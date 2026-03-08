@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Nano Banana 2 Test</title>
+  <style>
+    body { background: #111; color: #eee; font-family: monospace; padding: 20px; max-width: 1200px; margin: 0 auto; }
+    h1 { color: #ff4444; }
+    h2 { color: #ffaa00; margin-top: 30px; }
+    .row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+    .card { background: #1a1a2e; border: 1px solid #333; border-radius: 8px; padding: 16px; }
+    img { max-width: 512px; border: 1px solid #444; }
+    button { background: #ff4444; color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-family: monospace; font-size: 14px; margin: 5px; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button:hover:not(:disabled) { background: #ff6666; }
+    #status { color: #ffaa00; margin: 10px 0; min-height: 20px; }
+    textarea { width: 100%; height: 80px; background: #0a0a1a; color: #eee; border: 1px solid #333; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 12px; }
+    .preview { max-height: 200px; }
+    #log { background: #0a0a1a; border: 1px solid #333; padding: 10px; border-radius: 4px; max-height: 200px; overflow-y: auto; font-size: 11px; color: #888; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Nano Banana 2 — Sprite Test</h1>
+  <p>Upload a character photo to test if Gemini can replace both Freepik (reposing) and Ludo (sprite animation).</p>
+
+  <div class="card">
+    <h2>Model Selection</h2>
+    <select id="modelSelect" style="background:#0a0a1a;color:#eee;padding:8px;border:1px solid #333;border-radius:4px;font-family:monospace;">
+      <option value="gemini-2.0-flash-preview-image-generation">gemini-2.0-flash-preview-image-generation (stable)</option>
+      <option value="gemini-2.5-flash-image">gemini-2.5-flash-image (Nano Banana)</option>
+      <option value="gemini-3.1-flash-image-preview">gemini-3.1-flash-image-preview (Nano Banana 2 - newest)</option>
+    </select>
+  </div>
+
+  <div class="card">
+    <h2>1. Upload Character Photo</h2>
+    <input type="file" id="fileInput" accept="image/*">
+    <br><br>
+    <img id="originalPreview" class="preview" style="display:none">
+  </div>
+
+  <div id="status"></div>
+  <div id="log"></div>
+
+  <div class="row">
+    <div class="card">
+      <h2>2. Repose to Fighting Stance</h2>
+      <p>Test: Can Nano Banana repose to 3/4 fighting stance while preserving face?</p>
+      <textarea id="reposePrompt">Using this photo as reference, create a full-body fighting game character. Preserve the EXACT same visual style, art style, textures, colors, clothing, and level of detail from the original image — do NOT change the aesthetic. Keep the same face, hair, skin tone, and outfit faithfully. If only a face or upper body is shown, imagine and generate the rest of the body (legs, feet, full outfit) in a style perfectly consistent with what is visible. The character should be in a 3/4 view facing right in a fighting stance — fists raised, feet planted shoulder-width apart, slight forward lean. Show the COMPLETE body from head to feet with nothing cropped. Clean solid dark background.</textarea>
+      <br>
+      <button id="btnRepose" disabled onclick="testRepose()">Test Repose</button>
+      <br><br>
+      <img id="reposeResult" style="display:none">
+    </div>
+
+  </div>
+
+  <div class="card" style="margin-top:20px">
+    <h2>3. Individual Animation Tests</h2>
+    <p>Test each animation one at a time. Uses reposed image if available, otherwise original. Mirrored anims show raw + mirrored.</p>
+    <div id="animButtons" style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0;"></div>
+    <div id="singleResult" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="card" style="margin-top:20px">
+    <h2>4. Full Pipeline Test</h2>
+    <p>Repose + all 10 animations in one go (will take a while)</p>
+    <button id="btnFull" disabled onclick="testFullPipeline()">Run Full Pipeline</button>
+    <div id="fullResults"></div>
+  </div>
+
+<script>
+let currentModel = 'gemini-2.0-flash-preview-image-generation';
+const getGeminiUrl = () => `/proxy/gemini/v1beta/models/${currentModel}:generateContent`;
+
+let originalBase64 = null;
+let reposedBase64 = null;
+
+document.getElementById('modelSelect').addEventListener('change', (e) => {
+  currentModel = e.target.value;
+  log('Switched model to: ' + currentModel);
+});
+
+const log = (msg) => {
+  const el = document.getElementById('log');
+  el.textContent += new Date().toLocaleTimeString() + ' ' + msg + '\n';
+  el.scrollTop = el.scrollHeight;
+};
+
+const setStatus = (msg) => {
+  document.getElementById('status').textContent = msg;
+  log(msg);
+};
+
+document.getElementById('fileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    originalBase64 = dataUrl.split(',')[1];
+    document.getElementById('originalPreview').src = dataUrl;
+    document.getElementById('originalPreview').style.display = 'block';
+    document.getElementById('btnRepose').disabled = false;
+    enableAnimButtons();
+    setStatus('Photo loaded. Ready to test.');
+  };
+  reader.readAsDataURL(file);
+});
+
+async function callGemini(prompt, imageBase64, mimeType = 'image/png') {
+  const reqParts = [];
+  if (imageBase64) {
+    reqParts.push({ inlineData: { mimeType, data: imageBase64 } });
+  }
+  reqParts.push({ text: prompt });
+
+  const body = {
+    contents: [{ parts: reqParts }],
+    generationConfig: {
+      responseModalities: ['TEXT', 'IMAGE'],
+    },
+  };
+
+  setStatus('Calling Gemini API...');
+  const start = Date.now();
+
+  const res = await fetch(getGeminiUrl(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Gemini ${res.status}: ${err.slice(0, 300)}`);
+  }
+
+  const json = await res.json();
+  setStatus(`Gemini responded in ${elapsed}s`);
+
+  const candidate = json.candidates?.[0];
+  if (!candidate) throw new Error('No candidates in response');
+
+  const resParts = candidate.content?.parts;
+  if (!resParts || !Array.isArray(resParts)) {
+    const reason = candidate.finishReason || 'unknown';
+    log('No parts in response. finishReason: ' + reason + ' | ' + JSON.stringify(candidate).slice(0, 300));
+    throw new Error('Gemini returned no content (finishReason: ' + reason + ')');
+  }
+
+  let text = '';
+  let imageData = null;
+
+  for (const part of resParts) {
+    if (part.text) text += part.text;
+    if (part.inlineData) imageData = part.inlineData;
+  }
+
+  log(`Response text: ${text.slice(0, 200)}`);
+  log(`Image returned: ${imageData ? 'YES' : 'NO'} ${imageData ? `(${(imageData.data.length / 1024).toFixed(0)} KB)` : ''}`);
+
+  return { text, imageData };
+}
+
+async function testRepose() {
+  try {
+    document.getElementById('btnRepose').disabled = true;
+    const prompt = document.getElementById('reposePrompt').value;
+
+    const { imageData } = await callGemini(prompt, originalBase64);
+
+    if (imageData) {
+      reposedBase64 = imageData.data;
+      const img = document.getElementById('reposeResult');
+      img.src = `data:${imageData.mimeType};base64,${imageData.data}`;
+      img.style.display = 'block';
+      document.getElementById('btnSprite').disabled = false;
+      setStatus('Repose complete! Check the result.');
+    } else {
+      setStatus('ERROR: No image returned. Try adjusting the prompt.');
+    }
+  } catch (err) {
+    setStatus('ERROR: ' + err.message);
+  } finally {
+    document.getElementById('btnRepose').disabled = false;
+  }
+}
+
+function buildPrompt(motion, cols, rows, frames, halfOnly) {
+  const endNote = halfOnly
+    ? `- Frame 1 is the resting stance. Each subsequent frame progresses the motion further. Frame ${frames} is the peak/impact moment. Do NOT show the character returning to stance — only the wind-up through impact.`
+    : `- Frame 1 starts in the base stance. The motion progresses gradually through the middle frames. The final frame returns to or finishes the pose.`;
+
+  return `Generate a sprite sheet of this exact character performing: ${motion}.
+
+STRICT LAYOUT RULES:
+- The image must be a single image containing a grid of EXACTLY ${cols} columns and ${rows} rows.
+- That means EXACTLY ${frames} cells total — no more, no fewer.
+- Every cell must be the same size. Every row must have exactly ${cols} cells.
+
+ANIMATION RULES:
+- Frames are read left-to-right, top-to-bottom (frame 1 is top-left, frame ${frames} is bottom-right).
+- The frames must form a smooth, sequential animation — each frame shows the next step of the motion.
+${endNote}
+- The character must face right in every frame.
+
+STYLE RULES:
+- Preserve the exact same visual style, proportions, colors, and textures of the reference character — do NOT change the art style.
+- Each frame shows the complete character at the same scale and vertical position.
+- Clean white or black background (no scenery, no effects, no ground).`;
+}
+
+// Mirror anims: only generate first half (stance→impact), then mirror frames for the return
+const MIRROR_SET = new Set(['light_punch', 'heavy_punch', 'light_kick', 'heavy_kick']);
+
+const ANIMS = [
+  { name: 'idle',         totalFrames: 16, genFrames: 16, mirror: false, prompt: buildPrompt('idle fighting stance, subtle breathing sway, fists raised, looping', 4, 4, 16, false) },
+  { name: 'walk',         totalFrames: 16, genFrames: 16, mirror: false, prompt: buildPrompt('walking forward to the right cycle, fighting game walk, looping', 4, 4, 16, false) },
+  { name: 'light_punch',  totalFrames: 9,  genFrames: 5,  mirror: true,  prompt: buildPrompt('quick jab punch extending right arm forward to peak impact', 3, 2, 5, true) },
+  { name: 'heavy_punch',  totalFrames: 16, genFrames: 8,  mirror: true,  prompt: buildPrompt('powerful cross punch, full arm extension to the right with body rotation, to peak impact', 3, 3, 8, true) },
+  { name: 'light_kick',   totalFrames: 9,  genFrames: 5,  mirror: true,  prompt: buildPrompt('quick front kick extending right leg forward to peak impact', 3, 2, 5, true) },
+  { name: 'heavy_kick',   totalFrames: 16, genFrames: 8,  mirror: true,  prompt: buildPrompt('powerful roundhouse kick swinging right leg forward to peak impact', 3, 3, 8, true) },
+  { name: 'jump',         totalFrames: 9,  genFrames: 9,  mirror: false, prompt: buildPrompt('jumping straight up, tucked pose at peak, landing back down', 3, 3, 9, false) },
+  { name: 'crouch',       totalFrames: 4,  genFrames: 4,  mirror: false, prompt: buildPrompt('crouching down into low defensive stance', 2, 2, 4, false) },
+  { name: 'hit',          totalFrames: 9,  genFrames: 9,  mirror: false, prompt: buildPrompt('recoiling from impact, pain reaction, staggering backward', 3, 3, 9, false) },
+  { name: 'ko',           totalFrames: 16, genFrames: 16, mirror: false, prompt: buildPrompt('falling to the ground, knocked out, collapsing backward', 4, 4, 16, false) },
+];
+
+function loadImgFromBase64(base64, mime) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = `data:${mime};base64,${base64}`;
+  });
+}
+
+async function mirrorSpriteSheet(halfBase64, halfMime, genFrames, totalFrames, srcCols) {
+  const img = await loadImgFromBase64(halfBase64, halfMime);
+  const srcRows = Math.ceil(genFrames / srcCols);
+  const frameW = Math.round(img.width / srcCols);
+  const frameH = Math.round(img.height / srcRows);
+
+  // Extract individual frames
+  const frames = [];
+  for (let i = 0; i < genFrames; i++) {
+    const col = i % srcCols;
+    const row = Math.floor(i / srcCols);
+    const c = document.createElement('canvas');
+    c.width = frameW; c.height = frameH;
+    c.getContext('2d').drawImage(img, col * frameW, row * frameH, frameW, frameH, 0, 0, frameW, frameH);
+    frames.push(c);
+  }
+
+  // Build full sequence: forward + reversed middle frames
+  const full = [...frames];
+  const reversePart = frames.slice(1, -1).reverse();
+  for (const f of reversePart) {
+    if (full.length >= totalFrames) break;
+    full.push(f);
+  }
+  while (full.length < totalFrames) full.push(frames[0]);
+  full.length = totalFrames;
+
+  // Compose into new grid
+  const outCols = Math.round(Math.sqrt(totalFrames));
+  const outRows = Math.ceil(totalFrames / outCols);
+  const out = document.createElement('canvas');
+  out.width = outCols * frameW;
+  out.height = outRows * frameH;
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, out.width, out.height);
+
+  for (let i = 0; i < totalFrames; i++) {
+    ctx.drawImage(full[i], (i % outCols) * frameW, Math.floor(i / outCols) * frameH);
+  }
+
+  log(`Mirrored ${genFrames} → ${totalFrames} frames (${outCols}x${outRows})`);
+  return out.toDataURL('image/png');
+}
+
+// Render individual animation buttons
+(function renderAnimButtons() {
+  const container = document.getElementById('animButtons');
+  ANIMS.forEach((anim, i) => {
+    const btn = document.createElement('button');
+    btn.id = `btn_anim_${i}`;
+    btn.disabled = true;
+    const tag = anim.mirror ? ` [${anim.genFrames}→${anim.totalFrames}]` : ` [${anim.totalFrames}f]`;
+    btn.textContent = anim.name.replace('_', ' ').toUpperCase() + tag;
+    btn.style.fontSize = '11px';
+    btn.style.padding = '8px 12px';
+    if (anim.mirror) btn.style.background = '#aa4400';
+    btn.onclick = () => testSingleAnim(i);
+    container.appendChild(btn);
+  });
+})();
+
+function enableAnimButtons() {
+  ANIMS.forEach((_, i) => { document.getElementById(`btn_anim_${i}`).disabled = false; });
+}
+
+async function testSingleAnim(index) {
+  const sourceBase64 = reposedBase64 || originalBase64;
+  if (!sourceBase64) { setStatus('Upload a photo (and optionally repose) first!'); return; }
+
+  const anim = ANIMS[index];
+  const btn = document.getElementById(`btn_anim_${index}`);
+  btn.disabled = true;
+
+  const container = document.getElementById('singleResult');
+  container.innerHTML = '';
+
+  setStatus(`Generating ${anim.name}${anim.mirror ? ' [half → mirror]' : ''}...`);
+
+  try {
+    const { imageData } = await callGemini(anim.prompt, sourceBase64);
+
+    if (!imageData) {
+      container.innerHTML = `<div style="color:#ff4444">No image returned for ${anim.name}</div>`;
+      return;
+    }
+
+    const rawSrc = `data:${imageData.mimeType};base64,${imageData.data}`;
+
+    if (anim.mirror) {
+      const srcCols = Math.round(Math.sqrt(anim.genFrames));
+      const mirroredSrc = await mirrorSpriteSheet(imageData.data, imageData.mimeType, anim.genFrames, anim.totalFrames, srcCols);
+
+      container.innerHTML = `
+        <div style="display:flex;gap:20px;flex-wrap:wrap;">
+          <div style="text-align:center">
+            <div style="color:#ffaa00;font-size:13px;margin-bottom:6px">${anim.name.toUpperCase()} — RAW (${anim.genFrames} frames, stance→impact)</div>
+            <img src="${rawSrc}" style="max-width:400px;border:1px solid #555">
+          </div>
+          <div style="text-align:center">
+            <div style="color:#44ff44;font-size:13px;margin-bottom:6px">${anim.name.toUpperCase()} — MIRRORED (${anim.totalFrames} frames, stance→impact→stance)</div>
+            <img src="${mirroredSrc}" style="max-width:400px;border:1px solid #555">
+          </div>
+        </div>`;
+    } else {
+      container.innerHTML = `
+        <div style="text-align:center">
+          <div style="color:#44ff44;font-size:13px;margin-bottom:6px">${anim.name.toUpperCase()} — ${anim.totalFrames} frames</div>
+          <img src="${rawSrc}" style="max-width:500px;border:1px solid #555">
+        </div>`;
+    }
+
+    setStatus(`${anim.name} done!`);
+  } catch (err) {
+    container.innerHTML = `<div style="color:#ff4444">${anim.name} ERROR: ${err.message}</div>`;
+    setStatus('ERROR: ' + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function testFullPipeline() {
+  const sourceBase64 = reposedBase64 || originalBase64;
+  if (!sourceBase64) { setStatus('Upload and optionally repose first!'); return; }
+
+  document.getElementById('btnFull').disabled = true;
+  const container = document.getElementById('fullResults');
+  container.innerHTML = '';
+
+  for (let i = 0; i < ANIMS.length; i++) {
+    const anim = ANIMS[i];
+    setStatus(`Generating ${anim.name} (${i + 1}/${ANIMS.length})${anim.mirror ? ' [half → mirror]' : ''}...`);
+
+    try {
+      const { imageData } = await callGemini(anim.prompt, sourceBase64);
+      const div = document.createElement('div');
+      div.style.cssText = 'display:inline-block; margin:8px; text-align:center;';
+
+      if (imageData) {
+        let displaySrc;
+        if (anim.mirror) {
+          const srcCols = Math.round(Math.sqrt(anim.genFrames));
+          displaySrc = await mirrorSpriteSheet(imageData.data, imageData.mimeType, anim.genFrames, anim.totalFrames, srcCols);
+        } else {
+          displaySrc = `data:${imageData.mimeType};base64,${imageData.data}`;
+        }
+        div.innerHTML = `<div style="color:#44ff44;font-size:12px">${anim.name}${anim.mirror ? ' (mirrored)' : ''}</div><img src="${displaySrc}" style="max-width:256px;border:1px solid #333">`;
+      } else {
+        div.innerHTML = `<div style="color:#ff4444;font-size:12px">${anim.name} — NO IMAGE</div>`;
+      }
+      container.appendChild(div);
+    } catch (err) {
+      const div = document.createElement('div');
+      div.style.cssText = 'display:inline-block; margin:8px;';
+      div.innerHTML = `<div style="color:#ff4444;font-size:12px">${anim.name} — ERROR: ${err.message.slice(0, 60)}</div>`;
+      container.appendChild(div);
+    }
+  }
+
+  setStatus('Full pipeline complete!');
+  document.getElementById('btnFull').disabled = false;
+}
+</script>
+</body>
+</html>

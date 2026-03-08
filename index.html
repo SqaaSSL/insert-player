@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>AI Street Fighter</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; background: #0a0a0a; font-family: 'Press Start 2P', monospace; }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        overflow: hidden;
+      }
+      #game-wrapper {
+        position: relative;
+        width: 100vw;
+        height: 100vh;
+      }
+      #game-container {
+        width: 100%;
+        height: 100%;
+      }
+      #game-wrapper::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 10;
+        background:
+          repeating-linear-gradient(
+            to bottom,
+            transparent 0px,
+            transparent 2px,
+            rgba(0, 0, 0, 0.05) 2px,
+            rgba(0, 0, 0, 0.05) 3px
+          ),
+          radial-gradient(
+            ellipse at center,
+            transparent 50%,
+            rgba(0, 0, 0, 0.25) 100%
+          );
+      }
+      canvas { image-rendering: pixelated; display: block; }
+
+      #controls-toggle {
+        position: absolute;
+        bottom: 8px;
+        right: 8px;
+        z-index: 20;
+        background: rgba(0,0,0,0.6);
+        border: 1px solid #333;
+        border-radius: 4px;
+        color: #888;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 7px;
+        padding: 4px 8px;
+        cursor: pointer;
+        transition: color 0.15s, border-color 0.15s;
+      }
+      #controls-toggle:hover { color: #fff; border-color: #ff4444; }
+
+      #controls-modal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        background: rgba(0,0,0,0.85);
+        backdrop-filter: blur(4px);
+        align-items: center;
+        justify-content: center;
+      }
+      #controls-modal.open { display: flex; }
+
+      #controls-modal .modal-box {
+        background: linear-gradient(180deg, #151520 0%, #0c0c14 100%);
+        border: 1px solid #2a2a3a;
+        border-radius: 10px;
+        padding: 24px 36px;
+        max-width: 640px;
+        width: 90%;
+      }
+      #controls-modal .modal-title {
+        font-size: 14px;
+        color: #ff4444;
+        text-align: center;
+        margin-bottom: 18px;
+        letter-spacing: 2px;
+      }
+      #controls-modal .columns {
+        display: flex;
+        gap: 32px;
+      }
+      #controls-modal .player-col { flex: 1; }
+      #controls-modal h4 {
+        font-size: 9px;
+        color: #ff4444;
+        margin-bottom: 10px;
+        letter-spacing: 1px;
+      }
+      #controls-modal .row {
+        display: flex;
+        align-items: center;
+        margin-bottom: 5px;
+        gap: 8px;
+      }
+      #controls-modal .keys { display: flex; gap: 3px; }
+      #controls-modal kbd {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 24px;
+        height: 22px;
+        padding: 0 5px;
+        font-family: 'Press Start 2P', monospace;
+        font-size: 8px;
+        color: #ddd;
+        background: linear-gradient(180deg, #2a2a2a 0%, #161616 100%);
+        border: 1px solid #3a3a3a;
+        border-bottom: 2px solid #1a1a1a;
+        border-radius: 3px;
+      }
+      #controls-modal .lbl {
+        font-size: 7px;
+        color: #777;
+        text-transform: uppercase;
+      }
+      #controls-modal .sep {
+        width: 1px;
+        background: #222;
+        align-self: stretch;
+      }
+      #controls-modal .special-section {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid #222;
+        text-align: center;
+      }
+      #controls-modal .special-section h4 { text-align: center; margin-bottom: 8px; }
+      #controls-modal .special-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        margin-bottom: 4px;
+      }
+      #controls-modal .close-hint {
+        text-align: center;
+        margin-top: 16px;
+        font-size: 7px;
+        color: #444;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game-wrapper">
+      <div id="game-container"></div>
+      <button id="controls-toggle">CONTROLS</button>
+    </div>
+    <div id="controls-modal">
+      <div class="modal-box">
+        <div class="modal-title">CONTROLS</div>
+        <div class="columns">
+          <div class="player-col">
+            <h4>PLAYER 1</h4>
+            <div class="row"><div class="keys"><kbd>W</kbd></div><span class="lbl">Jump</span></div>
+            <div class="row"><div class="keys"><kbd>A</kbd><kbd>D</kbd></div><span class="lbl">Move</span></div>
+            <div class="row"><div class="keys"><kbd>S</kbd></div><span class="lbl">Crouch</span></div>
+            <div class="row"><div class="keys"><kbd>G</kbd></div><span class="lbl">Guard / Block</span></div>
+            <div class="row"><div class="keys"><kbd>U</kbd></div><span class="lbl">Light Punch</span></div>
+            <div class="row"><div class="keys"><kbd>I</kbd></div><span class="lbl">Heavy Punch</span></div>
+            <div class="row"><div class="keys"><kbd>J</kbd></div><span class="lbl">Light Kick</span></div>
+            <div class="row"><div class="keys"><kbd>K</kbd></div><span class="lbl">Heavy Kick</span></div>
+          </div>
+          <div class="sep"></div>
+          <div class="player-col">
+            <h4>PLAYER 2 / CPU</h4>
+            <div class="row"><div class="keys"><kbd>↑</kbd></div><span class="lbl">Jump</span></div>
+            <div class="row"><div class="keys"><kbd>←</kbd><kbd>→</kbd></div><span class="lbl">Move</span></div>
+            <div class="row"><div class="keys"><kbd>↓</kbd></div><span class="lbl">Crouch</span></div>
+            <div class="row"><div class="keys"><kbd>0</kbd></div><span class="lbl">Guard / Block (Num)</span></div>
+            <div class="row"><div class="keys"><kbd>4</kbd></div><span class="lbl">Light Punch (Num)</span></div>
+            <div class="row"><div class="keys"><kbd>5</kbd></div><span class="lbl">Heavy Punch (Num)</span></div>
+            <div class="row"><div class="keys"><kbd>1</kbd></div><span class="lbl">Light Kick (Num)</span></div>
+            <div class="row"><div class="keys"><kbd>2</kbd></div><span class="lbl">Heavy Kick (Num)</span></div>
+          </div>
+        </div>
+        <div class="special-section">
+          <h4>SPECIAL MOVES</h4>
+          <div class="special-row"><kbd>↓</kbd><kbd>↘</kbd><kbd>→</kbd><span class="lbl">+</span><kbd>U</kbd><span class="lbl">Fireball</span></div>
+          <div class="special-row"><kbd>→</kbd><kbd>↓</kbd><kbd>↘</kbd><span class="lbl">+</span><kbd>U</kbd><span class="lbl">Uppercut</span></div>
+        </div>
+        <div class="close-hint">Click anywhere or press ESC to close</div>
+      </div>
+    </div>
+    <script>
+      const toggle = document.getElementById('controls-toggle');
+      const modal = document.getElementById('controls-modal');
+      toggle.addEventListener('click', (e) => { e.stopPropagation(); modal.classList.add('open'); });
+      modal.addEventListener('click', () => modal.classList.remove('open'));
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') modal.classList.remove('open'); });
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

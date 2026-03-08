@@ -1,0 +1,19 @@
+name = "ai-street-fighter-api"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "development"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ai-street-fighter-db"
+database_id = "PLACEHOLDER_D1_ID"
+
+[[r2_buckets]]
+binding = "SPRITES"
+bucket_name = "ai-street-fighter-sprites"
+
+[dev]
+port = 8787
