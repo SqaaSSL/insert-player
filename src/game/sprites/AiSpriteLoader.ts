@@ -25,6 +25,12 @@ const FALLBACK_MAP: Partial<Record<FighterState, FighterState>> = {
   [FighterState.DEFEAT]: FighterState.KNOCKDOWN,
 };
 
+const LOOPING_STATES = new Set<FighterState>([
+  FighterState.IDLE,
+  FighterState.WALK_FORWARD,
+  FighterState.WALK_BACKWARD,
+]);
+
 export async function loadAiSprites(
   scene: Phaser.Scene,
   spriteKey: string,
@@ -96,10 +102,7 @@ export async function loadAiSprites(
     const drawH = Math.round(cropH * scale);
 
     for (let f = 0; f < targetFrameCount; f++) {
-      const srcIdx = Math.min(
-        Math.floor((f / targetFrameCount) * srcTotal),
-        srcTotal - 1,
-      );
+      const srcIdx = selectSourceFrameIndex(state, f, targetFrameCount, srcTotal);
 
       const dstX = f * FIGHTER_WIDTH;
       const dstY = row * FIGHTER_HEIGHT;
@@ -133,6 +136,31 @@ function stateToAnimName(state: FighterState): string {
     if (s === state) return name;
   }
   return '';
+}
+
+function selectSourceFrameIndex(
+  state: FighterState,
+  frameIndex: number,
+  targetFrameCount: number,
+  sourceFrameCount: number,
+): number {
+  if (sourceFrameCount <= 1) return 0;
+
+  if (targetFrameCount <= 1) {
+    return LOOPING_STATES.has(state) ? 0 : sourceFrameCount - 1;
+  }
+
+  if (LOOPING_STATES.has(state)) {
+    return Math.min(
+      Math.floor((frameIndex / targetFrameCount) * sourceFrameCount),
+      sourceFrameCount - 1,
+    );
+  }
+
+  return Math.min(
+    Math.round((frameIndex / (targetFrameCount - 1)) * (sourceFrameCount - 1)),
+    sourceFrameCount - 1,
+  );
 }
 
 function blobToImage(blob: Blob): Promise<HTMLImageElement> {

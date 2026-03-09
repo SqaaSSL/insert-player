@@ -130,6 +130,30 @@ export class Fighter {
     );
   }
 
+  getBodyWidth(): number {
+    return BODY_WIDTH;
+  }
+
+  getBodyHeight(crouching = this.isCrouching() || this.state === FighterState.LOW_PUNCH || this.state === FighterState.LOW_KICK): number {
+    return crouching ? BODY_HEIGHT * 0.6 : BODY_HEIGHT;
+  }
+
+  getAttackRange(state: FighterState): number {
+    const atk = ATTACKS[state];
+    if (!atk) return this.getBodyWidth();
+    return this.getBodyWidth() / 2 + atk.hitbox.x + atk.hitbox.width;
+  }
+
+  getMaxMeleeRange(): number {
+    return Math.max(
+      this.getAttackRange(FighterState.HIGH_PUNCH),
+      this.getAttackRange(FighterState.LOW_PUNCH),
+      this.getAttackRange(FighterState.HIGH_KICK),
+      this.getAttackRange(FighterState.LOW_KICK),
+      this.getAttackRange(FighterState.UPPERCUT),
+    );
+  }
+
   getAttackData(): AttackData | null {
     return ATTACKS[this.state] ?? null;
   }
@@ -138,12 +162,13 @@ export class Fighter {
     const crouching = this.isCrouching() ||
       this.state === FighterState.LOW_PUNCH ||
       this.state === FighterState.LOW_KICK;
-    const h = crouching ? BODY_HEIGHT * 0.6 : BODY_HEIGHT;
+    const width = this.getBodyWidth();
+    const height = this.getBodyHeight(crouching);
     return {
-      x: this.x - BODY_WIDTH / 2,
-      y: this.y - h,
-      width: BODY_WIDTH,
-      height: h,
+      x: this.x - width / 2,
+      y: this.y - height,
+      width,
+      height,
     };
   }
 

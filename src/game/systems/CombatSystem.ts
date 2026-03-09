@@ -1,5 +1,5 @@
 import { Fighter } from '../fighters/Fighter.ts';
-import { FighterState, BODY_WIDTH } from '../constants.ts';
+import { FighterState } from '../constants.ts';
 
 export interface HitEvent {
   attacker: number;
@@ -80,8 +80,9 @@ export class CombatSystem {
     // This allows jump cross-overs: an airborne fighter can pass over the grounded one.
     if (!p1.isGrounded() || !p2.isGrounded()) return;
 
-    const overlap = BODY_WIDTH - Math.abs(p1.x - p2.x);
-    if (overlap > 0 && Math.abs(p1.x - p2.x) < BODY_WIDTH) {
+    const minDistance = (p1.getBodyWidth() + p2.getBodyWidth()) / 2;
+    const overlap = minDistance - Math.abs(p1.x - p2.x);
+    if (overlap > 0 && Math.abs(p1.x - p2.x) < minDistance) {
       const push = overlap / 2 + 1;
       if (p1.x < p2.x) {
         p1.x -= push;

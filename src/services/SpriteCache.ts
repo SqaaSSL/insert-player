@@ -1,8 +1,9 @@
 const DB_NAME = 'ai-street-fighter';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_SPRITES = 'sprites';
 const STORE_INTROS = 'intros';
 const STORE_META = 'meta';
+const STORE_STAGES = 'stages';
 
 interface CachedSprite {
   photoHash: string;
@@ -19,6 +20,13 @@ interface CachedIntro {
   photoHash: string;
   videoBlob: Blob;
   mimeType: string;
+  createdAt: number;
+}
+
+interface CachedStageBackground {
+  stageKey: string;
+  prompt: string;
+  pngBlob: Blob;
   createdAt: number;
 }
 
@@ -55,6 +63,9 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!db.objectStoreNames.contains(STORE_META)) {
         db.createObjectStore(STORE_META, { keyPath: 'photoHash' });
+      }
+      if (!db.objectStoreNames.contains(STORE_STAGES)) {
+        db.createObjectStore(STORE_STAGES, { keyPath: 'stageKey' });
       }
     };
 
@@ -150,6 +161,26 @@ export async function getAllCachedMetas(): Promise<CachedMeta[]> {
   });
 }
 
+export async function getCachedStageBackground(stageKey: string): Promise<CachedStageBackground | null> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_STAGES, 'readonly');
+    const req = tx.objectStore(STORE_STAGES).get(stageKey);
+    req.onsuccess = () => resolve(req.result ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+export async function setCachedStageBackground(stage: CachedStageBackground): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_STAGES, 'readwrite');
+    tx.objectStore(STORE_STAGES).put(stage);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function deleteCharacter(photoHash: string): Promise<void> {
   const db = await openDB();
   const tx = db.transaction([STORE_SPRITES, STORE_INTROS, STORE_META], 'readwrite');
@@ -174,10 +205,11 @@ export async function deleteCharacter(photoHash: string): Promise<void> {
 
 export async function clearCache(): Promise<void> {
   const db = await openDB();
-  const tx = db.transaction([STORE_SPRITES, STORE_INTROS, STORE_META], 'readwrite');
+  const tx = db.transaction([STORE_SPRITES, STORE_INTROS, STORE_META, STORE_STAGES], 'readwrite');
   tx.objectStore(STORE_SPRITES).clear();
   tx.objectStore(STORE_INTROS).clear();
   tx.objectStore(STORE_META).clear();
+  tx.objectStore(STORE_STAGES).clear();
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -185,4 +217,4 @@ export async function clearCache(): Promise<void> {
 }
 
 export { CACHE_VERSION };
-export type { CachedSprite, CachedIntro, CachedMeta };
+export type { CachedSprite, CachedIntro, CachedMeta, CachedStageBackground };

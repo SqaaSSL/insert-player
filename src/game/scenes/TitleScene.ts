@@ -175,9 +175,9 @@ export class TitleScene extends Phaser.Scene {
 
   private createMenu(): void {
     this.menuItems = [
-      { label: 'VS CPU', enabled: true, action: () => this.goToRoster(true) },
+      { label: 'WATCH MODE', enabled: true, action: () => this.goToRoster(true, true) },
+      { label: 'PLAY VS CPU', enabled: true, action: () => this.goToRoster(true) },
       { label: 'VS PLAYER', enabled: true, action: () => this.goToRoster(false) },
-      { label: 'CPU vs CPU', enabled: true, action: () => this.goToRoster(true, true) },
       { label: 'GALLERY', enabled: true, action: () => this.goToScene('GalleryScene') },
       { label: 'ONLINE', enabled: false, action: () => this.showComingSoon() },
     ];

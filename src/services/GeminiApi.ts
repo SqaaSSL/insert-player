@@ -258,3 +258,50 @@ export async function geminiSpriteSheet(
     usedScale: cleaned.usedScale,
   };
 }
+
+// ─── Stage backgrounds ──────────────────────────────────────────────
+
+export interface GeminiStageBackgroundRequest {
+  stageLabel: string;
+  stageBlurb: string;
+  fighterOneName: string;
+  fighterTwoName: string;
+  fighterOneStyle: string;
+  fighterTwoStyle: string;
+  referenceImages?: { data: string; mime: string }[];
+}
+
+export async function geminiStageBackground(req: GeminiStageBackgroundRequest): Promise<{ imageBase64: string; prompt: string }> {
+  const prompt = [
+    `Create a dramatic arcade fighting game stage background for a versus match.`,
+    `Theme: ${req.stageLabel}. ${req.stageBlurb}`,
+    `Fighter one: ${req.fighterOneName} (${req.fighterOneStyle}).`,
+    `Fighter two: ${req.fighterTwoName} (${req.fighterTwoStyle}).`,
+    ``,
+    `REFERENCE USAGE RULES:`,
+    `- Use any reference photos only to borrow color palette, fashion cues, attitude, and world-building inspiration.`,
+    `- Do NOT place the referenced people or any fighters in the scene.`,
+    ``,
+    `COMPOSITION RULES:`,
+    `- Produce a single widescreen 16:9 arena background.`,
+    `- Side-on camera suitable for a 2D fighting game match.`,
+    `- Leave the center lane visually readable for two fighters standing and moving.`,
+    `- Include a clear floor or ground plane along the bottom of the image.`,
+    `- Rich layered background depth, strong atmosphere, and cinematic lighting.`,
+    `- No text, no logos, no UI, no watermarks, no speech bubbles.`,
+    `- No foreground characters, no crowd close-ups blocking the arena.`,
+    ``,
+    `STYLE RULES:`,
+    `- High-quality stylized game art with bold silhouettes and readable background shapes.`,
+    `- The stage should feel handcrafted, viral, and slightly exaggerated rather than generic concept art.`,
+  ].join('\n');
+
+  console.log(`[GeminiApi] Generating stage background: ${req.stageLabel}...`);
+  const result = await callGemini(prompt, undefined, 'image/png', req.referenceImages);
+  if (!result.imageBase64) throw new Error('Gemini stage background returned no image');
+
+  return {
+    imageBase64: result.imageBase64,
+    prompt,
+  };
+}

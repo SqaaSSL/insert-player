@@ -9,6 +9,10 @@ import { HUD } from '../ui/HUD.ts';
 import { SeededRng } from '../utils/SeededRng.ts';
 import { ScreenEffects } from '../effects/ScreenEffects.ts';
 import {
+  ensureStageBackground,
+  getCachedStageBackgroundForRequest,
+} from '../../services/StageBackgroundService.ts';
+import {
   GAME_WIDTH,
   GAME_HEIGHT,
   GROUND_Y,
@@ -20,6 +24,19 @@ import {
   FighterState,
 } from '../constants.ts';
 import { loadAiSprites } from '../sprites/AiSpriteLoader.ts';
+import {
+  buildMatchSeed,
+  getDefaultPersonalityId,
+  getFighterPersonality,
+  getMatchLabel,
+  type FighterPersonalityId,
+  type MatchSceneData,
+} from '../match/MatchConfig.ts';
+import {
+  getStageTheme,
+  pickStageThemeIdFromSeed,
+  type StageThemeId,
+} from '../match/StageConfig.ts';
 
 enum RoundPhase {
   INTRO = 0,
@@ -36,7 +53,6 @@ export class FightScene extends Phaser.Scene {
   private ai!: AIController;
   private ai2!: AIController;
   private hud!: HUD;
-  private rng!: SeededRng;
   private sound_mgr!: SoundManager;
 
   private accumulator = 0;
@@ -51,8 +67,12 @@ export class FightScene extends Phaser.Scene {
 
   private hitSparks!: Phaser.GameObjects.Particles.ParticleEmitter;
   private stageGfx!: Phaser.GameObjects.Graphics;
-  private cloudLayers: Phaser.GameObjects.Graphics[] = [];
-  private lanternGlows: Phaser.GameObjects.Graphics[] = [];
+  private stageBackdrop?: Phaser.GameObjects.Image;
+  private stageBackdropTextureKey?: string;
+  private stageVisualLayers: Phaser.GameObjects.Graphics[] = [];
+  private ambientLayers: Phaser.GameObjects.Graphics[] = [];
+  private stageLoadingText?: Phaser.GameObjects.Text;
+  private stageLoadId = 0;
 
   private projectiles: Projectile[] = [];
   private matchOverUI?: Phaser.GameObjects.Text;
@@ -61,19 +81,42 @@ export class FightScene extends Phaser.Scene {
   private p2PhotoHash: string | null = null;
   private p1Name = 'Player 1';
   private p2Name = 'CPU';
+  private p1PersonalityId: FighterPersonalityId = getDefaultPersonalityId(0);
+  private p2PersonalityId: FighterPersonalityId = getDefaultPersonalityId(1);
+  private stageId: StageThemeId | null = null;
+  private resolvedStageId: StageThemeId = 'dojo';
+  private matchSeed = 1;
+  private remix = 0;
   private ready = false;
 
   constructor() {
     super({ key: 'FightScene' });
   }
 
-  init(data: { vsAI?: boolean; cpuVsCpu?: boolean; p1PhotoHash?: string; p2PhotoHash?: string; p1Name?: string; p2Name?: string }): void {
+  init(data: MatchSceneData): void {
     this.cpuVsCpu = data.cpuVsCpu === true;
     this.isVsAI = data.vsAI !== false || this.cpuVsCpu;
     this.p1PhotoHash = data.p1PhotoHash ?? null;
     this.p2PhotoHash = data.p2PhotoHash ?? null;
     this.p1Name = data.p1Name ?? (this.cpuVsCpu ? 'CPU 1' : 'Player 1');
     this.p2Name = data.p2Name ?? (this.isVsAI ? 'CPU' : 'Player 2');
+    this.p1PersonalityId = data.p1PersonalityId ?? getDefaultPersonalityId(0);
+    this.p2PersonalityId = data.p2PersonalityId ?? getDefaultPersonalityId(1);
+    this.stageId = data.stageId ?? null;
+    this.remix = data.remix ?? 0;
+    this.matchSeed = buildMatchSeed({
+      ...data,
+      vsAI: this.isVsAI,
+      cpuVsCpu: this.cpuVsCpu,
+      p1PhotoHash: this.p1PhotoHash ?? undefined,
+      p2PhotoHash: this.p2PhotoHash ?? undefined,
+      p1Name: this.p1Name,
+      p2Name: this.p2Name,
+      p1PersonalityId: this.p1PersonalityId,
+      p2PersonalityId: this.p2PersonalityId,
+      stageId: this.stageId ?? undefined,
+      remix: this.remix,
+    });
     this.p1Wins = 0;
     this.p2Wins = 0;
     this.accumulator = 0;
@@ -82,7 +125,14 @@ export class FightScene extends Phaser.Scene {
   }
 
   async create(): Promise<void> {
-    this.rng = new SeededRng(Date.now());
+    const p1Personality = getFighterPersonality(this.p1PersonalityId);
+    const p2Personality = getFighterPersonality(this.p2PersonalityId);
+    const stageTheme = getStageTheme(this.stageId ?? pickStageThemeIdFromSeed(this.matchSeed));
+    this.resolvedStageId = stageTheme.id;
+    const matchLabel = this.isVsAI
+      ? `${stageTheme.label} · ${getMatchLabel(this.remix)}`
+      : stageTheme.label;
+
     this.combat = new CombatSystem();
     this.inputMgr = new InputManager(this);
     this.sound_mgr = new SoundManager();
@@ -90,22 +140,31 @@ export class FightScene extends Phaser.Scene {
     await this.loadAiSpritesIfNeeded();
 
     this.drawStage();
-    this.createClouds();
-    this.createFloorDetail();
-    this.createSpectators();
-    this.createLanternGlow();
+    void this.loadAiStageBackground();
     this.createFighters();
 
     this.hud = new HUD(this);
-    this.hud.create(this.p1.name, this.p2.name);
+    this.hud.create(
+      this.p1.name,
+      this.p2.name,
+      this.cpuVsCpu ? p1Personality.label : undefined,
+      this.isVsAI ? p2Personality.label : undefined,
+      matchLabel,
+    );
 
-    this.ai = new AIController(this.rng);
-    this.ai2 = new AIController(new SeededRng(Date.now() + 12345));
+    this.ai = new AIController(new SeededRng(this.mixSeed(0x6d2b79f5)), p2Personality);
+    this.ai2 = new AIController(new SeededRng(this.mixSeed(0x1b873593)), p1Personality);
 
     this.createParticles();
     ScreenEffects.createCRTOverlay(this);
     this.startRound();
     this.ready = true;
+  }
+
+  private mixSeed(salt: number): number {
+    const mixed = Math.imul(this.matchSeed ^ salt, 0x45d9f3b);
+    const normalized = mixed >>> 0;
+    return normalized === 0 ? salt >>> 0 : normalized;
   }
 
   private async loadAiSpritesIfNeeded(): Promise<void> {
@@ -133,119 +192,588 @@ export class FightScene extends Phaser.Scene {
   }
 
   private drawStage(): void {
-    this.stageGfx = this.add.graphics();
-
-    // Sky gradient
-    for (let y = 0; y < GROUND_Y; y++) {
-      const t = y / GROUND_Y;
-      const r = Math.floor(20 + t * 40);
-      const g = Math.floor(10 + t * 30);
-      const b = Math.floor(60 + t * 50);
-      this.stageGfx.fillStyle(Phaser.Display.Color.GetColor(r, g, b));
-      this.stageGfx.fillRect(0, y, GAME_WIDTH, 1);
+    this.stageBackdrop?.destroy();
+    this.stageBackdrop = undefined;
+    if (this.stageBackdropTextureKey && this.textures.exists(this.stageBackdropTextureKey)) {
+      this.textures.remove(this.stageBackdropTextureKey);
     }
+    this.stageBackdropTextureKey = undefined;
+    this.stageGfx = this.add.graphics().setDepth(0);
+    this.stageVisualLayers = [];
+    this.ambientLayers = [];
 
-    // Ground
-    this.stageGfx.fillStyle(0x3a2a1a);
-    this.stageGfx.fillRect(0, GROUND_Y, GAME_WIDTH, GAME_HEIGHT - GROUND_Y);
+    const midGfx = this.add.graphics().setDepth(2);
+    const frontGfx = this.add.graphics().setDepth(3);
+    this.stageVisualLayers.push(this.stageGfx, midGfx, frontGfx);
 
-    // Ground line
-    this.stageGfx.lineStyle(3, 0x5a4a3a);
-    this.stageGfx.lineBetween(0, GROUND_Y, GAME_WIDTH, GROUND_Y);
+    switch (this.resolvedStageId) {
+      case 'dojo':
+        this.drawVerticalGradient(this.stageGfx, 0x14193c, 0x385a78);
+        this.drawGround(this.stageGfx, 0x3a2a1a, 0x5a4a3a);
+        this.stageGfx.fillStyle(0x4a3a2a);
+        this.stageGfx.fillRect(30, GROUND_Y - 280, 40, 280);
+        this.stageGfx.fillRect(GAME_WIDTH - 70, GROUND_Y - 280, 40, 280);
+        this.stageGfx.fillStyle(0x8b0000);
+        this.stageGfx.fillTriangle(0, GROUND_Y - 280, GAME_WIDTH / 2, GROUND_Y - 360, GAME_WIDTH, GROUND_Y - 280);
+        for (let i = 0; i < 5; i++) {
+          const lx = 120 + i * 180;
+          this.stageGfx.fillStyle(0xcc3333);
+          this.stageGfx.fillRoundedRect(lx - 12, GROUND_Y - 300, 24, 36, 6);
+        }
 
-    // Dojo pillars
-    this.stageGfx.fillStyle(0x4a3a2a);
-    this.stageGfx.fillRect(30, GROUND_Y - 280, 40, 280);
-    this.stageGfx.fillRect(GAME_WIDTH - 70, GROUND_Y - 280, 40, 280);
+        midGfx.lineStyle(1, 0x5a4a3a, 0.4);
+        for (let i = 0; i < 16; i++) {
+          const plankX = i * 66;
+          midGfx.lineBetween(plankX, GROUND_Y + 2, plankX, GAME_HEIGHT);
+        }
+        midGfx.lineStyle(1, 0x4a3a2a, 0.3);
+        for (let y = GROUND_Y + 20; y < GAME_HEIGHT; y += 30) {
+          midGfx.lineBetween(0, y, GAME_WIDTH, y);
+        }
 
-    // Roof
-    this.stageGfx.fillStyle(0x8b0000);
-    this.stageGfx.fillTriangle(0, GROUND_Y - 280, GAME_WIDTH / 2, GROUND_Y - 360, GAME_WIDTH, GROUND_Y - 280);
+        frontGfx.fillStyle(0x111111, 0.5);
+        for (const sx of [140, 360, 660, 870]) {
+          const headY = GROUND_Y - 30;
+          frontGfx.fillCircle(sx, headY, 8);
+          frontGfx.fillRoundedRect(sx - 7, headY + 8, 14, 22, 3);
+        }
 
-    // Lanterns
-    for (let i = 0; i < 5; i++) {
-      const lx = 120 + i * 180;
-      this.stageGfx.fillStyle(0xcc3333);
-      this.stageGfx.fillRoundedRect(lx - 12, GROUND_Y - 300, 24, 36, 6);
-      this.stageGfx.fillStyle(0xffaa00, 0.3);
-      this.stageGfx.fillCircle(lx, GROUND_Y - 282, 20);
-    }
+        this.createCloudLayer(30, 0.008, 0xffffff, 0.06, [
+          { x: 100, w: 120, h: 24 },
+          { x: 500, w: 90, h: 18 },
+          { x: 820, w: 110, h: 22 },
+        ]);
+        this.createCloudLayer(70, 0.015, 0xffffff, 0.06, [
+          { x: 200, w: 80, h: 16 },
+          { x: 650, w: 100, h: 20 },
+          { x: 950, w: 70, h: 14 },
+        ]);
+        this.createLanternGlows([120, 300, 480, 660, 840], GROUND_Y - 282, 0xffaa00);
+        break;
 
-    this.stageGfx.setDepth(0);
-  }
+      case 'neon-rooftop':
+        this.drawVerticalGradient(this.stageGfx, 0x070b1f, 0x5a1769);
+        this.stageGfx.fillStyle(0xff55aa, 0.12);
+        this.stageGfx.fillCircle(820, 120, 86);
+        this.drawGround(this.stageGfx, 0x1c1f2c, 0x56617f);
 
-  private createClouds(): void {
-    const cloudData = [
-      { y: 30, speed: 0.008, shapes: [{ x: 100, w: 120, h: 24 }, { x: 500, w: 90, h: 18 }, { x: 820, w: 110, h: 22 }] },
-      { y: 70, speed: 0.015, shapes: [{ x: 200, w: 80, h: 16 }, { x: 650, w: 100, h: 20 }, { x: 950, w: 70, h: 14 }] },
-    ];
+        for (const building of [
+          { x: 20, w: 90, h: 180, color: 0x121a30 },
+          { x: 130, w: 120, h: 220, color: 0x18233a },
+          { x: 280, w: 100, h: 190, color: 0x10182a },
+          { x: 420, w: 160, h: 250, color: 0x172035 },
+          { x: 620, w: 110, h: 205, color: 0x0f1730 },
+          { x: 770, w: 130, h: 235, color: 0x17223f },
+          { x: 930, w: 80, h: 170, color: 0x10192c },
+        ]) {
+          const topY = GROUND_Y - building.h;
+          this.stageGfx.fillStyle(building.color);
+          this.stageGfx.fillRect(building.x, topY, building.w, building.h);
+          midGfx.fillStyle(0xffdd88, 0.35);
+          for (let wy = topY + 18; wy < GROUND_Y - 18; wy += 22) {
+            for (let wx = building.x + 12; wx < building.x + building.w - 12; wx += 18) {
+              if (((wx + wy) / 6) % 3 < 1) midGfx.fillRect(wx, wy, 8, 10);
+            }
+          }
+        }
 
-    for (const layer of cloudData) {
-      const gfx = this.add.graphics().setDepth(1);
-      gfx.setData('cloudLayer', layer);
-      this.cloudLayers.push(gfx);
+        midGfx.lineStyle(2, 0x7de8ff, 0.35);
+        midGfx.lineBetween(0, GROUND_Y - 52, GAME_WIDTH, GROUND_Y - 52);
+        midGfx.lineStyle(3, 0x67708e, 0.75);
+        for (let x = 0; x < GAME_WIDTH; x += 48) {
+          midGfx.lineBetween(x, GROUND_Y - 6, x + 20, GROUND_Y - 6);
+        }
+
+        frontGfx.lineStyle(2, 0x50607b, 0.9);
+        frontGfx.lineBetween(0, GROUND_Y - 72, GAME_WIDTH, GROUND_Y - 72);
+        for (let x = 0; x <= GAME_WIDTH; x += 42) {
+          frontGfx.lineBetween(x, GROUND_Y - 72, x + 20, GROUND_Y - 102);
+          frontGfx.lineBetween(x, GROUND_Y - 72, x - 20, GROUND_Y - 102);
+        }
+
+        this.createCloudLayer(88, 0.012, 0xff88ff, 0.05, [
+          { x: 80, w: 180, h: 30 },
+          { x: 520, w: 150, h: 24 },
+          { x: 860, w: 170, h: 28 },
+        ]);
+        this.createNeonSigns([
+          { x: 150, y: GROUND_Y - 190, w: 92, h: 30, color: 0xff44bb },
+          { x: 488, y: GROUND_Y - 230, w: 110, h: 36, color: 0x44e5ff },
+          { x: 812, y: GROUND_Y - 170, w: 82, h: 28, color: 0xffef66 },
+        ]);
+        break;
+
+      case 'sunset-pier':
+        this.drawVerticalGradient(this.stageGfx, 0xff8f4b, 0xffd68b);
+        this.stageGfx.fillStyle(0xfff3ba, 0.45);
+        this.stageGfx.fillCircle(780, 122, 72);
+        this.stageGfx.fillStyle(0x1e5f90);
+        this.stageGfx.fillRect(0, GROUND_Y - 34, GAME_WIDTH, 92);
+        this.drawGround(this.stageGfx, 0x7b4e2a, 0xc89552);
+
+        midGfx.fillStyle(0x5e371d);
+        for (let x = 0; x < GAME_WIDTH; x += 58) {
+          midGfx.fillRect(x, GROUND_Y - 10, 8, GAME_HEIGHT - GROUND_Y + 10);
+        }
+        midGfx.lineStyle(2, 0xd9b07b, 0.45);
+        for (let y = GROUND_Y + 14; y < GAME_HEIGHT; y += 24) {
+          midGfx.lineBetween(0, y, GAME_WIDTH, y);
+        }
+
+        frontGfx.fillStyle(0x1f1f1f, 0.72);
+        for (const palmX of [90, 910]) {
+          frontGfx.fillRect(palmX - 5, GROUND_Y - 170, 10, 170);
+          for (const dir of [-1, 1]) {
+            frontGfx.fillTriangle(
+              palmX,
+              GROUND_Y - 170,
+              palmX + dir * 70,
+              GROUND_Y - 210,
+              palmX + dir * 24,
+              GROUND_Y - 132,
+            );
+            frontGfx.fillTriangle(
+              palmX,
+              GROUND_Y - 150,
+              palmX + dir * 60,
+              GROUND_Y - 140,
+              palmX + dir * 18,
+              GROUND_Y - 92,
+            );
+          }
+        }
+
+        this.createCloudLayer(54, 0.008, 0xffffff, 0.11, [
+          { x: 130, w: 170, h: 32 },
+          { x: 560, w: 200, h: 36 },
+          { x: 900, w: 150, h: 28 },
+        ]);
+        this.createWaterShimmerLines([GROUND_Y - 10, GROUND_Y + 8, GROUND_Y + 28], 0xe8f5ff);
+        break;
+
+      case 'moonlit-garden':
+        this.drawVerticalGradient(this.stageGfx, 0x081226, 0x17485b);
+        this.stageGfx.fillStyle(0xe3f5ff, 0.2);
+        this.stageGfx.fillCircle(820, 110, 78);
+        this.drawGround(this.stageGfx, 0x24311d, 0x4f6344);
+
+        midGfx.fillStyle(0x552e18);
+        midGfx.fillRect(140, GROUND_Y - 190, 18, 190);
+        midGfx.fillRect(318, GROUND_Y - 190, 18, 190);
+        midGfx.fillRect(124, GROUND_Y - 190, 228, 14);
+        midGfx.fillStyle(0x6f3f1d);
+        midGfx.fillRect(180, GROUND_Y - 132, 120, 10);
+
+        frontGfx.fillStyle(0x102012, 0.85);
+        for (const bambooX of [640, 686, 730, 776, 828, 874]) {
+          frontGfx.fillRect(bambooX, GROUND_Y - 220, 10, 220);
+          for (let y = GROUND_Y - 198; y < GROUND_Y - 20; y += 36) {
+            frontGfx.fillRect(bambooX - 2, y, 14, 4);
+          }
+        }
+
+        this.createCloudLayer(84, 0.006, 0xb5ffff, 0.05, [
+          { x: 60, w: 220, h: 42 },
+          { x: 410, w: 260, h: 46 },
+          { x: 800, w: 210, h: 38 },
+        ], 1, 'mist');
+        this.createFireflies([
+          { x: 130, y: 170 },
+          { x: 220, y: 130 },
+          { x: 360, y: 210 },
+          { x: 560, y: 140 },
+          { x: 730, y: 190 },
+          { x: 860, y: 152 },
+          { x: 930, y: 220 },
+        ]);
+        break;
+
+      case 'subway-platform':
+        this.drawVerticalGradient(this.stageGfx, 0x11161e, 0x2c3643);
+        this.stageGfx.fillStyle(0x384655);
+        this.stageGfx.fillRect(0, GROUND_Y - 230, GAME_WIDTH, 230);
+        this.stageGfx.fillStyle(0x2f3946);
+        this.stageGfx.fillRect(0, GROUND_Y, GAME_WIDTH, GAME_HEIGHT - GROUND_Y);
+        this.stageGfx.fillStyle(0xc2a741);
+        this.stageGfx.fillRect(0, GROUND_Y - 10, GAME_WIDTH, 10);
+        this.stageGfx.lineStyle(2, 0x9c8936, 0.8);
+        this.stageGfx.lineBetween(0, GROUND_Y - 10, GAME_WIDTH, GROUND_Y - 10);
+
+        for (let y = GROUND_Y - 220; y < GROUND_Y - 30; y += 32) {
+          midGfx.lineStyle(1, 0x607082, 0.5);
+          midGfx.lineBetween(0, y, GAME_WIDTH, y);
+        }
+        for (let x = 0; x < GAME_WIDTH; x += 64) {
+          midGfx.lineStyle(1, 0x607082, 0.35);
+          midGfx.lineBetween(x, GROUND_Y - 230, x, GROUND_Y - 14);
+        }
+        midGfx.fillStyle(0x9aa8b2, 0.2);
+        midGfx.fillRoundedRect(72, GROUND_Y - 182, 180, 42, 5);
+        midGfx.fillRoundedRect(422, GROUND_Y - 162, 220, 36, 5);
+        midGfx.fillRoundedRect(760, GROUND_Y - 192, 150, 38, 5);
+
+        frontGfx.lineStyle(4, 0x1c1c1c, 0.9);
+        frontGfx.lineBetween(0, GROUND_Y + 28, GAME_WIDTH, GROUND_Y + 28);
+        frontGfx.lineBetween(0, GROUND_Y + 56, GAME_WIDTH, GROUND_Y + 56);
+        for (let x = 18; x < GAME_WIDTH; x += 52) {
+          frontGfx.lineBetween(x, GROUND_Y + 18, x + 16, GAME_HEIGHT);
+        }
+
+        this.createFluorescentLights([
+          { x: 90, y: 60, w: 170 },
+          { x: 410, y: 72, w: 210 },
+          { x: 760, y: 58, w: 150 },
+        ]);
+        this.createDustMotes([
+          { x: 120, y: 140, radius: 14 },
+          { x: 340, y: 120, radius: 10 },
+          { x: 560, y: 170, radius: 16 },
+          { x: 760, y: 130, radius: 12 },
+          { x: 930, y: 180, radius: 14 },
+        ]);
+        break;
     }
   }
 
   private updateClouds(time: number): void {
-    for (const gfx of this.cloudLayers) {
-      const layer = gfx.getData('cloudLayer') as { y: number; speed: number; shapes: { x: number; w: number; h: number }[] };
+    for (let i = 0; i < this.ambientLayers.length; i++) {
+      const gfx = this.ambientLayers[i];
+      const type = gfx.getData('ambientType') as string;
       gfx.clear();
-      gfx.fillStyle(0xffffff, 0.06);
-      for (const shape of layer.shapes) {
-        const offsetX = (time * layer.speed) % (GAME_WIDTH + shape.w);
-        const drawX = (shape.x + offsetX) % (GAME_WIDTH + shape.w) - shape.w;
-        gfx.fillEllipse(drawX + shape.w / 2, layer.y, shape.w, shape.h);
+
+      if (type === 'clouds' || type === 'mist') {
+        const layer = gfx.getData('ambientLayer') as {
+          y: number;
+          speed: number;
+          shapes: { x: number; w: number; h: number }[];
+          color: number;
+          alpha: number;
+        };
+        gfx.fillStyle(layer.color, layer.alpha);
+        for (const shape of layer.shapes) {
+          const offsetX = (time * layer.speed) % (GAME_WIDTH + shape.w);
+          const drawX = (shape.x + offsetX) % (GAME_WIDTH + shape.w) - shape.w;
+          gfx.fillEllipse(drawX + shape.w / 2, layer.y, shape.w, shape.h);
+        }
+        continue;
+      }
+
+      if (type === 'lantern') {
+        const points = gfx.getData('points') as { x: number; y: number }[];
+        const color = gfx.getData('color') as number;
+        for (let p = 0; p < points.length; p++) {
+          const point = points[p];
+          const pulse = 0.15 + Math.sin(time * 0.003 + p * 1.2) * 0.1;
+          gfx.fillStyle(color, pulse);
+          gfx.fillCircle(point.x, point.y, 28);
+          gfx.fillStyle(0xffcc44, pulse * 0.5);
+          gfx.fillCircle(point.x, point.y, 42);
+        }
+        continue;
+      }
+
+      if (type === 'water') {
+        const rows = gfx.getData('rows') as number[];
+        const color = gfx.getData('color') as number;
+        for (let r = 0; r < rows.length; r++) {
+          const y = rows[r];
+          const alpha = 0.12 + Math.sin(time * 0.0025 + r) * 0.05;
+          gfx.lineStyle(2, color, alpha);
+          for (let x = 0; x < GAME_WIDTH; x += 24) {
+            const wave = Math.sin(time * 0.004 + x * 0.025 + r) * 3;
+            gfx.lineBetween(x, y + wave, x + 18, y + wave + 1);
+          }
+        }
+        continue;
+      }
+
+      if (type === 'neon') {
+        const signs = gfx.getData('signs') as { x: number; y: number; w: number; h: number; color: number }[];
+        for (let s = 0; s < signs.length; s++) {
+          const sign = signs[s];
+          const pulse = 0.35 + Math.sin(time * 0.006 + s * 1.5) * 0.18;
+          gfx.fillStyle(sign.color, pulse * 0.22);
+          gfx.fillRoundedRect(sign.x - 8, sign.y - 8, sign.w + 16, sign.h + 16, 8);
+          gfx.lineStyle(3, sign.color, 0.8);
+          gfx.strokeRoundedRect(sign.x, sign.y, sign.w, sign.h, 6);
+          gfx.fillStyle(sign.color, 0.25 + pulse * 0.12);
+          gfx.fillRoundedRect(sign.x + 5, sign.y + 5, sign.w - 10, sign.h - 10, 4);
+        }
+        continue;
+      }
+
+      if (type === 'fireflies') {
+        const points = gfx.getData('points') as { x: number; y: number }[];
+        for (let p = 0; p < points.length; p++) {
+          const point = points[p];
+          const driftX = Math.sin(time * 0.0016 + p * 1.7) * 16;
+          const driftY = Math.cos(time * 0.0012 + p * 2.4) * 10;
+          const alpha = 0.28 + Math.sin(time * 0.006 + p * 2.1) * 0.14;
+          gfx.fillStyle(0xfff8a8, alpha);
+          gfx.fillCircle(point.x + driftX, point.y + driftY, 3);
+          gfx.fillStyle(0xf0ffcc, alpha * 0.4);
+          gfx.fillCircle(point.x + driftX, point.y + driftY, 8);
+        }
+        continue;
+      }
+
+      if (type === 'fluorescent') {
+        const lights = gfx.getData('lights') as { x: number; y: number; w: number }[];
+        for (let l = 0; l < lights.length; l++) {
+          const light = lights[l];
+          const flicker = 0.2 + Math.sin(time * 0.012 + l * 0.9) * 0.08 + Math.sin(time * 0.027 + l * 2.1) * 0.04;
+          gfx.fillStyle(0xd7fff6, flicker);
+          gfx.fillRoundedRect(light.x, light.y, light.w, 12, 5);
+          gfx.fillStyle(0xb7ffff, flicker * 0.35);
+          gfx.fillRoundedRect(light.x - 16, light.y + 4, light.w + 32, 28, 8);
+        }
+        continue;
+      }
+
+      if (type === 'dust') {
+        const motes = gfx.getData('motes') as { x: number; y: number; radius: number }[];
+        for (let m = 0; m < motes.length; m++) {
+          const mote = motes[m];
+          const offsetX = Math.sin(time * 0.0015 + m) * 14;
+          const offsetY = Math.cos(time * 0.0011 + m * 1.8) * 6;
+          gfx.fillStyle(0xdde8ef, 0.06);
+          gfx.fillCircle(mote.x + offsetX, mote.y + offsetY, mote.radius);
+        }
       }
     }
   }
 
-  private createFloorDetail(): void {
-    const floorGfx = this.add.graphics().setDepth(2);
-    floorGfx.lineStyle(1, 0x5a4a3a, 0.4);
-    for (let i = 0; i < 16; i++) {
-      const plankX = i * 66;
-      floorGfx.lineBetween(plankX, GROUND_Y + 2, plankX, GAME_HEIGHT);
-    }
-    floorGfx.lineStyle(1, 0x4a3a2a, 0.3);
-    for (let y = GROUND_Y + 20; y < GAME_HEIGHT; y += 30) {
-      floorGfx.lineBetween(0, y, GAME_WIDTH, y);
-    }
-  }
-
-  private createSpectators(): void {
-    const specGfx = this.add.graphics().setDepth(3);
-    const spectatorXPositions = [140, 360, 660, 870];
-    for (const sx of spectatorXPositions) {
-      const headY = GROUND_Y - 30;
-      specGfx.fillStyle(0x111111, 0.5);
-      specGfx.fillCircle(sx, headY, 8);
-      specGfx.fillRoundedRect(sx - 7, headY + 8, 14, 22, 3);
+  private drawVerticalGradient(gfx: Phaser.GameObjects.Graphics, topColor: number, bottomColor: number): void {
+    const top = Phaser.Display.Color.IntegerToRGB(topColor);
+    const bottom = Phaser.Display.Color.IntegerToRGB(bottomColor);
+    for (let y = 0; y < GROUND_Y; y++) {
+      const t = y / GROUND_Y;
+      const r = Math.floor(Phaser.Math.Linear(top.r, bottom.r, t));
+      const g = Math.floor(Phaser.Math.Linear(top.g, bottom.g, t));
+      const b = Math.floor(Phaser.Math.Linear(top.b, bottom.b, t));
+      gfx.fillStyle(Phaser.Display.Color.GetColor(r, g, b));
+      gfx.fillRect(0, y, GAME_WIDTH, 1);
     }
   }
 
-  private createLanternGlow(): void {
-    for (let i = 0; i < 5; i++) {
-      const lx = 120 + i * 180;
-      const glow = this.add.graphics().setDepth(1);
-      glow.setData('lanternX', lx);
-      glow.setData('lanternY', GROUND_Y - 282);
-      this.lanternGlows.push(glow);
+  private drawGround(gfx: Phaser.GameObjects.Graphics, groundColor: number, lineColor: number): void {
+    gfx.fillStyle(groundColor);
+    gfx.fillRect(0, GROUND_Y, GAME_WIDTH, GAME_HEIGHT - GROUND_Y);
+    gfx.lineStyle(3, lineColor);
+    gfx.lineBetween(0, GROUND_Y, GAME_WIDTH, GROUND_Y);
+  }
+
+  private createCloudLayer(
+    y: number,
+    speed: number,
+    color: number,
+    alpha: number,
+    shapes: { x: number; w: number; h: number }[],
+    depth = 1,
+    type: 'clouds' | 'mist' = 'clouds',
+  ): void {
+    const gfx = this.add.graphics().setDepth(depth);
+    gfx.setData('ambientType', type);
+    gfx.setData('ambientLayer', { y, speed, shapes, color, alpha });
+    this.ambientLayers.push(gfx);
+  }
+
+  private createLanternGlows(xs: number[], y: number, color: number): void {
+    const gfx = this.add.graphics().setDepth(1);
+    gfx.setData('ambientType', 'lantern');
+    gfx.setData('points', xs.map((x) => ({ x, y })));
+    gfx.setData('color', color);
+    this.ambientLayers.push(gfx);
+  }
+
+  private createWaterShimmerLines(rows: number[], color: number): void {
+    const gfx = this.add.graphics().setDepth(1);
+    gfx.setData('ambientType', 'water');
+    gfx.setData('rows', rows);
+    gfx.setData('color', color);
+    this.ambientLayers.push(gfx);
+  }
+
+  private createNeonSigns(signs: { x: number; y: number; w: number; h: number; color: number }[]): void {
+    const gfx = this.add.graphics().setDepth(1);
+    gfx.setData('ambientType', 'neon');
+    gfx.setData('signs', signs);
+    this.ambientLayers.push(gfx);
+  }
+
+  private createFireflies(points: { x: number; y: number }[]): void {
+    const gfx = this.add.graphics().setDepth(1);
+    gfx.setData('ambientType', 'fireflies');
+    gfx.setData('points', points);
+    this.ambientLayers.push(gfx);
+  }
+
+  private createFluorescentLights(lights: { x: number; y: number; w: number }[]): void {
+    const gfx = this.add.graphics().setDepth(1);
+    gfx.setData('ambientType', 'fluorescent');
+    gfx.setData('lights', lights);
+    this.ambientLayers.push(gfx);
+  }
+
+  private createDustMotes(motes: { x: number; y: number; radius: number }[]): void {
+    const gfx = this.add.graphics().setDepth(1);
+    gfx.setData('ambientType', 'dust');
+    gfx.setData('motes', motes);
+    this.ambientLayers.push(gfx);
+  }
+
+  private async loadAiStageBackground(): Promise<void> {
+    const loadId = ++this.stageLoadId;
+
+    try {
+      const cached = await getCachedStageBackgroundForRequest({
+        matchSeed: this.matchSeed,
+        stageId: this.resolvedStageId,
+      });
+      if (!this.isActiveStageLoad(loadId)) return;
+
+      if (cached) {
+        await this.applyStageBackground(cached.pngBlob, loadId);
+        return;
+      }
+
+      this.setStageLoadingText('SUMMONING ARENA...');
+      const generated = await ensureStageBackground({
+        matchSeed: this.matchSeed,
+        stageId: this.resolvedStageId,
+        fighterOneName: this.p1Name,
+        fighterTwoName: this.p2Name,
+        fighterOnePersonalityId: this.p1PersonalityId,
+        fighterTwoPersonalityId: this.p2PersonalityId,
+        fighterOnePhotoHash: this.p1PhotoHash,
+        fighterTwoPhotoHash: this.p2PhotoHash,
+      });
+
+      if (!this.isActiveStageLoad(loadId)) return;
+      await this.applyStageBackground(generated.pngBlob, loadId);
+      this.setStageLoadingText('ARENA READY', 900);
+    } catch (err: any) {
+      if (!this.isActiveStageLoad(loadId)) return;
+      console.warn('[FightScene] AI stage background failed, keeping procedural stage:', err?.message || err);
+      this.clearStageLoadingText();
     }
   }
 
-  private updateLanternGlow(time: number): void {
-    for (let i = 0; i < this.lanternGlows.length; i++) {
-      const glow = this.lanternGlows[i];
-      const lx = glow.getData('lanternX') as number;
-      const ly = glow.getData('lanternY') as number;
-      const pulse = 0.15 + Math.sin(time * 0.003 + i * 1.2) * 0.1;
-      glow.clear();
-      glow.fillStyle(0xffaa00, pulse);
-      glow.fillCircle(lx, ly, 28);
-      glow.fillStyle(0xffcc44, pulse * 0.5);
-      glow.fillCircle(lx, ly, 42);
+  private isActiveStageLoad(loadId: number): boolean {
+    return loadId === this.stageLoadId && this.scene.isActive();
+  }
+
+  private async applyStageBackground(blob: Blob, loadId: number): Promise<void> {
+    const img = await this.loadBlobImage(blob);
+    if (!this.isActiveStageLoad(loadId)) return;
+
+    const texKey = `stage_bg_${this.resolvedStageId}_${(this.matchSeed >>> 0).toString(16)}`;
+    if (this.stageBackdropTextureKey && this.stageBackdropTextureKey !== texKey && this.textures.exists(this.stageBackdropTextureKey)) {
+      this.textures.remove(this.stageBackdropTextureKey);
     }
+    if (this.textures.exists(texKey)) {
+      this.textures.remove(texKey);
+    }
+    this.textures.addImage(texKey, img);
+    this.stageBackdropTextureKey = texKey;
+
+    if (!this.stageBackdrop) {
+      this.stageBackdrop = this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, texKey)
+        .setDepth(-2)
+        .setOrigin(0.5)
+        .setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
+    } else {
+      this.stageBackdrop.setTexture(texKey).setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
+    }
+
+    this.stageBackdrop.setAlpha(0);
+
+    const visualAlphas = [0.04, 0.12, 0.2];
+    for (let i = 0; i < this.stageVisualLayers.length; i++) {
+      const layer = this.stageVisualLayers[i];
+      const targetAlpha = visualAlphas[i] ?? 0.75;
+      this.tweens.add({
+        targets: layer,
+        alpha: targetAlpha,
+        duration: 700,
+        ease: 'Sine.easeOut',
+      });
+    }
+
+    for (const layer of this.ambientLayers) {
+      this.tweens.add({
+        targets: layer,
+        alpha: 0.5,
+        duration: 700,
+        ease: 'Sine.easeOut',
+      });
+    }
+
+    this.tweens.add({
+      targets: this.stageBackdrop,
+      alpha: 1,
+      duration: 700,
+      ease: 'Sine.easeOut',
+      onComplete: () => this.clearStageLoadingText(),
+    });
+  }
+
+  private setStageLoadingText(text: string, autoHideMs = 0): void {
+    if (!this.stageLoadingText) {
+      this.stageLoadingText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 94, '', {
+        fontFamily: '"Press Start 2P", monospace',
+        fontSize: '8px',
+        color: '#88ddff',
+        stroke: '#000000',
+        strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(120);
+    }
+
+    this.tweens.killTweensOf(this.stageLoadingText);
+    this.stageLoadingText.setText(text).setAlpha(1);
+
+    if (autoHideMs > 0) {
+      this.time.delayedCall(autoHideMs, () => {
+        if (this.stageLoadingText?.text === text) {
+          this.clearStageLoadingText();
+        }
+      });
+    }
+  }
+
+  private clearStageLoadingText(immediate = false): void {
+    if (!this.stageLoadingText) return;
+    this.tweens.killTweensOf(this.stageLoadingText);
+    if (immediate) {
+      this.stageLoadingText.destroy();
+      this.stageLoadingText = undefined;
+      return;
+    }
+    this.tweens.add({
+      targets: this.stageLoadingText,
+      alpha: 0,
+      duration: 220,
+      onComplete: () => {
+        this.stageLoadingText?.destroy();
+        this.stageLoadingText = undefined;
+      },
+    });
+  }
+
+  private loadBlobImage(blob: Blob): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve(img);
+      };
+      img.onerror = (err) => {
+        URL.revokeObjectURL(url);
+        reject(err);
+      };
+      img.src = url;
+    });
   }
 
   private createFighters(): void {
@@ -327,6 +855,7 @@ export class FightScene extends Phaser.Scene {
 
     if (this.phase === RoundPhase.ROUND_END || this.phase === RoundPhase.MATCH_END) {
       this.phaseTimer--;
+      this.updateRoundEndPresentation(delta);
       this.p1.syncSprite(this.p2.x);
       this.p2.syncSprite(this.p1.x);
 
@@ -350,11 +879,31 @@ export class FightScene extends Phaser.Scene {
     }
 
     this.updateClouds(time);
-    this.updateLanternGlow(time);
 
     this.p1.syncSprite(this.p2.x);
     this.p2.syncSprite(this.p1.x);
     this.hud.update(this.p1.health, this.p2.health, this.roundTimer);
+  }
+
+  private updateRoundEndPresentation(delta: number): void {
+    const dt = Math.min(delta, FIXED_TIMESTEP * 2) / 1000;
+    this.advanceFighterPresentation(this.p1, this.p2.x, dt);
+    this.advanceFighterPresentation(this.p2, this.p1.x, dt);
+  }
+
+  private advanceFighterPresentation(fighter: Fighter, opponentX: number, dt: number): void {
+    if (Math.abs(opponentX - fighter.x) > 4) {
+      fighter.facingRight = opponentX > fighter.x;
+    }
+
+    fighter.stateFrame++;
+
+    if (fighter.state === FighterState.KNOCKDOWN) {
+      fighter.applyPhysics(dt);
+      if (fighter.health <= 0 && fighter.isGrounded() && fighter.stateFrame >= 30) {
+        fighter.forceState(FighterState.DEFEAT);
+      }
+    }
   }
 
   private fixedUpdate(): void {
@@ -401,8 +950,8 @@ export class FightScene extends Phaser.Scene {
     const startup = ATTACKS[FighterState.FIREBALL].startup;
     if (fighter.stateFrame !== startup) return;
 
-    const spawnX = fighter.x + (fighter.facingRight ? 60 : -60);
-    const spawnY = fighter.y - 100;
+    const spawnX = fighter.x + (fighter.facingRight ? fighter.getBodyWidth() : -fighter.getBodyWidth());
+    const spawnY = fighter.y - fighter.getBodyHeight() * 0.56;
     const proj = new Projectile(this, spawnX, spawnY, fighter.facingRight, fighter.playerIndex, false);
     this.projectiles.push(proj);
   }
@@ -555,8 +1104,11 @@ export class FightScene extends Phaser.Scene {
   }
 
   private endRound(): void {
+    if (this.phase !== RoundPhase.FIGHTING) return;
+
     this.phase = RoundPhase.ROUND_END;
     this.phaseTimer = 180; // 3 seconds
+    this.accumulator = 0;
 
     let winner: Fighter;
     if (this.p1.health <= 0 && this.p2.health <= 0) {
@@ -577,12 +1129,16 @@ export class FightScene extends Phaser.Scene {
     const loser = winner === this.p1 ? this.p2 : this.p1;
 
     winner.forceState(FighterState.VICTORY);
-    loser.forceState(FighterState.DEFEAT);
     if (loser.health <= 0) {
+      if (loser.state !== FighterState.KNOCKDOWN) {
+        loser.forceState(FighterState.KNOCKDOWN);
+      }
       this.hud.showAnnouncement('K.O.!', 2000);
       this.sound_mgr.playKO();
       this.sound_mgr.playAnnounce('ko');
       ScreenEffects.flashWhite(this, 200);
+    } else {
+      loser.forceState(FighterState.DEFEAT);
     }
 
     this.hud.updateRoundWins(this.p1Wins, this.p2Wins);
@@ -603,10 +1159,10 @@ export class FightScene extends Phaser.Scene {
     this.matchOverUI = this.add.text(
       GAME_WIDTH / 2,
       GAME_HEIGHT - 60,
-      'ENTER: REMATCH  /  ESC: MENU',
+      'ENTER: RUN IT BACK  /  R: REMIX  /  ESC: MENU',
       {
         fontFamily: '"Press Start 2P", monospace',
-        fontSize: '14px',
+        fontSize: '11px',
         color: '#ffcc00',
         stroke: '#000000',
         strokeThickness: 3,
@@ -624,29 +1180,46 @@ export class FightScene extends Phaser.Scene {
 
     const enterKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
     const escKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
+    const remixKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.R);
 
     enterKey.once('down', () => {
+      remixKey.removeAllListeners();
       escKey.removeAllListeners();
-      this.cleanupMatchOverUI();
-      this.cameras.main.flash(200, 255, 255, 255);
-      this.time.delayedCall(200, () => {
-        this.scene.restart({
-          vsAI: this.isVsAI,
-          cpuVsCpu: this.cpuVsCpu,
-          p1PhotoHash: this.p1PhotoHash,
-          p2PhotoHash: this.p2PhotoHash,
-          p1Name: this.p1Name,
-          p2Name: this.p2Name,
-        });
-      });
+      this.restartMatch(this.remix);
+    });
+
+    remixKey.once('down', () => {
+      enterKey.removeAllListeners();
+      escKey.removeAllListeners();
+      this.restartMatch(this.remix + 1);
     });
 
     escKey.once('down', () => {
       enterKey.removeAllListeners();
+      remixKey.removeAllListeners();
       this.cleanupMatchOverUI();
       this.cameras.main.fadeOut(500, 0, 0, 0);
       this.cameras.main.once('camerafadeoutcomplete', () => {
         this.scene.start('TitleScene');
+      });
+    });
+  }
+
+  private restartMatch(remix: number): void {
+    this.cleanupMatchOverUI();
+    this.cameras.main.flash(200, 255, 255, 255);
+    this.time.delayedCall(200, () => {
+      this.scene.restart({
+        vsAI: this.isVsAI,
+        cpuVsCpu: this.cpuVsCpu,
+        p1PhotoHash: this.p1PhotoHash ?? undefined,
+        p2PhotoHash: this.p2PhotoHash ?? undefined,
+        p1Name: this.p1Name,
+        p2Name: this.p2Name,
+        p1PersonalityId: this.p1PersonalityId,
+        p2PersonalityId: this.p2PersonalityId,
+        stageId: this.stageId ?? undefined,
+        remix,
       });
     });
   }
@@ -657,5 +1230,19 @@ export class FightScene extends Phaser.Scene {
       this.matchOverUI.destroy();
       this.matchOverUI = undefined;
     }
+  }
+
+  shutdown(): void {
+    this.clearStageLoadingText(true);
+    this.stageBackdrop?.destroy();
+    this.stageBackdrop = undefined;
+    if (this.stageBackdropTextureKey && this.textures.exists(this.stageBackdropTextureKey)) {
+      this.textures.remove(this.stageBackdropTextureKey);
+      this.stageBackdropTextureKey = undefined;
+    }
+  }
+
+  destroy(): void {
+    this.shutdown();
   }
 }

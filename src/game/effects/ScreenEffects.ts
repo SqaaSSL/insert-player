@@ -40,19 +40,27 @@ export class ScreenEffects {
   static createCRTOverlay(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
     const gfx = scene.add.graphics().setDepth(998).setScrollFactor(0);
 
-    for (let y = 0; y < GAME_HEIGHT; y += 3) {
-      gfx.fillStyle(0x000000, 0.04);
+    gfx.fillStyle(0xffffff, 0.015);
+    gfx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+
+    for (let y = 0; y < GAME_HEIGHT; y += 4) {
+      gfx.fillStyle(0x000000, 0.015);
       gfx.fillRect(0, y, GAME_WIDTH, 1);
     }
 
-    const vignetteRadius = Math.max(GAME_WIDTH, GAME_HEIGHT) * 0.7;
-    const steps = 20;
-    for (let i = steps; i >= 0; i--) {
-      const t = i / steps;
-      const alpha = (1 - t) * (1 - t) * 0.12;
-      const radius = vignetteRadius * (0.6 + t * 0.4);
-      gfx.fillStyle(0x000000, alpha);
-      gfx.fillCircle(GAME_WIDTH / 2, GAME_HEIGHT / 2, radius);
+    const borderSteps = 5;
+    for (let i = 0; i < borderSteps; i++) {
+      const inset = i * 10;
+      const thickness = 18 - i * 3;
+      const alpha = 0.03 - i * 0.004;
+      gfx.lineStyle(Math.max(4, thickness), 0x000000, Math.max(0.006, alpha));
+      gfx.strokeRoundedRect(
+        inset,
+        inset,
+        GAME_WIDTH - inset * 2,
+        GAME_HEIGHT - inset * 2,
+        18,
+      );
     }
 
     return gfx;

@@ -28,6 +28,9 @@ export class HUD {
   private timerText!: Phaser.GameObjects.Text;
   private p1NameText!: Phaser.GameObjects.Text;
   private p2NameText!: Phaser.GameObjects.Text;
+  private p1TagText?: Phaser.GameObjects.Text;
+  private p2TagText?: Phaser.GameObjects.Text;
+  private matchLabelText?: Phaser.GameObjects.Text;
   private p1RoundIndicators: Phaser.GameObjects.Graphics[] = [];
   private p2RoundIndicators: Phaser.GameObjects.Graphics[] = [];
   private announceText!: Phaser.GameObjects.Text;
@@ -42,7 +45,7 @@ export class HUD {
     this.scene = scene;
   }
 
-  create(p1Name: string, p2Name: string): void {
+  create(p1Name: string, p2Name: string, p1Tag?: string, p2Tag?: string, matchLabel?: string): void {
     this.p1HealthBar = this.scene.add.graphics().setDepth(100).setScrollFactor(0);
     this.p2HealthBar = this.scene.add.graphics().setDepth(100).setScrollFactor(0);
 
@@ -56,6 +59,21 @@ export class HUD {
 
     this.p1NameText = this.scene.add.text(20, 8, p1Name.toUpperCase(), textStyle).setDepth(100).setScrollFactor(0);
     this.p2NameText = this.scene.add.text(GAME_WIDTH - 20, 8, p2Name.toUpperCase(), { ...textStyle, align: 'right' }).setOrigin(1, 0).setDepth(100).setScrollFactor(0);
+    this.p1TagText = this.scene.add.text(20, 24, p1Tag ?? '', {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: '8px',
+      color: '#ffcc66',
+      stroke: '#000000',
+      strokeThickness: 2,
+    }).setDepth(100).setScrollFactor(0);
+    this.p2TagText = this.scene.add.text(GAME_WIDTH - 20, 24, p2Tag ?? '', {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: '8px',
+      color: '#66ccff',
+      stroke: '#000000',
+      strokeThickness: 2,
+      align: 'right',
+    }).setOrigin(1, 0).setDepth(100).setScrollFactor(0);
 
     this.timerText = this.scene.add.text(GAME_WIDTH / 2, TIMER_Y, '99', {
       fontFamily: '"Press Start 2P", monospace',
@@ -63,6 +81,13 @@ export class HUD {
       color: '#ffff00',
       stroke: '#000000',
       strokeThickness: 4,
+    }).setOrigin(0.5, 0).setDepth(100).setScrollFactor(0);
+    this.matchLabelText = this.scene.add.text(GAME_WIDTH / 2, 58, matchLabel ?? '', {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: '8px',
+      color: '#bbbbbb',
+      stroke: '#000000',
+      strokeThickness: 2,
     }).setOrigin(0.5, 0).setDepth(100).setScrollFactor(0);
 
     for (let i = 0; i < ROUNDS_TO_WIN; i++) {
