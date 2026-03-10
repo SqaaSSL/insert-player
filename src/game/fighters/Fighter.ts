@@ -1,3 +1,4 @@
+import Phaser from 'phaser';
 import {
   FighterState,
   GRAVITY,
@@ -53,8 +54,14 @@ export class Fighter {
   private layout: SpriteSheetLayout;
   private motionInputs = new MotionInputs();
   private wasCrouching = false;
+  private renderScale = 1;
+  private renderYOffset = 0;
+  private shadowOffsetX = 8;
+  private shadowOffsetY = 8;
+  private shadowAlpha = 0.16;
 
   sprite!: Phaser.GameObjects.Sprite;
+  shadowSprite?: Phaser.GameObjects.Sprite;
 
   constructor(playerIndex: number, name: string, spriteKey: string, x: number, facingRight: boolean) {
     this.playerIndex = playerIndex;
@@ -67,8 +74,37 @@ export class Fighter {
   }
 
   createSprite(scene: Phaser.Scene): void {
+    this.shadowSprite = scene.add.sprite(this.x, this.y, this.spriteKey, 0);
+    this.shadowSprite
+      .setOrigin(0.5, 1)
+      .setScale(this.renderScale * 1.015)
+      .setTint(0x000000)
+      .setAlpha(this.shadowAlpha)
+      .setBlendMode(Phaser.BlendModes.MULTIPLY);
     this.sprite = scene.add.sprite(this.x, this.y, this.spriteKey, 0);
-    this.sprite.setOrigin(0.5, 1);
+    this.sprite.setOrigin(0.5, 1).setScale(this.renderScale);
+  }
+
+  setRenderPresentation(scale: number, yOffset = 0): void {
+    this.renderScale = scale;
+    this.renderYOffset = yOffset;
+    this.shadowOffsetX = Math.max(7, Math.round(8 * scale));
+    this.shadowOffsetY = Math.max(7, Math.round(9 * scale));
+    this.shadowAlpha = scale > 1 ? 0.18 : 0.14;
+    if (this.shadowSprite) {
+      this.shadowSprite
+        .setScale(scale * 1.015)
+        .setAlpha(this.shadowAlpha)
+        .setPosition(this.x + this.shadowOffsetX, this.y + yOffset + this.shadowOffsetY);
+    }
+    if (this.sprite) {
+      this.sprite.setScale(scale);
+      this.sprite.setY(this.y + yOffset);
+    }
+  }
+
+  getRenderY(): number {
+    return this.y + this.renderYOffset;
   }
 
   snapshot(): FighterSnapshot {
@@ -402,12 +438,23 @@ export class Fighter {
 
   syncSprite(opponentX: number): void {
     if (!this.sprite) return;
-    this.sprite.setPosition(this.x, this.y);
+    const spriteDepth = this.x < opponentX ? 10 : 11;
+    if (this.shadowSprite) {
+      this.shadowSprite.setPosition(
+        this.x + this.shadowOffsetX,
+        this.getRenderY() + this.shadowOffsetY,
+      );
+      this.shadowSprite.setFlipX(!this.facingRight);
+      this.shadowSprite.setScale(this.renderScale * 1.015);
+      this.shadowSprite.setDepth(spriteDepth - 0.5);
+    }
+    this.sprite.setPosition(this.x, this.getRenderY());
     this.sprite.setFlipX(!this.facingRight);
-
-    this.sprite.setDepth(this.x < opponentX ? 10 : 11);
+    this.sprite.setScale(this.renderScale);
+    this.sprite.setDepth(spriteDepth);
 
     const frameIndex = this.getFrameIndex();
+    this.shadowSprite?.setFrame(frameIndex);
     this.sprite.setFrame(frameIndex);
   }
 

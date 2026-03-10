@@ -45,12 +45,12 @@ interface AnimDef {
 const ANIMATIONS: AnimDef[] = [
   { name: 'idle',       motion: 'idle fighting stance with very subtle weight shifting and breathing sway, fists raised, feet planted — the character barely moves, just alive and ready', frames: 16, duration: 2,   loop: true,  base: 'standing' },
   { name: 'walk',       motion: 'walking forward to the right cycle, fighting game walk',                                          frames: 16, duration: 1.5, loop: true,  base: 'standing' },
-  { name: 'high_punch', motion: 'quick jab punch extending right arm forward then retracting back to stance',                      frames: 7,  duration: 1.0, loop: false, base: 'standing' },
-  { name: 'high_kick',  motion: 'powerful roundhouse kick swinging right leg in a high arc, then returning to stance',              frames: 7,  duration: 1.2, loop: false, base: 'standing' },
-  { name: 'low_punch',  motion: 'quick low jab punch from crouched position, extending right arm forward then retracting',         frames: 7,  duration: 1.0, loop: false, base: 'crouched' },
-  { name: 'low_kick',   motion: 'low sweep kick extending right leg along the ground from crouched stance, then retracting',       frames: 7,  duration: 1.2, loop: false, base: 'crouched' },
-  { name: 'jump',       motion: 'jumping straight up, tucked pose at peak, landing back down',                                     frames: 8,  duration: 1.5, loop: false, base: 'standing' },
-  { name: 'crouch',     motion: 'transitioning from standing fighting stance down into a deep low crouch — bending knees, dropping hips, lowering center of gravity', frames: 4, duration: 1.2, loop: false, base: 'crouched' },
+  { name: 'high_punch', motion: 'quick grounded standing jab punch extending the lead arm forward while both feet stay planted, then retracting to stance', frames: 7, duration: 1.0, loop: false, base: 'standing' },
+  { name: 'high_kick',  motion: 'powerful grounded standing roundhouse kick swinging the right leg in a high arc while the support foot stays planted, then returning to stance', frames: 7, duration: 1.2, loop: false, base: 'standing' },
+  { name: 'low_punch',  motion: 'quick crouching jab punch from a deep low stance, extending the right arm forward while staying crouched throughout, then retracting', frames: 7, duration: 1.0, loop: false, base: 'crouched' },
+  { name: 'low_kick',   motion: 'low crouching sweep kick extending the right leg along the ground from a deep crouched stance while staying low throughout, then retracting', frames: 7, duration: 1.2, loop: false, base: 'crouched' },
+  { name: 'jump',       motion: 'jump anticipation into airborne jump pose then landing, with the character staying the same size in frame and not physically traveling upward inside the frame', frames: 8, duration: 1.5, loop: false, base: 'standing' },
+  { name: 'crouch',     motion: 'transitioning from standing fighting stance down into a deep low crouch with visibly dropped hips, bent knees, and a much shorter silhouette by the final frame', frames: 4, duration: 1.2, loop: false, base: 'crouched' },
   { name: 'hit',        motion: 'recoiling from impact, pain reaction, staggering backward',                                       frames: 8,  duration: 1.0, loop: false, base: 'standing' },
   { name: 'ko',         motion: 'falling to the ground, knocked out, collapsing backward',                                         frames: 16, duration: 2,   loop: false, base: 'standing' },
 ];
@@ -246,7 +246,6 @@ export async function processCharacter(
     await setCachedMeta(meta);
 
     const total = ANIMATIONS.length;
-    let standingScale: number | undefined;
 
     for (let i = 0; i < ANIMATIONS.length; i++) {
       const anim = ANIMATIONS[i];
@@ -261,12 +260,11 @@ export async function processCharacter(
       const baseImage = anim.base === 'crouched' ? crouchViewBase64 : sideViewBase64;
       const secondaryImage = anim.name === 'crouch' ? crouchViewBase64 : undefined;
       const primaryImage = anim.name === 'crouch' ? sideViewBase64 : baseImage;
-      const useMaxScale = anim.base === 'crouched' || anim.name === 'crouch' ? standingScale : undefined;
       let spriteResult: { blob: Blob; rawBlob?: Blob; frameCount: number; frameW: number; frameH: number; usedScale?: number };
 
       if (provider === 'gemini') {
         try {
-          spriteResult = await generateSpriteWithGemini(primaryImage, anim, secondaryImage, useMaxScale);
+          spriteResult = await generateSpriteWithGemini(primaryImage, anim, secondaryImage);
         } catch (err: any) {
           console.warn(`[Pipeline] Gemini sprite ${anim.name} failed, falling back to Ludo:`, err.message);
           if (i === 0) {
@@ -277,11 +275,6 @@ export async function processCharacter(
         }
       } else {
         spriteResult = await generateSpriteWithLudo(primaryImage, anim);
-      }
-
-      if (anim.name === 'idle' && spriteResult.usedScale != null) {
-        standingScale = spriteResult.usedScale;
-        console.log(`[Pipeline] Captured standing scale from idle: ${standingScale.toFixed(3)}`);
       }
 
       console.log(`[Pipeline] ${anim.name}: ${spriteResult.frameCount} frames, frame ${spriteResult.frameW}x${spriteResult.frameH}`);
@@ -334,7 +327,6 @@ export async function rebuildCharacter(
   });
   const total = sprites.length;
   let rebuilt = 0;
-  let standingScale: number | undefined;
 
   for (const sprite of sprites) {
     if (!sprite.rawPngBlob) {
@@ -358,13 +350,7 @@ export async function rebuildCharacter(
     const gridCols = computeGridCols(genFrames);
     const gridRows = Math.ceil(genFrames / gridCols);
 
-    const useMaxScale = anim.base === 'crouched' || anim.name === 'crouch' ? standingScale : undefined;
-    const cleaned = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, useMaxScale);
-
-    if (anim.name === 'idle') {
-      standingScale = cleaned.usedScale;
-      console.log(`[Rebuild] Captured standing scale from idle: ${standingScale.toFixed(3)}`);
-    }
+    const cleaned = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, anim.name);
     let finalBase64: string;
     let finalFrameCount: number;
     let finalGridCols: number;
@@ -441,16 +427,11 @@ export async function retryAnimation(
 
   onStatus({ stage: 'generating_sprites', animation: anim.name, current: 1, total: 1 });
 
-  let maxScale: number | undefined;
-  if (anim.base === 'crouched' || anim.name === 'crouch') {
-    maxScale = await getStandingScale(photoHash);
-  }
-
   const baseImage = anim.base === 'crouched' ? crouchViewBase64 : sideViewBase64;
   const secondaryImage = anim.name === 'crouch' ? crouchViewBase64 : undefined;
   const primaryImage = anim.name === 'crouch' ? sideViewBase64 : baseImage;
 
-  const spriteResult = await generateSpriteWithGemini(primaryImage, anim, secondaryImage, maxScale);
+  const spriteResult = await generateSpriteWithGemini(primaryImage, anim, secondaryImage);
 
   await setCachedSprite({
     photoHash,
@@ -472,20 +453,6 @@ export async function retryAnimation(
   onStatus({ stage: 'sprite_ready', animation: anim.name, photoHash, current: 1, total: 1 });
   onStatus({ stage: 'done', photoHash });
   console.log(`[Retry] ${anim.name}: regenerated ${spriteResult.frameCount} frames (${spriteResult.frameW}x${spriteResult.frameH})`);
-}
-
-async function getStandingScale(photoHash: string): Promise<number | undefined> {
-  const idleSprite = await getCachedSprite(photoHash, 'idle');
-  if (!idleSprite?.rawPngBlob) return undefined;
-
-  const idleAnim = ANIMATIONS.find(a => a.name === 'idle')!;
-  const rawBase64 = await blobToBase64Util(idleSprite.rawPngBlob);
-  const genFrames = idleAnim.frames;
-  const gridCols = computeGridCols(genFrames);
-  const gridRows = Math.ceil(genFrames / gridCols);
-  const result = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows);
-  console.log(`[getStandingScale] Idle scale: ${result.usedScale.toFixed(3)}`);
-  return result.usedScale;
 }
 
 export async function retrySideView(

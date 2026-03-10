@@ -4,6 +4,7 @@ import { getStageTheme, type StageThemeId } from '../game/match/StageConfig.ts';
 import { geminiStageBackground } from './GeminiApi.ts';
 import { blobToBase64, resizeImageForApi } from './FreepikApi.ts';
 import {
+  hashPhoto,
   getCachedMeta,
   getCachedStageBackground,
   setCachedStageBackground,
@@ -12,10 +13,18 @@ import {
 
 const STAGE_BACKGROUND_VERSION = 'stage-v1';
 const inflightGenerations = new Map<string, Promise<CachedStageBackground>>();
+export type StageBackgroundCacheScope = 'matchup' | 'stage';
+const PHOTO_STAGE_PREFIX = `${STAGE_BACKGROUND_VERSION}:photo-ai-v2`;
+
+interface NormalizeStageOptions {
+  bottomShadeAlpha: number;
+  verticalBias?: number;
+}
 
 export interface StageBackgroundRequest {
   matchSeed: number;
   stageId: StageThemeId;
+  cacheScope?: StageBackgroundCacheScope;
   fighterOneName: string;
   fighterTwoName: string;
   fighterOnePersonalityId: FighterPersonalityId;
@@ -24,18 +33,61 @@ export interface StageBackgroundRequest {
   fighterTwoPhotoHash?: string | null;
 }
 
-export function buildStageBackgroundKey(matchSeed: number, stageId: StageThemeId): string {
+export function buildPhotoStageKey(photoHash: string): string {
+  return `${PHOTO_STAGE_PREFIX}:${photoHash}`;
+}
+
+export async function createPhotoStage(file: Blob, label?: string): Promise<CachedStageBackground> {
+  const photoHash = await hashPhoto(file);
+  const stageKey = buildPhotoStageKey(photoHash);
+  const cached = await getCachedStageBackground(stageKey);
+  if (cached) return cached;
+
+  const base64 = await blobToBase64(file);
+  const resized = await resizeImageForApi(base64);
+  const safeLabel = sanitizeStageLabel(label);
+  const result = await geminiStageBackground({
+    stageLabel: safeLabel,
+    stageBlurb: 'Transform the supplied location photo into a stylized side-on 2D fighting game arena.',
+    sourceImage: { data: resized, mime: 'image/jpeg' },
+    sourceMode: 'transform-scene',
+  });
+  const pngBlob = await normalizeStageImage(result.imageBase64, {
+    bottomShadeAlpha: 0.04,
+    verticalBias: 0.92,
+  });
+  const created: CachedStageBackground = {
+    stageKey,
+    prompt: result.prompt,
+    pngBlob,
+    createdAt: Date.now(),
+    kind: 'photo',
+    label: safeLabel,
+  };
+
+  await setCachedStageBackground(created);
+  return created;
+}
+
+export function buildStageBackgroundKey(
+  matchSeed: number,
+  stageId: StageThemeId,
+  cacheScope: StageBackgroundCacheScope = 'matchup',
+): string {
+  if (cacheScope === 'stage') {
+    return `${STAGE_BACKGROUND_VERSION}:${stageId}:stage-lock`;
+  }
   return `${STAGE_BACKGROUND_VERSION}:${stageId}:${(matchSeed >>> 0).toString(16)}`;
 }
 
 export async function getCachedStageBackgroundForRequest(
-  req: Pick<StageBackgroundRequest, 'matchSeed' | 'stageId'>,
+  req: Pick<StageBackgroundRequest, 'matchSeed' | 'stageId' | 'cacheScope'>,
 ): Promise<CachedStageBackground | null> {
-  return getCachedStageBackground(buildStageBackgroundKey(req.matchSeed, req.stageId));
+  return getCachedStageBackground(buildStageBackgroundKey(req.matchSeed, req.stageId, req.cacheScope));
 }
 
 export async function ensureStageBackground(req: StageBackgroundRequest): Promise<CachedStageBackground> {
-  const stageKey = buildStageBackgroundKey(req.matchSeed, req.stageId);
+  const stageKey = buildStageBackgroundKey(req.matchSeed, req.stageId, req.cacheScope);
   const cached = await getCachedStageBackground(stageKey);
   if (cached) return cached;
 
@@ -65,12 +117,16 @@ async function generateStageBackground(req: StageBackgroundRequest, stageKey: st
     referenceImages,
   });
 
-  const pngBlob = await normalizeStageBackground(result.imageBase64);
+  const pngBlob = await normalizeStageImage(result.imageBase64, {
+    bottomShadeAlpha: 0.05,
+  });
   const cached: CachedStageBackground = {
     stageKey,
     prompt: result.prompt,
     pngBlob,
     createdAt: Date.now(),
+    kind: 'generated',
+    label: stage.label,
   };
 
   await setCachedStageBackground(cached);
@@ -97,7 +153,8 @@ async function loadReferenceImages(
   return refs;
 }
 
-async function normalizeStageBackground(base64: string): Promise<Blob> {
+async function normalizeStageImage(base64: string, options: NormalizeStageOptions): Promise<Blob> {
+  const { bottomShadeAlpha, verticalBias = 0.5 } = options;
   const img = await loadImg(`data:image/png;base64,${base64}`);
   const canvas = document.createElement('canvas');
   canvas.width = GAME_WIDTH;
@@ -108,18 +165,32 @@ async function normalizeStageBackground(base64: string): Promise<Blob> {
   const drawWidth = img.width * scale;
   const drawHeight = img.height * scale;
   const drawX = (GAME_WIDTH - drawWidth) / 2;
-  const drawY = (GAME_HEIGHT - drawHeight) / 2;
+  const overflowY = Math.max(0, drawHeight - GAME_HEIGHT);
+  const drawY = overflowY > 0
+    ? -overflowY * clamp(verticalBias, 0, 1)
+    : (GAME_HEIGHT - drawHeight) / 2;
 
   ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
 
   const grade = ctx.createLinearGradient(0, 0, 0, GAME_HEIGHT);
   grade.addColorStop(0, 'rgba(255, 255, 255, 0.02)');
   grade.addColorStop(0.6, 'rgba(255, 255, 255, 0)');
-  grade.addColorStop(1, 'rgba(0, 0, 0, 0.05)');
+  grade.addColorStop(1, `rgba(0, 0, 0, ${bottomShadeAlpha})`);
   ctx.fillStyle = grade;
   ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
   return canvasToBlob(canvas);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function sanitizeStageLabel(label?: string): string {
+  const trimmed = label?.trim();
+  if (!trimmed) return 'PHOTO STAGE';
+  const normalized = trimmed.replace(/\.[a-z0-9]+$/i, '').trim();
+  return normalized.slice(0, 28) || 'PHOTO STAGE';
 }
 
 function loadImg(src: string): Promise<HTMLImageElement> {

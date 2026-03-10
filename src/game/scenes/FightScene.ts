@@ -1,17 +1,17 @@
-import Phaser from 'phaser';
-import { Fighter } from '../fighters/Fighter.ts';
-import { Projectile } from '../fighters/Projectile.ts';
-import { CombatSystem, type HitEvent } from '../systems/CombatSystem.ts';
-import { AIController } from '../systems/AIController.ts';
-import { InputManager } from '../systems/InputManager.ts';
-import { SoundManager } from '../systems/SoundManager.ts';
-import { HUD } from '../ui/HUD.ts';
-import { SeededRng } from '../utils/SeededRng.ts';
-import { ScreenEffects } from '../effects/ScreenEffects.ts';
+import Phaser from "phaser";
+import { Fighter } from "../fighters/Fighter.ts";
+import { Projectile } from "../fighters/Projectile.ts";
+import { CombatSystem, type HitEvent } from "../systems/CombatSystem.ts";
+import { AIController } from "../systems/AIController.ts";
+import { InputManager } from "../systems/InputManager.ts";
+import { SoundManager } from "../systems/SoundManager.ts";
+import { HUD } from "../ui/HUD.ts";
+import { SeededRng } from "../utils/SeededRng.ts";
+import { ScreenEffects } from "../effects/ScreenEffects.ts";
 import {
   ensureStageBackground,
   getCachedStageBackgroundForRequest,
-} from '../../services/StageBackgroundService.ts';
+} from "../../services/StageBackgroundService.ts";
 import {
   GAME_WIDTH,
   GAME_HEIGHT,
@@ -22,8 +22,9 @@ import {
   MAX_HEALTH,
   ATTACKS,
   FighterState,
-} from '../constants.ts';
-import { loadAiSprites } from '../sprites/AiSpriteLoader.ts';
+} from "../constants.ts";
+import { loadAiSprites } from "../sprites/AiSpriteLoader.ts";
+import { getCachedStageBackground } from "../../services/SpriteCache.ts";
 import {
   buildMatchSeed,
   getDefaultPersonalityId,
@@ -31,12 +32,12 @@ import {
   getMatchLabel,
   type FighterPersonalityId,
   type MatchSceneData,
-} from '../match/MatchConfig.ts';
+} from "../match/MatchConfig.ts";
 import {
   getStageTheme,
   pickStageThemeIdFromSeed,
   type StageThemeId,
-} from '../match/StageConfig.ts';
+} from "../match/StageConfig.ts";
 
 enum RoundPhase {
   INTRO = 0,
@@ -79,18 +80,24 @@ export class FightScene extends Phaser.Scene {
   private waitingForMatchInput = false;
   private p1PhotoHash: string | null = null;
   private p2PhotoHash: string | null = null;
-  private p1Name = 'Player 1';
-  private p2Name = 'CPU';
+  private p1Name = "Player 1";
+  private p2Name = "CPU";
   private p1PersonalityId: FighterPersonalityId = getDefaultPersonalityId(0);
   private p2PersonalityId: FighterPersonalityId = getDefaultPersonalityId(1);
   private stageId: StageThemeId | null = null;
-  private resolvedStageId: StageThemeId = 'dojo';
+  private customStageKey: string | null = null;
+  private customStageLabel: string | null = null;
+  private resolvedStageId: StageThemeId = "dojo";
   private matchSeed = 1;
   private remix = 0;
+  private stageFloorY = GROUND_Y;
+  private fighterRenderScale = 1;
+  private fighterRenderYOffset = 0;
+  private bottomOverlayY = GAME_HEIGHT - 60;
   private ready = false;
 
   constructor() {
-    super({ key: 'FightScene' });
+    super({ key: "FightScene" });
   }
 
   init(data: MatchSceneData): void {
@@ -98,11 +105,13 @@ export class FightScene extends Phaser.Scene {
     this.isVsAI = data.vsAI !== false || this.cpuVsCpu;
     this.p1PhotoHash = data.p1PhotoHash ?? null;
     this.p2PhotoHash = data.p2PhotoHash ?? null;
-    this.p1Name = data.p1Name ?? (this.cpuVsCpu ? 'CPU 1' : 'Player 1');
-    this.p2Name = data.p2Name ?? (this.isVsAI ? 'CPU' : 'Player 2');
+    this.p1Name = data.p1Name ?? (this.cpuVsCpu ? "CPU 1" : "Player 1");
+    this.p2Name = data.p2Name ?? (this.isVsAI ? "CPU" : "Player 2");
     this.p1PersonalityId = data.p1PersonalityId ?? getDefaultPersonalityId(0);
     this.p2PersonalityId = data.p2PersonalityId ?? getDefaultPersonalityId(1);
     this.stageId = data.stageId ?? null;
+    this.customStageKey = data.customStageKey ?? null;
+    this.customStageLabel = data.customStageLabel ?? null;
     this.remix = data.remix ?? 0;
     this.matchSeed = buildMatchSeed({
       ...data,
@@ -115,6 +124,8 @@ export class FightScene extends Phaser.Scene {
       p1PersonalityId: this.p1PersonalityId,
       p2PersonalityId: this.p2PersonalityId,
       stageId: this.stageId ?? undefined,
+      customStageKey: this.customStageKey ?? undefined,
+      customStageLabel: this.customStageLabel ?? undefined,
       remix: this.remix,
     });
     this.p1Wins = 0;
@@ -125,13 +136,30 @@ export class FightScene extends Phaser.Scene {
   }
 
   async create(): Promise<void> {
+    if (this.customStageKey) {
+      this.stageFloorY = GROUND_Y + 18;
+      this.fighterRenderScale = 1.2;
+      this.fighterRenderYOffset = this.stageFloorY - GROUND_Y;
+      this.bottomOverlayY = GAME_HEIGHT - 28;
+    } else {
+      this.stageFloorY = GROUND_Y;
+      this.fighterRenderScale = 1.03;
+      this.fighterRenderYOffset = 0;
+      this.bottomOverlayY = GAME_HEIGHT - 60;
+    }
+
     const p1Personality = getFighterPersonality(this.p1PersonalityId);
     const p2Personality = getFighterPersonality(this.p2PersonalityId);
-    const stageTheme = getStageTheme(this.stageId ?? pickStageThemeIdFromSeed(this.matchSeed));
+    const stageTheme = getStageTheme(
+      this.stageId ?? pickStageThemeIdFromSeed(this.matchSeed),
+    );
     this.resolvedStageId = stageTheme.id;
-    const matchLabel = this.isVsAI
-      ? `${stageTheme.label} · ${getMatchLabel(this.remix)}`
+    const stageLabel = this.customStageKey
+      ? (this.customStageLabel ?? "PHOTO STAGE").toUpperCase()
       : stageTheme.label;
+    const matchLabel = this.isVsAI
+      ? `${stageLabel} · ${getMatchLabel(this.remix)}`
+      : stageLabel;
 
     this.combat = new CombatSystem();
     this.inputMgr = new InputManager(this);
@@ -140,7 +168,11 @@ export class FightScene extends Phaser.Scene {
     await this.loadAiSpritesIfNeeded();
 
     this.drawStage();
-    void this.loadAiStageBackground();
+    if (this.customStageKey) {
+      void this.loadCustomStageBackground();
+    } else if (!this.stageId) {
+      void this.loadAiStageBackground();
+    }
     this.createFighters();
 
     this.hud = new HUD(this);
@@ -150,10 +182,18 @@ export class FightScene extends Phaser.Scene {
       this.cpuVsCpu ? p1Personality.label : undefined,
       this.isVsAI ? p2Personality.label : undefined,
       matchLabel,
+      this.p1PhotoHash,
+      this.p2PhotoHash,
     );
 
-    this.ai = new AIController(new SeededRng(this.mixSeed(0x6d2b79f5)), p2Personality);
-    this.ai2 = new AIController(new SeededRng(this.mixSeed(0x1b873593)), p1Personality);
+    this.ai = new AIController(
+      new SeededRng(this.mixSeed(0x6d2b79f5)),
+      p2Personality,
+    );
+    this.ai2 = new AIController(
+      new SeededRng(this.mixSeed(0x1b873593)),
+      p1Personality,
+    );
 
     this.createParticles();
     ScreenEffects.createCRTOverlay(this);
@@ -172,18 +212,18 @@ export class FightScene extends Phaser.Scene {
 
     if (this.p1PhotoHash) {
       loads.push(
-        loadAiSprites(this, 'fighter_p1', this.p1PhotoHash).then((ok) => {
-          if (ok) console.log('Loaded AI sprites for P1');
-          else console.warn('No AI sprites found for P1, using procedural');
+        loadAiSprites(this, "fighter_p1", this.p1PhotoHash).then((ok) => {
+          if (ok) console.log("Loaded AI sprites for P1");
+          else console.warn("No AI sprites found for P1, using procedural");
         }),
       );
     }
 
     if (this.p2PhotoHash) {
       loads.push(
-        loadAiSprites(this, 'fighter_p2', this.p2PhotoHash).then((ok) => {
-          if (ok) console.log('Loaded AI sprites for P2');
-          else console.warn('No AI sprites found for P2, using procedural');
+        loadAiSprites(this, "fighter_p2", this.p2PhotoHash).then((ok) => {
+          if (ok) console.log("Loaded AI sprites for P2");
+          else console.warn("No AI sprites found for P2, using procedural");
         }),
       );
     }
@@ -194,7 +234,10 @@ export class FightScene extends Phaser.Scene {
   private drawStage(): void {
     this.stageBackdrop?.destroy();
     this.stageBackdrop = undefined;
-    if (this.stageBackdropTextureKey && this.textures.exists(this.stageBackdropTextureKey)) {
+    if (
+      this.stageBackdropTextureKey &&
+      this.textures.exists(this.stageBackdropTextureKey)
+    ) {
       this.textures.remove(this.stageBackdropTextureKey);
     }
     this.stageBackdropTextureKey = undefined;
@@ -206,15 +249,68 @@ export class FightScene extends Phaser.Scene {
     const frontGfx = this.add.graphics().setDepth(3);
     this.stageVisualLayers.push(this.stageGfx, midGfx, frontGfx);
 
+    if (this.customStageKey) {
+      this.drawVerticalGradient(this.stageGfx, 0x09111b, 0x162131);
+      this.stageGfx.fillStyle(0x102030, 0.58);
+      this.stageGfx.fillRect(
+        0,
+        this.stageFloorY - 14,
+        GAME_WIDTH,
+        GAME_HEIGHT - this.stageFloorY + 14,
+      );
+      this.stageGfx.lineStyle(3, 0xdce8f5, 0.24);
+      this.stageGfx.lineBetween(
+        0,
+        this.stageFloorY,
+        GAME_WIDTH,
+        this.stageFloorY,
+      );
+
+      midGfx.fillStyle(0xffffff, 0.04);
+      midGfx.fillRect(
+        0,
+        this.stageFloorY + 4,
+        GAME_WIDTH,
+        GAME_HEIGHT - this.stageFloorY - 4,
+      );
+      midGfx.lineStyle(1, 0xffffff, 0.08);
+      for (let y = this.stageFloorY + 20; y < GAME_HEIGHT; y += 22) {
+        midGfx.lineBetween(0, y, GAME_WIDTH, y);
+      }
+      midGfx.lineStyle(1, 0xffffff, 0.06);
+      for (let x = -80; x <= GAME_WIDTH + 80; x += 72) {
+        const targetX = GAME_WIDTH / 2 + (x - GAME_WIDTH / 2) * 1.45;
+        midGfx.lineBetween(x, this.stageFloorY + 6, targetX, GAME_HEIGHT);
+      }
+
+      frontGfx.fillStyle(0x000000, 0.12);
+      frontGfx.fillRect(0, GAME_HEIGHT - 18, GAME_WIDTH, 18);
+      frontGfx.lineStyle(2, 0xffffff, 0.07);
+      frontGfx.lineBetween(
+        0,
+        this.stageFloorY + 8,
+        GAME_WIDTH,
+        this.stageFloorY + 8,
+      );
+      return;
+    }
+
     switch (this.resolvedStageId) {
-      case 'dojo':
+      case "dojo":
         this.drawVerticalGradient(this.stageGfx, 0x14193c, 0x385a78);
         this.drawGround(this.stageGfx, 0x3a2a1a, 0x5a4a3a);
         this.stageGfx.fillStyle(0x4a3a2a);
         this.stageGfx.fillRect(30, GROUND_Y - 280, 40, 280);
         this.stageGfx.fillRect(GAME_WIDTH - 70, GROUND_Y - 280, 40, 280);
         this.stageGfx.fillStyle(0x8b0000);
-        this.stageGfx.fillTriangle(0, GROUND_Y - 280, GAME_WIDTH / 2, GROUND_Y - 360, GAME_WIDTH, GROUND_Y - 280);
+        this.stageGfx.fillTriangle(
+          0,
+          GROUND_Y - 280,
+          GAME_WIDTH / 2,
+          GROUND_Y - 360,
+          GAME_WIDTH,
+          GROUND_Y - 280,
+        );
         for (let i = 0; i < 5; i++) {
           const lx = 120 + i * 180;
           this.stageGfx.fillStyle(0xcc3333);
@@ -248,10 +344,14 @@ export class FightScene extends Phaser.Scene {
           { x: 650, w: 100, h: 20 },
           { x: 950, w: 70, h: 14 },
         ]);
-        this.createLanternGlows([120, 300, 480, 660, 840], GROUND_Y - 282, 0xffaa00);
+        this.createLanternGlows(
+          [120, 300, 480, 660, 840],
+          GROUND_Y - 282,
+          0xffaa00,
+        );
         break;
 
-      case 'neon-rooftop':
+      case "neon-rooftop":
         this.drawVerticalGradient(this.stageGfx, 0x070b1f, 0x5a1769);
         this.stageGfx.fillStyle(0xff55aa, 0.12);
         this.stageGfx.fillCircle(820, 120, 86);
@@ -271,7 +371,11 @@ export class FightScene extends Phaser.Scene {
           this.stageGfx.fillRect(building.x, topY, building.w, building.h);
           midGfx.fillStyle(0xffdd88, 0.35);
           for (let wy = topY + 18; wy < GROUND_Y - 18; wy += 22) {
-            for (let wx = building.x + 12; wx < building.x + building.w - 12; wx += 18) {
+            for (
+              let wx = building.x + 12;
+              wx < building.x + building.w - 12;
+              wx += 18
+            ) {
               if (((wx + wy) / 6) % 3 < 1) midGfx.fillRect(wx, wy, 8, 10);
             }
           }
@@ -303,7 +407,7 @@ export class FightScene extends Phaser.Scene {
         ]);
         break;
 
-      case 'sunset-pier':
+      case "sunset-pier":
         this.drawVerticalGradient(this.stageGfx, 0xff8f4b, 0xffd68b);
         this.stageGfx.fillStyle(0xfff3ba, 0.45);
         this.stageGfx.fillCircle(780, 122, 72);
@@ -348,10 +452,13 @@ export class FightScene extends Phaser.Scene {
           { x: 560, w: 200, h: 36 },
           { x: 900, w: 150, h: 28 },
         ]);
-        this.createWaterShimmerLines([GROUND_Y - 10, GROUND_Y + 8, GROUND_Y + 28], 0xe8f5ff);
+        this.createWaterShimmerLines(
+          [GROUND_Y - 10, GROUND_Y + 8, GROUND_Y + 28],
+          0xe8f5ff,
+        );
         break;
 
-      case 'moonlit-garden':
+      case "moonlit-garden":
         this.drawVerticalGradient(this.stageGfx, 0x081226, 0x17485b);
         this.stageGfx.fillStyle(0xe3f5ff, 0.2);
         this.stageGfx.fillCircle(820, 110, 78);
@@ -372,11 +479,19 @@ export class FightScene extends Phaser.Scene {
           }
         }
 
-        this.createCloudLayer(84, 0.006, 0xb5ffff, 0.05, [
-          { x: 60, w: 220, h: 42 },
-          { x: 410, w: 260, h: 46 },
-          { x: 800, w: 210, h: 38 },
-        ], 1, 'mist');
+        this.createCloudLayer(
+          84,
+          0.006,
+          0xb5ffff,
+          0.05,
+          [
+            { x: 60, w: 220, h: 42 },
+            { x: 410, w: 260, h: 46 },
+            { x: 800, w: 210, h: 38 },
+          ],
+          1,
+          "mist",
+        );
         this.createFireflies([
           { x: 130, y: 170 },
           { x: 220, y: 130 },
@@ -388,7 +503,7 @@ export class FightScene extends Phaser.Scene {
         ]);
         break;
 
-      case 'subway-platform':
+      case "subway-platform":
         this.drawVerticalGradient(this.stageGfx, 0x11161e, 0x2c3643);
         this.stageGfx.fillStyle(0x384655);
         this.stageGfx.fillRect(0, GROUND_Y - 230, GAME_WIDTH, 230);
@@ -438,11 +553,11 @@ export class FightScene extends Phaser.Scene {
   private updateClouds(time: number): void {
     for (let i = 0; i < this.ambientLayers.length; i++) {
       const gfx = this.ambientLayers[i];
-      const type = gfx.getData('ambientType') as string;
+      const type = gfx.getData("ambientType") as string;
       gfx.clear();
 
-      if (type === 'clouds' || type === 'mist') {
-        const layer = gfx.getData('ambientLayer') as {
+      if (type === "clouds" || type === "mist") {
+        const layer = gfx.getData("ambientLayer") as {
           y: number;
           speed: number;
           shapes: { x: number; w: number; h: number }[];
@@ -452,15 +567,16 @@ export class FightScene extends Phaser.Scene {
         gfx.fillStyle(layer.color, layer.alpha);
         for (const shape of layer.shapes) {
           const offsetX = (time * layer.speed) % (GAME_WIDTH + shape.w);
-          const drawX = (shape.x + offsetX) % (GAME_WIDTH + shape.w) - shape.w;
+          const drawX =
+            ((shape.x + offsetX) % (GAME_WIDTH + shape.w)) - shape.w;
           gfx.fillEllipse(drawX + shape.w / 2, layer.y, shape.w, shape.h);
         }
         continue;
       }
 
-      if (type === 'lantern') {
-        const points = gfx.getData('points') as { x: number; y: number }[];
-        const color = gfx.getData('color') as number;
+      if (type === "lantern") {
+        const points = gfx.getData("points") as { x: number; y: number }[];
+        const color = gfx.getData("color") as number;
         for (let p = 0; p < points.length; p++) {
           const point = points[p];
           const pulse = 0.15 + Math.sin(time * 0.003 + p * 1.2) * 0.1;
@@ -472,9 +588,9 @@ export class FightScene extends Phaser.Scene {
         continue;
       }
 
-      if (type === 'water') {
-        const rows = gfx.getData('rows') as number[];
-        const color = gfx.getData('color') as number;
+      if (type === "water") {
+        const rows = gfx.getData("rows") as number[];
+        const color = gfx.getData("color") as number;
         for (let r = 0; r < rows.length; r++) {
           const y = rows[r];
           const alpha = 0.12 + Math.sin(time * 0.0025 + r) * 0.05;
@@ -487,23 +603,41 @@ export class FightScene extends Phaser.Scene {
         continue;
       }
 
-      if (type === 'neon') {
-        const signs = gfx.getData('signs') as { x: number; y: number; w: number; h: number; color: number }[];
+      if (type === "neon") {
+        const signs = gfx.getData("signs") as {
+          x: number;
+          y: number;
+          w: number;
+          h: number;
+          color: number;
+        }[];
         for (let s = 0; s < signs.length; s++) {
           const sign = signs[s];
           const pulse = 0.35 + Math.sin(time * 0.006 + s * 1.5) * 0.18;
           gfx.fillStyle(sign.color, pulse * 0.22);
-          gfx.fillRoundedRect(sign.x - 8, sign.y - 8, sign.w + 16, sign.h + 16, 8);
+          gfx.fillRoundedRect(
+            sign.x - 8,
+            sign.y - 8,
+            sign.w + 16,
+            sign.h + 16,
+            8,
+          );
           gfx.lineStyle(3, sign.color, 0.8);
           gfx.strokeRoundedRect(sign.x, sign.y, sign.w, sign.h, 6);
           gfx.fillStyle(sign.color, 0.25 + pulse * 0.12);
-          gfx.fillRoundedRect(sign.x + 5, sign.y + 5, sign.w - 10, sign.h - 10, 4);
+          gfx.fillRoundedRect(
+            sign.x + 5,
+            sign.y + 5,
+            sign.w - 10,
+            sign.h - 10,
+            4,
+          );
         }
         continue;
       }
 
-      if (type === 'fireflies') {
-        const points = gfx.getData('points') as { x: number; y: number }[];
+      if (type === "fireflies") {
+        const points = gfx.getData("points") as { x: number; y: number }[];
         for (let p = 0; p < points.length; p++) {
           const point = points[p];
           const driftX = Math.sin(time * 0.0016 + p * 1.7) * 16;
@@ -517,11 +651,18 @@ export class FightScene extends Phaser.Scene {
         continue;
       }
 
-      if (type === 'fluorescent') {
-        const lights = gfx.getData('lights') as { x: number; y: number; w: number }[];
+      if (type === "fluorescent") {
+        const lights = gfx.getData("lights") as {
+          x: number;
+          y: number;
+          w: number;
+        }[];
         for (let l = 0; l < lights.length; l++) {
           const light = lights[l];
-          const flicker = 0.2 + Math.sin(time * 0.012 + l * 0.9) * 0.08 + Math.sin(time * 0.027 + l * 2.1) * 0.04;
+          const flicker =
+            0.2 +
+            Math.sin(time * 0.012 + l * 0.9) * 0.08 +
+            Math.sin(time * 0.027 + l * 2.1) * 0.04;
           gfx.fillStyle(0xd7fff6, flicker);
           gfx.fillRoundedRect(light.x, light.y, light.w, 12, 5);
           gfx.fillStyle(0xb7ffff, flicker * 0.35);
@@ -530,8 +671,12 @@ export class FightScene extends Phaser.Scene {
         continue;
       }
 
-      if (type === 'dust') {
-        const motes = gfx.getData('motes') as { x: number; y: number; radius: number }[];
+      if (type === "dust") {
+        const motes = gfx.getData("motes") as {
+          x: number;
+          y: number;
+          radius: number;
+        }[];
         for (let m = 0; m < motes.length; m++) {
           const mote = motes[m];
           const offsetX = Math.sin(time * 0.0015 + m) * 14;
@@ -543,7 +688,11 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
-  private drawVerticalGradient(gfx: Phaser.GameObjects.Graphics, topColor: number, bottomColor: number): void {
+  private drawVerticalGradient(
+    gfx: Phaser.GameObjects.Graphics,
+    topColor: number,
+    bottomColor: number,
+  ): void {
     const top = Phaser.Display.Color.IntegerToRGB(topColor);
     const bottom = Phaser.Display.Color.IntegerToRGB(bottomColor);
     for (let y = 0; y < GROUND_Y; y++) {
@@ -556,7 +705,11 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
-  private drawGround(gfx: Phaser.GameObjects.Graphics, groundColor: number, lineColor: number): void {
+  private drawGround(
+    gfx: Phaser.GameObjects.Graphics,
+    groundColor: number,
+    lineColor: number,
+  ): void {
     gfx.fillStyle(groundColor);
     gfx.fillRect(0, GROUND_Y, GAME_WIDTH, GAME_HEIGHT - GROUND_Y);
     gfx.lineStyle(3, lineColor);
@@ -570,65 +723,101 @@ export class FightScene extends Phaser.Scene {
     alpha: number,
     shapes: { x: number; w: number; h: number }[],
     depth = 1,
-    type: 'clouds' | 'mist' = 'clouds',
+    type: "clouds" | "mist" = "clouds",
   ): void {
     const gfx = this.add.graphics().setDepth(depth);
-    gfx.setData('ambientType', type);
-    gfx.setData('ambientLayer', { y, speed, shapes, color, alpha });
+    gfx.setData("ambientType", type);
+    gfx.setData("ambientLayer", { y, speed, shapes, color, alpha });
     this.ambientLayers.push(gfx);
   }
 
   private createLanternGlows(xs: number[], y: number, color: number): void {
     const gfx = this.add.graphics().setDepth(1);
-    gfx.setData('ambientType', 'lantern');
-    gfx.setData('points', xs.map((x) => ({ x, y })));
-    gfx.setData('color', color);
+    gfx.setData("ambientType", "lantern");
+    gfx.setData(
+      "points",
+      xs.map((x) => ({ x, y })),
+    );
+    gfx.setData("color", color);
     this.ambientLayers.push(gfx);
   }
 
   private createWaterShimmerLines(rows: number[], color: number): void {
     const gfx = this.add.graphics().setDepth(1);
-    gfx.setData('ambientType', 'water');
-    gfx.setData('rows', rows);
-    gfx.setData('color', color);
+    gfx.setData("ambientType", "water");
+    gfx.setData("rows", rows);
+    gfx.setData("color", color);
     this.ambientLayers.push(gfx);
   }
 
-  private createNeonSigns(signs: { x: number; y: number; w: number; h: number; color: number }[]): void {
+  private createNeonSigns(
+    signs: { x: number; y: number; w: number; h: number; color: number }[],
+  ): void {
     const gfx = this.add.graphics().setDepth(1);
-    gfx.setData('ambientType', 'neon');
-    gfx.setData('signs', signs);
+    gfx.setData("ambientType", "neon");
+    gfx.setData("signs", signs);
     this.ambientLayers.push(gfx);
   }
 
   private createFireflies(points: { x: number; y: number }[]): void {
     const gfx = this.add.graphics().setDepth(1);
-    gfx.setData('ambientType', 'fireflies');
-    gfx.setData('points', points);
+    gfx.setData("ambientType", "fireflies");
+    gfx.setData("points", points);
     this.ambientLayers.push(gfx);
   }
 
-  private createFluorescentLights(lights: { x: number; y: number; w: number }[]): void {
+  private createFluorescentLights(
+    lights: { x: number; y: number; w: number }[],
+  ): void {
     const gfx = this.add.graphics().setDepth(1);
-    gfx.setData('ambientType', 'fluorescent');
-    gfx.setData('lights', lights);
+    gfx.setData("ambientType", "fluorescent");
+    gfx.setData("lights", lights);
     this.ambientLayers.push(gfx);
   }
 
-  private createDustMotes(motes: { x: number; y: number; radius: number }[]): void {
+  private createDustMotes(
+    motes: { x: number; y: number; radius: number }[],
+  ): void {
     const gfx = this.add.graphics().setDepth(1);
-    gfx.setData('ambientType', 'dust');
-    gfx.setData('motes', motes);
+    gfx.setData("ambientType", "dust");
+    gfx.setData("motes", motes);
     this.ambientLayers.push(gfx);
+  }
+
+  private async loadCustomStageBackground(): Promise<void> {
+    if (!this.customStageKey) return;
+
+    const loadId = ++this.stageLoadId;
+    try {
+      const cached = await getCachedStageBackground(this.customStageKey);
+      if (!this.isActiveStageLoad(loadId)) return;
+      if (!cached) {
+        console.warn(
+          "[FightScene] Missing cached photo stage, keeping neutral arena shell",
+        );
+        return;
+      }
+      await this.applyStageBackground(cached.pngBlob, loadId);
+    } catch (err: any) {
+      if (!this.isActiveStageLoad(loadId)) return;
+      console.warn(
+        "[FightScene] Photo stage failed to load, keeping neutral arena shell:",
+        err?.message || err,
+      );
+    }
   }
 
   private async loadAiStageBackground(): Promise<void> {
+    if (this.stageId) return;
+
     const loadId = ++this.stageLoadId;
+    const cacheScope = this.stageId ? "stage" : "matchup";
 
     try {
       const cached = await getCachedStageBackgroundForRequest({
         matchSeed: this.matchSeed,
         stageId: this.resolvedStageId,
+        cacheScope,
       });
       if (!this.isActiveStageLoad(loadId)) return;
 
@@ -637,10 +826,11 @@ export class FightScene extends Phaser.Scene {
         return;
       }
 
-      this.setStageLoadingText('SUMMONING ARENA...');
+      this.setStageLoadingText("SUMMONING ARENA...");
       const generated = await ensureStageBackground({
         matchSeed: this.matchSeed,
         stageId: this.resolvedStageId,
+        cacheScope,
         fighterOneName: this.p1Name,
         fighterTwoName: this.p2Name,
         fighterOnePersonalityId: this.p1PersonalityId,
@@ -651,10 +841,13 @@ export class FightScene extends Phaser.Scene {
 
       if (!this.isActiveStageLoad(loadId)) return;
       await this.applyStageBackground(generated.pngBlob, loadId);
-      this.setStageLoadingText('ARENA READY', 900);
+      this.setStageLoadingText("ARENA READY", 900);
     } catch (err: any) {
       if (!this.isActiveStageLoad(loadId)) return;
-      console.warn('[FightScene] AI stage background failed, keeping procedural stage:', err?.message || err);
+      console.warn(
+        "[FightScene] AI stage background failed, keeping procedural stage:",
+        err?.message || err,
+      );
       this.clearStageLoadingText();
     }
   }
@@ -663,12 +856,21 @@ export class FightScene extends Phaser.Scene {
     return loadId === this.stageLoadId && this.scene.isActive();
   }
 
-  private async applyStageBackground(blob: Blob, loadId: number): Promise<void> {
+  private async applyStageBackground(
+    blob: Blob,
+    loadId: number,
+  ): Promise<void> {
     const img = await this.loadBlobImage(blob);
     if (!this.isActiveStageLoad(loadId)) return;
 
-    const texKey = `stage_bg_${this.resolvedStageId}_${(this.matchSeed >>> 0).toString(16)}`;
-    if (this.stageBackdropTextureKey && this.stageBackdropTextureKey !== texKey && this.textures.exists(this.stageBackdropTextureKey)) {
+    const texKey = this.customStageKey
+      ? `stage_bg_custom_${this.customStageKey.replace(/[^a-z0-9_-]/gi, "_")}`
+      : `stage_bg_${this.resolvedStageId}_${(this.matchSeed >>> 0).toString(16)}`;
+    if (
+      this.stageBackdropTextureKey &&
+      this.stageBackdropTextureKey !== texKey &&
+      this.textures.exists(this.stageBackdropTextureKey)
+    ) {
       this.textures.remove(this.stageBackdropTextureKey);
     }
     if (this.textures.exists(texKey)) {
@@ -678,17 +880,27 @@ export class FightScene extends Phaser.Scene {
     this.stageBackdropTextureKey = texKey;
 
     if (!this.stageBackdrop) {
-      this.stageBackdrop = this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, texKey)
+      this.stageBackdrop = this.add
+        .image(GAME_WIDTH / 2, GAME_HEIGHT / 2, texKey)
         .setDepth(-2)
-        .setOrigin(0.5)
-        .setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
+        .setOrigin(0.5);
     } else {
-      this.stageBackdrop.setTexture(texKey).setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
+      this.stageBackdrop.setTexture(texKey);
     }
+
+    const backdropHeight = this.customStageKey ? GAME_HEIGHT + 40 : GAME_HEIGHT;
+    const backdropY = this.customStageKey
+      ? GAME_HEIGHT / 2 - 20
+      : GAME_HEIGHT / 2;
+    this.stageBackdrop
+      .setPosition(GAME_WIDTH / 2, backdropY)
+      .setDisplaySize(GAME_WIDTH, backdropHeight);
 
     this.stageBackdrop.setAlpha(0);
 
-    const visualAlphas = [0.04, 0.12, 0.2];
+    const visualAlphas = this.customStageKey
+      ? [0.03, 0.16, 0.1]
+      : [0.04, 0.12, 0.2];
     for (let i = 0; i < this.stageVisualLayers.length; i++) {
       const layer = this.stageVisualLayers[i];
       const targetAlpha = visualAlphas[i] ?? 0.75;
@@ -696,16 +908,16 @@ export class FightScene extends Phaser.Scene {
         targets: layer,
         alpha: targetAlpha,
         duration: 700,
-        ease: 'Sine.easeOut',
+        ease: "Sine.easeOut",
       });
     }
 
     for (const layer of this.ambientLayers) {
       this.tweens.add({
         targets: layer,
-        alpha: 0.5,
+        alpha: this.customStageKey ? 0.2 : 0.5,
         duration: 700,
-        ease: 'Sine.easeOut',
+        ease: "Sine.easeOut",
       });
     }
 
@@ -713,20 +925,23 @@ export class FightScene extends Phaser.Scene {
       targets: this.stageBackdrop,
       alpha: 1,
       duration: 700,
-      ease: 'Sine.easeOut',
+      ease: "Sine.easeOut",
       onComplete: () => this.clearStageLoadingText(),
     });
   }
 
   private setStageLoadingText(text: string, autoHideMs = 0): void {
     if (!this.stageLoadingText) {
-      this.stageLoadingText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 94, '', {
-        fontFamily: '"Press Start 2P", monospace',
-        fontSize: '8px',
-        color: '#88ddff',
-        stroke: '#000000',
-        strokeThickness: 2,
-      }).setOrigin(0.5).setDepth(120);
+      this.stageLoadingText = this.add
+        .text(GAME_WIDTH / 2, this.bottomOverlayY - 14, "", {
+          fontFamily: '"Press Start 2P", monospace',
+          fontSize: "8px",
+          color: "#88ddff",
+          stroke: "#000000",
+          strokeThickness: 2,
+        })
+        .setOrigin(0.5)
+        .setDepth(120);
     }
 
     this.tweens.killTweensOf(this.stageLoadingText);
@@ -777,17 +992,31 @@ export class FightScene extends Phaser.Scene {
   }
 
   private createFighters(): void {
-    this.p1 = new Fighter(0, this.p1Name, 'fighter_p1', 250, true);
-    this.p2 = new Fighter(1, this.p2Name, 'fighter_p2', GAME_WIDTH - 250, false);
+    this.p1 = new Fighter(0, this.p1Name, "fighter_p1", 250, true);
+    this.p2 = new Fighter(
+      1,
+      this.p2Name,
+      "fighter_p2",
+      GAME_WIDTH - 250,
+      false,
+    );
 
     this.p1.createSprite(this);
     this.p2.createSprite(this);
+    this.p1.setRenderPresentation(
+      this.fighterRenderScale,
+      this.fighterRenderYOffset,
+    );
+    this.p2.setRenderPresentation(
+      this.fighterRenderScale,
+      this.fighterRenderYOffset,
+    );
     this.p1.sprite.setDepth(10);
     this.p2.sprite.setDepth(10);
   }
 
   private createParticles(): void {
-    this.hitSparks = this.add.particles(0, 0, 'spark', {
+    this.hitSparks = this.add.particles(0, 0, "spark", {
       speed: { min: 100, max: 300 },
       angle: { min: 0, max: 360 },
       scale: { start: 1, end: 0 },
@@ -831,11 +1060,11 @@ export class FightScene extends Phaser.Scene {
 
     const roundNum = this.p1Wins + this.p2Wins + 1;
     this.hud.showAnnouncement(`ROUND ${roundNum}`, 1200);
-    this.sound_mgr.playAnnounce('round');
+    this.sound_mgr.playAnnounce("round");
     this.time.delayedCall(1300, () => {
       if (this.phase === RoundPhase.INTRO) {
-        this.hud.showAnnouncement('FIGHT!', 800);
-        this.sound_mgr.playAnnounce('fight');
+        this.hud.showAnnouncement("FIGHT!", 800);
+        this.sound_mgr.playAnnounce("fight");
       }
     });
   }
@@ -853,7 +1082,10 @@ export class FightScene extends Phaser.Scene {
       return;
     }
 
-    if (this.phase === RoundPhase.ROUND_END || this.phase === RoundPhase.MATCH_END) {
+    if (
+      this.phase === RoundPhase.ROUND_END ||
+      this.phase === RoundPhase.MATCH_END
+    ) {
       this.phaseTimer--;
       this.updateRoundEndPresentation(delta);
       this.p1.syncSprite(this.p2.x);
@@ -891,7 +1123,11 @@ export class FightScene extends Phaser.Scene {
     this.advanceFighterPresentation(this.p2, this.p1.x, dt);
   }
 
-  private advanceFighterPresentation(fighter: Fighter, opponentX: number, dt: number): void {
+  private advanceFighterPresentation(
+    fighter: Fighter,
+    opponentX: number,
+    dt: number,
+  ): void {
     if (Math.abs(opponentX - fighter.x) > 4) {
       fighter.facingRight = opponentX > fighter.x;
     }
@@ -900,7 +1136,11 @@ export class FightScene extends Phaser.Scene {
 
     if (fighter.state === FighterState.KNOCKDOWN) {
       fighter.applyPhysics(dt);
-      if (fighter.health <= 0 && fighter.isGrounded() && fighter.stateFrame >= 30) {
+      if (
+        fighter.health <= 0 &&
+        fighter.isGrounded() &&
+        fighter.stateFrame >= 30
+      ) {
         fighter.forceState(FighterState.DEFEAT);
       }
     }
@@ -919,8 +1159,12 @@ export class FightScene extends Phaser.Scene {
     }
 
     // Read inputs
-    const p1Input = this.cpuVsCpu ? this.ai2.getInput(this.p1, this.p2) : this.inputMgr.readPlayer1();
-    const p2Input = this.isVsAI ? this.ai.getInput(this.p2, this.p1) : this.inputMgr.readPlayer2();
+    const p1Input = this.cpuVsCpu
+      ? this.ai2.getInput(this.p1, this.p2)
+      : this.inputMgr.readPlayer1();
+    const p2Input = this.isVsAI
+      ? this.ai.getInput(this.p2, this.p1)
+      : this.inputMgr.readPlayer2();
 
     // Update fighters
     this.p1.update(dt, p1Input, this.p2.x);
@@ -950,9 +1194,18 @@ export class FightScene extends Phaser.Scene {
     const startup = ATTACKS[FighterState.FIREBALL].startup;
     if (fighter.stateFrame !== startup) return;
 
-    const spawnX = fighter.x + (fighter.facingRight ? fighter.getBodyWidth() : -fighter.getBodyWidth());
-    const spawnY = fighter.y - fighter.getBodyHeight() * 0.56;
-    const proj = new Projectile(this, spawnX, spawnY, fighter.facingRight, fighter.playerIndex, false);
+    const spawnX =
+      fighter.x +
+      (fighter.facingRight ? fighter.getBodyWidth() : -fighter.getBodyWidth());
+    const spawnY = fighter.getRenderY() - fighter.getBodyHeight() * 0.56;
+    const proj = new Projectile(
+      this,
+      spawnX,
+      spawnY,
+      fighter.facingRight,
+      fighter.playerIndex,
+      false,
+    );
     this.projectiles.push(proj);
   }
 
@@ -973,8 +1226,8 @@ export class FightScene extends Phaser.Scene {
       if (this.aabbOverlap(pHitbox, hurtbox)) {
         const isBlocking =
           (defender.state === FighterState.WALK_BACKWARD ||
-           defender.state === FighterState.CROUCH ||
-           defender.state === FighterState.BLOCK) &&
+            defender.state === FighterState.CROUCH ||
+            defender.state === FighterState.BLOCK) &&
           defender.isGrounded();
 
         const fakeAtk = {
@@ -992,31 +1245,36 @@ export class FightScene extends Phaser.Scene {
 
         this.hitSparks.emitParticleAt(
           defender.x + (defender.facingRight ? -20 : 20),
-          defender.y - 80,
+          defender.getRenderY() - 80,
           isBlocking ? 5 : 12,
         );
 
-        const dmgColor = isBlocking ? '#999999' : '#ff8844';
-        const actualDmg = isBlocking ? Math.floor(proj.damage * 0.1) : proj.damage;
-        const dmgText = this.add.text(
-          defender.x + (defender.facingRight ? -10 : 10),
-          defender.y - 100,
-          actualDmg.toString(),
-          {
-            fontFamily: '"Press Start 2P", monospace',
-            fontSize: '12px',
-            color: dmgColor,
-            stroke: '#000000',
-            strokeThickness: 3,
-          },
-        ).setOrigin(0.5).setDepth(105);
+        const dmgColor = isBlocking ? "#999999" : "#ff8844";
+        const actualDmg = isBlocking
+          ? Math.floor(proj.damage * 0.1)
+          : proj.damage;
+        const dmgText = this.add
+          .text(
+            defender.x + (defender.facingRight ? -10 : 10),
+            defender.getRenderY() - 100,
+            actualDmg.toString(),
+            {
+              fontFamily: '"Press Start 2P", monospace',
+              fontSize: "12px",
+              color: dmgColor,
+              stroke: "#000000",
+              strokeThickness: 3,
+            },
+          )
+          .setOrigin(0.5)
+          .setDepth(105);
 
         this.tweens.add({
           targets: dmgText,
           y: dmgText.y - 50,
           alpha: 0,
           duration: 800,
-          ease: 'Cubic.easeOut',
+          ease: "Cubic.easeOut",
           onComplete: () => dmgText.destroy(),
         });
 
@@ -1069,36 +1327,44 @@ export class FightScene extends Phaser.Scene {
     // Sparks
     this.hitSparks.emitParticleAt(
       defender.x + (defender.facingRight ? -20 : 20),
-      defender.y - 80,
+      defender.getRenderY() - 80,
       event.blocked ? 5 : 12,
     );
 
     // Combo counter
     if (!event.blocked && defender.comboCount >= 2) {
-      this.hud.showCombo(attacker.x, attacker.y, defender.comboCount, attacker.playerIndex);
+      this.hud.showCombo(
+        attacker.x,
+        attacker.getRenderY(),
+        defender.comboCount,
+        attacker.playerIndex,
+      );
     }
 
     // Floating damage number
-    const dmgColor = event.blocked ? '#999999' : '#ff4444';
-    const dmgText = this.add.text(
-      defender.x + (defender.facingRight ? -10 : 10),
-      defender.y - 100,
-      event.damage.toString(),
-      {
-        fontFamily: '"Press Start 2P", monospace',
-        fontSize: '12px',
-        color: dmgColor,
-        stroke: '#000000',
-        strokeThickness: 3,
-      },
-    ).setOrigin(0.5).setDepth(105);
+    const dmgColor = event.blocked ? "#999999" : "#ff4444";
+    const dmgText = this.add
+      .text(
+        defender.x + (defender.facingRight ? -10 : 10),
+        defender.getRenderY() - 100,
+        event.damage.toString(),
+        {
+          fontFamily: '"Press Start 2P", monospace',
+          fontSize: "12px",
+          color: dmgColor,
+          stroke: "#000000",
+          strokeThickness: 3,
+        },
+      )
+      .setOrigin(0.5)
+      .setDepth(105);
 
     this.tweens.add({
       targets: dmgText,
       y: dmgText.y - 50,
       alpha: 0,
       duration: 800,
-      ease: 'Cubic.easeOut',
+      ease: "Cubic.easeOut",
       onComplete: () => dmgText.destroy(),
     });
   }
@@ -1112,9 +1378,9 @@ export class FightScene extends Phaser.Scene {
 
     let winner: Fighter;
     if (this.p1.health <= 0 && this.p2.health <= 0) {
-      this.hud.showAnnouncement('DOUBLE K.O.!', 2500);
+      this.hud.showAnnouncement("DOUBLE K.O.!", 2500);
       this.sound_mgr.playKO();
-      this.sound_mgr.playAnnounce('ko');
+      this.sound_mgr.playAnnounce("ko");
       this.p1.syncSprite(this.p2.x);
       this.p2.syncSprite(this.p1.x);
       return;
@@ -1133,9 +1399,9 @@ export class FightScene extends Phaser.Scene {
       if (loser.state !== FighterState.KNOCKDOWN) {
         loser.forceState(FighterState.KNOCKDOWN);
       }
-      this.hud.showAnnouncement('K.O.!', 2000);
+      this.hud.showAnnouncement("K.O.!", 2000);
       this.sound_mgr.playKO();
-      this.sound_mgr.playAnnounce('ko');
+      this.sound_mgr.playAnnounce("ko");
       ScreenEffects.flashWhite(this, 200);
     } else {
       loser.forceState(FighterState.DEFEAT);
@@ -1148,7 +1414,7 @@ export class FightScene extends Phaser.Scene {
       this.phaseTimer = 300; // 5 seconds
       this.time.delayedCall(2200, () => {
         this.hud.showAnnouncement(`${winner.name.toUpperCase()} WINS!`, 0);
-        this.sound_mgr.playAnnounce('wins');
+        this.sound_mgr.playAnnounce("wins");
       });
     }
   }
@@ -1156,18 +1422,21 @@ export class FightScene extends Phaser.Scene {
   private showMatchOverUI(): void {
     this.waitingForMatchInput = true;
 
-    this.matchOverUI = this.add.text(
-      GAME_WIDTH / 2,
-      GAME_HEIGHT - 60,
-      'ENTER: RUN IT BACK  /  R: REMIX  /  ESC: MENU',
-      {
-        fontFamily: '"Press Start 2P", monospace',
-        fontSize: '11px',
-        color: '#ffcc00',
-        stroke: '#000000',
-        strokeThickness: 3,
-      },
-    ).setOrigin(0.5).setDepth(200);
+    this.matchOverUI = this.add
+      .text(
+        GAME_WIDTH / 2,
+        this.bottomOverlayY,
+        "ENTER: RUN IT BACK  /  R: REMIX  /  ESC: MENU",
+        {
+          fontFamily: '"Press Start 2P", monospace',
+          fontSize: "11px",
+          color: "#ffcc00",
+          stroke: "#000000",
+          strokeThickness: 3,
+        },
+      )
+      .setOrigin(0.5)
+      .setDepth(200);
 
     this.tweens.add({
       targets: this.matchOverUI,
@@ -1175,32 +1444,38 @@ export class FightScene extends Phaser.Scene {
       duration: 600,
       yoyo: true,
       repeat: -1,
-      ease: 'Sine.easeInOut',
+      ease: "Sine.easeInOut",
     });
 
-    const enterKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER);
-    const escKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
-    const remixKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.R);
+    const enterKey = this.input.keyboard!.addKey(
+      Phaser.Input.Keyboard.KeyCodes.ENTER,
+    );
+    const escKey = this.input.keyboard!.addKey(
+      Phaser.Input.Keyboard.KeyCodes.ESC,
+    );
+    const remixKey = this.input.keyboard!.addKey(
+      Phaser.Input.Keyboard.KeyCodes.R,
+    );
 
-    enterKey.once('down', () => {
+    enterKey.once("down", () => {
       remixKey.removeAllListeners();
       escKey.removeAllListeners();
       this.restartMatch(this.remix);
     });
 
-    remixKey.once('down', () => {
+    remixKey.once("down", () => {
       enterKey.removeAllListeners();
       escKey.removeAllListeners();
       this.restartMatch(this.remix + 1);
     });
 
-    escKey.once('down', () => {
+    escKey.once("down", () => {
       enterKey.removeAllListeners();
       remixKey.removeAllListeners();
       this.cleanupMatchOverUI();
       this.cameras.main.fadeOut(500, 0, 0, 0);
-      this.cameras.main.once('camerafadeoutcomplete', () => {
-        this.scene.start('TitleScene');
+      this.cameras.main.once("camerafadeoutcomplete", () => {
+        this.scene.start("TitleScene");
       });
     });
   }
@@ -1219,6 +1494,8 @@ export class FightScene extends Phaser.Scene {
         p1PersonalityId: this.p1PersonalityId,
         p2PersonalityId: this.p2PersonalityId,
         stageId: this.stageId ?? undefined,
+        customStageKey: this.customStageKey ?? undefined,
+        customStageLabel: this.customStageLabel ?? undefined,
         remix,
       });
     });
@@ -1236,7 +1513,10 @@ export class FightScene extends Phaser.Scene {
     this.clearStageLoadingText(true);
     this.stageBackdrop?.destroy();
     this.stageBackdrop = undefined;
-    if (this.stageBackdropTextureKey && this.textures.exists(this.stageBackdropTextureKey)) {
+    if (
+      this.stageBackdropTextureKey &&
+      this.textures.exists(this.stageBackdropTextureKey)
+    ) {
       this.textures.remove(this.stageBackdropTextureKey);
       this.stageBackdropTextureKey = undefined;
     }

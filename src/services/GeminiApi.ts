@@ -1,4 +1,5 @@
 import { cleanReposedImage, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, type CleanSheetResult } from './SpritePostProcess';
+import { getAnimationProfile } from './AnimationProfiles';
 
 const GEMINI_BASE = '/proxy/gemini/v1beta/models';
 const MODEL = 'gemini-3.1-flash-image-preview';
@@ -104,7 +105,7 @@ export async function geminiRepose(photoBase64: string): Promise<string> {
   if (!rawBase64) throw new Error('Gemini repose returned no image');
 
   console.log(`[GeminiApi] Repose raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
-  const cleaned = await cleanReposedImage(rawBase64);
+  const cleaned = await cleanReposedImage(rawBase64, 'idle');
   console.log(`[GeminiApi] Repose cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
 
   return cleaned;
@@ -136,7 +137,7 @@ export async function geminiCrouchRepose(sideViewBase64: string): Promise<string
   if (!rawBase64) throw new Error('Gemini crouch repose returned no image');
 
   console.log(`[GeminiApi] Crouch repose raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
-  const cleaned = await cleanReposedImage(rawBase64);
+  const cleaned = await cleanReposedImage(rawBase64, 'crouch');
   console.log(`[GeminiApi] Crouch repose cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
 
   return cleaned;
@@ -164,6 +165,7 @@ export async function geminiSpriteSheet(
   maxScale?: number,
 ): Promise<GeminiSpriteResult> {
   const shouldMirror = MIRROR_ANIMS.has(animName);
+  const profile = getAnimationProfile(animName);
 
   const genFrames = shouldMirror ? Math.ceil(frames / 2) : frames;
   const gridCols = computeGridCols(genFrames);
@@ -184,6 +186,9 @@ export async function geminiSpriteSheet(
     endNote = `- Frame 1 starts in the base stance. The motion progresses gradually through the middle frames. The final frame returns to or finishes the pose.`;
   }
 
+  const targetHeightPct = Math.round(profile.targetHeightRatio * 100);
+  const targetWidthPct = Math.round(profile.targetWidthRatio * 100);
+
   const prompt = [
     `Generate a sprite sheet of this exact character performing: ${motionDesc}.`,
     ``,
@@ -197,11 +202,13 @@ export async function geminiSpriteSheet(
     `- The frames must form a smooth, sequential animation — each frame shows the next step of the motion.`,
     endNote,
     `- The character must face right in every frame.`,
+    ...profile.promptRules.map((rule) => `- ${rule}`),
     ``,
     `FRAMING RULES (CRITICAL):`,
     `- EVERY frame MUST show the COMPLETE character from head to feet — never crop or zoom in.`,
     `- The character must be the SAME SIZE in every frame — do NOT zoom in or out between frames.`,
-    `- Frame the character so they occupy roughly 85% of the cell height, vertically centered with feet near the bottom.`,
+    `- Frame the character so they occupy roughly ${targetHeightPct}% of the cell height and at most ${targetWidthPct}% of the cell width.`,
+    `- Keep the feet near the same floor line close to the bottom of every cell.`,
     `- Even for subtle animations, maintain the EXACT same camera distance and framing as the reference image.`,
     ``,
     `STYLE RULES:`,
@@ -234,7 +241,7 @@ export async function geminiSpriteSheet(
   if (!rawBase64) throw new Error(`Gemini sprite sheet for ${animName} returned no image`);
 
   const geminiRawBase64 = rawBase64;
-  const cleaned: CleanSheetResult = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, maxScale);
+  const cleaned: CleanSheetResult = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, animName, maxScale);
   console.log(`[GeminiApi] ${animName} cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s (scale ${cleaned.usedScale.toFixed(2)})`);
 
   if (shouldMirror) {
@@ -264,29 +271,60 @@ export async function geminiSpriteSheet(
 export interface GeminiStageBackgroundRequest {
   stageLabel: string;
   stageBlurb: string;
-  fighterOneName: string;
-  fighterTwoName: string;
-  fighterOneStyle: string;
-  fighterTwoStyle: string;
+  fighterOneName?: string;
+  fighterTwoName?: string;
+  fighterOneStyle?: string;
+  fighterTwoStyle?: string;
+  sourceImage?: { data: string; mime: string };
+  sourceMode?: 'inspire' | 'transform-scene';
   referenceImages?: { data: string; mime: string }[];
 }
 
 export async function geminiStageBackground(req: GeminiStageBackgroundRequest): Promise<{ imageBase64: string; prompt: string }> {
-  const prompt = [
+  const prompt: string[] = [
     `Create a dramatic arcade fighting game stage background for a versus match.`,
     `Theme: ${req.stageLabel}. ${req.stageBlurb}`,
-    `Fighter one: ${req.fighterOneName} (${req.fighterOneStyle}).`,
-    `Fighter two: ${req.fighterTwoName} (${req.fighterTwoStyle}).`,
-    ``,
-    `REFERENCE USAGE RULES:`,
-    `- Use any reference photos only to borrow color palette, fashion cues, attitude, and world-building inspiration.`,
-    `- Do NOT place the referenced people or any fighters in the scene.`,
-    ``,
+  ];
+
+  if (req.fighterOneName && req.fighterTwoName && req.fighterOneStyle && req.fighterTwoStyle) {
+    prompt.push(
+      `Fighter one: ${req.fighterOneName} (${req.fighterOneStyle}).`,
+      `Fighter two: ${req.fighterTwoName} (${req.fighterTwoStyle}).`,
+    );
+  }
+
+  prompt.push('');
+
+  if (req.sourceImage && req.sourceMode === 'transform-scene') {
+    prompt.push(
+      `SOURCE IMAGE RULES:`,
+      `- The uploaded image is the actual place to transform into the arena.`,
+      `- Preserve the location's recognizable layout, architecture, major props, floor lines, horizon, and camera perspective.`,
+      `- Reinterpret the place into polished stylized 2D fighting-game background art, not a raw photo.`,
+      `- Do NOT ignore the supplied scene and replace it with a generic stage.`,
+      `- If the original photo does not show enough walkable foreground, extend the same location naturally toward the camera so the arena has a proper playable floor.`,
+      `- Remove or simplify any visible people so the final scene contains no foreground characters.`,
+      '',
+    );
+  }
+
+  if (req.referenceImages?.length) {
+    prompt.push(
+      `REFERENCE USAGE RULES:`,
+      `- Use any extra reference photos only to borrow color palette, fashion cues, attitude, and world-building inspiration.`,
+      `- Do NOT place the referenced people or any fighters in the scene.`,
+      '',
+    );
+  }
+
+  prompt.push(
     `COMPOSITION RULES:`,
     `- Produce a single widescreen 16:9 arena background.`,
     `- Side-on camera suitable for a 2D fighting game match.`,
     `- Leave the center lane visually readable for two fighters standing and moving.`,
-    `- Include a clear floor or ground plane along the bottom of the image.`,
+    `- The lower 25-35% of the image must read as continuous playable floor, ground, dock, street, platform, or arena surface from left to right.`,
+    `- Include a clear floor or ground plane along the bottom of the image with enough visible depth below the fighters.`,
+    `- Keep the middle-lower lane free of blocking props so the fighters do not look cramped or cut off.`,
     `- Rich layered background depth, strong atmosphere, and cinematic lighting.`,
     `- No text, no logos, no UI, no watermarks, no speech bubbles.`,
     `- No foreground characters, no crowd close-ups blocking the arena.`,
@@ -294,14 +332,21 @@ export async function geminiStageBackground(req: GeminiStageBackgroundRequest): 
     `STYLE RULES:`,
     `- High-quality stylized game art with bold silhouettes and readable background shapes.`,
     `- The stage should feel handcrafted, viral, and slightly exaggerated rather than generic concept art.`,
-  ].join('\n');
+  );
+
+  const finalPrompt = prompt.join('\n');
 
   console.log(`[GeminiApi] Generating stage background: ${req.stageLabel}...`);
-  const result = await callGemini(prompt, undefined, 'image/png', req.referenceImages);
+  const result = await callGemini(
+    finalPrompt,
+    req.sourceImage?.data,
+    req.sourceImage?.mime ?? 'image/png',
+    req.referenceImages,
+  );
   if (!result.imageBase64) throw new Error('Gemini stage background returned no image');
 
   return {
     imageBase64: result.imageBase64,
-    prompt,
+    prompt: finalPrompt,
   };
 }

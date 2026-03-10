@@ -3,9 +3,11 @@
  * 1. Chroma-key background removal (green #00FF00)
  * 2. For single images: crop to character bbox, pad to rect
  * 3. For sprite sheets: detect actual grid layout from image,
- *    remove bg per-frame, find union bbox across all frames,
- *    crop+scale each frame to a standard cell size, recompose into a clean grid
+ *    remove bg per-frame, normalize each frame with a pose-aware profile,
+ *    and recompose into a clean grid
  */
+
+import { getAnimationProfile, type AnimationProfile } from './AnimationProfiles';
 
 const ALPHA_THRESHOLD = 15;
 export const CELL_W = 192;
@@ -18,8 +20,9 @@ const GREEN_BRIGHT_MIN = 30;
 
 // ─── Single image processing (for reposed character) ─────────────────
 
-export async function cleanReposedImage(base64: string): Promise<string> {
+export async function cleanReposedImage(base64: string, profileName = 'idle'): Promise<string> {
   const img = await loadImg(`data:image/png;base64,${base64}`);
+  const profile = getAnimationProfile(profileName);
 
   const canvas = document.createElement('canvas');
   canvas.width = img.width;
@@ -41,10 +44,9 @@ export async function cleanReposedImage(base64: string): Promise<string> {
   const bbox = findBoundingBox(imageData);
   if (!bbox) return base64;
 
-  const cropped = cropCanvas(canvas, bbox);
-  const padded = padToRect(cropped, CELL_W, CELL_H);
+  const normalized = normalizeCanvasToCell(canvas, bbox, profile);
 
-  return padded.toDataURL('image/png').split(',')[1];
+  return normalized.canvas.toDataURL('image/png').split(',')[1];
 }
 
 // ─── Sprite sheet processing ─────────────────────────────────────────
@@ -65,9 +67,11 @@ export async function cleanSpriteSheet(
   expectedFrameCount: number,
   expectedGridCols: number,
   expectedGridRows: number,
+  animationName: string,
   maxScale?: number,
 ): Promise<CleanSheetResult> {
   const img = await loadImg(`data:image/png;base64,${base64}`);
+  const profile = getAnimationProfile(animationName);
 
   // Always trust the expected grid dimensions from our prompt to Gemini.
   // Grid detection from green lines is unreliable (character limbs, shadows,
@@ -105,6 +109,11 @@ export async function cleanSpriteSheet(
       lightBgRemove(data);
     }
     erodeAlphaEdge(data);
+    if (animationName === 'jump') {
+      removeDetachedComponents(data, 'largest');
+    } else {
+      removeDetachedComponents(data, 'conservative');
+    }
     ctx.putImageData(data, 0, 0);
   }
 
@@ -118,31 +127,31 @@ export async function cleanSpriteSheet(
   }
 
   const finalCount = rawFrames.length;
-
-  const unionBox = findUnionBBoxMulti(rawFrames);
-  if (!unionBox) {
+  const frameBBoxes = rawFrames.map((frame) => getCanvasBoundingBox(frame));
+  const populatedBoxes = frameBBoxes.filter((bbox): bbox is BBox => bbox != null);
+  if (populatedBoxes.length === 0) {
     return { base64, rawBase64: base64, gridCols, gridRows, frameCount: finalCount, frameW: srcFrameW, frameH: srcFrameH, usedScale: 1 };
   }
-
-  let scale = Math.min(CELL_W / unionBox.w, CELL_H / unionBox.h);
-  if (maxScale != null && scale > maxScale) scale = maxScale;
-  const drawW = Math.round(unionBox.w * scale);
-  const drawH = Math.round(unionBox.h * scale);
-  const offsetX = Math.round((CELL_W - drawW) / 2);
-  const offsetY = CELL_H - drawH;
+  const stableCenterXRaw = median(populatedBoxes.map((bbox) => bbox.x + bbox.w / 2));
+  const lockedScale = profile.lockScaleAcrossFrames
+    ? getLockedAnimationScale(populatedBoxes, profile, maxScale)
+    : undefined;
 
   const cleanFrames: HTMLCanvasElement[] = [];
-  for (const frame of rawFrames) {
-    const c = document.createElement('canvas');
-    c.width = CELL_W;
-    c.height = CELL_H;
-    const ctx = c.getContext('2d')!;
-    ctx.drawImage(
-      frame,
-      unionBox.x, unionBox.y, unionBox.w, unionBox.h,
-      offsetX, offsetY, drawW, drawH,
-    );
-    cleanFrames.push(c);
+  const usedScales: number[] = [];
+  for (let i = 0; i < rawFrames.length; i++) {
+    const bbox = frameBBoxes[i];
+    if (!bbox) {
+      const blank = document.createElement('canvas');
+      blank.width = CELL_W;
+      blank.height = CELL_H;
+      cleanFrames.push(blank);
+      continue;
+    }
+
+    const normalized = normalizeCanvasToCell(rawFrames[i], bbox, profile, maxScale, stableCenterXRaw, lockedScale);
+    usedScales.push(normalized.usedScale);
+    cleanFrames.push(normalized.canvas);
   }
 
   const outCols = computeGridCols(finalCount);
@@ -160,9 +169,10 @@ export async function cleanSpriteSheet(
   }
 
   const resultBase64 = outCanvas.toDataURL('image/png').split(',')[1];
+  const usedScale = usedScales.length > 0 ? median(usedScales) : 1;
   console.log(
     `[SpritePostProcess] Cleaned ${finalCount} frames: ${srcFrameW}x${srcFrameH} → ${CELL_W}x${CELL_H} ` +
-    `(grid ${gridCols}x${gridRows}, bg: ${bgIsGreen ? 'green' : 'light'}, union ${unionBox.w}x${unionBox.h}, scale ${scale.toFixed(2)})`
+    `(grid ${gridCols}x${gridRows}, anim ${animationName}, bg: ${bgIsGreen ? 'green' : 'light'}, target ${Math.round(profile.targetHeightRatio * 100)}%, scale ${usedScale.toFixed(2)})`
   );
 
   return {
@@ -173,7 +183,7 @@ export async function cleanSpriteSheet(
     frameCount: finalCount,
     frameW: CELL_W,
     frameH: CELL_H,
-    usedScale: scale,
+    usedScale,
   };
 }
 
@@ -534,9 +544,86 @@ function erodeAlphaEdge(data: ImageData): void {
   }
 }
 
+function removeDetachedComponents(data: ImageData, mode: 'largest' | 'conservative'): void {
+  const d = data.data;
+  const w = data.width;
+  const h = data.height;
+  const visited = new Uint8Array(w * h);
+  const components: number[][] = [];
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const start = y * w + x;
+      if (visited[start] || d[start * 4 + 3] <= ALPHA_THRESHOLD) continue;
+
+      visited[start] = 1;
+      const stack = [start];
+      const component: number[] = [];
+
+      while (stack.length > 0) {
+        const idx = stack.pop()!;
+        component.push(idx);
+
+        const cx = idx % w;
+        const cy = Math.floor(idx / w);
+        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+          const next = ny * w + nx;
+          if (visited[next] || d[next * 4 + 3] <= ALPHA_THRESHOLD) continue;
+          visited[next] = 1;
+          stack.push(next);
+        }
+      }
+
+      components.push(component);
+    }
+  }
+
+  if (components.length <= 1) return;
+
+  components.sort((a, b) => b.length - a.length);
+  const largest = components[0].length;
+  const total = components.reduce((sum, component) => sum + component.length, 0);
+  const keep = new Set<number>();
+
+  for (const idx of components[0]) keep.add(idx);
+
+  if (mode === 'conservative') {
+    const minPixels = Math.max(80, Math.round(largest * 0.12));
+    for (let i = 1; i < components.length; i++) {
+      const component = components[i];
+      if (component.length >= minPixels && component.length >= total * 0.06) {
+        for (const idx of component) keep.add(idx);
+      }
+    }
+  } else if (largest / total < 0.7) {
+    const minPixels = Math.max(120, Math.round(largest * 0.22));
+    for (let i = 1; i < components.length; i++) {
+      const component = components[i];
+      if (component.length >= minPixels) {
+        for (const idx of component) keep.add(idx);
+      }
+    }
+  }
+
+  for (let i = 0; i < visited.length; i++) {
+    if (d[i * 4 + 3] > 0 && !keep.has(i)) {
+      d[i * 4 + 3] = 0;
+    }
+  }
+}
+
 // ─── Shared helpers ──────────────────────────────────────────────────
 
 interface BBox { x: number; y: number; w: number; h: number }
+
+function getCanvasBoundingBox(canvas: HTMLCanvasElement): BBox | null {
+  const ctx = canvas.getContext('2d')!;
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return findBoundingBox(data);
+}
 
 function findBoundingBox(data: ImageData): BBox | null {
   const d = data.data;
@@ -561,44 +648,6 @@ function findBoundingBox(data: ImageData): BBox | null {
   return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
 }
 
-function findUnionBBoxMulti(frames: HTMLCanvasElement[]): BBox | null {
-  let minX = Infinity, minY = Infinity, maxX = 0, maxY = 0;
-  let found = false;
-
-  for (const frame of frames) {
-    const ctx = frame.getContext('2d')!;
-    const data = ctx.getImageData(0, 0, frame.width, frame.height);
-    const d = data.data;
-    const w = frame.width;
-    const h = frame.height;
-
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        if (d[(y * w + x) * 4 + 3] > ALPHA_THRESHOLD) {
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-          found = true;
-        }
-      }
-    }
-  }
-
-  if (!found) return null;
-
-  const marginX = Math.round((maxX - minX) * 0.04);
-  const marginY = Math.round((maxY - minY) * 0.04);
-  const w0 = frames[0].width;
-  const h0 = frames[0].height;
-  minX = Math.max(0, minX - marginX);
-  minY = Math.max(0, minY - marginY);
-  maxX = Math.min(w0 - 1, maxX + marginX);
-  maxY = Math.min(h0 - 1, maxY + marginY);
-
-  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
-}
-
 function cropCanvas(source: HTMLCanvasElement, bbox: BBox): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = bbox.w;
@@ -620,6 +669,67 @@ function padToRect(source: HTMLCanvasElement, w: number, h: number): HTMLCanvasE
   const dy = h - Math.round(h * 0.05) - drawH;
   ctx.drawImage(source, 0, 0, source.width, source.height, dx, dy, drawW, drawH);
   return c;
+}
+
+function normalizeCanvasToCell(
+  source: HTMLCanvasElement,
+  bbox: BBox,
+  profile: AnimationProfile,
+  maxScale?: number,
+  stableCenterXRaw?: number,
+  lockedScale?: number,
+): { canvas: HTMLCanvasElement; usedScale: number } {
+  const targetDrawH = CELL_H * profile.targetHeightRatio;
+  const targetDrawW = CELL_W * profile.targetWidthRatio;
+  let scale = lockedScale ?? Math.min(targetDrawH / bbox.h, targetDrawW / bbox.w);
+  if (maxScale != null && scale > maxScale) scale = maxScale;
+
+  const drawW = Math.round(bbox.w * scale);
+  const drawH = Math.round(bbox.h * scale);
+  const rawCenterX = stableCenterXRaw ?? (bbox.x + bbox.w / 2);
+  const baselineY = CELL_H * profile.baselineRatio;
+
+  let dx = Math.round(CELL_W / 2 - (rawCenterX - bbox.x) * scale);
+  let dy = Math.round(baselineY - drawH);
+
+  dx = clamp(dx, 0, CELL_W - drawW);
+  dy = clamp(dy, 0, CELL_H - drawH);
+
+  const c = document.createElement('canvas');
+  c.width = CELL_W;
+  c.height = CELL_H;
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(source, bbox.x, bbox.y, bbox.w, bbox.h, dx, dy, drawW, drawH);
+  return { canvas: c, usedScale: scale };
+}
+
+function getLockedAnimationScale(
+  boxes: BBox[],
+  profile: AnimationProfile,
+  maxScale?: number,
+): number {
+  const maxHeight = Math.max(...boxes.map((bbox) => bbox.h));
+  const maxWidth = Math.max(...boxes.map((bbox) => bbox.w));
+  let scale = Math.min(
+    (CELL_H * profile.targetHeightRatio) / maxHeight,
+    (CELL_W * profile.targetWidthRatio) / maxWidth,
+  );
+  if (maxScale != null && scale > maxScale) scale = maxScale;
+  return scale;
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  return sorted[mid];
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function loadImg(src: string): Promise<HTMLImageElement> {

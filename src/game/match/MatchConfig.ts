@@ -29,6 +29,8 @@ export interface MatchSceneData {
   p1PersonalityId?: FighterPersonalityId;
   p2PersonalityId?: FighterPersonalityId;
   stageId?: StageThemeId;
+  customStageKey?: string;
+  customStageLabel?: string;
   remix?: number;
 }
 
@@ -37,56 +39,56 @@ export const FIGHTER_PERSONALITIES: FighterPersonality[] = [
     id: 'balanced',
     label: 'BALANCED',
     blurb: 'Steady reads and low-risk pressure.',
-    aggression: 0.52,
-    patience: 0.55,
-    flair: 0.35,
-    zoning: 0.4,
-    reversal: 0.45,
+    aggression: 0.5,
+    patience: 0.58,
+    flair: 0.32,
+    zoning: 0.45,
+    reversal: 0.48,
     tempo: 0.5,
   },
   {
     id: 'brawler',
     label: 'BRAWLER',
     blurb: 'Walks forward and tries to overwhelm.',
-    aggression: 0.92,
-    patience: 0.2,
-    flair: 0.35,
-    zoning: 0.1,
-    reversal: 0.25,
-    tempo: 0.88,
+    aggression: 0.78,
+    patience: 0.28,
+    flair: 0.32,
+    zoning: 0.08,
+    reversal: 0.22,
+    tempo: 0.72,
   },
   {
     id: 'counter',
     label: 'COUNTER',
     blurb: 'Blocks, baits, and punishes hard.',
-    aggression: 0.42,
-    patience: 0.88,
+    aggression: 0.5,
+    patience: 0.82,
     flair: 0.12,
-    zoning: 0.3,
-    reversal: 0.92,
-    tempo: 0.32,
+    zoning: 0.28,
+    reversal: 0.86,
+    tempo: 0.44,
   },
   {
     id: 'zoner',
     label: 'ZONER',
     blurb: 'Keeps space and wins with timing.',
-    aggression: 0.3,
-    patience: 0.76,
-    flair: 0.22,
-    zoning: 0.96,
-    reversal: 0.42,
-    tempo: 0.4,
+    aggression: 0.36,
+    patience: 0.74,
+    flair: 0.2,
+    zoning: 0.92,
+    reversal: 0.46,
+    tempo: 0.48,
   },
   {
     id: 'showboat',
     label: 'SHOWBOAT',
     blurb: 'Jump-ins, risky swings, big moments.',
-    aggression: 0.72,
+    aggression: 0.68,
     patience: 0.22,
-    flair: 0.98,
-    zoning: 0.22,
-    reversal: 0.25,
-    tempo: 0.72,
+    flair: 0.95,
+    zoning: 0.18,
+    reversal: 0.24,
+    tempo: 0.68,
   },
 ];
 
@@ -95,7 +97,7 @@ export function getFighterPersonality(id?: FighterPersonalityId | null): Fighter
 }
 
 export function getDefaultPersonalityId(slotIndex: number): FighterPersonalityId {
-  return slotIndex === 0 ? 'brawler' : 'counter';
+  return slotIndex === 0 ? 'balanced' : 'balanced';
 }
 
 export function nextFighterPersonalityId(current: FighterPersonalityId): FighterPersonalityId {
@@ -114,7 +116,8 @@ export function buildMatchSeed(data: MatchSceneData): number {
     data.p2PhotoHash ?? data.p2Name ?? 'p2',
     data.p1PersonalityId ?? getDefaultPersonalityId(0),
     data.p2PersonalityId ?? getDefaultPersonalityId(1),
-    data.stageId ?? 'auto',
+    data.customStageKey ? 'photo-stage' : (data.stageId ?? 'auto'),
+    data.customStageKey ?? 'stage:none',
     String(remix),
   ];
 

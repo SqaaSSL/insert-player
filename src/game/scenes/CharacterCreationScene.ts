@@ -217,8 +217,8 @@ export class CharacterCreationScene extends Phaser.Scene {
 
     const LABELS: Record<string, string> = {
       idle: 'IDLE', walk: 'WALK',
-      high_punch: 'H.PUNCH', low_punch: 'L.PUNCH',
-      high_kick: 'H.KICK', low_kick: 'L.KICK',
+      high_punch: 'PUNCH', low_punch: 'C.PUNCH',
+      high_kick: 'KICK', low_kick: 'C.KICK',
       jump: 'JUMP', crouch: 'CROUCH',
       hit: 'HIT', ko: 'K.O.',
     };

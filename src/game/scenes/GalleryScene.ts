@@ -17,8 +17,8 @@ const W = GAME_WIDTH;
 const H = GAME_HEIGHT;
 
 const ANIM_LABELS: Record<string, string> = {
-  idle: 'IDLE', walk: 'WALK', high_punch: 'H.PUNCH', low_punch: 'L.PUNCH',
-  high_kick: 'H.KICK', low_kick: 'L.KICK', jump: 'JUMP', crouch: 'CROUCH',
+  idle: 'IDLE', walk: 'WALK', high_punch: 'PUNCH', low_punch: 'C.PUNCH',
+  high_kick: 'KICK', low_kick: 'C.KICK', jump: 'JUMP', crouch: 'CROUCH',
   hit: 'HIT', ko: 'K.O.',
 };
 

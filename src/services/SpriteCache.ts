@@ -28,6 +28,8 @@ interface CachedStageBackground {
   prompt: string;
   pngBlob: Blob;
   createdAt: number;
+  kind?: 'generated' | 'photo';
+  label?: string;
 }
 
 const CACHE_VERSION = 1;
@@ -171,11 +173,31 @@ export async function getCachedStageBackground(stageKey: string): Promise<Cached
   });
 }
 
+export async function getAllCachedStageBackgrounds(): Promise<CachedStageBackground[]> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_STAGES, 'readonly');
+    const req = tx.objectStore(STORE_STAGES).getAll();
+    req.onsuccess = () => resolve(req.result ?? []);
+    req.onerror = () => reject(req.error);
+  });
+}
+
 export async function setCachedStageBackground(stage: CachedStageBackground): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_STAGES, 'readwrite');
     tx.objectStore(STORE_STAGES).put(stage);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function deleteCachedStageBackground(stageKey: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_STAGES, 'readwrite');
+    tx.objectStore(STORE_STAGES).delete(stageKey);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
