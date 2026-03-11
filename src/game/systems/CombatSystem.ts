@@ -1,5 +1,5 @@
 import { Fighter } from '../fighters/Fighter.ts';
-import { FighterState } from '../constants.ts';
+import { FighterState, type AttackData } from '../constants.ts';
 
 export interface HitEvent {
   attacker: number;
@@ -8,36 +8,58 @@ export interface HitEvent {
   blocked: boolean;
 }
 
+interface PendingHit {
+  attacker: Fighter;
+  defender: Fighter;
+  attackData: AttackData;
+  blocked: boolean;
+}
+
 export class CombatSystem {
   resolve(p1: Fighter, p2: Fighter): HitEvent[] {
     const events: HitEvent[] = [];
+    const p1Hit = this.getPendingHit(p1, p2);
+    const p2Hit = this.getPendingHit(p2, p1);
 
-    this.checkHit(p1, p2, events);
-    this.checkHit(p2, p1, events);
+    if (p1Hit && p2Hit) {
+      this.applyHit(p1Hit, events);
+      this.applyHit(p2Hit, events);
+    } else if (p1Hit) {
+      this.applyHit(p1Hit, events);
+    } else if (p2Hit) {
+      this.applyHit(p2Hit, events);
+    }
     this.pushApart(p1, p2);
 
     return events;
   }
 
-  private checkHit(attacker: Fighter, defender: Fighter, events: HitEvent[]): void {
+  private getPendingHit(attacker: Fighter, defender: Fighter): PendingHit | null {
     const hitbox = attacker.getActiveHitbox();
-    if (!hitbox) return;
+    if (!hitbox) return null;
+    const attackData = attacker.getAttackData();
+    if (!attackData) return null;
 
     const hurtbox = defender.getHurtbox();
-    if (!this.aabbOverlap(hitbox, hurtbox)) return;
+    if (!this.aabbOverlap(hitbox, hurtbox)) return null;
 
-    attacker.attackHit = true;
+    return {
+      attacker,
+      defender,
+      attackData,
+      blocked: this.isBlocking(defender, attacker),
+    };
+  }
 
-    const atk = attacker.getAttackData()!;
-    const isBlocking = this.isBlocking(defender, attacker);
-
-    defender.takeDamage(atk, isBlocking);
+  private applyHit(hit: PendingHit, events: HitEvent[]): void {
+    hit.attacker.attackHit = true;
+    hit.defender.takeDamage(hit.attackData, hit.blocked);
 
     events.push({
-      attacker: attacker.playerIndex,
-      defender: defender.playerIndex,
-      damage: isBlocking ? Math.floor(atk.damage * 0.1) : atk.damage,
-      blocked: isBlocking,
+      attacker: hit.attacker.playerIndex,
+      defender: hit.defender.playerIndex,
+      damage: hit.blocked ? Math.floor(hit.attackData.damage * 0.1) : hit.attackData.damage,
+      blocked: hit.blocked,
     });
   }
 

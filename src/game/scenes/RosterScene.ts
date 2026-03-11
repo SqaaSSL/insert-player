@@ -94,6 +94,7 @@ export class RosterScene extends Phaser.Scene {
   private stageText!: Phaser.GameObjects.Text;
   private stageHintText!: Phaser.GameObjects.Text;
   private stageUploadBtn!: Phaser.GameObjects.Text;
+  private stageDownloadBtn!: Phaser.GameObjects.Text;
   private clearStageBtn!: Phaser.GameObjects.Text;
   private stagePreviewFrame!: Phaser.GameObjects.Graphics;
   private stagePreviewFill!: Phaser.GameObjects.Graphics;
@@ -489,8 +490,26 @@ export class RosterScene extends Phaser.Scene {
     this.stageUploadBtn.on("pointerout", () => this.stageUploadBtn.setColor("#ffd36d"));
     this.stageUploadBtn.on("pointerdown", () => this.openStageFileDialog());
 
+    this.stageDownloadBtn = this.add
+      .text(STAGE_PANEL_X, panelTop + 340, "SAVE STAGE PNG", {
+        fontFamily: FONT,
+        fontSize: "8px",
+        color: "#88ccff",
+        stroke: "#000000",
+        strokeThickness: 3,
+        backgroundColor: "#102038",
+        padding: { x: 10, y: 6 },
+      })
+      .setOrigin(0.5)
+      .setDepth(20)
+      .setInteractive({ useHandCursor: true })
+      .setVisible(false);
+    this.stageDownloadBtn.on("pointerover", () => this.stageDownloadBtn.setColor("#b8e6ff"));
+    this.stageDownloadBtn.on("pointerout", () => this.stageDownloadBtn.setColor("#88ccff"));
+    this.stageDownloadBtn.on("pointerdown", () => this.downloadCurrentStage());
+
     this.clearStageBtn = this.add
-      .text(STAGE_PANEL_X, panelTop + 340, "USE BUILT-IN / AUTO", {
+      .text(STAGE_PANEL_X, panelTop + 376, "USE BUILT-IN / AUTO", {
         fontFamily: FONT,
         fontSize: "8px",
         color: "#888888",
@@ -514,7 +533,7 @@ export class RosterScene extends Phaser.Scene {
     });
 
     this.add
-      .text(STAGE_PANEL_X, panelTop + 372, "ARROWS CYCLE BUILT-INS AND SAVED PHOTO STAGES", {
+      .text(STAGE_PANEL_X, panelTop + 410, "ARROWS CYCLE BUILT-INS AND SAVED PHOTO STAGES", {
         fontFamily: FONT,
         fontSize: "7px",
         color: "#777777",
@@ -582,6 +601,7 @@ export class RosterScene extends Phaser.Scene {
     if (current.kind === "photo") {
       this.stagePreviewMetaText.setText("FORGED PHOTO STAGE");
       this.stageUploadBtn.setText("RE-FORGE FROM PHOTO");
+      this.stageDownloadBtn.setVisible(true);
       this.clearStageBtn.setText("USE BUILT-IN / AUTO").setColor("#ff8888");
       this.stageDeleteBtn.setVisible(true);
     } else {
@@ -592,6 +612,7 @@ export class RosterScene extends Phaser.Scene {
           : "FORGE A PHOTO TO ADD CUSTOM ARENAS",
       );
       this.stageUploadBtn.setText("FORGE STAGE FROM PHOTO");
+      this.stageDownloadBtn.setVisible(false);
       this.clearStageBtn.setText("USE BUILT-IN / AUTO").setColor("#888888");
       this.stageDeleteBtn.setVisible(false);
     }
@@ -652,6 +673,17 @@ export class RosterScene extends Phaser.Scene {
       console.warn("[RosterScene] Failed to delete cached stage:", err);
       this.stagePreviewMetaText?.setText("FAILED TO DELETE STAGE");
     }
+  }
+
+  private downloadCurrentStage(): void {
+    const current = this.getCurrentStageOption();
+    if (!current || current.kind !== "photo" || !current.previewBlob) return;
+
+    const safeName = (current.label || "photo_stage")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gi, "_")
+      .replace(/^_+|_+$/g, "") || "photo_stage";
+    downloadBlob(current.previewBlob, `${safeName}.png`);
   }
 
   private async loadCachedPhotoStages(): Promise<void> {
@@ -1239,4 +1271,15 @@ export class RosterScene extends Phaser.Scene {
     this.input.keyboard?.off("keydown-DOWN", this.scrollRosterDown, this);
     this.stageFileInput?.remove();
   }
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
