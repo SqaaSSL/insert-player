@@ -79,9 +79,11 @@ const PROFILES: Record<string, AnimationProfile> = {
     targetWidthRatio: 0.8,
     baselineRatio: 0.95,
     promptRules: [
+      'This jump is exactly four key poses: anticipation, lift-off, apex, and landing.',
       'Keep the character the same apparent size as the standing pose in every frame.',
       'Do not animate the character physically traveling upward inside the frame.',
       'The game engine handles vertical movement. Only show the pose progression of anticipation, airborne posture, and landing.',
+      'Every frame must stay inside its own cell with margin on the left and right. Never let the body cross a cell boundary.',
       'Each frame must contain exactly one complete character silhouette. No duplicate limbs, no echo trails, and no detached body fragments.',
     ],
   },
@@ -104,6 +106,9 @@ const PROFILES: Record<string, AnimationProfile> = {
     promptRules: [
       'This is a grounded hit reaction only, not an aerial launch.',
       'The character stays at full size with no camera zoom change.',
+      'Use exactly four readable key poses: impact, recoil, stagger, and recovery.',
+      'Keep the full body visible in each frame with no cropping and no frame-to-frame layout shifts.',
+      'Each frame must contain exactly one complete character silhouette. No detached limbs or partial bodies.',
     ],
   },
   ko: {

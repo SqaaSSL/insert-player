@@ -3,12 +3,18 @@ import { GAME_WIDTH, GAME_HEIGHT } from '../constants.ts';
 import {
   getAllCachedMetas,
   getAllSpritesForHash,
+  getAllCachedStageBackgrounds,
   deleteCharacter,
+  deleteCachedStageBackground,
+  renameCharacter,
+  renameCachedStageBackground,
   CACHE_VERSION,
   type CachedMeta,
   type CachedSprite,
+  type CachedStageBackground,
 } from '../../services/SpriteCache.ts';
 import { getAnimationList, rebuildCharacter, retryAnimation, retrySideView, retryCrouchView, type StatusCallback } from '../../services/CharacterPipeline.ts';
+import { createDirectPhotoStage, createPhotoStage } from '../../services/StageBackgroundService.ts';
 import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 
 const FONT = '"Press Start 2P", monospace';
@@ -44,24 +50,35 @@ const GRID_COLS = 2;
 const PREVIEW_X = 785;
 const PREVIEW_Y = 290;
 const PREVIEW_SIZE = 280;
+const STAGE_PREVIEW_X = W / 2;
+const STAGE_PREVIEW_Y = 320;
+const STAGE_PREVIEW_W = 660;
+const STAGE_PREVIEW_H = 320;
 
 const BTN_Y = H - 26;
 
 export class GalleryScene extends Phaser.Scene {
+  private activeTab: 'characters' | 'stages' = 'characters';
   private metas: CachedMeta[] = [];
   private sprites: CachedSprite[] = [];
+  private stages: CachedStageBackground[] = [];
   private currentIndex = 0;
+  private currentStageIndex = 0;
   private selectedAnimIndex = 0;
   private transitioning = false;
 
   private dynamicObjects: Phaser.GameObjects.GameObject[] = [];
 
   private counterText!: Phaser.GameObjects.Text;
+  private titleText!: Phaser.GameObjects.Text;
+  private charactersTabBtn!: Phaser.GameObjects.Text;
+  private stagesTabBtn!: Phaser.GameObjects.Text;
   private nameText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
   private infoText!: Phaser.GameObjects.Text;
   private emptyGroup!: Phaser.GameObjects.Container;
   private contentGroup!: Phaser.GameObjects.Container;
+  private stageGroup!: Phaser.GameObjects.Container;
 
   private bigPreviewSprite: Phaser.GameObjects.Sprite | null = null;
   private bigPreviewImage: Phaser.GameObjects.Image | null = null;
@@ -77,8 +94,31 @@ export class GalleryScene extends Phaser.Scene {
   private currentPreviewAnimName = '';
   private thumbBlobs: { label: string; blob: Blob }[] = [];
 
+  private stageNameText!: Phaser.GameObjects.Text;
+  private stageInfoText!: Phaser.GameObjects.Text;
+  private stageMetaText!: Phaser.GameObjects.Text;
+  private stagePreviewLabelText!: Phaser.GameObjects.Text;
+  private stagePreviewImage: Phaser.GameObjects.Image | null = null;
+  private stagePreviewTextureKey?: string;
+  private stagePrevBtn!: Phaser.GameObjects.Text;
+  private stageNextBtn!: Phaser.GameObjects.Text;
+  private stageDownloadBtn!: Phaser.GameObjects.Text;
+  private stageRenameBtn!: Phaser.GameObjects.Text;
+  private stageDeleteBtn!: Phaser.GameObjects.Text;
+  private stageForgeBtn!: Phaser.GameObjects.Text;
+  private stageDirectBtn!: Phaser.GameObjects.Text;
+  private openRosterBtn!: Phaser.GameObjects.Text;
+
   private fileInput!: HTMLInputElement;
+  private stageFileInput!: HTMLInputElement;
   private nameInput!: HTMLInputElement;
+  private stageFileMode: 'forge' | 'direct' = 'forge';
+  private prevBtn!: Phaser.GameObjects.Text;
+  private createBtn!: Phaser.GameObjects.Text;
+  private nextBtn!: Phaser.GameObjects.Text;
+  private renameBtn!: Phaser.GameObjects.Text;
+  private rebuildBtn!: Phaser.GameObjects.Text;
+  private deleteBtn!: Phaser.GameObjects.Text;
 
   constructor() {
     super({ key: 'GalleryScene' });
@@ -87,19 +127,23 @@ export class GalleryScene extends Phaser.Scene {
   async create(): Promise<void> {
     this.transitioning = false;
     this.currentIndex = 0;
+    this.currentStageIndex = 0;
     this.selectedAnimIndex = 0;
     this.dynamicObjects = [];
+    this.activeTab = 'characters';
 
     this.drawBackground();
     this.createHeader();
     this.createEmptyState();
     this.createContentLayout();
+    this.createStageLayout();
     this.createBottomUI();
-    this.createFileInput();
+    this.createFileInputs();
     this.setupInput();
     this.cameras.main.fadeIn(300, 0, 0, 0);
 
-    await this.loadCharacters();
+    await Promise.all([this.loadCharacters(), this.loadStages()]);
+    this.refreshActiveTab();
   }
 
   // ─── Background ──────────────────────────────────────────────
@@ -122,7 +166,7 @@ export class GalleryScene extends Phaser.Scene {
   // ─── Header ──────────────────────────────────────────────────
 
   private createHeader(): void {
-    this.add.text(W / 2, HEADER_Y, 'FIGHTER GALLERY', {
+    this.titleText = this.add.text(W / 2, HEADER_Y, 'GALLERY', {
       fontFamily: FONT, fontSize: '20px', color: '#ffcc00',
       stroke: '#000000', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(10);
@@ -130,6 +174,20 @@ export class GalleryScene extends Phaser.Scene {
     this.counterText = this.add.text(W / 2, COUNTER_Y, '', {
       fontFamily: FONT, fontSize: '8px', color: '#888888',
     }).setOrigin(0.5).setDepth(10);
+
+    this.charactersTabBtn = this.add.text(W / 2 - 70, 62, 'CHARACTERS', {
+      fontFamily: FONT, fontSize: '8px', color: '#ffffff',
+      stroke: '#000000', strokeThickness: 3,
+      backgroundColor: '#291110', padding: { x: 10, y: 6 },
+    }).setOrigin(0.5).setDepth(10).setInteractive({ useHandCursor: true });
+    this.charactersTabBtn.on('pointerdown', () => this.switchTab('characters'));
+
+    this.stagesTabBtn = this.add.text(W / 2 + 70, 62, 'STAGES', {
+      fontFamily: FONT, fontSize: '8px', color: '#888888',
+      stroke: '#000000', strokeThickness: 3,
+      backgroundColor: '#111827', padding: { x: 10, y: 6 },
+    }).setOrigin(0.5).setDepth(10).setInteractive({ useHandCursor: true });
+    this.stagesTabBtn.on('pointerdown', () => this.switchTab('stages'));
   }
 
   // ─── Empty State ─────────────────────────────────────────────
@@ -172,9 +230,10 @@ export class GalleryScene extends Phaser.Scene {
 
     for (let i = 0; i < thumbCount; i++) {
       const ty = THUMB_START_Y + i * THUMB_STEP;
-      this.add.text(THUMB_COL_X, ty + THUMB_LABEL_OFFSET, thumbLabels[i], {
+      const thumbLabel = this.add.text(THUMB_COL_X, ty + THUMB_LABEL_OFFSET, thumbLabels[i], {
         fontFamily: FONT, fontSize: '5px', color: '#666666',
       }).setOrigin(0.5).setDepth(10);
+      this.contentGroup.add(thumbLabel);
 
       const box = this.add.graphics().setDepth(8);
       const half = THUMB_SIZE / 2;
@@ -182,11 +241,13 @@ export class GalleryScene extends Phaser.Scene {
       box.fillRoundedRect(THUMB_COL_X - half, ty - half, THUMB_SIZE, THUMB_SIZE, 5);
       box.lineStyle(1, 0x333366, 0.6);
       box.strokeRoundedRect(THUMB_COL_X - half, ty - half, THUMB_SIZE, THUMB_SIZE, 5);
+      this.contentGroup.add(box);
 
       const hitArea = this.add.rectangle(THUMB_COL_X, ty, THUMB_SIZE, THUMB_SIZE)
         .setInteractive({ useHandCursor: true }).setAlpha(0.001).setDepth(15);
       const thumbIdx = i;
       hitArea.on('pointerdown', () => this.selectThumb(thumbIdx));
+      this.contentGroup.add(hitArea);
     }
 
     // --- Center column: character info + animation grid ---
@@ -195,19 +256,23 @@ export class GalleryScene extends Phaser.Scene {
       stroke: ACCENT, strokeThickness: 3,
       wordWrap: { width: 380 },
     }).setOrigin(0, 0).setDepth(10);
+    this.contentGroup.add(this.nameText);
 
     this.statusText = this.add.text(INFO_X, INFO_TOP + 22, '', {
       fontFamily: FONT, fontSize: '8px', color: '#44ff44',
     }).setOrigin(0, 0).setDepth(10);
+    this.contentGroup.add(this.statusText);
 
     this.infoText = this.add.text(INFO_X, INFO_TOP + 40, '', {
       fontFamily: FONT, fontSize: '6px', color: '#aaaaaa',
       lineSpacing: 6, wordWrap: { width: 380 },
     }).setOrigin(0, 0).setDepth(10);
+    this.contentGroup.add(this.infoText);
 
     // Animation selector grid
     this.animGridContainer = this.add.container(0, 0).setDepth(10);
     this.buildAnimGrid();
+    this.contentGroup.add(this.animGridContainer);
 
     // --- Right column: sprite preview ---
     const previewBg = this.add.graphics().setDepth(8);
@@ -216,10 +281,12 @@ export class GalleryScene extends Phaser.Scene {
     previewBg.fillRoundedRect(PREVIEW_X - phalf, PREVIEW_Y - phalf, PREVIEW_SIZE, PREVIEW_SIZE, 8);
     previewBg.lineStyle(2, 0x333366);
     previewBg.strokeRoundedRect(PREVIEW_X - phalf, PREVIEW_Y - phalf, PREVIEW_SIZE, PREVIEW_SIZE, 8);
+    this.contentGroup.add(previewBg);
 
     this.animNameText = this.add.text(PREVIEW_X, PREVIEW_Y - phalf - 14, 'SELECT ANIMATION', {
       fontFamily: FONT, fontSize: '7px', color: '#888888',
     }).setOrigin(0.5).setDepth(10);
+    this.contentGroup.add(this.animNameText);
 
     this.downloadBtn = this.add.text(PREVIEW_X - 90, PREVIEW_Y + phalf + 14, 'SAVE PNG', {
       fontFamily: FONT, fontSize: '6px', color: '#44aaff',
@@ -228,6 +295,7 @@ export class GalleryScene extends Phaser.Scene {
     this.downloadBtn.on('pointerover', () => this.downloadBtn.setColor('#88ccff'));
     this.downloadBtn.on('pointerout', () => this.downloadBtn.setColor('#44aaff'));
     this.downloadBtn.on('pointerdown', () => this.downloadCurrentSprite());
+    this.contentGroup.add(this.downloadBtn);
 
     this.downloadRawBtn = this.add.text(PREVIEW_X - 30, PREVIEW_Y + phalf + 14, 'SAVE RAW', {
       fontFamily: FONT, fontSize: '6px', color: '#aa44ff',
@@ -236,6 +304,7 @@ export class GalleryScene extends Phaser.Scene {
     this.downloadRawBtn.on('pointerover', () => this.downloadRawBtn.setColor('#cc88ff'));
     this.downloadRawBtn.on('pointerout', () => this.downloadRawBtn.setColor('#aa44ff'));
     this.downloadRawBtn.on('pointerdown', () => this.downloadRawSprite());
+    this.contentGroup.add(this.downloadRawBtn);
 
     this.downloadGifBtn = this.add.text(PREVIEW_X + 30, PREVIEW_Y + phalf + 14, 'SAVE GIF', {
       fontFamily: FONT, fontSize: '6px', color: '#44ff88',
@@ -244,6 +313,7 @@ export class GalleryScene extends Phaser.Scene {
     this.downloadGifBtn.on('pointerover', () => this.downloadGifBtn.setColor('#88ffbb'));
     this.downloadGifBtn.on('pointerout', () => this.downloadGifBtn.setColor('#44ff88'));
     this.downloadGifBtn.on('pointerdown', () => this.downloadGif());
+    this.contentGroup.add(this.downloadGifBtn);
 
     this.downloadAllBtn = this.add.text(PREVIEW_X + 90, PREVIEW_Y + phalf + 14, 'SAVE ALL', {
       fontFamily: FONT, fontSize: '6px', color: '#aaaa44',
@@ -252,6 +322,7 @@ export class GalleryScene extends Phaser.Scene {
     this.downloadAllBtn.on('pointerover', () => this.downloadAllBtn.setColor('#dddd88'));
     this.downloadAllBtn.on('pointerout', () => this.downloadAllBtn.setColor('#aaaa44'));
     this.downloadAllBtn.on('pointerdown', () => this.downloadAllSprites());
+    this.contentGroup.add(this.downloadAllBtn);
 
     this.retryAnimBtn = this.add.text(PREVIEW_X, PREVIEW_Y + phalf + 28, '\u21bb RETRY THIS ANIMATION', {
       fontFamily: FONT, fontSize: '6px', color: '#ff8844',
@@ -260,6 +331,143 @@ export class GalleryScene extends Phaser.Scene {
     this.retryAnimBtn.on('pointerover', () => this.retryAnimBtn.setColor('#ffbb88'));
     this.retryAnimBtn.on('pointerout', () => this.retryAnimBtn.setColor('#ff8844'));
     this.retryAnimBtn.on('pointerdown', () => this.retryCurrentAnimation());
+    this.contentGroup.add(this.retryAnimBtn);
+  }
+
+  private createStageLayout(): void {
+    this.stageGroup = this.add.container(0, 0).setDepth(21).setVisible(false);
+
+    const previewW = STAGE_PREVIEW_W;
+    const previewH = STAGE_PREVIEW_H;
+    const previewX = STAGE_PREVIEW_X;
+    const previewY = STAGE_PREVIEW_Y;
+
+    this.stageNameText = this.add.text(W / 2, 96, '', {
+      fontFamily: FONT, fontSize: '14px', color: '#ffffff',
+      stroke: '#44aaff', strokeThickness: 3, wordWrap: { width: 820 }, align: 'center',
+    }).setOrigin(0.5, 0).setDepth(10);
+    this.stageGroup.add(this.stageNameText);
+
+    this.stageInfoText = this.add.text(W / 2, 124, '', {
+      fontFamily: FONT, fontSize: '8px', color: '#66ddff',
+      wordWrap: { width: 760 }, lineSpacing: 4, align: 'center',
+    }).setOrigin(0.5, 0).setDepth(10);
+    this.stageGroup.add(this.stageInfoText);
+
+    this.stageMetaText = this.add.text(W / 2, 148, '', {
+      fontFamily: FONT, fontSize: '6px', color: '#aaaaaa',
+      wordWrap: { width: 760 }, lineSpacing: 6, align: 'center',
+    }).setOrigin(0.5, 0).setDepth(10);
+    this.stageGroup.add(this.stageMetaText);
+
+    const previewBg = this.add.graphics().setDepth(8);
+    previewBg.fillStyle(0x0a0a1a, 0.92);
+    previewBg.fillRoundedRect(previewX - previewW / 2, previewY - previewH / 2, previewW, previewH, 10);
+    previewBg.lineStyle(2, 0x335577, 0.9);
+    previewBg.strokeRoundedRect(previewX - previewW / 2, previewY - previewH / 2, previewW, previewH, 10);
+    this.stageGroup.add(previewBg);
+
+    this.stagePreviewLabelText = this.add.text(previewX, 172, 'SELECT STAGE', {
+      fontFamily: FONT, fontSize: '7px', color: '#888888',
+    }).setOrigin(0.5).setDepth(10);
+    this.stageGroup.add(this.stagePreviewLabelText);
+
+    this.stagePrevBtn = this.add.text(previewX - previewW / 2 + 16, previewY, '<', {
+      fontFamily: FONT, fontSize: '16px', color: '#ffe8aa',
+      stroke: '#000000', strokeThickness: 4,
+      backgroundColor: '#23160d',
+      padding: { x: 8, y: 10 },
+    }).setOrigin(0.5).setDepth(12).setInteractive({ useHandCursor: true });
+    this.stagePrevBtn.on('pointerover', () => this.stagePrevBtn.setColor('#fff4cc'));
+    this.stagePrevBtn.on('pointerout', () => this.stagePrevBtn.setColor('#ffe8aa'));
+    this.stagePrevBtn.on('pointerdown', () => this.navigateStage(-1));
+    this.stageGroup.add(this.stagePrevBtn);
+
+    this.stageNextBtn = this.add.text(previewX + previewW / 2 - 16, previewY, '>', {
+      fontFamily: FONT, fontSize: '16px', color: '#ffe8aa',
+      stroke: '#000000', strokeThickness: 4,
+      backgroundColor: '#23160d',
+      padding: { x: 8, y: 10 },
+    }).setOrigin(0.5).setDepth(12).setInteractive({ useHandCursor: true });
+    this.stageNextBtn.on('pointerover', () => this.stageNextBtn.setColor('#fff4cc'));
+    this.stageNextBtn.on('pointerout', () => this.stageNextBtn.setColor('#ffe8aa'));
+    this.stageNextBtn.on('pointerdown', () => this.navigateStage(1));
+    this.stageGroup.add(this.stageNextBtn);
+
+    const actionPanel = this.add.graphics().setDepth(9);
+    actionPanel.fillStyle(0x081018, 0.95);
+    actionPanel.fillRoundedRect(previewX - 300, 498, 600, 48, 10);
+    actionPanel.lineStyle(2, 0x223a55, 0.9);
+    actionPanel.strokeRoundedRect(previewX - 300, 498, 600, 48, 10);
+    this.stageGroup.add(actionPanel);
+
+    this.stageDownloadBtn = this.add.text(previewX - 190, 522, 'SAVE PNG', {
+      fontFamily: FONT, fontSize: '9px', color: '#e4f6ff',
+      stroke: '#000000', strokeThickness: 2,
+      backgroundColor: '#1a4f78',
+      padding: { x: 16, y: 10 },
+    }).setOrigin(0.5).setDepth(12).setInteractive({ useHandCursor: true });
+    this.stageDownloadBtn.on('pointerover', () => this.stageDownloadBtn.setColor('#d4efff'));
+    this.stageDownloadBtn.on('pointerout', () => this.stageDownloadBtn.setColor('#9ed8ff'));
+    this.stageDownloadBtn.on('pointerdown', () => this.downloadCurrentStageFromGallery());
+    this.stageGroup.add(this.stageDownloadBtn);
+
+    this.stageRenameBtn = this.add.text(previewX, 522, 'RENAME', {
+      fontFamily: FONT, fontSize: '9px', color: '#fff0d4',
+      stroke: '#000000', strokeThickness: 2,
+      backgroundColor: '#6a3a18',
+      padding: { x: 16, y: 10 },
+    }).setOrigin(0.5).setDepth(12).setInteractive({ useHandCursor: true });
+    this.stageRenameBtn.on('pointerover', () => this.stageRenameBtn.setColor('#ffebc7'));
+    this.stageRenameBtn.on('pointerout', () => this.stageRenameBtn.setColor('#ffd8a0'));
+    this.stageRenameBtn.on('pointerdown', () => this.renameCurrentStageFromGallery());
+    this.stageGroup.add(this.stageRenameBtn);
+
+    this.stageDeleteBtn = this.add.text(previewX + 190, 522, 'DELETE', {
+      fontFamily: FONT, fontSize: '9px', color: '#ffe0e0',
+      stroke: '#000000', strokeThickness: 2,
+      backgroundColor: '#6a1c1c',
+      padding: { x: 16, y: 10 },
+    }).setOrigin(0.5).setDepth(12).setInteractive({ useHandCursor: true });
+    this.stageDeleteBtn.on('pointerover', () => this.stageDeleteBtn.setColor('#ffc7c7'));
+    this.stageDeleteBtn.on('pointerout', () => this.stageDeleteBtn.setColor('#ff9d9d'));
+    this.stageDeleteBtn.on('pointerdown', () => this.deleteCurrentStageFromGallery());
+    this.stageGroup.add(this.stageDeleteBtn);
+
+    this.stageForgeBtn = this.add.text(previewX - 120, 542, 'FORGE WITH GEMINI', {
+      fontFamily: FONT, fontSize: '7px', color: '#f4ffd2',
+      stroke: '#000000', strokeThickness: 2,
+      backgroundColor: '#2a5a18',
+      padding: { x: 16, y: 8 },
+    }).setOrigin(0.5).setDepth(12).setInteractive({ useHandCursor: true });
+    this.stageForgeBtn.on('pointerover', () => this.stageForgeBtn.setColor('#ffffff'));
+    this.stageForgeBtn.on('pointerout', () => this.stageForgeBtn.setColor('#f4ffd2'));
+    this.stageForgeBtn.on('pointerdown', () => this.createNewStage('forge'));
+    this.stageGroup.add(this.stageForgeBtn);
+
+    this.stageDirectBtn = this.add.text(previewX + 120, 542, 'USE PHOTO AS-IS', {
+      fontFamily: FONT, fontSize: '7px', color: '#d9f6ff',
+      stroke: '#000000', strokeThickness: 2,
+      backgroundColor: '#184c66',
+      padding: { x: 16, y: 8 },
+    }).setOrigin(0.5).setDepth(12).setInteractive({ useHandCursor: true });
+    this.stageDirectBtn.on('pointerover', () => this.stageDirectBtn.setColor('#ffffff'));
+    this.stageDirectBtn.on('pointerout', () => this.stageDirectBtn.setColor('#d9f6ff'));
+    this.stageDirectBtn.on('pointerdown', () => this.createNewStage('direct'));
+    this.stageGroup.add(this.stageDirectBtn);
+
+    this.openRosterBtn = this.add.text(previewX, 574, 'OPEN MATCH SETUP', {
+      fontFamily: FONT, fontSize: '7px', color: '#d2ffd4',
+      stroke: '#000000', strokeThickness: 2,
+      backgroundColor: '#17321a',
+      padding: { x: 12, y: 6 },
+    }).setOrigin(0.5).setDepth(12).setInteractive({ useHandCursor: true });
+    this.openRosterBtn.on('pointerover', () => this.openRosterBtn.setColor('#d3ffd4'));
+    this.openRosterBtn.on('pointerout', () => this.openRosterBtn.setColor('#a8ffab'));
+    this.openRosterBtn.on('pointerdown', () => {
+      this.scene.start('RosterScene');
+    });
+    this.stageGroup.add(this.openRosterBtn);
   }
 
   private buildAnimGrid(): void {
@@ -307,57 +515,73 @@ export class GalleryScene extends Phaser.Scene {
     backBtn.on('pointerout', () => backBtn.setColor('#aaaaaa'));
     backBtn.on('pointerdown', () => this.goBack());
 
-    const prevBtn = this.add.text(W / 2 - 120, BTN_Y, '< PREV', {
+    this.prevBtn = this.add.text(W / 2 - 180, BTN_Y, '< PREV', {
       fontFamily: FONT, fontSize: '10px', color: '#44aaff',
       stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
-    prevBtn.on('pointerover', () => prevBtn.setColor('#88ccff'));
-    prevBtn.on('pointerout', () => prevBtn.setColor('#44aaff'));
-    prevBtn.on('pointerdown', () => this.navigate(-1));
+    this.prevBtn.on('pointerover', () => this.prevBtn.setColor('#88ccff'));
+    this.prevBtn.on('pointerout', () => this.prevBtn.setColor('#44aaff'));
+    this.prevBtn.on('pointerdown', () => this.navigate(-1));
 
-    const createBtn = this.add.text(W / 2, BTN_Y, '+ CREATE', {
+    this.createBtn = this.add.text(W / 2 - 60, BTN_Y, '+ CREATE', {
       fontFamily: FONT, fontSize: '10px', color: '#44ff44',
       stroke: '#000000', strokeThickness: 3,
       backgroundColor: '#0a2a0a',
       padding: { x: 12, y: 6 },
     }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
-    createBtn.on('pointerover', () => createBtn.setColor('#88ff88'));
-    createBtn.on('pointerout', () => createBtn.setColor('#44ff44'));
-    createBtn.on('pointerdown', () => this.createNewFighter());
+    this.createBtn.on('pointerover', () => this.createBtn.setColor('#88ff88'));
+    this.createBtn.on('pointerout', () => this.createBtn.setColor('#44ff44'));
+    this.createBtn.on('pointerdown', () => this.createNewFighter());
 
-    const nextBtn = this.add.text(W / 2 + 120, BTN_Y, 'NEXT >', {
+    this.nextBtn = this.add.text(W / 2 + 60, BTN_Y, 'NEXT >', {
       fontFamily: FONT, fontSize: '10px', color: '#44aaff',
       stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
-    nextBtn.on('pointerover', () => nextBtn.setColor('#88ccff'));
-    nextBtn.on('pointerout', () => nextBtn.setColor('#44aaff'));
-    nextBtn.on('pointerdown', () => this.navigate(1));
+    this.nextBtn.on('pointerover', () => this.nextBtn.setColor('#88ccff'));
+    this.nextBtn.on('pointerout', () => this.nextBtn.setColor('#44aaff'));
+    this.nextBtn.on('pointerdown', () => this.navigate(1));
 
-    const rebuildBtn = this.add.text(W - 150, BTN_Y, 'REBUILD', {
+    this.renameBtn = this.add.text(W / 2 + 180, BTN_Y, 'RENAME', {
+      fontFamily: FONT, fontSize: '10px', color: '#ffcc88',
+      stroke: '#000000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
+    this.renameBtn.on('pointerover', () => this.renameBtn.setColor('#ffe0b0'));
+    this.renameBtn.on('pointerout', () => this.renameBtn.setColor('#ffcc88'));
+    this.renameBtn.on('pointerdown', () => {
+      void this.renameCurrentCharacter();
+    });
+
+    this.rebuildBtn = this.add.text(W - 150, BTN_Y, 'REBUILD', {
       fontFamily: FONT, fontSize: '10px', color: '#ffaa00',
       stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
-    rebuildBtn.on('pointerover', () => rebuildBtn.setColor('#ffcc44'));
-    rebuildBtn.on('pointerout', () => rebuildBtn.setColor('#ffaa00'));
-    rebuildBtn.on('pointerdown', () => this.rebuildCurrent(rebuildBtn));
+    this.rebuildBtn.on('pointerover', () => this.rebuildBtn.setColor('#ffcc44'));
+    this.rebuildBtn.on('pointerout', () => this.rebuildBtn.setColor('#ffaa00'));
+    this.rebuildBtn.on('pointerdown', () => this.rebuildCurrent(this.rebuildBtn));
 
-    const deleteBtn = this.add.text(W - 60, BTN_Y, 'DELETE', {
+    this.deleteBtn = this.add.text(W - 60, BTN_Y, 'DELETE', {
       fontFamily: FONT, fontSize: '10px', color: ACCENT,
       stroke: '#000000', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
-    deleteBtn.on('pointerover', () => deleteBtn.setColor('#ff8888'));
-    deleteBtn.on('pointerout', () => deleteBtn.setColor(ACCENT));
-    deleteBtn.on('pointerdown', () => this.deleteCurrent());
+    this.deleteBtn.on('pointerover', () => this.deleteBtn.setColor('#ff8888'));
+    this.deleteBtn.on('pointerout', () => this.deleteBtn.setColor(ACCENT));
+    this.deleteBtn.on('pointerdown', () => this.deleteCurrent());
   }
 
   // ─── File Input (for create) ─────────────────────────────────
 
-  private createFileInput(): void {
+  private createFileInputs(): void {
     this.fileInput = document.createElement('input');
     this.fileInput.type = 'file';
     this.fileInput.accept = 'image/*';
     this.fileInput.style.display = 'none';
     document.body.appendChild(this.fileInput);
+
+    this.stageFileInput = document.createElement('input');
+    this.stageFileInput.type = 'file';
+    this.stageFileInput.accept = 'image/png,image/jpeg,image/webp';
+    this.stageFileInput.style.display = 'none';
+    document.body.appendChild(this.stageFileInput);
 
     this.nameInput = document.createElement('input');
     this.nameInput.type = 'text';
@@ -370,33 +594,18 @@ export class GalleryScene extends Phaser.Scene {
       const file = this.fileInput.files?.[0];
       if (!file) return;
       this.fileInput.value = '';
+      void this.beginCreateCharacter(file);
+    });
 
-      this.nameInput.style.display = 'block';
-      this.nameInput.value = '';
-      this.nameInput.focus();
-
-      const handleName = () => {
-        const name = this.nameInput.value.trim() || 'Fighter';
-        this.nameInput.style.display = 'none';
-        this.nameInput.removeEventListener('keydown', onKeydown);
-        this.cleanupHTML();
-        this.cameras.main.fadeOut(300, 0, 0, 0);
-        this.cameras.main.once('camerafadeoutcomplete', () => {
-          this.scene.start('CharacterCreationScene', {
-            file, characterName: name, slotIndex: 0, returnScene: 'GalleryScene',
-          });
-        });
-      };
-
-      const onKeydown = (e: KeyboardEvent) => {
-        if (e.key === 'Enter') handleName();
-        if (e.key === 'Escape') {
-          this.nameInput.style.display = 'none';
-          this.nameInput.removeEventListener('keydown', onKeydown);
-        }
-        e.stopPropagation();
-      };
-      this.nameInput.addEventListener('keydown', onKeydown);
+    this.stageFileInput.addEventListener('change', () => {
+      const file = this.stageFileInput.files?.[0];
+      if (!file) return;
+      this.stageFileInput.value = '';
+      if (this.stageFileMode === 'direct') {
+        void this.beginCreateDirectStage(file);
+      } else {
+        void this.beginCreateStage(file);
+      }
     });
   }
 
@@ -404,14 +613,83 @@ export class GalleryScene extends Phaser.Scene {
     this.fileInput.click();
   }
 
+  private createNewStage(mode: 'forge' | 'direct'): void {
+    this.stageFileMode = mode;
+    this.stageFileInput.click();
+  }
+
+  private async beginCreateCharacter(file: File): Promise<void> {
+    const name = await this.promptForText('', 'Fighter name...', 20);
+    if (!name) return;
+    this.cameras.main.fadeOut(300, 0, 0, 0);
+    this.cameras.main.once('camerafadeoutcomplete', () => {
+      this.scene.start('CharacterCreationScene', {
+        file, characterName: name, slotIndex: 0, returnScene: 'GalleryScene',
+      });
+    });
+  }
+
+  private async beginCreateStage(file: File): Promise<void> {
+    this.stagePreviewLabelText.setText('FORGING STAGE...').setColor('#ffd36d');
+    this.stageInfoText.setText('RUNNING GEMINI ON YOUR PHOTO. THIS CAN TAKE A MOMENT.');
+    this.setStageCreateButtonsEnabled(false);
+
+    try {
+      const cached = await createPhotoStage(file, file.name);
+      await this.loadStages();
+      const nextIndex = this.stages.findIndex((stage) => stage.stageKey === cached.stageKey);
+      if (nextIndex >= 0) this.currentStageIndex = nextIndex;
+      this.showCurrentStage();
+    } catch (err: any) {
+      this.stagePreviewLabelText.setText('FORGE FAILED').setColor(ACCENT);
+      this.stageInfoText.setText(err?.message ? `FAILED: ${err.message}` : 'FAILED TO FORGE STAGE FROM PHOTO.');
+    } finally {
+      this.setStageCreateButtonsEnabled(true);
+    }
+  }
+
+  private async beginCreateDirectStage(file: File): Promise<void> {
+    this.stagePreviewLabelText.setText('SAVING PHOTO STAGE...').setColor('#66ddff');
+    this.stageInfoText.setText('USING YOUR PHOTO DIRECTLY AS THE ARENA. NO GEMINI STEP.');
+    this.setStageCreateButtonsEnabled(false);
+
+    try {
+      const cached = await createDirectPhotoStage(file, file.name);
+      await this.loadStages();
+      const nextIndex = this.stages.findIndex((stage) => stage.stageKey === cached.stageKey);
+      if (nextIndex >= 0) this.currentStageIndex = nextIndex;
+      this.showCurrentStage();
+    } catch (err: any) {
+      this.stagePreviewLabelText.setText('SAVE FAILED').setColor(ACCENT);
+      this.stageInfoText.setText(err?.message ? `FAILED: ${err.message}` : 'FAILED TO SAVE PHOTO STAGE.');
+    } finally {
+      this.setStageCreateButtonsEnabled(true);
+    }
+  }
+
+  private setStageCreateButtonsEnabled(enabled: boolean): void {
+    const alpha = enabled ? 1 : 0.6;
+    this.stageForgeBtn.setAlpha(alpha);
+    this.stageDirectBtn.setAlpha(alpha);
+    if (enabled) {
+      this.stageForgeBtn.setInteractive({ useHandCursor: true });
+      this.stageDirectBtn.setInteractive({ useHandCursor: true });
+    } else {
+      this.stageForgeBtn.disableInteractive();
+      this.stageDirectBtn.disableInteractive();
+    }
+  }
+
   // ─── Input ───────────────────────────────────────────────────
 
   private setupInput(): void {
     const leftKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT);
     const rightKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT);
+    const tabKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.TAB);
     const escKey = this.input.keyboard!.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
-    leftKey.on('down', () => this.navigate(-1));
-    rightKey.on('down', () => this.navigate(1));
+    leftKey.on('down', () => this.activeTab === 'characters' ? this.navigate(-1) : this.navigateStage(-1));
+    rightKey.on('down', () => this.activeTab === 'characters' ? this.navigate(1) : this.navigateStage(1));
+    tabKey.on('down', () => this.switchTab(this.activeTab === 'characters' ? 'stages' : 'characters'));
     escKey.on('down', () => this.goBack());
   }
 
@@ -430,7 +708,23 @@ export class GalleryScene extends Phaser.Scene {
     if (this.currentIndex >= this.metas.length) {
       this.currentIndex = Math.max(0, this.metas.length - 1);
     }
-    this.showCurrent();
+    if (this.activeTab === 'characters') this.showCurrent();
+  }
+
+  private async loadStages(): Promise<void> {
+    try {
+      const all = await getAllCachedStageBackgrounds();
+      this.stages = all
+        .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
+        .sort((a, b) => b.createdAt - a.createdAt);
+    } catch {
+      this.stages = [];
+    }
+
+    if (this.currentStageIndex >= this.stages.length) {
+      this.currentStageIndex = Math.max(0, this.stages.length - 1);
+    }
+    if (this.activeTab === 'stages') this.showCurrentStage();
   }
 
   // ─── Display ─────────────────────────────────────────────────
@@ -443,6 +737,7 @@ export class GalleryScene extends Phaser.Scene {
   }
 
   private showCurrent(): void {
+    if (this.activeTab !== 'characters') return;
     this.clearDynamic();
     this.selectedAnimIndex = -1;
 
@@ -450,6 +745,11 @@ export class GalleryScene extends Phaser.Scene {
       this.emptyGroup.setVisible(true);
       this.contentGroup.setVisible(false);
       this.counterText.setText('0 FIGHTERS');
+      this.prevBtn.setVisible(false);
+      this.nextBtn.setVisible(false);
+      this.renameBtn.setVisible(false);
+      this.rebuildBtn.setVisible(false);
+      this.deleteBtn.setVisible(false);
       this.nameText.setText('');
       this.statusText.setText('');
       this.infoText.setText('');
@@ -460,6 +760,11 @@ export class GalleryScene extends Phaser.Scene {
 
     this.emptyGroup.setVisible(false);
     this.contentGroup.setVisible(true);
+    this.prevBtn.setVisible(true);
+    this.nextBtn.setVisible(true);
+    this.renameBtn.setVisible(true);
+    this.rebuildBtn.setVisible(true);
+    this.deleteBtn.setVisible(true);
 
     const meta = this.metas[this.currentIndex];
     this.counterText.setText(`FIGHTER ${this.currentIndex + 1} / ${this.metas.length}`);
@@ -513,6 +818,46 @@ export class GalleryScene extends Phaser.Scene {
     this.highlightAvailableAnims(meta.animationsReady || []);
   }
 
+  private showCurrentStage(): void {
+    if (this.activeTab !== 'stages') return;
+
+    this.clearStagePreview();
+    if (this.stages.length === 0) {
+      this.counterText.setText('0 STAGES');
+      this.stageNameText.setText('NO SAVED CUSTOM STAGES');
+      this.stageInfoText.setText('MAKE A STAGE FROM A PHOTO HERE. EITHER FORGE IT WITH GEMINI OR USE THE PHOTO AS-IS.');
+      this.stageMetaText.setText('UPLOAD A REAL PLACE, SAVE IT DIRECTLY, OR LET GEMINI TURN IT INTO A 2D ARENA. THEN RENAME, DOWNLOAD, OR DELETE IT HERE.');
+      this.stagePreviewLabelText.setText('NO STAGE SELECTED').setColor('#888888');
+      this.stageDownloadBtn.setVisible(false);
+      this.stageRenameBtn.setVisible(false);
+      this.stageDeleteBtn.setVisible(false);
+      this.stagePrevBtn.setVisible(false);
+      this.stageNextBtn.setVisible(false);
+      return;
+    }
+
+    const stage = this.stages[this.currentStageIndex];
+    const isDirectStage = stage.kind === 'photo-direct';
+    this.counterText.setText(`STAGE ${this.currentStageIndex + 1} / ${this.stages.length}`);
+    this.stageNameText.setText((stage.label ?? 'PHOTO STAGE').toUpperCase());
+    this.stageInfoText.setText(isDirectStage ? 'DIRECT PHOTO STAGE' : 'FORGED CUSTOM STAGE');
+    const dateStr = new Date(stage.createdAt).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+    });
+    this.stageMetaText.setText(
+      `CREATED: ${dateStr}  |  ${stage.stageKey.slice(0, 14)}...\n${isDirectStage ? 'USING YOUR ORIGINAL PHOTO AS THE STAGE.' : 'GEMINI-FORGED FROM YOUR PHOTO.'} DOWNLOAD, RENAME, OR DELETE THIS SAVED ARENA.`
+    );
+    this.stagePreviewLabelText
+      .setText(isDirectStage ? 'DIRECT PHOTO PREVIEW' : 'FORGED ARENA PREVIEW')
+      .setColor(isDirectStage ? '#8fe4ff' : '#66ddff');
+    this.stageDownloadBtn.setVisible(true);
+    this.stageRenameBtn.setVisible(true);
+    this.stageDeleteBtn.setVisible(true);
+    this.stagePrevBtn.setVisible(this.stages.length > 1);
+    this.stageNextBtn.setVisible(this.stages.length > 1);
+    void this.renderCurrentStagePreview(stage.pngBlob);
+  }
+
   private loadBlobImage(blob: Blob, cx: number, cy: number, size: number, keyHint: string): void {
     const url = URL.createObjectURL(blob);
     const htmlImg = new Image();
@@ -532,6 +877,7 @@ export class GalleryScene extends Phaser.Scene {
       this.textures.addCanvas(texKey, canvas);
 
       const sprite = this.add.image(cx, cy, texKey).setDepth(11);
+      this.contentGroup.add(sprite);
       this.dynamicObjects.push(sprite);
     };
     htmlImg.src = url;
@@ -621,6 +967,7 @@ export class GalleryScene extends Phaser.Scene {
       const maxDim = PREVIEW_SIZE - 20;
       const scale = Math.min(maxDim / htmlImg.width, maxDim / htmlImg.height);
       this.bigPreviewImage = this.add.image(PREVIEW_X, PREVIEW_Y, texKey).setDepth(12).setScale(scale);
+      this.contentGroup.add(this.bigPreviewImage);
       this.dynamicObjects.push(this.bigPreviewImage);
 
       this.animNameText.setText(
@@ -714,6 +1061,7 @@ export class GalleryScene extends Phaser.Scene {
       const scale = Math.min(maxDim / frameW, maxDim / frameH);
       this.bigPreviewSprite = this.add.sprite(PREVIEW_X, PREVIEW_Y, texKey).setDepth(12).setScale(scale);
       this.bigPreviewSprite.play(animKey);
+      this.contentGroup.add(this.bigPreviewSprite);
       this.dynamicObjects.push(this.bigPreviewSprite);
 
       this.animNameText.setColor('#44ff44');
@@ -746,6 +1094,157 @@ export class GalleryScene extends Phaser.Scene {
     if (this.metas.length <= 1) return;
     this.currentIndex = (this.currentIndex + dir + this.metas.length) % this.metas.length;
     this.showCurrent();
+  }
+
+  private navigateStage(dir: number): void {
+    if (this.stages.length <= 1) return;
+    this.currentStageIndex = (this.currentStageIndex + dir + this.stages.length) % this.stages.length;
+    this.showCurrentStage();
+  }
+
+  private switchTab(tab: 'characters' | 'stages'): void {
+    if (this.activeTab === tab) return;
+    this.activeTab = tab;
+    this.refreshActiveTab();
+  }
+
+  private refreshActiveTab(): void {
+    const characterTab = this.activeTab === 'characters';
+    this.charactersTabBtn
+      .setColor(characterTab ? '#ffffff' : '#888888')
+      .setBackgroundColor(characterTab ? '#291110' : '#171717');
+    this.stagesTabBtn
+      .setColor(characterTab ? '#888888' : '#ffffff')
+      .setBackgroundColor(characterTab ? '#111827' : '#14263a');
+
+    this.emptyGroup.setVisible(characterTab && this.metas.length === 0);
+    this.contentGroup.setVisible(characterTab && this.metas.length > 0);
+    this.stageGroup.setVisible(!characterTab);
+
+    this.prevBtn.setVisible(characterTab);
+    this.createBtn.setVisible(characterTab);
+    this.nextBtn.setVisible(characterTab);
+    this.renameBtn.setVisible(characterTab);
+    this.rebuildBtn.setVisible(characterTab);
+    this.deleteBtn.setVisible(characterTab);
+
+    if (characterTab) {
+      this.showCurrent();
+    } else {
+      this.clearDynamic();
+      this.showCurrentStage();
+    }
+  }
+
+  private async renameCurrentCharacter(): Promise<void> {
+    if (this.metas.length === 0) return;
+    const meta = this.metas[this.currentIndex];
+    const nextName = await this.promptForText(meta.characterName, 'Fighter name...', 20);
+    if (!nextName) return;
+    await renameCharacter(meta.photoHash, nextName);
+    await this.loadCharacters();
+    this.currentIndex = this.metas.findIndex((entry) => entry.photoHash === meta.photoHash);
+    if (this.currentIndex < 0) this.currentIndex = 0;
+    this.showCurrent();
+  }
+
+  private downloadCurrentStageFromGallery(): void {
+    if (this.stages.length === 0) return;
+    const stage = this.stages[this.currentStageIndex];
+    const safeName = ((stage.label ?? 'photo_stage').toLowerCase().replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '')) || 'photo_stage';
+    downloadBlob(stage.pngBlob, `${safeName}.png`);
+  }
+
+  private async renameCurrentStageFromGallery(): Promise<void> {
+    if (this.stages.length === 0) return;
+    const stage = this.stages[this.currentStageIndex];
+    const nextName = await this.promptForText(stage.label ?? 'PHOTO STAGE', 'Stage name...', 28);
+    if (!nextName) return;
+    await renameCachedStageBackground(stage.stageKey, nextName);
+    await this.loadStages();
+    this.currentStageIndex = this.stages.findIndex((entry) => entry.stageKey === stage.stageKey);
+    if (this.currentStageIndex < 0) this.currentStageIndex = 0;
+    this.showCurrentStage();
+  }
+
+  private async deleteCurrentStageFromGallery(): Promise<void> {
+    if (this.stages.length === 0) return;
+    const stage = this.stages[this.currentStageIndex];
+    await deleteCachedStageBackground(stage.stageKey);
+    await this.loadStages();
+    this.currentStageIndex = Math.min(this.currentStageIndex, Math.max(0, this.stages.length - 1));
+    this.showCurrentStage();
+  }
+
+  private clearStagePreview(): void {
+    if (this.stagePreviewImage) {
+      this.stagePreviewImage.destroy();
+      this.stagePreviewImage = null;
+    }
+    if (this.stagePreviewTextureKey && this.textures.exists(this.stagePreviewTextureKey)) {
+      this.textures.remove(this.stagePreviewTextureKey);
+      this.stagePreviewTextureKey = undefined;
+    }
+  }
+
+  private async renderCurrentStagePreview(blob: Blob): Promise<void> {
+    this.clearStagePreview();
+    const img = await blobToImage(blob);
+    const canvas = document.createElement('canvas');
+    const width = STAGE_PREVIEW_W - 8;
+    const height = STAGE_PREVIEW_H - 8;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d')!;
+    const scale = Math.max(width / img.width, height / img.height);
+    const drawW = img.width * scale;
+    const drawH = img.height * scale;
+    ctx.drawImage(img, (width - drawW) / 2, (height - drawH) / 2, drawW, drawH);
+
+    const texKey = `gallery_stage_${Date.now()}`;
+    if (this.textures.exists(texKey)) this.textures.remove(texKey);
+    this.textures.addCanvas(texKey, canvas);
+    this.stagePreviewTextureKey = texKey;
+    this.stagePreviewImage = this.add.image(STAGE_PREVIEW_X, STAGE_PREVIEW_Y, texKey).setDepth(12);
+    this.stageGroup.add(this.stagePreviewImage);
+  }
+
+  private promptForText(initialValue: string, placeholder: string, maxLength: number): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.nameInput.placeholder = placeholder;
+      this.nameInput.maxLength = maxLength;
+      this.nameInput.value = initialValue;
+      this.nameInput.style.display = 'block';
+      this.nameInput.focus();
+      this.nameInput.select();
+
+      const cleanup = () => {
+        this.nameInput.style.display = 'none';
+        this.nameInput.removeEventListener('keydown', onKeydown);
+        this.nameInput.removeEventListener('blur', onBlur);
+      };
+
+      const submit = () => {
+        const value = this.nameInput.value.trim().slice(0, maxLength);
+        cleanup();
+        resolve(value || null);
+      };
+
+      const cancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      const onKeydown = (e: KeyboardEvent) => {
+        if (e.key === 'Enter') submit();
+        else if (e.key === 'Escape') cancel();
+        e.stopPropagation();
+      };
+      const onBlur = () => submit();
+
+      this.nameInput.addEventListener('keydown', onKeydown);
+      this.nameInput.addEventListener('blur', onBlur, { once: true });
+    });
   }
 
   private async deleteCurrent(): Promise<void> {
@@ -876,9 +1375,14 @@ export class GalleryScene extends Phaser.Scene {
     const meta = this.metas[this.currentIndex];
     const animName = this.currentPreviewAnimName;
     if (!animName) return;
+    const label = ANIM_LABELS[animName] || animName.toUpperCase();
 
     this.retryAnimBtn.setText('RETRYING...').disableInteractive();
     this.statusText.setText(`Regenerating ${animName}...`).setColor('#ffaa00');
+    this.animNameText.setColor('#ffaa00').setText(`${label}  RETRYING...`);
+    this.downloadBtn.setVisible(false);
+    this.downloadRawBtn.setVisible(false);
+    this.downloadGifBtn.setVisible(false);
 
     try {
       await retryAnimation(meta.photoHash, animName, (status) => {
@@ -891,8 +1395,9 @@ export class GalleryScene extends Phaser.Scene {
         }
       });
       await this.loadCharacters();
+      await this.loadSpriteData(meta.photoHash);
       const cached = this.sprites.find(s => s.animationName === animName);
-      if (cached) this.showBigPreview(cached, animName);
+      if (cached) await this.showBigPreview(cached, animName);
     } catch (err: any) {
       this.statusText.setText(`Retry failed: ${err.message}`).setColor(ACCENT);
     } finally {
@@ -931,6 +1436,7 @@ export class GalleryScene extends Phaser.Scene {
   private cleanupHTML(): void {
     this.nameInput?.remove();
     this.fileInput?.remove();
+    this.stageFileInput?.remove();
   }
 
   shutdown(): void {

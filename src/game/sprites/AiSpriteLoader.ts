@@ -91,7 +91,9 @@ export async function loadAiSprites(
     const gridCols = Math.round(sourceImg.width / srcW);
     const gridRows = Math.round(sourceImg.height / srcH);
 
-    const frames = extractFrames(sourceImg, srcW, srcH, srcTotal, gridCols);
+    const extractedFrames = extractFrames(sourceImg, srcW, srcH, srcTotal, gridCols);
+    const frames = selectStableFramesForState(state, extractedFrames, srcW, srcH, targetFrameCount);
+    const sourceFrameCount = frames.length;
     const unionBox = findUnionBBox(frames, srcW, srcH);
 
     const cropW = unionBox.w;
@@ -102,7 +104,7 @@ export async function loadAiSprites(
     const drawH = Math.round(cropH * scale);
 
     for (let f = 0; f < targetFrameCount; f++) {
-      const srcIdx = selectSourceFrameIndex(state, f, targetFrameCount, srcTotal);
+      const srcIdx = selectSourceFrameIndex(state, f, targetFrameCount, sourceFrameCount);
 
       const dstX = f * FIGHTER_WIDTH;
       const dstY = row * FIGHTER_HEIGHT;
@@ -199,6 +201,87 @@ function extractFrames(
 }
 
 interface BBox { x: number; y: number; w: number; h: number }
+const FRAGMENTED_STATES = new Set([FighterState.JUMP, FighterState.HIT_STUN]);
+
+function selectStableFramesForState(
+  state: FighterState,
+  frames: HTMLCanvasElement[],
+  frameW: number,
+  frameH: number,
+  targetFrameCount: number,
+): HTMLCanvasElement[] {
+  if (!FRAGMENTED_STATES.has(state) || frames.length <= targetFrameCount) {
+    return frames;
+  }
+
+  const scored = frames
+    .map((frame, index) => {
+      const bbox = getFrameBBox(frame, frameW, frameH);
+      return bbox ? { frame, index, bbox } : null;
+    })
+    .filter((entry): entry is { frame: HTMLCanvasElement; index: number; bbox: BBox } => entry != null);
+
+  if (scored.length === 0) {
+    return frames;
+  }
+  if (scored.length <= targetFrameCount) {
+    return scored.map((entry) => entry.frame);
+  }
+
+  const medianArea = median(scored.map((entry) => entry.bbox.w * entry.bbox.h));
+  const medianHeight = median(scored.map((entry) => entry.bbox.h));
+  const medianWidth = median(scored.map((entry) => entry.bbox.w));
+  const edgeMargin = 2;
+
+  const ranked = scored.map((entry) => {
+    const area = entry.bbox.w * entry.bbox.h;
+    const areaRatio = medianArea > 0 ? area / medianArea : 1;
+    const heightRatio = medianHeight > 0 ? entry.bbox.h / medianHeight : 1;
+    const widthRatio = medianWidth > 0 ? entry.bbox.w / medianWidth : 1;
+    const touchesEdge =
+      entry.bbox.x <= edgeMargin ||
+      entry.bbox.x + entry.bbox.w >= frameW - edgeMargin ||
+      entry.bbox.y <= edgeMargin;
+
+    let score = 100;
+    if (touchesEdge) score -= 55;
+    if (areaRatio < 0.55) score -= 45;
+    if (areaRatio > 1.75) score -= 45;
+    if (heightRatio < 0.7) score -= 35;
+    if (widthRatio < 0.45) score -= 20;
+    return { ...entry, score, valid: score >= 60 && !touchesEdge };
+  });
+
+  let selected = ranked.filter((entry) => entry.valid);
+  if (selected.length < targetFrameCount) {
+    selected = ranked
+      .slice()
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.min(Math.max(targetFrameCount, 4), ranked.length));
+  }
+
+  if (selected.length === 0) {
+    return frames;
+  }
+
+  return sampleFrames(
+    selected
+      .sort((a, b) => a.index - b.index)
+      .map((entry) => entry.frame),
+    Math.min(Math.max(targetFrameCount, 4), selected.length),
+  );
+}
+
+function sampleFrames(frames: HTMLCanvasElement[], count: number): HTMLCanvasElement[] {
+  if (frames.length <= count) return frames;
+  if (count <= 1) return [frames[0]];
+  const sampled: HTMLCanvasElement[] = [];
+  for (let i = 0; i < count; i++) {
+    const index = Math.round((i / (count - 1)) * (frames.length - 1));
+    sampled.push(frames[index]);
+  }
+  return sampled;
+}
 
 function findUnionBBox(frames: HTMLCanvasElement[], frameW: number, frameH: number): BBox {
   let minX = frameW, minY = frameH, maxX = 0, maxY = 0;
@@ -237,4 +320,43 @@ function findUnionBBox(frames: HTMLCanvasElement[], frameW: number, frameH: numb
   maxY = Math.min(frameH - 1, maxY + marginY);
 
   return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+function getFrameBBox(frame: HTMLCanvasElement, frameW: number, frameH: number): BBox | null {
+  const ctx = frame.getContext('2d')!;
+  const data = ctx.getImageData(0, 0, frameW, frameH).data;
+  const ALPHA_THRESHOLD = 20;
+  const DARK_THRESHOLD = 25;
+  let minX = frameW;
+  let minY = frameH;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < frameH; y++) {
+    for (let x = 0; x < frameW; x++) {
+      const i = (y * frameW + x) * 4;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      const a = data[i + 3];
+      if (a < ALPHA_THRESHOLD) continue;
+      if (r < DARK_THRESHOLD && g < DARK_THRESHOLD && b < DARK_THRESHOLD) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  if (maxX < minX || maxY < minY) return null;
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
 }

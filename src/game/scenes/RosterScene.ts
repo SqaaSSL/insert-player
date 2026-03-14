@@ -5,6 +5,7 @@ import {
   getAllCachedStageBackgrounds,
   deleteCachedStageBackground,
   deleteCharacter,
+  renameCachedStageBackground,
   CACHE_VERSION,
   type CachedMeta,
   type CachedStageBackground,
@@ -95,6 +96,7 @@ export class RosterScene extends Phaser.Scene {
   private stageHintText!: Phaser.GameObjects.Text;
   private stageUploadBtn!: Phaser.GameObjects.Text;
   private stageDownloadBtn!: Phaser.GameObjects.Text;
+  private stageRenameBtn!: Phaser.GameObjects.Text;
   private clearStageBtn!: Phaser.GameObjects.Text;
   private stagePreviewFrame!: Phaser.GameObjects.Graphics;
   private stagePreviewFill!: Phaser.GameObjects.Graphics;
@@ -115,6 +117,7 @@ export class RosterScene extends Phaser.Scene {
   private customStageKey: string | null = null;
   private customStageLabel: string | null = null;
   private stageFileInput!: HTMLInputElement;
+  private stageNameInput!: HTMLInputElement;
 
   constructor() {
     super({ key: "RosterScene" });
@@ -139,7 +142,7 @@ export class RosterScene extends Phaser.Scene {
     this.drawBackground();
     this.createHeader();
     this.createSlots();
-    this.createStageFileInput();
+    this.createStageInputs();
     this.createBottomBar();
     this.input.on("wheel", this.handleRosterWheel, this);
     this.input.keyboard?.on("keydown-UP", this.scrollRosterUp, this);
@@ -491,7 +494,7 @@ export class RosterScene extends Phaser.Scene {
     this.stageUploadBtn.on("pointerdown", () => this.openStageFileDialog());
 
     this.stageDownloadBtn = this.add
-      .text(STAGE_PANEL_X, panelTop + 340, "SAVE STAGE PNG", {
+      .text(STAGE_PANEL_X, panelTop + 338, "SAVE STAGE PNG", {
         fontFamily: FONT,
         fontSize: "8px",
         color: "#88ccff",
@@ -508,8 +511,28 @@ export class RosterScene extends Phaser.Scene {
     this.stageDownloadBtn.on("pointerout", () => this.stageDownloadBtn.setColor("#88ccff"));
     this.stageDownloadBtn.on("pointerdown", () => this.downloadCurrentStage());
 
+    this.stageRenameBtn = this.add
+      .text(STAGE_PANEL_X, panelTop + 370, "RENAME STAGE", {
+        fontFamily: FONT,
+        fontSize: "8px",
+        color: "#ffcc88",
+        stroke: "#000000",
+        strokeThickness: 3,
+        backgroundColor: "#2b1b11",
+        padding: { x: 10, y: 6 },
+      })
+      .setOrigin(0.5)
+      .setDepth(20)
+      .setInteractive({ useHandCursor: true })
+      .setVisible(false);
+    this.stageRenameBtn.on("pointerover", () => this.stageRenameBtn.setColor("#ffe0b0"));
+    this.stageRenameBtn.on("pointerout", () => this.stageRenameBtn.setColor("#ffcc88"));
+    this.stageRenameBtn.on("pointerdown", () => {
+      void this.renameCurrentStage();
+    });
+
     this.clearStageBtn = this.add
-      .text(STAGE_PANEL_X, panelTop + 376, "USE BUILT-IN / AUTO", {
+      .text(STAGE_PANEL_X, panelTop + 402, "USE BUILT-IN / AUTO", {
         fontFamily: FONT,
         fontSize: "8px",
         color: "#888888",
@@ -533,7 +556,7 @@ export class RosterScene extends Phaser.Scene {
     });
 
     this.add
-      .text(STAGE_PANEL_X, panelTop + 410, "ARROWS CYCLE BUILT-INS AND SAVED PHOTO STAGES", {
+      .text(STAGE_PANEL_X, panelTop + 434, "ARROWS CYCLE BUILT-INS AND SAVED CUSTOM STAGES", {
         fontFamily: FONT,
         fontSize: "7px",
         color: "#777777",
@@ -599,20 +622,26 @@ export class RosterScene extends Phaser.Scene {
     this.stageCarouselCounterText.setText(`${this.stageCarouselIndex + 1} / ${this.stageCarouselOptions.length}`);
 
     if (current.kind === "photo") {
-      this.stagePreviewMetaText.setText("FORGED PHOTO STAGE");
-      this.stageUploadBtn.setText("RE-FORGE FROM PHOTO");
+      const savedStage = current.customStageKey
+        ? this.cachedPhotoStages.find((stage) => stage.stageKey === current.customStageKey)
+        : null;
+      const isDirectStage = savedStage?.kind === "photo-direct";
+      this.stagePreviewMetaText.setText(isDirectStage ? "DIRECT PHOTO STAGE" : "FORGED PHOTO STAGE");
+      this.stageUploadBtn.setText(isDirectStage ? "FORGE WITH GEMINI" : "RE-FORGE FROM PHOTO");
       this.stageDownloadBtn.setVisible(true);
+      this.stageRenameBtn.setVisible(true);
       this.clearStageBtn.setText("USE BUILT-IN / AUTO").setColor("#ff8888");
       this.stageDeleteBtn.setVisible(true);
     } else {
       const photoCount = this.cachedPhotoStages.length;
       this.stagePreviewMetaText.setText(
         photoCount > 0
-          ? `${photoCount} SAVED PHOTO STAGE${photoCount === 1 ? "" : "S"} READY`
-          : "FORGE A PHOTO TO ADD CUSTOM ARENAS",
+          ? `${photoCount} SAVED CUSTOM STAGE${photoCount === 1 ? "" : "S"} READY`
+          : "FORGE OR SAVE A PHOTO TO ADD CUSTOM ARENAS",
       );
       this.stageUploadBtn.setText("FORGE STAGE FROM PHOTO");
       this.stageDownloadBtn.setVisible(false);
+      this.stageRenameBtn.setVisible(false);
       this.clearStageBtn.setText("USE BUILT-IN / AUTO").setColor("#888888");
       this.stageDeleteBtn.setVisible(false);
     }
@@ -622,12 +651,20 @@ export class RosterScene extends Phaser.Scene {
     void this.renderStagePreview(current);
   }
 
-  private createStageFileInput(): void {
+  private createStageInputs(): void {
     this.stageFileInput = document.createElement("input");
     this.stageFileInput.type = "file";
     this.stageFileInput.accept = "image/png,image/jpeg,image/webp";
     this.stageFileInput.style.display = "none";
     document.body.appendChild(this.stageFileInput);
+
+    this.stageNameInput = document.createElement("input");
+    this.stageNameInput.type = "text";
+    this.stageNameInput.maxLength = 28;
+    this.stageNameInput.placeholder = "Stage name...";
+    this.stageNameInput.style.cssText =
+      "position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;font-family:monospace;font-size:18px;padding:12px 20px;background:#111;color:#fff;border:2px solid #ff8844;border-radius:6px;text-align:center;outline:none;display:none;";
+    document.body.appendChild(this.stageNameInput);
 
     this.stageFileInput.addEventListener("change", () => {
       const file = this.stageFileInput.files?.[0];
@@ -686,11 +723,70 @@ export class RosterScene extends Phaser.Scene {
     downloadBlob(current.previewBlob, `${safeName}.png`);
   }
 
+  private async renameCurrentStage(): Promise<void> {
+    const current = this.getCurrentStageOption();
+    if (!current) return;
+    const stageKey = current?.kind === "photo" ? current.customStageKey : null;
+    if (!stageKey) return;
+
+    const nextName = await this.promptForStageName(current.label || "PHOTO STAGE");
+    if (!nextName) return;
+
+    try {
+      await renameCachedStageBackground(stageKey, nextName);
+      if (this.customStageKey === stageKey) {
+        this.customStageLabel = nextName;
+      }
+      await this.loadCachedPhotoStages();
+      this.refreshStageTexts();
+    } catch (err) {
+      console.warn("[RosterScene] Failed to rename cached stage:", err);
+      this.stagePreviewMetaText?.setText("FAILED TO RENAME STAGE");
+    }
+  }
+
+  private promptForStageName(initialValue: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.stageNameInput.style.display = "block";
+      this.stageNameInput.value = initialValue;
+      this.stageNameInput.focus();
+      this.stageNameInput.select();
+
+      const cleanup = () => {
+        this.stageNameInput.style.display = "none";
+        this.stageNameInput.removeEventListener("keydown", onKeydown);
+        this.stageNameInput.removeEventListener("blur", onBlur);
+      };
+
+      const submit = () => {
+        const name = this.stageNameInput.value.trim().slice(0, 28);
+        cleanup();
+        resolve(name || null);
+      };
+
+      const cancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      const onKeydown = (e: KeyboardEvent) => {
+        if (e.key === "Enter") submit();
+        else if (e.key === "Escape") cancel();
+        e.stopPropagation();
+      };
+
+      const onBlur = () => submit();
+
+      this.stageNameInput.addEventListener("keydown", onKeydown);
+      this.stageNameInput.addEventListener("blur", onBlur, { once: true });
+    });
+  }
+
   private async loadCachedPhotoStages(): Promise<void> {
     try {
       const allStages = await getAllCachedStageBackgrounds();
       this.cachedPhotoStages = allStages
-        .filter((stage) => stage.kind === "photo")
+        .filter((stage) => stage.kind === "photo" || stage.kind === "photo-direct")
         .sort((a, b) => b.createdAt - a.createdAt);
     } catch {
       this.cachedPhotoStages = [];
@@ -720,7 +816,9 @@ export class RosterScene extends Phaser.Scene {
         key: `photo:${stage.stageKey}`,
         kind: "photo" as const,
         label: (stage.label ?? "PHOTO STAGE").toUpperCase(),
-        blurb: "Gemini-forged stage saved from your uploaded photo.",
+        blurb: stage.kind === "photo-direct"
+          ? "Direct photo stage used exactly as uploaded."
+          : "Gemini-forged stage saved from your uploaded photo.",
         customStageKey: stage.stageKey,
         previewBlob: stage.pngBlob,
       })),
@@ -1263,6 +1361,7 @@ export class RosterScene extends Phaser.Scene {
       this.stagePreviewTextureKey = undefined;
     }
     this.stageFileInput?.remove();
+    this.stageNameInput?.remove();
   }
 
   destroy(): void {
@@ -1270,6 +1369,7 @@ export class RosterScene extends Phaser.Scene {
     this.input.keyboard?.off("keydown-UP", this.scrollRosterUp, this);
     this.input.keyboard?.off("keydown-DOWN", this.scrollRosterDown, this);
     this.stageFileInput?.remove();
+    this.stageNameInput?.remove();
   }
 }
 

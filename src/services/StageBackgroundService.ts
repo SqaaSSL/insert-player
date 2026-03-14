@@ -15,6 +15,7 @@ const STAGE_BACKGROUND_VERSION = 'stage-v1';
 const inflightGenerations = new Map<string, Promise<CachedStageBackground>>();
 export type StageBackgroundCacheScope = 'matchup' | 'stage';
 const PHOTO_STAGE_PREFIX = `${STAGE_BACKGROUND_VERSION}:photo-ai-v2`;
+const DIRECT_STAGE_PREFIX = `${STAGE_BACKGROUND_VERSION}:photo-direct-v1`;
 
 interface NormalizeStageOptions {
   bottomShadeAlpha: number;
@@ -35,6 +36,10 @@ export interface StageBackgroundRequest {
 
 export function buildPhotoStageKey(photoHash: string): string {
   return `${PHOTO_STAGE_PREFIX}:${photoHash}`;
+}
+
+export function buildDirectPhotoStageKey(photoHash: string): string {
+  return `${DIRECT_STAGE_PREFIX}:${photoHash}`;
 }
 
 export async function createPhotoStage(file: Blob, label?: string): Promise<CachedStageBackground> {
@@ -62,6 +67,30 @@ export async function createPhotoStage(file: Blob, label?: string): Promise<Cach
     pngBlob,
     createdAt: Date.now(),
     kind: 'photo',
+    label: safeLabel,
+  };
+
+  await setCachedStageBackground(created);
+  return created;
+}
+
+export async function createDirectPhotoStage(file: Blob, label?: string): Promise<CachedStageBackground> {
+  const photoHash = await hashPhoto(file);
+  const stageKey = buildDirectPhotoStageKey(photoHash);
+  const cached = await getCachedStageBackground(stageKey);
+  if (cached) return cached;
+
+  const safeLabel = sanitizeStageLabel(label);
+  const pngBlob = await normalizeStageBlob(file, {
+    bottomShadeAlpha: 0.02,
+    verticalBias: 0.82,
+  });
+  const created: CachedStageBackground = {
+    stageKey,
+    prompt: 'Direct photo stage using the uploaded image without Gemini transformation.',
+    pngBlob,
+    createdAt: Date.now(),
+    kind: 'photo-direct',
     label: safeLabel,
   };
 
@@ -154,8 +183,22 @@ async function loadReferenceImages(
 }
 
 async function normalizeStageImage(base64: string, options: NormalizeStageOptions): Promise<Blob> {
-  const { bottomShadeAlpha, verticalBias = 0.5 } = options;
   const img = await loadImg(`data:image/png;base64,${base64}`);
+  return normalizeLoadedStageImage(img, options);
+}
+
+async function normalizeStageBlob(blob: Blob, options: NormalizeStageOptions): Promise<Blob> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await loadImg(url);
+    return normalizeLoadedStageImage(img, options);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function normalizeLoadedStageImage(img: HTMLImageElement, options: NormalizeStageOptions): Promise<Blob> {
+  const { bottomShadeAlpha, verticalBias = 0.5 } = options;
   const canvas = document.createElement('canvas');
   canvas.width = GAME_WIDTH;
   canvas.height = GAME_HEIGHT;

@@ -156,6 +156,12 @@ export interface GeminiSpriteResult {
 
 const MIRROR_ANIMS = new Set(['high_punch', 'low_punch', 'high_kick', 'low_kick']);
 
+function getMinimumReliableFrames(animName: string): number {
+  if (animName === 'jump') return 3;
+  if (animName === 'hit') return 2;
+  return 1;
+}
+
 export async function geminiSpriteSheet(
   characterBase64: string,
   animName: string,
@@ -220,28 +226,56 @@ export async function geminiSpriteSheet(
   console.log(`[GeminiApi] Generating sprite: ${animName} (${gridCols}x${gridRows}, ${genFrames} frames${shouldMirror ? ', will mirror to ' + frames : ''})...`);
   const start = Date.now();
 
-  let rawBase64: string | null = null;
-
   const extras = secondaryBase64 ? [{ data: secondaryBase64, mime: 'image/png' }] : undefined;
-
-  try {
-    const result = await callGemini(prompt, characterBase64, 'image/png', extras);
-    rawBase64 = result.imageBase64;
-  } catch (err: any) {
-    if (err.message.includes('IMAGE_SAFETY')) {
-      console.warn(`[GeminiApi] Sprite ${animName} blocked by safety, retrying with clothing note...`);
-      const safePrompt = prompt + `\n\nIMPORTANT: The character must be fully clothed in a fighting outfit (shirt, pants, shoes). Add clothing if needed.`;
-      const result = await callGemini(safePrompt, characterBase64, 'image/png', extras);
-      rawBase64 = result.imageBase64;
-    } else {
-      throw err;
-    }
+  const minReliableFrames = getMinimumReliableFrames(animName);
+  const promptVariants = [prompt];
+  if (animName === 'jump' || animName === 'hit') {
+    promptVariants.push(
+      `${prompt}\n- CRITICAL: keep every full body centered fully inside its own cell with empty green margin on all sides.\n- CRITICAL: if a pose would cross a cell boundary, make the pose smaller instead of cropping it.\n- CRITICAL: do not include any oversized hero frame, close-up frame, or pose that spans more than one cell.`,
+    );
   }
 
-  if (!rawBase64) throw new Error(`Gemini sprite sheet for ${animName} returned no image`);
+  let geminiRawBase64: string | null = null;
+  let cleaned: CleanSheetResult | null = null;
 
-  const geminiRawBase64 = rawBase64;
-  const cleaned: CleanSheetResult = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, animName, maxScale);
+  for (const attemptPrompt of promptVariants) {
+    let rawBase64: string | null = null;
+
+    try {
+      const result = await callGemini(attemptPrompt, characterBase64, 'image/png', extras);
+      rawBase64 = result.imageBase64;
+    } catch (err: any) {
+      if (err.message.includes('IMAGE_SAFETY')) {
+        console.warn(`[GeminiApi] Sprite ${animName} blocked by safety, retrying with clothing note...`);
+        const safePrompt = attemptPrompt + `\n\nIMPORTANT: The character must be fully clothed in a fighting outfit (shirt, pants, shoes). Add clothing if needed.`;
+        const result = await callGemini(safePrompt, characterBase64, 'image/png', extras);
+        rawBase64 = result.imageBase64;
+      } else {
+        throw err;
+      }
+    }
+
+    if (!rawBase64) continue;
+
+    const nextCleaned = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, animName, maxScale);
+    geminiRawBase64 = rawBase64;
+    cleaned = nextCleaned;
+    if (nextCleaned.frameCount >= minReliableFrames) {
+      break;
+    }
+
+    console.warn(
+      `[GeminiApi] ${animName}: rejected attempt with only ${nextCleaned.frameCount} reliable frames (need ${minReliableFrames})`,
+    );
+  }
+
+  if (!geminiRawBase64 || !cleaned) {
+    throw new Error(`Gemini sprite sheet for ${animName} returned no image`);
+  }
+  if (cleaned.frameCount < minReliableFrames) {
+    throw new Error(`Gemini sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames`);
+  }
+
   console.log(`[GeminiApi] ${animName} cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s (scale ${cleaned.usedScale.toFixed(2)})`);
 
   if (shouldMirror) {

@@ -13,6 +13,7 @@ interface CachedSprite {
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  processingVersion?: number;
   createdAt: number;
 }
 
@@ -23,12 +24,14 @@ interface CachedIntro {
   createdAt: number;
 }
 
+type CachedStageKind = 'generated' | 'photo' | 'photo-direct';
+
 interface CachedStageBackground {
   stageKey: string;
   prompt: string;
   pngBlob: Blob;
   createdAt: number;
-  kind?: 'generated' | 'photo';
+  kind?: CachedStageKind;
   label?: string;
 }
 
@@ -100,6 +103,15 @@ export async function setCachedMeta(meta: CachedMeta): Promise<void> {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+}
+
+export async function renameCharacter(photoHash: string, characterName: string): Promise<CachedMeta | null> {
+  const meta = await getCachedMeta(photoHash);
+  if (!meta) return null;
+  meta.characterName = characterName;
+  meta.updatedAt = Date.now();
+  await setCachedMeta(meta);
+  return meta;
 }
 
 export async function getCachedSprite(photoHash: string, animationName: string): Promise<CachedSprite | null> {
@@ -193,6 +205,14 @@ export async function setCachedStageBackground(stage: CachedStageBackground): Pr
   });
 }
 
+export async function renameCachedStageBackground(stageKey: string, label: string): Promise<CachedStageBackground | null> {
+  const stage = await getCachedStageBackground(stageKey);
+  if (!stage) return null;
+  stage.label = label;
+  await setCachedStageBackground(stage);
+  return stage;
+}
+
 export async function deleteCachedStageBackground(stageKey: string): Promise<void> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -239,4 +259,4 @@ export async function clearCache(): Promise<void> {
 }
 
 export { CACHE_VERSION };
-export type { CachedSprite, CachedIntro, CachedMeta, CachedStageBackground };
+export type { CachedSprite, CachedIntro, CachedMeta, CachedStageBackground, CachedStageKind };

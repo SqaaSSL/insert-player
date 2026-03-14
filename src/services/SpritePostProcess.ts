@@ -17,6 +17,10 @@ const GREEN_HUE_MIN = 70;
 const GREEN_HUE_MAX = 170;
 const GREEN_SAT_MIN = 0.20;
 const GREEN_BRIGHT_MIN = 30;
+const CRITICAL_ANIMATION_CONFIG: Partial<Record<string, { minFrames: number; maxFrames: number }>> = {
+  jump: { minFrames: 3, maxFrames: 4 },
+  hit: { minFrames: 2, maxFrames: 4 },
+};
 
 // ─── Single image processing (for reposed character) ─────────────────
 
@@ -109,7 +113,7 @@ export async function cleanSpriteSheet(
       lightBgRemove(data);
     }
     erodeAlphaEdge(data);
-    if (animationName === 'jump') {
+    if (animationName === 'jump' || animationName === 'hit') {
       removeDetachedComponents(data, 'largest');
     } else {
       removeDetachedComponents(data, 'conservative');
@@ -126,8 +130,23 @@ export async function cleanSpriteSheet(
     rawFrames.pop();
   }
 
-  const finalCount = rawFrames.length;
-  const frameBBoxes = rawFrames.map((frame) => getCanvasBoundingBox(frame));
+  let workingFrames = rawFrames;
+  let frameBBoxes = rawFrames.map((frame) => getCanvasBoundingBox(frame));
+  const criticalConfig = CRITICAL_ANIMATION_CONFIG[animationName];
+  if (criticalConfig) {
+    const filtered = filterCriticalAnimationFrames(
+      workingFrames,
+      frameBBoxes,
+      srcFrameW,
+      srcFrameH,
+      criticalConfig,
+      animationName,
+    );
+    workingFrames = filtered.frames;
+    frameBBoxes = filtered.boxes;
+  }
+
+  const finalCount = workingFrames.length;
   const populatedBoxes = frameBBoxes.filter((bbox): bbox is BBox => bbox != null);
   if (populatedBoxes.length === 0) {
     return { base64, rawBase64: base64, gridCols, gridRows, frameCount: finalCount, frameW: srcFrameW, frameH: srcFrameH, usedScale: 1 };
@@ -139,7 +158,7 @@ export async function cleanSpriteSheet(
 
   const cleanFrames: HTMLCanvasElement[] = [];
   const usedScales: number[] = [];
-  for (let i = 0; i < rawFrames.length; i++) {
+  for (let i = 0; i < workingFrames.length; i++) {
     const bbox = frameBBoxes[i];
     if (!bbox) {
       const blank = document.createElement('canvas');
@@ -149,7 +168,7 @@ export async function cleanSpriteSheet(
       continue;
     }
 
-    const normalized = normalizeCanvasToCell(rawFrames[i], bbox, profile, maxScale, stableCenterXRaw, lockedScale);
+    const normalized = normalizeCanvasToCell(workingFrames[i], bbox, profile, maxScale, stableCenterXRaw, lockedScale);
     usedScales.push(normalized.usedScale);
     cleanFrames.push(normalized.canvas);
   }
@@ -566,7 +585,10 @@ function removeDetachedComponents(data: ImageData, mode: 'largest' | 'conservati
 
         const cx = idx % w;
         const cy = Math.floor(idx / w);
-        for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+        for (const [dx, dy] of [
+          [-1, 0], [1, 0], [0, -1], [0, 1],
+          [-1, -1], [1, -1], [-1, 1], [1, 1],
+        ] as const) {
           const nx = cx + dx;
           const ny = cy + dy;
           if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
@@ -616,6 +638,91 @@ function removeDetachedComponents(data: ImageData, mode: 'largest' | 'conservati
 }
 
 // ─── Shared helpers ──────────────────────────────────────────────────
+
+function filterCriticalAnimationFrames(
+  frames: HTMLCanvasElement[],
+  boxes: (BBox | null)[],
+  frameW: number,
+  frameH: number,
+  config: { minFrames: number; maxFrames: number },
+  animationName: string,
+): { frames: HTMLCanvasElement[]; boxes: (BBox | null)[] } {
+  const populated = boxes
+    .map((bbox, index) => ({ bbox, index }))
+    .filter((entry): entry is { bbox: BBox; index: number } => entry.bbox != null);
+
+  if (populated.length === 0) {
+    return { frames: [], boxes: [] };
+  }
+
+  const areas = populated.map(({ bbox }) => bbox.w * bbox.h);
+  const heights = populated.map(({ bbox }) => bbox.h);
+  const widths = populated.map(({ bbox }) => bbox.w);
+  const medianArea = median(areas);
+  const medianHeight = median(heights);
+  const medianWidth = median(widths);
+  const edgeMargin = 2;
+
+  const scored = populated.map(({ bbox, index }) => {
+    const area = bbox.w * bbox.h;
+    const areaRatio = medianArea > 0 ? area / medianArea : 1;
+    const heightRatio = medianHeight > 0 ? bbox.h / medianHeight : 1;
+    const widthRatio = medianWidth > 0 ? bbox.w / medianWidth : 1;
+    const touchesLeft = bbox.x <= edgeMargin;
+    const touchesRight = bbox.x + bbox.w >= frameW - edgeMargin;
+    const touchesTop = bbox.y <= edgeMargin;
+    const touchesBottom = bbox.y + bbox.h >= frameH - edgeMargin;
+    const verticalFill = bbox.h / frameH;
+
+    let score = 100;
+    if (touchesLeft) score -= 45;
+    if (touchesRight) score -= 45;
+    if (touchesTop) score -= 35;
+    if (areaRatio < 0.55) score -= 55;
+    if (areaRatio > 1.75) score -= 50;
+    if (heightRatio < 0.7) score -= 40;
+    if (widthRatio < 0.45) score -= 25;
+    if (verticalFill < 0.38) score -= 45;
+    if (touchesBottom && verticalFill < 0.44) score -= 20;
+
+    const valid = score >= 60 && !touchesLeft && !touchesRight && !touchesTop;
+    return { index, score, valid };
+  });
+
+  let selectedIndices = scored.filter((entry) => entry.valid).map((entry) => entry.index);
+  if (selectedIndices.length < config.minFrames) {
+    selectedIndices = scored
+      .slice()
+      .sort((a, b) => b.score - a.score)
+      .slice(0, Math.min(config.maxFrames, scored.length))
+      .map((entry) => entry.index)
+      .sort((a, b) => a - b);
+  }
+
+  if (selectedIndices.length > config.maxFrames) {
+    selectedIndices = sampleOrderedIndices(selectedIndices, config.maxFrames);
+  }
+
+  console.log(
+    `[SpritePostProcess] ${animationName}: kept ${selectedIndices.length}/${frames.length} reliable critical frames`,
+  );
+
+  return {
+    frames: selectedIndices.map((index) => frames[index]),
+    boxes: selectedIndices.map((index) => boxes[index]),
+  };
+}
+
+function sampleOrderedIndices(indices: number[], count: number): number[] {
+  if (indices.length <= count) return indices.slice();
+  if (count <= 1) return [indices[0]];
+  const sampled: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const position = Math.round((i / (count - 1)) * (indices.length - 1));
+    sampled.push(indices[position]);
+  }
+  return sampled;
+}
 
 interface BBox { x: number; y: number; w: number; h: number }
 

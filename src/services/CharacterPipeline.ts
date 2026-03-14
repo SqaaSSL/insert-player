@@ -7,6 +7,7 @@ import {
   getAllSpritesForHash,
   CACHE_VERSION,
   type CachedMeta,
+  type CachedSprite,
 } from './SpriteCache';
 import { geminiRepose, geminiCrouchRepose, geminiSpriteSheet } from './GeminiApi';
 import { cleanSpriteSheet, mirrorCleanFrames, computeGridCols } from './SpritePostProcess';
@@ -49,16 +50,44 @@ const ANIMATIONS: AnimDef[] = [
   { name: 'high_kick',  motion: 'powerful grounded standing roundhouse kick swinging the right leg in a high arc while the support foot stays planted, then returning to stance', frames: 7, duration: 1.2, loop: false, base: 'standing' },
   { name: 'low_punch',  motion: 'quick crouching jab punch from a deep low stance, extending the right arm forward while staying crouched throughout, then retracting', frames: 7, duration: 1.0, loop: false, base: 'crouched' },
   { name: 'low_kick',   motion: 'low crouching sweep kick extending the right leg along the ground from a deep crouched stance while staying low throughout, then retracting', frames: 7, duration: 1.2, loop: false, base: 'crouched' },
-  { name: 'jump',       motion: 'jump anticipation into airborne jump pose then landing, with the character staying the same size in frame and not physically traveling upward inside the frame', frames: 8, duration: 1.5, loop: false, base: 'standing' },
+  { name: 'jump',       motion: 'four clear jump key poses: grounded anticipation, airborne lift-off, apex airborne pose, and grounded landing recovery, with the character staying the same size in frame and not physically traveling upward inside the frame', frames: 4, duration: 1.5, loop: false, base: 'standing' },
   { name: 'crouch',     motion: 'transitioning from standing fighting stance down into a deep low crouch with visibly dropped hips, bent knees, and a much shorter silhouette by the final frame', frames: 4, duration: 1.2, loop: false, base: 'crouched' },
-  { name: 'hit',        motion: 'recoiling from impact, pain reaction, staggering backward',                                       frames: 8,  duration: 1.0, loop: false, base: 'standing' },
+  { name: 'hit',        motion: 'four clear hit-reaction key poses: impact, recoil, stagger, and grounded recovery without falling or becoming airborne', frames: 4,  duration: 1.0, loop: false, base: 'standing' },
   { name: 'ko',         motion: 'falling to the ground, knocked out, collapsing backward',                                         frames: 16, duration: 2,   loop: false, base: 'standing' },
 ];
 
 let activeProvider: PipelineProvider = 'gemini';
+const CRITICAL_ANIMATION_NAMES = new Set(['jump', 'hit']);
+const MIRRORED_ANIMATION_NAMES = new Set(['high_punch', 'low_punch', 'high_kick', 'low_kick']);
+const criticalSpriteMaintenanceInflight = new Map<string, Promise<void>>();
+export const SPRITE_PROCESSING_VERSION = 2;
 
 export function setProvider(p: PipelineProvider) { activeProvider = p; }
 export function getProvider(): PipelineProvider { return activeProvider; }
+function isCriticalAnimation(name: string): boolean { return CRITICAL_ANIMATION_NAMES.has(name); }
+
+function getMinimumReliableFrameCount(name: string): number {
+  if (name === 'jump') return 3;
+  if (name === 'hit') return 2;
+  return 1;
+}
+
+function getAnimationDefinition(name: string): AnimDef {
+  const anim = ANIMATIONS.find((entry) => entry.name === name);
+  if (!anim) throw new Error(`Unknown animation: ${name}`);
+  return anim;
+}
+
+function getGenerationFrameCount(anim: AnimDef, cachedSprite?: CachedSprite): number {
+  if (!cachedSprite || !isCriticalAnimation(anim.name)) {
+    return anim.frames;
+  }
+  const currentVersion = cachedSprite.processingVersion ?? 0;
+  if (currentVersion >= SPRITE_PROCESSING_VERSION) {
+    return anim.frames;
+  }
+  return Math.max(anim.frames, cachedSprite.frameCount);
+}
 
 async function fetchImageAsBlob(url: string): Promise<Blob> {
   const proxied = `/proxy/image?url=${encodeURIComponent(url)}`;
@@ -144,6 +173,102 @@ async function generateSpriteWithLudo(
   const frameH = Math.round(sheetH / gridRows);
 
   return { blob, frameCount: result.num_frames, frameW, frameH };
+}
+
+async function rebuildSpriteFromRawBlob(
+  photoHash: string,
+  sprite: CachedSprite,
+  anim: AnimDef,
+): Promise<CachedSprite> {
+  if (!sprite.rawPngBlob) {
+    throw new Error(`No raw sprite data for ${anim.name}`);
+  }
+
+  const rawBase64 = await blobToBase64Util(sprite.rawPngBlob);
+  const shouldMirror = MIRRORED_ANIMATION_NAMES.has(anim.name);
+  const generationFrames = getGenerationFrameCount(anim, sprite);
+  const genFrames = shouldMirror ? Math.ceil(generationFrames / 2) : generationFrames;
+  const gridCols = computeGridCols(genFrames);
+  const gridRows = Math.ceil(genFrames / gridCols);
+
+  const cleaned = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, anim.name);
+  if (cleaned.frameCount < getMinimumReliableFrameCount(anim.name)) {
+    throw new Error(`Cleaned ${anim.name} sprite has only ${cleaned.frameCount} reliable frames`);
+  }
+  let finalBase64: string;
+  let finalFrameCount: number;
+  let finalGridCols: number;
+  let finalGridRows: number;
+
+  if (shouldMirror) {
+    const mirrored = await mirrorCleanFrames(cleaned.base64, cleaned.frameCount, anim.frames, cleaned.gridCols, cleaned.gridRows);
+    finalBase64 = mirrored.base64;
+    finalFrameCount = mirrored.frameCount;
+    finalGridCols = mirrored.gridCols;
+    finalGridRows = mirrored.gridRows;
+  } else {
+    finalBase64 = cleaned.base64;
+    finalFrameCount = cleaned.frameCount;
+    finalGridCols = cleaned.gridCols;
+    finalGridRows = cleaned.gridRows;
+  }
+
+  const blob = base64ToBlob(finalBase64, 'image/png');
+  const { width: sheetW, height: sheetH } = await measureImage(blob);
+  const frameW = Math.round(sheetW / finalGridCols);
+  const frameH = Math.round(sheetH / finalGridRows);
+
+  return {
+    photoHash,
+    animationName: anim.name,
+    pngBlob: blob,
+    rawPngBlob: sprite.rawPngBlob,
+    frameWidth: frameW,
+    frameHeight: frameH,
+    frameCount: finalFrameCount,
+    processingVersion: SPRITE_PROCESSING_VERSION,
+    createdAt: sprite.createdAt,
+  };
+}
+
+export async function ensureCriticalAnimationsUpToDate(photoHash: string): Promise<void> {
+  const existing = criticalSpriteMaintenanceInflight.get(photoHash);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    const sprites = await getAllSpritesForHash(photoHash);
+    if (sprites.length === 0) return;
+
+    for (const animName of CRITICAL_ANIMATION_NAMES) {
+      const sprite = sprites.find((entry) => entry.animationName === animName);
+      if (!sprite) continue;
+      if ((sprite.processingVersion ?? 0) >= SPRITE_PROCESSING_VERSION) continue;
+      if (!sprite.rawPngBlob) continue;
+
+      try {
+        const rebuilt = await rebuildSpriteFromRawBlob(photoHash, sprite, getAnimationDefinition(animName));
+        await setCachedSprite(rebuilt);
+        console.log(`[CriticalRepair] ${animName}: upgraded cached sprite for ${photoHash.slice(0, 8)}`);
+      } catch (err: any) {
+        console.warn(`[CriticalRepair] ${animName}: failed to upgrade ${photoHash.slice(0, 8)}: ${err.message}`);
+      }
+    }
+  })().finally(() => {
+    criticalSpriteMaintenanceInflight.delete(photoHash);
+  });
+
+  criticalSpriteMaintenanceInflight.set(photoHash, promise);
+  return promise;
+}
+
+export async function warmCriticalAnimationUpgrades(photoHashes: string[]): Promise<void> {
+  for (const photoHash of photoHashes) {
+    try {
+      await ensureCriticalAnimationsUpToDate(photoHash);
+    } catch (err: any) {
+      console.warn(`[CriticalRepair] Warm repair failed for ${photoHash.slice(0, 8)}: ${err.message}`);
+    }
+  }
 }
 
 // ─── Main pipeline ──────────────────────────────────────────────────
@@ -287,6 +412,7 @@ export async function processCharacter(
         frameWidth: spriteResult.frameW,
         frameHeight: spriteResult.frameH,
         frameCount: spriteResult.frameCount,
+        processingVersion: SPRITE_PROCESSING_VERSION,
         createdAt: Date.now(),
       });
 
@@ -344,50 +470,18 @@ export async function rebuildCharacter(
 
     onStatus({ stage: 'generating_sprites', animation: anim.name, current: rebuilt + 1, total });
 
-    const rawBase64 = await blobToBase64Util(sprite.rawPngBlob);
-    const shouldMirror = ['high_punch', 'low_punch', 'high_kick', 'low_kick'].includes(anim.name);
-    const genFrames = shouldMirror ? Math.ceil(anim.frames / 2) : anim.frames;
-    const gridCols = computeGridCols(genFrames);
-    const gridRows = Math.ceil(genFrames / gridCols);
+    try {
+      const rebuiltSprite = await rebuildSpriteFromRawBlob(photoHash, sprite, anim);
+      await setCachedSprite(rebuiltSprite);
 
-    const cleaned = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, anim.name);
-    let finalBase64: string;
-    let finalFrameCount: number;
-    let finalGridCols: number;
-    let finalGridRows: number;
-
-    if (shouldMirror) {
-      const mirrored = await mirrorCleanFrames(cleaned.base64, cleaned.frameCount, anim.frames, cleaned.gridCols, cleaned.gridRows);
-      finalBase64 = mirrored.base64;
-      finalFrameCount = mirrored.frameCount;
-      finalGridCols = mirrored.gridCols;
-      finalGridRows = mirrored.gridRows;
-    } else {
-      finalBase64 = cleaned.base64;
-      finalFrameCount = cleaned.frameCount;
-      finalGridCols = cleaned.gridCols;
-      finalGridRows = cleaned.gridRows;
+      rebuilt++;
+      onStatus({ stage: 'sprite_ready', animation: anim.name, photoHash, current: rebuilt, total });
+      console.log(`[Rebuild] ${anim.name}: re-processed ${rebuiltSprite.frameCount} frames (${rebuiltSprite.frameWidth}x${rebuiltSprite.frameHeight})`);
+    } catch (err: any) {
+      rebuilt++;
+      onStatus({ stage: 'sprite_ready', animation: anim.name, photoHash, current: rebuilt, total });
+      console.warn(`[Rebuild] ${anim.name}: failed to re-process, keeping existing sprite: ${err.message}`);
     }
-
-    const blob = base64ToBlob(finalBase64, 'image/png');
-    const { width: sheetW, height: sheetH } = await measureImage(blob);
-    const frameW = Math.round(sheetW / finalGridCols);
-    const frameH = Math.round(sheetH / finalGridRows);
-
-    await setCachedSprite({
-      photoHash,
-      animationName: anim.name,
-      pngBlob: blob,
-      rawPngBlob: sprite.rawPngBlob,
-      frameWidth: frameW,
-      frameHeight: frameH,
-      frameCount: finalFrameCount,
-      createdAt: sprite.createdAt,
-    });
-
-    rebuilt++;
-    onStatus({ stage: 'sprite_ready', animation: anim.name, photoHash, current: rebuilt, total });
-    console.log(`[Rebuild] ${anim.name}: re-processed ${finalFrameCount} frames (${frameW}x${frameH})`);
   }
 
   // Also regenerate clean meta blobs if missing
@@ -415,8 +509,7 @@ export async function retryAnimation(
   const meta = await getCachedMeta(photoHash);
   if (!meta) throw new Error('Character not found');
 
-  const anim = ANIMATIONS.find(a => a.name === animationName);
-  if (!anim) throw new Error(`Unknown animation: ${animationName}`);
+  const anim = getAnimationDefinition(animationName);
 
   if (!meta.sideViewBlob) throw new Error('No side view image found — cannot regenerate');
 
@@ -441,6 +534,7 @@ export async function retryAnimation(
     frameWidth: spriteResult.frameW,
     frameHeight: spriteResult.frameH,
     frameCount: spriteResult.frameCount,
+    processingVersion: SPRITE_PROCESSING_VERSION,
     createdAt: Date.now(),
   });
 
