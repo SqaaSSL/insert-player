@@ -24,7 +24,7 @@ import {
 } from '../../services/CharacterPipeline.ts';
 import { createDirectPhotoStage, createPhotoStage } from '../../services/StageBackgroundService.ts';
 import { DEBUG_EVENT_NAME, clearDebugLog, getDebugLogLines } from '../../services/DebugLog.ts';
-import { GIFEncoder, quantize, applyPalette } from 'gifenc';
+import { exportAnimationGif } from '../../services/GifExportService.ts';
 
 const FONT = '"Press Start 2P", monospace';
 const ACCENT = '#ff4444';
@@ -1333,39 +1333,8 @@ export class GalleryScene extends Phaser.Scene {
     if (!cached) return;
 
     try {
-      this.downloadGifBtn.setText('...');
-      const img = await blobToImage(cached.pngBlob);
-      const frameW = cached.frameWidth;
-      const frameH = cached.frameHeight;
-      const gridCols = Math.round(img.width / frameW);
-      const frameCount = cached.frameCount;
-      const delay = Math.round(100 / 10); // 10fps → 100ms per frame
-
-      const gif = GIFEncoder();
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = frameW;
-      tempCanvas.height = frameH;
-      const tempCtx = tempCanvas.getContext('2d')!;
-
-      for (let f = 0; f < frameCount; f++) {
-        const sc = f % gridCols;
-        const sr = Math.floor(f / gridCols);
-        tempCtx.clearRect(0, 0, frameW, frameH);
-        tempCtx.fillStyle = '#000000';
-        tempCtx.fillRect(0, 0, frameW, frameH);
-        tempCtx.drawImage(img, sc * frameW, sr * frameH, frameW, frameH, 0, 0, frameW, frameH);
-
-        const imageData = tempCtx.getImageData(0, 0, frameW, frameH);
-        const palette = quantize(imageData.data, 256);
-        const index = applyPalette(imageData.data, palette);
-        const frameOpts: Record<string, unknown> = { palette, delay };
-        if (f === 0) frameOpts.repeat = 0;
-        gif.writeFrame(index, frameW, frameH, frameOpts as any);
-      }
-
-      gif.finish();
-      const gifBytes = gif.bytes();
-      const blob = new Blob([new Uint8Array(gifBytes)], { type: 'image/gif' });
+      this.downloadGifBtn.setText('COMPOSING...');
+      const blob = await exportAnimationGif(cached, animName);
       downloadBlob(blob, `${safeName}_${animName}.gif`);
     } catch (err: any) {
       console.error('[Gallery] GIF export failed:', err);
