@@ -52,6 +52,8 @@ export async function loadAiSprites(
   canvas.width = cols * FIGHTER_WIDTH;
   canvas.height = rows * FIGHTER_HEIGHT;
   const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const loadedAnims = new Map<string, { img: HTMLImageElement; sprite: CachedSprite }>();

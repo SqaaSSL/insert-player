@@ -8,6 +8,7 @@
  */
 
 import { getAnimationProfile, type AnimationProfile } from './AnimationProfiles';
+import { publishDebugLog } from './DebugLog';
 
 const ALPHA_THRESHOLD = 15;
 export const CELL_W = 192;
@@ -20,11 +21,23 @@ const GREEN_BRIGHT_MIN = 30;
 const CRITICAL_ANIMATION_CONFIG: Partial<Record<string, { minFrames: number; maxFrames: number }>> = {
   jump: { minFrames: 3, maxFrames: 4 },
   hit: { minFrames: 2, maxFrames: 4 },
+  low_punch: { minFrames: 3, maxFrames: 4 },
+  low_kick: { minFrames: 3, maxFrames: 4 },
 };
 
 // ─── Single image processing (for reposed character) ─────────────────
 
-export async function cleanReposedImage(base64: string, profileName = 'idle'): Promise<string> {
+export interface NormalizationReference {
+  targetDrawHeight?: number;
+  targetDrawWidth?: number;
+  baselineRatio?: number;
+}
+
+export async function cleanReposedImage(
+  base64: string,
+  profileName = 'idle',
+  normalizationReference?: NormalizationReference,
+): Promise<string> {
   const img = await loadImg(`data:image/png;base64,${base64}`);
   const profile = getAnimationProfile(profileName);
 
@@ -48,7 +61,107 @@ export async function cleanReposedImage(base64: string, profileName = 'idle'): P
   const bbox = findBoundingBox(imageData);
   if (!bbox) return base64;
 
-  const normalized = normalizeCanvasToCell(canvas, bbox, profile);
+  const normalized = normalizeCanvasToCell(canvas, bbox, profile, undefined, undefined, undefined, normalizationReference);
+  if (profileName === 'crouch') {
+    const targetDrawH = Math.round(normalizationReference?.targetDrawHeight ?? CELL_H * profile.targetHeightRatio);
+    const targetDrawW = Math.round(normalizationReference?.targetDrawWidth ?? CELL_W * profile.targetWidthRatio);
+    const message =
+      `[SpritePostProcess] Reposed crouch normalize: bbox=${bbox.w}x${bbox.h}@(${bbox.x},${bbox.y}) ` +
+      `target=${targetDrawW}x${targetDrawH} baseline=${(normalizationReference?.baselineRatio ?? profile.baselineRatio).toFixed(3)} scale=${normalized.usedScale.toFixed(3)}`;
+    console.log(message);
+    publishDebugLog(message);
+  }
+
+  return normalized.canvas.toDataURL('image/png').split(',')[1];
+}
+
+export async function cleanReposedImagePreserveCanvas(base64: string): Promise<string> {
+  const img = await loadImg(`data:image/png;base64,${base64}`);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(img, 0, 0);
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const bgType = detectDominantBgColor([canvas]);
+  if (bgType === 'green') {
+    chromaKeyRemove(imageData);
+  } else {
+    lightBgRemove(imageData);
+  }
+  ctx.putImageData(imageData, 0, 0);
+
+  return canvas.toDataURL('image/png').split(',')[1];
+}
+
+export async function zoomTransparentImageToBottom(base64: string, scale: number): Promise<string> {
+  const img = await loadImg(`data:image/png;base64,${base64}`);
+  const sourceCanvas = document.createElement('canvas');
+  sourceCanvas.width = img.width;
+  sourceCanvas.height = img.height;
+  const sourceCtx = sourceCanvas.getContext('2d')!;
+  sourceCtx.drawImage(img, 0, 0);
+
+  const imageData = sourceCtx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+  const bbox = findBoundingBox(imageData);
+  if (!bbox || scale >= 0.999) return base64;
+
+  const out = document.createElement('canvas');
+  out.width = sourceCanvas.width;
+  out.height = sourceCanvas.height;
+  const ctx = out.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  const drawW = Math.max(1, Math.round(bbox.w * scale));
+  const drawH = Math.max(1, Math.round(bbox.h * scale));
+  const drawX = Math.round(bbox.x + (bbox.w - drawW) / 2);
+  const drawY = Math.round(bbox.y + bbox.h - drawH);
+
+  ctx.drawImage(
+    sourceCanvas,
+    bbox.x,
+    bbox.y,
+    bbox.w,
+    bbox.h,
+    drawX,
+    drawY,
+    drawW,
+    drawH,
+  );
+
+  return out.toDataURL('image/png').split(',')[1];
+}
+
+export async function normalizeTransparentReposedImage(
+  base64: string,
+  profileName = 'idle',
+  normalizationReference?: NormalizationReference,
+): Promise<string> {
+  const img = await loadImg(`data:image/png;base64,${base64}`);
+  const profile = getAnimationProfile(profileName);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(img, 0, 0);
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const bbox = findBoundingBox(imageData);
+  if (!bbox) return base64;
+
+  const normalized = normalizeCanvasToCell(canvas, bbox, profile, undefined, undefined, undefined, normalizationReference);
+  if (profileName === 'crouch') {
+    const targetDrawH = Math.round(normalizationReference?.targetDrawHeight ?? CELL_H * profile.targetHeightRatio);
+    const targetDrawW = Math.round(normalizationReference?.targetDrawWidth ?? CELL_W * profile.targetWidthRatio);
+    const message =
+      `[SpritePostProcess] Transparent crouch normalize: bbox=${bbox.w}x${bbox.h}@(${bbox.x},${bbox.y}) ` +
+      `target=${targetDrawW}x${targetDrawH} baseline=${(normalizationReference?.baselineRatio ?? profile.baselineRatio).toFixed(3)} scale=${normalized.usedScale.toFixed(3)}`;
+    console.log(message);
+    publishDebugLog(message);
+  }
 
   return normalized.canvas.toDataURL('image/png').split(',')[1];
 }
@@ -73,6 +186,7 @@ export async function cleanSpriteSheet(
   expectedGridRows: number,
   animationName: string,
   maxScale?: number,
+  normalizationReference?: NormalizationReference,
 ): Promise<CleanSheetResult> {
   const img = await loadImg(`data:image/png;base64,${base64}`);
   const profile = getAnimationProfile(animationName);
@@ -153,8 +267,19 @@ export async function cleanSpriteSheet(
   }
   const stableCenterXRaw = median(populatedBoxes.map((bbox) => bbox.x + bbox.w / 2));
   const lockedScale = profile.lockScaleAcrossFrames
-    ? getLockedAnimationScale(populatedBoxes, profile, maxScale)
+    ? getLockedAnimationScale(populatedBoxes, profile, maxScale, normalizationReference)
     : undefined;
+  if (animationName === 'crouch' || animationName === 'low_punch' || animationName === 'low_kick') {
+    const boxSummary = populatedBoxes
+      .map((bbox, index) => `#${index}:${bbox.w}x${bbox.h}@(${bbox.x},${bbox.y})`)
+      .join(' ');
+    const message =
+      `[SpritePostProcess] ${animationName} normalize: boxes=${boxSummary} ` +
+      `lockedScale=${lockedScale?.toFixed(3) ?? 'none'} ` +
+      `reference=${normalizationReference ? `${Math.round(normalizationReference.targetDrawWidth ?? 0)}x${Math.round(normalizationReference.targetDrawHeight ?? 0)} baseline=${(normalizationReference.baselineRatio ?? 0).toFixed(3)}` : 'none'}`;
+    console.log(message);
+    publishDebugLog(message);
+  }
 
   const cleanFrames: HTMLCanvasElement[] = [];
   const usedScales: number[] = [];
@@ -168,7 +293,15 @@ export async function cleanSpriteSheet(
       continue;
     }
 
-    const normalized = normalizeCanvasToCell(workingFrames[i], bbox, profile, maxScale, stableCenterXRaw, lockedScale);
+    const normalized = normalizeCanvasToCell(
+      workingFrames[i],
+      bbox,
+      profile,
+      maxScale,
+      stableCenterXRaw,
+      lockedScale,
+      normalizationReference,
+    );
     usedScales.push(normalized.usedScale);
     cleanFrames.push(normalized.canvas);
   }
@@ -772,6 +905,8 @@ function padToRect(source: HTMLCanvasElement, w: number, h: number): HTMLCanvasE
   c.width = w;
   c.height = h;
   const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   const dx = Math.round((w - drawW) / 2);
   const dy = h - Math.round(h * 0.05) - drawH;
   ctx.drawImage(source, 0, 0, source.width, source.height, dx, dy, drawW, drawH);
@@ -785,16 +920,17 @@ function normalizeCanvasToCell(
   maxScale?: number,
   stableCenterXRaw?: number,
   lockedScale?: number,
+  normalizationReference?: NormalizationReference,
 ): { canvas: HTMLCanvasElement; usedScale: number } {
-  const targetDrawH = CELL_H * profile.targetHeightRatio;
-  const targetDrawW = CELL_W * profile.targetWidthRatio;
+  const targetDrawH = normalizationReference?.targetDrawHeight ?? CELL_H * profile.targetHeightRatio;
+  const targetDrawW = normalizationReference?.targetDrawWidth ?? CELL_W * profile.targetWidthRatio;
   let scale = lockedScale ?? Math.min(targetDrawH / bbox.h, targetDrawW / bbox.w);
   if (maxScale != null && scale > maxScale) scale = maxScale;
 
   const drawW = Math.round(bbox.w * scale);
   const drawH = Math.round(bbox.h * scale);
   const rawCenterX = stableCenterXRaw ?? (bbox.x + bbox.w / 2);
-  const baselineY = CELL_H * profile.baselineRatio;
+  const baselineY = CELL_H * (normalizationReference?.baselineRatio ?? profile.baselineRatio);
 
   let dx = Math.round(CELL_W / 2 - (rawCenterX - bbox.x) * scale);
   let dy = Math.round(baselineY - drawH);
@@ -806,6 +942,8 @@ function normalizeCanvasToCell(
   c.width = CELL_W;
   c.height = CELL_H;
   const ctx = c.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, bbox.x, bbox.y, bbox.w, bbox.h, dx, dy, drawW, drawH);
   return { canvas: c, usedScale: scale };
 }
@@ -814,12 +952,15 @@ function getLockedAnimationScale(
   boxes: BBox[],
   profile: AnimationProfile,
   maxScale?: number,
+  normalizationReference?: NormalizationReference,
 ): number {
-  const maxHeight = Math.max(...boxes.map((bbox) => bbox.h));
-  const maxWidth = Math.max(...boxes.map((bbox) => bbox.w));
+  const heights = boxes.map((bbox) => bbox.h).sort((a, b) => a - b);
+  const widths = boxes.map((bbox) => bbox.w).sort((a, b) => a - b);
+  const referenceHeight = upperPercentile(heights, 0.75);
+  const referenceWidth = upperPercentile(widths, 0.75);
   let scale = Math.min(
-    (CELL_H * profile.targetHeightRatio) / maxHeight,
-    (CELL_W * profile.targetWidthRatio) / maxWidth,
+    (normalizationReference?.targetDrawHeight ?? CELL_H * profile.targetHeightRatio) / referenceHeight,
+    (normalizationReference?.targetDrawWidth ?? CELL_W * profile.targetWidthRatio) / referenceWidth,
   );
   if (maxScale != null && scale > maxScale) scale = maxScale;
   return scale;
@@ -839,6 +980,13 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function upperPercentile(values: number[], percentile: number): number {
+  if (values.length === 0) return 1;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * percentile)));
+  return sorted[index];
+}
+
 function loadImg(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -846,4 +994,15 @@ function loadImg(src: string): Promise<HTMLImageElement> {
     img.onerror = reject;
     img.src = src;
   });
+}
+
+export async function measureOpaqueBoundsFromBase64(base64: string): Promise<BBox | null> {
+  const img = await loadImg(`data:image/png;base64,${base64}`);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(img, 0, 0);
+  const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  return findBoundingBox(data);
 }

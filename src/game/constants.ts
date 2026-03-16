@@ -14,8 +14,8 @@ export const ROUND_TIME = 99;
 export const MAX_HEALTH = 1000;
 export const ROUNDS_TO_WIN = 2;
 
-export const FIGHTER_WIDTH = 160;
-export const FIGHTER_HEIGHT = 240;
+export const FIGHTER_WIDTH = 192;
+export const FIGHTER_HEIGHT = 256;
 
 export const BODY_WIDTH = 60;
 export const BODY_HEIGHT = 180;

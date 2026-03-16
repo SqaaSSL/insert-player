@@ -1,5 +1,6 @@
-import { cleanReposedImage, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, type CleanSheetResult } from './SpritePostProcess';
+import { CELL_H, CELL_W, cleanReposedImagePreserveCanvas, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, zoomTransparentImageToBottom, type CleanSheetResult, type NormalizationReference } from './SpritePostProcess';
 import { getAnimationProfile } from './AnimationProfiles';
+import { publishDebugLog, publishDebugMultiline } from './DebugLog';
 
 const GEMINI_BASE = '/proxy/gemini/v1beta/models';
 const MODEL = 'gemini-3.1-flash-image-preview';
@@ -72,13 +73,40 @@ async function callGemini(prompt: string, imageBase64?: string, mimeType = 'imag
   };
 }
 
+function loadAlphaImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
 // ─── Repose ──────────────────────────────────────────────────────────
 
 const REPOSE_BASE = `Using this photo as reference, create a full-body fighting game character. Preserve the EXACT same visual style, art style, textures, colors, and level of detail from the original image — do NOT change the aesthetic. Keep the same face, hair, and skin tone faithfully. If only a face or upper body is shown, imagine and generate the rest of the body (legs, feet, full outfit) in a style consistent with what is visible. The character should be in a 3/4 view facing right in a fighting stance — fists raised, feet planted shoulder-width apart, slight forward lean. Show the COMPLETE body from head to feet with nothing cropped. Pure bright green (#00FF00) background — the entire background must be a flat, uniform, vivid green with no gradients or shadows.`;
 
 const REPOSE_CLOTHING_FALLBACK = ` The character MUST be wearing a full fighting outfit — tank top or t-shirt, long pants or martial arts gi, and shoes/boots. Add clothing if the original has none. Keep the outfit style consistent with the character's aesthetic.`;
 
-export async function geminiRepose(photoBase64: string): Promise<string> {
+const UPRIGHT_REPOSE_PROMPT = `Using this character as reference, create the SAME character in a clearly upright heroic standing pose.
+
+Keep the exact 3/4 side-view facing right, the same face, outfit, proportions, and art style.
+Keep the same camera distance and full-body framing. Do not shrink the character and do not zoom out.
+
+The pose should be noticeably straighter and taller than the reference:
+- stand upright with the torso lifted
+- raise the hips
+- straighten both legs much more than in the reference
+- reduce the knee bend a lot
+- keep the feet planted on the ground
+- keep the head facing the same direction with no neck twist or sideways turn
+- the arms can stay posed naturally, but do not use a boxing or fighting guard
+
+The result should look like a confident upright hero pose, not an attack stance.
+
+Use a solid pure bright green (#00FF00) background with no shadows, floor, or gradients.`;
+
+export async function geminiReposeDetailed(photoBase64: string): Promise<GeminiPoseResult> {
   console.log('[GeminiApi] Reposing character...');
   const start = Date.now();
 
@@ -105,42 +133,316 @@ export async function geminiRepose(photoBase64: string): Promise<string> {
   if (!rawBase64) throw new Error('Gemini repose returned no image');
 
   console.log(`[GeminiApi] Repose raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
-  const cleaned = await cleanReposedImage(rawBase64, 'idle');
+  const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
   console.log(`[GeminiApi] Repose cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
 
-  return cleaned;
+  return { rawBase64, cleanedBase64: cleaned };
+}
+
+export async function geminiRepose(photoBase64: string): Promise<string> {
+  const result = await geminiReposeDetailed(photoBase64);
+  return result.cleanedBase64;
+}
+
+export async function geminiUprightReposeDetailed(sideViewBase64: string): Promise<GeminiPoseResult> {
+  console.log('[GeminiApi] Generating upright reference...');
+  const start = Date.now();
+  const rawBase64 = await generateGeminiImageWithSafetyFallback(UPRIGHT_REPOSE_PROMPT, sideViewBase64);
+  console.log(`[GeminiApi] Upright raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
+  const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
+  console.log(`[GeminiApi] Upright cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
+  publishDebugLog('[GeminiApi] Upright reference generated from side view');
+  return { rawBase64, cleanedBase64: cleaned };
+}
+
+export async function geminiUprightRepose(sideViewBase64: string): Promise<string> {
+  const result = await geminiUprightReposeDetailed(sideViewBase64);
+  return result.cleanedBase64;
 }
 
 // ─── Crouch Repose ────────────────────────────────────────────────────
 
-const CROUCH_REPOSE_PROMPT = `Using this fighting character as reference, create the SAME character in a DEEP CROUCH position. This is NOT a standing pose — the character's knees must be bent at roughly 90 degrees, hips dropped very low, torso leaning forward, head at roughly HALF the height of the standing version. Think of a Street Fighter crouch block: the character is ducking under a high punch. Fists still raised near the chin, but everything is compressed downward. The character's overall silhouette height should be approximately 55-65% of the standing version. Same 3/4 view facing right. Preserve the EXACT same visual style, art style, textures, colors, outfit, face, hair, skin tone. Show the COMPLETE body from head to feet with nothing cropped. Pure bright green (#00FF00) background — the entire background must be a flat, uniform, vivid green with no gradients or shadows.`;
+const CROUCH_REPOSE_PROMPT = `Using this fighting character as reference, create the SAME character in an extreme classic 2D fighting-game crouch defensive guard, as if the player is holding the down arrow.
 
-export async function geminiCrouchRepose(sideViewBase64: string): Promise<string> {
-  console.log('[GeminiApi] Generating crouched view...');
-  const start = Date.now();
+Keep the exact 3/4 side-view facing right, the same face, outfit, proportions, and art style.
+Keep the same camera distance and full-body framing. Do not shrink the character and do not zoom out.
 
+This must look like a real arcade low hitbox crouch-block position:
+- both feet stay planted on the ground
+- bend both knees completely, fully folded into a deep full squat
+- drop the hips extremely low
+- bring the buttocks almost onto the ground, nearly touching the floor
+- make the whole body as low as possible without sitting down or lying down
+- drop the head and shoulders dramatically below the standing pose
+- fold the torso tightly downward into a compact defensive posture
+- tuck the elbows in close to the body
+- keep the forearms and fists up in a protective guard near the chest and face
+- keep the head facing the same direction with no neck twist or sideways turn
+- the result should read as an extreme Street Fighter down-arrow crouch-block / defensive guard, not a medium squat, not a half-crouch, and not a relaxed standing pose
+
+Use a solid pure bright green (#00FF00) background with no shadows, floor, or gradients.`;
+
+interface SilhouetteBounds {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface SilhouetteMetrics extends SilhouetteBounds {
+  aspectRatio: number;
+  normCenterY: number;
+  lowerHalfRatio: number;
+}
+
+export interface GeminiCrouchOption {
+  id: string;
+  label: string;
+  imageBase64: string;
+  previewBase64?: string;
+  rawBase64?: string;
+  score: number;
+  valid: boolean;
+  source: 'gemini';
+  details: string;
+}
+
+export interface GeminiPoseResult {
+  rawBase64: string;
+  cleanedBase64: string;
+}
+
+function formatSilhouetteMetrics(metrics: SilhouetteMetrics | null): string {
+  if (!metrics) return 'null';
+  return `bbox=${metrics.w}x${metrics.h}@(${metrics.x},${metrics.y}) aspect=${metrics.aspectRatio.toFixed(3)} centerY=${metrics.normCenterY.toFixed(3)} lowerHalf=${metrics.lowerHalfRatio.toFixed(3)}`;
+}
+
+function debugLog(message: string): void {
+  console.log(message);
+  publishDebugLog(message);
+}
+
+function debugWarn(message: string): void {
+  console.warn(message);
+  publishDebugLog(message);
+}
+
+function summarizePrompt(prompt: string): string {
+  return prompt.replace(/\s+/g, ' ').trim().slice(0, 220);
+}
+
+async function getImageDimensions(base64: string): Promise<{ width: number; height: number }> {
+  const img = await loadAlphaImage(`data:image/png;base64,${base64}`);
+  return { width: img.width, height: img.height };
+}
+
+async function generateGeminiImageWithSafetyFallback(prompt: string, imageBase64: string): Promise<string> {
   let rawBase64: string | null = null;
 
   try {
-    const result = await callGemini(CROUCH_REPOSE_PROMPT, sideViewBase64);
+    const result = await callGemini(prompt, imageBase64);
     rawBase64 = result.imageBase64;
   } catch (err: any) {
     if (err.message.includes('IMAGE_SAFETY')) {
-      console.warn('[GeminiApi] Crouch repose blocked by safety, retrying with clothing...');
-      const result = await callGemini(CROUCH_REPOSE_PROMPT + REPOSE_CLOTHING_FALLBACK, sideViewBase64);
+      console.warn('[GeminiApi] Prompt blocked by safety, retrying with clothing...');
+      const result = await callGemini(prompt + REPOSE_CLOTHING_FALLBACK, imageBase64);
       rawBase64 = result.imageBase64;
     } else {
       throw err;
     }
   }
 
-  if (!rawBase64) throw new Error('Gemini crouch repose returned no image');
+  if (!rawBase64) throw new Error('Gemini returned no image');
+  return rawBase64;
+}
 
-  console.log(`[GeminiApi] Crouch repose raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
-  const cleaned = await cleanReposedImage(rawBase64, 'crouch');
-  console.log(`[GeminiApi] Crouch repose cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
+async function getSilhouetteMetrics(base64: string): Promise<SilhouetteMetrics | null> {
+  const img = await loadAlphaImage(`data:image/png;base64,${base64}`);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(img, 0, 0);
+  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-  return cleaned;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  let weightedY = 0;
+  let totalAlpha = 0;
+  let lowerHalfAlpha = 0;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const alpha = data[(y * width + x) * 4 + 3];
+      if (alpha <= 15) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+      weightedY += alpha * y;
+      totalAlpha += alpha;
+    }
+  }
+
+  if (maxX < 0 || maxY < 0 || totalAlpha <= 0) return null;
+
+  const boxHeight = maxY - minY + 1;
+  const midY = minY + boxHeight / 2;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const alpha = data[(y * width + x) * 4 + 3];
+      if (alpha <= 15) continue;
+      if (y >= midY) lowerHalfAlpha += alpha;
+    }
+  }
+
+  return {
+    x: minX,
+    y: minY,
+    w: maxX - minX + 1,
+    h: boxHeight,
+    aspectRatio: (maxX - minX + 1) / boxHeight,
+    normCenterY: ((weightedY / totalAlpha) - minY) / boxHeight,
+    lowerHalfRatio: lowerHalfAlpha / totalAlpha,
+  };
+}
+
+function scoreCrouchPose(standing: SilhouetteMetrics | null, crouch: SilhouetteMetrics | null): number {
+  if (!standing || !crouch) return 0;
+  const aspectGain = crouch.aspectRatio / standing.aspectRatio;
+  const centerDrop = crouch.normCenterY - standing.normCenterY;
+  const lowerHalfGain = crouch.lowerHalfRatio - standing.lowerHalfRatio;
+  const bottomDelta = Math.abs((standing.y + standing.h) - (crouch.y + crouch.h));
+
+  let score = 0;
+  score += Math.max(0, Math.min(35, (aspectGain - 1) * 240));
+  score += Math.max(0, Math.min(35, centerDrop * 700));
+  score += Math.max(0, Math.min(30, lowerHalfGain * 600));
+  score += Math.max(0, Math.min(20, 20 - Math.max(0, bottomDelta - 16)));
+  return score;
+}
+
+function isValidCrouchPose(standing: SilhouetteMetrics | null, crouch: SilhouetteMetrics | null): boolean {
+  if (!standing || !crouch) return true;
+  const aspectGain = crouch.aspectRatio / standing.aspectRatio;
+  const centerDrop = crouch.normCenterY - standing.normCenterY;
+  const lowerHalfGain = crouch.lowerHalfRatio - standing.lowerHalfRatio;
+  const bottomDelta = Math.abs((standing.y + standing.h) - (crouch.y + crouch.h));
+  return aspectGain >= 1.05 && centerDrop >= 0.03 && lowerHalfGain >= 0.03 && bottomDelta <= 16;
+}
+
+function describeCrouchOption(
+  source: 'gemini',
+  metrics: SilhouetteMetrics | null,
+  score: number,
+  valid: boolean,
+): string {
+  const verdict = valid ? 'VALID' : 'WEAK';
+  return `${source.toUpperCase()}  SCORE ${score.toFixed(1)}  ${verdict}\n${formatSilhouetteMetrics(metrics)}`;
+}
+
+function pickBestCrouchOption(options: GeminiCrouchOption[]): GeminiCrouchOption | null {
+  if (options.length === 0) return null;
+  const sorted = [...options].sort((a, b) => {
+    if (a.valid !== b.valid) return a.valid ? -1 : 1;
+    return b.score - a.score;
+  });
+  return sorted[0] ?? null;
+}
+
+export async function geminiCrouchReposeOptions(
+  sideViewBase64: string,
+  normalizationReference?: NormalizationReference,
+  standingMetricsBase64 = sideViewBase64,
+): Promise<GeminiCrouchOption[]> {
+  console.log('[GeminiApi] Generating crouched view...');
+  const start = Date.now();
+  const inputSize = await getImageDimensions(sideViewBase64);
+  const standingBounds = await getSilhouetteMetrics(standingMetricsBase64);
+  debugLog(
+    `[GeminiApi] Crouch Gemini input image: ${inputSize.width}x${inputSize.height}`,
+  );
+  debugLog(
+    `[GeminiApi] Crouch standing metrics: ${formatSilhouetteMetrics(standingBounds)} ` +
+    `reference=${normalizationReference ? `${Math.round(normalizationReference.targetDrawWidth ?? 0)}x${Math.round(normalizationReference.targetDrawHeight ?? 0)} baseline=${(normalizationReference.baselineRatio ?? 0).toFixed(3)}` : 'none'}`,
+  );
+  const promptVariants = [CROUCH_REPOSE_PROMPT];
+  console.log('[GeminiApi] Crouch prompt:\n' + CROUCH_REPOSE_PROMPT);
+  publishDebugLog(`[GeminiApi] Crouch prompt summary: ${summarizePrompt(CROUCH_REPOSE_PROMPT)}`);
+  publishDebugMultiline(
+    `[GeminiApi] Crouch prompt lines:\n${CROUCH_REPOSE_PROMPT}`,
+  );
+  const options: GeminiCrouchOption[] = [];
+
+  for (let i = 0; i < promptVariants.length; i++) {
+    const prompt = promptVariants[i];
+    try {
+      const rawBase64 = await generateGeminiImageWithSafetyFallback(prompt, sideViewBase64);
+      debugLog(`[GeminiApi] Crouch attempt ${i + 1}/${promptVariants.length}: raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
+      const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
+      const zoomed = await zoomTransparentImageToBottom(cleaned, 0.88);
+      const crouchBounds = await getSilhouetteMetrics(cleaned);
+      const score = scoreCrouchPose(standingBounds, crouchBounds);
+      const valid = isValidCrouchPose(standingBounds, crouchBounds);
+      debugLog(
+        `[GeminiApi] Crouch attempt ${i + 1}/${promptVariants.length}: ` +
+        `${formatSilhouetteMetrics(crouchBounds)} score=${score.toFixed(2)} valid=${valid}`,
+      );
+      options.push({
+        id: `gemini_${i + 1}`,
+        label: `GEMINI ${i + 1}`,
+        imageBase64: zoomed,
+        previewBase64: rawBase64,
+        rawBase64,
+        score,
+        valid,
+        source: 'gemini',
+        details: describeCrouchOption('gemini', crouchBounds, score, valid),
+      });
+
+      if (valid) {
+        debugLog(`[GeminiApi] Crouch candidate passed validation (score ${score.toFixed(1)})`);
+      } else {
+        debugWarn(`[GeminiApi] Flagged weak crouch candidate for manual review (score ${score.toFixed(1)})`);
+      }
+    } catch (err: any) {
+      debugWarn(`[GeminiApi] Crouch attempt failed: ${err.message}`);
+    }
+  }
+
+  debugLog(`[GeminiApi] Crouch repose finished in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
+  if (options.length === 0) throw new Error('Gemini crouch repose returned no image');
+  return options;
+}
+
+export async function geminiCrouchRepose(
+  sideViewBase64: string,
+  normalizationReference?: NormalizationReference,
+  standingMetricsBase64 = sideViewBase64,
+): Promise<string> {
+  const result = await geminiCrouchReposeDetailed(sideViewBase64, normalizationReference, standingMetricsBase64);
+  return result.cleanedBase64;
+}
+
+export async function geminiCrouchReposeDetailed(
+  sideViewBase64: string,
+  normalizationReference?: NormalizationReference,
+  standingMetricsBase64 = sideViewBase64,
+): Promise<GeminiPoseResult> {
+  const options = await geminiCrouchReposeOptions(sideViewBase64, normalizationReference, standingMetricsBase64);
+  const chosen = pickBestCrouchOption(options);
+  if (!chosen) throw new Error('Gemini crouch repose returned no image');
+  if (!chosen.valid) {
+    debugWarn('[GeminiApi] Falling back to best available crouch candidate');
+  } else {
+    debugLog(`[GeminiApi] Crouch repose accepted from ${chosen.label}`);
+  }
+  return {
+    rawBase64: chosen.rawBase64 ?? chosen.previewBase64 ?? chosen.imageBase64,
+    cleanedBase64: chosen.imageBase64,
+  };
 }
 
 // ─── Sprite sheets ───────────────────────────────────────────────────
@@ -159,6 +461,7 @@ const MIRROR_ANIMS = new Set(['high_punch', 'low_punch', 'high_kick', 'low_kick'
 function getMinimumReliableFrames(animName: string): number {
   if (animName === 'jump') return 3;
   if (animName === 'hit') return 2;
+  if (animName === 'low_punch' || animName === 'low_kick') return 3;
   return 1;
 }
 
@@ -169,6 +472,7 @@ export async function geminiSpriteSheet(
   frames: number,
   secondaryBase64?: string,
   maxScale?: number,
+  normalizationReference?: NormalizationReference,
 ): Promise<GeminiSpriteResult> {
   const shouldMirror = MIRROR_ANIMS.has(animName);
   const profile = getAnimationProfile(animName);
@@ -192,8 +496,8 @@ export async function geminiSpriteSheet(
     endNote = `- Frame 1 starts in the base stance. The motion progresses gradually through the middle frames. The final frame returns to or finishes the pose.`;
   }
 
-  const targetHeightPct = Math.round(profile.targetHeightRatio * 100);
-  const targetWidthPct = Math.round(profile.targetWidthRatio * 100);
+  const targetHeightPct = Math.round(((normalizationReference?.targetDrawHeight ?? CELL_H * profile.targetHeightRatio) / CELL_H) * 100);
+  const targetWidthPct = Math.round(((normalizationReference?.targetDrawWidth ?? CELL_W * profile.targetWidthRatio) / CELL_W) * 100);
 
   const prompt = [
     `Generate a sprite sheet of this exact character performing: ${motionDesc}.`,
@@ -233,6 +537,10 @@ export async function geminiSpriteSheet(
     promptVariants.push(
       `${prompt}\n- CRITICAL: keep every full body centered fully inside its own cell with empty green margin on all sides.\n- CRITICAL: if a pose would cross a cell boundary, make the pose smaller instead of cropping it.\n- CRITICAL: do not include any oversized hero frame, close-up frame, or pose that spans more than one cell.`,
     );
+  } else if (animName === 'low_punch' || animName === 'low_kick') {
+    promptVariants.push(
+      `${prompt}\n- CRITICAL: every populated cell must contain exactly one full-body character from head to feet.\n- CRITICAL: do not leave internal cells empty; all ${genFrames} cells must show a valid sequential step of the move.\n- CRITICAL: do not include any oversized close-up pose, merged multi-cell pose, or cropped body.\n- CRITICAL: keep the character low to the ground while still fully contained inside each cell with visible green margin around the silhouette.`,
+    );
   }
 
   let geminiRawBase64: string | null = null;
@@ -257,7 +565,7 @@ export async function geminiSpriteSheet(
 
     if (!rawBase64) continue;
 
-    const nextCleaned = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, animName, maxScale);
+    const nextCleaned = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, animName, maxScale, normalizationReference);
     geminiRawBase64 = rawBase64;
     cleaned = nextCleaned;
     if (nextCleaned.frameCount >= minReliableFrames) {

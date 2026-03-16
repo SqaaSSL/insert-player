@@ -13,8 +13,17 @@ import {
   type CachedSprite,
   type CachedStageBackground,
 } from '../../services/SpriteCache.ts';
-import { getAnimationList, rebuildCharacter, retryAnimation, retrySideView, retryCrouchView, type StatusCallback } from '../../services/CharacterPipeline.ts';
+import {
+  getAnimationList,
+  rebuildCharacter,
+  retryAnimation,
+  retrySideView,
+  retryUprightView,
+  retryCrouchView,
+  type StatusCallback,
+} from '../../services/CharacterPipeline.ts';
 import { createDirectPhotoStage, createPhotoStage } from '../../services/StageBackgroundService.ts';
+import { DEBUG_EVENT_NAME, clearDebugLog, getDebugLogLines } from '../../services/DebugLog.ts';
 import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 
 const FONT = '"Press Start 2P", monospace';
@@ -56,6 +65,7 @@ const STAGE_PREVIEW_W = 660;
 const STAGE_PREVIEW_H = 320;
 
 const BTN_Y = H - 26;
+const THUMB_DISPLAY_LABELS = ['ORIGINAL', 'SIDE VIEW', 'UPRIGHT', 'CROUCH'];
 
 export class GalleryScene extends Phaser.Scene {
   private activeTab: 'characters' | 'stages' = 'characters';
@@ -75,6 +85,7 @@ export class GalleryScene extends Phaser.Scene {
   private stagesTabBtn!: Phaser.GameObjects.Text;
   private nameText!: Phaser.GameObjects.Text;
   private statusText!: Phaser.GameObjects.Text;
+  private debugText!: Phaser.GameObjects.Text;
   private infoText!: Phaser.GameObjects.Text;
   private emptyGroup!: Phaser.GameObjects.Container;
   private contentGroup!: Phaser.GameObjects.Container;
@@ -119,6 +130,7 @@ export class GalleryScene extends Phaser.Scene {
   private renameBtn!: Phaser.GameObjects.Text;
   private rebuildBtn!: Phaser.GameObjects.Text;
   private deleteBtn!: Phaser.GameObjects.Text;
+  private debugListener?: (event: Event) => void;
 
   constructor() {
     super({ key: 'GalleryScene' });
@@ -140,6 +152,7 @@ export class GalleryScene extends Phaser.Scene {
     this.createBottomUI();
     this.createFileInputs();
     this.setupInput();
+    this.setupDebugFeed();
     this.cameras.main.fadeIn(300, 0, 0, 0);
 
     await Promise.all([this.loadCharacters(), this.loadStages()]);
@@ -224,8 +237,8 @@ export class GalleryScene extends Phaser.Scene {
   private createContentLayout(): void {
     this.contentGroup = this.add.container(0, 0).setDepth(10).setVisible(false);
 
-    // --- Left column: 5 thumbnail boxes with labels (clickable) ---
-    const thumbLabels = ['ORIGINAL', 'SIDE VIEW', 'SIDE CLEAN', 'CROUCH', 'CROUCH CLEAN'];
+    // --- Left column: primary source poses only ---
+    const thumbLabels = THUMB_DISPLAY_LABELS;
     const thumbCount = thumbLabels.length;
 
     for (let i = 0; i < thumbCount; i++) {
@@ -263,7 +276,13 @@ export class GalleryScene extends Phaser.Scene {
     }).setOrigin(0, 0).setDepth(10);
     this.contentGroup.add(this.statusText);
 
-    this.infoText = this.add.text(INFO_X, INFO_TOP + 40, '', {
+    this.debugText = this.add.text(INFO_X, INFO_TOP + 56, '', {
+      fontFamily: FONT, fontSize: '5px', color: '#77d7ff',
+      lineSpacing: 3, wordWrap: { width: 390 },
+    }).setOrigin(0, 0).setDepth(10);
+    this.contentGroup.add(this.debugText);
+
+    this.infoText = this.add.text(INFO_X, INFO_TOP + 108, '', {
       fontFamily: FONT, fontSize: '6px', color: '#aaaaaa',
       lineSpacing: 6, wordWrap: { width: 380 },
     }).setOrigin(0, 0).setDepth(10);
@@ -693,6 +712,20 @@ export class GalleryScene extends Phaser.Scene {
     escKey.on('down', () => this.goBack());
   }
 
+  private setupDebugFeed(): void {
+    this.debugListener = () => {
+      this.renderDebugLog();
+    };
+    window.addEventListener(DEBUG_EVENT_NAME, this.debugListener);
+    this.renderDebugLog();
+  }
+
+  private renderDebugLog(): void {
+    if (!this.debugText) return;
+    const lines = getDebugLogLines();
+    this.debugText.setText(lines.slice(-6).join('\n'));
+  }
+
   // ─── Data Loading ────────────────────────────────────────────
 
   private async loadCharacters(): Promise<void> {
@@ -752,6 +785,7 @@ export class GalleryScene extends Phaser.Scene {
       this.deleteBtn.setVisible(false);
       this.nameText.setText('');
       this.statusText.setText('');
+      this.debugText.setText('');
       this.infoText.setText('');
       this.animNameText.setText('');
       this.resetAnimGridColors();
@@ -778,6 +812,7 @@ export class GalleryScene extends Phaser.Scene {
     };
     const st = statusMap[meta.status] || { label: meta.status.toUpperCase(), color: '#aaaaaa' };
     this.statusText.setText(`STATUS: ${st.label}`).setColor(st.color);
+    this.renderDebugLog();
 
     const date = new Date(meta.createdAt);
     const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -799,9 +834,8 @@ export class GalleryScene extends Phaser.Scene {
     const thumbSlots: { label: string; blob: Blob | null }[] = [
       { label: 'original', blob: meta.originalPhotoBlob },
       { label: 'side_view', blob: meta.sideViewBlob },
-      { label: 'side_view_clean', blob: meta.sideViewCleanBlob || null },
+      { label: 'upright', blob: meta.uprightViewBlob },
       { label: 'crouch', blob: meta.crouchViewBlob },
-      { label: 'crouch_clean', blob: meta.crouchViewCleanBlob || null },
     ];
 
     for (let i = 0; i < thumbSlots.length; i++) {
@@ -927,16 +961,29 @@ export class GalleryScene extends Phaser.Scene {
     this.currentPreviewBlob = entry.blob;
     this.currentRawBlob = null;
     this.currentPreviewAnimName = entry.label;
-    this.downloadRawBtn.setVisible(false);
+    if (thumbIndex === 1 && meta?.sideViewRawBlob) {
+      this.currentRawBlob = meta.sideViewRawBlob;
+    } else if (thumbIndex === 2 && meta?.uprightViewRawBlob) {
+      this.currentRawBlob = meta.uprightViewRawBlob;
+    } else if (thumbIndex === 3 && meta?.crouchViewRawBlob) {
+      this.currentRawBlob = meta.crouchViewRawBlob;
+    }
+    this.downloadRawBtn.setVisible(!!this.currentRawBlob);
     this.downloadGifBtn.setVisible(false);
 
-    const canRetrySide = thumbIndex === 1 || thumbIndex === 2;
-    const canRetryCrouch = thumbIndex === 3 || thumbIndex === 4;
+    const canRetrySide = thumbIndex === 1;
+    const canRetryUpright = thumbIndex === 2;
+    const canRetryCrouch = thumbIndex === 3;
     if (canRetrySide) {
       this.retryAnimBtn.setText('\u21bb RETRY SIDE VIEW');
       this.retryAnimBtn.setVisible(true);
       this.retryAnimBtn.off('pointerdown');
       this.retryAnimBtn.on('pointerdown', () => this.retryBase('side'));
+    } else if (canRetryUpright) {
+      this.retryAnimBtn.setText('\u21bb RETRY UPRIGHT');
+      this.retryAnimBtn.setVisible(true);
+      this.retryAnimBtn.off('pointerdown');
+      this.retryAnimBtn.on('pointerdown', () => this.retryBase('upright'));
     } else if (canRetryCrouch) {
       this.retryAnimBtn.setText('\u21bb RETRY CROUCH');
       this.retryAnimBtn.setVisible(true);
@@ -946,8 +993,7 @@ export class GalleryScene extends Phaser.Scene {
       this.retryAnimBtn.setVisible(false);
     }
 
-    const thumbDisplayLabels = ['ORIGINAL', 'SIDE VIEW', 'SIDE CLEAN', 'CROUCH', 'CROUCH CLEAN'];
-    this.animNameText.setText(thumbDisplayLabels[thumbIndex] || entry.label.toUpperCase()).setColor('#44aaff');
+    this.animNameText.setText(THUMB_DISPLAY_LABELS[thumbIndex] || entry.label.toUpperCase()).setColor('#44aaff');
 
     const url = URL.createObjectURL(entry.blob);
     const htmlImg = new Image();
@@ -971,7 +1017,7 @@ export class GalleryScene extends Phaser.Scene {
       this.dynamicObjects.push(this.bigPreviewImage);
 
       this.animNameText.setText(
-        `${thumbDisplayLabels[thumbIndex]}  ${htmlImg.width}x${htmlImg.height}`
+        `${THUMB_DISPLAY_LABELS[thumbIndex]}  ${htmlImg.width}x${htmlImg.height}`
       );
       this.downloadBtn.setVisible(true);
     };
@@ -1335,9 +1381,11 @@ export class GalleryScene extends Phaser.Scene {
 
     if (meta.originalPhotoBlob)  downloadBlob(meta.originalPhotoBlob, `${safeName}_original.png`);
     if (meta.sideViewBlob)       downloadBlob(meta.sideViewBlob, `${safeName}_side_view.png`);
-    if (meta.sideViewCleanBlob)  downloadBlob(meta.sideViewCleanBlob, `${safeName}_side_view_clean.png`);
+    if (meta.sideViewRawBlob)    downloadBlob(meta.sideViewRawBlob, `${safeName}_side_view_RAW.png`);
+    if (meta.uprightViewBlob)    downloadBlob(meta.uprightViewBlob, `${safeName}_upright.png`);
+    if (meta.uprightViewRawBlob) downloadBlob(meta.uprightViewRawBlob, `${safeName}_upright_RAW.png`);
     if (meta.crouchViewBlob)     downloadBlob(meta.crouchViewBlob, `${safeName}_crouch.png`);
-    if (meta.crouchViewCleanBlob) downloadBlob(meta.crouchViewCleanBlob, `${safeName}_crouch_clean.png`);
+    if (meta.crouchViewRawBlob)  downloadBlob(meta.crouchViewRawBlob, `${safeName}_crouch_RAW.png`);
 
     for (const sp of this.sprites) {
       downloadBlob(sp.pngBlob, `${safeName}_${sp.animationName}.png`);
@@ -1379,6 +1427,8 @@ export class GalleryScene extends Phaser.Scene {
 
     this.retryAnimBtn.setText('RETRYING...').disableInteractive();
     this.statusText.setText(`Regenerating ${animName}...`).setColor('#ffaa00');
+    clearDebugLog();
+    this.renderDebugLog();
     this.animNameText.setColor('#ffaa00').setText(`${label}  RETRYING...`);
     this.downloadBtn.setVisible(false);
     this.downloadRawBtn.setVisible(false);
@@ -1405,31 +1455,63 @@ export class GalleryScene extends Phaser.Scene {
     }
   }
 
-  private async retryBase(which: 'side' | 'crouch'): Promise<void> {
+  private async retryBase(which: 'side' | 'upright' | 'crouch'): Promise<void> {
     if (this.metas.length === 0) return;
     const meta = this.metas[this.currentIndex];
-    const label = which === 'side' ? 'SIDE VIEW' : 'CROUCH';
+    const label =
+      which === 'crouch'
+        ? 'CROUCH'
+        : which === 'upright'
+          ? 'UPRIGHT'
+          : 'SIDE VIEW';
 
     this.retryAnimBtn.setText('RETRYING...').disableInteractive();
     this.statusText.setText(`Regenerating ${label}...`).setColor('#ffaa00');
+    clearDebugLog();
+    this.renderDebugLog();
 
     try {
-      const fn = which === 'side' ? retrySideView : retryCrouchView;
-      await fn(meta.photoHash, (status) => {
-        if (status.stage === 'converting_side_view') {
-          this.statusText.setText('Calling Gemini for new side view...');
-        } else if (status.stage === 'converting_crouch_view') {
-          this.statusText.setText('Calling Gemini for new crouch view...');
-        } else if (status.stage === 'done') {
-          this.statusText.setText(`${label} regenerated!`).setColor('#44ff44');
-        }
-      });
+      if (which === 'crouch') {
+        await retryCrouchView(meta.photoHash, (status) => {
+          if (status.stage === 'converting_upright_view') {
+            this.statusText.setText('Straightening stance before crouch...');
+          } else if (status.stage === 'converting_crouch_view') {
+            this.statusText.setText('Calling Gemini for new crouch...');
+          } else if (status.stage === 'done') {
+            this.statusText.setText(`${label} regenerated!`).setColor('#44ff44');
+          }
+        });
+      } else if (which === 'upright') {
+        await retryUprightView(meta.photoHash, (status) => {
+          if (status.stage === 'converting_upright_view') {
+            this.statusText.setText('Calling Gemini for new upright view...');
+          } else if (status.stage === 'done') {
+            this.statusText.setText(`${label} regenerated!`).setColor('#44ff44');
+          }
+        });
+      } else {
+        await retrySideView(meta.photoHash, (status) => {
+          if (status.stage === 'converting_side_view') {
+            this.statusText.setText('Calling Gemini for new side view...');
+          } else if (status.stage === 'done') {
+            this.statusText.setText(`${label} regenerated!`).setColor('#44ff44');
+          }
+        });
+      }
       await this.loadCharacters();
+      if (which === 'crouch') this.selectThumb(3);
     } catch (err: any) {
       this.statusText.setText(`Retry failed: ${err.message}`).setColor(ACCENT);
     } finally {
-      const btnLabel = which === 'side' ? '\u21bb RETRY SIDE VIEW' : '\u21bb RETRY CROUCH';
-      this.retryAnimBtn.setText(btnLabel).setInteractive({ useHandCursor: true });
+      this.retryAnimBtn
+        .setText(
+          which === 'crouch'
+            ? '\u21bb RETRY CROUCH'
+            : which === 'upright'
+              ? '\u21bb RETRY UPRIGHT'
+              : '\u21bb RETRY SIDE VIEW'
+        )
+        .setInteractive({ useHandCursor: true });
     }
   }
 
@@ -1440,6 +1522,10 @@ export class GalleryScene extends Phaser.Scene {
   }
 
   shutdown(): void {
+    if (this.debugListener) {
+      window.removeEventListener(DEBUG_EVENT_NAME, this.debugListener);
+      this.debugListener = undefined;
+    }
     this.cleanupHTML();
   }
 }

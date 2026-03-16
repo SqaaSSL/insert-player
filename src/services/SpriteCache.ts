@@ -42,8 +42,12 @@ interface CachedMeta {
   version: number;
   originalPhotoBlob: Blob | null;
   sideViewBlob: Blob | null;
+  sideViewRawBlob: Blob | null;
+  uprightViewBlob: Blob | null;
+  uprightViewRawBlob: Blob | null;
   sideViewCleanBlob: Blob | null;
   crouchViewBlob: Blob | null;
+  crouchViewRawBlob: Blob | null;
   crouchViewCleanBlob: Blob | null;
   noBgBlob: Blob | null;
   characterName: string;

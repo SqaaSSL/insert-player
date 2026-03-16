@@ -508,6 +508,12 @@ export class CharacterCreationScene extends Phaser.Scene {
         this.drawProgressBar(0.05);
         break;
 
+      case 'converting_upright_view':
+        this.stageText.setText('Straightening reference stance...');
+        this.statusText.setText('Preparing an upright base for crouch generation...');
+        this.drawProgressBar(0.09);
+        break;
+
       case 'converting_crouch_view':
         this.stageText.setText('Generating crouched stance...');
         this.statusText.setText('Creating low-stance base for crouch attacks...');
