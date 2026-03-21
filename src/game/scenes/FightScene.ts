@@ -24,7 +24,7 @@ import {
   FighterState,
 } from "../constants.ts";
 import { loadAiSprites } from "../sprites/AiSpriteLoader.ts";
-import { getCachedStageBackground } from "../../services/SpriteCache.ts";
+import { getCachedMeta, getCachedStageBackground } from "../../services/SpriteCache.ts";
 import {
   buildMatchSeed,
   getDefaultPersonalityId,
@@ -95,6 +95,18 @@ export class FightScene extends Phaser.Scene {
   private fighterRenderYOffset = 0;
   private bottomOverlayY = GAME_HEIGHT - 60;
   private ready = false;
+  private matchLabel = "";
+  private stageDisplayLabel = "";
+  private p1DisplayTag = "";
+  private p2DisplayTag = "";
+  private introHasPlayed = false;
+  private cinematicIntroActive = false;
+  private introCanSkip = false;
+  private introOverlay?: Phaser.GameObjects.Container;
+  private introPortraitTextureKeys: string[] = [];
+  private introEvents: Phaser.Time.TimerEvent[] = [];
+  private introEnterKey?: Phaser.Input.Keyboard.Key;
+  private introSpaceKey?: Phaser.Input.Keyboard.Key;
 
   constructor() {
     super({ key: "FightScene" });
@@ -133,6 +145,13 @@ export class FightScene extends Phaser.Scene {
     this.accumulator = 0;
     this.waitingForMatchInput = false;
     this.ready = false;
+    this.matchLabel = "";
+    this.stageDisplayLabel = "";
+    this.p1DisplayTag = "";
+    this.p2DisplayTag = "";
+    this.introHasPlayed = false;
+    this.cinematicIntroActive = false;
+    this.introCanSkip = false;
   }
 
   async create(): Promise<void> {
@@ -160,10 +179,20 @@ export class FightScene extends Phaser.Scene {
     const matchLabel = this.isVsAI
       ? `${stageLabel} · ${getMatchLabel(this.remix)}`
       : stageLabel;
+    this.stageDisplayLabel = stageLabel;
+    this.matchLabel = matchLabel;
+    this.p1DisplayTag = this.cpuVsCpu ? p1Personality.label : "";
+    this.p2DisplayTag = this.isVsAI ? p2Personality.label : "";
 
     this.combat = new CombatSystem();
     this.inputMgr = new InputManager(this);
     this.sound_mgr = new SoundManager();
+    this.introEnterKey = this.input.keyboard?.addKey(
+      Phaser.Input.Keyboard.KeyCodes.ENTER,
+    );
+    this.introSpaceKey = this.input.keyboard?.addKey(
+      Phaser.Input.Keyboard.KeyCodes.SPACE,
+    );
 
     await this.loadAiSpritesIfNeeded();
 
@@ -1027,11 +1056,329 @@ export class FightScene extends Phaser.Scene {
     this.hitSparks.setDepth(50);
   }
 
+  private shouldSkipIntro(): boolean {
+    if (!this.introCanSkip) return false;
+    return Boolean(
+      (this.introEnterKey && Phaser.Input.Keyboard.JustDown(this.introEnterKey)) ||
+      (this.introSpaceKey && Phaser.Input.Keyboard.JustDown(this.introSpaceKey)),
+    );
+  }
+
+  private clearIntroEvents(): void {
+    for (const event of this.introEvents) {
+      event.remove(false);
+    }
+    this.introEvents = [];
+  }
+
+  private scheduleIntroEvent(delayMs: number, callback: () => void): void {
+    const event = this.time.delayedCall(delayMs, callback);
+    this.introEvents.push(event);
+  }
+
+  private destroyIntroOverlay(immediate = true): void {
+    if (immediate) {
+      this.clearIntroEvents();
+      this.introCanSkip = false;
+    }
+    if (!this.introOverlay) {
+      for (const texKey of this.introPortraitTextureKeys) {
+        if (this.textures.exists(texKey)) this.textures.remove(texKey);
+      }
+      this.introPortraitTextureKeys = [];
+      return;
+    }
+
+    const overlay = this.introOverlay;
+    this.introOverlay = undefined;
+
+    const cleanup = () => {
+      overlay.destroy(true);
+      for (const texKey of this.introPortraitTextureKeys) {
+        if (this.textures.exists(texKey)) this.textures.remove(texKey);
+      }
+      this.introPortraitTextureKeys = [];
+    };
+
+    if (immediate) {
+      cleanup();
+      return;
+    }
+
+    this.tweens.add({
+      targets: overlay,
+      alpha: 0,
+      duration: 220,
+      ease: "Sine.easeInOut",
+      onComplete: cleanup,
+    });
+  }
+
+  private async renderIntroPortrait(blob: Blob, size: number): Promise<HTMLCanvasElement> {
+    const img = await this.loadBlobImage(blob);
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = "#081018";
+    ctx.fillRect(0, 0, size, size);
+    const inset = 8;
+    const innerSize = size - inset * 2;
+    const scale = Math.max(innerSize / img.width, innerSize / img.height);
+    const drawW = img.width * scale;
+    const drawH = img.height * scale;
+    const dx = Math.round((size - drawW) / 2);
+    const dy = Math.round((size - drawH) / 2);
+    ctx.drawImage(img, dx, dy, drawW, drawH);
+    return canvas;
+  }
+
+  private async attachIntroPortrait(
+    parent: Phaser.GameObjects.Container,
+    photoHash: string | null,
+    x: number,
+    y: number,
+    size: number,
+  ): Promise<void> {
+    if (!photoHash) return;
+    const meta = await getCachedMeta(photoHash);
+    if (!meta?.originalPhotoBlob || !this.introOverlay) return;
+    const canvas = await this.renderIntroPortrait(meta.originalPhotoBlob, size);
+    if (!this.introOverlay || parent.parentContainer !== this.introOverlay) return;
+
+    const texKey = `fight_intro_portrait_${photoHash.slice(0, 12)}_${Date.now()}`;
+    if (this.textures.exists(texKey)) this.textures.remove(texKey);
+    this.textures.addCanvas(texKey, canvas);
+    this.introPortraitTextureKeys.push(texKey);
+
+    const image = this.add.image(x, y, texKey).setDepth(162);
+    parent.add(image);
+  }
+
+  private createIntroCard(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    align: "left" | "right",
+    name: string,
+    tag: string,
+    accent: string,
+  ): Phaser.GameObjects.Container {
+    const card = this.add.container(x, y).setDepth(161);
+    const bg = this.add.graphics();
+    bg.fillStyle(0x050811, 0.88);
+    bg.fillRoundedRect(-width / 2, -height / 2, width, height, 12);
+    bg.lineStyle(3, Phaser.Display.Color.HexStringToColor(accent).color, 0.85);
+    bg.strokeRoundedRect(-width / 2, -height / 2, width, height, 12);
+    bg.fillStyle(0xffffff, 0.08);
+    bg.fillRect(-width / 2, -height / 2, width, 34);
+    card.add(bg);
+
+    const portraitOffset = align === "left" ? -width / 2 + 62 : width / 2 - 62;
+    const portraitFrame = this.add.graphics();
+    portraitFrame.fillStyle(0x0b1020, 0.95);
+    portraitFrame.fillRoundedRect(portraitOffset - 46, -46, 92, 92, 10);
+    portraitFrame.lineStyle(2, 0xffffff, 0.4);
+    portraitFrame.strokeRoundedRect(portraitOffset - 46, -46, 92, 92, 10);
+    card.add(portraitFrame);
+
+    const textX = align === "left" ? -20 : 20;
+    const originX = align === "left" ? 0 : 1;
+    const nameText = this.add.text(textX, -34, name.toUpperCase(), {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: "13px",
+      color: "#ffffff",
+      stroke: "#000000",
+      strokeThickness: 4,
+      align,
+      wordWrap: { width: 160 },
+    }).setOrigin(originX, 0.5);
+    const tagText = this.add.text(textX, 8, tag, {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: "8px",
+      color: accent,
+      stroke: "#000000",
+      strokeThickness: 3,
+      align,
+      wordWrap: { width: 170 },
+    }).setOrigin(originX, 0.5);
+    card.add([nameText, tagText]);
+
+    return card;
+  }
+
+  private finishCinematicIntro(showFightAnnouncement: boolean): void {
+    this.cinematicIntroActive = false;
+    this.introCanSkip = false;
+    this.clearIntroEvents();
+    this.destroyIntroOverlay(true);
+
+    const cam = this.cameras.main;
+    cam.stopFollow();
+    cam.setZoom(1);
+    cam.centerOn(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+
+    this.p1.x = 250;
+    this.p2.x = GAME_WIDTH - 250;
+    this.p1.forceState(FighterState.IDLE);
+    this.p2.forceState(FighterState.IDLE);
+    this.p1.syncSprite(this.p2.x);
+    this.p2.syncSprite(this.p1.x);
+
+    if (showFightAnnouncement) {
+      this.hud.showAnnouncement("FIGHT!", 800);
+      this.sound_mgr.playAnnounce("fight");
+    }
+
+    this.phaseTimer = 0;
+    this.phase = RoundPhase.FIGHTING;
+  }
+
+  private playMatchIntro(roundNum: number): void {
+    this.cinematicIntroActive = true;
+    this.introCanSkip = false;
+    this.destroyIntroOverlay(true);
+    this.phaseTimer = 150;
+
+    const cam = this.cameras.main;
+    cam.stopFollow();
+    cam.setZoom(1.03);
+    cam.centerOn(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+
+    this.p1.x = 250;
+    this.p2.x = GAME_WIDTH - 250;
+    this.p1.forceState(FighterState.IDLE);
+    this.p2.forceState(FighterState.IDLE);
+
+    const overlay = this.add.container(0, 0).setDepth(160).setAlpha(1);
+    this.introOverlay = overlay;
+
+    const dimmer = this.add.rectangle(
+      GAME_WIDTH / 2,
+      GAME_HEIGHT / 2,
+      GAME_WIDTH,
+      GAME_HEIGHT,
+      0x000000,
+      0.28,
+    ).setDepth(160);
+    overlay.add(dimmer);
+
+    const stageText = this.add.text(GAME_WIDTH / 2, 76, this.stageDisplayLabel, {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: "12px",
+      color: "#ffdd66",
+      stroke: "#000000",
+      strokeThickness: 4,
+      align: "center",
+    }).setOrigin(0.5).setDepth(161);
+    const matchText = this.add.text(GAME_WIDTH / 2, 102, this.matchLabel, {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: "7px",
+      color: "#b9d8ff",
+      stroke: "#000000",
+      strokeThickness: 3,
+      align: "center",
+    }).setOrigin(0.5).setDepth(161);
+    const vsText = this.add.text(GAME_WIDTH / 2, 314, "VS", {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: "30px",
+      color: "#ffffff",
+      stroke: "#000000",
+      strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(162);
+    const skipText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 34, "ENTER / SPACE: SKIP", {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: "7px",
+      color: "#9ad6ff",
+      stroke: "#000000",
+      strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(161);
+    overlay.add([stageText, matchText, vsText, skipText]);
+
+    const leftCard = this.createIntroCard(
+      -170,
+      320,
+      260,
+      126,
+      "left",
+      this.p1Name,
+      this.p1DisplayTag || "CHALLENGER",
+      "#ff6b6b",
+    );
+    const rightCard = this.createIntroCard(
+      GAME_WIDTH + 170,
+      320,
+      260,
+      126,
+      "right",
+      this.p2Name,
+      this.p2DisplayTag || (this.isVsAI ? "CPU" : "RIVAL"),
+      "#66ccff",
+    );
+    overlay.add([leftCard, rightCard]);
+
+    void this.attachIntroPortrait(leftCard, this.p1PhotoHash, -68, 0, 84);
+    void this.attachIntroPortrait(rightCard, this.p2PhotoHash, 68, 0, 84);
+
+    this.tweens.add({
+      targets: leftCard,
+      x: 188,
+      duration: 500,
+      ease: "Cubic.easeOut",
+    });
+    this.tweens.add({
+      targets: rightCard,
+      x: GAME_WIDTH - 188,
+      duration: 500,
+      ease: "Cubic.easeOut",
+    });
+    this.tweens.add({
+      targets: [stageText, matchText, vsText],
+      alpha: { from: 0, to: 1 },
+      y: "-=10",
+      duration: 360,
+      ease: "Sine.easeOut",
+    });
+    this.tweens.add({
+      targets: cam,
+      zoom: 1,
+      duration: 900,
+      ease: "Sine.easeInOut",
+    });
+
+    this.scheduleIntroEvent(420, () => {
+      this.introCanSkip = true;
+    });
+    this.scheduleIntroEvent(760, () => {
+      if (this.phase !== RoundPhase.INTRO) return;
+      this.hud.showAnnouncement(`ROUND ${roundNum}`, 1200);
+      this.sound_mgr.playAnnounce("round");
+    });
+    this.scheduleIntroEvent(1750, () => {
+      if (this.phase !== RoundPhase.INTRO) return;
+      this.hud.showAnnouncement("FIGHT!", 800);
+      this.sound_mgr.playAnnounce("fight");
+    });
+    this.scheduleIntroEvent(1900, () => {
+      if (this.phase !== RoundPhase.INTRO) return;
+      this.destroyIntroOverlay(false);
+    });
+  }
+
+  private skipCinematicIntro(): void {
+    if (!this.cinematicIntroActive) return;
+    this.finishCinematicIntro(true);
+  }
+
   private startRound(): void {
     this.phase = RoundPhase.INTRO;
     this.phaseTimer = 120;
     this.roundTimer = ROUND_TIME;
     this.frameCount = 0;
+    this.cinematicIntroActive = false;
+    this.introCanSkip = false;
+    this.destroyIntroOverlay(true);
 
     const cam = this.cameras.main;
     cam.stopFollow();
@@ -1059,6 +1406,12 @@ export class FightScene extends Phaser.Scene {
     this.p2.comboCount = 0;
 
     const roundNum = this.p1Wins + this.p2Wins + 1;
+    if (!this.introHasPlayed && roundNum === 1) {
+      this.introHasPlayed = true;
+      this.playMatchIntro(roundNum);
+      return;
+    }
+
     this.hud.showAnnouncement(`ROUND ${roundNum}`, 1200);
     this.sound_mgr.playAnnounce("round");
     this.time.delayedCall(1300, () => {
@@ -1073,9 +1426,16 @@ export class FightScene extends Phaser.Scene {
     if (!this.ready) return;
 
     if (this.phase === RoundPhase.INTRO) {
+      if (this.cinematicIntroActive && this.shouldSkipIntro()) {
+        this.skipCinematicIntro();
+      }
       this.phaseTimer--;
       if (this.phaseTimer <= 0) {
-        this.phase = RoundPhase.FIGHTING;
+        if (this.cinematicIntroActive) {
+          this.finishCinematicIntro(false);
+        } else {
+          this.phase = RoundPhase.FIGHTING;
+        }
       }
       this.p1.syncSprite(this.p2.x);
       this.p2.syncSprite(this.p1.x);
