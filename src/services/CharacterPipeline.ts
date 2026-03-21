@@ -57,6 +57,7 @@ const ANIMATIONS: AnimDef[] = [
   { name: 'crouch',     motion: 'transitioning from standing fighting stance down into an extreme low-profile crouch with visibly dropped hips, bent knees, thighs near-parallel to the ground, a tightly compressed torso, and a much lower head position by the final frame, while keeping the head facing the same direction', frames: 4, duration: 1.2, loop: false, base: 'crouched' },
   { name: 'hit',        motion: 'four clear hit-reaction key poses: impact, recoil, stagger, and grounded recovery without falling or becoming airborne', frames: 4,  duration: 1.0, loop: false, base: 'standing' },
   { name: 'ko',         motion: 'falling to the ground, knocked out, collapsing backward',                                         frames: 16, duration: 2,   loop: false, base: 'standing' },
+  { name: 'victory',    motion: 'big arcade-style victory celebration with an unmistakably triumphant winning pose: chest lifted, shoulders back, chin up, one or both arms raised or pumping in triumph, then settling into a proud champion hold facing right', frames: 8, duration: 1.8, loop: false, base: 'standing' },
 ];
 
 let activeProvider: PipelineProvider = 'gemini';

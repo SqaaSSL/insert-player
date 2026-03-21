@@ -133,6 +133,19 @@ const PROFILES: Record<string, AnimationProfile> = {
       'Show a fall to the ground, ending in a downed pose.',
     ],
   },
+  victory: {
+    targetHeightRatio: 0.86,
+    targetWidthRatio: 0.82,
+    baselineRatio: 0.95,
+    promptRules: [
+      'This is a grounded victory celebration only. The character stays standing, fully visible, and clearly reads as the winner.',
+      'Make the celebration obvious and energetic: triumphant body language, lifted chest, strong silhouette, and a big celebratory beat.',
+      'Use unmistakable winning gestures such as a raised fist, both arms lifted, a strong fist pump, or a proud champion pose.',
+      'Do not make this subtle, neutral, or close to the idle stance. It must look clearly more cheerful and victorious than the standing pose.',
+      'Keep the move grounded throughout. No jump, no crouch, and no knockdown.',
+      'The final frame should read as a strong held champion pose that can freeze on screen cleanly after the celebration.',
+    ],
+  },
 };
 
 export function getAnimationProfile(name: string): AnimationProfile {

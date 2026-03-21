@@ -220,7 +220,7 @@ export class CharacterCreationScene extends Phaser.Scene {
       high_punch: 'PUNCH', low_punch: 'C.PUNCH',
       high_kick: 'KICK', low_kick: 'C.KICK',
       jump: 'JUMP', crouch: 'CROUCH',
-      hit: 'HIT', ko: 'K.O.',
+      hit: 'HIT', ko: 'K.O.', victory: 'WIN',
     };
 
     this.previewContainer = this.add.container(0, 0).setDepth(10);

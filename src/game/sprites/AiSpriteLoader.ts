@@ -14,6 +14,7 @@ const ANIM_NAME_TO_STATE: Record<string, FighterState> = {
   crouch: FighterState.CROUCH,
   hit: FighterState.HIT_STUN,
   ko: FighterState.KNOCKDOWN,
+  victory: FighterState.VICTORY,
 };
 
 const FALLBACK_MAP: Partial<Record<FighterState, FighterState>> = {

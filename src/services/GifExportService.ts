@@ -80,6 +80,14 @@ function buildGifFramePlan(animationName: string, frameCount: number): GifFrameS
       }
       pushHold(steps, frameCount - 1, baseDelayMs, 1200);
       break;
+    case 'victory':
+      pushHold(steps, 0, baseDelayMs, 120);
+      for (let i = 0; i < frameCount; i++) {
+        steps.push({ sourceIndex: i, delayMs: clamp(baseDelayMs, 100, 150) });
+        if (i === peakIndex) pushHold(steps, i, baseDelayMs, 220);
+      }
+      pushHold(steps, frameCount - 1, baseDelayMs, 900);
+      break;
     case 'high_punch':
     case 'low_punch':
       pushHold(steps, 0, baseDelayMs, 80);

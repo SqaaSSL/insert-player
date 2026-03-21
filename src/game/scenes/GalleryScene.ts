@@ -34,7 +34,7 @@ const H = GAME_HEIGHT;
 const ANIM_LABELS: Record<string, string> = {
   idle: 'IDLE', walk: 'WALK', high_punch: 'PUNCH', low_punch: 'C.PUNCH',
   high_kick: 'KICK', low_kick: 'C.KICK', jump: 'JUMP', crouch: 'CROUCH',
-  hit: 'HIT', ko: 'K.O.',
+  hit: 'HIT', ko: 'K.O.', victory: 'WIN',
 };
 
 // Layout constants
@@ -948,7 +948,6 @@ export class GalleryScene extends Phaser.Scene {
 
   private selectThumb(thumbIndex: number): void {
     const entry = this.thumbBlobs[thumbIndex];
-    if (!entry) return;
 
     this.selectedAnimIndex = -1;
     this.resetAnimGridColors();
@@ -958,9 +957,17 @@ export class GalleryScene extends Phaser.Scene {
     if (this.bigPreviewSprite) { this.bigPreviewSprite.destroy(); this.bigPreviewSprite = null; }
     if (this.bigPreviewImage) { this.bigPreviewImage.destroy(); this.bigPreviewImage = null; }
 
-    this.currentPreviewBlob = entry.blob;
+    this.currentPreviewBlob = entry?.blob ?? null;
     this.currentRawBlob = null;
-    this.currentPreviewAnimName = entry.label;
+    this.currentPreviewAnimName = entry?.label ?? (
+      thumbIndex === 0
+        ? 'original'
+        : thumbIndex === 1
+          ? 'side_view'
+          : thumbIndex === 2
+            ? 'upright'
+            : 'crouch'
+    );
     if (thumbIndex === 1 && meta?.sideViewRawBlob) {
       this.currentRawBlob = meta.sideViewRawBlob;
     } else if (thumbIndex === 2 && meta?.uprightViewRawBlob) {
@@ -993,7 +1000,15 @@ export class GalleryScene extends Phaser.Scene {
       this.retryAnimBtn.setVisible(false);
     }
 
-    this.animNameText.setText(THUMB_DISPLAY_LABELS[thumbIndex] || entry.label.toUpperCase()).setColor('#44aaff');
+    const thumbLabel = THUMB_DISPLAY_LABELS[thumbIndex] || this.currentPreviewAnimName.toUpperCase();
+    this.animNameText.setText(thumbLabel).setColor('#44aaff');
+
+    if (!entry?.blob) {
+      this.animNameText.setColor('#555555').setText(`${thumbLabel} (NOT FOUND)`);
+      this.downloadBtn.setVisible(false);
+      this.downloadRawBtn.setVisible(!!this.currentRawBlob);
+      return;
+    }
 
     const url = URL.createObjectURL(entry.blob);
     const htmlImg = new Image();
@@ -1050,6 +1065,7 @@ export class GalleryScene extends Phaser.Scene {
     if (cached) {
       this.showBigPreview(cached, animName);
     } else {
+      this.currentPreviewAnimName = animName;
       this.animNameText.setColor('#555555');
       this.animNameText.setText(label + ' (NOT FOUND)');
       this.downloadBtn.setVisible(false);
@@ -1390,7 +1406,9 @@ export class GalleryScene extends Phaser.Scene {
   private async retryCurrentAnimation(): Promise<void> {
     if (this.metas.length === 0) return;
     const meta = this.metas[this.currentIndex];
-    const animName = this.currentPreviewAnimName;
+    const selectedAnim =
+      this.selectedAnimIndex >= 0 ? getAnimationList()[this.selectedAnimIndex] : null;
+    const animName = selectedAnim?.name || this.currentPreviewAnimName;
     if (!animName) return;
     const label = ANIM_LABELS[animName] || animName.toUpperCase();
 
