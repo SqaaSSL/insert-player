@@ -18,7 +18,42 @@ const GREEN_HUE_MIN = 70;
 const GREEN_HUE_MAX = 170;
 const GREEN_SAT_MIN = 0.20;
 const GREEN_BRIGHT_MIN = 30;
-const CRITICAL_ANIMATION_CONFIG: Partial<Record<string, { minFrames: number; maxFrames: number }>> = {
+interface ReliableFrameConfig {
+  minFrames: number;
+  maxFrames: number;
+  allowBestEffortFill?: boolean;
+  referenceMode?: 'median' | 'upper-percentile';
+  minAreaRatio?: number;
+  minHeightRatio?: number;
+  minWidthRatio?: number;
+  minVerticalFill?: number;
+  edgeMargin?: number;
+  requireBottomMargin?: boolean;
+}
+
+const CRITICAL_ANIMATION_CONFIG: Partial<Record<string, ReliableFrameConfig>> = {
+  idle: {
+    minFrames: 16,
+    maxFrames: 16,
+    allowBestEffortFill: false,
+    referenceMode: 'upper-percentile',
+    minAreaRatio: 0.78,
+    minHeightRatio: 0.9,
+    minWidthRatio: 0.74,
+    minVerticalFill: 0.56,
+    edgeMargin: 4,
+    requireBottomMargin: true,
+  },
+  walk: {
+    minFrames: 12,
+    maxFrames: 16,
+    allowBestEffortFill: false,
+    referenceMode: 'upper-percentile',
+    minAreaRatio: 0.72,
+    minHeightRatio: 0.82,
+    minWidthRatio: 0.72,
+    minVerticalFill: 0.5,
+  },
   jump: { minFrames: 3, maxFrames: 4 },
   hit: { minFrames: 2, maxFrames: 4 },
   low_punch: { minFrames: 3, maxFrames: 4 },
@@ -777,7 +812,7 @@ function filterCriticalAnimationFrames(
   boxes: (BBox | null)[],
   frameW: number,
   frameH: number,
-  config: { minFrames: number; maxFrames: number },
+  config: ReliableFrameConfig,
   animationName: string,
 ): { frames: HTMLCanvasElement[]; boxes: (BBox | null)[] } {
   const populated = boxes
@@ -791,10 +826,15 @@ function filterCriticalAnimationFrames(
   const areas = populated.map(({ bbox }) => bbox.w * bbox.h);
   const heights = populated.map(({ bbox }) => bbox.h);
   const widths = populated.map(({ bbox }) => bbox.w);
-  const medianArea = median(areas);
-  const medianHeight = median(heights);
-  const medianWidth = median(widths);
-  const edgeMargin = 2;
+  const medianArea = config.referenceMode === 'upper-percentile' ? upperPercentile(areas, 0.75) : median(areas);
+  const medianHeight = config.referenceMode === 'upper-percentile' ? upperPercentile(heights, 0.75) : median(heights);
+  const medianWidth = config.referenceMode === 'upper-percentile' ? upperPercentile(widths, 0.75) : median(widths);
+  const edgeMargin = config.edgeMargin ?? 2;
+  const minAreaRatio = config.minAreaRatio ?? 0.55;
+  const minHeightRatio = config.minHeightRatio ?? 0.7;
+  const minWidthRatio = config.minWidthRatio ?? 0.45;
+  const minVerticalFill = config.minVerticalFill ?? 0.38;
+  const requireBottomMargin = config.requireBottomMargin === true;
 
   const scored = populated.map(({ bbox, index }) => {
     const area = bbox.w * bbox.h;
@@ -811,19 +851,29 @@ function filterCriticalAnimationFrames(
     if (touchesLeft) score -= 45;
     if (touchesRight) score -= 45;
     if (touchesTop) score -= 35;
-    if (areaRatio < 0.55) score -= 55;
+    if (requireBottomMargin && touchesBottom) score -= 45;
+    if (areaRatio < minAreaRatio) score -= 55;
     if (areaRatio > 1.75) score -= 50;
-    if (heightRatio < 0.7) score -= 40;
-    if (widthRatio < 0.45) score -= 25;
-    if (verticalFill < 0.38) score -= 45;
+    if (heightRatio < minHeightRatio) score -= 40;
+    if (widthRatio < minWidthRatio) score -= 25;
+    if (verticalFill < minVerticalFill) score -= 45;
     if (touchesBottom && verticalFill < 0.44) score -= 20;
 
-    const valid = score >= 60 && !touchesLeft && !touchesRight && !touchesTop;
+    const valid =
+      score >= 60 &&
+      !touchesLeft &&
+      !touchesRight &&
+      !touchesTop &&
+      (!requireBottomMargin || !touchesBottom) &&
+      areaRatio >= minAreaRatio &&
+      heightRatio >= minHeightRatio &&
+      widthRatio >= minWidthRatio &&
+      verticalFill >= minVerticalFill;
     return { index, score, valid };
   });
 
   let selectedIndices = scored.filter((entry) => entry.valid).map((entry) => entry.index);
-  if (selectedIndices.length < config.minFrames) {
+  if (selectedIndices.length < config.minFrames && config.allowBestEffortFill !== false) {
     selectedIndices = scored
       .slice()
       .sort((a, b) => b.score - a.score)

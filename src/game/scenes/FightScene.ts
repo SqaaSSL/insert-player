@@ -24,7 +24,7 @@ import {
   FighterState,
 } from "../constants.ts";
 import { loadAiSprites } from "../sprites/AiSpriteLoader.ts";
-import { getCachedMeta, getCachedStageBackground } from "../../services/SpriteCache.ts";
+import { getCachedIntro, getCachedMeta, getCachedStageBackground } from "../../services/SpriteCache.ts";
 import {
   buildMatchSeed,
   getDefaultPersonalityId,
@@ -107,6 +107,11 @@ export class FightScene extends Phaser.Scene {
   private introEvents: Phaser.Time.TimerEvent[] = [];
   private introEnterKey?: Phaser.Input.Keyboard.Key;
   private introSpaceKey?: Phaser.Input.Keyboard.Key;
+  private introVideoSequenceActive = false;
+  private introVideoSequenceToken = 0;
+  private introVideoOverlayEl?: HTMLDivElement;
+  private introVideoEl?: HTMLVideoElement;
+  private introVideoUrl?: string;
 
   constructor() {
     super({ key: "FightScene" });
@@ -1155,6 +1160,279 @@ export class FightScene extends Phaser.Scene {
     parent.add(image);
   }
 
+  private getActiveIntroBlob(intro: Awaited<ReturnType<typeof getCachedIntro>>): Blob | null {
+    if (!intro?.variants?.length) return null;
+    const activeVariant =
+      intro.variants.find((variant) => variant.id === intro.activeVariantId) ??
+      intro.variants[0];
+    return activeVariant?.videoBlob ?? null;
+  }
+
+  private async loadFightIntroClip(
+    photoHash: string | null,
+    title: string,
+    subtitle: string,
+  ): Promise<{ title: string; subtitle: string; blob: Blob } | null> {
+    if (!photoHash) return null;
+    const intro = await getCachedIntro(photoHash);
+    const blob = this.getActiveIntroBlob(intro);
+    if (!blob) return null;
+    return { title, subtitle, blob };
+  }
+
+  private destroyIntroVideoOverlay(): void {
+    if (this.introVideoEl) {
+      this.introVideoEl.pause();
+      this.introVideoEl.removeAttribute("src");
+      this.introVideoEl.load();
+      this.introVideoEl.remove();
+      this.introVideoEl = undefined;
+    }
+    if (this.introVideoOverlayEl) {
+      this.introVideoOverlayEl.remove();
+      this.introVideoOverlayEl = undefined;
+    }
+    if (this.introVideoUrl) {
+      URL.revokeObjectURL(this.introVideoUrl);
+      this.introVideoUrl = undefined;
+    }
+  }
+
+  private mountIntroVideoOverlay(
+    clip: { title: string; subtitle: string; blob: Blob },
+  ): HTMLVideoElement {
+    this.destroyIntroVideoOverlay();
+
+    const container =
+      document.getElementById("game-container") ??
+      this.game.canvas.parentElement ??
+      this.game.canvas;
+    const rect = container.getBoundingClientRect();
+
+    const overlay = document.createElement("div");
+    overlay.style.position = "fixed";
+    overlay.style.left = `${rect.left}px`;
+    overlay.style.top = `${rect.top}px`;
+    overlay.style.width = `${rect.width}px`;
+    overlay.style.height = `${rect.height}px`;
+    overlay.style.zIndex = "1500";
+    overlay.style.display = "flex";
+    overlay.style.flexDirection = "column";
+    overlay.style.alignItems = "center";
+    overlay.style.justifyContent = "center";
+    overlay.style.gap = "16px";
+    overlay.style.padding = "24px";
+    overlay.style.boxSizing = "border-box";
+    overlay.style.background = "rgba(4,8,18,0.72)";
+    overlay.style.backdropFilter = "blur(4px)";
+
+    const header = document.createElement("div");
+    header.textContent = "FIGHTER INTRO";
+    header.style.fontFamily = '"Press Start 2P", monospace';
+    header.style.fontSize = "12px";
+    header.style.color = "#9ed9ff";
+    header.style.textShadow = "0 2px 0 #000";
+    overlay.appendChild(header);
+
+    const videoShell = document.createElement("div");
+    videoShell.style.position = "relative";
+    videoShell.style.width = "min(82vw, 1120px)";
+    videoShell.style.height = "min(68vh, 640px)";
+    videoShell.style.display = "flex";
+    videoShell.style.alignItems = "center";
+    videoShell.style.justifyContent = "center";
+    videoShell.style.border = "3px solid #4ea0ff";
+    videoShell.style.borderRadius = "12px";
+    videoShell.style.background = "#040810";
+    videoShell.style.boxShadow = "0 18px 48px rgba(0,0,0,0.55)";
+    videoShell.style.overflow = "hidden";
+
+    this.introVideoUrl = URL.createObjectURL(clip.blob);
+    const video = document.createElement("video");
+    video.src = this.introVideoUrl;
+    video.autoplay = true;
+    video.controls = false;
+    video.loop = false;
+    video.muted = false;
+    video.volume = 1;
+    video.playsInline = true;
+    video.style.maxWidth = "100%";
+    video.style.maxHeight = "100%";
+    video.style.width = "auto";
+    video.style.height = "auto";
+    video.style.objectFit = "contain";
+    video.style.background = "#040810";
+    videoShell.appendChild(video);
+
+    const topBadge = document.createElement("div");
+    topBadge.textContent = clip.subtitle.toUpperCase();
+    topBadge.style.position = "absolute";
+    topBadge.style.left = "20px";
+    topBadge.style.top = "18px";
+    topBadge.style.padding = "8px 12px";
+    topBadge.style.fontFamily = '"Press Start 2P", monospace';
+    topBadge.style.fontSize = "10px";
+    topBadge.style.color = "#d7efff";
+    topBadge.style.textShadow = "0 2px 0 #000";
+    topBadge.style.background = "rgba(7,17,34,0.78)";
+    topBadge.style.border = "2px solid rgba(118,189,255,0.85)";
+    topBadge.style.borderRadius = "8px";
+    videoShell.appendChild(topBadge);
+
+    const lowerThird = document.createElement("div");
+    lowerThird.style.position = "absolute";
+    lowerThird.style.left = "0";
+    lowerThird.style.right = "0";
+    lowerThird.style.bottom = "0";
+    lowerThird.style.padding = "18px 24px 20px";
+    lowerThird.style.background = "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(3,7,16,0.72) 35%, rgba(3,7,16,0.94) 100%)";
+    lowerThird.style.pointerEvents = "none";
+
+    const nameLine = document.createElement("div");
+    nameLine.textContent = clip.title.toUpperCase();
+    nameLine.style.fontFamily = '"Press Start 2P", monospace';
+    nameLine.style.fontSize = "28px";
+    nameLine.style.lineHeight = "1.2";
+    nameLine.style.color = "#ffe26a";
+    nameLine.style.textShadow = "0 4px 0 #000";
+    lowerThird.appendChild(nameLine);
+
+    const subtitleLine = document.createElement("div");
+    subtitleLine.textContent = "READY TO FIGHT";
+    subtitleLine.style.marginTop = "10px";
+    subtitleLine.style.fontFamily = '"Press Start 2P", monospace';
+    subtitleLine.style.fontSize = "10px";
+    subtitleLine.style.color = "#d0ebff";
+    subtitleLine.style.textShadow = "0 2px 0 #000";
+    lowerThird.appendChild(subtitleLine);
+
+    videoShell.appendChild(lowerThird);
+    overlay.appendChild(videoShell);
+
+    const skip = document.createElement("div");
+    skip.textContent = "ENTER / SPACE TO SKIP";
+    skip.style.fontFamily = '"Press Start 2P", monospace';
+    skip.style.fontSize = "10px";
+    skip.style.color = "#9ed9ff";
+    skip.style.textShadow = "0 2px 0 #000";
+    overlay.appendChild(skip);
+
+    container.appendChild(overlay);
+    this.introVideoOverlayEl = overlay;
+    this.introVideoEl = video;
+    return video;
+  }
+
+  private async playIntroVideoClip(
+    clip: { title: string; subtitle: string; blob: Blob },
+    token: number,
+  ): Promise<void> {
+    const video = this.mountIntroVideoOverlay(clip);
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+
+      const cleanup = () => {
+        video.removeEventListener("ended", onEnded);
+        video.removeEventListener("error", onError);
+      };
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const fail = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error(`Failed to play intro video for ${clip.title}`));
+      };
+
+      const onEnded = () => finish();
+      const onError = () => fail();
+      video.addEventListener("ended", onEnded);
+      video.addEventListener("error", onError);
+
+      const playVideo = async () => {
+        try {
+          await video.play();
+        } catch {
+          video.muted = true;
+          try {
+            await video.play();
+          } catch {
+            fail();
+            return;
+          }
+        }
+      };
+
+      void playVideo();
+
+      const pollAbort = () => {
+        if (settled) return;
+        if (token !== this.introVideoSequenceToken || !this.introVideoSequenceActive) {
+          settled = true;
+          cleanup();
+          resolve();
+          return;
+        }
+        window.setTimeout(pollAbort, 120);
+      };
+      pollAbort();
+    });
+    this.destroyIntroVideoOverlay();
+  }
+
+  private async playCachedIntroVideos(roundNum: number): Promise<void> {
+    const token = ++this.introVideoSequenceToken;
+    const clips = (await Promise.all([
+      this.loadFightIntroClip(
+        this.p1PhotoHash,
+        this.p1Name,
+        this.p1DisplayTag || "CHALLENGER",
+      ),
+      this.loadFightIntroClip(
+        this.p2PhotoHash,
+        this.p2Name,
+        this.p2DisplayTag || (this.isVsAI ? "CPU" : "RIVAL"),
+      ),
+    ])).filter((clip): clip is { title: string; subtitle: string; blob: Blob } => !!clip);
+
+    if (token !== this.introVideoSequenceToken || this.phase !== RoundPhase.INTRO) return;
+
+    if (clips.length === 0) {
+      this.playMatchIntro(roundNum);
+      return;
+    }
+
+    this.introVideoSequenceActive = true;
+    this.introCanSkip = true;
+    this.p1.forceState(FighterState.IDLE);
+    this.p2.forceState(FighterState.IDLE);
+    this.p1.syncSprite(this.p2.x);
+    this.p2.syncSprite(this.p1.x);
+
+    try {
+      for (const clip of clips) {
+        if (token !== this.introVideoSequenceToken || this.phase !== RoundPhase.INTRO) return;
+        await this.playIntroVideoClip(clip, token);
+      }
+    } catch (err) {
+      console.warn("Fight intro video playback failed, falling back to cinematic intro.", err);
+    } finally {
+      this.destroyIntroVideoOverlay();
+      if (token === this.introVideoSequenceToken) {
+        this.introVideoSequenceActive = false;
+      }
+    }
+
+    if (token !== this.introVideoSequenceToken || this.phase !== RoundPhase.INTRO) return;
+    this.playMatchIntro(roundNum);
+  }
+
   private createIntroCard(
     x: number,
     y: number,
@@ -1210,9 +1488,11 @@ export class FightScene extends Phaser.Scene {
 
   private finishCinematicIntro(showFightAnnouncement: boolean): void {
     this.cinematicIntroActive = false;
+    this.introVideoSequenceActive = false;
     this.introCanSkip = false;
     this.clearIntroEvents();
     this.destroyIntroOverlay(true);
+    this.destroyIntroVideoOverlay();
 
     const cam = this.cameras.main;
     cam.stopFollow();
@@ -1237,8 +1517,10 @@ export class FightScene extends Phaser.Scene {
 
   private playMatchIntro(roundNum: number): void {
     this.cinematicIntroActive = true;
+    this.introVideoSequenceActive = false;
     this.introCanSkip = false;
     this.destroyIntroOverlay(true);
+    this.destroyIntroVideoOverlay();
     this.phaseTimer = 150;
 
     const cam = this.cameras.main;
@@ -1377,8 +1659,10 @@ export class FightScene extends Phaser.Scene {
     this.roundTimer = ROUND_TIME;
     this.frameCount = 0;
     this.cinematicIntroActive = false;
+    this.introVideoSequenceActive = false;
     this.introCanSkip = false;
     this.destroyIntroOverlay(true);
+    this.destroyIntroVideoOverlay();
 
     const cam = this.cameras.main;
     cam.stopFollow();
@@ -1408,7 +1692,7 @@ export class FightScene extends Phaser.Scene {
     const roundNum = this.p1Wins + this.p2Wins + 1;
     if (!this.introHasPlayed && roundNum === 1) {
       this.introHasPlayed = true;
-      this.playMatchIntro(roundNum);
+      void this.playCachedIntroVideos(roundNum);
       return;
     }
 
@@ -1426,9 +1710,10 @@ export class FightScene extends Phaser.Scene {
     if (!this.ready) return;
 
     if (this.phase === RoundPhase.INTRO) {
-      if (this.cinematicIntroActive && this.shouldSkipIntro()) {
+      if ((this.cinematicIntroActive || this.introVideoSequenceActive) && this.shouldSkipIntro()) {
         this.skipCinematicIntro();
       }
+      if (this.introVideoSequenceActive) return;
       this.phaseTimer--;
       if (this.phaseTimer <= 0) {
         if (this.cinematicIntroActive) {
@@ -1870,6 +2155,10 @@ export class FightScene extends Phaser.Scene {
   }
 
   shutdown(): void {
+    this.introVideoSequenceActive = false;
+    this.introVideoSequenceToken++;
+    this.destroyIntroVideoOverlay();
+    this.destroyIntroOverlay(true);
     this.clearStageLoadingText(true);
     this.stageBackdrop?.destroy();
     this.stageBackdrop = undefined;

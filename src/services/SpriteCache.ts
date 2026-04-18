@@ -17,11 +17,31 @@ interface CachedSprite {
   createdAt: number;
 }
 
-interface CachedIntro {
-  photoHash: string;
+type CachedIntroModel =
+  | 'kling-v2-1-std'
+  | 'veo-3-1'
+  | 'runway-gen4-turbo'
+  | 'fal-ltx-v2-3-fast'
+  | 'fal-kling-v2-6-pro'
+  | 'fal-vidu-q3';
+
+type CachedIntroVariantId = 'legacy' | 'single';
+
+interface CachedIntroVariant {
+  id: CachedIntroVariantId;
+  label: string;
   videoBlob: Blob;
   mimeType: string;
   createdAt: number;
+  model?: CachedIntroModel;
+  prompt?: string | null;
+  referenceCount?: number;
+}
+
+interface CachedIntro {
+  photoHash: string;
+  activeVariantId?: CachedIntroVariantId | null;
+  variants: CachedIntroVariant[];
 }
 
 type CachedStageKind = 'generated' | 'photo' | 'photo-direct';
@@ -51,6 +71,9 @@ interface CachedMeta {
   crouchViewCleanBlob: Blob | null;
   noBgBlob: Blob | null;
   characterName: string;
+  introVideoPrompt?: string | null;
+  introVideoModel?: 'freepik-auto' | 'kling-v2-1-std' | 'veo-3-1' | 'runway-gen4-turbo' | 'fal-ltx-v2-3-fast' | 'fal-kling-v2-6-pro' | 'fal-vidu-q3' | null;
+  introVideoReferenceBlobs?: Blob[] | null;
   status: 'pending' | 'sprites_generating' | 'ready' | 'error';
   animationsReady: string[];
   createdAt: number;
@@ -118,6 +141,26 @@ export async function renameCharacter(photoHash: string, characterName: string):
   return meta;
 }
 
+export async function updateCharacterIntroConfig(
+  photoHash: string,
+  patch: Partial<Pick<CachedMeta, 'introVideoPrompt' | 'introVideoModel' | 'introVideoReferenceBlobs'>>,
+): Promise<CachedMeta | null> {
+  const meta = await getCachedMeta(photoHash);
+  if (!meta) return null;
+  if (Object.prototype.hasOwnProperty.call(patch, 'introVideoPrompt')) {
+    meta.introVideoPrompt = patch.introVideoPrompt ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'introVideoModel')) {
+    meta.introVideoModel = patch.introVideoModel ?? null;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'introVideoReferenceBlobs')) {
+    meta.introVideoReferenceBlobs = patch.introVideoReferenceBlobs ?? null;
+  }
+  meta.updatedAt = Date.now();
+  await setCachedMeta(meta);
+  return meta;
+}
+
 export async function getCachedSprite(photoHash: string, animationName: string): Promise<CachedSprite | null> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
@@ -149,12 +192,73 @@ export async function setCachedSprite(sprite: CachedSprite): Promise<void> {
   });
 }
 
+function normalizeCachedIntro(raw: any): CachedIntro | null {
+  if (!raw || typeof raw !== 'object' || typeof raw.photoHash !== 'string') return null;
+
+  if (Array.isArray(raw.variants) && raw.variants.length > 0) {
+    const variants = raw.variants
+      .filter((variant: any) => variant && typeof variant.id === 'string' && variant.videoBlob instanceof Blob)
+      .map((variant: any): CachedIntroVariant => ({
+        id: variant.id === 'legacy' ? 'legacy' : 'single',
+        label: variant.id === 'legacy' ? 'LEGACY' : 'VIDEO',
+        videoBlob: variant.videoBlob,
+        mimeType: typeof variant.mimeType === 'string' ? variant.mimeType : 'video/mp4',
+        createdAt: typeof variant.createdAt === 'number' ? variant.createdAt : Date.now(),
+        model: variant.model,
+        prompt: variant.prompt ?? null,
+        referenceCount: typeof variant.referenceCount === 'number' ? variant.referenceCount : 1,
+      }));
+    if (variants.length === 0) return null;
+    let preferredVariant = variants[0];
+    for (const current of variants.slice(1)) {
+      const best = preferredVariant;
+      if (best.id === 'legacy' && current.id !== 'legacy') {
+        preferredVariant = current;
+        continue;
+      }
+      if (best.id !== 'legacy' && current.id === 'legacy') continue;
+      const bestRefs = best.referenceCount ?? Number.MAX_SAFE_INTEGER;
+      const currentRefs = current.referenceCount ?? Number.MAX_SAFE_INTEGER;
+      if (currentRefs < bestRefs) {
+        preferredVariant = current;
+        continue;
+      }
+      if (currentRefs > bestRefs) continue;
+      if (current.createdAt > best.createdAt) preferredVariant = current;
+    }
+    return {
+      photoHash: raw.photoHash,
+      activeVariantId: preferredVariant.id,
+      variants: [preferredVariant],
+    };
+  }
+
+  if (raw.videoBlob instanceof Blob) {
+    return {
+      photoHash: raw.photoHash,
+      activeVariantId: 'legacy',
+      variants: [{
+        id: 'legacy',
+        label: 'LEGACY',
+        videoBlob: raw.videoBlob,
+        mimeType: typeof raw.mimeType === 'string' ? raw.mimeType : 'video/mp4',
+        createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
+        model: raw.model,
+        prompt: raw.prompt ?? null,
+        referenceCount: typeof raw.referenceCount === 'number' ? raw.referenceCount : 1,
+      }],
+    };
+  }
+
+  return null;
+}
+
 export async function getCachedIntro(photoHash: string): Promise<CachedIntro | null> {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_INTROS, 'readonly');
     const req = tx.objectStore(STORE_INTROS).get(photoHash);
-    req.onsuccess = () => resolve(req.result ?? null);
+    req.onsuccess = () => resolve(normalizeCachedIntro(req.result));
     req.onerror = () => reject(req.error);
   });
 }
@@ -164,6 +268,16 @@ export async function setCachedIntro(intro: CachedIntro): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_INTROS, 'readwrite');
     tx.objectStore(STORE_INTROS).put(intro);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+export async function deleteCachedIntro(photoHash: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_INTROS, 'readwrite');
+    tx.objectStore(STORE_INTROS).delete(photoHash);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -263,4 +377,13 @@ export async function clearCache(): Promise<void> {
 }
 
 export { CACHE_VERSION };
-export type { CachedSprite, CachedIntro, CachedMeta, CachedStageBackground, CachedStageKind };
+export type {
+  CachedSprite,
+  CachedIntro,
+  CachedIntroModel,
+  CachedIntroVariant,
+  CachedIntroVariantId,
+  CachedMeta,
+  CachedStageBackground,
+  CachedStageKind,
+};

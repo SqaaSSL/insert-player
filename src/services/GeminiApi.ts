@@ -3,7 +3,7 @@ import { getAnimationProfile } from './AnimationProfiles';
 import { publishDebugLog, publishDebugMultiline } from './DebugLog';
 
 const GEMINI_BASE = '/proxy/gemini/v1beta/models';
-const MODEL = 'gemini-3.1-flash-image-preview';
+const DEFAULT_GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
 interface GeminiPart {
   text?: string;
@@ -18,7 +18,45 @@ interface GeminiResponse {
   error?: { code: number; message: string };
 }
 
-async function callGemini(prompt: string, imageBase64?: string, mimeType = 'image/png', extraImages?: { data: string; mime: string }[]): Promise<{ text: string; imageBase64: string | null; imageMime: string | null }> {
+type GeminiModelOperation = 'repose' | 'upright' | 'crouch' | 'sprite' | 'stage';
+
+function normalizeModelEnvSegment(value: string): string {
+  return value.trim().replace(/[^a-z0-9]+/gi, '_').toUpperCase();
+}
+
+function resolveGeminiImageModel(options?: {
+  operation?: GeminiModelOperation;
+  animationName?: string;
+}): string {
+  const env = import.meta.env as Record<string, string | boolean | undefined>;
+  const keys: string[] = [];
+
+  if (options?.animationName) {
+    keys.push(`VITE_GEMINI_IMAGE_MODEL_ANIM_${normalizeModelEnvSegment(options.animationName)}`);
+  }
+  if (options?.operation) {
+    keys.push(`VITE_GEMINI_IMAGE_MODEL_${normalizeModelEnvSegment(options.operation)}`);
+  }
+  keys.push('VITE_GEMINI_IMAGE_MODEL');
+
+  for (const key of keys) {
+    const value = env[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return DEFAULT_GEMINI_IMAGE_MODEL;
+}
+
+async function callGemini(
+  prompt: string,
+  imageBase64?: string,
+  mimeType = 'image/png',
+  extraImages?: { data: string; mime: string }[],
+  modelOverride?: string,
+): Promise<{ text: string; imageBase64: string | null; imageMime: string | null; finishReason: string | null }> {
+  const model = modelOverride || DEFAULT_GEMINI_IMAGE_MODEL;
   const reqParts: GeminiPart[] = [];
   if (imageBase64) {
     reqParts.push({ inlineData: { mimeType, data: imageBase64 } });
@@ -30,7 +68,7 @@ async function callGemini(prompt: string, imageBase64?: string, mimeType = 'imag
   }
   reqParts.push({ text: prompt });
 
-  const res = await fetch(`${GEMINI_BASE}/${MODEL}:generateContent`, {
+  const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -41,7 +79,7 @@ async function callGemini(prompt: string, imageBase64?: string, mimeType = 'imag
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Gemini ${res.status}: ${body.slice(0, 300)}`);
+    throw new Error(`${model} ${res.status}: ${body.slice(0, 300)}`);
   }
 
   const json: GeminiResponse = await res.json();
@@ -70,6 +108,7 @@ async function callGemini(prompt: string, imageBase64?: string, mimeType = 'imag
     text,
     imageBase64: imageData?.data ?? null,
     imageMime: imageData?.mimeType ?? null,
+    finishReason: candidate.finishReason ?? null,
   };
 }
 
@@ -107,14 +146,15 @@ The result should look like a confident upright hero pose, not an attack stance.
 Use a solid pure bright green (#00FF00) background with no shadows, floor, or gradients.`;
 
 export async function geminiReposeDetailed(photoBase64: string): Promise<GeminiPoseResult> {
-  console.log('[GeminiApi] Reposing character...');
+  const model = resolveGeminiImageModel({ operation: 'repose' });
+  console.log(`[GeminiApi] Reposing character with ${model}...`);
   const start = Date.now();
 
   let rawBase64: string | null = null;
 
   try {
     const prompt = REPOSE_BASE + ` Preserve the original clothing/outfit faithfully.`;
-    const result = await callGemini(prompt, photoBase64);
+    const result = await callGemini(prompt, photoBase64, 'image/png', undefined, model);
     rawBase64 = result.imageBase64;
   } catch (err: any) {
     if (err.message.includes('IMAGE_SAFETY')) {
@@ -126,7 +166,7 @@ export async function geminiReposeDetailed(photoBase64: string): Promise<GeminiP
 
   if (!rawBase64) {
     console.log('[GeminiApi] Retrying repose with added clothing...');
-    const result = await callGemini(REPOSE_BASE + REPOSE_CLOTHING_FALLBACK, photoBase64);
+    const result = await callGemini(REPOSE_BASE + REPOSE_CLOTHING_FALLBACK, photoBase64, 'image/png', undefined, model);
     rawBase64 = result.imageBase64;
   }
 
@@ -145,9 +185,10 @@ export async function geminiRepose(photoBase64: string): Promise<string> {
 }
 
 export async function geminiUprightReposeDetailed(sideViewBase64: string): Promise<GeminiPoseResult> {
-  console.log('[GeminiApi] Generating upright reference...');
+  const model = resolveGeminiImageModel({ operation: 'upright' });
+  console.log(`[GeminiApi] Generating upright reference with ${model}...`);
   const start = Date.now();
-  const rawBase64 = await generateGeminiImageWithSafetyFallback(UPRIGHT_REPOSE_PROMPT, sideViewBase64);
+  const rawBase64 = await generateGeminiImageWithSafetyFallback(UPRIGHT_REPOSE_PROMPT, sideViewBase64, model);
   console.log(`[GeminiApi] Upright raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
   const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
   console.log(`[GeminiApi] Upright cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
@@ -236,16 +277,16 @@ async function getImageDimensions(base64: string): Promise<{ width: number; heig
   return { width: img.width, height: img.height };
 }
 
-async function generateGeminiImageWithSafetyFallback(prompt: string, imageBase64: string): Promise<string> {
+async function generateGeminiImageWithSafetyFallback(prompt: string, imageBase64: string, modelOverride?: string): Promise<string> {
   let rawBase64: string | null = null;
 
   try {
-    const result = await callGemini(prompt, imageBase64);
+    const result = await callGemini(prompt, imageBase64, 'image/png', undefined, modelOverride);
     rawBase64 = result.imageBase64;
   } catch (err: any) {
     if (err.message.includes('IMAGE_SAFETY')) {
       console.warn('[GeminiApi] Prompt blocked by safety, retrying with clothing...');
-      const result = await callGemini(prompt + REPOSE_CLOTHING_FALLBACK, imageBase64);
+      const result = await callGemini(prompt + REPOSE_CLOTHING_FALLBACK, imageBase64, 'image/png', undefined, modelOverride);
       rawBase64 = result.imageBase64;
     } else {
       throw err;
@@ -357,7 +398,8 @@ export async function geminiCrouchReposeOptions(
   normalizationReference?: NormalizationReference,
   standingMetricsBase64 = sideViewBase64,
 ): Promise<GeminiCrouchOption[]> {
-  console.log('[GeminiApi] Generating crouched view...');
+  const model = resolveGeminiImageModel({ operation: 'crouch' });
+  console.log(`[GeminiApi] Generating crouched view with ${model}...`);
   const start = Date.now();
   const inputSize = await getImageDimensions(sideViewBase64);
   const standingBounds = await getSilhouetteMetrics(standingMetricsBase64);
@@ -379,7 +421,7 @@ export async function geminiCrouchReposeOptions(
   for (let i = 0; i < promptVariants.length; i++) {
     const prompt = promptVariants[i];
     try {
-      const rawBase64 = await generateGeminiImageWithSafetyFallback(prompt, sideViewBase64);
+      const rawBase64 = await generateGeminiImageWithSafetyFallback(prompt, sideViewBase64, model);
       debugLog(`[GeminiApi] Crouch attempt ${i + 1}/${promptVariants.length}: raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
       const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
       const zoomed = await zoomTransparentImageToBottom(cleaned, 0.88);
@@ -459,6 +501,7 @@ export interface GeminiSpriteResult {
 const MIRROR_ANIMS = new Set(['high_punch', 'low_punch', 'high_kick', 'low_kick']);
 
 function getMinimumReliableFrames(animName: string): number {
+  if (animName === 'idle' || animName === 'walk') return 12;
   if (animName === 'jump') return 3;
   if (animName === 'hit') return 2;
   if (animName === 'low_punch' || animName === 'low_kick') return 3;
@@ -476,6 +519,7 @@ export async function geminiSpriteSheet(
 ): Promise<GeminiSpriteResult> {
   const shouldMirror = MIRROR_ANIMS.has(animName);
   const profile = getAnimationProfile(animName);
+  const model = resolveGeminiImageModel({ operation: 'sprite', animationName: animName });
 
   const genFrames = shouldMirror ? Math.ceil(frames / 2) : frames;
   const gridCols = computeGridCols(genFrames);
@@ -517,6 +561,7 @@ export async function geminiSpriteSheet(
     `FRAMING RULES (CRITICAL):`,
     `- EVERY frame MUST show the COMPLETE character from head to feet — never crop or zoom in.`,
     `- The character must be the SAME SIZE in every frame — do NOT zoom in or out between frames.`,
+    `- Treat the uploaded reference image as the exact framing template. Match its camera distance, full-body crop, and overall composition; never crop closer than the reference image.`,
     `- Frame the character so they occupy roughly ${targetHeightPct}% of the cell height and at most ${targetWidthPct}% of the cell width.`,
     `- Keep the feet near the same floor line close to the bottom of every cell.`,
     `- Even for subtle animations, maintain the EXACT same camera distance and framing as the reference image.`,
@@ -527,15 +572,25 @@ export async function geminiSpriteSheet(
     `- Pure bright green (#00FF00) background in every cell — flat, uniform, vivid green with no gradients, shadows, or ground.`,
   ].join('\n');
 
-  console.log(`[GeminiApi] Generating sprite: ${animName} (${gridCols}x${gridRows}, ${genFrames} frames${shouldMirror ? ', will mirror to ' + frames : ''})...`);
+  console.log(`[GeminiApi] Generating sprite: ${animName} with ${model} (${gridCols}x${gridRows}, ${genFrames} frames${shouldMirror ? ', will mirror to ' + frames : ''})...`);
   const start = Date.now();
 
   const extras = secondaryBase64 ? [{ data: secondaryBase64, mime: 'image/png' }] : undefined;
   const minReliableFrames = getMinimumReliableFrames(animName);
   const promptVariants = [prompt];
+  promptVariants.push(
+    `${prompt}\n- CRITICAL OUTPUT RULE: return exactly one sprite sheet image and no explanatory text.\n- CRITICAL OUTPUT RULE: do not answer with text only, markdown, or notes.\n- CRITICAL OUTPUT RULE: if uncertain, still return the requested sprite sheet image with the exact grid layout.`,
+  );
   if (animName === 'jump' || animName === 'hit') {
     promptVariants.push(
       `${prompt}\n- CRITICAL: keep every full body centered fully inside its own cell with empty green margin on all sides.\n- CRITICAL: if a pose would cross a cell boundary, make the pose smaller instead of cropping it.\n- CRITICAL: do not include any oversized hero frame, close-up frame, or pose that spans more than one cell.`,
+    );
+  } else if (animName === 'idle' || animName === 'walk') {
+    promptVariants.push(
+      `${prompt}\n- CRITICAL: every one of the ${genFrames} cells must contain a complete full-body fighter from head to feet.\n- CRITICAL: do not crop or zoom into any middle frame; no half-body, waist-up, or torso-only cells.\n- CRITICAL: keep the same full-body framing in all rows of the sheet; do not switch to closer framing in the middle rows.\n- CRITICAL: if needed, make the fighter slightly smaller so the full body stays visible in every cell with green margin around it.`,
+    );
+    promptVariants.push(
+      `${prompt}\n- CRITICAL: the uploaded side-view reference already has the correct full-body composition; copy that same camera framing into all ${genFrames} cells before adding motion.\n- CRITICAL: preserve the same headroom, visible feet, and full-body crop as the reference image in every cell.\n- CRITICAL: this idle sheet fails if even one cell is bust-only, waist-up, or missing feet.\n- CRITICAL: it is better to make the fighter slightly smaller in every cell than to crop any body part or zoom closer than the reference.`,
     );
   } else if (animName === 'low_punch' || animName === 'low_kick') {
     promptVariants.push(
@@ -550,14 +605,28 @@ export async function geminiSpriteSheet(
     let rawBase64: string | null = null;
 
     try {
-      const result = await callGemini(attemptPrompt, characterBase64, 'image/png', extras);
+      const result = await callGemini(attemptPrompt, characterBase64, 'image/png', extras, model);
       rawBase64 = result.imageBase64;
+      if (!rawBase64) {
+        console.warn(
+          `[GeminiApi] ${animName}: Gemini returned no image` +
+            `${result.finishReason ? ` (finishReason: ${result.finishReason})` : ''}` +
+            `${result.text ? ` | text: ${result.text.replace(/\s+/g, ' ').trim().slice(0, 220)}` : ''}`,
+        );
+      }
     } catch (err: any) {
       if (err.message.includes('IMAGE_SAFETY')) {
         console.warn(`[GeminiApi] Sprite ${animName} blocked by safety, retrying with clothing note...`);
         const safePrompt = attemptPrompt + `\n\nIMPORTANT: The character must be fully clothed in a fighting outfit (shirt, pants, shoes). Add clothing if needed.`;
-        const result = await callGemini(safePrompt, characterBase64, 'image/png', extras);
+        const result = await callGemini(safePrompt, characterBase64, 'image/png', extras, model);
         rawBase64 = result.imageBase64;
+        if (!rawBase64) {
+          console.warn(
+            `[GeminiApi] ${animName}: Gemini safety retry returned no image` +
+              `${result.finishReason ? ` (finishReason: ${result.finishReason})` : ''}` +
+              `${result.text ? ` | text: ${result.text.replace(/\s+/g, ' ').trim().slice(0, 220)}` : ''}`,
+          );
+        }
       } else {
         throw err;
       }
@@ -623,6 +692,7 @@ export interface GeminiStageBackgroundRequest {
 }
 
 export async function geminiStageBackground(req: GeminiStageBackgroundRequest): Promise<{ imageBase64: string; prompt: string }> {
+  const model = resolveGeminiImageModel({ operation: 'stage' });
   const prompt: string[] = [
     `Create a dramatic arcade fighting game stage background for a versus match.`,
     `Theme: ${req.stageLabel}. ${req.stageBlurb}`,
@@ -678,12 +748,13 @@ export async function geminiStageBackground(req: GeminiStageBackgroundRequest): 
 
   const finalPrompt = prompt.join('\n');
 
-  console.log(`[GeminiApi] Generating stage background: ${req.stageLabel}...`);
+  console.log(`[GeminiApi] Generating stage background with ${model}: ${req.stageLabel}...`);
   const result = await callGemini(
     finalPrompt,
     req.sourceImage?.data,
     req.sourceImage?.mime ?? 'image/png',
     req.referenceImages,
+    model,
   );
   if (!result.imageBase64) throw new Error('Gemini stage background returned no image');
 

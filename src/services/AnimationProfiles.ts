@@ -24,6 +24,12 @@ const PROFILES: Record<string, AnimationProfile> = {
     promptRules: [
       'This is a grounded standing stance. Both feet stay planted on the floor.',
       'Only tiny breathing and weight-shift changes are allowed. No crouching and no hopping.',
+      'The uploaded side-view reference already has the correct full-body framing. Preserve that exact camera distance, scale, and overall body crop.',
+      'The character stays at full size with no camera zoom change.',
+      'Do not crop closer than the reference image in any frame. If needed, make the character slightly smaller instead.',
+      'Keep the full body visible in each frame with no cropping and no frame-to-frame layout shifts.',
+      'Every frame must stay inside its own cell with margin on the left and right. Never let the body cross a cell boundary.',
+      'Each frame must contain exactly one complete character silhouette. No detached limbs, partial bodies, or torso-only frames.',
     ],
   },
   walk: {
@@ -33,6 +39,9 @@ const PROFILES: Record<string, AnimationProfile> = {
     promptRules: [
       'This is a grounded fighting-game walk cycle, not a run and not a hop.',
       'The body stays at the same apparent size in every frame.',
+      'Keep the full body visible in each frame with no cropping and no frame-to-frame layout shifts.',
+      'Every frame must stay inside its own cell with margin on the left and right. Never let the body cross a cell boundary.',
+      'Each frame must contain exactly one complete character silhouette. No detached limbs, partial bodies, or torso-only frames.',
     ],
   },
   high_punch: {

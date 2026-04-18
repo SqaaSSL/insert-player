@@ -14,8 +14,9 @@ import { CELL_H, CELL_W, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, m
 import { getAnimationProfile } from './AnimationProfiles';
 import { publishDebugLog } from './DebugLog';
 import { ludoAnimateSprite } from './LudoApi';
-import { freepikImageToFightingStance, freepikRemoveBackground, blobToBase64 } from './FreepikApi';
+import { freepikImageToFightingStance, blobToBase64 } from './FreepikApi';
 import { prepareBaseImage } from './ImagePrep';
+import { getConfiguredBgRemovalProvider, removeBackgroundWithConfiguredProvider } from './BackgroundRemovalService';
 
 export type PipelineProvider = 'gemini' | 'ludo';
 
@@ -71,6 +72,7 @@ export function getProvider(): PipelineProvider { return activeProvider; }
 function isCriticalAnimation(name: string): boolean { return CRITICAL_ANIMATION_NAMES.has(name); }
 
 function getMinimumReliableFrameCount(name: string): number {
+  if (name === 'idle' || name === 'walk') return 12;
   if (name === 'jump') return 3;
   if (name === 'hit') return 2;
   if (name === 'low_punch' || name === 'low_kick') return 3;
@@ -120,14 +122,20 @@ async function uprightReposeWithGemini(
   return geminiUprightReposeDetailed(sideViewBase64);
 }
 
-async function tryFreepikBgRemoval(base64: string): Promise<Blob | null> {
+async function tryApiBgRemoval(base64: string): Promise<Blob | null> {
   try {
-    console.log('[Pipeline] Trying Freepik background removal for display version...');
-    const cleaned = await freepikRemoveBackground(base64);
-    console.log('[Pipeline] Freepik bg removal succeeded');
+    const provider = getConfiguredBgRemovalProvider();
+    console.log(`[Pipeline] Trying ${provider} background removal for display version...`);
+    const cleaned = await removeBackgroundWithConfiguredProvider(base64);
+    if (!cleaned) {
+      console.log(`[Pipeline] ${provider} background removal skipped`);
+      return null;
+    }
+    console.log(`[Pipeline] ${provider} bg removal succeeded`);
     return base64ToBlob(cleaned, 'image/png');
   } catch (err: any) {
-    console.warn('[Pipeline] Freepik bg removal failed:', err.message);
+    const provider = getConfiguredBgRemovalProvider();
+    console.warn(`[Pipeline] ${provider} bg removal failed:`, err.message);
     return null;
   }
 }
@@ -447,7 +455,7 @@ export async function processCharacter(
 
       meta.sideViewBlob = base64ToBlob(sideViewBase64, 'image/png');
       meta.sideViewRawBlob = base64ToBlob(sideViewInputBase64, 'image/png');
-      meta.sideViewCleanBlob = await tryFreepikBgRemoval(sideViewBase64);
+      meta.sideViewCleanBlob = await tryApiBgRemoval(sideViewBase64);
       meta.updatedAt = Date.now();
       await setCachedMeta(meta);
     }
@@ -466,6 +474,15 @@ export async function processCharacter(
         crouchSourceBase64 = sideViewBase64;
         crouchSourceInputBase64 = sideViewInputBase64;
       }
+    } else {
+      if (!meta.uprightViewBlob) {
+        meta.uprightViewBlob = base64ToBlob(sideViewBase64, 'image/png');
+      }
+      if (!meta.uprightViewRawBlob) {
+        meta.uprightViewRawBlob = base64ToBlob(sideViewInputBase64, 'image/png');
+      }
+      meta.updatedAt = Date.now();
+      await setCachedMeta(meta);
     }
 
     const crouchNormalizationReference = await getCrouchNormalizationReference(crouchSourceBase64);
@@ -494,12 +511,17 @@ export async function processCharacter(
 
       meta.crouchViewBlob = base64ToBlob(crouchViewBase64, 'image/png');
       meta.crouchViewRawBlob = base64ToBlob(crouchViewInputBase64, 'image/png');
-      meta.crouchViewCleanBlob = await tryFreepikBgRemoval(crouchViewBase64);
+      meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64);
       meta.updatedAt = Date.now();
       await setCachedMeta(meta);
     } else {
       crouchViewBase64 = sideViewBase64;
       crouchViewInputBase64 = sideViewInputBase64;
+      meta.crouchViewBlob = base64ToBlob(crouchViewBase64, 'image/png');
+      meta.crouchViewRawBlob = base64ToBlob(crouchViewInputBase64, 'image/png');
+      meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64);
+      meta.updatedAt = Date.now();
+      await setCachedMeta(meta);
     }
 
     // ── Step 2: Generate sprite sheets ──
@@ -639,11 +661,11 @@ export async function rebuildCharacter(
   // Also regenerate clean meta blobs if missing
   if (meta.sideViewBlob && !meta.sideViewCleanBlob) {
     const sideBase64 = await blobToBase64Util(meta.sideViewBlob);
-    meta.sideViewCleanBlob = await tryFreepikBgRemoval(sideBase64);
+    meta.sideViewCleanBlob = await tryApiBgRemoval(sideBase64);
   }
   if (meta.crouchViewBlob && !meta.crouchViewCleanBlob) {
     const crouchBase64 = await blobToBase64Util(meta.crouchViewBlob);
-    meta.crouchViewCleanBlob = await tryFreepikBgRemoval(crouchBase64);
+    meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchBase64);
   }
 
   meta.updatedAt = Date.now();
@@ -759,7 +781,7 @@ export async function retrySideView(
   meta.sideViewRawBlob = base64ToBlob(sideView.rawBase64, 'image/png');
   meta.uprightViewBlob = null;
   meta.uprightViewRawBlob = null;
-  meta.sideViewCleanBlob = await tryFreepikBgRemoval(sideView.cleanedBase64);
+  meta.sideViewCleanBlob = await tryApiBgRemoval(sideView.cleanedBase64);
   meta.updatedAt = Date.now();
   await setCachedMeta(meta);
 
@@ -831,7 +853,7 @@ export async function retryCrouchView(
 
   meta.crouchViewBlob = base64ToBlob(crouchViewBase64, 'image/png');
   meta.crouchViewRawBlob = base64ToBlob(crouchView.rawBase64, 'image/png');
-  meta.crouchViewCleanBlob = await tryFreepikBgRemoval(crouchViewBase64);
+  meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64);
   meta.updatedAt = Date.now();
   await setCachedMeta(meta);
 

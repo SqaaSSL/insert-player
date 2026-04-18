@@ -5,6 +5,8 @@ function apiProxyPlugin(): Plugin {
   let ludoKey = '';
   let freepikKey = '';
   let geminiKey = '';
+  let runwayKey = '';
+  let falKey = '';
 
   async function proxyRequest(
     req: IncomingMessage,
@@ -111,11 +113,15 @@ function apiProxyPlugin(): Plugin {
       ludoKey = env.LUDO_API_KEY || env.VITE_LUDO_API_KEY || '';
       freepikKey = env.FREEPIK_API_KEY || env.VITE_FREEPIK_API_KEY || '';
       geminiKey = env.GEMINI_API_KEY || '';
+      runwayKey = env.RUNWAY_API_KEY || env.VITE_RUNWAY_API_KEY || '';
+      falKey = env.FAL_API_KEY || env.VITE_FAL_API_KEY || '';
 
       const mask = (k: string) => k ? `${k.slice(0, 4)}...${k.slice(-4)} (${k.length} chars)` : 'NOT SET';
       console.log(`[proxy] LUDO_API_KEY: ${mask(ludoKey)}`);
       console.log(`[proxy] FREEPIK_API_KEY: ${mask(freepikKey)}`);
       console.log(`[proxy] GEMINI_API_KEY: ${mask(geminiKey)}`);
+      console.log(`[proxy] RUNWAY_API_KEY: ${mask(runwayKey)}`);
+      console.log(`[proxy] FAL_API_KEY: ${mask(falKey)}`);
 
       server.middlewares.use((req, res, next) => {
         const url = req.url ?? '';
@@ -172,6 +178,23 @@ function apiProxyPlugin(): Plugin {
           const apiPath = url.replace(/^\/proxy\/gemini/, '');
           const separator = apiPath.includes('?') ? '&' : '?';
           proxyRequest(req, res, `https://generativelanguage.googleapis.com${apiPath}${separator}key=${geminiKey}`, {});
+          return;
+        }
+
+        if (url.startsWith('/proxy/runway')) {
+          const apiPath = url.replace(/^\/proxy\/runway/, '');
+          proxyRequest(req, res, `https://api.dev.runwayml.com${apiPath}`, {
+            Authorization: `Bearer ${runwayKey}`,
+            'X-Runway-Version': '2024-11-06',
+          });
+          return;
+        }
+
+        if (url.startsWith('/proxy/fal')) {
+          const apiPath = url.replace(/^\/proxy\/fal/, '');
+          proxyRequest(req, res, `https://queue.fal.run${apiPath}`, {
+            Authorization: `Key ${falKey}`,
+          });
           return;
         }
 

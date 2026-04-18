@@ -5,11 +5,16 @@ import {
   getAllSpritesForHash,
   getAllCachedStageBackgrounds,
   deleteCharacter,
+  deleteCachedIntro,
   deleteCachedStageBackground,
+  getCachedIntro,
   renameCharacter,
   renameCachedStageBackground,
+  updateCharacterIntroConfig,
   CACHE_VERSION,
   type CachedMeta,
+  type CachedIntro,
+  type CachedIntroVariant,
   type CachedSprite,
   type CachedStageBackground,
 } from '../../services/SpriteCache.ts';
@@ -25,6 +30,7 @@ import {
 import { createDirectPhotoStage, createPhotoStage } from '../../services/StageBackgroundService.ts';
 import { DEBUG_EVENT_NAME, clearDebugLog, getDebugLogLines } from '../../services/DebugLog.ts';
 import { exportAnimationGif } from '../../services/GifExportService.ts';
+import { generateCharacterIntroVideo } from '../../services/IntroVideoService.ts';
 
 const FONT = '"Press Start 2P", monospace';
 const ACCENT = '#ff4444';
@@ -66,6 +72,7 @@ const STAGE_PREVIEW_H = 320;
 
 const BTN_Y = H - 26;
 const THUMB_DISPLAY_LABELS = ['ORIGINAL', 'SIDE VIEW', 'UPRIGHT', 'CROUCH'];
+const INTRO_VIDEO_PROVIDER = ((import.meta.env.VITE_INTRO_VIDEO_PROVIDER as string | undefined) ?? 'fal').trim().toLowerCase();
 
 export class GalleryScene extends Phaser.Scene {
   private activeTab: 'characters' | 'stages' = 'characters';
@@ -123,6 +130,8 @@ export class GalleryScene extends Phaser.Scene {
   private fileInput!: HTMLInputElement;
   private stageFileInput!: HTMLInputElement;
   private nameInput!: HTMLInputElement;
+  private introRefInput!: HTMLInputElement;
+  private introBriefInput!: HTMLTextAreaElement;
   private stageFileMode: 'forge' | 'direct' = 'forge';
   private prevBtn!: Phaser.GameObjects.Text;
   private createBtn!: Phaser.GameObjects.Text;
@@ -130,7 +139,20 @@ export class GalleryScene extends Phaser.Scene {
   private renameBtn!: Phaser.GameObjects.Text;
   private rebuildBtn!: Phaser.GameObjects.Text;
   private deleteBtn!: Phaser.GameObjects.Text;
+  private introVideoBtn!: Phaser.GameObjects.Text;
+  private introOverlay?: Phaser.GameObjects.Container;
+  private introOverlaySummaryText?: Phaser.GameObjects.Text;
+  private introOverlayStatusText?: Phaser.GameObjects.Text;
+  private introOverlayAdvanced = false;
+  private introVideoLoading = false;
+  private introVideoStatusMessage = 'Ready to generate. Add a brief only if you want to steer the shot.';
+  private introVideoStatusColor = '#b7dfff';
   private debugListener?: (event: Event) => void;
+  private currentIntro: CachedIntro | null = null;
+  private introOverlayVideo?: HTMLVideoElement;
+  private introOverlayVideoUrl?: string;
+  private introInlineVideo?: HTMLVideoElement;
+  private introInlineVideoUrl?: string;
 
   constructor() {
     super({ key: 'GalleryScene' });
@@ -351,6 +373,17 @@ export class GalleryScene extends Phaser.Scene {
     this.retryAnimBtn.on('pointerout', () => this.retryAnimBtn.setColor('#ff8844'));
     this.retryAnimBtn.on('pointerdown', () => this.retryCurrentAnimation());
     this.contentGroup.add(this.retryAnimBtn);
+
+    this.introVideoBtn = this.add.text(PREVIEW_X, PREVIEW_Y + phalf + 48, 'INTRO VIDEO', {
+      fontFamily: FONT, fontSize: '6px', color: '#ffe8aa',
+      stroke: '#000000', strokeThickness: 2,
+      backgroundColor: '#2a1f0d',
+      padding: { x: 12, y: 6 },
+    }).setOrigin(0.5).setDepth(12).setInteractive({ useHandCursor: true });
+    this.introVideoBtn.on('pointerover', () => this.introVideoBtn.setColor('#fff4cc'));
+    this.introVideoBtn.on('pointerout', () => this.introVideoBtn.setColor('#ffe8aa'));
+    this.introVideoBtn.on('pointerdown', () => this.openIntroVideoOverlay());
+    this.contentGroup.add(this.introVideoBtn);
   }
 
   private createStageLayout(): void {
@@ -602,12 +635,25 @@ export class GalleryScene extends Phaser.Scene {
     this.stageFileInput.style.display = 'none';
     document.body.appendChild(this.stageFileInput);
 
+    this.introRefInput = document.createElement('input');
+    this.introRefInput.type = 'file';
+    this.introRefInput.accept = 'image/png,image/jpeg,image/webp';
+    this.introRefInput.multiple = true;
+    this.introRefInput.style.display = 'none';
+    document.body.appendChild(this.introRefInput);
+
     this.nameInput = document.createElement('input');
     this.nameInput.type = 'text';
     this.nameInput.placeholder = 'Fighter name...';
     this.nameInput.maxLength = 20;
     this.nameInput.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;font-family:monospace;font-size:18px;padding:12px 20px;background:#111;color:#fff;border:2px solid #ff4444;border-radius:6px;text-align:center;outline:none;display:none;';
     document.body.appendChild(this.nameInput);
+
+    this.introBriefInput = document.createElement('textarea');
+    this.introBriefInput.placeholder = 'Describe camera move, attitude, mood, and final pose...';
+    this.introBriefInput.maxLength = 500;
+    this.introBriefInput.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10000;width:640px;max-width:82vw;height:220px;font-family:monospace;font-size:16px;line-height:1.45;padding:14px 16px;background:#0b1020;color:#fff;border:2px solid #44aaff;border-radius:8px;outline:none;display:none;resize:none;box-shadow:0 18px 40px rgba(0,0,0,.45);';
+    document.body.appendChild(this.introBriefInput);
 
     this.fileInput.addEventListener('change', () => {
       const file = this.fileInput.files?.[0];
@@ -625,6 +671,13 @@ export class GalleryScene extends Phaser.Scene {
       } else {
         void this.beginCreateStage(file);
       }
+    });
+
+    this.introRefInput.addEventListener('change', () => {
+      const files = Array.from(this.introRefInput.files ?? []);
+      this.introRefInput.value = '';
+      if (files.length === 0) return;
+      void this.addIntroReferenceImages(files);
     });
   }
 
@@ -767,6 +820,7 @@ export class GalleryScene extends Phaser.Scene {
     this.dynamicObjects = [];
     if (this.bigPreviewSprite) { this.bigPreviewSprite.destroy(); this.bigPreviewSprite = null; }
     if (this.bigPreviewImage) { this.bigPreviewImage.destroy(); this.bigPreviewImage = null; }
+    this.destroyInlineIntroVideoPreview();
   }
 
   private showCurrent(): void {
@@ -787,6 +841,8 @@ export class GalleryScene extends Phaser.Scene {
       this.statusText.setText('');
       this.debugText.setText('');
       this.infoText.setText('');
+      this.currentIntro = null;
+      this.refreshIntroVideoUI();
       this.animNameText.setText('');
       this.resetAnimGridColors();
       return;
@@ -820,6 +876,7 @@ export class GalleryScene extends Phaser.Scene {
     this.infoText.setText(
       `CREATED: ${dateStr}  |  ANIMS: ${animCount}  |  ${meta.photoHash.slice(0, 10)}...`
     );
+    void this.loadIntroData(meta.photoHash);
 
     this.animNameText.setText('SELECT ANIMATION').setColor('#888888');
     this.downloadBtn.setVisible(false);
@@ -828,6 +885,7 @@ export class GalleryScene extends Phaser.Scene {
     this.retryAnimBtn.setVisible(false);
     this.currentPreviewBlob = null;
     this.currentRawBlob = null;
+    this.currentPreviewAnimName = '';
     this.downloadAllBtn.setVisible(this.sprites.length > 0 || meta.status === 'ready');
 
     this.thumbBlobs = [];
@@ -926,6 +984,15 @@ export class GalleryScene extends Phaser.Scene {
     this.downloadAllBtn.setVisible(this.sprites.length > 0);
   }
 
+  private async loadIntroData(photoHash: string): Promise<void> {
+    try {
+      this.currentIntro = await getCachedIntro(photoHash);
+    } catch {
+      this.currentIntro = null;
+    }
+    this.refreshIntroVideoUI();
+  }
+
   private resetAnimGridColors(): void {
     const anims = getAnimationList();
     for (let i = 0; i < anims.length; i++) {
@@ -947,6 +1014,7 @@ export class GalleryScene extends Phaser.Scene {
   // ─── Thumbnail Preview ───────────────────────────────────────
 
   private selectThumb(thumbIndex: number): void {
+    this.destroyInlineIntroVideoPreview();
     const entry = this.thumbBlobs[thumbIndex];
 
     this.selectedAnimIndex = -1;
@@ -1042,6 +1110,7 @@ export class GalleryScene extends Phaser.Scene {
   // ─── Sprite Preview ──────────────────────────────────────────
 
   private selectAnim(index: number): void {
+    this.destroyInlineIntroVideoPreview();
     const anims = getAnimationList();
     if (index < 0 || index >= anims.length) return;
 
@@ -1271,6 +1340,560 @@ export class GalleryScene extends Phaser.Scene {
     this.stageGroup.add(this.stagePreviewImage);
   }
 
+  private getIntroSummary(meta: CachedMeta): string {
+    const extraRefs = meta.introVideoReferenceBlobs?.length ?? 0;
+    const brief = (meta.introVideoPrompt ?? '').trim();
+    const hasOriginal = !!meta.originalPhotoBlob;
+    const activeVariant = this.getActiveIntroVariant();
+    const model = activeVariant?.model ?? meta.introVideoModel ?? 'fal-ltx-v2-3-fast';
+    const videoState = this.currentIntro ? 'Video ready' : 'No cached video yet';
+    const briefState = brief ? `Brief: ${brief.length} chars` : 'Brief: using default cinematic prompt';
+    const modelLabel =
+      model === 'runway-gen4-turbo'
+        ? 'Provider: Runway Gen-4 Turbo'
+        : model === 'fal-ltx-v2-3-fast'
+          ? 'Provider: fal LTX 2.3 Fast'
+        : model === 'fal-kling-v2-6-pro' || model === 'fal-vidu-q3'
+          ? 'Provider: fal Kling 2.6 Pro'
+          : model === 'freepik-auto'
+            ? 'Provider: Freepik Auto'
+            : model === 'veo-3-1'
+              ? 'Provider: Freepik Veo 3.1'
+              : 'Provider: Freepik Kling 2.1';
+    return [
+      `${videoState}`,
+      `${briefState}`,
+      `Preview: ${activeVariant?.label ?? 'VIDEO'}`,
+      `Automatic base image: ${hasOriginal ? 'original photo' : 'best available character image'}`,
+      `Extra ref images: ${extraRefs}/2`,
+      `${modelLabel}`,
+    ].join('\n');
+  }
+
+  private getIntroVariants(): CachedIntroVariant[] {
+    return this.currentIntro?.variants ?? [];
+  }
+
+  private getActiveIntroVariant(): CachedIntroVariant | null {
+    const variants = this.getIntroVariants();
+    if (variants.length === 0) return null;
+    const activeId = this.currentIntro?.activeVariantId;
+    return variants.find((variant) => variant.id === activeId) ?? variants[0];
+  }
+
+  private refreshIntroOverlaySummary(): void {
+    if (!this.introOverlaySummaryText || this.metas.length === 0) return;
+    this.introOverlaySummaryText.setText(this.getIntroSummary(this.metas[this.currentIndex]));
+  }
+
+  private refreshIntroOverlayStatus(): void {
+    if (!this.introOverlayStatusText) return;
+    this.introOverlayStatusText.setText(this.introVideoStatusMessage).setColor(this.introVideoStatusColor);
+  }
+
+  private getIntroVideoProviderLabel(): string {
+    switch (INTRO_VIDEO_PROVIDER) {
+      case 'runway':
+      case 'runway-gen4':
+      case 'runway-gen4-turbo':
+        return 'RUNWAY';
+      case 'fal':
+      case 'fal-kling':
+      case 'fal-kling-v2-6-pro':
+      case 'fal-vidu':
+      case 'fal-vidu-q3':
+        return 'FAL';
+      case 'freepik':
+      case 'freepik-auto':
+      case 'kling':
+      case 'kling-v2-1-std':
+      case 'veo':
+      case 'veo-3-1':
+      default:
+        return 'FREEPIK';
+    }
+  }
+
+  private refreshIntroVideoUI(): void {
+    if (this.introVideoBtn) {
+      this.introVideoBtn.setText(this.currentIntro ? 'EDIT VIDEO' : 'INTRO VIDEO');
+    }
+    if (
+      this.activeTab === 'characters' &&
+      this.metas.length > 0 &&
+      this.selectedAnimIndex === -1 &&
+      !this.currentPreviewBlob &&
+      !this.currentPreviewAnimName
+    ) {
+      this.showInlineIntroPreview();
+      return;
+    }
+    this.destroyInlineIntroVideoPreview();
+  }
+
+  private closeIntroVideoOverlay(): void {
+    this.introOverlay?.destroy(true);
+    this.introOverlay = undefined;
+    this.introOverlaySummaryText = undefined;
+    this.introOverlayStatusText = undefined;
+    this.destroyOverlayIntroVideoPreview();
+  }
+
+  private destroyOverlayIntroVideoPreview(): void {
+    if (this.introOverlayVideo) {
+      this.introOverlayVideo.pause();
+      this.introOverlayVideo.removeAttribute('src');
+      this.introOverlayVideo.load();
+      this.introOverlayVideo.remove();
+      this.introOverlayVideo = undefined;
+    }
+    if (this.introOverlayVideoUrl) {
+      URL.revokeObjectURL(this.introOverlayVideoUrl);
+      this.introOverlayVideoUrl = undefined;
+    }
+  }
+
+  private destroyInlineIntroVideoPreview(): void {
+    if (this.introInlineVideo) {
+      this.introInlineVideo.pause();
+      this.introInlineVideo.removeAttribute('src');
+      this.introInlineVideo.load();
+      this.introInlineVideo.remove();
+      this.introInlineVideo = undefined;
+    }
+    if (this.introInlineVideoUrl) {
+      URL.revokeObjectURL(this.introInlineVideoUrl);
+      this.introInlineVideoUrl = undefined;
+    }
+  }
+
+  private mountOverlayIntroVideoPreview(cx: number, cy: number, width: number, height: number): void {
+    this.destroyOverlayIntroVideoPreview();
+    const activeVariant = this.getActiveIntroVariant();
+    if (!activeVariant) return;
+
+    const container = document.getElementById('game-container') ?? this.game.canvas.parentElement ?? this.game.canvas;
+    const rect = container.getBoundingClientRect();
+    const scaleX = rect.width / W;
+    const scaleY = rect.height / H;
+    const left = rect.left + (cx - width / 2) * scaleX;
+    const top = rect.top + (cy - height / 2) * scaleY;
+
+    this.introOverlayVideoUrl = URL.createObjectURL(activeVariant.videoBlob);
+    const video = document.createElement('video');
+    video.src = this.introOverlayVideoUrl;
+    video.autoplay = true;
+    video.loop = true;
+    video.muted = true;
+    video.controls = true;
+    video.playsInline = true;
+    video.style.position = 'fixed';
+    video.style.left = `${left}px`;
+    video.style.top = `${top}px`;
+    video.style.width = `${width * scaleX}px`;
+    video.style.height = `${height * scaleY}px`;
+    video.style.objectFit = 'contain';
+    video.style.background = '#050812';
+    video.style.border = '2px solid #40658b';
+    video.style.borderRadius = '8px';
+    video.style.boxShadow = '0 8px 24px rgba(0,0,0,0.45)';
+    video.style.zIndex = '1100';
+    container.appendChild(video);
+    this.introOverlayVideo = video;
+    void video.play().catch(() => {});
+  }
+
+  private mountInlineIntroVideoPreview(cx: number, cy: number, width: number, height: number): void {
+    this.destroyInlineIntroVideoPreview();
+    const activeVariant = this.getActiveIntroVariant();
+    if (!activeVariant) return;
+
+    const container = document.getElementById('game-container') ?? this.game.canvas.parentElement ?? this.game.canvas;
+    const rect = container.getBoundingClientRect();
+    const scaleX = rect.width / W;
+    const scaleY = rect.height / H;
+    const left = rect.left + (cx - width / 2) * scaleX;
+    const top = rect.top + (cy - height / 2) * scaleY;
+
+    this.introInlineVideoUrl = URL.createObjectURL(activeVariant.videoBlob);
+    const video = document.createElement('video');
+    video.src = this.introInlineVideoUrl;
+    video.autoplay = true;
+    video.loop = true;
+    video.muted = true;
+    video.controls = false;
+    video.playsInline = true;
+    video.style.position = 'fixed';
+    video.style.left = `${left}px`;
+    video.style.top = `${top}px`;
+    video.style.width = `${width * scaleX}px`;
+    video.style.height = `${height * scaleY}px`;
+    video.style.objectFit = 'contain';
+    video.style.background = '#050812';
+    video.style.border = '2px solid #40658b';
+    video.style.borderRadius = '8px';
+    video.style.boxShadow = '0 8px 24px rgba(0,0,0,0.35)';
+    video.style.zIndex = '120';
+    video.style.cursor = 'pointer';
+    video.addEventListener('click', () => this.openIntroVideoOverlay());
+    container.appendChild(video);
+    this.introInlineVideo = video;
+    void video.play().catch(() => {});
+  }
+
+  private showInlineIntroPreview(): void {
+    if (!this.currentIntro) {
+      this.destroyInlineIntroVideoPreview();
+      return;
+    }
+    if (this.bigPreviewSprite) { this.bigPreviewSprite.destroy(); this.bigPreviewSprite = null; }
+    if (this.bigPreviewImage) { this.bigPreviewImage.destroy(); this.bigPreviewImage = null; }
+    this.currentPreviewBlob = null;
+    this.currentRawBlob = null;
+    this.currentPreviewAnimName = '';
+    this.downloadBtn.setVisible(false);
+    this.downloadRawBtn.setVisible(false);
+    this.downloadGifBtn.setVisible(false);
+    this.retryAnimBtn.setVisible(false);
+    this.animNameText.setText('INTRO VIDEO READY').setColor('#ffdd66');
+    this.mountInlineIntroVideoPreview(PREVIEW_X, PREVIEW_Y, PREVIEW_SIZE - 18, PREVIEW_SIZE - 18);
+  }
+
+  private openIntroVideoOverlay(): void {
+    if (this.metas.length === 0) return;
+    this.closeIntroVideoOverlay();
+    this.destroyInlineIntroVideoPreview();
+
+    const meta = this.metas[this.currentIndex];
+    const extraRefs = meta.introVideoReferenceBlobs?.length ?? 0;
+    const brief = (meta.introVideoPrompt ?? '').trim();
+    const isLoading = this.introVideoLoading;
+    const providerLabel = this.getIntroVideoProviderLabel();
+    const hasVideoPreview = !!this.currentIntro;
+    const activeVariant = this.getActiveIntroVariant();
+    const overlay = this.add.container(0, 0).setDepth(200);
+    this.introOverlay = overlay;
+
+    const dim = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.72).setDepth(200);
+    overlay.add(dim);
+
+    const panelWidth = hasVideoPreview ? 840 : 700;
+    const panelHeight = hasVideoPreview
+      ? (this.introOverlayAdvanced ? 560 : 520)
+      : (this.introOverlayAdvanced ? 420 : 330);
+    const panelTop = hasVideoPreview ? 18 : 42;
+    const panelLeft = W / 2 - panelWidth / 2;
+    const panel = this.add.graphics().setDepth(201);
+    panel.fillStyle(0x091120, 0.98);
+    panel.fillRoundedRect(panelLeft, panelTop, panelWidth, panelHeight, 12);
+    panel.lineStyle(2, 0x335577, 1);
+    panel.strokeRoundedRect(panelLeft, panelTop, panelWidth, panelHeight, 12);
+    overlay.add(panel);
+
+    const title = this.add.text(W / 2, panelTop + 24, 'INTRO VIDEO', {
+      fontFamily: FONT, fontSize: '12px', color: '#ffdd66',
+      stroke: '#000000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(202);
+    overlay.add(title);
+
+    const closeBtn = this.add.text(panelLeft + panelWidth - 28, panelTop + 24, 'X', {
+      fontFamily: FONT, fontSize: '10px', color: '#ffffff',
+      stroke: '#000000', strokeThickness: 3,
+      backgroundColor: '#3a1515', padding: { x: 8, y: 6 },
+    }).setOrigin(0.5).setDepth(203);
+    if (!isLoading) closeBtn.setInteractive({ useHandCursor: true });
+    closeBtn.on('pointerdown', () => {
+      this.closeIntroVideoOverlay();
+      this.refreshIntroVideoUI();
+    });
+    overlay.add(closeBtn);
+
+    const guide = this.add.text(W / 2, panelTop + 54,
+      'THE ORIGINAL PHOTO IS USED AUTOMATICALLY. ADD A BRIEF ONLY IF YOU WANT TO STEER THE SHOT.',
+      {
+        fontFamily: FONT, fontSize: '6px', color: '#a7dfff',
+        stroke: '#000000', strokeThickness: 2, align: 'center', lineSpacing: 6,
+        wordWrap: { width: panelWidth - 60 },
+      }).setOrigin(0.5, 0).setDepth(202);
+    overlay.add(guide);
+
+    const wideLayout = hasVideoPreview;
+    const rightColW = 270;
+    const rightColCenterX = panelLeft + panelWidth - 44 - rightColW / 2;
+    const videoCx = panelLeft + 210;
+    const videoCy = panelTop + 272;
+    const videoW = 340;
+    const videoH = 400;
+    const promptCardX = wideLayout ? (rightColCenterX - rightColW / 2) : (W / 2 - 280);
+    const promptCardY = panelTop + 92;
+    const promptCardW = wideLayout ? rightColW : 560;
+    const promptCardH = wideLayout ? 110 : 78;
+
+    if (hasVideoPreview) {
+      const previewLabel = this.add.text(videoCx, panelTop + 86, 'VIDEO PREVIEW', {
+        fontFamily: FONT, fontSize: '7px', color: '#ffdd66',
+        stroke: '#000000', strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(202);
+      overlay.add(previewLabel);
+      this.mountOverlayIntroVideoPreview(videoCx, videoCy, videoW, videoH);
+    }
+
+    const promptCard = this.add.graphics().setDepth(201);
+    promptCard.fillStyle(0x101a2e, 1);
+    promptCard.fillRoundedRect(promptCardX, promptCardY, promptCardW, promptCardH, 10);
+    promptCard.lineStyle(2, 0x40658b, 1);
+    promptCard.strokeRoundedRect(promptCardX, promptCardY, promptCardW, promptCardH, 10);
+    overlay.add(promptCard);
+
+    const promptLabel = this.add.text(promptCardX + promptCardW / 2, promptCardY + 12, 'OPTIONAL BRIEF', {
+      fontFamily: FONT, fontSize: '7px', color: '#ffdd66',
+      stroke: '#000000', strokeThickness: 2,
+    }).setOrigin(0.5, 0).setDepth(202);
+    overlay.add(promptLabel);
+
+    const promptText = this.add.text(promptCardX + promptCardW / 2, promptCardY + 32,
+      brief
+        ? `"${brief.slice(0, wideLayout ? 110 : 130)}${brief.length > (wideLayout ? 110 : 130) ? '...' : ''}"`
+        : 'No custom brief yet. Click here to describe camera, attitude, motion or final pose.',
+      {
+        fontFamily: FONT, fontSize: '6px', color: brief ? '#ffffff' : '#9fd3ff',
+        stroke: '#000000', strokeThickness: 2, align: 'center', lineSpacing: 6,
+        wordWrap: { width: promptCardW - 34 },
+      }).setOrigin(0.5, 0).setDepth(202);
+    overlay.add(promptText);
+
+    const promptHint = this.add.text(promptCardX + promptCardW / 2, promptCardY + promptCardH - 16,
+      'CLICK TO EDIT',
+      {
+        fontFamily: FONT, fontSize: '5px', color: '#ffe2a8',
+        stroke: '#000000', strokeThickness: 2, align: 'center',
+      }).setOrigin(0.5, 1).setDepth(202);
+    overlay.add(promptHint);
+
+    const promptClickZone = this.add.zone(promptCardX + promptCardW / 2, promptCardY + promptCardH / 2, promptCardW, promptCardH)
+      .setDepth(203);
+    if (!isLoading) promptClickZone.setInteractive({ useHandCursor: true });
+    promptClickZone.on('pointerdown', () => {
+      void this.editIntroBrief();
+    });
+    overlay.add(promptClickZone);
+
+    const statusX = wideLayout ? rightColCenterX : W / 2;
+    const statusY = wideLayout ? (promptCardY + promptCardH + 20) : (panelTop + 232);
+    this.introOverlayStatusText = this.add.text(statusX, statusY, this.introVideoStatusMessage, {
+      fontFamily: FONT, fontSize: '7px', color: '#ffffff',
+      stroke: '#000000', strokeThickness: 2, align: 'center', lineSpacing: 8,
+      wordWrap: { width: wideLayout ? (rightColW - 10) : (panelWidth - 70) },
+    }).setOrigin(0.5, 0).setDepth(202);
+    this.refreshIntroOverlayStatus();
+    overlay.add(this.introOverlayStatusText);
+
+    if (this.introOverlayAdvanced) {
+      const summaryY = wideLayout ? (statusY + 70) : (panelTop + 272);
+      this.introOverlaySummaryText = this.add.text(wideLayout ? rightColCenterX : W / 2, summaryY, this.getIntroSummary(meta), {
+        fontFamily: FONT, fontSize: '7px', color: '#ffffff',
+        stroke: '#000000', strokeThickness: 2, align: 'center', lineSpacing: 8,
+        wordWrap: { width: wideLayout ? (rightColW - 10) : (panelWidth - 70) },
+      }).setOrigin(0.5, 0).setDepth(202);
+      overlay.add(this.introOverlaySummaryText);
+    }
+
+    const makeBtn = (
+      x: number,
+      y: number,
+      label: string,
+      color: string,
+      bg: string,
+      onClick: () => void,
+      enabled = true,
+    ) => {
+      const btn = this.add.text(x, y, label, {
+        fontFamily: FONT, fontSize: '7px', color,
+        stroke: '#000000', strokeThickness: 2,
+        backgroundColor: bg,
+        padding: { x: 12, y: 8 },
+      }).setOrigin(0.5).setDepth(203);
+      if (enabled) {
+        btn.setInteractive({ useHandCursor: true });
+        btn.on('pointerdown', onClick);
+      } else {
+        btn.setAlpha(0.55);
+      }
+      overlay.add(btn);
+      return btn;
+    };
+
+    const primaryButtonsY = wideLayout ? (this.introOverlayAdvanced ? panelTop + 428 : panelTop + 360) : (panelTop + 346);
+    makeBtn(wideLayout ? (rightColCenterX - 78) : (W / 2 - 90), primaryButtonsY, isLoading ? 'GENERATING...' : (this.currentIntro ? 'REGENERATE VIDEO' : 'GENERATE VIDEO'), '#fff6d2', '#6a5316', () => {
+      void this.generateIntroVideoFromOverlay();
+    }, !isLoading);
+    makeBtn(wideLayout ? (rightColCenterX + 78) : (W / 2 + 110), primaryButtonsY, this.introOverlayAdvanced ? 'HIDE ADVANCED' : 'ADVANCED', '#f4ffd2', '#2a5a18', () => {
+      this.introOverlayAdvanced = !this.introOverlayAdvanced;
+      this.openIntroVideoOverlay();
+    }, !isLoading);
+
+    if (this.introOverlayAdvanced) {
+      const advancedTop = wideLayout ? (primaryButtonsY + 32) : (panelTop + 388);
+      const advancedLabel = this.add.text(wideLayout ? rightColCenterX : W / 2, advancedTop, 'ADVANCED', {
+        fontFamily: FONT, fontSize: '7px', color: '#ffdd66',
+        stroke: '#000000', strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(202);
+      overlay.add(advancedLabel);
+
+      const advancedSummary = this.add.text(wideLayout ? rightColCenterX : W / 2, advancedTop + 16,
+        `Provider: ${providerLabel}  |  Extra refs: ${extraRefs}/2${this.currentIntro ? '  |  Video ready to download' : ''}`,
+        {
+          fontFamily: FONT, fontSize: '6px', color: '#b7dfff',
+          stroke: '#000000', strokeThickness: 2, align: 'center',
+          wordWrap: { width: wideLayout ? (rightColW - 10) : 560 },
+        }).setOrigin(0.5).setDepth(202);
+      overlay.add(advancedSummary);
+
+      const advancedButtonsY = advancedTop + 54;
+      makeBtn(this.currentIntro ? (wideLayout ? rightColCenterX - 78 : W / 2 - 90) : (wideLayout ? rightColCenterX : W / 2 - 40), advancedButtonsY, 'ADD REF IMAGE', '#f4ffd2', '#2a5a18', () => {
+        this.introRefInput.click();
+      }, !isLoading);
+      if (extraRefs > 0) {
+        makeBtn(this.currentIntro ? (wideLayout ? rightColCenterX + 78 : W / 2 + 90) : (wideLayout ? rightColCenterX + 100 : W / 2 + 110), advancedButtonsY, 'CLEAR REFS', '#ffe0e0', '#6a1c1c', () => {
+          void this.clearIntroReferenceImages();
+        }, !isLoading);
+      }
+      if (this.currentIntro) {
+        makeBtn(wideLayout ? rightColCenterX : (W / 2 + 170), advancedButtonsY + 40, 'DOWNLOAD VIDEO', '#d4e8ff', '#1a4f78', () => {
+          this.downloadCurrentIntroVideo();
+        }, !isLoading);
+      }
+    }
+  }
+
+  private async editIntroBrief(): Promise<void> {
+    if (this.metas.length === 0) return;
+    const meta = this.metas[this.currentIndex];
+    const nextBrief = await this.promptForMultilineText(
+      meta.introVideoPrompt ?? '',
+      'Describe camera move, emotion, tiny action, and final pose. Cmd/Ctrl+Enter to save. Leave empty to remove it.',
+      500,
+    );
+    if (nextBrief === null) return;
+    await updateCharacterIntroConfig(meta.photoHash, {
+      introVideoPrompt: nextBrief,
+    });
+    await deleteCachedIntro(meta.photoHash);
+    await this.loadCharacters();
+    this.currentIndex = this.metas.findIndex((entry) => entry.photoHash === meta.photoHash);
+    if (this.currentIndex < 0) this.currentIndex = 0;
+    await this.loadIntroData(meta.photoHash);
+    this.refreshIntroOverlaySummary();
+  }
+
+  private async addIntroReferenceImages(files: File[]): Promise<void> {
+    if (this.metas.length === 0) return;
+    const meta = this.metas[this.currentIndex];
+    const current = meta.introVideoReferenceBlobs ?? [];
+    const next = [...current, ...files].slice(0, 2);
+    await updateCharacterIntroConfig(meta.photoHash, {
+      introVideoReferenceBlobs: next,
+    });
+    await deleteCachedIntro(meta.photoHash);
+    await this.loadCharacters();
+    this.currentIndex = this.metas.findIndex((entry) => entry.photoHash === meta.photoHash);
+    if (this.currentIndex < 0) this.currentIndex = 0;
+    await this.loadIntroData(meta.photoHash);
+    this.refreshIntroOverlaySummary();
+  }
+
+  private async clearIntroReferenceImages(): Promise<void> {
+    if (this.metas.length === 0) return;
+    const meta = this.metas[this.currentIndex];
+    await updateCharacterIntroConfig(meta.photoHash, {
+      introVideoReferenceBlobs: [],
+    });
+    await deleteCachedIntro(meta.photoHash);
+    await this.loadCharacters();
+    this.currentIndex = this.metas.findIndex((entry) => entry.photoHash === meta.photoHash);
+    if (this.currentIndex < 0) this.currentIndex = 0;
+    await this.loadIntroData(meta.photoHash);
+    this.refreshIntroOverlaySummary();
+  }
+
+  private async generateIntroVideoFromOverlay(): Promise<void> {
+    if (this.metas.length === 0 || this.introVideoLoading) return;
+    const meta = this.metas[this.currentIndex];
+    this.introVideoLoading = true;
+    this.introVideoStatusMessage = 'Preparing intro video...';
+    this.introVideoStatusColor = '#ffd36d';
+    if (this.introOverlay) this.openIntroVideoOverlay();
+    this.statusText.setText('Generating intro video...').setColor('#ffaa00');
+
+    try {
+      if (this.currentIntro) {
+        this.statusText.setText('Refreshing intro video...').setColor('#ffaa00');
+        await deleteCachedIntro(meta.photoHash);
+        this.currentIntro = null;
+        this.refreshIntroOverlaySummary();
+      }
+      this.currentIntro = await generateCharacterIntroVideo(meta.photoHash, (status) => {
+        switch (status.stage) {
+          case 'preparing':
+            this.statusText.setText('Preparing intro inputs...');
+            this.introVideoStatusMessage = 'Preparing intro inputs...';
+            break;
+          case 'uploading_inputs':
+            this.statusText.setText(`Uploading intro inputs (${status.count})...`);
+            this.introVideoStatusMessage = `Uploading inputs (${status.count})...`;
+            break;
+          case 'creating_task':
+            this.statusText.setText(`Creating ${status.model} video task...`);
+            this.introVideoStatusMessage = `Creating ${status.model} task...`;
+            break;
+          case 'polling':
+            this.statusText.setText(`${status.model} status: ${status.status}`);
+            this.introVideoStatusMessage = `Rendering video... ${status.status}`;
+            break;
+          case 'fetching_result':
+            this.statusText.setText('Fetching intro video...');
+            this.introVideoStatusMessage = 'Fetching rendered video...';
+            break;
+          case 'cached':
+            this.statusText.setText('Intro video already cached.').setColor('#44ff44');
+            this.introVideoStatusMessage = 'Video already cached.';
+            this.introVideoStatusColor = '#44ff44';
+            break;
+          case 'done':
+            this.statusText.setText('Intro video ready!').setColor('#44ff44');
+            this.introVideoStatusMessage = 'Video ready. Regenerate it or open advanced to download the current one.';
+            this.introVideoStatusColor = '#44ff44';
+            break;
+          case 'error':
+            this.statusText.setText(`Intro video failed: ${status.message}`).setColor(ACCENT);
+            this.introVideoStatusMessage = `Failed: ${status.message}`;
+            this.introVideoStatusColor = ACCENT;
+            break;
+        }
+        this.refreshIntroOverlayStatus();
+      });
+      this.refreshIntroOverlaySummary();
+      this.refreshIntroVideoUI();
+    } catch (err: any) {
+      this.statusText.setText(`Intro video failed: ${err?.message || 'unknown error'}`).setColor(ACCENT);
+      this.introVideoStatusMessage = `Failed: ${err?.message || 'unknown error'}`;
+      this.introVideoStatusColor = ACCENT;
+      this.refreshIntroOverlayStatus();
+    } finally {
+      this.introVideoLoading = false;
+      if (this.introOverlay) this.openIntroVideoOverlay();
+    }
+  }
+
+  private downloadCurrentIntroVideo(): void {
+    const activeVariant = this.getActiveIntroVariant();
+    if (!activeVariant || this.metas.length === 0) return;
+    const meta = this.metas[this.currentIndex];
+    const safeName = (meta.characterName || 'fighter').replace(/[^a-z0-9]/gi, '_');
+    const ext = activeVariant.mimeType.includes('webm') ? 'webm' : 'mp4';
+    downloadBlob(activeVariant.videoBlob, `${safeName}_intro.${ext}`);
+  }
+
   private promptForText(initialValue: string, placeholder: string, maxLength: number): Promise<string | null> {
     return new Promise((resolve) => {
       this.nameInput.placeholder = placeholder;
@@ -1306,6 +1929,49 @@ export class GalleryScene extends Phaser.Scene {
 
       this.nameInput.addEventListener('keydown', onKeydown);
       this.nameInput.addEventListener('blur', onBlur, { once: true });
+    });
+  }
+
+  private promptForMultilineText(initialValue: string, placeholder: string, maxLength: number): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.introBriefInput.placeholder = placeholder;
+      this.introBriefInput.maxLength = maxLength;
+      this.introBriefInput.value = initialValue;
+      this.introBriefInput.style.display = 'block';
+      this.introBriefInput.focus();
+      this.introBriefInput.select();
+
+      const cleanup = () => {
+        this.introBriefInput.style.display = 'none';
+        this.introBriefInput.removeEventListener('keydown', onKeydown);
+        this.introBriefInput.removeEventListener('blur', onBlur);
+      };
+
+      const submit = () => {
+        const value = this.introBriefInput.value.trim().slice(0, maxLength);
+        cleanup();
+        resolve(value);
+      };
+
+      const cancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      const onKeydown = (e: KeyboardEvent) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault();
+          submit();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          cancel();
+        }
+        e.stopPropagation();
+      };
+      const onBlur = () => submit();
+
+      this.introBriefInput.addEventListener('keydown', onKeydown);
+      this.introBriefInput.addEventListener('blur', onBlur, { once: true });
     });
   }
 
@@ -1503,9 +2169,13 @@ export class GalleryScene extends Phaser.Scene {
   }
 
   private cleanupHTML(): void {
+    this.closeIntroVideoOverlay();
+    this.destroyInlineIntroVideoPreview();
     this.nameInput?.remove();
     this.fileInput?.remove();
     this.stageFileInput?.remove();
+    this.introRefInput?.remove();
+    this.introBriefInput?.remove();
   }
 
   shutdown(): void {
