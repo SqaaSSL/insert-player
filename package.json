@@ -8,16 +8,23 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "check:frontend": "node scripts/check-no-inline-styles.mjs",
+    "build": "npm run check:frontend && tsc && vite build",
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.2.2",
+    "tailwindcss": "^4.2.2",
     "typescript": "~5.9.3",
     "vite": "^7.3.1"
   },
   "dependencies": {
     "@bunnio/rembg-web": "^1.0.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "gifenc": "^1.0.3",
-    "phaser": "^3.90.0"
+    "phaser": "^3.90.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
   }
 }

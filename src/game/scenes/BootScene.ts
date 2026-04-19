@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT } from '../constants.ts';
 import { generateFighterSpriteSheet } from '../sprites/SpriteGenerator.ts';
+import { getPendingLaunchTarget } from '../launchState.ts';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -42,6 +43,16 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
+    const pendingTarget = getPendingLaunchTarget();
+    console.info('[BootScene] create', {
+      pendingSceneKey: pendingTarget?.sceneKey ?? null,
+      hasPendingData: Boolean(pendingTarget?.data),
+    });
+    if (pendingTarget) {
+      this.scene.start(pendingTarget.sceneKey, pendingTarget.data);
+      return;
+    }
+    console.warn('[BootScene] No pending launch target. Falling back to TitleScene.');
     this.scene.start('TitleScene');
   }
 

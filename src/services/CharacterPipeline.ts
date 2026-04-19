@@ -7,9 +7,10 @@ import {
   getAllSpritesForHash,
   CACHE_VERSION,
   type CachedMeta,
+  type CachedFailedAnimationArtifact,
   type CachedSprite,
 } from './SpriteCache';
-import { geminiReposeDetailed, geminiUprightReposeDetailed, geminiCrouchRepose, geminiCrouchReposeDetailed, geminiSpriteSheet } from './GeminiApi';
+import { geminiReposeDetailed, geminiUprightReposeDetailed, geminiCrouchRepose, geminiCrouchReposeDetailed, geminiSpriteSheet, geminiIdleFrameSequence, PartialSpriteGenerationError } from './GeminiApi';
 import { CELL_H, CELL_W, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, measureOpaqueBoundsFromBase64, type NormalizationReference } from './SpritePostProcess';
 import { getAnimationProfile } from './AnimationProfiles';
 import { publishDebugLog } from './DebugLog';
@@ -19,6 +20,7 @@ import { prepareBaseImage } from './ImagePrep';
 import { getConfiguredBgRemovalProvider, removeBackgroundWithConfiguredProvider } from './BackgroundRemovalService';
 
 export type PipelineProvider = 'gemini' | 'ludo';
+export type IdleGenerationMode = 'frame_sequence' | 'sheet';
 
 export type PipelineStatus =
   | { stage: 'hashing' }
@@ -48,7 +50,7 @@ interface AnimDef {
 }
 
 const ANIMATIONS: AnimDef[] = [
-  { name: 'idle',       motion: 'idle fighting stance with very subtle weight shifting and breathing sway, fists raised, feet planted — the character barely moves, just alive and ready', frames: 16, duration: 2,   loop: true,  base: 'standing' },
+  { name: 'idle',       motion: 'idle fighting stance with very subtle weight shifting and breathing sway, fists raised, feet planted — the character barely moves, just alive and ready', frames: 8, duration: 2,   loop: true,  base: 'standing' },
   { name: 'walk',       motion: 'walking forward to the right cycle, fighting game walk',                                          frames: 16, duration: 1.5, loop: true,  base: 'standing' },
   { name: 'high_punch', motion: 'quick grounded standing jab punch extending the lead arm forward while both feet stay planted, then retracting to stance', frames: 7, duration: 1.0, loop: false, base: 'standing' },
   { name: 'high_kick',  motion: 'powerful grounded standing roundhouse kick swinging the right leg in a high arc while the support foot stays planted, then returning to stance', frames: 7, duration: 1.2, loop: false, base: 'standing' },
@@ -72,7 +74,8 @@ export function getProvider(): PipelineProvider { return activeProvider; }
 function isCriticalAnimation(name: string): boolean { return CRITICAL_ANIMATION_NAMES.has(name); }
 
 function getMinimumReliableFrameCount(name: string): number {
-  if (name === 'idle' || name === 'walk') return 12;
+  if (name === 'idle') return 8;
+  if (name === 'walk') return 12;
   if (name === 'jump') return 3;
   if (name === 'hit') return 2;
   if (name === 'low_punch' || name === 'low_kick') return 3;
@@ -83,6 +86,27 @@ function getAnimationDefinition(name: string): AnimDef {
   const anim = ANIMATIONS.find((entry) => entry.name === name);
   if (!anim) throw new Error(`Unknown animation: ${name}`);
   return anim;
+}
+
+function clearFailedAnimationArtifact(meta: CachedMeta, animationName: string): boolean {
+  if (!meta.failedAnimationArtifacts?.[animationName]) return false;
+  const nextArtifacts = { ...(meta.failedAnimationArtifacts ?? {}) };
+  delete nextArtifacts[animationName];
+  meta.failedAnimationArtifacts = Object.keys(nextArtifacts).length > 0 ? nextArtifacts : null;
+  meta.updatedAt = Date.now();
+  return true;
+}
+
+function storeFailedAnimationArtifact(
+  meta: CachedMeta,
+  animationName: string,
+  artifact: CachedFailedAnimationArtifact,
+): void {
+  meta.failedAnimationArtifacts = {
+    ...(meta.failedAnimationArtifacts ?? {}),
+    [animationName]: artifact,
+  };
+  meta.updatedAt = Date.now();
 }
 
 function getGenerationFrameCount(anim: AnimDef, cachedSprite?: CachedSprite): number {
@@ -146,8 +170,18 @@ async function generateSpriteWithGemini(
   secondaryBase64?: string,
   maxScale?: number,
   normalizationReference?: NormalizationReference,
+  idleMode: IdleGenerationMode = 'frame_sequence',
 ): Promise<{ blob: Blob; rawBlob: Blob; frameCount: number; frameW: number; frameH: number; usedScale: number }> {
-  const result = await geminiSpriteSheet(characterBase64, anim.name, anim.motion, anim.frames, secondaryBase64, maxScale, normalizationReference);
+  if (anim.name === 'idle') {
+    const modeMessage = `[Pipeline] idle generation mode: ${idleMode}`;
+    console.log(modeMessage);
+    publishDebugLog(modeMessage);
+  }
+  const result = anim.name === 'idle'
+    ? idleMode === 'sheet'
+      ? await geminiSpriteSheet(characterBase64, anim.name, anim.motion, anim.frames, secondaryBase64, maxScale, normalizationReference)
+      : await geminiIdleFrameSequence(characterBase64, anim.frames, maxScale)
+    : await geminiSpriteSheet(characterBase64, anim.name, anim.motion, anim.frames, secondaryBase64, maxScale, normalizationReference);
   const rawBlob = base64ToBlob(result.rawBase64 || result.imageBase64, 'image/png');
   const blob = base64ToBlob(result.imageBase64, 'image/png');
   const { width: sheetW, height: sheetH } = await measureImage(blob);
@@ -550,6 +584,22 @@ export async function processCharacter(
         try {
           spriteResult = await generateSpriteWithGemini(primaryImage, anim, secondaryImage, undefined, normalizationReference);
         } catch (err: any) {
+          if (err instanceof PartialSpriteGenerationError && err.partialResult) {
+            const partialBlob = base64ToBlob(err.partialResult.imageBase64, 'image/png');
+            const partialRawBlob = base64ToBlob(err.partialResult.rawBase64, 'image/png');
+            const { width: partialSheetW, height: partialSheetH } = await measureImage(partialBlob);
+            storeFailedAnimationArtifact(meta, anim.name, {
+              pngBlob: partialBlob,
+              rawPngBlob: partialRawBlob,
+              frameWidth: Math.round(partialSheetW / err.partialResult.gridCols),
+              frameHeight: Math.round(partialSheetH / err.partialResult.gridRows),
+              frameCount: err.partialResult.frameCount,
+              reason: err.message,
+              mode: 'sheet',
+              createdAt: Date.now(),
+            });
+            await setCachedMeta(meta);
+          }
           console.warn(`[Pipeline] Gemini sprite ${anim.name} failed, falling back to Ludo:`, err.message);
           if (i === 0) {
             onStatus({ stage: 'falling_back', reason: `Gemini sprites failed: ${err.message}` });
@@ -575,6 +625,7 @@ export async function processCharacter(
         createdAt: Date.now(),
       });
 
+      clearFailedAnimationArtifact(meta, anim.name);
       meta.animationsReady.push(anim.name);
       meta.updatedAt = Date.now();
       await setCachedMeta(meta);
@@ -679,6 +730,7 @@ export async function retryAnimation(
   photoHash: string,
   animationName: string,
   onStatus: StatusCallback,
+  options?: { idleMode?: IdleGenerationMode },
 ): Promise<void> {
   const meta = await getCachedMeta(photoHash);
   if (!meta) throw new Error('Character not found');
@@ -723,6 +775,7 @@ export async function retryAnimation(
   const baseImage = anim.base === 'crouched' ? crouchViewInputBase64 : sideViewBase64;
   const secondaryImage = anim.name === 'crouch' ? crouchViewInputBase64 : undefined;
   const primaryImage = anim.name === 'crouch' ? crouchSourceInputBase64 : baseImage;
+  const idleMode = options?.idleMode ?? 'frame_sequence';
 
   if (isCrouchFamilyAnimation(anim)) {
     const message =
@@ -739,7 +792,26 @@ export async function retryAnimation(
     secondaryImage,
     undefined,
     isCrouchFamilyAnimation(anim) ? crouchSpriteNormalizationReference : undefined,
-  );
+    idleMode,
+  ).catch(async (err: any) => {
+    if (err instanceof PartialSpriteGenerationError && err.partialResult) {
+      const partialBlob = base64ToBlob(err.partialResult.imageBase64, 'image/png');
+      const partialRawBlob = base64ToBlob(err.partialResult.rawBase64, 'image/png');
+      const { width: partialSheetW, height: partialSheetH } = await measureImage(partialBlob);
+      storeFailedAnimationArtifact(meta, anim.name, {
+        pngBlob: partialBlob,
+        rawPngBlob: partialRawBlob,
+        frameWidth: Math.round(partialSheetW / err.partialResult.gridCols),
+        frameHeight: Math.round(partialSheetH / err.partialResult.gridRows),
+        frameCount: err.partialResult.frameCount,
+        reason: err.message,
+        mode: anim.name === 'idle' ? idleMode : 'sheet',
+        createdAt: Date.now(),
+      });
+      await setCachedMeta(meta);
+    }
+    throw err;
+  });
 
   await setCachedSprite({
     photoHash,
@@ -756,6 +828,7 @@ export async function retryAnimation(
   if (!meta.animationsReady.includes(anim.name)) {
     meta.animationsReady.push(anim.name);
   }
+  clearFailedAnimationArtifact(meta, anim.name);
   meta.updatedAt = Date.now();
   await setCachedMeta(meta);
 

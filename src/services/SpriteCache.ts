@@ -17,6 +17,17 @@ interface CachedSprite {
   createdAt: number;
 }
 
+interface CachedFailedAnimationArtifact {
+  pngBlob: Blob;
+  rawPngBlob?: Blob;
+  frameWidth: number;
+  frameHeight: number;
+  frameCount: number;
+  reason: string;
+  mode?: string;
+  createdAt: number;
+}
+
 type CachedIntroModel =
   | 'kling-v2-1-std'
   | 'veo-3-1'
@@ -76,6 +87,7 @@ interface CachedMeta {
   introVideoReferenceBlobs?: Blob[] | null;
   status: 'pending' | 'sprites_generating' | 'ready' | 'error';
   animationsReady: string[];
+  failedAnimationArtifacts?: Record<string, CachedFailedAnimationArtifact> | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -386,4 +398,5 @@ export type {
   CachedMeta,
   CachedStageBackground,
   CachedStageKind,
+  CachedFailedAnimationArtifact,
 };

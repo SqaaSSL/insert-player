@@ -13,6 +13,7 @@ import {
   updateCharacterIntroConfig,
   CACHE_VERSION,
   type CachedMeta,
+  type CachedFailedAnimationArtifact,
   type CachedIntro,
   type CachedIntroVariant,
   type CachedSprite,
@@ -25,6 +26,7 @@ import {
   retrySideView,
   retryUprightView,
   retryCrouchView,
+  type IdleGenerationMode,
   type StatusCallback,
 } from '../../services/CharacterPipeline.ts';
 import { createDirectPhotoStage, createPhotoStage } from '../../services/StageBackgroundService.ts';
@@ -107,9 +109,11 @@ export class GalleryScene extends Phaser.Scene {
   private downloadGifBtn!: Phaser.GameObjects.Text;
   private downloadAllBtn!: Phaser.GameObjects.Text;
   private retryAnimBtn!: Phaser.GameObjects.Text;
+  private idleModeBtn!: Phaser.GameObjects.Text;
   private currentPreviewBlob: Blob | null = null;
   private currentRawBlob: Blob | null = null;
   private currentPreviewAnimName = '';
+  private idleRetryMode: IdleGenerationMode = 'frame_sequence';
   private thumbBlobs: { label: string; blob: Blob }[] = [];
 
   private stageNameText!: Phaser.GameObjects.Text;
@@ -373,6 +377,16 @@ export class GalleryScene extends Phaser.Scene {
     this.retryAnimBtn.on('pointerout', () => this.retryAnimBtn.setColor('#ff8844'));
     this.retryAnimBtn.on('pointerdown', () => this.retryCurrentAnimation());
     this.contentGroup.add(this.retryAnimBtn);
+
+    this.idleModeBtn = this.add.text(PREVIEW_X, PREVIEW_Y - phalf + 14, '', {
+      fontFamily: FONT, fontSize: '6px', color: '#88ddff',
+      stroke: '#000000', strokeThickness: 2,
+      backgroundColor: '#0d2030', padding: { x: 8, y: 4 },
+    }).setOrigin(0.5).setDepth(12).setInteractive({ useHandCursor: true }).setVisible(false);
+    this.idleModeBtn.on('pointerover', () => this.idleModeBtn.setColor('#c4f1ff'));
+    this.idleModeBtn.on('pointerout', () => this.idleModeBtn.setColor('#88ddff'));
+    this.idleModeBtn.on('pointerdown', () => this.toggleIdleRetryMode());
+    this.contentGroup.add(this.idleModeBtn);
 
     this.introVideoBtn = this.add.text(PREVIEW_X, PREVIEW_Y + phalf + 48, 'INTRO VIDEO', {
       fontFamily: FONT, fontSize: '6px', color: '#ffe8aa',
@@ -823,6 +837,28 @@ export class GalleryScene extends Phaser.Scene {
     this.destroyInlineIntroVideoPreview();
   }
 
+  private getIdleModeLabel(mode = this.idleRetryMode): string {
+    return mode === 'sheet' ? 'SHEET' : 'FRAMES';
+  }
+
+  private toggleIdleRetryMode(): void {
+    this.idleRetryMode = this.idleRetryMode === 'frame_sequence' ? 'sheet' : 'frame_sequence';
+    this.refreshIdleModeUI();
+  }
+
+  private refreshIdleModeUI(animName?: string | null): void {
+    const currentAnim = animName ?? this.currentPreviewAnimName;
+    const shouldShow = currentAnim === 'idle';
+    this.idleModeBtn.setVisible(shouldShow);
+    if (!shouldShow) return;
+    this.idleModeBtn.setText(`MODE: ${this.getIdleModeLabel()}`);
+  }
+
+  private getFailedArtifact(animName: string): CachedFailedAnimationArtifact | null {
+    const meta = this.metas[this.currentIndex];
+    return meta?.failedAnimationArtifacts?.[animName] ?? null;
+  }
+
   private showCurrent(): void {
     if (this.activeTab !== 'characters') return;
     this.clearDynamic();
@@ -844,6 +880,7 @@ export class GalleryScene extends Phaser.Scene {
       this.currentIntro = null;
       this.refreshIntroVideoUI();
       this.animNameText.setText('');
+      this.refreshIdleModeUI(null);
       this.resetAnimGridColors();
       return;
     }
@@ -886,6 +923,7 @@ export class GalleryScene extends Phaser.Scene {
     this.currentPreviewBlob = null;
     this.currentRawBlob = null;
     this.currentPreviewAnimName = '';
+    this.refreshIdleModeUI(null);
     this.downloadAllBtn.setVisible(this.sprites.length > 0 || meta.status === 'ready');
 
     this.thumbBlobs = [];
@@ -1067,6 +1105,7 @@ export class GalleryScene extends Phaser.Scene {
     } else {
       this.retryAnimBtn.setVisible(false);
     }
+    this.refreshIdleModeUI(null);
 
     const thumbLabel = THUMB_DISPLAY_LABELS[thumbIndex] || this.currentPreviewAnimName.toUpperCase();
     this.animNameText.setText(thumbLabel).setColor('#44aaff');
@@ -1131,9 +1170,15 @@ export class GalleryScene extends Phaser.Scene {
     if (this.bigPreviewImage) { this.bigPreviewImage.destroy(); this.bigPreviewImage = null; }
 
     const cached = this.sprites.find(s => s.animationName === animName);
+    this.refreshIdleModeUI(animName);
     if (cached) {
       this.showBigPreview(cached, animName);
     } else {
+      const failedArtifact = this.getFailedArtifact(animName);
+      if (failedArtifact) {
+        void this.showFailedPreview(failedArtifact, animName);
+        return;
+      }
       this.currentPreviewAnimName = animName;
       this.animNameText.setColor('#555555');
       this.animNameText.setText(label + ' (NOT FOUND)');
@@ -1206,6 +1251,7 @@ export class GalleryScene extends Phaser.Scene {
       this.retryAnimBtn.off('pointerdown');
       this.retryAnimBtn.on('pointerdown', () => this.retryCurrentAnimation());
       this.retryAnimBtn.setVisible(true);
+      this.refreshIdleModeUI(animName);
     } catch {
       this.animNameText.setColor('#ff4444');
       this.animNameText.setText('LOAD ERROR');
@@ -1216,6 +1262,75 @@ export class GalleryScene extends Phaser.Scene {
       this.retryAnimBtn.off('pointerdown');
       this.retryAnimBtn.on('pointerdown', () => this.retryCurrentAnimation());
       this.retryAnimBtn.setVisible(true);
+      this.refreshIdleModeUI(animName);
+    }
+  }
+
+  private async showFailedPreview(failed: CachedFailedAnimationArtifact, animName: string): Promise<void> {
+    this.currentPreviewBlob = failed.pngBlob;
+    this.currentRawBlob = failed.rawPngBlob ?? null;
+    this.currentPreviewAnimName = animName;
+
+    const texKey = `gallery_failedprev_${animName}_${Date.now()}`;
+    const animKey = `gallery_failed_anim_${animName}_${Date.now()}`;
+
+    try {
+      const img = await blobToImage(failed.pngBlob);
+      const frameW = failed.frameWidth;
+      const frameH = failed.frameHeight;
+      const gridCols = Math.round(img.width / frameW);
+      const gridRows = Math.round(img.height / frameH);
+      const frameCount = Math.min(failed.frameCount, gridCols * gridRows);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = frameCount * frameW;
+      canvas.height = frameH;
+      const ctx = canvas.getContext('2d')!;
+      for (let f = 0; f < frameCount; f++) {
+        const sc = f % gridCols;
+        const sr = Math.floor(f / gridCols);
+        ctx.drawImage(img, sc * frameW, sr * frameH, frameW, frameH, f * frameW, 0, frameW, frameH);
+      }
+
+      if (this.textures.exists(texKey)) this.textures.remove(texKey);
+      this.textures.addSpriteSheet(texKey, canvas as unknown as HTMLImageElement, {
+        frameWidth: frameW, frameHeight: frameH,
+      });
+
+      if (this.anims.exists(animKey)) this.anims.remove(animKey);
+      this.anims.create({
+        key: animKey,
+        frames: this.anims.generateFrameNumbers(texKey, { start: 0, end: frameCount - 1 }),
+        frameRate: 10, repeat: -1,
+      });
+
+      if (this.bigPreviewSprite) this.bigPreviewSprite.destroy();
+      const maxDim = PREVIEW_SIZE - 40;
+      const scale = Math.min(maxDim / frameW, maxDim / frameH);
+      this.bigPreviewSprite = this.add.sprite(PREVIEW_X, PREVIEW_Y, texKey).setDepth(12).setScale(scale);
+      this.bigPreviewSprite.play(animKey);
+      this.contentGroup.add(this.bigPreviewSprite);
+      this.dynamicObjects.push(this.bigPreviewSprite);
+
+      this.animNameText.setColor('#ff8844');
+      this.animNameText.setText(
+        `${ANIM_LABELS[animName] || animName.toUpperCase()}  FAILED PREVIEW  ${frameW}x${frameH}  ${frameCount}f`
+      );
+      this.statusText.setText(`Showing failed result: ${failed.reason}`).setColor('#ff8844');
+      this.downloadBtn.setVisible(true);
+      this.downloadRawBtn.setVisible(!!this.currentRawBlob);
+      this.downloadGifBtn.setVisible(false);
+      this.retryAnimBtn.setText('\u21bb RETRY THIS ANIMATION');
+      this.retryAnimBtn.off('pointerdown');
+      this.retryAnimBtn.on('pointerdown', () => this.retryCurrentAnimation());
+      this.retryAnimBtn.setVisible(true);
+      this.refreshIdleModeUI(animName);
+    } catch {
+      this.animNameText.setColor('#ff4444');
+      this.animNameText.setText('FAILED PREVIEW LOAD ERROR');
+      this.downloadBtn.setVisible(false);
+      this.downloadRawBtn.setVisible(false);
+      this.downloadGifBtn.setVisible(false);
     }
   }
 
@@ -2077,34 +2192,60 @@ export class GalleryScene extends Phaser.Scene {
     const animName = selectedAnim?.name || this.currentPreviewAnimName;
     if (!animName) return;
     const label = ANIM_LABELS[animName] || animName.toUpperCase();
+    const idleModeLabel = animName === 'idle' ? this.getIdleModeLabel() : null;
 
     this.retryAnimBtn.setText('RETRYING...').disableInteractive();
-    this.statusText.setText(`Regenerating ${animName}...`).setColor('#ffaa00');
+    this.statusText
+      .setText(animName === 'idle' ? `Regenerating ${animName} (${idleModeLabel})...` : `Regenerating ${animName}...`)
+      .setColor('#ffaa00');
     clearDebugLog();
     this.renderDebugLog();
-    this.animNameText.setColor('#ffaa00').setText(`${label}  RETRYING...`);
+    this.animNameText
+      .setColor('#ffaa00')
+      .setText(animName === 'idle' ? `${label}  ${idleModeLabel}  RETRYING...` : `${label}  RETRYING...`);
     this.downloadBtn.setVisible(false);
     this.downloadRawBtn.setVisible(false);
     this.downloadGifBtn.setVisible(false);
+    this.idleModeBtn.disableInteractive().setAlpha(animName === 'idle' ? 0.6 : 1);
 
     try {
       await retryAnimation(meta.photoHash, animName, (status) => {
         if (status.stage === 'generating_sprites') {
-          this.statusText.setText(`Calling Gemini for ${status.animation}...`);
+          const isIdle = status.animation === 'idle';
+          this.statusText.setText(
+            isIdle ? `Calling Gemini for ${status.animation} (${this.getIdleModeLabel()})...` : `Calling Gemini for ${status.animation}...`,
+          );
         } else if (status.stage === 'sprite_ready') {
           this.statusText.setText(`${status.animation} regenerated!`);
         } else if (status.stage === 'done') {
           this.statusText.setText('Retry complete!').setColor('#44ff44');
         }
-      });
+      }, animName === 'idle' ? { idleMode: this.idleRetryMode } : undefined);
       await this.loadCharacters();
       await this.loadSpriteData(meta.photoHash);
       const cached = this.sprites.find(s => s.animationName === animName);
-      if (cached) await this.showBigPreview(cached, animName);
+      if (cached) {
+        await this.showBigPreview(cached, animName);
+      } else {
+        const failedArtifact = this.getFailedArtifact(animName);
+        if (failedArtifact) {
+          await this.showFailedPreview(failedArtifact, animName);
+        }
+      }
     } catch (err: any) {
       this.statusText.setText(`Retry failed: ${err.message}`).setColor(ACCENT);
+      await this.loadCharacters();
+      const failedArtifact = this.getFailedArtifact(animName);
+      if (failedArtifact) {
+        await this.showFailedPreview(failedArtifact, animName);
+      }
     } finally {
       this.retryAnimBtn.setText('\u21bb RETRY THIS ANIMATION').setInteractive({ useHandCursor: true });
+      this.idleModeBtn.setAlpha(1);
+      if (animName === 'idle') {
+        this.idleModeBtn.setInteractive({ useHandCursor: true });
+      }
+      this.refreshIdleModeUI(animName);
     }
   }
 

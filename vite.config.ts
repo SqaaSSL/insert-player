@@ -1,4 +1,5 @@
 import { defineConfig, type Plugin, loadEnv } from 'vite';
+import tailwindcss from '@tailwindcss/vite';
 import type { IncomingMessage, ServerResponse } from 'http';
 
 function apiProxyPlugin(): Plugin {
@@ -205,5 +206,5 @@ function apiProxyPlugin(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [apiProxyPlugin()],
+  plugins: [tailwindcss(), apiProxyPlugin()],
 });

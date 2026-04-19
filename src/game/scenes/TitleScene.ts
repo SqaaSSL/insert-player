@@ -20,7 +20,7 @@ export class TitleScene extends Phaser.Scene {
   private titleText!: Phaser.GameObjects.Text;
   private titleGlow!: Phaser.GameObjects.Text;
   private sparkParticles!: Phaser.GameObjects.Particles.ParticleEmitter;
-  private floorLine!: Phaser.GameObjects.Graphics;
+  private floorLine?: Phaser.GameObjects.Graphics;
   private menuActive = false;
   private transitioning = false;
   private elapsedMs = 0;
@@ -30,6 +30,12 @@ export class TitleScene extends Phaser.Scene {
   }
 
   create(): void {
+    if ((window as Window & { __ASF_DISABLE_PHASER_TITLE__?: boolean }).__ASF_DISABLE_PHASER_TITLE__) {
+      window.history.replaceState({}, '', '/menu');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      return;
+    }
+
     this.selectedIndex = 0;
     this.menuActive = false;
     this.transitioning = false;
@@ -178,7 +184,14 @@ export class TitleScene extends Phaser.Scene {
       { label: 'WATCH MODE', enabled: true, action: () => this.goToRoster(true, true) },
       { label: 'PLAY VS CPU', enabled: true, action: () => this.goToRoster(true) },
       { label: 'VS PLAYER', enabled: true, action: () => this.goToRoster(false) },
-      { label: 'GALLERY', enabled: true, action: () => this.goToScene('GalleryScene') },
+      {
+        label: 'GALLERY',
+        enabled: true,
+        action: () => {
+          window.history.pushState({}, '', '/gallery');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+      },
       { label: 'ONLINE', enabled: false, action: () => this.showComingSoon() },
     ];
 
@@ -380,6 +393,8 @@ export class TitleScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    if (!this.floorLine) return;
+
     this.elapsedMs += delta;
 
     const cycle = Math.sin(this.elapsedMs * 0.002) * 0.5 + 0.5;

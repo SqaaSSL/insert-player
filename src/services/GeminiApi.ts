@@ -1,4 +1,4 @@
-import { CELL_H, CELL_W, cleanReposedImagePreserveCanvas, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, zoomTransparentImageToBottom, type CleanSheetResult, type NormalizationReference } from './SpritePostProcess';
+import { CELL_H, CELL_W, cleanReposedImagePreserveCanvas, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, zoomTransparentImageToBottom, normalizeTransparentReposedImage, measureOpaqueBoundsFromBase64, type CleanSheetResult, type NormalizationReference } from './SpritePostProcess';
 import { getAnimationProfile } from './AnimationProfiles';
 import { publishDebugLog, publishDebugMultiline } from './DebugLog';
 
@@ -498,14 +498,323 @@ export interface GeminiSpriteResult {
   usedScale: number;
 }
 
+export class PartialSpriteGenerationError extends Error {
+  partialResult?: GeminiSpriteResult;
+
+  constructor(message: string, partialResult?: GeminiSpriteResult) {
+    super(message);
+    this.name = 'PartialSpriteGenerationError';
+    this.partialResult = partialResult;
+  }
+}
+
 const MIRROR_ANIMS = new Set(['high_punch', 'low_punch', 'high_kick', 'low_kick']);
+const IDLE_FRAME_DIRECTIONS = [
+  'neutral ready guard matching the side-view reference almost exactly',
+  'tiny inhale with a barely noticeable shoulder rise and torso lift',
+  'very small weight shift forward while keeping both feet planted',
+  'settle back toward center guard with hands still high',
+  'tiny exhale with a subtle shoulder drop and relaxed guard tension',
+  'very small weight shift backward while keeping the same full-body framing',
+  'return toward the neutral center guard with only slight breathing motion',
+  'neutral ready guard again so the loop connects cleanly back to frame 1',
+];
 
 function getMinimumReliableFrames(animName: string): number {
-  if (animName === 'idle' || animName === 'walk') return 12;
+  if (animName === 'idle') return 8;
+  if (animName === 'walk') return 12;
   if (animName === 'jump') return 3;
   if (animName === 'hit') return 2;
   if (animName === 'low_punch' || animName === 'low_kick') return 3;
   return 1;
+}
+
+interface IdleFramingReference extends NormalizationReference {
+  widthRatio: number;
+  heightRatio: number;
+  bottomRatio: number;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+async function buildIdleFramingReference(sideViewBase64: string): Promise<IdleFramingReference> {
+  const bbox = await measureOpaqueBoundsFromBase64(sideViewBase64);
+  const { width, height } = await getImageDimensions(sideViewBase64);
+  const profile = getAnimationProfile('idle');
+
+  if (!bbox || width <= 0 || height <= 0) {
+    return {
+      targetDrawWidth: Math.round(CELL_W * profile.targetWidthRatio),
+      targetDrawHeight: Math.round(CELL_H * profile.targetHeightRatio),
+      baselineRatio: profile.baselineRatio,
+      widthRatio: profile.targetWidthRatio,
+      heightRatio: profile.targetHeightRatio,
+      bottomRatio: profile.baselineRatio,
+    };
+  }
+
+  const widthRatio = bbox.w / width;
+  const heightRatio = bbox.h / height;
+  const bottomRatio = (bbox.y + bbox.h) / height;
+
+  return {
+    targetDrawWidth: Math.round(CELL_W * clampNumber(widthRatio, 0.45, 0.9)),
+    targetDrawHeight: Math.round(CELL_H * clampNumber(heightRatio, 0.55, 0.95)),
+    baselineRatio: clampNumber(bottomRatio, 0.72, 0.99),
+    widthRatio,
+    heightRatio,
+    bottomRatio,
+  };
+}
+
+async function validateIdleFrameFraming(
+  cleanedBase64: string,
+  reference: IdleFramingReference,
+): Promise<{ valid: boolean; details: string }> {
+  const bbox = await measureOpaqueBoundsFromBase64(cleanedBase64);
+  const { width, height } = await getImageDimensions(cleanedBase64);
+
+  if (!bbox || width <= 0 || height <= 0) {
+    return { valid: false, details: 'no visible fighter silhouette found' };
+  }
+
+  const widthRatio = bbox.w / width;
+  const heightRatio = bbox.h / height;
+  const bottomRatio = (bbox.y + bbox.h) / height;
+  const leftMarginRatio = bbox.x / width;
+  const rightMarginRatio = (width - (bbox.x + bbox.w)) / width;
+  const topMarginRatio = bbox.y / height;
+  const touchesLeft = bbox.x <= 1;
+  const touchesRight = bbox.x + bbox.w >= width - 1;
+  const touchesTop = bbox.y <= 1;
+  const touchesBottom = bbox.y + bbox.h >= height - 1;
+
+  const valid =
+    heightRatio >= reference.heightRatio * 0.62 &&
+    heightRatio <= Math.min(0.985, reference.heightRatio * 1.32) &&
+    widthRatio >= reference.widthRatio * 0.6 &&
+    widthRatio <= Math.min(0.96, reference.widthRatio * 1.35) &&
+    bottomRatio >= 0.7 &&
+    leftMarginRatio >= 0.004 &&
+    rightMarginRatio >= 0.004 &&
+    topMarginRatio >= 0.004 &&
+    !touchesLeft &&
+    !touchesRight &&
+    !touchesTop &&
+    !touchesBottom;
+
+  return {
+    valid,
+    details:
+      `bbox=${bbox.w}x${bbox.h}@(${bbox.x},${bbox.y}) ` +
+      `w=${widthRatio.toFixed(3)} h=${heightRatio.toFixed(3)} bottom=${bottomRatio.toFixed(3)} ` +
+      `margins=${leftMarginRatio.toFixed(3)}/${topMarginRatio.toFixed(3)}/${rightMarginRatio.toFixed(3)} ` +
+      `touch=${Number(touchesLeft)}/${Number(touchesTop)}/${Number(touchesRight)}/${Number(touchesBottom)}`,
+  };
+}
+
+async function buildIdleFallbackFrame(
+  sideViewBase64: string,
+  previousFrameBase64: string | undefined,
+  reference: IdleFramingReference,
+): Promise<{ base64: string; source: 'previous' | 'side_view' }> {
+  if (previousFrameBase64) {
+    return { base64: previousFrameBase64, source: 'previous' };
+  }
+
+  const cleanedSideView = await cleanReposedImagePreserveCanvas(sideViewBase64);
+  const normalizedSideView = await normalizeTransparentReposedImage(cleanedSideView, 'idle', reference);
+  return { base64: normalizedSideView, source: 'side_view' };
+}
+
+async function composeFramesToSheet(frameBase64s: string[], gridCols: number, gridRows: number): Promise<string> {
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL_W * gridCols;
+  canvas.height = CELL_H * gridRows;
+  const ctx = canvas.getContext('2d')!;
+
+  const images = await Promise.all(
+    frameBase64s.map((base64) => loadAlphaImage(`data:image/png;base64,${base64}`)),
+  );
+
+  for (let i = 0; i < images.length; i++) {
+    const col = i % gridCols;
+    const row = Math.floor(i / gridCols);
+    ctx.drawImage(images[i], col * CELL_W, row * CELL_H, CELL_W, CELL_H);
+  }
+
+  return canvas.toDataURL('image/png').split(',')[1];
+}
+
+async function generateIdleFrameWithGemini(
+  prompt: string,
+  sideViewBase64: string,
+  previousFrameBase64: string | undefined,
+  model: string,
+): Promise<string | null> {
+  const extras = previousFrameBase64
+    ? [{ data: previousFrameBase64, mime: 'image/png' }]
+    : undefined;
+
+  try {
+    const result = await callGemini(prompt, sideViewBase64, 'image/png', extras, model);
+    if (!result.imageBase64) {
+      console.warn(
+        `[GeminiApi] idle frame: Gemini returned no image` +
+          `${result.finishReason ? ` (finishReason: ${result.finishReason})` : ''}` +
+          `${result.text ? ` | text: ${result.text.replace(/\s+/g, ' ').trim().slice(0, 220)}` : ''}`,
+      );
+    }
+    return result.imageBase64;
+  } catch (err: any) {
+    if (!err.message.includes('IMAGE_SAFETY')) {
+      throw err;
+    }
+    const result = await callGemini(prompt + REPOSE_CLOTHING_FALLBACK, sideViewBase64, 'image/png', extras, model);
+    if (!result.imageBase64) {
+      console.warn(
+        `[GeminiApi] idle frame safety retry returned no image` +
+          `${result.finishReason ? ` (finishReason: ${result.finishReason})` : ''}` +
+          `${result.text ? ` | text: ${result.text.replace(/\s+/g, ' ').trim().slice(0, 220)}` : ''}`,
+      );
+    }
+    return result.imageBase64;
+  }
+}
+
+function buildIdleFramePrompt(
+  frameIndex: number,
+  totalFrames: number,
+  direction: string,
+  hasPreviousFrame: boolean,
+  strictAttempt: number,
+  reference: IdleFramingReference,
+): string {
+  const strictLines =
+    strictAttempt === 0
+      ? []
+      : [
+          `- CRITICAL: reject any close-up, bust, waist-up, or feet-cropped composition.`,
+          `- CRITICAL: copy the entire side-view full-body composition from IMAGE 1 before applying the micro-motion.`,
+          `- CRITICAL: if needed, make the fighter slightly smaller instead of cropping any body part.`,
+        ];
+
+  return [
+    `Generate a single image for frame ${frameIndex + 1} of ${totalFrames} of a classic 2D fighting-game idle loop.`,
+    ``,
+    `REFERENCE RULES:`,
+    `- IMAGE 1 is the canonical side-view identity, scale, and full-body framing anchor.`,
+    hasPreviousFrame
+      ? `- IMAGE 2 is the previous accepted idle frame. Stay very close to IMAGE 2 for continuity, but apply the requested micro-change for this frame.`
+      : `- There is no IMAGE 2 for frame 1, so match IMAGE 1 almost exactly.`,
+    `- Preserve the exact same face, outfit, proportions, and right-facing orientation from IMAGE 1.`,
+    ``,
+    `FRAMING RULES (CRITICAL):`,
+    `- Show the COMPLETE fighter from head to feet. No busts, no waist-up crops, no missing shoes, no cropped elbows.`,
+    `- Respect the entire side-view framing from IMAGE 1. Do not crop closer than the reference image at any point.`,
+    `- Keep the fighter occupying roughly ${Math.round(reference.heightRatio * 100)}% of the image height and ${Math.round(reference.widthRatio * 100)}% of the image width.`,
+    `- Keep the feet on the same floor line as IMAGE 1, with the silhouette bottom near ${Math.round(reference.bottomRatio * 100)}% of the image height.`,
+    `- No zoom, no camera move, no reframing, no dramatic pose change.`,
+    ``,
+    `MOTION RULE FOR THIS FRAME:`,
+    `- ${direction}.`,
+    `- This is a tiny full-body idle motion only: subtle breathing and weight shift, nothing bigger.`,
+    ``,
+    `OUTPUT RULES:`,
+    `- Return exactly one image, not a sprite sheet.`,
+    `- Use a solid pure bright green (#00FF00) background with no gradients, shadows, or floor.`,
+    ...strictLines,
+  ].join('\n');
+}
+
+export async function geminiIdleFrameSequence(
+  sideViewBase64: string,
+  frames: number,
+  _maxScale?: number,
+): Promise<GeminiSpriteResult> {
+  const model = resolveGeminiImageModel({ operation: 'sprite', animationName: 'idle' });
+  const frameDirections =
+    frames === IDLE_FRAME_DIRECTIONS.length
+      ? IDLE_FRAME_DIRECTIONS
+      : Array.from({ length: frames }, (_, index) =>
+          index === 0 || index === frames - 1
+            ? 'neutral ready guard matching the side-view reference almost exactly'
+            : `tiny breathing and weight-shift variation for frame ${index + 1}`,
+        );
+  const gridCols = computeGridCols(frames);
+  const gridRows = Math.ceil(frames / gridCols);
+  const reference = await buildIdleFramingReference(sideViewBase64);
+  const acceptedFrames: string[] = [];
+  let previousFrameBase64: string | undefined;
+  const start = Date.now();
+
+  console.log(`[GeminiApi] Generating idle with ${model} as ${frames} individual frames (${gridCols}x${gridRows})...`);
+  debugLog(
+    `[GeminiApi] Idle framing reference: target=${Math.round(reference.targetDrawWidth ?? 0)}x${Math.round(reference.targetDrawHeight ?? 0)} ` +
+    `baseline=${(reference.baselineRatio ?? 0).toFixed(3)} occupancy=${reference.widthRatio.toFixed(3)}x${reference.heightRatio.toFixed(3)}`,
+  );
+
+  for (let frameIndex = 0; frameIndex < frames; frameIndex++) {
+    let acceptedFrame: string | null = null;
+    let bestCandidate: { base64: string; valid: boolean; details: string } | null = null;
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const prompt = buildIdleFramePrompt(
+        frameIndex,
+        frames,
+        frameDirections[frameIndex] ?? IDLE_FRAME_DIRECTIONS[frameIndex % IDLE_FRAME_DIRECTIONS.length],
+        !!previousFrameBase64,
+        attempt,
+        reference,
+      );
+      const rawBase64 = await generateIdleFrameWithGemini(prompt, sideViewBase64, previousFrameBase64, model);
+      if (!rawBase64) continue;
+
+      const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
+      const validation = await validateIdleFrameFraming(cleaned, reference);
+      debugLog(
+        `[GeminiApi] Idle frame ${frameIndex + 1}/${frames} attempt ${attempt + 1}/3: ${validation.details} valid=${validation.valid}`,
+      );
+
+      if (!bestCandidate) {
+        bestCandidate = { base64: cleaned, valid: validation.valid, details: validation.details };
+      }
+
+      if (!validation.valid) {
+        continue;
+      }
+
+      acceptedFrame = await normalizeTransparentReposedImage(cleaned, 'idle', reference);
+      previousFrameBase64 = acceptedFrame;
+      break;
+    }
+
+    if (!acceptedFrame) {
+      const fallback = await buildIdleFallbackFrame(sideViewBase64, previousFrameBase64, reference);
+      acceptedFrame = fallback.base64;
+      previousFrameBase64 = acceptedFrame;
+      debugWarn(
+        `[GeminiApi] Idle frame ${frameIndex + 1}/${frames}: using ${fallback.source} fallback after 3 rejected attempts` +
+          `${bestCandidate ? ` | best=${bestCandidate.details}` : ''}`,
+      );
+    }
+
+    acceptedFrames.push(acceptedFrame);
+  }
+
+  const sheetBase64 = await composeFramesToSheet(acceptedFrames, gridCols, gridRows);
+  console.log(`[GeminiApi] idle frame-by-frame finished in ${((Date.now() - start) / 1000).toFixed(1)}s`);
+
+  return {
+    imageBase64: sheetBase64,
+    rawBase64: sheetBase64,
+    gridCols,
+    gridRows,
+    frameCount: frames,
+    usedScale: 1,
+  };
 }
 
 export async function geminiSpriteSheet(
@@ -650,7 +959,17 @@ export async function geminiSpriteSheet(
     throw new Error(`Gemini sprite sheet for ${animName} returned no image`);
   }
   if (cleaned.frameCount < minReliableFrames) {
-    throw new Error(`Gemini sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames`);
+    throw new PartialSpriteGenerationError(
+      `Gemini sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames`,
+      {
+        imageBase64: cleaned.base64,
+        rawBase64: geminiRawBase64,
+        gridCols: cleaned.gridCols,
+        gridRows: cleaned.gridRows,
+        frameCount: cleaned.frameCount,
+        usedScale: cleaned.usedScale,
+      },
+    );
   }
 
   console.log(`[GeminiApi] ${animName} cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s (scale ${cleaned.usedScale.toFixed(2)})`);

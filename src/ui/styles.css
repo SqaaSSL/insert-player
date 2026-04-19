@@ -1,0 +1,504 @@
+@import "tailwindcss";
+
+@theme {
+  --font-arcade: "Press Start 2P", monospace;
+
+  /* Arcade cabinet — deep indigo/black */
+  --color-asf-bg-0: #04040d;
+  --color-asf-bg-1: #0a0a20;
+  --color-asf-bg-2: #13102d;
+
+  /* Panel surfaces */
+  --color-asf-panel: rgba(10, 8, 26, 0.94);
+  --color-asf-panel-alt: rgba(20, 14, 40, 0.92);
+  --color-asf-line: rgba(255, 206, 58, 0.38);
+
+  /* Typography */
+  --color-asf-text: #fff4d6;
+  --color-asf-muted: #b08a6b;
+
+  /* SF2 accent palette */
+  --color-asf-red: #ff2a2a;
+  --color-asf-red-deep: #a80d0d;
+  --color-asf-red-dark: #6a0a0a;
+  --color-asf-gold: #ffce3a;
+  --color-asf-gold-bright: #fff080;
+  --color-asf-gold-deep: #c88a00;
+  --color-asf-violet: #7b3dff;
+  --color-asf-blue: #4fb3ff;
+
+  /* Semantic aliases (reused by existing utilities) */
+  --color-asf-accent: #ff2a2a;
+  --color-asf-accent-soft: #ffce3a;
+  --color-asf-ok: #30e07a;
+  --color-asf-warn: #ffb066;
+}
+
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  html,
+  body,
+  #app {
+    @apply min-h-full w-full;
+  }
+
+  body {
+    @apply m-0 overflow-y-auto font-arcade text-asf-text bg-asf-bg-0
+           [background-image:radial-gradient(ellipse_at_top,rgba(255,42,42,0.22),transparent_55%),radial-gradient(ellipse_at_bottom_left,rgba(255,206,58,0.10),transparent_55%),repeating-linear-gradient(0deg,transparent_0,transparent_2px,rgba(255,255,255,0.025)_2px,rgba(255,255,255,0.025)_3px),linear-gradient(180deg,var(--color-asf-bg-1),var(--color-asf-bg-0))];
+  }
+
+  button,
+  input,
+  textarea {
+    @apply [font:inherit];
+  }
+
+  canvas {
+    @apply block [image-rendering:pixelated];
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply m-0 tracking-[0.05em] uppercase;
+  }
+}
+
+@layer components {
+  /* ============== Typography ============== */
+
+  .gallery-eyebrow {
+    @apply text-[9px] tracking-[0.38em] uppercase text-asf-red
+           [text-shadow:0_0_8px_rgba(255,42,42,0.55)];
+  }
+
+  .gallery-sidebar__header h1,
+  .roster-hero h1 {
+    @apply text-[22px] tracking-[0.12em] text-asf-gold
+           [text-shadow:0_2px_0_#a80d0d,_0_0_18px_rgba(255,42,42,0.45)];
+  }
+
+  .gallery-hero h2 {
+    @apply text-[28px] tracking-[0.1em] text-asf-gold
+           [text-shadow:0_3px_0_#a80d0d,_0_0_22px_rgba(255,42,42,0.45)];
+  }
+
+  .gallery-panel h3,
+  .asf-panel h3,
+  .gallery-preview__header h3 {
+    @apply text-[14px] tracking-[0.16em] text-asf-gold;
+  }
+
+  .gallery-panel h4,
+  .asf-panel h4 {
+    @apply text-[12px] tracking-[0.14em] text-asf-gold-bright;
+  }
+
+  .gallery-empty h2 {
+    @apply text-[22px] tracking-[0.14em] text-asf-gold
+           [text-shadow:0_2px_0_#a80d0d,_0_0_18px_rgba(255,42,42,0.4)];
+  }
+
+  /* ============== Panels / surfaces ============== */
+
+  .asf-panel,
+  .gallery-panel {
+    @apply flex min-h-0 flex-col gap-4 rounded-[6px] border-[2px] border-asf-gold-deep bg-asf-panel p-5
+           shadow-[inset_0_0_0_1px_rgba(255,206,58,0.18),_0_10px_30px_rgba(0,0,0,0.55)];
+  }
+
+  .asf-card,
+  .roster-fighter-card {
+    @apply rounded-[4px] border-[2px] border-asf-gold-deep bg-asf-panel p-3
+           shadow-[inset_0_0_0_1px_rgba(255,206,58,0.12)];
+  }
+
+  .asf-surface,
+  .gallery-preview__surface,
+  .gallery-stage-preview,
+  .roster-slot-card__preview,
+  .roster-stage-preview,
+  .roster-fighter-card__surface {
+    @apply overflow-hidden rounded-[4px] border-[2px] border-[rgba(255,206,58,0.28)]
+           [background:linear-gradient(180deg,rgba(6,5,20,0.95),rgba(2,1,10,0.98)),repeating-linear-gradient(0deg,transparent_0_2px,rgba(255,255,255,0.035)_2px_3px)];
+  }
+
+  /* ============== Buttons — action chips ============== */
+
+  .asf-action,
+  .game-shell__gallery-link,
+  .gallery-back,
+  .gallery-mode-toggle,
+  .gallery-actions button {
+    @apply cursor-pointer rounded-[4px] border-[2px] border-asf-gold-deep px-3 py-2
+           text-[10px] uppercase tracking-[0.16em] text-asf-gold
+           [background:linear-gradient(180deg,rgba(40,26,14,0.96),rgba(20,14,6,0.96))]
+           [text-shadow:0_1px_0_rgba(0,0,0,0.8)]
+           transition-colors hover:border-asf-gold hover:text-asf-gold-bright;
+  }
+
+  /* ============== Buttons — menu / big arcade ============== */
+
+  .home-menu__action {
+    @apply relative min-h-[128px] cursor-pointer rounded-[6px] border-[2px] border-asf-gold-deep
+           px-6 py-5 text-left text-asf-text
+           [background:linear-gradient(180deg,rgba(28,18,60,0.98),rgba(10,6,26,0.98))]
+           shadow-[inset_0_0_0_1px_rgba(255,206,58,0.15),_0_6px_18px_rgba(0,0,0,0.55)]
+           transition-all duration-150
+           hover:-translate-y-0.5 hover:border-asf-gold
+           hover:shadow-[inset_0_0_0_1px_rgba(255,206,58,0.4),_0_12px_30px_rgba(255,42,42,0.35)]
+           active:translate-y-0;
+  }
+
+  .home-menu__action span {
+    @apply block text-[18px] tracking-[0.08em] uppercase text-asf-gold-bright
+           [text-shadow:0_2px_0_rgba(168,13,13,0.95),_0_0_14px_rgba(255,206,58,0.5)];
+  }
+
+  .home-menu__action small {
+    @apply mt-2 block text-[9px] tracking-[0.18em] uppercase leading-[1.6] text-asf-muted;
+  }
+
+  .home-menu__action.is-primary {
+    @apply border-asf-gold
+           [background:linear-gradient(180deg,rgba(230,30,30,0.98),rgba(110,8,12,0.98)),radial-gradient(circle_at_top_right,rgba(255,206,58,0.32),transparent_52%)]
+           shadow-[inset_0_0_0_1px_rgba(255,240,128,0.35),_0_10px_30px_rgba(255,42,42,0.45)]
+           hover:border-asf-gold-bright
+           hover:shadow-[inset_0_0_0_1px_rgba(255,240,128,0.6),_0_14px_42px_rgba(255,42,42,0.65)];
+  }
+
+  .home-menu__action.is-primary span {
+    @apply text-asf-gold-bright
+           [text-shadow:0_2px_0_rgba(80,0,0,0.95),_0_0_16px_rgba(255,206,58,0.65)];
+  }
+
+  .home-menu__action.is-secondary {
+    @apply [background:linear-gradient(180deg,rgba(48,24,96,0.98),rgba(20,10,50,0.98)),radial-gradient(circle_at_top_right,rgba(123,61,255,0.42),transparent_48%)];
+  }
+
+  .home-menu__action.is-secondary span {
+    @apply text-asf-gold-bright
+           [text-shadow:0_2px_0_rgba(20,0,60,0.9),_0_0_14px_rgba(123,61,255,0.55)];
+  }
+
+  /* ============== Chips / selectors ============== */
+
+  .gallery-chip {
+    @apply flex cursor-pointer flex-col gap-1.5 rounded-[4px]
+           border-[2px] border-[rgba(255,206,58,0.18)] bg-asf-panel-alt p-3 text-left text-asf-text
+           transition-all duration-150
+           hover:-translate-y-px hover:border-[rgba(255,206,58,0.55)];
+  }
+
+  .gallery-chip span {
+    @apply text-[11px] tracking-[0.14em] uppercase text-asf-gold-bright;
+  }
+
+  .gallery-chip small,
+  .gallery-anim-tile small,
+  .gallery-fighter-card__meta,
+  .gallery-hero__meta {
+    @apply text-[8px] tracking-[0.14em] uppercase leading-[1.6] text-asf-muted;
+  }
+
+  .gallery-chip.is-active,
+  .gallery-anim-tile.is-active,
+  .gallery-fighter-card.is-active {
+    @apply border-asf-gold bg-asf-panel
+           shadow-[inset_0_0_0_1px_rgba(255,240,128,0.4),_0_0_22px_rgba(255,42,42,0.35)];
+  }
+
+  /* ============== Gallery sidebar tabs ============== */
+
+  .gallery-tab {
+    @apply cursor-pointer rounded-[4px] border-[2px] border-asf-gold-deep
+           bg-asf-panel-alt px-3 py-2.5 text-[10px] tracking-[0.18em] uppercase text-asf-muted
+           transition-colors hover:text-asf-gold-bright hover:border-asf-gold;
+  }
+
+  .gallery-tab.is-active {
+    @apply border-asf-gold text-asf-gold-bright
+           [background:linear-gradient(180deg,rgba(230,30,30,0.85),rgba(110,8,12,0.85)),radial-gradient(circle_at_top_right,rgba(255,206,58,0.35),transparent_48%)]
+           shadow-[inset_0_0_0_1px_rgba(255,240,128,0.35)];
+  }
+
+  /* ============== Sidebar fighter card ============== */
+
+  .gallery-fighter-card,
+  .gallery-anim-tile {
+    @apply flex cursor-pointer flex-col gap-1.5 rounded-[4px]
+           border-[2px] border-transparent bg-asf-panel-alt p-3 text-left text-asf-text
+           transition-all duration-150
+           hover:border-[rgba(255,206,58,0.5)];
+  }
+
+  .gallery-fighter-card__name {
+    @apply block text-[12px] tracking-[0.1em] uppercase text-asf-gold-bright;
+  }
+
+  /* ============== Status / warnings ============== */
+
+  .gallery-hero__status {
+    @apply max-w-[360px] rounded-[4px] border-[2px] border-asf-gold-deep
+           bg-[rgba(10,8,24,0.85)] px-4 py-3 text-[9px] tracking-[0.16em] uppercase
+           leading-[1.6] text-asf-gold;
+  }
+
+  .gallery-preview__empty {
+    @apply max-w-[300px] text-center text-[10px] tracking-[0.14em] uppercase leading-[1.8] text-asf-muted;
+  }
+
+  .gallery-preview__warning {
+    @apply absolute right-4 bottom-4 left-4 rounded-[4px] border-[2px] border-asf-red
+           bg-[rgba(80,10,10,0.92)] px-3 py-2 text-[8px] tracking-[0.16em] uppercase leading-[1.6] text-asf-gold-bright;
+  }
+
+  .gallery-debug {
+    @apply min-h-[220px] flex-1 rounded-[4px] border-[2px] border-[rgba(255,206,58,0.22)]
+           bg-[rgba(4,3,14,0.95)] p-3;
+  }
+
+  .gallery-debug pre {
+    @apply m-0 whitespace-pre-wrap text-[8px] leading-[1.6] tracking-[0.02em] text-asf-blue;
+  }
+
+  /* ============== HomePage ============== */
+
+  .home-app {
+    @apply flex min-h-screen flex-col justify-center gap-10 p-12;
+  }
+
+  .home-hero {
+    @apply max-w-[860px];
+  }
+
+  .home-hero h1 {
+    @apply mb-6 text-asf-gold text-[clamp(42px,7vw,104px)] leading-[0.95] tracking-[0.06em] uppercase
+           [text-shadow:0_2px_0_#a80d0d,_0_4px_0_#6a0808,_0_6px_26px_rgba(255,42,42,0.55),_4px_4px_0_rgba(123,61,255,0.7)];
+  }
+
+  .home-hero__copy {
+    @apply max-w-[700px] text-[11px] tracking-[0.28em] uppercase leading-[2] text-asf-gold-bright
+           [text-shadow:0_0_12px_rgba(255,206,58,0.4)];
+  }
+
+  .home-menu {
+    @apply grid gap-5 grid-cols-[repeat(auto-fit,minmax(240px,1fr))];
+  }
+
+  /* ============== Game shell (Phaser) ============== */
+
+  .game-shell {
+    @apply relative h-screen w-full;
+  }
+
+  .game-shell__surface,
+  .game-shell__canvas {
+    @apply h-full w-full;
+  }
+
+  .game-shell__gallery-link {
+    @apply fixed top-5 right-5 z-40;
+  }
+
+  /* ============== Gallery layout ============== */
+
+  .gallery-app {
+    @apply grid min-h-screen w-full grid-cols-[320px_minmax(0,1fr)]
+           max-[1280px]:grid-cols-1 max-[1200px]:grid-cols-1;
+  }
+
+  .gallery-sidebar {
+    @apply sticky top-0 flex max-h-screen flex-col gap-4 overflow-hidden
+           border-r-[2px] border-asf-gold-deep p-6
+           [background:linear-gradient(180deg,rgba(14,10,36,0.98),rgba(4,3,14,0.98))]
+           max-[1280px]:static max-[1280px]:max-h-[280px] max-[1280px]:border-r-0 max-[1280px]:border-b-[2px];
+  }
+
+  .gallery-sidebar__header,
+  .gallery-hero,
+  .gallery-preview__header,
+  .roster-hero,
+  .roster-panel__header {
+    @apply flex items-start justify-between gap-4;
+  }
+
+  .gallery-sidebar__list {
+    @apply flex flex-1 flex-col gap-2 overflow-auto pr-1.5;
+  }
+
+  .gallery-tab-row {
+    @apply grid grid-cols-2 gap-2;
+  }
+
+  .gallery-main {
+    @apply p-8;
+  }
+
+  .gallery-hero {
+    @apply mb-5;
+  }
+
+  .gallery-layout {
+    @apply grid gap-5 grid-cols-[320px_minmax(420px,1fr)_320px]
+           max-[1280px]:grid-cols-1 max-[1200px]:grid-cols-1;
+  }
+
+  .gallery-stage-layout {
+    @apply grid gap-5 grid-cols-[minmax(0,1fr)_340px] max-[1200px]:grid-cols-1;
+  }
+
+  .gallery-panel--preview {
+    @apply [background:linear-gradient(180deg,rgba(14,10,30,0.98),rgba(4,3,14,0.98)),radial-gradient(circle_at_top_right,rgba(255,42,42,0.16),transparent_46%)];
+  }
+
+  .gallery-source-grid,
+  .gallery-anim-grid,
+  .gallery-actions,
+  .roster-personality,
+  .roster-stage-list {
+    @apply grid gap-2.5;
+  }
+
+  .gallery-source-grid,
+  .gallery-anim-grid {
+    @apply grid-cols-2;
+  }
+
+  .gallery-preview__surface {
+    @apply relative flex min-h-[540px] flex-1 items-center justify-center p-4;
+  }
+
+  .gallery-stage-preview {
+    @apply flex min-h-[560px] items-center justify-center p-4;
+  }
+
+  .gallery-stage-preview__image {
+    @apply h-auto max-h-[720px] w-full object-contain;
+  }
+
+  .gallery-preview__image,
+  .gallery-preview__canvas {
+    @apply h-auto max-h-[640px] w-[min(100%,640px)] object-contain;
+  }
+
+  .gallery-stage-meta {
+    @apply flex flex-col gap-3 text-[8px] tracking-[0.16em] uppercase leading-[1.8] text-asf-muted;
+  }
+
+  .gallery-stage-meta strong {
+    @apply mr-2 text-asf-gold-bright;
+  }
+
+  .gallery-intro-card {
+    @apply rounded-[4px] border-[2px] border-asf-gold-deep bg-asf-panel-alt p-3;
+  }
+
+  .gallery-intro-card__video {
+    @apply mt-2.5 w-full rounded-[4px];
+  }
+
+  .gallery-empty {
+    @apply grid h-full place-items-center gap-4 text-center;
+  }
+
+  /* ============== RosterPage ============== */
+
+  .roster-app {
+    @apply flex min-h-screen flex-col gap-6 p-8;
+  }
+
+  .roster-hero__copy {
+    @apply max-w-[760px] text-[10px] tracking-[0.22em] uppercase leading-[2] text-asf-gold-bright
+           [text-shadow:0_0_10px_rgba(255,206,58,0.3)];
+  }
+
+  .roster-hero__actions {
+    @apply flex items-start gap-3;
+  }
+
+  .roster-layout {
+    @apply grid gap-5 grid-cols-[320px_minmax(0,1fr)_320px] max-[1200px]:grid-cols-1;
+  }
+
+  .roster-column {
+    @apply flex min-w-0 flex-col gap-5;
+  }
+
+  .roster-column--fighters .gallery-panel {
+    @apply min-h-[calc(100vh-180px)] max-[1200px]:min-h-0;
+  }
+
+  .roster-fight-btn {
+    @apply min-h-[96px] min-w-[230px];
+  }
+
+  .roster-slot-card {
+    @apply flex items-center gap-4;
+  }
+
+  .roster-slot-card__preview,
+  .roster-stage-preview {
+    @apply flex min-h-[180px] items-center justify-center;
+  }
+
+  .roster-slot-card__preview {
+    @apply w-[120px] min-w-[120px];
+  }
+
+  .roster-slot-card__preview img,
+  .roster-stage-preview img,
+  .roster-fighter-card__image {
+    @apply h-full w-full object-contain;
+  }
+
+  .roster-slot-card__meta,
+  .roster-stage-summary,
+  .roster-fighter-card__meta,
+  .roster-fighter-card__actions {
+    @apply flex flex-col gap-2;
+  }
+
+  .roster-slot-card__meta strong,
+  .roster-stage-summary strong,
+  .roster-fighter-card__meta strong {
+    @apply text-[12px] tracking-[0.1em] uppercase text-asf-gold-bright;
+  }
+
+  .roster-slot-card__meta span,
+  .roster-stage-summary span,
+  .roster-fighter-card__meta span {
+    @apply text-[8px] tracking-[0.14em] uppercase leading-[1.7] text-asf-muted;
+  }
+
+  .roster-fighter-grid {
+    @apply grid gap-4 grid-cols-[repeat(auto-fill,minmax(220px,1fr))];
+  }
+
+  .roster-fighter-card {
+    @apply flex flex-col gap-3;
+  }
+
+  .roster-fighter-card__surface {
+    @apply h-[220px];
+  }
+
+  /* ============== VS divider ============== */
+
+  .sf-vs-divider {
+    @apply flex items-center gap-4 py-2;
+  }
+
+  .sf-vs-divider__line {
+    @apply h-[2px] flex-1 bg-asf-gold-deep;
+  }
+
+  .sf-vs-divider__text {
+    @apply text-asf-gold text-[44px] leading-none tracking-[0.06em] uppercase
+           [text-shadow:0_3px_0_#a80d0d,_0_0_24px_rgba(255,42,42,0.6),_3px_3px_0_rgba(123,61,255,0.7)];
+  }
+}

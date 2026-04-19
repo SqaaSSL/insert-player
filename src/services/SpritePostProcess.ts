@@ -33,8 +33,8 @@ interface ReliableFrameConfig {
 
 const CRITICAL_ANIMATION_CONFIG: Partial<Record<string, ReliableFrameConfig>> = {
   idle: {
-    minFrames: 16,
-    maxFrames: 16,
+    minFrames: 8,
+    maxFrames: 8,
     allowBestEffortFill: false,
     referenceMode: 'upper-percentile',
     minAreaRatio: 0.78,
