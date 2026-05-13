@@ -1,6 +1,7 @@
-import { CELL_H, CELL_W, cleanReposedImagePreserveCanvas, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, zoomTransparentImageToBottom, normalizeTransparentReposedImage, measureOpaqueBoundsFromBase64, type CleanSheetResult, type NormalizationReference } from './SpritePostProcess';
+import { CELL_H, CELL_W, cleanReposedImagePreserveCanvas, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, neutralizeGreenSpillForSegmentation, zoomTransparentImageToBottom, normalizeTransparentReposedImage, measureOpaqueBoundsFromBase64, type CleanSheetResult, type NormalizationReference } from './SpritePostProcess';
 import { getAnimationProfile } from './AnimationProfiles';
 import { publishDebugLog, publishDebugMultiline } from './DebugLog';
+import { getConfiguredBgRemovalProvider, removeBackgroundWithConfiguredProvider } from './BackgroundRemovalService';
 
 const GEMINI_BASE = '/proxy/gemini/v1beta/models';
 const DEFAULT_GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
@@ -205,7 +206,9 @@ export async function geminiUprightRepose(sideViewBase64: string): Promise<strin
 
 const CROUCH_REPOSE_PROMPT = `Using this fighting character as reference, create the SAME character in an extreme classic 2D fighting-game crouch defensive guard, as if the player is holding the down arrow.
 
-Keep the exact 3/4 side-view facing right, the same face, outfit, proportions, and art style.
+Preserve the EXACT same visual style, art style, textures, colors, and level of detail from the reference image — do NOT change the aesthetic. Keep the same face, hair, skin tone, outfit, and proportions faithfully. The result must look like the same physical person from the reference simply lowered into a crouch. Do NOT redraw as a cartoon, anime, cel-shaded, illustrative, stylized, comic, flat-shaded, or otherwise re-interpreted version. Match the exact rendering technique, shading, linework density, and photographic/painterly feel of the reference — if the reference is photorealistic, the output must be photorealistic; if it is painted, it must stay painted in the same style.
+
+Keep the exact 3/4 side-view facing right.
 Keep the same camera distance and full-body framing. Do not shrink the character and do not zoom out.
 
 This must look like a real arcade low hitbox crouch-block position:
@@ -704,12 +707,17 @@ function buildIdleFramePrompt(
   return [
     `Generate a single image for frame ${frameIndex + 1} of ${totalFrames} of a classic 2D fighting-game idle loop.`,
     ``,
+    `STYLE LOCK (CRITICAL):`,
+    `- Preserve the EXACT same visual style, art style, textures, colors, and level of detail from IMAGE 1 — do NOT change the aesthetic.`,
+    `- The output must look like the same physical person from IMAGE 1, just in a slightly different pose. Do NOT redraw as a cartoon, anime, cel-shaded, illustrative, comic, watercolour, painted, stylized, or otherwise re-interpreted version.`,
+    `- Match the exact rendering technique, shading style, linework density, and photographic/painterly feel of IMAGE 1 — if IMAGE 1 is photorealistic, the output must stay photorealistic; if it is painted, stay in the exact same painted style.`,
+    `- Preserve the same face, hair, skin tone, outfit, and proportions faithfully. No clothing changes, no new props, no accessory drift.`,
+    ``,
     `REFERENCE RULES:`,
-    `- IMAGE 1 is the canonical side-view identity, scale, and full-body framing anchor.`,
+    `- IMAGE 1 is the canonical side-view identity, scale, full-body framing, AND visual style anchor.`,
     hasPreviousFrame
-      ? `- IMAGE 2 is the previous accepted idle frame. Stay very close to IMAGE 2 for continuity, but apply the requested micro-change for this frame.`
+      ? `- IMAGE 2 is the previous accepted idle frame. Stay very close to IMAGE 2 for continuity, but apply the requested micro-change for this frame. If IMAGE 2 has drifted visually from IMAGE 1, trust IMAGE 1 for style.`
       : `- There is no IMAGE 2 for frame 1, so match IMAGE 1 almost exactly.`,
-    `- Preserve the exact same face, outfit, proportions, and right-facing orientation from IMAGE 1.`,
     ``,
     `FRAMING RULES (CRITICAL):`,
     `- Show the COMPLETE fighter from head to feet. No busts, no waist-up crops, no missing shoes, no cropped elbows.`,
@@ -875,8 +883,11 @@ export async function geminiSpriteSheet(
     `- Keep the feet near the same floor line close to the bottom of every cell.`,
     `- Even for subtle animations, maintain the EXACT same camera distance and framing as the reference image.`,
     ``,
-    `STYLE RULES:`,
-    `- Preserve the exact same visual style, proportions, colors, and textures of the reference character — do NOT change the art style.`,
+    `STYLE RULES (CRITICAL):`,
+    `- Preserve the EXACT same visual style, art style, textures, colors, and level of detail from the reference image — do NOT change the aesthetic.`,
+    `- Every frame must look like the same physical person from the reference, just in a different pose. Do NOT redraw as a cartoon, anime, cel-shaded, illustrative, comic, watercolour, painted, stylized, or otherwise re-interpreted version.`,
+    `- Match the exact rendering technique, shading style, linework density, and photographic/painterly feel of the reference — if the reference is photorealistic, every frame must stay photorealistic; if it is painted, stay in the exact same painted style across every frame.`,
+    `- Preserve the same face, hair, skin tone, outfit, and proportions faithfully across every frame. No clothing changes, no new props, no accessory drift between frames.`,
     `- Each frame shows the complete character at the same scale and vertical position.`,
     `- Pure bright green (#00FF00) background in every cell — flat, uniform, vivid green with no gradients, shadows, or ground.`,
   ].join('\n');
@@ -994,6 +1005,462 @@ export async function geminiSpriteSheet(
     frameCount: cleaned.frameCount,
     usedScale: cleaned.usedScale,
   };
+}
+
+// ─── Sheet-then-refine (coherent sheet + per-frame high-res refine) ──
+
+async function splitSheetIntoCells(
+  sheetBase64: string,
+  gridCols: number,
+  gridRows: number,
+  frameCount: number,
+): Promise<string[]> {
+  const img = await loadAlphaImage(`data:image/png;base64,${sheetBase64}`);
+  const cellW = Math.round(img.width / gridCols);
+  const cellH = Math.round(img.height / gridRows);
+  const cells: string[] = [];
+
+  for (let i = 0; i < frameCount; i++) {
+    const col = i % gridCols;
+    const row = Math.floor(i / gridCols);
+    const canvas = document.createElement('canvas');
+    canvas.width = cellW;
+    canvas.height = cellH;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(img, col * cellW, row * cellH, cellW, cellH, 0, 0, cellW, cellH);
+    cells.push(canvas.toDataURL('image/png').split(',')[1]);
+  }
+  return cells;
+}
+
+async function composeRefinedFramesToSheet(
+  frameBase64s: string[],
+  gridCols: number,
+  gridRows: number,
+  options: { padding?: 'green' | 'transparent' } = {},
+): Promise<string> {
+  const images = await Promise.all(
+    frameBase64s.map((b) => loadAlphaImage(`data:image/png;base64,${b}`)),
+  );
+  const cellW = Math.max(...images.map((img) => img.width));
+  const cellH = Math.max(...images.map((img) => img.height));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = cellW * gridCols;
+  canvas.height = cellH * gridRows;
+  const ctx = canvas.getContext('2d')!;
+  if (options.padding !== 'transparent') {
+    // Fill with pure green so any padding matches Gemini's green background
+    // for downstream chroma-key removal in cleanSpriteSheet.
+    ctx.fillStyle = '#00FF00';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  for (let i = 0; i < images.length; i++) {
+    const col = i % gridCols;
+    const row = Math.floor(i / gridCols);
+    const img = images[i];
+    const dx = col * cellW + Math.round((cellW - img.width) / 2);
+    const dy = row * cellH + Math.round((cellH - img.height) / 2);
+    ctx.drawImage(img, dx, dy);
+  }
+  return canvas.toDataURL('image/png').split(',')[1];
+}
+
+function buildSheetRefinePrompt(animName: string, motion: string): string {
+  const motionSummary = motion.replace(/\s+/g, ' ').trim().slice(0, 160);
+  return [
+    `Render a single high-fidelity full-resolution image of the pose shown in IMAGE 2, preserving the identity and visual style from IMAGE 1.`,
+    ``,
+    `CONTEXT:`,
+    `- This is one frame of a classic 2D fighting-game "${animName}" animation (${motionSummary}).`,
+    `- IMAGE 2 is a lower-resolution reference showing the EXACT pose to replicate at this frame.`,
+    `- IMAGE 1 is the canonical identity, outfit, and visual style anchor.`,
+    ``,
+    `POSE RULE (CRITICAL):`,
+    `- Replicate the EXACT pose, silhouette, and framing from IMAGE 2. Same limb positions, same stance, same facing direction, same center of mass, same feet placement.`,
+    `- Do NOT reinterpret, smooth, "correct", or alter the pose in any way — render it as-is, just at higher resolution.`,
+    `- Do NOT add motion blur, speed lines, trails, or "in-between" interpolation. This is a single static frame.`,
+    ``,
+    `STYLE LOCK (CRITICAL):`,
+    `- Preserve the EXACT same visual style, art style, textures, colors, and level of detail from IMAGE 1 — do NOT change the aesthetic.`,
+    `- The output must look like the same physical person from IMAGE 1. Do NOT redraw as a cartoon, anime, cel-shaded, illustrative, comic, watercolour, painted, stylized, or otherwise re-interpreted version.`,
+    `- Match the exact rendering technique, shading style, linework density, and photographic/painterly feel of IMAGE 1 — if IMAGE 1 is photorealistic, stay photorealistic; if it is painted, stay in the exact same painted style.`,
+    `- Preserve the same face, hair, skin tone, outfit, and proportions faithfully. No clothing changes, no new props, no accessory drift.`,
+    ``,
+    `FRAMING RULES:`,
+    `- Show the COMPLETE character from head to feet. No cropping.`,
+    `- The character should occupy roughly the same proportion of the frame as in IMAGE 2. Centered horizontally, feet near the bottom.`,
+    ``,
+    `OUTPUT RULES:`,
+    `- Return exactly one image with pure bright green (#00FF00) background — flat, uniform, vivid green, no gradients, shadows, or ground.`,
+    `- No text, no UI, no grids, no multiple frames. Just the single pose at high fidelity.`,
+  ].join('\n');
+}
+
+async function measureGreenBackedCharacterBounds(
+  base64: string,
+): Promise<{ w: number; h: number; imageW: number; imageH: number; widthRatio: number; heightRatio: number } | null> {
+  try {
+    const cleaned = await cleanReposedImagePreserveCanvas(base64);
+    const bbox = await measureOpaqueBoundsFromBase64(cleaned);
+    const dims = await getImageDimensions(cleaned);
+    if (!bbox || dims.width <= 0 || dims.height <= 0) return null;
+    return {
+      w: bbox.w,
+      h: bbox.h,
+      imageW: dims.width,
+      imageH: dims.height,
+      widthRatio: bbox.w / dims.width,
+      heightRatio: bbox.h / dims.height,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function singleRefineAttempt(
+  characterBase64: string,
+  cellBase64: string,
+  animName: string,
+  prompt: string,
+  model: string,
+  frameIndex: number,
+  total: number,
+  attemptLabel: string,
+): Promise<string | null> {
+  const extras = [{ data: cellBase64, mime: 'image/png' }];
+  try {
+    const result = await callGemini(prompt, characterBase64, 'image/png', extras, model);
+    if (!result.imageBase64) {
+      debugWarn(
+        `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel}: no image returned` +
+          `${result.finishReason ? ` (finishReason: ${result.finishReason})` : ''}`,
+      );
+      return null;
+    }
+    return result.imageBase64;
+  } catch (err: any) {
+    if (err.message?.includes('IMAGE_SAFETY')) {
+      debugWarn(
+        `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel}: safety filter, retrying with clothing note`,
+      );
+      try {
+        const retryResult = await callGemini(
+          prompt + REPOSE_CLOTHING_FALLBACK,
+          characterBase64,
+          'image/png',
+          extras,
+          model,
+        );
+        return retryResult.imageBase64 ?? null;
+      } catch (retryErr: any) {
+        debugWarn(
+          `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel} safety retry failed: ${retryErr.message}`,
+        );
+        return null;
+      }
+    }
+    debugWarn(
+      `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel} failed: ${err.message}`,
+    );
+    return null;
+  }
+}
+
+const REFINE_SIZE_MIN_RATIO = 0.75;
+const REFINE_SIZE_MAX_RATIO = 1.3;
+
+async function refineSheetCell(
+  characterBase64: string,
+  cellBase64: string,
+  animName: string,
+  prompt: string,
+  model: string,
+  frameIndex: number,
+  total: number,
+): Promise<string> {
+  const start = Date.now();
+  const baseBounds = await measureGreenBackedCharacterBounds(cellBase64);
+
+  const validateSize = async (candidate: string): Promise<{ ok: boolean; reason: string }> => {
+    if (!baseBounds) return { ok: true, reason: 'no base bounds to compare against' };
+    const bounds = await measureGreenBackedCharacterBounds(candidate);
+    if (!bounds) return { ok: false, reason: 'could not measure refined bounds' };
+    // Compare PROPORTION of the frame the character occupies, not absolute pixel
+    // height. The base sheet cell is ~256px tall and the refined output is
+    // ~1024px tall — pixel ratios are meaningless. What matters is that the
+    // character fills a similar fraction of the cell in both.
+    const ratio = bounds.heightRatio / baseBounds.heightRatio;
+    if (ratio < REFINE_SIZE_MIN_RATIO || ratio > REFINE_SIZE_MAX_RATIO) {
+      return {
+        ok: false,
+        reason: `size drift ratio=${ratio.toFixed(2)} base=${baseBounds.heightRatio.toFixed(2)} refined=${bounds.heightRatio.toFixed(2)}`,
+      };
+    }
+    return { ok: true, reason: `ratio=${ratio.toFixed(2)}` };
+  };
+
+  // Attempt 1 — standard prompt
+  const first = await singleRefineAttempt(characterBase64, cellBase64, animName, prompt, model, frameIndex, total, 'attempt 1');
+  if (first) {
+    const check = await validateSize(first);
+    if (check.ok) {
+      publishDebugLog(
+        `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total}: ${((Date.now() - start) / 1000).toFixed(1)}s (${check.reason})`,
+      );
+      return first;
+    }
+    debugWarn(
+      `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total}: rejecting attempt 1 — ${check.reason}`,
+    );
+  }
+
+  // Attempt 2 — harder size prompt
+  const stricterPrompt =
+    prompt +
+    `\n\nSIZE LOCK (CRITICAL):\n- The character in your output MUST occupy the exact same vertical and horizontal proportion of the frame as in IMAGE 2. Do not zoom out, do not shrink, do not frame the character smaller. If the character in IMAGE 2 is tall and nearly fills the frame vertically, the output must do the same.`;
+  const second = await singleRefineAttempt(
+    characterBase64,
+    cellBase64,
+    animName,
+    stricterPrompt,
+    model,
+    frameIndex,
+    total,
+    'attempt 2 (size-strict)',
+  );
+  if (second) {
+    const check = await validateSize(second);
+    if (check.ok) {
+      publishDebugLog(
+        `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total}: recovered on attempt 2 in ${((Date.now() - start) / 1000).toFixed(1)}s (${check.reason})`,
+      );
+      return second;
+    }
+    debugWarn(
+      `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total}: rejecting attempt 2 — ${check.reason}`,
+    );
+  }
+
+  debugWarn(
+    `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total}: falling back to base sheet cell after 2 attempts`,
+  );
+  return cellBase64;
+}
+
+export async function geminiSheetRefined(
+  characterBase64: string,
+  animName: string,
+  motion: string,
+  frames: number,
+  secondaryBase64?: string,
+  maxScale?: number,
+  normalizationReference?: NormalizationReference,
+): Promise<GeminiSpriteResult> {
+  const start = Date.now();
+  const model = resolveGeminiImageModel({ operation: 'sprite', animationName: animName });
+
+  // Step 1: coherent base sheet — fixes pose sequence + style across all frames.
+  console.log(`[GeminiApi] Sheet-refine ${animName}: generating base sheet with ${model}...`);
+  const sheet = await geminiSpriteSheet(
+    characterBase64,
+    animName,
+    motion,
+    frames,
+    secondaryBase64,
+    maxScale,
+    normalizationReference,
+  );
+  debugLog(
+    `[GeminiApi] Sheet-refine ${animName}: base sheet done in ${((Date.now() - start) / 1000).toFixed(1)}s ` +
+    `(${sheet.frameCount} frames, ${sheet.gridCols}x${sheet.gridRows})`,
+  );
+
+  // Step 2: split base sheet into per-frame cells that will act as pose anchors.
+  const sheetCells = await splitSheetIntoCells(
+    sheet.rawBase64,
+    sheet.gridCols,
+    sheet.gridRows,
+    sheet.frameCount,
+  );
+  const sheetDims = await getImageDimensions(sheet.rawBase64);
+  publishDebugLog(
+    `[GeminiApi] Sheet-refine ${animName}: split base sheet ${sheetDims.width}x${sheetDims.height} into ${sheetCells.length} cells`,
+  );
+
+  // Step 3: refine each cell in parallel. Each refine renders one pose at full Gemini resolution
+  // using the side-view-quality character ref as IMAGE 1 and the base-sheet cell as IMAGE 2.
+  const refinePrompt = buildSheetRefinePrompt(animName, motion);
+  const refineStart = Date.now();
+  const refinedCells = await Promise.all(
+    sheetCells.map((cellBase64, idx) =>
+      refineSheetCell(characterBase64, cellBase64, animName, refinePrompt, model, idx, sheetCells.length),
+    ),
+  );
+  debugLog(
+    `[GeminiApi] Sheet-refine ${animName}: all ${refinedCells.length} refines done in ${((Date.now() - refineStart) / 1000).toFixed(1)}s`,
+  );
+
+  // Step 4: compose the refined frames into a sheet at Gemini-native resolution (green bg).
+  //         This is the "raw" version — what Save RAW downloads.
+  const rawSheetBase64 = await composeRefinedFramesToSheet(
+    refinedCells,
+    sheet.gridCols,
+    sheet.gridRows,
+  );
+  const rawDims = await getImageDimensions(rawSheetBase64);
+
+  // Step 5: per-frame cleanup. Runs BiRefNet AND chroma-key flood-fill on each
+  //         cell and unions the alpha masks. BiRefNet sometimes erroneously eats
+  //         face pixels (low-contrast highlights it confuses with bg); chroma
+  //         flood-fill from edges can never punch interior holes — together they
+  //         cover each other's blind spots.
+  const cleanedCells = await cleanCellsWithUnionMasks(refinedCells, animName);
+
+  // Step 6: compose the alpha-cleaned cells into a sheet (transparent padding —
+  //         cells are already chroma+DNN cleaned, no need for downstream rescue).
+  const displaySheetBase64 = await composeRefinedFramesToSheet(
+    cleanedCells,
+    sheet.gridCols,
+    sheet.gridRows,
+    { padding: 'transparent' },
+  );
+
+  // Step 7: per-cell normalization via cleanSpriteSheet (chroma-key on alpha cells is
+  //         a near no-op; on cells where DNN failed it still kills the green bg).
+  const cleaned = await cleanSpriteSheet(
+    displaySheetBase64,
+    sheet.frameCount,
+    sheet.gridCols,
+    sheet.gridRows,
+    animName,
+    maxScale,
+    normalizationReference,
+  );
+
+  console.log(
+    `[GeminiApi] Sheet-refine ${animName}: total ${((Date.now() - start) / 1000).toFixed(1)}s ` +
+    `(raw ${rawDims.width}x${rawDims.height}, cleaned ${cleaned.frameW * cleaned.gridCols}x${cleaned.frameH * cleaned.gridRows})`,
+  );
+
+  return {
+    imageBase64: cleaned.base64,
+    rawBase64: rawSheetBase64,
+    gridCols: cleaned.gridCols,
+    gridRows: cleaned.gridRows,
+    frameCount: cleaned.frameCount,
+    usedScale: cleaned.usedScale,
+  };
+}
+
+// Combines BiRefNet's mask with the chroma-key flood-fill mask to recover face
+// pixels that BiRefNet sometimes erroneously eats. Both fight in the user's
+// favour: chroma can never punch holes in the interior of the character (its
+// flood-fill only reaches pixels connected to the frame border), and BiRefNet
+// can rescue green-tinted character pixels that strict chroma would mark as
+// background. Taking max(alpha) of the two masks preserves anything that
+// EITHER algorithm classifies as character. RGB stays from chroma path —
+// already spill-suppressed and untouched from Gemini's original output.
+async function unionMasksKeepRGB(
+  chromaResult: string,
+  birefnetResult: string,
+): Promise<string> {
+  const chromaImg = await loadAlphaImage(`data:image/png;base64,${chromaResult}`);
+  const birefnetImg = await loadAlphaImage(`data:image/png;base64,${birefnetResult}`);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = chromaImg.width;
+  canvas.height = chromaImg.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(chromaImg, 0, 0);
+
+  const birefCanvas = document.createElement('canvas');
+  birefCanvas.width = chromaImg.width;
+  birefCanvas.height = chromaImg.height;
+  const birefCtx = birefCanvas.getContext('2d')!;
+  // Resize BiRefNet output to match chroma's resolution if needed (fal might
+  // return a different size; bilinear scale of an alpha mask is acceptable).
+  birefCtx.drawImage(birefnetImg, 0, 0, chromaImg.width, chromaImg.height);
+
+  const chromaData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const birefData = birefCtx.getImageData(0, 0, birefCanvas.width, birefCanvas.height);
+
+  for (let i = 0; i < chromaData.data.length; i += 4) {
+    const chromaAlpha = chromaData.data[i + 3];
+    const birefAlpha = birefData.data[i + 3];
+    if (birefAlpha > chromaAlpha) {
+      chromaData.data[i + 3] = birefAlpha;
+    }
+  }
+
+  ctx.putImageData(chromaData, 0, 0);
+  return canvas.toDataURL('image/png').split(',')[1];
+}
+
+// Cleans every refined cell using BOTH BiRefNet (DNN segmentation) and the
+// chroma-key flood-fill, unioned. Per-frame, in parallel. Falls back gracefully
+// if BiRefNet fails on a specific frame — that frame just uses chroma alone.
+async function cleanCellsWithUnionMasks(cellBase64s: string[], animName: string): Promise<string[]> {
+  const provider = getConfiguredBgRemovalProvider();
+  const start = Date.now();
+  if (provider === 'none') {
+    debugLog(`[GeminiApi] Sheet-refine ${animName}: bg-removal disabled (provider=none) — chroma-key only`);
+    return Promise.all(cellBase64s.map((c) => cleanReposedImagePreserveCanvas(c)));
+  }
+
+  debugLog(`[GeminiApi] Sheet-refine ${animName}: cleaning ${cellBase64s.length} frames via chroma+${provider} union (with pre-neutralize)...`);
+
+  let dnnOk = 0;
+  const cleaned = await Promise.all(
+    cellBase64s.map(async (rawGreenCell, idx) => {
+      // Pre-correction: neutralize green ambient bounce on character pixels
+      // BEFORE we segment. Both chroma and BiRefNet work better on a cell
+      // where skin highlights aren't tinted green. The chroma background
+      // itself stays intact (the heuristic protects pure-green pixels), so
+      // chroma-key still has something to flood-fill.
+      let neutralizedCell: string;
+      try {
+        neutralizedCell = await neutralizeGreenSpillForSegmentation(rawGreenCell);
+      } catch (err: any) {
+        debugWarn(
+          `[GeminiApi] Sheet-refine ${animName} pre-neutralize failed frame ${idx + 1}/${cellBase64s.length}: ${err.message} — using raw cell`,
+        );
+        neutralizedCell = rawGreenCell;
+      }
+
+      let chromaCleaned: string;
+      try {
+        chromaCleaned = await cleanReposedImagePreserveCanvas(neutralizedCell);
+      } catch (err: any) {
+        debugWarn(`[GeminiApi] Sheet-refine ${animName} chroma failed frame ${idx + 1}/${cellBase64s.length}: ${err.message}`);
+        return neutralizedCell;
+      }
+
+      try {
+        const birefnetResult = await removeBackgroundWithConfiguredProvider(neutralizedCell);
+        if (!birefnetResult) {
+          debugWarn(
+            `[GeminiApi] Sheet-refine ${animName} ${provider} returned null frame ${idx + 1}/${cellBase64s.length} — chroma only`,
+          );
+          return chromaCleaned;
+        }
+        dnnOk += 1;
+        return unionMasksKeepRGB(chromaCleaned, birefnetResult);
+      } catch (err: any) {
+        debugWarn(
+          `[GeminiApi] Sheet-refine ${animName} ${provider} failed frame ${idx + 1}/${cellBase64s.length} (${err.message}) — chroma only`,
+        );
+        return chromaCleaned;
+      }
+    }),
+  );
+
+  debugLog(
+    `[GeminiApi] Sheet-refine ${animName}: cleanup done in ${((Date.now() - start) / 1000).toFixed(1)}s ` +
+    `(${dnnOk}/${cellBase64s.length} unioned with ${provider}, ${cellBase64s.length - dnnOk} chroma-only)`,
+  );
+  return cleaned;
 }
 
 // ─── Stage backgrounds ──────────────────────────────────────────────

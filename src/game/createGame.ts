@@ -1,10 +1,6 @@
 import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene.ts';
-import { TitleScene } from './scenes/TitleScene.ts';
-import { CharacterCreationScene } from './scenes/CharacterCreationScene.ts';
-import { RosterScene } from './scenes/RosterScene.ts';
 import { FightScene } from './scenes/FightScene.ts';
-import { GalleryScene } from './scenes/GalleryScene.ts';
 import { GAME_WIDTH, GAME_HEIGHT } from './constants.ts';
 import { setPendingLaunchTarget, type GameLaunchTarget } from './launchState.ts';
 
@@ -22,7 +18,7 @@ export function createGame(parent: string, launchTarget?: GameLaunchTarget | nul
       parent,
       expandParent: true,
     },
-    scene: [BootScene, TitleScene, RosterScene, CharacterCreationScene, FightScene, GalleryScene],
+    scene: [BootScene, FightScene],
     physics: {
       default: 'arcade',
       arcade: { debug: false },

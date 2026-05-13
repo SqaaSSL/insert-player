@@ -2120,7 +2120,13 @@ export class FightScene extends Phaser.Scene {
       this.cleanupMatchOverUI();
       this.cameras.main.fadeOut(500, 0, 0, 0);
       this.cameras.main.once("camerafadeoutcomplete", () => {
-        this.scene.start("TitleScene");
+        const exitToMenu = (window as Window & { __ASF_EXIT_TO_MENU__?: () => void }).__ASF_EXIT_TO_MENU__;
+        if (exitToMenu) {
+          exitToMenu();
+        } else {
+          console.warn("[FightScene] No __ASF_EXIT_TO_MENU__ handler registered; falling back to full reload");
+          window.location.href = "/menu";
+        }
       });
     });
   }

@@ -25,18 +25,17 @@ Separate package. Runs only when using the Worker API (auth, leaderboard, persis
 Two-layer frontend: **React shell** owns navigation, menus, roster, and gallery; **Phaser 3** owns only the in-match runtime. They are wired together through a hand-rolled launch-target handoff, not a shared store.
 
 ### React shell (`src/ui/`)
-- Entry is `src/main.tsx` → `App.tsx`. Routing is a hand-rolled hash/path router (`useHashRoute`) with routes `/menu`, `/gallery`, `/roster/{watch,cpu,vs}`, `/fight`. There is no React Router.
-- Routes under `src/ui/routes/` render pure React (`HomePage`, `RosterPage`, `GalleryPage`). `/fight` is the only route that mounts Phaser — via `GamePage`, which instantiates `createGame('game-container', launchTarget)` and destroys it on unmount.
+- Entry is `src/main.tsx` → `App.tsx`. Routing is a hand-rolled hash/path router (`useHashRoute`) with routes `/menu`, `/gallery`, `/fighters/new`, `/roster/{watch,cpu,vs}`, `/fight`. There is no React Router.
+- Routes under `src/ui/routes/`: `HomePage`, `GalleryPage` (characters + stages, with retries), `CreateFighterPage` (photo → pipeline → gallery), `RosterPage` (match builder). Only `/fight` mounts Phaser — via `GamePage`, which instantiates `createGame('game-container', launchTarget)` and destroys it on unmount.
+- Shared fighter-UI primitives live in `src/ui/components/` (`AnimationGrid`, `SourceViewsPanel`, `SpritePreviewSurface`, `SpritePreviewCanvas`, `DebugFeed`, `PipelineProgress`) and `src/ui/shared/` (`fighterPreview.ts` = labels/types/helpers, `useObjectUrl.ts`, `downloadBlob.ts`). `GalleryPage` (edit) and `CreateFighterPage` (create) consume the same primitives — do not re-implement animation grids, source view chips, or sprite preview rendering in new screens.
 - `App` persists the selected `MatchSceneData` to `sessionStorage` under key `ai-street-fighter:last-match` so a hard reload at `/fight` can still start the match.
-- `GamePage` sets two window globals consumed by Phaser:
-  - `window.__ASF_DISABLE_PHASER_TITLE__ = true` — tells `TitleScene` to bounce the user back to the React `/menu` instead of drawing itself. The React shell has replaced the Phaser title/menu flow; `TitleScene` is kept only as a fallback.
-  - `window.__ASF_OPEN_GALLERY__` — a callback Phaser scenes call to navigate to the React `/gallery` route.
+- Phaser↔React bridge: `GamePage` installs `window.__ASF_EXIT_TO_MENU__` which `FightScene` (and `BootScene` fallback) call to pop back to the React `/menu` instead of trying to start a Phaser menu scene.
 
 ### Phaser runtime (`src/game/`)
 - `createGame.ts` builds the `Phaser.Game` (1024×576, arcade physics, FIT scaling). Before instantiating, it calls `setPendingLaunchTarget(...)` in `launchState.ts` (module-level singleton, the bridge between React and Phaser).
-- `BootScene` reads `getPendingLaunchTarget()` and immediately `scene.start(sceneKey, data)` into the real target scene. If nothing is pending, it falls back to `TitleScene`.
-- Scene registry (order matters for auto-start): `BootScene`, `TitleScene`, `RosterScene`, `CharacterCreationScene`, `FightScene`, `GalleryScene`. In normal flow the React shell drives everything, so only `BootScene` + `FightScene` (+ occasionally `GalleryScene` / `CharacterCreationScene`) are entered.
-- `FightScene` runs on a fixed `FIXED_TIMESTEP` (60 Hz) accumulator with a `SeededRng` for deterministic replays. Match parameters come in as `MatchSceneData` from `src/game/match/MatchConfig.ts`; stage theme from `StageConfig.ts`.
+- Scene registry: `[BootScene, FightScene]`. That is the entire in-browser Phaser surface. Everything else (title, menu, roster, gallery, character creation) is owned by React. If you find yourself wanting to add a new Phaser scene for a UI flow, build it in React instead.
+- `BootScene` reads `getPendingLaunchTarget()` and immediately `scene.start(sceneKey, data)` into the real target scene. If nothing is pending (shouldn't happen in the React shell flow), it calls `window.__ASF_EXIT_TO_MENU__` to bounce back to `/menu`.
+- `FightScene` runs on a fixed `FIXED_TIMESTEP` (60 Hz) accumulator with a `SeededRng` for deterministic replays. Match parameters come in as `MatchSceneData` from `src/game/match/MatchConfig.ts`; stage theme from `StageConfig.ts`. On ESC after match-over it calls `__ASF_EXIT_TO_MENU__` (no Phaser title scene exists to return to).
 - Core combat constants (health, round time, attack frame data, hitboxes) live in `src/game/constants.ts`. `ATTACKS` is the canonical table — damage/startup/active/recovery/hitbox per move.
 - Systems under `src/game/systems/`: `CombatSystem` (hit detection/resolution), `AIController` (personality-driven opponent), `InputManager` + `MotionInputs` (directional-input buffer for specials), `SoundManager`. HUD lives in `src/game/ui/HUD.ts`.
 
@@ -83,4 +82,12 @@ Cloudflare Workers app (`wrangler.toml`) backing optional multiplayer/persistenc
 
 ## Active refactor
 
-Every screen that is **not** the in-match Phaser runtime is being migrated to React + Tailwind. The React shell already owns `/menu`, `/gallery`, and `/roster/*`; Phaser now only owns `/fight`. `src/game/scenes/TitleScene.ts` and `src/game/scenes/RosterScene.ts` are legacy fallbacks — `window.__ASF_DISABLE_PHASER_TITLE__` makes `TitleScene` bounce back to the React `/menu`. Don't re-introduce Phaser for non-match screens. Current work-in-progress focus is visual consolidation and DRY-ing `HomePage.tsx`, `GalleryPage.tsx`, and `RosterPage.tsx` to match the look of the old Phaser screens.
+The non-match → React migration is complete: all title, roster, gallery, character-creation, and photo-upload Phaser scenes have been deleted, and the React shell owns every UI flow except the in-match runtime. Fighter creation (`/fighters/new`) and fighter editing (inside `/gallery`) now share the primitives listed in "React shell" above instead of each reimplementing grids/previews. **Do not add new Phaser scenes for UI flows.** Current open item is the large JS bundle (~1.6 MB) — a candidate for code-splitting the Phaser runtime behind a dynamic import when entering `/fight`.
+
+## Roadmap and pending work
+
+For "what's next?" questions, read these in order:
+- **`ROADMAP.md`** — state snapshot + phased plan (Phase A validation → B tiers → C-G PROD migration → H video → I monetization).
+- **`QUALITY_TIERS.md`** — full design of the pricing tier system (Phase B, not yet implemented).
+
+Current state at the head of `main`: the sprite pipeline default is `sheet_refined` with HD cache (768×1024 per cell). Background removal uses a pre-neutralize CPU pass + a union of chroma-key flood-fill + BiRefNet (fal). Tier system designed but not yet implemented. Worker / Clerk / server-side cache approved as next PROD phases.

@@ -34,6 +34,26 @@
   --color-asf-warn: #ffb066;
 }
 
+@keyframes sf-pulse {
+  0%, 100% {
+    opacity: 0.35;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes sf-dot {
+  0%, 80%, 100% {
+    opacity: 0.2;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
 @layer base {
   * {
     @apply box-border;
@@ -258,12 +278,56 @@
   }
 
   .gallery-debug {
-    @apply min-h-[220px] flex-1 rounded-[4px] border-[2px] border-[rgba(255,206,58,0.22)]
+    @apply rounded-[4px] border-[2px] border-[rgba(255,206,58,0.22)]
            bg-[rgba(4,3,14,0.95)] p-3;
   }
 
+  .gallery-debug > summary {
+    @apply cursor-pointer list-none text-[10px] tracking-[0.18em] uppercase text-asf-gold
+           hover:text-asf-gold-bright;
+  }
+
+  .gallery-debug[open] > summary {
+    @apply mb-2;
+  }
+
   .gallery-debug pre {
-    @apply m-0 whitespace-pre-wrap text-[8px] leading-[1.6] tracking-[0.02em] text-asf-blue;
+    @apply m-0 max-h-[160px] overflow-y-auto whitespace-pre-wrap text-[8px] leading-[1.6] tracking-[0.02em] text-asf-blue;
+  }
+
+  .preview-loading {
+    @apply flex flex-col items-center justify-center gap-5;
+  }
+
+  .preview-loading__orb {
+    @apply h-[72px] w-[72px] rounded-full
+           [background:radial-gradient(circle,rgba(255,240,128,0.95),rgba(255,42,42,0.65)_55%,rgba(255,42,42,0)_78%)]
+           [animation:sf-pulse_1.2s_ease-in-out_infinite];
+  }
+
+  .preview-loading__label {
+    @apply text-[13px] tracking-[0.3em] uppercase text-asf-gold-bright
+           [text-shadow:0_0_12px_rgba(255,206,58,0.55)];
+  }
+
+  .preview-loading__dots {
+    @apply flex items-center gap-2 text-[10px] text-asf-gold;
+  }
+
+  .preview-loading__dots > span {
+    @apply inline-block h-2 w-2 rounded-full bg-asf-gold;
+  }
+
+  .preview-loading__dots > span:nth-child(1) {
+    @apply [animation:sf-dot_1.2s_ease-in-out_0s_infinite];
+  }
+
+  .preview-loading__dots > span:nth-child(2) {
+    @apply [animation:sf-dot_1.2s_ease-in-out_0.2s_infinite];
+  }
+
+  .preview-loading__dots > span:nth-child(3) {
+    @apply [animation:sf-dot_1.2s_ease-in-out_0.4s_infinite];
   }
 
   /* ============== HomePage ============== */
@@ -344,8 +408,12 @@
   }
 
   .gallery-layout {
-    @apply grid gap-5 grid-cols-[320px_minmax(420px,1fr)_320px]
+    @apply grid gap-5 grid-cols-[340px_minmax(0,1fr)]
            max-[1280px]:grid-cols-1 max-[1200px]:grid-cols-1;
+  }
+
+  .gallery-column--side {
+    @apply flex min-w-0 flex-col gap-5;
   }
 
   .gallery-stage-layout {
@@ -485,6 +553,53 @@
 
   .roster-fighter-card__surface {
     @apply h-[220px];
+  }
+
+  /* ============== CreateFighterPage ============== */
+
+  .create-app {
+    @apply flex min-h-screen flex-col gap-6 p-8;
+  }
+
+  .create-intro {
+    @apply mx-auto flex w-full max-w-[640px] flex-col gap-5 rounded-[6px]
+           border-[2px] border-asf-gold-deep bg-asf-panel p-8
+           shadow-[inset_0_0_0_1px_rgba(255,206,58,0.18),_0_10px_30px_rgba(0,0,0,0.55)];
+  }
+
+  .create-form__field {
+    @apply flex flex-col gap-2;
+  }
+
+  .create-form__field span {
+    @apply text-[10px] tracking-[0.22em] uppercase text-asf-gold;
+  }
+
+  .create-form__field input[type="text"],
+  .create-form__field input[type="file"] {
+    @apply rounded-[4px] border-[2px] border-asf-gold-deep bg-[rgba(10,8,24,0.85)] px-3 py-2
+           text-[12px] tracking-[0.04em] text-asf-text transition-colors
+           hover:border-asf-gold focus:border-asf-gold focus:outline-none;
+  }
+
+  .create-form__field input[type="file"]::file-selector-button {
+    @apply mr-3 cursor-pointer rounded-[3px] border-[2px] border-asf-gold-deep
+           bg-[rgba(40,26,14,0.96)] px-3 py-1.5 text-[9px] tracking-[0.16em] uppercase text-asf-gold;
+  }
+
+  .create-progress {
+    @apply h-[14px] w-full overflow-hidden rounded-[2px] border-[2px] border-asf-gold-deep
+           bg-[rgba(10,8,24,0.85)]
+           shadow-[inset_0_0_0_1px_rgba(255,206,58,0.18)];
+  }
+
+  .create-progress__bar {
+    @apply block h-full w-full;
+  }
+
+  .create-error {
+    @apply rounded-[4px] border-[2px] border-asf-red bg-[rgba(80,10,10,0.92)]
+           px-4 py-3 text-[10px] tracking-[0.16em] uppercase text-asf-gold-bright;
   }
 
   /* ============== VS divider ============== */

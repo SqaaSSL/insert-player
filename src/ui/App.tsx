@@ -4,9 +4,17 @@ import { createGame } from '../game/createGame.ts';
 import { GalleryPage } from './routes/GalleryPage.tsx';
 import { HomePage } from './routes/HomePage.tsx';
 import { RosterPage } from './routes/RosterPage.tsx';
+import { CreateFighterPage } from './routes/CreateFighterPage.tsx';
 import type { MatchSceneData } from '../game/match/MatchConfig.ts';
 
-type AppRoute = '/menu' | '/gallery' | '/roster/watch' | '/roster/cpu' | '/roster/vs' | '/fight';
+type AppRoute =
+  | '/menu'
+  | '/gallery'
+  | '/fighters/new'
+  | '/roster/watch'
+  | '/roster/cpu'
+  | '/roster/vs'
+  | '/fight';
 const LAST_MATCH_STORAGE_KEY = 'ai-street-fighter:last-match';
 
 function readStoredMatch(): MatchSceneData | null {
@@ -41,7 +49,6 @@ function writeStoredMatch(data: MatchSceneData | null): void {
       cpuVsCpu: data.cpuVsCpu ?? null,
     });
   } catch {
-    // Ignore storage failures; in-memory state still works.
     console.warn('[AppRouter] Failed to write match to sessionStorage');
   }
 }
@@ -54,6 +61,7 @@ function normalizeRoute(pathname: string, hash: string): AppRoute {
       ? cleanedPath
       : (cleanedHash || '/menu');
   if (cleaned === '/gallery') return '/gallery';
+  if (cleaned === '/fighters/new') return '/fighters/new';
   if (cleaned === '/roster/watch') return '/roster/watch';
   if (cleaned === '/roster/cpu') return '/roster/cpu';
   if (cleaned === '/roster/vs') return '/roster/vs';
@@ -103,21 +111,14 @@ function GamePage({
 }) {
   useEffect(() => {
     const win = window as Window & {
-      __ASF_OPEN_GALLERY__?: () => void;
-      __ASF_DISABLE_PHASER_TITLE__?: boolean;
+      __ASF_EXIT_TO_MENU__?: () => void;
     };
-    const originalOpenGallery = win.__ASF_OPEN_GALLERY__;
-    const originalDisablePhaserTitle = win.__ASF_DISABLE_PHASER_TITLE__;
-    win.__ASF_OPEN_GALLERY__ = () => {
-      window.history.pushState({}, '', '/gallery');
-      window.dispatchEvent(new PopStateEvent('popstate'));
-    };
-    win.__ASF_DISABLE_PHASER_TITLE__ = true;
+    const previous = win.__ASF_EXIT_TO_MENU__;
+    win.__ASF_EXIT_TO_MENU__ = () => onExit();
     return () => {
-      win.__ASF_OPEN_GALLERY__ = originalOpenGallery;
-      win.__ASF_DISABLE_PHASER_TITLE__ = originalDisablePhaserTitle;
+      win.__ASF_EXIT_TO_MENU__ = previous;
     };
-  }, []);
+  }, [onExit]);
 
   useEffect(() => {
     console.info('[GamePage] Mounting Phaser runtime', {
@@ -184,7 +185,20 @@ export function App() {
       );
     }
     if (route === '/gallery') {
-      return <GalleryPage onBack={() => navigate('/menu')} />;
+      return (
+        <GalleryPage
+          onBack={() => navigate('/menu')}
+          onCreateFighter={() => navigate('/fighters/new')}
+        />
+      );
+    }
+    if (route === '/fighters/new') {
+      return (
+        <CreateFighterPage
+          onBack={() => navigate('/gallery')}
+          onComplete={() => navigate('/gallery')}
+        />
+      );
     }
     if (route === '/roster/watch' || route === '/roster/cpu' || route === '/roster/vs') {
       const mode = route === '/roster/watch' ? 'watch' : route === '/roster/vs' ? 'vs' : 'cpu';

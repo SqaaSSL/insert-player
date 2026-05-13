@@ -52,8 +52,15 @@ export class BootScene extends Phaser.Scene {
       this.scene.start(pendingTarget.sceneKey, pendingTarget.data);
       return;
     }
-    console.warn('[BootScene] No pending launch target. Falling back to TitleScene.');
-    this.scene.start('TitleScene');
+    // No scene to launch into — the React shell owns menu/gallery/roster flows now.
+    // If Phaser was mounted without a target, bounce back to the React menu.
+    console.warn('[BootScene] No pending launch target. Bouncing back to React menu.');
+    const exitToMenu = (window as Window & { __ASF_EXIT_TO_MENU__?: () => void }).__ASF_EXIT_TO_MENU__;
+    if (exitToMenu) {
+      exitToMenu();
+    } else {
+      window.location.href = '/menu';
+    }
   }
 
   private generatePlaceholderAssets(): void {

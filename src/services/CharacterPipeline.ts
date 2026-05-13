@@ -10,7 +10,7 @@ import {
   type CachedFailedAnimationArtifact,
   type CachedSprite,
 } from './SpriteCache';
-import { geminiReposeDetailed, geminiUprightReposeDetailed, geminiCrouchRepose, geminiCrouchReposeDetailed, geminiSpriteSheet, geminiIdleFrameSequence, PartialSpriteGenerationError } from './GeminiApi';
+import { geminiReposeDetailed, geminiUprightReposeDetailed, geminiCrouchRepose, geminiCrouchReposeDetailed, geminiSpriteSheet, geminiSheetRefined, geminiIdleFrameSequence, PartialSpriteGenerationError } from './GeminiApi';
 import { CELL_H, CELL_W, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, measureOpaqueBoundsFromBase64, type NormalizationReference } from './SpritePostProcess';
 import { getAnimationProfile } from './AnimationProfiles';
 import { publishDebugLog } from './DebugLog';
@@ -20,7 +20,18 @@ import { prepareBaseImage } from './ImagePrep';
 import { getConfiguredBgRemovalProvider, removeBackgroundWithConfiguredProvider } from './BackgroundRemovalService';
 
 export type PipelineProvider = 'gemini' | 'ludo';
-export type IdleGenerationMode = 'frame_sequence' | 'sheet';
+// Sprite generation mode, applies to ALL animations (not just idle anymore).
+// - 'sheet_refined' (default): sheet establishes coherent pose + style, then each
+//   frame is re-rendered at full Gemini resolution using the side-view as style
+//   anchor and the sheet cell as pose anchor. Highest quality, ~9× API cost/anim.
+// - 'sheet': single grid generation. Fast, coherent, but low per-frame resolution.
+// - 'frame_sequence': idle-only per-frame generation with previous-frame continuity.
+//   Falls back to 'sheet' for non-idle animations (frame_sequence doesn't build
+//   sheets, only the idle pipeline does).
+export type SpriteGenerationMode = 'sheet_refined' | 'sheet' | 'frame_sequence';
+
+/** @deprecated alias kept for pre-existing call sites; use SpriteGenerationMode. */
+export type IdleGenerationMode = SpriteGenerationMode;
 
 export type PipelineStatus =
   | { stage: 'hashing' }
@@ -67,7 +78,7 @@ let activeProvider: PipelineProvider = 'gemini';
 const CRITICAL_ANIMATION_NAMES = new Set(['jump', 'hit']);
 const MIRRORED_ANIMATION_NAMES = new Set(['high_punch', 'low_punch', 'high_kick', 'low_kick']);
 const criticalSpriteMaintenanceInflight = new Map<string, Promise<void>>();
-export const SPRITE_PROCESSING_VERSION = 2;
+export const SPRITE_PROCESSING_VERSION = 3;
 
 export function setProvider(p: PipelineProvider) { activeProvider = p; }
 export function getProvider(): PipelineProvider { return activeProvider; }
@@ -170,18 +181,23 @@ async function generateSpriteWithGemini(
   secondaryBase64?: string,
   maxScale?: number,
   normalizationReference?: NormalizationReference,
-  idleMode: IdleGenerationMode = 'frame_sequence',
+  spriteMode: SpriteGenerationMode = 'sheet_refined',
 ): Promise<{ blob: Blob; rawBlob: Blob; frameCount: number; frameW: number; frameH: number; usedScale: number }> {
-  if (anim.name === 'idle') {
-    const modeMessage = `[Pipeline] idle generation mode: ${idleMode}`;
-    console.log(modeMessage);
-    publishDebugLog(modeMessage);
+  const effectiveMode: SpriteGenerationMode = spriteMode === 'frame_sequence' && anim.name !== 'idle'
+    ? 'sheet'
+    : spriteMode;
+  const modeMessage = `[Pipeline] ${anim.name} generation mode: ${effectiveMode}${effectiveMode !== spriteMode ? ` (requested ${spriteMode}, frame_sequence only supported for idle)` : ''}`;
+  console.log(modeMessage);
+  publishDebugLog(modeMessage);
+
+  let result;
+  if (effectiveMode === 'frame_sequence') {
+    result = await geminiIdleFrameSequence(characterBase64, anim.frames, maxScale);
+  } else if (effectiveMode === 'sheet_refined') {
+    result = await geminiSheetRefined(characterBase64, anim.name, anim.motion, anim.frames, secondaryBase64, maxScale, normalizationReference);
+  } else {
+    result = await geminiSpriteSheet(characterBase64, anim.name, anim.motion, anim.frames, secondaryBase64, maxScale, normalizationReference);
   }
-  const result = anim.name === 'idle'
-    ? idleMode === 'sheet'
-      ? await geminiSpriteSheet(characterBase64, anim.name, anim.motion, anim.frames, secondaryBase64, maxScale, normalizationReference)
-      : await geminiIdleFrameSequence(characterBase64, anim.frames, maxScale)
-    : await geminiSpriteSheet(characterBase64, anim.name, anim.motion, anim.frames, secondaryBase64, maxScale, normalizationReference);
   const rawBlob = base64ToBlob(result.rawBase64 || result.imageBase64, 'image/png');
   const blob = base64ToBlob(result.imageBase64, 'image/png');
   const { width: sheetW, height: sheetH } = await measureImage(blob);
@@ -730,7 +746,7 @@ export async function retryAnimation(
   photoHash: string,
   animationName: string,
   onStatus: StatusCallback,
-  options?: { idleMode?: IdleGenerationMode },
+  options?: { spriteMode?: SpriteGenerationMode; idleMode?: SpriteGenerationMode },
 ): Promise<void> {
   const meta = await getCachedMeta(photoHash);
   if (!meta) throw new Error('Character not found');
@@ -775,7 +791,7 @@ export async function retryAnimation(
   const baseImage = anim.base === 'crouched' ? crouchViewInputBase64 : sideViewBase64;
   const secondaryImage = anim.name === 'crouch' ? crouchViewInputBase64 : undefined;
   const primaryImage = anim.name === 'crouch' ? crouchSourceInputBase64 : baseImage;
-  const idleMode = options?.idleMode ?? 'frame_sequence';
+  const spriteMode: SpriteGenerationMode = options?.spriteMode ?? options?.idleMode ?? 'sheet_refined';
 
   if (isCrouchFamilyAnimation(anim)) {
     const message =
@@ -792,7 +808,7 @@ export async function retryAnimation(
     secondaryImage,
     undefined,
     isCrouchFamilyAnimation(anim) ? crouchSpriteNormalizationReference : undefined,
-    idleMode,
+    spriteMode,
   ).catch(async (err: any) => {
     if (err instanceof PartialSpriteGenerationError && err.partialResult) {
       const partialBlob = base64ToBlob(err.partialResult.imageBase64, 'image/png');
@@ -805,7 +821,7 @@ export async function retryAnimation(
         frameHeight: Math.round(partialSheetH / err.partialResult.gridRows),
         frameCount: err.partialResult.frameCount,
         reason: err.message,
-        mode: anim.name === 'idle' ? idleMode : 'sheet',
+        mode: spriteMode,
         createdAt: Date.now(),
       });
       await setCachedMeta(meta);

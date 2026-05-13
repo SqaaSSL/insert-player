@@ -11,8 +11,15 @@ import { getAnimationProfile, type AnimationProfile } from './AnimationProfiles'
 import { publishDebugLog } from './DebugLog';
 
 const ALPHA_THRESHOLD = 15;
-export const CELL_W = 192;
-export const CELL_H = 256;
+// CELL_W/CELL_H is the per-frame resolution stored in the IndexedDB sprite
+// cache — not the in-game render size. Phaser renders fighters at
+// FIGHTER_WIDTH/FIGHTER_HEIGHT (192×256) via AiSpriteLoader, which downsamples
+// from whatever this cache resolution is. Larger cells = higher-fidelity
+// previews/GIF/RAW exports + better GPU-downsampled in-game textures, at a
+// proportional cache-size cost. 4× (768×1024) puts each frame at roughly
+// native Gemini output resolution so almost no detail is lost in normalization.
+export const CELL_W = 768;
+export const CELL_H = 1024;
 
 const GREEN_HUE_MIN = 70;
 const GREEN_HUE_MAX = 170;
@@ -108,6 +115,59 @@ export async function cleanReposedImage(
   }
 
   return normalized.canvas.toDataURL('image/png').split(',')[1];
+}
+
+// Neutralizes green ambient bounce on character pixels BEFORE any segmentation
+// runs. The Gemini output puts the character on a pure green background; bright
+// skin/clothing highlights pick up a subtle green tint from the rendered
+// "ambient bounce" of the green bg. That tint confuses both BiRefNet (DNN
+// segmentation) and chroma-key — they can mistake green-tinted skin for
+// background.
+//
+// This function fixes the input image once, then the SAME corrected image is
+// fed to BOTH segmentation paths. The pure-green bg pixels (where r and b are
+// both very low) are left UNTOUCHED so chroma-key can still detect and remove
+// them. Only character pixels with a slight green dominance get their green
+// channel pulled toward max(r, b), removing the spill without affecting hue
+// of legitimately green/yellow surfaces.
+function preNeutralizeGreenSpill(data: ImageData): void {
+  const d = data.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+
+    // Skip if green is not the dominant channel — no spill to remove here.
+    if (g <= r || g <= b) continue;
+    // Skip if this looks like the actual chroma background (very low r AND
+    // low b) — leave for the chroma-key flood-fill to handle later.
+    if (r < 55 && b < 55) continue;
+
+    const target = Math.max(r, b);
+    const excess = g - target;
+    if (excess < 4) continue;
+
+    // Pull the green channel most of the way to max(r, b). Keep ~15% of the
+    // original excess so genuinely green-tinted surfaces (sweater, foliage)
+    // still read as green, just without the rendered glow.
+    d[i + 1] = Math.min(255, target + Math.round(excess * 0.15));
+  }
+}
+
+// Public wrapper: takes a base64 PNG with green spill, returns a base64 PNG
+// where the spill is neutralized on character pixels but the chroma-green bg
+// is preserved untouched. Use BEFORE any segmentation step.
+export async function neutralizeGreenSpillForSegmentation(base64: string): Promise<string> {
+  const img = await loadImg(`data:image/png;base64,${base64}`);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(img, 0, 0);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  preNeutralizeGreenSpill(imageData);
+  ctx.putImageData(imageData, 0, 0);
+  return canvas.toDataURL('image/png').split(',')[1];
 }
 
 export async function cleanReposedImagePreserveCanvas(base64: string): Promise<string> {
@@ -649,42 +709,137 @@ function lightBgRemove(data: ImageData): void {
 
 // ─── Chroma key background removal ──────────────────────────────────
 
+// Returns true for pixels that look like background-ish green. Used by edge
+// flood-fill — relaxed enough to catch anti-aliased edge spill, but still
+// requires green to be the dominant channel (so skin highlights are spared).
+function isFloodableGreen(r: number, g: number, b: number, a: number): boolean {
+  if (a < ALPHA_THRESHOLD) return true;
+  if (g < 60) return false;
+  if (g <= r) return false;
+  if (g <= b) return false;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const sat = max === 0 ? 0 : (max - min) / max;
+  if (sat < 0.22) return false;
+  // Hue must be in the green band.
+  const delta = max - min;
+  let hue = 0;
+  if (delta > 0) {
+    if (max === r) hue = 60 * (((g - b) / delta) % 6);
+    else if (max === g) hue = 60 * ((b - r) / delta + 2);
+    else hue = 60 * ((r - g) / delta + 4);
+    if (hue < 0) hue += 360;
+  }
+  return hue >= 75 && hue <= 165;
+}
+
+// Strict test: only matches near-pure Gemini chroma green. Used as a safety
+// net for internal background pockets (e.g., between an arm and the torso)
+// that the edge flood-fill cannot reach. Skin/face highlights never pass this.
+function isStrictGreen(r: number, g: number, b: number, a: number): boolean {
+  if (a < ALPHA_THRESHOLD) return true;
+  if (g < 130) return false;
+  if (g < r * 1.5) return false;
+  if (g < b * 1.5) return false;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const sat = max === 0 ? 0 : (max - min) / max;
+  return sat >= 0.55;
+}
+
+// Desaturates green spill on surviving (non-background) pixels.
+// For each pixel where green is the dominant channel, push green back toward
+// max(red, blue) so the green ambient bounce on the character disappears
+// without losing the underlying skin/clothing tone.
+function suppressGreenSpill(data: ImageData): void {
+  const d = data.data;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i + 3] === 0) continue;
+    const r = d[i];
+    const g = d[i + 1];
+    const b = d[i + 2];
+    if (g <= r && g <= b) continue;
+    const target = Math.max(r, b);
+    if (g <= target) continue;
+    // Only neutralize if green is more than ~5% above the next channel; below
+    // that it's just natural variation in a green-tinted material (e.g., a
+    // green sweater) that we'd be wrong to flatten.
+    if (g < Math.round(target * 1.05)) continue;
+    // Pull green most of the way to target — keep a touch of original green
+    // so genuinely greenish surfaces still read as green, just not glowing.
+    d[i + 1] = Math.round(target + (g - target) * 0.2);
+  }
+}
+
 function chromaKeyRemove(data: ImageData): void {
   const d = data.data;
+  const w = data.width;
+  const h = data.height;
+  const bg = new Uint8Array(w * h);
+  const queue: number[] = [];
 
-  for (let i = 0; i < d.length; i += 4) {
-    const r = d[i], g = d[i + 1], b = d[i + 2], a = d[i + 3];
-    if (a < ALPHA_THRESHOLD) { d[i + 3] = 0; continue; }
-
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const delta = max - min;
-
-    if (max < GREEN_BRIGHT_MIN) continue;
-
-    const sat = max === 0 ? 0 : delta / max;
-    if (sat < GREEN_SAT_MIN) continue;
-
-    let hue = 0;
-    if (delta > 0) {
-      if (max === r) hue = 60 * (((g - b) / delta) % 6);
-      else if (max === g) hue = 60 * ((b - r) / delta + 2);
-      else hue = 60 * ((r - g) / delta + 4);
-      if (hue < 0) hue += 360;
+  // Pass 1: flood-fill from every edge pixel. A pixel joins the background
+  // set only if it itself looks floodable AND it's reachable from the border.
+  // This guarantees interior character pixels never get killed, even when
+  // they happen to look slightly greenish (face highlights, light spill).
+  const trySeed = (x: number, y: number) => {
+    const idx = y * w + x;
+    if (bg[idx]) return;
+    const i = idx * 4;
+    if (isFloodableGreen(d[i], d[i + 1], d[i + 2], d[i + 3])) {
+      bg[idx] = 1;
+      queue.push(idx);
     }
+  };
+  for (let x = 0; x < w; x++) {
+    trySeed(x, 0);
+    trySeed(x, h - 1);
+  }
+  for (let y = 0; y < h; y++) {
+    trySeed(0, y);
+    trySeed(w - 1, y);
+  }
 
-    if (hue >= GREEN_HUE_MIN && hue <= GREEN_HUE_MAX) {
-      if (sat > 0.5 && g > r && g > b) {
-        d[i + 3] = 0;
-      } else {
-        const greenness = sat * (g / (r + g + b + 1));
-        if (greenness > 0.25) {
-          const alpha = Math.round(Math.max(0, 1 - (greenness - 0.25) / 0.15) * 255);
-          d[i + 3] = Math.min(a, alpha);
-        }
+  while (queue.length > 0) {
+    const idx = queue.pop()!;
+    const x = idx % w;
+    const y = Math.floor(idx / w);
+    const neighbours: Array<[number, number]> = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    for (const [dx, dy] of neighbours) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+      const nIdx = ny * w + nx;
+      if (bg[nIdx]) continue;
+      const i = nIdx * 4;
+      if (isFloodableGreen(d[i], d[i + 1], d[i + 2], d[i + 3])) {
+        bg[nIdx] = 1;
+        queue.push(nIdx);
       }
     }
   }
+
+  // Pass 2: clean up internal background pockets (e.g., the gap between an
+  // arm and the torso) that flood-fill could not reach. Strict test only —
+  // never touches skin or clothing.
+  for (let idx = 0; idx < bg.length; idx++) {
+    if (bg[idx]) continue;
+    const i = idx * 4;
+    if (isStrictGreen(d[i], d[i + 1], d[i + 2], d[i + 3])) {
+      bg[idx] = 1;
+    }
+  }
+
+  // Apply background mask and produce a soft 1-pixel feather so edges aren't
+  // razor-sharp against the flood-filled boundary.
+  for (let idx = 0; idx < bg.length; idx++) {
+    if (bg[idx]) {
+      d[idx * 4 + 3] = 0;
+    }
+  }
+
+  // Pass 3: kill green spill on surviving character pixels.
+  suppressGreenSpill(data);
 }
 
 // ─── Alpha edge erosion (removes fringe pixels left by bg removal) ──
