@@ -4,6 +4,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { frontendHeadersForTarget } from './frontend-security-headers.mjs';
+import { textReferencesHostname, textReferencesOrigin } from './url-reference.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
@@ -859,13 +860,17 @@ function assertSandboxIsolationIsWired() {
   const sandboxDatabaseId = sandboxConfig.match(/database_id\s*=\s*"([^"]+)"/)?.[1];
   const productionBucket = productionConfig.match(/bucket_name\s*=\s*"([^"]+)"/)?.[1];
   const sandboxBucket = sandboxConfig.match(/bucket_name\s*=\s*"([^"]+)"/)?.[1];
+  const sandboxDatabaseName = sandboxConfig.match(/database_name\s*=\s*"([^"]+)"/)?.[1];
   if (!productionDatabaseId || !sandboxDatabaseId || productionDatabaseId === sandboxDatabaseId) {
     throw new Error('Production and sandbox must use different D1 database ids.');
   }
   if (!productionBucket || !sandboxBucket || productionBucket === sandboxBucket) {
     throw new Error('Production and sandbox must use different R2 buckets.');
   }
-  if (sandboxConfig.includes('https://api.insertplayer.ai') || sandboxConfig.includes('database_name = "insert-player-db"')) {
+  if (
+    textReferencesOrigin(sandboxConfig, 'https://api.insertplayer.ai')
+    || sandboxDatabaseName === 'insert-player-db'
+  ) {
     throw new Error('Sandbox Wrangler config references a production origin or database.');
   }
   const secretKeys = [
@@ -2852,7 +2857,7 @@ function assertLaunchMetadataIsWired() {
     "`--target=${isSandbox ? 'sandbox' : 'live'}`",
   ];
   const missingHtml = requiredHtml.filter((snippet) => !html.includes(snippet));
-  if (html.includes('fonts.googleapis.com') || html.includes('fonts.gstatic.com')) {
+  if (textReferencesHostname(html, ['fonts.googleapis.com', 'fonts.gstatic.com'])) {
     throw new Error('Launch HTML must self-host fonts instead of sending player requests to Google Fonts.');
   }
   if (!main.includes("import '@fontsource/press-start-2p/latin-400.css'")) {

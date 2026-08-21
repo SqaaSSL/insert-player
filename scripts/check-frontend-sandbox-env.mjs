@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeClerkPublishableKey } from './clerk-publishable-key.mjs';
 import { frontendHeadersForTarget } from './frontend-security-headers.mjs';
+import { textReferencesOrigin } from './url-reference.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const expectedWorkerUrl = 'https://insert-player-api-sandbox.shellbot.workers.dev';
@@ -62,7 +63,10 @@ if (!decodedClerkKey || decodedClerkKey.environment !== 'test') {
     apiOrigin: expectedWorkerUrl,
     clerkFrontendApiOrigin: decodedClerkKey.frontendApiOrigin,
   });
-  if (headers.includes('https://api.insertplayer.ai') || headers.includes('https://clerk.insertplayer.ai')) {
+  if (
+    textReferencesOrigin(headers, 'https://api.insertplayer.ai')
+    || textReferencesOrigin(headers, 'https://clerk.insertplayer.ai')
+  ) {
     errors.push('Sandbox frontend CSP must not trust production API or Clerk origins.');
   }
 }
