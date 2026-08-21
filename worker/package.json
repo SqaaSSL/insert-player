@@ -31,11 +31,11 @@
     "db:execute:0017": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0017_provider_cost_events.sql"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260817.1",
-    "wrangler": "^4.123.0"
+    "@cloudflare/workers-types": "^5.20260818.1",
+    "wrangler": "^4.124.0"
   },
   "dependencies": {
-    "@clerk/backend": "^3.16.6",
-    "jose": "^6.2.3"
+    "@clerk/backend": "^3.16.7",
+    "jose": "^6.2.9"
   }
 }
