@@ -9,6 +9,18 @@ function apiProxyPlugin(): Plugin {
   let runwayKey = '';
   let falKey = '';
 
+  function sanitizeProxyUrlForLog(rawUrl: string): string {
+    try {
+      const url = new URL(rawUrl);
+      for (const key of ['key', 'api_key', 'apikey', 'token', 'access_token']) {
+        if (url.searchParams.has(key)) url.searchParams.set(key, '<redacted>');
+      }
+      return url.toString();
+    } catch {
+      return rawUrl.replace(/([?&](?:key|api_key|apikey|token|access_token)=)[^&\s]+/gi, '$1<redacted>');
+    }
+  }
+
   async function proxyRequest(
     req: IncomingMessage,
     res: ServerResponse,
@@ -17,8 +29,9 @@ function apiProxyPlugin(): Plugin {
   ) {
     const body = await collectBody(req);
     const method = req.method ?? 'POST';
+    const safeTargetUrl = sanitizeProxyUrlForLog(targetUrl);
 
-    console.log(`[proxy] ${method} ${targetUrl} (body: ${body.length} bytes)`);
+    console.log(`[proxy] ${method} ${safeTargetUrl} (body: ${body.length} bytes)`);
 
     const upstreamHeaders: Record<string, string> = {
       ...extraHeaders,
@@ -36,9 +49,11 @@ function apiProxyPlugin(): Plugin {
 
       const ct = upstream.headers.get('content-type');
       if (ct) res.setHeader('Content-Type', ct);
+      const retryAfter = upstream.headers.get('retry-after');
+      if (retryAfter) res.setHeader('Retry-After', retryAfter);
 
       const respBody = Buffer.from(await upstream.arrayBuffer());
-      console.log(`[proxy] ${method} ${targetUrl} → ${upstream.status} (${respBody.length} bytes)`);
+      console.log(`[proxy] ${method} ${safeTargetUrl} -> ${upstream.status} (${respBody.length} bytes)`);
 
       if (upstream.status >= 400) {
         const preview = respBody.toString('utf-8').slice(0, 300);
@@ -48,7 +63,7 @@ function apiProxyPlugin(): Plugin {
       res.writeHead(upstream.status);
       res.end(respBody);
     } catch (err: any) {
-      console.error(`[proxy] ${method} ${targetUrl} FAILED:`, err.message);
+      console.error(`[proxy] ${method} ${safeTargetUrl} FAILED:`, err.message);
       res.writeHead(502);
       res.end(`Proxy error: ${err.message}`);
     }
@@ -95,7 +110,7 @@ function apiProxyPlugin(): Plugin {
       }
 
       const publicUrl = (await upstream.text()).trim();
-      console.log(`[proxy] Temp image uploaded: ${publicUrl}`);
+      console.log('[proxy] Temp image uploaded');
 
       res.setHeader('Content-Type', 'application/json');
       res.writeHead(200);
@@ -111,18 +126,18 @@ function apiProxyPlugin(): Plugin {
     name: 'api-proxy',
     configureServer(server) {
       const env = loadEnv('', process.cwd(), '');
-      ludoKey = env.LUDO_API_KEY || env.VITE_LUDO_API_KEY || '';
-      freepikKey = env.FREEPIK_API_KEY || env.VITE_FREEPIK_API_KEY || '';
+      ludoKey = env.LUDO_API_KEY || '';
+      freepikKey = env.FREEPIK_API_KEY || '';
       geminiKey = env.GEMINI_API_KEY || '';
-      runwayKey = env.RUNWAY_API_KEY || env.VITE_RUNWAY_API_KEY || '';
-      falKey = env.FAL_API_KEY || env.VITE_FAL_API_KEY || '';
+      runwayKey = env.RUNWAY_API_KEY || '';
+      falKey = env.FAL_API_KEY || '';
 
-      const mask = (k: string) => k ? `${k.slice(0, 4)}...${k.slice(-4)} (${k.length} chars)` : 'NOT SET';
-      console.log(`[proxy] LUDO_API_KEY: ${mask(ludoKey)}`);
-      console.log(`[proxy] FREEPIK_API_KEY: ${mask(freepikKey)}`);
-      console.log(`[proxy] GEMINI_API_KEY: ${mask(geminiKey)}`);
-      console.log(`[proxy] RUNWAY_API_KEY: ${mask(runwayKey)}`);
-      console.log(`[proxy] FAL_API_KEY: ${mask(falKey)}`);
+      const configured = (key: string) => key ? 'configured' : 'missing';
+      console.log(`[proxy] LUDO_API_KEY: ${configured(ludoKey)}`);
+      console.log(`[proxy] FREEPIK_API_KEY: ${configured(freepikKey)}`);
+      console.log(`[proxy] GEMINI_API_KEY: ${configured(geminiKey)}`);
+      console.log(`[proxy] RUNWAY_API_KEY: ${configured(runwayKey)}`);
+      console.log(`[proxy] FAL_API_KEY: ${configured(falKey)}`);
 
       server.middlewares.use((req, res, next) => {
         const url = req.url ?? '';
@@ -132,14 +147,15 @@ function apiProxyPlugin(): Plugin {
           return;
         }
 
-        if (url.startsWith('/proxy/image')) {
-          const imgUrl = new URL(url, 'http://localhost').searchParams.get('url');
-          if (!imgUrl) {
+        if (url.startsWith('/proxy/image') || url.startsWith('/proxy/media')) {
+          const isMediaProxy = url.startsWith('/proxy/media');
+          const targetUrl = new URL(url, 'http://localhost').searchParams.get('url');
+          if (!targetUrl) {
             res.writeHead(400);
             res.end('Missing ?url= parameter');
             return;
           }
-          fetch(imgUrl)
+          fetch(targetUrl)
             .then(async (upstream) => {
               if (!upstream.ok) {
                 res.writeHead(upstream.status);
@@ -147,6 +163,12 @@ function apiProxyPlugin(): Plugin {
                 return;
               }
               const ct = upstream.headers.get('content-type');
+              const normalizedType = ct?.toLowerCase() ?? '';
+              if (normalizedType && !normalizedType.startsWith('image/') && !(isMediaProxy && normalizedType.startsWith('video/'))) {
+                res.writeHead(415);
+                res.end(isMediaProxy ? 'Upstream did not return supported media' : 'Upstream did not return an image');
+                return;
+              }
               if (ct) res.setHeader('Content-Type', ct);
               res.setHeader('Cache-Control', 'public, max-age=86400');
               res.writeHead(200);
@@ -205,6 +227,21 @@ function apiProxyPlugin(): Plugin {
   };
 }
 
-export default defineConfig({
-  plugins: [tailwindcss(), apiProxyPlugin()],
-});
+function prelaunchEntryPlugin(mode: string): Plugin {
+  return {
+    name: 'prelaunch-entry',
+    transformIndexHtml: {
+      order: 'pre',
+      handler(html) {
+        return mode === 'prelaunch'
+          ? html.replace('/src/main.tsx', '/src/prelaunch.tsx')
+          : html;
+      },
+    },
+  };
+}
+
+export default defineConfig(({ mode }) => ({
+  envDir: mode === 'prelaunch' ? false : undefined,
+  plugins: [prelaunchEntryPlugin(mode), tailwindcss(), apiProxyPlugin()],
+}));

@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 4,
+  "validatedAt": "2026-05-17T00:00:00.000Z",
+  "legalVersion": "2026-08-19",
+  "frontendUrl": "https://insertplayer.ai",
+  "workerUrl": "https://api.insertplayer.ai",
+  "publicBrandName": "Insert Player",
+  "publicShortName": "P1",
+  "primaryClerkUserId": "user_primary_replace_me",
+  "secondaryClerkUserId": "user_secondary_replace_me",
+  "tierFighterIds": {
+    "rookie": "rookie_cloud_fighter_id_replace_me",
+    "contender": "contender_cloud_fighter_id_replace_me",
+    "champion": "champion_cloud_fighter_id_replace_me"
+  },
+  "checks": {
+    "signed_out_menu": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Fresh signed-out browser loaded /menu from the production Pages URL."
+    },
+    "brand_metadata_social_preview": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Production HTML title, Open Graph/Twitter metadata, manifest name, social-card PNG, app icons, and Worker /share/:id metadata all used Insert Player with no internal project name."
+    },
+    "signed_out_rookie_policy": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Signed-out Create defaulted to Rookie and paid tiers were locked in UI and Worker responses."
+    },
+    "legal_pages_and_generation_consent": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Opened /legal, /privacy, /terms, and /refunds; current company details and AI-generated disclosures were visible, and generation stayed disabled until the versioned age/photo/AI/immediate-performance consent was checked."
+    },
+    "support_email_delivery": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Sent separate messages to privacy@insertplayer.ai and support@insertplayer.ai and confirmed both reached the verified operator inbox."
+    },
+    "turnstile_valid_token_and_replay": {
+      "passed": true,
+      "evidence": "evidence_replace_me: A production Turnstile token authorized one anonymous Rookie request; replaying the same token returned 403 and no providerSessionId."
+    },
+    "clerk_sign_in_profile": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Signed in with Clerk and /auth/me returned the expected production user profile."
+    },
+    "shared_browser_account_isolation": {
+      "passed": true,
+      "evidence": "evidence_replace_me: In one browser profile, user A created/imported a fighter, signed out, and user B saw an empty/private roster; switching back restored only user A's local and cloud roster."
+    },
+    "clerk_account_deletion_purge": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Deleted a disposable Clerk user with a synced fighter; signed webhook purged its R2/D1 data and the old JWT returned 401 without recreating the account."
+    },
+    "stripe_test_checkout_credit": {
+      "passed": true,
+      "evidence": "evidence_replace_me: In the isolated Insert Player Stripe sandbox, Checkout completed, webhook credited exactly one pack, and duplicate delivery was idempotent."
+    },
+    "stripe_checkout_consent_tax_customer": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Checkout stayed disabled until purchase consent, collected Stripe Terms consent, calculated tax from an inclusive EUR price, and reused the same Stripe Customer for the Clerk user."
+    },
+    "stripe_live_checkout_credit": {
+      "passed": true,
+      "evidence": "evidence_replace_me: In the isolated live Insert Player Stripe account, a real Starter purchase credited exactly 11 credits once and appeared with the expected EUR tax treatment."
+    },
+    "rookie_generation_commit": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Generated a Rookie fighter on production and verified the generation reservation committed."
+    },
+    "contender_generation_commit_cloud_sync": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Generated a Contender fighter on production and verified paid credits committed plus cloud sync completed."
+    },
+    "champion_generation_commit_cloud_sync": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Generated a Champion fighter on production and verified paid credits committed plus cloud sync completed."
+    },
+    "generation_failure_refund": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Forced a production generation failure and verified /api/billing/generation/complete refunded reserved credits."
+    },
+    "second_device_import_and_play": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Signed in on a second device, imported the cloud fighter, selected it in /roster/cpu, and played a match."
+    },
+    "cross_device_retry_or_upgrade_refresh": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Retried or upgraded a fighter on device one and verified device two refreshed the newer cloud version."
+    },
+    "version_preservation_after_upgrade": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Verified older generated versions remained present locally/cloud-side after an upgrade."
+    },
+    "rename_delete_cloud_sync": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Renamed and deleted a synced fighter in Gallery and verified the same Clerk user's cloud copy changed."
+    },
+    "duplicate_source_sprite_upload_idempotency": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Repeated Sync Cloud/retry uploads for identical source and sprite content reused archived versions."
+    },
+    "publish_share_clone_full_animation": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Published a full-animation fighter, shared it, and cloned it without exposing original/raw assets."
+    },
+    "share_page_metadata_and_deep_link": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Opened /share/:id and /community?fighter=:id in a fresh browser; metadata and featured clone flow worked."
+    },
+    "community_report_moderation": {
+      "passed": true,
+      "evidence": "evidence_replace_me: A signed-in player reported a public fighter, an admin reviewed it with an audit note, repeated reports stayed deduplicated, and manual action removed it from Community without automatic threshold enforcement."
+    },
+    "asset_privacy_headers": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Verified private assets reject signed-out access and public assets use immutable public cache headers."
+    },
+    "proxy_rate_limit_retry_after": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Repeated expensive proxy calls returned 429 with Retry-After under the production rate limit."
+    },
+    "upload_temp_uses_worker_r2": {
+      "passed": true,
+      "evidence": "evidence_replace_me: /proxy/upload-temp returned a Worker /temp-assets/* URL and provider flow avoided third-party temp hosts."
+    },
+    "signed_in_match_stats": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Finished a signed-in match and verified /api/stats included the recent match and updated record."
+    },
+    "source_views_pro_all_tiers": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Generated Rookie, Contender, and Champion fighters and confirmed source views used Pro model settings."
+    },
+    "bg_removal_face_integrity": {
+      "passed": true,
+      "evidence": "evidence_replace_me: Reviewed generated refined animations in Gallery and confirmed faces no longer have mask holes."
+    }
+  }
+}

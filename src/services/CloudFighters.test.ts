@@ -1,0 +1,172 @@
+import { describe, expect, it } from 'vitest';
+import {
+  buildSpriteDownloadPlan,
+  buildSpriteUploadPlan,
+  shouldRefreshLocalFighter,
+  type CloudSprite,
+  type FingerprintedSprite,
+} from './CloudFighters.ts';
+import type { CachedMeta, CachedSprite } from './SpriteCache.ts';
+
+function candidate(
+  versionId: string,
+  createdAt: number,
+  contentHash: string,
+  qualityTier: CachedSprite['qualityTier'] = 'champion',
+): FingerprintedSprite {
+  return {
+    contentHash,
+    rawContentHash: `${contentHash}-raw`,
+    sprite: {
+      ownerScope: 'user:test',
+      versionId,
+      photoHash: 'fighter-hash',
+      animationName: 'walk',
+      qualityTier,
+      pngBlob: new Blob(['sprite']),
+      rawPngBlob: new Blob(['raw']),
+      frameWidth: 256,
+      frameHeight: 256,
+      frameCount: 8,
+      processingVersion: 5,
+      createdAt,
+    },
+  };
+}
+
+function cloudSprite(
+  contentHash: string,
+  qualityTier: CloudSprite['qualityTier'] = 'champion',
+): CloudSprite {
+  return {
+    animationName: 'walk',
+    qualityTier,
+    contentHash,
+    rawContentHash: `${contentHash}-raw`,
+    url: 'https://api.insertplayer.ai/assets/walk.png',
+    rawUrl: 'https://api.insertplayer.ai/assets/walk-raw.png',
+    frameWidth: 256,
+    frameHeight: 256,
+    frameCount: 8,
+    processingVersion: 5,
+  };
+}
+
+describe('buildSpriteUploadPlan', () => {
+  it('promotes an archived current version without re-uploading its bytes', () => {
+    const oldVersion = candidate('old', 1, 'old-hash');
+    const current = candidate('current', 2, 'current-hash');
+
+    const plan = buildSpriteUploadPlan(
+      [current, oldVersion],
+      [current],
+      [cloudSprite('old-hash'), cloudSprite('current-hash')],
+      [cloudSprite('old-hash')],
+    );
+
+    expect(plan).toEqual([{ kind: 'promote', candidate: current }]);
+  });
+
+  it('does no writes when cloud history and current pointers already match', () => {
+    const current = candidate('current', 2, 'current-hash');
+    expect(buildSpriteUploadPlan(
+      [current],
+      [current],
+      [cloudSprite('current-hash')],
+      [cloudSprite('current-hash')],
+    )).toEqual([]);
+  });
+
+  it('uploads a missing historical version as archive and a missing current once', () => {
+    const archived = candidate('archived', 1, 'archive-hash', 'contender');
+    const current = candidate('current', 2, 'current-hash');
+
+    expect(buildSpriteUploadPlan([archived, current], [current], [], [])).toEqual([
+      { kind: 'upload', candidate: archived, setCurrent: true },
+      { kind: 'upload', candidate: current, setCurrent: true },
+    ]);
+  });
+
+  it('uploads non-current history without moving a matching current pointer', () => {
+    const archived = candidate('archived', 1, 'archive-hash');
+    const current = candidate('current', 2, 'current-hash');
+
+    expect(buildSpriteUploadPlan(
+      [current, archived],
+      [current],
+      [cloudSprite('current-hash')],
+      [cloudSprite('current-hash')],
+    )).toEqual([{ kind: 'upload', candidate: archived, setCurrent: false }]);
+  });
+});
+
+describe('buildSpriteDownloadPlan', () => {
+  it('skips remote versions already present by content hash', () => {
+    const local = candidate('local-version', 1, 'same-hash');
+    expect(buildSpriteDownloadPlan(
+      [cloudSprite('same-hash')],
+      [local],
+    )).toEqual([]);
+  });
+
+  it('downloads only a missing RAW blob for an imported version id', () => {
+    const local = candidate('remote-version', 1, 'same-hash');
+    local.sprite.rawPngBlob = undefined;
+    const remote = { ...cloudSprite('same-hash'), id: 'remote-version' };
+    expect(buildSpriteDownloadPlan([remote], [local])).toEqual([{
+      remote,
+      existing: local.sprite,
+      downloadProcessed: false,
+      downloadRaw: true,
+    }]);
+  });
+
+  it('downloads both blobs for a genuinely missing remote version', () => {
+    const remote = { ...cloudSprite('new-hash'), id: 'new-version' };
+    expect(buildSpriteDownloadPlan([remote], [])).toEqual([{
+      remote,
+      existing: null,
+      downloadProcessed: true,
+      downloadRaw: true,
+    }]);
+  });
+});
+
+describe('shouldRefreshLocalFighter', () => {
+  it('does not confuse three tier pointers with missing animation names', () => {
+    const names = ['idle', 'walk', 'high_punch'];
+    const sprites = (['rookie', 'contender', 'champion'] as const).flatMap((tier) =>
+      names.map((name) => ({ ...cloudSprite(`${tier}-${name}`, tier), animationName: name })),
+    );
+    expect(shouldRefreshLocalFighter({
+      id: 'fighter-cloud',
+      name: 'Nova QA',
+      photoHash: 'fighter-hash',
+      qualityTier: 'champion',
+      public: false,
+      sources: {},
+      sprites,
+      updatedAt: '2026-08-19T02:00:00.000Z',
+    }, {
+      photoHash: 'fighter-hash',
+      version: 1,
+      originalPhotoBlob: null,
+      sideViewBlob: null,
+      sideViewRawBlob: null,
+      uprightViewBlob: null,
+      uprightViewRawBlob: null,
+      sideViewCleanBlob: null,
+      crouchViewBlob: null,
+      crouchViewRawBlob: null,
+      crouchViewCleanBlob: null,
+      noBgBlob: null,
+      characterName: 'Nova QA',
+      qualityTier: 'champion',
+      cloudFighterId: 'fighter-cloud',
+      status: 'ready',
+      animationsReady: names,
+      createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
+      updatedAt: Date.parse('2026-08-19T02:00:00.000Z'),
+    } as CachedMeta)).toBe(false);
+  });
+});

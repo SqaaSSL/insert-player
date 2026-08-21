@@ -1,0 +1,55 @@
+name: Reusable validation
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Production gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Worker dependencies
+        run: npm --prefix worker ci
+
+      - name: Run production checks
+        run: npm run check:production
+
+      - name: Build production frontend
+        run: npm run build
+
+      - name: Build sandbox frontend
+        run: npm run build:sandbox
+
+      - name: Validate production Worker bundle
+        run: npm --prefix worker run deploy -- --dry-run
+
+      - name: Validate sandbox Worker bundle
+        run: npm --prefix worker run deploy:sandbox -- --dry-run
+
+      - name: Audit frontend dependencies
+        run: npm audit --audit-level=high
+
+      - name: Audit Worker dependencies
+        run: npm --prefix worker audit --audit-level=high

@@ -30,7 +30,12 @@ import {
   getDefaultPersonalityId,
   getFighterPersonality,
   getMatchLabel,
+  MATCH_ACTION_EVENT,
+  MATCH_ACTIONS_VISIBILITY_EVENT,
+  MATCH_COMPLETE_EVENT,
   type FighterPersonalityId,
+  type MatchAction,
+  type MatchCompletionDetail,
   type MatchSceneData,
 } from "../match/MatchConfig.ts";
 import {
@@ -38,6 +43,7 @@ import {
   pickStageThemeIdFromSeed,
   type StageThemeId,
 } from "../match/StageConfig.ts";
+import { debugInfo, debugWarn } from "../../services/DebugLog.ts";
 
 enum RoundPhase {
   INTRO = 0,
@@ -72,14 +78,17 @@ export class FightScene extends Phaser.Scene {
   private stageBackdropTextureKey?: string;
   private stageVisualLayers: Phaser.GameObjects.Graphics[] = [];
   private ambientLayers: Phaser.GameObjects.Graphics[] = [];
-  private stageLoadingText?: Phaser.GameObjects.Text;
   private stageLoadId = 0;
 
   private projectiles: Projectile[] = [];
-  private matchOverUI?: Phaser.GameObjects.Text;
+  private matchActionKeys: Phaser.Input.Keyboard.Key[] = [];
+  private matchActionsVisible = false;
+  private matchActionCommitted = false;
   private waitingForMatchInput = false;
   private p1PhotoHash: string | null = null;
   private p2PhotoHash: string | null = null;
+  private p1CloudFighterId: string | null = null;
+  private p2CloudFighterId: string | null = null;
   private p1Name = "Player 1";
   private p2Name = "CPU";
   private p1PersonalityId: FighterPersonalityId = getDefaultPersonalityId(0);
@@ -93,7 +102,6 @@ export class FightScene extends Phaser.Scene {
   private stageFloorY = GROUND_Y;
   private fighterRenderScale = 1;
   private fighterRenderYOffset = 0;
-  private bottomOverlayY = GAME_HEIGHT - 60;
   private ready = false;
   private matchLabel = "";
   private stageDisplayLabel = "";
@@ -112,6 +120,8 @@ export class FightScene extends Phaser.Scene {
   private introVideoOverlayEl?: HTMLDivElement;
   private introVideoEl?: HTMLVideoElement;
   private introVideoUrl?: string;
+  private matchStartedAt = 0;
+  private matchReported = false;
 
   constructor() {
     super({ key: "FightScene" });
@@ -122,6 +132,8 @@ export class FightScene extends Phaser.Scene {
     this.isVsAI = data.vsAI !== false || this.cpuVsCpu;
     this.p1PhotoHash = data.p1PhotoHash ?? null;
     this.p2PhotoHash = data.p2PhotoHash ?? null;
+    this.p1CloudFighterId = data.p1CloudFighterId ?? null;
+    this.p2CloudFighterId = data.p2CloudFighterId ?? null;
     this.p1Name = data.p1Name ?? (this.cpuVsCpu ? "CPU 1" : "Player 1");
     this.p2Name = data.p2Name ?? (this.isVsAI ? "CPU" : "Player 2");
     this.p1PersonalityId = data.p1PersonalityId ?? getDefaultPersonalityId(0);
@@ -149,6 +161,7 @@ export class FightScene extends Phaser.Scene {
     this.p2Wins = 0;
     this.accumulator = 0;
     this.waitingForMatchInput = false;
+    this.matchActionCommitted = false;
     this.ready = false;
     this.matchLabel = "";
     this.stageDisplayLabel = "";
@@ -157,19 +170,22 @@ export class FightScene extends Phaser.Scene {
     this.introHasPlayed = false;
     this.cinematicIntroActive = false;
     this.introCanSkip = false;
+    this.matchStartedAt = Date.now();
+    this.matchReported = false;
   }
 
   async create(): Promise<void> {
+    window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
+    window.addEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
+
     if (this.customStageKey) {
       this.stageFloorY = GROUND_Y + 18;
       this.fighterRenderScale = 1.2;
       this.fighterRenderYOffset = this.stageFloorY - GROUND_Y;
-      this.bottomOverlayY = GAME_HEIGHT - 28;
     } else {
       this.stageFloorY = GROUND_Y;
       this.fighterRenderScale = 1.03;
       this.fighterRenderYOffset = 0;
-      this.bottomOverlayY = GAME_HEIGHT - 60;
     }
 
     const p1Personality = getFighterPersonality(this.p1PersonalityId);
@@ -247,8 +263,8 @@ export class FightScene extends Phaser.Scene {
     if (this.p1PhotoHash) {
       loads.push(
         loadAiSprites(this, "fighter_p1", this.p1PhotoHash).then((ok) => {
-          if (ok) console.log("Loaded AI sprites for P1");
-          else console.warn("No AI sprites found for P1, using procedural");
+          if (ok) debugInfo("Loaded AI sprites for P1");
+          else debugWarn("No AI sprites found for P1, using procedural");
         }),
       );
     }
@@ -256,8 +272,8 @@ export class FightScene extends Phaser.Scene {
     if (this.p2PhotoHash) {
       loads.push(
         loadAiSprites(this, "fighter_p2", this.p2PhotoHash).then((ok) => {
-          if (ok) console.log("Loaded AI sprites for P2");
-          else console.warn("No AI sprites found for P2, using procedural");
+          if (ok) debugInfo("Loaded AI sprites for P2");
+          else debugWarn("No AI sprites found for P2, using procedural");
         }),
       );
     }
@@ -826,7 +842,7 @@ export class FightScene extends Phaser.Scene {
       const cached = await getCachedStageBackground(this.customStageKey);
       if (!this.isActiveStageLoad(loadId)) return;
       if (!cached) {
-        console.warn(
+        debugWarn(
           "[FightScene] Missing cached photo stage, keeping neutral arena shell",
         );
         return;
@@ -834,7 +850,7 @@ export class FightScene extends Phaser.Scene {
       await this.applyStageBackground(cached.pngBlob, loadId);
     } catch (err: any) {
       if (!this.isActiveStageLoad(loadId)) return;
-      console.warn(
+      debugWarn(
         "[FightScene] Photo stage failed to load, keeping neutral arena shell:",
         err?.message || err,
       );
@@ -845,7 +861,7 @@ export class FightScene extends Phaser.Scene {
     if (this.stageId) return;
 
     const loadId = ++this.stageLoadId;
-    const cacheScope = this.stageId ? "stage" : "matchup";
+    const cacheScope = "stage";
 
     try {
       const cached = await getCachedStageBackgroundForRequest({
@@ -856,11 +872,13 @@ export class FightScene extends Phaser.Scene {
       if (!this.isActiveStageLoad(loadId)) return;
 
       if (cached) {
-        await this.applyStageBackground(cached.pngBlob, loadId);
+        const applied = await this.applyStageBackground(cached.pngBlob, loadId, true);
+        if (!applied) {
+          debugInfo("[FightScene] Cached AI arena will apply on the next match; preserving the active round");
+        }
         return;
       }
 
-      this.setStageLoadingText("SUMMONING ARENA...");
       const generated = await ensureStageBackground({
         matchSeed: this.matchSeed,
         stageId: this.resolvedStageId,
@@ -874,15 +892,16 @@ export class FightScene extends Phaser.Scene {
       });
 
       if (!this.isActiveStageLoad(loadId)) return;
-      await this.applyStageBackground(generated.pngBlob, loadId);
-      this.setStageLoadingText("ARENA READY", 900);
+      const applied = await this.applyStageBackground(generated.pngBlob, loadId, true);
+      if (!applied) {
+        debugInfo("[FightScene] AI arena cached for the next match; preserving the active round");
+      }
     } catch (err: any) {
       if (!this.isActiveStageLoad(loadId)) return;
-      console.warn(
+      debugWarn(
         "[FightScene] AI stage background failed, keeping procedural stage:",
         err?.message || err,
       );
-      this.clearStageLoadingText();
     }
   }
 
@@ -893,9 +912,16 @@ export class FightScene extends Phaser.Scene {
   private async applyStageBackground(
     blob: Blob,
     loadId: number,
-  ): Promise<void> {
+    beforeFirstExchangeOnly = false,
+  ): Promise<boolean> {
     const img = await this.loadBlobImage(blob);
-    if (!this.isActiveStageLoad(loadId)) return;
+    if (!this.isActiveStageLoad(loadId)) return false;
+    if (
+      beforeFirstExchangeOnly &&
+      (this.phase !== RoundPhase.INTRO || this.frameCount > 0)
+    ) {
+      return false;
+    }
 
     const texKey = this.customStageKey
       ? `stage_bg_custom_${this.customStageKey.replace(/[^a-z0-9_-]/gi, "_")}`
@@ -960,53 +986,8 @@ export class FightScene extends Phaser.Scene {
       alpha: 1,
       duration: 700,
       ease: "Sine.easeOut",
-      onComplete: () => this.clearStageLoadingText(),
     });
-  }
-
-  private setStageLoadingText(text: string, autoHideMs = 0): void {
-    if (!this.stageLoadingText) {
-      this.stageLoadingText = this.add
-        .text(GAME_WIDTH / 2, this.bottomOverlayY - 14, "", {
-          fontFamily: '"Press Start 2P", monospace',
-          fontSize: "8px",
-          color: "#88ddff",
-          stroke: "#000000",
-          strokeThickness: 2,
-        })
-        .setOrigin(0.5)
-        .setDepth(120);
-    }
-
-    this.tweens.killTweensOf(this.stageLoadingText);
-    this.stageLoadingText.setText(text).setAlpha(1);
-
-    if (autoHideMs > 0) {
-      this.time.delayedCall(autoHideMs, () => {
-        if (this.stageLoadingText?.text === text) {
-          this.clearStageLoadingText();
-        }
-      });
-    }
-  }
-
-  private clearStageLoadingText(immediate = false): void {
-    if (!this.stageLoadingText) return;
-    this.tweens.killTweensOf(this.stageLoadingText);
-    if (immediate) {
-      this.stageLoadingText.destroy();
-      this.stageLoadingText = undefined;
-      return;
-    }
-    this.tweens.add({
-      targets: this.stageLoadingText,
-      alpha: 0,
-      duration: 220,
-      onComplete: () => {
-        this.stageLoadingText?.destroy();
-        this.stageLoadingText = undefined;
-      },
-    });
+    return true;
   }
 
   private loadBlobImage(blob: Blob): Promise<HTMLImageElement> {
@@ -1207,45 +1188,17 @@ export class FightScene extends Phaser.Scene {
       document.getElementById("game-container") ??
       this.game.canvas.parentElement ??
       this.game.canvas;
-    const rect = container.getBoundingClientRect();
 
     const overlay = document.createElement("div");
-    overlay.style.position = "fixed";
-    overlay.style.left = `${rect.left}px`;
-    overlay.style.top = `${rect.top}px`;
-    overlay.style.width = `${rect.width}px`;
-    overlay.style.height = `${rect.height}px`;
-    overlay.style.zIndex = "1500";
-    overlay.style.display = "flex";
-    overlay.style.flexDirection = "column";
-    overlay.style.alignItems = "center";
-    overlay.style.justifyContent = "center";
-    overlay.style.gap = "16px";
-    overlay.style.padding = "24px";
-    overlay.style.boxSizing = "border-box";
-    overlay.style.background = "rgba(4,8,18,0.72)";
-    overlay.style.backdropFilter = "blur(4px)";
+    overlay.className = "intro-video-overlay";
 
     const header = document.createElement("div");
     header.textContent = "FIGHTER INTRO";
-    header.style.fontFamily = '"Press Start 2P", monospace';
-    header.style.fontSize = "12px";
-    header.style.color = "#9ed9ff";
-    header.style.textShadow = "0 2px 0 #000";
+    header.className = "intro-video-kicker";
     overlay.appendChild(header);
 
     const videoShell = document.createElement("div");
-    videoShell.style.position = "relative";
-    videoShell.style.width = "min(82vw, 1120px)";
-    videoShell.style.height = "min(68vh, 640px)";
-    videoShell.style.display = "flex";
-    videoShell.style.alignItems = "center";
-    videoShell.style.justifyContent = "center";
-    videoShell.style.border = "3px solid #4ea0ff";
-    videoShell.style.borderRadius = "12px";
-    videoShell.style.background = "#040810";
-    videoShell.style.boxShadow = "0 18px 48px rgba(0,0,0,0.55)";
-    videoShell.style.overflow = "hidden";
+    videoShell.className = "intro-video-shell";
 
     this.introVideoUrl = URL.createObjectURL(clip.blob);
     const video = document.createElement("video");
@@ -1256,54 +1209,25 @@ export class FightScene extends Phaser.Scene {
     video.muted = false;
     video.volume = 1;
     video.playsInline = true;
-    video.style.maxWidth = "100%";
-    video.style.maxHeight = "100%";
-    video.style.width = "auto";
-    video.style.height = "auto";
-    video.style.objectFit = "contain";
-    video.style.background = "#040810";
+    video.className = "intro-video-player";
     videoShell.appendChild(video);
 
     const topBadge = document.createElement("div");
     topBadge.textContent = clip.subtitle.toUpperCase();
-    topBadge.style.position = "absolute";
-    topBadge.style.left = "20px";
-    topBadge.style.top = "18px";
-    topBadge.style.padding = "8px 12px";
-    topBadge.style.fontFamily = '"Press Start 2P", monospace';
-    topBadge.style.fontSize = "10px";
-    topBadge.style.color = "#d7efff";
-    topBadge.style.textShadow = "0 2px 0 #000";
-    topBadge.style.background = "rgba(7,17,34,0.78)";
-    topBadge.style.border = "2px solid rgba(118,189,255,0.85)";
-    topBadge.style.borderRadius = "8px";
+    topBadge.className = "intro-video-badge";
     videoShell.appendChild(topBadge);
 
     const lowerThird = document.createElement("div");
-    lowerThird.style.position = "absolute";
-    lowerThird.style.left = "0";
-    lowerThird.style.right = "0";
-    lowerThird.style.bottom = "0";
-    lowerThird.style.padding = "18px 24px 20px";
-    lowerThird.style.background = "linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(3,7,16,0.72) 35%, rgba(3,7,16,0.94) 100%)";
-    lowerThird.style.pointerEvents = "none";
+    lowerThird.className = "intro-video-lower";
 
     const nameLine = document.createElement("div");
     nameLine.textContent = clip.title.toUpperCase();
-    nameLine.style.fontFamily = '"Press Start 2P", monospace';
-    nameLine.style.fontSize = "28px";
-    nameLine.style.lineHeight = "1.2";
-    nameLine.style.color = "#ffe26a";
-    nameLine.style.textShadow = "0 4px 0 #000";
+    nameLine.className = "intro-video-title";
     lowerThird.appendChild(nameLine);
 
     const subtitleLine = document.createElement("div");
     subtitleLine.textContent = "READY TO FIGHT";
-    subtitleLine.style.marginTop = "10px";
-    subtitleLine.style.fontFamily = '"Press Start 2P", monospace';
-    subtitleLine.style.fontSize = "10px";
-    subtitleLine.style.color = "#d0ebff";
-    subtitleLine.style.textShadow = "0 2px 0 #000";
+    subtitleLine.className = "intro-video-subtitle";
     lowerThird.appendChild(subtitleLine);
 
     videoShell.appendChild(lowerThird);
@@ -1311,10 +1235,7 @@ export class FightScene extends Phaser.Scene {
 
     const skip = document.createElement("div");
     skip.textContent = "ENTER / SPACE TO SKIP";
-    skip.style.fontFamily = '"Press Start 2P", monospace';
-    skip.style.fontSize = "10px";
-    skip.style.color = "#9ed9ff";
-    skip.style.textShadow = "0 2px 0 #000";
+    skip.className = "intro-video-skip";
     overlay.appendChild(skip);
 
     container.appendChild(overlay);
@@ -1421,7 +1342,7 @@ export class FightScene extends Phaser.Scene {
         await this.playIntroVideoClip(clip, token);
       }
     } catch (err) {
-      console.warn("Fight intro video playback failed, falling back to cinematic intro.", err);
+      debugWarn("Fight intro video playback failed, falling back to cinematic intro.", err);
     } finally {
       this.destroyIntroVideoOverlay();
       if (token === this.introVideoSequenceToken) {
@@ -2057,6 +1978,7 @@ export class FightScene extends Phaser.Scene {
     if (this.p1Wins >= ROUNDS_TO_WIN || this.p2Wins >= ROUNDS_TO_WIN) {
       this.phase = RoundPhase.MATCH_END;
       this.phaseTimer = 300; // 5 seconds
+      this.reportMatchComplete(winner === this.p1 ? "p1" : "p2");
       this.time.delayedCall(2200, () => {
         this.hud.showAnnouncement(`${winner.name.toUpperCase()} WINS!`, 0);
         this.sound_mgr.playAnnounce("wins");
@@ -2064,33 +1986,27 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
+  private reportMatchComplete(winnerSlot: "p1" | "p2"): void {
+    if (this.matchReported) return;
+    this.matchReported = true;
+
+    const detail: MatchCompletionDetail = {
+      winnerSlot,
+      roundsP1: this.p1Wins,
+      roundsP2: this.p2Wins,
+      durationSeconds: Math.max(0, Math.round((Date.now() - this.matchStartedAt) / 1000)),
+      vsAI: this.isVsAI,
+      cpuVsCpu: this.cpuVsCpu,
+      p1FighterId: this.p1CloudFighterId,
+      p2FighterId: this.p2CloudFighterId,
+      isRanked: false,
+    };
+    window.dispatchEvent(new CustomEvent(MATCH_COMPLETE_EVENT, { detail }));
+  }
+
   private showMatchOverUI(): void {
     this.waitingForMatchInput = true;
-
-    this.matchOverUI = this.add
-      .text(
-        GAME_WIDTH / 2,
-        this.bottomOverlayY,
-        "ENTER: RUN IT BACK  /  R: REMIX  /  ESC: MENU",
-        {
-          fontFamily: '"Press Start 2P", monospace',
-          fontSize: "11px",
-          color: "#ffcc00",
-          stroke: "#000000",
-          strokeThickness: 3,
-        },
-      )
-      .setOrigin(0.5)
-      .setDepth(200);
-
-    this.tweens.add({
-      targets: this.matchOverUI,
-      alpha: { from: 1, to: 0.3 },
-      duration: 600,
-      yoyo: true,
-      repeat: -1,
-      ease: "Sine.easeInOut",
-    });
+    this.setMatchActionsVisible(true);
 
     const enterKey = this.input.keyboard!.addKey(
       Phaser.Input.Keyboard.KeyCodes.ENTER,
@@ -2101,33 +2017,48 @@ export class FightScene extends Phaser.Scene {
     const remixKey = this.input.keyboard!.addKey(
       Phaser.Input.Keyboard.KeyCodes.R,
     );
+    this.matchActionKeys = [enterKey, escKey, remixKey];
 
     enterKey.once("down", () => {
-      remixKey.removeAllListeners();
-      escKey.removeAllListeners();
-      this.restartMatch(this.remix);
+      this.performMatchAction("run_it_back");
     });
 
     remixKey.once("down", () => {
-      enterKey.removeAllListeners();
-      escKey.removeAllListeners();
-      this.restartMatch(this.remix + 1);
+      this.performMatchAction("remix");
     });
 
     escKey.once("down", () => {
-      enterKey.removeAllListeners();
-      remixKey.removeAllListeners();
-      this.cleanupMatchOverUI();
-      this.cameras.main.fadeOut(500, 0, 0, 0);
-      this.cameras.main.once("camerafadeoutcomplete", () => {
-        const exitToMenu = (window as Window & { __ASF_EXIT_TO_MENU__?: () => void }).__ASF_EXIT_TO_MENU__;
-        if (exitToMenu) {
-          exitToMenu();
-        } else {
-          console.warn("[FightScene] No __ASF_EXIT_TO_MENU__ handler registered; falling back to full reload");
-          window.location.href = "/menu";
-        }
-      });
+      this.performMatchAction("menu");
+    });
+  }
+
+  private readonly onMatchAction = (event: WindowEventMap[typeof MATCH_ACTION_EVENT]): void => {
+    this.performMatchAction(event.detail.action);
+  };
+
+  private performMatchAction(action: MatchAction): void {
+    if (!this.waitingForMatchInput || this.matchActionCommitted) return;
+    this.matchActionCommitted = true;
+    this.cleanupMatchOverUI();
+
+    if (action === "run_it_back") {
+      this.restartMatch(this.remix);
+      return;
+    }
+    if (action === "remix") {
+      this.restartMatch(this.remix + 1);
+      return;
+    }
+
+    this.cameras.main.fadeOut(500, 0, 0, 0);
+    this.cameras.main.once("camerafadeoutcomplete", () => {
+      const exitToMenu = (window as Window & { __ASF_EXIT_TO_MENU__?: () => void }).__ASF_EXIT_TO_MENU__;
+      if (exitToMenu) {
+        exitToMenu();
+      } else {
+        debugWarn("[FightScene] No __ASF_EXIT_TO_MENU__ handler registered; falling back to full reload");
+        window.location.href = "/menu";
+      }
     });
   }
 
@@ -2140,6 +2071,8 @@ export class FightScene extends Phaser.Scene {
         cpuVsCpu: this.cpuVsCpu,
         p1PhotoHash: this.p1PhotoHash ?? undefined,
         p2PhotoHash: this.p2PhotoHash ?? undefined,
+        p1CloudFighterId: this.p1CloudFighterId,
+        p2CloudFighterId: this.p2CloudFighterId,
         p1Name: this.p1Name,
         p2Name: this.p2Name,
         p1PersonalityId: this.p1PersonalityId,
@@ -2153,19 +2086,26 @@ export class FightScene extends Phaser.Scene {
   }
 
   private cleanupMatchOverUI(): void {
-    if (this.matchOverUI) {
-      this.tweens.killTweensOf(this.matchOverUI);
-      this.matchOverUI.destroy();
-      this.matchOverUI = undefined;
-    }
+    this.matchActionKeys.forEach((key) => key.removeAllListeners());
+    this.matchActionKeys = [];
+    this.setMatchActionsVisible(false);
+  }
+
+  private setMatchActionsVisible(visible: boolean): void {
+    if (this.matchActionsVisible === visible) return;
+    this.matchActionsVisible = visible;
+    window.dispatchEvent(
+      new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible } }),
+    );
   }
 
   shutdown(): void {
+    window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
+    this.cleanupMatchOverUI();
     this.introVideoSequenceActive = false;
     this.introVideoSequenceToken++;
     this.destroyIntroVideoOverlay();
     this.destroyIntroOverlay(true);
-    this.clearStageLoadingText(true);
     this.stageBackdrop?.destroy();
     this.stageBackdrop = undefined;
     if (

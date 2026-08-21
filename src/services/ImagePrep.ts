@@ -8,6 +8,8 @@
  * Returns a base64 PNG (no data: prefix).
  */
 
+import { debugWarn } from './DebugLog';
+
 const STANDARD_SIZE = 512;
 const PADDING_RATIO = 0.08;
 const BG_THRESHOLD = 30;
@@ -27,7 +29,7 @@ export async function prepareBaseImage(base64: string): Promise<string> {
 
   const bbox = findBoundingBox(imageData, canvas.width, canvas.height);
   if (!bbox) {
-    console.warn('[ImagePrep] No visible pixels found, returning original');
+    debugWarn('[ImagePrep] No visible pixels found, returning original');
     return base64;
   }
 

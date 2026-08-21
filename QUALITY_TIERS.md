@@ -1,7 +1,7 @@
 # Quality Tiers — Pricing & Implementation Plan
 
-> **Status:** Plan only. NOT YET IMPLEMENTED.
-> **Blocker:** Validate the DNN background-removal integration (`geminiSheetRefined` → `dnnBgRemoveCells`) is producing clean faces in real fighters before introducing tier-switching complexity on top.
+> **Status:** Implemented in the current working tree for sprite tiers, local tier cache, cloud sync metadata, upgrade UI, operation-specific credit gating, and profitability checks. Keep this file as the design contract.
+> **Blocker:** Tier code and pricing guards are implemented. Real Rookie creation, Contender upgrade, Champion upgrade, failed-upgrade refunds, authenticated Champion Retry, processing-v5 RAW reconstruction, version-preserving incremental cloud sync, and playable match entry have passed against the isolated sandbox. Launch validation remains: production Clerk/Stripe setup, payment/webhook smoke, real-phone QA, and two-device play. Background removal is validated unless a new real output demonstrates a regression.
 > **Author:** Discussed 2026-04-24.
 
 ---
@@ -17,32 +17,32 @@ Fighter creation in any tier is a one-shot purchase. Video intro is a fully sepa
 ## 2. Tiers
 
 | Tier | Pipeline | Gemini model (anims) | BiRefNet on anims | Frame detail |
-|---|---|---|---|---|
+|---|---|---|---|---|---|
 | **Rookie** | `sheet` (1 call/anim) | Flash 3.1 | ❌ no | ~256px (single sheet) |
 | **Contender** | `sheet_refined` (1 sheet + N refines) | Flash 3.1 | ✅ yes | ~1024px per frame |
-| **Champion** | `sheet_refined` (1 sheet + N refines) | Pro | ✅ yes | ~1024px per frame, premium model |
+| **Champion** | `sheet_refined` (Flash scaffold + N Pro refines) | Flash scaffold + Pro final frames | ✅ yes | ~1024px per frame, premium final render |
 
-Source views always: 1 Gemini Pro call each (side / upright / crouch) + 1 BiRefNet each. Fixed cost = ~$0.23 per fighter regardless of tier.
+Source views always: 1 Gemini Pro call each (side / upright / crouch), plus BiRefNet display cleanup for side and crouch. Fixed nominal cost = **~$0.41** per fighter regardless of tier.
 
 ### Why these specific combos
 - **Rookie**: matches the pipeline that existed BEFORE the `sheet_refined` work. Cheap, fast, "good enough to play with". Chroma-key only on anims (no per-frame DNN).
 - **Contender**: full pipeline + same model that was already producing great quality before we switched to Pro. Best quality/price ratio.
-- **Champion**: same pipeline as Contender, swap to Pro for the marginal-but-visible bump in fine detail (eye highlights, fabric texture, hair edges).
+- **Champion**: Flash establishes the strict multi-cell pose sequence, then Pro independently renders every final frame for the bump in fine detail (eye highlights, fabric texture, hair edges). The Flash sheet is only a composition scaffold and is never shipped as the final Champion animation.
 - 3-tier with no half-measures: the gap between any two tiers must be visible enough to justify the upsell. Skipping intermediates avoids "is it really worth $X more?" friction.
 
 ---
 
 ## 3. Per-fighter cost breakdown (our cost, before markup)
 
-Source views (always Pro): **$0.23** fixed across all tiers.
+Source views (always Pro): **~$0.41** fixed across all tiers.
 
-| Tier | Anim Gemini calls | Anim Gemini cost | BiRefNet anims | **Total fighter** |
+| Tier | Anim Gemini calls | Anim Gemini cost | BiRefNet anims | **Nominal fighter** | **Measured QA session** |
 |---|---|---|---|---|
-| Rookie | 11 sheets × Flash @ ~$0.03 | $0.33 | $0 | **~$0.56** |
-| Contender | 87 calls × Flash @ ~$0.03 | $2.61 | 76 × $0.002 = $0.15 | **~$2.99** |
-| Champion | 87 calls × Pro @ ~$0.075 | $6.53 | 76 × $0.002 = $0.15 | **~$6.91** |
+| Rookie | 11 sheets × Flash @ $0.067 | ~$0.74 | $0 | **~$1.15** | **$1.43** |
+| Contender | 87 calls × Flash @ $0.067 | ~$5.88 | 76 × $0.002 = $0.15 | **~$6.44** | **$7.88** |
+| Champion | 11 scaffolds × Flash @ $0.067 + 76 final frames × Pro @ $0.134 | ~$10.92 | 76 × $0.002 = $0.15 | **~$11.48** | **$12.64** |
 
-Pricing assumptions are estimates; Gemini 3 Pro Image is preview-tier and exact $/image is not yet fully published. Range is ±30%.
+The nominal columns are standard-API estimates dated 2026-08-17. The pricing guard uses the higher measured end-to-end sessions from real sandbox QA, which include actual request shape and pipeline overhead. They do not assume that retries are free. Google released the GA model IDs on 2026-05-28 and shut down the preview IDs on 2026-06-25. Pricing source: [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing); lifecycle source: [Gemini API release notes](https://ai.google.dev/gemini-api/docs/changelog).
 
 ---
 
@@ -52,14 +52,14 @@ Upgrades regenerate animations from scratch (decision **B**, MVP simplicity). So
 
 | Upgrade path | Our cost |
 |---|---|
-| Rookie → Contender | ~$2.76 (regenerate 11 anims at Sharp pipeline) |
-| Contender → Champion | ~$6.68 (regenerate 11 anims at Ultra pipeline) |
-| Rookie → Champion (skip middle) | ~$6.68 (same — straight to Ultra) |
+| Rookie → Contender | Price against the conservative $7.88 measured Contender session |
+| Contender → Champion | Price against the conservative $12.64 measured Champion session |
+| Rookie → Champion (skip middle) | Same Champion price — straight regeneration |
 
 There is no "discount" for already having a lower-tier blob in cache, because the upgrade regenerates from scratch. The lower-tier blob still sits in cache (see §5).
 
 ### Future optimization (not MVP)
-For Contender → Champion, the base sheet from Contender could be reused as the pose anchor and only the refines re-run with Pro — saves ~$0.73 per upgrade (~10%). Skipped for MVP because (a) it complicates code, (b) full regenerate gives marginally better consistency.
+For Contender → Champion, the existing Contender base sheet could be reused as the pose anchor and only the refines re-run with Pro. Skipped for MVP because (a) it complicates version provenance and (b) regeneration gives an independent premium result while preserving the Contender version.
 
 ---
 
@@ -69,22 +69,22 @@ For Contender → Champion, the base sheet from Contender could be reused as the
 
 ### Schema impact
 
-Current cache key: `[photoHash, animationName]` → unique per anim per fighter.
-New cache key: **`[photoHash, animationName, tier]`** → unique per (anim, tier) per fighter.
+Original cache key: `[photoHash, animationName]` → unique per anim per fighter.
+Implemented cache key: **`[ownerScope, versionId]` per generated sprite record**, with scoped indexes for `[ownerScope, photoHash, animationName]` and `[ownerScope, photoHash, animationName, tier]` lookup.
 
-Each animation can have up to 3 cached blobs simultaneously (one per tier). Upgrading writes a new entry; doesn't overwrite.
+Each animation can have multiple cached blobs simultaneously, including same-tier retries. Upgrading writes new entries; it doesn't overwrite older generated versions.
 
 ### Code-level changes
-- `CachedSprite` gets a `qualityTier: QualityTier` field.
-- IndexedDB key path bumps from `[photoHash, animationName]` to `[photoHash, animationName, qualityTier]`. This requires a DB version bump in `SpriteCache.ts` (today `DB_VERSION = 2`, would go to 3) with an `onupgradeneeded` migration that backfills existing entries with `qualityTier = 'champion'` (everything pre-tier was generated at the highest pipeline → safest default).
+- `CachedSprite` gets `qualityTier: QualityTier` and optional `versionId` fields.
+- IndexedDB key path is `[ownerScope, versionId]` in `SpriteCache.ts` (`DB_VERSION = 5`). Existing v4 rows migrate into versioned `local` records with normalized `qualityTier`; the first Clerk account claims those rows, and later account switches see only their own scope. Same-tier retries and lower-tier assets remain preserved instead of being overwritten.
 - New helper `getBestSpriteForAnim(hash, animName, preferredTier?)` returns the highest tier available, optionally capped at `preferredTier`.
 - Existing `getAllSpritesForHash(hash)` could return ALL versions; callers that want "best" use the new helper. Or keep `getAllSpritesForHash` as "best per anim" for backwards compat and add `getAllSpriteVersionsForHash` for full listing.
-- `setCachedSprite` writes with the new 3-key path.
+- `setCachedSprite` writes a new `versionId` by default; cloud import may preserve the cloud `sprite_versions.id`.
 - `deleteCharacter` already deletes by `photoHash` index → still works (cascades all tiers).
 - `CachedMeta.qualityTier` records the *highest* tier the user has ever generated for this fighter. Used for the badge and to decide which upgrade buttons to show.
 
 ### Disk impact
-3 tiers × ~11 anims × ~1.5 MB per anim sheet (Champion size) ≈ **~50 MB per fighter at full upgrade**. IndexedDB on modern browsers easily handles GBs. Acceptable.
+3 tiers × ~11 anims × ~1.5 MB per anim sheet (Champion size) ≈ **~50 MB per fighter at full upgrade**, plus any retry versions the user chooses to keep. IndexedDB on modern browsers easily handles GBs. Acceptable.
 
 ---
 
@@ -104,40 +104,41 @@ interface TierConfig {
 const TIER_CONFIGS: Record<QualityTier, TierConfig> = {
   rookie: {
     spriteMode: 'sheet',
-    geminiAnimModelOverride: 'gemini-3.1-flash-image-preview',
+    geminiAnimModelOverride: 'gemini-3.1-flash-image',
     enableDnnBgRemoval: false,
   },
   contender: {
     spriteMode: 'sheet_refined',
-    geminiAnimModelOverride: 'gemini-3.1-flash-image-preview',
+    geminiAnimModelOverride: 'gemini-3.1-flash-image',
     enableDnnBgRemoval: true,
   },
   champion: {
     spriteMode: 'sheet_refined',
-    geminiAnimModelOverride: 'gemini-3-pro-image-preview',
+    geminiAnimModelOverride: 'gemini-3-pro-image',
     enableDnnBgRemoval: true,
   },
 };
 ```
 
-### Runtime override mechanism
-Module-level state in `GeminiApi.ts` with try/finally scoping in `CharacterPipeline.ts`:
+### Per-operation model selection
+Animation model selection is explicit request data, not module-level state. `CharacterPipeline.ts` passes the tier model through each sprite call so concurrent generations cannot exchange models or cost profiles:
 ```ts
-// GeminiApi.ts
-let runtimeAnimModelOverride: string | null = null;
-export function setGeminiAnimModelOverride(model: string | null): void {
-  runtimeAnimModelOverride = model;
-}
-
-function resolveGeminiImageModel(options) {
-  // For sprite/animation operations, runtime override takes precedence.
-  if (runtimeAnimModelOverride && (options?.operation === 'sprite' || options?.animationName)) {
-    return runtimeAnimModelOverride;
-  }
-  // For repose/upright/crouch, env defaults stand → always Pro per user's setup.
-  // ... existing env resolution
-}
+generateSpriteWithGemini(
+  primaryImage,
+  animation,
+  secondaryImage,
+  undefined,
+  normalizationReference,
+  tierConfig.spriteMode,
+  tierConfig.enableDnnBgRemoval,
+  apiContext,
+  tierConfig.geminiAnimModelOverride,
+);
 ```
+
+`GeminiApi.ts` accepts that override only for sprite operations. Repose, upright, and crouch source operations fail closed to `gemini-3-pro-image` if an environment override is absent or points at a non-Pro model.
+
+Inside `sheet_refined`, a Pro override means **Flash scaffold + Pro final-frame render**. Flash is used only for the structured pose grid because it follows multi-cell layouts more reliably; each visible Champion frame is regenerated from the canonical character image and its scaffold cell with Pro. Contender remains Flash for both stages.
 
 For BiRefNet enable/disable in `geminiSheetRefined`, add a parameter `{ enableBgRemoval: boolean }` that gates the call to `dnnBgRemoveCells`.
 
@@ -178,7 +179,7 @@ upgradeFighter(hash, toTier, onStatus): Promise<void>  // NEW
 - **Tier preview switcher** in the Animations panel (future enhancement — not MVP): per-anim dropdown that lets you preview the same animation at different cached tiers. Useful for showing the user "this is what upgrading would unlock".
 
 ### HomePage
-- Marketing line below hero: "Your first 1-2 fighters are free in Rookie quality. Upgrade anytime to bring out the detail."
+- Marketing line below hero: "Your first fighter is free in Rookie quality. Upgrade anytime to bring out the detail."
 - (Future) Credit balance display once monetization wiring is added.
 
 ---
@@ -194,32 +195,34 @@ Wire in after sprite tier system is stable.
 
 ---
 
-## 9. Marketing / monetization (out of code scope but worth recording)
+## 9. Marketing / monetization
 
-- Cost per acquired user: 1-2 free Rookies = ~$0.56 to $1.12. Cheaper than a Meta ad click.
-- Suggested credit pack: 10 credits for $5. Conversion: 1 credit = Rookie (or free), 6 credits = Contender, 15 credits = Champion. Upgrade Rookie→Contender = 6 credits. Upgrade Rookie→Champion = 15 credits.
-- Margin at 3x markup: Rookie freebie costs us $0.56, Contender $9 sale ⇒ ~$6 margin, Champion $20 sale ⇒ ~$13 margin. Healthy.
-- Video as add-on: 1-5 credits depending on provider.
+- Acquisition subsidy is one anonymous Rookie authorization per pseudonymized network identity/day after server-verified single-use Turnstile, plus one signed-in free Rookie per Clerk account. Free quota applies only to a new Rookie fighter, never to a retry or upgrade.
+- Full generation/upgrade costs are locked at **2 / 11 / 18 credits** for Rookie / Contender / Champion. Animation retries cost **1 / 2 / 4 credits** by tier, a canonical Pro source-view retry costs **1 credit**, and RAW HD reconstruction is local-only and free. Every prior version remains owned and archived.
+- Launch packs are Starter (11 credits, **€14.99**), Versus (20 credits, **€24.99**), and Arcade (47 credits, **€56.99**). Starter buys one Contender; Versus buys one Champion plus one Rookie; Arcade buys two Champions plus one Contender.
+- `scripts/check-tier-parity.mjs` keeps frontend, Worker, bootstrap, and pack arithmetic exact. It computes net revenue after 21% VAT, Stripe's 1.5% + €0.25 EEA-card fee, and 0.5% Stripe Tax. At the least valuable pack, each clean tier must cover at least 1.30× the measured provider cost and each retry at least 1.25× its conservative cost. It also replays the actual failure-heavy `$32.64` QA sequence, including two refunded Champion failures, and requires it to remain above 1.10×. Provider calls write durable per-operation cost events so these assumptions can be replaced with production cohorts instead of guesswork.
+- Provider-cost estimates are internal and are not returned by the public `/api/tiers` response.
+- Video remains a separately priced add-on after the sprite launch path is stable.
 
 ---
 
-## 10. Open decisions before building
+## 10. Launch decisions
 
-1. **Confirm tier names**: `Rookie / Contender / Champion`. Or alternatives.
-2. **Free fighter quota**: hard-code 1, 2, or N free Rookies per browser/account? Out of code scope but affects HomePage copy.
-3. **Tier badge style**: text chip, medal emoji, or a tiny colored bar? UI polish detail.
-4. **Tier preview switcher in Gallery**: MVP or post-MVP?
-5. **Monetization wiring**: stub now (just costs/labels) or skip entirely until later?
+1. Tier names are `Rookie / Contender / Champion`.
+2. Anonymous launch quota is one Rookie authorization attempt per pseudonymized network identity/day after Turnstile; signed-in users receive one free Rookie through the account quota and generation ledger.
+3. Tier badges use the existing product UI treatment; no emoji dependency is required.
+4. The per-animation tier preview switcher is post-MVP. Full version history is preserved now so the UI can expose it later without a data migration.
+5. Monetization uses one-shot credit packs for v1. Subscriptions are not required for launch.
 
 ---
 
 ## 11. Sequencing
 
-1. ✅ Validate DNN bg-removal works in current `Champion`-equivalent path. **[BLOCKER, in progress]**
-2. ⏭ Schema migration: bump `DB_VERSION` to 3, add `qualityTier` to `CachedSprite` + `CachedMeta`, write migration that defaults existing entries to `'champion'`.
-3. ⏭ Pipeline: add `QualityTier`, `tierToConfig`, runtime override setters, thread `{ tier }` through `processCharacter` / `retryAnimation`. Add `upgradeFighter`. Remove env overrides for animations (keep for source views).
-4. ⏭ UI: tier selector in CreateFighterPage, tier badge + upgrade buttons in GalleryPage. HomePage marketing copy.
-5. ⏭ Verify all three tiers end-to-end with a real fighter, including upgrades and cache preservation.
+1. ✅ Bg-removal pre-neutralize + union-mask + connected-edge decontamination path validated on a real Champion Retry: face preserved and severe green-edge rate reduced from `43.704%` to `0.276%`; all current Champion animations rebuilt from preserved RAW sheets at processing v5.
+2. ✅ Schema migration: bump `DB_VERSION` to 3, add `qualityTier` to `CachedSprite` + `CachedMeta`, write migration that defaults existing entries to `'champion'`.
+3. ✅ Pipeline: add `QualityTier`, `tierToConfig`, pass the animation model explicitly per operation, thread `{ tier }` through `processCharacter` / `retryAnimation`. Add `upgradeFighter`. Source views fail closed to Gemini Pro.
+4. ✅ UI: tier selector in CreateFighterPage, tier badge + upgrade buttons in GalleryPage. HomePage pricing/credit panel.
+5. ✅ All three real provider paths passed on one preserved fighter: Rookie creation 17 calls / `$1.43`, Contender upgrade 165 / `$7.88`, Champion upgrade 123 / `$12.64`; reservations committed, two failed Champion attempts refunded, all 11 animations per tier synced, and every prior version remained archived. Production payment and two-device evidence remain release checks rather than tier-design work.
 6. ⏭ Video integration as separate feature.
 
 ---

@@ -1,4 +1,6 @@
 import { freepikRemoveBackground, resizeImageForApi, urlToBase64 } from './FreepikApi';
+import { ApiSessionChangedError, apiFetch, type ApiRequestContext } from './ApiClient';
+import { debugInfo, debugWarn } from './DebugLog';
 
 const FAL_BASE = '/proxy/fal';
 const FAL_BG_MODEL_ID = 'fal-ai/birefnet';
@@ -30,12 +32,12 @@ function getConfiguredProvider(): BgRemovalProvider {
   return normalizeConfiguredProvider(import.meta.env.VITE_BG_REMOVAL_PROVIDER);
 }
 
-async function uploadTempImage(base64: string): Promise<string> {
-  const res = await fetch('/proxy/upload-temp', {
+async function uploadTempImage(base64: string, context?: ApiRequestContext): Promise<string> {
+  const res = await apiFetch('/proxy/upload-temp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image: base64 }),
-  });
+  }, context);
 
   if (!res.ok) {
     const body = await res.text();
@@ -85,12 +87,12 @@ function findHttpUrl(value: unknown, depth = 0): string | null {
   return null;
 }
 
-async function createFalBgRemovalTask(imageUrl: string): Promise<string> {
-  const res = await fetch(`${FAL_BASE}/${FAL_BG_MODEL_ID}`, {
+async function createFalBgRemovalTask(imageUrl: string, context?: ApiRequestContext): Promise<string> {
+  const res = await apiFetch(`${FAL_BASE}/${FAL_BG_MODEL_ID}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image_url: imageUrl }),
-  });
+  }, context);
 
   if (!res.ok) {
     const body = await res.text();
@@ -102,17 +104,17 @@ async function createFalBgRemovalTask(imageUrl: string): Promise<string> {
   return json.request_id;
 }
 
-async function pollFalBgRemovalTask(taskId: string): Promise<string> {
+async function pollFalBgRemovalTask(taskId: string, context?: ApiRequestContext): Promise<string> {
   const start = Date.now();
   const maxWaitMs = 180_000;
   const pollInterval = 2500;
   let lastStatus = 'UNKNOWN';
 
   while (Date.now() - start < maxWaitMs) {
-    const statusRes = await fetch(`${FAL_BASE}/${FAL_BG_MODEL_ID}/requests/${taskId}/status`, {
+    const statusRes = await apiFetch(`${FAL_BASE}/${FAL_BG_MODEL_ID}/requests/${taskId}/status`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
-    });
+    }, context);
 
     if (!statusRes.ok) {
       const body = await statusRes.text();
@@ -128,10 +130,10 @@ async function pollFalBgRemovalTask(taskId: string): Promise<string> {
     }
 
     if (isSuccessStatus(status)) {
-      const resultRes = await fetch(`${FAL_BASE}/${FAL_BG_MODEL_ID}/requests/${taskId}`, {
+      const resultRes = await apiFetch(`${FAL_BASE}/${FAL_BG_MODEL_ID}/requests/${taskId}`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
-      });
+      }, context);
       if (!resultRes.ok) {
         const body = await resultRes.text();
         throw new Error(`fal bg-remove result fetch failed (${resultRes.status}): ${body.slice(0, 200)}`);
@@ -149,31 +151,47 @@ async function pollFalBgRemovalTask(taskId: string): Promise<string> {
   throw new Error(`fal bg-remove timed out after ${Math.round(maxWaitMs / 1000)}s (last status: ${lastStatus})`);
 }
 
-async function falRemoveBackground(imageBase64: string): Promise<string> {
+async function falRemoveBackground(imageBase64: string, context?: ApiRequestContext): Promise<string> {
   const resized = await resizeImageForApi(imageBase64);
-  const publicUrl = await uploadTempImage(resized);
+  const publicUrl = await uploadTempImage(resized, context);
 
-  console.log('[BackgroundRemoval] Removing background via fal/BiRefNet...');
-  const taskId = await createFalBgRemovalTask(publicUrl);
-  const resultUrl = await pollFalBgRemovalTask(taskId);
-  return urlToBase64(resultUrl);
+  debugInfo('[BackgroundRemoval] Removing background via fal/BiRefNet...');
+  const taskId = await createFalBgRemovalTask(publicUrl, context);
+  const resultUrl = await pollFalBgRemovalTask(taskId, context);
+  return urlToBase64(resultUrl, context);
 }
 
-export async function removeBackgroundWithConfiguredProvider(imageBase64: string): Promise<string | null> {
+export async function removeBackgroundWithConfiguredProvider(
+  imageBase64: string,
+  context?: ApiRequestContext,
+): Promise<string | null> {
   const provider = getConfiguredProvider();
 
   if (provider === 'none') {
-    console.log('[BackgroundRemoval] Provider disabled');
+    debugInfo('[BackgroundRemoval] Provider disabled');
     return null;
   }
 
   if (provider === 'freepik') {
-    console.log('[BackgroundRemoval] Using Freepik provider');
-    return freepikRemoveBackground(imageBase64);
+    debugInfo('[BackgroundRemoval] Using Freepik provider');
+    return freepikRemoveBackground(imageBase64, context);
   }
 
-  console.log('[BackgroundRemoval] Using fal provider');
-  return falRemoveBackground(imageBase64);
+  debugInfo('[BackgroundRemoval] Using fal provider');
+  try {
+    return await falRemoveBackground(imageBase64, context);
+  } catch (error) {
+    if (error instanceof ApiSessionChangedError) throw error;
+    const falMessage = error instanceof Error ? error.message : String(error);
+    debugWarn(`[BackgroundRemoval] fal failed (${falMessage}); retrying with Freepik DNN`);
+    try {
+      return await freepikRemoveBackground(imageBase64, context);
+    } catch (fallbackError) {
+      if (fallbackError instanceof ApiSessionChangedError) throw fallbackError;
+      const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      throw new Error(`fal failed (${falMessage}); Freepik fallback failed (${fallbackMessage})`);
+    }
+  }
 }
 
 export function getConfiguredBgRemovalProvider(): BgRemovalProvider {

@@ -1,10 +1,23 @@
 import { CELL_H, CELL_W, cleanReposedImagePreserveCanvas, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, neutralizeGreenSpillForSegmentation, zoomTransparentImageToBottom, normalizeTransparentReposedImage, measureOpaqueBoundsFromBase64, type CleanSheetResult, type NormalizationReference } from './SpritePostProcess';
 import { getAnimationProfile } from './AnimationProfiles';
-import { publishDebugLog, publishDebugMultiline } from './DebugLog';
+import { debugInfo, debugWarn as debugConsoleWarn, publishDebugLog, publishDebugMultiline } from './DebugLog';
 import { getConfiguredBgRemovalProvider, removeBackgroundWithConfiguredProvider } from './BackgroundRemovalService';
+import { ApiSessionChangedError, apiFetch, type ApiRequestContext } from './ApiClient';
+import { expandMirroredSequence } from './FrameSequence';
+import { decontaminateGreenEdges, unionForegroundMasks } from './AlphaMask';
+import {
+  GeminiRequestError,
+  RequestStartPacer,
+  geminiErrorFromResponse,
+  geminiNetworkError,
+  retryGeminiRequest,
+} from './GeminiRequestPolicy';
 
 const GEMINI_BASE = '/proxy/gemini/v1beta/models';
-const DEFAULT_GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
+const DEFAULT_GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image';
+const DEFAULT_GEMINI_SOURCE_MODEL = 'gemini-3-pro-image';
+const PRO_REQUEST_START_INTERVAL_MS = 11_000;
+const geminiRequestPacer = new RequestStartPacer();
 
 interface GeminiPart {
   text?: string;
@@ -28,7 +41,12 @@ function normalizeModelEnvSegment(value: string): string {
 function resolveGeminiImageModel(options?: {
   operation?: GeminiModelOperation;
   animationName?: string;
+  modelOverride?: string;
 }): string {
+  if (options?.modelOverride && (options.operation === 'sprite' || options.animationName)) {
+    return options.modelOverride;
+  }
+
   const env = import.meta.env as Record<string, string | boolean | undefined>;
   const keys: string[] = [];
 
@@ -43,10 +61,19 @@ function resolveGeminiImageModel(options?: {
   for (const key of keys) {
     const value = env[key];
     if (typeof value === 'string' && value.trim()) {
+      if (
+        options?.operation && ['repose', 'upright', 'crouch'].includes(options.operation) &&
+        !value.toLowerCase().includes('pro')
+      ) {
+        return DEFAULT_GEMINI_SOURCE_MODEL;
+      }
       return value.trim();
     }
   }
 
+  if (options?.operation && ['repose', 'upright', 'crouch'].includes(options.operation)) {
+    return DEFAULT_GEMINI_SOURCE_MODEL;
+  }
   return DEFAULT_GEMINI_IMAGE_MODEL;
 }
 
@@ -56,6 +83,7 @@ async function callGemini(
   mimeType = 'image/png',
   extraImages?: { data: string; mime: string }[],
   modelOverride?: string,
+  context?: ApiRequestContext,
 ): Promise<{ text: string; imageBase64: string | null; imageMime: string | null; finishReason: string | null }> {
   const model = modelOverride || DEFAULT_GEMINI_IMAGE_MODEL;
   const reqParts: GeminiPart[] = [];
@@ -69,19 +97,36 @@ async function callGemini(
   }
   reqParts.push({ text: prompt });
 
-  const res = await fetch(`${GEMINI_BASE}/${model}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: reqParts }],
-      generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
-    }),
+  const res = await retryGeminiRequest(async () => {
+    if (model.toLowerCase().includes('pro')) {
+      await geminiRequestPacer.wait(model, PRO_REQUEST_START_INTERVAL_MS);
+    }
+    let response: Response;
+    try {
+      response = await apiFetch(`${GEMINI_BASE}/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: reqParts }],
+          generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+        }),
+      }, context);
+    } catch (error) {
+      throw geminiNetworkError(model, error);
+    }
+    if (!response.ok) {
+      const body = await response.text();
+      throw geminiErrorFromResponse(model, response, body);
+    }
+    return response;
+  }, {
+    onRetry: ({ attempt, delayMs, error }) => {
+      const seconds = Math.max(1, Math.ceil(delayMs / 1_000));
+      debugWarn(
+        `[GeminiApi] ${model} ${error.status || 'network'}; retry ${attempt}/5 in ${seconds}s`,
+      );
+    },
   });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`${model} ${res.status}: ${body.slice(0, 300)}`);
-  }
 
   const json: GeminiResponse = await res.json();
   const candidate = json.candidates?.[0];
@@ -146,59 +191,65 @@ The result should look like a confident upright hero pose, not an attack stance.
 
 Use a solid pure bright green (#00FF00) background with no shadows, floor, or gradients.`;
 
-export async function geminiReposeDetailed(photoBase64: string): Promise<GeminiPoseResult> {
+export async function geminiReposeDetailed(
+  photoBase64: string,
+  context?: ApiRequestContext,
+): Promise<GeminiPoseResult> {
   const model = resolveGeminiImageModel({ operation: 'repose' });
-  console.log(`[GeminiApi] Reposing character with ${model}...`);
+  debugInfo(`[GeminiApi] Reposing character with ${model}...`);
   const start = Date.now();
 
   let rawBase64: string | null = null;
 
   try {
     const prompt = REPOSE_BASE + ` Preserve the original clothing/outfit faithfully.`;
-    const result = await callGemini(prompt, photoBase64, 'image/png', undefined, model);
+    const result = await callGemini(prompt, photoBase64, 'image/png', undefined, model, context);
     rawBase64 = result.imageBase64;
   } catch (err: any) {
     if (err.message.includes('IMAGE_SAFETY')) {
-      console.warn('[GeminiApi] Repose blocked by safety filter, retrying with clothing...');
+      debugWarn('[GeminiApi] Repose blocked by safety filter, retrying with clothing...');
     } else {
       throw err;
     }
   }
 
   if (!rawBase64) {
-    console.log('[GeminiApi] Retrying repose with added clothing...');
-    const result = await callGemini(REPOSE_BASE + REPOSE_CLOTHING_FALLBACK, photoBase64, 'image/png', undefined, model);
+    debugInfo('[GeminiApi] Retrying repose with added clothing...');
+    const result = await callGemini(REPOSE_BASE + REPOSE_CLOTHING_FALLBACK, photoBase64, 'image/png', undefined, model, context);
     rawBase64 = result.imageBase64;
   }
 
   if (!rawBase64) throw new Error('Gemini repose returned no image');
 
-  console.log(`[GeminiApi] Repose raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
+  debugInfo(`[GeminiApi] Repose raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
   const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
-  console.log(`[GeminiApi] Repose cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
+  debugInfo(`[GeminiApi] Repose cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
 
   return { rawBase64, cleanedBase64: cleaned };
 }
 
-export async function geminiRepose(photoBase64: string): Promise<string> {
-  const result = await geminiReposeDetailed(photoBase64);
+export async function geminiRepose(photoBase64: string, context?: ApiRequestContext): Promise<string> {
+  const result = await geminiReposeDetailed(photoBase64, context);
   return result.cleanedBase64;
 }
 
-export async function geminiUprightReposeDetailed(sideViewBase64: string): Promise<GeminiPoseResult> {
+export async function geminiUprightReposeDetailed(
+  sideViewBase64: string,
+  context?: ApiRequestContext,
+): Promise<GeminiPoseResult> {
   const model = resolveGeminiImageModel({ operation: 'upright' });
-  console.log(`[GeminiApi] Generating upright reference with ${model}...`);
+  debugInfo(`[GeminiApi] Generating upright reference with ${model}...`);
   const start = Date.now();
-  const rawBase64 = await generateGeminiImageWithSafetyFallback(UPRIGHT_REPOSE_PROMPT, sideViewBase64, model);
-  console.log(`[GeminiApi] Upright raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
+  const rawBase64 = await generateGeminiImageWithSafetyFallback(UPRIGHT_REPOSE_PROMPT, sideViewBase64, model, context);
+  debugInfo(`[GeminiApi] Upright raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
   const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
-  console.log(`[GeminiApi] Upright cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
+  debugInfo(`[GeminiApi] Upright cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s total`);
   publishDebugLog('[GeminiApi] Upright reference generated from side view');
   return { rawBase64, cleanedBase64: cleaned };
 }
 
-export async function geminiUprightRepose(sideViewBase64: string): Promise<string> {
-  const result = await geminiUprightReposeDetailed(sideViewBase64);
+export async function geminiUprightRepose(sideViewBase64: string, context?: ApiRequestContext): Promise<string> {
+  const result = await geminiUprightReposeDetailed(sideViewBase64, context);
   return result.cleanedBase64;
 }
 
@@ -222,7 +273,7 @@ This must look like a real arcade low hitbox crouch-block position:
 - tuck the elbows in close to the body
 - keep the forearms and fists up in a protective guard near the chest and face
 - keep the head facing the same direction with no neck twist or sideways turn
-- the result should read as an extreme Street Fighter down-arrow crouch-block / defensive guard, not a medium squat, not a half-crouch, and not a relaxed standing pose
+- the result should read as an extreme arcade-fighter down-arrow crouch-block / defensive guard, not a medium squat, not a half-crouch, and not a relaxed standing pose
 
 Use a solid pure bright green (#00FF00) background with no shadows, floor, or gradients.`;
 
@@ -262,12 +313,12 @@ function formatSilhouetteMetrics(metrics: SilhouetteMetrics | null): string {
 }
 
 function debugLog(message: string): void {
-  console.log(message);
+  debugInfo(message);
   publishDebugLog(message);
 }
 
 function debugWarn(message: string): void {
-  console.warn(message);
+  debugConsoleWarn(message);
   publishDebugLog(message);
 }
 
@@ -280,16 +331,21 @@ async function getImageDimensions(base64: string): Promise<{ width: number; heig
   return { width: img.width, height: img.height };
 }
 
-async function generateGeminiImageWithSafetyFallback(prompt: string, imageBase64: string, modelOverride?: string): Promise<string> {
+async function generateGeminiImageWithSafetyFallback(
+  prompt: string,
+  imageBase64: string,
+  modelOverride?: string,
+  context?: ApiRequestContext,
+): Promise<string> {
   let rawBase64: string | null = null;
 
   try {
-    const result = await callGemini(prompt, imageBase64, 'image/png', undefined, modelOverride);
+    const result = await callGemini(prompt, imageBase64, 'image/png', undefined, modelOverride, context);
     rawBase64 = result.imageBase64;
   } catch (err: any) {
     if (err.message.includes('IMAGE_SAFETY')) {
-      console.warn('[GeminiApi] Prompt blocked by safety, retrying with clothing...');
-      const result = await callGemini(prompt + REPOSE_CLOTHING_FALLBACK, imageBase64, 'image/png', undefined, modelOverride);
+      debugWarn('[GeminiApi] Prompt blocked by safety, retrying with clothing...');
+      const result = await callGemini(prompt + REPOSE_CLOTHING_FALLBACK, imageBase64, 'image/png', undefined, modelOverride, context);
       rawBase64 = result.imageBase64;
     } else {
       throw err;
@@ -400,9 +456,10 @@ export async function geminiCrouchReposeOptions(
   sideViewBase64: string,
   normalizationReference?: NormalizationReference,
   standingMetricsBase64 = sideViewBase64,
+  context?: ApiRequestContext,
 ): Promise<GeminiCrouchOption[]> {
   const model = resolveGeminiImageModel({ operation: 'crouch' });
-  console.log(`[GeminiApi] Generating crouched view with ${model}...`);
+  debugInfo(`[GeminiApi] Generating crouched view with ${model}...`);
   const start = Date.now();
   const inputSize = await getImageDimensions(sideViewBase64);
   const standingBounds = await getSilhouetteMetrics(standingMetricsBase64);
@@ -414,7 +471,7 @@ export async function geminiCrouchReposeOptions(
     `reference=${normalizationReference ? `${Math.round(normalizationReference.targetDrawWidth ?? 0)}x${Math.round(normalizationReference.targetDrawHeight ?? 0)} baseline=${(normalizationReference.baselineRatio ?? 0).toFixed(3)}` : 'none'}`,
   );
   const promptVariants = [CROUCH_REPOSE_PROMPT];
-  console.log('[GeminiApi] Crouch prompt:\n' + CROUCH_REPOSE_PROMPT);
+  debugInfo('[GeminiApi] Crouch prompt:\n' + CROUCH_REPOSE_PROMPT);
   publishDebugLog(`[GeminiApi] Crouch prompt summary: ${summarizePrompt(CROUCH_REPOSE_PROMPT)}`);
   publishDebugMultiline(
     `[GeminiApi] Crouch prompt lines:\n${CROUCH_REPOSE_PROMPT}`,
@@ -424,7 +481,7 @@ export async function geminiCrouchReposeOptions(
   for (let i = 0; i < promptVariants.length; i++) {
     const prompt = promptVariants[i];
     try {
-      const rawBase64 = await generateGeminiImageWithSafetyFallback(prompt, sideViewBase64, model);
+      const rawBase64 = await generateGeminiImageWithSafetyFallback(prompt, sideViewBase64, model, context);
       debugLog(`[GeminiApi] Crouch attempt ${i + 1}/${promptVariants.length}: raw done in ${((Date.now() - start) / 1000).toFixed(1)}s, cleaning...`);
       const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
       const zoomed = await zoomTransparentImageToBottom(cleaned, 0.88);
@@ -453,6 +510,7 @@ export async function geminiCrouchReposeOptions(
         debugWarn(`[GeminiApi] Flagged weak crouch candidate for manual review (score ${score.toFixed(1)})`);
       }
     } catch (err: any) {
+      if (err instanceof ApiSessionChangedError) throw err;
       debugWarn(`[GeminiApi] Crouch attempt failed: ${err.message}`);
     }
   }
@@ -466,8 +524,9 @@ export async function geminiCrouchRepose(
   sideViewBase64: string,
   normalizationReference?: NormalizationReference,
   standingMetricsBase64 = sideViewBase64,
+  context?: ApiRequestContext,
 ): Promise<string> {
-  const result = await geminiCrouchReposeDetailed(sideViewBase64, normalizationReference, standingMetricsBase64);
+  const result = await geminiCrouchReposeDetailed(sideViewBase64, normalizationReference, standingMetricsBase64, context);
   return result.cleanedBase64;
 }
 
@@ -475,8 +534,9 @@ export async function geminiCrouchReposeDetailed(
   sideViewBase64: string,
   normalizationReference?: NormalizationReference,
   standingMetricsBase64 = sideViewBase64,
+  context?: ApiRequestContext,
 ): Promise<GeminiPoseResult> {
-  const options = await geminiCrouchReposeOptions(sideViewBase64, normalizationReference, standingMetricsBase64);
+  const options = await geminiCrouchReposeOptions(sideViewBase64, normalizationReference, standingMetricsBase64, context);
   const chosen = pickBestCrouchOption(options);
   if (!chosen) throw new Error('Gemini crouch repose returned no image');
   if (!chosen.valid) {
@@ -656,15 +716,16 @@ async function generateIdleFrameWithGemini(
   sideViewBase64: string,
   previousFrameBase64: string | undefined,
   model: string,
+  context?: ApiRequestContext,
 ): Promise<string | null> {
   const extras = previousFrameBase64
     ? [{ data: previousFrameBase64, mime: 'image/png' }]
     : undefined;
 
   try {
-    const result = await callGemini(prompt, sideViewBase64, 'image/png', extras, model);
+    const result = await callGemini(prompt, sideViewBase64, 'image/png', extras, model, context);
     if (!result.imageBase64) {
-      console.warn(
+      debugWarn(
         `[GeminiApi] idle frame: Gemini returned no image` +
           `${result.finishReason ? ` (finishReason: ${result.finishReason})` : ''}` +
           `${result.text ? ` | text: ${result.text.replace(/\s+/g, ' ').trim().slice(0, 220)}` : ''}`,
@@ -675,9 +736,9 @@ async function generateIdleFrameWithGemini(
     if (!err.message.includes('IMAGE_SAFETY')) {
       throw err;
     }
-    const result = await callGemini(prompt + REPOSE_CLOTHING_FALLBACK, sideViewBase64, 'image/png', extras, model);
+    const result = await callGemini(prompt + REPOSE_CLOTHING_FALLBACK, sideViewBase64, 'image/png', extras, model, context);
     if (!result.imageBase64) {
-      console.warn(
+      debugWarn(
         `[GeminiApi] idle frame safety retry returned no image` +
           `${result.finishReason ? ` (finishReason: ${result.finishReason})` : ''}` +
           `${result.text ? ` | text: ${result.text.replace(/\s+/g, ' ').trim().slice(0, 220)}` : ''}`,
@@ -741,8 +802,10 @@ export async function geminiIdleFrameSequence(
   sideViewBase64: string,
   frames: number,
   _maxScale?: number,
+  context?: ApiRequestContext,
+  modelOverride?: string,
 ): Promise<GeminiSpriteResult> {
-  const model = resolveGeminiImageModel({ operation: 'sprite', animationName: 'idle' });
+  const model = resolveGeminiImageModel({ operation: 'sprite', animationName: 'idle', modelOverride });
   const frameDirections =
     frames === IDLE_FRAME_DIRECTIONS.length
       ? IDLE_FRAME_DIRECTIONS
@@ -758,7 +821,7 @@ export async function geminiIdleFrameSequence(
   let previousFrameBase64: string | undefined;
   const start = Date.now();
 
-  console.log(`[GeminiApi] Generating idle with ${model} as ${frames} individual frames (${gridCols}x${gridRows})...`);
+  debugInfo(`[GeminiApi] Generating idle with ${model} as ${frames} individual frames (${gridCols}x${gridRows})...`);
   debugLog(
     `[GeminiApi] Idle framing reference: target=${Math.round(reference.targetDrawWidth ?? 0)}x${Math.round(reference.targetDrawHeight ?? 0)} ` +
     `baseline=${(reference.baselineRatio ?? 0).toFixed(3)} occupancy=${reference.widthRatio.toFixed(3)}x${reference.heightRatio.toFixed(3)}`,
@@ -777,7 +840,7 @@ export async function geminiIdleFrameSequence(
         attempt,
         reference,
       );
-      const rawBase64 = await generateIdleFrameWithGemini(prompt, sideViewBase64, previousFrameBase64, model);
+      const rawBase64 = await generateIdleFrameWithGemini(prompt, sideViewBase64, previousFrameBase64, model, context);
       if (!rawBase64) continue;
 
       const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
@@ -813,7 +876,7 @@ export async function geminiIdleFrameSequence(
   }
 
   const sheetBase64 = await composeFramesToSheet(acceptedFrames, gridCols, gridRows);
-  console.log(`[GeminiApi] idle frame-by-frame finished in ${((Date.now() - start) / 1000).toFixed(1)}s`);
+  debugInfo(`[GeminiApi] idle frame-by-frame finished in ${((Date.now() - start) / 1000).toFixed(1)}s`);
 
   return {
     imageBase64: sheetBase64,
@@ -833,10 +896,12 @@ export async function geminiSpriteSheet(
   secondaryBase64?: string,
   maxScale?: number,
   normalizationReference?: NormalizationReference,
+  context?: ApiRequestContext,
+  modelOverride?: string,
 ): Promise<GeminiSpriteResult> {
   const shouldMirror = MIRROR_ANIMS.has(animName);
   const profile = getAnimationProfile(animName);
-  const model = resolveGeminiImageModel({ operation: 'sprite', animationName: animName });
+  const model = resolveGeminiImageModel({ operation: 'sprite', animationName: animName, modelOverride });
 
   const genFrames = shouldMirror ? Math.ceil(frames / 2) : frames;
   const gridCols = computeGridCols(genFrames);
@@ -892,7 +957,7 @@ export async function geminiSpriteSheet(
     `- Pure bright green (#00FF00) background in every cell — flat, uniform, vivid green with no gradients, shadows, or ground.`,
   ].join('\n');
 
-  console.log(`[GeminiApi] Generating sprite: ${animName} with ${model} (${gridCols}x${gridRows}, ${genFrames} frames${shouldMirror ? ', will mirror to ' + frames : ''})...`);
+  debugInfo(`[GeminiApi] Generating sprite: ${animName} with ${model} (${gridCols}x${gridRows}, ${genFrames} frames${shouldMirror ? ', will mirror to ' + frames : ''})...`);
   const start = Date.now();
 
   const extras = secondaryBase64 ? [{ data: secondaryBase64, mime: 'image/png' }] : undefined;
@@ -925,10 +990,10 @@ export async function geminiSpriteSheet(
     let rawBase64: string | null = null;
 
     try {
-      const result = await callGemini(attemptPrompt, characterBase64, 'image/png', extras, model);
+      const result = await callGemini(attemptPrompt, characterBase64, 'image/png', extras, model, context);
       rawBase64 = result.imageBase64;
       if (!rawBase64) {
-        console.warn(
+        debugWarn(
           `[GeminiApi] ${animName}: Gemini returned no image` +
             `${result.finishReason ? ` (finishReason: ${result.finishReason})` : ''}` +
             `${result.text ? ` | text: ${result.text.replace(/\s+/g, ' ').trim().slice(0, 220)}` : ''}`,
@@ -936,12 +1001,12 @@ export async function geminiSpriteSheet(
       }
     } catch (err: any) {
       if (err.message.includes('IMAGE_SAFETY')) {
-        console.warn(`[GeminiApi] Sprite ${animName} blocked by safety, retrying with clothing note...`);
+        debugWarn(`[GeminiApi] Sprite ${animName} blocked by safety, retrying with clothing note...`);
         const safePrompt = attemptPrompt + `\n\nIMPORTANT: The character must be fully clothed in a fighting outfit (shirt, pants, shoes). Add clothing if needed.`;
-        const result = await callGemini(safePrompt, characterBase64, 'image/png', extras, model);
+        const result = await callGemini(safePrompt, characterBase64, 'image/png', extras, model, context);
         rawBase64 = result.imageBase64;
         if (!rawBase64) {
-          console.warn(
+          debugWarn(
             `[GeminiApi] ${animName}: Gemini safety retry returned no image` +
               `${result.finishReason ? ` (finishReason: ${result.finishReason})` : ''}` +
               `${result.text ? ` | text: ${result.text.replace(/\s+/g, ' ').trim().slice(0, 220)}` : ''}`,
@@ -961,7 +1026,7 @@ export async function geminiSpriteSheet(
       break;
     }
 
-    console.warn(
+    debugWarn(
       `[GeminiApi] ${animName}: rejected attempt with only ${nextCleaned.frameCount} reliable frames (need ${minReliableFrames})`,
     );
   }
@@ -983,7 +1048,7 @@ export async function geminiSpriteSheet(
     );
   }
 
-  console.log(`[GeminiApi] ${animName} cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s (scale ${cleaned.usedScale.toFixed(2)})`);
+  debugInfo(`[GeminiApi] ${animName} cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s (scale ${cleaned.usedScale.toFixed(2)})`);
 
   if (shouldMirror) {
     const mirrored = await mirrorCleanFrames(cleaned.base64, cleaned.frameCount, frames, cleaned.gridCols, cleaned.gridRows);
@@ -1128,10 +1193,11 @@ async function singleRefineAttempt(
   frameIndex: number,
   total: number,
   attemptLabel: string,
+  context?: ApiRequestContext,
 ): Promise<string | null> {
   const extras = [{ data: cellBase64, mime: 'image/png' }];
   try {
-    const result = await callGemini(prompt, characterBase64, 'image/png', extras, model);
+    const result = await callGemini(prompt, characterBase64, 'image/png', extras, model, context);
     if (!result.imageBase64) {
       debugWarn(
         `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel}: no image returned` +
@@ -1141,6 +1207,8 @@ async function singleRefineAttempt(
     }
     return result.imageBase64;
   } catch (err: any) {
+    if (err instanceof ApiSessionChangedError) throw err;
+    if (err instanceof GeminiRequestError && err.retryable) throw err;
     if (err.message?.includes('IMAGE_SAFETY')) {
       debugWarn(
         `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel}: safety filter, retrying with clothing note`,
@@ -1152,9 +1220,11 @@ async function singleRefineAttempt(
           'image/png',
           extras,
           model,
+          context,
         );
         return retryResult.imageBase64 ?? null;
       } catch (retryErr: any) {
+        if (retryErr instanceof ApiSessionChangedError) throw retryErr;
         debugWarn(
           `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel} safety retry failed: ${retryErr.message}`,
         );
@@ -1179,6 +1249,7 @@ async function refineSheetCell(
   model: string,
   frameIndex: number,
   total: number,
+  context?: ApiRequestContext,
 ): Promise<string> {
   const start = Date.now();
   const baseBounds = await measureGreenBackedCharacterBounds(cellBase64);
@@ -1202,7 +1273,7 @@ async function refineSheetCell(
   };
 
   // Attempt 1 — standard prompt
-  const first = await singleRefineAttempt(characterBase64, cellBase64, animName, prompt, model, frameIndex, total, 'attempt 1');
+  const first = await singleRefineAttempt(characterBase64, cellBase64, animName, prompt, model, frameIndex, total, 'attempt 1', context);
   if (first) {
     const check = await validateSize(first);
     if (check.ok) {
@@ -1229,6 +1300,7 @@ async function refineSheetCell(
     frameIndex,
     total,
     'attempt 2 (size-strict)',
+    context,
   );
   if (second) {
     const check = await validateSize(second);
@@ -1257,12 +1329,25 @@ export async function geminiSheetRefined(
   secondaryBase64?: string,
   maxScale?: number,
   normalizationReference?: NormalizationReference,
+  options?: { enableBgRemoval?: boolean },
+  context?: ApiRequestContext,
+  modelOverride?: string,
 ): Promise<GeminiSpriteResult> {
   const start = Date.now();
-  const model = resolveGeminiImageModel({ operation: 'sprite', animationName: animName });
+  const renderModel = resolveGeminiImageModel({ operation: 'sprite', animationName: animName, modelOverride });
+  // Pro is excellent at final-frame detail but unreliable at strict multi-cell
+  // layouts. Use Flash only as the pose/coherence scaffold; every visible
+  // Champion frame is still rendered independently by Pro.
+  const scaffoldModel = renderModel.toLowerCase().includes('pro')
+    ? DEFAULT_GEMINI_IMAGE_MODEL
+    : renderModel;
+  const shouldMirror = MIRROR_ANIMS.has(animName);
 
   // Step 1: coherent base sheet — fixes pose sequence + style across all frames.
-  console.log(`[GeminiApi] Sheet-refine ${animName}: generating base sheet with ${model}...`);
+  debugInfo(
+    `[GeminiApi] Sheet-refine ${animName}: generating pose scaffold with ${scaffoldModel} ` +
+    `(final frames: ${renderModel})...`,
+  );
   const sheet = await geminiSpriteSheet(
     characterBase64,
     animName,
@@ -1271,43 +1356,83 @@ export async function geminiSheetRefined(
     secondaryBase64,
     maxScale,
     normalizationReference,
+    context,
+    scaffoldModel,
   );
   debugLog(
     `[GeminiApi] Sheet-refine ${animName}: base sheet done in ${((Date.now() - start) / 1000).toFixed(1)}s ` +
     `(${sheet.frameCount} frames, ${sheet.gridCols}x${sheet.gridRows})`,
   );
 
-  // Step 2: split base sheet into per-frame cells that will act as pose anchors.
+  // Step 2: split only the paid keyframes that will act as pose anchors. Attack
+  // sheets generate a half-sequence; refining it before mirroring preserves the
+  // intended 4 paid keyframes -> 7 playback frames contract.
+  const refineFrameCount = shouldMirror ? Math.ceil(frames / 2) : sheet.frameCount;
   const sheetCells = await splitSheetIntoCells(
-    sheet.rawBase64,
+    sheet.imageBase64,
     sheet.gridCols,
     sheet.gridRows,
-    sheet.frameCount,
+    refineFrameCount,
   );
-  const sheetDims = await getImageDimensions(sheet.rawBase64);
+  const sheetDims = await getImageDimensions(sheet.imageBase64);
   publishDebugLog(
     `[GeminiApi] Sheet-refine ${animName}: split base sheet ${sheetDims.width}x${sheetDims.height} into ${sheetCells.length} cells`,
   );
 
-  // Step 3: refine each cell in parallel. Each refine renders one pose at full Gemini resolution
-  // using the side-view-quality character ref as IMAGE 1 and the base-sheet cell as IMAGE 2.
+  // Step 3: refine each cell at full Gemini resolution. Pro runs sequentially
+  // so one fighter cannot burst through Google's rolling spend-rate window.
   const refinePrompt = buildSheetRefinePrompt(animName, motion);
   const refineStart = Date.now();
-  const refinedCells = await Promise.all(
-    sheetCells.map((cellBase64, idx) =>
-      refineSheetCell(characterBase64, cellBase64, animName, refinePrompt, model, idx, sheetCells.length),
-    ),
-  );
+  const refinedCells: string[] = [];
+  if (renderModel.toLowerCase().includes('pro')) {
+    for (let idx = 0; idx < sheetCells.length; idx++) {
+      refinedCells.push(await refineSheetCell(
+        characterBase64,
+        sheetCells[idx],
+        animName,
+        refinePrompt,
+        renderModel,
+        idx,
+        sheetCells.length,
+        context,
+      ));
+    }
+  } else {
+    const concurrency = 3;
+    for (let start = 0; start < sheetCells.length; start += concurrency) {
+      const batch = sheetCells.slice(start, start + concurrency);
+      const batchResults = await Promise.all(batch.map((cellBase64, offset) =>
+        refineSheetCell(
+          characterBase64,
+          cellBase64,
+          animName,
+          refinePrompt,
+          renderModel,
+          start + offset,
+          sheetCells.length,
+          context,
+        ),
+      ));
+      refinedCells.push(...batchResults);
+    }
+  }
   debugLog(
     `[GeminiApi] Sheet-refine ${animName}: all ${refinedCells.length} refines done in ${((Date.now() - refineStart) / 1000).toFixed(1)}s`,
   );
 
+  const outputFrameCount = shouldMirror ? frames : refinedCells.length;
+  const outputGridCols = computeGridCols(outputFrameCount);
+  const outputGridRows = Math.ceil(outputFrameCount / outputGridCols);
+  const rawOutputCells = shouldMirror
+    ? expandMirroredSequence(refinedCells, outputFrameCount)
+    : refinedCells;
+
   // Step 4: compose the refined frames into a sheet at Gemini-native resolution (green bg).
   //         This is the "raw" version — what Save RAW downloads.
   const rawSheetBase64 = await composeRefinedFramesToSheet(
-    refinedCells,
-    sheet.gridCols,
-    sheet.gridRows,
+    rawOutputCells,
+    outputGridCols,
+    outputGridRows,
   );
   const rawDims = await getImageDimensions(rawSheetBase64);
 
@@ -1316,14 +1441,19 @@ export async function geminiSheetRefined(
   //         face pixels (low-contrast highlights it confuses with bg); chroma
   //         flood-fill from edges can never punch interior holes — together they
   //         cover each other's blind spots.
-  const cleanedCells = await cleanCellsWithUnionMasks(refinedCells, animName);
+  const cleanedUniqueCells = options?.enableBgRemoval === false
+    ? refinedCells
+    : await cleanCellsWithUnionMasks(refinedCells, animName, context);
+  const cleanedCells = shouldMirror
+    ? expandMirroredSequence(cleanedUniqueCells, outputFrameCount)
+    : cleanedUniqueCells;
 
   // Step 6: compose the alpha-cleaned cells into a sheet (transparent padding —
   //         cells are already chroma+DNN cleaned, no need for downstream rescue).
   const displaySheetBase64 = await composeRefinedFramesToSheet(
     cleanedCells,
-    sheet.gridCols,
-    sheet.gridRows,
+    outputGridCols,
+    outputGridRows,
     { padding: 'transparent' },
   );
 
@@ -1331,15 +1461,15 @@ export async function geminiSheetRefined(
   //         a near no-op; on cells where DNN failed it still kills the green bg).
   const cleaned = await cleanSpriteSheet(
     displaySheetBase64,
-    sheet.frameCount,
-    sheet.gridCols,
-    sheet.gridRows,
+    outputFrameCount,
+    outputGridCols,
+    outputGridRows,
     animName,
     maxScale,
     normalizationReference,
   );
 
-  console.log(
+  debugInfo(
     `[GeminiApi] Sheet-refine ${animName}: total ${((Date.now() - start) / 1000).toFixed(1)}s ` +
     `(raw ${rawDims.width}x${rawDims.height}, cleaned ${cleaned.frameW * cleaned.gridCols}x${cleaned.frameH * cleaned.gridRows})`,
   );
@@ -1354,15 +1484,9 @@ export async function geminiSheetRefined(
   };
 }
 
-// Combines BiRefNet's mask with the chroma-key flood-fill mask to recover face
-// pixels that BiRefNet sometimes erroneously eats. Both fight in the user's
-// favour: chroma can never punch holes in the interior of the character (its
-// flood-fill only reaches pixels connected to the frame border), and BiRefNet
-// can rescue green-tinted character pixels that strict chroma would mark as
-// background. Taking max(alpha) of the two masks preserves anything that
-// EITHER algorithm classifies as character. RGB stays from chroma path —
-// already spill-suppressed and untouched from Gemini's original output.
-async function unionMasksKeepRGB(
+// Combines the chroma and DNN masks to recover foreground details without
+// reviving transparent chroma RGB as a green fringe.
+async function unionMasksPreserveForeground(
   chromaResult: string,
   birefnetResult: string,
 ): Promise<string> {
@@ -1386,22 +1510,21 @@ async function unionMasksKeepRGB(
   const chromaData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const birefData = birefCtx.getImageData(0, 0, birefCanvas.width, birefCanvas.height);
 
-  for (let i = 0; i < chromaData.data.length; i += 4) {
-    const chromaAlpha = chromaData.data[i + 3];
-    const birefAlpha = birefData.data[i + 3];
-    if (birefAlpha > chromaAlpha) {
-      chromaData.data[i + 3] = birefAlpha;
-    }
-  }
+  unionForegroundMasks(chromaData.data, birefData.data);
+  decontaminateGreenEdges(chromaData.data, canvas.width, canvas.height);
 
   ctx.putImageData(chromaData, 0, 0);
   return canvas.toDataURL('image/png').split(',')[1];
 }
 
-// Cleans every refined cell using BOTH BiRefNet (DNN segmentation) and the
-// chroma-key flood-fill, unioned. Per-frame, in parallel. Falls back gracefully
-// if BiRefNet fails on a specific frame — that frame just uses chroma alone.
-async function cleanCellsWithUnionMasks(cellBase64s: string[], animName: string): Promise<string[]> {
+// Cleans every refined cell using DNN segmentation and the chroma-key
+// flood-fill, unioned. Requests run in bounded batches; fal failures try the
+// Freepik DNN before a frame is allowed to fall back to chroma alone.
+async function cleanCellsWithUnionMasks(
+  cellBase64s: string[],
+  animName: string,
+  context?: ApiRequestContext,
+): Promise<string[]> {
   const provider = getConfiguredBgRemovalProvider();
   const start = Date.now();
   if (provider === 'none') {
@@ -1412,49 +1535,56 @@ async function cleanCellsWithUnionMasks(cellBase64s: string[], animName: string)
   debugLog(`[GeminiApi] Sheet-refine ${animName}: cleaning ${cellBase64s.length} frames via chroma+${provider} union (with pre-neutralize)...`);
 
   let dnnOk = 0;
-  const cleaned = await Promise.all(
-    cellBase64s.map(async (rawGreenCell, idx) => {
-      // Pre-correction: neutralize green ambient bounce on character pixels
-      // BEFORE we segment. Both chroma and BiRefNet work better on a cell
-      // where skin highlights aren't tinted green. The chroma background
-      // itself stays intact (the heuristic protects pure-green pixels), so
-      // chroma-key still has something to flood-fill.
-      let neutralizedCell: string;
-      try {
-        neutralizedCell = await neutralizeGreenSpillForSegmentation(rawGreenCell);
-      } catch (err: any) {
-        debugWarn(
-          `[GeminiApi] Sheet-refine ${animName} pre-neutralize failed frame ${idx + 1}/${cellBase64s.length}: ${err.message} — using raw cell`,
-        );
-        neutralizedCell = rawGreenCell;
-      }
-
-      let chromaCleaned: string;
-      try {
-        chromaCleaned = await cleanReposedImagePreserveCanvas(neutralizedCell);
-      } catch (err: any) {
-        debugWarn(`[GeminiApi] Sheet-refine ${animName} chroma failed frame ${idx + 1}/${cellBase64s.length}: ${err.message}`);
-        return neutralizedCell;
-      }
-
-      try {
-        const birefnetResult = await removeBackgroundWithConfiguredProvider(neutralizedCell);
-        if (!birefnetResult) {
+  const cleaned: string[] = [];
+  const concurrency = 3;
+  for (let startIndex = 0; startIndex < cellBase64s.length; startIndex += concurrency) {
+    const batch = cellBase64s.slice(startIndex, startIndex + concurrency);
+    const batchResults = await Promise.all(
+      batch.map(async (rawGreenCell, batchIndex) => {
+        const idx = startIndex + batchIndex;
+        // Pre-correction: neutralize green ambient bounce on character pixels
+        // BEFORE we segment. Both chroma and DNN removal work better on a cell
+        // where skin highlights aren't tinted green. The chroma background
+        // itself stays intact, so chroma-key still has something to flood-fill.
+        let neutralizedCell: string;
+        try {
+          neutralizedCell = await neutralizeGreenSpillForSegmentation(rawGreenCell);
+        } catch (err: any) {
           debugWarn(
-            `[GeminiApi] Sheet-refine ${animName} ${provider} returned null frame ${idx + 1}/${cellBase64s.length} — chroma only`,
+            `[GeminiApi] Sheet-refine ${animName} pre-neutralize failed frame ${idx + 1}/${cellBase64s.length}: ${err.message} — using raw cell`,
+          );
+          neutralizedCell = rawGreenCell;
+        }
+
+        let chromaCleaned: string;
+        try {
+          chromaCleaned = await cleanReposedImagePreserveCanvas(neutralizedCell);
+        } catch (err: any) {
+          debugWarn(`[GeminiApi] Sheet-refine ${animName} chroma failed frame ${idx + 1}/${cellBase64s.length}: ${err.message}`);
+          return neutralizedCell;
+        }
+
+        try {
+          const birefnetResult = await removeBackgroundWithConfiguredProvider(neutralizedCell, context);
+          if (!birefnetResult) {
+            debugWarn(
+              `[GeminiApi] Sheet-refine ${animName} ${provider} returned null frame ${idx + 1}/${cellBase64s.length} — chroma only`,
+            );
+            return chromaCleaned;
+          }
+          dnnOk += 1;
+          return unionMasksPreserveForeground(chromaCleaned, birefnetResult);
+        } catch (err: any) {
+          if (err instanceof ApiSessionChangedError) throw err;
+          debugWarn(
+            `[GeminiApi] Sheet-refine ${animName} ${provider} failed frame ${idx + 1}/${cellBase64s.length} (${err.message}) — chroma only`,
           );
           return chromaCleaned;
         }
-        dnnOk += 1;
-        return unionMasksKeepRGB(chromaCleaned, birefnetResult);
-      } catch (err: any) {
-        debugWarn(
-          `[GeminiApi] Sheet-refine ${animName} ${provider} failed frame ${idx + 1}/${cellBase64s.length} (${err.message}) — chroma only`,
-        );
-        return chromaCleaned;
-      }
-    }),
-  );
+      }),
+    );
+    cleaned.push(...batchResults);
+  }
 
   debugLog(
     `[GeminiApi] Sheet-refine ${animName}: cleanup done in ${((Date.now() - start) / 1000).toFixed(1)}s ` +
@@ -1477,7 +1607,10 @@ export interface GeminiStageBackgroundRequest {
   referenceImages?: { data: string; mime: string }[];
 }
 
-export async function geminiStageBackground(req: GeminiStageBackgroundRequest): Promise<{ imageBase64: string; prompt: string }> {
+export async function geminiStageBackground(
+  req: GeminiStageBackgroundRequest,
+  context?: ApiRequestContext,
+): Promise<{ imageBase64: string; prompt: string }> {
   const model = resolveGeminiImageModel({ operation: 'stage' });
   const prompt: string[] = [
     `Create a dramatic arcade fighting game stage background for a versus match.`,
@@ -1534,13 +1667,14 @@ export async function geminiStageBackground(req: GeminiStageBackgroundRequest): 
 
   const finalPrompt = prompt.join('\n');
 
-  console.log(`[GeminiApi] Generating stage background with ${model}: ${req.stageLabel}...`);
+  debugInfo(`[GeminiApi] Generating stage background with ${model}: ${req.stageLabel}...`);
   const result = await callGemini(
     finalPrompt,
     req.sourceImage?.data,
     req.sourceImage?.mime ?? 'image/png',
     req.referenceImages,
     model,
+    context,
   );
   if (!result.imageBase64) throw new Error('Gemini stage background returned no image');
 

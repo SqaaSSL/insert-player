@@ -18,12 +18,18 @@ import {
   getStageChoiceLabel,
   type StageThemeId,
 } from '../../game/match/StageConfig.ts';
+import { syncCloudFightersToLocal } from '../../services/CloudFighters.ts';
+import { captureApiRequestContext } from '../../services/ApiClient.ts';
+import { debugWarn } from '../../services/DebugLog.ts';
+import { ensurePlayableSpritesUpToDate } from '../../services/CharacterPipeline.ts';
 
 type RosterMode = 'watch' | 'cpu' | 'vs';
 
 interface RosterPageProps {
+  authSessionKey: string;
   mode: RosterMode;
   onBack: () => void;
+  onCreateFighter: () => void;
   onStartFight: (data: MatchSceneData) => void;
 }
 
@@ -133,7 +139,7 @@ function FighterRosterCard({
   );
 }
 
-export function RosterPage({ mode, onBack, onStartFight }: RosterPageProps) {
+export function RosterPage({ authSessionKey, mode, onBack, onCreateFighter, onStartFight }: RosterPageProps) {
   const modeMeta = getModeMeta(mode);
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [photoStages, setPhotoStages] = useState<CachedStageBackground[]>([]);
@@ -143,20 +149,48 @@ export function RosterPage({ mode, onBack, onStartFight }: RosterPageProps) {
   const [p1PersonalityId, setP1PersonalityId] = useState<FighterPersonalityId>(getDefaultPersonalityId(0));
   const [p2PersonalityId, setP2PersonalityId] = useState<FighterPersonalityId>(getDefaultPersonalityId(1));
   const [stageChoice, setStageChoice] = useState<StageChoice>({ kind: 'auto' });
+  const [preparingFight, setPreparingFight] = useState(false);
 
   useEffect(() => {
+    const apiContext = captureApiRequestContext();
+    let cancelled = false;
     const load = async () => {
-      const [allMetas, allStages] = await Promise.all([
+      let [allMetas, allStages] = await Promise.all([
         getAllCachedMetas(),
         getAllCachedStageBackgrounds(),
       ]);
+      let cloudImported = 0;
+      let cloudUpdated = 0;
+      try {
+        const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext);
+        if (cloudSync.imported > 0 || cloudSync.updated > 0) {
+          cloudImported = cloudSync.imported;
+          cloudUpdated = cloudSync.updated;
+          [allMetas, allStages] = await Promise.all([
+            getAllCachedMetas(),
+            getAllCachedStageBackgrounds(),
+          ]);
+        }
+      } catch (err: any) {
+        if (cancelled) return;
+        debugWarn('[Roster] Cloud import skipped:', err?.message ?? err);
+      }
+      if (cancelled) return;
       const filteredMetas = allMetas
         .filter((item) => item.version === CACHE_VERSION)
         .sort((a, b) => b.createdAt - a.createdAt);
-      const filteredStages = allStages.sort((a, b) => b.createdAt - a.createdAt);
+      const filteredStages = allStages
+        .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
+        .sort((a, b) => b.createdAt - a.createdAt);
       setMetas(filteredMetas);
       setPhotoStages(filteredStages);
-      setStatus(filteredMetas.length > 0 ? 'Roster ready' : 'No fighters yet');
+      setStatus(
+        cloudImported > 0 || cloudUpdated > 0
+          ? `Cloud synced: ${cloudImported} imported, ${cloudUpdated} updated`
+          : filteredMetas.length > 0
+            ? 'Roster ready'
+            : 'No fighters yet',
+      );
 
       setP1Hash((current) => current ?? filteredMetas[0]?.photoHash ?? null);
       setP2Hash((current) => {
@@ -166,7 +200,8 @@ export function RosterPage({ mode, onBack, onStartFight }: RosterPageProps) {
       });
     };
     void load();
-  }, []);
+    return () => { cancelled = true; };
+  }, [authSessionKey]);
 
   const p1Meta = useMemo(() => metas.find((item) => item.photoHash === p1Hash) ?? null, [metas, p1Hash]);
   const p2Meta = useMemo(() => metas.find((item) => item.photoHash === p2Hash) ?? null, [metas, p2Hash]);
@@ -187,21 +222,40 @@ export function RosterPage({ mode, onBack, onStartFight }: RosterPageProps) {
         ? { label: getStageChoiceLabel(stageChoice.stageId), blurb: getStageChoiceBlurb(stageChoice.stageId) }
         : { label: selectedPhotoStage?.label ?? stageChoice.label, blurb: 'Custom photo stage from your local cache.' };
 
-  const launchFight = () => {
-    if (!p1Meta || !p2Meta) return;
-    onStartFight({
-      vsAI: modeMeta.vsAI,
-      cpuVsCpu: modeMeta.cpuVsCpu,
-      p1PhotoHash: p1Meta.photoHash,
-      p2PhotoHash: p2Meta.photoHash,
-      p1Name: p1Meta.characterName,
-      p2Name: p2Meta.characterName,
-      p1PersonalityId,
-      p2PersonalityId,
-      stageId: stageChoice.kind === 'built-in' ? stageChoice.stageId : undefined,
-      customStageKey: stageChoice.kind === 'photo' ? stageChoice.stageKey : undefined,
-      customStageLabel: stageChoice.kind === 'photo' ? (selectedPhotoStage?.label ?? stageChoice.label) : undefined,
-    });
+  const launchFight = async () => {
+    if (!p1Meta || !p2Meta || preparingFight) return;
+    setPreparingFight(true);
+    setStatus('Preparing fighter sprites...');
+    try {
+      const hashes = Array.from(new Set([p1Meta.photoHash, p2Meta.photoHash]));
+      let upgraded = 0;
+      for (const photoHash of hashes) {
+        upgraded += await ensurePlayableSpritesUpToDate(photoHash);
+      }
+      if (upgraded > 0) {
+        setStatus(`Updated ${upgraded} cached animations`);
+      }
+      onStartFight({
+        vsAI: modeMeta.vsAI,
+        cpuVsCpu: modeMeta.cpuVsCpu,
+        p1PhotoHash: p1Meta.photoHash,
+        p2PhotoHash: p2Meta.photoHash,
+        p1CloudFighterId: p1Meta.cloudFighterId ?? null,
+        p2CloudFighterId: p2Meta.cloudFighterId ?? null,
+        p1Name: p1Meta.characterName,
+        p2Name: p2Meta.characterName,
+        p1PersonalityId,
+        p2PersonalityId,
+        stageId: stageChoice.kind === 'built-in' ? stageChoice.stageId : undefined,
+        customStageKey: stageChoice.kind === 'photo' ? stageChoice.stageKey : undefined,
+        customStageLabel: stageChoice.kind === 'photo' ? (selectedPhotoStage?.label ?? stageChoice.label) : undefined,
+      });
+    } catch (err: any) {
+      debugWarn('[Roster] Sprite preparation failed:', err?.message ?? err);
+      setStatus(err?.message ? `Could not prepare fighters: ${err.message}` : 'Could not prepare fighters');
+    } finally {
+      setPreparingFight(false);
+    }
   };
 
   return (
@@ -213,7 +267,7 @@ export function RosterPage({ mode, onBack, onStartFight }: RosterPageProps) {
           <p className="roster-hero__copy">{modeMeta.description}</p>
         </div>
         <div className="roster-hero__actions">
-          <div className="gallery-hero__status">{status}</div>
+          <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
           <button className="gallery-back" onClick={onBack}>
             Back
           </button>
@@ -286,10 +340,12 @@ export function RosterPage({ mode, onBack, onStartFight }: RosterPageProps) {
                 <p className="gallery-eyebrow">Roster</p>
                 <h3>Select Fighters</h3>
               </div>
-              <button className="home-menu__action is-primary roster-fight-btn" disabled={!canStartFight} onClick={launchFight}>
-                <span>{modeMeta.actionLabel}</span>
+              <button className="home-menu__action is-primary roster-fight-btn" disabled={!canStartFight || preparingFight} onClick={() => void launchFight()}>
+                <span>{preparingFight ? 'Preparing...' : modeMeta.actionLabel}</span>
                 <small>
-                  {canStartFight
+                  {preparingFight
+                    ? 'Checking cached sprites'
+                    : canStartFight
                     ? `${p1Meta?.characterName ?? 'P1'} vs ${p2Meta?.characterName ?? 'P2'}`
                     : 'Select both fighters first'}
                 </small>
@@ -297,7 +353,16 @@ export function RosterPage({ mode, onBack, onStartFight }: RosterPageProps) {
             </div>
 
             <div className="roster-fighter-grid">
-              {metas.map((meta) => (
+              {metas.length === 0 ? (
+                <section className="gallery-empty roster-empty">
+                  <h2>Create Your First Fighter</h2>
+                  <p>Upload a photo, choose a quality tier, and enter the arcade.</p>
+                  <button className="home-menu__action is-primary" onClick={onCreateFighter}>
+                    <span>Forge Fighter</span>
+                    <small>Start With Your Photo</small>
+                  </button>
+                </section>
+              ) : metas.map((meta) => (
                 <FighterRosterCard
                   key={meta.photoHash}
                   meta={meta}

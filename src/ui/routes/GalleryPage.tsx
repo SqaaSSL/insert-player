@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getAllCachedMetas,
   getAllCachedStageBackgrounds,
   getAllSpritesForHash,
+  getCachedMeta,
   getCachedIntro,
+  setCachedMeta,
   deleteCachedStageBackground,
   deleteCharacter,
   renameCachedStageBackground,
@@ -20,10 +22,11 @@ import {
   retryCrouchView,
   retrySideView,
   retryUprightView,
+  upgradeFighter,
   SPRITE_PROCESSING_VERSION,
   type SpriteGenerationMode,
 } from '../../services/CharacterPipeline.ts';
-import { clearDebugLog } from '../../services/DebugLog.ts';
+import { clearDebugLog, debugWarn } from '../../services/DebugLog.ts';
 import { exportAnimationGif } from '../../services/GifExportService.ts';
 import { AnimationGrid } from '../components/AnimationGrid.tsx';
 import { SourceViewsPanel } from '../components/SourceViewsPanel.tsx';
@@ -38,6 +41,30 @@ import {
 } from '../shared/fighterPreview.ts';
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
+import { shareCommunityFighter } from '../shared/communityShare.ts';
+import {
+  deleteCloudFighter,
+  renameCloudFighter,
+  setCloudFighterPublic,
+  syncCloudFightersToLocal,
+  syncFighterToCloud,
+} from '../../services/CloudFighters.ts';
+import {
+  QUALITY_TIERS,
+  SOURCE_RETRY_CREDIT_COST,
+  animationRetryCreditCost,
+  type GenerationBillingOperation,
+  type QualityTier,
+} from '../../services/QualityTiers.ts';
+import { authorizeGeneration, finishGenerationPurchase } from '../../services/Billing.ts';
+import {
+  captureApiRequestContext,
+  runWithProviderSession,
+  type ApiRequestContext,
+} from '../../services/ApiClient.ts';
+import { checkoutStatusMessage, consumeCheckoutStatus } from '../shared/checkoutStatus.ts';
+import { GenerationConsent } from '../components/LegalConsent.tsx';
+import { currentGenerationLegalAttestation } from '../legal.ts';
 
 function formatDate(value: number): string {
   return new Date(value).toLocaleDateString('en-US', {
@@ -51,12 +78,21 @@ function getPrimaryIntroBlob(intro: CachedIntro | null): Blob | null {
   return intro?.variants[0]?.videoBlob ?? null;
 }
 
+function tierIndex(tier: QualityTier): number {
+  return QUALITY_TIERS.findIndex((item) => item.id === tier);
+}
+
+function tierLabel(tier: QualityTier | undefined): string {
+  return QUALITY_TIERS.find((item) => item.id === tier)?.label ?? 'Contender';
+}
+
 interface GalleryPageProps {
+  authSessionKey: string;
   onBack: () => void;
   onCreateFighter: () => void;
 }
 
-export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
+export function GalleryPage({ authSessionKey, onBack, onCreateFighter }: GalleryPageProps) {
   const [activeTab, setActiveTab] = useState<'characters' | 'stages'>('characters');
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [stages, setStages] = useState<CachedStageBackground[]>([]);
@@ -70,15 +106,52 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
   type RetryTarget = { kind: 'source'; key: SourceKey } | { kind: 'animation'; name: string };
   const [retryingTarget, setRetryingTarget] = useState<RetryTarget | null>(null);
   const [spriteMode, setSpriteMode] = useState<SpriteGenerationMode>('sheet_refined');
+  const [legalAccepted, setLegalAccepted] = useState(false);
+  const [pendingUpgradeTier, setPendingUpgradeTier] = useState<QualityTier | null>(null);
+  const upgradeConfirmRef = useRef<HTMLButtonElement>(null);
 
   const meta = metas[currentIndex] ?? null;
+  const pendingUpgrade = QUALITY_TIERS.find((tier) => tier.id === pendingUpgradeTier) ?? null;
 
   useEffect(() => {
+    if (!pendingUpgradeTier) return;
+    upgradeConfirmRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPendingUpgradeTier(null);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [pendingUpgradeTier]);
+
+  useEffect(() => {
+    const apiContext = captureApiRequestContext();
+    let cancelled = false;
     const load = async () => {
-      const [all, allStages] = await Promise.all([
+      const checkoutStatus = consumeCheckoutStatus();
+      const checkoutMessage = checkoutStatus ? checkoutStatusMessage(checkoutStatus) : null;
+      let cloudImported = 0;
+      let cloudUpdated = 0;
+      let cloudFailed = 0;
+      let [all, allStages] = await Promise.all([
         getAllCachedMetas(),
         getAllCachedStageBackgrounds(),
       ]);
+      try {
+        const cloudSync = await syncCloudFightersToLocal(all, apiContext);
+        cloudFailed = cloudSync.failed;
+        if (cloudSync.imported > 0 || cloudSync.updated > 0) {
+          cloudImported = cloudSync.imported;
+          cloudUpdated = cloudSync.updated;
+          [all, allStages] = await Promise.all([
+            getAllCachedMetas(),
+            getAllCachedStageBackgrounds(),
+          ]);
+        }
+      } catch (err: any) {
+        if (cancelled) return;
+        debugWarn('[Gallery] Cloud import skipped:', err?.message ?? err);
+      }
+      if (cancelled) return;
       const filtered = all
         .filter((item) => item.version === CACHE_VERSION)
         .sort((a, b) => b.createdAt - a.createdAt);
@@ -89,10 +162,20 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
       setStages(filteredStages);
       setCurrentIndex((current) => Math.min(current, Math.max(0, filtered.length - 1)));
       setCurrentStageIndex((current) => Math.min(current, Math.max(0, filteredStages.length - 1)));
-      setStatus(filtered.length > 0 || filteredStages.length > 0 ? 'Ready' : 'No fighters or stages yet');
+      setStatus(
+        checkoutMessage ??
+        (cloudFailed > 0
+          ? `Cloud sync incomplete: ${cloudFailed} fighter${cloudFailed === 1 ? '' : 's'} could not be downloaded`
+          : cloudImported > 0 || cloudUpdated > 0
+          ? `Cloud synced: ${cloudImported} imported, ${cloudUpdated} updated`
+          : filtered.length > 0 || filteredStages.length > 0
+            ? 'Ready'
+            : 'No fighters or stages yet'),
+      );
     };
     void load();
-  }, []);
+    return () => { cancelled = true; };
+  }, [authSessionKey]);
 
   useEffect(() => {
     if (!meta) {
@@ -109,6 +192,10 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
       setIntro(nextIntro);
     };
     void load();
+  }, [meta?.photoHash]);
+
+  useEffect(() => {
+    setLegalAccepted(false);
   }, [meta?.photoHash]);
 
   const previewSprite = useMemo<PreviewSpriteLike | null>(() => {
@@ -151,6 +238,12 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
 
   const safeName = (meta?.characterName || 'fighter').replace(/[^a-z0-9]/gi, '_');
   const selectedAnimName = selection.kind === 'animation' ? selection.animationName : null;
+  const currentTier: QualityTier = meta?.qualityTier ?? 'contender';
+  const currentAnimationRetryCost = animationRetryCreditCost(currentTier);
+  const upgradeOptions = QUALITY_TIERS.filter((item) => tierIndex(item.id) > tierIndex(currentTier));
+  const characterEmptyMessage = status && status !== 'No fighters or stages yet'
+    ? status
+    : 'Upload a photo to forge your first challenger.';
 
   const refreshCurrent = async () => {
     const currentPhotoHash = meta?.photoHash ?? null;
@@ -176,19 +269,57 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
   };
 
   const runRetry = async (
-    action: () => Promise<void>,
+    action: (context: ApiRequestContext) => Promise<void>,
     nextStatus: string,
-    target?: RetryTarget,
+    target: RetryTarget,
+    operation: GenerationBillingOperation,
+    creditCost: number,
   ) => {
+    if (!meta) return;
+    if (!legalAccepted) {
+      setStatus('Accept the generation terms to continue');
+      return;
+    }
+    const retryLabel = target.kind === 'animation' ? animLabel(target.name) : `${target.key} source`;
+    const creditLabel = creditCost === 1 ? 'credit' : 'credits';
+    if (!window.confirm(
+      `Regenerate ${retryLabel} for ${creditCost} ${creditLabel}? Existing versions will be kept.`,
+    )) {
+      return;
+    }
     clearDebugLog();
     setBusy(true);
-    setRetryingTarget(target ?? null);
+    setRetryingTarget(target);
     setStatus(nextStatus);
+    let purchaseId: string | undefined;
+    let purchaseCommitted = false;
+    const apiContext = captureApiRequestContext();
     try {
-      await action();
+      const authorization = await authorizeGeneration(
+        currentTier,
+        operation,
+        meta.cloudFighterId ?? null,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+      );
+      if (!authorization.authorized) {
+        throw new Error(authorization.error ?? 'Generation not authorized');
+      }
+      purchaseId = authorization.purchaseId;
+      await runWithProviderSession(authorization.providerSessionId, action, apiContext);
+      await finishGenerationPurchase(purchaseId, true, meta.cloudFighterId ?? null, apiContext);
+      purchaseCommitted = true;
       await refreshCurrent();
       setStatus('Done');
     } catch (err: any) {
+      if (purchaseId && !purchaseCommitted) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, meta?.cloudFighterId ?? null, apiContext);
+        } catch (refundErr: any) {
+          debugWarn('[Billing] Failed to release retry purchase:', refundErr?.message ?? refundErr);
+        }
+      }
       await refreshCurrent();
       setStatus(err?.message ? `Failed: ${err.message}` : 'Failed');
     } finally {
@@ -206,12 +337,19 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
     if (!meta) return;
     const nextName = window.prompt('Fighter name', meta.characterName);
     if (!nextName || !nextName.trim() || nextName.trim() === meta.characterName) return;
+    const trimmedName = nextName.trim();
     setBusy(true);
     setStatus('Renaming...');
+    const apiContext = captureApiRequestContext();
     try {
-      await renameCharacter(meta.photoHash, nextName.trim());
+      await renameCharacter(meta.photoHash, trimmedName);
+      let cloudRenamed = false;
+      if (meta.cloudFighterId) {
+        const updated = await renameCloudFighter(meta.cloudFighterId, trimmedName, apiContext);
+        cloudRenamed = Boolean(updated);
+      }
       await refreshCurrent();
-      setStatus('Fighter renamed');
+      setStatus(meta.cloudFighterId && !cloudRenamed ? 'Fighter renamed locally; cloud update skipped' : 'Fighter renamed');
     } catch (err: any) {
       setStatus(err?.message ? `Rename failed: ${err.message}` : 'Rename failed');
     } finally {
@@ -227,7 +365,16 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
     const removedHash = meta.photoHash;
     setBusy(true);
     setStatus(`Deleting ${meta.characterName}...`);
+    const apiContext = captureApiRequestContext();
     try {
+      let cloudDeleteStatus: 'synced' | 'signed_out' | 'failed' | null = null;
+      if (meta.cloudFighterId) {
+        const cloudDelete = await deleteCloudFighter(meta.cloudFighterId, apiContext);
+        cloudDeleteStatus = cloudDelete.status;
+        if (cloudDelete.status === 'failed') {
+          throw new Error(cloudDelete.message ?? 'Cloud delete failed');
+        }
+      }
       await deleteCharacter(removedHash);
       const nextMetas = metas.filter((item) => item.photoHash !== removedHash);
       setMetas(nextMetas);
@@ -235,7 +382,11 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
       setSprites([]);
       setIntro(null);
       setSelection({ kind: 'source', source: 'original' });
-      setStatus(nextMetas.length > 0 ? 'Fighter deleted' : 'No fighters left');
+      setStatus(
+        cloudDeleteStatus === 'signed_out'
+          ? 'Fighter deleted locally; sign in to delete cloud copy'
+          : nextMetas.length > 0 ? 'Fighter deleted' : 'No fighters left',
+      );
     } catch (err: any) {
       setStatus(err?.message ? `Delete failed: ${err.message}` : 'Delete failed');
     } finally {
@@ -245,7 +396,7 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
 
   const rebuildHd = async () => {
     if (!meta) return;
-    if (!window.confirm(`Rebuild all sprites for "${meta.characterName}" at HD resolution? Animations without a cached raw blob will be skipped — re-run retry on those.`)) {
+    if (!window.confirm(`Rebuild all sprites for "${meta.characterName}" at HD resolution for free? Animations without a cached raw blob will be skipped.`)) {
       return;
     }
     clearDebugLog();
@@ -310,6 +461,149 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
       setStatus(err?.message ? `Bulk save failed: ${err.message}` : 'Bulk save failed');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const syncCloud = async () => {
+    if (!meta) return;
+    setBusy(true);
+    setStatus('Syncing cloud roster...');
+    const apiContext = captureApiRequestContext();
+    try {
+      const result = await syncFighterToCloud(meta, sprites, intro, apiContext);
+      if (result.status === 'synced') {
+        setStatus('Cloud synced');
+        await refreshCurrent();
+      } else if (result.status === 'signed_out') {
+        setStatus('Sign in to sync across devices');
+      } else {
+        setStatus(result.message ? `Cloud sync failed: ${result.message}` : 'Cloud sync failed');
+      }
+    } catch (err: any) {
+      setStatus(err?.message ? `Cloud sync failed: ${err.message}` : 'Cloud sync failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const togglePublic = async () => {
+    if (!meta) return;
+    setBusy(true);
+    const nextPublic = !meta.cloudPublic;
+    setStatus(nextPublic ? 'Publishing fighter...' : 'Making fighter private...');
+    const apiContext = captureApiRequestContext();
+    try {
+      let fighterId = meta.cloudFighterId ?? null;
+      if (!fighterId) {
+        const sync = await syncFighterToCloud(meta, sprites, intro, apiContext);
+        if (sync.status !== 'synced' || !sync.fighterId) {
+          setStatus(sync.status === 'signed_out' ? 'Sign in to publish fighters' : `Publish failed: ${sync.message ?? 'cloud sync failed'}`);
+          return;
+        }
+        fighterId = sync.fighterId;
+      }
+      const updated = await setCloudFighterPublic(fighterId, nextPublic, apiContext);
+      if (!updated) {
+        setStatus('Sign in to publish fighters');
+        return;
+      }
+      const latestMeta = await getCachedMeta(meta.photoHash);
+      if (latestMeta) {
+        latestMeta.cloudFighterId = updated.id;
+        latestMeta.cloudPublic = updated.public;
+        latestMeta.updatedAt = Date.now();
+        await setCachedMeta(latestMeta);
+      }
+      await refreshCurrent();
+      setStatus(updated.public ? 'Published to Community' : 'Private again');
+    } catch (err: any) {
+      setStatus(err?.message ? `Publish failed: ${err.message}` : 'Publish failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sharePublishedFighter = async () => {
+    if (!meta?.cloudFighterId) {
+      setStatus('Sync cloud before sharing this fighter');
+      return;
+    }
+    const share = await shareCommunityFighter(meta.cloudFighterId, meta.characterName);
+    if (share.mode === 'native') {
+      setStatus('Community share sheet opened');
+    } else if (share.mode === 'clipboard') {
+      setStatus('Community share link copied');
+    } else if (share.mode === 'cancelled') {
+      setStatus('Community share cancelled');
+    } else {
+      window.prompt('Share fighter link', share.url);
+      setStatus('Community share link ready');
+    }
+  };
+
+  const upgradeToTier = async (toTier: QualityTier) => {
+    if (!meta || !legalAccepted) return;
+    const tier = QUALITY_TIERS.find((item) => item.id === toTier);
+    if (!tier) return;
+    clearDebugLog();
+    setBusy(true);
+    setStatus(`Upgrading to ${tier.label}...`);
+    let purchaseId: string | undefined;
+    let purchaseCommitted = false;
+    const apiContext = captureApiRequestContext();
+    try {
+      const authorization = await authorizeGeneration(
+        toTier,
+        'fighter_upgrade',
+        meta.cloudFighterId ?? null,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+      );
+      if (!authorization.authorized) {
+        throw new Error(authorization.error ?? 'Upgrade not authorized');
+      }
+      purchaseId = authorization.purchaseId;
+      await runWithProviderSession(
+        authorization.providerSessionId,
+        (providerContext) => upgradeFighter(meta.photoHash, toTier, (progress) => {
+          if (progress.stage === 'generating_sprites') {
+            setStatus(`Upgrading ${progress.animation} (${progress.current}/${progress.total})...`);
+            setRetryingTarget({ kind: 'animation', name: progress.animation });
+          }
+          if (progress.stage === 'sprite_ready') {
+            setRetryingTarget(null);
+          }
+        }, providerContext),
+        apiContext,
+      );
+      await finishGenerationPurchase(purchaseId, true, meta.cloudFighterId ?? null, apiContext);
+      purchaseCommitted = true;
+      const [updatedMeta, updatedSprites] = await Promise.all([
+        getCachedMeta(meta.photoHash),
+        getAllSpritesForHash(meta.photoHash),
+      ]);
+      if (updatedMeta) {
+        const sync = await syncFighterToCloud(updatedMeta, updatedSprites, intro, apiContext);
+        if (sync.status === 'synced') {
+          await finishGenerationPurchase(purchaseId, true, sync.fighterId ?? meta.cloudFighterId ?? null, apiContext);
+        }
+      }
+      await refreshCurrent();
+      setStatus(`${tier.label} upgrade synced`);
+    } catch (err: any) {
+      if (purchaseId && !purchaseCommitted) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, meta.cloudFighterId ?? null, apiContext);
+        } catch (refundErr: any) {
+          debugWarn('[Billing] Failed to release upgrade purchase:', refundErr?.message ?? refundErr);
+        }
+      }
+      await refreshCurrent();
+      setStatus(err?.message ? `Upgrade failed: ${err.message}` : 'Upgrade failed');
+    } finally {
+      setBusy(false);
+      setRetryingTarget(null);
     }
   };
 
@@ -394,7 +688,7 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
               >
                 <span className="gallery-fighter-card__name">{item.characterName}</span>
                 <span className="gallery-fighter-card__meta">
-                  {formatDate(item.createdAt)} · {item.animationsReady.length} anims
+                  {tierLabel(item.qualityTier)} · {formatDate(item.createdAt)} · {item.animationsReady.length} anims
                 </span>
               </button>
             ))}
@@ -421,7 +715,7 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
         {activeTab === 'characters' ? !meta ? (
           <section className="gallery-empty">
             <h2>No Fighters Yet</h2>
-            <p>Upload a photo to forge your first challenger.</p>
+            <p>{characterEmptyMessage}</p>
             <button className="home-menu__action is-primary" onClick={onCreateFighter}>
               <span>Forge Fighter</span>
               <small>Start The Pipeline</small>
@@ -436,19 +730,40 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
                 </p>
                 <h2>{meta.characterName}</h2>
                 <p className="gallery-hero__meta">
-                  Status: {meta.status} · Created {formatDate(meta.createdAt)} · Hash {meta.photoHash.slice(0, 10)}...
+                  Status: {meta.status} · Tier {tierLabel(currentTier)} · Created {formatDate(meta.createdAt)} · Hash {meta.photoHash.slice(0, 10)}...
                 </p>
               </div>
               <div className="roster-hero__actions">
-                <div className="gallery-hero__status">{status}</div>
+                <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
+                {upgradeOptions.map((tier) => (
+                  <button
+                    key={tier.id}
+                    className="gallery-back"
+                    disabled={busy || !legalAccepted}
+                    onClick={() => setPendingUpgradeTier(tier.id)}
+                  >
+                    {tier.label} {tier.priceLabel}
+                  </button>
+                ))}
                 {hasOutdatedSprites ? (
                   <button className="gallery-back" disabled={busy} onClick={() => void rebuildHd()}>
-                    Rebuild HD
+                    Rebuild HD · Free
                   </button>
                 ) : null}
                 <button className="gallery-back" disabled={busy} onClick={() => void saveAll()}>
                   Save All
                 </button>
+                <button className="gallery-back" disabled={busy} onClick={() => void syncCloud()}>
+                  Sync Cloud
+                </button>
+                <button className="gallery-back" disabled={busy} onClick={() => void togglePublic()}>
+                  {meta.cloudPublic ? 'Unpublish' : 'Publish'}
+                </button>
+                {meta.cloudPublic && meta.cloudFighterId ? (
+                  <button className="gallery-back" disabled={busy} onClick={() => void sharePublishedFighter()}>
+                    Share Link
+                  </button>
+                ) : null}
                 <button className="gallery-back" disabled={busy} onClick={() => void renameFighter()}>
                   Rename
                 </button>
@@ -458,6 +773,12 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
               </div>
             </header>
 
+            <GenerationConsent
+              checked={legalAccepted}
+              disabled={busy}
+              onChange={setLegalAccepted}
+            />
+
             <section className="gallery-layout">
               <div className="gallery-column--side">
                 <div className="gallery-panel gallery-panel--sources">
@@ -466,24 +787,31 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
                     selectedSource={selection.kind === 'source' ? selection.source : null}
                     onSelectSource={(source) => setSelection({ kind: 'source', source })}
                     regeneratingSource={retryingSource}
+                    retryCreditCost={SOURCE_RETRY_CREDIT_COST}
                     onRetry={{
                       side: () => runRetry(
-                        () => retrySideView(meta.photoHash, () => {}),
+                        (context) => retrySideView(meta.photoHash, () => {}, context),
                         'Retrying side view...',
                         { kind: 'source', key: 'side' },
+                        'fighter_retry_source',
+                        SOURCE_RETRY_CREDIT_COST,
                       ),
                       upright: () => runRetry(
-                        () => retryUprightView(meta.photoHash, () => {}),
+                        (context) => retryUprightView(meta.photoHash, () => {}, context),
                         'Retrying upright...',
                         { kind: 'source', key: 'upright' },
+                        'fighter_retry_source',
+                        SOURCE_RETRY_CREDIT_COST,
                       ),
                       crouch: () => runRetry(
-                        () => retryCrouchView(meta.photoHash, () => {}),
+                        (context) => retryCrouchView(meta.photoHash, () => {}, context),
                         'Retrying crouch...',
                         { kind: 'source', key: 'crouch' },
+                        'fighter_retry_source',
+                        SOURCE_RETRY_CREDIT_COST,
                       ),
                     }}
-                    busy={busy}
+                    busy={busy || !legalAccepted}
                   />
 
                   {introUrl ? (
@@ -520,7 +848,7 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
                   {selectedAnimName ? (
                     <button
                       className="gallery-mode-toggle"
-                      disabled={busy}
+                      disabled={busy || !legalAccepted}
                       onClick={() =>
                         setSpriteMode((current) => {
                           if (current === 'sheet_refined') return selectedAnimName === 'idle' ? 'frame_sequence' : 'sheet';
@@ -575,13 +903,19 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
                       disabled={busy}
                       onClick={() =>
                         void runRetry(
-                          () => retryAnimation(meta.photoHash, selectedAnimName, () => {}, { spriteMode }),
+                          (context) => retryAnimation(meta.photoHash, selectedAnimName, () => {}, {
+                            spriteMode,
+                            apiContext: context,
+                          }),
                           `Retrying ${selectedAnimName} (${spriteMode === 'sheet_refined' ? 'refined' : spriteMode === 'frame_sequence' ? 'frames' : 'sheet'})...`,
                           { kind: 'animation', name: selectedAnimName },
+                          'fighter_retry_animation',
+                          currentAnimationRetryCost,
                         )
                       }
                     >
-                      Retry Animation
+                      Retry Animation · {currentAnimationRetryCost}{' '}
+                      {currentAnimationRetryCost === 1 ? 'credit' : 'credits'}
                     </button>
                   ) : null}
                 </div>
@@ -605,7 +939,7 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
                   Created {formatDate(currentStage.createdAt)} · Kind {currentStage.kind ?? 'photo'} · Key {currentStage.stageKey.slice(0, 14)}...
                 </p>
               </div>
-              <div className="gallery-hero__status">{status}</div>
+              <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
             </header>
 
             <section className="gallery-stage-layout">
@@ -643,6 +977,51 @@ export function GalleryPage({ onBack, onCreateFighter }: GalleryPageProps) {
           </>
         )}
       </main>
+
+      {pendingUpgrade ? (
+        <div className="upgrade-confirm-backdrop">
+          <section
+            className="upgrade-confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="upgrade-confirm-title"
+            aria-describedby="upgrade-confirm-description"
+          >
+            <div className="upgrade-confirm-dialog__header">
+              <div>
+                <p className="gallery-eyebrow">Quality Upgrade</p>
+                <h2 id="upgrade-confirm-title">Upgrade to {pendingUpgrade.label}</h2>
+              </div>
+              <strong>{pendingUpgrade.priceLabel}</strong>
+            </div>
+            <p id="upgrade-confirm-description" className="upgrade-confirm-dialog__copy">
+              All 11 animations will be regenerated from the canonical Pro source views.
+              Every existing local and cloud version remains preserved.
+            </p>
+            <div className="upgrade-confirm-dialog__actions">
+              <button
+                className="gallery-chip"
+                type="button"
+                onClick={() => setPendingUpgradeTier(null)}
+              >
+                <span>Cancel</span>
+              </button>
+              <button
+                ref={upgradeConfirmRef}
+                className="gallery-chip is-active"
+                type="button"
+                onClick={() => {
+                  const tier = pendingUpgrade.id;
+                  setPendingUpgradeTier(null);
+                  void upgradeToTier(tier);
+                }}
+              >
+                <span>Regenerate for {pendingUpgrade.priceLabel}</span>
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

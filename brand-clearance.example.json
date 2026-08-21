@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "validatedAt": "2026-05-17T00:00:00.000Z",
+  "publicBrandName": "Insert Player",
+  "publicShortName": "P1",
+  "productionOrigin": "https://insertplayer.ai",
+  "clearanceStatus": "clearance_status_replace_me",
+  "reviewedBy": "attorney_or_owner_replace_me",
+  "searchedJurisdictions": [
+    "USPTO_search_replace_me",
+    "WIPO_or_EUIPO_search_replace_me"
+  ],
+  "evidence": {
+    "trademarkSearch": "evidence_replace_me: summarize trademark search results and legal review for game/software classes.",
+    "domainAndHandles": "evidence_replace_me: list reserved domain and social/app-store handles for the cleared brand.",
+    "publicSurfaces": "evidence_replace_me: confirm index.html, manifest, share text, Worker share pages, social card, and Pages domain/custom domain use the cleared brand."
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "name": "Insert Player",
+  "short_name": "P1",
+  "description": "Insert yourself into the game. Turn a photo into a playable arcade character.",
+  "id": "/",
+  "start_url": "/menu",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111216",
+  "theme_color": "#d22727",
+  "icons": [
+    {
+      "src": "/assets/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/app-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": [
+    "games",
+    "entertainment"
+  ],
+  "orientation": "any"
+}

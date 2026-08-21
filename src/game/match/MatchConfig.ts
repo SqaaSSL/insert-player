@@ -24,6 +24,8 @@ export interface MatchSceneData {
   cpuVsCpu?: boolean;
   p1PhotoHash?: string;
   p2PhotoHash?: string;
+  p1CloudFighterId?: string | null;
+  p2CloudFighterId?: string | null;
   p1Name?: string;
   p2Name?: string;
   p1PersonalityId?: FighterPersonalityId;
@@ -32,6 +34,40 @@ export interface MatchSceneData {
   customStageKey?: string;
   customStageLabel?: string;
   remix?: number;
+}
+
+export const MATCH_COMPLETE_EVENT = 'asf-match-complete';
+export const MATCH_ACTION_EVENT = 'asf-match-action';
+export const MATCH_ACTIONS_VISIBILITY_EVENT = 'asf-match-actions-visibility';
+
+export type MatchAction = 'run_it_back' | 'remix' | 'menu';
+
+export interface MatchCompletionDetail {
+  winnerSlot: 'p1' | 'p2';
+  roundsP1: number;
+  roundsP2: number;
+  durationSeconds: number;
+  vsAI: boolean;
+  cpuVsCpu: boolean;
+  p1FighterId?: string | null;
+  p2FighterId?: string | null;
+  isRanked?: boolean;
+}
+
+export interface MatchActionDetail {
+  action: MatchAction;
+}
+
+export interface MatchActionsVisibilityDetail {
+  visible: boolean;
+}
+
+declare global {
+  interface WindowEventMap {
+    [MATCH_COMPLETE_EVENT]: CustomEvent<MatchCompletionDetail>;
+    [MATCH_ACTION_EVENT]: CustomEvent<MatchActionDetail>;
+    [MATCH_ACTIONS_VISIBILITY_EVENT]: CustomEvent<MatchActionsVisibilityDetail>;
+  }
 }
 
 export const FIGHTER_PERSONALITIES: FighterPersonality[] = [

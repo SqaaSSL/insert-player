@@ -1,19 +1,31 @@
 const DB_NAME = 'ai-street-fighter';
-const DB_VERSION = 2;
+const DB_VERSION = 5;
 const STORE_SPRITES = 'sprites';
 const STORE_INTROS = 'intros';
 const STORE_META = 'meta';
 const STORE_STAGES = 'stages';
+const LOCAL_CACHE_SCOPE = 'local';
+
+let activeCacheScope = LOCAL_CACHE_SCOPE;
+let databasePromise: Promise<IDBDatabase> | null = null;
+let scopeMutationQueue: Promise<void> = Promise.resolve();
+
+type QualityTier = 'rookie' | 'contender' | 'champion';
 
 interface CachedSprite {
+  ownerScope?: string;
+  versionId?: string;
   photoHash: string;
   animationName: string;
+  qualityTier: QualityTier;
   pngBlob: Blob;
   rawPngBlob?: Blob;
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
   processingVersion?: number;
+  contentHash?: string | null;
+  rawContentHash?: string | null;
   createdAt: number;
 }
 
@@ -50,6 +62,7 @@ interface CachedIntroVariant {
 }
 
 interface CachedIntro {
+  ownerScope?: string;
   photoHash: string;
   activeVariantId?: CachedIntroVariantId | null;
   variants: CachedIntroVariant[];
@@ -58,6 +71,7 @@ interface CachedIntro {
 type CachedStageKind = 'generated' | 'photo' | 'photo-direct';
 
 interface CachedStageBackground {
+  ownerScope?: string;
   stageKey: string;
   prompt: string;
   pngBlob: Blob;
@@ -67,8 +81,15 @@ interface CachedStageBackground {
 }
 
 const CACHE_VERSION = 1;
+const DEFAULT_MIGRATED_TIER: QualityTier = 'champion';
+const QUALITY_TIER_RANK: Record<QualityTier, number> = {
+  rookie: 1,
+  contender: 2,
+  champion: 3,
+};
 
 interface CachedMeta {
+  ownerScope?: string;
   photoHash: string;
   version: number;
   originalPhotoBlob: Blob | null;
@@ -82,6 +103,11 @@ interface CachedMeta {
   crouchViewCleanBlob: Blob | null;
   noBgBlob: Blob | null;
   characterName: string;
+  qualityTier?: 'rookie' | 'contender' | 'champion';
+  cloudFighterId?: string | null;
+  cloudPublic?: boolean;
+  cloudSourceHashes?: Record<string, string | null>;
+  pendingGenerationPurchaseId?: string | null;
   introVideoPrompt?: string | null;
   introVideoModel?: 'freepik-auto' | 'kling-v2-1-std' | 'veo-3-1' | 'runway-gen4-turbo' | 'fal-ltx-v2-3-fast' | 'fal-kling-v2-6-pro' | 'fal-vidu-q3' | null;
   introVideoReferenceBlobs?: Blob[] | null;
@@ -92,30 +118,351 @@ interface CachedMeta {
   updatedAt: number;
 }
 
+function normalizeCacheScope(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : LOCAL_CACHE_SCOPE;
+}
+
+export function spriteCacheScopeForOwner(clerkUserId: string | null | undefined): string {
+  const normalized = typeof clerkUserId === 'string' ? clerkUserId.trim() : '';
+  return normalized ? `clerk:${normalized}` : LOCAL_CACHE_SCOPE;
+}
+
+export function configureSpriteCacheOwner(clerkUserId: string | null | undefined): string {
+  activeCacheScope = spriteCacheScopeForOwner(clerkUserId);
+  return activeCacheScope;
+}
+
+export function getActiveSpriteCacheScope(): string {
+  return activeCacheScope;
+}
+
+function requestedCacheScope(value?: string): string {
+  return normalizeCacheScope(value ?? activeCacheScope);
+}
+
+function assertActiveCacheScope(scope: string): void {
+  if (scope !== activeCacheScope) {
+    throw new Error('Player changed while local data was being updated. The stale operation was stopped.');
+  }
+}
+
 function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (databasePromise) return databasePromise;
+
+  const openPromise = new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
 
-    req.onupgradeneeded = () => {
+    req.onupgradeneeded = (event) => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_SPRITES)) {
-        const store = db.createObjectStore(STORE_SPRITES, { keyPath: ['photoHash', 'animationName'] });
-        store.createIndex('byHash', 'photoHash');
-      }
-      if (!db.objectStoreNames.contains(STORE_INTROS)) {
-        db.createObjectStore(STORE_INTROS, { keyPath: 'photoHash' });
-      }
-      if (!db.objectStoreNames.contains(STORE_META)) {
-        db.createObjectStore(STORE_META, { keyPath: 'photoHash' });
-      }
-      if (!db.objectStoreNames.contains(STORE_STAGES)) {
-        db.createObjectStore(STORE_STAGES, { keyPath: 'stageKey' });
+      const tx = req.transaction;
+      if (event.oldVersion < 5 && tx) {
+        migrateStoreToScoped(db, tx, STORE_SPRITES, createSpriteStore, normalizeCachedSpriteRecord);
+        migrateStoreToScoped(db, tx, STORE_INTROS, createIntroStore);
+        migrateStoreToScoped(db, tx, STORE_META, createMetaStore);
+        migrateStoreToScoped(db, tx, STORE_STAGES, createStageStore);
+      } else {
+        if (!db.objectStoreNames.contains(STORE_SPRITES)) createSpriteStore(db);
+        if (!db.objectStoreNames.contains(STORE_INTROS)) createIntroStore(db);
+        if (!db.objectStoreNames.contains(STORE_META)) createMetaStore(db);
+        if (!db.objectStoreNames.contains(STORE_STAGES)) createStageStore(db);
       }
     };
 
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => {
+        db.close();
+        databasePromise = null;
+      };
+      resolve(db);
+    };
+    req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error('Sprite cache upgrade is blocked by another tab'));
+  }).catch((error) => {
+    databasePromise = null;
+    throw error;
+  });
+  databasePromise = openPromise;
+
+  return openPromise;
+}
+
+function createSpriteStore(db: IDBDatabase): IDBObjectStore {
+  const store = db.createObjectStore(STORE_SPRITES, { keyPath: ['ownerScope', 'versionId'] });
+  ensureSpriteIndexes(store);
+  return store;
+}
+
+function ensureSpriteIndexes(store: IDBObjectStore): void {
+  if (!store.indexNames.contains('byScope')) {
+    store.createIndex('byScope', 'ownerScope');
+  }
+  if (!store.indexNames.contains('byScopeAndHash')) {
+    store.createIndex('byScopeAndHash', ['ownerScope', 'photoHash']);
+  }
+  if (!store.indexNames.contains('byScopeHashAndAnim')) {
+    store.createIndex('byScopeHashAndAnim', ['ownerScope', 'photoHash', 'animationName']);
+  }
+  if (!store.indexNames.contains('byScopeHashAnimTier')) {
+    store.createIndex('byScopeHashAnimTier', ['ownerScope', 'photoHash', 'animationName', 'qualityTier']);
+  }
+}
+
+function createScopedStore(db: IDBDatabase, name: string, recordKey: string): IDBObjectStore {
+  const store = db.createObjectStore(name, { keyPath: ['ownerScope', recordKey] });
+  store.createIndex('byScope', 'ownerScope');
+  return store;
+}
+
+function createIntroStore(db: IDBDatabase): IDBObjectStore {
+  return createScopedStore(db, STORE_INTROS, 'photoHash');
+}
+
+function createMetaStore(db: IDBDatabase): IDBObjectStore {
+  return createScopedStore(db, STORE_META, 'photoHash');
+}
+
+function createStageStore(db: IDBDatabase): IDBObjectStore {
+  return createScopedStore(db, STORE_STAGES, 'stageKey');
+}
+
+function normalizeQualityTier(value: unknown, fallback: QualityTier = DEFAULT_MIGRATED_TIER): QualityTier {
+  return value === 'rookie' || value === 'contender' || value === 'champion' ? value : fallback;
+}
+
+function createSpriteVersionId(sprite: Pick<CachedSprite, 'photoHash' | 'animationName' | 'qualityTier'> & { createdAt?: number }): string {
+  const createdAt = typeof sprite.createdAt === 'number' ? sprite.createdAt : Date.now();
+  const suffix = crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${sprite.photoHash}:${sprite.animationName}:${sprite.qualityTier}:${createdAt}:${suffix}`;
+}
+
+function normalizeCachedSpriteRecord(raw: any): CachedSprite | null {
+  if (!raw || typeof raw.photoHash !== 'string' || typeof raw.animationName !== 'string' || !(raw.pngBlob instanceof Blob)) {
+    return null;
+  }
+  const normalized = {
+    ...raw,
+    ownerScope: normalizeCacheScope(raw.ownerScope),
+    qualityTier: normalizeQualityTier(raw.qualityTier),
+    createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
+  } as CachedSprite;
+  normalized.versionId = typeof raw.versionId === 'string' && raw.versionId
+    ? raw.versionId
+    : createSpriteVersionId(normalized);
+  return normalized;
+}
+
+function migrateStoreToScoped(
+  db: IDBDatabase,
+  tx: IDBTransaction,
+  storeName: string,
+  createStore: (db: IDBDatabase) => IDBObjectStore,
+  normalize: (raw: any) => any | null = (raw) => raw,
+): void {
+  if (!db.objectStoreNames.contains(storeName)) {
+    createStore(db);
+    return;
+  }
+
+  const oldStore = tx.objectStore(storeName);
+  const records: any[] = [];
+  const cursorReq = oldStore.openCursor();
+  cursorReq.onsuccess = () => {
+    const cursor = cursorReq.result;
+    if (cursor) {
+      const normalized = normalize(cursor.value);
+      if (normalized) {
+        records.push({
+          ...normalized,
+          ownerScope: normalizeCacheScope(normalized.ownerScope),
+        });
+      }
+      cursor.continue();
+      return;
+    }
+
+    db.deleteObjectStore(storeName);
+    const newStore = createStore(db);
+    for (const record of records) {
+      newStore.put(record);
+    }
+  };
+  cursorReq.onerror = () => {
+    throw cursorReq.error ?? new Error(`${storeName} cache migration failed`);
+  };
+}
+
+function compareSpritesByTierAndTime(a: CachedSprite, b: CachedSprite): number {
+  const tierDelta = QUALITY_TIER_RANK[b.qualityTier] - QUALITY_TIER_RANK[a.qualityTier];
+  if (tierDelta !== 0) return tierDelta;
+  return (b.createdAt ?? 0) - (a.createdAt ?? 0);
+}
+
+function bestSpritesByAnimation(sprites: CachedSprite[]): CachedSprite[] {
+  const best = new Map<string, CachedSprite>();
+  for (const sprite of sprites) {
+    const existing = best.get(sprite.animationName);
+    if (!existing || compareSpritesByTierAndTime(sprite, existing) < 0) {
+      best.set(sprite.animationName, sprite);
+    }
+  }
+  return Array.from(best.values()).sort((a, b) => a.animationName.localeCompare(b.animationName));
+}
+
+function transactionDone(tx: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error('Sprite cache transaction aborted'));
+  });
+}
+
+function recordsForScope<T>(db: IDBDatabase, storeName: string, scope: string): Promise<T[]> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).index('byScope').getAll(scope);
+    req.onsuccess = () => resolve((req.result ?? []) as T[]);
     req.onerror = () => reject(req.error);
   });
+}
+
+function maxOptionalTier(a: QualityTier | undefined, b: QualityTier | undefined): QualityTier | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return QUALITY_TIER_RANK[a] >= QUALITY_TIER_RANK[b] ? a : b;
+}
+
+function mergeClaimedMeta(existing: CachedMeta | undefined, local: CachedMeta, ownerScope: string): CachedMeta {
+  if (!existing) return { ...local, ownerScope };
+  const newer = (existing.updatedAt ?? 0) >= (local.updatedAt ?? 0) ? existing : local;
+  const older = newer === existing ? local : existing;
+  return {
+    ...older,
+    ...newer,
+    ownerScope,
+    originalPhotoBlob: newer.originalPhotoBlob ?? older.originalPhotoBlob,
+    sideViewBlob: newer.sideViewBlob ?? older.sideViewBlob,
+    sideViewRawBlob: newer.sideViewRawBlob ?? older.sideViewRawBlob,
+    uprightViewBlob: newer.uprightViewBlob ?? older.uprightViewBlob,
+    uprightViewRawBlob: newer.uprightViewRawBlob ?? older.uprightViewRawBlob,
+    sideViewCleanBlob: newer.sideViewCleanBlob ?? older.sideViewCleanBlob,
+    crouchViewBlob: newer.crouchViewBlob ?? older.crouchViewBlob,
+    crouchViewRawBlob: newer.crouchViewRawBlob ?? older.crouchViewRawBlob,
+    crouchViewCleanBlob: newer.crouchViewCleanBlob ?? older.crouchViewCleanBlob,
+    noBgBlob: newer.noBgBlob ?? older.noBgBlob,
+    qualityTier: maxOptionalTier(existing.qualityTier, local.qualityTier),
+    cloudFighterId: existing.cloudFighterId ?? local.cloudFighterId ?? null,
+    cloudPublic: existing.cloudPublic ?? local.cloudPublic ?? false,
+    animationsReady: Array.from(new Set([
+      ...(existing.animationsReady ?? []),
+      ...(local.animationsReady ?? []),
+    ])),
+    failedAnimationArtifacts: {
+      ...(older.failedAnimationArtifacts ?? {}),
+      ...(newer.failedAnimationArtifacts ?? {}),
+    },
+    createdAt: Math.min(existing.createdAt ?? Date.now(), local.createdAt ?? Date.now()),
+    updatedAt: Math.max(existing.updatedAt ?? 0, local.updatedAt ?? 0),
+  };
+}
+
+function mergeClaimedIntro(
+  existing: CachedIntro | undefined,
+  local: CachedIntro,
+  ownerScope: string,
+): CachedIntro {
+  if (!existing) return { ...local, ownerScope };
+  const variants = [...(existing.variants ?? []), ...(local.variants ?? [])];
+  const unique = new Map<string, CachedIntroVariant>();
+  for (const variant of variants) {
+    unique.set(`${variant.id}:${variant.createdAt}:${variant.model ?? ''}`, variant);
+  }
+  const merged = Array.from(unique.values()).sort((a, b) => b.createdAt - a.createdAt);
+  return {
+    ownerScope,
+    photoHash: local.photoHash,
+    activeVariantId: existing.activeVariantId ?? local.activeVariantId ?? merged[0]?.id ?? null,
+    variants: merged,
+  };
+}
+
+async function claimLocalCacheForOwner(ownerScope: string): Promise<void> {
+  if (ownerScope === LOCAL_CACHE_SCOPE) return;
+  const db = await openDB();
+  const [
+    localSprites,
+    ownerSprites,
+    localIntros,
+    ownerIntros,
+    localMetas,
+    ownerMetas,
+    localStages,
+    ownerStages,
+  ] = await Promise.all([
+    recordsForScope<CachedSprite>(db, STORE_SPRITES, LOCAL_CACHE_SCOPE),
+    recordsForScope<CachedSprite>(db, STORE_SPRITES, ownerScope),
+    recordsForScope<CachedIntro>(db, STORE_INTROS, LOCAL_CACHE_SCOPE),
+    recordsForScope<CachedIntro>(db, STORE_INTROS, ownerScope),
+    recordsForScope<CachedMeta>(db, STORE_META, LOCAL_CACHE_SCOPE),
+    recordsForScope<CachedMeta>(db, STORE_META, ownerScope),
+    recordsForScope<CachedStageBackground>(db, STORE_STAGES, LOCAL_CACHE_SCOPE),
+    recordsForScope<CachedStageBackground>(db, STORE_STAGES, ownerScope),
+  ]);
+
+  if (localSprites.length + localIntros.length + localMetas.length + localStages.length === 0) return;
+
+  const tx = db.transaction([STORE_SPRITES, STORE_INTROS, STORE_META, STORE_STAGES], 'readwrite');
+  const spriteStore = tx.objectStore(STORE_SPRITES);
+  const introStore = tx.objectStore(STORE_INTROS);
+  const metaStore = tx.objectStore(STORE_META);
+  const stageStore = tx.objectStore(STORE_STAGES);
+  const ownerSpriteIds = new Set(ownerSprites.map((sprite) => sprite.versionId).filter(Boolean));
+  const ownerIntroByHash = new Map(ownerIntros.map((intro) => [intro.photoHash, intro]));
+  const ownerMetaByHash = new Map(ownerMetas.map((meta) => [meta.photoHash, meta]));
+  const ownerStageByKey = new Map(ownerStages.map((stage) => [stage.stageKey, stage]));
+
+  for (const sprite of localSprites) {
+    if (!sprite.versionId) continue;
+    const versionId = ownerSpriteIds.has(sprite.versionId)
+      ? createSpriteVersionId(sprite)
+      : sprite.versionId;
+    spriteStore.put({ ...sprite, ownerScope, versionId });
+    spriteStore.delete([LOCAL_CACHE_SCOPE, sprite.versionId]);
+  }
+  for (const intro of localIntros) {
+    introStore.put(mergeClaimedIntro(ownerIntroByHash.get(intro.photoHash), intro, ownerScope));
+    introStore.delete([LOCAL_CACHE_SCOPE, intro.photoHash]);
+  }
+  for (const meta of localMetas) {
+    metaStore.put(mergeClaimedMeta(ownerMetaByHash.get(meta.photoHash), meta, ownerScope));
+    metaStore.delete([LOCAL_CACHE_SCOPE, meta.photoHash]);
+  }
+  for (const stage of localStages) {
+    const existing = ownerStageByKey.get(stage.stageKey);
+    const selected = existing && existing.createdAt >= stage.createdAt ? existing : stage;
+    stageStore.put({ ...selected, ownerScope });
+    stageStore.delete([LOCAL_CACHE_SCOPE, stage.stageKey]);
+  }
+
+  await transactionDone(tx);
+}
+
+export function claimLocalSpriteCacheForCurrentOwner(): Promise<void> {
+  const ownerScope = activeCacheScope;
+  const operation = scopeMutationQueue.then(() => claimLocalCacheForOwner(ownerScope));
+  scopeMutationQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+export async function closeSpriteCacheDatabase(): Promise<void> {
+  const current = databasePromise;
+  databasePromise = null;
+  if (!current) return;
+  try {
+    (await current).close();
+  } catch {
+    // A failed open has no live connection to close.
+  }
 }
 
 export async function hashPhoto(blob: Blob): Promise<string> {
@@ -124,21 +471,29 @@ export async function hashPhoto(blob: Blob): Promise<string> {
   return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function getCachedMeta(photoHash: string): Promise<CachedMeta | null> {
+export async function getCachedMeta(
+  photoHash: string,
+  ownerScope = activeCacheScope,
+): Promise<CachedMeta | null> {
+  const scope = requestedCacheScope(ownerScope);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_META, 'readonly');
-    const req = tx.objectStore(STORE_META).get(photoHash);
+    const req = tx.objectStore(STORE_META).get([scope, photoHash]);
     req.onsuccess = () => resolve(req.result ?? null);
     req.onerror = () => reject(req.error);
   });
 }
 
-export async function setCachedMeta(meta: CachedMeta): Promise<void> {
+export async function setCachedMeta(meta: CachedMeta, ownerScope = meta.ownerScope ?? activeCacheScope): Promise<void> {
+  const scope = requestedCacheScope(ownerScope);
+  assertActiveCacheScope(scope);
   const db = await openDB();
+  assertActiveCacheScope(scope);
+  meta.ownerScope = scope;
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_META, 'readwrite');
-    tx.objectStore(STORE_META).put(meta);
+    tx.objectStore(STORE_META).put({ ...meta, ownerScope: scope });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -173,32 +528,86 @@ export async function updateCharacterIntroConfig(
   return meta;
 }
 
-export async function getCachedSprite(photoHash: string, animationName: string): Promise<CachedSprite | null> {
+export async function getCachedSprite(
+  photoHash: string,
+  animationName: string,
+  qualityTier?: QualityTier,
+  ownerScope = activeCacheScope,
+): Promise<CachedSprite | null> {
+  const scope = requestedCacheScope(ownerScope);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_SPRITES, 'readonly');
-    const req = tx.objectStore(STORE_SPRITES).get([photoHash, animationName]);
-    req.onsuccess = () => resolve(req.result ?? null);
+    if (qualityTier) {
+      const idx = tx.objectStore(STORE_SPRITES).index('byScopeHashAnimTier');
+      const req = idx.getAll([scope, photoHash, animationName, qualityTier]);
+      req.onsuccess = () => {
+        const versions = (req.result ?? []) as CachedSprite[];
+        versions.sort(compareSpritesByTierAndTime);
+        resolve(versions[0] ?? null);
+      };
+      req.onerror = () => reject(req.error);
+      return;
+    }
+    const idx = tx.objectStore(STORE_SPRITES).index('byScopeHashAndAnim');
+    const req = idx.getAll([scope, photoHash, animationName]);
+    req.onsuccess = () => {
+      const versions = (req.result ?? []) as CachedSprite[];
+      versions.sort(compareSpritesByTierAndTime);
+      resolve(versions[0] ?? null);
+    };
     req.onerror = () => reject(req.error);
   });
 }
 
-export async function getAllSpritesForHash(photoHash: string): Promise<CachedSprite[]> {
+export async function getAllSpritesForHash(
+  photoHash: string,
+  ownerScope = activeCacheScope,
+): Promise<CachedSprite[]> {
+  const versions = await getAllSpriteVersionsForHash(photoHash, ownerScope);
+  return bestSpritesByAnimation(versions);
+}
+
+export async function getAllSpriteVersionsForHash(
+  photoHash: string,
+  ownerScope = activeCacheScope,
+): Promise<CachedSprite[]> {
+  const scope = requestedCacheScope(ownerScope);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_SPRITES, 'readonly');
-    const idx = tx.objectStore(STORE_SPRITES).index('byHash');
-    const req = idx.getAll(photoHash);
-    req.onsuccess = () => resolve(req.result ?? []);
+    const idx = tx.objectStore(STORE_SPRITES).index('byScopeAndHash');
+    const req = idx.getAll([scope, photoHash]);
+    req.onsuccess = () => {
+      const versions = (req.result ?? []) as CachedSprite[];
+      versions.sort(compareSpritesByTierAndTime);
+      resolve(versions);
+    };
     req.onerror = () => reject(req.error);
   });
 }
 
-export async function setCachedSprite(sprite: CachedSprite): Promise<void> {
+export async function setCachedSprite(
+  sprite: CachedSprite,
+  options: { preserveVersionId?: boolean; ownerScope?: string } = {},
+): Promise<void> {
+  const scope = requestedCacheScope(options.ownerScope ?? sprite.ownerScope);
+  assertActiveCacheScope(scope);
   const db = await openDB();
+  assertActiveCacheScope(scope);
+  sprite.ownerScope = scope;
+  const normalized = {
+    ...sprite,
+    ownerScope: scope,
+    qualityTier: normalizeQualityTier(sprite.qualityTier, 'contender'),
+    createdAt: typeof sprite.createdAt === 'number' ? sprite.createdAt : Date.now(),
+  };
+  normalized.versionId = options.preserveVersionId && sprite.versionId
+    ? sprite.versionId
+    : createSpriteVersionId(normalized);
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_SPRITES, 'readwrite');
-    tx.objectStore(STORE_SPRITES).put(sprite);
+    tx.objectStore(STORE_SPRITES).put(normalized);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -239,6 +648,7 @@ function normalizeCachedIntro(raw: any): CachedIntro | null {
       if (current.createdAt > best.createdAt) preferredVariant = current;
     }
     return {
+      ownerScope: normalizeCacheScope(raw.ownerScope),
       photoHash: raw.photoHash,
       activeVariantId: preferredVariant.id,
       variants: [preferredVariant],
@@ -247,6 +657,7 @@ function normalizeCachedIntro(raw: any): CachedIntro | null {
 
   if (raw.videoBlob instanceof Blob) {
     return {
+      ownerScope: normalizeCacheScope(raw.ownerScope),
       photoHash: raw.photoHash,
       activeVariantId: 'legacy',
       variants: [{
@@ -265,71 +676,97 @@ function normalizeCachedIntro(raw: any): CachedIntro | null {
   return null;
 }
 
-export async function getCachedIntro(photoHash: string): Promise<CachedIntro | null> {
+export async function getCachedIntro(
+  photoHash: string,
+  ownerScope = activeCacheScope,
+): Promise<CachedIntro | null> {
+  const scope = requestedCacheScope(ownerScope);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_INTROS, 'readonly');
-    const req = tx.objectStore(STORE_INTROS).get(photoHash);
+    const req = tx.objectStore(STORE_INTROS).get([scope, photoHash]);
     req.onsuccess = () => resolve(normalizeCachedIntro(req.result));
     req.onerror = () => reject(req.error);
   });
 }
 
-export async function setCachedIntro(intro: CachedIntro): Promise<void> {
+export async function setCachedIntro(
+  intro: CachedIntro,
+  ownerScope = intro.ownerScope ?? activeCacheScope,
+): Promise<void> {
+  const scope = requestedCacheScope(ownerScope);
+  assertActiveCacheScope(scope);
   const db = await openDB();
+  assertActiveCacheScope(scope);
+  intro.ownerScope = scope;
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_INTROS, 'readwrite');
-    tx.objectStore(STORE_INTROS).put(intro);
+    tx.objectStore(STORE_INTROS).put({ ...intro, ownerScope: scope });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
 export async function deleteCachedIntro(photoHash: string): Promise<void> {
+  const scope = activeCacheScope;
   const db = await openDB();
+  assertActiveCacheScope(scope);
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_INTROS, 'readwrite');
-    tx.objectStore(STORE_INTROS).delete(photoHash);
+    tx.objectStore(STORE_INTROS).delete([scope, photoHash]);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
-export async function getAllCachedMetas(): Promise<CachedMeta[]> {
+export async function getAllCachedMetas(ownerScope = activeCacheScope): Promise<CachedMeta[]> {
+  const scope = requestedCacheScope(ownerScope);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_META, 'readonly');
-    const req = tx.objectStore(STORE_META).getAll();
+    const req = tx.objectStore(STORE_META).index('byScope').getAll(scope);
     req.onsuccess = () => resolve(req.result ?? []);
     req.onerror = () => reject(req.error);
   });
 }
 
-export async function getCachedStageBackground(stageKey: string): Promise<CachedStageBackground | null> {
+export async function getCachedStageBackground(
+  stageKey: string,
+  ownerScope = activeCacheScope,
+): Promise<CachedStageBackground | null> {
+  const scope = requestedCacheScope(ownerScope);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_STAGES, 'readonly');
-    const req = tx.objectStore(STORE_STAGES).get(stageKey);
+    const req = tx.objectStore(STORE_STAGES).get([scope, stageKey]);
     req.onsuccess = () => resolve(req.result ?? null);
     req.onerror = () => reject(req.error);
   });
 }
 
-export async function getAllCachedStageBackgrounds(): Promise<CachedStageBackground[]> {
+export async function getAllCachedStageBackgrounds(ownerScope = activeCacheScope): Promise<CachedStageBackground[]> {
+  const scope = requestedCacheScope(ownerScope);
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_STAGES, 'readonly');
-    const req = tx.objectStore(STORE_STAGES).getAll();
+    const req = tx.objectStore(STORE_STAGES).index('byScope').getAll(scope);
     req.onsuccess = () => resolve(req.result ?? []);
     req.onerror = () => reject(req.error);
   });
 }
 
-export async function setCachedStageBackground(stage: CachedStageBackground): Promise<void> {
+export async function setCachedStageBackground(
+  stage: CachedStageBackground,
+  ownerScope = stage.ownerScope ?? activeCacheScope,
+): Promise<void> {
+  const scope = requestedCacheScope(ownerScope);
+  assertActiveCacheScope(scope);
   const db = await openDB();
+  assertActiveCacheScope(scope);
+  stage.ownerScope = scope;
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_STAGES, 'readwrite');
-    tx.objectStore(STORE_STAGES).put(stage);
+    tx.objectStore(STORE_STAGES).put({ ...stage, ownerScope: scope });
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -344,30 +781,33 @@ export async function renameCachedStageBackground(stageKey: string, label: strin
 }
 
 export async function deleteCachedStageBackground(stageKey: string): Promise<void> {
+  const scope = activeCacheScope;
   const db = await openDB();
+  assertActiveCacheScope(scope);
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_STAGES, 'readwrite');
-    tx.objectStore(STORE_STAGES).delete(stageKey);
+    tx.objectStore(STORE_STAGES).delete([scope, stageKey]);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
 export async function deleteCharacter(photoHash: string): Promise<void> {
+  const scope = activeCacheScope;
   const db = await openDB();
+  assertActiveCacheScope(scope);
   const tx = db.transaction([STORE_SPRITES, STORE_INTROS, STORE_META], 'readwrite');
-  tx.objectStore(STORE_META).delete(photoHash);
-  tx.objectStore(STORE_INTROS).delete(photoHash);
-
-  const sprites = await new Promise<CachedSprite[]>((resolve, reject) => {
-    const idx = tx.objectStore(STORE_SPRITES).index('byHash');
-    const req = idx.getAll(photoHash);
-    req.onsuccess = () => resolve(req.result ?? []);
-    req.onerror = () => reject(req.error);
-  });
-  for (const s of sprites) {
-    tx.objectStore(STORE_SPRITES).delete([s.photoHash, s.animationName]);
-  }
+  tx.objectStore(STORE_META).delete([scope, photoHash]);
+  tx.objectStore(STORE_INTROS).delete([scope, photoHash]);
+  const spriteCursor = tx.objectStore(STORE_SPRITES)
+    .index('byScopeAndHash')
+    .openCursor(IDBKeyRange.only([scope, photoHash]));
+  spriteCursor.onsuccess = () => {
+    const cursor = spriteCursor.result;
+    if (!cursor) return;
+    cursor.delete();
+    cursor.continue();
+  };
 
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
@@ -376,12 +816,19 @@ export async function deleteCharacter(photoHash: string): Promise<void> {
 }
 
 export async function clearCache(): Promise<void> {
+  const scope = activeCacheScope;
   const db = await openDB();
+  assertActiveCacheScope(scope);
   const tx = db.transaction([STORE_SPRITES, STORE_INTROS, STORE_META, STORE_STAGES], 'readwrite');
-  tx.objectStore(STORE_SPRITES).clear();
-  tx.objectStore(STORE_INTROS).clear();
-  tx.objectStore(STORE_META).clear();
-  tx.objectStore(STORE_STAGES).clear();
+  for (const storeName of [STORE_SPRITES, STORE_INTROS, STORE_META, STORE_STAGES]) {
+    const cursorRequest = tx.objectStore(storeName).index('byScope').openCursor(IDBKeyRange.only(scope));
+    cursorRequest.onsuccess = () => {
+      const cursor = cursorRequest.result;
+      if (!cursor) return;
+      cursor.delete();
+      cursor.continue();
+    };
+  }
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -391,6 +838,7 @@ export async function clearCache(): Promise<void> {
 export { CACHE_VERSION };
 export type {
   CachedSprite,
+  QualityTier,
   CachedIntro,
   CachedIntroModel,
   CachedIntroVariant,

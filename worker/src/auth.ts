@@ -1,4 +1,11 @@
-import type { Env, GoogleTokenResponse, GoogleUserInfo, User } from './types';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+import type { AuthContext, Env, PublicAuthContext, User } from './types';
+
+let cachedJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
+let cachedJwksUrl = '';
+
+const MAX_PUBLIC_NAME_CHARS = 48;
+const MAX_EMAIL_CHARS = 254;
 
 export function generateId(): string {
   const bytes = new Uint8Array(16);
@@ -6,104 +13,266 @@ export function generateId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function hashString(input: string): Promise<string> {
-  const encoded = new TextEncoder().encode(input);
+export async function hashString(input: string | ArrayBuffer): Promise<string> {
+  const encoded = typeof input === 'string' ? new TextEncoder().encode(input) : input;
   const hash = await crypto.subtle.digest('SHA-256', encoded);
   return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function createSession(env: Env, userId: string): Promise<string> {
-  const sessionId = generateId();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
-
-  await env.DB.prepare(
-    'INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)'
-  ).bind(sessionId, userId, expiresAt).run();
-
-  return sessionId;
+async function hmacString(secret: string, input: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export async function validateSession(env: Env, sessionId: string): Promise<User | null> {
-  const row = await env.DB.prepare(`
-    SELECT u.* FROM users u
-    JOIN sessions s ON s.user_id = u.id
-    WHERE s.id = ? AND s.expires_at > datetime('now')
-  `).bind(sessionId).first<User>();
-
-  return row ?? null;
+export async function anonymousRateLimitKey(request: Request, env: Env): Promise<string> {
+  const secret = env.ANONYMIZATION_SECRET?.trim() || (
+    env.ENVIRONMENT === 'production' ? '' : 'insert-player-local-development-only'
+  );
+  if (!secret) throw new Error('ANONYMIZATION_SECRET is required');
+  const address = (
+    request.headers.get('CF-Connecting-IP') ||
+    request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    'anonymous'
+  ).trim().toLowerCase().slice(0, 128);
+  return `anon:${await hmacString(secret, address)}`;
 }
 
-export async function deleteSession(env: Env, sessionId: string): Promise<void> {
-  await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(sessionId).run();
+function json(data: unknown, status = 200): Response {
+  return Response.json(data, { status });
 }
 
-export function getSessionIdFromRequest(request: Request): string | null {
-  const cookie = request.headers.get('Cookie');
-  if (!cookie) return null;
-  const match = cookie.match(/session=([a-f0-9]+)/);
-  return match ? match[1] : null;
+function getBearerToken(request: Request): string | null {
+  const header = request.headers.get('Authorization');
+  if (!header) return null;
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
 }
 
-export function sessionCookie(sessionId: string, maxAge = 30 * 24 * 60 * 60): string {
-  return `session=${sessionId}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+function getClerkIssuer(env: Env): string {
+  const issuer = env.CLERK_ISSUER?.replace(/\/+$/, '');
+  if (!issuer) {
+    throw new Error('CLERK_ISSUER is required');
+  }
+  return issuer;
 }
 
-export async function exchangeGoogleCode(
-  code: string,
-  redirectUri: string,
-  env: Env
-): Promise<GoogleUserInfo> {
-  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      code,
-      client_id: env.GOOGLE_CLIENT_ID,
-      client_secret: env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: redirectUri,
-      grant_type: 'authorization_code',
-    }),
-  });
+function getJwks(env: Env): ReturnType<typeof createRemoteJWKSet> {
+  const issuer = getClerkIssuer(env);
+  const jwksUrl = env.CLERK_JWKS_URL || (issuer ? `${issuer}/.well-known/jwks.json` : '');
+  if (!jwksUrl) {
+    throw new Error('CLERK_JWKS_URL is required');
+  }
+  if (!cachedJwks || cachedJwksUrl !== jwksUrl) {
+    cachedJwksUrl = jwksUrl;
+    cachedJwks = createRemoteJWKSet(new URL(jwksUrl));
+  }
+  return cachedJwks;
+}
 
-  if (!tokenRes.ok) {
-    throw new Error(`Google token exchange failed: ${await tokenRes.text()}`);
+function readStringClaim(claims: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = claims[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function cleanProfileString(value: unknown): string {
+  return typeof value === 'string'
+    ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim()
+    : '';
+}
+
+export function normalizePublicDisplayName(value: unknown, fallback = 'Player'): string {
+  const normalized = cleanProfileString(value) || cleanProfileString(fallback) || 'Player';
+  return Array.from(normalized).slice(0, MAX_PUBLIC_NAME_CHARS).join('');
+}
+
+export function normalizeOptionalHttpsUrl(value: unknown): string | null {
+  const normalized = cleanProfileString(value);
+  if (!normalized || normalized.length > 2048) return null;
+  try {
+    const url = new URL(normalized);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function normalizeOptionalEmail(value: unknown): string | null {
+  const normalized = cleanProfileString(value);
+  if (!normalized || normalized.length > MAX_EMAIL_CHARS || !normalized.includes('@')) return null;
+  return normalized;
+}
+
+function normalizeOrigin(value: string): string {
+  return value.trim().replace(/\/+$/, '');
+}
+
+function configuredAuthorizedParties(env: Env): string[] {
+  return (env.CLERK_AUTHORIZED_PARTIES || env.CORS_ORIGIN || '')
+    .split(',')
+    .map(normalizeOrigin)
+    .filter((origin) => /^https?:\/\//i.test(origin));
+}
+
+function assertAuthorizedParty(claims: Record<string, unknown>, env: Env): void {
+  const allowed = configuredAuthorizedParties(env);
+  if (allowed.length === 0) return;
+
+  const azp = readStringClaim(claims, ['azp']);
+  if (!azp || !allowed.includes(normalizeOrigin(azp))) {
+    throw new Error('Clerk token authorized party is not allowed');
+  }
+}
+
+function resolveDisplayName(claims: Record<string, unknown>): string | null {
+  const fullName = readStringClaim(claims, ['name', 'full_name']);
+  if (fullName) return normalizePublicDisplayName(fullName);
+  const first = readStringClaim(claims, ['given_name', 'first_name']);
+  const last = readStringClaim(claims, ['family_name', 'last_name']);
+  const joined = [first, last].filter(Boolean).join(' ').trim();
+  if (joined) return normalizePublicDisplayName(joined);
+  const fallback = readStringClaim(claims, ['username', 'email']);
+  return fallback ? normalizePublicDisplayName(fallback) : null;
+}
+
+export async function verifyClerkRequest(request: Request, env: Env): Promise<AuthContext | null> {
+  const token = getBearerToken(request);
+  if (!token) return null;
+
+  const issuer = getClerkIssuer(env);
+  const verifyOptions = { issuer };
+  const verified = await jwtVerify(token, getJwks(env), verifyOptions);
+  const claims = verified.payload as Record<string, unknown>;
+  assertAuthorizedParty(claims, env);
+  const clerkUserId = typeof verified.payload.sub === 'string' ? verified.payload.sub : null;
+  if (!clerkUserId) throw new Error('Clerk token missing subject');
+
+  const user = await upsertClerkUser(env, clerkUserId, claims);
+  return { userId: user.id, user, claims };
+}
+
+export async function optionalAuth(request: Request, env: Env): Promise<PublicAuthContext> {
+  try {
+    const auth = await verifyClerkRequest(request, env);
+    if (auth) {
+      return {
+        userId: auth.userId,
+        rateLimitKey: `user:${auth.userId}`,
+        user: auth.user,
+        claims: auth.claims,
+      };
+    }
+  } catch (err) {
+    console.warn('Optional auth failed:', err instanceof Error ? err.message : err);
   }
 
-  const tokens: GoogleTokenResponse = await tokenRes.json();
-
-  const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-    headers: { Authorization: `Bearer ${tokens.access_token}` },
-  });
-
-  if (!userRes.ok) {
-    throw new Error(`Google userinfo failed: ${await userRes.text()}`);
-  }
-
-  return userRes.json();
+  return {
+    userId: null,
+    rateLimitKey: await anonymousRateLimitKey(request, env),
+    user: null,
+    claims: null,
+  };
 }
 
-export async function findOrCreateUser(
+export async function requireAuth(request: Request, env: Env): Promise<AuthContext | Response> {
+  try {
+    const auth = await verifyClerkRequest(request, env);
+    if (!auth) return json({ error: 'Unauthorized' }, 401);
+    return auth;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unauthorized';
+    const status = message.includes('CLERK_') ? 503 : 401;
+    const error = status === 503 ? 'Auth not configured' : 'Unauthorized';
+    if (env.ENVIRONMENT === 'production') return json({ error }, status);
+    return json({ error, message }, status);
+  }
+}
+
+export async function upsertClerkUser(
   env: Env,
-  provider: string,
-  oauthId: string,
-  displayName: string,
-  avatarUrl: string | null
+  clerkUserId: string,
+  claims: Record<string, unknown>,
 ): Promise<User> {
-  const existing = await env.DB.prepare(
-    'SELECT * FROM users WHERE oauth_provider = ? AND oauth_id = ?'
-  ).bind(provider, oauthId).first<User>();
+  return upsertClerkUserProfile(env, clerkUserId, {
+    displayName: resolveDisplayName(claims),
+    avatarUrl: readStringClaim(claims, ['picture', 'image_url', 'avatar_url']),
+    email: readStringClaim(claims, ['email', 'primary_email_address']),
+  }, { preserveMissingFields: true });
+}
 
-  if (existing) {
-    await env.DB.prepare(
-      'UPDATE users SET display_name = ?, avatar_url = ?, updated_at = datetime(\'now\') WHERE id = ?'
-    ).bind(displayName, avatarUrl, existing.id).run();
-    return { ...existing, display_name: displayName, avatar_url: avatarUrl };
+export async function isClerkUserTombstoned(env: Env, clerkUserId: string): Promise<boolean> {
+  const subjectHash = await hashString(clerkUserId);
+  const tombstone = await env.DB.prepare(
+    'SELECT subject_hash FROM clerk_user_tombstones WHERE subject_hash = ?'
+  ).bind(subjectHash).first<{ subject_hash: string }>();
+  return Boolean(tombstone);
+}
+
+export async function upsertClerkUserProfile(
+  env: Env,
+  clerkUserId: string,
+  profile: { displayName?: unknown; avatarUrl?: unknown; email?: unknown },
+  options: { preserveMissingFields?: boolean } = {},
+): Promise<User> {
+  const subjectHash = await hashString(clerkUserId);
+  if (await isClerkUserTombstoned(env, clerkUserId)) {
+    throw new Error('Clerk user has been deleted');
   }
 
-  const id = generateId();
-  await env.DB.prepare(
-    'INSERT INTO users (id, display_name, avatar_url, oauth_provider, oauth_id) VALUES (?, ?, ?, ?, ?)'
-  ).bind(id, displayName, avatarUrl, provider, oauthId).run();
+  const displayNameValue = cleanProfileString(profile.displayName);
+  const displayName = displayNameValue ? normalizePublicDisplayName(displayNameValue) : 'Player';
+  const avatarUrl = normalizeOptionalHttpsUrl(profile.avatarUrl);
+  const email = normalizeOptionalEmail(profile.email);
+  const preserveMissingFields = options.preserveMissingFields ? 1 : 0;
+  const hasDisplayName = displayNameValue ? 1 : 0;
 
-  return (await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first<User>())!;
+  await env.DB.prepare(`
+    INSERT INTO users (id, clerk_user_id, display_name, avatar_url, email, oauth_provider, oauth_id)
+    SELECT ?, ?, ?, ?, ?, 'clerk', ?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM clerk_user_tombstones WHERE subject_hash = ?
+    )
+    ON CONFLICT(id) DO UPDATE SET
+      clerk_user_id = excluded.clerk_user_id,
+      display_name = CASE
+        WHEN ? = 1 AND ? = 0 THEN users.display_name
+        ELSE excluded.display_name
+      END,
+      avatar_url = CASE
+        WHEN ? = 1 AND excluded.avatar_url IS NULL THEN users.avatar_url
+        ELSE excluded.avatar_url
+      END,
+      email = CASE
+        WHEN ? = 1 AND excluded.email IS NULL THEN users.email
+        ELSE excluded.email
+      END,
+      oauth_provider = 'clerk',
+      oauth_id = excluded.oauth_id,
+      updated_at = datetime('now')
+  `).bind(
+    clerkUserId,
+    clerkUserId,
+    displayName,
+    avatarUrl,
+    email,
+    clerkUserId,
+    subjectHash,
+    preserveMissingFields,
+    hasDisplayName,
+    preserveMissingFields,
+    preserveMissingFields,
+  ).run();
+
+  const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(clerkUserId).first<User>();
+  if (!user) throw new Error('Clerk user has been deleted');
+  return user;
 }

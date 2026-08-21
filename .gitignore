@@ -6,6 +6,7 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+*-command-messageinitcommand-message.txt
 
 node_modules
 dist
@@ -13,6 +14,18 @@ dist-ssr
 *.local
 .env
 .env.*
+!.env.example
+!.env.production.example
+!.env.sandbox.example
+worker/.prod.vars
+!worker/.dev.vars.example
+.wrangler-logs/
+.wrangler/
+.qa/
+.launch-validation.json
+launch-validation.local.json
+.brand-clearance.json
+brand-clearance.local.json
 
 # Editor directories and files
 .vscode/*

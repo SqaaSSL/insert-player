@@ -2,8 +2,12 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
 
 const ROOT = process.cwd();
-const TARGET_DIRS = [join(ROOT, 'src', 'ui')];
-const TARGET_FILES = [join(ROOT, 'src', 'main.tsx'), join(ROOT, 'index.html')];
+const TARGET_DIRS = [join(ROOT, 'src', 'ui'), join(ROOT, 'src', 'game')];
+const TARGET_FILES = [
+  join(ROOT, 'src', 'main.tsx'),
+  join(ROOT, 'src', 'prelaunch.tsx'),
+  join(ROOT, 'index.html'),
+];
 const STYLES_CSS = join(ROOT, 'src', 'ui', 'styles.css');
 const violations = [];
 
@@ -16,7 +20,7 @@ function walk(dir) {
       continue;
     }
     const ext = extname(fullPath);
-    if (ext === '.tsx' || ext === '.jsx') {
+    if (ext === '.tsx' || ext === '.jsx' || ext === '.ts' || ext === '.js') {
       TARGET_FILES.push(fullPath);
     }
   }
@@ -33,8 +37,15 @@ for (const filePath of TARGET_FILES) {
         { regex: /<style[\s>]/g, label: 'inline <style> block' },
         { regex: /\sstyle=/g, label: 'inline style attribute' },
       ]
-    : [
+    : filePath.endsWith('.tsx') || filePath.endsWith('.jsx')
+      ? [
         { regex: /\bstyle\s*=\s*\{\{/g, label: 'JSX style prop' },
+        { regex: /\.style\./g, label: 'DOM inline style assignment' },
+        { regex: /setAttribute\(\s*['"]style['"]/g, label: 'DOM inline style attribute' },
+      ]
+      : [
+        { regex: /\.style\./g, label: 'DOM inline style assignment' },
+        { regex: /setAttribute\(\s*['"]style['"]/g, label: 'DOM inline style attribute' },
       ];
 
   for (const { regex, label } of patterns) {

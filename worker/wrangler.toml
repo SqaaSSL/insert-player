@@ -1,19 +1,65 @@
 name = "ai-street-fighter-api"
 main = "src/index.ts"
-compatibility_date = "2024-12-01"
+compatibility_date = "2026-08-17"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-ENVIRONMENT = "development"
+ENVIRONMENT = "production"
+# Comma-separated frontend origins allowed to call the Worker.
+CORS_ORIGIN = "https://insertplayer.ai,https://www.insertplayer.ai"
+PUBLIC_APP_NAME = "Insert Player"
+PUBLIC_APP_SHORT_NAME = "P1"
+PUBLIC_SOCIAL_CARD_PATH = "/assets/social-card.png"
+TURNSTILE_REQUIRED = "true"
+TURNSTILE_ACTION = "anonymous_rookie"
+TURNSTILE_HOSTNAMES = "insertplayer.ai,www.insertplayer.ai"
+ANONYMOUS_ROOKIE_ENABLED = "true"
+# Initial hard ceiling for estimated upstream spend. Raise deliberately after
+# conversion and retry-cost telemetry have been reviewed.
+PROVIDER_MONTHLY_BUDGET_USD_CENTS = "50000"
+GEMINI_SPEND_RATE_LIMIT_USD_CENTS = "900"
+# Set this to your Clerk issuer, for example:
+# Production Clerk uses the dedicated Insert Player Frontend API domain.
+CLERK_ISSUER = "https://clerk.insertplayer.ai"
+# Keep token azp validation explicit and aligned with CORS.
+CLERK_AUTHORIZED_PARTIES = "https://insertplayer.ai,https://www.insertplayer.ai"
+# API keys are Worker secrets, not Vite-exposed env vars:
+# wrangler secret put GEMINI_API_KEY
+# wrangler secret put FAL_API_KEY
+# wrangler secret put RUNWAY_API_KEY
+# wrangler secret put FREEPIK_API_KEY
+# wrangler secret put LUDO_API_KEY
+# wrangler secret put STRIPE_SECRET_KEY
+# wrangler secret put STRIPE_WEBHOOK_SECRET
+# Pin Checkout and webhooks to the dedicated Insert Player Stripe account.
+STRIPE_ACCOUNT_ID = "acct_1U5w8DCQ9OPSWOkj"
+# STRIPE_PRICE_STARTER = "price_replace_me"
+# STRIPE_PRICE_VERSUS = "price_replace_me"
+# STRIPE_PRICE_ARCADE = "price_replace_me"
+# wrangler secret put CLERK_WEBHOOK_SIGNING_SECRET
+# wrangler secret put TURNSTILE_SECRET_KEY
+# HMAC key used to pseudonymize anonymous network identifiers before D1 writes.
+# wrangler secret put ANONYMIZATION_SECRET
 
 [[d1_databases]]
 binding = "DB"
-database_name = "ai-street-fighter-db"
-database_id = "PLACEHOLDER_D1_ID"
+database_name = "insert-player-db"
+database_id = "aa9e6ba6-8a7f-4261-ac31-986e6cf44659"
+migrations_dir = "migrations"
 
 [[r2_buckets]]
 binding = "SPRITES"
-bucket_name = "ai-street-fighter-sprites"
+bucket_name = "insert-player-assets"
+jurisdiction = "eu"
+# The Worker stores provider temp inputs under the temp/ prefix and refuses them
+# after 24h. Add a matching R2 lifecycle delete rule in Cloudflare for temp/*.
 
 [dev]
 port = 8787
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[triggers]
+crons = ["0 4 * * *"]
