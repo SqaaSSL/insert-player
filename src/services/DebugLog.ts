@@ -4,6 +4,28 @@ const MAX_DEBUG_LINES = 40;
 declare global {
   interface Window {
     __ASF_DEBUG_LINES__?: string[];
+    __ASF_DEBUG_LOGS__?: boolean;
+  }
+}
+
+function isDebugLoggingEnabled(): boolean {
+  if (import.meta.env.DEV) return true;
+  try {
+    return window.__ASF_DEBUG_LOGS__ === true || window.localStorage.getItem('asf:debug') === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function debugInfo(message: string, ...args: unknown[]): void {
+  if (isDebugLoggingEnabled()) {
+    console.info(message, ...args);
+  }
+}
+
+export function debugWarn(message: string, ...args: unknown[]): void {
+  if (isDebugLoggingEnabled()) {
+    console.warn(message, ...args);
   }
 }
 

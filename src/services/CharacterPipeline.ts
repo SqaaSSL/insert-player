@@ -5,6 +5,8 @@ import {
   getCachedSprite,
   setCachedSprite,
   getAllSpritesForHash,
+  getAllSpriteVersionsForHash,
+  getActiveSpriteCacheScope,
   CACHE_VERSION,
   type CachedMeta,
   type CachedFailedAnimationArtifact,
@@ -13,11 +15,19 @@ import {
 import { geminiReposeDetailed, geminiUprightReposeDetailed, geminiCrouchRepose, geminiCrouchReposeDetailed, geminiSpriteSheet, geminiSheetRefined, geminiIdleFrameSequence, PartialSpriteGenerationError } from './GeminiApi';
 import { CELL_H, CELL_W, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, measureOpaqueBoundsFromBase64, type NormalizationReference } from './SpritePostProcess';
 import { getAnimationProfile } from './AnimationProfiles';
-import { publishDebugLog } from './DebugLog';
+import { debugInfo, debugWarn, publishDebugLog } from './DebugLog';
 import { ludoAnimateSprite } from './LudoApi';
 import { freepikImageToFightingStance, blobToBase64 } from './FreepikApi';
 import { prepareBaseImage } from './ImagePrep';
 import { getConfiguredBgRemovalProvider, removeBackgroundWithConfiguredProvider } from './BackgroundRemovalService';
+import {
+  ApiSessionChangedError,
+  apiFetch,
+  captureApiRequestContext,
+  type ApiRequestContext,
+} from './ApiClient';
+import type { QualityTier } from './QualityTiers';
+import { detectImageMime } from './ImageFile.ts';
 
 export type PipelineProvider = 'gemini' | 'ludo';
 // Sprite generation mode, applies to ALL animations (not just idle anymore).
@@ -32,6 +42,41 @@ export type SpriteGenerationMode = 'sheet_refined' | 'sheet' | 'frame_sequence';
 
 /** @deprecated alias kept for pre-existing call sites; use SpriteGenerationMode. */
 export type IdleGenerationMode = SpriteGenerationMode;
+
+interface TierConfig {
+  spriteMode: SpriteGenerationMode;
+  geminiAnimModelOverride: string;
+  enableDnnBgRemoval: boolean;
+}
+
+const TIER_CONFIGS: Record<QualityTier, TierConfig> = {
+  rookie: {
+    spriteMode: 'sheet',
+    geminiAnimModelOverride: 'gemini-3.1-flash-image',
+    enableDnnBgRemoval: false,
+  },
+  contender: {
+    spriteMode: 'sheet_refined',
+    geminiAnimModelOverride: 'gemini-3.1-flash-image',
+    enableDnnBgRemoval: true,
+  },
+  champion: {
+    spriteMode: 'sheet_refined',
+    geminiAnimModelOverride: 'gemini-3-pro-image',
+    enableDnnBgRemoval: true,
+  },
+};
+
+const QUALITY_TIER_RANK: Record<QualityTier, number> = {
+  rookie: 1,
+  contender: 2,
+  champion: 3,
+};
+
+function maxQualityTier(a: QualityTier | undefined, b: QualityTier): QualityTier {
+  if (!a) return b;
+  return QUALITY_TIER_RANK[a] >= QUALITY_TIER_RANK[b] ? a : b;
+}
 
 export type PipelineStatus =
   | { stage: 'hashing' }
@@ -77,8 +122,8 @@ const ANIMATIONS: AnimDef[] = [
 let activeProvider: PipelineProvider = 'gemini';
 const CRITICAL_ANIMATION_NAMES = new Set(['jump', 'hit']);
 const MIRRORED_ANIMATION_NAMES = new Set(['high_punch', 'low_punch', 'high_kick', 'low_kick']);
-const criticalSpriteMaintenanceInflight = new Map<string, Promise<void>>();
-export const SPRITE_PROCESSING_VERSION = 3;
+const spriteMaintenanceInflight = new Map<string, Promise<number>>();
+export const SPRITE_PROCESSING_VERSION = 5;
 
 export function setProvider(p: PipelineProvider) { activeProvider = p; }
 export function getProvider(): PipelineProvider { return activeProvider; }
@@ -131,46 +176,52 @@ function getGenerationFrameCount(anim: AnimDef, cachedSprite?: CachedSprite): nu
   return Math.max(anim.frames, cachedSprite.frameCount);
 }
 
-async function fetchImageAsBlob(url: string): Promise<Blob> {
+async function fetchImageAsBlob(url: string, context: ApiRequestContext): Promise<Blob> {
   const proxied = `/proxy/image?url=${encodeURIComponent(url)}`;
-  const res = await fetch(proxied);
+  const res = await apiFetch(proxied, {}, context);
   if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
   return res.blob();
 }
 
 // ─── Plan A: Gemini (repose + sprite sheets) ────────────────────────
 
-async function reposeWithGemini(photoBase64: string): Promise<{ rawBase64: string; cleanedBase64: string }> {
-  return geminiReposeDetailed(photoBase64);
+async function reposeWithGemini(
+  photoBase64: string,
+  context: ApiRequestContext,
+): Promise<{ rawBase64: string; cleanedBase64: string }> {
+  return geminiReposeDetailed(photoBase64, context);
 }
 
 async function crouchReposeWithGemini(
   sideViewBase64: string,
   normalizationReference?: NormalizationReference,
+  context?: ApiRequestContext,
 ): Promise<string> {
-  return geminiCrouchRepose(sideViewBase64, normalizationReference);
+  return geminiCrouchRepose(sideViewBase64, normalizationReference, sideViewBase64, context);
 }
 
 async function uprightReposeWithGemini(
   sideViewBase64: string,
+  context: ApiRequestContext,
 ): Promise<{ rawBase64: string; cleanedBase64: string }> {
-  return geminiUprightReposeDetailed(sideViewBase64);
+  return geminiUprightReposeDetailed(sideViewBase64, context);
 }
 
-async function tryApiBgRemoval(base64: string): Promise<Blob | null> {
+async function tryApiBgRemoval(base64: string, context: ApiRequestContext): Promise<Blob | null> {
   try {
     const provider = getConfiguredBgRemovalProvider();
-    console.log(`[Pipeline] Trying ${provider} background removal for display version...`);
-    const cleaned = await removeBackgroundWithConfiguredProvider(base64);
+    debugInfo(`[Pipeline] Trying ${provider} background removal for display version...`);
+    const cleaned = await removeBackgroundWithConfiguredProvider(base64, context);
     if (!cleaned) {
-      console.log(`[Pipeline] ${provider} background removal skipped`);
+      debugInfo(`[Pipeline] ${provider} background removal skipped`);
       return null;
     }
-    console.log(`[Pipeline] ${provider} bg removal succeeded`);
+    debugInfo(`[Pipeline] ${provider} bg removal succeeded`);
     return base64ToBlob(cleaned, 'image/png');
   } catch (err: any) {
+    if (err instanceof ApiSessionChangedError) throw err;
     const provider = getConfiguredBgRemovalProvider();
-    console.warn(`[Pipeline] ${provider} bg removal failed:`, err.message);
+    debugWarn(`[Pipeline] ${provider} bg removal failed:`, err.message);
     return null;
   }
 }
@@ -182,21 +233,36 @@ async function generateSpriteWithGemini(
   maxScale?: number,
   normalizationReference?: NormalizationReference,
   spriteMode: SpriteGenerationMode = 'sheet_refined',
+  enableDnnBgRemoval = true,
+  context?: ApiRequestContext,
+  modelOverride?: string,
 ): Promise<{ blob: Blob; rawBlob: Blob; frameCount: number; frameW: number; frameH: number; usedScale: number }> {
   const effectiveMode: SpriteGenerationMode = spriteMode === 'frame_sequence' && anim.name !== 'idle'
     ? 'sheet'
     : spriteMode;
   const modeMessage = `[Pipeline] ${anim.name} generation mode: ${effectiveMode}${effectiveMode !== spriteMode ? ` (requested ${spriteMode}, frame_sequence only supported for idle)` : ''}`;
-  console.log(modeMessage);
+  debugInfo(modeMessage);
   publishDebugLog(modeMessage);
 
   let result;
   if (effectiveMode === 'frame_sequence') {
-    result = await geminiIdleFrameSequence(characterBase64, anim.frames, maxScale);
+    result = await geminiIdleFrameSequence(characterBase64, anim.frames, maxScale, context, modelOverride);
   } else if (effectiveMode === 'sheet_refined') {
-    result = await geminiSheetRefined(characterBase64, anim.name, anim.motion, anim.frames, secondaryBase64, maxScale, normalizationReference);
+    result = await geminiSheetRefined(characterBase64, anim.name, anim.motion, anim.frames, secondaryBase64, maxScale, normalizationReference, {
+      enableBgRemoval: enableDnnBgRemoval,
+    }, context, modelOverride);
   } else {
-    result = await geminiSpriteSheet(characterBase64, anim.name, anim.motion, anim.frames, secondaryBase64, maxScale, normalizationReference);
+    result = await geminiSpriteSheet(
+      characterBase64,
+      anim.name,
+      anim.motion,
+      anim.frames,
+      secondaryBase64,
+      maxScale,
+      normalizationReference,
+      context,
+      modelOverride,
+    );
   }
   const rawBlob = base64ToBlob(result.rawBase64 || result.imageBase64, 'image/png');
   const blob = base64ToBlob(result.imageBase64, 'image/png');
@@ -208,10 +274,14 @@ async function generateSpriteWithGemini(
 
 // ─── Plan B: Freepik + Ludo (legacy fallback) ───────────────────────
 
-async function reposeWithFreepik(photoBase64: string, onStatus: StatusCallback): Promise<string> {
+async function reposeWithFreepik(
+  photoBase64: string,
+  onStatus: StatusCallback,
+  context: ApiRequestContext,
+): Promise<string> {
   onStatus({ stage: 'converting_side_view' });
-  const sideViewUrl = await freepikImageToFightingStance(photoBase64);
-  const sideViewBlob = await fetchImageAsBlob(sideViewUrl);
+  const sideViewUrl = await freepikImageToFightingStance(photoBase64, context);
+  const sideViewBlob = await fetchImageAsBlob(sideViewUrl, context);
   let sideViewBase64 = await blobToBase64(sideViewBlob);
 
   onStatus({ stage: 'preparing_base' });
@@ -222,6 +292,7 @@ async function reposeWithFreepik(photoBase64: string, onStatus: StatusCallback):
 async function generateSpriteWithLudo(
   characterBase64: string,
   anim: AnimDef,
+  context: ApiRequestContext,
 ): Promise<{ blob: Blob; frameCount: number; frameW: number; frameH: number }> {
   const FACING = 'character facing right throughout, 3/4 view, ';
   const result = await ludoAnimateSprite({
@@ -236,9 +307,9 @@ async function generateSpriteWithLudo(
     model: 'standard',
     duration: anim.duration as any,
     augment_prompt: true,
-  });
+  }, context);
 
-  const blob = await fetchImageAsBlob(result.spritesheet_url);
+  const blob = await fetchImageAsBlob(result.spritesheet_url, context);
   const { width: sheetW, height: sheetH } = await measureImage(blob);
   const gridCols = Math.round(Math.sqrt(result.num_frames));
   const gridRows = Math.ceil(result.num_frames / gridCols);
@@ -293,15 +364,17 @@ async function rebuildSpriteFromRawBlob(
   const frameH = Math.round(sheetH / finalGridRows);
 
   return {
+    ownerScope: sprite.ownerScope,
     photoHash,
     animationName: anim.name,
+    qualityTier: sprite.qualityTier,
     pngBlob: blob,
     rawPngBlob: sprite.rawPngBlob,
     frameWidth: frameW,
     frameHeight: frameH,
     frameCount: finalFrameCount,
     processingVersion: SPRITE_PROCESSING_VERSION,
-    createdAt: sprite.createdAt,
+    createdAt: Date.now(),
   };
 }
 
@@ -330,7 +403,7 @@ async function getCrouchNormalizationReference(sideViewBase64: string): Promise<
     `[Pipeline] Crouch normalization reference: standing=${standingBounds.w}x${standingBounds.h}@(${standingBounds.x},${standingBounds.y}) ` +
     `normalizedStanding=${Math.round(normalizedStandingW)}x${Math.round(normalizedStandingH)} ` +
     `target=${reference.targetDrawWidth}x${reference.targetDrawHeight} baseline=${reference.baselineRatio.toFixed(3)}`;
-  console.log(message);
+  debugInfo(message);
   publishDebugLog(message);
   return reference;
 }
@@ -346,10 +419,11 @@ async function ensureUprightView(
   meta: CachedMeta,
   sideViewInputBase64: string,
   onStatus?: StatusCallback,
+  context: ApiRequestContext = captureApiRequestContext(),
 ): Promise<{ inputBase64: string; cleanedBase64: string }> {
   if (meta.uprightViewBlob && meta.uprightViewRawBlob) {
     const message = `[Pipeline] Reusing cached upright reference for ${meta.photoHash.slice(0, 8)}`;
-    console.log(message);
+    debugInfo(message);
     publishDebugLog(message);
     return {
       inputBase64: await blobToBase64Util(meta.uprightViewRawBlob),
@@ -359,16 +433,16 @@ async function ensureUprightView(
 
   if (meta.uprightViewBlob && !meta.uprightViewRawBlob) {
     const message = `[Pipeline] Upright reference missing raw source, regenerating for ${meta.photoHash.slice(0, 8)}`;
-    console.log(message);
+    debugInfo(message);
     publishDebugLog(message);
   }
 
   onStatus?.({ stage: 'converting_upright_view' });
   const message = `[Pipeline] Generating upright reference from side view for ${meta.photoHash.slice(0, 8)}`;
-  console.log(message);
+  debugInfo(message);
   publishDebugLog(message);
 
-  const uprightView = await uprightReposeWithGemini(sideViewInputBase64);
+  const uprightView = await uprightReposeWithGemini(sideViewInputBase64, context);
   meta.uprightViewRawBlob = base64ToBlob(uprightView.rawBase64, 'image/png');
   meta.uprightViewBlob = base64ToBlob(uprightView.cleanedBase64, 'image/png');
   meta.updatedAt = Date.now();
@@ -380,42 +454,75 @@ async function ensureUprightView(
   };
 }
 
-export async function ensureCriticalAnimationsUpToDate(photoHash: string): Promise<void> {
-  const existing = criticalSpriteMaintenanceInflight.get(photoHash);
+export async function ensurePlayableSpritesUpToDate(photoHash: string): Promise<number> {
+  const ownerScope = getActiveSpriteCacheScope();
+  const operationKey = `${ownerScope}:${photoHash}`;
+  const existing = spriteMaintenanceInflight.get(operationKey);
   if (existing) return existing;
 
   const promise = (async () => {
-    const sprites = await getAllSpritesForHash(photoHash);
-    if (sprites.length === 0) return;
+    const meta = await getCachedMeta(photoHash, ownerScope);
+    const sprites = await getAllSpritesForHash(photoHash, ownerScope);
+    if (sprites.length === 0) return 0;
 
-    for (const animName of CRITICAL_ANIMATION_NAMES) {
-      const sprite = sprites.find((entry) => entry.animationName === animName);
-      if (!sprite) continue;
+    let crouchSpriteNormalizationReference: NormalizationReference | undefined;
+    if (meta?.sideViewBlob) {
+      const sideViewBase64 = await blobToBase64Util(meta.sideViewBlob);
+      const crouchSourceBase64 = meta.uprightViewBlob
+        ? await blobToBase64Util(meta.uprightViewBlob)
+        : sideViewBase64;
+      const crouchNormalizationReference = await getCrouchNormalizationReference(crouchSourceBase64);
+      crouchSpriteNormalizationReference = getCrouchSpriteNormalizationReference(crouchNormalizationReference);
+    }
+
+    const animationOrder = new Map(ANIMATIONS.map((animation, index) => [animation.name, index]));
+    sprites.sort((a, b) =>
+      (animationOrder.get(a.animationName) ?? Number.MAX_SAFE_INTEGER) -
+      (animationOrder.get(b.animationName) ?? Number.MAX_SAFE_INTEGER),
+    );
+
+    let upgraded = 0;
+    for (const sprite of sprites) {
       if ((sprite.processingVersion ?? 0) >= SPRITE_PROCESSING_VERSION) continue;
       if (!sprite.rawPngBlob) continue;
 
+      const anim = ANIMATIONS.find((entry) => entry.name === sprite.animationName);
+      if (!anim) continue;
+
       try {
-        const rebuilt = await rebuildSpriteFromRawBlob(photoHash, sprite, getAnimationDefinition(animName));
+        const rebuilt = await rebuildSpriteFromRawBlob(
+          photoHash,
+          sprite,
+          anim,
+          isCrouchFamilyAnimation(anim) ? crouchSpriteNormalizationReference : undefined,
+        );
         await setCachedSprite(rebuilt);
-        console.log(`[CriticalRepair] ${animName}: upgraded cached sprite for ${photoHash.slice(0, 8)}`);
+        upgraded += 1;
+        debugInfo(`[SpriteRepair] ${anim.name}: upgraded cached sprite for ${photoHash.slice(0, 8)}`);
       } catch (err: any) {
-        console.warn(`[CriticalRepair] ${animName}: failed to upgrade ${photoHash.slice(0, 8)}: ${err.message}`);
+        debugWarn(`[SpriteRepair] ${anim.name}: failed to upgrade ${photoHash.slice(0, 8)}: ${err.message}`);
       }
     }
+
+    return upgraded;
   })().finally(() => {
-    criticalSpriteMaintenanceInflight.delete(photoHash);
+    spriteMaintenanceInflight.delete(operationKey);
   });
 
-  criticalSpriteMaintenanceInflight.set(photoHash, promise);
+  spriteMaintenanceInflight.set(operationKey, promise);
   return promise;
+}
+
+export async function ensureCriticalAnimationsUpToDate(photoHash: string): Promise<void> {
+  await ensurePlayableSpritesUpToDate(photoHash);
 }
 
 export async function warmCriticalAnimationUpgrades(photoHashes: string[]): Promise<void> {
   for (const photoHash of photoHashes) {
     try {
-      await ensureCriticalAnimationsUpToDate(photoHash);
+      await ensurePlayableSpritesUpToDate(photoHash);
     } catch (err: any) {
-      console.warn(`[CriticalRepair] Warm repair failed for ${photoHash.slice(0, 8)}: ${err.message}`);
+      debugWarn(`[SpriteRepair] Warm repair failed for ${photoHash.slice(0, 8)}: ${err.message}`);
     }
   }
 }
@@ -426,16 +533,23 @@ export async function processCharacter(
   photoFile: File,
   onStatus: StatusCallback,
   characterName = 'Fighter',
+  options?: { tier?: QualityTier; apiContext?: ApiRequestContext },
 ): Promise<string> {
+  const ownerScope = getActiveSpriteCacheScope();
+  const apiContext = options?.apiContext ?? captureApiRequestContext();
   try {
+    const qualityTier = options?.tier ?? 'contender';
+    const tierConfig = TIER_CONFIGS[qualityTier];
     onStatus({ stage: 'hashing' });
     const photoHash = await hashPhoto(photoFile);
     const photoBlob = new Blob([await photoFile.arrayBuffer()], { type: photoFile.type });
 
-    const existingMeta = await getCachedMeta(photoHash);
+    const existingMeta = await getCachedMeta(photoHash, ownerScope);
     if (existingMeta?.status === 'ready' && existingMeta.version === CACHE_VERSION) {
-      const sprites = await getAllSpritesForHash(photoHash);
-      if (sprites.length >= ANIMATIONS.length) {
+      const sprites = await getAllSpriteVersionsForHash(photoHash, ownerScope);
+      const requestedTierSprites = sprites.filter((sprite) => sprite.qualityTier === qualityTier);
+      const requestedTierAnimations = new Set(requestedTierSprites.map((sprite) => sprite.animationName));
+      if (requestedTierAnimations.size >= ANIMATIONS.length) {
         let dirty = false;
         if (!existingMeta.originalPhotoBlob) { existingMeta.originalPhotoBlob = photoBlob; dirty = true; }
         if (characterName && characterName !== 'Fighter') { existingMeta.characterName = characterName; dirty = true; }
@@ -446,6 +560,7 @@ export async function processCharacter(
     }
 
     const meta: CachedMeta = (existingMeta && existingMeta.version === CACHE_VERSION) ? existingMeta : {
+      ownerScope,
       photoHash,
       version: CACHE_VERSION,
       originalPhotoBlob: photoBlob,
@@ -459,6 +574,7 @@ export async function processCharacter(
       crouchViewCleanBlob: null,
       noBgBlob: null,
       characterName,
+      qualityTier,
       status: 'pending',
       animationsReady: [],
       createdAt: Date.now(),
@@ -466,6 +582,7 @@ export async function processCharacter(
     };
 
     if (!meta.originalPhotoBlob) meta.originalPhotoBlob = photoBlob;
+    meta.qualityTier = maxQualityTier(meta.qualityTier, qualityTier);
     if (meta.sideViewRawBlob === undefined) meta.sideViewRawBlob = null;
     if (meta.uprightViewBlob === undefined) meta.uprightViewBlob = null;
     if (meta.uprightViewRawBlob === undefined) meta.uprightViewRawBlob = null;
@@ -488,24 +605,25 @@ export async function processCharacter(
       if (provider === 'gemini') {
         try {
           onStatus({ stage: 'converting_side_view' });
-          const sideView = await reposeWithGemini(photoBase64);
+          const sideView = await reposeWithGemini(photoBase64, apiContext);
           sideViewBase64 = sideView.cleanedBase64;
           sideViewInputBase64 = sideView.rawBase64;
         } catch (err: any) {
-          console.warn(`[Pipeline] Gemini repose failed, falling back to Freepik+Ludo:`, err.message);
+          if (err instanceof ApiSessionChangedError) throw err;
+          debugWarn(`[Pipeline] Gemini repose failed, falling back to Freepik+Ludo:`, err.message);
           onStatus({ stage: 'falling_back', reason: `Gemini repose failed: ${err.message}` });
           provider = 'ludo';
-          sideViewBase64 = await reposeWithFreepik(photoBase64, onStatus);
+          sideViewBase64 = await reposeWithFreepik(photoBase64, onStatus, apiContext);
           sideViewInputBase64 = sideViewBase64;
         }
       } else {
-        sideViewBase64 = await reposeWithFreepik(photoBase64, onStatus);
+        sideViewBase64 = await reposeWithFreepik(photoBase64, onStatus, apiContext);
         sideViewInputBase64 = sideViewBase64;
       }
 
       meta.sideViewBlob = base64ToBlob(sideViewBase64, 'image/png');
       meta.sideViewRawBlob = base64ToBlob(sideViewInputBase64, 'image/png');
-      meta.sideViewCleanBlob = await tryApiBgRemoval(sideViewBase64);
+      meta.sideViewCleanBlob = await tryApiBgRemoval(sideViewBase64, apiContext);
       meta.updatedAt = Date.now();
       await setCachedMeta(meta);
     }
@@ -514,12 +632,13 @@ export async function processCharacter(
     let crouchSourceInputBase64 = sideViewInputBase64;
     if (provider === 'gemini') {
       try {
-        const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus);
+        const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus, apiContext);
         crouchSourceBase64 = uprightView.cleanedBase64;
         crouchSourceInputBase64 = uprightView.inputBase64;
       } catch (err: any) {
+        if (err instanceof ApiSessionChangedError) throw err;
         const message = `[Pipeline] Upright reference generation failed, using side view: ${err.message}`;
-        console.warn(message);
+        debugWarn(message);
         publishDebugLog(message);
         crouchSourceBase64 = sideViewBase64;
         crouchSourceInputBase64 = sideViewInputBase64;
@@ -550,18 +669,24 @@ export async function processCharacter(
     } else if (provider === 'gemini') {
       try {
         onStatus({ stage: 'converting_crouch_view' });
-        const crouchView = await geminiCrouchReposeDetailed(crouchSourceInputBase64, crouchNormalizationReference, crouchSourceInputBase64);
+        const crouchView = await geminiCrouchReposeDetailed(
+          crouchSourceInputBase64,
+          crouchNormalizationReference,
+          crouchSourceInputBase64,
+          apiContext,
+        );
         crouchViewBase64 = crouchView.cleanedBase64;
         crouchViewInputBase64 = crouchView.rawBase64;
       } catch (err: any) {
-        console.warn(`[Pipeline] Gemini crouch repose failed, using standing view as fallback:`, err.message);
+        if (err instanceof ApiSessionChangedError) throw err;
+        debugWarn(`[Pipeline] Gemini crouch repose failed, using standing view as fallback:`, err.message);
         crouchViewBase64 = crouchSourceBase64;
         crouchViewInputBase64 = crouchSourceInputBase64;
       }
 
       meta.crouchViewBlob = base64ToBlob(crouchViewBase64, 'image/png');
       meta.crouchViewRawBlob = base64ToBlob(crouchViewInputBase64, 'image/png');
-      meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64);
+      meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64, apiContext);
       meta.updatedAt = Date.now();
       await setCachedMeta(meta);
     } else {
@@ -569,7 +694,7 @@ export async function processCharacter(
       crouchViewInputBase64 = sideViewInputBase64;
       meta.crouchViewBlob = base64ToBlob(crouchViewBase64, 'image/png');
       meta.crouchViewRawBlob = base64ToBlob(crouchViewInputBase64, 'image/png');
-      meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64);
+      meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64, apiContext);
       meta.updatedAt = Date.now();
       await setCachedMeta(meta);
     }
@@ -584,8 +709,8 @@ export async function processCharacter(
       const anim = ANIMATIONS[i];
 
       if (meta.animationsReady.includes(anim.name)) {
-        const cached = await getCachedSprite(photoHash, anim.name);
-        if (cached) continue;
+        const cached = await getCachedSprite(photoHash, anim.name, qualityTier, ownerScope);
+        if (cached && cached.qualityTier === qualityTier) continue;
       }
 
       onStatus({ stage: 'generating_sprites', animation: anim.name, current: i + 1, total });
@@ -598,8 +723,19 @@ export async function processCharacter(
 
       if (provider === 'gemini') {
         try {
-          spriteResult = await generateSpriteWithGemini(primaryImage, anim, secondaryImage, undefined, normalizationReference);
+          spriteResult = await generateSpriteWithGemini(
+            primaryImage,
+            anim,
+            secondaryImage,
+            undefined,
+            normalizationReference,
+            tierConfig.spriteMode,
+            tierConfig.enableDnnBgRemoval,
+            apiContext,
+            tierConfig.geminiAnimModelOverride,
+          );
         } catch (err: any) {
+          if (err instanceof ApiSessionChangedError) throw err;
           if (err instanceof PartialSpriteGenerationError && err.partialResult) {
             const partialBlob = base64ToBlob(err.partialResult.imageBase64, 'image/png');
             const partialRawBlob = base64ToBlob(err.partialResult.rawBase64, 'image/png');
@@ -611,27 +747,29 @@ export async function processCharacter(
               frameHeight: Math.round(partialSheetH / err.partialResult.gridRows),
               frameCount: err.partialResult.frameCount,
               reason: err.message,
-              mode: 'sheet',
+              mode: tierConfig.spriteMode,
               createdAt: Date.now(),
             });
             await setCachedMeta(meta);
           }
-          console.warn(`[Pipeline] Gemini sprite ${anim.name} failed, falling back to Ludo:`, err.message);
+          debugWarn(`[Pipeline] Gemini sprite ${anim.name} failed, falling back to Ludo:`, err.message);
           if (i === 0) {
             onStatus({ stage: 'falling_back', reason: `Gemini sprites failed: ${err.message}` });
             provider = 'ludo';
           }
-          spriteResult = await generateSpriteWithLudo(primaryImage, anim);
+          spriteResult = await generateSpriteWithLudo(primaryImage, anim, apiContext);
         }
       } else {
-        spriteResult = await generateSpriteWithLudo(primaryImage, anim);
+        spriteResult = await generateSpriteWithLudo(primaryImage, anim, apiContext);
       }
 
-      console.log(`[Pipeline] ${anim.name}: ${spriteResult.frameCount} frames, frame ${spriteResult.frameW}x${spriteResult.frameH}`);
+      debugInfo(`[Pipeline] ${anim.name}: ${spriteResult.frameCount} frames, frame ${spriteResult.frameW}x${spriteResult.frameH}`);
 
       await setCachedSprite({
+        ownerScope,
         photoHash,
         animationName: anim.name,
+        qualityTier,
         pngBlob: spriteResult.blob,
         rawPngBlob: spriteResult.rawBlob,
         frameWidth: spriteResult.frameW,
@@ -642,7 +780,8 @@ export async function processCharacter(
       });
 
       clearFailedAnimationArtifact(meta, anim.name);
-      meta.animationsReady.push(anim.name);
+      if (!meta.animationsReady.includes(anim.name)) meta.animationsReady.push(anim.name);
+      meta.qualityTier = maxQualityTier(meta.qualityTier, qualityTier);
       meta.updatedAt = Date.now();
       await setCachedMeta(meta);
 
@@ -669,7 +808,7 @@ export async function rebuildCharacter(
   const meta = await getCachedMeta(photoHash);
   if (!meta) throw new Error('Character not found');
 
-  const allSprites = await getAllSpritesForHash(photoHash);
+  const allSprites = await getAllSpriteVersionsForHash(photoHash, meta.ownerScope);
   // Process idle first so we can capture its scale for crouch-based animations
   const animOrder = ANIMATIONS.map(a => a.name);
   const sprites = allSprites.sort((a, b) => {
@@ -692,14 +831,14 @@ export async function rebuildCharacter(
 
   for (const sprite of sprites) {
     if (!sprite.rawPngBlob) {
-      console.warn(`[Rebuild] ${sprite.animationName}: no rawPngBlob, skipping`);
+      debugWarn(`[Rebuild] ${sprite.animationName}: no rawPngBlob, skipping`);
       rebuilt++;
       continue;
     }
 
     const anim = ANIMATIONS.find((a) => a.name === sprite.animationName);
     if (!anim) {
-      console.warn(`[Rebuild] ${sprite.animationName}: unknown animation, skipping`);
+      debugWarn(`[Rebuild] ${sprite.animationName}: unknown animation, skipping`);
       rebuilt++;
       continue;
     }
@@ -707,49 +846,48 @@ export async function rebuildCharacter(
     onStatus({ stage: 'generating_sprites', animation: anim.name, current: rebuilt + 1, total });
 
     try {
-        const rebuiltSprite = await rebuildSpriteFromRawBlob(
-          photoHash,
-          sprite,
-          anim,
-          isCrouchFamilyAnimation(anim) ? crouchSpriteNormalizationReference : undefined,
-        );
+      const rebuiltSprite = await rebuildSpriteFromRawBlob(
+        photoHash,
+        sprite,
+        anim,
+        isCrouchFamilyAnimation(anim) ? crouchSpriteNormalizationReference : undefined,
+      );
       await setCachedSprite(rebuiltSprite);
 
       rebuilt++;
       onStatus({ stage: 'sprite_ready', animation: anim.name, photoHash, current: rebuilt, total });
-      console.log(`[Rebuild] ${anim.name}: re-processed ${rebuiltSprite.frameCount} frames (${rebuiltSprite.frameWidth}x${rebuiltSprite.frameHeight})`);
+      debugInfo(`[Rebuild] ${anim.name}: re-processed ${rebuiltSprite.frameCount} frames (${rebuiltSprite.frameWidth}x${rebuiltSprite.frameHeight})`);
     } catch (err: any) {
       rebuilt++;
       onStatus({ stage: 'sprite_ready', animation: anim.name, photoHash, current: rebuilt, total });
-      console.warn(`[Rebuild] ${anim.name}: failed to re-process, keeping existing sprite: ${err.message}`);
+      debugWarn(`[Rebuild] ${anim.name}: failed to re-process, keeping existing sprite: ${err.message}`);
     }
-  }
-
-  // Also regenerate clean meta blobs if missing
-  if (meta.sideViewBlob && !meta.sideViewCleanBlob) {
-    const sideBase64 = await blobToBase64Util(meta.sideViewBlob);
-    meta.sideViewCleanBlob = await tryApiBgRemoval(sideBase64);
-  }
-  if (meta.crouchViewBlob && !meta.crouchViewCleanBlob) {
-    const crouchBase64 = await blobToBase64Util(meta.crouchViewBlob);
-    meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchBase64);
   }
 
   meta.updatedAt = Date.now();
   await setCachedMeta(meta);
 
   onStatus({ stage: 'done', photoHash });
-  console.log(`[Rebuild] Done: ${rebuilt}/${total} sprites re-processed`);
+  debugInfo(`[Rebuild] Done: ${rebuilt}/${total} sprites re-processed`);
 }
 
 export async function retryAnimation(
   photoHash: string,
   animationName: string,
   onStatus: StatusCallback,
-  options?: { spriteMode?: SpriteGenerationMode; idleMode?: SpriteGenerationMode },
+  options?: {
+    spriteMode?: SpriteGenerationMode;
+    idleMode?: SpriteGenerationMode;
+    tier?: QualityTier;
+    ownerScope?: string;
+    apiContext?: ApiRequestContext;
+  },
 ): Promise<void> {
-  const meta = await getCachedMeta(photoHash);
+  const apiContext = options?.apiContext ?? captureApiRequestContext();
+  const meta = await getCachedMeta(photoHash, options?.ownerScope);
   if (!meta) throw new Error('Character not found');
+  const qualityTier = options?.tier ?? meta.qualityTier ?? 'contender';
+  const tierConfig = TIER_CONFIGS[qualityTier];
 
   const anim = getAnimationDefinition(animationName);
 
@@ -763,12 +901,13 @@ export async function retryAnimation(
   let crouchSourceInputBase64 = sideViewInputBase64;
   if (isCrouchFamilyAnimation(anim)) {
     try {
-      const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus);
+      const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus, apiContext);
       crouchSourceBase64 = uprightView.cleanedBase64;
       crouchSourceInputBase64 = uprightView.inputBase64;
     } catch (err: any) {
+      if (err instanceof ApiSessionChangedError) throw err;
       const fallbackMessage = `[Retry] ${anim.name}: upright generation failed, using side view: ${err.message}`;
-      console.warn(fallbackMessage);
+      debugWarn(fallbackMessage);
       publishDebugLog(fallbackMessage);
     }
   } else if (meta.uprightViewBlob) {
@@ -791,14 +930,14 @@ export async function retryAnimation(
   const baseImage = anim.base === 'crouched' ? crouchViewInputBase64 : sideViewBase64;
   const secondaryImage = anim.name === 'crouch' ? crouchViewInputBase64 : undefined;
   const primaryImage = anim.name === 'crouch' ? crouchSourceInputBase64 : baseImage;
-  const spriteMode: SpriteGenerationMode = options?.spriteMode ?? options?.idleMode ?? 'sheet_refined';
+  const spriteMode: SpriteGenerationMode = options?.spriteMode ?? options?.idleMode ?? tierConfig.spriteMode;
 
   if (isCrouchFamilyAnimation(anim)) {
     const message =
       `[Retry] ${anim.name}: using crouch reference ` +
       `${crouchNormalizationReference ? `${crouchNormalizationReference.targetDrawWidth}x${crouchNormalizationReference.targetDrawHeight}` : 'none'} ` +
       `spriteBaseline=${crouchSpriteNormalizationReference?.baselineRatio?.toFixed(3) ?? 'none'}`;
-    console.log(message);
+    debugInfo(message);
     publishDebugLog(message);
   }
 
@@ -809,6 +948,9 @@ export async function retryAnimation(
     undefined,
     isCrouchFamilyAnimation(anim) ? crouchSpriteNormalizationReference : undefined,
     spriteMode,
+    tierConfig.enableDnnBgRemoval,
+    apiContext,
+    tierConfig.geminiAnimModelOverride,
   ).catch(async (err: any) => {
     if (err instanceof PartialSpriteGenerationError && err.partialResult) {
       const partialBlob = base64ToBlob(err.partialResult.imageBase64, 'image/png');
@@ -830,8 +972,10 @@ export async function retryAnimation(
   });
 
   await setCachedSprite({
+    ownerScope: meta.ownerScope,
     photoHash,
     animationName: anim.name,
+    qualityTier,
     pngBlob: spriteResult.blob,
     rawPngBlob: spriteResult.rawBlob,
     frameWidth: spriteResult.frameW,
@@ -845,17 +989,45 @@ export async function retryAnimation(
     meta.animationsReady.push(anim.name);
   }
   clearFailedAnimationArtifact(meta, anim.name);
+  meta.qualityTier = maxQualityTier(meta.qualityTier, qualityTier);
   meta.updatedAt = Date.now();
   await setCachedMeta(meta);
 
   onStatus({ stage: 'sprite_ready', animation: anim.name, photoHash, current: 1, total: 1 });
   onStatus({ stage: 'done', photoHash });
-  console.log(`[Retry] ${anim.name}: regenerated ${spriteResult.frameCount} frames (${spriteResult.frameW}x${spriteResult.frameH})`);
+  debugInfo(`[Retry] ${anim.name}: regenerated ${spriteResult.frameCount} frames (${spriteResult.frameW}x${spriteResult.frameH})`);
+}
+
+export async function upgradeFighter(
+  photoHash: string,
+  toTier: QualityTier,
+  onStatus: StatusCallback,
+  apiContext: ApiRequestContext = captureApiRequestContext(),
+): Promise<void> {
+  const meta = await getCachedMeta(photoHash);
+  if (!meta) throw new Error('Character not found');
+
+  for (let i = 0; i < ANIMATIONS.length; i++) {
+    const anim = ANIMATIONS[i];
+    onStatus({ stage: 'generating_sprites', animation: anim.name, current: i + 1, total: ANIMATIONS.length });
+    await retryAnimation(photoHash, anim.name, () => {}, {
+      tier: toTier,
+      ownerScope: meta.ownerScope,
+      apiContext,
+    });
+    onStatus({ stage: 'sprite_ready', animation: anim.name, photoHash, current: i + 1, total: ANIMATIONS.length });
+  }
+
+  meta.qualityTier = maxQualityTier(meta.qualityTier, toTier);
+  meta.updatedAt = Date.now();
+  await setCachedMeta(meta);
+  onStatus({ stage: 'done', photoHash });
 }
 
 export async function retrySideView(
   photoHash: string,
   onStatus: StatusCallback,
+  apiContext: ApiRequestContext = captureApiRequestContext(),
 ): Promise<void> {
   const meta = await getCachedMeta(photoHash);
   if (!meta) throw new Error('Character not found');
@@ -864,23 +1036,24 @@ export async function retrySideView(
   onStatus({ stage: 'converting_side_view' });
 
   const photoBase64 = await blobToBase64Util(meta.originalPhotoBlob);
-  const sideView = await reposeWithGemini(photoBase64);
+  const sideView = await reposeWithGemini(photoBase64, apiContext);
 
   meta.sideViewBlob = base64ToBlob(sideView.cleanedBase64, 'image/png');
   meta.sideViewRawBlob = base64ToBlob(sideView.rawBase64, 'image/png');
   meta.uprightViewBlob = null;
   meta.uprightViewRawBlob = null;
-  meta.sideViewCleanBlob = await tryApiBgRemoval(sideView.cleanedBase64);
+  meta.sideViewCleanBlob = await tryApiBgRemoval(sideView.cleanedBase64, apiContext);
   meta.updatedAt = Date.now();
   await setCachedMeta(meta);
 
   onStatus({ stage: 'done', photoHash });
-  console.log(`[RetrySideView] Regenerated side view for ${photoHash.slice(0, 8)}`);
+  debugInfo(`[RetrySideView] Regenerated side view for ${photoHash.slice(0, 8)}`);
 }
 
 export async function retryUprightView(
   photoHash: string,
   onStatus: StatusCallback,
+  apiContext: ApiRequestContext = captureApiRequestContext(),
 ): Promise<void> {
   const meta = await getCachedMeta(photoHash);
   if (!meta) throw new Error('Character not found');
@@ -892,7 +1065,7 @@ export async function retryUprightView(
     : sideViewBase64;
 
   onStatus({ stage: 'converting_upright_view' });
-  const uprightView = await uprightReposeWithGemini(sideViewInputBase64);
+  const uprightView = await uprightReposeWithGemini(sideViewInputBase64, apiContext);
 
   meta.uprightViewBlob = base64ToBlob(uprightView.cleanedBase64, 'image/png');
   meta.uprightViewRawBlob = base64ToBlob(uprightView.rawBase64, 'image/png');
@@ -900,12 +1073,13 @@ export async function retryUprightView(
   await setCachedMeta(meta);
 
   onStatus({ stage: 'done', photoHash });
-  console.log(`[RetryUprightView] Regenerated upright view for ${photoHash.slice(0, 8)}`);
+  debugInfo(`[RetryUprightView] Regenerated upright view for ${photoHash.slice(0, 8)}`);
 }
 
 export async function retryCrouchView(
   photoHash: string,
   onStatus: StatusCallback,
+  apiContext: ApiRequestContext = captureApiRequestContext(),
 ): Promise<void> {
   const meta = await getCachedMeta(photoHash);
   if (!meta) throw new Error('Character not found');
@@ -922,32 +1096,38 @@ export async function retryCrouchView(
   let crouchSourceInputBase64 = sideViewInputBase64;
   let crouchSourceLabel = sideInputLabel;
   try {
-    const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus);
+    const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus, apiContext);
     crouchSourceBase64 = uprightView.cleanedBase64;
     crouchSourceInputBase64 = uprightView.inputBase64;
     crouchSourceLabel = meta.uprightViewRawBlob ? 'upright(raw)' : 'upright(clean)';
   } catch (err: any) {
+    if (err instanceof ApiSessionChangedError) throw err;
     const fallbackMessage = `[RetryCrouchView] Upright generation failed, using side view: ${err.message}`;
-    console.warn(fallbackMessage);
+    debugWarn(fallbackMessage);
     publishDebugLog(fallbackMessage);
   }
   const crouchNormalizationReference = await getCrouchNormalizationReference(crouchSourceBase64);
   const message =
     `[RetryCrouchView] ${photoHash.slice(0, 8)} source=${crouchSourceLabel} metricsSource=${crouchSourceInputBase64 === sideViewInputBase64 ? sideInputLabel : 'upright(raw)'} reference=` +
     `${crouchNormalizationReference ? `${crouchNormalizationReference.targetDrawWidth}x${crouchNormalizationReference.targetDrawHeight} baseline=${crouchNormalizationReference.baselineRatio?.toFixed(3)}` : 'none'}`;
-  console.log(message);
+  debugInfo(message);
   publishDebugLog(message);
-  const crouchView = await geminiCrouchReposeDetailed(crouchSourceInputBase64, crouchNormalizationReference, crouchSourceInputBase64);
+  const crouchView = await geminiCrouchReposeDetailed(
+    crouchSourceInputBase64,
+    crouchNormalizationReference,
+    crouchSourceInputBase64,
+    apiContext,
+  );
   const crouchViewBase64 = crouchView.cleanedBase64;
 
   meta.crouchViewBlob = base64ToBlob(crouchViewBase64, 'image/png');
   meta.crouchViewRawBlob = base64ToBlob(crouchView.rawBase64, 'image/png');
-  meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64);
+  meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64, apiContext);
   meta.updatedAt = Date.now();
   await setCachedMeta(meta);
 
   onStatus({ stage: 'done', photoHash });
-  console.log(`[RetryCrouchView] Regenerated crouch view for ${photoHash.slice(0, 8)}`);
+  debugInfo(`[RetryCrouchView] Regenerated crouch view for ${photoHash.slice(0, 8)}`);
 }
 
 async function blobToBase64Util(blob: Blob): Promise<string> {
@@ -979,7 +1159,7 @@ function base64ToBlob(base64: string, mime: string): Blob {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
+  return new Blob([bytes], { type: detectImageMime(bytes) ?? mime });
 }
 
 function measureImage(blob: Blob): Promise<{ width: number; height: number }> {

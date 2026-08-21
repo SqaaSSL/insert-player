@@ -1,3 +1,6 @@
+import { apiFetch, type ApiRequestContext } from './ApiClient';
+import { debugInfo, debugWarn } from './DebugLog';
+
 const FREEPIK_BASE = '/proxy/freepik';
 
 export interface KontextProRequest {
@@ -19,12 +22,12 @@ export interface KontextTaskResponse {
   };
 }
 
-async function freepikKontextProCreate(req: KontextProRequest): Promise<string> {
-  const res = await fetch(`${FREEPIK_BASE}/v1/ai/text-to-image/flux-kontext-pro`, {
+async function freepikKontextProCreate(req: KontextProRequest, context?: ApiRequestContext): Promise<string> {
+  const res = await apiFetch(`${FREEPIK_BASE}/v1/ai/text-to-image/flux-kontext-pro`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
-  });
+  }, context);
 
   if (!res.ok) {
     const body = await res.text();
@@ -35,25 +38,29 @@ async function freepikKontextProCreate(req: KontextProRequest): Promise<string> 
   return json.data.task_id;
 }
 
-async function freepikKontextProPoll(taskId: string, maxWaitMs = 120_000): Promise<string[]> {
+async function freepikKontextProPoll(
+  taskId: string,
+  context?: ApiRequestContext,
+  maxWaitMs = 120_000,
+): Promise<string[]> {
   const start = Date.now();
   const pollInterval = 3000;
 
   while (Date.now() - start < maxWaitMs) {
-    const res = await fetch(`${FREEPIK_BASE}/v1/ai/text-to-image/flux-kontext-pro/${taskId}`, {
+    const res = await apiFetch(`${FREEPIK_BASE}/v1/ai/text-to-image/flux-kontext-pro/${taskId}`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
-    });
+    }, context);
 
     if (!res.ok) {
       const body = await res.text();
-      console.warn(`Kontext Pro poll ${res.status}:`, body.slice(0, 200));
+      debugWarn(`Kontext Pro poll ${res.status}:`, body.slice(0, 200));
       await new Promise((r) => setTimeout(r, pollInterval));
       continue;
     }
 
     const json: KontextTaskResponse = await res.json();
-    console.log(`[KontextPro] task ${taskId} status: ${json.data.status}`);
+    debugInfo(`[KontextPro] task ${taskId} status: ${json.data.status}`);
 
     if (json.data.status === 'COMPLETED') {
       if (!json.data.generated?.length) {
@@ -72,12 +79,12 @@ async function freepikKontextProPoll(taskId: string, maxWaitMs = 120_000): Promi
   throw new Error(`Kontext Pro timed out after ${maxWaitMs / 1000}s`);
 }
 
-async function uploadTempImage(base64: string): Promise<string> {
-  const res = await fetch('/proxy/upload-temp', {
+async function uploadTempImage(base64: string, context?: ApiRequestContext): Promise<string> {
+  const res = await apiFetch('/proxy/upload-temp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image: base64 }),
-  });
+  }, context);
 
   if (!res.ok) {
     const body = await res.text();
@@ -90,16 +97,17 @@ async function uploadTempImage(base64: string): Promise<string> {
 
 export async function freepikImageToFightingStance(
   imageBase64: string,
+  context?: ApiRequestContext,
 ): Promise<string> {
   const resized = await resizeImageForApi(imageBase64);
 
-  console.log('[FreepikApi] Uploading temp image for Kontext Pro...');
-  const publicUrl = await uploadTempImage(resized);
-  console.log(`[FreepikApi] Temp URL: ${publicUrl}`);
+  debugInfo('[FreepikApi] Uploading temp image for Kontext Pro...');
+  const publicUrl = await uploadTempImage(resized, context);
+  debugInfo('[FreepikApi] Temp image uploaded for Kontext Pro');
 
-  console.log('[FreepikApi] Creating Kontext Pro task...');
+  debugInfo('[FreepikApi] Creating Kontext Pro task...');
   const taskId = await freepikKontextProCreate({
-    prompt: 'Keep the EXACT same person with identical face, hair, skin tone, clothing, colors, and proportions. Repose them in a 3/4 view facing right, similar to a classic Street Fighter character select pose. Upper body slightly angled toward the camera, fighting stance with fists raised. Full body visible from head to feet, clean solid-color background. Preserve all facial features and identity faithfully.',
+    prompt: 'Keep the EXACT same person with identical face, hair, skin tone, clothing, colors, and proportions. Repose them in a 3/4 view facing right, similar to a classic arcade fighting-game character select pose. Upper body slightly angled toward the camera, fighting stance with fists raised. Full body visible from head to feet, clean solid-color background. Preserve all facial features and identity faithfully.',
     input_image: publicUrl,
     guidance: 7,
     steps: 50,
@@ -107,10 +115,10 @@ export async function freepikImageToFightingStance(
     safety_tolerance: 6,
     output_format: 'png',
     prompt_upsampling: false,
-  });
-  console.log(`[FreepikApi] Task created: ${taskId}, polling...`);
+  }, context);
+  debugInfo(`[FreepikApi] Task created: ${taskId}, polling...`);
 
-  const urls = await freepikKontextProPoll(taskId);
+  const urls = await freepikKontextProPoll(taskId, context);
   return urls[0];
 }
 
@@ -142,7 +150,7 @@ export async function resizeImageForApi(base64: string): Promise<string> {
     result = canvas.toDataURL('image/jpeg', quality).split(',')[1];
   }
 
-  console.log(`[resize] ${img.width}x${img.height} → ${w}x${h}, base64: ${(base64.length / 1024).toFixed(0)}KB → ${(result.length / 1024).toFixed(0)}KB`);
+  debugInfo(`[resize] ${img.width}x${img.height} → ${w}x${h}, base64: ${(base64.length / 1024).toFixed(0)}KB → ${(result.length / 1024).toFixed(0)}KB`);
   return result;
 }
 
@@ -170,18 +178,21 @@ interface BgRemoveResponse {
   };
 }
 
-export async function freepikRemoveBackground(imageBase64: string): Promise<string> {
+export async function freepikRemoveBackground(
+  imageBase64: string,
+  context?: ApiRequestContext,
+): Promise<string> {
   const resized = await resizeImageForApi(imageBase64);
-  const publicUrl = await uploadTempImage(resized);
+  const publicUrl = await uploadTempImage(resized, context);
 
-  console.log('[FreepikApi] Removing background via API...');
+  debugInfo('[FreepikApi] Removing background via API...');
   const formData = new FormData();
   formData.append('image_url', publicUrl);
 
-  const res = await fetch(`${FREEPIK_BASE}/v1/ai/beta/remove-background`, {
+  const res = await apiFetch(`${FREEPIK_BASE}/v1/ai/beta/remove-background`, {
     method: 'POST',
     body: formData,
-  });
+  }, context);
 
   if (!res.ok) {
     const body = await res.text();
@@ -192,8 +203,8 @@ export async function freepikRemoveBackground(imageBase64: string): Promise<stri
   const resultUrl = json.data?.attributes?.image?.high_resolution || json.data?.attributes?.image?.url;
   if (!resultUrl) throw new Error('Freepik bg-remove returned no image URL');
 
-  console.log(`[FreepikApi] Background removed, fetching result...`);
-  const resultBase64 = await urlToBase64(resultUrl);
+  debugInfo(`[FreepikApi] Background removed, fetching result...`);
+  const resultBase64 = await urlToBase64(resultUrl, context);
   return resultBase64;
 }
 
@@ -210,9 +221,9 @@ export function blobToBase64(blob: Blob): Promise<string> {
   });
 }
 
-export async function urlToBase64(url: string): Promise<string> {
+export async function urlToBase64(url: string, context?: ApiRequestContext): Promise<string> {
   const proxied = `/proxy/image?url=${encodeURIComponent(url)}`;
-  const res = await fetch(proxied);
+  const res = await apiFetch(proxied, {}, context);
   const blob = await res.blob();
   return blobToBase64(blob);
 }

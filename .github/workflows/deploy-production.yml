@@ -1,0 +1,149 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    uses: ./.github/workflows/validate.yml
+
+  deploy:
+    name: Deploy production
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: https://insertplayer.ai
+    env:
+      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
+      VITE_PUBLIC_APP_NAME: Insert Player
+      VITE_PUBLIC_APP_SHORT_NAME: P1
+      VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+      VITE_GEMINI_IMAGE_MODEL_REPOSE: ${{ vars.VITE_GEMINI_IMAGE_MODEL_REPOSE }}
+      VITE_GEMINI_IMAGE_MODEL_UPRIGHT: ${{ vars.VITE_GEMINI_IMAGE_MODEL_UPRIGHT }}
+      VITE_GEMINI_IMAGE_MODEL_CROUCH: ${{ vars.VITE_GEMINI_IMAGE_MODEL_CROUCH }}
+      VITE_BG_REMOVAL_PROVIDER: ${{ vars.VITE_BG_REMOVAL_PROVIDER }}
+      VITE_INTRO_VIDEO_PROVIDER: ${{ vars.VITE_INTRO_VIDEO_PROVIDER }}
+      CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
+      CORS_ORIGIN: ${{ vars.CORS_ORIGIN }}
+      CLERK_AUTHORIZED_PARTIES: ${{ vars.CLERK_AUTHORIZED_PARTIES }}
+      STRIPE_ACCOUNT_ID: ${{ vars.STRIPE_ACCOUNT_ID }}
+      STRIPE_PRICE_STARTER: ${{ vars.STRIPE_PRICE_STARTER }}
+      STRIPE_PRICE_VERSUS: ${{ vars.STRIPE_PRICE_VERSUS }}
+      STRIPE_PRICE_ARCADE: ${{ vars.STRIPE_PRICE_ARCADE }}
+      ASF_FORBIDDEN_STRIPE_ACCOUNT_IDS: ${{ vars.ASF_FORBIDDEN_STRIPE_ACCOUNT_IDS }}
+      TURNSTILE_HOSTNAMES: ${{ vars.TURNSTILE_HOSTNAMES }}
+      ASF_PUBLIC_APP_NAME: Insert Player
+      ASF_PUBLIC_APP_SHORT_NAME: P1
+      ASF_SOCIAL_CARD_PATH: /assets/social-card.png
+      ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+      ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
+      ASF_FRONTEND_URL: ${{ vars.ASF_FRONTEND_URL }}
+      ASF_FRONTEND_ORIGIN: ${{ vars.ASF_FRONTEND_ORIGIN }}
+      ASF_PAGES_PROJECT_NAME: ${{ vars.ASF_PAGES_PROJECT_NAME }}
+      ASF_PAGES_BRANCH: main
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Worker dependencies
+        run: npm --prefix worker ci
+
+      - name: Materialize brand clearance
+        env:
+          ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
+          BRAND_CLEARANCE_JSON: ${{ secrets.BRAND_CLEARANCE_JSON }}
+        run: |
+          if [ -z "$BRAND_CLEARANCE_JSON" ]; then
+            printf '%s\n' 'BRAND_CLEARANCE_JSON is required.' >&2
+            exit 1
+          fi
+          install -m 600 /dev/null "$ASF_BRAND_CLEARANCE_FILE"
+          printf '%s' "$BRAND_CLEARANCE_JSON" > "$ASF_BRAND_CLEARANCE_FILE"
+          node -e 'JSON.parse(require("node:fs").readFileSync(process.env.ASF_BRAND_CLEARANCE_FILE, "utf8"))'
+
+      - name: Validate and stage live configuration
+        env:
+          ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
+        run: node scripts/apply-live-config.mjs --require-complete --skip-production-check --skip-secrets
+
+      - name: Apply production D1 migrations
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm --prefix worker run db:migrate
+
+      - name: Upload Worker secrets and deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FAL_API_KEY: ${{ secrets.FAL_API_KEY }}
+          RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
+          FREEPIK_API_KEY: ${{ secrets.FREEPIK_API_KEY }}
+          LUDO_API_KEY: ${{ secrets.LUDO_API_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
+        run: node scripts/apply-live-config.mjs --skip-production-check --deploy-worker
+
+      - name: Smoke production Worker
+        run: npm run smoke:live
+
+      - name: Build, deploy, and smoke Pages
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run deploy:frontend
+
+      - name: Verify live readiness
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npm run check:live-readiness
+
+      - name: Publish deployment summary
+        run: |
+          printf '%s\n' '## Production deployment' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '- Frontend: https://insertplayer.ai' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '- API: https://api.insertplayer.ai' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary launch files
+        if: always()
+        env:
+          ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
+        run: rm -f "$ASF_BRAND_CLEARANCE_FILE"

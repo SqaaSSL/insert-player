@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { FighterState, FIGHTER_WIDTH, FIGHTER_HEIGHT } from '../constants.ts';
 import { getAllSpritesForHash, type CachedSprite } from '../../services/SpriteCache.ts';
 import { getSpriteLayout } from './SpriteGenerator.ts';
+import { debugInfo } from '../../services/DebugLog.ts';
 
 const ANIM_NAME_TO_STATE: Record<string, FighterState> = {
   idle: FighterState.IDLE,
@@ -32,6 +33,8 @@ const LOOPING_STATES = new Set<FighterState>([
   FighterState.WALK_BACKWARD,
 ]);
 
+type LoadedAnimation = { img: HTMLImageElement; sprite: CachedSprite };
+
 export async function loadAiSprites(
   scene: Phaser.Scene,
   spriteKey: string,
@@ -57,34 +60,30 @@ export async function loadAiSprites(
   ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const loadedAnims = new Map<string, { img: HTMLImageElement; sprite: CachedSprite }>();
+  const loadedAnims = new Map<string, LoadedAnimation>();
 
   for (const [animName, sprite] of spritesByAnim) {
     if (!ANIM_NAME_TO_STATE[animName]) continue;
     const img = await blobToImage(sprite.pngBlob);
     loadedAnims.set(animName, { img, sprite });
-    console.log(`[AiSpriteLoader] ${animName}: ${img.width}x${img.height}, frame ${sprite.frameWidth}x${sprite.frameHeight}, count ${sprite.frameCount}`);
+    debugInfo(`[AiSpriteLoader] ${animName}: ${img.width}x${img.height}, frame ${sprite.frameWidth}x${sprite.frameHeight}, count ${sprite.frameCount}`);
   }
+  if (loadedAnims.size === 0) return false;
 
   const stateOrder = Object.entries(layout.stateRow)
     .sort(([, a], [, b]) => a - b)
     .map(([state]) => state as FighterState);
 
+  let fallbackFillCount = 0;
   for (const state of stateOrder) {
     const row = layout.stateRow[state];
     const targetFrameCount = layout.frameCounts[state];
 
-    let animName = stateToAnimName(state);
-    let anim = loadedAnims.get(animName);
-
-    if (!anim) {
-      const fallback = FALLBACK_MAP[state];
-      if (fallback) {
-        animName = stateToAnimName(fallback);
-        anim = loadedAnims.get(animName);
-      }
-    }
-    if (!anim) continue;
+    const directAnimName = stateToAnimName(state);
+    const resolved = resolveLoadedAnimationForState(state, loadedAnims);
+    if (!resolved) return false;
+    const { animName, anim } = resolved;
+    if (animName !== directAnimName) fallbackFillCount += 1;
 
     const { img: sourceImg, sprite } = anim;
     const srcTotal = sprite.frameCount;
@@ -123,7 +122,7 @@ export async function loadAiSprites(
     }
   }
 
-  console.log(`[AiSpriteLoader] Built ${canvas.width}x${canvas.height} sheet for "${spriteKey}" (${loadedAnims.size} anims, ${cols}x${rows} cells of ${FIGHTER_WIDTH}x${FIGHTER_HEIGHT})`);
+  debugInfo(`[AiSpriteLoader] Built ${canvas.width}x${canvas.height} sheet for "${spriteKey}" (${loadedAnims.size} anims, ${fallbackFillCount} fallback-filled states, ${cols}x${rows} cells of ${FIGHTER_WIDTH}x${FIGHTER_HEIGHT})`);
 
   if (scene.textures.exists(spriteKey)) {
     scene.textures.remove(spriteKey);
@@ -141,6 +140,28 @@ function stateToAnimName(state: FighterState): string {
     if (s === state) return name;
   }
   return '';
+}
+
+function resolveLoadedAnimationForState(
+  state: FighterState,
+  loadedAnims: Map<string, LoadedAnimation>,
+): { animName: string; anim: LoadedAnimation } | null {
+  const directName = stateToAnimName(state);
+  const directAnim = loadedAnims.get(directName);
+  if (directAnim) return { animName: directName, anim: directAnim };
+
+  const fallbackState = FALLBACK_MAP[state];
+  if (fallbackState) {
+    const fallbackName = stateToAnimName(fallbackState);
+    const fallbackAnim = loadedAnims.get(fallbackName);
+    if (fallbackAnim) return { animName: fallbackName, anim: fallbackAnim };
+  }
+
+  const idleAnim = loadedAnims.get('idle');
+  if (idleAnim) return { animName: 'idle', anim: idleAnim };
+
+  const firstLoaded = loadedAnims.entries().next().value;
+  return firstLoaded ? { animName: firstLoaded[0], anim: firstLoaded[1] } : null;
 }
 
 function selectSourceFrameIndex(

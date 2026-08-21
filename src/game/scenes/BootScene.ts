@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT } from '../constants.ts';
 import { generateFighterSpriteSheet } from '../sprites/SpriteGenerator.ts';
 import { getPendingLaunchTarget } from '../launchState.ts';
+import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -25,7 +26,7 @@ export class BootScene extends Phaser.Scene {
       bar.fillRect(barX, barY, barW * value, barH);
     });
 
-    this.add.text(GAME_WIDTH / 2, barY - 60, 'AI STREET FIGHTER', {
+    this.add.text(GAME_WIDTH / 2, barY - 60, 'INSERT PLAYER: FIGHT', {
       fontFamily: '"Press Start 2P", monospace',
       fontSize: '28px',
       color: '#ff4444',
@@ -44,7 +45,7 @@ export class BootScene extends Phaser.Scene {
 
   create(): void {
     const pendingTarget = getPendingLaunchTarget();
-    console.info('[BootScene] create', {
+    debugInfo('[BootScene] create', {
       pendingSceneKey: pendingTarget?.sceneKey ?? null,
       hasPendingData: Boolean(pendingTarget?.data),
     });
@@ -54,7 +55,7 @@ export class BootScene extends Phaser.Scene {
     }
     // No scene to launch into — the React shell owns menu/gallery/roster flows now.
     // If Phaser was mounted without a target, bounce back to the React menu.
-    console.warn('[BootScene] No pending launch target. Bouncing back to React menu.');
+    debugWarn('[BootScene] No pending launch target. Bouncing back to React menu.');
     const exitToMenu = (window as Window & { __ASF_EXIT_TO_MENU__?: () => void }).__ASF_EXIT_TO_MENU__;
     if (exitToMenu) {
       exitToMenu();

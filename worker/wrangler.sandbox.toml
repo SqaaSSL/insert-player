@@ -1,0 +1,48 @@
+name = "insert-player-api-sandbox"
+main = "src/index.ts"
+compatibility_date = "2026-08-17"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
+
+[vars]
+ENVIRONMENT = "sandbox"
+# Sandbox data, auth, and billing must never use production origins or resources.
+CORS_ORIGIN = "https://insert-player-sandbox.pages.dev,http://localhost:5173,http://127.0.0.1:5174"
+PUBLIC_APP_NAME = "Insert Player"
+PUBLIC_APP_SHORT_NAME = "P1"
+PUBLIC_SOCIAL_CARD_PATH = "/assets/social-card.png"
+TURNSTILE_REQUIRED = "false"
+TURNSTILE_ACTION = "anonymous_rookie"
+TURNSTILE_HOSTNAMES = "insert-player-sandbox.pages.dev,localhost,127.0.0.1"
+ANONYMOUS_ROOKIE_ENABLED = "false"
+PROVIDER_MONTHLY_BUDGET_USD_CENTS = "5000"
+GEMINI_SPEND_RATE_LIMIT_USD_CENTS = "900"
+CLERK_ISSUER = "https://right-cricket-1317.clerk.accounts.dev"
+CLERK_AUTHORIZED_PARTIES = "https://insert-player-sandbox.pages.dev,http://localhost:5173,http://127.0.0.1:5174"
+# Add only Insert Player sandbox Stripe ids here. Secrets remain Worker secrets:
+STRIPE_ACCOUNT_ID = "acct_1U5w8DCQ9OPSWOkj"
+STRIPE_PRICE_STARTER = "price_1U6H1vCQ9OPSWOkj1ljokcL6"
+STRIPE_PRICE_VERSUS = "price_1U6H1wCQ9OPSWOkjuTEqzam3"
+STRIPE_PRICE_ARCADE = "price_1U6H1xCQ9OPSWOkjLU7ClORv"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "insert-player-sandbox-db"
+database_id = "f60b6e22-d262-4e46-a7d9-ca095e49d102"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "SPRITES"
+bucket_name = "insert-player-sandbox-assets"
+jurisdiction = "eu"
+
+[dev]
+port = 8788
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[triggers]
+crons = ["17 4 * * *"]

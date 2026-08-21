@@ -8,7 +8,10 @@
  */
 
 import { getAnimationProfile, type AnimationProfile } from './AnimationProfiles';
-import { publishDebugLog } from './DebugLog';
+import { debugInfo, publishDebugLog } from './DebugLog';
+import { decontaminateGreenEdges } from './AlphaMask';
+import { expandMirroredSequence } from './FrameSequence';
+import { inferSpriteGridFromSubjects, type SubjectBox } from './SpriteGrid';
 
 const ALPHA_THRESHOLD = 15;
 // CELL_W/CELL_H is the per-frame resolution stored in the IndexedDB sprite
@@ -110,7 +113,7 @@ export async function cleanReposedImage(
     const message =
       `[SpritePostProcess] Reposed crouch normalize: bbox=${bbox.w}x${bbox.h}@(${bbox.x},${bbox.y}) ` +
       `target=${targetDrawW}x${targetDrawH} baseline=${(normalizationReference?.baselineRatio ?? profile.baselineRatio).toFixed(3)} scale=${normalized.usedScale.toFixed(3)}`;
-    console.log(message);
+    debugInfo(message);
     publishDebugLog(message);
   }
 
@@ -254,7 +257,7 @@ export async function normalizeTransparentReposedImage(
     const message =
       `[SpritePostProcess] Transparent crouch normalize: bbox=${bbox.w}x${bbox.h}@(${bbox.x},${bbox.y}) ` +
       `target=${targetDrawW}x${targetDrawH} baseline=${(normalizationReference?.baselineRatio ?? profile.baselineRatio).toFixed(3)} scale=${normalized.usedScale.toFixed(3)}`;
-    console.log(message);
+    debugInfo(message);
     publishDebugLog(message);
   }
 
@@ -274,6 +277,116 @@ export interface CleanSheetResult {
   usedScale: number;
 }
 
+function sliceImageIntoGrid(img: HTMLImageElement, cols: number, rows: number): HTMLCanvasElement[] {
+  const frameWidth = Math.round(img.width / cols);
+  const frameHeight = Math.round(img.height / rows);
+  const frames: HTMLCanvasElement[] = [];
+
+  for (let index = 0; index < cols * rows; index += 1) {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const canvas = document.createElement('canvas');
+    canvas.width = frameWidth;
+    canvas.height = frameHeight;
+    canvas.getContext('2d')!.drawImage(
+      img,
+      col * frameWidth,
+      row * frameHeight,
+      frameWidth,
+      frameHeight,
+      0,
+      0,
+      frameWidth,
+      frameHeight,
+    );
+    frames.push(canvas);
+  }
+
+  return frames;
+}
+
+function findOpaqueSubjectBoxes(data: ImageData): SubjectBox[] {
+  const pixels = data.data;
+  const width = data.width;
+  const height = data.height;
+  const visited = new Uint8Array(width * height);
+  const subjects: SubjectBox[] = [];
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const start = y * width + x;
+      if (visited[start] || pixels[start * 4 + 3] <= ALPHA_THRESHOLD) continue;
+
+      visited[start] = 1;
+      const stack = [start];
+      let area = 0;
+      let minX = x;
+      let maxX = x;
+      let minY = y;
+      let maxY = y;
+
+      while (stack.length > 0) {
+        const index = stack.pop()!;
+        const currentX = index % width;
+        const currentY = Math.floor(index / width);
+        area += 1;
+        minX = Math.min(minX, currentX);
+        maxX = Math.max(maxX, currentX);
+        minY = Math.min(minY, currentY);
+        maxY = Math.max(maxY, currentY);
+
+        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+          for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+            if (offsetX === 0 && offsetY === 0) continue;
+            const nextX = currentX + offsetX;
+            const nextY = currentY + offsetY;
+            if (nextX < 0 || nextX >= width || nextY < 0 || nextY >= height) continue;
+            const next = nextY * width + nextX;
+            if (visited[next] || pixels[next * 4 + 3] <= ALPHA_THRESHOLD) continue;
+            visited[next] = 1;
+            stack.push(next);
+          }
+        }
+      }
+
+      subjects.push({
+        x: minX,
+        y: minY,
+        w: maxX - minX + 1,
+        h: maxY - minY + 1,
+        area,
+      });
+    }
+  }
+
+  return subjects;
+}
+
+function inferSpriteGrid(
+  img: HTMLImageElement,
+  bgIsGreen: boolean,
+  expectedFrameCount: number,
+): ReturnType<typeof inferSpriteGridFromSubjects> {
+  const canvas = document.createElement('canvas');
+  canvas.width = img.width;
+  canvas.height = img.height;
+  const context = canvas.getContext('2d')!;
+  context.drawImage(img, 0, 0);
+  const data = context.getImageData(0, 0, canvas.width, canvas.height);
+  if (bgIsGreen) {
+    chromaKeyRemove(data);
+  } else {
+    lightBgRemove(data);
+  }
+  erodeAlphaEdge(data);
+  return inferSpriteGridFromSubjects(
+    img.width,
+    img.height,
+    findOpaqueSubjectBoxes(data),
+    expectedFrameCount,
+  );
+}
+
 export async function cleanSpriteSheet(
   base64: string,
   expectedFrameCount: number,
@@ -286,32 +399,24 @@ export async function cleanSpriteSheet(
   const img = await loadImg(`data:image/png;base64,${base64}`);
   const profile = getAnimationProfile(animationName);
 
-  // Always trust the expected grid dimensions from our prompt to Gemini.
-  // Grid detection from green lines is unreliable (character limbs, shadows,
-  // and partial green channels cause false dividers).
-  const gridCols = expectedGridCols;
-  const gridRows = expectedGridRows;
-  console.log(`[SpritePostProcess] Using expected grid ${gridCols}x${gridRows} (${expectedFrameCount} frames)`);
-
-  const frameCount = gridCols * gridRows;
+  const expectedFrames = sliceImageIntoGrid(img, expectedGridCols, expectedGridRows);
+  const bgIsGreen = detectDominantBgColor(expectedFrames) === 'green';
+  const inferredGrid = inferSpriteGrid(img, bgIsGreen, expectedFrameCount);
+  const gridCols = inferredGrid?.cols ?? expectedGridCols;
+  const gridRows = inferredGrid?.rows ?? expectedGridRows;
+  if (gridCols !== expectedGridCols || gridRows !== expectedGridRows) {
+    debugInfo(
+      `[SpritePostProcess] Inferred ${gridCols}x${gridRows} grid from ${inferredGrid?.subjectCount ?? 0} subjects; ` +
+      `prompt requested ${expectedGridCols}x${expectedGridRows}`,
+    );
+  } else {
+    debugInfo(`[SpritePostProcess] Using ${gridCols}x${gridRows} grid (${expectedFrameCount} requested frames)`);
+  }
 
   const srcFrameW = Math.round(img.width / gridCols);
   const srcFrameH = Math.round(img.height / gridRows);
 
-  const rawFrames: HTMLCanvasElement[] = [];
-  for (let i = 0; i < frameCount; i++) {
-    const col = i % gridCols;
-    const row = Math.floor(i / gridCols);
-    const c = document.createElement('canvas');
-    c.width = srcFrameW;
-    c.height = srcFrameH;
-    const ctx = c.getContext('2d')!;
-    ctx.drawImage(img, col * srcFrameW, row * srcFrameH, srcFrameW, srcFrameH, 0, 0, srcFrameW, srcFrameH);
-    rawFrames.push(c);
-  }
-
-  // Detect dominant bg color from corner samples to choose removal strategy
-  const bgIsGreen = detectDominantBgColor(rawFrames) === 'green';
+  const rawFrames = sliceImageIntoGrid(img, gridCols, gridRows);
 
   for (const frame of rawFrames) {
     const ctx = frame.getContext('2d')!;
@@ -355,6 +460,18 @@ export async function cleanSpriteSheet(
     frameBBoxes = filtered.boxes;
   }
 
+  if (workingFrames.length > expectedFrameCount) {
+    const selectedIndices = sampleOrderedIndices(
+      workingFrames.map((_, index) => index),
+      expectedFrameCount,
+    );
+    debugInfo(
+      `[SpritePostProcess] ${animationName}: sampled ${workingFrames.length} detected frames down to ${expectedFrameCount}`,
+    );
+    workingFrames = selectedIndices.map((index) => workingFrames[index]);
+    frameBBoxes = selectedIndices.map((index) => frameBBoxes[index]);
+  }
+
   const finalCount = workingFrames.length;
   const populatedBoxes = frameBBoxes.filter((bbox): bbox is BBox => bbox != null);
   if (populatedBoxes.length === 0) {
@@ -372,7 +489,7 @@ export async function cleanSpriteSheet(
       `[SpritePostProcess] ${animationName} normalize: boxes=${boxSummary} ` +
       `lockedScale=${lockedScale?.toFixed(3) ?? 'none'} ` +
       `reference=${normalizationReference ? `${Math.round(normalizationReference.targetDrawWidth ?? 0)}x${Math.round(normalizationReference.targetDrawHeight ?? 0)} baseline=${(normalizationReference.baselineRatio ?? 0).toFixed(3)}` : 'none'}`;
-    console.log(message);
+    debugInfo(message);
     publishDebugLog(message);
   }
 
@@ -397,6 +514,19 @@ export async function cleanSpriteSheet(
       lockedScale,
       normalizationReference,
     );
+    const normalizedCtx = normalized.canvas.getContext('2d')!;
+    const normalizedData = normalizedCtx.getImageData(
+      0,
+      0,
+      normalized.canvas.width,
+      normalized.canvas.height,
+    );
+    decontaminateGreenEdges(
+      normalizedData.data,
+      normalized.canvas.width,
+      normalized.canvas.height,
+    );
+    normalizedCtx.putImageData(normalizedData, 0, 0);
     usedScales.push(normalized.usedScale);
     cleanFrames.push(normalized.canvas);
   }
@@ -417,7 +547,7 @@ export async function cleanSpriteSheet(
 
   const resultBase64 = outCanvas.toDataURL('image/png').split(',')[1];
   const usedScale = usedScales.length > 0 ? median(usedScales) : 1;
-  console.log(
+  debugInfo(
     `[SpritePostProcess] Cleaned ${finalCount} frames: ${srcFrameW}x${srcFrameH} → ${CELL_W}x${CELL_H} ` +
     `(grid ${gridCols}x${gridRows}, anim ${animationName}, bg: ${bgIsGreen ? 'green' : 'light'}, target ${Math.round(profile.targetHeightRatio * 100)}%, scale ${usedScale.toFixed(2)})`
   );
@@ -456,14 +586,7 @@ export async function mirrorCleanFrames(
     extracted.push(c);
   }
 
-  const full = [...extracted];
-  const reversed = extracted.slice(1, -1).reverse();
-  for (const f of reversed) {
-    if (full.length >= totalFrames) break;
-    full.push(f);
-  }
-  while (full.length < totalFrames) full.push(extracted[0]);
-  full.length = totalFrames;
+  const full = expandMirroredSequence(extracted, totalFrames);
 
   const outCols = computeGridCols(totalFrames);
   const outRows = Math.ceil(totalFrames / outCols);
@@ -477,7 +600,7 @@ export async function mirrorCleanFrames(
     outCtx.drawImage(full[i], (i % outCols) * frameW, Math.floor(i / outCols) * frameH);
   }
 
-  console.log(`[SpritePostProcess] Mirrored ${halfFrames} → ${totalFrames} frames (${outCols}x${outRows})`);
+  debugInfo(`[SpritePostProcess] Mirrored ${halfFrames} → ${totalFrames} frames (${outCols}x${outRows})`);
 
   return {
     base64: outCanvas.toDataURL('image/png').split(',')[1],
@@ -1041,7 +1164,7 @@ function filterCriticalAnimationFrames(
     selectedIndices = sampleOrderedIndices(selectedIndices, config.maxFrames);
   }
 
-  console.log(
+  debugInfo(
     `[SpritePostProcess] ${animationName}: kept ${selectedIndices.length}/${frames.length} reliable critical frames`,
   );
 

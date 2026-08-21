@@ -18,6 +18,7 @@ interface SourceViewsPanelProps {
   onRetry?: SourceRetryActions;
   busy?: boolean;
   regeneratingSource?: SourceKey | null;
+  retryCreditCost?: number;
 }
 
 export function SourceViewsPanel({
@@ -27,6 +28,7 @@ export function SourceViewsPanel({
   onRetry,
   busy,
   regeneratingSource,
+  retryCreditCost = 1,
 }: SourceViewsPanelProps) {
   return (
     <>
@@ -51,17 +53,17 @@ export function SourceViewsPanel({
         <div className="gallery-actions">
           {onRetry.side ? (
             <button disabled={busy} onClick={() => void onRetry.side!()}>
-              Retry Side
+              Retry Side · {retryCreditCost} credit
             </button>
           ) : null}
           {onRetry.upright ? (
             <button disabled={busy} onClick={() => void onRetry.upright!()}>
-              Retry Upright
+              Retry Upright · {retryCreditCost} credit
             </button>
           ) : null}
           {onRetry.crouch ? (
             <button disabled={busy} onClick={() => void onRetry.crouch!()}>
-              Retry Crouch
+              Retry Crouch · {retryCreditCost} credit
             </button>
           ) : null}
         </div>

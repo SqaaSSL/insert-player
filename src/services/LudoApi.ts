@@ -1,3 +1,5 @@
+import { apiFetch, type ApiRequestContext } from './ApiClient';
+
 const LUDO_BASE = '/proxy/ludo';
 
 function headers(): HeadersInit {
@@ -67,12 +69,15 @@ export interface CreateImageResponse {
   created_at: number;
 }
 
-export async function ludoAnimateSprite(req: AnimateSpriteRequest): Promise<AnimateSpriteResponse> {
-  const res = await fetch(`${LUDO_BASE}/assets/sprite/animate`, {
+export async function ludoAnimateSprite(
+  req: AnimateSpriteRequest,
+  context?: ApiRequestContext,
+): Promise<AnimateSpriteResponse> {
+  const res = await apiFetch(`${LUDO_BASE}/assets/sprite/animate`, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(req),
-  });
+  }, context);
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Ludo animateSprite failed (${res.status}): ${err}`);
@@ -80,12 +85,15 @@ export async function ludoAnimateSprite(req: AnimateSpriteRequest): Promise<Anim
   return res.json();
 }
 
-export async function ludoGeneratePose(req: GeneratePoseRequest): Promise<GeneratePoseResponse[]> {
-  const res = await fetch(`${LUDO_BASE}/assets/sprite/pose`, {
+export async function ludoGeneratePose(
+  req: GeneratePoseRequest,
+  context?: ApiRequestContext,
+): Promise<GeneratePoseResponse[]> {
+  const res = await apiFetch(`${LUDO_BASE}/assets/sprite/pose`, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(req),
-  });
+  }, context);
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Ludo generatePose failed (${res.status}): ${err}`);
@@ -93,12 +101,15 @@ export async function ludoGeneratePose(req: GeneratePoseRequest): Promise<Genera
   return res.json();
 }
 
-export async function ludoCreateImage(req: CreateImageRequest): Promise<CreateImageResponse[]> {
-  const res = await fetch(`${LUDO_BASE}/assets/image`, {
+export async function ludoCreateImage(
+  req: CreateImageRequest,
+  context?: ApiRequestContext,
+): Promise<CreateImageResponse[]> {
+  const res = await apiFetch(`${LUDO_BASE}/assets/image`, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(req),
-  });
+  }, context);
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Ludo createImage failed (${res.status}): ${err}`);
@@ -106,29 +117,28 @@ export async function ludoCreateImage(req: CreateImageRequest): Promise<CreateIm
   return res.json();
 }
 
-export async function ludoValidateKey(): Promise<boolean> {
+export async function ludoValidateKey(context?: ApiRequestContext): Promise<boolean> {
   try {
-    const res = await fetch(`${LUDO_BASE}/auth/validate-api-key`, {
+    const res = await apiFetch(`${LUDO_BASE}/auth/validate-api-key`, {
       headers: headers(),
-    });
+    }, context);
     return res.ok;
   } catch {
     return false;
   }
 }
 
-export async function ludoGetSpriteResults(requestId?: string): Promise<any[]> {
-  const url = new URL(`${LUDO_BASE}/assets/sprites/results`);
-  if (requestId) url.searchParams.set('request_id', requestId);
-  const res = await fetch(url.toString(), { headers: headers() });
+export async function ludoGetSpriteResults(requestId?: string, context?: ApiRequestContext): Promise<any[]> {
+  const query = requestId ? `?request_id=${encodeURIComponent(requestId)}` : '';
+  const res = await apiFetch(`${LUDO_BASE}/assets/sprites/results${query}`, { headers: headers() }, context);
   if (!res.ok) throw new Error(`Ludo getResults failed: ${res.status}`);
   return res.json();
 }
 
-export async function ludoListAnimationPresets(): Promise<any> {
-  const res = await fetch(`${LUDO_BASE}/assets/sprite/animation-presets`, {
+export async function ludoListAnimationPresets(context?: ApiRequestContext): Promise<any> {
+  const res = await apiFetch(`${LUDO_BASE}/assets/sprite/animation-presets`, {
     headers: headers(),
-  });
+  }, context);
   if (!res.ok) throw new Error(`Ludo listPresets failed: ${res.status}`);
   return res.json();
 }

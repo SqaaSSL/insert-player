@@ -1,24 +1,76 @@
-import type { Env, User } from './types';
+import { generateId, optionalAuth, requireAuth } from './auth';
 import {
-  exchangeGoogleCode,
-  findOrCreateUser,
-  createSession,
-  validateSession,
-  deleteSession,
-  getSessionIdFromRequest,
-  sessionCookie,
-} from './auth';
-import { uploadPhoto, getCharacter, listCharacters, getSpriteAsset } from './sprites';
-import { getLeaderboard, getPlayerStats, reportMatchResult } from './leaderboard';
-import { generateId } from './auth';
+  authorizeGenerationPurchase,
+  completeGenerationPurchase,
+  createCreditCheckoutSession,
+  creditPacksResponse,
+  handleStripeWebhook,
+  releaseExpiredGenerationCharges,
+} from './billing';
+import {
+  createFighter,
+  cloneCommunityFighter,
+  deleteFighter,
+  getAsset,
+  getCommunityFighter,
+  getFighter,
+  listCommunityFighters,
+  listFighters,
+  listStages,
+  patchFighter,
+  promoteFighterSpriteVersion,
+  reportCommunityFighter,
+  requestFighterUpgrade,
+  shareCommunityFighterPage,
+  tiersResponse,
+  uploadFighterSource,
+  uploadFighterSprite,
+} from './fighters';
+import { ensureSystemUser, getLeaderboard, getPlayerStats, reportMatchResult } from './leaderboard';
+import { getTempAsset, handleProxy } from './proxy';
+import { enforceRateLimit } from './rateLimit';
+import { createFeatureProviderSession } from './providerSessions';
+import type { AuthContext, Env, PublicAuthContext, User } from './types';
+import { turnstileConfigurationStatus } from './turnstile';
+import { handleClerkWebhook } from './clerkWebhooks';
+import { cleanupOperationalData } from './maintenance';
+import { listCommunityReports, moderateCommunityReport } from './moderation';
+import {
+  InvalidMultipartBodyError,
+  InvalidJsonBodyError,
+  readJsonBody,
+  RequestBodyTooLargeError,
+} from './requestBody';
 
-function corsHeaders(env: Env): HeadersInit {
-  return {
-    'Access-Control-Allow-Origin': env.CORS_ORIGIN || '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Credentials': 'true',
+const MAX_MATCH_ROUNDS = 5;
+const MAX_MATCH_DURATION_SECONDS = 20 * 60;
+const MAX_MATCH_ID_LENGTH = 128;
+const MAX_MATCH_REPORT_BODY_BYTES = 16 * 1024;
+
+function resolveCorsOrigin(request: Request, env: Env): string {
+  const requestOrigin = request.headers.get('Origin') ?? '';
+  const configured = (env.CORS_ORIGIN ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  if (configured.length === 0) return '*';
+  if (requestOrigin && configured.includes(requestOrigin)) return requestOrigin;
+  return configured[0];
+}
+
+function corsHeaders(request: Request, env: Env): HeadersInit {
+  const origin = resolveCorsOrigin(request, env);
+  const headers: HeadersInit = {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASF-Provider-Session',
+    'Vary': 'Origin',
   };
+  if (origin !== '*') {
+    headers['Access-Control-Allow-Credentials'] = 'true';
+  }
+  return headers;
 }
 
 function json(data: unknown, status = 200, extraHeaders: HeadersInit = {}): Response {
@@ -28,16 +80,139 @@ function json(data: unknown, status = 200, extraHeaders: HeadersInit = {}): Resp
   });
 }
 
-async function requireAuth(request: Request, env: Env): Promise<User | Response> {
-  const sessionId = getSessionIdFromRequest(request);
-  if (!sessionId) {
-    return json({ error: 'Unauthorized' }, 401, corsHeaders(env));
+function addCors(response: Response, request: Request, env: Env): Response {
+  const headers = new Headers(response.headers);
+  for (const [key, value] of Object.entries(corsHeaders(request, env))) {
+    headers.set(key, value);
   }
-  const user = await validateSession(env, sessionId);
-  if (!user) {
-    return json({ error: 'Session expired' }, 401, corsHeaders(env));
+  return new Response(response.body, { status: response.status, headers });
+}
+
+function isResponse(value: unknown): value is Response {
+  return value instanceof Response;
+}
+
+function decodePathParam(value: string): string | Response {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return json({ error: 'Invalid path parameter' }, 400);
   }
-  return user;
+}
+
+async function authenticated(
+  request: Request,
+  env: Env,
+  handler: (auth: AuthContext) => Promise<Response>,
+): Promise<Response> {
+  const auth = await requireAuth(request, env);
+  if (isResponse(auth)) return auth;
+  return handler(auth);
+}
+
+function authAsPublicContext(auth: AuthContext): PublicAuthContext {
+  return {
+    userId: auth.userId,
+    rateLimitKey: `user:${auth.userId}`,
+    user: auth.user,
+    claims: auth.claims,
+  };
+}
+
+function hasBearerAuth(request: Request): boolean {
+  return /^Bearer\s+\S+/i.test(request.headers.get('Authorization') ?? '');
+}
+
+async function sensitiveOptionalAuth(
+  request: Request,
+  env: Env,
+  publicAuth: PublicAuthContext,
+): Promise<PublicAuthContext | Response> {
+  if (publicAuth.user || !hasBearerAuth(request)) return publicAuth;
+  const auth = await requireAuth(request, env);
+  if (isResponse(auth)) return auth;
+  return authAsPublicContext(auth);
+}
+
+function readBoundedInteger(value: unknown, min: number, max: number): number {
+  const parsed = Math.round(Number(value ?? 0));
+  if (!Number.isFinite(parsed)) return min;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function readOptionalId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_MATCH_ID_LENGTH) return undefined;
+  return /^[a-z0-9:_-]+$/i.test(trimmed) ? trimmed : undefined;
+}
+
+async function readOwnedFighterId(env: Env, userId: string, value: unknown): Promise<string | undefined | Response> {
+  const fighterId = readOptionalId(value);
+  if (!fighterId) return undefined;
+  const fighter = await env.DB.prepare(
+    'SELECT id FROM fighters WHERE id = ? AND owner_user_id = ?'
+  ).bind(fighterId, userId).first<{ id: string }>();
+  if (!fighter) return json({ error: 'Match fighter does not belong to this user' }, 403);
+  return fighter.id;
+}
+
+async function authenticatedLimited(
+  request: Request,
+  env: Env,
+  routeKey: string,
+  handler: (auth: AuthContext) => Promise<Response>,
+): Promise<Response> {
+  return authenticated(request, env, async (auth) => {
+    const limited = await enforceRateLimit(env, routeKey, authAsPublicContext(auth));
+    if (limited) return limited;
+    return handler(auth);
+  });
+}
+
+function healthResponse(env: Env): Response {
+  const providerSecrets = {
+    gemini: Boolean(env.GEMINI_API_KEY),
+    fal: Boolean(env.FAL_API_KEY),
+    runway: Boolean(env.RUNWAY_API_KEY),
+    freepik: Boolean(env.FREEPIK_API_KEY),
+    ludo: Boolean(env.LUDO_API_KEY),
+  };
+  const allProvidersConfigured = Object.values(providerSecrets).every(Boolean);
+  const authConfigured = Boolean(env.CLERK_ISSUER);
+  const anonymousIdentifiersProtected = Boolean(env.ANONYMIZATION_SECRET);
+  const stripeSecret = env.STRIPE_SECRET_KEY ?? '';
+  const stripeWebhookSecret = env.STRIPE_WEBHOOK_SECRET ?? '';
+  const stripeAccountPinned = /^acct_[A-Za-z0-9]+$/.test(env.STRIPE_ACCOUNT_ID ?? '');
+  const stripeCatalogPinned = [env.STRIPE_PRICE_STARTER, env.STRIPE_PRICE_VERSUS, env.STRIPE_PRICE_ARCADE]
+    .every((priceId) => /^price_[A-Za-z0-9]+$/.test(priceId ?? ''));
+  const stripeLiveConfigured = stripeAccountPinned && stripeCatalogPinned && /^sk_live_/i.test(stripeSecret) && /^whsec_/i.test(stripeWebhookSecret);
+  const stripeTestConfigured = stripeAccountPinned && stripeCatalogPinned && /^sk_test_/i.test(stripeSecret) && /^whsec_/i.test(stripeWebhookSecret);
+
+  return json({
+    status: 'ok',
+    version: '0.16.0',
+    environment: env.ENVIRONMENT ?? 'unknown',
+    cors: env.CORS_ORIGIN ? 'configured' : 'wildcard',
+    auth: authConfigured ? 'clerk' : 'not_configured',
+    accountLifecycle: env.CLERK_WEBHOOK_SIGNING_SECRET ? 'clerk_webhook' : 'not_configured',
+    billing: stripeLiveConfigured ? 'stripe' : stripeTestConfigured ? 'stripe_test' : 'not_configured',
+    turnstile: turnstileConfigurationStatus(env),
+    anonymousRookie: env.ANONYMOUS_ROOKIE_ENABLED === 'false' ? 'disabled' : 'enabled',
+    providerBudget: /^\d+$/.test(env.PROVIDER_MONTHLY_BUDGET_USD_CENTS ?? '')
+      ? 'configured'
+      : 'not_configured',
+    providerSpendRate: /^\d+$/.test(env.GEMINI_SPEND_RATE_LIMIT_USD_CENTS ?? '')
+      ? 'configured'
+      : 'not_configured',
+    storage: {
+      d1: env.DB ? 'bound' : 'missing',
+      r2: env.SPRITES ? 'bound' : 'missing',
+    },
+    rateLimit: 'd1',
+    privacy: anonymousIdentifiersProtected ? 'pseudonymized' : 'not_configured',
+    providers: allProvidersConfigured ? 'configured' : 'partial',
+  });
 }
 
 export default {
@@ -47,163 +222,360 @@ export default {
     const method = request.method;
 
     if (method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: corsHeaders(env) });
+      return new Response(null, { status: 204, headers: corsHeaders(request, env) });
     }
 
-    const addCors = (response: Response): Response => {
-      const headers = new Headers(response.headers);
-      for (const [key, value] of Object.entries(corsHeaders(env))) {
-        headers.set(key, value);
-      }
-      return new Response(response.body, { status: response.status, headers });
-    };
-
     try {
-      // --- Auth Routes ---
-
-      if (path === '/auth/google' && method === 'GET') {
-        const redirectUri = `${url.origin}/auth/google/callback`;
-        const googleAuthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
-        googleAuthUrl.searchParams.set('client_id', env.GOOGLE_CLIENT_ID);
-        googleAuthUrl.searchParams.set('redirect_uri', redirectUri);
-        googleAuthUrl.searchParams.set('response_type', 'code');
-        googleAuthUrl.searchParams.set('scope', 'openid profile email');
-        googleAuthUrl.searchParams.set('access_type', 'offline');
-
-        return Response.redirect(googleAuthUrl.toString(), 302);
+      if (path === '/api/clerk/webhook' && method === 'POST') {
+        return addCors(await handleClerkWebhook(request, env), request, env);
       }
 
-      if (path === '/auth/google/callback' && method === 'GET') {
-        const code = url.searchParams.get('code');
-        if (!code) {
-          return addCors(json({ error: 'Missing auth code' }, 400));
-        }
+      const publicAuth: PublicAuthContext = await optionalAuth(request, env);
+      const proxied = path.startsWith('/proxy/')
+        ? await handleProxy(request, env, publicAuth)
+        : null;
+      if (proxied) return addCors(proxied, request, env);
 
-        const redirectUri = `${url.origin}/auth/google/callback`;
-        const googleUser = await exchangeGoogleCode(code, redirectUri, env);
+      if (path === '/health') {
+        return addCors(healthResponse(env), request, env);
+      }
 
-        const user = await findOrCreateUser(
+      if (path.startsWith('/temp-assets/') && method === 'GET') {
+        return addCors(await getTempAsset(request, env), request, env);
+      }
+
+      if (path === '/api/tiers' && method === 'GET') {
+        return addCors(tiersResponse(), request, env);
+      }
+
+      if (path === '/api/billing/packs' && method === 'GET') {
+        return addCors(creditPacksResponse(), request, env);
+      }
+
+      if (path === '/api/billing/generation' && method === 'POST') {
+        const generationAuth = await sensitiveOptionalAuth(request, env, publicAuth);
+        if (isResponse(generationAuth)) return addCors(generationAuth, request, env);
+        const limited = await enforceRateLimit(env, 'generation:authorize', generationAuth);
+        if (limited) return addCors(limited, request, env);
+        return addCors(await authorizeGenerationPurchase(request, env, generationAuth), request, env);
+      }
+
+      if (path === '/api/billing/generation/complete' && method === 'POST') {
+        return addCors(await authenticated(request, env, (auth) => completeGenerationPurchase(request, env, auth)), request, env);
+      }
+
+      if (path === '/api/provider-sessions' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'provider:session',
+            (auth) => createFeatureProviderSession(request, env, authAsPublicContext(auth)),
+          ),
+          request,
           env,
-          'google',
-          googleUser.sub,
-          googleUser.name,
-          googleUser.picture
         );
+      }
 
-        const sessionId = await createSession(env, user.id);
-        const gameUrl = env.CORS_ORIGIN || url.origin;
+      if (path === '/api/billing/checkout' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'billing:checkout',
+            (auth) => createCreditCheckoutSession(request, env, auth),
+          ),
+          request,
+          env,
+        );
+      }
 
-        return new Response(null, {
-          status: 302,
-          headers: {
-            Location: `${gameUrl}/?authenticated=true`,
-            'Set-Cookie': sessionCookie(sessionId),
-          },
-        });
+      if (path === '/api/billing/stripe-webhook' && method === 'POST') {
+        return addCors(await handleStripeWebhook(request, env), request, env);
+      }
+
+      if (path === '/api/community' && method === 'GET') {
+        return addCors(await listCommunityFighters(request, env), request, env);
+      }
+
+      const communityDetailMatch = path.match(/^\/api\/community\/([^/]+)$/);
+      if (communityDetailMatch && method === 'GET') {
+        const fighterId = decodePathParam(communityDetailMatch[1]);
+        if (isResponse(fighterId)) return addCors(fighterId, request, env);
+        return addCors(await getCommunityFighter(request, env, fighterId), request, env);
+      }
+
+      const shareMatch = path.match(/^\/share\/([^/]+)$/);
+      if (shareMatch && method === 'GET') {
+        const fighterId = decodePathParam(shareMatch[1]);
+        if (isResponse(fighterId)) return addCors(fighterId, request, env);
+        return addCors(await shareCommunityFighterPage(request, env, fighterId), request, env);
+      }
+
+      const communityCloneMatch = path.match(/^\/api\/community\/([^/]+)\/clone$/);
+      if (communityCloneMatch && method === 'POST') {
+        const sourceFighterId = decodePathParam(communityCloneMatch[1]);
+        if (isResponse(sourceFighterId)) return addCors(sourceFighterId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'community:clone',
+            (auth) => cloneCommunityFighter(request, env, auth, sourceFighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const communityReportMatch = path.match(/^\/api\/community\/([^/]+)\/report$/);
+      if (communityReportMatch && method === 'POST') {
+        const fighterId = decodePathParam(communityReportMatch[1]);
+        if (isResponse(fighterId)) return addCors(fighterId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'community:report',
+            (auth) => reportCommunityFighter(request, env, auth, fighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/admin/community-reports' && method === 'GET') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:moderation',
+            (auth) => listCommunityReports(request, env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const communityModerationMatch = path.match(/^\/api\/admin\/community-reports\/([^/]+)$/);
+      if (communityModerationMatch && method === 'PATCH') {
+        const reportId = decodePathParam(communityModerationMatch[1]);
+        if (isResponse(reportId)) return addCors(reportId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:moderation',
+            (auth) => moderateCommunityReport(request, env, auth, reportId),
+          ),
+          request,
+          env,
+        );
       }
 
       if (path === '/auth/me' && method === 'GET') {
-        const result = await requireAuth(request, env);
-        if (result instanceof Response) return addCors(result);
-        const user = result;
+        if (!publicAuth.user) return addCors(json({ user: null }), request, env);
+        await releaseExpiredGenerationCharges(env, publicAuth.user.id);
+        const user = await env.DB.prepare(
+          'SELECT * FROM users WHERE id = ?'
+        ).bind(publicAuth.user.id).first<User>() ?? publicAuth.user;
         return addCors(json({
           user: {
             id: user.id,
+            clerkUserId: user.clerk_user_id,
             displayName: user.display_name,
             avatarUrl: user.avatar_url,
+            email: user.email,
+            planTier: user.plan_tier,
+            creditsBalance: user.credits_balance,
+            freeRookieGenerationsUsed: user.free_rookie_generations_used,
             eloRating: user.elo_rating,
             wins: user.wins,
             losses: user.losses,
             winStreak: user.win_streak,
           },
-        }));
+        }), request, env);
       }
 
-      if (path === '/auth/logout' && method === 'POST') {
-        const sessionId = getSessionIdFromRequest(request);
-        if (sessionId) {
-          await deleteSession(env, sessionId);
+      if (path === '/api/fighters' && method === 'GET') {
+        return addCors(await authenticated(request, env, (auth) => listFighters(request, env, auth)), request, env);
+      }
+
+      if (path === '/api/fighters' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'fighters:write',
+            (auth) => createFighter(request, env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const fighterMatch = path.match(/^\/api\/fighters\/([^/]+)(?:\/([^/]+))?$/);
+      if (fighterMatch) {
+        const fighterId = decodePathParam(fighterMatch[1]);
+        if (isResponse(fighterId)) return addCors(fighterId, request, env);
+        const action = fighterMatch[2] ?? '';
+        if (!action && method === 'GET') {
+          return addCors(await authenticated(request, env, (auth) => getFighter(request, env, auth, fighterId)), request, env);
         }
-        return addCors(new Response(null, {
-          status: 200,
-          headers: { 'Set-Cookie': sessionCookie('', 0) },
-        }));
+        if (!action && method === 'PATCH') {
+          return addCors(
+            await authenticatedLimited(
+              request,
+              env,
+              'fighters:write',
+              (auth) => patchFighter(request, env, auth, fighterId),
+            ),
+            request,
+            env,
+          );
+        }
+        if (!action && method === 'DELETE') {
+          return addCors(
+            await authenticatedLimited(
+              request,
+              env,
+              'fighters:write',
+              (auth) => deleteFighter(env, auth, fighterId),
+            ),
+            request,
+            env,
+          );
+        }
+        if (action === 'sources' && method === 'POST') {
+          return addCors(
+            await authenticatedLimited(
+              request,
+              env,
+              'fighters:upload',
+              (auth) => uploadFighterSource(request, env, auth, fighterId),
+            ),
+            request,
+            env,
+          );
+        }
+        if (action === 'sprites' && method === 'POST') {
+          return addCors(
+            await authenticatedLimited(
+              request,
+              env,
+              'fighters:upload',
+              (auth) => uploadFighterSprite(request, env, auth, fighterId),
+            ),
+            request,
+            env,
+          );
+        }
+        if (action === 'sprites' && method === 'PATCH') {
+          return addCors(
+            await authenticatedLimited(
+              request,
+              env,
+              'fighters:write',
+              (auth) => promoteFighterSpriteVersion(request, env, auth, fighterId),
+            ),
+            request,
+            env,
+          );
+        }
+        if (action === 'upgrade' && method === 'POST') {
+          return addCors(
+            await authenticatedLimited(
+              request,
+              env,
+              'fighters:write',
+              (auth) => requestFighterUpgrade(request, env, auth, fighterId),
+            ),
+            request,
+            env,
+          );
+        }
       }
 
-      // --- Character/Sprite Routes ---
-
-      if (path === '/api/characters' && method === 'POST') {
-        const result = await requireAuth(request, env);
-        if (result instanceof Response) return addCors(result);
-        return addCors(await uploadPhoto(request, env, result.id));
+      if (path === '/api/stages' && method === 'GET') {
+        return addCors(await authenticated(request, env, (auth) => listStages(request, env, auth)), request, env);
       }
 
-      if (path === '/api/characters' && method === 'GET') {
-        const result = await requireAuth(request, env);
-        if (result instanceof Response) return addCors(result);
-        return addCors(await listCharacters(env, result.id));
+      if (path.startsWith('/assets/') && method === 'GET') {
+        const key = path.slice('/assets/'.length);
+        return addCors(await getAsset(request, env, publicAuth, key), request, env);
       }
-
-      if (path.startsWith('/api/characters/') && method === 'GET') {
-        const charId = path.split('/')[3];
-        const result = await requireAuth(request, env);
-        if (result instanceof Response) return addCors(result);
-        return addCors(await getCharacter(env, charId, result.id));
-      }
-
-      if (path.startsWith('/sprites/') && method === 'GET') {
-        const key = path.slice('/sprites/'.length);
-        return addCors(await getSpriteAsset(env, key));
-      }
-
-      // --- Leaderboard Routes ---
 
       if (path === '/api/leaderboard' && method === 'GET') {
-        return addCors(await getLeaderboard(env));
+        return addCors(await getLeaderboard(env), request, env);
       }
 
       if (path === '/api/stats' && method === 'GET') {
-        const result = await requireAuth(request, env);
-        if (result instanceof Response) return addCors(result);
-        return addCors(await getPlayerStats(env, result.id));
+        return addCors(await authenticated(request, env, (auth) => getPlayerStats(env, auth.userId)), request, env);
       }
 
       if (path.startsWith('/api/stats/') && method === 'GET') {
-        const userId = path.split('/')[3];
-        return addCors(await getPlayerStats(env, userId));
+        const userId = decodePathParam(path.split('/')[3] ?? '');
+        if (isResponse(userId)) return addCors(userId, request, env);
+        return addCors(await authenticated(request, env, (auth) => {
+          if (userId !== auth.userId) return Promise.resolve(json({ error: 'Stats are private' }, 403));
+          return getPlayerStats(env, auth.userId);
+        }), request, env);
       }
-
-      // --- Match Result Reporting ---
 
       if (path === '/api/matches' && method === 'POST') {
-        const result = await requireAuth(request, env);
-        if (result instanceof Response) return addCors(result);
-        const body = await request.json() as any;
-        return addCors(await reportMatchResult(env, {
-          matchId: generateId(),
-          player1Id: body.player1Id,
-          player2Id: body.player2Id,
-          winnerId: body.winnerId,
-          roundsP1: body.roundsP1,
-          roundsP2: body.roundsP2,
-          duration: body.duration,
-          p1CharId: body.p1CharacterId,
-          p2CharId: body.p2CharacterId,
-          isRanked: body.isRanked ?? false,
-        }));
+        return addCors(await authenticatedLimited(request, env, 'matches:report', async (auth) => {
+          const body = await readJsonBody<Record<string, unknown>>(request, MAX_MATCH_REPORT_BODY_BYTES);
+          const opponentKind = body.opponentKind === 'local' ? 'local' : 'cpu';
+          const systemOpponentId = opponentKind === 'local' ? 'system:local-player' : 'system:cpu';
+          const systemOpponentName = opponentKind === 'local' ? 'Local Player 2' : 'CPU Opponent';
+          const player2Id = systemOpponentId;
+          await ensureSystemUser(env, systemOpponentId, systemOpponentName);
+          const winnerSlot = body.winnerSlot === 'p2' ? 'p2' : 'p1';
+          const winnerId = winnerSlot === 'p2' ? player2Id : auth.userId;
+          const p1FighterId = await readOwnedFighterId(env, auth.userId, body.p1FighterId);
+          if (isResponse(p1FighterId)) return p1FighterId;
+          const p2FighterId = await readOwnedFighterId(env, auth.userId, body.p2FighterId);
+          if (isResponse(p2FighterId)) return p2FighterId;
+          return reportMatchResult(env, {
+            matchId: generateId(),
+            player1Id: auth.userId,
+            player2Id,
+            winnerId,
+            roundsP1: readBoundedInteger(body.roundsP1, 0, MAX_MATCH_ROUNDS),
+            roundsP2: readBoundedInteger(body.roundsP2, 0, MAX_MATCH_ROUNDS),
+            duration: readBoundedInteger(body.duration, 0, MAX_MATCH_DURATION_SECONDS),
+            p1CharId: readOptionalId(body.p1CharacterId),
+            p2CharId: readOptionalId(body.p2CharacterId),
+            p1FighterId,
+            p2FighterId,
+            isRanked: false,
+          });
+        }), request, env);
       }
 
-      // --- Health Check ---
-
-      if (path === '/health') {
-        return addCors(json({ status: 'ok', version: '0.1.0' }));
+      return addCors(json({ error: 'Not found' }, 404), request, env);
+    } catch (err) {
+      if (err instanceof RequestBodyTooLargeError) {
+        return addCors(json({ error: 'Request body is too large' }, 413), request, env);
       }
-
-      return addCors(json({ error: 'Not found' }, 404));
-
-    } catch (err: any) {
+      if (err instanceof InvalidJsonBodyError) {
+        return addCors(json({ error: 'Invalid JSON request body' }, 400), request, env);
+      }
+      if (err instanceof InvalidMultipartBodyError) {
+        return addCors(json({ error: 'Invalid multipart request body' }, 400), request, env);
+      }
       console.error('Worker error:', err);
-      return addCors(json({ error: 'Internal server error', message: err.message }, 500));
+      const message = err instanceof Error ? err.message : 'Internal server error';
+      const isProduction = env.ENVIRONMENT === 'production';
+      return addCors(json(
+        isProduction
+          ? { error: 'Internal server error' }
+          : { error: 'Internal server error', message },
+        500,
+      ), request, env);
     }
+  },
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await cleanupOperationalData(env);
   },
 };

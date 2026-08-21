@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /gallery
+Disallow: /fighters/
+Disallow: /roster/
+Disallow: /fight
+Disallow: /moderation
+
+Sitemap: https://insertplayer.ai/sitemap.xml

@@ -1,0 +1,26 @@
+ENVIRONMENT=development
+CORS_ORIGIN=http://127.0.0.1:5173,http://localhost:5173
+PUBLIC_APP_NAME=Insert Player
+PUBLIC_APP_SHORT_NAME=P1
+PUBLIC_SOCIAL_CARD_PATH=/assets/social-card.png
+CLERK_ISSUER=https://your-clerk-instance.clerk.accounts.dev
+CLERK_AUTHORIZED_PARTIES=http://127.0.0.1:5173,http://localhost:5173
+CLERK_WEBHOOK_SIGNING_SECRET=whsec_replace_me
+ANONYMIZATION_SECRET=replace_me_with_at_least_32_random_bytes
+TURNSTILE_REQUIRED=false
+TURNSTILE_ACTION=anonymous_rookie
+
+GEMINI_API_KEY=replace_me
+FAL_API_KEY=replace_me
+RUNWAY_API_KEY=replace_me
+FREEPIK_API_KEY=replace_me
+LUDO_API_KEY=replace_me
+STRIPE_ACCOUNT_ID=acct_replace_me
+STRIPE_PRICE_STARTER=price_replace_me
+STRIPE_PRICE_VERSUS=price_replace_me
+STRIPE_PRICE_ARCADE=price_replace_me
+STRIPE_SECRET_KEY=sk_test_replace_me
+STRIPE_WEBHOOK_SECRET=whsec_replace_me
+# Optional in development. Production always requires this as a Worker secret.
+# TURNSTILE_SECRET_KEY=0x4AAAAAA_replace_me
+# TURNSTILE_HOSTNAMES=localhost,127.0.0.1

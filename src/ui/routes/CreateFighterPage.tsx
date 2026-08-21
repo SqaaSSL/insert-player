@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CACHE_VERSION,
   getAllCachedMetas,
   getAllSpritesForHash,
+  setCachedMeta,
   type CachedMeta,
   type CachedSprite,
 } from '../../services/SpriteCache.ts';
@@ -16,6 +17,8 @@ import { SourceViewsPanel } from '../components/SourceViewsPanel.tsx';
 import { SpritePreviewSurface } from '../components/SpritePreviewSurface.tsx';
 import { DebugFeed } from '../components/DebugFeed.tsx';
 import { PipelineProgress } from '../components/PipelineProgress.tsx';
+import { TurnstileChallenge } from '../components/TurnstileChallenge.tsx';
+import { GenerationConsent } from '../components/LegalConsent.tsx';
 import {
   animLabel,
   getSourceBlob,
@@ -25,8 +28,16 @@ import {
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
 import { exportAnimationGif } from '../../services/GifExportService.ts';
+import { syncFighterToCloud } from '../../services/CloudFighters.ts';
+import { QUALITY_TIERS, type QualityTier } from '../../services/QualityTiers.ts';
+import { authorizeGeneration, finishGenerationPurchase } from '../../services/Billing.ts';
+import { captureApiRequestContext, runWithProviderSession } from '../../services/ApiClient.ts';
+import { debugWarn } from '../../services/DebugLog.ts';
+import { paidTiersLocked, type AuthStatus } from '../authState.ts';
+import { currentGenerationLegalAttestation } from '../legal.ts';
 
 interface CreateFighterPageProps {
+  authStatus: AuthStatus;
   onBack: () => void;
   onComplete: (photoHash: string) => void;
 }
@@ -90,9 +101,10 @@ function stageToPercent(status: PipelineStatus): number | null {
   }
 }
 
-export function CreateFighterPage({ onBack, onComplete }: CreateFighterPageProps) {
+export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFighterPageProps) {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState(DEFAULT_NAME);
+  const [tier, setTier] = useState<QualityTier>(() => paidTiersLocked(authStatus) ? 'rookie' : 'contender');
 
   const [started, setStarted] = useState(false);
   const [running, setRunning] = useState(false);
@@ -107,8 +119,21 @@ export function CreateFighterPage({ onBack, onComplete }: CreateFighterPageProps
   const [sprites, setSprites] = useState<CachedSprite[]>([]);
   const [generating, setGenerating] = useState<Set<string>>(new Set());
   const [selection, setSelection] = useState<PreviewSelection>({ kind: 'source', source: 'original' });
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
+  const [legalAccepted, setLegalAccepted] = useState(false);
+  const lockPaidTiers = paidTiersLocked(authStatus);
+  const requiresTurnstile = authStatus === 'signed-out' && tier === 'rookie';
+  const turnstileSiteKey = String(import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '').trim();
+  const turnstileReady = !requiresTurnstile || Boolean(turnstileToken);
 
-  async function refreshFromCache(hash: string) {
+  useEffect(() => {
+    if (lockPaidTiers && tier !== 'rookie') {
+      setTier('rookie');
+    }
+  }, [lockPaidTiers, tier]);
+
+  async function refreshFromCache(hash: string): Promise<{ meta: CachedMeta | null; sprites: CachedSprite[] }> {
     const [allMetas, nextSprites] = await Promise.all([
       getAllCachedMetas(),
       getAllSpritesForHash(hash),
@@ -116,6 +141,7 @@ export function CreateFighterPage({ onBack, onComplete }: CreateFighterPageProps
     const nextMeta = allMetas.find((item) => item.photoHash === hash && item.version === CACHE_VERSION) ?? null;
     setMeta(nextMeta);
     setSprites(nextSprites);
+    return { meta: nextMeta, sprites: nextSprites };
   }
 
   const handleStatus: StatusCallback = (status) => {
@@ -156,23 +182,83 @@ export function CreateFighterPage({ onBack, onComplete }: CreateFighterPageProps
   };
 
   async function start() {
-    if (!file) return;
-    setStarted(true);
+    if (!file || running || !turnstileReady || !legalAccepted) return;
     setRunning(true);
     setDone(false);
     setError(null);
     setPercent(0);
     setStageText('Starting pipeline...');
     setGenerating(new Set());
+    let purchaseId: string | undefined;
+    let purchaseCommitted = false;
+    const apiContext = captureApiRequestContext();
     try {
-      const hash = await processCharacter(file, handleStatus, name.trim() || DEFAULT_NAME);
+      let authorization;
+      try {
+        authorization = await authorizeGeneration(
+          tier,
+          'fighter_generation',
+          null,
+          requiresTurnstile ? turnstileToken : null,
+          currentGenerationLegalAttestation(),
+          apiContext,
+        );
+      } finally {
+        if (requiresTurnstile) {
+          setTurnstileToken(null);
+          setTurnstileResetSignal((current) => current + 1);
+        }
+      }
+      if (!authorization.authorized) {
+        throw new Error(authorization.error ?? 'Generation not authorized');
+      }
+      setStarted(true);
+      purchaseId = authorization.purchaseId;
+      const hash = await runWithProviderSession(
+        authorization.providerSessionId,
+        (providerContext) => processCharacter(file, handleStatus, name.trim() || DEFAULT_NAME, {
+          tier,
+          apiContext: providerContext,
+        }),
+        apiContext,
+      );
       setPhotoHash(hash);
-      await refreshFromCache(hash);
+      const cached = await refreshFromCache(hash);
+      if (purchaseId && cached.meta) {
+        cached.meta.pendingGenerationPurchaseId = purchaseId;
+        cached.meta.updatedAt = Date.now();
+        await setCachedMeta(cached.meta);
+      }
       setPercent(1);
       setDone(true);
-      setStageText('All sprites generated!');
+      await finishGenerationPurchase(purchaseId, true, null, apiContext);
+      purchaseCommitted = true;
+      setStageText('All sprites generated. Syncing cloud roster...');
+      if (cached.meta) {
+        try {
+          const cloud = await syncFighterToCloud(cached.meta, cached.sprites, null, apiContext);
+          if (cloud.status === 'synced') {
+            setStageText(cloud.message ?? 'All sprites generated and synced!');
+          } else if (cloud.status === 'signed_out') {
+            setStageText('All sprites generated locally. Sign in to sync across devices.');
+          } else {
+            setStageText(`All sprites generated locally. Cloud sync failed: ${cloud.message ?? 'unknown error'}`);
+          }
+        } catch (syncErr: any) {
+          setStageText(`All sprites generated locally. Cloud sync failed: ${syncErr?.message ?? 'unknown error'}`);
+        }
+      } else {
+        setStageText('All sprites generated locally.');
+      }
       setGenerating(new Set());
     } catch (err: any) {
+      if (purchaseId && !purchaseCommitted) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, null, apiContext);
+        } catch (refundErr: any) {
+          debugWarn('[Billing] Failed to release generation purchase:', refundErr?.message ?? refundErr);
+        }
+      }
       const message = err?.message ? String(err.message) : 'Pipeline failed';
       setError(message);
       setStageText(`Error: ${message.slice(0, 120)}`);
@@ -288,12 +374,45 @@ export function CreateFighterPage({ onBack, onComplete }: CreateFighterPageProps
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             />
           </label>
+          <div className="tier-picker" role="radiogroup" aria-label="Quality tier">
+            {QUALITY_TIERS.map((item) => {
+              const locked = lockPaidTiers && item.id !== 'rookie';
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`tier-picker__option${tier === item.id ? ' is-active' : ''}`}
+                  role="radio"
+                  aria-checked={tier === item.id}
+                  disabled={locked}
+                  onClick={() => setTier(item.id)}
+                >
+                  <span>{item.label}</span>
+                  <small>{locked ? `${item.priceLabel} · Sign in` : `${item.priceLabel} · ${item.estimatedTime}`}</small>
+                  <em>{locked ? 'Sign in to unlock paid quality.' : item.pitch}</em>
+                </button>
+              );
+            })}
+          </div>
+          {requiresTurnstile ? (
+            <TurnstileChallenge
+              siteKey={turnstileSiteKey}
+              resetSignal={turnstileResetSignal}
+              onTokenChange={setTurnstileToken}
+            />
+          ) : null}
+          <GenerationConsent
+            checked={legalAccepted}
+            disabled={running}
+            onChange={setLegalAccepted}
+          />
+          {error ? <p className="create-intro__error" role="alert">{error}</p> : null}
           <button
             className="home-menu__action is-primary"
-            disabled={!file || !name.trim()}
+            disabled={!file || !name.trim() || running || !turnstileReady || !legalAccepted}
             onClick={() => void start()}
           >
-            <span>Start Forging</span>
+            <span>{running ? 'Authorizing...' : 'Start Forging'}</span>
             <small>{file ? file.name : 'Pick a photo to continue'}</small>
           </button>
         </div>
@@ -310,7 +429,9 @@ export function CreateFighterPage({ onBack, onComplete }: CreateFighterPageProps
           <p className="roster-hero__copy">{stageText}</p>
         </div>
         <div className="roster-hero__actions">
-          <div className="gallery-hero__status">{Math.round(percent * 100)}%</div>
+          <div className="gallery-hero__status" role="status" aria-live="polite">
+            {Math.round(percent * 100)}%
+          </div>
           {done && meta ? (
             <button className="gallery-back" onClick={() => void saveAll()}>
               Save All
@@ -329,10 +450,17 @@ export function CreateFighterPage({ onBack, onComplete }: CreateFighterPageProps
       <PipelineProgress percent={percent} />
 
       {error ? (
-        <div className="create-error">
+        <div className="create-error" role="alert">
           <strong>{error}</strong>
+          {requiresTurnstile ? (
+            <TurnstileChallenge
+              siteKey={turnstileSiteKey}
+              resetSignal={turnstileResetSignal}
+              onTokenChange={setTurnstileToken}
+            />
+          ) : null}
           <div className="gallery-actions">
-            <button onClick={retry} disabled={running}>
+            <button onClick={retry} disabled={running || !turnstileReady}>
               Retry Pipeline
             </button>
           </div>

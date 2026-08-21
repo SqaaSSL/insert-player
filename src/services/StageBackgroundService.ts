@@ -3,8 +3,11 @@ import { getFighterPersonality, type FighterPersonalityId } from '../game/match/
 import { getStageTheme, type StageThemeId } from '../game/match/StageConfig.ts';
 import { geminiStageBackground } from './GeminiApi.ts';
 import { blobToBase64, resizeImageForApi } from './FreepikApi.ts';
+import { captureApiRequestContext, runWithProviderSession } from './ApiClient.ts';
+import { authorizeProviderSession } from './Billing.ts';
 import {
   hashPhoto,
+  getActiveSpriteCacheScope,
   getCachedMeta,
   getCachedStageBackground,
   setCachedStageBackground,
@@ -43,25 +46,32 @@ export function buildDirectPhotoStageKey(photoHash: string): string {
 }
 
 export async function createPhotoStage(file: Blob, label?: string): Promise<CachedStageBackground> {
+  const apiContext = captureApiRequestContext();
+  const ownerScope = getActiveSpriteCacheScope();
   const photoHash = await hashPhoto(file);
   const stageKey = buildPhotoStageKey(photoHash);
-  const cached = await getCachedStageBackground(stageKey);
+  const cached = await getCachedStageBackground(stageKey, ownerScope);
   if (cached) return cached;
 
   const base64 = await blobToBase64(file);
   const resized = await resizeImageForApi(base64);
   const safeLabel = sanitizeStageLabel(label);
-  const result = await geminiStageBackground({
-    stageLabel: safeLabel,
-    stageBlurb: 'Transform the supplied location photo into a stylized side-on 2D fighting game arena.',
-    sourceImage: { data: resized, mime: 'image/jpeg' },
-    sourceMode: 'transform-scene',
-  });
+  const providerSession = await authorizeProviderSession('stage_background', apiContext);
+  if (providerSession.error) throw new Error(providerSession.error);
+  const result = await runWithProviderSession(providerSession.providerSessionId, (providerContext) =>
+    geminiStageBackground({
+      stageLabel: safeLabel,
+      stageBlurb: 'Transform the supplied location photo into a stylized side-on 2D fighting game arena.',
+      sourceImage: { data: resized, mime: 'image/jpeg' },
+      sourceMode: 'transform-scene',
+    }, providerContext),
+  apiContext);
   const pngBlob = await normalizeStageImage(result.imageBase64, {
     bottomShadeAlpha: 0.04,
     verticalBias: 0.92,
   });
   const created: CachedStageBackground = {
+    ownerScope,
     stageKey,
     prompt: result.prompt,
     pngBlob,
@@ -75,9 +85,10 @@ export async function createPhotoStage(file: Blob, label?: string): Promise<Cach
 }
 
 export async function createDirectPhotoStage(file: Blob, label?: string): Promise<CachedStageBackground> {
+  const ownerScope = getActiveSpriteCacheScope();
   const photoHash = await hashPhoto(file);
   const stageKey = buildDirectPhotoStageKey(photoHash);
-  const cached = await getCachedStageBackground(stageKey);
+  const cached = await getCachedStageBackground(stageKey, ownerScope);
   if (cached) return cached;
 
   const safeLabel = sanitizeStageLabel(label);
@@ -86,6 +97,7 @@ export async function createDirectPhotoStage(file: Blob, label?: string): Promis
     verticalBias: 0.82,
   });
   const created: CachedStageBackground = {
+    ownerScope,
     stageKey,
     prompt: 'Direct photo stage using the uploaded image without Gemini transformation.',
     pngBlob,
@@ -116,40 +128,53 @@ export async function getCachedStageBackgroundForRequest(
 }
 
 export async function ensureStageBackground(req: StageBackgroundRequest): Promise<CachedStageBackground> {
+  const apiContext = captureApiRequestContext();
+  const ownerScope = getActiveSpriteCacheScope();
   const stageKey = buildStageBackgroundKey(req.matchSeed, req.stageId, req.cacheScope);
-  const cached = await getCachedStageBackground(stageKey);
+  const cached = await getCachedStageBackground(stageKey, ownerScope);
   if (cached) return cached;
 
-  const existing = inflightGenerations.get(stageKey);
+  const operationKey = `${ownerScope}:${stageKey}`;
+  const existing = inflightGenerations.get(operationKey);
   if (existing) return existing;
 
-  const promise = generateStageBackground(req, stageKey).finally(() => {
-    inflightGenerations.delete(stageKey);
+  const promise = generateStageBackground(req, stageKey, ownerScope, apiContext).finally(() => {
+    inflightGenerations.delete(operationKey);
   });
-  inflightGenerations.set(stageKey, promise);
+  inflightGenerations.set(operationKey, promise);
   return promise;
 }
 
-async function generateStageBackground(req: StageBackgroundRequest, stageKey: string): Promise<CachedStageBackground> {
+async function generateStageBackground(
+  req: StageBackgroundRequest,
+  stageKey: string,
+  ownerScope: string,
+  apiContext: ReturnType<typeof captureApiRequestContext>,
+): Promise<CachedStageBackground> {
   const stage = getStageTheme(req.stageId);
   const fighterOneStyle = getFighterPersonality(req.fighterOnePersonalityId).label;
   const fighterTwoStyle = getFighterPersonality(req.fighterTwoPersonalityId).label;
-  const referenceImages = await loadReferenceImages(req.fighterOnePhotoHash, req.fighterTwoPhotoHash);
+  const referenceImages = await loadReferenceImages(req.fighterOnePhotoHash, req.fighterTwoPhotoHash, ownerScope);
 
-  const result = await geminiStageBackground({
-    stageLabel: stage.label,
-    stageBlurb: stage.blurb,
-    fighterOneName: req.fighterOneName,
-    fighterTwoName: req.fighterTwoName,
-    fighterOneStyle,
-    fighterTwoStyle,
-    referenceImages,
-  });
+  const providerSession = await authorizeProviderSession('stage_background', apiContext);
+  if (providerSession.error) throw new Error(providerSession.error);
+  const result = await runWithProviderSession(providerSession.providerSessionId, (providerContext) =>
+    geminiStageBackground({
+      stageLabel: stage.label,
+      stageBlurb: stage.blurb,
+      fighterOneName: req.fighterOneName,
+      fighterTwoName: req.fighterTwoName,
+      fighterOneStyle,
+      fighterTwoStyle,
+      referenceImages,
+    }, providerContext),
+  apiContext);
 
   const pngBlob = await normalizeStageImage(result.imageBase64, {
     bottomShadeAlpha: 0.05,
   });
   const cached: CachedStageBackground = {
+    ownerScope,
     stageKey,
     prompt: result.prompt,
     pngBlob,
@@ -165,12 +190,13 @@ async function generateStageBackground(req: StageBackgroundRequest, stageKey: st
 async function loadReferenceImages(
   fighterOnePhotoHash?: string | null,
   fighterTwoPhotoHash?: string | null,
+  ownerScope = getActiveSpriteCacheScope(),
 ): Promise<{ data: string; mime: string }[]> {
   const hashes = [fighterOnePhotoHash, fighterTwoPhotoHash].filter(Boolean) as string[];
   const refs: { data: string; mime: string }[] = [];
 
   for (const hash of hashes) {
-    const meta = await getCachedMeta(hash);
+    const meta = await getCachedMeta(hash, ownerScope);
     const blob = meta?.originalPhotoBlob ?? meta?.sideViewBlob ?? null;
     if (!blob) continue;
 

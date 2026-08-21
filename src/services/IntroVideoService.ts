@@ -4,6 +4,14 @@ import {
   setCachedIntro,
   type CachedIntro,
 } from './SpriteCache.ts';
+import {
+  apiFetch,
+  captureApiRequestContext,
+  runWithProviderSession,
+  type ApiRequestContext,
+} from './ApiClient';
+import { authorizeProviderSession } from './Billing.ts';
+import { debugInfo } from './DebugLog';
 
 export type IntroVideoModel =
   | 'freepik-auto'
@@ -114,12 +122,12 @@ function emit(onStatus: StatusCallback | undefined, status: IntroVideoStatus): v
   onStatus?.(status);
 }
 
-async function uploadTempImage(base64: string): Promise<string> {
-  const res = await fetch('/proxy/upload-temp', {
+async function uploadTempImage(base64: string, context: ApiRequestContext): Promise<string> {
+  const res = await apiFetch('/proxy/upload-temp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ image: base64 }),
-  });
+  }, context);
 
   if (!res.ok) {
     const body = await res.text();
@@ -175,7 +183,7 @@ async function prepareIntroReferenceForUpload(
   const minScale = Math.max(minSize / width, minSize / height, 1);
 
   if (minScale === 1 && framingScale === 1) {
-    console.log(`[IntroVideo] ${label}: ${width}x${height} (unchanged)`);
+    debugInfo(`[IntroVideo] ${label}: ${width}x${height} (unchanged)`);
     return { base64: await blobToBase64(blob), width, height };
   }
 
@@ -193,7 +201,7 @@ async function prepareIntroReferenceForUpload(
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
   const base64 = canvas.toDataURL('image/png').split(',')[1];
-  console.log(
+  debugInfo(
     `[IntroVideo] ${label}: ${img.width}x${img.height} -> ${canvasWidth}x${canvasHeight}` +
       ` (framingScale ${framingScale.toFixed(2)}, draw ${drawWidth}x${drawHeight})`,
   );
@@ -225,7 +233,7 @@ async function prepareOriginalPhotoForUpload(
   }
 
   if (canvasWidth === width && canvasHeight === height) {
-    console.log(`[IntroVideo] ${label}: ${width}x${height} (original composition preserved)`);
+    debugInfo(`[IntroVideo] ${label}: ${width}x${height} (original composition preserved)`);
     return { base64: await blobToBase64(blob), width, height };
   }
 
@@ -255,15 +263,15 @@ async function prepareOriginalPhotoForUpload(
   ctx.drawImage(img, drawX, drawY, scaledWidth, scaledHeight);
 
   const base64 = canvas.toDataURL('image/png').split(',')[1];
-  console.log(
+  debugInfo(
     `[IntroVideo] ${label}: ${width}x${height} -> ${canvasWidth}x${canvasHeight}` +
       ' (original composition preserved on 16:9 canvas)',
   );
   return { base64, width: canvasWidth, height: canvasHeight };
 }
 
-async function fetchUrlAsBlob(url: string): Promise<Blob> {
-  const res = await fetch(`/proxy/image?url=${encodeURIComponent(url)}`);
+async function fetchUrlAsBlob(url: string, context: ApiRequestContext): Promise<Blob> {
+  const res = await apiFetch(`/proxy/media?url=${encodeURIComponent(url)}`, {}, context);
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Failed to fetch generated video (${res.status}): ${body.slice(0, 200)}`);
@@ -291,7 +299,7 @@ function buildIntroPrompt(
 ): string {
   const userPrompt = (extraPrompt || '').trim();
   const basePrompt = [
-    `This character prepare for an epic battle like in an intro video game like Mortal Kombat or Street Fighter.`,
+    `This character prepares for an epic battle in a high-energy arcade fighting-game intro.`,
     `Keep only the main fighter and remove any extra people from the source photo.`,
     `Transform the original environment into a dramatic stylized fighting-game intro stage with bold arena presentation energy, cinematic contrast, smoky atmosphere, and strong colored backlight.`,
     `Use confident pre-fight body performance, not just camera movement, and end in a strong ready-to-fight presentation pose.`,
@@ -364,8 +372,12 @@ function isFailureStatus(status: string): boolean {
   return ['FAILED', 'ERROR', 'CANCELLED', 'CANCELED', 'REJECTED', 'EXPIRED'].includes(normalized);
 }
 
-async function createKlingIntroTask(imageUrl: string, prompt: string): Promise<string> {
-  const res = await fetch(`${FREEPIK_BASE}/v1/ai/image-to-video/kling-v2-1-std`, {
+async function createKlingIntroTask(
+  imageUrl: string,
+  prompt: string,
+  context: ApiRequestContext,
+): Promise<string> {
+  const res = await apiFetch(`${FREEPIK_BASE}/v1/ai/image-to-video/kling-v2-1-std`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -375,7 +387,7 @@ async function createKlingIntroTask(imageUrl: string, prompt: string): Promise<s
       duration: FREEPIK_KLING_DURATION,
       aspect_ratio: '16:9',
     }),
-  });
+  }, context);
 
   if (!res.ok) {
     const body = await res.text();
@@ -388,8 +400,12 @@ async function createKlingIntroTask(imageUrl: string, prompt: string): Promise<s
   return taskId;
 }
 
-async function createVeoIntroTask(imageUrls: string[], prompt: string): Promise<string> {
-  const res = await fetch(`${FREEPIK_BASE}/v1/ai/reference-to-video/veo-3-1`, {
+async function createVeoIntroTask(
+  imageUrls: string[],
+  prompt: string,
+  context: ApiRequestContext,
+): Promise<string> {
+  const res = await apiFetch(`${FREEPIK_BASE}/v1/ai/reference-to-video/veo-3-1`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -401,7 +417,7 @@ async function createVeoIntroTask(imageUrls: string[], prompt: string): Promise<
       aspect_ratio: '16:9',
       generate_audio: false,
     }),
-  });
+  }, context);
 
   if (!res.ok) {
     const body = await res.text();
@@ -417,8 +433,9 @@ async function createVeoIntroTask(imageUrls: string[], prompt: string): Promise<
 async function createRunwayIntroTask(
   promptImageUrl: string,
   prompt: string,
+  context: ApiRequestContext,
 ): Promise<string> {
-  const res = await fetch(`${RUNWAY_BASE}/v1/image_to_video`, {
+  const res = await apiFetch(`${RUNWAY_BASE}/v1/image_to_video`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -428,7 +445,7 @@ async function createRunwayIntroTask(
       ratio: '1280:720',
       duration: RUNWAY_DURATION,
     }),
-  });
+  }, context);
 
   if (!res.ok) {
     const body = await res.text();
@@ -443,8 +460,9 @@ async function createRunwayIntroTask(
 async function createFalLtxIntroTask(
   imageUrl: string,
   prompt: string,
+  context: ApiRequestContext,
 ): Promise<{ requestId: string; statusUrl?: string; responseUrl?: string }> {
-  const res = await fetch(`${FAL_BASE}/${FAL_LTX_MODEL_ID}`, {
+  const res = await apiFetch(`${FAL_BASE}/${FAL_LTX_MODEL_ID}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -457,7 +475,7 @@ async function createFalLtxIntroTask(
       generate_audio: true,
       negative_prompt: DEFAULT_NEGATIVE_PROMPT,
     }),
-  });
+  }, context);
 
   if (!res.ok) {
     const body = await res.text();
@@ -473,7 +491,12 @@ async function createFalLtxIntroTask(
   };
 }
 
-async function pollFreepikTask(model: 'kling-v2-1-std' | 'veo-3-1', taskId: string, onStatus?: StatusCallback): Promise<string> {
+async function pollFreepikTask(
+  model: 'kling-v2-1-std' | 'veo-3-1',
+  taskId: string,
+  onStatus: StatusCallback | undefined,
+  context: ApiRequestContext,
+): Promise<string> {
   const start = Date.now();
   const maxWaitMs = model === 'veo-3-1' ? 600_000 : 240_000;
   const pollInterval = 4000;
@@ -484,7 +507,11 @@ async function pollFreepikTask(model: 'kling-v2-1-std' | 'veo-3-1', taskId: stri
   let lastStatus = 'UNKNOWN';
 
   while (Date.now() - start < maxWaitMs) {
-    const res = await fetch(statusPath, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
+    const res = await apiFetch(
+      statusPath,
+      { method: 'GET', headers: { 'Content-Type': 'application/json' } },
+      context,
+    );
 
     if (!res.ok) {
       const body = await res.text();
@@ -508,17 +535,21 @@ async function pollFreepikTask(model: 'kling-v2-1-std' | 'veo-3-1', taskId: stri
   throw new Error(`${model} video task timed out after ${Math.round(maxWaitMs / 1000)}s (last status: ${lastStatus})`);
 }
 
-async function pollRunwayTask(taskId: string, onStatus?: StatusCallback): Promise<string> {
+async function pollRunwayTask(
+  taskId: string,
+  onStatus: StatusCallback | undefined,
+  context: ApiRequestContext,
+): Promise<string> {
   const start = Date.now();
   const maxWaitMs = 600_000;
   const pollInterval = 5000;
   let lastStatus = 'UNKNOWN';
 
   while (Date.now() - start < maxWaitMs) {
-    const res = await fetch(`${RUNWAY_BASE}/v1/tasks/${taskId}`, {
+    const res = await apiFetch(`${RUNWAY_BASE}/v1/tasks/${taskId}`, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
-    });
+    }, context);
 
     if (!res.ok) {
       const body = await res.text();
@@ -556,7 +587,8 @@ async function pollFalTask(
   modelId: string,
   modelLabel: IntroVideoModel,
   task: { requestId: string; statusUrl?: string; responseUrl?: string },
-  onStatus?: StatusCallback,
+  onStatus: StatusCallback | undefined,
+  context: ApiRequestContext,
 ): Promise<string> {
   const start = Date.now();
   const maxWaitMs = 600_000;
@@ -567,17 +599,17 @@ async function pollFalTask(
   let responseUrl = task.responseUrl ? proxifyFalUrl(task.responseUrl) : defaultResponseUrl;
 
   while (Date.now() - start < maxWaitMs) {
-    const statusRes = await fetch(task.statusUrl ? proxifyFalUrl(task.statusUrl) : defaultStatusUrl, {
+    const statusRes = await apiFetch(task.statusUrl ? proxifyFalUrl(task.statusUrl) : defaultStatusUrl, {
       method: 'GET',
       headers: { 'Content-Type': 'application/json' },
-    });
+    }, context);
 
     if (!statusRes.ok) {
       if (statusRes.status === 405) {
-        const resultRes = await fetch(responseUrl, {
+        const resultRes = await apiFetch(responseUrl, {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
-        });
+        }, context);
         if (resultRes.ok) {
           const resultJson = await resultRes.json() as Record<string, unknown>;
           const completedStatus = typeof resultJson.status === 'string' ? resultJson.status : 'COMPLETED';
@@ -609,10 +641,10 @@ async function pollFalTask(
     }
 
     if (status.toUpperCase() === 'COMPLETED') {
-      const resultRes = await fetch(responseUrl, {
+      const resultRes = await apiFetch(responseUrl, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
-      });
+      }, context);
       if (!resultRes.ok) {
         const body = await resultRes.text();
         throw new Error(`${modelLabel} result fetch failed (${resultRes.status}): ${body.slice(0, 200)}`);
@@ -633,6 +665,7 @@ export async function generateCharacterIntroVideo(
   photoHash: string,
   onStatus?: StatusCallback,
 ): Promise<CachedIntro> {
+  const apiContext = captureApiRequestContext();
   emit(onStatus, { stage: 'preparing' });
   const meta = await getCachedMeta(photoHash);
   if (!meta) throw new Error('Character not found in cache');
@@ -642,7 +675,7 @@ export async function generateCharacterIntroVideo(
     configuredModel === 'freepik-auto'
       ? chooseFreepikSubmodel(meta)
       : configuredModel;
-  const existing = await getCachedIntro(photoHash);
+  const existing = await getCachedIntro(photoHash, meta.ownerScope);
 
   const originalBlob = getOriginalBlob(meta);
   const extraRefs = (meta.introVideoReferenceBlobs ?? []).filter(Boolean).slice(0, 2);
@@ -662,6 +695,34 @@ export async function generateCharacterIntroVideo(
     throw new Error('This character needs at least one reference image before generating intro video');
   }
 
+  const providerSession = await authorizeProviderSession('intro_video', apiContext);
+  if (providerSession.error) throw new Error(providerSession.error);
+
+  return runWithProviderSession(
+    providerSession.providerSessionId,
+    (providerContext) => generateCharacterIntroVideoWithSession(
+      meta,
+      effectiveModel,
+      baseImageBlob,
+      originalBlob,
+      freepikRefs,
+      onStatus,
+      providerContext,
+    ),
+    apiContext,
+  );
+}
+
+async function generateCharacterIntroVideoWithSession(
+  meta: NonNullable<Awaited<ReturnType<typeof getCachedMeta>>>,
+  effectiveModel: IntroVideoModel,
+  baseImageBlob: Blob,
+  originalBlob: Blob | null,
+  freepikRefs: Blob[],
+  onStatus: StatusCallback | undefined,
+  context: ApiRequestContext,
+): Promise<CachedIntro> {
+  const photoHash = meta.photoHash;
   const prompt = buildIntroPrompt(meta.introVideoPrompt);
 
   let intro: CachedIntro;
@@ -669,12 +730,12 @@ export async function generateCharacterIntroVideo(
   if (effectiveModel === 'kling-v2-1-std') {
     emit(onStatus, { stage: 'uploading_inputs', count: 1 });
     const prepared = await prepareIntroReferenceForUpload(baseImageBlob, 'base_image');
-    const imageUrl = await uploadTempImage(prepared.base64);
+    const imageUrl = await uploadTempImage(prepared.base64, context);
     emit(onStatus, { stage: 'creating_task', model: effectiveModel });
-    const taskId = await createKlingIntroTask(imageUrl, prompt);
-    const generatedUrl = await pollFreepikTask(effectiveModel, taskId, onStatus);
+    const taskId = await createKlingIntroTask(imageUrl, prompt, context);
+    const generatedUrl = await pollFreepikTask(effectiveModel, taskId, onStatus, context);
     emit(onStatus, { stage: 'fetching_result', model: effectiveModel });
-    const videoBlob = await fetchUrlAsBlob(generatedUrl);
+    const videoBlob = await fetchUrlAsBlob(generatedUrl, context);
     intro = {
       photoHash,
       activeVariantId: 'single',
@@ -700,13 +761,13 @@ export async function generateCharacterIntroVideo(
         `freepik_ref_${i + 1}`,
         i > 0 ? { framingScale: 0.9 } : undefined,
       );
-      imageUrls.push(await uploadTempImage(prepared.base64));
+      imageUrls.push(await uploadTempImage(prepared.base64, context));
     }
     emit(onStatus, { stage: 'creating_task', model: effectiveModel });
-    const taskId = await createVeoIntroTask(imageUrls, prompt);
-    const generatedUrl = await pollFreepikTask(effectiveModel, taskId, onStatus);
+    const taskId = await createVeoIntroTask(imageUrls, prompt, context);
+    const generatedUrl = await pollFreepikTask(effectiveModel, taskId, onStatus, context);
     emit(onStatus, { stage: 'fetching_result', model: effectiveModel });
-    const videoBlob = await fetchUrlAsBlob(generatedUrl);
+    const videoBlob = await fetchUrlAsBlob(generatedUrl, context);
     intro = {
       photoHash,
       activeVariantId: 'single',
@@ -728,12 +789,12 @@ export async function generateCharacterIntroVideo(
     const prepared = await prepareIntroReferenceForUpload(runwayBlob, 'runway_prompt_image', {
       framingScale: 0.88,
     });
-    const promptImageUrl = await uploadTempImage(prepared.base64);
+    const promptImageUrl = await uploadTempImage(prepared.base64, context);
     emit(onStatus, { stage: 'creating_task', model: effectiveModel });
-    const taskId = await createRunwayIntroTask(promptImageUrl, prompt);
-    const generatedUrl = await pollRunwayTask(taskId, onStatus);
+    const taskId = await createRunwayIntroTask(promptImageUrl, prompt, context);
+    const generatedUrl = await pollRunwayTask(taskId, onStatus, context);
     emit(onStatus, { stage: 'fetching_result', model: effectiveModel });
-    const videoBlob = await fetchUrlAsBlob(generatedUrl);
+    const videoBlob = await fetchUrlAsBlob(generatedUrl, context);
     intro = {
       photoHash,
       activeVariantId: 'single',
@@ -756,12 +817,12 @@ export async function generateCharacterIntroVideo(
       originalBlob && startBlob === originalBlob
         ? await prepareOriginalPhotoForUpload(startBlob, 'fal_start_original')
         : await prepareIntroReferenceForUpload(startBlob, 'fal_start_fallback');
-    const startUrl = await uploadTempImage(startPrepared.base64);
+    const startUrl = await uploadTempImage(startPrepared.base64, context);
     emit(onStatus, { stage: 'creating_task', model: 'fal-ltx-v2-3-fast' });
-    const task = await createFalLtxIntroTask(startUrl, prompt);
-    const generatedUrl = await pollFalTask(FAL_LTX_MODEL_ID, 'fal-ltx-v2-3-fast', task, onStatus);
+    const task = await createFalLtxIntroTask(startUrl, prompt, context);
+    const generatedUrl = await pollFalTask(FAL_LTX_MODEL_ID, 'fal-ltx-v2-3-fast', task, onStatus, context);
     emit(onStatus, { stage: 'fetching_result', model: 'fal-ltx-v2-3-fast' });
-    const videoBlob = await fetchUrlAsBlob(generatedUrl);
+    const videoBlob = await fetchUrlAsBlob(generatedUrl, context);
     intro = {
       photoHash,
       activeVariantId: 'single',
@@ -778,6 +839,7 @@ export async function generateCharacterIntroVideo(
     };
     emit(onStatus, { stage: 'done', model: 'fal-ltx-v2-3-fast' });
   }
+  intro.ownerScope = meta.ownerScope;
   await setCachedIntro(intro);
   return intro;
 }
