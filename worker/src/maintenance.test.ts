@@ -8,18 +8,27 @@ describe('operational data retention', () => {
     const database = {
       prepare(sql: string) {
         statements.push(sql.replace(/\s+/g, ' ').trim());
-        return {};
+        return {
+          bind() { return this; },
+          async all() { return { results: [] }; },
+        };
       },
       async batch() {
         return [];
       },
     };
+    const bucket = { async delete() {} };
 
-    await cleanupOperationalData({ DB: database as unknown as D1Database } as Env);
+    await cleanupOperationalData({
+      DB: database as unknown as D1Database,
+      SPRITES: bucket as unknown as R2Bucket,
+    } as Env);
 
-    expect(statements).toHaveLength(8);
+    expect(statements.length).toBeGreaterThanOrEqual(12);
     expect(statements.join('\n')).toContain('DELETE FROM provider_spend_reservations');
     expect(statements.some((sql) => sql.startsWith('DELETE FROM rate_limits'))).toBe(true);
+    expect(statements.some((sql) => sql.startsWith('DELETE FROM provider_request_cache'))).toBe(true);
+    expect(statements.some((sql) => sql.startsWith('DELETE FROM generation_jobs'))).toBe(true);
     expect(statements.some((sql) => sql.startsWith('DELETE FROM provider_sessions'))).toBe(true);
     expect(statements.some((sql) => sql.startsWith('DELETE FROM stripe_events'))).toBe(true);
     expect(statements.some((sql) => sql.startsWith('DELETE FROM clerk_webhook_events'))).toBe(true);

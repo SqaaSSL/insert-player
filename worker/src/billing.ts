@@ -54,6 +54,13 @@ interface GenerationCharge {
   updated_at: string;
 }
 
+export interface GenerationPurchaseSettlement {
+  purchaseId: string;
+  status: GenerationCharge['status'];
+  creditsCharged: number;
+  fighterId: string | null;
+}
+
 interface CheckoutCreditExpectation {
   userId: string;
   packId: string;
@@ -821,66 +828,106 @@ export async function completeGenerationPurchase(
 
   const charge = await getGenerationCharge(env, auth.userId, purchaseId);
   if (!charge) return json({ error: 'Generation purchase not found' }, 404);
-
-  if (charge.status !== 'reserved') {
-    if (charge.status === 'committed' && body.success && ownedFighterId && !charge.fighter_id) {
-      await env.DB.batch([
-        env.DB.prepare(`
-          UPDATE generation_charges
-          SET fighter_id = ?, updated_at = datetime('now')
-          WHERE id = ? AND user_id = ? AND fighter_id IS NULL
-        `).bind(ownedFighterId, charge.id, auth.userId),
-        env.DB.prepare(`
-          UPDATE credit_ledger
-          SET fighter_id = COALESCE(?, fighter_id)
-          WHERE id = ? AND user_id = ?
-        `).bind(ownedFighterId, charge.ledger_id, auth.userId),
-      ]);
-    }
+  const durableJob = await env.DB.prepare(
+    'SELECT status FROM generation_jobs WHERE id = ?'
+  ).bind(purchaseId).first<{ status: string }>();
+  if (durableJob) {
     return json({
-      purchaseId: charge.id,
-      status: charge.status,
-      creditsCharged: charge.credit_cost,
-      fighterId: ownedFighterId ?? charge.fighter_id,
-    });
+      error: 'This generation purchase is settled by its cloud job',
+      code: 'durable_generation_settlement_managed',
+      jobStatus: durableJob.status,
+    }, 409);
   }
+  const settlement = await settleGenerationPurchase(
+    env,
+    auth.userId,
+    purchaseId,
+    Boolean(body.success),
+    ownedFighterId,
+  );
+  if (!settlement) return json({ error: 'Generation purchase not found' }, 404);
+  if (body.success || settlement.status !== 'refunded') return json(settlement);
 
-  if (body.success) {
-    await env.DB.batch([
-      env.DB.prepare(`
-        UPDATE generation_charges
-        SET status = 'committed',
-            fighter_id = COALESCE(?, fighter_id),
-            updated_at = datetime('now')
-        WHERE id = ? AND user_id = ? AND status = 'reserved'
-      `).bind(ownedFighterId, charge.id, auth.userId),
-      env.DB.prepare(`
-        UPDATE credit_ledger
-        SET fighter_id = COALESCE(?, fighter_id)
-        WHERE id = ? AND user_id = ?
-      `).bind(ownedFighterId, charge.ledger_id, auth.userId),
-    ]);
-    await markProviderSessionsForCharge(env, auth.userId, charge.id, 'completed');
-    return json({
-      purchaseId: charge.id,
-      status: 'committed',
-      creditsCharged: charge.credit_cost,
-    });
-  }
-
-  await refundReservedGenerationCharge(env, charge);
-  await markProviderSessionsForCharge(env, auth.userId, charge.id, 'cancelled');
   const latest = await env.DB.prepare(
     'SELECT credits_balance, free_rookie_generations_used FROM users WHERE id = ?'
   ).bind(auth.userId).first<{ credits_balance: number; free_rookie_generations_used: number }>();
 
   return json({
-    purchaseId: charge.id,
-    status: 'refunded',
-    creditsRefunded: charge.credit_cost,
+    ...settlement,
+    creditsRefunded: settlement.creditsCharged,
     creditsBalance: latest?.credits_balance ?? auth.user.credits_balance,
     freeRookieGenerationsUsed: latest?.free_rookie_generations_used ?? auth.user.free_rookie_generations_used,
   });
+}
+
+export async function settleGenerationPurchase(
+  env: Env,
+  userId: string,
+  purchaseId: string,
+  success: boolean,
+  fighterId: string | null,
+  successStatements: D1PreparedStatement[] = [],
+): Promise<GenerationPurchaseSettlement | null> {
+  let charge = await getGenerationCharge(env, userId, purchaseId);
+  if (!charge) return null;
+
+  if (success) {
+    if (charge.status === 'reserved') {
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE generation_charges
+          SET status = 'committed',
+              fighter_id = COALESCE(?, fighter_id),
+              updated_at = datetime('now')
+          WHERE id = ? AND user_id = ? AND status = 'reserved'
+          RETURNING id
+        `).bind(fighterId, charge.id, userId),
+        env.DB.prepare(`
+          UPDATE credit_ledger
+          SET fighter_id = COALESCE(?, fighter_id)
+          WHERE id = ? AND user_id = ? AND EXISTS (
+            SELECT 1 FROM generation_charges
+            WHERE id = ? AND user_id = ? AND status = 'committed'
+          )
+        `).bind(fighterId, charge.ledger_id, userId, charge.id, userId),
+        ...successStatements,
+      ]);
+      charge = (await getGenerationCharge(env, userId, purchaseId)) ?? charge;
+    } else if (charge.status === 'committed') {
+      const statements: D1PreparedStatement[] = [];
+      if (fighterId && !charge.fighter_id) {
+        statements.push(env.DB.prepare(`
+          UPDATE generation_charges
+          SET fighter_id = ?, updated_at = datetime('now')
+          WHERE id = ? AND user_id = ? AND fighter_id IS NULL
+        `).bind(fighterId, charge.id, userId));
+        statements.push(env.DB.prepare(`
+          UPDATE credit_ledger
+          SET fighter_id = COALESCE(?, fighter_id)
+          WHERE id = ? AND user_id = ?
+        `).bind(fighterId, charge.ledger_id, userId));
+      }
+      statements.push(...successStatements);
+      if (statements.length > 0) await env.DB.batch(statements);
+      charge = (await getGenerationCharge(env, userId, purchaseId)) ?? charge;
+    }
+    if (charge.status === 'committed') {
+      await markProviderSessionsForCharge(env, userId, charge.id, 'completed');
+    }
+  } else if (charge.status === 'reserved') {
+    await refundReservedGenerationCharge(env, charge);
+    charge = (await getGenerationCharge(env, userId, purchaseId)) ?? charge;
+  }
+  if (!success && charge.status === 'refunded') {
+    await markProviderSessionsForCharge(env, userId, charge.id, 'cancelled');
+  }
+
+  return {
+    purchaseId: charge.id,
+    status: charge.status,
+    creditsCharged: charge.credit_cost,
+    fighterId: fighterId ?? charge.fighter_id,
+  };
 }
 
 function parseStripeSignature(header: string): { timestamp: string; signatures: string[] } | null {
@@ -965,7 +1012,7 @@ function checkoutCreditExpectation(
   if (
     !userId || !packId || credits === null || amountCents === null || !currency ||
     !stripeAccountId || stripeAccountId !== expectedStripeAccountId ||
-    !/^\d{4}-\d{2}-\d{2}$/.test(legalVersion) || metadata.terms_accepted !== 'true' ||
+    !/^\d{4}-\d{2}-\d{2}(?:\.\d+)?$/.test(legalVersion) || metadata.terms_accepted !== 'true' ||
     metadata.immediate_delivery_confirmed !== 'true' ||
     metadata.withdrawal_loss_acknowledged !== 'true' ||
     !/^cus_[A-Za-z0-9]+$/.test(customerId) ||

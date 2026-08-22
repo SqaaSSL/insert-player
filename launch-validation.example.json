@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "validatedAt": "2026-05-17T00:00:00.000Z",
-  "legalVersion": "2026-08-22",
+  "legalVersion": "2026-08-22.5",
   "frontendUrl": "https://insertplayer.ai",
   "workerUrl": "https://api.insertplayer.ai",
   "publicBrandName": "Insert Player",

@@ -1,6 +1,6 @@
 name = "insert-player-api-sandbox"
 main = "src/index.ts"
-compatibility_date = "2026-08-17"
+compatibility_date = "2026-08-22"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = false
@@ -18,6 +18,7 @@ TURNSTILE_HOSTNAMES = "insert-player-sandbox.pages.dev,localhost,127.0.0.1"
 ANONYMOUS_ROOKIE_ENABLED = "false"
 PROVIDER_MONTHLY_BUDGET_USD_CENTS = "5000"
 GEMINI_SPEND_RATE_LIMIT_USD_CENTS = "900"
+GENERATION_API_BASE_URL = "https://insert-player-api-sandbox.shellbot.workers.dev"
 CLERK_ISSUER = "https://right-cricket-1317.clerk.accounts.dev"
 CLERK_AUTHORIZED_PARTIES = "https://insert-player-sandbox.pages.dev,http://localhost:5173,http://127.0.0.1:5174"
 # Add only Insert Player sandbox Stripe ids here. Secrets remain Worker secrets:
@@ -25,6 +26,48 @@ STRIPE_ACCOUNT_ID = "acct_1U5w8DCQ9OPSWOkj"
 STRIPE_PRICE_STARTER = "price_1U6H1vCQ9OPSWOkj1ljokcL6"
 STRIPE_PRICE_VERSUS = "price_1U6H1wCQ9OPSWOkjuTEqzam3"
 STRIPE_PRICE_ARCADE = "price_1U6H1xCQ9OPSWOkjLU7ClORv"
+
+[secrets]
+required = [
+  "GEMINI_API_KEY",
+  "FAL_API_KEY",
+  "RUNWAY_API_KEY",
+  "FREEPIK_API_KEY",
+  "LUDO_API_KEY",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "CLERK_WEBHOOK_SIGNING_SECRET",
+  "TURNSTILE_SECRET_KEY",
+  "ANONYMIZATION_SECRET",
+  "GENERATION_JOB_SIGNING_SECRET",
+]
+
+[limits]
+cpu_ms = 300000
+
+[[workflows]]
+binding = "FIGHTER_GENERATION"
+name = "insert-player-fighter-generation-sandbox"
+class_name = "FighterGenerationWorkflow"
+
+[[containers]]
+name = "insert-player-image-processor-sandbox"
+class_name = "ImageProcessorContainer"
+image = "../Dockerfile.processor"
+image_build_context = ".."
+max_instances = 3
+instance_type = "basic"
+
+[containers.constraints]
+jurisdiction = "eu"
+
+[[durable_objects.bindings]]
+name = "IMAGE_PROCESSOR"
+class_name = "ImageProcessorContainer"
+
+[[migrations]]
+tag = "image-processor-v1"
+new_sqlite_classes = ["ImageProcessorContainer"]
 
 [[d1_databases]]
 binding = "DB"

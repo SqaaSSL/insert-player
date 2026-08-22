@@ -7,6 +7,18 @@ export interface ApiRequestContext {
   readonly authRevision: number;
   readonly tokenGetter: TokenGetter | null;
   readonly providerSessionId: string | null;
+  readonly detached?: boolean;
+  readonly apiBaseUrl?: string;
+  readonly authorizationScheme?: 'Bearer' | 'Generation';
+  readonly providerRequestScope?: string;
+}
+
+export interface DetachedApiRequestContextOptions {
+  apiBaseUrl: string;
+  authorizationToken: string;
+  authorizationScheme?: 'Bearer' | 'Generation';
+  providerSessionId?: string | null;
+  providerRequestScope?: string;
 }
 
 export class ApiSessionChangedError extends Error {
@@ -29,6 +41,31 @@ export function captureApiRequestContext(): ApiRequestContext {
   });
 }
 
+export function createDetachedApiRequestContext(
+  options: DetachedApiRequestContextOptions,
+): ApiRequestContext {
+  const apiBaseUrl = options.apiBaseUrl.trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(apiBaseUrl)) {
+    throw new Error('Detached API contexts require an absolute HTTP(S) API base URL.');
+  }
+  if (!options.authorizationToken.trim()) {
+    throw new Error('Detached API contexts require an authorization token.');
+  }
+  const providerRequestScope = options.providerRequestScope?.trim();
+  if (providerRequestScope && !/^[a-zA-Z0-9:_-]{1,160}$/.test(providerRequestScope)) {
+    throw new Error('Detached provider request scopes may contain only letters, numbers, colons, underscores, and hyphens.');
+  }
+  return Object.freeze({
+    authRevision: -1,
+    tokenGetter: async () => options.authorizationToken,
+    providerSessionId: options.providerSessionId ?? null,
+    detached: true,
+    apiBaseUrl,
+    authorizationScheme: options.authorizationScheme ?? 'Bearer',
+    providerRequestScope,
+  });
+}
+
 export function withProviderSession(
   context: ApiRequestContext,
   sessionId: string | null | undefined,
@@ -40,6 +77,7 @@ export function withProviderSession(
 }
 
 export function assertApiRequestContextCurrent(context: ApiRequestContext): void {
+  if (context.detached) return;
   if (context.authRevision !== authRevision || context.tokenGetter !== tokenGetter) {
     throw new ApiSessionChangedError();
   }
@@ -54,13 +92,15 @@ export async function runWithProviderSession<T>(
   return action(withProviderSession(baseContext, sessionId));
 }
 
-function configuredApiBase(): string {
-  return String(import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+function configuredApiBase(context?: ApiRequestContext): string {
+  if (context?.apiBaseUrl) return context.apiBaseUrl;
+  const metaEnv = (import.meta as ImportMeta & { env?: Record<string, unknown> }).env;
+  return String(metaEnv?.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
 }
 
-export function apiUrl(path: string): string {
+export function apiUrl(path: string, context?: ApiRequestContext): string {
   if (/^https?:\/\//i.test(path)) return path;
-  const base = configuredApiBase();
+  const base = configuredApiBase(context);
   if (!base) return path;
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${base}${normalizedPath}`;
@@ -78,11 +118,11 @@ function originOf(url: string, base?: string): string | null {
   }
 }
 
-function shouldAttachAuth(targetUrl: string): boolean {
+function shouldAttachAuth(targetUrl: string, context?: ApiRequestContext): boolean {
   const targetOrigin = originOf(targetUrl, browserBaseUrl());
   if (!targetOrigin) return false;
 
-  const apiBase = configuredApiBase();
+  const apiBase = configuredApiBase(context);
   const apiOrigin = apiBase
     ? originOf(apiBase, browserBaseUrl())
     : originOf('/', browserBaseUrl());
@@ -95,16 +135,26 @@ export async function apiFetch(
   context: ApiRequestContext = captureApiRequestContext(),
 ): Promise<Response> {
   assertApiRequestContextCurrent(context);
-  const targetUrl = apiUrl(input);
+  const targetUrl = apiUrl(input, context);
   const headers = new Headers(init.headers);
-  const attachesAuth = shouldAttachAuth(targetUrl);
+  const attachesAuth = shouldAttachAuth(targetUrl, context);
   const token = attachesAuth ? await context.tokenGetter?.() : null;
   assertApiRequestContextCurrent(context);
   if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
+    headers.set('Authorization', `${context.authorizationScheme ?? 'Bearer'} ${token}`);
   }
   if (context.providerSessionId && attachesAuth && !headers.has('X-ASF-Provider-Session')) {
     headers.set('X-ASF-Provider-Session', context.providerSessionId);
+  }
+  const method = (init.method ?? 'GET').toUpperCase();
+  if (
+    context.providerRequestScope &&
+    attachesAuth &&
+    method !== 'GET' &&
+    method !== 'HEAD' &&
+    !headers.has('X-Insert-Player-Provider-Request-Key')
+  ) {
+    headers.set('X-Insert-Player-Provider-Request-Key', context.providerRequestScope);
   }
   const response = await fetch(targetUrl, {
     ...init,

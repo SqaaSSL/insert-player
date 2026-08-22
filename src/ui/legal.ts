@@ -1,5 +1,5 @@
 export const LEGAL_EFFECTIVE_DATE = '22 August 2026';
-export const LEGAL_VERSION = '2026-08-22';
+export const LEGAL_VERSION = '2026-08-22.5';
 export const PUBLIC_ORIGIN = 'https://insertplayer.ai';
 export const PRIVACY_EMAIL = 'privacy@insertplayer.ai';
 export const SUPPORT_EMAIL = 'support@insertplayer.ai';

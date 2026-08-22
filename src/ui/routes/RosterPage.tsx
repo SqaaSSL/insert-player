@@ -177,7 +177,7 @@ export function RosterPage({ authSessionKey, mode, onBack, onCreateFighter, onSt
       }
       if (cancelled) return;
       const filteredMetas = allMetas
-        .filter((item) => item.version === CACHE_VERSION)
+        .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
         .sort((a, b) => b.createdAt - a.createdAt);
       const filteredStages = allStages
         .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')

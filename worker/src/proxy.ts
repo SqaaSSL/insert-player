@@ -1,7 +1,9 @@
 import type { Env, PublicAuthContext } from './types';
 import { enforceRateLimit } from './rateLimit';
-import { generateId } from './auth';
+import { generateId, hashString } from './auth';
+import { generationJobIdFromAuth } from './generationAuth';
 import {
+  createProviderRequestState,
   finalizeProviderRequest,
   requireProviderResultSession,
   requireProviderSession,
@@ -11,6 +13,14 @@ import {
   readJsonBody,
   RequestBodyTooLargeError,
 } from './requestBody';
+import { createBoundedByteStream, ResponseBodyTooLargeError } from './streamLimits';
+import {
+  PROVIDER_REQUEST_BODY_LIMITS,
+  PROVIDER_RESPONSE_BODY_LIMITS,
+  type ProviderName,
+} from './providerLimits';
+
+export { ResponseBodyTooLargeError } from './streamLimits';
 
 const TEMP_ASSET_TTL_SECONDS = 24 * 60 * 60;
 const TEMP_ASSET_PATH_PREFIX = '/temp-assets/';
@@ -22,20 +32,12 @@ const MAX_PROXIED_MEDIA_BYTES = 64 * 1024 * 1024;
 const MAX_RESULT_REDIRECTS = 3;
 const PROVIDER_FETCH_TIMEOUT_MS = 60_000;
 const RESULT_FETCH_TIMEOUT_MS = 45_000;
-const PROVIDER_REQUEST_BODY_LIMITS: Record<ProxyProvider, number> = {
-  gemini: 48 * 1024 * 1024,
-  ludo: 24 * 1024 * 1024,
-  freepik: 24 * 1024 * 1024,
-  runway: 24 * 1024 * 1024,
-  fal: 24 * 1024 * 1024,
-};
-
 interface ImageFormat {
   ext: 'gif' | 'jpg' | 'png' | 'webp';
   contentType: string;
 }
 
-type ProxyProvider = 'gemini' | 'ludo' | 'freepik' | 'runway' | 'fal';
+type ProxyProvider = ProviderName;
 
 interface ProviderRouteRule {
   method: string;
@@ -45,13 +47,6 @@ interface ProviderRouteRule {
 interface FetchedPublicResult {
   response: Response;
   finalUrl: URL;
-}
-
-export class ResponseBodyTooLargeError extends Error {
-  constructor() {
-    super('Upstream response body is too large');
-    this.name = 'ResponseBodyTooLargeError';
-  }
 }
 
 const PROVIDER_ROUTE_ALLOWLIST: Record<ProxyProvider, ProviderRouteRule[]> = {
@@ -131,6 +126,7 @@ export async function proxyRequest(
   targetUrl: string,
   extraHeaders: Record<string, string>,
   maxRequestBytes: number,
+  maxResponseBytes = 32 * 1024 * 1024,
 ): Promise<Response> {
   const headers = new Headers(extraHeaders);
   const contentType = request.headers.get('Content-Type');
@@ -170,7 +166,10 @@ export async function proxyRequest(
   if (upstreamContentType) responseHeaders.set('Content-Type', upstreamContentType);
   const retryAfter = upstream.headers.get('Retry-After');
   if (retryAfter) responseHeaders.set('Retry-After', retryAfter);
-  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+  const boundedBody = upstream.body
+    ? createBoundedByteStream(upstream.body, maxResponseBytes)
+    : null;
+  return new Response(boundedBody, { status: upstream.status, headers: responseHeaders });
 }
 
 function decodeBase64Image(image: string): Uint8Array | null {
@@ -376,7 +375,10 @@ async function handleTempUpload(request: Request, env: Env, auth: PublicAuthCont
     return Response.json({ error: 'Only PNG, JPEG, WebP, and GIF temp images are supported' }, { status: 415 });
   }
 
-  const id = generateId();
+  const jobId = generationJobIdFromAuth(auth);
+  const id = jobId
+    ? (await hashString(`${jobId}:${await hashString(bytes.buffer as ArrayBuffer)}`)).slice(0, 32)
+    : generateId();
   const expiresAt = new Date(Date.now() + TEMP_ASSET_TTL_SECONDS * 1000).toISOString();
   await env.SPRITES.put(`temp/${id}.${format.ext}`, bytes, {
     httpMetadata: { contentType: format.contentType },
@@ -534,8 +536,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
     }
     const limited = await enforceRateLimit(env, 'proxy:default', auth);
     if (limited) return limited;
+    const providerState = createProviderRequestState();
     if (requiresProviderSession('ludo', request.method)) {
-      const sessionError = await requireProviderSession(request, env, auth, { provider: 'ludo', path });
+      const sessionError = await requireProviderSession(request, env, auth, { provider: 'ludo', path }, providerState);
       if (sessionError) return sessionError;
     }
     const apiPath = path.replace(/^\/proxy\/ludo/, '/api');
@@ -545,9 +548,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       target.toString(),
       { Authorization: `ApiKey ${env.LUDO_API_KEY}` },
       PROVIDER_REQUEST_BODY_LIMITS.ludo,
+      PROVIDER_RESPONSE_BODY_LIMITS.ludo,
     );
-    await finalizeProviderRequest(request, env, response);
-    return response;
+    return finalizeProviderRequest(env, response, providerState);
   }
 
   if (path.startsWith('/proxy/freepik')) {
@@ -556,8 +559,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
     if (!env.FREEPIK_API_KEY) return missingKey('FREEPIK_API_KEY');
     const limited = await enforceRateLimit(env, 'proxy:default', auth);
     if (limited) return limited;
+    const providerState = createProviderRequestState();
     if (requiresProviderSession('freepik', request.method)) {
-      const sessionError = await requireProviderSession(request, env, auth, { provider: 'freepik', path });
+      const sessionError = await requireProviderSession(request, env, auth, { provider: 'freepik', path }, providerState);
       if (sessionError) return sessionError;
     }
     const apiPath = path.replace(/^\/proxy\/freepik/, '');
@@ -567,9 +571,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       target.toString(),
       { 'x-freepik-api-key': env.FREEPIK_API_KEY },
       PROVIDER_REQUEST_BODY_LIMITS.freepik,
+      PROVIDER_RESPONSE_BODY_LIMITS.freepik,
     );
-    await finalizeProviderRequest(request, env, response);
-    return response;
+    return finalizeProviderRequest(env, response, providerState);
   }
 
   if (path.startsWith('/proxy/gemini')) {
@@ -578,16 +582,22 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
     if (!env.GEMINI_API_KEY) return missingKey('GEMINI_API_KEY');
     const limited = await enforceRateLimit(env, 'proxy:gemini', auth);
     if (limited) return limited;
+    const providerState = createProviderRequestState();
     if (requiresProviderSession('gemini', request.method)) {
-      const sessionError = await requireProviderSession(request, env, auth, { provider: 'gemini', path });
+      const sessionError = await requireProviderSession(request, env, auth, { provider: 'gemini', path }, providerState);
       if (sessionError) return sessionError;
     }
     const apiPath = path.replace(/^\/proxy\/gemini/, '');
     const target = appendSearch(new URL(`https://generativelanguage.googleapis.com${apiPath}`), url);
     target.searchParams.set('key', env.GEMINI_API_KEY);
-    const response = await proxyRequest(request, target.toString(), {}, PROVIDER_REQUEST_BODY_LIMITS.gemini);
-    await finalizeProviderRequest(request, env, response);
-    return response;
+    const response = await proxyRequest(
+      request,
+      target.toString(),
+      {},
+      PROVIDER_REQUEST_BODY_LIMITS.gemini,
+      PROVIDER_RESPONSE_BODY_LIMITS.gemini,
+    );
+    return finalizeProviderRequest(env, response, providerState);
   }
 
   if (path.startsWith('/proxy/runway')) {
@@ -596,8 +606,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
     if (!env.RUNWAY_API_KEY) return missingKey('RUNWAY_API_KEY');
     const limited = await enforceRateLimit(env, 'proxy:default', auth);
     if (limited) return limited;
+    const providerState = createProviderRequestState();
     if (requiresProviderSession('runway', request.method)) {
-      const sessionError = await requireProviderSession(request, env, auth, { provider: 'runway', path });
+      const sessionError = await requireProviderSession(request, env, auth, { provider: 'runway', path }, providerState);
       if (sessionError) return sessionError;
     }
     const apiPath = path.replace(/^\/proxy\/runway/, '');
@@ -610,9 +621,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
         'X-Runway-Version': '2024-11-06',
       },
       PROVIDER_REQUEST_BODY_LIMITS.runway,
+      PROVIDER_RESPONSE_BODY_LIMITS.runway,
     );
-    await finalizeProviderRequest(request, env, response);
-    return response;
+    return finalizeProviderRequest(env, response, providerState);
   }
 
   if (path.startsWith('/proxy/fal')) {
@@ -621,8 +632,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
     if (!env.FAL_API_KEY) return missingKey('FAL_API_KEY');
     const limited = await enforceRateLimit(env, 'proxy:fal', auth);
     if (limited) return limited;
+    const providerState = createProviderRequestState();
     if (requiresProviderSession('fal', request.method)) {
-      const sessionError = await requireProviderSession(request, env, auth, { provider: 'fal', path });
+      const sessionError = await requireProviderSession(request, env, auth, { provider: 'fal', path }, providerState);
       if (sessionError) return sessionError;
     }
     const apiPath = path.replace(/^\/proxy\/fal/, '');
@@ -632,9 +644,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       target.toString(),
       { Authorization: `Key ${env.FAL_API_KEY}` },
       PROVIDER_REQUEST_BODY_LIMITS.fal,
+      PROVIDER_RESPONSE_BODY_LIMITS.fal,
     );
-    await finalizeProviderRequest(request, env, response);
-    return response;
+    return finalizeProviderRequest(env, response, providerState);
   }
 
   return null;

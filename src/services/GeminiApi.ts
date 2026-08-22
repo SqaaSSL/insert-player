@@ -1,4 +1,4 @@
-import { CELL_H, CELL_W, cleanReposedImagePreserveCanvas, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, neutralizeGreenSpillForSegmentation, zoomTransparentImageToBottom, normalizeTransparentReposedImage, measureOpaqueBoundsFromBase64, type CleanSheetResult, type NormalizationReference } from './SpritePostProcess';
+import { CELL_H, CELL_W, cleanReposedImagePreserveCanvas, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, computeRequestedSpriteGrid, neutralizeGreenSpillForSegmentation, zoomTransparentImageToBottom, normalizeTransparentReposedImage, measureOpaqueBoundsFromBase64, type CleanSheetResult, type NormalizationReference } from './SpritePostProcess';
 import { getAnimationProfile } from './AnimationProfiles';
 import { debugInfo, debugWarn as debugConsoleWarn, publishDebugLog, publishDebugMultiline } from './DebugLog';
 import { getConfiguredBgRemovalProvider, removeBackgroundWithConfiguredProvider } from './BackgroundRemovalService';
@@ -32,6 +32,50 @@ interface GeminiResponse {
   error?: { code: number; message: string };
 }
 
+function normalizedBase64Payload(value: string): string {
+  const payload = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value;
+  return payload.replace(/\s+/g, '');
+}
+
+export function isPngBase64(value: string): boolean {
+  try {
+    const prefix = atob(normalizedBase64Payload(value).slice(0, 16));
+    return prefix.length >= 8 &&
+      prefix.charCodeAt(0) === 0x89 &&
+      prefix.charCodeAt(1) === 0x50 &&
+      prefix.charCodeAt(2) === 0x4e &&
+      prefix.charCodeAt(3) === 0x47 &&
+      prefix.charCodeAt(4) === 0x0d &&
+      prefix.charCodeAt(5) === 0x0a &&
+      prefix.charCodeAt(6) === 0x1a &&
+      prefix.charCodeAt(7) === 0x0a;
+  } catch {
+    return false;
+  }
+}
+
+export async function normalizeGeneratedImageToPng(
+  value: string,
+  declaredMimeType?: string | null,
+): Promise<string> {
+  const payload = normalizedBase64Payload(value);
+  if (isPngBase64(payload)) return payload;
+
+  const mimeType = declaredMimeType && /^image\/(?:jpe?g|png|webp)$/i.test(declaredMimeType)
+    ? declaredMimeType
+    : 'application/octet-stream';
+  const image = await loadAlphaImage(`data:${mimeType};base64,${payload}`);
+  if (!image.width || !image.height) throw new Error('Gemini returned an empty image');
+
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Could not create an image normalization canvas');
+  context.drawImage(image, 0, 0);
+  return canvas.toDataURL('image/png').split(',')[1];
+}
+
 type GeminiModelOperation = 'repose' | 'upright' | 'crouch' | 'sprite' | 'stage';
 
 function normalizeModelEnvSegment(value: string): string {
@@ -47,7 +91,9 @@ function resolveGeminiImageModel(options?: {
     return options.modelOverride;
   }
 
-  const env = import.meta.env as Record<string, string | boolean | undefined>;
+  const env = (import.meta as ImportMeta & {
+    env?: Record<string, string | boolean | undefined>;
+  }).env ?? {};
   const keys: string[] = [];
 
   if (options?.animationName) {
@@ -150,10 +196,14 @@ async function callGemini(
     if (part.inlineData) imageData = part.inlineData;
   }
 
+  const normalizedImageBase64 = imageData
+    ? await normalizeGeneratedImageToPng(imageData.data, imageData.mimeType)
+    : null;
+
   return {
     text,
-    imageBase64: imageData?.data ?? null,
-    imageMime: imageData?.mimeType ?? null,
+    imageBase64: normalizedImageBase64,
+    imageMime: normalizedImageBase64 ? 'image/png' : null,
     finishReason: candidate.finishReason ?? null,
   };
 }
@@ -589,6 +639,8 @@ function getMinimumReliableFrames(animName: string): number {
   if (animName === 'jump') return 3;
   if (animName === 'hit') return 2;
   if (animName === 'low_punch' || animName === 'low_kick') return 3;
+  if (animName === 'ko') return 8;
+  if (animName === 'victory') return 6;
   return 1;
 }
 
@@ -904,8 +956,9 @@ export async function geminiSpriteSheet(
   const model = resolveGeminiImageModel({ operation: 'sprite', animationName: animName, modelOverride });
 
   const genFrames = shouldMirror ? Math.ceil(frames / 2) : frames;
-  const gridCols = computeGridCols(genFrames);
-  const gridRows = Math.ceil(genFrames / gridCols);
+  const requestedGrid = computeRequestedSpriteGrid(animName, genFrames);
+  const gridCols = requestedGrid.cols;
+  const gridRows = requestedGrid.rows;
 
   const motionDesc = shouldMirror
     ? motion.replace(/then (?:returning|retracting|back) to stance/i, '').replace(/,\s*$/, '').trim()
@@ -976,6 +1029,14 @@ export async function geminiSpriteSheet(
     );
     promptVariants.push(
       `${prompt}\n- CRITICAL: the uploaded side-view reference already has the correct full-body composition; copy that same camera framing into all ${genFrames} cells before adding motion.\n- CRITICAL: preserve the same headroom, visible feet, and full-body crop as the reference image in every cell.\n- CRITICAL: this idle sheet fails if even one cell is bust-only, waist-up, or missing feet.\n- CRITICAL: it is better to make the fighter slightly smaller in every cell than to crop any body part or zoom closer than the reference.`,
+    );
+  } else if (animName === 'ko') {
+    promptVariants.push(
+      `${prompt}\n- CRITICAL: all ${genFrames} cells must contain one complete, self-contained fighter silhouette with green margin around it.\n- CRITICAL: the final downed poses must be compact, diagonal, and bent at the knees so each whole body fits in one cell.\n- CRITICAL: never draw one horizontal body across two neighboring cells and never split torso and legs between cells.`,
+    );
+  } else if (animName === 'victory') {
+    promptVariants.push(
+      `${prompt}\n- CRITICAL: preserve the full-body camera distance from the uploaded reference in all ${genFrames} cells.\n- CRITICAL: every celebratory pose must include the complete head, torso, legs, and both feet with green margin on every side.\n- CRITICAL: no close-up, waist-up, torso-only, cropped-foot, or enlarged hero framing.`,
     );
   } else if (animName === 'low_punch' || animName === 'low_kick') {
     promptVariants.push(

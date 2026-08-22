@@ -40,7 +40,6 @@ export interface CloudFighter {
   id: string;
   owner?: {
     name: string;
-    avatarUrl: string | null;
   };
   name: string;
   photoHash?: string;
@@ -70,6 +69,7 @@ export interface CloudImportResult {
 export interface CloudImportOptions {
   includeArchivedVersions?: boolean;
   includeRawAssets?: boolean;
+  allowIncomplete?: boolean;
 }
 
 export interface CloudRosterSyncSummary {
@@ -77,6 +77,11 @@ export interface CloudRosterSyncSummary {
   updated: number;
   skipped: number;
   failed: number;
+}
+
+export interface PreparedCloudFighter {
+  fighter: CloudFighter;
+  photoHash: string;
 }
 
 export type CommunityReportReason =
@@ -460,6 +465,44 @@ export async function getCloudFighter(fighterId: string, context?: ApiRequestCon
   if (!res.ok) throw new Error(`Cloud fighter failed (${res.status})`);
   const json = await res.json() as { fighter?: CloudFighter };
   return json.fighter ?? null;
+}
+
+export async function prepareCloudFighterGeneration(
+  params: {
+    name: string;
+    photoHash: string;
+    originalPhoto: Blob;
+  },
+  context?: ApiRequestContext,
+): Promise<PreparedCloudFighter> {
+  const requestContext = context ?? captureApiRequestContext();
+  const createRes = await apiFetch('/api/fighters', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: params.name,
+      photoHash: params.photoHash,
+      qualityTier: 'rookie',
+    }),
+  }, requestContext);
+  const createdBody = await createRes.json().catch(() => ({})) as {
+    fighter?: CloudFighter;
+    error?: string;
+  };
+  if (!createRes.ok || !createdBody.fighter?.id) {
+    throw new Error(createdBody.error ?? `Private fighter setup failed (${createRes.status})`);
+  }
+
+  await uploadSource(
+    createdBody.fighter.id,
+    'original',
+    params.originalPhoto,
+    createdBody.fighter.sourceHashes?.original,
+    requestContext,
+  );
+  const detailed = await getCloudFighter(createdBody.fighter.id, requestContext);
+  if (!detailed) throw new Error('Private fighter could not be reloaded after source upload');
+  return { fighter: detailed, photoHash: params.photoHash };
 }
 
 export async function listCommunityFighters(): Promise<CloudFighter[]> {
@@ -866,7 +909,7 @@ export async function downloadCloudFighterToLocal(
     }));
   }
 
-  if (availableAnimations.size === 0) {
+  if (availableAnimations.size === 0 && !options.allowIncomplete) {
     throw new Error(`Cloud fighter ${fighter.name} has no playable sprite assets to import.`);
   }
 
@@ -886,7 +929,9 @@ export async function downloadCloudFighterToLocal(
     crouchViewCleanBlob: existingMeta?.crouchViewCleanBlob ?? crouchViewBlob,
     noBgBlob: existingMeta?.noBgBlob ?? null,
     characterName: fighter.name,
-    status: 'ready',
+    status: options.allowIncomplete && existingMeta?.status !== 'ready'
+      ? 'sprites_generating'
+      : 'ready',
     animationsReady: Array.from(availableAnimations),
     createdAt,
     updatedAt: staleSourceKinds.size > 0 || spritesSkipped > 0

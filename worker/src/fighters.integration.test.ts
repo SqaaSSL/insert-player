@@ -2,7 +2,11 @@ import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 import {
   getAsset,
+  getPublicFighterSourceAsset,
+  getPublicFighterSpriteAsset,
+  listCommunityFighters,
   promoteFighterSpriteVersion,
+  shareCommunityFighterPage,
   uploadFighterSource,
   uploadFighterSprite,
 } from './fighters';
@@ -158,10 +162,10 @@ function tinyPngFile(name: string): File {
   ], name, { type: 'image/png' });
 }
 
-function sourceRequest(): Request {
+function sourceRequest(kind = 'side'): Request {
   const formData = new FormData();
-  formData.set('kind', 'side');
-  formData.set('file', tinyPngFile('side.png'));
+  formData.set('kind', kind);
+  formData.set('file', tinyPngFile(`${kind}.png`));
   return new Request('https://api.insertplayer.ai/api/fighters/fighter-target/sources', {
     method: 'POST',
     body: formData,
@@ -240,8 +244,8 @@ async function createBindings(): Promise<{
     .filter(Boolean)
     .map((statement) => db.prepare(statement)));
   await db.batch([
-    db.prepare('INSERT INTO users (id, clerk_user_id, display_name) VALUES (?, ?, ?)')
-      .bind(auth.userId, auth.userId, auth.user.display_name),
+    db.prepare('INSERT INTO users (id, clerk_user_id, display_name, avatar_url) VALUES (?, ?, ?, ?)')
+      .bind(auth.userId, auth.userId, auth.user.display_name, 'https://img.clerk.com/private-profile.png'),
     db.prepare(`
       INSERT INTO fighters (id, owner_user_id, name, photo_hash, quality_tier)
       VALUES (?, ?, ?, ?, ?)
@@ -259,6 +263,102 @@ async function createBindings(): Promise<{
 const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
 
 describe('fighter uploads against real D1 and R2 bindings', () => {
+  it('keeps Clerk photos and private fighter fields out of community payloads', async () => {
+    const { mf, db, bucket, env } = await createBindings();
+    try {
+      const animationNames = [
+        'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
+        'jump', 'crouch', 'hit', 'ko', 'victory',
+      ];
+      await db.batch([
+        db.prepare(`
+          UPDATE fighters
+          SET public_flag = 1,
+              original_blob_key = 'users/user-target/fighters/fighter-target/sources/original.png',
+              side_view_blob_key = 'users/user-target/fighters/fighter-target/sources/side.png',
+              side_view_raw_blob_key = 'users/user-target/fighters/fighter-target/sources/side-raw.png'
+          WHERE id = 'fighter-target'
+        `),
+        ...animationNames.map((animationName, index) => db.prepare(`
+          INSERT INTO sprites (
+            id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+            frame_w, frame_h, frame_count, processing_version
+          ) VALUES (?, 'fighter-target', ?, 'contender', ?, ?, 256, 256, 8, 4)
+        `).bind(
+          `sprite-public-${index}`,
+          animationName,
+          `users/user-target/fighters/fighter-target/sprites/${animationName}.png`,
+          `users/user-target/fighters/fighter-target/sprites/${animationName}-raw.png`,
+        )),
+      ]);
+      await Promise.all([
+        bucket.put(
+          'users/user-target/fighters/fighter-target/sources/side.png',
+          new Uint8Array([1, 2, 3]),
+          { httpMetadata: { contentType: 'image/png' } },
+        ),
+        bucket.put(
+          'users/user-target/fighters/fighter-target/sprites/idle.png',
+          new Uint8Array([4, 5, 6]),
+          { httpMetadata: { contentType: 'image/png' } },
+        ),
+      ]);
+
+      const response = await listCommunityFighters(
+        new Request('https://api.insertplayer.ai/api/community'),
+        env,
+      );
+      const body = await response.json() as { fighters: Array<Record<string, any>> };
+      expect(response.status).toBe(200);
+      expect(body.fighters).toHaveLength(1);
+      const fighter = body.fighters[0];
+      expect(fighter.owner).toEqual({ name: 'Player' });
+      expect(fighter).not.toHaveProperty('ownerUserId');
+      expect(fighter).not.toHaveProperty('photoHash');
+      expect(fighter.sources).toMatchObject({ original: null, sideRaw: null });
+      expect(fighter.sprites.every((sprite: Record<string, unknown>) => sprite.rawUrl === null)).toBe(true);
+      expect(fighter.sources.side).toContain(
+        '/public-assets/fighters/fighter-target/sources/side/side.png',
+      );
+      const idleSprite = fighter.sprites.find((sprite: Record<string, unknown>) => sprite.animationName === 'idle');
+      expect(idleSprite?.url).toContain(
+        '/public-assets/fighters/fighter-target/sprites/sprite-public-0/idle.png',
+      );
+      expect(JSON.stringify(fighter)).not.toContain('/assets/users/');
+      expect(JSON.stringify(fighter)).not.toContain('user-target');
+
+      const shareResponse = await shareCommunityFighterPage(
+        new Request('https://api.insertplayer.ai/share/fighter-target'),
+        env,
+        'fighter-target',
+      );
+      const shareHtml = await shareResponse.text();
+      expect(shareResponse.status).toBe(200);
+      expect(shareHtml).not.toContain(auth.user.display_name);
+      expect(shareHtml).not.toContain(auth.user.email!);
+      expect(shareHtml).not.toContain('private-profile.png');
+      expect(shareHtml).not.toContain('user-target');
+      expect(shareHtml).toContain('/public-assets/fighters/fighter-target/sources/side/side.png');
+
+      const [publicSource, publicSprite] = await Promise.all([
+        getPublicFighterSourceAsset(env, 'fighter-target', 'side', 'side.png'),
+        getPublicFighterSpriteAsset(env, 'fighter-target', 'sprite-public-0', 'idle.png'),
+      ]);
+      expect(publicSource.status).toBe(200);
+      expect(publicSource.headers.get('Cache-Control')).toBe(
+        'public, max-age=60, s-maxage=300, must-revalidate',
+      );
+      expect(publicSprite.status).toBe(200);
+
+      await db.prepare('UPDATE fighters SET public_flag = 0 WHERE id = ?').bind('fighter-target').run();
+      const revokedSource = await getPublicFighterSourceAsset(env, 'fighter-target', 'side', 'side.png');
+      expect(revokedSource.status).toBe(404);
+      expect(revokedSource.headers.get('Cache-Control')).toBe('no-store');
+    } finally {
+      await mf.dispose();
+    }
+  }, INTEGRATION_TEST_TIMEOUT_MS);
+
   it('collapses concurrent identical source uploads without orphaning R2 objects', async () => {
     const { mf, db, bucket, env } = await createBindings();
     try {
@@ -440,20 +540,28 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
     }
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
-  it('serves owner assets across devices and exposes only active processed assets when public', async () => {
+  it('serves owner assets across devices and keeps namespaced asset keys owner-only', async () => {
     const { mf, db, bucket, env } = await createBindings();
     try {
-      expect((await uploadFighterSource(sourceRequest(), env, auth, 'fighter-target')).status).toBe(200);
+      expect((await uploadFighterSource(sourceRequest('original'), env, auth, 'fighter-target')).status).toBe(200);
+      expect((await uploadFighterSource(sourceRequest('side_raw'), env, auth, 'fighter-target')).status).toBe(200);
+      expect((await uploadFighterSource(sourceRequest('side'), env, auth, 'fighter-target')).status).toBe(200);
       expect((await uploadFighterSprite(spriteRequest(), env, auth, 'fighter-target')).status).toBe(200);
 
       const fighter = await db.prepare(
-        'SELECT side_view_blob_key FROM fighters WHERE id = ?'
-      ).bind('fighter-target').first<{ side_view_blob_key: string }>();
+        'SELECT original_blob_key, side_view_blob_key, side_view_raw_blob_key FROM fighters WHERE id = ?'
+      ).bind('fighter-target').first<{
+        original_blob_key: string;
+        side_view_blob_key: string;
+        side_view_raw_blob_key: string;
+      }>();
       const sprite = await db.prepare(
         'SELECT blob_key, raw_blob_key FROM sprites WHERE fighter_id = ? AND animation_name = ?'
       ).bind('fighter-target', 'idle').first<{ blob_key: string; raw_blob_key: string }>();
 
       const sourceKey = fighter?.side_view_blob_key ?? '';
+      const originalKey = fighter?.original_blob_key ?? '';
+      const sourceRawKey = fighter?.side_view_raw_blob_key ?? '';
       const spriteKey = sprite?.blob_key ?? '';
       const rawKey = sprite?.raw_blob_key ?? '';
       const ownerAsset = await getAsset(
@@ -474,17 +582,20 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect(privateAsset.status).toBe(404);
 
       await db.prepare('UPDATE fighters SET public_flag = 1 WHERE id = ?').bind('fighter-target').run();
-      const [publicSource, publicSprite, privateRaw] = await Promise.all([
+      const [privateProcessedSource, privateProcessedSprite, privateOriginal, privateSourceRaw, privateSpriteRaw] = await Promise.all([
         getAsset(new Request(`https://api.insertplayer.ai/assets/${sourceKey}`), env, publicAuth(), sourceKey),
         getAsset(new Request(`https://api.insertplayer.ai/assets/${spriteKey}`), env, publicAuth(), spriteKey),
+        getAsset(new Request(`https://api.insertplayer.ai/assets/${originalKey}`), env, publicAuth(), originalKey),
+        getAsset(new Request(`https://api.insertplayer.ai/assets/${sourceRawKey}`), env, publicAuth(), sourceRawKey),
         getAsset(new Request(`https://api.insertplayer.ai/assets/${rawKey}`), env, publicAuth(), rawKey),
       ]);
 
-      expect(publicSource.status).toBe(200);
-      expect(publicSource.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
-      expect(publicSprite.status).toBe(200);
-      expect(privateRaw.status).toBe(404);
-      expect((await bucket.list({ prefix: 'users/user-target/fighters/fighter-target/' })).objects).toHaveLength(3);
+      expect(privateProcessedSource.status).toBe(404);
+      expect(privateProcessedSprite.status).toBe(404);
+      expect(privateOriginal.status).toBe(404);
+      expect(privateSourceRaw.status).toBe(404);
+      expect(privateSpriteRaw.status).toBe(404);
+      expect((await bucket.list({ prefix: 'users/user-target/fighters/fighter-target/' })).objects).toHaveLength(5);
     } finally {
       await mf.dispose();
     }

@@ -1,5 +1,5 @@
 import type { AuthContext, Env, Fighter, PublicAuthContext, QualityTier, SourceVersion, SpriteAsset, SpriteVersion, Stage } from './types';
-import { generateId, hashString, normalizeOptionalHttpsUrl, normalizePublicDisplayName } from './auth';
+import { generateId, hashString } from './auth';
 import { maxTier, normalizeQualityTier, TIER_DEFINITIONS } from './tiers';
 import { publicAppName, publicSocialCardUrl } from './branding';
 import { readJsonBody, readMultipartFormData } from './requestBody';
@@ -57,6 +57,9 @@ const PUBLIC_COMMUNITY_CACHE_HEADERS = {
 const PUBLIC_SHARE_CACHE_HEADERS = {
   'Cache-Control': 'public, max-age=300, s-maxage=900, stale-while-revalidate=900',
 };
+const PUBLIC_ASSET_CACHE_HEADERS = {
+  'Cache-Control': 'public, max-age=60, s-maxage=300, must-revalidate',
+};
 const NO_STORE_HEADERS = {
   'Cache-Control': 'no-store',
 };
@@ -80,13 +83,6 @@ const HTML_SECURITY_HEADERS = {
 
 interface UploadImageFormat {
   contentType: 'image/jpeg' | 'image/png' | 'image/webp';
-}
-
-interface AssetAccess {
-  owner_user_id: string;
-  public_flag: number;
-  public_asset: number;
-  asset_kind: string;
 }
 
 interface CopiedPublicSourceView {
@@ -193,6 +189,42 @@ function assetUrl(request: Request, key: string | null): string | null {
   return `${url.origin}/assets/${encoded}`;
 }
 
+type PublicSourceKind = 'side' | 'upright' | 'crouch';
+
+const PUBLIC_SOURCE_COLUMNS: Record<PublicSourceKind, keyof Fighter> = {
+  side: 'side_view_blob_key',
+  upright: 'upright_view_blob_key',
+  crouch: 'crouch_view_blob_key',
+};
+
+function publicAssetRevision(key: string | null): string | null {
+  if (!key) return null;
+  return key.split('/').at(-1) ?? null;
+}
+
+function publicSourceAssetUrl(
+  request: Request,
+  fighterId: string,
+  kind: PublicSourceKind,
+  key: string | null,
+): string | null {
+  const revision = publicAssetRevision(key);
+  if (!revision) return null;
+  const url = new URL(request.url);
+  return `${url.origin}/public-assets/fighters/${encodeURIComponent(fighterId)}/sources/${kind}/${encodeURIComponent(revision)}`;
+}
+
+function publicSpriteAssetUrl(
+  request: Request,
+  fighterId: string,
+  sprite: SpriteAsset,
+): string | null {
+  const revision = publicAssetRevision(sprite.blob_key);
+  if (!revision) return null;
+  const url = new URL(request.url);
+  return `${url.origin}/public-assets/fighters/${encodeURIComponent(fighterId)}/sprites/${encodeURIComponent(sprite.id)}/${encodeURIComponent(revision)}`;
+}
+
 function decodeAssetKey(key: string): string | Response {
   let decodedKey: string;
   try {
@@ -216,50 +248,9 @@ function decodeAssetKey(key: string): string | Response {
   return decodedKey;
 }
 
-function cacheControlForAsset(asset: AssetAccess): string {
-  if (asset.public_flag && asset.public_asset) {
-    return 'public, max-age=31536000, immutable';
-  }
-  if (!asset.public_asset) {
-    return 'private, no-store';
-  }
-  return 'private, max-age=3600';
-}
-
 function namespacedAssetOwner(key: string): string | null {
   const segments = key.split('/');
   return segments[0] === 'users' && segments[1] ? segments[1] : null;
-}
-
-async function findPublicAssetAccess(env: Env, key: string): Promise<AssetAccess | null> {
-  const results = await env.DB.batch([
-    env.DB.prepare(`
-      SELECT owner_user_id, public_flag, 1 AS public_asset, 'fighter_public_source' AS asset_kind
-      FROM fighters
-      WHERE public_flag = 1
-        AND (side_view_blob_key = ? OR upright_view_blob_key = ? OR crouch_view_blob_key = ?)
-      LIMIT 1
-    `).bind(key, key, key),
-    env.DB.prepare(`
-      SELECT f.owner_user_id, f.public_flag, 1 AS public_asset, 'sprite' AS asset_kind
-      FROM sprites s
-      JOIN fighters f ON f.id = s.fighter_id
-      WHERE f.public_flag = 1 AND s.blob_key = ?
-      LIMIT 1
-    `).bind(key),
-    env.DB.prepare(`
-      SELECT owner_user_id, public_flag, 1 AS public_asset, 'stage' AS asset_kind
-      FROM stages
-      WHERE public_flag = 1 AND blob_key = ?
-      LIMIT 1
-    `).bind(key),
-  ]);
-
-  for (const result of results) {
-    const candidate = (result.results?.[0] ?? null) as AssetAccess | null;
-    if (candidate) return candidate;
-  }
-  return null;
 }
 
 function playableSpriteSetSql(fighterAlias: string): string {
@@ -378,7 +369,7 @@ function serializeFighter(
 
 function serializeCommunityFighter(
   request: Request,
-  fighter: Fighter & { owner_name?: string; owner_avatar_url?: string | null },
+  fighter: Fighter,
   sprites: SpriteAsset[] = [],
 ) {
   const serialized = serializeFighter(request, fighter, sprites);
@@ -386,7 +377,7 @@ function serializeCommunityFighter(
     ownerUserId: _ownerUserId,
     photoHash: _photoHash,
     sources,
-    sprites: serializedSprites,
+    sprites: _serializedSprites,
     ...publicFighter
   } = serialized;
 
@@ -394,20 +385,20 @@ function serializeCommunityFighter(
     ...publicFighter,
     sources: {
       original: null,
-      side: sources.side,
+      side: publicSourceAssetUrl(request, fighter.id, 'side', fighter.side_view_blob_key),
       sideRaw: null,
-      upright: sources.upright,
+      upright: publicSourceAssetUrl(request, fighter.id, 'upright', fighter.upright_view_blob_key),
       uprightRaw: null,
-      crouch: sources.crouch,
+      crouch: publicSourceAssetUrl(request, fighter.id, 'crouch', fighter.crouch_view_blob_key),
       crouchRaw: null,
     },
-    sprites: serializedSprites.map((sprite) => ({
-      ...sprite,
+    sprites: sprites.map((sprite) => ({
+      ...serializeSprite(request, sprite),
+      url: publicSpriteAssetUrl(request, fighter.id, sprite),
       rawUrl: null,
     })),
     owner: {
-      name: normalizePublicDisplayName(fighter.owner_name),
-      avatarUrl: normalizeOptionalHttpsUrl(fighter.owner_avatar_url),
+      name: 'Player',
     },
   };
 }
@@ -516,14 +507,13 @@ export async function listCommunityFighters(request: Request, env: Env): Promise
   const url = new URL(request.url);
   const limit = readCommunityLimit(url.searchParams.get('limit'));
   const { results } = await env.DB.prepare(`
-    SELECT f.*, u.display_name AS owner_name, u.avatar_url AS owner_avatar_url
+    SELECT f.*
     FROM fighters f
-    JOIN users u ON u.id = f.owner_user_id
     WHERE f.public_flag = 1
       AND ${playableSpriteSetSql('f')}
     ORDER BY f.updated_at DESC
     LIMIT ?
-  `).bind(limit).all<Fighter & { owner_name?: string; owner_avatar_url?: string | null }>();
+  `).bind(limit).all<Fighter>();
   const fighters = results ?? [];
   const sprites = await getSpritesForFighters(env, fighters.map((fighter) => fighter.id));
   const spritesByFighter = new Map<string, SpriteAsset[]>();
@@ -543,14 +533,13 @@ export async function getCommunityFighter(
   fighterId: string,
 ): Promise<Response> {
   const fighter = await env.DB.prepare(`
-    SELECT f.*, u.display_name AS owner_name, u.avatar_url AS owner_avatar_url
+    SELECT f.*
     FROM fighters f
-    JOIN users u ON u.id = f.owner_user_id
     WHERE f.id = ?
       AND f.public_flag = 1
       AND ${playableSpriteSetSql('f')}
     LIMIT 1
-  `).bind(fighterId).first<Fighter & { owner_name?: string; owner_avatar_url?: string | null }>();
+  `).bind(fighterId).first<Fighter>();
   if (!fighter) return json({ error: 'Public fighter not found' }, 404, NO_STORE_HEADERS);
   const sprites = await getSpritesForFighters(env, [fighterId]);
   return json({ fighter: serializeCommunityFighter(request, fighter, sprites) }, 200, PUBLIC_COMMUNITY_CACHE_HEADERS);
@@ -655,13 +644,12 @@ export async function shareCommunityFighterPage(
   fighterId: string,
 ): Promise<Response> {
   const fighter = await env.DB.prepare(`
-    SELECT f.*, u.display_name AS owner_name
+    SELECT f.*
     FROM fighters f
-    JOIN users u ON u.id = f.owner_user_id
     WHERE f.id = ? AND f.public_flag = 1
       AND ${playableSpriteSetSql('f')}
     LIMIT 1
-  `).bind(fighterId).first<Fighter & { owner_name?: string }>();
+  `).bind(fighterId).first<Fighter>();
   if (!fighter) {
     return html('<!doctype html><title>Fighter not found</title><h1>Fighter not found</h1>', 404, {
       ...NO_STORE_HEADERS,
@@ -679,10 +667,10 @@ export async function shareCommunityFighterPage(
   `).bind(fighterId).first<SpriteAsset>();
 
   const imageUrl =
-    assetUrl(request, fighter.side_view_blob_key) ??
-    assetUrl(request, fighter.upright_view_blob_key) ??
-    assetUrl(request, fighter.crouch_view_blob_key) ??
-    assetUrl(request, sprite?.blob_key ?? null) ??
+    publicSourceAssetUrl(request, fighter.id, 'side', fighter.side_view_blob_key) ??
+    publicSourceAssetUrl(request, fighter.id, 'upright', fighter.upright_view_blob_key) ??
+    publicSourceAssetUrl(request, fighter.id, 'crouch', fighter.crouch_view_blob_key) ??
+    (sprite ? publicSpriteAssetUrl(request, fighter.id, sprite) : null) ??
     publicSocialCardUrl(env);
   const redirectUrl = `${frontendOrigin(env)}/community?fighter=${encodeURIComponent(fighter.id)}`;
   const fighterName = normalizeFighterName(fighter.name, 'Community Fighter');
@@ -1561,25 +1549,63 @@ export async function getAsset(request: Request, env: Env, auth: PublicAuthConte
   const decodedKey = decodeAssetKey(key);
   if (decodedKey instanceof Response) return decodedKey;
   const namespaceOwner = namespacedAssetOwner(decodedKey);
-  const assetOwner = auth.userId && namespaceOwner === auth.userId
-    ? {
-        owner_user_id: auth.userId,
-        public_flag: 0,
-        public_asset: 0,
-        asset_kind: 'owner_namespaced_asset',
-      } satisfies AssetAccess
-    : await findPublicAssetAccess(env, decodedKey);
-
-  if (!assetOwner) return json({ error: 'Asset not found' }, 404);
-  if (assetOwner.owner_user_id !== auth.userId && (!assetOwner.public_flag || !assetOwner.public_asset)) {
-    return json({ error: 'Asset not found' }, 404);
-  }
+  if (!auth.userId || namespaceOwner !== auth.userId) return json({ error: 'Asset not found' }, 404);
 
   const object = await env.SPRITES.get(decodedKey);
   if (!object) return json({ error: 'Asset missing' }, 404);
   const headers = new Headers();
   headers.set('Content-Type', object.httpMetadata?.contentType ?? 'application/octet-stream');
-  headers.set('Cache-Control', cacheControlForAsset(assetOwner));
+  headers.set('Cache-Control', 'private, no-store');
   headers.set('X-Content-Type-Options', 'nosniff');
   return new Response(object.body, { headers });
+}
+
+async function publicAssetResponse(env: Env, blobKey: string): Promise<Response> {
+  const object = await env.SPRITES.get(blobKey);
+  if (!object) return json({ error: 'Asset missing' }, 404, NO_STORE_HEADERS);
+  const headers = new Headers(PUBLIC_ASSET_CACHE_HEADERS);
+  headers.set('Content-Type', object.httpMetadata?.contentType ?? 'application/octet-stream');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  if (object.httpEtag) headers.set('ETag', object.httpEtag);
+  return new Response(object.body, { headers });
+}
+
+export async function getPublicFighterSourceAsset(
+  env: Env,
+  fighterId: string,
+  kind: PublicSourceKind,
+  revision: string,
+): Promise<Response> {
+  const column = PUBLIC_SOURCE_COLUMNS[kind];
+  const fighter = await env.DB.prepare(`
+    SELECT f.${column} AS blob_key
+    FROM fighters f
+    WHERE f.id = ? AND f.public_flag = 1
+      AND ${playableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId).first<{ blob_key: string | null }>();
+  if (!fighter?.blob_key || publicAssetRevision(fighter.blob_key) !== revision) {
+    return json({ error: 'Public asset not found' }, 404, NO_STORE_HEADERS);
+  }
+  return publicAssetResponse(env, fighter.blob_key);
+}
+
+export async function getPublicFighterSpriteAsset(
+  env: Env,
+  fighterId: string,
+  spriteId: string,
+  revision: string,
+): Promise<Response> {
+  const sprite = await env.DB.prepare(`
+    SELECT s.blob_key
+    FROM sprites s
+    JOIN fighters f ON f.id = s.fighter_id
+    WHERE f.id = ? AND f.public_flag = 1 AND s.id = ?
+      AND ${playableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId, spriteId).first<{ blob_key: string }>();
+  if (!sprite?.blob_key || publicAssetRevision(sprite.blob_key) !== revision) {
+    return json({ error: 'Public asset not found' }, 404, NO_STORE_HEADERS);
+  }
+  return publicAssetResponse(env, sprite.blob_key);
 }

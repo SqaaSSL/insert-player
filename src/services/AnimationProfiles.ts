@@ -139,7 +139,11 @@ const PROFILES: Record<string, AnimationProfile> = {
     baselineRatio: 0.95,
     promptRules: [
       'Keep the character full-size as they collapse. Do not make the figure shrink.',
-      'Show a fall to the ground, ending in a downed pose.',
+      'Use exactly eight readable key poses from standing impact through the final grounded hold.',
+      'Show a fall to the ground, ending in a compact downed pose with bent knees so the entire body fits inside one cell.',
+      'Every frame must contain exactly one complete character from head to feet with visible green margin on every side.',
+      'Never let the falling or downed body cross a cell boundary, span adjacent cells, or split into separate torso and leg cells.',
+      'Angle or foreshorten the final grounded pose diagonally inside its own cell instead of laying the body horizontally across the grid.',
     ],
   },
   victory: {
@@ -153,6 +157,8 @@ const PROFILES: Record<string, AnimationProfile> = {
       'Do not make this subtle, neutral, or close to the idle stance. It must look clearly more cheerful and victorious than the standing pose.',
       'Keep the move grounded throughout. No jump, no crouch, and no knockdown.',
       'The final frame should read as a strong held champion pose that can freeze on screen cleanly after the celebration.',
+      'Every frame must show the complete character from head to feet at the same camera distance as the reference.',
+      'Leave visible green margin above the head, below both feet, and on both sides in every cell. No waist-up or torso-only framing.',
     ],
   },
 };

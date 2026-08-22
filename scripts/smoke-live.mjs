@@ -63,7 +63,7 @@ const requiredPlayableAnimations = [
   'victory',
 ];
 const generationLegal = {
-  legalVersion: '2026-08-22',
+  legalVersion: '2026-08-22.5',
   ageConfirmed: true,
   termsAccepted: true,
   photoRightsConfirmed: true,
@@ -137,8 +137,36 @@ function assertOptionalHttpsUrl(value, label) {
 
 function assertCommunityOwner(owner, label) {
   assert(owner && typeof owner === 'object', `${label} owner is missing`);
-  assertPublicDisplayName(owner.name, `${label} owner`);
-  assertOptionalHttpsUrl(owner.avatarUrl, `${label} owner`);
+  assert(owner.name === 'Player', `${label} exposed an account display name`);
+  assert(!Object.hasOwn(owner, 'avatarUrl'), `${label} exposed the Clerk profile photo`);
+}
+
+function assertOpaqueCommunityAssets(fighter, label) {
+  const urls = [
+    fighter?.sources?.side,
+    fighter?.sources?.upright,
+    fighter?.sources?.crouch,
+    ...(fighter?.sprites ?? []).map((sprite) => sprite?.url),
+  ].filter(Boolean);
+  assert(fighter?.sources?.original === null, `${label} exposed the original upload`);
+  assert(
+    [fighter?.sources?.sideRaw, fighter?.sources?.uprightRaw, fighter?.sources?.crouchRaw]
+      .every((value) => value === null),
+    `${label} exposed a RAW source view`,
+  );
+  assert(
+    (fighter?.sprites ?? []).every((sprite) => sprite?.rawUrl === null),
+    `${label} exposed a RAW sprite URL`,
+  );
+  for (const assetUrl of urls) {
+    const parsed = new URL(assetUrl);
+    assert(
+      parsed.pathname.startsWith(`/public-assets/fighters/${encodeURIComponent(fighter.id)}/`),
+      `${label} did not use an opaque public fighter asset route`,
+    );
+    assert(!parsed.pathname.includes('/users/'), `${label} exposed an owner-scoped R2 path`);
+    assert(!/user_[A-Za-z0-9]+/.test(parsed.pathname), `${label} exposed a Clerk user id in an asset URL`);
+  }
 }
 
 function assertLeaderboardProfile(entry, label) {
@@ -272,6 +300,7 @@ function imageBlob() {
 async function runPublicSmoke() {
   const health = await waitForCurrentWorkerHealth();
   assert(health.status === 'ok', 'Health response did not report ok');
+  assert(health.version === '0.17.0', `/health did not report Worker 0.17.0 (got ${String(health.version ?? 'missing')})`);
   assert(health.legalVersion === generationLegal.legalVersion, '/health did not report the current legal version');
   assert(health.environment === 'production', '/health did not report production environment');
   assert(health.storage?.d1 === 'bound', '/health did not report D1 binding');
@@ -279,6 +308,7 @@ async function runPublicSmoke() {
   assert(health.providers === 'configured', '/health did not report configured provider secrets');
   assert(health.providerBudget === 'configured', '/health did not report a provider spend ceiling');
   assert(health.providerSpendRate === 'configured', '/health did not report a Gemini rolling spend-rate guard');
+  assert(health.durableGeneration === 'configured', '/health did not report durable backend generation');
   assert(health.turnstile === 'configured', '/health did not report configured Turnstile protection');
   assert(health.anonymousRookie === 'enabled', '/health did not report enabled anonymous Rookie launch flow');
   assert(health.privacy === 'pseudonymized', '/health did not report pseudonymized anonymous identifiers');
@@ -378,6 +408,7 @@ async function runPublicSmoke() {
   );
   for (const fighter of communityFeedBody.fighters ?? []) {
     assertCommunityOwner(fighter.owner, 'Community feed');
+    assertOpaqueCommunityAssets(fighter, 'Community feed');
   }
   log('/api/community is cache-friendly for public feed traffic');
 
@@ -396,6 +427,9 @@ async function runPublicSmoke() {
     assert(shareHtml.includes('rel="canonical"'), 'Public feed share page missing canonical community link');
     assert(/<script nonce="[a-f0-9]{32}">/.test(shareHtml), 'Public feed share page redirect script missing CSP nonce');
     assert(shareHtml.includes(`/community?fighter=${firstPublicFighter.id}`), 'Public feed share page missing community redirect');
+    assert(shareHtml.includes('/public-assets/fighters/'), 'Public feed share page did not use an opaque media URL');
+    assert(!shareHtml.includes('/users/'), 'Public feed share page exposed an owner-scoped R2 path');
+    assert(!/user_[A-Za-z0-9]+/.test(shareHtml), 'Public feed share page exposed a Clerk user id');
     log('public feed share page exposes crawler-ready fighter metadata');
   }
 
@@ -820,20 +854,20 @@ async function runAuthenticatedSmoke() {
   assert(!Object.hasOwn(detail.fighter, 'photoHash'), 'Community detail exposed photoHash');
   assertCommunityOwner(published.owner, 'Community listing');
   assertCommunityOwner(detail.fighter.owner, 'Community detail');
-  assert(detail.fighter?.sources?.original === null, 'Community detail exposed original upload');
+  assertOpaqueCommunityAssets(published, 'Community listing');
+  assertOpaqueCommunityAssets(detail.fighter, 'Community detail');
   const detailHeaders = await expectStatus('community fighter detail cache headers', `/api/community/${smokeFighterId}`, 200);
   assert(
     (detailHeaders.headers.get('Cache-Control') ?? '').includes('s-maxage=300'),
     'Community detail is missing short shared-cache headers',
   );
-  assert(published.sources?.original === null, 'Community listing exposed original upload');
-  assert(published.sprites?.[0]?.rawUrl === null, 'Community listing exposed raw sprite URL');
   assert(published.sprites?.[0]?.url, 'Community listing did not expose playable sprite URL');
+  const publishedPublicAssetUrl = published.sprites[0].url;
   const publicSprite = await expectStatus('public sprite without auth', published.sprites[0].url, 200);
   assert(publicSprite.headers.get('X-Content-Type-Options') === 'nosniff', 'Public sprite did not set nosniff');
   assert(
-    publicSprite.headers.get('Cache-Control') === 'public, max-age=31536000, immutable',
-    'Public sprite was not cached as an immutable public asset',
+    publicSprite.headers.get('Cache-Control') === 'public, max-age=60, s-maxage=300, must-revalidate',
+    'Public sprite did not use the short revocable public cache policy',
   );
   const sharePage = await expectStatus('published fighter share page', `/share/${smokeFighterId}`, 200);
   assert(
@@ -848,7 +882,9 @@ async function runAuthenticatedSmoke() {
   assert(shareHtml.includes('rel="canonical"'), 'Share page missing canonical community link');
   assert(/<script nonce="[a-f0-9]{32}">/.test(shareHtml), 'Share page redirect script missing CSP nonce');
   assert(shareHtml.includes(`/community?fighter=${smokeFighterId}`), 'Share page missing community redirect');
-  assert(shareHtml.includes('/assets/'), 'Share page did not use a public fighter asset preview');
+  assert(shareHtml.includes('/public-assets/fighters/'), 'Share page did not use an opaque public fighter asset preview');
+  assert(!shareHtml.includes('/users/'), 'Share page exposed an owner-scoped R2 path');
+  assert(!/user_[A-Za-z0-9]+/.test(shareHtml), 'Share page exposed a Clerk user id');
   log('community publishing exposes playable assets without exposing originals/raws');
 
   if (cloneClerkJwt) {
@@ -959,6 +995,23 @@ async function runAuthenticatedSmoke() {
   assert(Number(stats.player?.wins ?? 0) >= winsBeforeMatch + 1, 'Unranked match win did not update signed-in record');
   log('match reporting persists unranked match history');
   log('match reporting updates signed-in record');
+
+  await expectJson('unpublish fighter', `/api/fighters/${smokeFighterId}`, 200, {
+    method: 'PATCH',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ public: false }),
+  });
+  const revokedAssetUrl = new URL(publishedPublicAssetUrl);
+  revokedAssetUrl.searchParams.set('smoke-revoked', String(Date.now()));
+  const revokedAsset = await expectStatus('revoked public sprite', revokedAssetUrl.toString(), 404);
+  assert(revokedAsset.headers.get('Cache-Control') === 'no-store', 'Revoked public sprite should not be cached');
+  const unpublishedDetail = await expectStatus(
+    'unpublished fighter community detail',
+    `/api/community/${smokeFighterId}?smoke-revoked=${Date.now()}`,
+    404,
+  );
+  assert(unpublishedDetail.headers.get('Cache-Control') === 'no-store', 'Unpublished community detail should not be cached');
+  log('unpublishing revokes opaque public assets and community detail');
 }
 
 async function main() {

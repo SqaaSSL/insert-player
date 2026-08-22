@@ -1,0 +1,33 @@
+{
+  "name": "insert-player-image-processor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.mjs --external:@napi-rs/canvas",
+    "check": "tsc --noEmit",
+    "start": "node dist/server.mjs",
+    "fixture:clean-sheet": "tsx src/fixture-clean-sheet.ts",
+    "benchmark:providers:test": "tsx --test src/benchmark/rosterProviderBenchmark.test.ts",
+    "benchmark:providers:plan": "tsx src/benchmark/rosterProviderBenchmarkCli.ts plan",
+    "benchmark:providers:pricing": "tsx src/benchmark/rosterProviderBenchmarkCli.ts pricing",
+    "benchmark:providers:repair-gemini": "tsx src/benchmark/rosterProviderBenchmarkCli.ts repair-gemini-transport",
+    "benchmark:providers:execute": "tsx src/benchmark/rosterProviderBenchmarkCli.ts execute",
+    "benchmark:flash-sequence:test": "tsx --test src/benchmark/flashSequenceBenchmark.test.ts",
+    "benchmark:flash-sequence:plan": "tsx src/benchmark/flashSequenceBenchmarkCli.ts plan",
+    "benchmark:flash-sequence:pricing": "tsx src/benchmark/flashSequenceBenchmarkCli.ts pricing",
+    "benchmark:flash-sequence:execute": "tsx src/benchmark/flashSequenceBenchmarkCli.ts execute"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "1.0.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "esbuild": "0.28.2",
+    "tsx": "^4.21.0",
+    "typescript": "~5.9.3"
+  }
+}

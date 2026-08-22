@@ -32,6 +32,7 @@ const requiredSecrets = [
   'CLERK_WEBHOOK_SIGNING_SECRET',
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
+  'GENERATION_JOB_SIGNING_SECRET',
 ];
 
 const sampleFragments = [
@@ -527,6 +528,10 @@ function assertRemoteD1Schema() {
     'community_reports',
     'provider_spend_months',
     'provider_spend_reservations',
+    'provider_cost_events',
+    'generation_jobs',
+    'generation_job_events',
+    'provider_request_cache',
   ];
   const missing = requiredTables.filter((table) => !output.includes(`"name": "${table}"`));
   if (missing.length > 0) {
@@ -657,6 +662,38 @@ function assertRemoteD1Schema() {
     const costOutput = `${providerCostEvents.stdout ?? ''}${providerCostEvents.stderr ?? ''}`.trim();
     fail(`Remote D1 database ${databaseName} is missing migration 0017 provider cost events.\n${costOutput}`);
   }
+
+  const durableGeneration = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    'SELECT id, workflow_instance_id, provider_session_id, progress_total FROM generation_jobs LIMIT 0;',
+  ], workerDir);
+  if (durableGeneration.status !== 0) {
+    const generationOutput = `${durableGeneration.stdout ?? ''}${durableGeneration.stderr ?? ''}`.trim();
+    fail(`Remote D1 database ${databaseName} is missing migration 0018 durable generation jobs.\n${generationOutput}`);
+  }
+
+  const generationIndexes = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_generation_jobs_active_fighter', 'idx_provider_request_cache_job');",
+  ], workerDir);
+  const indexOutput = generationIndexes.stdout ?? '';
+  if (
+    generationIndexes.status !== 0
+    || !indexOutput.includes('idx_generation_jobs_active_fighter')
+    || !indexOutput.includes('idx_provider_request_cache_job')
+  ) {
+    fail(`Remote D1 database ${databaseName} is missing durable-generation indexes.\n${`${generationIndexes.stdout ?? ''}${generationIndexes.stderr ?? ''}`.trim()}`);
+  }
 }
 
 function resolveWorkerHealthUrl() {
@@ -717,6 +754,7 @@ async function assertLiveHealth() {
     ['providerBudget', 'configured'],
     ['providerSpendRate', 'configured'],
     ['providers', 'configured'],
+    ['durableGeneration', 'configured'],
     ['privacy', 'pseudonymized'],
   ];
   for (const [key, value] of expected) {

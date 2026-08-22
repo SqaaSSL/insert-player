@@ -1,4 +1,5 @@
-import { defineConfig, type Plugin, loadEnv } from 'vite';
+import { type Plugin, loadEnv } from 'vite';
+import { configDefaults, defineConfig } from 'vitest/config';
 import tailwindcss from '@tailwindcss/vite';
 import type { IncomingMessage, ServerResponse } from 'http';
 
@@ -244,4 +245,10 @@ function prelaunchEntryPlugin(mode: string): Plugin {
 export default defineConfig(({ mode }) => ({
   envDir: mode === 'prelaunch' ? false : undefined,
   plugins: [prelaunchEntryPlugin(mode), tailwindcss(), apiProxyPlugin()],
+  test: {
+    exclude: [
+      ...configDefaults.exclude,
+      'processor/src/benchmark/**/*.test.ts',
+    ],
+  },
 }));
