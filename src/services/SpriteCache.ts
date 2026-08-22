@@ -107,6 +107,7 @@ interface CachedMeta {
   cloudFighterId?: string | null;
   cloudPublic?: boolean;
   cloudSourceHashes?: Record<string, string | null>;
+  cloudSpriteVersionCount?: number;
   pendingGenerationPurchaseId?: string | null;
   introVideoPrompt?: string | null;
   introVideoModel?: 'freepik-auto' | 'kling-v2-1-std' | 'veo-3-1' | 'runway-gen4-turbo' | 'fal-ltx-v2-3-fast' | 'fal-kling-v2-6-pro' | 'fal-vidu-q3' | null;

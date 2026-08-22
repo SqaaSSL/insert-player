@@ -381,6 +381,9 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect((await uploadFighterSprite(
         spriteRequest({ marker: 1 }), env, auth, 'fighter-target',
       )).status).toBe(200);
+      await db.prepare(
+        "UPDATE fighters SET updated_at = '2000-01-01 00:00:00' WHERE id = ?"
+      ).bind('fighter-target').run();
       const original = await db.prepare(`
         SELECT content_hash FROM sprites
         WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
@@ -397,8 +400,12 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         SELECT COUNT(*) AS count FROM sprite_versions
         WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
       `).bind('fighter-target', 'idle', 'contender').first<{ count: number }>();
+      const fighterAfterArchive = await db.prepare(
+        'SELECT updated_at FROM fighters WHERE id = ?'
+      ).bind('fighter-target').first<{ updated_at: string }>();
       expect(archivedOnly?.content_hash).toBe(original?.content_hash);
       expect(versionCount?.count).toBe(2);
+      expect(fighterAfterArchive?.updated_at).not.toBe('2000-01-01 00:00:00');
 
       const archivedVersion = await db.prepare(`
         SELECT content_hash, raw_content_hash FROM sprite_versions
