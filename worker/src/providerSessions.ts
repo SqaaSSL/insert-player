@@ -891,10 +891,11 @@ async function reserveMonthlyProviderSpend(
   return reservation?.period ?? null;
 }
 
-async function releaseProviderSpend(
+async function releaseUnstartedProviderReservation(
   env: Env,
-  reservation: Omit<ProviderSpendReservation, 'monthlyPeriod'> & { monthlyPeriod?: string | null },
-  httpStatus?: number,
+  reservation: Omit<ProviderSpendReservation, 'monthlyPeriod' | 'eventId'> & {
+    monthlyPeriod?: string | null;
+  },
 ): Promise<void> {
   const statements = [
     env.DB.prepare(`
@@ -919,15 +920,6 @@ async function releaseProviderSpend(
       DELETE FROM provider_spend_reservations
       WHERE id = ?
     `).bind(reservation.rollingReservationId));
-  }
-  if (reservation.eventId) {
-    statements.push(env.DB.prepare(`
-      UPDATE provider_cost_events
-      SET outcome = 'failed',
-          http_status = ?,
-          finalized_at = datetime('now')
-      WHERE id = ? AND outcome = 'reserved'
-    `).bind(httpStatus ?? null, reservation.eventId));
   }
   await env.DB.batch(statements);
 }
@@ -964,9 +956,15 @@ export async function finalizeProviderRequest(
     return clientResponse;
   }
   try {
-    await releaseProviderSpend(env, reservation, providerStatus);
+    await env.DB.prepare(`
+      UPDATE provider_cost_events
+      SET outcome = 'failed',
+          http_status = ?,
+          finalized_at = datetime('now')
+      WHERE id = ? AND outcome = 'reserved'
+    `).bind(providerStatus, reservation.eventId).run();
   } catch (error) {
-    console.error('[provider] Failed to release an unsuccessful provider reservation', error);
+    console.error('[provider] Failed to finalize unsuccessful provider cost event', error);
   }
   return clientResponse;
 }
@@ -1064,42 +1062,88 @@ export async function requireProviderSession(
   if (session) {
     const monthlyPeriod = await reserveMonthlyProviderSpend(env, estimatedCostCents);
     if (!monthlyPeriod) {
-      await releaseProviderSpend(env, {
+      await releaseUnstartedProviderReservation(env, {
         sessionId,
         estimatedCostCents,
         monthlyPeriod: null,
         rollingReservationId: rollingReservation.id,
-        eventId: null,
       });
       await abandonProviderRequestCache(env, state, 'Provider monthly capacity unavailable');
       return providerMonthlyBudgetResponse();
     }
     const eventId = generateId();
     try {
-      await env.DB.prepare(`
-        INSERT INTO provider_cost_events (
-          id, session_id, charge_id, tier, purpose, billing_operation,
-          provider, model_path, estimated_cost_cents
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        eventId,
-        sessionId,
-        existing.charge_id ?? null,
-        existing.tier,
-        existing.purpose,
-        billingOperationForSession(existing.purpose, existing.charge_reason),
-        route.provider,
-        route.path,
-        estimatedCostCents,
-      ).run();
+      let eventResultIndex = 0;
+      const statements: D1PreparedStatement[] = [];
+      let eventStatement: D1PreparedStatement;
+      if (existing.charge_id) {
+        if (!auth.userId) throw new Error('A charged provider request requires an authenticated user');
+        statements.push(env.DB.prepare(`
+          UPDATE generation_charges
+          SET status = 'committed', updated_at = datetime('now')
+          WHERE id = ? AND user_id = ? AND status IN ('reserved', 'committed')
+          RETURNING status
+        `).bind(existing.charge_id, auth.userId));
+        eventStatement = env.DB.prepare(`
+          INSERT INTO provider_cost_events (
+            id, session_id, charge_id, tier, purpose, billing_operation,
+            provider, model_path, estimated_cost_cents
+          )
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM generation_charges
+            WHERE id = ? AND user_id = ? AND status = 'committed'
+          )
+          RETURNING id
+        `).bind(
+          eventId,
+          sessionId,
+          existing.charge_id,
+          existing.tier,
+          existing.purpose,
+          billingOperationForSession(existing.purpose, existing.charge_reason),
+          route.provider,
+          route.path,
+          estimatedCostCents,
+          existing.charge_id,
+          auth.userId,
+        );
+        eventResultIndex = 1;
+      } else {
+        eventStatement = env.DB.prepare(`
+          INSERT INTO provider_cost_events (
+            id, session_id, charge_id, tier, purpose, billing_operation,
+            provider, model_path, estimated_cost_cents
+          )
+          VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)
+          RETURNING id
+        `).bind(
+          eventId,
+          sessionId,
+          existing.tier,
+          existing.purpose,
+          billingOperationForSession(existing.purpose, existing.charge_reason),
+          route.provider,
+          route.path,
+          estimatedCostCents,
+        );
+      }
+      statements.push(eventStatement);
+      // D1 batches are transactional: the charge becomes irrevocably consumed
+      // in the same transaction that records the first billable provider try.
+      const results = await env.DB.batch(statements);
+      if (existing.charge_id && !(results[0]?.results?.[0] as { status?: string } | undefined)?.status) {
+        throw new Error('Generation charge is unavailable for provider processing');
+      }
+      if (!(results[eventResultIndex]?.results?.[0] as { id?: string } | undefined)?.id) {
+        throw new Error('Provider cost event could not be reserved');
+      }
     } catch (error) {
-      await releaseProviderSpend(env, {
+      await releaseUnstartedProviderReservation(env, {
         sessionId,
         estimatedCostCents,
         monthlyPeriod,
         rollingReservationId: rollingReservation.id,
-        eventId: null,
       });
       await abandonProviderRequestCache(env, state, 'Provider cost accounting unavailable');
       console.error('[provider] Failed to reserve durable provider cost event', error);

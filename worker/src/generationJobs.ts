@@ -322,7 +322,7 @@ export async function createGenerationJob(
         auth.userId,
         purchaseId,
         fighterId,
-        'Generation authorization is no longer active; credits were restored',
+        'Generation authorization is no longer active; the unused reservation was released',
         409,
       );
     }
@@ -333,7 +333,7 @@ export async function createGenerationJob(
     Date.parse(authorization.provider_expires_at) <= Date.now()
   ) {
     await settleGenerationPurchase(env, auth.userId, purchaseId, false, fighterId);
-    return json({ error: 'Generation authorization expired; credits were restored' }, 409);
+    return json({ error: 'Generation authorization expired; the unused reservation was released' }, 409);
   }
   const operation = operationForAuthorization(authorization);
   if (!operation) {
@@ -342,7 +342,7 @@ export async function createGenerationJob(
       auth.userId,
       purchaseId,
       fighterId,
-      'Generation authorization has the wrong operation scope; credits were restored',
+      'Generation authorization has the wrong operation scope; the unused reservation was released',
       403,
     );
   }
@@ -353,13 +353,13 @@ export async function createGenerationJob(
       auth.userId,
       purchaseId,
       fighterId,
-      `${targetError}; credits were restored`,
+      `${targetError}; the unused reservation was released`,
       400,
     );
   }
   const assetError = await validateRequiredAssets(env, authorization, operation, targetName);
   if (assetError) {
-    return rejectReservedJob(env, auth.userId, purchaseId, fighterId, `${assetError}; credits were restored`, 409);
+    return rejectReservedJob(env, auth.userId, purchaseId, fighterId, `${assetError}; the unused reservation was released`, 409);
   }
   if (
     !env.FIGHTER_GENERATION
@@ -371,7 +371,7 @@ export async function createGenerationJob(
       auth.userId,
       purchaseId,
       fighterId,
-      'Durable generation is temporarily unavailable; credits were restored',
+      'Durable generation is temporarily unavailable; the unused reservation was released',
       503,
     );
   }
@@ -395,7 +395,7 @@ export async function createGenerationJob(
     }
     await settleGenerationPurchase(env, auth.userId, purchaseId, false, fighterId);
     return json({
-      error: 'A generation is already running for this fighter; the new reservation was restored',
+      error: 'A generation is already running for this fighter; the unused reservation was released',
       job: serializeJob(activeFighterJob, await getJobEvents(env, activeFighterJob.id)),
     }, 409);
   }
@@ -459,7 +459,7 @@ export async function createGenerationJob(
     }
     await settleGenerationPurchase(env, auth.userId, purchaseId, false, fighterId);
     return json({
-      error: 'A generation is already running for this fighter; the new reservation was restored',
+      error: 'A generation is already running for this fighter; the unused reservation was released',
       job: serializeJob(racedJob, await getJobEvents(env, racedJob.id)),
     }, 409);
   }
@@ -476,7 +476,7 @@ export async function createGenerationJob(
       env.DB.prepare(`
         UPDATE generation_jobs
         SET status = 'failed', stage = 'failed', error_code = 'workflow_start_failed',
-            error_message = 'Generation could not start; credits were restored',
+            error_message = 'Generation could not start external processing; the unused reservation was released',
             finished_at = datetime('now'), updated_at = datetime('now')
         WHERE id = ? AND status = 'queued'
       `).bind(jobId),
@@ -486,7 +486,7 @@ export async function createGenerationJob(
       `).bind(generateId(), jobId),
     ]);
     await settleGenerationPurchase(env, auth.userId, purchaseId, false, fighterId);
-    return json({ error: 'Generation could not start; credits were restored' }, 503);
+    return json({ error: 'Generation could not start external processing; the unused reservation was released' }, 503);
   }
 
   const job = await getOwnedJob(env, auth.userId, jobId);

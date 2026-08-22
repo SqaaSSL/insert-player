@@ -60,7 +60,7 @@ function LegalNotice() {
 
       <section>
         <h2>3. Prices and taxes</h2>
-        <p>Credit-pack and generation prices are shown before purchase or use. Consumer prices include applicable taxes when stated at Checkout. There are no shipping costs because the service supplies digital content only. The Terms of Service and Refund Policy explain credit use, immediate digital performance, failures, and refunds.</p>
+        <p>Credit-pack and generation prices are shown before purchase or use. Consumer prices include applicable taxes when stated at Checkout. There are no shipping costs because the service supplies digital content only. The Terms of Service and Cancellations &amp; Remedies Policy explain credit use, immediate digital performance, service failures, and mandatory remedies.</p>
       </section>
 
       <section>
@@ -113,7 +113,7 @@ function PrivacyPolicy() {
         <h2>3. Why we process it</h2>
         <ul>
           <li>To create, privately store, sync, upgrade, and play the fighter you request, and to publish its generated assets only when you choose.</li>
-          <li>To authenticate your account, fulfil purchases, restore failed generation credits, and provide support.</li>
+          <li>To authenticate your account, fulfil purchases, settle generation credits, investigate failures, and provide support or mandatory remedies.</li>
           <li>To prevent fraud, enforce rate limits, secure private assets, and investigate service failures.</li>
           <li>To investigate community safety reports and remove content that breaches these terms or applicable law.</li>
           <li>To meet tax, accounting, consumer-protection, and other legal duties.</li>
@@ -219,9 +219,9 @@ function TermsOfService() {
         <ul>
           <li>Credit packs are one-time purchases. Credits have no cash value, are not transferable, and do not expire while your account remains active.</li>
           <li>The selected tier shows its credit cost before generation begins. Prices shown to consumers include applicable tax where the checkout says so.</li>
-          <li>Credits are committed only after a generation completes. A failed or expired reserved generation restores the reserved credits automatically.</li>
+          <li>Credits are reserved when a generation is accepted. If Insert Player cannot start external AI processing, the unused reservation is released. Once the first external AI request begins, the displayed credits are consumed and are not automatically restored because a provider fails, the job is delayed, or the result needs remediation.</li>
           <li>An approved payment refund or payment dispute reverses the corresponding pack credits. If those credits were already spent, your wallet may become negative and further paid generation remains unavailable until the balance is restored.</li>
-          <li>When you start a paid generation, you request immediate performance and acknowledge that consumed credits are not refundable merely because you change your mind after performance starts. Mandatory consumer remedies still apply.</li>
+          <li>When you start a paid generation, you request immediate performance and acknowledge that consumed credits are not voluntarily refundable after external AI processing begins. This does not limit mandatory remedies for non-delivery, material lack of conformity, duplicate billing, or an incorrect charge.</li>
         </ul>
       </section>
 
@@ -254,38 +254,38 @@ function TermsOfService() {
   );
 }
 
-function RefundPolicy() {
+function CancellationAndRemediesPolicy() {
   return (
     <>
       <header className="legal-page__intro">
-        <p className="gallery-eyebrow">Credit Protection</p>
-        <h1>Refund Policy</h1>
-        <p>Failed generation should not cost you credits. Statutory consumer rights remain available where they apply.</p>
+        <p className="gallery-eyebrow">Digital Performance</p>
+        <h1>Cancellations &amp; Remedies</h1>
+        <p>There are no voluntary refunds after external AI processing begins. Mandatory consumer remedies remain available where they apply.</p>
       </header>
 
       <section>
-        <h2>Automatic credit restoration</h2>
-        <p>If a paid fighter generation fails before completion or its reservation expires, Insert Player restores the reserved credits to your wallet. Retrying after restoration creates a new generation request.</p>
+        <h2>Before external processing</h2>
+        <p>Insert Player first reserves the displayed credits. If the request is rejected, conflicts with an existing job, or cannot reach external AI processing, the unused reservation is released. This is not a refund of inference spend because no provider request was started.</p>
       </section>
 
       <section>
-        <h2>Unused credit packs</h2>
-        <p>If you are entitled to a cooling-off period, you may request cancellation of an unused credit pack within 14 days of purchase. We may reduce the refund to account for credits already used with your request for immediate performance, as permitted by law. A payment refund reverses the corresponding credits; if they were already spent, the wallet may become negative until new credits restore it.</p>
+        <h2>After external processing begins</h2>
+        <p>The displayed credits are consumed when the first external AI request begins. They are not automatically restored if a provider returns an error, a job is delayed, an output is not to your taste, or the output needs further work. Insert Player may retry idempotently or provide a controlled repair without charging the same generation again.</p>
       </section>
 
       <section>
-        <h2>Used credits and defective service</h2>
-        <p>After you expressly start a generation, the credits used for completed digital performance are normally non-refundable. This does not remove remedies for a defective, unavailable, duplicated, or incorrectly charged service. We may restore credits or issue a payment refund depending on the fault.</p>
+        <h2>Credit packs and change of mind</h2>
+        <p>Credit packs are delivered immediately and are not voluntarily refundable because you change your mind. If a mandatory withdrawal right still applies to an unused pack, or the law requires a proportionate remedy, Insert Player will honour it. Any payment reversal removes the corresponding credits; if they were already spent, the wallet may become negative.</p>
       </section>
 
       <section>
-        <h2>Request a refund</h2>
-        <p>Email <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> from the address on your Insert Player account. Include the Stripe receipt or Checkout Session ID and the pack or generation involved. Approved payment refunds return to the original payment method; bank processing time is controlled by Stripe and your payment provider.</p>
+        <h2>Non-delivery or lack of conformity</h2>
+        <p>Email <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> from the address on your Insert Player account and include the fighter or Checkout reference involved. The primary remedy is to put the digital service in conformity through repair or controlled re-performance. A price reduction, payment refund, or other remedy is available only when required by applicable law or approved for a duplicated or incorrect charge.</p>
       </section>
 
       <section>
         <h2>Account deletion</h2>
-        <p>Deleting an account does not automatically refund an unused credit balance. Request any legally available refund before deleting the account so we can verify the purchase and balance.</p>
+        <p>Deleting an account does not create a refund right or convert an unused credit balance into cash. Request any mandatory remedy before deleting the account so we can verify the purchase, generation history, and balance.</p>
       </section>
     </>
   );
@@ -316,7 +316,7 @@ export function LegalPage({ kind, backLabel = 'Back to game', onBack, onNavigate
             href="/refunds"
             aria-current={kind === 'refunds' ? 'page' : undefined}
             onClick={(event) => { event.preventDefault(); onNavigate('/refunds'); }}
-          >Refunds</a>
+          >Cancellations</a>
         </nav>
       </div>
 
@@ -327,7 +327,7 @@ export function LegalPage({ kind, backLabel = 'Back to game', onBack, onNavigate
             ? <PrivacyPolicy />
             : kind === 'terms'
               ? <TermsOfService />
-              : <RefundPolicy />}
+              : <CancellationAndRemediesPolicy />}
         <p className="legal-page__updated">Effective {LEGAL_EFFECTIVE_DATE} · {PUBLIC_ORIGIN}</p>
       </article>
     </main>

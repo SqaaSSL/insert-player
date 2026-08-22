@@ -450,6 +450,7 @@ function assertApiOperationsAreSessionScoped() {
   const gemini = readFileSync(join(root, 'src/services/GeminiApi.ts'), 'utf8');
   const providerSessions = readFileSync(join(root, 'worker/src/providerSessions.ts'), 'utf8');
   const providerSessionTests = readFileSync(join(root, 'worker/src/providerSessions.test.ts'), 'utf8');
+  const providerSessionIntegrationTests = readFileSync(join(root, 'worker/src/providerSessions.integration.test.ts'), 'utf8');
   const providerSpendMigration = readFileSync(join(root, 'worker/migrations/0014_provider_spend_budgets.sql'), 'utf8');
   const providerSpendRateMigration = readFileSync(join(root, 'worker/migrations/0016_provider_spend_rate_window.sql'), 'utf8');
   const providerCostEventsMigration = readFileSync(join(root, 'worker/migrations/0017_provider_cost_events.sql'), 'utf8');
@@ -488,7 +489,10 @@ function assertApiOperationsAreSessionScoped() {
     'provider_cost_events',
     'billing_operation',
     'export async function finalizeProviderRequest',
-    'await releaseProviderSpend(env, reservation, providerStatus)',
+    "SET status = 'committed', updated_at = datetime('now')",
+    "it('keeps attempted provider spend after an upstream failure'",
+    "it('keeps the committed charge and provider spend after an upstream failure'",
+    "it('fails closed without cost residue when the charge was released concurrently'",
     'PRO_REQUEST_START_INTERVAL_MS = 11_000',
     'err instanceof GeminiRequestError && err.retryable',
     'maxAttempts ?? 5',
@@ -499,8 +503,9 @@ function assertApiOperationsAreSessionScoped() {
     'let providerSessionId',
     'runtimeAnimModelOverride',
     'setGeminiAnimModelOverride',
+    'releaseProviderSpend(env, reservation, providerStatus)',
   ];
-  const combined = `${apiClient}\n${apiClientTests}\n${createPage}\n${galleryPage}\n${cloudFighters}\n${gemini}\n${geminiPolicy}\n${geminiPolicyTests}\n${providerSessions}\n${providerSessionTests}\n${providerSpendMigration}\n${providerSpendRateMigration}\n${providerCostEventsMigration}\n${productionWrangler}\n${sandboxWrangler}`;
+  const combined = `${apiClient}\n${apiClientTests}\n${createPage}\n${galleryPage}\n${cloudFighters}\n${gemini}\n${geminiPolicy}\n${geminiPolicyTests}\n${providerSessions}\n${providerSessionTests}\n${providerSessionIntegrationTests}\n${providerSpendMigration}\n${providerSpendRateMigration}\n${providerCostEventsMigration}\n${productionWrangler}\n${sandboxWrangler}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
   if (missing.length > 0 || foundForbidden.length > 0) {
@@ -979,8 +984,8 @@ function assertLegalConsentAndPrivacyIsWired() {
     liveReadiness,
   ].join('\n');
   const required = [
-    "CURRENT_LEGAL_VERSION = '2026-08-22.5'",
-    "LEGAL_VERSION = '2026-08-22.5'",
+    "CURRENT_LEGAL_VERSION = '2026-08-23.1'",
+    "LEGAL_VERSION = '2026-08-23.1'",
     "Paseo de la Castellana 126, 8th floor right, Madrid, Spain",
     "Registro Mercantil de Madrid, section 8, sheet M-784524",
     "type LegalPageKind = 'legal' | 'privacy' | 'terms' | 'refunds'",
@@ -1553,11 +1558,11 @@ function assertLiveSmokeCoversCriticalPaths() {
     'launchHealthErrors.join',
     'Public smoke warning: /health reports auth=',
     'Use npm run check:launch for launch readiness.',
-    'live_smoke_rookie_refund',
-    'authenticated Rookie generation reservation refunds idempotently',
-    'live_smoke_contender_refund',
+    'live_smoke_rookie_release',
+    'authenticated Rookie generation releases an unused reservation idempotently',
+    'live_smoke_contender_release',
     'authenticated paid-tier generation enforces credits',
-    'authenticated paid-tier generation reservation refunds credits',
+    'authenticated paid-tier generation releases an unused reservation',
     'live_smoke_foreign_fighter_guard',
     'generation authorization rejects foreign fighter ids before reservation',
     'provider proxy blocks non-allowlisted routes',
@@ -2341,41 +2346,41 @@ function replayMigrations() {
 
         BEGIN;
         INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
-        SELECT 'paid-refund-1', user_id, credit_cost, 'generation_refund:paid-charge-1', fighter_id
+        SELECT 'paid-release-1', user_id, credit_cost, 'generation_reservation_release:paid-charge-1', fighter_id
         FROM generation_charges
         WHERE id = 'paid-charge-1' AND user_id = 'billing-paid' AND status = 'reserved';
         UPDATE users
         SET credits_balance = credits_balance + COALESCE(
-              (SELECT delta FROM credit_ledger WHERE id = 'paid-refund-1'),
+              (SELECT delta FROM credit_ledger WHERE id = 'paid-release-1'),
               0
             )
         WHERE id = 'billing-paid' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'paid-refund-1'
+          SELECT 1 FROM credit_ledger WHERE id = 'paid-release-1'
         );
         UPDATE generation_charges
-        SET status = 'refunded', refund_ledger_id = 'paid-refund-1'
+        SET status = 'refunded', refund_ledger_id = 'paid-release-1'
         WHERE id = 'paid-charge-1' AND user_id = 'billing-paid' AND status = 'reserved' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'paid-refund-1'
+          SELECT 1 FROM credit_ledger WHERE id = 'paid-release-1'
         );
         COMMIT;
 
         BEGIN;
         INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
-        SELECT 'paid-refund-duplicate', user_id, credit_cost, 'generation_refund:paid-charge-1', fighter_id
+        SELECT 'paid-release-duplicate', user_id, credit_cost, 'generation_reservation_release:paid-charge-1', fighter_id
         FROM generation_charges
         WHERE id = 'paid-charge-1' AND user_id = 'billing-paid' AND status = 'reserved';
         UPDATE users
         SET credits_balance = credits_balance + COALESCE(
-              (SELECT delta FROM credit_ledger WHERE id = 'paid-refund-duplicate'),
+              (SELECT delta FROM credit_ledger WHERE id = 'paid-release-duplicate'),
               0
             )
         WHERE id = 'billing-paid' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'paid-refund-duplicate'
+          SELECT 1 FROM credit_ledger WHERE id = 'paid-release-duplicate'
         );
         UPDATE generation_charges
-        SET status = 'refunded', refund_ledger_id = 'paid-refund-duplicate'
+        SET status = 'refunded', refund_ledger_id = 'paid-release-duplicate'
         WHERE id = 'paid-charge-1' AND user_id = 'billing-paid' AND status = 'reserved' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'paid-refund-duplicate'
+          SELECT 1 FROM credit_ledger WHERE id = 'paid-release-duplicate'
         );
         COMMIT;
 
@@ -2383,12 +2388,12 @@ function replayMigrations() {
           (SELECT credits_balance FROM users WHERE id = 'billing-paid') || '|' ||
           (SELECT COUNT(*) FROM generation_charges WHERE user_id = 'billing-paid') || '|' ||
           (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-paid') || '|' ||
-          (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-paid' AND reason LIKE 'generation_refund:%') || '|' ||
+          (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-paid' AND reason LIKE 'generation_reservation_release:%') || '|' ||
           (SELECT status FROM generation_charges WHERE id = 'paid-charge-1');
       `,
     ]);
     if (paidGenerationChargeState !== '15|1|2|1|refunded') {
-      throw new Error(`Paid generation charge/refund was not atomic and idempotent; got ${paidGenerationChargeState}`);
+      throw new Error(`Paid generation reservation release was not atomic and idempotent; got ${paidGenerationChargeState}`);
     }
 
     const freeGenerationChargeState = runCapture('D1 free Rookie charge atomicity check', sqlite, [
@@ -2437,7 +2442,7 @@ function replayMigrations() {
 
         BEGIN;
         INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
-        SELECT 'free-refund-1', user_id, credit_cost, 'generation_refund:free-charge-1', fighter_id
+        SELECT 'free-release-1', user_id, credit_cost, 'generation_reservation_release:free-charge-1', fighter_id
         FROM generation_charges
         WHERE id = 'free-charge-1' AND user_id = 'billing-free' AND status = 'reserved';
         UPDATE users
@@ -2454,29 +2459,29 @@ function replayMigrations() {
               ELSE 0
             END
         WHERE id = 'billing-free' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'free-refund-1'
+          SELECT 1 FROM credit_ledger WHERE id = 'free-release-1'
         );
         UPDATE generation_charges
-        SET status = 'refunded', refund_ledger_id = 'free-refund-1'
+        SET status = 'refunded', refund_ledger_id = 'free-release-1'
         WHERE id = 'free-charge-1' AND user_id = 'billing-free' AND status = 'reserved' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'free-refund-1'
+          SELECT 1 FROM credit_ledger WHERE id = 'free-release-1'
         );
         COMMIT;
 
         BEGIN;
         INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
-        SELECT 'free-refund-duplicate', user_id, credit_cost, 'generation_refund:free-charge-1', fighter_id
+        SELECT 'free-release-duplicate', user_id, credit_cost, 'generation_reservation_release:free-charge-1', fighter_id
         FROM generation_charges
         WHERE id = 'free-charge-1' AND user_id = 'billing-free' AND status = 'reserved';
         UPDATE users
         SET free_rookie_generations_used = free_rookie_generations_used - 1
         WHERE id = 'billing-free' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'free-refund-duplicate'
+          SELECT 1 FROM credit_ledger WHERE id = 'free-release-duplicate'
         );
         UPDATE generation_charges
-        SET status = 'refunded', refund_ledger_id = 'free-refund-duplicate'
+        SET status = 'refunded', refund_ledger_id = 'free-release-duplicate'
         WHERE id = 'free-charge-1' AND user_id = 'billing-free' AND status = 'reserved' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'free-refund-duplicate'
+          SELECT 1 FROM credit_ledger WHERE id = 'free-release-duplicate'
         );
         COMMIT;
 
@@ -2484,12 +2489,12 @@ function replayMigrations() {
           (SELECT free_rookie_generations_used FROM users WHERE id = 'billing-free') || '|' ||
           (SELECT COUNT(*) FROM generation_charges WHERE user_id = 'billing-free') || '|' ||
           (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-free') || '|' ||
-          (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-free' AND reason LIKE 'generation_refund:%') || '|' ||
+          (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-free' AND reason LIKE 'generation_reservation_release:%') || '|' ||
           (SELECT status FROM generation_charges WHERE id = 'free-charge-1');
       `,
     ]);
     if (freeGenerationChargeState !== '0|1|2|1|refunded') {
-      throw new Error(`Free Rookie charge/refund was not atomic and idempotent; got ${freeGenerationChargeState}`);
+      throw new Error(`Free Rookie reservation release was not atomic and idempotent; got ${freeGenerationChargeState}`);
     }
 
     const firstStripeClaim = runCapture('D1 Stripe checkout first claim check', sqlite, [
@@ -3157,7 +3162,7 @@ function assertDurableGenerationIsWired() {
     "retention: { successRetention: '30 days', errorRetention: '30 days' }",
     "locationHint: 'weur'",
     "status IN ('queued', 'running')",
-    'credits were restored',
+    'unused reservation was released',
     'export class FighterGenerationWorkflow extends WorkflowEntrypoint',
     "retries: { limit: 5, delay: '30 seconds'",
     "timeout: '3 hours'",
@@ -3195,7 +3200,7 @@ function assertDurableGenerationIsWired() {
     'keeps one reserved purchase when identical job requests race',
     'starts an idempotent one-target animation retry in the durable workflow',
     'starts a one-target canonical source retry with the source scope',
-    'restores a retry reservation when its target is outside the scoped animation set',
+    'releases a retry reservation when its target is outside the scoped animation set',
     'keeps a reservation uncommitted when the durable completion batch fails',
   ];
   const missing = required.filter((snippet) => !combined.toLowerCase().includes(snippet.toLowerCase()));

@@ -94,7 +94,7 @@ Run the full gate before requesting review or deploying:
 npm run check:production
 ```
 
-This includes frontend style guards, TypeScript, 196 tests across 40 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
+This includes frontend style guards, TypeScript, 199 tests across 40 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
 
 Useful focused commands:
 
@@ -181,11 +181,13 @@ The browser never receives provider or Stripe secret keys. Provider calls requir
 - Canonical side, upright, and crouch source views always use Gemini Pro, regardless of fighter tier.
 - Preserve every generated version locally and in cloud storage. Upgrades and retries never delete paid assets.
 - Authenticated generation, upgrades, and retries must remain backend-owned durable jobs; a tab or network loss cannot cancel paid work.
+- Release a generation reservation only before the first external AI request. Commit the charge atomically with that first billable attempt; provider failure, timeout, or a result needing repair must never restore credits automatically.
 - The original photo and private fighter stay account-private. Publish requires a separate confirmation and exposes only the chosen fighter's clean generated source views/playable assets under the neutral author label `Player`; account names, emails, Clerk profile photos, Clerk/internal account ids, original uploads, RAW intermediates, private hashes, and archived history remain private. Public media uses revocable opaque URLs that never expose the owner-scoped R2 key. A future public handle requires separate opt-in.
 - Upgrades regenerate animations from scratch while retaining prior tiers.
 - React owns product UI. Do not create Phaser scenes for menus, gallery, auth, pricing, or account UI.
 - Use the existing Tailwind/component CSS system. No inline styles and no raw declarations inside `@layer`.
 - Keep provider and Stripe secrets server-side in Cloudflare Worker secrets.
+- Keep Stripe refund/dispute reconciliation because it removes credits only after Stripe or a bank has already reversed money. Do not add an API path that voluntarily initiates generation refunds.
 - Keep local, QA, and production identity, billing, storage, CSP, and environment files isolated.
 - Do not expose internal provider cost estimates through public APIs.
 - Do not weaken legal consent, rate limits, Turnstile, ownership checks, or cost-event retention to simplify a feature.

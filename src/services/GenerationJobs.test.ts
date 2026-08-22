@@ -69,7 +69,7 @@ describe('durable generation browser recovery', () => {
   it('reconnects to the existing fighter job when a duplicate reservation loses the start race', async () => {
     const running = { ...JOB, status: 'running' as const, stage: 'sprite:idle', progressCurrent: 4 };
     vi.mocked(apiFetch).mockResolvedValueOnce(Response.json({
-      error: 'A generation is already running for this fighter; the new reservation was restored',
+      error: 'A generation is already running for this fighter; the unused reservation was released',
       job: running,
     }, { status: 409 }));
 

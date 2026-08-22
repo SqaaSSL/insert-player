@@ -344,7 +344,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       },
     });
     if (completed.status !== 'succeeded') {
-      throw new Error(completed.errorMessage ?? 'Generation failed; credits were restored');
+      throw new Error(completed.errorMessage ?? 'Generation stopped; review the job details or contact support.');
     }
     const cloud = await getCloudFighter(completed.fighterId, apiContext);
     if (!cloud?.photoHash) throw new Error('Completed cloud fighter could not be loaded');
@@ -477,8 +477,8 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       if (purchaseId && !purchaseCommitted && !backendOwnsPurchase) {
         try {
           await finishGenerationPurchase(purchaseId, false, meta?.cloudFighterId ?? null, apiContext);
-        } catch (refundErr: any) {
-          debugWarn('[Billing] Failed to release retry purchase:', refundErr?.message ?? refundErr);
+        } catch (releaseErr: any) {
+          debugWarn('[Billing] Failed to release retry purchase:', releaseErr?.message ?? releaseErr);
         }
       }
       await refreshCurrent();
@@ -772,7 +772,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           },
         });
         if (completed.status !== 'succeeded') {
-          throw new Error(completed.errorMessage ?? 'Upgrade failed; credits were restored');
+          throw new Error(completed.errorMessage ?? 'Upgrade stopped; review the job details or contact support.');
         }
         const cloud = await getCloudFighter(fighterId, apiContext);
         if (!cloud) throw new Error('Completed cloud fighter could not be loaded');
@@ -812,8 +812,8 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       if (purchaseId && !purchaseCommitted && !backendOwnsPurchase) {
         try {
           await finishGenerationPurchase(purchaseId, false, meta.cloudFighterId ?? null, apiContext);
-        } catch (refundErr: any) {
-          debugWarn('[Billing] Failed to release upgrade purchase:', refundErr?.message ?? refundErr);
+        } catch (releaseErr: any) {
+          debugWarn('[Billing] Failed to release upgrade purchase:', releaseErr?.message ?? releaseErr);
         }
       }
       await refreshCurrent();

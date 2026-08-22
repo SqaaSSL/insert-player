@@ -492,22 +492,28 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       job = await step.do('load failed generation context', STEP_CONFIG, () => this.loadJob(jobId));
       if (job.status === 'succeeded') return { jobId, status: 'succeeded' };
       if (job) {
-        await step.do('refund failed generation', STEP_CONFIG, async () => {
-          await settleGenerationPurchase(
+        await step.do('settle failed generation', STEP_CONFIG, async () => {
+          const settlement = await settleGenerationPurchase(
             this.env,
             job!.user_id,
             job!.charge_id,
             false,
             job!.fighter_id,
           );
+          const releasedBeforeProviderStart = settlement?.status === 'refunded';
           await this.env.DB.batch([
             this.env.DB.prepare(`
               UPDATE generation_jobs
               SET status = 'failed', stage = 'failed', error_code = 'generation_failed',
-                  error_message = 'Generation failed; credits were restored',
+                  error_message = ?,
                   finished_at = datetime('now'), updated_at = datetime('now')
               WHERE id = ? AND status IN ('queued', 'running')
-            `).bind(job!.id),
+            `).bind(
+              releasedBeforeProviderStart
+                ? 'Generation could not start external processing; the unused reservation was released'
+                : 'Generation stopped after external processing began; contact support if it cannot be repaired',
+              job!.id,
+            ),
             this.env.DB.prepare(`
               INSERT INTO generation_job_events (id, job_id, stage, status, detail)
               VALUES (?, ?, 'failed', 'failed', ?)

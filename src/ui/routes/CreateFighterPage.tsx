@@ -109,7 +109,7 @@ function describeDurableJob(job: GenerationJob): string {
   if (job.status === 'queued') return 'Queued safely in the cloud...';
   if (job.status === 'succeeded') return 'Generation complete. Syncing this device...';
   if (job.status === 'failed' || job.status === 'cancelled') {
-    return job.errorMessage ?? 'Generation stopped and credits were restored.';
+    return job.errorMessage ?? 'Generation stopped; review the job details or contact support.';
   }
   if (job.stage === 'initializing') return 'Starting cloud forge...';
   if (job.stage === 'source:side') return 'Side reference ready';
@@ -309,7 +309,7 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
     apiContext: ReturnType<typeof captureApiRequestContext>,
   ): Promise<void> {
     if (job.status !== 'succeeded') {
-      throw new Error(job.errorMessage ?? 'Generation failed; credits were restored');
+      throw new Error(job.errorMessage ?? 'Generation stopped; review the job details or contact support.');
     }
     setStageText('Generation complete. Downloading your private fighter...');
     const fighter = await getCloudFighter(job.fighterId, apiContext);
@@ -463,8 +463,8 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
       if (purchaseId && !purchaseCommitted) {
         try {
           await finishGenerationPurchase(purchaseId, false, null, apiContext);
-        } catch (refundErr: any) {
-          debugWarn('[Billing] Failed to release generation purchase:', refundErr?.message ?? refundErr);
+        } catch (releaseErr: any) {
+          debugWarn('[Billing] Failed to release generation purchase:', releaseErr?.message ?? releaseErr);
         }
       }
       const message = err?.message ? String(err.message) : 'Pipeline failed';

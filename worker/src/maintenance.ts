@@ -24,18 +24,24 @@ export async function cleanupOperationalData(env: Env): Promise<void> {
     LIMIT 50
   `).all<StaleGenerationJobRow>();
   for (const job of staleJobs ?? []) {
-    await settleGenerationPurchase(env, job.user_id, job.charge_id, false, job.fighter_id);
+    const settlement = await settleGenerationPurchase(env, job.user_id, job.charge_id, false, job.fighter_id);
+    const releasedBeforeProviderStart = settlement?.status === 'refunded';
     await env.DB.batch([
       env.DB.prepare(`
         UPDATE generation_jobs
         SET status = 'failed', stage = 'failed', error_code = 'job_stalled',
-            error_message = 'Generation timed out; credits were restored',
+            error_message = ?,
             finished_at = datetime('now'), updated_at = datetime('now')
         WHERE id = ? AND status IN ('queued', 'running')
-      `).bind(job.id),
+      `).bind(
+        releasedBeforeProviderStart
+          ? 'Generation never reached external processing; the unused reservation was released'
+          : 'Generation stalled after external processing began; contact support if it cannot be repaired',
+        job.id,
+      ),
       env.DB.prepare(`
         INSERT INTO generation_job_events (id, job_id, stage, status, detail)
-        SELECT ?, ?, 'failed', 'failed', 'Stale cloud job released by maintenance'
+        SELECT ?, ?, 'failed', 'failed', 'Stale cloud job closed by maintenance'
         WHERE EXISTS (SELECT 1 FROM generation_jobs WHERE id = ? AND status = 'failed')
       `).bind(generateId(), job.id, job.id),
     ]);

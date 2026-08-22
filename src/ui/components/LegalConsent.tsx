@@ -11,7 +11,7 @@ function LegalLinks() {
     <span className="legal-consent__links">
       <a href="/terms">Terms</a>
       <a href="/privacy">Privacy</a>
-      <a href="/refunds">Refunds</a>
+      <a href="/refunds">Cancellations</a>
     </span>
   );
 }
@@ -40,8 +40,10 @@ export function GenerationConsent({ checked, disabled, onChange }: ConsentProps)
           original photo, Clerk account identity, RAW files, or private generation history. This is
           not a licence to reuse my photo or private fighter. Insert Player will not sell them, use
           them in advertising, or use them to train models. I agree to the Terms and Privacy Policy,
-          request immediate generation, and understand that starting it ends the 14-day withdrawal
-          right for that digital content, except where law requires a remedy.
+          request immediate generation, acknowledge that digital performance starts immediately,
+          and understand that the displayed credits are consumed once external AI processing begins.
+          They are not automatically restored if a provider fails or an output needs remediation.
+          Mandatory consumer remedies still apply.
         </span>
       </label>
       <LegalLinks />
@@ -60,8 +62,9 @@ export function CheckoutConsent({ checked, disabled, onChange }: ConsentProps) {
           onChange={(event) => onChange(event.target.checked)}
         />
         <span>
-          I am 18+, agree to the Terms and Refund Policy, request immediate credit delivery,
-          and understand that using credits can end the withdrawal right for the used digital service.
+          I am 18+, agree to the Terms and Cancellations &amp; Remedies Policy, request immediate credit
+          delivery, and acknowledge that used credits and generations whose external AI processing
+          has begun are not voluntarily refundable. Mandatory consumer rights still apply.
         </span>
       </label>
       <LegalLinks />

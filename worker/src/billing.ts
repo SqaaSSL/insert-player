@@ -44,6 +44,7 @@ interface GenerationCharge {
   tier: QualityTier;
   credit_cost: number;
   free_quota_delta: number;
+  // `refunded` is the legacy persisted name for a pre-provider release.
   status: 'reserved' | 'committed' | 'refunded';
   reason: string;
   fighter_id: string | null;
@@ -171,14 +172,17 @@ function providerSessionPurposeForOperation(
   return 'fighter_generation';
 }
 
-async function refundReservedGenerationCharge(
+// `refunded` is the historical D1 enum for an unused reservation release. This
+// path never asks Stripe to return money and is reachable only before provider
+// processing commits the charge.
+async function releaseReservedGenerationCharge(
   env: Env,
   charge: GenerationCharge,
-  refundReason = 'generation_refund',
+  releaseReason = 'generation_reservation_release',
 ): Promise<boolean> {
   if (charge.status !== 'reserved') return false;
 
-  const refundLedgerId = generateId();
+  const releaseLedgerId = generateId();
   const [claim] = await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
@@ -186,7 +190,7 @@ async function refundReservedGenerationCharge(
       FROM generation_charges
       WHERE id = ? AND user_id = ? AND status = 'reserved'
       RETURNING id
-    `).bind(refundLedgerId, `${refundReason}:${charge.id}`, charge.id, charge.user_id),
+    `).bind(releaseLedgerId, `${releaseReason}:${charge.id}`, charge.id, charge.user_id),
     env.DB.prepare(`
       UPDATE users
       SET credits_balance = credits_balance + COALESCE(
@@ -210,13 +214,13 @@ async function refundReservedGenerationCharge(
         SELECT 1 FROM credit_ledger WHERE id = ?
       )
     `).bind(
-      refundLedgerId,
+      releaseLedgerId,
       charge.id,
       charge.user_id,
       charge.id,
       charge.user_id,
       charge.user_id,
-      refundLedgerId,
+      releaseLedgerId,
     ),
     env.DB.prepare(`
       UPDATE generation_charges
@@ -226,7 +230,7 @@ async function refundReservedGenerationCharge(
       WHERE id = ? AND user_id = ? AND status = 'reserved' AND EXISTS (
         SELECT 1 FROM credit_ledger WHERE id = ?
       )
-    `).bind(refundLedgerId, charge.id, charge.user_id, refundLedgerId),
+    `).bind(releaseLedgerId, charge.id, charge.user_id, releaseLedgerId),
   ]);
 
   return Boolean(claim.results?.[0]);
@@ -252,7 +256,7 @@ async function createProviderSessionForCharge(
     const userId = auth.user?.id;
     const charge = userId ? await getGenerationCharge(env, userId, chargeId) : null;
     if (charge) {
-      await refundReservedGenerationCharge(env, charge, 'provider_session_failed');
+      await releaseReservedGenerationCharge(env, charge, 'provider_session_failed');
     }
     throw err;
   }
@@ -266,7 +270,7 @@ export async function releaseExpiredGenerationCharges(env: Env, userId: string):
   `).bind(userId).all<GenerationCharge>();
 
   for (const charge of results ?? []) {
-    await refundReservedGenerationCharge(env, charge, 'generation_reservation_expired');
+    await releaseReservedGenerationCharge(env, charge, 'generation_reservation_expired');
   }
 }
 
@@ -854,7 +858,9 @@ export async function completeGenerationPurchase(
 
   return json({
     ...settlement,
-    creditsRefunded: settlement.creditsCharged,
+    status: 'released',
+    reservationReleased: true,
+    creditsReleased: settlement.creditsCharged,
     creditsBalance: latest?.credits_balance ?? auth.user.credits_balance,
     freeRookieGenerationsUsed: latest?.free_rookie_generations_used ?? auth.user.free_rookie_generations_used,
   });
@@ -915,7 +921,7 @@ export async function settleGenerationPurchase(
       await markProviderSessionsForCharge(env, userId, charge.id, 'completed');
     }
   } else if (charge.status === 'reserved') {
-    await refundReservedGenerationCharge(env, charge);
+    await releaseReservedGenerationCharge(env, charge);
     charge = (await getGenerationCharge(env, userId, purchaseId)) ?? charge;
   }
   if (!success && charge.status === 'refunded') {

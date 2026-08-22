@@ -453,12 +453,14 @@ describe('provider session usage', () => {
     expect(sessionUpdateAttempted).toBe(false);
   });
 
-  it('releases session and monthly reservations after an upstream failure', async () => {
-    let releasedStatements = 0;
+  it('keeps attempted provider spend after an upstream failure', async () => {
+    let accountingBatchStatements = 0;
+    let providerSpendReleased = false;
     let providerCostEventReserved = false;
     let providerCostEventFailed = false;
     const database = {
       prepare(sql: string) {
+        if (sql.includes('provider_calls_used = MAX')) providerSpendReleased = true;
         if (sql.includes('INSERT INTO provider_cost_events')) providerCostEventReserved = true;
         if (sql.includes('UPDATE provider_cost_events')) providerCostEventFailed = true;
         return {
@@ -494,8 +496,8 @@ describe('provider session usage', () => {
         };
       },
       async batch(statements: unknown[]) {
-        releasedStatements = statements.length;
-        return [];
+        accountingBatchStatements = statements.length;
+        return [{ results: [{ id: 'event-1' }] }];
       },
     };
     const env = {
@@ -520,7 +522,8 @@ describe('provider session usage', () => {
     }, providerState)).resolves.toBeNull();
     await finalizeProviderRequest(env, Response.json({ error: 'busy' }, { status: 429 }), providerState);
 
-    expect(releasedStatements).toBe(3);
+    expect(accountingBatchStatements).toBe(1);
+    expect(providerSpendReleased).toBe(false);
     expect(providerCostEventReserved).toBe(true);
     expect(providerCostEventFailed).toBe(true);
   });

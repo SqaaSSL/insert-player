@@ -299,7 +299,7 @@ describe('durable generation job creation', () => {
     }
   }, 15_000);
 
-  it('refunds a second reservation and returns the already-running fighter job', async () => {
+  it('releases a second unused reservation and returns the already-running fighter job', async () => {
     const { mf, db, env } = await bindings();
     try {
       expect((await createGenerationJob(request(), env, auth)).status).toBe(202);
@@ -340,13 +340,13 @@ describe('durable generation job creation', () => {
     }
   }, 15_000);
 
-  it('restores the reservation when required private input is unavailable', async () => {
+  it('releases the reservation when required private input is unavailable', async () => {
     const { mf, db, env } = await bindings();
     try {
       await env.SPRITES.delete(ORIGINAL_KEY);
       const response = await createGenerationJob(request(), env, auth);
       expect(response.status).toBe(409);
-      expect((await response.json() as { error: string }).error).toContain('credits were restored');
+      expect((await response.json() as { error: string }).error).toContain('unused reservation was released');
       expect((await db.prepare('SELECT status FROM generation_charges WHERE id = ?')
         .bind(PURCHASE_ID).first<{ status: string }>())?.status).toBe('refunded');
       expect((await db.prepare('SELECT status FROM provider_sessions WHERE id = ?')
@@ -360,14 +360,14 @@ describe('durable generation job creation', () => {
     }
   }, 15_000);
 
-  it('restores the reservation when a deployed environment lacks job signing', async () => {
+  it('releases the reservation when a deployed environment lacks job signing', async () => {
     const { mf, db, env } = await bindings();
     try {
       env.ENVIRONMENT = 'sandbox';
       env.GENERATION_JOB_SIGNING_SECRET = undefined;
       const response = await createGenerationJob(request(), env, auth);
       expect(response.status).toBe(503);
-      expect((await response.json() as { error: string }).error).toContain('credits were restored');
+      expect((await response.json() as { error: string }).error).toContain('unused reservation was released');
       expect((await db.prepare('SELECT status FROM generation_charges WHERE id = ?')
         .bind(PURCHASE_ID).first<{ status: string }>())?.status).toBe('refunded');
       expect((await db.prepare('SELECT status FROM provider_sessions WHERE id = ?')
@@ -446,7 +446,7 @@ describe('durable generation job creation', () => {
     }
   }, 15_000);
 
-  it('restores a retry reservation when its target is outside the scoped animation set', async () => {
+  it('releases a retry reservation when its target is outside the scoped animation set', async () => {
     const { mf, db, env } = await bindings();
     try {
       await seedAnimationRetry(db, env);
@@ -455,7 +455,7 @@ describe('durable generation job creation', () => {
         targetName: 'taunt',
       }), env, auth);
       expect(response.status).toBe(400);
-      expect((await response.json() as { error: string }).error).toContain('credits were restored');
+      expect((await response.json() as { error: string }).error).toContain('unused reservation was released');
       expect((await db.prepare('SELECT status FROM generation_charges WHERE id = ?')
         .bind(SECOND_PURCHASE_ID).first<{ status: string }>())?.status).toBe('refunded');
       expect((await db.prepare('SELECT status FROM provider_sessions WHERE id = ?')

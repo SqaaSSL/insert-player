@@ -1,7 +1,7 @@
 import { generateId, hashString } from './auth';
 import type { Env, PublicAuthContext } from './types';
 
-export const CURRENT_LEGAL_VERSION = '2026-08-22.5';
+export const CURRENT_LEGAL_VERSION = '2026-08-23.1';
 
 export type LegalAcceptanceAction =
   | 'fighter_generation'

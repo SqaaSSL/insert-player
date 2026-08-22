@@ -19,7 +19,7 @@ export function LegalFooter({ onNavigate }: LegalFooterProps) {
         <a href="/legal" onClick={(event) => navigate(event, '/legal')}>Legal Notice</a>
         <a href="/privacy" onClick={(event) => navigate(event, '/privacy')}>Privacy</a>
         <a href="/terms" onClick={(event) => navigate(event, '/terms')}>Terms</a>
-        <a href="/refunds" onClick={(event) => navigate(event, '/refunds')}>Refunds</a>
+        <a href="/refunds" onClick={(event) => navigate(event, '/refunds')}>Cancellations</a>
         <a href={`mailto:${SUPPORT_EMAIL}`}>Contact</a>
       </nav>
     </footer>

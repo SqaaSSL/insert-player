@@ -26,7 +26,8 @@ const SCHEMA = `
     user_id TEXT NOT NULL,
     tier TEXT NOT NULL,
     status TEXT NOT NULL,
-    reason TEXT NOT NULL
+    reason TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE provider_sessions (
     id TEXT PRIMARY KEY,
@@ -181,6 +182,11 @@ async function usage(db: D1Database): Promise<{ calls: number; cost: number; eve
   return { calls: session?.calls ?? -1, cost: session?.cost ?? -1, events: event?.count ?? -1 };
 }
 
+async function chargeStatus(db: D1Database): Promise<string | null> {
+  return (await db.prepare('SELECT status FROM generation_charges WHERE id = ?')
+    .bind(CHARGE_ID).first<{ status: string }>())?.status ?? null;
+}
+
 describe('durable provider request cache against D1 and R2', () => {
   it('rejects a declared oversized durable request before reserving provider spend', async () => {
     const { mf, db, env } = await bindings();
@@ -197,6 +203,7 @@ describe('durable provider request cache against D1 and R2', () => {
 
       expect(response?.status).toBe(413);
       expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 0 });
+      expect(await chargeStatus(db)).toBe('reserved');
     } finally {
       await mf.dispose();
     }
@@ -208,6 +215,7 @@ describe('durable provider request cache against D1 and R2', () => {
       const state = createProviderRequestState();
       expect(await requireProviderSession(providerRequest('job:source:side:0001'), env, auth, ROUTE, state)).toBeNull();
       expect(await usage(db)).toEqual({ calls: 1, cost: 8, events: 1 });
+      expect(await chargeStatus(db)).toBe('committed');
 
       const upstream = Response.json({ candidates: [{ result: 'generated' }] });
       const delivered = await finalizeProviderRequest(env, upstream, state);
@@ -238,6 +246,61 @@ describe('durable provider request cache against D1 and R2', () => {
       `).first<{ response_blob_key: string; status: string }>();
       expect(cacheRow?.status).toBe('succeeded');
       expect(await bucket.head(cacheRow!.response_blob_key)).not.toBeNull();
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('keeps the committed charge and provider spend after an upstream failure', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const state = createProviderRequestState();
+      expect(await requireProviderSession(
+        providerRequest('job:source:side:provider-failure'),
+        env,
+        auth,
+        ROUTE,
+        state,
+      )).toBeNull();
+
+      const delivered = await finalizeProviderRequest(
+        env,
+        Response.json({ error: 'busy' }, { status: 429 }),
+        state,
+      );
+
+      expect(delivered.status).toBe(429);
+      expect(await usage(db)).toEqual({ calls: 1, cost: 8, events: 1 });
+      expect(await chargeStatus(db)).toBe('committed');
+      expect(await db.prepare('SELECT outcome, http_status FROM provider_cost_events')
+        .first<{ outcome: string; http_status: number }>())
+        .toEqual({ outcome: 'failed', http_status: 429 });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('fails closed without cost residue when the charge was released concurrently', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      await db.prepare(`
+        UPDATE generation_charges SET status = 'refunded' WHERE id = ?
+      `).bind(CHARGE_ID).run();
+
+      const response = await requireProviderSession(
+        providerRequest('job:source:side:released-race'),
+        env,
+        auth,
+        ROUTE,
+        createProviderRequestState(),
+      );
+
+      expect(response?.status).toBe(503);
+      expect(await response?.json()).toMatchObject({
+        error: 'Provider cost accounting is temporarily unavailable',
+      });
+      expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 0 });
+      expect(await chargeStatus(db)).toBe('refunded');
     } finally {
       await mf.dispose();
     }

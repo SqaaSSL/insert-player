@@ -63,7 +63,7 @@ const requiredPlayableAnimations = [
   'victory',
 ];
 const generationLegal = {
-  legalVersion: '2026-08-22.5',
+  legalVersion: '2026-08-23.1',
   ageConfirmed: true,
   termsAccepted: true,
   photoRightsConfirmed: true,
@@ -647,23 +647,23 @@ async function completeGenerationPurchase(purchaseId, success, fighterId = null)
 }
 
 async function assertAuthenticatedGenerationBilling(fighterId) {
-  const rookie = await authorizeGeneration('rookie', 'live_smoke_rookie_refund', fighterId);
+  const rookie = await authorizeGeneration('rookie', 'live_smoke_rookie_release', fighterId);
   if (rookie.res.status === 402) {
-    console.log('Skipping Rookie reservation/refund smoke: signed-in smoke account has no free quota or credits.');
+    console.log('Skipping Rookie reservation-release smoke: signed-in smoke account has no free quota or credits.');
   } else {
     assert(rookie.res.status === 200, `Rookie generation auth expected 200 or 402, got ${rookie.res.status}`);
     assert(rookie.json.authorized === true, 'Signed-in Rookie generation was not authorized');
     assert(rookie.json.purchaseId, 'Signed-in Rookie generation did not return a purchaseId');
     assert(rookie.json.providerSessionId, 'Signed-in Rookie generation did not return a providerSessionId');
     assert(Number(rookie.json.providerCallLimit) === 48, 'Signed-in Rookie generation did not expose the Rookie provider call limit');
-    const refunded = await completeGenerationPurchase(rookie.json.purchaseId, false, fighterId);
-    assert(refunded.status === 'refunded', 'Failed Rookie generation did not refund reservation');
-    const refundedAgain = await completeGenerationPurchase(rookie.json.purchaseId, false, fighterId);
-    assert(refundedAgain.status === 'refunded', 'Duplicate failed Rookie completion was not idempotent');
-    log('authenticated Rookie generation reservation refunds idempotently');
+    const released = await completeGenerationPurchase(rookie.json.purchaseId, false, fighterId);
+    assert(released.status === 'released', 'Unused Rookie reservation was not released');
+    const releasedAgain = await completeGenerationPurchase(rookie.json.purchaseId, false, fighterId);
+    assert(releasedAgain.status === 'released', 'Duplicate Rookie reservation release was not idempotent');
+    log('authenticated Rookie generation releases an unused reservation idempotently');
   }
 
-  const contender = await authorizeGeneration('contender', 'live_smoke_contender_refund', fighterId);
+  const contender = await authorizeGeneration('contender', 'live_smoke_contender_release', fighterId);
   if (contender.res.status === 402) {
     assert(contender.json.authorized === false, 'Contender insufficient-credit response should not be authorized');
     assert(Number(contender.json.requiredCredits ?? 0) > 0, 'Contender insufficient-credit response missing requiredCredits');
@@ -676,9 +676,9 @@ async function assertAuthenticatedGenerationBilling(fighterId) {
   assert(contender.json.purchaseId, 'Signed-in Contender generation did not return a purchaseId');
   assert(contender.json.providerSessionId, 'Signed-in Contender generation did not return a providerSessionId');
   assert(Number(contender.json.providerCallLimit) === 280, 'Signed-in Contender generation did not expose the Contender provider call limit');
-  const refunded = await completeGenerationPurchase(contender.json.purchaseId, false, fighterId);
-  assert(refunded.status === 'refunded', 'Failed Contender generation did not refund credits');
-  log('authenticated paid-tier generation reservation refunds credits');
+  const released = await completeGenerationPurchase(contender.json.purchaseId, false, fighterId);
+  assert(released.status === 'released', 'Unused Contender reservation was not released');
+  log('authenticated paid-tier generation releases an unused reservation');
 }
 
 function spriteUrlFromFighterPayload(payload) {

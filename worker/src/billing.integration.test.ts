@@ -10,6 +10,7 @@ const SCHEMA = `
     clerk_user_id TEXT NOT NULL,
     display_name TEXT NOT NULL,
     credits_balance INTEGER NOT NULL DEFAULT 0,
+    free_rookie_generations_used INTEGER NOT NULL DEFAULT 0,
     stripe_customer_id TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -213,6 +214,61 @@ async function insertPaidCheckout(
 }
 
 describe('Generation purchase fighter linkage against D1', () => {
+  it('exposes only a pre-provider reservation release and remains idempotent', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES ('user-release', 'user-release', 'Release Player', 8)
+        `),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason)
+          VALUES ('ledger-release', 'user-release', -2, 'fighter_generation')
+        `),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, status, reason, ledger_id, expires_at
+          ) VALUES (
+            'purchase-release', 'user-release', 'rookie', 2, 'reserved',
+            'fighter_generation', 'ledger-release', datetime('now', '+1 hour')
+          )
+        `),
+      ]);
+      const auth = { userId: 'user-release' } as AuthContext;
+      const request = () => new Request(
+        'https://api.insertplayer.ai/api/billing/generation/complete',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ purchaseId: 'purchase-release', success: false }),
+        },
+      );
+
+      const first = await (await completeGenerationPurchase(request(), env, auth)).json() as Record<string, unknown>;
+      expect(first).toMatchObject({
+        purchaseId: 'purchase-release',
+        status: 'released',
+        reservationReleased: true,
+        creditsReleased: 2,
+        creditsBalance: 10,
+      });
+      expect(first).not.toHaveProperty('creditsRefunded');
+
+      const duplicate = await (await completeGenerationPurchase(request(), env, auth)).json();
+      expect(duplicate).toMatchObject({ status: 'released', creditsBalance: 10 });
+      expect((await db.prepare(`
+        SELECT status FROM generation_charges WHERE id = 'purchase-release'
+      `).first<{ status: string }>())?.status).toBe('refunded');
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM credit_ledger
+        WHERE user_id = 'user-release' AND reason = 'generation_reservation_release:purchase-release'
+      `).first<{ count: number }>())?.count).toBe(1);
+    } finally {
+      await mf.dispose();
+    }
+  });
+
   it('links a committed purchase after cloud creation and remains idempotent', async () => {
     const { mf, db, env } = await createBindings();
     try {
