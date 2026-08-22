@@ -32,10 +32,10 @@ CLERK_AUTHORIZED_PARTIES = "https://insertplayer.ai,https://www.insertplayer.ai"
 # wrangler secret put STRIPE_SECRET_KEY
 # wrangler secret put STRIPE_WEBHOOK_SECRET
 # Pin Checkout and webhooks to the dedicated Insert Player Stripe account.
-STRIPE_ACCOUNT_ID = "acct_1U5w8DCQ9OPSWOkj"
-# STRIPE_PRICE_STARTER = "price_replace_me"
-# STRIPE_PRICE_VERSUS = "price_replace_me"
-# STRIPE_PRICE_ARCADE = "price_replace_me"
+STRIPE_ACCOUNT_ID = "acct_1U5w7XCPjQq08iG9"
+STRIPE_PRICE_STARTER = "price_1U7DsICPjQq08iG9cfEyX3NU"
+STRIPE_PRICE_VERSUS = "price_1U7DsJCPjQq08iG9feLhQhLr"
+STRIPE_PRICE_ARCADE = "price_1U7DsKCPjQq08iG98e4ZosBp"
 # wrangler secret put CLERK_WEBHOOK_SIGNING_SECRET
 # wrangler secret put TURNSTILE_SECRET_KEY
 # HMAC key used to pseudonymize anonymous network identifiers before D1 writes.
