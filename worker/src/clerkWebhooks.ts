@@ -66,6 +66,28 @@ function webhookDisplayName(data: Extract<UserWebhookEvent, { type: 'user.create
   return fullName || data.username || primaryEmail(data) || 'Player';
 }
 
+function webhookGrantsAdmin(data: Extract<UserWebhookEvent, { type: 'user.created' | 'user.updated' }>['data']): boolean {
+  return data.private_metadata?.insert_player_role === 'admin';
+}
+
+async function syncClerkAdminRole(
+  env: Env,
+  clerkUserId: string,
+  grantsAdmin: boolean,
+): Promise<void> {
+  await env.DB.prepare(`
+    UPDATE users
+    SET
+      plan_tier = CASE
+        WHEN ? = 1 THEN 'admin'
+        WHEN plan_tier = 'admin' THEN 'free'
+        ELSE plan_tier
+      END,
+      updated_at = datetime('now')
+    WHERE clerk_user_id = ?
+  `).bind(grantsAdmin ? 1 : 0, clerkUserId).run();
+}
+
 export async function purgeR2Prefix(
   bucket: R2Bucket,
   prefix: string,
@@ -230,6 +252,7 @@ export async function processClerkUserWebhook(
     avatarUrl: event.data.image_url,
     email: primaryEmail(event.data),
   });
+  await syncClerkAdminRole(env, clerkUserId, webhookGrantsAdmin(event.data));
   await recordWebhookEvent(env, eventId, event.type);
   return { outcome: 'synced' };
 }
