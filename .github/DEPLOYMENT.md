@@ -9,7 +9,7 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 | `feature/*` or `fix/*` | Pull request to `develop` | CI and CodeQL; no secrets or deployment |
 | `develop` | GitHub `development` environment | Automatic isolated sandbox Worker, D1 migrations, Pages, and smoke tests |
 | `develop` | Pull request to `main` | CI and CodeQL again |
-| `main` | GitHub `production` environment | Waits for owner approval, then deploys production Worker, D1, Pages, and live-readiness checks |
+| `main` | GitHub `production` environment | After required checks, deploys production Worker, D1, Pages, and live-readiness checks |
 
 `development` may cancel an older in-progress deployment when a newer commit arrives. `production` never cancels an in-progress deployment.
 
@@ -18,7 +18,7 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 - `ci.yml`: required pull-request and branch validation.
 - `validate.yml`: reusable production gate, full builds, Worker dry-runs, and dependency audits.
 - `deploy-development.yml`: `develop` to the isolated sandbox.
-- `deploy-production.yml`: approved `main` release to `insertplayer.ai`.
+- `deploy-production.yml`: checked `main` release to `insertplayer.ai`.
 - `codeql.yml`: JavaScript/TypeScript code scanning on pull requests, protected branches, and weekly schedule.
 - `dependabot.yml`: weekly frontend, Worker, and GitHub Actions updates.
 
@@ -26,11 +26,10 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 
 The repository uses environments named exactly `development` and `production`.
 
-`production` is protected with:
+`production` is restricted with:
 
-- Required reviewer: an owner identity or release-team member; repository administrators may bypass when the owner authorizes a release.
 - Deployment branch: `main` only.
-- Self-review disabled, so use the alternate owner identity or the administrator bypass for owner-only releases; coworker approval is not required.
+- No manual environment reviewer. Required CI and CodeQL checks remain the release gate for this owner-operated project.
 
 `development` is restricted to `develop` and does not need a manual reviewer.
 
@@ -98,9 +97,9 @@ For both `develop` and `main`:
 - Require the branch to be current before merge.
 - Dismiss stale approvals when new commits arrive.
 
-For `main`, also require CodeQL and at least one approving review. Restrict direct pushes and force pushes.
+For `main`, also require CodeQL. Restrict direct pushes and force pushes; a separate human approval is optional rather than a release dependency.
 
-`CODEOWNERS` assigns the SqaaSSL team to every path. A teammate should not merge their own production promotion without another team member reviewing it.
+`CODEOWNERS` assigns the SqaaSSL team to every path so reviewers are discoverable, while the project owner may merge a production promotion after the required automated checks pass.
 
 ## Recovery
 

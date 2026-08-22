@@ -124,7 +124,7 @@ npm run smoke:frontend-sandbox
 
 Production configuration belongs in ignored `.env.production.local`. The authoritative sequence and manual evidence requirements live in [`PRODUCTION_READINESS.md`](./PRODUCTION_READINESS.md).
 
-Merges to `main` trigger the protected `production` GitHub environment. The deployment waits for owner approval before it can access production secrets. See [`.github/DEPLOYMENT.md`](./.github/DEPLOYMENT.md) for branch rules, environment variables, secrets, and recovery.
+Merges to `main` trigger the branch-restricted `production` GitHub environment after required CI and CodeQL checks pass. Production secrets remain environment-scoped, but this owner-operated project does not require a separate manual deployment approval. See [`.github/DEPLOYMENT.md`](./.github/DEPLOYMENT.md) for branch rules, environment variables, secrets, and recovery.
 
 High-level release order:
 
@@ -192,7 +192,7 @@ The canonical repository is [SqaaSSL/insert-player](https://github.com/SqaaSSL/i
 
 - Branch from `develop`; use focused `feature/*` or `fix/*` branches and pull requests.
 - Merge reviewed work into `develop` for automatic sandbox deployment.
-- Promote `develop` to `main` through a pull request; production still requires environment approval.
+- Promote `develop` to `main` through a pull request; production deploys automatically after the required checks pass.
 - Do not commit `.env*`, `.dev.vars`, Wrangler state/logs, launch evidence containing identities, or downloaded/generated user assets.
 - Keep unrelated local changes intact when working in a dirty tree.
 - Run `npm run check:production` before review.

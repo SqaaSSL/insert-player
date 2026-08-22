@@ -306,8 +306,15 @@ async function main() {
   assert(assetPaths.some((path) => path.endsWith('.js')), 'Frontend HTML did not reference a JS asset');
   const jsTexts = [];
   for (const assetPath of assetPaths.filter((path) => path.endsWith('.js'))) {
-    const asset = await fetchText(`frontend asset ${assetPath}`, assetPath);
-    assert((asset.res.headers.get('Cache-Control') ?? '').includes('immutable'), `Frontend asset ${assetPath} is not immutable cached`);
+    const asset = await waitForFrontendText(`frontend asset ${assetPath}`, assetPath, {
+      readinessError: ({ res }) => {
+        const contentType = res.headers.get('Content-Type') ?? '';
+        if (!/javascript/i.test(contentType)) return `expected JavaScript, got ${contentType || 'no content type'}`;
+        const cacheControl = res.headers.get('Cache-Control') ?? '';
+        if (!cacheControl.includes('immutable')) return `expected immutable cache headers, got ${cacheControl || 'none'}`;
+        return '';
+      },
+    });
     jsTexts.push(asset.text);
   }
   const jsBundle = jsTexts.join('\n');

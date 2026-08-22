@@ -14,4 +14,4 @@
 
 - [ ] No deployment required
 - [ ] Deploy to development after merge
-- [ ] Production approval required after merge to `main`
+- [ ] Production deploy expected after merge to `main`

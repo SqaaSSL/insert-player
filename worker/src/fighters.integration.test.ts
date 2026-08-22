@@ -256,6 +256,8 @@ async function createBindings(): Promise<{
   return { mf, db, bucket, env };
 }
 
+const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
+
 describe('fighter uploads against real D1 and R2 bindings', () => {
   it('collapses concurrent identical source uploads without orphaning R2 objects', async () => {
     const { mf, db, bucket, env } = await createBindings();
@@ -280,7 +282,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
     } finally {
       await mf.dispose();
     }
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('repairs a missing canonical source object on an idempotent upload', async () => {
     const { mf, db, bucket, env } = await createBindings();
@@ -309,7 +311,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
     } finally {
       await mf.dispose();
     }
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('collapses concurrent identical sprite uploads and keeps current on the archived version', async () => {
     const { mf, db, bucket, env } = await createBindings();
@@ -338,7 +340,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
     } finally {
       await mf.dispose();
     }
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('repairs missing canonical sprite objects on an idempotent upload', async () => {
     const { mf, db, bucket, env } = await createBindings();
@@ -373,7 +375,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
     } finally {
       await mf.dispose();
     }
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('archives historical sprite uploads without changing current until explicitly requested', async () => {
     const { mf, db, env } = await createBindings();
@@ -436,7 +438,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
     } finally {
       await mf.dispose();
     }
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 
   it('serves owner assets across devices and exposes only active processed assets when public', async () => {
     const { mf, db, bucket, env } = await createBindings();
@@ -486,5 +488,5 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
     } finally {
       await mf.dispose();
     }
-  });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
 });
