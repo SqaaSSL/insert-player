@@ -44,13 +44,14 @@ Current live resources:
 - R2 lifecycle: `expire-temp-assets` deletes `temp/` objects after 1 day
 - R2 exposure: public `r2.dev` URL disabled; no direct custom domains or bucket CORS policy
 - Worker provider secrets set: Gemini, FAL, Runway, Freepik, Ludo
-- Isolated QA Worker: `https://insert-player-api-sandbox.shellbot.workers.dev`, version `0.16.0` (`ec74e04b-50e5-4c6b-83c4-ae6ecb7fb7a6`), `ENVIRONMENT=sandbox`, `$50/month` provider reserve, production-origin CORS denied, Clerk Development configured, and dedicated test-mode Stripe billing configured. Provider secrets are present for authenticated QA, while `ANONYMOUS_ROOKIE_ENABLED=false` blocks public provider-session minting before cost; the deployed route returns `403 anonymous_rookie_disabled`.
+- Isolated QA Worker: `https://insert-player-api-sandbox.shellbot.workers.dev`, version `0.16.0`, deployed automatically from protected `develop`, `ENVIRONMENT=sandbox`, `$50/month` provider reserve, production-origin CORS denied, Clerk Development configured, and dedicated test-mode Stripe billing configured. Provider secrets are present for authenticated QA, while `ANONYMOUS_ROOKIE_ENABLED=false` blocks public provider-session minting before cost; the deployed route returns `403 anonymous_rookie_disabled`.
 - Isolated QA D1: `insert-player-sandbox-db` (`f60b6e22-d262-4e46-a7d9-ca095e49d102`, EU jurisdiction, EEUR primary region), with migrations `0001` through `0017` applied
 - Isolated QA R2: `insert-player-sandbox-assets` (EU jurisdiction), with `temp/` objects expiring after 1 day; provider secrets and a unique anonymization secret are installed on the sandbox Worker
-- Isolated QA Pages project: `insert-player-sandbox`; stable URL `https://insert-player-sandbox.pages.dev/`, currently backed by deployment `13a05984`
+- Isolated QA Pages project: `insert-player-sandbox`; stable URL `https://insert-player-sandbox.pages.dev/`, deployed automatically from protected `develop`
 - `npm run smoke:sandbox` passes D1/R2, provider and budget health, CORS, signed-out auth, tier-cost, privacy, and live-Stripe-absence checks
 - Production dependency audit: zero known vulnerabilities as of 2026-08-19.
-- The sandbox v2 Stripe catalog and purchase path pass: a €14.99 Starter purchase granted 11 credits, moved the wallet from 6 to 17, and preserved the historical 6-credit purchase and ledger history.
+- The sandbox v2 Stripe catalog and purchase path pass twice: each €14.99 Starter purchase granted exactly 11 credits once, moving the wallet from 6 to 17 to 28 while preserving the historical 6-credit purchase and every ledger row.
+- Separate Chrome and in-app-browser storage origins loaded the same signed-in 28-credit wallet, match history, and Champion fighter from D1/R2. A fresh origin exposed the fighter after the 11 best playable sprites arrived in `4.776s`; all 48 cloud sprite versions plus RAW assets then hydrated in the background, and the next Gallery entry reached `Ready` in `3.037s`. This is strong cross-browser persistence evidence, but a physical second-device pass remains required.
 - Still missing before full launch: Clerk Production plus two launch users, live Insert Player Stripe credentials/catalog/webhook and purchase smoke, replacement of the legal prelaunch build with the full production app, real-phone QA, and two-device validation. Real provider generation, cloud archival, and the authenticated Stripe purchase/webhook path have passed in isolated QA.
 - Support delivery is also launch-critical: routing, MX, SPF, and explicit `privacy@insertplayer.ai` / `support@insertplayer.ai` routes are active, and the SMTP edge accepted both recipients with `250`. Send and receive one real external test through each alias and verify reply identity. Do not launch with dead legal/support addresses.
 
@@ -331,7 +332,7 @@ After those checks pass, copy `launch-validation.example.json` to `.launch-valid
 ## Not Yet Done
 
 - Send external test messages to `privacy@insertplayer.ai` and `support@insertplayer.ai`; Cloudflare routing, MX and SPF are configured, but inbox receipt still needs evidence.
-- Clerk Development email-code QA, signed-in API loading, webhook delivery, and D1 profile retention passed with two disposable users. Create the Production instance and two launch-test users with dedicated Insert Player OAuth credentials.
+- Clerk Development email-code QA, signed-in API loading, webhook delivery, and D1 profile retention passed with two disposable users. The dedicated Insert Player Production instance, live publishable key, issuer, authorized parties, and lifecycle webhook secret are wired; deploy its custom-domain certificates, configure dedicated Google/Apple OAuth credentials, keep mailbox sign-in disabled, and create two launch-test users.
 - Configure the isolated live account/catalog/wildcard webhook, then repeat the validated authenticated purchase flow in live mode.
 - The sandbox frontend is deployed and uses Cloudflare's deterministic test widget. Deploy the production frontend after its live Clerk key is available, then validate one real production Turnstile token and reject its replay.
 - Real Rookie, Contender, Champion, failed-upgrade refund, Retry, and cloud-history paths have passed in authenticated sandbox. Carry that evidence into the final launch record; do not regenerate solely to repeat provider spend.
