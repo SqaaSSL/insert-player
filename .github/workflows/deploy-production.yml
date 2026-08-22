@@ -54,7 +54,6 @@ jobs:
       ASF_FRONTEND_ORIGIN: ${{ vars.ASF_FRONTEND_ORIGIN }}
       ASF_PAGES_PROJECT_NAME: ${{ vars.ASF_PAGES_PROJECT_NAME }}
       ASF_PAGES_BRANCH: main
-      ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
 
     steps:
       - name: Check out repository
@@ -89,6 +88,7 @@ jobs:
           install -m 600 /dev/null "$ASF_BRAND_CLEARANCE_FILE"
           printf '%s' "$BRAND_CLEARANCE_JSON" > "$ASF_BRAND_CLEARANCE_FILE"
           node -e 'JSON.parse(require("node:fs").readFileSync(process.env.ASF_BRAND_CLEARANCE_FILE, "utf8"))'
+          printf '%s\n' "ASF_BRAND_CLEARANCE_FILE=$ASF_BRAND_CLEARANCE_FILE" >> "$GITHUB_ENV"
 
       - name: Validate and stage live configuration
         env:
