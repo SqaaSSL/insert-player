@@ -1425,6 +1425,10 @@ export async function uploadFighterSprite(
       statements.push(env.DB.prepare(
         'UPDATE fighters SET quality_tier = ?, updated_at = datetime(\'now\') WHERE id = ? AND owner_user_id = ?'
       ).bind(maxTier(fighter.quality_tier, qualityTier), fighterId, auth.userId));
+    } else {
+      statements.push(env.DB.prepare(
+        'UPDATE fighters SET updated_at = datetime(\'now\') WHERE id = ? AND owner_user_id = ?'
+      ).bind(fighterId, auth.userId));
     }
     statements.push(env.DB.prepare('SELECT id FROM sprite_versions WHERE id = ?').bind(versionId));
     spriteResults = await env.DB.batch(statements);

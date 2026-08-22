@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSpriteDownloadPlan,
   buildSpriteUploadPlan,
+  selectPlayableCloudSprites,
   shouldRefreshLocalFighter,
   type CloudSprite,
   type FingerprintedSprite,
@@ -130,9 +131,80 @@ describe('buildSpriteDownloadPlan', () => {
       downloadRaw: true,
     }]);
   });
+
+  it('defers raw-only work during the playable-first import', () => {
+    const local = candidate('remote-version', 1, 'same-hash');
+    local.sprite.rawPngBlob = undefined;
+    const remote = { ...cloudSprite('same-hash'), id: 'remote-version' };
+
+    expect(buildSpriteDownloadPlan([remote], [local], { includeRawAssets: false })).toEqual([]);
+  });
+});
+
+describe('selectPlayableCloudSprites', () => {
+  it('selects one highest-tier current sprite per animation', () => {
+    const sprites = [
+      { ...cloudSprite('idle-rookie', 'rookie'), animationName: 'idle' },
+      { ...cloudSprite('walk-contender', 'contender'), animationName: 'walk' },
+      { ...cloudSprite('idle-champion', 'champion'), animationName: 'idle' },
+      { ...cloudSprite('walk-rookie', 'rookie'), animationName: 'walk' },
+    ];
+
+    expect(selectPlayableCloudSprites(sprites).map((sprite) => [
+      sprite.animationName,
+      sprite.qualityTier,
+    ])).toEqual([
+      ['idle', 'champion'],
+      ['walk', 'contender'],
+    ]);
+  });
+
+  it('uses the newest current pointer when an animation has equal-tier entries', () => {
+    const older = {
+      ...cloudSprite('older', 'champion'),
+      createdAt: '2026-08-18T10:00:00.000Z',
+    };
+    const newer = {
+      ...cloudSprite('newer', 'champion'),
+      createdAt: '2026-08-18T11:00:00.000Z',
+    };
+
+    expect(selectPlayableCloudSprites([older, newer])).toEqual([newer]);
+  });
 });
 
 describe('shouldRefreshLocalFighter', () => {
+  it('resumes an incomplete archived-version hydration', () => {
+    const fighter = {
+      id: 'fighter-cloud',
+      name: 'Nova QA',
+      photoHash: 'fighter-hash',
+      qualityTier: 'champion' as const,
+      public: false,
+      sources: {},
+      sprites: [{ ...cloudSprite('current'), animationName: 'idle' }],
+      spriteVersions: [
+        { ...cloudSprite('current'), animationName: 'idle' },
+        { ...cloudSprite('archived'), animationName: 'idle' },
+      ],
+      updatedAt: '2026-08-19T02:00:00.000Z',
+    };
+    const existing = {
+      photoHash: 'fighter-hash',
+      version: 1,
+      characterName: 'Nova QA',
+      qualityTier: 'champion' as const,
+      cloudFighterId: 'fighter-cloud',
+      cloudSpriteVersionCount: 1,
+      status: 'ready' as const,
+      animationsReady: ['idle'],
+      createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
+      updatedAt: Date.parse('2026-08-19T02:00:00.000Z'),
+    } as CachedMeta;
+
+    expect(shouldRefreshLocalFighter(fighter, existing)).toBe(true);
+  });
+
   it('does not confuse three tier pointers with missing animation names', () => {
     const names = ['idle', 'walk', 'high_punch'];
     const sprites = (['rookie', 'contender', 'champion'] as const).flatMap((tier) =>
@@ -163,6 +235,7 @@ describe('shouldRefreshLocalFighter', () => {
       characterName: 'Nova QA',
       qualityTier: 'champion',
       cloudFighterId: 'fighter-cloud',
+      cloudSpriteVersionCount: sprites.length,
       status: 'ready',
       animationsReady: names,
       createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
