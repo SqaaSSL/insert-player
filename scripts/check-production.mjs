@@ -3007,6 +3007,7 @@ function assertGithubActionsAreWired() {
       'cancel-in-progress: false',
       'name: production',
       'BRAND_CLEARANCE_JSON',
+      'ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json',
       'npm --prefix worker run db:migrate',
       'node scripts/apply-live-config.mjs --skip-production-check --deploy-worker',
       'npm run smoke:live',
