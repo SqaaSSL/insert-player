@@ -2,6 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeClerkPublishableKey } from './clerk-publishable-key.mjs';
+import {
+  frontendShellReadinessError,
+  parseContentSecurityPolicy,
+} from './frontend-smoke-readiness.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const rawArgs = process.argv.slice(2);
@@ -118,7 +122,7 @@ function isTransientFrontendStatus(status) {
   return [404, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(status);
 }
 
-async function waitForFrontendText(label, pathOrUrl) {
+async function waitForFrontendText(label, pathOrUrl, { readinessError } = {}) {
   const target = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : url(pathOrUrl);
   const started = Date.now();
   let lastError = null;
@@ -127,14 +131,18 @@ async function waitForFrontendText(label, pathOrUrl) {
     try {
       const res = await fetchWithTimeout(label, target);
       if (res.ok) {
-        return {
+        const candidate = {
           res,
           text: await res.text(),
           url: target,
         };
+        const reason = readinessError?.(candidate) ?? '';
+        if (!reason) return candidate;
+        lastError = new Error(`${label} still serves a previous deployment: ${reason}`);
+      } else {
+        lastError = new Error(`${label} expected 2xx, got ${res.status} at ${target}`);
+        if (!isTransientFrontendStatus(res.status)) break;
       }
-      lastError = new Error(`${label} expected 2xx, got ${res.status} at ${target}`);
-      if (!isTransientFrontendStatus(res.status)) break;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
     }
@@ -165,15 +173,6 @@ async function assertSpaRoute(path) {
   assert(text.includes('<div id="app"></div>'), `${path} did not return the app shell`);
 }
 
-function parseContentSecurityPolicy(value) {
-  const directives = new Map();
-  for (const rawDirective of value.split(';')) {
-    const parts = rawDirective.trim().split(/\s+/).filter(Boolean);
-    if (parts.length > 0) directives.set(parts[0], parts.slice(1));
-  }
-  return directives;
-}
-
 function assertCspSource(directives, directive, source) {
   assert(
     directives.get(directive)?.includes(source),
@@ -189,14 +188,20 @@ async function main() {
     throw new Error('Set ASF_FRONTEND_URL or ASF_FRONTEND_ORIGIN to the deployed HTTPS Pages URL.');
   }
 
-  const home = await waitForFrontendText('frontend home', '/');
+  assert(expectedClerkOrigin, 'Frontend smoke requires a valid Clerk publishable key');
+  const home = await waitForFrontendText('frontend home', '/', {
+    readinessError: ({ res, text }) => frontendShellReadinessError({
+      html: text,
+      cspHeader: res.headers.get('Content-Security-Policy') ?? '',
+      expectedClerkOrigin,
+    }),
+  });
   assert(home.res.headers.get('X-Content-Type-Options') === 'nosniff', 'Frontend shell missing nosniff header');
   assert(home.res.headers.get('Referrer-Policy') === 'strict-origin-when-cross-origin', 'Frontend shell missing referrer policy');
   assert(home.res.headers.get('X-Frame-Options') === 'DENY', 'Frontend shell missing frame protection');
   const cspHeader = home.res.headers.get('Content-Security-Policy') ?? '';
   assert(cspHeader, 'Frontend shell missing Content Security Policy');
   const csp = parseContentSecurityPolicy(cspHeader);
-  assert(expectedClerkOrigin, 'Frontend smoke requires a valid Clerk publishable key');
   for (const [directive, source] of [
     ['default-src', "'self'"],
     ['base-uri', "'self'"],
