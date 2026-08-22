@@ -332,7 +332,7 @@ After those checks pass, copy `launch-validation.example.json` to `.launch-valid
 ## Not Yet Done
 
 - Send external test messages to `privacy@insertplayer.ai` and `support@insertplayer.ai`; Cloudflare routing, MX and SPF are configured, but inbox receipt still needs evidence.
-- Clerk Development email-code QA, signed-in API loading, webhook delivery, and D1 profile retention passed with two disposable users. Create the Production instance and two launch-test users with dedicated Insert Player OAuth credentials.
+- Clerk Development email-code QA, signed-in API loading, webhook delivery, and D1 profile retention passed with two disposable users. The dedicated Insert Player Production instance, live publishable key, issuer, authorized parties, and lifecycle webhook secret are wired; deploy its custom-domain certificates, configure dedicated Google/Apple OAuth credentials, keep mailbox sign-in disabled, and create two launch-test users.
 - Configure the isolated live account/catalog/wildcard webhook, then repeat the validated authenticated purchase flow in live mode.
 - The sandbox frontend is deployed and uses Cloudflare's deterministic test widget. Deploy the production frontend after its live Clerk key is available, then validate one real production Turnstile token and reject its replay.
 - Real Rookie, Contender, Champion, failed-upgrade refund, Retry, and cloud-history paths have passed in authenticated sandbox. Carry that evidence into the final launch record; do not regenerate solely to repeat provider spend.
