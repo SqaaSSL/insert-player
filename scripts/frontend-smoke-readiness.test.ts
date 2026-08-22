@@ -21,6 +21,22 @@ describe('frontend deployment propagation readiness', () => {
     })).toBe('');
   });
 
+  it('keeps waiting until the custom domain references the asset from this build', () => {
+    expect(frontendShellReadinessError({
+      html: `${appShell}<script type="module" src="/assets/index-old.js"></script>`,
+      cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
+      expectedClerkOrigin: clerkOrigin,
+      expectedAssetPath: '/assets/index-current.js',
+    })).toBe('the app shell does not reference deployed asset /assets/index-current.js');
+
+    expect(frontendShellReadinessError({
+      html: `${appShell}<script type="module" src="/assets/index-current.js"></script>`,
+      cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
+      expectedClerkOrigin: clerkOrigin,
+      expectedAssetPath: '/assets/index-current.js',
+    })).toBe('');
+  });
+
   it('does not accept an unrelated successful HTML response', () => {
     expect(frontendShellReadinessError({
       html: '<!doctype html><main>Coming soon</main>',

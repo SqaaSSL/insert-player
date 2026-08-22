@@ -14,7 +14,7 @@ const targetArg = rawArgs.find((arg) => arg.startsWith('--target='));
 const deployTarget = targetArg?.slice('--target='.length) || 'live';
 const isSandbox = deployTarget === 'sandbox';
 const DEPLOY_TIMEOUT_MS = 300_000;
-const SMOKE_TIMEOUT_MS = 180_000;
+const SMOKE_TIMEOUT_MS = 360_000;
 
 const sampleFragments = [
   'PLACEHOLDER',
@@ -90,13 +90,14 @@ function cleanPagesProjectName(values) {
   return projectName;
 }
 
-function run(label, command, commandArgs, cwd = root, timeout = undefined) {
+function run(label, command, commandArgs, cwd = root, timeout = undefined, extraEnv = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd,
     stdio: 'inherit',
     env: {
       ...process.env,
       WRANGLER_LOG_PATH: process.env.WRANGLER_LOG_PATH || wranglerLogPath,
+      ...extraEnv,
     },
     timeout,
   });
@@ -108,6 +109,16 @@ function run(label, command, commandArgs, cwd = root, timeout = undefined) {
   }
   if (result.signal) throw new Error(`${label} exited with signal ${result.signal}`);
   if (result.status !== 0) throw new Error(`${label} failed with exit code ${result.status ?? 'unknown'}`);
+}
+
+function builtFrontendAssetPath() {
+  const html = readFileSync(join(root, 'dist', 'index.html'), 'utf8');
+  const paths = [...html.matchAll(/<script\b[^>]*\bsrc="(\/assets\/[A-Za-z0-9._-]+\.js)"/g)]
+    .map((match) => match[1]);
+  if (paths.length !== 1) {
+    throw new Error(`Expected exactly one frontend entry asset in dist/index.html, found ${paths.length}.`);
+  }
+  return paths[0];
 }
 
 function main() {
@@ -145,6 +156,8 @@ function main() {
     node,
     ['scripts/configure-frontend-dist.mjs', `--target=${isSandbox ? 'sandbox' : 'live'}`],
   );
+  const expectedAssetPath = builtFrontendAssetPath();
+  console.log(`Frontend release asset: ${expectedAssetPath}`);
   run(
     'Cloudflare Pages deploy',
     node,
@@ -167,6 +180,7 @@ function main() {
     ['run', isSandbox ? 'smoke:frontend-sandbox' : 'smoke:frontend-live'],
     root,
     SMOKE_TIMEOUT_MS,
+    { ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath },
   );
 }
 

@@ -18,7 +18,7 @@ const wranglerLogPath = join(root, '.wrangler-logs');
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 const CURL_TIMEOUT_ARGS = ['--connect-timeout', '10', '--max-time', '30'];
-const DEFAULT_FRONTEND_READY_TIMEOUT_MS = 90_000;
+const DEFAULT_FRONTEND_READY_TIMEOUT_MS = 240_000;
 const DEFAULT_FRONTEND_RETRY_DELAY_MS = 2_500;
 
 const requiredSecrets = [
