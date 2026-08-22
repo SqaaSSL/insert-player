@@ -26,12 +26,16 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             worker/package-lock.json
+            processor/package-lock.json
 
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Install Worker dependencies
         run: npm --prefix worker ci
+
+      - name: Install processor dependencies
+        run: npm --prefix processor ci
 
       - name: Run production checks
         run: npm run check:production
@@ -53,3 +57,6 @@ jobs:
 
       - name: Audit Worker dependencies
         run: npm --prefix worker audit --audit-level=high
+
+      - name: Audit processor dependencies
+        run: npm --prefix processor audit --audit-level=high
