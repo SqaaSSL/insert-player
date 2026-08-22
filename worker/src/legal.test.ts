@@ -18,6 +18,7 @@ describe('legal attestations', () => {
     };
     expect(parseGenerationLegalAttestation(current)).toEqual(current);
     expect(parseGenerationLegalAttestation({ ...current, photoRightsConfirmed: false })).toBeNull();
+    expect(parseGenerationLegalAttestation({ ...current, legalVersion: '2026-08-19' })).toBeNull();
     expect(parseGenerationLegalAttestation({ ...current, legalVersion: 'legacy' })).toBeNull();
   });
 

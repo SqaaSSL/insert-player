@@ -113,7 +113,7 @@ function PrivacyPolicy() {
       <section>
         <h2>3. Why we process it</h2>
         <ul>
-          <li>To create, store, sync, upgrade, play, and share the fighter you request.</li>
+          <li>To create, privately store, sync, upgrade, and play the fighter you request, and to publish its generated assets only when you choose.</li>
           <li>To authenticate your account, fulfil purchases, restore failed generation credits, and provide support.</li>
           <li>To prevent fraud, enforce rate limits, secure private assets, and investigate service failures.</li>
           <li>To investigate community safety reports and remove content that breaches these terms or applicable law.</li>
@@ -125,6 +125,7 @@ function PrivacyPolicy() {
       <section>
         <h2>4. Photos and AI providers</h2>
         <p>Your photo and generated intermediates are sent only to the providers needed for the selected generation workflow. These providers may process data outside the European Economic Area under their own data-processing terms and transfer safeguards.</p>
+        <p>Insert Player does not sell your photo, use it in advertising, or use your photo or private fighter assets to train its own models. Your original photo remains private and is never published, including when you choose to publish the generated fighter.</p>
         <div className="legal-page__link-list">
           {providerLinks.map(([label, href]) => (
             <a key={label} href={href} target="_blank" rel="noreferrer">{label}</a>
@@ -209,6 +210,7 @@ function TermsOfService() {
       <section>
         <h2>4. Generated content</h2>
         <p>You retain the rights you hold in your inputs. As between you and Insert Player, we do not claim ownership of the generated fighter assets delivered to your roster. We grant you a non-exclusive licence to use those assets for lawful personal or commercial purposes, subject to applicable law, third-party rights, and any provider terms that apply.</p>
+        <p>Any permission needed to process and host your inputs is limited to operating the service you request. It does not permit us to publish your original photo, use it in advertising, or train an Insert Player model with your photo or private fighter assets.</p>
         <p>AI output can be inaccurate, unexpected, or similar to other output and may not qualify for copyright protection. We do not guarantee exclusivity, likeness accuracy, or freedom from third-party claims.</p>
       </section>
 

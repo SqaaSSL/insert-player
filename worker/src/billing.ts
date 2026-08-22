@@ -76,6 +76,7 @@ interface CheckoutAdjustmentRow {
   amount_cents: number;
   currency: string;
   status: string;
+  legal_version: string;
   stripe_customer_id: string | null;
   refunded_amount_cents: number;
   refunded_credits: number;
@@ -964,7 +965,7 @@ function checkoutCreditExpectation(
   if (
     !userId || !packId || credits === null || amountCents === null || !currency ||
     !stripeAccountId || stripeAccountId !== expectedStripeAccountId ||
-    legalVersion !== CURRENT_LEGAL_VERSION || metadata.terms_accepted !== 'true' ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(legalVersion) || metadata.terms_accepted !== 'true' ||
     metadata.immediate_delivery_confirmed !== 'true' ||
     metadata.withdrawal_loss_acknowledged !== 'true' ||
     !/^cus_[A-Za-z0-9]+$/.test(customerId) ||
@@ -1025,7 +1026,7 @@ async function findCheckoutForStripeAdjustment(
   if (!sessionToken && !paymentIntentId) return null;
   return env.DB.prepare(`
     SELECT id, stripe_session_id, stripe_payment_intent_id, user_id, pack_id,
-           credits, amount_cents, currency, status, stripe_customer_id,
+           credits, amount_cents, currency, status, legal_version, stripe_customer_id,
            refunded_amount_cents, refunded_credits, disputed_amount_cents,
            disputed_credits, reversed_credits, dispute_event_created
     FROM checkout_sessions
@@ -1054,7 +1055,7 @@ function refundMetadataMatchesCheckout(
     metadata.pack_id === row.pack_id &&
     readStripeInteger(metadata.credits) === row.credits &&
     metadata.stripe_account_id === expectedStripeAccountId &&
-    metadata.legal_version === CURRENT_LEGAL_VERSION &&
+    metadata.legal_version === row.legal_version &&
     metadata.terms_accepted === 'true' &&
     metadata.immediate_delivery_confirmed === 'true' &&
     metadata.withdrawal_loss_acknowledged === 'true' &&

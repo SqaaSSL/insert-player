@@ -61,7 +61,7 @@ const requiredPlayableAnimations = [
   'victory',
 ];
 const generationLegal = {
-  legalVersion: '2026-08-19',
+  legalVersion: '2026-08-22',
   ageConfirmed: true,
   termsAccepted: true,
   photoRightsConfirmed: true,
