@@ -1210,6 +1210,9 @@ function assertCommunityModerationIsWired() {
   const homePage = readFileSync(join(root, 'src/ui/routes/HomePage.tsx'), 'utf8');
   const communityPage = readFileSync(join(root, 'src/ui/routes/CommunityPage.tsx'), 'utf8');
   const maintenance = readFileSync(join(root, 'worker/src/maintenance.ts'), 'utf8');
+  const clerkWebhooks = readFileSync(join(root, 'worker/src/clerkWebhooks.ts'), 'utf8');
+  const clerkWebhookTests = readFileSync(join(root, 'worker/src/clerkWebhooks.test.ts'), 'utf8');
+  const authIntegrationTests = readFileSync(join(root, 'worker/src/auth.integration.test.ts'), 'utf8');
   const required = [
     'export async function reportCommunityFighter',
     'MAX_COMMUNITY_REPORT_BODY_BYTES',
@@ -1228,6 +1231,8 @@ function assertCommunityModerationIsWired() {
     'export async function listCommunityReports',
     'export async function moderateCommunityReport',
     "auth.user.plan_tier === 'admin'",
+    "data.private_metadata?.insert_player_role === 'admin'",
+    "WHEN plan_tier = 'admin' THEN 'free'",
     "status === 'actioned'",
     "UPDATE fighters\n      SET public_flag = 0",
     "path === '/api/admin/community-reports'",
@@ -1243,6 +1248,8 @@ function assertCommunityModerationIsWired() {
     "DELETE FROM community_reports",
     "status IN ('dismissed', 'actioned')",
     "it('keeps the queue admin-only and requires an audited note for closing actions'",
+    "it('grants and revokes moderation access from signed Clerk private metadata only'",
+    "it('persists Clerk private-metadata admin grants and safe revocation in real D1'",
   ];
   const combined = [
     fighters,
@@ -1256,6 +1263,9 @@ function assertCommunityModerationIsWired() {
     homePage,
     communityPage,
     maintenance,
+    clerkWebhooks,
+    clerkWebhookTests,
+    authIntegrationTests,
   ].join('\n');
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
