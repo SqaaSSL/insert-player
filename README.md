@@ -36,7 +36,7 @@ Operational and product references:
 | QA | [insert-player-sandbox.pages.dev](https://insert-player-sandbox.pages.dev) | `https://insert-player-api-sandbox.shellbot.workers.dev` | Clerk Development, dedicated Stripe sandbox | Isolated sandbox D1/R2 |
 | Production | [insertplayer.ai](https://insertplayer.ai) | [api.insertplayer.ai](https://api.insertplayer.ai) | Clerk Production, dedicated Stripe live | Isolated production D1/R2 |
 
-Production serves the full app with Clerk Production and dedicated live Stripe configuration. QA remains the environment for paid-provider generation and test Checkout; promotion to production is automated from `main` only after migrations, checks, and smoke pass.
+Production serves the full app with Clerk Production, dedicated live Stripe configuration, and Cloudflare Workflow/Container generation. QA remains the environment for paid-provider generation and test Checkout. Promotion from `main` runs migrations, checks, Worker/Container deploy, Worker smoke, Pages deploy, and readiness; the GitHub Cloudflare token must include `Containers: Write` as well as the existing Worker, D1, R2, and Pages permissions.
 
 Never point a local or QA build at production storage, Clerk, Stripe, or Worker secrets. Never install test Stripe credentials on the production Worker.
 
