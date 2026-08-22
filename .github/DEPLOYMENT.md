@@ -28,9 +28,9 @@ The repository uses environments named exactly `development` and `production`.
 
 `production` is protected with:
 
-- Required reviewer: another SqaaSSL release-team member.
+- Required reviewer: an owner identity or release-team member; repository administrators may bypass when the owner authorizes a release.
 - Deployment branch: `main` only.
-- Self-review disabled.
+- Self-review disabled, so use the alternate owner identity or the administrator bypass for owner-only releases; coworker approval is not required.
 
 `development` is restricted to `develop` and does not need a manual reviewer.
 
