@@ -24,7 +24,6 @@ const providerLinks = [
   ['fal', 'https://fal.ai/legal/privacy-policy'],
   ['Runway', 'https://runway.com/privacy-policy'],
   ['Freepik', 'https://www.freepik.com/legal/privacy'],
-  ['Ludo.ai', 'https://ludo.ai/privacy-policies'],
 ] as const;
 
 function OperatorDetails() {
@@ -124,8 +123,9 @@ function PrivacyPolicy() {
 
       <section>
         <h2>4. Photos and AI providers</h2>
-        <p>Your photo and generated intermediates are sent only to the providers needed for the selected generation workflow. These providers may process data outside the European Economic Area under their own data-processing terms and transfer safeguards.</p>
-        <p>Insert Player does not sell your photo, use it in advertising, or use your photo or private fighter assets to train its own models. Your original photo remains private and is never published, including when you choose to publish the generated fighter.</p>
+        <p>Your original photo is sent through Insert Player's Cloudflare backend only to Google Gemini to create the fighter you requested. Clerk and Stripe do not receive that uploaded photo. Refined tiers may send generated frames, but not the original upload, to fal or Freepik for background removal. Runway or Freepik receives generated fighter assets only if you separately request an optional video workflow.</p>
+        <p>Insert Player uses the paid Gemini API. Under Google's terms current on this policy date, Google does not use paid-service prompts, uploaded files, or responses to improve its products, although it may retain limited logs for abuse prevention and legal compliance. The providers may process data outside the European Economic Area under their data-processing terms and transfer safeguards.</p>
+        <p>Your generation permission is limited to creating and privately storing the fighter you request. It is not a licence for Insert Player to publish or reuse your photo or private fighter for another purpose. Insert Player does not sell your photo or private fighter assets, use either in advertising or promotion, or use either to train its own models. Your original photo remains private and is never published, including when you choose to publish the generated fighter.</p>
         <div className="legal-page__link-list">
           {providerLinks.map(([label, href]) => (
             <a key={label} href={href} target="_blank" rel="noreferrer">{label}</a>
@@ -148,7 +148,7 @@ function PrivacyPolicy() {
 
       <section>
         <h2>6. Community sharing</h2>
-        <p>Fighters are private unless you choose Publish. Public pages expose the fighter name, playable generated assets, quality tier, and a bounded owner display profile. Original uploads, raw intermediates, private photo hashes, account IDs, and archived private versions are not published.</p>
+        <p>Fighters are private to their Insert Player account unless the owner separately confirms Publish. Public pages expose the fighter name, clean generated source views and playable assets, quality tier, and the neutral author label Player. Account names, emails, Clerk profile photos, original uploads, raw intermediates, private photo hashes, account IDs, and archived private versions are never published. A future public handle will require a separate opt-in.</p>
         <p>Signed-in players can report a public fighter for review. Reports do not trigger automatic removal based on volume; an authorised moderator records a decision and may unpublish content after review.</p>
         <p>You can unpublish a fighter at any time. Short-lived network caches may take a brief period to expire.</p>
       </section>
@@ -210,7 +210,7 @@ function TermsOfService() {
       <section>
         <h2>4. Generated content</h2>
         <p>You retain the rights you hold in your inputs. As between you and Insert Player, we do not claim ownership of the generated fighter assets delivered to your roster. We grant you a non-exclusive licence to use those assets for lawful personal or commercial purposes, subject to applicable law, third-party rights, and any provider terms that apply.</p>
-        <p>Any permission needed to process and host your inputs is limited to operating the service you request. It does not permit us to publish your original photo, use it in advertising, or train an Insert Player model with your photo or private fighter assets.</p>
+        <p>Any permission needed to process and host your inputs is limited to operating the private service you request. It is not a licence to publish or reuse your photo or private fighter for another purpose, and it does not permit us to use either in advertising or promotion or to train an Insert Player model with either.</p>
         <p>AI output can be inaccurate, unexpected, or similar to other output and may not qualify for copyright protection. We do not guarantee exclusivity, likeness accuracy, or freedom from third-party claims.</p>
       </section>
 
@@ -227,7 +227,7 @@ function TermsOfService() {
 
       <section>
         <h2>6. Public fighters</h2>
-        <p>Publishing is optional. You grant us a worldwide, non-exclusive, revocable licence to host, display, copy, and deliver the published generated assets so other players can view, play, share, and clone that fighter inside Insert Player. Unpublishing ends new public distribution, subject to short cache expiry and copies another player already cloned into their own roster.</p>
+        <p>Publishing is optional and requires a separate confirmation. For the fighter you choose to publish, you grant us a worldwide, non-exclusive, revocable licence to host, display, copy, and deliver its clean generated source views and playable assets so other players can view, play, share, and clone that fighter inside Insert Player. We show the neutral author label Player. This never includes your account name, email, Clerk profile photo, original photo, raw intermediates, private hashes, or archived generation history. A future public handle will require a separate opt-in. Unpublishing ends new public distribution, subject to short cache expiry and copies another player already cloned into their own roster.</p>
         <p>Signed-in players may report public content. We review reports manually and may unpublish content, restrict community access, suspend accounts, preserve necessary evidence, or take no action. Report volume alone does not decide the outcome. Contact <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> if you believe a moderation decision is mistaken.</p>
       </section>
 

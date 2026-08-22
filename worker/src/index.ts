@@ -14,6 +14,8 @@ import {
   getAsset,
   getCommunityFighter,
   getFighter,
+  getPublicFighterSourceAsset,
+  getPublicFighterSpriteAsset,
   listCommunityFighters,
   listFighters,
   listStages,
@@ -36,12 +38,21 @@ import { handleClerkWebhook } from './clerkWebhooks';
 import { cleanupOperationalData } from './maintenance';
 import { listCommunityReports, moderateCommunityReport } from './moderation';
 import { CURRENT_LEGAL_VERSION } from './legal';
+import { optionalGenerationJobAuth } from './generationAuth';
+import {
+  createGenerationJob,
+  getGenerationJob,
+  listGenerationJobs,
+} from './generationJobs';
 import {
   InvalidMultipartBodyError,
   InvalidJsonBodyError,
   readJsonBody,
   RequestBodyTooLargeError,
 } from './requestBody';
+
+export { FighterGenerationWorkflow } from './generationWorkflow';
+export { ImageProcessorContainer } from './imageProcessorContainer';
 
 const MAX_MATCH_ROUNDS = 5;
 const MAX_MATCH_DURATION_SECONDS = 20 * 60;
@@ -65,7 +76,7 @@ function corsHeaders(request: Request, env: Env): HeadersInit {
   const headers: HeadersInit = {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASF-Provider-Session',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASF-Provider-Session, X-Insert-Player-Provider-Request-Key',
     'Vary': 'Origin',
   };
   if (origin !== '*') {
@@ -192,7 +203,7 @@ function healthResponse(env: Env): Response {
 
   return json({
     status: 'ok',
-    version: '0.16.0',
+    version: '0.17.0',
     legalVersion: CURRENT_LEGAL_VERSION,
     environment: env.ENVIRONMENT ?? 'unknown',
     cors: env.CORS_ORIGIN ? 'configured' : 'wildcard',
@@ -211,6 +222,11 @@ function healthResponse(env: Env): Response {
       d1: env.DB ? 'bound' : 'missing',
       r2: env.SPRITES ? 'bound' : 'missing',
     },
+    durableGeneration: env.FIGHTER_GENERATION
+      && env.IMAGE_PROCESSOR
+      && env.GENERATION_JOB_SIGNING_SECRET
+      ? 'configured'
+      : 'not_configured',
     rateLimit: 'd1',
     privacy: anonymousIdentifiersProtected ? 'pseudonymized' : 'not_configured',
     providers: allProvidersConfigured ? 'configured' : 'partial',
@@ -232,7 +248,13 @@ export default {
         return addCors(await handleClerkWebhook(request, env), request, env);
       }
 
-      const publicAuth: PublicAuthContext = await optionalAuth(request, env);
+      const generationAuth = path.startsWith('/proxy/')
+        ? await optionalGenerationJobAuth(request, env)
+        : null;
+      if (generationAuth instanceof Response) {
+        return addCors(generationAuth, request, env);
+      }
+      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(request, env);
       const proxied = path.startsWith('/proxy/')
         ? await handleProxy(request, env, publicAuth)
         : null;
@@ -312,6 +334,43 @@ export default {
         const fighterId = decodePathParam(shareMatch[1]);
         if (isResponse(fighterId)) return addCors(fighterId, request, env);
         return addCors(await shareCommunityFighterPage(request, env, fighterId), request, env);
+      }
+
+      const publicSourceAssetMatch = path.match(
+        /^\/public-assets\/fighters\/([^/]+)\/sources\/(side|upright|crouch)\/([^/]+)$/,
+      );
+      if (publicSourceAssetMatch && method === 'GET') {
+        const fighterId = decodePathParam(publicSourceAssetMatch[1]);
+        const revision = decodePathParam(publicSourceAssetMatch[3]);
+        if (isResponse(fighterId)) return addCors(fighterId, request, env);
+        if (isResponse(revision)) return addCors(revision, request, env);
+        return addCors(
+          await getPublicFighterSourceAsset(
+            env,
+            fighterId,
+            publicSourceAssetMatch[2] as 'side' | 'upright' | 'crouch',
+            revision,
+          ),
+          request,
+          env,
+        );
+      }
+
+      const publicSpriteAssetMatch = path.match(
+        /^\/public-assets\/fighters\/([^/]+)\/sprites\/([^/]+)\/([^/]+)$/,
+      );
+      if (publicSpriteAssetMatch && method === 'GET') {
+        const fighterId = decodePathParam(publicSpriteAssetMatch[1]);
+        const spriteId = decodePathParam(publicSpriteAssetMatch[2]);
+        const revision = decodePathParam(publicSpriteAssetMatch[3]);
+        if (isResponse(fighterId)) return addCors(fighterId, request, env);
+        if (isResponse(spriteId)) return addCors(spriteId, request, env);
+        if (isResponse(revision)) return addCors(revision, request, env);
+        return addCors(
+          await getPublicFighterSpriteAsset(env, fighterId, spriteId, revision),
+          request,
+          env,
+        );
       }
 
       const communityCloneMatch = path.match(/^\/api\/community\/([^/]+)\/clone$/);
@@ -401,6 +460,38 @@ export default {
 
       if (path === '/api/fighters' && method === 'GET') {
         return addCors(await authenticated(request, env, (auth) => listFighters(request, env, auth)), request, env);
+      }
+
+      if (path === '/api/generation-jobs' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => listGenerationJobs(env, auth)),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/generation-jobs' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'generation:job',
+            (auth) => createGenerationJob(request, env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const generationJobMatch = path.match(/^\/api\/generation-jobs\/([^/]+)$/);
+      if (generationJobMatch && method === 'GET') {
+        const jobId = decodePathParam(generationJobMatch[1]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        return addCors(
+          await authenticated(request, env, (auth) => getGenerationJob(env, auth, jobId)),
+          request,
+          env,
+        );
       }
 
       if (path === '/api/fighters' && method === 'POST') {

@@ -16,20 +16,15 @@ import { geminiReposeDetailed, geminiUprightReposeDetailed, geminiCrouchRepose, 
 import { CELL_H, CELL_W, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, measureOpaqueBoundsFromBase64, type NormalizationReference } from './SpritePostProcess';
 import { getAnimationProfile } from './AnimationProfiles';
 import { debugInfo, debugWarn, publishDebugLog } from './DebugLog';
-import { ludoAnimateSprite } from './LudoApi';
-import { freepikImageToFightingStance, blobToBase64 } from './FreepikApi';
-import { prepareBaseImage } from './ImagePrep';
 import { getConfiguredBgRemovalProvider, removeBackgroundWithConfiguredProvider } from './BackgroundRemovalService';
 import {
   ApiSessionChangedError,
-  apiFetch,
   captureApiRequestContext,
   type ApiRequestContext,
 } from './ApiClient';
 import type { QualityTier } from './QualityTiers';
 import { detectImageMime } from './ImageFile.ts';
 
-export type PipelineProvider = 'gemini' | 'ludo';
 // Sprite generation mode, applies to ALL animations (not just idle anymore).
 // - 'sheet_refined' (default): sheet establishes coherent pose + style, then each
 //   frame is re-rendered at full Gemini resolution using the side-view as style
@@ -84,11 +79,8 @@ export type PipelineStatus =
   | { stage: 'converting_side_view' }
   | { stage: 'converting_upright_view' }
   | { stage: 'converting_crouch_view' }
-  | { stage: 'converting_side_view_polling'; taskId: string }
-  | { stage: 'preparing_base' }
   | { stage: 'generating_sprites'; animation: string; current: number; total: number }
   | { stage: 'sprite_ready'; animation: string; photoHash: string; current: number; total: number }
-  | { stage: 'falling_back'; reason: string }
   | { stage: 'done'; photoHash: string }
   | { stage: 'error'; message: string };
 
@@ -115,18 +107,15 @@ const ANIMATIONS: AnimDef[] = [
   { name: 'jump',       motion: 'four clear jump key poses: grounded anticipation, airborne lift-off, apex airborne pose, and grounded landing recovery, with the character staying the same size in frame and not physically traveling upward inside the frame', frames: 4, duration: 1.5, loop: false, base: 'standing' },
   { name: 'crouch',     motion: 'transitioning from standing fighting stance down into an extreme low-profile crouch with visibly dropped hips, bent knees, thighs near-parallel to the ground, a tightly compressed torso, and a much lower head position by the final frame, while keeping the head facing the same direction', frames: 4, duration: 1.2, loop: false, base: 'crouched' },
   { name: 'hit',        motion: 'four clear hit-reaction key poses: impact, recoil, stagger, and grounded recovery without falling or becoming airborne', frames: 4,  duration: 1.0, loop: false, base: 'standing' },
-  { name: 'ko',         motion: 'falling to the ground, knocked out, collapsing backward',                                         frames: 16, duration: 2,   loop: false, base: 'standing' },
+  { name: 'ko',         motion: 'eight clear key poses of falling backward into a compact knocked-out pose that stays fully inside each frame, ending diagonally on the ground with bent knees', frames: 8, duration: 2, loop: false, base: 'standing' },
   { name: 'victory',    motion: 'big arcade-style victory celebration with an unmistakably triumphant winning pose: chest lifted, shoulders back, chin up, one or both arms raised or pumping in triumph, then settling into a proud champion hold facing right', frames: 8, duration: 1.8, loop: false, base: 'standing' },
 ];
 
-let activeProvider: PipelineProvider = 'gemini';
 const CRITICAL_ANIMATION_NAMES = new Set(['jump', 'hit']);
 const MIRRORED_ANIMATION_NAMES = new Set(['high_punch', 'low_punch', 'high_kick', 'low_kick']);
 const spriteMaintenanceInflight = new Map<string, Promise<number>>();
 export const SPRITE_PROCESSING_VERSION = 5;
 
-export function setProvider(p: PipelineProvider) { activeProvider = p; }
-export function getProvider(): PipelineProvider { return activeProvider; }
 function isCriticalAnimation(name: string): boolean { return CRITICAL_ANIMATION_NAMES.has(name); }
 
 function getMinimumReliableFrameCount(name: string): number {
@@ -135,6 +124,8 @@ function getMinimumReliableFrameCount(name: string): number {
   if (name === 'jump') return 3;
   if (name === 'hit') return 2;
   if (name === 'low_punch' || name === 'low_kick') return 3;
+  if (name === 'ko') return 8;
+  if (name === 'victory') return 6;
   return 1;
 }
 
@@ -175,15 +166,6 @@ function getGenerationFrameCount(anim: AnimDef, cachedSprite?: CachedSprite): nu
   }
   return Math.max(anim.frames, cachedSprite.frameCount);
 }
-
-async function fetchImageAsBlob(url: string, context: ApiRequestContext): Promise<Blob> {
-  const proxied = `/proxy/image?url=${encodeURIComponent(url)}`;
-  const res = await apiFetch(proxied, {}, context);
-  if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
-  return res.blob();
-}
-
-// ─── Plan A: Gemini (repose + sprite sheets) ────────────────────────
 
 async function reposeWithGemini(
   photoBase64: string,
@@ -270,53 +252,6 @@ async function generateSpriteWithGemini(
   const frameW = Math.round(sheetW / result.gridCols);
   const frameH = Math.round(sheetH / result.gridRows);
   return { blob, rawBlob, frameCount: result.frameCount, frameW, frameH, usedScale: result.usedScale };
-}
-
-// ─── Plan B: Freepik + Ludo (legacy fallback) ───────────────────────
-
-async function reposeWithFreepik(
-  photoBase64: string,
-  onStatus: StatusCallback,
-  context: ApiRequestContext,
-): Promise<string> {
-  onStatus({ stage: 'converting_side_view' });
-  const sideViewUrl = await freepikImageToFightingStance(photoBase64, context);
-  const sideViewBlob = await fetchImageAsBlob(sideViewUrl, context);
-  let sideViewBase64 = await blobToBase64(sideViewBlob);
-
-  onStatus({ stage: 'preparing_base' });
-  sideViewBase64 = await prepareBaseImage(sideViewBase64);
-  return sideViewBase64;
-}
-
-async function generateSpriteWithLudo(
-  characterBase64: string,
-  anim: AnimDef,
-  context: ApiRequestContext,
-): Promise<{ blob: Blob; frameCount: number; frameW: number; frameH: number }> {
-  const FACING = 'character facing right throughout, 3/4 view, ';
-  const result = await ludoAnimateSprite({
-    motion_prompt: `${FACING}${anim.motion}`,
-    initial_image: `data:image/png;base64,${characterBase64}`,
-    loop: anim.loop,
-    crop: true,
-    frames: anim.frames as any,
-    frame_size: 256,
-    margin_ratio_mode: 'none',
-    image_type: 'sprite',
-    model: 'standard',
-    duration: anim.duration as any,
-    augment_prompt: true,
-  }, context);
-
-  const blob = await fetchImageAsBlob(result.spritesheet_url, context);
-  const { width: sheetW, height: sheetH } = await measureImage(blob);
-  const gridCols = Math.round(Math.sqrt(result.num_frames));
-  const gridRows = Math.ceil(result.num_frames / gridCols);
-  const frameW = Math.round(sheetW / gridCols);
-  const frameH = Math.round(sheetH / gridRows);
-
-  return { blob, frameCount: result.num_frames, frameW, frameH };
 }
 
 async function rebuildSpriteFromRawBlob(
@@ -590,36 +525,20 @@ export async function processCharacter(
     if (characterName && characterName !== 'Fighter') meta.characterName = characterName;
 
     // ── Step 1: Repose to fighting stance (standing) ──
-    let provider = activeProvider;
     let sideViewBase64: string;
     let sideViewInputBase64: string;
 
     if (meta.sideViewBlob) {
-      sideViewBase64 = await blobToBase64(meta.sideViewBlob);
+      sideViewBase64 = await blobToBase64Util(meta.sideViewBlob);
       sideViewInputBase64 = meta.sideViewRawBlob
         ? await blobToBase64Util(meta.sideViewRawBlob)
         : sideViewBase64;
     } else {
-      const photoBase64 = await blobToBase64(photoFile);
-
-      if (provider === 'gemini') {
-        try {
-          onStatus({ stage: 'converting_side_view' });
-          const sideView = await reposeWithGemini(photoBase64, apiContext);
-          sideViewBase64 = sideView.cleanedBase64;
-          sideViewInputBase64 = sideView.rawBase64;
-        } catch (err: any) {
-          if (err instanceof ApiSessionChangedError) throw err;
-          debugWarn(`[Pipeline] Gemini repose failed, falling back to Freepik+Ludo:`, err.message);
-          onStatus({ stage: 'falling_back', reason: `Gemini repose failed: ${err.message}` });
-          provider = 'ludo';
-          sideViewBase64 = await reposeWithFreepik(photoBase64, onStatus, apiContext);
-          sideViewInputBase64 = sideViewBase64;
-        }
-      } else {
-        sideViewBase64 = await reposeWithFreepik(photoBase64, onStatus, apiContext);
-        sideViewInputBase64 = sideViewBase64;
-      }
+      const photoBase64 = await blobToBase64Util(photoFile);
+      onStatus({ stage: 'converting_side_view' });
+      const sideView = await reposeWithGemini(photoBase64, apiContext);
+      sideViewBase64 = sideView.cleanedBase64;
+      sideViewInputBase64 = sideView.rawBase64;
 
       meta.sideViewBlob = base64ToBlob(sideViewBase64, 'image/png');
       meta.sideViewRawBlob = base64ToBlob(sideViewInputBase64, 'image/png');
@@ -628,31 +547,9 @@ export async function processCharacter(
       await setCachedMeta(meta);
     }
 
-    let crouchSourceBase64 = sideViewBase64;
-    let crouchSourceInputBase64 = sideViewInputBase64;
-    if (provider === 'gemini') {
-      try {
-        const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus, apiContext);
-        crouchSourceBase64 = uprightView.cleanedBase64;
-        crouchSourceInputBase64 = uprightView.inputBase64;
-      } catch (err: any) {
-        if (err instanceof ApiSessionChangedError) throw err;
-        const message = `[Pipeline] Upright reference generation failed, using side view: ${err.message}`;
-        debugWarn(message);
-        publishDebugLog(message);
-        crouchSourceBase64 = sideViewBase64;
-        crouchSourceInputBase64 = sideViewInputBase64;
-      }
-    } else {
-      if (!meta.uprightViewBlob) {
-        meta.uprightViewBlob = base64ToBlob(sideViewBase64, 'image/png');
-      }
-      if (!meta.uprightViewRawBlob) {
-        meta.uprightViewRawBlob = base64ToBlob(sideViewInputBase64, 'image/png');
-      }
-      meta.updatedAt = Date.now();
-      await setCachedMeta(meta);
-    }
+    const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus, apiContext);
+    const crouchSourceBase64 = uprightView.cleanedBase64;
+    const crouchSourceInputBase64 = uprightView.inputBase64;
 
     const crouchNormalizationReference = await getCrouchNormalizationReference(crouchSourceBase64);
     const crouchSpriteNormalizationReference = getCrouchSpriteNormalizationReference(crouchNormalizationReference);
@@ -662,36 +559,21 @@ export async function processCharacter(
     let crouchViewInputBase64: string;
 
     if (meta.crouchViewBlob) {
-      crouchViewBase64 = await blobToBase64(meta.crouchViewBlob);
+      crouchViewBase64 = await blobToBase64Util(meta.crouchViewBlob);
       crouchViewInputBase64 = meta.crouchViewRawBlob
         ? await blobToBase64Util(meta.crouchViewRawBlob)
         : crouchViewBase64;
-    } else if (provider === 'gemini') {
-      try {
-        onStatus({ stage: 'converting_crouch_view' });
-        const crouchView = await geminiCrouchReposeDetailed(
-          crouchSourceInputBase64,
-          crouchNormalizationReference,
-          crouchSourceInputBase64,
-          apiContext,
-        );
-        crouchViewBase64 = crouchView.cleanedBase64;
-        crouchViewInputBase64 = crouchView.rawBase64;
-      } catch (err: any) {
-        if (err instanceof ApiSessionChangedError) throw err;
-        debugWarn(`[Pipeline] Gemini crouch repose failed, using standing view as fallback:`, err.message);
-        crouchViewBase64 = crouchSourceBase64;
-        crouchViewInputBase64 = crouchSourceInputBase64;
-      }
-
-      meta.crouchViewBlob = base64ToBlob(crouchViewBase64, 'image/png');
-      meta.crouchViewRawBlob = base64ToBlob(crouchViewInputBase64, 'image/png');
-      meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64, apiContext);
-      meta.updatedAt = Date.now();
-      await setCachedMeta(meta);
     } else {
-      crouchViewBase64 = sideViewBase64;
-      crouchViewInputBase64 = sideViewInputBase64;
+      onStatus({ stage: 'converting_crouch_view' });
+      const crouchView = await geminiCrouchReposeDetailed(
+        crouchSourceInputBase64,
+        crouchNormalizationReference,
+        crouchSourceInputBase64,
+        apiContext,
+      );
+      crouchViewBase64 = crouchView.cleanedBase64;
+      crouchViewInputBase64 = crouchView.rawBase64;
+
       meta.crouchViewBlob = base64ToBlob(crouchViewBase64, 'image/png');
       meta.crouchViewRawBlob = base64ToBlob(crouchViewInputBase64, 'image/png');
       meta.crouchViewCleanBlob = await tryApiBgRemoval(crouchViewBase64, apiContext);
@@ -721,46 +603,37 @@ export async function processCharacter(
       const normalizationReference = isCrouchFamilyAnimation(anim) ? crouchSpriteNormalizationReference : undefined;
       let spriteResult: { blob: Blob; rawBlob?: Blob; frameCount: number; frameW: number; frameH: number; usedScale?: number };
 
-      if (provider === 'gemini') {
-        try {
-          spriteResult = await generateSpriteWithGemini(
-            primaryImage,
-            anim,
-            secondaryImage,
-            undefined,
-            normalizationReference,
-            tierConfig.spriteMode,
-            tierConfig.enableDnnBgRemoval,
-            apiContext,
-            tierConfig.geminiAnimModelOverride,
-          );
-        } catch (err: any) {
-          if (err instanceof ApiSessionChangedError) throw err;
-          if (err instanceof PartialSpriteGenerationError && err.partialResult) {
-            const partialBlob = base64ToBlob(err.partialResult.imageBase64, 'image/png');
-            const partialRawBlob = base64ToBlob(err.partialResult.rawBase64, 'image/png');
-            const { width: partialSheetW, height: partialSheetH } = await measureImage(partialBlob);
-            storeFailedAnimationArtifact(meta, anim.name, {
-              pngBlob: partialBlob,
-              rawPngBlob: partialRawBlob,
-              frameWidth: Math.round(partialSheetW / err.partialResult.gridCols),
-              frameHeight: Math.round(partialSheetH / err.partialResult.gridRows),
-              frameCount: err.partialResult.frameCount,
-              reason: err.message,
-              mode: tierConfig.spriteMode,
-              createdAt: Date.now(),
-            });
-            await setCachedMeta(meta);
-          }
-          debugWarn(`[Pipeline] Gemini sprite ${anim.name} failed, falling back to Ludo:`, err.message);
-          if (i === 0) {
-            onStatus({ stage: 'falling_back', reason: `Gemini sprites failed: ${err.message}` });
-            provider = 'ludo';
-          }
-          spriteResult = await generateSpriteWithLudo(primaryImage, anim, apiContext);
+      try {
+        spriteResult = await generateSpriteWithGemini(
+          primaryImage,
+          anim,
+          secondaryImage,
+          undefined,
+          normalizationReference,
+          tierConfig.spriteMode,
+          tierConfig.enableDnnBgRemoval,
+          apiContext,
+          tierConfig.geminiAnimModelOverride,
+        );
+      } catch (err: any) {
+        if (err instanceof PartialSpriteGenerationError && err.partialResult) {
+          const partialBlob = base64ToBlob(err.partialResult.imageBase64, 'image/png');
+          const partialRawBlob = base64ToBlob(err.partialResult.rawBase64, 'image/png');
+          const { width: partialSheetW, height: partialSheetH } = await measureImage(partialBlob);
+          storeFailedAnimationArtifact(meta, anim.name, {
+            pngBlob: partialBlob,
+            rawPngBlob: partialRawBlob,
+            frameWidth: Math.round(partialSheetW / err.partialResult.gridCols),
+            frameHeight: Math.round(partialSheetH / err.partialResult.gridRows),
+            frameCount: err.partialResult.frameCount,
+            reason: err.message,
+            mode: tierConfig.spriteMode,
+            createdAt: Date.now(),
+          });
+          await setCachedMeta(meta);
         }
-      } else {
-        spriteResult = await generateSpriteWithLudo(primaryImage, anim, apiContext);
+        debugWarn(`[Pipeline] Gemini sprite ${anim.name} failed without changing provider:`, err.message);
+        throw err;
       }
 
       debugInfo(`[Pipeline] ${anim.name}: ${spriteResult.frameCount} frames, frame ${spriteResult.frameW}x${spriteResult.frameH}`);
@@ -900,16 +773,13 @@ export async function retryAnimation(
   let crouchSourceBase64 = sideViewBase64;
   let crouchSourceInputBase64 = sideViewInputBase64;
   if (isCrouchFamilyAnimation(anim)) {
-    try {
-      const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus, apiContext);
-      crouchSourceBase64 = uprightView.cleanedBase64;
-      crouchSourceInputBase64 = uprightView.inputBase64;
-    } catch (err: any) {
-      if (err instanceof ApiSessionChangedError) throw err;
-      const fallbackMessage = `[Retry] ${anim.name}: upright generation failed, using side view: ${err.message}`;
-      debugWarn(fallbackMessage);
-      publishDebugLog(fallbackMessage);
+    if (!meta.uprightViewBlob || !meta.crouchViewBlob) {
+      throw new Error('Canonical upright and crouch sources are required; retry the missing source first');
     }
+    crouchSourceBase64 = await blobToBase64Util(meta.uprightViewBlob);
+    crouchSourceInputBase64 = meta.uprightViewRawBlob
+      ? await blobToBase64Util(meta.uprightViewRawBlob)
+      : crouchSourceBase64;
   } else if (meta.uprightViewBlob) {
     crouchSourceBase64 = await blobToBase64Util(meta.uprightViewBlob);
     crouchSourceInputBase64 = meta.uprightViewRawBlob
@@ -1092,20 +962,10 @@ export async function retryCrouchView(
     ? await blobToBase64Util(meta.sideViewRawBlob)
     : sideViewBase64;
   const sideInputLabel = meta.sideViewRawBlob ? 'side(raw)' : 'side(clean)';
-  let crouchSourceBase64 = sideViewBase64;
-  let crouchSourceInputBase64 = sideViewInputBase64;
-  let crouchSourceLabel = sideInputLabel;
-  try {
-    const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus, apiContext);
-    crouchSourceBase64 = uprightView.cleanedBase64;
-    crouchSourceInputBase64 = uprightView.inputBase64;
-    crouchSourceLabel = meta.uprightViewRawBlob ? 'upright(raw)' : 'upright(clean)';
-  } catch (err: any) {
-    if (err instanceof ApiSessionChangedError) throw err;
-    const fallbackMessage = `[RetryCrouchView] Upright generation failed, using side view: ${err.message}`;
-    debugWarn(fallbackMessage);
-    publishDebugLog(fallbackMessage);
-  }
+  const uprightView = await ensureUprightView(meta, sideViewInputBase64, onStatus, apiContext);
+  const crouchSourceBase64 = uprightView.cleanedBase64;
+  const crouchSourceInputBase64 = uprightView.inputBase64;
+  const crouchSourceLabel = meta.uprightViewRawBlob ? 'upright(raw)' : 'upright(clean)';
   const crouchNormalizationReference = await getCrouchNormalizationReference(crouchSourceBase64);
   const message =
     `[RetryCrouchView] ${photoHash.slice(0, 8)} source=${crouchSourceLabel} metricsSource=${crouchSourceInputBase64 === sideViewInputBase64 ? sideInputLabel : 'upright(raw)'} reference=` +

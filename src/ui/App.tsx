@@ -283,6 +283,7 @@ export function App({
     if (route === '/gallery') {
       return (
         <GalleryPage
+          authStatus={authStatus}
           authSessionKey={authSessionKey}
           onBack={() => navigate('/menu')}
           onCreateFighter={() => navigate('/fighters/new')}

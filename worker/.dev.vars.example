@@ -7,6 +7,7 @@ CLERK_ISSUER=https://your-clerk-instance.clerk.accounts.dev
 CLERK_AUTHORIZED_PARTIES=http://127.0.0.1:5173,http://localhost:5173
 CLERK_WEBHOOK_SIGNING_SECRET=whsec_replace_me
 ANONYMIZATION_SECRET=replace_me_with_at_least_32_random_bytes
+GENERATION_JOB_SIGNING_SECRET=replace_me_with_at_least_32_random_bytes
 TURNSTILE_REQUIRED=false
 TURNSTILE_ACTION=anonymous_rookie
 

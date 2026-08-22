@@ -1,5 +1,6 @@
 const DEBUG_EVENT_NAME = 'asf-debug-log';
 const MAX_DEBUG_LINES = 40;
+const serverDebugLines: string[] = [];
 
 declare global {
   interface Window {
@@ -9,9 +10,12 @@ declare global {
 }
 
 function isDebugLoggingEnabled(): boolean {
-  if (import.meta.env.DEV) return true;
+  const metaEnv = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env;
+  if (metaEnv?.DEV) return true;
   try {
-    return window.__ASF_DEBUG_LOGS__ === true || window.localStorage.getItem('asf:debug') === '1';
+    return typeof window !== 'undefined' && (
+      window.__ASF_DEBUG_LOGS__ === true || window.localStorage.getItem('asf:debug') === '1'
+    );
   } catch {
     return false;
   }
@@ -30,6 +34,7 @@ export function debugWarn(message: string, ...args: unknown[]): void {
 }
 
 function getDebugStore(): string[] {
+  if (typeof window === 'undefined') return serverDebugLines;
   if (!window.__ASF_DEBUG_LINES__) {
     window.__ASF_DEBUG_LINES__ = [];
   }
@@ -42,12 +47,20 @@ export function publishDebugLog(message: string): void {
   if (store.length > MAX_DEBUG_LINES) {
     store.splice(0, store.length - MAX_DEBUG_LINES);
   }
-  window.dispatchEvent(new CustomEvent(DEBUG_EVENT_NAME, { detail: message }));
+  if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(DEBUG_EVENT_NAME, { detail: message }));
+  }
 }
 
 export function clearDebugLog(): void {
+  if (typeof window === 'undefined') {
+    serverDebugLines.length = 0;
+    return;
+  }
   window.__ASF_DEBUG_LINES__ = [];
-  window.dispatchEvent(new CustomEvent(DEBUG_EVENT_NAME, { detail: '' }));
+  if (typeof CustomEvent !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(DEBUG_EVENT_NAME, { detail: '' }));
+  }
 }
 
 export function publishDebugMultiline(message: string): void {

@@ -82,6 +82,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Matching environment user-lifecycle endpoint |
 | `TURNSTILE_SECRET_KEY` | Matching environment widget |
 | `ANONYMIZATION_SECRET` | Stable random HMAC secret, at least 32 characters |
+| `GENERATION_JOB_SIGNING_SECRET` | Stable random HMAC secret for scoped processor job tokens, at least 32 characters |
 | `BRAND_CLEARANCE_JSON` | Production only; exact JSON from the local cleared brand record |
 
 The Cloudflare token needs Worker Scripts edit, D1 edit, Pages edit, and the route/resource permissions required by the checked-in Worker bindings. Scope it to the single SqaaS Cloudflare account and `insertplayer.ai`; do not use a Global API Key.

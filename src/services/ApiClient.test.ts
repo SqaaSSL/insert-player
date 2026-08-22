@@ -4,6 +4,7 @@ import {
   apiFetch,
   captureApiRequestContext,
   configureApiAuth,
+  createDetachedApiRequestContext,
   withProviderSession,
 } from './ApiClient';
 
@@ -42,6 +43,35 @@ describe('ApiClient request contexts', () => {
     expect(seen).toEqual([
       { authorization: 'Bearer token-a', provider: 'provider-a' },
       { authorization: 'Bearer token-a', provider: 'provider-b' },
+    ]);
+  });
+
+  it('uses a stable semantic request key for parallel durable provider calls', async () => {
+    const context = createDetachedApiRequestContext({
+      apiBaseUrl: 'https://api.insertplayer.ai',
+      authorizationToken: 'generation-token',
+      authorizationScheme: 'Generation',
+      providerSessionId: 'provider-job',
+      providerRequestScope: 'job:abc:sprite:walk',
+    });
+    const seen: Array<{ authorization: string | null; key: string | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_input: string, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      seen.push({
+        authorization: headers.get('Authorization'),
+        key: headers.get('X-Insert-Player-Provider-Request-Key'),
+      });
+      return new Response('{}');
+    }));
+
+    await Promise.all([
+      apiFetch('/proxy/gemini/frame-a', { method: 'POST', body: 'a' }, context),
+      apiFetch('/proxy/gemini/frame-b', { method: 'POST', body: 'b' }, context),
+    ]);
+
+    expect(seen).toEqual([
+      { authorization: 'Generation generation-token', key: 'job:abc:sprite:walk' },
+      { authorization: 'Generation generation-token', key: 'job:abc:sprite:walk' },
     ]);
   });
 

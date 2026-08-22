@@ -38,6 +38,7 @@ const secretKeys = [
   'CLERK_WEBHOOK_SIGNING_SECRET',
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
+  'GENERATION_JOB_SIGNING_SECRET',
 ];
 
 const requiredKeys = [
@@ -52,6 +53,7 @@ const requiredKeys = [
   'CLERK_WEBHOOK_SIGNING_SECRET',
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
+  'GENERATION_JOB_SIGNING_SECRET',
 ];
 
 const sampleFragments = [
@@ -313,6 +315,7 @@ async function validateRequired(values) {
   const clerkPublishableKey = readValue(values, 'VITE_CLERK_PUBLISHABLE_KEY');
   const turnstileSecret = readValue(values, 'TURNSTILE_SECRET_KEY');
   const anonymizationSecret = readValue(values, 'ANONYMIZATION_SECRET');
+  const generationJobSigningSecret = readValue(values, 'GENERATION_JOB_SIGNING_SECRET');
   const turnstileHostnames = readValue(values, 'TURNSTILE_HOSTNAMES') || defaultTurnstileHostnames;
   const stripeSecret = readValue(values, 'STRIPE_SECRET_KEY');
   const stripeAccountId = readValue(values, 'STRIPE_ACCOUNT_ID');
@@ -466,6 +469,13 @@ async function validateRequired(values) {
     errors,
     'ANONYMIZATION_SECRET',
     anonymizationSecret,
+    (value) => value.length >= 32,
+    'must be a random Worker secret of at least 32 characters.',
+  );
+  assertLiveShape(
+    errors,
+    'GENERATION_JOB_SIGNING_SECRET',
+    generationJobSigningSecret,
     (value) => value.length >= 32,
     'must be a random Worker secret of at least 32 characters.',
   );

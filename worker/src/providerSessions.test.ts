@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createProviderRequestState,
   createFeatureProviderSession,
   finalizeProviderRequest,
   PROVIDER_SESSION_HEADER,
@@ -511,12 +512,13 @@ describe('provider session usage', () => {
       claims: null,
       rateLimitKey: 'user:user-1',
     };
+    const providerState = createProviderRequestState();
 
     await expect(requireProviderSession(request, env, auth, {
       provider: 'gemini',
       path: '/proxy/gemini/v1beta/models/gemini-3.1-flash-image:generateContent',
-    })).resolves.toBeNull();
-    await finalizeProviderRequest(request, env, Response.json({ error: 'busy' }, { status: 429 }));
+    }, providerState)).resolves.toBeNull();
+    await finalizeProviderRequest(env, Response.json({ error: 'busy' }, { status: 429 }), providerState);
 
     expect(releasedStatements).toBe(3);
     expect(providerCostEventReserved).toBe(true);

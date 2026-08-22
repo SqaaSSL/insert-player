@@ -68,6 +68,27 @@ const CRITICAL_ANIMATION_CONFIG: Partial<Record<string, ReliableFrameConfig>> = 
   hit: { minFrames: 2, maxFrames: 4 },
   low_punch: { minFrames: 3, maxFrames: 4 },
   low_kick: { minFrames: 3, maxFrames: 4 },
+  ko: {
+    minFrames: 8,
+    maxFrames: 8,
+    allowBestEffortFill: false,
+    minAreaRatio: 0.3,
+    minHeightRatio: 0.25,
+    minWidthRatio: 0.35,
+    minVerticalFill: 0.18,
+    edgeMargin: 4,
+  },
+  victory: {
+    minFrames: 6,
+    maxFrames: 8,
+    allowBestEffortFill: false,
+    minAreaRatio: 0.55,
+    minHeightRatio: 0.7,
+    minWidthRatio: 0.45,
+    minVerticalFill: 0.38,
+    edgeMargin: 4,
+    requireBottomMargin: true,
+  },
 };
 
 // ─── Single image processing (for reposed character) ─────────────────
@@ -711,6 +732,17 @@ export function computeGridCols(frames: number): number {
   if (frames <= 4) return 2;
   if (frames <= 8) return 4;
   return 4;
+}
+
+export function computeRequestedSpriteGrid(
+  animationName: string,
+  frames: number,
+): { cols: number; rows: number } {
+  if (animationName === 'ko' && frames === 8) {
+    return { cols: 2, rows: 4 };
+  }
+  const cols = computeGridCols(frames);
+  return { cols, rows: Math.ceil(frames / cols) };
 }
 
 // ─── Background color detection ─────────────────────────────────────

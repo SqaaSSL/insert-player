@@ -133,7 +133,9 @@ function assertBillingUsesRequestOrigin() {
     'SELECT ?, user_id, credit_cost, ?, fighter_id',
     'return Boolean(claim.results?.[0]);',
     'const ownedFighterId = await resolveOwnedFighterId(env, auth.userId, body.fighterId)',
-    "charge.status === 'committed' && body.success && ownedFighterId && !charge.fighter_id",
+    'export async function settleGenerationPurchase',
+    "charge.status === 'committed'",
+    'fighterId && !charge.fighter_id',
     'fighterId?: string | null',
     'function formatBillingError',
     "'Not enough credits'",
@@ -213,6 +215,9 @@ function assertProxyIsProductionScoped() {
   const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
   const apiClient = readFileSync(join(root, 'src/services/ApiClient.ts'), 'utf8');
   const providerSessions = readFileSync(join(root, 'worker/src/providerSessions.ts'), 'utf8');
+  const providerLimits = readFileSync(join(root, 'worker/src/providerLimits.ts'), 'utf8');
+  const streamLimits = readFileSync(join(root, 'worker/src/streamLimits.ts'), 'utf8');
+  const providerSessionIntegrationTests = readFileSync(join(root, 'worker/src/providerSessions.integration.test.ts'), 'utf8');
   const billingClient = readFileSync(join(root, 'src/services/Billing.ts'), 'utf8');
   const forbidden = [
     'catbox.moe',
@@ -220,6 +225,7 @@ function assertProxyIsProductionScoped() {
     "return method === 'POST' && (",
     "if (path === '/proxy/image') {\n    const limited = await enforceRateLimit(env, 'proxy:default', auth);",
     "if (path === '/proxy/media') {\n    const limited = await enforceRateLimit(env, 'proxy:default', auth);",
+    'response.clone().arrayBuffer()',
   ];
   const required = [
     'env.SPRITES.put(`temp/${id}.${format.ext}`',
@@ -243,11 +249,23 @@ function assertProxyIsProductionScoped() {
     'fetchPublicResult',
     'readResponseBytes',
     'ResponseBodyTooLargeError',
-    'const PROVIDER_REQUEST_BODY_LIMITS',
+    'PROVIDER_REQUEST_BODY_LIMITS',
+    'PROVIDER_RESPONSE_BODY_LIMITS',
     'createBoundedRequestStream(request, maxRequestBytes)',
+    'createBoundedByteStream(upstream.body, maxResponseBytes)',
+    'async function providerRequestHash',
+    "new DigestStream('SHA-256')",
+    'async function storeProviderResponseStream',
+    'bucket.createMultipartUpload(key, options)',
+    'PROVIDER_CACHE_MULTIPART_BYTES',
+    'PROVIDER_CACHE_MAX_RESPONSE_BYTES',
+    'provider_response_too_large',
     'Provider request body is too large',
     "it('rejects a declared oversized provider body before fetch'",
     "it('aborts a chunked provider body as soon as its streaming cap is crossed'",
+    "it('streams provider responses through a byte cap instead of buffering them'",
+    "it('rejects a declared oversized durable request before reserving provider spend'",
+    "it('fails an oversized response without buffering it or releasing incurred provider spend'",
     'Upstream did not return an image',
     'function handleMediaProxy',
     "path === '/proxy/media'",
@@ -266,9 +284,9 @@ function assertProxyIsProductionScoped() {
     "export const PROVIDER_SESSION_HEADER = 'X-ASF-Provider-Session'",
     'function requiresProviderSession',
     "if (request.method === 'GET' || request.method === 'HEAD') return null;",
-    "await requireProviderSession(request, env, auth, { provider: 'gemini', path })",
-    "await requireProviderSession(request, env, auth, { provider: 'freepik', path })",
-    "await requireProviderSession(request, env, auth, { provider: 'fal', path })",
+    "await requireProviderSession(request, env, auth, { provider: 'gemini', path }, providerState)",
+    "await requireProviderSession(request, env, auth, { provider: 'freepik', path }, providerState)",
+    "await requireProviderSession(request, env, auth, { provider: 'fal', path }, providerState)",
     'Provider session is not valid for this provider route',
     'function isAllowedProviderUse',
     "purpose === 'intro_video'",
@@ -284,12 +302,12 @@ function assertProxyIsProductionScoped() {
     'providerSessionId',
     'runWithProviderSession',
     "headers.set('X-ASF-Provider-Session', context.providerSessionId)",
-    "'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASF-Provider-Session'",
+    "'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASF-Provider-Session, X-Insert-Player-Provider-Request-Key'",
     'Provider session required',
     "it('revalidates every redirect and blocks a public URL redirecting private'",
     "it('cancels an upstream body as soon as the streamed byte cap is crossed'",
   ];
-  const combined = `${proxy}\n${proxyTests}\n${workerIndex}\n${apiClient}\n${providerSessions}\n${billingClient}`;
+  const combined = `${proxy}\n${proxyTests}\n${workerIndex}\n${apiClient}\n${providerSessions}\n${providerLimits}\n${streamLimits}\n${providerSessionIntegrationTests}\n${billingClient}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
   if (foundForbidden.length > 0) {
     throw new Error(`Production proxy must not use third-party temp hosts: ${foundForbidden.join(', ')}`);
@@ -306,10 +324,11 @@ function assertWorkerRequestBodiesAreBounded() {
   const billing = readFileSync(join(root, 'worker/src/billing.ts'), 'utf8');
   const clerkWebhooks = readFileSync(join(root, 'worker/src/clerkWebhooks.ts'), 'utf8');
   const fighters = readFileSync(join(root, 'worker/src/fighters.ts'), 'utf8');
+  const generationJobs = readFileSync(join(root, 'worker/src/generationJobs.ts'), 'utf8');
   const providerSessions = readFileSync(join(root, 'worker/src/providerSessions.ts'), 'utf8');
   const proxy = readFileSync(join(root, 'worker/src/proxy.ts'), 'utf8');
   const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
-  const workerSources = [billing, clerkWebhooks, fighters, providerSessions, proxy, workerIndex];
+  const workerSources = [billing, clerkWebhooks, fighters, generationJobs, providerSessions, proxy, workerIndex];
   const directBodyReads = workerSources.flatMap((source, index) => {
     const matches = source.match(/request\.(?:json|text|formData|arrayBuffer)\s*\(/g) ?? [];
     return matches.map((match) => `${index}:${match}`);
@@ -318,7 +337,7 @@ function assertWorkerRequestBodiesAreBounded() {
     throw new Error(`Worker routes bypass bounded request-body readers: ${directBodyReads.join(', ')}`);
   }
 
-  const combined = [requestBody, requestBodyTests, billing, clerkWebhooks, fighters, providerSessions, proxy, workerIndex].join('\n');
+  const combined = [requestBody, requestBodyTests, billing, clerkWebhooks, fighters, generationJobs, providerSessions, proxy, workerIndex].join('\n');
   const required = [
     'class RequestBodyTooLargeError',
     'class InvalidJsonBodyError',
@@ -333,8 +352,10 @@ function assertWorkerRequestBodiesAreBounded() {
     'MAX_CLERK_WEBHOOK_BODY_BYTES',
     'MAX_SOURCE_MULTIPART_BODY_BYTES',
     'MAX_SPRITE_MULTIPART_BODY_BYTES',
+    'MAX_JOB_BODY_BYTES',
     'readMultipartFormData(request, MAX_SOURCE_MULTIPART_BODY_BYTES)',
     'readMultipartFormData(request, MAX_SPRITE_MULTIPART_BODY_BYTES)',
+    'readJsonBody<{',
     "it('rejects chunked multipart bytes over the cap before parsing'",
     "it('stops a forwarded request stream when a chunk crosses the cap'",
     'readJsonBody<Record<string, unknown>>(request, MAX_MATCH_REPORT_BODY_BYTES)',
@@ -384,6 +405,14 @@ function assertOperationalDataRetentionIsSafe() {
     "datetime(created_at) <= datetime('now', '-6 years')",
     'DELETE FROM provider_spend_reservations',
     "created_at_epoch <= unixepoch('now', '-1 day')",
+    'DELETE FROM provider_request_cache',
+    'DELETE FROM generation_jobs',
+    'response_blob_key IS NULL',
+    'await env.SPRITES.delete',
+    "datetime(updated_at) <= datetime('now', '-4 days')",
+    'settleGenerationPurchase(env, job.user_id, job.charge_id, false, job.fighter_id)',
+    "datetime(finished_at) <= datetime('now', '-7 days')",
+    'generation_jobs.provider_session_id = provider_sessions.id',
     'async scheduled(_controller: ScheduledController, env: Env)',
     'await cleanupOperationalData(env)',
     '[triggers]',
@@ -459,7 +488,7 @@ function assertApiOperationsAreSessionScoped() {
     'provider_cost_events',
     'billing_operation',
     'export async function finalizeProviderRequest',
-    'await releaseProviderSpend(env, reservation, response.status)',
+    'await releaseProviderSpend(env, reservation, providerStatus)',
     'PRO_REQUEST_START_INTERVAL_MS = 11_000',
     'err instanceof GeminiRequestError && err.retryable',
     'maxAttempts ?? 5',
@@ -643,6 +672,7 @@ function assertLiveConfigHelperIsWired() {
     "'STRIPE_PRICE_ARCADE'",
     "'CLERK_WEBHOOK_SIGNING_SECRET'",
     "'ANONYMIZATION_SECRET'",
+    "'GENERATION_JOB_SIGNING_SECRET'",
     "'CLERK_ISSUER'",
     "'CLERK_AUTHORIZED_PARTIES'",
     "'VITE_CLERK_PUBLISHABLE_KEY'",
@@ -756,8 +786,10 @@ function assertLiveConfigHelperIsWired() {
     '"db:execute:0015": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0015_asset_lookup_indexes.sql"',
     '"db:execute:0016": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0016_provider_spend_rate_window.sql"',
     '"db:execute:0017": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0017_provider_cost_events.sql"',
+    '"db:execute:0018": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0018_durable_generation_jobs.sql"',
+    '"db:execute:0019": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0019_durable_retry_jobs.sql"',
     'scripts/wrangler-workspace-log.mjs',
-    '"wrangler": "^4.123.0"',
+    '"wrangler": "^4.125.0"',
     '.env.*',
     'worker/.prod.vars',
     '.wrangler-logs/',
@@ -767,6 +799,7 @@ function assertLiveConfigHelperIsWired() {
     'STRIPE_WEBHOOK_SECRET=whsec_replace_me',
     'CLERK_WEBHOOK_SIGNING_SECRET=whsec_replace_me',
     'ANONYMIZATION_SECRET=replace_me_with_at_least_32_random_bytes',
+    'GENERATION_JOB_SIGNING_SECRET=replace_me_with_at_least_32_random_bytes',
     'ENVIRONMENT=development',
     'npm run stripe:bootstrap:sandbox',
     '.env.sandbox.local',
@@ -892,6 +925,7 @@ function assertSandboxIsolationIsWired() {
     'STRIPE_WEBHOOK_SECRET',
     'CLERK_WEBHOOK_SIGNING_SECRET',
     'ANONYMIZATION_SECRET',
+    'GENERATION_JOB_SIGNING_SECRET',
   ];
   const inlineSecrets = secretKeys.filter((key) => new RegExp(`^\\s*${key}\\s*=`, 'm').test(sandboxConfig));
   if (inlineSecrets.length > 0) {
@@ -916,6 +950,7 @@ function assertLegalConsentAndPrivacyIsWired() {
   const legalPage = readFileSync(join(root, 'src/ui/routes/LegalPage.tsx'), 'utf8');
   const legalFooter = readFileSync(join(root, 'src/ui/components/LegalFooter.tsx'), 'utf8');
   const communityPage = readFileSync(join(root, 'src/ui/routes/CommunityPage.tsx'), 'utf8');
+  const characterPipeline = readFileSync(join(root, 'src/services/CharacterPipeline.ts'), 'utf8');
   const fighters = readFileSync(join(root, 'worker/src/fighters.ts'), 'utf8');
   const stripeBootstrap = readFileSync(join(root, 'scripts/bootstrap-stripe-catalog.mjs'), 'utf8');
   const liveSmoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
@@ -944,8 +979,8 @@ function assertLegalConsentAndPrivacyIsWired() {
     liveReadiness,
   ].join('\n');
   const required = [
-    "CURRENT_LEGAL_VERSION = '2026-08-22'",
-    "LEGAL_VERSION = '2026-08-22'",
+    "CURRENT_LEGAL_VERSION = '2026-08-22.5'",
+    "LEGAL_VERSION = '2026-08-22.5'",
     "Paseo de la Castellana 126, 8th floor right, Madrid, Spain",
     "Registro Mercantil de Madrid, section 8, sheet M-784524",
     "type LegalPageKind = 'legal' | 'privacy' | 'terms' | 'refunds'",
@@ -976,12 +1011,29 @@ function assertLegalConsentAndPrivacyIsWired() {
     '<GenerationConsent',
     '<CheckoutConsent',
     'storedGenerationLegalAttestation()',
-    'Private by default.',
-    'generated fighter is shared only if I choose Publish.',
-    'Insert Player does not sell your photo',
+    'Process this photo only for my private fighter.',
+    'process it solely to create and',
+    'privately store this fighter in my Insert Player account.',
+    'Neither my photo nor generated',
+    'fighter will be visible to other players unless I later choose Publish.',
+    'separate action and makes only the clean generated assets of that fighter public',
+    'original photo, Clerk account identity, RAW files, or private generation history.',
+    'not a licence to reuse my photo or private fighter.',
+    'Player will not sell them, use',
+    'them in advertising, or use them to train models.',
+    "only to Google Gemini to create the fighter you requested",
+    "Clerk and Stripe do not receive that uploaded photo",
+    "generated frames, but not the original upload, to fal or Freepik",
+    "Google does not use paid-service prompts, uploaded files, or responses to improve its products",
+    'does not sell your photo or private fighter assets',
+    'use either in advertising or promotion',
     'Your original photo remains private and is never published',
-    'use your photo or private fighter assets to train its own models',
+    'use either to train its own models',
     'Any permission needed to process and host your inputs is limited',
+    'Publishing is optional and requires a separate confirmation.',
+    'Clerk profile photos',
+    'neutral author label Player',
+    'A future public handle will require a separate opt-in.',
     "request.headers.get('CF-Connecting-IP')",
     "return `anon:${await hmacString(secret, address)}`",
     "throw new Error('ANONYMIZATION_SECRET is required')",
@@ -996,6 +1048,18 @@ function assertLegalConsentAndPrivacyIsWired() {
   }
   if (/^\s*ANONYMIZATION_SECRET\s*=/m.test(wrangler)) {
     throw new Error('ANONYMIZATION_SECRET must remain a Worker secret, not a wrangler.toml var.');
+  }
+  const forbiddenProviderFallbacks = [
+    "from './LudoApi'",
+    'reposeWithFreepik',
+    'generateSpriteWithLudo',
+    'falling back to Freepik+Ludo',
+    'falling back to Ludo',
+    'using side view:',
+    'using standing view as fallback',
+  ].filter((snippet) => characterPipeline.includes(snippet));
+  if (forbiddenProviderFallbacks.length > 0) {
+    throw new Error(`Fighter generation must not change AI provider silently: ${forbiddenProviderFallbacks.join(', ')}`);
   }
 }
 
@@ -1012,7 +1076,7 @@ function assertClerkAuthIsWired() {
     'isLoaded',
     "'loading'",
     'configureApiAuth(isLoaded && isSignedIn ? () => getToken() : null)',
-    "headers.set('Authorization', `Bearer ${token}`)",
+    "headers.set('Authorization', `${context.authorizationScheme ?? 'Bearer'} ${token}`)",
     'jwtVerify(token, getJwks(env)',
     'function getClerkIssuer',
     "throw new Error('CLERK_ISSUER is required')",
@@ -1056,11 +1120,12 @@ function assertClerkUserLifecycleIsWired() {
   const auth = readFileSync(join(root, 'worker/src/auth.ts'), 'utf8');
   const index = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
   const types = readFileSync(join(root, 'worker/src/types.ts'), 'utf8');
+  const generatedTypes = readFileSync(join(root, 'worker/worker-configuration.d.ts'), 'utf8');
   const wrangler = readFileSync(join(root, 'worker/wrangler.toml'), 'utf8');
   const required = [
     "from '@clerk/backend/webhooks'",
     'verifyWebhook(verifiedRequest, { signingSecret: env.CLERK_WEBHOOK_SIGNING_SECRET })',
-    'CLERK_WEBHOOK_SIGNING_SECRET?: string',
+    'CLERK_WEBHOOK_SIGNING_SECRET: string',
     "path === '/api/clerk/webhook' && method === 'POST'",
     "accountLifecycle: env.CLERK_WEBHOOK_SIGNING_SECRET ? 'clerk_webhook' : 'not_configured'",
     'CREATE TABLE IF NOT EXISTS clerk_webhook_events',
@@ -1085,7 +1150,7 @@ function assertClerkUserLifecycleIsWired() {
     "it('deletes the account-scoped Stripe Customer before removing local account rows'",
     "it('bounds a single R2 purge attempt so webhook retries can continue large deletions'",
   ];
-  const combined = `${webhook}\n${webhookTests}\n${migration}\n${auth}\n${index}\n${types}`;
+  const combined = `${webhook}\n${webhookTests}\n${migration}\n${auth}\n${index}\n${types}\n${generatedTypes}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
     throw new Error(`Clerk user lifecycle handling is missing: ${missing.join(', ')}`);
@@ -1103,20 +1168,24 @@ function assertCommunityAssetsAreSanitized() {
   const community = readFileSync(join(root, 'src/ui/routes/CommunityPage.tsx'), 'utf8');
   const share = readFileSync(join(root, 'src/ui/shared/communityShare.ts'), 'utf8');
   const index = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
+  const liveSmoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
   const forbidden = [
     'for (const kind of SOURCE_KINDS)',
     'copyR2Object(env, sprite.raw_blob_key',
     '...serialized,\n    sources:',
+    'public, max-age=31536000, immutable',
     "'unsafe-inline'",
   ];
   const required = [
     'function serializeCommunityFighter',
     'ownerUserId: _ownerUserId',
     'photoHash: _photoHash',
-    'name: normalizePublicDisplayName(fighter.owner_name)',
-    'avatarUrl: normalizeOptionalHttpsUrl(fighter.owner_avatar_url)',
+    "name: 'Player'",
     '...publicFighter',
-    'sprites: serializedSprites.map',
+    'sprites: sprites.map',
+    'function publicSourceAssetUrl',
+    'function publicSpriteAssetUrl',
+    '/public-assets/fighters/',
     'export async function getCommunityFighter',
     'getCommunityFighter(featuredId)',
     'Featured fighter loaded',
@@ -1135,7 +1204,6 @@ function assertCommunityAssetsAreSanitized() {
     'getOwnedFighterByPhotoHash',
     'maxTier(existing.quality_tier, source.quality_tier)',
     'COALESCE(side_view_blob_key, ?)',
-    'public_asset',
     'export async function shareCommunityFighterPage',
     "path.match(/^\\/share\\/([^/]+)$/)",
     'meta property="og:image"',
@@ -1178,24 +1246,24 @@ function assertCommunityAssetsAreSanitized() {
     'function decodeAssetKey',
     "!decodedKey.startsWith('users/')",
     'segments.some((segment) => !segment',
-    'function cacheControlForAsset',
     'function namespacedAssetOwner',
-    'namespaceOwner === auth.userId',
-    "asset_kind: 'owner_namespaced_asset'",
-    'function findPublicAssetAccess',
-    'AND (side_view_blob_key = ? OR upright_view_blob_key = ? OR crouch_view_blob_key = ?)',
-    'WHERE f.public_flag = 1 AND s.blob_key = ?',
-    'WHERE public_flag = 1 AND blob_key = ?',
-    'idx_fighters_side_view_blob',
-    'idx_fighters_upright_view_blob',
-    'idx_fighters_crouch_view_blob',
-    'idx_sprites_blob',
-    'idx_stages_blob',
-    "serves owner assets across devices and exposes only active processed assets when public",
-    'public, max-age=31536000, immutable',
+    '!auth.userId || namespaceOwner !== auth.userId',
+    'function publicAssetRevision',
+    'export async function getPublicFighterSourceAsset',
+    'export async function getPublicFighterSpriteAsset',
+    'PUBLIC_ASSET_CACHE_HEADERS',
+    'public, max-age=60, s-maxage=300, must-revalidate',
+    'publicSourceAssetMatch = path.match',
+    'publicSpriteAssetMatch = path.match',
+    "serves owner assets across devices and keeps namespaced asset keys owner-only",
+    "not.toContain('/assets/users/')",
+    "not.toContain('user-target')",
+    'const revokedSource = await getPublicFighterSourceAsset',
+    'function assertOpaqueCommunityAssets',
+    "expectStatus('revoked public sprite'",
+    'unpublishing revokes opaque public assets and community detail',
     'private, no-store',
     'X-Content-Type-Options',
-    "assetOwner.owner_user_id !== auth.userId && (!assetOwner.public_flag || !assetOwner.public_asset)",
     'communityFighterUrl',
     'copyToClipboard',
     'shareCommunityFighter',
@@ -1203,8 +1271,17 @@ function assertCommunityAssetsAreSanitized() {
     "get('fighter')",
     'Share Link',
   ];
-  const combined = `${fighters}\n${assetIndexes}\n${fighterIntegrationTests}\n${gallery}\n${community}\n${share}\n${index}`;
-  const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
+  if (
+    fighters.includes('owner_avatar_url') ||
+    /\bowner_name\b/.test(fighters) ||
+    fighters.includes('JOIN users u ON u.id = f.owner_user_id') ||
+    fighters.includes('avatarUrl: normalizeOptionalHttpsUrl')
+  ) {
+    throw new Error('Community payloads must not expose Clerk account profile fields.');
+  }
+  const implementationCombined = `${fighters}\n${assetIndexes}\n${fighterIntegrationTests}\n${gallery}\n${community}\n${share}\n${index}`;
+  const combined = `${implementationCombined}\n${liveSmoke}`;
+  const foundForbidden = forbidden.filter((snippet) => implementationCombined.includes(snippet));
   if (foundForbidden.length > 0) {
     throw new Error(`Community clone privacy must not copy private intermediates: ${foundForbidden.join(', ')}`);
   }
@@ -1339,7 +1416,8 @@ function assertAppConsoleLogsAreDebugGated() {
   const required = [
     'export function debugInfo',
     'export function debugWarn',
-    'import.meta.env.DEV',
+    'metaEnv?.DEV',
+    "typeof window !== 'undefined'",
     "window.localStorage.getItem('asf:debug')",
     'window.__ASF_DEBUG_LOGS__',
   ];
@@ -1863,7 +1941,7 @@ function assertCrossDeviceRosterImportIsWired() {
     'await renameCloudFighter(meta.cloudFighterId, trimmedName, apiContext)',
     'const cloudDelete = await deleteCloudFighter(meta.cloudFighterId, apiContext)',
     'Fighter renamed locally; cloud update skipped',
-    'const cloudSync = await syncCloudFightersToLocal(all, apiContext)',
+    'syncCloudFightersToLocal(all, apiContext)',
     'const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext)',
     'p1CloudFighterId: p1Meta.cloudFighterId ?? null',
     'p2CloudFighterId: p2Meta.cloudFighterId ?? null',
@@ -1947,6 +2025,9 @@ function assertTierPricingAndPipelineParity() {
   const frontendTiers = readFileSync(join(root, 'src/services/QualityTiers.ts'), 'utf8');
   const workerTiers = readFileSync(join(root, 'worker/src/tiers.ts'), 'utf8');
   const pipeline = readFileSync(join(root, 'src/services/CharacterPipeline.ts'), 'utf8');
+  const gemini = readFileSync(join(root, 'src/services/GeminiApi.ts'), 'utf8');
+  const spritePostProcess = readFileSync(join(root, 'src/services/SpritePostProcess.ts'), 'utf8');
+  const generationWorkflow = readFileSync(join(root, 'worker/src/generationWorkflow.ts'), 'utf8');
   const authState = readFileSync(join(root, 'src/ui/authState.ts'), 'utf8');
   const createFighter = readFileSync(join(root, 'src/ui/routes/CreateFighterPage.tsx'), 'utf8');
   const gallery = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
@@ -1987,11 +2068,24 @@ function assertTierPricingAndPipelineParity() {
     'setPendingUpgradeTier(tier.id)',
     'aria-labelledby="upgrade-confirm-title"',
     'Every existing local and cloud version remains preserved.',
+    'tier: currentTier,',
+    'syncFighterToCloud(updatedMeta, updatedSprites, intro, apiContext)',
+    "setStatus('Done and synced')",
+    "animationName === 'ko' && frames === 8",
+    'computeRequestedSpriteGrid(animName, genFrames)',
+    "if (animName === 'ko') return 8",
+    "name: 'ko',         motion: 'eight clear key poses",
+    "name: 'ko', motion: 'eight clear key poses",
   ];
-  const combined = `${frontendTiers}\n${workerTiers}\n${pipeline}\n${authState}\n${createFighter}\n${gallery}\n${packageJson}\n${tierParity}`;
+  const combined = `${frontendTiers}\n${workerTiers}\n${pipeline}\n${gemini}\n${spritePostProcess}\n${generationWorkflow}\n${authState}\n${createFighter}\n${gallery}\n${packageJson}\n${tierParity}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
-  if (missing.length > 0) {
-    throw new Error(`Tier pricing/pipeline parity is missing: ${missing.join(', ')}`);
+  const forbidden = ['setSpriteMode(', 'Mode: Refined', 'spriteMode,'];
+  const foundForbidden = forbidden.filter((snippet) => gallery.includes(snippet));
+  if (missing.length > 0 || foundForbidden.length > 0) {
+    throw new Error([
+      missing.length > 0 ? `Tier pricing/pipeline parity is missing: ${missing.join(', ')}` : '',
+      foundForbidden.length > 0 ? `Gallery exposes tier-bypassing sprite controls: ${foundForbidden.join(', ')}` : '',
+    ].filter(Boolean).join('; '));
   }
 }
 
@@ -2020,7 +2114,9 @@ function replayMigrations() {
     '.read worker/migrations/0015_asset_lookup_indexes.sql',
     '.read worker/migrations/0016_provider_spend_rate_window.sql',
     '.read worker/migrations/0017_provider_cost_events.sql',
-    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports");',
+    '.read worker/migrations/0018_durable_generation_jobs.sql',
+    '.read worker/migrations/0019_durable_retry_jobs.sql',
+    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports");',
   ];
   try {
     run('D1 migration replay', sqlite, migrationArgs);
@@ -2075,6 +2171,22 @@ function replayMigrations() {
     ]);
     if (sourceDuplicateCount !== '1') {
       throw new Error(`Source content unique index did not collapse duplicate uploads; got ${sourceDuplicateCount}`);
+    }
+
+    const durableGenerationIndexCount = runCapture('D1 durable generation index check', sqlite, [
+      dbPath,
+      `
+        SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'index'
+          AND name IN (
+            'idx_generation_jobs_active_fighter',
+            'idx_generation_job_events_job',
+            'idx_provider_request_cache_job'
+          );
+      `,
+    ]);
+    if (durableGenerationIndexCount !== '3') {
+      throw new Error(`Durable generation indexes are incomplete; got ${durableGenerationIndexCount}/3`);
     }
 
 	    const communityPublishState = runCapture('D1 community publishable asset filter check', sqlite, [
@@ -2722,7 +2834,7 @@ function assertAnonymousRookieTurnstileIsWired() {
     'if (turnstileError) return turnstileError',
     'turnstileToken: turnstileToken ?? null',
     '<TurnstileChallenge',
-    'disabled={!file || !name.trim() || running || !turnstileReady || !legalAccepted}',
+    'disabled={!file || !name.trim() || running || !turnstileReady || !legalAccepted || !recoveryReady}',
     'window.turnstile.reset(widgetId)',
     'TURNSTILE_REQUIRED = "true"',
     'TURNSTILE_ACTION = "anonymous_rookie"',
@@ -2977,6 +3089,126 @@ function assertLaunchRasterAssetsAreFresh() {
   }
 }
 
+function assertDurableGenerationIsWired() {
+  const migration = readFileSync(join(root, 'worker/migrations/0018_durable_generation_jobs.sql'), 'utf8');
+  const retryMigration = readFileSync(join(root, 'worker/migrations/0019_durable_retry_jobs.sql'), 'utf8');
+  const billing = readFileSync(join(root, 'worker/src/billing.ts'), 'utf8');
+  const jobs = readFileSync(join(root, 'worker/src/generationJobs.ts'), 'utf8');
+  const workflow = readFileSync(join(root, 'worker/src/generationWorkflow.ts'), 'utf8');
+  const auth = readFileSync(join(root, 'worker/src/generationAuth.ts'), 'utf8');
+  const assets = readFileSync(join(root, 'worker/src/generatedAssets.ts'), 'utf8');
+  const imageProcessorContainer = readFileSync(join(root, 'worker/src/imageProcessorContainer.ts'), 'utf8');
+  const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
+  const processor = readFileSync(join(root, 'processor/src/server.ts'), 'utf8');
+  const processorDockerfile = readFileSync(join(root, 'Dockerfile.processor'), 'utf8');
+  const frontendJobs = readFileSync(join(root, 'src/services/GenerationJobs.ts'), 'utf8');
+  const apiClientTests = readFileSync(join(root, 'src/services/ApiClient.test.ts'), 'utf8');
+  const createPage = readFileSync(join(root, 'src/ui/routes/CreateFighterPage.tsx'), 'utf8');
+  const galleryPage = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
+  const rateLimit = readFileSync(join(root, 'worker/src/rateLimit.ts'), 'utf8');
+  const productionWrangler = readFileSync(join(root, 'worker/wrangler.toml'), 'utf8');
+  const sandboxWrangler = readFileSync(join(root, 'worker/wrangler.sandbox.toml'), 'utf8');
+  const workerPackage = readFileSync(join(root, 'worker/package.json'), 'utf8');
+  const authTests = readFileSync(join(root, 'worker/src/generationAuth.test.ts'), 'utf8');
+  const jobTests = readFileSync(join(root, 'worker/src/generationJobs.integration.test.ts'), 'utf8');
+  const assetTests = readFileSync(join(root, 'worker/src/generatedAssets.integration.test.ts'), 'utf8');
+  const providerTests = readFileSync(join(root, 'worker/src/providerSessions.integration.test.ts'), 'utf8');
+  const billingTests = readFileSync(join(root, 'worker/src/billing.integration.test.ts'), 'utf8');
+  const combined = [
+    migration,
+    retryMigration,
+    billing,
+    jobs,
+    workflow,
+    auth,
+    assets,
+    imageProcessorContainer,
+    workerIndex,
+    processor,
+    processorDockerfile,
+    frontendJobs,
+    apiClientTests,
+    createPage,
+    galleryPage,
+    rateLimit,
+    productionWrangler,
+    sandboxWrangler,
+    workerPackage,
+    authTests,
+    jobTests,
+    assetTests,
+    providerTests,
+    billingTests,
+  ].join('\n');
+  const required = [
+    'CREATE TABLE IF NOT EXISTS generation_jobs',
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_generation_jobs_active_fighter',
+    'CREATE TABLE IF NOT EXISTS generation_job_events',
+    'CREATE TABLE IF NOT EXISTS provider_request_cache',
+    'UNIQUE(job_id, provider, method, request_path, request_hash)',
+    "'fighter_retry_animation'",
+    "'fighter_retry_source'",
+    'target_kind TEXT',
+    'target_name TEXT',
+    'export async function settleGenerationPurchase',
+    'successStatements: D1PreparedStatement[] = []',
+    '...successStatements',
+    'export async function createGenerationJob',
+    "retention: { successRetention: '30 days', errorRetention: '30 days' }",
+    "locationHint: 'weur'",
+    "status IN ('queued', 'running')",
+    'credits were restored',
+    'export class FighterGenerationWorkflow extends WorkflowEntrypoint',
+    "retries: { limit: 5, delay: '30 seconds'",
+    "timeout: '3 hours'",
+    "step.do('commit generation purchase'",
+    'INSERT OR IGNORE INTO generation_job_events',
+    'GENERATION_JOB_SIGNING_SECRET is required',
+    '[secrets]',
+    '"GENERATION_JOB_SIGNING_SECRET"',
+    '"types:check": "node ../scripts/wrangler-workspace-log.mjs types worker-configuration.d.ts --strict-vars false --check"',
+    'Generation job is not active',
+    'export class ImageProcessorContainer extends Container',
+    "path === '/api/generation-jobs' && method === 'POST'",
+    "path === '/api/generation-jobs' && method === 'GET'",
+    'durableGeneration: env.FIGHTER_GENERATION',
+    "image = \"../Dockerfile.processor\"",
+    'jurisdiction = "eu"',
+    'FROM node:22-bookworm-slim',
+    'USER node',
+    'export async function startGenerationJob',
+    'export async function waitForGenerationJob',
+    'listGenerationJobs',
+    "'generation:job':",
+    'backendOwnsPurchase = true',
+    'targetKind: target.kind',
+    "Connection lost. The cloud job is still running; reconnecting...",
+    "step.do('retry canonical side source'",
+    "step.do('retry canonical upright source'",
+    "step.do('retry canonical crouch source'",
+    'preparing your private cloud fighter',
+    'deduplicates exact source retries while preserving every distinct version',
+    'replays a completed provider response without another call reservation',
+    'keys parallel calls by semantic scope plus body and blocks exact concurrent duplicates',
+    'uses a stable semantic request key for parallel durable provider calls',
+    'starts one idempotent workflow and extends its backend-owned reservation',
+    'keeps one reserved purchase when identical job requests race',
+    'starts an idempotent one-target animation retry in the durable workflow',
+    'starts a one-target canonical source retry with the source scope',
+    'restores a retry reservation when its target is outside the scoped animation set',
+    'keeps a reservation uncommitted when the durable completion batch fails',
+  ];
+  const missing = required.filter((snippet) => !combined.toLowerCase().includes(snippet.toLowerCase()));
+  if (missing.length > 0) {
+    throw new Error(`Durable generation wiring is incomplete: ${missing.join(', ')}`);
+  }
+  for (const [label, config] of [['production', productionWrangler], ['sandbox', sandboxWrangler]]) {
+    if (/^\s*GENERATION_JOB_SIGNING_SECRET\s*=/m.test(config)) {
+      throw new Error(`${label} generation job signing key must remain a Worker secret.`);
+    }
+  }
+}
+
 function assertGithubActionsAreWired() {
   const files = {
     validation: '.github/workflows/validate.yml',
@@ -3022,6 +3254,7 @@ function assertGithubActionsAreWired() {
       'npm run deploy:frontend:sandbox',
       'secrets.CLOUDFLARE_API_TOKEN',
       'secrets.ANONYMIZATION_SECRET',
+      'secrets.GENERATION_JOB_SIGNING_SECRET',
     ],
     production: [
       'group: deploy-production',
@@ -3036,6 +3269,7 @@ function assertGithubActionsAreWired() {
       'npm run check:live-readiness',
       'secrets.CLOUDFLARE_API_TOKEN',
       'secrets.CLERK_WEBHOOK_SIGNING_SECRET',
+      'secrets.GENERATION_JOB_SIGNING_SECRET',
     ],
     codeql: [
       'github/codeql-action/init@v4',
@@ -3083,7 +3317,9 @@ assertGeminiImageModelsAreGa();
 run('frontend style guard', npm, ['run', 'check:frontend']);
 run('tier parity guard', node, ['scripts/check-tier-parity.mjs']);
 run('unit tests', npm, ['test']);
+run('processor benchmark tests', npm, ['--prefix', 'processor', 'run', 'benchmark:providers:test']);
 run('frontend typecheck', npx, ['tsc', '--noEmit']);
+run('Worker binding type drift check', npm, ['--prefix', 'worker', 'run', 'types:check']);
 run('worker typecheck', npx, ['tsc', '--noEmit'], join(root, 'worker'));
 replayMigrations();
 assertNoLegacyApiRoutes();
@@ -3121,6 +3357,7 @@ assertLocalCachePreservesSpriteVersions();
 assertWorkerErrorsDoNotLeakInProduction();
 assertLaunchMetadataIsWired();
 assertLaunchRasterAssetsAreFresh();
+assertDurableGenerationIsWired();
 assertGithubActionsAreWired();
 run('prelaunch bundle isolation', node, ['scripts/build-prelaunch.mjs', '--skip-checks']);
 

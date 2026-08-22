@@ -1,0 +1,11 @@
+.git
+.github
+.qa
+.wrangler
+.wrangler-logs
+dist
+node_modules
+processor/dist
+processor/node_modules
+worker/node_modules
+*.log

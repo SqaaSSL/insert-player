@@ -29,7 +29,8 @@ function normalizeConfiguredProvider(value: string | undefined | null): BgRemova
 }
 
 function getConfiguredProvider(): BgRemovalProvider {
-  return normalizeConfiguredProvider(import.meta.env.VITE_BG_REMOVAL_PROVIDER);
+  const metaEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env;
+  return normalizeConfiguredProvider(metaEnv?.VITE_BG_REMOVAL_PROVIDER);
 }
 
 async function uploadTempImage(base64: string, context?: ApiRequestContext): Promise<string> {

@@ -1,7 +1,7 @@
 # Quality Tiers — Pricing & Implementation Plan
 
-> **Status:** Implemented in the current working tree for sprite tiers, local tier cache, cloud sync metadata, upgrade UI, operation-specific credit gating, and profitability checks. Keep this file as the design contract.
-> **Blocker:** Tier code and pricing guards are implemented. Real Rookie creation, Contender upgrade, Champion upgrade, failed-upgrade refunds, authenticated Champion Retry, processing-v5 RAW reconstruction, version-preserving incremental cloud sync, and playable match entry have passed against the isolated sandbox. Launch validation remains: production Clerk/Stripe setup, payment/webhook smoke, real-phone QA, and two-device play. Background removal is validated unless a new real output demonstrates a regression.
+> **Status:** Implemented for sprite tiers, account-scoped local cache, version-preserving cloud sync, durable backend generation/upgrades/retries, operation-specific credits, UI, and profitability guards. Keep this file as the design contract.
+> **Launch evidence:** Real Rookie creation, Contender upgrade, Champion upgrade, failed-upgrade refunds, authenticated Champion Retry, processing-v5 RAW reconstruction, incremental cloud sync, and playable match entry have passed in isolated QA. A durable Victory Retry and Pro Upright-source Retry also survived navigation/reconnect, committed exactly one credit, and preserved prior versions. Remaining validation is one live Stripe payment/webhook, two production Clerk users for authenticated smoke, real-phone QA, and physical two-device play. Background removal is validated unless a new real output demonstrates a regression.
 > **Author:** Discussed 2026-04-24.
 
 ---
