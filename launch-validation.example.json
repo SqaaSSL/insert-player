@@ -1,7 +1,7 @@
 {
   "schemaVersion": 4,
   "validatedAt": "2026-05-17T00:00:00.000Z",
-  "legalVersion": "2026-08-19",
+  "legalVersion": "2026-08-22",
   "frontendUrl": "https://insertplayer.ai",
   "workerUrl": "https://api.insertplayer.ai",
   "publicBrandName": "Insert Player",
@@ -28,7 +28,7 @@
     },
     "legal_pages_and_generation_consent": {
       "passed": true,
-      "evidence": "evidence_replace_me: Opened /legal, /privacy, /terms, and /refunds; current company details and AI-generated disclosures were visible, and generation stayed disabled until the versioned age/photo/AI/immediate-performance consent was checked."
+      "evidence": "evidence_replace_me: Opened /legal, /privacy, /terms, and /refunds; the private-by-default photo promise and provider disclosure were visible, and generation stayed disabled until the versioned age/photo/AI/immediate-performance consent was checked."
     },
     "support_email_delivery": {
       "passed": true,

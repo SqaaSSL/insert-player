@@ -941,8 +941,8 @@ function assertLegalConsentAndPrivacyIsWired() {
     liveReadiness,
   ].join('\n');
   const required = [
-    "CURRENT_LEGAL_VERSION = '2026-08-19'",
-    "LEGAL_VERSION = '2026-08-19'",
+    "CURRENT_LEGAL_VERSION = '2026-08-22'",
+    "LEGAL_VERSION = '2026-08-22'",
     "Paseo de la Castellana 126, 8th floor right, Madrid, Spain",
     "Registro Mercantil de Madrid, section 8, sheet M-784524",
     "type LegalPageKind = 'legal' | 'privacy' | 'terms' | 'refunds'",
@@ -973,6 +973,12 @@ function assertLegalConsentAndPrivacyIsWired() {
     '<GenerationConsent',
     '<CheckoutConsent',
     'storedGenerationLegalAttestation()',
+    'Private by default.',
+    'generated fighter is shared only if I choose Publish.',
+    'Insert Player does not sell your photo',
+    'Your original photo remains private and is never published',
+    'use your photo or private fighter assets to train its own models',
+    'Any permission needed to process and host your inputs is limited',
     "request.headers.get('CF-Connecting-IP')",
     "return `anon:${await hmacString(secret, address)}`",
     "throw new Error('ANONYMIZATION_SECRET is required')",

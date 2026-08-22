@@ -31,9 +31,14 @@ export function GenerationConsent({ checked, disabled, onChange }: ConsentProps)
           }}
         />
         <span>
-          I am 18+, have permission to use this photo, agree to the Terms and AI processing,
-          request immediate generation, and understand that starting it ends the 14-day
-          withdrawal right for that digital content, except where law requires a remedy.
+          <strong>Private by default.</strong>{' '}
+          I am 18+ and confirm I own this photo or have the pictured adult's permission to
+          submit it. I ask Insert Player and the AI providers named in Privacy to process it
+          only as needed to create and privately store this fighter for my account. My original
+          photo is never published, and the generated fighter is shared only if I choose Publish.
+          I agree to the Terms and Privacy Policy, request immediate generation, and understand
+          that starting it ends the 14-day withdrawal right for that digital content, except
+          where law requires a remedy.
         </span>
       </label>
       <LegalLinks />

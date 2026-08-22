@@ -4,6 +4,7 @@ import {
   creditsForStripeAdjustment,
   stripeEventAuditPayload,
 } from './billing';
+import { CURRENT_LEGAL_VERSION } from './legal';
 import type { AuthContext, Env } from './types';
 
 class FakeD1Statement {
@@ -57,7 +58,7 @@ const auth = {
 } as unknown as AuthContext;
 
 const checkoutLegal = {
-  legalVersion: '2026-08-19',
+  legalVersion: CURRENT_LEGAL_VERSION,
   ageConfirmed: true,
   termsAccepted: true,
   refundPolicyAcknowledged: true,
@@ -141,12 +142,12 @@ describe('Stripe checkout hardening', () => {
     expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
     expect(checkoutForms[0].get('automatic_tax[enabled]')).toBe('true');
     expect(checkoutForms[0].get('consent_collection[terms_of_service]')).toBe('none');
-    expect(checkoutForms[0].get('metadata[legal_version]')).toBe('2026-08-19');
+    expect(checkoutForms[0].get('metadata[legal_version]')).toBe(CURRENT_LEGAL_VERSION);
     expect(checkoutForms[0].get('metadata[withdrawal_loss_acknowledged]')).toBe('true');
     expect(checkoutForms[0].get('payment_intent_data[metadata][session_token]'))
       .toBe(checkoutForms[0].get('metadata[session_token]'));
     expect(checkoutForms[0].get('payment_intent_data[metadata][stripe_account_id]')).toBe('acct_insertplayer');
-    expect(checkoutForms[0].get('payment_intent_data[metadata][legal_version]')).toBe('2026-08-19');
+    expect(checkoutForms[0].get('payment_intent_data[metadata][legal_version]')).toBe(CURRENT_LEGAL_VERSION);
     expect(checkoutForms[0].get('customer')).toBe('cus_insertplayer');
     expect(checkoutForms[0].get('customer_update[address]')).toBe('auto');
   });
