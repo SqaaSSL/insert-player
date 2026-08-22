@@ -19,7 +19,7 @@ const CURRENT_LEGAL_VERSION = legalVersionMatch[1];
 const DEFAULT_LAUNCH_TIMEOUTS_MS = {
   'check:production': 300_000,
   'check:live-readiness': 600_000,
-  'smoke:frontend-live': 180_000,
+  'smoke:frontend-live': 300_000,
   'smoke:live:launch': 600_000,
 };
 

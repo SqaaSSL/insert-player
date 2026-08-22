@@ -511,6 +511,7 @@ function assertFrontendDeployIsProductionScoped() {
     'FETCH_TIMEOUT_MS',
     'FRONTEND_READY_TIMEOUT_MS',
     'ASF_FRONTEND_READY_TIMEOUT_MS',
+    'ASF_EXPECTED_FRONTEND_ASSET_PATH',
     'FRONTEND_RETRY_DELAY_MS',
     'function fetchWithTimeout',
     'function waitForFrontendText',
@@ -534,6 +535,8 @@ function assertFrontendDeployIsProductionScoped() {
     "'--project-name'",
     'projectName',
     "'--branch'",
+    'builtFrontendAssetPath',
+    'Frontend release asset:',
     'npm run smoke:frontend-live',
   ];
   const deployFrontend = readFileSync(join(root, 'scripts/deploy-frontend-pages.mjs'), 'utf8');
@@ -2866,6 +2869,8 @@ function assertLaunchMetadataIsWired() {
     "home.res.headers.get('Content-Security-Policy')",
     'parseContentSecurityPolicy',
     'frontendShellReadinessError',
+    'expectedAssetPath',
+    'ASF_EXPECTED_FRONTEND_ASSET_PATH',
     'assertCspSource',
     "['script-src', 'https://challenges.cloudflare.com']",
     "['script-src', expectedClerkOrigin]",
