@@ -983,6 +983,7 @@ function assertLegalConsentAndPrivacyIsWired() {
     "return `anon:${await hmacString(secret, address)}`",
     "throw new Error('ANONYMIZATION_SECRET is required')",
     "privacy: anonymousIdentifiersProtected ? 'pseudonymized' : 'not_configured'",
+    'legalVersion: CURRENT_LEGAL_VERSION',
     "['privacy', 'pseudonymized']",
     "health.privacy === 'pseudonymized'",
   ];
@@ -2881,7 +2882,8 @@ function assertLaunchMetadataIsWired() {
     'Home HTML missing canonical production origin',
     'robots.txt missing canonical sitemap',
     'Sitemap must not publish private roster routes',
-    "asset.res.headers.get('Cache-Control')",
+    "const cacheControl = res.headers.get('Cache-Control')",
+    'expected JavaScript',
   ];
   const requiredDeploy = [
     "'frontend environment CSP'",

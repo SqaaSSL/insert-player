@@ -35,6 +35,7 @@ import { turnstileConfigurationStatus } from './turnstile';
 import { handleClerkWebhook } from './clerkWebhooks';
 import { cleanupOperationalData } from './maintenance';
 import { listCommunityReports, moderateCommunityReport } from './moderation';
+import { CURRENT_LEGAL_VERSION } from './legal';
 import {
   InvalidMultipartBodyError,
   InvalidJsonBodyError,
@@ -192,6 +193,7 @@ function healthResponse(env: Env): Response {
   return json({
     status: 'ok',
     version: '0.16.0',
+    legalVersion: CURRENT_LEGAL_VERSION,
     environment: env.ENVIRONMENT ?? 'unknown',
     cors: env.CORS_ORIGIN ? 'configured' : 'wildcard',
     auth: authConfigured ? 'clerk' : 'not_configured',

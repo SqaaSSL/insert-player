@@ -43,6 +43,8 @@ const requireAuthenticatedSmoke =
 const requireCloneSmoke =
   envValue(env, 'ASF_SMOKE_REQUIRE_CLONE') === '1' || process.argv.includes('--require-clone');
 const FETCH_TIMEOUT_MS = Number(envValue(env, 'ASF_LIVE_SMOKE_TIMEOUT_MS') || 45_000);
+const WORKER_READY_TIMEOUT_MS = Number(envValue(env, 'ASF_WORKER_READY_TIMEOUT_MS') || 90_000);
+const WORKER_RETRY_DELAY_MS = Number(envValue(env, 'ASF_WORKER_RETRY_DELAY_MS') || 2_500);
 
 const tinyPngBase64 =
   envValue(env, 'ASF_TEST_IMAGE_BASE64') ||
@@ -235,6 +237,31 @@ async function expectJson(label, pathOrUrl, status = 200, init = {}) {
   return readJson(res);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForCurrentWorkerHealth() {
+  const started = Date.now();
+  let lastError = null;
+  while (Date.now() - started <= WORKER_READY_TIMEOUT_MS) {
+    try {
+      const health = await expectJson('health', '/health');
+      if (health.legalVersion === generationLegal.legalVersion) return health;
+      lastError = new Error(
+        `/health still reports legal version ${String(health.legalVersion ?? 'missing')}`,
+      );
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+    const remaining = WORKER_READY_TIMEOUT_MS - (Date.now() - started);
+    if (remaining <= 0) break;
+    await sleep(Math.min(WORKER_RETRY_DELAY_MS, remaining));
+  }
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`Current production Worker did not become ready: ${detail}`);
+}
+
 function imageBlob() {
   const binary = atob(tinyPngBase64.replace(/\s+/g, ''));
   const bytes = new Uint8Array(binary.length);
@@ -243,8 +270,9 @@ function imageBlob() {
 }
 
 async function runPublicSmoke() {
-  const health = await expectJson('health', '/health');
+  const health = await waitForCurrentWorkerHealth();
   assert(health.status === 'ok', 'Health response did not report ok');
+  assert(health.legalVersion === generationLegal.legalVersion, '/health did not report the current legal version');
   assert(health.environment === 'production', '/health did not report production environment');
   assert(health.storage?.d1 === 'bound', '/health did not report D1 binding');
   assert(health.storage?.r2 === 'bound', '/health did not report R2 binding');
