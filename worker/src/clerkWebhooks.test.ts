@@ -10,6 +10,7 @@ import { upsertClerkUser } from './auth';
 import type { Env, User } from './types';
 
 const SIGNING_SECRET = 'whsec_c3VwZXItc2VjcmV0';
+type ActiveUserWebhookEvent = Extract<UserWebhookEvent, { type: 'user.created' | 'user.updated' }>;
 
 class FakeR2Bucket {
   readonly keys = new Set<string>();
@@ -103,13 +104,27 @@ class FakeD1Database {
       const existing = this.users.get(id);
       const preserveMissingFields = Number(values[7]) === 1;
       const hasDisplayName = Number(values[8]) === 1;
-      this.users.set(id, fakeUser(
+      const nextUser = fakeUser(
         id,
         clerkUserId,
         preserveMissingFields && !hasDisplayName ? existing?.display_name ?? displayName : displayName,
         preserveMissingFields && avatarUrl === null ? existing?.avatar_url ?? null : avatarUrl,
         preserveMissingFields && email === null ? existing?.email ?? null : email,
-      ));
+      );
+      nextUser.plan_tier = existing?.plan_tier ?? 'free';
+      this.users.set(id, nextUser);
+      return;
+    }
+    if (query.includes('UPDATE users') && query.includes('plan_tier = CASE')) {
+      const grantsAdmin = Number(values[0]) === 1;
+      const clerkUserId = String(values[1]);
+      for (const [id, user] of this.users) {
+        if (user.clerk_user_id !== clerkUserId) continue;
+        this.users.set(id, {
+          ...user,
+          plan_tier: grantsAdmin ? 'admin' : user.plan_tier === 'admin' ? 'free' : user.plan_tier,
+        });
+      }
       return;
     }
     if (query.includes('INSERT INTO clerk_user_tombstones')) {
@@ -170,7 +185,7 @@ function fakeEnv(database = new FakeD1Database(), bucket = new FakeR2Bucket()): 
   };
 }
 
-function userEvent(type: 'user.created' | 'user.updated', id = 'user_test'): UserWebhookEvent {
+function userEvent(type: 'user.created' | 'user.updated', id = 'user_test'): ActiveUserWebhookEvent {
   return {
     type,
     object: 'event',
@@ -184,7 +199,7 @@ function userEvent(type: 'user.created' | 'user.updated', id = 'user_test'): Use
       email_addresses: [{ id: 'email_primary', email_address: 'ada@example.com' }],
     },
     event_attributes: { http_request: { client_ip: '203.0.113.1', user_agent: 'test' } },
-  } as UserWebhookEvent;
+  } as ActiveUserWebhookEvent;
 }
 
 function signedRequest(event: WebhookEvent, eventId: string): Request {
@@ -235,6 +250,30 @@ describe('Clerk user lifecycle webhook', () => {
       avatar_url: 'https://img.clerk.com/avatar.png',
       email: 'ada@example.com',
     });
+  });
+
+  it('grants and revokes moderation access from signed Clerk private metadata only', async () => {
+    const database = new FakeD1Database();
+    const env = fakeEnv(database);
+    const adminCreated = userEvent('user.created');
+    adminCreated.data.private_metadata = { insert_player_role: 'admin' };
+    adminCreated.data.public_metadata = { insert_player_role: 'free' };
+
+    await processClerkUserWebhook(adminCreated, 'msg_admin_created', env);
+    expect(database.users.get('user_test')?.plan_tier).toBe('admin');
+
+    const adminRevoked = userEvent('user.updated');
+    adminRevoked.data.private_metadata = {};
+    adminRevoked.data.public_metadata = { insert_player_role: 'admin' };
+
+    await processClerkUserWebhook(adminRevoked, 'msg_admin_revoked', env);
+    expect(database.users.get('user_test')?.plan_tier).toBe('free');
+
+    const paidUser = database.users.get('user_test');
+    if (!paidUser) throw new Error('Expected synced Clerk user');
+    paidUser.plan_tier = 'pro';
+    await processClerkUserWebhook(userEvent('user.updated'), 'msg_paid_profile', env);
+    expect(database.users.get('user_test')?.plan_tier).toBe('pro');
   });
 
   it('rejects invalid signatures without touching account data', async () => {
