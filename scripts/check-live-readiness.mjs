@@ -9,6 +9,7 @@ import {
   clerkPublishableKeyIssues,
   decodeClerkPublishableKey,
 } from './clerk-publishable-key.mjs';
+import { wranglerAuthIssue } from './wrangler-auth-status.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -439,11 +440,13 @@ function assertClerkJwksReachable() {
 function assertWranglerAuth() {
   const whoami = run(npx, ['wrangler', 'whoami'], workerDir);
   const output = `${whoami.stdout ?? ''}${whoami.stderr ?? ''}`.trim();
-  if (
-    whoami.status !== 0 ||
-    /not authenticated|CLOUDFLARE_API_TOKEN/i.test(output)
-  ) {
-    fail(`Wrangler is not authenticated or not usable.\n${output}`);
+  const issue = wranglerAuthIssue({
+    status: whoami.status,
+    output,
+    expectedAccountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? '',
+  });
+  if (issue) {
+    fail(`Wrangler is not authenticated for the expected account: ${issue}.\n${output}`);
     return false;
   }
   return true;
