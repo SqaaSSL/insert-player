@@ -125,6 +125,23 @@ describe('Gemini content-block handling', () => {
     expect(prompt).toContain('casual civilian stroll');
   });
 
+  it('forces a dedicated wardrobe and accessory continuity audit', () => {
+    const prompt = geminiOfficialSpriteReviewPrompt(
+      'Original fighter in a navy suit with bare hands, black shoes, and a red tie.',
+      'idle',
+      'subtle breathing loop',
+      8,
+      'initial-wardrobe',
+      1,
+    );
+
+    expect(prompt).toContain('Inventory the visible clothing and accessories across all cells');
+    expect(prompt).toContain('majority-consistent frames');
+    expect(prompt).toContain('A glove, watch, ring, bracelet, prop, changed shoe, changed tie');
+    expect(prompt).toContain('WARDROBE SPECIALIST PASS');
+    expect(prompt).toContain('REVIEW INSTANCE: initial-wardrobe-1');
+  });
+
   it('makes independent QA passes and format recovery requests cache-distinct', () => {
     const first = geminiOfficialSpriteReviewPrompt(
       'Original fighter in a navy suit.',

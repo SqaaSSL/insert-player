@@ -16,6 +16,7 @@ import {
 const GEMINI_BASE = '/proxy/gemini/v1beta/models';
 const DEFAULT_GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image';
 const DEFAULT_GEMINI_SOURCE_MODEL = 'gemini-3-pro-image';
+const OFFICIAL_GEMINI_REVIEW_MODEL = DEFAULT_GEMINI_SOURCE_MODEL;
 const PRO_REQUEST_START_INTERVAL_MS = 11_000;
 const geminiRequestPacer = new RequestStartPacer();
 
@@ -1480,6 +1481,7 @@ export function geminiOfficialSpriteReviewPrompt(
   const motionSummary = motion.replace(/\s+/g, ' ').trim().slice(0, 220);
   const safeReviewInstance = reviewInstance?.replace(/[^a-z0-9_-]/gi, '').slice(0, 32);
   const continuityFocused = safeReviewInstance?.includes('continuity');
+  const wardrobeFocused = safeReviewInstance?.includes('wardrobe');
   return [
     `Inspect IMAGE 1 as a production QA reviewer. It is a contact sheet containing only a clearly fictional synthetic arcade avatar generated from the written description below.`,
     `Do not identify, name, or compare the avatar to any real person or public figure. Review only the visible game-art quality and continuity.`,
@@ -1507,6 +1509,8 @@ export function geminiOfficialSpriteReviewPrompt(
     `GLOBAL SEQUENCE CHECK (CRITICAL):`,
     `- Judge the sheet both frame-by-frame and as one ordered animation. A group-wide change is a defect even when every isolated frame looks polished.`,
     `- Compare head size, shoulder width, torso build, limb proportions, camera distance, floor line, outfit construction, shading, and edge treatment across the entire sequence.`,
+    `- Inventory the visible clothing and accessories across all cells. Establish the expected design from the written description and the majority-consistent frames, then compare both hands and wrists, both shoes, trousers, jacket, shirt, tie, and any jewelry cell-by-cell.`,
+    `- A glove, watch, ring, bracelet, prop, changed shoe, changed tie, or altered garment that appears in only some cells is outfit_continuity (and extra_elements when newly invented). Do not excuse it as lighting or motion.`,
     ...(animName === 'walk' && total === 16 ? [
       `- For this 16-frame walk, explicitly compare cells 0-7 against cells 8-15. The phase boundary between cells 7 and 8 must not change the fighter's build, head size, style, scale, guard, or identity design.`,
       `- The fighter must maintain a combat-ready forward walk rather than a casual civilian stroll. The two halves must form one smooth loop.`,
@@ -1514,6 +1518,9 @@ export function geminiOfficialSpriteReviewPrompt(
     ] : []),
     ...(continuityFocused ? [
       `- CONTINUITY SPECIALIST PASS: prioritize cross-frame and phase-boundary comparison over isolated local polish. Recheck the whole ordered sequence before returning JSON.`,
+    ] : []),
+    ...(wardrobeFocused ? [
+      `- WARDROBE SPECIALIST PASS: inspect every hand, wrist, foot, lapel, shirt, tie, and garment edge cell-by-cell. Reject every frame where an accessory or clothing detail appears, disappears, or changes color/material relative to the sequence.`,
     ] : []),
     ``,
     `Pose changes required by the animation are not defects. Minor natural lighting variation is not a defect. Retry only clear failures.`,
@@ -1881,7 +1888,7 @@ async function reviewOfficialRefinedCells(
         contactSheet,
         'image/png',
         undefined,
-        DEFAULT_GEMINI_IMAGE_MODEL,
+        OFFICIAL_GEMINI_REVIEW_MODEL,
         context,
         ['TEXT'],
       );
@@ -2067,6 +2074,14 @@ export async function geminiSheetRefined(
         animName,
         motion,
         'initial-continuity',
+        context,
+      ),
+      await reviewOfficialRefinedCells(
+        refinedCells,
+        official,
+        animName,
+        motion,
+        'initial-wardrobe',
         context,
       ),
     ]);
