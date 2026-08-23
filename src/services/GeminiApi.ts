@@ -36,6 +36,8 @@ interface GeminiResponse {
   error?: { code: number; message: string };
 }
 
+type GeminiResponseModality = 'TEXT' | 'IMAGE';
+
 export class GeminiContentBlockedError extends Error {
   readonly blockReason: string;
 
@@ -194,6 +196,7 @@ async function callGemini(
   extraImages?: { data: string; mime: string }[],
   modelOverride?: string,
   context?: ApiRequestContext,
+  responseModalities: GeminiResponseModality[] = ['TEXT', 'IMAGE'],
 ): Promise<{ text: string; imageBase64: string | null; imageMime: string | null; finishReason: string | null }> {
   const model = modelOverride || DEFAULT_GEMINI_IMAGE_MODEL;
   const reqParts: GeminiPart[] = [];
@@ -218,7 +221,7 @@ async function callGemini(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: reqParts }],
-          generationConfig: { responseModalities: ['TEXT', 'IMAGE'] },
+          generationConfig: { responseModalities },
         }),
       }, context);
     } catch (error) {
@@ -1404,8 +1407,10 @@ export function geminiOfficialRefinePrompt(
   motion: string,
   frameIndex: number,
   total: number,
+  qualityCorrection?: string,
 ): string {
   const motionSummary = motion.replace(/\s+/g, ' ').trim().slice(0, 180);
+  const normalizedCorrection = qualityCorrection?.replace(/\s+/g, ' ').trim().slice(0, 500);
   return [
     geminiOfficialTextOnlyPrompt(description),
     `FRAME CONTEXT:`,
@@ -1422,11 +1427,131 @@ export function geminiOfficialRefinePrompt(
     `STYLE AND CONTINUITY:`,
     `- Preserve the written synthetic face design, hair, skin tone, build, outfit, colors, materials, and realistic premium 2.5D rendering consistently.`,
     `- Avoid cartoon, chibi, anime, cel shading, caricature, flat illustration, or documentary photography.`,
+    ...(normalizedCorrection ? [
+      ``,
+      `QUALITY CORRECTION (CRITICAL):`,
+      `- A previous synthetic render of this frame failed QA. ${normalizedCorrection}`,
+      `- Correct those defects while preserving the silhouette guide, written character design, and animation timing.`,
+    ] : []),
     ``,
     `OUTPUT:`,
     `- Return exactly one image with a pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients.`,
     `- Return no explanatory text, UI, grid, or multiple frames.`,
   ].join('\n');
+}
+
+const OFFICIAL_SPRITE_REVIEW_ISSUES = [
+  'anatomy',
+  'complete_body',
+  'character_count',
+  'scale_framing',
+  'appearance_continuity',
+  'outfit_continuity',
+  'render_style',
+  'background',
+  'extra_elements',
+] as const;
+
+export type GeminiOfficialSpriteReviewIssue = typeof OFFICIAL_SPRITE_REVIEW_ISSUES[number];
+
+export interface GeminiOfficialSpriteReview {
+  retry: number[];
+  issues: Record<string, GeminiOfficialSpriteReviewIssue[]>;
+}
+
+export function geminiOfficialSpriteReviewPrompt(
+  description: string,
+  animName: string,
+  motion: string,
+  total: number,
+): string {
+  const motionSummary = motion.replace(/\s+/g, ' ').trim().slice(0, 220);
+  return [
+    `Inspect IMAGE 1 as a production QA reviewer. It is a contact sheet containing only a clearly fictional synthetic arcade avatar generated from the written description below.`,
+    `Do not identify, name, or compare the avatar to any real person or public figure. Review only the visible game-art quality and continuity.`,
+    ``,
+    `WRITTEN CHARACTER DESIGN:`,
+    description.trim(),
+    ``,
+    `ANIMATION: "${animName}" (${motionSummary})`,
+    `FRAME ORDER: inspect exactly the first ${total} cells, indexed 0 through ${total - 1}, left-to-right and then top-to-bottom. Ignore any empty padding cells after index ${total - 1}.`,
+    ``,
+    `Reject a frame only for a clear production defect:`,
+    `- anatomy: impossible, duplicated, merged, detached, or badly malformed anatomy.`,
+    `- complete_body: any head, hand, elbow, knee, leg, or foot is cropped or missing.`,
+    `- character_count: the cell contains zero or more than one complete fighter.`,
+    `- scale_framing: the fighter's scale, floor line, or camera framing clearly breaks continuity with the other cells.`,
+    `- appearance_continuity: face design, hair, skin tone, build, or apparent age clearly changes.`,
+    `- outfit_continuity: outfit, colors, materials, footwear, or accessories clearly change.`,
+    `- render_style: the frame becomes cartoon, anime, chibi, cel-shaded, flat illustration, caricature, or otherwise departs from premium realistic 2.5D rendering.`,
+    `- background: the background is not flat pure bright green or contains a floor, shadow, gradient, or scenery.`,
+    `- extra_elements: props, text, logos, UI, motion trails, detached objects, or extra figures appear.`,
+    ``,
+    `Pose changes required by the animation are not defects. Minor natural lighting variation is not a defect. Retry only clear failures.`,
+    `Return exactly one JSON object and no markdown or prose. Use zero-based indices and only the issue labels above:`,
+    `{"retry":[3],"issues":{"3":["render_style"]}}`,
+    `If all frames pass, return: {"retry":[],"issues":{}}`,
+  ].join('\n');
+}
+
+export function parseGeminiOfficialSpriteReview(
+  responseText: string,
+  total: number,
+): GeminiOfficialSpriteReview {
+  const trimmed = responseText.trim();
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace < 0 || lastBrace <= firstBrace) {
+    throw new Error('Gemini official sprite review did not return a JSON object');
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+  } catch {
+    throw new Error('Gemini official sprite review returned malformed JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Gemini official sprite review returned an invalid payload');
+  }
+
+  const payload = parsed as { retry?: unknown; issues?: unknown };
+  if (!Array.isArray(payload.retry)) {
+    throw new Error('Gemini official sprite review omitted the retry array');
+  }
+  if (!payload.issues || typeof payload.issues !== 'object' || Array.isArray(payload.issues)) {
+    throw new Error('Gemini official sprite review omitted the issues object');
+  }
+
+  const retry: number[] = [];
+  for (const value of payload.retry) {
+    if (!Number.isInteger(value) || (value as number) < 0 || (value as number) >= total) {
+      throw new Error('Gemini official sprite review returned an invalid frame index');
+    }
+    if (!retry.includes(value as number)) retry.push(value as number);
+  }
+  retry.sort((a, b) => a - b);
+
+  const allowedIssues = new Set<string>(OFFICIAL_SPRITE_REVIEW_ISSUES);
+  const issuePayload = payload.issues as Record<string, unknown>;
+  const issues: Record<string, GeminiOfficialSpriteReviewIssue[]> = {};
+  for (const frameIndex of retry) {
+    const frameIssues = issuePayload[String(frameIndex)];
+    if (!Array.isArray(frameIssues) || frameIssues.length === 0) {
+      throw new Error(`Gemini official sprite review omitted issues for frame ${frameIndex}`);
+    }
+    const normalized: GeminiOfficialSpriteReviewIssue[] = [];
+    for (const issue of frameIssues) {
+      if (typeof issue !== 'string' || !allowedIssues.has(issue)) {
+        throw new Error(`Gemini official sprite review returned an invalid issue for frame ${frameIndex}`);
+      }
+      const typedIssue = issue as GeminiOfficialSpriteReviewIssue;
+      if (!normalized.includes(typedIssue)) normalized.push(typedIssue);
+    }
+    issues[String(frameIndex)] = normalized;
+  }
+
+  return { retry, issues };
 }
 
 async function createIdentityFreePoseGuide(base64: string): Promise<string> {
@@ -1489,6 +1614,7 @@ async function singleRefineAttempt(
   attemptLabel: string,
   context?: ApiRequestContext,
   officialDescription?: string,
+  officialQualityCorrection?: string,
 ): Promise<string | null> {
   const official = officialDescription?.trim();
   const primaryBase64 = official
@@ -1496,7 +1622,14 @@ async function singleRefineAttempt(
     : characterBase64;
   const extras = official ? undefined : [{ data: cellBase64, mime: 'image/png' }];
   const requestPrompt = official
-    ? geminiOfficialRefinePrompt(official, animName, prompt, frameIndex, total)
+    ? geminiOfficialRefinePrompt(
+      official,
+      animName,
+      prompt,
+      frameIndex,
+      total,
+      officialQualityCorrection,
+    )
     : prompt;
   try {
     const result = await callGemini(requestPrompt, primaryBase64, 'image/png', extras, model, context);
@@ -1553,6 +1686,7 @@ async function refineSheetCell(
   total: number,
   context?: ApiRequestContext,
   officialDescription?: string,
+  officialQualityCorrection?: string,
 ): Promise<string> {
   const start = Date.now();
   const baseBounds = await measureGreenBackedCharacterBounds(cellBase64);
@@ -1587,6 +1721,7 @@ async function refineSheetCell(
     'attempt 1',
     context,
     officialDescription,
+    officialQualityCorrection,
   );
   if (first) {
     const check = await validateSize(first);
@@ -1602,9 +1737,13 @@ async function refineSheetCell(
   }
 
   // Attempt 2 — harder size prompt
-  const stricterPrompt =
-    prompt +
-    `\n\nSIZE LOCK (CRITICAL):\n- The character in your output MUST occupy the exact same vertical and horizontal proportion of the frame as in IMAGE 2. Do not zoom out, do not shrink, do not frame the character smaller. If the character in IMAGE 2 is tall and nearly fills the frame vertically, the output must do the same.`;
+  const sizeCorrection = `Match the silhouette guide's exact vertical and horizontal scale, camera distance, floor line, and framing. Do not zoom out, shrink, crop, or enlarge the fighter.`;
+  const stricterPrompt = officialDescription?.trim()
+    ? prompt
+    : prompt + `\n\nSIZE LOCK (CRITICAL):\n- ${sizeCorrection}`;
+  const stricterOfficialCorrection = officialDescription?.trim()
+    ? [officialQualityCorrection, sizeCorrection].filter(Boolean).join(' ')
+    : undefined;
   const second = await singleRefineAttempt(
     characterBase64,
     cellBase64,
@@ -1616,6 +1755,7 @@ async function refineSheetCell(
     'attempt 2 (size-strict)',
     context,
     officialDescription,
+    stricterOfficialCorrection,
   );
   if (second) {
     const check = await validateSize(second);
@@ -1630,10 +1770,78 @@ async function refineSheetCell(
     );
   }
 
-  debugWarn(
-    `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total}: falling back to base sheet cell after 2 attempts`,
-  );
+  if (officialDescription?.trim()) {
+    throw new Error(
+      `Gemini official final render for ${animName} frame ${frameIndex + 1}/${total} failed both validated attempts`,
+    );
+  }
+  debugWarn(`[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total}: falling back to base sheet cell after 2 attempts`);
   return cellBase64;
+}
+
+const OFFICIAL_REVIEW_CORRECTIONS: Record<GeminiOfficialSpriteReviewIssue, string> = {
+  anatomy: 'Restore plausible adult anatomy with exactly two correctly attached arms, hands, legs, and feet.',
+  complete_body: 'Render the complete head-to-toe body with green margin around every extremity.',
+  character_count: 'Render exactly one complete fighter and no duplicate figure or detached body part.',
+  scale_framing: 'Match the silhouette guide scale, camera distance, floor line, and full-body framing exactly.',
+  appearance_continuity: 'Match the written synthetic face design, hair, skin tone, build, and apparent age exactly.',
+  outfit_continuity: 'Match the written outfit, colors, materials, footwear, and accessories exactly.',
+  render_style: 'Use premium realistic 2.5D game rendering with dimensional materials and shading; no cartoon, anime, cel shading, caricature, or flat illustration.',
+  background: 'Use only a flat pure bright green background with no floor, shadow, gradient, or scenery.',
+  extra_elements: 'Remove every prop, logo, word, UI element, motion trail, detached object, and extra figure.',
+};
+
+function officialReviewCorrection(
+  review: GeminiOfficialSpriteReview,
+  frameIndex: number,
+): string {
+  return (review.issues[String(frameIndex)] ?? [])
+    .map((issue) => OFFICIAL_REVIEW_CORRECTIONS[issue])
+    .join(' ');
+}
+
+async function reviewOfficialRefinedCells(
+  refinedCells: string[],
+  description: string,
+  animName: string,
+  motion: string,
+  context?: ApiRequestContext,
+): Promise<GeminiOfficialSpriteReview> {
+  const total = refinedCells.length;
+  const gridCols = computeGridCols(total);
+  const gridRows = Math.ceil(total / gridCols);
+  const contactSheet = await composeRefinedFramesToSheet(refinedCells, gridCols, gridRows);
+  const prompt = geminiOfficialSpriteReviewPrompt(description, animName, motion, total);
+
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const result = await callGemini(
+        prompt,
+        contactSheet,
+        'image/png',
+        undefined,
+        DEFAULT_GEMINI_IMAGE_MODEL,
+        context,
+        ['TEXT'],
+      );
+      const review = parseGeminiOfficialSpriteReview(result.text, total);
+      publishDebugLog(
+        `[GeminiApi] Official ${animName} visual QA ${review.retry.length === 0 ? 'passed' : `rejected frames ${review.retry.map((idx) => idx + 1).join(', ')}`}`,
+      );
+      return review;
+    } catch (error) {
+      if (error instanceof ApiSessionChangedError || isGeminiContentBlockedError(error)) throw error;
+      lastError = error;
+      if (attempt < 2) {
+        debugWarn(`[GeminiApi] Official ${animName} visual QA response was invalid; retrying once`);
+      }
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Gemini official ${animName} visual QA failed`);
 }
 
 export async function geminiSheetRefined(
@@ -1740,6 +1948,49 @@ export async function geminiSheetRefined(
   debugLog(
     `[GeminiApi] Sheet-refine ${animName}: all ${refinedCells.length} refines done in ${((Date.now() - refineStart) / 1000).toFixed(1)}s`,
   );
+
+  const official = officialDescription?.trim();
+  if (official) {
+    const firstReview = await reviewOfficialRefinedCells(
+      refinedCells,
+      official,
+      animName,
+      motion,
+      context,
+    );
+    if (firstReview.retry.length > 0) {
+      debugInfo(
+        `[GeminiApi] Official ${animName} QA: rerendering ${firstReview.retry.length}/${refinedCells.length} rejected frames with ${renderModel}...`,
+      );
+      for (const frameIndex of firstReview.retry) {
+        refinedCells[frameIndex] = await refineSheetCell(
+          characterBase64,
+          sheetCells[frameIndex],
+          animName,
+          refinePrompt,
+          renderModel,
+          frameIndex,
+          sheetCells.length,
+          context,
+          official,
+          officialReviewCorrection(firstReview, frameIndex),
+        );
+      }
+
+      const finalReview = await reviewOfficialRefinedCells(
+        refinedCells,
+        official,
+        animName,
+        motion,
+        context,
+      );
+      if (finalReview.retry.length > 0) {
+        throw new Error(
+          `Gemini official ${animName} visual QA still rejected frames ${finalReview.retry.map((idx) => idx + 1).join(', ')} after selective rerender`,
+        );
+      }
+    }
+  }
 
   const outputFrameCount = shouldMirror ? frames : refinedCells.length;
   const outputGridCols = computeGridCols(outputFrameCount);

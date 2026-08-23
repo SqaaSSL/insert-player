@@ -5,9 +5,11 @@ import {
   geminiFinishReasonBlockReason,
   geminiOfficialPosePrompt,
   geminiOfficialRefinePrompt,
+  geminiOfficialSpriteReviewPrompt,
   geminiOfficialSpritePrompt,
   geminiOfficialTextOnlyPrompt,
   isGeminiContentBlockedError,
+  parseGeminiOfficialSpriteReview,
 } from './GeminiApi';
 
 describe('Gemini content-block handling', () => {
@@ -68,5 +70,54 @@ describe('Gemini content-block handling', () => {
     expect(refine).toContain('identity-free silhouette guide');
     expect(refine).toContain('frame 2 of 4');
     expect(refine).toContain('Do not infer identity');
+  });
+
+  it('adds controlled correction instructions to an official frame retry', () => {
+    const prompt = geminiOfficialRefinePrompt(
+      'Original fighter in a navy suit.',
+      'idle',
+      'subtle breathing loop',
+      3,
+      8,
+      'Use dimensional realistic 2.5D shading and preserve the complete body.',
+    );
+
+    expect(prompt).toContain('QUALITY CORRECTION (CRITICAL)');
+    expect(prompt).toContain('dimensional realistic 2.5D shading');
+  });
+
+  it('reviews official sprite sheets without asking Gemini to identify the avatar', () => {
+    const prompt = geminiOfficialSpriteReviewPrompt(
+      'Original fighter in a navy suit.',
+      'idle',
+      'subtle breathing loop',
+      8,
+    );
+
+    expect(prompt).toContain('Do not identify, name, or compare');
+    expect(prompt).toContain('indexed 0 through 7');
+    expect(prompt).toContain('render_style');
+    expect(prompt).toContain('{"retry":[],"issues":{}}');
+  });
+
+  it('parses and validates closed-category official sprite QA results', () => {
+    expect(parseGeminiOfficialSpriteReview(
+      '```json\n{"retry":[3,1,3],"issues":{"1":["anatomy"],"3":["render_style","outfit_continuity"]}}\n```',
+      8,
+    )).toEqual({
+      retry: [1, 3],
+      issues: {
+        '1': ['anatomy'],
+        '3': ['render_style', 'outfit_continuity'],
+      },
+    });
+    expect(() => parseGeminiOfficialSpriteReview(
+      '{"retry":[8],"issues":{"8":["render_style"]}}',
+      8,
+    )).toThrow('invalid frame index');
+    expect(() => parseGeminiOfficialSpriteReview(
+      '{"retry":[2],"issues":{"2":["celebrity_similarity"]}}',
+      8,
+    )).toThrow('invalid issue');
   });
 });
