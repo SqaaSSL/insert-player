@@ -63,6 +63,7 @@ describe('Gemini content-block handling', () => {
     );
 
     expect(scaffold).toContain('without an identity reference image');
+    expect(scaffold).toContain('identity-free silhouette guide for the canonical starting pose');
     expect(scaffold).toContain('Generate a 2x2 idle sprite sheet.');
     expect(refine).toContain('identity-free silhouette guide');
     expect(refine).toContain('frame 2 of 4');

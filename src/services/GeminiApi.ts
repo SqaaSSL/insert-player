@@ -1075,7 +1075,10 @@ export function geminiOfficialSpritePrompt(
     geminiOfficialTextOnlyPrompt(description),
     `ANIMATION OVERRIDE (CRITICAL):`,
     `- Generate the requested sprite-sheet animation from the written character specification without an identity reference image.`,
-    `- Any mention of an uploaded character or identity reference in the requirements below means the written character specification above.`,
+    `- IMAGE 1, when present, is an identity-free silhouette guide for the canonical starting pose, full-body scale, facing direction, framing, and floor line only.`,
+    `- IMAGE 2, when present, is an identity-free silhouette guide for the ending pose only.`,
+    `- Do not infer identity, facial appearance, clothing, color, texture, or rendering style from either silhouette guide.`,
+    `- Any mention of character identity or visual style in the requirements below means the written character specification above.`,
     `- The animation, pose, frame count, grid, and framing requirements below override any neutral pose mentioned in the character description.`,
     `- Keep the written hair, synthetic face design, skin tone, build, outfit, colors, and materials consistent in every frame.`,
     `- Every populated cell must contain exactly one anatomically complete character with no duplicate or detached limbs.`,
@@ -1158,12 +1161,19 @@ export async function geminiSpriteSheet(
   debugInfo(`[GeminiApi] Generating sprite: ${animName} with ${model} (${gridCols}x${gridRows}, ${genFrames} frames${shouldMirror ? ', will mirror to ' + frames : ''})...`);
   const start = Date.now();
 
-  const extras = !officialDescription?.trim() && secondaryBase64
-    ? [{ data: secondaryBase64, mime: 'image/png' }]
+  const official = officialDescription?.trim();
+  const primaryBase64 = official
+    ? await createIdentityFreePoseGuide(characterBase64)
+    : characterBase64;
+  const extras = secondaryBase64
+    ? [{
+      data: official ? await createIdentityFreePoseGuide(secondaryBase64) : secondaryBase64,
+      mime: 'image/png',
+    }]
     : undefined;
   const minReliableFrames = getMinimumReliableFrames(animName);
-  const basePrompt = officialDescription?.trim()
-    ? geminiOfficialSpritePrompt(officialDescription, prompt)
+  const basePrompt = official
+    ? geminiOfficialSpritePrompt(official, prompt)
     : prompt;
   const promptVariants = [basePrompt];
   promptVariants.push(
@@ -1203,7 +1213,7 @@ export async function geminiSpriteSheet(
     try {
       const result = await callGemini(
         attemptPrompt,
-        officialDescription?.trim() ? undefined : characterBase64,
+        primaryBase64,
         'image/png',
         extras,
         model,
@@ -1223,7 +1233,7 @@ export async function geminiSpriteSheet(
         const safePrompt = attemptPrompt + `\n\nIMPORTANT: The character must be fully clothed in a fighting outfit (shirt, pants, shoes). Add clothing if needed.`;
         const result = await callGemini(
           safePrompt,
-          officialDescription?.trim() ? undefined : characterBase64,
+          primaryBase64,
           'image/png',
           extras,
           model,
@@ -1785,7 +1795,7 @@ export async function geminiSheetRefined(
     `(raw ${rawDims.width}x${rawDims.height}, cleaned ${cleaned.frameW * cleaned.gridCols}x${cleaned.frameH * cleaned.gridRows})`,
   );
 
-  return {
+  const result: GeminiSpriteResult = {
     imageBase64: cleaned.base64,
     rawBase64: rawSheetBase64,
     gridCols: cleaned.gridCols,
@@ -1793,6 +1803,14 @@ export async function geminiSheetRefined(
     frameCount: cleaned.frameCount,
     usedScale: cleaned.usedScale,
   };
+  const minimumFrames = Math.min(outputFrameCount, getMinimumReliableFrames(animName));
+  if (cleaned.frameCount < minimumFrames) {
+    throw new PartialSpriteGenerationError(
+      `Gemini refined sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames (need ${minimumFrames})`,
+      result,
+    );
+  }
+  return result;
 }
 
 // Combines the chroma and DNN masks to recover foreground details without
