@@ -123,11 +123,16 @@ function configuredAuthorizedParties(env: Env): string[] {
     .filter((origin) => /^https?:\/\//i.test(origin));
 }
 
-function assertAuthorizedParty(claims: Record<string, unknown>, env: Env): void {
+export function assertAuthorizedParty(
+  claims: Record<string, unknown>,
+  env: Env,
+  options: { allowMissingAuthorizedParty?: boolean } = {},
+): void {
   const allowed = configuredAuthorizedParties(env);
   if (allowed.length === 0) return;
 
   const azp = readStringClaim(claims, ['azp']);
+  if (!azp && options.allowMissingAuthorizedParty) return;
   if (!azp || !allowed.includes(normalizeOrigin(azp))) {
     throw new Error('Clerk token authorized party is not allowed');
   }
@@ -144,7 +149,11 @@ function resolveDisplayName(claims: Record<string, unknown>): string | null {
   return fallback ? normalizePublicDisplayName(fallback) : null;
 }
 
-export async function verifyClerkRequest(request: Request, env: Env): Promise<AuthContext | null> {
+export async function verifyClerkRequest(
+  request: Request,
+  env: Env,
+  options: { allowMissingAuthorizedParty?: boolean } = {},
+): Promise<AuthContext | null> {
   const token = getBearerToken(request);
   if (!token) return null;
 
@@ -152,7 +161,7 @@ export async function verifyClerkRequest(request: Request, env: Env): Promise<Au
   const verifyOptions = { issuer };
   const verified = await jwtVerify(token, getJwks(env), verifyOptions);
   const claims = verified.payload as Record<string, unknown>;
-  assertAuthorizedParty(claims, env);
+  assertAuthorizedParty(claims, env, options);
   const clerkUserId = typeof verified.payload.sub === 'string' ? verified.payload.sub : null;
   if (!clerkUserId) throw new Error('Clerk token missing subject');
 
@@ -183,9 +192,13 @@ export async function optionalAuth(request: Request, env: Env): Promise<PublicAu
   };
 }
 
-export async function requireAuth(request: Request, env: Env): Promise<AuthContext | Response> {
+export async function requireAuth(
+  request: Request,
+  env: Env,
+  options: { allowMissingAuthorizedParty?: boolean } = {},
+): Promise<AuthContext | Response> {
   try {
-    const auth = await verifyClerkRequest(request, env);
+    const auth = await verifyClerkRequest(request, env, options);
     if (!auth) return json({ error: 'Unauthorized' }, 401);
     return auth;
   } catch (err) {

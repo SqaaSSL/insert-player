@@ -62,6 +62,7 @@ const MAX_MATCH_ROUNDS = 5;
 const MAX_MATCH_DURATION_SECONDS = 20 * 60;
 const MAX_MATCH_ID_LENGTH = 128;
 const MAX_MATCH_REPORT_BODY_BYTES = 16 * 1024;
+const ARCADE_ADMIN_SEED_HEADER = 'X-Insert-Player-Admin-Seed';
 
 function resolveCorsOrigin(request: Request, env: Env): string {
   const requestOrigin = request.headers.get('Origin') ?? '';
@@ -121,8 +122,14 @@ async function authenticated(
   env: Env,
   handler: (auth: AuthContext) => Promise<Response>,
 ): Promise<Response> {
-  const auth = await requireAuth(request, env);
+  const isArcadeAdminSeed = request.headers.get(ARCADE_ADMIN_SEED_HEADER) === 'clerk-backend';
+  const auth = await requireAuth(request, env, {
+    allowMissingAuthorizedParty: isArcadeAdminSeed,
+  });
   if (isResponse(auth)) return auth;
+  if (isArcadeAdminSeed && auth.user.plan_tier !== 'admin') {
+    return json({ error: 'Admin access required' }, 403);
+  }
   return handler(auth);
 }
 

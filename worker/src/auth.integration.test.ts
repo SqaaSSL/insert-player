@@ -1,7 +1,7 @@
 import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 import type { UserWebhookEvent } from '@clerk/backend/webhooks';
-import { upsertClerkUser, upsertClerkUserProfile } from './auth';
+import { assertAuthorizedParty, upsertClerkUser, upsertClerkUserProfile } from './auth';
 import { processClerkUserWebhook } from './clerkWebhooks';
 import type { Env, User } from './types';
 
@@ -181,5 +181,26 @@ describe('Clerk profile persistence', () => {
     } finally {
       await mf.dispose();
     }
+  });
+});
+
+describe('Clerk authorized parties', () => {
+  const env = {
+    CLERK_AUTHORIZED_PARTIES: 'https://insertplayer.ai,https://www.insertplayer.ai',
+  } as Env;
+
+  it('requires an authorized party for normal browser authentication', () => {
+    expect(() => assertAuthorizedParty({}, env)).toThrow('authorized party is not allowed');
+    expect(() => assertAuthorizedParty({ azp: 'https://evil.example' }, env)).toThrow('authorized party is not allowed');
+    expect(() => assertAuthorizedParty({ azp: 'https://insertplayer.ai/' }, env)).not.toThrow();
+  });
+
+  it('allows only a missing party in the explicit Clerk backend flow', () => {
+    expect(() => assertAuthorizedParty({}, env, { allowMissingAuthorizedParty: true })).not.toThrow();
+    expect(() => assertAuthorizedParty(
+      { azp: 'https://evil.example' },
+      env,
+      { allowMissingAuthorizedParty: true },
+    )).toThrow('authorized party is not allowed');
   });
 });

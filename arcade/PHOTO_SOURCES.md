@@ -31,3 +31,15 @@ The official Arcade roster uses real, reusable photographs as identity reference
 ## Publication
 
 The legal page exposes the corresponding source and license links. Never publish the original source bundle as a public static asset; the app publishes only the transformed fighter assets and the required attribution.
+
+## Seeding
+
+Use an active Clerk admin session for long Champion jobs. Keep the production Clerk secret and admin user ID only in the local process environment:
+
+```bash
+ASF_ARCADE_CLERK_SECRET_KEY=... \
+ASF_ARCADE_ADMIN_CLERK_USER_ID=... \
+npm run arcade:seed -- --slug=donald-trump --confirm-production
+```
+
+The seeder asks Clerk for short-lived session tokens and refreshes them during polling. It never writes or prints those credentials. A pre-minted `ASF_ARCADE_ADMIN_JWT` remains available for short runs, but it must have at least five minutes left. Generate one fighter as a draft, inspect all canonical views and animations, and only then rerun with `--activate` or continue to the next fighter.

@@ -25,6 +25,8 @@ const all = args.has('--all');
 const POLL_INTERVAL_MS = 5_000;
 const JOB_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 60_000;
+const CLERK_TOKEN_REFRESH_SKEW_MS = 30_000;
+const CLERK_TOKEN_TTL_SECONDS = 10 * 60;
 const MAX_SOURCE_UPLOAD_BYTES = 12 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
@@ -67,6 +69,83 @@ function decodeJwtPayload(token) {
   } catch {
     throw new Error('The Arcade admin Clerk JWT payload could not be decoded.');
   }
+}
+
+function jwtExpiresAt(token) {
+  return Number(decodeJwtPayload(token).exp ?? 0) * 1000;
+}
+
+function clerkErrorDetail(body, fallback) {
+  const message = body?.errors?.[0]?.long_message ?? body?.errors?.[0]?.message;
+  return typeof message === 'string' && message.trim() ? message.trim() : fallback;
+}
+
+async function clerkRequest(secretKey, path, init = {}) {
+  const response = await fetch(`https://api.clerk.com/v1${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${secretKey}`,
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(init.headers ?? {}),
+    },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const text = await response.text();
+  let body = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`Clerk ${init.method ?? 'GET'} ${path} returned non-JSON (${response.status}).`);
+  }
+  if (!response.ok) {
+    throw new Error(clerkErrorDetail(body, `Clerk ${init.method ?? 'GET'} ${path} failed with HTTP ${response.status}.`));
+  }
+  return body;
+}
+
+async function createClerkAdminTokenProvider(secretKey, userId) {
+  const params = new URLSearchParams({
+    user_id: userId,
+    status: 'active',
+    limit: '20',
+  });
+  const listed = await clerkRequest(secretKey, `/sessions?${params}`);
+  const sessions = Array.isArray(listed.data) ? listed.data : Array.isArray(listed) ? listed : [];
+  const session = sessions.find((entry) => entry?.user_id === userId && entry?.status === 'active');
+  if (!session?.id) {
+    throw new Error('The configured Arcade admin has no active Clerk session. Sign in to the target app and retry.');
+  }
+
+  let cachedToken = '';
+  let cachedExpiresAt = 0;
+  return async () => {
+    if (cachedToken && cachedExpiresAt > Date.now() + CLERK_TOKEN_REFRESH_SKEW_MS) return cachedToken;
+    const created = await clerkRequest(secretKey, `/sessions/${encodeURIComponent(session.id)}/tokens`, {
+      method: 'POST',
+      body: JSON.stringify({ expires_in_seconds: CLERK_TOKEN_TTL_SECONDS }),
+    });
+    if (typeof created.jwt !== 'string' || !created.jwt) {
+      throw new Error('Clerk did not return an Arcade admin session token.');
+    }
+    const claims = decodeJwtPayload(created.jwt);
+    if (claims.sub !== userId) throw new Error('Clerk returned a token for a different Arcade admin.');
+    cachedToken = created.jwt;
+    cachedExpiresAt = jwtExpiresAt(cachedToken);
+    return cachedToken;
+  };
+}
+
+function createStaticTokenProvider(token) {
+  const claims = decodeJwtPayload(token);
+  if (Number(claims.exp ?? 0) * 1000 < Date.now() + 5 * 60 * 1000) {
+    throw new Error('The Arcade admin Clerk JWT is expired or expires in under five minutes.');
+  }
+  return async () => {
+    if (jwtExpiresAt(token) <= Date.now() + CLERK_TOKEN_REFRESH_SKEW_MS) {
+      throw new Error('The Arcade admin Clerk JWT expired while seeding. Use the Clerk secret-key flow for long jobs.');
+    }
+    return token;
+  };
 }
 
 function readState() {
@@ -189,11 +268,13 @@ function generationLegal(manifest) {
   };
 }
 
-async function apiRequest(baseUrl, token, path, init = {}) {
+async function apiRequest(baseUrl, getToken, path, init = {}) {
+  const token = await getToken();
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${token}`,
+      'X-Insert-Player-Admin-Seed': 'clerk-backend',
       ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
       ...(init.headers ?? {}),
     },
@@ -337,15 +418,22 @@ async function main() {
     || envValue(env, 'VITE_API_BASE_URL')
     || defaultBaseUrl
   ).replace(/\/+$/, '');
-  const token = envValue(env, 'ASF_ARCADE_ADMIN_JWT') || envValue(env, 'ASF_CLERK_JWT');
-  if (!token) throw new Error('Set ASF_ARCADE_ADMIN_JWT or ASF_CLERK_JWT locally; do not commit it.');
-  const claims = decodeJwtPayload(token);
-  if (Number(claims.exp ?? 0) * 1000 < Date.now() + 5 * 60 * 1000) {
-    throw new Error('The Arcade admin Clerk JWT is expired or expires in under five minutes.');
+  const staticToken = envValue(env, 'ASF_ARCADE_ADMIN_JWT') || envValue(env, 'ASF_CLERK_JWT');
+  const clerkSecretKey = envValue(env, 'ASF_ARCADE_CLERK_SECRET_KEY');
+  const clerkUserId = envValue(env, 'ASF_ARCADE_ADMIN_CLERK_USER_ID');
+  if (Boolean(clerkSecretKey) !== Boolean(clerkUserId)) {
+    throw new Error('Set both ASF_ARCADE_CLERK_SECRET_KEY and ASF_ARCADE_ADMIN_CLERK_USER_ID.');
   }
+  if (!staticToken && !clerkSecretKey) {
+    throw new Error(
+      'Set ASF_ARCADE_CLERK_SECRET_KEY plus ASF_ARCADE_ADMIN_CLERK_USER_ID, '
+      + 'or provide a long-lived ASF_ARCADE_ADMIN_JWT. Never commit these values.',
+    );
+  }
+  const token = clerkSecretKey
+    ? await createClerkAdminTokenProvider(clerkSecretKey, clerkUserId)
+    : createStaticTokenProvider(staticToken);
 
-  const me = await apiRequest(baseUrl, token, '/auth/me');
-  if (me.user?.planTier !== 'admin') throw new Error('The Clerk user is not an Insert Player admin.');
   const admin = await apiRequest(baseUrl, token, '/api/admin/arcade');
   const adminEntries = Array.isArray(admin.fighters) ? admin.fighters : [];
   const state = readState();
