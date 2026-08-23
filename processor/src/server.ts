@@ -44,6 +44,7 @@ interface GenerateSpriteRequest extends ProviderContextRequest {
   };
   primaryBase64: string;
   secondaryBase64?: string;
+  generationPrompt?: string;
   normalizationReference?: {
     targetDrawHeight?: number;
     targetDrawWidth?: number;
@@ -95,9 +96,19 @@ async function generateSource(body: GenerateSourceRequest) {
   const context = await detachedProviderContext(body);
   const {
     geminiCrouchReposeDetailed,
+    geminiOfficialPoseDetailed,
     geminiReposeDetailed,
     geminiUprightReposeDetailed,
   } = await import('../../src/services/GeminiApi.ts');
+  if (body.generationPrompt?.trim()) {
+    const pose = body.operation === 'repose' ? 'side' : body.operation;
+    const result = await geminiOfficialPoseDetailed(body.generationPrompt, pose, context);
+    if (pose !== 'crouch') return result;
+    return {
+      ...result,
+      normalizationReference: await crouchNormalizationReference(body.normalizationSourceBase64),
+    };
+  }
   if (body.operation === 'repose') {
     return geminiReposeDetailed(body.imageBase64, context, body.generationPrompt);
   }
@@ -132,6 +143,7 @@ async function generateSprite(body: GenerateSpriteRequest) {
       { enableBgRemoval: true },
       context,
       model,
+      body.generationPrompt,
     )
     : await geminiSpriteSheet(
       body.primaryBase64,
@@ -143,6 +155,7 @@ async function generateSprite(body: GenerateSpriteRequest) {
       body.normalizationReference,
       context,
       model,
+      body.generationPrompt,
     );
   return {
     ...result,

@@ -283,6 +283,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     sources: GenerationSources,
     animation: AnimationDefinition,
     progressCurrent: number,
+    generationPrompt?: string,
   ): Promise<{ animationName: string; versionId: string }> {
     const isCrouchFamily = animation.name === 'crouch' || animation.base === 'crouched';
     const primaryKey = animation.name === 'crouch'
@@ -300,6 +301,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       animation,
       primaryBase64: await this.loadAssetBase64(primaryKey),
       secondaryBase64: secondaryKey ? await this.loadAssetBase64(secondaryKey) : undefined,
+      generationPrompt,
       normalizationReference,
     });
     const persisted = await persistGeneratedSprite(this.env, {
@@ -372,6 +374,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           cleanKind: 'upright',
           rawKind: 'upright_raw',
           inputKey: side.rawKey,
+          generationPrompt,
           progressCurrent: 2,
         }));
         const crouch = await step.do('generate canonical crouch source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
@@ -380,6 +383,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           rawKind: 'crouch_raw',
           inputKey: upright.rawKey,
           normalizationSourceKey: upright.cleanKey,
+          generationPrompt,
           progressCurrent: 3,
         }));
         const sources: GenerationSources = {
@@ -393,10 +397,15 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           await step.do(
             `generate ${animation.name} ${activeJob.tier} sprite`,
             STEP_CONFIG,
-            () => this.generateSprite(activeJob, sources, animation, index + 4),
+            () => this.generateSprite(activeJob, sources, animation, index + 4, generationPrompt),
           );
         }
       } else if (activeJob.operation === 'fighter_upgrade') {
+        const generationPrompt = await step.do(
+          'load official Arcade upgrade prompt',
+          STEP_CONFIG,
+          () => this.loadArcadeGenerationPrompt(activeJob.fighter_id),
+        );
         const sources = await step.do('load canonical upgrade sources', STEP_CONFIG, () => this.currentSources(activeJob));
         sources.crouchNormalizationReference = await step.do(
           'measure upgrade crouch reference',
@@ -408,12 +417,17 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           await step.do(
             `generate ${animation.name} ${activeJob.tier} sprite`,
             STEP_CONFIG,
-            () => this.generateSprite(activeJob, sources, animation, index + 1),
+            () => this.generateSprite(activeJob, sources, animation, index + 1, generationPrompt),
           );
         }
       } else if (activeJob.operation === 'fighter_retry_animation') {
         const animation = ANIMATIONS.find((entry) => entry.name === activeJob.target_name);
         if (!animation) throw new Error('Retry animation target is unavailable');
+        const generationPrompt = await step.do(
+          'load official Arcade animation retry prompt',
+          STEP_CONFIG,
+          () => this.loadArcadeGenerationPrompt(activeJob.fighter_id),
+        );
         const sources = await step.do('load canonical retry sources', STEP_CONFIG, () => this.currentSources(activeJob));
         if (animation.name === 'crouch' || animation.base === 'crouched') {
           sources.crouchNormalizationReference = await step.do(
@@ -425,18 +439,18 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         await step.do(
           `retry ${animation.name} ${activeJob.tier} sprite`,
           STEP_CONFIG,
-          () => this.generateSprite(activeJob, sources, animation, 1),
+          () => this.generateSprite(activeJob, sources, animation, 1, generationPrompt),
         );
       } else {
         const fighter = await this.loadFighter(activeJob);
         const target = activeJob.target_name;
+        const generationPrompt = await step.do(
+          'load official Arcade source retry prompt',
+          STEP_CONFIG,
+          () => this.loadArcadeGenerationPrompt(activeJob.fighter_id),
+        );
         if (target === 'side') {
           if (!fighter.original_blob_key) throw new Error('Original source photo is missing');
-          const generationPrompt = await step.do(
-            'load official Arcade retry prompt',
-            STEP_CONFIG,
-            () => this.loadArcadeGenerationPrompt(activeJob.fighter_id),
-          );
           await step.do('retry canonical side source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
             operation: 'repose',
             cleanKind: 'side',
@@ -452,6 +466,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
             cleanKind: 'upright',
             rawKind: 'upright_raw',
             inputKey: fighter.side_view_raw_blob_key!,
+            generationPrompt,
             progressCurrent: 1,
           }));
         } else if (target === 'crouch') {
@@ -464,6 +479,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
             rawKind: 'crouch_raw',
             inputKey: fighter.upright_view_raw_blob_key!,
             normalizationSourceKey: fighter.upright_view_blob_key!,
+            generationPrompt,
             progressCurrent: 1,
           }));
         } else {

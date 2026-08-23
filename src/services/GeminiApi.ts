@@ -74,6 +74,28 @@ export function geminiOfficialTextOnlyPrompt(prompt: string): string {
   return `Generate a new, clearly fictional arcade character from the written description only. Do not depict, identify, or reproduce any real person, public figure, event, endorsement, or documentary photograph. The result must be an original synthetic game avatar with realistic adult anatomy and a complete head-to-toe silhouette.\n\n${prompt.trim()}`;
 }
 
+export type GeminiOfficialPose = 'side' | 'upright' | 'crouch';
+
+export function geminiOfficialPosePrompt(description: string, pose: GeminiOfficialPose): string {
+  const poseRequirement = pose === 'side'
+    ? `Create the canonical fighting source view: a complete head-to-toe figure in a ready fighting stance, 3/4 view facing right, fists raised, feet planted, with realistic adult anatomy.`
+    : pose === 'upright'
+      ? `Create the canonical upright source view: a complete head-to-toe figure in a tall, confident heroic standing pose, 3/4 view facing right, torso lifted, hips raised, legs mostly straight, feet planted, and arms relaxed outside a fighting guard.`
+      : `Create the canonical crouch source view: a complete head-to-toe figure in an extreme classic 2D fighting-game crouch guard, 3/4 view facing right, both feet planted, knees deeply folded, hips very low, torso compressed, and fists protecting the chest and face.`;
+
+  return [
+    geminiOfficialTextOnlyPrompt(description),
+    `POSE OVERRIDE (CRITICAL):`,
+    `- ${poseRequirement}`,
+    `- This pose requirement overrides any neutral stance or pose mentioned earlier in the character description.`,
+    `- Preserve the written hair, face design, skin tone, build, outfit, colors, materials, and realistic 2.5D rendering consistently.`,
+    `- Show exactly one character with exactly one head, two arms, two hands, two legs, and two feet. No duplicate limbs or detached body parts.`,
+    `- Keep empty green margin around the complete silhouette; do not crop the head, hands, elbows, knees, or feet.`,
+    `- Use a solid pure bright green (#00FF00) background with no floor, shadows, gradients, text, logos, props, or scenery.`,
+    `- Return exactly one image and no explanatory text.`,
+  ].join('\n');
+}
+
 function normalizedBase64Payload(value: string): string {
   const payload = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value;
   return payload.replace(/\s+/g, '');
@@ -479,6 +501,36 @@ async function generateGeminiImageWithSafetyFallback(
 
   if (!rawBase64) throw new Error('Gemini returned no image');
   return rawBase64;
+}
+
+export async function geminiOfficialPoseDetailed(
+  description: string,
+  pose: GeminiOfficialPose,
+  context?: ApiRequestContext,
+): Promise<GeminiPoseResult> {
+  const operation: GeminiModelOperation = pose === 'side' ? 'repose' : pose;
+  const model = resolveGeminiImageModel({ operation });
+  debugInfo(`[GeminiApi] Generating official ${pose} source from text with ${model}...`);
+  const start = Date.now();
+  const result = await callGemini(
+    geminiOfficialPosePrompt(description, pose),
+    undefined,
+    'image/png',
+    undefined,
+    model,
+    context,
+  );
+  if (!result.imageBase64) throw new Error(`Gemini official ${pose} source returned no image`);
+
+  const rawBase64 = result.imageBase64;
+  const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
+  const cleanedBase64 = pose === 'crouch'
+    ? await zoomTransparentImageToBottom(cleaned, 0.88)
+    : cleaned;
+  debugInfo(
+    `[GeminiApi] Official ${pose} source finished in ${((Date.now() - start) / 1000).toFixed(1)}s`,
+  );
+  return { rawBase64, cleanedBase64 };
 }
 
 async function getSilhouetteMetrics(base64: string): Promise<SilhouetteMetrics | null> {
@@ -1015,6 +1067,23 @@ export async function geminiIdleFrameSequence(
   };
 }
 
+export function geminiOfficialSpritePrompt(
+  description: string,
+  animationRequirements: string,
+): string {
+  return [
+    geminiOfficialTextOnlyPrompt(description),
+    `ANIMATION OVERRIDE (CRITICAL):`,
+    `- Generate the requested sprite-sheet animation from the written character specification without an identity reference image.`,
+    `- Any mention of an uploaded character or identity reference in the requirements below means the written character specification above.`,
+    `- The animation, pose, frame count, grid, and framing requirements below override any neutral pose mentioned in the character description.`,
+    `- Keep the written hair, synthetic face design, skin tone, build, outfit, colors, and materials consistent in every frame.`,
+    `- Every populated cell must contain exactly one anatomically complete character with no duplicate or detached limbs.`,
+    ``,
+    animationRequirements,
+  ].join('\n');
+}
+
 export async function geminiSpriteSheet(
   characterBase64: string,
   animName: string,
@@ -1025,6 +1094,7 @@ export async function geminiSpriteSheet(
   normalizationReference?: NormalizationReference,
   context?: ApiRequestContext,
   modelOverride?: string,
+  officialDescription?: string,
 ): Promise<GeminiSpriteResult> {
   const shouldMirror = MIRROR_ANIMS.has(animName);
   const profile = getAnimationProfile(animName);
@@ -1088,34 +1158,39 @@ export async function geminiSpriteSheet(
   debugInfo(`[GeminiApi] Generating sprite: ${animName} with ${model} (${gridCols}x${gridRows}, ${genFrames} frames${shouldMirror ? ', will mirror to ' + frames : ''})...`);
   const start = Date.now();
 
-  const extras = secondaryBase64 ? [{ data: secondaryBase64, mime: 'image/png' }] : undefined;
+  const extras = !officialDescription?.trim() && secondaryBase64
+    ? [{ data: secondaryBase64, mime: 'image/png' }]
+    : undefined;
   const minReliableFrames = getMinimumReliableFrames(animName);
-  const promptVariants = [prompt];
+  const basePrompt = officialDescription?.trim()
+    ? geminiOfficialSpritePrompt(officialDescription, prompt)
+    : prompt;
+  const promptVariants = [basePrompt];
   promptVariants.push(
-    `${prompt}\n- CRITICAL OUTPUT RULE: return exactly one sprite sheet image and no explanatory text.\n- CRITICAL OUTPUT RULE: do not answer with text only, markdown, or notes.\n- CRITICAL OUTPUT RULE: if uncertain, still return the requested sprite sheet image with the exact grid layout.`,
+    `${basePrompt}\n- CRITICAL OUTPUT RULE: return exactly one sprite sheet image and no explanatory text.\n- CRITICAL OUTPUT RULE: do not answer with text only, markdown, or notes.\n- CRITICAL OUTPUT RULE: if uncertain, still return the requested sprite sheet image with the exact grid layout.`,
   );
   if (animName === 'jump' || animName === 'hit') {
     promptVariants.push(
-      `${prompt}\n- CRITICAL: keep every full body centered fully inside its own cell with empty green margin on all sides.\n- CRITICAL: if a pose would cross a cell boundary, make the pose smaller instead of cropping it.\n- CRITICAL: do not include any oversized hero frame, close-up frame, or pose that spans more than one cell.`,
+      `${basePrompt}\n- CRITICAL: keep every full body centered fully inside its own cell with empty green margin on all sides.\n- CRITICAL: if a pose would cross a cell boundary, make the pose smaller instead of cropping it.\n- CRITICAL: do not include any oversized hero frame, close-up frame, or pose that spans more than one cell.`,
     );
   } else if (animName === 'idle' || animName === 'walk') {
     promptVariants.push(
-      `${prompt}\n- CRITICAL: every one of the ${genFrames} cells must contain a complete full-body fighter from head to feet.\n- CRITICAL: do not crop or zoom into any middle frame; no half-body, waist-up, or torso-only cells.\n- CRITICAL: keep the same full-body framing in all rows of the sheet; do not switch to closer framing in the middle rows.\n- CRITICAL: if needed, make the fighter slightly smaller so the full body stays visible in every cell with green margin around it.`,
+      `${basePrompt}\n- CRITICAL: every one of the ${genFrames} cells must contain a complete full-body fighter from head to feet.\n- CRITICAL: do not crop or zoom into any middle frame; no half-body, waist-up, or torso-only cells.\n- CRITICAL: keep the same full-body framing in all rows of the sheet; do not switch to closer framing in the middle rows.\n- CRITICAL: if needed, make the fighter slightly smaller so the full body stays visible in every cell with green margin around it.`,
     );
     promptVariants.push(
-      `${prompt}\n- CRITICAL: the uploaded side-view reference already has the correct full-body composition; copy that same camera framing into all ${genFrames} cells before adding motion.\n- CRITICAL: preserve the same headroom, visible feet, and full-body crop as the reference image in every cell.\n- CRITICAL: this idle sheet fails if even one cell is bust-only, waist-up, or missing feet.\n- CRITICAL: it is better to make the fighter slightly smaller in every cell than to crop any body part or zoom closer than the reference.`,
+      `${basePrompt}\n- CRITICAL: preserve the same headroom, visible feet, and full-body crop in every one of the ${genFrames} cells.\n- CRITICAL: this sheet fails if even one cell is bust-only, waist-up, or missing feet.\n- CRITICAL: it is better to make the fighter slightly smaller in every cell than to crop any body part.`,
     );
   } else if (animName === 'ko') {
     promptVariants.push(
-      `${prompt}\n- CRITICAL: all ${genFrames} cells must contain one complete, self-contained fighter silhouette with green margin around it.\n- CRITICAL: the final downed poses must be compact, diagonal, and bent at the knees so each whole body fits in one cell.\n- CRITICAL: never draw one horizontal body across two neighboring cells and never split torso and legs between cells.`,
+      `${basePrompt}\n- CRITICAL: all ${genFrames} cells must contain one complete, self-contained fighter silhouette with green margin around it.\n- CRITICAL: the final downed poses must be compact, diagonal, and bent at the knees so each whole body fits in one cell.\n- CRITICAL: never draw one horizontal body across two neighboring cells and never split torso and legs between cells.`,
     );
   } else if (animName === 'victory') {
     promptVariants.push(
-      `${prompt}\n- CRITICAL: preserve the full-body camera distance from the uploaded reference in all ${genFrames} cells.\n- CRITICAL: every celebratory pose must include the complete head, torso, legs, and both feet with green margin on every side.\n- CRITICAL: no close-up, waist-up, torso-only, cropped-foot, or enlarged hero framing.`,
+      `${basePrompt}\n- CRITICAL: preserve the full-body camera distance in all ${genFrames} cells.\n- CRITICAL: every celebratory pose must include the complete head, torso, legs, and both feet with green margin on every side.\n- CRITICAL: no close-up, waist-up, torso-only, cropped-foot, or enlarged hero framing.`,
     );
   } else if (animName === 'low_punch' || animName === 'low_kick') {
     promptVariants.push(
-      `${prompt}\n- CRITICAL: every populated cell must contain exactly one full-body character from head to feet.\n- CRITICAL: do not leave internal cells empty; all ${genFrames} cells must show a valid sequential step of the move.\n- CRITICAL: do not include any oversized close-up pose, merged multi-cell pose, or cropped body.\n- CRITICAL: keep the character low to the ground while still fully contained inside each cell with visible green margin around the silhouette.`,
+      `${basePrompt}\n- CRITICAL: every populated cell must contain exactly one full-body character from head to feet.\n- CRITICAL: do not leave internal cells empty; all ${genFrames} cells must show a valid sequential step of the move.\n- CRITICAL: do not include any oversized close-up pose, merged multi-cell pose, or cropped body.\n- CRITICAL: keep the character low to the ground while still fully contained inside each cell with visible green margin around the silhouette.`,
     );
   }
 
@@ -1126,7 +1201,14 @@ export async function geminiSpriteSheet(
     let rawBase64: string | null = null;
 
     try {
-      const result = await callGemini(attemptPrompt, characterBase64, 'image/png', extras, model, context);
+      const result = await callGemini(
+        attemptPrompt,
+        officialDescription?.trim() ? undefined : characterBase64,
+        'image/png',
+        extras,
+        model,
+        context,
+      );
       rawBase64 = result.imageBase64;
       if (!rawBase64) {
         debugWarn(
@@ -1139,7 +1221,14 @@ export async function geminiSpriteSheet(
       if (isGeminiContentBlockedError(err)) {
         debugWarn(`[GeminiApi] Sprite ${animName} blocked by safety, retrying with clothing note...`);
         const safePrompt = attemptPrompt + `\n\nIMPORTANT: The character must be fully clothed in a fighting outfit (shirt, pants, shoes). Add clothing if needed.`;
-        const result = await callGemini(safePrompt, characterBase64, 'image/png', extras, model, context);
+        const result = await callGemini(
+          safePrompt,
+          officialDescription?.trim() ? undefined : characterBase64,
+          'image/png',
+          extras,
+          model,
+          context,
+        );
         rawBase64 = result.imageBase64;
         if (!rawBase64) {
           debugWarn(
@@ -1299,6 +1388,65 @@ function buildSheetRefinePrompt(animName: string, motion: string): string {
   ].join('\n');
 }
 
+export function geminiOfficialRefinePrompt(
+  description: string,
+  animName: string,
+  motion: string,
+  frameIndex: number,
+  total: number,
+): string {
+  const motionSummary = motion.replace(/\s+/g, ' ').trim().slice(0, 180);
+  return [
+    geminiOfficialTextOnlyPrompt(description),
+    `FRAME CONTEXT:`,
+    `- Render frame ${frameIndex + 1} of ${total} for the classic 2D fighting-game "${animName}" animation (${motionSummary}).`,
+    `- IMAGE 1 is an identity-free silhouette guide. It communicates only the exact pose, framing, facing direction, center of mass, and limb placement for this frame.`,
+    `- Reconstruct the silhouette guide as the written fictional character above. Do not infer identity, facial appearance, clothing, color, or texture from the guide.`,
+    ``,
+    `POSE AND ANATOMY (CRITICAL):`,
+    `- Match IMAGE 1's complete silhouette and pose exactly while using realistic adult anatomy.`,
+    `- Show exactly one complete character with one head, two arms, two hands, two legs, and two feet. No duplicate, merged, or detached limbs.`,
+    `- Keep the same camera distance and full-body framing as IMAGE 1. Do not crop or zoom.`,
+    `- Do not add motion blur, trails, speed lines, props, text, logos, scenery, or extra figures.`,
+    ``,
+    `STYLE AND CONTINUITY:`,
+    `- Preserve the written synthetic face design, hair, skin tone, build, outfit, colors, materials, and realistic premium 2.5D rendering consistently.`,
+    `- Avoid cartoon, chibi, anime, cel shading, caricature, flat illustration, or documentary photography.`,
+    ``,
+    `OUTPUT:`,
+    `- Return exactly one image with a pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients.`,
+    `- Return no explanatory text, UI, grid, or multiple frames.`,
+  ].join('\n');
+}
+
+async function createIdentityFreePoseGuide(base64: string): Promise<string> {
+  const image = await loadAlphaImage(`data:image/png;base64,${base64}`);
+  const source = document.createElement('canvas');
+  source.width = image.width;
+  source.height = image.height;
+  const sourceContext = source.getContext('2d')!;
+  sourceContext.drawImage(image, 0, 0);
+  const sourcePixels = sourceContext.getImageData(0, 0, source.width, source.height);
+
+  const guide = document.createElement('canvas');
+  guide.width = image.width;
+  guide.height = image.height;
+  const guideContext = guide.getContext('2d')!;
+  guideContext.fillStyle = '#00FF00';
+  guideContext.fillRect(0, 0, guide.width, guide.height);
+  const guidePixels = guideContext.getImageData(0, 0, guide.width, guide.height);
+
+  for (let offset = 0; offset < sourcePixels.data.length; offset += 4) {
+    if (sourcePixels.data[offset + 3] <= 15) continue;
+    guidePixels.data[offset] = 24;
+    guidePixels.data[offset + 1] = 24;
+    guidePixels.data[offset + 2] = 24;
+    guidePixels.data[offset + 3] = 255;
+  }
+  guideContext.putImageData(guidePixels, 0, 0);
+  return guide.toDataURL('image/png').split(',')[1];
+}
+
 async function measureGreenBackedCharacterBounds(
   base64: string,
 ): Promise<{ w: number; h: number; imageW: number; imageH: number; widthRatio: number; heightRatio: number } | null> {
@@ -1330,10 +1478,18 @@ async function singleRefineAttempt(
   total: number,
   attemptLabel: string,
   context?: ApiRequestContext,
+  officialDescription?: string,
 ): Promise<string | null> {
-  const extras = [{ data: cellBase64, mime: 'image/png' }];
+  const official = officialDescription?.trim();
+  const primaryBase64 = official
+    ? await createIdentityFreePoseGuide(cellBase64)
+    : characterBase64;
+  const extras = official ? undefined : [{ data: cellBase64, mime: 'image/png' }];
+  const requestPrompt = official
+    ? geminiOfficialRefinePrompt(official, animName, prompt, frameIndex, total)
+    : prompt;
   try {
-    const result = await callGemini(prompt, characterBase64, 'image/png', extras, model, context);
+    const result = await callGemini(requestPrompt, primaryBase64, 'image/png', extras, model, context);
     if (!result.imageBase64) {
       debugWarn(
         `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel}: no image returned` +
@@ -1351,8 +1507,8 @@ async function singleRefineAttempt(
       );
       try {
         const retryResult = await callGemini(
-          prompt + REPOSE_CLOTHING_FALLBACK,
-          characterBase64,
+          requestPrompt + REPOSE_CLOTHING_FALLBACK,
+          primaryBase64,
           'image/png',
           extras,
           model,
@@ -1386,6 +1542,7 @@ async function refineSheetCell(
   frameIndex: number,
   total: number,
   context?: ApiRequestContext,
+  officialDescription?: string,
 ): Promise<string> {
   const start = Date.now();
   const baseBounds = await measureGreenBackedCharacterBounds(cellBase64);
@@ -1409,7 +1566,18 @@ async function refineSheetCell(
   };
 
   // Attempt 1 — standard prompt
-  const first = await singleRefineAttempt(characterBase64, cellBase64, animName, prompt, model, frameIndex, total, 'attempt 1', context);
+  const first = await singleRefineAttempt(
+    characterBase64,
+    cellBase64,
+    animName,
+    prompt,
+    model,
+    frameIndex,
+    total,
+    'attempt 1',
+    context,
+    officialDescription,
+  );
   if (first) {
     const check = await validateSize(first);
     if (check.ok) {
@@ -1437,6 +1605,7 @@ async function refineSheetCell(
     total,
     'attempt 2 (size-strict)',
     context,
+    officialDescription,
   );
   if (second) {
     const check = await validateSize(second);
@@ -1468,6 +1637,7 @@ export async function geminiSheetRefined(
   options?: { enableBgRemoval?: boolean },
   context?: ApiRequestContext,
   modelOverride?: string,
+  officialDescription?: string,
 ): Promise<GeminiSpriteResult> {
   const start = Date.now();
   const renderModel = resolveGeminiImageModel({ operation: 'sprite', animationName: animName, modelOverride });
@@ -1494,6 +1664,7 @@ export async function geminiSheetRefined(
     normalizationReference,
     context,
     scaffoldModel,
+    officialDescription,
   );
   debugLog(
     `[GeminiApi] Sheet-refine ${animName}: base sheet done in ${((Date.now() - start) / 1000).toFixed(1)}s ` +
@@ -1517,7 +1688,9 @@ export async function geminiSheetRefined(
 
   // Step 3: refine each cell at full Gemini resolution. Pro runs sequentially
   // so one fighter cannot burst through Google's rolling spend-rate window.
-  const refinePrompt = buildSheetRefinePrompt(animName, motion);
+  const refinePrompt = officialDescription?.trim()
+    ? motion
+    : buildSheetRefinePrompt(animName, motion);
   const refineStart = Date.now();
   const refinedCells: string[] = [];
   if (renderModel.toLowerCase().includes('pro')) {
@@ -1531,6 +1704,7 @@ export async function geminiSheetRefined(
         idx,
         sheetCells.length,
         context,
+        officialDescription,
       ));
     }
   } else {
@@ -1547,6 +1721,7 @@ export async function geminiSheetRefined(
           start + offset,
           sheetCells.length,
           context,
+          officialDescription,
         ),
       ));
       refinedCells.push(...batchResults);
