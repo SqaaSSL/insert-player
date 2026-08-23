@@ -108,6 +108,40 @@ describe('Gemini content-block handling', () => {
     expect(prompt).toContain('{"retry":[],"issues":{}}');
   });
 
+  it('makes independent QA passes and format recovery requests cache-distinct', () => {
+    const first = geminiOfficialSpriteReviewPrompt(
+      'Original fighter in a navy suit.',
+      'walk',
+      'walking forward',
+      16,
+      'initial-a',
+      1,
+    );
+    const second = geminiOfficialSpriteReviewPrompt(
+      'Original fighter in a navy suit.',
+      'walk',
+      'walking forward',
+      16,
+      'initial-b',
+      1,
+    );
+    const recovery = geminiOfficialSpriteReviewPrompt(
+      'Original fighter in a navy suit.',
+      'walk',
+      'walking forward',
+      16,
+      'initial-a',
+      2,
+    );
+
+    expect(first).toContain('REVIEW INSTANCE: initial-a-1');
+    expect(second).toContain('REVIEW INSTANCE: initial-b-1');
+    expect(second).not.toBe(first);
+    expect(recovery).toContain('REVIEW INSTANCE: initial-a-2');
+    expect(recovery).toContain('FORMAT RECOVERY');
+    expect(recovery).not.toBe(first);
+  });
+
   it('parses and validates closed-category official sprite QA results', () => {
     expect(parseGeminiOfficialSpriteReview(
       '```json\n{"retry":[3,1,3],"issues":{"1":["anatomy"],"3":["render_style","outfit_continuity"]}}\n```',

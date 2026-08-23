@@ -1472,8 +1472,11 @@ export function geminiOfficialSpriteReviewPrompt(
   animName: string,
   motion: string,
   total: number,
+  reviewInstance?: string,
+  formatAttempt = 1,
 ): string {
   const motionSummary = motion.replace(/\s+/g, ' ').trim().slice(0, 220);
+  const safeReviewInstance = reviewInstance?.replace(/[^a-z0-9_-]/gi, '').slice(0, 32);
   return [
     `Inspect IMAGE 1 as a production QA reviewer. It is a contact sheet containing only a clearly fictional synthetic arcade avatar generated from the written description below.`,
     `Do not identify, name, or compare the avatar to any real person or public figure. Review only the visible game-art quality and continuity.`,
@@ -1500,6 +1503,13 @@ export function geminiOfficialSpriteReviewPrompt(
     `Return exactly one JSON object and no markdown or prose. Use zero-based indices and only the issue labels above:`,
     `{"retry":[3],"issues":{"3":["render_style"]}}`,
     `If all frames pass, return: {"retry":[],"issues":{}}`,
+    ...(safeReviewInstance ? [
+      ``,
+      `REVIEW INSTANCE: ${safeReviewInstance}-${formatAttempt}. Perform this review independently; this label must not appear in the JSON response.`,
+      ...(formatAttempt > 1 ? [
+        `FORMAT RECOVERY: the preceding response could not be parsed. Reinspect the image and use only the exact issue labels and JSON shape listed above.`,
+      ] : []),
+    ] : []),
   ].join('\n');
 }
 
@@ -1828,17 +1838,25 @@ async function reviewOfficialRefinedCells(
   description: string,
   animName: string,
   motion: string,
+  reviewInstance: string,
   context?: ApiRequestContext,
 ): Promise<GeminiOfficialSpriteReview> {
   const total = refinedCells.length;
   const gridCols = computeGridCols(total);
   const gridRows = Math.ceil(total / gridCols);
   const contactSheet = await composeRefinedFramesToSheet(refinedCells, gridCols, gridRows);
-  const prompt = geminiOfficialSpriteReviewPrompt(description, animName, motion, total);
 
   let lastError: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
+      const prompt = geminiOfficialSpriteReviewPrompt(
+        description,
+        animName,
+        motion,
+        total,
+        reviewInstance,
+        attempt,
+      );
       const result = await callGemini(
         prompt,
         contactSheet,
@@ -2019,6 +2037,7 @@ export async function geminiSheetRefined(
         official,
         animName,
         motion,
+        'initial-a',
         context,
       ),
       await reviewOfficialRefinedCells(
@@ -2026,6 +2045,7 @@ export async function geminiSheetRefined(
         official,
         animName,
         motion,
+        'initial-b',
         context,
       ),
     ]);
@@ -2053,6 +2073,7 @@ export async function geminiSheetRefined(
         official,
         animName,
         motion,
+        'post-correction',
         context,
       );
       if (finalReview.retry.length > 0) {

@@ -7,6 +7,7 @@ import {
   persistGeneratedSprite,
 } from './generatedAssets';
 import { mintGenerationJobToken } from './generationAuth';
+import { generationFailureDetails } from './generationFailure';
 import { maxTier } from './tiers';
 import type { Env, Fighter, GenerationJob } from './types';
 
@@ -560,17 +561,17 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
             job!.fighter_id,
           );
           const releasedBeforeProviderStart = settlement?.status === 'refunded';
+          const failure = generationFailureDetails(message, releasedBeforeProviderStart);
           await this.env.DB.batch([
             this.env.DB.prepare(`
               UPDATE generation_jobs
-              SET status = 'failed', stage = 'failed', error_code = 'generation_failed',
+              SET status = 'failed', stage = 'failed', error_code = ?,
                   error_message = ?,
                   finished_at = datetime('now'), updated_at = datetime('now')
               WHERE id = ? AND status IN ('queued', 'running')
             `).bind(
-              releasedBeforeProviderStart
-                ? 'Generation could not start external processing; the unused reservation was released'
-                : 'Generation stopped after external processing began; contact support if it cannot be repaired',
+              failure.errorCode,
+              failure.errorMessage,
               job!.id,
             ),
             this.env.DB.prepare(`
