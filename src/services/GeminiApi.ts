@@ -52,8 +52,15 @@ export function isGeminiContentBlockedError(error: unknown): boolean {
     error instanceof Error && (
       error.name === 'GeminiContentBlockedError'
       || error.message.includes('IMAGE_SAFETY')
+      || error.message.includes('IMAGE_OTHER')
     )
   );
+}
+
+export function geminiFinishReasonBlockReason(finishReason: string | null | undefined): string | null {
+  const reason = finishReason?.trim();
+  if (!reason) return null;
+  return /SAFETY|BLOCK|PROHIBITED|IMAGE_OTHER/i.test(reason) ? reason : null;
 }
 
 export function geminiContentBlockReason(response: {
@@ -218,9 +225,8 @@ async function callGemini(
   if (!resParts || !Array.isArray(resParts)) {
     const reason = candidate.finishReason || 'unknown';
     console.error(`[GeminiApi] No parts in response. finishReason: ${reason}`, JSON.stringify(candidate).slice(0, 500));
-    if (/SAFETY|BLOCK|PROHIBITED/i.test(reason)) {
-      throw new GeminiContentBlockedError(reason);
-    }
+    const blockReason = geminiFinishReasonBlockReason(reason);
+    if (blockReason) throw new GeminiContentBlockedError(blockReason);
     throw new Error(`Gemini returned no content (finishReason: ${reason})`);
   }
 
