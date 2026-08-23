@@ -793,6 +793,7 @@ function assertLiveConfigHelperIsWired() {
     '"db:execute:0017": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0017_provider_cost_events.sql"',
     '"db:execute:0018": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0018_durable_generation_jobs.sql"',
     '"db:execute:0019": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0019_durable_retry_jobs.sql"',
+    '"db:execute:0020": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0020_official_arcade.sql"',
     'scripts/wrangler-workspace-log.mjs',
     '"wrangler": "^4.125.0"',
     '.env.*',
@@ -1948,8 +1949,8 @@ function assertCrossDeviceRosterImportIsWired() {
     'Fighter renamed locally; cloud update skipped',
     'syncCloudFightersToLocal(all, apiContext)',
     'const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext)',
-    'p1CloudFighterId: p1Meta.cloudFighterId ?? null',
-    'p2CloudFighterId: p2Meta.cloudFighterId ?? null',
+    'p1CloudFighterId: p1Fighter.cloudFighterId',
+    'p2CloudFighterId: p2Fighter.cloudFighterId',
   ];
   const combined = `${cloud}\n${gallery}\n${roster}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
@@ -2121,7 +2122,8 @@ function replayMigrations() {
     '.read worker/migrations/0017_provider_cost_events.sql',
     '.read worker/migrations/0018_durable_generation_jobs.sql',
     '.read worker/migrations/0019_durable_retry_jobs.sql',
-    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports");',
+    '.read worker/migrations/0020_official_arcade.sql',
+    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters");',
   ];
   try {
     run('D1 migration replay', sqlite, migrationArgs);
@@ -3214,6 +3216,117 @@ function assertDurableGenerationIsWired() {
   }
 }
 
+function assertOfficialArcadeIsWired() {
+  const migration = readFileSync(join(root, 'worker/migrations/0020_official_arcade.sql'), 'utf8');
+  const fighters = readFileSync(join(root, 'worker/src/fighters.ts'), 'utf8');
+  const generation = readFileSync(join(root, 'worker/src/arcadeGeneration.ts'), 'utf8');
+  const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
+  const cloudFighters = readFileSync(join(root, 'src/services/CloudFighters.ts'), 'utf8');
+  const legalPage = readFileSync(join(root, 'src/ui/routes/LegalPage.tsx'), 'utf8');
+  const rosterPage = readFileSync(join(root, 'src/ui/routes/RosterPage.tsx'), 'utf8');
+  const seeder = readFileSync(join(root, 'scripts/seed-arcade-roster.mjs'), 'utf8');
+  const packageJson = readFileSync(join(root, 'package.json'), 'utf8');
+  const gitignore = readFileSync(join(root, '.gitignore'), 'utf8');
+  const manifest = JSON.parse(readFileSync(join(root, 'arcade/roster-2026.json'), 'utf8'));
+  const expectedSlugs = [
+    'donald-trump',
+    'lamine-yamal',
+    'ibai-llanos',
+    'aitana',
+    'rosalia',
+    'bad-bunny',
+    'mrbeast',
+    'ishowspeed',
+    'elon-musk',
+    'cristiano-ronaldo',
+    'javier-milei',
+    'lionel-messi',
+    'perro-sanxe',
+  ];
+  if (manifest.qualityTier !== 'champion') {
+    throw new Error('The official Arcade manifest must stay Champion-only.');
+  }
+  if (!Array.isArray(manifest.fighters) || manifest.fighters.length !== expectedSlugs.length) {
+    throw new Error(`The official Arcade manifest must contain exactly ${expectedSlugs.length} launch fighters.`);
+  }
+  const actualSlugs = manifest.fighters.map((fighter) => fighter.slug);
+  const missingSlugs = expectedSlugs.filter((slug) => !actualSlugs.includes(slug));
+  if (missingSlugs.length > 0 || new Set(actualSlugs).size !== actualSlugs.length) {
+    throw new Error(`The official Arcade manifest is missing or duplicating launch fighters: ${missingSlugs.join(', ')}`);
+  }
+  if (!/unofficial/i.test(manifest.disclosure ?? '') || !/endorse/i.test(manifest.disclosure ?? '')) {
+    throw new Error('The official Arcade manifest must retain its unofficial/no-endorsement disclosure.');
+  }
+  const invalidReferences = manifest.fighters.filter((fighter) => {
+    const reference = fighter.reference ?? manifest.reference;
+    return (
+      reference?.kind !== 'licensed'
+      || typeof reference.sourceUrl !== 'string'
+      || !reference.sourceUrl.startsWith('https://')
+      || typeof reference.licenseUrl !== 'string'
+      || !reference.licenseUrl.startsWith('https://')
+      || !reference.license
+      || !reference.credit
+      || !reference.author
+      || !reference.sourceDate
+      || !reference.verification
+      || !/^[a-f0-9]{64}$/.test(reference.sourceSha256 ?? '')
+    );
+  });
+  if (invalidReferences.length > 0) {
+    throw new Error(`Every launch fighter needs approved licensed-photo provenance: ${invalidReferences.map((fighter) => fighter.slug).join(', ')}`);
+  }
+  const sourceUrls = manifest.fighters.map((fighter) => (fighter.reference ?? manifest.reference).sourceUrl);
+  if (new Set(sourceUrls).size !== sourceUrls.length) {
+    throw new Error('Each launch fighter must use a distinct licensed source photo.');
+  }
+  if (manifest.fighters.some((fighter) => !fighter.referencePrompt || fighter.referencePrompt.length < 180)) {
+    throw new Error('Every official Arcade fighter needs a detailed transformation prompt.');
+  }
+
+  const combined = [
+    migration,
+    fighters,
+    generation,
+    workerIndex,
+    cloudFighters,
+    legalPage,
+    rosterPage,
+    seeder,
+    packageJson,
+    gitignore,
+  ].join('\n');
+  const required = [
+    'CREATE TABLE IF NOT EXISTS arcade_fighters',
+    "WHERE status IN ('draft', 'active')",
+    "af.status = 'active'",
+    'AND f.public_flag = 1',
+    'Generate the full playable animation set before activating this fighter',
+    'export async function startAdminArcadeGeneration',
+    "'arcade_seed_generation'",
+    "VALUES (?, ?, 'champion', 0, 0, 'reserved'",
+    'return createGenerationJob',
+    "path === '/api/arcade' && method === 'GET'",
+    '/api/admin/arcade/',
+    'downloadArcadeFighterToLocal',
+    'arcadeFighterPhotoHash',
+    'Photo: {fighter.cloud.arcade.reference.credit}',
+    'makes that artwork available under the same CC BY-SA version',
+    'sourceSha256',
+    'Licensed source hash mismatch',
+    "type RosterFilter = 'official' | 'yours' | 'all'",
+    "playableSpriteSetSql('f', 'champion')",
+    '"arcade:seed": "node scripts/seed-arcade-roster.mjs"',
+    '--confirm-production',
+    '.arcade-sources/',
+    '.arcade-state.json',
+  ];
+  const missing = required.filter((snippet) => !combined.includes(snippet));
+  if (missing.length > 0) {
+    throw new Error(`Official Arcade wiring is incomplete: ${missing.join(', ')}`);
+  }
+}
+
 function assertGithubActionsAreWired() {
   const files = {
     validation: '.github/workflows/validate.yml',
@@ -3362,6 +3475,7 @@ assertLocalCachePreservesSpriteVersions();
 assertWorkerErrorsDoNotLeakInProduction();
 assertLaunchMetadataIsWired();
 assertLaunchRasterAssetsAreFresh();
+assertOfficialArcadeIsWired();
 assertDurableGenerationIsWired();
 assertGithubActionsAreWired();
 run('prelaunch bundle isolation', node, ['scripts/build-prelaunch.mjs', '--skip-checks']);

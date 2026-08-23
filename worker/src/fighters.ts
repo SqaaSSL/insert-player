@@ -1,4 +1,16 @@
-import type { AuthContext, Env, Fighter, PublicAuthContext, QualityTier, SourceVersion, SpriteAsset, SpriteVersion, Stage } from './types';
+import type {
+  ArcadeFighter,
+  AuthContext,
+  Env,
+  Fighter,
+  FighterPersonalityId,
+  PublicAuthContext,
+  QualityTier,
+  SourceVersion,
+  SpriteAsset,
+  SpriteVersion,
+  Stage,
+} from './types';
 import { generateId, hashString } from './auth';
 import { maxTier, normalizeQualityTier, TIER_DEFINITIONS } from './tiers';
 import { publicAppName, publicSocialCardUrl } from './branding';
@@ -50,7 +62,16 @@ const MAX_SPRITE_FRAME_DIMENSION = 4096;
 const MAX_SPRITE_FRAME_COUNT = 64;
 const MAX_PROCESSING_VERSION = 100;
 const MAX_FIGHTER_NAME_CHARS = 48;
+const MAX_ARCADE_CHALLENGER_LINE_CHARS = 120;
+const MAX_ARCADE_REFERENCE_TEXT_CHARS = 240;
 const ALLOWED_UPLOAD_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+const FIGHTER_PERSONALITY_IDS = new Set<FighterPersonalityId>([
+  'balanced',
+  'brawler',
+  'counter',
+  'zoner',
+  'showboat',
+]);
 const PUBLIC_COMMUNITY_CACHE_HEADERS = {
   'Cache-Control': 'public, max-age=60, s-maxage=300, stale-while-revalidate=300',
 };
@@ -94,6 +115,20 @@ interface CopiedPublicSourceView {
 interface CopiedPublicSourceViews {
   columns: Partial<Record<keyof Fighter, string | null>>;
   versions: CopiedPublicSourceView[];
+}
+
+interface ArcadeFighterRow extends Fighter {
+  arcade_slug: string;
+  arcade_sort_order: number;
+  arcade_challenger_line: string;
+  arcade_default_personality: FighterPersonalityId;
+  arcade_reference_kind: ArcadeFighter['reference_kind'];
+  arcade_reference_source_url: string | null;
+  arcade_reference_license: string;
+  arcade_reference_credit: string;
+  arcade_status: ArcadeFighter['status'];
+  arcade_created_at: string;
+  arcade_updated_at: string;
 }
 
 function json(data: unknown, status = 200, extraHeaders: HeadersInit = {}): Response {
@@ -253,12 +288,14 @@ function namespacedAssetOwner(key: string): string | null {
   return segments[0] === 'users' && segments[1] ? segments[1] : null;
 }
 
-function playableSpriteSetSql(fighterAlias: string): string {
+function playableSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): string {
+  const tierCondition = qualityTier ? `AND s.quality_tier = '${qualityTier}'` : '';
   return `(
     SELECT COUNT(DISTINCT s.animation_name)
     FROM sprites s
     WHERE s.fighter_id = ${fighterAlias}.id
       AND s.animation_name IN (${PLAYABLE_ANIMATION_SQL_LIST})
+      ${tierCondition}
   ) = ${PLAYABLE_ANIMATION_COUNT}`;
 }
 
@@ -280,6 +317,22 @@ function normalizeFighterName(value: unknown, fallback: string): string {
   const requested = typeof value === 'string' ? cleanFighterNameString(value) : '';
   const normalized = requested || cleanFighterNameString(fallback) || 'Fighter';
   return Array.from(normalized).slice(0, MAX_FIGHTER_NAME_CHARS).join('');
+}
+
+function normalizeBoundedText(value: unknown, fallback: string, maxChars: number): string {
+  const requested = typeof value === 'string' ? cleanFighterNameString(value) : '';
+  return Array.from(requested || fallback).slice(0, maxChars).join('');
+}
+
+function normalizeHttpsUrl(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || value.length > 2_048) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 function frontendOrigin(env: Env): string {
@@ -403,6 +456,72 @@ function serializeCommunityFighter(
   };
 }
 
+function serializeArcadeFighter(
+  request: Request,
+  fighter: ArcadeFighterRow,
+  sprites: SpriteAsset[] = [],
+) {
+  return {
+    ...serializeCommunityFighter(request, fighter, sprites),
+    arcade: {
+      slug: fighter.arcade_slug,
+      rank: fighter.arcade_sort_order,
+      challengerLine: fighter.arcade_challenger_line,
+      defaultPersonality: fighter.arcade_default_personality,
+      reference: {
+        kind: fighter.arcade_reference_kind,
+        sourceUrl: fighter.arcade_reference_source_url,
+        license: fighter.arcade_reference_license,
+        credit: fighter.arcade_reference_credit,
+      },
+    },
+  };
+}
+
+function arcadeFighterSelectSql(whereClause: string, orderClause: string): string {
+  return `
+    SELECT
+      f.*,
+      af.slug AS arcade_slug,
+      af.sort_order AS arcade_sort_order,
+      af.challenger_line AS arcade_challenger_line,
+      af.default_personality AS arcade_default_personality,
+      af.reference_kind AS arcade_reference_kind,
+      af.reference_source_url AS arcade_reference_source_url,
+      af.reference_license AS arcade_reference_license,
+      af.reference_credit AS arcade_reference_credit,
+      af.status AS arcade_status,
+      af.created_at AS arcade_created_at,
+      af.updated_at AS arcade_updated_at
+    FROM arcade_fighters af
+    JOIN fighters f ON f.id = af.fighter_id
+    ${whereClause}
+    ${orderClause}
+  `;
+}
+
+function serializeAdminArcadeFighter(fighter: ArcadeFighterRow) {
+  return {
+    fighterId: fighter.id,
+    fighterName: normalizeFighterName(fighter.name, 'Fighter'),
+    qualityTier: fighter.quality_tier,
+    public: Boolean(fighter.public_flag),
+    slug: fighter.arcade_slug,
+    rank: fighter.arcade_sort_order,
+    challengerLine: fighter.arcade_challenger_line,
+    defaultPersonality: fighter.arcade_default_personality,
+    reference: {
+      kind: fighter.arcade_reference_kind,
+      sourceUrl: fighter.arcade_reference_source_url,
+      license: fighter.arcade_reference_license,
+      credit: fighter.arcade_reference_credit,
+    },
+    status: fighter.arcade_status,
+    createdAt: fighter.arcade_created_at,
+    updatedAt: fighter.arcade_updated_at,
+  };
+}
+
 async function getOwnedFighter(env: Env, fighterId: string, userId: string): Promise<Fighter | null> {
   return env.DB.prepare(
     'SELECT * FROM fighters WHERE id = ? AND owner_user_id = ?'
@@ -438,16 +557,28 @@ async function getSourceVersionsForFighter(env: Env, fighterId: string): Promise
   return results ?? [];
 }
 
-async function getMissingPlayableAnimationNames(env: Env, fighterId: string): Promise<string[]> {
-  const { results } = await env.DB.prepare(
-    'SELECT DISTINCT animation_name FROM sprites WHERE fighter_id = ?'
-  ).bind(fighterId).all<{ animation_name: string }>();
+async function getMissingPlayableAnimationNames(
+  env: Env,
+  fighterId: string,
+  qualityTier?: QualityTier,
+): Promise<string[]> {
+  const tierCondition = qualityTier ? ' AND quality_tier = ?' : '';
+  const statement = env.DB.prepare(
+    `SELECT DISTINCT animation_name FROM sprites WHERE fighter_id = ?${tierCondition}`
+  );
+  const { results } = qualityTier
+    ? await statement.bind(fighterId, qualityTier).all<{ animation_name: string }>()
+    : await statement.bind(fighterId).all<{ animation_name: string }>();
   const available = new Set((results ?? []).map((sprite) => sprite.animation_name));
   return PLAYABLE_ANIMATION_NAMES.filter((name) => !available.has(name));
 }
 
-async function fighterHasPlayableSprite(env: Env, fighterId: string): Promise<boolean> {
-  return (await getMissingPlayableAnimationNames(env, fighterId)).length === 0;
+async function fighterHasPlayableSprite(
+  env: Env,
+  fighterId: string,
+  qualityTier?: QualityTier,
+): Promise<boolean> {
+  return (await getMissingPlayableAnimationNames(env, fighterId, qualityTier)).length === 0;
 }
 
 async function resolvePublicFlag(
@@ -525,6 +656,177 @@ export async function listCommunityFighters(request: Request, env: Env): Promise
   return json({
     fighters: fighters.map((fighter) => serializeCommunityFighter(request, fighter, spritesByFighter.get(fighter.id) ?? [])),
   }, 200, PUBLIC_COMMUNITY_CACHE_HEADERS);
+}
+
+export async function listArcadeFighters(request: Request, env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(arcadeFighterSelectSql(
+    `WHERE af.status = 'active'
+      AND f.public_flag = 1
+      AND f.quality_tier = 'champion'
+      AND ${playableSpriteSetSql('f', 'champion')}`,
+    'ORDER BY af.sort_order ASC, af.updated_at DESC',
+  )).all<ArcadeFighterRow>();
+  const fighters = results ?? [];
+  const sprites = (await getSpritesForFighters(env, fighters.map((fighter) => fighter.id)))
+    .filter((sprite) => sprite.quality_tier === 'champion');
+  const spritesByFighter = new Map<string, SpriteAsset[]>();
+  for (const sprite of sprites) {
+    const existing = spritesByFighter.get(sprite.fighter_id) ?? [];
+    existing.push(sprite);
+    spritesByFighter.set(sprite.fighter_id, existing);
+  }
+  return json({
+    fighters: fighters.map((fighter) => serializeArcadeFighter(
+      request,
+      fighter,
+      spritesByFighter.get(fighter.id) ?? [],
+    )),
+  }, 200, PUBLIC_COMMUNITY_CACHE_HEADERS);
+}
+
+export async function listAdminArcadeFighters(env: Env, auth: AuthContext): Promise<Response> {
+  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403, NO_STORE_HEADERS);
+  const { results } = await env.DB.prepare(arcadeFighterSelectSql(
+    'WHERE f.owner_user_id = ?',
+    'ORDER BY af.sort_order ASC, af.updated_at DESC',
+  )).bind(auth.userId).all<ArcadeFighterRow>();
+  return json({ fighters: (results ?? []).map(serializeAdminArcadeFighter) }, 200, NO_STORE_HEADERS);
+}
+
+export async function upsertAdminArcadeFighter(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+): Promise<Response> {
+  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403, NO_STORE_HEADERS);
+  if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400, NO_STORE_HEADERS);
+
+  const fighter = await getOwnedFighter(env, fighterId, auth.userId);
+  if (!fighter) return json({ error: 'Admin fighter not found' }, 404, NO_STORE_HEADERS);
+  const existing = await env.DB.prepare(
+    'SELECT * FROM arcade_fighters WHERE fighter_id = ?'
+  ).bind(fighterId).first<ArcadeFighter>();
+  const body = await readJsonBody<{
+    slug?: unknown;
+    rank?: unknown;
+    challengerLine?: unknown;
+    defaultPersonality?: unknown;
+    reference?: {
+      kind?: unknown;
+      sourceUrl?: unknown;
+      license?: unknown;
+      credit?: unknown;
+    };
+    status?: unknown;
+  }>(request, MAX_FIGHTER_JSON_BODY_BYTES);
+
+  const slug = typeof body.slug === 'string' ? body.slug.trim().toLowerCase() : existing?.slug ?? '';
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || slug.length > 64) {
+    return json({ error: 'Arcade slug must use lowercase letters, numbers, and hyphens' }, 400, NO_STORE_HEADERS);
+  }
+  const rank = body.rank === undefined ? existing?.sort_order ?? 0 : Number(body.rank);
+  if (!Number.isInteger(rank) || rank < 1 || rank > 999) {
+    return json({ error: 'Arcade rank must be an integer from 1 to 999' }, 400, NO_STORE_HEADERS);
+  }
+  const challengerLine = normalizeBoundedText(
+    body.challengerLine,
+    existing?.challenger_line ?? '',
+    MAX_ARCADE_CHALLENGER_LINE_CHARS,
+  );
+  if (!challengerLine) return json({ error: 'A challenger line is required' }, 400, NO_STORE_HEADERS);
+  const defaultPersonality = (
+    body.defaultPersonality === undefined ? existing?.default_personality : body.defaultPersonality
+  );
+  if (typeof defaultPersonality !== 'string' || !FIGHTER_PERSONALITY_IDS.has(defaultPersonality as FighterPersonalityId)) {
+    return json({ error: 'A supported default personality is required' }, 400, NO_STORE_HEADERS);
+  }
+
+  const referenceKind = body.reference?.kind === undefined
+    ? existing?.reference_kind
+    : body.reference.kind;
+  if (referenceKind !== 'generated' && referenceKind !== 'licensed') {
+    return json({ error: 'Reference kind must be generated or licensed' }, 400, NO_STORE_HEADERS);
+  }
+  const referenceSourceUrl = body.reference?.sourceUrl === undefined
+    ? existing?.reference_source_url ?? null
+    : normalizeHttpsUrl(body.reference.sourceUrl);
+  if (referenceKind === 'licensed' && !referenceSourceUrl) {
+    return json({ error: 'Licensed references require an HTTPS source URL' }, 400, NO_STORE_HEADERS);
+  }
+  const referenceLicense = normalizeBoundedText(
+    body.reference?.license,
+    existing?.reference_license ?? '',
+    MAX_ARCADE_REFERENCE_TEXT_CHARS,
+  );
+  const referenceCredit = normalizeBoundedText(
+    body.reference?.credit,
+    existing?.reference_credit ?? '',
+    MAX_ARCADE_REFERENCE_TEXT_CHARS,
+  );
+  if (!referenceLicense || !referenceCredit) {
+    return json({ error: 'Reference licence and credit are required' }, 400, NO_STORE_HEADERS);
+  }
+  const status = body.status === undefined ? existing?.status ?? 'draft' : body.status;
+  if (status !== 'draft' && status !== 'active' && status !== 'retired') {
+    return json({ error: 'Arcade status must be draft, active, or retired' }, 400, NO_STORE_HEADERS);
+  }
+  if (status === 'active' && (
+    fighter.quality_tier !== 'champion'
+    || !await fighterHasPlayableSprite(env, fighterId, 'champion')
+  )) {
+    return json({ error: 'Generate the full playable animation set before activating this fighter' }, 409, NO_STORE_HEADERS);
+  }
+
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO arcade_fighters (
+          fighter_id, slug, sort_order, challenger_line, default_personality,
+          reference_kind, reference_source_url, reference_license, reference_credit, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(fighter_id) DO UPDATE SET
+          slug = excluded.slug,
+          sort_order = excluded.sort_order,
+          challenger_line = excluded.challenger_line,
+          default_personality = excluded.default_personality,
+          reference_kind = excluded.reference_kind,
+          reference_source_url = excluded.reference_source_url,
+          reference_license = excluded.reference_license,
+          reference_credit = excluded.reference_credit,
+          status = excluded.status,
+          updated_at = datetime('now')
+      `).bind(
+        fighterId,
+        slug,
+        rank,
+        challengerLine,
+        defaultPersonality,
+        referenceKind,
+        referenceKind === 'licensed' ? referenceSourceUrl : null,
+        referenceLicense,
+        referenceCredit,
+        status,
+      ),
+      env.DB.prepare(`
+        UPDATE fighters
+        SET public_flag = ?, updated_at = datetime('now')
+        WHERE id = ? AND owner_user_id = ?
+      `).bind(status === 'active' ? 1 : 0, fighterId, auth.userId),
+    ]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.toLowerCase().includes('unique')) {
+      return json({ error: 'Arcade slug is already in use' }, 409, NO_STORE_HEADERS);
+    }
+    throw error;
+  }
+
+  const updated = await env.DB.prepare(arcadeFighterSelectSql(
+    'WHERE af.fighter_id = ? AND f.owner_user_id = ?',
+    'LIMIT 1',
+  )).bind(fighterId, auth.userId).first<ArcadeFighterRow>();
+  return json({ fighter: updated ? serializeAdminArcadeFighter(updated) : null }, existing ? 200 : 201, NO_STORE_HEADERS);
 }
 
 export async function getCommunityFighter(

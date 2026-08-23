@@ -1,0 +1,268 @@
+{
+  "version": "2026.08.23-real-photos",
+  "qualityTier": "champion",
+  "legalVersion": "2026-08-23.1",
+  "disclosure": "Unofficial AI-generated parody. No featured person sponsors or endorses Insert Player.",
+  "fighters": [
+    {
+      "slug": "donald-trump",
+      "name": "Donald Trump",
+      "identityName": "Donald Trump",
+      "rank": 1,
+      "challengerLine": "The comeback never stays off-screen.",
+      "defaultPersonality": "showboat",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:January_2025_Official_Presidential_Portrait_of_Donald_J._Trump.jpg",
+        "license": "Public domain (United States federal government work)",
+        "licenseUrl": "https://commons.wikimedia.org/wiki/File:January_2025_Official_Presidential_Portrait_of_Donald_J._Trump.jpg#Licensing",
+        "credit": "Daniel Torok / The White House (2025), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Daniel Torok",
+        "sourceDate": "2025-01-15",
+        "verification": "United States federal government public-domain provenance verified on Wikimedia Commons",
+        "sourceSha256": "b8cdec38c5a7e8042acd2a095336a2a5b3255bf8771aedf7634860129af4c476"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of Donald Trump. Head-to-toe, standing in a relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, navy tailored suit, white shirt, vivid red tie, polished black shoes. Original wardrobe with no campaign marks, flags, text, logos, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic news photography."
+    },
+    {
+      "slug": "lamine-yamal",
+      "name": "Lamine Yamal",
+      "identityName": "Lamine Yamal",
+      "rank": 2,
+      "challengerLine": "Too young to fear the final round.",
+      "defaultPersonality": "showboat",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Lamine_Yamal_France_v_Spain_7.24.26-142_(cropped).jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "Bryan Berlin / WikiPortraits (2026), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Bryan Berlin / WikiPortraits",
+        "sourceDate": "2026-07-14",
+        "verification": "Photographer-uploaded Wikimedia Commons source",
+        "sourceSha256": "e4dae2540e85991fd337558d8a53b5fba022aaea9629bc2577dbdaba3a49a8e8"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of Lamine Yamal. Head-to-toe, relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, original crimson and teal football-inspired training jacket, black athletic trousers, clean white trainers. No club, sponsor, federation, flag, number, text, logos, ball, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic sports photography."
+    },
+    {
+      "slug": "ibai-llanos",
+      "name": "Ibai Llanos",
+      "identityName": "Ibai Llanos",
+      "rank": 3,
+      "challengerLine": "The whole arena is watching.",
+      "defaultPersonality": "balanced",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Ibai_Llanos_2025_-_2.png",
+        "license": "CC BY 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+        "credit": "Movistar KOI VODS (2025), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Movistar KOI VODS",
+        "sourceDate": "2025-04-18",
+        "verification": "Creative Commons source setting independently checked on the linked YouTube video on 2026-08-23",
+        "sourceSha256": "b25a718f057956b0b74502574e49d48d95e1b09d37a046b088352ce7602cb488"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of Ibai Llanos. Head-to-toe, relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, original black and cream varsity jacket with restrained red accents, plain dark T-shirt, tapered black trousers, red and white trainers. No team marks, sponsors, text, logos, microphone, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic event photography."
+    },
+    {
+      "slug": "aitana",
+      "name": "Aitana",
+      "identityName": "Aitana Ocaña",
+      "rank": 4,
+      "challengerLine": "Pop precision. No missed beats.",
+      "defaultPersonality": "counter",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Aitana_GHD.jpg",
+        "license": "CC BY 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+        "credit": "Juli Carné Martorell (2018), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Juli Carné Martorell",
+        "sourceDate": "2018-11-15",
+        "verification": "Wikimedia Commons source with archived Vimeo provenance",
+        "sourceSha256": "2dad771add37269eeb6b3882767324a99e689ebff88f405c3fc55a19f4a34d5e"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of Spanish singer Aitana Ocaña. Head-to-toe, relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, original cobalt and silver performance jacket, fitted black stage trousers, practical silver ankle boots. No album references, tour styling, text, logos, microphone, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic concert photography."
+    },
+    {
+      "slug": "rosalia",
+      "name": "Rosalía",
+      "identityName": "Rosalía Vila Tobella",
+      "rank": 5,
+      "challengerLine": "Changes the rhythm, owns the round.",
+      "defaultPersonality": "showboat",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Rosalia_2019-portrait.jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "Pedro J Pacheco (2019), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Pedro J Pacheco",
+        "sourceDate": "2019-02-02",
+        "verification": "Photographer-uploaded Wikimedia Commons source",
+        "sourceSha256": "1b24f41867329bf1a84773773906ae2a21010bf0a03a3164ace8c57b69afab30"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of Rosalía. Head-to-toe, relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, original avant-garde black and deep-red performance outfit with subtle chrome details, fitted trousers, sturdy fashion boots. No album references, tour styling, text, logos, microphone, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic concert photography."
+    },
+    {
+      "slug": "bad-bunny",
+      "name": "Bad Bunny",
+      "identityName": "Benito Antonio Martínez Ocasio",
+      "rank": 6,
+      "challengerLine": "Nobody knows the next move.",
+      "defaultPersonality": "brawler",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Bad_Bunny_2019_by_Glenn_Francis_(cropped).jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "© Glenn Francis, www.PacificProDigital.com (2019), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Glenn Francis / PacificProDigital.com",
+        "sourceDate": "2019-10-11",
+        "verification": "Photographer-uploaded Wikimedia Commons source",
+        "sourceSha256": "ed81f3176b18c89b8af0aea6279b6fd229ad4a5903545a1b47b074cff2bc07e5"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of Bad Bunny. Head-to-toe, relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, original black, white, and mint streetwear fighter outfit, cropped utility jacket, loose technical trousers, rugged trainers. No album references, brand marks, text, logos, jewelry logos, microphone, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic concert photography."
+    },
+    {
+      "slug": "mrbeast",
+      "name": "MrBeast",
+      "identityName": "Jimmy Donaldson",
+      "rank": 7,
+      "challengerLine": "One round. Everything on the line.",
+      "defaultPersonality": "balanced",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Mrbeast_in_2025_4.jpg",
+        "license": "CC BY 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+        "credit": "小Lin说 (2025), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "小Lin说",
+        "sourceDate": "2025-05-14",
+        "verification": "Wikimedia Commons license review completed on 2026-01-20",
+        "sourceSha256": "18a9e42fb1582b2b0bfdf7776cc44f1f0380e219ad8a97566c209be6ee7506dc"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of MrBeast, Jimmy Donaldson. Head-to-toe, relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, original cobalt and cyan utility jacket over a plain black shirt, dark cargo trousers, clean trainers. No channel iconography, challenge references, text, logos, money, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic social-media photography."
+    },
+    {
+      "slug": "ishowspeed",
+      "name": "IShowSpeed",
+      "identityName": "Darren Watkins Jr.",
+      "rank": 8,
+      "challengerLine": "Zero brakes from the opening bell.",
+      "defaultPersonality": "brawler",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:IShowSpeed_at_Chinatown_(Portrait)_02.jpg",
+        "license": "CC BY-SA 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+        "credit": "Chin Yu Chu (2024), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Chin Yu Chu",
+        "sourceDate": "2024-09-24",
+        "verification": "Flickr license reviewed by Wikimedia Commons",
+        "sourceSha256": "414002a980812168381b3986faf69fedde74085f26e5dd31b262b1100cedde95"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of IShowSpeed, Darren Watkins Jr. Head-to-toe, relaxed neutral fighting stance with contained high energy, face unobstructed and unmistakably recognizable, original red, white, and black athletic fighter jacket, tapered training trousers, lightweight trainers. No club, federation, sponsor, flag, number, text, logos, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic stream photography."
+    },
+    {
+      "slug": "elon-musk",
+      "name": "Elon Musk",
+      "identityName": "Elon Musk",
+      "rank": 9,
+      "challengerLine": "Launches first. Explains later.",
+      "defaultPersonality": "zoner",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Elon_Musk_(3x4_close_cropped).jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "Gage Skidmore (2025), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Gage Skidmore",
+        "sourceDate": "2025-09-21",
+        "verification": "Flickr source and photographer attribution recorded on Wikimedia Commons",
+        "sourceSha256": "110a0f41f9c4b8e75a0ab30ce13e0db651c516621ad893b3f0459d24416fe27e"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of Elon Musk. Head-to-toe, relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, original graphite and silver technical jacket with restrained electric-blue details, black trousers, minimalist dark boots. No company products, vehicle silhouettes, text, logos, symbols, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic press photography."
+    },
+    {
+      "slug": "cristiano-ronaldo",
+      "name": "Cristiano Ronaldo",
+      "identityName": "Cristiano Ronaldo",
+      "rank": 10,
+      "challengerLine": "Built for the last-minute winner.",
+      "defaultPersonality": "showboat",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Cristiano_Ronaldo_Croatia_v_Portugal_2_July_2026-154(cropped).jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "Bryan Berlin / WikiPortraits (2026), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Bryan Berlin / WikiPortraits",
+        "sourceDate": "2026-07-02",
+        "verification": "Photographer-uploaded Wikimedia Commons source; conservative share-alike compliance follows the parent image license",
+        "sourceSha256": "c0746ccd1fdcc52066ee39afde64c25417032de465fe71436b7d7f8e5b3adb77"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of Cristiano Ronaldo. Head-to-toe, relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, original white, obsidian, and restrained gold athletic training outfit, fitted track trousers, performance trainers. No club, federation, sponsor, flag, number, text, logos, ball, celebration pose, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic sports photography."
+    },
+    {
+      "slug": "javier-milei",
+      "name": "Javier Milei",
+      "identityName": "Javier Milei",
+      "rank": 11,
+      "challengerLine": "No middle ground. No slow rounds.",
+      "defaultPersonality": "brawler",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Retrato_oficial_del_Presidente_Javier_(cropped).jpeg",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+        "credit": "Gobierno Argentino / Argentina.gob.ar (2024), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Gobierno Argentino",
+        "sourceDate": "2024",
+        "verification": "Official Argentine government source recorded on Wikimedia Commons",
+        "sourceSha256": "79d329b9bc0668de2d2df78f1ac0b6a3183aa9977e92055c63165046c6009f6c"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of Javier Milei. Head-to-toe, relaxed neutral fighting stance, face and distinctive hair unobstructed and unmistakably recognizable, original dark tailored suit, black shirt, restrained yellow pocket detail, polished dark shoes. No party marks, national symbols, slogans, text, logos, chainsaw, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic political photography."
+    },
+    {
+      "slug": "lionel-messi",
+      "name": "Lionel Messi",
+      "identityName": "Lionel Messi",
+      "rank": 12,
+      "challengerLine": "Sees the opening before it exists.",
+      "defaultPersonality": "counter",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-043_(cropped).jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "Bryan Berlin / WikiPortraits (2025), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Bryan Berlin / WikiPortraits",
+        "sourceDate": "2025-07-09",
+        "verification": "Photographer-uploaded Wikimedia Commons source",
+        "sourceSha256": "b0d24c8dd3eee3b0751f8eac2d890b3c7740050b5cefad454c69aecb0ccdf3a1"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body game-character reference of Lionel Messi. Head-to-toe, relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, original sky-blue, charcoal, and white athletic training jacket, fitted track trousers, performance trainers. No club, federation, sponsor, flag, number, text, logos, ball, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, caricature, or photorealistic sports photography."
+    },
+    {
+      "slug": "perro-sanxe",
+      "name": "Perro Sanxe",
+      "identityName": "Pedro Sánchez",
+      "rank": 13,
+      "challengerLine": "Survives every round.",
+      "defaultPersonality": "counter",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Pedro_S%C3%A1nchez_with_Ursula_von_der_Leyen_-_2025_(P-067042).jpg",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+        "credit": "© European Union, 2026 (source image dated 2025), via Wikimedia Commons; cropped and converted to PNG by Insert Player.",
+        "author": "European Union",
+        "sourceDate": "2025-05-28",
+        "verification": "European Commission Audiovisual Service Creative Commons source",
+        "sourceSha256": "2ffb5a186881b2b89df9be15dcc46db0946366435510b5fa42a9ecf8834b6eeb"
+      },
+      "referencePrompt": "Create a clearly AI-rendered, premium realistic 2.5D full-body satirical game-character reference of Spanish prime minister Pedro Sánchez, titled Perro Sanxe. Head-to-toe, relaxed neutral fighting stance, face unobstructed and unmistakably recognizable, original charcoal tailored suit, white shirt, burgundy tie, restrained blue details, polished dark shoes. No party marks, government insignia, flags, slogans, text, logos, animal features, props, or protected game styling. Neutral light-gray studio background, even soft light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, grotesque caricature, or photorealistic political photography."
+    }
+  ]
+}

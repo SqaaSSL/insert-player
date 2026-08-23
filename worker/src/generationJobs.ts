@@ -146,7 +146,10 @@ async function replayExistingJob(env: Env, userId: string, job: GenerationJob): 
 }
 
 function operationForAuthorization(row: GenerationJobAuthorizationRow): GenerationJobOperation | null {
-  if (row.charge_reason === 'fighter_generation' && row.provider_purpose === 'fighter_generation') {
+  if (
+    (row.charge_reason === 'fighter_generation' || row.charge_reason === 'arcade_seed_generation')
+    && row.provider_purpose === 'fighter_generation'
+  ) {
     return 'fighter_generation';
   }
   if (row.charge_reason === 'fighter_upgrade' && row.provider_purpose === 'fighter_upgrade') {

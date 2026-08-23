@@ -17,6 +17,7 @@
     "check:launch": "node scripts/check-launch.mjs",
     "brand:apply": "node scripts/apply-public-brand.mjs",
     "brand:rasterize": "node scripts/rasterize-public-assets.mjs",
+    "arcade:seed": "node scripts/seed-arcade-roster.mjs",
     "stripe:bootstrap": "node scripts/bootstrap-stripe-catalog.mjs",
     "stripe:bootstrap:sandbox": "node scripts/bootstrap-stripe-catalog.mjs --target=sandbox",
     "config:live": "node scripts/apply-live-config.mjs --require-complete --deploy-worker",

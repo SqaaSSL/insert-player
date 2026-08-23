@@ -41,6 +41,18 @@ export interface CloudFighter {
   owner?: {
     name: string;
   };
+  arcade?: {
+    slug: string;
+    rank: number;
+    challengerLine: string;
+    defaultPersonality: 'balanced' | 'brawler' | 'counter' | 'zoner' | 'showboat';
+    reference: {
+      kind: 'generated' | 'licensed';
+      sourceUrl: string | null;
+      license: string;
+      credit: string;
+    };
+  };
   name: string;
   photoHash?: string;
   qualityTier: CloudQualityTier;
@@ -513,6 +525,18 @@ export async function listCommunityFighters(): Promise<CloudFighter[]> {
   return json.fighters ?? [];
 }
 
+export async function listArcadeFighters(): Promise<CloudFighter[]> {
+  if (isLocalDevWithoutApi()) return [];
+  const res = await apiFetch('/api/arcade');
+  if (!res.ok) throw new Error(`Arcade fighters failed (${res.status})`);
+  const json = await res.json() as { fighters?: CloudFighter[] };
+  return (json.fighters ?? []).filter((fighter) => Boolean(fighter.arcade));
+}
+
+export function arcadeFighterPhotoHash(fighter: CloudFighter): string {
+  return `arcade:${fighter.arcade?.slug ?? fighter.id}:${fighter.id}`;
+}
+
 export async function getCommunityFighter(fighterId: string): Promise<CloudFighter | null> {
   if (isLocalDevWithoutApi()) return null;
   const res = await apiFetch(`/api/community/${encodeURIComponent(fighterId)}`);
@@ -962,6 +986,22 @@ export async function downloadCloudFighterToLocal(
     optionalAssetsSkipped,
     spritesSkipped,
   };
+}
+
+export async function downloadArcadeFighterToLocal(
+  fighter: CloudFighter,
+  context?: ApiRequestContext,
+): Promise<CloudImportResult> {
+  if (!fighter.arcade || !fighter.public) {
+    throw new Error(`${fighter.name} is not an active Arcade fighter.`);
+  }
+  return downloadCloudFighterToLocal({
+    ...fighter,
+    photoHash: arcadeFighterPhotoHash(fighter),
+  }, context, {
+    includeArchivedVersions: false,
+    includeRawAssets: false,
+  });
 }
 
 const archivedCloudImportJobs = new Map<string, Promise<void>>();

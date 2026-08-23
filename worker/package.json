@@ -32,7 +32,8 @@
     "db:execute:0016": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0016_provider_spend_rate_window.sql",
     "db:execute:0017": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0017_provider_cost_events.sql",
     "db:execute:0018": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0018_durable_generation_jobs.sql",
-    "db:execute:0019": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0019_durable_retry_jobs.sql"
+    "db:execute:0019": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0019_durable_retry_jobs.sql",
+    "db:execute:0020": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0020_official_arcade.sql"
   },
   "devDependencies": {
     "wrangler": "^4.125.0"

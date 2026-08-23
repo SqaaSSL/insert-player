@@ -16,6 +16,8 @@ import {
   getFighter,
   getPublicFighterSourceAsset,
   getPublicFighterSpriteAsset,
+  listAdminArcadeFighters,
+  listArcadeFighters,
   listCommunityFighters,
   listFighters,
   listStages,
@@ -27,6 +29,7 @@ import {
   tiersResponse,
   uploadFighterSource,
   uploadFighterSprite,
+  upsertAdminArcadeFighter,
 } from './fighters';
 import { ensureSystemUser, getLeaderboard, getPlayerStats, reportMatchResult } from './leaderboard';
 import { getTempAsset, handleProxy } from './proxy';
@@ -39,6 +42,7 @@ import { cleanupOperationalData } from './maintenance';
 import { listCommunityReports, moderateCommunityReport } from './moderation';
 import { CURRENT_LEGAL_VERSION } from './legal';
 import { optionalGenerationJobAuth } from './generationAuth';
+import { startAdminArcadeGeneration } from './arcadeGeneration';
 import {
   createGenerationJob,
   getGenerationJob,
@@ -322,6 +326,10 @@ export default {
         return addCors(await listCommunityFighters(request, env), request, env);
       }
 
+      if (path === '/api/arcade' && method === 'GET') {
+        return addCors(await listArcadeFighters(request, env), request, env);
+      }
+
       const communityDetailMatch = path.match(/^\/api\/community\/([^/]+)$/);
       if (communityDetailMatch && method === 'GET') {
         const fighterId = decodePathParam(communityDetailMatch[1]);
@@ -412,6 +420,51 @@ export default {
             env,
             'admin:moderation',
             (auth) => listCommunityReports(request, env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/admin/arcade' && method === 'GET') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => listAdminArcadeFighters(env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const arcadeAdminMatch = path.match(/^\/api\/admin\/arcade\/([^/]+)$/);
+      if (arcadeAdminMatch && method === 'PATCH') {
+        const arcadeFighterId = decodePathParam(arcadeAdminMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => upsertAdminArcadeFighter(request, env, auth, arcadeFighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const arcadeGenerationMatch = path.match(/^\/api\/admin\/arcade\/([^/]+)\/generate$/);
+      if (arcadeGenerationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(arcadeGenerationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => startAdminArcadeGeneration(request, env, auth, arcadeFighterId),
           ),
           request,
           env,

@@ -54,6 +54,10 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
     anonymous: { limit: 1, windowSeconds: 60 * 60 },
     signedIn: { limit: 300, windowSeconds: 60 * 60 },
   },
+  'admin:arcade': {
+    anonymous: { limit: 1, windowSeconds: 60 * 60 },
+    signedIn: { limit: 300, windowSeconds: 60 * 60 },
+  },
   'fighters:upload': {
     anonymous: { limit: 4, windowSeconds: 24 * 60 * 60 },
     signedIn: { limit: 240, windowSeconds: 24 * 60 * 60 },

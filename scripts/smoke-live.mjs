@@ -392,6 +392,36 @@ async function runPublicSmoke() {
   }
   log('/api/tiers exposes Rookie, Contender, Champion');
 
+  const arcadeFeed = await expectStatus('official Arcade cache headers', '/api/arcade', 200);
+  assert(
+    (arcadeFeed.headers.get('Cache-Control') ?? '').includes('s-maxage=300'),
+    'Official Arcade feed is missing short shared-cache headers',
+  );
+  const arcadeBody = await readJson(arcadeFeed);
+  assert(Array.isArray(arcadeBody.fighters), 'Official Arcade feed did not return a fighters array');
+  let previousRank = 0;
+  for (const fighter of arcadeBody.fighters) {
+    assert(fighter.qualityTier === 'champion', 'Official Arcade exposed a non-Champion fighter');
+    assert(!Object.hasOwn(fighter, 'ownerUserId'), 'Official Arcade exposed ownerUserId');
+    assert(!Object.hasOwn(fighter, 'photoHash'), 'Official Arcade exposed photoHash');
+    assertCommunityOwner(fighter.owner, 'Official Arcade');
+    assertOpaqueCommunityAssets(fighter, 'Official Arcade');
+    assert(typeof fighter.arcade?.slug === 'string' && fighter.arcade.slug, 'Official Arcade fighter is missing its slug');
+    assert(Number(fighter.arcade?.rank) > previousRank, 'Official Arcade fighters are not in stable rank order');
+    assert(typeof fighter.arcade?.challengerLine === 'string', 'Official Arcade fighter is missing its challenger line');
+    assert(
+      fighter.arcade?.reference?.kind === 'licensed'
+        && /^https:\/\//.test(fighter.arcade.reference.sourceUrl ?? '')
+        && typeof fighter.arcade.reference.license === 'string'
+        && fighter.arcade.reference.license
+        && typeof fighter.arcade.reference.credit === 'string'
+        && fighter.arcade.reference.credit,
+      'Official Arcade fighter is missing public photo attribution',
+    );
+    previousRank = Number(fighter.arcade.rank);
+  }
+  log(`/api/arcade safely exposes ${arcadeBody.fighters.length} official Champion fighter${arcadeBody.fighters.length === 1 ? '' : 's'}`);
+
   const communityFeed = await expectStatus('community feed cache headers', '/api/community?limit=1', 200);
   assert(
     (communityFeed.headers.get('Cache-Control') ?? '').includes('s-maxage=300'),

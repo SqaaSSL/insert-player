@@ -532,6 +532,7 @@ function assertRemoteD1Schema() {
     'generation_jobs',
     'generation_job_events',
     'provider_request_cache',
+    'arcade_fighters',
   ];
   const missing = requiredTables.filter((table) => !output.includes(`"name": "${table}"`));
   if (missing.length > 0) {
@@ -693,6 +694,20 @@ function assertRemoteD1Schema() {
     || !indexOutput.includes('idx_provider_request_cache_job')
   ) {
     fail(`Remote D1 database ${databaseName} is missing durable-generation indexes.\n${`${generationIndexes.stdout ?? ''}${generationIndexes.stderr ?? ''}`.trim()}`);
+  }
+
+  const arcadeColumns = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    'SELECT fighter_id, slug, sort_order, challenger_line, default_personality, reference_kind, status FROM arcade_fighters LIMIT 0;',
+  ], workerDir);
+  if (arcadeColumns.status !== 0) {
+    const arcadeOutput = `${arcadeColumns.stdout ?? ''}${arcadeColumns.stderr ?? ''}`.trim();
+    fail(`Remote D1 database ${databaseName} is missing migration 0020 official Arcade fields.\n${arcadeOutput}`);
   }
 }
 

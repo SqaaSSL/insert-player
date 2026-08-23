@@ -26,6 +26,100 @@ const providerLinks = [
   ['Freepik', 'https://www.freepik.com/legal/privacy'],
 ] as const;
 
+const arcadePhotoCredits = [
+  {
+    name: 'Donald Trump',
+    credit: 'Daniel Torok / The White House (2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:January_2025_Official_Presidential_Portrait_of_Donald_J._Trump.jpg',
+    license: 'Public domain',
+    licenseUrl: 'https://commons.wikimedia.org/wiki/File:January_2025_Official_Presidential_Portrait_of_Donald_J._Trump.jpg#Licensing',
+  },
+  {
+    name: 'Lamine Yamal',
+    credit: 'Bryan Berlin / WikiPortraits (2026)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Lamine_Yamal_France_v_Spain_7.24.26-142_(cropped).jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'Ibai Llanos',
+    credit: 'Movistar KOI VODS (2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Ibai_Llanos_2025_-_2.png',
+    license: 'CC BY 3.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/3.0',
+  },
+  {
+    name: 'Aitana',
+    credit: 'Juli Carné Martorell (2018)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Aitana_GHD.jpg',
+    license: 'CC BY 3.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/3.0',
+  },
+  {
+    name: 'Rosalía',
+    credit: 'Pedro J Pacheco (2019)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Rosalia_2019-portrait.jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'Bad Bunny',
+    credit: '© Glenn Francis / PacificProDigital.com (2019)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Bad_Bunny_2019_by_Glenn_Francis_(cropped).jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'MrBeast',
+    credit: '小Lin说 (2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Mrbeast_in_2025_4.jpg',
+    license: 'CC BY 3.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/3.0',
+  },
+  {
+    name: 'IShowSpeed',
+    credit: 'Chin Yu Chu (2024)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:IShowSpeed_at_Chinatown_(Portrait)_02.jpg',
+    license: 'CC BY-SA 2.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/2.0',
+  },
+  {
+    name: 'Elon Musk',
+    credit: 'Gage Skidmore (2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Elon_Musk_(3x4_close_cropped).jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'Cristiano Ronaldo',
+    credit: 'Bryan Berlin / WikiPortraits (2026)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Cristiano_Ronaldo_Croatia_v_Portugal_2_July_2026-154(cropped).jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'Javier Milei',
+    credit: 'Gobierno Argentino / Argentina.gob.ar (2024)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Retrato_oficial_del_Presidente_Javier_(cropped).jpeg',
+    license: 'CC BY 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/4.0',
+  },
+  {
+    name: 'Lionel Messi',
+    credit: 'Bryan Berlin / WikiPortraits (2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-043_(cropped).jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'Perro Sanxe / Pedro Sánchez',
+    credit: '© European Union, 2026 (source image dated 2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Pedro_S%C3%A1nchez_with_Ursula_von_der_Leyen_-_2025_(P-067042).jpg',
+    license: 'CC BY 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/4.0',
+  },
+] as const;
+
 function OperatorDetails() {
   return (
     <address className="legal-page__address">
@@ -69,12 +163,27 @@ function LegalNotice() {
       </section>
 
       <section>
-        <h2>5. Acceptable access</h2>
+        <h2>5. Official Arcade photo credits</h2>
+        <p>Official Arcade fighters are unofficial AI-generated parody characters. No featured person sponsors or endorses Insert Player. The following real-world source images are used as identity references and were cropped or converted where stated. Their licences cover copyright in the source image; names, likenesses, trademarks, and personality rights remain separate.</p>
+        <p>Changes include cropping, format conversion, and AI transformation into original game artwork. To the extent an official fighter derived from a CC BY-SA source constitutes Adapted Material under that licence, Insert Player makes that artwork available under the same CC BY-SA version listed below. This does not license the depicted person's name, likeness, trademarks, or personality rights.</p>
+        <ul>
+          {arcadePhotoCredits.map((photo) => (
+            <li key={photo.name}>
+              <strong>{photo.name}:</strong> {photo.credit}.{' '}
+              <a href={photo.sourceUrl} target="_blank" rel="noreferrer">Source</a>{' '}
+              (<a href={photo.licenseUrl} target="_blank" rel="noreferrer">{photo.license}</a>).
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section>
+        <h2>6. Acceptable access</h2>
         <p>You may use this site only in accordance with applicable law and the Terms of Service. You may not interfere with the service, bypass access or payment controls, extract private assets, or use Insert Player to violate another person's rights.</p>
       </section>
 
       <section>
-        <h2>6. Applicable law</h2>
+        <h2>7. Applicable law</h2>
         <p>Spanish law applies, without limiting mandatory consumer protections or court options available in your country of residence. Contact us first so we can try to resolve a complaint directly.</p>
       </section>
     </>

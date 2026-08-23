@@ -93,6 +93,23 @@ export interface Fighter {
   updated_at: string;
 }
 
+export type FighterPersonalityId = 'balanced' | 'brawler' | 'counter' | 'zoner' | 'showboat';
+
+export interface ArcadeFighter {
+  fighter_id: string;
+  slug: string;
+  sort_order: number;
+  challenger_line: string;
+  default_personality: FighterPersonalityId;
+  reference_kind: 'generated' | 'licensed';
+  reference_source_url: string | null;
+  reference_license: string;
+  reference_credit: string;
+  status: 'draft' | 'active' | 'retired';
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SpriteAsset {
   id: string;
   fighter_id: string;

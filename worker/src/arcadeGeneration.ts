@@ -1,0 +1,237 @@
+import { generateId } from './auth';
+import { createGenerationJob } from './generationJobs';
+import {
+  CURRENT_LEGAL_VERSION,
+  parseGenerationLegalAttestation,
+} from './legal';
+import { createProviderSession } from './providerSessions';
+import { readJsonBody } from './requestBody';
+import type { AuthContext, Env, PublicAuthContext } from './types';
+
+const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
+const AUTHORIZATION_TTL_HOURS = 12;
+const PLAYABLE_ANIMATION_NAMES = [
+  'idle',
+  'walk',
+  'high_punch',
+  'low_punch',
+  'high_kick',
+  'low_kick',
+  'jump',
+  'crouch',
+  'hit',
+  'ko',
+  'victory',
+] as const;
+
+interface ArcadeGenerationFighterRow {
+  id: string;
+  owner_user_id: string;
+  original_blob_key: string | null;
+  arcade_status: 'draft' | 'active' | 'retired';
+}
+
+interface ActiveArcadeJobRow {
+  id: string;
+  fighter_id: string;
+  status: 'queued' | 'running';
+  stage: string;
+  progress_current: number;
+  progress_total: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ReusableArcadeAuthorizationRow {
+  purchase_id: string;
+  provider_session_id: string;
+}
+
+function json(data: unknown, status = 200): Response {
+  return Response.json(data, {
+    status,
+    headers: { 'Cache-Control': 'no-store' },
+  });
+}
+
+function authorizationExpiresAt(): string {
+  return new Date(Date.now() + AUTHORIZATION_TTL_HOURS * 60 * 60 * 1000).toISOString();
+}
+
+function publicAuth(auth: AuthContext): PublicAuthContext {
+  return {
+    userId: auth.userId,
+    rateLimitKey: `user:${auth.userId}`,
+    user: auth.user,
+    claims: auth.claims,
+  };
+}
+
+function generationJobRequest(
+  request: Request,
+  fighterId: string,
+  purchaseId: string,
+  providerSessionId: string,
+): Request {
+  return new Request(request.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fighterId, purchaseId, providerSessionId }),
+  });
+}
+
+async function playableAnimationCount(env: Env, fighterId: string): Promise<number> {
+  const placeholders = PLAYABLE_ANIMATION_NAMES.map(() => '?').join(',');
+  const row = await env.DB.prepare(`
+    SELECT COUNT(DISTINCT animation_name) AS count
+    FROM sprites
+    WHERE fighter_id = ?
+      AND quality_tier = 'champion'
+      AND animation_name IN (${placeholders})
+  `).bind(fighterId, ...PLAYABLE_ANIMATION_NAMES).first<{ count: number }>();
+  return Number(row?.count ?? 0);
+}
+
+export async function startAdminArcadeGeneration(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+): Promise<Response> {
+  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
+
+  const body = await readJsonBody<{ legal?: unknown }>(request, MAX_ADMIN_GENERATION_BODY_BYTES);
+  const legal = parseGenerationLegalAttestation(body.legal);
+  if (!legal) {
+    return json({
+      error: 'Current generation consent is required',
+      legalVersion: CURRENT_LEGAL_VERSION,
+    }, 428);
+  }
+
+  const fighter = await env.DB.prepare(`
+    SELECT f.id, f.owner_user_id, f.original_blob_key, af.status AS arcade_status
+    FROM fighters f
+    JOIN arcade_fighters af ON af.fighter_id = f.id
+    WHERE f.id = ? AND f.owner_user_id = ?
+    LIMIT 1
+  `).bind(fighterId, auth.userId).first<ArcadeGenerationFighterRow>();
+  if (!fighter) return json({ error: 'Official Arcade fighter not found' }, 404);
+  if (fighter.arcade_status === 'retired') {
+    return json({ error: 'Retired Arcade fighters cannot start generation' }, 409);
+  }
+  if (!fighter.original_blob_key || !await env.SPRITES.head(fighter.original_blob_key)) {
+    return json({ error: 'Upload the private reference image before generation' }, 409);
+  }
+
+  const animationCount = await playableAnimationCount(env, fighterId);
+  if (animationCount === PLAYABLE_ANIMATION_NAMES.length) {
+    return json({
+      ready: true,
+      fighterId,
+      tier: 'champion',
+      animationCount,
+    });
+  }
+
+  const active = await env.DB.prepare(`
+    SELECT id, fighter_id, status, stage, progress_current, progress_total, created_at, updated_at
+    FROM generation_jobs
+    WHERE fighter_id = ? AND status IN ('queued', 'running')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).bind(fighterId).first<ActiveArcadeJobRow>();
+  if (active) {
+    return json({
+      job: {
+        id: active.id,
+        fighterId: active.fighter_id,
+        tier: 'champion',
+        operation: 'fighter_generation',
+        status: active.status,
+        stage: active.stage,
+        progressCurrent: active.progress_current,
+        progressTotal: active.progress_total,
+        createdAt: active.created_at,
+        updatedAt: active.updated_at,
+      },
+      replayed: true,
+    });
+  }
+
+  const reusable = await env.DB.prepare(`
+    SELECT gc.id AS purchase_id, ps.id AS provider_session_id
+    FROM generation_charges gc
+    JOIN credit_ledger cl
+      ON cl.id = gc.ledger_id
+      AND cl.reason = 'arcade_seed_generation'
+      AND cl.delta = 0
+    JOIN provider_sessions ps
+      ON ps.charge_id = gc.id
+      AND ps.user_id = gc.user_id
+      AND ps.status = 'active'
+      AND datetime(ps.expires_at) > datetime('now')
+    LEFT JOIN generation_jobs gj ON gj.charge_id = gc.id
+    WHERE gc.user_id = ?
+      AND gc.fighter_id = ?
+      AND gc.tier = 'champion'
+      AND gc.credit_cost = 0
+      AND gc.free_quota_delta = 0
+      AND gc.status = 'reserved'
+      AND gc.reason = 'arcade_seed_generation'
+      AND datetime(gc.expires_at) > datetime('now')
+      AND gj.id IS NULL
+    ORDER BY gc.created_at DESC
+    LIMIT 1
+  `).bind(auth.userId, fighterId).first<ReusableArcadeAuthorizationRow>();
+  if (reusable) {
+    return createGenerationJob(generationJobRequest(
+      request,
+      fighterId,
+      reusable.purchase_id,
+      reusable.provider_session_id,
+    ), env, auth);
+  }
+
+  const purchaseId = generateId();
+  const ledgerId = generateId();
+  const expiresAt = authorizationExpiresAt();
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+      VALUES (?, ?, 0, 'arcade_seed_generation', ?)
+    `).bind(ledgerId, auth.userId, fighterId),
+    env.DB.prepare(`
+      INSERT INTO generation_charges (
+        id, user_id, tier, credit_cost, free_quota_delta, status,
+        reason, fighter_id, ledger_id, expires_at
+      ) VALUES (?, ?, 'champion', 0, 0, 'reserved', 'arcade_seed_generation', ?, ?, ?)
+    `).bind(purchaseId, auth.userId, fighterId, ledgerId, expiresAt),
+  ]);
+
+  let providerSession: Awaited<ReturnType<typeof createProviderSession>>;
+  try {
+    providerSession = await createProviderSession(env, publicAuth(auth), {
+      tier: 'champion',
+      purpose: 'fighter_generation',
+      operation: 'fighter_generation',
+      chargeId: purchaseId,
+      legal,
+    });
+  } catch (error) {
+    await env.DB.prepare(`
+      UPDATE generation_charges
+      SET status = 'refunded', updated_at = datetime('now')
+      WHERE id = ? AND user_id = ? AND status = 'reserved'
+    `).bind(purchaseId, auth.userId).run();
+    throw error;
+  }
+
+  return createGenerationJob(generationJobRequest(
+    request,
+    fighterId,
+    purchaseId,
+    providerSession.id,
+  ), env, auth);
+}
