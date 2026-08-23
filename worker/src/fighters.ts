@@ -131,6 +131,9 @@ interface ArcadeFighterRow extends Fighter {
   arcade_updated_at: string;
 }
 
+const MIN_ARCADE_GENERATION_PROMPT_CHARS = 180;
+const MAX_ARCADE_GENERATION_PROMPT_CHARS = 3000;
+
 function json(data: unknown, status = 200, extraHeaders: HeadersInit = {}): Response {
   return Response.json(data, { status, headers: extraHeaders });
 }
@@ -718,6 +721,7 @@ export async function upsertAdminArcadeFighter(
       license?: unknown;
       credit?: unknown;
     };
+    generationPrompt?: unknown;
     status?: unknown;
   }>(request, MAX_FIGHTER_JSON_BODY_BYTES);
 
@@ -771,6 +775,14 @@ export async function upsertAdminArcadeFighter(
   if (status !== 'draft' && status !== 'active' && status !== 'retired') {
     return json({ error: 'Arcade status must be draft, active, or retired' }, 400, NO_STORE_HEADERS);
   }
+  const generationPrompt = normalizeBoundedText(
+    body.generationPrompt,
+    existing?.generation_prompt ?? '',
+    MAX_ARCADE_GENERATION_PROMPT_CHARS,
+  );
+  if (status !== 'retired' && generationPrompt.length < MIN_ARCADE_GENERATION_PROMPT_CHARS) {
+    return json({ error: 'A detailed private Arcade generation prompt is required' }, 400, NO_STORE_HEADERS);
+  }
   if (status === 'active' && (
     fighter.quality_tier !== 'champion'
     || !await fighterHasPlayableSprite(env, fighterId, 'champion')
@@ -783,8 +795,9 @@ export async function upsertAdminArcadeFighter(
       env.DB.prepare(`
         INSERT INTO arcade_fighters (
           fighter_id, slug, sort_order, challenger_line, default_personality,
-          reference_kind, reference_source_url, reference_license, reference_credit, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          reference_kind, reference_source_url, reference_license, reference_credit,
+          generation_prompt, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(fighter_id) DO UPDATE SET
           slug = excluded.slug,
           sort_order = excluded.sort_order,
@@ -794,6 +807,7 @@ export async function upsertAdminArcadeFighter(
           reference_source_url = excluded.reference_source_url,
           reference_license = excluded.reference_license,
           reference_credit = excluded.reference_credit,
+          generation_prompt = excluded.generation_prompt,
           status = excluded.status,
           updated_at = datetime('now')
       `).bind(
@@ -806,6 +820,7 @@ export async function upsertAdminArcadeFighter(
         referenceKind === 'licensed' ? referenceSourceUrl : null,
         referenceLicense,
         referenceCredit,
+        generationPrompt || null,
         status,
       ),
       env.DB.prepare(`

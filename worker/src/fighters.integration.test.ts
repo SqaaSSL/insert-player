@@ -130,6 +130,7 @@ const SCHEMA = `
     reference_source_url TEXT,
     reference_license TEXT NOT NULL,
     reference_credit TEXT NOT NULL,
+    generation_prompt TEXT,
     status TEXT NOT NULL DEFAULT 'draft',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -248,6 +249,7 @@ function arcadeRequest(status: 'draft' | 'active' | 'retired'): Request {
         license: 'CC BY-SA 4.0',
         credit: 'Example Photographer (2026)',
       },
+      generationPrompt: 'Transform the person in this licensed photo into a clearly synthetic premium realistic 2.5D full-body arcade avatar. Preserve recognizable facial structure without caricature. Show the complete figure on a flat pure green background with no text, logos, props, shadows, or documentary context.',
       status,
     }),
   });
@@ -324,6 +326,10 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect((await upsertAdminArcadeFighter(
         arcadeRequest('draft'), env, adminAuth, fighterId,
       )).status).toBe(201);
+      expect((await db.prepare(
+        'SELECT generation_prompt FROM arcade_fighters WHERE fighter_id = ?'
+      ).bind(fighterId).first<{ generation_prompt: string }>())?.generation_prompt)
+        .toContain('clearly synthetic premium realistic 2.5D');
       const draftResponse = await listArcadeFighters(
         new Request('https://api.insertplayer.ai/api/arcade'), env,
       );

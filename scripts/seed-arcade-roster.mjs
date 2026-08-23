@@ -252,6 +252,7 @@ function arcadePayload(manifest, fighter, status, slug = fighter.slug) {
       license: reference.license,
       credit: reference.credit,
     },
+    generationPrompt: fighter.referencePrompt,
     status,
   };
 }

@@ -105,6 +105,7 @@ export interface ArcadeFighter {
   reference_source_url: string | null;
   reference_license: string;
   reference_credit: string;
+  generation_prompt: string | null;
   status: 'draft' | 'active' | 'retired';
   created_at: string;
   updated_at: string;

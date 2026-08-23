@@ -1,4 +1,5 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
+import { NonRetryableError } from 'cloudflare:workflows';
 import { generateId } from './auth';
 import { settleGenerationPurchase } from './billing';
 import {
@@ -29,6 +30,10 @@ interface GenerationSources {
   upright: SourcePair;
   crouch: SourcePair;
   crouchNormalizationReference?: NormalizationReference;
+}
+
+interface ArcadeGenerationPromptRow {
+  generation_prompt: string | null;
 }
 
 interface ProcessorSourceResult {
@@ -152,9 +157,30 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     }));
     if (!response.ok) {
       const detail = (await response.text()).slice(0, 2_000);
+      let errorCode = '';
+      try {
+        const parsed = JSON.parse(detail) as { code?: unknown };
+        errorCode = typeof parsed.code === 'string' ? parsed.code : '';
+      } catch {
+        // The bounded response text below remains the diagnostic for non-JSON failures.
+      }
+      if (response.status === 422 && errorCode === 'provider_content_blocked') {
+        throw new NonRetryableError('The image provider declined this transformation without returning an image');
+      }
       throw new Error(`Image processor ${path} failed with ${response.status}: ${detail}`);
     }
     return response.json<T>();
+  }
+
+  private async loadArcadeGenerationPrompt(fighterId: string): Promise<string | undefined> {
+    const row = await this.env.DB.prepare(`
+      SELECT generation_prompt
+      FROM arcade_fighters
+      WHERE fighter_id = ? AND status IN ('draft', 'active')
+      LIMIT 1
+    `).bind(fighterId).first<ArcadeGenerationPromptRow>();
+    const prompt = row?.generation_prompt?.trim();
+    return prompt || undefined;
   }
 
   private async recordProgress(
@@ -185,6 +211,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       rawKind: 'side_raw' | 'upright_raw' | 'crouch_raw';
       inputKey: string;
       normalizationSourceKey?: string;
+      generationPrompt?: string;
       progressCurrent: number;
     },
   ): Promise<SourcePair & { normalizationReference?: NormalizationReference }> {
@@ -192,6 +219,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       requestScope: `job:${job.id}:source:${params.cleanKind}`,
       operation: params.operation,
       imageBase64: await this.loadAssetBase64(params.inputKey),
+      generationPrompt: params.generationPrompt,
       normalizationSourceBase64: params.normalizationSourceKey
         ? await this.loadAssetBase64(params.normalizationSourceKey)
         : undefined,
@@ -326,11 +354,17 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       if (activeJob.operation === 'fighter_generation') {
         const fighter = await this.loadFighter(activeJob);
         if (!fighter.original_blob_key) throw new Error('Original source photo is missing');
+        const generationPrompt = await step.do(
+          'load official Arcade generation prompt',
+          STEP_CONFIG,
+          () => this.loadArcadeGenerationPrompt(activeJob.fighter_id),
+        );
         const side = await step.do('generate canonical side source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
           operation: 'repose',
           cleanKind: 'side',
           rawKind: 'side_raw',
           inputKey: fighter.original_blob_key!,
+          generationPrompt,
           progressCurrent: 1,
         }));
         const upright = await step.do('generate canonical upright source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
@@ -398,11 +432,17 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         const target = activeJob.target_name;
         if (target === 'side') {
           if (!fighter.original_blob_key) throw new Error('Original source photo is missing');
+          const generationPrompt = await step.do(
+            'load official Arcade retry prompt',
+            STEP_CONFIG,
+            () => this.loadArcadeGenerationPrompt(activeJob.fighter_id),
+          );
           await step.do('retry canonical side source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
             operation: 'repose',
             cleanKind: 'side',
             rawKind: 'side_raw',
             inputKey: fighter.original_blob_key!,
+            generationPrompt,
             progressCurrent: 1,
           }));
         } else if (target === 'upright') {

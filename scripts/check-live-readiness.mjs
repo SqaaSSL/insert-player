@@ -703,11 +703,11 @@ function assertRemoteD1Schema() {
     databaseName,
     '--remote',
     '--command',
-    'SELECT fighter_id, slug, sort_order, challenger_line, default_personality, reference_kind, status FROM arcade_fighters LIMIT 0;',
+    'SELECT fighter_id, slug, sort_order, challenger_line, default_personality, reference_kind, generation_prompt, status FROM arcade_fighters LIMIT 0;',
   ], workerDir);
   if (arcadeColumns.status !== 0) {
     const arcadeOutput = `${arcadeColumns.stdout ?? ''}${arcadeColumns.stderr ?? ''}`.trim();
-    fail(`Remote D1 database ${databaseName} is missing migration 0020 official Arcade fields.\n${arcadeOutput}`);
+    fail(`Remote D1 database ${databaseName} is missing migrations 0020-0021 official Arcade fields.\n${arcadeOutput}`);
   }
 }
 

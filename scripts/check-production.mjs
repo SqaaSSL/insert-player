@@ -794,6 +794,7 @@ function assertLiveConfigHelperIsWired() {
     '"db:execute:0018": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0018_durable_generation_jobs.sql"',
     '"db:execute:0019": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0019_durable_retry_jobs.sql"',
     '"db:execute:0020": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0020_official_arcade.sql"',
+    '"db:execute:0021": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0021_arcade_generation_prompts.sql"',
     'scripts/wrangler-workspace-log.mjs',
     '"wrangler": "^4.125.0"',
     '.env.*',
@@ -2123,6 +2124,7 @@ function replayMigrations() {
     '.read worker/migrations/0018_durable_generation_jobs.sql',
     '.read worker/migrations/0019_durable_retry_jobs.sql',
     '.read worker/migrations/0020_official_arcade.sql',
+    '.read worker/migrations/0021_arcade_generation_prompts.sql',
     'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters");',
   ];
   try {
@@ -3218,8 +3220,12 @@ function assertDurableGenerationIsWired() {
 
 function assertOfficialArcadeIsWired() {
   const migration = readFileSync(join(root, 'worker/migrations/0020_official_arcade.sql'), 'utf8');
+  const promptMigration = readFileSync(join(root, 'worker/migrations/0021_arcade_generation_prompts.sql'), 'utf8');
   const fighters = readFileSync(join(root, 'worker/src/fighters.ts'), 'utf8');
   const generation = readFileSync(join(root, 'worker/src/arcadeGeneration.ts'), 'utf8');
+  const workflow = readFileSync(join(root, 'worker/src/generationWorkflow.ts'), 'utf8');
+  const processor = readFileSync(join(root, 'processor/src/server.ts'), 'utf8');
+  const gemini = readFileSync(join(root, 'src/services/GeminiApi.ts'), 'utf8');
   const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
   const cloudFighters = readFileSync(join(root, 'src/services/CloudFighters.ts'), 'utf8');
   const legalPage = readFileSync(join(root, 'src/ui/routes/LegalPage.tsx'), 'utf8');
@@ -3286,8 +3292,12 @@ function assertOfficialArcadeIsWired() {
 
   const combined = [
     migration,
+    promptMigration,
     fighters,
     generation,
+    workflow,
+    processor,
+    gemini,
     workerIndex,
     cloudFighters,
     legalPage,
@@ -3298,6 +3308,7 @@ function assertOfficialArcadeIsWired() {
   ].join('\n');
   const required = [
     'CREATE TABLE IF NOT EXISTS arcade_fighters',
+    'ADD COLUMN generation_prompt TEXT',
     "WHERE status IN ('draft', 'active')",
     "af.status = 'active'",
     'AND f.public_flag = 1',
@@ -3317,6 +3328,11 @@ function assertOfficialArcadeIsWired() {
     'ASF_ARCADE_CLERK_SECRET_KEY',
     'expires_in_seconds: CLERK_TOKEN_TTL_SECONDS',
     'Use the Clerk secret-key flow for long jobs',
+    'generationPrompt: fighter.referencePrompt',
+    "SELECT generation_prompt",
+    "provider_content_blocked",
+    'new NonRetryableError',
+    'GeminiContentBlockedError',
     "ARCADE_ADMIN_SEED_HEADER = 'X-Insert-Player-Admin-Seed'",
     'allowMissingAuthorizedParty: isArcadeAdminSeed',
     "auth.user.plan_tier !== 'admin'",

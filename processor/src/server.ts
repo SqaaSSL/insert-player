@@ -31,6 +31,7 @@ interface GenerateSourceRequest extends ProviderContextRequest {
   operation: 'repose' | 'upright' | 'crouch';
   imageBase64: string;
   normalizationSourceBase64?: string;
+  generationPrompt?: string;
 }
 
 interface GenerateSpriteRequest extends ProviderContextRequest {
@@ -98,7 +99,7 @@ async function generateSource(body: GenerateSourceRequest) {
     geminiUprightReposeDetailed,
   } = await import('../../src/services/GeminiApi.ts');
   if (body.operation === 'repose') {
-    return geminiReposeDetailed(body.imageBase64, context);
+    return geminiReposeDetailed(body.imageBase64, context, body.generationPrompt);
   }
   if (body.operation === 'upright') {
     return geminiUprightReposeDetailed(body.imageBase64, context);
@@ -208,7 +209,12 @@ const server = createServer(async (request, response) => {
       if (
         !isProviderContextRequest(body) ||
         !['repose', 'upright', 'crouch'].includes(body.operation) ||
-        !body.imageBase64
+        !body.imageBase64 ||
+        (body.generationPrompt !== undefined && (
+          typeof body.generationPrompt !== 'string' ||
+          body.generationPrompt.trim().length < 180 ||
+          body.generationPrompt.length > 3000
+        ))
       ) {
         sendJson(response, 400, { error: 'Invalid generate-source request' });
         return;
@@ -249,7 +255,12 @@ const server = createServer(async (request, response) => {
     sendJson(response, 404, { error: 'Not found' });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown image processor error';
-    sendJson(response, message === 'REQUEST_TOO_LARGE' ? 413 : 500, { error: message });
+    const contentBlocked = error instanceof Error && error.name === 'GeminiContentBlockedError';
+    sendJson(
+      response,
+      message === 'REQUEST_TOO_LARGE' ? 413 : contentBlocked ? 422 : 500,
+      contentBlocked ? { error: message, code: 'provider_content_blocked' } : { error: message },
+    );
   }
 });
 
