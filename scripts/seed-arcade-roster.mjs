@@ -18,8 +18,10 @@ const args = new Set(rawArgs);
 const targetArg = rawArgs.find((arg) => arg.startsWith('--target='));
 const slugArg = rawArgs.find((arg) => arg.startsWith('--slug='));
 const animationArg = rawArgs.find((arg) => arg.startsWith('--animation='));
+const sourceArg = rawArgs.find((arg) => arg.startsWith('--source='));
 const target = targetArg?.slice('--target='.length) ?? 'production';
 const animationName = animationArg?.slice('--animation='.length) ?? '';
+const sourceName = sourceArg?.slice('--source='.length) ?? '';
 const dryRun = args.has('--dry-run');
 const activate = args.has('--activate');
 const continueOnError = args.has('--continue-on-error');
@@ -44,6 +46,7 @@ const PLAYABLE_ANIMATIONS = new Set([
   'ko',
   'victory',
 ]);
+const CANONICAL_SOURCES = new Set(['side', 'upright', 'crouch']);
 const REFERENCE_DEPENDENT_PROMPT = /\b(?:this|the) (?:licensed )?reference photo\b|\bperson in (?:this|the) photo\b/i;
 
 function parseEnvText(text, values) {
@@ -226,11 +229,17 @@ function validateManifest(manifest) {
 
 function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
-  if (animationName && (all || !slugArg || activate)) {
-    throw new Error('--animation requires one --slug and cannot be combined with --all or --activate.');
+  if (animationName && sourceName) {
+    throw new Error('Use either --animation or --source, not both.');
+  }
+  if ((animationName || sourceName) && (all || !slugArg || activate)) {
+    throw new Error('--animation and --source require one --slug and cannot be combined with --all or --activate.');
   }
   if (animationName && !PLAYABLE_ANIMATIONS.has(animationName)) {
     throw new Error(`Unknown playable animation: ${animationName}`);
+  }
+  if (sourceName && !CANONICAL_SOURCES.has(sourceName)) {
+    throw new Error(`Unknown canonical source: ${sourceName}`);
   }
   if (all) return manifest.fighters;
   const slug = slugArg?.slice('--slug='.length);
@@ -442,6 +451,29 @@ async function seedAnimation({ manifest, fighter, baseUrl, token, adminEntries }
   console.log(`  archived ${animationName}: ${entry.fighterId}`);
 }
 
+async function seedSource({ manifest, fighter, baseUrl, token, adminEntries }) {
+  const entry = adminEntries.find((candidate) => (
+    candidate.slug === fighter.slug && candidate.status !== 'retired'
+  ));
+  if (!/^[a-f0-9]{32}$/.test(entry?.fighterId ?? '')) {
+    throw new Error(`No current Arcade fighter exists for ${fighter.slug}. Seed the fighter before retrying a source.`);
+  }
+
+  console.log(`\n${fighter.rank}. ${fighter.name} [Champion source:${sourceName}]`);
+  const generation = await apiRequest(
+    baseUrl,
+    token,
+    `/api/admin/arcade/${entry.fighterId}/generate/source/${encodeURIComponent(sourceName)}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ legal: generationLegal(manifest) }),
+    },
+  );
+  if (!generation.job?.id) throw new Error(`${fighter.name} source generation returned no job.`);
+  await waitForJob(baseUrl, token, fighter, generation.job.id);
+  console.log(`  archived source:${sourceName}: ${entry.fighterId}`);
+}
+
 async function main() {
   if (!['production', 'sandbox'].includes(target)) throw new Error('--target must be production or sandbox.');
   if (target === 'production' && !dryRun && !args.has('--confirm-production')) {
@@ -456,7 +488,7 @@ async function main() {
     for (const fighter of selected) {
       const { photoHash } = readApprovedSource(manifest, fighter);
       console.log(
-        `ready  ${fighter.slug}  Champion${animationName ? `:${animationName}` : ''}  licensed:${photoHash.slice(0, 12)}`,
+        `ready  ${fighter.slug}  Champion${animationName ? `:${animationName}` : sourceName ? `:source:${sourceName}` : ''}  licensed:${photoHash.slice(0, 12)}`,
       );
     }
     return;
@@ -491,6 +523,16 @@ async function main() {
   const adminEntries = Array.isArray(admin.fighters) ? admin.fighters : [];
   if (animationName) {
     await seedAnimation({
+      manifest,
+      fighter: selected[0],
+      baseUrl,
+      token,
+      adminEntries,
+    });
+    return;
+  }
+  if (sourceName) {
+    await seedSource({
       manifest,
       fighter: selected[0],
       baseUrl,

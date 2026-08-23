@@ -4,6 +4,7 @@ import { createGenerationJob } from './generationJobs';
 import {
   startAdminArcadeAnimationGeneration,
   startAdminArcadeGeneration,
+  startAdminArcadeSourceGeneration,
 } from './arcadeGeneration';
 import { createProviderSession } from './providerSessions';
 import type { AuthContext, Env } from './types';
@@ -121,6 +122,17 @@ function generationRequest(): Request {
 function animationRequest(animationName = 'walk'): Request {
   return new Request(
     `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/generate/${animationName}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ legal: LEGAL }),
+    },
+  );
+}
+
+function sourceRequest(sourceName = 'upright'): Request {
+  return new Request(
+    `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/generate/source/${sourceName}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -294,6 +306,58 @@ describe('official Arcade generation authorization', () => {
         adminAuth,
         FIGHTER_ID,
         'fatality',
+      );
+      expect(response.status).toBe(400);
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges')
+        .first<{ count: number }>()).toEqual({ count: 0 });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('starts a zero-credit Champion retry for one canonical Arcade source', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const response = await startAdminArcadeSourceGeneration(
+        sourceRequest(),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+        'upright',
+      );
+      expect(response.status).toBe(201);
+      expect(createProviderSession).toHaveBeenCalledOnce();
+      const [, , providerParams] = vi.mocked(createProviderSession).mock.calls[0];
+      expect(providerParams).toMatchObject({
+        tier: 'champion',
+        purpose: 'fighter_retry',
+        operation: 'fighter_retry_source',
+      });
+
+      const [jobRequest] = vi.mocked(createGenerationJob).mock.calls[0];
+      expect(await jobRequest.clone().json()).toMatchObject({
+        fighterId: FIGHTER_ID,
+        targetKind: 'source',
+        targetName: 'upright',
+      });
+      expect(await db.prepare(
+        'SELECT delta, reason FROM credit_ledger LIMIT 1'
+      ).first()).toEqual({ delta: 0, reason: 'fighter_retry_source' });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('rejects an unknown canonical source before reserving provider spend', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const response = await startAdminArcadeSourceGeneration(
+        sourceRequest('portrait'),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+        'portrait',
       );
       expect(response.status).toBe(400);
       expect(createProviderSession).not.toHaveBeenCalled();

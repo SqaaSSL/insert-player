@@ -45,6 +45,7 @@ import { optionalGenerationJobAuth } from './generationAuth';
 import {
   startAdminArcadeAnimationGeneration,
   startAdminArcadeGeneration,
+  startAdminArcadeSourceGeneration,
 } from './arcadeGeneration';
 import {
   createGenerationJob,
@@ -475,6 +476,32 @@ export default {
             env,
             'admin:arcade',
             (auth) => startAdminArcadeGeneration(request, env, auth, arcadeFighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const arcadeSourceGenerationMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/generate\/source\/([^/]+)$/,
+      );
+      if (arcadeSourceGenerationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(arcadeSourceGenerationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        const sourceName = decodePathParam(arcadeSourceGenerationMatch[2]);
+        if (isResponse(sourceName)) return addCors(sourceName, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => startAdminArcadeSourceGeneration(
+              request,
+              env,
+              auth,
+              arcadeFighterId,
+              sourceName,
+            ),
           ),
           request,
           env,

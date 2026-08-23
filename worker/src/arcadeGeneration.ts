@@ -23,6 +23,7 @@ const PLAYABLE_ANIMATION_NAMES = [
   'ko',
   'victory',
 ] as const;
+const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'] as const;
 
 interface ArcadeGenerationFighterRow {
   id: string;
@@ -72,7 +73,7 @@ function generationJobRequest(
   fighterId: string,
   purchaseId: string,
   providerSessionId: string,
-  target?: { kind: 'animation'; name: string },
+  target?: { kind: 'animation' | 'source'; name: string },
 ): Request {
   return new Request(request.url, {
     method: 'POST',
@@ -91,9 +92,9 @@ async function createAdminGenerationAuthorization(
   auth: AuthContext,
   fighterId: string,
   params: {
-    chargeReason: 'arcade_seed_generation' | 'fighter_retry_animation';
+    chargeReason: 'arcade_seed_generation' | 'fighter_retry_animation' | 'fighter_retry_source';
     purpose: 'fighter_generation' | 'fighter_retry';
-    operation: 'fighter_generation' | 'fighter_retry_animation';
+    operation: 'fighter_generation' | 'fighter_retry_animation' | 'fighter_retry_source';
     legal: NonNullable<ReturnType<typeof parseGenerationLegalAttestation>>;
   },
 ): Promise<{ purchaseId: string; providerSessionId: string }> {
@@ -329,5 +330,69 @@ export async function startAdminArcadeAnimationGeneration(
     authorization.purchaseId,
     authorization.providerSessionId,
     { kind: 'animation', name: animationName },
+  ), env, auth);
+}
+
+export async function startAdminArcadeSourceGeneration(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+  sourceName: string,
+): Promise<Response> {
+  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
+  if (!(CANONICAL_SOURCE_NAMES as readonly string[]).includes(sourceName)) {
+    return json({ error: 'A valid canonical source is required' }, 400);
+  }
+
+  const body = await readJsonBody<{ legal?: unknown }>(request, MAX_ADMIN_GENERATION_BODY_BYTES);
+  const legal = parseGenerationLegalAttestation(body.legal);
+  if (!legal) {
+    return json({
+      error: 'Current generation consent is required',
+      legalVersion: CURRENT_LEGAL_VERSION,
+    }, 428);
+  }
+
+  const fighter = await env.DB.prepare(`
+    SELECT f.id, f.owner_user_id, f.original_blob_key, af.status AS arcade_status
+    FROM fighters f
+    JOIN arcade_fighters af ON af.fighter_id = f.id
+    WHERE f.id = ? AND f.owner_user_id = ?
+    LIMIT 1
+  `).bind(fighterId, auth.userId).first<ArcadeGenerationFighterRow>();
+  if (!fighter) return json({ error: 'Official Arcade fighter not found' }, 404);
+  if (fighter.arcade_status === 'retired') {
+    return json({ error: 'Retired Arcade fighters cannot start generation' }, 409);
+  }
+
+  const active = await env.DB.prepare(`
+    SELECT id
+    FROM generation_jobs
+    WHERE fighter_id = ? AND status IN ('queued', 'running')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).bind(fighterId).first<{ id: string }>();
+  if (active) {
+    return json({
+      error: 'Another generation job is already active for this fighter',
+      jobId: active.id,
+    }, 409);
+  }
+
+  const authorization = await createAdminGenerationAuthorization(env, auth, fighterId, {
+    chargeReason: 'fighter_retry_source',
+    purpose: 'fighter_retry',
+    operation: 'fighter_retry_source',
+    legal,
+  });
+
+  return createGenerationJob(generationJobRequest(
+    request,
+    fighterId,
+    authorization.purchaseId,
+    authorization.providerSessionId,
+    { kind: 'source', name: sourceName },
   ), env, auth);
 }
