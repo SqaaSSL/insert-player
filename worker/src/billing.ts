@@ -924,7 +924,7 @@ export async function settleGenerationPurchase(
     await releaseReservedGenerationCharge(env, charge);
     charge = (await getGenerationCharge(env, userId, purchaseId)) ?? charge;
   }
-  if (!success && charge.status === 'refunded') {
+  if (!success && (charge.status === 'refunded' || charge.status === 'committed')) {
     await markProviderSessionsForCharge(env, userId, charge.id, 'cancelled');
   }
 

@@ -380,6 +380,68 @@ describe('Generation purchase fighter linkage against D1', () => {
     }
   });
 
+  it('closes the provider session without refunding after paid processing has started', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES ('user-paid-failure', 'user-paid-failure', 'Paid Failure Player', 4)
+        `),
+        db.prepare(`
+          INSERT INTO fighters (id, owner_user_id)
+          VALUES ('fighter-paid-failure', 'user-paid-failure')
+        `),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES (
+            'ledger-paid-failure', 'user-paid-failure', -3,
+            'fighter_generation', 'fighter-paid-failure'
+          )
+        `),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, status, reason, fighter_id, ledger_id, expires_at
+          ) VALUES (
+            'purchase-paid-failure', 'user-paid-failure', 'champion', 3, 'committed',
+            'fighter_generation', 'fighter-paid-failure', 'ledger-paid-failure',
+            datetime('now', '+1 hour')
+          )
+        `),
+        db.prepare(`
+          INSERT INTO provider_sessions (id, user_id, charge_id, status)
+          VALUES (
+            'provider-paid-failure', 'user-paid-failure',
+            'purchase-paid-failure', 'active'
+          )
+        `),
+      ]);
+
+      const settlement = await settleGenerationPurchase(
+        env,
+        'user-paid-failure',
+        'purchase-paid-failure',
+        false,
+        'fighter-paid-failure',
+      );
+
+      expect(settlement?.status).toBe('committed');
+      expect((await db.prepare(`
+        SELECT status FROM provider_sessions WHERE id = 'provider-paid-failure'
+      `).first<{ status: string }>())?.status).toBe('cancelled');
+      expect((await db.prepare(`
+        SELECT credits_balance FROM users WHERE id = 'user-paid-failure'
+      `).first<{ credits_balance: number }>())?.credits_balance).toBe(4);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM credit_ledger
+        WHERE user_id = 'user-paid-failure'
+          AND reason = 'generation_reservation_release:purchase-paid-failure'
+      `).first<{ count: number }>())?.count).toBe(0);
+    } finally {
+      await mf.dispose();
+    }
+  });
+
   it('rejects browser settlement after a durable job takes ownership', async () => {
     const { mf, db, env } = await createBindings();
     try {
