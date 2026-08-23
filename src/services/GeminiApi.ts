@@ -70,6 +70,10 @@ export function geminiContentBlockReason(response: {
   return reason || null;
 }
 
+export function geminiOfficialTextOnlyPrompt(prompt: string): string {
+  return `Generate a new, clearly fictional arcade character from the written description only. Do not depict, identify, or reproduce any real person, public figure, event, endorsement, or documentary photograph. The result must be an original synthetic game avatar with realistic adult anatomy and a complete head-to-toe silhouette.\n\n${prompt.trim()}`;
+}
+
 function normalizedBase64Payload(value: string): string {
   const payload = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value;
   return payload.replace(/\s+/g, '');
@@ -312,9 +316,26 @@ export async function geminiReposeDetailed(
 
   if (!rawBase64) {
     debugInfo('[GeminiApi] Retrying repose with the safe synthetic-avatar prompt...');
+    try {
+      const result = await callGemini(
+        syntheticTransformationFallback(prompt),
+        photoBase64,
+        'image/png',
+        undefined,
+        model,
+        context,
+      );
+      rawBase64 = result.imageBase64;
+    } catch (err: unknown) {
+      if (!isGeminiContentBlockedError(err) || !promptOverride?.trim()) throw err;
+      debugWarn('[GeminiApi] Licensed public reference declined twice; generating the official fictional avatar from text only...');
+    }
+  }
+
+  if (!rawBase64 && promptOverride?.trim()) {
     const result = await callGemini(
-      syntheticTransformationFallback(prompt),
-      photoBase64,
+      geminiOfficialTextOnlyPrompt(prompt),
+      undefined,
       'image/png',
       undefined,
       model,

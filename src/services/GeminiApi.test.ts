@@ -3,6 +3,7 @@ import {
   GeminiContentBlockedError,
   geminiContentBlockReason,
   geminiFinishReasonBlockReason,
+  geminiOfficialTextOnlyPrompt,
   isGeminiContentBlockedError,
 } from './GeminiApi';
 
@@ -26,5 +27,13 @@ describe('Gemini content-block handling', () => {
     expect(geminiFinishReasonBlockReason('IMAGE_SAFETY')).toBe('IMAGE_SAFETY');
     expect(geminiFinishReasonBlockReason('STOP')).toBeNull();
     expect(geminiFinishReasonBlockReason(null)).toBeNull();
+  });
+
+  it('builds an explicit text-only fallback for licensed official fighters', () => {
+    const prompt = geminiOfficialTextOnlyPrompt('Create an original fighter in a navy suit.');
+
+    expect(prompt).toContain('from the written description only');
+    expect(prompt).toContain('Do not depict, identify, or reproduce any real person');
+    expect(prompt).toContain('Create an original fighter in a navy suit.');
   });
 });
