@@ -44,6 +44,7 @@ const PLAYABLE_ANIMATIONS = new Set([
   'ko',
   'victory',
 ]);
+const REFERENCE_DEPENDENT_PROMPT = /\b(?:this|the) (?:licensed )?reference photo\b|\bperson in (?:this|the) photo\b/i;
 
 function parseEnvText(text, values) {
   for (const line of text.split(/\r?\n/)) {
@@ -196,6 +197,11 @@ function validateManifest(manifest) {
     if (ranks.has(fighter.rank)) throw new Error(`Duplicate Arcade rank: ${fighter.rank}`);
     if (!fighter.name || !fighter.challengerLine || !fighter.referencePrompt) {
       throw new Error(`Incomplete Arcade manifest entry: ${fighter.slug}`);
+    }
+    if (REFERENCE_DEPENDENT_PROMPT.test(fighter.referencePrompt)) {
+      throw new Error(
+        `Arcade prompt for ${fighter.slug} depends on a reference image that the official text-only generator does not receive.`,
+      );
     }
     const reference = fighterReference(manifest, fighter);
     if (
