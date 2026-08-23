@@ -172,7 +172,9 @@ export async function retryGeminiRequest<T>(
         ? Math.min(spendMaxDelayMs, spendBaseDelayMs * (2 ** retryIndex))
         : Math.min(maxDelayMs, baseDelayMs * (2 ** retryIndex));
       const jitter = 0.75 + Math.min(1, Math.max(0, random())) * 0.5;
-      const delayMs = Math.max(error.retryAfterMs ?? 0, Math.ceil(exponential * jitter));
+      const retryAfterLimitMs = error.spendRateLimited ? spendMaxDelayMs : maxDelayMs;
+      const boundedRetryAfterMs = Math.min(error.retryAfterMs ?? 0, retryAfterLimitMs);
+      const delayMs = Math.max(boundedRetryAfterMs, Math.ceil(exponential * jitter));
       options.onRetry?.({ attempt: attempt + 1, delayMs, error });
       await sleep(delayMs);
     }

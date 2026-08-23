@@ -63,6 +63,33 @@ describe('Gemini request policy', () => {
     expect(delays).toEqual([100, 200]);
   });
 
+  it('caps an excessive upstream Retry-After at the normal retry ceiling', async () => {
+    const delays: number[] = [];
+    let calls = 0;
+    const result = await retryGeminiRequest(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new GeminiRequestError({
+          message: 'busy for too long',
+          status: 429,
+          retryable: true,
+          retryAfterMs: 24 * 60 * 60 * 1_000,
+        });
+      }
+      return 'ok';
+    }, {
+      maxAttempts: 2,
+      baseDelayMs: 100,
+      maxDelayMs: 60_000,
+      random: () => 0.5,
+      sleep: async (delayMs) => { delays.push(delayMs); },
+    });
+
+    expect(result).toBe('ok');
+    expect(calls).toBe(2);
+    expect(delays).toEqual([60_000]);
+  });
+
   it('uses the longer spend cooldown and stops at the attempt limit', async () => {
     const delays: number[] = [];
     let calls = 0;
