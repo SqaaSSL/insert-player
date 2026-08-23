@@ -1,7 +1,10 @@
 import { Miniflare } from 'miniflare';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGenerationJob } from './generationJobs';
-import { startAdminArcadeGeneration } from './arcadeGeneration';
+import {
+  startAdminArcadeAnimationGeneration,
+  startAdminArcadeGeneration,
+} from './arcadeGeneration';
 import { createProviderSession } from './providerSessions';
 import type { AuthContext, Env } from './types';
 
@@ -115,6 +118,17 @@ function generationRequest(): Request {
   });
 }
 
+function animationRequest(animationName = 'walk'): Request {
+  return new Request(
+    `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/generate/${animationName}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ legal: LEGAL }),
+    },
+  );
+}
+
 async function bindings(): Promise<{ mf: Miniflare; db: D1Database; env: Env }> {
   const mf = new Miniflare({
     workers: [{
@@ -225,6 +239,66 @@ describe('official Arcade generation authorization', () => {
       expect(body.ready).not.toBe(true);
       expect(body.job?.id).toBe('arcade-job');
       expect(createGenerationJob).toHaveBeenCalledOnce();
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('starts a zero-credit Champion retry for one approved Arcade animation', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const response = await startAdminArcadeAnimationGeneration(
+        animationRequest(),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+        'walk',
+      );
+      expect(response.status).toBe(201);
+      expect(createProviderSession).toHaveBeenCalledOnce();
+      const [, , providerParams] = vi.mocked(createProviderSession).mock.calls[0];
+      expect(providerParams).toMatchObject({
+        tier: 'champion',
+        purpose: 'fighter_retry',
+        operation: 'fighter_retry_animation',
+      });
+
+      const [jobRequest] = vi.mocked(createGenerationJob).mock.calls[0];
+      expect(await jobRequest.clone().json()).toMatchObject({
+        fighterId: FIGHTER_ID,
+        targetKind: 'animation',
+        targetName: 'walk',
+      });
+      expect(await db.prepare(
+        'SELECT delta, reason FROM credit_ledger LIMIT 1'
+      ).first()).toEqual({ delta: 0, reason: 'fighter_retry_animation' });
+      expect(await db.prepare(`
+        SELECT tier, credit_cost, status, reason FROM generation_charges LIMIT 1
+      `).first()).toEqual({
+        tier: 'champion',
+        credit_cost: 0,
+        status: 'reserved',
+        reason: 'fighter_retry_animation',
+      });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('rejects an unknown Arcade animation before reserving provider spend', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const response = await startAdminArcadeAnimationGeneration(
+        animationRequest('fatality'),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+        'fatality',
+      );
+      expect(response.status).toBe(400);
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges')
+        .first<{ count: number }>()).toEqual({ count: 0 });
     } finally {
       await mf.dispose();
     }

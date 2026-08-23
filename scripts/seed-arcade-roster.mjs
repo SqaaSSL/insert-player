@@ -17,7 +17,9 @@ const rawArgs = process.argv.slice(2);
 const args = new Set(rawArgs);
 const targetArg = rawArgs.find((arg) => arg.startsWith('--target='));
 const slugArg = rawArgs.find((arg) => arg.startsWith('--slug='));
+const animationArg = rawArgs.find((arg) => arg.startsWith('--animation='));
 const target = targetArg?.slice('--target='.length) ?? 'production';
+const animationName = animationArg?.slice('--animation='.length) ?? '';
 const dryRun = args.has('--dry-run');
 const activate = args.has('--activate');
 const continueOnError = args.has('--continue-on-error');
@@ -29,6 +31,19 @@ const CLERK_TOKEN_REFRESH_SKEW_MS = 30_000;
 const CLERK_TOKEN_TTL_SECONDS = 10 * 60;
 const MAX_SOURCE_UPLOAD_BYTES = 12 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PLAYABLE_ANIMATIONS = new Set([
+  'idle',
+  'walk',
+  'high_punch',
+  'low_punch',
+  'high_kick',
+  'low_kick',
+  'jump',
+  'crouch',
+  'hit',
+  'ko',
+  'victory',
+]);
 
 function parseEnvText(text, values) {
   for (const line of text.split(/\r?\n/)) {
@@ -205,6 +220,12 @@ function validateManifest(manifest) {
 
 function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
+  if (animationName && (all || !slugArg || activate)) {
+    throw new Error('--animation requires one --slug and cannot be combined with --all or --activate.');
+  }
+  if (animationName && !PLAYABLE_ANIMATIONS.has(animationName)) {
+    throw new Error(`Unknown playable animation: ${animationName}`);
+  }
   if (all) return manifest.fighters;
   const slug = slugArg?.slice('--slug='.length);
   if (!slug) throw new Error('Choose --all or --slug=<fighter>.');
@@ -392,6 +413,29 @@ async function seedFighter({ manifest, fighter, baseUrl, token, adminEntries, st
   console.log(`  ${activate ? 'active' : 'draft'}: ${fighterId}`);
 }
 
+async function seedAnimation({ manifest, fighter, baseUrl, token, adminEntries }) {
+  const entry = adminEntries.find((candidate) => (
+    candidate.slug === fighter.slug && candidate.status !== 'retired'
+  ));
+  if (!/^[a-f0-9]{32}$/.test(entry?.fighterId ?? '')) {
+    throw new Error(`No current Arcade fighter exists for ${fighter.slug}. Seed the fighter before retrying an animation.`);
+  }
+
+  console.log(`\n${fighter.rank}. ${fighter.name} [Champion ${animationName}]`);
+  const generation = await apiRequest(
+    baseUrl,
+    token,
+    `/api/admin/arcade/${entry.fighterId}/generate/${encodeURIComponent(animationName)}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ legal: generationLegal(manifest) }),
+    },
+  );
+  if (!generation.job?.id) throw new Error(`${fighter.name} animation generation returned no job.`);
+  await waitForJob(baseUrl, token, fighter, generation.job.id);
+  console.log(`  archived ${animationName}: ${entry.fighterId}`);
+}
+
 async function main() {
   if (!['production', 'sandbox'].includes(target)) throw new Error('--target must be production or sandbox.');
   if (target === 'production' && !dryRun && !args.has('--confirm-production')) {
@@ -405,7 +449,9 @@ async function main() {
   if (dryRun) {
     for (const fighter of selected) {
       const { photoHash } = readApprovedSource(manifest, fighter);
-      console.log(`ready  ${fighter.slug}  Champion  licensed:${photoHash.slice(0, 12)}`);
+      console.log(
+        `ready  ${fighter.slug}  Champion${animationName ? `:${animationName}` : ''}  licensed:${photoHash.slice(0, 12)}`,
+      );
     }
     return;
   }
@@ -437,6 +483,16 @@ async function main() {
 
   const admin = await apiRequest(baseUrl, token, '/api/admin/arcade');
   const adminEntries = Array.isArray(admin.fighters) ? admin.fighters : [];
+  if (animationName) {
+    await seedAnimation({
+      manifest,
+      fighter: selected[0],
+      baseUrl,
+      token,
+      adminEntries,
+    });
+    return;
+  }
   const state = readState();
   const failures = [];
   for (const fighter of selected) {

@@ -42,7 +42,10 @@ import { cleanupOperationalData } from './maintenance';
 import { listCommunityReports, moderateCommunityReport } from './moderation';
 import { CURRENT_LEGAL_VERSION } from './legal';
 import { optionalGenerationJobAuth } from './generationAuth';
-import { startAdminArcadeGeneration } from './arcadeGeneration';
+import {
+  startAdminArcadeAnimationGeneration,
+  startAdminArcadeGeneration,
+} from './arcadeGeneration';
 import {
   createGenerationJob,
   getGenerationJob,
@@ -472,6 +475,32 @@ export default {
             env,
             'admin:arcade',
             (auth) => startAdminArcadeGeneration(request, env, auth, arcadeFighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const arcadeAnimationGenerationMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/generate\/([^/]+)$/,
+      );
+      if (arcadeAnimationGenerationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(arcadeAnimationGenerationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        const animationName = decodePathParam(arcadeAnimationGenerationMatch[2]);
+        if (isResponse(animationName)) return addCors(animationName, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => startAdminArcadeAnimationGeneration(
+              request,
+              env,
+              auth,
+              arcadeFighterId,
+              animationName,
+            ),
           ),
           request,
           env,

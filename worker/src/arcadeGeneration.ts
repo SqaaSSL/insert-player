@@ -72,12 +72,71 @@ function generationJobRequest(
   fighterId: string,
   purchaseId: string,
   providerSessionId: string,
+  target?: { kind: 'animation'; name: string },
 ): Request {
   return new Request(request.url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fighterId, purchaseId, providerSessionId }),
+    body: JSON.stringify({
+      fighterId,
+      purchaseId,
+      providerSessionId,
+      ...(target ? { targetKind: target.kind, targetName: target.name } : {}),
+    }),
   });
+}
+
+async function createAdminGenerationAuthorization(
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+  params: {
+    chargeReason: 'arcade_seed_generation' | 'fighter_retry_animation';
+    purpose: 'fighter_generation' | 'fighter_retry';
+    operation: 'fighter_generation' | 'fighter_retry_animation';
+    legal: NonNullable<ReturnType<typeof parseGenerationLegalAttestation>>;
+  },
+): Promise<{ purchaseId: string; providerSessionId: string }> {
+  const purchaseId = generateId();
+  const ledgerId = generateId();
+  const expiresAt = authorizationExpiresAt();
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+      VALUES (?, ?, 0, ?, ?)
+    `).bind(ledgerId, auth.userId, params.chargeReason, fighterId),
+    env.DB.prepare(`
+      INSERT INTO generation_charges (
+        id, user_id, tier, credit_cost, free_quota_delta, status,
+        reason, fighter_id, ledger_id, expires_at
+      ) VALUES (?, ?, 'champion', 0, 0, 'reserved', ?, ?, ?, ?)
+    `).bind(
+      purchaseId,
+      auth.userId,
+      params.chargeReason,
+      fighterId,
+      ledgerId,
+      expiresAt,
+    ),
+  ]);
+
+  try {
+    const providerSession = await createProviderSession(env, publicAuth(auth), {
+      tier: 'champion',
+      purpose: params.purpose,
+      operation: params.operation,
+      chargeId: purchaseId,
+      legal: params.legal,
+    });
+    return { purchaseId, providerSessionId: providerSession.id };
+  } catch (error) {
+    await env.DB.prepare(`
+      UPDATE generation_charges
+      SET status = 'refunded', updated_at = datetime('now')
+      WHERE id = ? AND user_id = ? AND status = 'reserved'
+    `).bind(purchaseId, auth.userId).run();
+    throw error;
+  }
 }
 
 async function playableAnimationCount(env: Env, fighterId: string): Promise<number> {
@@ -194,44 +253,81 @@ export async function startAdminArcadeGeneration(
     ), env, auth);
   }
 
-  const purchaseId = generateId();
-  const ledgerId = generateId();
-  const expiresAt = authorizationExpiresAt();
-  await env.DB.batch([
-    env.DB.prepare(`
-      INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
-      VALUES (?, ?, 0, 'arcade_seed_generation', ?)
-    `).bind(ledgerId, auth.userId, fighterId),
-    env.DB.prepare(`
-      INSERT INTO generation_charges (
-        id, user_id, tier, credit_cost, free_quota_delta, status,
-        reason, fighter_id, ledger_id, expires_at
-      ) VALUES (?, ?, 'champion', 0, 0, 'reserved', 'arcade_seed_generation', ?, ?, ?)
-    `).bind(purchaseId, auth.userId, fighterId, ledgerId, expiresAt),
-  ]);
-
-  let providerSession: Awaited<ReturnType<typeof createProviderSession>>;
-  try {
-    providerSession = await createProviderSession(env, publicAuth(auth), {
-      tier: 'champion',
-      purpose: 'fighter_generation',
-      operation: 'fighter_generation',
-      chargeId: purchaseId,
-      legal,
-    });
-  } catch (error) {
-    await env.DB.prepare(`
-      UPDATE generation_charges
-      SET status = 'refunded', updated_at = datetime('now')
-      WHERE id = ? AND user_id = ? AND status = 'reserved'
-    `).bind(purchaseId, auth.userId).run();
-    throw error;
-  }
+  const authorization = await createAdminGenerationAuthorization(env, auth, fighterId, {
+    chargeReason: 'arcade_seed_generation',
+    purpose: 'fighter_generation',
+    operation: 'fighter_generation',
+    legal,
+  });
 
   return createGenerationJob(generationJobRequest(
     request,
     fighterId,
-    purchaseId,
-    providerSession.id,
+    authorization.purchaseId,
+    authorization.providerSessionId,
+  ), env, auth);
+}
+
+export async function startAdminArcadeAnimationGeneration(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+  animationName: string,
+): Promise<Response> {
+  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
+  if (!(PLAYABLE_ANIMATION_NAMES as readonly string[]).includes(animationName)) {
+    return json({ error: 'A valid playable animation is required' }, 400);
+  }
+
+  const body = await readJsonBody<{ legal?: unknown }>(request, MAX_ADMIN_GENERATION_BODY_BYTES);
+  const legal = parseGenerationLegalAttestation(body.legal);
+  if (!legal) {
+    return json({
+      error: 'Current generation consent is required',
+      legalVersion: CURRENT_LEGAL_VERSION,
+    }, 428);
+  }
+
+  const fighter = await env.DB.prepare(`
+    SELECT f.id, f.owner_user_id, f.original_blob_key, af.status AS arcade_status
+    FROM fighters f
+    JOIN arcade_fighters af ON af.fighter_id = f.id
+    WHERE f.id = ? AND f.owner_user_id = ?
+    LIMIT 1
+  `).bind(fighterId, auth.userId).first<ArcadeGenerationFighterRow>();
+  if (!fighter) return json({ error: 'Official Arcade fighter not found' }, 404);
+  if (fighter.arcade_status === 'retired') {
+    return json({ error: 'Retired Arcade fighters cannot start generation' }, 409);
+  }
+
+  const active = await env.DB.prepare(`
+    SELECT id
+    FROM generation_jobs
+    WHERE fighter_id = ? AND status IN ('queued', 'running')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).bind(fighterId).first<{ id: string }>();
+  if (active) {
+    return json({
+      error: 'Another generation job is already active for this fighter',
+      jobId: active.id,
+    }, 409);
+  }
+
+  const authorization = await createAdminGenerationAuthorization(env, auth, fighterId, {
+    chargeReason: 'fighter_retry_animation',
+    purpose: 'fighter_retry',
+    operation: 'fighter_retry_animation',
+    legal,
+  });
+
+  return createGenerationJob(generationJobRequest(
+    request,
+    fighterId,
+    authorization.purchaseId,
+    authorization.providerSessionId,
+    { kind: 'animation', name: animationName },
   ), env, auth);
 }
