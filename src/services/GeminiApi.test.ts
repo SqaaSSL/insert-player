@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   GeminiContentBlockedError,
+  GeminiOfficialSpriteQualityError,
   geminiContentBlockReason,
   geminiFinishReasonBlockReason,
   geminiOfficialPosePrompt,
@@ -25,6 +26,12 @@ describe('Gemini content-block handling', () => {
     expect(isGeminiContentBlockedError(new Error('IMAGE_SAFETY response'))).toBe(true);
     expect(isGeminiContentBlockedError(new Error('IMAGE_OTHER response'))).toBe(true);
     expect(isGeminiContentBlockedError(new Error('network timeout'))).toBe(false);
+  });
+
+  it('keeps deterministic official QA failures distinct from provider safety blocks', () => {
+    const error = new GeminiOfficialSpriteQualityError('walk only produced 13 reliable frames');
+    expect(error.name).toBe('GeminiOfficialSpriteQualityError');
+    expect(isGeminiContentBlockedError(error)).toBe(false);
   });
 
   it('treats image-only declines as eligible for the safe synthetic retry', () => {

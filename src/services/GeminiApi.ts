@@ -751,6 +751,13 @@ export class PartialSpriteGenerationError extends Error {
   }
 }
 
+export class GeminiOfficialSpriteQualityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GeminiOfficialSpriteQualityError';
+  }
+}
+
 const MIRROR_ANIMS = new Set(['high_punch', 'low_punch', 'high_kick', 'low_kick']);
 const IDLE_FRAME_DIRECTIONS = [
   'neutral ready guard matching the side-view reference almost exactly',
@@ -1274,17 +1281,16 @@ export async function geminiSpriteSheet(
     throw new Error(`Gemini sprite sheet for ${animName} returned no image`);
   }
   if (cleaned.frameCount < requiredReliableFrames) {
-    throw new PartialSpriteGenerationError(
-      `Gemini sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames (need ${requiredReliableFrames})`,
-      {
-        imageBase64: cleaned.base64,
-        rawBase64: geminiRawBase64,
-        gridCols: cleaned.gridCols,
-        gridRows: cleaned.gridRows,
-        frameCount: cleaned.frameCount,
-        usedScale: cleaned.usedScale,
-      },
-    );
+    const message = `Gemini sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames (need ${requiredReliableFrames})`;
+    if (official) throw new GeminiOfficialSpriteQualityError(message);
+    throw new PartialSpriteGenerationError(message, {
+      imageBase64: cleaned.base64,
+      rawBase64: geminiRawBase64,
+      gridCols: cleaned.gridCols,
+      gridRows: cleaned.gridRows,
+      frameCount: cleaned.frameCount,
+      usedScale: cleaned.usedScale,
+    });
   }
 
   debugInfo(`[GeminiApi] ${animName} cleaned in ${((Date.now() - start) / 1000).toFixed(1)}s (scale ${cleaned.usedScale.toFixed(2)})`);
@@ -1774,7 +1780,7 @@ async function refineSheetCell(
   }
 
   if (officialDescription?.trim()) {
-    throw new Error(
+    throw new GeminiOfficialSpriteQualityError(
       `Gemini official final render for ${animName} frame ${frameIndex + 1}/${total} failed both validated attempts`,
     );
   }
@@ -1856,9 +1862,11 @@ async function reviewOfficialRefinedCells(
     }
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(`Gemini official ${animName} visual QA failed`);
+  if (lastError instanceof GeminiRequestError) throw lastError;
+  const detail = lastError instanceof Error ? `: ${lastError.message}` : '';
+  throw new GeminiOfficialSpriteQualityError(
+    `Gemini official ${animName} visual QA did not return a valid verdict${detail}`,
+  );
 }
 
 export async function geminiSheetRefined(
@@ -1875,6 +1883,7 @@ export async function geminiSheetRefined(
   officialDescription?: string,
 ): Promise<GeminiSpriteResult> {
   const start = Date.now();
+  const official = officialDescription?.trim();
   const renderModel = resolveGeminiImageModel({ operation: 'sprite', animationName: animName, modelOverride });
   // Pro is excellent at final-frame detail but unreliable at strict multi-cell
   // layouts. Use Flash only as the pose/coherence scaffold; every visible
@@ -1889,37 +1898,74 @@ export async function geminiSheetRefined(
     `[GeminiApi] Sheet-refine ${animName}: generating pose scaffold with ${scaffoldModel} ` +
     `(final frames: ${renderModel})...`,
   );
-  const sheet = await geminiSpriteSheet(
-    characterBase64,
-    animName,
-    motion,
-    frames,
-    secondaryBase64,
-    maxScale,
-    normalizationReference,
-    context,
-    scaffoldModel,
-    officialDescription,
-  );
-  debugLog(
-    `[GeminiApi] Sheet-refine ${animName}: base sheet done in ${((Date.now() - start) / 1000).toFixed(1)}s ` +
-    `(${sheet.frameCount} frames, ${sheet.gridCols}x${sheet.gridRows})`,
-  );
+  let sheetCells: string[];
+  if (official && animName === 'walk' && frames === 16 && !shouldMirror) {
+    const phaseMotions = [
+      `${motion}. Generate frames 1 through 8 of a 16-frame seamless cycle: begin at a clear forward-leg contact pose, pass through the balanced mid-step, and finish just before the opposite-leg contact. Do not return to the starting contact pose in this half.`,
+      `${motion}. Generate frames 9 through 16 of a 16-frame seamless cycle: begin at the opposite-leg contact pose, pass through the balanced return step, and finish at the original forward-leg contact so the full 16-frame loop closes cleanly.`,
+    ];
+    sheetCells = [];
+    for (let phaseIndex = 0; phaseIndex < phaseMotions.length; phaseIndex++) {
+      const phaseSheet = await geminiSpriteSheet(
+        characterBase64,
+        animName,
+        phaseMotions[phaseIndex],
+        8,
+        undefined,
+        maxScale,
+        normalizationReference,
+        context,
+        scaffoldModel,
+        official,
+      );
+      const phaseCells = await splitSheetIntoCells(
+        phaseSheet.imageBase64,
+        phaseSheet.gridCols,
+        phaseSheet.gridRows,
+        8,
+      );
+      if (phaseCells.length !== 8) {
+        throw new GeminiOfficialSpriteQualityError(
+          `Gemini official walk scaffold phase ${phaseIndex + 1}/2 produced ${phaseCells.length} reliable frames (need 8)`,
+        );
+      }
+      sheetCells.push(...phaseCells);
+      publishDebugLog(
+        `[GeminiApi] Sheet-refine walk: phase ${phaseIndex + 1}/2 produced 8/8 scaffold cells`,
+      );
+    }
+  } else {
+    const sheet = await geminiSpriteSheet(
+      characterBase64,
+      animName,
+      motion,
+      frames,
+      secondaryBase64,
+      maxScale,
+      normalizationReference,
+      context,
+      scaffoldModel,
+      officialDescription,
+    );
+    debugLog(
+      `[GeminiApi] Sheet-refine ${animName}: base sheet done in ${((Date.now() - start) / 1000).toFixed(1)}s ` +
+      `(${sheet.frameCount} frames, ${sheet.gridCols}x${sheet.gridRows})`,
+    );
 
-  // Step 2: split only the paid keyframes that will act as pose anchors. Attack
-  // sheets generate a half-sequence; refining it before mirroring preserves the
-  // intended 4 paid keyframes -> 7 playback frames contract.
-  const refineFrameCount = shouldMirror ? Math.ceil(frames / 2) : sheet.frameCount;
-  const sheetCells = await splitSheetIntoCells(
-    sheet.imageBase64,
-    sheet.gridCols,
-    sheet.gridRows,
-    refineFrameCount,
-  );
-  const sheetDims = await getImageDimensions(sheet.imageBase64);
-  publishDebugLog(
-    `[GeminiApi] Sheet-refine ${animName}: split base sheet ${sheetDims.width}x${sheetDims.height} into ${sheetCells.length} cells`,
-  );
+    // Attack sheets generate a half-sequence; refining before mirroring preserves
+    // the intended 4 paid keyframes -> 7 playback frames contract.
+    const refineFrameCount = shouldMirror ? Math.ceil(frames / 2) : sheet.frameCount;
+    sheetCells = await splitSheetIntoCells(
+      sheet.imageBase64,
+      sheet.gridCols,
+      sheet.gridRows,
+      refineFrameCount,
+    );
+    const sheetDims = await getImageDimensions(sheet.imageBase64);
+    publishDebugLog(
+      `[GeminiApi] Sheet-refine ${animName}: split base sheet ${sheetDims.width}x${sheetDims.height} into ${sheetCells.length} cells`,
+    );
+  }
 
   // Step 3: refine each cell at full Gemini resolution. Pro runs sequentially
   // so one fighter cannot burst through Google's rolling spend-rate window.
@@ -1966,7 +2012,6 @@ export async function geminiSheetRefined(
     `[GeminiApi] Sheet-refine ${animName}: all ${refinedCells.length} refines done in ${((Date.now() - refineStart) / 1000).toFixed(1)}s`,
   );
 
-  const official = officialDescription?.trim();
   if (official) {
     const initialReview = mergeOfficialSpriteReviews([
       await reviewOfficialRefinedCells(
@@ -2011,7 +2056,7 @@ export async function geminiSheetRefined(
         context,
       );
       if (finalReview.retry.length > 0) {
-        throw new Error(
+        throw new GeminiOfficialSpriteQualityError(
           `Gemini official ${animName} visual QA still rejected frames ${finalReview.retry.map((idx) => idx + 1).join(', ')} after selective rerender`,
         );
       }
@@ -2085,10 +2130,9 @@ export async function geminiSheetRefined(
     getMinimumReliableFrames(animName),
   );
   if (cleaned.frameCount < minimumFrames) {
-    throw new PartialSpriteGenerationError(
-      `Gemini refined sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames (need ${minimumFrames})`,
-      result,
-    );
+    const message = `Gemini refined sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames (need ${minimumFrames})`;
+    if (official) throw new GeminiOfficialSpriteQualityError(message);
+    throw new PartialSpriteGenerationError(message, result);
   }
   return result;
 }

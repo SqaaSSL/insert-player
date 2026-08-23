@@ -167,6 +167,9 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       if (response.status === 422 && errorCode === 'provider_content_blocked') {
         throw new NonRetryableError('The image provider declined this transformation without returning an image');
       }
+      if (response.status === 422 && errorCode === 'official_quality_rejected') {
+        throw new NonRetryableError(`Official roster quality gate rejected the generated asset: ${detail}`);
+      }
       throw new Error(`Image processor ${path} failed with ${response.status}: ${detail}`);
     }
     return response.json<T>();

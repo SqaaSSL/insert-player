@@ -269,10 +269,15 @@ const server = createServer(async (request, response) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown image processor error';
     const contentBlocked = error instanceof Error && error.name === 'GeminiContentBlockedError';
+    const qualityRejected = error instanceof Error && error.name === 'GeminiOfficialSpriteQualityError';
     sendJson(
       response,
-      message === 'REQUEST_TOO_LARGE' ? 413 : contentBlocked ? 422 : 500,
-      contentBlocked ? { error: message, code: 'provider_content_blocked' } : { error: message },
+      message === 'REQUEST_TOO_LARGE' ? 413 : contentBlocked || qualityRejected ? 422 : 500,
+      contentBlocked
+        ? { error: message, code: 'provider_content_blocked' }
+        : qualityRejected
+          ? { error: message, code: 'official_quality_rejected' }
+          : { error: message },
     );
   }
 });
