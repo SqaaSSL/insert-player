@@ -2129,30 +2129,60 @@ export async function geminiSheetRefined(
   const cleanedUniqueCells = options?.enableBgRemoval === false
     ? refinedCells
     : await cleanCellsWithUnionMasks(refinedCells, animName, context);
-  const cleanedCells = shouldMirror
-    ? expandMirroredSequence(cleanedUniqueCells, outputFrameCount)
-    : cleanedUniqueCells;
-
-  // Step 6: compose the alpha-cleaned cells into a sheet (transparent padding —
-  //         cells are already chroma+DNN cleaned, no need for downstream rescue).
-  const displaySheetBase64 = await composeRefinedFramesToSheet(
-    cleanedCells,
-    outputGridCols,
-    outputGridRows,
-    { padding: 'transparent' },
-  );
-
-  // Step 7: per-cell normalization via cleanSpriteSheet (chroma-key on alpha cells is
-  //         a near no-op; on cells where DNN failed it still kills the green bg).
-  const cleaned = await cleanSpriteSheet(
-    displaySheetBase64,
-    outputFrameCount,
-    outputGridCols,
-    outputGridRows,
-    animName,
-    maxScale,
-    normalizationReference,
-  );
+  // Step 6-7: normalize paid attack keyframes before expanding the mirrored
+  // playback sequence. The critical-frame filters intentionally cap attacks at
+  // four generated keyframes; running them after 4 -> 7 expansion would trim a
+  // valid sequence back to four frames.
+  let cleaned: CleanSheetResult;
+  if (shouldMirror) {
+    const uniqueGridCols = computeGridCols(cleanedUniqueCells.length);
+    const uniqueGridRows = Math.ceil(cleanedUniqueCells.length / uniqueGridCols);
+    const uniqueSheetBase64 = await composeRefinedFramesToSheet(
+      cleanedUniqueCells,
+      uniqueGridCols,
+      uniqueGridRows,
+      { padding: 'transparent' },
+    );
+    const normalizedUnique = await cleanSpriteSheet(
+      uniqueSheetBase64,
+      cleanedUniqueCells.length,
+      uniqueGridCols,
+      uniqueGridRows,
+      animName,
+      maxScale,
+      normalizationReference,
+    );
+    if (official && normalizedUnique.frameCount < cleanedUniqueCells.length) {
+      throw new GeminiOfficialSpriteQualityError(
+        `Gemini refined sprite sheet for ${animName} only produced ${normalizedUnique.frameCount} reliable keyframes ` +
+        `(need ${cleanedUniqueCells.length})`,
+      );
+    }
+    const mirrored = await mirrorCleanFrames(
+      normalizedUnique.base64,
+      normalizedUnique.frameCount,
+      outputFrameCount,
+      normalizedUnique.gridCols,
+      normalizedUnique.gridRows,
+    );
+    cleaned = { ...mirrored, usedScale: normalizedUnique.usedScale };
+  } else {
+    const displaySheetBase64 = await composeRefinedFramesToSheet(
+      cleanedUniqueCells,
+      outputGridCols,
+      outputGridRows,
+      { padding: 'transparent' },
+    );
+    cleaned = await cleanSpriteSheet(
+      displaySheetBase64,
+      outputFrameCount,
+      outputGridCols,
+      outputGridRows,
+      animName,
+      maxScale,
+      normalizationReference,
+    );
+  }
 
   debugInfo(
     `[GeminiApi] Sheet-refine ${animName}: total ${((Date.now() - start) / 1000).toFixed(1)}s ` +
