@@ -97,6 +97,7 @@ describe('Gemini content-block handling', () => {
     expect(prompt).toContain('Do not identify, name, or compare');
     expect(prompt).toContain('indexed 0 through 7');
     expect(prompt).toContain('render_style');
+    expect(prompt).toContain('render_quality');
     expect(prompt).toContain('{"retry":[],"issues":{}}');
   });
 

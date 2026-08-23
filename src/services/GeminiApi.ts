@@ -1175,6 +1175,7 @@ export async function geminiSpriteSheet(
     }]
     : undefined;
   const minReliableFrames = getMinimumReliableFrames(animName);
+  const requiredReliableFrames = official ? genFrames : minReliableFrames;
   const basePrompt = official
     ? geminiOfficialSpritePrompt(official, prompt)
     : prompt;
@@ -1260,21 +1261,21 @@ export async function geminiSpriteSheet(
     const nextCleaned = await cleanSpriteSheet(rawBase64, genFrames, gridCols, gridRows, animName, maxScale, normalizationReference);
     geminiRawBase64 = rawBase64;
     cleaned = nextCleaned;
-    if (nextCleaned.frameCount >= minReliableFrames) {
+    if (nextCleaned.frameCount >= requiredReliableFrames) {
       break;
     }
 
     debugWarn(
-      `[GeminiApi] ${animName}: rejected attempt with only ${nextCleaned.frameCount} reliable frames (need ${minReliableFrames})`,
+      `[GeminiApi] ${animName}: rejected attempt with only ${nextCleaned.frameCount} reliable frames (need ${requiredReliableFrames})`,
     );
   }
 
   if (!geminiRawBase64 || !cleaned) {
     throw new Error(`Gemini sprite sheet for ${animName} returned no image`);
   }
-  if (cleaned.frameCount < minReliableFrames) {
+  if (cleaned.frameCount < requiredReliableFrames) {
     throw new PartialSpriteGenerationError(
-      `Gemini sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames`,
+      `Gemini sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames (need ${requiredReliableFrames})`,
       {
         imageBase64: cleaned.base64,
         rawBase64: geminiRawBase64,
@@ -1448,6 +1449,7 @@ const OFFICIAL_SPRITE_REVIEW_ISSUES = [
   'appearance_continuity',
   'outfit_continuity',
   'render_style',
+  'render_quality',
   'background',
   'extra_elements',
 ] as const;
@@ -1484,6 +1486,7 @@ export function geminiOfficialSpriteReviewPrompt(
     `- appearance_continuity: face design, hair, skin tone, build, or apparent age clearly changes.`,
     `- outfit_continuity: outfit, colors, materials, footwear, or accessories clearly change.`,
     `- render_style: the frame becomes cartoon, anime, chibi, cel-shaded, flat illustration, caricature, or otherwise departs from premium realistic 2.5D rendering.`,
+    `- render_quality: the frame is visibly blurrier, smeared, unfinished, lower-detail, or more heavily outlined than the rest of the sheet.`,
     `- background: the background is not flat pure bright green or contains a floor, shadow, gradient, or scenery.`,
     `- extra_elements: props, text, logos, UI, motion trails, detached objects, or extra figures appear.`,
     ``,
@@ -1787,6 +1790,7 @@ const OFFICIAL_REVIEW_CORRECTIONS: Record<GeminiOfficialSpriteReviewIssue, strin
   appearance_continuity: 'Match the written synthetic face design, hair, skin tone, build, and apparent age exactly.',
   outfit_continuity: 'Match the written outfit, colors, materials, footwear, and accessories exactly.',
   render_style: 'Use premium realistic 2.5D game rendering with dimensional materials and shading; no cartoon, anime, cel shading, caricature, or flat illustration.',
+  render_quality: 'Match the other frames in sharpness, detail, dimensional shading, material definition, and restrained edge treatment.',
   background: 'Use only a flat pure bright green background with no floor, shadow, gradient, or scenery.',
   extra_elements: 'Remove every prop, logo, word, UI element, motion trail, detached object, and extra figure.',
 };
@@ -1798,6 +1802,19 @@ function officialReviewCorrection(
   return (review.issues[String(frameIndex)] ?? [])
     .map((issue) => OFFICIAL_REVIEW_CORRECTIONS[issue])
     .join(' ');
+}
+
+function mergeOfficialSpriteReviews(
+  reviews: GeminiOfficialSpriteReview[],
+): GeminiOfficialSpriteReview {
+  const retry = [...new Set(reviews.flatMap((review) => review.retry))].sort((a, b) => a - b);
+  const issues: Record<string, GeminiOfficialSpriteReviewIssue[]> = {};
+  for (const frameIndex of retry) {
+    issues[String(frameIndex)] = [...new Set(reviews.flatMap(
+      (review) => review.issues[String(frameIndex)] ?? [],
+    ))];
+  }
+  return { retry, issues };
 }
 
 async function reviewOfficialRefinedCells(
@@ -1951,18 +1968,27 @@ export async function geminiSheetRefined(
 
   const official = officialDescription?.trim();
   if (official) {
-    const firstReview = await reviewOfficialRefinedCells(
-      refinedCells,
-      official,
-      animName,
-      motion,
-      context,
-    );
-    if (firstReview.retry.length > 0) {
+    const initialReview = mergeOfficialSpriteReviews([
+      await reviewOfficialRefinedCells(
+        refinedCells,
+        official,
+        animName,
+        motion,
+        context,
+      ),
+      await reviewOfficialRefinedCells(
+        refinedCells,
+        official,
+        animName,
+        motion,
+        context,
+      ),
+    ]);
+    if (initialReview.retry.length > 0) {
       debugInfo(
-        `[GeminiApi] Official ${animName} QA: rerendering ${firstReview.retry.length}/${refinedCells.length} rejected frames with ${renderModel}...`,
+        `[GeminiApi] Official ${animName} QA: rerendering ${initialReview.retry.length}/${refinedCells.length} rejected frames with ${renderModel}...`,
       );
-      for (const frameIndex of firstReview.retry) {
+      for (const frameIndex of initialReview.retry) {
         refinedCells[frameIndex] = await refineSheetCell(
           characterBase64,
           sheetCells[frameIndex],
@@ -1973,7 +1999,7 @@ export async function geminiSheetRefined(
           sheetCells.length,
           context,
           official,
-          officialReviewCorrection(firstReview, frameIndex),
+          officialReviewCorrection(initialReview, frameIndex),
         );
       }
 
@@ -2054,7 +2080,10 @@ export async function geminiSheetRefined(
     frameCount: cleaned.frameCount,
     usedScale: cleaned.usedScale,
   };
-  const minimumFrames = Math.min(outputFrameCount, getMinimumReliableFrames(animName));
+  const minimumFrames = official ? outputFrameCount : Math.min(
+    outputFrameCount,
+    getMinimumReliableFrames(animName),
+  );
   if (cleaned.frameCount < minimumFrames) {
     throw new PartialSpriteGenerationError(
       `Gemini refined sprite sheet for ${animName} only produced ${cleaned.frameCount} reliable frames (need ${minimumFrames})`,
