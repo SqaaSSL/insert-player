@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { installCanvasRuntime } from './canvasRuntime';
+import { sourceGenerationStrategy } from './sourceGenerationPolicy';
 
 installCanvasRuntime();
 
@@ -100,13 +101,26 @@ async function generateSource(body: GenerateSourceRequest) {
     geminiReposeDetailed,
     geminiUprightReposeDetailed,
   } = await import('../../src/services/GeminiApi.ts');
-  if (body.generationPrompt?.trim()) {
-    const pose = body.operation === 'repose' ? 'side' : body.operation;
-    const result = await geminiOfficialPoseDetailed(body.generationPrompt, pose, context);
-    if (pose !== 'crouch') return result;
+  const generationPrompt = body.generationPrompt?.trim();
+  const strategy = sourceGenerationStrategy(body.operation, generationPrompt);
+  if (strategy !== 'reference-photo') {
+    if (strategy === 'official-text-side') {
+      if (!generationPrompt) throw new Error('Official source prompt is unavailable');
+      return geminiOfficialPoseDetailed(generationPrompt, 'side', context);
+    }
+    if (strategy === 'official-reference-upright') {
+      return geminiUprightReposeDetailed(body.imageBase64, context);
+    }
+    const normalizationReference = await crouchNormalizationReference(body.normalizationSourceBase64);
+    const result = await geminiCrouchReposeDetailed(
+      body.imageBase64,
+      normalizationReference,
+      body.imageBase64,
+      context,
+    );
     return {
       ...result,
-      normalizationReference: await crouchNormalizationReference(body.normalizationSourceBase64),
+      normalizationReference,
     };
   }
   if (body.operation === 'repose') {
