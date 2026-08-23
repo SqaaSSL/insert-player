@@ -1454,6 +1454,8 @@ const OFFICIAL_SPRITE_REVIEW_ISSUES = [
   'scale_framing',
   'appearance_continuity',
   'outfit_continuity',
+  'sequence_continuity',
+  'animation_fidelity',
   'render_style',
   'render_quality',
   'background',
@@ -1477,6 +1479,7 @@ export function geminiOfficialSpriteReviewPrompt(
 ): string {
   const motionSummary = motion.replace(/\s+/g, ' ').trim().slice(0, 220);
   const safeReviewInstance = reviewInstance?.replace(/[^a-z0-9_-]/gi, '').slice(0, 32);
+  const continuityFocused = safeReviewInstance?.includes('continuity');
   return [
     `Inspect IMAGE 1 as a production QA reviewer. It is a contact sheet containing only a clearly fictional synthetic arcade avatar generated from the written description below.`,
     `Do not identify, name, or compare the avatar to any real person or public figure. Review only the visible game-art quality and continuity.`,
@@ -1494,10 +1497,24 @@ export function geminiOfficialSpriteReviewPrompt(
     `- scale_framing: the fighter's scale, floor line, or camera framing clearly breaks continuity with the other cells.`,
     `- appearance_continuity: face design, hair, skin tone, build, or apparent age clearly changes.`,
     `- outfit_continuity: outfit, colors, materials, footwear, or accessories clearly change.`,
+    `- sequence_continuity: neighboring frames or animation phases have an abrupt jump in body proportions, scale, pose progression, facing direction, floor line, or visual treatment.`,
+    `- animation_fidelity: the sequence clearly fails to depict the requested action, combat stance, direction, progression, or loop.`,
     `- render_style: the frame becomes cartoon, anime, chibi, cel-shaded, flat illustration, caricature, or otherwise departs from premium realistic 2.5D rendering.`,
     `- render_quality: the frame is visibly blurrier, smeared, unfinished, lower-detail, or more heavily outlined than the rest of the sheet.`,
     `- background: the background is not flat pure bright green or contains a floor, shadow, gradient, or scenery.`,
     `- extra_elements: props, text, logos, UI, motion trails, detached objects, or extra figures appear.`,
+    ``,
+    `GLOBAL SEQUENCE CHECK (CRITICAL):`,
+    `- Judge the sheet both frame-by-frame and as one ordered animation. A group-wide change is a defect even when every isolated frame looks polished.`,
+    `- Compare head size, shoulder width, torso build, limb proportions, camera distance, floor line, outfit construction, shading, and edge treatment across the entire sequence.`,
+    ...(animName === 'walk' && total === 16 ? [
+      `- For this 16-frame walk, explicitly compare cells 0-7 against cells 8-15. The phase boundary between cells 7 and 8 must not change the fighter's build, head size, style, scale, guard, or identity design.`,
+      `- The fighter must maintain a combat-ready forward walk rather than a casual civilian stroll. The two halves must form one smooth loop.`,
+      `- If one half has systematic drift, include every clearly affected frame from that half in retry with the applicable continuity labels. Do not approve the sheet merely because individual cells are anatomically complete.`,
+    ] : []),
+    ...(continuityFocused ? [
+      `- CONTINUITY SPECIALIST PASS: prioritize cross-frame and phase-boundary comparison over isolated local polish. Recheck the whole ordered sequence before returning JSON.`,
+    ] : []),
     ``,
     `Pose changes required by the animation are not defects. Minor natural lighting variation is not a defect. Retry only clear failures.`,
     `Return exactly one JSON object and no markdown or prose. Use zero-based indices and only the issue labels above:`,
@@ -1805,6 +1822,8 @@ const OFFICIAL_REVIEW_CORRECTIONS: Record<GeminiOfficialSpriteReviewIssue, strin
   scale_framing: 'Match the silhouette guide scale, camera distance, floor line, and full-body framing exactly.',
   appearance_continuity: 'Match the written synthetic face design, hair, skin tone, build, and apparent age exactly.',
   outfit_continuity: 'Match the written outfit, colors, materials, footwear, and accessories exactly.',
+  sequence_continuity: 'Match adjacent frames and the full sequence in body proportions, scale, floor line, facing direction, pose progression, and visual treatment with no phase-boundary jump.',
+  animation_fidelity: 'Depict the requested combat animation and ordered motion phase accurately while preserving a fighting-ready stance and a smooth loop.',
   render_style: 'Use premium realistic 2.5D game rendering with dimensional materials and shading; no cartoon, anime, cel shading, caricature, or flat illustration.',
   render_quality: 'Match the other frames in sharpness, detail, dimensional shading, material definition, and restrained edge treatment.',
   background: 'Use only a flat pure bright green background with no floor, shadow, gradient, or scenery.',
@@ -1919,17 +1938,19 @@ export async function geminiSheetRefined(
   let sheetCells: string[];
   if (official && animName === 'walk' && frames === 16 && !shouldMirror) {
     const phaseMotions = [
-      `${motion}. Generate frames 1 through 8 of a 16-frame seamless cycle: begin at a clear forward-leg contact pose, pass through the balanced mid-step, and finish just before the opposite-leg contact. Do not return to the starting contact pose in this half.`,
-      `${motion}. Generate frames 9 through 16 of a 16-frame seamless cycle: begin at the opposite-leg contact pose, pass through the balanced return step, and finish at the original forward-leg contact so the full 16-frame loop closes cleanly.`,
+      `${motion}. Generate frames 1 through 8 of a 16-frame seamless cycle: begin at a clear forward-leg contact pose, pass through the balanced mid-step, and finish just before the opposite-leg contact. Keep both fists raised in a consistent combat guard and the upper body ready throughout. Do not return to the starting contact pose in this half.`,
+      `${motion}. Generate frames 9 through 16 of a 16-frame seamless cycle: begin at the opposite-leg contact pose, pass through the balanced return step, and finish at the original forward-leg contact so the full 16-frame loop closes cleanly. Keep both fists raised in the same combat guard and preserve the exact body proportions, framing, and floor line established by the first half.`,
     ];
     sheetCells = [];
     for (let phaseIndex = 0; phaseIndex < phaseMotions.length; phaseIndex++) {
+      const phasePrimary = phaseIndex === 0 ? characterBase64 : sheetCells[7];
+      const phaseEndGuide = phaseIndex === 0 ? undefined : sheetCells[0];
       const phaseSheet = await geminiSpriteSheet(
-        characterBase64,
+        phasePrimary,
         animName,
         phaseMotions[phaseIndex],
         8,
-        undefined,
+        phaseEndGuide,
         maxScale,
         normalizationReference,
         context,
@@ -2037,7 +2058,7 @@ export async function geminiSheetRefined(
         official,
         animName,
         motion,
-        'initial-a',
+        'initial-local',
         context,
       ),
       await reviewOfficialRefinedCells(
@@ -2045,7 +2066,7 @@ export async function geminiSheetRefined(
         official,
         animName,
         motion,
-        'initial-b',
+        'initial-continuity',
         context,
       ),
     ]);

@@ -105,7 +105,24 @@ describe('Gemini content-block handling', () => {
     expect(prompt).toContain('indexed 0 through 7');
     expect(prompt).toContain('render_style');
     expect(prompt).toContain('render_quality');
+    expect(prompt).toContain('sequence_continuity');
+    expect(prompt).toContain('animation_fidelity');
     expect(prompt).toContain('{"retry":[],"issues":{}}');
+  });
+
+  it('forces a dedicated whole-cycle comparison for 16-frame walks', () => {
+    const prompt = geminiOfficialSpriteReviewPrompt(
+      'Original fighter in a navy suit.',
+      'walk',
+      'combat-ready forward walk',
+      16,
+      'initial-continuity',
+      1,
+    );
+
+    expect(prompt).toContain('explicitly compare cells 0-7 against cells 8-15');
+    expect(prompt).toContain('CONTINUITY SPECIALIST PASS');
+    expect(prompt).toContain('casual civilian stroll');
   });
 
   it('makes independent QA passes and format recovery requests cache-distinct', () => {
@@ -114,7 +131,7 @@ describe('Gemini content-block handling', () => {
       'walk',
       'walking forward',
       16,
-      'initial-a',
+      'initial-local',
       1,
     );
     const second = geminiOfficialSpriteReviewPrompt(
@@ -122,7 +139,7 @@ describe('Gemini content-block handling', () => {
       'walk',
       'walking forward',
       16,
-      'initial-b',
+      'initial-continuity',
       1,
     );
     const recovery = geminiOfficialSpriteReviewPrompt(
@@ -130,14 +147,14 @@ describe('Gemini content-block handling', () => {
       'walk',
       'walking forward',
       16,
-      'initial-a',
+      'initial-local',
       2,
     );
 
-    expect(first).toContain('REVIEW INSTANCE: initial-a-1');
-    expect(second).toContain('REVIEW INSTANCE: initial-b-1');
+    expect(first).toContain('REVIEW INSTANCE: initial-local-1');
+    expect(second).toContain('REVIEW INSTANCE: initial-continuity-1');
     expect(second).not.toBe(first);
-    expect(recovery).toContain('REVIEW INSTANCE: initial-a-2');
+    expect(recovery).toContain('REVIEW INSTANCE: initial-local-2');
     expect(recovery).toContain('FORMAT RECOVERY');
     expect(recovery).not.toBe(first);
   });

@@ -63,7 +63,7 @@ interface AnimationDefinition {
 
 const ANIMATIONS: AnimationDefinition[] = [
   { name: 'idle', motion: 'idle fighting stance with very subtle weight shifting and breathing sway, fists raised, feet planted — the character barely moves, just alive and ready', frames: 8, base: 'standing' },
-  { name: 'walk', motion: 'walking forward to the right cycle, fighting game walk', frames: 16, base: 'standing' },
+  { name: 'walk', motion: 'combat-ready forward walk cycle to the right with both fists raised in a consistent guard, upper body steady and ready, deliberate fighting-game footwork, no casual civilian arm swing', frames: 16, base: 'standing' },
   { name: 'high_punch', motion: 'quick grounded standing jab punch extending the lead arm forward while both feet stay planted, then retracting to stance', frames: 7, base: 'standing' },
   { name: 'high_kick', motion: 'powerful grounded standing roundhouse kick swinging the right leg in a high arc while the support foot stays planted, then returning to stance', frames: 7, base: 'standing' },
   { name: 'low_punch', motion: 'quick low jab punch from an extreme low-profile crouch, extending the right arm forward while staying low throughout, with hips dropped very low and thighs near-parallel to the ground, then retracting', frames: 7, base: 'crouched' },
