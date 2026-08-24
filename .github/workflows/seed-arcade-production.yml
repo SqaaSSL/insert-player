@@ -19,8 +19,10 @@ on:
           - seed
           - resume
           - restart-draft
+          - prepare-canary
+          - canary-side
       confirmation:
-        description: Enter GEMINI_ONLY_PRODUCTION for a billable operation
+        description: Enter GEMINI_ONLY_PRODUCTION for a production mutation or billable operation
         required: false
         type: string
 
@@ -60,7 +62,7 @@ jobs:
           }
           if [[ "$REQUESTED_OPERATION" != "dry-run" && "$REQUESTED_OPERATION" != "preflight" ]]; then
             [[ "$REQUESTED_CONFIRMATION" == "GEMINI_ONLY_PRODUCTION" ]] || {
-              printf '::error::Billable production generation requires the exact confirmation phrase.\n'
+              printf '::error::Production mutations and billable generation require the exact confirmation phrase.\n'
               exit 1
             }
           fi
@@ -130,6 +132,12 @@ jobs:
               ;;
             restart-draft)
               seed_args+=(--restart-draft --confirm-production)
+              ;;
+            prepare-canary)
+              seed_args+=(--prepare-canary --confirm-production)
+              ;;
+            canary-side)
+              seed_args+=(--canary-side --confirm-production)
               ;;
             *)
               printf '::error::Unsupported Arcade seed operation.\n'

@@ -209,4 +209,9 @@ describe('Arcade roster provider preflight', () => {
       '"$REQUESTED_OPERATION" != "dry-run" && "$REQUESTED_OPERATION" != "preflight"',
     );
   });
+
+  it('keeps canary preparation separate from the capped side inference', () => {
+    expect(productionWorkflow).toContain('seed_args+=(--prepare-canary --confirm-production)');
+    expect(productionWorkflow).toContain('seed_args+=(--canary-side --confirm-production)');
+  });
 });

@@ -151,11 +151,11 @@ const adminAuth = {
   },
 } as unknown as AuthContext;
 
-function generationRequest(): Request {
+function generationRequest(restart = false): Request {
   return new Request(`https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ legal: LEGAL }),
+    body: JSON.stringify({ legal: LEGAL, ...(restart ? { restart: true } : {}) }),
   });
 }
 
@@ -170,13 +170,17 @@ function animationRequest(animationName = 'walk'): Request {
   );
 }
 
-function sourceRequest(sourceName = 'upright'): Request {
+function sourceRequest(sourceName = 'upright', restart = false, canary = false): Request {
   return new Request(
     `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/generate/source/${sourceName}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ legal: LEGAL }),
+      body: JSON.stringify({
+        legal: LEGAL,
+        ...(restart ? { restart: true } : {}),
+        ...(canary ? { canary: true } : {}),
+      }),
     },
   );
 }
@@ -443,6 +447,52 @@ describe('official Arcade generation authorization', () => {
     }
   });
 
+  it('starts a fresh full run when restart is explicit and never inherits an older partial run', async () => {
+    const { mf, db, env } = await bindings();
+    const failedJobId = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('restart-ledger', ?, 0, 'arcade_seed_generation', ?)
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, free_quota_delta, status,
+            reason, fighter_id, ledger_id, expires_at
+          ) VALUES ('restart-charge', ?, 'champion', 0, 0, 'committed',
+            'arcade_seed_generation', ?, 'restart-ledger', datetime('now', '+1 hour'))
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, operation, status
+          ) VALUES (?, ?, ?, 'champion', 'fighter_generation', 'partial')
+        `).bind(failedJobId, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, charge_id, user_id, fighter_id, artifact_run_id, tier, operation,
+            status, stage, progress_current, progress_total
+          ) VALUES (?, 'restart-charge', ?, ?, ?, 'champion', 'fighter_generation',
+            'failed', 'sprite:low_punch', 7, 14)
+        `).bind(failedJobId, USER_ID, FIGHTER_ID, failedJobId),
+      ]);
+
+      const response = await startAdminArcadeGeneration(
+        generationRequest(true), env, adminAuth, FIGHTER_ID,
+      );
+
+      expect(response.status).toBe(201);
+      expect(constrainProviderSessionToArtifactRunRemaining).not.toHaveBeenCalled();
+      const charge = await db.prepare(`
+        SELECT continuation_run_id, resumed_from_job_id
+        FROM generation_charges WHERE status = 'reserved'
+      `).first();
+      expect(charge).toEqual({ continuation_run_id: null, resumed_from_job_id: null });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
   it('cancels a continuation session when its aggregate budget cannot be bounded', async () => {
     const { mf, db, env } = await bindings();
     const failedJobId = 'dddddddddddddddddddddddddddddddd';
@@ -701,6 +751,81 @@ describe('official Arcade generation authorization', () => {
       expect(await db.prepare(
         'SELECT delta, reason FROM credit_ledger LIMIT 1'
       ).first()).toEqual({ delta: 0, reason: 'fighter_retry_source' });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('starts a fresh one-source canary when restart is explicit', async () => {
+    const { mf, db, env } = await bindings();
+    const failedJobId = 'ffffffffffffffffffffffffffffffff';
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('source-restart-ledger', ?, 0, 'fighter_retry_source', ?)
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, free_quota_delta, status,
+            reason, fighter_id, ledger_id, expires_at
+          ) VALUES ('source-restart-charge', ?, 'champion', 0, 0, 'committed',
+            'fighter_retry_source', ?, 'source-restart-ledger', datetime('now', '+1 hour'))
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, operation, target_kind, target_name, status
+          ) VALUES (?, ?, ?, 'champion', 'fighter_retry_source', 'source', 'side', 'partial')
+        `).bind(failedJobId, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, charge_id, user_id, fighter_id, artifact_run_id, tier, operation,
+            status, stage, progress_current, progress_total
+          ) VALUES (?, 'source-restart-charge', ?, ?, ?, 'champion', 'fighter_retry_source',
+            'failed', 'source:side', 0, 1)
+        `).bind(failedJobId, USER_ID, FIGHTER_ID, failedJobId),
+      ]);
+
+      const response = await startAdminArcadeSourceGeneration(
+        sourceRequest('side', true, true), env, adminAuth, FIGHTER_ID, 'side',
+      );
+
+      expect(response.status).toBe(201);
+      expect(constrainProviderSessionToArtifactRunRemaining).not.toHaveBeenCalled();
+      const [, , providerParams] = vi.mocked(createProviderSession).mock.calls[0];
+      expect(providerParams).toMatchObject({
+        providerCallLimitCap: 2,
+        providerCostLimitCentsCap: 30,
+      });
+      expect(await db.prepare(`
+        SELECT continuation_run_id, resumed_from_job_id
+        FROM generation_charges WHERE status = 'reserved'
+      `).first()).toEqual({ continuation_run_id: null, resumed_from_job_id: null });
+      const [jobRequest] = vi.mocked(createGenerationJob).mock.calls[0];
+      expect(await jobRequest.clone().json()).toMatchObject({
+        targetKind: 'source',
+        targetName: 'side',
+      });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('rejects a canary unless it is a fresh side generation', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const responses = await Promise.all([
+        startAdminArcadeSourceGeneration(
+          sourceRequest('side', false, true), env, adminAuth, FIGHTER_ID, 'side',
+        ),
+        startAdminArcadeSourceGeneration(
+          sourceRequest('upright', true, true), env, adminAuth, FIGHTER_ID, 'upright',
+        ),
+      ]);
+      expect(responses.map((response) => response.status)).toEqual([400, 400]);
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges')
+        .first<{ count: number }>()).toEqual({ count: 0 });
     } finally {
       await mf.dispose();
     }

@@ -28,6 +28,8 @@ const continueOnError = args.has('--continue-on-error');
 const all = args.has('--all');
 const resume = args.has('--resume');
 const restartDraft = args.has('--restart-draft');
+const prepareCanary = args.has('--prepare-canary');
+const canarySide = args.has('--canary-side');
 const preflightOnly = args.has('--preflight-only');
 const POLL_INTERVAL_MS = 5_000;
 const JOB_TIMEOUT_MS = 2 * 60 * 60 * 1000;
@@ -280,7 +282,7 @@ function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
   if (
     preflightOnly
-    && (dryRun || all || resume || restartDraft || activate || animationName || sourceName)
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || activate || animationName || sourceName)
   ) {
     throw new Error('--preflight-only requires one --slug and cannot be combined with a generation operation.');
   }
@@ -293,8 +295,14 @@ function selectFighters(manifest) {
   if (resume && (animationName || sourceName)) {
     throw new Error('--resume fills an entire fighter and cannot be combined with --animation or --source.');
   }
-  if (restartDraft && (all || resume || activate || animationName || sourceName || !slugArg)) {
+  if (restartDraft && (all || resume || prepareCanary || canarySide || activate || animationName || sourceName || !slugArg)) {
     throw new Error('--restart-draft requires one --slug and cannot be combined with --all, --resume, --activate, --animation, or --source.');
+  }
+  if (prepareCanary && (all || resume || restartDraft || canarySide || activate || animationName || sourceName || !slugArg)) {
+    throw new Error('--prepare-canary requires one --slug and cannot be combined with another generation operation.');
+  }
+  if (canarySide && (all || resume || restartDraft || prepareCanary || activate || animationName || sourceName || !slugArg)) {
+    throw new Error('--canary-side requires one --slug and cannot be combined with another generation operation.');
   }
   if (animationName && !PLAYABLE_ANIMATIONS.has(animationName)) {
     throw new Error(`Unknown playable animation: ${animationName}`);
@@ -481,7 +489,16 @@ async function loadOwnedFighter(baseUrl, token, fighterId, fighter) {
   return detail.fighter;
 }
 
-async function generateSource({ manifest, fighter, baseUrl, token, fighterId, name }) {
+async function generateSource({
+  manifest,
+  fighter,
+  baseUrl,
+  token,
+  fighterId,
+  name,
+  restart = false,
+  canary = false,
+}) {
   console.log(`  source:${name}`);
   const generation = await apiRequest(
     baseUrl,
@@ -489,7 +506,11 @@ async function generateSource({ manifest, fighter, baseUrl, token, fighterId, na
     `/api/admin/arcade/${fighterId}/generate/source/${encodeURIComponent(name)}`,
     {
       method: 'POST',
-      body: JSON.stringify({ legal: generationLegal(manifest) }),
+      body: JSON.stringify({
+        legal: generationLegal(manifest),
+        ...(restart ? { restart: true } : {}),
+        ...(canary ? { canary: true } : {}),
+      }),
     },
   );
   if (!generation.job?.id) throw new Error(`${fighter.name} source generation returned no job.`);
@@ -566,7 +587,10 @@ async function seedFighter({ manifest, fighter, baseUrl, token, adminEntries, st
 
   const generation = await apiRequest(baseUrl, token, `/api/admin/arcade/${fighterId}/generate`, {
     method: 'POST',
-    body: JSON.stringify({ legal: generationLegal(manifest) }),
+    body: JSON.stringify({
+      legal: generationLegal(manifest),
+      ...(registration.restartFullGeneration ? { restart: true } : {}),
+    }),
   });
   if (generation.job?.id) await waitForJob(baseUrl, token, fighter, generation.job.id);
   else if (!generation.ready) throw new Error(`${fighter.name} generation returned neither a job nor a ready fighter.`);
@@ -763,6 +787,83 @@ async function seedSource({ manifest, fighter, baseUrl, token, adminEntries }) {
   console.log(`  archived source:${sourceName}: ${entry.fighterId}`);
 }
 
+async function seedSideCanary({ manifest, fighter, baseUrl, token, adminEntries, state }) {
+  const { entry, photoHash } = await prepareSideCanary({
+    manifest,
+    fighter,
+    baseUrl,
+    token,
+    adminEntries,
+    state,
+  });
+
+  console.log(`\n${fighter.rank}. ${fighter.name} [Champion source:side canary]`);
+  await generateSource({
+    manifest,
+    fighter,
+    baseUrl,
+    token,
+    fighterId: entry.fighterId,
+    name: 'side',
+    restart: true,
+    canary: true,
+  });
+
+  const owned = await loadOwnedFighter(baseUrl, token, entry.fighterId, fighter);
+  if (!owned.sources?.side || !owned.sources?.sideRaw) {
+    throw new Error(`${fighter.name} side canary did not archive both clean and raw assets.`);
+  }
+  checkpointState(state, manifest, fighter, entry.fighterId, photoHash, 'draft', {
+    complete: false,
+    canary: 'side',
+    canaryPrepared: true,
+    canaryReady: true,
+    pendingSources: ['upright', 'crouch'],
+    pendingAnimations: PLAYABLE_ANIMATION_NAMES,
+  });
+  console.log(`  canary ready: ${entry.fighterId} (side only; awaiting visual approval)`);
+}
+
+async function prepareSideCanary({ manifest, fighter, baseUrl, token, adminEntries, state }) {
+  const entry = findCurrentArcadeEntry(adminEntries, fighter.slug);
+  if (!/^[a-f0-9]{32}$/.test(entry?.fighterId ?? '')) {
+    throw new Error(`No current Arcade fighter exists for ${fighter.slug}. Stage its private draft first.`);
+  }
+  if (entry.status !== 'draft') {
+    throw new Error(`Arcade canaries are restricted to draft fighters; ${fighter.slug} is ${entry.status}.`);
+  }
+
+  const { sourceBytes, photoHash } = readApprovedSource(manifest, fighter);
+  let owned = await loadOwnedFighter(baseUrl, token, entry.fighterId, fighter);
+  if (owned.photoHash !== photoHash) {
+    throw new Error(`${fighter.name} draft does not match the approved licensed-photo hash.`);
+  }
+
+  console.log(`\n${fighter.rank}. ${fighter.name} [prepare Champion source:side canary]`);
+  await uploadOriginalSource(baseUrl, token, entry.fighterId, fighter, sourceBytes);
+  const patched = await apiRequest(baseUrl, token, `/api/admin/arcade/${entry.fighterId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(arcadePayload(manifest, fighter, 'draft')),
+  });
+  owned = await loadOwnedFighter(baseUrl, token, entry.fighterId, fighter);
+  if (owned.photoHash !== photoHash || !owned.sources?.original) {
+    throw new Error(`${fighter.name} approved original was not durably repaired.`);
+  }
+  if (patched.fighter?.generationPrompt !== fighter.referencePrompt) {
+    throw new Error(`${fighter.name} private Arcade prompt did not match manifest v3 after PATCH.`);
+  }
+  checkpointState(state, manifest, fighter, entry.fighterId, photoHash, 'draft', {
+    complete: false,
+    canary: 'side',
+    canaryPrepared: true,
+    canaryReady: false,
+    pendingSources: ['upright', 'crouch'],
+    pendingAnimations: PLAYABLE_ANIMATION_NAMES,
+  });
+  console.log(`  canary prepared: ${entry.fighterId} (original repaired; manifest v3 frozen; no inference started)`);
+  return { entry, photoHash };
+}
+
 async function main() {
   if (!['production', 'sandbox'].includes(target)) throw new Error('--target must be production or sandbox.');
   if (target === 'production' && !dryRun && !preflightOnly && !args.has('--confirm-production')) {
@@ -777,7 +878,7 @@ async function main() {
     for (const fighter of selected) {
       const { photoHash } = readApprovedSource(manifest, fighter);
       console.log(
-        `ready  ${fighter.slug}  Champion${animationName ? `:${animationName}` : sourceName ? `:source:${sourceName}` : resume ? ':resume' : restartDraft ? ':restart-draft' : ''}  licensed:${photoHash.slice(0, 12)}`,
+        `ready  ${fighter.slug}  Champion${animationName ? `:${animationName}` : sourceName ? `:source:${sourceName}` : prepareCanary ? ':prepare-canary' : canarySide ? ':canary-side' : resume ? ':resume' : restartDraft ? ':restart-draft' : ''}  licensed:${photoHash.slice(0, 12)}`,
       );
     }
     return;
@@ -844,6 +945,28 @@ async function main() {
     return;
   }
   const state = readState();
+  if (prepareCanary) {
+    await prepareSideCanary({
+      manifest,
+      fighter: selected[0],
+      baseUrl,
+      token,
+      adminEntries,
+      state,
+    });
+    return;
+  }
+  if (canarySide) {
+    await seedSideCanary({
+      manifest,
+      fighter: selected[0],
+      baseUrl,
+      token,
+      adminEntries,
+      state,
+    });
+    return;
+  }
   const failures = [];
   for (const fighter of selected) {
     try {

@@ -13,6 +13,7 @@ import type {
 } from './types';
 import { generateId, hashString } from './auth';
 import { inspectArcadeAssetIntegrity } from './arcadeAssets';
+import { drainFighterAssetDeletions, listFighterAssetKeys } from './assetDeletion';
 import { maxTier, normalizeQualityTier, TIER_DEFINITIONS } from './tiers';
 import { publicAppName, publicSocialCardUrl } from './branding';
 import { readJsonBody, readMultipartFormData } from './requestBody';
@@ -127,6 +128,7 @@ interface ArcadeFighterRow extends Fighter {
   arcade_reference_source_url: string | null;
   arcade_reference_license: string;
   arcade_reference_credit: string;
+  arcade_generation_prompt: string | null;
   arcade_status: ArcadeFighter['status'];
   arcade_created_at: string;
   arcade_updated_at: string;
@@ -494,6 +496,7 @@ function arcadeFighterSelectSql(whereClause: string, orderClause: string): strin
       af.reference_source_url AS arcade_reference_source_url,
       af.reference_license AS arcade_reference_license,
       af.reference_credit AS arcade_reference_credit,
+      af.generation_prompt AS arcade_generation_prompt,
       af.status AS arcade_status,
       af.created_at AS arcade_created_at,
       af.updated_at AS arcade_updated_at
@@ -520,6 +523,7 @@ function serializeAdminArcadeFighter(fighter: ArcadeFighterRow) {
       license: fighter.arcade_reference_license,
       credit: fighter.arcade_reference_credit,
     },
+    generationPrompt: fighter.arcade_generation_prompt,
     status: fighter.arcade_status,
     createdAt: fighter.arcade_created_at,
     updatedAt: fighter.arcade_updated_at,
@@ -1141,6 +1145,16 @@ export async function deleteFighter(env: Env, auth: AuthContext, fighterId: stri
   const fighter = await getOwnedFighter(env, fighterId, auth.userId);
   if (!fighter) return json({ error: 'Fighter not found' }, 404);
 
+  const arcade = await env.DB.prepare(`
+    SELECT status FROM arcade_fighters WHERE fighter_id = ? LIMIT 1
+  `).bind(fighterId).first<{ status: string }>();
+  if (arcade) {
+    return json({
+      error: 'Official Arcade fighters must be retired and reconciled through the admin roster flow',
+      code: 'arcade_fighter_requires_reconciliation',
+    }, 409);
+  }
+
   const sprites = await getSpritesForFighters(env, [fighterId]);
   const spriteVersions = await getSpriteVersionsForFighter(env, fighterId);
   const sourceVersions = await getSourceVersionsForFighter(env, fighterId);
@@ -1159,11 +1173,36 @@ export async function deleteFighter(env: Env, auth: AuthContext, fighterId: stri
     keys.add(version.blob_key);
     if (version.raw_blob_key) keys.add(version.raw_blob_key);
   }
-  for (const key of keys) {
-    await env.SPRITES.delete(key);
-  }
-  await env.DB.prepare('DELETE FROM fighters WHERE id = ? AND owner_user_id = ?').bind(fighterId, auth.userId).run();
-  return json({ success: true });
+  for (const key of await listFighterAssetKeys(env, auth.userId, fighterId)) keys.add(key);
+
+  const namespace = `users/${auth.userId}/fighters/${fighterId}/`;
+  const namespacedKeys = Array.from(keys).filter((key) => key.startsWith(namespace));
+  const queueStatement = env.DB.prepare(`
+    INSERT INTO fighter_asset_deletions (
+      id, owner_user_id, fighter_id, blob_key, reason
+    )
+    SELECT lower(hex(randomblob(16))), ?, ?, value, 'fighter_deleted'
+    FROM json_each(?)
+    WHERE true
+    ON CONFLICT(fighter_id, blob_key) DO UPDATE SET
+      last_error = NULL,
+      updated_at = datetime('now')
+  `).bind(auth.userId, fighterId, JSON.stringify(namespacedKeys));
+  const deleteStatement = env.DB.prepare(`
+    DELETE FROM fighters
+    WHERE id = ? AND owner_user_id = ?
+    RETURNING id
+  `).bind(fighterId, auth.userId);
+  const results = await env.DB.batch([queueStatement, deleteStatement]);
+  const deleted = results[1]?.results?.some((row) => (row as { id?: string }).id === fighterId);
+  if (!deleted) throw new Error('Fighter deletion was not committed');
+
+  const cleanup = await drainFighterAssetDeletions(env, { fighterId });
+  return json({
+    success: true,
+    assetCleanup: cleanup.pending > 0 ? 'pending' : 'complete',
+    deletedAssets: cleanup.deleted,
+  });
 }
 
 async function copyR2Object(env: Env, fromKey: string | null, toKey: string): Promise<string | null> {
