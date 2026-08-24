@@ -104,6 +104,7 @@ jobs:
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
         run: node scripts/apply-live-config.mjs --require-complete --skip-production-check --skip-secrets
 
       - name: Apply production D1 migrations
@@ -127,6 +128,7 @@ jobs:
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
         run: node scripts/apply-live-config.mjs --skip-production-check --deploy-worker
 
       - name: Smoke production Worker

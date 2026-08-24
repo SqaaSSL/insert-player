@@ -3396,6 +3396,7 @@ function assertGithubActionsAreWired() {
       'secrets.CLOUDFLARE_API_TOKEN',
       'secrets.ANONYMIZATION_SECRET',
       'secrets.GENERATION_JOB_SIGNING_SECRET',
+      'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
     ],
     production: [
       'group: deploy-production',
@@ -3411,6 +3412,7 @@ function assertGithubActionsAreWired() {
       'secrets.CLOUDFLARE_API_TOKEN',
       'secrets.CLERK_WEBHOOK_SIGNING_SECRET',
       'secrets.GENERATION_JOB_SIGNING_SECRET',
+      'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
     ],
     codeql: [
       'github/codeql-action/init@v4',
@@ -3440,6 +3442,15 @@ function assertGithubActionsAreWired() {
   }
   if (missingSnippets.length > 0) {
     throw new Error(`GitHub delivery wiring is incomplete:\n- ${missingSnippets.join('\n- ')}`);
+  }
+
+  const backendBridgeEnv = 'CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}';
+  const productionBridgeUses = text.production.split(backendBridgeEnv).length - 1;
+  const developmentBridgeUses = text.development.split(backendBridgeEnv).length - 1;
+  if (productionBridgeUses < 2 || developmentBridgeUses < 1) {
+    throw new Error(
+      'GitHub deploy workflows must pass CLERK_BACKEND_AUTH_BRIDGE_SECRET to validation and Worker upload steps.',
+    );
   }
 
   const githubText = Object.values(text).join('\n');

@@ -14,8 +14,8 @@ TURNSTILE_REQUIRED = "true"
 TURNSTILE_ACTION = "anonymous_rookie"
 TURNSTILE_HOSTNAMES = "insertplayer.ai,www.insertplayer.ai"
 ANONYMOUS_ROOKIE_ENABLED = "true"
-# Initial hard ceiling for estimated upstream spend. Raise deliberately after
-# conversion and retry-cost telemetry have been reviewed.
+# Durable generation requests remain credit-backed, session-bounded, rate
+# limited, and recorded in the provider cost ledger.
 GENERATION_API_BASE_URL = "https://api.insertplayer.ai"
 # Set this to your Clerk issuer, for example:
 # Production Clerk uses the dedicated Insert Player Frontend API domain.
