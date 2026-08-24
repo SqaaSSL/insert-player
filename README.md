@@ -36,7 +36,7 @@ Operational and product references:
 | QA | [insert-player-sandbox.pages.dev](https://insert-player-sandbox.pages.dev) | `https://insert-player-api-sandbox.shellbot.workers.dev` | Clerk Development, dedicated Stripe sandbox | Isolated sandbox D1/R2 |
 | Production | [insertplayer.ai](https://insertplayer.ai) | [api.insertplayer.ai](https://api.insertplayer.ai) | Clerk Production, dedicated Stripe live | Isolated production D1/R2 |
 
-Production serves the full app with Clerk Production, dedicated live Stripe configuration, and Cloudflare Workflow/Container generation. QA remains the environment for paid-provider generation and test Checkout. Promotion from `main` runs migrations, checks, Worker/Container deploy, Worker smoke, Pages deploy, and readiness. The last full protected deployment is proven, but the temporary Cloudflare OAuth token stored in GitHub has since expired (`9109 Invalid access token`), so current production/development Actions stop at their first remote Cloudflare operation. Replace it with a long-lived token for the exact SqaaS account that includes Worker Scripts, D1, R2, Pages, Containers, Workflows, and Cache Purge access.
+Production serves the full app with Clerk Production, dedicated live Stripe configuration, and Cloudflare Workflow/Container generation. QA remains the environment for paid-provider generation and test Checkout. Main commit `7d01ef8` is deployed in production with D1 migration `0023`; the matching Worker version is `046d55ca-3e60-4edd-b90c-b2469214767d`. Develop commit `d056437` is deployed in QA with the same migration; its Worker version is `f32657e9-b525-4c2c-8384-65b9601c07c6`. Worker, Pages, canonical-origin, and live-readiness smoke passed for both environments. Promotion from `main` normally runs migrations, checks, Worker/Container deploy, Worker smoke, Pages deploy, and readiness. The temporary Cloudflare OAuth token stored in GitHub has expired (`9109 Invalid access token`), so current production/development Actions stop at their first remote Cloudflare operation even though both runtimes are healthy after an operator deploy. Replace it with a long-lived token for the exact SqaaS account that includes Worker Scripts, D1, R2, Pages, Containers, Workflows, and Cache Purge access, then rerun both workflows.
 
 Never point a local or QA build at production storage, Clerk, Stripe, or Worker secrets. Never install test Stripe credentials on the production Worker.
 
@@ -94,7 +94,7 @@ Run the full gate before requesting review or deploying:
 npm run check:production
 ```
 
-This includes frontend style guards, TypeScript, 284 tests across 58 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
+This includes frontend style guards, TypeScript, 319 tests across 62 files, Worker typechecking, a clean replay of D1 migrations through `0023`, the provider benchmark, a credential-free prelaunch scan, per-artifact checkpoint/resume and crash-recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
 
 Useful focused commands:
 
@@ -153,7 +153,7 @@ npm run check:live-readiness
 npm run smoke:live
 ```
 
-Official Arcade roster generation is operator-only through the `Seed Arcade roster (production)` GitHub workflow. It accepts an authenticated, non-billable `preflight` that verifies the deployed Container without restoring or mutating fighter data; generation operations restore the manifest-pinned source from private R2 and verify its exact SHA-256 hash. The Action accepts only explicit `preflight`, `dry-run`, `seed`, `resume`, or `restart-draft` operations and never activates a fighter automatically. Billable runs require the exact `GEMINI_ONLY_PRODUCTION` confirmation and fail closed unless the approved-provider guard can prove the production processor is Gemini-only before the first call.
+Official Arcade roster generation is operator-only through the `Seed Arcade roster (production)` GitHub workflow. It accepts an authenticated, non-billable `preflight` that verifies the deployed Container without restoring or mutating fighter data; generation operations restore the manifest-pinned source from private R2 and verify its exact SHA-256 hash. The Action accepts only explicit `preflight`, `dry-run`, `seed`, `resume`, or `restart-draft` operations and never activates a fighter automatically. Billable runs require the exact `GEMINI_ONLY_PRODUCTION` confirmation and fail closed unless the approved-provider guard can prove the production processor is Gemini-only before the first call. Normal application and infrastructure deployments never seed, regenerate, or activate Arcade fighters. Production currently exposes zero official fighters, and no paid roster inference may run without a separate explicit owner approval.
 
 ## Architecture
 
@@ -168,6 +168,7 @@ Cloudflare Worker
   Clerk JWT verification
   credit reservations and Stripe webhooks
   provider-session enforcement and durable cost accounting
+  immutable artifact checkpoints and resumable generation runs
   fighter/community/moderation APIs
        |
        +--> Workflow + Container: durable generation, upgrades, and retries

@@ -25,6 +25,12 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 - `codeql.yml`: JavaScript/TypeScript code scanning on pull requests, protected branches, and weekly schedule.
 - `dependabot.yml`: weekly frontend, Worker, and GitHub Actions updates.
 
+## Current Deployment Credential Status
+
+Production main `7d01ef8` and sandbox develop `d056437` are already live and smoke-verified with D1 migration `0023`. The production Worker version is `046d55ca-3e60-4edd-b90c-b2469214767d`; the sandbox Worker version is `f32657e9-b525-4c2c-8384-65b9601c07c6`.
+
+The `CLOUDFLARE_API_TOKEN` currently stored in both GitHub environments is an expired temporary Wrangler OAuth credential. Production Action `32726045103` and development Action `32723834617` therefore fail before their first remote D1 migration with Cloudflare error `9109`. This does not indicate an unhealthy deployed runtime: both releases were deployed through the equivalent operator path and passed Worker, Pages, canonical-origin, and readiness smoke. Replace the secret in both environments with one durable account-owned token, verify it belongs to account `61fc998aa16c1c11a949d982e7a65dcb`, then rerun both failed workflows. Do not rotate provider, Clerk, Stripe, D1, R2, or generated-asset state as part of this repair.
+
 ## GitHub Environments
 
 The repository uses environments named exactly `development` and `production`.
@@ -93,7 +99,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | `GENERATION_JOB_SIGNING_SECRET` | Stable random HMAC secret for scoped processor job tokens, at least 32 characters |
 | `BRAND_CLEARANCE_JSON` | Production only; exact JSON from the local cleared brand record |
 
-The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit, Pages edit, Containers write, zone Cache Purge, and the route/resource permissions required by the checked-in Worker/Workflow bindings. Scope it to Cloudflare account `61fc998aa16c1c11a949d982e7a65dcb` and zone `insertplayer.ai`; do not use a Global API Key. A `7403` response from the first D1 migration means the token is for the wrong account or cannot access D1, even if its permission names otherwise look correct. Production Pages deploys probe a fresh immutable asset under an isolated cache key, purge the exact apex and `www` asset URLs after propagation, then run a second smoke against the canonical URL so an SPA fallback can never remain cached as JavaScript.
+The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit, Pages edit, Containers write, Workflows edit, zone Cache Purge, and the route/resource permissions required by the checked-in Worker/Workflow bindings. Scope it to Cloudflare account `61fc998aa16c1c11a949d982e7a65dcb` and zone `insertplayer.ai`; do not use a Global API Key or a temporary Wrangler OAuth access token. A `7403` response from the first D1 migration means the token is for the wrong account or cannot access D1, even if its permission names otherwise look correct. A `9109` response means the stored token is expired or invalid. Production Pages deploys probe a fresh immutable asset under an isolated cache key, purge the exact apex and `www` asset URLs after propagation, then run a second smoke against the canonical URL so an SPA fallback can never remain cached as JavaScript.
 
 Never use one GitHub environment as a fallback for another. A missing value must fail the deployment rather than silently reuse a test or live credential.
 
