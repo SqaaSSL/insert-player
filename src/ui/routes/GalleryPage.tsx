@@ -44,6 +44,7 @@ import { shareCommunityFighter } from '../shared/communityShare.ts';
 import {
   deleteCloudFighter,
   downloadCloudFighterToLocal,
+  formatCloudRosterSyncStatus,
   getCloudFighter,
   renameCloudFighter,
   setCloudFighterPublic,
@@ -173,6 +174,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       const checkoutMessage = checkoutStatus ? checkoutStatusMessage(checkoutStatus) : null;
       let cloudImported = 0;
       let cloudUpdated = 0;
+      let cloudDrafts = 0;
       let cloudFailed = 0;
       let activeCloudJob: Awaited<ReturnType<typeof listGenerationJobs>>[number] | null = null;
       let [all, allStages] = await Promise.all([
@@ -187,6 +189,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         activeCloudJob = generationJobs.find((job) => job.status === 'queued' || job.status === 'running') ?? null;
         setRecoveryJob(activeCloudJob);
         cloudFailed = cloudSync.failed;
+        cloudDrafts = cloudSync.drafts;
         if (cloudSync.imported > 0 || cloudSync.updated > 0) {
           cloudImported = cloudSync.imported;
           cloudUpdated = cloudSync.updated;
@@ -210,16 +213,18 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       setStages(filteredStages);
       setCurrentIndex((current) => Math.min(current, Math.max(0, filtered.length - 1)));
       setCurrentStageIndex((current) => Math.min(current, Math.max(0, filteredStages.length - 1)));
+      const cloudSyncStatus = formatCloudRosterSyncStatus({
+        imported: cloudImported,
+        updated: cloudUpdated,
+        drafts: cloudDrafts,
+        failed: cloudFailed,
+      });
       setStatus(
         checkoutMessage ??
         (activeCloudJob
           ? `${tierLabel(activeCloudJob.tier)} forge continues safely in the cloud (${activeCloudJob.progressCurrent}/${activeCloudJob.progressTotal})`
-          :
-        (cloudFailed > 0
-          ? `Cloud sync incomplete: ${cloudFailed} fighter${cloudFailed === 1 ? '' : 's'} could not be downloaded`
-          : cloudImported > 0 || cloudUpdated > 0
-          ? `Cloud synced: ${cloudImported} imported, ${cloudUpdated} updated`
-          : filtered.length > 0 || filteredStages.length > 0
+          : cloudSyncStatus ??
+          (filtered.length > 0 || filteredStages.length > 0
             ? 'Ready'
             : 'No fighters or stages yet')),
       );
