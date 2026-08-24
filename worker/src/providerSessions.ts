@@ -677,13 +677,23 @@ export async function createProviderSession(
     purpose: ProviderSessionPurpose;
     operation?: GenerationBillingOperation;
     chargeId?: string | null;
+    providerCallLimitCap?: number;
+    providerCostLimitCentsCap?: number;
     legal: GenerationLegalAttestation;
   },
 ): Promise<CreatedProviderSession> {
   const id = generateId();
   const sessionExpiresAt = expiresAt();
-  const providerCallLimit = providerCallLimitFor(params.purpose, params.tier, params.operation);
-  const providerCostLimitCents = providerCostLimitFor(params.purpose, params.tier, params.operation);
+  const defaultCallLimit = providerCallLimitFor(params.purpose, params.tier, params.operation);
+  const defaultCostLimitCents = providerCostLimitFor(params.purpose, params.tier, params.operation);
+  const providerCallLimit = Math.min(
+    defaultCallLimit,
+    Math.max(1, params.providerCallLimitCap ?? defaultCallLimit),
+  );
+  const providerCostLimitCents = Math.min(
+    defaultCostLimitCents,
+    Math.max(1, params.providerCostLimitCentsCap ?? defaultCostLimitCents),
+  );
 
   const sessionStatement = env.DB.prepare(`
     INSERT INTO provider_sessions (

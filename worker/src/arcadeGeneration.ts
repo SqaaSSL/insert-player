@@ -174,6 +174,7 @@ async function createAdminGenerationAuthorization(
     operation: 'fighter_generation' | 'fighter_retry_animation' | 'fighter_retry_source';
     legal: NonNullable<ReturnType<typeof parseGenerationLegalAttestation>>;
     continuation?: { runId: string; fromJobId: string };
+    providerLimits?: { calls: number; costCents: number };
   },
 ): Promise<{ purchaseId: string; providerSessionId: string }> {
   const purchaseId = generateId();
@@ -209,6 +210,8 @@ async function createAdminGenerationAuthorization(
       purpose: params.purpose,
       operation: params.operation,
       chargeId: purchaseId,
+      providerCallLimitCap: params.providerLimits?.calls,
+      providerCostLimitCentsCap: params.providerLimits?.costCents,
       legal: params.legal,
     });
     createdProviderSessionId = createdProviderSession.id;
@@ -286,7 +289,14 @@ export async function startAdminArcadeGeneration(
   if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
   if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
 
-  const body = await readJsonBody<{ legal?: unknown }>(request, MAX_ADMIN_GENERATION_BODY_BYTES);
+  const body = await readJsonBody<{ legal?: unknown; restart?: unknown }>(
+    request,
+    MAX_ADMIN_GENERATION_BODY_BYTES,
+  );
+  if (body.restart !== undefined && typeof body.restart !== 'boolean') {
+    return json({ error: 'restart must be a boolean' }, 400);
+  }
+  const restart = body.restart === true;
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
     return json({
@@ -311,7 +321,7 @@ export async function startAdminArcadeGeneration(
   }
 
   const assetIntegrity = await inspectArcadeAssetIntegrity(env, fighterId);
-  if (assetIntegrity.ready) {
+  if (assetIntegrity.ready && !restart) {
     return json({
       ready: true,
       fighterId,
@@ -345,7 +355,7 @@ export async function startAdminArcadeGeneration(
     });
   }
 
-  const partial = await env.DB.prepare(`
+  const partial = restart ? null : await env.DB.prepare(`
     SELECT gj.id AS job_id, gj.artifact_run_id AS run_id
     FROM generation_jobs gj
     JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
@@ -407,7 +417,7 @@ export async function startAdminArcadeGeneration(
     ), env, auth);
   }
 
-  const reusable = await env.DB.prepare(`
+  const reusable = restart ? null : await env.DB.prepare(`
     SELECT gc.id AS purchase_id, ps.id AS provider_session_id
     FROM generation_charges gc
     JOIN credit_ledger cl
@@ -469,7 +479,14 @@ export async function startAdminArcadeAnimationGeneration(
     return json({ error: 'A valid playable animation is required' }, 400);
   }
 
-  const body = await readJsonBody<{ legal?: unknown }>(request, MAX_ADMIN_GENERATION_BODY_BYTES);
+  const body = await readJsonBody<{ legal?: unknown; restart?: unknown }>(
+    request,
+    MAX_ADMIN_GENERATION_BODY_BYTES,
+  );
+  if (body.restart !== undefined && typeof body.restart !== 'boolean') {
+    return json({ error: 'restart must be a boolean' }, 400);
+  }
+  const restart = body.restart === true;
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
     return json({
@@ -504,7 +521,7 @@ export async function startAdminArcadeAnimationGeneration(
     }, 409);
   }
 
-  const partial = await findResumableArcadeRun(env, auth, fighterId, {
+  const partial = restart ? null : await findResumableArcadeRun(env, auth, fighterId, {
     operation: 'fighter_retry_animation',
     targetKind: 'animation',
     targetName: animationName,
@@ -539,7 +556,21 @@ export async function startAdminArcadeSourceGeneration(
     return json({ error: 'A valid canonical source is required' }, 400);
   }
 
-  const body = await readJsonBody<{ legal?: unknown }>(request, MAX_ADMIN_GENERATION_BODY_BYTES);
+  const body = await readJsonBody<{ legal?: unknown; restart?: unknown; canary?: unknown }>(
+    request,
+    MAX_ADMIN_GENERATION_BODY_BYTES,
+  );
+  if (body.restart !== undefined && typeof body.restart !== 'boolean') {
+    return json({ error: 'restart must be a boolean' }, 400);
+  }
+  const restart = body.restart === true;
+  if (body.canary !== undefined && typeof body.canary !== 'boolean') {
+    return json({ error: 'canary must be a boolean' }, 400);
+  }
+  const canary = body.canary === true;
+  if (canary && (!restart || sourceName !== 'side')) {
+    return json({ error: 'A canary must be a fresh canonical side generation' }, 400);
+  }
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
     return json({
@@ -574,7 +605,7 @@ export async function startAdminArcadeSourceGeneration(
     }, 409);
   }
 
-  const partial = await findResumableArcadeRun(env, auth, fighterId, {
+  const partial = restart ? null : await findResumableArcadeRun(env, auth, fighterId, {
     operation: 'fighter_retry_source',
     targetKind: 'source',
     targetName: sourceName,
@@ -585,6 +616,7 @@ export async function startAdminArcadeSourceGeneration(
     operation: 'fighter_retry_source',
     legal,
     continuation: partial ? { runId: partial.run_id, fromJobId: partial.job_id } : undefined,
+    providerLimits: canary ? { calls: 2, costCents: 30 } : undefined,
   });
 
   return createGenerationJob(generationJobRequest(

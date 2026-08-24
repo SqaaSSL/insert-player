@@ -89,6 +89,18 @@ const SCHEMA = `
   CREATE TABLE checkout_sessions (status TEXT NOT NULL, updated_at TEXT NOT NULL);
   CREATE TABLE legal_acceptances (created_at TEXT NOT NULL);
   CREATE TABLE community_reports (status TEXT NOT NULL, updated_at TEXT NOT NULL);
+  CREATE TABLE fighter_asset_deletions (
+    id TEXT PRIMARY KEY,
+    owner_user_id TEXT NOT NULL,
+    fighter_id TEXT NOT NULL,
+    blob_key TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(fighter_id, blob_key)
+  );
 `;
 
 async function bindings(): Promise<{ mf: Miniflare; db: D1Database; bucket: R2Bucket; env: Env }> {

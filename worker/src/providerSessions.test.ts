@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createProviderRequestState,
   createFeatureProviderSession,
+  createProviderSession,
   finalizeProviderRequest,
   PROVIDER_SESSION_HEADER,
   requireProviderSession,
@@ -9,6 +10,51 @@ import {
 import type { Env, PublicAuthContext } from './types';
 
 describe('provider session usage', () => {
+  it('persists a stricter server-side call and cost cap for a canary session', async () => {
+    const prepared: Array<{ sql: string; values: unknown[] }> = [];
+    const database = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            prepared.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
+            return this;
+          },
+        };
+      },
+      async batch() { return []; },
+    };
+    const auth: PublicAuthContext = {
+      userId: 'user-canary',
+      user: { id: 'user-canary' } as PublicAuthContext['user'],
+      claims: {},
+      rateLimitKey: 'user:user-canary',
+    };
+
+    const session = await createProviderSession({
+      DB: database as unknown as D1Database,
+    } as Env, auth, {
+      tier: 'champion',
+      purpose: 'fighter_retry',
+      operation: 'fighter_retry_source',
+      chargeId: 'charge-canary',
+      providerCallLimitCap: 2,
+      providerCostLimitCentsCap: 30,
+      legal: {
+        legalVersion: '2026-08-23.1',
+        ageConfirmed: true,
+        termsAccepted: true,
+        photoRightsConfirmed: true,
+        aiProcessingConfirmed: true,
+        immediatePerformanceConfirmed: true,
+        withdrawalLossAcknowledged: true,
+      },
+    });
+
+    expect(session).toMatchObject({ providerCallLimit: 2, providerCostLimitCents: 30 });
+    const insert = prepared.find((entry) => entry.sql.includes('INSERT INTO provider_sessions'));
+    expect(insert?.values.slice(6, 8)).toEqual([2, 30]);
+  });
+
   it('rejects a feature session without current generation consent', async () => {
     const env = { DB: {} as D1Database } as Env;
     const auth: PublicAuthContext = {
