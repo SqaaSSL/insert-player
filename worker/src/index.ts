@@ -294,8 +294,10 @@ export default {
       if (path === '/api/billing/generation' && method === 'POST') {
         const generationAuth = await sensitiveOptionalAuth(request, env, publicAuth);
         if (isResponse(generationAuth)) return addCors(generationAuth, request, env);
-        const limited = await enforceRateLimit(env, 'generation:authorize', generationAuth);
-        if (limited) return addCors(limited, request, env);
+        if (generationAuth.user) {
+          const limited = await enforceRateLimit(env, 'generation:authorize', generationAuth);
+          if (limited) return addCors(limited, request, env);
+        }
         return addCors(await authorizeGenerationPurchase(request, env, generationAuth), request, env);
       }
 
