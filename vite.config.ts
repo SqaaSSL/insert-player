@@ -4,6 +4,8 @@ import tailwindcss from '@tailwindcss/vite';
 import type { IncomingMessage, ServerResponse } from 'http';
 
 function apiProxyPlugin(): Plugin {
+  type ProxyProvider = 'ludo' | 'freepik' | 'gemini' | 'runway' | 'fal';
+
   let ludoKey = '';
   let freepikKey = '';
   let geminiKey = '';
@@ -25,6 +27,7 @@ function apiProxyPlugin(): Plugin {
   async function proxyRequest(
     req: IncomingMessage,
     res: ServerResponse,
+    provider: ProxyProvider,
     targetUrl: string,
     extraHeaders: Record<string, string>,
   ) {
@@ -32,7 +35,14 @@ function apiProxyPlugin(): Plugin {
     const method = req.method ?? 'POST';
     const safeTargetUrl = sanitizeProxyUrlForLog(targetUrl);
 
-    console.log(`[proxy] ${method} ${safeTargetUrl} (body: ${body.length} bytes)`);
+    if (provider === 'gemini') {
+      const redactedUrl = new URL(safeTargetUrl);
+      if (redactedUrl.searchParams.get('key') !== '<redacted>') {
+        throw new Error('Gemini proxy URL credential redaction failed');
+      }
+    }
+
+    console.log(`[proxy:${provider}] ${method} request (${body.length} bytes)`);
 
     const upstreamHeaders: Record<string, string> = {
       ...extraHeaders,
@@ -54,19 +64,19 @@ function apiProxyPlugin(): Plugin {
       if (retryAfter) res.setHeader('Retry-After', retryAfter);
 
       const respBody = Buffer.from(await upstream.arrayBuffer());
-      console.log(`[proxy] ${method} ${safeTargetUrl} -> ${upstream.status} (${respBody.length} bytes)`);
+      console.log(`[proxy:${provider}] ${method} -> ${upstream.status} (${respBody.length} bytes)`);
 
       if (upstream.status >= 400) {
-        const preview = respBody.toString('utf-8').slice(0, 300);
-        console.error(`[proxy] Error response body: ${preview}`);
+        console.error(`[proxy:${provider}] upstream error response (${respBody.length} bytes)`);
       }
 
       res.writeHead(upstream.status);
       res.end(respBody);
-    } catch (err: any) {
-      console.error(`[proxy] ${method} ${safeTargetUrl} FAILED:`, err.message);
+    } catch (error: unknown) {
+      const errorName = error instanceof Error ? error.name : 'UnknownError';
+      console.error(`[proxy:${provider}] ${method} failed (${errorName})`);
       res.writeHead(502);
-      res.end(`Proxy error: ${err.message}`);
+      res.end('Proxy request failed');
     }
   }
 
@@ -184,7 +194,7 @@ function apiProxyPlugin(): Plugin {
 
         if (url.startsWith('/proxy/ludo')) {
           const apiPath = url.replace(/^\/proxy\/ludo/, '/api');
-          proxyRequest(req, res, `https://api.ludo.ai${apiPath}`, {
+          proxyRequest(req, res, 'ludo', `https://api.ludo.ai${apiPath}`, {
             Authorization: `ApiKey ${ludoKey}`,
           });
           return;
@@ -192,7 +202,7 @@ function apiProxyPlugin(): Plugin {
 
         if (url.startsWith('/proxy/freepik')) {
           const apiPath = url.replace(/^\/proxy\/freepik/, '');
-          proxyRequest(req, res, `https://api.freepik.com${apiPath}`, {
+          proxyRequest(req, res, 'freepik', `https://api.freepik.com${apiPath}`, {
             'x-freepik-api-key': freepikKey,
           });
           return;
@@ -201,13 +211,13 @@ function apiProxyPlugin(): Plugin {
         if (url.startsWith('/proxy/gemini')) {
           const apiPath = url.replace(/^\/proxy\/gemini/, '');
           const separator = apiPath.includes('?') ? '&' : '?';
-          proxyRequest(req, res, `https://generativelanguage.googleapis.com${apiPath}${separator}key=${geminiKey}`, {});
+          proxyRequest(req, res, 'gemini', `https://generativelanguage.googleapis.com${apiPath}${separator}key=${geminiKey}`, {});
           return;
         }
 
         if (url.startsWith('/proxy/runway')) {
           const apiPath = url.replace(/^\/proxy\/runway/, '');
-          proxyRequest(req, res, `https://api.dev.runwayml.com${apiPath}`, {
+          proxyRequest(req, res, 'runway', `https://api.dev.runwayml.com${apiPath}`, {
             Authorization: `Bearer ${runwayKey}`,
             'X-Runway-Version': '2024-11-06',
           });
@@ -216,7 +226,7 @@ function apiProxyPlugin(): Plugin {
 
         if (url.startsWith('/proxy/fal')) {
           const apiPath = url.replace(/^\/proxy\/fal/, '');
-          proxyRequest(req, res, `https://queue.fal.run${apiPath}`, {
+          proxyRequest(req, res, 'fal', `https://queue.fal.run${apiPath}`, {
             Authorization: `Key ${falKey}`,
           });
           return;
