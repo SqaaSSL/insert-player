@@ -48,6 +48,7 @@ const ANIMATIONS = [
   'ko',
   'victory',
 ];
+const MINIFLARE_TEST_TIMEOUT_MS = 30_000;
 
 const SCHEMA = `
   CREATE TABLE fighters (
@@ -309,7 +310,7 @@ async function stageCompleteChampionInventory(
   ]);
 }
 
-describe('official Arcade generation authorization', () => {
+describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_TIMEOUT_MS }, () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(createProviderSession).mockResolvedValue({
