@@ -36,7 +36,7 @@ Operational and product references:
 | QA | [insert-player-sandbox.pages.dev](https://insert-player-sandbox.pages.dev) | `https://insert-player-api-sandbox.shellbot.workers.dev` | Clerk Development, dedicated Stripe sandbox | Isolated sandbox D1/R2 |
 | Production | [insertplayer.ai](https://insertplayer.ai) | [api.insertplayer.ai](https://api.insertplayer.ai) | Clerk Production, dedicated Stripe live | Isolated production D1/R2 |
 
-Production serves the full app with Clerk Production, dedicated live Stripe configuration, and Cloudflare Workflow/Container generation. QA remains the environment for paid-provider generation and test Checkout. Promotion from `main` runs migrations, checks, Worker/Container deploy, Worker smoke, Pages deploy, and readiness. The current GitHub Cloudflare secret returns `7403` on the first production D1 call; replace it with a token for the exact SqaaS account that includes Worker Scripts, D1, R2, Pages, Containers, and Workflow deployment access.
+Production serves the full app with Clerk Production, dedicated live Stripe configuration, and Cloudflare Workflow/Container generation. QA remains the environment for paid-provider generation and test Checkout. Promotion from `main` runs migrations, checks, Worker/Container deploy, Worker smoke, Pages deploy, and readiness. The protected GitHub deployment succeeds with the current temporary Cloudflare OAuth credential, but exact zone-cache purge returns `401`; replace it with a long-lived token for the exact SqaaS account that includes Worker Scripts, D1, R2, Pages, Containers, Workflows, and Cache Purge access.
 
 Never point a local or QA build at production storage, Clerk, Stripe, or Worker secrets. Never install test Stripe credentials on the production Worker.
 
@@ -94,7 +94,7 @@ Run the full gate before requesting review or deploying:
 npm run check:production
 ```
 
-This includes frontend style guards, TypeScript, 253 tests across 49 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
+This includes frontend style guards, TypeScript, 282 tests across 56 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
 
 Useful focused commands:
 
@@ -153,6 +153,8 @@ npm run check:live-readiness
 npm run smoke:live
 ```
 
+Official Arcade roster generation is operator-only through the `Seed Arcade roster (production)` GitHub workflow. It restores the manifest-pinned source from private R2, verifies its exact SHA-256 hash, accepts only explicit `dry-run`, `seed`, `resume`, or `restart-draft` operations, and never activates a fighter automatically. Billable runs require the exact `GEMINI_ONLY_PRODUCTION` confirmation and fail closed unless the approved-provider guard can prove the production processor is Gemini-only before the first call.
+
 ## Architecture
 
 ```text
@@ -179,6 +181,7 @@ The browser never receives provider or Stripe secret keys. Provider calls requir
 ## Non-Negotiable Rules
 
 - Canonical side, upright, and crouch source views always use Gemini Pro, regardless of fighter tier.
+- Official Arcade roster seeding, regeneration, retries, and fallbacks are Gemini-only. Experimental image providers must never enter that runtime path; fail closed before the first provider call if isolation cannot be proved.
 - Preserve every generated version locally and in cloud storage. Upgrades and retries never delete paid assets.
 - Authenticated generation, upgrades, and retries must remain backend-owned durable jobs; a tab or network loss cannot cancel paid work.
 - Release a generation reservation only before the first external AI request. Commit the charge atomically with that first billable attempt; provider failure, timeout, or a result needing repair must never restore credits automatically.
