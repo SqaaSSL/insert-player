@@ -16,6 +16,7 @@ import {
 } from './providerCapacity';
 import { maxTier } from './tiers';
 import type { Env, Fighter, GenerationJob } from './types';
+import { stripTrailingSlashes } from './url';
 
 interface FighterGenerationParams {
   jobId: string;
@@ -142,7 +143,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     body: Record<string, unknown>,
   ): Promise<T> {
     if (!this.env.IMAGE_PROCESSOR) throw new Error('Image processor binding is unavailable');
-    const apiBaseUrl = this.env.GENERATION_API_BASE_URL?.trim().replace(/\/+$/, '');
+    const apiBaseUrl = stripTrailingSlashes(this.env.GENERATION_API_BASE_URL?.trim() ?? '');
     if (!apiBaseUrl || !/^https:\/\//i.test(apiBaseUrl)) {
       throw new Error('Generation API base URL is unavailable');
     }

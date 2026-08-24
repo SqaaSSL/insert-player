@@ -1,5 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 import type { AuthContext, Env, PublicAuthContext, User } from './types';
+import { stripTrailingSlashes } from './url';
 
 let cachedJwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 let cachedJwksUrl = '';
@@ -56,7 +57,7 @@ function getBearerToken(request: Request): string | null {
 }
 
 function getClerkIssuer(env: Env): string {
-  const issuer = env.CLERK_ISSUER?.replace(/\/+$/, '');
+  const issuer = stripTrailingSlashes(env.CLERK_ISSUER ?? '');
   if (!issuer) {
     throw new Error('CLERK_ISSUER is required');
   }
@@ -113,7 +114,7 @@ export function normalizeOptionalEmail(value: unknown): string | null {
 }
 
 function normalizeOrigin(value: string): string {
-  return value.trim().replace(/\/+$/, '');
+  return stripTrailingSlashes(value.trim());
 }
 
 function configuredAuthorizedParties(env: Env): string[] {

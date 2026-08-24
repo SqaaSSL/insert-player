@@ -21,6 +21,7 @@ import {
   RequestBodyTooLargeError,
 } from './requestBody';
 import { publicAppName } from './branding';
+import { stripTrailingSlashes } from './url';
 
 const FREE_ROOKIE_GENERATION_LIMIT = 1;
 const GENERATION_RESERVATION_TTL_HOURS = 12;
@@ -276,10 +277,10 @@ export async function releaseExpiredGenerationCharges(env: Env, userId: string):
 }
 
 function getClientBaseUrl(request: Request, env: Env): string {
-  const requestOrigin = request.headers.get('Origin')?.replace(/\/+$/, '') ?? '';
+  const requestOrigin = stripTrailingSlashes(request.headers.get('Origin') ?? '');
   const configured = env.CORS_ORIGIN
     ?.split(',')
-    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .map((origin) => stripTrailingSlashes(origin.trim()))
     .filter(Boolean) ?? [];
   if (requestOrigin && configured.includes(requestOrigin)) return requestOrigin;
   if (configured.length > 0) return configured[0];

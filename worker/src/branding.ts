@@ -1,4 +1,5 @@
 import type { Env } from './types';
+import { stripTrailingSlashes } from './url';
 
 const DEFAULT_PUBLIC_APP_NAME = 'Insert Player';
 const DEFAULT_SOCIAL_CARD_PATH = '/assets/social-card.png';
@@ -16,5 +17,6 @@ export function publicAppName(env: Env): string {
 export function publicSocialCardUrl(env: Env): string {
   const path = cleanPublicText(env.PUBLIC_SOCIAL_CARD_PATH, DEFAULT_SOCIAL_CARD_PATH);
   if (/^https:\/\//i.test(path)) return path;
-  return `${env.CORS_ORIGIN.split(',')[0]?.trim().replace(/\/+$/, '') || ''}${path.startsWith('/') ? path : `/${path}`}`;
+  const origin = stripTrailingSlashes(env.CORS_ORIGIN.split(',')[0]?.trim() ?? '');
+  return `${origin}${path.startsWith('/') ? path : `/${path}`}`;
 }
