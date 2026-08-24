@@ -26,6 +26,7 @@ jobs:
       ASF_LAUNCH_SMOKE_CLERK_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
       ASF_LAUNCH_SMOKE_PRIMARY_USER_ID: ${{ secrets.ASF_LAUNCH_SMOKE_PRIMARY_USER_ID }}
       ASF_LAUNCH_SMOKE_CLONE_USER_ID: ${{ secrets.ASF_LAUNCH_SMOKE_CLONE_USER_ID }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
 
     steps:
       - name: Check out repository

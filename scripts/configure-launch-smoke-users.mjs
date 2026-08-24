@@ -13,7 +13,7 @@ function normalizedOauthProvider(provider) {
   return String(provider ?? '').toLowerCase().replace(/^oauth_/, '');
 }
 
-export function validateLaunchSmokeConfigurationUser(user, role) {
+export function validateLaunchSmokeConfigurationUser(user, role, expectedAdminUserId) {
   if (!user || typeof user.id !== 'string' || !/^user_[A-Za-z0-9_-]+$/.test(user.id)) {
     throw new Error(`Production ${role} QA user could not be loaded from Clerk.`);
   }
@@ -21,10 +21,10 @@ export function validateLaunchSmokeConfigurationUser(user, role) {
     throw new Error(`Production ${role} QA user is banned or locked.`);
   }
   const metadata = user.privateMetadata ?? {};
-  if (role === 'primary' && metadata.insert_player_role !== 'admin') {
-    throw new Error('Production primary QA user must already have insert_player_role=admin in Clerk private metadata.');
+  if (role === 'primary' && user.id !== expectedAdminUserId) {
+    throw new Error('Production primary QA user does not match the pinned Arcade admin Clerk user.');
   }
-  if (role === 'clone' && metadata.insert_player_role === 'admin') {
+  if (role === 'clone' && (user.id === expectedAdminUserId || metadata.insert_player_role === 'admin')) {
     throw new Error('Production clone QA user must not have the Insert Player admin role.');
   }
   const verifiedProvider = (user.externalAccounts ?? []).find((account) => (
@@ -53,6 +53,7 @@ async function main() {
   }
   const primaryUserId = requiredEnv('ASF_LAUNCH_SMOKE_PRIMARY_USER_ID');
   const cloneUserId = requiredEnv('ASF_LAUNCH_SMOKE_CLONE_USER_ID');
+  const adminUserId = requiredEnv('ASF_ARCADE_ADMIN_CLERK_USER_ID');
   if (primaryUserId === cloneUserId) {
     throw new Error('Production launch smoke needs two different Clerk users.');
   }
@@ -62,12 +63,13 @@ async function main() {
     clerk.users.getUser(primaryUserId),
     clerk.users.getUser(cloneUserId),
   ]);
-  validateLaunchSmokeConfigurationUser(primaryUser, 'primary');
-  validateLaunchSmokeConfigurationUser(cloneUser, 'clone');
+  validateLaunchSmokeConfigurationUser(primaryUser, 'primary', adminUserId);
+  validateLaunchSmokeConfigurationUser(cloneUser, 'clone', adminUserId);
 
   const [updatedPrimary, updatedClone] = await Promise.all([
     clerk.users.updateUserMetadata(primaryUserId, {
       privateMetadata: {
+        insert_player_role: 'admin',
         insertPlayerLaunchSmokeQa: true,
         launchSmokeRole: 'primary',
       },

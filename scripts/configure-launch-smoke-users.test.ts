@@ -14,31 +14,37 @@ function oauthUser(role: 'primary' | 'clone') {
   };
 }
 
+const adminUserId = 'user_primary';
+
 describe('production launch-smoke user configuration guard', () => {
   it('accepts an existing admin primary and non-admin OAuth clone', () => {
-    expect(validateLaunchSmokeConfigurationUser(oauthUser('primary'), 'primary')).toBe('google');
-    expect(validateLaunchSmokeConfigurationUser(oauthUser('clone'), 'clone')).toBe('google');
+    expect(validateLaunchSmokeConfigurationUser(oauthUser('primary'), 'primary', adminUserId)).toBe('google');
+    expect(validateLaunchSmokeConfigurationUser(oauthUser('clone'), 'clone', adminUserId)).toBe('google');
   });
 
-  it('never invents the admin role or assigns an admin as clone', () => {
+  it('pins primary admin restoration to the separate Arcade admin secret', () => {
     expect(() => validateLaunchSmokeConfigurationUser({
       ...oauthUser('primary'),
       privateMetadata: {},
-    }, 'primary')).toThrow(/already have insert_player_role=admin/i);
+    }, 'primary', 'user_someone_else')).toThrow(/pinned Arcade admin/i);
+    expect(validateLaunchSmokeConfigurationUser({
+      ...oauthUser('primary'),
+      privateMetadata: {},
+    }, 'primary', adminUserId)).toBe('google');
     expect(() => validateLaunchSmokeConfigurationUser({
       ...oauthUser('clone'),
       privateMetadata: { insert_player_role: 'admin' },
-    }, 'clone')).toThrow(/must not have.*admin role/i);
+    }, 'clone', adminUserId)).toThrow(/must not have.*admin role/i);
   });
 
   it('rejects locked and non-OAuth users before any metadata write', () => {
     expect(() => validateLaunchSmokeConfigurationUser({
       ...oauthUser('primary'),
       locked: true,
-    }, 'primary')).toThrow(/banned or locked/i);
+    }, 'primary', adminUserId)).toThrow(/banned or locked/i);
     expect(() => validateLaunchSmokeConfigurationUser({
       ...oauthUser('clone'),
       externalAccounts: [{ provider: 'oauth_google', verification: { status: 'unverified' } }],
-    }, 'clone')).toThrow(/verified Google or Apple/i);
+    }, 'clone', adminUserId)).toThrow(/verified Google or Apple/i);
   });
 });
