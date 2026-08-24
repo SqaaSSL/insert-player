@@ -141,8 +141,18 @@ export function validateLaunchSmokeToken(token, {
 }) {
   const claims = decodeJwtPayload(token);
   if (claims.sub !== userId) throw new Error('Clerk launch-smoke token belongs to a different user.');
-  if (normalizedOrigin(String(claims.azp ?? '')) !== normalizedOrigin(frontendOrigin)) {
-    throw new Error('Clerk launch-smoke token is missing the expected authorized party.');
+  const authorizedParty = normalizedOrigin(String(claims.azp ?? ''));
+  if (!authorizedParty) {
+    throw new Error('Clerk launch-smoke token is missing its authorized-party claim.');
+  }
+  if (authorizedParty !== normalizedOrigin(frontendOrigin)) {
+    let receivedHost = 'invalid-origin';
+    try {
+      receivedHost = new URL(authorizedParty).hostname || receivedHost;
+    } catch {
+      // Keep malformed claims out of diagnostics while still failing closed.
+    }
+    throw new Error(`Clerk launch-smoke token has an unexpected authorized-party host (${receivedHost}).`);
   }
   if (normalizedOrigin(String(claims.iss ?? '')) !== normalizedOrigin(clerkIssuer)) {
     throw new Error('Clerk launch-smoke token has the wrong issuer.');
