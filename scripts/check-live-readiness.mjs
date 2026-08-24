@@ -671,6 +671,22 @@ function assertRemoteD1Schema() {
     fail(`Remote D1 database ${databaseName} is missing migration 0017 provider cost events.\n${costOutput}`);
   }
 
+  const zeroCostEvents = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    `SELECT CASE WHEN sql LIKE '%estimated_cost_cents INTEGER NOT NULL CHECK (estimated_cost_cents >= 0)%'
+      THEN 1 ELSE 0 END AS zero_cost_enabled
+     FROM sqlite_master WHERE type = 'table' AND name = 'provider_cost_events';`,
+  ], workerDir);
+  const zeroCostOutput = `${zeroCostEvents.stdout ?? ''}${zeroCostEvents.stderr ?? ''}`.trim();
+  if (zeroCostEvents.status !== 0 || !zeroCostOutput.includes('"zero_cost_enabled": 1')) {
+    fail(`Remote D1 database ${databaseName} is missing migration 0026 zero-cost not-dispatched events.\n${zeroCostOutput}`);
+  }
+
   const meterkeyCapacity = run(npx, [
     'wrangler',
     'd1',

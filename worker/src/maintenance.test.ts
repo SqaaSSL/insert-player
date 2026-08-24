@@ -11,6 +11,7 @@ describe('operational data retention', () => {
         return {
           bind() { return this; },
           async all() { return { results: [] }; },
+          async run() { return { success: true }; },
         };
       },
       async batch() {
@@ -39,11 +40,17 @@ describe('operational data retention', () => {
     expect(statements.some((sql) => sql.startsWith('DELETE FROM community_reports'))).toBe(true);
 
     const combined = statements.join('\n');
+    const reconciliationQueryIndex = statements.findIndex((sql) => (
+      sql.includes('FROM provider_cost_events cost_event')
+    ));
+    const jobPurgeIndex = statements.findIndex((sql) => sql.startsWith('DELETE FROM generation_jobs'));
+    expect(reconciliationQueryIndex).toBeGreaterThanOrEqual(0);
+    expect(reconciliationQueryIndex).toBeLessThan(jobPurgeIndex);
     expect(combined).not.toContain('fighters');
     expect(combined).not.toContain('sprites');
     expect(combined).not.toContain('credit_ledger');
     expect(combined).not.toContain('clerk_user_tombstones');
-    expect(combined).not.toContain('provider_cost_events');
+    expect(statements.some((sql) => sql.startsWith('DELETE FROM provider_cost_events'))).toBe(false);
     expect(combined).not.toContain('users');
   });
 });

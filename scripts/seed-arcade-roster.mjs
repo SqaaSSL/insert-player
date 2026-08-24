@@ -58,6 +58,7 @@ const LICENSED_REFERENCE_PROMPT = /\blicensed reference photo\b|\bperson in (?:t
 const IDENTITY_ERASING_PROMPT = /\bwritten description only\b|\b(?:new|own) clearly synthetic face\b/i;
 const APPROVED_ARCADE_PROVIDER_CONTRACT = {
   schemaVersion: 1,
+  processorRuntimeRevision: 'meterkey-transport-v1',
   allowedGenerationProviders: ['gemini'],
   sourceModels: {
     side: 'gemini-3-pro-image',
@@ -79,6 +80,7 @@ export function assertApprovedArcadeGenerationContract(payload) {
   const approved = payload?.ready === true
     && payload?.runtime === 'canvas-skia'
     && contract?.schemaVersion === expected.schemaVersion
+    && contract?.processorRuntimeRevision === expected.processorRuntimeRevision
     && Array.isArray(providers)
     && providers.length === 1
     && providers[0] === expected.allowedGenerationProviders[0]
@@ -894,7 +896,8 @@ async function main() {
     || defaultBaseUrl
   ).replace(/\/+$/, '');
   const staticToken = envValue(env, 'ASF_ARCADE_ADMIN_JWT') || envValue(env, 'ASF_CLERK_JWT');
-  const clerkSecretKey = envValue(env, 'ASF_ARCADE_CLERK_SECRET_KEY');
+  const clerkSecretKey = envValue(env, 'ASF_ARCADE_CLERK_SECRET_KEY')
+    || (preflightOnly ? envValue(env, 'ASF_ARCADE_PREFLIGHT_KEY') : '');
   const clerkUserId = envValue(env, 'ASF_ARCADE_ADMIN_CLERK_USER_ID');
   if (Boolean(clerkSecretKey) !== Boolean(clerkUserId)) {
     throw new Error('Set both ASF_ARCADE_CLERK_SECRET_KEY and ASF_ARCADE_ADMIN_CLERK_USER_ID.');

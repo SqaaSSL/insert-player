@@ -454,6 +454,7 @@ function assertApiOperationsAreSessionScoped() {
   const providerSpendMigration = readFileSync(join(root, 'worker/migrations/0014_provider_spend_budgets.sql'), 'utf8');
   const providerSpendRateMigration = readFileSync(join(root, 'worker/migrations/0016_provider_spend_rate_window.sql'), 'utf8');
   const providerCostEventsMigration = readFileSync(join(root, 'worker/migrations/0017_provider_cost_events.sql'), 'utf8');
+  const zeroCostEventsMigration = readFileSync(join(root, 'worker/migrations/0026_zero_cost_not_dispatched_events.sql'), 'utf8');
   const geminiPolicy = readFileSync(join(root, 'src/services/GeminiRequestPolicy.ts'), 'utf8');
   const geminiPolicyTests = readFileSync(join(root, 'src/services/GeminiRequestPolicy.test.ts'), 'utf8');
   const productionWrangler = readFileSync(join(root, 'worker/wrangler.toml'), 'utf8');
@@ -483,6 +484,7 @@ function assertApiOperationsAreSessionScoped() {
     'INSERT INTO provider_spend_months',
     'ON CONFLICT(period) DO UPDATE SET',
     'provider_cost_events',
+    'estimated_cost_cents >= 0',
     'billing_operation',
     'export async function finalizeProviderRequest',
     "SET status = 'committed', updated_at = datetime('now')",
@@ -507,7 +509,8 @@ function assertApiOperationsAreSessionScoped() {
     'provider_global_spend_rate',
   ];
   const combined = `${apiClient}\n${apiClientTests}\n${createPage}\n${galleryPage}\n${cloudFighters}\n${gemini}\n${geminiPolicy}\n${geminiPolicyTests}\n${providerSessions}\n${providerSessionTests}\n${providerSessionIntegrationTests}\n${providerSpendMigration}\n${providerSpendRateMigration}\n${providerCostEventsMigration}\n${productionWrangler}\n${sandboxWrangler}`;
-  const missing = required.filter((snippet) => !combined.includes(snippet));
+  const migrationCombined = `${combined}\n${zeroCostEventsMigration}`;
+  const missing = required.filter((snippet) => !migrationCombined.includes(snippet));
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
   if (missing.length > 0 || foundForbidden.length > 0) {
     throw new Error([
@@ -691,7 +694,9 @@ function assertLiveConfigHelperIsWired() {
     'CLERK_ISSUER',
     'must be an HTTPS Clerk issuer URL',
     "spawnSync(npx, ['wrangler', 'secret', 'put', key]",
-    "'wrangler',\n      'deploy',\n      '--keep-vars',\n      '--strict',\n      '--secrets-file'",
+    "'--no-install',\n      'wrangler',\n      'deploy',\n      '--keep-vars',\n      '--strict'",
+    "'--containers-rollout',\n      'immediate'",
+    "args.has('--dry-run-worker-deploy')",
     'mkdtempSync',
     'rmSync(tempDirectory, { recursive: true, force: true })',
     'SECRET_PUT_TIMEOUT_MS',
@@ -2130,6 +2135,11 @@ function replayMigrations() {
     '.read worker/migrations/0019_durable_retry_jobs.sql',
     '.read worker/migrations/0020_official_arcade.sql',
     '.read worker/migrations/0021_arcade_generation_prompts.sql',
+    '.read worker/migrations/0022_provider_capacity_windows.sql',
+    '.read worker/migrations/0023_durable_artifact_resume.sql',
+    '.read worker/migrations/0024_durable_asset_deletions.sql',
+    '.read worker/migrations/0025_meterkey_capacity_windows.sql',
+    '.read worker/migrations/0026_zero_cost_not_dispatched_events.sql',
     'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters");',
   ];
   try {
@@ -3403,13 +3413,26 @@ function assertGithubActionsAreWired() {
       'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
     ],
     production: [
-      'group: deploy-production',
+      'group: production-worker-mutations',
       'cancel-in-progress: false',
       'name: production',
       'BRAND_CLEARANCE_JSON',
       'ASF_BRAND_CLEARANCE_FILE=$ASF_BRAND_CLEARANCE_FILE" >> "$GITHUB_ENV',
+      'npm run check:meterkey-auth',
+      'ASF_METERKEY_EXPECTED_KEY_ID:',
+      'ASF_METERKEY_EXPECTED_USER_ID:',
+      'ASF_METERKEY_EXPECTED_WALLET_ID:',
+      'ASF_METERKEY_MIN_AVAILABLE_UC:',
+      'ASF_METERKEY_EXPECTED_PER_REQUEST_CAP_UC:',
+      'node scripts/worker-version-rollout.mjs guard-full',
+      'node scripts/apply-live-config.mjs --skip-production-check --dry-run-worker-deploy',
       'npm --prefix worker run db:migrate',
+      'node scripts/check-generation-idle.mjs',
       'node scripts/apply-live-config.mjs --skip-production-check --deploy-worker',
+      'ASF_EXPECTED_WORKER_VERSION_TAG:',
+      'ASF_ARCADE_PREFLIGHT_KEY:',
+      '--preflight-only',
+      'node scripts/worker-version-rollout.mjs rollback',
       'npm run smoke:live',
       'npm run deploy:frontend',
       'npm run check:live-readiness',

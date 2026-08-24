@@ -60,11 +60,13 @@ export interface CreatedProviderSession {
   providerCostLimitCents: number;
 }
 
-interface ProviderSpendReservation {
+export interface ProviderSpendReservation {
   sessionId: string;
   estimatedCostCents: number;
   monthlyPeriod: string;
-  eventId: string | null;
+  eventId: string;
+  chargeId: string | null;
+  userId: string | null;
 }
 
 const SESSION_TTL_HOURS = 12;
@@ -960,7 +962,7 @@ async function recordMonthlyProviderSpend(
 
 async function releaseUnstartedProviderReservation(
   env: Env,
-  reservation: Omit<ProviderSpendReservation, 'monthlyPeriod' | 'eventId'> & {
+  reservation: Pick<ProviderSpendReservation, 'sessionId' | 'estimatedCostCents'> & {
     monthlyPeriod?: string | null;
   },
 ): Promise<void> {
@@ -990,6 +992,14 @@ async function finalizeNotDispatchedProviderReservation(
   reservation: ProviderSpendReservation,
   providerStatus: number,
 ): Promise<void> {
+  const reservedEvent = `
+    SELECT 1
+    FROM provider_cost_events
+    WHERE id = ? AND session_id = ? AND outcome = 'reserved'
+      AND estimated_cost_cents = ?
+  `;
+  // Every rollback is guarded by the still-reserved event. The charge update
+  // excludes that event because the final statement zeroes it in this batch.
   const statements = [
     env.DB.prepare(`
       UPDATE provider_sessions
@@ -997,27 +1007,88 @@ async function finalizeNotDispatchedProviderReservation(
           provider_cost_used_cents = MAX(0, provider_cost_used_cents - ?),
           updated_at = datetime('now')
       WHERE id = ?
-    `).bind(reservation.estimatedCostCents, reservation.sessionId),
+        AND EXISTS (${reservedEvent})
+    `).bind(
+      reservation.estimatedCostCents,
+      reservation.sessionId,
+      reservation.eventId,
+      reservation.sessionId,
+      reservation.estimatedCostCents,
+    ),
     env.DB.prepare(`
       UPDATE provider_spend_months
       SET estimated_cost_cents = MAX(0, estimated_cost_cents - ?),
           provider_calls = MAX(0, provider_calls - 1),
           updated_at = datetime('now')
       WHERE period = ?
-    `).bind(reservation.estimatedCostCents, reservation.monthlyPeriod),
+        AND EXISTS (${reservedEvent})
+    `).bind(
+      reservation.estimatedCostCents,
+      reservation.monthlyPeriod,
+      reservation.eventId,
+      reservation.sessionId,
+      reservation.estimatedCostCents,
+    ),
   ];
-  if (reservation.eventId) {
+  if (reservation.chargeId && reservation.userId) {
     statements.push(env.DB.prepare(`
-      UPDATE provider_cost_events
-      SET outcome = 'failed',
-          upstream_outcome = 'not_dispatched',
-          http_status = ?,
-          estimated_cost_cents = 0,
-          finalized_at = datetime('now')
-      WHERE id = ? AND outcome = 'reserved'
-    `).bind(providerStatus, reservation.eventId));
+      UPDATE generation_charges
+      SET status = 'reserved', updated_at = datetime('now')
+      WHERE id = ? AND user_id = ? AND status = 'committed'
+        AND EXISTS (
+          SELECT 1 FROM provider_cost_events
+          WHERE id = ? AND session_id = ? AND charge_id = ?
+            AND outcome = 'reserved' AND estimated_cost_cents = ?
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM provider_cost_events
+          WHERE charge_id = ? AND id <> ? AND estimated_cost_cents > 0
+        )
+    `).bind(
+      reservation.chargeId,
+      reservation.userId,
+      reservation.eventId,
+      reservation.sessionId,
+      reservation.chargeId,
+      reservation.estimatedCostCents,
+      reservation.chargeId,
+      reservation.eventId,
+    ));
   }
+  statements.push(env.DB.prepare(`
+    UPDATE provider_cost_events
+    SET outcome = 'failed',
+        upstream_outcome = 'not_dispatched',
+        http_status = ?,
+        estimated_cost_cents = 0,
+        finalized_at = datetime('now')
+    WHERE id = ? AND session_id = ? AND outcome = 'reserved'
+      AND estimated_cost_cents = ?
+  `).bind(
+    providerStatus,
+    reservation.eventId,
+    reservation.sessionId,
+    reservation.estimatedCostCents,
+  ));
   await env.DB.batch(statements);
+}
+
+export async function reconcileNotDispatchedProviderReservation(
+  env: Env,
+  reservation: ProviderSpendReservation,
+  providerStatus: number,
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      await finalizeNotDispatchedProviderReservation(env, reservation, providerStatus);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw lastError;
 }
 
 export async function finalizeProviderRequest(
@@ -1035,6 +1106,44 @@ export async function finalizeProviderRequest(
       : providerSucceeded
         ? 'http_succeeded'
         : 'http_failed';
+  const reservation = state.spendReservation;
+  state.spendReservation = null;
+  if (reservation && upstreamOutcome === 'not_dispatched') {
+    try {
+      await reconcileNotDispatchedProviderReservation(env, reservation, providerStatus);
+    } catch (error) {
+      // Keep the request-cache claim pending. A retry therefore fails closed
+      // instead of reserving a second charge while reconciliation is unknown.
+      console.error('[provider] Failed to release a provider request that was not dispatched', error);
+      const eventMarker = `(provider_request_not_dispatched:${reservation.eventId})`;
+      try {
+        // Persist exact-event proof independently of the failed accounting
+        // batch. If this write also fails, the marker is carried through the
+        // Processor and durable job event for maintenance to correlate later.
+        await env.DB.prepare(`
+          UPDATE provider_cost_events
+          SET upstream_outcome = 'not_dispatched', http_status = ?
+          WHERE id = ? AND session_id = ? AND outcome = 'reserved'
+            AND estimated_cost_cents = ?
+        `).bind(
+          providerStatus,
+          reservation.eventId,
+          reservation.sessionId,
+          reservation.estimatedCostCents,
+        ).run();
+      } catch (markerError) {
+        console.error('[provider] Failed to persist exact not-dispatched event proof', markerError);
+      }
+      return json({
+        error: `${eventMarker} Provider dispatch was blocked, but its local accounting could not be reconciled safely`,
+        code: 'provider_not_dispatched_reconciliation_failed',
+        providerCostEventId: reservation.eventId,
+      }, 503, {
+        'Retry-After': '5',
+        'X-Insert-Player-Upstream-Outcome': 'not-dispatched',
+      });
+    }
+  }
   let clientResponse = response;
   try {
     clientResponse = await finalizeProviderRequestCache(env, response, state);
@@ -1042,17 +1151,8 @@ export async function finalizeProviderRequest(
     console.error('[provider] Failed to persist idempotent provider response', error);
     clientResponse = json({ error: 'Provider response could not be persisted safely' }, 502);
   }
-  const reservation = state.spendReservation;
-  state.spendReservation = null;
   if (!reservation) return clientResponse;
-  if (upstreamOutcome === 'not_dispatched') {
-    try {
-      await finalizeNotDispatchedProviderReservation(env, reservation, providerStatus);
-    } catch (error) {
-      console.error('[provider] Failed to release a provider request that was not dispatched', error);
-    }
-    return clientResponse;
-  }
+  if (upstreamOutcome === 'not_dispatched') return clientResponse;
   if (providerSucceeded) {
     try {
       await env.DB.prepare(`
@@ -1310,6 +1410,8 @@ export async function requireProviderSession(
       estimatedCostCents,
       monthlyPeriod,
       eventId,
+      chargeId: existing.charge_id ?? null,
+      userId: auth.userId ?? null,
     };
     return null;
   }

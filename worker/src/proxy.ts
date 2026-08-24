@@ -192,6 +192,7 @@ export async function proxyRequest(
   extraHeaders: Record<string, string>,
   maxRequestBytes: number,
   maxResponseBytes = 32 * 1024 * 1024,
+  upstreamOutcomePolicy: 'standard' | 'meterkey' = 'standard',
 ): Promise<Response> {
   const headers = new Headers(extraHeaders);
   const contentType = request.headers.get('Content-Type');
@@ -241,7 +242,11 @@ export async function proxyRequest(
       ? 'unknown'
       : meterkeyOutcome === 'not-dispatched'
         ? 'not-dispatched'
-        : 'received',
+        : meterkeyOutcome === 'received'
+          ? 'received'
+          : upstreamOutcomePolicy === 'meterkey'
+            ? 'unknown'
+            : 'received',
   );
   const boundedBody = upstream.body
     ? createBoundedByteStream(upstream.body, maxResponseBytes)
@@ -684,6 +689,7 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       upstream.headers,
       PROVIDER_REQUEST_BODY_LIMITS.gemini,
       PROVIDER_RESPONSE_BODY_LIMITS.gemini,
+      upstream.transport === 'meterkey' ? 'meterkey' : 'standard',
     );
     const finalized = await finalizeProviderRequest(env, response, providerState);
     finalized.headers.set('X-Insert-Player-Gemini-Transport', upstream.transport);

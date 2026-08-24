@@ -234,6 +234,13 @@ function healthResponse(env: Env): Response {
   return json({
     status: 'ok',
     version: '0.19.0',
+    workerVersionId: env.WORKER_VERSION_METADATA?.id ?? null,
+    workerVersion: env.WORKER_VERSION_METADATA
+      ? {
+          id: env.WORKER_VERSION_METADATA.id,
+          tag: env.WORKER_VERSION_METADATA.tag || null,
+        }
+      : null,
     legalVersion: CURRENT_LEGAL_VERSION,
     environment: env.ENVIRONMENT ?? 'unknown',
     cors: env.CORS_ORIGIN ? 'configured' : 'wildcard',
