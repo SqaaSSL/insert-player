@@ -88,6 +88,7 @@ export interface CloudRosterSyncSummary {
   imported: number;
   updated: number;
   skipped: number;
+  drafts: number;
   failed: number;
 }
 
@@ -294,6 +295,25 @@ export function selectPlayableCloudSprites(sprites: CloudSprite[]): CloudSprite[
     }
   }
   return Array.from(bestByAnimation.values());
+}
+
+export function isSourceOnlyCloudFighter(fighter: CloudFighter): boolean {
+  return fighter.sprites.length === 0 && (fighter.spriteVersions?.length ?? 0) === 0;
+}
+
+export function formatCloudRosterSyncStatus(
+  summary: Pick<CloudRosterSyncSummary, 'imported' | 'updated' | 'drafts' | 'failed'>,
+): string | null {
+  if (summary.failed > 0) {
+    return `Cloud sync incomplete: ${summary.failed} fighter${summary.failed === 1 ? '' : 's'} could not be downloaded`;
+  }
+  if (summary.imported > 0 || summary.updated > 0) {
+    return `Cloud synced: ${summary.imported} imported, ${summary.updated} updated`;
+  }
+  if (summary.drafts > 0) {
+    return `${summary.drafts} unfinished fighter${summary.drafts === 1 ? ' is' : 's are'} safely stored for regeneration`;
+  }
+  return null;
 }
 
 function cloudSpritesForImport(
@@ -1074,6 +1094,7 @@ export async function syncCloudFightersToLocal(
     imported: 0,
     updated: 0,
     skipped: 0,
+    drafts: 0,
     failed: 0,
   };
   const archiveCandidates: CloudFighter[] = [];
@@ -1088,6 +1109,10 @@ export async function syncCloudFightersToLocal(
     try {
       const detailed = await getCloudFighter(fighter.id, requestContext);
       const manifest = detailed ?? fighter;
+      if (isSourceOnlyCloudFighter(manifest)) {
+        summary.drafts += 1;
+        continue;
+      }
       await downloadCloudFighterToLocal(manifest, requestContext, {
         includeArchivedVersions: false,
         includeRawAssets: false,

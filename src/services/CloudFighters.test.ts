@@ -3,6 +3,8 @@ import {
   arcadeFighterPhotoHash,
   buildSpriteDownloadPlan,
   buildSpriteUploadPlan,
+  formatCloudRosterSyncStatus,
+  isSourceOnlyCloudFighter,
   selectPlayableCloudSprites,
   shouldRefreshLocalFighter,
   type CloudSprite,
@@ -196,6 +198,50 @@ describe('selectPlayableCloudSprites', () => {
     };
 
     expect(selectPlayableCloudSprites([older, newer])).toEqual([newer]);
+  });
+});
+
+describe('cloud roster sync status', () => {
+  const fighter = {
+    id: 'fighter-cloud',
+    name: 'Nova QA',
+    photoHash: 'fighter-hash',
+    qualityTier: 'champion' as const,
+    public: false,
+    sources: {},
+    sprites: [],
+  };
+
+  it('recognizes a preserved source-only fighter as an unfinished draft', () => {
+    expect(isSourceOnlyCloudFighter(fighter)).toBe(true);
+    expect(isSourceOnlyCloudFighter({
+      ...fighter,
+      spriteVersions: [{ ...cloudSprite('archived'), animationName: 'idle' }],
+    })).toBe(false);
+  });
+
+  it('reports unfinished fighters without presenting them as download failures', () => {
+    expect(formatCloudRosterSyncStatus({
+      imported: 0,
+      updated: 0,
+      drafts: 7,
+      failed: 0,
+    })).toBe('7 unfinished fighters are safely stored for regeneration');
+  });
+
+  it('keeps real download failures and successful imports higher priority', () => {
+    expect(formatCloudRosterSyncStatus({
+      imported: 0,
+      updated: 0,
+      drafts: 7,
+      failed: 1,
+    })).toBe('Cloud sync incomplete: 1 fighter could not be downloaded');
+    expect(formatCloudRosterSyncStatus({
+      imported: 2,
+      updated: 1,
+      drafts: 7,
+      failed: 0,
+    })).toBe('Cloud synced: 2 imported, 1 updated');
   });
 });
 
