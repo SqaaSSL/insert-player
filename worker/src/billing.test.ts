@@ -43,6 +43,7 @@ const env = {
   } as unknown as D1Database,
   ENVIRONMENT: 'production',
   CORS_ORIGIN: 'https://insertplayer.ai',
+  PUBLIC_APP_NAME: 'Insert Player',
   STRIPE_SECRET_KEY: 'sk_live_insert_player',
   STRIPE_WEBHOOK_SECRET: 'whsec_insert_player',
   STRIPE_ACCOUNT_ID: 'acct_insertplayer',
@@ -193,6 +194,38 @@ describe('Stripe checkout hardening', () => {
         body: JSON.stringify({ packId: 'starter', legal: checkoutLegal }),
       },
     ), env, auth);
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: 'Credit checkout is temporarily unavailable while billing setup is being completed.',
+    });
+    expect(stripeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('validates the Stripe business profile against the configured public brand', async () => {
+    const stripeFetch = vi.fn(async (input: string | URL | Request) => {
+      expect(String(input)).toMatch(/\/v1\/account$/);
+      return Response.json({
+        id: 'acct_insertplayer',
+        details_submitted: true,
+        charges_enabled: true,
+        business_profile: {
+          name: 'Insert Player',
+          url: 'https://insertplayer.ai',
+          support_url: 'https://insertplayer.ai/support',
+        },
+      });
+    });
+    vi.stubGlobal('fetch', stripeFetch);
+
+    const response = await createCreditCheckoutSession(new Request(
+      'https://api.insertplayer.ai/api/billing/checkout',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packId: 'starter', legal: checkoutLegal }),
+      },
+    ), { ...env, PUBLIC_APP_NAME: 'A Different Arcade' }, auth);
 
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({

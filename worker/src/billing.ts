@@ -20,6 +20,7 @@ import {
   readRequestText,
   RequestBodyTooLargeError,
 } from './requestBody';
+import { publicAppName } from './branding';
 
 const FREE_ROOKIE_GENERATION_LIMIT = 1;
 const GENERATION_RESERVATION_TTL_HOURS = 12;
@@ -371,14 +372,15 @@ async function verifyStripeCheckoutConfiguration(env: Env, pack: CreditPack): Pr
       url?: string | null;
     };
   };
+  const appName = publicAppName(env);
   if (!res.ok || body.id !== env.STRIPE_ACCOUNT_ID) {
-    throw new Error('Stripe credentials do not match the configured Insert Player account');
+    throw new Error(`Stripe credentials do not match the configured ${appName} account`);
   }
   const profile = body.business_profile;
   if (
     body.details_submitted !== true ||
     body.charges_enabled !== true ||
-    !String(profile?.name ?? '').toLowerCase().includes('insert player') ||
+    !String(profile?.name ?? '').toLowerCase().includes(appName.toLowerCase()) ||
     !isHttpsUrl(profile?.url) ||
     !(
       isHttpsUrl(profile?.support_url) ||
