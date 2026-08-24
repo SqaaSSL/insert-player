@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { decodeJwtPayload, validateLaunchSmokeToken } from './smoke-launch-auth.mjs';
+import {
+  buildSmokeUserParams,
+  decodeJwtPayload,
+  formatSmokeError,
+  redactSmokeDiagnostic,
+  validateLaunchSmokeToken,
+} from './smoke-launch-auth.mjs';
 
 function tokenWith(payload: Record<string, unknown>): string {
   return `header.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`;
@@ -71,5 +77,53 @@ describe('automated Clerk launch-smoke token guard', () => {
       minRemainingSeconds: 60,
       nowMs,
     })).toThrow(/expires too soon/i);
+  });
+});
+
+describe('automated Clerk launch-smoke user creation', () => {
+  it('creates a social-only technical user without disabled identifiers', () => {
+    const params = buildSmokeUserParams('run-123', 'primary');
+    expect(params).toEqual({
+      externalId: 'insert-player-launch-smoke:run-123:primary',
+      privateMetadata: {
+        insertPlayerLaunchSmoke: true,
+        launchSmokeRunId: 'run-123',
+        launchSmokeRole: 'primary',
+      },
+    });
+    expect(params).not.toHaveProperty('emailAddress');
+    expect(params).not.toHaveProperty('password');
+    expect(params).not.toHaveProperty('skipLegalChecks');
+  });
+
+  it('reports actionable Clerk codes while redacting sensitive values', () => {
+    const diagnostic = formatSmokeError({
+      status: 422,
+      clerkTraceId: 'trace_safe123',
+      errors: [{
+        code: 'form_param_value_invalid',
+        message: 'Invalid identifier',
+        longMessage: 'Rejected person@example.com for user_secret123; see https://clerk.example/tasks/task_secret456?ticket=abc',
+      }],
+    });
+    expect(diagnostic).toContain('Clerk API HTTP 422');
+    expect(diagnostic).toContain('form_param_value_invalid');
+    expect(diagnostic).toContain('trace_safe123');
+    expect(diagnostic).not.toContain('person@example.com');
+    expect(diagnostic).not.toContain('user_secret123');
+    expect(diagnostic).not.toContain('https://');
+    expect(diagnostic).not.toContain('task_secret456');
+  });
+
+  it('redacts API keys, bearer tokens, JWTs, and multiline output', () => {
+    const diagnostic = redactSmokeDiagnostic([
+      'sk_live_secret123',
+      'Bearer opaque.token-value',
+      'eyJheader.eyJpayload.signature',
+      'second@example.com',
+    ].join('\n'));
+    expect(diagnostic).toBe(
+      '[redacted-api-key] Bearer [redacted-token] [redacted-jwt] [redacted-email]',
+    );
   });
 });

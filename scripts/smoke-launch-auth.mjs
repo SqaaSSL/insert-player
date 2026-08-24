@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createClerkClient } from '@clerk/backend';
+import { isClerkAPIResponseError } from '@clerk/backend/errors';
 import { chromium } from 'playwright';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -13,6 +14,48 @@ const TOKEN_TTL_SECONDS = 10 * 60;
 const BROWSER_TIMEOUT_MS = 90_000;
 const TOMBSTONE_TIMEOUT_MS = 90_000;
 const LIVE_SMOKE_TIMEOUT_MS = 10 * 60 * 1000;
+const MAX_DIAGNOSTIC_LENGTH = 1_200;
+
+export function redactSmokeDiagnostic(value) {
+  return String(value ?? '')
+    .replace(/\b(?:sk|pk)_(?:live|test)_[A-Za-z0-9_-]+\b/g, '[redacted-api-key]')
+    .replace(/\bBearer\s+[A-Za-z0-9._~-]+/gi, 'Bearer [redacted-token]')
+    .replace(/\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[redacted-jwt]')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]')
+    .replace(/\b(?:user|sess|session|agent_task|task)_[A-Za-z0-9_-]+\b/gi, '[redacted-id]')
+    .replace(/https?:\/\/[^\s<>()]+/gi, '[redacted-url]')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_DIAGNOSTIC_LENGTH);
+}
+
+function hasClerkApiErrorShape(error) {
+  return Boolean(
+    error
+    && typeof error === 'object'
+    && Number.isInteger(error.status)
+    && Array.isArray(error.errors),
+  );
+}
+
+export function formatSmokeError(error) {
+  if (isClerkAPIResponseError(error) || hasClerkApiErrorShape(error)) {
+    const details = error.errors
+      .map((entry) => {
+        const code = typeof entry?.code === 'string' ? entry.code : 'unknown_error';
+        const message = entry?.longMessage || entry?.message || 'No Clerk error detail was returned.';
+        return `${code}: ${message}`;
+      })
+      .join('; ');
+    const trace = typeof error.clerkTraceId === 'string' && error.clerkTraceId
+      ? ` (Clerk trace ${error.clerkTraceId})`
+      : '';
+    return redactSmokeDiagnostic(`Clerk API HTTP ${error.status}: ${details}${trace}`);
+  }
+  if (error instanceof Error) return redactSmokeDiagnostic(error.message);
+  return redactSmokeDiagnostic(error);
+}
 
 function parseEnvText(text, values) {
   for (const line of text.split(/\r?\n/)) {
@@ -138,20 +181,24 @@ function launchSmokeRunId() {
   return candidate.slice(0, 80);
 }
 
-async function createSmokeUser(clerk, runId, role) {
-  return clerk.users.createUser({
+export function buildSmokeUserParams(runId, role) {
+  return {
     externalId: `insert-player-launch-smoke:${runId}:${role}`,
-    emailAddress: [`insert-player-launch-smoke+${runId}-${role}@example.com`],
-    firstName: 'Launch Smoke',
-    lastName: role === 'primary' ? 'Primary' : 'Clone',
-    legalAcceptedAt: new Date(),
-    skipPasswordRequirement: true,
     privateMetadata: {
       insertPlayerLaunchSmoke: true,
       launchSmokeRunId: runId,
       launchSmokeRole: role,
     },
-  });
+  };
+}
+
+async function createSmokeUser(clerk, runId, role) {
+  try {
+    // Production is social-only, so do not submit identifiers disabled in Clerk's user model.
+    return await clerk.users.createUser(buildSmokeUserParams(runId, role));
+  } catch (error) {
+    throw new Error(`Could not create the ephemeral ${role} Clerk user: ${formatSmokeError(error)}`);
+  }
 }
 
 async function createBrowserBackedToken({
@@ -380,9 +427,9 @@ if (import.meta.url === invokedPath) {
   main().catch((err) => {
     if (err instanceof AggregateError) {
       console.error(err.message);
-      for (const cause of err.errors) console.error(`- ${cause instanceof Error ? cause.message : String(cause)}`);
+      for (const cause of err.errors) console.error(`- ${formatSmokeError(cause)}`);
     } else {
-      console.error(err instanceof Error ? err.message : String(err));
+      console.error(formatSmokeError(err));
     }
     process.exit(1);
   });
