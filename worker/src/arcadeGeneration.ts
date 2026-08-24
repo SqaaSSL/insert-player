@@ -79,26 +79,50 @@ export async function readAdminArcadeGenerationContract(
 ): Promise<Response> {
   if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
   if (!env.IMAGE_PROCESSOR) {
-    return json({ error: 'Image processor binding is unavailable' }, 503);
+    return json({
+      error: 'Image processor binding is unavailable',
+      reason: 'processor_binding_unavailable',
+    }, 503);
   }
 
   try {
     const processor = env.IMAGE_PROCESSOR.getByName('official-arcade-provider-contract-v1');
     const response = await processor.fetch(new Request('http://image-processor/health'));
     if (!response.ok) {
-      return json({ error: 'Image processor health check failed' }, 503);
+      return json({
+        error: 'Image processor health check failed',
+        reason: 'processor_health_http_failed',
+        upstreamStatus: response.status,
+      }, 503);
     }
     const payload = await response.json<{
       status?: unknown;
       runtime?: unknown;
       imageProviderContract?: unknown;
     }>();
-    if (
-      payload.status !== 'ok'
-      || payload.runtime !== 'canvas-skia'
-      || !isOfficialArcadeImageProviderContract(payload.imageProviderContract)
-    ) {
-      return json({ error: 'Image processor provider contract is not approved' }, 503);
+    if (payload.status !== 'ok') {
+      return json({
+        error: 'Image processor health status is not approved',
+        reason: 'processor_health_status_unapproved',
+      }, 503);
+    }
+    if (payload.runtime !== 'canvas-skia') {
+      return json({
+        error: 'Image processor runtime is not approved',
+        reason: 'processor_runtime_unapproved',
+      }, 503);
+    }
+    if (payload.imageProviderContract == null) {
+      return json({
+        error: 'Image processor provider contract is missing',
+        reason: 'processor_contract_missing',
+      }, 503);
+    }
+    if (!isOfficialArcadeImageProviderContract(payload.imageProviderContract)) {
+      return json({
+        error: 'Image processor provider contract is not approved',
+        reason: 'processor_contract_unapproved',
+      }, 503);
     }
     return json({
       ready: true,
@@ -106,7 +130,10 @@ export async function readAdminArcadeGenerationContract(
       contract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
     });
   } catch {
-    return json({ error: 'Image processor provider contract could not be verified' }, 503);
+    return json({
+      error: 'Image processor provider contract could not be verified',
+      reason: 'processor_contract_verification_failed',
+    }, 503);
   }
 }
 

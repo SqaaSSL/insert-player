@@ -387,7 +387,8 @@ async function apiRequest(baseUrl, getToken, path, init = {}) {
   }
   if (!response.ok) {
     const detail = typeof body.error === 'string' ? body.error : `HTTP ${response.status}`;
-    const context = [body.code, body.model, body.retryAt].filter((value) => typeof value === 'string' && value);
+    const context = [body.code, body.reason, body.model, body.retryAt]
+      .filter((value) => typeof value === 'string' && value);
     throw new Error(`${init.method ?? 'GET'} ${path} failed: ${detail}${context.length > 0 ? ` (${context.join(', ')})` : ''}`);
   }
   return body;
