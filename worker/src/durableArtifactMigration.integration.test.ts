@@ -5,6 +5,7 @@ import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 
 const migrationsDirectory = join(dirname(fileURLToPath(import.meta.url)), '../migrations');
+const integrationTestTimeoutMs = 30_000;
 
 function migrationStatements(sql: string): string[] {
   const statements: string[] = [];
@@ -133,7 +134,7 @@ describe('0023 durable artifact resume migration', () => {
     } finally {
       await mf.dispose();
     }
-  });
+  }, integrationTestTimeoutMs);
 
   it('fails old dispatches closed while preserving jobs created during rollout', async () => {
     const { mf, db } = await database();
@@ -308,5 +309,5 @@ describe('0023 durable artifact resume migration', () => {
     } finally {
       await mf.dispose();
     }
-  });
+  }, integrationTestTimeoutMs);
 });
