@@ -28,6 +28,7 @@ const continueOnError = args.has('--continue-on-error');
 const all = args.has('--all');
 const resume = args.has('--resume');
 const restartDraft = args.has('--restart-draft');
+const preflightOnly = args.has('--preflight-only');
 const POLL_INTERVAL_MS = 5_000;
 const JOB_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -53,6 +54,46 @@ const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'];
 const CANONICAL_SOURCES = new Set(CANONICAL_SOURCE_NAMES);
 const LICENSED_REFERENCE_PROMPT = /\blicensed reference photo\b|\bperson in (?:this|the) licensed photo\b/i;
 const IDENTITY_ERASING_PROMPT = /\bwritten description only\b|\b(?:new|own) clearly synthetic face\b/i;
+const APPROVED_ARCADE_PROVIDER_CONTRACT = {
+  schemaVersion: 1,
+  allowedGenerationProviders: ['gemini'],
+  sourceModels: {
+    side: 'gemini-3-pro-image',
+    upright: 'gemini-3-pro-image',
+    crouch: 'gemini-3-pro-image',
+  },
+  championAnimation: {
+    scaffoldModel: 'gemini-3.1-flash-image',
+    renderModel: 'gemini-3-pro-image',
+    reviewModel: 'gemini-3-pro-image',
+  },
+  fallbackPolicy: 'fail-closed',
+};
+
+export function assertApprovedArcadeGenerationContract(payload) {
+  const contract = payload?.contract;
+  const providers = contract?.allowedGenerationProviders;
+  const expected = APPROVED_ARCADE_PROVIDER_CONTRACT;
+  const approved = payload?.ready === true
+    && payload?.runtime === 'canvas-skia'
+    && contract?.schemaVersion === expected.schemaVersion
+    && Array.isArray(providers)
+    && providers.length === 1
+    && providers[0] === expected.allowedGenerationProviders[0]
+    && contract?.sourceModels?.side === expected.sourceModels.side
+    && contract?.sourceModels?.upright === expected.sourceModels.upright
+    && contract?.sourceModels?.crouch === expected.sourceModels.crouch
+    && contract?.championAnimation?.scaffoldModel === expected.championAnimation.scaffoldModel
+    && contract?.championAnimation?.renderModel === expected.championAnimation.renderModel
+    && contract?.championAnimation?.reviewModel === expected.championAnimation.reviewModel
+    && contract?.fallbackPolicy === expected.fallbackPolicy;
+  if (!approved) {
+    throw new Error(
+      'Arcade generation aborted before mutation: the deployed image processor did not prove the approved Gemini-only contract.',
+    );
+  }
+  return contract;
+}
 
 function parseEnvText(text, values) {
   for (const line of text.split(/\r?\n/)) {
@@ -237,6 +278,12 @@ export function validateManifest(manifest) {
 
 function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
+  if (
+    preflightOnly
+    && (dryRun || all || resume || restartDraft || activate || animationName || sourceName)
+  ) {
+    throw new Error('--preflight-only requires one --slug and cannot be combined with a generation operation.');
+  }
   if (animationName && sourceName) {
     throw new Error('Use either --animation or --source, not both.');
   }
@@ -717,7 +764,7 @@ async function seedSource({ manifest, fighter, baseUrl, token, adminEntries }) {
 
 async function main() {
   if (!['production', 'sandbox'].includes(target)) throw new Error('--target must be production or sandbox.');
-  if (target === 'production' && !dryRun && !args.has('--confirm-production')) {
+  if (target === 'production' && !dryRun && !preflightOnly && !args.has('--confirm-production')) {
     throw new Error('Production seeding requires --confirm-production.');
   }
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -759,6 +806,19 @@ async function main() {
   const token = clerkSecretKey
     ? await createClerkAdminTokenProvider(clerkSecretKey, clerkUserId)
     : createStaticTokenProvider(staticToken);
+
+  const providerPreflight = await apiRequest(
+    baseUrl,
+    token,
+    '/api/admin/arcade/generation-contract',
+  );
+  const providerContract = assertApprovedArcadeGenerationContract(providerPreflight);
+  console.log(
+    `provider  Gemini-only (sources ${providerContract.sourceModels.side}; `
+    + `Champion scaffold ${providerContract.championAnimation.scaffoldModel}; `
+    + `frames ${providerContract.championAnimation.renderModel}; fail-closed)`,
+  );
+  if (preflightOnly) return;
 
   const admin = await apiRequest(baseUrl, token, '/api/admin/arcade');
   const adminEntries = Array.isArray(admin.fighters) ? admin.fighters : [];
