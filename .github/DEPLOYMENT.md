@@ -27,7 +27,7 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 
 ## Current Deployment Credential Status
 
-Production main `b7c96cf` and sandbox develop `1d3ea1e` are live and smoke-verified with D1 migration `0024`; both Workers report healthy `0.18.0` runtimes and the branches have the same tree `6564088a`.
+Protected production `main` and sandbox `develop` are byte-for-byte aligned, live, and smoke-verified with D1 migration `0024`; both Workers report healthy `0.18.0` runtimes.
 
 The `CLOUDFLARE_API_TOKEN` stored in both GitHub environments is the same durable account-owned token scoped to the Insert Player Cloudflare account and zone. Production Action `32767504225` and development Action `32767773857` passed their complete remote migrations, Worker/Container/Workflow deploys, API smokes, Pages deploys, and readiness checks. Cloudflare audit logs identify their actor as an account API token, not a temporary Wrangler OAuth session. Authenticated sandbox Action `32768251105` also passes with the Development Clerk backend key and private bridge secret. Rotate this token deliberately through both environments together; never replace it with a Global API Key or temporary Wrangler OAuth token.
 
