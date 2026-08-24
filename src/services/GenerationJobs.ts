@@ -21,8 +21,11 @@ export interface GenerationJob {
   operation: GenerationBillingOperation;
   targetKind: 'animation' | 'source' | null;
   targetName: string | null;
+  artifactRunId: string | null;
+  resumedFromJobId: string | null;
   status: GenerationJobStatus;
   stage: string;
+  failureStage: string | null;
   progressCurrent: number;
   progressTotal: number;
   errorCode: string | null;
@@ -31,6 +34,10 @@ export interface GenerationJob {
   finishedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  resumable: boolean;
+  completedStages: string[];
+  pendingStages: string[];
+  preservedArtifactCount: number;
   events: GenerationJobEvent[];
 }
 

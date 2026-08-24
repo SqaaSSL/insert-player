@@ -12,6 +12,10 @@ export interface GenerationAuthorization {
   providerSessionId?: string;
   providerSessionExpiresAt?: string;
   providerCallLimit?: number;
+  providerCostLimitCents?: number;
+  mode?: 'anonymous_rookie' | 'free_rookie' | 'credits' | 'continuation';
+  artifactRunId?: string;
+  resumedFromJobId?: string;
   message?: string;
   error?: string;
   requiredCredits?: number;
@@ -140,6 +144,7 @@ export async function authorizeGeneration(
   turnstileToken?: string | null,
   legal?: GenerationLegalAttestation | null,
   context?: ApiRequestContext,
+  resumeJobId?: string | null,
 ): Promise<GenerationAuthorization> {
   if (isLocalDevWithoutApi()) {
     return { authorized: true, message: 'Local generation authorization skipped.' };
@@ -153,6 +158,7 @@ export async function authorizeGeneration(
         tier,
         operation,
         fighterId: fighterId ?? null,
+        resumeJobId: resumeJobId ?? null,
         turnstileToken: turnstileToken ?? null,
         legal: legal ?? null,
       }),

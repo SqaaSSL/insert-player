@@ -6,8 +6,17 @@ import {
   persistGeneratedSource,
   persistGeneratedSprite,
 } from './generatedAssets';
+import {
+  assertArtifactRunComplete,
+  loadArtifactRun,
+  recordSourceCheckpoint,
+  recordSpriteCheckpoint,
+  requireArtifactRunId,
+  reuseSourceCheckpoint,
+  reuseSpriteCheckpoint,
+} from './generationArtifacts';
 import { mintGenerationJobToken } from './generationAuth';
-import { generationFailureDetails } from './generationFailure';
+import { generationFailureDetails, generationFailureStage } from './generationFailure';
 import {
   parseProviderDailyQuotaSignal,
   providerDailyQuotaFailureMessage,
@@ -15,7 +24,7 @@ import {
   type ProviderCapacityWindow,
 } from './providerCapacity';
 import { maxTier } from './tiers';
-import type { Env, Fighter, GenerationJob } from './types';
+import type { Env, Fighter, GenerationArtifactRun, GenerationJob } from './types';
 import { stripTrailingSlashes } from './url';
 
 interface FighterGenerationParams {
@@ -31,6 +40,15 @@ interface NormalizationReference {
 interface SourcePair {
   cleanKey: string;
   rawKey: string;
+}
+
+interface SourceManifest {
+  side: string | null;
+  sideRaw: string | null;
+  upright: string | null;
+  uprightRaw: string | null;
+  crouch: string | null;
+  crouchRaw: string | null;
 }
 
 interface GenerationSources {
@@ -130,6 +148,16 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     return fighter;
   }
 
+  private async legacyArcadeGenerationPrompt(job: GenerationJob): Promise<string | undefined> {
+    const row = await this.env.DB.prepare(`
+      SELECT generation_prompt
+      FROM arcade_fighters
+      WHERE fighter_id = ?
+      LIMIT 1
+    `).bind(job.fighter_id).first<ArcadeGenerationPromptRow>();
+    return row?.generation_prompt?.trim() || undefined;
+  }
+
   private async loadAssetBase64(key: string | null): Promise<string> {
     if (!key) throw new Error('Required generation asset key is missing');
     const object = await this.env.SPRITES.get(key);
@@ -207,15 +235,13 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     return response.json<T>();
   }
 
-  private async loadArcadeGenerationPrompt(fighterId: string): Promise<string | undefined> {
-    const row = await this.env.DB.prepare(`
-      SELECT generation_prompt
-      FROM arcade_fighters
-      WHERE fighter_id = ? AND status IN ('draft', 'active')
-      LIMIT 1
-    `).bind(fighterId).first<ArcadeGenerationPromptRow>();
-    const prompt = row?.generation_prompt?.trim();
-    return prompt || undefined;
+  private async recordStageStarted(job: GenerationJob, stage: string): Promise<void> {
+    await this.env.DB.prepare(`
+      UPDATE generation_jobs
+      SET status = 'running', stage = ?, failure_stage = NULL,
+          started_at = COALESCE(started_at, datetime('now')), updated_at = datetime('now')
+      WHERE id = ? AND status IN ('queued', 'running')
+    `).bind(stage, job.id).run();
   }
 
   private async recordProgress(
@@ -235,6 +261,11 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         INSERT INTO generation_job_events (id, job_id, stage, status, detail)
         VALUES (?, ?, ?, 'succeeded', ?)
       `).bind(generateId(), job.id, stage, detail.slice(0, 300)),
+      this.env.DB.prepare(`
+        UPDATE provider_cost_events
+        SET stage_outcome = 'succeeded'
+        WHERE artifact_run_id = ? AND stage = ? AND stage_outcome = 'pending'
+      `).bind(requireArtifactRunId(job), stage),
     ]);
   }
 
@@ -250,8 +281,29 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       progressCurrent: number;
     },
   ): Promise<SourcePair & { normalizationReference?: NormalizationReference }> {
+    const stage = `source:${params.cleanKind}`;
+    await this.recordStageStarted(job, stage);
+    const checkpoint = await reuseSourceCheckpoint<NormalizationReference>(
+      this.env,
+      job,
+      params.cleanKind,
+    );
+    if (checkpoint) {
+      await this.recordProgress(
+        job,
+        stage,
+        params.progressCurrent,
+        `${params.cleanKind} source restored from immutable checkpoint`,
+      );
+      return {
+        cleanKey: checkpoint.cleanKey,
+        rawKey: checkpoint.rawKey,
+        normalizationReference: checkpoint.metadata,
+      };
+    }
+
     const result = await this.callProcessor<ProcessorSourceResult>(job, '/v1/generate-source', {
-      requestScope: `job:${job.id}:source:${params.cleanKind}`,
+      requestScope: `job:${requireArtifactRunId(job)}:source:${params.cleanKind}`,
       operation: params.operation,
       imageBase64: await this.loadAssetBase64(params.inputKey),
       generationPrompt: params.generationPrompt,
@@ -275,9 +327,16 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         bytes: base64ToArrayBuffer(result.rawBase64),
       }),
     ]);
+    await recordSourceCheckpoint(this.env, job, {
+      sourceName: params.cleanKind,
+      stageIndex: params.progressCurrent,
+      clean,
+      raw,
+      metadata: result.normalizationReference,
+    });
     await this.recordProgress(
       job,
-      `source:${params.cleanKind}`,
+      stage,
       params.progressCurrent,
       `${params.cleanKind} source archived`,
     );
@@ -304,6 +363,29 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     };
   }
 
+  private sourcesFromRun(run: GenerationArtifactRun): GenerationSources {
+    let manifest: Partial<SourceManifest> = {};
+    try {
+      manifest = run.source_manifest_json
+        ? JSON.parse(run.source_manifest_json) as Partial<SourceManifest>
+        : {};
+    } catch {
+      throw new Error('Durable generation source manifest is invalid');
+    }
+    if (
+      !manifest.side || !manifest.sideRaw ||
+      !manifest.upright || !manifest.uprightRaw ||
+      !manifest.crouch || !manifest.crouchRaw
+    ) {
+      throw new Error('Durable generation source manifest is incomplete');
+    }
+    return {
+      side: { cleanKey: manifest.side, rawKey: manifest.sideRaw },
+      upright: { cleanKey: manifest.upright, rawKey: manifest.uprightRaw },
+      crouch: { cleanKey: manifest.crouch, rawKey: manifest.crouchRaw },
+    };
+  }
+
   private async measureCrouchReference(job: GenerationJob, uprightCleanKey: string): Promise<NormalizationReference | undefined> {
     const result = await this.callProcessor<{ normalizationReference?: NormalizationReference }>(
       job,
@@ -320,6 +402,19 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     progressCurrent: number,
     generationPrompt?: string,
   ): Promise<{ animationName: string; versionId: string }> {
+    const stage = `sprite:${animation.name}`;
+    await this.recordStageStarted(job, stage);
+    const checkpoint = await reuseSpriteCheckpoint(this.env, job, animation.name);
+    if (checkpoint) {
+      await this.recordProgress(
+        job,
+        stage,
+        progressCurrent,
+        `${animation.name} ${job.tier} restored from immutable checkpoint`,
+      );
+      return checkpoint;
+    }
+
     const isCrouchFamily = animation.name === 'crouch' || animation.base === 'crouched';
     const primaryKey = animation.name === 'crouch'
       ? sources.upright.rawKey
@@ -331,7 +426,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       ? { baselineRatio: sources.crouchNormalizationReference.baselineRatio }
       : undefined;
     const result = await this.callProcessor<ProcessorSpriteResult>(job, '/v1/generate-sprite', {
-      requestScope: `job:${job.id}:sprite:${animation.name}`,
+      requestScope: `job:${requireArtifactRunId(job)}:sprite:${animation.name}`,
       tier: job.tier,
       animation,
       primaryBase64: await this.loadAssetBase64(primaryKey),
@@ -352,9 +447,15 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       frameCount: result.frameCount,
       processingVersion: SPRITE_PROCESSING_VERSION,
     });
+    await recordSpriteCheckpoint(this.env, job, {
+      animationName: animation.name,
+      stageIndex: progressCurrent,
+      sprite: persisted,
+      processingVersion: SPRITE_PROCESSING_VERSION,
+    });
     await this.recordProgress(
       job,
-      `sprite:${animation.name}`,
+      stage,
       progressCurrent,
       `${animation.name} ${job.tier} version archived`,
     );
@@ -382,25 +483,34 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
             INSERT INTO generation_job_events (id, job_id, stage, status, detail)
             VALUES (?, ?, 'initializing', 'running', 'Durable generation started')
           `).bind(generateId(), loaded.id),
+          this.env.DB.prepare(`
+            UPDATE generation_artifact_runs
+            SET status = 'active', failure_stage = NULL, updated_at = datetime('now')
+            WHERE id = ? AND status IN ('active', 'partial')
+          `).bind(requireArtifactRunId(loaded)),
         ]);
         return { ...loaded, status: 'running', stage: 'initializing' };
       });
       job = activeJob;
       if (activeJob.status === 'succeeded') return { jobId, status: 'succeeded' };
+      const artifactRun = await step.do(
+        'load durable artifact run',
+        STEP_CONFIG,
+        () => loadArtifactRun(this.env, activeJob),
+      );
+      const generationPrompt = artifactRun.generation_prompt?.trim() || await step.do(
+        'recover legacy Arcade generation prompt',
+        STEP_CONFIG,
+        () => this.legacyArcadeGenerationPrompt(activeJob),
+      );
 
       if (activeJob.operation === 'fighter_generation') {
-        const fighter = await this.loadFighter(activeJob);
-        if (!fighter.original_blob_key) throw new Error('Original source photo is missing');
-        const generationPrompt = await step.do(
-          'load official Arcade generation prompt',
-          STEP_CONFIG,
-          () => this.loadArcadeGenerationPrompt(activeJob.fighter_id),
-        );
+        if (!artifactRun.original_blob_key) throw new Error('Durable original source photo is missing');
         const side = await step.do('generate canonical side source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
           operation: 'repose',
           cleanKind: 'side',
           rawKind: 'side_raw',
-          inputKey: fighter.original_blob_key!,
+          inputKey: artifactRun.original_blob_key!,
           generationPrompt,
           progressCurrent: 1,
         }));
@@ -427,6 +537,13 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           crouch,
           crouchNormalizationReference: crouch.normalizationReference,
         };
+        if (!sources.crouchNormalizationReference?.baselineRatio) {
+          sources.crouchNormalizationReference = await step.do(
+            'recover generation crouch reference',
+            STEP_CONFIG,
+            () => this.measureCrouchReference(activeJob, sources.upright.cleanKey),
+          );
+        }
         for (let index = 0; index < ANIMATIONS.length; index += 1) {
           const animation = ANIMATIONS[index];
           await step.do(
@@ -436,12 +553,11 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           );
         }
       } else if (activeJob.operation === 'fighter_upgrade') {
-        const generationPrompt = await step.do(
-          'load official Arcade upgrade prompt',
+        const sources = await step.do(
+          'load durable upgrade sources',
           STEP_CONFIG,
-          () => this.loadArcadeGenerationPrompt(activeJob.fighter_id),
+          async () => this.sourcesFromRun(artifactRun),
         );
-        const sources = await step.do('load canonical upgrade sources', STEP_CONFIG, () => this.currentSources(activeJob));
         sources.crouchNormalizationReference = await step.do(
           'measure upgrade crouch reference',
           STEP_CONFIG,
@@ -458,12 +574,11 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       } else if (activeJob.operation === 'fighter_retry_animation') {
         const animation = ANIMATIONS.find((entry) => entry.name === activeJob.target_name);
         if (!animation) throw new Error('Retry animation target is unavailable');
-        const generationPrompt = await step.do(
-          'load official Arcade animation retry prompt',
+        const sources = await step.do(
+          'load durable animation retry sources',
           STEP_CONFIG,
-          () => this.loadArcadeGenerationPrompt(activeJob.fighter_id),
+          async () => this.sourcesFromRun(artifactRun),
         );
-        const sources = await step.do('load canonical retry sources', STEP_CONFIG, () => this.currentSources(activeJob));
         if (animation.name === 'crouch' || animation.base === 'crouched') {
           sources.crouchNormalizationReference = await step.do(
             'measure retry crouch reference',
@@ -477,43 +592,43 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           () => this.generateSprite(activeJob, sources, animation, 1, generationPrompt),
         );
       } else {
-        const fighter = await this.loadFighter(activeJob);
         const target = activeJob.target_name;
-        const generationPrompt = await step.do(
-          'load official Arcade source retry prompt',
-          STEP_CONFIG,
-          () => this.loadArcadeGenerationPrompt(activeJob.fighter_id),
-        );
+        const sourceManifest = artifactRun.source_manifest_json
+          ? JSON.parse(artifactRun.source_manifest_json) as Partial<SourceManifest>
+          : {};
         if (target === 'side') {
-          if (!fighter.original_blob_key) throw new Error('Original source photo is missing');
+          if (!artifactRun.original_blob_key) throw new Error('Durable original source photo is missing');
           await step.do('retry canonical side source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
             operation: 'repose',
             cleanKind: 'side',
             rawKind: 'side_raw',
-            inputKey: fighter.original_blob_key!,
+            inputKey: artifactRun.original_blob_key!,
             generationPrompt,
             progressCurrent: 1,
           }));
         } else if (target === 'upright') {
-          if (!fighter.side_view_raw_blob_key) throw new Error('Side source is missing');
+          if (!sourceManifest.sideRaw) throw new Error('Durable side source is missing');
+          const sideRawKey = sourceManifest.sideRaw;
           await step.do('retry canonical upright source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
             operation: 'upright',
             cleanKind: 'upright',
             rawKind: 'upright_raw',
-            inputKey: fighter.side_view_raw_blob_key!,
+            inputKey: sideRawKey,
             generationPrompt,
             progressCurrent: 1,
           }));
         } else if (target === 'crouch') {
-          if (!fighter.upright_view_blob_key || !fighter.upright_view_raw_blob_key) {
-            throw new Error('Upright source is missing');
+          if (!sourceManifest.upright || !sourceManifest.uprightRaw) {
+            throw new Error('Durable upright source is missing');
           }
+          const uprightKey = sourceManifest.upright;
+          const uprightRawKey = sourceManifest.uprightRaw;
           await step.do('retry canonical crouch source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
             operation: 'crouch',
             cleanKind: 'crouch',
             rawKind: 'crouch_raw',
-            inputKey: fighter.upright_view_raw_blob_key!,
-            normalizationSourceKey: fighter.upright_view_blob_key!,
+            inputKey: uprightRawKey,
+            normalizationSourceKey: uprightKey,
             generationPrompt,
             progressCurrent: 1,
           }));
@@ -522,6 +637,11 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         }
       }
 
+      await step.do(
+        'verify durable artifact run complete',
+        STEP_CONFIG,
+        () => assertArtifactRunComplete(this.env, activeJob),
+      );
       await step.do('commit generation purchase', STEP_CONFIG, async () => {
         const fighter = await this.loadFighter(activeJob);
         const completedEventId = activeJob.id;
@@ -552,7 +672,8 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
             ),
             this.env.DB.prepare(`
               UPDATE generation_jobs
-              SET status = 'succeeded', stage = 'complete', progress_current = progress_total,
+              SET status = 'succeeded', stage = 'complete', failure_stage = NULL,
+                  progress_current = progress_total,
                   error_code = NULL, error_message = NULL, finished_at = datetime('now'),
                   updated_at = datetime('now')
               WHERE id = ? AND status IN ('queued', 'running')
@@ -561,6 +682,17 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
                   WHERE id = ? AND user_id = ? AND status = 'committed'
                 )
             `).bind(activeJob.id, activeJob.charge_id, activeJob.user_id),
+            this.env.DB.prepare(`
+              UPDATE generation_artifact_runs
+              SET status = 'succeeded', failure_stage = NULL,
+                  completed_at = datetime('now'), updated_at = datetime('now')
+              WHERE id = ? AND user_id = ? AND fighter_id = ?
+            `).bind(requireArtifactRunId(activeJob), activeJob.user_id, activeJob.fighter_id),
+            this.env.DB.prepare(`
+              UPDATE provider_cost_events
+              SET job_outcome = 'succeeded'
+              WHERE job_id = ? AND job_outcome = 'in_progress'
+            `).bind(activeJob.id),
             this.env.DB.prepare(`
               INSERT OR IGNORE INTO generation_job_events (id, job_id, stage, status, detail)
               SELECT ?, ?, 'complete', 'succeeded', ?
@@ -593,22 +725,71 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           );
           const releasedBeforeProviderStart = settlement?.status === 'refunded';
           const failure = generationFailureDetails(message, releasedBeforeProviderStart);
+          const persistedFailureState = await this.env.DB.prepare(`
+            SELECT stage, failure_stage
+            FROM generation_jobs
+            WHERE id = ?
+            LIMIT 1
+          `).bind(job!.id).first<{ stage: string; failure_stage: string | null }>();
+          const failureStage = generationFailureStage(persistedFailureState, job!);
           await this.env.DB.batch([
             this.env.DB.prepare(`
               UPDATE generation_jobs
-              SET status = 'failed', stage = 'failed', error_code = ?,
+              SET status = 'failed', stage = ?, failure_stage = ?, error_code = ?,
                   error_message = ?,
                   finished_at = datetime('now'), updated_at = datetime('now')
               WHERE id = ? AND status IN ('queued', 'running')
             `).bind(
+              failureStage,
+              failureStage,
               failure.errorCode,
               failure.errorMessage,
               job!.id,
             ),
             this.env.DB.prepare(`
+              UPDATE generation_artifact_runs
+              SET status = CASE
+                    WHEN status = 'succeeded' THEN status
+                    WHEN EXISTS (
+                      SELECT 1 FROM generation_artifact_checkpoints checkpoint
+                      WHERE checkpoint.run_id = generation_artifact_runs.id
+                        AND checkpoint.status = 'approved'
+                    ) OR EXISTS (
+                      SELECT 1
+                      FROM generation_jobs run_job
+                      JOIN generation_charges charge ON charge.id = run_job.charge_id
+                      WHERE run_job.artifact_run_id = generation_artifact_runs.id
+                        AND charge.status = 'committed'
+                    ) THEN 'partial'
+                    ELSE 'failed'
+                  END,
+                  failure_stage = ?, updated_at = datetime('now')
+              WHERE id = ?
+            `).bind(failureStage, requireArtifactRunId(job!)),
+            this.env.DB.prepare(`
+              UPDATE provider_cost_events
+              SET stage_outcome = CASE
+                    WHEN stage = ? AND stage_outcome = 'pending' THEN 'failed'
+                    ELSE stage_outcome
+                  END,
+                  job_outcome = CASE
+                    WHEN EXISTS (
+                      SELECT 1 FROM generation_artifact_checkpoints checkpoint
+                      WHERE checkpoint.run_id = ? AND checkpoint.status = 'approved'
+                    ) OR EXISTS (
+                      SELECT 1
+                      FROM generation_jobs failed_job
+                      JOIN generation_charges failed_charge ON failed_charge.id = failed_job.charge_id
+                      WHERE failed_job.id = ? AND failed_charge.status = 'committed'
+                    ) THEN 'failed_partial'
+                    ELSE 'failed'
+                  END
+              WHERE job_id = ? AND job_outcome = 'in_progress'
+            `).bind(failureStage, requireArtifactRunId(job!), job!.id, job!.id),
+            this.env.DB.prepare(`
               INSERT INTO generation_job_events (id, job_id, stage, status, detail)
-              VALUES (?, ?, 'failed', 'failed', ?)
-            `).bind(generateId(), job!.id, message),
+              VALUES (?, ?, ?, 'failed', ?)
+            `).bind(generateId(), job!.id, failureStage, message),
           ]);
           return { status: 'failed' };
         });

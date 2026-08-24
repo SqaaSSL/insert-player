@@ -1,8 +1,13 @@
 import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
-import { completeGenerationPurchase, handleStripeWebhook, settleGenerationPurchase } from './billing';
+import {
+  authorizeGenerationPurchase,
+  completeGenerationPurchase,
+  handleStripeWebhook,
+  settleGenerationPurchase,
+} from './billing';
 import { CURRENT_LEGAL_VERSION } from './legal';
-import type { AuthContext, Env } from './types';
+import type { AuthContext, Env, PublicAuthContext } from './types';
 
 const SCHEMA = `
   CREATE TABLE users (
@@ -43,6 +48,8 @@ const SCHEMA = `
     fighter_id TEXT REFERENCES fighters(id) ON DELETE SET NULL,
     ledger_id TEXT REFERENCES credit_ledger(id) ON DELETE SET NULL,
     refund_ledger_id TEXT REFERENCES credit_ledger(id) ON DELETE SET NULL,
+    continuation_run_id TEXT,
+    resumed_from_job_id TEXT,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -51,14 +58,70 @@ const SCHEMA = `
   CREATE TABLE provider_sessions (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
+    rate_limit_key TEXT NOT NULL DEFAULT '',
+    tier TEXT NOT NULL DEFAULT 'rookie',
+    purpose TEXT NOT NULL DEFAULT 'fighter_generation',
     charge_id TEXT,
     status TEXT NOT NULL DEFAULT 'active',
+    provider_calls_used INTEGER NOT NULL DEFAULT 0,
+    provider_call_limit INTEGER NOT NULL DEFAULT 0,
+    provider_cost_used_cents INTEGER NOT NULL DEFAULT 0,
+    provider_cost_limit_cents INTEGER NOT NULL DEFAULT 0,
+    expires_at TEXT NOT NULL DEFAULT (datetime('now', '+12 hours')),
+    legal_version TEXT NOT NULL DEFAULT 'legacy',
+    age_confirmed INTEGER NOT NULL DEFAULT 0,
+    photo_rights_confirmed INTEGER NOT NULL DEFAULT 0,
+    ai_processing_confirmed INTEGER NOT NULL DEFAULT 0,
+    immediate_performance_confirmed INTEGER NOT NULL DEFAULT 0,
+    withdrawal_loss_acknowledged INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE generation_jobs (
     id TEXT PRIMARY KEY,
+    user_id TEXT,
+    fighter_id TEXT,
+    charge_id TEXT,
+    artifact_run_id TEXT,
+    tier TEXT,
+    operation TEXT,
     status TEXT NOT NULL DEFAULT 'queued'
+  );
+
+  CREATE TABLE generation_artifact_runs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    fighter_id TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE provider_cost_events (
+    id TEXT PRIMARY KEY,
+    artifact_run_id TEXT,
+    estimated_cost_cents INTEGER NOT NULL
+  );
+
+  CREATE TABLE legal_acceptances (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    subject_hash TEXT NOT NULL,
+    action TEXT NOT NULL,
+    context_id TEXT NOT NULL,
+    legal_version TEXT NOT NULL,
+    age_confirmed INTEGER NOT NULL,
+    terms_accepted INTEGER NOT NULL,
+    photo_rights_confirmed INTEGER NOT NULL,
+    ai_processing_confirmed INTEGER NOT NULL,
+    immediate_performance_confirmed INTEGER NOT NULL,
+    refund_policy_acknowledged INTEGER NOT NULL,
+    immediate_delivery_confirmed INTEGER NOT NULL,
+    withdrawal_loss_acknowledged INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(action, context_id)
   );
 
   CREATE TABLE checkout_sessions (
@@ -214,6 +277,140 @@ async function insertPaidCheckout(
 }
 
 describe('Generation purchase fighter linkage against D1', () => {
+  it('authorizes an idempotent zero-credit continuation for committed partial work', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-resume';
+    const fighterId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const failedJobId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const originalChargeId = 'cccccccccccccccccccccccccccccccc';
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (
+            id, clerk_user_id, display_name, credits_balance, free_rookie_generations_used
+          ) VALUES (?, ?, 'Resume Player', 9, 1)
+        `).bind(userId, userId),
+        db.prepare('INSERT INTO fighters (id, owner_user_id) VALUES (?, ?)')
+          .bind(fighterId, userId),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('ledger-original', ?, -7, 'fighter_generation', ?)
+        `).bind(userId, fighterId),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, status, reason,
+            fighter_id, ledger_id, expires_at
+          ) VALUES (?, ?, 'champion', 7, 'committed', 'fighter_generation',
+            ?, 'ledger-original', datetime('now', '-1 hour'))
+        `).bind(originalChargeId, userId, fighterId),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, operation, status
+          ) VALUES (?, ?, ?, 'champion', 'fighter_generation', 'partial')
+        `).bind(failedJobId, userId, fighterId),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, user_id, fighter_id, charge_id, artifact_run_id,
+            tier, operation, status
+          ) VALUES (?, ?, ?, ?, ?, 'champion', 'fighter_generation', 'failed')
+        `).bind(failedJobId, userId, fighterId, originalChargeId, failedJobId),
+        db.prepare(`
+          WITH RECURSIVE sequence(value) AS (
+            SELECT 1
+            UNION ALL
+            SELECT value + 1 FROM sequence WHERE value < 101
+          )
+          INSERT INTO provider_cost_events (id, artifact_run_id, estimated_cost_cents)
+          SELECT
+            printf('historical-call-%03d', value),
+            ?,
+            CASE WHEN value = 101 THEN 85 ELSE 8 END
+          FROM sequence
+        `).bind(failedJobId),
+      ]);
+      const auth = {
+        userId,
+        rateLimitKey: `user:${userId}`,
+        claims: {},
+        user: { id: userId },
+      } as unknown as PublicAuthContext;
+      const request = () => new Request(
+        'https://api.insertplayer.ai/api/billing/generation',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fighterId,
+            tier: 'champion',
+            operation: 'fighter_generation',
+            resumeJobId: failedJobId,
+            legal: {
+              legalVersion: CURRENT_LEGAL_VERSION,
+              ageConfirmed: true,
+              termsAccepted: true,
+              photoRightsConfirmed: true,
+              aiProcessingConfirmed: true,
+              immediatePerformanceConfirmed: true,
+              withdrawalLossAcknowledged: true,
+            },
+          }),
+        },
+      );
+
+      const first = await authorizeGenerationPurchase(request(), env, auth);
+      expect(first.status).toBe(200);
+      const firstBody = await first.json() as Record<string, unknown>;
+      expect(firstBody).toMatchObject({
+        authorized: true,
+        mode: 'continuation',
+        creditsCharged: 0,
+        artifactRunId: failedJobId,
+        resumedFromJobId: failedJobId,
+        providerCallLimit: 219,
+        providerCostLimitCents: 915,
+      });
+      const duplicate = await authorizeGenerationPurchase(request(), env, auth);
+      expect(duplicate.status).toBe(200);
+      expect(await duplicate.json()).toMatchObject({
+        mode: 'continuation',
+        purchaseId: firstBody.purchaseId,
+        creditsCharged: 0,
+      });
+
+      expect((await db.prepare('SELECT credits_balance FROM users WHERE id = ?')
+        .bind(userId).first<{ credits_balance: number }>())?.credits_balance).toBe(9);
+      expect((await db.prepare(`
+        SELECT credit_cost, free_quota_delta, continuation_run_id, resumed_from_job_id
+        FROM generation_charges
+        WHERE continuation_run_id = ?
+      `).bind(failedJobId).first())).toEqual({
+        credit_cost: 0,
+        free_quota_delta: 0,
+        continuation_run_id: failedJobId,
+        resumed_from_job_id: failedJobId,
+      });
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM generation_charges WHERE continuation_run_id = ?
+      `).bind(failedJobId).first<{ count: number }>())?.count).toBe(1);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM credit_ledger
+        WHERE user_id = ? AND reason = 'fighter_generation_continuation'
+      `).bind(userId).first<{ count: number }>())?.count).toBe(1);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM provider_sessions WHERE charge_id = ?
+      `).bind(firstBody.purchaseId).first<{ count: number }>())?.count).toBe(1);
+      expect(await db.prepare(`
+        SELECT provider_call_limit, provider_cost_limit_cents
+        FROM provider_sessions WHERE charge_id = ?
+      `).bind(firstBody.purchaseId).first()).toEqual({
+        provider_call_limit: 219,
+        provider_cost_limit_cents: 915,
+      });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
   it('exposes only a pre-provider reservation release and remains idempotent', async () => {
     const { mf, db, env } = await createBindings();
     try {

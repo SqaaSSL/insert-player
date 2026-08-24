@@ -137,6 +137,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const publishConfirmRef = useRef<HTMLButtonElement>(null);
   const generationJobAbortRef = useRef<AbortController | null>(null);
   const [recoveryJob, setRecoveryJob] = useState<GenerationJob | null>(null);
+  const [resumableJobs, setResumableJobs] = useState<GenerationJob[]>([]);
 
   const meta = metas[currentIndex] ?? null;
   const pendingUpgrade = QUALITY_TIERS.find((tier) => tier.id === pendingUpgradeTier) ?? null;
@@ -169,6 +170,8 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   useEffect(() => {
     const apiContext = captureApiRequestContext();
     let cancelled = false;
+    setRecoveryJob(null);
+    setResumableJobs([]);
     const load = async () => {
       const checkoutStatus = consumeCheckoutStatus();
       const checkoutMessage = checkoutStatus ? checkoutStatusMessage(checkoutStatus) : null;
@@ -177,6 +180,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       let cloudDrafts = 0;
       let cloudFailed = 0;
       let activeCloudJob: Awaited<ReturnType<typeof listGenerationJobs>>[number] | null = null;
+      let resumableCloudJobs: GenerationJob[] = [];
       let [all, allStages] = await Promise.all([
         getAllCachedMetas(),
         getAllCachedStageBackgrounds(),
@@ -187,7 +191,13 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           authStatus === 'signed-in' ? listGenerationJobs(apiContext) : Promise.resolve([]),
         ]);
         activeCloudJob = generationJobs.find((job) => job.status === 'queued' || job.status === 'running') ?? null;
+        resumableCloudJobs = generationJobs.filter((job) => (
+          (job.status === 'failed' || job.status === 'cancelled') &&
+          job.resumable &&
+          job.operation !== 'fighter_generation'
+        ));
         setRecoveryJob(activeCloudJob);
+        setResumableJobs(resumableCloudJobs);
         cloudFailed = cloudSync.failed;
         cloudDrafts = cloudSync.drafts;
         if (cloudSync.imported > 0 || cloudSync.updated > 0) {
@@ -223,6 +233,8 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         checkoutMessage ??
         (activeCloudJob
           ? `${tierLabel(activeCloudJob.tier)} forge continues safely in the cloud (${activeCloudJob.progressCurrent}/${activeCloudJob.progressTotal})`
+          : resumableCloudJobs.length > 0
+            ? 'Paid generation work is preserved and ready to resume'
           : cloudSyncStatus ??
           (filtered.length > 0 || filteredStages.length > 0
             ? 'Ready'
@@ -297,6 +309,9 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const currentTier: QualityTier = meta?.qualityTier ?? 'contender';
   const currentAnimationRetryCost = animationRetryCreditCost(currentTier);
   const upgradeOptions = QUALITY_TIERS.filter((item) => tierIndex(item.id) > tierIndex(currentTier));
+  const resumableJob = meta?.cloudFighterId
+    ? resumableJobs.find((job) => job.fighterId === meta.cloudFighterId) ?? null
+    : null;
   const characterEmptyMessage = status && status !== 'No fighters or stages yet'
     ? status
     : 'Upload a photo to forge your first challenger.';
@@ -349,8 +364,17 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       },
     });
     if (completed.status !== 'succeeded') {
+      if (completed.resumable) {
+        setResumableJobs((current) => [
+          completed,
+          ...current.filter((job) => job.artifactRunId !== completed.artifactRunId),
+        ]);
+      }
       throw new Error(completed.errorMessage ?? 'Generation stopped; review the job details or contact support.');
     }
+    setResumableJobs((current) => (
+      current.filter((job) => job.artifactRunId !== completed.artifactRunId)
+    ));
     const cloud = await getCloudFighter(completed.fighterId, apiContext);
     if (!cloud?.photoHash) throw new Error('Completed cloud fighter could not be loaded');
     await downloadCloudFighterToLocal(cloud, apiContext);
@@ -392,6 +416,53 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       if (generationJobAbortRef.current === controller) generationJobAbortRef.current = null;
     };
   }, [recoveryJob?.id]);
+
+  const resumeCloudGeneration = async (failedJob: GenerationJob) => {
+    if (!legalAccepted) {
+      setStatus('Accept the generation terms to resume preserved work');
+      return;
+    }
+    clearDebugLog();
+    setBusy(true);
+    setStatus(`Restoring ${failedJob.preservedArtifactCount} completed stages without charging credits...`);
+    const apiContext = captureApiRequestContext();
+    try {
+      const authorization = await authorizeGeneration(
+        failedJob.tier,
+        failedJob.operation,
+        failedJob.fighterId,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+        failedJob.id,
+      );
+      if (
+        !authorization.authorized ||
+        authorization.mode !== 'continuation' ||
+        !authorization.purchaseId ||
+        !authorization.providerSessionId
+      ) {
+        throw new Error(authorization.error ?? 'Preserved generation could not be resumed');
+      }
+      const job = await startGenerationJob({
+        fighterId: failedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        targetKind: failedJob.targetKind ?? undefined,
+        targetName: failedJob.targetName ?? undefined,
+      }, apiContext);
+      const controller = new AbortController();
+      generationJobAbortRef.current?.abort();
+      generationJobAbortRef.current = controller;
+      const completed = await monitorCloudGenerationJob(job, apiContext, controller.signal);
+      setStatus(completed.targetName ? 'Done and synced' : `${tierLabel(completed.tier)} upgrade synced`);
+    } catch (err: any) {
+      setStatus(err?.message ? `Resume failed: ${err.message}` : 'Resume failed');
+    } finally {
+      setBusy(false);
+      setRetryingTarget(null);
+    }
+  };
 
   const runRetry = async (
     action: (context: ApiRequestContext) => Promise<void>,
@@ -957,6 +1028,15 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
               </div>
               <div className="roster-hero__actions">
                 <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
+                {resumableJob ? (
+                  <button
+                    className="gallery-back"
+                    disabled={busy || !legalAccepted}
+                    onClick={() => void resumeCloudGeneration(resumableJob)}
+                  >
+                    Resume Preserved Work · Free
+                  </button>
+                ) : null}
                 {upgradeOptions.map((tier) => (
                   <button
                     key={tier.id}

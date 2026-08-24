@@ -411,3 +411,86 @@ export async function persistGeneratedSprite(
     reused: persisted.id !== versionId,
   };
 }
+
+export async function promoteGeneratedSourceVersion(
+  env: Env,
+  params: {
+    userId: string;
+    fighterId: string;
+    kind: GeneratedSourceKind;
+    versionId: string;
+  },
+): Promise<SourceVersion> {
+  await requireOwnedFighter(env, params.userId, params.fighterId);
+  const version = await env.DB.prepare(`
+    SELECT *
+    FROM source_versions
+    WHERE id = ? AND fighter_id = ? AND kind = ?
+    LIMIT 1
+  `).bind(params.versionId, params.fighterId, params.kind).first<SourceVersion>();
+  if (!version) throw new Error(`Checkpointed ${params.kind} source version is unavailable`);
+
+  const column = SOURCE_COLUMNS[params.kind];
+  await env.DB.prepare(`
+    UPDATE fighters
+    SET ${column} = ?, updated_at = datetime('now')
+    WHERE id = ? AND owner_user_id = ?
+  `).bind(version.blob_key, params.fighterId, params.userId).run();
+  return version;
+}
+
+export async function promoteGeneratedSpriteVersion(
+  env: Env,
+  params: {
+    userId: string;
+    fighterId: string;
+    tier: QualityTier;
+    animationName: string;
+    versionId: string;
+  },
+): Promise<SpriteVersion> {
+  await requireOwnedFighter(env, params.userId, params.fighterId);
+  const version = await env.DB.prepare(`
+    SELECT *
+    FROM sprite_versions
+    WHERE id = ? AND fighter_id = ? AND animation_name = ? AND quality_tier = ?
+    LIMIT 1
+  `).bind(
+    params.versionId,
+    params.fighterId,
+    params.animationName,
+    params.tier,
+  ).first<SpriteVersion>();
+  if (!version) throw new Error(`Checkpointed ${params.animationName} sprite version is unavailable`);
+
+  await env.DB.prepare(`
+    INSERT INTO sprites (
+      id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+      content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(fighter_id, animation_name, quality_tier) DO UPDATE SET
+      blob_key = excluded.blob_key,
+      raw_blob_key = excluded.raw_blob_key,
+      content_hash = excluded.content_hash,
+      raw_content_hash = excluded.raw_content_hash,
+      frame_w = excluded.frame_w,
+      frame_h = excluded.frame_h,
+      frame_count = excluded.frame_count,
+      processing_version = excluded.processing_version,
+      created_at = datetime('now')
+  `).bind(
+    generateId(),
+    version.fighter_id,
+    version.animation_name,
+    version.quality_tier,
+    version.blob_key,
+    version.raw_blob_key,
+    version.content_hash,
+    version.raw_content_hash,
+    version.frame_w,
+    version.frame_h,
+    version.frame_count,
+    version.processing_version,
+  ).run();
+  return version;
+}
