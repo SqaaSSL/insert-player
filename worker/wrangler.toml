@@ -1,6 +1,6 @@
 name = "ai-street-fighter-api"
 main = "src/index.ts"
-compatibility_date = "2026-08-17"
+compatibility_date = "2026-08-22"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
@@ -18,6 +18,7 @@ ANONYMOUS_ROOKIE_ENABLED = "true"
 # conversion and retry-cost telemetry have been reviewed.
 PROVIDER_MONTHLY_BUDGET_USD_CENTS = "50000"
 GEMINI_SPEND_RATE_LIMIT_USD_CENTS = "900"
+GENERATION_API_BASE_URL = "https://api.insertplayer.ai"
 # Set this to your Clerk issuer, for example:
 # Production Clerk uses the dedicated Insert Player Frontend API domain.
 CLERK_ISSUER = "https://clerk.insertplayer.ai"
@@ -40,6 +41,50 @@ STRIPE_PRICE_ARCADE = "price_1U7DsKCPjQq08iG98e4ZosBp"
 # wrangler secret put TURNSTILE_SECRET_KEY
 # HMAC key used to pseudonymize anonymous network identifiers before D1 writes.
 # wrangler secret put ANONYMIZATION_SECRET
+# HMAC key for short-lived, job-scoped backend generation tokens.
+# wrangler secret put GENERATION_JOB_SIGNING_SECRET
+
+[secrets]
+required = [
+  "GEMINI_API_KEY",
+  "FAL_API_KEY",
+  "RUNWAY_API_KEY",
+  "FREEPIK_API_KEY",
+  "LUDO_API_KEY",
+  "STRIPE_SECRET_KEY",
+  "STRIPE_WEBHOOK_SECRET",
+  "CLERK_WEBHOOK_SIGNING_SECRET",
+  "TURNSTILE_SECRET_KEY",
+  "ANONYMIZATION_SECRET",
+  "GENERATION_JOB_SIGNING_SECRET",
+]
+
+[limits]
+cpu_ms = 300000
+
+[[workflows]]
+binding = "FIGHTER_GENERATION"
+name = "insert-player-fighter-generation"
+class_name = "FighterGenerationWorkflow"
+
+[[containers]]
+name = "insert-player-image-processor"
+class_name = "ImageProcessorContainer"
+image = "../Dockerfile.processor"
+image_build_context = ".."
+max_instances = 20
+instance_type = "basic"
+
+[containers.constraints]
+jurisdiction = "eu"
+
+[[durable_objects.bindings]]
+name = "IMAGE_PROCESSOR"
+class_name = "ImageProcessorContainer"
+
+[[migrations]]
+tag = "image-processor-v1"
+new_sqlite_classes = ["ImageProcessorContainer"]
 
 [[d1_databases]]
 binding = "DB"

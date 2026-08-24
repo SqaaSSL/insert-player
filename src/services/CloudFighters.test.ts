@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  arcadeFighterPhotoHash,
   buildSpriteDownloadPlan,
   buildSpriteUploadPlan,
   selectPlayableCloudSprites,
@@ -138,6 +139,31 @@ describe('buildSpriteDownloadPlan', () => {
     const remote = { ...cloudSprite('same-hash'), id: 'remote-version' };
 
     expect(buildSpriteDownloadPlan([remote], [local], { includeRawAssets: false })).toEqual([]);
+  });
+});
+
+describe('official Arcade cache identity', () => {
+  it('uses a deterministic account-scoped cache hash without exposing a private photo hash', () => {
+    expect(arcadeFighterPhotoHash({
+      id: 'fighter-official',
+      name: 'Headline Fighter',
+      qualityTier: 'champion',
+      public: true,
+      sources: {},
+      sprites: [],
+      arcade: {
+        slug: 'headline-fighter',
+        rank: 1,
+        challengerLine: 'Fight the headline.',
+        defaultPersonality: 'showboat',
+        reference: {
+          kind: 'licensed',
+          sourceUrl: 'https://commons.wikimedia.org/wiki/File:Headline_Fighter.jpg',
+          license: 'CC BY-SA 4.0',
+          credit: 'Example Photographer (2026)',
+        },
+      },
+    })).toBe('arcade:headline-fighter:fighter-official');
   });
 });
 

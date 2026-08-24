@@ -1,36 +1,45 @@
 export type QualityTier = 'rookie' | 'contender' | 'champion';
 
-export interface Env {
-  DB: D1Database;
-  SPRITES: R2Bucket;
-  ENVIRONMENT: string;
-  CORS_ORIGIN: string;
-  CLERK_ISSUER?: string;
+type OptionalCloudflareBindings = Partial<
+  Omit<Cloudflare.Env, 'DB' | 'SPRITES' | 'ENVIRONMENT' | 'CORS_ORIGIN'>
+>;
+
+export interface Env extends OptionalCloudflareBindings {
+  DB: Cloudflare.Env['DB'];
+  SPRITES: Cloudflare.Env['SPRITES'];
+  ENVIRONMENT: Cloudflare.Env['ENVIRONMENT'];
+  CORS_ORIGIN: Cloudflare.Env['CORS_ORIGIN'];
   CLERK_JWKS_URL?: string;
-  CLERK_AUTHORIZED_PARTIES?: string;
-  CLERK_WEBHOOK_SIGNING_SECRET?: string;
-  ANONYMIZATION_SECRET?: string;
-  LUDO_API_KEY?: string;
-  FREEPIK_API_KEY?: string;
-  GEMINI_API_KEY?: string;
-  RUNWAY_API_KEY?: string;
-  FAL_API_KEY?: string;
-  STRIPE_SECRET_KEY?: string;
-  STRIPE_WEBHOOK_SECRET?: string;
-  STRIPE_ACCOUNT_ID?: string;
-  STRIPE_PRICE_STARTER?: string;
-  STRIPE_PRICE_VERSUS?: string;
-  STRIPE_PRICE_ARCADE?: string;
-  TURNSTILE_SECRET_KEY?: string;
-  TURNSTILE_REQUIRED?: string;
-  TURNSTILE_ACTION?: string;
-  TURNSTILE_HOSTNAMES?: string;
-  ANONYMOUS_ROOKIE_ENABLED?: string;
-  PROVIDER_MONTHLY_BUDGET_USD_CENTS?: string;
-  GEMINI_SPEND_RATE_LIMIT_USD_CENTS?: string;
-  PUBLIC_APP_NAME?: string;
-  PUBLIC_APP_SHORT_NAME?: string;
-  PUBLIC_SOCIAL_CARD_PATH?: string;
+}
+
+export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type GenerationJobOperation =
+  | 'fighter_generation'
+  | 'fighter_upgrade'
+  | 'fighter_retry_animation'
+  | 'fighter_retry_source';
+
+export interface GenerationJob {
+  id: string;
+  workflow_instance_id: string;
+  user_id: string;
+  fighter_id: string;
+  charge_id: string;
+  provider_session_id: string;
+  tier: QualityTier;
+  operation: GenerationJobOperation;
+  target_kind: 'animation' | 'source' | null;
+  target_name: string | null;
+  status: GenerationJobStatus;
+  stage: string;
+  progress_current: number;
+  progress_total: number;
+  error_code: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface User {
@@ -80,6 +89,24 @@ export interface Fighter {
   upright_view_raw_blob_key: string | null;
   crouch_view_blob_key: string | null;
   crouch_view_raw_blob_key: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type FighterPersonalityId = 'balanced' | 'brawler' | 'counter' | 'zoner' | 'showboat';
+
+export interface ArcadeFighter {
+  fighter_id: string;
+  slug: string;
+  sort_order: number;
+  challenger_line: string;
+  default_personality: FighterPersonalityId;
+  reference_kind: 'generated' | 'licensed';
+  reference_source_url: string | null;
+  reference_license: string;
+  reference_credit: string;
+  generation_prompt: string | null;
+  status: 'draft' | 'active' | 'retired';
   created_at: string;
   updated_at: string;
 }

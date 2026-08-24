@@ -14,7 +14,8 @@ const targetArg = rawArgs.find((arg) => arg.startsWith('--target='));
 const deployTarget = targetArg?.slice('--target='.length) || 'live';
 const isSandbox = deployTarget === 'sandbox';
 const DEPLOY_TIMEOUT_MS = 300_000;
-const SMOKE_TIMEOUT_MS = 180_000;
+const SMOKE_TIMEOUT_MS = 360_000;
+const LIVE_FRONTEND_ORIGINS = ['https://insertplayer.ai', 'https://www.insertplayer.ai'];
 
 const sampleFragments = [
   'PLACEHOLDER',
@@ -90,13 +91,14 @@ function cleanPagesProjectName(values) {
   return projectName;
 }
 
-function run(label, command, commandArgs, cwd = root, timeout = undefined) {
+function run(label, command, commandArgs, cwd = root, timeout = undefined, extraEnv = {}) {
   const result = spawnSync(command, commandArgs, {
     cwd,
     stdio: 'inherit',
     env: {
       ...process.env,
       WRANGLER_LOG_PATH: process.env.WRANGLER_LOG_PATH || wranglerLogPath,
+      ...extraEnv,
     },
     timeout,
   });
@@ -110,7 +112,48 @@ function run(label, command, commandArgs, cwd = root, timeout = undefined) {
   if (result.status !== 0) throw new Error(`${label} failed with exit code ${result.status ?? 'unknown'}`);
 }
 
-function main() {
+function builtFrontendAssetPath() {
+  const html = readFileSync(join(root, 'dist', 'index.html'), 'utf8');
+  const paths = [...html.matchAll(/<script\b[^>]*\bsrc="(\/assets\/[A-Za-z0-9._-]+\.js)"/g)]
+    .map((match) => match[1]);
+  if (paths.length !== 1) {
+    throw new Error(`Expected exactly one frontend entry asset in dist/index.html, found ${paths.length}.`);
+  }
+  return paths[0];
+}
+
+async function purgeLiveAssetCache(values, assetPath) {
+  if (isSandbox) return;
+  const token = envValue(values, 'CLOUDFLARE_API_TOKEN');
+  const zoneId = envValue(values, 'ASF_CLOUDFLARE_ZONE_ID', 'CLOUDFLARE_ZONE_ID');
+  if (!token || !zoneId) {
+    console.warn('Skipping exact asset cache purge: Cloudflare API token or zone id is unavailable.');
+    return;
+  }
+  if (!/^[a-f0-9]{32}$/i.test(zoneId)) {
+    throw new Error('ASF_CLOUDFLARE_ZONE_ID must be a 32-character Cloudflare zone id.');
+  }
+
+  const response = await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      files: LIVE_FRONTEND_ORIGINS.map((origin) => `${origin}${assetPath}`),
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body?.success !== true) {
+    const message = body?.errors?.map((error) => error?.message).filter(Boolean).join('; ');
+    throw new Error(`Cloudflare exact asset cache purge failed (${response.status}): ${message || 'unknown error'}`);
+  }
+  console.log(`Purged live cache entries for ${assetPath}.`);
+}
+
+async function main() {
   if (!['live', 'sandbox'].includes(deployTarget)) {
     throw new Error('Frontend deploy target must be --target=live or --target=sandbox.');
   }
@@ -145,6 +188,8 @@ function main() {
     node,
     ['scripts/configure-frontend-dist.mjs', `--target=${isSandbox ? 'sandbox' : 'live'}`],
   );
+  const expectedAssetPath = builtFrontendAssetPath();
+  console.log(`Frontend release asset: ${expectedAssetPath}`);
   run(
     'Cloudflare Pages deploy',
     node,
@@ -162,16 +207,32 @@ function main() {
     DEPLOY_TIMEOUT_MS,
   );
   run(
-    isSandbox ? 'frontend sandbox smoke' : 'frontend live smoke',
+    isSandbox ? 'frontend sandbox propagation smoke' : 'frontend live propagation smoke',
     npm,
     ['run', isSandbox ? 'smoke:frontend-sandbox' : 'smoke:frontend-live'],
     root,
     SMOKE_TIMEOUT_MS,
+    {
+      ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath,
+      ASF_FRONTEND_ASSET_PROBE_NONCE: `deploy-${Date.now()}`,
+    },
+  );
+  await purgeLiveAssetCache(values, expectedAssetPath);
+  run(
+    isSandbox ? 'frontend sandbox canonical smoke' : 'frontend live canonical smoke',
+    npm,
+    ['run', isSandbox ? 'smoke:frontend-sandbox' : 'smoke:frontend-live'],
+    root,
+    SMOKE_TIMEOUT_MS,
+    {
+      ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath,
+      ASF_FRONTEND_READY_TIMEOUT_MS: '30_000',
+    },
   );
 }
 
 try {
-  main();
+  await main();
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);

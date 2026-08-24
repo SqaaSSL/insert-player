@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CACHE_VERSION,
   getAllCachedMetas,
   getAllSpritesForHash,
+  hashPhoto,
   setCachedMeta,
   type CachedMeta,
   type CachedSprite,
@@ -28,21 +29,47 @@ import {
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
 import { exportAnimationGif } from '../../services/GifExportService.ts';
-import { syncFighterToCloud } from '../../services/CloudFighters.ts';
-import { QUALITY_TIERS, type QualityTier } from '../../services/QualityTiers.ts';
-import { authorizeGeneration, finishGenerationPurchase } from '../../services/Billing.ts';
+import {
+  downloadCloudFighterToLocal,
+  getCloudFighter,
+  prepareCloudFighterGeneration,
+  syncFighterToCloud,
+} from '../../services/CloudFighters.ts';
+import {
+  QUALITY_TIERS,
+  type QualityTier,
+} from '../../services/QualityTiers.ts';
+import {
+  authorizeGeneration,
+  finishGenerationPurchase,
+  getBillingProfile,
+  type BillingProfile,
+} from '../../services/Billing.ts';
 import { captureApiRequestContext, runWithProviderSession } from '../../services/ApiClient.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { paidTiersLocked, type AuthStatus } from '../authState.ts';
 import { currentGenerationLegalAttestation } from '../legal.ts';
+import {
+  listGenerationJobs,
+  startGenerationJob,
+  waitForGenerationJob,
+  type GenerationJob,
+} from '../../services/GenerationJobs.ts';
+import { includedRookieStatus, initialCreationTier } from '../shared/rookieEntitlement.ts';
 
 interface CreateFighterPageProps {
   authStatus: AuthStatus;
+  authSessionKey: string;
   onBack: () => void;
   onComplete: (photoHash: string) => void;
 }
 
 const DEFAULT_NAME = 'New Fighter';
+
+function initialQualityTier(authStatus: AuthStatus): QualityTier {
+  const requestedTier = new URLSearchParams(window.location.search).get('tier');
+  return initialCreationTier(requestedTier, paidTiersLocked(authStatus));
+}
 
 function describeStage(status: PipelineStatus): string {
   switch (status.stage) {
@@ -56,12 +83,6 @@ function describeStage(status: PipelineStatus): string {
       return 'Straightening reference stance...';
     case 'converting_crouch_view':
       return 'Generating crouched stance...';
-    case 'converting_side_view_polling':
-      return `Waiting for task ${status.taskId.slice(0, 8)}...`;
-    case 'preparing_base':
-      return 'Preparing base image...';
-    case 'falling_back':
-      return `Falling back: ${status.reason.slice(0, 80)}`;
     case 'generating_sprites':
       return `Generating ${animLabel(status.animation)} (${status.current}/${status.total})`;
     case 'sprite_ready':
@@ -83,8 +104,6 @@ function stageToPercent(status: PipelineStatus): number | null {
       return 0.09;
     case 'converting_crouch_view':
       return 0.12;
-    case 'preparing_base':
-      return 0.15;
     case 'cached':
     case 'done':
       return 1;
@@ -101,10 +120,26 @@ function stageToPercent(status: PipelineStatus): number | null {
   }
 }
 
-export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFighterPageProps) {
+function describeDurableJob(job: GenerationJob): string {
+  if (job.status === 'queued') return 'Queued safely in the cloud...';
+  if (job.status === 'succeeded') return 'Generation complete. Syncing this device...';
+  if (job.status === 'failed' || job.status === 'cancelled') {
+    return job.errorMessage ?? 'Generation stopped; review the job details or contact support.';
+  }
+  if (job.stage === 'initializing') return 'Starting cloud forge...';
+  if (job.stage === 'source:side') return 'Side reference ready';
+  if (job.stage === 'source:upright') return 'Upright reference ready';
+  if (job.stage === 'source:crouch') return 'Crouch reference ready';
+  if (job.stage.startsWith('sprite:')) {
+    return `${animLabel(job.stage.slice('sprite:'.length))} ready (${job.progressCurrent}/${job.progressTotal})`;
+  }
+  return 'Forging safely in the cloud...';
+}
+
+export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComplete }: CreateFighterPageProps) {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState(DEFAULT_NAME);
-  const [tier, setTier] = useState<QualityTier>(() => paidTiersLocked(authStatus) ? 'rookie' : 'contender');
+  const [tier, setTier] = useState<QualityTier>(() => initialQualityTier(authStatus));
 
   const [started, setStarted] = useState(false);
   const [running, setRunning] = useState(false);
@@ -122,6 +157,9 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
   const [legalAccepted, setLegalAccepted] = useState(false);
+  const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
+  const [recoveryReady, setRecoveryReady] = useState(authStatus !== 'signed-in');
+  const pollingAbortRef = useRef<AbortController | null>(null);
   const lockPaidTiers = paidTiersLocked(authStatus);
   const requiresTurnstile = authStatus === 'signed-out' && tier === 'rookie';
   const turnstileSiteKey = String(import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '').trim();
@@ -132,6 +170,92 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
       setTier('rookie');
     }
   }, [lockPaidTiers, tier]);
+
+  useEffect(() => {
+    if (authStatus !== 'signed-in') {
+      setBillingProfile(null);
+      return;
+    }
+
+    let cancelled = false;
+    const apiContext = captureApiRequestContext();
+    void getBillingProfile(apiContext).then((profile) => {
+      if (!cancelled) setBillingProfile(profile);
+    });
+    return () => { cancelled = true; };
+  }, [authSessionKey, authStatus]);
+
+  useEffect(() => () => {
+    pollingAbortRef.current?.abort();
+    pollingAbortRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (authStatus !== 'signed-in') {
+      setRecoveryReady(true);
+      return;
+    }
+
+    let disposed = false;
+    const apiContext = captureApiRequestContext();
+    const controller = new AbortController();
+    pollingAbortRef.current?.abort();
+    pollingAbortRef.current = controller;
+    setRecoveryReady(false);
+
+    void (async () => {
+      try {
+        const jobs = await listGenerationJobs(apiContext);
+        if (disposed) return;
+        const active = jobs.find((job) => (
+          job.operation === 'fighter_generation' &&
+          (job.status === 'queued' || job.status === 'running')
+        ));
+        if (!active) {
+          setRecoveryReady(true);
+          return;
+        }
+        const fighter = await getCloudFighter(active.fighterId, apiContext);
+        if (disposed) return;
+        if (fighter) {
+          setName(fighter.name);
+          setPhotoHash(fighter.photoHash ?? null);
+          if (fighter.photoHash) {
+            await downloadCloudFighterToLocal(fighter, apiContext, {
+              includeArchivedVersions: false,
+              includeRawAssets: false,
+              allowIncomplete: true,
+            });
+            await refreshFromCache(fighter.photoHash);
+          }
+        }
+        setTier(active.tier);
+        setStarted(true);
+        setRunning(true);
+        setDone(false);
+        setError(null);
+        applyDurableJob(active);
+        const completed = await monitorDurableJob(active, apiContext, controller.signal);
+        if (disposed) return;
+        await finishDurableJob(completed, apiContext);
+      } catch (err: any) {
+        if (disposed || (err instanceof DOMException && err.name === 'AbortError')) return;
+        setError(err?.message ? String(err.message) : 'Could not reconnect to cloud generation');
+        setStageText('Cloud generation status is temporarily unavailable.');
+      } finally {
+        if (!disposed) {
+          setRunning(false);
+          setRecoveryReady(true);
+        }
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      controller.abort();
+      if (pollingAbortRef.current === controller) pollingAbortRef.current = null;
+    };
+  }, [authStatus]);
 
   async function refreshFromCache(hash: string): Promise<{ meta: CachedMeta | null; sprites: CachedSprite[] }> {
     const [allMetas, nextSprites] = await Promise.all([
@@ -181,8 +305,118 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
     }
   };
 
+  function applyDurableJob(job: GenerationJob): void {
+    setStageText(describeDurableJob(job));
+    setPercent(job.progressTotal > 0 ? job.progressCurrent / job.progressTotal : 0);
+    if (job.stage.startsWith('sprite:') && job.status === 'running') {
+      setGenerating(new Set([job.stage.slice('sprite:'.length)]));
+    } else {
+      setGenerating(new Set());
+    }
+  }
+
+  async function monitorDurableJob(
+    initial: GenerationJob,
+    apiContext: ReturnType<typeof captureApiRequestContext>,
+    signal: AbortSignal,
+  ): Promise<GenerationJob> {
+    applyDurableJob(initial);
+    if (initial.status === 'succeeded' || initial.status === 'failed' || initial.status === 'cancelled') {
+      return initial;
+    }
+    return waitForGenerationJob(initial.id, {
+      context: apiContext,
+      signal,
+      onUpdate: applyDurableJob,
+      onConnectionIssue: () => {
+        setStageText('Connection lost. The cloud forge is still running; reconnecting...');
+      },
+    });
+  }
+
+  async function finishDurableJob(
+    job: GenerationJob,
+    apiContext: ReturnType<typeof captureApiRequestContext>,
+  ): Promise<void> {
+    if (job.status !== 'succeeded') {
+      throw new Error(job.errorMessage ?? 'Generation stopped; review the job details or contact support.');
+    }
+    setStageText('Generation complete. Downloading your private fighter...');
+    const fighter = await getCloudFighter(job.fighterId, apiContext);
+    if (!fighter?.photoHash) throw new Error('Completed fighter could not be loaded from the cloud');
+    await downloadCloudFighterToLocal(fighter, apiContext);
+    setName(fighter.name);
+    setTier(fighter.qualityTier);
+    setPhotoHash(fighter.photoHash);
+    await refreshFromCache(fighter.photoHash);
+    setPercent(1);
+    setDone(true);
+    setGenerating(new Set());
+    setStageText('All sprites generated, private, and synced!');
+  }
+
+  async function startDurable(apiContext: ReturnType<typeof captureApiRequestContext>): Promise<void> {
+    if (!file) return;
+    setStarted(true);
+    setStageText('Preparing your private cloud fighter...');
+    const hash = await hashPhoto(file);
+    setPhotoHash(hash);
+    const fighterName = name.trim() || DEFAULT_NAME;
+    const prepared = await prepareCloudFighterGeneration({
+      name: fighterName,
+      photoHash: hash,
+      originalPhoto: file,
+    }, apiContext);
+    await downloadCloudFighterToLocal(prepared.fighter, apiContext, {
+      includeArchivedVersions: false,
+      includeRawAssets: false,
+      allowIncomplete: true,
+    });
+    await refreshFromCache(hash);
+    const authorization = await authorizeGeneration(
+      tier,
+      'fighter_generation',
+      prepared.fighter.id,
+      null,
+      currentGenerationLegalAttestation(),
+      apiContext,
+    );
+    if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
+      throw new Error(authorization.error ?? 'Generation not authorized');
+    }
+    setStageText('Handing the forge to the cloud...');
+    let job: GenerationJob;
+    try {
+      job = await startGenerationJob({
+        fighterId: prepared.fighter.id,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+      }, apiContext);
+    } catch (error) {
+      try {
+        await finishGenerationPurchase(
+          authorization.purchaseId,
+          false,
+          prepared.fighter.id,
+          apiContext,
+        );
+      } catch (settlementError: any) {
+        debugWarn(
+          '[Billing] Backend job ownership could not be confirmed during cleanup:',
+          settlementError?.message ?? settlementError,
+        );
+      }
+      throw error;
+    }
+    const controller = new AbortController();
+    pollingAbortRef.current?.abort();
+    pollingAbortRef.current = controller;
+    const completed = await monitorDurableJob(job, apiContext, controller.signal);
+    await finishDurableJob(completed, apiContext);
+  }
+
   async function start() {
-    if (!file || running || !turnstileReady || !legalAccepted) return;
+    if (!file || running || !turnstileReady || !legalAccepted || !recoveryReady) return;
     setRunning(true);
     setDone(false);
     setError(null);
@@ -193,6 +427,10 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
     let purchaseCommitted = false;
     const apiContext = captureApiRequestContext();
     try {
+      if (authStatus === 'signed-in') {
+        await startDurable(apiContext);
+        return;
+      }
       let authorization;
       try {
         authorization = await authorizeGeneration(
@@ -255,8 +493,8 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
       if (purchaseId && !purchaseCommitted) {
         try {
           await finishGenerationPurchase(purchaseId, false, null, apiContext);
-        } catch (refundErr: any) {
-          debugWarn('[Billing] Failed to release generation purchase:', refundErr?.message ?? refundErr);
+        } catch (releaseErr: any) {
+          debugWarn('[Billing] Failed to release generation purchase:', releaseErr?.message ?? releaseErr);
         }
       }
       const message = err?.message ? String(err.message) : 'Pipeline failed';
@@ -271,6 +509,20 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
     if (!file) return;
     setError(null);
     void start();
+  }
+
+  function choosePhotoAgain() {
+    setStarted(false);
+    setDone(false);
+    setError(null);
+    setStageText('');
+    setPercent(0);
+    setPhotoHash(null);
+    setMeta(null);
+    setSprites([]);
+    setGenerating(new Set());
+    setSelection({ kind: 'source', source: 'original' });
+    setLegalAccepted(false);
   }
 
   const selectedAnimName = selection.kind === 'animation' ? selection.animationName : null;
@@ -308,6 +560,10 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
   const cachedSelectedSprite = selectedAnimName
     ? sprites.find((item) => item.animationName === selectedAnimName)
     : null;
+  const rookieStatus = includedRookieStatus(authStatus, billingProfile);
+  const startLabel = tier === 'rookie' && rookieStatus === 'included'
+    ? 'Create Free Rookie'
+    : `Create ${QUALITY_TIERS.find((item) => item.id === tier)?.label ?? 'Fighter'}`;
 
   const saveGif = async () => {
     if (!cachedSelectedSprite || !selectedAnimName) return;
@@ -343,9 +599,9 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
         <header className="roster-hero">
           <div>
             <p className="gallery-eyebrow">New Fighter</p>
-            <h1>Forge A Challenger</h1>
+            <h1>Make Yourself Playable</h1>
             <p className="roster-hero__copy">
-              Upload a photo and name your fighter. The AI handles the rest.
+              Upload one photo. We build a fighter you can take straight into Arcade Mode.
             </p>
           </div>
           <div className="roster-hero__actions">
@@ -377,6 +633,18 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
           <div className="tier-picker" role="radiogroup" aria-label="Quality tier">
             {QUALITY_TIERS.map((item) => {
               const locked = lockPaidTiers && item.id !== 'rookie';
+              const priceLabel = item.id !== 'rookie'
+                ? item.priceLabel
+                : rookieStatus === 'included'
+                  ? 'Included'
+                  : rookieStatus === 'credits'
+                    ? item.priceLabel
+                    : 'Checking account';
+              const pitch = item.id === 'rookie' && rookieStatus === 'included'
+                ? authStatus === 'signed-out'
+                  ? 'Your first playable fighter is free after a quick human check.'
+                  : 'Your first playable fighter is included with your account.'
+                : item.pitch;
               return (
                 <button
                   key={item.id}
@@ -388,8 +656,8 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
                   onClick={() => setTier(item.id)}
                 >
                   <span>{item.label}</span>
-                  <small>{locked ? `${item.priceLabel} · Sign in` : `${item.priceLabel} · ${item.estimatedTime}`}</small>
-                  <em>{locked ? 'Sign in to unlock paid quality.' : item.pitch}</em>
+                  <small>{locked ? `${item.priceLabel} · Sign in` : `${priceLabel} · ${item.estimatedTime}`}</small>
+                  <em>{locked ? 'Sign in to unlock paid quality.' : pitch}</em>
                 </button>
               );
             })}
@@ -409,10 +677,10 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
           {error ? <p className="create-intro__error" role="alert">{error}</p> : null}
           <button
             className="home-menu__action is-primary"
-            disabled={!file || !name.trim() || running || !turnstileReady || !legalAccepted}
+            disabled={!file || !name.trim() || running || !turnstileReady || !legalAccepted || !recoveryReady}
             onClick={() => void start()}
           >
-            <span>{running ? 'Authorizing...' : 'Start Forging'}</span>
+            <span>{!recoveryReady ? 'Checking Cloud...' : running ? 'Authorizing...' : startLabel}</span>
             <small>{file ? file.name : 'Pick a photo to continue'}</small>
           </button>
         </div>
@@ -439,10 +707,10 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
           ) : null}
           <button
             className="gallery-back"
-            disabled={running}
+            disabled={running && authStatus !== 'signed-in'}
             onClick={done && photoHash ? () => onComplete(photoHash) : onBack}
           >
-            {done ? 'Open In Gallery' : running ? 'Running...' : 'Back'}
+            {done ? 'Open In Gallery' : running && authStatus !== 'signed-in' ? 'Running...' : 'Back'}
           </button>
         </div>
       </header>
@@ -460,9 +728,15 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
             />
           ) : null}
           <div className="gallery-actions">
-            <button onClick={retry} disabled={running || !turnstileReady}>
-              Retry Pipeline
-            </button>
+            {file ? (
+              <button onClick={retry} disabled={running || !turnstileReady}>
+                Retry Pipeline
+              </button>
+            ) : (
+              <button onClick={choosePhotoAgain} disabled={running}>
+                Choose Photo Again
+              </button>
+            )}
           </div>
         </div>
       ) : null}

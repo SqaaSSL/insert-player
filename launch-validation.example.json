@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "validatedAt": "2026-05-17T00:00:00.000Z",
-  "legalVersion": "2026-08-19",
+  "legalVersion": "2026-08-22.5",
   "frontendUrl": "https://insertplayer.ai",
   "workerUrl": "https://api.insertplayer.ai",
   "publicBrandName": "Insert Player",
@@ -28,7 +28,7 @@
     },
     "legal_pages_and_generation_consent": {
       "passed": true,
-      "evidence": "evidence_replace_me: Opened /legal, /privacy, /terms, and /refunds; current company details and AI-generated disclosures were visible, and generation stayed disabled until the versioned age/photo/AI/immediate-performance consent was checked."
+      "evidence": "evidence_replace_me: Opened /legal, /privacy, /terms, and /refunds; the private-by-default photo promise and provider disclosure were visible, and generation stayed disabled until the versioned age/photo/AI/immediate-performance consent was checked."
     },
     "support_email_delivery": {
       "passed": true,
@@ -74,9 +74,9 @@
       "passed": true,
       "evidence": "evidence_replace_me: Generated a Champion fighter on production and verified paid credits committed plus cloud sync completed."
     },
-    "generation_failure_refund": {
+    "generation_failure_charge_boundary": {
       "passed": true,
-      "evidence": "evidence_replace_me: Forced a production generation failure and verified /api/billing/generation/complete refunded reserved credits."
+      "evidence": "evidence_replace_me: A failure before any provider request released the untouched reservation; a separate upstream provider failure kept the charge committed, retained its cost event, and returned no credits automatically."
     },
     "second_device_import_and_play": {
       "passed": true,

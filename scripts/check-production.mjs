@@ -133,7 +133,9 @@ function assertBillingUsesRequestOrigin() {
     'SELECT ?, user_id, credit_cost, ?, fighter_id',
     'return Boolean(claim.results?.[0]);',
     'const ownedFighterId = await resolveOwnedFighterId(env, auth.userId, body.fighterId)',
-    "charge.status === 'committed' && body.success && ownedFighterId && !charge.fighter_id",
+    'export async function settleGenerationPurchase',
+    "charge.status === 'committed'",
+    'fighterId && !charge.fighter_id',
     'fighterId?: string | null',
     'function formatBillingError',
     "'Not enough credits'",
@@ -213,6 +215,9 @@ function assertProxyIsProductionScoped() {
   const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
   const apiClient = readFileSync(join(root, 'src/services/ApiClient.ts'), 'utf8');
   const providerSessions = readFileSync(join(root, 'worker/src/providerSessions.ts'), 'utf8');
+  const providerLimits = readFileSync(join(root, 'worker/src/providerLimits.ts'), 'utf8');
+  const streamLimits = readFileSync(join(root, 'worker/src/streamLimits.ts'), 'utf8');
+  const providerSessionIntegrationTests = readFileSync(join(root, 'worker/src/providerSessions.integration.test.ts'), 'utf8');
   const billingClient = readFileSync(join(root, 'src/services/Billing.ts'), 'utf8');
   const forbidden = [
     'catbox.moe',
@@ -220,6 +225,7 @@ function assertProxyIsProductionScoped() {
     "return method === 'POST' && (",
     "if (path === '/proxy/image') {\n    const limited = await enforceRateLimit(env, 'proxy:default', auth);",
     "if (path === '/proxy/media') {\n    const limited = await enforceRateLimit(env, 'proxy:default', auth);",
+    'response.clone().arrayBuffer()',
   ];
   const required = [
     'env.SPRITES.put(`temp/${id}.${format.ext}`',
@@ -243,11 +249,23 @@ function assertProxyIsProductionScoped() {
     'fetchPublicResult',
     'readResponseBytes',
     'ResponseBodyTooLargeError',
-    'const PROVIDER_REQUEST_BODY_LIMITS',
+    'PROVIDER_REQUEST_BODY_LIMITS',
+    'PROVIDER_RESPONSE_BODY_LIMITS',
     'createBoundedRequestStream(request, maxRequestBytes)',
+    'createBoundedByteStream(upstream.body, maxResponseBytes)',
+    'async function providerRequestHash',
+    "new DigestStream('SHA-256')",
+    'async function storeProviderResponseStream',
+    'bucket.createMultipartUpload(key, options)',
+    'PROVIDER_CACHE_MULTIPART_BYTES',
+    'PROVIDER_CACHE_MAX_RESPONSE_BYTES',
+    'provider_response_too_large',
     'Provider request body is too large',
     "it('rejects a declared oversized provider body before fetch'",
     "it('aborts a chunked provider body as soon as its streaming cap is crossed'",
+    "it('streams provider responses through a byte cap instead of buffering them'",
+    "it('rejects a declared oversized durable request before reserving provider spend'",
+    "it('fails an oversized response without buffering it or releasing incurred provider spend'",
     'Upstream did not return an image',
     'function handleMediaProxy',
     "path === '/proxy/media'",
@@ -266,9 +284,9 @@ function assertProxyIsProductionScoped() {
     "export const PROVIDER_SESSION_HEADER = 'X-ASF-Provider-Session'",
     'function requiresProviderSession',
     "if (request.method === 'GET' || request.method === 'HEAD') return null;",
-    "await requireProviderSession(request, env, auth, { provider: 'gemini', path })",
-    "await requireProviderSession(request, env, auth, { provider: 'freepik', path })",
-    "await requireProviderSession(request, env, auth, { provider: 'fal', path })",
+    "await requireProviderSession(request, env, auth, { provider: 'gemini', path }, providerState)",
+    "await requireProviderSession(request, env, auth, { provider: 'freepik', path }, providerState)",
+    "await requireProviderSession(request, env, auth, { provider: 'fal', path }, providerState)",
     'Provider session is not valid for this provider route',
     'function isAllowedProviderUse',
     "purpose === 'intro_video'",
@@ -284,12 +302,12 @@ function assertProxyIsProductionScoped() {
     'providerSessionId',
     'runWithProviderSession',
     "headers.set('X-ASF-Provider-Session', context.providerSessionId)",
-    "'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASF-Provider-Session'",
+    "'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASF-Provider-Session, X-Insert-Player-Provider-Request-Key'",
     'Provider session required',
     "it('revalidates every redirect and blocks a public URL redirecting private'",
     "it('cancels an upstream body as soon as the streamed byte cap is crossed'",
   ];
-  const combined = `${proxy}\n${proxyTests}\n${workerIndex}\n${apiClient}\n${providerSessions}\n${billingClient}`;
+  const combined = `${proxy}\n${proxyTests}\n${workerIndex}\n${apiClient}\n${providerSessions}\n${providerLimits}\n${streamLimits}\n${providerSessionIntegrationTests}\n${billingClient}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
   if (foundForbidden.length > 0) {
     throw new Error(`Production proxy must not use third-party temp hosts: ${foundForbidden.join(', ')}`);
@@ -306,10 +324,11 @@ function assertWorkerRequestBodiesAreBounded() {
   const billing = readFileSync(join(root, 'worker/src/billing.ts'), 'utf8');
   const clerkWebhooks = readFileSync(join(root, 'worker/src/clerkWebhooks.ts'), 'utf8');
   const fighters = readFileSync(join(root, 'worker/src/fighters.ts'), 'utf8');
+  const generationJobs = readFileSync(join(root, 'worker/src/generationJobs.ts'), 'utf8');
   const providerSessions = readFileSync(join(root, 'worker/src/providerSessions.ts'), 'utf8');
   const proxy = readFileSync(join(root, 'worker/src/proxy.ts'), 'utf8');
   const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
-  const workerSources = [billing, clerkWebhooks, fighters, providerSessions, proxy, workerIndex];
+  const workerSources = [billing, clerkWebhooks, fighters, generationJobs, providerSessions, proxy, workerIndex];
   const directBodyReads = workerSources.flatMap((source, index) => {
     const matches = source.match(/request\.(?:json|text|formData|arrayBuffer)\s*\(/g) ?? [];
     return matches.map((match) => `${index}:${match}`);
@@ -318,7 +337,7 @@ function assertWorkerRequestBodiesAreBounded() {
     throw new Error(`Worker routes bypass bounded request-body readers: ${directBodyReads.join(', ')}`);
   }
 
-  const combined = [requestBody, requestBodyTests, billing, clerkWebhooks, fighters, providerSessions, proxy, workerIndex].join('\n');
+  const combined = [requestBody, requestBodyTests, billing, clerkWebhooks, fighters, generationJobs, providerSessions, proxy, workerIndex].join('\n');
   const required = [
     'class RequestBodyTooLargeError',
     'class InvalidJsonBodyError',
@@ -333,8 +352,10 @@ function assertWorkerRequestBodiesAreBounded() {
     'MAX_CLERK_WEBHOOK_BODY_BYTES',
     'MAX_SOURCE_MULTIPART_BODY_BYTES',
     'MAX_SPRITE_MULTIPART_BODY_BYTES',
+    'MAX_JOB_BODY_BYTES',
     'readMultipartFormData(request, MAX_SOURCE_MULTIPART_BODY_BYTES)',
     'readMultipartFormData(request, MAX_SPRITE_MULTIPART_BODY_BYTES)',
+    'readJsonBody<{',
     "it('rejects chunked multipart bytes over the cap before parsing'",
     "it('stops a forwarded request stream when a chunk crosses the cap'",
     'readJsonBody<Record<string, unknown>>(request, MAX_MATCH_REPORT_BODY_BYTES)',
@@ -384,6 +405,14 @@ function assertOperationalDataRetentionIsSafe() {
     "datetime(created_at) <= datetime('now', '-6 years')",
     'DELETE FROM provider_spend_reservations',
     "created_at_epoch <= unixepoch('now', '-1 day')",
+    'DELETE FROM provider_request_cache',
+    'DELETE FROM generation_jobs',
+    'response_blob_key IS NULL',
+    'await env.SPRITES.delete',
+    "datetime(updated_at) <= datetime('now', '-4 days')",
+    'settleGenerationPurchase(env, job.user_id, job.charge_id, false, job.fighter_id)',
+    "datetime(finished_at) <= datetime('now', '-7 days')",
+    'generation_jobs.provider_session_id = provider_sessions.id',
     'async scheduled(_controller: ScheduledController, env: Env)',
     'await cleanupOperationalData(env)',
     '[triggers]',
@@ -421,6 +450,7 @@ function assertApiOperationsAreSessionScoped() {
   const gemini = readFileSync(join(root, 'src/services/GeminiApi.ts'), 'utf8');
   const providerSessions = readFileSync(join(root, 'worker/src/providerSessions.ts'), 'utf8');
   const providerSessionTests = readFileSync(join(root, 'worker/src/providerSessions.test.ts'), 'utf8');
+  const providerSessionIntegrationTests = readFileSync(join(root, 'worker/src/providerSessions.integration.test.ts'), 'utf8');
   const providerSpendMigration = readFileSync(join(root, 'worker/migrations/0014_provider_spend_budgets.sql'), 'utf8');
   const providerSpendRateMigration = readFileSync(join(root, 'worker/migrations/0016_provider_spend_rate_window.sql'), 'utf8');
   const providerCostEventsMigration = readFileSync(join(root, 'worker/migrations/0017_provider_cost_events.sql'), 'utf8');
@@ -459,7 +489,10 @@ function assertApiOperationsAreSessionScoped() {
     'provider_cost_events',
     'billing_operation',
     'export async function finalizeProviderRequest',
-    'await releaseProviderSpend(env, reservation, response.status)',
+    "SET status = 'committed', updated_at = datetime('now')",
+    "it('keeps attempted provider spend after an upstream failure'",
+    "it('keeps the committed charge and provider spend after an upstream failure'",
+    "it('fails closed without cost residue when the charge was released concurrently'",
     'PRO_REQUEST_START_INTERVAL_MS = 11_000',
     'err instanceof GeminiRequestError && err.retryable',
     'maxAttempts ?? 5',
@@ -470,8 +503,9 @@ function assertApiOperationsAreSessionScoped() {
     'let providerSessionId',
     'runtimeAnimModelOverride',
     'setGeminiAnimModelOverride',
+    'releaseProviderSpend(env, reservation, providerStatus)',
   ];
-  const combined = `${apiClient}\n${apiClientTests}\n${createPage}\n${galleryPage}\n${cloudFighters}\n${gemini}\n${geminiPolicy}\n${geminiPolicyTests}\n${providerSessions}\n${providerSessionTests}\n${providerSpendMigration}\n${providerSpendRateMigration}\n${providerCostEventsMigration}\n${productionWrangler}\n${sandboxWrangler}`;
+  const combined = `${apiClient}\n${apiClientTests}\n${createPage}\n${galleryPage}\n${cloudFighters}\n${gemini}\n${geminiPolicy}\n${geminiPolicyTests}\n${providerSessions}\n${providerSessionTests}\n${providerSessionIntegrationTests}\n${providerSpendMigration}\n${providerSpendRateMigration}\n${providerCostEventsMigration}\n${productionWrangler}\n${sandboxWrangler}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
   if (missing.length > 0 || foundForbidden.length > 0) {
@@ -511,6 +545,7 @@ function assertFrontendDeployIsProductionScoped() {
     'FETCH_TIMEOUT_MS',
     'FRONTEND_READY_TIMEOUT_MS',
     'ASF_FRONTEND_READY_TIMEOUT_MS',
+    'ASF_EXPECTED_FRONTEND_ASSET_PATH',
     'FRONTEND_RETRY_DELAY_MS',
     'function fetchWithTimeout',
     'function waitForFrontendText',
@@ -534,6 +569,8 @@ function assertFrontendDeployIsProductionScoped() {
     "'--project-name'",
     'projectName',
     "'--branch'",
+    'builtFrontendAssetPath',
+    'Frontend release asset:',
     'npm run smoke:frontend-live',
   ];
   const deployFrontend = readFileSync(join(root, 'scripts/deploy-frontend-pages.mjs'), 'utf8');
@@ -640,6 +677,7 @@ function assertLiveConfigHelperIsWired() {
     "'STRIPE_PRICE_ARCADE'",
     "'CLERK_WEBHOOK_SIGNING_SECRET'",
     "'ANONYMIZATION_SECRET'",
+    "'GENERATION_JOB_SIGNING_SECRET'",
     "'CLERK_ISSUER'",
     "'CLERK_AUTHORIZED_PARTIES'",
     "'VITE_CLERK_PUBLISHABLE_KEY'",
@@ -753,8 +791,12 @@ function assertLiveConfigHelperIsWired() {
     '"db:execute:0015": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0015_asset_lookup_indexes.sql"',
     '"db:execute:0016": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0016_provider_spend_rate_window.sql"',
     '"db:execute:0017": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0017_provider_cost_events.sql"',
+    '"db:execute:0018": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0018_durable_generation_jobs.sql"',
+    '"db:execute:0019": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0019_durable_retry_jobs.sql"',
+    '"db:execute:0020": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0020_official_arcade.sql"',
+    '"db:execute:0021": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0021_arcade_generation_prompts.sql"',
     'scripts/wrangler-workspace-log.mjs',
-    '"wrangler": "^4.123.0"',
+    '"wrangler": "^4.125.0"',
     '.env.*',
     'worker/.prod.vars',
     '.wrangler-logs/',
@@ -764,6 +806,7 @@ function assertLiveConfigHelperIsWired() {
     'STRIPE_WEBHOOK_SECRET=whsec_replace_me',
     'CLERK_WEBHOOK_SIGNING_SECRET=whsec_replace_me',
     'ANONYMIZATION_SECRET=replace_me_with_at_least_32_random_bytes',
+    'GENERATION_JOB_SIGNING_SECRET=replace_me_with_at_least_32_random_bytes',
     'ENVIRONMENT=development',
     'npm run stripe:bootstrap:sandbox',
     '.env.sandbox.local',
@@ -889,6 +932,7 @@ function assertSandboxIsolationIsWired() {
     'STRIPE_WEBHOOK_SECRET',
     'CLERK_WEBHOOK_SIGNING_SECRET',
     'ANONYMIZATION_SECRET',
+    'GENERATION_JOB_SIGNING_SECRET',
   ];
   const inlineSecrets = secretKeys.filter((key) => new RegExp(`^\\s*${key}\\s*=`, 'm').test(sandboxConfig));
   if (inlineSecrets.length > 0) {
@@ -913,6 +957,7 @@ function assertLegalConsentAndPrivacyIsWired() {
   const legalPage = readFileSync(join(root, 'src/ui/routes/LegalPage.tsx'), 'utf8');
   const legalFooter = readFileSync(join(root, 'src/ui/components/LegalFooter.tsx'), 'utf8');
   const communityPage = readFileSync(join(root, 'src/ui/routes/CommunityPage.tsx'), 'utf8');
+  const characterPipeline = readFileSync(join(root, 'src/services/CharacterPipeline.ts'), 'utf8');
   const fighters = readFileSync(join(root, 'worker/src/fighters.ts'), 'utf8');
   const stripeBootstrap = readFileSync(join(root, 'scripts/bootstrap-stripe-catalog.mjs'), 'utf8');
   const liveSmoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
@@ -941,8 +986,8 @@ function assertLegalConsentAndPrivacyIsWired() {
     liveReadiness,
   ].join('\n');
   const required = [
-    "CURRENT_LEGAL_VERSION = '2026-08-19'",
-    "LEGAL_VERSION = '2026-08-19'",
+    "CURRENT_LEGAL_VERSION = '2026-08-23.1'",
+    "LEGAL_VERSION = '2026-08-23.1'",
     "Paseo de la Castellana 126, 8th floor right, Madrid, Spain",
     "Registro Mercantil de Madrid, section 8, sheet M-784524",
     "type LegalPageKind = 'legal' | 'privacy' | 'terms' | 'refunds'",
@@ -973,10 +1018,34 @@ function assertLegalConsentAndPrivacyIsWired() {
     '<GenerationConsent',
     '<CheckoutConsent',
     'storedGenerationLegalAttestation()',
+    'Process this photo only for my private fighter.',
+    'process it solely to create and',
+    'privately store this fighter in my Insert Player account.',
+    'Neither my photo nor generated',
+    'fighter will be visible to other players unless I later choose Publish.',
+    'separate action and makes only the clean generated assets of that fighter public',
+    'original photo, Clerk account identity, RAW files, or private generation history.',
+    'not a licence to reuse my photo or private fighter.',
+    'Player will not sell them, use',
+    'them in advertising, or use them to train models.',
+    "only to Google Gemini to create the fighter you requested",
+    "Clerk and Stripe do not receive that uploaded photo",
+    "generated frames, but not the original upload, to fal or Freepik",
+    "Google does not use paid-service prompts, uploaded files, or responses to improve its products",
+    'does not sell your photo or private fighter assets',
+    'use either in advertising or promotion',
+    'Your original photo remains private and is never published',
+    'use either to train its own models',
+    'Any permission needed to process and host your inputs is limited',
+    'Publishing is optional and requires a separate confirmation.',
+    'Clerk profile photos',
+    'neutral author label Player',
+    'A future public handle will require a separate opt-in.',
     "request.headers.get('CF-Connecting-IP')",
     "return `anon:${await hmacString(secret, address)}`",
     "throw new Error('ANONYMIZATION_SECRET is required')",
     "privacy: anonymousIdentifiersProtected ? 'pseudonymized' : 'not_configured'",
+    'legalVersion: CURRENT_LEGAL_VERSION',
     "['privacy', 'pseudonymized']",
     "health.privacy === 'pseudonymized'",
   ];
@@ -986,6 +1055,18 @@ function assertLegalConsentAndPrivacyIsWired() {
   }
   if (/^\s*ANONYMIZATION_SECRET\s*=/m.test(wrangler)) {
     throw new Error('ANONYMIZATION_SECRET must remain a Worker secret, not a wrangler.toml var.');
+  }
+  const forbiddenProviderFallbacks = [
+    "from './LudoApi'",
+    'reposeWithFreepik',
+    'generateSpriteWithLudo',
+    'falling back to Freepik+Ludo',
+    'falling back to Ludo',
+    'using side view:',
+    'using standing view as fallback',
+  ].filter((snippet) => characterPipeline.includes(snippet));
+  if (forbiddenProviderFallbacks.length > 0) {
+    throw new Error(`Fighter generation must not change AI provider silently: ${forbiddenProviderFallbacks.join(', ')}`);
   }
 }
 
@@ -1002,7 +1083,7 @@ function assertClerkAuthIsWired() {
     'isLoaded',
     "'loading'",
     'configureApiAuth(isLoaded && isSignedIn ? () => getToken() : null)',
-    "headers.set('Authorization', `Bearer ${token}`)",
+    "headers.set('Authorization', `${context.authorizationScheme ?? 'Bearer'} ${token}`)",
     'jwtVerify(token, getJwks(env)',
     'function getClerkIssuer',
     "throw new Error('CLERK_ISSUER is required')",
@@ -1018,7 +1099,7 @@ function assertClerkAuthIsWired() {
     'function configuredAuthorizedParties',
     'function assertAuthorizedParty',
     "readStringClaim(claims, ['azp'])",
-    'assertAuthorizedParty(claims, env)',
+    'assertAuthorizedParty(claims, env, options)',
     'upsertClerkUser(env, clerkUserId, claims)',
     "if (path === '/auth/me' && method === 'GET')",
     'function healthResponse',
@@ -1046,11 +1127,12 @@ function assertClerkUserLifecycleIsWired() {
   const auth = readFileSync(join(root, 'worker/src/auth.ts'), 'utf8');
   const index = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
   const types = readFileSync(join(root, 'worker/src/types.ts'), 'utf8');
+  const generatedTypes = readFileSync(join(root, 'worker/worker-configuration.d.ts'), 'utf8');
   const wrangler = readFileSync(join(root, 'worker/wrangler.toml'), 'utf8');
   const required = [
     "from '@clerk/backend/webhooks'",
     'verifyWebhook(verifiedRequest, { signingSecret: env.CLERK_WEBHOOK_SIGNING_SECRET })',
-    'CLERK_WEBHOOK_SIGNING_SECRET?: string',
+    'CLERK_WEBHOOK_SIGNING_SECRET: string',
     "path === '/api/clerk/webhook' && method === 'POST'",
     "accountLifecycle: env.CLERK_WEBHOOK_SIGNING_SECRET ? 'clerk_webhook' : 'not_configured'",
     'CREATE TABLE IF NOT EXISTS clerk_webhook_events',
@@ -1075,7 +1157,7 @@ function assertClerkUserLifecycleIsWired() {
     "it('deletes the account-scoped Stripe Customer before removing local account rows'",
     "it('bounds a single R2 purge attempt so webhook retries can continue large deletions'",
   ];
-  const combined = `${webhook}\n${webhookTests}\n${migration}\n${auth}\n${index}\n${types}`;
+  const combined = `${webhook}\n${webhookTests}\n${migration}\n${auth}\n${index}\n${types}\n${generatedTypes}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
     throw new Error(`Clerk user lifecycle handling is missing: ${missing.join(', ')}`);
@@ -1093,20 +1175,24 @@ function assertCommunityAssetsAreSanitized() {
   const community = readFileSync(join(root, 'src/ui/routes/CommunityPage.tsx'), 'utf8');
   const share = readFileSync(join(root, 'src/ui/shared/communityShare.ts'), 'utf8');
   const index = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
+  const liveSmoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
   const forbidden = [
     'for (const kind of SOURCE_KINDS)',
     'copyR2Object(env, sprite.raw_blob_key',
     '...serialized,\n    sources:',
+    'public, max-age=31536000, immutable',
     "'unsafe-inline'",
   ];
   const required = [
     'function serializeCommunityFighter',
     'ownerUserId: _ownerUserId',
     'photoHash: _photoHash',
-    'name: normalizePublicDisplayName(fighter.owner_name)',
-    'avatarUrl: normalizeOptionalHttpsUrl(fighter.owner_avatar_url)',
+    "name: 'Player'",
     '...publicFighter',
-    'sprites: serializedSprites.map',
+    'sprites: sprites.map',
+    'function publicSourceAssetUrl',
+    'function publicSpriteAssetUrl',
+    '/public-assets/fighters/',
     'export async function getCommunityFighter',
     'getCommunityFighter(featuredId)',
     'Featured fighter loaded',
@@ -1125,7 +1211,6 @@ function assertCommunityAssetsAreSanitized() {
     'getOwnedFighterByPhotoHash',
     'maxTier(existing.quality_tier, source.quality_tier)',
     'COALESCE(side_view_blob_key, ?)',
-    'public_asset',
     'export async function shareCommunityFighterPage',
     "path.match(/^\\/share\\/([^/]+)$/)",
     'meta property="og:image"',
@@ -1168,24 +1253,24 @@ function assertCommunityAssetsAreSanitized() {
     'function decodeAssetKey',
     "!decodedKey.startsWith('users/')",
     'segments.some((segment) => !segment',
-    'function cacheControlForAsset',
     'function namespacedAssetOwner',
-    'namespaceOwner === auth.userId',
-    "asset_kind: 'owner_namespaced_asset'",
-    'function findPublicAssetAccess',
-    'AND (side_view_blob_key = ? OR upright_view_blob_key = ? OR crouch_view_blob_key = ?)',
-    'WHERE f.public_flag = 1 AND s.blob_key = ?',
-    'WHERE public_flag = 1 AND blob_key = ?',
-    'idx_fighters_side_view_blob',
-    'idx_fighters_upright_view_blob',
-    'idx_fighters_crouch_view_blob',
-    'idx_sprites_blob',
-    'idx_stages_blob',
-    "serves owner assets across devices and exposes only active processed assets when public",
-    'public, max-age=31536000, immutable',
+    '!auth.userId || namespaceOwner !== auth.userId',
+    'function publicAssetRevision',
+    'export async function getPublicFighterSourceAsset',
+    'export async function getPublicFighterSpriteAsset',
+    'PUBLIC_ASSET_CACHE_HEADERS',
+    'public, max-age=60, s-maxage=300, must-revalidate',
+    'publicSourceAssetMatch = path.match',
+    'publicSpriteAssetMatch = path.match',
+    "serves owner assets across devices and keeps namespaced asset keys owner-only",
+    "not.toContain('/assets/users/')",
+    "not.toContain('user-target')",
+    'const revokedSource = await getPublicFighterSourceAsset',
+    'function assertOpaqueCommunityAssets',
+    "expectStatus('revoked public sprite'",
+    'unpublishing revokes opaque public assets and community detail',
     'private, no-store',
     'X-Content-Type-Options',
-    "assetOwner.owner_user_id !== auth.userId && (!assetOwner.public_flag || !assetOwner.public_asset)",
     'communityFighterUrl',
     'copyToClipboard',
     'shareCommunityFighter',
@@ -1193,8 +1278,17 @@ function assertCommunityAssetsAreSanitized() {
     "get('fighter')",
     'Share Link',
   ];
-  const combined = `${fighters}\n${assetIndexes}\n${fighterIntegrationTests}\n${gallery}\n${community}\n${share}\n${index}`;
-  const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
+  if (
+    fighters.includes('owner_avatar_url') ||
+    /\bowner_name\b/.test(fighters) ||
+    fighters.includes('JOIN users u ON u.id = f.owner_user_id') ||
+    fighters.includes('avatarUrl: normalizeOptionalHttpsUrl')
+  ) {
+    throw new Error('Community payloads must not expose Clerk account profile fields.');
+  }
+  const implementationCombined = `${fighters}\n${assetIndexes}\n${fighterIntegrationTests}\n${gallery}\n${community}\n${share}\n${index}`;
+  const combined = `${implementationCombined}\n${liveSmoke}`;
+  const foundForbidden = forbidden.filter((snippet) => implementationCombined.includes(snippet));
   if (foundForbidden.length > 0) {
     throw new Error(`Community clone privacy must not copy private intermediates: ${foundForbidden.join(', ')}`);
   }
@@ -1329,7 +1423,8 @@ function assertAppConsoleLogsAreDebugGated() {
   const required = [
     'export function debugInfo',
     'export function debugWarn',
-    'import.meta.env.DEV',
+    'metaEnv?.DEV',
+    "typeof window !== 'undefined'",
     "window.localStorage.getItem('asf:debug')",
     'window.__ASF_DEBUG_LOGS__',
   ];
@@ -1465,11 +1560,11 @@ function assertLiveSmokeCoversCriticalPaths() {
     'launchHealthErrors.join',
     'Public smoke warning: /health reports auth=',
     'Use npm run check:launch for launch readiness.',
-    'live_smoke_rookie_refund',
-    'authenticated Rookie generation reservation refunds idempotently',
-    'live_smoke_contender_refund',
+    'live_smoke_rookie_release',
+    'authenticated Rookie generation releases an unused reservation idempotently',
+    'live_smoke_contender_release',
     'authenticated paid-tier generation enforces credits',
-    'authenticated paid-tier generation reservation refunds credits',
+    'authenticated paid-tier generation releases an unused reservation',
     'live_smoke_foreign_fighter_guard',
     'generation authorization rejects foreign fighter ids before reservation',
     'provider proxy blocks non-allowlisted routes',
@@ -1853,10 +1948,10 @@ function assertCrossDeviceRosterImportIsWired() {
     'await renameCloudFighter(meta.cloudFighterId, trimmedName, apiContext)',
     'const cloudDelete = await deleteCloudFighter(meta.cloudFighterId, apiContext)',
     'Fighter renamed locally; cloud update skipped',
-    'const cloudSync = await syncCloudFightersToLocal(all, apiContext)',
+    'syncCloudFightersToLocal(all, apiContext)',
     'const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext)',
-    'p1CloudFighterId: p1Meta.cloudFighterId ?? null',
-    'p2CloudFighterId: p2Meta.cloudFighterId ?? null',
+    'p1CloudFighterId: p1Fighter.cloudFighterId',
+    'p2CloudFighterId: p2Fighter.cloudFighterId',
   ];
   const combined = `${cloud}\n${gallery}\n${roster}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
@@ -1937,6 +2032,9 @@ function assertTierPricingAndPipelineParity() {
   const frontendTiers = readFileSync(join(root, 'src/services/QualityTiers.ts'), 'utf8');
   const workerTiers = readFileSync(join(root, 'worker/src/tiers.ts'), 'utf8');
   const pipeline = readFileSync(join(root, 'src/services/CharacterPipeline.ts'), 'utf8');
+  const gemini = readFileSync(join(root, 'src/services/GeminiApi.ts'), 'utf8');
+  const spritePostProcess = readFileSync(join(root, 'src/services/SpritePostProcess.ts'), 'utf8');
+  const generationWorkflow = readFileSync(join(root, 'worker/src/generationWorkflow.ts'), 'utf8');
   const authState = readFileSync(join(root, 'src/ui/authState.ts'), 'utf8');
   const createFighter = readFileSync(join(root, 'src/ui/routes/CreateFighterPage.tsx'), 'utf8');
   const gallery = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
@@ -1977,11 +2075,24 @@ function assertTierPricingAndPipelineParity() {
     'setPendingUpgradeTier(tier.id)',
     'aria-labelledby="upgrade-confirm-title"',
     'Every existing local and cloud version remains preserved.',
+    'tier: currentTier,',
+    'syncFighterToCloud(updatedMeta, updatedSprites, intro, apiContext)',
+    "setStatus('Done and synced')",
+    "animationName === 'ko' && frames === 8",
+    'computeRequestedSpriteGrid(animName, genFrames)',
+    "if (animName === 'ko') return 8",
+    "name: 'ko',         motion: 'eight clear key poses",
+    "name: 'ko', motion: 'eight clear key poses",
   ];
-  const combined = `${frontendTiers}\n${workerTiers}\n${pipeline}\n${authState}\n${createFighter}\n${gallery}\n${packageJson}\n${tierParity}`;
+  const combined = `${frontendTiers}\n${workerTiers}\n${pipeline}\n${gemini}\n${spritePostProcess}\n${generationWorkflow}\n${authState}\n${createFighter}\n${gallery}\n${packageJson}\n${tierParity}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
-  if (missing.length > 0) {
-    throw new Error(`Tier pricing/pipeline parity is missing: ${missing.join(', ')}`);
+  const forbidden = ['setSpriteMode(', 'Mode: Refined', 'spriteMode,'];
+  const foundForbidden = forbidden.filter((snippet) => gallery.includes(snippet));
+  if (missing.length > 0 || foundForbidden.length > 0) {
+    throw new Error([
+      missing.length > 0 ? `Tier pricing/pipeline parity is missing: ${missing.join(', ')}` : '',
+      foundForbidden.length > 0 ? `Gallery exposes tier-bypassing sprite controls: ${foundForbidden.join(', ')}` : '',
+    ].filter(Boolean).join('; '));
   }
 }
 
@@ -2010,7 +2121,11 @@ function replayMigrations() {
     '.read worker/migrations/0015_asset_lookup_indexes.sql',
     '.read worker/migrations/0016_provider_spend_rate_window.sql',
     '.read worker/migrations/0017_provider_cost_events.sql',
-    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports");',
+    '.read worker/migrations/0018_durable_generation_jobs.sql',
+    '.read worker/migrations/0019_durable_retry_jobs.sql',
+    '.read worker/migrations/0020_official_arcade.sql',
+    '.read worker/migrations/0021_arcade_generation_prompts.sql',
+    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters");',
   ];
   try {
     run('D1 migration replay', sqlite, migrationArgs);
@@ -2065,6 +2180,22 @@ function replayMigrations() {
     ]);
     if (sourceDuplicateCount !== '1') {
       throw new Error(`Source content unique index did not collapse duplicate uploads; got ${sourceDuplicateCount}`);
+    }
+
+    const durableGenerationIndexCount = runCapture('D1 durable generation index check', sqlite, [
+      dbPath,
+      `
+        SELECT COUNT(*) FROM sqlite_master
+        WHERE type = 'index'
+          AND name IN (
+            'idx_generation_jobs_active_fighter',
+            'idx_generation_job_events_job',
+            'idx_provider_request_cache_job'
+          );
+      `,
+    ]);
+    if (durableGenerationIndexCount !== '3') {
+      throw new Error(`Durable generation indexes are incomplete; got ${durableGenerationIndexCount}/3`);
     }
 
 	    const communityPublishState = runCapture('D1 community publishable asset filter check', sqlite, [
@@ -2219,41 +2350,41 @@ function replayMigrations() {
 
         BEGIN;
         INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
-        SELECT 'paid-refund-1', user_id, credit_cost, 'generation_refund:paid-charge-1', fighter_id
+        SELECT 'paid-release-1', user_id, credit_cost, 'generation_reservation_release:paid-charge-1', fighter_id
         FROM generation_charges
         WHERE id = 'paid-charge-1' AND user_id = 'billing-paid' AND status = 'reserved';
         UPDATE users
         SET credits_balance = credits_balance + COALESCE(
-              (SELECT delta FROM credit_ledger WHERE id = 'paid-refund-1'),
+              (SELECT delta FROM credit_ledger WHERE id = 'paid-release-1'),
               0
             )
         WHERE id = 'billing-paid' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'paid-refund-1'
+          SELECT 1 FROM credit_ledger WHERE id = 'paid-release-1'
         );
         UPDATE generation_charges
-        SET status = 'refunded', refund_ledger_id = 'paid-refund-1'
+        SET status = 'refunded', refund_ledger_id = 'paid-release-1'
         WHERE id = 'paid-charge-1' AND user_id = 'billing-paid' AND status = 'reserved' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'paid-refund-1'
+          SELECT 1 FROM credit_ledger WHERE id = 'paid-release-1'
         );
         COMMIT;
 
         BEGIN;
         INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
-        SELECT 'paid-refund-duplicate', user_id, credit_cost, 'generation_refund:paid-charge-1', fighter_id
+        SELECT 'paid-release-duplicate', user_id, credit_cost, 'generation_reservation_release:paid-charge-1', fighter_id
         FROM generation_charges
         WHERE id = 'paid-charge-1' AND user_id = 'billing-paid' AND status = 'reserved';
         UPDATE users
         SET credits_balance = credits_balance + COALESCE(
-              (SELECT delta FROM credit_ledger WHERE id = 'paid-refund-duplicate'),
+              (SELECT delta FROM credit_ledger WHERE id = 'paid-release-duplicate'),
               0
             )
         WHERE id = 'billing-paid' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'paid-refund-duplicate'
+          SELECT 1 FROM credit_ledger WHERE id = 'paid-release-duplicate'
         );
         UPDATE generation_charges
-        SET status = 'refunded', refund_ledger_id = 'paid-refund-duplicate'
+        SET status = 'refunded', refund_ledger_id = 'paid-release-duplicate'
         WHERE id = 'paid-charge-1' AND user_id = 'billing-paid' AND status = 'reserved' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'paid-refund-duplicate'
+          SELECT 1 FROM credit_ledger WHERE id = 'paid-release-duplicate'
         );
         COMMIT;
 
@@ -2261,12 +2392,12 @@ function replayMigrations() {
           (SELECT credits_balance FROM users WHERE id = 'billing-paid') || '|' ||
           (SELECT COUNT(*) FROM generation_charges WHERE user_id = 'billing-paid') || '|' ||
           (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-paid') || '|' ||
-          (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-paid' AND reason LIKE 'generation_refund:%') || '|' ||
+          (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-paid' AND reason LIKE 'generation_reservation_release:%') || '|' ||
           (SELECT status FROM generation_charges WHERE id = 'paid-charge-1');
       `,
     ]);
     if (paidGenerationChargeState !== '15|1|2|1|refunded') {
-      throw new Error(`Paid generation charge/refund was not atomic and idempotent; got ${paidGenerationChargeState}`);
+      throw new Error(`Paid generation reservation release was not atomic and idempotent; got ${paidGenerationChargeState}`);
     }
 
     const freeGenerationChargeState = runCapture('D1 free Rookie charge atomicity check', sqlite, [
@@ -2315,7 +2446,7 @@ function replayMigrations() {
 
         BEGIN;
         INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
-        SELECT 'free-refund-1', user_id, credit_cost, 'generation_refund:free-charge-1', fighter_id
+        SELECT 'free-release-1', user_id, credit_cost, 'generation_reservation_release:free-charge-1', fighter_id
         FROM generation_charges
         WHERE id = 'free-charge-1' AND user_id = 'billing-free' AND status = 'reserved';
         UPDATE users
@@ -2332,29 +2463,29 @@ function replayMigrations() {
               ELSE 0
             END
         WHERE id = 'billing-free' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'free-refund-1'
+          SELECT 1 FROM credit_ledger WHERE id = 'free-release-1'
         );
         UPDATE generation_charges
-        SET status = 'refunded', refund_ledger_id = 'free-refund-1'
+        SET status = 'refunded', refund_ledger_id = 'free-release-1'
         WHERE id = 'free-charge-1' AND user_id = 'billing-free' AND status = 'reserved' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'free-refund-1'
+          SELECT 1 FROM credit_ledger WHERE id = 'free-release-1'
         );
         COMMIT;
 
         BEGIN;
         INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
-        SELECT 'free-refund-duplicate', user_id, credit_cost, 'generation_refund:free-charge-1', fighter_id
+        SELECT 'free-release-duplicate', user_id, credit_cost, 'generation_reservation_release:free-charge-1', fighter_id
         FROM generation_charges
         WHERE id = 'free-charge-1' AND user_id = 'billing-free' AND status = 'reserved';
         UPDATE users
         SET free_rookie_generations_used = free_rookie_generations_used - 1
         WHERE id = 'billing-free' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'free-refund-duplicate'
+          SELECT 1 FROM credit_ledger WHERE id = 'free-release-duplicate'
         );
         UPDATE generation_charges
-        SET status = 'refunded', refund_ledger_id = 'free-refund-duplicate'
+        SET status = 'refunded', refund_ledger_id = 'free-release-duplicate'
         WHERE id = 'free-charge-1' AND user_id = 'billing-free' AND status = 'reserved' AND EXISTS (
-          SELECT 1 FROM credit_ledger WHERE id = 'free-refund-duplicate'
+          SELECT 1 FROM credit_ledger WHERE id = 'free-release-duplicate'
         );
         COMMIT;
 
@@ -2362,12 +2493,12 @@ function replayMigrations() {
           (SELECT free_rookie_generations_used FROM users WHERE id = 'billing-free') || '|' ||
           (SELECT COUNT(*) FROM generation_charges WHERE user_id = 'billing-free') || '|' ||
           (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-free') || '|' ||
-          (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-free' AND reason LIKE 'generation_refund:%') || '|' ||
+          (SELECT COUNT(*) FROM credit_ledger WHERE user_id = 'billing-free' AND reason LIKE 'generation_reservation_release:%') || '|' ||
           (SELECT status FROM generation_charges WHERE id = 'free-charge-1');
       `,
     ]);
     if (freeGenerationChargeState !== '0|1|2|1|refunded') {
-      throw new Error(`Free Rookie charge/refund was not atomic and idempotent; got ${freeGenerationChargeState}`);
+      throw new Error(`Free Rookie reservation release was not atomic and idempotent; got ${freeGenerationChargeState}`);
     }
 
     const firstStripeClaim = runCapture('D1 Stripe checkout first claim check', sqlite, [
@@ -2712,7 +2843,7 @@ function assertAnonymousRookieTurnstileIsWired() {
     'if (turnstileError) return turnstileError',
     'turnstileToken: turnstileToken ?? null',
     '<TurnstileChallenge',
-    'disabled={!file || !name.trim() || running || !turnstileReady || !legalAccepted}',
+    'disabled={!file || !name.trim() || running || !turnstileReady || !legalAccepted || !recoveryReady}',
     'window.turnstile.reset(widgetId)',
     'TURNSTILE_REQUIRED = "true"',
     'TURNSTILE_ACTION = "anonymous_rookie"',
@@ -2859,6 +2990,8 @@ function assertLaunchMetadataIsWired() {
     "home.res.headers.get('Content-Security-Policy')",
     'parseContentSecurityPolicy',
     'frontendShellReadinessError',
+    'expectedAssetPath',
+    'ASF_EXPECTED_FRONTEND_ASSET_PATH',
     'assertCspSource',
     "['script-src', 'https://challenges.cloudflare.com']",
     "['script-src', expectedClerkOrigin]",
@@ -2875,7 +3008,8 @@ function assertLaunchMetadataIsWired() {
     'Home HTML missing canonical production origin',
     'robots.txt missing canonical sitemap',
     'Sitemap must not publish private roster routes',
-    "asset.res.headers.get('Cache-Control')",
+    "const cacheControl = res.headers.get('Cache-Control')",
+    'expected JavaScript',
   ];
   const requiredDeploy = [
     "'frontend environment CSP'",
@@ -2964,6 +3098,257 @@ function assertLaunchRasterAssetsAreFresh() {
   }
 }
 
+function assertDurableGenerationIsWired() {
+  const migration = readFileSync(join(root, 'worker/migrations/0018_durable_generation_jobs.sql'), 'utf8');
+  const retryMigration = readFileSync(join(root, 'worker/migrations/0019_durable_retry_jobs.sql'), 'utf8');
+  const billing = readFileSync(join(root, 'worker/src/billing.ts'), 'utf8');
+  const jobs = readFileSync(join(root, 'worker/src/generationJobs.ts'), 'utf8');
+  const workflow = readFileSync(join(root, 'worker/src/generationWorkflow.ts'), 'utf8');
+  const auth = readFileSync(join(root, 'worker/src/generationAuth.ts'), 'utf8');
+  const assets = readFileSync(join(root, 'worker/src/generatedAssets.ts'), 'utf8');
+  const imageProcessorContainer = readFileSync(join(root, 'worker/src/imageProcessorContainer.ts'), 'utf8');
+  const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
+  const processor = readFileSync(join(root, 'processor/src/server.ts'), 'utf8');
+  const processorDockerfile = readFileSync(join(root, 'Dockerfile.processor'), 'utf8');
+  const frontendJobs = readFileSync(join(root, 'src/services/GenerationJobs.ts'), 'utf8');
+  const apiClientTests = readFileSync(join(root, 'src/services/ApiClient.test.ts'), 'utf8');
+  const createPage = readFileSync(join(root, 'src/ui/routes/CreateFighterPage.tsx'), 'utf8');
+  const galleryPage = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
+  const rateLimit = readFileSync(join(root, 'worker/src/rateLimit.ts'), 'utf8');
+  const productionWrangler = readFileSync(join(root, 'worker/wrangler.toml'), 'utf8');
+  const sandboxWrangler = readFileSync(join(root, 'worker/wrangler.sandbox.toml'), 'utf8');
+  const workerPackage = readFileSync(join(root, 'worker/package.json'), 'utf8');
+  const authTests = readFileSync(join(root, 'worker/src/generationAuth.test.ts'), 'utf8');
+  const jobTests = readFileSync(join(root, 'worker/src/generationJobs.integration.test.ts'), 'utf8');
+  const assetTests = readFileSync(join(root, 'worker/src/generatedAssets.integration.test.ts'), 'utf8');
+  const providerTests = readFileSync(join(root, 'worker/src/providerSessions.integration.test.ts'), 'utf8');
+  const billingTests = readFileSync(join(root, 'worker/src/billing.integration.test.ts'), 'utf8');
+  const combined = [
+    migration,
+    retryMigration,
+    billing,
+    jobs,
+    workflow,
+    auth,
+    assets,
+    imageProcessorContainer,
+    workerIndex,
+    processor,
+    processorDockerfile,
+    frontendJobs,
+    apiClientTests,
+    createPage,
+    galleryPage,
+    rateLimit,
+    productionWrangler,
+    sandboxWrangler,
+    workerPackage,
+    authTests,
+    jobTests,
+    assetTests,
+    providerTests,
+    billingTests,
+  ].join('\n');
+  const required = [
+    'CREATE TABLE IF NOT EXISTS generation_jobs',
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_generation_jobs_active_fighter',
+    'CREATE TABLE IF NOT EXISTS generation_job_events',
+    'CREATE TABLE IF NOT EXISTS provider_request_cache',
+    'UNIQUE(job_id, provider, method, request_path, request_hash)',
+    "'fighter_retry_animation'",
+    "'fighter_retry_source'",
+    'target_kind TEXT',
+    'target_name TEXT',
+    'export async function settleGenerationPurchase',
+    'successStatements: D1PreparedStatement[] = []',
+    '...successStatements',
+    'export async function createGenerationJob',
+    "retention: { successRetention: '30 days', errorRetention: '30 days' }",
+    "locationHint: 'weur'",
+    "status IN ('queued', 'running')",
+    'unused reservation was released',
+    'export class FighterGenerationWorkflow extends WorkflowEntrypoint',
+    "retries: { limit: 5, delay: '30 seconds'",
+    "timeout: '3 hours'",
+    "step.do('commit generation purchase'",
+    'INSERT OR IGNORE INTO generation_job_events',
+    'GENERATION_JOB_SIGNING_SECRET is required',
+    '[secrets]',
+    '"GENERATION_JOB_SIGNING_SECRET"',
+    '"types:check": "node ../scripts/wrangler-workspace-log.mjs types worker-configuration.d.ts --strict-vars false --check"',
+    'Generation job is not active',
+    'export class ImageProcessorContainer extends Container',
+    "path === '/api/generation-jobs' && method === 'POST'",
+    "path === '/api/generation-jobs' && method === 'GET'",
+    'durableGeneration: env.FIGHTER_GENERATION',
+    "image = \"../Dockerfile.processor\"",
+    'jurisdiction = "eu"',
+    'FROM node:22-bookworm-slim',
+    'USER node',
+    'export async function startGenerationJob',
+    'export async function waitForGenerationJob',
+    'listGenerationJobs',
+    "'generation:job':",
+    'backendOwnsPurchase = true',
+    'targetKind: target.kind',
+    "Connection lost. The cloud job is still running; reconnecting...",
+    "step.do('retry canonical side source'",
+    "step.do('retry canonical upright source'",
+    "step.do('retry canonical crouch source'",
+    'preparing your private cloud fighter',
+    'deduplicates exact source retries while preserving every distinct version',
+    'replays a completed provider response without another call reservation',
+    'keys parallel calls by semantic scope plus body and blocks exact concurrent duplicates',
+    'uses a stable semantic request key for parallel durable provider calls',
+    'starts one idempotent workflow and extends its backend-owned reservation',
+    'keeps one reserved purchase when identical job requests race',
+    'starts an idempotent one-target animation retry in the durable workflow',
+    'starts a one-target canonical source retry with the source scope',
+    'releases a retry reservation when its target is outside the scoped animation set',
+    'keeps a reservation uncommitted when the durable completion batch fails',
+  ];
+  const missing = required.filter((snippet) => !combined.toLowerCase().includes(snippet.toLowerCase()));
+  if (missing.length > 0) {
+    throw new Error(`Durable generation wiring is incomplete: ${missing.join(', ')}`);
+  }
+  for (const [label, config] of [['production', productionWrangler], ['sandbox', sandboxWrangler]]) {
+    if (/^\s*GENERATION_JOB_SIGNING_SECRET\s*=/m.test(config)) {
+      throw new Error(`${label} generation job signing key must remain a Worker secret.`);
+    }
+  }
+}
+
+function assertOfficialArcadeIsWired() {
+  const migration = readFileSync(join(root, 'worker/migrations/0020_official_arcade.sql'), 'utf8');
+  const promptMigration = readFileSync(join(root, 'worker/migrations/0021_arcade_generation_prompts.sql'), 'utf8');
+  const fighters = readFileSync(join(root, 'worker/src/fighters.ts'), 'utf8');
+  const generation = readFileSync(join(root, 'worker/src/arcadeGeneration.ts'), 'utf8');
+  const workflow = readFileSync(join(root, 'worker/src/generationWorkflow.ts'), 'utf8');
+  const processor = readFileSync(join(root, 'processor/src/server.ts'), 'utf8');
+  const gemini = readFileSync(join(root, 'src/services/GeminiApi.ts'), 'utf8');
+  const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
+  const cloudFighters = readFileSync(join(root, 'src/services/CloudFighters.ts'), 'utf8');
+  const legalPage = readFileSync(join(root, 'src/ui/routes/LegalPage.tsx'), 'utf8');
+  const rosterPage = readFileSync(join(root, 'src/ui/routes/RosterPage.tsx'), 'utf8');
+  const seeder = readFileSync(join(root, 'scripts/seed-arcade-roster.mjs'), 'utf8');
+  const packageJson = readFileSync(join(root, 'package.json'), 'utf8');
+  const gitignore = readFileSync(join(root, '.gitignore'), 'utf8');
+  const manifest = JSON.parse(readFileSync(join(root, 'arcade/roster-2026.json'), 'utf8'));
+  const expectedSlugs = [
+    'donald-trump',
+    'lamine-yamal',
+    'ibai-llanos',
+    'aitana',
+    'rosalia',
+    'bad-bunny',
+    'mrbeast',
+    'ishowspeed',
+    'elon-musk',
+    'cristiano-ronaldo',
+    'javier-milei',
+    'lionel-messi',
+    'perro-sanxe',
+  ];
+  if (manifest.qualityTier !== 'champion') {
+    throw new Error('The official Arcade manifest must stay Champion-only.');
+  }
+  if (!Array.isArray(manifest.fighters) || manifest.fighters.length !== expectedSlugs.length) {
+    throw new Error(`The official Arcade manifest must contain exactly ${expectedSlugs.length} launch fighters.`);
+  }
+  const actualSlugs = manifest.fighters.map((fighter) => fighter.slug);
+  const missingSlugs = expectedSlugs.filter((slug) => !actualSlugs.includes(slug));
+  if (missingSlugs.length > 0 || new Set(actualSlugs).size !== actualSlugs.length) {
+    throw new Error(`The official Arcade manifest is missing or duplicating launch fighters: ${missingSlugs.join(', ')}`);
+  }
+  if (!/unofficial/i.test(manifest.disclosure ?? '') || !/endorse/i.test(manifest.disclosure ?? '')) {
+    throw new Error('The official Arcade manifest must retain its unofficial/no-endorsement disclosure.');
+  }
+  const invalidReferences = manifest.fighters.filter((fighter) => {
+    const reference = fighter.reference ?? manifest.reference;
+    return (
+      reference?.kind !== 'licensed'
+      || typeof reference.sourceUrl !== 'string'
+      || !reference.sourceUrl.startsWith('https://')
+      || typeof reference.licenseUrl !== 'string'
+      || !reference.licenseUrl.startsWith('https://')
+      || !reference.license
+      || !reference.credit
+      || !reference.author
+      || !reference.sourceDate
+      || !reference.verification
+      || !/^[a-f0-9]{64}$/.test(reference.sourceSha256 ?? '')
+    );
+  });
+  if (invalidReferences.length > 0) {
+    throw new Error(`Every launch fighter needs approved licensed-photo provenance: ${invalidReferences.map((fighter) => fighter.slug).join(', ')}`);
+  }
+  const sourceUrls = manifest.fighters.map((fighter) => (fighter.reference ?? manifest.reference).sourceUrl);
+  if (new Set(sourceUrls).size !== sourceUrls.length) {
+    throw new Error('Each launch fighter must use a distinct licensed source photo.');
+  }
+  if (manifest.fighters.some((fighter) => !fighter.referencePrompt || fighter.referencePrompt.length < 180)) {
+    throw new Error('Every official Arcade fighter needs a detailed transformation prompt.');
+  }
+
+  const combined = [
+    migration,
+    promptMigration,
+    fighters,
+    generation,
+    workflow,
+    processor,
+    gemini,
+    workerIndex,
+    cloudFighters,
+    legalPage,
+    rosterPage,
+    seeder,
+    packageJson,
+    gitignore,
+  ].join('\n');
+  const required = [
+    'CREATE TABLE IF NOT EXISTS arcade_fighters',
+    'ADD COLUMN generation_prompt TEXT',
+    "WHERE status IN ('draft', 'active')",
+    "af.status = 'active'",
+    'AND f.public_flag = 1',
+    'Generate the full playable animation set before activating this fighter',
+    'export async function startAdminArcadeGeneration',
+    "'arcade_seed_generation'",
+    "VALUES (?, ?, 'champion', 0, 0, 'reserved'",
+    'return createGenerationJob',
+    "path === '/api/arcade' && method === 'GET'",
+    '/api/admin/arcade/',
+    'downloadArcadeFighterToLocal',
+    'arcadeFighterPhotoHash',
+    'Photo: {fighter.cloud.arcade.reference.credit}',
+    'makes that artwork available under the same CC BY-SA version',
+    'sourceSha256',
+    'Licensed source hash mismatch',
+    'ASF_ARCADE_CLERK_SECRET_KEY',
+    'expires_in_seconds: CLERK_TOKEN_TTL_SECONDS',
+    'Use the Clerk secret-key flow for long jobs',
+    'generationPrompt: fighter.referencePrompt',
+    "SELECT generation_prompt",
+    "provider_content_blocked",
+    'new NonRetryableError',
+    'GeminiContentBlockedError',
+    "ARCADE_ADMIN_SEED_HEADER = 'X-Insert-Player-Admin-Seed'",
+    'allowMissingAuthorizedParty: isArcadeAdminSeed',
+    "auth.user.plan_tier !== 'admin'",
+    "type RosterFilter = 'official' | 'yours' | 'all'",
+    "playableSpriteSetSql('f', 'champion')",
+    '"arcade:seed": "node scripts/seed-arcade-roster.mjs"',
+    '--confirm-production',
+    '.arcade-sources/',
+    '.arcade-state.json',
+  ];
+  const missing = required.filter((snippet) => !combined.includes(snippet));
+  if (missing.length > 0) {
+    throw new Error(`Official Arcade wiring is incomplete: ${missing.join(', ')}`);
+  }
+}
+
 function assertGithubActionsAreWired() {
   const files = {
     validation: '.github/workflows/validate.yml',
@@ -3009,6 +3394,7 @@ function assertGithubActionsAreWired() {
       'npm run deploy:frontend:sandbox',
       'secrets.CLOUDFLARE_API_TOKEN',
       'secrets.ANONYMIZATION_SECRET',
+      'secrets.GENERATION_JOB_SIGNING_SECRET',
     ],
     production: [
       'group: deploy-production',
@@ -3023,6 +3409,7 @@ function assertGithubActionsAreWired() {
       'npm run check:live-readiness',
       'secrets.CLOUDFLARE_API_TOKEN',
       'secrets.CLERK_WEBHOOK_SIGNING_SECRET',
+      'secrets.GENERATION_JOB_SIGNING_SECRET',
     ],
     codeql: [
       'github/codeql-action/init@v4',
@@ -3070,7 +3457,9 @@ assertGeminiImageModelsAreGa();
 run('frontend style guard', npm, ['run', 'check:frontend']);
 run('tier parity guard', node, ['scripts/check-tier-parity.mjs']);
 run('unit tests', npm, ['test']);
+run('processor benchmark tests', npm, ['--prefix', 'processor', 'run', 'benchmark:providers:test']);
 run('frontend typecheck', npx, ['tsc', '--noEmit']);
+run('Worker binding type drift check', npm, ['--prefix', 'worker', 'run', 'types:check']);
 run('worker typecheck', npx, ['tsc', '--noEmit'], join(root, 'worker'));
 replayMigrations();
 assertNoLegacyApiRoutes();
@@ -3108,6 +3497,8 @@ assertLocalCachePreservesSpriteVersions();
 assertWorkerErrorsDoNotLeakInProduction();
 assertLaunchMetadataIsWired();
 assertLaunchRasterAssetsAreFresh();
+assertOfficialArcadeIsWired();
+assertDurableGenerationIsWired();
 assertGithubActionsAreWired();
 run('prelaunch bundle isolation', node, ['scripts/build-prelaunch.mjs', '--skip-checks']);
 

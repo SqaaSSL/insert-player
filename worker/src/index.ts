@@ -14,6 +14,10 @@ import {
   getAsset,
   getCommunityFighter,
   getFighter,
+  getPublicFighterSourceAsset,
+  getPublicFighterSpriteAsset,
+  listAdminArcadeFighters,
+  listArcadeFighters,
   listCommunityFighters,
   listFighters,
   listStages,
@@ -25,6 +29,7 @@ import {
   tiersResponse,
   uploadFighterSource,
   uploadFighterSprite,
+  upsertAdminArcadeFighter,
 } from './fighters';
 import { ensureSystemUser, getLeaderboard, getPlayerStats, reportMatchResult } from './leaderboard';
 import { getTempAsset, handleProxy } from './proxy';
@@ -35,6 +40,18 @@ import { turnstileConfigurationStatus } from './turnstile';
 import { handleClerkWebhook } from './clerkWebhooks';
 import { cleanupOperationalData } from './maintenance';
 import { listCommunityReports, moderateCommunityReport } from './moderation';
+import { CURRENT_LEGAL_VERSION } from './legal';
+import { optionalGenerationJobAuth } from './generationAuth';
+import {
+  startAdminArcadeAnimationGeneration,
+  startAdminArcadeGeneration,
+  startAdminArcadeSourceGeneration,
+} from './arcadeGeneration';
+import {
+  createGenerationJob,
+  getGenerationJob,
+  listGenerationJobs,
+} from './generationJobs';
 import {
   InvalidMultipartBodyError,
   InvalidJsonBodyError,
@@ -42,10 +59,14 @@ import {
   RequestBodyTooLargeError,
 } from './requestBody';
 
+export { FighterGenerationWorkflow } from './generationWorkflow';
+export { ImageProcessorContainer } from './imageProcessorContainer';
+
 const MAX_MATCH_ROUNDS = 5;
 const MAX_MATCH_DURATION_SECONDS = 20 * 60;
 const MAX_MATCH_ID_LENGTH = 128;
 const MAX_MATCH_REPORT_BODY_BYTES = 16 * 1024;
+const ARCADE_ADMIN_SEED_HEADER = 'X-Insert-Player-Admin-Seed';
 
 function resolveCorsOrigin(request: Request, env: Env): string {
   const requestOrigin = request.headers.get('Origin') ?? '';
@@ -64,7 +85,7 @@ function corsHeaders(request: Request, env: Env): HeadersInit {
   const headers: HeadersInit = {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASF-Provider-Session',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASF-Provider-Session, X-Insert-Player-Provider-Request-Key',
     'Vary': 'Origin',
   };
   if (origin !== '*') {
@@ -105,8 +126,14 @@ async function authenticated(
   env: Env,
   handler: (auth: AuthContext) => Promise<Response>,
 ): Promise<Response> {
-  const auth = await requireAuth(request, env);
+  const isArcadeAdminSeed = request.headers.get(ARCADE_ADMIN_SEED_HEADER) === 'clerk-backend';
+  const auth = await requireAuth(request, env, {
+    allowMissingAuthorizedParty: isArcadeAdminSeed,
+  });
   if (isResponse(auth)) return auth;
+  if (isArcadeAdminSeed && auth.user.plan_tier !== 'admin') {
+    return json({ error: 'Admin access required' }, 403);
+  }
   return handler(auth);
 }
 
@@ -191,7 +218,8 @@ function healthResponse(env: Env): Response {
 
   return json({
     status: 'ok',
-    version: '0.16.0',
+    version: '0.17.0',
+    legalVersion: CURRENT_LEGAL_VERSION,
     environment: env.ENVIRONMENT ?? 'unknown',
     cors: env.CORS_ORIGIN ? 'configured' : 'wildcard',
     auth: authConfigured ? 'clerk' : 'not_configured',
@@ -209,6 +237,11 @@ function healthResponse(env: Env): Response {
       d1: env.DB ? 'bound' : 'missing',
       r2: env.SPRITES ? 'bound' : 'missing',
     },
+    durableGeneration: env.FIGHTER_GENERATION
+      && env.IMAGE_PROCESSOR
+      && env.GENERATION_JOB_SIGNING_SECRET
+      ? 'configured'
+      : 'not_configured',
     rateLimit: 'd1',
     privacy: anonymousIdentifiersProtected ? 'pseudonymized' : 'not_configured',
     providers: allProvidersConfigured ? 'configured' : 'partial',
@@ -230,7 +263,13 @@ export default {
         return addCors(await handleClerkWebhook(request, env), request, env);
       }
 
-      const publicAuth: PublicAuthContext = await optionalAuth(request, env);
+      const generationAuth = path.startsWith('/proxy/')
+        ? await optionalGenerationJobAuth(request, env)
+        : null;
+      if (generationAuth instanceof Response) {
+        return addCors(generationAuth, request, env);
+      }
+      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(request, env);
       const proxied = path.startsWith('/proxy/')
         ? await handleProxy(request, env, publicAuth)
         : null;
@@ -298,6 +337,10 @@ export default {
         return addCors(await listCommunityFighters(request, env), request, env);
       }
 
+      if (path === '/api/arcade' && method === 'GET') {
+        return addCors(await listArcadeFighters(request, env), request, env);
+      }
+
       const communityDetailMatch = path.match(/^\/api\/community\/([^/]+)$/);
       if (communityDetailMatch && method === 'GET') {
         const fighterId = decodePathParam(communityDetailMatch[1]);
@@ -310,6 +353,43 @@ export default {
         const fighterId = decodePathParam(shareMatch[1]);
         if (isResponse(fighterId)) return addCors(fighterId, request, env);
         return addCors(await shareCommunityFighterPage(request, env, fighterId), request, env);
+      }
+
+      const publicSourceAssetMatch = path.match(
+        /^\/public-assets\/fighters\/([^/]+)\/sources\/(side|upright|crouch)\/([^/]+)$/,
+      );
+      if (publicSourceAssetMatch && method === 'GET') {
+        const fighterId = decodePathParam(publicSourceAssetMatch[1]);
+        const revision = decodePathParam(publicSourceAssetMatch[3]);
+        if (isResponse(fighterId)) return addCors(fighterId, request, env);
+        if (isResponse(revision)) return addCors(revision, request, env);
+        return addCors(
+          await getPublicFighterSourceAsset(
+            env,
+            fighterId,
+            publicSourceAssetMatch[2] as 'side' | 'upright' | 'crouch',
+            revision,
+          ),
+          request,
+          env,
+        );
+      }
+
+      const publicSpriteAssetMatch = path.match(
+        /^\/public-assets\/fighters\/([^/]+)\/sprites\/([^/]+)\/([^/]+)$/,
+      );
+      if (publicSpriteAssetMatch && method === 'GET') {
+        const fighterId = decodePathParam(publicSpriteAssetMatch[1]);
+        const spriteId = decodePathParam(publicSpriteAssetMatch[2]);
+        const revision = decodePathParam(publicSpriteAssetMatch[3]);
+        if (isResponse(fighterId)) return addCors(fighterId, request, env);
+        if (isResponse(spriteId)) return addCors(spriteId, request, env);
+        if (isResponse(revision)) return addCors(revision, request, env);
+        return addCors(
+          await getPublicFighterSpriteAsset(env, fighterId, spriteId, revision),
+          request,
+          env,
+        );
       }
 
       const communityCloneMatch = path.match(/^\/api\/community\/([^/]+)\/clone$/);
@@ -351,6 +431,103 @@ export default {
             env,
             'admin:moderation',
             (auth) => listCommunityReports(request, env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/admin/arcade' && method === 'GET') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => listAdminArcadeFighters(env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const arcadeAdminMatch = path.match(/^\/api\/admin\/arcade\/([^/]+)$/);
+      if (arcadeAdminMatch && method === 'PATCH') {
+        const arcadeFighterId = decodePathParam(arcadeAdminMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => upsertAdminArcadeFighter(request, env, auth, arcadeFighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const arcadeGenerationMatch = path.match(/^\/api\/admin\/arcade\/([^/]+)\/generate$/);
+      if (arcadeGenerationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(arcadeGenerationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => startAdminArcadeGeneration(request, env, auth, arcadeFighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const arcadeSourceGenerationMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/generate\/source\/([^/]+)$/,
+      );
+      if (arcadeSourceGenerationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(arcadeSourceGenerationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        const sourceName = decodePathParam(arcadeSourceGenerationMatch[2]);
+        if (isResponse(sourceName)) return addCors(sourceName, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => startAdminArcadeSourceGeneration(
+              request,
+              env,
+              auth,
+              arcadeFighterId,
+              sourceName,
+            ),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const arcadeAnimationGenerationMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/generate\/([^/]+)$/,
+      );
+      if (arcadeAnimationGenerationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(arcadeAnimationGenerationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        const animationName = decodePathParam(arcadeAnimationGenerationMatch[2]);
+        if (isResponse(animationName)) return addCors(animationName, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => startAdminArcadeAnimationGeneration(
+              request,
+              env,
+              auth,
+              arcadeFighterId,
+              animationName,
+            ),
           ),
           request,
           env,
@@ -399,6 +576,38 @@ export default {
 
       if (path === '/api/fighters' && method === 'GET') {
         return addCors(await authenticated(request, env, (auth) => listFighters(request, env, auth)), request, env);
+      }
+
+      if (path === '/api/generation-jobs' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => listGenerationJobs(env, auth)),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/generation-jobs' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'generation:job',
+            (auth) => createGenerationJob(request, env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const generationJobMatch = path.match(/^\/api\/generation-jobs\/([^/]+)$/);
+      if (generationJobMatch && method === 'GET') {
+        const jobId = decodePathParam(generationJobMatch[1]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        return addCors(
+          await authenticated(request, env, (auth) => getGenerationJob(env, auth, jobId)),
+          request,
+          env,
+        );
       }
 
       if (path === '/api/fighters' && method === 'POST') {

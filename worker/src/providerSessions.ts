@@ -1,21 +1,28 @@
-import { generateId } from './auth';
+import { generateId, hashString } from './auth';
 import type { Env, PublicAuthContext, QualityTier } from './types';
+import { generationJobIdFromAuth } from './generationAuth';
 import {
   normalizeGenerationBillingOperation,
   normalizeQualityTier,
   type GenerationBillingOperation,
 } from './tiers';
-import { readJsonBody } from './requestBody';
+import {
+  readJsonBody,
+  rejectDeclaredBodyTooLarge,
+  RequestBodyTooLargeError,
+} from './requestBody';
 import { enforceRateLimit } from './rateLimit';
 import {
   parseGenerationLegalAttestation,
   prepareLegalAcceptance,
   type GenerationLegalAttestation,
 } from './legal';
+import { ResponseBodyTooLargeError } from './streamLimits';
+import { PROVIDER_REQUEST_BODY_LIMITS, type ProviderName } from './providerLimits';
 
 export const PROVIDER_SESSION_HEADER = 'X-ASF-Provider-Session';
 
-export type ProviderSessionProvider = 'gemini' | 'ludo' | 'freepik' | 'runway' | 'fal';
+export type ProviderSessionProvider = ProviderName;
 
 type ProviderSessionPurpose =
   | 'fighter_generation'
@@ -90,10 +97,433 @@ const FEATURE_PROVIDER_COST_LIMITS_CENTS: Record<'stage_background' | 'intro_vid
 const GEMINI_FLASH_IMAGE_MODEL = 'gemini-3.1-flash-image';
 const GEMINI_PRO_IMAGE_MODEL = 'gemini-3-pro-image';
 const GEMINI_SPEND_WINDOW_SECONDS = 10 * 60;
-const providerRequestReservations = new WeakMap<Request, ProviderSpendReservation>();
+const PROVIDER_REQUEST_KEY_HEADER = 'X-Insert-Player-Provider-Request-Key';
+const PROVIDER_CACHE_MAX_RESPONSE_BYTES = 96 * 1024 * 1024;
+const PROVIDER_CACHE_MULTIPART_BYTES = 8 * 1024 * 1024;
+
+interface ProviderRequestCacheRow {
+  id: string;
+  status: 'pending' | 'succeeded' | 'failed';
+  response_blob_key: string | null;
+  response_status: number | null;
+  response_content_type: string | null;
+  owner_attempt_id: string;
+  updated_at: string;
+}
+
+interface ProviderRequestCacheClaim {
+  id: string;
+  jobId: string;
+  ownerAttemptId: string;
+  responseBlobKey: string;
+}
+
+export interface ProviderRequestState {
+  spendReservation: ProviderSpendReservation | null;
+  cacheClaim: ProviderRequestCacheClaim | null;
+}
+
+export function createProviderRequestState(): ProviderRequestState {
+  return { spendReservation: null, cacheClaim: null };
+}
+
+async function uploadMultipartPartWithRetry(
+  upload: R2MultipartUpload,
+  partNumber: number,
+  bytes: Uint8Array,
+): Promise<R2UploadedPart> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await upload.uploadPart(partNumber, bytes);
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+    }
+  }
+  throw lastError;
+}
+
+async function completeMultipartUploadWithRetry(
+  bucket: R2Bucket,
+  upload: R2MultipartUpload,
+  key: string,
+  parts: R2UploadedPart[],
+): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await upload.complete(parts);
+      return;
+    } catch (error) {
+      if (await bucket.head(key)) return;
+      lastError = error;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+    }
+  }
+  throw lastError;
+}
+
+async function storeProviderResponseStream(
+  bucket: R2Bucket,
+  key: string,
+  body: ReadableStream<Uint8Array> | null,
+  options: R2MultipartOptions,
+): Promise<void> {
+  if (!body) {
+    await bucket.put(key, null, options);
+    return;
+  }
+
+  const upload = await bucket.createMultipartUpload(key, options);
+  const reader = body.getReader();
+  const parts: R2UploadedPart[] = [];
+  let partBytes = new Uint8Array(PROVIDER_CACHE_MULTIPART_BYTES);
+  let partOffset = 0;
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > PROVIDER_CACHE_MAX_RESPONSE_BYTES) {
+        throw new ResponseBodyTooLargeError();
+      }
+      let sourceOffset = 0;
+      while (sourceOffset < value.byteLength) {
+        const copyBytes = Math.min(
+          value.byteLength - sourceOffset,
+          PROVIDER_CACHE_MULTIPART_BYTES - partOffset,
+        );
+        partBytes.set(value.subarray(sourceOffset, sourceOffset + copyBytes), partOffset);
+        sourceOffset += copyBytes;
+        partOffset += copyBytes;
+        if (partOffset === PROVIDER_CACHE_MULTIPART_BYTES) {
+          parts.push(await uploadMultipartPartWithRetry(upload, parts.length + 1, partBytes));
+          partBytes = new Uint8Array(PROVIDER_CACHE_MULTIPART_BYTES);
+          partOffset = 0;
+        }
+      }
+    }
+
+    if (partOffset > 0) {
+      parts.push(await uploadMultipartPartWithRetry(
+        upload,
+        parts.length + 1,
+        partBytes.subarray(0, partOffset),
+      ));
+    }
+    if (parts.length === 0) {
+      await upload.abort();
+      await bucket.put(key, null, options);
+      return;
+    }
+    await completeMultipartUploadWithRetry(bucket, upload, key, parts);
+  } catch (error) {
+    await Promise.allSettled([reader.cancel(error), upload.abort()]);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 function json(data: unknown, status = 200, extraHeaders: HeadersInit = {}): Response {
   return Response.json(data, { status, headers: extraHeaders });
+}
+
+function providerRequestPath(request: Request): string {
+  const url = new URL(request.url);
+  return `${url.pathname}${url.search}`;
+}
+
+function digestHex(digest: ArrayBuffer): string {
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function providerRequestHash(
+  request: Request,
+  requestKey: string,
+  maxBytes: number,
+): Promise<string> {
+  if (rejectDeclaredBodyTooLarge(request, maxBytes)) throw new RequestBodyTooLargeError();
+  const prefix = new Uint8Array(requestKey.length + 1);
+  prefix.set(new TextEncoder().encode(requestKey));
+
+  if (typeof DigestStream === 'undefined') {
+    const requestBytes = await request.clone().arrayBuffer();
+    if (requestBytes.byteLength > maxBytes) throw new RequestBodyTooLargeError();
+    const keyedRequest = new Uint8Array(prefix.byteLength + requestBytes.byteLength);
+    keyedRequest.set(prefix, 0);
+    keyedRequest.set(new Uint8Array(requestBytes), prefix.byteLength);
+    return hashString(keyedRequest.buffer);
+  }
+
+  const digestStream = new DigestStream('SHA-256');
+  const writer = digestStream.getWriter();
+  const reader = request.clone().body?.getReader() ?? null;
+  let totalBytes = 0;
+  try {
+    await writer.write(prefix);
+    if (reader) {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        totalBytes += value.byteLength;
+        if (totalBytes > maxBytes) throw new RequestBodyTooLargeError();
+        await writer.write(value);
+      }
+    }
+    await writer.close();
+    return digestHex(await digestStream.digest);
+  } catch (error) {
+    await Promise.allSettled([
+      reader?.cancel(error) ?? Promise.resolve(),
+      writer.abort(error),
+    ]);
+    void digestStream.digest.catch(() => undefined);
+    throw error;
+  } finally {
+    reader?.releaseLock();
+    writer.releaseLock();
+  }
+}
+
+function parseSqliteTimestamp(value: string): number {
+  return Date.parse(value.includes('T') ? value : `${value.replace(' ', 'T')}Z`);
+}
+
+async function cachedProviderResponse(
+  env: Env,
+  row: ProviderRequestCacheRow,
+): Promise<Response | null> {
+  if (!row.response_blob_key || !row.response_status) return null;
+  const object = await env.SPRITES.get(row.response_blob_key);
+  if (!object) {
+    if (row.status === 'succeeded') {
+      await env.DB.prepare(`
+        UPDATE provider_request_cache
+        SET status = 'failed', error_message = 'Cached response object is missing', updated_at = datetime('now')
+        WHERE id = ? AND status = 'succeeded'
+      `).bind(row.id).run();
+    }
+    return null;
+  }
+  if (row.status !== 'succeeded') {
+    await env.DB.prepare(`
+      UPDATE provider_request_cache
+      SET status = 'succeeded', error_message = NULL, updated_at = datetime('now')
+      WHERE id = ? AND response_blob_key = ? AND response_status = ?
+    `).bind(row.id, row.response_blob_key, row.response_status).run();
+  }
+  return new Response(object.body, {
+    status: row.response_status,
+    headers: {
+      'Content-Type': row.response_content_type ?? object.httpMetadata?.contentType ?? 'application/json',
+      'X-Insert-Player-Provider-Cache': 'hit',
+    },
+  });
+}
+
+async function beginProviderRequestCache(
+  request: Request,
+  env: Env,
+  auth: PublicAuthContext,
+  route: { provider: ProviderSessionProvider; path: string },
+): Promise<Response | ProviderRequestCacheClaim | null> {
+  const jobId = generationJobIdFromAuth(auth);
+  if (!jobId || request.method !== 'POST') return null;
+
+  const requestKey = request.headers.get(PROVIDER_REQUEST_KEY_HEADER)?.trim() ?? '';
+  if (!/^[a-zA-Z0-9:_-]{1,200}$/.test(requestKey)) {
+    return json({ error: 'A valid durable provider request key is required' }, 400);
+  }
+  let requestHash: string;
+  try {
+    requestHash = await providerRequestHash(
+      request,
+      requestKey,
+      PROVIDER_REQUEST_BODY_LIMITS[route.provider],
+    );
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return json({ error: 'Provider request body is too large' }, 413);
+    }
+    throw error;
+  }
+  const requestPath = providerRequestPath(request);
+  const ownerAttemptId = generateId();
+  const id = generateId();
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO provider_request_cache (
+      id, job_id, provider, method, request_path, request_hash, owner_attempt_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    jobId,
+    route.provider,
+    request.method,
+    requestPath,
+    requestHash,
+    ownerAttemptId,
+  ).run();
+
+  let row = await env.DB.prepare(`
+    SELECT id, status, response_blob_key, response_status, response_content_type,
+           owner_attempt_id, updated_at
+    FROM provider_request_cache
+    WHERE job_id = ? AND provider = ? AND method = ? AND request_path = ? AND request_hash = ?
+  `).bind(jobId, route.provider, request.method, requestPath, requestHash)
+    .first<ProviderRequestCacheRow>();
+  if (!row) return json({ error: 'Provider request cache is unavailable' }, 503);
+
+  const cached = await cachedProviderResponse(env, row);
+  if (cached) return cached;
+
+  if (row.owner_attempt_id !== ownerAttemptId) {
+    const stale = row.status === 'failed' || (
+      Number.isFinite(parseSqliteTimestamp(row.updated_at)) &&
+      parseSqliteTimestamp(row.updated_at) <= Date.now() - 15 * 60 * 1_000
+    );
+    if (stale) {
+      const takeover = await env.DB.prepare(`
+        UPDATE provider_request_cache
+        SET status = 'pending', owner_attempt_id = ?, error_message = NULL, updated_at = datetime('now')
+        WHERE id = ? AND owner_attempt_id = ? AND status IN ('pending', 'failed')
+        RETURNING id
+      `).bind(ownerAttemptId, row.id, row.owner_attempt_id).first<{ id: string }>();
+      if (takeover) {
+        row = { ...row, status: 'pending', owner_attempt_id: ownerAttemptId };
+      }
+    }
+  }
+
+  if (row.owner_attempt_id !== ownerAttemptId) {
+    return json(
+      { error: 'Identical provider request is already in progress', code: 'provider_request_in_progress' },
+      425,
+      { 'Retry-After': '5' },
+    );
+  }
+
+  return {
+    id: row.id,
+    jobId,
+    ownerAttemptId,
+    responseBlobKey: `users/${auth.userId}/jobs/${jobId}/provider-responses/${row.id}.bin`,
+  };
+}
+
+async function finalizeProviderRequestCache(
+  env: Env,
+  response: Response,
+  state: ProviderRequestState,
+): Promise<Response> {
+  const claim = state.cacheClaim;
+  state.cacheClaim = null;
+  if (!claim) return response;
+
+  if (!response.ok) {
+    await env.DB.prepare(`
+      UPDATE provider_request_cache
+      SET status = 'failed', response_status = ?, error_message = ?, updated_at = datetime('now')
+      WHERE id = ? AND owner_attempt_id = ? AND status = 'pending'
+    `).bind(response.status, `Provider returned HTTP ${response.status}`, claim.id, claim.ownerAttemptId).run();
+    return response;
+  }
+
+  const contentType = response.headers.get('Content-Type') ?? 'application/json';
+  const prepared = await env.DB.prepare(`
+    UPDATE provider_request_cache
+    SET response_blob_key = ?, response_status = ?, response_content_type = ?,
+        error_message = NULL, updated_at = datetime('now')
+    WHERE id = ? AND owner_attempt_id = ? AND status = 'pending'
+    RETURNING id
+  `).bind(
+    claim.responseBlobKey,
+    response.status,
+    contentType,
+    claim.id,
+    claim.ownerAttemptId,
+  ).first<{ id: string }>();
+  if (!prepared) {
+    return json({ error: 'Provider response cache ownership was lost' }, 503);
+  }
+
+  try {
+    await storeProviderResponseStream(env.SPRITES, claim.responseBlobKey, response.body, {
+      httpMetadata: { contentType },
+      customMetadata: { responseStatus: String(response.status), jobId: claim.jobId },
+    });
+  } catch (error) {
+    await Promise.allSettled([
+      env.SPRITES.delete(claim.responseBlobKey),
+      env.DB.prepare(`
+        UPDATE provider_request_cache
+        SET status = 'failed', response_blob_key = NULL, response_status = NULL,
+            response_content_type = NULL, error_message = ?, updated_at = datetime('now')
+        WHERE id = ? AND owner_attempt_id = ? AND status = 'pending'
+      `).bind(
+        error instanceof ResponseBodyTooLargeError
+          ? 'Provider response exceeded the durable cache limit'
+          : 'Could not persist provider response',
+        claim.id,
+        claim.ownerAttemptId,
+      ).run(),
+    ]);
+    if (error instanceof ResponseBodyTooLargeError) {
+      return json({
+        error: 'Provider response exceeded the safe processing limit',
+        code: 'provider_response_too_large',
+      }, 502);
+    }
+    throw error;
+  }
+
+  const finalized = await env.DB.prepare(`
+    UPDATE provider_request_cache
+    SET status = 'succeeded', error_message = NULL, updated_at = datetime('now')
+    WHERE id = ? AND owner_attempt_id = ? AND status = 'pending'
+    RETURNING id
+  `).bind(claim.id, claim.ownerAttemptId).first<{ id: string }>();
+  if (!finalized) {
+    throw new Error('Provider response cache could not be finalized');
+  }
+  const cached = await cachedProviderResponse(env, {
+    id: claim.id,
+    status: 'succeeded',
+    response_blob_key: claim.responseBlobKey,
+    response_status: response.status,
+    response_content_type: contentType,
+    owner_attempt_id: claim.ownerAttemptId,
+    updated_at: new Date().toISOString(),
+  });
+  if (!cached) {
+    await env.DB.prepare(`
+      UPDATE provider_request_cache
+      SET status = 'failed', error_message = 'Cached response object is missing', updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(claim.id).run();
+    return json({ error: 'Provider response cache is unavailable' }, 503);
+  }
+  cached.headers.set('X-Insert-Player-Provider-Cache', 'stored');
+  return cached;
+}
+
+async function abandonProviderRequestCache(
+  env: Env,
+  state: ProviderRequestState,
+  errorMessage: string,
+): Promise<void> {
+  const claim = state.cacheClaim;
+  state.cacheClaim = null;
+  if (!claim) return;
+
+  await env.DB.prepare(`
+    UPDATE provider_request_cache
+    SET status = 'failed', error_message = ?, updated_at = datetime('now')
+    WHERE id = ? AND owner_attempt_id = ? AND status = 'pending'
+  `).bind(errorMessage, claim.id, claim.ownerAttemptId).run();
 }
 
 function providerSessionLimitResponse(expiresAt: string): Response {
@@ -461,10 +891,11 @@ async function reserveMonthlyProviderSpend(
   return reservation?.period ?? null;
 }
 
-async function releaseProviderSpend(
+async function releaseUnstartedProviderReservation(
   env: Env,
-  reservation: Omit<ProviderSpendReservation, 'monthlyPeriod'> & { monthlyPeriod?: string | null },
-  httpStatus?: number,
+  reservation: Omit<ProviderSpendReservation, 'monthlyPeriod' | 'eventId'> & {
+    monthlyPeriod?: string | null;
+  },
 ): Promise<void> {
   const statements = [
     env.DB.prepare(`
@@ -490,27 +921,27 @@ async function releaseProviderSpend(
       WHERE id = ?
     `).bind(reservation.rollingReservationId));
   }
-  if (reservation.eventId) {
-    statements.push(env.DB.prepare(`
-      UPDATE provider_cost_events
-      SET outcome = 'failed',
-          http_status = ?,
-          finalized_at = datetime('now')
-      WHERE id = ? AND outcome = 'reserved'
-    `).bind(httpStatus ?? null, reservation.eventId));
-  }
   await env.DB.batch(statements);
 }
 
 export async function finalizeProviderRequest(
-  request: Request,
   env: Env,
   response: Response,
-): Promise<void> {
-  const reservation = providerRequestReservations.get(request);
-  providerRequestReservations.delete(request);
-  if (!reservation) return;
-  if (response.ok) {
+  state: ProviderRequestState,
+): Promise<Response> {
+  const providerSucceeded = response.ok;
+  const providerStatus = response.status;
+  let clientResponse = response;
+  try {
+    clientResponse = await finalizeProviderRequestCache(env, response, state);
+  } catch (error) {
+    console.error('[provider] Failed to persist idempotent provider response', error);
+    clientResponse = json({ error: 'Provider response could not be persisted safely' }, 502);
+  }
+  const reservation = state.spendReservation;
+  state.spendReservation = null;
+  if (!reservation) return clientResponse;
+  if (providerSucceeded) {
     try {
       await env.DB.prepare(`
         UPDATE provider_cost_events
@@ -518,17 +949,24 @@ export async function finalizeProviderRequest(
             http_status = ?,
             finalized_at = datetime('now')
         WHERE id = ? AND outcome = 'reserved'
-      `).bind(response.status, reservation.eventId).run();
+      `).bind(providerStatus, reservation.eventId).run();
     } catch (error) {
       console.error('[provider] Failed to finalize provider cost event', error);
     }
-    return;
+    return clientResponse;
   }
   try {
-    await releaseProviderSpend(env, reservation, response.status);
+    await env.DB.prepare(`
+      UPDATE provider_cost_events
+      SET outcome = 'failed',
+          http_status = ?,
+          finalized_at = datetime('now')
+      WHERE id = ? AND outcome = 'reserved'
+    `).bind(providerStatus, reservation.eventId).run();
   } catch (error) {
-    console.error('[provider] Failed to release an unsuccessful provider reservation', error);
+    console.error('[provider] Failed to finalize unsuccessful provider cost event', error);
   }
+  return clientResponse;
 }
 
 export async function requireProviderSession(
@@ -536,6 +974,7 @@ export async function requireProviderSession(
   env: Env,
   auth: PublicAuthContext,
   route: { provider: ProviderSessionProvider; path: string },
+  state: ProviderRequestState = createProviderRequestState(),
 ): Promise<Response | null> {
   const sessionId = request.headers.get(PROVIDER_SESSION_HEADER)?.trim();
   if (!sessionId) {
@@ -572,21 +1011,30 @@ export async function requireProviderSession(
   // Polling/result reads still need the scoped session, but only provider jobs
   // consume its paid call budget.
   if (request.method === 'GET' || request.method === 'HEAD') return null;
+  const cache = await beginProviderRequestCache(request, env, auth, route);
+  if (cache instanceof Response) return cache;
+  if (cache) state.cacheClaim = cache;
   if ((existing.provider_calls_used ?? 0) >= (existing.provider_call_limit ?? 0)) {
+    await abandonProviderRequestCache(env, state, 'Provider session call limit exceeded');
     return providerSessionLimitResponse(existing.expires_at);
   }
   const estimatedCostCents = estimatedProviderCallCostCents(route.provider, route.path);
   if (estimatedCostCents === null) {
+    await abandonProviderRequestCache(env, state, 'Provider route has no approved spend estimate');
     return json({ error: 'Provider route has no approved spend estimate' }, 403);
   }
   if (
     (existing.provider_cost_used_cents ?? 0) + estimatedCostCents >
     (existing.provider_cost_limit_cents ?? 0)
   ) {
+    await abandonProviderRequestCache(env, state, 'Provider session spend limit exceeded');
     return providerSessionCostLimitResponse(existing.expires_at);
   }
   const rollingReservation = await reserveRollingGeminiSpend(env, route, estimatedCostCents);
-  if (rollingReservation instanceof Response) return rollingReservation;
+  if (rollingReservation instanceof Response) {
+    await abandonProviderRequestCache(env, state, 'Provider rolling spend reservation unavailable');
+    return rollingReservation;
+  }
   const session = await env.DB.prepare(`
     UPDATE provider_sessions
     SET provider_calls_used = provider_calls_used + 1,
@@ -614,52 +1062,100 @@ export async function requireProviderSession(
   if (session) {
     const monthlyPeriod = await reserveMonthlyProviderSpend(env, estimatedCostCents);
     if (!monthlyPeriod) {
-      await releaseProviderSpend(env, {
+      await releaseUnstartedProviderReservation(env, {
         sessionId,
         estimatedCostCents,
         monthlyPeriod: null,
         rollingReservationId: rollingReservation.id,
-        eventId: null,
       });
+      await abandonProviderRequestCache(env, state, 'Provider monthly capacity unavailable');
       return providerMonthlyBudgetResponse();
     }
     const eventId = generateId();
     try {
-      await env.DB.prepare(`
-        INSERT INTO provider_cost_events (
-          id, session_id, charge_id, tier, purpose, billing_operation,
-          provider, model_path, estimated_cost_cents
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).bind(
-        eventId,
-        sessionId,
-        existing.charge_id ?? null,
-        existing.tier,
-        existing.purpose,
-        billingOperationForSession(existing.purpose, existing.charge_reason),
-        route.provider,
-        route.path,
-        estimatedCostCents,
-      ).run();
+      let eventResultIndex = 0;
+      const statements: D1PreparedStatement[] = [];
+      let eventStatement: D1PreparedStatement;
+      if (existing.charge_id) {
+        if (!auth.userId) throw new Error('A charged provider request requires an authenticated user');
+        statements.push(env.DB.prepare(`
+          UPDATE generation_charges
+          SET status = 'committed', updated_at = datetime('now')
+          WHERE id = ? AND user_id = ? AND status IN ('reserved', 'committed')
+          RETURNING status
+        `).bind(existing.charge_id, auth.userId));
+        eventStatement = env.DB.prepare(`
+          INSERT INTO provider_cost_events (
+            id, session_id, charge_id, tier, purpose, billing_operation,
+            provider, model_path, estimated_cost_cents
+          )
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE EXISTS (
+            SELECT 1 FROM generation_charges
+            WHERE id = ? AND user_id = ? AND status = 'committed'
+          )
+          RETURNING id
+        `).bind(
+          eventId,
+          sessionId,
+          existing.charge_id,
+          existing.tier,
+          existing.purpose,
+          billingOperationForSession(existing.purpose, existing.charge_reason),
+          route.provider,
+          route.path,
+          estimatedCostCents,
+          existing.charge_id,
+          auth.userId,
+        );
+        eventResultIndex = 1;
+      } else {
+        eventStatement = env.DB.prepare(`
+          INSERT INTO provider_cost_events (
+            id, session_id, charge_id, tier, purpose, billing_operation,
+            provider, model_path, estimated_cost_cents
+          )
+          VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)
+          RETURNING id
+        `).bind(
+          eventId,
+          sessionId,
+          existing.tier,
+          existing.purpose,
+          billingOperationForSession(existing.purpose, existing.charge_reason),
+          route.provider,
+          route.path,
+          estimatedCostCents,
+        );
+      }
+      statements.push(eventStatement);
+      // D1 batches are transactional: the charge becomes irrevocably consumed
+      // in the same transaction that records the first billable provider try.
+      const results = await env.DB.batch(statements);
+      if (existing.charge_id && !(results[0]?.results?.[0] as { status?: string } | undefined)?.status) {
+        throw new Error('Generation charge is unavailable for provider processing');
+      }
+      if (!(results[eventResultIndex]?.results?.[0] as { id?: string } | undefined)?.id) {
+        throw new Error('Provider cost event could not be reserved');
+      }
     } catch (error) {
-      await releaseProviderSpend(env, {
+      await releaseUnstartedProviderReservation(env, {
         sessionId,
         estimatedCostCents,
         monthlyPeriod,
         rollingReservationId: rollingReservation.id,
-        eventId: null,
       });
+      await abandonProviderRequestCache(env, state, 'Provider cost accounting unavailable');
       console.error('[provider] Failed to reserve durable provider cost event', error);
       return json({ error: 'Provider cost accounting is temporarily unavailable' }, 503);
     }
-    providerRequestReservations.set(request, {
+    state.spendReservation = {
       sessionId,
       estimatedCostCents,
       monthlyPeriod,
       rollingReservationId: rollingReservation.id,
       eventId,
-    });
+    };
     return null;
   }
 
@@ -669,6 +1165,7 @@ export async function requireProviderSession(
       WHERE id = ?
     `).bind(rollingReservation.id).run();
   }
+  await abandonProviderRequestCache(env, state, 'Provider session reservation lost a concurrent race');
 
   const latest = await env.DB.prepare(`
     SELECT ps.id, ps.charge_id, ps.tier, ps.purpose, ps.provider_calls_used, ps.provider_call_limit,

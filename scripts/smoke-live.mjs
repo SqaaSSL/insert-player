@@ -33,6 +33,11 @@ function envValue(values, key) {
 }
 
 const env = readEnvValues();
+const smokeTarget = envValue(env, 'ASF_SMOKE_TARGET') || 'production';
+if (!['production', 'sandbox'].includes(smokeTarget)) {
+  throw new Error('ASF_SMOKE_TARGET must be production or sandbox.');
+}
+const isSandboxSmoke = smokeTarget === 'sandbox';
 const baseUrl = (envValue(env, 'ASF_WORKER_URL') || envValue(env, 'VITE_API_BASE_URL')).replace(/\/+$/, '');
 const frontendOrigin = (envValue(env, 'ASF_FRONTEND_ORIGIN') || envValue(env, 'ASF_FRONTEND_URL')).replace(/\/+$/, '');
 const clerkJwt = envValue(env, 'ASF_CLERK_JWT');
@@ -42,7 +47,10 @@ const requireAuthenticatedSmoke =
   envValue(env, 'ASF_SMOKE_REQUIRE_AUTH') === '1' || process.argv.includes('--require-auth');
 const requireCloneSmoke =
   envValue(env, 'ASF_SMOKE_REQUIRE_CLONE') === '1' || process.argv.includes('--require-clone');
+const preserveSmokeUserState = envValue(env, 'ASF_SMOKE_PRESERVE_USER_STATE') === '1';
 const FETCH_TIMEOUT_MS = Number(envValue(env, 'ASF_LIVE_SMOKE_TIMEOUT_MS') || 45_000);
+const WORKER_READY_TIMEOUT_MS = Number(envValue(env, 'ASF_WORKER_READY_TIMEOUT_MS') || 90_000);
+const WORKER_RETRY_DELAY_MS = Number(envValue(env, 'ASF_WORKER_RETRY_DELAY_MS') || 2_500);
 
 const tinyPngBase64 =
   envValue(env, 'ASF_TEST_IMAGE_BASE64') ||
@@ -61,7 +69,7 @@ const requiredPlayableAnimations = [
   'victory',
 ];
 const generationLegal = {
-  legalVersion: '2026-08-19',
+  legalVersion: '2026-08-23.1',
   ageConfirmed: true,
   termsAccepted: true,
   photoRightsConfirmed: true,
@@ -135,13 +143,44 @@ function assertOptionalHttpsUrl(value, label) {
 
 function assertCommunityOwner(owner, label) {
   assert(owner && typeof owner === 'object', `${label} owner is missing`);
-  assertPublicDisplayName(owner.name, `${label} owner`);
-  assertOptionalHttpsUrl(owner.avatarUrl, `${label} owner`);
+  assert(owner.name === 'Player', `${label} exposed an account display name`);
+  assert(!Object.hasOwn(owner, 'avatarUrl'), `${label} exposed the Clerk profile photo`);
+}
+
+function assertOpaqueCommunityAssets(fighter, label) {
+  const urls = [
+    fighter?.sources?.side,
+    fighter?.sources?.upright,
+    fighter?.sources?.crouch,
+    ...(fighter?.sprites ?? []).map((sprite) => sprite?.url),
+  ].filter(Boolean);
+  assert(fighter?.sources?.original === null, `${label} exposed the original upload`);
+  assert(
+    [fighter?.sources?.sideRaw, fighter?.sources?.uprightRaw, fighter?.sources?.crouchRaw]
+      .every((value) => value === null),
+    `${label} exposed a RAW source view`,
+  );
+  assert(
+    (fighter?.sprites ?? []).every((sprite) => sprite?.rawUrl === null),
+    `${label} exposed a RAW sprite URL`,
+  );
+  for (const assetUrl of urls) {
+    const parsed = new URL(assetUrl);
+    assert(
+      parsed.pathname.startsWith(`/public-assets/fighters/${encodeURIComponent(fighter.id)}/`),
+      `${label} did not use an opaque public fighter asset route`,
+    );
+    assert(!parsed.pathname.includes('/users/'), `${label} exposed an owner-scoped R2 path`);
+    assert(!/user_[A-Za-z0-9]+/.test(parsed.pathname), `${label} exposed a Clerk user id in an asset URL`);
+  }
 }
 
 function assertLeaderboardProfile(entry, label) {
-  assertPublicDisplayName(entry.display_name, `${label} display`);
-  assertOptionalHttpsUrl(entry.avatar_url, `${label} display`);
+  const rank = Number(String(entry.id ?? '').replace(/^rank:/, ''));
+  assert(Number.isSafeInteger(rank) && rank > 0, `${label} returned an invalid rank alias`);
+  assert(entry.id === `rank:${rank}`, `${label} exposed a stable account identifier`);
+  assert(entry.display_name === `Player ${rank}`, `${label} exposed an account display name`);
+  assert(entry.avatar_url === null, `${label} exposed an account avatar`);
 }
 
 function assertSharePageSecurityHeaders(res, label) {
@@ -235,6 +274,31 @@ async function expectJson(label, pathOrUrl, status = 200, init = {}) {
   return readJson(res);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForCurrentWorkerHealth() {
+  const started = Date.now();
+  let lastError = null;
+  while (Date.now() - started <= WORKER_READY_TIMEOUT_MS) {
+    try {
+      const health = await expectJson('health', '/health');
+      if (health.legalVersion === generationLegal.legalVersion) return health;
+      lastError = new Error(
+        `/health still reports legal version ${String(health.legalVersion ?? 'missing')}`,
+      );
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+    const remaining = WORKER_READY_TIMEOUT_MS - (Date.now() - started);
+    if (remaining <= 0) break;
+    await sleep(Math.min(WORKER_RETRY_DELAY_MS, remaining));
+  }
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`Current ${smokeTarget} Worker did not become ready: ${detail}`);
+}
+
 function imageBlob() {
   const binary = atob(tinyPngBase64.replace(/\s+/g, ''));
   const bytes = new Uint8Array(binary.length);
@@ -243,19 +307,37 @@ function imageBlob() {
 }
 
 async function runPublicSmoke() {
-  const health = await expectJson('health', '/health');
+  const health = await waitForCurrentWorkerHealth();
   assert(health.status === 'ok', 'Health response did not report ok');
-  assert(health.environment === 'production', '/health did not report production environment');
+  assert(health.version === '0.17.0', `/health did not report Worker 0.17.0 (got ${String(health.version ?? 'missing')})`);
+  assert(health.legalVersion === generationLegal.legalVersion, '/health did not report the current legal version');
+  if (isSandboxSmoke) {
+    assert(health.environment === 'sandbox', '/health did not report sandbox environment');
+  } else {
+    assert(health.environment === 'production', '/health did not report production environment');
+  }
   assert(health.storage?.d1 === 'bound', '/health did not report D1 binding');
   assert(health.storage?.r2 === 'bound', '/health did not report R2 binding');
   assert(health.providers === 'configured', '/health did not report configured provider secrets');
   assert(health.providerBudget === 'configured', '/health did not report a provider spend ceiling');
   assert(health.providerSpendRate === 'configured', '/health did not report a Gemini rolling spend-rate guard');
-  assert(health.turnstile === 'configured', '/health did not report configured Turnstile protection');
-  assert(health.anonymousRookie === 'enabled', '/health did not report enabled anonymous Rookie launch flow');
+  assert(health.durableGeneration === 'configured', '/health did not report durable backend generation');
+  assert(
+    health.turnstile === (isSandboxSmoke ? 'disabled' : 'configured'),
+    `/health did not report the expected ${smokeTarget} Turnstile state`,
+  );
+  if (isSandboxSmoke) {
+    assert(health.anonymousRookie === 'disabled', '/health did not report disabled sandbox anonymous Rookie');
+  } else {
+    assert(health.anonymousRookie === 'enabled', '/health did not report enabled anonymous Rookie launch flow');
+  }
   assert(health.privacy === 'pseudonymized', '/health did not report pseudonymized anonymous identifiers');
-  assert(health.billing !== 'stripe_test', '/health reports test Stripe on the production Worker');
-  log('/health reports production Worker bindings');
+  const expectedBilling = isSandboxSmoke ? 'stripe_test' : 'stripe';
+  if (!isSandboxSmoke) {
+    assert(health.billing !== 'stripe_test', '/health reports test Stripe on the production Worker');
+  }
+  assert(health.billing === expectedBilling, `/health did not report ${expectedBilling} billing`);
+  log(`/health reports ${smokeTarget} Worker bindings`);
   if (requireAuthenticatedSmoke || requireCloneSmoke) {
     const launchHealthErrors = [];
     if (health.auth !== 'clerk') {
@@ -264,12 +346,15 @@ async function runPublicSmoke() {
     if (health.accountLifecycle !== 'clerk_webhook') {
       launchHealthErrors.push(`Launch smoke requires /health to report Clerk account lifecycle; got ${String(health.accountLifecycle ?? 'missing')}`);
     }
-    if (health.billing !== 'stripe') {
+    if (isSandboxSmoke && health.billing !== 'stripe_test') {
+      launchHealthErrors.push(`Launch smoke requires /health to report Stripe test billing; got ${String(health.billing ?? 'missing')}`);
+    }
+    if (!isSandboxSmoke && health.billing !== 'stripe') {
       launchHealthErrors.push(`Launch smoke requires /health to report live Stripe billing; got ${String(health.billing ?? 'missing')}`);
     }
     assert(launchHealthErrors.length === 0, launchHealthErrors.join('\n'));
-    log('/health reports Clerk auth/lifecycle and live Stripe billing for launch smoke');
-  } else if (health.auth !== 'clerk' || health.accountLifecycle !== 'clerk_webhook' || health.billing !== 'stripe') {
+    log(`/health reports Clerk auth/lifecycle and ${expectedBilling} billing for launch smoke`);
+  } else if (health.auth !== 'clerk' || health.accountLifecycle !== 'clerk_webhook' || health.billing !== expectedBilling) {
     console.warn(
       `Public smoke warning: /health reports auth=${String(health.auth ?? 'missing')} ` +
       `accountLifecycle=${String(health.accountLifecycle ?? 'missing')} ` +
@@ -289,7 +374,7 @@ async function runPublicSmoke() {
       preflight.headers.get('Access-Control-Allow-Origin') === frontendOrigin,
       'CORS preflight did not reflect ASF_FRONTEND_ORIGIN',
     );
-    log('CORS preflight reflects the production frontend origin');
+    log(`CORS preflight reflects the ${smokeTarget} frontend origin`);
 
     const rejectedOrigin = 'https://evil.example';
     const rejectedPreflight = await expectStatus('rejected CORS preflight', '/api/tiers', 204, {
@@ -334,6 +419,36 @@ async function runPublicSmoke() {
   }
   log('/api/tiers exposes Rookie, Contender, Champion');
 
+  const arcadeFeed = await expectStatus('official Arcade cache headers', '/api/arcade', 200);
+  assert(
+    (arcadeFeed.headers.get('Cache-Control') ?? '').includes('s-maxage=300'),
+    'Official Arcade feed is missing short shared-cache headers',
+  );
+  const arcadeBody = await readJson(arcadeFeed);
+  assert(Array.isArray(arcadeBody.fighters), 'Official Arcade feed did not return a fighters array');
+  let previousRank = 0;
+  for (const fighter of arcadeBody.fighters) {
+    assert(fighter.qualityTier === 'champion', 'Official Arcade exposed a non-Champion fighter');
+    assert(!Object.hasOwn(fighter, 'ownerUserId'), 'Official Arcade exposed ownerUserId');
+    assert(!Object.hasOwn(fighter, 'photoHash'), 'Official Arcade exposed photoHash');
+    assertCommunityOwner(fighter.owner, 'Official Arcade');
+    assertOpaqueCommunityAssets(fighter, 'Official Arcade');
+    assert(typeof fighter.arcade?.slug === 'string' && fighter.arcade.slug, 'Official Arcade fighter is missing its slug');
+    assert(Number(fighter.arcade?.rank) > previousRank, 'Official Arcade fighters are not in stable rank order');
+    assert(typeof fighter.arcade?.challengerLine === 'string', 'Official Arcade fighter is missing its challenger line');
+    assert(
+      fighter.arcade?.reference?.kind === 'licensed'
+        && /^https:\/\//.test(fighter.arcade.reference.sourceUrl ?? '')
+        && typeof fighter.arcade.reference.license === 'string'
+        && fighter.arcade.reference.license
+        && typeof fighter.arcade.reference.credit === 'string'
+        && fighter.arcade.reference.credit,
+      'Official Arcade fighter is missing public photo attribution',
+    );
+    previousRank = Number(fighter.arcade.rank);
+  }
+  log(`/api/arcade safely exposes ${arcadeBody.fighters.length} official Champion fighter${arcadeBody.fighters.length === 1 ? '' : 's'}`);
+
   const communityFeed = await expectStatus('community feed cache headers', '/api/community?limit=1', 200);
   assert(
     (communityFeed.headers.get('Cache-Control') ?? '').includes('s-maxage=300'),
@@ -350,6 +465,7 @@ async function runPublicSmoke() {
   );
   for (const fighter of communityFeedBody.fighters ?? []) {
     assertCommunityOwner(fighter.owner, 'Community feed');
+    assertOpaqueCommunityAssets(fighter, 'Community feed');
   }
   log('/api/community is cache-friendly for public feed traffic');
 
@@ -368,6 +484,9 @@ async function runPublicSmoke() {
     assert(shareHtml.includes('rel="canonical"'), 'Public feed share page missing canonical community link');
     assert(/<script nonce="[a-f0-9]{32}">/.test(shareHtml), 'Public feed share page redirect script missing CSP nonce');
     assert(shareHtml.includes(`/community?fighter=${firstPublicFighter.id}`), 'Public feed share page missing community redirect');
+    assert(shareHtml.includes('/public-assets/fighters/'), 'Public feed share page did not use an opaque media URL');
+    assert(!shareHtml.includes('/users/'), 'Public feed share page exposed an owner-scoped R2 path');
+    assert(!/user_[A-Za-z0-9]+/.test(shareHtml), 'Public feed share page exposed a Clerk user id');
     log('public feed share page exposes crawler-ready fighter metadata');
   }
 
@@ -384,10 +503,11 @@ async function runPublicSmoke() {
     (leaderboard.leaderboard ?? []).every((entry) => !/^user_/i.test(String(entry.id ?? ''))),
     '/api/leaderboard exposed raw Clerk user ids',
   );
-  for (const entry of leaderboard.leaderboard ?? []) {
+  for (const [index, entry] of (leaderboard.leaderboard ?? []).entries()) {
+    assert(entry.id === `rank:${index + 1}`, 'Leaderboard rank aliases are out of order');
     assertLeaderboardProfile(entry, 'Leaderboard');
   }
-  log('/api/leaderboard exposes public fight board');
+  log('/api/leaderboard exposes public fight board with rank-only aliases');
 
   const packs = await expectJson('billing packs', '/api/billing/packs');
   const packIds = new Set((packs.packs ?? []).map((pack) => pack.id));
@@ -455,6 +575,12 @@ async function runPublicSmoke() {
   if (rookieAuthRes.status === 429) {
     assert(rookieAuthRes.headers.has('Retry-After'), 'Signed-out Rookie generation rate limit is missing Retry-After');
     log('signed-out Rookie generation authorization is rate-limited');
+  } else if (isSandboxSmoke) {
+    assert(rookieAuthRes.status === 403, `signed-out sandbox Rookie expected 403 or 429, got ${rookieAuthRes.status}`);
+    assert(!rookieAuth.authorized, 'Signed-out sandbox Rookie should not be authorized');
+    assert(!rookieAuth.providerSessionId, 'Signed-out sandbox Rookie minted a provider session');
+    assert(rookieAuth.code === 'anonymous_rookie_disabled', 'Sandbox did not report disabled anonymous Rookie');
+    log('sandbox keeps anonymous Rookie generation disabled');
   } else {
     assert(rookieAuthRes.status === 403, `signed-out Rookie without Turnstile expected 403 or 429, got ${rookieAuthRes.status}`);
     assert(!rookieAuth.authorized, 'Signed-out Rookie without Turnstile should not be authorized');
@@ -585,23 +711,23 @@ async function completeGenerationPurchase(purchaseId, success, fighterId = null)
 }
 
 async function assertAuthenticatedGenerationBilling(fighterId) {
-  const rookie = await authorizeGeneration('rookie', 'live_smoke_rookie_refund', fighterId);
+  const rookie = await authorizeGeneration('rookie', 'live_smoke_rookie_release', fighterId);
   if (rookie.res.status === 402) {
-    console.log('Skipping Rookie reservation/refund smoke: signed-in smoke account has no free quota or credits.');
+    console.log('Skipping Rookie reservation-release smoke: signed-in smoke account has no free quota or credits.');
   } else {
     assert(rookie.res.status === 200, `Rookie generation auth expected 200 or 402, got ${rookie.res.status}`);
     assert(rookie.json.authorized === true, 'Signed-in Rookie generation was not authorized');
     assert(rookie.json.purchaseId, 'Signed-in Rookie generation did not return a purchaseId');
     assert(rookie.json.providerSessionId, 'Signed-in Rookie generation did not return a providerSessionId');
     assert(Number(rookie.json.providerCallLimit) === 48, 'Signed-in Rookie generation did not expose the Rookie provider call limit');
-    const refunded = await completeGenerationPurchase(rookie.json.purchaseId, false, fighterId);
-    assert(refunded.status === 'refunded', 'Failed Rookie generation did not refund reservation');
-    const refundedAgain = await completeGenerationPurchase(rookie.json.purchaseId, false, fighterId);
-    assert(refundedAgain.status === 'refunded', 'Duplicate failed Rookie completion was not idempotent');
-    log('authenticated Rookie generation reservation refunds idempotently');
+    const released = await completeGenerationPurchase(rookie.json.purchaseId, false, fighterId);
+    assert(released.status === 'released', 'Unused Rookie reservation was not released');
+    const releasedAgain = await completeGenerationPurchase(rookie.json.purchaseId, false, fighterId);
+    assert(releasedAgain.status === 'released', 'Duplicate Rookie reservation release was not idempotent');
+    log('authenticated Rookie generation releases an unused reservation idempotently');
   }
 
-  const contender = await authorizeGeneration('contender', 'live_smoke_contender_refund', fighterId);
+  const contender = await authorizeGeneration('contender', 'live_smoke_contender_release', fighterId);
   if (contender.res.status === 402) {
     assert(contender.json.authorized === false, 'Contender insufficient-credit response should not be authorized');
     assert(Number(contender.json.requiredCredits ?? 0) > 0, 'Contender insufficient-credit response missing requiredCredits');
@@ -614,9 +740,9 @@ async function assertAuthenticatedGenerationBilling(fighterId) {
   assert(contender.json.purchaseId, 'Signed-in Contender generation did not return a purchaseId');
   assert(contender.json.providerSessionId, 'Signed-in Contender generation did not return a providerSessionId');
   assert(Number(contender.json.providerCallLimit) === 280, 'Signed-in Contender generation did not expose the Contender provider call limit');
-  const refunded = await completeGenerationPurchase(contender.json.purchaseId, false, fighterId);
-  assert(refunded.status === 'refunded', 'Failed Contender generation did not refund credits');
-  log('authenticated paid-tier generation reservation refunds credits');
+  const released = await completeGenerationPurchase(contender.json.purchaseId, false, fighterId);
+  assert(released.status === 'released', 'Unused Contender reservation was not released');
+  log('authenticated paid-tier generation releases an unused reservation');
 }
 
 function spriteUrlFromFighterPayload(payload) {
@@ -714,7 +840,11 @@ async function runAuthenticatedSmoke() {
   assert(String(created.fighter?.name ?? '').length <= 48, 'Created fighter name exceeded the public metadata cap');
   log('authenticated fighter create writes D1');
 
-  await assertAuthenticatedGenerationBilling(smokeFighterId);
+  if (preserveSmokeUserState) {
+    console.log('Skipping generation reservation mutations for persistent production QA users.');
+  } else {
+    await assertAuthenticatedGenerationBilling(smokeFighterId);
+  }
 
   const firstSourceUpload = await uploadSource(smokeFighterId);
   const firstOriginalUrl = originalSourceUrlFromFighterPayload(firstSourceUpload);
@@ -792,20 +922,20 @@ async function runAuthenticatedSmoke() {
   assert(!Object.hasOwn(detail.fighter, 'photoHash'), 'Community detail exposed photoHash');
   assertCommunityOwner(published.owner, 'Community listing');
   assertCommunityOwner(detail.fighter.owner, 'Community detail');
-  assert(detail.fighter?.sources?.original === null, 'Community detail exposed original upload');
+  assertOpaqueCommunityAssets(published, 'Community listing');
+  assertOpaqueCommunityAssets(detail.fighter, 'Community detail');
   const detailHeaders = await expectStatus('community fighter detail cache headers', `/api/community/${smokeFighterId}`, 200);
   assert(
     (detailHeaders.headers.get('Cache-Control') ?? '').includes('s-maxage=300'),
     'Community detail is missing short shared-cache headers',
   );
-  assert(published.sources?.original === null, 'Community listing exposed original upload');
-  assert(published.sprites?.[0]?.rawUrl === null, 'Community listing exposed raw sprite URL');
   assert(published.sprites?.[0]?.url, 'Community listing did not expose playable sprite URL');
+  const publishedPublicAssetUrl = published.sprites[0].url;
   const publicSprite = await expectStatus('public sprite without auth', published.sprites[0].url, 200);
   assert(publicSprite.headers.get('X-Content-Type-Options') === 'nosniff', 'Public sprite did not set nosniff');
   assert(
-    publicSprite.headers.get('Cache-Control') === 'public, max-age=31536000, immutable',
-    'Public sprite was not cached as an immutable public asset',
+    publicSprite.headers.get('Cache-Control') === 'public, max-age=60, s-maxage=300, must-revalidate',
+    'Public sprite did not use the short revocable public cache policy',
   );
   const sharePage = await expectStatus('published fighter share page', `/share/${smokeFighterId}`, 200);
   assert(
@@ -820,7 +950,9 @@ async function runAuthenticatedSmoke() {
   assert(shareHtml.includes('rel="canonical"'), 'Share page missing canonical community link');
   assert(/<script nonce="[a-f0-9]{32}">/.test(shareHtml), 'Share page redirect script missing CSP nonce');
   assert(shareHtml.includes(`/community?fighter=${smokeFighterId}`), 'Share page missing community redirect');
-  assert(shareHtml.includes('/assets/'), 'Share page did not use a public fighter asset preview');
+  assert(shareHtml.includes('/public-assets/fighters/'), 'Share page did not use an opaque public fighter asset preview');
+  assert(!shareHtml.includes('/users/'), 'Share page exposed an owner-scoped R2 path');
+  assert(!/user_[A-Za-z0-9]+/.test(shareHtml), 'Share page exposed a Clerk user id');
   log('community publishing exposes playable assets without exposing originals/raws');
 
   if (cloneClerkJwt) {
@@ -909,28 +1041,50 @@ async function runAuthenticatedSmoke() {
   const statsBeforeMatch = await expectJson('player stats before match', '/api/stats', 200, {
     headers: authHeaders(),
   });
-  const winsBeforeMatch = Number(statsBeforeMatch.player?.wins ?? 0);
-  await expectJson('match report', '/api/matches', 200, {
-    method: 'POST',
+  assert(Array.isArray(statsBeforeMatch.recentMatches), '/api/stats did not include recentMatches');
+  if (preserveSmokeUserState) {
+    log('player stats are readable without mutating persistent production QA records');
+  } else {
+    const winsBeforeMatch = Number(statsBeforeMatch.player?.wins ?? 0);
+    await expectJson('match report', '/api/matches', 200, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        winnerSlot: 'p1',
+        roundsP1: 2,
+        roundsP2: 0,
+        duration: 42,
+        p1FighterId: smokeFighterId,
+        p2FighterId: smokeFighterId,
+        opponentKind: 'cpu',
+        isRanked: false,
+      }),
+    });
+    const stats = await expectJson('player stats', '/api/stats', 200, {
+      headers: authHeaders(),
+    });
+    assert(Array.isArray(stats.recentMatches), '/api/stats did not include recentMatches');
+    assert(Number(stats.player?.wins ?? 0) >= winsBeforeMatch + 1, 'Unranked match win did not update signed-in record');
+    log('match reporting persists unranked match history');
+    log('match reporting updates signed-in record');
+  }
+
+  await expectJson('unpublish fighter', `/api/fighters/${smokeFighterId}`, 200, {
+    method: 'PATCH',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
-      winnerSlot: 'p1',
-      roundsP1: 2,
-      roundsP2: 0,
-      duration: 42,
-      p1FighterId: smokeFighterId,
-      p2FighterId: smokeFighterId,
-      opponentKind: 'cpu',
-      isRanked: false,
-    }),
+    body: JSON.stringify({ public: false }),
   });
-  const stats = await expectJson('player stats', '/api/stats', 200, {
-    headers: authHeaders(),
-  });
-  assert(Array.isArray(stats.recentMatches), '/api/stats did not include recentMatches');
-  assert(Number(stats.player?.wins ?? 0) >= winsBeforeMatch + 1, 'Unranked match win did not update signed-in record');
-  log('match reporting persists unranked match history');
-  log('match reporting updates signed-in record');
+  const revokedAssetUrl = new URL(publishedPublicAssetUrl);
+  revokedAssetUrl.searchParams.set('smoke-revoked', String(Date.now()));
+  const revokedAsset = await expectStatus('revoked public sprite', revokedAssetUrl.toString(), 404);
+  assert(revokedAsset.headers.get('Cache-Control') === 'no-store', 'Revoked public sprite should not be cached');
+  const unpublishedDetail = await expectStatus(
+    'unpublished fighter community detail',
+    `/api/community/${smokeFighterId}?smoke-revoked=${Date.now()}`,
+    404,
+  );
+  assert(unpublishedDetail.headers.get('Cache-Control') === 'no-store', 'Unpublished community detail should not be cached');
+  log('unpublishing revokes opaque public assets and community detail');
 }
 
 async function main() {

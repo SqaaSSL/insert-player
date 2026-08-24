@@ -17,6 +17,7 @@
     "check:launch": "node scripts/check-launch.mjs",
     "brand:apply": "node scripts/apply-public-brand.mjs",
     "brand:rasterize": "node scripts/rasterize-public-assets.mjs",
+    "arcade:seed": "node scripts/seed-arcade-roster.mjs",
     "stripe:bootstrap": "node scripts/bootstrap-stripe-catalog.mjs",
     "stripe:bootstrap:sandbox": "node scripts/bootstrap-stripe-catalog.mjs --target=sandbox",
     "config:live": "node scripts/apply-live-config.mjs --require-complete --deploy-worker",
@@ -29,6 +30,9 @@
     "deploy:frontend:prelaunch": "node scripts/deploy-prelaunch-pages.mjs --confirm-production",
     "smoke:live": "node scripts/smoke-live.mjs",
     "smoke:live:launch": "node scripts/smoke-live.mjs --require-auth --require-clone",
+    "smoke:live:automated": "node scripts/smoke-launch-auth.mjs --target=production --confirm-production",
+    "smoke:launch:production": "node scripts/smoke-launch-auth.mjs --target=production --confirm-production",
+    "smoke:launch:sandbox": "node scripts/smoke-launch-auth.mjs --target=sandbox",
     "smoke:sandbox": "node scripts/smoke-sandbox.mjs",
     "smoke:frontend-live": "node scripts/smoke-frontend-live.mjs",
     "smoke:frontend-sandbox": "node scripts/smoke-frontend-live.mjs --target=sandbox",
@@ -40,8 +44,10 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "@clerk/backend": "^3.16.10",
     "@tailwindcss/vite": "^4.2.2",
     "fake-indexeddb": "^6.2.5",
+    "playwright": "^1.62.1",
     "tailwindcss": "^4.2.2",
     "typescript": "~5.9.3",
     "vite": "^7.3.1",

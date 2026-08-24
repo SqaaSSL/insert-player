@@ -287,7 +287,8 @@ if (!frontendTiers.includes('export const SOURCE_RETRY_CREDIT_COST = 1;') ||
 }
 
 // This is the actual 2026-08-18 QA sequence: one free Rookie, a Contender
-// upgrade, two refunded Champion failures, one completed Champion, two
+// upgrade, two Champion failures whose credits were returned under the old
+// pre-launch policy, one completed Champion, two
 // Champion animation retries, and the measured stage call.
 const observedQaProviderCostUsd = 32.64;
 const observedQaPaidCredits = 11 + 18 + 4 + 4;

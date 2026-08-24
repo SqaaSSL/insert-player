@@ -174,7 +174,6 @@
   .asf-action,
   .game-shell__gallery-link,
   .gallery-back,
-  .gallery-mode-toggle,
   .gallery-actions button {
     @apply min-h-11 cursor-pointer rounded-[4px] border-[2px] border-asf-gold-deep px-3 py-2
            text-[10px] uppercase tracking-[0.16em] text-asf-gold
@@ -539,7 +538,7 @@
   }
 
   .game-shell__gallery-link {
-    @apply fixed top-5 right-5 z-40;
+    @apply fixed top-24 right-5 z-40;
   }
 
   .match-actions {
@@ -801,12 +800,40 @@
     @apply flex min-w-0 flex-col gap-5;
   }
 
+  .roster-column--fighters {
+    @apply max-[1200px]:order-first;
+  }
+
   .roster-column--fighters .gallery-panel {
     @apply min-h-[calc(100vh-180px)] max-[1200px]:min-h-0;
   }
 
   .roster-fight-btn {
     @apply min-h-[96px] min-w-[230px];
+  }
+
+  .roster-filter-tabs {
+    @apply mt-4 flex flex-wrap gap-2;
+  }
+
+  .roster-filter-tab {
+    @apply flex min-h-9 cursor-pointer items-center gap-2 rounded-[3px] border-[2px]
+           border-[rgba(255,206,58,0.22)] bg-asf-bg-1 px-3 py-2 text-[8px]
+           uppercase tracking-[0] text-asf-muted transition-colors duration-150
+           hover:border-asf-gold hover:text-asf-gold-bright focus-visible:outline-2
+           focus-visible:outline-offset-2 focus-visible:outline-asf-gold;
+  }
+
+  .roster-filter-tab > span {
+    @apply font-sans text-[10px] tracking-[0] text-asf-muted;
+  }
+
+  .roster-filter-tab.is-active {
+    @apply border-asf-red bg-asf-red-dark text-asf-gold-bright;
+  }
+
+  .roster-filter-tab.is-active > span {
+    @apply text-asf-gold;
   }
 
   .roster-slot-card {
@@ -852,15 +879,48 @@
   }
 
   .roster-empty {
-    @apply col-span-full min-h-[320px];
+    @apply col-span-full min-h-[320px] content-center justify-items-center px-6 py-10;
+  }
+
+  .roster-empty p {
+    @apply m-0 max-w-[560px] font-sans text-[14px] normal-case leading-[1.65] text-asf-muted;
+  }
+
+  .roster-empty .home-menu__action {
+    @apply w-full max-w-[420px];
   }
 
   .roster-fighter-card {
     @apply flex flex-col gap-3;
   }
 
+  .roster-fighter-card.is-official {
+    @apply border-asf-gold shadow-[inset_0_0_0_1px_rgba(255,206,58,0.28),_0_8px_24px_rgba(255,42,42,0.14)];
+  }
+
   .roster-fighter-card__surface {
     @apply h-[220px];
+  }
+
+  .roster-fighter-card__title {
+    @apply flex min-h-8 items-start justify-between gap-2;
+  }
+
+  .roster-official-badge {
+    @apply shrink-0 rounded-[3px] border border-asf-red bg-asf-red-dark px-2 py-1
+           font-sans text-[9px] font-bold uppercase tracking-[0] text-asf-gold-bright;
+  }
+
+  .roster-official-disclosure {
+    @apply m-0 mt-5 border-t border-[rgba(255,206,58,0.16)] pt-4 font-sans text-[11px]
+           normal-case leading-[1.6] tracking-[0] text-asf-muted;
+  }
+
+  .roster-photo-credit {
+    @apply font-sans text-[10px] normal-case leading-[1.5] tracking-[0] text-asf-muted underline
+           decoration-[rgba(255,206,58,0.38)] underline-offset-2 transition-colors duration-150
+           hover:text-asf-gold-bright focus-visible:outline-2 focus-visible:outline-offset-2
+           focus-visible:outline-asf-gold;
   }
 
   .community-feature {
@@ -951,22 +1011,26 @@
     @apply min-h-12 items-center justify-center text-center;
   }
 
-  .upgrade-confirm-backdrop {
+  .upgrade-confirm-backdrop,
+  .publish-confirm-backdrop {
     @apply fixed inset-0 z-[120] flex items-center justify-center overflow-y-auto
            bg-[rgba(2,1,10,0.88)] px-5 py-10 backdrop-blur-[3px];
   }
 
-  .upgrade-confirm-dialog {
+  .upgrade-confirm-dialog,
+  .publish-confirm-dialog {
     @apply flex max-h-full w-full max-w-[560px] flex-col gap-6 overflow-y-auto rounded-[6px]
            border-[2px] border-asf-gold bg-[rgba(10,8,26,0.98)] p-6
            shadow-[inset_0_0_0_1px_rgba(255,240,128,0.25),_0_24px_80px_rgba(0,0,0,0.72)];
   }
 
-  .upgrade-confirm-dialog__header {
+  .upgrade-confirm-dialog__header,
+  .publish-confirm-dialog__header {
     @apply flex items-start justify-between gap-5 border-b border-[rgba(255,206,58,0.24)] pb-5;
   }
 
-  .upgrade-confirm-dialog__header h2 {
+  .upgrade-confirm-dialog__header h2,
+  .publish-confirm-dialog__header h2 {
     @apply mt-2 text-[15px] leading-[1.5] text-asf-gold-bright;
   }
 
@@ -975,15 +1039,18 @@
            text-[9px] uppercase text-asf-gold-bright;
   }
 
-  .upgrade-confirm-dialog__copy {
+  .upgrade-confirm-dialog__copy,
+  .publish-confirm-dialog__copy {
     @apply m-0 font-sans text-[14px] leading-[1.7] text-asf-text;
   }
 
-  .upgrade-confirm-dialog__actions {
+  .upgrade-confirm-dialog__actions,
+  .publish-confirm-dialog__actions {
     @apply grid gap-3 grid-cols-2;
   }
 
-  .upgrade-confirm-dialog__actions .gallery-chip {
+  .upgrade-confirm-dialog__actions .gallery-chip,
+  .publish-confirm-dialog__actions .gallery-chip {
     @apply min-h-12 items-center justify-center text-center;
   }
 
@@ -1089,16 +1156,20 @@
       @apply max-h-[92vh] max-w-none rounded-b-none border-x-0 border-b-0 p-5;
     }
 
-    .upgrade-confirm-backdrop {
+    .upgrade-confirm-backdrop,
+    .publish-confirm-backdrop {
       @apply items-end px-0 py-0;
     }
 
-    .upgrade-confirm-dialog {
+    .upgrade-confirm-dialog,
+    .publish-confirm-dialog {
       @apply max-h-[92vh] max-w-none rounded-b-none border-x-0 border-b-0 p-5;
     }
 
     .upgrade-confirm-dialog__header,
-    .upgrade-confirm-dialog__actions {
+    .upgrade-confirm-dialog__actions,
+    .publish-confirm-dialog__header,
+    .publish-confirm-dialog__actions {
       @apply grid grid-cols-1;
     }
 
@@ -1404,7 +1475,6 @@
   .asf-action:focus-visible,
   .game-shell__gallery-link:focus-visible,
   .gallery-back:focus-visible,
-  .gallery-mode-toggle:focus-visible,
   .gallery-actions button:focus-visible,
   .home-menu__action:focus-visible,
   .home-credit-pack:focus-visible,

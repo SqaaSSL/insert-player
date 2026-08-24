@@ -7,6 +7,8 @@
   },
   "scripts": {
     "dev": "node ../scripts/wrangler-workspace-log.mjs dev",
+    "types": "node ../scripts/wrangler-workspace-log.mjs types worker-configuration.d.ts --strict-vars false",
+    "types:check": "node ../scripts/wrangler-workspace-log.mjs types worker-configuration.d.ts --strict-vars false --check",
     "deploy": "node ../scripts/wrangler-workspace-log.mjs deploy --keep-vars",
     "deploy:sandbox": "node ../scripts/wrangler-workspace-log.mjs deploy --config wrangler.sandbox.toml --keep-vars",
     "db:migrate": "node ../scripts/wrangler-workspace-log.mjs d1 migrations apply insert-player-db --remote",
@@ -28,14 +30,18 @@
     "db:execute:0014": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0014_provider_spend_budgets.sql",
     "db:execute:0015": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0015_asset_lookup_indexes.sql",
     "db:execute:0016": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0016_provider_spend_rate_window.sql",
-    "db:execute:0017": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0017_provider_cost_events.sql"
+    "db:execute:0017": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0017_provider_cost_events.sql",
+    "db:execute:0018": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0018_durable_generation_jobs.sql",
+    "db:execute:0019": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0019_durable_retry_jobs.sql",
+    "db:execute:0020": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0020_official_arcade.sql",
+    "db:execute:0021": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0021_arcade_generation_prompts.sql"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260817.1",
-    "wrangler": "^4.123.0"
+    "wrangler": "^4.125.0"
   },
   "dependencies": {
     "@clerk/backend": "^3.16.6",
+    "@cloudflare/containers": "^0.3.7",
     "jose": "^6.2.3"
   }
 }

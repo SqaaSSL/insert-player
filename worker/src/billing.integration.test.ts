@@ -1,6 +1,7 @@
 import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
-import { completeGenerationPurchase, handleStripeWebhook } from './billing';
+import { completeGenerationPurchase, handleStripeWebhook, settleGenerationPurchase } from './billing';
+import { CURRENT_LEGAL_VERSION } from './legal';
 import type { AuthContext, Env } from './types';
 
 const SCHEMA = `
@@ -9,6 +10,7 @@ const SCHEMA = `
     clerk_user_id TEXT NOT NULL,
     display_name TEXT NOT NULL,
     credits_balance INTEGER NOT NULL DEFAULT 0,
+    free_rookie_generations_used INTEGER NOT NULL DEFAULT 0,
     stripe_customer_id TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -44,6 +46,19 @@ const SCHEMA = `
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE provider_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    charge_id TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE generation_jobs (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'queued'
   );
 
   CREATE TABLE checkout_sessions (
@@ -106,7 +121,7 @@ function metadata(sessionToken: string, userId: string) {
     credits: '11',
     session_token: sessionToken,
     stripe_account_id: stripeAccountId,
-    legal_version: '2026-08-19',
+    legal_version: CURRENT_LEGAL_VERSION,
     terms_accepted: 'true',
     immediate_delivery_confirmed: 'true',
     withdrawal_loss_acknowledged: 'true',
@@ -193,12 +208,67 @@ async function insertPaidCheckout(
         credits, amount_cents, currency, status, legal_version,
         terms_accepted, immediate_delivery_confirmed, withdrawal_loss_acknowledged,
         stripe_customer_id
-      ) VALUES (?, ?, ?, ?, 'starter', 11, 1499, 'eur', 'paid', '2026-08-19', 1, 1, 1, 'cus_insertplayer')
-    `).bind(sessionToken, stripeSessionId, paymentIntentId, userId),
+      ) VALUES (?, ?, ?, ?, 'starter', 11, 1499, 'eur', 'paid', ?, 1, 1, 1, 'cus_insertplayer')
+    `).bind(sessionToken, stripeSessionId, paymentIntentId, userId, CURRENT_LEGAL_VERSION),
   ]);
 }
 
 describe('Generation purchase fighter linkage against D1', () => {
+  it('exposes only a pre-provider reservation release and remains idempotent', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES ('user-release', 'user-release', 'Release Player', 8)
+        `),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason)
+          VALUES ('ledger-release', 'user-release', -2, 'fighter_generation')
+        `),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, status, reason, ledger_id, expires_at
+          ) VALUES (
+            'purchase-release', 'user-release', 'rookie', 2, 'reserved',
+            'fighter_generation', 'ledger-release', datetime('now', '+1 hour')
+          )
+        `),
+      ]);
+      const auth = { userId: 'user-release' } as AuthContext;
+      const request = () => new Request(
+        'https://api.insertplayer.ai/api/billing/generation/complete',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ purchaseId: 'purchase-release', success: false }),
+        },
+      );
+
+      const first = await (await completeGenerationPurchase(request(), env, auth)).json() as Record<string, unknown>;
+      expect(first).toMatchObject({
+        purchaseId: 'purchase-release',
+        status: 'released',
+        reservationReleased: true,
+        creditsReleased: 2,
+        creditsBalance: 10,
+      });
+      expect(first).not.toHaveProperty('creditsRefunded');
+
+      const duplicate = await (await completeGenerationPurchase(request(), env, auth)).json();
+      expect(duplicate).toMatchObject({ status: 'released', creditsBalance: 10 });
+      expect((await db.prepare(`
+        SELECT status FROM generation_charges WHERE id = 'purchase-release'
+      `).first<{ status: string }>())?.status).toBe('refunded');
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM credit_ledger
+        WHERE user_id = 'user-release' AND reason = 'generation_reservation_release:purchase-release'
+      `).first<{ count: number }>())?.count).toBe(1);
+    } finally {
+      await mf.dispose();
+    }
+  });
+
   it('links a committed purchase after cloud creation and remains idempotent', async () => {
     const { mf, db, env } = await createBindings();
     try {
@@ -258,6 +328,220 @@ describe('Generation purchase fighter linkage against D1', () => {
       `).first<{ fighter_id: string | null }>();
       expect(charge?.fighter_id).toBe('fighter-generation');
       expect(ledger?.fighter_id).toBe('fighter-generation');
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('commits the charge and durable job state in one batch', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES ('user-atomic', 'user-atomic', 'Atomic Player', 0)
+        `),
+        db.prepare(`INSERT INTO fighters (id, owner_user_id) VALUES ('fighter-atomic', 'user-atomic')`),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('ledger-atomic', 'user-atomic', -3, 'fighter_generation', 'fighter-atomic')
+        `),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, status, reason, fighter_id, ledger_id, expires_at
+          ) VALUES (
+            'purchase-atomic', 'user-atomic', 'rookie', 3, 'reserved',
+            'fighter_generation', 'fighter-atomic', 'ledger-atomic', datetime('now', '+1 hour')
+          )
+        `),
+        db.prepare(`
+          INSERT INTO provider_sessions (id, user_id, charge_id, status)
+          VALUES ('provider-atomic', 'user-atomic', 'purchase-atomic', 'active')
+        `),
+        db.prepare(`INSERT INTO generation_jobs (id, status) VALUES ('job-atomic', 'running')`),
+      ]);
+
+      const settlement = await settleGenerationPurchase(
+        env,
+        'user-atomic',
+        'purchase-atomic',
+        true,
+        'fighter-atomic',
+        [db.prepare(`UPDATE generation_jobs SET status = 'succeeded' WHERE id = 'job-atomic'`)],
+      );
+
+      expect(settlement?.status).toBe('committed');
+      expect((await db.prepare(`SELECT status FROM generation_jobs WHERE id = 'job-atomic'`)
+        .first<{ status: string }>())?.status).toBe('succeeded');
+      expect((await db.prepare(`SELECT status FROM provider_sessions WHERE id = 'provider-atomic'`)
+        .first<{ status: string }>())?.status).toBe('completed');
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('closes the provider session without refunding after paid processing has started', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES ('user-paid-failure', 'user-paid-failure', 'Paid Failure Player', 4)
+        `),
+        db.prepare(`
+          INSERT INTO fighters (id, owner_user_id)
+          VALUES ('fighter-paid-failure', 'user-paid-failure')
+        `),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES (
+            'ledger-paid-failure', 'user-paid-failure', -3,
+            'fighter_generation', 'fighter-paid-failure'
+          )
+        `),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, status, reason, fighter_id, ledger_id, expires_at
+          ) VALUES (
+            'purchase-paid-failure', 'user-paid-failure', 'champion', 3, 'committed',
+            'fighter_generation', 'fighter-paid-failure', 'ledger-paid-failure',
+            datetime('now', '+1 hour')
+          )
+        `),
+        db.prepare(`
+          INSERT INTO provider_sessions (id, user_id, charge_id, status)
+          VALUES (
+            'provider-paid-failure', 'user-paid-failure',
+            'purchase-paid-failure', 'active'
+          )
+        `),
+      ]);
+
+      const settlement = await settleGenerationPurchase(
+        env,
+        'user-paid-failure',
+        'purchase-paid-failure',
+        false,
+        'fighter-paid-failure',
+      );
+
+      expect(settlement?.status).toBe('committed');
+      expect((await db.prepare(`
+        SELECT status FROM provider_sessions WHERE id = 'provider-paid-failure'
+      `).first<{ status: string }>())?.status).toBe('cancelled');
+      expect((await db.prepare(`
+        SELECT credits_balance FROM users WHERE id = 'user-paid-failure'
+      `).first<{ credits_balance: number }>())?.credits_balance).toBe(4);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM credit_ledger
+        WHERE user_id = 'user-paid-failure'
+          AND reason = 'generation_reservation_release:purchase-paid-failure'
+      `).first<{ count: number }>())?.count).toBe(0);
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('rejects browser settlement after a durable job takes ownership', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES ('user-managed', 'user-managed', 'Managed Player', 4)
+        `),
+        db.prepare(`INSERT INTO fighters (id, owner_user_id) VALUES ('fighter-managed', 'user-managed')`),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('ledger-managed', 'user-managed', -2, 'fighter_generation', 'fighter-managed')
+        `),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, status, reason, fighter_id, ledger_id, expires_at
+          ) VALUES (
+            'purchase-managed', 'user-managed', 'rookie', 2, 'reserved',
+            'fighter_generation', 'fighter-managed', 'ledger-managed', datetime('now', '+1 hour')
+          )
+        `),
+        db.prepare(`
+          INSERT INTO provider_sessions (id, user_id, charge_id, status)
+          VALUES ('provider-managed', 'user-managed', 'purchase-managed', 'active')
+        `),
+        db.prepare(`INSERT INTO generation_jobs (id, status) VALUES ('purchase-managed', 'running')`),
+      ]);
+
+      const response = await completeGenerationPurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/generation/complete',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            purchaseId: 'purchase-managed',
+            success: false,
+            fighterId: 'fighter-managed',
+          }),
+        },
+      ), env, { userId: 'user-managed' } as AuthContext);
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        code: 'durable_generation_settlement_managed',
+        jobStatus: 'running',
+      });
+      expect((await db.prepare(`
+        SELECT status FROM generation_charges WHERE id = 'purchase-managed'
+      `).first<{ status: string }>())?.status).toBe('reserved');
+      expect((await db.prepare(`
+        SELECT status FROM provider_sessions WHERE id = 'provider-managed'
+      `).first<{ status: string }>())?.status).toBe('active');
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('keeps a reservation uncommitted when the durable completion batch fails', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES ('user-rollback', 'user-rollback', 'Rollback Player', 0)
+        `),
+        db.prepare(`INSERT INTO fighters (id, owner_user_id) VALUES ('fighter-rollback', 'user-rollback')`),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('ledger-rollback', 'user-rollback', -3, 'fighter_generation', 'fighter-rollback')
+        `),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, status, reason, fighter_id, ledger_id, expires_at
+          ) VALUES (
+            'purchase-rollback', 'user-rollback', 'rookie', 3, 'reserved',
+            'fighter_generation', 'fighter-rollback', 'ledger-rollback', datetime('now', '+1 hour')
+          )
+        `),
+        db.prepare(`
+          INSERT INTO provider_sessions (id, user_id, charge_id, status)
+          VALUES ('provider-rollback', 'user-rollback', 'purchase-rollback', 'active')
+        `),
+        db.prepare(`INSERT INTO generation_jobs (id, status) VALUES ('job-rollback', 'running')`),
+      ]);
+
+      await expect(settleGenerationPurchase(
+        env,
+        'user-rollback',
+        'purchase-rollback',
+        true,
+        'fighter-rollback',
+        [db.prepare(`UPDATE generation_jobs SET status = NULL WHERE id = 'job-rollback'`)],
+      )).rejects.toThrow();
+
+      expect((await db.prepare(`SELECT status FROM generation_charges WHERE id = 'purchase-rollback'`)
+        .first<{ status: string }>())?.status).toBe('reserved');
+      expect((await db.prepare(`SELECT status FROM generation_jobs WHERE id = 'job-rollback'`)
+        .first<{ status: string }>())?.status).toBe('running');
+      expect((await db.prepare(`SELECT status FROM provider_sessions WHERE id = 'provider-rollback'`)
+        .first<{ status: string }>())?.status).toBe('active');
     } finally {
       await mf.dispose();
     }
@@ -374,9 +658,9 @@ describe('Stripe refund and dispute reconciliation against D1', () => {
             withdrawal_loss_acknowledged, stripe_customer_id
           ) VALUES (
             'checkout-ordered', 'pending:checkout-ordered', 'user-ordered', 'starter',
-            11, 1499, 'eur', 'open', '2026-08-19', 1, 1, 1, 'cus_insertplayer'
+            11, 1499, 'eur', 'open', ?, 1, 1, 1, 'cus_insertplayer'
           )
-        `),
+        `).bind(CURRENT_LEGAL_VERSION),
       ]);
       const created = Math.floor(Date.now() / 1000);
       const refund = {

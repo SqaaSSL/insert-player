@@ -208,22 +208,30 @@ export async function freepikRemoveBackground(
   return resultBase64;
 }
 
-export function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = reader.result as string;
-      const base64 = dataUrl.split(',')[1];
-      resolve(base64);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+export async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const chunkSize = 3 * 8192;
+  let encoded = '';
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+    let binary = '';
+    for (const byte of chunk) binary += String.fromCharCode(byte);
+    encoded += btoa(binary);
+  }
+  return encoded;
 }
 
 export async function urlToBase64(url: string, context?: ApiRequestContext): Promise<string> {
   const proxied = `/proxy/image?url=${encodeURIComponent(url)}`;
   const res = await apiFetch(proxied, {}, context);
+  if (!res.ok) {
+    const detail = (await res.text()).replace(/\s+/g, ' ').trim().slice(0, 240);
+    throw new Error(`Image download failed (${res.status})${detail ? `: ${detail}` : ''}`);
+  }
+  const contentType = res.headers.get('Content-Type')?.toLowerCase() ?? '';
+  if (!contentType.startsWith('image/')) {
+    throw new Error(`Image download returned unsupported content type: ${contentType || 'missing'}`);
+  }
   const blob = await res.blob();
   return blobToBase64(blob);
 }

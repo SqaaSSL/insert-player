@@ -7,6 +7,7 @@ This repository contains:
 - A React/Vite product shell and gallery.
 - A Phaser fight runtime loaded only for matches.
 - A Cloudflare Worker API and provider proxy.
+- Cloudflare Workflows plus an image-processor Container for generation that survives disconnects.
 - D1 persistence for users, fighters, billing, sharing, moderation, and cost events.
 - R2 storage for source images, generated sprites, and every preserved asset version.
 - Clerk authentication and Stripe credit-pack billing.
@@ -35,7 +36,7 @@ Operational and product references:
 | QA | [insert-player-sandbox.pages.dev](https://insert-player-sandbox.pages.dev) | `https://insert-player-api-sandbox.shellbot.workers.dev` | Clerk Development, dedicated Stripe sandbox | Isolated sandbox D1/R2 |
 | Production | [insertplayer.ai](https://insertplayer.ai) | [api.insertplayer.ai](https://api.insertplayer.ai) | Clerk Production, dedicated Stripe live | Isolated production D1/R2 |
 
-Production currently serves the credential-free legal prelaunch build until Clerk Production and Stripe live pass the launch gate. QA is the environment for real provider generation and test Checkout.
+Production serves the full app with Clerk Production, dedicated live Stripe configuration, and Cloudflare Workflow/Container generation. QA remains the environment for paid-provider generation and test Checkout. Promotion from `main` runs migrations, checks, Worker/Container deploy, Worker smoke, Pages deploy, and readiness. The current GitHub Cloudflare secret returns `7403` on the first production D1 call; replace it with a token for the exact SqaaS account that includes Worker Scripts, D1, R2, Pages, Containers, and Workflow deployment access.
 
 Never point a local or QA build at production storage, Clerk, Stripe, or Worker secrets. Never install test Stripe credentials on the production Worker.
 
@@ -93,7 +94,7 @@ Run the full gate before requesting review or deploying:
 npm run check:production
 ```
 
-This includes frontend style guards, TypeScript, 145+ tests, Worker typechecking, a clean replay of every D1 migration, a credential-free prelaunch build, billing reconciliation, provider-session controls, durable cost accounting, privacy checks, and tier profitability.
+This includes frontend style guards, TypeScript, 253 tests across 49 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
 
 Useful focused commands:
 
@@ -124,7 +125,7 @@ npm run smoke:frontend-sandbox
 
 Production configuration belongs in ignored `.env.production.local`. The authoritative sequence and manual evidence requirements live in [`PRODUCTION_READINESS.md`](./PRODUCTION_READINESS.md).
 
-Merges to `main` trigger the protected `production` GitHub environment. The deployment waits for owner approval before it can access production secrets. See [`.github/DEPLOYMENT.md`](./.github/DEPLOYMENT.md) for branch rules, environment variables, secrets, and recovery.
+Merges to `main` trigger the branch-restricted `production` GitHub environment after required CI and CodeQL checks pass. Production secrets remain environment-scoped, but this owner-operated project does not require a separate manual deployment approval. See [`.github/DEPLOYMENT.md`](./.github/DEPLOYMENT.md) for branch rules, environment variables, secrets, and recovery.
 
 High-level release order:
 
@@ -167,6 +168,7 @@ Cloudflare Worker
   provider-session and spend enforcement
   fighter/community/moderation APIs
        |
+       +--> Workflow + Container: durable generation, upgrades, and retries
        +--> D1: users, fighters, versions, billing, reports, cost events
        +--> R2: private source, sprite, RAW, intro, and stage assets
        +--> Gemini / fal / Runway / Freepik / Ludo via server-side secrets
@@ -178,10 +180,14 @@ The browser never receives provider or Stripe secret keys. Provider calls requir
 
 - Canonical side, upright, and crouch source views always use Gemini Pro, regardless of fighter tier.
 - Preserve every generated version locally and in cloud storage. Upgrades and retries never delete paid assets.
+- Authenticated generation, upgrades, and retries must remain backend-owned durable jobs; a tab or network loss cannot cancel paid work.
+- Release a generation reservation only before the first external AI request. Commit the charge atomically with that first billable attempt; provider failure, timeout, or a result needing repair must never restore credits automatically.
+- The original photo and private fighter stay account-private. Publish requires a separate confirmation and exposes only the chosen fighter's clean generated source views/playable assets under the neutral author label `Player`; account names, emails, Clerk profile photos, Clerk/internal account ids, original uploads, RAW intermediates, private hashes, and archived history remain private. Public media uses revocable opaque URLs that never expose the owner-scoped R2 key. A future public handle requires separate opt-in.
 - Upgrades regenerate animations from scratch while retaining prior tiers.
 - React owns product UI. Do not create Phaser scenes for menus, gallery, auth, pricing, or account UI.
 - Use the existing Tailwind/component CSS system. No inline styles and no raw declarations inside `@layer`.
 - Keep provider and Stripe secrets server-side in Cloudflare Worker secrets.
+- Keep Stripe refund/dispute reconciliation because it removes credits only after Stripe or a bank has already reversed money. Do not add an API path that voluntarily initiates generation refunds.
 - Keep local, QA, and production identity, billing, storage, CSP, and environment files isolated.
 - Do not expose internal provider cost estimates through public APIs.
 - Do not weaken legal consent, rate limits, Turnstile, ownership checks, or cost-event retention to simplify a feature.
@@ -192,7 +198,7 @@ The canonical repository is [SqaaSSL/insert-player](https://github.com/SqaaSSL/i
 
 - Branch from `develop`; use focused `feature/*` or `fix/*` branches and pull requests.
 - Merge reviewed work into `develop` for automatic sandbox deployment.
-- Promote `develop` to `main` through a pull request; production still requires environment approval.
+- Promote `develop` to `main` through a pull request; production deploys automatically after the required checks pass.
 - Do not commit `.env*`, `.dev.vars`, Wrangler state/logs, launch evidence containing identities, or downloaded/generated user assets.
 - Keep unrelated local changes intact when working in a dirty tree.
 - Run `npm run check:production` before review.

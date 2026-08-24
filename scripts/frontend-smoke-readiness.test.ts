@@ -1,10 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { frontendShellReadinessError } from './frontend-smoke-readiness.mjs';
+import {
+  frontendAssetProbeUrl,
+  frontendShellReadinessError,
+} from './frontend-smoke-readiness.mjs';
 
 const appShell = '<!doctype html><div id="app"></div>';
 const clerkOrigin = 'https://clerk.insertplayer.ai';
 
 describe('frontend deployment propagation readiness', () => {
+  it('uses an isolated cache key while a new immutable asset propagates', () => {
+    expect(frontendAssetProbeUrl(
+      'https://insertplayer.ai',
+      '/assets/index-current.js',
+      'deploy-123',
+    )).toBe('https://insertplayer.ai/assets/index-current.js?__insert_player_readiness=deploy-123');
+    expect(frontendAssetProbeUrl(
+      'https://insertplayer.ai',
+      '/assets/index-current.js',
+      '',
+    )).toBe('https://insertplayer.ai/assets/index-current.js');
+  });
+
   it('keeps waiting while the custom domain serves the prelaunch CSP', () => {
     expect(frontendShellReadinessError({
       html: appShell,
@@ -18,6 +34,22 @@ describe('frontend deployment propagation readiness', () => {
       html: appShell,
       cspHeader: `default-src 'self'; script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
       expectedClerkOrigin: clerkOrigin,
+    })).toBe('');
+  });
+
+  it('keeps waiting until the custom domain references the asset from this build', () => {
+    expect(frontendShellReadinessError({
+      html: `${appShell}<script type="module" src="/assets/index-old.js"></script>`,
+      cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
+      expectedClerkOrigin: clerkOrigin,
+      expectedAssetPath: '/assets/index-current.js',
+    })).toBe('the app shell does not reference deployed asset /assets/index-current.js');
+
+    expect(frontendShellReadinessError({
+      html: `${appShell}<script type="module" src="/assets/index-current.js"></script>`,
+      cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
+      expectedClerkOrigin: clerkOrigin,
+      expectedAssetPath: '/assets/index-current.js',
     })).toBe('');
   });
 

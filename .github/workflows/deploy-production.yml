@@ -54,6 +54,7 @@ jobs:
       ASF_FRONTEND_ORIGIN: ${{ vars.ASF_FRONTEND_ORIGIN }}
       ASF_PAGES_PROJECT_NAME: ${{ vars.ASF_PAGES_PROJECT_NAME }}
       ASF_PAGES_BRANCH: main
+      ASF_CLOUDFLARE_ZONE_ID: ${{ vars.ASF_CLOUDFLARE_ZONE_ID }}
 
     steps:
       - name: Check out repository
@@ -98,6 +99,7 @@ jobs:
           CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
+          GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
         run: node scripts/apply-live-config.mjs --require-complete --skip-production-check --skip-secrets
 
       - name: Apply production D1 migrations
@@ -120,6 +122,7 @@ jobs:
           CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
+          GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
         run: node scripts/apply-live-config.mjs --skip-production-check --deploy-worker
 
       - name: Smoke production Worker

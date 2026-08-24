@@ -1,0 +1,268 @@
+{
+  "version": "2026.08.24-licensed-reference-v3",
+  "qualityTier": "champion",
+  "legalVersion": "2026-08-23.1",
+  "disclosure": "Unofficial AI-generated parody. No featured person sponsors or endorses Insert Player.",
+  "fighters": [
+    {
+      "slug": "donald-trump",
+      "name": "Donald Trump",
+      "identityName": "Donald Trump",
+      "rank": 1,
+      "challengerLine": "The comeback never stays off-screen.",
+      "defaultPersonality": "showboat",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:January_2025_Official_Presidential_Portrait_of_Donald_J._Trump.jpg",
+        "license": "Public domain (dedicated by the author)",
+        "licenseUrl": "https://commons.wikimedia.org/wiki/File:January_2025_Official_Presidential_Portrait_of_Donald_J._Trump.jpg#Licensing",
+        "credit": "Daniel Torok (2025), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Daniel Torok",
+        "sourceDate": "2025-01-15",
+        "verification": "Author's worldwide public-domain dedication verified on Wikimedia Commons",
+        "sourceSha256": "b8cdec38c5a7e8042acd2a095336a2a5b3255bf8771aedf7634860129af4c476"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: an older adult man with swept light-blond hair, warm tan fair skin, a solid build, heavy brows, close-set light eyes, and a stern confident expression. Show the complete figure head-to-toe in a neutral ready stance, 3/4 view facing right, wearing a navy tailored suit, white shirt, vivid red tie, and polished black shoes. No campaign marks, flags, slogans, text, logos, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "lamine-yamal",
+      "name": "Lamine Yamal",
+      "identityName": "Lamine Yamal",
+      "rank": 2,
+      "challengerLine": "Too young to fear the final round.",
+      "defaultPersonality": "showboat",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Lamine_Yamal_France_v_Spain_7.24.26-142_(cropped).jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "Bryan Berlin / WikiPortraits (2026), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Bryan Berlin / WikiPortraits",
+        "sourceDate": "2026-07-14",
+        "verification": "Photographer-uploaded Wikimedia Commons source",
+        "sourceSha256": "e4dae2540e85991fd337558d8a53b5fba022aaea9629bc2577dbdaba3a49a8e8"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a very young adult man with medium-brown skin and a lean elite-athlete build; a narrow oval face with high cheekbones, strong dark brows, almond-shaped dark eyes, and a focused expression; and dense dark curls worn high with closely tapered sides and scattered honey-blond tips. Show the complete figure head-to-toe in a compact neutral ready stance, 3/4 view facing right, wearing an original crimson and teal football-inspired training jacket, black athletic trousers, and clean white trainers. No club, sponsor, federation, flag, number, text, logos, ball, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "ibai-llanos",
+      "name": "Ibai Llanos",
+      "identityName": "Ibai Llanos",
+      "rank": 3,
+      "challengerLine": "The whole arena is watching.",
+      "defaultPersonality": "balanced",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Ibai_Llanos_2025_-_2.png",
+        "license": "CC BY 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+        "credit": "Movistar KOI VODS (2025), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Movistar KOI VODS",
+        "sourceDate": "2025-04-18",
+        "verification": "Creative Commons source setting independently checked on the linked YouTube video on 2026-08-23",
+        "sourceSha256": "b25a718f057956b0b74502574e49d48d95e1b09d37a046b088352ce7602cb488"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a young adult man with fair skin and a broad heavyset build; a round face, large brown eyes, thick dark brows, a short receding dark-brown haircut, and a dense full reddish-brown beard and moustache. Keep the expression alert and approachable. Show the complete figure head-to-toe in a grounded neutral ready stance, 3/4 view facing right, wearing an original black and cream varsity jacket with restrained red accents, a plain dark T-shirt, tapered black trousers, and red and white trainers. No team marks, sponsors, text, logos, headphones, microphone, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "aitana",
+      "name": "Aitana",
+      "identityName": "Aitana Ocaña",
+      "rank": 4,
+      "challengerLine": "Pop precision. No missed beats.",
+      "defaultPersonality": "counter",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Aitana_GHD.jpg",
+        "license": "CC BY 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+        "credit": "Juli Carné Martorell (2018), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Juli Carné Martorell",
+        "sourceDate": "2018-11-15",
+        "verification": "Wikimedia Commons source with archived Vimeo provenance",
+        "sourceSha256": "2dad771add37269eeb6b3882767324a99e689ebff88f405c3fc55a19f4a34d5e"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a petite young adult woman with fair skin and a slim build; a softly heart-shaped face, large brown eyes with dark eyeliner, straight brows, a small straight nose, and defined rose lips; and long chestnut-brown hair with a full blunt fringe and loose waves. Show the complete figure head-to-toe in a balanced neutral ready stance, 3/4 view facing right, wearing an original cobalt and silver performance jacket, fitted black stage trousers, and practical silver ankle boots. No album references, tour styling, text, logos, microphone, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "rosalia",
+      "name": "Rosalía",
+      "identityName": "Rosalía Vila Tobella",
+      "rank": 5,
+      "challengerLine": "Changes the rhythm, owns the round.",
+      "defaultPersonality": "showboat",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Rosalia_2019-portrait.jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "Pedro J Pacheco (2019), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Pedro J Pacheco",
+        "sourceDate": "2019-02-02",
+        "verification": "Photographer-uploaded Wikimedia Commons source",
+        "sourceSha256": "1b24f41867329bf1a84773773906ae2a21010bf0a03a3164ace8c57b69afab30"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a young adult woman with light olive skin and a slim athletic build; a long oval face with prominent cheekbones, arched dark brows, almond-shaped brown eyes, a straight nose, and full lips; and very long glossy near-black hair worn straight with a precise center part. Show the complete figure head-to-toe in a poised neutral ready stance, 3/4 view facing right, wearing an original avant-garde black and deep-red performance outfit with subtle chrome details, fitted trousers, and sturdy fashion boots. No album references, tour styling, text, logos, microphone, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "bad-bunny",
+      "name": "Bad Bunny",
+      "identityName": "Benito Antonio Martínez Ocasio",
+      "rank": 6,
+      "challengerLine": "Nobody knows the next move.",
+      "defaultPersonality": "brawler",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Bad_Bunny_2019_by_Glenn_Francis_(cropped).jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "© Glenn Francis, www.PacificProDigital.com (2019), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Glenn Francis / PacificProDigital.com",
+        "sourceDate": "2019-10-11",
+        "verification": "Photographer-uploaded Wikimedia Commons source",
+        "sourceSha256": "ed81f3176b18c89b8af0aea6279b6fd229ad4a5903545a1b47b074cff2bc07e5"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a young adult Latino man with warm olive skin and a sturdy athletic build; a compact oval face, thick straight dark brows, deep-set brown eyes, a close-cropped dark haircut, and a precisely trimmed moustache and short boxed beard. Add small restrained facial piercings without branded jewelry, keep the expression cool and unreadable. Show the complete figure head-to-toe in a neutral ready stance, 3/4 view facing right, wearing an original black, white, and mint streetwear outfit with a cropped utility jacket, loose technical trousers, and rugged trainers. No album references, brand marks, text, logos, jewelry logos, glasses, microphone, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "mrbeast",
+      "name": "MrBeast",
+      "identityName": "Jimmy Donaldson",
+      "rank": 7,
+      "challengerLine": "One round. Everything on the line.",
+      "defaultPersonality": "balanced",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Mrbeast_in_2025_4.jpg",
+        "license": "CC BY 3.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+        "credit": "小Lin说 (2025), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "小Lin说",
+        "sourceDate": "2025-05-14",
+        "verification": "Wikimedia Commons license review completed on 2026-01-20",
+        "sourceSha256": "18a9e42fb1582b2b0bfdf7776cc44f1f0380e219ad8a97566c209be6ee7506dc"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a tall young adult man with fair skin and a lean-to-average build; a long oval face, bright blue eyes, straight medium brows, a short swept light-brown haircut, and a neatly trimmed light-brown beard and moustache framing a broad mouth. Keep the expression focused and friendly. Show the complete figure head-to-toe in a neutral ready stance, 3/4 view facing right, wearing an original cobalt and cyan utility jacket over a plain black shirt, dark cargo trousers, and clean trainers. No channel iconography, challenge references, text, logos, money, microphone, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "ishowspeed",
+      "name": "IShowSpeed",
+      "identityName": "Darren Watkins Jr.",
+      "rank": 8,
+      "challengerLine": "Zero brakes from the opening bell.",
+      "defaultPersonality": "brawler",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:IShowSpeed_at_Chinatown_(Portrait)_02.jpg",
+        "license": "CC BY-SA 2.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+        "credit": "Chin Yu Chu (2024), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Chin Yu Chu",
+        "sourceDate": "2024-09-24",
+        "verification": "Flickr license reviewed by Wikimedia Commons",
+        "sourceSha256": "414002a980812168381b3986faf69fedde74085f26e5dd31b262b1100cedde95"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a very young adult Black man with deep brown skin and a lean athletic build; a narrow heart-shaped face with high cheekbones, large expressive dark eyes, strong brows, and a wide mouth; and short thick freeform twists rising around the crown. Keep the intensity contained in a determined expression. Show the complete figure head-to-toe in a compact neutral ready stance, 3/4 view facing right, wearing an original red, white, and black athletic jacket, tapered training trousers, and lightweight trainers. No club, federation, sponsor, flag, number, text, logos, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "elon-musk",
+      "name": "Elon Musk",
+      "identityName": "Elon Musk",
+      "rank": 9,
+      "challengerLine": "Launches first. Explains later.",
+      "defaultPersonality": "zoner",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Elon_Musk_(3x4_close_cropped).jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "Gage Skidmore (2025), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Gage Skidmore",
+        "sourceDate": "2025-09-21",
+        "verification": "Flickr source and photographer attribution recorded on Wikimedia Commons",
+        "sourceSha256": "110a0f41f9c4b8e75a0ab30ce13e0db651c516621ad893b3f0459d24416fe27e"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a middle-aged man with fair skin and a broad solid build; a rounded square face, high forehead, light blue-gray eyes, straight medium brows, a clean-shaven jaw, and short light-brown hair swept loosely back with receding temples. Keep the expression reserved and stern. Show the complete figure head-to-toe in a neutral ready stance, 3/4 view facing right, wearing an original graphite and silver technical jacket with restrained electric-blue details, black trousers, and minimalist dark boots. No company products, vehicle silhouettes, text, logos, symbols, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "cristiano-ronaldo",
+      "name": "Cristiano Ronaldo",
+      "identityName": "Cristiano Ronaldo",
+      "rank": 10,
+      "challengerLine": "Built for the last-minute winner.",
+      "defaultPersonality": "showboat",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Cristiano_Ronaldo_Croatia_v_Portugal_2_July_2026-154(cropped).jpg",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+        "credit": "Bryan Berlin / WikiPortraits (2026), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Bryan Berlin / WikiPortraits",
+        "sourceDate": "2026-07-02",
+        "verification": "Cropped Wikimedia Commons source and parent image verified as CC BY 4.0",
+        "sourceSha256": "c0746ccd1fdcc52066ee39afde64c25417032de465fe71436b7d7f8e5b3adb77"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a tall adult man with warm tan olive skin and a powerful lean-muscular athlete build; a long angular face, pronounced jaw, high cheekbones, thick dark brows, focused brown eyes, and short dark wavy hair with closely tapered sides. Keep the face clean-shaven, the expression intensely competitive. Show the complete figure head-to-toe in an upright neutral ready stance, 3/4 view facing right, wearing an original white, obsidian, and restrained gold athletic training outfit, fitted track trousers, and performance trainers. No club, federation, sponsor, flag, number, text, logos, ball, celebration pose, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "javier-milei",
+      "name": "Javier Milei",
+      "identityName": "Javier Milei",
+      "rank": 11,
+      "challengerLine": "No middle ground. No slow rounds.",
+      "defaultPersonality": "brawler",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Retrato_oficial_del_Presidente_Javier_(cropped).jpeg",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+        "credit": "Gobierno Argentino / Argentina.gob.ar (2024), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Gobierno Argentino",
+        "sourceDate": "2024",
+        "verification": "Official Argentine government source recorded on Wikimedia Commons",
+        "sourceSha256": "79d329b9bc0668de2d2df78f1ac0b6a3183aa9977e92055c63165046c6009f6c"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a middle-aged man with fair skin and a slim-to-average build; an elongated angular face, sharp cheekbones, a strong narrow nose, intense light blue-gray eyes under exceptionally thick dark brows, and long sideburns; and unmistakably voluminous shaggy dark-brown hair swept outward around the head. Keep the face clean-shaven, the expression fierce. Show the complete figure head-to-toe in a forward neutral ready stance, 3/4 view facing right, wearing an original dark tailored suit, black shirt, restrained yellow pocket detail, and polished dark shoes. No party marks, national symbols, slogans, text, logos, chainsaw, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "lionel-messi",
+      "name": "Lionel Messi",
+      "identityName": "Lionel Messi",
+      "rank": 12,
+      "challengerLine": "Sees the opening before it exists.",
+      "defaultPersonality": "counter",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-043_(cropped).jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "Bryan Berlin / WikiPortraits (2025), via Wikimedia Commons; converted to PNG by Insert Player.",
+        "author": "Bryan Berlin / WikiPortraits",
+        "sourceDate": "2025-07-09",
+        "verification": "Photographer-uploaded Wikimedia Commons source",
+        "sourceSha256": "b0d24c8dd3eee3b0751f8eac2d890b3c7740050b5cefad454c69aecb0ccdf3a1"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a compact adult man with light olive skin and a low-center-of-gravity muscular athlete build; a rounded square face, strong brows, deep-set brown eyes, a straight nose, and a full neatly trimmed dark-brown beard and moustache; and short dark-brown hair brushed to one side with close tapered sides. Keep the expression calm and analytical. Show the complete figure head-to-toe in a balanced neutral ready stance, 3/4 view facing right, wearing an original sky-blue, charcoal, and white athletic training jacket, fitted track trousers, and performance trainers. No club, federation, sponsor, flag, number, text, logos, ball, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "perro-sanxe",
+      "name": "Perro Sanxe",
+      "identityName": "Pedro Sánchez",
+      "rank": 13,
+      "challengerLine": "Survives every round.",
+      "defaultPersonality": "counter",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Pedro_S%C3%A1nchez_with_Ursula_von_der_Leyen_-_2025_(P-067042).jpg",
+        "license": "CC BY 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+        "credit": "© European Union, 2026 (source image dated 2025), via Wikimedia Commons; cropped and converted to PNG by Insert Player.",
+        "author": "European Union",
+        "sourceDate": "2025-05-28",
+        "verification": "European Commission Audiovisual Service Creative Commons source",
+        "sourceSha256": "2ffb5a186881b2b89df9be15dcc46db0946366435510b5fa42a9ecf8834b6eeb"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a tall middle-aged man with fair-to-light-olive skin and a lean build; a long oval face, straight dark brows, brown eyes, a prominent friendly smile, and a clean-shaven jaw; and short salt-and-pepper dark hair neatly combed with a precise side part. Keep the expression confident rather than comic. Show the complete figure head-to-toe in a composed neutral ready stance, 3/4 view facing right, wearing an original charcoal tailored suit, white shirt, burgundy tie, restrained blue details, and polished dark shoes. No party marks, government insignia, flags, slogans, text, logos, animal features, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, grotesque caricature, or photorealistic documentary photography."
+    }
+  ]
+}

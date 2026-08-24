@@ -206,4 +206,26 @@ describe('provider request proxy hardening', () => {
     expect(response.status).toBe(413);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('streams provider responses through a byte cap instead of buffering them', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(new Uint8Array(9), {
+      headers: { 'Content-Type': 'application/json' },
+    })));
+    const request = new Request('https://api.insertplayer.ai/proxy/gemini/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+
+    const response = await proxyRequest(
+      request,
+      'https://provider.example/model',
+      {},
+      8,
+      8,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.arrayBuffer()).rejects.toBeInstanceOf(ResponseBodyTooLargeError);
+  });
 });

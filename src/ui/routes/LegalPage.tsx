@@ -24,7 +24,100 @@ const providerLinks = [
   ['fal', 'https://fal.ai/legal/privacy-policy'],
   ['Runway', 'https://runway.com/privacy-policy'],
   ['Freepik', 'https://www.freepik.com/legal/privacy'],
-  ['Ludo.ai', 'https://ludo.ai/privacy-policies'],
+] as const;
+
+const arcadePhotoCredits = [
+  {
+    name: 'Donald Trump',
+    credit: 'Daniel Torok (2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:January_2025_Official_Presidential_Portrait_of_Donald_J._Trump.jpg',
+    license: 'Public domain',
+    licenseUrl: 'https://commons.wikimedia.org/wiki/File:January_2025_Official_Presidential_Portrait_of_Donald_J._Trump.jpg#Licensing',
+  },
+  {
+    name: 'Lamine Yamal',
+    credit: 'Bryan Berlin / WikiPortraits (2026)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Lamine_Yamal_France_v_Spain_7.24.26-142_(cropped).jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'Ibai Llanos',
+    credit: 'Movistar KOI VODS (2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Ibai_Llanos_2025_-_2.png',
+    license: 'CC BY 3.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/3.0',
+  },
+  {
+    name: 'Aitana',
+    credit: 'Juli Carné Martorell (2018)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Aitana_GHD.jpg',
+    license: 'CC BY 3.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/3.0',
+  },
+  {
+    name: 'Rosalía',
+    credit: 'Pedro J Pacheco (2019)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Rosalia_2019-portrait.jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'Bad Bunny',
+    credit: '© Glenn Francis / PacificProDigital.com (2019)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Bad_Bunny_2019_by_Glenn_Francis_(cropped).jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'MrBeast',
+    credit: '小Lin说 (2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Mrbeast_in_2025_4.jpg',
+    license: 'CC BY 3.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/3.0',
+  },
+  {
+    name: 'IShowSpeed',
+    credit: 'Chin Yu Chu (2024)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:IShowSpeed_at_Chinatown_(Portrait)_02.jpg',
+    license: 'CC BY-SA 2.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/2.0',
+  },
+  {
+    name: 'Elon Musk',
+    credit: 'Gage Skidmore (2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Elon_Musk_(3x4_close_cropped).jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'Cristiano Ronaldo',
+    credit: 'Bryan Berlin / WikiPortraits (2026)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Cristiano_Ronaldo_Croatia_v_Portugal_2_July_2026-154(cropped).jpg',
+    license: 'CC BY 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/4.0',
+  },
+  {
+    name: 'Javier Milei',
+    credit: 'Gobierno Argentino / Argentina.gob.ar (2024)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Retrato_oficial_del_Presidente_Javier_(cropped).jpeg',
+    license: 'CC BY 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/4.0',
+  },
+  {
+    name: 'Lionel Messi',
+    credit: 'Bryan Berlin / WikiPortraits (2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-043_(cropped).jpg',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+  },
+  {
+    name: 'Perro Sanxe / Pedro Sánchez',
+    credit: '© European Union, 2026 (source image dated 2025)',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Pedro_S%C3%A1nchez_with_Ursula_von_der_Leyen_-_2025_(P-067042).jpg',
+    license: 'CC BY 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/4.0',
+  },
 ] as const;
 
 function OperatorDetails() {
@@ -61,7 +154,7 @@ function LegalNotice() {
 
       <section>
         <h2>3. Prices and taxes</h2>
-        <p>Credit-pack and generation prices are shown before purchase or use. Consumer prices include applicable taxes when stated at Checkout. There are no shipping costs because the service supplies digital content only. The Terms of Service and Refund Policy explain credit use, immediate digital performance, failures, and refunds.</p>
+        <p>Credit-pack and generation prices are shown before purchase or use. Consumer prices include applicable taxes when stated at Checkout. There are no shipping costs because the service supplies digital content only. The Terms of Service and Cancellations &amp; Remedies Policy explain credit use, immediate digital performance, service failures, and mandatory remedies.</p>
       </section>
 
       <section>
@@ -70,12 +163,27 @@ function LegalNotice() {
       </section>
 
       <section>
-        <h2>5. Acceptable access</h2>
+        <h2>5. Official Arcade photo credits</h2>
+        <p>Official Arcade fighters are unofficial AI-generated parody characters. No featured person sponsors or endorses Insert Player. The following real-world source images are used as identity references and were cropped or converted where stated. Their licences cover copyright in the source image; names, likenesses, trademarks, and personality rights remain separate.</p>
+        <p>Changes include cropping, format conversion, and AI transformation into original game artwork. To the extent an official fighter derived from a CC BY-SA source constitutes Adapted Material under that licence, Insert Player makes that artwork available under the same CC BY-SA version listed below. This does not license the depicted person's name, likeness, trademarks, or personality rights.</p>
+        <ul>
+          {arcadePhotoCredits.map((photo) => (
+            <li key={photo.name}>
+              <strong>{photo.name}:</strong> {photo.credit}.{' '}
+              <a href={photo.sourceUrl} target="_blank" rel="noreferrer">Source</a>{' '}
+              (<a href={photo.licenseUrl} target="_blank" rel="noreferrer">{photo.license}</a>).
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section>
+        <h2>6. Acceptable access</h2>
         <p>You may use this site only in accordance with applicable law and the Terms of Service. You may not interfere with the service, bypass access or payment controls, extract private assets, or use Insert Player to violate another person's rights.</p>
       </section>
 
       <section>
-        <h2>6. Applicable law</h2>
+        <h2>7. Applicable law</h2>
         <p>Spanish law applies, without limiting mandatory consumer protections or court options available in your country of residence. Contact us first so we can try to resolve a complaint directly.</p>
       </section>
     </>
@@ -113,8 +221,8 @@ function PrivacyPolicy() {
       <section>
         <h2>3. Why we process it</h2>
         <ul>
-          <li>To create, store, sync, upgrade, play, and share the fighter you request.</li>
-          <li>To authenticate your account, fulfil purchases, restore failed generation credits, and provide support.</li>
+          <li>To create, privately store, sync, upgrade, and play the fighter you request, and to publish its generated assets only when you choose.</li>
+          <li>To authenticate your account, fulfil purchases, settle generation credits, investigate failures, and provide support or mandatory remedies.</li>
           <li>To prevent fraud, enforce rate limits, secure private assets, and investigate service failures.</li>
           <li>To investigate community safety reports and remove content that breaches these terms or applicable law.</li>
           <li>To meet tax, accounting, consumer-protection, and other legal duties.</li>
@@ -124,7 +232,9 @@ function PrivacyPolicy() {
 
       <section>
         <h2>4. Photos and AI providers</h2>
-        <p>Your photo and generated intermediates are sent only to the providers needed for the selected generation workflow. These providers may process data outside the European Economic Area under their own data-processing terms and transfer safeguards.</p>
+        <p>Your original photo is sent through Insert Player's Cloudflare backend only to Google Gemini to create the fighter you requested. Clerk and Stripe do not receive that uploaded photo. Refined tiers may send generated frames, but not the original upload, to fal or Freepik for background removal. Runway or Freepik receives generated fighter assets only if you separately request an optional video workflow.</p>
+        <p>Insert Player uses the paid Gemini API. Under Google's terms current on this policy date, Google does not use paid-service prompts, uploaded files, or responses to improve its products, although it may retain limited logs for abuse prevention and legal compliance. The providers may process data outside the European Economic Area under their data-processing terms and transfer safeguards.</p>
+        <p>Your generation permission is limited to creating and privately storing the fighter you request. It is not a licence for Insert Player to publish or reuse your photo or private fighter for another purpose. Insert Player does not sell your photo or private fighter assets, use either in advertising or promotion, or use either to train its own models. Your original photo remains private and is never published, including when you choose to publish the generated fighter.</p>
         <div className="legal-page__link-list">
           {providerLinks.map(([label, href]) => (
             <a key={label} href={href} target="_blank" rel="noreferrer">{label}</a>
@@ -147,7 +257,7 @@ function PrivacyPolicy() {
 
       <section>
         <h2>6. Community sharing</h2>
-        <p>Fighters are private unless you choose Publish. Public pages expose the fighter name, playable generated assets, quality tier, and a bounded owner display profile. Original uploads, raw intermediates, private photo hashes, account IDs, and archived private versions are not published.</p>
+        <p>Fighters are private to their Insert Player account unless the owner separately confirms Publish. Public pages expose the fighter name, clean generated source views and playable assets, quality tier, and the neutral author label Player. The public Fight Board uses rank-only aliases such as Player 1 and never exposes an account name, avatar, or stable account identifier. Account names, emails, Clerk profile photos, original uploads, raw intermediates, private photo hashes, account IDs, and archived private versions are never published. A future public handle will require a separate opt-in.</p>
         <p>Signed-in players can report a public fighter for review. Reports do not trigger automatic removal based on volume; an authorised moderator records a decision and may unpublish content after review.</p>
         <p>You can unpublish a fighter at any time. Short-lived network caches may take a brief period to expire.</p>
       </section>
@@ -209,6 +319,7 @@ function TermsOfService() {
       <section>
         <h2>4. Generated content</h2>
         <p>You retain the rights you hold in your inputs. As between you and Insert Player, we do not claim ownership of the generated fighter assets delivered to your roster. We grant you a non-exclusive licence to use those assets for lawful personal or commercial purposes, subject to applicable law, third-party rights, and any provider terms that apply.</p>
+        <p>Any permission needed to process and host your inputs is limited to operating the private service you request. It is not a licence to publish or reuse your photo or private fighter for another purpose, and it does not permit us to use either in advertising or promotion or to train an Insert Player model with either.</p>
         <p>AI output can be inaccurate, unexpected, or similar to other output and may not qualify for copyright protection. We do not guarantee exclusivity, likeness accuracy, or freedom from third-party claims.</p>
       </section>
 
@@ -217,15 +328,15 @@ function TermsOfService() {
         <ul>
           <li>Credit packs are one-time purchases. Credits have no cash value, are not transferable, and do not expire while your account remains active.</li>
           <li>The selected tier shows its credit cost before generation begins. Prices shown to consumers include applicable tax where the checkout says so.</li>
-          <li>Credits are committed only after a generation completes. A failed or expired reserved generation restores the reserved credits automatically.</li>
+          <li>Credits are reserved when a generation is accepted. If Insert Player cannot start external AI processing, the unused reservation is released. Once the first external AI request begins, the displayed credits are consumed and are not automatically restored because a provider fails, the job is delayed, or the result needs remediation.</li>
           <li>An approved payment refund or payment dispute reverses the corresponding pack credits. If those credits were already spent, your wallet may become negative and further paid generation remains unavailable until the balance is restored.</li>
-          <li>When you start a paid generation, you request immediate performance and acknowledge that consumed credits are not refundable merely because you change your mind after performance starts. Mandatory consumer remedies still apply.</li>
+          <li>When you start a paid generation, you request immediate performance and acknowledge that consumed credits are not voluntarily refundable after external AI processing begins. This does not limit mandatory remedies for non-delivery, material lack of conformity, duplicate billing, or an incorrect charge.</li>
         </ul>
       </section>
 
       <section>
         <h2>6. Public fighters</h2>
-        <p>Publishing is optional. You grant us a worldwide, non-exclusive, revocable licence to host, display, copy, and deliver the published generated assets so other players can view, play, share, and clone that fighter inside Insert Player. Unpublishing ends new public distribution, subject to short cache expiry and copies another player already cloned into their own roster.</p>
+        <p>Publishing is optional and requires a separate confirmation. For the fighter you choose to publish, you grant us a worldwide, non-exclusive, revocable licence to host, display, copy, and deliver its clean generated source views and playable assets so other players can view, play, share, and clone that fighter inside Insert Player. We show the neutral author label Player. This never includes your account name, email, Clerk profile photo, original photo, raw intermediates, private hashes, or archived generation history. A future public handle will require a separate opt-in. Unpublishing ends new public distribution, subject to short cache expiry and copies another player already cloned into their own roster.</p>
         <p>Signed-in players may report public content. We review reports manually and may unpublish content, restrict community access, suspend accounts, preserve necessary evidence, or take no action. Report volume alone does not decide the outcome. Contact <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> if you believe a moderation decision is mistaken.</p>
       </section>
 
@@ -252,38 +363,38 @@ function TermsOfService() {
   );
 }
 
-function RefundPolicy() {
+function CancellationAndRemediesPolicy() {
   return (
     <>
       <header className="legal-page__intro">
-        <p className="gallery-eyebrow">Credit Protection</p>
-        <h1>Refund Policy</h1>
-        <p>Failed generation should not cost you credits. Statutory consumer rights remain available where they apply.</p>
+        <p className="gallery-eyebrow">Digital Performance</p>
+        <h1>Cancellations &amp; Remedies</h1>
+        <p>There are no voluntary refunds after external AI processing begins. Mandatory consumer remedies remain available where they apply.</p>
       </header>
 
       <section>
-        <h2>Automatic credit restoration</h2>
-        <p>If a paid fighter generation fails before completion or its reservation expires, Insert Player restores the reserved credits to your wallet. Retrying after restoration creates a new generation request.</p>
+        <h2>Before external processing</h2>
+        <p>Insert Player first reserves the displayed credits. If the request is rejected, conflicts with an existing job, or cannot reach external AI processing, the unused reservation is released. This is not a refund of inference spend because no provider request was started.</p>
       </section>
 
       <section>
-        <h2>Unused credit packs</h2>
-        <p>If you are entitled to a cooling-off period, you may request cancellation of an unused credit pack within 14 days of purchase. We may reduce the refund to account for credits already used with your request for immediate performance, as permitted by law. A payment refund reverses the corresponding credits; if they were already spent, the wallet may become negative until new credits restore it.</p>
+        <h2>After external processing begins</h2>
+        <p>The displayed credits are consumed when the first external AI request begins. They are not automatically restored if a provider returns an error, a job is delayed, an output is not to your taste, or the output needs further work. Insert Player may retry idempotently or provide a controlled repair without charging the same generation again.</p>
       </section>
 
       <section>
-        <h2>Used credits and defective service</h2>
-        <p>After you expressly start a generation, the credits used for completed digital performance are normally non-refundable. This does not remove remedies for a defective, unavailable, duplicated, or incorrectly charged service. We may restore credits or issue a payment refund depending on the fault.</p>
+        <h2>Credit packs and change of mind</h2>
+        <p>Credit packs are delivered immediately and are not voluntarily refundable because you change your mind. If a mandatory withdrawal right still applies to an unused pack, or the law requires a proportionate remedy, Insert Player will honour it. Any payment reversal removes the corresponding credits; if they were already spent, the wallet may become negative.</p>
       </section>
 
       <section>
-        <h2>Request a refund</h2>
-        <p>Email <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> from the address on your Insert Player account. Include the Stripe receipt or Checkout Session ID and the pack or generation involved. Approved payment refunds return to the original payment method; bank processing time is controlled by Stripe and your payment provider.</p>
+        <h2>Non-delivery or lack of conformity</h2>
+        <p>Email <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> from the address on your Insert Player account and include the fighter or Checkout reference involved. The primary remedy is to put the digital service in conformity through repair or controlled re-performance. A price reduction, payment refund, or other remedy is available only when required by applicable law or approved for a duplicated or incorrect charge.</p>
       </section>
 
       <section>
         <h2>Account deletion</h2>
-        <p>Deleting an account does not automatically refund an unused credit balance. Request any legally available refund before deleting the account so we can verify the purchase and balance.</p>
+        <p>Deleting an account does not create a refund right or convert an unused credit balance into cash. Request any mandatory remedy before deleting the account so we can verify the purchase, generation history, and balance.</p>
       </section>
     </>
   );
@@ -314,7 +425,7 @@ export function LegalPage({ kind, backLabel = 'Back to game', onBack, onNavigate
             href="/refunds"
             aria-current={kind === 'refunds' ? 'page' : undefined}
             onClick={(event) => { event.preventDefault(); onNavigate('/refunds'); }}
-          >Refunds</a>
+          >Cancellations</a>
         </nav>
       </div>
 
@@ -325,7 +436,7 @@ export function LegalPage({ kind, backLabel = 'Back to game', onBack, onNavigate
             ? <PrivacyPolicy />
             : kind === 'terms'
               ? <TermsOfService />
-              : <RefundPolicy />}
+              : <CancellationAndRemediesPolicy />}
         <p className="legal-page__updated">Effective {LEGAL_EFFECTIVE_DATE} · {PUBLIC_ORIGIN}</p>
       </article>
     </main>

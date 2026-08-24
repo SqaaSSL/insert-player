@@ -18,7 +18,7 @@ const wranglerLogPath = join(root, '.wrangler-logs');
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 const CURL_TIMEOUT_ARGS = ['--connect-timeout', '10', '--max-time', '30'];
-const DEFAULT_FRONTEND_READY_TIMEOUT_MS = 90_000;
+const DEFAULT_FRONTEND_READY_TIMEOUT_MS = 240_000;
 const DEFAULT_FRONTEND_RETRY_DELAY_MS = 2_500;
 
 const requiredSecrets = [
@@ -32,6 +32,7 @@ const requiredSecrets = [
   'CLERK_WEBHOOK_SIGNING_SECRET',
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
+  'GENERATION_JOB_SIGNING_SECRET',
 ];
 
 const sampleFragments = [
@@ -527,6 +528,11 @@ function assertRemoteD1Schema() {
     'community_reports',
     'provider_spend_months',
     'provider_spend_reservations',
+    'provider_cost_events',
+    'generation_jobs',
+    'generation_job_events',
+    'provider_request_cache',
+    'arcade_fighters',
   ];
   const missing = requiredTables.filter((table) => !output.includes(`"name": "${table}"`));
   if (missing.length > 0) {
@@ -657,6 +663,52 @@ function assertRemoteD1Schema() {
     const costOutput = `${providerCostEvents.stdout ?? ''}${providerCostEvents.stderr ?? ''}`.trim();
     fail(`Remote D1 database ${databaseName} is missing migration 0017 provider cost events.\n${costOutput}`);
   }
+
+  const durableGeneration = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    'SELECT id, workflow_instance_id, provider_session_id, progress_total FROM generation_jobs LIMIT 0;',
+  ], workerDir);
+  if (durableGeneration.status !== 0) {
+    const generationOutput = `${durableGeneration.stdout ?? ''}${durableGeneration.stderr ?? ''}`.trim();
+    fail(`Remote D1 database ${databaseName} is missing migration 0018 durable generation jobs.\n${generationOutput}`);
+  }
+
+  const generationIndexes = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_generation_jobs_active_fighter', 'idx_provider_request_cache_job');",
+  ], workerDir);
+  const indexOutput = generationIndexes.stdout ?? '';
+  if (
+    generationIndexes.status !== 0
+    || !indexOutput.includes('idx_generation_jobs_active_fighter')
+    || !indexOutput.includes('idx_provider_request_cache_job')
+  ) {
+    fail(`Remote D1 database ${databaseName} is missing durable-generation indexes.\n${`${generationIndexes.stdout ?? ''}${generationIndexes.stderr ?? ''}`.trim()}`);
+  }
+
+  const arcadeColumns = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    'SELECT fighter_id, slug, sort_order, challenger_line, default_personality, reference_kind, generation_prompt, status FROM arcade_fighters LIMIT 0;',
+  ], workerDir);
+  if (arcadeColumns.status !== 0) {
+    const arcadeOutput = `${arcadeColumns.stdout ?? ''}${arcadeColumns.stderr ?? ''}`.trim();
+    fail(`Remote D1 database ${databaseName} is missing migrations 0020-0021 official Arcade fields.\n${arcadeOutput}`);
+  }
 }
 
 function resolveWorkerHealthUrl() {
@@ -717,6 +769,7 @@ async function assertLiveHealth() {
     ['providerBudget', 'configured'],
     ['providerSpendRate', 'configured'],
     ['providers', 'configured'],
+    ['durableGeneration', 'configured'],
     ['privacy', 'pseudonymized'],
   ];
   for (const [key, value] of expected) {

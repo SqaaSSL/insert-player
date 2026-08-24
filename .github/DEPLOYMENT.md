@@ -9,7 +9,7 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 | `feature/*` or `fix/*` | Pull request to `develop` | CI and CodeQL; no secrets or deployment |
 | `develop` | GitHub `development` environment | Automatic isolated sandbox Worker, D1 migrations, Pages, and smoke tests |
 | `develop` | Pull request to `main` | CI and CodeQL again |
-| `main` | GitHub `production` environment | Waits for owner approval, then deploys production Worker, D1, Pages, and live-readiness checks |
+| `main` | GitHub `production` environment | After required checks, deploys production Worker, D1, Pages, and live-readiness checks |
 
 `development` may cancel an older in-progress deployment when a newer commit arrives. `production` never cancels an in-progress deployment.
 
@@ -18,7 +18,9 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 - `ci.yml`: required pull-request and branch validation.
 - `validate.yml`: reusable production gate, full builds, Worker dry-runs, and dependency audits.
 - `deploy-development.yml`: `develop` to the isolated sandbox.
-- `deploy-production.yml`: approved `main` release to `insertplayer.ai`.
+- `deploy-production.yml`: checked `main` release to `insertplayer.ai`.
+- `smoke-development.yml`: manual authenticated sandbox smoke with two disposable Clerk users and full deletion/tombstone validation.
+- `smoke-production.yml`: manual authenticated production smoke with two dedicated OAuth QA users and fresh revocable sessions.
 - `codeql.yml`: JavaScript/TypeScript code scanning on pull requests, protected branches, and weekly schedule.
 - `dependabot.yml`: weekly frontend, Worker, and GitHub Actions updates.
 
@@ -26,11 +28,10 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 
 The repository uses environments named exactly `development` and `production`.
 
-`production` is protected with:
+`production` is restricted with:
 
-- Required reviewer: an owner identity or release-team member; repository administrators may bypass when the owner authorizes a release.
 - Deployment branch: `main` only.
-- Self-review disabled, so use the alternate owner identity or the administrator bypass for owner-only releases; coworker approval is not required.
+- No manual environment reviewer. Required CI and CodeQL checks remain the release gate for this owner-operated project.
 
 `development` is restricted to `develop` and does not need a manual reviewer.
 
@@ -41,6 +42,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | Variable | Development | Production |
 |---|---|---|
 | `CLOUDFLARE_ACCOUNT_ID` | Insert Player Cloudflare account | Same account |
+| `ASF_CLOUDFLARE_ZONE_ID` | Not used | `insertplayer.ai` zone id |
 | `VITE_API_BASE_URL` | Sandbox Worker URL | `https://api.insertplayer.ai` |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk Development key | Clerk Production key |
 | `VITE_TURNSTILE_SITE_KEY` | Sandbox/test widget | Production widget |
@@ -81,13 +83,21 @@ Use the same variable and secret names in both environments. Values must remain 
 | `STRIPE_SECRET_KEY` | Test in development, live in production |
 | `STRIPE_WEBHOOK_SECRET` | Matching environment billing endpoint |
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Matching environment user-lifecycle endpoint |
+| `ASF_LAUNCH_SMOKE_CLERK_KEY` | Clerk Backend API key for the matching environment; used only by authenticated launch smoke |
+| `ASF_LAUNCH_SMOKE_PRIMARY_USER_ID` | Production only; Clerk user id for the dedicated primary OAuth QA account |
+| `ASF_LAUNCH_SMOKE_CLONE_USER_ID` | Production only; Clerk user id for the dedicated clone OAuth QA account |
 | `TURNSTILE_SECRET_KEY` | Matching environment widget |
 | `ANONYMIZATION_SECRET` | Stable random HMAC secret, at least 32 characters |
+| `GENERATION_JOB_SIGNING_SECRET` | Stable random HMAC secret for scoped processor job tokens, at least 32 characters |
 | `BRAND_CLEARANCE_JSON` | Production only; exact JSON from the local cleared brand record |
 
-The Cloudflare token needs Worker Scripts edit, D1 edit, Pages edit, and the route/resource permissions required by the checked-in Worker bindings. Scope it to the single SqaaS Cloudflare account and `insertplayer.ai`; do not use a Global API Key.
+The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit, Pages edit, Containers write, zone Cache Purge, and the route/resource permissions required by the checked-in Worker/Workflow bindings. Scope it to Cloudflare account `61fc998aa16c1c11a949d982e7a65dcb` and zone `insertplayer.ai`; do not use a Global API Key. A `7403` response from the first D1 migration means the token is for the wrong account or cannot access D1, even if its permission names otherwise look correct. Production Pages deploys probe a fresh immutable asset under an isolated cache key, purge the exact apex and `www` asset URLs after propagation, then run a second smoke against the canonical URL so an SPA fallback can never remain cached as JavaScript.
 
 Never use one GitHub environment as a fallback for another. A missing value must fail the deployment rather than silently reuse a test or live credential.
+
+Neither authenticated smoke consumes AI inference or charges Stripe. The development workflow creates two identified `+clerk_test` users, establishes browser sessions through Clerk Agent Tasks, runs the complete authenticated D1/R2/billing-reservation/match/community-clone/privacy smoke, deletes both users, and verifies that the deletion webhook tombstones their still-valid tokens.
+
+Production is intentionally different because its Clerk instance accepts only social sign-in: a Backend API user without a real OAuth identification cannot receive a production session. Create two dedicated Google or Apple QA accounts by signing into `insertplayer.ai` once with each account. In Clerk private metadata, mark the first as `{"insertPlayerLaunchSmokeQa":true,"launchSmokeRole":"primary"}` and the second as `{"insertPlayerLaunchSmokeQa":true,"launchSmokeRole":"clone"}`. Store their Clerk user ids in the two production secrets above. The workflow verifies those metadata markers and a verified OAuth account before it creates fresh Agent Task sessions. It exercises auth, D1, R2, publishing, sharing, cloning, and cross-account privacy, cleans up its fighters, and revokes both sessions. It deliberately leaves credit reservations and match history untouched on persistent QA accounts; the disposable development run covers those mutations and account deletion. Browser diagnostics are retained for seven days only when a run fails.
 
 ## Required Branch Rules
 
@@ -98,9 +108,9 @@ For both `develop` and `main`:
 - Require the branch to be current before merge.
 - Dismiss stale approvals when new commits arrive.
 
-For `main`, also require CodeQL and at least one approving review. Restrict direct pushes and force pushes.
+For `main`, also require CodeQL. Restrict direct pushes and force pushes; a separate human approval is optional rather than a release dependency.
 
-`CODEOWNERS` assigns the SqaaSSL team to every path. A teammate should not merge their own production promotion without another team member reviewing it.
+`CODEOWNERS` assigns the SqaaSSL team to every path so reviewers are discoverable, while the project owner may merge a production promotion after the required automated checks pass.
 
 ## Recovery
 

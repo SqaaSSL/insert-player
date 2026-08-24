@@ -4,6 +4,7 @@ import {
   creditsForStripeAdjustment,
   stripeEventAuditPayload,
 } from './billing';
+import { CURRENT_LEGAL_VERSION } from './legal';
 import type { AuthContext, Env } from './types';
 
 class FakeD1Statement {
@@ -42,6 +43,7 @@ const env = {
   } as unknown as D1Database,
   ENVIRONMENT: 'production',
   CORS_ORIGIN: 'https://insertplayer.ai',
+  PUBLIC_APP_NAME: 'Insert Player',
   STRIPE_SECRET_KEY: 'sk_live_insert_player',
   STRIPE_WEBHOOK_SECRET: 'whsec_insert_player',
   STRIPE_ACCOUNT_ID: 'acct_insertplayer',
@@ -57,7 +59,7 @@ const auth = {
 } as unknown as AuthContext;
 
 const checkoutLegal = {
-  legalVersion: '2026-08-19',
+  legalVersion: CURRENT_LEGAL_VERSION,
   ageConfirmed: true,
   termsAccepted: true,
   refundPolicyAcknowledged: true,
@@ -141,12 +143,12 @@ describe('Stripe checkout hardening', () => {
     expect(idempotencyKeys[1]).toBe(idempotencyKeys[0]);
     expect(checkoutForms[0].get('automatic_tax[enabled]')).toBe('true');
     expect(checkoutForms[0].get('consent_collection[terms_of_service]')).toBe('none');
-    expect(checkoutForms[0].get('metadata[legal_version]')).toBe('2026-08-19');
+    expect(checkoutForms[0].get('metadata[legal_version]')).toBe(CURRENT_LEGAL_VERSION);
     expect(checkoutForms[0].get('metadata[withdrawal_loss_acknowledged]')).toBe('true');
     expect(checkoutForms[0].get('payment_intent_data[metadata][session_token]'))
       .toBe(checkoutForms[0].get('metadata[session_token]'));
     expect(checkoutForms[0].get('payment_intent_data[metadata][stripe_account_id]')).toBe('acct_insertplayer');
-    expect(checkoutForms[0].get('payment_intent_data[metadata][legal_version]')).toBe('2026-08-19');
+    expect(checkoutForms[0].get('payment_intent_data[metadata][legal_version]')).toBe(CURRENT_LEGAL_VERSION);
     expect(checkoutForms[0].get('customer')).toBe('cus_insertplayer');
     expect(checkoutForms[0].get('customer_update[address]')).toBe('auto');
   });
@@ -192,6 +194,38 @@ describe('Stripe checkout hardening', () => {
         body: JSON.stringify({ packId: 'starter', legal: checkoutLegal }),
       },
     ), env, auth);
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: 'Credit checkout is temporarily unavailable while billing setup is being completed.',
+    });
+    expect(stripeFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('validates the Stripe business profile against the configured public brand', async () => {
+    const stripeFetch = vi.fn(async (input: string | URL | Request) => {
+      expect(String(input)).toMatch(/\/v1\/account$/);
+      return Response.json({
+        id: 'acct_insertplayer',
+        details_submitted: true,
+        charges_enabled: true,
+        business_profile: {
+          name: 'Insert Player',
+          url: 'https://insertplayer.ai',
+          support_url: 'https://insertplayer.ai/support',
+        },
+      });
+    });
+    vi.stubGlobal('fetch', stripeFetch);
+
+    const response = await createCreditCheckoutSession(new Request(
+      'https://api.insertplayer.ai/api/billing/checkout',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ packId: 'starter', legal: checkoutLegal }),
+      },
+    ), { ...env, PUBLIC_APP_NAME: 'A Different Arcade' }, auth);
 
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({

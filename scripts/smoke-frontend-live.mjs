@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeClerkPublishableKey } from './clerk-publishable-key.mjs';
 import {
+  frontendAssetProbeUrl,
   frontendShellReadinessError,
   parseContentSecurityPolicy,
 } from './frontend-smoke-readiness.mjs';
@@ -63,8 +64,10 @@ const expectedApiOrigin = isSandbox
   : 'https://api.insertplayer.ai';
 const expectedAppName = envValue(env, 'ASF_PUBLIC_APP_NAME') || envValue(env, 'VITE_PUBLIC_APP_NAME') || 'Insert Player';
 const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card.png';
+const expectedAssetPath = envValue(env, 'ASF_EXPECTED_FRONTEND_ASSET_PATH');
+const assetProbeNonce = envValue(env, 'ASF_FRONTEND_ASSET_PROBE_NONCE');
 const FETCH_TIMEOUT_MS = Number(envValue(env, 'ASF_FRONTEND_SMOKE_TIMEOUT_MS') || 30_000);
-const FRONTEND_READY_TIMEOUT_MS = Number(envValue(env, 'ASF_FRONTEND_READY_TIMEOUT_MS') || 90_000);
+const FRONTEND_READY_TIMEOUT_MS = Number(envValue(env, 'ASF_FRONTEND_READY_TIMEOUT_MS') || 240_000);
 const FRONTEND_RETRY_DELAY_MS = Number(envValue(env, 'ASF_FRONTEND_RETRY_DELAY_MS') || 2_500);
 
 const failures = [];
@@ -187,6 +190,9 @@ async function main() {
   if (!frontendUrl || !/^https:\/\//i.test(frontendUrl)) {
     throw new Error('Set ASF_FRONTEND_URL or ASF_FRONTEND_ORIGIN to the deployed HTTPS Pages URL.');
   }
+  if (expectedAssetPath && !/^\/assets\/[A-Za-z0-9._-]+\.js$/.test(expectedAssetPath)) {
+    throw new Error('ASF_EXPECTED_FRONTEND_ASSET_PATH must be a root-relative JavaScript asset path.');
+  }
 
   assert(expectedClerkOrigin, 'Frontend smoke requires a valid Clerk publishable key');
   const home = await waitForFrontendText('frontend home', '/', {
@@ -194,6 +200,7 @@ async function main() {
       html: text,
       cspHeader: res.headers.get('Content-Security-Policy') ?? '',
       expectedClerkOrigin,
+      expectedAssetPath,
     }),
   });
   assert(home.res.headers.get('X-Content-Type-Options') === 'nosniff', 'Frontend shell missing nosniff header');
@@ -304,10 +311,21 @@ async function main() {
 
   const assetPaths = extractAssetPaths(home.text);
   assert(assetPaths.some((path) => path.endsWith('.js')), 'Frontend HTML did not reference a JS asset');
+  if (expectedAssetPath) {
+    assert(assetPaths.includes(expectedAssetPath), `Frontend HTML did not reference deployed asset ${expectedAssetPath}`);
+  }
   const jsTexts = [];
   for (const assetPath of assetPaths.filter((path) => path.endsWith('.js'))) {
-    const asset = await fetchText(`frontend asset ${assetPath}`, assetPath);
-    assert((asset.res.headers.get('Cache-Control') ?? '').includes('immutable'), `Frontend asset ${assetPath} is not immutable cached`);
+    const assetProbeUrl = frontendAssetProbeUrl(frontendUrl, assetPath, assetProbeNonce);
+    const asset = await waitForFrontendText(`frontend asset ${assetPath}`, assetProbeUrl, {
+      readinessError: ({ res }) => {
+        const contentType = res.headers.get('Content-Type') ?? '';
+        if (!/javascript/i.test(contentType)) return `expected JavaScript, got ${contentType || 'no content type'}`;
+        const cacheControl = res.headers.get('Cache-Control') ?? '';
+        if (!cacheControl.includes('immutable')) return `expected immutable cache headers, got ${cacheControl || 'none'}`;
+        return '';
+      },
+    });
     jsTexts.push(asset.text);
   }
   const jsBundle = jsTexts.join('\n');

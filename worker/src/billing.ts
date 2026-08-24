@@ -20,6 +20,8 @@ import {
   readRequestText,
   RequestBodyTooLargeError,
 } from './requestBody';
+import { publicAppName } from './branding';
+import { stripTrailingSlashes } from './url';
 
 const FREE_ROOKIE_GENERATION_LIMIT = 1;
 const GENERATION_RESERVATION_TTL_HOURS = 12;
@@ -44,6 +46,7 @@ interface GenerationCharge {
   tier: QualityTier;
   credit_cost: number;
   free_quota_delta: number;
+  // `refunded` is the legacy persisted name for a pre-provider release.
   status: 'reserved' | 'committed' | 'refunded';
   reason: string;
   fighter_id: string | null;
@@ -52,6 +55,13 @@ interface GenerationCharge {
   expires_at: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface GenerationPurchaseSettlement {
+  purchaseId: string;
+  status: GenerationCharge['status'];
+  creditsCharged: number;
+  fighterId: string | null;
 }
 
 interface CheckoutCreditExpectation {
@@ -76,6 +86,7 @@ interface CheckoutAdjustmentRow {
   amount_cents: number;
   currency: string;
   status: string;
+  legal_version: string;
   stripe_customer_id: string | null;
   refunded_amount_cents: number;
   refunded_credits: number;
@@ -163,14 +174,17 @@ function providerSessionPurposeForOperation(
   return 'fighter_generation';
 }
 
-async function refundReservedGenerationCharge(
+// `refunded` is the historical D1 enum for an unused reservation release. This
+// path never asks Stripe to return money and is reachable only before provider
+// processing commits the charge.
+async function releaseReservedGenerationCharge(
   env: Env,
   charge: GenerationCharge,
-  refundReason = 'generation_refund',
+  releaseReason = 'generation_reservation_release',
 ): Promise<boolean> {
   if (charge.status !== 'reserved') return false;
 
-  const refundLedgerId = generateId();
+  const releaseLedgerId = generateId();
   const [claim] = await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
@@ -178,7 +192,7 @@ async function refundReservedGenerationCharge(
       FROM generation_charges
       WHERE id = ? AND user_id = ? AND status = 'reserved'
       RETURNING id
-    `).bind(refundLedgerId, `${refundReason}:${charge.id}`, charge.id, charge.user_id),
+    `).bind(releaseLedgerId, `${releaseReason}:${charge.id}`, charge.id, charge.user_id),
     env.DB.prepare(`
       UPDATE users
       SET credits_balance = credits_balance + COALESCE(
@@ -202,13 +216,13 @@ async function refundReservedGenerationCharge(
         SELECT 1 FROM credit_ledger WHERE id = ?
       )
     `).bind(
-      refundLedgerId,
+      releaseLedgerId,
       charge.id,
       charge.user_id,
       charge.id,
       charge.user_id,
       charge.user_id,
-      refundLedgerId,
+      releaseLedgerId,
     ),
     env.DB.prepare(`
       UPDATE generation_charges
@@ -218,7 +232,7 @@ async function refundReservedGenerationCharge(
       WHERE id = ? AND user_id = ? AND status = 'reserved' AND EXISTS (
         SELECT 1 FROM credit_ledger WHERE id = ?
       )
-    `).bind(refundLedgerId, charge.id, charge.user_id, refundLedgerId),
+    `).bind(releaseLedgerId, charge.id, charge.user_id, releaseLedgerId),
   ]);
 
   return Boolean(claim.results?.[0]);
@@ -244,7 +258,7 @@ async function createProviderSessionForCharge(
     const userId = auth.user?.id;
     const charge = userId ? await getGenerationCharge(env, userId, chargeId) : null;
     if (charge) {
-      await refundReservedGenerationCharge(env, charge, 'provider_session_failed');
+      await releaseReservedGenerationCharge(env, charge, 'provider_session_failed');
     }
     throw err;
   }
@@ -258,15 +272,15 @@ export async function releaseExpiredGenerationCharges(env: Env, userId: string):
   `).bind(userId).all<GenerationCharge>();
 
   for (const charge of results ?? []) {
-    await refundReservedGenerationCharge(env, charge, 'generation_reservation_expired');
+    await releaseReservedGenerationCharge(env, charge, 'generation_reservation_expired');
   }
 }
 
 function getClientBaseUrl(request: Request, env: Env): string {
-  const requestOrigin = request.headers.get('Origin')?.replace(/\/+$/, '') ?? '';
+  const requestOrigin = stripTrailingSlashes(request.headers.get('Origin') ?? '');
   const configured = env.CORS_ORIGIN
     ?.split(',')
-    .map((origin) => origin.trim().replace(/\/+$/, ''))
+    .map((origin) => stripTrailingSlashes(origin.trim()))
     .filter(Boolean) ?? [];
   if (requestOrigin && configured.includes(requestOrigin)) return requestOrigin;
   if (configured.length > 0) return configured[0];
@@ -359,14 +373,15 @@ async function verifyStripeCheckoutConfiguration(env: Env, pack: CreditPack): Pr
       url?: string | null;
     };
   };
+  const appName = publicAppName(env);
   if (!res.ok || body.id !== env.STRIPE_ACCOUNT_ID) {
-    throw new Error('Stripe credentials do not match the configured Insert Player account');
+    throw new Error(`Stripe credentials do not match the configured ${appName} account`);
   }
   const profile = body.business_profile;
   if (
     body.details_submitted !== true ||
     body.charges_enabled !== true ||
-    !String(profile?.name ?? '').toLowerCase().includes('insert player') ||
+    !String(profile?.name ?? '').toLowerCase().includes(appName.toLowerCase()) ||
     !isHttpsUrl(profile?.url) ||
     !(
       isHttpsUrl(profile?.support_url) ||
@@ -820,66 +835,108 @@ export async function completeGenerationPurchase(
 
   const charge = await getGenerationCharge(env, auth.userId, purchaseId);
   if (!charge) return json({ error: 'Generation purchase not found' }, 404);
-
-  if (charge.status !== 'reserved') {
-    if (charge.status === 'committed' && body.success && ownedFighterId && !charge.fighter_id) {
-      await env.DB.batch([
-        env.DB.prepare(`
-          UPDATE generation_charges
-          SET fighter_id = ?, updated_at = datetime('now')
-          WHERE id = ? AND user_id = ? AND fighter_id IS NULL
-        `).bind(ownedFighterId, charge.id, auth.userId),
-        env.DB.prepare(`
-          UPDATE credit_ledger
-          SET fighter_id = COALESCE(?, fighter_id)
-          WHERE id = ? AND user_id = ?
-        `).bind(ownedFighterId, charge.ledger_id, auth.userId),
-      ]);
-    }
+  const durableJob = await env.DB.prepare(
+    'SELECT status FROM generation_jobs WHERE id = ?'
+  ).bind(purchaseId).first<{ status: string }>();
+  if (durableJob) {
     return json({
-      purchaseId: charge.id,
-      status: charge.status,
-      creditsCharged: charge.credit_cost,
-      fighterId: ownedFighterId ?? charge.fighter_id,
-    });
+      error: 'This generation purchase is settled by its cloud job',
+      code: 'durable_generation_settlement_managed',
+      jobStatus: durableJob.status,
+    }, 409);
   }
+  const settlement = await settleGenerationPurchase(
+    env,
+    auth.userId,
+    purchaseId,
+    Boolean(body.success),
+    ownedFighterId,
+  );
+  if (!settlement) return json({ error: 'Generation purchase not found' }, 404);
+  if (body.success || settlement.status !== 'refunded') return json(settlement);
 
-  if (body.success) {
-    await env.DB.batch([
-      env.DB.prepare(`
-        UPDATE generation_charges
-        SET status = 'committed',
-            fighter_id = COALESCE(?, fighter_id),
-            updated_at = datetime('now')
-        WHERE id = ? AND user_id = ? AND status = 'reserved'
-      `).bind(ownedFighterId, charge.id, auth.userId),
-      env.DB.prepare(`
-        UPDATE credit_ledger
-        SET fighter_id = COALESCE(?, fighter_id)
-        WHERE id = ? AND user_id = ?
-      `).bind(ownedFighterId, charge.ledger_id, auth.userId),
-    ]);
-    await markProviderSessionsForCharge(env, auth.userId, charge.id, 'completed');
-    return json({
-      purchaseId: charge.id,
-      status: 'committed',
-      creditsCharged: charge.credit_cost,
-    });
-  }
-
-  await refundReservedGenerationCharge(env, charge);
-  await markProviderSessionsForCharge(env, auth.userId, charge.id, 'cancelled');
   const latest = await env.DB.prepare(
     'SELECT credits_balance, free_rookie_generations_used FROM users WHERE id = ?'
   ).bind(auth.userId).first<{ credits_balance: number; free_rookie_generations_used: number }>();
 
   return json({
-    purchaseId: charge.id,
-    status: 'refunded',
-    creditsRefunded: charge.credit_cost,
+    ...settlement,
+    status: 'released',
+    reservationReleased: true,
+    creditsReleased: settlement.creditsCharged,
     creditsBalance: latest?.credits_balance ?? auth.user.credits_balance,
     freeRookieGenerationsUsed: latest?.free_rookie_generations_used ?? auth.user.free_rookie_generations_used,
   });
+}
+
+export async function settleGenerationPurchase(
+  env: Env,
+  userId: string,
+  purchaseId: string,
+  success: boolean,
+  fighterId: string | null,
+  successStatements: D1PreparedStatement[] = [],
+): Promise<GenerationPurchaseSettlement | null> {
+  let charge = await getGenerationCharge(env, userId, purchaseId);
+  if (!charge) return null;
+
+  if (success) {
+    if (charge.status === 'reserved') {
+      await env.DB.batch([
+        env.DB.prepare(`
+          UPDATE generation_charges
+          SET status = 'committed',
+              fighter_id = COALESCE(?, fighter_id),
+              updated_at = datetime('now')
+          WHERE id = ? AND user_id = ? AND status = 'reserved'
+          RETURNING id
+        `).bind(fighterId, charge.id, userId),
+        env.DB.prepare(`
+          UPDATE credit_ledger
+          SET fighter_id = COALESCE(?, fighter_id)
+          WHERE id = ? AND user_id = ? AND EXISTS (
+            SELECT 1 FROM generation_charges
+            WHERE id = ? AND user_id = ? AND status = 'committed'
+          )
+        `).bind(fighterId, charge.ledger_id, userId, charge.id, userId),
+        ...successStatements,
+      ]);
+      charge = (await getGenerationCharge(env, userId, purchaseId)) ?? charge;
+    } else if (charge.status === 'committed') {
+      const statements: D1PreparedStatement[] = [];
+      if (fighterId && !charge.fighter_id) {
+        statements.push(env.DB.prepare(`
+          UPDATE generation_charges
+          SET fighter_id = ?, updated_at = datetime('now')
+          WHERE id = ? AND user_id = ? AND fighter_id IS NULL
+        `).bind(fighterId, charge.id, userId));
+        statements.push(env.DB.prepare(`
+          UPDATE credit_ledger
+          SET fighter_id = COALESCE(?, fighter_id)
+          WHERE id = ? AND user_id = ?
+        `).bind(fighterId, charge.ledger_id, userId));
+      }
+      statements.push(...successStatements);
+      if (statements.length > 0) await env.DB.batch(statements);
+      charge = (await getGenerationCharge(env, userId, purchaseId)) ?? charge;
+    }
+    if (charge.status === 'committed') {
+      await markProviderSessionsForCharge(env, userId, charge.id, 'completed');
+    }
+  } else if (charge.status === 'reserved') {
+    await releaseReservedGenerationCharge(env, charge);
+    charge = (await getGenerationCharge(env, userId, purchaseId)) ?? charge;
+  }
+  if (!success && (charge.status === 'refunded' || charge.status === 'committed')) {
+    await markProviderSessionsForCharge(env, userId, charge.id, 'cancelled');
+  }
+
+  return {
+    purchaseId: charge.id,
+    status: charge.status,
+    creditsCharged: charge.credit_cost,
+    fighterId: fighterId ?? charge.fighter_id,
+  };
 }
 
 function parseStripeSignature(header: string): { timestamp: string; signatures: string[] } | null {
@@ -964,7 +1021,7 @@ function checkoutCreditExpectation(
   if (
     !userId || !packId || credits === null || amountCents === null || !currency ||
     !stripeAccountId || stripeAccountId !== expectedStripeAccountId ||
-    legalVersion !== CURRENT_LEGAL_VERSION || metadata.terms_accepted !== 'true' ||
+    !/^\d{4}-\d{2}-\d{2}(?:\.\d+)?$/.test(legalVersion) || metadata.terms_accepted !== 'true' ||
     metadata.immediate_delivery_confirmed !== 'true' ||
     metadata.withdrawal_loss_acknowledged !== 'true' ||
     !/^cus_[A-Za-z0-9]+$/.test(customerId) ||
@@ -1025,7 +1082,7 @@ async function findCheckoutForStripeAdjustment(
   if (!sessionToken && !paymentIntentId) return null;
   return env.DB.prepare(`
     SELECT id, stripe_session_id, stripe_payment_intent_id, user_id, pack_id,
-           credits, amount_cents, currency, status, stripe_customer_id,
+           credits, amount_cents, currency, status, legal_version, stripe_customer_id,
            refunded_amount_cents, refunded_credits, disputed_amount_cents,
            disputed_credits, reversed_credits, dispute_event_created
     FROM checkout_sessions
@@ -1054,7 +1111,7 @@ function refundMetadataMatchesCheckout(
     metadata.pack_id === row.pack_id &&
     readStripeInteger(metadata.credits) === row.credits &&
     metadata.stripe_account_id === expectedStripeAccountId &&
-    metadata.legal_version === CURRENT_LEGAL_VERSION &&
+    metadata.legal_version === row.legal_version &&
     metadata.terms_accepted === 'true' &&
     metadata.immediate_delivery_confirmed === 'true' &&
     metadata.withdrawal_loss_acknowledged === 'true' &&

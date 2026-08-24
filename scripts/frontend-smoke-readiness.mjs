@@ -7,9 +7,23 @@ export function parseContentSecurityPolicy(value) {
   return directives;
 }
 
-export function frontendShellReadinessError({ html, cspHeader, expectedClerkOrigin }) {
+export function frontendAssetProbeUrl(frontendUrl, assetPath, nonce) {
+  const target = new URL(assetPath, `${frontendUrl.replace(/\/+$/, '')}/`);
+  if (nonce) target.searchParams.set('__insert_player_readiness', nonce);
+  return target.toString();
+}
+
+export function frontendShellReadinessError({
+  html,
+  cspHeader,
+  expectedClerkOrigin,
+  expectedAssetPath = '',
+}) {
   if (!html.includes('<div id="app"></div>')) {
     return 'the current response is not the app shell';
+  }
+  if (expectedAssetPath && !html.includes(`src="${expectedAssetPath}"`)) {
+    return `the app shell does not reference deployed asset ${expectedAssetPath}`;
   }
   if (!cspHeader) {
     return 'the current response has no Content Security Policy';

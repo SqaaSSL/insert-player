@@ -3,6 +3,7 @@ import {
   GeminiRequestError,
   RequestStartPacer,
   geminiErrorFromResponse,
+  isApprovedGeminiImageModel,
   parseRetryAfterMs,
   retryGeminiRequest,
 } from './GeminiRequestPolicy';
@@ -43,6 +44,44 @@ describe('Gemini request policy', () => {
     expect(error.retryable).toBe(false);
   });
 
+  it('recognizes the structured per-model daily quota and preserves its reset delay', () => {
+    const error = geminiErrorFromResponse(
+      'gemini-3-pro-image',
+      new Response(null, { status: 429 }),
+      JSON.stringify({
+        error: {
+          status: 'RESOURCE_EXHAUSTED',
+          message: 'You exceeded your current quota.',
+          details: [
+            {
+              '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+              violations: [{
+                quotaMetric: 'generativelanguage.googleapis.com/generate_requests_per_model_per_day',
+                quotaId: 'GenerateRequestsPerDayPerProjectPerModel',
+              }],
+            },
+            { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '85783s' },
+          ],
+        },
+      }),
+      0,
+    );
+
+    expect(error).toMatchObject({
+      model: 'gemini-3-pro-image',
+      retryable: false,
+      dailyQuotaExhausted: true,
+      retryAfterMs: 85_783_000,
+    });
+  });
+
+  it('allows only the two production Gemini image models', () => {
+    expect(isApprovedGeminiImageModel('gemini-3-pro-image')).toBe(true);
+    expect(isApprovedGeminiImageModel('gemini-3.1-flash-image')).toBe(true);
+    expect(isApprovedGeminiImageModel('gemini-2.5-flash-image')).toBe(false);
+    expect(isApprovedGeminiImageModel('flux-2-pro')).toBe(false);
+  });
+
   it('backs off transient errors and succeeds', async () => {
     const delays: number[] = [];
     let calls = 0;
@@ -61,6 +100,33 @@ describe('Gemini request policy', () => {
     expect(result).toBe('ok');
     expect(calls).toBe(3);
     expect(delays).toEqual([100, 200]);
+  });
+
+  it('caps an excessive upstream Retry-After at the normal retry ceiling', async () => {
+    const delays: number[] = [];
+    let calls = 0;
+    const result = await retryGeminiRequest(async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new GeminiRequestError({
+          message: 'busy for too long',
+          status: 429,
+          retryable: true,
+          retryAfterMs: 24 * 60 * 60 * 1_000,
+        });
+      }
+      return 'ok';
+    }, {
+      maxAttempts: 2,
+      baseDelayMs: 100,
+      maxDelayMs: 60_000,
+      random: () => 0.5,
+      sleep: async (delayMs) => { delays.push(delayMs); },
+    });
+
+    expect(result).toBe('ok');
+    expect(calls).toBe(2);
+    expect(delays).toEqual([60_000]);
   });
 
   it('uses the longer spend cooldown and stops at the attempt limit', async () => {

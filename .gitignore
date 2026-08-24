@@ -22,6 +22,9 @@ worker/.prod.vars
 .wrangler-logs/
 .wrangler/
 .qa/
+.artifacts/
+.arcade-sources/
+.arcade-state.json
 .launch-validation.json
 launch-validation.local.json
 .brand-clearance.json

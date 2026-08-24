@@ -84,6 +84,7 @@ jobs:
           CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
+          GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
         run: npm run config:sandbox
 
       - name: Build, deploy, and smoke Pages

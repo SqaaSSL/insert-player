@@ -1,6 +1,29 @@
 import type { Env } from './types';
 import { normalizeOptionalHttpsUrl, normalizePublicDisplayName } from './auth';
 
+function normalizedPrivateProfile(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...row,
+    display_name: normalizePublicDisplayName(row.display_name),
+    avatar_url: normalizeOptionalHttpsUrl(row.avatar_url),
+  };
+}
+
+function publicLeaderboardEntry(row: Record<string, unknown>, index: number): Record<string, unknown> {
+  return {
+    id: `rank:${index + 1}`,
+    display_name: `Player ${index + 1}`,
+    avatar_url: null,
+    elo_rating: row.elo_rating,
+    wins: row.wins,
+    losses: row.losses,
+    win_streak: row.win_streak,
+    best_streak: row.best_streak,
+    total_kos: row.total_kos,
+    win_rate: row.win_rate,
+  };
+}
+
 export async function ensureSystemUser(env: Env, id: string, displayName: string): Promise<void> {
   const normalizedDisplayName = normalizePublicDisplayName(displayName);
   await env.DB.prepare(`
@@ -35,12 +58,7 @@ export async function getLeaderboard(env: Env): Promise<Response> {
   `).all<Record<string, unknown>>();
 
   return Response.json({
-    leaderboard: results.map((row, index) => ({
-      ...row,
-      id: `rank:${index + 1}`,
-      display_name: normalizePublicDisplayName(row.display_name),
-      avatar_url: normalizeOptionalHttpsUrl(row.avatar_url),
-    })),
+    leaderboard: results.map(publicLeaderboardEntry),
   });
 }
 
@@ -66,11 +84,7 @@ export async function getPlayerStats(env: Env, userId: string): Promise<Response
   `).bind(userId, userId).all<Record<string, unknown>>();
 
   return Response.json({
-    player: {
-      ...user,
-      display_name: normalizePublicDisplayName(user.display_name),
-      avatar_url: normalizeOptionalHttpsUrl(user.avatar_url),
-    },
+    player: normalizedPrivateProfile(user),
     recentMatches: recentMatches.map((match) => ({
       ...match,
       p1_name: normalizePublicDisplayName(match.p1_name),
