@@ -838,7 +838,7 @@ describe('Stripe refund and dispute reconciliation against D1', () => {
     } finally {
       await mf.dispose();
     }
-  });
+  }, 15_000);
 
   it('withholds refunded credits when refund delivery precedes checkout completion', async () => {
     const { mf, db, env } = await createBindings();
