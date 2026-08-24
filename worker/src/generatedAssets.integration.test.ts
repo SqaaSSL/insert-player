@@ -1,7 +1,19 @@
 import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
-import { persistGeneratedSource, persistGeneratedSprite } from './generatedAssets';
-import type { Env } from './types';
+import {
+  persistGeneratedSource,
+  persistGeneratedSprite,
+  promoteGeneratedSourceVersion,
+  promoteGeneratedSpriteVersion,
+} from './generatedAssets';
+import {
+  artifactProgress,
+  recordSourceCheckpoint,
+  recordSpriteCheckpoint,
+  reuseSourceCheckpoint,
+  reuseSpriteCheckpoint,
+} from './generationArtifacts';
+import type { Env, GenerationJob } from './types';
 
 const USER_ID = 'user-generated-assets';
 const FIGHTER_ID = 'fighter-generated-assets';
@@ -70,6 +82,35 @@ const SCHEMA = `
     processing_version INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(fighter_id, animation_name, quality_tier)
+  );
+  CREATE TABLE generation_artifact_runs (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'active',
+    failure_stage TEXT,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE generation_artifact_checkpoints (
+    run_id TEXT NOT NULL,
+    artifact_kind TEXT NOT NULL,
+    artifact_name TEXT NOT NULL,
+    stage_index INTEGER NOT NULL,
+    tier TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'approved',
+    clean_version_id TEXT NOT NULL,
+    raw_version_id TEXT,
+    clean_blob_key TEXT NOT NULL,
+    raw_blob_key TEXT,
+    clean_content_hash TEXT,
+    raw_content_hash TEXT,
+    frame_w INTEGER,
+    frame_h INTEGER,
+    frame_count INTEGER,
+    processing_version INTEGER,
+    metadata_json TEXT,
+    completed_by_job_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    verified_at TEXT,
+    PRIMARY KEY (run_id, artifact_kind, artifact_name)
   );
 `;
 
@@ -165,6 +206,18 @@ describe('backend-generated asset persistence', () => {
       `).bind(FIGHTER_ID).first<{ count: number }>())?.count).toBe(2);
       expect((await db.prepare('SELECT side_view_blob_key AS key FROM fighters WHERE id = ?')
         .bind(FIGHTER_ID).first<{ key: string }>())?.key).toBe(distinct.blobKey);
+      const restored = await promoteGeneratedSourceVersion(env, {
+        userId: USER_ID,
+        fighterId: FIGHTER_ID,
+        kind: 'side',
+        versionId: first.versionId,
+      });
+      expect(restored.blob_key).toBe(first.blobKey);
+      expect((await db.prepare('SELECT side_view_blob_key AS key FROM fighters WHERE id = ?')
+        .bind(FIGHTER_ID).first<{ key: string }>())?.key).toBe(first.blobKey);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM source_versions WHERE fighter_id = ? AND kind = 'side'
+      `).bind(FIGHTER_ID).first<{ count: number }>())?.count).toBe(2);
       expect(await bucket.head(first.blobKey)).not.toBeNull();
       expect(await bucket.head(distinct.blobKey)).not.toBeNull();
     } finally {
@@ -228,10 +281,190 @@ describe('backend-generated asset persistence', () => {
       `).bind(FIGHTER_ID).first<{ blob_key: string; raw_blob_key: string }>();
       expect(current?.blob_key).toBe(upgraded.blobKey);
       expect(current?.raw_blob_key).toBe(upgraded.rawBlobKey);
+      const restored = await promoteGeneratedSpriteVersion(env, {
+        userId: USER_ID,
+        fighterId: FIGHTER_ID,
+        tier: 'rookie',
+        animationName: 'idle',
+        versionId: first.versionId,
+      });
+      expect(restored.blob_key).toBe(first.blobKey);
+      expect(await db.prepare(`
+        SELECT blob_key, raw_blob_key FROM sprites
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'rookie'
+      `).bind(FIGHTER_ID).first()).toEqual({
+        blob_key: first.blobKey,
+        raw_blob_key: first.rawBlobKey,
+      });
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM sprite_versions WHERE fighter_id = ? AND animation_name = 'idle'
+      `).bind(FIGHTER_ID).first<{ count: number }>())?.count).toBe(3);
       for (const asset of [first, regenerated, upgraded]) {
         expect(await bucket.head(asset.blobKey)).not.toBeNull();
         expect(await bucket.head(asset.rawBlobKey!)).not.toBeNull();
       }
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('restores the exact 3 source and 4 sprite checkpoints before low_punch without deleting newer versions', async () => {
+    const { mf, db, bucket, env } = await bindings();
+    const runId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const job: GenerationJob = {
+      id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      workflow_instance_id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      user_id: USER_ID,
+      fighter_id: FIGHTER_ID,
+      charge_id: 'cccccccccccccccccccccccccccccccc',
+      provider_session_id: 'dddddddddddddddddddddddddddddddd',
+      tier: 'champion',
+      operation: 'fighter_generation',
+      target_kind: null,
+      target_name: null,
+      artifact_run_id: runId,
+      resumed_from_job_id: null,
+      status: 'running',
+      stage: 'source:side',
+      failure_stage: null,
+      progress_current: 0,
+      progress_total: 14,
+      error_code: null,
+      error_message: null,
+      started_at: null,
+      finished_at: null,
+      created_at: '2026-08-24 00:00:00',
+      updated_at: '2026-08-24 00:00:00',
+    };
+    try {
+      await db.prepare('INSERT INTO generation_artifact_runs (id) VALUES (?)').bind(runId).run();
+      const sources = [
+        ['side', 'side_raw', 1, 20],
+        ['upright', 'upright_raw', 2, 30],
+        ['crouch', 'crouch_raw', 3, 40],
+      ] as const;
+      const sourceCheckpoints: Array<{
+        clean: Awaited<ReturnType<typeof persistGeneratedSource>>;
+        raw: Awaited<ReturnType<typeof persistGeneratedSource>>;
+      }> = [];
+      for (const [cleanKind, rawKind, stageIndex, marker] of sources) {
+        const clean = await persistGeneratedSource(env, {
+          jobId: job.id,
+          userId: USER_ID,
+          fighterId: FIGHTER_ID,
+          kind: cleanKind,
+          bytes: png(marker),
+        });
+        const raw = await persistGeneratedSource(env, {
+          jobId: job.id,
+          userId: USER_ID,
+          fighterId: FIGHTER_ID,
+          kind: rawKind,
+          bytes: png(marker + 1),
+        });
+        sourceCheckpoints.push({ clean, raw });
+        await recordSourceCheckpoint(env, job, {
+          sourceName: cleanKind,
+          stageIndex,
+          clean,
+          raw,
+        });
+      }
+
+      const animations = ['idle', 'walk', 'high_punch', 'high_kick'] as const;
+      const spriteCheckpoints: Array<Awaited<ReturnType<typeof persistGeneratedSprite>>> = [];
+      for (const [index, animationName] of animations.entries()) {
+        const sprite = await persistGeneratedSprite(env, {
+          jobId: job.id,
+          userId: USER_ID,
+          fighterId: FIGHTER_ID,
+          tier: 'champion',
+          animationName,
+          bytes: png(60 + index * 2),
+          rawBytes: png(61 + index * 2),
+          frameWidth: 256,
+          frameHeight: 256,
+          frameCount: animationName === 'idle' || animationName === 'walk' ? 8 : 7,
+          processingVersion: 5,
+        });
+        spriteCheckpoints.push(sprite);
+        await recordSpriteCheckpoint(env, job, {
+          animationName,
+          stageIndex: index + 4,
+          sprite,
+          processingVersion: 5,
+        });
+      }
+
+      const newerSide = await persistGeneratedSource(env, {
+        jobId: 'job-newer-side',
+        userId: USER_ID,
+        fighterId: FIGHTER_ID,
+        kind: 'side',
+        bytes: png(90),
+      });
+      const newerIdle = await persistGeneratedSprite(env, {
+        jobId: 'job-newer-idle',
+        userId: USER_ID,
+        fighterId: FIGHTER_ID,
+        tier: 'champion',
+        animationName: 'idle',
+        bytes: png(91),
+        rawBytes: png(92),
+        frameWidth: 256,
+        frameHeight: 256,
+        frameCount: 8,
+        processingVersion: 5,
+      });
+
+      for (const [cleanKind] of sources) {
+        expect(await reuseSourceCheckpoint(env, job, cleanKind)).not.toBeNull();
+      }
+      for (const animationName of animations) {
+        expect(await reuseSpriteCheckpoint(env, job, animationName)).not.toBeNull();
+      }
+
+      const progress = await artifactProgress(env, {
+        id: runId,
+        operation: 'fighter_generation',
+        target_name: null,
+      });
+      expect(progress.completedStages).toEqual([
+        'source:side',
+        'source:upright',
+        'source:crouch',
+        'sprite:idle',
+        'sprite:walk',
+        'sprite:high_punch',
+        'sprite:high_kick',
+      ]);
+      expect(progress.pendingStages[0]).toBe('sprite:low_punch');
+      expect(progress.preservedArtifactCount).toBe(7);
+      expect((await db.prepare('SELECT side_view_blob_key AS key FROM fighters WHERE id = ?')
+        .bind(FIGHTER_ID).first<{ key: string }>())?.key).toBe(sourceCheckpoints[0].clean.blobKey);
+      expect((await db.prepare(`
+        SELECT blob_key FROM sprites
+        WHERE fighter_id = ? AND quality_tier = 'champion' AND animation_name = 'idle'
+      `).bind(FIGHTER_ID).first<{ blob_key: string }>())?.blob_key).toBe(spriteCheckpoints[0].blobKey);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM source_versions WHERE fighter_id = ? AND kind = 'side'
+      `).bind(FIGHTER_ID).first<{ count: number }>())?.count).toBe(2);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM sprite_versions
+        WHERE fighter_id = ? AND quality_tier = 'champion' AND animation_name = 'idle'
+      `).bind(FIGHTER_ID).first<{ count: number }>())?.count).toBe(2);
+      expect(await bucket.head(newerSide.blobKey)).not.toBeNull();
+      expect(await bucket.head(newerIdle.blobKey)).not.toBeNull();
+
+      await bucket.delete(sourceCheckpoints[0].clean.blobKey);
+      await expect(reuseSourceCheckpoint(env, job, 'side'))
+        .rejects.toThrow('checkpoint blob is missing from durable storage');
+      expect((await db.prepare(`
+        SELECT status FROM generation_artifact_checkpoints
+        WHERE run_id = ? AND artifact_kind = 'source' AND artifact_name = 'side'
+      `).bind(runId).first<{ status: string }>())?.status).toBe('corrupt');
+      expect((await db.prepare('SELECT status FROM generation_artifact_runs WHERE id = ?')
+        .bind(runId).first<{ status: string }>())?.status).toBe('failed');
     } finally {
       await mf.dispose();
     }

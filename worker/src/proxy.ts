@@ -157,7 +157,10 @@ export async function proxyRequest(
     }
     return Response.json(
       { error: signal.aborted ? 'Provider request timed out' : 'Provider request failed' },
-      { status: signal.aborted ? 504 : 502 },
+      {
+        status: signal.aborted ? 504 : 502,
+        headers: { 'X-Insert-Player-Upstream-Outcome': 'unknown' },
+      },
     );
   }
 
@@ -166,6 +169,7 @@ export async function proxyRequest(
   if (upstreamContentType) responseHeaders.set('Content-Type', upstreamContentType);
   const retryAfter = upstream.headers.get('Retry-After');
   if (retryAfter) responseHeaders.set('Retry-After', retryAfter);
+  responseHeaders.set('X-Insert-Player-Upstream-Outcome', 'received');
   const boundedBody = upstream.body
     ? createBoundedByteStream(upstream.body, maxResponseBytes)
     : null;

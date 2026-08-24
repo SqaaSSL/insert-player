@@ -19,8 +19,11 @@ const JOB: GenerationJob = {
   operation: 'fighter_generation',
   targetKind: null,
   targetName: null,
+  artifactRunId: '11111111111111111111111111111111',
+  resumedFromJobId: null,
   status: 'queued',
   stage: 'queued',
+  failureStage: null,
   progressCurrent: 0,
   progressTotal: 14,
   errorCode: null,
@@ -29,6 +32,10 @@ const JOB: GenerationJob = {
   finishedAt: null,
   createdAt: '2026-08-22T00:00:00.000Z',
   updatedAt: '2026-08-22T00:00:00.000Z',
+  resumable: false,
+  completedStages: [],
+  pendingStages: [],
+  preservedArtifactCount: 0,
   events: [],
 };
 

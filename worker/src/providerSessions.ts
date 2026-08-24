@@ -52,6 +52,13 @@ interface ProviderSessionUsageRow {
   provider_cost_limit_cents: number;
 }
 
+export interface CreatedProviderSession {
+  id: string;
+  expiresAt: string;
+  providerCallLimit: number;
+  providerCostLimitCents: number;
+}
+
 interface ProviderSpendReservation {
   sessionId: string;
   estimatedCostCents: number;
@@ -96,12 +103,13 @@ const FEATURE_PROVIDER_COST_LIMITS_CENTS: Record<'stage_background' | 'intro_vid
 const GEMINI_FLASH_IMAGE_MODEL = 'gemini-3.1-flash-image';
 const GEMINI_PRO_IMAGE_MODEL = 'gemini-3-pro-image';
 const PROVIDER_REQUEST_KEY_HEADER = 'X-Insert-Player-Provider-Request-Key';
+export const PROVIDER_CALL_KIND_HEADER = 'X-Insert-Player-Provider-Call-Kind';
 const PROVIDER_CACHE_MAX_RESPONSE_BYTES = 96 * 1024 * 1024;
 const PROVIDER_CACHE_MULTIPART_BYTES = 8 * 1024 * 1024;
 
 interface ProviderRequestCacheRow {
   id: string;
-  status: 'pending' | 'succeeded' | 'failed';
+  status: 'pending' | 'succeeded' | 'failed' | 'uncertain';
   response_blob_key: string | null;
   response_status: number | null;
   response_content_type: string | null;
@@ -112,6 +120,10 @@ interface ProviderRequestCacheRow {
 interface ProviderRequestCacheClaim {
   id: string;
   jobId: string;
+  artifactRunId: string;
+  requestKey: string;
+  stage: string | null;
+  callKind: string;
   ownerAttemptId: string;
   responseBlobKey: string;
 }
@@ -119,10 +131,11 @@ interface ProviderRequestCacheClaim {
 export interface ProviderRequestState {
   spendReservation: ProviderSpendReservation | null;
   cacheClaim: ProviderRequestCacheClaim | null;
+  requestMetadata: Omit<ProviderRequestCacheClaim, 'id' | 'ownerAttemptId' | 'responseBlobKey'> | null;
 }
 
 export function createProviderRequestState(): ProviderRequestState {
-  return { spendReservation: null, cacheClaim: null };
+  return { spendReservation: null, cacheClaim: null, requestMetadata: null };
 }
 
 async function uploadMultipartPartWithRetry(
@@ -235,6 +248,50 @@ function providerRequestPath(request: Request): string {
   return `${url.pathname}${url.search}`;
 }
 
+function providerStageFromRequestKey(requestKey: string): string | null {
+  const match = requestKey.match(/^(?:job|run):[a-f0-9]{32}:(source|sprite):([a-z_]{2,64})$/i);
+  return match ? `${match[1].toLowerCase()}:${match[2].toLowerCase()}` : null;
+}
+
+function providerCallKind(
+  request: Request,
+  route: { provider: ProviderSessionProvider; path: string },
+): string {
+  const declared = request.headers.get(PROVIDER_CALL_KIND_HEADER)?.trim().toLowerCase();
+  if (declared && [
+    'image_generation',
+    'quality_review',
+    'background_removal',
+    'video_generation',
+    'provider_other',
+  ].includes(declared)) {
+    return declared;
+  }
+  if (
+    (route.provider === 'fal' && route.path.includes('birefnet')) ||
+    (route.provider === 'freepik' && route.path.includes('remove-background'))
+  ) return 'background_removal';
+  if (route.path.includes('image-to-video') || route.path.includes('image_to_video')) {
+    return 'video_generation';
+  }
+  return route.provider === 'gemini' ? 'image_generation' : 'provider_other';
+}
+
+async function generationRequestContext(
+  env: Env,
+  auth: PublicAuthContext,
+  jobId: string,
+): Promise<{ jobId: string; artifactRunId: string } | null> {
+  const job = await env.DB.prepare(`
+    SELECT id, artifact_run_id
+    FROM generation_jobs
+    WHERE id = ? AND user_id = ? AND status IN ('queued', 'running')
+    LIMIT 1
+  `).bind(jobId, auth.userId ?? '').first<{ id: string; artifact_run_id: string | null }>();
+  if (!job?.artifact_run_id) return null;
+  return { jobId: job.id, artifactRunId: job.artifact_run_id };
+}
+
 function digestHex(digest: ArrayBuffer): string {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
@@ -301,7 +358,9 @@ async function cachedProviderResponse(
     if (row.status === 'succeeded') {
       await env.DB.prepare(`
         UPDATE provider_request_cache
-        SET status = 'failed', error_message = 'Cached response object is missing', updated_at = datetime('now')
+        SET status = 'uncertain',
+            error_message = 'Provider response completed but its durable cache object is missing; automatic replay is disabled',
+            updated_at = datetime('now')
         WHERE id = ? AND status = 'succeeded'
       `).bind(row.id).run();
     }
@@ -329,8 +388,16 @@ async function beginProviderRequestCache(
   auth: PublicAuthContext,
   route: { provider: ProviderSessionProvider; path: string },
 ): Promise<Response | ProviderRequestCacheClaim | null> {
-  const jobId = generationJobIdFromAuth(auth);
-  if (!jobId || request.method !== 'POST') return null;
+  const generationJobId = generationJobIdFromAuth(auth);
+  if (!generationJobId || request.method !== 'POST') return null;
+  const requestContext = await generationRequestContext(env, auth, generationJobId);
+  if (!requestContext) {
+    return json({
+      error: 'Durable generation context is unavailable; provider dispatch was blocked',
+      code: 'durable_generation_context_missing',
+    }, 503);
+  }
+  const { jobId, artifactRunId } = requestContext;
 
   const requestKey = request.headers.get(PROVIDER_REQUEST_KEY_HEADER)?.trim() ?? '';
   if (!/^[a-zA-Z0-9:_-]{1,200}$/.test(requestKey)) {
@@ -350,19 +417,24 @@ async function beginProviderRequestCache(
     throw error;
   }
   const requestPath = providerRequestPath(request);
+  const stage = providerStageFromRequestKey(requestKey);
+  const callKind = providerCallKind(request, route);
   const ownerAttemptId = generateId();
   const id = generateId();
   await env.DB.prepare(`
     INSERT OR IGNORE INTO provider_request_cache (
-      id, job_id, provider, method, request_path, request_hash, owner_attempt_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      id, job_id, artifact_run_id, provider, method, request_path, request_hash,
+      request_key, owner_attempt_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id,
     jobId,
+    artifactRunId,
     route.provider,
     request.method,
     requestPath,
     requestHash,
+    requestKey,
     ownerAttemptId,
   ).run();
 
@@ -370,20 +442,31 @@ async function beginProviderRequestCache(
     SELECT id, status, response_blob_key, response_status, response_content_type,
            owner_attempt_id, updated_at
     FROM provider_request_cache
-    WHERE job_id = ? AND provider = ? AND method = ? AND request_path = ? AND request_hash = ?
-  `).bind(jobId, route.provider, request.method, requestPath, requestHash)
+    WHERE artifact_run_id = ? AND provider = ? AND method = ? AND request_path = ? AND request_hash = ?
+  `).bind(artifactRunId, route.provider, request.method, requestPath, requestHash)
     .first<ProviderRequestCacheRow>();
   if (!row) return json({ error: 'Provider request cache is unavailable' }, 503);
 
   const cached = await cachedProviderResponse(env, row);
   if (cached) return cached;
+  if (row.response_blob_key && row.response_status) {
+    const refreshed = await env.DB.prepare(`
+      SELECT status
+      FROM provider_request_cache
+      WHERE id = ?
+    `).bind(row.id).first<{ status: ProviderRequestCacheRow['status'] }>();
+    if (refreshed) row = { ...row, status: refreshed.status };
+  }
+
+  if (row.status === 'uncertain') {
+    return json({
+      error: 'The previous provider request has an unknown completion outcome and will not be submitted again automatically',
+      code: 'provider_request_outcome_unknown',
+    }, 409);
+  }
 
   if (row.owner_attempt_id !== ownerAttemptId) {
-    const stale = row.status === 'failed' || (
-      Number.isFinite(parseSqliteTimestamp(row.updated_at)) &&
-      parseSqliteTimestamp(row.updated_at) <= Date.now() - 15 * 60 * 1_000
-    );
-    if (stale) {
+    if (row.status === 'failed') {
       const takeover = await env.DB.prepare(`
         UPDATE provider_request_cache
         SET status = 'pending', owner_attempt_id = ?, error_message = NULL, updated_at = datetime('now')
@@ -397,6 +480,22 @@ async function beginProviderRequestCache(
   }
 
   if (row.owner_attempt_id !== ownerAttemptId) {
+    const stalePending = row.status === 'pending' &&
+      Number.isFinite(parseSqliteTimestamp(row.updated_at)) &&
+      parseSqliteTimestamp(row.updated_at) <= Date.now() - 15 * 60 * 1_000;
+    if (stalePending) {
+      await env.DB.prepare(`
+        UPDATE provider_request_cache
+        SET status = 'uncertain',
+            error_message = 'Dispatch outcome was not durably finalized; automatic replay is disabled',
+            updated_at = datetime('now')
+        WHERE id = ? AND status = 'pending' AND owner_attempt_id = ?
+      `).bind(row.id, row.owner_attempt_id).run();
+      return json({
+        error: 'The previous provider request has an unknown completion outcome and will not be submitted again automatically',
+        code: 'provider_request_outcome_unknown',
+      }, 409);
+    }
     return json(
       { error: 'Identical provider request is already in progress', code: 'provider_request_in_progress' },
       425,
@@ -407,8 +506,12 @@ async function beginProviderRequestCache(
   return {
     id: row.id,
     jobId,
+    artifactRunId,
+    requestKey,
+    stage,
+    callKind,
     ownerAttemptId,
-    responseBlobKey: `users/${auth.userId}/jobs/${jobId}/provider-responses/${row.id}.bin`,
+    responseBlobKey: `users/${auth.userId}/generation-runs/${artifactRunId}/provider-responses/${row.id}.bin`,
   };
 }
 
@@ -422,11 +525,20 @@ async function finalizeProviderRequestCache(
   if (!claim) return response;
 
   if (!response.ok) {
+    const unknownOutcome = response.headers.get('X-Insert-Player-Upstream-Outcome') === 'unknown';
     await env.DB.prepare(`
       UPDATE provider_request_cache
-      SET status = 'failed', response_status = ?, error_message = ?, updated_at = datetime('now')
+      SET status = ?, response_status = ?, error_message = ?, updated_at = datetime('now')
       WHERE id = ? AND owner_attempt_id = ? AND status = 'pending'
-    `).bind(response.status, `Provider returned HTTP ${response.status}`, claim.id, claim.ownerAttemptId).run();
+    `).bind(
+      unknownOutcome ? 'uncertain' : 'failed',
+      response.status,
+      unknownOutcome
+        ? 'Provider dispatch outcome is unknown; automatic replay is disabled'
+        : `Provider returned HTTP ${response.status}`,
+      claim.id,
+      claim.ownerAttemptId,
+    ).run();
     return response;
   }
 
@@ -458,13 +570,13 @@ async function finalizeProviderRequestCache(
       env.SPRITES.delete(claim.responseBlobKey),
       env.DB.prepare(`
         UPDATE provider_request_cache
-        SET status = 'failed', response_blob_key = NULL, response_status = NULL,
+        SET status = 'uncertain', response_blob_key = NULL, response_status = NULL,
             response_content_type = NULL, error_message = ?, updated_at = datetime('now')
         WHERE id = ? AND owner_attempt_id = ? AND status = 'pending'
       `).bind(
         error instanceof ResponseBodyTooLargeError
-          ? 'Provider response exceeded the durable cache limit'
-          : 'Could not persist provider response',
+          ? 'Provider returned success but its response exceeded the durable cache limit; automatic replay is disabled'
+          : 'Provider returned success but its response could not be persisted; automatic replay is disabled',
         claim.id,
         claim.ownerAttemptId,
       ).run(),
@@ -499,7 +611,9 @@ async function finalizeProviderRequestCache(
   if (!cached) {
     await env.DB.prepare(`
       UPDATE provider_request_cache
-      SET status = 'failed', error_message = 'Cached response object is missing', updated_at = datetime('now')
+      SET status = 'uncertain',
+          error_message = 'Provider response completed but its durable cache object is missing; automatic replay is disabled',
+          updated_at = datetime('now')
       WHERE id = ?
     `).bind(claim.id).run();
     return json({ error: 'Provider response cache is unavailable' }, 503);
@@ -565,7 +679,7 @@ export async function createProviderSession(
     chargeId?: string | null;
     legal: GenerationLegalAttestation;
   },
-): Promise<{ id: string; expiresAt: string; providerCallLimit: number; providerCostLimitCents: number }> {
+): Promise<CreatedProviderSession> {
   const id = generateId();
   const sessionExpiresAt = expiresAt();
   const providerCallLimit = providerCallLimitFor(params.purpose, params.tier, params.operation);
@@ -601,6 +715,41 @@ export async function createProviderSession(
   await env.DB.batch([sessionStatement, acceptanceStatement]);
 
   return { id, expiresAt: sessionExpiresAt, providerCallLimit, providerCostLimitCents };
+}
+
+export async function constrainProviderSessionToArtifactRunRemaining(
+  env: Env,
+  session: CreatedProviderSession,
+  chargeId: string,
+  artifactRunId: string,
+): Promise<CreatedProviderSession> {
+  const usage = await env.DB.prepare(`
+    SELECT
+      COUNT(*) AS provider_calls_used,
+      COALESCE(SUM(estimated_cost_cents), 0) AS provider_cost_used_cents
+    FROM provider_cost_events
+    WHERE artifact_run_id = ?
+  `).bind(artifactRunId).first<{
+    provider_calls_used: number;
+    provider_cost_used_cents: number;
+  }>();
+  const providerCallLimit = Math.max(
+    0,
+    session.providerCallLimit - Number(usage?.provider_calls_used ?? 0),
+  );
+  const providerCostLimitCents = Math.max(
+    0,
+    session.providerCostLimitCents - Number(usage?.provider_cost_used_cents ?? 0),
+  );
+  const adjusted = await env.DB.prepare(`
+    UPDATE provider_sessions
+    SET provider_call_limit = ?, provider_cost_limit_cents = ?, updated_at = datetime('now')
+    WHERE id = ? AND charge_id = ? AND status = 'active'
+    RETURNING id
+  `).bind(providerCallLimit, providerCostLimitCents, session.id, chargeId)
+    .first<{ id: string }>();
+  if (!adjusted) throw new Error('Continuation provider budget could not be bounded');
+  return { ...session, providerCallLimit, providerCostLimitCents };
 }
 
 function providerCallLimitFor(
@@ -827,6 +976,11 @@ export async function finalizeProviderRequest(
 ): Promise<Response> {
   const providerSucceeded = response.ok;
   const providerStatus = response.status;
+  const upstreamOutcome = response.headers.get('X-Insert-Player-Upstream-Outcome') === 'unknown'
+    ? 'unknown'
+    : providerSucceeded
+      ? 'http_succeeded'
+      : 'http_failed';
   let clientResponse = response;
   try {
     clientResponse = await finalizeProviderRequestCache(env, response, state);
@@ -842,10 +996,11 @@ export async function finalizeProviderRequest(
       await env.DB.prepare(`
         UPDATE provider_cost_events
         SET outcome = 'succeeded',
+            upstream_outcome = ?,
             http_status = ?,
             finalized_at = datetime('now')
         WHERE id = ? AND outcome = 'reserved'
-      `).bind(providerStatus, reservation.eventId).run();
+      `).bind(upstreamOutcome, providerStatus, reservation.eventId).run();
     } catch (error) {
       console.error('[provider] Failed to finalize provider cost event', error);
     }
@@ -855,10 +1010,11 @@ export async function finalizeProviderRequest(
     await env.DB.prepare(`
       UPDATE provider_cost_events
       SET outcome = 'failed',
+          upstream_outcome = ?,
           http_status = ?,
           finalized_at = datetime('now')
       WHERE id = ? AND outcome = 'reserved'
-    `).bind(providerStatus, reservation.eventId).run();
+    `).bind(upstreamOutcome, providerStatus, reservation.eventId).run();
   } catch (error) {
     console.error('[provider] Failed to finalize unsuccessful provider cost event', error);
   }
@@ -909,7 +1065,26 @@ export async function requireProviderSession(
   if (request.method === 'GET' || request.method === 'HEAD') return null;
   const cache = await beginProviderRequestCache(request, env, auth, route);
   if (cache instanceof Response) return cache;
-  if (cache) state.cacheClaim = cache;
+  if (
+    existing.charge_id &&
+    ['fighter_generation', 'fighter_retry', 'fighter_upgrade'].includes(existing.purpose) &&
+    !cache
+  ) {
+    return json({
+      error: 'Charged generation provider dispatch requires its signed durable job context',
+      code: 'durable_generation_context_missing',
+    }, 503);
+  }
+  if (cache) {
+    state.cacheClaim = cache;
+    state.requestMetadata = {
+      jobId: cache.jobId,
+      artifactRunId: cache.artifactRunId,
+      requestKey: cache.requestKey,
+      stage: cache.stage,
+      callKind: cache.callKind,
+    };
+  }
   if ((existing.provider_calls_used ?? 0) >= (existing.provider_call_limit ?? 0)) {
     await abandonProviderRequestCache(env, state, 'Provider session call limit exceeded');
     return providerSessionLimitResponse(existing.expires_at);
@@ -974,6 +1149,7 @@ export async function requireProviderSession(
       return json({ error: 'Provider cost accounting is temporarily unavailable' }, 503);
     }
     const eventId = generateId();
+    const requestMetadata = state.requestMetadata;
     try {
       let eventResultIndex = 0;
       const statements: D1PreparedStatement[] = [];
@@ -989,9 +1165,10 @@ export async function requireProviderSession(
         eventStatement = env.DB.prepare(`
           INSERT INTO provider_cost_events (
             id, session_id, charge_id, tier, purpose, billing_operation,
-            provider, model_path, estimated_cost_cents
+            provider, model_path, estimated_cost_cents,
+            job_id, artifact_run_id, request_key, call_kind, stage
           )
-          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+          SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
           WHERE EXISTS (
             SELECT 1 FROM generation_charges
             WHERE id = ? AND user_id = ? AND status = 'committed'
@@ -1007,6 +1184,11 @@ export async function requireProviderSession(
           route.provider,
           route.path,
           estimatedCostCents,
+          requestMetadata?.jobId ?? null,
+          requestMetadata?.artifactRunId ?? null,
+          requestMetadata?.requestKey ?? null,
+          requestMetadata?.callKind ?? providerCallKind(request, route),
+          requestMetadata?.stage ?? null,
           existing.charge_id,
           auth.userId,
         );
@@ -1015,9 +1197,10 @@ export async function requireProviderSession(
         eventStatement = env.DB.prepare(`
           INSERT INTO provider_cost_events (
             id, session_id, charge_id, tier, purpose, billing_operation,
-            provider, model_path, estimated_cost_cents
+            provider, model_path, estimated_cost_cents,
+            job_id, artifact_run_id, request_key, call_kind, stage
           )
-          VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           RETURNING id
         `).bind(
           eventId,
@@ -1028,6 +1211,11 @@ export async function requireProviderSession(
           route.provider,
           route.path,
           estimatedCostCents,
+          requestMetadata?.jobId ?? null,
+          requestMetadata?.artifactRunId ?? null,
+          requestMetadata?.requestKey ?? null,
+          requestMetadata?.callKind ?? providerCallKind(request, route),
+          requestMetadata?.stage ?? null,
         );
       }
       statements.push(eventStatement);
