@@ -157,6 +157,18 @@ export function validateLaunchSmokeToken(token, {
   return { claims, sessionId: claims.sid };
 }
 
+export async function forceFreshBrowserClerkToken() {
+  const clerk = globalThis.Clerk;
+  if (!clerk?.session?.getToken) {
+    throw new Error('The frontend Clerk session was not available after Agent Task bootstrap.');
+  }
+  const token = await clerk.session.getToken({ skipCache: true });
+  if (!token) {
+    throw new Error('Clerk did not mint a fresh frontend session token.');
+  }
+  return token;
+}
+
 function normalizedOauthProvider(provider) {
   return String(provider ?? '').toLowerCase().replace(/^oauth_/, '');
 }
@@ -204,31 +216,11 @@ async function captureFrontendSessionToken({
   browser,
   agentTaskUrl,
   frontendOrigin,
-  workerUrl,
   role,
   artifactDir,
 }) {
   const context = await browser.newContext();
   const page = await context.newPage();
-  let tokenResolver = null;
-  let tokenRejecter = null;
-  const tokenPromise = new Promise((resolveToken, rejectToken) => {
-    tokenResolver = resolveToken;
-    tokenRejecter = rejectToken;
-  });
-  void tokenPromise.catch(() => {});
-  const tokenTimeout = setTimeout(
-    () => tokenRejecter?.(new Error('Timed out waiting for the frontend Clerk bearer token.')),
-    BROWSER_TIMEOUT_MS,
-  );
-  const authMeUrl = `${workerUrl}/auth/me`;
-
-  page.on('request', (request) => {
-    if (request.url().split('?')[0] !== authMeUrl) return;
-    const authorization = request.headers().authorization ?? '';
-    const match = authorization.match(/^Bearer\s+(.+)$/i);
-    if (match?.[1]) tokenResolver?.(match[1]);
-  });
 
   try {
     const response = await page.goto(agentTaskUrl, {
@@ -241,7 +233,12 @@ async function captureFrontendSessionToken({
     await page.waitForURL((candidate) => (
       candidate.origin === frontendOrigin && candidate.pathname === '/menu'
     ), { timeout: BROWSER_TIMEOUT_MS });
-    return await tokenPromise;
+    await page.waitForFunction(
+      () => Boolean(globalThis.Clerk?.loaded && globalThis.Clerk?.session),
+      undefined,
+      { timeout: BROWSER_TIMEOUT_MS },
+    );
+    return await page.evaluate(forceFreshBrowserClerkToken);
   } catch (error) {
     if (artifactDir) {
       mkdirSync(artifactDir, { recursive: true });
@@ -249,7 +246,6 @@ async function captureFrontendSessionToken({
     }
     throw error;
   } finally {
-    clearTimeout(tokenTimeout);
     await context.close();
   }
 }
@@ -295,7 +291,6 @@ async function createAgentTaskBackedToken({
   user,
   role,
   frontendOrigin,
-  workerUrl,
   clerkIssuer,
   artifactDir,
 }) {
@@ -314,7 +309,6 @@ async function createAgentTaskBackedToken({
       browser,
       agentTaskUrl: task.url,
       frontendOrigin,
-      workerUrl,
       role,
       artifactDir,
     });
@@ -486,7 +480,6 @@ async function main() {
       user: primaryUser,
       role: 'primary',
       frontendOrigin: config.frontendOrigin,
-      workerUrl: config.workerUrl,
       clerkIssuer: config.clerkIssuer,
       artifactDir,
     });
@@ -496,7 +489,6 @@ async function main() {
       user: cloneUser,
       role: 'clone',
       frontendOrigin: config.frontendOrigin,
-      workerUrl: config.workerUrl,
       clerkIssuer: config.clerkIssuer,
       artifactDir,
     });
