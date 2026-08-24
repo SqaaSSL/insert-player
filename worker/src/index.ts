@@ -1,4 +1,5 @@
 import {
+  clerkAuthOptionsForRequest,
   generateId,
   hasValidClerkBackendAuthBridge,
   optionalAuth,
@@ -134,10 +135,9 @@ async function authenticated(
   handler: (auth: AuthContext) => Promise<Response>,
 ): Promise<Response> {
   const isArcadeAdminSeed = request.headers.get(ARCADE_ADMIN_SEED_HEADER) === 'clerk-backend';
-  const isClerkBackendBridge = await hasValidClerkBackendAuthBridge(request, env);
-  const auth = await requireAuth(request, env, {
-    allowMissingAuthorizedParty: isArcadeAdminSeed || isClerkBackendBridge,
-  });
+  const auth = await requireAuth(request, env, await clerkAuthOptionsForRequest(request, env, {
+    allowMissingAuthorizedParty: isArcadeAdminSeed,
+  }));
   if (isResponse(auth)) return auth;
   if (isArcadeAdminSeed && auth.user.plan_tier !== 'admin') {
     return json({ error: 'Admin access required' }, 403);
@@ -170,7 +170,7 @@ async function sensitiveOptionalAuth(
     if (isResponse(auth)) return auth;
     return authAsPublicContext(auth);
   }
-  const bridgedAuth = await requireAuth(request, env, { allowMissingAuthorizedParty: true });
+  const bridgedAuth = await requireAuth(request, env, await clerkAuthOptionsForRequest(request, env));
   if (isResponse(bridgedAuth)) return bridgedAuth;
   return authAsPublicContext(bridgedAuth);
 }
@@ -289,9 +289,11 @@ export default {
       if (generationAuth instanceof Response) {
         return addCors(generationAuth, request, env);
       }
-      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(request, env, {
-        allowMissingAuthorizedParty: await hasValidClerkBackendAuthBridge(request, env),
-      });
+      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(
+        request,
+        env,
+        await clerkAuthOptionsForRequest(request, env),
+      );
       const proxied = path.startsWith('/proxy/')
         ? await handleProxy(request, env, publicAuth)
         : null;

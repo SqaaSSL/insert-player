@@ -226,5 +226,18 @@ describe('Clerk authorized parties', () => {
       ...bridgeEnv,
       CLERK_BACKEND_AUTH_BRIDGE_SECRET: '',
     })).resolves.toBe(false);
+
+    const validBridge = await hasValidClerkBackendAuthBridge(matchingRequest, bridgeEnv);
+    const invalidBridge = await hasValidClerkBackendAuthBridge(wrongRequest, bridgeEnv);
+    expect(() => assertAuthorizedParty(
+      { azp: 'https://unexpected-clerk-session.example' },
+      bridgeEnv,
+      { skipAuthorizedPartyValidation: validBridge },
+    )).not.toThrow();
+    expect(() => assertAuthorizedParty(
+      { azp: 'https://unexpected-clerk-session.example' },
+      bridgeEnv,
+      { skipAuthorizedPartyValidation: invalidBridge },
+    )).toThrow('authorized party is not allowed');
   });
 });
