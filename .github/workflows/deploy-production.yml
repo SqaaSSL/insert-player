@@ -70,12 +70,16 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             worker/package-lock.json
+            processor/package-lock.json
 
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Install Worker dependencies
         run: npm --prefix worker ci
+
+      - name: Install processor dependencies
+        run: npm --prefix processor ci
 
       - name: Materialize brand clearance
         env:
