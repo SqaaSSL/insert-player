@@ -36,7 +36,7 @@ Operational and product references:
 | QA | [insert-player-sandbox.pages.dev](https://insert-player-sandbox.pages.dev) | `https://insert-player-api-sandbox.shellbot.workers.dev` | Clerk Development, dedicated Stripe sandbox | Isolated sandbox D1/R2 |
 | Production | [insertplayer.ai](https://insertplayer.ai) | [api.insertplayer.ai](https://api.insertplayer.ai) | Clerk Production, dedicated Stripe live | Isolated production D1/R2 |
 
-Production serves the full app with Clerk Production, dedicated live Stripe configuration, and Cloudflare Workflow/Container generation. QA remains the environment for paid-provider generation and test Checkout. Promotion from `main` runs migrations, checks, Worker/Container deploy, Worker smoke, Pages deploy, and readiness; the GitHub Cloudflare token must include `Containers: Write` as well as the existing Worker, D1, R2, and Pages permissions.
+Production serves the full app with Clerk Production, dedicated live Stripe configuration, and Cloudflare Workflow/Container generation. QA remains the environment for paid-provider generation and test Checkout. Promotion from `main` runs migrations, checks, Worker/Container deploy, Worker smoke, Pages deploy, and readiness. The current GitHub Cloudflare secret returns `7403` on the first production D1 call; replace it with a token for the exact SqaaS account that includes Worker Scripts, D1, R2, Pages, Containers, and Workflow deployment access.
 
 Never point a local or QA build at production storage, Clerk, Stripe, or Worker secrets. Never install test Stripe credentials on the production Worker.
 
@@ -94,7 +94,7 @@ Run the full gate before requesting review or deploying:
 npm run check:production
 ```
 
-This includes frontend style guards, TypeScript, 199 tests across 40 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
+This includes frontend style guards, TypeScript, 253 tests across 49 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
 
 Useful focused commands:
 

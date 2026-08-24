@@ -39,7 +39,7 @@ const REQUIRED_MANUAL_CHECKS = [
   'rookie_generation_commit',
   'contender_generation_commit_cloud_sync',
   'champion_generation_commit_cloud_sync',
-  'generation_failure_refund',
+  'generation_failure_charge_boundary',
   'second_device_import_and_play',
   'cross_device_retry_or_upgrade_refresh',
   'version_preservation_after_upgrade',
@@ -360,8 +360,8 @@ function assertManualLaunchValidation(values, workerUrl, frontendUrl, primaryJwt
     return;
   }
 
-  if (validation.schemaVersion !== 4) {
-    fail('Manual launch validation schemaVersion must be 4.');
+  if (validation.schemaVersion !== 5) {
+    fail('Manual launch validation schemaVersion must be 5.');
   }
   if (String(validation.legalVersion ?? '').trim() !== CURRENT_LEGAL_VERSION) {
     fail(`Manual launch validation legalVersion must match ${CURRENT_LEGAL_VERSION}.`);
