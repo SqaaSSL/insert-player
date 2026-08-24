@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  authMeRejectsDeletedIdentity,
   buildSandboxSmokeUserParams,
   decodeJwtPayload,
   forceFreshBrowserClerkToken,
@@ -149,6 +150,13 @@ describe('automated Clerk launch-smoke targets', () => {
     });
     expect(params).not.toHaveProperty('password');
     expect(params).not.toHaveProperty('legalAcceptedAt');
+  });
+
+  it('treats auth/me anonymous semantics as rejection after Clerk deletion', () => {
+    expect(authMeRejectsDeletedIdentity(401, null)).toBe(true);
+    expect(authMeRejectsDeletedIdentity(200, { user: null })).toBe(true);
+    expect(authMeRejectsDeletedIdentity(200, { user: { id: 'still-active' } })).toBe(false);
+    expect(authMeRejectsDeletedIdentity(500, { user: null })).toBe(false);
   });
 
   it('accepts only explicitly marked, verified production OAuth QA users', () => {

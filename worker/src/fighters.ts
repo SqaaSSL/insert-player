@@ -1188,13 +1188,24 @@ export async function deleteFighter(env: Env, auth: AuthContext, fighterId: stri
       last_error = NULL,
       updated_at = datetime('now')
   `).bind(auth.userId, fighterId, JSON.stringify(namespacedKeys));
+  const releaseMatchReferencesStatement = env.DB.prepare(`
+    UPDATE matches
+    SET
+      p1_fighter_id = CASE WHEN p1_fighter_id = ? THEN NULL ELSE p1_fighter_id END,
+      p2_fighter_id = CASE WHEN p2_fighter_id = ? THEN NULL ELSE p2_fighter_id END
+    WHERE p1_fighter_id = ? OR p2_fighter_id = ?
+  `).bind(fighterId, fighterId, fighterId, fighterId);
   const deleteStatement = env.DB.prepare(`
     DELETE FROM fighters
     WHERE id = ? AND owner_user_id = ?
     RETURNING id
   `).bind(fighterId, auth.userId);
-  const results = await env.DB.batch([queueStatement, deleteStatement]);
-  const deleted = results[1]?.results?.some((row) => (row as { id?: string }).id === fighterId);
+  const results = await env.DB.batch([
+    queueStatement,
+    releaseMatchReferencesStatement,
+    deleteStatement,
+  ]);
+  const deleted = results[2]?.results?.some((row) => (row as { id?: string }).id === fighterId);
   if (!deleted) throw new Error('Fighter deletion was not committed');
 
   const cleanup = await drainFighterAssetDeletions(env, { fighterId });
