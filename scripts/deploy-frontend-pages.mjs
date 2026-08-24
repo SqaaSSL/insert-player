@@ -16,6 +16,7 @@ const deployTarget = targetArg?.slice('--target='.length) || 'live';
 const isSandbox = deployTarget === 'sandbox';
 const DEPLOY_TIMEOUT_MS = 300_000;
 const SMOKE_TIMEOUT_MS = 360_000;
+const CANONICAL_SMOKE_READY_TIMEOUT_MS = 240_000;
 const LIVE_FRONTEND_ORIGINS = ['https://insertplayer.ai', 'https://www.insertplayer.ai'];
 
 const sampleFragments = [
@@ -221,7 +222,7 @@ async function main() {
     SMOKE_TIMEOUT_MS,
     {
       ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath,
-      ASF_FRONTEND_READY_TIMEOUT_MS: '30000',
+      ASF_FRONTEND_READY_TIMEOUT_MS: String(CANONICAL_SMOKE_READY_TIMEOUT_MS),
     },
   );
 }
