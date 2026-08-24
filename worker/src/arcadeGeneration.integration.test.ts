@@ -519,7 +519,23 @@ describe('official Arcade deployed provider preflight', () => {
     });
     const response = await readAdminArcadeGenerationContract(env, adminAuth);
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: 'Image processor provider contract is not approved' });
+    expect(await response.json()).toEqual({
+      error: 'Image processor provider contract is not approved',
+      reason: 'processor_contract_unapproved',
+    });
+  });
+
+  it('reports a safe reason when the deployed processor has not published the contract', async () => {
+    const { env } = contractEnv({
+      status: 'ok',
+      runtime: 'canvas-skia',
+    });
+    const response = await readAdminArcadeGenerationContract(env, adminAuth);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: 'Image processor provider contract is missing',
+      reason: 'processor_contract_missing',
+    });
   });
 
   it('does not expose the processor contract to non-admin users', async () => {
