@@ -8,6 +8,10 @@ import {
 import { createProviderSession } from './providerSessions';
 import { readJsonBody } from './requestBody';
 import type { AuthContext, Env, PublicAuthContext } from './types';
+import {
+  isOfficialArcadeImageProviderContract,
+  OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+} from '../../src/services/ImageProviderContract';
 
 const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
 const AUTHORIZATION_TTL_HOURS = 12;
@@ -67,6 +71,43 @@ function publicAuth(auth: AuthContext): PublicAuthContext {
     user: auth.user,
     claims: auth.claims,
   };
+}
+
+export async function readAdminArcadeGenerationContract(
+  env: Env,
+  auth: AuthContext,
+): Promise<Response> {
+  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  if (!env.IMAGE_PROCESSOR) {
+    return json({ error: 'Image processor binding is unavailable' }, 503);
+  }
+
+  try {
+    const processor = env.IMAGE_PROCESSOR.getByName('official-arcade-provider-contract-v1');
+    const response = await processor.fetch(new Request('http://image-processor/health'));
+    if (!response.ok) {
+      return json({ error: 'Image processor health check failed' }, 503);
+    }
+    const payload = await response.json<{
+      status?: unknown;
+      runtime?: unknown;
+      imageProviderContract?: unknown;
+    }>();
+    if (
+      payload.status !== 'ok'
+      || payload.runtime !== 'canvas-skia'
+      || !isOfficialArcadeImageProviderContract(payload.imageProviderContract)
+    ) {
+      return json({ error: 'Image processor provider contract is not approved' }, 503);
+    }
+    return json({
+      ready: true,
+      runtime: payload.runtime,
+      contract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+    });
+  } catch {
+    return json({ error: 'Image processor provider contract could not be verified' }, 503);
+  }
 }
 
 function generationJobRequest(
