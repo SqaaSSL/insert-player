@@ -27,6 +27,7 @@ const activate = args.has('--activate');
 const continueOnError = args.has('--continue-on-error');
 const all = args.has('--all');
 const resume = args.has('--resume');
+const restartDraft = args.has('--restart-draft');
 const POLL_INTERVAL_MS = 5_000;
 const JOB_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -245,6 +246,9 @@ function selectFighters(manifest) {
   if (resume && (animationName || sourceName)) {
     throw new Error('--resume fills an entire fighter and cannot be combined with --animation or --source.');
   }
+  if (restartDraft && (all || resume || activate || animationName || sourceName || !slugArg)) {
+    throw new Error('--restart-draft requires one --slug and cannot be combined with --all, --resume, --activate, --animation, or --source.');
+  }
   if (animationName && !PLAYABLE_ANIMATIONS.has(animationName)) {
     throw new Error(`Unknown playable animation: ${animationName}`);
   }
@@ -348,6 +352,26 @@ export function findCurrentArcadeEntry(adminEntries, slug) {
     throw new Error(`Multiple current Arcade fighters use slug ${slug}; resolve the roster collision before resuming.`);
   }
   return current[0] ?? null;
+}
+
+export function planArcadeDraftRegistration(current, fighterId, slug, photoHash, shouldRestartDraft) {
+  if (shouldRestartDraft) {
+    if (!current) throw new Error(`No current Arcade draft exists for ${slug}.`);
+    if (current.status !== 'draft') {
+      throw new Error(`Arcade fighter ${slug} is ${current.status}; only a draft can be restarted before review.`);
+    }
+    if (current.fighterId !== fighterId) {
+      throw new Error(`Arcade fighter ${slug} did not resolve to its content-addressed cloud fighter.`);
+    }
+    return { slug: current.slug, restartFullGeneration: true };
+  }
+  if (current?.fighterId === fighterId) {
+    throw new Error(`Arcade fighter ${slug} already exists; use --resume or --restart-draft explicitly.`);
+  }
+  return {
+    slug: current ? `${slug.slice(0, 49)}-next-${photoHash.slice(0, 8)}` : slug,
+    restartFullGeneration: false,
+  };
 }
 
 export function planFighterResume(fighter) {
@@ -479,13 +503,16 @@ async function seedFighter({ manifest, fighter, baseUrl, token, adminEntries, st
   await uploadOriginalSource(baseUrl, token, fighterId, fighter, sourceBytes);
 
   const current = findCurrentArcadeEntry(adminEntries, fighter.slug);
-  const currentForFighter = adminEntries.find((entry) => entry.fighterId === fighterId);
-  const temporarySlug = current && current.fighterId !== fighterId
-    ? `${fighter.slug.slice(0, 49)}-next-${photoHash.slice(0, 8)}`
-    : fighter.slug;
+  const registration = planArcadeDraftRegistration(
+    current,
+    fighterId,
+    fighter.slug,
+    photoHash,
+    restartDraft,
+  );
   await apiRequest(baseUrl, token, `/api/admin/arcade/${fighterId}`, {
     method: 'PATCH',
-    body: JSON.stringify(arcadePayload(manifest, fighter, 'draft', currentForFighter?.slug ?? temporarySlug)),
+    body: JSON.stringify(arcadePayload(manifest, fighter, 'draft', registration.slug)),
   });
   checkpointState(state, manifest, fighter, fighterId, photoHash, 'draft', { complete: false });
 
@@ -702,7 +729,7 @@ async function main() {
     for (const fighter of selected) {
       const { photoHash } = readApprovedSource(manifest, fighter);
       console.log(
-        `ready  ${fighter.slug}  Champion${animationName ? `:${animationName}` : sourceName ? `:source:${sourceName}` : resume ? ':resume' : ''}  licensed:${photoHash.slice(0, 12)}`,
+        `ready  ${fighter.slug}  Champion${animationName ? `:${animationName}` : sourceName ? `:source:${sourceName}` : resume ? ':resume' : restartDraft ? ':restart-draft' : ''}  licensed:${photoHash.slice(0, 12)}`,
       );
     }
     return;

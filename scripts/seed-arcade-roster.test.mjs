@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   findCurrentArcadeEntry,
+  planArcadeDraftRegistration,
   planFighterResume,
   validateManifest,
 } from './seed-arcade-roster.mjs';
@@ -101,5 +102,57 @@ describe('Arcade roster resume planning', () => {
       { fighterId: 'one', slug: 'donald-trump', status: 'draft' },
       { fighterId: 'two', slug: 'donald-trump', status: 'active' },
     ], 'donald-trump')).toThrow(/Multiple current Arcade fighters/);
+  });
+
+  it('restarts only the matching content-addressed draft', () => {
+    expect(planArcadeDraftRegistration(
+      { fighterId: 'old-draft', slug: 'donald-trump', status: 'draft' },
+      'old-draft',
+      'donald-trump',
+      'b8cdec38c5a7e804',
+      true,
+    )).toEqual({ slug: 'donald-trump', restartFullGeneration: true });
+
+    expect(() => planArcadeDraftRegistration(
+      { fighterId: 'live', slug: 'donald-trump', status: 'active' },
+      'live',
+      'donald-trump',
+      'b8cdec38c5a7e804',
+      true,
+    )).toThrow(/only a draft can be restarted/);
+    expect(() => planArcadeDraftRegistration(
+      null,
+      'new-draft',
+      'donald-trump',
+      'b8cdec38c5a7e804',
+      true,
+    )).toThrow(/No current Arcade draft/);
+    expect(() => planArcadeDraftRegistration(
+      { fighterId: 'old-draft', slug: 'donald-trump', status: 'draft' },
+      'different-fighter',
+      'donald-trump',
+      'b8cdec38c5a7e804',
+      true,
+    )).toThrow(/content-addressed cloud fighter/);
+  });
+
+  it('uses a collision-safe temporary slug for an ordinary unreviewed replacement', () => {
+    expect(planArcadeDraftRegistration(
+      { fighterId: 'current', slug: 'donald-trump', status: 'active' },
+      'new-draft',
+      'donald-trump',
+      'b8cdec38c5a7e804',
+      false,
+    )).toEqual({
+      slug: 'donald-trump-next-b8cdec38',
+      restartFullGeneration: false,
+    });
+    expect(() => planArcadeDraftRegistration(
+      { fighterId: 'same-fighter', slug: 'donald-trump', status: 'draft' },
+      'same-fighter',
+      'donald-trump',
+      'b8cdec38c5a7e804',
+      false,
+    )).toThrow(/use --resume or --restart-draft/);
   });
 });
