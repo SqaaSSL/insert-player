@@ -5,6 +5,7 @@ import {
   getPublicFighterSourceAsset,
   getPublicFighterSpriteAsset,
   listArcadeFighters,
+  listAdminArcadeFighters,
   listCommunityFighters,
   promoteFighterSpriteVersion,
   shareCommunityFighterPage,
@@ -323,9 +324,21 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect((await upsertAdminArcadeFighter(
         arcadeRequest('draft'), env, auth, fighterId,
       )).status).toBe(403);
-      expect((await upsertAdminArcadeFighter(
+      const draftUpsertResponse = await upsertAdminArcadeFighter(
         arcadeRequest('draft'), env, adminAuth, fighterId,
-      )).status).toBe(201);
+      );
+      expect(draftUpsertResponse.status).toBe(201);
+      const draftUpsertBody = await draftUpsertResponse.json() as {
+        fighter: { generationPrompt: string };
+      };
+      expect(draftUpsertBody.fighter.generationPrompt)
+        .toContain('clearly synthetic premium realistic 2.5D');
+      const adminBody = await listAdminArcadeFighters(env, adminAuth)
+        .then((response) => response.json() as Promise<{
+          fighters: Array<{ generationPrompt: string }>;
+        }>);
+      expect(adminBody.fighters[0]?.generationPrompt)
+        .toContain('clearly synthetic premium realistic 2.5D');
       expect((await db.prepare(
         'SELECT generation_prompt FROM arcade_fighters WHERE fighter_id = ?'
       ).bind(fighterId).first<{ generation_prompt: string }>())?.generation_prompt)
@@ -430,6 +443,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       });
       expect(activeBody.fighters[0]).not.toHaveProperty('photoHash');
       expect(activeBody.fighters[0]).not.toHaveProperty('ownerUserId');
+      expect(activeBody.fighters[0]).not.toHaveProperty('generationPrompt');
 
       expect((await upsertAdminArcadeFighter(
         arcadeRequest('retired'), env, adminAuth, fighterId,

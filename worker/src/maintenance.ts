@@ -1,4 +1,5 @@
 import { generateId } from './auth';
+import { drainFighterAssetDeletions } from './assetDeletion';
 import { settleGenerationPurchase } from './billing';
 import type { Env } from './types';
 
@@ -16,6 +17,8 @@ interface ProviderCacheObjectRow {
 }
 
 export async function cleanupOperationalData(env: Env): Promise<void> {
+  await drainFighterAssetDeletions(env, { maxBatches: 5 });
+
   const { results: staleJobs } = await env.DB.prepare(`
     SELECT id, user_id, charge_id, fighter_id, stage
     FROM generation_jobs
