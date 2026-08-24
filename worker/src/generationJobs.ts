@@ -1,8 +1,16 @@
 import { generateId } from './auth';
+import { artifactProgress, generationStagesForOperation } from './generationArtifacts';
 import { settleGenerationPurchase } from './billing';
 import { activeGenerationCapacity } from './providerCapacity';
 import { readJsonBody } from './requestBody';
-import type { AuthContext, Env, GenerationJob, GenerationJobOperation, QualityTier } from './types';
+import type {
+  AuthContext,
+  Env,
+  GenerationArtifactRun,
+  GenerationJob,
+  GenerationJobOperation,
+  QualityTier,
+} from './types';
 
 const MAX_JOB_BODY_BYTES = 8 * 1024;
 const JOB_TTL_HOURS = 48;
@@ -28,6 +36,8 @@ interface GenerationJobAuthorizationRow {
   charge_status: 'reserved' | 'committed' | 'refunded';
   charge_fighter_id: string | null;
   charge_expires_at: string;
+  continuation_run_id: string | null;
+  resumed_from_job_id: string | null;
   provider_session_id: string;
   provider_tier: QualityTier;
   provider_purpose: string;
@@ -41,6 +51,14 @@ interface GenerationJobAuthorizationRow {
   upright_view_raw_blob_key: string | null;
   crouch_view_blob_key: string | null;
   crouch_view_raw_blob_key: string | null;
+  generation_prompt: string | null;
+  resume_run_user_id: string | null;
+  resume_run_fighter_id: string | null;
+  resume_run_tier: QualityTier | null;
+  resume_run_operation: GenerationJobOperation | null;
+  resume_run_target_kind: 'animation' | 'source' | null;
+  resume_run_target_name: string | null;
+  resume_run_status: string | null;
 }
 
 interface GenerationJobEventRow {
@@ -67,7 +85,19 @@ async function rejectReservedJob(
   return json({ error, ...details }, status);
 }
 
-function serializeJob(job: GenerationJob, events: GenerationJobEventRow[] = []) {
+interface GenerationRunSnapshot {
+  status: string;
+  failureStage: string | null;
+  completedStages: string[];
+  pendingStages: string[];
+  preservedArtifactCount: number;
+}
+
+function serializeJob(
+  job: GenerationJob,
+  events: GenerationJobEventRow[] = [],
+  run?: GenerationRunSnapshot,
+) {
   return {
     id: job.id,
     fighterId: job.fighter_id,
@@ -75,8 +105,11 @@ function serializeJob(job: GenerationJob, events: GenerationJobEventRow[] = []) 
     operation: job.operation,
     targetKind: job.target_kind,
     targetName: job.target_name,
+    artifactRunId: job.artifact_run_id,
+    resumedFromJobId: job.resumed_from_job_id,
     status: job.status,
     stage: job.stage,
+    failureStage: job.failure_stage ?? run?.failureStage ?? null,
     progressCurrent: job.progress_current,
     progressTotal: job.progress_total,
     errorCode: job.error_code,
@@ -85,6 +118,11 @@ function serializeJob(job: GenerationJob, events: GenerationJobEventRow[] = []) 
     finishedAt: job.finished_at,
     createdAt: job.created_at,
     updatedAt: job.updated_at,
+    resumable: (job.status === 'failed' || job.status === 'cancelled') && run?.status === 'partial',
+    completedStages: run?.completedStages ?? [],
+    pendingStages: run?.pendingStages ?? generationStagesForOperation(job.operation, job.target_name)
+      .map((entry) => entry.key),
+    preservedArtifactCount: run?.preservedArtifactCount ?? 0,
     events: events.map((event) => ({
       stage: event.stage,
       status: event.status,
@@ -92,6 +130,29 @@ function serializeJob(job: GenerationJob, events: GenerationJobEventRow[] = []) 
       createdAt: event.created_at,
     })),
   };
+}
+
+async function getRunSnapshot(env: Env, job: GenerationJob): Promise<GenerationRunSnapshot | undefined> {
+  if (!job.artifact_run_id) return undefined;
+  const run = await env.DB.prepare(`
+    SELECT * FROM generation_artifact_runs
+    WHERE id = ? AND user_id = ? AND fighter_id = ?
+    LIMIT 1
+  `).bind(job.artifact_run_id, job.user_id, job.fighter_id).first<GenerationArtifactRun>();
+  if (!run) return undefined;
+  return {
+    status: run.status,
+    failureStage: run.failure_stage,
+    ...await artifactProgress(env, run),
+  };
+}
+
+async function serializeOwnedJob(
+  env: Env,
+  job: GenerationJob,
+  events: GenerationJobEventRow[] = [],
+) {
+  return serializeJob(job, events, await getRunSnapshot(env, job));
 }
 
 async function getOwnedJob(env: Env, userId: string, jobId: string): Promise<GenerationJob | null> {
@@ -139,12 +200,12 @@ async function replayExistingJob(env: Env, userId: string, job: GenerationJob): 
       }));
       return json({
         error: 'The accepted generation job is waiting for the cloud runner; retry this request to reconnect',
-        job: serializeJob(job, await getJobEvents(env, job.id)),
+        job: await serializeOwnedJob(env, job, await getJobEvents(env, job.id)),
       }, 503);
     }
   }
   const refreshed = await getOwnedJob(env, userId, job.id) ?? job;
-  return json({ job: serializeJob(refreshed, await getJobEvents(env, refreshed.id)) });
+  return json({ job: await serializeOwnedJob(env, refreshed, await getJobEvents(env, refreshed.id)) });
 }
 
 function operationForAuthorization(row: GenerationJobAuthorizationRow): GenerationJobOperation | null {
@@ -294,6 +355,8 @@ export async function createGenerationJob(
       gc.status AS charge_status,
       gc.fighter_id AS charge_fighter_id,
       gc.expires_at AS charge_expires_at,
+      gc.continuation_run_id,
+      gc.resumed_from_job_id,
       ps.id AS provider_session_id,
       ps.tier AS provider_tier,
       ps.purpose AS provider_purpose,
@@ -306,10 +369,20 @@ export async function createGenerationJob(
       f.upright_view_blob_key,
       f.upright_view_raw_blob_key,
       f.crouch_view_blob_key,
-      f.crouch_view_raw_blob_key
+      f.crouch_view_raw_blob_key,
+      af.generation_prompt,
+      resume_run.user_id AS resume_run_user_id,
+      resume_run.fighter_id AS resume_run_fighter_id,
+      resume_run.tier AS resume_run_tier,
+      resume_run.operation AS resume_run_operation,
+      resume_run.target_kind AS resume_run_target_kind,
+      resume_run.target_name AS resume_run_target_name,
+      resume_run.status AS resume_run_status
     FROM generation_charges gc
     JOIN provider_sessions ps ON ps.id = ? AND ps.charge_id = gc.id AND ps.user_id = gc.user_id
     JOIN fighters f ON f.id = ? AND f.owner_user_id = gc.user_id
+    LEFT JOIN arcade_fighters af ON af.fighter_id = f.id
+    LEFT JOIN generation_artifact_runs resume_run ON resume_run.id = gc.continuation_run_id
     WHERE gc.id = ? AND gc.user_id = ?
       AND (gc.fighter_id IS NULL OR gc.fighter_id = f.id)
     LIMIT 1
@@ -350,6 +423,27 @@ export async function createGenerationJob(
       'Generation authorization has the wrong operation scope; the unused reservation was released',
       403,
     );
+  }
+  if (authorization.continuation_run_id) {
+    const validContinuation =
+      authorization.resume_run_user_id === auth.userId &&
+      authorization.resume_run_fighter_id === fighterId &&
+      authorization.resume_run_tier === authorization.charge_tier &&
+      authorization.resume_run_operation === operation &&
+      authorization.resume_run_status === 'partial' &&
+      authorization.resume_run_target_kind === targetKind &&
+      authorization.resume_run_target_name === targetName &&
+      Boolean(authorization.resumed_from_job_id);
+    if (!validContinuation) {
+      return rejectReservedJob(
+        env,
+        auth.userId,
+        purchaseId,
+        fighterId,
+        'Generation continuation no longer matches preserved work; the unused reservation was released',
+        409,
+      );
+    }
   }
   const targetError = validateTarget(operation, targetKind, targetName);
   if (targetError) {
@@ -437,7 +531,7 @@ export async function createGenerationJob(
     await settleGenerationPurchase(env, auth.userId, purchaseId, false, fighterId);
     return json({
       error: 'A generation is already running for this fighter; the unused reservation was released',
-      job: serializeJob(activeFighterJob, await getJobEvents(env, activeFighterJob.id)),
+      job: await serializeOwnedJob(env, activeFighterJob, await getJobEvents(env, activeFighterJob.id)),
     }, 409);
   }
 
@@ -447,14 +541,61 @@ export async function createGenerationJob(
     : operation === 'fighter_upgrade'
       ? 11
       : 1;
+  const runId = authorization.continuation_run_id ?? jobId;
+  const resumedFromJobId = authorization.resumed_from_job_id ?? null;
+  const initialProgress = authorization.continuation_run_id
+    ? (await env.DB.prepare(`
+        SELECT COUNT(*) AS count
+        FROM generation_artifact_checkpoints
+        WHERE run_id = ? AND status = 'approved'
+      `).bind(runId).first<{ count: number }>())?.count ?? 0
+    : 0;
+  const sourceManifest = JSON.stringify({
+    side: authorization.side_view_blob_key,
+    sideRaw: authorization.side_view_raw_blob_key,
+    upright: authorization.upright_view_blob_key,
+    uprightRaw: authorization.upright_view_raw_blob_key,
+    crouch: authorization.crouch_view_blob_key,
+    crouchRaw: authorization.crouch_view_raw_blob_key,
+  });
   const extendedExpiry = new Date(Date.now() + JOB_TTL_HOURS * 60 * 60 * 1_000).toISOString();
   try {
     await env.DB.batch([
       env.DB.prepare(`
+        INSERT INTO generation_artifact_runs (
+          id, user_id, fighter_id, tier, operation, target_kind, target_name,
+          root_job_id, original_charge_id, original_blob_key,
+          source_manifest_json, generation_prompt
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE ? IS NULL
+      `).bind(
+        runId,
+        auth.userId,
+        fighterId,
+        authorization.charge_tier,
+        operation,
+        targetKind,
+        targetName,
+        jobId,
+        purchaseId,
+        authorization.original_blob_key,
+        sourceManifest,
+        authorization.generation_prompt,
+        authorization.continuation_run_id,
+      ),
+      env.DB.prepare(`
+        UPDATE generation_artifact_runs
+        SET status = 'active', failure_stage = NULL, updated_at = datetime('now')
+        WHERE id = ? AND user_id = ? AND fighter_id = ?
+          AND status = 'partial' AND ? IS NOT NULL
+      `).bind(runId, auth.userId, fighterId, authorization.continuation_run_id),
+      env.DB.prepare(`
         INSERT INTO generation_jobs (
           id, workflow_instance_id, user_id, fighter_id, charge_id,
-          provider_session_id, tier, operation, target_kind, target_name, progress_total
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          provider_session_id, tier, operation, target_kind, target_name,
+          artifact_run_id, resumed_from_job_id, progress_current, progress_total
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         jobId,
         jobId,
@@ -466,6 +607,9 @@ export async function createGenerationJob(
         operation,
         targetKind,
         targetName,
+        runId,
+        resumedFromJobId,
+        Math.min(initialProgress, progressTotal),
         progressTotal,
       ),
       env.DB.prepare(`
@@ -484,7 +628,11 @@ export async function createGenerationJob(
       `).bind(
         generateId(),
         jobId,
-        targetName ? `${operation} ${targetName} accepted by the backend` : 'Generation accepted by the backend',
+        resumedFromJobId
+          ? `Generation continuation accepted; ${initialProgress} immutable stages preserved`
+          : targetName
+            ? `${operation} ${targetName} accepted by the backend`
+            : 'Generation accepted by the backend',
       ),
     ]);
   } catch (error) {
@@ -501,7 +649,7 @@ export async function createGenerationJob(
     await settleGenerationPurchase(env, auth.userId, purchaseId, false, fighterId);
     return json({
       error: 'A generation is already running for this fighter; the unused reservation was released',
-      job: serializeJob(racedJob, await getJobEvents(env, racedJob.id)),
+      job: await serializeOwnedJob(env, racedJob, await getJobEvents(env, racedJob.id)),
     }, 409);
   }
 
@@ -516,11 +664,18 @@ export async function createGenerationJob(
     await env.DB.batch([
       env.DB.prepare(`
         UPDATE generation_jobs
-        SET status = 'failed', stage = 'failed', error_code = 'workflow_start_failed',
+        SET status = 'failed', stage = 'workflow:start', failure_stage = 'workflow:start',
+            error_code = 'workflow_start_failed',
             error_message = 'Generation could not start external processing; the unused reservation was released',
             finished_at = datetime('now'), updated_at = datetime('now')
         WHERE id = ? AND status = 'queued'
       `).bind(jobId),
+      env.DB.prepare(`
+        UPDATE generation_artifact_runs
+        SET status = CASE WHEN ? IS NULL THEN 'failed' ELSE 'partial' END,
+            failure_stage = 'workflow:start', updated_at = datetime('now')
+        WHERE id = ?
+      `).bind(authorization.continuation_run_id, runId),
       env.DB.prepare(`
         INSERT INTO generation_job_events (id, job_id, stage, status, detail)
         VALUES (?, ?, 'failed', 'failed', 'Workflow start failed')
@@ -532,7 +687,7 @@ export async function createGenerationJob(
 
   const job = await getOwnedJob(env, auth.userId, jobId);
   if (!job) return json({ error: 'Generation job could not be loaded' }, 500);
-  return json({ job: serializeJob(job, await getJobEvents(env, job.id)) }, 202);
+  return json({ job: await serializeOwnedJob(env, job, await getJobEvents(env, job.id)) }, 202);
 }
 
 export async function getGenerationJob(
@@ -543,7 +698,7 @@ export async function getGenerationJob(
   if (!/^[a-f0-9]{32}$/.test(jobId)) return json({ error: 'Generation job not found' }, 404);
   const job = await getOwnedJob(env, auth.userId, jobId);
   if (!job) return json({ error: 'Generation job not found' }, 404);
-  return json({ job: serializeJob(job, await getJobEvents(env, job.id)) });
+  return json({ job: await serializeOwnedJob(env, job, await getJobEvents(env, job.id)) });
 }
 
 export async function listGenerationJobs(env: Env, auth: AuthContext): Promise<Response> {
@@ -553,5 +708,5 @@ export async function listGenerationJobs(env: Env, auth: AuthContext): Promise<R
     ORDER BY created_at DESC
     LIMIT 20
   `).bind(auth.userId).all<GenerationJob>();
-  return json({ jobs: (results ?? []).map((job) => serializeJob(job)) });
+  return json({ jobs: await Promise.all((results ?? []).map((job) => serializeOwnedJob(env, job))) });
 }

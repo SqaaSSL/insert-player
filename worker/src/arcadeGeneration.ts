@@ -5,7 +5,10 @@ import {
   CURRENT_LEGAL_VERSION,
   parseGenerationLegalAttestation,
 } from './legal';
-import { createProviderSession } from './providerSessions';
+import {
+  constrainProviderSessionToArtifactRunRemaining,
+  createProviderSession,
+} from './providerSessions';
 import { readJsonBody } from './requestBody';
 import type { AuthContext, Env, PublicAuthContext } from './types';
 import {
@@ -51,6 +54,11 @@ interface ActiveArcadeJobRow {
 interface ReusableArcadeAuthorizationRow {
   purchase_id: string;
   provider_session_id: string;
+}
+
+interface ResumableArcadeRunRow {
+  job_id: string;
+  run_id: string;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -165,6 +173,7 @@ async function createAdminGenerationAuthorization(
     purpose: 'fighter_generation' | 'fighter_retry';
     operation: 'fighter_generation' | 'fighter_retry_animation' | 'fighter_retry_source';
     legal: NonNullable<ReturnType<typeof parseGenerationLegalAttestation>>;
+    continuation?: { runId: string; fromJobId: string };
   },
 ): Promise<{ purchaseId: string; providerSessionId: string }> {
   const purchaseId = generateId();
@@ -178,8 +187,9 @@ async function createAdminGenerationAuthorization(
     env.DB.prepare(`
       INSERT INTO generation_charges (
         id, user_id, tier, credit_cost, free_quota_delta, status,
-        reason, fighter_id, ledger_id, expires_at
-      ) VALUES (?, ?, 'champion', 0, 0, 'reserved', ?, ?, ?, ?)
+        reason, fighter_id, ledger_id, expires_at,
+        continuation_run_id, resumed_from_job_id
+      ) VALUES (?, ?, 'champion', 0, 0, 'reserved', ?, ?, ?, ?, ?, ?)
     `).bind(
       purchaseId,
       auth.userId,
@@ -187,26 +197,84 @@ async function createAdminGenerationAuthorization(
       fighterId,
       ledgerId,
       expiresAt,
+      params.continuation?.runId ?? null,
+      params.continuation?.fromJobId ?? null,
     ),
   ]);
 
+  let createdProviderSessionId: string | null = null;
   try {
-    const providerSession = await createProviderSession(env, publicAuth(auth), {
+    const createdProviderSession = await createProviderSession(env, publicAuth(auth), {
       tier: 'champion',
       purpose: params.purpose,
       operation: params.operation,
       chargeId: purchaseId,
       legal: params.legal,
     });
+    createdProviderSessionId = createdProviderSession.id;
+    const providerSession = params.continuation
+      ? await constrainProviderSessionToArtifactRunRemaining(
+          env,
+          createdProviderSession,
+          purchaseId,
+          params.continuation.runId,
+        )
+      : createdProviderSession;
     return { purchaseId, providerSessionId: providerSession.id };
   } catch (error) {
-    await env.DB.prepare(`
-      UPDATE generation_charges
-      SET status = 'refunded', updated_at = datetime('now')
-      WHERE id = ? AND user_id = ? AND status = 'reserved'
-    `).bind(purchaseId, auth.userId).run();
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE generation_charges
+        SET status = 'refunded', updated_at = datetime('now')
+        WHERE id = ? AND user_id = ? AND status = 'reserved'
+      `).bind(purchaseId, auth.userId),
+      env.DB.prepare(`
+        UPDATE provider_sessions
+        SET status = 'cancelled', updated_at = datetime('now')
+        WHERE id = ? AND user_id = ? AND status = 'active'
+      `).bind(createdProviderSessionId ?? '', auth.userId),
+    ]);
     throw error;
   }
+}
+
+async function findResumableArcadeRun(
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+  params: {
+    operation: 'fighter_retry_animation' | 'fighter_retry_source';
+    targetKind: 'animation' | 'source';
+    targetName: string;
+  },
+): Promise<ResumableArcadeRunRow | null> {
+  return env.DB.prepare(`
+    SELECT gj.id AS job_id, gj.artifact_run_id AS run_id
+    FROM generation_jobs gj
+    JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+    WHERE gj.fighter_id = ? AND gj.user_id = ?
+      AND gj.status IN ('failed', 'cancelled')
+      AND run.status = 'partial'
+      AND run.tier = 'champion'
+      AND run.operation = ?
+      AND run.target_kind = ?
+      AND run.target_name = ?
+      AND EXISTS (
+        SELECT 1
+        FROM generation_jobs paid_job
+        JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
+        WHERE paid_job.artifact_run_id = run.id
+          AND paid_charge.status = 'committed'
+      )
+    ORDER BY gj.created_at DESC
+    LIMIT 1
+  `).bind(
+    fighterId,
+    auth.userId,
+    params.operation,
+    params.targetKind,
+    params.targetName,
+  ).first<ResumableArcadeRunRow>();
 }
 
 export async function startAdminArcadeGeneration(
@@ -275,6 +343,68 @@ export async function startAdminArcadeGeneration(
       },
       replayed: true,
     });
+  }
+
+  const partial = await env.DB.prepare(`
+    SELECT gj.id AS job_id, gj.artifact_run_id AS run_id
+    FROM generation_jobs gj
+    JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+    WHERE gj.fighter_id = ? AND gj.user_id = ?
+      AND gj.status IN ('failed', 'cancelled')
+      AND run.status = 'partial'
+      AND run.tier = 'champion'
+      AND run.operation = 'fighter_generation'
+      AND EXISTS (
+        SELECT 1
+        FROM generation_jobs paid_job
+        JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
+        WHERE paid_job.artifact_run_id = run.id
+          AND paid_charge.status = 'committed'
+      )
+    ORDER BY gj.created_at DESC
+    LIMIT 1
+  `).bind(fighterId, auth.userId).first<{ job_id: string; run_id: string }>();
+  if (partial) {
+    const reusableContinuation = await env.DB.prepare(`
+      SELECT gc.id AS purchase_id, ps.id AS provider_session_id
+      FROM generation_charges gc
+      JOIN provider_sessions ps
+        ON ps.charge_id = gc.id
+        AND ps.user_id = gc.user_id
+        AND ps.status = 'active'
+        AND datetime(ps.expires_at) > datetime('now')
+      LEFT JOIN generation_jobs continuation_job ON continuation_job.charge_id = gc.id
+      WHERE gc.user_id = ? AND gc.fighter_id = ?
+        AND gc.status = 'reserved' AND gc.credit_cost = 0
+        AND gc.continuation_run_id = ? AND gc.resumed_from_job_id = ?
+        AND datetime(gc.expires_at) > datetime('now')
+        AND continuation_job.id IS NULL
+      ORDER BY gc.created_at DESC
+      LIMIT 1
+    `).bind(
+      auth.userId,
+      fighterId,
+      partial.run_id,
+      partial.job_id,
+    ).first<ReusableArcadeAuthorizationRow>();
+    const continuation = reusableContinuation
+      ? {
+          purchaseId: reusableContinuation.purchase_id,
+          providerSessionId: reusableContinuation.provider_session_id,
+        }
+      : await createAdminGenerationAuthorization(env, auth, fighterId, {
+          chargeReason: 'arcade_seed_generation',
+          purpose: 'fighter_generation',
+          operation: 'fighter_generation',
+          legal,
+          continuation: { runId: partial.run_id, fromJobId: partial.job_id },
+        });
+    return createGenerationJob(generationJobRequest(
+      request,
+      fighterId,
+      continuation.purchaseId,
+      continuation.providerSessionId,
+    ), env, auth);
   }
 
   const reusable = await env.DB.prepare(`
@@ -374,11 +504,17 @@ export async function startAdminArcadeAnimationGeneration(
     }, 409);
   }
 
+  const partial = await findResumableArcadeRun(env, auth, fighterId, {
+    operation: 'fighter_retry_animation',
+    targetKind: 'animation',
+    targetName: animationName,
+  });
   const authorization = await createAdminGenerationAuthorization(env, auth, fighterId, {
     chargeReason: 'fighter_retry_animation',
     purpose: 'fighter_retry',
     operation: 'fighter_retry_animation',
     legal,
+    continuation: partial ? { runId: partial.run_id, fromJobId: partial.job_id } : undefined,
   });
 
   return createGenerationJob(generationJobRequest(
@@ -438,11 +574,17 @@ export async function startAdminArcadeSourceGeneration(
     }, 409);
   }
 
+  const partial = await findResumableArcadeRun(env, auth, fighterId, {
+    operation: 'fighter_retry_source',
+    targetKind: 'source',
+    targetName: sourceName,
+  });
   const authorization = await createAdminGenerationAuthorization(env, auth, fighterId, {
     chargeReason: 'fighter_retry_source',
     purpose: 'fighter_retry',
     operation: 'fighter_retry_source',
     legal,
+    continuation: partial ? { runId: partial.run_id, fromJobId: partial.job_id } : undefined,
   });
 
   return createGenerationJob(generationJobRequest(

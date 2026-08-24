@@ -5,7 +5,21 @@ export interface GenerationFailureDetails {
   errorMessage: string;
 }
 
+interface GenerationFailureStageState {
+  stage: string;
+  failure_stage: string | null;
+}
+
 const OFFICIAL_QUALITY_MARKER = 'Official roster quality gate rejected the generated asset:';
+
+export function generationFailureStage(
+  persisted: GenerationFailureStageState | null,
+  fallback: GenerationFailureStageState,
+): string {
+  const currentStage = persisted?.stage ?? fallback.stage;
+  if (!['queued', 'initializing'].includes(currentStage)) return currentStage;
+  return persisted?.failure_stage ?? fallback.failure_stage ?? currentStage;
+}
 
 function officialQualityDetail(message: string): string | null {
   const markerIndex = message.indexOf(OFFICIAL_QUALITY_MARKER);

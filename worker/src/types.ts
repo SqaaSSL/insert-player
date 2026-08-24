@@ -31,8 +31,11 @@ export interface GenerationJob {
   operation: GenerationJobOperation;
   target_kind: 'animation' | 'source' | null;
   target_name: string | null;
+  artifact_run_id: string | null;
+  resumed_from_job_id: string | null;
   status: GenerationJobStatus;
   stage: string;
+  failure_stage: string | null;
   progress_current: number;
   progress_total: number;
   error_code: string | null;
@@ -41,6 +44,57 @@ export interface GenerationJob {
   finished_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type GenerationArtifactRunStatus =
+  | 'active'
+  | 'partial'
+  | 'succeeded'
+  | 'failed'
+  | 'superseded';
+
+export interface GenerationArtifactRun {
+  id: string;
+  user_id: string;
+  fighter_id: string;
+  tier: QualityTier;
+  operation: GenerationJobOperation;
+  target_kind: 'animation' | 'source' | null;
+  target_name: string | null;
+  root_job_id: string;
+  original_charge_id: string | null;
+  original_blob_key: string | null;
+  source_manifest_json: string | null;
+  generation_prompt: string | null;
+  pipeline_version: number;
+  status: GenerationArtifactRunStatus;
+  failure_stage: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface GenerationArtifactCheckpoint {
+  run_id: string;
+  artifact_kind: 'source' | 'sprite';
+  artifact_name: string;
+  stage_index: number;
+  tier: QualityTier;
+  status: 'approved' | 'corrupt';
+  clean_version_id: string;
+  raw_version_id: string | null;
+  clean_blob_key: string;
+  raw_blob_key: string | null;
+  clean_content_hash: string | null;
+  raw_content_hash: string | null;
+  frame_w: number | null;
+  frame_h: number | null;
+  frame_count: number | null;
+  processing_version: number | null;
+  metadata_json: string | null;
+  completed_by_job_id: string;
+  created_at: string;
+  verified_at: string | null;
 }
 
 export interface User {

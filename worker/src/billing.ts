@@ -6,7 +6,11 @@ import {
   normalizeQualityTier,
   type GenerationBillingOperation,
 } from './tiers';
-import { createProviderSession, markProviderSessionsForCharge } from './providerSessions';
+import {
+  constrainProviderSessionToArtifactRunRemaining,
+  createProviderSession,
+  markProviderSessionsForCharge,
+} from './providerSessions';
 import { enforceRateLimit } from './rateLimit';
 import { enforceAnonymousRookieTurnstile } from './turnstile';
 import {
@@ -53,9 +57,31 @@ interface GenerationCharge {
   fighter_id: string | null;
   ledger_id: string | null;
   refund_ledger_id: string | null;
+  continuation_run_id: string | null;
+  resumed_from_job_id: string | null;
   expires_at: string;
   created_at: string;
   updated_at: string;
+}
+
+interface ResumableGenerationRow {
+  job_id: string;
+  job_status: string;
+  artifact_run_id: string;
+  run_status: string;
+  run_user_id: string;
+  run_fighter_id: string;
+  run_tier: QualityTier;
+  run_operation: GenerationBillingOperation;
+}
+
+interface ReusableContinuationAuthorization {
+  purchase_id: string;
+  provider_session_id: string;
+  provider_session_expires_at: string;
+  provider_call_limit: number;
+  provider_cost_limit_cents: number;
+  reservation_expires_at: string;
 }
 
 export interface GenerationPurchaseSettlement {
@@ -246,23 +272,206 @@ async function createProviderSessionForCharge(
   operation: GenerationBillingOperation,
   chargeId: string,
   legal: GenerationLegalAttestation,
+  continuationRunId?: string,
 ) {
+  let createdSessionId: string | null = null;
   try {
-    return await createProviderSession(env, auth, {
+    const session = await createProviderSession(env, auth, {
       tier,
       purpose: providerSessionPurposeForOperation(operation),
       operation,
       chargeId,
       legal,
     });
+    createdSessionId = session.id;
+    return continuationRunId
+      ? constrainProviderSessionToArtifactRunRemaining(env, session, chargeId, continuationRunId)
+      : session;
   } catch (err) {
     const userId = auth.user?.id;
     const charge = userId ? await getGenerationCharge(env, userId, chargeId) : null;
     if (charge) {
       await releaseReservedGenerationCharge(env, charge, 'provider_session_failed');
     }
+    if (createdSessionId && userId) {
+      await env.DB.prepare(`
+        UPDATE provider_sessions
+        SET status = 'cancelled', updated_at = datetime('now')
+        WHERE id = ? AND user_id = ? AND status = 'active'
+      `).bind(createdSessionId, userId).run();
+    }
     throw err;
   }
+}
+
+async function authorizeGenerationContinuation(
+  env: Env,
+  auth: PublicAuthContext,
+  params: {
+    resumeJobId: string;
+    fighterId: string;
+    tier: QualityTier;
+    operation: GenerationBillingOperation;
+    legal: GenerationLegalAttestation;
+  },
+): Promise<Response> {
+  if (!auth.user) return json({ error: 'Sign in to resume preserved generation work' }, 401);
+  if (!/^[a-f0-9]{32}$/.test(params.resumeJobId)) {
+    return json({ error: 'A valid resumeJobId is required' }, 400);
+  }
+
+  const resumable = await env.DB.prepare(`
+    SELECT
+      gj.id AS job_id,
+      gj.status AS job_status,
+      gj.artifact_run_id,
+      run.status AS run_status,
+      run.user_id AS run_user_id,
+      run.fighter_id AS run_fighter_id,
+      run.tier AS run_tier,
+      run.operation AS run_operation
+    FROM generation_jobs gj
+    JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+    WHERE gj.id = ? AND gj.user_id = ?
+      AND gj.status IN ('failed', 'cancelled')
+      AND run.status = 'partial'
+      AND EXISTS (
+        SELECT 1
+        FROM generation_jobs paid_job
+        JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
+        WHERE paid_job.artifact_run_id = run.id
+          AND paid_charge.user_id = run.user_id
+          AND paid_charge.status = 'committed'
+      )
+    LIMIT 1
+  `).bind(params.resumeJobId, auth.user.id).first<ResumableGenerationRow>();
+  if (!resumable) {
+    return json({
+      error: 'This job has no paid partial work eligible for a zero-credit continuation',
+      code: 'generation_not_resumable',
+    }, 409);
+  }
+  if (
+    resumable.run_user_id !== auth.user.id ||
+    resumable.run_fighter_id !== params.fighterId ||
+    resumable.run_tier !== params.tier ||
+    resumable.run_operation !== params.operation
+  ) {
+    return json({ error: 'Resume request does not match the preserved generation work' }, 409);
+  }
+
+  const active = await env.DB.prepare(`
+    SELECT id
+    FROM generation_jobs
+    WHERE fighter_id = ? AND status IN ('queued', 'running')
+    LIMIT 1
+  `).bind(params.fighterId).first<{ id: string }>();
+  if (active) {
+    return json({
+      error: 'A generation is already running for this fighter',
+      activeJobId: active.id,
+    }, 409);
+  }
+
+  const reusable = await env.DB.prepare(`
+    SELECT
+      gc.id AS purchase_id,
+      ps.id AS provider_session_id,
+      ps.expires_at AS provider_session_expires_at,
+      ps.provider_call_limit,
+      ps.provider_cost_limit_cents,
+      gc.expires_at AS reservation_expires_at
+    FROM generation_charges gc
+    JOIN provider_sessions ps
+      ON ps.charge_id = gc.id
+      AND ps.user_id = gc.user_id
+      AND ps.status = 'active'
+      AND datetime(ps.expires_at) > datetime('now')
+    LEFT JOIN generation_jobs continuation_job ON continuation_job.charge_id = gc.id
+    WHERE gc.user_id = ?
+      AND gc.fighter_id = ?
+      AND gc.tier = ?
+      AND gc.status = 'reserved'
+      AND gc.credit_cost = 0
+      AND gc.free_quota_delta = 0
+      AND gc.continuation_run_id = ?
+      AND gc.resumed_from_job_id = ?
+      AND datetime(gc.expires_at) > datetime('now')
+      AND continuation_job.id IS NULL
+    ORDER BY gc.created_at DESC
+    LIMIT 1
+  `).bind(
+    auth.user.id,
+    params.fighterId,
+    params.tier,
+    resumable.artifact_run_id,
+    params.resumeJobId,
+  ).first<ReusableContinuationAuthorization>();
+  if (reusable) {
+    return json({
+      authorized: true,
+      mode: 'continuation',
+      purchaseId: reusable.purchase_id,
+      creditsCharged: 0,
+      artifactRunId: resumable.artifact_run_id,
+      resumedFromJobId: params.resumeJobId,
+      providerSessionId: reusable.provider_session_id,
+      providerSessionExpiresAt: reusable.provider_session_expires_at,
+      providerCallLimit: reusable.provider_call_limit,
+      providerCostLimitCents: reusable.provider_cost_limit_cents,
+      reservationExpiresAt: reusable.reservation_expires_at,
+    });
+  }
+
+  const purchaseId = generateId();
+  const ledgerId = generateId();
+  const expiresAt = reservationExpiresAt();
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+      VALUES (?, ?, 0, ?, ?)
+    `).bind(ledgerId, auth.user.id, `${params.operation}_continuation`, params.fighterId),
+    env.DB.prepare(`
+      INSERT INTO generation_charges (
+        id, user_id, tier, credit_cost, free_quota_delta, status,
+        reason, fighter_id, ledger_id, expires_at,
+        continuation_run_id, resumed_from_job_id
+      ) VALUES (?, ?, ?, 0, 0, 'reserved', ?, ?, ?, ?, ?, ?)
+    `).bind(
+      purchaseId,
+      auth.user.id,
+      params.tier,
+      params.operation,
+      params.fighterId,
+      ledgerId,
+      expiresAt,
+      resumable.artifact_run_id,
+      params.resumeJobId,
+    ),
+  ]);
+
+  const providerSession = await createProviderSessionForCharge(
+    env,
+    auth,
+    params.tier,
+    params.operation,
+    purchaseId,
+    params.legal,
+    resumable.artifact_run_id,
+  );
+  return json({
+    authorized: true,
+    mode: 'continuation',
+    purchaseId,
+    creditsCharged: 0,
+    artifactRunId: resumable.artifact_run_id,
+    resumedFromJobId: params.resumeJobId,
+    providerSessionId: providerSession.id,
+    providerSessionExpiresAt: providerSession.expiresAt,
+    providerCallLimit: providerSession.providerCallLimit,
+    providerCostLimitCents: providerSession.providerCostLimitCents,
+    reservationExpiresAt: expiresAt,
+  });
 }
 
 export async function releaseExpiredGenerationCharges(env: Env, userId: string): Promise<void> {
@@ -627,6 +836,7 @@ export async function authorizeGenerationPurchase(
   const body = await readJsonBody<{
     tier?: QualityTier;
     fighterId?: string;
+    resumeJobId?: string;
     operation?: GenerationBillingOperation;
     reason?: string;
     turnstileToken?: string;
@@ -637,8 +847,10 @@ export async function authorizeGenerationPurchase(
   const requiredCredits = generationCreditCost(tier, operation);
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) return json({ error: 'Current generation consent is required' }, 428);
+  const resumeJobId = body.resumeJobId?.trim() ?? '';
 
   if (!auth.user) {
+    if (resumeJobId) return json({ error: 'Sign in to resume preserved generation work' }, 401);
     if (tier === 'rookie' && operation === 'fighter_generation') {
       const turnstileError = await enforceAnonymousRookieTurnstile(request, env, body.turnstileToken);
       if (turnstileError) return turnstileError;
@@ -674,6 +886,16 @@ export async function authorizeGenerationPurchase(
   if (isResponse(ownedFighterId)) return ownedFighterId;
   if (operation !== 'fighter_generation' && !ownedFighterId) {
     return json({ error: 'This operation requires an owned fighter' }, 400);
+  }
+  if (resumeJobId) {
+    if (!ownedFighterId) return json({ error: 'A continuation requires an owned fighter' }, 400);
+    return authorizeGenerationContinuation(env, auth, {
+      resumeJobId,
+      fighterId: ownedFighterId,
+      tier,
+      operation,
+      legal,
+    });
   }
 
   if (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { generationFailureDetails } from './generationFailure';
+import { generationFailureDetails, generationFailureStage } from './generationFailure';
 import { GEMINI_PRO_IMAGE_MODEL, providerDailyQuotaFailureMessage } from './providerCapacity';
 
 describe('generationFailureDetails', () => {
@@ -30,5 +30,21 @@ describe('generationFailureDetails', () => {
       errorCode: 'provider_daily_quota_exhausted',
       errorMessage: 'Image generation is at daily capacity; try again after 2026-08-24T00:00:00.000Z',
     });
+  });
+});
+
+describe('generationFailureStage', () => {
+  it('uses the stage most recently persisted by the running Workflow', () => {
+    expect(generationFailureStage(
+      { stage: 'sprite:low_punch', failure_stage: null },
+      { stage: 'initializing', failure_stage: null },
+    )).toBe('sprite:low_punch');
+  });
+
+  it('falls back to an existing failure stage while still initializing', () => {
+    expect(generationFailureStage(
+      { stage: 'initializing', failure_stage: 'source:upright' },
+      { stage: 'initializing', failure_stage: null },
+    )).toBe('source:upright');
   });
 });
