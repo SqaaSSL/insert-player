@@ -81,12 +81,20 @@ const FAL_LTX_MODEL_ID = 'fal-ai/ltx-2.3/image-to-video/fast';
 const DEFAULT_NEGATIVE_PROMPT =
   'hard cuts, multiple shots, scene changes, extra characters, other people, background people, crowd, duplicate person, cropped body, sitting, lying down, deformed anatomy, duplicate limbs, unreadable face, face swap, identity drift, hairstyle changes, outfit changes, pan-only motion, zoom-only motion, ambient noise, random chatter, comedic sound, whimsical music, weak audio, text overlays, watermark, logo';
 
-function proxifyFalUrl(url: string): string {
-  if (url.startsWith('/proxy/fal')) return url;
-  if (url.startsWith('https://queue.fal.run')) {
-    const parsed = new URL(url);
+export function proxifyFalUrl(url: string): string {
+  if (url === FAL_BASE || url.startsWith(`${FAL_BASE}/`)) return url;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+
+  if (parsed.protocol === 'https:' && parsed.hostname === 'queue.fal.run' && parsed.port === '') {
     return `${FAL_BASE}${parsed.pathname}${parsed.search}`;
   }
+
   return url;
 }
 
