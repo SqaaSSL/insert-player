@@ -103,6 +103,10 @@ export async function cleanupOperationalData(env: Env): Promise<void> {
       WHERE created_at_epoch <= unixepoch('now', '-1 day')
     `),
     env.DB.prepare(`
+      DELETE FROM provider_capacity_windows
+      WHERE retry_at_epoch <= unixepoch('now', '-1 day')
+    `),
+    env.DB.prepare(`
       DELETE FROM stripe_events
       WHERE datetime(created_at) <= datetime('now', '-180 days')
     `),

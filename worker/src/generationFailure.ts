@@ -1,3 +1,5 @@
+import { parseProviderDailyQuotaFailure } from './providerCapacity';
+
 export interface GenerationFailureDetails {
   errorCode: string;
   errorMessage: string;
@@ -24,6 +26,16 @@ export function generationFailureDetails(
   workflowErrorMessage: string,
   releasedBeforeProviderStart: boolean,
 ): GenerationFailureDetails {
+  const dailyCapacity = parseProviderDailyQuotaFailure(workflowErrorMessage);
+  if (dailyCapacity) {
+    return {
+      errorCode: 'provider_daily_quota_exhausted',
+      errorMessage: `Image generation is at daily capacity; try again after ${new Date(
+        dailyCapacity.retryAtEpoch * 1_000,
+      ).toISOString()}`,
+    };
+  }
+
   const qualityDetail = officialQualityDetail(workflowErrorMessage);
   if (qualityDetail) {
     return {

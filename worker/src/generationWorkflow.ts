@@ -8,6 +8,12 @@ import {
 } from './generatedAssets';
 import { mintGenerationJobToken } from './generationAuth';
 import { generationFailureDetails } from './generationFailure';
+import {
+  parseProviderDailyQuotaSignal,
+  providerDailyQuotaFailureMessage,
+  recordProviderDailyQuota,
+  type ProviderCapacityWindow,
+} from './providerCapacity';
 import { maxTier } from './tiers';
 import type { Env, Fighter, GenerationJob } from './types';
 
@@ -170,6 +176,30 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       }
       if (response.status === 422 && errorCode === 'official_quality_rejected') {
         throw new NonRetryableError(`Official roster quality gate rejected the generated asset: ${detail}`);
+      }
+      if (response.status === 429 && errorCode === 'provider_daily_quota_exhausted') {
+        const signal = parseProviderDailyQuotaSignal(detail);
+        if (!signal) {
+          throw new NonRetryableError('The image processor returned an invalid daily-capacity signal');
+        }
+        let window: ProviderCapacityWindow;
+        try {
+          window = await recordProviderDailyQuota(this.env, signal);
+        } catch (error) {
+          console.error(JSON.stringify({
+            event: 'provider_capacity_window_write_failed',
+            provider: signal.provider,
+            model: signal.model,
+            error: boundedErrorMessage(error),
+          }));
+          window = {
+            provider: signal.provider,
+            model: signal.model,
+            reason: 'daily_quota_exhausted',
+            retryAtEpoch: Math.floor(Date.now() / 1_000) + signal.retryAfterSeconds,
+          };
+        }
+        throw new NonRetryableError(providerDailyQuotaFailureMessage(window));
       }
       throw new Error(`Image processor ${path} failed with ${response.status}: ${detail}`);
     }

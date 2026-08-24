@@ -1,6 +1,7 @@
 import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 import { createGenerationJob } from './generationJobs';
+import { GEMINI_PRO_IMAGE_MODEL, recordProviderDailyQuota } from './providerCapacity';
 import type { AuthContext, Env } from './types';
 
 const USER_ID = 'user-generation-job';
@@ -108,6 +109,15 @@ const SCHEMA = `
     status TEXT NOT NULL,
     detail TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE provider_capacity_windows (
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    retry_at_epoch INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (provider, model)
   );
 `;
 
@@ -347,6 +357,38 @@ describe('durable generation job creation', () => {
       const response = await createGenerationJob(request(), env, auth);
       expect(response.status).toBe(409);
       expect((await response.json() as { error: string }).error).toContain('unused reservation was released');
+      expect((await db.prepare('SELECT status FROM generation_charges WHERE id = ?')
+        .bind(PURCHASE_ID).first<{ status: string }>())?.status).toBe('refunded');
+      expect((await db.prepare('SELECT status FROM provider_sessions WHERE id = ?')
+        .bind(SESSION_ID).first<{ status: string }>())?.status).toBe('cancelled');
+      expect((await db.prepare('SELECT credits_balance FROM users WHERE id = ?')
+        .bind(USER_ID).first<{ credits_balance: number }>())?.credits_balance).toBe(10);
+      expect((await db.prepare('SELECT COUNT(*) AS count FROM generation_jobs')
+        .first<{ count: number }>())?.count).toBe(0);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('releases the reservation before asset access when a required Gemini model is at daily capacity', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      const window = await recordProviderDailyQuota(env, {
+        provider: 'gemini',
+        model: GEMINI_PRO_IMAGE_MODEL,
+        retryAfterSeconds: 3600,
+      });
+      await env.SPRITES.delete(ORIGINAL_KEY);
+
+      const response = await createGenerationJob(request(), env, auth);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: 'provider_daily_quota_exhausted',
+        provider: 'gemini',
+        model: GEMINI_PRO_IMAGE_MODEL,
+        retryAt: new Date(window.retryAtEpoch * 1_000).toISOString(),
+      });
+      expect(workflowStarts).toEqual([]);
       expect((await db.prepare('SELECT status FROM generation_charges WHERE id = ?')
         .bind(PURCHASE_ID).first<{ status: string }>())?.status).toBe('refunded');
       expect((await db.prepare('SELECT status FROM provider_sessions WHERE id = ?')

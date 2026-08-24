@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { installCanvasRuntime } from './canvasRuntime';
+import { processorErrorResponse } from './providerErrorResponse';
 import { sourceGenerationStrategy } from './sourceGenerationPolicy';
 
 installCanvasRuntime();
@@ -281,18 +282,8 @@ const server = createServer(async (request, response) => {
 
     sendJson(response, 404, { error: 'Not found' });
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown image processor error';
-    const contentBlocked = error instanceof Error && error.name === 'GeminiContentBlockedError';
-    const qualityRejected = error instanceof Error && error.name === 'GeminiOfficialSpriteQualityError';
-    sendJson(
-      response,
-      message === 'REQUEST_TOO_LARGE' ? 413 : contentBlocked || qualityRejected ? 422 : 500,
-      contentBlocked
-        ? { error: message, code: 'provider_content_blocked' }
-        : qualityRejected
-          ? { error: message, code: 'official_quality_rejected' }
-          : { error: message },
-    );
+    const failure = processorErrorResponse(error);
+    sendJson(response, failure.status, failure.body);
   }
 });
 

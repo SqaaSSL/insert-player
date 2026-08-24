@@ -1,5 +1,6 @@
 import { generateId } from './auth';
 import { settleGenerationPurchase } from './billing';
+import { activeGenerationCapacity } from './providerCapacity';
 import { readJsonBody } from './requestBody';
 import type { AuthContext, Env, GenerationJob, GenerationJobOperation, QualityTier } from './types';
 
@@ -60,9 +61,10 @@ async function rejectReservedJob(
   fighterId: string,
   error: string,
   status: number,
+  details: Record<string, unknown> = {},
 ): Promise<Response> {
   await settleGenerationPurchase(env, userId, purchaseId, false, fighterId);
-  return json({ error }, status);
+  return json({ error, ...details }, status);
 }
 
 function serializeJob(job: GenerationJob, events: GenerationJobEventRow[] = []) {
@@ -358,6 +360,42 @@ export async function createGenerationJob(
       fighterId,
       `${targetError}; the unused reservation was released`,
       400,
+    );
+  }
+  let capacity;
+  try {
+    capacity = await activeGenerationCapacity(env, operation, authorization.charge_tier);
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'provider_capacity_read_failed',
+      operation,
+      tier: authorization.charge_tier,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Image generation capacity could not be verified; the unused reservation was released',
+      503,
+      { code: 'provider_capacity_unavailable' },
+    );
+  }
+  if (capacity) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Image generation is temporarily at daily capacity; the unused reservation was released',
+      503,
+      {
+        code: 'provider_daily_quota_exhausted',
+        provider: capacity.provider,
+        model: capacity.model,
+        retryAt: new Date(capacity.retryAtEpoch * 1_000).toISOString(),
+      },
     );
   }
   const assetError = await validateRequiredAssets(env, authorization, operation, targetName);

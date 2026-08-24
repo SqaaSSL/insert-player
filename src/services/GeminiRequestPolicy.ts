@@ -1,9 +1,22 @@
 import { ApiSessionChangedError } from './ApiClient';
 
+export const APPROVED_GEMINI_IMAGE_MODELS = [
+  'gemini-3-pro-image',
+  'gemini-3.1-flash-image',
+] as const;
+
+export type ApprovedGeminiImageModel = typeof APPROVED_GEMINI_IMAGE_MODELS[number];
+
+export function isApprovedGeminiImageModel(model: string | null | undefined): model is ApprovedGeminiImageModel {
+  return APPROVED_GEMINI_IMAGE_MODELS.some((approved) => approved === model);
+}
+
 interface ParsedGeminiErrorBody {
   code: string | null;
   message: string;
   retryAfterMs: number | null;
+  quotaMetrics: string[];
+  quotaIds: string[];
 }
 
 export interface GeminiRetryOptions {
@@ -18,27 +31,33 @@ export interface GeminiRetryOptions {
 }
 
 export class GeminiRequestError extends Error {
+  readonly model: string | null;
   readonly status: number;
   readonly code: string | null;
   readonly retryAfterMs: number | null;
   readonly retryable: boolean;
   readonly spendRateLimited: boolean;
+  readonly dailyQuotaExhausted: boolean;
 
   constructor(params: {
     message: string;
+    model?: string | null;
     status: number;
     code?: string | null;
     retryAfterMs?: number | null;
     retryable?: boolean;
     spendRateLimited?: boolean;
+    dailyQuotaExhausted?: boolean;
   }) {
     super(params.message);
     this.name = 'GeminiRequestError';
+    this.model = params.model ?? null;
     this.status = params.status;
     this.code = params.code ?? null;
     this.retryAfterMs = params.retryAfterMs ?? null;
     this.retryable = params.retryable ?? false;
     this.spendRateLimited = params.spendRateLimited ?? false;
+    this.dailyQuotaExhausted = params.dailyQuotaExhausted ?? false;
   }
 }
 
@@ -88,13 +107,28 @@ function parseGeminiErrorBody(body: string): ParsedGeminiErrorBody {
     const retryInfo = error.details?.find((detail) =>
       String(detail['@type'] ?? '').endsWith('google.rpc.RetryInfo'),
     );
+    const quotaMetrics: string[] = [];
+    const quotaIds: string[] = [];
+    for (const detail of error.details ?? []) {
+      if (!String(detail['@type'] ?? '').endsWith('google.rpc.QuotaFailure')) continue;
+      const violations = detail.violations;
+      if (!Array.isArray(violations)) continue;
+      for (const violation of violations) {
+        if (!violation || typeof violation !== 'object') continue;
+        const record = violation as Record<string, unknown>;
+        if (typeof record.quotaMetric === 'string') quotaMetrics.push(record.quotaMetric);
+        if (typeof record.quotaId === 'string') quotaIds.push(record.quotaId);
+      }
+    }
     return {
       code: rawCode,
       message: typeof error.message === 'string' ? error.message : body,
       retryAfterMs: parseDurationMs(retryInfo?.retryDelay),
+      quotaMetrics,
+      quotaIds,
     };
   } catch {
-    return { code: null, message: body, retryAfterMs: null };
+    return { code: null, message: body, retryAfterMs: null, quotaMetrics: [], quotaIds: [] };
   }
 }
 
@@ -121,14 +155,21 @@ export function geminiErrorFromResponse(
     capacityMessage.includes('spend-based rate limit') ||
     capacityMessage.includes('spending rate') ||
     capacityMessage.includes('provider_global_spend_rate');
+  const dailyQuotaExhausted = response.status === 429 && (
+    parsed.quotaMetrics.some((metric) => metric.endsWith('/generate_requests_per_model_per_day')) ||
+    parsed.quotaIds.some((quotaId) => quotaId.toLowerCase().includes('requestsperday')) ||
+    capacityMessage.includes('generate_requests_per_model_per_day')
+  );
 
   return new GeminiRequestError({
     message: `${model} ${response.status}: ${message.slice(0, 300)}`,
+    model,
     status: response.status,
     code,
     retryAfterMs,
-    retryable: RETRYABLE_STATUSES.has(response.status) && !nonRetryableCapacity,
+    retryable: RETRYABLE_STATUSES.has(response.status) && !nonRetryableCapacity && !dailyQuotaExhausted,
     spendRateLimited,
+    dailyQuotaExhausted,
   });
 }
 
@@ -137,6 +178,7 @@ export function geminiNetworkError(model: string, error: unknown): GeminiRequest
   const message = error instanceof Error ? error.message : String(error);
   return new GeminiRequestError({
     message: `${model} network error: ${message}`,
+    model,
     status: 0,
     retryable: true,
   });

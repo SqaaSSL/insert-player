@@ -10,6 +10,7 @@ import {
   RequestStartPacer,
   geminiErrorFromResponse,
   geminiNetworkError,
+  isApprovedGeminiImageModel,
   retryGeminiRequest,
 } from './GeminiRequestPolicy';
 
@@ -200,6 +201,14 @@ async function callGemini(
   responseModalities: GeminiResponseModality[] = ['TEXT', 'IMAGE'],
 ): Promise<{ text: string; imageBase64: string | null; imageMime: string | null; finishReason: string | null }> {
   const model = modelOverride || DEFAULT_GEMINI_IMAGE_MODEL;
+  if (!isApprovedGeminiImageModel(model)) {
+    throw new GeminiRequestError({
+      message: `Gemini image model is not approved for production: ${model}`,
+      model,
+      status: 0,
+      code: 'provider_model_unapproved',
+    });
+  }
   const reqParts: GeminiPart[] = [];
   if (imageBase64) {
     reqParts.push({ inlineData: { mimeType, data: imageBase64 } });
@@ -691,7 +700,7 @@ export async function geminiCrouchReposeOptions(
         debugWarn(`[GeminiApi] Flagged weak crouch candidate for manual review (score ${score.toFixed(1)})`);
       }
     } catch (err: any) {
-      if (err instanceof ApiSessionChangedError) throw err;
+      if (err instanceof ApiSessionChangedError || err instanceof GeminiRequestError) throw err;
       debugWarn(`[GeminiApi] Crouch attempt failed: ${err.message}`);
     }
   }
@@ -1687,6 +1696,7 @@ async function singleRefineAttempt(
   } catch (err: any) {
     if (err instanceof ApiSessionChangedError) throw err;
     if (err instanceof GeminiRequestError && err.retryable) throw err;
+    if (err instanceof GeminiRequestError && !err.retryable) throw err;
     if (isGeminiContentBlockedError(err)) {
       debugWarn(
         `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel}: safety filter, retrying with clothing note`,
@@ -1703,6 +1713,7 @@ async function singleRefineAttempt(
         return retryResult.imageBase64 ?? null;
       } catch (retryErr: any) {
         if (retryErr instanceof ApiSessionChangedError) throw retryErr;
+        if (retryErr instanceof GeminiRequestError) throw retryErr;
         debugWarn(
           `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel} safety retry failed: ${retryErr.message}`,
         );
@@ -1898,7 +1909,11 @@ async function reviewOfficialRefinedCells(
       );
       return review;
     } catch (error) {
-      if (error instanceof ApiSessionChangedError || isGeminiContentBlockedError(error)) throw error;
+      if (
+        error instanceof ApiSessionChangedError ||
+        error instanceof GeminiRequestError ||
+        isGeminiContentBlockedError(error)
+      ) throw error;
       lastError = error;
       if (attempt < 2) {
         debugWarn(`[GeminiApi] Official ${animName} visual QA response was invalid; retrying once`);

@@ -3,6 +3,7 @@ import {
   GeminiRequestError,
   RequestStartPacer,
   geminiErrorFromResponse,
+  isApprovedGeminiImageModel,
   parseRetryAfterMs,
   retryGeminiRequest,
 } from './GeminiRequestPolicy';
@@ -41,6 +42,44 @@ describe('Gemini request policy', () => {
     );
 
     expect(error.retryable).toBe(false);
+  });
+
+  it('recognizes the structured per-model daily quota and preserves its reset delay', () => {
+    const error = geminiErrorFromResponse(
+      'gemini-3-pro-image',
+      new Response(null, { status: 429 }),
+      JSON.stringify({
+        error: {
+          status: 'RESOURCE_EXHAUSTED',
+          message: 'You exceeded your current quota.',
+          details: [
+            {
+              '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+              violations: [{
+                quotaMetric: 'generativelanguage.googleapis.com/generate_requests_per_model_per_day',
+                quotaId: 'GenerateRequestsPerDayPerProjectPerModel',
+              }],
+            },
+            { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '85783s' },
+          ],
+        },
+      }),
+      0,
+    );
+
+    expect(error).toMatchObject({
+      model: 'gemini-3-pro-image',
+      retryable: false,
+      dailyQuotaExhausted: true,
+      retryAfterMs: 85_783_000,
+    });
+  });
+
+  it('allows only the two production Gemini image models', () => {
+    expect(isApprovedGeminiImageModel('gemini-3-pro-image')).toBe(true);
+    expect(isApprovedGeminiImageModel('gemini-3.1-flash-image')).toBe(true);
+    expect(isApprovedGeminiImageModel('gemini-2.5-flash-image')).toBe(false);
+    expect(isApprovedGeminiImageModel('flux-2-pro')).toBe(false);
   });
 
   it('backs off transient errors and succeeds', async () => {
