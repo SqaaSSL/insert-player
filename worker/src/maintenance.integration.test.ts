@@ -84,6 +84,7 @@ const SCHEMA = `
   CREATE TABLE rate_limits (expires_at TEXT NOT NULL);
   CREATE TABLE provider_spend_reservations (created_at_epoch INTEGER NOT NULL);
   CREATE TABLE provider_capacity_windows (retry_at_epoch INTEGER NOT NULL);
+  CREATE TABLE provider_meterkey_capacity_windows (retry_at_epoch INTEGER NOT NULL);
   CREATE TABLE stripe_events (created_at TEXT NOT NULL);
   CREATE TABLE clerk_webhook_events (processed_at TEXT NOT NULL);
   CREATE TABLE checkout_sessions (status TEXT NOT NULL, updated_at TEXT NOT NULL);

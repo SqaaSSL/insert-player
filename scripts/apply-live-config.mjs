@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -28,6 +36,7 @@ const defaultSourceModel = 'gemini-3-pro-image';
 const defaultTurnstileHostnames = 'insertplayer.ai,www.insertplayer.ai';
 
 const secretKeys = [
+  'METERKEY_API_KEY',
   'GEMINI_API_KEY',
   'FAL_API_KEY',
   'RUNWAY_API_KEY',
@@ -56,6 +65,7 @@ const requiredKeys = [
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
   'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+  'METERKEY_API_KEY',
 ];
 
 const sampleFragments = [
@@ -252,15 +262,34 @@ function putSecret(key, value) {
   }
 }
 
-function runWranglerDeploy() {
-  const result = spawnSync(npx, ['wrangler', 'deploy', '--keep-vars'], {
-    cwd: workerDir,
-    encoding: 'utf8',
-    stdio: 'inherit',
-    env: wranglerEnv(),
-    timeout: DEPLOY_TIMEOUT_MS,
-  });
-  if (result.status !== 0) throw new Error('Worker deploy failed');
+function runWranglerDeploy(secretValues) {
+  const secrets = Object.fromEntries(
+    secretKeys
+      .map((key) => [key, readValue(secretValues, key)])
+      .filter(([, value]) => Boolean(value)),
+  );
+  const tempDirectory = mkdtempSync(join(tmpdir(), 'insert-player-worker-secrets-'));
+  const secretsPath = join(tempDirectory, 'secrets.json');
+  try {
+    writeFileSync(secretsPath, JSON.stringify(secrets), { mode: 0o600 });
+    const result = spawnSync(npx, [
+      'wrangler',
+      'deploy',
+      '--keep-vars',
+      '--strict',
+      '--secrets-file',
+      secretsPath,
+    ], {
+      cwd: workerDir,
+      encoding: 'utf8',
+      stdio: 'inherit',
+      env: wranglerEnv(),
+      timeout: DEPLOY_TIMEOUT_MS,
+    });
+    if (result.status !== 0) throw new Error('Worker deploy failed');
+  } finally {
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
 }
 
 function runProductionCheck() {
@@ -587,7 +616,7 @@ async function main() {
   writeFrontendEnv(values);
   console.log('Updated .env.production frontend values.');
 
-  if (!args.has('--skip-secrets')) {
+  if (!args.has('--skip-secrets') && !args.has('--deploy-worker')) {
     for (const key of secretKeys) {
       const value = readValue(values, key);
       if (!value) {
@@ -600,7 +629,7 @@ async function main() {
   }
 
   if (args.has('--deploy-worker')) {
-    runWranglerDeploy();
+    runWranglerDeploy(args.has('--skip-secrets') ? new Map() : values);
   }
 }
 

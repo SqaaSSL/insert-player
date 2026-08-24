@@ -64,6 +64,7 @@ import {
   readJsonBody,
   RequestBodyTooLargeError,
 } from './requestBody';
+import { geminiTransportStatus } from './geminiTransport';
 
 export { FighterGenerationWorkflow } from './generationWorkflow';
 export { ImageProcessorContainer } from './imageProcessorContainer';
@@ -211,8 +212,9 @@ async function authenticatedLimited(
 }
 
 function healthResponse(env: Env): Response {
+  const geminiTransport = geminiTransportStatus(env);
   const providerSecrets = {
-    gemini: Boolean(env.GEMINI_API_KEY),
+    gemini: geminiTransport.configured,
     fal: Boolean(env.FAL_API_KEY),
     runway: Boolean(env.RUNWAY_API_KEY),
     freepik: Boolean(env.FREEPIK_API_KEY),
@@ -231,7 +233,7 @@ function healthResponse(env: Env): Response {
 
   return json({
     status: 'ok',
-    version: '0.18.0',
+    version: '0.19.0',
     legalVersion: CURRENT_LEGAL_VERSION,
     environment: env.ENVIRONMENT ?? 'unknown',
     cors: env.CORS_ORIGIN ? 'configured' : 'wildcard',
@@ -241,6 +243,7 @@ function healthResponse(env: Env): Response {
     turnstile: turnstileConfigurationStatus(env),
     anonymousRookie: env.ANONYMOUS_ROOKIE_ENABLED === 'false' ? 'disabled' : 'enabled',
     providerAccounting: 'durable',
+    geminiTransport: geminiTransport.transport ?? 'invalid',
     providerSessionLimits: 'configured',
     providerGlobalCaps: 'disabled',
     storage: {

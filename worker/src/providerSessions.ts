@@ -19,6 +19,7 @@ import {
 } from './legal';
 import { ResponseBodyTooLargeError } from './streamLimits';
 import { PROVIDER_REQUEST_BODY_LIMITS, type ProviderName } from './providerLimits';
+import { geminiEstimatedCostCents } from './geminiTransport';
 
 export const PROVIDER_SESSION_HEADER = 'X-ASF-Provider-Session';
 
@@ -132,10 +133,16 @@ export interface ProviderRequestState {
   spendReservation: ProviderSpendReservation | null;
   cacheClaim: ProviderRequestCacheClaim | null;
   requestMetadata: Omit<ProviderRequestCacheClaim, 'id' | 'ownerAttemptId' | 'responseBlobKey'> | null;
+  upstreamAttemptKey: string | null;
 }
 
 export function createProviderRequestState(): ProviderRequestState {
-  return { spendReservation: null, cacheClaim: null, requestMetadata: null };
+  return {
+    spendReservation: null,
+    cacheClaim: null,
+    requestMetadata: null,
+    upstreamAttemptKey: null,
+  };
 }
 
 async function uploadMultipartPartWithRetry(
@@ -629,6 +636,7 @@ async function abandonProviderRequestCache(
 ): Promise<void> {
   const claim = state.cacheClaim;
   state.cacheClaim = null;
+  state.upstreamAttemptKey = null;
   if (!claim) return;
 
   await env.DB.prepare(`
@@ -907,12 +915,10 @@ function isAllowedProviderUse(
   );
 }
 
-function estimatedProviderCallCostCents(provider: ProviderSessionProvider, path: string): number | null {
+function estimatedProviderCallCostCents(env: Env, provider: ProviderSessionProvider, path: string): number | null {
   if (provider === 'gemini') {
     const model = path.match(/^\/proxy\/gemini\/v1beta\/models\/([^/:]+):generateContent$/)?.[1];
-    if (model === GEMINI_FLASH_IMAGE_MODEL) return 8;
-    if (model === GEMINI_PRO_IMAGE_MODEL) return 15;
-    return null;
+    return geminiEstimatedCostCents(env, model ?? '');
   }
   if (provider === 'fal') {
     if (path.startsWith('/proxy/fal/fal-ai/birefnet')) return 1;
@@ -979,6 +985,41 @@ async function releaseUnstartedProviderReservation(
   await env.DB.batch(statements);
 }
 
+async function finalizeNotDispatchedProviderReservation(
+  env: Env,
+  reservation: ProviderSpendReservation,
+  providerStatus: number,
+): Promise<void> {
+  const statements = [
+    env.DB.prepare(`
+      UPDATE provider_sessions
+      SET provider_calls_used = MAX(0, provider_calls_used - 1),
+          provider_cost_used_cents = MAX(0, provider_cost_used_cents - ?),
+          updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(reservation.estimatedCostCents, reservation.sessionId),
+    env.DB.prepare(`
+      UPDATE provider_spend_months
+      SET estimated_cost_cents = MAX(0, estimated_cost_cents - ?),
+          provider_calls = MAX(0, provider_calls - 1),
+          updated_at = datetime('now')
+      WHERE period = ?
+    `).bind(reservation.estimatedCostCents, reservation.monthlyPeriod),
+  ];
+  if (reservation.eventId) {
+    statements.push(env.DB.prepare(`
+      UPDATE provider_cost_events
+      SET outcome = 'failed',
+          upstream_outcome = 'not_dispatched',
+          http_status = ?,
+          estimated_cost_cents = 0,
+          finalized_at = datetime('now')
+      WHERE id = ? AND outcome = 'reserved'
+    `).bind(providerStatus, reservation.eventId));
+  }
+  await env.DB.batch(statements);
+}
+
 export async function finalizeProviderRequest(
   env: Env,
   response: Response,
@@ -986,11 +1027,14 @@ export async function finalizeProviderRequest(
 ): Promise<Response> {
   const providerSucceeded = response.ok;
   const providerStatus = response.status;
-  const upstreamOutcome = response.headers.get('X-Insert-Player-Upstream-Outcome') === 'unknown'
+  const responseOutcome = response.headers.get('X-Insert-Player-Upstream-Outcome');
+  const upstreamOutcome = responseOutcome === 'unknown'
     ? 'unknown'
-    : providerSucceeded
-      ? 'http_succeeded'
-      : 'http_failed';
+    : responseOutcome === 'not-dispatched'
+      ? 'not_dispatched'
+      : providerSucceeded
+        ? 'http_succeeded'
+        : 'http_failed';
   let clientResponse = response;
   try {
     clientResponse = await finalizeProviderRequestCache(env, response, state);
@@ -1001,6 +1045,14 @@ export async function finalizeProviderRequest(
   const reservation = state.spendReservation;
   state.spendReservation = null;
   if (!reservation) return clientResponse;
+  if (upstreamOutcome === 'not_dispatched') {
+    try {
+      await finalizeNotDispatchedProviderReservation(env, reservation, providerStatus);
+    } catch (error) {
+      console.error('[provider] Failed to release a provider request that was not dispatched', error);
+    }
+    return clientResponse;
+  }
   if (providerSucceeded) {
     try {
       await env.DB.prepare(`
@@ -1087,6 +1139,11 @@ export async function requireProviderSession(
   }
   if (cache) {
     state.cacheClaim = cache;
+    // The public request scope identifies a complete source/animation and is
+    // reused by several distinct provider bodies. Meterkey idempotency must
+    // identify only this durable dispatch attempt. A known failed request gets
+    // a new ownerAttemptId; a crash remains fail-closed in the local cache.
+    state.upstreamAttemptKey = `ip:${cache.id}:${cache.ownerAttemptId}`;
     state.requestMetadata = {
       jobId: cache.jobId,
       artifactRunId: cache.artifactRunId,
@@ -1099,7 +1156,7 @@ export async function requireProviderSession(
     await abandonProviderRequestCache(env, state, 'Provider session call limit exceeded');
     return providerSessionLimitResponse(existing.expires_at);
   }
-  const estimatedCostCents = estimatedProviderCallCostCents(route.provider, route.path);
+  const estimatedCostCents = estimatedProviderCallCostCents(env, route.provider, route.path);
   if (estimatedCostCents === null) {
     await abandonProviderRequestCache(env, state, 'Provider route has no approved spend estimate');
     return json({ error: 'Provider route has no approved spend estimate' }, 403);

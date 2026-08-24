@@ -27,6 +27,7 @@ describe('operational data retention', () => {
     expect(statements.length).toBeGreaterThanOrEqual(12);
     expect(statements.join('\n')).toContain('DELETE FROM provider_spend_reservations');
     expect(statements.join('\n')).toContain('DELETE FROM provider_capacity_windows');
+    expect(statements.join('\n')).toContain('DELETE FROM provider_meterkey_capacity_windows');
     expect(statements.some((sql) => sql.startsWith('DELETE FROM rate_limits'))).toBe(true);
     expect(statements.some((sql) => sql.startsWith('DELETE FROM provider_request_cache'))).toBe(true);
     expect(statements.some((sql) => sql.startsWith('DELETE FROM generation_jobs'))).toBe(true);

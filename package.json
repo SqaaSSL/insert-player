@@ -12,6 +12,7 @@
     "check:production": "node scripts/check-production.mjs",
     "check:tiers": "node scripts/check-tier-parity.mjs",
     "check:live-readiness": "node scripts/check-live-readiness.mjs",
+    "check:meterkey-auth": "node scripts/check-meterkey-auth.mjs",
     "check:frontend-live": "node scripts/check-frontend-live-env.mjs",
     "check:frontend-sandbox": "node scripts/check-frontend-sandbox-env.mjs",
     "check:launch": "node scripts/check-launch.mjs",

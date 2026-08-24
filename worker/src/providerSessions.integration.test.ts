@@ -1,5 +1,5 @@
 import { Miniflare } from 'miniflare';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createProviderRequestState,
   finalizeProviderRequest,
@@ -7,6 +7,7 @@ import {
   requireProviderSession,
 } from './providerSessions';
 import { createBoundedByteStream } from './streamLimits';
+import { proxyRequest } from './proxy';
 import type { Env, PublicAuthContext } from './types';
 
 const USER_ID = 'user-provider-cache';
@@ -313,6 +314,57 @@ describe('durable provider request cache against D1 and R2', () => {
     }
   }, 15_000);
 
+  it('derives Meterkey idempotency per durable dispatch instead of per animation scope', async () => {
+    const { mf, env } = await bindings();
+    try {
+      const scope = `job:${JOB_ID}:sprite:high_kick`;
+      const frameOne = createProviderRequestState();
+      const frameTwo = createProviderRequestState();
+
+      expect(await requireProviderSession(
+        providerRequest(scope, 'high kick frame 1'),
+        env,
+        auth,
+        ROUTE,
+        frameOne,
+      )).toBeNull();
+      expect(await requireProviderSession(
+        providerRequest(scope, 'high kick frame 2'),
+        env,
+        auth,
+        ROUTE,
+        frameTwo,
+      )).toBeNull();
+
+      expect(frameOne.upstreamAttemptKey).toMatch(/^ip:[a-f0-9]{32}:[a-f0-9]{32}$/);
+      expect(frameTwo.upstreamAttemptKey).toMatch(/^ip:[a-f0-9]{32}:[a-f0-9]{32}$/);
+      expect(frameTwo.upstreamAttemptKey).not.toBe(frameOne.upstreamAttemptKey);
+
+      const firstAttemptKey = frameOne.upstreamAttemptKey;
+      await finalizeProviderRequest(
+        env,
+        Response.json({ error: 'known failure' }, { status: 429 }),
+        frameOne,
+      );
+
+      const retry = createProviderRequestState();
+      expect(await requireProviderSession(
+        providerRequest(scope, 'high kick frame 1'),
+        env,
+        auth,
+        ROUTE,
+        retry,
+      )).toBeNull();
+      expect(retry.upstreamAttemptKey).toMatch(/^ip:[a-f0-9]{32}:[a-f0-9]{32}$/);
+      expect(retry.upstreamAttemptKey).not.toBe(firstAttemptKey);
+
+      await finalizeProviderRequest(env, Response.json({ result: 'frame 2' }), frameTwo);
+      await finalizeProviderRequest(env, Response.json({ result: 'frame 1 retry' }), retry);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
   it('replays a completed provider response without another call reservation', async () => {
     const { mf, db, bucket, env } = await bindings();
     try {
@@ -343,6 +395,7 @@ describe('durable provider request cache against D1 and R2', () => {
       expect(replay?.status).toBe(200);
       expect(replay?.headers.get('X-Insert-Player-Provider-Cache')).toBe('hit');
       expect(await replay?.json()).toEqual({ candidates: [{ result: 'generated' }] });
+      expect(replayState.upstreamAttemptKey).toBeNull();
       expect(await usage(db)).toEqual({ calls: 1, cost: 8, events: 1 });
 
       const cacheRow = await db.prepare(`
@@ -573,11 +626,18 @@ describe('durable provider request cache against D1 and R2', () => {
         ROUTE,
         state,
       )).toBeNull();
-      const ambiguous = Response.json(
-        { error: 'Provider request timed out' },
-        { status: 504, headers: { 'X-Insert-Player-Upstream-Outcome': 'unknown' } },
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(
+        { error: { code: 'service_unavailable', message: 'upstream provider request failed' } },
+        { status: 503, headers: { 'X-Meterkey-Upstream-Outcome': 'unknown' } },
+      )));
+      const ambiguous = await proxyRequest(
+        firstRequest,
+        'https://meter.hilo.cx/google-ai-studio/v1beta/models/gemini-3.1-flash-image:generateContent',
+        { Authorization: 'Bearer mk-test' },
+        1024 * 1024,
       );
-      expect((await finalizeProviderRequest(env, ambiguous, state)).status).toBe(504);
+      expect(ambiguous.headers.get('X-Insert-Player-Upstream-Outcome')).toBe('unknown');
+      expect((await finalizeProviderRequest(env, ambiguous, state)).status).toBe(503);
 
       const replay = await requireProviderSession(
         providerRequest(requestKey, 'ambiguous dispatch'),
@@ -600,6 +660,49 @@ describe('durable provider request cache against D1 and R2', () => {
         stage: 'sprite:low_punch',
         request_key: requestKey,
       });
+    } finally {
+		vi.unstubAllGlobals();
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('releases local provider spend when Meterkey proves the request was not dispatched', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const state = createProviderRequestState();
+      const requestKey = `job:${JOB_ID}:sprite:low_punch:meterkey-cap`;
+      expect(await requireProviderSession(
+        providerRequest(requestKey, 'not dispatched by Meterkey'),
+        env,
+        auth,
+        ROUTE,
+        state,
+      )).toBeNull();
+
+      const rejected = Response.json(
+        { error: { code: 'daily_cap_exceeded', message: 'rejected before provider dispatch' } },
+        {
+          status: 429,
+          headers: { 'X-Insert-Player-Upstream-Outcome': 'not-dispatched' },
+        },
+      );
+      expect((await finalizeProviderRequest(env, rejected, state)).status).toBe(429);
+
+      expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 1 });
+      expect(await db.prepare(`
+        SELECT outcome, upstream_outcome, http_status, estimated_cost_cents
+        FROM provider_cost_events
+      `).first()).toEqual({
+        outcome: 'failed',
+        upstream_outcome: 'not_dispatched',
+        http_status: 429,
+        estimated_cost_cents: 0,
+      });
+      expect(await db.prepare(`
+        SELECT estimated_cost_cents, provider_calls FROM provider_spend_months
+      `).first()).toEqual({ estimated_cost_cents: 0, provider_calls: 0 });
+      expect((await db.prepare('SELECT status FROM provider_request_cache')
+        .first<{ status: string }>())?.status).toBe('failed');
     } finally {
       await mf.dispose();
     }

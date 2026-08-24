@@ -19,6 +19,10 @@ import {
   PROVIDER_RESPONSE_BODY_LIMITS,
   type ProviderName,
 } from './providerLimits';
+import {
+  geminiTransportStatus,
+  meterkeyBaseUrl,
+} from './geminiTransport';
 
 export { ResponseBodyTooLargeError } from './streamLimits';
 
@@ -121,6 +125,67 @@ function appendSearch(target: URL, source: URL): URL {
   return target;
 }
 
+function appendSearchWithoutGoogleKey(target: URL, source: URL): URL {
+  for (const [key, value] of source.searchParams.entries()) {
+    if (key.toLowerCase() !== 'key') target.searchParams.append(key, value);
+  }
+  return target;
+}
+
+function meterkeyGeminiHeaders(apiKey: string, upstreamAttemptKey?: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+    // Do not persist licensed photos, prompts, or generated images in AI
+    // Gateway logs. Meterkey forwards this customer-controlled AIG header.
+    'cf-aig-collect-log-payload': 'false',
+    // One Insert Player provider attempt must remain one upstream attempt.
+    'cf-aig-max-attempts': '1',
+    // Meterkey keeps only a small completed-attempt marker for idempotency;
+    // generated image bytes must not enter its 24-hour replay cache.
+    'x-meterkey-no-store': 'true',
+  };
+  if (upstreamAttemptKey && /^[a-zA-Z0-9:_-]{1,200}$/.test(upstreamAttemptKey)) {
+    headers['Idempotency-Key'] = upstreamAttemptKey;
+    headers['X-Request-Id'] = upstreamAttemptKey;
+  }
+  return headers;
+}
+
+export interface GeminiProxyTarget {
+  transport: 'google-direct' | 'meterkey';
+  targetUrl: string;
+  headers: Record<string, string>;
+}
+
+export function buildGeminiProxyTarget(
+  request: Request,
+  env: Env,
+  apiPath: string,
+  sourceUrl: URL,
+  upstreamAttemptKey?: string | null,
+): GeminiProxyTarget | null {
+  const status = geminiTransportStatus(env);
+  if (!status.configured || !status.transport) return null;
+  if (status.transport === 'meterkey') {
+    const baseUrl = meterkeyBaseUrl(env.METERKEY_BASE_URL);
+    if (!baseUrl || !env.METERKEY_API_KEY) return null;
+    const attemptKey = upstreamAttemptKey ?? `ip:ephemeral:${crypto.randomUUID()}`;
+    const target = appendSearchWithoutGoogleKey(
+      new URL(`/google-ai-studio${apiPath}`, baseUrl),
+      sourceUrl,
+    );
+    return {
+      transport: status.transport,
+      targetUrl: target.toString(),
+      headers: meterkeyGeminiHeaders(env.METERKEY_API_KEY, attemptKey),
+    };
+  }
+  if (!env.GEMINI_API_KEY) return null;
+  const target = appendSearch(new URL(`https://generativelanguage.googleapis.com${apiPath}`), sourceUrl);
+  target.searchParams.set('key', env.GEMINI_API_KEY);
+  return { transport: status.transport, targetUrl: target.toString(), headers: {} };
+}
+
 export async function proxyRequest(
   request: Request,
   targetUrl: string,
@@ -169,7 +234,15 @@ export async function proxyRequest(
   if (upstreamContentType) responseHeaders.set('Content-Type', upstreamContentType);
   const retryAfter = upstream.headers.get('Retry-After');
   if (retryAfter) responseHeaders.set('Retry-After', retryAfter);
-  responseHeaders.set('X-Insert-Player-Upstream-Outcome', 'received');
+  const meterkeyOutcome = upstream.headers.get('X-Meterkey-Upstream-Outcome')?.trim().toLowerCase();
+  responseHeaders.set(
+    'X-Insert-Player-Upstream-Outcome',
+    meterkeyOutcome === 'unknown'
+      ? 'unknown'
+      : meterkeyOutcome === 'not-dispatched'
+        ? 'not-dispatched'
+        : 'received',
+  );
   const boundedBody = upstream.body
     ? createBoundedByteStream(upstream.body, maxResponseBytes)
     : null;
@@ -583,7 +656,10 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
   if (path.startsWith('/proxy/gemini')) {
     const allowlistError = enforceProviderRouteAllowlist('gemini', path, request.method);
     if (allowlistError) return allowlistError;
-    if (!env.GEMINI_API_KEY) return missingKey('GEMINI_API_KEY');
+    const transport = geminiTransportStatus(env);
+    if (!transport.configured || !transport.transport) {
+      return Response.json({ error: transport.error ?? 'Gemini transport is not configured' }, { status: 503 });
+    }
     const limited = await enforceRateLimit(env, 'proxy:gemini', auth);
     if (limited) return limited;
     const providerState = createProviderRequestState();
@@ -592,16 +668,26 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       if (sessionError) return sessionError;
     }
     const apiPath = path.replace(/^\/proxy\/gemini/, '');
-    const target = appendSearch(new URL(`https://generativelanguage.googleapis.com${apiPath}`), url);
-    target.searchParams.set('key', env.GEMINI_API_KEY);
+    const upstream = buildGeminiProxyTarget(
+      request,
+      env,
+      apiPath,
+      url,
+      providerState.upstreamAttemptKey,
+    );
+    if (!upstream) {
+      return Response.json({ error: 'Gemini transport is not configured' }, { status: 503 });
+    }
     const response = await proxyRequest(
       request,
-      target.toString(),
-      {},
+      upstream.targetUrl,
+      upstream.headers,
       PROVIDER_REQUEST_BODY_LIMITS.gemini,
       PROVIDER_RESPONSE_BODY_LIMITS.gemini,
     );
-    return finalizeProviderRequest(env, response, providerState);
+    const finalized = await finalizeProviderRequest(env, response, providerState);
+    finalized.headers.set('X-Insert-Player-Gemini-Transport', upstream.transport);
+    return finalized;
   }
 
   if (path.startsWith('/proxy/runway')) {

@@ -171,6 +171,15 @@ const SCHEMA = `
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (provider, model)
   );
+  CREATE TABLE provider_meterkey_capacity_windows (
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    retry_at_epoch INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (provider, model)
+  );
 `;
 
 function png(): Uint8Array {
