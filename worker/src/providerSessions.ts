@@ -56,7 +56,6 @@ interface ProviderSpendReservation {
   sessionId: string;
   estimatedCostCents: number;
   monthlyPeriod: string;
-  rollingReservationId: string | null;
   eventId: string | null;
 }
 
@@ -96,7 +95,6 @@ const FEATURE_PROVIDER_COST_LIMITS_CENTS: Record<'stage_background' | 'intro_vid
 
 const GEMINI_FLASH_IMAGE_MODEL = 'gemini-3.1-flash-image';
 const GEMINI_PRO_IMAGE_MODEL = 'gemini-3-pro-image';
-const GEMINI_SPEND_WINDOW_SECONDS = 10 * 60;
 const PROVIDER_REQUEST_KEY_HEADER = 'X-Insert-Player-Provider-Request-Key';
 const PROVIDER_CACHE_MAX_RESPONSE_BYTES = 96 * 1024 * 1024;
 const PROVIDER_CACHE_MULTIPART_BYTES = 8 * 1024 * 1024;
@@ -544,31 +542,6 @@ function providerSessionCostLimitResponse(expiresAt: string): Response {
   );
 }
 
-function nextUtcMonthRetryAfter(): string {
-  const now = new Date();
-  const nextMonth = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
-  return String(Math.max(1, Math.ceil((nextMonth - now.getTime()) / 1000)));
-}
-
-function providerMonthlyBudgetResponse(): Response {
-  return json(
-    { error: 'Generation capacity is temporarily exhausted', code: 'provider_monthly_budget_exhausted' },
-    503,
-    { 'Retry-After': nextUtcMonthRetryAfter() },
-  );
-}
-
-function providerSpendRateResponse(retryAfterSeconds: number): Response {
-  return json(
-    {
-      error: 'Generation is waiting for available provider capacity',
-      code: 'provider_global_spend_rate',
-    },
-    429,
-    { 'Retry-After': String(Math.max(1, retryAfterSeconds)) },
-  );
-}
-
 function expiresAt(): string {
   return new Date(Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000).toISOString();
 }
@@ -799,93 +772,22 @@ function estimatedProviderCallCostCents(provider: ProviderSessionProvider, path:
   return null;
 }
 
-function monthlyBudgetCents(env: Env): number | null {
-  const raw = env.PROVIDER_MONTHLY_BUDGET_USD_CENTS?.trim();
-  if (!raw || !/^\d+$/.test(raw)) return null;
-  const parsed = Number(raw);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function geminiSpendRateLimitCents(env: Env): number | null {
-  const raw = env.GEMINI_SPEND_RATE_LIMIT_USD_CENTS?.trim();
-  if (!raw || !/^\d+$/.test(raw)) return null;
-  const parsed = Number(raw);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-async function reserveRollingGeminiSpend(
-  env: Env,
-  route: { provider: ProviderSessionProvider; path: string },
-  estimatedCostCents: number,
-): Promise<{ id: string | null } | Response> {
-  if (route.provider !== 'gemini') return { id: null };
-  const limitCents = geminiSpendRateLimitCents(env);
-  if (!limitCents) return { id: null };
-  if (estimatedCostCents > limitCents) return providerSpendRateResponse(GEMINI_SPEND_WINDOW_SECONDS);
-
-  const nowEpoch = Math.floor(Date.now() / 1_000);
-  const cutoffEpoch = nowEpoch - GEMINI_SPEND_WINDOW_SECONDS;
-  const id = generateId();
-  const reservation = await env.DB.prepare(`
-    INSERT INTO provider_spend_reservations (
-      id, provider, model_path, estimated_cost_cents, created_at_epoch
-    )
-    SELECT ?, 'gemini', ?, ?, ?
-    WHERE COALESCE((
-      SELECT SUM(estimated_cost_cents)
-      FROM provider_spend_reservations
-      WHERE provider = 'gemini'
-        AND created_at_epoch > ?
-    ), 0) <= ?
-    RETURNING id
-  `).bind(
-    id,
-    route.path,
-    estimatedCostCents,
-    nowEpoch,
-    cutoffEpoch,
-    limitCents - estimatedCostCents,
-  ).first<{ id: string }>();
-
-  if (reservation) return { id };
-  const oldest = await env.DB.prepare(`
-    SELECT MIN(created_at_epoch) AS created_at_epoch
-    FROM provider_spend_reservations
-    WHERE provider = 'gemini'
-      AND created_at_epoch > ?
-  `).bind(cutoffEpoch).first<{ created_at_epoch: number | null }>();
-  const retryAfterSeconds = oldest?.created_at_epoch
-    ? oldest.created_at_epoch + GEMINI_SPEND_WINDOW_SECONDS - nowEpoch + 1
-    : 1;
-  return providerSpendRateResponse(retryAfterSeconds);
-}
-
-async function reserveMonthlyProviderSpend(
+async function recordMonthlyProviderSpend(
   env: Env,
   estimatedCostCents: number,
 ): Promise<string | null> {
-  const budgetCents = monthlyBudgetCents(env);
-  if (!budgetCents || estimatedCostCents > budgetCents) return null;
   const period = new Date().toISOString().slice(0, 7);
-
-  await env.DB.prepare(`
-    INSERT INTO provider_spend_months (period)
-    VALUES (?)
-    ON CONFLICT(period) DO NOTHING
-  `).bind(period).run();
-
   const reservation = await env.DB.prepare(`
-    UPDATE provider_spend_months
-    SET estimated_cost_cents = estimated_cost_cents + ?,
-        provider_calls = provider_calls + 1,
-        updated_at = datetime('now')
-    WHERE period = ?
-      AND estimated_cost_cents <= ?
+    INSERT INTO provider_spend_months (period, estimated_cost_cents, provider_calls)
+    VALUES (?, ?, 1)
+    ON CONFLICT(period) DO UPDATE SET
+      estimated_cost_cents = provider_spend_months.estimated_cost_cents + excluded.estimated_cost_cents,
+      provider_calls = provider_spend_months.provider_calls + 1,
+      updated_at = datetime('now')
     RETURNING period
   `).bind(
-    estimatedCostCents,
     period,
-    budgetCents - estimatedCostCents,
+    estimatedCostCents,
   ).first<{ period: string }>();
 
   return reservation?.period ?? null;
@@ -914,12 +816,6 @@ async function releaseUnstartedProviderReservation(
           updated_at = datetime('now')
       WHERE period = ?
     `).bind(reservation.estimatedCostCents, reservation.monthlyPeriod));
-  }
-  if (reservation.rollingReservationId) {
-    statements.push(env.DB.prepare(`
-      DELETE FROM provider_spend_reservations
-      WHERE id = ?
-    `).bind(reservation.rollingReservationId));
   }
   await env.DB.batch(statements);
 }
@@ -1030,11 +926,6 @@ export async function requireProviderSession(
     await abandonProviderRequestCache(env, state, 'Provider session spend limit exceeded');
     return providerSessionCostLimitResponse(existing.expires_at);
   }
-  const rollingReservation = await reserveRollingGeminiSpend(env, route, estimatedCostCents);
-  if (rollingReservation instanceof Response) {
-    await abandonProviderRequestCache(env, state, 'Provider rolling spend reservation unavailable');
-    return rollingReservation;
-  }
   const session = await env.DB.prepare(`
     UPDATE provider_sessions
     SET provider_calls_used = provider_calls_used + 1,
@@ -1060,16 +951,27 @@ export async function requireProviderSession(
   ).first<ProviderSessionUsageRow>();
 
   if (session) {
-    const monthlyPeriod = await reserveMonthlyProviderSpend(env, estimatedCostCents);
+    let monthlyPeriod: string | null = null;
+    try {
+      monthlyPeriod = await recordMonthlyProviderSpend(env, estimatedCostCents);
+    } catch (error) {
+      await releaseUnstartedProviderReservation(env, {
+        sessionId,
+        estimatedCostCents,
+        monthlyPeriod: null,
+      });
+      await abandonProviderRequestCache(env, state, 'Provider monthly accounting unavailable');
+      console.error('[provider] Failed to record monthly provider spend', error);
+      return json({ error: 'Provider cost accounting is temporarily unavailable' }, 503);
+    }
     if (!monthlyPeriod) {
       await releaseUnstartedProviderReservation(env, {
         sessionId,
         estimatedCostCents,
         monthlyPeriod: null,
-        rollingReservationId: rollingReservation.id,
       });
-      await abandonProviderRequestCache(env, state, 'Provider monthly capacity unavailable');
-      return providerMonthlyBudgetResponse();
+      await abandonProviderRequestCache(env, state, 'Provider monthly accounting unavailable');
+      return json({ error: 'Provider cost accounting is temporarily unavailable' }, 503);
     }
     const eventId = generateId();
     try {
@@ -1143,7 +1045,6 @@ export async function requireProviderSession(
         sessionId,
         estimatedCostCents,
         monthlyPeriod,
-        rollingReservationId: rollingReservation.id,
       });
       await abandonProviderRequestCache(env, state, 'Provider cost accounting unavailable');
       console.error('[provider] Failed to reserve durable provider cost event', error);
@@ -1153,18 +1054,11 @@ export async function requireProviderSession(
       sessionId,
       estimatedCostCents,
       monthlyPeriod,
-      rollingReservationId: rollingReservation.id,
       eventId,
     };
     return null;
   }
 
-  if (rollingReservation.id) {
-    await env.DB.prepare(`
-      DELETE FROM provider_spend_reservations
-      WHERE id = ?
-    `).bind(rollingReservation.id).run();
-  }
   await abandonProviderRequestCache(env, state, 'Provider session reservation lost a concurrent race');
 
   const latest = await env.DB.prepare(`

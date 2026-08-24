@@ -1,4 +1,5 @@
 import { generateId } from './auth';
+import { inspectArcadeAssetIntegrity } from './arcadeAssets';
 import { createGenerationJob } from './generationJobs';
 import {
   CURRENT_LEGAL_VERSION,
@@ -140,18 +141,6 @@ async function createAdminGenerationAuthorization(
   }
 }
 
-async function playableAnimationCount(env: Env, fighterId: string): Promise<number> {
-  const placeholders = PLAYABLE_ANIMATION_NAMES.map(() => '?').join(',');
-  const row = await env.DB.prepare(`
-    SELECT COUNT(DISTINCT animation_name) AS count
-    FROM sprites
-    WHERE fighter_id = ?
-      AND quality_tier = 'champion'
-      AND animation_name IN (${placeholders})
-  `).bind(fighterId, ...PLAYABLE_ANIMATION_NAMES).first<{ count: number }>();
-  return Number(row?.count ?? 0);
-}
-
 export async function startAdminArcadeGeneration(
   request: Request,
   env: Env,
@@ -185,13 +174,13 @@ export async function startAdminArcadeGeneration(
     return json({ error: 'Upload the private reference image before generation' }, 409);
   }
 
-  const animationCount = await playableAnimationCount(env, fighterId);
-  if (animationCount === PLAYABLE_ANIMATION_NAMES.length) {
+  const assetIntegrity = await inspectArcadeAssetIntegrity(env, fighterId);
+  if (assetIntegrity.ready) {
     return json({
       ready: true,
       fighterId,
       tier: 'champion',
-      animationCount,
+      animationCount: assetIntegrity.animationCount,
     });
   }
 

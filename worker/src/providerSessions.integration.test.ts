@@ -148,7 +148,6 @@ async function bindings(): Promise<{ mf: Miniflare; db: D1Database; bucket: R2Bu
       SPRITES: bucket,
       ENVIRONMENT: 'development',
       CORS_ORIGIN: 'https://insertplayer.ai',
-      PROVIDER_MONTHLY_BUDGET_USD_CENTS: '50000',
     } as Env,
   };
 }
@@ -204,6 +203,37 @@ describe('durable provider request cache against D1 and R2', () => {
       expect(response?.status).toBe(413);
       expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 0 });
       expect(await chargeStatus(db)).toBe('reserved');
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('records spend without blocking a valid session after high aggregate usage', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const period = new Date().toISOString().slice(0, 7);
+      await db.prepare(`
+        INSERT INTO provider_spend_months (period, estimated_cost_cents, provider_calls)
+        VALUES (?, 99999999, 999999)
+      `).bind(period).run();
+
+      const state = createProviderRequestState();
+      expect(await requireProviderSession(
+        providerRequest('job:source:side:high-aggregate'),
+        env,
+        auth,
+        ROUTE,
+        state,
+      )).toBeNull();
+      expect(await usage(db)).toEqual({ calls: 1, cost: 8, events: 1 });
+      expect(await db.prepare(`
+        SELECT estimated_cost_cents AS cost, provider_calls AS calls
+        FROM provider_spend_months WHERE period = ?
+      `).bind(period).first<{ cost: number; calls: number }>()).toEqual({
+        cost: 100000007,
+        calls: 1000000,
+      });
+      await finalizeProviderRequest(env, Response.json({ result: 'generated' }), state);
     } finally {
       await mf.dispose();
     }

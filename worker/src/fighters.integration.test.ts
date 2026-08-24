@@ -312,7 +312,7 @@ const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
 
 describe('fighter uploads against real D1 and R2 bindings', () => {
   it('activates, lists, and retires a private-by-default official Arcade fighter', async () => {
-    const { mf, db, env } = await createBindings();
+    const { mf, db, bucket, env } = await createBindings();
     const fighterId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     try {
       await db.prepare(`
@@ -340,17 +340,71 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
         'jump', 'crouch', 'hit', 'ko', 'victory',
       ];
-      await db.batch(animationNames.map((animationName, index) => db.prepare(`
-        INSERT INTO sprites (
-          id, fighter_id, animation_name, quality_tier, blob_key,
-          frame_w, frame_h, frame_count, processing_version
-        ) VALUES (?, ?, ?, 'champion', ?, 768, 1024, 8, 5)
-      `).bind(
-        `arcade-sprite-${index}`,
-        fighterId,
-        animationName,
-        `users/user-target/fighters/${fighterId}/sprites/${animationName}.png`,
-      )));
+      const sourceKeys = {
+        original: `users/user-target/fighters/${fighterId}/sources/original.png`,
+        side: `users/user-target/fighters/${fighterId}/sources/side.png`,
+        sideRaw: `users/user-target/fighters/${fighterId}/sources/side-raw.png`,
+        upright: `users/user-target/fighters/${fighterId}/sources/upright.png`,
+        uprightRaw: `users/user-target/fighters/${fighterId}/sources/upright-raw.png`,
+        crouch: `users/user-target/fighters/${fighterId}/sources/crouch.png`,
+        crouchRaw: `users/user-target/fighters/${fighterId}/sources/crouch-raw.png`,
+      };
+      await db.batch([
+        db.prepare(`
+          UPDATE fighters SET
+            original_blob_key = ?,
+            side_view_blob_key = ?,
+            side_view_raw_blob_key = ?,
+            upright_view_blob_key = ?,
+            upright_view_raw_blob_key = ?,
+            crouch_view_blob_key = ?,
+            crouch_view_raw_blob_key = ?
+          WHERE id = ?
+        `).bind(
+          sourceKeys.original,
+          sourceKeys.side,
+          sourceKeys.sideRaw,
+          sourceKeys.upright,
+          sourceKeys.uprightRaw,
+          sourceKeys.crouch,
+          sourceKeys.crouchRaw,
+          fighterId,
+        ),
+        ...animationNames.map((animationName, index) => db.prepare(`
+          INSERT INTO sprites (
+            id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+            frame_w, frame_h, frame_count, processing_version
+          ) VALUES (?, ?, ?, 'champion', ?, ?, 768, 1024, 8, 5)
+        `).bind(
+          `arcade-sprite-${index}`,
+          fighterId,
+          animationName,
+          `users/user-target/fighters/${fighterId}/sprites/${animationName}.png`,
+          `users/user-target/fighters/${fighterId}/sprites/${animationName}-raw.png`,
+        )),
+      ]);
+
+      const missingResponse = await upsertAdminArcadeFighter(
+        arcadeRequest('active'), env, adminAuth, fighterId,
+      );
+      expect(missingResponse.status).toBe(409);
+      expect(await missingResponse.json()).toMatchObject({
+        missingAssets: expect.arrayContaining(['source:original', 'sprite:idle']),
+      });
+
+      await Promise.all([
+        ...Object.values(sourceKeys).map((key) => bucket.put(key, new Uint8Array([1, 2, 3]))),
+        ...animationNames.flatMap((animationName) => [
+          bucket.put(
+            `users/user-target/fighters/${fighterId}/sprites/${animationName}.png`,
+            new Uint8Array([4, 5, 6]),
+          ),
+          bucket.put(
+            `users/user-target/fighters/${fighterId}/sprites/${animationName}-raw.png`,
+            new Uint8Array([7, 8, 9]),
+          ),
+        ]),
+      ]);
 
       expect((await upsertAdminArcadeFighter(
         arcadeRequest('active'), env, adminAuth, fighterId,

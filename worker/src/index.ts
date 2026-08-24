@@ -230,7 +230,7 @@ function healthResponse(env: Env): Response {
 
   return json({
     status: 'ok',
-    version: '0.17.0',
+    version: '0.18.0',
     legalVersion: CURRENT_LEGAL_VERSION,
     environment: env.ENVIRONMENT ?? 'unknown',
     cors: env.CORS_ORIGIN ? 'configured' : 'wildcard',
@@ -239,12 +239,9 @@ function healthResponse(env: Env): Response {
     billing: stripeLiveConfigured ? 'stripe' : stripeTestConfigured ? 'stripe_test' : 'not_configured',
     turnstile: turnstileConfigurationStatus(env),
     anonymousRookie: env.ANONYMOUS_ROOKIE_ENABLED === 'false' ? 'disabled' : 'enabled',
-    providerBudget: /^\d+$/.test(env.PROVIDER_MONTHLY_BUDGET_USD_CENTS ?? '')
-      ? 'configured'
-      : 'not_configured',
-    providerSpendRate: /^\d+$/.test(env.GEMINI_SPEND_RATE_LIMIT_USD_CENTS ?? '')
-      ? 'configured'
-      : 'not_configured',
+    providerAccounting: 'durable',
+    providerSessionLimits: 'configured',
+    providerGlobalCaps: 'disabled',
     storage: {
       d1: env.DB ? 'bound' : 'missing',
       r2: env.SPRITES ? 'bound' : 'missing',
