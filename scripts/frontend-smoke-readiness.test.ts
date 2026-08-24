@@ -2,12 +2,24 @@ import { describe, expect, it } from 'vitest';
 import {
   frontendAssetProbeUrl,
   frontendShellReadinessError,
+  parsePositiveTimeoutMs,
 } from './frontend-smoke-readiness.mjs';
 
 const appShell = '<!doctype html><div id="app"></div>';
 const clerkOrigin = 'https://clerk.insertplayer.ai';
 
 describe('frontend deployment propagation readiness', () => {
+  it('accepts only positive numeric timeout values', () => {
+    expect(parsePositiveTimeoutMs('', 30_000, 'TEST_TIMEOUT_MS')).toBe(30_000);
+    expect(parsePositiveTimeoutMs('30000', 1, 'TEST_TIMEOUT_MS')).toBe(30_000);
+    expect(() => parsePositiveTimeoutMs('30_000', 1, 'TEST_TIMEOUT_MS')).toThrow(
+      'TEST_TIMEOUT_MS must be a positive number of milliseconds',
+    );
+    expect(() => parsePositiveTimeoutMs('0', 1, 'TEST_TIMEOUT_MS')).toThrow(
+      'TEST_TIMEOUT_MS must be a positive number of milliseconds',
+    );
+  });
+
   it('uses an isolated cache key while a new immutable asset propagates', () => {
     expect(frontendAssetProbeUrl(
       'https://insertplayer.ai',
