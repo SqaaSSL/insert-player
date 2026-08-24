@@ -102,7 +102,7 @@ function normalizeRoute(pathname: string, hash: string): AppRoute {
   return '/menu';
 }
 
-function useHashRoute(): [AppRoute, (route: AppRoute) => void] {
+function useHashRoute(): [AppRoute, (route: AppRoute, search?: string) => void] {
   const [route, setRoute] = useState<AppRoute>(() =>
     normalizeRoute(window.location.pathname, window.location.hash),
   );
@@ -123,12 +123,16 @@ function useHashRoute(): [AppRoute, (route: AppRoute) => void] {
     };
   }, []);
 
-  const navigate = (nextRoute: AppRoute) => {
-    if (normalizeRoute(window.location.pathname, window.location.hash) === nextRoute) {
+  const navigate = (nextRoute: AppRoute, search = '') => {
+    const normalizedSearch = search && !search.startsWith('?') ? `?${search}` : search;
+    if (
+      normalizeRoute(window.location.pathname, window.location.hash) === nextRoute &&
+      window.location.search === normalizedSearch
+    ) {
       setRoute(nextRoute);
       return;
     }
-    window.history.pushState({}, '', nextRoute);
+    window.history.pushState({}, '', `${nextRoute}${normalizedSearch}`);
     setRoute(nextRoute);
   };
 
@@ -244,6 +248,10 @@ export function App({
   const [pendingMatch, setPendingMatch] = useState<MatchSceneData | null>(() => readStoredMatch());
 
   useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [route]);
+
+  useEffect(() => {
     debugInfo('[AppRouter] Route changed', {
       route,
       pathname: window.location.pathname,
@@ -306,6 +314,7 @@ export function App({
       return (
         <CreateFighterPage
           authStatus={authStatus}
+          authSessionKey={authSessionKey}
           onBack={() => navigate('/gallery')}
           onComplete={() => navigate('/gallery')}
         />
@@ -324,10 +333,11 @@ export function App({
       const mode = route === '/roster/watch' ? 'watch' : route === '/roster/vs' ? 'vs' : 'cpu';
       return (
         <RosterPage
+          authStatus={authStatus}
           authSessionKey={authSessionKey}
           mode={mode}
           onBack={() => navigate('/menu')}
-          onCreateFighter={() => navigate('/fighters/new')}
+          onCreateFighter={() => navigate('/fighters/new', 'tier=rookie')}
           onStartFight={startFight}
         />
       );

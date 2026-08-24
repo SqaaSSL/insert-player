@@ -23,7 +23,7 @@ export const QUALITY_TIERS: QualityTierInfo[] = [
     creditCost: 2,
     animationRetryCreditCost: 1,
     estimatedTime: '~2 min',
-    pitch: 'Fast sheet animation for the free viral loop.',
+    pitch: 'A quick playable fighter, ready for your first match.',
   },
   {
     id: 'contender',
@@ -32,7 +32,7 @@ export const QUALITY_TIERS: QualityTierInfo[] = [
     creditCost: 11,
     animationRetryCreditCost: 2,
     estimatedTime: '~8 min',
-    pitch: 'Refined frames, Flash model, clean segmentation.',
+    pitch: 'Refined movement with cleaner edges and more consistent frames.',
   },
   {
     id: 'champion',
@@ -41,7 +41,7 @@ export const QUALITY_TIERS: QualityTierInfo[] = [
     creditCost: 18,
     animationRetryCreditCost: 4,
     estimatedTime: '~12 min',
-    pitch: 'Pro animation model for the best detail.',
+    pitch: 'Maximum detail and consistency across every move.',
   },
 ];
 

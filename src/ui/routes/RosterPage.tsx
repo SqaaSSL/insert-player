@@ -28,11 +28,15 @@ import {
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { ensurePlayableSpritesUpToDate } from '../../services/CharacterPipeline.ts';
+import { getBillingProfile, type BillingProfile } from '../../services/Billing.ts';
+import type { AuthStatus } from '../authState.ts';
+import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
 
 type RosterMode = 'watch' | 'cpu' | 'vs';
 type RosterFilter = 'official' | 'yours' | 'all';
 
 interface RosterPageProps {
+  authStatus: AuthStatus;
   authSessionKey: string;
   mode: RosterMode;
   onBack: () => void;
@@ -225,12 +229,14 @@ function FighterRosterCard({
   );
 }
 
-export function RosterPage({ authSessionKey, mode, onBack, onCreateFighter, onStartFight }: RosterPageProps) {
+export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateFighter, onStartFight }: RosterPageProps) {
   const modeMeta = getModeMeta(mode);
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [arcadeFighters, setArcadeFighters] = useState<CloudFighter[]>([]);
   const [photoStages, setPhotoStages] = useState<CachedStageBackground[]>([]);
   const [status, setStatus] = useState('Loading roster...');
+  const [rosterLoaded, setRosterLoaded] = useState(false);
+  const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
   const [rosterFilter, setRosterFilter] = useState<RosterFilter>(mode === 'vs' ? 'all' : 'official');
   const [p1Key, setP1Key] = useState<string | null>(null);
   const [p2Key, setP2Key] = useState<string | null>(null);
@@ -243,13 +249,15 @@ export function RosterPage({ authSessionKey, mode, onBack, onCreateFighter, onSt
     const apiContext = captureApiRequestContext();
     let cancelled = false;
     const load = async () => {
-      let [allMetas, allStages, officialFighters] = await Promise.all([
+      setRosterLoaded(false);
+      let [allMetas, allStages, officialFighters, profile] = await Promise.all([
         getAllCachedMetas(),
         getAllCachedStageBackgrounds(),
         listArcadeFighters().catch((err: any) => {
           debugWarn('[Roster] Official Arcade roster unavailable:', err?.message ?? err);
           return [];
         }),
+        authStatus === 'signed-in' ? getBillingProfile(apiContext) : Promise.resolve(null),
       ]);
       let cloudImported = 0;
       let cloudUpdated = 0;
@@ -277,6 +285,8 @@ export function RosterPage({ authSessionKey, mode, onBack, onCreateFighter, onSt
       setMetas(filteredMetas);
       setArcadeFighters(officialFighters);
       setPhotoStages(filteredStages);
+      setBillingProfile(profile);
+      setRosterLoaded(true);
       setStatus(
         cloudImported > 0 || cloudUpdated > 0
           ? `Cloud synced: ${cloudImported} imported, ${cloudUpdated} updated`
@@ -315,9 +325,15 @@ export function RosterPage({ authSessionKey, mode, onBack, onCreateFighter, onSt
           : firstOpponent?.key ?? null;
       });
     };
-    void load();
+    void load().catch((err: any) => {
+      if (cancelled) return;
+      debugWarn('[Roster] Roster load failed:', err?.message ?? err);
+      setStatus('Roster is temporarily unavailable');
+      setBillingProfile(null);
+      setRosterLoaded(true);
+    });
     return () => { cancelled = true; };
-  }, [authSessionKey]);
+  }, [authSessionKey, authStatus]);
 
   const localEntries = useMemo(() => metas.map(localRosterEntry), [metas]);
   const officialEntries = useMemo(() => arcadeFighters.map(arcadeRosterEntry), [arcadeFighters]);
@@ -344,6 +360,13 @@ export function RosterPage({ authSessionKey, mode, onBack, onCreateFighter, onSt
   const photoStageUrl = useObjectUrl(selectedPhotoStage?.pngBlob ?? null);
 
   const canStartFight = Boolean(p1Fighter && p2Fighter);
+  const rookieStatus = includedRookieStatus(authStatus, billingProfile);
+  const createLabel = rookieStatus === 'included' ? 'Create Free Rookie' : 'Create Rookie';
+  const firstFighterCopy = rookieStatus === 'included'
+    ? 'Your first Rookie is included. Upload one photo, then come back here to face the Arcade roster.'
+    : rookieStatus === 'credits'
+      ? 'Rookie costs 2 credits. Upload one photo, then come back here to face the Arcade roster.'
+      : 'Upload one photo. We will check your included Rookie or credit balance before generation starts.';
 
   const stageSummary =
     stageChoice.kind === 'auto'
@@ -526,33 +549,54 @@ export function RosterPage({ authSessionKey, mode, onBack, onCreateFighter, onSt
                   </button>
                 </div>
               </div>
-              <button className="home-menu__action is-primary roster-fight-btn" disabled={!canStartFight || preparingFight} onClick={() => void launchFight()}>
-                <span>{preparingFight ? 'Preparing...' : modeMeta.actionLabel}</span>
-                <small>
-                  {preparingFight
-                    ? 'Checking cached sprites'
-                    : canStartFight
-                    ? `${p1Fighter?.name ?? 'P1'} vs ${p2Fighter?.name ?? 'P2'}`
-                    : 'Select both fighters first'}
-                </small>
-              </button>
+              {rosterLoaded && rosterEntries.length > 0 ? (
+                <button className="home-menu__action is-primary roster-fight-btn" disabled={!canStartFight || preparingFight} onClick={() => void launchFight()}>
+                  <span>{preparingFight ? 'Preparing...' : modeMeta.actionLabel}</span>
+                  <small>
+                    {preparingFight
+                      ? 'Checking cached sprites'
+                      : canStartFight
+                      ? `${p1Fighter?.name ?? 'P1'} vs ${p2Fighter?.name ?? 'P2'}`
+                      : 'Select both fighters first'}
+                  </small>
+                </button>
+              ) : null}
             </div>
 
             <div className="roster-fighter-grid">
-              {visibleEntries.length === 0 ? (
+              {!rosterLoaded ? (
+                <section className="gallery-empty roster-empty" aria-live="polite">
+                  <h2>Syncing Your Roster</h2>
+                  <p>Checking this device and your cloud fighters.</p>
+                </section>
+              ) : rosterEntries.length === 0 ? (
+                <section className="gallery-empty roster-empty">
+                  <h2>Make Yourself Playable</h2>
+                  <p>{firstFighterCopy}</p>
+                  <button className="home-menu__action is-primary" onClick={onCreateFighter}>
+                    <span>{createLabel}</span>
+                    <small>One photo · about 2 minutes</small>
+                  </button>
+                </section>
+              ) : visibleEntries.length === 0 ? (
                 <section className="gallery-empty roster-empty">
                   {rosterFilter === 'official' ? (
                     <>
                       <h2>Official Challengers Incoming</h2>
                       <p>The headline roster is being prepared in Champion quality.</p>
+                      {localEntries.length > 0 ? (
+                        <button className="gallery-back" onClick={() => setRosterFilter('yours')}>
+                          View Your Fighters
+                        </button>
+                      ) : null}
                     </>
                   ) : (
                     <>
                       <h2>Create Your First Fighter</h2>
-                      <p>Upload a photo, choose a quality tier, and enter the arcade.</p>
+                      <p>{firstFighterCopy}</p>
                       <button className="home-menu__action is-primary" onClick={onCreateFighter}>
-                        <span>Create Fighter</span>
-                        <small>Start With Your Photo</small>
+                        <span>{createLabel}</span>
+                        <small>Start with one photo</small>
                       </button>
                     </>
                   )}

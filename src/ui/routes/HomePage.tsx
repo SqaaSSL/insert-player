@@ -25,6 +25,7 @@ import { PUBLIC_APP_NAME } from '../publicBrand.ts';
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import { CheckoutConsent } from '../components/LegalConsent.tsx';
 import { currentCheckoutLegalAttestation } from '../legal.ts';
+import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
 
 interface HomePageProps extends AuthRouteState {
   onOpenGallery: () => void;
@@ -183,6 +184,13 @@ export function HomePage({
     setCheckoutPackId(null);
   };
 
+  const rookieStatus = includedRookieStatus(authStatus, billingProfile);
+  const arcadeModeHint = rookieStatus === 'included'
+    ? 'Your Rookie is included. Pick an official challenger.'
+    : rookieStatus === 'credits'
+      ? 'Take your fighter into the CPU ladder.'
+      : 'Create a fighter or pick an official challenger.';
+
   return (
     <div className="home-app">
       <div className="home-hero">
@@ -196,7 +204,7 @@ export function HomePage({
       <div className="home-menu">
         <button className="home-menu__action is-primary" onClick={onOpenVsCpu}>
           <span>Arcade Mode</span>
-          <small>Take Your Fighter Into The CPU Ladder</small>
+          <small>{arcadeModeHint}</small>
         </button>
         <button className="home-menu__action" onClick={onOpenVsPlayer}>
           <span>Versus</span>

@@ -35,8 +35,16 @@ import {
   prepareCloudFighterGeneration,
   syncFighterToCloud,
 } from '../../services/CloudFighters.ts';
-import { QUALITY_TIERS, type QualityTier } from '../../services/QualityTiers.ts';
-import { authorizeGeneration, finishGenerationPurchase } from '../../services/Billing.ts';
+import {
+  QUALITY_TIERS,
+  type QualityTier,
+} from '../../services/QualityTiers.ts';
+import {
+  authorizeGeneration,
+  finishGenerationPurchase,
+  getBillingProfile,
+  type BillingProfile,
+} from '../../services/Billing.ts';
 import { captureApiRequestContext, runWithProviderSession } from '../../services/ApiClient.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { paidTiersLocked, type AuthStatus } from '../authState.ts';
@@ -47,14 +55,21 @@ import {
   waitForGenerationJob,
   type GenerationJob,
 } from '../../services/GenerationJobs.ts';
+import { includedRookieStatus, initialCreationTier } from '../shared/rookieEntitlement.ts';
 
 interface CreateFighterPageProps {
   authStatus: AuthStatus;
+  authSessionKey: string;
   onBack: () => void;
   onComplete: (photoHash: string) => void;
 }
 
 const DEFAULT_NAME = 'New Fighter';
+
+function initialQualityTier(authStatus: AuthStatus): QualityTier {
+  const requestedTier = new URLSearchParams(window.location.search).get('tier');
+  return initialCreationTier(requestedTier, paidTiersLocked(authStatus));
+}
 
 function describeStage(status: PipelineStatus): string {
   switch (status.stage) {
@@ -121,10 +136,10 @@ function describeDurableJob(job: GenerationJob): string {
   return 'Forging safely in the cloud...';
 }
 
-export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFighterPageProps) {
+export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComplete }: CreateFighterPageProps) {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState(DEFAULT_NAME);
-  const [tier, setTier] = useState<QualityTier>(() => paidTiersLocked(authStatus) ? 'rookie' : 'contender');
+  const [tier, setTier] = useState<QualityTier>(() => initialQualityTier(authStatus));
 
   const [started, setStarted] = useState(false);
   const [running, setRunning] = useState(false);
@@ -142,6 +157,7 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
   const [legalAccepted, setLegalAccepted] = useState(false);
+  const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
   const [recoveryReady, setRecoveryReady] = useState(authStatus !== 'signed-in');
   const pollingAbortRef = useRef<AbortController | null>(null);
   const lockPaidTiers = paidTiersLocked(authStatus);
@@ -154,6 +170,20 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
       setTier('rookie');
     }
   }, [lockPaidTiers, tier]);
+
+  useEffect(() => {
+    if (authStatus !== 'signed-in') {
+      setBillingProfile(null);
+      return;
+    }
+
+    let cancelled = false;
+    const apiContext = captureApiRequestContext();
+    void getBillingProfile(apiContext).then((profile) => {
+      if (!cancelled) setBillingProfile(profile);
+    });
+    return () => { cancelled = true; };
+  }, [authSessionKey, authStatus]);
 
   useEffect(() => () => {
     pollingAbortRef.current?.abort();
@@ -530,6 +560,10 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
   const cachedSelectedSprite = selectedAnimName
     ? sprites.find((item) => item.animationName === selectedAnimName)
     : null;
+  const rookieStatus = includedRookieStatus(authStatus, billingProfile);
+  const startLabel = tier === 'rookie' && rookieStatus === 'included'
+    ? 'Create Free Rookie'
+    : `Create ${QUALITY_TIERS.find((item) => item.id === tier)?.label ?? 'Fighter'}`;
 
   const saveGif = async () => {
     if (!cachedSelectedSprite || !selectedAnimName) return;
@@ -565,9 +599,9 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
         <header className="roster-hero">
           <div>
             <p className="gallery-eyebrow">New Fighter</p>
-            <h1>Forge A Challenger</h1>
+            <h1>Make Yourself Playable</h1>
             <p className="roster-hero__copy">
-              Upload a photo and name your fighter. The AI handles the rest.
+              Upload one photo. We build a fighter you can take straight into Arcade Mode.
             </p>
           </div>
           <div className="roster-hero__actions">
@@ -599,6 +633,18 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
           <div className="tier-picker" role="radiogroup" aria-label="Quality tier">
             {QUALITY_TIERS.map((item) => {
               const locked = lockPaidTiers && item.id !== 'rookie';
+              const priceLabel = item.id !== 'rookie'
+                ? item.priceLabel
+                : rookieStatus === 'included'
+                  ? 'Included'
+                  : rookieStatus === 'credits'
+                    ? item.priceLabel
+                    : 'Checking account';
+              const pitch = item.id === 'rookie' && rookieStatus === 'included'
+                ? authStatus === 'signed-out'
+                  ? 'Your first playable fighter is free after a quick human check.'
+                  : 'Your first playable fighter is included with your account.'
+                : item.pitch;
               return (
                 <button
                   key={item.id}
@@ -610,8 +656,8 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
                   onClick={() => setTier(item.id)}
                 >
                   <span>{item.label}</span>
-                  <small>{locked ? `${item.priceLabel} · Sign in` : `${item.priceLabel} · ${item.estimatedTime}`}</small>
-                  <em>{locked ? 'Sign in to unlock paid quality.' : item.pitch}</em>
+                  <small>{locked ? `${item.priceLabel} · Sign in` : `${priceLabel} · ${item.estimatedTime}`}</small>
+                  <em>{locked ? 'Sign in to unlock paid quality.' : pitch}</em>
                 </button>
               );
             })}
@@ -634,7 +680,7 @@ export function CreateFighterPage({ authStatus, onBack, onComplete }: CreateFigh
             disabled={!file || !name.trim() || running || !turnstileReady || !legalAccepted || !recoveryReady}
             onClick={() => void start()}
           >
-            <span>{!recoveryReady ? 'Checking Cloud...' : running ? 'Authorizing...' : 'Start Forging'}</span>
+            <span>{!recoveryReady ? 'Checking Cloud...' : running ? 'Authorizing...' : startLabel}</span>
             <small>{file ? file.name : 'Pick a photo to continue'}</small>
           </button>
         </div>
