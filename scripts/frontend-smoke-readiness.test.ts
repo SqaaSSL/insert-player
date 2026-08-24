@@ -1,10 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { frontendShellReadinessError } from './frontend-smoke-readiness.mjs';
+import {
+  frontendAssetProbeUrl,
+  frontendShellReadinessError,
+} from './frontend-smoke-readiness.mjs';
 
 const appShell = '<!doctype html><div id="app"></div>';
 const clerkOrigin = 'https://clerk.insertplayer.ai';
 
 describe('frontend deployment propagation readiness', () => {
+  it('uses an isolated cache key while a new immutable asset propagates', () => {
+    expect(frontendAssetProbeUrl(
+      'https://insertplayer.ai',
+      '/assets/index-current.js',
+      'deploy-123',
+    )).toBe('https://insertplayer.ai/assets/index-current.js?__insert_player_readiness=deploy-123');
+    expect(frontendAssetProbeUrl(
+      'https://insertplayer.ai',
+      '/assets/index-current.js',
+      '',
+    )).toBe('https://insertplayer.ai/assets/index-current.js');
+  });
+
   it('keeps waiting while the custom domain serves the prelaunch CSP', () => {
     expect(frontendShellReadinessError({
       html: appShell,

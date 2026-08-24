@@ -54,6 +54,7 @@ jobs:
       ASF_FRONTEND_ORIGIN: ${{ vars.ASF_FRONTEND_ORIGIN }}
       ASF_PAGES_PROJECT_NAME: ${{ vars.ASF_PAGES_PROJECT_NAME }}
       ASF_PAGES_BRANCH: main
+      ASF_CLOUDFLARE_ZONE_ID: ${{ vars.ASF_CLOUDFLARE_ZONE_ID }}
 
     steps:
       - name: Check out repository

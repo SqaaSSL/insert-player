@@ -7,6 +7,12 @@ export function parseContentSecurityPolicy(value) {
   return directives;
 }
 
+export function frontendAssetProbeUrl(frontendUrl, assetPath, nonce) {
+  const target = new URL(assetPath, `${frontendUrl.replace(/\/+$/, '')}/`);
+  if (nonce) target.searchParams.set('__insert_player_readiness', nonce);
+  return target.toString();
+}
+
 export function frontendShellReadinessError({
   html,
   cspHeader,

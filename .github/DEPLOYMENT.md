@@ -40,6 +40,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | Variable | Development | Production |
 |---|---|---|
 | `CLOUDFLARE_ACCOUNT_ID` | Insert Player Cloudflare account | Same account |
+| `ASF_CLOUDFLARE_ZONE_ID` | Not used | `insertplayer.ai` zone id |
 | `VITE_API_BASE_URL` | Sandbox Worker URL | `https://api.insertplayer.ai` |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk Development key | Clerk Production key |
 | `VITE_TURNSTILE_SITE_KEY` | Sandbox/test widget | Production widget |
@@ -85,7 +86,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | `GENERATION_JOB_SIGNING_SECRET` | Stable random HMAC secret for scoped processor job tokens, at least 32 characters |
 | `BRAND_CLEARANCE_JSON` | Production only; exact JSON from the local cleared brand record |
 
-The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit, Pages edit, Containers write, and the route/resource permissions required by the checked-in Worker/Workflow bindings. Scope it to Cloudflare account `61fc998aa16c1c11a949d982e7a65dcb` and zone `insertplayer.ai`; do not use a Global API Key. A `7403` response from the first D1 migration means the token is for the wrong account or cannot access D1, even if its permission names otherwise look correct.
+The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit, Pages edit, Containers write, zone Cache Purge, and the route/resource permissions required by the checked-in Worker/Workflow bindings. Scope it to Cloudflare account `61fc998aa16c1c11a949d982e7a65dcb` and zone `insertplayer.ai`; do not use a Global API Key. A `7403` response from the first D1 migration means the token is for the wrong account or cannot access D1, even if its permission names otherwise look correct. Production Pages deploys probe a fresh immutable asset under an isolated cache key, purge the exact apex and `www` asset URLs after propagation, then run a second smoke against the canonical URL so an SPA fallback can never remain cached as JavaScript.
 
 Never use one GitHub environment as a fallback for another. A missing value must fail the deployment rather than silently reuse a test or live credential.
 

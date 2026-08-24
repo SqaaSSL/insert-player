@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeClerkPublishableKey } from './clerk-publishable-key.mjs';
 import {
+  frontendAssetProbeUrl,
   frontendShellReadinessError,
   parseContentSecurityPolicy,
 } from './frontend-smoke-readiness.mjs';
@@ -64,6 +65,7 @@ const expectedApiOrigin = isSandbox
 const expectedAppName = envValue(env, 'ASF_PUBLIC_APP_NAME') || envValue(env, 'VITE_PUBLIC_APP_NAME') || 'Insert Player';
 const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card.png';
 const expectedAssetPath = envValue(env, 'ASF_EXPECTED_FRONTEND_ASSET_PATH');
+const assetProbeNonce = envValue(env, 'ASF_FRONTEND_ASSET_PROBE_NONCE');
 const FETCH_TIMEOUT_MS = Number(envValue(env, 'ASF_FRONTEND_SMOKE_TIMEOUT_MS') || 30_000);
 const FRONTEND_READY_TIMEOUT_MS = Number(envValue(env, 'ASF_FRONTEND_READY_TIMEOUT_MS') || 240_000);
 const FRONTEND_RETRY_DELAY_MS = Number(envValue(env, 'ASF_FRONTEND_RETRY_DELAY_MS') || 2_500);
@@ -314,7 +316,8 @@ async function main() {
   }
   const jsTexts = [];
   for (const assetPath of assetPaths.filter((path) => path.endsWith('.js'))) {
-    const asset = await waitForFrontendText(`frontend asset ${assetPath}`, assetPath, {
+    const assetProbeUrl = frontendAssetProbeUrl(frontendUrl, assetPath, assetProbeNonce);
+    const asset = await waitForFrontendText(`frontend asset ${assetPath}`, assetProbeUrl, {
       readinessError: ({ res }) => {
         const contentType = res.headers.get('Content-Type') ?? '';
         if (!/javascript/i.test(contentType)) return `expected JavaScript, got ${contentType || 'no content type'}`;
