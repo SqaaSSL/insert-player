@@ -6,6 +6,7 @@ import {
   frontendAssetProbeUrl,
   frontendShellReadinessError,
   parseContentSecurityPolicy,
+  parsePositiveTimeoutMs,
 } from './frontend-smoke-readiness.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -66,9 +67,21 @@ const expectedAppName = envValue(env, 'ASF_PUBLIC_APP_NAME') || envValue(env, 'V
 const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card.png';
 const expectedAssetPath = envValue(env, 'ASF_EXPECTED_FRONTEND_ASSET_PATH');
 const assetProbeNonce = envValue(env, 'ASF_FRONTEND_ASSET_PROBE_NONCE');
-const FETCH_TIMEOUT_MS = Number(envValue(env, 'ASF_FRONTEND_SMOKE_TIMEOUT_MS') || 30_000);
-const FRONTEND_READY_TIMEOUT_MS = Number(envValue(env, 'ASF_FRONTEND_READY_TIMEOUT_MS') || 240_000);
-const FRONTEND_RETRY_DELAY_MS = Number(envValue(env, 'ASF_FRONTEND_RETRY_DELAY_MS') || 2_500);
+const FETCH_TIMEOUT_MS = parsePositiveTimeoutMs(
+  envValue(env, 'ASF_FRONTEND_SMOKE_TIMEOUT_MS'),
+  30_000,
+  'ASF_FRONTEND_SMOKE_TIMEOUT_MS',
+);
+const FRONTEND_READY_TIMEOUT_MS = parsePositiveTimeoutMs(
+  envValue(env, 'ASF_FRONTEND_READY_TIMEOUT_MS'),
+  240_000,
+  'ASF_FRONTEND_READY_TIMEOUT_MS',
+);
+const FRONTEND_RETRY_DELAY_MS = parsePositiveTimeoutMs(
+  envValue(env, 'ASF_FRONTEND_RETRY_DELAY_MS'),
+  2_500,
+  'ASF_FRONTEND_RETRY_DELAY_MS',
+);
 
 const failures = [];
 

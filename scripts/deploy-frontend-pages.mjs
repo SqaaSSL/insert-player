@@ -226,7 +226,7 @@ async function main() {
     SMOKE_TIMEOUT_MS,
     {
       ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath,
-      ASF_FRONTEND_READY_TIMEOUT_MS: '30_000',
+      ASF_FRONTEND_READY_TIMEOUT_MS: '30000',
     },
   );
 }
