@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 const TURNSTILE_SCRIPT_ID = 'cloudflare-turnstile-script';
 const TURNSTILE_SCRIPT_URL = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
@@ -75,6 +75,12 @@ export function TurnstileChallenge({
   const widgetIdRef = useRef<string | null>(null);
   const onTokenChangeRef = useRef(onTokenChange);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [responseToken, setResponseToken] = useState('');
+
+  const publishToken = useCallback((token: string | null) => {
+    setResponseToken(token ?? '');
+    onTokenChangeRef.current(token);
+  }, []);
 
   useEffect(() => {
     onTokenChangeRef.current = onTokenChange;
@@ -83,7 +89,7 @@ export function TurnstileChallenge({
   useEffect(() => {
     let cancelled = false;
     setLoadFailed(false);
-    onTokenChangeRef.current(null);
+    publishToken(null);
 
     if (!siteKey) {
       setLoadFailed(true);
@@ -100,9 +106,9 @@ export function TurnstileChallenge({
           size: 'flexible',
           appearance: 'interaction-only',
           'response-field': false,
-          callback: (token) => onTokenChangeRef.current(token),
-          'expired-callback': () => onTokenChangeRef.current(null),
-          'error-callback': () => onTokenChangeRef.current(null),
+          callback: publishToken,
+          'expired-callback': () => publishToken(null),
+          'error-callback': () => publishToken(null),
         });
       })
       .catch(() => {
@@ -116,18 +122,24 @@ export function TurnstileChallenge({
       if (widgetId && window.turnstile) window.turnstile.remove(widgetId);
       onTokenChangeRef.current(null);
     };
-  }, [siteKey]);
+  }, [publishToken, siteKey]);
 
   useEffect(() => {
     const widgetId = widgetIdRef.current;
     if (!widgetId || !window.turnstile) return;
-    onTokenChangeRef.current(null);
+    publishToken(null);
     window.turnstile.reset(widgetId);
-  }, [resetSignal]);
+  }, [publishToken, resetSignal]);
 
   return (
     <div className="turnstile-challenge" aria-live="polite">
       <div ref={mountRef} className="turnstile-challenge__mount" />
+      <input
+        type="hidden"
+        name="cf-turnstile-response"
+        value={responseToken}
+        readOnly
+      />
       {loadFailed ? (
         <p className="turnstile-challenge__error" role="alert">
           Verification is unavailable. Refresh to retry.
