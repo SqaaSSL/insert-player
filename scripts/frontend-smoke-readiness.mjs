@@ -13,6 +13,15 @@ export function frontendAssetProbeUrl(frontendUrl, assetPath, nonce) {
   return target.toString();
 }
 
+export function parsePositiveTimeoutMs(value, fallback, label) {
+  const raw = value?.trim() || String(fallback);
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive number of milliseconds`);
+  }
+  return parsed;
+}
+
 export function frontendShellReadinessError({
   html,
   cspHeader,
