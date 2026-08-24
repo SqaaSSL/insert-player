@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { installCanvasRuntime } from './canvasRuntime';
 import { processorErrorResponse } from './providerErrorResponse';
 import { sourceGenerationStrategy } from './sourceGenerationPolicy';
+import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
 
 installCanvasRuntime();
 
@@ -202,7 +203,11 @@ function sendJson(response: import('node:http').ServerResponse, status: number, 
 const server = createServer(async (request, response) => {
   try {
     if (request.method === 'GET' && request.url === '/health') {
-      sendJson(response, 200, { status: 'ok', runtime: 'canvas-skia' });
+      sendJson(response, 200, {
+        status: 'ok',
+        runtime: 'canvas-skia',
+        imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      });
       return;
     }
 

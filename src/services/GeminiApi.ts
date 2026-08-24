@@ -13,11 +13,15 @@ import {
   isApprovedGeminiImageModel,
   retryGeminiRequest,
 } from './GeminiRequestPolicy';
+import {
+  GEMINI_FLASH_IMAGE_MODEL,
+  OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+} from './ImageProviderContract';
 
 const GEMINI_BASE = '/proxy/gemini/v1beta/models';
-const DEFAULT_GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image';
+const DEFAULT_GEMINI_IMAGE_MODEL = GEMINI_FLASH_IMAGE_MODEL;
 const DEFAULT_GEMINI_SOURCE_MODEL = 'gemini-3-pro-image';
-const OFFICIAL_GEMINI_REVIEW_MODEL = DEFAULT_GEMINI_SOURCE_MODEL;
+const OFFICIAL_GEMINI_REVIEW_MODEL = OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.championAnimation.reviewModel;
 const PRO_REQUEST_START_INTERVAL_MS = 11_000;
 const geminiRequestPacer = new RequestStartPacer();
 

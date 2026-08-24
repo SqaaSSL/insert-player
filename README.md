@@ -153,7 +153,7 @@ npm run check:live-readiness
 npm run smoke:live
 ```
 
-Official Arcade roster generation is operator-only through the `Seed Arcade roster (production)` GitHub workflow. It restores the manifest-pinned source from private R2, verifies its exact SHA-256 hash, accepts only explicit `dry-run`, `seed`, `resume`, or `restart-draft` operations, and never activates a fighter automatically. Billable runs require the exact `GEMINI_ONLY_PRODUCTION` confirmation and fail closed unless the approved-provider guard can prove the production processor is Gemini-only before the first call.
+Official Arcade roster generation is operator-only through the `Seed Arcade roster (production)` GitHub workflow. It accepts an authenticated, non-billable `preflight` that verifies the deployed Container without restoring or mutating fighter data; generation operations restore the manifest-pinned source from private R2 and verify its exact SHA-256 hash. The Action accepts only explicit `preflight`, `dry-run`, `seed`, `resume`, or `restart-draft` operations and never activates a fighter automatically. Billable runs require the exact `GEMINI_ONLY_PRODUCTION` confirmation and fail closed unless the approved-provider guard can prove the production processor is Gemini-only before the first call.
 
 ## Architecture
 
