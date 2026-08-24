@@ -57,6 +57,8 @@ const SCHEMA = `
     fighter_id TEXT,
     ledger_id TEXT,
     refund_ledger_id TEXT,
+    continuation_run_id TEXT,
+    resumed_from_job_id TEXT,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -88,8 +90,11 @@ const SCHEMA = `
     operation TEXT NOT NULL,
     target_kind TEXT,
     target_name TEXT,
+    artifact_run_id TEXT,
+    resumed_from_job_id TEXT,
     status TEXT NOT NULL DEFAULT 'queued',
     stage TEXT NOT NULL DEFAULT 'queued',
+    failure_stage TEXT,
     progress_current INTEGER NOT NULL DEFAULT 0,
     progress_total INTEGER NOT NULL DEFAULT 14,
     error_code TEXT,
@@ -109,6 +114,53 @@ const SCHEMA = `
     status TEXT NOT NULL,
     detail TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE arcade_fighters (
+    fighter_id TEXT PRIMARY KEY,
+    generation_prompt TEXT
+  );
+  CREATE TABLE generation_artifact_runs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    fighter_id TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    target_kind TEXT,
+    target_name TEXT,
+    root_job_id TEXT NOT NULL,
+    original_charge_id TEXT,
+    original_blob_key TEXT,
+    source_manifest_json TEXT,
+    generation_prompt TEXT,
+    pipeline_version INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'active',
+    failure_stage TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT
+  );
+  CREATE TABLE generation_artifact_checkpoints (
+    run_id TEXT NOT NULL,
+    artifact_kind TEXT NOT NULL,
+    artifact_name TEXT NOT NULL,
+    stage_index INTEGER NOT NULL,
+    tier TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'approved',
+    clean_version_id TEXT NOT NULL,
+    raw_version_id TEXT,
+    clean_blob_key TEXT NOT NULL,
+    raw_blob_key TEXT,
+    clean_content_hash TEXT,
+    raw_content_hash TEXT,
+    frame_w INTEGER,
+    frame_h INTEGER,
+    frame_count INTEGER,
+    processing_version INTEGER,
+    metadata_json TEXT,
+    completed_by_job_id TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    verified_at TEXT,
+    PRIMARY KEY (run_id, artifact_kind, artifact_name)
   );
   CREATE TABLE provider_capacity_windows (
     provider TEXT NOT NULL,
@@ -282,6 +334,125 @@ describe('durable generation job creation', () => {
       expect(Date.parse(charge?.expires_at ?? '')).toBeGreaterThan(Date.now() + 47 * 60 * 60 * 1_000);
       expect((await db.prepare('SELECT COUNT(*) AS count FROM generation_jobs')
         .first<{ count: number }>())?.count).toBe(1);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('creates a continuation job at 7/14 on the original partial artifact run', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    const completedStages = [
+      ['source', 'side', 1],
+      ['source', 'upright', 2],
+      ['source', 'crouch', 3],
+      ['sprite', 'idle', 4],
+      ['sprite', 'walk', 5],
+      ['sprite', 'high_punch', 6],
+      ['sprite', 'high_kick', 7],
+    ] as const;
+    try {
+      await db.batch([
+        db.prepare("UPDATE generation_charges SET status = 'committed' WHERE id = ?")
+          .bind(PURCHASE_ID),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, operation, root_job_id,
+            original_charge_id, original_blob_key, status, failure_stage
+          ) VALUES (?, ?, ?, 'rookie', 'fighter_generation', ?, ?, ?, 'partial', 'sprite:low_punch')
+        `).bind(PURCHASE_ID, USER_ID, FIGHTER_ID, PURCHASE_ID, PURCHASE_ID, ORIGINAL_KEY),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, workflow_instance_id, user_id, fighter_id, charge_id, provider_session_id,
+            tier, operation, artifact_run_id, status, stage, failure_stage,
+            progress_current, progress_total, finished_at
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?, 'rookie', 'fighter_generation', ?,
+            'failed', 'sprite:low_punch', 'sprite:low_punch', 7, 14, datetime('now')
+          )
+        `).bind(
+          PURCHASE_ID,
+          PURCHASE_ID,
+          USER_ID,
+          FIGHTER_ID,
+          PURCHASE_ID,
+          SESSION_ID,
+          PURCHASE_ID,
+        ),
+        ...completedStages.map(([kind, name, index]) => db.prepare(`
+          INSERT INTO generation_artifact_checkpoints (
+            run_id, artifact_kind, artifact_name, stage_index, tier,
+            clean_version_id, clean_blob_key, completed_by_job_id
+          ) VALUES (?, ?, ?, ?, 'rookie', ?, ?, ?)
+        `).bind(
+          PURCHASE_ID,
+          kind,
+          name,
+          index,
+          `version-${name}`,
+          `users/${USER_ID}/fighters/${FIGHTER_ID}/versions/${name}.png`,
+          PURCHASE_ID,
+        )),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('ledger-continuation', ?, 0, 'fighter_generation_continuation', ?)
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, status, reason, fighter_id, ledger_id,
+            continuation_run_id, resumed_from_job_id, expires_at
+          ) VALUES (
+            ?, ?, 'rookie', 0, 'reserved', 'fighter_generation', ?, 'ledger-continuation',
+            ?, ?, datetime('now', '+12 hours')
+          )
+        `).bind(SECOND_PURCHASE_ID, USER_ID, FIGHTER_ID, PURCHASE_ID, PURCHASE_ID),
+        db.prepare(`
+          INSERT INTO provider_sessions (
+            id, user_id, rate_limit_key, tier, purpose, charge_id, status, expires_at
+          ) VALUES (?, ?, ?, 'rookie', 'fighter_generation', ?, 'active', datetime('now', '+12 hours'))
+        `).bind(SECOND_SESSION_ID, USER_ID, `user:${USER_ID}`, SECOND_PURCHASE_ID),
+      ]);
+
+      const response = await createGenerationJob(
+        request(SECOND_PURCHASE_ID, SECOND_SESSION_ID),
+        env,
+        auth,
+      );
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({
+        job: {
+          id: SECOND_PURCHASE_ID,
+          artifactRunId: PURCHASE_ID,
+          resumedFromJobId: PURCHASE_ID,
+          progressCurrent: 7,
+          progressTotal: 14,
+          preservedArtifactCount: 7,
+          completedStages: [
+            'source:side',
+            'source:upright',
+            'source:crouch',
+            'sprite:idle',
+            'sprite:walk',
+            'sprite:high_punch',
+            'sprite:high_kick',
+          ],
+          pendingStages: [
+            'sprite:low_punch',
+            'sprite:low_kick',
+            'sprite:jump',
+            'sprite:crouch',
+            'sprite:hit',
+            'sprite:ko',
+            'sprite:victory',
+          ],
+        },
+      });
+      expect(workflowStarts).toEqual([SECOND_PURCHASE_ID]);
+      expect((await db.prepare('SELECT COUNT(*) AS count FROM generation_artifact_runs')
+        .first<{ count: number }>())?.count).toBe(1);
+      expect((await db.prepare('SELECT status FROM generation_artifact_runs WHERE id = ?')
+        .bind(PURCHASE_ID).first<{ status: string }>())?.status).toBe('active');
+      expect((await db.prepare('SELECT credits_balance FROM users WHERE id = ?')
+        .bind(USER_ID).first<{ credits_balance: number }>())?.credits_balance).toBe(7);
     } finally {
       await mf.dispose();
     }

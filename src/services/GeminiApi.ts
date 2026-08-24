@@ -206,7 +206,14 @@ async function callGemini(
     try {
       response = await apiFetch(`${GEMINI_BASE}/${model}:generateContent`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(context?.detached ? {
+            'X-Insert-Player-Provider-Call-Kind': responseModalities.length === 1 && responseModalities[0] === 'TEXT'
+              ? 'quality_review'
+              : 'image_generation',
+          } : {}),
+        },
         body: JSON.stringify({
           contents: [{ parts: reqParts }],
           generationConfig: { responseModalities },

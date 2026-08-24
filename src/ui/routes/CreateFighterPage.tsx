@@ -158,6 +158,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
+  const [resumableJob, setResumableJob] = useState<GenerationJob | null>(null);
   const [recoveryReady, setRecoveryReady] = useState(authStatus !== 'signed-in');
   const pollingAbortRef = useRef<AbortController | null>(null);
   const lockPaidTiers = paidTiersLocked(authStatus);
@@ -192,6 +193,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
 
   useEffect(() => {
     if (authStatus !== 'signed-in') {
+      setResumableJob(null);
       setRecoveryReady(true);
       return;
     }
@@ -211,11 +213,16 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
           job.operation === 'fighter_generation' &&
           (job.status === 'queued' || job.status === 'running')
         ));
-        if (!active) {
+        const resumable = jobs.find((job) => (
+          job.operation === 'fighter_generation' && job.resumable
+        ));
+        const recovering = active ?? resumable;
+        if (!recovering) {
+          setResumableJob(null);
           setRecoveryReady(true);
           return;
         }
-        const fighter = await getCloudFighter(active.fighterId, apiContext);
+        const fighter = await getCloudFighter(recovering.fighterId, apiContext);
         if (disposed) return;
         if (fighter) {
           setName(fighter.name);
@@ -229,14 +236,26 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             await refreshFromCache(fighter.photoHash);
           }
         }
-        setTier(active.tier);
+        setTier(recovering.tier);
         setStarted(true);
-        setRunning(true);
         setDone(false);
+        applyDurableJob(recovering);
+        if (!active && resumable) {
+          setResumableJob(recovering);
+          setError(
+            `${recovering.errorMessage ?? 'Generation paused.'} ` +
+            `${recovering.preservedArtifactCount} completed stages are preserved; retry continues without charging again.`,
+          );
+          setRunning(false);
+          setRecoveryReady(true);
+          return;
+        }
+        setResumableJob(null);
+        setRunning(true);
         setError(null);
-        applyDurableJob(active);
-        const completed = await monitorDurableJob(active, apiContext, controller.signal);
+        const completed = await monitorDurableJob(recovering, apiContext, controller.signal);
         if (disposed) return;
+        if (completed.status === 'failed' && completed.resumable) setResumableJob(completed);
         await finishDurableJob(completed, apiContext);
       } catch (err: any) {
         if (disposed || (err instanceof DOMException && err.name === 'AbortError')) return;
@@ -255,7 +274,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       controller.abort();
       if (pollingAbortRef.current === controller) pollingAbortRef.current = null;
     };
-  }, [authStatus]);
+  }, [authSessionKey, authStatus]);
 
   async function refreshFromCache(hash: string): Promise<{ meta: CachedMeta | null; sprites: CachedSprite[] }> {
     const [allMetas, nextSprites] = await Promise.all([
@@ -412,11 +431,49 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     pollingAbortRef.current?.abort();
     pollingAbortRef.current = controller;
     const completed = await monitorDurableJob(job, apiContext, controller.signal);
+    if (completed.status === 'failed' && completed.resumable) setResumableJob(completed);
+    await finishDurableJob(completed, apiContext);
+  }
+
+  async function resumeDurable(
+    failedJob: GenerationJob,
+    apiContext: ReturnType<typeof captureApiRequestContext>,
+  ): Promise<void> {
+    setStarted(true);
+    setStageText(`Restoring ${failedJob.preservedArtifactCount} completed stages...`);
+    const authorization = await authorizeGeneration(
+      failedJob.tier,
+      failedJob.operation,
+      failedJob.fighterId,
+      null,
+      currentGenerationLegalAttestation(),
+      apiContext,
+      failedJob.id,
+    );
+    if (
+      !authorization.authorized ||
+      authorization.mode !== 'continuation' ||
+      !authorization.purchaseId ||
+      !authorization.providerSessionId
+    ) {
+      throw new Error(authorization.error ?? 'Preserved generation could not be resumed');
+    }
+    const job = await startGenerationJob({
+      fighterId: failedJob.fighterId,
+      purchaseId: authorization.purchaseId,
+      providerSessionId: authorization.providerSessionId,
+    }, apiContext);
+    setResumableJob(null);
+    const controller = new AbortController();
+    pollingAbortRef.current?.abort();
+    pollingAbortRef.current = controller;
+    const completed = await monitorDurableJob(job, apiContext, controller.signal);
+    if (completed.status === 'failed' && completed.resumable) setResumableJob(completed);
     await finishDurableJob(completed, apiContext);
   }
 
   async function start() {
-    if (!file || running || !turnstileReady || !legalAccepted || !recoveryReady) return;
+    if ((!file && !resumableJob) || running || !turnstileReady || !legalAccepted || !recoveryReady) return;
     setRunning(true);
     setDone(false);
     setError(null);
@@ -428,7 +485,8 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     const apiContext = captureApiRequestContext();
     try {
       if (authStatus === 'signed-in') {
-        await startDurable(apiContext);
+        if (resumableJob) await resumeDurable(resumableJob, apiContext);
+        else await startDurable(apiContext);
         return;
       }
       let authorization;
@@ -450,6 +508,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       if (!authorization.authorized) {
         throw new Error(authorization.error ?? 'Generation not authorized');
       }
+      if (!file) throw new Error('Choose a source photo before starting generation');
       setStarted(true);
       purchaseId = authorization.purchaseId;
       const hash = await runWithProviderSession(
@@ -506,7 +565,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   }
 
   function retry() {
-    if (!file) return;
+    if (!file && !resumableJob) return;
     setError(null);
     void start();
   }
@@ -521,6 +580,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     setMeta(null);
     setSprites([]);
     setGenerating(new Set());
+    setResumableJob(null);
     setSelection({ kind: 'source', source: 'original' });
     setLegalAccepted(false);
   }
@@ -627,7 +687,10 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             <input
               type="file"
               accept="image/*"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              onChange={(event) => {
+                setFile(event.target.files?.[0] ?? null);
+                setResumableJob(null);
+              }}
             />
           </label>
           <div className="tier-picker" role="radiogroup" aria-label="Quality tier">
@@ -728,9 +791,9 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             />
           ) : null}
           <div className="gallery-actions">
-            {file ? (
+            {file || resumableJob ? (
               <button onClick={retry} disabled={running || !turnstileReady}>
-                Retry Pipeline
+                {resumableJob ? 'Resume Preserved Work' : 'Retry Pipeline'}
               </button>
             ) : (
               <button onClick={choosePhotoAgain} disabled={running}>

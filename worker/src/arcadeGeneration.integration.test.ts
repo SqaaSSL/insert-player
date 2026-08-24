@@ -7,7 +7,10 @@ import {
   startAdminArcadeGeneration,
   startAdminArcadeSourceGeneration,
 } from './arcadeGeneration';
-import { createProviderSession } from './providerSessions';
+import {
+  constrainProviderSessionToArtifactRunRemaining,
+  createProviderSession,
+} from './providerSessions';
 import type { AuthContext, Env } from './types';
 import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
 
@@ -17,6 +20,7 @@ vi.mock('./generationJobs', () => ({
 
 vi.mock('./providerSessions', () => ({
   createProviderSession: vi.fn(),
+  constrainProviderSessionToArtifactRunRemaining: vi.fn(),
 }));
 
 const USER_ID = 'arcade-admin';
@@ -87,6 +91,8 @@ const SCHEMA = `
     reason TEXT NOT NULL,
     fighter_id TEXT,
     ledger_id TEXT,
+    continuation_run_id TEXT,
+    resumed_from_job_id TEXT,
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -94,7 +100,11 @@ const SCHEMA = `
   CREATE TABLE generation_jobs (
     id TEXT PRIMARY KEY,
     charge_id TEXT,
+    user_id TEXT,
     fighter_id TEXT NOT NULL,
+    artifact_run_id TEXT,
+    tier TEXT,
+    operation TEXT,
     status TEXT NOT NULL,
     stage TEXT NOT NULL,
     progress_current INTEGER NOT NULL,
@@ -102,12 +112,32 @@ const SCHEMA = `
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+  CREATE TABLE generation_artifact_runs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    fighter_id TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    target_kind TEXT,
+    target_name TEXT,
+    status TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE generation_artifact_checkpoints (
+    run_id TEXT NOT NULL,
+    artifact_kind TEXT NOT NULL,
+    artifact_name TEXT NOT NULL,
+    stage_index INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    PRIMARY KEY (run_id, artifact_kind, artifact_name)
+  );
   CREATE TABLE provider_sessions (
     id TEXT PRIMARY KEY,
     user_id TEXT,
     charge_id TEXT,
     status TEXT NOT NULL,
-    expires_at TEXT NOT NULL
+    expires_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `;
 
@@ -278,7 +308,19 @@ async function stageCompleteChampionInventory(
 describe('official Arcade generation authorization', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(createProviderSession).mockResolvedValue({ id: 'provider-session' } as never);
+    vi.mocked(createProviderSession).mockResolvedValue({
+      id: 'provider-session',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      providerCallLimit: 320,
+      providerCostLimitCents: 1_800,
+    });
+    vi.mocked(constrainProviderSessionToArtifactRunRemaining).mockImplementation(
+      async (_env, session) => ({
+        ...session,
+        providerCallLimit: 219,
+        providerCostLimitCents: 915,
+      }),
+    );
     vi.mocked(createGenerationJob).mockResolvedValue(Response.json({
       job: { id: 'arcade-job', status: 'queued' },
     }, { status: 201 }));
@@ -319,6 +361,138 @@ describe('official Arcade generation authorization', () => {
         reason: 'arcade_seed_generation',
         fighter_id: FIGHTER_ID,
       });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('resumes the failed Champion roster after 3 sources and 4 animations on the same run', async () => {
+    const { mf, db, env } = await bindings();
+    const failedJobId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const originalChargeId = 'cccccccccccccccccccccccccccccccc';
+    const completedStages = [
+      ['source', 'side', 1],
+      ['source', 'upright', 2],
+      ['source', 'crouch', 3],
+      ['sprite', 'idle', 4],
+      ['sprite', 'walk', 5],
+      ['sprite', 'high_punch', 6],
+      ['sprite', 'high_kick', 7],
+    ] as const;
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('original-roster-ledger', ?, 0, 'arcade_seed_generation', ?)
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, free_quota_delta, status,
+            reason, fighter_id, ledger_id, expires_at
+          ) VALUES (?, ?, 'champion', 0, 0, 'committed',
+            'arcade_seed_generation', ?, 'original-roster-ledger', datetime('now', '+1 hour'))
+        `).bind(originalChargeId, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, operation, status
+          ) VALUES (?, ?, ?, 'champion', 'fighter_generation', 'partial')
+        `).bind(failedJobId, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, charge_id, user_id, fighter_id, artifact_run_id, tier, operation,
+            status, stage, progress_current, progress_total
+          ) VALUES (?, ?, ?, ?, ?, 'champion', 'fighter_generation',
+            'failed', 'sprite:low_punch', 7, 14)
+        `).bind(failedJobId, originalChargeId, USER_ID, FIGHTER_ID, failedJobId),
+        ...completedStages.map(([kind, name, index]) => db.prepare(`
+          INSERT INTO generation_artifact_checkpoints (
+            run_id, artifact_kind, artifact_name, stage_index, status
+          ) VALUES (?, ?, ?, ?, 'approved')
+        `).bind(failedJobId, kind, name, index)),
+      ]);
+
+      const response = await startAdminArcadeGeneration(
+        generationRequest(),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+      );
+
+      expect(response.status).toBe(201);
+      expect(constrainProviderSessionToArtifactRunRemaining).toHaveBeenCalledOnce();
+      const [, , , continuationRunId] = vi.mocked(
+        constrainProviderSessionToArtifactRunRemaining,
+      ).mock.calls[0];
+      expect(continuationRunId).toBe(failedJobId);
+      expect(await db.prepare(`
+        SELECT continuation_run_id, resumed_from_job_id, credit_cost
+        FROM generation_charges WHERE status = 'reserved'
+      `).first()).toEqual({
+        continuation_run_id: failedJobId,
+        resumed_from_job_id: failedJobId,
+        credit_cost: 0,
+      });
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM generation_artifact_checkpoints
+        WHERE run_id = ? AND status = 'approved'
+      `).bind(failedJobId).first<{ count: number }>())?.count).toBe(7);
+      const [jobRequest] = vi.mocked(createGenerationJob).mock.calls[0];
+      expect(await jobRequest.clone().json()).toMatchObject({ fighterId: FIGHTER_ID });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('cancels a continuation session when its aggregate budget cannot be bounded', async () => {
+    const { mf, db, env } = await bindings();
+    const failedJobId = 'dddddddddddddddddddddddddddddddd';
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('failed-budget-ledger', ?, 0, 'arcade_seed_generation', ?)
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, free_quota_delta, status,
+            reason, fighter_id, ledger_id, expires_at
+          ) VALUES ('failed-budget-charge', ?, 'champion', 0, 0, 'committed',
+            'arcade_seed_generation', ?, 'failed-budget-ledger', datetime('now', '+1 hour'))
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, operation, status
+          ) VALUES (?, ?, ?, 'champion', 'fighter_generation', 'partial')
+        `).bind(failedJobId, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, charge_id, user_id, fighter_id, artifact_run_id, tier, operation,
+            status, stage, progress_current, progress_total
+          ) VALUES (?, 'failed-budget-charge', ?, ?, ?, 'champion', 'fighter_generation',
+            'failed', 'sprite:low_punch', 7, 14)
+        `).bind(failedJobId, USER_ID, FIGHTER_ID, failedJobId),
+        db.prepare(`
+          INSERT INTO provider_sessions (id, user_id, charge_id, status, expires_at)
+          VALUES ('provider-session', ?, NULL, 'active', datetime('now', '+1 hour'))
+        `).bind(USER_ID),
+      ]);
+      vi.mocked(constrainProviderSessionToArtifactRunRemaining)
+        .mockRejectedValueOnce(new Error('budget unavailable'));
+
+      await expect(startAdminArcadeGeneration(
+        generationRequest(),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+      )).rejects.toThrow('budget unavailable');
+
+      expect((await db.prepare(`
+        SELECT status FROM generation_charges
+        WHERE continuation_run_id = ?
+      `).bind(failedJobId).first<{ status: string }>())?.status).toBe('refunded');
+      expect((await db.prepare(`
+        SELECT status FROM provider_sessions WHERE id = 'provider-session'
+      `).first<{ status: string }>())?.status).toBe('cancelled');
     } finally {
       await mf.dispose();
     }
@@ -409,6 +583,71 @@ describe('official Arcade generation authorization', () => {
         credit_cost: 0,
         status: 'reserved',
         reason: 'fighter_retry_animation',
+      });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('continues a failed Arcade animation on its original artifact run', async () => {
+    const { mf, db, env } = await bindings();
+    const failedJobId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const originalChargeId = 'cccccccccccccccccccccccccccccccc';
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('original-ledger', ?, 0, 'fighter_retry_animation', ?)
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, credit_cost, free_quota_delta, status,
+            reason, fighter_id, ledger_id, expires_at
+          ) VALUES (?, ?, 'champion', 0, 0, 'committed',
+            'fighter_retry_animation', ?, 'original-ledger', datetime('now', '+1 hour'))
+        `).bind(originalChargeId, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, operation, target_kind, target_name, status
+          ) VALUES (?, ?, ?, 'champion', 'fighter_retry_animation', 'animation', 'walk', 'partial')
+        `).bind(failedJobId, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, charge_id, user_id, fighter_id, artifact_run_id, tier, operation,
+            status, stage, progress_current, progress_total
+          ) VALUES (?, ?, ?, ?, ?, 'champion', 'fighter_retry_animation',
+            'failed', 'sprite:walk', 0, 1)
+        `).bind(failedJobId, originalChargeId, USER_ID, FIGHTER_ID, failedJobId),
+      ]);
+
+      const response = await startAdminArcadeAnimationGeneration(
+        animationRequest(),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+        'walk',
+      );
+      expect(response.status).toBe(201);
+      expect(constrainProviderSessionToArtifactRunRemaining).toHaveBeenCalledOnce();
+      const [, continuationSession, continuationChargeId, continuationRunId] = vi.mocked(
+        constrainProviderSessionToArtifactRunRemaining,
+      ).mock.calls[0];
+      expect(continuationSession).toMatchObject({ id: 'provider-session' });
+      expect(continuationChargeId).toMatch(/^[a-f0-9]{32}$/);
+      expect(continuationRunId).toBe(failedJobId);
+      expect(await db.prepare(`
+        SELECT continuation_run_id, resumed_from_job_id, credit_cost
+        FROM generation_charges
+        WHERE status = 'reserved'
+      `).first()).toEqual({
+        continuation_run_id: failedJobId,
+        resumed_from_job_id: failedJobId,
+        credit_cost: 0,
+      });
+      const [jobRequest] = vi.mocked(createGenerationJob).mock.calls[0];
+      expect(await jobRequest.clone().json()).toMatchObject({
+        targetKind: 'animation',
+        targetName: 'walk',
       });
     } finally {
       await mf.dispose();
