@@ -28,6 +28,11 @@ const SCHEMA = `
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+  CREATE TABLE matches (
+    id TEXT PRIMARY KEY,
+    p1_fighter_id TEXT REFERENCES fighters(id),
+    p2_fighter_id TEXT REFERENCES fighters(id)
+  );
   CREATE TABLE arcade_fighters (
     fighter_id TEXT PRIMARY KEY REFERENCES fighters(id) ON DELETE CASCADE,
     status TEXT NOT NULL
@@ -152,6 +157,8 @@ async function bindings(): Promise<{ mf: Miniflare; db: D1Database; bucket: R2Bu
       .bind(FIGHTER_ID),
     db.prepare(`INSERT INTO generation_jobs (id, fighter_id, artifact_run_id) VALUES ('job', ?, 'run')`)
       .bind(FIGHTER_ID),
+    db.prepare(`INSERT INTO matches (id, p1_fighter_id) VALUES ('historical-match', ?)`)
+      .bind(FIGHTER_ID),
   ]);
   await Promise.all([
     bucket.put(SOURCE_KEY, new Uint8Array([1])),
@@ -185,6 +192,9 @@ describe('durable fighter deletion', () => {
       expect(await db.prepare('SELECT id FROM fighters WHERE id = ?').bind(FIGHTER_ID).first()).toBeNull();
       expect(await db.prepare('SELECT id FROM generation_jobs').first()).toBeNull();
       expect(await db.prepare('SELECT id FROM generation_artifact_runs').first()).toBeNull();
+      expect(await db.prepare(`
+        SELECT id, p1_fighter_id FROM matches WHERE id = 'historical-match'
+      `).first()).toEqual({ id: 'historical-match', p1_fighter_id: null });
       expect(await db.prepare('SELECT id FROM fighter_asset_deletions').first()).toBeNull();
       expect(await bucket.head(SOURCE_KEY)).toBeNull();
       expect(await bucket.head(SPRITE_KEY)).toBeNull();
