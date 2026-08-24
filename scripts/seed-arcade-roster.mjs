@@ -50,7 +50,8 @@ const PLAYABLE_ANIMATION_NAMES = [
 const PLAYABLE_ANIMATIONS = new Set(PLAYABLE_ANIMATION_NAMES);
 const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'];
 const CANONICAL_SOURCES = new Set(CANONICAL_SOURCE_NAMES);
-const REFERENCE_DEPENDENT_PROMPT = /\b(?:this|the) (?:licensed )?reference photo\b|\bperson in (?:this|the) photo\b/i;
+const LICENSED_REFERENCE_PROMPT = /\blicensed reference photo\b|\bperson in (?:this|the) licensed photo\b/i;
+const IDENTITY_ERASING_PROMPT = /\bwritten description only\b|\b(?:new|own) clearly synthetic face\b/i;
 
 function parseEnvText(text, values) {
   for (const line of text.split(/\r?\n/)) {
@@ -185,7 +186,7 @@ function fighterReference(manifest, fighter) {
   return fighter.reference ?? manifest.reference;
 }
 
-function validateManifest(manifest) {
+export function validateManifest(manifest) {
   if (manifest.qualityTier !== 'champion') throw new Error('The official Arcade roster must use Champion.');
   if (!Array.isArray(manifest.fighters) || manifest.fighters.length === 0) {
     throw new Error('The Arcade manifest has no fighters.');
@@ -204,9 +205,12 @@ function validateManifest(manifest) {
     if (!fighter.name || !fighter.challengerLine || !fighter.referencePrompt) {
       throw new Error(`Incomplete Arcade manifest entry: ${fighter.slug}`);
     }
-    if (REFERENCE_DEPENDENT_PROMPT.test(fighter.referencePrompt)) {
+    if (
+      !LICENSED_REFERENCE_PROMPT.test(fighter.referencePrompt)
+      || IDENTITY_ERASING_PROMPT.test(fighter.referencePrompt)
+    ) {
       throw new Error(
-        `Arcade prompt for ${fighter.slug} depends on a reference image that the official text-only generator does not receive.`,
+        `Arcade prompt for ${fighter.slug} must preserve the approved licensed-photo identity and cannot request a text-only replacement face.`,
       );
     }
     const reference = fighterReference(manifest, fighter);

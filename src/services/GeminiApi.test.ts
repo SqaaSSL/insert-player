@@ -4,11 +4,9 @@ import {
   GeminiOfficialSpriteQualityError,
   geminiContentBlockReason,
   geminiFinishReasonBlockReason,
-  geminiOfficialPosePrompt,
   geminiOfficialRefinePrompt,
   geminiOfficialSpriteReviewPrompt,
   geminiOfficialSpritePrompt,
-  geminiOfficialTextOnlyPrompt,
   isGeminiContentBlockedError,
   parseGeminiOfficialSpriteReview,
 } from './GeminiApi';
@@ -41,42 +39,27 @@ describe('Gemini content-block handling', () => {
     expect(geminiFinishReasonBlockReason(null)).toBeNull();
   });
 
-  it('builds an explicit text-only fallback for licensed official fighters', () => {
-    const prompt = geminiOfficialTextOnlyPrompt('Create an original fighter in a navy suit.');
-
-    expect(prompt).toContain('from the written description only');
-    expect(prompt).toContain('Do not depict, identify, or reproduce any real person');
-    expect(prompt).toContain('Create an original fighter in a navy suit.');
-  });
-
-  it('keeps official source views text-only and anatomically constrained', () => {
-    const prompt = geminiOfficialPosePrompt('Original fighter in a navy suit.', 'crouch');
-
-    expect(prompt).toContain('written description only');
-    expect(prompt).toContain('extreme classic 2D fighting-game crouch guard');
-    expect(prompt).toContain('two arms');
-    expect(prompt).toContain('two legs');
-  });
-
-  it('uses written identity plus identity-free pose guidance for official Champion sprites', () => {
+  it('keeps the approved reference identity attached to official Champion sprites', () => {
     const scaffold = geminiOfficialSpritePrompt(
-      'Original fighter in a navy suit.',
+      'Transform the person in the licensed reference photo into a fighter in a navy suit.',
       'Generate a 2x2 idle sprite sheet.',
     );
     const refine = geminiOfficialRefinePrompt(
-      'Original fighter in a navy suit.',
+      'Transform the person in the licensed reference photo into a fighter in a navy suit.',
       'idle',
       'subtle breathing loop',
       1,
       4,
     );
 
-    expect(scaffold).toContain('without an identity reference image');
-    expect(scaffold).toContain('identity-free silhouette guide for the canonical starting pose');
+    expect(scaffold).toContain('IMAGE 1 is the canonical identity');
+    expect(scaffold).toContain('recognizable facial structure');
     expect(scaffold).toContain('Generate a 2x2 idle sprite sheet.');
-    expect(refine).toContain('identity-free silhouette guide');
+    expect(scaffold).not.toContain('identity-free');
+    expect(refine).toContain('IMAGE 1 is the canonical identity');
+    expect(refine).toContain("IMAGE 2 is the exact pose");
     expect(refine).toContain('frame 2 of 4');
-    expect(refine).toContain('Do not infer identity');
+    expect(refine).not.toContain('Do not infer identity');
   });
 
   it('adds controlled correction instructions to an official frame retry', () => {

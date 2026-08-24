@@ -1,5 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { findCurrentArcadeEntry, planFighterResume } from './seed-arcade-roster.mjs';
+import {
+  findCurrentArcadeEntry,
+  planFighterResume,
+  validateManifest,
+} from './seed-arcade-roster.mjs';
+
+const manifest = JSON.parse(readFileSync(new URL('../arcade/roster-2026.json', import.meta.url), 'utf8'));
 
 const animations = [
   'idle',
@@ -33,6 +40,18 @@ function championSprites(names) {
 }
 
 describe('Arcade roster resume planning', () => {
+  it('requires every official prompt to preserve its licensed reference identity', () => {
+    expect(() => validateManifest(manifest)).not.toThrow();
+
+    const missingReference = structuredClone(manifest);
+    missingReference.fighters[0].referencePrompt = 'Create a premium realistic 2.5D full-body arcade fighter on green.';
+    expect(() => validateManifest(missingReference)).toThrow(/licensed-photo identity/);
+
+    const identityErasing = structuredClone(manifest);
+    identityErasing.fighters[0].referencePrompt = 'Use the licensed reference photo, then replace it from the written description only.';
+    expect(() => validateManifest(identityErasing)).toThrow(/text-only replacement face/);
+  });
+
   it('builds every canonical source and animation for an empty draft', () => {
     expect(planFighterResume({ sources: { original: '/original.png' }, sprites: [] })).toEqual({
       sourceNames: ['side', 'upright', 'crouch'],

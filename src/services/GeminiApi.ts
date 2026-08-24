@@ -74,32 +74,6 @@ export function geminiContentBlockReason(response: {
   return reason || null;
 }
 
-export function geminiOfficialTextOnlyPrompt(prompt: string): string {
-  return `Generate a new, clearly fictional arcade character from the written description only. Do not depict, identify, or reproduce any real person, public figure, event, endorsement, or documentary photograph. The result must be an original synthetic game avatar with realistic adult anatomy and a complete head-to-toe silhouette.\n\n${prompt.trim()}`;
-}
-
-export type GeminiOfficialPose = 'side' | 'upright' | 'crouch';
-
-export function geminiOfficialPosePrompt(description: string, pose: GeminiOfficialPose): string {
-  const poseRequirement = pose === 'side'
-    ? `Create the canonical fighting source view: a complete head-to-toe figure in a ready fighting stance, 3/4 view facing right, fists raised, feet planted, with realistic adult anatomy.`
-    : pose === 'upright'
-      ? `Create the canonical upright source view: a complete head-to-toe figure in a tall, confident heroic standing pose, 3/4 view facing right, torso lifted, hips raised, legs mostly straight, feet planted, and arms relaxed outside a fighting guard.`
-      : `Create the canonical crouch source view: a complete head-to-toe figure in an extreme classic 2D fighting-game crouch guard, 3/4 view facing right, both feet planted, knees deeply folded, hips very low, torso compressed, and fists protecting the chest and face.`;
-
-  return [
-    geminiOfficialTextOnlyPrompt(description),
-    `POSE OVERRIDE (CRITICAL):`,
-    `- ${poseRequirement}`,
-    `- This pose requirement overrides any neutral stance or pose mentioned earlier in the character description.`,
-    `- Preserve the written hair, face design, skin tone, build, outfit, colors, materials, and realistic 2.5D rendering consistently.`,
-    `- Show exactly one character with exactly one head, two arms, two hands, two legs, and two feet. No duplicate limbs or detached body parts.`,
-    `- Keep empty green margin around the complete silhouette; do not crop the head, hands, elbows, knees, or feet.`,
-    `- Use a solid pure bright green (#00FF00) background with no floor, shadows, gradients, text, logos, props, or scenery.`,
-    `- Return exactly one image and no explanatory text.`,
-  ].join('\n');
-}
-
 function normalizedBase64Payload(value: string): string {
   const payload = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value;
   return payload.replace(/\s+/g, '');
@@ -363,20 +337,9 @@ export async function geminiReposeDetailed(
       rawBase64 = result.imageBase64;
     } catch (err: unknown) {
       if (!isGeminiContentBlockedError(err) || !promptOverride?.trim()) throw err;
-      debugWarn('[GeminiApi] Licensed public reference declined twice; generating the official fictional avatar from text only...');
+      debugWarn('[GeminiApi] Licensed public reference declined twice; failing closed to preserve the approved identity input.');
+      throw err;
     }
-  }
-
-  if (!rawBase64 && promptOverride?.trim()) {
-    const result = await callGemini(
-      geminiOfficialTextOnlyPrompt(prompt),
-      undefined,
-      'image/png',
-      undefined,
-      model,
-      context,
-    );
-    rawBase64 = result.imageBase64;
   }
 
   if (!rawBase64) throw new Error('Gemini repose returned no image');
@@ -514,36 +477,6 @@ async function generateGeminiImageWithSafetyFallback(
 
   if (!rawBase64) throw new Error('Gemini returned no image');
   return rawBase64;
-}
-
-export async function geminiOfficialPoseDetailed(
-  description: string,
-  pose: GeminiOfficialPose,
-  context?: ApiRequestContext,
-): Promise<GeminiPoseResult> {
-  const operation: GeminiModelOperation = pose === 'side' ? 'repose' : pose;
-  const model = resolveGeminiImageModel({ operation });
-  debugInfo(`[GeminiApi] Generating official ${pose} source from text with ${model}...`);
-  const start = Date.now();
-  const result = await callGemini(
-    geminiOfficialPosePrompt(description, pose),
-    undefined,
-    'image/png',
-    undefined,
-    model,
-    context,
-  );
-  if (!result.imageBase64) throw new Error(`Gemini official ${pose} source returned no image`);
-
-  const rawBase64 = result.imageBase64;
-  const cleaned = await cleanReposedImagePreserveCanvas(rawBase64);
-  const cleanedBase64 = pose === 'crouch'
-    ? await zoomTransparentImageToBottom(cleaned, 0.88)
-    : cleaned;
-  debugInfo(
-    `[GeminiApi] Official ${pose} source finished in ${((Date.now() - start) / 1000).toFixed(1)}s`,
-  );
-  return { rawBase64, cleanedBase64 };
 }
 
 async function getSilhouetteMetrics(base64: string): Promise<SilhouetteMetrics | null> {
@@ -1092,16 +1025,17 @@ export function geminiOfficialSpritePrompt(
   animationRequirements: string,
 ): string {
   return [
-    geminiOfficialTextOnlyPrompt(description),
-    `ANIMATION OVERRIDE (CRITICAL):`,
-    `- Generate the requested sprite-sheet animation from the written character specification without an identity reference image.`,
-    `- IMAGE 1, when present, is an identity-free silhouette guide for the canonical starting pose, full-body scale, facing direction, framing, and floor line only.`,
-    `- IMAGE 2, when present, is an identity-free silhouette guide for the ending pose only.`,
-    `- Do not infer identity, facial appearance, clothing, color, texture, or rendering style from either silhouette guide.`,
-    `- Any mention of character identity or visual style in the requirements below means the written character specification above.`,
+    `Create an unofficial, clearly AI-generated premium 2.5D arcade animation from the approved reference artwork supplied with this request.`,
+    `REFERENCE LOCK (CRITICAL):`,
+    `- IMAGE 1 is the canonical identity, face, hair, skin tone, build, outfit, rendering style, starting pose, scale, framing, and floor-line reference.`,
+    `- IMAGE 2, when present, is the ending-pose reference and must preserve the same identity and outfit as IMAGE 1.`,
+    `- Preserve the recognizable facial structure and every stable visual feature from IMAGE 1 throughout the sheet.`,
+    `- The approved character brief below is supplementary wardrobe and art direction. If it conflicts with visible identity or anatomy in IMAGE 1, IMAGE 1 controls.`,
     `- The animation, pose, frame count, grid, and framing requirements below override any neutral pose mentioned in the character description.`,
-    `- Keep the written hair, synthetic face design, skin tone, build, outfit, colors, and materials consistent in every frame.`,
     `- Every populated cell must contain exactly one anatomically complete character with no duplicate or detached limbs.`,
+    ``,
+    `APPROVED CHARACTER BRIEF:`,
+    description.trim(),
     ``,
     animationRequirements,
   ].join('\n');
@@ -1182,12 +1116,10 @@ export async function geminiSpriteSheet(
   const start = Date.now();
 
   const official = officialDescription?.trim();
-  const primaryBase64 = official
-    ? await createIdentityFreePoseGuide(characterBase64)
-    : characterBase64;
+  const primaryBase64 = characterBase64;
   const extras = secondaryBase64
     ? [{
-      data: official ? await createIdentityFreePoseGuide(secondaryBase64) : secondaryBase64,
+      data: secondaryBase64,
       mime: 'image/png',
     }]
     : undefined;
@@ -1429,26 +1361,30 @@ export function geminiOfficialRefinePrompt(
   const motionSummary = motion.replace(/\s+/g, ' ').trim().slice(0, 180);
   const normalizedCorrection = qualityCorrection?.replace(/\s+/g, ' ').trim().slice(0, 500);
   return [
-    geminiOfficialTextOnlyPrompt(description),
+    `Render one high-fidelity frame of the approved unofficial AI-generated arcade fighter from the supplied reference artwork.`,
     `FRAME CONTEXT:`,
     `- Render frame ${frameIndex + 1} of ${total} for the classic 2D fighting-game "${animName}" animation (${motionSummary}).`,
-    `- IMAGE 1 is an identity-free silhouette guide. It communicates only the exact pose, framing, facing direction, center of mass, and limb placement for this frame.`,
-    `- Reconstruct the silhouette guide as the written fictional character above. Do not infer identity, facial appearance, clothing, color, or texture from the guide.`,
+    `- IMAGE 1 is the canonical identity, face, hair, skin tone, build, outfit, and premium 2.5D rendering-style anchor.`,
+    `- IMAGE 2 is the exact pose, framing, facing direction, center of mass, and limb-placement guide for this frame.`,
     ``,
     `POSE AND ANATOMY (CRITICAL):`,
-    `- Match IMAGE 1's complete silhouette and pose exactly while using realistic adult anatomy.`,
+    `- Match IMAGE 2's complete silhouette and pose exactly while preserving the recognizable person and visual design from IMAGE 1.`,
     `- Show exactly one complete character with one head, two arms, two hands, two legs, and two feet. No duplicate, merged, or detached limbs.`,
-    `- Keep the same camera distance and full-body framing as IMAGE 1. Do not crop or zoom.`,
+    `- Keep the same camera distance and full-body framing as IMAGE 2. Do not crop or zoom.`,
     `- Do not add motion blur, trails, speed lines, props, text, logos, scenery, or extra figures.`,
     ``,
     `STYLE AND CONTINUITY:`,
-    `- Preserve the written synthetic face design, hair, skin tone, build, outfit, colors, materials, and realistic premium 2.5D rendering consistently.`,
+    `- Preserve IMAGE 1's face, hair, skin tone, apparent age, build, outfit, colors, materials, and realistic premium 2.5D rendering consistently.`,
     `- Avoid cartoon, chibi, anime, cel shading, caricature, flat illustration, or documentary photography.`,
+    `- The approved character brief below is supplementary wardrobe and art direction. IMAGE 1 controls identity and visible continuity.`,
+    ``,
+    `APPROVED CHARACTER BRIEF:`,
+    description.trim(),
     ...(normalizedCorrection ? [
       ``,
       `QUALITY CORRECTION (CRITICAL):`,
-      `- A previous synthetic render of this frame failed QA. ${normalizedCorrection}`,
-      `- Correct those defects while preserving the silhouette guide, written character design, and animation timing.`,
+      `- A previous render of this frame failed QA. ${normalizedCorrection}`,
+      `- Correct those defects while preserving IMAGE 1's identity and IMAGE 2's pose and animation timing.`,
     ] : []),
     ``,
     `OUTPUT:`,
@@ -1492,7 +1428,7 @@ export function geminiOfficialSpriteReviewPrompt(
   const continuityFocused = safeReviewInstance?.includes('continuity');
   const wardrobeFocused = safeReviewInstance?.includes('wardrobe');
   return [
-    `Inspect IMAGE 1 as a production QA reviewer. It is a contact sheet containing only a clearly fictional synthetic arcade avatar generated from the written description below.`,
+    `Inspect IMAGE 1 as a production QA reviewer. It is a contact sheet containing only unofficial, clearly AI-generated arcade artwork based on the approved character brief below.`,
     `Do not identify, name, or compare the avatar to any real person or public figure. Review only the visible game-art quality and continuity.`,
     ``,
     `WRITTEN CHARACTER DESIGN:`,
@@ -1606,34 +1542,6 @@ export function parseGeminiOfficialSpriteReview(
   return { retry, issues };
 }
 
-async function createIdentityFreePoseGuide(base64: string): Promise<string> {
-  const image = await loadAlphaImage(`data:image/png;base64,${base64}`);
-  const source = document.createElement('canvas');
-  source.width = image.width;
-  source.height = image.height;
-  const sourceContext = source.getContext('2d')!;
-  sourceContext.drawImage(image, 0, 0);
-  const sourcePixels = sourceContext.getImageData(0, 0, source.width, source.height);
-
-  const guide = document.createElement('canvas');
-  guide.width = image.width;
-  guide.height = image.height;
-  const guideContext = guide.getContext('2d')!;
-  guideContext.fillStyle = '#00FF00';
-  guideContext.fillRect(0, 0, guide.width, guide.height);
-  const guidePixels = guideContext.getImageData(0, 0, guide.width, guide.height);
-
-  for (let offset = 0; offset < sourcePixels.data.length; offset += 4) {
-    if (sourcePixels.data[offset + 3] <= 15) continue;
-    guidePixels.data[offset] = 24;
-    guidePixels.data[offset + 1] = 24;
-    guidePixels.data[offset + 2] = 24;
-    guidePixels.data[offset + 3] = 255;
-  }
-  guideContext.putImageData(guidePixels, 0, 0);
-  return guide.toDataURL('image/png').split(',')[1];
-}
-
 async function measureGreenBackedCharacterBounds(
   base64: string,
 ): Promise<{ w: number; h: number; imageW: number; imageH: number; widthRatio: number; heightRatio: number } | null> {
@@ -1669,10 +1577,8 @@ async function singleRefineAttempt(
   officialQualityCorrection?: string,
 ): Promise<string | null> {
   const official = officialDescription?.trim();
-  const primaryBase64 = official
-    ? await createIdentityFreePoseGuide(cellBase64)
-    : characterBase64;
-  const extras = official ? undefined : [{ data: cellBase64, mime: 'image/png' }];
+  const primaryBase64 = characterBase64;
+  const extras = [{ data: cellBase64, mime: 'image/png' }];
   const requestPrompt = official
     ? geminiOfficialRefinePrompt(
       official,

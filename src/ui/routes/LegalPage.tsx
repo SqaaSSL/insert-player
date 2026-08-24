@@ -29,7 +29,7 @@ const providerLinks = [
 const arcadePhotoCredits = [
   {
     name: 'Donald Trump',
-    credit: 'Daniel Torok / The White House (2025)',
+    credit: 'Daniel Torok (2025)',
     sourceUrl: 'https://commons.wikimedia.org/wiki/File:January_2025_Official_Presidential_Portrait_of_Donald_J._Trump.jpg',
     license: 'Public domain',
     licenseUrl: 'https://commons.wikimedia.org/wiki/File:January_2025_Official_Presidential_Portrait_of_Donald_J._Trump.jpg#Licensing',
@@ -94,8 +94,8 @@ const arcadePhotoCredits = [
     name: 'Cristiano Ronaldo',
     credit: 'Bryan Berlin / WikiPortraits (2026)',
     sourceUrl: 'https://commons.wikimedia.org/wiki/File:Cristiano_Ronaldo_Croatia_v_Portugal_2_July_2026-154(cropped).jpg',
-    license: 'CC BY-SA 4.0',
-    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+    license: 'CC BY 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by/4.0',
   },
   {
     name: 'Javier Milei',

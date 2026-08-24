@@ -98,16 +98,15 @@ async function generateSource(body: GenerateSourceRequest) {
   const context = await detachedProviderContext(body);
   const {
     geminiCrouchReposeDetailed,
-    geminiOfficialPoseDetailed,
     geminiReposeDetailed,
     geminiUprightReposeDetailed,
   } = await import('../../src/services/GeminiApi.ts');
   const generationPrompt = body.generationPrompt?.trim();
   const strategy = sourceGenerationStrategy(body.operation, generationPrompt);
   if (strategy !== 'reference-photo') {
-    if (strategy === 'official-text-side') {
+    if (strategy === 'official-reference-side') {
       if (!generationPrompt) throw new Error('Official source prompt is unavailable');
-      return geminiOfficialPoseDetailed(generationPrompt, 'side', context);
+      return geminiReposeDetailed(body.imageBase64, context, generationPrompt);
     }
     if (strategy === 'official-reference-upright') {
       return geminiUprightReposeDetailed(body.imageBase64, context);
