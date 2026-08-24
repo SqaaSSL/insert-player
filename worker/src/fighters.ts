@@ -12,6 +12,7 @@ import type {
   Stage,
 } from './types';
 import { generateId, hashString } from './auth';
+import { inspectArcadeAssetIntegrity } from './arcadeAssets';
 import { maxTier, normalizeQualityTier, TIER_DEFINITIONS } from './tiers';
 import { publicAppName, publicSocialCardUrl } from './branding';
 import { readJsonBody, readMultipartFormData } from './requestBody';
@@ -783,11 +784,16 @@ export async function upsertAdminArcadeFighter(
   if (status !== 'retired' && generationPrompt.length < MIN_ARCADE_GENERATION_PROMPT_CHARS) {
     return json({ error: 'A detailed private Arcade generation prompt is required' }, 400, NO_STORE_HEADERS);
   }
-  if (status === 'active' && (
-    fighter.quality_tier !== 'champion'
-    || !await fighterHasPlayableSprite(env, fighterId, 'champion')
-  )) {
-    return json({ error: 'Generate the full playable animation set before activating this fighter' }, 409, NO_STORE_HEADERS);
+  if (status === 'active') {
+    const assetIntegrity = fighter.quality_tier === 'champion'
+      ? await inspectArcadeAssetIntegrity(env, fighterId)
+      : { ready: false, missingAssets: ['tier:champion'] };
+    if (!assetIntegrity.ready) {
+      return json({
+        error: 'Generate the full playable animation set before activating this fighter',
+        missingAssets: assetIntegrity.missingAssets,
+      }, 409, NO_STORE_HEADERS);
+    }
   }
 
   try {

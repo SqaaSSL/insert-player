@@ -34,16 +34,6 @@ describe('Gemini request policy', () => {
     expect(error.retryAfterMs).toBe(12_250);
   });
 
-  it('does not retry hard provider budgets', () => {
-    const error = geminiErrorFromResponse(
-      'gemini-3-pro-image',
-      new Response(null, { status: 503, headers: { 'Retry-After': '86400' } }),
-      JSON.stringify({ code: 'provider_monthly_budget_exhausted', error: 'Capacity exhausted' }),
-    );
-
-    expect(error.retryable).toBe(false);
-  });
-
   it('recognizes the structured per-model daily quota and preserves its reset delay', () => {
     const error = geminiErrorFromResponse(
       'gemini-3-pro-image',

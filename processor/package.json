@@ -7,8 +7,9 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.mjs --external:@napi-rs/canvas",
+    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.mjs --external:@napi-rs/canvas && node scripts/assert-approved-image-providers.mjs --bundle dist/server.mjs",
     "check": "tsc --noEmit",
+    "prestart": "npm run build",
     "start": "node dist/server.mjs",
     "fixture:clean-sheet": "tsx src/fixture-clean-sheet.ts",
     "benchmark:providers:test": "tsx --test src/benchmark/rosterProviderBenchmark.test.ts",

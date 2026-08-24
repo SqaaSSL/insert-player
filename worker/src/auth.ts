@@ -7,6 +7,7 @@ let cachedJwksUrl = '';
 
 const MAX_PUBLIC_NAME_CHARS = 48;
 const MAX_EMAIL_CHARS = 254;
+export const CLERK_BACKEND_AUTH_BRIDGE_HEADER = 'X-Insert-Player-Clerk-Backend-Auth';
 
 export function generateId(): string {
   const bytes = new Uint8Array(16);
@@ -117,6 +118,28 @@ function normalizeOrigin(value: string): string {
   return stripTrailingSlashes(value.trim());
 }
 
+async function constantTimeSecretMatch(provided: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const [providedHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(provided)),
+    crypto.subtle.digest('SHA-256', encoder.encode(expected)),
+  ]);
+  const providedBytes = new Uint8Array(providedHash);
+  const expectedBytes = new Uint8Array(expectedHash);
+  let difference = 0;
+  for (let index = 0; index < expectedBytes.length; index += 1) {
+    difference |= providedBytes[index] ^ expectedBytes[index];
+  }
+  return difference === 0;
+}
+
+export async function hasValidClerkBackendAuthBridge(request: Request, env: Env): Promise<boolean> {
+  const expected = env.CLERK_BACKEND_AUTH_BRIDGE_SECRET?.trim() ?? '';
+  const provided = request.headers.get(CLERK_BACKEND_AUTH_BRIDGE_HEADER)?.trim() ?? '';
+  if (expected.length < 32 || !provided) return false;
+  return constantTimeSecretMatch(provided, expected);
+}
+
 function configuredAuthorizedParties(env: Env): string[] {
   return (env.CLERK_AUTHORIZED_PARTIES || env.CORS_ORIGIN || '')
     .split(',')
@@ -170,9 +193,13 @@ export async function verifyClerkRequest(
   return { userId: user.id, user, claims };
 }
 
-export async function optionalAuth(request: Request, env: Env): Promise<PublicAuthContext> {
+export async function optionalAuth(
+  request: Request,
+  env: Env,
+  options: { allowMissingAuthorizedParty?: boolean } = {},
+): Promise<PublicAuthContext> {
   try {
-    const auth = await verifyClerkRequest(request, env);
+    const auth = await verifyClerkRequest(request, env, options);
     if (auth) {
       return {
         userId: auth.userId,
