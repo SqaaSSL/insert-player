@@ -155,7 +155,16 @@ async function captureFrontendSessionToken({
   });
 
   try {
-    await page.goto(agentTaskUrl, { waitUntil: 'domcontentloaded', timeout: BROWSER_TIMEOUT_MS });
+    const response = await page.goto(agentTaskUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: BROWSER_TIMEOUT_MS,
+    });
+    if (response && !response.ok()) {
+      const responseText = await response.text().catch(() => 'No response body was available.');
+      throw new Error(
+        `Clerk Agent Task navigation failed with HTTP ${response.status()}: ${redactSmokeDiagnostic(responseText)}`,
+      );
+    }
     await page.waitForURL((candidate) => (
       candidate.origin === frontendOrigin && candidate.pathname === '/menu'
     ), { timeout: BROWSER_TIMEOUT_MS });
@@ -184,6 +193,7 @@ function launchSmokeRunId() {
 export function buildSmokeUserParams(runId, role) {
   return {
     externalId: `insert-player-launch-smoke:${runId}:${role}`,
+    emailAddress: [`launch-smoke+${runId.slice(0, 32)}-${role}@example.com`],
     privateMetadata: {
       insertPlayerLaunchSmoke: true,
       launchSmokeRunId: runId,
@@ -194,7 +204,7 @@ export function buildSmokeUserParams(runId, role) {
 
 async function createSmokeUser(clerk, runId, role) {
   try {
-    // Production is social-only, so do not submit identifiers disabled in Clerk's user model.
+    // Agent Tasks need an identification; this ephemeral address never enables email auth in the app.
     return await clerk.users.createUser(buildSmokeUserParams(runId, role));
   } catch (error) {
     throw new Error(`Could not create the ephemeral ${role} Clerk user: ${formatSmokeError(error)}`);
