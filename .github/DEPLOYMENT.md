@@ -27,9 +27,9 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 
 ## Current Deployment Credential Status
 
-Production main `7d01ef8` and sandbox develop `d056437` are already live and smoke-verified with D1 migration `0023`. The production Worker version is `046d55ca-3e60-4edd-b90c-b2469214767d`; the sandbox Worker version is `f32657e9-b525-4c2c-8384-65b9601c07c6`.
+Production main `b7c96cf` and sandbox develop `1d3ea1e` are live and smoke-verified with D1 migration `0024`; both Workers report healthy `0.18.0` runtimes and the branches have the same tree `6564088a`.
 
-The `CLOUDFLARE_API_TOKEN` currently stored in both GitHub environments is an expired temporary Wrangler OAuth credential. Production Action `32726045103` and development Action `32723834617` therefore fail before their first remote D1 migration with Cloudflare error `9109`. This does not indicate an unhealthy deployed runtime: both releases were deployed through the equivalent operator path and passed Worker, Pages, canonical-origin, and readiness smoke. Replace the secret in both environments with one durable account-owned token, verify it belongs to account `61fc998aa16c1c11a949d982e7a65dcb`, then rerun both failed workflows. Do not rotate provider, Clerk, Stripe, D1, R2, or generated-asset state as part of this repair.
+The `CLOUDFLARE_API_TOKEN` stored in both GitHub environments is the same durable account-owned token scoped to the Insert Player Cloudflare account and zone. Production Action `32767504225` and development Action `32767773857` passed their complete remote migrations, Worker/Container/Workflow deploys, API smokes, Pages deploys, and readiness checks. Cloudflare audit logs identify their actor as an account API token, not a temporary Wrangler OAuth session. Authenticated sandbox Action `32768251105` also passes with the Development Clerk backend key and private bridge secret. Rotate this token deliberately through both environments together; never replace it with a Global API Key or temporary Wrangler OAuth token.
 
 ## GitHub Environments
 
