@@ -136,16 +136,17 @@ export function validateLaunchSmokeToken(token, {
   userId,
   frontendOrigin,
   clerkIssuer,
+  allowMissingAuthorizedParty = false,
   minRemainingSeconds = 10,
   nowMs = Date.now(),
 }) {
   const claims = decodeJwtPayload(token);
   if (claims.sub !== userId) throw new Error('Clerk launch-smoke token belongs to a different user.');
   const authorizedParty = normalizedOrigin(String(claims.azp ?? ''));
-  if (!authorizedParty) {
+  if (!authorizedParty && !allowMissingAuthorizedParty) {
     throw new Error('Clerk launch-smoke token is missing its authorized-party claim.');
   }
-  if (authorizedParty !== normalizedOrigin(frontendOrigin)) {
+  if (authorizedParty && authorizedParty !== normalizedOrigin(frontendOrigin)) {
     let receivedHost = 'invalid-origin';
     try {
       receivedHost = new URL(authorizedParty).hostname || receivedHost;
@@ -327,12 +328,14 @@ async function createAgentTaskBackedToken({
       userId: user.id,
       frontendOrigin,
       clerkIssuer,
+      allowMissingAuthorizedParty: true,
     });
     const refreshed = await clerk.sessions.getToken(sessionId, undefined, TOKEN_TTL_SECONDS);
     validateLaunchSmokeToken(refreshed.jwt, {
       userId: user.id,
       frontendOrigin,
       clerkIssuer,
+      allowMissingAuthorizedParty: true,
       minRemainingSeconds: 8 * 60,
     });
     return { token: refreshed.jwt, sessionId };
@@ -347,7 +350,7 @@ async function createAgentTaskBackedToken({
   }
 }
 
-function runAuthenticatedLiveSmoke(primaryToken, cloneToken, target, preserveUserState) {
+function runAuthenticatedLiveSmoke(primaryToken, cloneToken, target, preserveUserState, backendAuthBridgeSecret) {
   const result = spawnSync(
     process.execPath,
     [join(root, 'scripts/smoke-live.mjs'), '--require-auth', '--require-clone'],
@@ -362,6 +365,7 @@ function runAuthenticatedLiveSmoke(primaryToken, cloneToken, target, preserveUse
         ASF_SMOKE_REQUIRE_CLONE: '1',
         ASF_SMOKE_TARGET: target,
         ASF_SMOKE_PRESERVE_USER_STATE: preserveUserState ? '1' : '0',
+        CLERK_BACKEND_AUTH_BRIDGE_SECRET: backendAuthBridgeSecret,
       },
       timeout: LIVE_SMOKE_TIMEOUT_MS,
     },
@@ -435,6 +439,7 @@ function validateTargetConfiguration(target, env) {
       || (target === 'sandbox' ? envValue(env, 'ASF_SANDBOX_WORKER_URL') : ''),
   );
   const clerkIssuer = normalizedOrigin(envValue(env, 'CLERK_ISSUER'));
+  const backendAuthBridgeSecret = envValue(env, 'CLERK_BACKEND_AUTH_BRIDGE_SECRET');
   if (!secretKey.startsWith(config.secretPrefix)) {
     throw new Error(`${target} ASF_LAUNCH_SMOKE_CLERK_KEY is required and must match its Clerk instance.`);
   }
@@ -447,7 +452,17 @@ function validateTargetConfiguration(target, env) {
   if (clerkIssuer !== config.expectedClerkIssuer) {
     throw new Error(`${target} launch smoke requires the expected Insert Player Clerk issuer.`);
   }
-  return { ...config, secretKey, frontendOrigin, workerUrl, clerkIssuer };
+  if (backendAuthBridgeSecret.length < 32) {
+    throw new Error(`${target} launch smoke requires CLERK_BACKEND_AUTH_BRIDGE_SECRET with at least 32 characters.`);
+  }
+  return {
+    ...config,
+    secretKey,
+    frontendOrigin,
+    workerUrl,
+    clerkIssuer,
+    backendAuthBridgeSecret,
+  };
 }
 
 async function main() {
@@ -502,11 +517,17 @@ async function main() {
       clerkIssuer: config.clerkIssuer,
       artifactDir,
     });
-    console.log(`\u2713 captured two distinct origin-bound ${target} Clerk tokens`);
+    console.log(`\u2713 captured two distinct ${target} Clerk Agent Task sessions`);
     await browser.close();
     browser = null;
 
-    runAuthenticatedLiveSmoke(primaryAuth.token, cloneAuth.token, target, config.preserveUserState);
+    runAuthenticatedLiveSmoke(
+      primaryAuth.token,
+      cloneAuth.token,
+      target,
+      config.preserveUserState,
+      config.backendAuthBridgeSecret,
+    );
   } catch (error) {
     errors.push(error instanceof Error ? error : new Error(String(error)));
   } finally {

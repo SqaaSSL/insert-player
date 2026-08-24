@@ -1,4 +1,9 @@
-import { generateId, optionalAuth, requireAuth } from './auth';
+import {
+  generateId,
+  hasValidClerkBackendAuthBridge,
+  optionalAuth,
+  requireAuth,
+} from './auth';
 import {
   authorizeGenerationPurchase,
   completeGenerationPurchase,
@@ -127,8 +132,9 @@ async function authenticated(
   handler: (auth: AuthContext) => Promise<Response>,
 ): Promise<Response> {
   const isArcadeAdminSeed = request.headers.get(ARCADE_ADMIN_SEED_HEADER) === 'clerk-backend';
+  const isClerkBackendBridge = await hasValidClerkBackendAuthBridge(request, env);
   const auth = await requireAuth(request, env, {
-    allowMissingAuthorizedParty: isArcadeAdminSeed,
+    allowMissingAuthorizedParty: isArcadeAdminSeed || isClerkBackendBridge,
   });
   if (isResponse(auth)) return auth;
   if (isArcadeAdminSeed && auth.user.plan_tier !== 'admin') {
@@ -156,9 +162,15 @@ async function sensitiveOptionalAuth(
   publicAuth: PublicAuthContext,
 ): Promise<PublicAuthContext | Response> {
   if (publicAuth.user || !hasBearerAuth(request)) return publicAuth;
-  const auth = await requireAuth(request, env);
-  if (isResponse(auth)) return auth;
-  return authAsPublicContext(auth);
+  const hasBackendBridge = await hasValidClerkBackendAuthBridge(request, env);
+  if (!hasBackendBridge) {
+    const auth = await requireAuth(request, env);
+    if (isResponse(auth)) return auth;
+    return authAsPublicContext(auth);
+  }
+  const bridgedAuth = await requireAuth(request, env, { allowMissingAuthorizedParty: true });
+  if (isResponse(bridgedAuth)) return bridgedAuth;
+  return authAsPublicContext(bridgedAuth);
 }
 
 function readBoundedInteger(value: unknown, min: number, max: number): number {
@@ -269,7 +281,9 @@ export default {
       if (generationAuth instanceof Response) {
         return addCors(generationAuth, request, env);
       }
-      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(request, env);
+      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(request, env, {
+        allowMissingAuthorizedParty: await hasValidClerkBackendAuthBridge(request, env),
+      });
       const proxied = path.startsWith('/proxy/')
         ? await handleProxy(request, env, publicAuth)
         : null;

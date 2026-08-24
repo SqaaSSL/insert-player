@@ -33,6 +33,7 @@ const requiredSecrets = [
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
+  'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
 ];
 
 const sampleFragments = [

@@ -96,6 +96,7 @@ npx wrangler secret put LUDO_API_KEY
 npx wrangler secret put STRIPE_SECRET_KEY
 npx wrangler secret put STRIPE_WEBHOOK_SECRET
 npx wrangler secret put GENERATION_JOB_SIGNING_SECRET
+npx wrangler secret put CLERK_BACKEND_AUTH_BRIDGE_SECRET
 ```
 
 The preferred handoff path is to create a gitignored `.env.production.local` with the live dashboard values and run the idempotent helper:
@@ -109,6 +110,7 @@ VITE_TURNSTILE_SITE_KEY=0x4AAAAAA...
 CORS_ORIGIN=https://insertplayer.ai,https://www.insertplayer.ai
 CLERK_AUTHORIZED_PARTIES=https://insertplayer.ai,https://www.insertplayer.ai
 CLERK_WEBHOOK_SIGNING_SECRET=whsec_...
+CLERK_BACKEND_AUTH_BRIDGE_SECRET=replace_with_a_distinct_random_value_of_at_least_32_characters
 STRIPE_SECRET_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 TURNSTILE_SECRET_KEY=0x4AAAAAA...
@@ -181,6 +183,8 @@ npm run smoke:live:launch
 
 `npm run smoke:live:launch` is the hard-failing launch gate; unlike `npm run smoke:live`, it refuses to skip authenticated D1/R2 smoke or same-photo clone/privacy smoke when the Clerk tokens are missing.
 It also fails immediately if the clone token is missing, the clone token is the same JWT or Clerk subject as the primary token, or `/health` does not report Clerk auth and live Stripe billing.
+
+The automated GitHub smoke uses Clerk Agent Tasks, whose backend-created session tokens omit `azp`. Store a distinct `CLERK_BACKEND_AUTH_BRIDGE_SECRET` in both the matching GitHub environment and Worker. The smoke sends it only from the Node runner; the Worker does not expose that header through CORS and still rejects every token carrying a wrong `azp`. Manual browser JWTs remain origin-bound and do not need the bridge.
 
 For the final prelaunch pass, use the one-command final launch gate from the repo root:
 

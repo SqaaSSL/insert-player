@@ -82,6 +82,16 @@ describe('automated Clerk launch-smoke token guard', () => {
       clerkIssuer: 'https://clerk.insertplayer.ai',
       nowMs,
     })).toThrow(/missing its authorized-party claim/i);
+    expect(validateLaunchSmokeToken(tokenWith({
+      ...validPayload,
+      azp: undefined,
+    }), {
+      userId: 'user_primary',
+      frontendOrigin: 'https://insertplayer.ai',
+      clerkIssuer: 'https://clerk.insertplayer.ai',
+      allowMissingAuthorizedParty: true,
+      nowMs,
+    }).sessionId).toBe('sess_launch_smoke');
   });
 
   it('rejects wrong issuers, missing sessions, and short-lived tokens', () => {

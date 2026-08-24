@@ -42,6 +42,7 @@ const baseUrl = (envValue(env, 'ASF_WORKER_URL') || envValue(env, 'VITE_API_BASE
 const frontendOrigin = (envValue(env, 'ASF_FRONTEND_ORIGIN') || envValue(env, 'ASF_FRONTEND_URL')).replace(/\/+$/, '');
 const clerkJwt = envValue(env, 'ASF_CLERK_JWT');
 const cloneClerkJwt = envValue(env, 'ASF_CLERK_JWT_CLONE') || envValue(env, 'ASF_CLERK_JWT_ALT');
+const clerkBackendAuthBridgeSecret = envValue(env, 'CLERK_BACKEND_AUTH_BRIDGE_SECRET');
 const runRateLimitSmoke = envValue(env, 'ASF_SMOKE_RATE_LIMIT') === '1';
 const requireAuthenticatedSmoke =
   envValue(env, 'ASF_SMOKE_REQUIRE_AUTH') === '1' || process.argv.includes('--require-auth');
@@ -212,7 +213,14 @@ function url(pathOrUrl) {
 }
 
 function authHeadersFor(token, extra = {}) {
-  return token ? { ...extra, Authorization: `Bearer ${token}` } : extra;
+  if (!token) return extra;
+  return {
+    ...extra,
+    Authorization: `Bearer ${token}`,
+    ...(clerkBackendAuthBridgeSecret
+      ? { 'X-Insert-Player-Clerk-Backend-Auth': clerkBackendAuthBridgeSecret }
+      : {}),
+  };
 }
 
 function authHeaders(extra = {}) {

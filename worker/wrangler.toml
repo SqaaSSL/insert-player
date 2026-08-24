@@ -43,6 +43,8 @@ STRIPE_PRICE_ARCADE = "price_1U7DsKCPjQq08iG98e4ZosBp"
 # wrangler secret put ANONYMIZATION_SECRET
 # HMAC key for short-lived, job-scoped backend generation tokens.
 # wrangler secret put GENERATION_JOB_SIGNING_SECRET
+# Private bridge for Clerk Agent Task launch smoke; never expose it through CORS.
+# wrangler secret put CLERK_BACKEND_AUTH_BRIDGE_SECRET
 
 [secrets]
 required = [
@@ -57,6 +59,7 @@ required = [
   "TURNSTILE_SECRET_KEY",
   "ANONYMIZATION_SECRET",
   "GENERATION_JOB_SIGNING_SECRET",
+  "CLERK_BACKEND_AUTH_BRIDGE_SECRET",
 ]
 
 [limits]

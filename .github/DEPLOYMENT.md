@@ -85,6 +85,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | `STRIPE_WEBHOOK_SECRET` | Matching environment billing endpoint |
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Matching environment user-lifecycle endpoint |
 | `ASF_LAUNCH_SMOKE_CLERK_KEY` | Clerk Backend API key for the matching environment; used only by authenticated launch smoke |
+| `CLERK_BACKEND_AUTH_BRIDGE_SECRET` | Distinct random secret shared only by the matching Worker and authenticated smoke workflow; at least 32 characters |
 | `ASF_LAUNCH_SMOKE_PRIMARY_USER_ID` | Production only; Clerk user id for the dedicated primary OAuth QA account |
 | `ASF_LAUNCH_SMOKE_CLONE_USER_ID` | Production only; Clerk user id for the dedicated clone OAuth QA account |
 | `TURNSTILE_SECRET_KEY` | Matching environment widget |
@@ -96,7 +97,7 @@ The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit,
 
 Never use one GitHub environment as a fallback for another. A missing value must fail the deployment rather than silently reuse a test or live credential.
 
-Neither authenticated smoke consumes AI inference or charges Stripe. The development workflow creates two identified `+clerk_test` users, establishes browser sessions through Clerk Agent Tasks, runs the complete authenticated D1/R2/billing-reservation/match/community-clone/privacy smoke, deletes both users, and verifies that the deletion webhook tombstones their still-valid tokens.
+Neither authenticated smoke consumes AI inference or charges Stripe. The development workflow creates two identified `+clerk_test` users, establishes browser sessions through Clerk Agent Tasks, runs the complete authenticated D1/R2/billing-reservation/match/community-clone/privacy smoke, deletes both users, and verifies that the deletion webhook tombstones their still-valid tokens. Clerk Agent Task tokens omit the browser `azp` claim, so these two workflows send a private backend bridge header. The Worker accepts a missing `azp` only when that header matches `CLERK_BACKEND_AUTH_BRIDGE_SECRET`; an incorrect `azp` is still rejected, and the header is deliberately absent from CORS.
 
 Production is intentionally different because its Clerk instance accepts only social sign-in: a Backend API user without a real OAuth identification cannot receive a production session. Create two dedicated Google or Apple QA accounts by signing into `insertplayer.ai` once with each account, then store their Clerk user ids in the two production secrets above and pin the operator separately as `ASF_ARCADE_ADMIN_CLERK_USER_ID`. Run `Configure production launch-smoke users` with the exact confirmation `CONFIGURE_PRODUCTION_LAUNCH_SMOKE_USERS`; it requires the primary to match that independent admin id, rejects an admin clone, verifies Google/Apple, and deep-merges the admin/QA markers without replacing other private metadata. The smoke workflow re-verifies those markers and OAuth accounts before it creates fresh Agent Task sessions. It exercises auth, D1, R2, publishing, sharing, cloning, and cross-account privacy, cleans up its fighters, and revokes both sessions. It deliberately leaves credit reservations and match history untouched on persistent QA accounts; the disposable development run covers those mutations and account deletion. Browser diagnostics are retained for seven days only when a run fails.
 

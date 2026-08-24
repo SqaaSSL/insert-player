@@ -39,6 +39,7 @@ const secretKeys = [
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
+  'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
 ];
 
 const requiredKeys = [
@@ -54,6 +55,7 @@ const requiredKeys = [
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
+  'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
 ];
 
 const sampleFragments = [
@@ -316,6 +318,7 @@ async function validateRequired(values) {
   const turnstileSecret = readValue(values, 'TURNSTILE_SECRET_KEY');
   const anonymizationSecret = readValue(values, 'ANONYMIZATION_SECRET');
   const generationJobSigningSecret = readValue(values, 'GENERATION_JOB_SIGNING_SECRET');
+  const clerkBackendAuthBridgeSecret = readValue(values, 'CLERK_BACKEND_AUTH_BRIDGE_SECRET');
   const turnstileHostnames = readValue(values, 'TURNSTILE_HOSTNAMES') || defaultTurnstileHostnames;
   const stripeSecret = readValue(values, 'STRIPE_SECRET_KEY');
   const stripeAccountId = readValue(values, 'STRIPE_ACCOUNT_ID');
@@ -479,6 +482,19 @@ async function validateRequired(values) {
     (value) => value.length >= 32,
     'must be a random Worker secret of at least 32 characters.',
   );
+  assertLiveShape(
+    errors,
+    'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+    clerkBackendAuthBridgeSecret,
+    (value) => value.length >= 32,
+    'must be a distinct random Worker secret of at least 32 characters.',
+  );
+  if (
+    clerkBackendAuthBridgeSecret
+    && [anonymizationSecret, generationJobSigningSecret].includes(clerkBackendAuthBridgeSecret)
+  ) {
+    errors.push('CLERK_BACKEND_AUTH_BRIDGE_SECRET must not reuse another Worker secret.');
+  }
   const turnstileHosts = turnstileHostnames.split(',').map((host) => host.trim()).filter(Boolean);
   const requiredFrontendOrigins = configuredOrigins(defaultCorsOrigins);
   const requiredTurnstileHosts = defaultTurnstileHostnames.split(',');

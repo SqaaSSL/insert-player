@@ -1,7 +1,13 @@
 import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 import type { UserWebhookEvent } from '@clerk/backend/webhooks';
-import { assertAuthorizedParty, upsertClerkUser, upsertClerkUserProfile } from './auth';
+import {
+  assertAuthorizedParty,
+  CLERK_BACKEND_AUTH_BRIDGE_HEADER,
+  hasValidClerkBackendAuthBridge,
+  upsertClerkUser,
+  upsertClerkUserProfile,
+} from './auth';
 import { processClerkUserWebhook } from './clerkWebhooks';
 import type { Env, User } from './types';
 
@@ -202,5 +208,23 @@ describe('Clerk authorized parties', () => {
       env,
       { allowMissingAuthorizedParty: true },
     )).toThrow('authorized party is not allowed');
+  });
+
+  it('requires the private backend bridge secret before allowing Agent Task tokens', async () => {
+    const secret = 'launch-smoke-bridge-secret-that-is-long-enough';
+    const bridgeEnv = { ...env, CLERK_BACKEND_AUTH_BRIDGE_SECRET: secret } as Env;
+    const matchingRequest = new Request('https://api.insertplayer.ai/auth/me', {
+      headers: { [CLERK_BACKEND_AUTH_BRIDGE_HEADER]: secret },
+    });
+    const wrongRequest = new Request('https://api.insertplayer.ai/auth/me', {
+      headers: { [CLERK_BACKEND_AUTH_BRIDGE_HEADER]: `${secret}-wrong` },
+    });
+
+    await expect(hasValidClerkBackendAuthBridge(matchingRequest, bridgeEnv)).resolves.toBe(true);
+    await expect(hasValidClerkBackendAuthBridge(wrongRequest, bridgeEnv)).resolves.toBe(false);
+    await expect(hasValidClerkBackendAuthBridge(matchingRequest, {
+      ...bridgeEnv,
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: '',
+    })).resolves.toBe(false);
   });
 });
