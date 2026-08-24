@@ -678,7 +678,7 @@ function assertRemoteD1Schema() {
     databaseName,
     '--remote',
     '--command',
-    `SELECT CASE WHEN sql LIKE '%estimated_cost_cents INTEGER NOT NULL CHECK (estimated_cost_cents >= 0)%'
+    `SELECT CASE WHEN instr(sql, 'estimated_cost_cents INTEGER NOT NULL CHECK (estimated_cost_cents >= 0)') > 0
       THEN 1 ELSE 0 END AS zero_cost_enabled
      FROM sqlite_master WHERE type = 'table' AND name = 'provider_cost_events';`,
   ], workerDir);
