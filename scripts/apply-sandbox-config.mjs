@@ -37,6 +37,7 @@ const sandboxSecretKeys = [
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
+  'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
 ];
 const requiredCompleteKeys = [
   'VITE_CLERK_PUBLISHABLE_KEY',
@@ -50,6 +51,7 @@ const requiredCompleteKeys = [
   'STRIPE_WEBHOOK_SECRET',
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
+  'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
 ];
 const expectedPrices = [
   { key: 'STRIPE_PRICE_STARTER', packId: 'starter', credits: '11', amountCents: 1499 },
@@ -257,6 +259,7 @@ async function validate(values) {
   const stripeWebhookSecret = value(values, 'STRIPE_WEBHOOK_SECRET');
   const anonymizationSecret = value(values, 'ANONYMIZATION_SECRET');
   const generationJobSigningSecret = value(values, 'GENERATION_JOB_SIGNING_SECRET');
+  const clerkBackendAuthBridgeSecret = value(values, 'CLERK_BACKEND_AUTH_BRIDGE_SECRET');
   const stripeAccountId = value(values, 'STRIPE_ACCOUNT_ID');
   const forbiddenAccounts = value(values, 'ASF_FORBIDDEN_STRIPE_ACCOUNT_IDS')
     .split(',').map((entry) => entry.trim()).filter(Boolean);
@@ -278,6 +281,13 @@ async function validate(values) {
   if (stripeWebhookSecret && !/^whsec_[A-Za-z0-9+/=_-]+$/i.test(stripeWebhookSecret)) errors.push('STRIPE_WEBHOOK_SECRET must be a whsec_ secret.');
   if (anonymizationSecret && anonymizationSecret.length < 32) errors.push('ANONYMIZATION_SECRET must contain at least 32 characters.');
   if (generationJobSigningSecret && generationJobSigningSecret.length < 32) errors.push('GENERATION_JOB_SIGNING_SECRET must contain at least 32 characters.');
+  if (clerkBackendAuthBridgeSecret && clerkBackendAuthBridgeSecret.length < 32) errors.push('CLERK_BACKEND_AUTH_BRIDGE_SECRET must contain at least 32 characters.');
+  if (
+    clerkBackendAuthBridgeSecret
+    && [anonymizationSecret, generationJobSigningSecret].includes(clerkBackendAuthBridgeSecret)
+  ) {
+    errors.push('CLERK_BACKEND_AUTH_BRIDGE_SECRET must not reuse another Worker secret.');
+  }
   if (stripeAccountId && !/^acct_[A-Za-z0-9]+$/.test(stripeAccountId)) errors.push('STRIPE_ACCOUNT_ID must be a Stripe acct_ id.');
   if (stripeAccountId && forbiddenAccounts.includes(stripeAccountId)) errors.push('Refusing to configure the sandbox with a forbidden shared Stripe account.');
   if (webhookUrl !== `${sandboxWorkerUrl}/api/billing/stripe-webhook`) errors.push('Sandbox Stripe webhook must target the isolated sandbox Worker.');

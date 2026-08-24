@@ -7,6 +7,7 @@ import {
   type GenerationBillingOperation,
 } from './tiers';
 import { createProviderSession, markProviderSessionsForCharge } from './providerSessions';
+import { enforceRateLimit } from './rateLimit';
 import { enforceAnonymousRookieTurnstile } from './turnstile';
 import {
   CURRENT_LEGAL_VERSION,
@@ -641,6 +642,8 @@ export async function authorizeGenerationPurchase(
     if (tier === 'rookie' && operation === 'fighter_generation') {
       const turnstileError = await enforceAnonymousRookieTurnstile(request, env, body.turnstileToken);
       if (turnstileError) return turnstileError;
+      const limited = await enforceRateLimit(env, 'generation:authorize', auth);
+      if (limited) return limited;
       const providerSession = await createProviderSession(env, auth, {
         tier,
         purpose: 'fighter_generation',

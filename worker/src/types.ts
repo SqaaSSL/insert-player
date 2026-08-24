@@ -10,6 +10,7 @@ export interface Env extends OptionalCloudflareBindings {
   ENVIRONMENT: Cloudflare.Env['ENVIRONMENT'];
   CORS_ORIGIN: Cloudflare.Env['CORS_ORIGIN'];
   CLERK_JWKS_URL?: string;
+  CLERK_BACKEND_AUTH_BRIDGE_SECRET?: string;
 }
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';

@@ -304,13 +304,24 @@ for (const required of [
   'provider_cost_used_cents',
   'provider_cost_limit_cents',
   'provider_spend_months',
-  'PROVIDER_MONTHLY_BUDGET_USD_CENTS',
-  'provider_monthly_budget_exhausted',
+  'INSERT INTO provider_spend_months',
+  'ON CONFLICT(period) DO UPDATE SET',
   'provider_cost_events',
   'billing_operation',
 ]) {
   if (!`${providerSessions}\n${providerCostEventsMigration}\n${productionWrangler}\n${sandboxWrangler}`.includes(required)) {
     fail(`Profitable pricing is missing provider spend accounting/control: ${required}`);
+  }
+}
+
+for (const obsoleteGlobalCap of [
+  'PROVIDER_MONTHLY_BUDGET_USD_CENTS',
+  'GEMINI_SPEND_RATE_LIMIT_USD_CENTS',
+  'provider_monthly_budget_exhausted',
+  'provider_global_spend_rate',
+]) {
+  if (`${providerSessions}\n${productionWrangler}\n${sandboxWrangler}`.includes(obsoleteGlobalCap)) {
+    fail(`Provider accounting must not impose the obsolete global cap: ${obsoleteGlobalCap}`);
   }
 }
 

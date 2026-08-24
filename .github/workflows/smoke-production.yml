@@ -18,6 +18,7 @@ jobs:
     environment: production
     env:
       ASF_LAUNCH_SMOKE_CLERK_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
       ASF_LAUNCH_SMOKE_PRIMARY_USER_ID: ${{ secrets.ASF_LAUNCH_SMOKE_PRIMARY_USER_ID }}
       ASF_LAUNCH_SMOKE_CLONE_USER_ID: ${{ secrets.ASF_LAUNCH_SMOKE_CLONE_USER_ID }}
       CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
@@ -35,6 +36,7 @@ jobs:
         run: |
           missing=()
           [[ -n "$ASF_LAUNCH_SMOKE_CLERK_KEY" ]] || missing+=(ASF_LAUNCH_SMOKE_CLERK_KEY)
+          [[ -n "$CLERK_BACKEND_AUTH_BRIDGE_SECRET" ]] || missing+=(CLERK_BACKEND_AUTH_BRIDGE_SECRET)
           [[ -n "$ASF_LAUNCH_SMOKE_PRIMARY_USER_ID" ]] || missing+=(ASF_LAUNCH_SMOKE_PRIMARY_USER_ID)
           [[ -n "$ASF_LAUNCH_SMOKE_CLONE_USER_ID" ]] || missing+=(ASF_LAUNCH_SMOKE_CLONE_USER_ID)
           if (( ${#missing[@]} > 0 )); then

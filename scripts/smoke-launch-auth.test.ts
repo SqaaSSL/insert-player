@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSandboxSmokeUserParams,
   decodeJwtPayload,
+  forceFreshBrowserClerkToken,
   formatSmokeError,
   parseSmokeTarget,
   redactSmokeDiagnostic,
@@ -23,6 +24,27 @@ const validPayload = {
 };
 
 describe('automated Clerk launch-smoke token guard', () => {
+  it('forces a frontend-origin Clerk token instead of reusing the Agent Task bootstrap token', async () => {
+    const expectedToken = tokenWith(validPayload);
+    const calls: unknown[] = [];
+    const previousClerk = globalThis.Clerk;
+    globalThis.Clerk = {
+      loaded: true,
+      session: {
+        getToken: async (options: unknown) => {
+          calls.push(options);
+          return expectedToken;
+        },
+      },
+    };
+    try {
+      await expect(forceFreshBrowserClerkToken()).resolves.toBe(expectedToken);
+      expect(calls).toEqual([{ skipCache: true }]);
+    } finally {
+      globalThis.Clerk = previousClerk;
+    }
+  });
+
   it('accepts a live token bound to the production user, issuer, and frontend', () => {
     const token = tokenWith(validPayload);
     expect(decodeJwtPayload(token)).toEqual(validPayload);
@@ -50,7 +72,26 @@ describe('automated Clerk launch-smoke token guard', () => {
       frontendOrigin: 'https://insertplayer.ai',
       clerkIssuer: 'https://clerk.insertplayer.ai',
       nowMs,
-    })).toThrow(/authorized party/i);
+    })).toThrow(/unexpected authorized-party host \(evil\.example\)/i);
+    expect(() => validateLaunchSmokeToken(tokenWith({
+      ...validPayload,
+      azp: undefined,
+    }), {
+      userId: 'user_primary',
+      frontendOrigin: 'https://insertplayer.ai',
+      clerkIssuer: 'https://clerk.insertplayer.ai',
+      nowMs,
+    })).toThrow(/missing its authorized-party claim/i);
+    expect(validateLaunchSmokeToken(tokenWith({
+      ...validPayload,
+      azp: undefined,
+    }), {
+      userId: 'user_primary',
+      frontendOrigin: 'https://insertplayer.ai',
+      clerkIssuer: 'https://clerk.insertplayer.ai',
+      allowMissingAuthorizedParty: true,
+      nowMs,
+    }).sessionId).toBe('sess_launch_smoke');
   });
 
   it('rejects wrong issuers, missing sessions, and short-lived tokens', () => {

@@ -1,4 +1,9 @@
-import { generateId, optionalAuth, requireAuth } from './auth';
+import {
+  generateId,
+  hasValidClerkBackendAuthBridge,
+  optionalAuth,
+  requireAuth,
+} from './auth';
 import {
   authorizeGenerationPurchase,
   completeGenerationPurchase,
@@ -127,8 +132,9 @@ async function authenticated(
   handler: (auth: AuthContext) => Promise<Response>,
 ): Promise<Response> {
   const isArcadeAdminSeed = request.headers.get(ARCADE_ADMIN_SEED_HEADER) === 'clerk-backend';
+  const isClerkBackendBridge = await hasValidClerkBackendAuthBridge(request, env);
   const auth = await requireAuth(request, env, {
-    allowMissingAuthorizedParty: isArcadeAdminSeed,
+    allowMissingAuthorizedParty: isArcadeAdminSeed || isClerkBackendBridge,
   });
   if (isResponse(auth)) return auth;
   if (isArcadeAdminSeed && auth.user.plan_tier !== 'admin') {
@@ -156,9 +162,15 @@ async function sensitiveOptionalAuth(
   publicAuth: PublicAuthContext,
 ): Promise<PublicAuthContext | Response> {
   if (publicAuth.user || !hasBearerAuth(request)) return publicAuth;
-  const auth = await requireAuth(request, env);
-  if (isResponse(auth)) return auth;
-  return authAsPublicContext(auth);
+  const hasBackendBridge = await hasValidClerkBackendAuthBridge(request, env);
+  if (!hasBackendBridge) {
+    const auth = await requireAuth(request, env);
+    if (isResponse(auth)) return auth;
+    return authAsPublicContext(auth);
+  }
+  const bridgedAuth = await requireAuth(request, env, { allowMissingAuthorizedParty: true });
+  if (isResponse(bridgedAuth)) return bridgedAuth;
+  return authAsPublicContext(bridgedAuth);
 }
 
 function readBoundedInteger(value: unknown, min: number, max: number): number {
@@ -218,7 +230,7 @@ function healthResponse(env: Env): Response {
 
   return json({
     status: 'ok',
-    version: '0.17.0',
+    version: '0.18.0',
     legalVersion: CURRENT_LEGAL_VERSION,
     environment: env.ENVIRONMENT ?? 'unknown',
     cors: env.CORS_ORIGIN ? 'configured' : 'wildcard',
@@ -227,12 +239,9 @@ function healthResponse(env: Env): Response {
     billing: stripeLiveConfigured ? 'stripe' : stripeTestConfigured ? 'stripe_test' : 'not_configured',
     turnstile: turnstileConfigurationStatus(env),
     anonymousRookie: env.ANONYMOUS_ROOKIE_ENABLED === 'false' ? 'disabled' : 'enabled',
-    providerBudget: /^\d+$/.test(env.PROVIDER_MONTHLY_BUDGET_USD_CENTS ?? '')
-      ? 'configured'
-      : 'not_configured',
-    providerSpendRate: /^\d+$/.test(env.GEMINI_SPEND_RATE_LIMIT_USD_CENTS ?? '')
-      ? 'configured'
-      : 'not_configured',
+    providerAccounting: 'durable',
+    providerSessionLimits: 'configured',
+    providerGlobalCaps: 'disabled',
     storage: {
       d1: env.DB ? 'bound' : 'missing',
       r2: env.SPRITES ? 'bound' : 'missing',
@@ -269,7 +278,9 @@ export default {
       if (generationAuth instanceof Response) {
         return addCors(generationAuth, request, env);
       }
-      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(request, env);
+      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(request, env, {
+        allowMissingAuthorizedParty: await hasValidClerkBackendAuthBridge(request, env),
+      });
       const proxied = path.startsWith('/proxy/')
         ? await handleProxy(request, env, publicAuth)
         : null;
@@ -294,8 +305,10 @@ export default {
       if (path === '/api/billing/generation' && method === 'POST') {
         const generationAuth = await sensitiveOptionalAuth(request, env, publicAuth);
         if (isResponse(generationAuth)) return addCors(generationAuth, request, env);
-        const limited = await enforceRateLimit(env, 'generation:authorize', generationAuth);
-        if (limited) return addCors(limited, request, env);
+        if (generationAuth.user) {
+          const limited = await enforceRateLimit(env, 'generation:authorize', generationAuth);
+          if (limited) return addCors(limited, request, env);
+        }
         return addCors(await authorizeGenerationPurchase(request, env, generationAuth), request, env);
       }
 

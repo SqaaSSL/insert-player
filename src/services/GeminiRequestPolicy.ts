@@ -62,7 +62,6 @@ export class GeminiRequestError extends Error {
 }
 
 const NON_RETRYABLE_CAPACITY_CODES = new Set([
-  'provider_monthly_budget_exhausted',
   'provider_session_spend_limit',
 ]);
 
@@ -149,12 +148,10 @@ export function geminiErrorFromResponse(
   const nonRetryableCapacity =
     (code ? NON_RETRYABLE_CAPACITY_CODES.has(code) : false) ||
     capacityMessage.includes('provider session call limit') ||
-    capacityMessage.includes('provider session spend limit') ||
-    capacityMessage.includes('monthly budget');
+    capacityMessage.includes('provider session spend limit');
   const spendRateLimited =
     capacityMessage.includes('spend-based rate limit') ||
-    capacityMessage.includes('spending rate') ||
-    capacityMessage.includes('provider_global_spend_rate');
+    capacityMessage.includes('spending rate');
   const dailyQuotaExhausted = response.status === 429 && (
     parsed.quotaMetrics.some((metric) => metric.endsWith('/generate_requests_per_model_per_day')) ||
     parsed.quotaIds.some((quotaId) => quotaId.toLowerCase().includes('requestsperday')) ||

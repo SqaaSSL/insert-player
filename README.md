@@ -94,7 +94,7 @@ Run the full gate before requesting review or deploying:
 npm run check:production
 ```
 
-This includes frontend style guards, TypeScript, 283 tests across 57 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
+This includes frontend style guards, TypeScript, 284 tests across 58 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
 
 Useful focused commands:
 
@@ -167,7 +167,7 @@ Browser
 Cloudflare Worker
   Clerk JWT verification
   credit reservations and Stripe webhooks
-  provider-session and spend enforcement
+  provider-session enforcement and durable cost accounting
   fighter/community/moderation APIs
        |
        +--> Workflow + Container: durable generation, upgrades, and retries
@@ -176,7 +176,7 @@ Cloudflare Worker
        +--> Gemini / fal / Runway / Freepik / Ludo via server-side secrets
 ```
 
-The browser never receives provider or Stripe secret keys. Provider calls require short-lived, purpose-scoped Worker sessions so direct proxy calls cannot bypass billing or spend controls.
+The browser never receives provider or Stripe secret keys. Provider calls require short-lived, purpose-scoped Worker sessions so direct proxy calls cannot bypass billing, route, call-count, or per-session cost controls. D1 keeps atomic monthly aggregates and permanent per-call cost events for profitability and operations, but aggregate spend is observability rather than a global kill switch.
 
 ## Non-Negotiable Rules
 
@@ -193,6 +193,7 @@ The browser never receives provider or Stripe secret keys. Provider calls requir
 - Keep Stripe refund/dispute reconciliation because it removes credits only after Stripe or a bank has already reversed money. Do not add an API path that voluntarily initiates generation refunds.
 - Keep local, QA, and production identity, billing, storage, CSP, and environment files isolated.
 - Do not expose internal provider cost estimates through public APIs.
+- Do not reintroduce a global monthly or rolling provider-spend cap. Scale is controlled by paid credits, per-session route/call/cost bounds, user/IP rate limits, Turnstile, and the provider's real quotas while durable accounting remains mandatory.
 - Do not weaken legal consent, rate limits, Turnstile, ownership checks, or cost-event retention to simplify a feature.
 
 ## Git Workflow

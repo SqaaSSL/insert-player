@@ -47,7 +47,13 @@ const SCHEMA = `
   CREATE TABLE fighters (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL,
-    original_blob_key TEXT
+    original_blob_key TEXT,
+    side_view_blob_key TEXT,
+    side_view_raw_blob_key TEXT,
+    upright_view_blob_key TEXT,
+    upright_view_raw_blob_key TEXT,
+    crouch_view_blob_key TEXT,
+    crouch_view_raw_blob_key TEXT
   );
   CREATE TABLE arcade_fighters (
     fighter_id TEXT PRIMARY KEY,
@@ -57,7 +63,9 @@ const SCHEMA = `
     id TEXT PRIMARY KEY,
     fighter_id TEXT NOT NULL,
     animation_name TEXT NOT NULL,
-    quality_tier TEXT NOT NULL
+    quality_tier TEXT NOT NULL,
+    blob_key TEXT,
+    raw_blob_key TEXT
   );
   CREATE TABLE credit_ledger (
     id TEXT PRIMARY KEY,
@@ -141,7 +149,7 @@ function sourceRequest(sourceName = 'upright'): Request {
   );
 }
 
-async function bindings(): Promise<{ mf: Miniflare; db: D1Database; env: Env }> {
+async function bindings(): Promise<{ mf: Miniflare; db: D1Database; bucket: R2Bucket; env: Env }> {
   const mf = new Miniflare({
     workers: [{
       config: {
@@ -181,6 +189,7 @@ async function bindings(): Promise<{ mf: Miniflare; db: D1Database; env: Env }> 
   return {
     mf,
     db,
+    bucket,
     env: {
       DB: db,
       SPRITES: bucket,
@@ -188,6 +197,66 @@ async function bindings(): Promise<{ mf: Miniflare; db: D1Database; env: Env }> 
       CORS_ORIGIN: 'https://insertplayer.ai',
     } as Env,
   };
+}
+
+async function stageCompleteChampionInventory(
+  db: D1Database,
+  bucket: R2Bucket,
+  storeObjects: boolean,
+): Promise<void> {
+  const sourceKeys = {
+    side: `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/side.png`,
+    sideRaw: `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/side-raw.png`,
+    upright: `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/upright.png`,
+    uprightRaw: `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/upright-raw.png`,
+    crouch: `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/crouch.png`,
+    crouchRaw: `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/crouch-raw.png`,
+  };
+  await db.batch([
+    db.prepare(`
+      UPDATE fighters SET
+        side_view_blob_key = ?,
+        side_view_raw_blob_key = ?,
+        upright_view_blob_key = ?,
+        upright_view_raw_blob_key = ?,
+        crouch_view_blob_key = ?,
+        crouch_view_raw_blob_key = ?
+      WHERE id = ?
+    `).bind(
+      sourceKeys.side,
+      sourceKeys.sideRaw,
+      sourceKeys.upright,
+      sourceKeys.uprightRaw,
+      sourceKeys.crouch,
+      sourceKeys.crouchRaw,
+      FIGHTER_ID,
+    ),
+    ...ANIMATIONS.map((animation, index) => db.prepare(`
+      INSERT INTO sprites (
+        id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key
+      ) VALUES (?, ?, ?, 'champion', ?, ?)
+    `).bind(
+      `sprite-${index}`,
+      FIGHTER_ID,
+      animation,
+      `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${animation}.png`,
+      `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${animation}-raw.png`,
+    )),
+  ]);
+  if (!storeObjects) return;
+  await Promise.all([
+    ...Object.values(sourceKeys).map((key) => bucket.put(key, new Uint8Array([1, 2, 3]))),
+    ...ANIMATIONS.flatMap((animation) => [
+      bucket.put(
+        `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${animation}.png`,
+        new Uint8Array([4, 5, 6]),
+      ),
+      bucket.put(
+        `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${animation}-raw.png`,
+        new Uint8Array([7, 8, 9]),
+      ),
+    ]),
+  ]);
 }
 
 describe('official Arcade generation authorization', () => {
@@ -251,6 +320,39 @@ describe('official Arcade generation authorization', () => {
       expect(body.ready).not.toBe(true);
       expect(body.job?.id).toBe('arcade-job');
       expect(createGenerationJob).toHaveBeenCalledOnce();
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('does not mistake stale Champion rows with missing R2 objects for a ready fighter', async () => {
+    const { mf, db, bucket, env } = await bindings();
+    try {
+      await stageCompleteChampionInventory(db, bucket, false);
+      const response = await startAdminArcadeGeneration(generationRequest(), env, adminAuth, FIGHTER_ID);
+      const body = await response.json() as { ready?: boolean; job?: { id: string } };
+      expect(body.ready).not.toBe(true);
+      expect(body.job?.id).toBe('arcade-job');
+      expect(createGenerationJob).toHaveBeenCalledOnce();
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('returns ready only when every canonical and Champion object exists in R2', async () => {
+    const { mf, db, bucket, env } = await bindings();
+    try {
+      await stageCompleteChampionInventory(db, bucket, true);
+      const response = await startAdminArcadeGeneration(generationRequest(), env, adminAuth, FIGHTER_ID);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ready: true,
+        fighterId: FIGHTER_ID,
+        tier: 'champion',
+        animationCount: ANIMATIONS.length,
+      });
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(createGenerationJob).not.toHaveBeenCalled();
     } finally {
       await mf.dispose();
     }

@@ -1,0 +1,53 @@
+name: Configure production launch-smoke users
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type CONFIGURE_PRODUCTION_LAUNCH_SMOKE_USERS
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: configure-production-launch-smoke-users
+  cancel-in-progress: false
+
+jobs:
+  configure:
+    name: Mark two verified OAuth QA users
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    env:
+      ASF_CONFIGURE_LAUNCH_SMOKE_CONFIRMATION: ${{ inputs.confirmation }}
+      ASF_LAUNCH_SMOKE_CLERK_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_LAUNCH_SMOKE_PRIMARY_USER_ID: ${{ secrets.ASF_LAUNCH_SMOKE_PRIMARY_USER_ID }}
+      ASF_LAUNCH_SMOKE_CLONE_USER_ID: ${{ secrets.ASF_LAUNCH_SMOKE_CLONE_USER_ID }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate explicit production confirmation
+        shell: bash
+        run: |
+          if [[ "$ASF_CONFIGURE_LAUNCH_SMOKE_CONFIRMATION" != "CONFIGURE_PRODUCTION_LAUNCH_SMOKE_USERS" ]]; then
+            echo "::error::Exact production confirmation is required."
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install operator dependencies
+        run: npm ci
+
+      - name: Deep-merge launch-smoke markers
+        run: npm run config:launch-smoke:production
