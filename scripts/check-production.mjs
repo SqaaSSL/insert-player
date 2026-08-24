@@ -3457,6 +3457,7 @@ assertNodeVersion();
 assertGeminiImageModelsAreGa();
 run('frontend style guard', npm, ['run', 'check:frontend']);
 run('tier parity guard', node, ['scripts/check-tier-parity.mjs']);
+run('approved image-provider boundary', node, ['processor/scripts/assert-approved-image-providers.mjs']);
 run('unit tests', npm, ['test']);
 run('processor benchmark tests', npm, ['--prefix', 'processor', 'run', 'benchmark:providers:test']);
 run('frontend typecheck', npx, ['tsc', '--noEmit']);
