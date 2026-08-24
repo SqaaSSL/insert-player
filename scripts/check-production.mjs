@@ -480,30 +480,31 @@ function assertApiOperationsAreSessionScoped() {
     'provider_cost_used_cents',
     'provider_cost_limit_cents',
     'provider_spend_months',
-    'PROVIDER_MONTHLY_BUDGET_USD_CENTS = "50000"',
-    'PROVIDER_MONTHLY_BUDGET_USD_CENTS = "5000"',
-    'GEMINI_SPEND_RATE_LIMIT_USD_CENTS = "900"',
-    "code: 'provider_monthly_budget_exhausted'",
-    "code: 'provider_global_spend_rate'",
-    'provider_spend_reservations',
+    'INSERT INTO provider_spend_months',
+    'ON CONFLICT(period) DO UPDATE SET',
     'provider_cost_events',
     'billing_operation',
     'export async function finalizeProviderRequest',
     "SET status = 'committed', updated_at = datetime('now')",
     "it('keeps attempted provider spend after an upstream failure'",
     "it('keeps the committed charge and provider spend after an upstream failure'",
+    "it('records spend without blocking a valid session after high aggregate usage'",
+    "it('fails closed when durable monthly accounting cannot be recorded'",
     "it('fails closed without cost residue when the charge was released concurrently'",
     'PRO_REQUEST_START_INTERVAL_MS = 11_000',
     'err instanceof GeminiRequestError && err.retryable',
     'maxAttempts ?? 5',
     "it('honors Google RetryInfo and identifies spend-based limits'",
-    "it('defers Gemini globally before consuming a session call'",
   ];
   const forbidden = [
     'let providerSessionId',
     'runtimeAnimModelOverride',
     'setGeminiAnimModelOverride',
     'releaseProviderSpend(env, reservation, providerStatus)',
+    'PROVIDER_MONTHLY_BUDGET_USD_CENTS',
+    'GEMINI_SPEND_RATE_LIMIT_USD_CENTS',
+    'provider_monthly_budget_exhausted',
+    'provider_global_spend_rate',
   ];
   const combined = `${apiClient}\n${apiClientTests}\n${createPage}\n${galleryPage}\n${cloudFighters}\n${gemini}\n${geminiPolicy}\n${geminiPolicyTests}\n${providerSessions}\n${providerSessionTests}\n${providerSessionIntegrationTests}\n${providerSpendMigration}\n${providerSpendRateMigration}\n${providerCostEventsMigration}\n${productionWrangler}\n${sandboxWrangler}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
@@ -511,7 +512,7 @@ function assertApiOperationsAreSessionScoped() {
   if (missing.length > 0 || foundForbidden.length > 0) {
     throw new Error([
       missing.length > 0 ? `session-scoped API operations are missing: ${missing.join(', ')}` : '',
-      foundForbidden.length > 0 ? `mutable cross-request API state remains: ${foundForbidden.join(', ')}` : '',
+      foundForbidden.length > 0 ? `obsolete or mutable provider state remains: ${foundForbidden.join(', ')}` : '',
     ].filter(Boolean).join('; '));
   }
 }

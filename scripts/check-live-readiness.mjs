@@ -228,7 +228,6 @@ function assertWranglerConfig() {
     parseTomlString(text, 'STRIPE_PRICE_VERSUS'),
     parseTomlString(text, 'STRIPE_PRICE_ARCADE'),
   ];
-  const geminiSpendRateLimit = parseTomlString(text, 'GEMINI_SPEND_RATE_LIMIT_USD_CENTS');
   const turnstileRequired = parseTomlString(text, 'TURNSTILE_REQUIRED');
   const turnstileAction = parseTomlString(text, 'TURNSTILE_ACTION');
   const turnstileHostnames = parseTomlString(text, 'TURNSTILE_HOSTNAMES')
@@ -286,8 +285,13 @@ function assertWranglerConfig() {
   if (stripePriceIds.some((priceId) => !priceId || hasSampleValue(priceId) || !/^price_[A-Za-z0-9]+$/.test(priceId))) {
     fail('worker/wrangler.toml must pin all three Insert Player Stripe Price ids.');
   }
-  if (!/^\d+$/.test(geminiSpendRateLimit) || Number(geminiSpendRateLimit) <= 0) {
-    fail('worker/wrangler.toml must set a positive GEMINI_SPEND_RATE_LIMIT_USD_CENTS rolling guard.');
+  for (const obsoleteGlobalCap of [
+    'PROVIDER_MONTHLY_BUDGET_USD_CENTS',
+    'GEMINI_SPEND_RATE_LIMIT_USD_CENTS',
+  ]) {
+    if (parseTomlString(text, obsoleteGlobalCap)) {
+      fail(`worker/wrangler.toml must not impose the obsolete ${obsoleteGlobalCap} global spend cap.`);
+    }
   }
   if (turnstileRequired !== 'true') {
     fail('worker/wrangler.toml must set TURNSTILE_REQUIRED="true" in production.');
@@ -767,8 +771,9 @@ async function assertLiveHealth() {
     ['billing', 'stripe'],
     ['turnstile', 'configured'],
     ['anonymousRookie', 'enabled'],
-    ['providerBudget', 'configured'],
-    ['providerSpendRate', 'configured'],
+    ['providerAccounting', 'durable'],
+    ['providerSessionLimits', 'configured'],
+    ['providerGlobalCaps', 'disabled'],
     ['providers', 'configured'],
     ['durableGeneration', 'configured'],
     ['privacy', 'pseudonymized'],

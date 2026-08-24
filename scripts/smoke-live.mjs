@@ -317,7 +317,7 @@ function imageBlob() {
 async function runPublicSmoke() {
   const health = await waitForCurrentWorkerHealth();
   assert(health.status === 'ok', 'Health response did not report ok');
-  assert(health.version === '0.17.0', `/health did not report Worker 0.17.0 (got ${String(health.version ?? 'missing')})`);
+  assert(health.version === '0.18.0', `/health did not report Worker 0.18.0 (got ${String(health.version ?? 'missing')})`);
   assert(health.legalVersion === generationLegal.legalVersion, '/health did not report the current legal version');
   if (isSandboxSmoke) {
     assert(health.environment === 'sandbox', '/health did not report sandbox environment');
@@ -327,8 +327,9 @@ async function runPublicSmoke() {
   assert(health.storage?.d1 === 'bound', '/health did not report D1 binding');
   assert(health.storage?.r2 === 'bound', '/health did not report R2 binding');
   assert(health.providers === 'configured', '/health did not report configured provider secrets');
-  assert(health.providerBudget === 'configured', '/health did not report a provider spend ceiling');
-  assert(health.providerSpendRate === 'configured', '/health did not report a Gemini rolling spend-rate guard');
+  assert(health.providerAccounting === 'durable', '/health did not report durable provider cost accounting');
+  assert(health.providerSessionLimits === 'configured', '/health did not report per-session provider limits');
+  assert(health.providerGlobalCaps === 'disabled', '/health still reports a global provider spend cap');
   assert(health.durableGeneration === 'configured', '/health did not report durable backend generation');
   assert(
     health.turnstile === (isSandboxSmoke ? 'disabled' : 'configured'),
