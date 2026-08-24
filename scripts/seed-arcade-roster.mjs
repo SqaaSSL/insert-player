@@ -36,6 +36,7 @@ const JOB_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 60_000;
 const CLERK_TOKEN_REFRESH_SKEW_MS = 30_000;
 const CLERK_TOKEN_TTL_SECONDS = 10 * 60;
+let clerkBackendAuthBridgeSecret = '';
 const MAX_SOURCE_UPLOAD_BYTES = 12 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PLAYABLE_ANIMATION_NAMES = [
@@ -376,13 +377,22 @@ function generationLegal(manifest) {
   };
 }
 
+export function arcadeAdminAuthHeaders(token, backendBridgeSecret = '') {
+  return {
+    Authorization: `Bearer ${token}`,
+    'X-Insert-Player-Admin-Seed': 'clerk-backend',
+    ...(backendBridgeSecret
+      ? { 'X-Insert-Player-Clerk-Backend-Auth': backendBridgeSecret }
+      : {}),
+  };
+}
+
 async function apiRequest(baseUrl, getToken, path, init = {}) {
   const token = await getToken();
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
-      Authorization: `Bearer ${token}`,
-      'X-Insert-Player-Admin-Seed': 'clerk-backend',
+      ...arcadeAdminAuthHeaders(token, clerkBackendAuthBridgeSecret),
       ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
       ...(init.headers ?? {}),
     },
@@ -887,6 +897,10 @@ async function main() {
   }
 
   const env = readEnvValues();
+  clerkBackendAuthBridgeSecret = envValue(env, 'CLERK_BACKEND_AUTH_BRIDGE_SECRET');
+  if (clerkBackendAuthBridgeSecret && clerkBackendAuthBridgeSecret.length < 32) {
+    throw new Error('CLERK_BACKEND_AUTH_BRIDGE_SECRET must contain at least 32 characters.');
+  }
   const defaultBaseUrl = target === 'sandbox'
     ? 'https://insert-player-api-sandbox.shellbot.workers.dev'
     : 'https://api.insertplayer.ai';

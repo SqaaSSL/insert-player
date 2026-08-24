@@ -1,12 +1,27 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  arcadeAdminAuthHeaders,
   assertApprovedArcadeGenerationContract,
   findCurrentArcadeEntry,
   planArcadeDraftRegistration,
   planFighterResume,
   validateManifest,
 } from './seed-arcade-roster.mjs';
+
+describe('Arcade admin backend authentication', () => {
+  it('adds the backend bridge only when explicitly configured', () => {
+    expect(arcadeAdminAuthHeaders('session-token')).toEqual({
+      Authorization: 'Bearer session-token',
+      'X-Insert-Player-Admin-Seed': 'clerk-backend',
+    });
+    expect(arcadeAdminAuthHeaders('session-token', 'b'.repeat(32))).toEqual({
+      Authorization: 'Bearer session-token',
+      'X-Insert-Player-Admin-Seed': 'clerk-backend',
+      'X-Insert-Player-Clerk-Backend-Auth': 'b'.repeat(32),
+    });
+  });
+});
 
 const manifest = JSON.parse(readFileSync(new URL('../arcade/roster-2026.json', import.meta.url), 'utf8'));
 const productionWorkflow = readFileSync(
