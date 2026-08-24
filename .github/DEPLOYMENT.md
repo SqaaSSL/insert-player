@@ -19,7 +19,8 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 - `validate.yml`: reusable production gate, full builds, Worker dry-runs, and dependency audits.
 - `deploy-development.yml`: `develop` to the isolated sandbox.
 - `deploy-production.yml`: checked `main` release to `insertplayer.ai`.
-- `smoke-production.yml`: manual, ephemeral two-user Clerk/D1/R2/clone/deletion launch smoke.
+- `smoke-development.yml`: manual authenticated sandbox smoke with two disposable Clerk users and full deletion/tombstone validation.
+- `smoke-production.yml`: manual authenticated production smoke with two dedicated OAuth QA users and fresh revocable sessions.
 - `codeql.yml`: JavaScript/TypeScript code scanning on pull requests, protected branches, and weekly schedule.
 - `dependabot.yml`: weekly frontend, Worker, and GitHub Actions updates.
 
@@ -82,7 +83,9 @@ Use the same variable and secret names in both environments. Values must remain 
 | `STRIPE_SECRET_KEY` | Test in development, live in production |
 | `STRIPE_WEBHOOK_SECRET` | Matching environment billing endpoint |
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Matching environment user-lifecycle endpoint |
-| `ASF_LAUNCH_SMOKE_CLERK_KEY` | Production launch-smoke only; scoped alias used to create and delete isolated Clerk test users |
+| `ASF_LAUNCH_SMOKE_CLERK_KEY` | Clerk Backend API key for the matching environment; used only by authenticated launch smoke |
+| `ASF_LAUNCH_SMOKE_PRIMARY_USER_ID` | Production only; Clerk user id for the dedicated primary OAuth QA account |
+| `ASF_LAUNCH_SMOKE_CLONE_USER_ID` | Production only; Clerk user id for the dedicated clone OAuth QA account |
 | `TURNSTILE_SECRET_KEY` | Matching environment widget |
 | `ANONYMIZATION_SECRET` | Stable random HMAC secret, at least 32 characters |
 | `GENERATION_JOB_SIGNING_SECRET` | Stable random HMAC secret for scoped processor job tokens, at least 32 characters |
@@ -92,7 +95,9 @@ The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit,
 
 Never use one GitHub environment as a fallback for another. A missing value must fail the deployment rather than silently reuse a test or live credential.
 
-The manual `Production launch smoke` workflow does not consume AI inference or charge Stripe. It creates two uniquely marked production Clerk users, establishes browser sessions through short-lived one-time Clerk sign-in tokens, runs the authenticated D1/R2/community clone/privacy smoke, deletes both users, and verifies that the deletion webhook tombstones their still-valid tokens. Browser diagnostics are retained for seven days only when the run fails.
+Neither authenticated smoke consumes AI inference or charges Stripe. The development workflow creates two identified `+clerk_test` users, establishes browser sessions through Clerk Agent Tasks, runs the complete authenticated D1/R2/billing-reservation/match/community-clone/privacy smoke, deletes both users, and verifies that the deletion webhook tombstones their still-valid tokens.
+
+Production is intentionally different because its Clerk instance accepts only social sign-in: a Backend API user without a real OAuth identification cannot receive a production session. Create two dedicated Google or Apple QA accounts by signing into `insertplayer.ai` once with each account. In Clerk private metadata, mark the first as `{"insertPlayerLaunchSmokeQa":true,"launchSmokeRole":"primary"}` and the second as `{"insertPlayerLaunchSmokeQa":true,"launchSmokeRole":"clone"}`. Store their Clerk user ids in the two production secrets above. The workflow verifies those metadata markers and a verified OAuth account before it creates fresh Agent Task sessions. It exercises auth, D1, R2, publishing, sharing, cloning, and cross-account privacy, cleans up its fighters, and revokes both sessions. It deliberately leaves credit reservations and match history untouched on persistent QA accounts; the disposable development run covers those mutations and account deletion. Browser diagnostics are retained for seven days only when a run fails.
 
 ## Required Branch Rules
 

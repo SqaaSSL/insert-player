@@ -7,14 +7,44 @@ import { isClerkAPIResponseError } from '@clerk/backend/errors';
 import { chromium } from 'playwright';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const args = new Set(process.argv.slice(2));
-const EXPECTED_FRONTEND_ORIGIN = 'https://insertplayer.ai';
-const EXPECTED_WORKER_URL = 'https://api.insertplayer.ai';
+const args = process.argv.slice(2);
 const TOKEN_TTL_SECONDS = 10 * 60;
 const BROWSER_TIMEOUT_MS = 90_000;
 const TOMBSTONE_TIMEOUT_MS = 90_000;
 const LIVE_SMOKE_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_DIAGNOSTIC_LENGTH = 1_200;
+const PRODUCTION_QA_MARKER = 'insertPlayerLaunchSmokeQa';
+const PRODUCTION_QA_ROLE = 'launchSmokeRole';
+const ALLOWED_QA_OAUTH_PROVIDERS = new Set(['apple', 'google']);
+
+const TARGET_CONFIG = {
+  production: {
+    expectedFrontendOrigin: 'https://insertplayer.ai',
+    expectedWorkerUrl: 'https://api.insertplayer.ai',
+    expectedClerkIssuer: 'https://clerk.insertplayer.ai',
+    secretPrefix: 'sk_live_',
+    preserveUserState: true,
+  },
+  sandbox: {
+    expectedFrontendOrigin: 'https://insert-player-sandbox.pages.dev',
+    expectedWorkerUrl: 'https://insert-player-api-sandbox.shellbot.workers.dev',
+    expectedClerkIssuer: 'https://right-cricket-1317.clerk.accounts.dev',
+    secretPrefix: 'sk_test_',
+    preserveUserState: false,
+  },
+};
+
+export function parseSmokeTarget(argv) {
+  const values = argv
+    .filter((arg) => arg.startsWith('--target='))
+    .map((arg) => arg.slice('--target='.length).trim());
+  if (values.length > 1) throw new Error('Pass exactly one launch-smoke target.');
+  const target = values[0] || 'production';
+  if (!Object.hasOwn(TARGET_CONFIG, target)) {
+    throw new Error('Launch-smoke target must be --target=production or --target=sandbox.');
+  }
+  return target;
+}
 
 export function redactSmokeDiagnostic(value) {
   return String(value ?? '')
@@ -69,9 +99,12 @@ function parseEnvText(text, values) {
   }
 }
 
-function readEnvValues() {
+function readEnvValues(target) {
   const values = new Map();
-  for (const file of ['.env.production.local', '.env.production', '.env.local', '.env']) {
+  const files = target === 'sandbox'
+    ? ['.env.sandbox.local', '.env.sandbox', '.env.local', '.env']
+    : ['.env.production.local', '.env.production', '.env.local', '.env'];
+  for (const file of files) {
     const path = join(root, file);
     if (existsSync(path)) parseEnvText(readFileSync(path, 'utf8'), values);
   }
@@ -109,7 +142,7 @@ export function validateLaunchSmokeToken(token, {
   const claims = decodeJwtPayload(token);
   if (claims.sub !== userId) throw new Error('Clerk launch-smoke token belongs to a different user.');
   if (normalizedOrigin(String(claims.azp ?? '')) !== normalizedOrigin(frontendOrigin)) {
-    throw new Error('Clerk launch-smoke token is missing the production authorized party.');
+    throw new Error('Clerk launch-smoke token is missing the expected authorized party.');
   }
   if (normalizedOrigin(String(claims.iss ?? '')) !== normalizedOrigin(clerkIssuer)) {
     throw new Error('Clerk launch-smoke token has the wrong issuer.');
@@ -124,11 +157,52 @@ export function validateLaunchSmokeToken(token, {
   return { claims, sessionId: claims.sid };
 }
 
+function normalizedOauthProvider(provider) {
+  return String(provider ?? '').toLowerCase().replace(/^oauth_/, '');
+}
+
+export function validateProductionQaUser(user, role) {
+  if (!user || typeof user.id !== 'string') {
+    throw new Error(`Production ${role} QA user could not be loaded from Clerk.`);
+  }
+  if (user.banned || user.locked) {
+    throw new Error(`Production ${role} QA user is banned or locked.`);
+  }
+  const metadata = user.privateMetadata ?? {};
+  if (metadata[PRODUCTION_QA_MARKER] !== true || metadata[PRODUCTION_QA_ROLE] !== role) {
+    throw new Error(
+      `Production ${role} user must be explicitly marked in Clerk private metadata as ${PRODUCTION_QA_MARKER}=true and ${PRODUCTION_QA_ROLE}=${role}.`,
+    );
+  }
+  const verifiedProvider = (user.externalAccounts ?? []).find((account) => (
+    ALLOWED_QA_OAUTH_PROVIDERS.has(normalizedOauthProvider(account.provider))
+    && account.verification?.status === 'verified'
+  ));
+  if (!verifiedProvider) {
+    throw new Error(`Production ${role} QA user needs a verified Google or Apple OAuth account.`);
+  }
+  return normalizedOauthProvider(verifiedProvider.provider);
+}
+
+export function buildSandboxSmokeUserParams(runId, role) {
+  return {
+    externalId: `insert-player-launch-smoke:${runId}:${role}`,
+    emailAddress: [`insert-player+clerk_test_${runId}_${role}@example.com`],
+    firstName: 'Launch Smoke',
+    lastName: role === 'primary' ? 'Primary' : 'Clone',
+    skipPasswordRequirement: true,
+    skipLegalChecks: true,
+    privateMetadata: {
+      insertPlayerLaunchSmoke: true,
+      launchSmokeRunId: runId,
+      launchSmokeRole: role,
+    },
+  };
+}
+
 async function captureFrontendSessionToken({
   browser,
-  signInTicket,
-  publishableKey,
-  clerkIssuer,
+  agentTaskUrl,
   frontendOrigin,
   workerUrl,
   role,
@@ -157,67 +231,23 @@ async function captureFrontendSessionToken({
   });
 
   try {
-    const response = await page.goto(`${frontendOrigin}/menu`, {
+    const response = await page.goto(agentTaskUrl, {
       waitUntil: 'domcontentloaded',
       timeout: BROWSER_TIMEOUT_MS,
     });
     if (response && !response.ok()) {
-      const responseText = await response.text().catch(() => 'No response body was available.');
-      throw new Error(
-        `Insert Player session bootstrap failed with HTTP ${response.status()}: ${redactSmokeDiagnostic(responseText)}`,
-      );
+      throw new Error(`Clerk Agent Task bootstrap failed with HTTP ${response.status()}.`);
     }
-    await page.evaluate(async ({ clerkJsUrl, key, ticket }) => {
-      if (!window.Clerk) {
-        await new Promise((resolveScript, rejectScript) => {
-          const script = document.createElement('script');
-          script.async = true;
-          script.crossOrigin = 'anonymous';
-          script.src = clerkJsUrl;
-          script.setAttribute('data-clerk-publishable-key', key);
-          script.addEventListener('load', resolveScript, { once: true });
-          script.addEventListener('error', () => rejectScript(new Error('ClerkJS failed to load.')), {
-            once: true,
-          });
-          document.head.appendChild(script);
-        });
-      }
-      let clerk = window.Clerk;
-      if (typeof clerk === 'function') {
-        clerk = new clerk(key);
-        window.Clerk = clerk;
-      }
-      if (!clerk?.loaded) await clerk?.load?.();
-      if (!clerk?.client?.signIn?.create || !clerk?.setActive) {
-        throw new Error('ClerkJS did not expose the ticket sign-in API.');
-      }
-      const attempt = await clerk.client.signIn.create({ strategy: 'ticket', ticket });
-      if (attempt.status !== 'complete' || !attempt.createdSessionId) {
-        throw new Error(`Clerk ticket sign-in did not complete (status ${attempt.status ?? 'unknown'}).`);
-      }
-      await clerk.setActive({ session: attempt.createdSessionId });
-    }, {
-      clerkJsUrl: `${clerkIssuer}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`,
-      key: publishableKey,
-      ticket: signInTicket,
-    });
-    await page.reload({
-      waitUntil: 'domcontentloaded',
-      timeout: BROWSER_TIMEOUT_MS,
-    });
-    if (new URL(page.url()).pathname !== '/menu') {
-      await page.goto(`${frontendOrigin}/menu`, {
-        waitUntil: 'domcontentloaded',
-        timeout: BROWSER_TIMEOUT_MS,
-      });
-    }
+    await page.waitForURL((candidate) => (
+      candidate.origin === frontendOrigin && candidate.pathname === '/menu'
+    ), { timeout: BROWSER_TIMEOUT_MS });
     return await tokenPromise;
-  } catch (err) {
+  } catch (error) {
     if (artifactDir) {
       mkdirSync(artifactDir, { recursive: true });
       await page.screenshot({ path: join(artifactDir, `${role}-failure.png`), fullPage: true }).catch(() => {});
     }
-    throw err;
+    throw error;
   } finally {
     clearTimeout(tokenTimeout);
     await context.close();
@@ -233,26 +263,33 @@ function launchSmokeRunId() {
   return candidate.slice(0, 80);
 }
 
-export function buildSmokeUserParams(runId, role) {
-  return {
-    externalId: `insert-player-launch-smoke:${runId}:${role}`,
-    privateMetadata: {
-      insertPlayerLaunchSmoke: true,
-      launchSmokeRunId: runId,
-      launchSmokeRole: role,
-    },
-  };
-}
-
-async function createSmokeUser(clerk, runId, role) {
+async function createSandboxSmokeUser(clerk, runId, role) {
   try {
-    return await clerk.users.createUser(buildSmokeUserParams(runId, role));
+    return await clerk.users.createUser(buildSandboxSmokeUserParams(runId, role));
   } catch (error) {
     throw new Error(`Could not create the ephemeral ${role} Clerk user: ${formatSmokeError(error)}`);
   }
 }
 
-async function createBrowserBackedToken({
+async function loadProductionQaUsers(clerk, primaryUserId, cloneUserId) {
+  if (!/^user_[A-Za-z0-9_-]+$/.test(primaryUserId) || !/^user_[A-Za-z0-9_-]+$/.test(cloneUserId)) {
+    throw new Error(
+      'Production launch smoke needs ASF_LAUNCH_SMOKE_PRIMARY_USER_ID and ASF_LAUNCH_SMOKE_CLONE_USER_ID from two dedicated OAuth QA accounts.',
+    );
+  }
+  if (primaryUserId === cloneUserId) {
+    throw new Error('Production launch smoke needs two different dedicated OAuth QA users.');
+  }
+  const [primaryUser, cloneUser] = await Promise.all([
+    clerk.users.getUser(primaryUserId),
+    clerk.users.getUser(cloneUserId),
+  ]);
+  validateProductionQaUser(primaryUser, 'primary');
+  validateProductionQaUser(cloneUser, 'clone');
+  return { primaryUser, cloneUser };
+}
+
+async function createAgentTaskBackedToken({
   clerk,
   browser,
   user,
@@ -260,24 +297,28 @@ async function createBrowserBackedToken({
   frontendOrigin,
   workerUrl,
   clerkIssuer,
-  publishableKey,
   artifactDir,
 }) {
-  const signInToken = await clerk.signInTokens.createSignInToken({
-    userId: user.id,
-    expiresInSeconds: 5 * 60,
-  });
+  let task = null;
+  let consumed = false;
   try {
+    task = await clerk.agentTasks.create({
+      onBehalfOf: { userId: user.id },
+      permissions: '*',
+      agentName: 'insert-player-launch-smoke',
+      taskDescription: `Insert Player launch smoke (${role})`,
+      redirectUrl: `${frontendOrigin}/menu`,
+      sessionMaxDurationInSeconds: 15 * 60,
+    });
     const shortToken = await captureFrontendSessionToken({
       browser,
-      signInTicket: signInToken.token,
-      publishableKey,
-      clerkIssuer,
+      agentTaskUrl: task.url,
       frontendOrigin,
       workerUrl,
       role,
       artifactDir,
     });
+    consumed = true;
     const { sessionId } = validateLaunchSmokeToken(shortToken, {
       userId: user.id,
       frontendOrigin,
@@ -290,52 +331,19 @@ async function createBrowserBackedToken({
       clerkIssuer,
       minRemainingSeconds: 8 * 60,
     });
-    return refreshed.jwt;
+    return { token: refreshed.jwt, sessionId };
   } catch (error) {
-    await clerk.signInTokens.revokeSignInToken(signInToken.id).catch((revokeError) => {
-      console.error(`Could not revoke the failed Clerk sign-in token: ${formatSmokeError(revokeError)}`);
-    });
-    throw error;
+    throw new Error(`Could not establish the ${role} Agent Task session: ${formatSmokeError(error)}`);
+  } finally {
+    if (task && !consumed) {
+      await clerk.agentTasks.revoke(task.agentTaskId).catch((revokeError) => {
+        console.error(`Could not revoke the unused ${role} Agent Task: ${formatSmokeError(revokeError)}`);
+      });
+    }
   }
 }
 
-async function createOriginBoundBackendToken({
-  clerk,
-  secretKey,
-  user,
-  frontendOrigin,
-  clerkIssuer,
-}) {
-  const session = await clerk.sessions.createSession({ userId: user.id });
-  const response = await fetch(
-    `https://api.clerk.com/v1/sessions/${encodeURIComponent(session.id)}/tokens`,
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${secretKey}`,
-        'Content-Type': 'application/json',
-        Origin: frontendOrigin,
-      },
-      body: JSON.stringify({ expires_in_seconds: TOKEN_TTL_SECONDS }),
-      signal: AbortSignal.timeout(30_000),
-    },
-  );
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || typeof payload.jwt !== 'string') {
-    throw new Error(
-      `Clerk backend session token mint failed with HTTP ${response.status}: ${redactSmokeDiagnostic(JSON.stringify(payload))}`,
-    );
-  }
-  validateLaunchSmokeToken(payload.jwt, {
-    userId: user.id,
-    frontendOrigin,
-    clerkIssuer,
-    minRemainingSeconds: 8 * 60,
-  });
-  return payload.jwt;
-}
-
-function runAuthenticatedLiveSmoke(primaryToken, cloneToken) {
+function runAuthenticatedLiveSmoke(primaryToken, cloneToken, target, preserveUserState) {
   const result = spawnSync(
     process.execPath,
     [join(root, 'scripts/smoke-live.mjs'), '--require-auth', '--require-clone'],
@@ -348,19 +356,21 @@ function runAuthenticatedLiveSmoke(primaryToken, cloneToken) {
         ASF_CLERK_JWT_CLONE: cloneToken,
         ASF_SMOKE_REQUIRE_AUTH: '1',
         ASF_SMOKE_REQUIRE_CLONE: '1',
+        ASF_SMOKE_TARGET: target,
+        ASF_SMOKE_PRESERVE_USER_STATE: preserveUserState ? '1' : '0',
       },
       timeout: LIVE_SMOKE_TIMEOUT_MS,
     },
   );
   if (result.error) {
     if (result.error.code === 'ETIMEDOUT') {
-      throw new Error('Authenticated production smoke timed out after 10 minutes.');
+      throw new Error('Authenticated launch smoke timed out after 10 minutes.');
     }
     throw result.error;
   }
-  if (result.signal) throw new Error(`Authenticated production smoke exited with signal ${result.signal}.`);
+  if (result.signal) throw new Error(`Authenticated launch smoke exited with signal ${result.signal}.`);
   if (result.status !== 0) {
-    throw new Error(`Authenticated production smoke failed with exit code ${result.status ?? 'unknown'}.`);
+    throw new Error(`Authenticated launch smoke failed with exit code ${result.status ?? 'unknown'}.`);
   }
 }
 
@@ -382,7 +392,7 @@ async function waitForDeletedTokenRejection({ token, workerUrl, frontendOrigin, 
     lastStatus = response.status;
     if (response.status === 401) {
       await response.body?.cancel().catch(() => {});
-      console.log(`✓ ${role} Clerk deletion tombstones its still-valid session token`);
+      console.log(`\u2713 ${role} Clerk deletion tombstones its still-valid session token`);
       return;
     }
     await response.body?.cancel().catch(() => {});
@@ -391,133 +401,183 @@ async function waitForDeletedTokenRejection({ token, workerUrl, frontendOrigin, 
   throw new Error(`${role} deleted Clerk token remained usable (last HTTP ${lastStatus || 'unknown'}).`);
 }
 
-async function deleteSmokeUser(clerk, user, role) {
+async function deleteSandboxSmokeUser(clerk, user, role) {
   if (!user?.id) return false;
   await clerk.users.deleteUser(user.id);
-  console.log(`✓ deleted ephemeral ${role} Clerk user`);
+  console.log(`\u2713 deleted ephemeral ${role} Clerk user`);
   return true;
 }
 
-async function main() {
-  if (!args.has('--confirm-production')) {
-    throw new Error('Pass --confirm-production to run the mutating production launch smoke.');
+async function revokeProductionQaSession(clerk, sessionId, role) {
+  if (!sessionId) return;
+  const session = await clerk.sessions.revokeSession(sessionId);
+  if (session.status !== 'revoked') {
+    throw new Error(`Production ${role} QA session did not reach revoked status.`);
   }
-  const env = readEnvValues();
+  console.log(`\u2713 revoked production ${role} QA session`);
+}
+
+function validateTargetConfiguration(target, env) {
+  const config = TARGET_CONFIG[target];
   const secretKey = envValue(env, 'ASF_LAUNCH_SMOKE_CLERK_KEY');
   const frontendOrigin = normalizedOrigin(
-    envValue(env, 'ASF_FRONTEND_ORIGIN') || envValue(env, 'ASF_FRONTEND_URL'),
+    envValue(env, 'ASF_FRONTEND_ORIGIN')
+      || envValue(env, 'ASF_FRONTEND_URL')
+      || (target === 'sandbox' ? envValue(env, 'ASF_SANDBOX_FRONTEND_URL') : ''),
   );
   const workerUrl = normalizedOrigin(
-    envValue(env, 'ASF_WORKER_URL') || envValue(env, 'VITE_API_BASE_URL'),
+    envValue(env, 'ASF_WORKER_URL')
+      || envValue(env, 'VITE_API_BASE_URL')
+      || (target === 'sandbox' ? envValue(env, 'ASF_SANDBOX_WORKER_URL') : ''),
   );
   const clerkIssuer = normalizedOrigin(envValue(env, 'CLERK_ISSUER'));
-  const publishableKey = envValue(env, 'VITE_CLERK_PUBLISHABLE_KEY');
-  if (!secretKey.startsWith('sk_live_')) {
-    throw new Error('Production ASF_LAUNCH_SMOKE_CLERK_KEY is required.');
+  if (!secretKey.startsWith(config.secretPrefix)) {
+    throw new Error(`${target} ASF_LAUNCH_SMOKE_CLERK_KEY is required and must match its Clerk instance.`);
   }
-  if (frontendOrigin !== EXPECTED_FRONTEND_ORIGIN) {
-    throw new Error(`Launch smoke is pinned to ${EXPECTED_FRONTEND_ORIGIN}.`);
+  if (frontendOrigin !== config.expectedFrontendOrigin) {
+    throw new Error(`${target} launch smoke is pinned to ${config.expectedFrontendOrigin}.`);
   }
-  if (workerUrl !== EXPECTED_WORKER_URL) {
-    throw new Error(`Launch smoke is pinned to ${EXPECTED_WORKER_URL}.`);
+  if (workerUrl !== config.expectedWorkerUrl) {
+    throw new Error(`${target} launch smoke is pinned to ${config.expectedWorkerUrl}.`);
   }
-  if (clerkIssuer !== 'https://clerk.insertplayer.ai') {
-    throw new Error('Launch smoke requires the production Insert Player Clerk issuer.');
+  if (clerkIssuer !== config.expectedClerkIssuer) {
+    throw new Error(`${target} launch smoke requires the expected Insert Player Clerk issuer.`);
   }
-  if (!publishableKey.startsWith('pk_live_')) {
-    throw new Error('Launch smoke requires the production Clerk publishable key.');
-  }
+  return { ...config, secretKey, frontendOrigin, workerUrl, clerkIssuer };
+}
 
+async function main() {
+  const target = parseSmokeTarget(args);
+  if (target === 'production' && !args.includes('--confirm-production')) {
+    throw new Error('Pass --confirm-production to run the mutating production launch smoke.');
+  }
+  const env = readEnvValues(target);
+  const config = validateTargetConfiguration(target, env);
   const artifactDir = process.env.RUNNER_TEMP
-    ? join(process.env.RUNNER_TEMP, 'insert-player-launch-smoke')
+    ? join(process.env.RUNNER_TEMP, `insert-player-${target}-launch-smoke`)
     : '';
-  const clerk = createClerkClient({ secretKey });
+  const clerk = createClerkClient({ secretKey: config.secretKey });
   const runId = launchSmokeRunId();
   let browser = null;
   let primaryUser = null;
   let cloneUser = null;
-  let primaryToken = '';
-  let cloneToken = '';
+  let primaryAuth = null;
+  let cloneAuth = null;
   const errors = [];
 
   try {
-    primaryUser = await createSmokeUser(clerk, runId, 'primary');
-    cloneUser = await createSmokeUser(clerk, runId, 'clone');
-    console.log('✓ created two isolated Clerk launch-smoke users');
+    if (target === 'sandbox') {
+      primaryUser = await createSandboxSmokeUser(clerk, runId, 'primary');
+      cloneUser = await createSandboxSmokeUser(clerk, runId, 'clone');
+      console.log('\u2713 created two isolated sandbox Clerk users');
+    } else {
+      ({ primaryUser, cloneUser } = await loadProductionQaUsers(
+        clerk,
+        envValue(env, 'ASF_LAUNCH_SMOKE_PRIMARY_USER_ID'),
+        envValue(env, 'ASF_LAUNCH_SMOKE_CLONE_USER_ID'),
+      ));
+      console.log('\u2713 verified two dedicated production OAuth QA users');
+    }
 
-    primaryToken = await createOriginBoundBackendToken({
+    browser = await chromium.launch({ headless: true });
+    primaryAuth = await createAgentTaskBackedToken({
       clerk,
-      secretKey,
+      browser,
       user: primaryUser,
-      frontendOrigin,
-      clerkIssuer,
+      role: 'primary',
+      frontendOrigin: config.frontendOrigin,
+      workerUrl: config.workerUrl,
+      clerkIssuer: config.clerkIssuer,
+      artifactDir,
     });
-    cloneToken = await createOriginBoundBackendToken({
+    cloneAuth = await createAgentTaskBackedToken({
       clerk,
-      secretKey,
+      browser,
       user: cloneUser,
-      frontendOrigin,
-      clerkIssuer,
+      role: 'clone',
+      frontendOrigin: config.frontendOrigin,
+      workerUrl: config.workerUrl,
+      clerkIssuer: config.clerkIssuer,
+      artifactDir,
     });
-    console.log('✓ captured two distinct origin-bound Clerk backend session tokens');
+    console.log(`\u2713 captured two distinct origin-bound ${target} Clerk tokens`);
+    await browser.close();
+    browser = null;
 
-    runAuthenticatedLiveSmoke(primaryToken, cloneToken);
-  } catch (err) {
-    errors.push(err instanceof Error ? err : new Error(String(err)));
+    runAuthenticatedLiveSmoke(primaryAuth.token, cloneAuth.token, target, config.preserveUserState);
+  } catch (error) {
+    errors.push(error instanceof Error ? error : new Error(String(error)));
   } finally {
-    if (browser) await browser.close().catch((err) => errors.push(err));
-    let cloneDeleted = false;
-    let primaryDeleted = false;
-    try {
-      cloneDeleted = await deleteSmokeUser(clerk, cloneUser, 'clone');
-    } catch (err) {
-      errors.push(err instanceof Error ? err : new Error(String(err)));
-    }
-    try {
-      primaryDeleted = await deleteSmokeUser(clerk, primaryUser, 'primary');
-    } catch (err) {
-      errors.push(err instanceof Error ? err : new Error(String(err)));
-    }
-    if (cloneDeleted && cloneToken) {
+    if (browser) await browser.close().catch((error) => errors.push(error));
+    if (target === 'sandbox') {
+      let cloneDeleted = false;
+      let primaryDeleted = false;
       try {
-        await waitForDeletedTokenRejection({
-          token: cloneToken,
-          workerUrl,
-          frontendOrigin,
-          role: 'clone',
-        });
-      } catch (err) {
-        errors.push(err instanceof Error ? err : new Error(String(err)));
+        cloneDeleted = await deleteSandboxSmokeUser(clerk, cloneUser, 'clone');
+      } catch (error) {
+        errors.push(error instanceof Error ? error : new Error(String(error)));
       }
-    }
-    if (primaryDeleted && primaryToken) {
       try {
-        await waitForDeletedTokenRejection({
-          token: primaryToken,
-          workerUrl,
-          frontendOrigin,
-          role: 'primary',
-        });
-      } catch (err) {
-        errors.push(err instanceof Error ? err : new Error(String(err)));
+        primaryDeleted = await deleteSandboxSmokeUser(clerk, primaryUser, 'primary');
+      } catch (error) {
+        errors.push(error instanceof Error ? error : new Error(String(error)));
+      }
+      if (cloneDeleted && cloneAuth?.token) {
+        try {
+          await waitForDeletedTokenRejection({
+            token: cloneAuth.token,
+            workerUrl: config.workerUrl,
+            frontendOrigin: config.frontendOrigin,
+            role: 'clone',
+          });
+        } catch (error) {
+          errors.push(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
+      if (primaryDeleted && primaryAuth?.token) {
+        try {
+          await waitForDeletedTokenRejection({
+            token: primaryAuth.token,
+            workerUrl: config.workerUrl,
+            frontendOrigin: config.frontendOrigin,
+            role: 'primary',
+          });
+        } catch (error) {
+          errors.push(error instanceof Error ? error : new Error(String(error)));
+        }
+      }
+    } else {
+      try {
+        await revokeProductionQaSession(clerk, cloneAuth?.sessionId, 'clone');
+      } catch (error) {
+        errors.push(error instanceof Error ? error : new Error(String(error)));
+      }
+      try {
+        await revokeProductionQaSession(clerk, primaryAuth?.sessionId, 'primary');
+      } catch (error) {
+        errors.push(error instanceof Error ? error : new Error(String(error)));
       }
     }
   }
 
   if (errors.length > 0) {
-    throw new AggregateError(errors, 'Automated production launch smoke failed.');
+    throw new AggregateError(errors, `Automated ${target} launch smoke failed.`);
   }
-  console.log('Automated production Clerk, D1, R2, clone, privacy, and deletion smoke passed.');
+  if (target === 'sandbox') {
+    console.log('Sandbox Clerk, D1, R2, clone, privacy, and account-deletion smoke passed.');
+  } else {
+    console.log('Production Clerk OAuth, D1, R2, clone, privacy, and session-revocation smoke passed.');
+  }
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
 if (import.meta.url === invokedPath) {
-  main().catch((err) => {
-    if (err instanceof AggregateError) {
-      console.error(err.message);
-      for (const cause of err.errors) console.error(`- ${formatSmokeError(cause)}`);
+  main().catch((error) => {
+    if (error instanceof AggregateError) {
+      console.error(error.message);
+      for (const cause of error.errors) console.error(`- ${formatSmokeError(cause)}`);
     } else {
-      console.error(formatSmokeError(err));
+      console.error(formatSmokeError(error));
     }
     process.exit(1);
   });

@@ -33,6 +33,11 @@ function envValue(values, key) {
 }
 
 const env = readEnvValues();
+const smokeTarget = envValue(env, 'ASF_SMOKE_TARGET') || 'production';
+if (!['production', 'sandbox'].includes(smokeTarget)) {
+  throw new Error('ASF_SMOKE_TARGET must be production or sandbox.');
+}
+const isSandboxSmoke = smokeTarget === 'sandbox';
 const baseUrl = (envValue(env, 'ASF_WORKER_URL') || envValue(env, 'VITE_API_BASE_URL')).replace(/\/+$/, '');
 const frontendOrigin = (envValue(env, 'ASF_FRONTEND_ORIGIN') || envValue(env, 'ASF_FRONTEND_URL')).replace(/\/+$/, '');
 const clerkJwt = envValue(env, 'ASF_CLERK_JWT');
@@ -42,6 +47,7 @@ const requireAuthenticatedSmoke =
   envValue(env, 'ASF_SMOKE_REQUIRE_AUTH') === '1' || process.argv.includes('--require-auth');
 const requireCloneSmoke =
   envValue(env, 'ASF_SMOKE_REQUIRE_CLONE') === '1' || process.argv.includes('--require-clone');
+const preserveSmokeUserState = envValue(env, 'ASF_SMOKE_PRESERVE_USER_STATE') === '1';
 const FETCH_TIMEOUT_MS = Number(envValue(env, 'ASF_LIVE_SMOKE_TIMEOUT_MS') || 45_000);
 const WORKER_READY_TIMEOUT_MS = Number(envValue(env, 'ASF_WORKER_READY_TIMEOUT_MS') || 90_000);
 const WORKER_RETRY_DELAY_MS = Number(envValue(env, 'ASF_WORKER_RETRY_DELAY_MS') || 2_500);
@@ -290,7 +296,7 @@ async function waitForCurrentWorkerHealth() {
     await sleep(Math.min(WORKER_RETRY_DELAY_MS, remaining));
   }
   const detail = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`Current production Worker did not become ready: ${detail}`);
+  throw new Error(`Current ${smokeTarget} Worker did not become ready: ${detail}`);
 }
 
 function imageBlob() {
@@ -305,18 +311,33 @@ async function runPublicSmoke() {
   assert(health.status === 'ok', 'Health response did not report ok');
   assert(health.version === '0.17.0', `/health did not report Worker 0.17.0 (got ${String(health.version ?? 'missing')})`);
   assert(health.legalVersion === generationLegal.legalVersion, '/health did not report the current legal version');
-  assert(health.environment === 'production', '/health did not report production environment');
+  if (isSandboxSmoke) {
+    assert(health.environment === 'sandbox', '/health did not report sandbox environment');
+  } else {
+    assert(health.environment === 'production', '/health did not report production environment');
+  }
   assert(health.storage?.d1 === 'bound', '/health did not report D1 binding');
   assert(health.storage?.r2 === 'bound', '/health did not report R2 binding');
   assert(health.providers === 'configured', '/health did not report configured provider secrets');
   assert(health.providerBudget === 'configured', '/health did not report a provider spend ceiling');
   assert(health.providerSpendRate === 'configured', '/health did not report a Gemini rolling spend-rate guard');
   assert(health.durableGeneration === 'configured', '/health did not report durable backend generation');
-  assert(health.turnstile === 'configured', '/health did not report configured Turnstile protection');
-  assert(health.anonymousRookie === 'enabled', '/health did not report enabled anonymous Rookie launch flow');
+  assert(
+    health.turnstile === (isSandboxSmoke ? 'disabled' : 'configured'),
+    `/health did not report the expected ${smokeTarget} Turnstile state`,
+  );
+  if (isSandboxSmoke) {
+    assert(health.anonymousRookie === 'disabled', '/health did not report disabled sandbox anonymous Rookie');
+  } else {
+    assert(health.anonymousRookie === 'enabled', '/health did not report enabled anonymous Rookie launch flow');
+  }
   assert(health.privacy === 'pseudonymized', '/health did not report pseudonymized anonymous identifiers');
-  assert(health.billing !== 'stripe_test', '/health reports test Stripe on the production Worker');
-  log('/health reports production Worker bindings');
+  const expectedBilling = isSandboxSmoke ? 'stripe_test' : 'stripe';
+  if (!isSandboxSmoke) {
+    assert(health.billing !== 'stripe_test', '/health reports test Stripe on the production Worker');
+  }
+  assert(health.billing === expectedBilling, `/health did not report ${expectedBilling} billing`);
+  log(`/health reports ${smokeTarget} Worker bindings`);
   if (requireAuthenticatedSmoke || requireCloneSmoke) {
     const launchHealthErrors = [];
     if (health.auth !== 'clerk') {
@@ -325,12 +346,15 @@ async function runPublicSmoke() {
     if (health.accountLifecycle !== 'clerk_webhook') {
       launchHealthErrors.push(`Launch smoke requires /health to report Clerk account lifecycle; got ${String(health.accountLifecycle ?? 'missing')}`);
     }
-    if (health.billing !== 'stripe') {
+    if (isSandboxSmoke && health.billing !== 'stripe_test') {
+      launchHealthErrors.push(`Launch smoke requires /health to report Stripe test billing; got ${String(health.billing ?? 'missing')}`);
+    }
+    if (!isSandboxSmoke && health.billing !== 'stripe') {
       launchHealthErrors.push(`Launch smoke requires /health to report live Stripe billing; got ${String(health.billing ?? 'missing')}`);
     }
     assert(launchHealthErrors.length === 0, launchHealthErrors.join('\n'));
-    log('/health reports Clerk auth/lifecycle and live Stripe billing for launch smoke');
-  } else if (health.auth !== 'clerk' || health.accountLifecycle !== 'clerk_webhook' || health.billing !== 'stripe') {
+    log(`/health reports Clerk auth/lifecycle and ${expectedBilling} billing for launch smoke`);
+  } else if (health.auth !== 'clerk' || health.accountLifecycle !== 'clerk_webhook' || health.billing !== expectedBilling) {
     console.warn(
       `Public smoke warning: /health reports auth=${String(health.auth ?? 'missing')} ` +
       `accountLifecycle=${String(health.accountLifecycle ?? 'missing')} ` +
@@ -350,7 +374,7 @@ async function runPublicSmoke() {
       preflight.headers.get('Access-Control-Allow-Origin') === frontendOrigin,
       'CORS preflight did not reflect ASF_FRONTEND_ORIGIN',
     );
-    log('CORS preflight reflects the production frontend origin');
+    log(`CORS preflight reflects the ${smokeTarget} frontend origin`);
 
     const rejectedOrigin = 'https://evil.example';
     const rejectedPreflight = await expectStatus('rejected CORS preflight', '/api/tiers', 204, {
@@ -551,6 +575,12 @@ async function runPublicSmoke() {
   if (rookieAuthRes.status === 429) {
     assert(rookieAuthRes.headers.has('Retry-After'), 'Signed-out Rookie generation rate limit is missing Retry-After');
     log('signed-out Rookie generation authorization is rate-limited');
+  } else if (isSandboxSmoke) {
+    assert(rookieAuthRes.status === 403, `signed-out sandbox Rookie expected 403 or 429, got ${rookieAuthRes.status}`);
+    assert(!rookieAuth.authorized, 'Signed-out sandbox Rookie should not be authorized');
+    assert(!rookieAuth.providerSessionId, 'Signed-out sandbox Rookie minted a provider session');
+    assert(rookieAuth.code === 'anonymous_rookie_disabled', 'Sandbox did not report disabled anonymous Rookie');
+    log('sandbox keeps anonymous Rookie generation disabled');
   } else {
     assert(rookieAuthRes.status === 403, `signed-out Rookie without Turnstile expected 403 or 429, got ${rookieAuthRes.status}`);
     assert(!rookieAuth.authorized, 'Signed-out Rookie without Turnstile should not be authorized');
@@ -810,7 +840,11 @@ async function runAuthenticatedSmoke() {
   assert(String(created.fighter?.name ?? '').length <= 48, 'Created fighter name exceeded the public metadata cap');
   log('authenticated fighter create writes D1');
 
-  await assertAuthenticatedGenerationBilling(smokeFighterId);
+  if (preserveSmokeUserState) {
+    console.log('Skipping generation reservation mutations for persistent production QA users.');
+  } else {
+    await assertAuthenticatedGenerationBilling(smokeFighterId);
+  }
 
   const firstSourceUpload = await uploadSource(smokeFighterId);
   const firstOriginalUrl = originalSourceUrlFromFighterPayload(firstSourceUpload);
@@ -1007,28 +1041,33 @@ async function runAuthenticatedSmoke() {
   const statsBeforeMatch = await expectJson('player stats before match', '/api/stats', 200, {
     headers: authHeaders(),
   });
-  const winsBeforeMatch = Number(statsBeforeMatch.player?.wins ?? 0);
-  await expectJson('match report', '/api/matches', 200, {
-    method: 'POST',
-    headers: authHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
-      winnerSlot: 'p1',
-      roundsP1: 2,
-      roundsP2: 0,
-      duration: 42,
-      p1FighterId: smokeFighterId,
-      p2FighterId: smokeFighterId,
-      opponentKind: 'cpu',
-      isRanked: false,
-    }),
-  });
-  const stats = await expectJson('player stats', '/api/stats', 200, {
-    headers: authHeaders(),
-  });
-  assert(Array.isArray(stats.recentMatches), '/api/stats did not include recentMatches');
-  assert(Number(stats.player?.wins ?? 0) >= winsBeforeMatch + 1, 'Unranked match win did not update signed-in record');
-  log('match reporting persists unranked match history');
-  log('match reporting updates signed-in record');
+  assert(Array.isArray(statsBeforeMatch.recentMatches), '/api/stats did not include recentMatches');
+  if (preserveSmokeUserState) {
+    log('player stats are readable without mutating persistent production QA records');
+  } else {
+    const winsBeforeMatch = Number(statsBeforeMatch.player?.wins ?? 0);
+    await expectJson('match report', '/api/matches', 200, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        winnerSlot: 'p1',
+        roundsP1: 2,
+        roundsP2: 0,
+        duration: 42,
+        p1FighterId: smokeFighterId,
+        p2FighterId: smokeFighterId,
+        opponentKind: 'cpu',
+        isRanked: false,
+      }),
+    });
+    const stats = await expectJson('player stats', '/api/stats', 200, {
+      headers: authHeaders(),
+    });
+    assert(Array.isArray(stats.recentMatches), '/api/stats did not include recentMatches');
+    assert(Number(stats.player?.wins ?? 0) >= winsBeforeMatch + 1, 'Unranked match win did not update signed-in record');
+    log('match reporting persists unranked match history');
+    log('match reporting updates signed-in record');
+  }
 
   await expectJson('unpublish fighter', `/api/fighters/${smokeFighterId}`, 200, {
     method: 'PATCH',

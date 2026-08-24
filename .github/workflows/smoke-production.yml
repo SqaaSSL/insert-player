@@ -12,12 +12,14 @@ concurrency:
 
 jobs:
   launch-smoke:
-    name: Clerk, storage, clone, and deletion smoke
+    name: Clerk OAuth, storage, clone, and privacy smoke
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
     env:
       ASF_LAUNCH_SMOKE_CLERK_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_LAUNCH_SMOKE_PRIMARY_USER_ID: ${{ secrets.ASF_LAUNCH_SMOKE_PRIMARY_USER_ID }}
+      ASF_LAUNCH_SMOKE_CLONE_USER_ID: ${{ secrets.ASF_LAUNCH_SMOKE_CLONE_USER_ID }}
       CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
       ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
       ASF_FRONTEND_URL: ${{ vars.ASF_FRONTEND_URL }}
@@ -27,6 +29,18 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Validate dedicated OAuth QA configuration
+        shell: bash
+        run: |
+          missing=()
+          [[ -n "$ASF_LAUNCH_SMOKE_CLERK_KEY" ]] || missing+=(ASF_LAUNCH_SMOKE_CLERK_KEY)
+          [[ -n "$ASF_LAUNCH_SMOKE_PRIMARY_USER_ID" ]] || missing+=(ASF_LAUNCH_SMOKE_PRIMARY_USER_ID)
+          [[ -n "$ASF_LAUNCH_SMOKE_CLONE_USER_ID" ]] || missing+=(ASF_LAUNCH_SMOKE_CLONE_USER_ID)
+          if (( ${#missing[@]} > 0 )); then
+            printf '::error::Production launch smoke is not configured. Missing production environment secrets: %s\n' "${missing[*]}"
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -41,13 +55,13 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run authenticated production launch smoke
-        run: npm run smoke:live:automated
+        run: npm run smoke:launch:production
 
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@v6
         with:
           name: production-launch-smoke-browser-diagnostics
-          path: ${{ runner.temp }}/insert-player-launch-smoke
+          path: ${{ runner.temp }}/insert-player-production-launch-smoke
           if-no-files-found: ignore
           retention-days: 7

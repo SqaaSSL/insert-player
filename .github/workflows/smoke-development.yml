@@ -1,0 +1,60 @@
+name: Development authenticated smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: development-authenticated-smoke
+  cancel-in-progress: true
+
+jobs:
+  launch-smoke:
+    name: Ephemeral Clerk, storage, clone, and deletion smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: development
+    env:
+      ASF_LAUNCH_SMOKE_CLERK_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      CLERK_ISSUER: ${{ vars.CLERK_ISSUER }}
+      ASF_WORKER_URL: ${{ vars.ASF_SANDBOX_WORKER_URL }}
+      ASF_FRONTEND_URL: ${{ vars.ASF_SANDBOX_FRONTEND_URL }}
+      ASF_FRONTEND_ORIGIN: ${{ vars.ASF_SANDBOX_FRONTEND_URL }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate sandbox Clerk configuration
+        shell: bash
+        run: |
+          if [[ -z "$ASF_LAUNCH_SMOKE_CLERK_KEY" ]]; then
+            printf '%s\n' '::error::Set ASF_LAUNCH_SMOKE_CLERK_KEY in the development GitHub environment to the Insert Player Clerk development secret key.'
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install launch-smoke dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run authenticated sandbox launch smoke
+        run: npm run smoke:launch:sandbox
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: development-launch-smoke-browser-diagnostics
+          path: ${{ runner.temp }}/insert-player-sandbox-launch-smoke
+          if-no-files-found: ignore
+          retention-days: 7
