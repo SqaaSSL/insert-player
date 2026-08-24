@@ -5,10 +5,12 @@ The official Arcade roster uses real, reusable photographs as identity reference
 ## Rules
 
 - Keep approved inputs in `.arcade-sources/<slug>.png`.
+- Keep the operational copy private and content-addressed at `official-roster-inputs/<slug>/<sha256>.png` in the target environment's R2 bucket. The browser and public asset routes must never expose this prefix.
 - Do not replace a photograph without reviewing its source, license, attribution, and personality/publicity-right implications.
 - Keep the approved photograph attached to Gemini when generating the canonical side view. Upright, crouch, and Champion frames must remain reference-guided from that identity chain; a blocked reference fails closed and never falls back to a text-only face.
 - Keep the longest image edge at or below 2048 px and the file below the Worker upload limit of 12 MiB.
 - Run `npm run arcade:seed -- --all --dry-run` after every source change. The seeder verifies PNG format, upload size, and the manifest hash.
+- CI operators can restore an approved input without moving it through chat or repository history with `npm run arcade:sources -- --target=production --slug=<fighter>`; the command refuses any R2 object whose bytes do not match the manifest hash.
 - A reusable photo license covers the photograph. It does not grant endorsement or eliminate rights associated with depicting the person. The resulting fighters remain clearly disclosed, unofficial AI-generated parody.
 
 ## Launch roster
@@ -44,3 +46,5 @@ npm run arcade:seed -- --slug=donald-trump --confirm-production
 ```
 
 The seeder asks Clerk for short-lived session tokens and refreshes them during polling. It never writes or prints those credentials. A pre-minted `ASF_ARCADE_ADMIN_JWT` remains available for short runs, but it must have at least five minutes left. Generate one fighter as a draft, inspect all canonical views and animations, and only then rerun with `--activate` or continue to the next fighter.
+
+When an incomplete draft must be regenerated after a rejected pipeline, use `--restart-draft` with exactly one slug. Fighter identity is content-addressed by the approved photo hash, so this deliberately restarts the full three-source and eleven-animation Workflow on the same private draft. Existing source and sprite artifacts remain immutable in `source_versions` and `sprite_versions`; the command never activates the result, so visual QA is still mandatory.

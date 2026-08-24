@@ -1,0 +1,141 @@
+name: Seed production Arcade fighter
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: Fighter slug from arcade/roster-2026.json
+        required: true
+        default: donald-trump
+        type: string
+      operation:
+        description: Keep activation separate until visual QA passes
+        required: true
+        default: dry-run
+        type: choice
+        options:
+          - dry-run
+          - seed
+          - resume
+          - restart-draft
+      confirmation:
+        description: Enter GEMINI_ONLY_PRODUCTION for a billable operation
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-arcade-seed
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    name: Gemini-only Champion draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: production
+    env:
+      REQUESTED_SLUG: ${{ inputs.slug }}
+      REQUESTED_OPERATION: ${{ inputs.operation }}
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+      ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate guarded request
+        shell: bash
+        run: |
+          [[ "$REQUESTED_SLUG" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || {
+            printf '::error::Invalid Arcade fighter slug.\n'
+            exit 1
+          }
+          if [[ "$REQUESTED_OPERATION" != "dry-run" ]]; then
+            [[ "$REQUESTED_CONFIRMATION" == "GEMINI_ONLY_PRODUCTION" ]] || {
+              printf '::error::Billable production generation requires the exact confirmation phrase.\n'
+              exit 1
+            }
+            [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" ]] || {
+              printf '::error::ASF_LAUNCH_SMOKE_CLERK_KEY is unavailable in the production environment.\n'
+              exit 1
+            }
+            [[ -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" ]] || {
+              printf '::error::ASF_ARCADE_ADMIN_CLERK_USER_ID is unavailable in the production environment.\n'
+              exit 1
+            }
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+            processor/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Worker dependencies
+        run: npm --prefix worker ci
+
+      - name: Install processor dependencies
+        run: npm --prefix processor ci
+
+      - name: Prove the approved image-provider boundary
+        shell: bash
+        run: |
+          [[ -f processor/scripts/assert-approved-image-providers.mjs ]] || {
+            printf '::error::The Gemini-only runtime guard is not present on this commit. Generation remains disabled.\n'
+            exit 1
+          }
+          node processor/scripts/assert-approved-image-providers.mjs
+          npm --prefix processor run build
+
+      - name: Run production gate
+        run: npm run check:production
+
+      - name: Restore and verify the private licensed source
+        run: npm run arcade:sources -- --target=production --slug="$REQUESTED_SLUG"
+
+      - name: Start or inspect the Champion draft
+        shell: bash
+        run: |
+          seed_args=(--target=production --slug="$REQUESTED_SLUG")
+          case "$REQUESTED_OPERATION" in
+            dry-run)
+              seed_args+=(--dry-run)
+              ;;
+            seed)
+              seed_args+=(--confirm-production)
+              ;;
+            resume)
+              seed_args+=(--resume --confirm-production)
+              ;;
+            restart-draft)
+              seed_args+=(--restart-draft --confirm-production)
+              ;;
+            *)
+              printf '::error::Unsupported Arcade seed operation.\n'
+              exit 1
+              ;;
+          esac
+          npm run arcade:seed -- "${seed_args[@]}"
+
+      - name: Upload resumable seed checkpoint
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-seed-${{ inputs.slug }}-${{ github.run_id }}
+          path: .arcade-state.json
+          if-no-files-found: ignore
+          retention-days: 30
