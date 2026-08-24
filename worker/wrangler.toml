@@ -3,6 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2026-08-22"
 compatibility_flags = ["nodejs_compat"]
 
+[version_metadata]
+binding = "WORKER_VERSION_METADATA"
+
 [vars]
 ENVIRONMENT = "production"
 # Comma-separated frontend origins allowed to call the Worker.
@@ -17,12 +20,19 @@ ANONYMOUS_ROOKIE_ENABLED = "true"
 # Durable generation requests remain credit-backed, session-bounded, rate
 # limited, and recorded in the provider cost ledger.
 GENERATION_API_BASE_URL = "https://api.insertplayer.ai"
+# Keep the Gemini API contract while routing production requests through the
+# dedicated Insert Player Meterkey wallet and Google AI Studio BYOK.
+GEMINI_TRANSPORT = "meterkey"
+METERKEY_BASE_URL = "https://meter.hilo.cx"
 # Set this to your Clerk issuer, for example:
 # Production Clerk uses the dedicated Insert Player Frontend API domain.
 CLERK_ISSUER = "https://clerk.insertplayer.ai"
 # Keep token azp validation explicit and aligned with CORS.
 CLERK_AUTHORIZED_PARTIES = "https://insertplayer.ai,https://www.insertplayer.ai"
 # API keys are Worker secrets, not Vite-exposed env vars:
+# wrangler secret put METERKEY_API_KEY
+# GEMINI_API_KEY remains installed only for an explicit rollback version; the
+# meterkey transport never reads it or falls back to it.
 # wrangler secret put GEMINI_API_KEY
 # wrangler secret put FAL_API_KEY
 # wrangler secret put RUNWAY_API_KEY
@@ -46,6 +56,7 @@ STRIPE_PRICE_ARCADE = "price_1U7DsKCPjQq08iG98e4ZosBp"
 
 [secrets]
 required = [
+  "METERKEY_API_KEY",
   "GEMINI_API_KEY",
   "FAL_API_KEY",
   "RUNWAY_API_KEY",

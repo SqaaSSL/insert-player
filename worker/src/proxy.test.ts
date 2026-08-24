@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { handleProxy, proxyRequest, readResponseBytes, ResponseBodyTooLargeError } from './proxy';
+import {
+  buildGeminiProxyTarget,
+  handleProxy,
+  proxyRequest,
+  readResponseBytes,
+  ResponseBodyTooLargeError,
+} from './proxy';
 import { PROVIDER_SESSION_HEADER } from './providerSessions';
 import type { Env, PublicAuthContext } from './types';
 
@@ -165,6 +171,231 @@ describe('provider result proxy hardening', () => {
 describe('provider request proxy hardening', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('builds the Meterkey Google AI Studio route without leaking the direct Google key', () => {
+    const request = new Request(
+      'https://api.insertplayer.ai/proxy/gemini/v1beta/models/gemini-3-pro-image:generateContent?key=attacker&alt=json',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Insert-Player-Provider-Request-Key': 'job:0123456789abcdef0123456789abcdef:source:side',
+        },
+        body: '{"contents":[]}',
+      },
+    );
+    const upstream = buildGeminiProxyTarget(
+      request,
+      {
+        ENVIRONMENT: 'production',
+        GEMINI_TRANSPORT: 'meterkey',
+        METERKEY_BASE_URL: 'https://meter.hilo.cx',
+        METERKEY_API_KEY: 'mk-insert-player-test',
+        GEMINI_API_KEY: 'direct-google-must-not-leak',
+      } as Env,
+      '/v1beta/models/gemini-3-pro-image:generateContent',
+      new URL(request.url),
+      'ip:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    );
+
+    expect(upstream).toMatchObject({
+      transport: 'meterkey',
+      targetUrl: 'https://meter.hilo.cx/google-ai-studio/v1beta/models/gemini-3-pro-image:generateContent?alt=json',
+    });
+    expect(upstream?.targetUrl).not.toContain('direct-google-must-not-leak');
+    expect(upstream?.targetUrl).not.toContain('attacker');
+    expect(upstream?.headers).toMatchObject({
+      Authorization: 'Bearer mk-insert-player-test',
+      'cf-aig-collect-log-payload': 'false',
+      'cf-aig-max-attempts': '1',
+      'x-meterkey-no-store': 'true',
+      'Idempotency-Key': 'ip:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      'X-Request-Id': 'ip:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    });
+  });
+
+  it('never forwards the animation-wide request scope as Meterkey idempotency', () => {
+    const request = new Request('https://api.insertplayer.ai/proxy/gemini/model', {
+      method: 'POST',
+      headers: {
+        'X-Insert-Player-Provider-Request-Key':
+          'job:0123456789abcdef0123456789abcdef:sprite:high_kick',
+      },
+      body: '{"frame":2}',
+    });
+    const upstream = buildGeminiProxyTarget(
+      request,
+      {
+        ENVIRONMENT: 'production',
+        GEMINI_TRANSPORT: 'meterkey',
+        METERKEY_BASE_URL: 'https://meter.hilo.cx',
+        METERKEY_API_KEY: 'mk-test',
+      } as Env,
+      '/v1beta/models/gemini-3-pro-image:generateContent',
+      new URL(request.url),
+    );
+
+    expect(upstream?.headers['Idempotency-Key']).toMatch(/^ip:ephemeral:[0-9a-f-]{36}$/);
+    expect(upstream?.headers['X-Request-Id']).toBe(upstream?.headers['Idempotency-Key']);
+    expect(upstream?.headers['Idempotency-Key']).not.toContain('sprite:high_kick');
+  });
+
+  it('fails closed before session accounting or fetch when the selected Meterkey secret is absent', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { env } = fakeEnv(true);
+    Object.assign(env, {
+      ENVIRONMENT: 'production',
+      GEMINI_TRANSPORT: 'meterkey',
+      METERKEY_BASE_URL: 'https://meter.hilo.cx',
+      GEMINI_API_KEY: 'legacy-direct-key',
+    });
+
+    const response = await handleProxy(new Request(
+      'https://api.insertplayer.ai/proxy/gemini/v1beta/models/gemini-3-pro-image:generateContent',
+      { method: 'POST', body: '{}' },
+    ), env, auth);
+
+    expect(response?.status).toBe(503);
+    expect(await response?.json()).toEqual({ error: 'METERKEY_API_KEY is not configured' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a Meterkey rejection after exactly one upstream attempt', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"error":"quota"}', {
+      status: 429,
+      headers: {
+        'Content-Type': 'application/json',
+        'Retry-After': '60',
+        'X-Meterkey-Upstream-Outcome': 'not-dispatched',
+      },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const request = new Request('https://api.insertplayer.ai/proxy/gemini/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"contents":[]}',
+    });
+    const upstream = buildGeminiProxyTarget(
+      request,
+      {
+        ENVIRONMENT: 'production',
+        GEMINI_TRANSPORT: 'meterkey',
+        METERKEY_BASE_URL: 'https://meter.hilo.cx',
+        METERKEY_API_KEY: 'mk-test',
+      } as Env,
+      '/v1beta/models/gemini-3-pro-image:generateContent',
+      new URL(request.url),
+    );
+    expect(upstream).not.toBeNull();
+
+    const response = await proxyRequest(request, upstream!.targetUrl, upstream!.headers, 1024);
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('60');
+    expect(response.headers.get('X-Insert-Player-Upstream-Outcome')).toBe('not-dispatched');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('meter.hilo.cx/google-ai-studio');
+  });
+
+  it('propagates an ambiguous Meterkey dispatch without retrying it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { code: 'service_unavailable', message: 'upstream provider request failed' },
+    }), {
+      status: 503,
+      headers: { 'X-Meterkey-Upstream-Outcome': 'unknown' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const request = new Request('https://api.insertplayer.ai/proxy/gemini/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"contents":[]}',
+    });
+
+    const response = await proxyRequest(
+      request,
+      'https://meter.hilo.cx/google-ai-studio/v1beta/models/gemini-3-pro-image:generateContent',
+      { Authorization: 'Bearer mk-test' },
+      1024,
+      32 * 1024 * 1024,
+      'meterkey',
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('X-Insert-Player-Upstream-Outcome')).toBe('unknown');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([null, 'invalid-outcome'])(
+    'fails closed when Meterkey omits a valid dispatch outcome (%s)',
+    async (declaredOutcome) => {
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      if (declaredOutcome) headers.set('X-Meterkey-Upstream-Outcome', declaredOutcome);
+      const fetchMock = vi.fn().mockResolvedValue(new Response('{"error":"edge failure"}', {
+        status: 503,
+        headers,
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+      const request = new Request('https://api.insertplayer.ai/proxy/gemini/model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{"contents":[]}',
+      });
+
+      const response = await proxyRequest(
+        request,
+        'https://meter.hilo.cx/google-ai-studio/v1beta/models/gemini-3-pro-image:generateContent',
+        { Authorization: 'Bearer mk-test' },
+        1024,
+        32 * 1024 * 1024,
+        'meterkey',
+      );
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get('X-Insert-Player-Upstream-Outcome')).toBe('unknown');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([200, 503])('accepts Meterkey received outcome for HTTP %s', async (status) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', {
+      status,
+      headers: { 'X-Meterkey-Upstream-Outcome': 'received' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const request = new Request('https://api.insertplayer.ai/proxy/gemini/model', {
+      method: 'POST',
+      body: '{}',
+    });
+
+    const response = await proxyRequest(
+      request,
+      'https://meter.hilo.cx/google-ai-studio/v1beta/models/gemini-3-pro-image:generateContent',
+      { Authorization: 'Bearer mk-test' },
+      1024,
+      32 * 1024 * 1024,
+      'meterkey',
+    );
+
+    expect(response.headers.get('X-Insert-Player-Upstream-Outcome')).toBe('received');
+  });
+
+  it('keeps the legacy received default for non-Meterkey providers without an outcome header', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"error":"provider failure"}', {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const request = new Request('https://api.insertplayer.ai/proxy/provider/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+
+    const response = await proxyRequest(request, 'https://provider.example/model', {}, 1024);
+
+    expect(response.headers.get('X-Insert-Player-Upstream-Outcome')).toBe('received');
   });
 
   it('rejects a declared oversized provider body before fetch', async () => {

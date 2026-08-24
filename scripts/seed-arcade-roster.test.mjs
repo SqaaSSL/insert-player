@@ -168,6 +168,7 @@ describe('Arcade roster provider preflight', () => {
     runtime: 'canvas-skia',
     contract: {
       schemaVersion: 1,
+      processorRuntimeRevision: 'meterkey-transport-v1',
       allowedGenerationProviders: ['gemini'],
       sourceModels: {
         side: 'gemini-3-pro-image',

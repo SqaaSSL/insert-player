@@ -3,6 +3,9 @@ export const GEMINI_PRO_IMAGE_MODEL = 'gemini-3-pro-image';
 
 export const OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT = {
   schemaVersion: 1,
+  // Additive so the previous Worker remains compatible after a rollback, while
+  // the new Worker can reject an older Container during rollout.
+  processorRuntimeRevision: 'meterkey-transport-v1',
   allowedGenerationProviders: ['gemini'],
   sourceModels: {
     side: GEMINI_PRO_IMAGE_MODEL,
@@ -28,6 +31,7 @@ export function isOfficialArcadeImageProviderContract(
   const sourceModels = contract.sourceModels as Record<string, unknown> | null;
   const championAnimation = contract.championAnimation as Record<string, unknown> | null;
   return contract.schemaVersion === OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.schemaVersion
+    && contract.processorRuntimeRevision === OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.processorRuntimeRevision
     && Array.isArray(providers)
     && providers.length === 1
     && providers[0] === 'gemini'

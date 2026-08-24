@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-production
+  group: production-worker-mutations
   cancel-in-progress: false
 
 jobs:
@@ -62,6 +62,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
@@ -100,6 +101,7 @@ jobs:
       - name: Validate and stage live configuration
         env:
           ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
+          METERKEY_API_KEY: ${{ secrets.METERKEY_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
@@ -109,16 +111,77 @@ jobs:
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
         run: node scripts/apply-live-config.mjs --require-complete --skip-production-check --skip-secrets
 
+      - name: Preflight Meterkey credentials
+        env:
+          METERKEY_API_KEY: ${{ secrets.METERKEY_API_KEY }}
+          METERKEY_BASE_URL: https://meter.hilo.cx
+          ASF_METERKEY_EXPECTED_KEY_ID: ${{ vars.ASF_METERKEY_EXPECTED_KEY_ID }}
+          ASF_METERKEY_EXPECTED_USER_ID: ${{ vars.ASF_METERKEY_EXPECTED_USER_ID }}
+          ASF_METERKEY_EXPECTED_WALLET_ID: ${{ vars.ASF_METERKEY_EXPECTED_WALLET_ID }}
+          ASF_METERKEY_MIN_AVAILABLE_UC: ${{ vars.ASF_METERKEY_MIN_AVAILABLE_UC }}
+          ASF_METERKEY_EXPECTED_PER_REQUEST_CAP_UC: ${{ vars.ASF_METERKEY_EXPECTED_PER_REQUEST_CAP_UC }}
+        run: npm run check:meterkey-auth
+
+      - name: Capture stable Worker version
+        id: stable-worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ASF_BOOTSTRAP_STABLE_VERSION_ID: ${{ vars.ASF_BOOTSTRAP_STABLE_VERSION_ID }}
+          ASF_BOOTSTRAP_STABLE_GIT_SHA: ${{ vars.ASF_BOOTSTRAP_STABLE_GIT_SHA }}
+        run: node scripts/worker-version-rollout.mjs current
+
+      - name: Guard rollback-safe full rollout scope
+        env:
+          ROLLOUT_BASE_SHA: ${{ steps.stable-worker.outputs.stable_git_sha }}
+          ROLLOUT_HEAD_SHA: ${{ github.sha }}
+        run: node scripts/worker-version-rollout.mjs guard-full
+
+      - name: Dry-run exact Worker and Container bundle
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ASF_WORKER_VERSION_TAG: prod-${{ github.sha }}-${{ github.run_attempt }}
+          METERKEY_API_KEY: ${{ secrets.METERKEY_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FAL_API_KEY: ${{ secrets.FAL_API_KEY }}
+          RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
+          FREEPIK_API_KEY: ${{ secrets.FREEPIK_API_KEY }}
+          LUDO_API_KEY: ${{ secrets.LUDO_API_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
+          GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+        run: node scripts/apply-live-config.mjs --skip-production-check --dry-run-worker-deploy
+
+      - name: Require an idle generation pipeline before migrations
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/check-generation-idle.mjs
+
       - name: Apply production D1 migrations
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npm --prefix worker run db:migrate
 
-      - name: Upload Worker secrets and deploy
+      - name: Reconfirm an idle generation pipeline before deploy
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/check-generation-idle.mjs
+
+      - name: Deploy Worker and compatible Container
+        id: deploy-worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ASF_WORKER_VERSION_TAG: prod-${{ github.sha }}-${{ github.run_attempt }}
+          METERKEY_API_KEY: ${{ secrets.METERKEY_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FAL_API_KEY: ${{ secrets.FAL_API_KEY }}
           RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
@@ -133,8 +196,42 @@ jobs:
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
         run: node scripts/apply-live-config.mjs --skip-production-check --deploy-worker
 
+      - name: Capture deployed Worker version
+        id: deployed-worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ASF_BOOTSTRAP_STABLE_VERSION_ID: ${{ vars.ASF_BOOTSTRAP_STABLE_VERSION_ID }}
+          ASF_BOOTSTRAP_STABLE_GIT_SHA: ${{ vars.ASF_BOOTSTRAP_STABLE_GIT_SHA }}
+        run: node scripts/worker-version-rollout.mjs current
+
       - name: Smoke production Worker
+        env:
+          ASF_EXPECTED_WORKER_VERSION_ID: ${{ steps.deployed-worker.outputs.stable_version_id }}
+          ASF_EXPECTED_WORKER_VERSION_TAG: prod-${{ github.sha }}-${{ github.run_attempt }}
         run: npm run smoke:live
+
+      - name: Wait for the compatible image processor Container
+        env:
+          ASF_ARCADE_PREFLIGHT_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+          ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+          ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+        run: |
+          ready=0
+          for attempt in $(seq 1 30); do
+            if node scripts/seed-arcade-roster.mjs \
+              --target=production \
+              --preflight-only \
+              --slug=donald-trump; then
+              ready=1
+              break
+            fi
+            sleep 20
+          done
+          if [ "$ready" -ne 1 ]; then
+            printf '%s\n' 'Compatible image processor did not become ready.' >&2
+            exit 1
+          fi
 
       - name: Build, deploy, and smoke Pages
         env:
@@ -147,6 +244,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npm run check:live-readiness
+
+      - name: Restore stable Worker after failed rollout
+        if: failure() && steps.deploy-worker.outcome != 'skipped'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STABLE_WORKER_VERSION_ID: ${{ steps.stable-worker.outputs.stable_version_id }}
+        run: node scripts/worker-version-rollout.mjs rollback
 
       - name: Publish deployment summary
         run: |

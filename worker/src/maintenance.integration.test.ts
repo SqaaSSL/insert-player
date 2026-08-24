@@ -5,7 +5,21 @@ import type { Env } from './types';
 
 const SCHEMA = `
   PRAGMA foreign_keys = ON;
-  CREATE TABLE users (id TEXT PRIMARY KEY);
+  CREATE TABLE users (
+    id TEXT PRIMARY KEY,
+    credits_balance INTEGER NOT NULL DEFAULT 0,
+    free_rookie_generations_used INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE credit_ledger (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    delta INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    fighter_id TEXT,
+    stripe_session_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
   CREATE TABLE fighters (
     id TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
@@ -31,6 +45,8 @@ const SCHEMA = `
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     charge_id TEXT,
+    provider_calls_used INTEGER NOT NULL DEFAULT 0 CHECK (provider_calls_used >= 0),
+    provider_cost_used_cents INTEGER NOT NULL DEFAULT 0 CHECK (provider_cost_used_cents >= 0),
     status TEXT NOT NULL DEFAULT 'active',
     expires_at TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -76,14 +92,32 @@ const SCHEMA = `
     updated_at TEXT NOT NULL
   );
   CREATE TABLE provider_cost_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES provider_sessions(id) ON DELETE SET NULL,
+    charge_id TEXT REFERENCES generation_charges(id) ON DELETE SET NULL,
+    estimated_cost_cents INTEGER NOT NULL CHECK (estimated_cost_cents >= 0),
+    outcome TEXT NOT NULL DEFAULT 'reserved',
+    http_status INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    finalized_at TEXT,
     job_id TEXT,
+    artifact_run_id TEXT,
     stage TEXT,
+    upstream_outcome TEXT NOT NULL DEFAULT 'pending',
     stage_outcome TEXT NOT NULL DEFAULT 'pending',
     job_outcome TEXT NOT NULL DEFAULT 'in_progress'
+  );
+  CREATE TABLE provider_spend_months (
+    period TEXT PRIMARY KEY,
+    estimated_cost_cents INTEGER NOT NULL DEFAULT 0 CHECK (estimated_cost_cents >= 0),
+    provider_calls INTEGER NOT NULL DEFAULT 0 CHECK (provider_calls >= 0),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE rate_limits (expires_at TEXT NOT NULL);
   CREATE TABLE provider_spend_reservations (created_at_epoch INTEGER NOT NULL);
   CREATE TABLE provider_capacity_windows (retry_at_epoch INTEGER NOT NULL);
+  CREATE TABLE provider_meterkey_capacity_windows (retry_at_epoch INTEGER NOT NULL);
   CREATE TABLE stripe_events (created_at TEXT NOT NULL);
   CREATE TABLE clerk_webhook_events (processed_at TEXT NOT NULL);
   CREATE TABLE checkout_sessions (status TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -281,8 +315,11 @@ describe('operational generation retention against D1 and R2', () => {
           )
         `),
         db.prepare(`
-          INSERT INTO provider_cost_events (job_id, stage)
-          VALUES ('job-1', 'sprite:low_punch')
+          INSERT INTO provider_cost_events (
+            id, session_id, charge_id, estimated_cost_cents, outcome, job_id, stage
+          ) VALUES (
+            'cost-1', 'session-1', 'charge-1', 8, 'succeeded', 'job-1', 'sprite:low_punch'
+          )
         `),
       ]);
 
@@ -304,6 +341,300 @@ describe('operational generation retention against D1 and R2', () => {
       `).first()).toEqual({ stage_outcome: 'failed', job_outcome: 'failed_partial' });
       expect((await db.prepare("SELECT status FROM provider_sessions WHERE id = 'session-1'")
         .first<{ status: string }>())?.status).toBe('cancelled');
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('reconciles exact not-dispatched events and refunds late releases exactly once', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      await db.batch([
+        db.prepare("INSERT INTO users (id) VALUES ('user-1')"),
+        db.prepare("INSERT INTO fighters (id, owner_user_id) VALUES ('fighter-1', 'user-1')"),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES
+            ('ledger-correlation', 'user-1', -7, 'generation_charge', 'fighter-1'),
+            ('ledger-marker', 'user-1', -7, 'generation_charge', 'fighter-1'),
+            ('ledger-outcome', 'user-1', -7, 'generation_charge', 'fighter-1')
+        `),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, fighter_id, ledger_id, status
+          ) VALUES
+            ('charge-correlation', 'user-1', 'fighter-1', 'ledger-correlation', 'committed'),
+            ('charge-marker', 'user-1', 'fighter-1', 'ledger-marker', 'committed'),
+            ('charge-outcome', 'user-1', 'fighter-1', 'ledger-outcome', 'committed')
+        `),
+        db.prepare(`
+          INSERT INTO provider_sessions (
+            id, user_id, charge_id, provider_calls_used, provider_cost_used_cents, expires_at
+          ) VALUES
+            ('session-correlation', 'user-1', 'charge-correlation', 2, 16, datetime('now', '+1 day')),
+            ('session-marker', 'user-1', 'charge-marker', 1, 8, datetime('now', '+1 day')),
+            ('session-outcome', 'user-1', 'charge-outcome', 1, 8, datetime('now', '+1 day'))
+        `),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, user_id, fighter_id, charge_id, provider_session_id,
+            status, stage, finished_at, updated_at
+          ) VALUES
+            (
+              'job-correlation', 'user-1', 'fighter-1', 'charge-correlation', 'session-correlation',
+              'failed', 'sprite:high_kick', datetime('now'), datetime('now')
+            ),
+            (
+              'job-marker', 'user-1', 'fighter-1', 'charge-marker', 'session-marker',
+              'failed', 'sprite:high_kick', datetime('now'), datetime('now')
+            ),
+            (
+              'job-outcome', 'user-1', 'fighter-1', 'charge-outcome', 'session-outcome',
+              'failed', 'sprite:high_kick', datetime('now'), datetime('now')
+            )
+        `),
+        db.prepare(`
+          INSERT INTO generation_job_events (id, job_id, stage, status, detail)
+          VALUES
+            (
+              'job-event-correlation', 'job-correlation', 'sprite:high_kick', 'failed',
+              'Image provider request is not safe to retry (provider_request_not_dispatched): '
+              || '(provider_request_not_dispatched:cost-correlation-b)'
+            ),
+            (
+              'job-event-marker', 'job-marker', 'sprite:high_kick', 'failed',
+              'Image provider request is not safe to retry (provider_request_not_dispatched): '
+              || '(provider_request_not_dispatched:cost-marker)'
+            )
+        `),
+        db.prepare(`
+          INSERT INTO provider_cost_events (
+            id, session_id, charge_id, estimated_cost_cents, outcome,
+            http_status, job_id, stage, upstream_outcome
+          ) VALUES
+            (
+              'cost-correlation-a', 'session-correlation', 'charge-correlation', 8, 'reserved',
+              NULL, 'job-correlation', 'sprite:high_kick', 'pending'
+            ),
+            (
+              'cost-correlation-b', 'session-correlation', 'charge-correlation', 8, 'reserved',
+              NULL, 'job-correlation', 'sprite:high_kick', 'pending'
+            ),
+            (
+              'cost-marker', 'session-marker', 'charge-marker', 8, 'reserved',
+              NULL, 'job-marker', 'sprite:high_kick', 'pending'
+            ),
+            (
+              'cost-outcome', 'session-outcome', 'charge-outcome', 8, 'reserved',
+              429, 'job-outcome', 'sprite:high_kick', 'not_dispatched'
+            )
+        `),
+        db.prepare(`
+          INSERT INTO provider_spend_months (period, estimated_cost_cents, provider_calls)
+          VALUES (strftime('%Y-%m', 'now'), 32, 4)
+        `),
+      ]);
+
+      const accountingSnapshot = async () => ({
+        charges: (await db.prepare(`
+          SELECT id, status,
+                 CASE WHEN refund_ledger_id IS NULL THEN 0 ELSE 1 END AS has_refund_ledger
+          FROM generation_charges ORDER BY id
+        `).all()).results,
+        sessions: (await db.prepare(`
+          SELECT id, provider_calls_used, provider_cost_used_cents
+          FROM provider_sessions ORDER BY id
+        `).all()).results,
+        costs: (await db.prepare(`
+          SELECT id, estimated_cost_cents, outcome, upstream_outcome
+          FROM provider_cost_events ORDER BY id
+        `).all()).results,
+        month: await db.prepare(`
+          SELECT estimated_cost_cents, provider_calls FROM provider_spend_months
+        `).first(),
+        user: await db.prepare(`
+          SELECT credits_balance, free_rookie_generations_used FROM users WHERE id = 'user-1'
+        `).first(),
+        ledgers: await db.prepare(`
+          SELECT COUNT(*) AS count,
+                 SUM(CASE WHEN reason LIKE 'generation_reservation_release:%' THEN 1 ELSE 0 END)
+                   AS release_count,
+                 SUM(CASE
+                   WHEN reason LIKE 'generation_reservation_release:%' AND fighter_id = 'fighter-1'
+                   THEN 1 ELSE 0
+                 END) AS fighter_release_count
+          FROM credit_ledger
+        `).first(),
+      });
+
+      await cleanupOperationalData(env);
+      const afterFirstMaintenance = await accountingSnapshot();
+      expect(afterFirstMaintenance).toEqual({
+        charges: [
+          { id: 'charge-correlation', status: 'committed', has_refund_ledger: 0 },
+          { id: 'charge-marker', status: 'refunded', has_refund_ledger: 1 },
+          { id: 'charge-outcome', status: 'refunded', has_refund_ledger: 1 },
+        ],
+        sessions: [
+          { id: 'session-correlation', provider_calls_used: 1, provider_cost_used_cents: 8 },
+          { id: 'session-marker', provider_calls_used: 0, provider_cost_used_cents: 0 },
+          { id: 'session-outcome', provider_calls_used: 0, provider_cost_used_cents: 0 },
+        ],
+        costs: [
+          {
+            id: 'cost-correlation-a',
+            estimated_cost_cents: 8,
+            outcome: 'reserved',
+            upstream_outcome: 'pending',
+          },
+          {
+            id: 'cost-correlation-b',
+            estimated_cost_cents: 0,
+            outcome: 'failed',
+            upstream_outcome: 'not_dispatched',
+          },
+          {
+            id: 'cost-marker',
+            estimated_cost_cents: 0,
+            outcome: 'failed',
+            upstream_outcome: 'not_dispatched',
+          },
+          {
+            id: 'cost-outcome',
+            estimated_cost_cents: 0,
+            outcome: 'failed',
+            upstream_outcome: 'not_dispatched',
+          },
+        ],
+        month: { estimated_cost_cents: 8, provider_calls: 1 },
+        user: { credits_balance: 14, free_rookie_generations_used: 0 },
+        ledgers: { count: 5, release_count: 2, fighter_release_count: 2 },
+      });
+
+      await cleanupOperationalData(env);
+      expect(await accountingSnapshot()).toEqual(afterFirstMaintenance);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('closes only empty partial runs after a late not-dispatched refund', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      await db.batch([
+        db.prepare("INSERT INTO users (id) VALUES ('user-1')"),
+        db.prepare("INSERT INTO fighters (id, owner_user_id) VALUES ('fighter-1', 'user-1')"),
+        db.prepare(`
+          INSERT INTO generation_charges (id, user_id, fighter_id, status)
+          VALUES
+            ('charge-empty', 'user-1', 'fighter-1', 'reserved'),
+            ('charge-checkpoint', 'user-1', 'fighter-1', 'reserved'),
+            ('charge-refunded-with-other', 'user-1', 'fighter-1', 'reserved'),
+            ('charge-other-committed', 'user-1', 'fighter-1', 'committed')
+        `),
+        db.prepare(`
+          INSERT INTO provider_sessions (id, user_id, charge_id, expires_at)
+          VALUES
+            ('session-empty', 'user-1', 'charge-empty', datetime('now', '+1 day')),
+            ('session-checkpoint', 'user-1', 'charge-checkpoint', datetime('now', '+1 day')),
+            (
+              'session-refunded-with-other', 'user-1', 'charge-refunded-with-other',
+              datetime('now', '+1 day')
+            ),
+            (
+              'session-other-committed', 'user-1', 'charge-other-committed',
+              datetime('now', '+1 day')
+            )
+        `),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (id, original_charge_id, status, updated_at)
+          VALUES
+            ('run-empty', 'charge-empty', 'partial', datetime('now')),
+            ('run-checkpoint', 'charge-checkpoint', 'partial', datetime('now')),
+            (
+              'run-other-charge', 'charge-refunded-with-other', 'partial', datetime('now')
+            )
+        `),
+        db.prepare(`
+          INSERT INTO generation_artifact_checkpoints (run_id, status)
+          VALUES ('run-checkpoint', 'approved')
+        `),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, user_id, fighter_id, charge_id, provider_session_id,
+            artifact_run_id, status, stage, finished_at, updated_at
+          ) VALUES
+            (
+              'job-empty', 'user-1', 'fighter-1', 'charge-empty', 'session-empty',
+              'run-empty', 'failed', 'source:side', datetime('now'), datetime('now')
+            ),
+            (
+              'job-checkpoint', 'user-1', 'fighter-1', 'charge-checkpoint', 'session-checkpoint',
+              'run-checkpoint', 'failed', 'sprite:idle', datetime('now'), datetime('now')
+            ),
+            (
+              'job-refunded-with-other', 'user-1', 'fighter-1',
+              'charge-refunded-with-other', 'session-refunded-with-other',
+              'run-other-charge', 'failed', 'source:side', datetime('now'), datetime('now')
+            ),
+            (
+              'job-other-committed', 'user-1', 'fighter-1', 'charge-other-committed',
+              'session-other-committed', 'run-other-charge', 'failed', 'sprite:idle',
+              datetime('now'), datetime('now')
+            )
+        `),
+        db.prepare(`
+          INSERT INTO provider_cost_events (
+            id, session_id, charge_id, estimated_cost_cents, outcome,
+            job_id, artifact_run_id, stage, upstream_outcome
+          ) VALUES
+            (
+              'cost-empty', 'session-empty', 'charge-empty', 0, 'failed',
+              'job-empty', 'run-empty', 'source:side', 'not_dispatched'
+            ),
+            (
+              'cost-checkpoint', 'session-checkpoint', 'charge-checkpoint', 0, 'failed',
+              'job-checkpoint', 'run-checkpoint', 'sprite:idle', 'not_dispatched'
+            ),
+            (
+              'cost-refunded-with-other', 'session-refunded-with-other',
+              'charge-refunded-with-other', 0, 'failed', 'job-refunded-with-other',
+              'run-other-charge', 'source:side', 'not_dispatched'
+            )
+        `),
+      ]);
+
+      await cleanupOperationalData(env);
+      expect((await db.prepare(`
+        SELECT id, status FROM generation_artifact_runs ORDER BY id
+      `).all()).results).toEqual([
+        { id: 'run-checkpoint', status: 'partial' },
+        { id: 'run-empty', status: 'failed' },
+        { id: 'run-other-charge', status: 'partial' },
+      ]);
+      expect((await db.prepare(`
+        SELECT id, status FROM generation_charges
+        WHERE id <> 'charge-other-committed' ORDER BY id
+      `).all()).results).toEqual([
+        { id: 'charge-checkpoint', status: 'refunded' },
+        { id: 'charge-empty', status: 'refunded' },
+        { id: 'charge-refunded-with-other', status: 'refunded' },
+      ]);
+      expect((await db.prepare(`
+        SELECT credits_balance FROM users WHERE id = 'user-1'
+      `).first<{ credits_balance: number }>())?.credits_balance).toBe(21);
+
+      await cleanupOperationalData(env);
+      expect((await db.prepare(`
+        SELECT id, status FROM generation_artifact_runs ORDER BY id
+      `).all()).results).toEqual([
+        { id: 'run-checkpoint', status: 'partial' },
+        { id: 'run-empty', status: 'failed' },
+        { id: 'run-other-charge', status: 'partial' },
+      ]);
+      expect((await db.prepare(`
+        SELECT credits_balance FROM users WHERE id = 'user-1'
+      `).first<{ credits_balance: number }>())?.credits_balance).toBe(21);
     } finally {
       await mf.dispose();
     }

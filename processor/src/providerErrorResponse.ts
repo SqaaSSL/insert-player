@@ -17,6 +17,12 @@ export interface ProcessorErrorResponse {
 const DEFAULT_DAILY_QUOTA_RETRY_SECONDS = 24 * 60 * 60;
 const MAX_DAILY_QUOTA_RETRY_SECONDS = 48 * 60 * 60;
 const MIN_DAILY_QUOTA_RETRY_SECONDS = 60;
+const NON_RETRYABLE_METERKEY_CODES = new Set([
+  'provider_request_not_dispatched',
+  'provider_request_outcome_unknown',
+  'daily_cap_exceeded',
+  'monthly_cap_exceeded',
+]);
 
 function dailyQuotaRetrySeconds(error: GeminiRequestError): number {
   const upstreamSeconds = error.retryAfterMs === null
@@ -29,6 +35,24 @@ function dailyQuotaRetrySeconds(error: GeminiRequestError): number {
 }
 
 export function processorErrorResponse(error: unknown): ProcessorErrorResponse {
+  if (
+    error instanceof GeminiRequestError &&
+    error.code !== null &&
+    NON_RETRYABLE_METERKEY_CODES.has(error.code)
+  ) {
+    return {
+      status: Number.isInteger(error.status) && error.status >= 400 && error.status <= 599
+        ? error.status
+        : 502,
+      body: {
+        error: error.message,
+        code: error.code,
+        provider: 'gemini',
+        ...(isApprovedGeminiImageModel(error.model) ? { model: error.model } : {}),
+      },
+    };
+  }
+
   if (error instanceof GeminiRequestError && error.dailyQuotaExhausted) {
     if (!isApprovedGeminiImageModel(error.model)) {
       return {

@@ -104,6 +104,20 @@ const STEP_CONFIG = {
   retries: { limit: 5, delay: '30 seconds' as const, backoff: 'exponential' as const },
   timeout: '3 hours' as const,
 };
+const NON_RETRYABLE_PROVIDER_CODES = new Set([
+  'provider_request_not_dispatched',
+  'provider_request_outcome_unknown',
+  'daily_cap_exceeded',
+  'monthly_cap_exceeded',
+]);
+
+export function nonRetryableProcessorProviderMessage(
+  errorCode: string,
+  detail: string,
+): string | null {
+  if (!NON_RETRYABLE_PROVIDER_CODES.has(errorCode)) return null;
+  return `Image provider request is not safe to retry (${errorCode}): ${detail}`;
+}
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -199,6 +213,10 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         errorCode = typeof parsed.code === 'string' ? parsed.code : '';
       } catch {
         // The bounded response text below remains the diagnostic for non-JSON failures.
+      }
+      const nonRetryableProviderMessage = nonRetryableProcessorProviderMessage(errorCode, detail);
+      if (nonRetryableProviderMessage) {
+        throw new NonRetryableError(nonRetryableProviderMessage);
       }
       if (response.status === 422 && errorCode === 'provider_content_blocked') {
         throw new NonRetryableError('The image provider declined this transformation without returning an image');

@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-arcade-seed
+  group: production-worker-mutations
   cancel-in-progress: false
 
 jobs:

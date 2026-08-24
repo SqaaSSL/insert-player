@@ -52,6 +52,23 @@ const preserveSmokeUserState = envValue(env, 'ASF_SMOKE_PRESERVE_USER_STATE') ==
 const FETCH_TIMEOUT_MS = Number(envValue(env, 'ASF_LIVE_SMOKE_TIMEOUT_MS') || 45_000);
 const WORKER_READY_TIMEOUT_MS = Number(envValue(env, 'ASF_WORKER_READY_TIMEOUT_MS') || 90_000);
 const WORKER_RETRY_DELAY_MS = Number(envValue(env, 'ASF_WORKER_RETRY_DELAY_MS') || 2_500);
+const workerVersionOverride = envValue(env, 'ASF_WORKER_VERSION_OVERRIDE');
+const workerVersionOverrideName = envValue(env, 'ASF_WORKER_VERSION_OVERRIDE_NAME') || 'ai-street-fighter-api';
+const workerVersionOverrideTag = envValue(env, 'ASF_WORKER_VERSION_OVERRIDE_TAG');
+const expectedWorkerVersionId = workerVersionOverride || envValue(env, 'ASF_EXPECTED_WORKER_VERSION_ID');
+const expectedWorkerVersionTag = workerVersionOverrideTag || envValue(env, 'ASF_EXPECTED_WORKER_VERSION_TAG');
+if (workerVersionOverride && !/^[0-9a-f-]{36}$/i.test(workerVersionOverride)) {
+  throw new Error('ASF_WORKER_VERSION_OVERRIDE must be a Worker version UUID.');
+}
+if (!/^[a-z0-9_-]{1,63}$/i.test(workerVersionOverrideName)) {
+  throw new Error('ASF_WORKER_VERSION_OVERRIDE_NAME is invalid.');
+}
+if (expectedWorkerVersionId && !/^[0-9a-f-]{36}$/i.test(expectedWorkerVersionId)) {
+  throw new Error('Expected Worker version must be a UUID.');
+}
+if (expectedWorkerVersionId && !expectedWorkerVersionTag) {
+  throw new Error('Expected Worker version tag is required with a version id.');
+}
 
 const tinyPngBase64 =
   envValue(env, 'ASF_TEST_IMAGE_BASE64') ||
@@ -233,6 +250,12 @@ async function request(pathOrUrl, init = {}) {
     headers.set('Origin', frontendOrigin);
   }
   const target = url(pathOrUrl);
+  if (workerVersionOverride && new URL(target).origin === new URL(baseUrl).origin) {
+    headers.set(
+      'Cloudflare-Workers-Version-Overrides',
+      `${workerVersionOverrideName}="${workerVersionOverride}"`,
+    );
+  }
   try {
     return await fetch(target, {
       ...init,
@@ -292,10 +315,17 @@ async function waitForCurrentWorkerHealth() {
   while (Date.now() - started <= WORKER_READY_TIMEOUT_MS) {
     try {
       const health = await expectJson('health', '/health');
-      if (health.legalVersion === generationLegal.legalVersion) return health;
-      lastError = new Error(
-        `/health still reports legal version ${String(health.legalVersion ?? 'missing')}`,
+      const legalReady = health.legalVersion === generationLegal.legalVersion;
+      const versionReady = !expectedWorkerVersionId || (
+        health.workerVersion?.id === expectedWorkerVersionId
+        && health.workerVersion?.tag === expectedWorkerVersionTag
       );
+      if (legalReady && versionReady) return health;
+      lastError = new Error([
+        `/health reports legal=${String(health.legalVersion ?? 'missing')}`,
+        `worker=${String(health.workerVersion?.id ?? 'missing')}`,
+        `tag=${String(health.workerVersion?.tag ?? 'missing')}`,
+      ].join(', '));
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
     }
@@ -317,7 +347,17 @@ function imageBlob() {
 async function runPublicSmoke() {
   const health = await waitForCurrentWorkerHealth();
   assert(health.status === 'ok', 'Health response did not report ok');
-  assert(health.version === '0.18.0', `/health did not report Worker 0.18.0 (got ${String(health.version ?? 'missing')})`);
+  assert(health.version === '0.19.0', `/health did not report Worker 0.19.0 (got ${String(health.version ?? 'missing')})`);
+  if (expectedWorkerVersionId) {
+    assert(
+      health.workerVersion?.id === expectedWorkerVersionId,
+      `/health did not execute the requested Worker candidate (got ${String(health.workerVersion?.id ?? 'missing')})`,
+    );
+    assert(
+      health.workerVersion?.tag === expectedWorkerVersionTag,
+      `/health did not report the requested Worker candidate tag (got ${String(health.workerVersion?.tag ?? 'missing')})`,
+    );
+  }
   assert(health.legalVersion === generationLegal.legalVersion, '/health did not report the current legal version');
   if (isSandboxSmoke) {
     assert(health.environment === 'sandbox', '/health did not report sandbox environment');
@@ -327,6 +367,10 @@ async function runPublicSmoke() {
   assert(health.storage?.d1 === 'bound', '/health did not report D1 binding');
   assert(health.storage?.r2 === 'bound', '/health did not report R2 binding');
   assert(health.providers === 'configured', '/health did not report configured provider secrets');
+  assert(
+    health.geminiTransport === (isSandboxSmoke ? 'google-direct' : 'meterkey'),
+    `/health did not report the expected ${smokeTarget} Gemini transport`,
+  );
   assert(health.providerAccounting === 'durable', '/health did not report durable provider cost accounting');
   assert(health.providerSessionLimits === 'configured', '/health did not report per-session provider limits');
   assert(health.providerGlobalCaps === 'disabled', '/health still reports a global provider spend cap');
