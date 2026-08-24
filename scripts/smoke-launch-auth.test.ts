@@ -85,23 +85,17 @@ describe('automated Clerk launch-smoke user creation', () => {
     const params = buildSmokeUserParams('run-123', 'primary');
     expect(params).toEqual({
       externalId: 'insert-player-launch-smoke:run-123:primary',
-      emailAddress: ['launch-smoke+run-123-primary@example.com'],
       privateMetadata: {
         insertPlayerLaunchSmoke: true,
         launchSmokeRunId: 'run-123',
         launchSmokeRole: 'primary',
       },
     });
+    expect(params).not.toHaveProperty('emailAddress');
     expect(params).not.toHaveProperty('password');
     expect(params).not.toHaveProperty('firstName');
     expect(params).not.toHaveProperty('legalAcceptedAt');
     expect(params).not.toHaveProperty('skipLegalChecks');
-  });
-
-  it('keeps the synthetic email local part within RFC limits for long run ids', () => {
-    const params = buildSmokeUserParams('x'.repeat(80), 'primary');
-    const localPart = params.emailAddress[0].split('@')[0];
-    expect(localPart.length).toBeLessThanOrEqual(64);
   });
 
   it('reports actionable Clerk codes while redacting sensitive values', () => {

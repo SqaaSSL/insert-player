@@ -126,7 +126,7 @@ export function validateLaunchSmokeToken(token, {
 
 async function captureFrontendSessionToken({
   browser,
-  agentTaskUrl,
+  sessionBootstrapUrl,
   frontendOrigin,
   workerUrl,
   role,
@@ -155,19 +155,27 @@ async function captureFrontendSessionToken({
   });
 
   try {
-    const response = await page.goto(agentTaskUrl, {
+    const response = await page.goto(sessionBootstrapUrl, {
       waitUntil: 'domcontentloaded',
       timeout: BROWSER_TIMEOUT_MS,
     });
     if (response && !response.ok()) {
       const responseText = await response.text().catch(() => 'No response body was available.');
       throw new Error(
-        `Clerk Agent Task navigation failed with HTTP ${response.status()}: ${redactSmokeDiagnostic(responseText)}`,
+        `Clerk sign-in bootstrap failed with HTTP ${response.status()}: ${redactSmokeDiagnostic(responseText)}`,
       );
     }
-    await page.waitForURL((candidate) => (
-      candidate.origin === frontendOrigin && candidate.pathname === '/menu'
-    ), { timeout: BROWSER_TIMEOUT_MS });
+    if (new URL(page.url()).origin !== frontendOrigin) {
+      await page.waitForURL((candidate) => candidate.origin === frontendOrigin, {
+        timeout: BROWSER_TIMEOUT_MS,
+      });
+    }
+    if (new URL(page.url()).pathname !== '/menu') {
+      await page.goto(`${frontendOrigin}/menu`, {
+        waitUntil: 'domcontentloaded',
+        timeout: BROWSER_TIMEOUT_MS,
+      });
+    }
     return await tokenPromise;
   } catch (err) {
     if (artifactDir) {
@@ -193,7 +201,6 @@ function launchSmokeRunId() {
 export function buildSmokeUserParams(runId, role) {
   return {
     externalId: `insert-player-launch-smoke:${runId}:${role}`,
-    emailAddress: [`launch-smoke+${runId.slice(0, 32)}-${role}@example.com`],
     privateMetadata: {
       insertPlayerLaunchSmoke: true,
       launchSmokeRunId: runId,
@@ -204,7 +211,6 @@ export function buildSmokeUserParams(runId, role) {
 
 async function createSmokeUser(clerk, runId, role) {
   try {
-    // Agent Tasks need an identification; this ephemeral address never enables email auth in the app.
     return await clerk.users.createUser(buildSmokeUserParams(runId, role));
   } catch (error) {
     throw new Error(`Could not create the ephemeral ${role} Clerk user: ${formatSmokeError(error)}`);
@@ -221,35 +227,38 @@ async function createBrowserBackedToken({
   clerkIssuer,
   artifactDir,
 }) {
-  const task = await clerk.agentTasks.create({
-    onBehalfOf: { userId: user.id },
-    permissions: '*',
-    agentName: 'insert-player-launch-smoke',
-    taskDescription: `Production launch smoke (${role})`,
-    redirectUrl: `${frontendOrigin}/menu`,
-    sessionMaxDurationInSeconds: 15 * 60,
-  });
-  const shortToken = await captureFrontendSessionToken({
-    browser,
-    agentTaskUrl: task.url,
-    frontendOrigin,
-    workerUrl,
-    role,
-    artifactDir,
-  });
-  const { sessionId } = validateLaunchSmokeToken(shortToken, {
+  const signInToken = await clerk.signInTokens.createSignInToken({
     userId: user.id,
-    frontendOrigin,
-    clerkIssuer,
+    expiresInSeconds: 5 * 60,
   });
-  const refreshed = await clerk.sessions.getToken(sessionId, undefined, TOKEN_TTL_SECONDS);
-  validateLaunchSmokeToken(refreshed.jwt, {
-    userId: user.id,
-    frontendOrigin,
-    clerkIssuer,
-    minRemainingSeconds: 8 * 60,
-  });
-  return refreshed.jwt;
+  try {
+    const shortToken = await captureFrontendSessionToken({
+      browser,
+      sessionBootstrapUrl: signInToken.url,
+      frontendOrigin,
+      workerUrl,
+      role,
+      artifactDir,
+    });
+    const { sessionId } = validateLaunchSmokeToken(shortToken, {
+      userId: user.id,
+      frontendOrigin,
+      clerkIssuer,
+    });
+    const refreshed = await clerk.sessions.getToken(sessionId, undefined, TOKEN_TTL_SECONDS);
+    validateLaunchSmokeToken(refreshed.jwt, {
+      userId: user.id,
+      frontendOrigin,
+      clerkIssuer,
+      minRemainingSeconds: 8 * 60,
+    });
+    return refreshed.jwt;
+  } catch (error) {
+    await clerk.signInTokens.revokeSignInToken(signInToken.id).catch((revokeError) => {
+      console.error(`Could not revoke the failed Clerk sign-in token: ${formatSmokeError(revokeError)}`);
+    });
+    throw error;
+  }
 }
 
 function runAuthenticatedLiveSmoke(primaryToken, cloneToken) {

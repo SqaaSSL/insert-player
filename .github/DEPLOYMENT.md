@@ -92,7 +92,7 @@ The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit,
 
 Never use one GitHub environment as a fallback for another. A missing value must fail the deployment rather than silently reuse a test or live credential.
 
-The manual `Production launch smoke` workflow does not consume AI inference or charge Stripe. It creates two uniquely marked production Clerk users, establishes browser sessions through Clerk Agent Tasks, runs the authenticated D1/R2/community clone/privacy smoke, deletes both users, and verifies that the deletion webhook tombstones their still-valid tokens. Browser diagnostics are retained for seven days only when the run fails.
+The manual `Production launch smoke` workflow does not consume AI inference or charge Stripe. It creates two uniquely marked production Clerk users, establishes browser sessions through short-lived one-time Clerk sign-in tokens, runs the authenticated D1/R2/community clone/privacy smoke, deletes both users, and verifies that the deletion webhook tombstones their still-valid tokens. Browser diagnostics are retained for seven days only when the run fails.
 
 ## Required Branch Rules
 
