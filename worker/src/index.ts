@@ -48,6 +48,7 @@ import { listCommunityReports, moderateCommunityReport } from './moderation';
 import { CURRENT_LEGAL_VERSION } from './legal';
 import { optionalGenerationJobAuth } from './generationAuth';
 import {
+  readAdminArcadeGenerationContract,
   startAdminArcadeAnimationGeneration,
   startAdminArcadeGeneration,
   startAdminArcadeSourceGeneration,
@@ -457,6 +458,19 @@ export default {
             env,
             'admin:arcade',
             (auth) => listAdminArcadeFighters(env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/admin/arcade/generation-contract' && method === 'GET') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => readAdminArcadeGenerationContract(env, auth),
           ),
           request,
           env,

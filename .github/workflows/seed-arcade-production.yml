@@ -11,9 +11,10 @@ on:
       operation:
         description: Keep activation separate until visual QA passes
         required: true
-        default: dry-run
+        default: preflight
         type: choice
         options:
+          - preflight
           - dry-run
           - seed
           - resume
@@ -57,11 +58,13 @@ jobs:
             printf '::error::Invalid Arcade fighter slug.\n'
             exit 1
           }
-          if [[ "$REQUESTED_OPERATION" != "dry-run" ]]; then
+          if [[ "$REQUESTED_OPERATION" != "dry-run" && "$REQUESTED_OPERATION" != "preflight" ]]; then
             [[ "$REQUESTED_CONFIRMATION" == "GEMINI_ONLY_PRODUCTION" ]] || {
               printf '::error::Billable production generation requires the exact confirmation phrase.\n'
               exit 1
             }
+          fi
+          if [[ "$REQUESTED_OPERATION" != "dry-run" ]]; then
             [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" ]] || {
               printf '::error::ASF_LAUNCH_SMOKE_CLERK_KEY is unavailable in the production environment.\n'
               exit 1
@@ -105,13 +108,17 @@ jobs:
         run: npm run check:production
 
       - name: Restore and verify the private licensed source
+        if: inputs.operation != 'preflight'
         run: npm run arcade:sources -- --target=production --slug="$REQUESTED_SLUG"
 
-      - name: Start or inspect the Champion draft
+      - name: Verify runtime or start the Champion draft
         shell: bash
         run: |
           seed_args=(--target=production --slug="$REQUESTED_SLUG")
           case "$REQUESTED_OPERATION" in
+            preflight)
+              seed_args+=(--preflight-only)
+              ;;
             dry-run)
               seed_args+=(--dry-run)
               ;;

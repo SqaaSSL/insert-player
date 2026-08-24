@@ -2,12 +2,14 @@ import { Miniflare } from 'miniflare';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGenerationJob } from './generationJobs';
 import {
+  readAdminArcadeGenerationContract,
   startAdminArcadeAnimationGeneration,
   startAdminArcadeGeneration,
   startAdminArcadeSourceGeneration,
 } from './arcadeGeneration';
 import { createProviderSession } from './providerSessions';
 import type { AuthContext, Env } from './types';
+import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
 
 vi.mock('./generationJobs', () => ({
   createGenerationJob: vi.fn(),
@@ -147,6 +149,20 @@ function sourceRequest(sourceName = 'upright'): Request {
       body: JSON.stringify({ legal: LEGAL }),
     },
   );
+}
+
+function contractEnv(payload: unknown, status = 200): {
+  env: Env;
+  getByName: ReturnType<typeof vi.fn>;
+  processorFetch: ReturnType<typeof vi.fn>;
+} {
+  const processorFetch = vi.fn().mockResolvedValue(Response.json(payload, { status }));
+  const getByName = vi.fn().mockReturnValue({ fetch: processorFetch });
+  return {
+    env: { IMAGE_PROCESSOR: { getByName } } as unknown as Env,
+    getByName,
+    processorFetch,
+  };
 }
 
 async function bindings(): Promise<{ mf: Miniflare; db: D1Database; bucket: R2Bucket; env: Env }> {
@@ -468,5 +484,54 @@ describe('official Arcade generation authorization', () => {
     } finally {
       await mf.dispose();
     }
+  });
+});
+
+describe('official Arcade deployed provider preflight', () => {
+  it('returns the approved contract only after reading the deployed processor health endpoint', async () => {
+    const { env, getByName, processorFetch } = contractEnv({
+      status: 'ok',
+      runtime: 'canvas-skia',
+      imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+    });
+    const response = await readAdminArcadeGenerationContract(env, adminAuth);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ready: true,
+      runtime: 'canvas-skia',
+      contract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+    });
+    expect(getByName).toHaveBeenCalledWith('official-arcade-provider-contract-v1');
+    expect(processorFetch).toHaveBeenCalledOnce();
+    const [healthRequest] = processorFetch.mock.calls[0] as [Request];
+    expect(healthRequest.url).toBe('http://image-processor/health');
+    expect(healthRequest.method).toBe('GET');
+  });
+
+  it('fails closed when the processor advertises another generation provider', async () => {
+    const rejected = structuredClone(OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT) as Record<string, unknown>;
+    rejected.allowedGenerationProviders = ['fal'];
+    const { env } = contractEnv({
+      status: 'ok',
+      runtime: 'canvas-skia',
+      imageProviderContract: rejected,
+    });
+    const response = await readAdminArcadeGenerationContract(env, adminAuth);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Image processor provider contract is not approved' });
+  });
+
+  it('does not expose the processor contract to non-admin users', async () => {
+    const { env, processorFetch } = contractEnv({
+      status: 'ok',
+      runtime: 'canvas-skia',
+      imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+    });
+    const nonAdmin = structuredClone(adminAuth);
+    nonAdmin.user.plan_tier = 'free';
+    const response = await readAdminArcadeGenerationContract(env, nonAdmin);
+    expect(response.status).toBe(403);
+    expect(processorFetch).not.toHaveBeenCalled();
   });
 });
