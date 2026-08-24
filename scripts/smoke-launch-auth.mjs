@@ -299,6 +299,42 @@ async function createBrowserBackedToken({
   }
 }
 
+async function createOriginBoundBackendToken({
+  clerk,
+  secretKey,
+  user,
+  frontendOrigin,
+  clerkIssuer,
+}) {
+  const session = await clerk.sessions.createSession({ userId: user.id });
+  const response = await fetch(
+    `https://api.clerk.com/v1/sessions/${encodeURIComponent(session.id)}/tokens`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        'Content-Type': 'application/json',
+        Origin: frontendOrigin,
+      },
+      body: JSON.stringify({ expires_in_seconds: TOKEN_TTL_SECONDS }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || typeof payload.jwt !== 'string') {
+    throw new Error(
+      `Clerk backend session token mint failed with HTTP ${response.status}: ${redactSmokeDiagnostic(JSON.stringify(payload))}`,
+    );
+  }
+  validateLaunchSmokeToken(payload.jwt, {
+    userId: user.id,
+    frontendOrigin,
+    clerkIssuer,
+    minRemainingSeconds: 8 * 60,
+  });
+  return payload.jwt;
+}
+
 function runAuthenticatedLiveSmoke(primaryToken, cloneToken) {
   const result = spawnSync(
     process.execPath,
@@ -409,32 +445,21 @@ async function main() {
     cloneUser = await createSmokeUser(clerk, runId, 'clone');
     console.log('✓ created two isolated Clerk launch-smoke users');
 
-    browser = await chromium.launch({ headless: true });
-    primaryToken = await createBrowserBackedToken({
+    primaryToken = await createOriginBoundBackendToken({
       clerk,
-      browser,
+      secretKey,
       user: primaryUser,
-      role: 'primary',
       frontendOrigin,
-      workerUrl,
       clerkIssuer,
-      publishableKey,
-      artifactDir,
     });
-    cloneToken = await createBrowserBackedToken({
+    cloneToken = await createOriginBoundBackendToken({
       clerk,
-      browser,
+      secretKey,
       user: cloneUser,
-      role: 'clone',
       frontendOrigin,
-      workerUrl,
       clerkIssuer,
-      publishableKey,
-      artifactDir,
     });
-    console.log('✓ captured two distinct browser-backed Clerk tokens for insertplayer.ai');
-    await browser.close();
-    browser = null;
+    console.log('✓ captured two distinct origin-bound Clerk backend session tokens');
 
     runAuthenticatedLiveSmoke(primaryToken, cloneToken);
   } catch (err) {
