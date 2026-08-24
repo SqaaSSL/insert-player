@@ -170,8 +170,11 @@ function assertOpaqueCommunityAssets(fighter, label) {
 }
 
 function assertLeaderboardProfile(entry, label) {
-  assertPublicDisplayName(entry.display_name, `${label} display`);
-  assertOptionalHttpsUrl(entry.avatar_url, `${label} display`);
+  const rank = Number(String(entry.id ?? '').replace(/^rank:/, ''));
+  assert(Number.isSafeInteger(rank) && rank > 0, `${label} returned an invalid rank alias`);
+  assert(entry.id === `rank:${rank}`, `${label} exposed a stable account identifier`);
+  assert(entry.display_name === `Player ${rank}`, `${label} exposed an account display name`);
+  assert(entry.avatar_url === null, `${label} exposed an account avatar`);
 }
 
 function assertSharePageSecurityHeaders(res, label) {
@@ -476,10 +479,11 @@ async function runPublicSmoke() {
     (leaderboard.leaderboard ?? []).every((entry) => !/^user_/i.test(String(entry.id ?? ''))),
     '/api/leaderboard exposed raw Clerk user ids',
   );
-  for (const entry of leaderboard.leaderboard ?? []) {
+  for (const [index, entry] of (leaderboard.leaderboard ?? []).entries()) {
+    assert(entry.id === `rank:${index + 1}`, 'Leaderboard rank aliases are out of order');
     assertLeaderboardProfile(entry, 'Leaderboard');
   }
-  log('/api/leaderboard exposes public fight board');
+  log('/api/leaderboard exposes public fight board with rank-only aliases');
 
   const packs = await expectJson('billing packs', '/api/billing/packs');
   const packIds = new Set((packs.packs ?? []).map((pack) => pack.id));

@@ -257,7 +257,7 @@ function PrivacyPolicy() {
 
       <section>
         <h2>6. Community sharing</h2>
-        <p>Fighters are private to their Insert Player account unless the owner separately confirms Publish. Public pages expose the fighter name, clean generated source views and playable assets, quality tier, and the neutral author label Player. Account names, emails, Clerk profile photos, original uploads, raw intermediates, private photo hashes, account IDs, and archived private versions are never published. A future public handle will require a separate opt-in.</p>
+        <p>Fighters are private to their Insert Player account unless the owner separately confirms Publish. Public pages expose the fighter name, clean generated source views and playable assets, quality tier, and the neutral author label Player. The public Fight Board uses rank-only aliases such as Player 1 and never exposes an account name, avatar, or stable account identifier. Account names, emails, Clerk profile photos, original uploads, raw intermediates, private photo hashes, account IDs, and archived private versions are never published. A future public handle will require a separate opt-in.</p>
         <p>Signed-in players can report a public fighter for review. Reports do not trigger automatic removal based on volume; an authorised moderator records a decision and may unpublish content after review.</p>
         <p>You can unpublish a fighter at any time. Short-lived network caches may take a brief period to expire.</p>
       </section>

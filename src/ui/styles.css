@@ -538,7 +538,7 @@
   }
 
   .game-shell__gallery-link {
-    @apply fixed top-5 right-5 z-40;
+    @apply fixed top-24 right-5 z-40;
   }
 
   .match-actions {
