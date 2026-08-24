@@ -572,6 +572,8 @@ function assertFrontendDeployIsProductionScoped() {
     "'--branch'",
     'builtFrontendAssetPath',
     'Frontend release asset:',
+    'CANONICAL_SMOKE_READY_TIMEOUT_MS = 240_000',
+    'String(CANONICAL_SMOKE_READY_TIMEOUT_MS)',
     'npm run smoke:frontend-live',
   ];
   const deployFrontend = readFileSync(join(root, 'scripts/deploy-frontend-pages.mjs'), 'utf8');
