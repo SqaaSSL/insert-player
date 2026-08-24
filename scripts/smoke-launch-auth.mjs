@@ -126,7 +126,9 @@ export function validateLaunchSmokeToken(token, {
 
 async function captureFrontendSessionToken({
   browser,
-  sessionBootstrapUrl,
+  signInTicket,
+  publishableKey,
+  clerkIssuer,
   frontendOrigin,
   workerUrl,
   role,
@@ -155,21 +157,54 @@ async function captureFrontendSessionToken({
   });
 
   try {
-    const response = await page.goto(sessionBootstrapUrl, {
+    const response = await page.goto(`${frontendOrigin}/menu`, {
       waitUntil: 'domcontentloaded',
       timeout: BROWSER_TIMEOUT_MS,
     });
     if (response && !response.ok()) {
       const responseText = await response.text().catch(() => 'No response body was available.');
       throw new Error(
-        `Clerk sign-in bootstrap failed with HTTP ${response.status()}: ${redactSmokeDiagnostic(responseText)}`,
+        `Insert Player session bootstrap failed with HTTP ${response.status()}: ${redactSmokeDiagnostic(responseText)}`,
       );
     }
-    if (new URL(page.url()).origin !== frontendOrigin) {
-      await page.waitForURL((candidate) => candidate.origin === frontendOrigin, {
-        timeout: BROWSER_TIMEOUT_MS,
-      });
-    }
+    await page.evaluate(async ({ clerkJsUrl, key, ticket }) => {
+      if (!window.Clerk) {
+        await new Promise((resolveScript, rejectScript) => {
+          const script = document.createElement('script');
+          script.async = true;
+          script.crossOrigin = 'anonymous';
+          script.src = clerkJsUrl;
+          script.setAttribute('data-clerk-publishable-key', key);
+          script.addEventListener('load', resolveScript, { once: true });
+          script.addEventListener('error', () => rejectScript(new Error('ClerkJS failed to load.')), {
+            once: true,
+          });
+          document.head.appendChild(script);
+        });
+      }
+      let clerk = window.Clerk;
+      if (typeof clerk === 'function') {
+        clerk = new clerk(key);
+        window.Clerk = clerk;
+      }
+      if (!clerk?.loaded) await clerk?.load?.();
+      if (!clerk?.client?.signIn?.create || !clerk?.setActive) {
+        throw new Error('ClerkJS did not expose the ticket sign-in API.');
+      }
+      const attempt = await clerk.client.signIn.create({ strategy: 'ticket', ticket });
+      if (attempt.status !== 'complete' || !attempt.createdSessionId) {
+        throw new Error(`Clerk ticket sign-in did not complete (status ${attempt.status ?? 'unknown'}).`);
+      }
+      await clerk.setActive({ session: attempt.createdSessionId });
+    }, {
+      clerkJsUrl: `${clerkIssuer}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`,
+      key: publishableKey,
+      ticket: signInTicket,
+    });
+    await page.reload({
+      waitUntil: 'domcontentloaded',
+      timeout: BROWSER_TIMEOUT_MS,
+    });
     if (new URL(page.url()).pathname !== '/menu') {
       await page.goto(`${frontendOrigin}/menu`, {
         waitUntil: 'domcontentloaded',
@@ -225,6 +260,7 @@ async function createBrowserBackedToken({
   frontendOrigin,
   workerUrl,
   clerkIssuer,
+  publishableKey,
   artifactDir,
 }) {
   const signInToken = await clerk.signInTokens.createSignInToken({
@@ -234,7 +270,9 @@ async function createBrowserBackedToken({
   try {
     const shortToken = await captureFrontendSessionToken({
       browser,
-      sessionBootstrapUrl: signInToken.url,
+      signInTicket: signInToken.token,
+      publishableKey,
+      clerkIssuer,
       frontendOrigin,
       workerUrl,
       role,
@@ -337,6 +375,7 @@ async function main() {
     envValue(env, 'ASF_WORKER_URL') || envValue(env, 'VITE_API_BASE_URL'),
   );
   const clerkIssuer = normalizedOrigin(envValue(env, 'CLERK_ISSUER'));
+  const publishableKey = envValue(env, 'VITE_CLERK_PUBLISHABLE_KEY');
   if (!secretKey.startsWith('sk_live_')) {
     throw new Error('Production ASF_LAUNCH_SMOKE_CLERK_KEY is required.');
   }
@@ -348,6 +387,9 @@ async function main() {
   }
   if (clerkIssuer !== 'https://clerk.insertplayer.ai') {
     throw new Error('Launch smoke requires the production Insert Player Clerk issuer.');
+  }
+  if (!publishableKey.startsWith('pk_live_')) {
+    throw new Error('Launch smoke requires the production Clerk publishable key.');
   }
 
   const artifactDir = process.env.RUNNER_TEMP
@@ -376,6 +418,7 @@ async function main() {
       frontendOrigin,
       workerUrl,
       clerkIssuer,
+      publishableKey,
       artifactDir,
     });
     cloneToken = await createBrowserBackedToken({
@@ -386,6 +429,7 @@ async function main() {
       frontendOrigin,
       workerUrl,
       clerkIssuer,
+      publishableKey,
       artifactDir,
     });
     console.log('✓ captured two distinct browser-backed Clerk tokens for insertplayer.ai');

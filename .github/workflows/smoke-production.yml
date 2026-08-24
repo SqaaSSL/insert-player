@@ -22,6 +22,7 @@ jobs:
       ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
       ASF_FRONTEND_URL: ${{ vars.ASF_FRONTEND_URL }}
       ASF_FRONTEND_ORIGIN: ${{ vars.ASF_FRONTEND_ORIGIN }}
+      VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
 
     steps:
       - name: Check out repository
