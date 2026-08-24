@@ -12,6 +12,18 @@ function apiProxyPlugin(): Plugin {
   let runwayKey = '';
   let falKey = '';
 
+  function sanitizeProxyUrlForLog(rawUrl: string): string {
+    try {
+      const url = new URL(rawUrl);
+      for (const key of ['key', 'api_key', 'apikey', 'token', 'access_token']) {
+        if (url.searchParams.has(key)) url.searchParams.set(key, '<redacted>');
+      }
+      return url.toString();
+    } catch {
+      return rawUrl.replace(/([?&](?:key|api_key|apikey|token|access_token)=)[^&\s]+/gi, '$1<redacted>');
+    }
+  }
+
   async function proxyRequest(
     req: IncomingMessage,
     res: ServerResponse,
@@ -21,6 +33,14 @@ function apiProxyPlugin(): Plugin {
   ) {
     const body = await collectBody(req);
     const method = req.method ?? 'POST';
+    const safeTargetUrl = sanitizeProxyUrlForLog(targetUrl);
+
+    if (provider === 'gemini') {
+      const redactedUrl = new URL(safeTargetUrl);
+      if (redactedUrl.searchParams.get('key') !== '<redacted>') {
+        throw new Error('Gemini proxy URL credential redaction failed');
+      }
+    }
 
     console.log(`[proxy:${provider}] ${method} request (${body.length} bytes)`);
 
