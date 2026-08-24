@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { purgeExactCloudflareFiles } from './cloudflare-cache.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -134,21 +135,15 @@ async function purgeLiveAssetCache(values, assetPath) {
     throw new Error('ASF_CLOUDFLARE_ZONE_ID must be a 32-character Cloudflare zone id.');
   }
 
-  const response = await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      files: LIVE_FRONTEND_ORIGINS.map((origin) => `${origin}${assetPath}`),
-    }),
-    signal: AbortSignal.timeout(30_000),
+  const result = await purgeExactCloudflareFiles({
+    token,
+    zoneId,
+    files: LIVE_FRONTEND_ORIGINS.map((origin) => `${origin}${assetPath}`),
   });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok || body?.success !== true) {
-    const message = body?.errors?.map((error) => error?.message).filter(Boolean).join('; ');
-    throw new Error(`Cloudflare exact asset cache purge failed (${response.status}): ${message || 'unknown error'}`);
+
+  if (!result.purged) {
+    console.warn(`${result.warning}; continuing to the authoritative canonical smoke.`);
+    return;
   }
   console.log(`Purged live cache entries for ${assetPath}.`);
 }
