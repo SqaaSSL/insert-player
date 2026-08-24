@@ -19,6 +19,7 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 - `validate.yml`: reusable production gate, full builds, Worker dry-runs, and dependency audits.
 - `deploy-development.yml`: `develop` to the isolated sandbox.
 - `deploy-production.yml`: checked `main` release to `insertplayer.ai`.
+- `smoke-production.yml`: manual, ephemeral two-user Clerk/D1/R2/clone/deletion launch smoke.
 - `codeql.yml`: JavaScript/TypeScript code scanning on pull requests, protected branches, and weekly schedule.
 - `dependabot.yml`: weekly frontend, Worker, and GitHub Actions updates.
 
@@ -81,6 +82,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | `STRIPE_SECRET_KEY` | Test in development, live in production |
 | `STRIPE_WEBHOOK_SECRET` | Matching environment billing endpoint |
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Matching environment user-lifecycle endpoint |
+| `ASF_LAUNCH_SMOKE_CLERK_KEY` | Production launch-smoke only; scoped alias used to create and delete isolated Clerk test users |
 | `TURNSTILE_SECRET_KEY` | Matching environment widget |
 | `ANONYMIZATION_SECRET` | Stable random HMAC secret, at least 32 characters |
 | `GENERATION_JOB_SIGNING_SECRET` | Stable random HMAC secret for scoped processor job tokens, at least 32 characters |
@@ -89,6 +91,8 @@ Use the same variable and secret names in both environments. Values must remain 
 The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit, Pages edit, Containers write, zone Cache Purge, and the route/resource permissions required by the checked-in Worker/Workflow bindings. Scope it to Cloudflare account `61fc998aa16c1c11a949d982e7a65dcb` and zone `insertplayer.ai`; do not use a Global API Key. A `7403` response from the first D1 migration means the token is for the wrong account or cannot access D1, even if its permission names otherwise look correct. Production Pages deploys probe a fresh immutable asset under an isolated cache key, purge the exact apex and `www` asset URLs after propagation, then run a second smoke against the canonical URL so an SPA fallback can never remain cached as JavaScript.
 
 Never use one GitHub environment as a fallback for another. A missing value must fail the deployment rather than silently reuse a test or live credential.
+
+The manual `Production launch smoke` workflow does not consume AI inference or charge Stripe. It creates two uniquely marked production Clerk users, establishes browser sessions through Clerk Agent Tasks, runs the authenticated D1/R2/community clone/privacy smoke, deletes both users, and verifies that the deletion webhook tombstones their still-valid tokens. Browser diagnostics are retained for seven days only when the run fails.
 
 ## Required Branch Rules
 
