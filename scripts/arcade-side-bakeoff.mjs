@@ -603,6 +603,7 @@ export async function runBakeoff(options = {}) {
       promptSha256: sha256(prompt),
       modelId: model.id,
       endpoint: model.endpoint,
+      referenceInputs: model.referenceInputs ?? [],
       params: model.params,
     };
   });

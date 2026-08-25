@@ -1,10 +1,10 @@
-name: Run production XAI SIDE realism canary
+name: Run production XAI SIDE pose-transfer canary
 
 on:
   workflow_dispatch:
     inputs:
       confirmation:
-        description: Enter ARCADE_SIDE_XAI_TRUMP_REALISTIC_V1 to authorize exactly one paid SIDE call
+        description: Enter ARCADE_SIDE_XAI_TRUMP_POSE_TRANSFER_V2 to authorize exactly one paid two-reference SIDE call
         required: true
         type: string
       resume_run_id:
@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   canary:
-    name: Donald Trump by pinned XAI provider
+    name: Donald Trump identity plus pinned pose master
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production
@@ -41,7 +41,7 @@ jobs:
       - name: Validate the sealed one-call request
         shell: bash
         run: |
-          [[ "$REQUESTED_CONFIRMATION" == "ARCADE_SIDE_XAI_TRUMP_REALISTIC_V1" ]] || {
+          [[ "$REQUESTED_CONFIRMATION" == "ARCADE_SIDE_XAI_TRUMP_POSE_TRANSFER_V2" ]] || {
             printf '::error::The exact XAI SIDE canary confirmation phrase is required.\n'
             exit 1
           }
@@ -80,25 +80,29 @@ jobs:
         run: >-
           gh run download "$RESUME_RUN_ID"
           --repo "${{ github.repository }}"
-          --name arcade-side-xai-trump-v1-state
+          --name arcade-side-xai-trump-pose-transfer-v2-state
           --dir .
 
       - name: Restore and verify the private licensed Trump source
         run: npm run arcade:sources -- --target=production --slug=donald-trump
 
-      - name: Execute exactly one pinned XAI SIDE request
+      - name: Restore and verify the immutable pose master
+        run: npm run arcade:pose-master -- --target=production --master=xai-milei-side-v1
+
+      - name: Execute exactly one pinned two-reference XAI SIDE request
         run: >-
           npm run arcade:canary:xai-side --
           --execute
-          --confirm=ARCADE_SIDE_XAI_TRUMP_REALISTIC_V1
-          --state=.arcade-side-xai-canary-state.json
-          --output-dir=.artifacts/arcade-side-xai-canary
+          --confirm=ARCADE_SIDE_XAI_TRUMP_POSE_TRANSFER_V2
+          --state=.arcade-side-xai-pose-transfer-canary-state.json
+          --pose-master-upload-state=.arcade-xai-pose-master-upload-state.json
+          --output-dir=.artifacts/arcade-side-xai-pose-transfer-canary
 
       - name: Publish experiment summary
         if: always()
         shell: bash
         run: |
-          summary=.artifacts/arcade-side-xai-canary/arcade-side-xai-trump-realistic-adult-v1/summary.md
+          summary=.artifacts/arcade-side-xai-pose-transfer-canary/arcade-side-xai-trump-pose-transfer-v2/summary.md
           if [[ -f "$summary" ]]; then
             cat "$summary" >> "$GITHUB_STEP_SUMMARY"
           fi
@@ -107,10 +111,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: arcade-side-xai-trump-v1-state
+          name: arcade-side-xai-trump-pose-transfer-v2-state
           path: |
-            .arcade-side-xai-canary-state.json
-            .artifacts/arcade-side-xai-canary/
+            .arcade-side-xai-pose-transfer-canary-state.json
+            .arcade-xai-pose-master-upload-state.json
+            .artifacts/arcade-side-xai-pose-transfer-canary/
           if-no-files-found: warn
           retention-days: 90
           include-hidden-files: true

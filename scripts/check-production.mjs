@@ -3453,16 +3453,19 @@ function assertGithubActionsAreWired() {
     ],
     xaiCanary: [
       'workflow_dispatch:',
-      'ARCADE_SIDE_XAI_TRUMP_REALISTIC_V1',
-      'authorize exactly one paid SIDE call',
+      'ARCADE_SIDE_XAI_TRUMP_POSE_TRANSFER_V2',
+      'authorize exactly one paid two-reference SIDE call',
       'group: production-worker-mutations',
       'cancel-in-progress: false',
       'npm --prefix worker ci',
       'npm run test:arcade:xai-canary',
       '--slug=donald-trump',
+      'npm run arcade:pose-master',
+      '--master=xai-milei-side-v1',
       'npm run arcade:canary:xai-side',
-      '--state=.arcade-side-xai-canary-state.json',
-      'arcade-side-xai-trump-v1-state',
+      '--state=.arcade-side-xai-pose-transfer-canary-state.json',
+      '--pose-master-upload-state=.arcade-xai-pose-master-upload-state.json',
+      'arcade-side-xai-trump-pose-transfer-v2-state',
       'secrets.PIXCLI_API_KEY',
       'secrets.CLOUDFLARE_API_TOKEN',
     ],
@@ -3521,12 +3524,14 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
   const promptTests = readFileSync(join(root, 'scripts/arcade-provider-prompts.test.mjs'), 'utf8');
   const canary = readFileSync(join(root, 'scripts/arcade-side-xai-canary.mjs'), 'utf8');
   const canaryTests = readFileSync(join(root, 'scripts/arcade-side-xai-canary.test.mjs'), 'utf8');
+  const poseMasterFetch = readFileSync(join(root, 'scripts/fetch-arcade-pose-master.mjs'), 'utf8');
   const sealedRunner = readFileSync(join(root, 'scripts/arcade-side-bakeoff.mjs'), 'utf8');
   const packageJson = readFileSync(join(root, 'package.json'), 'utf8');
-  const combined = [prompts, promptTests, canary, canaryTests, sealedRunner, packageJson].join('\n');
+  const combined = [prompts, promptTests, canary, canaryTests, poseMasterFetch, sealedRunner, packageJson].join('\n');
   const required = [
     "canonical: 'canonical-v1'",
     "xaiRealisticAdult: 'xai-realistic-adult-v1'",
+    "xaiIdentityPoseTransfer: 'xai-identity-pose-transfer-v1'",
     'The supplied image is a close facial identity reference.',
     'premium semi-realistic 3D fighting-game roster art',
     'never stylize anatomy, head size, apparent age, or identity',
@@ -3534,22 +3539,30 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
     'about 13 percent of total body height',
     '70-85 mm equivalent camera',
     'no oversized head',
+    'IMAGE 1 is the POSE, COMPOSITION, AND RENDERING MASTER only',
+    'IMAGE 2 is the IDENTITY AND PHYSIQUE ANCHOR only',
+    'Never blend the two faces',
     'expect(prompt).not.toMatch(/clearly AI-generated|realistic 2\\.5D|documentary photography/i)',
-    "XAI_SIDE_CANARY_EXPERIMENT_ID = 'arcade-side-xai-trump-realistic-adult-v1'",
+    "XAI_SIDE_CANARY_EXPERIMENT_ID = 'arcade-side-xai-trump-pose-transfer-v2'",
     "XAI_SIDE_CANARY_SLUG = 'donald-trump'",
     "id: 'grok-imagine-image-2-edit'",
     "endpoint: 'xai/grok-imagine-image/v2.0/edit'",
-    "aspect_ratio: '3:4'",
+    "aspect_ratio: 'auto'",
     "resolution: '2k'",
     'expectedPaidCalls: 1',
     'enrich_prompt: false',
     "fallback: 'none'",
     'activation: false',
+    'image: [poseMasterAssetHash, sourceAssetHash]',
+    'referenceInputs: model.referenceInputs ?? []',
+    "id: 'xai-milei-side-v1'",
+    "contentSha256: '89bbecdfe8fc9cd08126f1c60b90e35ecc16427e3d0a227f0a4c1832f0960309'",
     'promptBuilder: buildXaiSideCanaryPrompt',
-    'payloadBuilder: buildXaiSideCanaryPayload',
+    'buildXaiSidePoseTransferPayload',
     'plan.length !== expectedPaidCalls',
     'state.experimentId !== experimentId',
     'options.experimentId ?? BAKEOFF_EXPERIMENT_ID',
+    '"arcade:pose-master": "node scripts/fetch-arcade-pose-master.mjs"',
     '"arcade:canary:xai-side": "node scripts/arcade-side-xai-canary.mjs"',
   ];
   const missing = required.filter((snippet) => !combined.includes(snippet));

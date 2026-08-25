@@ -10,11 +10,14 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BAKEOFF_MODELS } from './arcade-side-bakeoff.mjs';
+import { verifyXaiPoseMasterBytes } from './fetch-arcade-pose-master.mjs';
 import {
   XAI_SIDE_CANARY_CONFIRMATION,
   XAI_SIDE_CANARY_EXPERIMENT_ID,
   XAI_SIDE_CANARY_MODEL,
+  XAI_SIDE_CANARY_POSE_MASTER,
   buildXaiSideCanaryInitialState,
+  buildXaiSideCanaryModel,
   buildXaiSideCanaryPayload,
   buildXaiSideCanaryPlan,
   buildXaiSideCanaryPrompt,
@@ -39,44 +42,52 @@ afterEach(() => {
   for (const path of temporaryDirectories.splice(0)) rmSync(path, { recursive: true, force: true });
 });
 
-describe('XAI realistic-adult SIDE canary', () => {
-  it('is sealed to exactly one Trump SIDE request', () => {
+describe('XAI identity plus pose-master SIDE canary', () => {
+  it('is sealed to exactly one two-reference Trump SIDE request', () => {
     const plan = buildXaiSideCanaryPlan(manifest);
     expect(plan).toHaveLength(1);
     expect(plan[0]).toMatchObject({
-      slotKey: 'donald-trump:grok-imagine-image-2-edit:xai-realistic-adult-v1',
+      slotKey: 'donald-trump:grok-imagine-image-2-edit:xai-identity-pose-transfer-v1',
       fighter: { slug: 'donald-trump' },
       model: {
         id: 'grok-imagine-image-2-edit',
         endpoint: 'xai/grok-imagine-image/v2.0/edit',
       },
     });
-    expect(XAI_SIDE_CANARY_CONFIRMATION).toBe('ARCADE_SIDE_XAI_TRUMP_REALISTIC_V1');
+    expect(plan[0].model.referenceInputs).toEqual([{
+      role: 'pose_composition_rendering_master',
+      id: XAI_SIDE_CANARY_POSE_MASTER.id,
+      contentSha256: XAI_SIDE_CANARY_POSE_MASTER.contentSha256,
+    }]);
+    expect(XAI_SIDE_CANARY_CONFIRMATION).toBe('ARCADE_SIDE_XAI_TRUMP_POSE_TRANSFER_V2');
   });
 
-  it('uses the XAI-only prompt and vertical high-quality composition', () => {
+  it('sends the pose master first and the target identity second', () => {
     const [{ fighter, model }] = buildXaiSideCanaryPlan(manifest);
     const prompt = buildXaiSideCanaryPrompt({ fighter, model });
     const payload = buildXaiSideCanaryPayload({
       fighter,
       model,
       sourceAssetHash: 'a'.repeat(32),
+      poseMasterAssetHash: 'b'.repeat(32),
       prompt,
     });
 
     expect(prompt).not.toBe(fighter.referencePrompt);
     expect(payload.prompt).toBe(prompt);
     expect(payload.model).toBe('grok-imagine-image-2-edit');
-    expect(payload.image).toBe('a'.repeat(32));
+    expect(payload.image).toEqual(['b'.repeat(32), 'a'.repeat(32)]);
     expect(payload.enrich_prompt).toBe(false);
     expect(payload.publish).toBe(false);
     expect(payload.params).toEqual({
       num_images: 1,
-      aspect_ratio: '3:4',
+      aspect_ratio: 'auto',
       resolution: '2k',
       output_format: 'png',
       quality: 'medium',
     });
+    expect(prompt).toContain('IMAGE 1 is the POSE, COMPOSITION, AND RENDERING MASTER only');
+    expect(prompt).toContain('IMAGE 2 is the IDENTITY AND PHYSIQUE ANCHOR only');
     expect(JSON.stringify(payload)).not.toMatch(/fallback|retry/i);
   });
 
@@ -96,8 +107,21 @@ describe('XAI realistic-adult SIDE canary', () => {
     const historicalGrok = BAKEOFF_MODELS.find((model) => model.id === 'grok-imagine-image-2-edit');
     expect(historicalGrok.params.aspect_ratio).toBe('1:1');
     expect(historicalGrok.params.resolution).toBe('1k');
-    expect(XAI_SIDE_CANARY_MODEL.params.aspect_ratio).toBe('3:4');
+    expect(XAI_SIDE_CANARY_MODEL.params.aspect_ratio).toBe('auto');
     expect(XAI_SIDE_CANARY_MODEL.params.resolution).toBe('2k');
+  });
+
+  it('binds the immutable master hash into the provider matrix', () => {
+    const customMaster = {
+      id: 'anonymous-master-v1',
+      contentSha256: 'c'.repeat(64),
+    };
+    const model = buildXaiSideCanaryModel(customMaster);
+    expect(model.referenceInputs).toEqual([{
+      role: 'pose_composition_rendering_master',
+      id: 'anonymous-master-v1',
+      contentSha256: 'c'.repeat(64),
+    }]);
   });
 
   it('submits exactly one provider request and does not resubmit it on resume', async () => {
@@ -106,10 +130,20 @@ describe('XAI realistic-adult SIDE canary', () => {
     mkdirSync(sourceDir);
     const controlledManifest = structuredClone(manifest);
     const sourceBytes = Buffer.concat([PNG_SIGNATURE, Buffer.from('licensed-trump-source')]);
+    const poseMasterBytes = Buffer.concat([PNG_SIGNATURE, Buffer.from('approved-pose-master')]);
+    const poseMaster = {
+      id: 'test-pose-master-v1',
+      slug: 'test-pose-master-v1',
+      contentSha256: sha256(poseMasterBytes),
+    };
     controlledManifest.fighters.find((fighter) => fighter.slug === 'donald-trump').reference.sourceSha256 = sha256(sourceBytes);
     writeFileSync(join(sourceDir, 'donald-trump.png'), sourceBytes);
+    const poseMasterPath = join(directory, 'pose-master.png');
+    writeFileSync(poseMasterPath, poseMasterBytes);
+    expect(verifyXaiPoseMasterBytes(poseMasterBytes, poseMaster)).toBe(poseMaster.contentSha256);
     const manifestPath = join(directory, 'manifest.json');
     const statePath = join(directory, 'state.json');
+    const poseMasterUploadStatePath = join(directory, 'pose-master-upload.json');
     const outputDir = join(directory, 'output');
     writeFileSync(manifestPath, JSON.stringify(controlledManifest));
 
@@ -123,11 +157,12 @@ describe('XAI realistic-adult SIDE canary', () => {
       const path = new URL(url).pathname;
       if (init.method === 'POST' && path === '/api/v1/uploads') {
         uploaded += 1;
+        const hash = uploaded === 1 ? 'b'.repeat(32) : 'a'.repeat(32);
         return new Response(JSON.stringify({
-          hash: 'a'.repeat(32),
-          url: 'https://pixcli.example/api/v1/assets/source',
+          hash,
+          url: `https://pixcli.example/api/v1/assets/${hash}`,
           mime_type: 'image/png',
-          size: sourceBytes.byteLength,
+          size: uploaded === 1 ? poseMasterBytes.byteLength : sourceBytes.byteLength,
         }), { status: 201 });
       }
       if (init.method === 'POST' && path === '/api/v1/edit/advanced') {
@@ -172,6 +207,9 @@ describe('XAI realistic-adult SIDE canary', () => {
       manifestPath,
       sourceDir,
       statePath,
+      poseMaster,
+      poseMasterPath,
+      poseMasterUploadStatePath,
       outputDir,
       fetchImpl,
       sleepImpl: async () => {},
@@ -182,18 +220,19 @@ describe('XAI realistic-adult SIDE canary', () => {
     expect(state.status).toBe('complete');
     expect(Object.values(state.slots)).toHaveLength(1);
     expect(Object.values(state.slots)[0].status).toBe('completed');
-    expect(uploaded).toBe(1);
+    expect(uploaded).toBe(2);
     expect(submitted).toBe(1);
     expect(submittedPayload).toMatchObject({
       model: 'grok-imagine-image-2-edit',
       enrich_prompt: false,
       publish: false,
-      params: { aspect_ratio: '3:4', resolution: '2k', num_images: 1 },
+      image: ['b'.repeat(32), 'a'.repeat(32)],
+      params: { aspect_ratio: 'auto', resolution: '2k', num_images: 1 },
     });
-    expect(submittedPayload.prompt).toContain('never stylize anatomy, head size, apparent age, or identity');
+    expect(submittedPayload.prompt).toContain('Never blend the two faces');
 
     await runXaiSideCanary(options);
-    expect(uploaded).toBe(1);
+    expect(uploaded).toBe(2);
     expect(submitted).toBe(1);
   });
 });

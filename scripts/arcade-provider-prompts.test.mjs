@@ -32,6 +32,21 @@ describe('Arcade provider prompt profiles', () => {
     expect(prompt).not.toMatch(/clearly AI-generated|realistic 2\.5D|documentary photography/i);
   });
 
+  it('keeps pose/style and target identity in separate ordered reference roles', () => {
+    const prompt = buildArcadeProviderPrompt({
+      fighter: trump,
+      promptProfile: ARCADE_PROMPT_PROFILES.xaiIdentityPoseTransfer,
+    });
+
+    expect(prompt).toContain('IMAGE 1 is the POSE, COMPOSITION, AND RENDERING MASTER only');
+    expect(prompt).toContain('IMAGE 2 is the IDENTITY AND PHYSIQUE ANCHOR only');
+    expect(prompt).toContain('Never blend the two faces');
+    expect(prompt).toContain('must not resemble IMAGE 1');
+    expect(prompt).toContain('Identity and physique from IMAGE 2');
+    expect(prompt).toContain('Pose, camera, framing, proportions, and rendering finish from IMAGE 1');
+    expect(prompt).toContain('navy tailored suit, white shirt, vivid red tie');
+  });
+
   it('fails closed for unknown prompt profiles', () => {
     expect(() => buildArcadeProviderPrompt({
       fighter: trump,

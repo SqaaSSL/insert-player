@@ -1,6 +1,7 @@
 export const ARCADE_PROMPT_PROFILES = Object.freeze({
   canonical: 'canonical-v1',
   xaiRealisticAdult: 'xai-realistic-adult-v1',
+  xaiIdentityPoseTransfer: 'xai-identity-pose-transfer-v1',
 });
 
 const FIGHTER_DETAILS_MARKER = 'Supplement the reference with these design details:';
@@ -43,10 +44,34 @@ function buildXaiRealisticAdultPrompt(fighter) {
   ].join('\n');
 }
 
+function buildXaiIdentityPoseTransferPrompt(fighter) {
+  const requirements = fighterSpecificRequirements(fighter);
+  return [
+    'REFERENCE ROLES — KEEP THEM STRICTLY SEPARATE:',
+    'IMAGE 1 is the POSE, COMPOSITION, AND RENDERING MASTER only. Match its canvas framing, camera distance, perspective, full-body placement, facing direction, joint positions, stance, hand placement, foot placement, silhouette scale, lighting language, material finish, edge treatment, and plain background as closely as possible. Do not copy this person\'s identity.',
+    'IMAGE 2 is the IDENTITY AND PHYSIQUE ANCHOR only. Preserve this person\'s facial geometry, hair, skin tone, apparent age, distinguishing features, and natural body build. Do not copy the portrait crop, camera distance, head scale, or shoulder crop from IMAGE 2.',
+    '',
+    'IDENTITY TRANSFER:',
+    'Replace the person in IMAGE 1 with the person from IMAGE 2 while retaining the pose and shot geometry of IMAGE 1. Never blend the two faces. Remove every identity trait from IMAGE 1, including its face, hair, apparent age, skin tone, body build, and distinctive features. The output must be immediately recognizable as IMAGE 2 and must not resemble IMAGE 1.',
+    '',
+    'ANATOMY AND STYLE:',
+    'Keep the natural adult proportions and grounded semi-realistic 3D fighting-game roster finish demonstrated by IMAGE 1. Keep stylization in lighting, materials, silhouette clarity, and game-ready contrast only; never stylize anatomy, head size, apparent age, or identity. No oversized head, shortened limbs, mascot proportions, toy proportions, caricature, anime, cel shading, or chibi styling. Keep both arms, both hands, both legs, and both feet complete and anatomically coherent.',
+    '',
+    'TARGET CHARACTER, WARDROBE, AND BACKGROUND:',
+    requirements,
+    '',
+    'FINAL PRIORITY ORDER:',
+    '1) Identity and physique from IMAGE 2. 2) Pose, camera, framing, proportions, and rendering finish from IMAGE 1. 3) Wardrobe and target-specific details from the written requirements. Do not retain logos, clothing details, jewelry, or accessories from either reference unless the written requirements explicitly request them.',
+  ].join('\n');
+}
+
 export function buildArcadeProviderPrompt({ fighter, promptProfile = ARCADE_PROMPT_PROFILES.canonical }) {
   if (promptProfile === ARCADE_PROMPT_PROFILES.canonical) return canonicalPrompt(fighter);
   if (promptProfile === ARCADE_PROMPT_PROFILES.xaiRealisticAdult) {
     return buildXaiRealisticAdultPrompt(fighter);
+  }
+  if (promptProfile === ARCADE_PROMPT_PROFILES.xaiIdentityPoseTransfer) {
+    return buildXaiIdentityPoseTransferPrompt(fighter);
   }
   throw new Error(`Unsupported Arcade prompt profile: ${String(promptProfile)}.`);
 }
