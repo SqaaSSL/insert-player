@@ -20,6 +20,8 @@ const R2_JURISDICTION = 'eu';
 const D1_DATABASE = 'insert-player-db';
 const ARCHIVE_PREFIX = 'arcade-experiments/v1';
 const CONFIRMATION = 'ARCHIVE_IMMUTABLE_ARCADE_EXPERIMENT_V1';
+const ARCHIVE_UPLOAD_URL_ENV = 'ARCADE_ARCHIVE_UPLOAD_URL';
+const ARCHIVE_UPLOAD_TOKEN_ENV = 'ARCADE_ARCHIVE_UPLOAD_TOKEN';
 const TERMINAL_SLOT_STATUSES = new Set(['completed', 'failed', 'submission_rejected']);
 const ARTIFACT_KINDS = new Set(['provider_request', 'provider_response', 'image', 'job_failure']);
 
@@ -381,6 +383,75 @@ function uploadAndVerifyObject(blobKey, bytes, mimeType, temporaryDir) {
   if (sha256(downloaded) !== sha256(bytes)) throw new Error(`R2 round-trip hash mismatch: ${blobKey}.`);
 }
 
+function archiveUploadBridgeConfig(env = process.env) {
+  const rawUrl = env[ARCHIVE_UPLOAD_URL_ENV]?.trim() ?? '';
+  const token = env[ARCHIVE_UPLOAD_TOKEN_ENV]?.trim() ?? '';
+  if (!rawUrl && !token) return null;
+  if (!rawUrl || !token) {
+    throw new Error(`${ARCHIVE_UPLOAD_URL_ENV} and ${ARCHIVE_UPLOAD_TOKEN_ENV} must be configured together.`);
+  }
+  const url = new URL(rawUrl);
+  if (
+    url.protocol !== 'https:'
+    || !url.hostname.endsWith('.workers.dev')
+    || url.pathname !== '/archive-object'
+    || url.search
+    || url.hash
+  ) {
+    throw new Error(`${ARCHIVE_UPLOAD_URL_ENV} must be an exact HTTPS workers.dev /archive-object URL.`);
+  }
+  if (!/^[a-f0-9]{64}$/i.test(token)) {
+    throw new Error(`${ARCHIVE_UPLOAD_TOKEN_ENV} must be a 32-byte hexadecimal secret.`);
+  }
+  return { token, url: url.toString() };
+}
+
+async function boundedError(response) {
+  const message = (await response.text()).slice(0, 2_000).trim();
+  return message || `HTTP ${response.status}`;
+}
+
+export async function uploadAndVerifyObjectThroughBridge(object, options = {}) {
+  const bridge = options.bridge ?? archiveUploadBridgeConfig(options.env);
+  if (!bridge) throw new Error('The isolated R2 upload bridge is not configured.');
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const contentHash = sha256(object.bytes);
+  const headers = {
+    Authorization: `Bearer ${bridge.token}`,
+    'Content-Type': object.mimeType,
+    'X-Archive-Content-Sha256': contentHash,
+    'X-Archive-Object-Key': object.blobKey,
+    'X-Archive-Size': String(object.bytes.byteLength),
+  };
+  const uploadResponse = await fetchImpl(bridge.url, {
+    method: 'PUT',
+    headers,
+    body: object.bytes,
+    redirect: 'error',
+    signal: AbortSignal.timeout(90_000),
+  });
+  if (!uploadResponse.ok) {
+    throw new Error(`R2 bridge upload failed for ${object.blobKey}: ${await boundedError(uploadResponse)}`);
+  }
+  const downloadResponse = await fetchImpl(bridge.url, {
+    method: 'GET',
+    headers: {
+      Authorization: headers.Authorization,
+      'X-Archive-Content-Sha256': contentHash,
+      'X-Archive-Object-Key': object.blobKey,
+    },
+    redirect: 'error',
+    signal: AbortSignal.timeout(90_000),
+  });
+  if (!downloadResponse.ok) {
+    throw new Error(`R2 bridge verification failed for ${object.blobKey}: ${await boundedError(downloadResponse)}`);
+  }
+  const downloaded = Buffer.from(await downloadResponse.arrayBuffer());
+  if (downloaded.byteLength !== object.bytes.byteLength || sha256(downloaded) !== contentHash) {
+    throw new Error(`R2 round-trip hash mismatch: ${object.blobKey}.`);
+  }
+}
+
 function parseWranglerJson(output) {
   const start = output.indexOf('[');
   if (start < 0) throw new Error('Wrangler did not return D1 JSON.');
@@ -438,9 +509,11 @@ export async function archiveArcadeExperiment(options) {
   if (options.dryRun === true) return plan;
   const temporaryDir = mkdtempSync(join(tmpdir(), 'insert-player-arcade-archive-'));
   try {
-    const uploadObject = options.uploadObject ?? ((object) => (
-      uploadAndVerifyObject(object.blobKey, object.bytes, object.mimeType, temporaryDir)
-    ));
+    const bridge = archiveUploadBridgeConfig(options.env);
+    const uploadObject = options.uploadObject
+      ?? (bridge
+        ? ((object) => uploadAndVerifyObjectThroughBridge(object, { bridge }))
+        : ((object) => uploadAndVerifyObject(object.blobKey, object.bytes, object.mimeType, temporaryDir)));
     for (const object of archiveObjectList(plan)) await uploadObject(object);
     if (options.writeIndex) {
       await options.writeIndex(plan, buildArcadeExperimentIndexSql(plan));

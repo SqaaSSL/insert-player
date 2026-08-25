@@ -3656,6 +3656,15 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
 function assertArcadeExperimentArchiveIsImmutable() {
   const archive = readFileSync(join(root, 'scripts/archive-arcade-experiment.mjs'), 'utf8');
   const archiveTests = readFileSync(join(root, 'scripts/archive-arcade-experiment.test.mjs'), 'utf8');
+  const archiveUploader = readFileSync(join(root, 'scripts/archive-r2-upload-worker.mjs'), 'utf8');
+  const archiveUploaderTests = readFileSync(
+    join(root, 'scripts/archive-r2-upload-worker.test.mjs'),
+    'utf8',
+  );
+  const archiveUploaderConfig = readFileSync(
+    join(root, 'scripts/wrangler.archive-uploader.jsonc'),
+    'utf8',
+  );
   const catalog = readFileSync(join(root, 'arcade/experiment-archive-2026.json'), 'utf8');
   const migration = readFileSync(
     join(root, 'worker/migrations/0027_immutable_arcade_experiments.sql'),
@@ -3669,12 +3678,28 @@ function assertArcadeExperimentArchiveIsImmutable() {
     join(root, '.github/workflows/archive-arcade-experiment-production.yml'),
     'utf8',
   );
-  const combined = [archive, archiveTests, catalog, migration, migrationTests, workflow].join('\n');
+  const combined = [
+    archive,
+    archiveTests,
+    archiveUploader,
+    archiveUploaderTests,
+    archiveUploaderConfig,
+    catalog,
+    migration,
+    migrationTests,
+    workflow,
+  ].join('\n');
   const required = [
     "const ARCHIVE_PREFIX = 'arcade-experiments/v1'",
     "const R2_JURISDICTION = 'eu'",
     'Artifact bytes do not match the sealed state',
     'R2 round-trip hash mismatch',
+    "const ARCHIVE_PREFIX = 'arcade-experiments/v1/'",
+    "onlyIf: { etagDoesNotMatch: '*' }",
+    'immutable_archive_conflict',
+    'ARCADE_ARCHIVE_UPLOAD_URL',
+    'Delete isolated R2 upload bridge',
+    'scripts/wrangler.archive-uploader.jsonc',
     'D1 archive index verification failed',
     'INSERT OR IGNORE INTO arcade_generation_experiments',
     'arcade_generation_experiments_immutable_update',
