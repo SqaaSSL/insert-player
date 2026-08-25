@@ -21,6 +21,7 @@ const approvedScope = {
     'gemini-3.1-flash-image',
     'gemini-3-pro-image',
     'xai/grok-imagine-image/v2.0/edit',
+    'xai/grok-imagine-video/v1.5/image-to-video',
   ],
   endpoints: ['/fal/*', '/fal', '/v1/chat/completions', '/google-ai-studio/v1beta/models/*'],
   block_streaming: true,

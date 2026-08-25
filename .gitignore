@@ -32,6 +32,8 @@ worker/.prod.vars
 .arcade-side-xai-global-pose-transfer-state.json
 .arcade-xai-pose-master-upload-state.json
 .arcade-high-kick-xai-trump-impact-state.json
+.arcade-high-kick-xai-video-canary-state.json
+.arcade-high-kick-xai-video-canary-state.json.lock
 .arcade-xai-high-kick-impact-upload-state.json
 .arcade-xai-trump-canonical-upload-state.json
 .arcade-qa-milei-high-punch-f4-xai-state.json
