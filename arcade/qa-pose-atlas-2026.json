@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "atlasId": "arcade-qa-pose-atlas-2026-v1",
+  "status": "qa_only",
+  "frame": {
+    "width": 768,
+    "height": 1024
+  },
+  "transferContract": {
+    "referenceOrder": [
+      "pose_frame",
+      "canonical_character",
+      "identity_photo"
+    ],
+    "frameIsolation": "independent",
+    "previousOutputChaining": false,
+    "automaticRetries": 0,
+    "fallbackPolicy": "none",
+    "activationPolicy": "human_review_required"
+  },
+  "sources": {
+    "nova-qa": {
+      "characterName": "Nova QA",
+      "origin": "http://localhost:5173",
+      "photoHash": "2d8fbd6e1b7feb4bced503c927b00807ce60104577d3ec9d8d862fe307862b44",
+      "archiveFileName": "localhost--nova-qa--2d8fbd6e1b7feb4b.tar",
+      "archiveSha256": "e76aca9ffd0bd490f5864d439f9751b68e2c451b9b70fe1f682437985fa3f518",
+      "manifestSha256": "980ad5b686aeaf97ed3b5a20183132121e040a98d148b0ca2a6fcc41318ec76f"
+    },
+    "rafa-qa": {
+      "characterName": "Rafa QA",
+      "origin": "http://127.0.0.1:5173",
+      "photoHash": "9c0c3defc483cfc88e872f36281ce326873f513559bd7dea481cbeab1e11190f",
+      "archiveFileName": "127.0.0.1--rafa-qa--9c0c3defc483cfc8.tar",
+      "archiveSha256": "0f34440f85a124278a8981c2c8c5bb8db1649ef71ea214d702ba0b0b5f63c0c1",
+      "manifestSha256": "7111a5b83f2186f5280732d971aecdb91b4791cba6c6e8a620be1b4c0c6c6221"
+    }
+  },
+  "animations": [
+    {
+      "animation": "idle",
+      "sourceId": "nova-qa",
+      "versionId": "a01f84ba6b74a9ec82e5619d4b7559d6",
+      "qualityTier": "champion",
+      "processingVersion": 4,
+      "spriteBlobPath": "blobs/sprites/036/pngblob.png",
+      "spriteSheetSha256": "467b66bebccecbf9be75da63f1974aacff6cd5c65a1657c8447e186ed2f95bf5",
+      "sourceFrameCount": 8,
+      "grid": { "columns": 4, "rows": 2 },
+      "playbackFrameIndices": [0, 1, 2, 3, 4, 5, 6, 7],
+      "representativeFrameIndex": 0,
+      "selectionRationale": "Strong guard, stable scale, complete feet, and the most coherent subtle breathing sequence."
+    },
+    {
+      "animation": "walk",
+      "sourceId": "nova-qa",
+      "versionId": "1fcaf32a1ac98fdc661573d5707f3af4",
+      "qualityTier": "champion",
+      "processingVersion": 4,
+      "spriteBlobPath": "blobs/sprites/009/pngblob.png",
+      "spriteSheetSha256": "9c73aeb15f6e5ce01b946c7033e718b37d0870a6470ad1991f3d9b525d401619",
+      "sourceFrameCount": 16,
+      "grid": { "columns": 4, "rows": 4 },
+      "playbackFrameIndices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+      "representativeFrameIndex": 2,
+      "selectionRationale": "The only Champion v4 walk that keeps a fighting guard through the complete 16-frame cycle."
+    },
+    {
+      "animation": "high_punch",
+      "sourceId": "nova-qa",
+      "versionId": "9380f436c081c9f252d3570faaa16953",
+      "qualityTier": "champion",
+      "processingVersion": 4,
+      "spriteBlobPath": "blobs/sprites/032/pngblob.png",
+      "spriteSheetSha256": "82ef351ad470943dd8c109372b74983bce8637454843a295c66d44c3ad2ab138",
+      "sourceFrameCount": 7,
+      "grid": { "columns": 4, "rows": 2 },
+      "playbackFrameIndices": [0, 1, 2, 3, 4, 5, 6],
+      "representativeFrameIndex": 3,
+      "selectionRationale": "Clear grounded extension with both feet visible and no torso or clothing drift."
+    },
+    {
+      "animation": "high_kick",
+      "sourceId": "nova-qa",
+      "versionId": "5679797eb905a62b6657d4a0b6fc9e37",
+      "qualityTier": "champion",
+      "processingVersion": 4,
+      "spriteBlobPath": "blobs/sprites/020/pngblob.png",
+      "spriteSheetSha256": "d4f263895119560c1b5d0fc07dee3149b13e9b54afc8406ee5e51b26fd4addb3",
+      "sourceFrameCount": 7,
+      "grid": { "columns": 4, "rows": 2 },
+      "playbackFrameIndices": [0, 1, 2, 3, 4, 5, 6],
+      "representativeFrameIndex": 3,
+      "selectionRationale": "Best complete Nova kick sequence; unlike Champion v5 it reaches a real full extension instead of repeating knee lifts.",
+      "impactOverride": {
+        "id": "xai-high-kick-impact-v1",
+        "bucket": "insert-player-assets",
+        "jurisdiction": "eu",
+        "objectKey": "official-pose-masters/high-kick-impact-v1/43086a8d96acd9b153a1c38c3dd622bf0b7140d90d067a4459a0d3b7fd637bed.png",
+        "contentSha256": "43086a8d96acd9b153a1c38c3dd622bf0b7140d90d067a4459a0d3b7fd637bed",
+        "reason": "Already produced the approved Trump impact canary and has a slightly stronger contact silhouette."
+      }
+    },
+    {
+      "animation": "low_punch",
+      "sourceId": "rafa-qa",
+      "versionId": "9c0c3defc483cfc88e872f36281ce326873f513559bd7dea481cbeab1e11190f:low_punch:rookie:1786983230892:084d0f6f-a730-44aa-bf74-ee37c18c6f10",
+      "qualityTier": "rookie",
+      "processingVersion": 4,
+      "spriteBlobPath": "blobs/sprites/017/pngblob.png",
+      "spriteSheetSha256": "470ce698951a64039ad48af97b596424f496e52a87bd34cacfc5c199d0aeec08",
+      "sourceFrameCount": 7,
+      "grid": { "columns": 4, "rows": 2 },
+      "playbackFrameIndices": [0, 1, 2, 3, 4, 5, 6],
+      "representativeFrameIndex": 3,
+      "selectionRationale": "Rafa keeps all seven timings, a genuinely low center of gravity, and a readable guard-to-impact-to-guard arc."
+    },
+    {
+      "animation": "low_kick",
+      "sourceId": "rafa-qa",
+      "versionId": "9c0c3defc483cfc88e872f36281ce326873f513559bd7dea481cbeab1e11190f:low_kick:rookie:1786983231074:f9c43dbe-819f-4856-ba88-2166ac8d0413",
+      "qualityTier": "rookie",
+      "processingVersion": 4,
+      "spriteBlobPath": "blobs/sprites/015/pngblob.png",
+      "spriteSheetSha256": "e0f6ea10489a3f5ac81cc65c5c4aa881aa403d3799c4a540e9b238e6ac7cb826",
+      "sourceFrameCount": 7,
+      "grid": { "columns": 4, "rows": 2 },
+      "playbackFrameIndices": [0, 1, 2, 3, 4, 5, 6],
+      "representativeFrameIndex": 3,
+      "selectionRationale": "Rafa has the clearest full seven-frame sweep while staying compressed and grounded throughout."
+    },
+    {
+      "animation": "jump",
+      "sourceId": "nova-qa",
+      "versionId": "3b9cc78c4f124c4d0260c71d01fdb550",
+      "qualityTier": "champion",
+      "processingVersion": 4,
+      "spriteBlobPath": "blobs/sprites/014/pngblob.png",
+      "spriteSheetSha256": "95015e582cb1c8baf3199b2257bb64810894958605e4ab842723db7bfe0256cf",
+      "sourceFrameCount": 4,
+      "grid": { "columns": 2, "rows": 2 },
+      "playbackFrameIndices": [0, 1, 2, 3],
+      "representativeFrameIndex": 2,
+      "selectionRationale": "Four legible anticipation, lift, apex, and recovery silhouettes at stable camera scale."
+    },
+    {
+      "animation": "crouch",
+      "sourceId": "nova-qa",
+      "versionId": "1c14ef7abc6518fefd7727272b5a3476",
+      "qualityTier": "champion",
+      "processingVersion": 4,
+      "spriteBlobPath": "blobs/sprites/006/pngblob.png",
+      "spriteSheetSha256": "22d0ec6c86b3a7cd1fb7c473aaac99ab777468f458c7f450f48f9ae1fdf5dad6",
+      "sourceFrameCount": 4,
+      "grid": { "columns": 2, "rows": 2 },
+      "playbackFrameIndices": [0, 1, 2, 3],
+      "representativeFrameIndex": 3,
+      "selectionRationale": "Clear standing-to-deep-guard transition without solving the motion by shrinking the body."
+    },
+    {
+      "animation": "hit",
+      "sourceId": "nova-qa",
+      "versionId": "55687ffacad13eda7bbb5422cc7d46ea",
+      "qualityTier": "champion",
+      "processingVersion": 4,
+      "spriteBlobPath": "blobs/sprites/019/pngblob.png",
+      "spriteSheetSha256": "9af881235461cf8fab3697c0c17cec89c85ea8e3570374f24166bc858d8b91e9",
+      "sourceFrameCount": 4,
+      "grid": { "columns": 2, "rows": 2 },
+      "playbackFrameIndices": [0, 1, 2, 3],
+      "representativeFrameIndex": 2,
+      "selectionRationale": "Readable grounded recoil with no launch, crop, or anatomy break."
+    },
+    {
+      "animation": "ko",
+      "sourceId": "nova-qa",
+      "versionId": "fa062bcc1d451011f9dba751e6c6cb6f",
+      "qualityTier": "champion",
+      "processingVersion": 4,
+      "spriteBlobPath": "blobs/sprites/057/pngblob.png",
+      "spriteSheetSha256": "843361278a53bcf85a2eff9893f09ff9d247ac9dc3a683c35b06262e44bdcb13",
+      "sourceFrameCount": 16,
+      "grid": { "columns": 4, "rows": 4 },
+      "playbackFrameIndices": [0, 2, 4, 6, 8, 10, 14, 15],
+      "representativeFrameIndex": 15,
+      "selectionRationale": "The 16-frame fall is sampled to the runtime's eight required poses while excluding source frames 13 and 14, whose abrupt scale jump breaks continuity."
+    },
+    {
+      "animation": "victory",
+      "sourceId": "nova-qa",
+      "versionId": "64bb44b1198fdc98724151162de6a6e7",
+      "qualityTier": "champion",
+      "processingVersion": 5,
+      "spriteBlobPath": "blobs/sprites/025/pngblob.png",
+      "spriteSheetSha256": "b718fbf9ae396bfa17d9224408705d7a70baba707c273567f69bd70a9b23097c",
+      "sourceFrameCount": 8,
+      "grid": { "columns": 4, "rows": 2 },
+      "playbackFrameIndices": [0, 1, 2, 3, 4, 5, 6, 7],
+      "representativeFrameIndex": 3,
+      "selectionRationale": "The v5 cleanup removes the contaminated first cell present in Champion v4 while retaining the strongest full-body celebration."
+    }
+  ]
+}

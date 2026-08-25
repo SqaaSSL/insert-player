@@ -40,6 +40,9 @@ jobs:
       - name: Run production checks
         run: npm run check:production
 
+      - name: Test immutable QA pose atlas
+        run: npm --prefix processor run qa:pose-atlas:test
+
       - name: Build production frontend
         run: npm run build
 
