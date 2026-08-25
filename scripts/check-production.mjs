@@ -3380,6 +3380,7 @@ function assertGithubActionsAreWired() {
     development: '.github/workflows/deploy-development.yml',
     production: '.github/workflows/deploy-production.yml',
     xaiCanary: '.github/workflows/arcade-side-xai-canary-production.yml',
+    xaiGlobal: '.github/workflows/arcade-side-xai-global-production.yml',
     codeql: '.github/workflows/codeql.yml',
     dependabot: '.github/dependabot.yml',
     codeowners: '.github/CODEOWNERS',
@@ -3469,6 +3470,24 @@ function assertGithubActionsAreWired() {
       'secrets.PIXCLI_API_KEY',
       'secrets.CLOUDFLARE_API_TOKEN',
     ],
+    xaiGlobal: [
+      'workflow_dispatch:',
+      'ARCADE_SIDE_XAI_GLOBAL_4_V1',
+      'authorize exactly four paid two-reference SIDE calls',
+      'group: production-worker-mutations',
+      'cancel-in-progress: false',
+      'npm --prefix worker ci',
+      'npm run test:arcade:xai-global',
+      'for slug in cristiano-ronaldo lionel-messi bad-bunny mrbeast',
+      'npm run arcade:pose-master',
+      '--master=xai-milei-side-v1',
+      'npm run arcade:batch:xai-global-sides',
+      '--state=.arcade-side-xai-global-pose-transfer-state.json',
+      '--pose-master-upload-state=.arcade-xai-pose-master-upload-state.json',
+      'arcade-side-xai-global-pose-transfer-v1-state',
+      'secrets.PIXCLI_API_KEY',
+      'secrets.CLOUDFLARE_API_TOKEN',
+    ],
     codeql: [
       'github/codeql-action/init@v4',
       'github/codeql-action/analyze@v4',
@@ -3524,10 +3543,22 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
   const promptTests = readFileSync(join(root, 'scripts/arcade-provider-prompts.test.mjs'), 'utf8');
   const canary = readFileSync(join(root, 'scripts/arcade-side-xai-canary.mjs'), 'utf8');
   const canaryTests = readFileSync(join(root, 'scripts/arcade-side-xai-canary.test.mjs'), 'utf8');
+  const globalBatch = readFileSync(join(root, 'scripts/arcade-side-xai-global-batch.mjs'), 'utf8');
+  const globalBatchTests = readFileSync(join(root, 'scripts/arcade-side-xai-global-batch.test.mjs'), 'utf8');
   const poseMasterFetch = readFileSync(join(root, 'scripts/fetch-arcade-pose-master.mjs'), 'utf8');
   const sealedRunner = readFileSync(join(root, 'scripts/arcade-side-bakeoff.mjs'), 'utf8');
   const packageJson = readFileSync(join(root, 'package.json'), 'utf8');
-  const combined = [prompts, promptTests, canary, canaryTests, poseMasterFetch, sealedRunner, packageJson].join('\n');
+  const combined = [
+    prompts,
+    promptTests,
+    canary,
+    canaryTests,
+    globalBatch,
+    globalBatchTests,
+    poseMasterFetch,
+    sealedRunner,
+    packageJson,
+  ].join('\n');
   const required = [
     "canonical: 'canonical-v1'",
     "xaiRealisticAdult: 'xai-realistic-adult-v1'",
@@ -3545,11 +3576,18 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
     'expect(prompt).not.toMatch(/clearly AI-generated|realistic 2\\.5D|documentary photography/i)',
     "XAI_SIDE_CANARY_EXPERIMENT_ID = 'arcade-side-xai-trump-pose-transfer-v2'",
     "XAI_SIDE_CANARY_SLUG = 'donald-trump'",
+    "XAI_GLOBAL_SIDE_BATCH_EXPERIMENT_ID = 'arcade-side-xai-global-pose-transfer-v1'",
+    "XAI_GLOBAL_SIDE_BATCH_CONFIRMATION = 'ARCADE_SIDE_XAI_GLOBAL_4_V1'",
+    "'cristiano-ronaldo'",
+    "'lionel-messi'",
+    "'bad-bunny'",
+    "'mrbeast'",
     "id: 'grok-imagine-image-2-edit'",
     "endpoint: 'xai/grok-imagine-image/v2.0/edit'",
     "aspect_ratio: 'auto'",
     "resolution: '2k'",
     'expectedPaidCalls: 1',
+    'expectedPaidCalls: XAI_GLOBAL_SIDE_BATCH_SLUGS.length',
     'enrich_prompt: false',
     "fallback: 'none'",
     'activation: false',
@@ -3564,6 +3602,8 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
     'options.experimentId ?? BAKEOFF_EXPERIMENT_ID',
     '"arcade:pose-master": "node scripts/fetch-arcade-pose-master.mjs"',
     '"arcade:canary:xai-side": "node scripts/arcade-side-xai-canary.mjs"',
+    '"arcade:batch:xai-global-sides": "node scripts/arcade-side-xai-global-batch.mjs"',
+    '"test:arcade:xai-global": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-xai-global-batch.test.mjs scripts/arcade-side-bakeoff.test.mjs"',
   ];
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {

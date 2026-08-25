@@ -1,0 +1,125 @@
+name: Run production global XAI SIDE pose transfer
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Enter ARCADE_SIDE_XAI_GLOBAL_4_V1 to authorize exactly four paid two-reference SIDE calls
+        required: true
+        type: string
+      resume_run_id:
+        description: Optional prior batch run ID whose immutable checkpoint should be resumed
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  batch:
+    name: Four global identities plus pinned pose master
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment: production
+    env:
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
+      PIXCLI_BASE_URL: https://pixcli.hilo.cx
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate the sealed four-call request
+        shell: bash
+        run: |
+          [[ "$REQUESTED_CONFIRMATION" == "ARCADE_SIDE_XAI_GLOBAL_4_V1" ]] || {
+            printf '::error::The exact global XAI SIDE confirmation phrase is required.\n'
+            exit 1
+          }
+          [[ -n "$PIXCLI_API_KEY" ]] || {
+            printf '::error::PIXCLI_API_KEY is unavailable in the production environment.\n'
+            exit 1
+          }
+          [[ -n "$CLOUDFLARE_API_TOKEN" ]] || {
+            printf '::error::CLOUDFLARE_API_TOKEN is unavailable in the production environment.\n'
+            exit 1
+          }
+          if [[ -n "$RESUME_RUN_ID" && ! "$RESUME_RUN_ID" =~ ^[0-9]+$ ]]; then
+            printf '::error::resume_run_id must be a numeric GitHub Actions run ID.\n'
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Worker dependencies
+        run: npm --prefix worker ci
+
+      - name: Prove the sealed four-call pose-transfer runner
+        run: npm run test:arcade:xai-global
+
+      - name: Restore a prior paid checkpoint
+        if: inputs.resume_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run download "$RESUME_RUN_ID"
+          --repo "${{ github.repository }}"
+          --name arcade-side-xai-global-pose-transfer-v1-state
+          --dir .
+
+      - name: Restore and verify the four private licensed identity sources
+        shell: bash
+        run: |
+          for slug in cristiano-ronaldo lionel-messi bad-bunny mrbeast; do
+            npm run arcade:sources -- --target=production --slug="$slug"
+          done
+
+      - name: Restore and verify the immutable pose master
+        run: npm run arcade:pose-master -- --target=production --master=xai-milei-side-v1
+
+      - name: Execute one pinned two-reference XAI SIDE request per identity
+        run: >-
+          npm run arcade:batch:xai-global-sides --
+          --execute
+          --confirm=ARCADE_SIDE_XAI_GLOBAL_4_V1
+          --state=.arcade-side-xai-global-pose-transfer-state.json
+          --pose-master-upload-state=.arcade-xai-pose-master-upload-state.json
+          --output-dir=.artifacts/arcade-side-xai-global-pose-transfer
+
+      - name: Publish experiment summary
+        if: always()
+        shell: bash
+        run: |
+          summary=.artifacts/arcade-side-xai-global-pose-transfer/arcade-side-xai-global-pose-transfer-v1/summary.md
+          if [[ -f "$summary" ]]; then
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload immutable audit bundle and resumable state
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-side-xai-global-pose-transfer-v1-state
+          path: |
+            .arcade-side-xai-global-pose-transfer-state.json
+            .arcade-xai-pose-master-upload-state.json
+            .artifacts/arcade-side-xai-global-pose-transfer/
+          if-no-files-found: warn
+          retention-days: 90
+          include-hidden-files: true

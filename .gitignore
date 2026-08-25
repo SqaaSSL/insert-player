@@ -29,6 +29,7 @@ worker/.prod.vars
 .arcade-bakeoff-state.json
 .arcade-side-xai-canary-state.json
 .arcade-side-xai-pose-transfer-canary-state.json
+.arcade-side-xai-global-pose-transfer-state.json
 .arcade-xai-pose-master-upload-state.json
 .launch-validation.json
 launch-validation.local.json
