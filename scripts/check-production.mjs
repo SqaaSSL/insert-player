@@ -3379,6 +3379,7 @@ function assertGithubActionsAreWired() {
     ci: '.github/workflows/ci.yml',
     development: '.github/workflows/deploy-development.yml',
     production: '.github/workflows/deploy-production.yml',
+    xaiCanary: '.github/workflows/arcade-side-xai-canary-production.yml',
     codeql: '.github/workflows/codeql.yml',
     dependabot: '.github/dependabot.yml',
     codeowners: '.github/CODEOWNERS',
@@ -3450,6 +3451,20 @@ function assertGithubActionsAreWired() {
       'secrets.GENERATION_JOB_SIGNING_SECRET',
       'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
     ],
+    xaiCanary: [
+      'workflow_dispatch:',
+      'ARCADE_SIDE_XAI_TRUMP_REALISTIC_V1',
+      'authorize exactly one paid SIDE call',
+      'group: production-worker-mutations',
+      'cancel-in-progress: false',
+      'npm run test:arcade:xai-canary',
+      '--slug=donald-trump',
+      'npm run arcade:canary:xai-side',
+      '--state=.arcade-side-xai-canary-state.json',
+      'arcade-side-xai-trump-v1-state',
+      'secrets.PIXCLI_API_KEY',
+      'secrets.CLOUDFLARE_API_TOKEN',
+    ],
     codeql: [
       'github/codeql-action/init@v4',
       'github/codeql-action/analyze@v4',
@@ -3497,6 +3512,48 @@ function assertGithubActionsAreWired() {
     || githubText.includes('CLERK_SECRET_KEY')
   ) {
     throw new Error('GitHub delivery files must reference environment secrets by name and must not contain raw credentials.');
+  }
+}
+
+function assertXaiArcadeSidePromptIsProviderScoped() {
+  const prompts = readFileSync(join(root, 'scripts/arcade-provider-prompts.mjs'), 'utf8');
+  const promptTests = readFileSync(join(root, 'scripts/arcade-provider-prompts.test.mjs'), 'utf8');
+  const canary = readFileSync(join(root, 'scripts/arcade-side-xai-canary.mjs'), 'utf8');
+  const canaryTests = readFileSync(join(root, 'scripts/arcade-side-xai-canary.test.mjs'), 'utf8');
+  const sealedRunner = readFileSync(join(root, 'scripts/arcade-side-bakeoff.mjs'), 'utf8');
+  const packageJson = readFileSync(join(root, 'package.json'), 'utf8');
+  const combined = [prompts, promptTests, canary, canaryTests, sealedRunner, packageJson].join('\n');
+  const required = [
+    "canonical: 'canonical-v1'",
+    "xaiRealisticAdult: 'xai-realistic-adult-v1'",
+    'The supplied image is a close facial identity reference.',
+    'premium semi-realistic 3D fighting-game roster art',
+    'never stylize anatomy, head size, apparent age, or identity',
+    'approximately 7.5 heads',
+    'about 13 percent of total body height',
+    '70-85 mm equivalent camera',
+    'no oversized head',
+    'expect(prompt).not.toMatch(/clearly AI-generated|realistic 2\\.5D|documentary photography/i)',
+    "XAI_SIDE_CANARY_EXPERIMENT_ID = 'arcade-side-xai-trump-realistic-adult-v1'",
+    "XAI_SIDE_CANARY_SLUG = 'donald-trump'",
+    "id: 'grok-imagine-image-2-edit'",
+    "endpoint: 'xai/grok-imagine-image/v2.0/edit'",
+    "aspect_ratio: '3:4'",
+    "resolution: '2k'",
+    'expectedPaidCalls: 1',
+    'enrich_prompt: false',
+    "fallback: 'none'",
+    'activation: false',
+    'promptBuilder: buildXaiSideCanaryPrompt',
+    'payloadBuilder: buildXaiSideCanaryPayload',
+    'plan.length !== expectedPaidCalls',
+    'state.experimentId !== experimentId',
+    'options.experimentId ?? BAKEOFF_EXPERIMENT_ID',
+    '"arcade:canary:xai-side": "node scripts/arcade-side-xai-canary.mjs"',
+  ];
+  const missing = required.filter((snippet) => !combined.includes(snippet));
+  if (missing.length > 0) {
+    throw new Error(`XAI Arcade provider prompt isolation is incomplete: ${missing.join(', ')}`);
   }
 }
 
@@ -3548,6 +3605,7 @@ assertLaunchMetadataIsWired();
 assertLaunchRasterAssetsAreFresh();
 assertOfficialArcadeIsWired();
 assertDurableGenerationIsWired();
+assertXaiArcadeSidePromptIsProviderScoped();
 assertGithubActionsAreWired();
 run('prelaunch bundle isolation', node, ['scripts/build-prelaunch.mjs', '--skip-checks']);
 
