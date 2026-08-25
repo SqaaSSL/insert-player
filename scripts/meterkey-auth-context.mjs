@@ -1,13 +1,23 @@
 import { createHash } from 'node:crypto';
 
-// This fingerprint pins the complete, deliberately broad Insert Player
-// Google + provider-experiment scope without placing experimental provider
-// labels inside the production application repository. Changing any provider,
-// model, endpoint, or control requires an explicit code review.
-const APPROVED_SCOPE_SHA256 = 'bbc7468ac1cf1cc7cfa301e390a0bd96ca9e7cfe870317a7e80f1ae151c0559f';
-const REQUIRED_PROVIDERS = ['google-ai-studio'];
-const REQUIRED_MODELS = ['gemini-3-pro-image', 'gemini-3.1-flash-image'];
-const REQUIRED_ENDPOINTS = ['/google-ai-studio/v1beta/models/*'];
+// This fingerprint pins the complete dedicated Insert Player scope. Changing
+// any provider, model, endpoint, or control requires an explicit code review.
+const APPROVED_SCOPE_SHA256 = '731962ebb18cbec7aa0022685da4bc08df79600f141550f907a7630121c0e84c';
+const REQUIRED_PROVIDERS = ['fal', 'google-ai-studio'];
+const REQUIRED_MODELS = [
+  'bytedance/seedream/v5/pro/edit',
+  'gemini-3-pro-image',
+  'gemini-3.1-flash-image',
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
+  'xai/grok-imagine-image/v2.0/edit',
+];
+const REQUIRED_ENDPOINTS = [
+  '/fal',
+  '/fal/*',
+  '/google-ai-studio/v1beta/models/*',
+  '/v1/chat/completions',
+];
 
 function requiredString(value, label) {
   const normalized = String(value ?? '').trim();
