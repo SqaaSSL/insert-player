@@ -105,6 +105,14 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function resolveProviderPrompt(promptBuilder, fighter, model) {
+  const prompt = promptBuilder({ fighter, model });
+  if (typeof prompt !== 'string' || prompt.trim().length < 180) {
+    throw new Error(`Provider prompt is incomplete for ${fighter.slug}:${model.id}.`);
+  }
+  return prompt.trim();
+}
+
 function sleep(milliseconds) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
@@ -203,14 +211,17 @@ export function buildBakeoffPlan(manifest) {
   return slots;
 }
 
-export function buildPixcliPayload({ fighter, model, sourceAssetHash }) {
+export function buildPixcliPayload({ fighter, model, sourceAssetHash, prompt = fighter.referencePrompt }) {
   const marker = `ip-side-v1-${fighter.slug}-${model.code}`;
   if (marker.length > 60) throw new Error(`PixCLI marker exceeds 60 characters: ${marker}.`);
   if (!/^[a-f0-9]{32}$/.test(sourceAssetHash ?? '')) {
     throw new Error(`PixCLI source asset hash is invalid for ${fighter.slug}.`);
   }
+  if (typeof prompt !== 'string' || prompt.trim().length < 180) {
+    throw new Error(`Provider prompt is incomplete for ${fighter.slug}:${model.id}.`);
+  }
   return {
-    prompt: fighter.referencePrompt,
+    prompt: prompt.trim(),
     model: model.id,
     image: sourceAssetHash,
     params: { ...model.params },
@@ -421,7 +432,7 @@ export async function submitBakeoffSlot(options) {
   return { action: 'submitted', slot: submitted };
 }
 
-async function pollJob(options, slot) {
+export async function pollJob(options, slot) {
   const deadline = Date.now() + (options.jobTimeoutMs ?? JOB_TIMEOUT_MS);
   let current = slot;
   while (Date.now() < deadline) {
@@ -462,7 +473,7 @@ export async function archiveJob(options, slot, job) {
     if (kind && !selected.has(kind)) selected.set(kind, asset);
   }
 
-  const runDir = join(options.outputDir, BAKEOFF_EXPERIMENT_ID);
+  const runDir = join(options.outputDir, options.experimentId ?? BAKEOFF_EXPERIMENT_ID);
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
   const archived = {};
   for (const kind of ['provider_request', 'provider_response', 'image']) {
@@ -519,16 +530,18 @@ export async function archiveJob(options, slot, job) {
   };
 }
 
-function buildInitialState(matrixSha256) {
+export function buildInitialState(matrixSha256, options = {}) {
+  const experimentId = options.experimentId ?? BAKEOFF_EXPERIMENT_ID;
+  const expectedPaidCalls = options.expectedPaidCalls ?? 8;
   return {
     schemaVersion: 2,
-    experimentId: BAKEOFF_EXPERIMENT_ID,
+    experimentId,
     matrixSha256,
     status: 'running',
     createdAt: nowIso(),
     updatedAt: nowIso(),
     policy: {
-      expectedPaidCalls: 8,
+      expectedPaidCalls,
       retries: 0,
       fallback: 'none',
       promptEnrichment: false,
@@ -540,13 +553,13 @@ function buildInitialState(matrixSha256) {
 }
 
 function writeSummary(outputDir, state) {
-  const runDir = join(outputDir, BAKEOFF_EXPERIMENT_ID);
+  const runDir = join(outputDir, state.experimentId);
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
   writeJsonAtomic(join(runDir, 'summary.json'), state);
   const lines = [
     '# Arcade SIDE provider bakeoff',
     '',
-    `Experiment: \`${BAKEOFF_EXPERIMENT_ID}\``,
+    `Experiment: \`${state.experimentId}\``,
     '',
     '| Fighter | Model | Status | Image SHA-256 | PixCLI estimate |',
     '| --- | --- | --- | --- | ---: |',
@@ -570,21 +583,39 @@ export async function runBakeoff(options = {}) {
   if (!apiKey) throw new Error('PIXCLI_API_KEY is required.');
 
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-  const plan = buildBakeoffPlan(manifest);
-  const matrix = plan.map(({ fighter, model }) => ({
-    slug: fighter.slug,
-    sourceSha256: fighter.reference.sourceSha256,
-    promptSha256: sha256(fighter.referencePrompt),
-    modelId: model.id,
-    endpoint: model.endpoint,
-    params: model.params,
-  }));
+  validateManifest(manifest);
+  const experimentId = options.experimentId ?? BAKEOFF_EXPERIMENT_ID;
+  const plan = options.planBuilder ? options.planBuilder(manifest) : buildBakeoffPlan(manifest);
+  const expectedPaidCalls = options.expectedPaidCalls ?? 8;
+  if (!Number.isSafeInteger(expectedPaidCalls) || expectedPaidCalls < 1 || plan.length !== expectedPaidCalls) {
+    throw new Error(`Experiment ${experimentId} does not match its sealed paid-call count.`);
+  }
+  if (new Set(plan.map((slot) => slot.slotKey)).size !== plan.length) {
+    throw new Error(`Experiment ${experimentId} contains duplicate slots.`);
+  }
+  const promptBuilder = options.promptBuilder ?? (({ fighter }) => fighter.referencePrompt);
+  const payloadBuilder = options.payloadBuilder ?? buildPixcliPayload;
+  const matrix = plan.map(({ fighter, model }) => {
+    const prompt = resolveProviderPrompt(promptBuilder, fighter, model);
+    return {
+      slug: fighter.slug,
+      sourceSha256: fighter.reference.sourceSha256,
+      promptSha256: sha256(prompt),
+      modelId: model.id,
+      endpoint: model.endpoint,
+      params: model.params,
+    };
+  });
   const matrixSha256 = sha256(canonicalJson(matrix));
-  let state = readState(statePath) ?? buildInitialState(matrixSha256);
+  let state = readState(statePath) ?? buildInitialState(matrixSha256, {
+    experimentId,
+    expectedPaidCalls,
+  });
   if (
     state.schemaVersion !== 2
-    || state.experimentId !== BAKEOFF_EXPERIMENT_ID
+    || state.experimentId !== experimentId
     || state.matrixSha256 !== matrixSha256
+    || state.policy?.expectedPaidCalls !== expectedPaidCalls
   ) {
     throw new Error('Existing bakeoff state belongs to a different immutable matrix.');
   }
@@ -630,10 +661,12 @@ export async function runBakeoff(options = {}) {
         fetchImpl: options.fetchImpl,
       });
     }
-    const payload = buildPixcliPayload({
+    const prompt = resolveProviderPrompt(promptBuilder, fighter, model);
+    const payload = payloadBuilder({
       fighter,
       model,
       sourceAssetHash: uploadedSource.pixcliAssetHash,
+      prompt,
     });
     const invariants = {
       slotKey,
@@ -642,7 +675,7 @@ export async function runBakeoff(options = {}) {
       modelId: model.id,
       providerEndpoint: model.endpoint,
       sourceSha256,
-      promptSha256: sha256(fighter.referencePrompt),
+      promptSha256: sha256(prompt),
       requestSha256: sha256(canonicalJson(payload)),
     };
     const previous = state.slots[slotKey] ?? null;
@@ -677,6 +710,7 @@ export async function runBakeoff(options = {}) {
       apiBase,
       headers,
       outputDir,
+      experimentId,
       fetchImpl: options.fetchImpl,
       sleepImpl: options.sleepImpl,
     }, activeSlot, job);
