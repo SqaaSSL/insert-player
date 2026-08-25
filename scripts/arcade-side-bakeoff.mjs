@@ -121,6 +121,10 @@ function responseBodyHash(text) {
   return text ? sha256(text) : null;
 }
 
+const PIXCLI_UPLOAD_STORAGE_FAILED_BODY_SHA256 = responseBodyHash(
+  JSON.stringify({ error: 'Upload storage failed' }),
+);
+
 async function parseJsonResponse(response, label) {
   const text = await response.text();
   let body;
@@ -341,6 +345,22 @@ export function resumeActionForSlot(slot) {
   ) return 'skip';
   if (slot.status === 'submitting' || slot.status === 'submission_outcome_unknown') return 'block';
   throw new Error(`Unknown bakeoff slot state: ${String(slot.status)}.`);
+}
+
+export function resumeActionForSourceUpload(source) {
+  if (!source) return 'upload';
+  if (source.status === 'uploaded' && /^[a-f0-9]{32}$/.test(source.pixcliAssetHash ?? '')) {
+    return 'reuse';
+  }
+  if (
+    source.status === 'upload_outcome_unknown'
+    && source.uploadHttpStatus === 502
+    && source.uploadError === 'Upload storage failed'
+    && source.uploadResponseSha256 === PIXCLI_UPLOAD_STORAGE_FAILED_BODY_SHA256
+  ) {
+    return 'retry_storage';
+  }
+  return 'block';
 }
 
 export async function submitBakeoffSlot(options) {
@@ -658,10 +678,12 @@ export async function runBakeoff(options = {}) {
       if (uploadedSource.sourceSha256 !== sourceSha256) {
         throw new Error(`Uploaded source state mismatch for ${fighter.slug}.`);
       }
-      if (uploadedSource.status !== 'uploaded' || !/^[a-f0-9]{32}$/.test(uploadedSource.pixcliAssetHash ?? '')) {
-        throw new Error(`Licensed source upload requires manual reconciliation for ${fighter.slug}.`);
-      }
-    } else {
+    }
+    const sourceResumeAction = resumeActionForSourceUpload(uploadedSource);
+    if (sourceResumeAction === 'block') {
+      throw new Error(`Licensed source upload requires manual reconciliation for ${fighter.slug}.`);
+    }
+    if (sourceResumeAction === 'upload' || sourceResumeAction === 'retry_storage') {
       uploadedSource = await uploadBakeoffSource({
         apiBase,
         apiKey,
