@@ -1522,6 +1522,8 @@ function assertLeaderboardSurfaceIsWired() {
 
 function assertLiveSmokeCoversCriticalPaths() {
   const smoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
+  const smokeFetch = readFileSync(join(root, 'scripts/live-smoke-fetch.mjs'), 'utf8');
+  const smokeFetchTests = readFileSync(join(root, 'scripts/live-smoke-fetch.test.mjs'), 'utf8');
   const packageJson = readFileSync(join(root, 'package.json'), 'utf8');
   const runbook = readFileSync(join(root, 'PRODUCTION_READINESS.md'), 'utf8');
   const required = [
@@ -1535,7 +1537,14 @@ function assertLiveSmokeCoversCriticalPaths() {
     "envValue(env, 'ASF_CLERK_JWT')",
     'FETCH_TIMEOUT_MS',
     'ASF_LIVE_SMOKE_TIMEOUT_MS',
-    'AbortSignal.timeout(FETCH_TIMEOUT_MS)',
+    'fetchWithTransientNetworkRetry',
+    'ASF_LIVE_SMOKE_SAFE_FETCH_ATTEMPTS',
+    'ASF_LIVE_SMOKE_SAFE_FETCH_RETRY_DELAY_MS',
+    "const RETRYABLE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])",
+    'const retryable = RETRYABLE_METHODS.has(method) && !init.signal',
+    'signal: init.signal ?? AbortSignal.timeout(timeoutMs)',
+    "it('never retries a mutating request'",
+    "it('does not retry when the caller owns the abort signal'",
     'Request failed for ${target}',
     'ASF_SMOKE_REQUIRE_AUTH',
     'ASF_SMOKE_REQUIRE_CLONE',
@@ -1646,7 +1655,7 @@ function assertLiveSmokeCoversCriticalPaths() {
     'Same-photo community clone merge should return cloned=false',
     'same-photo community clone merge copies only public playable assets',
   ];
-  const combined = `${smoke}\n${packageJson}\n${runbook}`;
+  const combined = `${smoke}\n${smokeFetch}\n${smokeFetchTests}\n${packageJson}\n${runbook}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
     throw new Error(`Live smoke coverage is missing: ${missing.join(', ')}`);

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fetchWithTransientNetworkRetry } from './live-smoke-fetch.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -50,6 +51,8 @@ const requireCloneSmoke =
   envValue(env, 'ASF_SMOKE_REQUIRE_CLONE') === '1' || process.argv.includes('--require-clone');
 const preserveSmokeUserState = envValue(env, 'ASF_SMOKE_PRESERVE_USER_STATE') === '1';
 const FETCH_TIMEOUT_MS = Number(envValue(env, 'ASF_LIVE_SMOKE_TIMEOUT_MS') || 45_000);
+const SAFE_FETCH_MAX_ATTEMPTS = Number(envValue(env, 'ASF_LIVE_SMOKE_SAFE_FETCH_ATTEMPTS') || 3);
+const SAFE_FETCH_RETRY_DELAY_MS = Number(envValue(env, 'ASF_LIVE_SMOKE_SAFE_FETCH_RETRY_DELAY_MS') || 250);
 const WORKER_READY_TIMEOUT_MS = Number(envValue(env, 'ASF_WORKER_READY_TIMEOUT_MS') || 90_000);
 const WORKER_RETRY_DELAY_MS = Number(envValue(env, 'ASF_WORKER_RETRY_DELAY_MS') || 2_500);
 const workerVersionOverride = envValue(env, 'ASF_WORKER_VERSION_OVERRIDE');
@@ -257,10 +260,13 @@ async function request(pathOrUrl, init = {}) {
     );
   }
   try {
-    return await fetch(target, {
-      ...init,
-      headers,
-      signal: init.signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    return await fetchWithTransientNetworkRetry({
+      fetchImpl: fetch,
+      target,
+      init: { ...init, headers },
+      timeoutMs: FETCH_TIMEOUT_MS,
+      maxAttempts: SAFE_FETCH_MAX_ATTEMPTS,
+      baseDelayMs: SAFE_FETCH_RETRY_DELAY_MS,
     });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
