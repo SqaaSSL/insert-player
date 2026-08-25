@@ -203,13 +203,16 @@ export function buildBakeoffPlan(manifest) {
   return slots;
 }
 
-export function buildPixcliPayload({ fighter, model, sourceBytes }) {
+export function buildPixcliPayload({ fighter, model, sourceAssetHash }) {
   const marker = `ip-side-v1-${fighter.slug}-${model.code}`;
   if (marker.length > 60) throw new Error(`PixCLI marker exceeds 60 characters: ${marker}.`);
+  if (!/^[a-f0-9]{32}$/.test(sourceAssetHash ?? '')) {
+    throw new Error(`PixCLI source asset hash is invalid for ${fighter.slug}.`);
+  }
   return {
     prompt: fighter.referencePrompt,
     model: model.id,
-    image: `data:image/png;base64,${sourceBytes.toString('base64')}`,
+    image: sourceAssetHash,
     params: { ...model.params },
     enrich_prompt: false,
     search: false,
@@ -217,6 +220,93 @@ export function buildPixcliPayload({ fighter, model, sourceBytes }) {
     publish: false,
     publish_name: marker,
   };
+}
+
+export async function uploadBakeoffSource(options) {
+  const {
+    apiBase,
+    apiKey,
+    fighter,
+    sourceBytes,
+    sourceSha256,
+    save,
+    fetchImpl = fetch,
+  } = options;
+  const uploading = {
+    slug: fighter.slug,
+    sourceSha256,
+    status: 'uploading',
+    uploadStartedAt: nowIso(),
+  };
+  save(uploading);
+
+  const form = new FormData();
+  form.append('file', new Blob([sourceBytes], { type: 'image/png' }), `${fighter.slug}.png`);
+  let response;
+  try {
+    response = await fetchImpl(`${apiBase}/api/v1/uploads`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'User-Agent': 'insert-player-arcade-side-bakeoff/1.0',
+      },
+      body: form,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const failed = {
+      ...uploading,
+      status: 'upload_outcome_unknown',
+      uploadError: error instanceof Error ? error.message : String(error),
+      updatedAt: nowIso(),
+    };
+    save(failed);
+    throw new Error(`Licensed source upload outcome is unknown for ${fighter.slug}.`);
+  }
+
+  let parsed;
+  try {
+    parsed = await parseJsonResponse(response, 'PixCLI source upload');
+  } catch (error) {
+    const failed = {
+      ...uploading,
+      status: 'upload_outcome_unknown',
+      uploadHttpStatus: response.status,
+      uploadError: error instanceof Error ? error.message : String(error),
+      updatedAt: nowIso(),
+    };
+    save(failed);
+    throw new Error(`Licensed source upload outcome is unknown for ${fighter.slug}.`);
+  }
+  const { body, text } = parsed;
+  if (
+    response.status !== 201
+    || !/^[a-f0-9]{32}$/.test(body.hash ?? '')
+    || typeof body.url !== 'string'
+  ) {
+    const failed = {
+      ...uploading,
+      status: response.status >= 400 && response.status < 500 ? 'upload_rejected' : 'upload_outcome_unknown',
+      uploadHttpStatus: response.status,
+      uploadResponseSha256: responseBodyHash(text),
+      uploadError: typeof body.error === 'string' ? body.error : `HTTP ${response.status}`,
+      updatedAt: nowIso(),
+    };
+    save(failed);
+    throw new Error(`Licensed source upload failed for ${fighter.slug}.`);
+  }
+  const uploaded = {
+    ...uploading,
+    status: 'uploaded',
+    pixcliAssetHash: body.hash,
+    pixcliAssetUrl: body.url,
+    mimeType: body.mime_type ?? 'image/png',
+    sizeBytes: body.size ?? sourceBytes.byteLength,
+    uploadedAt: nowIso(),
+    updatedAt: nowIso(),
+  };
+  save(uploaded);
+  return uploaded;
 }
 
 export function verifyBakeoffSource(fighter, sourcePath) {
@@ -288,14 +378,16 @@ export async function submitBakeoffSlot(options) {
   try {
     parsed = await parseJsonResponse(response, 'PixCLI submit');
   } catch (error) {
+    const isDefinitiveRejection = response.status >= 400 && response.status < 500;
     const unknown = {
       ...submitting,
-      status: 'submission_outcome_unknown',
+      status: isDefinitiveRejection ? 'submission_rejected' : 'submission_outcome_unknown',
       submissionHttpStatus: response.status,
       submissionError: error instanceof Error ? error.message : String(error),
       updatedAt: nowIso(),
     };
     save(unknown);
+    if (isDefinitiveRejection) return { action: 'rejected', slot: unknown };
     throw new Error(`Submission outcome is unknown for ${options.invariants.slotKey}; automatic retry is forbidden.`);
   }
   const { body, text } = parsed;
@@ -406,7 +498,7 @@ async function archiveJob(options, slot, job) {
 
 function buildInitialState(matrixSha256) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     experimentId: BAKEOFF_EXPERIMENT_ID,
     matrixSha256,
     status: 'running',
@@ -419,6 +511,7 @@ function buildInitialState(matrixSha256) {
       promptEnrichment: false,
       activation: false,
     },
+    sources: {},
     slots: {},
   };
 }
@@ -466,7 +559,7 @@ export async function runBakeoff(options = {}) {
   const matrixSha256 = sha256(canonicalJson(matrix));
   let state = readState(statePath) ?? buildInitialState(matrixSha256);
   if (
-    state.schemaVersion !== 1
+    state.schemaVersion !== 2
     || state.experimentId !== BAKEOFF_EXPERIMENT_ID
     || state.matrixSha256 !== matrixSha256
   ) {
@@ -481,6 +574,10 @@ export async function runBakeoff(options = {}) {
     state.slots[slot.slotKey] = slot;
     saveState();
   };
+  const saveSource = (source) => {
+    state.sources[source.slug] = source;
+    saveState();
+  };
   saveState();
 
   const headers = {
@@ -491,7 +588,30 @@ export async function runBakeoff(options = {}) {
   for (const { slotKey, fighter, model } of plan) {
     const sourcePath = join(sourceDir, `${fighter.slug}.png`);
     const { bytes, sourceSha256 } = verifyBakeoffSource(fighter, sourcePath);
-    const payload = buildPixcliPayload({ fighter, model, sourceBytes: bytes });
+    let uploadedSource = state.sources[fighter.slug] ?? null;
+    if (uploadedSource) {
+      if (uploadedSource.sourceSha256 !== sourceSha256) {
+        throw new Error(`Uploaded source state mismatch for ${fighter.slug}.`);
+      }
+      if (uploadedSource.status !== 'uploaded' || !/^[a-f0-9]{32}$/.test(uploadedSource.pixcliAssetHash ?? '')) {
+        throw new Error(`Licensed source upload requires manual reconciliation for ${fighter.slug}.`);
+      }
+    } else {
+      uploadedSource = await uploadBakeoffSource({
+        apiBase,
+        apiKey,
+        fighter,
+        sourceBytes: bytes,
+        sourceSha256,
+        save: saveSource,
+        fetchImpl: options.fetchImpl,
+      });
+    }
+    const payload = buildPixcliPayload({
+      fighter,
+      model,
+      sourceAssetHash: uploadedSource.pixcliAssetHash,
+    });
     const invariants = {
       slotKey,
       slug: fighter.slug,

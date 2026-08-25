@@ -7,9 +7,14 @@ on:
         description: Enter ARCADE_SIDE_BAKEOFF_4X2 to authorize exactly eight paid SIDE calls
         required: true
         type: string
+      resume_run_id:
+        description: Optional prior bakeoff run ID whose immutable checkpoint should be resumed
+        required: false
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: production-worker-mutations
@@ -23,6 +28,7 @@ jobs:
     environment: production
     env:
       REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      RESUME_RUN_ID: ${{ inputs.resume_run_id }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
@@ -47,6 +53,10 @@ jobs:
             printf '::error::CLOUDFLARE_API_TOKEN is unavailable in the production environment.\n'
             exit 1
           }
+          if [[ -n "$RESUME_RUN_ID" && ! "$RESUME_RUN_ID" =~ ^[0-9]+$ ]]; then
+            printf '::error::resume_run_id must be a numeric GitHub Actions run ID.\n'
+            exit 1
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -65,6 +75,16 @@ jobs:
 
       - name: Prove the sealed matrix and fail-closed runner
         run: npm run test:arcade:bakeoff
+
+      - name: Restore a prior paid checkpoint
+        if: inputs.resume_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run download "$RESUME_RUN_ID"
+          --repo "${{ github.repository }}"
+          --name arcade-side-4x2-state
+          --dir .
 
       - name: Restore and verify the four private licensed sources
         shell: bash
@@ -94,9 +114,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: arcade-side-4x2-${{ github.run_id }}-${{ github.run_attempt }}
+          name: arcade-side-4x2-state
           path: |
             .arcade-bakeoff-state.json
             .artifacts/arcade-side-bakeoff/
           if-no-files-found: warn
           retention-days: 90
+          include-hidden-files: true
