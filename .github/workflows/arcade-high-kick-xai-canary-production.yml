@@ -1,0 +1,132 @@
+name: Run production Trump XAI HIGH_KICK impact canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Enter ARCADE_HIGH_KICK_XAI_TRUMP_IMPACT_V1 to authorize exactly one paid three-reference frame
+        required: true
+        type: string
+      resume_run_id:
+        description: Optional prior HIGH_KICK canary run ID whose immutable checkpoint should be resumed
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    name: Trump canonical in pinned HIGH_KICK impact pose
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
+      PIXCLI_BASE_URL: https://pixcli.hilo.cx
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate the sealed one-call request
+        shell: bash
+        run: |
+          [[ "$REQUESTED_CONFIRMATION" == "ARCADE_HIGH_KICK_XAI_TRUMP_IMPACT_V1" ]] || {
+            printf '::error::The exact HIGH_KICK canary confirmation phrase is required.\n'
+            exit 1
+          }
+          [[ -n "$PIXCLI_API_KEY" ]] || {
+            printf '::error::PIXCLI_API_KEY is unavailable in the production environment.\n'
+            exit 1
+          }
+          [[ -n "$CLOUDFLARE_API_TOKEN" ]] || {
+            printf '::error::CLOUDFLARE_API_TOKEN is unavailable in the production environment.\n'
+            exit 1
+          }
+          if [[ -n "$RESUME_RUN_ID" && ! "$RESUME_RUN_ID" =~ ^[0-9]+$ ]]; then
+            printf '::error::resume_run_id must be a numeric GitHub Actions run ID.\n'
+            exit 1
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Worker dependencies
+        run: npm --prefix worker ci
+
+      - name: Prove prompt roles and one-call resume behavior
+        run: npm run test:arcade:xai-high-kick
+
+      - name: Restore the approved Trump canonical
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run download "32889507819"
+          --repo "${{ github.repository }}"
+          --name arcade-side-xai-trump-pose-transfer-v2-state
+          --dir .
+
+      - name: Restore a prior paid HIGH_KICK checkpoint
+        if: inputs.resume_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run download "$RESUME_RUN_ID"
+          --repo "${{ github.repository }}"
+          --name arcade-high-kick-xai-trump-impact-v1-state
+          --dir .
+
+      - name: Restore and verify the private licensed Trump identity source
+        run: npm run arcade:sources -- --target=production --slug=donald-trump
+
+      - name: Restore and verify the immutable HIGH_KICK impact master
+        run: npm run arcade:motion-master -- --master=xai-high-kick-impact-v1
+
+      - name: Execute exactly one pinned three-reference XAI frame
+        run: >-
+          npm run arcade:canary:xai-high-kick --
+          --execute
+          --confirm=ARCADE_HIGH_KICK_XAI_TRUMP_IMPACT_V1
+          --state=.arcade-high-kick-xai-trump-impact-state.json
+          --motion-master-upload-state=.arcade-xai-high-kick-impact-upload-state.json
+          --canonical-upload-state=.arcade-xai-trump-canonical-upload-state.json
+          --output-dir=.artifacts/arcade-high-kick-xai-canary
+
+      - name: Publish experiment summary
+        if: always()
+        shell: bash
+        run: |
+          summary=.artifacts/arcade-high-kick-xai-canary/arcade-high-kick-xai-trump-impact-v1/summary.md
+          if [[ -f "$summary" ]]; then
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload immutable audit bundle and resumable state
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-high-kick-xai-trump-impact-v1-state
+          path: |
+            .arcade-high-kick-xai-trump-impact-state.json
+            .arcade-xai-high-kick-impact-upload-state.json
+            .arcade-xai-trump-canonical-upload-state.json
+            .artifacts/arcade-high-kick-xai-canary/
+          if-no-files-found: warn
+          retention-days: 90
+          include-hidden-files: true

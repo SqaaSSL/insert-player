@@ -47,6 +47,23 @@ describe('Arcade provider prompt profiles', () => {
     expect(prompt).toContain('navy tailored suit, white shirt, vivid red tie');
   });
 
+  it('separates motion, approved canonical, and real identity for frame transfer', () => {
+    const prompt = buildArcadeProviderPrompt({
+      fighter: trump,
+      promptProfile: ARCADE_PROMPT_PROFILES.xaiCanonicalMotionTransfer,
+    });
+
+    expect(prompt).toContain('IMAGE 1 is the MOTION POSE AND COMPOSITION MASTER only');
+    expect(prompt).toContain('IMAGE 2 is the APPROVED CANONICAL CHARACTER AND RENDERING MASTER');
+    expect(prompt).toContain('IMAGE 3 is the REAL IDENTITY SAFEGUARD only');
+    expect(prompt).toContain('same canonical character from IMAGE 2 captured at a different animation frame');
+    expect(prompt).toContain('Return exactly one full-body animation frame');
+    expect(prompt).toContain('not a sprite sheet, contact sheet, sequence, or collage');
+    expect(prompt).toContain('exact high-kick impact pose from IMAGE 1');
+    expect(prompt).not.toContain('neutral ready stance');
+    expect(prompt).toContain('navy tailored suit, white shirt, vivid red tie');
+  });
+
   it('fails closed for unknown prompt profiles', () => {
     expect(() => buildArcadeProviderPrompt({
       fighter: trump,

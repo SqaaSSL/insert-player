@@ -3381,6 +3381,7 @@ function assertGithubActionsAreWired() {
     production: '.github/workflows/deploy-production.yml',
     xaiCanary: '.github/workflows/arcade-side-xai-canary-production.yml',
     xaiGlobal: '.github/workflows/arcade-side-xai-global-production.yml',
+    xaiHighKick: '.github/workflows/arcade-high-kick-xai-canary-production.yml',
     codeql: '.github/workflows/codeql.yml',
     dependabot: '.github/dependabot.yml',
     codeowners: '.github/CODEOWNERS',
@@ -3488,6 +3489,26 @@ function assertGithubActionsAreWired() {
       'secrets.PIXCLI_API_KEY',
       'secrets.CLOUDFLARE_API_TOKEN',
     ],
+    xaiHighKick: [
+      'workflow_dispatch:',
+      'ARCADE_HIGH_KICK_XAI_TRUMP_IMPACT_V1',
+      'authorize exactly one paid three-reference frame',
+      'group: production-worker-mutations',
+      'cancel-in-progress: false',
+      'npm run test:arcade:xai-high-kick',
+      'gh run download "32889507819"',
+      'arcade-side-xai-trump-pose-transfer-v2-state',
+      '--slug=donald-trump',
+      'npm run arcade:motion-master',
+      '--master=xai-high-kick-impact-v1',
+      'npm run arcade:canary:xai-high-kick',
+      '--state=.arcade-high-kick-xai-trump-impact-state.json',
+      '--motion-master-upload-state=.arcade-xai-high-kick-impact-upload-state.json',
+      '--canonical-upload-state=.arcade-xai-trump-canonical-upload-state.json',
+      'arcade-high-kick-xai-trump-impact-v1-state',
+      'secrets.PIXCLI_API_KEY',
+      'secrets.CLOUDFLARE_API_TOKEN',
+    ],
     codeql: [
       'github/codeql-action/init@v4',
       'github/codeql-action/analyze@v4',
@@ -3545,7 +3566,10 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
   const canaryTests = readFileSync(join(root, 'scripts/arcade-side-xai-canary.test.mjs'), 'utf8');
   const globalBatch = readFileSync(join(root, 'scripts/arcade-side-xai-global-batch.mjs'), 'utf8');
   const globalBatchTests = readFileSync(join(root, 'scripts/arcade-side-xai-global-batch.test.mjs'), 'utf8');
+  const highKickCanary = readFileSync(join(root, 'scripts/arcade-high-kick-xai-canary.mjs'), 'utf8');
+  const highKickCanaryTests = readFileSync(join(root, 'scripts/arcade-high-kick-xai-canary.test.mjs'), 'utf8');
   const poseMasterFetch = readFileSync(join(root, 'scripts/fetch-arcade-pose-master.mjs'), 'utf8');
+  const motionMasterFetch = readFileSync(join(root, 'scripts/fetch-arcade-motion-master.mjs'), 'utf8');
   const sealedRunner = readFileSync(join(root, 'scripts/arcade-side-bakeoff.mjs'), 'utf8');
   const packageJson = readFileSync(join(root, 'package.json'), 'utf8');
   const combined = [
@@ -3555,7 +3579,10 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
     canaryTests,
     globalBatch,
     globalBatchTests,
+    highKickCanary,
+    highKickCanaryTests,
     poseMasterFetch,
+    motionMasterFetch,
     sealedRunner,
     packageJson,
   ].join('\n');
@@ -3563,6 +3590,7 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
     "canonical: 'canonical-v1'",
     "xaiRealisticAdult: 'xai-realistic-adult-v1'",
     "xaiIdentityPoseTransfer: 'xai-identity-pose-transfer-v1'",
+    "xaiCanonicalMotionTransfer: 'xai-canonical-motion-transfer-v1'",
     'The supplied image is a close facial identity reference.',
     'premium semi-realistic 3D fighting-game roster art',
     'never stylize anatomy, head size, apparent age, or identity',
@@ -3573,11 +3601,18 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
     'IMAGE 1 is the POSE, COMPOSITION, AND RENDERING MASTER only',
     'IMAGE 2 is the IDENTITY AND PHYSIQUE ANCHOR only',
     'Never blend the two faces',
+    'IMAGE 1 is the MOTION POSE AND COMPOSITION MASTER only',
+    'IMAGE 2 is the APPROVED CANONICAL CHARACTER AND RENDERING MASTER',
+    'IMAGE 3 is the REAL IDENTITY SAFEGUARD only',
+    'not a sprite sheet, contact sheet, sequence, or collage',
+    'expect(prompt).not.toContain(\'neutral ready stance\')',
     'expect(prompt).not.toMatch(/clearly AI-generated|realistic 2\\.5D|documentary photography/i)',
     "XAI_SIDE_CANARY_EXPERIMENT_ID = 'arcade-side-xai-trump-pose-transfer-v2'",
     "XAI_SIDE_CANARY_SLUG = 'donald-trump'",
     "XAI_GLOBAL_SIDE_BATCH_EXPERIMENT_ID = 'arcade-side-xai-global-pose-transfer-v1'",
     "XAI_GLOBAL_SIDE_BATCH_CONFIRMATION = 'ARCADE_SIDE_XAI_GLOBAL_4_V1'",
+    "XAI_HIGH_KICK_CANARY_EXPERIMENT_ID = 'arcade-high-kick-xai-trump-impact-v1'",
+    "XAI_HIGH_KICK_CANARY_CONFIRMATION = 'ARCADE_HIGH_KICK_XAI_TRUMP_IMPACT_V1'",
     "'cristiano-ronaldo'",
     "'lionel-messi'",
     "'bad-bunny'",
@@ -3595,15 +3630,21 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
     'referenceInputs: model.referenceInputs ?? []',
     "id: 'xai-milei-side-v1'",
     "contentSha256: '89bbecdfe8fc9cd08126f1c60b90e35ecc16427e3d0a227f0a4c1832f0960309'",
+    "contentSha256: '43086a8d96acd9b153a1c38c3dd622bf0b7140d90d067a4459a0d3b7fd637bed'",
+    "contentSha256: '9429960a62d833e1899d8572efde3f7df2cceb88ff1510b3c146e8489bf7f2c0'",
     'promptBuilder: buildXaiSideCanaryPrompt',
     'buildXaiSidePoseTransferPayload',
+    'image: [motionMasterAssetHash, canonicalAssetHash, sourceAssetHash]',
     'plan.length !== expectedPaidCalls',
     'state.experimentId !== experimentId',
     'options.experimentId ?? BAKEOFF_EXPERIMENT_ID',
     '"arcade:pose-master": "node scripts/fetch-arcade-pose-master.mjs"',
     '"arcade:canary:xai-side": "node scripts/arcade-side-xai-canary.mjs"',
     '"arcade:batch:xai-global-sides": "node scripts/arcade-side-xai-global-batch.mjs"',
+    '"arcade:motion-master": "node scripts/fetch-arcade-motion-master.mjs"',
+    '"arcade:canary:xai-high-kick": "node scripts/arcade-high-kick-xai-canary.mjs"',
     '"test:arcade:xai-global": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-xai-global-batch.test.mjs scripts/arcade-side-bakeoff.test.mjs"',
+    '"test:arcade:xai-high-kick": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-high-kick-xai-canary.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-bakeoff.test.mjs"',
   ];
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
