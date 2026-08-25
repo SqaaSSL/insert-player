@@ -27,6 +27,7 @@
     "arcade:batch:xai-global-sides": "node scripts/arcade-side-xai-global-batch.mjs",
     "arcade:canary:xai-high-kick": "node scripts/arcade-high-kick-xai-canary.mjs",
     "arcade:archive-experiment": "node scripts/archive-arcade-experiment.mjs",
+    "arcade:qa-pose-atlas": "npm --prefix processor run qa:pose-atlas --",
     "cache:audit": "node scripts/serve-legacy-cache-audit.mjs",
     "test:arcade:bakeoff": "vitest run scripts/arcade-side-bakeoff.test.mjs",
     "test:arcade:xai-canary": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-bakeoff.test.mjs",

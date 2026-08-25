@@ -20,7 +20,9 @@
     "benchmark:flash-sequence:test": "tsx --test src/benchmark/flashSequenceBenchmark.test.ts",
     "benchmark:flash-sequence:plan": "tsx src/benchmark/flashSequenceBenchmarkCli.ts plan",
     "benchmark:flash-sequence:pricing": "tsx src/benchmark/flashSequenceBenchmarkCli.ts pricing",
-    "benchmark:flash-sequence:execute": "tsx src/benchmark/flashSequenceBenchmarkCli.ts execute"
+    "benchmark:flash-sequence:execute": "tsx src/benchmark/flashSequenceBenchmarkCli.ts execute",
+    "qa:pose-atlas:test": "tsx --test src/benchmark/qaPoseAtlas.test.ts",
+    "qa:pose-atlas": "tsx src/benchmark/qaPoseAtlasCli.ts"
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.7"
