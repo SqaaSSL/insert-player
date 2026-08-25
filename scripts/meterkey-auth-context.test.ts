@@ -15,20 +15,12 @@ const expected = {
 const approvedScope = {
   providers: ['fal', 'google-ai-studio'],
   models: [
-    'xai/grok-imagine-video/v1.5/image-to-video',
-    'openai/gpt-image-2/edit',
-    'openai/gpt-image-2',
-    'fal-ai/flux-pro/kontext/max',
-    'fal-ai/nano-banana-2/edit',
-    'fal-ai/bytedance/seedream/v5/lite/edit',
-    'fal-ai/flux-2-pro/edit',
-    'fal-ai/flux-2/klein/9b/edit',
-    'fal-ai/flux-2/klein/4b/edit',
-    'fal-ai/flux-2/flash/edit',
+    'bytedance/seedream/v5/pro/edit',
     'gemini-3.1-flash-lite',
     'gemini-3.5-flash',
     'gemini-3.1-flash-image',
     'gemini-3-pro-image',
+    'xai/grok-imagine-image/v2.0/edit',
   ],
   endpoints: ['/fal/*', '/fal', '/v1/chat/completions', '/google-ai-studio/v1beta/models/*'],
   block_streaming: true,
@@ -98,12 +90,12 @@ describe('Meterkey Insert Player auth contract', () => {
     expect(() => validateMeterkeyAuthContext(context, expected)).toThrow();
   });
 
-  it('rejects a FAL-only key and a key missing either Gemini image model', () => {
+  it('rejects a FAL-only key and a key missing any approved model', () => {
     const falOnly = validContext();
     falOnly.scope.providers = ['fal'];
     expect(() => validateMeterkeyAuthContext(falOnly, expected)).toThrow();
 
-    for (const model of ['gemini-3-pro-image', 'gemini-3.1-flash-image']) {
+    for (const model of approvedScope.models) {
       const missingModel = validContext();
       missingModel.scope.models = missingModel.scope.models.filter((candidate) => candidate !== model);
       expect(() => validateMeterkeyAuthContext(missingModel, expected)).toThrow();
