@@ -3699,6 +3699,8 @@ function assertArcadeExperimentArchiveIsImmutable() {
     'immutable_archive_conflict',
     'ARCADE_ARCHIVE_UPLOAD_URL',
     'Delete isolated R2 upload bridge',
+    '--request DELETE',
+    '/workers/scripts/$ARCADE_ARCHIVE_WORKER_NAME',
     'scripts/wrangler.archive-uploader.jsonc',
     'D1 archive index verification failed',
     'INSERT OR IGNORE INTO arcade_generation_experiments',

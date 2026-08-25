@@ -140,11 +140,24 @@ jobs:
 
       - name: Delete isolated R2 upload bridge
         if: always() && env.ARCADE_ARCHIVE_WORKER_NAME != ''
-        run: >-
-          node worker/node_modules/wrangler/bin/wrangler.js delete
-          "$ARCADE_ARCHIVE_WORKER_NAME"
-          --config scripts/wrangler.archive-uploader.jsonc
-          --force
+        shell: bash
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          http_status="$(curl --silent --show-error \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
+            --request DELETE \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$ARCADE_ARCHIVE_WORKER_NAME")"
+          if jq -e '.success == true or any(.errors[]?; .code == 10007)' "$response_file" > /dev/null; then
+            printf 'Isolated R2 upload bridge removed (HTTP %s).\n' "$http_status"
+          else
+            printf '::error::Could not remove the isolated R2 upload bridge (HTTP %s).\n' "$http_status"
+            jq '{success, errors}' "$response_file"
+            exit 1
+          fi
 
       - name: Publish archive result
         if: success()
