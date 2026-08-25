@@ -32,7 +32,7 @@
     "test:arcade:xai-canary": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-bakeoff.test.mjs",
     "test:arcade:xai-global": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-xai-global-batch.test.mjs scripts/arcade-side-bakeoff.test.mjs",
     "test:arcade:xai-high-kick": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-high-kick-xai-canary.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-bakeoff.test.mjs",
-    "test:arcade:archive": "vitest run scripts/archive-arcade-experiment.test.mjs worker/src/arcadeExperimentMigration.integration.test.ts",
+    "test:arcade:archive": "vitest run scripts/archive-r2-upload-worker.test.mjs scripts/archive-arcade-experiment.test.mjs worker/src/arcadeExperimentMigration.integration.test.ts",
     "test:cache-audit": "vitest run scripts/serve-legacy-cache-audit.test.mjs",
     "stripe:bootstrap": "node scripts/bootstrap-stripe-catalog.mjs",
     "stripe:bootstrap:sandbox": "node scripts/bootstrap-stripe-catalog.mjs --target=sandbox",

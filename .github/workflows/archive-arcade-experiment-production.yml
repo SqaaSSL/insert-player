@@ -96,12 +96,55 @@ jobs:
       - name: Verify all local bytes without mutating production
         run: npm run arcade:archive-experiment -- --experiment="$REQUESTED_EXPERIMENT" --dry-run
 
+      - name: Deploy isolated prefix-scoped R2 upload bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive_worker_name="insert-player-archive-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          archive_token="$(openssl rand -hex 32)"
+          secrets_file="$(mktemp)"
+          trap 'rm -f "$secrets_file"' EXIT
+          printf '::add-mask::%s\n' "$archive_token"
+          printf '{"ARCHIVE_UPLOAD_TOKEN":"%s"}\n' "$archive_token" > "$secrets_file"
+          printf 'ARCADE_ARCHIVE_WORKER_NAME=%s\n' "$archive_worker_name" >> "$GITHUB_ENV"
+          node worker/node_modules/wrangler/bin/wrangler.js deploy \
+            --config scripts/wrangler.archive-uploader.jsonc \
+            --name "$archive_worker_name" \
+            --secrets-file "$secrets_file"
+          subdomain_payload="$(curl --fail-with-body --silent --show-error \
+            -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain")"
+          workers_subdomain="$(jq -er '.result.subdomain' <<< "$subdomain_payload")"
+          bridge_base_url="https://${archive_worker_name}.${workers_subdomain}.workers.dev"
+          ready=false
+          for _ in $(seq 1 20); do
+            if curl --fail --silent --show-error "$bridge_base_url/health" > /dev/null; then
+              ready=true
+              break
+            fi
+            sleep 2
+          done
+          [[ "$ready" == true ]] || {
+            printf '::error::The isolated R2 upload bridge did not become ready.\n'
+            exit 1
+          }
+          printf 'ARCADE_ARCHIVE_UPLOAD_URL=%s/archive-object\n' "$bridge_base_url" >> "$GITHUB_ENV"
+          printf 'ARCADE_ARCHIVE_UPLOAD_TOKEN=%s\n' "$archive_token" >> "$GITHUB_ENV"
+
       - name: Archive content-addressed bytes and immutable D1 index
         run: >-
           npm run arcade:archive-experiment --
           --experiment="$REQUESTED_EXPERIMENT"
           --execute
           --confirm=ARCHIVE_IMMUTABLE_ARCADE_EXPERIMENT_V1
+
+      - name: Delete isolated R2 upload bridge
+        if: always() && env.ARCADE_ARCHIVE_WORKER_NAME != ''
+        run: >-
+          node worker/node_modules/wrangler/bin/wrangler.js delete
+          "$ARCADE_ARCHIVE_WORKER_NAME"
+          --config scripts/wrangler.archive-uploader.jsonc
+          --force
 
       - name: Publish archive result
         if: success()

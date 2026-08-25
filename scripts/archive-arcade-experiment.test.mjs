@@ -14,6 +14,7 @@ import {
   archiveObjectList,
   buildArcadeExperimentArchivePlan,
   buildArcadeExperimentIndexSql,
+  uploadAndVerifyObjectThroughBridge,
 } from './archive-arcade-experiment.mjs';
 
 const temporaryDirectories = [];
@@ -158,6 +159,44 @@ describe('immutable Arcade experiment archive', () => {
     expect(uploaded.at(-2)).toBe(plan.stateBlobKey);
     expect(uploaded.at(-1)).toBe(plan.manifestBlobKey);
     expect(writeIndex).toHaveBeenCalledOnce();
+  });
+
+  it('round-trips exact bytes through the isolated R2 upload bridge', async () => {
+    const bytes = Buffer.from('sealed bytes');
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ action: 'stored' }), { status: 201 }))
+      .mockResolvedValueOnce(new Response(bytes, { status: 200 }));
+
+    await uploadAndVerifyObjectThroughBridge({
+      blobKey: 'arcade-experiments/v1/archive-test-v1/state/hash.json',
+      bytes,
+      mimeType: 'application/json',
+    }, {
+      bridge: {
+        url: 'https://temporary-archive.shellbot.workers.dev/archive-object',
+        token: 'a'.repeat(64),
+      },
+      fetchImpl,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls[0][1]).toMatchObject({ method: 'PUT', body: bytes, redirect: 'error' });
+    expect(fetchImpl.mock.calls[0][1].headers).toMatchObject({
+      Authorization: `Bearer ${'a'.repeat(64)}`,
+      'X-Archive-Content-Sha256': sha256(bytes),
+      'X-Archive-Size': String(bytes.byteLength),
+    });
+    expect(fetchImpl.mock.calls[1][1]).toMatchObject({ method: 'GET', redirect: 'error' });
+  });
+
+  it('fails closed when only half of the upload bridge configuration is present', async () => {
+    const data = fixture();
+    await expect(archiveArcadeExperiment({
+      rootDir: data.root,
+      catalogPath: data.catalogPath,
+      experimentId: data.state.experimentId,
+      env: { ARCADE_ARCHIVE_UPLOAD_URL: 'https://archive.shellbot.workers.dev/archive-object' },
+    })).rejects.toThrow(/must be configured together/);
   });
 
   it('fails closed on changed bytes or a path outside the workspace', () => {
