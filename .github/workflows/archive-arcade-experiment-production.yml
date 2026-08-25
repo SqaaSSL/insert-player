@@ -1,0 +1,117 @@
+name: Archive immutable Arcade experiment in production
+
+on:
+  workflow_dispatch:
+    inputs:
+      experiment:
+        description: Sealed experiment to preserve in production R2 and D1
+        required: true
+        type: choice
+        options:
+          - arcade-side-xai-trump-pose-transfer-v2
+          - arcade-side-xai-global-pose-transfer-v1
+          - arcade-high-kick-xai-trump-impact-v1
+      confirmation:
+        description: Enter ARCHIVE_IMMUTABLE_ARCADE_EXPERIMENT_V1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    name: Verify and archive sealed experiment
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      REQUESTED_EXPERIMENT: ${{ inputs.experiment }}
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate the non-generative archive request
+        shell: bash
+        run: |
+          [[ "$REQUESTED_CONFIRMATION" == "ARCHIVE_IMMUTABLE_ARCADE_EXPERIMENT_V1" ]] || {
+            printf '::error::The exact immutable archive confirmation phrase is required.\n'
+            exit 1
+          }
+          [[ -n "$CLOUDFLARE_API_TOKEN" ]] || {
+            printf '::error::CLOUDFLARE_API_TOKEN is unavailable in the production environment.\n'
+            exit 1
+          }
+          [[ -n "$CLOUDFLARE_ACCOUNT_ID" ]] || {
+            printf '::error::CLOUDFLARE_ACCOUNT_ID is unavailable in the production environment.\n'
+            exit 1
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install pinned Wrangler
+        run: npm --prefix worker ci
+
+      - name: Prove archive integrity and append-only migration
+        run: npm run test:arcade:archive
+
+      - name: Resolve sealed GitHub artifact
+        id: source
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { readFileSync } from 'node:fs';
+          const catalog = JSON.parse(readFileSync('arcade/experiment-archive-2026.json', 'utf8'));
+          const entry = catalog.experiments.find((candidate) => candidate.experimentId === process.env.REQUESTED_EXPERIMENT);
+          if (!entry) throw new Error(`Experiment is not sealed: ${process.env.REQUESTED_EXPERIMENT}`);
+          console.log(`run_id=${entry.githubRunId}`);
+          console.log(`artifact_name=${entry.githubArtifactName}`);
+          NODE
+
+      - name: Restore exact immutable experiment bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run download "${{ steps.source.outputs.run_id }}"
+          --repo "${{ github.repository }}"
+          --name "${{ steps.source.outputs.artifact_name }}"
+          --dir .
+
+      - name: Verify all local bytes without mutating production
+        run: npm run arcade:archive-experiment -- --experiment="$REQUESTED_EXPERIMENT" --dry-run
+
+      - name: Archive content-addressed bytes and immutable D1 index
+        run: >-
+          npm run arcade:archive-experiment --
+          --experiment="$REQUESTED_EXPERIMENT"
+          --execute
+          --confirm=ARCHIVE_IMMUTABLE_ARCADE_EXPERIMENT_V1
+
+      - name: Publish archive result
+        if: success()
+        shell: bash
+        run: |
+          {
+            printf '## Immutable Arcade experiment archived\n\n'
+            printf -- '- Experiment: `%s`\n' "$REQUESTED_EXPERIMENT"
+            printf -- '- Source run: `%s`\n' "${{ steps.source.outputs.run_id }}"
+            printf -- '- Storage: content-addressed production R2 objects plus append-only D1 index\n'
+            printf -- '- Provider calls: `0`\n'
+            printf -- '- Fighter activation: `none`\n'
+          } >> "$GITHUB_STEP_SUMMARY"

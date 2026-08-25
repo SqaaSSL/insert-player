@@ -2149,7 +2149,8 @@ function replayMigrations() {
     '.read worker/migrations/0024_durable_asset_deletions.sql',
     '.read worker/migrations/0025_meterkey_capacity_windows.sql',
     '.read worker/migrations/0026_zero_cost_not_dispatched_events.sql',
-    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters");',
+    '.read worker/migrations/0027_immutable_arcade_experiments.sql',
+    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters", "arcade_generation_experiments", "arcade_generation_experiment_slots", "arcade_generation_experiment_artifacts");',
   ];
   try {
     run('D1 migration replay', sqlite, migrationArgs);
@@ -3652,6 +3653,53 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
   }
 }
 
+function assertArcadeExperimentArchiveIsImmutable() {
+  const archive = readFileSync(join(root, 'scripts/archive-arcade-experiment.mjs'), 'utf8');
+  const archiveTests = readFileSync(join(root, 'scripts/archive-arcade-experiment.test.mjs'), 'utf8');
+  const catalog = readFileSync(join(root, 'arcade/experiment-archive-2026.json'), 'utf8');
+  const migration = readFileSync(
+    join(root, 'worker/migrations/0027_immutable_arcade_experiments.sql'),
+    'utf8',
+  );
+  const migrationTests = readFileSync(
+    join(root, 'worker/src/arcadeExperimentMigration.integration.test.ts'),
+    'utf8',
+  );
+  const workflow = readFileSync(
+    join(root, '.github/workflows/archive-arcade-experiment-production.yml'),
+    'utf8',
+  );
+  const combined = [archive, archiveTests, catalog, migration, migrationTests, workflow].join('\n');
+  const required = [
+    "const ARCHIVE_PREFIX = 'arcade-experiments/v1'",
+    "const R2_JURISDICTION = 'eu'",
+    'Artifact bytes do not match the sealed state',
+    'R2 round-trip hash mismatch',
+    'D1 archive index verification failed',
+    'INSERT OR IGNORE INTO arcade_generation_experiments',
+    'arcade_generation_experiments_immutable_update',
+    'arcade_generation_experiments_immutable_delete',
+    'arcade_generation_experiment_slots_immutable_update',
+    'arcade_generation_experiment_artifacts_immutable_delete',
+    'ARCHIVE_IMMUTABLE_ARCADE_EXPERIMENT_V1',
+    'Verify all local bytes without mutating production',
+    'Provider calls: `0`',
+    'arcade-side-xai-trump-pose-transfer-v2',
+    'arcade-side-xai-global-pose-transfer-v1',
+    'arcade-high-kick-xai-trump-impact-v1',
+  ];
+  const missing = required.filter((snippet) => !combined.includes(snippet));
+  if (missing.length > 0) {
+    throw new Error(`Immutable Arcade experiment archive is incomplete: ${missing.join(', ')}`);
+  }
+  if (workflow.includes('PIXCLI_API_KEY') || workflow.includes('arcade:canary:')) {
+    throw new Error('The immutable Arcade archive workflow must never have provider access.');
+  }
+  if (/r2\s+object\s+delete/i.test(archive) || /DELETE\s+FROM\s+arcade_generation/i.test(archive)) {
+    throw new Error('The immutable Arcade archive path must be append-only.');
+  }
+}
+
 assertNodeVersion();
 assertGeminiImageModelsAreGa();
 run('frontend style guard', npm, ['run', 'check:frontend']);
@@ -3701,6 +3749,7 @@ assertLaunchRasterAssetsAreFresh();
 assertOfficialArcadeIsWired();
 assertDurableGenerationIsWired();
 assertXaiArcadeSidePromptIsProviderScoped();
+assertArcadeExperimentArchiveIsImmutable();
 assertGithubActionsAreWired();
 run('prelaunch bundle isolation', node, ['scripts/build-prelaunch.mjs', '--skip-checks']);
 
