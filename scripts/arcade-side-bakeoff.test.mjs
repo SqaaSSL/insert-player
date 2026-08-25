@@ -73,11 +73,11 @@ describe('Arcade SIDE bakeoff matrix', () => {
     const payload = buildPixcliPayload({
       fighter,
       model: grok,
-      sourceBytes: Buffer.concat([PNG_SIGNATURE, Buffer.from('licensed-source')]),
+      sourceAssetHash: 'a'.repeat(32),
     });
     expect(payload.prompt).toBe(fighter.referencePrompt);
     expect(payload.model).toBe('grok-imagine-image-2-edit');
-    expect(payload.image).toMatch(/^data:image\/png;base64,/);
+    expect(payload.image).toBe('a'.repeat(32));
     expect(payload.enrich_prompt).toBe(false);
     expect(payload.publish).toBe(false);
     expect(payload.params).toEqual({
@@ -216,8 +216,19 @@ describe('Arcade SIDE bakeoff submission integrity', () => {
     const jobs = new Map();
     const artifacts = new Map();
     let submitted = 0;
+    let uploaded = 0;
     const fetchImpl = vi.fn(async (url, init = {}) => {
       const parsed = new URL(url);
+      if (init.method === 'POST' && parsed.pathname === '/api/v1/uploads') {
+        uploaded += 1;
+        const hash = uploaded.toString(16).padStart(32, '0');
+        return new Response(JSON.stringify({
+          hash,
+          url: `https://pixcli.example/api/v1/assets/${hash}`,
+          mime_type: 'image/png',
+          size: 100,
+        }), { status: 201 });
+      }
       if (init.method === 'POST' && parsed.pathname === '/api/v1/edit/advanced') {
         submitted += 1;
         const jobId = `job-${submitted}`;
@@ -287,7 +298,10 @@ describe('Arcade SIDE bakeoff submission integrity', () => {
     expect(Object.values(state.slots)).toHaveLength(8);
     expect(Object.values(state.slots).every((slot) => slot.status === 'completed')).toBe(true);
     expect(submitted).toBe(8);
-    expect(fetchImpl.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(8);
+    expect(uploaded).toBe(4);
+    expect(fetchImpl.mock.calls.filter(([url, init]) => (
+      init?.method === 'POST' && new URL(url).pathname === '/api/v1/edit/advanced'
+    ))).toHaveLength(8);
     expect(Object.values(state.slots).every((slot) => (
       slot.artifacts.image
       && slot.artifacts.provider_request
@@ -306,5 +320,6 @@ describe('Arcade SIDE bakeoff submission integrity', () => {
       pollIntervalMs: 0,
     });
     expect(submitted).toBe(8);
+    expect(uploaded).toBe(4);
   });
 });
