@@ -11,7 +11,9 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BAKEOFF_COHORT,
+  BAKEOFF_EXPERIMENT_ID,
   BAKEOFF_MODELS,
+  archiveJob,
   buildBakeoffPlan,
   buildPixcliPayload,
   resumeActionForSlot,
@@ -122,6 +124,74 @@ describe('Arcade SIDE bakeoff matrix', () => {
 });
 
 describe('Arcade SIDE bakeoff submission integrity', () => {
+	it('archives a pre-fix failed provider job without inventing a raw response', async () => {
+		const directory = tempDirectory();
+		const outputDir = join(directory, 'output');
+		const requestBytes = Buffer.from(JSON.stringify({ model: 'seedream-v5-pro-edit', input: { prompt: 'exact' } }));
+		const providerRequestId = 'fal-policy-rejection-1';
+		const fetchImpl = vi.fn(async (url, init = {}) => {
+			const parsed = new URL(url);
+			if (parsed.pathname === '/api/v1/jobs/job-failed/canva') {
+				return new Response(JSON.stringify({
+					job: { job_id: 'job-failed', status: 'failed' },
+					provider_runs: [{ provider: 'fal', requestId: providerRequestId, modelId: 'seedream-v5-pro-edit' }],
+					assets: [{
+						hash: sha256(requestBytes).slice(0, 32),
+						url: 'https://pixcli.example/artifacts/provider-request',
+						mime_type: 'application/json',
+						metadata: {
+							artifact_kind: 'provider_request',
+							content_sha256: sha256(requestBytes),
+						},
+					}],
+				}), { status: 200 });
+			}
+			if (parsed.pathname === '/artifacts/provider-request') {
+				return new Response(requestBytes, { status: 200 });
+			}
+			return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+		});
+
+		const job = {
+			job_id: 'job-failed',
+			status: 'failed',
+			error: 'Content rejected by provider safety checker',
+			cost: null,
+			completed_at: '2026-08-25 17:44:50',
+		};
+		const archived = await archiveJob({
+			apiBase: 'https://pixcli.example',
+			headers: { Authorization: 'Bearer test-key' },
+			outputDir,
+			fetchImpl,
+		}, {
+			slotKey: 'donald-trump:seedream-v5-pro-edit',
+			slug: 'donald-trump',
+			modelId: 'seedream-v5-pro-edit',
+			pixcliJobId: 'job-failed',
+		}, job);
+
+		expect(archived.artifacts.provider_request).toBeTruthy();
+		expect(archived.artifacts.provider_response).toBeUndefined();
+		expect(archived.artifacts.job_failure).toMatchObject({
+			mimeType: 'application/json',
+			providerRequestId,
+		});
+		const failure = JSON.parse(readFileSync(join(
+			outputDir,
+			BAKEOFF_EXPERIMENT_ID,
+			'donald-trump--seedream-v5-pro-edit--job_failure.json',
+		), 'utf8'));
+		expect(failure).toEqual({
+			schemaVersion: 1,
+			artifactKind: 'pixcli_job_failure',
+			providerResponseRetained: false,
+			job,
+			providerRuns: [{ provider: 'fal', requestId: providerRequestId, modelId: 'seedream-v5-pro-edit' }],
+		});
+		expect(fetchImpl.mock.calls.every(([, init]) => init?.method !== 'POST')).toBe(true);
+	});
+
   it('writes submitting state first and performs at most one POST for a known slot', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       job_id: 'job-one',
