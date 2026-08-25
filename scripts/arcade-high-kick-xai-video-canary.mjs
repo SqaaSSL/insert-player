@@ -48,7 +48,19 @@ export const XAI_HIGH_KICK_VIDEO_CANONICAL = Object.freeze({
   slug: 'canonical-trump-xai-side-v2',
   contentSha256: '9429960a62d833e1899d8572efde3f7df2cceb88ff1510b3c146e8489bf7f2c0',
 });
-export const XAI_HIGH_KICK_VIDEO_PLAYBACK = Object.freeze([0, 1, 2, 3, 2, 1, 0]);
+
+export function buildPingPongPlayback(uniqueCount) {
+  if (!Number.isSafeInteger(uniqueCount) || uniqueCount < 2 || uniqueCount > 64) {
+    throw new Error('uniqueCount must be an integer from 2 to 64.');
+  }
+  return [
+    ...Array.from({ length: uniqueCount }, (_, index) => index),
+    ...Array.from({ length: uniqueCount - 2 }, (_, index) => uniqueCount - index - 2),
+    0,
+  ];
+}
+
+export const XAI_HIGH_KICK_VIDEO_PLAYBACK = Object.freeze(buildPingPongPlayback(4));
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -121,18 +133,18 @@ function sleep(milliseconds) {
 }
 
 function ensureCanonical(path, descriptor = XAI_HIGH_KICK_VIDEO_CANONICAL) {
-  if (!existsSync(path)) throw new Error(`Approved Trump canonical is missing: ${path}.`);
+  if (!existsSync(path)) throw new Error(`Approved canonical is missing: ${path}.`);
   const bytes = readFileSync(path);
   if (
     bytes.byteLength < PNG_SIGNATURE.byteLength
     || bytes.byteLength > 12 * 1024 * 1024
     || !bytes.subarray(0, PNG_SIGNATURE.byteLength).equals(PNG_SIGNATURE)
   ) {
-    throw new Error('Approved Trump canonical must be a bounded PNG.');
+    throw new Error('Approved canonical must be a bounded PNG.');
   }
   const contentSha256 = sha256(bytes);
   if (contentSha256 !== descriptor.contentSha256) {
-    throw new Error(`Approved Trump canonical hash mismatch: ${contentSha256}.`);
+    throw new Error(`Approved canonical hash mismatch: ${contentSha256}.`);
   }
   return { bytes, contentSha256 };
 }
@@ -178,7 +190,7 @@ export function buildXaiHighKickVideoPayload(assetHash, options = {}) {
     enrich_prompt: false,
     output_format: 'url',
     publish: false,
-    publish_name: 'ip-trump-high-kick-xai-video-v1',
+    publish_name: options.publishName ?? 'ip-trump-high-kick-xai-video-v1',
   };
 }
 
@@ -186,20 +198,29 @@ export function buildXaiHighKickVideoPlan(options = {}) {
   const model = options.model ?? XAI_HIGH_KICK_VIDEO_MODEL;
   const canonical = options.canonical ?? XAI_HIGH_KICK_VIDEO_CANONICAL;
   const prompt = options.prompt ?? buildXaiHighKickVideoPrompt();
+  const uniqueFrames = options.uniqueFrames ?? 4;
+  const sampleFps = options.sampleFps ?? 8;
+  const playback = options.playback ?? buildPingPongPlayback(uniqueFrames);
+  if (!Number.isSafeInteger(sampleFps) || sampleFps < 1 || sampleFps > 30) {
+    throw new Error('sampleFps must be an integer from 1 to 30.');
+  }
+  validatePlayback(playback, uniqueFrames);
   return {
     schemaVersion: 1,
-    experimentId: XAI_HIGH_KICK_VIDEO_EXPERIMENT_ID,
-    fighter: 'donald-trump',
-    action: 'high_kick',
+    experimentId: options.experimentId ?? XAI_HIGH_KICK_VIDEO_EXPERIMENT_ID,
+    fighter: options.fighter ?? 'donald-trump',
+    action: options.action ?? 'high_kick',
     canonical,
     model,
     prompt,
     promptSha256: sha256(prompt),
     extraction: {
-      sampleFps: 8,
-      uniqueFrames: 4,
-      frameSources: ['canonical-derived', 'video@33%', 'video@67%', 'video@92%'],
-      playback: [...XAI_HIGH_KICK_VIDEO_PLAYBACK],
+      sampleFps,
+      uniqueFrames,
+      frameSources: uniqueFrames === 4
+        ? ['canonical-derived', 'video@33%', 'video@67%', 'video@92%']
+        : ['canonical-derived', `${uniqueFrames - 1} evenly spaced video frames through final impact`],
+      playback: [...playback],
       normalizedCell: { width: 768, height: 1024 },
       runtimeCell: { width: 192, height: 256 },
     },
@@ -237,16 +258,59 @@ export function selectMotionFrameIndices(frameCount) {
   return indices;
 }
 
-export function validateMotionFrameIndices(indices, frameCount) {
+export function selectDenseMotionFrameIndices(frameCount, motionCount) {
+  if (
+    !Number.isSafeInteger(frameCount)
+    || !Number.isSafeInteger(motionCount)
+    || motionCount < 1
+    || frameCount < motionCount + 1
+  ) {
+    throw new Error(`Cannot select ${motionCount} dense motion frames from ${frameCount}.`);
+  }
+  const last = frameCount - 1;
+  const indices = Array.from({ length: motionCount }, (_, index) => (
+    Math.round((last * (index + 1)) / motionCount)
+  ));
+  if (new Set(indices).size !== indices.length) {
+    throw new Error('Dense motion-frame selection produced duplicates.');
+  }
+  return indices;
+}
+
+export function validateMotionFrameIndices(indices, frameCount, expectedCount = 3) {
   if (
     !Array.isArray(indices)
-    || indices.length !== 3
+    || indices.length !== expectedCount
     || indices.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= frameCount)
     || indices.some((index, position) => position > 0 && index <= indices[position - 1])
   ) {
-    throw new Error('Motion-frame selection must contain three strictly ascending in-range indexes.');
+    throw new Error(
+      `Motion-frame selection must contain ${expectedCount} strictly ascending in-range indexes.`,
+    );
   }
   return [...indices];
+}
+
+function validatePlayback(playback, uniqueCount) {
+  if (
+    !Array.isArray(playback)
+    || playback.length < uniqueCount
+    || playback.some((index) => !Number.isSafeInteger(index) || index < 0 || index >= uniqueCount)
+    || playback[0] !== 0
+    || playback.at(-1) !== 0
+  ) {
+    throw new Error('Playback must be a bounded frame-index sequence that starts and ends at F0.');
+  }
+  return [...playback];
+}
+
+function tileLayout(frameCount, maxColumns) {
+  const columns = Math.min(maxColumns, frameCount);
+  return { columns, rows: Math.ceil(frameCount / columns) };
+}
+
+function tileFilter(layout, frameCount, prefix = '') {
+  return `${prefix}tile=${layout.columns}x${layout.rows}:nb_frames=${frameCount}:padding=0:margin=0:color=0x00000000`;
 }
 
 function systemCommand(binary, args) {
@@ -303,13 +367,18 @@ export function extractXaiVideoFrames(options) {
   const canonicalPath = resolve(options.canonicalPath);
   const outputDir = resolve(options.outputDir);
   const sampleFps = options.sampleFps ?? 8;
-  const uniqueCount = 4;
+  const uniqueCount = options.uniqueCount ?? 4;
+  const playback = options.playback ?? buildPingPongPlayback(uniqueCount);
   const ffmpegBin = options.ffmpegBin ?? 'ffmpeg';
   const ffprobeBin = options.ffprobeBin ?? 'ffprobe';
   const runCommand = options.runCommand ?? systemCommand;
   if (!Number.isSafeInteger(sampleFps) || sampleFps < 1 || sampleFps > 30) {
     throw new Error('sampleFps must be an integer from 1 to 30.');
   }
+  if (!Number.isSafeInteger(uniqueCount) || uniqueCount < 2 || uniqueCount > 64) {
+    throw new Error('uniqueCount must be an integer from 2 to 64.');
+  }
+  validatePlayback(playback, uniqueCount);
   const video = ensureMp4(videoPath);
   const canonical = ensureCanonical(
     canonicalPath,
@@ -356,8 +425,10 @@ export function extractXaiVideoFrames(options) {
   ]);
   const rawFrames = imageFiles(rawDir, 'frame-');
   const selectedIndices = options.selectedIndices
-    ? validateMotionFrameIndices(options.selectedIndices, rawFrames.length)
-    : selectMotionFrameIndices(rawFrames.length);
+    ? validateMotionFrameIndices(options.selectedIndices, rawFrames.length, uniqueCount - 1)
+    : uniqueCount === 4
+      ? selectMotionFrameIndices(rawFrames.length)
+      : selectDenseMotionFrameIndices(rawFrames.length, uniqueCount - 1);
   const normalizeFilter = [
     'chromakey=0x00FF00:0.20:0.08',
     'format=rgba',
@@ -371,48 +442,50 @@ export function extractXaiVideoFrames(options) {
     return outputPath;
   });
 
-  const playbackFrames = XAI_HIGH_KICK_VIDEO_PLAYBACK.map((uniqueIndex, playbackIndex) => {
+  const playbackFrames = playback.map((uniqueIndex, playbackIndex) => {
     const outputPath = join(playbackDir, `frame-${String(playbackIndex + 1).padStart(3, '0')}.png`);
     copyFileSync(uniqueFrames[uniqueIndex], outputPath);
     chmodSync(outputPath, 0o600);
     return outputPath;
   });
 
-  const contactColumns = Math.min(4, rawFrames.length);
-  const contactRows = Math.ceil(rawFrames.length / contactColumns);
+  const contactLayout = tileLayout(rawFrames.length, 6);
   const contactSheetPath = join(outputDir, 'all-frames-contact-sheet.png');
   runMediaCommand(runCommand, ffmpegBin, [
     '-hide_banner', '-loglevel', 'error', '-y',
     '-framerate', String(sampleFps),
     '-i', join(rawDir, 'frame-%03d.png'),
-    '-vf', `scale=240:-2:flags=lanczos,tile=${contactColumns}x${contactRows}:padding=4:margin=4:color=black`,
+    '-vf', `scale=240:-2:flags=lanczos,tile=${contactLayout.columns}x${contactLayout.rows}:nb_frames=${rawFrames.length}:padding=4:margin=4:color=black`,
     '-frames:v', '1',
     contactSheetPath,
   ]);
+  const uniqueLayout = tileLayout(uniqueFrames.length, 4);
   const uniqueSheetPath = join(outputDir, 'unique-frames-sheet.png');
   runMediaCommand(runCommand, ffmpegBin, [
     '-hide_banner', '-loglevel', 'error', '-y',
     '-framerate', '1',
     '-i', join(uniqueDir, 'frame-%03d.png'),
-    '-vf', `tile=${uniqueCount}x1:padding=0:margin=0:color=0x00000000`,
+    '-vf', tileFilter(uniqueLayout, uniqueFrames.length),
     '-frames:v', '1',
     uniqueSheetPath,
   ]);
+  const playbackLayout = tileLayout(playbackFrames.length, 4);
   const playbackSheetPath = join(outputDir, 'playback-sheet-768x1024.png');
   runMediaCommand(runCommand, ffmpegBin, [
     '-hide_banner', '-loglevel', 'error', '-y',
     '-framerate', '1',
     '-i', join(playbackDir, 'frame-%03d.png'),
-    '-vf', `tile=${playbackFrames.length}x1:padding=0:margin=0:color=0x00000000`,
+    '-vf', tileFilter(playbackLayout, playbackFrames.length),
     '-frames:v', '1',
     playbackSheetPath,
   ]);
+  const runtimeLayout = tileLayout(playbackFrames.length, 8);
   const runtimeSheetPath = join(outputDir, 'playback-sheet-192x256.png');
   runMediaCommand(runCommand, ffmpegBin, [
     '-hide_banner', '-loglevel', 'error', '-y',
     '-framerate', '1',
     '-i', join(playbackDir, 'frame-%03d.png'),
-    '-vf', `scale=192:256:flags=lanczos,tile=${playbackFrames.length}x1:padding=0:margin=0:color=0x00000000`,
+    '-vf', tileFilter(runtimeLayout, playbackFrames.length, 'scale=192:256:flags=lanczos,'),
     '-frames:v', '1',
     runtimeSheetPath,
   ]);
@@ -424,14 +497,22 @@ export function extractXaiVideoFrames(options) {
     canonical: {
       sourcePath: relative(root, canonicalPath),
       archivedInput: hashArtifact(canonicalInputPath),
-      ...canonical,
+      contentSha256: canonical.contentSha256,
     },
     probe,
     sampleFps,
     rawFrameCount: rawFrames.length,
+    uniqueFrameCount: uniqueFrames.length,
+    playbackFrameCount: playbackFrames.length,
     canonicalDerivedF0: true,
     selectedIndices,
-    playback: [...XAI_HIGH_KICK_VIDEO_PLAYBACK],
+    playback: [...playback],
+    layouts: {
+      contact: contactLayout,
+      unique: uniqueLayout,
+      playback: playbackLayout,
+      runtime: runtimeLayout,
+    },
     rawFrames: rawFrames.map(hashArtifact),
     uniqueFrames: uniqueFrames.map(hashArtifact),
     playbackFrames: playbackFrames.map(hashArtifact),
@@ -598,12 +679,13 @@ async function archiveVideoJob(options, state, job) {
   const { body: canva } = await parseJsonResponse(response, 'PixCLI video audit');
   if (!response.ok) throw new Error(`PixCLI video audit failed with HTTP ${response.status}.`);
   const { providerRuns, selected } = validatePinnedVideoAudit(canva);
-  const runDir = join(options.outputDir, XAI_HIGH_KICK_VIDEO_EXPERIMENT_ID);
+  const runDir = join(options.outputDir, options.experimentId ?? XAI_HIGH_KICK_VIDEO_EXPERIMENT_ID);
   mkdirSync(runDir, { recursive: true, mode: 0o700 });
+  const artifactStem = options.artifactStem ?? 'donald-trump--high-kick';
   const artifacts = {};
   for (const kind of ['provider_request', 'provider_response', 'video']) {
     const asset = selected.get(kind);
-    const outputPath = join(runDir, `donald-trump--high-kick--${kind}.${artifactExtension(asset, kind)}`);
+    const outputPath = join(runDir, `${artifactStem}--${kind}.${artifactExtension(asset, kind)}`);
     artifacts[kind] = {
       ...(await downloadArtifact(asset, outputPath, options.headers, options.fetchImpl)),
       pixcliAssetHash: asset.hash,
@@ -661,7 +743,17 @@ async function runXaiHighKickVideoCanaryLocked(options = {}) {
   const canonicalPath = resolve(options.canonicalPath ?? DEFAULT_CANONICAL_PATH);
   const canonical = options.canonical ?? XAI_HIGH_KICK_VIDEO_CANONICAL;
   ensureCanonical(canonicalPath, canonical);
-  const plan = buildXaiHighKickVideoPlan({ canonical });
+  const plan = buildXaiHighKickVideoPlan({
+    canonical,
+    experimentId: options.experimentId,
+    fighter: options.fighter,
+    action: options.action,
+    model: options.model,
+    prompt: options.prompt,
+    sampleFps: options.sampleFps,
+    uniqueFrames: options.uniqueFrames,
+    playback: options.playback,
+  });
   const ensureUpload = options.ensureUploadImpl ?? ensureXaiPoseMasterUpload;
   const uploaded = await ensureUpload({
     apiBase,
@@ -672,9 +764,13 @@ async function runXaiHighKickVideoCanaryLocked(options = {}) {
     fetchImpl: options.fetchImpl,
   });
   if (!/^[a-f0-9]{32}$/.test(uploaded?.pixcliAssetHash ?? '')) {
-    throw new Error('Approved Trump canonical upload is not reconciled.');
+    throw new Error('Approved canonical upload is not reconciled.');
   }
-  const payload = buildXaiHighKickVideoPayload(uploaded.pixcliAssetHash);
+  const payload = buildXaiHighKickVideoPayload(uploaded.pixcliAssetHash, {
+    model: plan.model,
+    prompt: plan.prompt,
+    publishName: options.publishName,
+  });
   const statePath = resolve(options.statePath ?? DEFAULT_STATE_PATH);
   const outputDir = resolve(options.outputDir ?? DEFAULT_OUTPUT_DIR);
   const expected = initialState(plan, payload, canonicalPath);
@@ -705,6 +801,8 @@ async function runXaiHighKickVideoCanaryLocked(options = {}) {
     pollIntervalMs: options.pollIntervalMs,
     jobTimeoutMs: options.jobTimeoutMs,
     outputDir,
+    experimentId: plan.experimentId,
+    artifactStem: options.artifactStem ?? `${plan.fighter}--${plan.action.replaceAll('_', '-')}`,
     expectedPrompt: plan.prompt,
     expectedAssetHash: uploaded.pixcliAssetHash,
   };
@@ -775,7 +873,7 @@ async function runXaiHighKickVideoCanaryLocked(options = {}) {
   const archived = await archiveVideoJob(runtime, state, job);
   const videoPath = resolve(root, archived.artifacts.video.path);
   const extractVideo = options.extractVideoImpl ?? extractXaiVideoFrames;
-  const extractionDir = join(outputDir, XAI_HIGH_KICK_VIDEO_EXPERIMENT_ID, 'extracted');
+  const extractionDir = join(outputDir, plan.experimentId, 'extracted');
   const extraction = await extractVideo({
     videoPath,
     canonicalPath,
@@ -785,6 +883,9 @@ async function runXaiHighKickVideoCanaryLocked(options = {}) {
     ffprobeBin: options.ffprobeBin,
     runCommand: options.runCommand,
     selectedIndices: options.selectedIndices,
+    sampleFps: plan.extraction.sampleFps,
+    uniqueCount: plan.extraction.uniqueFrames,
+    playback: plan.extraction.playback,
   });
   saveState({
     ...state,

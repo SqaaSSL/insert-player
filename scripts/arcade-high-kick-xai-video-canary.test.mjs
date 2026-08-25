@@ -15,11 +15,13 @@ import {
   XAI_HIGH_KICK_VIDEO_EXPERIMENT_ID,
   XAI_HIGH_KICK_VIDEO_MODEL,
   XAI_HIGH_KICK_VIDEO_PLAYBACK,
+  buildPingPongPlayback,
   buildXaiHighKickVideoPayload,
   buildXaiHighKickVideoPlan,
   buildXaiHighKickVideoPrompt,
   clearGeneratedFrames,
   runXaiHighKickVideoCanary,
+  selectDenseMotionFrameIndices,
   selectFrameIndices,
   selectMotionFrameIndices,
   validateMotionFrameIndices,
@@ -108,9 +110,15 @@ describe('XAI HIGH_KICK video sprite canary', () => {
   it('selects deterministic motion frames while deriving F0 only from the canonical', () => {
     expect(selectFrameIndices(16, 4)).toEqual([0, 5, 10, 15]);
     expect(selectMotionFrameIndices(16)).toEqual([5, 10, 14]);
+    expect(selectDenseMotionFrameIndices(48, 11)).toEqual([4, 9, 13, 17, 21, 26, 30, 34, 38, 43, 47]);
     expect(validateMotionFrameIndices([4, 9, 13], 16)).toEqual([4, 9, 13]);
     expect(XAI_HIGH_KICK_VIDEO_PLAYBACK).toEqual([0, 1, 2, 3, 2, 1, 0]);
+    expect(buildPingPongPlayback(12)).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+      10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+    ]);
     expect(() => selectMotionFrameIndices(3)).toThrow(/Cannot select/);
+    expect(() => selectDenseMotionFrameIndices(11, 11)).toThrow(/Cannot select/);
     expect(() => validateMotionFrameIndices([4, 4, 13], 16)).toThrow(/strictly ascending/);
   });
 
