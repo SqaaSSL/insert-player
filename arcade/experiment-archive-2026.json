@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "repository": "SqaaSSL/insert-player",
+  "experiments": [
+    {
+      "experimentId": "arcade-side-xai-trump-pose-transfer-v2",
+      "githubRunId": 32889507819,
+      "githubArtifactName": "arcade-side-xai-trump-pose-transfer-v2-state",
+      "statePath": ".arcade-side-xai-pose-transfer-canary-state.json",
+      "stateSha256": "536aa104661b8ad605935624e10ed54138ff07c4f561ee432b0479f29e31b8b4"
+    },
+    {
+      "experimentId": "arcade-side-xai-global-pose-transfer-v1",
+      "githubRunId": 32890810996,
+      "githubArtifactName": "arcade-side-xai-global-pose-transfer-v1-state",
+      "statePath": ".arcade-side-xai-global-pose-transfer-state.json",
+      "stateSha256": "e6cefe4d0b8777f6a9c1048ccb00eb0670f23962a2c3ebd049894ba567e6aabf"
+    },
+    {
+      "experimentId": "arcade-high-kick-xai-trump-impact-v1",
+      "githubRunId": 32892561632,
+      "githubArtifactName": "arcade-high-kick-xai-trump-impact-v1-state",
+      "statePath": ".arcade-high-kick-xai-trump-impact-state.json",
+      "stateSha256": "bb26266dbd356a5d6d52065038afe1ca26861ff196a85f7ca86225e7f94491fb"
+    }
+  ]
+}
