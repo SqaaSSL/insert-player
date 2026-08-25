@@ -24,9 +24,12 @@ worker/.prod.vars
 .qa/
 .artifacts/
 .arcade-sources/
+.arcade-pose-masters/
 .arcade-state.json
 .arcade-bakeoff-state.json
 .arcade-side-xai-canary-state.json
+.arcade-side-xai-pose-transfer-canary-state.json
+.arcade-xai-pose-master-upload-state.json
 .launch-validation.json
 launch-validation.local.json
 .brand-clearance.json

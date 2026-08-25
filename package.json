@@ -19,6 +19,7 @@
     "brand:apply": "node scripts/apply-public-brand.mjs",
     "brand:rasterize": "node scripts/rasterize-public-assets.mjs",
     "arcade:sources": "node scripts/fetch-arcade-sources.mjs",
+    "arcade:pose-master": "node scripts/fetch-arcade-pose-master.mjs",
     "arcade:seed": "node scripts/seed-arcade-roster.mjs",
     "arcade:bakeoff:side": "node scripts/arcade-side-bakeoff.mjs",
     "arcade:canary:xai-side": "node scripts/arcade-side-xai-canary.mjs",
