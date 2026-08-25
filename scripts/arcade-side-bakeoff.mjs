@@ -449,7 +449,7 @@ async function pollJob(options, slot) {
   throw new Error(`PixCLI job timed out without a resubmission: ${slot.pixcliJobId}.`);
 }
 
-async function archiveJob(options, slot, job) {
+export async function archiveJob(options, slot, job) {
   const canva = await readJsonWithPollingRetry(
     `${options.apiBase}/api/v1/jobs/${encodeURIComponent(slot.pixcliJobId)}/canva`,
     options.headers,
@@ -481,13 +481,36 @@ async function archiveJob(options, slot, job) {
     };
   }
 
-  if (!archived.provider_request || !archived.provider_response) {
-    throw new Error(`PixCLI audit JSON is incomplete for ${slot.slotKey}.`);
+  const providerRuns = Array.isArray(canva.provider_runs) ? canva.provider_runs : [];
+  if (job.status === 'failed' && !archived.provider_response) {
+    const outputPath = join(runDir, `${slot.slug}--${slot.modelId}--job_failure.json`);
+    writeJsonAtomic(outputPath, {
+      schemaVersion: 1,
+      artifactKind: 'pixcli_job_failure',
+      providerResponseRetained: false,
+      job,
+      providerRuns,
+    });
+    const bytes = readFileSync(outputPath);
+    archived.job_failure = {
+      pixcliAssetHash: null,
+      mimeType: 'application/json',
+      contentSha256: sha256(bytes),
+      sizeBytes: bytes.byteLength,
+      path: relative(root, outputPath),
+      providerRequestId: providerRuns[0]?.requestId ?? null,
+    };
+  }
+
+  if (!archived.provider_request) {
+    throw new Error(`PixCLI provider request audit is incomplete for ${slot.slotKey}.`);
+  }
+  if (!archived.provider_response && !archived.job_failure) {
+    throw new Error(`PixCLI provider outcome audit is incomplete for ${slot.slotKey}.`);
   }
   if ((job.status === 'completed' || job.status === 'completed_with_fallback') && !archived.image) {
     throw new Error(`PixCLI completed without an archived image for ${slot.slotKey}.`);
   }
-  const providerRuns = Array.isArray(canva.provider_runs) ? canva.provider_runs : [];
   return {
     artifacts: archived,
     providerRuns,
