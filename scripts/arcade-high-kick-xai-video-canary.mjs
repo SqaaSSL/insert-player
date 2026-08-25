@@ -155,7 +155,7 @@ export function buildXaiHighKickVideoPrompt() {
     'Start in the exact supplied ready stance, then progress monotonically through wind-up, compact knee chamber, extension, and a fully extended high-kick impact on the final frame.',
     'Do not retract the kick or return to idle; the final frame must be the strongest impact pose.',
     'Keep the planted foot fixed on one floor line and keep the torso balance physically plausible.',
-    'Preserve the exact same recognizable face, age, swept blond hair, navy suit, light-blue tie, body proportions, fabric texture, material finish, lighting, camera distance, and viewer-right facing direction from IMAGE 1.',
+    'Preserve the exact same recognizable face, age, swept blond hair, navy suit, red tie, body proportions, fabric texture, material finish, lighting, camera distance, and viewer-right facing direction from IMAGE 1.',
     'Exactly one connected adult fighter throughout. Do not introduce or duplicate limbs, hands, feet, heads, people, props, trails, afterimages, or detached anatomy. Preserve natural occlusions.',
     'Fixed locked camera, full body always visible with margin, no crop, no zoom, no pan, no cut, no camera shake, and no change of scale or perspective.',
     'Perfectly flat uniform pure #00FF00 background throughout, with no floor, shadow, grid, text, scenery, particles, motion blur, or audio-dependent action.',
