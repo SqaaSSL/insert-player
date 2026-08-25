@@ -15,6 +15,7 @@ import {
   isOfficialArcadeImageProviderContract,
   OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
 } from '../../src/services/ImageProviderContract';
+import { geminiEstimatedCostCents } from './geminiTransport';
 
 const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
 const AUTHORIZATION_TTL_HOURS = 12;
@@ -32,6 +33,19 @@ const PLAYABLE_ANIMATION_NAMES = [
   'victory',
 ] as const;
 const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'] as const;
+const SIDE_CANARY_PROVIDER_CALL_LIMIT = 2;
+
+function sideCanaryProviderLimits(env: Env): { calls: number; costCents: number } {
+  const sourceModel = OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.sourceModels.side;
+  const costPerCallCents = geminiEstimatedCostCents(env, sourceModel);
+  if (costPerCallCents === null) {
+    throw new Error(`No approved provider cost is configured for ${sourceModel}`);
+  }
+  return {
+    calls: SIDE_CANARY_PROVIDER_CALL_LIMIT,
+    costCents: SIDE_CANARY_PROVIDER_CALL_LIMIT * costPerCallCents,
+  };
+}
 
 interface ArcadeGenerationFighterRow {
   id: string;
@@ -616,7 +630,7 @@ export async function startAdminArcadeSourceGeneration(
     operation: 'fighter_retry_source',
     legal,
     continuation: partial ? { runId: partial.run_id, fromJobId: partial.job_id } : undefined,
-    providerLimits: canary ? { calls: 2, costCents: 30 } : undefined,
+    providerLimits: canary ? sideCanaryProviderLimits(env) : undefined,
   });
 
   return createGenerationJob(generationJobRequest(

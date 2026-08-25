@@ -761,6 +761,7 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
     const { mf, db, env } = await bindings();
     const failedJobId = 'ffffffffffffffffffffffffffffffff';
     try {
+      env.GEMINI_TRANSPORT = 'meterkey';
       await db.batch([
         db.prepare(`
           INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
@@ -796,7 +797,7 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
       const [, , providerParams] = vi.mocked(createProviderSession).mock.calls[0];
       expect(providerParams).toMatchObject({
         providerCallLimitCap: 2,
-        providerCostLimitCentsCap: 30,
+        providerCostLimitCentsCap: 34,
       });
       expect(await db.prepare(`
         SELECT continuation_run_id, resumed_from_job_id
