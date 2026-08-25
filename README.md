@@ -86,6 +86,16 @@ Open `http://127.0.0.1:5173`. The frontend calls the local Worker at `http://127
 
 The Vite development proxy remains available for focused frontend work, but production-shaped auth, billing, provider sessions, D1, and R2 behavior should be tested through the Worker.
 
+### Recover a legacy browser cache
+
+Older paid generations can be inventoried and exported from the exact local origin that created them without mutating IndexedDB:
+
+```bash
+npm run cache:audit -- --port=5173
+```
+
+Open both `http://localhost:5173` and `http://127.0.0.1:5173`, because browser storage is isolated by hostname. Each export is a lossless TAR containing the fighter metadata, source views, every preserved sprite version, and intro media. Archives are written with unique timestamped names to ignored `.local/legacy-cache-rescue/`; verify and move them into account-owned cloud storage before clearing browser data. Use another `--port` for a cache created by a different Vite origin.
+
 ## Required Checks
 
 Run the full gate before requesting review or deploying:
