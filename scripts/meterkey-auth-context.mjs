@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 // This fingerprint pins the complete dedicated Insert Player scope. Changing
 // any provider, model, endpoint, or control requires an explicit code review.
-const APPROVED_SCOPE_SHA256 = '731962ebb18cbec7aa0022685da4bc08df79600f141550f907a7630121c0e84c';
+const APPROVED_SCOPE_SHA256 = 'aa438488f92e392027fec77a37a92a7a634d92ffbc43c6c4bf6e7826db44bd36';
 const REQUIRED_PROVIDERS = ['fal', 'google-ai-studio'];
 const REQUIRED_MODELS = [
   'bytedance/seedream/v5/pro/edit',
@@ -11,6 +11,7 @@ const REQUIRED_MODELS = [
   'gemini-3.5-flash',
   'gemini-3.1-flash-lite',
   'xai/grok-imagine-image/v2.0/edit',
+  'xai/grok-imagine-video/v1.5/image-to-video',
 ];
 const REQUIRED_ENDPOINTS = [
   '/fal',
