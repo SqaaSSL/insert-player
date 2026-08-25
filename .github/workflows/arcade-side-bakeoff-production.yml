@@ -1,0 +1,102 @@
+name: Run production Arcade SIDE provider bakeoff
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Enter ARCADE_SIDE_BAKEOFF_4X2 to authorize exactly eight paid SIDE calls
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  bakeoff:
+    name: Four fighters by two explicit providers
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: production
+    env:
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
+      PIXCLI_BASE_URL: https://pixcli.hilo.cx
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate the sealed paid request
+        shell: bash
+        run: |
+          [[ "$REQUESTED_CONFIRMATION" == "ARCADE_SIDE_BAKEOFF_4X2" ]] || {
+            printf '::error::The exact bakeoff confirmation phrase is required.\n'
+            exit 1
+          }
+          [[ -n "$PIXCLI_API_KEY" ]] || {
+            printf '::error::PIXCLI_API_KEY is unavailable in the production environment.\n'
+            exit 1
+          }
+          [[ -n "$CLOUDFLARE_API_TOKEN" ]] || {
+            printf '::error::CLOUDFLARE_API_TOKEN is unavailable in the production environment.\n'
+            exit 1
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install pinned Worker dependencies
+        run: npm --prefix worker ci
+
+      - name: Prove the sealed matrix and fail-closed runner
+        run: npm run test:arcade:bakeoff
+
+      - name: Restore and verify the four private licensed sources
+        shell: bash
+        run: |
+          for slug in donald-trump cristiano-ronaldo bad-bunny mrbeast; do
+            npm run arcade:sources -- --target=production --slug="$slug"
+          done
+
+      - name: Execute exactly one SIDE per model and fighter
+        run: >-
+          npm run arcade:bakeoff:side --
+          --execute
+          --confirm=ARCADE_SIDE_BAKEOFF_4X2
+          --state=.arcade-bakeoff-state.json
+          --output-dir=.artifacts/arcade-side-bakeoff
+
+      - name: Publish experiment summary
+        if: always()
+        shell: bash
+        run: |
+          summary=.artifacts/arcade-side-bakeoff/arcade-side-4x2-2026-08-25-v1/summary.md
+          if [[ -f "$summary" ]]; then
+            cat "$summary" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload immutable audit bundle and resumable state
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-side-4x2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .arcade-bakeoff-state.json
+            .artifacts/arcade-side-bakeoff/
+          if-no-files-found: warn
+          retention-days: 90

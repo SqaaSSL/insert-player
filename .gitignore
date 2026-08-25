@@ -25,6 +25,7 @@ worker/.prod.vars
 .artifacts/
 .arcade-sources/
 .arcade-state.json
+.arcade-bakeoff-state.json
 .launch-validation.json
 launch-validation.local.json
 .brand-clearance.json
