@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "candidateId": "arcade-qa-milei-high-punch-f4-xai-v1",
+  "confirmation": "ARCADE_QA_MILEI_HIGH_PUNCH_F4_XAI_V1",
+  "approvalRequired": true,
+  "fighter": {
+    "slug": "javier-milei",
+    "fighterId": "f0915dca6c2cec6f509ee330e4f17b15"
+  },
+  "motion": {
+    "atlasId": "arcade-qa-pose-atlas-2026-v1",
+    "animation": "high_punch",
+    "playbackFrameNumber": 4,
+    "sourceFrameIndex": 3,
+    "asset": {
+      "id": "qa-atlas-high-punch-playback-04-v1",
+      "bucket": "insert-player-assets",
+      "jurisdiction": "eu",
+      "objectKey": "official-pose-masters/qa-atlas-2026-v1/high_punch/0f41337e9c79265c671906f9f5081280a72f9b72c0eacba04e649cf0bcd22d61.png",
+      "contentSha256": "0f41337e9c79265c671906f9f5081280a72f9b72c0eacba04e649cf0bcd22d61",
+      "width": 768,
+      "height": 1024
+    }
+  },
+  "canonical": {
+    "id": "gemini-javier-milei-side-clean-v1",
+    "kind": "side",
+    "bucket": "insert-player-assets",
+    "jurisdiction": "eu",
+    "objectKey": "users/user_3IHDkjy0fm7LmuNGKkz3OAv71RW/fighters/f0915dca6c2cec6f509ee330e4f17b15/sources/side_a0758e9953ed150774c174f41d09764e.png",
+    "contentSha256": "41dcb1e372fdfd36b7f53ba461198fdf26e645b637e3b4417a0833414a702559",
+    "width": 921,
+    "height": 1152
+  },
+  "identity": {
+    "kind": "original",
+    "bucket": "insert-player-assets",
+    "jurisdiction": "eu",
+    "objectKey": "users/user_3IHDkjy0fm7LmuNGKkz3OAv71RW/fighters/f0915dca6c2cec6f509ee330e4f17b15/sources/original_1f57df90bbda0ae550db016e5b65b459.png",
+    "contentSha256": "79d329b9bc0668de2d2df78f1ac0b6a3183aa9977e92055c63165046c6009f6c",
+    "width": 575,
+    "height": 719
+  },
+  "provider": {
+    "modelId": "grok-imagine-image-2-edit",
+    "endpoint": "xai/grok-imagine-image/v2.0/edit",
+    "provider": "xai",
+    "backend": "fal",
+    "catalogCostPerImage": 70000,
+    "estimatedCostUsd": 0.07,
+    "numImages": 1
+  },
+  "policy": {
+    "expectedPaidCalls": 1,
+    "automaticRetries": 0,
+    "fallback": "none",
+    "promptEnrichment": false,
+    "activation": false,
+    "humanReviewRequired": true
+  }
+}

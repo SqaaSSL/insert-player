@@ -64,6 +64,30 @@ describe('Arcade provider prompt profiles', () => {
     expect(prompt).toContain('navy tailored suit, white shirt, vivid red tie');
   });
 
+  it('binds the XAI motion contract to the requested HIGH_PUNCH without retaining a static pose', () => {
+    const milei = manifest.fighters.find((fighter) => fighter.slug === 'javier-milei');
+    const prompt = buildArcadeProviderPrompt({
+      fighter: milei,
+      promptProfile: ARCADE_PROMPT_PROFILES.xaiCanonicalMotionTransfer,
+      motionAnimation: 'high_punch',
+    });
+
+    expect(prompt).toContain('exact standing high-punch impact pose from IMAGE 1');
+    expect(prompt).toContain('both feet visible and planted');
+    expect(prompt).toContain('rear guarding hand near the face');
+    expect(prompt).toContain('dark tailored suit, black shirt');
+    expect(prompt).not.toContain('high-kick');
+    expect(prompt).not.toContain('forward neutral ready stance');
+  });
+
+  it('fails closed for a motion without a reviewed anatomy contract', () => {
+    expect(() => buildArcadeProviderPrompt({
+      fighter: trump,
+      promptProfile: ARCADE_PROMPT_PROFILES.xaiCanonicalMotionTransfer,
+      motionAnimation: 'provider_improvises',
+    })).toThrow(/unsupported Arcade motion transfer/i);
+  });
+
   it('fails closed for unknown prompt profiles', () => {
     expect(() => buildArcadeProviderPrompt({
       fighter: trump,
