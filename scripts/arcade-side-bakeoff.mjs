@@ -533,6 +533,12 @@ export async function archiveJob(options, slot, job) {
 export function buildInitialState(matrixSha256, options = {}) {
   const experimentId = options.experimentId ?? BAKEOFF_EXPERIMENT_ID;
   const expectedPaidCalls = options.expectedPaidCalls ?? 8;
+  const policyConstraints = options.policyConstraints ?? {};
+  for (const reserved of ['expectedPaidCalls', 'retries', 'fallback', 'promptEnrichment', 'activation']) {
+    if (Object.hasOwn(policyConstraints, reserved)) {
+      throw new Error(`Experiment policy constraint cannot override ${reserved}.`);
+    }
+  }
   return {
     schemaVersion: 2,
     experimentId,
@@ -546,6 +552,7 @@ export function buildInitialState(matrixSha256, options = {}) {
       fallback: 'none',
       promptEnrichment: false,
       activation: false,
+      ...policyConstraints,
     },
     sources: {},
     slots: {},
@@ -608,15 +615,18 @@ export async function runBakeoff(options = {}) {
     };
   });
   const matrixSha256 = sha256(canonicalJson(matrix));
-  let state = readState(statePath) ?? buildInitialState(matrixSha256, {
+  const stateOptions = {
     experimentId,
     expectedPaidCalls,
-  });
+    policyConstraints: options.policyConstraints,
+  };
+  const expectedPolicy = buildInitialState(matrixSha256, stateOptions).policy;
+  let state = readState(statePath) ?? buildInitialState(matrixSha256, stateOptions);
   if (
     state.schemaVersion !== 2
     || state.experimentId !== experimentId
     || state.matrixSha256 !== matrixSha256
-    || state.policy?.expectedPaidCalls !== expectedPaidCalls
+    || canonicalJson(state.policy) !== canonicalJson(expectedPolicy)
   ) {
     throw new Error('Existing bakeoff state belongs to a different immutable matrix.');
   }

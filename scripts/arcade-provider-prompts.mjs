@@ -5,6 +5,19 @@ export const ARCADE_PROMPT_PROFILES = Object.freeze({
   xaiCanonicalMotionTransfer: 'xai-canonical-motion-transfer-v1',
 });
 
+export const ARCADE_MOTION_TRANSFER_SPECS = Object.freeze({
+  high_punch: Object.freeze({
+    animation: 'high_punch',
+    promptLabel: 'standing high-punch impact',
+    anatomyContract: 'Keep both feet visible and planted, the rear guarding hand near the face, the punching arm extended without shoulder dislocation, and the torso balanced behind the strike.',
+  }),
+  high_kick: Object.freeze({
+    animation: 'high_kick',
+    promptLabel: 'high-kick impact',
+    anatomyContract: 'The support foot must remain planted and the kicking leg must be fully visible.',
+  }),
+});
+
 const FIGHTER_DETAILS_MARKER = 'Supplement the reference with these design details:';
 const TERMINAL_STYLE_NEGATIVES = /\s+Not cartoon,[^.]*documentary photography\.\s*$/i;
 
@@ -66,11 +79,18 @@ function buildXaiIdentityPoseTransferPrompt(fighter) {
   ].join('\n');
 }
 
-function buildXaiCanonicalMotionTransferPrompt(fighter) {
+function xaiMotionTransferSpec(animation = 'high_kick') {
+  const spec = ARCADE_MOTION_TRANSFER_SPECS[animation];
+  if (!spec) throw new Error(`Unsupported Arcade motion transfer: ${String(animation)}.`);
+  return spec;
+}
+
+function buildXaiCanonicalMotionTransferPrompt(fighter, animation) {
+  const motion = xaiMotionTransferSpec(animation);
   const staticRequirements = fighterSpecificRequirements(fighter);
   const requirements = staticRequirements.replace(
-    /Show the complete figure head-to-toe in (?:an? )?(?:(?:upright|balanced) )?neutral ready stance, 3\/4 view facing right,/i,
-    'Show the complete figure head-to-toe in the exact high-kick impact pose from IMAGE 1, 3/4 view facing right,',
+    /Show the complete figure head-to-toe in [^,]+,\s*3\/4 view facing right,/i,
+    `Show the complete figure head-to-toe in the exact ${motion.promptLabel} pose from IMAGE 1, 3/4 view facing right,`,
   );
   if (requirements === staticRequirements) {
     throw new Error(`Arcade motion prompt could not replace the static pose for ${fighter?.slug ?? 'unknown fighter'}.`);
@@ -82,10 +102,10 @@ function buildXaiCanonicalMotionTransferPrompt(fighter) {
     'IMAGE 3 is the REAL IDENTITY SAFEGUARD only. Use it to keep the face and distinguishing features recognizable as the real person. Do not copy its portrait crop, camera, pose, clothes, background, or photographic rendering.',
     '',
     'MOTION TRANSFER:',
-    'Place the exact character from IMAGE 2 into the exact high-kick impact pose from IMAGE 1. Never blend the people or faces. Remove every identity, wardrobe, and rendering trait from IMAGE 1. Use IMAGE 3 only to correct identity drift in IMAGE 2. The result must look like the same canonical character from IMAGE 2 captured at a different animation frame.',
+    `Place the exact character from IMAGE 2 into the exact ${motion.promptLabel} pose from IMAGE 1. Never blend the people or faces. Remove every identity, wardrobe, and rendering trait from IMAGE 1. Use IMAGE 3 only to correct identity drift in IMAGE 2. The result must look like the same canonical character from IMAGE 2 captured at a different animation frame.`,
     '',
     'CONSISTENCY AND ANATOMY:',
-    'Preserve canonical head scale, limb lengths, body volume, clothing construction, colors, materials, and facial geometry from IMAGE 2. Keep both arms, both hands, both legs, and both feet complete and anatomically coherent. The support foot must remain planted and the kicking leg must be fully visible. No oversized head, shortened limbs, caricature, mascot proportions, anime, chibi, cel shading, motion blur, duplicated limbs, extra fingers, or fused joints.',
+    `Preserve canonical head scale, limb lengths, body volume, clothing construction, colors, materials, and facial geometry from IMAGE 2. Keep both arms, both hands, both legs, and both feet complete and anatomically coherent. ${motion.anatomyContract} No oversized head, shortened limbs, caricature, mascot proportions, anime, chibi, cel shading, motion blur, duplicated limbs, extra fingers, or fused joints.`,
     '',
     'TARGET CHARACTER, WARDROBE, AND BACKGROUND:',
     requirements,
@@ -98,7 +118,11 @@ function buildXaiCanonicalMotionTransferPrompt(fighter) {
   ].join('\n');
 }
 
-export function buildArcadeProviderPrompt({ fighter, promptProfile = ARCADE_PROMPT_PROFILES.canonical }) {
+export function buildArcadeProviderPrompt({
+  fighter,
+  promptProfile = ARCADE_PROMPT_PROFILES.canonical,
+  motionAnimation,
+}) {
   if (promptProfile === ARCADE_PROMPT_PROFILES.canonical) return canonicalPrompt(fighter);
   if (promptProfile === ARCADE_PROMPT_PROFILES.xaiRealisticAdult) {
     return buildXaiRealisticAdultPrompt(fighter);
@@ -107,7 +131,7 @@ export function buildArcadeProviderPrompt({ fighter, promptProfile = ARCADE_PROM
     return buildXaiIdentityPoseTransferPrompt(fighter);
   }
   if (promptProfile === ARCADE_PROMPT_PROFILES.xaiCanonicalMotionTransfer) {
-    return buildXaiCanonicalMotionTransferPrompt(fighter);
+    return buildXaiCanonicalMotionTransferPrompt(fighter, motionAnimation);
   }
   throw new Error(`Unsupported Arcade prompt profile: ${String(promptProfile)}.`);
 }

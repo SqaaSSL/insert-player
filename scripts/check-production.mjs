@@ -3383,6 +3383,7 @@ function assertGithubActionsAreWired() {
     xaiCanary: '.github/workflows/arcade-side-xai-canary-production.yml',
     xaiGlobal: '.github/workflows/arcade-side-xai-global-production.yml',
     xaiHighKick: '.github/workflows/arcade-high-kick-xai-canary-production.yml',
+    xaiQaMotion: '.github/workflows/arcade-qa-motion-xai-canary-production.yml',
     codeql: '.github/workflows/codeql.yml',
     dependabot: '.github/dependabot.yml',
     codeowners: '.github/CODEOWNERS',
@@ -3510,6 +3511,24 @@ function assertGithubActionsAreWired() {
       'secrets.PIXCLI_API_KEY',
       'secrets.CLOUDFLARE_API_TOKEN',
     ],
+    xaiQaMotion: [
+      'workflow_dispatch:',
+      'ARCADE_QA_MILEI_HIGH_PUNCH_F4_XAI_V1',
+      'authorize exactly one paid three-reference frame (estimated USD 0.07)',
+      'group: production-worker-mutations',
+      'cancel-in-progress: false',
+      'npm run test:arcade:xai-qa-motion',
+      '--slug=javier-milei',
+      'npm run arcade:qa-motion-references',
+      '--candidate=arcade-qa-milei-high-punch-f4-xai-v1',
+      'npm run arcade:canary:xai-qa-motion',
+      '--state=.arcade-qa-milei-high-punch-f4-xai-state.json',
+      '--pose-upload-state=.arcade-qa-high-punch-f4-upload-state.json',
+      '--canonical-upload-state=.arcade-qa-milei-canonical-upload-state.json',
+      'arcade-qa-milei-high-punch-f4-xai-v1-state',
+      'secrets.PIXCLI_API_KEY',
+      'secrets.CLOUDFLARE_API_TOKEN',
+    ],
     codeql: [
       'github/codeql-action/init@v4',
       'github/codeql-action/analyze@v4',
@@ -3569,6 +3588,12 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
   const globalBatchTests = readFileSync(join(root, 'scripts/arcade-side-xai-global-batch.test.mjs'), 'utf8');
   const highKickCanary = readFileSync(join(root, 'scripts/arcade-high-kick-xai-canary.mjs'), 'utf8');
   const highKickCanaryTests = readFileSync(join(root, 'scripts/arcade-high-kick-xai-canary.test.mjs'), 'utf8');
+  const qaMotionCandidate = readFileSync(join(root, 'arcade/qa-motion-canary-2026.json'), 'utf8');
+  const qaMotionCandidateCode = readFileSync(join(root, 'scripts/arcade-qa-motion-candidate.mjs'), 'utf8');
+  const qaMotionCandidateTests = readFileSync(join(root, 'scripts/arcade-qa-motion-candidate.test.mjs'), 'utf8');
+  const qaMotionCanary = readFileSync(join(root, 'scripts/arcade-motion-xai-canary.mjs'), 'utf8');
+  const qaMotionCanaryTests = readFileSync(join(root, 'scripts/arcade-motion-xai-canary.test.mjs'), 'utf8');
+  const qaMotionReferenceFetch = readFileSync(join(root, 'scripts/fetch-arcade-qa-motion-references.mjs'), 'utf8');
   const poseMasterFetch = readFileSync(join(root, 'scripts/fetch-arcade-pose-master.mjs'), 'utf8');
   const motionMasterFetch = readFileSync(join(root, 'scripts/fetch-arcade-motion-master.mjs'), 'utf8');
   const sealedRunner = readFileSync(join(root, 'scripts/arcade-side-bakeoff.mjs'), 'utf8');
@@ -3582,6 +3607,12 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
     globalBatchTests,
     highKickCanary,
     highKickCanaryTests,
+    qaMotionCandidate,
+    qaMotionCandidateCode,
+    qaMotionCandidateTests,
+    qaMotionCanary,
+    qaMotionCanaryTests,
+    qaMotionReferenceFetch,
     poseMasterFetch,
     motionMasterFetch,
     sealedRunner,
@@ -3614,6 +3645,16 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
     "XAI_GLOBAL_SIDE_BATCH_CONFIRMATION = 'ARCADE_SIDE_XAI_GLOBAL_4_V1'",
     "XAI_HIGH_KICK_CANARY_EXPERIMENT_ID = 'arcade-high-kick-xai-trump-impact-v1'",
     "XAI_HIGH_KICK_CANARY_CONFIRMATION = 'ARCADE_HIGH_KICK_XAI_TRUMP_IMPACT_V1'",
+    'arcade-qa-milei-high-punch-f4-xai-v1',
+    'ARCADE_QA_MILEI_HIGH_PUNCH_F4_XAI_V1',
+    'qa-atlas-high-punch-playback-04-v1',
+    'gemini-javier-milei-side-clean-v1',
+    'exact standing high-punch impact pose from IMAGE 1',
+    'providerCatalogCostPerImage',
+    'maxEstimatedCostUsd',
+    'Pinned PixCLI model contract or price changed; new human approval is required.',
+    'image: [poseAssetHash, canonicalAssetHash, sourceAssetHash]',
+    'ip-motion-v1-${fighter.slug}-${candidate.motion.animation.replaceAll',
     "'cristiano-ronaldo'",
     "'lionel-messi'",
     "'bad-bunny'",
@@ -3644,6 +3685,9 @@ function assertXaiArcadeSidePromptIsProviderScoped() {
     '"arcade:batch:xai-global-sides": "node scripts/arcade-side-xai-global-batch.mjs"',
     '"arcade:motion-master": "node scripts/fetch-arcade-motion-master.mjs"',
     '"arcade:canary:xai-high-kick": "node scripts/arcade-high-kick-xai-canary.mjs"',
+    '"arcade:qa-motion-references": "node scripts/fetch-arcade-qa-motion-references.mjs"',
+    '"arcade:canary:xai-qa-motion": "node scripts/arcade-motion-xai-canary.mjs"',
+    '"test:arcade:xai-qa-motion": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-qa-motion-candidate.test.mjs scripts/arcade-motion-xai-canary.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-bakeoff.test.mjs"',
     '"test:arcade:xai-global": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-xai-global-batch.test.mjs scripts/arcade-side-bakeoff.test.mjs"',
     '"test:arcade:xai-high-kick": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-high-kick-xai-canary.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-bakeoff.test.mjs"',
   ];

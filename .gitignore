@@ -34,6 +34,9 @@ worker/.prod.vars
 .arcade-high-kick-xai-trump-impact-state.json
 .arcade-xai-high-kick-impact-upload-state.json
 .arcade-xai-trump-canonical-upload-state.json
+.arcade-qa-milei-high-punch-f4-xai-state.json
+.arcade-qa-high-punch-f4-upload-state.json
+.arcade-qa-milei-canonical-upload-state.json
 .launch-validation.json
 launch-validation.local.json
 .brand-clearance.json
