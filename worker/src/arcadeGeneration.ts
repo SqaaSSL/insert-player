@@ -33,18 +33,27 @@ const PLAYABLE_ANIMATION_NAMES = [
   'victory',
 ] as const;
 const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'] as const;
+const SIDE_PROBE_PROVIDER_CALL_LIMIT = 1;
 const SIDE_CANARY_PROVIDER_CALL_LIMIT = 2;
 
-function sideCanaryProviderLimits(env: Env): { calls: number; costCents: number } {
+function sideProviderLimits(env: Env, calls: number): { calls: number; costCents: number } {
   const sourceModel = OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.sourceModels.side;
   const costPerCallCents = geminiEstimatedCostCents(env, sourceModel);
   if (costPerCallCents === null) {
     throw new Error(`No approved provider cost is configured for ${sourceModel}`);
   }
   return {
-    calls: SIDE_CANARY_PROVIDER_CALL_LIMIT,
-    costCents: SIDE_CANARY_PROVIDER_CALL_LIMIT * costPerCallCents,
+    calls,
+    costCents: calls * costPerCallCents,
   };
+}
+
+function sideProbeProviderLimits(env: Env): { calls: number; costCents: number } {
+  return sideProviderLimits(env, SIDE_PROBE_PROVIDER_CALL_LIMIT);
+}
+
+function sideCanaryProviderLimits(env: Env): { calls: number; costCents: number } {
+  return sideProviderLimits(env, SIDE_CANARY_PROVIDER_CALL_LIMIT);
 }
 
 interface ArcadeGenerationFighterRow {
@@ -570,7 +579,12 @@ export async function startAdminArcadeSourceGeneration(
     return json({ error: 'A valid canonical source is required' }, 400);
   }
 
-  const body = await readJsonBody<{ legal?: unknown; restart?: unknown; canary?: unknown }>(
+  const body = await readJsonBody<{
+    legal?: unknown;
+    restart?: unknown;
+    canary?: unknown;
+    probe?: unknown;
+  }>(
     request,
     MAX_ADMIN_GENERATION_BODY_BYTES,
   );
@@ -582,8 +596,15 @@ export async function startAdminArcadeSourceGeneration(
     return json({ error: 'canary must be a boolean' }, 400);
   }
   const canary = body.canary === true;
-  if (canary && (!restart || sourceName !== 'side')) {
-    return json({ error: 'A canary must be a fresh canonical side generation' }, 400);
+  if (body.probe !== undefined && typeof body.probe !== 'boolean') {
+    return json({ error: 'probe must be a boolean' }, 400);
+  }
+  const probe = body.probe === true;
+  if (canary && probe) {
+    return json({ error: 'Choose either canary or probe mode' }, 400);
+  }
+  if ((canary || probe) && (!restart || sourceName !== 'side')) {
+    return json({ error: 'A canary or probe must be a fresh canonical side generation' }, 400);
   }
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
@@ -630,7 +651,11 @@ export async function startAdminArcadeSourceGeneration(
     operation: 'fighter_retry_source',
     legal,
     continuation: partial ? { runId: partial.run_id, fromJobId: partial.job_id } : undefined,
-    providerLimits: canary ? sideCanaryProviderLimits(env) : undefined,
+    providerLimits: probe
+      ? sideProbeProviderLimits(env)
+      : canary
+        ? sideCanaryProviderLimits(env)
+        : undefined,
   });
 
   return createGenerationJob(generationJobRequest(

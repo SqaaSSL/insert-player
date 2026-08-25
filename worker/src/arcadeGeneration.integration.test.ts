@@ -171,7 +171,7 @@ function animationRequest(animationName = 'walk'): Request {
   );
 }
 
-function sourceRequest(sourceName = 'upright', restart = false, canary = false): Request {
+function sourceRequest(sourceName = 'upright', restart = false, canary = false, probe = false): Request {
   return new Request(
     `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/generate/source/${sourceName}`,
     {
@@ -181,6 +181,7 @@ function sourceRequest(sourceName = 'upright', restart = false, canary = false):
         legal: LEGAL,
         ...(restart ? { restart: true } : {}),
         ...(canary ? { canary: true } : {}),
+        ...(probe ? { probe: true } : {}),
       }),
     },
   );
@@ -813,6 +814,35 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
     }
   });
 
+  it('caps an official side probe at one paid provider request', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      env.GEMINI_TRANSPORT = 'meterkey';
+      const response = await startAdminArcadeSourceGeneration(
+        sourceRequest('side', true, false, true), env, adminAuth, FIGHTER_ID, 'side',
+      );
+
+      expect(response.status).toBe(201);
+      expect(constrainProviderSessionToArtifactRunRemaining).not.toHaveBeenCalled();
+      const [, , providerParams] = vi.mocked(createProviderSession).mock.calls[0];
+      expect(providerParams).toMatchObject({
+        providerCallLimitCap: 1,
+        providerCostLimitCentsCap: 17,
+      });
+      expect(await db.prepare(`
+        SELECT continuation_run_id, resumed_from_job_id
+        FROM generation_charges WHERE status = 'reserved'
+      `).first()).toEqual({ continuation_run_id: null, resumed_from_job_id: null });
+      const [jobRequest] = vi.mocked(createGenerationJob).mock.calls[0];
+      expect(await jobRequest.clone().json()).toMatchObject({
+        targetKind: 'source',
+        targetName: 'side',
+      });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
   it('rejects a canary unless it is a fresh side generation', async () => {
     const { mf, db, env } = await bindings();
     try {
@@ -825,6 +855,29 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
         ),
       ]);
       expect(responses.map((response) => response.status)).toEqual([400, 400]);
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges')
+        .first<{ count: number }>()).toEqual({ count: 0 });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('rejects an invalid or mixed probe before reserving provider spend', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const responses = await Promise.all([
+        startAdminArcadeSourceGeneration(
+          sourceRequest('side', false, false, true), env, adminAuth, FIGHTER_ID, 'side',
+        ),
+        startAdminArcadeSourceGeneration(
+          sourceRequest('upright', true, false, true), env, adminAuth, FIGHTER_ID, 'upright',
+        ),
+        startAdminArcadeSourceGeneration(
+          sourceRequest('side', true, true, true), env, adminAuth, FIGHTER_ID, 'side',
+        ),
+      ]);
+      expect(responses.map((response) => response.status)).toEqual([400, 400, 400]);
       expect(createProviderSession).not.toHaveBeenCalled();
       expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges')
         .first<{ count: number }>()).toEqual({ count: 0 });
