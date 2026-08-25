@@ -3457,6 +3457,7 @@ function assertGithubActionsAreWired() {
       'authorize exactly one paid SIDE call',
       'group: production-worker-mutations',
       'cancel-in-progress: false',
+      'npm --prefix worker ci',
       'npm run test:arcade:xai-canary',
       '--slug=donald-trump',
       'npm run arcade:canary:xai-side',
