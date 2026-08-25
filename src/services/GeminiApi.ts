@@ -328,6 +328,10 @@ export async function geminiReposeDetailed(
     rawBase64 = result.imageBase64;
   } catch (err: any) {
     if (isGeminiContentBlockedError(err)) {
+      if (promptOverride?.trim()) {
+        debugWarn('[GeminiApi] Official licensed reference declined; skipping a duplicate paid retry.');
+        throw err;
+      }
       debugWarn('[GeminiApi] Repose declined by the provider, retrying as an explicitly synthetic transformation...');
     } else {
       throw err;
@@ -336,21 +340,15 @@ export async function geminiReposeDetailed(
 
   if (!rawBase64) {
     debugInfo('[GeminiApi] Retrying repose with the safe synthetic-avatar prompt...');
-    try {
-      const result = await callGemini(
-        syntheticTransformationFallback(prompt),
-        photoBase64,
-        'image/png',
-        undefined,
-        model,
-        context,
-      );
-      rawBase64 = result.imageBase64;
-    } catch (err: unknown) {
-      if (!isGeminiContentBlockedError(err) || !promptOverride?.trim()) throw err;
-      debugWarn('[GeminiApi] Licensed public reference declined twice; failing closed to preserve the approved identity input.');
-      throw err;
-    }
+    const result = await callGemini(
+      syntheticTransformationFallback(prompt),
+      photoBase64,
+      'image/png',
+      undefined,
+      model,
+      context,
+    );
+    rawBase64 = result.imageBase64;
   }
 
   if (!rawBase64) throw new Error('Gemini repose returned no image');

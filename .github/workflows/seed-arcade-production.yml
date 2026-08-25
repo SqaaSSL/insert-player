@@ -21,6 +21,7 @@ on:
           - restart-draft
           - prepare-canary
           - canary-side
+          - probe-side
       confirmation:
         description: Enter GEMINI_ONLY_PRODUCTION for a production mutation or billable operation
         required: false
@@ -139,6 +140,9 @@ jobs:
               ;;
             canary-side)
               seed_args+=(--canary-side --confirm-production)
+              ;;
+            probe-side)
+              seed_args+=(--probe-side --confirm-production)
               ;;
             *)
               printf '::error::Unsupported Arcade seed operation.\n'

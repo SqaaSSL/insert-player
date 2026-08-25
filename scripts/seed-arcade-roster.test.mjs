@@ -6,6 +6,7 @@ import {
   findCurrentArcadeEntry,
   planArcadeDraftRegistration,
   planFighterResume,
+  planSideDraftPreparation,
   validateManifest,
 } from './seed-arcade-roster.mjs';
 
@@ -124,6 +125,28 @@ describe('Arcade roster resume planning', () => {
     ], 'donald-trump')).toThrow(/Multiple current Arcade fighters/);
   });
 
+  it('stages only a missing probe draft and refuses to mutate a published fighter', () => {
+    expect(planSideDraftPreparation(null, 'bad-bunny', {
+      allowCreate: true,
+      mode: 'probe',
+    })).toEqual({ action: 'create', entry: null });
+
+    const draft = {
+      fighterId: 'a'.repeat(32),
+      slug: 'bad-bunny',
+      status: 'draft',
+    };
+    expect(planSideDraftPreparation(draft, 'bad-bunny', {
+      allowCreate: true,
+      mode: 'probe',
+    })).toEqual({ action: 'reuse', entry: draft });
+
+    expect(() => planSideDraftPreparation({ ...draft, status: 'active' }, 'bad-bunny', {
+      allowCreate: true,
+      mode: 'probe',
+    })).toThrow(/restricted to draft fighters/);
+  });
+
   it('restarts only the matching content-addressed draft', () => {
     expect(planArcadeDraftRegistration(
       { fighterId: 'old-draft', slug: 'donald-trump', status: 'draft' },
@@ -229,5 +252,10 @@ describe('Arcade roster provider preflight', () => {
   it('keeps canary preparation separate from the capped side inference', () => {
     expect(productionWorkflow).toContain('seed_args+=(--prepare-canary --confirm-production)');
     expect(productionWorkflow).toContain('seed_args+=(--canary-side --confirm-production)');
+  });
+
+  it('exposes the one-call side probe as a separately guarded production operation', () => {
+    expect(productionWorkflow).toContain('- probe-side');
+    expect(productionWorkflow).toContain('seed_args+=(--probe-side --confirm-production)');
   });
 });
