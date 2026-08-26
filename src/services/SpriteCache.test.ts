@@ -134,7 +134,9 @@ describe('account-scoped sprite cache', () => {
     await createLegacyV4Cache();
 
     expect((await getCachedMeta(PHOTO_HASH))?.characterName).toBe('Legacy Fighter');
-    expect(await getAllSpriteVersionsForHash(PHOTO_HASH)).toHaveLength(1);
+    const migratedVersions = await getAllSpriteVersionsForHash(PHOTO_HASH);
+    expect(migratedVersions).toHaveLength(1);
+    expect(migratedVersions[0]?.animationFormat).toBe('legacy');
 
     configureSpriteCacheOwner('user_a');
     await claimLocalSpriteCacheForCurrentOwner();
@@ -143,6 +145,22 @@ describe('account-scoped sprite cache', () => {
 
     configureSpriteCacheOwner(null);
     expect(await getAllCachedMetas()).toEqual([]);
+  });
+
+  it('persists an explicit dense-video animation format independently of processing version', async () => {
+    await setCachedSprite({
+      ...sprite('dense-v1', 'walk'),
+      animationFormat: 'video-dense-v1',
+      processingVersion: 5,
+    }, { preserveVersionId: true });
+
+    const versions = await getAllSpriteVersionsForHash(PHOTO_HASH);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]).toMatchObject({
+      animationName: 'walk',
+      animationFormat: 'video-dense-v1',
+      processingVersion: 5,
+    });
   });
 
   it('merges a local collision without dropping either sprite version', async () => {

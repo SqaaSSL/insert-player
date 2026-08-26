@@ -5,6 +5,7 @@ import {
   type PersistedGeneratedAsset,
   type PersistedGeneratedSprite,
 } from './generatedAssets';
+import { normalizeSpriteAnimationFormat, type SpriteAnimationFormat } from './spriteAnimationFormat';
 import type {
   Env,
   GenerationArtifactCheckpoint,
@@ -255,7 +256,12 @@ export async function reuseSpriteCheckpoint(
     animationName,
     versionId: checkpoint.clean_version_id,
   });
-  if (version.blob_key !== checkpoint.clean_blob_key || version.raw_blob_key !== checkpoint.raw_blob_key) {
+  if (
+    version.blob_key !== checkpoint.clean_blob_key ||
+    version.raw_blob_key !== checkpoint.raw_blob_key ||
+    normalizeSpriteAnimationFormat(version.animation_format) !==
+      normalizeSpriteAnimationFormat(checkpoint.animation_format)
+  ) {
     return markCheckpointCorrupt(env, checkpoint, `Checkpointed ${animationName} sprite version changed identity`);
   }
   await env.DB.prepare(`
@@ -273,6 +279,7 @@ function assertCheckpointIdentity(
     rawVersionId: string | null;
     cleanBlobKey: string;
     rawBlobKey: string | null;
+    animationFormat?: SpriteAnimationFormat;
   },
   label: string,
 ): asserts checkpoint is GenerationArtifactCheckpoint {
@@ -282,7 +289,11 @@ function assertCheckpointIdentity(
     checkpoint.clean_version_id !== expected.cleanVersionId ||
     checkpoint.raw_version_id !== expected.rawVersionId ||
     checkpoint.clean_blob_key !== expected.cleanBlobKey ||
-    checkpoint.raw_blob_key !== expected.rawBlobKey
+    checkpoint.raw_blob_key !== expected.rawBlobKey ||
+    (
+      expected.animationFormat !== undefined &&
+      normalizeSpriteAnimationFormat(checkpoint.animation_format) !== expected.animationFormat
+    )
   ) {
     throw new GenerationCheckpointIntegrityError(`${label} checkpoint conflicts with an immutable archived version`);
   }
@@ -353,8 +364,8 @@ export async function recordSpriteCheckpoint(
         run_id, artifact_kind, artifact_name, stage_index, tier,
         clean_version_id, clean_blob_key, raw_blob_key,
         clean_content_hash, raw_content_hash,
-        frame_w, frame_h, frame_count, processing_version, completed_by_job_id
-      ) VALUES (?, 'sprite', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        frame_w, frame_h, frame_count, animation_format, processing_version, completed_by_job_id
+      ) VALUES (?, 'sprite', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       runId,
       params.animationName,
@@ -368,6 +379,7 @@ export async function recordSpriteCheckpoint(
       params.sprite.frameWidth,
       params.sprite.frameHeight,
       params.sprite.frameCount,
+      params.sprite.animationFormat,
       params.processingVersion,
       job.id,
     ),
@@ -383,6 +395,7 @@ export async function recordSpriteCheckpoint(
     rawVersionId: null,
     cleanBlobKey: params.sprite.blobKey,
     rawBlobKey: params.sprite.rawBlobKey,
+    animationFormat: params.sprite.animationFormat,
   }, `${params.animationName} sprite`);
 }
 

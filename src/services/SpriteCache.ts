@@ -1,3 +1,8 @@
+import {
+  normalizeSpriteAnimationFormat,
+  type SpriteAnimationFormat,
+} from '../SpriteAnimationFormat.ts';
+
 const DB_NAME = 'ai-street-fighter';
 const DB_VERSION = 5;
 const STORE_SPRITES = 'sprites';
@@ -23,6 +28,7 @@ interface CachedSprite {
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  animationFormat?: SpriteAnimationFormat;
   processingVersion?: number;
   contentHash?: string | null;
   rawContentHash?: string | null;
@@ -245,6 +251,7 @@ function normalizeCachedSpriteRecord(raw: any): CachedSprite | null {
     ...raw,
     ownerScope: normalizeCacheScope(raw.ownerScope),
     qualityTier: normalizeQualityTier(raw.qualityTier),
+    animationFormat: normalizeSpriteAnimationFormat(raw.animationFormat),
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
   } as CachedSprite;
   normalized.versionId = typeof raw.versionId === 'string' && raw.versionId
@@ -601,6 +608,7 @@ export async function setCachedSprite(
     ...sprite,
     ownerScope: scope,
     qualityTier: normalizeQualityTier(sprite.qualityTier, 'contender'),
+    animationFormat: normalizeSpriteAnimationFormat(sprite.animationFormat),
     createdAt: typeof sprite.createdAt === 'number' ? sprite.createdAt : Date.now(),
   };
   normalized.versionId = options.preserveVersionId && sprite.versionId

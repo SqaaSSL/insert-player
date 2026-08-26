@@ -33,7 +33,11 @@ export function getActionAnimationFrame({
 
     if (tick < forwardTicks) {
       if (forwardTicks === 1) return frameCount - 1;
-      return Math.round((tick / (forwardTicks - 1)) * (frameCount - 1));
+      // When there are more authored poses than startup+active ticks, one pose
+      // cannot be displayed on the outbound leg. Bias that unavoidable skip
+      // toward the near-impact end so the recovery immediately shows it,
+      // instead of dropping a mid-wind-up pose and only revealing it later.
+      return Math.floor((tick / (forwardTicks - 1)) * (frameCount - 1));
     }
 
     const recoveryTicks = Math.max(1, totalDuration - forwardTicks);

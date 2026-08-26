@@ -17,6 +17,11 @@ import { drainFighterAssetDeletions, listFighterAssetKeys } from './assetDeletio
 import { maxTier, normalizeQualityTier, TIER_DEFINITIONS } from './tiers';
 import { publicAppName, publicSocialCardUrl } from './branding';
 import { readJsonBody, readMultipartFormData } from './requestBody';
+import {
+  isSpriteAnimationFormat,
+  normalizeSpriteAnimationFormat,
+  type SpriteAnimationFormat,
+} from './spriteAnimationFormat';
 
 type SourceKind =
   | 'original'
@@ -363,6 +368,7 @@ function serializeSprite(
     frameWidth: sprite.frame_w,
     frameHeight: sprite.frame_h,
     frameCount: sprite.frame_count,
+    animationFormat: normalizeSpriteAnimationFormat(sprite.animation_format),
     processingVersion: sprite.processing_version,
     createdAt: sprite.created_at,
   };
@@ -453,6 +459,10 @@ function serializeCommunityFighter(
     },
     sprites: sprites.map((sprite) => ({
       ...serializeSprite(request, sprite),
+      // Processed bytes are already public through this URL. Publishing their
+      // digest gives clients an immutable cache identity without exposing the
+      // private archival/raw asset or its digest.
+      contentHash: sprite.content_hash,
       url: publicSpriteAssetUrl(request, fighter.id, sprite),
       rawUrl: null,
     })),
@@ -1310,6 +1320,11 @@ function upsertCurrentSpriteFromVersionStatement(
   qualityTier: QualityTier,
   contentHash: string,
   rawContentHash: string | null,
+  animationFormat: SpriteAnimationFormat,
+  frameWidth: number,
+  frameHeight: number,
+  frameCount: number,
+  processingVersion: number,
 ): D1PreparedStatement {
   return env.DB.prepare(`
     INSERT INTO sprites (
@@ -1324,16 +1339,20 @@ function upsertCurrentSpriteFromVersionStatement(
       frame_w,
       frame_h,
       frame_count,
+      animation_format,
       processing_version
     )
     SELECT ?, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
-      content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
+      content_hash, raw_content_hash, frame_w, frame_h, frame_count, animation_format,
+      processing_version
     FROM sprite_versions
     WHERE fighter_id = ?
       AND animation_name = ?
       AND quality_tier = ?
       AND content_hash = ?
       AND COALESCE(raw_content_hash, '') = COALESCE(?, '')
+      AND animation_format = ?
+      AND frame_w = ? AND frame_h = ? AND frame_count = ? AND processing_version = ?
     ORDER BY created_at DESC
     LIMIT 1
     ON CONFLICT(fighter_id, animation_name, quality_tier) DO UPDATE SET
@@ -1344,6 +1363,7 @@ function upsertCurrentSpriteFromVersionStatement(
       frame_w = excluded.frame_w,
       frame_h = excluded.frame_h,
       frame_count = excluded.frame_count,
+      animation_format = excluded.animation_format,
       processing_version = excluded.processing_version,
       created_at = datetime('now')
   `).bind(
@@ -1353,6 +1373,11 @@ function upsertCurrentSpriteFromVersionStatement(
     qualityTier,
     contentHash,
     rawContentHash,
+    animationFormat,
+    frameWidth,
+    frameHeight,
+    frameCount,
+    processingVersion,
   );
 }
 
@@ -1377,8 +1402,8 @@ export async function copyCommunitySpritesToFighter(
     try {
       await env.DB.batch([
         env.DB.prepare(`
-          INSERT INTO sprite_versions (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version)
-          VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)
+          INSERT INTO sprite_versions (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, animation_format, processing_version)
+          VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)
         `).bind(
           versionId,
           targetFighterId,
@@ -1388,11 +1413,12 @@ export async function copyCommunitySpritesToFighter(
           sprite.frame_w,
           sprite.frame_h,
           sprite.frame_count,
+          normalizeSpriteAnimationFormat(sprite.animation_format),
           sprite.processing_version,
         ),
         env.DB.prepare(`
-          INSERT INTO sprites (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version)
-          VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)
+          INSERT INTO sprites (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, animation_format, processing_version)
+          VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)
           ON CONFLICT(fighter_id, animation_name, quality_tier) DO NOTHING
         `).bind(
           generateId(),
@@ -1403,6 +1429,7 @@ export async function copyCommunitySpritesToFighter(
           sprite.frame_w,
           sprite.frame_h,
           sprite.frame_count,
+          normalizeSpriteAnimationFormat(sprite.animation_format),
           sprite.processing_version,
         ),
       ]);
@@ -1627,6 +1654,7 @@ export async function uploadFighterSprite(
   const frameWidth = Number(formData.get('frameWidth') ?? 0);
   const frameHeight = Number(formData.get('frameHeight') ?? 0);
   const frameCount = Number(formData.get('frameCount') ?? 0);
+  const animationFormatValue = formData.get('animationFormat');
   const processingVersion = Number(formData.get('processingVersion') ?? 0);
   const setCurrentValue = formData.get('setCurrent');
   if (
@@ -1636,6 +1664,14 @@ export async function uploadFighterSprite(
     return json({ error: 'setCurrent must be true or false' }, 400);
   }
   const setCurrent = setCurrentValue !== 'false';
+  const animationFormat = animationFormatValue === null || animationFormatValue === ''
+    ? normalizeSpriteAnimationFormat(undefined)
+    : typeof animationFormatValue === 'string' && isSpriteAnimationFormat(animationFormatValue)
+      ? animationFormatValue
+      : null;
+  if (!animationFormat) {
+    return json({ error: 'Invalid animationFormat' }, 400);
+  }
   if (!Number.isFinite(frameWidth) || !Number.isFinite(frameHeight) || !Number.isFinite(frameCount)) {
     return json({ error: 'Invalid frame metadata' }, 400);
   }
@@ -1688,6 +1724,8 @@ export async function uploadFighterSprite(
       AND quality_tier = ?
       AND content_hash = ?
       AND COALESCE(raw_content_hash, '') = COALESCE(?, '')
+      AND animation_format = ?
+      AND frame_w = ? AND frame_h = ? AND frame_count = ? AND processing_version = ?
     ORDER BY created_at DESC
     LIMIT 1
   `).bind(
@@ -1696,6 +1734,11 @@ export async function uploadFighterSprite(
     qualityTier,
     contentHash,
     rawContentHash,
+    animationFormat,
+    roundedFrameWidth,
+    roundedFrameHeight,
+    roundedFrameCount,
+    roundedProcessingVersion,
   ).first<SpriteVersion>();
 
   if (duplicateVersion) {
@@ -1720,6 +1763,11 @@ export async function uploadFighterSprite(
           qualityTier,
           contentHash,
           rawContentHash,
+          animationFormat,
+          roundedFrameWidth,
+          roundedFrameHeight,
+          roundedFrameCount,
+          roundedProcessingVersion,
         ),
         env.DB.prepare(
           'UPDATE fighters SET quality_tier = ?, updated_at = datetime(\'now\') WHERE id = ? AND owner_user_id = ?'
@@ -1757,8 +1805,8 @@ export async function uploadFighterSprite(
   try {
     const statements = [
       env.DB.prepare(`
-        INSERT OR IGNORE INTO sprite_versions (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR IGNORE INTO sprite_versions (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, animation_format, processing_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         versionId,
         fighterId,
@@ -1771,6 +1819,7 @@ export async function uploadFighterSprite(
         roundedFrameWidth,
         roundedFrameHeight,
         roundedFrameCount,
+        animationFormat,
         roundedProcessingVersion,
       ),
     ];
@@ -1782,6 +1831,11 @@ export async function uploadFighterSprite(
         qualityTier,
         contentHash,
         rawContentHash,
+        animationFormat,
+        roundedFrameWidth,
+        roundedFrameHeight,
+        roundedFrameCount,
+        roundedProcessingVersion,
       ));
       statements.push(env.DB.prepare(
         'UPDATE fighters SET quality_tier = ?, updated_at = datetime(\'now\') WHERE id = ? AND owner_user_id = ?'
@@ -1818,6 +1872,11 @@ export async function promoteFighterSpriteVersion(
     qualityTier?: QualityTier;
     contentHash?: string;
     rawContentHash?: string | null;
+    animationFormat?: SpriteAnimationFormat;
+    frameWidth?: number;
+    frameHeight?: number;
+    frameCount?: number;
+    processingVersion?: number;
   }>(request, MAX_FIGHTER_JSON_BODY_BYTES);
   const animationName = body.animationName?.trim() ?? '';
   if (!/^[a-z0-9_-]{1,64}$/i.test(animationName)) {
@@ -1836,24 +1895,59 @@ export async function promoteFighterSpriteVersion(
   if (rawContentHash !== null && !/^[a-f0-9]{64}$/.test(rawContentHash)) {
     return json({ error: 'Invalid rawContentHash' }, 400);
   }
+  const hasExplicitAnimationFormat = body.animationFormat !== undefined;
+  const animationFormat = hasExplicitAnimationFormat && isSpriteAnimationFormat(body.animationFormat)
+    ? body.animationFormat
+    : null;
+  if (hasExplicitAnimationFormat && !animationFormat) {
+    return json({ error: 'Invalid animationFormat' }, 400);
+  }
 
-  const version = await env.DB.prepare(`
+  const metadataValues = [body.frameWidth, body.frameHeight, body.frameCount, body.processingVersion];
+  const hasInterpretationMetadata = metadataValues.every((value) => value !== undefined);
+  if (
+    metadataValues.some((value) => value !== undefined) && !hasInterpretationMetadata ||
+    hasInterpretationMetadata && (
+      metadataValues.some((value) => !Number.isInteger(value)) ||
+      body.frameWidth! < 1 || body.frameWidth! > MAX_SPRITE_FRAME_DIMENSION ||
+      body.frameHeight! < 1 || body.frameHeight! > MAX_SPRITE_FRAME_DIMENSION ||
+      body.frameCount! < 1 || body.frameCount! > MAX_SPRITE_FRAME_COUNT ||
+      body.processingVersion! < 0 || body.processingVersion! > MAX_PROCESSING_VERSION
+    )
+  ) {
+    return json({ error: 'Invalid frame metadata' }, 400);
+  }
+
+  const { results: matchingVersions } = await env.DB.prepare(`
     SELECT * FROM sprite_versions
     WHERE fighter_id = ?
       AND animation_name = ?
       AND quality_tier = ?
       AND content_hash = ?
       AND COALESCE(raw_content_hash, '') = COALESCE(?, '')
+      ${hasExplicitAnimationFormat ? 'AND animation_format = ?' : ''}
+      ${hasInterpretationMetadata
+        ? 'AND frame_w = ? AND frame_h = ? AND frame_count = ? AND processing_version = ?'
+        : ''}
     ORDER BY created_at DESC
-    LIMIT 1
+    LIMIT 2
   `).bind(
     fighterId,
     animationName,
     body.qualityTier,
     contentHash,
     rawContentHash,
-  ).first<SpriteVersion>();
+    ...(hasExplicitAnimationFormat ? [animationFormat] : []),
+    ...(hasInterpretationMetadata ? metadataValues : []),
+  ).all<SpriteVersion>();
+  if (matchingVersions.length > 1) {
+    return json({
+      error: 'Sprite version selection is ambiguous; include animationFormat and frame metadata',
+    }, 409);
+  }
+  const version = matchingVersions[0];
   if (!version) return json({ error: 'Sprite version not found' }, 404);
+  const selectedAnimationFormat = normalizeSpriteAnimationFormat(version.animation_format);
 
   const [processedObject, rawObject] = await Promise.all([
     env.SPRITES.head(version.blob_key),
@@ -1871,6 +1965,11 @@ export async function promoteFighterSpriteVersion(
       body.qualityTier,
       contentHash,
       rawContentHash,
+      selectedAnimationFormat,
+      version.frame_w,
+      version.frame_h,
+      version.frame_count,
+      version.processing_version,
     ),
     env.DB.prepare(
       'UPDATE fighters SET quality_tier = ?, updated_at = datetime(\'now\') WHERE id = ? AND owner_user_id = ?'

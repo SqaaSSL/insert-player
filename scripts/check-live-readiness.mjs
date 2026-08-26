@@ -10,6 +10,10 @@ import {
   decodeClerkPublishableKey,
 } from './clerk-publishable-key.mjs';
 import { wranglerAuthIssue } from './wrangler-auth-status.mjs';
+import {
+  SPRITE_VERSION_CONTENT_INDEX_CONTRACT_SQL,
+  spriteVersionContentIndexContractPassed,
+} from './live-readiness-sprite-schema.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -745,6 +749,26 @@ function assertRemoteD1Schema() {
   if (arcadeColumns.status !== 0) {
     const arcadeOutput = `${arcadeColumns.stdout ?? ''}${arcadeColumns.stderr ?? ''}`.trim();
     fail(`Remote D1 database ${databaseName} is missing migrations 0020-0021 official Arcade fields.\n${arcadeOutput}`);
+  }
+
+  const spriteAnimationFormat = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    `SELECT sprites.animation_format AS current_animation_format,
+      sprite_versions.animation_format AS version_animation_format,
+      generation_artifact_checkpoints.animation_format AS checkpoint_animation_format
+     FROM sprites CROSS JOIN sprite_versions CROSS JOIN generation_artifact_checkpoints LIMIT 0;
+     ${SPRITE_VERSION_CONTENT_INDEX_CONTRACT_SQL}`,
+  ], workerDir);
+  const spriteAnimationFormatOutput = `${spriteAnimationFormat.stdout ?? ''}${spriteAnimationFormat.stderr ?? ''}`.trim();
+  if (
+    !spriteVersionContentIndexContractPassed(spriteAnimationFormat)
+  ) {
+    fail(`Remote D1 database ${databaseName} is missing migration 0028 sprite animation formats.\n${spriteAnimationFormatOutput}`);
   }
 }
 

@@ -3,11 +3,15 @@ import { FighterState, FIGHTER_WIDTH, FIGHTER_HEIGHT } from '../constants.ts';
 import { getAllSpritesForHash, type CachedSprite } from '../../services/SpriteCache.ts';
 import {
   createSpriteLayout,
-  getHighKickRuntimeProfile,
+  getAnimationRuntimeProfile,
   registerSpriteLayout,
-  type HighKickRuntimeProfile,
+  type SpriteRuntimeProfile,
 } from './SpriteGenerator.ts';
 import { debugInfo } from '../../services/DebugLog.ts';
+import {
+  VIDEO_DENSE_SPRITE_ANIMATION_FORMAT,
+  type SpriteAnimationFormat,
+} from '../../SpriteAnimationFormat.ts';
 
 const ANIM_NAME_TO_STATE: Record<string, FighterState> = {
   idle: FighterState.IDLE,
@@ -63,12 +67,36 @@ export async function loadAiSprites(
   }
   if (loadedAnims.size === 0) return false;
 
-  const highKickProfile = getHighKickRuntimeProfile(
-    loadedAnims.get('high_kick')?.sprite.frameCount,
-  );
+  const runtimeProfiles = new Map<FighterState, SpriteRuntimeProfile>();
+  const frameCountOverrides: Partial<Record<FighterState, number>> = {};
+  const playbackModeOverrides: Partial<Record<FighterState, SpriteRuntimeProfile['playbackMode']>> = {};
+  const durationTickOverrides: Partial<Record<FighterState, number>> = {};
+
+  for (const state of Object.values(FighterState)) {
+    const directAnimName = stateToAnimName(state);
+    const resolved = resolveLoadedAnimationForState(state, loadedAnims);
+    const usesDenseSource = resolved && (
+      resolved.animName === directAnimName ||
+      (state === FighterState.WALK_BACKWARD && resolved.animName === 'walk')
+    );
+    const profileState = state === FighterState.WALK_BACKWARD
+      ? FighterState.WALK_FORWARD
+      : state;
+    const profile = getAnimationRuntimeProfile(
+      profileState,
+      usesDenseSource ? resolved?.anim.sprite.frameCount : undefined,
+      usesDenseSource ? resolved?.anim.sprite.animationFormat : undefined,
+    );
+    runtimeProfiles.set(state, profile);
+    frameCountOverrides[state] = profile.frameCount;
+    playbackModeOverrides[state] = profile.playbackMode;
+    if (profile.durationTicks) durationTickOverrides[state] = profile.durationTicks;
+  }
+
   const layout = createSpriteLayout(
-    { [FighterState.HIGH_KICK]: highKickProfile.frameCount },
-    { [FighterState.HIGH_KICK]: highKickProfile.playbackMode },
+    frameCountOverrides,
+    playbackModeOverrides,
+    durationTickOverrides,
   );
   const cols = layout.totalColumns;
   const rows = Object.keys(layout.stateRow).length;
@@ -116,28 +144,36 @@ export async function loadAiSprites(
       state,
       stableFrames,
       targetFrameCount,
-      highKickProfile,
+      runtimeProfiles.get(state) ?? getAnimationRuntimeProfile(state),
+      {
+        sourceState: ANIM_NAME_TO_STATE[animName],
+        animationFormat: sprite.animationFormat,
+      },
     );
-    const unionBox = findUnionBBox(frames, srcW, srcH);
-
-    const cropW = unionBox.w;
-    const cropH = unionBox.h;
-
-    const scale = Math.min(FIGHTER_WIDTH / cropW, FIGHTER_HEIGHT / cropH);
-    const drawW = Math.round(cropW * scale);
-    const drawH = Math.round(cropH * scale);
+    const contentBox = sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT
+      ? null
+      : findUnionBBox(frames, srcW, srcH);
+    const transform = calculateAtlasFrameTransform(
+      srcW,
+      srcH,
+      contentBox,
+      sprite.animationFormat,
+    );
 
     for (let f = 0; f < targetFrameCount; f++) {
       const dstX = f * FIGHTER_WIDTH;
       const dstY = row * FIGHTER_HEIGHT;
 
-      const offsetX = Math.round((FIGHTER_WIDTH - drawW) / 2);
-      const offsetY = FIGHTER_HEIGHT - drawH;
-
       ctx.drawImage(
         frames[f],
-        unionBox.x, unionBox.y, cropW, cropH,
-        dstX + offsetX, dstY + offsetY, drawW, drawH,
+        transform.source.x,
+        transform.source.y,
+        transform.source.w,
+        transform.source.h,
+        dstX + transform.destination.x,
+        dstY + transform.destination.y,
+        transform.destination.w,
+        transform.destination.h,
       );
     }
   }
@@ -189,12 +225,24 @@ export function selectSourceFramesForAtlas<T>(
   state: FighterState,
   sourceFrames: T[],
   targetFrameCount: number,
-  highKickProfile: HighKickRuntimeProfile,
+  runtimeProfile: SpriteRuntimeProfile,
+  sourceContext?: {
+    sourceState?: FighterState;
+    animationFormat?: SpriteAnimationFormat;
+  },
 ): T[] {
-  const runtimeSourceFrames = state === FighterState.HIGH_KICK &&
-    highKickProfile.sourceFormat === 'expanded-ping-pong'
-    ? sourceFrames.slice(0, highKickProfile.frameCount)
+  const runtimeSourceFrames = runtimeProfile.sourceFormat === 'expanded-ping-pong'
+    ? sourceFrames.slice(0, runtimeProfile.frameCount)
     : sourceFrames;
+
+  const holdsDenseKnockdownTerminalPose =
+    state === FighterState.DEFEAT &&
+    sourceContext?.sourceState === FighterState.KNOCKDOWN &&
+    sourceContext.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT;
+  if (holdsDenseKnockdownTerminalPose && runtimeSourceFrames.length > 0) {
+    const finalFrame = runtimeSourceFrames[runtimeSourceFrames.length - 1];
+    return Array.from({ length: targetFrameCount }, () => finalFrame);
+  }
 
   return Array.from({ length: targetFrameCount }, (_, frameIndex) => {
     const sourceIndex = selectSourceFrameIndex(
@@ -268,6 +316,34 @@ function extractFrames(
 }
 
 interface BBox { x: number; y: number; w: number; h: number }
+
+export interface AtlasFrameTransform {
+  source: BBox;
+  destination: BBox;
+}
+
+export function calculateAtlasFrameTransform(
+  sourceWidth: number,
+  sourceHeight: number,
+  contentBox: BBox | null,
+  animationFormat: SpriteAnimationFormat | undefined,
+): AtlasFrameTransform {
+  const source = animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT
+    ? { x: 0, y: 0, w: sourceWidth, h: sourceHeight }
+    : contentBox ?? { x: 0, y: 0, w: sourceWidth, h: sourceHeight };
+  const scale = Math.min(FIGHTER_WIDTH / source.w, FIGHTER_HEIGHT / source.h);
+  const drawWidth = Math.round(source.w * scale);
+  const drawHeight = Math.round(source.h * scale);
+  return {
+    source,
+    destination: {
+      x: Math.round((FIGHTER_WIDTH - drawWidth) / 2),
+      y: FIGHTER_HEIGHT - drawHeight,
+      w: drawWidth,
+      h: drawHeight,
+    },
+  };
+}
 const FRAGMENTED_STATES = new Set([FighterState.JUMP, FighterState.HIT_STUN]);
 
 function selectStableFramesForState(

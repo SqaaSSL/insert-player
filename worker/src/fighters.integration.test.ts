@@ -66,6 +66,7 @@ const SCHEMA = `
     frame_w INTEGER NOT NULL,
     frame_h INTEGER NOT NULL,
     frame_count INTEGER NOT NULL,
+    animation_format TEXT NOT NULL DEFAULT 'legacy' CHECK (animation_format IN ('legacy', 'video-dense-v1')),
     processing_version INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(fighter_id, animation_name, quality_tier)
@@ -83,6 +84,7 @@ const SCHEMA = `
     frame_w INTEGER NOT NULL,
     frame_h INTEGER NOT NULL,
     frame_count INTEGER NOT NULL,
+    animation_format TEXT NOT NULL DEFAULT 'legacy' CHECK (animation_format IN ('legacy', 'video-dense-v1')),
     processing_version INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -92,6 +94,11 @@ const SCHEMA = `
     fighter_id,
     animation_name,
     quality_tier,
+    animation_format,
+    frame_w,
+    frame_h,
+    frame_count,
+    processing_version,
     content_hash,
     COALESCE(raw_content_hash, '')
   )
@@ -200,15 +207,24 @@ function sourceRequest(kind = 'side'): Request {
   });
 }
 
-function spriteRequest(options: { setCurrent?: boolean; marker?: number } = {}): Request {
+function spriteRequest(options: {
+  setCurrent?: boolean;
+  marker?: number;
+  animationFormat?: 'legacy' | 'video-dense-v1';
+  frameWidth?: number;
+  frameHeight?: number;
+  frameCount?: number;
+  processingVersion?: number;
+} = {}): Request {
   const marker = options.marker ?? 4;
   const formData = new FormData();
   formData.set('animationName', 'idle');
   formData.set('qualityTier', 'contender');
-  formData.set('frameWidth', '256');
-  formData.set('frameHeight', '256');
-  formData.set('frameCount', '8');
-  formData.set('processingVersion', '4');
+  formData.set('frameWidth', String(options.frameWidth ?? 256));
+  formData.set('frameHeight', String(options.frameHeight ?? 256));
+  formData.set('frameCount', String(options.frameCount ?? 8));
+  if (options.animationFormat) formData.set('animationFormat', options.animationFormat);
+  formData.set('processingVersion', String(options.processingVersion ?? 4));
   formData.set('file', new File([
     new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, marker]),
   ], 'idle.png', { type: 'image/png' }));
@@ -222,7 +238,17 @@ function spriteRequest(options: { setCurrent?: boolean; marker?: number } = {}):
   });
 }
 
-function spritePromotionRequest(contentHash: string, rawContentHash: string | null): Request {
+function spritePromotionRequest(
+  contentHash: string,
+  rawContentHash: string | null,
+  animationFormat?: 'legacy' | 'video-dense-v1',
+  metadata?: {
+    frameWidth: number;
+    frameHeight: number;
+    frameCount: number;
+    processingVersion: number;
+  },
+): Request {
   return new Request('https://api.insertplayer.ai/api/fighters/fighter-target/sprites', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -231,6 +257,8 @@ function spritePromotionRequest(contentHash: string, rawContentHash: string | nu
       qualityTier: 'contender',
       contentHash,
       rawContentHash,
+      ...(animationFormat ? { animationFormat } : {}),
+      ...metadata,
     }),
   });
 }
@@ -478,13 +506,16 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         ...animationNames.map((animationName, index) => db.prepare(`
           INSERT INTO sprites (
             id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+            content_hash, raw_content_hash,
             frame_w, frame_h, frame_count, processing_version
-          ) VALUES (?, 'fighter-target', ?, 'contender', ?, ?, 256, 256, 8, 4)
+          ) VALUES (?, 'fighter-target', ?, 'contender', ?, ?, ?, ?, 256, 256, 8, 4)
         `).bind(
           `sprite-public-${index}`,
           animationName,
           `users/user-target/fighters/fighter-target/sprites/${animationName}.png`,
           `users/user-target/fighters/fighter-target/sprites/${animationName}-raw.png`,
+          `public-content-${index}`,
+          `private-raw-content-${index}`,
         )),
       ]);
       await Promise.all([
@@ -520,6 +551,8 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect(idleSprite?.url).toContain(
         '/public-assets/fighters/fighter-target/sprites/sprite-public-0/idle.png',
       );
+      expect(idleSprite?.contentHash).toBe('public-content-0');
+      expect(idleSprite).not.toHaveProperty('rawContentHash');
       expect(JSON.stringify(fighter)).not.toContain('/assets/users/');
       expect(JSON.stringify(fighter)).not.toContain('user-target');
 
@@ -638,6 +671,62 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
     }
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
+  it('defaults old uploads to legacy and preserves identical bytes under a dense-video contract', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      const legacyResponse = await uploadFighterSprite(
+        spriteRequest(), env, auth, 'fighter-target',
+      );
+      const denseResponse = await uploadFighterSprite(
+        spriteRequest({ animationFormat: 'video-dense-v1' }), env, auth, 'fighter-target',
+      );
+      expect([legacyResponse.status, denseResponse.status]).toEqual([200, 200]);
+
+      const { results } = await db.prepare(`
+        SELECT animation_format FROM sprite_versions
+        WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
+        ORDER BY animation_format
+      `).bind('fighter-target', 'idle', 'contender').all<{ animation_format: string }>();
+      expect(results).toEqual([
+        { animation_format: 'legacy' },
+        { animation_format: 'video-dense-v1' },
+      ]);
+      expect((await db.prepare(`
+        SELECT animation_format FROM sprites
+        WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
+      `).bind('fighter-target', 'idle', 'contender')
+        .first<{ animation_format: string }>())?.animation_format).toBe('video-dense-v1');
+
+      const body = await denseResponse.json() as {
+        fighter: { sprites: Array<{ animationFormat: string }> };
+      };
+      expect(body.fighter.sprites[0]?.animationFormat).toBe('video-dense-v1');
+
+      const hash = await db.prepare(`
+        SELECT content_hash, raw_content_hash FROM sprite_versions
+        WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
+        LIMIT 1
+      `).bind('fighter-target', 'idle', 'contender').first<{
+        content_hash: string;
+        raw_content_hash: string | null;
+      }>();
+      expect((await promoteFighterSpriteVersion(
+        spritePromotionRequest(hash!.content_hash, hash!.raw_content_hash),
+        env,
+        auth,
+        'fighter-target',
+      )).status).toBe(409);
+      expect((await promoteFighterSpriteVersion(
+        spritePromotionRequest(hash!.content_hash, hash!.raw_content_hash, 'legacy'),
+        env,
+        auth,
+        'fighter-target',
+      )).status).toBe(200);
+    } finally {
+      await mf.dispose();
+    }
+  }, INTEGRATION_TEST_TIMEOUT_MS);
+
   it('repairs missing canonical sprite objects on an idempotent upload', async () => {
     const { mf, db, bucket, env } = await createBindings();
     try {
@@ -731,6 +820,80 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         SELECT COUNT(*) AS count FROM sprite_versions
         WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
       `).bind('fighter-target', 'idle', 'contender').first<{ count: number }>())?.count).toBe(2);
+    } finally {
+      await mf.dispose();
+    }
+  }, INTEGRATION_TEST_TIMEOUT_MS);
+
+  it('rejects an old metadata-free promotion when matching hashes have multiple legacy interpretations', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      expect((await uploadFighterSprite(
+        spriteRequest({ setCurrent: false }), env, auth, 'fighter-target',
+      )).status).toBe(200);
+      expect((await uploadFighterSprite(
+        spriteRequest({ setCurrent: false, frameWidth: 128, frameCount: 16 }),
+        env,
+        auth,
+        'fighter-target',
+      )).status).toBe(200);
+
+      const { results } = await db.prepare(`
+        SELECT content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
+        FROM sprite_versions
+        WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
+        ORDER BY frame_w
+      `).bind('fighter-target', 'idle', 'contender').all<{
+        content_hash: string;
+        raw_content_hash: string | null;
+        frame_w: number;
+        frame_h: number;
+        frame_count: number;
+        processing_version: number;
+      }>();
+      expect(results).toHaveLength(2);
+      expect(results[0]?.content_hash).toBe(results[1]?.content_hash);
+      expect(results[0]?.raw_content_hash).toBe(results[1]?.raw_content_hash);
+
+      const ambiguous = await promoteFighterSpriteVersion(
+        spritePromotionRequest(results[0]!.content_hash, results[0]!.raw_content_hash),
+        env,
+        auth,
+        'fighter-target',
+      );
+      expect(ambiguous.status).toBe(409);
+      await expect(ambiguous.json()).resolves.toEqual({
+        error: 'Sprite version selection is ambiguous; include animationFormat and frame metadata',
+      });
+
+      const selected = results[0]!;
+      const explicit = await promoteFighterSpriteVersion(
+        spritePromotionRequest(selected.content_hash, selected.raw_content_hash, 'legacy', {
+          frameWidth: selected.frame_w,
+          frameHeight: selected.frame_h,
+          frameCount: selected.frame_count,
+          processingVersion: selected.processing_version,
+        }),
+        env,
+        auth,
+        'fighter-target',
+      );
+      expect(explicit.status).toBe(200);
+      expect((await db.prepare(`
+        SELECT frame_w, frame_h, frame_count, processing_version
+        FROM sprites
+        WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
+      `).bind('fighter-target', 'idle', 'contender').first<{
+        frame_w: number;
+        frame_h: number;
+        frame_count: number;
+        processing_version: number;
+      }>())).toEqual({
+        frame_w: selected.frame_w,
+        frame_h: selected.frame_h,
+        frame_count: selected.frame_count,
+        processing_version: selected.processing_version,
+      });
     } finally {
       await mf.dispose();
     }

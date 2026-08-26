@@ -34,7 +34,8 @@
     "db:execute:0018": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0018_durable_generation_jobs.sql",
     "db:execute:0019": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0019_durable_retry_jobs.sql",
     "db:execute:0020": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0020_official_arcade.sql",
-    "db:execute:0021": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0021_arcade_generation_prompts.sql"
+    "db:execute:0021": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0021_arcade_generation_prompts.sql",
+    "db:execute:0028": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0028_sprite_animation_format.sql"
   },
   "devDependencies": {
     "wrangler": "^4.125.0"
