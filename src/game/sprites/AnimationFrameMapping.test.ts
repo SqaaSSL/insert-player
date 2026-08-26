@@ -31,6 +31,7 @@ describe('action animation frame mapping', () => {
     const lastActiveTick = HIGH_KICK.startup + HIGH_KICK.active - 1;
 
     expect(new Set(frames)).toEqual(new Set(Array.from({ length: 12 }, (_, index) => index)));
+    expect(frames.slice(0, lastActiveTick + 1)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11]);
     expect(frames[lastActiveTick]).toBe(11);
     expect(frames[lastActiveTick + 1]).toBe(10);
     expect(frames.at(-1)).toBe(0);
@@ -44,5 +45,40 @@ describe('action animation frame mapping', () => {
       playbackMode: 'forward-ping-pong',
       attack: HIGH_KICK,
     })).toBe(0);
+  });
+
+  it('renders every dense knockout pose before the grounded state exits after tick 30', () => {
+    const frames = Array.from({ length: 31 }, (_, stateFrame) => getActionAnimationFrame({
+      stateFrame,
+      frameCount: 12,
+      totalDuration: 30,
+      playbackMode: 'timeline',
+    }));
+
+    expect(new Set(frames)).toEqual(new Set(Array.from({ length: 12 }, (_, index) => index)));
+    expect(frames.at(-1)).toBe(11);
+  });
+
+  it.each([
+    [FighterState.HIGH_PUNCH, 6],
+    [FighterState.LOW_PUNCH, 7],
+    [FighterState.LOW_KICK, 9],
+  ] as const)('reaches the dense %s peak on its last active tick and returns to stance', (state, frameCount) => {
+    const attack = ATTACKS[state];
+    const totalDuration = attack.startup + attack.active + attack.recovery;
+    const frames = Array.from({ length: totalDuration }, (_, stateFrame) =>
+      getActionAnimationFrame({
+        stateFrame,
+        frameCount,
+        totalDuration,
+        playbackMode: 'forward-ping-pong',
+        attack,
+      }),
+    );
+    const lastActiveTick = attack.startup + attack.active - 1;
+
+    expect(frames[0]).toBe(0);
+    expect(frames[lastActiveTick]).toBe(frameCount - 1);
+    expect(frames.at(-1)).toBe(0);
   });
 });

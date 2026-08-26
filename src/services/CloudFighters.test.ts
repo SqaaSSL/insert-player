@@ -17,6 +17,7 @@ function candidate(
   createdAt: number,
   contentHash: string,
   qualityTier: CachedSprite['qualityTier'] = 'champion',
+  animationFormat: CachedSprite['animationFormat'] = 'legacy',
 ): FingerprintedSprite {
   return {
     contentHash,
@@ -32,6 +33,7 @@ function candidate(
       frameWidth: 256,
       frameHeight: 256,
       frameCount: 8,
+      animationFormat,
       processingVersion: 5,
       createdAt,
     },
@@ -41,6 +43,7 @@ function candidate(
 function cloudSprite(
   contentHash: string,
   qualityTier: CloudSprite['qualityTier'] = 'champion',
+  animationFormat: CloudSprite['animationFormat'] = 'legacy',
 ): CloudSprite {
   return {
     animationName: 'walk',
@@ -52,6 +55,7 @@ function cloudSprite(
     frameWidth: 256,
     frameHeight: 256,
     frameCount: 8,
+    animationFormat,
     processingVersion: 5,
   };
 }
@@ -102,6 +106,29 @@ describe('buildSpriteUploadPlan', () => {
       [cloudSprite('current-hash')],
     )).toEqual([{ kind: 'upload', candidate: archived, setCurrent: false }]);
   });
+
+  it('treats an explicit dense playback contract as distinct from identical legacy bytes', () => {
+    const dense = candidate('dense', 2, 'same-hash', 'champion', 'video-dense-v1');
+
+    expect(buildSpriteUploadPlan(
+      [dense],
+      [dense],
+      [cloudSprite('same-hash', 'champion', 'legacy')],
+      [cloudSprite('same-hash', 'champion', 'legacy')],
+    )).toEqual([{ kind: 'upload', candidate: dense, setCurrent: true }]);
+  });
+
+  it('treats corrected frame metadata as a distinct immutable interpretation', () => {
+    const corrected = candidate('corrected', 2, 'same-hash');
+    corrected.sprite.frameCount = 12;
+
+    expect(buildSpriteUploadPlan(
+      [corrected],
+      [corrected],
+      [cloudSprite('same-hash')],
+      [cloudSprite('same-hash')],
+    )).toEqual([{ kind: 'upload', candidate: corrected, setCurrent: true }]);
+  });
 });
 
 describe('buildSpriteDownloadPlan', () => {
@@ -141,6 +168,21 @@ describe('buildSpriteDownloadPlan', () => {
     const remote = { ...cloudSprite('same-hash'), id: 'remote-version' };
 
     expect(buildSpriteDownloadPlan([remote], [local], { includeRawAssets: false })).toEqual([]);
+  });
+
+  it('redownloads identical bytes when the remote playback contract changed', () => {
+    const local = candidate('remote-version', 1, 'same-hash', 'champion', 'legacy');
+    const remote = {
+      ...cloudSprite('same-hash', 'champion', 'video-dense-v1'),
+      id: 'remote-version',
+    };
+
+    expect(buildSpriteDownloadPlan([remote], [local])).toEqual([{
+      remote,
+      existing: null,
+      downloadProcessed: true,
+      downloadRaw: true,
+    }]);
   });
 });
 

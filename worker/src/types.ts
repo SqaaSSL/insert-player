@@ -1,3 +1,5 @@
+import type { SpriteAnimationFormat } from './spriteAnimationFormat';
+
 export type QualityTier = 'rookie' | 'contender' | 'champion';
 
 type OptionalCloudflareBindings = Partial<
@@ -90,6 +92,7 @@ export interface GenerationArtifactCheckpoint {
   frame_w: number | null;
   frame_h: number | null;
   frame_count: number | null;
+  animation_format: SpriteAnimationFormat;
   processing_version: number | null;
   metadata_json: string | null;
   completed_by_job_id: string;
@@ -178,6 +181,7 @@ export interface SpriteAsset {
   frame_w: number;
   frame_h: number;
   frame_count: number;
+  animation_format: SpriteAnimationFormat;
   processing_version: number;
   created_at: string;
 }

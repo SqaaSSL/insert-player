@@ -20,6 +20,10 @@ import type { QualityTier as CloudQualityTier } from './QualityTiers';
 import { debugWarn } from './DebugLog.ts';
 import { imageBlobFile } from './ImageFile.ts';
 import { finishGenerationPurchase } from './Billing.ts';
+import {
+  normalizeSpriteAnimationFormat,
+  type SpriteAnimationFormat,
+} from '../SpriteAnimationFormat.ts';
 
 export interface CloudSprite {
   id?: string;
@@ -30,6 +34,7 @@ export interface CloudSprite {
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  animationFormat?: SpriteAnimationFormat;
   processingVersion: number;
   createdAt?: string;
   contentHash?: string | null;
@@ -146,9 +151,14 @@ function spriteContentKey(
   qualityTier: CloudQualityTier,
   contentHash: string | null | undefined,
   rawContentHash: string | null | undefined,
+  animationFormat: SpriteAnimationFormat | null | undefined,
+  frameWidth: number,
+  frameHeight: number,
+  frameCount: number,
+  processingVersion: number | null | undefined,
 ): string | null {
   if (!contentHash) return null;
-  return `${spritePairKey(animationName, qualityTier)}:${contentHash}:${rawContentHash ?? ''}`;
+  return `${spritePairKey(animationName, qualityTier)}:${normalizeSpriteAnimationFormat(animationFormat)}:${frameWidth}x${frameHeight}:${frameCount}:${processingVersion ?? 0}:${contentHash}:${rawContentHash ?? ''}`;
 }
 
 export function buildSpriteUploadPlan(
@@ -180,13 +190,28 @@ export function buildSpriteUploadPlan(
         sprite.qualityTier,
         sprite.contentHash,
         sprite.rawContentHash,
+        sprite.animationFormat,
+        sprite.frameWidth,
+        sprite.frameHeight,
+        sprite.frameCount,
+        sprite.processingVersion,
       ))
       .filter((key): key is string => Boolean(key)),
   );
   const remoteCurrentByPair = new Map(
     remoteCurrent.map((sprite) => [
       spritePairKey(sprite.animationName, sprite.qualityTier),
-      spriteContentKey(sprite.animationName, sprite.qualityTier, sprite.contentHash, sprite.rawContentHash),
+      spriteContentKey(
+        sprite.animationName,
+        sprite.qualityTier,
+        sprite.contentHash,
+        sprite.rawContentHash,
+        sprite.animationFormat,
+        sprite.frameWidth,
+        sprite.frameHeight,
+        sprite.frameCount,
+        sprite.processingVersion,
+      ),
     ]),
   );
   const currentContentKeys = new Set(
@@ -195,6 +220,11 @@ export function buildSpriteUploadPlan(
       candidate.sprite.qualityTier,
       candidate.contentHash,
       candidate.rawContentHash,
+      candidate.sprite.animationFormat,
+      candidate.sprite.frameWidth,
+      candidate.sprite.frameHeight,
+      candidate.sprite.frameCount,
+      candidate.sprite.processingVersion,
     )),
   );
   const localByContent = new Map<string, FingerprintedSprite>();
@@ -204,6 +234,11 @@ export function buildSpriteUploadPlan(
       candidate.sprite.qualityTier,
       candidate.contentHash,
       candidate.rawContentHash,
+      candidate.sprite.animationFormat,
+      candidate.sprite.frameWidth,
+      candidate.sprite.frameHeight,
+      candidate.sprite.frameCount,
+      candidate.sprite.processingVersion,
     );
     if (key && !localByContent.has(key)) localByContent.set(key, candidate);
   }
@@ -220,6 +255,11 @@ export function buildSpriteUploadPlan(
       candidate.sprite.qualityTier,
       candidate.contentHash,
       candidate.rawContentHash,
+      candidate.sprite.animationFormat,
+      candidate.sprite.frameWidth,
+      candidate.sprite.frameHeight,
+      candidate.sprite.frameCount,
+      candidate.sprite.processingVersion,
     )!;
     if (remoteCurrentByPair.get(pair) === key) continue;
     actions.push(remoteVersionKeys.has(key)
@@ -246,6 +286,11 @@ export function buildSpriteDownloadPlan(
       candidate.sprite.qualityTier,
       candidate.contentHash,
       candidate.rawContentHash,
+      candidate.sprite.animationFormat,
+      candidate.sprite.frameWidth,
+      candidate.sprite.frameHeight,
+      candidate.sprite.frameCount,
+      candidate.sprite.processingVersion,
     );
     if (key && !localByContent.has(key)) localByContent.set(key, candidate);
   }
@@ -257,8 +302,30 @@ export function buildSpriteDownloadPlan(
       remote.qualityTier,
       remote.contentHash,
       remote.rawContentHash,
+      remote.animationFormat,
+      remote.frameWidth,
+      remote.frameHeight,
+      remote.frameCount,
+      remote.processingVersion,
     );
-    const candidate = (remote.id ? localByVersionId.get(remote.id) : undefined)
+    const versionCandidate = remote.id ? localByVersionId.get(remote.id) : undefined;
+    const versionCandidateKey = versionCandidate
+      ? spriteContentKey(
+          versionCandidate.sprite.animationName,
+          versionCandidate.sprite.qualityTier,
+          versionCandidate.contentHash,
+          versionCandidate.rawContentHash,
+          versionCandidate.sprite.animationFormat,
+          versionCandidate.sprite.frameWidth,
+          versionCandidate.sprite.frameHeight,
+          versionCandidate.sprite.frameCount,
+          versionCandidate.sprite.processingVersion,
+        )
+      : null;
+    const matchingVersionCandidate = versionCandidate && versionCandidateKey === remoteKey
+      ? versionCandidate
+      : undefined;
+    const candidate = matchingVersionCandidate
       ?? (remoteKey ? localByContent.get(remoteKey) : undefined)
       ?? null;
     const existing = candidate?.sprite ?? null;
@@ -419,6 +486,7 @@ async function uploadSprite(
   form.append('frameWidth', String(sprite.frameWidth));
   form.append('frameHeight', String(sprite.frameHeight));
   form.append('frameCount', String(sprite.frameCount));
+  form.append('animationFormat', normalizeSpriteAnimationFormat(sprite.animationFormat));
   form.append('processingVersion', String(sprite.processingVersion ?? 0));
   form.append('setCurrent', String(setCurrent));
   form.append('file', await imageBlobFile(sprite.pngBlob, sprite.animationName));
@@ -472,6 +540,11 @@ async function promoteSprite(
       qualityTier: candidate.sprite.qualityTier,
       contentHash: candidate.contentHash,
       rawContentHash: candidate.rawContentHash,
+      animationFormat: normalizeSpriteAnimationFormat(candidate.sprite.animationFormat),
+      frameWidth: candidate.sprite.frameWidth,
+      frameHeight: candidate.sprite.frameHeight,
+      frameCount: candidate.sprite.frameCount,
+      processingVersion: candidate.sprite.processingVersion ?? 0,
     }),
   }, context);
   if (!res.ok) {
@@ -937,6 +1010,7 @@ export async function downloadCloudFighterToLocal(
           frameWidth: sprite.frameWidth,
           frameHeight: sprite.frameHeight,
           frameCount: sprite.frameCount,
+          animationFormat: normalizeSpriteAnimationFormat(sprite.animationFormat),
           processingVersion: sprite.processingVersion,
           contentHash: sprite.contentHash ?? action.existing?.contentHash ?? null,
           rawContentHash: sprite.rawContentHash ?? action.existing?.rawContentHash ?? null,

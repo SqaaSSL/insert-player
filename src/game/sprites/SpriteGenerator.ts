@@ -1,5 +1,9 @@
 import Phaser from 'phaser';
 import { FighterState, FIGHTER_WIDTH, FIGHTER_HEIGHT } from '../constants.ts';
+import {
+  VIDEO_DENSE_SPRITE_ANIMATION_FORMAT,
+  type SpriteAnimationFormat,
+} from '../../SpriteAnimationFormat.ts';
 
 const FW = FIGHTER_WIDTH;
 const FH = FIGHTER_HEIGHT;
@@ -23,20 +27,72 @@ const STATE_FRAMES: Record<string, number> = {
   [FighterState.DEFEAT]: 2,
 };
 
-export const MAX_DENSE_HIGH_KICK_FRAMES = 12;
+export const MAX_DENSE_VIDEO_FRAMES = 12;
+export const MAX_DENSE_HIGH_KICK_FRAMES = MAX_DENSE_VIDEO_FRAMES;
 const LEGACY_HIGH_KICK_MAX_FRAMES = 7;
 
 export type SpritePlaybackMode = 'timeline' | 'forward-ping-pong';
-export type HighKickSourceFormat =
+export type SpriteSourceFormat =
   | 'timeline'
   | 'forward-keyframes'
   | 'expanded-ping-pong';
 
-export interface HighKickRuntimeProfile {
+export interface SpriteRuntimeProfile {
   frameCount: number;
   playbackMode: SpritePlaybackMode;
-  sourceFormat: HighKickSourceFormat;
+  sourceFormat: SpriteSourceFormat;
+  durationTicks?: number;
 }
+
+export type HighKickRuntimeProfile = SpriteRuntimeProfile;
+
+const FORWARD_PING_PONG_STATES = new Set<FighterState>([
+  FighterState.HIGH_PUNCH,
+  FighterState.LOW_PUNCH,
+  FighterState.HIGH_KICK,
+  FighterState.LOW_KICK,
+]);
+
+const DENSE_VIDEO_SOURCE_MIN: Partial<Record<FighterState, number>> = {
+  [FighterState.IDLE]: 8,
+  [FighterState.WALK_FORWARD]: 8,
+  [FighterState.WALK_BACKWARD]: 8,
+  [FighterState.JUMP]: 5,
+  [FighterState.CROUCH]: 5,
+  [FighterState.HIGH_PUNCH]: 6,
+  [FighterState.LOW_PUNCH]: 7,
+  [FighterState.HIGH_KICK]: 8,
+  [FighterState.LOW_KICK]: 9,
+  [FighterState.HIT_STUN]: 5,
+  [FighterState.KNOCKDOWN]: 9,
+  [FighterState.VICTORY]: 9,
+};
+
+const DENSE_VIDEO_RUNTIME_MAX: Partial<Record<FighterState, number>> = {
+  [FighterState.IDLE]: 8,
+  [FighterState.WALK_FORWARD]: 12,
+  [FighterState.WALK_BACKWARD]: 12,
+  [FighterState.JUMP]: 8,
+  [FighterState.CROUCH]: 6,
+  [FighterState.HIGH_PUNCH]: 6,
+  [FighterState.LOW_PUNCH]: 7,
+  [FighterState.HIGH_KICK]: 12,
+  [FighterState.LOW_KICK]: 9,
+  [FighterState.HIT_STUN]: 6,
+  [FighterState.KNOCKDOWN]: 12,
+  [FighterState.VICTORY]: 12,
+};
+
+const DENSE_VIDEO_DURATION_TICKS: Partial<Record<FighterState, number>> = {
+  [FighterState.IDLE]: 120,
+  [FighterState.WALK_FORWARD]: 90,
+  [FighterState.WALK_BACKWARD]: 90,
+  [FighterState.JUMP]: 48,
+  [FighterState.CROUCH]: 8,
+  [FighterState.HIT_STUN]: 14,
+  [FighterState.KNOCKDOWN]: 30,
+  [FighterState.VICTORY]: 108,
+};
 
 const STATE_ORDER: FighterState[] = [
   FighterState.IDLE,
@@ -61,6 +117,7 @@ export interface SpriteSheetLayout {
   stateRow: Record<string, number>;
   frameCounts: Record<string, number>;
   playbackModes: Partial<Record<string, SpritePlaybackMode>>;
+  durationTicks: Partial<Record<string, number>>;
   totalColumns: number;
 }
 
@@ -69,10 +126,12 @@ const registeredLayouts = new Map<string, SpriteSheetLayout>();
 export function createSpriteLayout(
   frameCountOverrides: Partial<Record<FighterState, number>> = {},
   playbackModeOverrides: Partial<Record<FighterState, SpritePlaybackMode>> = {},
+  durationTickOverrides: Partial<Record<FighterState, number>> = {},
 ): SpriteSheetLayout {
   const stateRow: Record<string, number> = {};
   const frameCounts = { ...STATE_FRAMES };
   const playbackModes: Partial<Record<string, SpritePlaybackMode>> = {};
+  const durationTicks: Partial<Record<string, number>> = {};
 
   for (const [state, frameCount] of Object.entries(frameCountOverrides)) {
     if (Number.isInteger(frameCount) && frameCount > 0) {
@@ -82,13 +141,16 @@ export function createSpriteLayout(
   for (const [state, playbackMode] of Object.entries(playbackModeOverrides)) {
     if (playbackMode) playbackModes[state] = playbackMode;
   }
+  for (const [state, duration] of Object.entries(durationTickOverrides)) {
+    if (Number.isInteger(duration) && duration > 0) durationTicks[state] = duration;
+  }
 
   let maxCols = 0;
   STATE_ORDER.forEach((state, row) => {
     stateRow[state] = row;
     maxCols = Math.max(maxCols, frameCounts[state]);
   });
-  return { stateRow, frameCounts, playbackModes, totalColumns: maxCols };
+  return { stateRow, frameCounts, playbackModes, durationTicks, totalColumns: maxCols };
 }
 
 export function getSpriteLayout(spriteKey?: string): SpriteSheetLayout {
@@ -103,43 +165,75 @@ export function registerSpriteLayout(spriteKey: string, layout: SpriteSheetLayou
   registeredLayouts.set(spriteKey, layout);
 }
 
-export function getHighKickRuntimeProfile(sourceFrameCount?: number): HighKickRuntimeProfile {
+export function getAnimationRuntimeProfile(
+  state: FighterState,
+  sourceFrameCount?: number,
+  animationFormat: SpriteAnimationFormat = 'legacy',
+): SpriteRuntimeProfile {
   if (!Number.isFinite(sourceFrameCount) || !sourceFrameCount || sourceFrameCount < 1) {
     return {
-      frameCount: STATE_FRAMES[FighterState.HIGH_KICK],
+      frameCount: STATE_FRAMES[state] ?? 1,
       playbackMode: 'timeline',
       sourceFormat: 'timeline',
     };
   }
 
   const normalizedSourceCount = Math.floor(sourceFrameCount);
-  const isExpandedPingPong = normalizedSourceCount > MAX_DENSE_HIGH_KICK_FRAMES &&
-    normalizedSourceCount <= MAX_DENSE_HIGH_KICK_FRAMES * 2 - 1 &&
+  const runtimeMax = DENSE_VIDEO_RUNTIME_MAX[state];
+  const denseSourceMin = DENSE_VIDEO_SOURCE_MIN[state];
+  const supportsForwardPingPong = FORWARD_PING_PONG_STATES.has(state);
+  const supportsDenseVideo = state === FighterState.HIGH_KICK ||
+    animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT;
+  const isExpandedPingPong = supportsDenseVideo && supportsForwardPingPong &&
+    runtimeMax !== undefined &&
+    normalizedSourceCount > runtimeMax &&
+    normalizedSourceCount <= runtimeMax * 2 - 1 &&
     normalizedSourceCount % 2 === 1;
 
   if (isExpandedPingPong) {
     return {
-      frameCount: (normalizedSourceCount + 1) / 2,
+      frameCount: Math.min((normalizedSourceCount + 1) / 2, runtimeMax ?? MAX_DENSE_VIDEO_FRAMES),
       playbackMode: 'forward-ping-pong',
       sourceFormat: 'expanded-ping-pong',
     };
   }
 
-  const frameCount = Math.min(normalizedSourceCount, MAX_DENSE_HIGH_KICK_FRAMES);
+  const isDenseVideoSource = supportsDenseVideo &&
+    runtimeMax !== undefined &&
+    denseSourceMin !== undefined &&
+    normalizedSourceCount >= denseSourceMin &&
+    normalizedSourceCount <= MAX_DENSE_VIDEO_FRAMES;
 
-  // Existing generated attacks contain their return-to-stance frames already.
-  // The dense video format stores 8-12 forward keyframes and derives recovery
-  // locally so the runtime does not duplicate those large source cells.
-  const playbackMode = normalizedSourceCount > LEGACY_HIGH_KICK_MAX_FRAMES &&
-    normalizedSourceCount <= MAX_DENSE_HIGH_KICK_FRAMES
-    ? 'forward-ping-pong'
-    : 'timeline';
+  if (isDenseVideoSource) {
+    const playbackMode = supportsForwardPingPong ? 'forward-ping-pong' : 'timeline';
+    return {
+      frameCount: Math.min(normalizedSourceCount, runtimeMax),
+      playbackMode,
+      sourceFormat: playbackMode === 'forward-ping-pong' ? 'forward-keyframes' : 'timeline',
+      durationTicks: DENSE_VIDEO_DURATION_TICKS[state],
+    };
+  }
+
+  // HIGH_KICK was the first dense-video action. Preserve its historical
+  // 4-7-cell runtime behavior while every other legacy animation keeps the
+  // original procedural target count above.
+  if (state === FighterState.HIGH_KICK && normalizedSourceCount <= LEGACY_HIGH_KICK_MAX_FRAMES) {
+    return {
+      frameCount: normalizedSourceCount,
+      playbackMode: 'timeline',
+      sourceFormat: 'timeline',
+    };
+  }
 
   return {
-    frameCount,
-    playbackMode,
-    sourceFormat: playbackMode === 'forward-ping-pong' ? 'forward-keyframes' : 'timeline',
+    frameCount: STATE_FRAMES[state] ?? 1,
+    playbackMode: 'timeline',
+    sourceFormat: 'timeline',
   };
+}
+
+export function getHighKickRuntimeProfile(sourceFrameCount?: number): HighKickRuntimeProfile {
+  return getAnimationRuntimeProfile(FighterState.HIGH_KICK, sourceFrameCount);
 }
 
 /**

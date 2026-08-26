@@ -469,18 +469,40 @@ export class Fighter {
       this.state === FighterState.IDLE ||
       this.state === FighterState.WALK_FORWARD
     ) {
-      const animSpeed = this.state === FighterState.IDLE ? 10 : 6;
-      animFrame = Math.floor(this.stateFrame / animSpeed) % maxFrames;
+      const cycleTicks = this.layout.durationTicks[this.state];
+      if (cycleTicks) {
+        animFrame = Math.min(
+          Math.floor(((this.stateFrame % cycleTicks) / cycleTicks) * maxFrames),
+          maxFrames - 1,
+        );
+      } else {
+        const animSpeed = this.state === FighterState.IDLE ? 10 : 6;
+        animFrame = Math.floor(this.stateFrame / animSpeed) % maxFrames;
+      }
     } else if (this.state === FighterState.WALK_BACKWARD) {
-      const animSpeed = 6;
-      animFrame = (maxFrames - 1) - (Math.floor(this.stateFrame / animSpeed) % maxFrames);
+      const cycleTicks = this.layout.durationTicks[this.state];
+      const forwardFrame = cycleTicks
+        ? Math.min(
+          Math.floor(((this.stateFrame % cycleTicks) / cycleTicks) * maxFrames),
+          maxFrames - 1,
+        )
+        : Math.floor(this.stateFrame / 6) % maxFrames;
+      animFrame = (maxFrames - 1) - forwardFrame;
     } else if (
       this.state === FighterState.VICTORY ||
       this.state === FighterState.DEFEAT
     ) {
-      animFrame = Math.min(Math.floor(this.stateFrame / 15), maxFrames - 1);
+      const durationTicks = this.layout.durationTicks[this.state];
+      animFrame = durationTicks
+        ? getActionAnimationFrame({
+          stateFrame: this.stateFrame,
+          frameCount: maxFrames,
+          totalDuration: durationTicks,
+          playbackMode: 'timeline',
+        })
+        : Math.min(Math.floor(this.stateFrame / 15), maxFrames - 1);
     } else {
-      const totalDuration = this.getStateDuration();
+      const totalDuration = this.layout.durationTicks[this.state] ?? this.getStateDuration();
       animFrame = getActionAnimationFrame({
         stateFrame: this.stateFrame,
         frameCount: maxFrames,

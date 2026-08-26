@@ -2150,6 +2150,8 @@ function replayMigrations() {
     '.read worker/migrations/0025_meterkey_capacity_windows.sql',
     '.read worker/migrations/0026_zero_cost_not_dispatched_events.sql',
     '.read worker/migrations/0027_immutable_arcade_experiments.sql',
+    "INSERT INTO sprites (id, fighter_id, animation_name, quality_tier, blob_key, frame_w, frame_h, frame_count, processing_version) VALUES ('legacy-current', 'f1', 'idle', 'rookie', 'legacy-current.png', 192, 256, 4, 3);",
+    '.read worker/migrations/0028_sprite_animation_format.sql',
     'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters", "arcade_generation_experiments", "arcade_generation_experiment_slots", "arcade_generation_experiment_artifacts");',
   ];
   try {
@@ -2160,6 +2162,28 @@ function replayMigrations() {
     ]);
     if (legacyCount !== '2') {
       throw new Error(`Legacy sprite archive rows were not preserved through 0006; got ${legacyCount}`);
+    }
+
+    const legacyAnimationFormatCount = runCapture('D1 sprite animation format backfill check', sqlite, [
+      dbPath,
+      "SELECT COUNT(*) FROM sprite_versions WHERE fighter_id = 'f1' AND animation_format = 'legacy';",
+    ]);
+    if (legacyAnimationFormatCount !== '2') {
+      throw new Error(`Legacy sprite versions were not backfilled with animation_format=legacy; got ${legacyAnimationFormatCount}`);
+    }
+    const legacyCurrentAnimationFormat = runCapture('D1 current sprite animation format backfill check', sqlite, [
+      dbPath,
+      "SELECT animation_format FROM sprites WHERE id = 'legacy-current';",
+    ]);
+    if (legacyCurrentAnimationFormat !== 'legacy') {
+      throw new Error(`Current sprites were not backfilled with animation_format=legacy; got ${legacyCurrentAnimationFormat}`);
+    }
+    const checkpointAnimationFormatColumn = runCapture('D1 sprite checkpoint animation format check', sqlite, [
+      dbPath,
+      "SELECT COUNT(*) FROM pragma_table_info('generation_artifact_checkpoints') WHERE name = 'animation_format' AND dflt_value = \"'legacy'\";",
+    ]);
+    if (checkpointAnimationFormatColumn !== '1') {
+      throw new Error('Durable sprite checkpoints are missing the legacy-default animation format contract');
     }
 
     const duplicateCount = runCapture('D1 sprite content index check', sqlite, [
@@ -2188,6 +2212,28 @@ function replayMigrations() {
     ]);
     if (duplicateCount !== '1') {
       throw new Error(`Sprite content unique index did not collapse duplicate uploads; got ${duplicateCount}`);
+    }
+
+
+    const distinctAnimationFormatCount = runCapture('D1 sprite animation format identity check', sqlite, [
+      dbPath,
+      `
+        INSERT INTO sprite_versions (
+          id, fighter_id, animation_name, quality_tier, blob_key, content_hash, raw_content_hash,
+          frame_w, frame_h, frame_count, processing_version, animation_format
+        ) VALUES (
+          'hashed-dense', 'f1', 'walk', 'rookie', 'hashed-dense.png', 'same-content', NULL,
+          192, 256, 4, 3, 'video-dense-v1'
+        );
+        SELECT COUNT(*) FROM sprite_versions
+        WHERE fighter_id = 'f1'
+          AND animation_name = 'walk'
+          AND quality_tier = 'rookie'
+          AND content_hash = 'same-content';
+      `,
+    ]);
+    if (distinctAnimationFormatCount !== '2') {
+      throw new Error(`Sprite animation formats did not remain distinct in immutable history; got ${distinctAnimationFormatCount}`);
     }
 
     const sourceDuplicateCount = runCapture('D1 source content index check', sqlite, [
@@ -2236,13 +2282,6 @@ function replayMigrations() {
 	               WHERE s.fighter_id = f.id
 	                 AND s.animation_name IN ('idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick', 'jump', 'crouch', 'hit', 'ko', 'victory')
 	             ) = 11) || '|';
-	        INSERT INTO sprites (
-	          id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
-	          content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
-	        ) VALUES (
-	          'community-sprite-1', 'f1', 'idle', 'rookie', 'community-sprite-1.png', NULL,
-	          'community-sprite-content', NULL, 192, 256, 4, 3
-	        );
 	        SELECT
 	          (SELECT COUNT(*) FROM fighters f
 	           WHERE f.public_flag = 1
