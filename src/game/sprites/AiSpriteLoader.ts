@@ -1,7 +1,11 @@
 import Phaser from 'phaser';
 import { FighterState, FIGHTER_WIDTH, FIGHTER_HEIGHT } from '../constants.ts';
 import { getAllSpritesForHash, type CachedSprite } from '../../services/SpriteCache.ts';
-import { getSpriteLayout } from './SpriteGenerator.ts';
+import {
+  createSpriteLayout,
+  getHighKickRuntimeProfile,
+  registerSpriteLayout,
+} from './SpriteGenerator.ts';
 import { debugInfo } from '../../services/DebugLog.ts';
 
 const ANIM_NAME_TO_STATE: Record<string, FighterState> = {
@@ -48,7 +52,23 @@ export async function loadAiSprites(
     spritesByAnim.set(s.animationName, s);
   }
 
-  const layout = getSpriteLayout();
+  const loadedAnims = new Map<string, LoadedAnimation>();
+
+  for (const [animName, sprite] of spritesByAnim) {
+    if (!ANIM_NAME_TO_STATE[animName]) continue;
+    const img = await blobToImage(sprite.pngBlob);
+    loadedAnims.set(animName, { img, sprite });
+    debugInfo(`[AiSpriteLoader] ${animName}: ${img.width}x${img.height}, frame ${sprite.frameWidth}x${sprite.frameHeight}, count ${sprite.frameCount}`);
+  }
+  if (loadedAnims.size === 0) return false;
+
+  const highKickProfile = getHighKickRuntimeProfile(
+    loadedAnims.get('high_kick')?.sprite.frameCount,
+  );
+  const layout = createSpriteLayout(
+    { [FighterState.HIGH_KICK]: highKickProfile.frameCount },
+    { [FighterState.HIGH_KICK]: highKickProfile.playbackMode },
+  );
   const cols = layout.totalColumns;
   const rows = Object.keys(layout.stateRow).length;
 
@@ -59,16 +79,6 @@ export async function loadAiSprites(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  const loadedAnims = new Map<string, LoadedAnimation>();
-
-  for (const [animName, sprite] of spritesByAnim) {
-    if (!ANIM_NAME_TO_STATE[animName]) continue;
-    const img = await blobToImage(sprite.pngBlob);
-    loadedAnims.set(animName, { img, sprite });
-    debugInfo(`[AiSpriteLoader] ${animName}: ${img.width}x${img.height}, frame ${sprite.frameWidth}x${sprite.frameHeight}, count ${sprite.frameCount}`);
-  }
-  if (loadedAnims.size === 0) return false;
 
   const stateOrder = Object.entries(layout.stateRow)
     .sort(([, a], [, b]) => a - b)
@@ -131,6 +141,7 @@ export async function loadAiSprites(
     frameWidth: FIGHTER_WIDTH,
     frameHeight: FIGHTER_HEIGHT,
   });
+  registerSpriteLayout(spriteKey, layout);
 
   return true;
 }

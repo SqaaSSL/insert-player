@@ -19,6 +19,7 @@ import {
 import type { FighterInput } from '../systems/InputManager.ts';
 import { MotionInputs } from '../systems/MotionInputs.ts';
 import { getSpriteLayout, type SpriteSheetLayout } from '../sprites/SpriteGenerator.ts';
+import { getActionAnimationFrame } from '../sprites/AnimationFrameMapping.ts';
 
 export interface FighterSnapshot {
   x: number;
@@ -67,7 +68,7 @@ export class Fighter {
     this.playerIndex = playerIndex;
     this.name = name;
     this.spriteKey = spriteKey;
-    this.layout = getSpriteLayout();
+    this.layout = getSpriteLayout(spriteKey);
     this.x = x;
     this.y = GROUND_Y;
     this.facingRight = facingRight;
@@ -480,8 +481,13 @@ export class Fighter {
       animFrame = Math.min(Math.floor(this.stateFrame / 15), maxFrames - 1);
     } else {
       const totalDuration = this.getStateDuration();
-      const framesPerAnimFrame = Math.max(1, Math.floor(totalDuration / maxFrames));
-      animFrame = Math.min(Math.floor(this.stateFrame / framesPerAnimFrame), maxFrames - 1);
+      animFrame = getActionAnimationFrame({
+        stateFrame: this.stateFrame,
+        frameCount: maxFrames,
+        totalDuration,
+        playbackMode: this.layout.playbackModes[this.state] ?? 'timeline',
+        attack: ATTACKS[this.state],
+      });
     }
 
     return row * cols + animFrame;
