@@ -369,6 +369,62 @@ describe('backend-generated asset persistence', () => {
     }
   }, 15_000);
 
+  it('archives a private video candidate without changing the current sprite on new or duplicate paths', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const base = {
+        userId: USER_ID,
+        fighterId: FIGHTER_ID,
+        tier: 'champion' as const,
+        animationName: 'high_kick',
+        frameWidth: 192,
+        frameHeight: 256,
+        frameCount: 23,
+        processingVersion: 5,
+        animationFormat: 'video-dense-v1' as const,
+      };
+      const current = await persistGeneratedSprite(env, {
+        ...base,
+        jobId: 'job-current-video-sprite',
+        bytes: png(120),
+        rawBytes: png(121),
+      });
+      const privateCandidate = await persistGeneratedSprite(env, {
+        ...base,
+        jobId: 'job-private-video-sprite',
+        bytes: png(122),
+        rawBytes: png(123),
+        setCurrent: false,
+      });
+      const privateReplay = await persistGeneratedSprite(env, {
+        ...base,
+        jobId: 'job-private-video-sprite-replay',
+        bytes: png(122),
+        rawBytes: png(123),
+        setCurrent: false,
+      });
+
+      expect(privateCandidate.versionId).not.toBe(current.versionId);
+      expect(privateReplay).toMatchObject({ reused: true, versionId: privateCandidate.versionId });
+      expect(await db.prepare(`
+        SELECT blob_key, raw_blob_key, content_hash, raw_content_hash
+        FROM sprites
+        WHERE fighter_id = ? AND animation_name = 'high_kick' AND quality_tier = 'champion'
+      `).bind(FIGHTER_ID).first()).toEqual({
+        blob_key: current.blobKey,
+        raw_blob_key: current.rawBlobKey,
+        content_hash: current.contentHash,
+        raw_content_hash: current.rawContentHash,
+      });
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM sprite_versions
+        WHERE fighter_id = ? AND animation_name = 'high_kick' AND quality_tier = 'champion'
+      `).bind(FIGHTER_ID).first<{ count: number }>())?.count).toBe(2);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
   it('restores the exact 3 source and 4 sprite checkpoints before low_punch without deleting newer versions', async () => {
     const { mf, db, bucket, env } = await bindings();
     const runId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';

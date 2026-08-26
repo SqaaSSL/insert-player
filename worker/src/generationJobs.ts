@@ -12,6 +12,7 @@ import type {
   QualityTier,
 } from './types';
 import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+import { VIDEO_SPRITE_ACTIONS } from '../../src/services/VideoSpriteCompileContract';
 import {
   generationCreationFlowAvailable,
   parseRequestedGenerationCreationFlow,
@@ -67,6 +68,14 @@ interface GenerationJobAuthorizationRow {
   resume_run_target_kind: 'animation' | 'source' | null;
   resume_run_target_name: string | null;
   resume_run_status: string | null;
+  resume_run_approved_action_count: number | null;
+  resume_job_status: string | null;
+  resume_job_review_status: string | null;
+  resume_candidate_status: string | null;
+  resume_candidate_current_revision: number | null;
+  resume_candidate_approved_revision: number | null;
+  resume_candidate_report_sha256: string | null;
+  resume_child_job_id: string | null;
 }
 
 interface GenerationJobEventRow {
@@ -99,6 +108,7 @@ interface GenerationRunSnapshot {
   completedStages: string[];
   pendingStages: string[];
   preservedArtifactCount: number;
+  continuationConsumed: boolean;
 }
 
 function serializeJob(
@@ -117,6 +127,9 @@ function serializeJob(
     artifactRunId: job.artifact_run_id,
     resumedFromJobId: job.resumed_from_job_id,
     status: job.status,
+    reviewStatus: job.review_status ?? 'none',
+    fullRunRestartRequired: job.creation_flow === 'video' &&
+      job.operation === 'fighter_generation' && run?.status === 'failed',
     stage: job.stage,
     failureStage: job.failure_stage ?? run?.failureStage ?? null,
     progressCurrent: job.progress_current,
@@ -127,7 +140,14 @@ function serializeJob(
     finishedAt: job.finished_at,
     createdAt: job.created_at,
     updatedAt: job.updated_at,
-    resumable: (job.status === 'failed' || job.status === 'cancelled') && run?.status === 'partial',
+    resumable: (
+      (job.status === 'failed' || job.status === 'cancelled') ||
+      (job.creation_flow === 'video' && job.status === 'succeeded' && job.review_status === 'approved')
+    ) && run?.status === 'partial' && (
+      job.creation_flow !== 'video' || !run.continuationConsumed
+    ) && (
+      job.creation_flow !== 'video' || run.pendingStages.length > 0
+    ),
     completedStages: run?.completedStages ?? [],
     pendingStages: run?.pendingStages ?? generationStagesForOperation(job.operation, job.target_name)
       .map((entry) => entry.key),
@@ -153,6 +173,9 @@ async function getRunSnapshot(env: Env, job: GenerationJob): Promise<GenerationR
     status: run.status,
     failureStage: run.failure_stage,
     ...await artifactProgress(env, run),
+    continuationConsumed: Boolean(await env.DB.prepare(`
+      SELECT 1 AS present FROM generation_jobs WHERE resumed_from_job_id = ? LIMIT 1
+    `).bind(job.id).first()),
   };
 }
 
@@ -380,6 +403,25 @@ export async function createGenerationJob(
     return replayExistingJob(env, auth.userId, existing);
   }
 
+  const pendingReview = await env.DB.prepare(`
+    SELECT candidate.job_id
+    FROM video_sprite_candidates candidate
+    WHERE candidate.fighter_id = ? AND candidate.user_id = ?
+      AND candidate.status = 'awaiting_review'
+    LIMIT 1
+  `).bind(fighterId, auth.userId).first<{ job_id: string }>();
+  if (pendingReview) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Review the pending video action before starting another generation; the unused reservation was released',
+      409,
+      { code: 'video_review_pending', reviewJobId: pendingReview.job_id },
+    );
+  }
+
   const authorization = await env.DB.prepare(`
     SELECT
       gc.id AS charge_id,
@@ -413,12 +455,28 @@ export async function createGenerationJob(
       resume_run.operation AS resume_run_operation,
       resume_run.target_kind AS resume_run_target_kind,
       resume_run.target_name AS resume_run_target_name,
-      resume_run.status AS resume_run_status
+      resume_run.status AS resume_run_status,
+      (SELECT COUNT(*) FROM video_sprite_candidates approved
+        WHERE approved.run_id = resume_run.id AND approved.status = 'approved')
+        AS resume_run_approved_action_count,
+      resume_job.status AS resume_job_status,
+      resume_job.review_status AS resume_job_review_status,
+      resume_candidate.status AS resume_candidate_status,
+      resume_candidate.current_revision AS resume_candidate_current_revision,
+      resume_candidate.approved_revision AS resume_candidate_approved_revision,
+      resume_revision.report_sha256 AS resume_candidate_report_sha256,
+      resume_child.id AS resume_child_job_id
     FROM generation_charges gc
     JOIN provider_sessions ps ON ps.id = ? AND ps.charge_id = gc.id AND ps.user_id = gc.user_id
     JOIN fighters f ON f.id = ? AND f.owner_user_id = gc.user_id
     LEFT JOIN arcade_fighters af ON af.fighter_id = f.id
     LEFT JOIN generation_artifact_runs resume_run ON resume_run.id = gc.continuation_run_id
+    LEFT JOIN generation_jobs resume_job ON resume_job.id = gc.resumed_from_job_id
+    LEFT JOIN video_sprite_candidates resume_candidate ON resume_candidate.job_id = resume_job.id
+    LEFT JOIN video_sprite_candidate_revisions resume_revision
+      ON resume_revision.candidate_id = resume_candidate.id
+      AND resume_revision.revision = resume_candidate.current_revision
+    LEFT JOIN generation_jobs resume_child ON resume_child.resumed_from_job_id = resume_job.id
     WHERE gc.id = ? AND gc.user_id = ?
       AND (gc.fighter_id IS NULL OR gc.fighter_id = f.id)
     LIMIT 1
@@ -444,6 +502,17 @@ export async function createGenerationJob(
     }
     return json({ error: 'Generation authorization is no longer active' }, 409);
   }
+  if (creationFlow === 'video' && authorization.charge_tier !== 'champion') {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'The review-gated video flow is currently available only for Champion fighters',
+      400,
+      { code: 'video_creation_requires_champion' },
+    );
+  }
   if (
     Date.parse(authorization.charge_expires_at) <= Date.now() ||
     Date.parse(authorization.provider_expires_at) <= Date.now()
@@ -462,7 +531,49 @@ export async function createGenerationJob(
       403,
     );
   }
+  if (creationFlow === 'video' && operation !== 'fighter_generation') {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'The review-gated video flow currently supports full fighter generation only',
+      400,
+      { code: 'video_creation_operation_unsupported' },
+    );
+  }
+  const lockedVideoRun = await env.DB.prepare(`
+    SELECT id
+    FROM generation_artifact_runs
+    WHERE fighter_id = ? AND user_id = ? AND creation_flow = 'video' AND status = 'partial'
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).bind(fighterId, auth.userId).first<{ id: string }>();
+  if (lockedVideoRun && authorization.continuation_run_id !== lockedVideoRun.id) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Continue the current review-gated video run before starting another generation',
+      409,
+      { code: 'video_run_in_progress' },
+    );
+  }
   if (authorization.continuation_run_id) {
+    const validResumeState = creationFlow === 'video'
+      ? (
+          (authorization.resume_job_status === 'failed' || authorization.resume_job_status === 'cancelled') &&
+          authorization.resume_candidate_status === null
+        ) || (
+          authorization.resume_job_status === 'succeeded' &&
+          authorization.resume_job_review_status === 'approved' &&
+          authorization.resume_candidate_status === 'approved' &&
+          authorization.resume_candidate_current_revision === authorization.resume_candidate_approved_revision &&
+          Boolean(authorization.resume_candidate_report_sha256) &&
+          (authorization.resume_run_approved_action_count ?? 0) < VIDEO_SPRITE_ACTIONS.length
+        )
+      : authorization.resume_job_status === 'failed' || authorization.resume_job_status === 'cancelled';
     const validContinuation =
       authorization.resume_run_user_id === auth.userId &&
       authorization.resume_run_fighter_id === fighterId &&
@@ -472,7 +583,14 @@ export async function createGenerationJob(
       authorization.resume_run_status === 'partial' &&
       authorization.resume_run_target_kind === targetKind &&
       authorization.resume_run_target_name === targetName &&
-      Boolean(authorization.resumed_from_job_id);
+      Boolean(authorization.resumed_from_job_id) &&
+      validResumeState &&
+      (creationFlow !== 'video' || (
+        operation === 'fighter_generation' &&
+        authorization.resume_run_operation === 'fighter_generation' &&
+        (authorization.resume_run_approved_action_count ?? 0) < VIDEO_SPRITE_ACTIONS.length
+      )) &&
+      (creationFlow !== 'video' || authorization.resume_child_job_id === null);
     if (!validContinuation) {
       return rejectReservedJob(
         env,

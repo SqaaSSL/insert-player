@@ -7,8 +7,8 @@
       "action": "idle",
       "frameCount": 24,
       "motion": "static",
-      "expectedSelectedIndices": [3, 6, 9, 11, 14, 17, 20],
-      "expectedDecision": "auto_pass"
+      "expectedSelectedIndices": [0, 3, 6, 9, 12, 15, 18, 21],
+      "expectedDecision": "technical_pass"
     },
     {
       "id": "motion-arc-prefers-distinct-punch-poses",
@@ -16,7 +16,7 @@
       "frameCount": 24,
       "motion": "arm-extension",
       "expectedSelectedIndices": [2, 6, 10, 14, 20],
-      "expectedDecision": "auto_pass"
+      "expectedDecision": "technical_pass"
     },
     {
       "id": "missing-foreground-rejects",

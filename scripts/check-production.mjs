@@ -19,11 +19,11 @@ function assertNodeVersion() {
   }
 }
 
-function run(label, command, args, cwd = root) {
+function run(label, command, args, cwd = root, envOverrides = {}) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: 'inherit',
-    env: process.env,
+    env: { ...process.env, ...envOverrides },
   });
   if (result.status !== 0) {
     throw new Error(`${label} failed with exit code ${result.status ?? 'unknown'}`);
@@ -3845,6 +3845,13 @@ run('frontend style guard', npm, ['run', 'check:frontend']);
 run('tier parity guard', node, ['scripts/check-tier-parity.mjs']);
 run('approved image-provider boundary', node, ['processor/scripts/assert-approved-image-providers.mjs']);
 run('unit tests', npm, ['test']);
+run(
+  'deterministic video sprite compiler tests',
+  npm,
+  ['--prefix', 'processor', 'run', 'test:video-sprite'],
+  root,
+  { VIDEO_SPRITE_TEST_FFMPEG: '1' },
+);
 run('processor benchmark tests', npm, ['--prefix', 'processor', 'run', 'benchmark:providers:test']);
 run('frontend typecheck', npx, ['tsc', '--noEmit']);
 run('Worker binding type drift check', npm, ['--prefix', 'worker', 'run', 'types:check']);

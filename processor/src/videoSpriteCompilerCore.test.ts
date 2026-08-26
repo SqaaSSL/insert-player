@@ -108,6 +108,27 @@ test('matches the committed deterministic selection and decision goldens', async
   }
 });
 
+test('uses video raws only for loops and reserves canonical F0 for non-loop actions', () => {
+  const width = 32;
+  const height = 48;
+  const canonical = drawSubject(width, height);
+  const frames = Array.from({ length: 24 }, (_, sourceIndex) => ({
+    ...drawSubject(width, height, { armExtension: Math.min(8, Math.floor(sourceIndex / 3)) }),
+    sourceIndex,
+  }));
+  const loop = compileVideoSpriteFrames('idle', canonical, frames);
+  const attack = compileVideoSpriteFrames('high_punch', canonical, frames);
+  assert.equal(loop.uniqueFrames.length, 8);
+  assert.ok(loop.uniqueFrames.every((frame) => frame.sourceIndex !== null));
+  assert.equal(loop.uniqueFrames[0].sourceIndex, loop.selectedVideoIndices[0]);
+  assert.equal(attack.uniqueFrames.length, 6);
+  assert.equal(attack.uniqueFrames[0].sourceIndex, null);
+  assert.deepEqual(
+    attack.uniqueFrames.slice(1).map((frame) => frame.sourceIndex),
+    attack.selectedVideoIndices,
+  );
+});
+
 test('root-registers vertical video motion with bounded integer translations', () => {
   const width = 32;
   const height = 48;

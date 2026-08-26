@@ -8,6 +8,8 @@ import {
   VIDEO_SPRITE_FRAME_WIDTH,
   VIDEO_SPRITE_POLICY_VERSION,
   VIDEO_SPRITE_PROCESSING_VERSION,
+  VIDEO_SPRITE_RAW_FRAME_HEIGHT,
+  VIDEO_SPRITE_RAW_FRAME_WIDTH,
   VIDEO_SPRITE_REPORT_SCHEMA,
   VideoSpriteCompileError,
   decodeCanonicalBytes,
@@ -19,6 +21,9 @@ import {
 import {
   VIDEO_SPRITE_GATE_POLICY,
   compileVideoSpriteFrames,
+  evaluateVideoSpriteSequence,
+  translateVideoSpriteFrame,
+  type VideoSpriteCoreCompileResult,
   type VideoSpriteRgbaFrame,
 } from './videoSpriteCompilerCore.ts';
 import {
@@ -29,6 +34,18 @@ import {
 
 function sha256(value: Uint8Array | string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+const MAX_PERSISTED_SPRITE_BYTES = 32 * 1024 * 1024;
+const MAX_REPORT_BYTES = 1024 * 1024;
+
+function assertArtifactSize(label: string, bytes: Uint8Array, maximum: number): void {
+  if (bytes.byteLength === 0 || bytes.byteLength > maximum) {
+    throw new VideoSpriteCompileError(
+      'compiled_artifact_too_large',
+      `${label} exceeds the deterministic persistence limit.`,
+    );
+  }
 }
 
 function canonicalJson(value: unknown): string {
@@ -42,17 +59,22 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value) ?? 'null';
 }
 
-async function decodeNormalizedPng(bytes: Buffer, sourceIndex: number | null): Promise<VideoSpriteRgbaFrame> {
+async function decodeNormalizedPng(
+  bytes: Buffer,
+  sourceIndex: number | null,
+  expectedWidth: number = VIDEO_SPRITE_FRAME_WIDTH,
+  expectedHeight: number = VIDEO_SPRITE_FRAME_HEIGHT,
+): Promise<VideoSpriteRgbaFrame> {
   let image;
   try {
     image = await loadImage(bytes);
   } catch {
     throw new VideoSpriteCompileError('invalid_normalized_frame', 'A normalized media frame is not a valid PNG.');
   }
-  if (image.width !== VIDEO_SPRITE_FRAME_WIDTH || image.height !== VIDEO_SPRITE_FRAME_HEIGHT) {
+  if (image.width !== expectedWidth || image.height !== expectedHeight) {
     throw new VideoSpriteCompileError(
       'invalid_normalized_dimensions',
-      `Normalized frames must be ${VIDEO_SPRITE_FRAME_WIDTH}x${VIDEO_SPRITE_FRAME_HEIGHT}.`,
+      `Normalized frames must be ${expectedWidth}x${expectedHeight}.`,
     );
   }
   const canvas = createCanvas(image.width, image.height);
@@ -105,15 +127,17 @@ async function composeSheet(frames: VideoSpriteRgbaFrame[], columns: number): Pr
 }> {
   const boundedColumns = Math.max(1, Math.min(columns, frames.length));
   const rows = Math.ceil(frames.length / boundedColumns);
-  const canvas = createCanvas(boundedColumns * VIDEO_SPRITE_FRAME_WIDTH, rows * VIDEO_SPRITE_FRAME_HEIGHT);
+  const frameWidth = frames[0]?.width ?? VIDEO_SPRITE_FRAME_WIDTH;
+  const frameHeight = frames[0]?.height ?? VIDEO_SPRITE_FRAME_HEIGHT;
+  const canvas = createCanvas(boundedColumns * frameWidth, rows * frameHeight);
   const context = canvas.getContext('2d');
   context.clearRect(0, 0, canvas.width, canvas.height);
   frames.forEach((frame, index) => {
     putFrame(
       context,
       frame,
-      (index % boundedColumns) * VIDEO_SPRITE_FRAME_WIDTH,
-      Math.floor(index / boundedColumns) * VIDEO_SPRITE_FRAME_HEIGHT,
+      (index % boundedColumns) * frameWidth,
+      Math.floor(index / boundedColumns) * frameHeight,
     );
   });
   return {
@@ -122,6 +146,27 @@ async function composeSheet(frames: VideoSpriteRgbaFrame[], columns: number): Pr
     height: canvas.height,
     columns: boundedColumns,
     rows,
+  };
+}
+
+function resizeVideoSpriteFrame(
+  frame: VideoSpriteRgbaFrame,
+  width: number,
+  height: number,
+): VideoSpriteRgbaFrame {
+  const source = createCanvas(frame.width, frame.height);
+  putFrame(source.getContext('2d'), frame, 0, 0);
+  const target = createCanvas(width, height);
+  const context = target.getContext('2d');
+  context.clearRect(0, 0, width, height);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(source, 0, 0, width, height);
+  return {
+    width,
+    height,
+    data: new Uint8ClampedArray(context.getImageData(0, 0, width, height).data),
+    sourceIndex: frame.sourceIndex,
   };
 }
 
@@ -203,21 +248,87 @@ export async function compileExtractedVideoSprite(
     decodeNormalizedPng(media.canonicalPng, null),
     ...media.videoFramePngs.map((bytes, index) => decodeNormalizedPng(bytes, index)),
   ]);
-  let compiled;
+  let compiled: VideoSpriteCoreCompileResult;
   try {
-    compiled = compileVideoSpriteFrames(request.action, canonical, videoFrames);
+    compiled = compileVideoSpriteFrames(
+      request.action,
+      canonical,
+      videoFrames,
+      request.selectedVideoIndices,
+    );
   } catch (error) {
     throw new VideoSpriteCompileError(
       'frame_compilation_failed',
       error instanceof Error ? error.message : 'Video frame compilation failed.',
     );
   }
-  const [runtimeSheet, uniqueSheet, contactSheet, uniqueFramePngs] = await Promise.all([
-    composeSheet(compiled.playbackFrames, 8),
-    composeSheet(compiled.uniqueFrames, 8),
+  const archivalMedia = await media.extractArchival(compiled.selectedVideoIndices);
+  const archivalCanonical = await decodeNormalizedPng(
+    archivalMedia.canonicalPng,
+    null,
+    VIDEO_SPRITE_RAW_FRAME_WIDTH,
+    VIDEO_SPRITE_RAW_FRAME_HEIGHT,
+  );
+  const archivalVideoFrames = await Promise.all(archivalMedia.selectedVideoFramePngs.map((bytes, index) => (
+    decodeNormalizedPng(
+      bytes,
+      compiled.selectedVideoIndices[index],
+      VIDEO_SPRITE_RAW_FRAME_WIDTH,
+      VIDEO_SPRITE_RAW_FRAME_HEIGHT,
+    )
+  )));
+  const archivalSources = compiled.profile.sequenceFormat === 'loop'
+    ? archivalVideoFrames
+    : [archivalCanonical, ...archivalVideoFrames];
+  if (archivalSources.length !== compiled.uniqueFrames.length) {
+    throw new VideoSpriteCompileError(
+      'archival_source_count_mismatch',
+      'Archival source count does not match the deterministic unique-frame contract.',
+    );
+  }
+  const archivalUniqueFrames = archivalSources.map((frame, index) => {
+    const translation = compiled.translations[index];
+    return translateVideoSpriteFrame(frame, translation.dx * 4, translation.dy * 4);
+  });
+  const runtimeCanonical = resizeVideoSpriteFrame(
+    archivalCanonical,
+    VIDEO_SPRITE_FRAME_WIDTH,
+    VIDEO_SPRITE_FRAME_HEIGHT,
+  );
+  const runtimeRegistrationSources = archivalSources.map((frame) => (
+    resizeVideoSpriteFrame(frame, VIDEO_SPRITE_FRAME_WIDTH, VIDEO_SPRITE_FRAME_HEIGHT)
+  ));
+  const runtimeUniqueFrames = archivalUniqueFrames.map((frame) => (
+    resizeVideoSpriteFrame(frame, VIDEO_SPRITE_FRAME_WIDTH, VIDEO_SPRITE_FRAME_HEIGHT)
+  ));
+  const emittedEvaluation = evaluateVideoSpriteSequence(
+    compiled.profile,
+    runtimeCanonical,
+    runtimeUniqueFrames,
+    compiled.translations,
+    runtimeRegistrationSources,
+  );
+  compiled = {
+    ...compiled,
+    uniqueFrames: runtimeUniqueFrames,
+    playbackFrames: compiled.playback.map((index) => runtimeUniqueFrames[index]),
+    ...emittedEvaluation,
+  };
+  const runtimePlaybackFrames = compiled.playback.map((index) => runtimeUniqueFrames[index]);
+  const [runtimeSheet, rawSheet, uniqueSheet, contactSheet, uniqueFramePngs] = await Promise.all([
+    composeSheet(runtimePlaybackFrames, 8),
+    composeSheet(archivalUniqueFrames, 4),
+    composeSheet(runtimeUniqueFrames, 8),
     composeContactSheet(videoFrames),
-    Promise.all(compiled.uniqueFrames.map(encodeFrame)),
+    Promise.all(archivalUniqueFrames.map(encodeFrame)),
   ]);
+  assertArtifactSize('Runtime sprite sheet', runtimeSheet.bytes, MAX_PERSISTED_SPRITE_BYTES);
+  assertArtifactSize('Raw unique-frame sheet', rawSheet.bytes, MAX_PERSISTED_SPRITE_BYTES);
+  assertArtifactSize('Runtime unique-frame sheet', uniqueSheet.bytes, MAX_PERSISTED_SPRITE_BYTES);
+  assertArtifactSize('All-frames contact sheet', contactSheet.bytes, MAX_PERSISTED_SPRITE_BYTES);
+  for (const bytes of uniqueFramePngs) {
+    assertArtifactSize('Raw unique frame', bytes, MAX_PERSISTED_SPRITE_BYTES);
+  }
   const profile = VIDEO_SPRITE_ACTION_PROFILES[request.action];
   const decisionPolicySha256 = sha256(canonicalJson({
     policyVersion: VIDEO_SPRITE_POLICY_VERSION,
@@ -244,6 +355,9 @@ export async function compileExtractedVideoSprite(
     },
     contract: {
       sequenceFormat: profile.sequenceFormat,
+      frameSourceContract: profile.sequenceFormat === 'loop'
+        ? 'video-raw-only'
+        : 'canonical-f0-plus-video',
       uniqueFrameCount: profile.uniqueFrameCount,
       playbackFrameCount: compiled.playback.length,
       playback: compiled.playback,
@@ -257,19 +371,25 @@ export async function compileExtractedVideoSprite(
       pixelCleanup: 'transparent-rgb-zero+translucent-green-despill-v1',
       decodedFrameCount: videoFrames.length,
       selectedVideoIndices: compiled.selectedVideoIndices,
-      selectionAlgorithm: 'cumulative-motion-quantiles-v1',
+      selectionAlgorithm: request.selectedVideoIndices
+        ? 'operator-selected-indices-v1'
+        : 'cumulative-motion-quantiles-v2',
+      operatorAdjustmentApplied: Boolean(request.selectedVideoIndices),
       selectedTimeMs: compiled.selectedVideoIndices.map((index) => (
         Math.round(index * 1000 / media.toolchain.sampleFps)
       )),
       frameTranslations: compiled.translations,
       registrationAlgorithm: 'alpha-root-integer-v1',
-      canonicalDerivedF0: true,
+      canonicalDerivedF0: profile.sequenceFormat !== 'loop',
       normalizedFramePngSha256: media.videoFramePngs.map((bytes) => sha256(bytes)),
       uniqueFrameArtifacts: uniqueFramePngs.map((bytes, uniqueIndex) => ({
         uniqueIndex,
-        sourceVideoIndex: uniqueIndex === 0 ? null : compiled.selectedVideoIndices[uniqueIndex - 1],
+        sourceVideoIndex: profile.sequenceFormat === 'loop'
+          ? compiled.selectedVideoIndices[uniqueIndex]
+          : uniqueIndex === 0 ? null : compiled.selectedVideoIndices[uniqueIndex - 1],
         pngSha256: sha256(bytes),
-        pixelSha256: compiled.selectedMetrics[uniqueIndex].pixelSha256,
+        runtimePixelSha256: compiled.selectedMetrics[uniqueIndex].pixelSha256,
+        archivalPngSha256: sha256(bytes),
         sizeBytes: bytes.byteLength,
       })),
     },
@@ -310,6 +430,17 @@ export async function compileExtractedVideoSprite(
         columns: uniqueSheet.columns,
         rows: uniqueSheet.rows,
       },
+      rawUniqueFramesSheet: {
+        sha256: sha256(rawSheet.bytes),
+        sizeBytes: rawSheet.bytes.byteLength,
+        width: rawSheet.width,
+        height: rawSheet.height,
+        columns: rawSheet.columns,
+        rows: rawSheet.rows,
+        frameWidth: VIDEO_SPRITE_RAW_FRAME_WIDTH,
+        frameHeight: VIDEO_SPRITE_RAW_FRAME_HEIGHT,
+        frameCount: archivalUniqueFrames.length,
+      },
       allFramesContactSheet: {
         sha256: sha256(contactSheet.bytes),
         sizeBytes: contactSheet.bytes.byteLength,
@@ -326,6 +457,11 @@ export async function compileExtractedVideoSprite(
     ...reportWithoutHash,
     reportSha256: sha256(canonicalJson(reportWithoutHash)),
   };
+  assertArtifactSize(
+    'Compiler report',
+    Buffer.from(canonicalJson(report)),
+    MAX_REPORT_BYTES,
+  );
   return {
     schemaVersion: 1,
     animationFormat: VIDEO_SPRITE_ANIMATION_FORMAT,
@@ -334,6 +470,10 @@ export async function compileExtractedVideoSprite(
     frameH: VIDEO_SPRITE_FRAME_HEIGHT,
     frameCount: compiled.playback.length,
     spriteBase64: runtimeSheet.bytes.toString('base64'),
+    rawBase64: rawSheet.bytes.toString('base64'),
+    rawFrameW: VIDEO_SPRITE_RAW_FRAME_WIDTH,
+    rawFrameH: VIDEO_SPRITE_RAW_FRAME_HEIGHT,
+    rawFrameCount: archivalUniqueFrames.length,
     allFramesContactSheetBase64: contactSheet.bytes.toString('base64'),
     uniqueFramesSheetBase64: uniqueSheet.bytes.toString('base64'),
     report,

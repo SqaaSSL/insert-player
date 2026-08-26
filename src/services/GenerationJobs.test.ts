@@ -23,6 +23,8 @@ const JOB: GenerationJob = {
   artifactRunId: '11111111111111111111111111111111',
   resumedFromJobId: null,
   status: 'queued',
+  reviewStatus: 'none',
+  fullRunRestartRequired: false,
   stage: 'queued',
   failureStage: null,
   progressCurrent: 0,

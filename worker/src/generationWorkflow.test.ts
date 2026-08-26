@@ -22,9 +22,98 @@ import {
   FighterGenerationWorkflow,
   nonRetryableProcessorProviderMessage,
 } from './generationWorkflow';
+import {
+  downloadPixcliAuditAsset,
+  isTerminalVideoProviderFailure,
+  parsePixcliVideoSubmissionResponse,
+} from './videoSpriteWorkflow';
 import type { Env, GenerationJob } from './types';
 
 describe('generation workflow processor failure policy', () => {
+  it.each([
+    'Pinned PixCLI video job terminated as failed',
+    'Pinned PixCLI video response is terminal and cannot be replayed safely: provider_request_outcome_unknown',
+    'Pinned PixCLI video response is terminal and cannot be replayed safely: submission returned HTTP 422',
+    'Pinned PixCLI video response is terminal and cannot be replayed safely: submission returned an unusable HTTP 200 payload',
+    'Pinned completed PixCLI video audit is terminal and cannot be replayed safely: PixCLI audit JSON hash changed after Canva validation',
+    'Pinned completed PixCLI video audit is terminal and cannot be replayed safely: Video compiler report contract is invalid',
+  ])('classifies an immutable PixCLI response as terminal: %s', (message) => {
+    expect(isTerminalVideoProviderFailure(message)).toBe(true);
+  });
+
+  it('keeps transport failures with no received PixCLI response resumable', () => {
+    expect(isTerminalVideoProviderFailure('fetch failed before receiving a response')).toBe(false);
+    expect(isTerminalVideoProviderFailure('PixCLI audit asset abc failed with HTTP 503')).toBe(false);
+    expect(isTerminalVideoProviderFailure('Video compiler rejected the provider asset (503)')).toBe(false);
+  });
+
+  it('terminalizes an immutable completed-audit size mismatch but keeps network I/O resumable', async () => {
+    const env = {
+      ENVIRONMENT: 'development',
+      GENERATION_API_BASE_URL: 'https://insert-player.example',
+      GENERATION_JOB_SIGNING_SECRET: 'test-generation-signing-secret',
+    } as unknown as Env;
+    const job = {
+      id: 'a'.repeat(32),
+      user_id: 'user-1',
+      provider_session_id: 'b'.repeat(32),
+    } as GenerationJob;
+    const asset = {
+      hash: 'c'.repeat(32),
+      contentSha256: null,
+      sizeBytes: 99,
+      mimeType: 'video/mp4' as const,
+    };
+    const bytes = new Uint8Array(12);
+    bytes.set(new TextEncoder().encode('ftyp'), 4);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(bytes, {
+      status: 200,
+      headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(bytes.byteLength) },
+    })));
+    const immutableFailure = await downloadPixcliAuditAsset(
+      env, job, 'run:test:sprite:idle', asset,
+    ).then(() => null, (error: unknown) => error instanceof Error ? error : new Error(String(error)));
+    expect(immutableFailure).not.toBeNull();
+    expect(isTerminalVideoProviderFailure(immutableFailure!.message)).toBe(true);
+
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network unavailable')));
+    const transientFailure = await downloadPixcliAuditAsset(
+      env, job, 'run:test:sprite:idle', asset,
+    ).then(() => null, (error: unknown) => error instanceof Error ? error : new Error(String(error)));
+    expect(transientFailure).not.toBeNull();
+    expect(isTerminalVideoProviderFailure(transientFailure!.message)).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    [422, JSON.stringify({ code: 'provider_content_blocked' })],
+    [500, JSON.stringify({ error: 'upstream failed' })],
+    [409, JSON.stringify({ code: 'provider_request_outcome_unknown' })],
+    [200, '{invalid-json'],
+    [200, JSON.stringify({ unexpected: 'shape' })],
+  ])('terminalizes a cached/unusable advanced response (%s)', async (status, body) => {
+    const response = new Response(body, {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const failure = await parsePixcliVideoSubmissionResponse(response).then(
+      () => null,
+      (error: unknown) => error instanceof Error ? error : new Error(String(error)),
+    );
+    expect(failure).not.toBeNull();
+    expect(isTerminalVideoProviderFailure(failure!.message)).toBe(true);
+  });
+
+  it('keeps an explicitly not-dispatched advanced request resumable', async () => {
+    const response = Response.json({ code: 'provider_request_not_dispatched' }, { status: 503 });
+    const failure = await parsePixcliVideoSubmissionResponse(response).then(
+      () => null,
+      (error: unknown) => error instanceof Error ? error : new Error(String(error)),
+    );
+    expect(failure).not.toBeNull();
+    expect(isTerminalVideoProviderFailure(failure!.message)).toBe(false);
+  });
+
   it.each([
     'provider_request_not_dispatched',
     'provider_request_outcome_unknown',

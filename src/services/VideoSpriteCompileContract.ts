@@ -3,9 +3,11 @@ export const VIDEO_SPRITE_REPORT_SCHEMA = 'video-sprite-compile-report.v1' as co
 export const VIDEO_SPRITE_COMPILER_VERSION = '1.0.0' as const;
 export const VIDEO_SPRITE_POLICY_VERSION = 'video-sprite-policy.v1' as const;
 export const VIDEO_SPRITE_ANIMATION_FORMAT = 'video-dense-v1' as const;
-export const VIDEO_SPRITE_PROCESSING_VERSION = 6 as const;
+export const VIDEO_SPRITE_PROCESSING_VERSION = 5 as const;
 export const VIDEO_SPRITE_FRAME_WIDTH = 192 as const;
 export const VIDEO_SPRITE_FRAME_HEIGHT = 256 as const;
+export const VIDEO_SPRITE_RAW_FRAME_WIDTH = 768 as const;
+export const VIDEO_SPRITE_RAW_FRAME_HEIGHT = 1024 as const;
 export const VIDEO_SPRITE_SAMPLE_FPS = 24 as const;
 
 export const VIDEO_SPRITE_ACTIONS = [
@@ -16,7 +18,8 @@ export const VIDEO_SPRITE_ACTIONS = [
 export type VideoSpriteAction = typeof VIDEO_SPRITE_ACTIONS[number];
 export type VideoSpriteSequenceFormat = 'loop' | 'forward-ping-pong' | 'timeline-hold';
 export type VideoSpriteFacing = 'left' | 'right';
-export type VideoSpriteDecision = 'auto_pass' | 'needs_review' | 'reject';
+/** A technical gate result only. No outcome authorizes semantic promotion. */
+export type VideoSpriteDecision = 'technical_pass' | 'needs_review' | 'reject';
 
 export interface VideoSpriteActionProfile {
   action: VideoSpriteAction;
@@ -120,6 +123,8 @@ export interface VideoSpriteCompileRequest {
   expectedFacing: VideoSpriteFacing;
   videoBase64: string;
   canonicalFrameBase64: string;
+  /** Optional human-authored re-curation from the same decoded MP4. */
+  selectedVideoIndices?: number[];
   lineage?: VideoSpriteLineage;
 }
 
@@ -131,6 +136,10 @@ export interface VideoSpriteCompileResponse {
   frameH: typeof VIDEO_SPRITE_FRAME_HEIGHT;
   frameCount: number;
   spriteBase64: string;
+  rawBase64: string;
+  rawFrameW: typeof VIDEO_SPRITE_RAW_FRAME_WIDTH;
+  rawFrameH: typeof VIDEO_SPRITE_RAW_FRAME_HEIGHT;
+  rawFrameCount: number;
   allFramesContactSheetBase64: string;
   uniqueFramesSheetBase64: string;
   report: {

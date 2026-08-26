@@ -39,17 +39,23 @@ test('runs the real bounded FFmpeg adapter end to end', {
       videoPath,
     ]);
     const video = await readFile(videoPath);
-    const result = await compileVideoSprite({
+    const request = {
       schemaVersion: 1,
       action: 'high_punch',
       expectedFacing: 'right',
       videoBase64: video.toString('base64'),
       canonicalFrameBase64: canonical.toString('base64'),
-    });
+    } as const;
+    const result = await compileVideoSprite(request);
+    const repeated = await compileVideoSprite(request);
     assert.equal(result.frameCount, 11);
     assert.equal(result.animationFormat, 'video-dense-v1');
+    assert.equal(result.rawFrameW, 768);
+    assert.equal(result.rawFrameH, 1024);
+    assert.equal(result.rawFrameCount, 6);
     assert.match(result.report.reportSha256, /^[a-f0-9]{64}$/);
     assert.notEqual(result.report.decision.outcome, 'reject');
+    assert.deepEqual(repeated, result);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

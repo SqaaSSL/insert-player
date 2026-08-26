@@ -373,27 +373,41 @@ function chooseStrictIndices(cumulative: number[], targets: number[], minimumInd
 export function selectVideoSpriteFrames(
   frames: VideoSpriteRgbaFrame[],
   profile: VideoSpriteActionProfile,
+  selectedVideoIndices?: number[],
 ): { indices: number[]; metrics: VideoSpriteFrameMetrics[]; transitions: VideoSpriteTransitionMetrics[] } {
-  const needed = profile.uniqueFrameCount - 1;
-  if (frames.length < needed + 1) {
-    throw new Error(`Action ${profile.action} needs at least ${needed + 1} decoded video frames.`);
+  const rawOnlyLoop = profile.sequenceFormat === 'loop';
+  const needed = rawOnlyLoop ? profile.uniqueFrameCount : profile.uniqueFrameCount - 1;
+  const minimumFrames = rawOnlyLoop ? needed : needed + 1;
+  if (frames.length < minimumFrames) {
+    throw new Error(`Action ${profile.action} needs at least ${minimumFrames} decoded video frames.`);
   }
   const metrics = frames.map(measureVideoSpriteFrame);
   const transitions = frames.slice(1).map((frame, index) => (
     measureVideoSpriteTransition(frames[index], frame, metrics[index], metrics[index + 1])
   ));
+  if (selectedVideoIndices) {
+    if (
+      selectedVideoIndices.length !== needed ||
+      selectedVideoIndices.some((index, position) => (
+        !Number.isSafeInteger(index) || index < 0 || index >= frames.length ||
+        (position > 0 && index <= selectedVideoIndices[position - 1])
+      ))
+    ) {
+      throw new Error(`Action ${profile.action} received an invalid explicit frame selection.`);
+    }
+    return { indices: [...selectedVideoIndices], metrics, transitions };
+  }
   const cumulative = [0];
   for (const transition of transitions) {
     cumulative.push(cumulative[cumulative.length - 1] + transition.motionScore);
   }
   const total = cumulative[cumulative.length - 1];
-  const minimumIndex = frames.length > needed ? 1 : 0;
+  const minimumIndex = rawOnlyLoop ? 0 : frames.length > needed ? 1 : 0;
   if (total <= 0.000_001) {
     const temporal = frames.map((_, index) => index);
-    const denominator = profile.sequenceFormat === 'loop' ? profile.uniqueFrameCount : needed;
     const targets = Array.from({ length: needed }, (_, index) => (
-      profile.sequenceFormat === 'loop'
-        ? (index + 1) * (frames.length - 1) / denominator
+      rawOnlyLoop
+        ? index * frames.length / profile.uniqueFrameCount
         : (index + 1) * (frames.length - 1) / needed
     ));
     return {
@@ -403,8 +417,8 @@ export function selectVideoSpriteFrames(
     };
   }
   const targets = Array.from({ length: needed }, (_, index) => (
-    profile.sequenceFormat === 'loop'
-      ? total * (index + 1) / profile.uniqueFrameCount
+    rawOnlyLoop
+      ? total * index / profile.uniqueFrameCount
       : total * (index + 1) / needed
   ));
   return {
@@ -503,6 +517,7 @@ function buildGates(
   sequence: VideoSpriteCoreCompileResult['sequenceMetrics'],
   width: number,
   height: number,
+  registrationMetrics: VideoSpriteFrameMetrics[] = metrics,
 ): VideoSpriteGate[] {
   const noForeground = frameEvidence(metrics, (metric) => (
     metric.alphaAreaRatio < VIDEO_SPRITE_GATE_POLICY.minimumAlphaAreaRatio
@@ -534,7 +549,7 @@ function buildGates(
     Math.min(metric.margins.left, metric.margins.right, metric.margins.top, metric.margins.bottom) <
       VIDEO_SPRITE_GATE_POLICY.minimumSafeMarginRatio
   )));
-  const registrationWouldCrop = metrics.flatMap((metric, index) => {
+  const registrationWouldCrop = registrationMetrics.flatMap((metric, index) => {
     const bounds = metric.bounds;
     const translation = translations[index];
     if (!bounds || !translation) return [];
@@ -598,27 +613,29 @@ function buildGates(
   ];
 }
 
-export function compileVideoSpriteFrames(
-  action: keyof typeof VIDEO_SPRITE_ACTION_PROFILES,
+export interface VideoSpriteSequenceEvaluation {
+  selectedMetrics: VideoSpriteFrameMetrics[];
+  selectedTransitions: VideoSpriteTransitionMetrics[];
+  sequenceMetrics: VideoSpriteCoreCompileResult['sequenceMetrics'];
+  gates: VideoSpriteGate[];
+  decision: VideoSpriteDecision;
+  reasonCodes: string[];
+}
+
+export function evaluateVideoSpriteSequence(
+  profile: VideoSpriteActionProfile,
   canonical: VideoSpriteRgbaFrame,
-  videoFrames: VideoSpriteRgbaFrame[],
-): VideoSpriteCoreCompileResult {
+  uniqueFrames: VideoSpriteRgbaFrame[],
+  translations: Array<{ dx: number; dy: number }>,
+  registrationSourceFrames: VideoSpriteRgbaFrame[] = uniqueFrames,
+): VideoSpriteSequenceEvaluation {
+  if (uniqueFrames.length !== profile.uniqueFrameCount || translations.length !== uniqueFrames.length) {
+    throw new Error('Evaluated video sprite frames do not match the action profile.');
+  }
   assertFrame(canonical);
-  for (const frame of videoFrames) assertFrame(frame, canonical);
-  const profile = VIDEO_SPRITE_ACTION_PROFILES[action];
-  const selection = selectVideoSpriteFrames(videoFrames, profile);
-  const selectedSources = [canonical, ...selection.indices.map((index) => videoFrames[index])];
-  const sourceSelectedMetrics = selectedSources.map(measureVideoSpriteFrame);
-  const anchor = sourceSelectedMetrics[0];
-  const translations = sourceSelectedMetrics.map((metric, index) => (
-    index === 0
-      ? { dx: 0, dy: 0 }
-      : registrationTranslation(anchor, metric, canonical.width, canonical.height, profile.registration)
-  ));
-  const uniqueFrames = selectedSources.map((frame, index) => (
-    translateVideoSpriteFrame(frame, translations[index].dx, translations[index].dy)
-  ));
+  for (const frame of [...uniqueFrames, ...registrationSourceFrames]) assertFrame(frame, canonical);
   const selectedMetrics = uniqueFrames.map(measureVideoSpriteFrame);
+  const registrationMetrics = registrationSourceFrames.map(measureVideoSpriteFrame);
   const selectedTransitions = uniqueFrames.slice(1).map((frame, index) => (
     measureVideoSpriteTransition(uniqueFrames[index], frame, selectedMetrics[index], selectedMetrics[index + 1])
   ));
@@ -638,13 +655,16 @@ export function compileVideoSpriteFrames(
       selectedMetrics[0],
     )
     : null;
-  const facingConsistencyScores = uniqueFrames.slice(1).map((frame, index) => {
+  const canonicalMetric = measureVideoSpriteFrame(canonical);
+  const facingCandidates = profile.sequenceFormat === 'loop' ? uniqueFrames : uniqueFrames.slice(1);
+  const facingConsistencyScores = facingCandidates.map((frame) => {
+    const frameMetric = measureVideoSpriteFrame(frame);
     const normalDifference = measureVideoSpriteTransition(
-      uniqueFrames[0], frame, selectedMetrics[0], selectedMetrics[index + 1],
+      canonical, frame, canonicalMetric, frameMetric,
     ).motionScore;
     const mirrored = mirrorVideoSpriteFrame(frame);
     const mirroredDifference = measureVideoSpriteTransition(
-      uniqueFrames[0], mirrored, selectedMetrics[0], measureVideoSpriteFrame(mirrored),
+      canonical, mirrored, canonicalMetric, measureVideoSpriteFrame(mirrored),
     ).motionScore;
     return round(mirroredDifference - normalDifference);
   });
@@ -652,7 +672,7 @@ export function compileVideoSpriteFrames(
     score < VIDEO_SPRITE_GATE_POLICY.suspectedFacingFlipScore
   )).length;
   const sequenceMetrics = {
-    totalMotion: round(selection.transitions.reduce((sum, transition) => sum + transition.motionScore, 0)),
+    totalMotion: round(selectedTransitions.reduce((sum, transition) => sum + transition.motionScore, 0)),
     maximumMotionStep: round(maximum(motionSteps)),
     medianMotionStep: round(median(motionSteps)),
     maximumScaleStepRatio: round(maximum(scaleSteps)),
@@ -670,17 +690,59 @@ export function compileVideoSpriteFrames(
   };
   const gates = buildGates(
     profile,
-    sourceSelectedMetrics,
+    selectedMetrics,
     translations,
     sequenceMetrics,
     canonical.width,
     canonical.height,
+    registrationMetrics,
   );
   const hardFailures = gates.filter((entry) => entry.severity === 'hard' && !entry.passed);
   const reviewFailures = gates.filter((entry) => entry.severity === 'review' && !entry.passed);
   const decision: VideoSpriteDecision = hardFailures.length > 0
     ? 'reject'
-    : reviewFailures.length > 0 ? 'needs_review' : 'auto_pass';
+    : reviewFailures.length > 0 ? 'needs_review' : 'technical_pass';
+  return {
+    selectedMetrics,
+    selectedTransitions,
+    sequenceMetrics,
+    gates,
+    decision,
+    reasonCodes: gates.filter((entry) => !entry.passed).map((entry) => entry.code),
+  };
+}
+
+export function compileVideoSpriteFrames(
+  action: keyof typeof VIDEO_SPRITE_ACTION_PROFILES,
+  canonical: VideoSpriteRgbaFrame,
+  videoFrames: VideoSpriteRgbaFrame[],
+  selectedVideoIndices?: number[],
+): VideoSpriteCoreCompileResult {
+  assertFrame(canonical);
+  for (const frame of videoFrames) assertFrame(frame, canonical);
+  const profile = VIDEO_SPRITE_ACTION_PROFILES[action];
+  const selection = selectVideoSpriteFrames(videoFrames, profile, selectedVideoIndices);
+  const rawOnlyLoop = profile.sequenceFormat === 'loop';
+  const selectedSources = rawOnlyLoop
+    ? selection.indices.map((index) => videoFrames[index])
+    : [canonical, ...selection.indices.map((index) => videoFrames[index])];
+  const canonicalMetric = measureVideoSpriteFrame(canonical);
+  const sourceSelectedMetrics = selectedSources.map(measureVideoSpriteFrame);
+  const translations = sourceSelectedMetrics.map((metric, index) => (
+    !rawOnlyLoop && index === 0
+      ? { dx: 0, dy: 0 }
+      : registrationTranslation(canonicalMetric, metric, canonical.width, canonical.height, profile.registration)
+  ));
+  const uniqueFrames = selectedSources.map((frame, index) => (
+    translateVideoSpriteFrame(frame, translations[index].dx, translations[index].dy)
+  ));
+  const evaluation = evaluateVideoSpriteSequence(
+    profile,
+    canonical,
+    uniqueFrames,
+    translations,
+    selectedSources,
+  );
   const playback = buildVideoSpritePlayback(profile.uniqueFrameCount, profile.sequenceFormat);
   return {
     profile,
@@ -690,12 +752,12 @@ export function compileVideoSpriteFrames(
     uniqueFrames,
     playbackFrames: playback.map((index) => uniqueFrames[index]),
     sourceMetrics: selection.metrics,
-    selectedMetrics,
+    selectedMetrics: evaluation.selectedMetrics,
     sourceTransitions: selection.transitions,
-    selectedTransitions,
-    sequenceMetrics,
-    gates,
-    decision,
-    reasonCodes: gates.filter((entry) => !entry.passed).map((entry) => entry.code),
+    selectedTransitions: evaluation.selectedTransitions,
+    sequenceMetrics: evaluation.sequenceMetrics,
+    gates: evaluation.gates,
+    decision: evaluation.decision,
+    reasonCodes: evaluation.reasonCodes,
   };
 }

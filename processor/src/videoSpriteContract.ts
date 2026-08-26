@@ -1,5 +1,6 @@
 import {
   VIDEO_SPRITE_ACTIONS,
+  VIDEO_SPRITE_ACTION_PROFILES,
   VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
   type VideoSpriteAction,
   type VideoSpriteCompileRequest,
@@ -90,12 +91,35 @@ export function parseVideoSpriteCompileRequest(value: unknown): VideoSpriteCompi
   // after the validated request crosses the internal service boundary.
   decodeStrictBase64(value.videoBase64, 'videoBase64', MAX_VIDEO_BYTES);
   decodeStrictBase64(value.canonicalFrameBase64, 'canonicalFrameBase64', MAX_CANONICAL_BYTES);
+  const profile = VIDEO_SPRITE_ACTION_PROFILES[value.action as VideoSpriteAction];
+  const expectedSelectionCount = profile.sequenceFormat === 'loop'
+    ? profile.uniqueFrameCount
+    : profile.uniqueFrameCount - 1;
+  let selectedVideoIndices: number[] | undefined;
+  if (value.selectedVideoIndices !== undefined) {
+    if (
+      !Array.isArray(value.selectedVideoIndices) ||
+      value.selectedVideoIndices.length !== expectedSelectionCount ||
+      value.selectedVideoIndices.some((index, position) => (
+        !Number.isSafeInteger(index) || index < 0 || index > 143 ||
+        (position > 0 && index <= (value.selectedVideoIndices as number[])[position - 1])
+      ))
+    ) {
+      throw new VideoSpriteCompileError(
+        'invalid_frame_selection',
+        `selectedVideoIndices must contain ${expectedSelectionCount} strictly increasing decoded-frame indices.`,
+        400,
+      );
+    }
+    selectedVideoIndices = [...value.selectedVideoIndices] as number[];
+  }
   return {
     schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
     action: value.action as VideoSpriteAction,
     expectedFacing,
     videoBase64: value.videoBase64 as string,
     canonicalFrameBase64: value.canonicalFrameBase64 as string,
+    selectedVideoIndices,
     lineage: parseLineage(value.lineage),
   };
 }

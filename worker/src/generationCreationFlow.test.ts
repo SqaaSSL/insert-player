@@ -12,16 +12,16 @@ describe('generation creation flow rollout contract', () => {
     expect(generationCreationFlowAvailable('original')).toBe(true);
   });
 
-  it('recognizes video but keeps it fail-closed until its Workflow lands', () => {
+  it('recognizes video after its additive Workflow lands', () => {
     expect(parseRequestedGenerationCreationFlow('video')).toBe('video');
-    expect(generationCreationFlowAvailable('video')).toBe(false);
+    expect(generationCreationFlowAvailable('video')).toBe(true);
   });
 
   it('rejects unknown values instead of coercing them to original', () => {
     expect(parseRequestedGenerationCreationFlow('classic')).toBeNull();
   });
 
-  it('fails closed at authorization until the video Workflow is deployed', async () => {
+  it('fails closed for anonymous video authorization before reserving anything', async () => {
     const auth = { userId: null, rateLimitKey: 'test', user: null, claims: null } satisfies PublicAuthContext;
     const env = {} as Env;
     const response = await authorizeGenerationPurchase(new Request('https://api.example.test/api/billing/generation', {
@@ -30,7 +30,7 @@ describe('generation creation flow rollout contract', () => {
       body: JSON.stringify({ tier: 'rookie', operation: 'fighter_generation', creationFlow: 'video' }),
     }), env, auth);
 
-    expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ code: 'generation_creation_flow_unavailable' });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({ code: 'video_creation_requires_sign_in' });
   });
 });

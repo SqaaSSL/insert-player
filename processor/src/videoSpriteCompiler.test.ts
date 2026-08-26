@@ -25,6 +25,13 @@ async function framePng(armExtension: number, y = 46): Promise<Buffer> {
   return canvas.encode('png');
 }
 
+async function archivalPng(bytes: Buffer): Promise<Buffer> {
+  const image = await loadImage(bytes);
+  const canvas = createCanvas(768, 1024);
+  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.encode('png');
+}
+
 function mp4Fixture(): Buffer {
   return Buffer.concat([
     Buffer.from([0, 0, 0, 24]),
@@ -38,6 +45,7 @@ async function syntheticAdapter(videoSize: number): Promise<VideoSpriteMediaAdap
   const videoFramePngs = await Promise.all(Array.from({ length: 24 }, (_, index) => (
     framePng(Math.min(52, Math.floor(index / 2) * 5))
   )));
+  const archivalCanonicalPng = await archivalPng(canonicalPng);
   return {
     async extract() {
       return {
@@ -59,6 +67,14 @@ async function syntheticAdapter(videoSize: number): Promise<VideoSpriteMediaAdap
         },
         canonicalPng,
         videoFramePngs,
+        async extractArchival(selectedVideoIndices) {
+          return {
+            canonicalPng: archivalCanonicalPng,
+            selectedVideoFramePngs: await Promise.all(
+              selectedVideoIndices.map((index) => archivalPng(videoFramePngs[index])),
+            ),
+          };
+        },
       };
     },
   };
@@ -91,10 +107,13 @@ test('compiles an extracted video into a reproducible dense sheet and hash-bound
   const first = await compileVideoSprite(body, { mediaAdapter });
   const second = await compileVideoSprite(body, { mediaAdapter });
   assert.equal(first.animationFormat, 'video-dense-v1');
-  assert.equal(first.processingVersion, 6);
+  assert.equal(first.processingVersion, 5);
   assert.equal(first.frameW, 192);
   assert.equal(first.frameH, 256);
   assert.equal(first.frameCount, 11);
+  assert.equal(first.rawFrameW, 768);
+  assert.equal(first.rawFrameH, 1024);
+  assert.equal(first.rawFrameCount, 6);
   assert.equal(first.spriteBase64, second.spriteBase64);
   assert.equal(first.report.reportSha256, second.report.reportSha256);
   assert.deepEqual(first.report, second.report);
@@ -102,8 +121,14 @@ test('compiles an extracted video into a reproducible dense sheet and hash-bound
   const sprite = await loadImage(Buffer.from(first.spriteBase64, 'base64'));
   assert.equal(sprite.width, 1536);
   assert.equal(sprite.height, 512);
+  const raw = await loadImage(Buffer.from(first.rawBase64, 'base64'));
+  assert.equal(raw.width, 3072);
+  assert.equal(raw.height, 2048);
+  assert.equal((first.report.artifacts as {
+    rawUniqueFramesSheet: { sha256: string; width: number; height: number };
+  }).rawUniqueFramesSheet.sha256, sha256(Buffer.from(first.rawBase64, 'base64')));
   const decision = first.report.decision as { outcome: string; semanticPromotionApproved: boolean };
-  assert.ok(['auto_pass', 'needs_review', 'reject'].includes(decision.outcome));
+  assert.ok(['technical_pass', 'needs_review', 'reject'].includes(decision.outcome));
   assert.equal(decision.semanticPromotionApproved, false);
   assert.deepEqual(first.report.manualReviewLimitations, [
     'identity_equivalence',

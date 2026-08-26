@@ -344,8 +344,42 @@ async function authorizeGenerationContinuation(
       run.operation AS run_operation
     FROM generation_jobs gj
     JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+    LEFT JOIN video_sprite_candidates candidate ON candidate.job_id = gj.id
+    LEFT JOIN video_sprite_candidate_revisions revision
+      ON revision.candidate_id = candidate.id
+      AND revision.revision = candidate.current_revision
     WHERE gj.id = ? AND gj.user_id = ?
-      AND gj.status IN ('failed', 'cancelled')
+      AND (
+        (
+          gj.status IN ('failed', 'cancelled')
+          AND (
+            gj.creation_flow <> 'video' OR
+            (SELECT COUNT(*) FROM video_sprite_candidates approved
+              WHERE approved.run_id = run.id AND approved.status = 'approved') < 11
+          )
+        )
+        OR (
+          gj.status = 'succeeded'
+          AND gj.creation_flow = 'video'
+          AND gj.review_status = 'approved'
+          AND candidate.status = 'approved'
+          AND candidate.approved_revision = candidate.current_revision
+          AND revision.report_sha256 IS NOT NULL
+          AND (SELECT COUNT(*) FROM video_sprite_candidates approved
+            WHERE approved.run_id = run.id AND approved.status = 'approved') < 11
+          AND NOT EXISTS (
+            SELECT 1 FROM video_sprite_candidates pending
+            WHERE pending.run_id = run.id AND pending.status = 'awaiting_review'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM generation_jobs child
+            WHERE child.resumed_from_job_id = gj.id
+          )
+        )
+      )
+      AND (gj.creation_flow <> 'video' OR (
+        gj.operation = 'fighter_generation' AND run.operation = 'fighter_generation'
+      ))
       AND run.status = 'partial'
       AND EXISTS (
         SELECT 1
@@ -874,6 +908,24 @@ export async function authorizeGenerationPurchase(
       code: 'generation_creation_flow_unavailable',
     }, 503);
   }
+  if (creationFlow === 'video' && !auth.user) {
+    return json({
+      error: 'Video fighter generation requires a signed-in account',
+      code: 'video_creation_requires_sign_in',
+    }, 401);
+  }
+  if (creationFlow === 'video' && tier !== 'champion') {
+    return json({
+      error: 'The review-gated video flow is currently available only for Champion fighters',
+      code: 'video_creation_requires_champion',
+    }, 400);
+  }
+  if (creationFlow === 'video' && operation !== 'fighter_generation') {
+    return json({
+      error: 'The review-gated video flow currently supports full fighter generation only',
+      code: 'video_creation_operation_unsupported',
+    }, 400);
+  }
   const requiredCredits = generationCreditCost(tier, operation);
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) return json({ error: 'Current generation consent is required' }, 428);
@@ -918,6 +970,53 @@ export async function authorizeGenerationPurchase(
   if (isResponse(ownedFighterId)) return ownedFighterId;
   if (operation !== 'fighter_generation' && !ownedFighterId) {
     return json({ error: 'This operation requires an owned fighter' }, 400);
+  }
+  if (ownedFighterId) {
+    const pendingReview = await env.DB.prepare(`
+      SELECT candidate.job_id
+      FROM video_sprite_candidates candidate
+      WHERE candidate.fighter_id = ? AND candidate.user_id = ?
+        AND candidate.status = 'awaiting_review'
+      LIMIT 1
+    `).bind(ownedFighterId, auth.user.id).first<{ job_id: string }>();
+    if (pendingReview) {
+      return json({
+        error: 'Review the pending video action before starting another generation',
+        code: 'video_review_pending',
+        reviewJobId: pendingReview.job_id,
+      }, 409);
+    }
+    const partialVideoRun = await env.DB.prepare(`
+      SELECT run.id,
+        EXISTS (
+          SELECT 1 FROM generation_jobs resumable_job
+          WHERE resumable_job.id = ? AND resumable_job.artifact_run_id = run.id
+            AND (
+              resumable_job.status IN ('failed', 'cancelled')
+              OR EXISTS (
+                SELECT 1 FROM video_sprite_candidates candidate
+                WHERE candidate.job_id = resumable_job.id
+                  AND candidate.status IN ('approved', 'rejected')
+              )
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM generation_jobs child
+              WHERE child.resumed_from_job_id = resumable_job.id
+            )
+        ) AS exact_resume
+      FROM generation_artifact_runs run
+      WHERE run.fighter_id = ? AND run.user_id = ?
+        AND run.creation_flow = 'video' AND run.status = 'partial'
+      ORDER BY run.updated_at DESC
+      LIMIT 1
+    `).bind(resumeJobId || null, ownedFighterId, auth.user.id)
+      .first<{ id: string; exact_resume: number }>();
+    if (partialVideoRun && partialVideoRun.exact_resume !== 1) {
+      return json({
+        error: 'Continue the current review-gated video run before starting another generation',
+        code: 'video_run_in_progress',
+      }, 409);
+    }
   }
   if (resumeJobId) {
     if (!ownedFighterId) return json({ error: 'A continuation requires an owned fighter' }, 400);

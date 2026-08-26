@@ -5,6 +5,8 @@ import { basename, join } from 'node:path';
 import {
   VIDEO_SPRITE_FRAME_HEIGHT,
   VIDEO_SPRITE_FRAME_WIDTH,
+  VIDEO_SPRITE_RAW_FRAME_HEIGHT,
+  VIDEO_SPRITE_RAW_FRAME_WIDTH,
   VIDEO_SPRITE_SAMPLE_FPS,
   VideoSpriteCompileError,
 } from './videoSpriteContract.ts';
@@ -44,6 +46,10 @@ export interface VideoSpriteExtractedMedia {
   toolchain: VideoSpriteMediaToolchain;
   canonicalPng: Buffer;
   videoFramePngs: Buffer[];
+  extractArchival(selectedVideoIndices: number[]): Promise<{
+    canonicalPng: Buffer;
+    selectedVideoFramePngs: Buffer[];
+  }>;
 }
 
 export interface VideoSpriteMediaAdapter {
@@ -180,6 +186,18 @@ async function mediaVersion(run: MediaCommandRunner, binary: string): Promise<st
   return firstLine.slice(0, 240);
 }
 
+function requireApprovedMediaVersion(binary: 'ffmpeg' | 'ffprobe', actual: string): void {
+  const approved = process.env.VIDEO_SPRITE_APPROVED_FFMPEG_VERSION?.trim();
+  if (!approved) return;
+  if (!actual.startsWith(`${binary} version ${approved} `)) {
+    throw new VideoSpriteCompileError(
+      'unapproved_media_toolchain',
+      `${binary} does not match the processing-version-5 approved toolchain.`,
+      503,
+    );
+  }
+}
+
 function normalizedStillArgs(input: string, output: string): string[] {
   return [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
@@ -188,6 +206,28 @@ function normalizedStillArgs(input: string, output: string): string[] {
     '-vf', VIDEO_SPRITE_NORMALIZE_FILTER,
     '-frames:v', '1', '-compression_level', '9', output,
   ];
+}
+
+const VIDEO_SPRITE_ARCHIVAL_FILTER = [
+  'chromakey=0x00FF00:0.20:0.08',
+  'format=rgba',
+  `scale=${VIDEO_SPRITE_RAW_FRAME_WIDTH}:${VIDEO_SPRITE_RAW_FRAME_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos`,
+  `pad=${VIDEO_SPRITE_RAW_FRAME_WIDTH}:${VIDEO_SPRITE_RAW_FRAME_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`,
+].join(',');
+
+function archivalStillArgs(input: string, output: string): string[] {
+  return [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-threads', '1', '-filter_threads', '1', '-i', input,
+    '-map', '0:v:0', '-an', '-sn', '-dn',
+    '-vf', VIDEO_SPRITE_ARCHIVAL_FILTER,
+    '-frames:v', '1', '-compression_level', '9', output,
+  ];
+}
+
+function selectedFrameFilter(indices: number[]): string {
+  const expression = indices.map((index) => `eq(n\\,${index})`).join('+');
+  return `fps=${VIDEO_SPRITE_SAMPLE_FPS},select=${expression},${VIDEO_SPRITE_ARCHIVAL_FILTER}`;
 }
 
 export function createFfmpegVideoSpriteMediaAdapter(options: {
@@ -220,6 +260,8 @@ export function createFfmpegVideoSpriteMediaAdapter(options: {
             '-of', 'json', videoPath,
           ]),
         ]);
+        requireApprovedMediaVersion('ffmpeg', ffmpegVersion);
+        requireApprovedMediaVersion('ffprobe', ffprobeVersion);
         let probeDocument: unknown;
         try {
           probeDocument = JSON.parse(probeResult.stdout);
@@ -257,6 +299,61 @@ export function createFfmpegVideoSpriteMediaAdapter(options: {
           },
           canonicalPng,
           videoFramePngs,
+          async extractArchival(selectedVideoIndices) {
+            if (
+              selectedVideoIndices.length === 0 ||
+              selectedVideoIndices.some((index, position) => (
+                !Number.isSafeInteger(index) || index < 0 || index >= frameNames.length ||
+                (position > 0 && index <= selectedVideoIndices[position - 1])
+              ))
+            ) {
+              throw new VideoSpriteCompileError(
+                'invalid_archival_selection',
+                'Archival frame indices must be strictly increasing decoded-frame indices.',
+              );
+            }
+            const archivalDir = await mkdtemp(join(tmpdir(), 'insert-player-video-sprite-raw-'));
+            try {
+              const archivalVideoPath = join(archivalDir, 'input.mp4');
+              const archivalCanonicalInputPath = join(archivalDir, 'canonical-input');
+              const archivalCanonicalOutputPath = join(archivalDir, 'canonical.png');
+              const selectedDir = join(archivalDir, 'selected');
+              await mkdir(selectedDir, { mode: 0o700 });
+              await Promise.all([
+                writeFile(archivalVideoPath, videoBytes, { mode: 0o600 }),
+                writeFile(archivalCanonicalInputPath, canonicalBytes, { mode: 0o600 }),
+              ]);
+              await run(ffmpegBinary, archivalStillArgs(
+                archivalCanonicalInputPath,
+                archivalCanonicalOutputPath,
+              ));
+              await run(ffmpegBinary, [
+                '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+                '-threads', '1', '-filter_threads', '1', '-i', archivalVideoPath,
+                '-map', '0:v:0', '-an', '-sn', '-dn',
+                '-vf', selectedFrameFilter(selectedVideoIndices),
+                '-frames:v', String(selectedVideoIndices.length),
+                '-fps_mode', 'vfr', '-compression_level', '9',
+                join(selectedDir, 'frame-%04d.png'),
+              ]);
+              const selectedNames = (await readdir(selectedDir))
+                .filter((name) => /^frame-\d{4}\.png$/.test(name))
+                .sort();
+              if (selectedNames.length !== selectedVideoIndices.length) {
+                throw new VideoSpriteCompileError(
+                  'archival_frame_count_mismatch',
+                  'FFmpeg did not reproduce every selected frame at archival resolution.',
+                );
+              }
+              const [archivalCanonicalPng, ...selectedVideoFramePngs] = await Promise.all([
+                readFile(archivalCanonicalOutputPath),
+                ...selectedNames.map((name) => readFile(join(selectedDir, name))),
+              ]);
+              return { canonicalPng: archivalCanonicalPng, selectedVideoFramePngs };
+            } finally {
+              await rm(archivalDir, { recursive: true, force: true });
+            }
+          },
         };
       } finally {
         await rm(workDir, { recursive: true, force: true });

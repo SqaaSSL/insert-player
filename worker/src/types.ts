@@ -17,6 +17,7 @@ export interface Env extends OptionalCloudflareBindings {
 }
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type GenerationJobReviewStatus = 'none' | 'awaiting_review' | 'approved' | 'rejected';
 export type GenerationJobOperation =
   | 'fighter_generation'
   | 'fighter_upgrade'
@@ -38,6 +39,7 @@ export interface GenerationJob {
   artifact_run_id: string | null;
   resumed_from_job_id: string | null;
   status: GenerationJobStatus;
+  review_status?: GenerationJobReviewStatus;
   stage: string;
   failure_stage: string | null;
   progress_current: number;
