@@ -459,6 +459,10 @@ function serializeCommunityFighter(
     },
     sprites: sprites.map((sprite) => ({
       ...serializeSprite(request, sprite),
+      // Processed bytes are already public through this URL. Publishing their
+      // digest gives clients an immutable cache identity without exposing the
+      // private archival/raw asset or its digest.
+      contentHash: sprite.content_hash,
       url: publicSpriteAssetUrl(request, fighter.id, sprite),
       rawUrl: null,
     })),

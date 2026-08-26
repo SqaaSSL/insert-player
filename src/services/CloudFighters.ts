@@ -322,7 +322,12 @@ export function buildSpriteDownloadPlan(
           versionCandidate.sprite.processingVersion,
         )
       : null;
-    const matchingVersionCandidate = versionCandidate && versionCandidateKey === remoteKey
+    // Older public Arcade payloads did not expose content hashes. In that
+    // shape both keys are null, which is not proof that the locally cached
+    // bytes still match a promoted version whose id is intentionally stable.
+    // Fail toward one fresh processed download until the hashed payload is
+    // observed rather than pinning stale gameplay art indefinitely.
+    const matchingVersionCandidate = versionCandidate && remoteKey && versionCandidateKey === remoteKey
       ? versionCandidate
       : undefined;
     const candidate = matchingVersionCandidate

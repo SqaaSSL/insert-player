@@ -184,6 +184,24 @@ describe('buildSpriteDownloadPlan', () => {
       downloadRaw: true,
     }]);
   });
+
+  it('redownloads a public version with no content hash instead of trusting its stable id', () => {
+    const local = candidate('remote-version', 1, 'old-hash');
+    const remote = {
+      ...cloudSprite('ignored-hash'),
+      id: 'remote-version',
+      contentHash: null,
+      rawContentHash: null,
+      rawUrl: null,
+    };
+
+    expect(buildSpriteDownloadPlan([remote], [local])).toEqual([{
+      remote,
+      existing: null,
+      downloadProcessed: true,
+      downloadRaw: false,
+    }]);
+  });
 });
 
 describe('official Arcade cache identity', () => {

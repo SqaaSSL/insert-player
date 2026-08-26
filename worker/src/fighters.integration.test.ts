@@ -506,13 +506,16 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         ...animationNames.map((animationName, index) => db.prepare(`
           INSERT INTO sprites (
             id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+            content_hash, raw_content_hash,
             frame_w, frame_h, frame_count, processing_version
-          ) VALUES (?, 'fighter-target', ?, 'contender', ?, ?, 256, 256, 8, 4)
+          ) VALUES (?, 'fighter-target', ?, 'contender', ?, ?, ?, ?, 256, 256, 8, 4)
         `).bind(
           `sprite-public-${index}`,
           animationName,
           `users/user-target/fighters/fighter-target/sprites/${animationName}.png`,
           `users/user-target/fighters/fighter-target/sprites/${animationName}-raw.png`,
+          `public-content-${index}`,
+          `private-raw-content-${index}`,
         )),
       ]);
       await Promise.all([
@@ -548,6 +551,8 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect(idleSprite?.url).toContain(
         '/public-assets/fighters/fighter-target/sprites/sprite-public-0/idle.png',
       );
+      expect(idleSprite?.contentHash).toBe('public-content-0');
+      expect(idleSprite).not.toHaveProperty('rawContentHash');
       expect(JSON.stringify(fighter)).not.toContain('/assets/users/');
       expect(JSON.stringify(fighter)).not.toContain('user-target');
 
