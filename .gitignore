@@ -39,6 +39,9 @@ worker/.prod.vars
 .arcade-high-kick-xai-video-elon-canary-state.json
 .arcade-high-kick-xai-video-elon-canary-state.json.lock
 .arcade-xai-elon-video-canonical-upload-state.json
+.arcade-high-kick-xai-video-trump-v2-canary-state.json
+.arcade-high-kick-xai-video-trump-v2-canary-state.json.lock
+.arcade-xai-trump-profile-v4-video-v2-canonical-upload-state.json
 .arcade-qa-milei-high-punch-f4-xai-state.json
 .arcade-qa-high-punch-f4-upload-state.json
 .arcade-qa-milei-canonical-upload-state.json

@@ -1,5 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   XAI_TRUMP_PROFILE_EXPERIMENT_ID,
   XAI_TRUMP_PROFILE_MAX_COST_USD,
@@ -11,6 +13,19 @@ import {
 } from './arcade-side-xai-trump-profile-canary.mjs';
 
 const manifest = JSON.parse(readFileSync(new URL('../arcade/roster-2026.json', import.meta.url), 'utf8'));
+const temporaryDirectories = [];
+
+function freshStatePath() {
+  const directory = mkdtempSync(join(tmpdir(), 'insert-player-trump-profile-test-'));
+  temporaryDirectories.push(directory);
+  return join(directory, 'state.json');
+}
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 describe('XAI Trump strict-profile canary', () => {
   it('seals identity after pose and requires a vertical strict screen-right profile', () => {
@@ -73,6 +88,7 @@ describe('XAI Trump strict-profile canary', () => {
       apiBase: 'https://pixcli.example',
       fetchImpl,
       maxCostUsd: XAI_TRUMP_PROFILE_MAX_COST_USD,
+      statePath: freshStatePath(),
     })).rejects.toThrow(/contract changed/i);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
@@ -91,6 +107,7 @@ describe('XAI Trump strict-profile canary', () => {
       apiBase: 'https://pixcli.example',
       fetchImpl,
       maxCostUsd: XAI_TRUMP_PROFILE_MAX_COST_USD,
+      statePath: freshStatePath(),
     })).rejects.toThrow(/contract changed/i);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
