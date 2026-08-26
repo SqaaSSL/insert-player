@@ -2,6 +2,7 @@ import {
   GeminiRequestError,
   isApprovedGeminiImageModel,
 } from '../../src/services/GeminiRequestPolicy.ts';
+import { VideoSpriteCompileError } from './videoSpriteContract.ts';
 
 export interface ProcessorErrorResponse {
   status: number;
@@ -35,6 +36,16 @@ function dailyQuotaRetrySeconds(error: GeminiRequestError): number {
 }
 
 export function processorErrorResponse(error: unknown): ProcessorErrorResponse {
+  if (error instanceof VideoSpriteCompileError) {
+    return {
+      status: error.status,
+      body: {
+        error: error.message,
+        code: error.code,
+      },
+    };
+  }
+
   if (
     error instanceof GeminiRequestError &&
     error.code !== null &&
