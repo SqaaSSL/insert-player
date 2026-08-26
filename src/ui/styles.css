@@ -1488,6 +1488,107 @@
     @apply min-h-[92px];
   }
 
+  .video-review {
+    @apply flex flex-col gap-4 rounded-[6px] border-[2px] border-asf-violet bg-asf-panel p-5
+           shadow-[inset_0_0_0_1px_rgba(123,61,255,0.28),_0_12px_32px_rgba(0,0,0,0.48)];
+  }
+
+  .video-review__header {
+    @apply flex flex-wrap items-start justify-between gap-3;
+  }
+
+  .video-review__header h3 {
+    @apply mt-2 text-[14px] tracking-[0.16em] uppercase text-asf-gold;
+  }
+
+  .video-review__status {
+    @apply rounded-[3px] border border-asf-violet px-2 py-1.5 text-[8px] tracking-[0.14em]
+           uppercase text-asf-text;
+  }
+
+  .video-review__status.is-approved {
+    @apply border-asf-ok text-asf-ok;
+  }
+
+  .video-review__status.is-rejected {
+    @apply border-asf-red text-asf-red;
+  }
+
+  .video-review__intro,
+  .video-review__findings,
+  .video-review__figure figcaption,
+  .video-review__form small {
+    @apply font-sans text-[12px] normal-case leading-[1.55] text-asf-muted;
+  }
+
+  .video-review__figure {
+    @apply m-0 overflow-hidden rounded-[4px] border-[2px] border-[rgba(255,206,58,0.28)]
+           bg-asf-bg-1;
+  }
+
+  .video-review__figure img {
+    @apply block h-auto max-h-[560px] w-full object-contain;
+  }
+
+  .video-review__figure video {
+    @apply block aspect-video max-h-[560px] w-full bg-black object-contain;
+  }
+
+  .video-review__figure figcaption {
+    @apply border-t border-[rgba(255,206,58,0.28)] px-3 py-2;
+  }
+
+  .video-review__findings {
+    @apply rounded-[4px] border border-asf-warn bg-[rgba(255,178,26,0.08)] p-3;
+  }
+
+  .video-review__findings.is-clear {
+    @apply border-asf-ok bg-[rgba(46,204,113,0.08)] text-asf-ok;
+  }
+
+  .video-review__findings strong,
+  .video-review__form label {
+    @apply text-[9px] font-normal tracking-[0.16em] uppercase text-asf-gold-bright;
+  }
+
+  .video-review__findings ul {
+    @apply mt-2 list-disc space-y-1 pl-5;
+  }
+
+  .video-review__form {
+    @apply flex flex-col gap-2;
+  }
+
+  .video-review__form input {
+    @apply min-h-11 min-w-0 rounded-[4px] border-[2px] border-asf-gold-deep bg-asf-bg-1
+           px-3 py-2 font-sans text-[14px] text-asf-text hover:border-asf-gold
+           focus:border-asf-gold focus:outline-none disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .video-review__error {
+    @apply font-sans text-[12px] leading-[1.5] text-asf-red;
+  }
+
+  .video-review__actions {
+    @apply mt-2 flex flex-wrap gap-2;
+  }
+
+  .video-review__actions button,
+  .video-review__actions a {
+    @apply inline-flex min-h-11 cursor-pointer items-center justify-center rounded-[4px] border-[2px]
+           border-asf-gold-deep px-3 py-2 text-center text-[9px] tracking-[0.14em] uppercase
+           text-asf-gold transition-colors hover:border-asf-gold hover:text-asf-gold-bright
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .video-review__actions button:first-child {
+    @apply border-asf-ok text-asf-ok;
+  }
+
+  .video-review__actions .is-danger {
+    @apply border-asf-red text-asf-red;
+  }
+
   .turnstile-challenge {
     @apply flex min-h-[70px] w-full flex-col items-center justify-center gap-2;
   }
@@ -1547,6 +1648,9 @@
   .gallery-tab:focus-visible,
   .tier-picker__option:focus-visible,
   .creation-flow-picker__radio:focus-visible,
+  .video-review__form input:focus-visible,
+  .video-review__actions button:focus-visible,
+  .video-review__actions a:focus-visible,
   .create-form__field input:focus-visible,
   .community-report-form select:focus-visible,
   .community-report-form textarea:focus-visible,

@@ -30,7 +30,7 @@ const FLOW_OPTIONS: ReadonlyArray<{
     id: 'video',
     label: 'Video',
     badge: 'Experimental',
-    description: 'Generate motion clips, then turn them into dense frame sequences. The selected tier price still applies.',
+    description: 'Generate one motion clip at a time and review its dense frame sequence before continuing. The price shown for this operation still applies.',
   },
 ];
 

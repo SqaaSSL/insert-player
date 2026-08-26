@@ -20,6 +20,7 @@ import { DebugFeed } from '../components/DebugFeed.tsx';
 import { PipelineProgress } from '../components/PipelineProgress.tsx';
 import { TurnstileChallenge } from '../components/TurnstileChallenge.tsx';
 import { GenerationConsent } from '../components/LegalConsent.tsx';
+import { VideoGenerationReviewGate } from '../components/VideoGenerationReviewGate.tsx';
 import {
   CreationFlowPicker,
   type CreationFlow,
@@ -131,6 +132,11 @@ function stageToPercent(status: PipelineStatus): number | null {
 
 function describeDurableJob(job: GenerationJob): string {
   if (job.status === 'queued') return 'Queued safely in the cloud...';
+  if (job.creationFlow === 'video' && job.status === 'succeeded') {
+    if (job.reviewStatus === 'awaiting_review') return 'Video ready. Paused safely for your review.';
+    if (job.reviewStatus === 'approved' && job.resumable) return 'Action approved. Continue when ready.';
+    if (job.reviewStatus === 'rejected') return 'Video rejected. No additional action was generated.';
+  }
   if (job.status === 'succeeded') return 'Generation complete. Syncing this device...';
   if (job.status === 'failed' || job.status === 'cancelled') {
     return job.errorMessage ?? 'Generation stopped; review the job details or contact support.';
@@ -169,6 +175,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
   const [resumableJob, setResumableJob] = useState<GenerationJob | null>(null);
+  const [videoReviewJob, setVideoReviewJob] = useState<GenerationJob | null>(null);
   const [recoveryReady, setRecoveryReady] = useState(authStatus !== 'signed-in');
   const pollingAbortRef = useRef<AbortController | null>(null);
   const lockPaidTiers = paidTiersLocked(authStatus);
@@ -211,6 +218,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   useEffect(() => {
     if (authStatus !== 'signed-in') {
       setResumableJob(null);
+      setVideoReviewJob(null);
       setRecoveryReady(true);
       return;
     }
@@ -230,12 +238,28 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
           job.operation === 'fighter_generation' &&
           (job.status === 'queued' || job.status === 'running')
         ));
+        const videoReview = jobs.find((job) => (
+          job.operation === 'fighter_generation' &&
+          job.creationFlow === 'video' &&
+          (
+            job.fullRunRestartRequired ||
+            (
+              job.status === 'succeeded' &&
+              (
+                job.reviewStatus === 'awaiting_review' ||
+                job.reviewStatus === 'rejected' ||
+                (job.reviewStatus === 'approved' && job.resumable)
+              )
+            )
+          )
+        ));
         const resumable = jobs.find((job) => (
           job.operation === 'fighter_generation' && job.resumable
         ));
-        const recovering = active ?? resumable;
+        const recovering = active ?? videoReview ?? resumable;
         if (!recovering) {
           setResumableJob(null);
+          setVideoReviewJob(null);
           setRecoveryReady(true);
           return;
         }
@@ -258,7 +282,25 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
         setStarted(true);
         setDone(false);
         applyDurableJob(recovering);
+        if (!active && videoReview) {
+          setVideoReviewJob(videoReview);
+          setResumableJob(null);
+          setError(null);
+          setRunning(false);
+          setStageText(
+            videoReview.fullRunRestartRequired
+              ? 'The previous run ended safely. Start a new complete Video run when you are ready.'
+              : videoReview.reviewStatus === 'awaiting_review'
+              ? 'Generation paused safely for your review.'
+              : videoReview.reviewStatus === 'rejected'
+                ? 'The rejected run is archived. Start a new complete Video run when you are ready.'
+                : 'Approved. Continue when you are ready for the next action.',
+          );
+          setRecoveryReady(true);
+          return;
+        }
         if (!active && resumable) {
+          setVideoReviewJob(null);
           setResumableJob(recovering);
           setError(
             `${recovering.errorMessage ?? 'Generation paused.'} ` +
@@ -269,6 +311,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
           return;
         }
         setResumableJob(null);
+        setVideoReviewJob(null);
         setRunning(true);
         setError(null);
         const completed = await monitorDurableJob(recovering, apiContext, controller.signal);
@@ -378,6 +421,13 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     if (job.status !== 'succeeded') {
       throw new Error(job.errorMessage ?? 'Generation stopped; review the job details or contact support.');
     }
+    if (job.creationFlow === 'video' && job.reviewStatus === 'awaiting_review') {
+      setVideoReviewJob(job);
+      setResumableJob(null);
+      setStageText('Generation paused safely. Review the private video and proposed frames.');
+      setGenerating(new Set());
+      return;
+    }
     setStageText('Generation complete. Downloading your private fighter...');
     const fighter = await getCloudFighter(job.fighterId, apiContext);
     if (!fighter?.photoHash) throw new Error('Completed fighter could not be loaded from the cloud');
@@ -390,6 +440,140 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     setDone(true);
     setGenerating(new Set());
     setStageText('All sprites generated, private, and synced!');
+  }
+
+  async function finishApprovedVideoFighter(fighterId: string): Promise<void> {
+    const apiContext = captureApiRequestContext();
+    setStageText('All actions approved. Downloading your private fighter...');
+    const fighter = await getCloudFighter(fighterId, apiContext);
+    if (!fighter?.photoHash) throw new Error('Approved fighter could not be loaded from the cloud');
+    await downloadCloudFighterToLocal(fighter, apiContext);
+    setName(fighter.name);
+    setTier(fighter.qualityTier);
+    setPhotoHash(fighter.photoHash);
+    await refreshFromCache(fighter.photoHash);
+    setVideoReviewJob(null);
+    setPercent(1);
+    setDone(true);
+    setGenerating(new Set());
+    setStageText('All video actions approved, private, and synced!');
+  }
+
+  async function continueApprovedVideoJob(approvedJob: GenerationJob): Promise<void> {
+    if (running) return;
+    setRunning(true);
+    setError(null);
+    setStageText('Preparing the next video action without charging more credits...');
+    const apiContext = captureApiRequestContext();
+    let purchaseId: string | undefined;
+    let backendOwnsPurchase = false;
+    try {
+      const authorization = await authorizeGeneration(
+        approvedJob.tier,
+        approvedJob.operation,
+        approvedJob.fighterId,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+        approvedJob.id,
+        'video',
+      );
+      if (
+        !authorization.authorized || authorization.mode !== 'continuation' ||
+        !authorization.purchaseId || !authorization.providerSessionId
+      ) {
+        throw new Error(authorization.error ?? 'The next video action could not be authorized');
+      }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('video', authorization.creationFlow);
+      const nextJob = await startGenerationJob({
+        fighterId: approvedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        creationFlow: 'video',
+      }, apiContext);
+      backendOwnsPurchase = true;
+      setVideoReviewJob(null);
+      const controller = new AbortController();
+      pollingAbortRef.current?.abort();
+      pollingAbortRef.current = controller;
+      const completed = await monitorDurableJob(nextJob, apiContext, controller.signal);
+      await finishDurableJob(completed, apiContext);
+    } catch (cause) {
+      if (purchaseId && !backendOwnsPurchase) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, approvedJob.fighterId, apiContext);
+        } catch (settlementError: any) {
+          debugWarn(
+            '[Billing] Video continuation could not be released:',
+            settlementError?.message ?? settlementError,
+          );
+        }
+      }
+      setError(cause instanceof Error ? cause.message : 'The next video action could not start');
+      setVideoReviewJob(approvedJob);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function restartRejectedVideoRun(rejectedJob: GenerationJob): Promise<void> {
+    if (running) return;
+    const creditCost = QUALITY_TIERS.find((item) => item.id === rejectedJob.tier)?.creditCost ?? 18;
+    if (!window.confirm(
+      `Start a new complete Video run for ${creditCost} credits? The rejected run stays archived and will not be reused.`,
+    )) return;
+    setRunning(true);
+    setError(null);
+    setStageText('Preparing a new complete Video run...');
+    const apiContext = captureApiRequestContext();
+    let purchaseId: string | undefined;
+    let backendOwnsPurchase = false;
+    try {
+      const authorization = await authorizeGeneration(
+        rejectedJob.tier,
+        'fighter_generation',
+        rejectedJob.fighterId,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+        null,
+        'video',
+      );
+      if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
+        throw new Error(authorization.error ?? 'A new complete Video run could not be authorized');
+      }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('video', authorization.creationFlow);
+      const nextJob = await startGenerationJob({
+        fighterId: rejectedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        creationFlow: 'video',
+      }, apiContext);
+      backendOwnsPurchase = true;
+      setVideoReviewJob(null);
+      const controller = new AbortController();
+      pollingAbortRef.current?.abort();
+      pollingAbortRef.current = controller;
+      const completed = await monitorDurableJob(nextJob, apiContext, controller.signal);
+      await finishDurableJob(completed, apiContext);
+    } catch (cause) {
+      if (purchaseId && !backendOwnsPurchase) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, rejectedJob.fighterId, apiContext);
+        } catch (settlementError: any) {
+          debugWarn(
+            '[Billing] New Video run reservation could not be released:',
+            settlementError?.message ?? settlementError,
+          );
+        }
+      }
+      setError(cause instanceof Error ? cause.message : 'A new complete Video run could not start');
+      setVideoReviewJob(rejectedJob);
+    } finally {
+      setRunning(false);
+    }
   }
 
   async function startDurable(apiContext: ReturnType<typeof captureApiRequestContext>): Promise<void> {
@@ -524,6 +708,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     }
     setRunning(true);
     setDone(false);
+    setVideoReviewJob(null);
     setError(null);
     setPercent(0);
     setStageText('Starting pipeline...');
@@ -742,6 +927,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
               onChange={(event) => {
                 setFile(event.target.files?.[0] ?? null);
                 setResumableJob(null);
+                setVideoReviewJob(null);
               }}
             />
           </label>
@@ -843,6 +1029,20 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       </header>
 
       <PipelineProgress percent={percent} />
+
+      {videoReviewJob ? (
+        <VideoGenerationReviewGate
+          jobId={videoReviewJob.id}
+          disabled={running}
+          fullRunRestartRequired={videoReviewJob.fullRunRestartRequired}
+          onContinue={() => continueApprovedVideoJob(videoReviewJob)}
+          onFinalApproval={() => finishApprovedVideoFighter(videoReviewJob.fighterId)}
+          onRestart={() => restartRejectedVideoRun(videoReviewJob)}
+          onRejected={() => {
+            setStageText('Video rejected. It remains private and no additional provider call was made.');
+          }}
+        />
+      ) : null}
 
       {error ? (
         <div className="create-error" role="alert">
