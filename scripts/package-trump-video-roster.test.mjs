@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -267,6 +268,37 @@ function createFixture() {
 }
 
 describe('Trump video roster packager', () => {
+  it('disables macOS copyfile metadata when spawning tar', () => {
+    const fixture = createFixture();
+    const fakeBin = join(dirname(fixture.outputDirectory), 'fake-bin');
+    const markerPath = join(dirname(fixture.outputDirectory), 'copyfile-disable.txt');
+    const fakeTar = join(fakeBin, 'tar');
+    mkdirSync(fakeBin, { recursive: true });
+    writeFileSync(
+      fakeTar,
+      '#!/bin/sh\nprintf \'%s\' "${COPYFILE_DISABLE:-}" > "${TRUMP_TAR_TEST_MARKER:?}"\n: > "$2"\n',
+    );
+    chmodSync(fakeTar, 0o700);
+
+    const originalPath = process.env.PATH;
+    const originalCopyfileDisable = process.env.COPYFILE_DISABLE;
+    const originalMarker = process.env.TRUMP_TAR_TEST_MARKER;
+    process.env.PATH = `${fakeBin}:${originalPath ?? ''}`;
+    process.env.COPYFILE_DISABLE = '0';
+    process.env.TRUMP_TAR_TEST_MARKER = markerPath;
+    try {
+      packageTrumpVideoRoster(fixture);
+      expect(readFileSync(markerPath, 'utf8')).toBe('1');
+    } finally {
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
+      if (originalCopyfileDisable === undefined) delete process.env.COPYFILE_DISABLE;
+      else process.env.COPYFILE_DISABLE = originalCopyfileDisable;
+      if (originalMarker === undefined) delete process.env.TRUMP_TAR_TEST_MARKER;
+      else process.env.TRUMP_TAR_TEST_MARKER = originalMarker;
+    }
+  });
+
   it('assembles and revalidates a self-contained tar bundle', () => {
     const fixture = createFixture();
     const result = packageTrumpVideoRoster(fixture);
