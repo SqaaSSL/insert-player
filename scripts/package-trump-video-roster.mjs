@@ -306,7 +306,14 @@ function createArchive(bundleDirectory, archivePath) {
   const result = spawnSync(
     'tar',
     ['-czf', temporaryArchive, '-C', resolve(bundleDirectory, '..'), bundleDirectory.split('/').at(-1)],
-    { encoding: 'utf8' },
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        // BSD tar otherwise serializes macOS metadata as unsafe AppleDouble (._*) members.
+        COPYFILE_DISABLE: '1',
+      },
+    },
   );
   if (result.status !== 0) {
     throw new Error(`tar failed: ${(result.stderr || result.stdout || `exit ${result.status}`).trim()}`);
