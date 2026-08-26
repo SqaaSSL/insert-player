@@ -22,6 +22,7 @@ describe('sprite layouts', () => {
     expect(getHighKickRuntimeProfile(7)).toEqual({
       frameCount: 7,
       playbackMode: 'timeline',
+      sourceFormat: 'timeline',
     });
   });
 
@@ -32,17 +33,25 @@ describe('sprite layouts', () => {
       { [FighterState.HIGH_KICK]: profile.playbackMode },
     );
 
-    expect(profile).toEqual({ frameCount: 12, playbackMode: 'forward-ping-pong' });
+    expect(profile).toEqual({
+      frameCount: 12,
+      playbackMode: 'forward-ping-pong',
+      sourceFormat: 'forward-keyframes',
+    });
     expect(layout.frameCounts[FighterState.HIGH_KICK]).toBe(12);
     expect(layout.totalColumns).toBe(12);
   });
 
-  it('caps expanded playback sheets and keeps their full-cycle semantics', () => {
-    expect(getHighKickRuntimeProfile(23)).toEqual({
-      frameCount: 12,
-      playbackMode: 'timeline',
-    });
-  });
+  it.each([13, 15, 17, 19, 21, 23])(
+    'collapses an expanded %i-frame playback sheet back to its forward keyframes',
+    (expandedFrameCount) => {
+      expect(getHighKickRuntimeProfile(expandedFrameCount)).toEqual({
+        frameCount: (expandedFrameCount + 1) / 2,
+        playbackMode: 'forward-ping-pong',
+        sourceFormat: 'expanded-ping-pong',
+      });
+    },
+  );
 
   it('registers independent layouts for each fighter texture', () => {
     const legacy = createSpriteLayout({ [FighterState.HIGH_KICK]: 7 });

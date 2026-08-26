@@ -5,6 +5,7 @@ import {
   createSpriteLayout,
   getHighKickRuntimeProfile,
   registerSpriteLayout,
+  type HighKickRuntimeProfile,
 } from './SpriteGenerator.ts';
 import { debugInfo } from '../../services/DebugLog.ts';
 
@@ -104,8 +105,19 @@ export async function loadAiSprites(
     const gridRows = Math.round(sourceImg.height / srcH);
 
     const extractedFrames = extractFrames(sourceImg, srcW, srcH, srcTotal, gridCols);
-    const frames = selectStableFramesForState(state, extractedFrames, srcW, srcH, targetFrameCount);
-    const sourceFrameCount = frames.length;
+    const stableFrames = selectStableFramesForState(
+      state,
+      extractedFrames,
+      srcW,
+      srcH,
+      targetFrameCount,
+    );
+    const frames = selectSourceFramesForAtlas(
+      state,
+      stableFrames,
+      targetFrameCount,
+      highKickProfile,
+    );
     const unionBox = findUnionBBox(frames, srcW, srcH);
 
     const cropW = unionBox.w;
@@ -116,8 +128,6 @@ export async function loadAiSprites(
     const drawH = Math.round(cropH * scale);
 
     for (let f = 0; f < targetFrameCount; f++) {
-      const srcIdx = selectSourceFrameIndex(state, f, targetFrameCount, sourceFrameCount);
-
       const dstX = f * FIGHTER_WIDTH;
       const dstY = row * FIGHTER_HEIGHT;
 
@@ -125,7 +135,7 @@ export async function loadAiSprites(
       const offsetY = FIGHTER_HEIGHT - drawH;
 
       ctx.drawImage(
-        frames[srcIdx],
+        frames[f],
         unionBox.x, unionBox.y, cropW, cropH,
         dstX + offsetX, dstY + offsetY, drawW, drawH,
       );
@@ -173,6 +183,28 @@ function resolveLoadedAnimationForState(
 
   const firstLoaded = loadedAnims.entries().next().value;
   return firstLoaded ? { animName: firstLoaded[0], anim: firstLoaded[1] } : null;
+}
+
+export function selectSourceFramesForAtlas<T>(
+  state: FighterState,
+  sourceFrames: T[],
+  targetFrameCount: number,
+  highKickProfile: HighKickRuntimeProfile,
+): T[] {
+  const runtimeSourceFrames = state === FighterState.HIGH_KICK &&
+    highKickProfile.sourceFormat === 'expanded-ping-pong'
+    ? sourceFrames.slice(0, highKickProfile.frameCount)
+    : sourceFrames;
+
+  return Array.from({ length: targetFrameCount }, (_, frameIndex) => {
+    const sourceIndex = selectSourceFrameIndex(
+      state,
+      frameIndex,
+      targetFrameCount,
+      runtimeSourceFrames.length,
+    );
+    return runtimeSourceFrames[sourceIndex];
+  });
 }
 
 function selectSourceFrameIndex(

@@ -27,6 +27,16 @@ export const MAX_DENSE_HIGH_KICK_FRAMES = 12;
 const LEGACY_HIGH_KICK_MAX_FRAMES = 7;
 
 export type SpritePlaybackMode = 'timeline' | 'forward-ping-pong';
+export type HighKickSourceFormat =
+  | 'timeline'
+  | 'forward-keyframes'
+  | 'expanded-ping-pong';
+
+export interface HighKickRuntimeProfile {
+  frameCount: number;
+  playbackMode: SpritePlaybackMode;
+  sourceFormat: HighKickSourceFormat;
+}
 
 const STATE_ORDER: FighterState[] = [
   FighterState.IDLE,
@@ -93,18 +103,28 @@ export function registerSpriteLayout(spriteKey: string, layout: SpriteSheetLayou
   registeredLayouts.set(spriteKey, layout);
 }
 
-export function getHighKickRuntimeProfile(sourceFrameCount?: number): {
-  frameCount: number;
-  playbackMode: SpritePlaybackMode;
-} {
+export function getHighKickRuntimeProfile(sourceFrameCount?: number): HighKickRuntimeProfile {
   if (!Number.isFinite(sourceFrameCount) || !sourceFrameCount || sourceFrameCount < 1) {
     return {
       frameCount: STATE_FRAMES[FighterState.HIGH_KICK],
       playbackMode: 'timeline',
+      sourceFormat: 'timeline',
     };
   }
 
   const normalizedSourceCount = Math.floor(sourceFrameCount);
+  const isExpandedPingPong = normalizedSourceCount > MAX_DENSE_HIGH_KICK_FRAMES &&
+    normalizedSourceCount <= MAX_DENSE_HIGH_KICK_FRAMES * 2 - 1 &&
+    normalizedSourceCount % 2 === 1;
+
+  if (isExpandedPingPong) {
+    return {
+      frameCount: (normalizedSourceCount + 1) / 2,
+      playbackMode: 'forward-ping-pong',
+      sourceFormat: 'expanded-ping-pong',
+    };
+  }
+
   const frameCount = Math.min(normalizedSourceCount, MAX_DENSE_HIGH_KICK_FRAMES);
 
   // Existing generated attacks contain their return-to-stance frames already.
@@ -115,7 +135,11 @@ export function getHighKickRuntimeProfile(sourceFrameCount?: number): {
     ? 'forward-ping-pong'
     : 'timeline';
 
-  return { frameCount, playbackMode };
+  return {
+    frameCount,
+    playbackMode,
+    sourceFormat: playbackMode === 'forward-ping-pong' ? 'forward-keyframes' : 'timeline',
+  };
 }
 
 /**
