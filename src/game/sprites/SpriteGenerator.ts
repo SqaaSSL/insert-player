@@ -23,6 +23,21 @@ const STATE_FRAMES: Record<string, number> = {
   [FighterState.DEFEAT]: 2,
 };
 
+export const MAX_DENSE_HIGH_KICK_FRAMES = 12;
+const LEGACY_HIGH_KICK_MAX_FRAMES = 7;
+
+export type SpritePlaybackMode = 'timeline' | 'forward-ping-pong';
+export type HighKickSourceFormat =
+  | 'timeline'
+  | 'forward-keyframes'
+  | 'expanded-ping-pong';
+
+export interface HighKickRuntimeProfile {
+  frameCount: number;
+  playbackMode: SpritePlaybackMode;
+  sourceFormat: HighKickSourceFormat;
+}
+
 const STATE_ORDER: FighterState[] = [
   FighterState.IDLE,
   FighterState.WALK_FORWARD,
@@ -45,17 +60,86 @@ const STATE_ORDER: FighterState[] = [
 export interface SpriteSheetLayout {
   stateRow: Record<string, number>;
   frameCounts: Record<string, number>;
+  playbackModes: Partial<Record<string, SpritePlaybackMode>>;
   totalColumns: number;
 }
 
-export function getSpriteLayout(): SpriteSheetLayout {
+const registeredLayouts = new Map<string, SpriteSheetLayout>();
+
+export function createSpriteLayout(
+  frameCountOverrides: Partial<Record<FighterState, number>> = {},
+  playbackModeOverrides: Partial<Record<FighterState, SpritePlaybackMode>> = {},
+): SpriteSheetLayout {
   const stateRow: Record<string, number> = {};
+  const frameCounts = { ...STATE_FRAMES };
+  const playbackModes: Partial<Record<string, SpritePlaybackMode>> = {};
+
+  for (const [state, frameCount] of Object.entries(frameCountOverrides)) {
+    if (Number.isInteger(frameCount) && frameCount > 0) {
+      frameCounts[state] = frameCount;
+    }
+  }
+  for (const [state, playbackMode] of Object.entries(playbackModeOverrides)) {
+    if (playbackMode) playbackModes[state] = playbackMode;
+  }
+
   let maxCols = 0;
   STATE_ORDER.forEach((state, row) => {
     stateRow[state] = row;
-    maxCols = Math.max(maxCols, STATE_FRAMES[state]);
+    maxCols = Math.max(maxCols, frameCounts[state]);
   });
-  return { stateRow, frameCounts: { ...STATE_FRAMES }, totalColumns: maxCols };
+  return { stateRow, frameCounts, playbackModes, totalColumns: maxCols };
+}
+
+export function getSpriteLayout(spriteKey?: string): SpriteSheetLayout {
+  if (spriteKey) {
+    const registered = registeredLayouts.get(spriteKey);
+    if (registered) return registered;
+  }
+  return createSpriteLayout();
+}
+
+export function registerSpriteLayout(spriteKey: string, layout: SpriteSheetLayout): void {
+  registeredLayouts.set(spriteKey, layout);
+}
+
+export function getHighKickRuntimeProfile(sourceFrameCount?: number): HighKickRuntimeProfile {
+  if (!Number.isFinite(sourceFrameCount) || !sourceFrameCount || sourceFrameCount < 1) {
+    return {
+      frameCount: STATE_FRAMES[FighterState.HIGH_KICK],
+      playbackMode: 'timeline',
+      sourceFormat: 'timeline',
+    };
+  }
+
+  const normalizedSourceCount = Math.floor(sourceFrameCount);
+  const isExpandedPingPong = normalizedSourceCount > MAX_DENSE_HIGH_KICK_FRAMES &&
+    normalizedSourceCount <= MAX_DENSE_HIGH_KICK_FRAMES * 2 - 1 &&
+    normalizedSourceCount % 2 === 1;
+
+  if (isExpandedPingPong) {
+    return {
+      frameCount: (normalizedSourceCount + 1) / 2,
+      playbackMode: 'forward-ping-pong',
+      sourceFormat: 'expanded-ping-pong',
+    };
+  }
+
+  const frameCount = Math.min(normalizedSourceCount, MAX_DENSE_HIGH_KICK_FRAMES);
+
+  // Existing generated attacks contain their return-to-stance frames already.
+  // The dense video format stores 8-12 forward keyframes and derives recovery
+  // locally so the runtime does not duplicate those large source cells.
+  const playbackMode = normalizedSourceCount > LEGACY_HIGH_KICK_MAX_FRAMES &&
+    normalizedSourceCount <= MAX_DENSE_HIGH_KICK_FRAMES
+    ? 'forward-ping-pong'
+    : 'timeline';
+
+  return {
+    frameCount,
+    playbackMode,
+    sourceFormat: playbackMode === 'forward-ping-pong' ? 'forward-keyframes' : 'timeline',
+  };
 }
 
 /**
@@ -69,6 +153,7 @@ export function generateFighterSpriteSheet(
   _skinColor: string,
 ): void {
   const layout = getSpriteLayout();
+  registerSpriteLayout(key, layout);
   const cols = layout.totalColumns;
   const rows = STATE_ORDER.length;
   const sheetW = cols * FW;

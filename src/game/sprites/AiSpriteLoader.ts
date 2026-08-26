@@ -1,7 +1,12 @@
 import Phaser from 'phaser';
 import { FighterState, FIGHTER_WIDTH, FIGHTER_HEIGHT } from '../constants.ts';
 import { getAllSpritesForHash, type CachedSprite } from '../../services/SpriteCache.ts';
-import { getSpriteLayout } from './SpriteGenerator.ts';
+import {
+  createSpriteLayout,
+  getHighKickRuntimeProfile,
+  registerSpriteLayout,
+  type HighKickRuntimeProfile,
+} from './SpriteGenerator.ts';
 import { debugInfo } from '../../services/DebugLog.ts';
 
 const ANIM_NAME_TO_STATE: Record<string, FighterState> = {
@@ -48,7 +53,23 @@ export async function loadAiSprites(
     spritesByAnim.set(s.animationName, s);
   }
 
-  const layout = getSpriteLayout();
+  const loadedAnims = new Map<string, LoadedAnimation>();
+
+  for (const [animName, sprite] of spritesByAnim) {
+    if (!ANIM_NAME_TO_STATE[animName]) continue;
+    const img = await blobToImage(sprite.pngBlob);
+    loadedAnims.set(animName, { img, sprite });
+    debugInfo(`[AiSpriteLoader] ${animName}: ${img.width}x${img.height}, frame ${sprite.frameWidth}x${sprite.frameHeight}, count ${sprite.frameCount}`);
+  }
+  if (loadedAnims.size === 0) return false;
+
+  const highKickProfile = getHighKickRuntimeProfile(
+    loadedAnims.get('high_kick')?.sprite.frameCount,
+  );
+  const layout = createSpriteLayout(
+    { [FighterState.HIGH_KICK]: highKickProfile.frameCount },
+    { [FighterState.HIGH_KICK]: highKickProfile.playbackMode },
+  );
   const cols = layout.totalColumns;
   const rows = Object.keys(layout.stateRow).length;
 
@@ -59,16 +80,6 @@ export async function loadAiSprites(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  const loadedAnims = new Map<string, LoadedAnimation>();
-
-  for (const [animName, sprite] of spritesByAnim) {
-    if (!ANIM_NAME_TO_STATE[animName]) continue;
-    const img = await blobToImage(sprite.pngBlob);
-    loadedAnims.set(animName, { img, sprite });
-    debugInfo(`[AiSpriteLoader] ${animName}: ${img.width}x${img.height}, frame ${sprite.frameWidth}x${sprite.frameHeight}, count ${sprite.frameCount}`);
-  }
-  if (loadedAnims.size === 0) return false;
 
   const stateOrder = Object.entries(layout.stateRow)
     .sort(([, a], [, b]) => a - b)
@@ -94,8 +105,19 @@ export async function loadAiSprites(
     const gridRows = Math.round(sourceImg.height / srcH);
 
     const extractedFrames = extractFrames(sourceImg, srcW, srcH, srcTotal, gridCols);
-    const frames = selectStableFramesForState(state, extractedFrames, srcW, srcH, targetFrameCount);
-    const sourceFrameCount = frames.length;
+    const stableFrames = selectStableFramesForState(
+      state,
+      extractedFrames,
+      srcW,
+      srcH,
+      targetFrameCount,
+    );
+    const frames = selectSourceFramesForAtlas(
+      state,
+      stableFrames,
+      targetFrameCount,
+      highKickProfile,
+    );
     const unionBox = findUnionBBox(frames, srcW, srcH);
 
     const cropW = unionBox.w;
@@ -106,8 +128,6 @@ export async function loadAiSprites(
     const drawH = Math.round(cropH * scale);
 
     for (let f = 0; f < targetFrameCount; f++) {
-      const srcIdx = selectSourceFrameIndex(state, f, targetFrameCount, sourceFrameCount);
-
       const dstX = f * FIGHTER_WIDTH;
       const dstY = row * FIGHTER_HEIGHT;
 
@@ -115,7 +135,7 @@ export async function loadAiSprites(
       const offsetY = FIGHTER_HEIGHT - drawH;
 
       ctx.drawImage(
-        frames[srcIdx],
+        frames[f],
         unionBox.x, unionBox.y, cropW, cropH,
         dstX + offsetX, dstY + offsetY, drawW, drawH,
       );
@@ -131,6 +151,7 @@ export async function loadAiSprites(
     frameWidth: FIGHTER_WIDTH,
     frameHeight: FIGHTER_HEIGHT,
   });
+  registerSpriteLayout(spriteKey, layout);
 
   return true;
 }
@@ -162,6 +183,28 @@ function resolveLoadedAnimationForState(
 
   const firstLoaded = loadedAnims.entries().next().value;
   return firstLoaded ? { animName: firstLoaded[0], anim: firstLoaded[1] } : null;
+}
+
+export function selectSourceFramesForAtlas<T>(
+  state: FighterState,
+  sourceFrames: T[],
+  targetFrameCount: number,
+  highKickProfile: HighKickRuntimeProfile,
+): T[] {
+  const runtimeSourceFrames = state === FighterState.HIGH_KICK &&
+    highKickProfile.sourceFormat === 'expanded-ping-pong'
+    ? sourceFrames.slice(0, highKickProfile.frameCount)
+    : sourceFrames;
+
+  return Array.from({ length: targetFrameCount }, (_, frameIndex) => {
+    const sourceIndex = selectSourceFrameIndex(
+      state,
+      frameIndex,
+      targetFrameCount,
+      runtimeSourceFrames.length,
+    );
+    return runtimeSourceFrames[sourceIndex];
+  });
 }
 
 function selectSourceFrameIndex(
