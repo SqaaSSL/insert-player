@@ -609,7 +609,7 @@ export async function runBakeoff(options = {}) {
   const apiKey = options.apiKey ?? '';
   if (!apiKey) throw new Error('PIXCLI_API_KEY is required.');
 
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const manifest = options.manifest ?? JSON.parse(readFileSync(manifestPath, 'utf8'));
   validateManifest(manifest);
   const experimentId = options.experimentId ?? BAKEOFF_EXPERIMENT_ID;
   const plan = options.planBuilder ? options.planBuilder(manifest) : buildBakeoffPlan(manifest);

@@ -42,6 +42,12 @@ worker/.prod.vars
 .arcade-qa-milei-high-punch-f4-xai-state.json
 .arcade-qa-high-punch-f4-upload-state.json
 .arcade-qa-milei-canonical-upload-state.json
+.arcade-side-xai-trump-profile-canary-state.json
+.arcade-side-xai-trump-profile-v4-canary-state.json
+.arcade-xai-trump-profile-master-upload-state.json
+.arcade-nova-qa-high-punch-xai-state.json
+.arcade-nova-qa-high-punch-pose-upload-state.json
+.arcade-nova-qa-canonical-upload-state.json
 .launch-validation.json
 launch-validation.local.json
 .brand-clearance.json
