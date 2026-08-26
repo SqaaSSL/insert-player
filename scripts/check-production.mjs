@@ -2152,6 +2152,7 @@ function replayMigrations() {
     '.read worker/migrations/0027_immutable_arcade_experiments.sql',
     "INSERT INTO sprites (id, fighter_id, animation_name, quality_tier, blob_key, frame_w, frame_h, frame_count, processing_version) VALUES ('legacy-current', 'f1', 'idle', 'rookie', 'legacy-current.png', 192, 256, 4, 3);",
     '.read worker/migrations/0028_sprite_animation_format.sql',
+    '.read worker/migrations/0029_generation_creation_flow.sql',
     'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters", "arcade_generation_experiments", "arcade_generation_experiment_slots", "arcade_generation_experiment_artifacts");',
   ];
   try {
@@ -2184,6 +2185,26 @@ function replayMigrations() {
     ]);
     if (checkpointAnimationFormatColumn !== '1') {
       throw new Error('Durable sprite checkpoints are missing the legacy-default animation format contract');
+    }
+
+    const generationCreationFlowColumns = runCapture('D1 generation creation flow check', sqlite, [
+      dbPath,
+      `
+        SELECT COUNT(*)
+        FROM (
+          SELECT name, dflt_value FROM pragma_table_info('generation_charges') WHERE name = 'creation_flow'
+          UNION ALL
+          SELECT name, dflt_value FROM pragma_table_info('provider_sessions') WHERE name = 'creation_flow'
+          UNION ALL
+          SELECT name, dflt_value FROM pragma_table_info('generation_jobs') WHERE name = 'creation_flow'
+          UNION ALL
+          SELECT name, dflt_value FROM pragma_table_info('generation_artifact_runs') WHERE name = 'creation_flow'
+        )
+        WHERE name = 'creation_flow' AND dflt_value = "'original'";
+      `,
+    ]);
+    if (generationCreationFlowColumns !== '4') {
+      throw new Error(`Generation creation flow was not sealed across all durable records; got ${generationCreationFlowColumns}/4`);
     }
 
     const duplicateCount = runCapture('D1 sprite content index check', sqlite, [

@@ -27,6 +27,11 @@ import {
 } from './requestBody';
 import { publicAppName } from './branding';
 import { stripTrailingSlashes } from './url';
+import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+import {
+  generationCreationFlowAvailable,
+  parseRequestedGenerationCreationFlow,
+} from './generationCreationFlow';
 
 const FREE_ROOKIE_GENERATION_LIMIT = 1;
 const GENERATION_RESERVATION_TTL_HOURS = 12;
@@ -49,6 +54,7 @@ interface GenerationCharge {
   id: string;
   user_id: string;
   tier: QualityTier;
+  creation_flow: GenerationCreationFlow;
   credit_cost: number;
   free_quota_delta: number;
   // `refunded` is the legacy persisted name for a pre-provider release.
@@ -72,6 +78,7 @@ interface ResumableGenerationRow {
   run_user_id: string;
   run_fighter_id: string;
   run_tier: QualityTier;
+  run_creation_flow: GenerationCreationFlow;
   run_operation: GenerationBillingOperation;
 }
 
@@ -82,6 +89,7 @@ interface ReusableContinuationAuthorization {
   provider_call_limit: number;
   provider_cost_limit_cents: number;
   reservation_expires_at: string;
+  creation_flow: GenerationCreationFlow;
 }
 
 export interface GenerationPurchaseSettlement {
@@ -272,6 +280,7 @@ async function createProviderSessionForCharge(
   operation: GenerationBillingOperation,
   chargeId: string,
   legal: GenerationLegalAttestation,
+  creationFlow: GenerationCreationFlow,
   continuationRunId?: string,
 ) {
   let createdSessionId: string | null = null;
@@ -280,6 +289,7 @@ async function createProviderSessionForCharge(
       tier,
       purpose: providerSessionPurposeForOperation(operation),
       operation,
+      creationFlow,
       chargeId,
       legal,
     });
@@ -312,6 +322,7 @@ async function authorizeGenerationContinuation(
     fighterId: string;
     tier: QualityTier;
     operation: GenerationBillingOperation;
+    creationFlow: GenerationCreationFlow;
     legal: GenerationLegalAttestation;
   },
 ): Promise<Response> {
@@ -329,6 +340,7 @@ async function authorizeGenerationContinuation(
       run.user_id AS run_user_id,
       run.fighter_id AS run_fighter_id,
       run.tier AS run_tier,
+      run.creation_flow AS run_creation_flow,
       run.operation AS run_operation
     FROM generation_jobs gj
     JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
@@ -355,6 +367,7 @@ async function authorizeGenerationContinuation(
     resumable.run_user_id !== auth.user.id ||
     resumable.run_fighter_id !== params.fighterId ||
     resumable.run_tier !== params.tier ||
+    resumable.run_creation_flow !== params.creationFlow ||
     resumable.run_operation !== params.operation
   ) {
     return json({ error: 'Resume request does not match the preserved generation work' }, 409);
@@ -380,17 +393,20 @@ async function authorizeGenerationContinuation(
       ps.expires_at AS provider_session_expires_at,
       ps.provider_call_limit,
       ps.provider_cost_limit_cents,
-      gc.expires_at AS reservation_expires_at
+      gc.expires_at AS reservation_expires_at,
+      gc.creation_flow
     FROM generation_charges gc
     JOIN provider_sessions ps
       ON ps.charge_id = gc.id
       AND ps.user_id = gc.user_id
       AND ps.status = 'active'
+      AND ps.creation_flow = gc.creation_flow
       AND datetime(ps.expires_at) > datetime('now')
     LEFT JOIN generation_jobs continuation_job ON continuation_job.charge_id = gc.id
     WHERE gc.user_id = ?
       AND gc.fighter_id = ?
       AND gc.tier = ?
+      AND gc.creation_flow = ?
       AND gc.status = 'reserved'
       AND gc.credit_cost = 0
       AND gc.free_quota_delta = 0
@@ -404,6 +420,7 @@ async function authorizeGenerationContinuation(
     auth.user.id,
     params.fighterId,
     params.tier,
+    params.creationFlow,
     resumable.artifact_run_id,
     params.resumeJobId,
   ).first<ReusableContinuationAuthorization>();
@@ -420,6 +437,7 @@ async function authorizeGenerationContinuation(
       providerCallLimit: reusable.provider_call_limit,
       providerCostLimitCents: reusable.provider_cost_limit_cents,
       reservationExpiresAt: reusable.reservation_expires_at,
+      creationFlow: reusable.creation_flow,
     });
   }
 
@@ -435,8 +453,8 @@ async function authorizeGenerationContinuation(
       INSERT INTO generation_charges (
         id, user_id, tier, credit_cost, free_quota_delta, status,
         reason, fighter_id, ledger_id, expires_at,
-        continuation_run_id, resumed_from_job_id
-      ) VALUES (?, ?, ?, 0, 0, 'reserved', ?, ?, ?, ?, ?, ?)
+        continuation_run_id, resumed_from_job_id, creation_flow
+      ) VALUES (?, ?, ?, 0, 0, 'reserved', ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       purchaseId,
       auth.user.id,
@@ -447,6 +465,7 @@ async function authorizeGenerationContinuation(
       expiresAt,
       resumable.artifact_run_id,
       params.resumeJobId,
+      params.creationFlow,
     ),
   ]);
 
@@ -457,6 +476,7 @@ async function authorizeGenerationContinuation(
     params.operation,
     purchaseId,
     params.legal,
+    params.creationFlow,
     resumable.artifact_run_id,
   );
   return json({
@@ -471,6 +491,7 @@ async function authorizeGenerationContinuation(
     providerCallLimit: providerSession.providerCallLimit,
     providerCostLimitCents: providerSession.providerCostLimitCents,
     reservationExpiresAt: expiresAt,
+    creationFlow: params.creationFlow,
   });
 }
 
@@ -835,6 +856,7 @@ export async function authorizeGenerationPurchase(
 ): Promise<Response> {
   const body = await readJsonBody<{
     tier?: QualityTier;
+    creationFlow?: unknown;
     fighterId?: string;
     resumeJobId?: string;
     operation?: GenerationBillingOperation;
@@ -844,6 +866,14 @@ export async function authorizeGenerationPurchase(
   }>(request, MAX_BILLING_JSON_BODY_BYTES);
   const tier = normalizeQualityTier(body.tier);
   const operation = normalizeGenerationBillingOperation(body.operation, body.reason);
+  const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
+  if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
+  if (!generationCreationFlowAvailable(creationFlow)) {
+    return json({
+      error: 'Video generation is not available on this release',
+      code: 'generation_creation_flow_unavailable',
+    }, 503);
+  }
   const requiredCredits = generationCreditCost(tier, operation);
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) return json({ error: 'Current generation consent is required' }, 428);
@@ -859,6 +889,7 @@ export async function authorizeGenerationPurchase(
       const providerSession = await createProviderSession(env, auth, {
         tier,
         purpose: 'fighter_generation',
+        creationFlow,
         legal,
       });
       return json({
@@ -868,6 +899,7 @@ export async function authorizeGenerationPurchase(
         providerSessionId: providerSession.id,
         providerSessionExpiresAt: providerSession.expiresAt,
         providerCallLimit: providerSession.providerCallLimit,
+        creationFlow,
         message: 'Anonymous Rookie generation allowed after human verification.',
       });
     }
@@ -894,6 +926,7 @@ export async function authorizeGenerationPurchase(
       fighterId: ownedFighterId,
       tier,
       operation,
+      creationFlow,
       legal,
     });
   }
@@ -924,9 +957,9 @@ export async function authorizeGenerationPurchase(
       env.DB.prepare(`
         INSERT INTO generation_charges (
           id, user_id, tier, credit_cost, free_quota_delta, status,
-          reason, fighter_id, ledger_id, expires_at
+          reason, fighter_id, ledger_id, expires_at, creation_flow
         )
-        SELECT ?, user_id, ?, 0, 1, 'reserved', ?, ?, id, ?
+        SELECT ?, user_id, ?, 0, 1, 'reserved', ?, ?, id, ?, ?
         FROM credit_ledger
         WHERE id = ? AND user_id = ?
       `).bind(
@@ -935,6 +968,7 @@ export async function authorizeGenerationPurchase(
         reason,
         ownedFighterId,
         expiresAt,
+        creationFlow,
         ledgerId,
         user.id,
       ),
@@ -949,6 +983,7 @@ export async function authorizeGenerationPurchase(
         operation,
         purchaseId,
         legal,
+        creationFlow,
       );
       return json({
         authorized: true,
@@ -959,6 +994,7 @@ export async function authorizeGenerationPurchase(
         providerSessionExpiresAt: providerSession.expiresAt,
         providerCallLimit: providerSession.providerCallLimit,
         reservationExpiresAt: expiresAt,
+        creationFlow,
         freeRookieGenerationsRemaining: Math.max(0, FREE_ROOKIE_GENERATION_LIMIT - quota.free_rookie_generations_used),
       });
     }
@@ -991,9 +1027,9 @@ export async function authorizeGenerationPurchase(
     env.DB.prepare(`
       INSERT INTO generation_charges (
         id, user_id, tier, credit_cost, free_quota_delta, status,
-        reason, fighter_id, ledger_id, expires_at
+        reason, fighter_id, ledger_id, expires_at, creation_flow
       )
-      SELECT ?, user_id, ?, ?, 0, 'reserved', ?, ?, id, ?
+      SELECT ?, user_id, ?, ?, 0, 'reserved', ?, ?, id, ?, ?
       FROM credit_ledger
       WHERE id = ? AND user_id = ?
     `).bind(
@@ -1003,6 +1039,7 @@ export async function authorizeGenerationPurchase(
       reason,
       ownedFighterId,
       expiresAt,
+      creationFlow,
       ledgerId,
       user.id,
     ),
@@ -1028,6 +1065,7 @@ export async function authorizeGenerationPurchase(
     operation,
     purchaseId,
     legal,
+    creationFlow,
   );
 
   return json({
@@ -1040,6 +1078,7 @@ export async function authorizeGenerationPurchase(
     providerSessionExpiresAt: providerSession.expiresAt,
     providerCallLimit: providerSession.providerCallLimit,
     reservationExpiresAt: expiresAt,
+    creationFlow,
   });
 }
 

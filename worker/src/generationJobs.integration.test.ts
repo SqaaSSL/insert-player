@@ -50,6 +50,7 @@ const SCHEMA = `
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     tier TEXT NOT NULL,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     credit_cost INTEGER NOT NULL DEFAULT 0,
     free_quota_delta INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL,
@@ -68,6 +69,7 @@ const SCHEMA = `
     user_id TEXT,
     rate_limit_key TEXT NOT NULL,
     tier TEXT NOT NULL,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     purpose TEXT NOT NULL,
     charge_id TEXT,
     status TEXT NOT NULL,
@@ -87,6 +89,7 @@ const SCHEMA = `
     charge_id TEXT NOT NULL UNIQUE,
     provider_session_id TEXT NOT NULL UNIQUE,
     tier TEXT NOT NULL,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     operation TEXT NOT NULL,
     target_kind TEXT,
     target_name TEXT,
@@ -124,6 +127,7 @@ const SCHEMA = `
     user_id TEXT NOT NULL,
     fighter_id TEXT NOT NULL,
     tier TEXT NOT NULL,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     operation TEXT NOT NULL,
     target_kind TEXT,
     target_name TEXT,
@@ -328,8 +332,15 @@ describe('durable generation job creation', () => {
     try {
       const created = await createGenerationJob(request(), env, auth);
       expect(created.status).toBe(202);
-      const body = await created.json() as { job: { id: string; status: string; fighterId: string } };
-      expect(body.job).toMatchObject({ id: PURCHASE_ID, status: 'queued', fighterId: FIGHTER_ID });
+      const body = await created.json() as {
+        job: { id: string; status: string; fighterId: string; creationFlow: string };
+      };
+      expect(body.job).toMatchObject({
+        id: PURCHASE_ID,
+        status: 'queued',
+        fighterId: FIGHTER_ID,
+        creationFlow: 'original',
+      });
       expect(workflowStarts).toEqual([PURCHASE_ID]);
 
       const replay = await createGenerationJob(request(), env, auth);
@@ -343,6 +354,12 @@ describe('durable generation job creation', () => {
       expect(Date.parse(charge?.expires_at ?? '')).toBeGreaterThan(Date.now() + 47 * 60 * 60 * 1_000);
       expect((await db.prepare('SELECT COUNT(*) AS count FROM generation_jobs')
         .first<{ count: number }>())?.count).toBe(1);
+      expect(await db.prepare(`
+        SELECT creation_flow FROM generation_jobs WHERE id = ?
+      `).bind(PURCHASE_ID).first()).toEqual({ creation_flow: 'original' });
+      expect(await db.prepare(`
+        SELECT creation_flow FROM generation_artifact_runs WHERE id = ?
+      `).bind(PURCHASE_ID).first()).toEqual({ creation_flow: 'original' });
     } finally {
       await mf.dispose();
     }

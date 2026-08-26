@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  generationCreationFlowFromAuth,
   generationJobIdFromAuth,
   mintGenerationJobToken,
   optionalGenerationJobAuth,
@@ -10,7 +11,7 @@ const JOB_ID = '11111111111111111111111111111111';
 const SESSION_ID = '22222222222222222222222222222222';
 const USER_ID = 'user-generation';
 
-function fakeEnv(status = 'running'): Env {
+function fakeEnv(status = 'running', creationFlow: 'original' | 'video' = 'original'): Env {
   const database = {
     prepare(sql: string) {
       return {
@@ -27,6 +28,7 @@ function fakeEnv(status = 'running'): Env {
                   user_id: USER_ID,
                   provider_session_id: SESSION_ID,
                   status,
+                  creation_flow: creationFlow,
                 };
               }
               if (sql.includes('FROM users')) {
@@ -77,6 +79,29 @@ describe('generation job authorization', () => {
     expect(auth.rateLimitKey).toBe(`user:${USER_ID}`);
     expect(generationJobIdFromAuth(auth)).toBe(JOB_ID);
     expect(auth.claims?.generation_provider_session_id).toBe(SESSION_ID);
+    expect(generationCreationFlowFromAuth(auth)).toBe('original');
+  });
+
+  it('binds an explicit video token to a video job', async () => {
+    const env = fakeEnv('running', 'video');
+    const videoToken = await mintGenerationJobToken(env, {
+      jobId: JOB_ID,
+      userId: USER_ID,
+      providerSessionId: SESSION_ID,
+      creationFlow: 'video',
+    }, 1_000);
+    const result = await optionalGenerationJobAuth(request(videoToken), env, 1_001);
+
+    expect(result).not.toBeInstanceOf(Response);
+    expect(generationCreationFlowFromAuth(result as PublicAuthContext)).toBe('video');
+
+    const wrongFlow = await optionalGenerationJobAuth(
+      request(await token(fakeEnv('running', 'video'))),
+      fakeEnv('running', 'video'),
+      1_001,
+    );
+    expect(wrongFlow).toBeInstanceOf(Response);
+    expect((wrongFlow as Response).status).toBe(401);
   });
 
   it('rejects tampered, expired, and no-longer-active tokens', async () => {
