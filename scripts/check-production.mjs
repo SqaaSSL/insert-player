@@ -234,6 +234,7 @@ function assertProxyIsProductionScoped() {
     'Provider proxy route is not allowed',
     "enforceProviderRouteAllowlist('gemini'",
     "enforceProviderRouteAllowlist('fal'",
+    "enforceProviderRouteAllowlist('pixcli'",
     'function detectImageFormat',
     "const TEMP_ASSET_PATH_PREFIX = '/temp-assets/';",
     'Invalid temp asset path',
@@ -287,6 +288,9 @@ function assertProxyIsProductionScoped() {
     "await requireProviderSession(request, env, auth, { provider: 'gemini', path }, providerState)",
     "await requireProviderSession(request, env, auth, { provider: 'freepik', path }, providerState)",
     "await requireProviderSession(request, env, auth, { provider: 'fal', path }, providerState)",
+    'requireUnmeteredProviderSession',
+    "generationCreationFlowFromAuth(auth) !== 'video'",
+    "path === '/proxy/pixcli/api/v1/video/advanced') return 33",
     'Provider session is not valid for this provider route',
     'function isAllowedProviderUse',
     "purpose === 'intro_video'",
@@ -306,6 +310,9 @@ function assertProxyIsProductionScoped() {
     'Provider session required',
     "it('revalidates every redirect and blocks a public URL redirecting private'",
     "it('cancels an upstream body as soon as the streamed byte cap is crossed'",
+    "it('proxies an allowlisted PixCLI poll without forwarding client credentials'",
+    "it('caches a PixCLI upload without consuming spend or committing the charge'",
+    "it('reserves exactly 33 cents for one PixCLI video submission'",
   ];
   const combined = `${proxy}\n${proxyTests}\n${workerIndex}\n${apiClient}\n${providerSessions}\n${providerLimits}\n${streamLimits}\n${providerSessionIntegrationTests}\n${billingClient}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
@@ -938,6 +945,7 @@ function assertSandboxIsolationIsWired() {
     'RUNWAY_API_KEY',
     'FREEPIK_API_KEY',
     'LUDO_API_KEY',
+    'PIXCLI_API_KEY',
     'STRIPE_SECRET_KEY',
     'STRIPE_WEBHOOK_SECRET',
     'CLERK_WEBHOOK_SIGNING_SECRET',

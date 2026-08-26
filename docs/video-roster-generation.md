@@ -12,3 +12,19 @@ The rollout is intentionally fail-closed:
 4. The UI release exposes an explicit choice and requires the authorization response to echo the selected flow before a job can start.
 
 At no point may a request for `video` silently execute the original renderer, or vice versa.
+
+Each paid PixCLI submit has one semantic identity:
+`run:<artifactRunId>:sprite:<action>`. The Worker stores one cache row for that
+identity and derives the upstream idempotency key from the immutable row id,
+not from request bytes or a local ownership attempt. A recreated upload,
+changed multipart boundary, changed PixCLI asset hash, received HTTP response,
+or unknown dispatch outcome can therefore never trigger an automatic second
+advanced-video POST.
+
+Video retrieval is also closed over exact PixCLI paths. The processor may read
+`/api/v1/jobs/<32-hex>/canva`, validate the single expected video asset, and
+download only `/api/v1/assets/<32-hex>` through the authenticated Worker proxy.
+The asset proxy accepts only bounded `video/mp4` and `application/json`
+responses for the generated video and its sealed request/response audit. It
+rejects queries, redirects, every other MIME type, and oversized streams;
+metadata URLs and direct FAL URLs are never followed.

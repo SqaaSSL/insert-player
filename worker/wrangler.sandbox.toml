@@ -24,6 +24,7 @@ GENERATION_API_BASE_URL = "https://insert-player-api-sandbox.shellbot.workers.de
 # Meterkey wallet/key is provisioned. Production is pinned independently.
 GEMINI_TRANSPORT = "google-direct"
 METERKEY_BASE_URL = "https://meter.hilo.cx"
+PIXCLI_BASE_URL = "https://pixcli.hilo.cx"
 CLERK_ISSUER = "https://right-cricket-1317.clerk.accounts.dev"
 CLERK_AUTHORIZED_PARTIES = "https://insert-player-sandbox.pages.dev,http://localhost:5173,http://127.0.0.1:5174"
 # Add only Insert Player sandbox Stripe ids here. Secrets remain Worker secrets:
@@ -39,6 +40,7 @@ required = [
   "RUNWAY_API_KEY",
   "FREEPIK_API_KEY",
   "LUDO_API_KEY",
+  "PIXCLI_API_KEY",
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
   "CLERK_WEBHOOK_SIGNING_SECRET",

@@ -38,7 +38,7 @@ import {
   upsertAdminArcadeFighter,
 } from './fighters';
 import { ensureSystemUser, getLeaderboard, getPlayerStats, reportMatchResult } from './leaderboard';
-import { getTempAsset, handleProxy } from './proxy';
+import { getTempAsset, handleProxy, pixcliBaseUrl } from './proxy';
 import { enforceRateLimit } from './rateLimit';
 import { createFeatureProviderSession } from './providerSessions';
 import type { AuthContext, Env, PublicAuthContext, User } from './types';
@@ -265,6 +265,9 @@ function healthResponse(env: Env): Response {
     rateLimit: 'd1',
     privacy: anonymousIdentifiersProtected ? 'pseudonymized' : 'not_configured',
     providers: allProvidersConfigured ? 'configured' : 'partial',
+    videoCreationTransport: env.PIXCLI_API_KEY && pixcliBaseUrl(env.PIXCLI_BASE_URL)
+      ? 'configured'
+      : 'not_configured',
   });
 }
 

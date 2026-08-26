@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildGeminiProxyTarget,
   handleProxy,
+  pixcliBaseUrl,
+  pixcliUpstreamHeaders,
   proxyRequest,
   readResponseBytes,
   ResponseBodyTooLargeError,
@@ -24,7 +26,14 @@ function fakeEnv(hasSession: boolean) {
         bind() {
           return {
             async first() {
-              return hasSession ? { id: 'session-1' } : null;
+              return hasSession ? {
+                id: 'session-1',
+                tier: 'champion',
+                purpose: 'fighter_generation',
+                creation_flow: 'video',
+                expires_at: new Date(Date.now() + 60_000).toISOString(),
+                charge_reason: 'fighter_generation',
+              } : null;
             },
           };
         },
@@ -171,6 +180,242 @@ describe('provider result proxy hardening', () => {
 describe('provider request proxy hardening', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('accepts only a credential-free HTTPS PixCLI base URL', () => {
+    expect(pixcliBaseUrl(undefined)?.toString()).toBe('https://pixcli.hilo.cx/');
+    expect(pixcliBaseUrl('https://pixcli.example/internal')?.toString())
+      .toBe('https://pixcli.example/');
+    expect(pixcliBaseUrl('http://pixcli.example')).toBeNull();
+    expect(pixcliBaseUrl('https://secret@pixcli.example')).toBeNull();
+  });
+
+  it('pins PixCLI advanced idempotency to the durable cache row', () => {
+    const dispatchKey = `ip:${'a'.repeat(32)}`;
+    expect(pixcliUpstreamHeaders(
+      'pixcli-worker-secret',
+      '/proxy/pixcli/api/v1/video/advanced',
+      dispatchKey,
+    )).toEqual({
+      Authorization: 'Bearer pixcli-worker-secret',
+      'Idempotency-Key': dispatchKey,
+      'X-Request-Id': dispatchKey,
+    });
+    expect(pixcliUpstreamHeaders(
+      'pixcli-worker-secret',
+      '/proxy/pixcli/api/v1/video/advanced',
+      `ip:${'a'.repeat(32)}:${'b'.repeat(32)}`,
+    )).toBeNull();
+  });
+
+  it('proxies an allowlisted PixCLI poll without forwarding client credentials', async () => {
+    const upstreamBody = JSON.stringify({ status: 'processing' });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { env } = fakeEnv(true);
+    Object.assign(env, {
+      PIXCLI_API_KEY: 'pixcli-worker-secret',
+      PIXCLI_BASE_URL: 'https://pixcli.example',
+    });
+    const jobId = 'a'.repeat(32);
+    const response = await handleProxy(new Request(
+      `https://api.insertplayer.ai/proxy/pixcli/api/v1/jobs/${jobId}`,
+      {
+        headers: {
+          Authorization: 'Bearer attacker-client-token',
+          [PROVIDER_SESSION_HEADER]: 'session-1',
+        },
+      },
+    ), env, {
+      ...auth,
+      claims: { generation_creation_flow: 'video' },
+    });
+
+    expect(response?.status).toBe(200);
+    expect(await response?.text()).toBe(upstreamBody);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0]))
+      .toBe(`https://pixcli.example/api/v1/jobs/${jobId}`);
+    const upstreamHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+    expect(upstreamHeaders.get('Authorization')).toBe('Bearer pixcli-worker-secret');
+    expect(upstreamHeaders.get('Authorization')).not.toContain('attacker-client-token');
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: 'manual' });
+    expect(JSON.stringify([...response!.headers])).not.toContain('pixcli-worker-secret');
+  });
+
+  it('rejects unallowlisted PixCLI routes before upstream fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { env } = fakeEnv(true);
+    Object.assign(env, {
+      PIXCLI_API_KEY: 'pixcli-worker-secret',
+      PIXCLI_BASE_URL: 'https://pixcli.example',
+    });
+
+    const response = await handleProxy(new Request(
+      'https://api.insertplayer.ai/proxy/pixcli/api/v1/admin/keys',
+      { headers: { [PROVIDER_SESSION_HEADER]: 'session-1' } },
+    ), env, { ...auth, claims: { generation_creation_flow: 'video' } });
+
+    expect(response?.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('allows only the exact PixCLI asset hash path without query parameters', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2, 3]), {
+      status: 200,
+      headers: { 'Content-Type': 'video/mp4' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { env } = fakeEnv(true);
+    Object.assign(env, {
+      PIXCLI_API_KEY: 'pixcli-worker-secret',
+      PIXCLI_BASE_URL: 'https://pixcli.example',
+    });
+    const assetHash = 'c'.repeat(32);
+
+    const response = await handleProxy(new Request(
+      `https://api.insertplayer.ai/proxy/pixcli/api/v1/assets/${assetHash}`,
+      { headers: { [PROVIDER_SESSION_HEADER]: 'session-1' } },
+    ), env, { ...auth, claims: { generation_creation_flow: 'video' } });
+
+    expect(response?.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0]))
+      .toBe(`https://pixcli.example/api/v1/assets/${assetHash}`);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: 'manual' });
+
+    const withQuery = await handleProxy(new Request(
+      `https://api.insertplayer.ai/proxy/pixcli/api/v1/assets/${assetHash}?url=https://evil.example`,
+      { headers: { [PROVIDER_SESSION_HEADER]: 'session-1' } },
+    ), env, { ...auth, claims: { generation_creation_flow: 'video' } });
+    expect(withQuery?.status).toBe(400);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects PixCLI asset redirects and non-audit MIME types', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, {
+        status: 302,
+        headers: { Location: 'https://v3b.fal.media/untrusted.mp4' },
+      }))
+      .mockResolvedValueOnce(new Response('<html>not an audit asset</html>', {
+        headers: { 'Content-Type': 'text/html' },
+      }))
+      .mockResolvedValueOnce(new Response(new Uint8Array([0, 1, 2]), {
+        headers: { 'Content-Type': 'application/octet-stream' },
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { env } = fakeEnv(true);
+    Object.assign(env, {
+      PIXCLI_API_KEY: 'pixcli-worker-secret',
+      PIXCLI_BASE_URL: 'https://pixcli.example',
+    });
+    const assetPath = `https://api.insertplayer.ai/proxy/pixcli/api/v1/assets/${'d'.repeat(32)}`;
+    const request = () => new Request(assetPath, {
+      headers: { [PROVIDER_SESSION_HEADER]: 'session-1' },
+    });
+    const videoAuth = { ...auth, claims: { generation_creation_flow: 'video' as const } };
+
+    const redirected = await handleProxy(request(), env, videoAuth);
+    expect(redirected?.status).toBe(502);
+    expect(await redirected?.json()).toMatchObject({ error: 'PixCLI redirects are not allowed' });
+
+    const wrongMime = await handleProxy(request(), env, videoAuth);
+    expect(wrongMime?.status).toBe(415);
+    expect(await wrongMime?.json()).toMatchObject({ error: 'PixCLI asset MIME type is not allowlisted' });
+    const octetStream = await handleProxy(request(), env, videoAuth);
+    expect(octetStream?.status).toBe(415);
+    expect(await octetStream?.json()).toMatchObject({ error: 'PixCLI asset MIME type is not allowlisted' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('streams bounded PixCLI provider audit JSON through the exact asset path', async () => {
+    const audit = { model: 'grok-imagine-i2v-pinned', provider: 'fal' };
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(audit));
+    vi.stubGlobal('fetch', fetchMock);
+    const { env } = fakeEnv(true);
+    Object.assign(env, {
+      PIXCLI_API_KEY: 'pixcli-worker-secret',
+      PIXCLI_BASE_URL: 'https://pixcli.example',
+    });
+
+    const response = await handleProxy(new Request(
+      `https://api.insertplayer.ai/proxy/pixcli/api/v1/assets/${'e'.repeat(32)}`,
+      { headers: { [PROVIDER_SESSION_HEADER]: 'session-1' } },
+    ), env, { ...auth, claims: { generation_creation_flow: 'video' } });
+
+    expect(response?.status).toBe(200);
+    expect(response?.headers.get('Content-Type')).toBe('application/json');
+    expect(await response?.json()).toEqual(audit);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ redirect: 'manual' });
+  });
+
+  it('rejects a PixCLI video model outside the pinned 33-cent contract', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { env } = fakeEnv(true);
+    Object.assign(env, {
+      PIXCLI_API_KEY: 'pixcli-worker-secret',
+      PIXCLI_BASE_URL: 'https://pixcli.example',
+    });
+
+    const response = await handleProxy(new Request(
+      'https://api.insertplayer.ai/proxy/pixcli/api/v1/video/advanced',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [PROVIDER_SESSION_HEADER]: 'session-1',
+        },
+        body: JSON.stringify({
+          prompt: 'Generate one bounded high kick animation from the approved canonical.',
+          model: 'more-expensive-unapproved-model',
+          image: 'a'.repeat(32),
+          resolution: '720p',
+          params: { duration: 2, resolution: '720p' },
+          enrich_prompt: false,
+          output_format: 'url',
+          publish: false,
+          publish_name: 'high-kick',
+        }),
+      },
+    ), env, { ...auth, claims: { generation_creation_flow: 'video' } });
+
+    expect(response?.status).toBe(400);
+    expect(await response?.json()).toMatchObject({
+      error: 'PixCLI video request does not match the pinned generation contract',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('requires multipart transport for PixCLI uploads', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { env } = fakeEnv(true);
+    Object.assign(env, {
+      PIXCLI_API_KEY: 'pixcli-worker-secret',
+      PIXCLI_BASE_URL: 'https://pixcli.example',
+    });
+
+    const response = await handleProxy(new Request(
+      'https://api.insertplayer.ai/proxy/pixcli/api/v1/uploads',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [PROVIDER_SESSION_HEADER]: 'session-1',
+        },
+        body: '{}',
+      },
+    ), env, { ...auth, claims: { generation_creation_flow: 'video' } });
+
+    expect(response?.status).toBe(415);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('builds the Meterkey Google AI Studio route without leaking the direct Google key', () => {

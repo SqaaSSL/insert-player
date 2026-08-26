@@ -28,6 +28,7 @@ const providerSecretKeys = [
   'RUNWAY_API_KEY',
   'FREEPIK_API_KEY',
   'LUDO_API_KEY',
+  'PIXCLI_API_KEY',
 ];
 const sandboxSecretKeys = [
   ...providerSecretKeys,

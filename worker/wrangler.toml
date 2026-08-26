@@ -24,6 +24,7 @@ GENERATION_API_BASE_URL = "https://api.insertplayer.ai"
 # dedicated Insert Player Meterkey wallet and Google AI Studio BYOK.
 GEMINI_TRANSPORT = "meterkey"
 METERKEY_BASE_URL = "https://meter.hilo.cx"
+PIXCLI_BASE_URL = "https://pixcli.hilo.cx"
 # Set this to your Clerk issuer, for example:
 # Production Clerk uses the dedicated Insert Player Frontend API domain.
 CLERK_ISSUER = "https://clerk.insertplayer.ai"
@@ -38,6 +39,7 @@ CLERK_AUTHORIZED_PARTIES = "https://insertplayer.ai,https://www.insertplayer.ai"
 # wrangler secret put RUNWAY_API_KEY
 # wrangler secret put FREEPIK_API_KEY
 # wrangler secret put LUDO_API_KEY
+# wrangler secret put PIXCLI_API_KEY
 # wrangler secret put STRIPE_SECRET_KEY
 # wrangler secret put STRIPE_WEBHOOK_SECRET
 # Pin Checkout and webhooks to the dedicated Insert Player Stripe account.
@@ -62,6 +64,7 @@ required = [
   "RUNWAY_API_KEY",
   "FREEPIK_API_KEY",
   "LUDO_API_KEY",
+  "PIXCLI_API_KEY",
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
   "CLERK_WEBHOOK_SIGNING_SECRET",
