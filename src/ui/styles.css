@@ -1423,6 +1423,71 @@
     @apply font-sans text-[12px] normal-case not-italic leading-[1.55] text-asf-muted;
   }
 
+  .creation-flow-picker {
+    @apply m-0 min-w-0 border-0 p-0;
+  }
+
+  .creation-flow-picker legend {
+    @apply mb-2 text-[10px] tracking-[0.22em] uppercase text-asf-gold;
+  }
+
+  .creation-flow-picker__options {
+    @apply grid grid-cols-2 gap-3;
+  }
+
+  .creation-flow-picker__option {
+    @apply flex min-h-[112px] cursor-pointer items-start gap-3 rounded-[4px] border-[2px]
+           border-asf-gold-deep bg-asf-panel-alt p-3 text-left transition-colors
+           hover:border-asf-gold hover:bg-asf-panel;
+  }
+
+  .creation-flow-picker__option.is-active {
+    @apply border-asf-red bg-[rgba(80,10,10,0.92)]
+           shadow-[0_0_22px_rgba(255,42,42,0.22)];
+  }
+
+  .creation-flow-picker__option:focus-within {
+    @apply outline-2 outline-offset-2 outline-asf-blue;
+  }
+
+  .creation-flow-picker__option.is-unavailable,
+  .creation-flow-picker.is-disabled .creation-flow-picker__option {
+    @apply cursor-not-allowed opacity-55;
+  }
+
+  .creation-flow-picker__radio {
+    @apply mt-0.5 h-5 w-5 shrink-0 cursor-pointer accent-asf-red disabled:cursor-not-allowed;
+  }
+
+  .creation-flow-picker__copy {
+    @apply flex min-w-0 flex-1 flex-col gap-2;
+  }
+
+  .creation-flow-picker__heading {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .creation-flow-picker__heading strong {
+    @apply text-[11px] font-normal tracking-[0.16em] uppercase text-asf-gold-bright;
+  }
+
+  .creation-flow-picker__badge {
+    @apply rounded-[3px] border border-asf-violet px-1.5 py-1 text-[7px] tracking-[0.12em]
+           uppercase text-asf-text;
+  }
+
+  .creation-flow-picker__copy small {
+    @apply font-sans text-[12px] normal-case leading-[1.55] text-asf-muted;
+  }
+
+  .creation-flow-picker__reason {
+    @apply text-asf-gold;
+  }
+
+  .creation-flow-picker.is-compact .creation-flow-picker__option {
+    @apply min-h-[92px];
+  }
+
   .turnstile-challenge {
     @apply flex min-h-[70px] w-full flex-col items-center justify-center gap-2;
   }
@@ -1481,6 +1546,7 @@
   .gallery-chip:focus-visible,
   .gallery-tab:focus-visible,
   .tier-picker__option:focus-visible,
+  .creation-flow-picker__radio:focus-visible,
   .create-form__field input:focus-visible,
   .community-report-form select:focus-visible,
   .community-report-form textarea:focus-visible,
@@ -1583,6 +1649,10 @@
     }
 
     .tier-picker {
+      @apply grid-cols-1;
+    }
+
+    .creation-flow-picker__options {
       @apply grid-cols-1;
     }
 

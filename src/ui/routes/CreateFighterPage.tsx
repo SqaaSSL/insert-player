@@ -21,6 +21,10 @@ import { PipelineProgress } from '../components/PipelineProgress.tsx';
 import { TurnstileChallenge } from '../components/TurnstileChallenge.tsx';
 import { GenerationConsent } from '../components/LegalConsent.tsx';
 import {
+  CreationFlowPicker,
+  type CreationFlow,
+} from '../components/CreationFlowPicker.tsx';
+import {
   animLabel,
   getSourceBlob,
   type PreviewSelection,
@@ -56,6 +60,11 @@ import {
   type GenerationJob,
 } from '../../services/GenerationJobs.ts';
 import { includedRookieStatus, initialCreationTier } from '../shared/rookieEntitlement.ts';
+import {
+  assertCreationFlowAcknowledged,
+  creationFlowForResume,
+  videoCreationFlowAvailability,
+} from '../shared/creationFlow.ts';
 
 interface CreateFighterPageProps {
   authStatus: AuthStatus;
@@ -140,6 +149,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState(DEFAULT_NAME);
   const [tier, setTier] = useState<QualityTier>(() => initialQualityTier(authStatus));
+  const [creationFlow, setCreationFlow] = useState<CreationFlow>('original');
 
   const [started, setStarted] = useState(false);
   const [running, setRunning] = useState(false);
@@ -165,12 +175,19 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   const requiresTurnstile = authStatus === 'signed-out' && tier === 'rookie';
   const turnstileSiteKey = String(import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '').trim();
   const turnstileReady = !requiresTurnstile || Boolean(turnstileToken);
+  const videoFlowAvailability = videoCreationFlowAvailability(authStatus, tier);
 
   useEffect(() => {
     if (lockPaidTiers && tier !== 'rookie') {
       setTier('rookie');
     }
   }, [lockPaidTiers, tier]);
+
+  useEffect(() => {
+    if (!videoFlowAvailability.available && creationFlow === 'video') {
+      setCreationFlow('original');
+    }
+  }, [creationFlow, videoFlowAvailability.available]);
 
   useEffect(() => {
     if (authStatus !== 'signed-in') {
@@ -237,6 +254,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
           }
         }
         setTier(recovering.tier);
+        setCreationFlow(creationFlowForResume(recovering.creationFlow));
         setStarted(true);
         setDone(false);
         applyDurableJob(recovering);
@@ -399,6 +417,8 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       null,
       currentGenerationLegalAttestation(),
       apiContext,
+      null,
+      creationFlow,
     );
     if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
       throw new Error(authorization.error ?? 'Generation not authorized');
@@ -406,10 +426,12 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     setStageText('Handing the forge to the cloud...');
     let job: GenerationJob;
     try {
+      assertCreationFlowAcknowledged(creationFlow, authorization.creationFlow);
       job = await startGenerationJob({
         fighterId: prepared.fighter.id,
         purchaseId: authorization.purchaseId,
         providerSessionId: authorization.providerSessionId,
+        creationFlow,
       }, apiContext);
     } catch (error) {
       try {
@@ -439,6 +461,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     failedJob: GenerationJob,
     apiContext: ReturnType<typeof captureApiRequestContext>,
   ): Promise<void> {
+    const failedCreationFlow = creationFlowForResume(failedJob.creationFlow);
     setStarted(true);
     setStageText(`Restoring ${failedJob.preservedArtifactCount} completed stages...`);
     const authorization = await authorizeGeneration(
@@ -449,6 +472,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       currentGenerationLegalAttestation(),
       apiContext,
       failedJob.id,
+      failedCreationFlow,
     );
     if (
       !authorization.authorized ||
@@ -458,11 +482,31 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     ) {
       throw new Error(authorization.error ?? 'Preserved generation could not be resumed');
     }
-    const job = await startGenerationJob({
-      fighterId: failedJob.fighterId,
-      purchaseId: authorization.purchaseId,
-      providerSessionId: authorization.providerSessionId,
-    }, apiContext);
+    let job: GenerationJob;
+    try {
+      assertCreationFlowAcknowledged(failedCreationFlow, authorization.creationFlow);
+      job = await startGenerationJob({
+        fighterId: failedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        creationFlow: failedCreationFlow,
+      }, apiContext);
+    } catch (error) {
+      try {
+        await finishGenerationPurchase(
+          authorization.purchaseId,
+          false,
+          failedJob.fighterId,
+          apiContext,
+        );
+      } catch (settlementError: any) {
+        debugWarn(
+          '[Billing] Preserved job authorization could not be released:',
+          settlementError?.message ?? settlementError,
+        );
+      }
+      throw error;
+    }
     setResumableJob(null);
     const controller = new AbortController();
     pollingAbortRef.current?.abort();
@@ -474,6 +518,10 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
 
   async function start() {
     if ((!file && !resumableJob) || running || !turnstileReady || !legalAccepted || !recoveryReady) return;
+    if (creationFlow === 'video' && !videoFlowAvailability.available) {
+      setError(videoFlowAvailability.reason ?? 'Video creation is unavailable.');
+      return;
+    }
     setRunning(true);
     setDone(false);
     setError(null);
@@ -498,6 +546,8 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
           requiresTurnstile ? turnstileToken : null,
           currentGenerationLegalAttestation(),
           apiContext,
+          null,
+          creationFlow,
         );
       } finally {
         if (requiresTurnstile) {
@@ -508,9 +558,10 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       if (!authorization.authorized) {
         throw new Error(authorization.error ?? 'Generation not authorized');
       }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged(creationFlow, authorization.creationFlow);
       if (!file) throw new Error('Choose a source photo before starting generation');
       setStarted(true);
-      purchaseId = authorization.purchaseId;
       const hash = await runWithProviderSession(
         authorization.providerSessionId,
         (providerContext) => processCharacter(file, handleStatus, name.trim() || DEFAULT_NAME, {
@@ -583,6 +634,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     setResumableJob(null);
     setSelection({ kind: 'source', source: 'original' });
     setLegalAccepted(false);
+    setCreationFlow('original');
   }
 
   const selectedAnimName = selection.kind === 'animation' ? selection.animationName : null;
@@ -693,6 +745,14 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
               }}
             />
           </label>
+          <CreationFlowPicker
+            name="fighter-creation-flow"
+            value={creationFlow}
+            onChange={setCreationFlow}
+            disabled={running}
+            videoAvailable={videoFlowAvailability.available}
+            videoUnavailableReason={videoFlowAvailability.reason}
+          />
           <div className="tier-picker" role="radiogroup" aria-label="Quality tier">
             {QUALITY_TIERS.map((item) => {
               const locked = lockPaidTiers && item.id !== 'rookie';
@@ -744,7 +804,11 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             onClick={() => void start()}
           >
             <span>{!recoveryReady ? 'Checking Cloud...' : running ? 'Authorizing...' : startLabel}</span>
-            <small>{file ? file.name : 'Pick a photo to continue'}</small>
+            <small>
+              {file
+                ? `${file.name} · ${creationFlow === 'video' ? 'Video flow' : 'Original flow'}`
+                : 'Pick a photo to continue'}
+            </small>
           </button>
         </div>
       </section>
