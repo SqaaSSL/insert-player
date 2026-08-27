@@ -258,6 +258,9 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     const action = await step.do('video: choose one review-gated action', STEP_CONFIG, () => (
       nextVideoSpriteAction(this.env, job)
     ));
+    await step.do(`video ${action}: record action stage`, STEP_CONFIG, () => (
+      this.recordStageStarted(job, `sprite:${action}`)
+    ));
     const canonicalKind = videoAction(action).canonical;
     const canonicalKey = canonicalKind === 'crouch' ? sources.crouch.rawKey : sources.side.rawKey;
     const canonicalBytes = await this.loadAssetBytes(canonicalKey);

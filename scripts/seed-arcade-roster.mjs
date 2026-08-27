@@ -76,6 +76,7 @@ const preflightOnly = args.has('--preflight-only');
 const POLL_INTERVAL_MS = 5_000;
 const JOB_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 60_000;
+const VIDEO_REVIEW_ADJUST_TIMEOUT_MS = 3 * 60_000;
 const CLERK_TOKEN_REFRESH_SKEW_MS = 30_000;
 const CLERK_TOKEN_TTL_SECONDS = 10 * 60;
 let clerkBackendAuthBridgeSecret = '';
@@ -668,19 +669,23 @@ export function arcadeAdminAuthHeaders(token, backendBridgeSecret = '') {
 }
 
 export async function apiRequest(baseUrl, getToken, path, init = {}, request = fetch) {
+  const {
+    requestTimeoutMs = REQUEST_TIMEOUT_MS,
+    ...requestInit
+  } = init;
   const token = await getToken();
   const response = await request(`${baseUrl}${path}`, {
-    ...init,
+    ...requestInit,
     headers: {
       ...arcadeAdminAuthHeaders(token, clerkBackendAuthBridgeSecret),
       ...(expectedDeployedSha
         ? { 'X-Insert-Player-Expected-Worker-Sha': expectedDeployedSha }
         : {}),
-      ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-      ...(init.headers ?? {}),
+      ...(requestInit.body && !(requestInit.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+      ...(requestInit.headers ?? {}),
     },
     redirect: 'error',
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(requestTimeoutMs),
   });
   const text = await response.text();
   let body = {};
@@ -1539,6 +1544,7 @@ export async function runReviewGatedVideoDecision({
   const result = await requestApi(baseUrl, token, `${reviewPath}/${decision}`, {
     method: 'POST',
     body: JSON.stringify(requestBody),
+    ...(decision === 'adjust' ? { requestTimeoutMs: VIDEO_REVIEW_ADJUST_TIMEOUT_MS } : {}),
   });
   const updated = result.review;
   const identityChanged = !updated

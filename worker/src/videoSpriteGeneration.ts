@@ -522,11 +522,37 @@ export interface VideoSpriteCandidateReportProjection {
 
 const MAX_COMPILER_PNG_BYTES = 32 * 1024 * 1024;
 const MAX_COMPILER_REPORT_BYTES = 1024 * 1024;
-const BASE64_PATTERN = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const MAX_COMPILER_PNG_BASE64_BYTES = Math.ceil(MAX_COMPILER_PNG_BYTES / 3) * 4;
+
+function canonicalBase64DecodedLength(value: string): number | null {
+  if (!value || value.length % 4 !== 0 || value.length > MAX_COMPILER_PNG_BASE64_BYTES) {
+    return null;
+  }
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  const contentLength = value.length - padding;
+  for (let index = 0; index < contentLength; index += 1) {
+    const code = value.charCodeAt(index);
+    if (
+      code !== 43 && code !== 47 &&
+      (code < 48 || code > 57) &&
+      (code < 65 || code > 90) &&
+      (code < 97 || code > 122)
+    ) return null;
+  }
+  for (let index = contentLength; index < value.length; index += 1) {
+    if (value.charCodeAt(index) !== 61) return null;
+  }
+  return (value.length / 4) * 3 - padding;
+}
 
 function decodeCompilerPng(value: unknown, label: string): ArrayBuffer {
-  if (typeof value !== 'string' || !value || !BASE64_PATTERN.test(value)) {
+  if (typeof value !== 'string') {
     throw new Error(`${label} is not canonical base64.`);
+  }
+  const decodedLength = canonicalBase64DecodedLength(value);
+  if (decodedLength === null) throw new Error(`${label} is not canonical base64.`);
+  if (decodedLength < 24 || decodedLength > MAX_COMPILER_PNG_BYTES) {
+    throw new Error(`${label} is outside the persistence byte limit.`);
   }
   let binary: string;
   try {
@@ -534,10 +560,13 @@ function decodeCompilerPng(value: unknown, label: string): ArrayBuffer {
   } catch {
     throw new Error(`${label} is not valid base64.`);
   }
-  if (binary.length < 24 || binary.length > MAX_COMPILER_PNG_BYTES) {
+  if (binary.length !== decodedLength) {
     throw new Error(`${label} is outside the persistence byte limit.`);
   }
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
   const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
   if (!signature.every((byte, index) => bytes[index] === byte)) {
     throw new Error(`${label} is not a PNG.`);

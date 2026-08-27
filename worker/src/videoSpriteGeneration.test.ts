@@ -84,8 +84,8 @@ function liveCanvaFixture() {
   };
 }
 
-function fakePng(width: number, height: number, marker: number): Uint8Array {
-  const bytes = new Uint8Array(25);
+function fakePng(width: number, height: number, marker: number, byteLength = 25): Uint8Array {
+  const bytes = new Uint8Array(byteLength);
   bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   const view = new DataView(bytes.buffer);
   view.setUint32(16, width);
@@ -98,14 +98,14 @@ function exactBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-async function compilerFixture(operatorAdjustmentApplied = false) {
+async function compilerFixture(operatorAdjustmentApplied = false, rawByteLength = 25) {
   const selected = operatorAdjustmentApplied
     ? [1, 2, 3, 4, 5, 6, 7, 9]
     : [0, 1, 2, 3, 4, 5, 6, 7];
   const playback = [0, 1, 2, 3, 4, 5, 6, 7];
   const translations = selected.map(() => ({ dx: 0, dy: 0 }));
   const runtime = fakePng(1536, 256, 1);
-  const raw = fakePng(3072, 2048, 2);
+  const raw = fakePng(3072, 2048, 2, rawByteLength);
   const contact = fakePng(768, 256, 3);
   const unique = fakePng(1536, 256, 4);
   const hashes = {
@@ -310,5 +310,26 @@ describe('video sprite generation contracts', () => {
       selectedVideoIndices: adjusted.selected,
       operatorAdjustmentApplied: true,
     })).resolves.toMatchObject({ selectedIndices: adjusted.selected });
+  });
+
+  it('decodes a compiler PNG whose base64 crosses the Workerd RegExp stack limit', async () => {
+    const large = await compilerFixture(false, 4_200_000);
+    await expect(projectCompilerReport(large.response, 'idle', {
+      facing: 'right',
+      lineage: large.lineage,
+      videoSizeBytes: 621_474,
+      canonicalSizeBytes: 4_096,
+      operatorAdjustmentApplied: false,
+    })).resolves.toMatchObject({ selectedIndices: large.selected });
+
+    const malformed = await compilerFixture(false);
+    malformed.response.spriteBase64 = `${malformed.response.spriteBase64.slice(0, -4)}A=AA`;
+    await expect(projectCompilerReport(malformed.response, 'idle', {
+      facing: 'right',
+      lineage: malformed.lineage,
+      videoSizeBytes: 621_474,
+      canonicalSizeBytes: 4_096,
+      operatorAdjustmentApplied: false,
+    })).rejects.toThrow(/not canonical base64/);
   });
 });
