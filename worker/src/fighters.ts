@@ -798,6 +798,24 @@ export async function upsertAdminArcadeFighter(
   if (status !== 'retired' && generationPrompt.length < MIN_ARCADE_GENERATION_PROMPT_CHARS) {
     return json({ error: 'A detailed private Arcade generation prompt is required' }, 400, NO_STORE_HEADERS);
   }
+  if (status === 'active' && existing?.status !== 'active') {
+    const reviewedVideoRun = await env.DB.prepare(`
+      SELECT 1 AS present
+      FROM generation_artifact_runs
+      WHERE fighter_id = ? AND user_id = ? AND creation_flow = 'video'
+        AND CASE
+          WHEN json_valid(source_manifest_json)
+          THEN json_extract(source_manifest_json, '$.reviewedCanonicalSources.mode')
+          ELSE NULL
+        END = 'reviewed-current-v1'
+      LIMIT 1
+    `).bind(fighterId, auth.userId).first<{ present: number }>();
+    if (reviewedVideoRun) {
+      return json({
+        error: 'Reviewed Video fighters must use the dedicated reviewed activation endpoint',
+      }, 409, NO_STORE_HEADERS);
+    }
+  }
   if (status === 'active') {
     const assetIntegrity = fighter.quality_tier === 'champion'
       ? await inspectArcadeAssetIntegrity(env, fighterId)

@@ -26,6 +26,7 @@ import {
   validateReviewedCanonicalSourcesCurrent,
   type SealedReviewedCanonicalSources,
 } from './reviewedCanonicalSources';
+import { requireReviewedProductionWorkerPin } from './reviewedDeploymentPin';
 
 const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
 const AUTHORIZATION_TTL_HOURS = 12;
@@ -97,6 +98,15 @@ interface ResumableArcadeRunRow {
   source_manifest_json: string | null;
 }
 
+interface ReviewedVideoRecoverySeal {
+  job_id: string;
+  artifact_run_id: string | null;
+  job_status: string;
+  review_status: string;
+  run_status: string | null;
+  failure_stage: string | null;
+}
+
 function json(data: unknown, status = 200): Response {
   return Response.json(data, {
     status,
@@ -106,6 +116,41 @@ function json(data: unknown, status = 200): Response {
 
 function authorizationExpiresAt(): string {
   return new Date(Date.now() + AUTHORIZATION_TTL_HOURS * 60 * 60 * 1000).toISOString();
+}
+
+async function readLatestReviewedVideoRecoverySeal(
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+): Promise<ReviewedVideoRecoverySeal | null> {
+  return env.DB.prepare(`
+    SELECT gj.id AS job_id, gj.artifact_run_id,
+      gj.status AS job_status, gj.review_status,
+      run.status AS run_status, run.failure_stage
+    FROM generation_jobs gj
+    LEFT JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+    WHERE gj.fighter_id = ? AND gj.user_id = ?
+      AND gj.creation_flow = 'video' AND gj.operation = 'fighter_generation'
+    ORDER BY gj.created_at DESC, gj.rowid DESC
+    LIMIT 1
+  `).bind(fighterId, auth.userId).first<ReviewedVideoRecoverySeal>();
+}
+
+function reviewedRecoveryConflict(actualJobId: string | null): Response {
+  return json({
+    error: 'Reviewed Video recovery source changed; reload before retrying',
+    code: 'reviewed_video_recovery_source_changed',
+    ...(actualJobId ? { latestJobId: actualJobId } : {}),
+  }, 409);
+}
+
+function exactReviewedRestartSource(seal: ReviewedVideoRecoverySeal): boolean {
+  return seal.run_status === 'failed' && (
+    seal.job_status === 'failed' || seal.job_status === 'cancelled' || (
+      seal.job_status === 'succeeded' &&
+      (seal.review_status === 'rejected' || seal.review_status === 'approved')
+    )
+  );
 }
 
 function publicAuth(auth: AuthContext): PublicAuthContext {
@@ -341,6 +386,7 @@ export async function startAdminArcadeGeneration(
     creationFlow?: unknown;
     canonicalSourceMode?: unknown;
     canonicalSourceHashes?: unknown;
+    recoveryFromJobId?: unknown;
   }>(
     request,
     MAX_ADMIN_GENERATION_BODY_BYTES,
@@ -349,6 +395,15 @@ export async function startAdminArcadeGeneration(
     return json({ error: 'restart must be a boolean' }, 400);
   }
   const restart = body.restart === true;
+  const recoveryFromJobId = typeof body.recoveryFromJobId === 'string'
+    ? body.recoveryFromJobId.trim()
+    : '';
+  if (
+    body.recoveryFromJobId !== undefined
+    && (typeof body.recoveryFromJobId !== 'string' || !/^[a-f0-9]{32}$/.test(recoveryFromJobId))
+  ) {
+    return json({ error: 'recoveryFromJobId must be an exact Video job id' }, 400);
+  }
   const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
   if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
   let reviewedCanonicalRequest;
@@ -363,6 +418,16 @@ export async function startAdminArcadeGeneration(
   }
   if (reviewedCanonicalRequest && creationFlow !== 'video') {
     return json({ error: 'Reviewed canonical sources are supported only by the Video creation flow' }, 400);
+  }
+  if (recoveryFromJobId && (!reviewedCanonicalRequest || creationFlow !== 'video')) {
+    return json({ error: 'recoveryFromJobId is supported only by reviewed Video generation' }, 400);
+  }
+  if (reviewedCanonicalRequest && restart && !recoveryFromJobId) {
+    return json({ error: 'Reviewed Video restart requires the exact recoveryFromJobId' }, 400);
+  }
+  if (reviewedCanonicalRequest) {
+    const deploymentPinFailure = requireReviewedProductionWorkerPin(request, env);
+    if (deploymentPinFailure) return deploymentPinFailure;
   }
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
@@ -385,6 +450,20 @@ export async function startAdminArcadeGeneration(
   }
   if (!fighter.original_blob_key || !await env.SPRITES.head(fighter.original_blob_key)) {
     return json({ error: 'Upload the private reference image before generation' }, 409);
+  }
+
+  const initialVideoSeal = reviewedCanonicalRequest
+    ? await readLatestReviewedVideoRecoverySeal(env, auth, fighterId)
+    : null;
+  const initialRecoverySeal = recoveryFromJobId ? initialVideoSeal : null;
+  if (
+    recoveryFromJobId && (
+      !initialRecoverySeal
+      || initialRecoverySeal.job_id !== recoveryFromJobId
+      || (restart && !exactReviewedRestartSource(initialRecoverySeal))
+    )
+  ) {
+    return reviewedRecoveryConflict(initialRecoverySeal?.job_id ?? null);
   }
 
   const active = await env.DB.prepare(`
@@ -411,7 +490,8 @@ export async function startAdminArcadeGeneration(
 
   const assetIntegrity = await inspectArcadeAssetIntegrity(env, fighterId);
   if (
-    assetIntegrity.ready && !restart &&
+    assetIntegrity.ready && !restart && !recoveryFromJobId &&
+    (!reviewedCanonicalRequest || initialVideoSeal !== null) &&
     !(creationFlow === 'video' && (active || videoRunInProgress))
   ) {
     return json({
@@ -423,6 +503,7 @@ export async function startAdminArcadeGeneration(
   }
 
   if (active) {
+    if (recoveryFromJobId) return reviewedRecoveryConflict(active.id);
     if (active.creation_flow !== creationFlow) {
       return json({
         error: 'Another creation flow is already active for this fighter',
@@ -565,6 +646,26 @@ export async function startAdminArcadeGeneration(
   } catch (error) {
     if (error instanceof ReviewedCanonicalSourceError) return json({ error: error.message }, error.status);
     throw error;
+  }
+  if (reviewedCanonicalRequest && partial && !recoveryFromJobId) {
+    return json({
+      error: 'Reviewed Video continuation requires the exact recoveryFromJobId',
+      code: 'reviewed_video_recovery_source_required',
+    }, 409);
+  }
+  if (recoveryFromJobId) {
+    const finalRecoverySeal = await readLatestReviewedVideoRecoverySeal(env, auth, fighterId);
+    if (
+      !initialRecoverySeal
+      || !finalRecoverySeal
+      || JSON.stringify(finalRecoverySeal) !== JSON.stringify(initialRecoverySeal)
+      || finalRecoverySeal.job_id !== recoveryFromJobId
+      || (restart
+        ? !exactReviewedRestartSource(finalRecoverySeal)
+        : !partial || partial.job_id !== recoveryFromJobId)
+    ) {
+      return reviewedRecoveryConflict(finalRecoverySeal?.job_id ?? null);
+    }
   }
   if (partial) {
     const reusableContinuation = await env.DB.prepare(`

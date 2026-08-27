@@ -73,6 +73,7 @@ import {
   getVideoSpriteReviewAsset,
   rejectVideoSpriteReview,
 } from './videoSpriteReview';
+import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
 
 export { FighterGenerationWorkflow } from './generationWorkflow';
 export { ImageProcessorContainer } from './imageProcessorContainer';
@@ -515,6 +516,26 @@ export default {
         );
       }
 
+      const reviewedArcadeActivationMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/activate-reviewed-video$/,
+      );
+      if (reviewedArcadeActivationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(reviewedArcadeActivationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => activateReviewedVideoArcadeFighter(
+              request, env, auth, arcadeFighterId,
+            ),
+          ),
+          request,
+          env,
+        );
+      }
+
       const arcadeGenerationMatch = path.match(/^\/api\/admin\/arcade\/([^/]+)\/generate$/);
       if (arcadeGenerationMatch && method === 'POST') {
         const arcadeFighterId = decodePathParam(arcadeGenerationMatch[1]);
@@ -629,7 +650,7 @@ export default {
 
       if (path === '/api/generation-jobs' && method === 'GET') {
         return addCors(
-          await authenticated(request, env, (auth) => listGenerationJobs(env, auth)),
+          await authenticated(request, env, (auth) => listGenerationJobs(request, env, auth)),
           request,
           env,
         );
@@ -664,7 +685,11 @@ export default {
         const jobId = decodePathParam(videoReviewMatch[1]);
         if (isResponse(jobId)) return addCors(jobId, request, env);
         if (method === 'GET') {
-          return addCors(await authenticated(request, env, (auth) => getVideoSpriteReview(env, auth, jobId)), request, env);
+          return addCors(await authenticated(
+            request,
+            env,
+            (auth) => getVideoSpriteReview(request, env, auth, jobId),
+          ), request, env);
         }
       }
 

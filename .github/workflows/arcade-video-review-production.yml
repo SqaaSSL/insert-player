@@ -1,0 +1,331 @@
+name: Inspect or decide one reviewed Arcade Video candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Inspect first, then dispatch a separately bound human decision
+        required: true
+        default: inspect
+        type: choice
+        options:
+          - inspect
+          - approve
+          - adjust
+          - reject
+      slug:
+        description: Exact draft fighter slug
+        required: true
+        type: string
+      job_id:
+        description: Exact Video generation job id
+        required: true
+        type: string
+      candidate_id:
+        description: Exact Video review candidate id
+        required: true
+        type: string
+      revision:
+        description: Exact current review revision
+        required: true
+        type: string
+      report_sha256:
+        description: Exact current semantic report SHA-256
+        required: true
+        type: string
+      selected_video_indices:
+        description: Exact JSON indices; current selection for approve, new selection for adjust, empty otherwise
+        required: false
+        type: string
+      reason:
+        description: Explicit 8-300 character reason for reject; empty otherwise
+        required: false
+        type: string
+      confirmation:
+        description: Exact confirmation phrase for inspect/approve/adjust/reject
+        required: true
+        type: string
+      reviewed_manifest_run_id:
+        description: Completed approved canonical-import workflow run
+        required: true
+        type: string
+      inspection_run_id:
+        description: Prior successful step, inspect, or adjust artifact run on this exact commit; required for decisions
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  review:
+    name: ${{ inputs.operation }} exact Video review binding
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      REQUESTED_OPERATION: ${{ inputs.operation }}
+      REQUESTED_SLUG: ${{ inputs.slug }}
+      JOB_ID: ${{ inputs.job_id }}
+      CANDIDATE_ID: ${{ inputs.candidate_id }}
+      REVISION: ${{ inputs.revision }}
+      REPORT_SHA256: ${{ inputs.report_sha256 }}
+      SELECTED_VIDEO_INDICES: ${{ inputs.selected_video_indices }}
+      REJECTION_REASON: ${{ inputs.reason }}
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      REVIEWED_MANIFEST_RUN_ID: ${{ inputs.reviewed_manifest_run_id }}
+      INSPECTION_RUN_ID: ${{ inputs.inspection_run_id }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+      ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+      ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate the exact non-semantic operator request
+        shell: bash
+        run: |
+          [[ "$REQUESTED_SLUG" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || exit 1
+          [[ "$JOB_ID" =~ ^[a-f0-9]{32}$ ]] || exit 1
+          [[ "$CANDIDATE_ID" =~ ^[a-f0-9]{32}$ ]] || exit 1
+          [[ "$REVISION" =~ ^([1-9]|[1-9][0-9]|100)$ ]] || exit 1
+          [[ "$REPORT_SHA256" =~ ^[a-f0-9]{64}$ ]] || exit 1
+          [[ "$REVIEWED_MANIFEST_RUN_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
+          [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" ]] || exit 1
+          case "$REQUESTED_OPERATION" in
+            inspect)
+              expected="INSPECT_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION"
+              [[ -z "$INSPECTION_RUN_ID" && -z "$SELECTED_VIDEO_INDICES" && -z "$REJECTION_REASON" ]] || exit 1
+              ;;
+            approve)
+              expected="APPROVE_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION"
+              [[ "$INSPECTION_RUN_ID" =~ ^[1-9][0-9]*$ && -n "$SELECTED_VIDEO_INDICES" && -z "$REJECTION_REASON" ]] || exit 1
+              ;;
+            adjust)
+              expected="ADJUST_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION"
+              [[ "$INSPECTION_RUN_ID" =~ ^[1-9][0-9]*$ && -n "$SELECTED_VIDEO_INDICES" && -z "$REJECTION_REASON" ]] || exit 1
+              ;;
+            reject)
+              expected="REJECT_AND_ABANDON_REVIEW_GATED_VIDEO_RUN_PRODUCTION"
+              [[ "$INSPECTION_RUN_ID" =~ ^[1-9][0-9]*$ && -z "$SELECTED_VIDEO_INDICES" ]] || exit 1
+              [[ ${#REJECTION_REASON} -ge 8 && ${#REJECTION_REASON} -le 300 ]] || exit 1
+              ;;
+            *) exit 1 ;;
+          esac
+          [[ "$REQUESTED_CONFIRMATION" == "$expected" ]] || exit 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install Worker dependencies
+        run: npm --prefix worker ci
+
+      - name: Pin the live Worker to this exact commit
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const configured = process.env.ASF_WORKER_HEALTH_URL?.trim() ?? '';
+          const workerBase = process.env.ASF_WORKER_URL?.trim() ?? '';
+          if (workerBase !== 'https://api.insertplayer.ai') {
+            throw new Error('Reviewed production operations require exact ASF_WORKER_URL=https://api.insertplayer.ai.');
+          }
+          const expectedSha = process.env.GITHUB_SHA?.trim() ?? '';
+          const expectedTarget = `${workerBase}/health`;
+          const target = configured || expectedTarget;
+          if (!/^[a-f0-9]{40}$/.test(expectedSha) || new URL(target).toString() !== expectedTarget) {
+            throw new Error('Worker health URL and full reviewed commit SHA are required.');
+          }
+          const response = await fetch(target, {
+            redirect: 'error', signal: AbortSignal.timeout(30_000),
+          });
+          if (!response.ok) throw new Error(`Worker health failed with HTTP ${response.status}.`);
+          const health = await response.json();
+          const expectedTag = new RegExp(`^prod-${expectedSha}-[1-9][0-9]*$`);
+          if (
+            health?.status !== 'ok' || health.environment !== 'production' ||
+            health.storage?.d1 !== 'bound' || health.storage?.r2 !== 'bound' ||
+            typeof health.workerVersion?.id !== 'string' || !health.workerVersion.id ||
+            typeof health.workerVersion?.tag !== 'string' || !expectedTag.test(health.workerVersion.tag)
+          ) throw new Error(`Live Worker is not the exact healthy deployment for ${expectedSha}.`);
+          NODE
+
+      - name: Restore and verify the private licensed source
+        run: npm run arcade:sources -- --target=production --slug="$REQUESTED_SLUG"
+
+      - name: Download the approved canonical manifest lineage
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          metadata="$RUNNER_TEMP/reviewed-canonical-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REVIEWED_MANIFEST_RUN_ID" > "$metadata"
+          REVIEWED_RUN_METADATA="$metadata" node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const run = JSON.parse(readFileSync(process.env.REVIEWED_RUN_METADATA, 'utf8'));
+          const allowed = new Set([
+            '.github/workflows/import-reviewed-xai-canonical-production.yml',
+            '.github/workflows/import-reviewed-elon-mixed-canonical-production.yml',
+            '.github/workflows/import-reviewed-global-mixed-canonical-production.yml',
+          ]);
+          const path = String(run.path ?? '').split('@', 1)[0];
+          if (
+            run.id !== Number(process.env.REVIEWED_MANIFEST_RUN_ID) || run.status !== 'completed' ||
+            run.conclusion !== 'success' || run.event !== 'workflow_dispatch' ||
+            run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY || !allowed.has(path)
+          ) throw new Error('Reviewed canonical manifest producer lineage is not approved.');
+          NODE
+          destination="$RUNNER_TEMP/reviewed-canonical"
+          mkdir -p "$destination"
+          gh run download "$REVIEWED_MANIFEST_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-reviewed-canonical-manifest-$REQUESTED_SLUG" --dir "$destination"
+          manifest="$destination/reviewed-canonical-manifest.json"
+          [[ -f "$manifest" ]] || exit 1
+          printf 'REVIEWED_CANONICAL_MANIFEST=%s\n' "$manifest" >> "$GITHUB_ENV"
+
+      - name: Bind a decision to a prior private inspection artifact
+        if: inputs.operation != 'inspect'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          metadata="$RUNNER_TEMP/inspection-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$INSPECTION_RUN_ID" > "$metadata"
+          INSPECTION_METADATA="$metadata" node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const run = JSON.parse(readFileSync(process.env.INSPECTION_METADATA, 'utf8'));
+          const path = String(run.path ?? '').split('@', 1)[0];
+          const allowedPaths = new Set([
+            '.github/workflows/arcade-video-step-production.yml',
+            '.github/workflows/arcade-video-review-production.yml',
+          ]);
+          if (
+            run.id !== Number(process.env.INSPECTION_RUN_ID) || run.status !== 'completed' ||
+            run.conclusion !== 'success' || run.event !== 'workflow_dispatch' ||
+            run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            !allowedPaths.has(path) ||
+            run.head_sha !== process.env.GITHUB_SHA
+          ) throw new Error('Decision is not bound to a successful inspection on this exact commit.');
+          NODE
+          destination="$RUNNER_TEMP/prior-inspection"
+          mkdir -p "$destination"
+          gh run download "$INSPECTION_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-video-review-$REQUESTED_SLUG-$INSPECTION_RUN_ID" --dir "$destination"
+          descriptor="$destination/review-descriptor.json"
+          [[ -f "$descriptor" ]] || exit 1
+          INSPECTION_DESCRIPTOR="$descriptor" INSPECTION_DIRECTORY="$destination" node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { existsSync } from 'node:fs';
+          import { readFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const descriptor = JSON.parse(readFileSync(process.env.INSPECTION_DESCRIPTOR, 'utf8'));
+          const manifestBytes = readFileSync(process.env.REVIEWED_CANONICAL_MANIFEST);
+          const manifest = JSON.parse(manifestBytes);
+          const manifestSha = createHash('sha256').update(manifestBytes).digest('hex');
+          const actions = [
+            'idle', 'walk', 'high_punch', 'high_kick', 'low_punch', 'low_kick',
+            'jump', 'crouch', 'hit', 'ko', 'victory',
+          ];
+          const assetDefinitions = {
+            video: ['video.mp4', 'video/mp4'],
+            contactSheet: ['contact-sheet.png', 'image/png'],
+            uniqueSheet: ['unique-sheet.png', 'image/png'],
+            runtime: ['runtime.png', 'image/png'],
+            raw: ['raw.png', 'image/png'],
+            report: ['report.json', 'application/json'],
+          };
+          const mismatches = [
+            descriptor.schemaVersion === 1 ? null : 'schemaVersion',
+            descriptor.fighter === process.env.REQUESTED_SLUG ? null : 'slug',
+            descriptor.fighterId === manifest.fighterId ? null : 'fighterId',
+            descriptor.jobId === process.env.JOB_ID ? null : 'jobId',
+            /^[a-f0-9]{32}$/.test(descriptor.artifactRunId ?? '') ? null : 'artifactRunId',
+            descriptor.candidateId === process.env.CANDIDATE_ID ? null : 'candidateId',
+            descriptor.revision === Number(process.env.REVISION) ? null : 'revision',
+            descriptor.reportSha256 === process.env.REPORT_SHA256 ? null : 'reportSha256',
+            actions[descriptor.sequenceOrder] === descriptor.action ? null : 'actionSequence',
+            ['technical_pass', 'needs_review', 'reject'].includes(descriptor.technicalOutcome)
+              ? null : 'technicalOutcome',
+            Number.isInteger(descriptor.sourceFrameCount) && descriptor.sourceFrameCount >= 2
+              ? null : 'sourceFrameCount',
+            descriptor.animationFormat === 'video-dense-v1' ? null : 'animationFormat',
+            descriptor.processingVersion === 5 ? null : 'processingVersion',
+            Array.isArray(descriptor.selectedVideoIndices) && descriptor.selectedVideoIndices.length >= 2 &&
+              descriptor.selectedVideoIndices.every((value) => Number.isSafeInteger(value) && value >= 0) &&
+              new Set(descriptor.selectedVideoIndices).size === descriptor.selectedVideoIndices.length
+              ? null : 'selectedVideoIndices',
+            descriptor.reviewedManifestRunId === process.env.REVIEWED_MANIFEST_RUN_ID ? null : 'manifestRunId',
+            descriptor.reviewedManifestSha256 === manifestSha ? null : 'manifestSha256',
+            descriptor.reviewedCanonicalSourceMode === manifest.canonicalSourceMode ? null : 'sourceMode',
+            JSON.stringify(descriptor.reviewedCanonicalSourceHashes) === JSON.stringify(manifest.canonicalSourceHashes)
+              ? null : 'sourceHashes',
+          ].filter(Boolean);
+          for (const [name, [filename, contentType]] of Object.entries(assetDefinitions)) {
+            const asset = descriptor.assets?.[name];
+            const path = join(process.env.INSPECTION_DIRECTORY, filename);
+            if (
+              asset?.filename !== filename || asset?.contentType !== contentType ||
+              !/^[a-f0-9]{64}$/.test(asset?.sha256 ?? '') || !existsSync(path) ||
+              createHash('sha256').update(readFileSync(path)).digest('hex') !== asset.sha256
+            ) mismatches.push(`asset:${name}`);
+          }
+          const requestedSelection = process.env.REQUESTED_OPERATION === 'reject'
+            ? null : JSON.parse(process.env.SELECTED_VIDEO_INDICES);
+          if (
+            process.env.REQUESTED_OPERATION === 'approve' &&
+            JSON.stringify(requestedSelection) !== JSON.stringify(descriptor.selectedVideoIndices)
+          ) mismatches.push('approveSelection');
+          if (
+            process.env.REQUESTED_OPERATION === 'adjust' &&
+            JSON.stringify(requestedSelection) === JSON.stringify(descriptor.selectedVideoIndices)
+          ) mismatches.push('adjustSelection');
+          if (mismatches.length) throw new Error(`Inspection binding changed: ${mismatches.join(', ')}.`);
+          NODE
+
+      - name: Inspect or apply exactly one bound human decision
+        shell: bash
+        run: |
+          args=(
+            --target=production
+            --slug="$REQUESTED_SLUG"
+            --confirm-production
+            --confirm-video-step="$REQUESTED_CONFIRMATION"
+            --reviewed-canonical-manifest="$REVIEWED_CANONICAL_MANIFEST"
+            --reviewed-manifest-run-id="$REVIEWED_MANIFEST_RUN_ID"
+            --expected-deployed-sha="$GITHUB_SHA"
+            --video-review-job-id="$JOB_ID"
+            --video-review-candidate-id="$CANDIDATE_ID"
+            --video-review-revision="$REVISION"
+            --video-review-report-sha256="$REPORT_SHA256"
+          )
+          if [[ "$REQUESTED_OPERATION" == "inspect" ]]; then
+            args+=(--video-review-inspect --video-review-export-dir="$RUNNER_TEMP/video-review")
+          else
+            args+=(--video-review-decision="$REQUESTED_OPERATION")
+            [[ -z "$SELECTED_VIDEO_INDICES" ]] || args+=(--video-review-selected-indices="$SELECTED_VIDEO_INDICES")
+            [[ -z "$REJECTION_REASON" ]] || args+=(--video-review-reason="$REJECTION_REASON")
+            [[ "$REQUESTED_OPERATION" != "adjust" ]] || args+=(--video-review-export-dir="$RUNNER_TEMP/video-review")
+          fi
+          npm run arcade:seed -- "${args[@]}"
+
+      - name: Upload the private hash-bound inspection media
+        if: inputs.operation == 'inspect' || inputs.operation == 'adjust'
+        uses: actions/upload-artifact@v7
+        with:
+          name: arcade-video-review-${{ inputs.slug }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/video-review
+          if-no-files-found: error
+          retention-days: 14

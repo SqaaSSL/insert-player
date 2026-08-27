@@ -21,18 +21,50 @@ const animationArg = rawArgs.find((arg) => arg.startsWith('--animation='));
 const sourceArg = rawArgs.find((arg) => arg.startsWith('--source='));
 const activationConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-activation='));
 const videoStepConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-video-step='));
+const resumeVideoRunFromArg = rawArgs.find((arg) => arg.startsWith('--resume-video-run-from='));
+const restartVideoRunFromArg = rawArgs.find((arg) => arg.startsWith('--restart-video-run-from='));
+const videoReviewDecisionArg = rawArgs.find((arg) => arg.startsWith('--video-review-decision='));
+const reviewedManifestRunIdArg = rawArgs.find((arg) => arg.startsWith('--reviewed-manifest-run-id='));
+const videoReviewJobIdArg = rawArgs.find((arg) => arg.startsWith('--video-review-job-id='));
+const videoReviewCandidateIdArg = rawArgs.find((arg) => arg.startsWith('--video-review-candidate-id='));
+const videoReviewRevisionArg = rawArgs.find((arg) => arg.startsWith('--video-review-revision='));
+const videoReviewReportSha256Arg = rawArgs.find((arg) => arg.startsWith('--video-review-report-sha256='));
+const videoReviewSelectedIndicesArg = rawArgs.find((arg) => arg.startsWith('--video-review-selected-indices='));
+const videoReviewReasonArg = rawArgs.find((arg) => arg.startsWith('--video-review-reason='));
+const videoReviewExportDirArg = rawArgs.find((arg) => arg.startsWith('--video-review-export-dir='));
 const reviewedCanonicalManifestArg = rawArgs.find((arg) => arg.startsWith('--reviewed-canonical-manifest='));
+const reviewedVideoFinalJobIdArg = rawArgs.find((arg) => arg.startsWith('--reviewed-video-final-job-id='));
+const expectedDeployedShaArg = rawArgs.find((arg) => arg.startsWith('--expected-deployed-sha='));
 const target = targetArg?.slice('--target='.length) ?? 'production';
 const animationName = animationArg?.slice('--animation='.length) ?? '';
 const sourceName = sourceArg?.slice('--source='.length) ?? '';
 const activationConfirmation = activationConfirmationArg?.slice('--confirm-activation='.length) ?? '';
 const videoStepConfirmation = videoStepConfirmationArg?.slice('--confirm-video-step='.length) ?? '';
+const resumeVideoRunFrom = resumeVideoRunFromArg?.slice('--resume-video-run-from='.length) ?? '';
+const restartVideoRunFrom = restartVideoRunFromArg?.slice('--restart-video-run-from='.length) ?? '';
+const videoReviewDecision = videoReviewDecisionArg?.slice('--video-review-decision='.length) ?? '';
+const videoReviewJobId = videoReviewJobIdArg?.slice('--video-review-job-id='.length) ?? '';
+const videoReviewCandidateId = videoReviewCandidateIdArg?.slice('--video-review-candidate-id='.length) ?? '';
+const videoReviewRevision = videoReviewRevisionArg?.slice('--video-review-revision='.length) ?? '';
+const videoReviewReportSha256 = videoReviewReportSha256Arg
+  ?.slice('--video-review-report-sha256='.length) ?? '';
+const videoReviewSelectedIndices = videoReviewSelectedIndicesArg
+  ?.slice('--video-review-selected-indices='.length) ?? '';
+const videoReviewReason = videoReviewReasonArg?.slice('--video-review-reason='.length) ?? '';
+const videoReviewExportDir = videoReviewExportDirArg?.slice('--video-review-export-dir='.length) ?? '';
+const reviewedManifestRunId = reviewedManifestRunIdArg?.slice('--reviewed-manifest-run-id='.length) ?? '';
 const reviewedCanonicalManifestPath = reviewedCanonicalManifestArg
   ?.slice('--reviewed-canonical-manifest='.length) ?? '';
+const reviewedVideoFinalJobId = reviewedVideoFinalJobIdArg
+  ?.slice('--reviewed-video-final-job-id='.length) ?? '';
+const expectedDeployedSha = expectedDeployedShaArg?.slice('--expected-deployed-sha='.length) ?? '';
 const dryRun = args.has('--dry-run');
 const activate = args.has('--activate');
 const activateReviewed = args.has('--activate-reviewed');
 const videoStep = args.has('--video-step');
+const videoReviewInspect = args.has('--video-review-inspect');
+const videoReview = videoReviewDecision.length > 0 || videoReviewInspect;
+const reviewedVideoOperation = activateReviewed || videoStep || videoReview;
 const continueOnError = args.has('--continue-on-error');
 const all = args.has('--all');
 const resume = args.has('--resume');
@@ -48,6 +80,8 @@ const CLERK_TOKEN_REFRESH_SKEW_MS = 30_000;
 const CLERK_TOKEN_TTL_SECONDS = 10 * 60;
 let clerkBackendAuthBridgeSecret = '';
 const MAX_SOURCE_UPLOAD_BYTES = 12 * 1024 * 1024;
+const MAX_REVIEWED_VIDEO_ASSET_BYTES = 32 * 1024 * 1024;
+const REVIEWED_PRODUCTION_API_ORIGIN = 'https://api.insertplayer.ai';
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PLAYABLE_ANIMATION_NAMES = [
   'idle',
@@ -81,7 +115,21 @@ const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'];
 const CANONICAL_SOURCES = new Set(CANONICAL_SOURCE_NAMES);
 export const REVIEWED_ARCADE_ACTIVATION_CONFIRMATION = 'ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION';
 export const REVIEW_GATED_VIDEO_STEP_CONFIRMATION = 'START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION';
+export const REVIEW_GATED_VIDEO_RESUME_CONFIRMATION = 'RESUME_FAILED_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION';
+export const REVIEW_GATED_VIDEO_RESTART_CONFIRMATION = 'RESTART_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION';
+export const REVIEW_GATED_VIDEO_REVIEW_CONFIRMATIONS = Object.freeze({
+  inspect: 'INSPECT_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION',
+  approve: 'APPROVE_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION',
+  adjust: 'ADJUST_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION',
+  reject: 'REJECT_AND_ABANDON_REVIEW_GATED_VIDEO_RUN_PRODUCTION',
+});
 export const REVIEWED_CANONICAL_SOURCE_MODE = 'reviewed-current-v1';
+export const VIDEO_DENSE_ANIMATION_FORMAT = 'video-dense-v1';
+export const VIDEO_DENSE_PROCESSING_VERSION = 5;
+const COMPLETE_REVIEWED_VIDEO_STAGES = Object.freeze([
+  ...CANONICAL_SOURCE_NAMES.map((name) => `source:${name}`),
+  ...REVIEW_GATED_VIDEO_ACTIONS.map((name) => `sprite:${name}`),
+]);
 const LICENSED_REFERENCE_PROMPT = /\blicensed reference photo\b|\bperson in (?:this|the) licensed photo\b/i;
 const IDENTITY_ERASING_PROMPT = /\bwritten description only\b|\b(?:new|own) clearly synthetic face\b/i;
 const APPROVED_ARCADE_PROVIDER_CONTRACT = {
@@ -177,14 +225,15 @@ function clerkErrorDetail(body, fallback) {
   return typeof message === 'string' && message.trim() ? message.trim() : fallback;
 }
 
-async function clerkRequest(secretKey, path, init = {}) {
-  const response = await fetch(`https://api.clerk.com/v1${path}`, {
+export async function clerkRequest(secretKey, path, init = {}, request = fetch) {
+  const response = await request(`https://api.clerk.com/v1${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${secretKey}`,
       ...(init.body ? { 'Content-Type': 'application/json' } : {}),
       ...(init.headers ?? {}),
     },
+    redirect: 'error',
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const text = await response.text();
@@ -324,6 +373,96 @@ export function assertReviewGatedVideoStepConfirmation(value) {
   }
 }
 
+export function assertReviewGatedVideoRecoveryConfirmation(operation, value) {
+  const expected = operation === 'resume-failed'
+    ? REVIEW_GATED_VIDEO_RESUME_CONFIRMATION
+    : operation === 'restart-full'
+      ? REVIEW_GATED_VIDEO_RESTART_CONFIRMATION
+      : null;
+  if (!expected || value !== expected) {
+    throw new Error(`Review-gated Video ${operation} requires --confirm-video-step=${expected ?? 'a supported recovery confirmation'}.`);
+  }
+}
+
+export function assertReviewGatedVideoReviewConfirmation(decision, value) {
+  const expected = REVIEW_GATED_VIDEO_REVIEW_CONFIRMATIONS[decision];
+  if (!expected || value !== expected) {
+    throw new Error(`Review-gated Video ${decision} requires --confirm-video-step=${expected ?? 'a supported review confirmation'}.`);
+  }
+}
+
+function exactVideoJobId(value, label) {
+  if (typeof value !== 'string' || !/^[a-f0-9]{32}$/.test(value)) {
+    throw new Error(`${label} must be an exact 32-character lowercase hex Video job id.`);
+  }
+  return value;
+}
+
+export function assertReviewedVideoFinalJobId(value) {
+  if (typeof value !== 'string' || !/^[a-f0-9]{32}$/.test(value)) {
+    throw new Error(
+      'Reviewed Arcade activation requires --reviewed-video-final-job-id=<32 lowercase hex chars>.',
+    );
+  }
+  return value;
+}
+
+export function assertPinnedProductionWorkerHealth(health, expectedSha) {
+  if (typeof expectedSha !== 'string' || !/^[a-f0-9]{40}$/.test(expectedSha)) {
+    throw new Error('A full lowercase deployed commit SHA is required for the production Worker pin.');
+  }
+  const tagPattern = new RegExp(`^prod-${expectedSha}-[1-9][0-9]*$`);
+  if (
+    health?.status !== 'ok'
+    || health.environment !== 'production'
+    || health.storage?.d1 !== 'bound'
+    || health.storage?.r2 !== 'bound'
+    || typeof health.workerVersion?.id !== 'string'
+    || !health.workerVersion.id
+    || typeof health.workerVersion?.tag !== 'string'
+    || !tagPattern.test(health.workerVersion.tag)
+  ) {
+    throw new Error(`Live Worker is not the healthy production deployment for exact SHA ${expectedSha}.`);
+  }
+  return health.workerVersion.tag;
+}
+
+export function assertReviewedProductionApiOrigin(value) {
+  const baseUrl = typeof value === 'string' ? value : '';
+  if (baseUrl !== REVIEWED_PRODUCTION_API_ORIGIN) {
+    throw new Error(
+      `Reviewed production operations require exact ${REVIEWED_PRODUCTION_API_ORIGIN} `
+      + 'origin with no credentials, port, path, query, or fragment.',
+    );
+  }
+  return REVIEWED_PRODUCTION_API_ORIGIN;
+}
+
+export async function pinProductionWorkerHealth({
+  baseUrl,
+  configuredHealthUrl = '',
+  expectedSha,
+  requestHealth = fetch,
+}) {
+  const workerUrl = new URL(assertReviewedProductionApiOrigin(baseUrl));
+  const expectedHealthUrl = new URL('/health', workerUrl).toString();
+  const healthUrl = configuredHealthUrl?.trim() || expectedHealthUrl;
+  if (new URL(healthUrl).toString() !== expectedHealthUrl) {
+    throw new Error('ASF_WORKER_HEALTH_URL must be the /health endpoint of ASF_WORKER_URL.');
+  }
+  const response = await requestHealth(healthUrl, {
+    redirect: 'error',
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response?.ok) {
+    throw new Error(`Worker health failed with HTTP ${response?.status ?? 'unknown'}.`);
+  }
+  const health = await response.json();
+  const tag = assertPinnedProductionWorkerHealth(health, expectedSha);
+  console.log(`Worker health pinned to ${tag}.`);
+  return { healthUrl, tag };
+}
+
 function hasExactKeys(value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const actual = Object.keys(value).sort();
@@ -373,45 +512,80 @@ function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
   if (
     preflightOnly
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || animationName || sourceName)
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName)
   ) {
     throw new Error('--preflight-only requires one --slug and cannot be combined with a generation operation.');
   }
   if (animationName && sourceName) {
     throw new Error('Use either --animation or --source, not both.');
   }
-  if ((animationName || sourceName) && (all || !slugArg || activate || activateReviewed || videoStep)) {
+  if ((animationName || sourceName) && (all || !slugArg || activate || reviewedVideoOperation)) {
     throw new Error('--animation and --source require one --slug and cannot be combined with an activation operation.');
   }
   if (resume && (animationName || sourceName)) {
     throw new Error('--resume fills an entire fighter and cannot be combined with --animation or --source.');
   }
-  if (restartDraft && (all || resume || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || animationName || sourceName || !slugArg)) {
+  if (restartDraft && (all || resume || prepareCanary || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--restart-draft requires one --slug and cannot be combined with --all, --resume, --activate, --animation, or --source.');
   }
-  if (prepareCanary && (all || resume || restartDraft || canarySide || probeSide || activate || activateReviewed || videoStep || animationName || sourceName || !slugArg)) {
+  if (prepareCanary && (all || resume || restartDraft || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--prepare-canary requires one --slug and cannot be combined with another generation operation.');
   }
-  if (canarySide && (all || resume || restartDraft || prepareCanary || probeSide || activate || activateReviewed || videoStep || animationName || sourceName || !slugArg)) {
+  if (canarySide && (all || resume || restartDraft || prepareCanary || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--canary-side requires one --slug and cannot be combined with another generation operation.');
   }
-  if (probeSide && (all || resume || restartDraft || prepareCanary || canarySide || activate || activateReviewed || videoStep || animationName || sourceName || !slugArg)) {
+  if (probeSide && (all || resume || restartDraft || prepareCanary || canarySide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--probe-side requires one --slug and cannot be combined with another generation operation.');
   }
   if (
     activateReviewed
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || videoStep || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || videoStep || videoReview || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--activate-reviewed requires one --slug and cannot be combined with generation, resume, or dry-run.');
   }
   if (
     videoStep
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoReview || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--video-step requires one --slug and cannot be combined with generation, resume, activation, or dry-run.');
   }
-  if (reviewedCanonicalManifestPath && !videoStep) {
-    throw new Error('--reviewed-canonical-manifest is supported only with --video-step.');
+  if (
+    videoReview
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || animationName || sourceName || !slugArg)
+  ) {
+    throw new Error('--video-review-decision requires one --slug and cannot be combined with generation, resume, activation, or dry-run.');
+  }
+  if (resumeVideoRunFrom && restartVideoRunFrom) {
+    throw new Error('Choose exactly one of --resume-video-run-from or --restart-video-run-from.');
+  }
+  if ((resumeVideoRunFrom || restartVideoRunFrom) && !videoStep) {
+    throw new Error('Video recovery arguments are supported only with --video-step.');
+  }
+  if (videoReviewInspect && videoReviewDecision) {
+    throw new Error('Video review inspect cannot be combined with a review decision.');
+  }
+  if (
+    videoReviewExportDir
+    && !videoStep
+    && !videoReviewInspect
+    && videoReviewDecision !== 'adjust'
+  ) {
+    throw new Error('Video review export requires --video-step, --video-review-inspect, or adjust.');
+  }
+  if (videoReviewDecision === 'adjust' && !videoReviewExportDir) {
+    throw new Error('Video review adjust requires a private export destination for the new revision.');
+  }
+  if (reviewedManifestRunId && !videoStep && !videoReview) {
+    throw new Error('--reviewed-manifest-run-id requires a review-gated Video operation.');
+  }
+  if (reviewedCanonicalManifestPath && !videoStep && !videoReview) {
+    throw new Error('--reviewed-canonical-manifest is supported only with --video-step or --video-review-decision.');
+  }
+  if (reviewedVideoFinalJobId && !activateReviewed) {
+    throw new Error('--reviewed-video-final-job-id is supported only with --activate-reviewed.');
+  }
+  if (expectedDeployedSha && !reviewedVideoOperation) {
+    throw new Error('--expected-deployed-sha is supported only with a reviewed Video operation.');
   }
   if (animationName && !PLAYABLE_ANIMATIONS.has(animationName)) {
     throw new Error(`Unknown playable animation: ${animationName}`);
@@ -493,15 +667,19 @@ export function arcadeAdminAuthHeaders(token, backendBridgeSecret = '') {
   };
 }
 
-async function apiRequest(baseUrl, getToken, path, init = {}) {
+export async function apiRequest(baseUrl, getToken, path, init = {}, request = fetch) {
   const token = await getToken();
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await request(`${baseUrl}${path}`, {
     ...init,
     headers: {
       ...arcadeAdminAuthHeaders(token, clerkBackendAuthBridgeSecret),
+      ...(expectedDeployedSha
+        ? { 'X-Insert-Player-Expected-Worker-Sha': expectedDeployedSha }
+        : {}),
       ...(init.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
       ...(init.headers ?? {}),
     },
+    redirect: 'error',
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const text = await response.text();
@@ -518,6 +696,39 @@ async function apiRequest(baseUrl, getToken, path, init = {}) {
     throw new Error(`${init.method ?? 'GET'} ${path} failed: ${detail}${context.length > 0 ? ` (${context.join(', ')})` : ''}`);
   }
   return body;
+}
+
+export async function apiAssetRequest(baseUrl, getToken, path, request = fetch) {
+  if (typeof path !== 'string' || !path.startsWith('/api/generation-jobs/')) {
+    throw new Error('Reviewed Video provenance attempted to read an untrusted asset path.');
+  }
+  const token = await getToken();
+  const response = await request(`${baseUrl}${path}`, {
+    headers: {
+      ...arcadeAdminAuthHeaders(token, clerkBackendAuthBridgeSecret),
+      ...(expectedDeployedSha
+        ? { 'X-Insert-Player-Expected-Worker-Sha': expectedDeployedSha }
+        : {}),
+    },
+    redirect: 'error',
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`GET ${path} failed with HTTP ${response.status}.`);
+  }
+  const declaredLength = Number(response.headers.get('Content-Length') ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_REVIEWED_VIDEO_ASSET_BYTES) {
+    throw new Error(`Reviewed Video provenance asset exceeds ${MAX_REVIEWED_VIDEO_ASSET_BYTES} bytes.`);
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength > MAX_REVIEWED_VIDEO_ASSET_BYTES) {
+    throw new Error(`Reviewed Video provenance asset exceeds ${MAX_REVIEWED_VIDEO_ASSET_BYTES} bytes.`);
+  }
+  return {
+    bytes,
+    etag: response.headers.get('ETag')?.replace(/^"|"$/g, '') ?? '',
+    contentType: response.headers.get('Content-Type')?.split(';', 1)[0]?.trim() ?? '',
+  };
 }
 
 export function findCurrentArcadeEntry(adminEntries, slug) {
@@ -671,13 +882,219 @@ export function assertReviewedActivationDraft({
   return { fighterId: entry.fighterId };
 }
 
+function sameExactStringSet(actual, expected) {
+  if (!Array.isArray(actual) || actual.length !== expected.length) return false;
+  const values = new Set(actual);
+  return values.size === expected.length && expected.every((value) => values.has(value));
+}
+
+function reviewedVideoAssetBytes(result, label) {
+  const bytes = Buffer.isBuffer(result)
+    ? result
+    : result?.bytes instanceof Uint8Array
+      ? Buffer.from(result.bytes)
+      : null;
+  if (!bytes || bytes.byteLength === 0 || bytes.byteLength > MAX_REVIEWED_VIDEO_ASSET_BYTES) {
+    throw new Error(`${label} did not return bounded immutable bytes.`);
+  }
+  return bytes;
+}
+
+function assertApprovedVideoReviewForActivation(review, job, expectedAction, sequenceOrder, artifactRunId) {
+  const mismatches = [
+    review?.jobId === job.id ? null : 'jobId',
+    review?.artifactRunId === artifactRunId ? null : 'artifactRunId',
+    /^[a-f0-9]{32}$/.test(review?.candidateId ?? '') ? null : 'candidateId',
+    review?.action === expectedAction ? null : 'action',
+    review?.sequenceOrder === sequenceOrder ? null : 'sequenceOrder',
+    review?.status === 'approved' ? null : 'status',
+    Number.isInteger(review?.revision) && review.revision >= 1 ? null : 'revision',
+    /^[a-f0-9]{64}$/.test(review?.reportSha256 ?? '') ? null : 'reportSha256',
+    ['technical_pass', 'needs_review'].includes(review?.technicalOutcome) ? null : 'technicalOutcome',
+    review?.animationFormat === VIDEO_DENSE_ANIMATION_FORMAT ? null : 'animationFormat',
+    review?.processingVersion === VIDEO_DENSE_PROCESSING_VERSION ? null : 'processingVersion',
+    Number.isInteger(review?.frameCount) && review.frameCount >= 2 ? null : 'frameCount',
+    Number.isInteger(review?.rawFrameCount) && review.rawFrameCount >= 2 ? null : 'rawFrameCount',
+    typeof review?.reviewedAt === 'string' && review.reviewedAt ? null : 'reviewedAt',
+  ].filter(Boolean);
+  if (mismatches.length > 0) {
+    throw new Error(
+      `Reviewed Video approval ${sequenceOrder + 1}/11 failed its sealed provenance: ${mismatches.join(', ')}.`,
+    );
+  }
+  return review;
+}
+
+export async function verifyReviewedVideoActivationProvenance({
+  fighterId,
+  owned,
+  finalJobId,
+  baseUrl,
+  token,
+  requestApi = apiRequest,
+  requestAsset = apiAssetRequest,
+}) {
+  assertReviewedVideoFinalJobId(finalJobId);
+  const currentSprites = new Map(
+    (Array.isArray(owned?.sprites) ? owned.sprites : [])
+      .filter((sprite) => sprite?.qualityTier === 'champion')
+      .map((sprite) => [sprite.animationName, sprite]),
+  );
+  const seenJobs = new Set();
+  const seenCandidates = new Set();
+  const approvals = [];
+  let artifactRunId = '';
+  let jobId = finalJobId;
+
+  for (let sequenceOrder = REVIEW_GATED_VIDEO_ACTIONS.length - 1; sequenceOrder >= 0; sequenceOrder -= 1) {
+    if (!/^[a-f0-9]{32}$/.test(jobId) || seenJobs.has(jobId)) {
+      throw new Error('Reviewed Video job chain is invalid or cyclic.');
+    }
+    seenJobs.add(jobId);
+    const jobBody = await requestApi(
+      baseUrl,
+      token,
+      `/api/generation-jobs/${encodeURIComponent(jobId)}`,
+    );
+    const job = assertReviewGatedVideoJob(jobBody.job, fighterId);
+    if (!artifactRunId) artifactRunId = job.artifactRunId;
+    const jobMismatches = [
+      job.id === jobId ? null : 'id',
+      job.artifactRunId === artifactRunId ? null : 'artifactRunId',
+      job.status === 'succeeded' ? null : 'status',
+      job.reviewStatus === 'approved' ? null : 'reviewStatus',
+      job.fullRunRestartRequired !== true ? null : 'restartRequired',
+    ].filter(Boolean);
+    if (jobMismatches.length > 0) {
+      throw new Error(
+        `Reviewed Video job ${sequenceOrder + 1}/11 failed its completed-run contract: ${jobMismatches.join(', ')}.`,
+      );
+    }
+    if (sequenceOrder === REVIEW_GATED_VIDEO_ACTIONS.length - 1) {
+      if (
+        job.stage !== 'complete'
+        || job.resumable === true
+        || !sameExactStringSet(job.completedStages, COMPLETE_REVIEWED_VIDEO_STAGES)
+        || !Array.isArray(job.pendingStages)
+        || job.pendingStages.length !== 0
+        || job.preservedArtifactCount !== COMPLETE_REVIEWED_VIDEO_STAGES.length
+      ) {
+        throw new Error(
+          'Final victory job does not prove one completed 14-stage reviewed Video run.',
+        );
+      }
+    }
+
+    const reviewBody = await requestApi(
+      baseUrl,
+      token,
+      `/api/generation-jobs/${encodeURIComponent(job.id)}/video-review`,
+    );
+    const expectedAction = REVIEW_GATED_VIDEO_ACTIONS[sequenceOrder];
+    const review = assertApprovedVideoReviewForActivation(
+      reviewBody.review,
+      job,
+      expectedAction,
+      sequenceOrder,
+      artifactRunId,
+    );
+    if (seenCandidates.has(review.candidateId)) {
+      throw new Error('Reviewed Video approval chain reuses a candidate id.');
+    }
+    seenCandidates.add(review.candidateId);
+
+    const sprite = currentSprites.get(expectedAction);
+    const spriteMismatches = [
+      sprite ? null : 'missing',
+      sprite?.qualityTier === 'champion' ? null : 'tier',
+      sprite?.animationFormat === VIDEO_DENSE_ANIMATION_FORMAT ? null : 'animationFormat',
+      sprite?.processingVersion === VIDEO_DENSE_PROCESSING_VERSION ? null : 'processingVersion',
+      sprite?.frameWidth === 192 ? null : 'frameWidth',
+      sprite?.frameHeight === 256 ? null : 'frameHeight',
+      sprite?.frameCount === review.frameCount ? null : 'frameCount',
+      typeof sprite?.url === 'string' && sprite.url ? null : 'url',
+      typeof sprite?.rawUrl === 'string' && sprite.rawUrl ? null : 'rawUrl',
+      /^[a-f0-9]{64}$/.test(sprite?.contentHash ?? '') ? null : 'contentHash',
+      /^[a-f0-9]{64}$/.test(sprite?.rawContentHash ?? '') ? null : 'rawContentHash',
+    ].filter(Boolean);
+    if (spriteMismatches.length > 0) {
+      throw new Error(
+        `Current ${expectedAction} sprite is not a complete video-dense-v1 Champion pointer: ${spriteMismatches.join(', ')}.`,
+      );
+    }
+
+    const revision = review.revision;
+    const assetPrefix = `/api/generation-jobs/${encodeURIComponent(job.id)}/video-review/assets`;
+    const [runtimeResult, rawResult] = await Promise.all([
+      requestAsset(baseUrl, token, `${assetPrefix}/runtime?revision=${revision}`),
+      requestAsset(baseUrl, token, `${assetPrefix}/raw?revision=${revision}`),
+    ]);
+    const runtimeBytes = reviewedVideoAssetBytes(runtimeResult, `${expectedAction} runtime`);
+    const rawBytes = reviewedVideoAssetBytes(rawResult, `${expectedAction} raw`);
+    const runtimeSha256 = sha256(runtimeBytes);
+    const rawSha256 = sha256(rawBytes);
+    if (runtimeSha256 !== sprite.contentHash || rawSha256 !== sprite.rawContentHash) {
+      throw new Error(
+        `Current ${expectedAction} sprite bytes do not match approved Video revision ${revision}.`,
+      );
+    }
+    if (
+      (runtimeResult?.etag && runtimeResult.etag !== runtimeSha256)
+      || (rawResult?.etag && rawResult.etag !== rawSha256)
+    ) {
+      throw new Error(`Approved ${expectedAction} Video asset ETag does not match its bytes.`);
+    }
+    approvals.push({
+      action: expectedAction,
+      sequenceOrder,
+      jobId: job.id,
+      candidateId: review.candidateId,
+      revision,
+      reportSha256: review.reportSha256,
+      runtimeSha256,
+      rawSha256,
+    });
+
+    const previousJobId = job.resumedFromJobId;
+    if (sequenceOrder === 0) {
+      if (previousJobId != null) {
+        throw new Error('Reviewed Video root job unexpectedly resumes another job.');
+      }
+    } else if (typeof previousJobId !== 'string' || !/^[a-f0-9]{32}$/.test(previousJobId)) {
+      throw new Error(`Reviewed Video job ${sequenceOrder + 1}/11 has no sealed predecessor.`);
+    }
+    jobId = previousJobId ?? '';
+  }
+
+  if (
+    approvals.length !== REVIEW_GATED_VIDEO_ACTIONS.length
+    || approvals[0]?.action !== 'victory'
+    || approvals.at(-1)?.action !== 'idle'
+  ) {
+    throw new Error('Reviewed Video activation did not prove all eleven approvals through final victory.');
+  }
+  return {
+    schemaVersion: 1,
+    fighterId,
+    artifactRunId,
+    finalJobId,
+    animationFormat: VIDEO_DENSE_ANIMATION_FORMAT,
+    approvedActionCount: approvals.length,
+    finalAction: 'victory',
+    currentSpritesVerified: true,
+    approvals: approvals.reverse(),
+  };
+}
+
 export async function activateReviewedArcadeFighter({
   manifest,
   fighter,
   approvedPhotoHash,
+  reviewedVideoFinalJobId,
   baseUrl,
   token,
   requestApi = apiRequest,
+  requestAsset = apiAssetRequest,
 }) {
   const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
   const adminEntries = Array.isArray(admin.fighters) ? admin.fighters : [];
@@ -699,25 +1116,49 @@ export async function activateReviewedArcadeFighter({
   );
   const owned = detail.fighter;
   assertReviewedActivationDraft({ manifest, fighter, entry, owned, approvedPhotoHash });
+  const provenance = await verifyReviewedVideoActivationProvenance({
+    fighterId: entry.fighterId,
+    owned,
+    finalJobId: reviewedVideoFinalJobId,
+    baseUrl,
+    token,
+    requestApi,
+    requestAsset,
+  });
 
   console.log(`\n${fighter.rank}. ${fighter.name} [reviewed activation only]`);
   const result = await requestApi(
     baseUrl,
     token,
-    `/api/admin/arcade/${encodeURIComponent(entry.fighterId)}`,
+    `/api/admin/arcade/${encodeURIComponent(entry.fighterId)}/activate-reviewed-video`,
     {
-      method: 'PATCH',
-      body: JSON.stringify(arcadePayload(manifest, fighter, 'active')),
+      method: 'POST',
+      body: JSON.stringify({
+        finalJobId: reviewedVideoFinalJobId,
+        arcadeUpdatedAt: entry.updatedAt,
+        fighterUpdatedAt: owned.updatedAt,
+      }),
     },
   );
   if (
     result.fighter?.fighterId !== entry.fighterId
     || result.fighter?.status !== 'active'
     || result.fighter?.public !== true
+    || result.provenance?.schemaVersion !== 1
+    || result.provenance?.artifactRunId !== provenance.artifactRunId
+    || result.provenance?.finalJobId !== reviewedVideoFinalJobId
+    || result.provenance?.approvedActionCount !== REVIEW_GATED_VIDEO_ACTIONS.length
+    || result.provenance?.finalAction !== 'victory'
+    || result.provenance?.animationFormat !== VIDEO_DENSE_ANIMATION_FORMAT
+    || result.provenance?.currentSpritesVerified !== true
   ) {
-    throw new Error(`${fighter.name} activation did not return a public active Arcade fighter.`);
+    throw new Error(
+      `${fighter.name} activation did not return the atomically proven public Video fighter.`,
+    );
   }
-  console.log(`  active: ${entry.fighterId} (reviewed assets only; no generation requested)`);
+  console.log(
+    `  active: ${entry.fighterId} (11/11 ${provenance.animationFormat} approvals from ${provenance.artifactRunId}; no generation requested)`,
+  );
   return result.fighter;
 }
 
@@ -773,7 +1214,12 @@ export function assertReviewGatedVideoDraft({
   return { fighterId: entry.fighterId };
 }
 
-function assertReviewGatedVideoJob(job, fighterId) {
+function assertReviewGatedVideoJob(
+  job,
+  fighterId,
+  reviewedCanonicalManifest = null,
+  { allowFullRunRestartRequired = false } = {},
+) {
   if (!job || !/^[a-f0-9]{32}$/.test(job.id ?? '')) {
     throw new Error('Review-gated Video generation returned an invalid job id.');
   }
@@ -789,18 +1235,43 @@ function assertReviewGatedVideoJob(job, fighterId) {
   if (mismatches.length > 0) {
     throw new Error(`Review-gated Video job crossed its sealed scope: ${mismatches.join(', ')}.`);
   }
-  if (job.fullRunRestartRequired === true) {
+  if (job.fullRunRestartRequired === true && !allowFullRunRestartRequired) {
     throw new Error(`Video job ${job.id} requires an explicit full-run restart; video-step will not restart it.`);
+  }
+  if (reviewedCanonicalManifest && (
+    job.canonicalSourceMode !== reviewedCanonicalManifest.canonicalSourceMode
+    || JSON.stringify(job.canonicalSourceHashes) !== JSON.stringify(
+      reviewedCanonicalManifest.canonicalSourceHashes,
+    )
+  )) {
+    throw new Error(
+      `Video job ${job.id} is not sealed to the separately reviewed canonical manifest.`,
+    );
   }
   return job;
 }
 
-export function planReviewGatedVideoStep(jobs, fighterId) {
+export function planReviewGatedVideoStep(
+  jobs,
+  fighterId,
+  { resumeFromJobId = '', restartFromJobId = '' } = {},
+) {
   const fighterJobs = (Array.isArray(jobs) ? jobs : []).filter((job) => job?.fighterId === fighterId);
+  const recoveryOperation = resumeFromJobId
+    ? 'resume-failed'
+    : restartFromJobId
+      ? 'restart-full'
+      : '';
+  const recoveryJobId = resumeFromJobId || restartFromJobId;
   const active = fighterJobs.filter((job) => job.status === 'queued' || job.status === 'running');
   const awaiting = fighterJobs.filter((job) => job.reviewStatus === 'awaiting_review');
   if (active.length > 1 || awaiting.length > 1 || (active.length > 0 && awaiting.length > 0)) {
     throw new Error('Arcade Video job state is ambiguous; no generation was started.');
+  }
+  if (recoveryOperation && (active.length > 0 || awaiting.length > 0)) {
+    throw new Error(
+      `Video ${recoveryOperation} source is no longer the latest job; use the normal step operation to inspect its successor.`,
+    );
   }
   if (active.length === 1) {
     assertReviewGatedVideoJob(active[0], fighterId);
@@ -815,8 +1286,49 @@ export function planReviewGatedVideoStep(jobs, fighterId) {
   }
 
   const latest = fighterJobs.find((job) => job?.creationFlow === 'video');
-  if (!latest) return { action: 'start', job: null };
-  assertReviewGatedVideoJob(latest, fighterId);
+  if (!latest) {
+    if (recoveryOperation) {
+      throw new Error(`Video ${recoveryOperation} source job was not found for this fighter.`);
+    }
+    return { action: 'start', job: null };
+  }
+  assertReviewGatedVideoJob(latest, fighterId, null, {
+    allowFullRunRestartRequired: recoveryOperation === 'restart-full',
+  });
+  if (recoveryOperation) {
+    if (latest.id !== recoveryJobId) {
+      throw new Error(
+        `Video ${recoveryOperation} source ${recoveryJobId} is not the latest Video job for this fighter.`,
+      );
+    }
+    if (recoveryOperation === 'resume-failed') {
+      if (
+        !['failed', 'cancelled'].includes(latest.status)
+        || latest.resumable !== true
+        || latest.fullRunRestartRequired === true
+      ) {
+        throw new Error(
+          `Video job ${latest.id} is not an exact resumable local failure; no continuation was started.`,
+        );
+      }
+      return { action: 'resume-failed', job: latest };
+    }
+    const terminalStatus = ['failed', 'cancelled'].includes(latest.status)
+      || (
+        latest.status === 'succeeded'
+        && ['rejected', 'approved'].includes(latest.reviewStatus)
+      );
+    if (
+      !terminalStatus
+      || latest.fullRunRestartRequired !== true
+      || latest.resumable === true
+    ) {
+      throw new Error(
+        `Video job ${latest.id} is not an exact terminal restart-required run; no full restart was started.`,
+      );
+    }
+    return { action: 'restart-full', job: latest };
+  }
   if (latest.status === 'failed' || latest.status === 'cancelled') {
     throw new Error(
       `Video job ${latest.id} is ${latest.status}; video-step never retries or restarts a failed run automatically.`,
@@ -858,6 +1370,290 @@ export function assertAwaitingVideoReview(review, job) {
   return review;
 }
 
+function exactSelectedVideoIndices(value, label) {
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw new Error(`${label} must be an exact JSON array of integer source-frame indices.`);
+    }
+  }
+  if (
+    !Array.isArray(parsed) || parsed.length < 2
+    || !parsed.every((entry) => Number.isSafeInteger(entry) && entry >= 0)
+    || new Set(parsed).size !== parsed.length
+  ) {
+    throw new Error(`${label} must be an exact JSON array of unique non-negative integer source-frame indices.`);
+  }
+  return parsed;
+}
+
+function assertExactVideoReviewBinding(review, job, binding) {
+  assertAwaitingVideoReview(review, job);
+  const mismatches = [
+    review.jobId === binding.jobId ? null : 'jobId',
+    review.candidateId === binding.candidateId ? null : 'candidateId',
+    review.revision === binding.revision ? null : 'revision',
+    review.reportSha256 === binding.reportSha256 ? null : 'reportSha256',
+    review.animationFormat === VIDEO_DENSE_ANIMATION_FORMAT ? null : 'animationFormat',
+    review.processingVersion === VIDEO_DENSE_PROCESSING_VERSION ? null : 'processingVersion',
+    Number.isInteger(review.sourceFrameCount) && review.sourceFrameCount >= 2
+      ? null : 'sourceFrameCount',
+    Array.isArray(review.selectedVideoIndices) ? null : 'selectedVideoIndices',
+  ].filter(Boolean);
+  if (mismatches.length > 0) {
+    throw new Error(`Video review decision binding changed before mutation: ${mismatches.join(', ')}.`);
+  }
+  return review;
+}
+
+export async function runReviewGatedVideoDecision({
+  manifest,
+  fighter,
+  approvedPhotoHash,
+  reviewedCanonicalManifest,
+  reviewedManifestRunId,
+  reviewedManifestSha256,
+  baseUrl,
+  token,
+  decision,
+  jobId,
+  candidateId,
+  revision,
+  reportSha256,
+  selectedVideoIndices = null,
+  reason = '',
+  destination = '',
+  requestApi = apiRequest,
+  requestAsset = apiAssetRequest,
+}) {
+  if (!['approve', 'adjust', 'reject'].includes(decision)) {
+    throw new Error('Video review decision must be approve, adjust, or reject.');
+  }
+  exactVideoJobId(jobId, 'Video review jobId');
+  exactVideoJobId(candidateId, 'Video review candidateId');
+  const exactRevision = Number(revision);
+  if (!Number.isInteger(exactRevision) || exactRevision < 1 || exactRevision > 100) {
+    throw new Error('Video review revision must be an exact integer from 1 to 100.');
+  }
+  if (typeof reportSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(reportSha256)) {
+    throw new Error('Video review reportSha256 must be an exact lowercase SHA-256.');
+  }
+  if (!reviewedCanonicalManifest) {
+    throw new Error('Video review decisions require the exact separately reviewed canonical manifest.');
+  }
+  if (!/^[1-9][0-9]*$/.test(reviewedManifestRunId ?? '') ||
+    !/^[a-f0-9]{64}$/.test(reviewedManifestSha256 ?? '')) {
+    throw new Error('Video review decisions require the exact manifest producer run and file SHA-256.');
+  }
+  const requestedIndices = decision === 'reject'
+    ? null
+    : exactSelectedVideoIndices(selectedVideoIndices, 'Video review selected indices');
+  const rejectionReason = typeof reason === 'string' ? reason.trim() : '';
+  if (decision === 'reject' && (rejectionReason.length < 8 || rejectionReason.length > 300)) {
+    throw new Error('Video rejection requires an explicit reason from 8 to 300 characters.');
+  }
+  if (decision !== 'reject' && rejectionReason) {
+    throw new Error('A Video rejection reason is accepted only with the reject decision.');
+  }
+  if (decision === 'adjust' && !destination) {
+    throw new Error('Video adjustment requires a private artifact destination for its new revision.');
+  }
+
+  const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
+  const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
+  if (!entry) throw new Error(`No current Arcade fighter exists for ${fighter.slug}.`);
+  const detail = await requestApi(
+    baseUrl,
+    token,
+    `/api/fighters/${encodeURIComponent(entry.fighterId)}`,
+  );
+  const { fighterId } = assertReviewGatedVideoDraft({
+    manifest,
+    fighter,
+    entry,
+    owned: detail.fighter,
+    approvedPhotoHash,
+  });
+  assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
+    slug: fighter.slug,
+    fighterId,
+    photoHash: approvedPhotoHash,
+  });
+  const jobBody = await requestApi(
+    baseUrl,
+    token,
+    `/api/generation-jobs/${encodeURIComponent(jobId)}`,
+  );
+  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, reviewedCanonicalManifest);
+  if (job.id !== jobId) throw new Error('Video review job identity changed before mutation.');
+  const reviewPath = `/api/generation-jobs/${encodeURIComponent(jobId)}/video-review`;
+  const reviewBody = await requestApi(baseUrl, token, reviewPath);
+  const review = assertExactVideoReviewBinding(reviewBody.review, job, {
+    jobId, candidateId, revision: exactRevision, reportSha256,
+  });
+  if (
+    decision === 'approve'
+    && JSON.stringify(requestedIndices) !== JSON.stringify(review.selectedVideoIndices)
+  ) {
+    throw new Error('Approve selected indices do not exactly match the bound current revision.');
+  }
+  if (
+    decision === 'adjust'
+    && JSON.stringify(requestedIndices) === JSON.stringify(review.selectedVideoIndices)
+  ) {
+    throw new Error('Adjust requires a deliberately different exact frame selection.');
+  }
+  const requestBody = {
+    candidateId,
+    revision: exactRevision,
+    reportSha256,
+    ...(decision === 'adjust' ? { selectedVideoIndices: requestedIndices } : {}),
+    ...(decision === 'reject' ? { reason: rejectionReason } : {}),
+  };
+  const result = await requestApi(baseUrl, token, `${reviewPath}/${decision}`, {
+    method: 'POST',
+    body: JSON.stringify(requestBody),
+  });
+  const updated = result.review;
+  const identityChanged = !updated
+    || updated.jobId !== job.id
+    || updated.artifactRunId !== job.artifactRunId
+    || updated.candidateId !== review.candidateId
+    || updated.action !== review.action
+    || updated.sequenceOrder !== review.sequenceOrder
+    || updated.animationFormat !== VIDEO_DENSE_ANIMATION_FORMAT
+    || updated.processingVersion !== VIDEO_DENSE_PROCESSING_VERSION;
+  if (identityChanged) {
+    throw new Error('Video review decision response crossed its sealed job, run, or action identity.');
+  }
+  if (decision === 'approve' && (
+    updated.status !== 'approved'
+    || updated.revision !== exactRevision
+    || updated.reportSha256 !== reportSha256
+    || JSON.stringify(updated.selectedVideoIndices) !== JSON.stringify(requestedIndices)
+    || updated.continuationAvailable !== (review.action !== 'victory')
+  )) {
+    throw new Error('Video approval response did not preserve the exact bound revision.');
+  }
+  if (decision === 'adjust' && (
+    updated.status !== 'awaiting_review'
+    || updated.revision !== exactRevision + 1
+    || !/^[a-f0-9]{64}$/.test(updated.reportSha256 ?? '')
+    || updated.reportSha256 === reportSha256
+    || JSON.stringify(updated.selectedVideoIndices) !== JSON.stringify(requestedIndices)
+  )) {
+    throw new Error('Video adjustment response did not return the exact next local revision.');
+  }
+  if (decision === 'reject' && (
+    updated.status !== 'rejected'
+    || updated.revision !== exactRevision
+    || updated.reportSha256 !== reportSha256
+    || updated.fullRunRestartRequired !== true
+  )) {
+    throw new Error('Video rejection response did not terminalize the exact bound run.');
+  }
+  const descriptor = decision === 'adjust'
+    ? await exportAwaitingVideoReviewArtifact({
+        baseUrl,
+        token,
+        fighter,
+        job,
+        review: updated,
+        destination,
+        reviewedCanonicalManifest,
+        reviewedManifestRunId,
+        reviewedManifestSha256,
+        requestAsset,
+      })
+    : null;
+  console.log(`  video-review-${decision}: ${JSON.stringify({
+    fighter: fighter.slug,
+    jobId,
+    artifactRunId: job.artifactRunId,
+    candidateId,
+    action: review.action,
+    revision: updated.revision,
+    reportSha256: updated.reportSha256,
+    selectedVideoIndices: updated.selectedVideoIndices,
+    status: updated.status,
+  })}`);
+  return { decision, job, before: review, review: updated, descriptor };
+}
+
+export async function runReviewGatedVideoInspection({
+  manifest,
+  fighter,
+  approvedPhotoHash,
+  reviewedCanonicalManifest,
+  reviewedManifestRunId,
+  reviewedManifestSha256,
+  baseUrl,
+  token,
+  jobId,
+  candidateId,
+  revision,
+  reportSha256,
+  destination,
+  requestApi = apiRequest,
+  requestAsset = apiAssetRequest,
+}) {
+  if (!destination) throw new Error('Video review inspection requires a private artifact destination.');
+  exactVideoJobId(jobId, 'Video review jobId');
+  exactVideoJobId(candidateId, 'Video review candidateId');
+  const exactRevision = Number(revision);
+  if (!Number.isInteger(exactRevision) || exactRevision < 1 || exactRevision > 100) {
+    throw new Error('Video review revision must be an exact integer from 1 to 100.');
+  }
+  if (typeof reportSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(reportSha256)) {
+    throw new Error('Video review reportSha256 must be an exact lowercase SHA-256.');
+  }
+  if (!reviewedCanonicalManifest || !/^[1-9][0-9]*$/.test(reviewedManifestRunId)) {
+    throw new Error('Video review inspection requires the exact reviewed manifest and producer run id.');
+  }
+  if (!/^[a-f0-9]{64}$/.test(reviewedManifestSha256)) {
+    throw new Error('Video review inspection requires the exact reviewed manifest file SHA-256.');
+  }
+  const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
+  const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
+  if (!entry) throw new Error(`No current Arcade fighter exists for ${fighter.slug}.`);
+  const detail = await requestApi(baseUrl, token, `/api/fighters/${encodeURIComponent(entry.fighterId)}`);
+  const { fighterId } = assertReviewGatedVideoDraft({
+    manifest, fighter, entry, owned: detail.fighter, approvedPhotoHash,
+  });
+  assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
+    slug: fighter.slug, fighterId, photoHash: approvedPhotoHash,
+  });
+  const jobBody = await requestApi(
+    baseUrl, token, `/api/generation-jobs/${encodeURIComponent(jobId)}`,
+  );
+  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, reviewedCanonicalManifest);
+  if (job.id !== jobId) throw new Error('Video review job identity changed before inspection.');
+  const reviewBody = await requestApi(
+    baseUrl, token, `/api/generation-jobs/${encodeURIComponent(jobId)}/video-review`,
+  );
+  const review = assertExactVideoReviewBinding(reviewBody.review, job, {
+    jobId, candidateId, revision: exactRevision, reportSha256,
+  });
+  const descriptor = await exportAwaitingVideoReviewArtifact({
+    baseUrl,
+    token,
+    fighter,
+    job,
+    review,
+    destination,
+    reviewedCanonicalManifest,
+    reviewedManifestRunId,
+    reviewedManifestSha256,
+    requestAsset,
+  });
+  console.log(`  video-review-inspect: ${JSON.stringify({
+    fighter: fighter.slug, jobId, candidateId, revision: exactRevision, reportSha256,
+  })}`);
+  return { job, review, descriptor };
+}
+
 function printAwaitingVideoReview(fighter, review, mode) {
   const summary = {
     fighter: fighter.slug,
@@ -869,10 +1665,118 @@ function printAwaitingVideoReview(fighter, review, mode) {
     reportSha256: review.reportSha256,
     action: review.action,
     technicalOutcome: review.technicalOutcome,
+    selectedVideoIndices: review.selectedVideoIndices,
   };
   console.log(`  awaiting-review: ${JSON.stringify(summary)}`);
   console.log('  no approval, upload, activation, or additional action was performed');
   return summary;
+}
+
+function writeVideoJobRecoveryDescriptor({
+  destination,
+  fighter,
+  mode,
+  operation,
+  job,
+  reviewedCanonicalManifest,
+  reviewedManifestRunId,
+  reviewedManifestSha256,
+  expectedWorkerSha,
+}) {
+  if (!destination) return null;
+  mkdirSync(destination, { recursive: true });
+  const descriptor = {
+    schemaVersion: 1,
+    fighter: fighter.slug,
+    mode,
+    operation,
+    jobId: job.id,
+    artifactRunId: job.artifactRunId,
+    resumedFromJobId: job.resumedFromJobId ?? null,
+    reviewedCanonicalSourceMode: reviewedCanonicalManifest?.canonicalSourceMode ?? null,
+    reviewedCanonicalSourceHashes: reviewedCanonicalManifest?.canonicalSourceHashes ?? null,
+    reviewedManifestRunId,
+    reviewedManifestSha256,
+    expectedWorkerSha,
+  };
+  writeFileSync(
+    join(destination, 'video-job-descriptor.json'),
+    `${JSON.stringify(descriptor, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  return descriptor;
+}
+
+async function exportAwaitingVideoReviewArtifact({
+  baseUrl,
+  token,
+  fighter,
+  job,
+  review,
+  destination,
+  reviewedCanonicalManifest = null,
+  reviewedManifestRunId = '',
+  reviewedManifestSha256 = '',
+  requestAsset = apiAssetRequest,
+}) {
+  const definitions = [
+    ['video', 'video', 'video.mp4', 'video/mp4'],
+    ['contactSheet', 'contact-sheet', 'contact-sheet.png', 'image/png'],
+    ['uniqueSheet', 'unique-sheet', 'unique-sheet.png', 'image/png'],
+    ['runtime', 'runtime', 'runtime.png', 'image/png'],
+    ['raw', 'raw', 'raw.png', 'image/png'],
+    ['report', 'report', 'report.json', 'application/json'],
+  ];
+  mkdirSync(destination, { recursive: true });
+  const exportedAssets = {};
+  for (const [assetName, routeKind, filename, expectedContentType] of definitions) {
+    const path = review.assets?.[assetName];
+    const expectedPrefix = `/api/generation-jobs/${encodeURIComponent(job.id)}/video-review/assets/`;
+    const expectedPath = `${expectedPrefix}${routeKind}?revision=${review.revision}`;
+    if (path !== expectedPath) {
+      throw new Error(`Video review ${assetName} asset path is not bound to job ${job.id}.`);
+    }
+    const result = await requestAsset(baseUrl, token, path);
+    const digest = sha256(result.bytes);
+    if (
+      result.contentType !== expectedContentType
+      || !/^[a-f0-9]{64}$/.test(result.etag)
+      || result.etag !== digest
+    ) {
+      throw new Error(`Video review ${assetName} asset failed its MIME or ETag integrity binding.`);
+    }
+    writeFileSync(join(destination, filename), result.bytes, { mode: 0o600 });
+    exportedAssets[assetName] = { filename, sha256: digest, contentType: result.contentType };
+  }
+  const descriptor = {
+    schemaVersion: 1,
+    fighter: fighter.slug,
+    fighterId: job.fighterId,
+    jobId: job.id,
+    artifactRunId: job.artifactRunId,
+    candidateId: review.candidateId,
+    revision: review.revision,
+    reportSha256: review.reportSha256,
+    action: review.action,
+    sequenceOrder: review.sequenceOrder,
+    technicalOutcome: review.technicalOutcome,
+    selectedVideoIndices: review.selectedVideoIndices,
+    sourceFrameCount: review.sourceFrameCount,
+    animationFormat: review.animationFormat,
+    processingVersion: review.processingVersion,
+    reviewedCanonicalSourceMode: reviewedCanonicalManifest?.canonicalSourceMode ?? null,
+    reviewedCanonicalSourceHashes: reviewedCanonicalManifest?.canonicalSourceHashes ?? null,
+    reviewedManifestRunId,
+    reviewedManifestSha256,
+    assets: exportedAssets,
+  };
+  writeFileSync(
+    join(destination, 'review-descriptor.json'),
+    `${JSON.stringify(descriptor, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  console.log(`  review-artifact: ${destination}`);
+  return descriptor;
 }
 
 async function waitForAwaitingVideoReview({
@@ -885,12 +1789,13 @@ async function waitForAwaitingVideoReview({
   pause,
   pollIntervalMs,
   jobTimeoutMs,
+  reviewedCanonicalManifest,
 }) {
   const startedAt = Date.now();
   let job = initialJob;
   let lastStage = '';
   while (Date.now() - startedAt < jobTimeoutMs) {
-    assertReviewGatedVideoJob(job, fighterId);
+    assertReviewGatedVideoJob(job, fighterId, reviewedCanonicalManifest);
     const stage = `${job.status}:${job.reviewStatus ?? 'none'}:${job.stage}:${job.progressCurrent}/${job.progressTotal}`;
     if (stage !== lastStage) {
       console.log(`  ${fighter.name}: ${stage}`);
@@ -932,7 +1837,17 @@ export async function runReviewGatedVideoStep({
   pollIntervalMs = POLL_INTERVAL_MS,
   jobTimeoutMs = JOB_TIMEOUT_MS,
   reviewedCanonicalManifest = null,
+  resumeFromJobId = '',
+  restartFromJobId = '',
+  reviewArtifactDir = '',
+  requestAsset = apiAssetRequest,
+  reviewedManifestRunId = '',
+  reviewedManifestSha256 = '',
+  expectedWorkerSha = expectedDeployedSha,
 }) {
+  if ((resumeFromJobId || restartFromJobId) && !reviewedCanonicalManifest) {
+    throw new Error('Video recovery requires the exact separately reviewed canonical manifest.');
+  }
   const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
   const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
   if (!entry) throw new Error(`No current Arcade fighter exists for ${fighter.slug}.`);
@@ -955,11 +1870,23 @@ export async function runReviewGatedVideoStep({
       photoHash: approvedPhotoHash,
     });
   }
-  const listed = await requestApi(baseUrl, token, '/api/generation-jobs');
+  const listed = await requestApi(
+    baseUrl,
+    token,
+    `/api/generation-jobs?fighterId=${encodeURIComponent(fighterId)}`,
+  );
   if (!Array.isArray(listed.jobs)) {
     throw new Error('Generation job listing is unavailable; no Video generation was started.');
   }
-  const plan = planReviewGatedVideoStep(listed.jobs, fighterId);
+  const plan = planReviewGatedVideoStep(listed.jobs, fighterId, {
+    resumeFromJobId,
+    restartFromJobId,
+  });
+  if (plan.job && reviewedCanonicalManifest) {
+    assertReviewGatedVideoJob(plan.job, fighterId, reviewedCanonicalManifest, {
+      allowFullRunRestartRequired: plan.action === 'restart-full',
+    });
+  }
 
   if (plan.action === 'complete') {
     console.log(`  complete: ${fighter.slug} has no pending Video stages; no mutation was performed`);
@@ -968,7 +1895,10 @@ export async function runReviewGatedVideoStep({
 
   let job = plan.job;
   let mode = plan.action;
-  if (plan.action === 'start' || plan.action === 'continue') {
+  if (
+    plan.action === 'start' || plan.action === 'continue'
+    || plan.action === 'resume-failed' || plan.action === 'restart-full'
+  ) {
     const started = await requestApi(
       baseUrl,
       token,
@@ -978,6 +1908,8 @@ export async function runReviewGatedVideoStep({
         body: JSON.stringify({
           legal: generationLegal(manifest),
           creationFlow: 'video',
+          ...(plan.action === 'restart-full' ? { restart: true } : {}),
+          ...(plan.job ? { recoveryFromJobId: plan.job.id } : {}),
           ...(reviewedCanonicalManifest ? {
             canonicalSourceMode: reviewedCanonicalManifest.canonicalSourceMode,
             canonicalSourceHashes: reviewedCanonicalManifest.canonicalSourceHashes,
@@ -990,13 +1922,53 @@ export async function runReviewGatedVideoStep({
         `${fighter.name} Video endpoint returned no review-gated job; no fallback or restart was attempted.`,
       );
     }
-    job = assertReviewGatedVideoJob(started.job, fighterId);
-    mode = plan.action === 'continue' ? 'continued' : 'started';
+    job = assertReviewGatedVideoJob(started.job, fighterId, reviewedCanonicalManifest);
+    if (plan.action === 'resume-failed' && (
+      job.id === plan.job.id
+      || job.artifactRunId !== plan.job.artifactRunId
+      || job.resumedFromJobId !== plan.job.id
+    )) {
+      throw new Error('Video failed-run recovery did not return the exact same-run continuation.');
+    }
+    if (plan.action === 'restart-full' && (
+      job.id === plan.job.id
+      || job.artifactRunId !== job.id
+      || job.artifactRunId === plan.job.artifactRunId
+      || job.resumedFromJobId != null
+    )) {
+      throw new Error('Video full restart did not return a fresh sealed root run.');
+    }
+    mode = plan.action === 'continue'
+      ? 'continued'
+      : plan.action === 'resume-failed'
+        ? 'resumed-failed'
+        : plan.action === 'restart-full'
+          ? 'restarted-full'
+          : 'started';
   } else if (plan.action === 'poll') {
     mode = 'resumed-poll';
   } else {
     mode = 'reused-review';
   }
+
+  console.log(`  video-job: ${JSON.stringify({
+    fighter: fighter.slug,
+    mode,
+    jobId: job.id,
+    artifactRunId: job.artifactRunId,
+    resumedFromJobId: job.resumedFromJobId ?? null,
+  })}`);
+  writeVideoJobRecoveryDescriptor({
+    destination: reviewArtifactDir,
+    fighter,
+    mode,
+    operation: plan.action,
+    job,
+    reviewedCanonicalManifest,
+    reviewedManifestRunId,
+    reviewedManifestSha256,
+    expectedWorkerSha,
+  });
 
   if (plan.action !== 'reuse-review') {
     job = await waitForAwaitingVideoReview({
@@ -1009,9 +1981,10 @@ export async function runReviewGatedVideoStep({
       pause,
       pollIntervalMs,
       jobTimeoutMs,
+      reviewedCanonicalManifest,
     });
   }
-  assertReviewGatedVideoJob(job, fighterId);
+  assertReviewGatedVideoJob(job, fighterId, reviewedCanonicalManifest);
   const reviewBody = await requestApi(
     baseUrl,
     token,
@@ -1019,9 +1992,23 @@ export async function runReviewGatedVideoStep({
   );
   const review = assertAwaitingVideoReview(reviewBody.review, job);
   printAwaitingVideoReview(fighter, review, mode);
+  if (reviewArtifactDir) {
+    await exportAwaitingVideoReviewArtifact({
+      baseUrl,
+      token,
+      fighter,
+      job,
+      review,
+      destination: reviewArtifactDir,
+      reviewedCanonicalManifest,
+      reviewedManifestRunId,
+      reviewedManifestSha256,
+      requestAsset,
+    });
+  }
   return {
     mode,
-    mutated: plan.action === 'start' || plan.action === 'continue',
+    mutated: ['start', 'continue', 'resume-failed', 'restart-full'].includes(plan.action),
     job,
     review,
   };
@@ -1530,7 +2517,43 @@ async function main() {
   validateManifest(manifest);
   const selected = selectFighters(manifest);
   if (activateReviewed) assertReviewedActivationConfirmation(activationConfirmation);
-  if (videoStep) assertReviewGatedVideoStepConfirmation(videoStepConfirmation);
+  if (videoStep) {
+    if (resumeVideoRunFrom) {
+      exactVideoJobId(resumeVideoRunFrom, 'Video resume source');
+      assertReviewGatedVideoRecoveryConfirmation('resume-failed', videoStepConfirmation);
+    } else if (restartVideoRunFrom) {
+      exactVideoJobId(restartVideoRunFrom, 'Video restart source');
+      assertReviewGatedVideoRecoveryConfirmation('restart-full', videoStepConfirmation);
+    } else {
+      assertReviewGatedVideoStepConfirmation(videoStepConfirmation);
+    }
+  }
+  if (videoReview) {
+    assertReviewGatedVideoReviewConfirmation(
+      videoReviewInspect ? 'inspect' : videoReviewDecision,
+      videoStepConfirmation,
+    );
+  }
+  if (activateReviewed) assertReviewedVideoFinalJobId(reviewedVideoFinalJobId);
+  if (target === 'production' && (videoStep || videoReview) && !reviewedCanonicalManifestPath) {
+    throw new Error(
+      'Production review-gated Video operations require --reviewed-canonical-manifest from a separately reviewed run.',
+    );
+  }
+  if (
+    target === 'production'
+    && (videoStep || videoReview)
+    && !/^[1-9][0-9]*$/.test(reviewedManifestRunId)
+  ) {
+    throw new Error(
+      'Production review-gated Video operations require --reviewed-manifest-run-id from the approved producer.',
+    );
+  }
+  if (target === 'production' && reviewedVideoOperation && !/^[a-f0-9]{40}$/.test(expectedDeployedSha)) {
+    throw new Error(
+      'Production reviewed Video operations require --expected-deployed-sha=<full lowercase GITHUB_SHA>.',
+    );
+  }
   if (!activateReviewed) mkdirSync(sourceDir, { recursive: true });
 
   if (dryRun) {
@@ -1545,7 +2568,7 @@ async function main() {
   const reviewedActivationPhotoHash = activateReviewed
     ? readApprovedSource(manifest, selected[0]).photoHash
     : '';
-  const reviewGatedVideoPhotoHash = videoStep
+  const reviewGatedVideoPhotoHash = videoStep || videoReview
     ? readApprovedSource(manifest, selected[0]).photoHash
     : '';
   const reviewedCanonicalManifest = reviewedCanonicalManifestPath
@@ -1557,6 +2580,9 @@ async function main() {
         },
       )
     : null;
+  const reviewedManifestSha256 = reviewedCanonicalManifestPath
+    ? sha256(readFileSync(resolve(reviewedCanonicalManifestPath)))
+    : '';
 
   const env = readEnvValues();
   clerkBackendAuthBridgeSecret = envValue(env, 'CLERK_BACKEND_AUTH_BRIDGE_SECRET');
@@ -1566,11 +2592,21 @@ async function main() {
   const defaultBaseUrl = target === 'sandbox'
     ? 'https://insert-player-api-sandbox.shellbot.workers.dev'
     : 'https://api.insertplayer.ai';
-  const baseUrl = (
+  const configuredBaseUrl = (
     envValue(env, target === 'sandbox' ? 'ASF_SANDBOX_WORKER_URL' : 'ASF_WORKER_URL')
     || envValue(env, 'VITE_API_BASE_URL')
     || defaultBaseUrl
-  ).replace(/\/+$/, '');
+  );
+  const baseUrl = target === 'production' && reviewedVideoOperation
+    ? assertReviewedProductionApiOrigin(configuredBaseUrl)
+    : configuredBaseUrl.replace(/\/+$/, '');
+  if (target === 'production' && reviewedVideoOperation) {
+    await pinProductionWorkerHealth({
+      baseUrl,
+      configuredHealthUrl: envValue(env, 'ASF_WORKER_HEALTH_URL'),
+      expectedSha: expectedDeployedSha,
+    });
+  }
   const staticToken = envValue(env, 'ASF_ARCADE_ADMIN_JWT') || envValue(env, 'ASF_CLERK_JWT');
   const clerkSecretKey = envValue(env, 'ASF_ARCADE_CLERK_SECRET_KEY')
     || (preflightOnly ? envValue(env, 'ASF_ARCADE_PREFLIGHT_KEY') : '');
@@ -1593,9 +2629,9 @@ async function main() {
       manifest,
       fighter: selected[0],
       approvedPhotoHash: reviewedActivationPhotoHash,
+      reviewedVideoFinalJobId,
       baseUrl,
       token,
-      reviewedCanonicalManifest,
     });
     return;
   }
@@ -1608,6 +2644,52 @@ async function main() {
       baseUrl,
       token,
       reviewedCanonicalManifest,
+      resumeFromJobId: resumeVideoRunFrom,
+      restartFromJobId: restartVideoRunFrom,
+      reviewArtifactDir: videoReviewExportDir,
+      reviewedManifestRunId,
+      reviewedManifestSha256,
+    });
+    return;
+  }
+
+  if (videoReviewInspect) {
+    await runReviewGatedVideoInspection({
+      manifest,
+      fighter: selected[0],
+      approvedPhotoHash: reviewGatedVideoPhotoHash,
+      reviewedCanonicalManifest,
+      reviewedManifestRunId,
+      reviewedManifestSha256,
+      baseUrl,
+      token,
+      jobId: videoReviewJobId,
+      candidateId: videoReviewCandidateId,
+      revision: videoReviewRevision,
+      reportSha256: videoReviewReportSha256,
+      destination: videoReviewExportDir,
+    });
+    return;
+  }
+
+  if (videoReview) {
+    await runReviewGatedVideoDecision({
+      manifest,
+      fighter: selected[0],
+      approvedPhotoHash: reviewGatedVideoPhotoHash,
+      reviewedCanonicalManifest,
+      reviewedManifestRunId,
+      reviewedManifestSha256,
+      baseUrl,
+      token,
+      decision: videoReviewDecision,
+      jobId: videoReviewJobId,
+      candidateId: videoReviewCandidateId,
+      revision: videoReviewRevision,
+      reportSha256: videoReviewReportSha256,
+      selectedVideoIndices: videoReviewSelectedIndices,
+      reason: videoReviewReason,
+      destination: videoReviewExportDir,
     });
     return;
   }
