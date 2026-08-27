@@ -2012,8 +2012,8 @@ function assertCrossDeviceRosterImportIsWired() {
     'Fighter renamed in cloud. The preview cache will refresh when Gallery reloads.',
     'syncCloudFightersToLocal(all, apiContext)',
     'const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext)',
-    'p1CloudFighterId: p1Fighter.cloudFighterId',
-    'p2CloudFighterId: p2Fighter.cloudFighterId',
+    'p1CloudFighterId: selectedP1.cloudFighterId',
+    'p2CloudFighterId: selectedP2.cloudFighterId',
   ];
   const combined = `${cloud}\n${gallery}\n${roster}\n${cloudFirstRename}\n${cloudFirstDelete}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));

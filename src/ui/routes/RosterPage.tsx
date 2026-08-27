@@ -50,11 +50,16 @@ import {
   createAsyncEpochGuard,
   isCpuRosterSlot,
   personalityAfterFighterAssignment,
+  rosterLoadPresentation,
   shouldBlockTouchVersus,
+  type RosterSourceState,
   type RosterMode,
 } from '../shared/rosterMatch.ts';
 
 type RosterFilter = 'official' | 'yours' | 'all';
+
+const LOCAL_ROSTER_LOAD_TIMEOUT_MS = 4_000;
+const OFFICIAL_ROSTER_LOAD_TIMEOUT_MS = 12_000;
 
 interface RosterPageProps {
   authStatus: AuthStatus;
@@ -357,6 +362,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const [photoStages, setPhotoStages] = useState<CachedStageBackground[]>([]);
   const [status, setStatus] = useState('Loading roster...');
   const [rosterLoaded, setRosterLoaded] = useState(false);
+  const [rosterRetryAvailable, setRosterRetryAvailable] = useState(false);
+  const [rosterReloadKey, setRosterReloadKey] = useState(0);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
   const [rosterFilter, setRosterFilter] = useState<RosterFilter>(mode === 'vs' ? 'all' : 'official');
   const [p1Key, setP1Key] = useState<string | null>(null);
@@ -402,146 +409,187 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     const apiContext = captureApiRequestContext();
     const ownerScope = getActiveSpriteCacheScope();
     let cancelled = false;
-    const load = async () => {
-      setRosterLoaded(false);
-      setArcadeUnavailable(false);
-      let officialRosterUnavailable = false;
-      let [allMetas, allStages, officialFighters, profile] = await Promise.all([
-        getAllCachedMetas(ownerScope),
-        getAllCachedStageBackgrounds(ownerScope),
-        listArcadeFighters().catch((err: any) => {
-          officialRosterUnavailable = true;
-          debugWarn('[Roster] Official Arcade roster unavailable:', err?.message ?? err);
-          return [];
-        }),
-        authStatus === 'signed-in' ? getBillingProfile(apiContext) : Promise.resolve(null),
-      ]);
-      let marked = markArcadeManagedMetas(allMetas, officialFighters);
-      allMetas = marked.metas;
+    let officialState: RosterSourceState = 'loading';
+    let localState: RosterSourceState = 'loading';
+    let officialFighters: CloudFighter[] = [];
+    let allMetas: CachedMeta[] = [];
+    let allStages: CachedStageBackground[] = [];
+    let cloudSyncing = false;
+    let cloudImported = 0;
+    let cloudUpdated = 0;
 
-      const publishRosterSnapshot = (
-        sourceMetas: CachedMeta[],
-        sourceStages: CachedStageBackground[],
-        statusFor: (sections: RosterFighterSections) => string,
-      ) => {
-        const filteredMetas = sourceMetas
-          .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
-          .sort((a, b) => b.createdAt - a.createdAt);
-        const filteredStages = sourceStages
-          .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
-          .sort((a, b) => b.createdAt - a.createdAt);
-        const sections = buildRosterFighterSections(
-          filteredMetas,
-          officialFighters,
-          officialRosterUnavailable,
-        );
-        setMetas(filteredMetas);
-        setArcadeFighters(officialFighters);
-        setArcadeUnavailable(officialRosterUnavailable);
-        setPhotoStages(filteredStages);
-        setBillingProfile(profile);
-        setRosterLoaded(true);
-        setStatus(statusFor(sections));
-
-        const firstPlayer = sections.owned[0] ?? sections.official[0] ?? null;
-        const firstOpponent = sections.official.find((entry) => entry.key !== firstPlayer?.key)
-          ?? sections.owned.find((entry) => entry.key !== firstPlayer?.key)
-          ?? firstPlayer;
-        setP1PersonalityId((current) => personalityAfterFighterAssignment({
-          current,
-          fighterDefault: firstPlayer?.defaultPersonality ?? null,
-          isCpu: isCpuRosterSlot(mode, 'p1'),
-          wasExplicitlyChosen: p1PersonalityExplicitRef.current,
-        }));
-        setP2PersonalityId((current) => personalityAfterFighterAssignment({
-          current,
-          fighterDefault: firstOpponent?.defaultPersonality ?? null,
-          isCpu: isCpuRosterSlot(mode, 'p2'),
-          wasExplicitlyChosen: p2PersonalityExplicitRef.current,
-        }));
-        if (sections.owned.length === 0 && sections.official.length > 0) {
-          setRosterFilter('official');
-        } else if (sections.official.length === 0 && sections.owned.length > 0) {
-          setRosterFilter('yours');
-        }
-        setP1Key((current) => (
-          current && sections.all.some((entry) => entry.key === current)
-            ? current
-            : firstPlayer?.key ?? null
-        ));
-        setP2Key((current) => (
-          current && sections.all.some((entry) => entry.key === current)
-            ? current
-            : firstOpponent?.key ?? null
-        ));
-      };
-
+    const publishRosterSnapshot = () => {
       if (cancelled) return;
-      publishRosterSnapshot(allMetas, allStages, (sections) => (
-        authStatus === 'signed-in'
-          ? sections.official.length > 0
-            ? `${sections.official.length} official challengers ready · Syncing your fighters…`
-            : 'Syncing your roster…'
-          : sections.official.length > 0
-            ? `${sections.official.length} official challengers ready`
-            : sections.owned.length > 0
-              ? 'Roster ready'
-              : 'No fighters yet'
-      ));
-      if (marked.changed.length > 0) {
-        try {
-          await Promise.all(marked.changed.map((item) => setCachedMeta(item, ownerScope)));
-        } catch (err: any) {
-          debugWarn('[Roster] Official roster identity could not be persisted:', err?.message ?? err);
-        }
-      }
+      const filteredMetas = allMetas
+        .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
+        .sort((a, b) => b.createdAt - a.createdAt);
+      const filteredStages = allStages
+        .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
+        .sort((a, b) => b.createdAt - a.createdAt);
+      const sections = buildRosterFighterSections(
+        filteredMetas,
+        officialFighters,
+        officialState === 'unavailable',
+      );
+      const presentation = rosterLoadPresentation({
+        officialState,
+        localState,
+        officialCount: sections.official.length,
+        ownedCount: sections.owned.length,
+        cloudSyncing,
+        cloudImported,
+        cloudUpdated,
+      });
 
-      let cloudImported = 0;
-      let cloudUpdated = 0;
+      setMetas(filteredMetas);
+      setArcadeFighters(officialFighters);
+      setArcadeUnavailable(officialState === 'unavailable');
+      setPhotoStages(filteredStages);
+      setRosterLoaded(presentation.loaded);
+      setRosterRetryAvailable(presentation.retryAvailable);
+      setStatus(presentation.message);
+
+      const firstPlayer = sections.owned[0] ?? sections.official[0] ?? null;
+      const firstOpponent = sections.official.find((entry) => entry.key !== firstPlayer?.key)
+        ?? sections.owned.find((entry) => entry.key !== firstPlayer?.key)
+        ?? firstPlayer;
+      setP1PersonalityId((current) => personalityAfterFighterAssignment({
+        current,
+        fighterDefault: firstPlayer?.defaultPersonality ?? null,
+        isCpu: isCpuRosterSlot(mode, 'p1'),
+        wasExplicitlyChosen: p1PersonalityExplicitRef.current,
+      }));
+      setP2PersonalityId((current) => personalityAfterFighterAssignment({
+        current,
+        fighterDefault: firstOpponent?.defaultPersonality ?? null,
+        isCpu: isCpuRosterSlot(mode, 'p2'),
+        wasExplicitlyChosen: p2PersonalityExplicitRef.current,
+      }));
+      if (sections.owned.length === 0 && sections.official.length > 0) {
+        setRosterFilter('official');
+      } else if (sections.official.length === 0 && sections.owned.length > 0) {
+        setRosterFilter('yours');
+      }
+      setP1Key((current) => (
+        current && sections.all.some((entry) => entry.key === current)
+          ? current
+          : firstPlayer?.key ?? null
+      ));
+      setP2Key((current) => (
+        current && sections.all.some((entry) => entry.key === current)
+          ? current
+          : firstOpponent?.key ?? null
+      ));
+    };
+
+    const markAndPublish = () => {
+      const marked = markArcadeManagedMetas(allMetas, officialFighters);
+      allMetas = marked.metas;
+      publishRosterSnapshot();
+      if (marked.changed.length > 0) {
+        void Promise.all(marked.changed.map((item) => setCachedMeta(item, ownerScope))).catch((err: any) => {
+          debugWarn('[Roster] Official roster identity could not be persisted:', err?.message ?? err);
+        });
+      }
+    };
+
+    setMetas([]);
+    setArcadeFighters([]);
+    setArcadeUnavailable(false);
+    setPhotoStages([]);
+    setRosterLoaded(false);
+    setRosterRetryAvailable(false);
+    setBillingProfile(null);
+    setStatus(rosterReloadKey > 0 ? 'Retrying roster…' : 'Loading roster…');
+
+    const officialTimeout = window.setTimeout(() => {
+      if (cancelled || officialState !== 'loading') return;
+      officialState = 'unavailable';
+      debugWarn('[Roster] Official Arcade roster timed out. The request may still recover.');
+      markAndPublish();
+    }, OFFICIAL_ROSTER_LOAD_TIMEOUT_MS);
+    const localTimeout = window.setTimeout(() => {
+      if (cancelled || localState !== 'loading') return;
+      localState = 'unavailable';
+      debugWarn('[Roster] Local roster storage timed out. The request may still recover.');
+      publishRosterSnapshot();
+    }, LOCAL_ROSTER_LOAD_TIMEOUT_MS);
+
+    void listArcadeFighters().then((fighters) => {
+      if (cancelled) return;
+      window.clearTimeout(officialTimeout);
+      officialFighters = fighters;
+      officialState = 'ready';
+      markAndPublish();
+    }).catch((err: any) => {
+      if (cancelled) return;
+      window.clearTimeout(officialTimeout);
+      officialState = 'unavailable';
+      debugWarn('[Roster] Official Arcade roster unavailable:', err?.message ?? err);
+      markAndPublish();
+    });
+
+    const localLoad = Promise.all([
+      getAllCachedMetas(ownerScope),
+      getAllCachedStageBackgrounds(ownerScope),
+    ]);
+    void localLoad.then(async ([loadedMetas, loadedStages]) => {
+      if (cancelled) return;
+      window.clearTimeout(localTimeout);
+      allMetas = loadedMetas;
+      allStages = loadedStages;
+      localState = 'ready';
+      markAndPublish();
+
+      if (authStatus !== 'signed-in') return;
+      cloudSyncing = true;
+      publishRosterSnapshot();
       try {
         const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext);
-        if (cloudSync.imported > 0 || cloudSync.updated > 0) {
-          cloudImported = cloudSync.imported;
-          cloudUpdated = cloudSync.updated;
-          [allMetas, allStages] = await Promise.all([
+        if (cancelled) return;
+        cloudImported = cloudSync.imported;
+        cloudUpdated = cloudSync.updated;
+        cloudSyncing = false;
+        publishRosterSnapshot();
+        if (cloudImported > 0 || cloudUpdated > 0) {
+          void Promise.all([
             getAllCachedMetas(ownerScope),
             getAllCachedStageBackgrounds(ownerScope),
-          ]);
+          ]).then(([refreshedMetas, refreshedStages]) => {
+            if (cancelled) return;
+            allMetas = refreshedMetas;
+            allStages = refreshedStages;
+            markAndPublish();
+          }).catch((err: any) => {
+            debugWarn('[Roster] Synced roster cache could not be refreshed:', err?.message ?? err);
+          });
         }
       } catch (err: any) {
         if (cancelled) return;
+        cloudSyncing = false;
         debugWarn('[Roster] Cloud import skipped:', err?.message ?? err);
+        publishRosterSnapshot();
       }
+    }).catch((err: any) => {
       if (cancelled) return;
-      marked = markArcadeManagedMetas(allMetas, officialFighters);
-      allMetas = marked.metas;
-      if (marked.changed.length > 0) {
-        try {
-          await Promise.all(marked.changed.map((item) => setCachedMeta(item, ownerScope)));
-        } catch (err: any) {
-          debugWarn('[Roster] Official roster identity could not be persisted:', err?.message ?? err);
-        }
-      }
-      if (cancelled) return;
-      publishRosterSnapshot(allMetas, allStages, (sections) => (
-        cloudImported > 0 || cloudUpdated > 0
-          ? `Cloud synced: ${cloudImported} imported, ${cloudUpdated} updated`
-          : sections.official.length > 0
-            ? `${sections.official.length} official challengers ready`
-            : sections.owned.length > 0
-              ? 'Roster ready'
-              : 'No fighters yet'
-      ));
-    };
-    void load().catch((err: any) => {
-      if (cancelled) return;
-      debugWarn('[Roster] Roster load failed:', err?.message ?? err);
-      setStatus('Roster is temporarily unavailable');
-      setBillingProfile(null);
-      setRosterLoaded(true);
+      window.clearTimeout(localTimeout);
+      localState = 'unavailable';
+      debugWarn('[Roster] Local roster storage unavailable:', err?.message ?? err);
+      publishRosterSnapshot();
     });
-    return () => { cancelled = true; };
-  }, [authSessionKey, authStatus, mode]);
+
+    if (authStatus === 'signed-in') {
+      void getBillingProfile(apiContext).then((profile) => {
+        if (!cancelled) setBillingProfile(profile);
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(officialTimeout);
+      window.clearTimeout(localTimeout);
+    };
+  }, [authSessionKey, authStatus, mode, rosterReloadKey]);
 
   const rosterSections = useMemo(
     () => buildRosterFighterSections(metas, arcadeFighters, arcadeUnavailable),
@@ -725,6 +773,11 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         </div>
         <div className="roster-hero__actions">
           <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
+          {rosterRetryAvailable ? (
+            <Button onClick={() => setRosterReloadKey((value) => value + 1)} disabled={preparingFight}>
+              Retry Roster
+            </Button>
+          ) : null}
           <Button onClick={goBack}>{preparingFight ? 'Cancel & Back' : 'Back'}</Button>
         </div>
       </header>

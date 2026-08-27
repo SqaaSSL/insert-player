@@ -3,6 +3,7 @@ import {
   createAsyncEpochGuard,
   isCpuRosterSlot,
   personalityAfterFighterAssignment,
+  rosterLoadPresentation,
   shouldBlockTouchVersus,
 } from './rosterMatch';
 
@@ -49,5 +50,44 @@ describe('roster match helpers', () => {
     expect(guard.isCurrent(second)).toBe(true);
     guard.unmount();
     expect(guard.isCurrent(second)).toBe(false);
+  });
+
+  it('renders official fighters without waiting for IndexedDB', () => {
+    expect(rosterLoadPresentation({
+      officialState: 'ready',
+      localState: 'loading',
+      officialCount: 4,
+      ownedCount: 0,
+    })).toEqual({
+      loaded: true,
+      retryAvailable: false,
+      message: '4 official challengers ready · Checking your fighters…',
+    });
+  });
+
+  it('offers a retry after local storage fails while keeping globals ready', () => {
+    expect(rosterLoadPresentation({
+      officialState: 'ready',
+      localState: 'unavailable',
+      officialCount: 4,
+      ownedCount: 0,
+    })).toEqual({
+      loaded: true,
+      retryAvailable: true,
+      message: '4 official challengers ready · Saved fighters need a retry',
+    });
+  });
+
+  it('clears the retry state when a late local recovery succeeds', () => {
+    expect(rosterLoadPresentation({
+      officialState: 'ready',
+      localState: 'ready',
+      officialCount: 4,
+      ownedCount: 1,
+    })).toEqual({
+      loaded: true,
+      retryAvailable: false,
+      message: '4 official challengers ready',
+    });
   });
 });
