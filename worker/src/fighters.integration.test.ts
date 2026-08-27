@@ -1,13 +1,17 @@
 import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 import {
+  cloneCommunityFighter,
   getAsset,
+  getCommunityFighter,
   getPublicFighterSourceAsset,
   getPublicFighterSpriteAsset,
   listArcadeFighters,
   listAdminArcadeFighters,
   listCommunityFighters,
+  listFighters,
   promoteFighterSpriteVersion,
+  reportCommunityFighter,
   shareCommunityFighterPage,
   uploadFighterSource,
   uploadFighterSprite,
@@ -384,6 +388,10 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       );
       const draftBody = await draftResponse.json() as { fighters: unknown[] };
       expect(draftBody.fighters).toHaveLength(0);
+      const ownedBody = await listFighters(
+        new Request('https://api.insertplayer.ai/api/fighters'), env, auth,
+      ).then((response) => response.json() as Promise<{ fighters: Array<{ id: string }> }>);
+      expect(ownedBody.fighters.map((fighter) => fighter.id)).toEqual(['fighter-target']);
 
       const animationNames = [
         'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
@@ -480,6 +488,32 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect(activeBody.fighters[0]).not.toHaveProperty('photoHash');
       expect(activeBody.fighters[0]).not.toHaveProperty('ownerUserId');
       expect(activeBody.fighters[0]).not.toHaveProperty('generationPrompt');
+      const communityBody = await listCommunityFighters(
+        new Request('https://api.insertplayer.ai/api/community'), env,
+      ).then((response) => response.json() as Promise<{ fighters: unknown[] }>);
+      expect(communityBody.fighters).toHaveLength(0);
+      expect((await getCommunityFighter(
+        new Request(`https://api.insertplayer.ai/api/community/${fighterId}`), env, fighterId,
+      )).status).toBe(404);
+      expect((await shareCommunityFighterPage(
+        new Request(`https://api.insertplayer.ai/share/${fighterId}`), env, fighterId,
+      )).status).toBe(404);
+      expect((await cloneCommunityFighter(
+        new Request(`https://api.insertplayer.ai/api/community/${fighterId}/clone`, { method: 'POST' }),
+        env,
+        auth,
+        fighterId,
+      )).status).toBe(404);
+      expect((await reportCommunityFighter(
+        new Request(`https://api.insertplayer.ai/api/community/${fighterId}/report`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: 'other' }),
+        }),
+        env,
+        auth,
+        fighterId,
+      )).status).toBe(404);
 
       expect((await upsertAdminArcadeFighter(
         arcadeRequest('retired'), env, adminAuth, fighterId,

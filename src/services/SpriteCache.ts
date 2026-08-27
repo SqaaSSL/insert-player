@@ -124,6 +124,7 @@ interface CachedMeta {
   qualityTier?: 'rookie' | 'contender' | 'champion';
   cloudFighterId?: string | null;
   cloudPublic?: boolean;
+  cloudManagement?: 'arcade';
   cloudSourceHashes?: Record<string, string | null>;
   cloudSpriteVersionCount?: number;
   cloudPlayableSpriteRefs?: Record<string, CachedPlayableSpriteRef>;

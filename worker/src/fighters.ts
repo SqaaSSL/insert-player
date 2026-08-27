@@ -636,7 +636,13 @@ export function tiersResponse(): Response {
 
 export async function listFighters(request: Request, env: Env, auth: AuthContext): Promise<Response> {
   const { results } = await env.DB.prepare(
-    'SELECT * FROM fighters WHERE owner_user_id = ? ORDER BY updated_at DESC'
+    `SELECT f.*
+     FROM fighters f
+     WHERE f.owner_user_id = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+       )
+     ORDER BY f.updated_at DESC`
   ).bind(auth.userId).all<Fighter>();
   const fighters = results ?? [];
   const fighterIds = fighters.map((fighter) => fighter.id);
@@ -659,6 +665,9 @@ export async function listCommunityFighters(request: Request, env: Env): Promise
     SELECT f.*
     FROM fighters f
     WHERE f.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
       AND ${playableSpriteSetSql('f')}
     ORDER BY f.updated_at DESC
     LIMIT ?
@@ -892,6 +901,9 @@ export async function getCommunityFighter(
     FROM fighters f
     WHERE f.id = ?
       AND f.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
       AND ${playableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId).first<Fighter>();
@@ -932,9 +944,12 @@ export async function reportCommunityFighter(
   if (details instanceof Response) return details;
 
   const fighter = await env.DB.prepare(`
-    SELECT id, owner_user_id, name
-    FROM fighters
-    WHERE id = ? AND public_flag = 1
+    SELECT f.id, f.owner_user_id, f.name
+    FROM fighters f
+    WHERE f.id = ? AND f.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
     LIMIT 1
   `).bind(fighterId).first<Pick<Fighter, 'id' | 'owner_user_id' | 'name'>>();
   if (!fighter) return json({ error: 'Public fighter not found' }, 404, NO_STORE_HEADERS);
@@ -1002,6 +1017,9 @@ export async function shareCommunityFighterPage(
     SELECT f.*
     FROM fighters f
     WHERE f.id = ? AND f.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
       AND ${playableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId).first<Fighter>();
@@ -1468,6 +1486,9 @@ export async function cloneCommunityFighter(
     SELECT * FROM fighters f
     WHERE f.id = ?
       AND f.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
       AND ${playableSpriteSetSql('f')}
     LIMIT 1
   `

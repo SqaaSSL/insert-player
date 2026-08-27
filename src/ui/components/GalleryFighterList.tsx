@@ -4,6 +4,7 @@ import type { CachedMeta } from '../../services/SpriteCache.ts';
 import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
 import { isArcadeCachedMeta } from '../shared/fighterPreview.ts';
 import { cachedArcadeSlug, findCachedArcadeMeta } from '../shared/galleryArcadeRoster.ts';
+import { ownedRosterMetas } from '../shared/arcadeRosterIdentity.ts';
 
 export type GalleryArcadeState = 'loading' | 'ready' | 'unavailable';
 
@@ -84,7 +85,7 @@ export function buildGalleryFighterSections(
 
   return {
     globals,
-    owned: metas.filter((meta) => !isArcadeCachedMeta(meta)),
+    owned: ownedRosterMetas(metas, arcadeFighters),
   };
 }
 
