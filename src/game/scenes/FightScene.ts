@@ -52,6 +52,10 @@ enum RoundPhase {
   MATCH_END = 3,
 }
 
+function getSignatureStageTextureKey(stageId: StageThemeId): string {
+  return `stage_signature_${stageId}`;
+}
+
 export class FightScene extends Phaser.Scene {
   private p1!: Fighter;
   private p2!: Fighter;
@@ -172,6 +176,17 @@ export class FightScene extends Phaser.Scene {
     this.introCanSkip = false;
     this.matchStartedAt = Date.now();
     this.matchReported = false;
+  }
+
+  preload(): void {
+    if (!this.stageId || this.customStageKey) return;
+    const stageTheme = getStageTheme(this.stageId);
+    if (!stageTheme.assetPath) return;
+
+    const textureKey = getSignatureStageTextureKey(stageTheme.id);
+    if (!this.textures.exists(textureKey)) {
+      this.load.image(textureKey, stageTheme.assetPath);
+    }
   }
 
   async create(): Promise<void> {
@@ -298,6 +313,25 @@ export class FightScene extends Phaser.Scene {
     const midGfx = this.add.graphics().setDepth(2);
     const frontGfx = this.add.graphics().setDepth(3);
     this.stageVisualLayers.push(this.stageGfx, midGfx, frontGfx);
+
+    const stageTheme = getStageTheme(this.resolvedStageId);
+    if (stageTheme.assetPath) {
+      const textureKey = getSignatureStageTextureKey(stageTheme.id);
+      if (this.textures.exists(textureKey)) {
+        this.stageBackdrop = this.add
+          .image(GAME_WIDTH / 2, GAME_HEIGHT / 2, textureKey)
+          .setDepth(-2)
+          .setOrigin(0.5)
+          .setDisplaySize(GAME_WIDTH, GAME_HEIGHT);
+      } else {
+        debugWarn(
+          `[FightScene] Missing signature stage texture for ${stageTheme.id}, keeping neutral arena shell`,
+        );
+        this.drawVerticalGradient(this.stageGfx, 0x09111b, 0x162131);
+        this.drawGround(this.stageGfx, 0x102030, 0x60758d);
+      }
+      return;
+    }
 
     if (this.customStageKey) {
       this.drawVerticalGradient(this.stageGfx, 0x09111b, 0x162131);

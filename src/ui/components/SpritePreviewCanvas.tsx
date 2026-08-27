@@ -8,6 +8,18 @@ interface SpritePreviewCanvasProps {
   className?: string;
 }
 
+export const SPRITE_PREVIEW_RENDER_SCALE = 2;
+
+export function spritePreviewRenderSize(frameWidth: number, frameHeight: number): {
+  width: number;
+  height: number;
+} {
+  return {
+    width: Math.max(1, Math.round(frameWidth * SPRITE_PREVIEW_RENDER_SCALE)),
+    height: Math.max(1, Math.round(frameHeight * SPRITE_PREVIEW_RENDER_SCALE)),
+  };
+}
+
 export function SpritePreviewCanvas({
   blob,
   frameWidth,
@@ -18,6 +30,7 @@ export function SpritePreviewCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [frameIndex, setFrameIndex] = useState(0);
+  const renderSize = spritePreviewRenderSize(frameWidth, frameHeight);
 
   useEffect(() => {
     const url = URL.createObjectURL(blob);
@@ -49,9 +62,7 @@ export function SpritePreviewCanvas({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    canvas.width = frameWidth;
-    canvas.height = frameHeight;
-    ctx.clearRect(0, 0, frameWidth, frameHeight);
+    ctx.clearRect(0, 0, renderSize.width, renderSize.height);
 
     const gridCols = Math.max(1, Math.round(image.width / frameWidth));
     const sourceCol = frameIndex % gridCols;
@@ -66,10 +77,19 @@ export function SpritePreviewCanvas({
       frameHeight,
       0,
       0,
-      frameWidth,
-      frameHeight,
+      renderSize.width,
+      renderSize.height,
     );
-  }, [image, frameWidth, frameHeight, frameIndex]);
+  }, [image, frameWidth, frameHeight, frameIndex, renderSize.width, renderSize.height]);
 
-  return <canvas ref={canvasRef} className={className} />;
+  return (
+    <canvas
+      ref={canvasRef}
+      className={className}
+      width={renderSize.width}
+      height={renderSize.height}
+      role="img"
+      aria-label="Gameplay-scale animation preview"
+    />
+  );
 }

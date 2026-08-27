@@ -38,13 +38,16 @@ export function SpritePreviewSurface({
   if (sprite) {
     return (
       <>
-        <SpritePreviewCanvas
-          blob={sprite.blob}
-          frameWidth={sprite.frameWidth}
-          frameHeight={sprite.frameHeight}
-          frameCount={sprite.frameCount}
-          className="gallery-preview__canvas"
-        />
+        <div className="gallery-preview__sprite">
+          <SpritePreviewCanvas
+            blob={sprite.blob}
+            frameWidth={sprite.frameWidth}
+            frameHeight={sprite.frameHeight}
+            frameCount={sprite.frameCount}
+            className="gallery-preview__canvas"
+          />
+          <small className="gallery-preview__sprite-note">Gameplay-scale runtime preview</small>
+        </div>
         {sprite.failed ? (
           <div className="gallery-preview__warning">
             Showing failed result

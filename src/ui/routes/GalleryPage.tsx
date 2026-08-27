@@ -33,7 +33,9 @@ import { SpritePreviewSurface } from '../components/SpritePreviewSurface.tsx';
 import { DebugFeed } from '../components/DebugFeed.tsx';
 import {
   animLabel,
+  defaultSourceForMeta,
   getSourceBlob,
+  isArcadeCachedMeta,
   type PreviewSelection,
   type PreviewSpriteLike,
   type SourceKey,
@@ -310,6 +312,11 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
 
   useEffect(() => {
     setLegalAccepted(false);
+  }, [meta?.photoHash]);
+
+  useEffect(() => {
+    if (!meta) return;
+    setSelection({ kind: 'source', source: defaultSourceForMeta(meta) });
   }, [meta?.photoHash]);
 
   const previewSprite = useMemo<PreviewSpriteLike | null>(() => {
@@ -1216,7 +1223,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                 className={`gallery-fighter-card${index === currentIndex ? ' is-active' : ''}`}
                 onClick={() => {
                   setCurrentIndex(index);
-                  setSelection({ kind: 'source', source: 'original' });
+                  setSelection({ kind: 'source', source: defaultSourceForMeta(item) });
                 }}
               >
                 <span className="gallery-fighter-card__name">{item.characterName}</span>
@@ -1404,7 +1411,9 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                     <p className="gallery-eyebrow">Preview</p>
                     <h3>
                       {selection.kind === 'source'
-                        ? selection.source.toUpperCase()
+                        ? selection.source === 'original' && isArcadeCachedMeta(meta)
+                          ? 'PRIVATE REFERENCE'
+                          : selection.source.toUpperCase()
                         : animLabel(selection.animationName)}
                     </h3>
                   </div>
@@ -1426,7 +1435,11 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                           ? `Rebuilding ${retryingSource.toUpperCase()} view`
                           : 'Loading'
                     }
-                    emptyLabel={selection.kind === 'source' ? 'Missing source' : 'No preview for this animation yet'}
+                    emptyLabel={selection.kind === 'source'
+                      ? selection.source === 'original' && isArcadeCachedMeta(meta)
+                        ? 'Original reference is private'
+                        : 'Missing source'
+                      : 'No preview for this animation yet'}
                   />
                 </div>
 
