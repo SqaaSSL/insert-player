@@ -154,7 +154,7 @@ function main() {
     2,
   );
   const origin = normalizeOrigin(argValue('--origin') || envValue(env, 'ASF_FRONTEND_URL') || envValue(env, 'ASF_FRONTEND_ORIGIN'));
-  const socialCardPath = argValue('--social-card') || envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v3.png';
+  const socialCardPath = argValue('--social-card') || envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v4.png';
   const description = argValue('--description') || envValue(env, 'ASF_PUBLIC_APP_DESCRIPTION') || `Turn a photo into a playable arcade character in ${name}.`;
 
   const updates = {
