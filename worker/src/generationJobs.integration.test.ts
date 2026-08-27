@@ -1,6 +1,7 @@
 import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
-import { createGenerationJob } from './generationJobs';
+import { startAdminArcadeGeneration } from './arcadeGeneration';
+import { createGenerationJob, getGenerationJob } from './generationJobs';
 import { GEMINI_PRO_IMAGE_MODEL, recordProviderDailyQuota } from './providerCapacity';
 import type { AuthContext, Env } from './types';
 
@@ -19,6 +20,28 @@ const SOURCE_KEYS = {
   crouch: `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/crouch.png`,
   crouchRaw: `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/crouch_raw.png`,
 } as const;
+const VIDEO_ACTIONS = [
+  'idle',
+  'walk',
+  'high_punch',
+  'low_punch',
+  'high_kick',
+  'low_kick',
+  'jump',
+  'crouch',
+  'hit',
+  'ko',
+  'victory',
+] as const;
+const LEGAL = {
+  legalVersion: '2026-08-23.1',
+  ageConfirmed: true,
+  termsAccepted: true,
+  photoRightsConfirmed: true,
+  aiProcessingConfirmed: true,
+  immediatePerformanceConfirmed: true,
+  withdrawalLossAcknowledged: true,
+};
 
 const SCHEMA = `
   CREATE TABLE users (
@@ -96,6 +119,7 @@ const SCHEMA = `
     artifact_run_id TEXT,
     resumed_from_job_id TEXT,
     status TEXT NOT NULL DEFAULT 'queued',
+    review_status TEXT NOT NULL DEFAULT 'none',
     stage TEXT NOT NULL DEFAULT 'queued',
     failure_stage TEXT,
     progress_current INTEGER NOT NULL DEFAULT 0,
@@ -120,7 +144,16 @@ const SCHEMA = `
   );
   CREATE TABLE arcade_fighters (
     fighter_id TEXT PRIMARY KEY,
-    generation_prompt TEXT
+    generation_prompt TEXT,
+    status TEXT NOT NULL DEFAULT 'draft'
+  );
+  CREATE TABLE sprites (
+    id TEXT PRIMARY KEY,
+    fighter_id TEXT NOT NULL,
+    animation_name TEXT NOT NULL,
+    quality_tier TEXT NOT NULL,
+    blob_key TEXT,
+    raw_blob_key TEXT
   );
   CREATE TABLE generation_artifact_runs (
     id TEXT PRIMARY KEY,
@@ -166,6 +199,24 @@ const SCHEMA = `
     verified_at TEXT,
     PRIMARY KEY (run_id, artifact_kind, artifact_name)
   );
+  CREATE TABLE video_sprite_candidates (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    job_id TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    fighter_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    sequence_order INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'awaiting_review',
+    current_revision INTEGER NOT NULL DEFAULT 1,
+    approved_revision INTEGER
+  );
+  CREATE TABLE video_sprite_candidate_revisions (
+    candidate_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    report_sha256 TEXT NOT NULL,
+    PRIMARY KEY(candidate_id, revision)
+  );
   CREATE TABLE provider_capacity_windows (
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
@@ -194,11 +245,12 @@ function request(
   purchaseId = PURCHASE_ID,
   providerSessionId = SESSION_ID,
   target?: { targetKind: 'animation' | 'source'; targetName: string },
+  creationFlow?: 'original' | 'video',
 ): Request {
   return new Request('https://api.insertplayer.ai/api/generation-jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fighterId: FIGHTER_ID, purchaseId, providerSessionId, ...target }),
+    body: JSON.stringify({ fighterId: FIGHTER_ID, purchaseId, providerSessionId, ...target, creationFlow }),
   });
 }
 
@@ -244,6 +296,9 @@ async function bindings(): Promise<{
       VALUES (?, ?, ?)
     `).bind(FIGHTER_ID, USER_ID, ORIGINAL_KEY),
     db.prepare(`
+      INSERT INTO arcade_fighters (fighter_id, status) VALUES (?, 'draft')
+    `).bind(FIGHTER_ID),
+    db.prepare(`
       INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
       VALUES ('ledger-first', ?, -3, 'fighter_generation', ?)
     `).bind(USER_ID, FIGHTER_ID),
@@ -288,6 +343,68 @@ async function bindings(): Promise<{
 }
 
 const auth = { userId: USER_ID } as AuthContext;
+const adminAuth = {
+  userId: USER_ID,
+  rateLimitKey: `user:${USER_ID}`,
+  claims: {},
+  user: { id: USER_ID, plan_tier: 'admin' },
+} as unknown as AuthContext;
+
+function adminVideoRequest(): Request {
+  return new Request(`https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/generate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ legal: LEGAL, creationFlow: 'video' }),
+  });
+}
+
+async function stageCompleteChampionInventory(db: D1Database, env: Env): Promise<void> {
+  await db.batch([
+    db.prepare(`
+      UPDATE fighters
+      SET side_view_blob_key = ?, side_view_raw_blob_key = ?,
+          upright_view_blob_key = ?, upright_view_raw_blob_key = ?,
+          crouch_view_blob_key = ?, crouch_view_raw_blob_key = ?
+      WHERE id = ?
+    `).bind(
+      SOURCE_KEYS.side,
+      SOURCE_KEYS.sideRaw,
+      SOURCE_KEYS.upright,
+      SOURCE_KEYS.uprightRaw,
+      SOURCE_KEYS.crouch,
+      SOURCE_KEYS.crouchRaw,
+      FIGHTER_ID,
+    ),
+    ...VIDEO_ACTIONS.map((action, index) => db.prepare(`
+      INSERT INTO sprites (
+        id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key
+      ) VALUES (?, ?, ?, 'champion', ?, ?)
+    `).bind(
+      `champion-video-sprite-${index}`,
+      FIGHTER_ID,
+      action,
+      `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${action}.png`,
+      `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${action}-raw.png`,
+    )),
+  ]);
+  await Promise.all([
+    ...Object.values(SOURCE_KEYS).map((key) => (
+      env.SPRITES.put(key, png(), { httpMetadata: { contentType: 'image/png' } })
+    )),
+    ...VIDEO_ACTIONS.flatMap((action) => [
+      env.SPRITES.put(
+        `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${action}.png`,
+        png(),
+        { httpMetadata: { contentType: 'image/png' } },
+      ),
+      env.SPRITES.put(
+        `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${action}-raw.png`,
+        png(),
+        { httpMetadata: { contentType: 'image/png' } },
+      ),
+    ]),
+  ]);
+}
 
 async function seedAnimationRetry(db: D1Database, env: Env): Promise<void> {
   await db.batch([
@@ -327,6 +444,508 @@ async function seedAnimationRetry(db: D1Database, env: Env): Promise<void> {
 }
 
 describe('durable generation job creation', () => {
+  it('serializes every terminal full video run as requiring a fresh full restart', async () => {
+    const { mf, db, env } = await bindings();
+    const jobId = '46464646464646464646464646464646';
+    try {
+      await db.batch([
+        db.prepare(`INSERT INTO generation_artifact_runs (
+          id, user_id, fighter_id, tier, creation_flow, operation,
+          root_job_id, status, failure_stage
+        ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', ?,
+          'failed', 'video:submit')`).bind(jobId, USER_ID, FIGHTER_ID, jobId),
+        db.prepare(`INSERT INTO generation_jobs (
+          id, workflow_instance_id, user_id, fighter_id, charge_id,
+          provider_session_id, tier, creation_flow, operation, artifact_run_id,
+          status, review_status, stage, error_code
+        ) VALUES (?, ?, ?, ?, 'terminal-video-charge', 'terminal-video-session',
+          'champion', 'video', 'fighter_generation', ?, 'failed', 'none',
+          'video:submit', 'video_provider_terminal')`)
+          .bind(jobId, jobId, USER_ID, FIGHTER_ID, jobId),
+      ]);
+
+      const response = await getGenerationJob(env, auth, jobId);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ job: {
+        id: jobId,
+        status: 'failed',
+        reviewStatus: 'none',
+        errorCode: 'video_provider_terminal',
+        fullRunRestartRequired: true,
+        resumable: false,
+      } });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('creates a fresh video run after a rejected full run was terminally abandoned', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    const rejectedRunId = '99999999999999999999999999999999';
+    try {
+      await db.batch([
+        db.prepare(`
+          UPDATE generation_charges
+          SET tier = 'champion', creation_flow = 'video', credit_cost = 18
+          WHERE id = ?
+        `).bind(PURCHASE_ID),
+        db.prepare(`
+          UPDATE provider_sessions
+          SET tier = 'champion', creation_flow = 'video'
+          WHERE id = ?
+        `).bind(SESSION_ID),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, creation_flow, operation,
+            root_job_id, status, failure_stage
+          ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', ?,
+            'failed', 'review:rejected')
+        `).bind(rejectedRunId, USER_ID, FIGHTER_ID, rejectedRunId),
+      ]);
+
+      const created = await createGenerationJob(request(PURCHASE_ID, SESSION_ID, undefined, 'video'), env, auth);
+      expect(created.status).toBe(202);
+      expect(workflowStarts).toEqual([PURCHASE_ID]);
+      expect(await db.prepare(`
+        SELECT id, creation_flow, status FROM generation_artifact_runs
+        WHERE id IN (?, ?) ORDER BY id
+      `).bind(PURCHASE_ID, rejectedRunId).all()).toMatchObject({ results: [
+        { id: PURCHASE_ID, creation_flow: 'video', status: 'active' },
+        { id: rejectedRunId, creation_flow: 'video', status: 'failed' },
+      ] });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('persists a zero-credit admin Video authorization through the job and artifact run', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      await db.batch([
+        db.prepare(`
+          UPDATE credit_ledger
+          SET delta = 0, reason = 'arcade_seed_generation'
+          WHERE id = 'ledger-first'
+        `),
+        db.prepare(`
+          UPDATE generation_charges
+          SET tier = 'champion', creation_flow = 'video', credit_cost = 0,
+              free_quota_delta = 0, reason = 'arcade_seed_generation'
+          WHERE id = ?
+        `).bind(PURCHASE_ID),
+        db.prepare(`
+          UPDATE provider_sessions
+          SET tier = 'champion', creation_flow = 'video', purpose = 'fighter_generation'
+          WHERE id = ?
+        `).bind(SESSION_ID),
+      ]);
+
+      const created = await createGenerationJob(
+        request(PURCHASE_ID, SESSION_ID, undefined, 'video'),
+        env,
+        auth,
+      );
+
+      expect(created.status).toBe(202);
+      expect(await created.json()).toMatchObject({
+        job: {
+          id: PURCHASE_ID,
+          tier: 'champion',
+          creationFlow: 'video',
+          operation: 'fighter_generation',
+        },
+      });
+      expect(workflowStarts).toEqual([PURCHASE_ID]);
+      expect(await db.prepare(`
+        SELECT creation_flow, credit_cost, free_quota_delta, reason
+        FROM generation_charges WHERE id = ?
+      `).bind(PURCHASE_ID).first()).toEqual({
+        creation_flow: 'video',
+        credit_cost: 0,
+        free_quota_delta: 0,
+        reason: 'arcade_seed_generation',
+      });
+      expect(await db.prepare(`
+        SELECT creation_flow, purpose FROM provider_sessions WHERE id = ?
+      `).bind(SESSION_ID).first()).toEqual({
+        creation_flow: 'video',
+        purpose: 'fighter_generation',
+      });
+      expect(await db.prepare(`
+        SELECT creation_flow FROM generation_jobs WHERE id = ?
+      `).bind(PURCHASE_ID).first()).toEqual({ creation_flow: 'video' });
+      expect(await db.prepare(`
+        SELECT creation_flow FROM generation_artifact_runs WHERE id = ?
+      `).bind(PURCHASE_ID).first()).toEqual({ creation_flow: 'video' });
+      expect((await db.prepare(`
+        SELECT credits_balance FROM users WHERE id = ?
+      `).bind(USER_ID).first<{ credits_balance: number }>())?.credits_balance).toBe(7);
+      expect(await db.prepare(`
+        SELECT delta, reason FROM credit_ledger WHERE id = 'ledger-first'
+      `).first()).toEqual({ delta: 0, reason: 'arcade_seed_generation' });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('continues an approved Video action through the admin endpoint on the same run', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    const continuationPurchaseId = '55555555555555555555555555555555';
+    const continuationSessionId = '66666666666666666666666666666666';
+    try {
+      await db.batch([
+        db.prepare(`
+          UPDATE credit_ledger
+          SET delta = 0, reason = 'arcade_seed_generation'
+          WHERE id = 'ledger-first'
+        `),
+        db.prepare(`
+          UPDATE generation_charges
+          SET tier = 'champion', creation_flow = 'video', credit_cost = 0,
+              free_quota_delta = 0, reason = 'arcade_seed_generation'
+          WHERE id = ?
+        `).bind(PURCHASE_ID),
+        db.prepare(`
+          UPDATE provider_sessions
+          SET tier = 'champion', creation_flow = 'video', purpose = 'fighter_generation'
+          WHERE id = ?
+        `).bind(SESSION_ID),
+      ]);
+
+      const initial = await createGenerationJob(
+        request(PURCHASE_ID, SESSION_ID, undefined, 'video'),
+        env,
+        auth,
+      );
+      expect(initial.status).toBe(202);
+      expect(workflowStarts).toEqual([PURCHASE_ID]);
+
+      await db.batch([
+        db.prepare(`
+          UPDATE generation_charges
+          SET status = 'committed', updated_at = datetime('now')
+          WHERE id = ?
+        `).bind(PURCHASE_ID),
+        db.prepare(`
+          UPDATE provider_sessions
+          SET status = 'completed', updated_at = datetime('now')
+          WHERE id = ?
+        `).bind(SESSION_ID),
+        db.prepare(`
+          UPDATE generation_jobs
+          SET status = 'succeeded', review_status = 'approved',
+              stage = 'review:approved', progress_current = 1,
+              finished_at = datetime('now'), updated_at = datetime('now')
+          WHERE id = ?
+        `).bind(PURCHASE_ID),
+        db.prepare(`
+          UPDATE generation_artifact_runs
+          SET status = 'partial', updated_at = datetime('now')
+          WHERE id = ?
+        `).bind(PURCHASE_ID),
+        db.prepare(`
+          INSERT INTO video_sprite_candidates (
+            id, run_id, job_id, user_id, fighter_id, action, sequence_order,
+            status, current_revision, approved_revision
+          ) VALUES (
+            'admin-video-candidate-idle', ?, ?, ?, ?, 'idle', 0,
+            'approved', 1, 1
+          )
+        `).bind(PURCHASE_ID, PURCHASE_ID, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO video_sprite_candidate_revisions (
+            candidate_id, revision, report_sha256
+          ) VALUES ('admin-video-candidate-idle', 1, ?)
+        `).bind('a'.repeat(64)),
+        db.prepare(`
+          INSERT INTO generation_artifact_checkpoints (
+            run_id, artifact_kind, artifact_name, stage_index, tier,
+            status, clean_version_id, raw_version_id, clean_blob_key,
+            raw_blob_key, completed_by_job_id
+          ) VALUES (
+            ?, 'sprite', 'idle', 1, 'champion', 'approved',
+            'admin-video-idle-clean', 'admin-video-idle-raw', ?, ?, ?
+          )
+        `).bind(
+          PURCHASE_ID,
+          `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/idle.png`,
+          `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/idle-raw.png`,
+          PURCHASE_ID,
+        ),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('ledger-admin-video-continuation', ?, 0, 'arcade_seed_generation', ?)
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, creation_flow, credit_cost, free_quota_delta,
+            status, reason, fighter_id, ledger_id, continuation_run_id,
+            resumed_from_job_id, expires_at
+          ) VALUES (
+            ?, ?, 'champion', 'video', 0, 0, 'reserved',
+            'arcade_seed_generation', ?, 'ledger-admin-video-continuation',
+            ?, ?, datetime('now', '+12 hours')
+          )
+        `).bind(
+          continuationPurchaseId,
+          USER_ID,
+          FIGHTER_ID,
+          PURCHASE_ID,
+          PURCHASE_ID,
+        ),
+        db.prepare(`
+          INSERT INTO provider_sessions (
+            id, user_id, rate_limit_key, tier, creation_flow, purpose,
+            charge_id, status, expires_at
+          ) VALUES (
+            ?, ?, ?, 'champion', 'video', 'fighter_generation', ?,
+            'active', datetime('now', '+12 hours')
+          )
+        `).bind(
+          continuationSessionId,
+          USER_ID,
+          `user:${USER_ID}`,
+          continuationPurchaseId,
+        ),
+      ]);
+      await stageCompleteChampionInventory(db, env);
+
+      const continuation = await startAdminArcadeGeneration(
+        adminVideoRequest(),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+      );
+      expect(continuation.status).toBe(202);
+      expect(await continuation.json()).toMatchObject({ job: {
+        id: continuationPurchaseId,
+        creationFlow: 'video',
+        artifactRunId: PURCHASE_ID,
+        resumedFromJobId: PURCHASE_ID,
+        status: 'queued',
+      } });
+      expect(workflowStarts).toEqual([PURCHASE_ID, continuationPurchaseId]);
+      expect(await db.prepare(`
+        SELECT artifact_run_id, resumed_from_job_id, creation_flow, progress_current
+        FROM generation_jobs WHERE id = ?
+      `).bind(continuationPurchaseId).first()).toEqual({
+        artifact_run_id: PURCHASE_ID,
+        resumed_from_job_id: PURCHASE_ID,
+        creation_flow: 'video',
+        progress_current: 1,
+      });
+      expect(await db.prepare(`
+        SELECT continuation_run_id, resumed_from_job_id, creation_flow,
+          credit_cost, free_quota_delta, status
+        FROM generation_charges WHERE id = ?
+      `).bind(continuationPurchaseId).first()).toMatchObject({
+        continuation_run_id: PURCHASE_ID,
+        resumed_from_job_id: PURCHASE_ID,
+        creation_flow: 'video',
+        credit_cost: 0,
+        free_quota_delta: 0,
+      });
+      expect((await db.prepare(`
+        SELECT credits_balance FROM users WHERE id = ?
+      `).bind(USER_ID).first<{ credits_balance: number }>())?.credits_balance).toBe(7);
+      expect(await db.prepare(`
+        SELECT COALESCE(SUM(delta), 0) AS delta FROM credit_ledger
+      `).first()).toEqual({ delta: 0 });
+
+      const replay = await startAdminArcadeGeneration(
+        adminVideoRequest(),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+      );
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({
+        replayed: true,
+        job: { id: continuationPurchaseId, creationFlow: 'video', status: 'queued' },
+      });
+      expect(workflowStarts).toEqual([PURCHASE_ID, continuationPurchaseId]);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM generation_jobs
+      `).first<{ count: number }>())?.count).toBe(2);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM generation_charges
+      `).first<{ count: number }>())?.count).toBe(2);
+    } finally {
+      await mf.dispose();
+    }
+  }, 30_000);
+
+  it('blocks a Video job from reusing an Original authorization', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      const response = await createGenerationJob(
+        request(PURCHASE_ID, SESSION_ID, undefined, 'video'),
+        env,
+        auth,
+      );
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        error: expect.stringMatching(/authorization is no longer active/i),
+      });
+      expect(workflowStarts).toEqual([]);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM generation_jobs
+      `).first<{ count: number }>())?.count).toBe(0);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM generation_artifact_runs
+      `).first<{ count: number }>())?.count).toBe(0);
+      expect((await db.prepare(`
+        SELECT status FROM generation_charges WHERE id = ?
+      `).bind(PURCHASE_ID).first<{ status: string }>())?.status).toBe('refunded');
+      expect((await db.prepare(`
+        SELECT status FROM provider_sessions WHERE id = ?
+      `).bind(SESSION_ID).first<{ status: string }>())?.status).toBe('cancelled');
+      expect((await db.prepare(`
+        SELECT credits_balance FROM users WHERE id = ?
+      `).bind(USER_ID).first<{ credits_balance: number }>())?.credits_balance).toBe(10);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('creates a zero-credit video continuation for a failed local post-submit step', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    const failedJobId = '88888888888888888888888888888888';
+    const failedChargeId = '77777777777777777777777777777777';
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('ledger-video-failed', ?, -18, 'fighter_generation', ?)
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, creation_flow, credit_cost, status, reason,
+            fighter_id, ledger_id, expires_at
+          ) VALUES (?, ?, 'champion', 'video', 18, 'committed',
+            'fighter_generation', ?, 'ledger-video-failed', datetime('now', '+12 hours'))
+        `).bind(failedChargeId, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO provider_sessions (
+            id, user_id, rate_limit_key, tier, creation_flow, purpose,
+            charge_id, status, expires_at
+          ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', ?,
+            'completed', datetime('now', '+12 hours'))
+        `).bind('session-video-failed', USER_ID, `user:${USER_ID}`, failedChargeId),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, creation_flow, operation,
+            root_job_id, original_charge_id, original_blob_key, status
+          ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', ?, ?, ?, 'partial')
+        `).bind(failedJobId, USER_ID, FIGHTER_ID, failedJobId, failedChargeId, ORIGINAL_KEY),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, workflow_instance_id, user_id, fighter_id, charge_id,
+            provider_session_id, tier, creation_flow, operation, artifact_run_id,
+            status, stage
+          ) VALUES (?, ?, ?, ?, ?, 'session-video-failed', 'champion', 'video',
+            'fighter_generation', ?, 'failed', 'video:compile')
+        `).bind(failedJobId, failedJobId, USER_ID, FIGHTER_ID, failedChargeId, failedJobId),
+        db.prepare(`
+          UPDATE generation_charges
+          SET tier = 'champion', creation_flow = 'video', credit_cost = 0,
+              reason = 'fighter_generation', continuation_run_id = ?,
+              resumed_from_job_id = ?
+          WHERE id = ?
+        `).bind(failedJobId, failedJobId, PURCHASE_ID),
+        db.prepare(`
+          UPDATE provider_sessions
+          SET tier = 'champion', creation_flow = 'video'
+          WHERE id = ?
+        `).bind(SESSION_ID),
+      ]);
+
+      const created = await createGenerationJob(request(PURCHASE_ID, SESSION_ID, undefined, 'video'), env, auth);
+      expect(created.status).toBe(202);
+      expect(workflowStarts).toEqual([PURCHASE_ID]);
+      expect(await db.prepare(`
+        SELECT artifact_run_id, resumed_from_job_id, creation_flow
+        FROM generation_jobs WHERE id = ?
+      `).bind(PURCHASE_ID).first()).toEqual({
+        artifact_run_id: failedJobId,
+        resumed_from_job_id: failedJobId,
+        creation_flow: 'video',
+      });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('rejects a stale continuation authorization after the exact retry action is approved', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    const parentJobId = '56565656565656565656565656565656';
+    const parentChargeId = '78787878787878787878787878787878';
+    try {
+      await db.batch([
+        db.prepare(`INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('ledger-final-action', ?, -1, 'fighter_retry_animation', ?)`)
+          .bind(USER_ID, FIGHTER_ID),
+        db.prepare(`INSERT INTO generation_charges (
+          id, user_id, tier, creation_flow, credit_cost, status, reason,
+          fighter_id, ledger_id, expires_at
+        ) VALUES (?, ?, 'champion', 'video', 1, 'committed', 'fighter_retry_animation',
+          ?, 'ledger-final-action', datetime('now', '+12 hours'))`)
+          .bind(parentChargeId, USER_ID, FIGHTER_ID),
+        db.prepare(`INSERT INTO provider_sessions (
+          id, user_id, rate_limit_key, tier, creation_flow, purpose,
+          charge_id, status, expires_at
+        ) VALUES ('session-final-action', ?, ?, 'champion', 'video', 'fighter_retry',
+          ?, 'completed', datetime('now', '+12 hours'))`)
+          .bind(USER_ID, `user:${USER_ID}`, parentChargeId),
+        db.prepare(`INSERT INTO generation_artifact_runs (
+          id, user_id, fighter_id, tier, creation_flow, operation,
+          target_kind, target_name, root_job_id, status
+        ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_retry_animation',
+          'animation', 'idle', ?, 'partial')`)
+          .bind(parentJobId, USER_ID, FIGHTER_ID, parentJobId),
+        db.prepare(`INSERT INTO generation_jobs (
+          id, workflow_instance_id, user_id, fighter_id, charge_id,
+          provider_session_id, tier, creation_flow, operation, target_kind,
+          target_name, artifact_run_id, status, review_status, stage
+        ) VALUES (?, ?, ?, ?, ?, 'session-final-action', 'champion', 'video',
+          'fighter_retry_animation', 'animation', 'idle', ?, 'succeeded',
+          'approved', 'review:approved')`)
+          .bind(parentJobId, parentJobId, USER_ID, FIGHTER_ID, parentChargeId, parentJobId),
+        db.prepare(`INSERT INTO video_sprite_candidates (
+          id, run_id, job_id, user_id, fighter_id, action, sequence_order,
+          status, current_revision, approved_revision
+        ) VALUES ('candidate-final-action', ?, ?, ?, ?, 'idle', 0,
+          'approved', 1, 1)`)
+          .bind(parentJobId, parentJobId, USER_ID, FIGHTER_ID),
+        db.prepare(`INSERT INTO video_sprite_candidate_revisions (
+          candidate_id, revision, report_sha256
+        ) VALUES ('candidate-final-action', 1, ?)`).bind('b'.repeat(64)),
+        db.prepare(`UPDATE generation_charges
+          SET tier = 'champion', creation_flow = 'video', credit_cost = 0,
+              reason = 'fighter_retry_animation', continuation_run_id = ?,
+              resumed_from_job_id = ? WHERE id = ?`)
+          .bind(parentJobId, parentJobId, PURCHASE_ID),
+        db.prepare(`UPDATE provider_sessions
+          SET tier = 'champion', creation_flow = 'video', purpose = 'fighter_retry'
+          WHERE id = ?`).bind(SESSION_ID),
+      ]);
+      const created = await createGenerationJob(request(
+        PURCHASE_ID,
+        SESSION_ID,
+        { targetKind: 'animation', targetName: 'idle' },
+        'video',
+      ), env, auth);
+      expect(created.status).toBe(400);
+      expect(await created.json()).toMatchObject({ code: 'video_creation_operation_unsupported' });
+      expect(workflowStarts).toEqual([]);
+      expect((await db.prepare(`SELECT status FROM generation_charges WHERE id = ?`)
+        .bind(PURCHASE_ID).first<{ status: string }>())?.status).toBe('refunded');
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
   it('starts one idempotent workflow and extends its backend-owned reservation', async () => {
     const { mf, db, env, workflowStarts } = await bindings();
     try {
@@ -652,6 +1271,38 @@ describe('durable generation job creation', () => {
         target_name: 'victory',
         progress_total: 1,
       });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('refunds a reserved video action retry without creating a job', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      await seedAnimationRetry(db, env);
+      await db.batch([
+        db.prepare(`UPDATE generation_charges
+          SET tier = 'champion', creation_flow = 'video', credit_cost = 4
+          WHERE id = ?`).bind(SECOND_PURCHASE_ID),
+        db.prepare(`UPDATE provider_sessions
+          SET tier = 'champion', creation_flow = 'video'
+          WHERE id = ?`).bind(SECOND_SESSION_ID),
+      ]);
+      const response = await createGenerationJob(request(
+        SECOND_PURCHASE_ID,
+        SECOND_SESSION_ID,
+        { targetKind: 'animation', targetName: 'victory' },
+        'video',
+      ), env, auth);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: 'video_creation_operation_unsupported' });
+      expect(workflowStarts).toEqual([]);
+      expect((await db.prepare('SELECT COUNT(*) AS count FROM generation_jobs')
+        .first<{ count: number }>())?.count).toBe(0);
+      expect((await db.prepare('SELECT status FROM generation_charges WHERE id = ?')
+        .bind(SECOND_PURCHASE_ID).first<{ status: string }>())?.status).toBe('refunded');
+      expect((await db.prepare('SELECT status FROM provider_sessions WHERE id = ?')
+        .bind(SECOND_SESSION_ID).first<{ status: string }>())?.status).toBe('cancelled');
     } finally {
       await mf.dispose();
     }

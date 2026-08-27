@@ -108,7 +108,12 @@ jobs:
           node processor/scripts/assert-approved-image-providers.mjs
           npm --prefix processor run build
 
+      - name: Test video compiler with production FFmpeg toolchain
+        run: docker build --file Dockerfile.processor --target video-sprite-test .
+
       - name: Run production gate
+        env:
+          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"
         run: npm run check:production
 
       - name: Restore and verify the private licensed source

@@ -264,6 +264,8 @@ export async function persistGeneratedSprite(
     frameCount: number;
     processingVersion: number;
     animationFormat?: SpriteAnimationFormat;
+    /** Keep false for private review candidates. Existing callers promote immediately. */
+    setCurrent?: boolean;
   },
 ): Promise<PersistedGeneratedSprite> {
   if (!PLAYABLE_ANIMATIONS.has(params.animationName)) {
@@ -329,18 +331,20 @@ export async function persistGeneratedSprite(
         raw: 'true',
       });
     }
-    await currentSpriteStatement(env, {
-      fighterId: params.fighterId,
-      animationName: params.animationName,
-      tier: params.tier,
-      contentHash,
-      rawContentHash,
-      animationFormat,
-      frameWidth: params.frameWidth,
-      frameHeight: params.frameHeight,
-      frameCount: params.frameCount,
-      processingVersion: params.processingVersion,
-    }).run();
+    if (params.setCurrent !== false) {
+      await currentSpriteStatement(env, {
+        fighterId: params.fighterId,
+        animationName: params.animationName,
+        tier: params.tier,
+        contentHash,
+        rawContentHash,
+        animationFormat,
+        frameWidth: params.frameWidth,
+        frameHeight: params.frameHeight,
+        frameCount: params.frameCount,
+        processingVersion: params.processingVersion,
+      }).run();
+    }
     return {
       versionId: duplicate.id,
       blobKey: duplicate.blob_key,
@@ -384,7 +388,7 @@ export async function persistGeneratedSprite(
       });
       if (wroteRaw) stagedKeys.push(rawKey);
     }
-    await env.DB.batch([
+    const statements = [
       env.DB.prepare(`
         INSERT OR IGNORE INTO sprite_versions (
           id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
@@ -406,7 +410,9 @@ export async function persistGeneratedSprite(
         params.processingVersion,
         animationFormat,
       ),
-      currentSpriteStatement(env, {
+    ];
+    if (params.setCurrent !== false) {
+      statements.push(currentSpriteStatement(env, {
         fighterId: params.fighterId,
         animationName: params.animationName,
         tier: params.tier,
@@ -417,8 +423,9 @@ export async function persistGeneratedSprite(
         frameHeight: params.frameHeight,
         frameCount: params.frameCount,
         processingVersion: params.processingVersion,
-      }),
-    ]);
+      }));
+    }
+    await env.DB.batch(statements);
   } catch (error) {
     await deleteKeys(env, stagedKeys);
     throw error;

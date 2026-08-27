@@ -7,6 +7,7 @@ import type { GenerationBillingOperation, QualityTier } from './QualityTiers';
 import type { GenerationCreationFlow } from './GenerationCreationFlow';
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type GenerationJobReviewStatus = 'none' | 'awaiting_review' | 'approved' | 'rejected';
 
 export interface GenerationJobEvent {
   stage: string;
@@ -26,6 +27,8 @@ export interface GenerationJob {
   artifactRunId: string | null;
   resumedFromJobId: string | null;
   status: GenerationJobStatus;
+  reviewStatus: GenerationJobReviewStatus;
+  fullRunRestartRequired: boolean;
   stage: string;
   failureStage: string | null;
   progressCurrent: number;

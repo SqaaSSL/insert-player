@@ -9,7 +9,7 @@ permissions:
 jobs:
   validate:
     name: Production gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
@@ -37,7 +37,12 @@ jobs:
       - name: Install processor dependencies
         run: npm --prefix processor ci
 
+      - name: Test video compiler with production FFmpeg toolchain
+        run: docker build --file Dockerfile.processor --target video-sprite-test .
+
       - name: Run production checks
+        env:
+          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"
         run: npm run check:production
 
       - name: Test immutable QA pose atlas

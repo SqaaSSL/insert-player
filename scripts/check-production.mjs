@@ -19,11 +19,11 @@ function assertNodeVersion() {
   }
 }
 
-function run(label, command, args, cwd = root) {
+function run(label, command, args, cwd = root, envOverrides = {}) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: 'inherit',
-    env: process.env,
+    env: { ...process.env, ...envOverrides },
   });
   if (result.status !== 0) {
     throw new Error(`${label} failed with exit code ${result.status ?? 'unknown'}`);
@@ -3311,6 +3311,39 @@ function assertDurableGenerationIsWired() {
   }
 }
 
+function assertVideoSpriteProductionToolchainGate() {
+  const dockerfile = readFileSync(join(root, 'Dockerfile.processor'), 'utf8');
+  const dockerRequired = [
+    'AS media-runtime',
+    'ENV VIDEO_SPRITE_APPROVED_FFMPEG_VERSION=5.1.9-0+deb12u1',
+    'ffmpeg=7:5.1.9-0+deb12u1',
+    'ffmpeg version 5.1.9-0+deb12u1',
+    'ffprobe version 5.1.9-0+deb12u1',
+    'FROM media-runtime AS video-sprite-test',
+    'COPY --from=build /app /app',
+    'VIDEO_SPRITE_TEST_FFMPEG=1 npm --prefix processor run test:video-sprite',
+    'FROM media-runtime AS runtime',
+  ];
+  const missingDocker = dockerRequired.filter((snippet) => !dockerfile.includes(snippet));
+  if (missingDocker.length > 0) {
+    throw new Error(`Video sprite production toolchain is incomplete: ${missingDocker.join(', ')}`);
+  }
+  for (const [label, path] of [
+    ['reusable validation', '.github/workflows/validate.yml'],
+    ['production Arcade seed', '.github/workflows/seed-arcade-production.yml'],
+  ]) {
+    const validation = readFileSync(join(root, path), 'utf8');
+    const toolchainStep = validation.indexOf('--target video-sprite-test');
+    const productionGate = validation.indexOf('run: npm run check:production');
+    if (toolchainStep < 0 || productionGate < 0 || toolchainStep >= productionGate) {
+      throw new Error(`${label} must test the production video-sprite image before check:production.`);
+    }
+    if (!validation.includes('VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"')) {
+      throw new Error(`${label} must mark the exact media test before the host production gate.`);
+    }
+  }
+}
+
 function assertOfficialArcadeIsWired() {
   const migration = readFileSync(join(root, 'worker/migrations/0020_official_arcade.sql'), 'utf8');
   const promptMigration = readFileSync(join(root, 'worker/migrations/0021_arcade_generation_prompts.sql'), 'utf8');
@@ -3841,10 +3874,21 @@ function assertArcadeExperimentArchiveIsImmutable() {
 
 assertNodeVersion();
 assertGeminiImageModelsAreGa();
+assertVideoSpriteProductionToolchainGate();
 run('frontend style guard', npm, ['run', 'check:frontend']);
 run('tier parity guard', node, ['scripts/check-tier-parity.mjs']);
 run('approved image-provider boundary', node, ['processor/scripts/assert-approved-image-providers.mjs']);
 run('unit tests', npm, ['test']);
+run(
+  'deterministic video sprite compiler tests',
+  npm,
+  ['--prefix', 'processor', 'run', 'test:video-sprite'],
+  root,
+  {
+    VIDEO_SPRITE_TEST_FFMPEG:
+      process.env.VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED === '1' ? '0' : '1',
+  },
+);
 run('processor benchmark tests', npm, ['--prefix', 'processor', 'run', 'benchmark:providers:test']);
 run('frontend typecheck', npx, ['tsc', '--noEmit']);
 run('Worker binding type drift check', npm, ['--prefix', 'worker', 'run', 'types:check']);

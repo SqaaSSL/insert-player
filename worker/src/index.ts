@@ -66,6 +66,13 @@ import {
   RequestBodyTooLargeError,
 } from './requestBody';
 import { geminiTransportStatus } from './geminiTransport';
+import {
+  adjustVideoSpriteReview,
+  approveVideoSpriteReview,
+  getVideoSpriteReview,
+  getVideoSpriteReviewAsset,
+  rejectVideoSpriteReview,
+} from './videoSpriteReview';
 
 export { FighterGenerationWorkflow } from './generationWorkflow';
 export { ImageProcessorContainer } from './imageProcessorContainer';
@@ -647,6 +654,49 @@ export default {
         if (isResponse(jobId)) return addCors(jobId, request, env);
         return addCors(
           await authenticated(request, env, (auth) => getGenerationJob(env, auth, jobId)),
+          request,
+          env,
+        );
+      }
+
+      const videoReviewMatch = path.match(/^\/api\/generation-jobs\/([^/]+)\/video-review$/);
+      if (videoReviewMatch) {
+        const jobId = decodePathParam(videoReviewMatch[1]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        if (method === 'GET') {
+          return addCors(await authenticated(request, env, (auth) => getVideoSpriteReview(env, auth, jobId)), request, env);
+        }
+      }
+
+      const videoReviewDecisionMatch = path.match(
+        /^\/api\/generation-jobs\/([^/]+)\/video-review\/(approve|reject|adjust)$/,
+      );
+      if (videoReviewDecisionMatch && method === 'POST') {
+        const jobId = decodePathParam(videoReviewDecisionMatch[1]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        const decision = videoReviewDecisionMatch[2];
+        return addCors(await authenticatedLimited(
+          request,
+          env,
+          'generation:video-review',
+          (auth) => decision === 'approve'
+            ? approveVideoSpriteReview(request, env, auth, jobId)
+            : decision === 'reject'
+              ? rejectVideoSpriteReview(request, env, auth, jobId)
+              : adjustVideoSpriteReview(request, env, auth, jobId),
+        ), request, env);
+      }
+
+      const videoReviewAssetMatch = path.match(
+        /^\/api\/generation-jobs\/([^/]+)\/video-review\/assets\/([^/]+)$/,
+      );
+      if (videoReviewAssetMatch && method === 'GET') {
+        const jobId = decodePathParam(videoReviewAssetMatch[1]);
+        const kind = decodePathParam(videoReviewAssetMatch[2]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        if (isResponse(kind)) return addCors(kind, request, env);
+        return addCors(
+          await authenticated(request, env, (auth) => getVideoSpriteReviewAsset(request, env, auth, jobId, kind)),
           request,
           env,
         );

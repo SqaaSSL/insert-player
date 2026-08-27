@@ -1,6 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
-import { generateId } from './auth';
+import { generateId, hashString } from './auth';
 import { settleGenerationPurchase } from './billing';
 import {
   persistGeneratedSource,
@@ -26,6 +26,14 @@ import {
 import { maxTier } from './tiers';
 import type { Env, Fighter, GenerationArtifactRun, GenerationJob } from './types';
 import { stripTrailingSlashes } from './url';
+import {
+  isTerminalVideoProviderFailure,
+  nextVideoSpriteAction,
+  runVideoSpriteAction,
+  settleVideoSpriteCandidateAwaitingReview,
+} from './videoSpriteWorkflow';
+import type { VideoSpriteAction } from '../../src/services/VideoSpriteCompileContract';
+import { videoAction } from './videoSpriteGeneration';
 
 interface FighterGenerationParams {
   jobId: string;
@@ -173,10 +181,53 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
   }
 
   private async loadAssetBase64(key: string | null): Promise<string> {
+    return arrayBufferToBase64(await this.loadAssetBytes(key));
+  }
+
+  private async loadAssetBytes(key: string | null): Promise<ArrayBuffer> {
     if (!key) throw new Error('Required generation asset key is missing');
     const object = await this.env.SPRITES.get(key);
     if (!object) throw new Error('Required generation asset is missing');
-    return arrayBufferToBase64(await object.arrayBuffer());
+    return object.arrayBuffer();
+  }
+
+  private async runVideoFlow(
+    job: GenerationJob,
+    artifactRun: GenerationArtifactRun,
+    generationPrompt: string | undefined,
+    step: WorkflowStep,
+  ): Promise<void> {
+    let sources: GenerationSources;
+    if (job.operation === 'fighter_generation') {
+      if (!artifactRun.original_blob_key) throw new Error('Durable original source photo is missing');
+      const side = await step.do('video: resolve canonical side source', STEP_CONFIG, () => this.generateSourcePair(job, {
+        operation: 'repose', cleanKind: 'side', rawKind: 'side_raw',
+        inputKey: artifactRun.original_blob_key!, generationPrompt, progressCurrent: 1,
+      }));
+      const upright = await step.do('video: resolve canonical upright source', STEP_CONFIG, () => this.generateSourcePair(job, {
+        operation: 'upright', cleanKind: 'upright', rawKind: 'upright_raw',
+        inputKey: side.rawKey, generationPrompt, progressCurrent: 2,
+      }));
+      const crouch = await step.do('video: resolve canonical crouch source', STEP_CONFIG, () => this.generateSourcePair(job, {
+        operation: 'crouch', cleanKind: 'crouch', rawKind: 'crouch_raw',
+        inputKey: upright.rawKey, normalizationSourceKey: upright.cleanKey,
+        generationPrompt, progressCurrent: 3,
+      }));
+      sources = { side, upright, crouch, crouchNormalizationReference: crouch.normalizationReference };
+    } else {
+      throw new NonRetryableError('The review-gated video flow supports full fighter generation only');
+    }
+    const action = await step.do('video: choose one review-gated action', STEP_CONFIG, () => (
+      nextVideoSpriteAction(this.env, job)
+    ));
+    const canonicalKind = videoAction(action).canonical;
+    const canonicalKey = canonicalKind === 'crouch' ? sources.crouch.rawKey : sources.side.rawKey;
+    const canonicalBytes = await this.loadAssetBytes(canonicalKey);
+    await runVideoSpriteAction(this.env, step, job, action, {
+      blobKey: canonicalKey,
+      bytes: canonicalBytes,
+      sha256: await hashString(canonicalBytes),
+    }, generationPrompt);
   }
 
   private async callProcessor<T>(
@@ -523,6 +574,11 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         () => this.legacyArcadeGenerationPrompt(activeJob),
       );
 
+      if (activeJob.creation_flow === 'video') {
+        await this.runVideoFlow(activeJob, artifactRun, generationPrompt, step);
+        return { jobId, status: 'succeeded', reviewStatus: 'awaiting_review' };
+      }
+
       if (activeJob.operation === 'fighter_generation') {
         if (!artifactRun.original_blob_key) throw new Error('Durable original source photo is missing');
         const side = await step.do('generate canonical side source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
@@ -732,6 +788,26 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       const message = boundedErrorMessage(error);
       console.error(JSON.stringify({ event: 'generation_workflow_failed', jobId, error: message }));
       job = await step.do('load failed generation context', STEP_CONFIG, () => this.loadJob(jobId));
+      if (job.creation_flow === 'video') {
+        const pendingCandidate = await step.do('recover persisted video candidate', STEP_CONFIG, () => (
+          this.env.DB.prepare(`
+            SELECT id, action FROM video_sprite_candidates
+            WHERE job_id = ? AND status = 'awaiting_review'
+            LIMIT 1
+          `).bind(jobId).first<{ id: string; action: VideoSpriteAction }>()
+        ));
+        if (pendingCandidate) {
+          await step.do('recover video awaiting-review terminal state', STEP_CONFIG, () => (
+            settleVideoSpriteCandidateAwaitingReview(
+              this.env,
+              job!,
+              pendingCandidate.id,
+              pendingCandidate.action,
+            )
+          ));
+          return { jobId, status: 'succeeded', reviewStatus: 'awaiting_review' };
+        }
+      }
       if (job.status === 'succeeded') return { jobId, status: 'succeeded' };
       if (job) {
         await step.do('settle failed generation', STEP_CONFIG, async () => {
@@ -744,6 +820,8 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           );
           const releasedBeforeProviderStart = settlement?.status === 'refunded';
           const failure = generationFailureDetails(message, releasedBeforeProviderStart);
+          const videoProviderTerminal = job!.creation_flow === 'video' &&
+            isTerminalVideoProviderFailure(message);
           const persistedFailureState = await this.env.DB.prepare(`
             SELECT stage, failure_stage
             FROM generation_jobs
@@ -761,7 +839,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
             `).bind(
               failureStage,
               failureStage,
-              failure.errorCode,
+              videoProviderTerminal ? 'video_provider_terminal' : failure.errorCode,
               failure.errorMessage,
               job!.id,
             ),
@@ -769,6 +847,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
               UPDATE generation_artifact_runs
               SET status = CASE
                     WHEN status = 'succeeded' THEN status
+                    WHEN ? = 1 THEN 'failed'
                     WHEN EXISTS (
                       SELECT 1 FROM generation_artifact_checkpoints checkpoint
                       WHERE checkpoint.run_id = generation_artifact_runs.id
@@ -784,7 +863,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
                   END,
                   failure_stage = ?, updated_at = datetime('now')
               WHERE id = ?
-            `).bind(failureStage, requireArtifactRunId(job!)),
+            `).bind(videoProviderTerminal ? 1 : 0, failureStage, requireArtifactRunId(job!)),
             this.env.DB.prepare(`
               UPDATE provider_cost_events
               SET stage_outcome = CASE

@@ -14,10 +14,9 @@ export function parseRequestedGenerationCreationFlow(
 }
 
 /**
- * PR 1 only seals the choice. The video implementation enables its branch in
- * the later Workflow PR, so a partial rollout can never run the original
- * renderer after a caller explicitly requested video.
+ * Availability is still narrowed by the billing/job authorization gates:
+ * video currently requires a signed-in Champion request.
  */
 export function generationCreationFlowAvailable(flow: GenerationCreationFlow): boolean {
-  return flow === 'original';
+  return flow === 'original' || flow === 'video';
 }

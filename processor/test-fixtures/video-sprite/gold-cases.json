@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "frame": { "width": 32, "height": 48 },
+  "cases": [
+    {
+      "id": "static-idle-is-allowed",
+      "action": "idle",
+      "frameCount": 24,
+      "motion": "static",
+      "expectedSelectedIndices": [0, 3, 6, 9, 12, 15, 18, 21],
+      "expectedDecision": "technical_pass"
+    },
+    {
+      "id": "motion-arc-prefers-distinct-punch-poses",
+      "action": "high_punch",
+      "frameCount": 24,
+      "motion": "arm-extension",
+      "expectedSelectedIndices": [2, 6, 10, 14, 20],
+      "expectedDecision": "technical_pass"
+    },
+    {
+      "id": "missing-foreground-rejects",
+      "action": "high_punch",
+      "frameCount": 24,
+      "motion": "blank",
+      "expectedSelectedIndices": [5, 9, 14, 18, 23],
+      "expectedDecision": "reject"
+    }
+  ]
+}

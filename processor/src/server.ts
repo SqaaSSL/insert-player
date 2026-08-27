@@ -2,6 +2,11 @@ import { createServer } from 'node:http';
 import { installCanvasRuntime } from './canvasRuntime';
 import { processorErrorResponse } from './providerErrorResponse';
 import { sourceGenerationStrategy } from './sourceGenerationPolicy';
+import { compileVideoSprite } from './videoSpriteCompiler.ts';
+import {
+  VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+  VIDEO_SPRITE_COMPILER_VERSION,
+} from './videoSpriteContract.ts';
 import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
 
 installCanvasRuntime();
@@ -207,6 +212,10 @@ const server = createServer(async (request, response) => {
         status: 'ok',
         runtime: 'canvas-skia',
         imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+        videoSpriteCompiler: {
+          schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+          compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
+        },
       });
       return;
     }
@@ -264,6 +273,12 @@ const server = createServer(async (request, response) => {
       sendJson(response, 200, {
         normalizationReference: await crouchNormalizationReference(body.imageBase64),
       });
+      return;
+    }
+
+    if (request.method === 'POST' && request.url === '/v1/compile-video-sprite') {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, await compileVideoSprite(body));
       return;
     }
 
