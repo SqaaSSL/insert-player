@@ -18,6 +18,7 @@ import {
 import {
   buildXaiCanonicalBundlePayload,
   buildXaiCanonicalBundlePrompt,
+  XAI_CANONICAL_BUNDLE_CLEANUP,
 } from './arcade-xai-canonical-bundle.mjs';
 
 const roster = JSON.parse(readFileSync(new URL('../arcade/roster-2026.json', import.meta.url), 'utf8'));
@@ -132,7 +133,7 @@ function bundleFixture() {
       paidCalls: 3,
       actualCostUsd: 0.33,
     },
-    cleanup: { ffmpegVersion: '5.1.9-0+deb12u1', filter: 'chromakey=0x00FF00:0.20:0.08,format=rgba' },
+    cleanup: { ...XAI_CANONICAL_BUNDLE_CLEANUP },
     policy: {
       expectedPaidCalls: 3,
       maximumPaidCalls: 3,
@@ -200,6 +201,7 @@ function bundleFixture() {
         costUsd: 0.11,
       },
       cleanupFfmpegVersion: '5.1.9-0+deb12u1',
+      cleanupFilter: XAI_CANONICAL_BUNDLE_CLEANUP.filter,
     }])),
   };
   writeFileSync(join(bundleDirectory, 'generation-state.json'), JSON.stringify(state));

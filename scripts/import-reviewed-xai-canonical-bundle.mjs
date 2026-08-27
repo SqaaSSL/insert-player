@@ -319,6 +319,7 @@ function validateGenerationState(state, descriptor) {
       || slot.audit?.costMicrocredits !== XAI_CANONICAL_BUNDLE_MODEL.auditedCostMicrocredits
       || slot.audit?.costUsd !== 0.11
       || slot.cleanupFfmpegVersion !== XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion
+      || slot.cleanupFilter !== XAI_CANONICAL_BUNDLE_CLEANUP.filter
     ) {
       throw new Error(`${sourceName} generation state is not the exact completed reviewed source.`);
     }

@@ -3,16 +3,18 @@ import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
   closeSync,
+  copyFileSync,
   existsSync,
   fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   pollJob,
@@ -36,6 +38,7 @@ export const XAI_CANONICAL_BUNDLE_BASE_COMMIT = 'fca24ac39763b879eb6072c0cfb39ea
 export const XAI_CANONICAL_BUNDLE_CONFIRMATION = 'GENERATE_XAI_CANONICAL_BUNDLE_PRIVATE_V1';
 export const XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION = 'GENERATE_XAI_CANONICAL_SOURCE_PRIVATE_V1';
 export const XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION = 'PRIVATE_ARTIFACTS_ONLY_HUMAN_REVIEW';
+export const XAI_CANONICAL_BUNDLE_RECLEAN_CONFIRMATION = 'RECLEAN_XAI_CANONICAL_BUNDLE_OFFLINE_V1';
 export const XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE = 'elon_crouch_identity_hard_gate_v1';
 export const XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE = 'global_side_identity_hard_gate_v1';
 export const XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE =
@@ -100,7 +103,51 @@ export const XAI_CANONICAL_BUNDLE_MODEL = Object.freeze({
 });
 export const XAI_CANONICAL_BUNDLE_CLEANUP = Object.freeze({
   ffmpegVersion: '5.1.9-0+deb12u1',
+  // Keep opaque source pixels byte-stable except for green-dominant pixels in
+  // the 24-source-pixel foreground band connected to the exterior matte
+  // (under three pixels after the 1776px -> 192px runtime scale). Partially
+  // keyed antialiasing is decontaminated by reversing its composite against
+  // the requested #00ff00 screen; transparent RGB is zeroed after selection.
+  filter: [
+    '[0:v]split=4[in_base][in_corrected][in_green][in_matte]',
+    '[in_base]format=rgb24,split[base_rgb][black_source]',
+    '[black_source]lutrgb=r=0:g=0:b=0[black]',
+    "[in_corrected]chromakey=0x00FF00:0.20:0.08,format=rgba,geq=r='if(between(alpha(X,Y),1,254),clip(r(X,Y)*255/alpha(X,Y),0,255),r(X,Y))':g='if(between(alpha(X,Y),1,254),clip((g(X,Y)-(255-alpha(X,Y)))*255/alpha(X,Y),0,255),g(X,Y))':b='if(between(alpha(X,Y),1,254),clip(b(X,Y)*255/alpha(X,Y),0,255),b(X,Y))':a='alpha(X,Y)',format=rgb24,split[corrected_rgb][despill_source]",
+    '[despill_source]despill=green:mix=1:expand=0.15,format=rgb24[despilled_rgb]',
+    "[in_green]format=rgb24,geq=r='if(gt(g(X,Y)-max(r(X,Y),b(X,Y)),4)*lt(b(X,Y)-r(X,Y),12),255,0)':g='if(gt(g(X,Y)-max(r(X,Y),b(X,Y)),4)*lt(b(X,Y)-r(X,Y),12),255,0)':b='if(gt(g(X,Y)-max(r(X,Y),b(X,Y)),4)*lt(b(X,Y)-r(X,Y),12),255,0)',format=gray,split[green_for_partial][green_for_opaque]",
+    '[in_matte]chromakey=0x00FF00:0.20:0.08,format=rgba,alphaextract,split=4[alpha_for_partial][alpha_for_visible][alpha_for_opaque][alpha]',
+    "[alpha_for_partial]lut=y='if(between(val,1,254),255,0)',split[partial_for_select][partial_for_green]",
+    '[partial_for_select]format=rgb24[partial]',
+    '[partial_for_green][green_for_partial]blend=all_mode=multiply[partial_green]',
+    "[alpha_for_opaque]lut=y='if(eq(val,255),255,0)',split[opaque][opaque_for_erode]",
+    '[opaque_for_erode]erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion,erosion[opaque_eroded]',
+    "[opaque][opaque_eroded]blend=all_mode=subtract,lut=y='if(gt(val,0),255,0)'[opaque_edge]",
+    "[opaque_edge][green_for_opaque]blend=all_mode=multiply,lut=y='if(gt(val,0),255,0)'[opaque_green_edge]",
+    "[partial_green][opaque_green_edge]blend=all_mode=lighten,lut=y='if(gt(val,0),255,0)',format=rgb24[green_cleanup]",
+    '[base_rgb][corrected_rgb][partial]maskedmerge=planes=7,format=rgb24[partial_selected]',
+    '[partial_selected][despilled_rgb][green_cleanup]maskedmerge=planes=7,format=rgb24[selected]',
+    "[alpha_for_visible]lut=y='if(gt(val,0),255,0)',format=rgb24[visible]",
+    '[black][selected][visible]maskedmerge=planes=7,format=rgb24[rgb]',
+    '[rgb][alpha]alphamerge,format=rgba[out]',
+  ].join(';'),
+});
+export const XAI_CANONICAL_BUNDLE_LEGACY_CLEANUP = Object.freeze({
+  ffmpegVersion: '5.1.9-0+deb12u1',
   filter: 'chromakey=0x00FF00:0.20:0.08,format=rgba',
+});
+export const XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE = Object.freeze({
+  path: 'scripts/fixtures/xai-canonical-chroma-gradient.ppm',
+  width: 12,
+  height: 10,
+  inputSha256: 'c2555e9077026e4caa807106e7558fb5f0bb3b192b2a2f134fdb78ed1854b9ba',
+  cleanSha256: '5ae66f5be6828740e460b914e4d95e572be4b9760e8d4e2e400f1a75cfa339a9',
+  pixels: Object.freeze([
+    Object.freeze({ label: 'opaque teal exterior edge', x: 3, y: 3, rgba: Object.freeze([0, 96, 96, 255]) }),
+    Object.freeze({ label: 'opaque teal core', x: 4, y: 4, rgba: Object.freeze([0, 110, 110, 255]) }),
+    Object.freeze({ label: 'decontaminated opaque green fringe', x: 4, y: 3, rgba: Object.freeze([80, 80, 49, 255]) }),
+    Object.freeze({ label: 'decontaminated partial edge', x: 5, y: 2, rgba: Object.freeze([150, 39, 91, 135]) }),
+    Object.freeze({ label: 'zeroed transparent screen', x: 0, y: 0, rgba: Object.freeze([0, 0, 0, 0]) }),
+  ]),
 });
 
 function sha256(value) {
@@ -728,6 +775,14 @@ function defaultCommand(binary, args) {
   return { stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
+function defaultBinaryCommand(binary, args) {
+  const result = spawnSync(binary, args, { stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 1024 * 1024 });
+  if (result.error || result.status !== 0) {
+    throw new Error(`${basename(binary)} failed: ${(result.error?.message ?? result.stderr?.toString('utf8') ?? '').trim().slice(-1000)}`);
+  }
+  return { stdout: result.stdout ?? Buffer.alloc(0), stderr: result.stderr ?? Buffer.alloc(0) };
+}
+
 export function verifyCanonicalCleanupToolchain(options = {}) {
   const runCommand = options.runCommand ?? defaultCommand;
   const ffmpegBinary = options.ffmpegBinary ?? 'ffmpeg';
@@ -736,18 +791,25 @@ export function verifyCanonicalCleanupToolchain(options = {}) {
   if (!firstLine.startsWith(`ffmpeg version ${XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion} `)) {
     throw new Error('ffmpeg does not match the sealed canonical-cleanup toolchain.');
   }
-  return firstLine;
+  return XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion;
+}
+
+function canonicalCleanupCommandArgs(rawPath, temporary) {
+  return [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    '-threads', '1', '-filter_threads', '1', '-i', rawPath,
+    '-filter_complex', XAI_CANONICAL_BUNDLE_CLEANUP.filter,
+    '-map', '[out]', '-an', '-sn', '-dn',
+    '-frames:v', '1', '-compression_level', '9', temporary,
+  ];
 }
 
 function runCanonicalCleanup(rawPath, cleanPath, options = {}) {
   const temporary = `${cleanPath}.writing-${process.pid}.png`;
-  (options.runCommand ?? defaultCommand)(options.ffmpegBinary ?? 'ffmpeg', [
-    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
-    '-threads', '1', '-filter_threads', '1', '-i', rawPath,
-    '-map', '0:v:0', '-an', '-sn', '-dn',
-    '-vf', XAI_CANONICAL_BUNDLE_CLEANUP.filter,
-    '-frames:v', '1', '-compression_level', '9', temporary,
-  ]);
+  (options.runCommand ?? defaultCommand)(
+    options.ffmpegBinary ?? 'ffmpeg',
+    canonicalCleanupCommandArgs(rawPath, temporary),
+  );
   if (!existsSync(temporary)) throw new Error('ffmpeg did not produce the canonical clean PNG.');
   const bytes = readFileSync(temporary);
   inspectPng(bytes, 'canonical clean output');
@@ -755,6 +817,73 @@ function runCanonicalCleanup(rawPath, cleanPath, options = {}) {
   renameSync(temporary, cleanPath);
   chmodSync(cleanPath, 0o600);
   return { ...inspectPng(bytes, 'canonical clean output'), path: cleanPath };
+}
+
+export function verifyCanonicalCleanupFixture(options = {}) {
+  const fixturePath = resolve(options.fixturePath ?? join(root, XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.path));
+  const outputPath = options.outputPath;
+  if (!isAbsolute(outputPath ?? '')) throw new Error('Cleanup fixture verification requires an absolute output path.');
+  if (existsSync(outputPath)) throw new Error('Cleanup fixture verification output already exists.');
+  const fixtureBytes = readFileSync(fixturePath);
+  if (sha256(fixtureBytes) !== XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.inputSha256) {
+    throw new Error('Canonical chroma-gradient fixture changed.');
+  }
+  const ffmpegVersion = verifyCanonicalCleanupToolchain(options);
+  const temporary = `${outputPath}.writing-${process.pid}.png`;
+  (options.runCommand ?? defaultCommand)(
+    options.ffmpegBinary ?? 'ffmpeg',
+    canonicalCleanupCommandArgs(fixturePath, temporary),
+  );
+  if (!existsSync(temporary)) throw new Error('ffmpeg did not produce the key/despill fixture PNG.');
+  const cleanBytes = readFileSync(temporary);
+  if (
+    cleanBytes.byteLength < 24
+    || !cleanBytes.subarray(0, PNG_SIGNATURE.byteLength).equals(PNG_SIGNATURE)
+    || cleanBytes.toString('ascii', 12, 16) !== 'IHDR'
+    || cleanBytes.readUInt32BE(16) !== XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.width
+    || cleanBytes.readUInt32BE(20) !== XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.height
+    || sha256(cleanBytes) !== XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.cleanSha256
+  ) {
+    throw new Error('Pinned canonical key/despill output changed.');
+  }
+  const decoded = (options.runBinaryCommand ?? defaultBinaryCommand)(
+    options.ffmpegBinary ?? 'ffmpeg',
+    [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '1',
+      '-i', temporary, '-map', '0:v:0', '-frames:v', '1',
+      '-f', 'rawvideo', '-pix_fmt', 'rgba', 'pipe:1',
+    ],
+  ).stdout;
+  if (
+    !Buffer.isBuffer(decoded)
+    || decoded.byteLength !== (
+      XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.width
+      * XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.height
+      * 4
+    )
+  ) {
+    throw new Error('Pinned canonical key/despill fixture did not decode as exact RGBA bytes.');
+  }
+  for (const assertion of XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.pixels) {
+    const offset = (
+      (assertion.y * XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.width) + assertion.x
+    ) * 4;
+    if (!decoded.subarray(offset, offset + 4).equals(Buffer.from(assertion.rgba))) {
+      throw new Error(`Pinned cleanup lost the ${assertion.label} invariant.`);
+    }
+  }
+  chmodSync(temporary, 0o600);
+  renameSync(temporary, outputPath);
+  chmodSync(outputPath, 0o600);
+  return {
+    ffmpegVersion,
+    fixturePath,
+    path: outputPath,
+    width: XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.width,
+    height: XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.height,
+    sizeBytes: cleanBytes.byteLength,
+    contentSha256: XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.cleanSha256,
+  };
 }
 
 function createContactSheet(sourceArtifacts, sourceNames, outputPath, options = {}) {
@@ -1095,6 +1224,7 @@ async function archiveCompletedSource(options, slot, job, payload) {
     raw: {
       ...rawDownload,
       ...rawInspected,
+      providerRequestId: providerRuns[0].requestId,
       path: relative(options.outputDirectory, rawPath),
     },
     audit: {
@@ -1474,6 +1604,7 @@ export async function runXaiCanonicalBundle(options = {}) {
         ...slot,
         clean: { ...cleaned, path: relative(outputDirectory, cleanPath) },
         cleanupFfmpegVersion: ffmpegVersion,
+        cleanupFilter: XAI_CANONICAL_BUNDLE_CLEANUP.filter,
         status: 'completed',
         updatedAt: nowIso(),
       };
@@ -1483,7 +1614,12 @@ export async function runXaiCanonicalBundle(options = {}) {
     if (action === 'verify') {
       verifyStoredArtifact(slot.raw, outputDirectory, `${sourceName} raw`);
       verifyStoredArtifact(slot.clean, outputDirectory, `${sourceName} clean`);
-      if (slot.cleanupFfmpegVersion !== ffmpegVersion) throw new Error(`${sourceName} cleanup toolchain changed.`);
+      if (
+        slot.cleanupFfmpegVersion !== ffmpegVersion
+        || slot.cleanupFilter !== XAI_CANONICAL_BUNDLE_CLEANUP.filter
+      ) {
+        throw new Error(`${sourceName} cleanup contract changed; use the sealed offline re-clean path.`);
+      }
     }
   }
 
@@ -1511,6 +1647,406 @@ export async function runXaiCanonicalBundle(options = {}) {
   saveState();
   writeJsonAtomic(join(outputDirectory, 'generation-state.json'), state);
     return { state, descriptor, outputDirectory, statePath };
+  } finally {
+    releaseExclusiveBundleLocks(locks);
+  }
+}
+
+function readSealedJson(path, label) {
+  if (!existsSync(path)) throw new Error(`${label} is missing.`);
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    throw new Error(`${label} is not valid JSON.`);
+  }
+}
+
+function exactBundleArtifactPath(bundleDirectory, artifact, expectedPath, label) {
+  if (artifact?.path !== expectedPath) throw new Error(`${label} path is not sealed.`);
+  const absolutePath = resolve(bundleDirectory, expectedPath);
+  if (!absolutePath.startsWith(`${resolve(bundleDirectory)}${sep}`)) {
+    throw new Error(`${label} escapes the private bundle.`);
+  }
+  return absolutePath;
+}
+
+function verifyOfflinePngArtifact(bundleDirectory, artifact, expectedPath, label, raw, extraKeys = []) {
+  exactKeys(
+    artifact,
+    raw
+      ? ['contentSha256', 'sizeBytes', 'mimeType', 'pixcliAssetHash', 'providerRequestId', 'width', 'height', 'path']
+      : ['contentSha256', 'sizeBytes', 'width', 'height', 'path', ...extraKeys],
+    label,
+  );
+  requireString(artifact.contentSha256, `${label} SHA-256`, /^[a-f0-9]{64}$/);
+  if (!Number.isSafeInteger(artifact.sizeBytes) || artifact.sizeBytes < 24) {
+    throw new Error(`${label} size is invalid.`);
+  }
+  if (!Number.isSafeInteger(artifact.width) || !Number.isSafeInteger(artifact.height)) {
+    throw new Error(`${label} dimensions are invalid.`);
+  }
+  if (raw) {
+    if (artifact.mimeType !== 'image/png') throw new Error(`${label} MIME type is not PNG.`);
+    requireString(artifact.pixcliAssetHash, `${label} PixCLI hash`, /^[a-f0-9]{32}$/);
+    if (artifact.providerRequestId !== null && artifact.providerRequestId !== undefined) {
+      requireString(artifact.providerRequestId, `${label} provider request id`);
+    }
+  }
+  const absolutePath = exactBundleArtifactPath(bundleDirectory, artifact, expectedPath, label);
+  if (!existsSync(absolutePath)) throw new Error(`${label} PNG is missing.`);
+  const inspected = inspectPng(readFileSync(absolutePath), label);
+  for (const key of ['contentSha256', 'sizeBytes', 'width', 'height']) {
+    if (artifact[key] !== inspected[key]) throw new Error(`${label} ${key} was tampered.`);
+  }
+  return { ...artifact, absolutePath };
+}
+
+function verifyOfflineAuditArtifact(bundleDirectory, artifact, expectedPath, label) {
+  exactKeys(
+    artifact,
+    ['contentSha256', 'sizeBytes', 'mimeType', 'pixcliAssetHash', 'providerRequestId', 'path'],
+    label,
+  );
+  requireString(artifact.contentSha256, `${label} SHA-256`, /^[a-f0-9]{64}$/);
+  requireString(artifact.pixcliAssetHash, `${label} PixCLI hash`, /^[a-f0-9]{32}$/);
+  if (artifact.mimeType !== 'application/json') throw new Error(`${label} MIME type is not JSON.`);
+  if (!Number.isSafeInteger(artifact.sizeBytes) || artifact.sizeBytes < 2 || artifact.sizeBytes > MAX_AUDIT_JSON_BYTES) {
+    throw new Error(`${label} size is invalid.`);
+  }
+  if (artifact.providerRequestId !== null && artifact.providerRequestId !== undefined) {
+    requireString(artifact.providerRequestId, `${label} provider request id`);
+  }
+  const absolutePath = exactBundleArtifactPath(bundleDirectory, artifact, expectedPath, label);
+  if (!existsSync(absolutePath)) throw new Error(`${label} is missing.`);
+  const bytes = readFileSync(absolutePath);
+  if (bytes.byteLength !== artifact.sizeBytes || sha256(bytes) !== artifact.contentSha256) {
+    throw new Error(`${label} bytes were tampered.`);
+  }
+  try {
+    JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new Error(`${label} is not valid JSON.`);
+  }
+  return { ...artifact, absolutePath };
+}
+
+function selectedDescriptorSourceNames(descriptor) {
+  const sourceNames = descriptor?.sourceNames === undefined
+    ? [...XAI_CANONICAL_BUNDLE_SOURCE_NAMES]
+    : descriptor.sourceNames;
+  if (
+    !Array.isArray(sourceNames)
+    || ![1, XAI_CANONICAL_BUNDLE_SOURCE_NAMES.length].includes(sourceNames.length)
+    || sourceNames.some((sourceName) => !XAI_CANONICAL_BUNDLE_SOURCE_NAMES.includes(sourceName))
+    || new Set(sourceNames).size !== sourceNames.length
+    || (
+      sourceNames.length === XAI_CANONICAL_BUNDLE_SOURCE_NAMES.length
+      && canonicalJson(sourceNames) !== canonicalJson(XAI_CANONICAL_BUNDLE_SOURCE_NAMES)
+    )
+  ) {
+    throw new Error('Offline re-clean source selection is invalid.');
+  }
+  return sourceNames;
+}
+
+function isRecordedCleanupVersion(value) {
+  return value === XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion
+    || (typeof value === 'string'
+      && value.startsWith(`ffmpeg version ${XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion} `));
+}
+
+function verifyOfflineRecleanInput(bundleDirectory, reviewedDescriptorSha256) {
+  requireString(reviewedDescriptorSha256, 'explicit reviewed descriptor SHA-256', /^[a-f0-9]{64}$/);
+  const descriptor = readSealedJson(join(bundleDirectory, 'review-descriptor.json'), 'review descriptor');
+  const sourceNames = selectedDescriptorSourceNames(descriptor);
+  exactKeys(descriptor, [
+    'schemaVersion', 'descriptorType', 'bundleId', 'status', 'baseCommit', 'fighter',
+    'poseManifest', ...(sourceNames.length === 1 ? ['sourceNames'] : []),
+    'provider', 'cleanup', 'policy', 'sources', 'contactSheet', 'descriptorSha256',
+  ], 'review descriptor');
+  const { descriptorSha256, ...unsignedDescriptor } = descriptor;
+  if (
+    descriptor.schemaVersion !== 1
+    || descriptor.descriptorType !== 'arcade_xai_canonical_bundle_review'
+    || descriptor.status !== 'awaiting_human_review'
+    || descriptor.baseCommit !== XAI_CANONICAL_BUNDLE_BASE_COMMIT
+    || descriptorSha256 !== reviewedDescriptorSha256
+    || descriptorSha256 !== sha256(canonicalJson(unsignedDescriptor))
+  ) {
+    throw new Error('Offline re-clean requires the exact sealed awaiting-review descriptor.');
+  }
+  exactKeys(descriptor.cleanup, ['ffmpegVersion', 'filter'], 'review descriptor cleanup');
+  const recordedCleanup = canonicalJson(descriptor.cleanup);
+  if (![XAI_CANONICAL_BUNDLE_LEGACY_CLEANUP, XAI_CANONICAL_BUNDLE_CLEANUP]
+    .some((cleanup) => canonicalJson(cleanup) === recordedCleanup)) {
+    throw new Error('Offline re-clean does not recognize the recorded cleanup contract.');
+  }
+  if (
+    descriptor.provider?.modelId !== XAI_CANONICAL_BUNDLE_MODEL.id
+    || descriptor.provider?.endpoint !== XAI_CANONICAL_BUNDLE_MODEL.endpoint
+    || descriptor.provider?.provider !== XAI_CANONICAL_BUNDLE_MODEL.provider
+    || descriptor.provider?.backend !== XAI_CANONICAL_BUNDLE_MODEL.backend
+    || descriptor.provider?.paidCalls !== sourceNames.length
+    || descriptor.provider?.actualCostUsd !== Number((sourceNames.length * 0.11).toFixed(2))
+    || canonicalJson(descriptor.policy) !== canonicalJson(canonicalBundlePolicy(sourceNames))
+  ) {
+    throw new Error('Offline re-clean provider or zero-generation policy is not sealed.');
+  }
+
+  const state = readSealedJson(join(bundleDirectory, 'generation-state.json'), 'generation state');
+  exactKeys(state, [
+    'schemaVersion', 'bundleId', 'fighterSlug', 'fighterName', 'originalSha256', 'poseManifestId',
+    'poseManifestSha256', 'matrixSha256', 'status', 'createdAt', 'updatedAt', 'policy', 'uploads',
+    ...(sourceNames.length === 1 ? ['sourceNames'] : []),
+    'slots', 'lastCatalogPreflight', 'descriptorSha256', 'contactSheetSha256',
+  ], 'generation state');
+  if (
+    state.schemaVersion !== 1
+    || state.status !== 'awaiting_human_review'
+    || state.bundleId !== descriptor.bundleId
+    || state.fighterSlug !== descriptor.fighter?.slug
+    || state.fighterName !== descriptor.fighter?.name
+    || state.originalSha256 !== descriptor.fighter?.originalSha256
+    || state.poseManifestId !== descriptor.poseManifest?.id
+    || state.poseManifestSha256 !== descriptor.poseManifest?.contentSha256
+    || state.descriptorSha256 !== descriptorSha256
+    || state.contactSheetSha256 !== descriptor.contactSheet?.contentSha256
+    || canonicalJson(state.policy) !== canonicalJson(descriptor.policy)
+    || canonicalJson(state.sourceNames) !== canonicalJson(descriptor.sourceNames)
+  ) {
+    throw new Error('Offline re-clean generation state does not match the reviewed descriptor.');
+  }
+  exactKeys(descriptor.sources, sourceNames, 'review descriptor sources');
+  exactKeys(state.slots, sourceNames, 'generation state slots');
+
+  const sources = {};
+  for (const sourceName of sourceNames) {
+    const source = descriptor.sources[sourceName];
+    const slot = state.slots[sourceName];
+    exactKeys(source, [
+      'references', 'promptSha256', 'requestSha256', 'pixcliJobId', 'providerRequestId', 'raw', 'clean',
+    ], `${sourceName} review source`);
+    const providerRequestId = requireString(
+      source.providerRequestId,
+      `${sourceName} reviewed provider request id`,
+    );
+    const raw = verifyOfflinePngArtifact(
+      bundleDirectory,
+      source.raw,
+      `sources/${sourceName}_raw.png`,
+      `${sourceName} raw`,
+      true,
+    );
+    const clean = verifyOfflinePngArtifact(
+      bundleDirectory,
+      source.clean,
+      `sources/${sourceName}.png`,
+      `${sourceName} clean`,
+      false,
+    );
+    if (
+      slot?.status !== 'completed'
+      || slot.sourceName !== sourceName
+      || slot.fighterSlug !== descriptor.fighter.slug
+      || slot.originalSha256 !== descriptor.fighter.originalSha256
+      || slot.promptSha256 !== source.promptSha256
+      || slot.requestSha256 !== source.requestSha256
+      || slot.pixcliJobId !== source.pixcliJobId
+      || canonicalJson(slot.raw) !== canonicalJson(source.raw)
+      || canonicalJson(slot.clean) !== canonicalJson(source.clean)
+      || slot.audit?.providerRun?.requestId !== providerRequestId
+      || slot.audit?.providerRun?.provider !== XAI_CANONICAL_BUNDLE_MODEL.backend
+      || slot.audit?.providerRun?.modelId !== XAI_CANONICAL_BUNDLE_MODEL.id
+      || slot.audit?.inputSha256 !== source.requestSha256
+      || slot.audit?.costMicrocredits !== XAI_CANONICAL_BUNDLE_MODEL.auditedCostMicrocredits
+      || slot.audit?.costUsd !== XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd
+      || !isRecordedCleanupVersion(slot.cleanupFfmpegVersion)
+      || (
+        descriptor.cleanup.filter === XAI_CANONICAL_BUNDLE_CLEANUP.filter
+        && slot.cleanupFilter !== XAI_CANONICAL_BUNDLE_CLEANUP.filter
+      )
+      || (raw.providerRequestId !== null && raw.providerRequestId !== providerRequestId)
+    ) {
+      throw new Error(`${sourceName} completed source is not sealed to the reviewed raw/audit lineage.`);
+    }
+    const providerRequest = verifyOfflineAuditArtifact(
+      bundleDirectory,
+      slot.audit.providerRequest,
+      `audit/${sourceName}/provider_request.json`,
+      `${sourceName} provider request audit`,
+    );
+    const providerResponse = verifyOfflineAuditArtifact(
+      bundleDirectory,
+      slot.audit.providerResponse,
+      `audit/${sourceName}/provider_response.json`,
+      `${sourceName} provider response audit`,
+    );
+    if (
+      providerResponse.providerRequestId !== providerRequestId
+      || (providerRequest.providerRequestId !== null && providerRequest.providerRequestId !== providerRequestId)
+    ) {
+      throw new Error(`${sourceName} JSON audit lineage does not match the reviewed provider run.`);
+    }
+    sources[sourceName] = { source, slot, raw, clean, providerRequest, providerResponse };
+  }
+
+  exactKeys(
+    descriptor.contactSheet,
+    ['path', 'contentSha256', 'sizeBytes', 'width', 'height', 'layout'],
+    'contact sheet',
+  );
+  const contact = verifyOfflinePngArtifact(
+    bundleDirectory,
+    descriptor.contactSheet,
+    'contact-sheet.png',
+    'contact sheet',
+    false,
+    ['layout'],
+  );
+  const expectedLayout = sourceNames.length === 1
+    ? [`${sourceNames[0]}_raw`, `${sourceNames[0]}_clean`]
+    : ['side_raw', 'upright_raw', 'crouch_raw', 'side_clean', 'upright_clean', 'crouch_clean'];
+  const expectedContactSize = sourceNames.length === 1
+    ? { width: 768, height: 512 }
+    : { width: 1152, height: 1024 };
+  if (
+    canonicalJson(contact.layout) !== canonicalJson(expectedLayout)
+    || contact.width !== expectedContactSize.width
+    || contact.height !== expectedContactSize.height
+  ) {
+    throw new Error('Offline re-clean contact-sheet contract changed.');
+  }
+  return { descriptor, state, sourceNames, sources };
+}
+
+function copyPrivateArtifact(sourcePath, destinationPath) {
+  mkdirSync(dirname(destinationPath), { recursive: true, mode: 0o700 });
+  copyFileSync(sourcePath, destinationPath);
+  chmodSync(destinationPath, 0o600);
+}
+
+function portablePngArtifact(artifact, path) {
+  return {
+    width: artifact.width,
+    height: artifact.height,
+    sizeBytes: artifact.sizeBytes,
+    contentSha256: artifact.contentSha256,
+    path,
+  };
+}
+
+function isNestedPath(parent, child) {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
+}
+
+export function recleanXaiCanonicalBundle(options = {}) {
+  if (options.confirmation !== XAI_CANONICAL_BUNDLE_RECLEAN_CONFIRMATION) {
+    throw new Error(`Offline re-clean requires confirmation ${XAI_CANONICAL_BUNDLE_RECLEAN_CONFIRMATION}.`);
+  }
+  if (!isAbsolute(options.bundleDirectory ?? '') || !isAbsolute(options.outputDirectory ?? '')) {
+    throw new Error('Offline re-clean requires explicit absolute input and output directories.');
+  }
+  const bundleDirectory = realpathSync(options.bundleDirectory);
+  const outputDirectory = resolve(options.outputDirectory);
+  if (
+    isNestedPath(bundleDirectory, outputDirectory)
+    || isNestedPath(outputDirectory, bundleDirectory)
+  ) {
+    throw new Error('Offline re-clean output must be a distinct non-overlapping directory.');
+  }
+  if (existsSync(outputDirectory)) throw new Error('Offline re-clean output already exists.');
+  const locks = acquireExclusiveBundleLocks(`${outputDirectory}.offline-reclean`, outputDirectory);
+  try {
+    const reviewed = verifyOfflineRecleanInput(
+      bundleDirectory,
+      options.reviewedDescriptorSha256,
+    );
+    const cleanupFfmpegVersion = verifyCanonicalCleanupToolchain(options);
+    const stagingDirectory = `${outputDirectory}.writing-${randomUUID()}`;
+    if (existsSync(stagingDirectory)) throw new Error('Offline re-clean staging directory already exists.');
+    mkdirSync(stagingDirectory, { recursive: false, mode: 0o700 });
+
+    const artifacts = {};
+    const nextSources = {};
+    const nextSlots = {};
+    for (const sourceName of reviewed.sourceNames) {
+      const entry = reviewed.sources[sourceName];
+      const rawPath = join(stagingDirectory, 'sources', `${sourceName}_raw.png`);
+      copyPrivateArtifact(entry.raw.absolutePath, rawPath);
+      copyPrivateArtifact(
+        entry.providerRequest.absolutePath,
+        join(stagingDirectory, 'audit', sourceName, 'provider_request.json'),
+      );
+      copyPrivateArtifact(
+        entry.providerResponse.absolutePath,
+        join(stagingDirectory, 'audit', sourceName, 'provider_response.json'),
+      );
+      const cleanPath = join(stagingDirectory, 'sources', `${sourceName}.png`);
+      const clean = runCanonicalCleanup(rawPath, cleanPath, options);
+      const providerRequestId = entry.source.providerRequestId;
+      const raw = {
+        ...entry.source.raw,
+        providerRequestId,
+      };
+      const portableClean = portablePngArtifact(clean, `sources/${sourceName}.png`);
+      nextSources[sourceName] = {
+        ...entry.source,
+        providerRequestId,
+        raw,
+        clean: portableClean,
+      };
+      nextSlots[sourceName] = {
+        ...entry.slot,
+        raw,
+        clean: portableClean,
+        cleanupFfmpegVersion,
+        cleanupFilter: XAI_CANONICAL_BUNDLE_CLEANUP.filter,
+        updatedAt: nowIso(),
+      };
+      artifacts[sourceName] = {
+        raw: { ...raw, absolutePath: rawPath },
+        clean: { ...portableClean, absolutePath: cleanPath },
+      };
+    }
+
+    const contactSheet = createContactSheet(
+      artifacts,
+      reviewed.sourceNames,
+      join(stagingDirectory, 'contact-sheet.png'),
+      options,
+    );
+    const { descriptorSha256: _oldDescriptorSha256, ...oldUnsignedDescriptor } = reviewed.descriptor;
+    const unsignedDescriptor = {
+      ...oldUnsignedDescriptor,
+      cleanup: { ...XAI_CANONICAL_BUNDLE_CLEANUP },
+      sources: nextSources,
+      contactSheet: {
+        ...reviewed.descriptor.contactSheet,
+        contentSha256: contactSheet.contentSha256,
+        sizeBytes: contactSheet.sizeBytes,
+        width: contactSheet.width,
+        height: contactSheet.height,
+      },
+    };
+    const descriptor = {
+      ...unsignedDescriptor,
+      descriptorSha256: sha256(canonicalJson(unsignedDescriptor)),
+    };
+    const state = {
+      ...reviewed.state,
+      status: 'awaiting_human_review',
+      slots: nextSlots,
+      descriptorSha256: descriptor.descriptorSha256,
+      contactSheetSha256: contactSheet.contentSha256,
+      updatedAt: nowIso(),
+    };
+    writeJsonAtomic(join(stagingDirectory, 'review-descriptor.json'), descriptor);
+    writeJsonAtomic(join(stagingDirectory, 'generation-state.json'), state);
+    verifyOfflineRecleanInput(stagingDirectory, descriptor.descriptorSha256);
+    renameSync(stagingDirectory, outputDirectory);
+    chmodSync(outputDirectory, 0o700);
+    return { bundleDirectory, outputDirectory, descriptor, state, sourceNames: reviewed.sourceNames };
   } finally {
     releaseExclusiveBundleLocks(locks);
   }
