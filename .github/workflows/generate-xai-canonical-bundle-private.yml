@@ -27,6 +27,11 @@ on:
         required: false
         default: ''
         type: string
+      request_version:
+        description: Leave empty for v1; exact sealed version only for an explicitly approved retry
+        required: false
+        default: ''
+        type: string
       prompt_sha256:
         description: Exact reviewed prompt SHA-256; required for every single-source run
         required: false
@@ -89,6 +94,7 @@ jobs:
       INPUT_BUNDLE_SHA256: ${{ inputs.input_bundle_sha256 }}
       POSE_MANIFEST_SHA256: ${{ inputs.pose_manifest_sha256 }}
       REQUESTED_SOURCE: ${{ inputs.source }}
+      REQUEST_VERSION: ${{ inputs.request_version }}
       PROMPT_SHA256: ${{ inputs.prompt_sha256 }}
       REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
       PRIVATE_CONFIRMATION: ${{ inputs.private_confirmation }}
@@ -131,6 +137,10 @@ jobs:
             exit 1
           }
           if [[ -z "$REQUESTED_SOURCE" ]]; then
+            [[ -z "$REQUEST_VERSION" ]] || {
+              printf '::error::request_version must be empty for the original three-source flow.\n'
+              exit 1
+            }
             [[ -z "$PROMPT_SHA256" ]] || {
               printf '::error::prompt_sha256 must be empty for the original three-source flow.\n'
               exit 1
@@ -144,38 +154,55 @@ jobs:
               exit 1
             }
           else
-            case "$REQUESTED_SLUG:$REQUESTED_SOURCE" in
-              elon-musk:crouch)
-                expected_prompt_sha256="c7be4746256d2e39b39dd61ba50d4abb887742ff69ce148a36f00672e4283acb"
-                ;;
-              rosalia:side)
-                expected_prompt_sha256="eb0142fe810eda52e711a5e8acc58f06fa0370721be0e06cf7e45dcb612fdb78"
-                ;;
-              ibai-llanos:side)
-                expected_prompt_sha256="47aeadbceef3c883a26c7de9f6d925de153239d8f7d28d0ae5ce96dad17c449b"
-                ;;
-              lamine-yamal:side)
-                expected_prompt_sha256="27b1a65908a402f491e24b55ba1bccce97a07bc6a915356a16e65ff8c5a3be39"
-                ;;
-              rosalia:crouch)
-                expected_prompt_sha256="e8b11ecca2a2a1fbb958c427804631ec7eed5f901ae00bd6117a5b7f87c1cb82"
-                ;;
-              ibai-llanos:crouch)
-                expected_prompt_sha256="76e68a0c698326333e070bf5c3901570f994a24584fe3b65bad25b13a985becc"
-                ;;
-              lamine-yamal:crouch)
-                expected_prompt_sha256="800a2b5a1c1a90749490497f5b06a92707b3a35ed4784627b22b186a952224cf"
-                ;;
-              *)
-                printf '::error::The single-source fighter/source tuple is not sealed.\n'
+            if [[ "$REQUEST_VERSION" == "lamine-crouch-headwear-reject-v2" ]]; then
+              [[ "$REQUESTED_SLUG:$REQUESTED_SOURCE" == "lamine-yamal:crouch" \
+                && "$INPUT_BUNDLE_R2_KEY" == "temp/arcade-xai-canonical-inputs-v1/lamine-yamal/lamine-yamal-crouch--6f17ae7ad19f6695.tar.gz" \
+                && "$INPUT_BUNDLE_SHA256" == "6f17ae7ad19f6695a673b54938b1f5709e1ead790a26f20a5566083c2f0da418" \
+                && "$POSE_MANIFEST_SHA256" == "cc7ae95fbab0e2b6843b19380b611f11cc84a6dc48025fdf678b8f6c912df053" ]] || {
+                printf '::error::The Lamine CROUCH v2 retry requires the exact previously approved input archive and pose manifest.\n'
                 exit 1
-                ;;
-            esac
+              }
+              expected_prompt_sha256="b626d61e7dd60f46b894ee1bdd26a270acd38f23e3fcfb82305692e45caaa3c0"
+              expected_confirmation="GENERATE_LAMINE_CROUCH_HEADWEAR_REJECT_RETRY_PRIVATE_V2"
+            else
+              [[ -z "$REQUEST_VERSION" ]] || {
+                printf '::error::The requested retry version is not sealed.\n'
+                exit 1
+              }
+              case "$REQUESTED_SLUG:$REQUESTED_SOURCE" in
+                elon-musk:crouch)
+                  expected_prompt_sha256="c7be4746256d2e39b39dd61ba50d4abb887742ff69ce148a36f00672e4283acb"
+                  ;;
+                rosalia:side)
+                  expected_prompt_sha256="eb0142fe810eda52e711a5e8acc58f06fa0370721be0e06cf7e45dcb612fdb78"
+                  ;;
+                ibai-llanos:side)
+                  expected_prompt_sha256="47aeadbceef3c883a26c7de9f6d925de153239d8f7d28d0ae5ce96dad17c449b"
+                  ;;
+                lamine-yamal:side)
+                  expected_prompt_sha256="27b1a65908a402f491e24b55ba1bccce97a07bc6a915356a16e65ff8c5a3be39"
+                  ;;
+                rosalia:crouch)
+                  expected_prompt_sha256="e8b11ecca2a2a1fbb958c427804631ec7eed5f901ae00bd6117a5b7f87c1cb82"
+                  ;;
+                ibai-llanos:crouch)
+                  expected_prompt_sha256="76e68a0c698326333e070bf5c3901570f994a24584fe3b65bad25b13a985becc"
+                  ;;
+                lamine-yamal:crouch)
+                  expected_prompt_sha256="800a2b5a1c1a90749490497f5b06a92707b3a35ed4784627b22b186a952224cf"
+                  ;;
+                *)
+                  printf '::error::The single-source fighter/source tuple is not sealed.\n'
+                  exit 1
+                  ;;
+              esac
+              expected_confirmation="GENERATE_XAI_CANONICAL_SOURCE_PRIVATE_V1"
+            fi
             [[ "$PROMPT_SHA256" == "$expected_prompt_sha256" ]] || {
               printf '::error::The exact reviewed prompt SHA-256 for this fighter/source tuple is required.\n'
               exit 1
             }
-            [[ "$REQUESTED_CONFIRMATION" == "GENERATE_XAI_CANONICAL_SOURCE_PRIVATE_V1" ]] || {
+            [[ "$REQUESTED_CONFIRMATION" == "$expected_confirmation" ]] || {
               printf '::error::The exact single-output paid confirmation is required.\n'
               exit 1
             }
@@ -308,6 +335,7 @@ jobs:
             --env REQUESTED_SLUG \
             --env POSE_MANIFEST_SHA256 \
             --env REQUESTED_SOURCE \
+            --env REQUEST_VERSION \
             --env PROMPT_SHA256 \
             --env REQUESTED_CONFIRMATION \
             --env PRIVATE_CONFIRMATION \
@@ -325,6 +353,9 @@ jobs:
               source_args=()
               if [[ -n "$REQUESTED_SOURCE" ]]; then
                 source_args+=("--source=$REQUESTED_SOURCE" "--prompt-sha256=$PROMPT_SHA256")
+              fi
+              if [[ -n "$REQUEST_VERSION" ]]; then
+                source_args+=("--request-version=$REQUEST_VERSION")
               fi
               npm run arcade:bundle:xai-canonical -- \
                 --execute \
@@ -384,6 +415,7 @@ jobs:
     env:
       REQUESTED_SLUG: ${{ inputs.slug }}
       REQUESTED_SOURCE: ${{ inputs.source }}
+      REQUEST_VERSION: ${{ inputs.request_version }}
       RECLEAN_BUNDLE_RUN_ID: ${{ inputs.reclean_bundle_run_id }}
       REVIEWED_DESCRIPTOR_SHA256: ${{ inputs.reviewed_descriptor_sha256 }}
       RECLEAN_CONFIRMATION: ${{ inputs.reclean_confirmation }}
@@ -430,7 +462,8 @@ jobs:
             && -z "$PAID_CONFIRMATION" \
             && -z "$PRIVATE_CONFIRMATION" \
             && -z "$MAX_COST_USD" \
-            && -z "$RESUME_RUN_ID" ]] || {
+            && -z "$RESUME_RUN_ID" \
+            && -z "$REQUEST_VERSION" ]] || {
             printf '::error::Paid generation and resume inputs must all be empty in offline re-clean mode.\n'
             exit 1
           }

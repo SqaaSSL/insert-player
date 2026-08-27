@@ -14,6 +14,7 @@ import {
   GLOBAL_MIXED_QA_DECISION,
   GLOBAL_MIXED_TARGETS,
   GLOBAL_UPRIGHT_ALIAS_DECISION,
+  expectedGlobalMixedSourceBundleId,
 } from './import-reviewed-elon-mixed-canonical-set.mjs';
 import { validateManifest } from './seed-arcade-roster.mjs';
 
@@ -72,7 +73,7 @@ function loadExactSourceBundle({
   const source = bundle?.descriptor?.sources?.[sourceName];
   if (
     canonicalJson(bundle?.sourceNames) !== canonicalJson([sourceName])
-    || bundle.descriptor.bundleId !== `arcade-xai-canonical-source-${slug}-${sourceName}-v1`
+    || bundle.descriptor.bundleId !== expectedGlobalMixedSourceBundleId(slug, sourceName)
     || bundle.descriptor.fighter?.slug !== slug
     || bundle.descriptor.fighter?.name !== fighter.name
     || bundle.descriptor.fighter?.originalSha256 !== fighter.reference.sourceSha256

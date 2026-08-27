@@ -13,12 +13,15 @@ import {
   REVIEWED_CANONICAL_IMPORT_CONFIRMATION,
   REVIEWED_CANONICAL_IMPORT_SAFETY_CONFIRMATION,
   REVIEWED_CANONICAL_QA_DECISION,
+  loadReviewedCanonicalBundle,
   runReviewedCanonicalImport,
+  validateBundlePromptAndRequest,
 } from './import-reviewed-xai-canonical-bundle.mjs';
 import {
   buildXaiCanonicalBundlePayload,
   buildXaiCanonicalBundlePrompt,
   XAI_CANONICAL_BUNDLE_CLEANUP,
+  XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE,
 } from './arcade-xai-canonical-bundle.mjs';
 
 const roster = JSON.parse(readFileSync(new URL('../arcade/roster-2026.json', import.meta.url), 'utf8'));
@@ -46,13 +49,16 @@ function png(label, width = 128, height = 192) {
   return bytes;
 }
 
-function bundleFixture() {
+function bundleFixture(options = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'insert-player-reviewed-import-'));
   directories.push(directory);
   const bundleDirectory = join(directory, 'bundle');
   const outputDirectory = join(directory, 'output');
   mkdirSync(join(bundleDirectory, 'sources'), { recursive: true });
-  const fighter = roster.fighters.find((entry) => entry.slug === 'elon-musk');
+  const fighter = roster.fighters.find((entry) => entry.slug === (options.slug ?? 'elon-musk'));
+  const sourceNames = options.sourceNames ?? ['side', 'upright', 'crouch'];
+  const singleSource = sourceNames.length === 1;
+  const promptProfile = options.promptProfile;
   const artifact = (path, bytes, raw) => {
     writeFileSync(join(bundleDirectory, path), bytes);
     return {
@@ -85,7 +91,7 @@ function bundleFixture() {
     id: `identity-${fighter.slug}`,
     contentSha256: fighter.reference.sourceSha256,
   };
-  for (const sourceName of ['side', 'upright', 'crouch']) {
+  for (const sourceName of sourceNames) {
     const raw = artifact(`sources/${sourceName}_raw.png`, png(`${sourceName}-raw`, 1024, 1536), true);
     const clean = artifact(`sources/${sourceName}.png`, png(`${sourceName}-clean`, 1024, 1536), false);
     const providerRequestId = raw.providerRequestId;
@@ -94,6 +100,7 @@ function bundleFixture() {
     const payload = buildXaiCanonicalBundlePayload({
       fighter,
       sourceName,
+      promptProfile,
       poseAssetHash: upload(pose).pixcliAssetHash,
       renderingAssetHash: upload(rendering).pixcliAssetHash,
       identityAssetHash: upload(identityReference).pixcliAssetHash,
@@ -104,7 +111,7 @@ function bundleFixture() {
         rendering,
         identity: { contentSha256: fighter.reference.sourceSha256 },
       },
-      promptSha256: sha256(buildXaiCanonicalBundlePrompt(fighter, sourceName)),
+      promptSha256: sha256(buildXaiCanonicalBundlePrompt(fighter, sourceName, { promptProfile })),
       requestSha256: sha256(canonicalJson(payload)),
       pixcliJobId: `job-${sourceName}`,
       providerRequestId,
@@ -112,37 +119,38 @@ function bundleFixture() {
       clean,
     };
   }
-  const contact = png('contact', 1152, 1024);
+  const contact = png('contact', singleSource ? 768 : 1152, singleSource ? 512 : 1024);
   writeFileSync(join(bundleDirectory, 'contact-sheet.png'), contact);
   const unsigned = {
     schemaVersion: 1,
     descriptorType: 'arcade_xai_canonical_bundle_review',
-    bundleId: 'arcade-xai-canonical-bundle-elon-musk-v1',
+    bundleId: options.bundleId ?? 'arcade-xai-canonical-bundle-elon-musk-v1',
     status: 'awaiting_human_review',
     baseCommit: 'fca24ac39763b879eb6072c0cfb39ea098e5705d',
     fighter: { slug: fighter.slug, name: fighter.name, originalSha256: fighter.reference.sourceSha256 },
     poseManifest: { id: 'arcade-xai-canonical-pose-bundle-test-v1', contentSha256: sha256('pose-manifest') },
+    ...(singleSource ? { sourceNames } : {}),
     provider: {
       modelId: 'grok-imagine-image-2-edit',
       endpoint: 'xai/grok-imagine-image/v2.0/edit',
       provider: 'xai',
       backend: 'fal',
       auditedCostPerOutputUsd: 0.11,
-      maximumCostPerOutputUsd: 0.12,
-      maximumBundleCostUsd: 0.36,
-      paidCalls: 3,
-      actualCostUsd: 0.33,
+      maximumCostPerOutputUsd: singleSource ? 0.11 : 0.12,
+      maximumBundleCostUsd: singleSource ? 0.11 : 0.36,
+      paidCalls: sourceNames.length,
+      actualCostUsd: Number((sourceNames.length * 0.11).toFixed(2)),
     },
     cleanup: { ...XAI_CANONICAL_BUNDLE_CLEANUP },
     policy: {
-      expectedPaidCalls: 3,
-      maximumPaidCalls: 3,
+      expectedPaidCalls: sourceNames.length,
+      maximumPaidCalls: sourceNames.length,
       automaticRetries: 0,
       fallback: 'none',
       promptEnrichment: false,
       catalogCostPerOutputUsd: 0.11,
-      maximumCostPerOutputUsd: 0.12,
-      maximumBundleCostUsd: 0.36,
+      maximumCostPerOutputUsd: singleSource ? 0.11 : 0.12,
+      maximumBundleCostUsd: singleSource ? 0.11 : 0.36,
       outputVisibility: 'private_local',
       import: false,
       activation: false,
@@ -153,9 +161,11 @@ function bundleFixture() {
       path: 'contact-sheet.png',
       contentSha256: sha256(contact),
       sizeBytes: contact.byteLength,
-      width: 1152,
-      height: 1024,
-      layout: ['side_raw', 'upright_raw', 'crouch_raw', 'side_clean', 'upright_clean', 'crouch_clean'],
+      width: singleSource ? 768 : 1152,
+      height: singleSource ? 512 : 1024,
+      layout: singleSource
+        ? [`${sourceNames[0]}_raw`, `${sourceNames[0]}_clean`]
+        : ['side_raw', 'upright_raw', 'crouch_raw', 'side_clean', 'upright_clean', 'crouch_clean'],
     },
   };
   const descriptor = { ...unsigned, descriptorSha256: sha256(canonicalJson(unsigned)) };
@@ -173,6 +183,7 @@ function bundleFixture() {
     updatedAt: '2026-08-27T00:01:00.000Z',
     policy: descriptor.policy,
     uploads,
+    ...(singleSource ? { sourceNames } : {}),
     lastCatalogPreflight: {
       modelId: 'grok-imagine-image-2-edit',
       catalogSha256: sha256('catalog'),
@@ -181,7 +192,7 @@ function bundleFixture() {
     descriptorSha256: descriptor.descriptorSha256,
     contactSheetSha256: descriptor.contactSheet.contentSha256,
     status: 'awaiting_human_review',
-    slots: Object.fromEntries(['side', 'upright', 'crouch'].map((sourceName) => [sourceName, {
+    slots: Object.fromEntries(sourceNames.map((sourceName) => [sourceName, {
       status: 'completed',
       sourceName,
       fighterSlug: fighter.slug,
@@ -189,6 +200,7 @@ function bundleFixture() {
       poseSha256: sources[sourceName].references.pose.contentSha256,
       renderingSha256: sources[sourceName].references.rendering.contentSha256,
       promptSha256: sources[sourceName].promptSha256,
+      ...(singleSource ? { promptProfile } : {}),
       modelId: 'grok-imagine-image-2-edit',
       requestSha256: sources[sourceName].requestSha256,
       pixcliJobId: sources[sourceName].pixcliJobId,
@@ -317,6 +329,32 @@ describe('reviewed canonical bundle importer', () => {
       activated: false,
       qaDecision: REVIEWED_CANONICAL_QA_DECISION,
     });
+  });
+
+  it('accepts the exact Lamine CROUCH v2 identity and rejects a v2 prompt under the v1 bundle id', async () => {
+    const fixture = bundleFixture({
+      slug: 'lamine-yamal',
+      sourceNames: ['crouch'],
+      promptProfile: XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE,
+      bundleId: 'arcade-xai-canonical-source-lamine-yamal-crouch-v2',
+    });
+    const loaded = loadReviewedCanonicalBundle({
+      bundleDirectory: fixture.bundleDirectory,
+      reviewedDescriptorSha256: fixture.descriptor.descriptorSha256,
+    });
+    expect(loaded.state.bundleId).toBe('arcade-xai-canonical-source-lamine-yamal-crouch-v2');
+    expect(() => validateBundlePromptAndRequest(loaded, fixture.fighter)).not.toThrow();
+
+    const replay = bundleFixture({
+      slug: 'lamine-yamal',
+      sourceNames: ['crouch'],
+      promptProfile: XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE,
+      bundleId: 'arcade-xai-canonical-source-lamine-yamal-crouch-v1',
+    });
+    expect(() => loadReviewedCanonicalBundle({
+      bundleDirectory: replay.bundleDirectory,
+      reviewedDescriptorSha256: replay.descriptor.descriptorSha256,
+    })).toThrow(/exact completed reviewed source/i);
   });
 
   it('fails before authentication or mutation on tamper, cross-fighter data, or missing QA', async () => {

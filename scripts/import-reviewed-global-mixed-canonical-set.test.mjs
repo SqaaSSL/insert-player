@@ -15,6 +15,7 @@ import {
   GLOBAL_MIXED_QA_DECISION,
   GLOBAL_MIXED_TARGETS,
   GLOBAL_UPRIGHT_ALIAS_DECISION,
+  expectedGlobalMixedSourceBundleId,
   runReviewedGlobalMixedCanonicalImport,
 } from './import-reviewed-elon-mixed-canonical-set.mjs';
 import { XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE } from './arcade-xai-canonical-bundle.mjs';
@@ -77,7 +78,7 @@ function fixture(slug = 'rosalia') {
   const sideBundle = {
     sourceNames: ['side'],
     descriptor: {
-      bundleId: `arcade-xai-canonical-source-${slug}-side-v1`,
+      bundleId: expectedGlobalMixedSourceBundleId(slug, 'side'),
       fighter: { slug, name: target.name, originalSha256: target.photoHash },
       sources: {
         side: {
@@ -96,7 +97,7 @@ function fixture(slug = 'rosalia') {
   const crouchBundle = {
     sourceNames: ['crouch'],
     descriptor: {
-      bundleId: `arcade-xai-canonical-source-${slug}-crouch-v1`,
+      bundleId: expectedGlobalMixedSourceBundleId(slug, 'crouch'),
       fighter: { slug, name: target.name, originalSha256: target.photoHash },
       sources: {
         crouch: {
@@ -391,6 +392,97 @@ describe('reviewed global SIDE alias + CROUCH importer', () => {
       imported: false,
       activated: false,
     });
+  });
+
+  it('requires CROUCH v2 only for Lamine while every SIDE and other CROUCH stay v1', async () => {
+    expect(expectedGlobalMixedSourceBundleId('lamine-yamal', 'side'))
+      .toBe('arcade-xai-canonical-source-lamine-yamal-side-v1');
+    expect(expectedGlobalMixedSourceBundleId('lamine-yamal', 'crouch'))
+      .toBe('arcade-xai-canonical-source-lamine-yamal-crouch-v2');
+    expect(expectedGlobalMixedSourceBundleId('rosalia', 'crouch'))
+      .toBe('arcade-xai-canonical-source-rosalia-crouch-v1');
+
+    const lamine = fixture('lamine-yamal');
+    expect(() => assembleReviewedGlobalMixedCanonicalSet({
+      confirmation: ASSEMBLE_REVIEWED_GLOBAL_MIXED_CONFIRMATION,
+      qaDecision: GLOBAL_MIXED_QA_DECISION,
+      slug: 'lamine-yamal',
+      reviewedBy: 'qa-reviewer',
+      reviewedAt: '2026-08-27T05:30:00.000Z',
+      sideBundleDirectory: lamine.sideBundleDirectory,
+      sideBundleRunId: lamine.plan.side.bundleRunId,
+      reviewedSideDescriptorSha256: lamine.plan.side.reviewedDescriptorSha256,
+      crouchBundleDirectory: lamine.crouchBundleDirectory,
+      crouchBundleRunId: lamine.plan.crouch.bundleRunId,
+      reviewedCrouchDescriptorSha256: lamine.plan.crouch.reviewedDescriptorSha256,
+      rosterPath,
+      outputDirectory: join(lamine.directory, 'assembled'),
+      loadReviewedBundle: ({ bundleDirectory }) => (
+        bundleDirectory === lamine.sideBundleDirectory ? lamine.sideBundle : lamine.crouchBundle
+      ),
+      validateReviewedBundle: vi.fn(),
+    })).not.toThrow();
+
+    const lamineV1Replay = fixture('lamine-yamal');
+    lamineV1Replay.crouchBundle.descriptor.bundleId =
+      'arcade-xai-canonical-source-lamine-yamal-crouch-v1';
+    expect(() => assembleReviewedGlobalMixedCanonicalSet({
+      confirmation: ASSEMBLE_REVIEWED_GLOBAL_MIXED_CONFIRMATION,
+      qaDecision: GLOBAL_MIXED_QA_DECISION,
+      slug: 'lamine-yamal',
+      reviewedBy: 'qa-reviewer',
+      reviewedAt: '2026-08-27T05:30:00.000Z',
+      sideBundleDirectory: lamineV1Replay.sideBundleDirectory,
+      sideBundleRunId: lamineV1Replay.plan.side.bundleRunId,
+      reviewedSideDescriptorSha256: lamineV1Replay.plan.side.reviewedDescriptorSha256,
+      crouchBundleDirectory: lamineV1Replay.crouchBundleDirectory,
+      crouchBundleRunId: lamineV1Replay.plan.crouch.bundleRunId,
+      reviewedCrouchDescriptorSha256: lamineV1Replay.plan.crouch.reviewedDescriptorSha256,
+      rosterPath,
+      outputDirectory: join(lamineV1Replay.directory, 'assembled'),
+      loadReviewedBundle: ({ bundleDirectory }) => (
+        bundleDirectory === lamineV1Replay.sideBundleDirectory
+          ? lamineV1Replay.sideBundle
+          : lamineV1Replay.crouchBundle
+      ),
+      validateReviewedBundle: vi.fn(),
+    })).toThrow(/exact single-source fighter artifact/i);
+
+    const rosaliaV2 = fixture('rosalia');
+    rosaliaV2.crouchBundle.descriptor.bundleId = 'arcade-xai-canonical-source-rosalia-crouch-v2';
+    expect(() => assembleReviewedGlobalMixedCanonicalSet({
+      confirmation: ASSEMBLE_REVIEWED_GLOBAL_MIXED_CONFIRMATION,
+      qaDecision: GLOBAL_MIXED_QA_DECISION,
+      slug: 'rosalia',
+      reviewedBy: 'qa-reviewer',
+      reviewedAt: '2026-08-27T05:30:00.000Z',
+      sideBundleDirectory: rosaliaV2.sideBundleDirectory,
+      sideBundleRunId: rosaliaV2.plan.side.bundleRunId,
+      reviewedSideDescriptorSha256: rosaliaV2.plan.side.reviewedDescriptorSha256,
+      crouchBundleDirectory: rosaliaV2.crouchBundleDirectory,
+      crouchBundleRunId: rosaliaV2.plan.crouch.bundleRunId,
+      reviewedCrouchDescriptorSha256: rosaliaV2.plan.crouch.reviewedDescriptorSha256,
+      rosterPath,
+      outputDirectory: join(rosaliaV2.directory, 'assembled'),
+      loadReviewedBundle: ({ bundleDirectory }) => (
+        bundleDirectory === rosaliaV2.sideBundleDirectory ? rosaliaV2.sideBundle : rosaliaV2.crouchBundle
+      ),
+      validateReviewedBundle: vi.fn(),
+    })).toThrow(/exact single-source fighter artifact/i);
+
+    const api = apiFixture(lamine);
+    await expect(runReviewedGlobalMixedCanonicalImport(runOptions(lamine, api))).resolves.toBeTruthy();
+    expect(api.posts).toBe(6);
+
+    const replayPlan = fixture('lamine-yamal');
+    replayPlan.plan.crouch.bundleId = 'arcade-xai-canonical-source-lamine-yamal-crouch-v1';
+    const replayPlanBytes = Buffer.from(JSON.stringify(replayPlan.plan));
+    writeFileSync(replayPlan.planPath, replayPlanBytes);
+    replayPlan.planSha256 = sha256(replayPlanBytes);
+    const replayApi = apiFixture(replayPlan);
+    await expect(runReviewedGlobalMixedCanonicalImport(runOptions(replayPlan, replayApi)))
+      .rejects.toThrow(/bundle id is not sealed/i);
+    expect(replayApi.posts).toBe(0);
   });
 
   it('imports exactly six reviewed sources, aliases exact bytes, and never generates or activates', async () => {

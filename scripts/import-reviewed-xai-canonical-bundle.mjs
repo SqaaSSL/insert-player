@@ -16,7 +16,7 @@ import {
   XAI_CANONICAL_BUNDLE_BASE_COMMIT,
   XAI_CANONICAL_BUNDLE_CLEANUP,
   XAI_CANONICAL_BUNDLE_MODEL,
-  resolveXaiCanonicalSingleSourcePromptProfile,
+  resolveXaiCanonicalSingleSourceRequestByBundleId,
 } from './arcade-xai-canonical-bundle.mjs';
 import { validateManifest } from './seed-arcade-roster.mjs';
 
@@ -261,6 +261,13 @@ function validateReviewDescriptor(descriptor, bundleDirectory, expectedDescripto
 
 function validateGenerationState(state, descriptor) {
   const sourceNames = descriptor.sourceNames === undefined ? SOURCE_NAMES : descriptor.sourceNames;
+  const singleSourceRequest = sourceNames.length === 1
+    ? resolveXaiCanonicalSingleSourceRequestByBundleId(
+      descriptor.fighter.slug,
+      sourceNames[0],
+      descriptor.bundleId,
+    )
+    : null;
   exactKeys(state, [
     'schemaVersion', 'bundleId', 'fighterSlug', 'fighterName', 'originalSha256', 'poseManifestId',
     'poseManifestSha256', 'matrixSha256', 'status', 'createdAt', 'updatedAt', 'policy', 'uploads',
@@ -305,9 +312,7 @@ function validateGenerationState(state, descriptor) {
       || slot.poseSha256 !== reviewed.references.pose.contentSha256
       || slot.renderingSha256 !== reviewed.references.rendering.contentSha256
       || slot.promptSha256 !== reviewed.promptSha256
-      || slot.promptProfile !== (sourceNames.length === 1
-        ? resolveXaiCanonicalSingleSourcePromptProfile(descriptor.fighter.slug, sourceName)
-        : undefined)
+      || slot.promptProfile !== singleSourceRequest?.promptProfile
       || slot.modelId !== XAI_CANONICAL_BUNDLE_MODEL.id
       || slot.requestSha256 !== reviewed.requestSha256
       || slot.pixcliJobId !== reviewed.pixcliJobId
@@ -341,7 +346,11 @@ function reviewedUpload(state, reference, label) {
 
 export function validateBundlePromptAndRequest(bundle, rosterFighter) {
   const promptProfile = bundle.sourceNames.length === 1
-    ? resolveXaiCanonicalSingleSourcePromptProfile(rosterFighter.slug, bundle.sourceNames[0])
+    ? resolveXaiCanonicalSingleSourceRequestByBundleId(
+      rosterFighter.slug,
+      bundle.sourceNames[0],
+      bundle.descriptor.bundleId,
+    ).promptProfile
     : undefined;
   const identityReference = {
     id: `identity-${rosterFighter.slug}`,

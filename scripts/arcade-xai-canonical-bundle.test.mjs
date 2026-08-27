@@ -25,6 +25,11 @@ import {
   XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG,
   XAI_CANONICAL_GLOBAL_SIDE_REFERENCES,
   XAI_CANONICAL_GLOBAL_SIDE_SLUGS,
+  XAI_CANONICAL_LAMINE_CROUCH_RETRY_CONFIRMATION,
+  XAI_CANONICAL_LAMINE_CROUCH_RETRY_INPUT,
+  XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE,
+  XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_SHA256,
+  XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION,
   XAI_CANONICAL_PIXCLI_PROMPT_MAX,
   XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION,
   XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
@@ -36,6 +41,8 @@ import {
   parseXaiCanonicalBundleCliArgs,
   recleanXaiCanonicalBundle,
   resolveXaiCanonicalSingleSourcePromptProfile,
+  resolveXaiCanonicalSingleSourceRequest,
+  resolveXaiCanonicalSingleSourceRequestByBundleId,
   runXaiCanonicalBundle,
   verifyCanonicalCleanupFixture,
   validateXaiCanonicalPromptProfileReferences,
@@ -512,12 +519,22 @@ describe('sealed XAI canonical bundle inputs', () => {
     expect(offlineJob).not.toContain('/api/v1/edit/advanced');
     expect(generation).toContain('--max-cost-usd="$MAX_COST_USD"');
     expect(generation).toContain('REQUESTED_SOURCE: ${{ inputs.source }}');
+    expect(generation).toContain('REQUEST_VERSION: ${{ inputs.request_version }}');
     expect(generation).toContain('PROMPT_SHA256: ${{ inputs.prompt_sha256 }}');
     expect(generation).toContain('"--source=$REQUESTED_SOURCE" "--prompt-sha256=$PROMPT_SHA256"');
+    expect(generation).toContain('"--request-version=$REQUEST_VERSION"');
     expect(generation).toContain('elon-musk:crouch)');
     expect(generation).toContain('rosalia:side)');
     expect(generation).toContain('ibai-llanos:side)');
     expect(generation).toContain('lamine-yamal:side)');
+    expect(generation).toContain(XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION);
+    expect(generation).toContain(XAI_CANONICAL_LAMINE_CROUCH_RETRY_CONFIRMATION);
+    expect(generation).toContain(XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_SHA256);
+    expect(generation).toContain(XAI_CANONICAL_LAMINE_CROUCH_RETRY_INPUT.bundleR2Key);
+    expect(generation).toContain(XAI_CANONICAL_LAMINE_CROUCH_RETRY_INPUT.bundleSha256);
+    expect(generation).toContain(XAI_CANONICAL_LAMINE_CROUCH_RETRY_INPUT.poseManifestSha256);
+    expect(generation).toContain('[[ -z "$REQUEST_VERSION" ]]');
+    expect(generation).toContain('The Lamine CROUCH v2 retry requires the exact previously approved input archive and pose manifest.');
     expect(generation).not.toContain('aitana:side)');
     for (const promptSha256 of [
       XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256,
@@ -743,6 +760,122 @@ describe('sealed XAI canonical bundle inputs', () => {
       params: { num_images: 1 },
     });
     expect(JSON.stringify(payload)).not.toMatch(/fallback|retry/i);
+  });
+
+  it('seals one explicit Lamine CROUCH v2 retry without changing or replaying v1', () => {
+    const fighter = roster.fighters.find((entry) => entry.slug === 'lamine-yamal');
+    const v1Identity = resolveXaiCanonicalSingleSourceRequest('lamine-yamal', 'crouch');
+    const v2Identity = resolveXaiCanonicalSingleSourceRequest(
+      'lamine-yamal',
+      'crouch',
+      XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION,
+    );
+    expect(v1Identity).toMatchObject({
+      promptProfile: XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE,
+      confirmation: XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION,
+      bundleId: 'arcade-xai-canonical-source-lamine-yamal-crouch-v1',
+      stateStem: 'lamine-yamal-crouch',
+      publishMarkerVersion: 'v1',
+    });
+    expect(v2Identity).toEqual({
+      requestVersion: XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION,
+      promptProfile: XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE,
+      confirmation: XAI_CANONICAL_LAMINE_CROUCH_RETRY_CONFIRMATION,
+      bundleId: 'arcade-xai-canonical-source-lamine-yamal-crouch-v2',
+      stateStem: 'lamine-yamal-crouch-v2',
+      publishMarkerVersion: 'v2',
+    });
+    expect(resolveXaiCanonicalSingleSourceRequestByBundleId(
+      'lamine-yamal',
+      'crouch',
+      v2Identity.bundleId,
+    )).toEqual(v2Identity);
+
+    const v1Prompt = buildXaiCanonicalBundlePrompt(fighter, 'crouch', {
+      promptProfile: XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE,
+    });
+    const v2Prompt = buildXaiCanonicalBundlePrompt(fighter, 'crouch', {
+      promptProfile: XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE,
+    });
+    expect(sha256(v1Prompt)).toBe('800a2b5a1c1a90749490497f5b06a92707b3a35ed4784627b22b186a952224cf');
+    expect(Buffer.byteLength(v1Prompt, 'utf8')).toBe(3848);
+    expect(sha256(v2Prompt)).toBe(XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_SHA256);
+    expect(Buffer.byteLength(v2Prompt, 'utf8')).toBe(3993);
+    expect(v2Prompt).toContain('Hair exactly as IMAGE 2 SIDE RAW and IMAGE 3 original');
+    expect(v2Prompt).toContain('uncovered dense high curls/honey-blond tips');
+    expect(v2Prompt).toContain('Absolutely no headband, headwear, hair accessory, or other accessory');
+    expect(v2Prompt).toContain('athletic/kinesiology tape, bandage, wrap, club/sponsor mark');
+    expect(v2Prompt).toContain('flag, number, lettering, text, logo, badge, ball, or prop');
+    expect(v2Prompt).toContain('RENDERING/WARDROBE/HAIR ONLY');
+    expect(v2Prompt).not.toBe(v1Prompt);
+
+    const assets = {
+      poseAssetHash: '1'.repeat(32),
+      renderingAssetHash: '2'.repeat(32),
+      identityAssetHash: '3'.repeat(32),
+    };
+    const v1Payload = buildXaiCanonicalBundlePayload({
+      fighter,
+      sourceName: 'crouch',
+      promptProfile: v1Identity.promptProfile,
+      ...assets,
+    });
+    const v2Payload = buildXaiCanonicalBundlePayload({
+      fighter,
+      sourceName: 'crouch',
+      promptProfile: v2Identity.promptProfile,
+      ...assets,
+    });
+    expect(v1Payload.publish_name).toBe('ip-canonical-v1-lamine-yamal-crouch');
+    expect(v2Payload).toMatchObject({
+      publish_name: 'ip-canonical-v2-lamine-yamal-crouch',
+      publish: false,
+      enrich_prompt: false,
+      search: false,
+      params: { num_images: 1 },
+    });
+    expect(sha256(canonicalJson(v2Payload))).not.toBe(sha256(canonicalJson(v1Payload)));
+    expect(JSON.stringify(v2Payload)).not.toMatch(/fallback|retry/i);
+
+    const parsed = parseXaiCanonicalBundleCliArgs([
+      '--execute',
+      '--slug=lamine-yamal',
+      '--source=crouch',
+      `--request-version=${XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION}`,
+      `--prompt-sha256=${XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_SHA256}`,
+      `--confirm=${XAI_CANONICAL_LAMINE_CROUCH_RETRY_CONFIRMATION}`,
+      `--confirm-private=${XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION}`,
+      '--max-cost-usd=0.11',
+    ], { PIXCLI_API_KEY: 'private-test-key' });
+    expect(parsed).toMatchObject({
+      slug: 'lamine-yamal',
+      sourceName: 'crouch',
+      requestVersion: XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION,
+      promptSha256: XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_SHA256,
+    });
+    expect(parsed.statePath).toMatch(/lamine-yamal-crouch-v2\.json$/);
+    expect(parsed.outputDirectory).toMatch(/lamine-yamal-crouch-v2$/);
+
+    expect(() => resolveXaiCanonicalSingleSourceRequest(
+      'rosalia',
+      'crouch',
+      XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION,
+    )).toThrow(/not sealed/i);
+    expect(() => resolveXaiCanonicalSingleSourceRequest(
+      'lamine-yamal',
+      'side',
+      XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION,
+    )).toThrow(/not sealed/i);
+    expect(() => resolveXaiCanonicalSingleSourceRequestByBundleId(
+      'lamine-yamal',
+      'crouch',
+      'arcade-xai-canonical-source-lamine-yamal-crouch-v1-replay',
+    )).toThrow(/bundle identity is not sealed/i);
+    expect(() => buildXaiCanonicalBundlePrompt(
+      roster.fighters.find((entry) => entry.slug === 'rosalia'),
+      'crouch',
+      { promptProfile: XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE },
+    )).toThrow(/sealed only for Lamine Yamal/i);
   });
 
   it('seals global CROUCH to original identity + Trump crouch + that fighter reviewed SIDE raw', () => {
