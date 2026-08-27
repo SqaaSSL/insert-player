@@ -4,10 +4,9 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadXaiCanonicalPoseManifest } from './arcade-xai-canonical-bundle.mjs';
 import { verifyBakeoffSource } from './arcade-side-bakeoff.mjs';
