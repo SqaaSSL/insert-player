@@ -723,6 +723,19 @@ export async function listCommunityFighters(context?: ApiRequestContext): Promis
   return json.fighters ?? [];
 }
 
+export async function listOwnedCommunityFighterIds(
+  context?: ApiRequestContext,
+): Promise<string[]> {
+  if (isLocalDevWithoutApi()) return [];
+  const res = await apiFetch('/api/community/ownership', {}, context);
+  if (!res.ok) throw new Error(`Community ownership check failed (${res.status})`);
+  const json = await res.json() as { fighterIds?: unknown };
+  if (!Array.isArray(json.fighterIds)) {
+    throw new Error('Community ownership check returned an invalid response');
+  }
+  return json.fighterIds.filter((id): id is string => typeof id === 'string' && Boolean(id));
+}
+
 export async function listArcadeFighters(): Promise<CloudFighter[]> {
   if (isLocalDevWithoutApi()) return [];
   const res = await apiFetch('/api/arcade');

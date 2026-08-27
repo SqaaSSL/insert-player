@@ -3,8 +3,8 @@ import {
   cloneCommunityFighter,
   downloadCloudFighterToLocal,
   getCommunityFighter,
-  listCloudFighters,
   listCommunityFighters,
+  listOwnedCommunityFighterIds,
   reportCommunityFighter,
   type CommunityReportReason,
 } from '../../services/CloudFighters.ts';
@@ -13,6 +13,7 @@ import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import type { AuthStatus } from '../authState.ts';
 import { cloudPreviewUrl, tierLabel } from '../shared/fighterPreview.ts';
 import {
+  communityOwnershipActionsPaused,
   markOwnedCommunityFighters,
   resolveFeaturedCommunityFighter,
   type CommunityFighterView,
@@ -70,34 +71,54 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
   const [fighters, setFighters] = useState<CommunityFighterView[]>([]);
   const [loadState, setLoadState] = useState<CommunityLoadState>({ phase: 'loading' });
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [ownershipKnown, setOwnershipKnown] = useState(authStatus !== 'signed-in');
   const [notice, setNotice] = useState<string | null>(null);
   const [operation, setOperation] = useState<CommunityOperation | null>(null);
   const [featuredId, setFeaturedId] = useState<string | null>(() => readFeaturedFighterId());
   const [reportTarget, setReportTarget] = useState<CommunityFighterView | null>(null);
   const [shareLinkUrl, setShareLinkUrl] = useState<string | null>(null);
+  const [shareLinkError, setShareLinkError] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState<CommunityReportReason>('non_consensual_person');
   const [reportDetails, setReportDetails] = useState('');
   const [reportError, setReportError] = useState<string | null>(null);
   const requestEpoch = useRef(0);
 
   useEffect(() => {
+    const syncFeaturedDeepLink = () => {
+      const nextFeaturedId = readFeaturedFighterId();
+      if (nextFeaturedId === featuredId) return;
+      setFeaturedId(nextFeaturedId);
+      setLoadAttempt((current) => current + 1);
+    };
+    window.addEventListener('popstate', syncFeaturedDeepLink);
+    return () => window.removeEventListener('popstate', syncFeaturedDeepLink);
+  }, [featuredId]);
+
+  useEffect(() => {
     const epoch = ++requestEpoch.current;
     const apiContext = captureApiRequestContext();
     setLoadState({ phase: 'loading' });
     setFighters([]);
+    setOwnershipKnown(authStatus !== 'signed-in');
     setNotice(null);
 
     const load = async () => {
       try {
-        const [publicFighters, ownedFighters] = await Promise.all([
+        const [publicFighters, ownedResult] = await Promise.all([
           listCommunityFighters(apiContext),
           authStatus === 'signed-in'
-            ? listCloudFighters(apiContext).catch(() => [])
-            : Promise.resolve([]),
+            ? listOwnedCommunityFighterIds(apiContext)
+              .then((fighterIds) => ({ fighterIds, known: true }))
+              .catch(() => ({ fighterIds: [], known: false }))
+            : Promise.resolve({ fighterIds: [], known: true }),
         ]);
         if (requestEpoch.current !== epoch) return;
 
-        const ownedIds = new Set(ownedFighters.map((fighter) => fighter.id));
+        setOwnershipKnown(ownedResult.known);
+        if (!ownedResult.known) {
+          setNotice('Community ready. Roster ownership could not be verified, so clone and report actions are paused.');
+        }
+        const ownedIds = new Set(ownedResult.fighterIds);
         let resolved = markOwnedCommunityFighters(publicFighters, ownedIds);
         if (featuredId && !resolved.some((fighter) => fighter.id === featuredId)) {
           const detail = await getCommunityFighter(featuredId, apiContext);
@@ -136,6 +157,10 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
   );
   const featuredPreviewUrl = featured ? cloudPreviewUrl(featured) : null;
   const isBusy = operation !== null;
+  const ownershipUnavailable = communityOwnershipActionsPaused(
+    authStatus === 'signed-in',
+    ownershipKnown,
+  );
   const reportBusy = operation?.kind === 'report';
   const headerStatus = notice ?? loadStatusMessage(loadState, fighters.length);
 
@@ -158,6 +183,7 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
       } else if (share.mode === 'cancelled') {
         setNotice(`Share cancelled for ${fighter.name}`);
       } else {
+        setShareLinkError(null);
         setShareLinkUrl(share.url);
         setNotice(`Share link ready for ${fighter.name}`);
       }
@@ -246,19 +272,25 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
       <Button
         variant="primary"
         size={featuredCard ? 'lg' : 'md'}
-        disabled={isBusy}
+        disabled={isBusy || ownershipUnavailable}
         onClick={() => void addToRoster(fighter)}
       >
         {operation?.kind === 'clone' && operation.fighterId === fighter.id
           ? 'Adding...'
-          : fighter.isOwned ? 'Open In Roster' : 'Clone To Roster'}
+          : ownershipUnavailable
+            ? 'Roster Check Unavailable'
+            : fighter.isOwned ? 'Open In Roster' : 'Clone To Roster'}
       </Button>
       <Button disabled={isBusy} onClick={() => void shareFighter(fighter)}>
         {operation?.kind === 'share' && operation.fighterId === fighter.id ? 'Sharing...' : 'Share'}
       </Button>
       {!fighter.isOwned ? (
-        <Button variant="ghost" disabled={isBusy} onClick={() => openReport(fighter)}>
-          Report
+        <Button
+          variant="ghost"
+          disabled={isBusy || ownershipUnavailable}
+          onClick={() => openReport(fighter)}
+        >
+          {ownershipUnavailable ? 'Report Unavailable' : 'Report'}
         </Button>
       ) : null}
     </>
@@ -426,7 +458,13 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
       ) : null}
 
       {shareLinkUrl ? (
-        <Modal title="Share Fighter Link" onClose={() => setShareLinkUrl(null)}>
+        <Modal
+          title="Share Fighter Link"
+          onClose={() => {
+            setShareLinkError(null);
+            setShareLinkUrl(null);
+          }}
+        >
           <p className="asf-modal__copy">Copy this link to share the fighter.</p>
           <input
             className="asf-modal__link"
@@ -435,14 +473,26 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
             value={shareLinkUrl}
             onFocus={(event) => event.target.select()}
           />
+          {shareLinkError ? <StatusMessage severity="error">{shareLinkError}</StatusMessage> : null}
           <div className="asf-modal__actions">
-            <Button onClick={() => setShareLinkUrl(null)}>Close</Button>
+            <Button onClick={() => {
+              setShareLinkError(null);
+              setShareLinkUrl(null);
+            }}>Close</Button>
             <Button
               variant="primary"
               onClick={() => {
-                void navigator.clipboard?.writeText(shareLinkUrl).catch(() => {});
-                setShareLinkUrl(null);
-                setNotice('Share link copied');
+                if (!navigator.clipboard?.writeText) {
+                  setShareLinkError('Automatic copy is unavailable. Select the link above and copy it manually.');
+                  return;
+                }
+                void navigator.clipboard.writeText(shareLinkUrl).then(() => {
+                  setShareLinkError(null);
+                  setShareLinkUrl(null);
+                  setNotice('Share link copied');
+                }).catch(() => {
+                  setShareLinkError('The link could not be copied. Select it above and copy it manually.');
+                });
               }}
             >
               Copy Link

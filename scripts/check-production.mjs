@@ -1206,6 +1206,8 @@ function assertCommunityAssetsAreSanitized() {
   const fighterIntegrationTests = readFileSync(join(root, 'worker/src/fighters.integration.test.ts'), 'utf8');
   const gallery = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
   const community = readFileSync(join(root, 'src/ui/routes/CommunityPage.tsx'), 'utf8');
+  const communityState = readFileSync(join(root, 'src/ui/shared/communityState.ts'), 'utf8');
+  const communityStateTests = readFileSync(join(root, 'src/ui/shared/communityState.test.ts'), 'utf8');
   const share = readFileSync(join(root, 'src/ui/shared/communityShare.ts'), 'utf8');
   const index = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
   const liveSmoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
@@ -1227,9 +1229,16 @@ function assertCommunityAssetsAreSanitized() {
     'function publicSpriteAssetUrl',
     '/public-assets/fighters/',
     'export async function getCommunityFighter',
-    'getCommunityFighter(featuredId)',
-    'Featured fighter loaded',
-    'Shared fighter is no longer public',
+    'export async function listOwnedCommunityFighterIds',
+    "path === '/api/community/ownership'",
+    'JOIN fighters owned',
+    'listOwnedCommunityFighterIds(apiContext)',
+    'getCommunityFighter(featuredId, apiContext)',
+    "setLoadState({ phase: 'not-found' })",
+    'resolveFeaturedCommunityFighter(fighters, featuredId)',
+    'Fighter Not Found',
+    'This shared fighter is no longer public.',
+    'never substitutes the first fighter for an invalid shared id',
     'PUBLIC_CLONE_SOURCE_KINDS',
     "['side', 'upright', 'crouch']",
     'for (const kind of PUBLIC_CLONE_SOURCE_KINDS)',
@@ -1319,7 +1328,7 @@ function assertCommunityAssetsAreSanitized() {
   ) {
     throw new Error('Community payloads must not expose Clerk account profile fields.');
   }
-  const implementationCombined = `${fighters}\n${assetIndexes}\n${fighterIntegrationTests}\n${gallery}\n${community}\n${share}\n${index}`;
+  const implementationCombined = `${fighters}\n${assetIndexes}\n${fighterIntegrationTests}\n${gallery}\n${community}\n${communityState}\n${communityStateTests}\n${share}\n${index}`;
   const combined = `${implementationCombined}\n${liveSmoke}`;
   const foundForbidden = forbidden.filter((snippet) => implementationCombined.includes(snippet));
   if (foundForbidden.length > 0) {
@@ -1683,6 +1692,15 @@ function assertLiveSmokeCoversCriticalPaths() {
     'community publishing requires the full launch animation set',
     'Community listing did not include the full launch animation set',
     'Community detail did not include the full launch animation set',
+    'const requiredProductionArcadeSlugs',
+    "'donald-trump'",
+    "'lamine-yamal'",
+    "'rosalia'",
+    "'elon-musk'",
+    'Official Arcade is missing required production fighter',
+    'Official Arcade fighter ${fighter.arcade.slug} is missing playable animation ${animationName}',
+    'Official Arcade fighter ${fighter.arcade.slug} has no immutable hash for ${animationName}',
+    'Official Arcade fighter ${fighter.arcade.slug} has invalid playback metadata for ${animationName}',
     'create same-photo clone target',
     'Community clone did not merge into the existing same-photo fighter',
     'Same-photo community clone merge should return cloned=false',

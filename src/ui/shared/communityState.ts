@@ -4,6 +4,13 @@ export interface CommunityFighterView extends CloudFighter {
   isOwned: boolean;
 }
 
+export function communityOwnershipActionsPaused(
+  signedIn: boolean,
+  ownershipKnown: boolean,
+): boolean {
+  return signedIn && !ownershipKnown;
+}
+
 export function markOwnedCommunityFighters(
   fighters: CloudFighter[],
   ownedFighterIds: ReadonlySet<string>,
