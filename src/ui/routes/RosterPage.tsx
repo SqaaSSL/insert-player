@@ -116,7 +116,7 @@ function getModeMeta(mode: RosterMode) {
     };
   }
   return {
-    title: 'Arcade Mode',
+    title: 'CPU Match',
     description: 'Pick your fighter. Choose the CPU challenger. Fight!',
     vsAI: true,
     cpuVsCpu: false,

@@ -34,6 +34,8 @@ export interface MatchSceneData {
   customStageKey?: string;
   customStageLabel?: string;
   remix?: number;
+  /** Arcade-ladder AI strength for the P2 CPU, 0..1. Omitted = full strength. */
+  p2Difficulty?: number;
 }
 
 export const MATCH_COMPLETE_EVENT = 'asf-match-complete';
@@ -155,6 +157,7 @@ export function buildMatchSeed(data: MatchSceneData): number {
     data.customStageKey ? 'photo-stage' : (data.stageId ?? 'auto'),
     data.customStageKey ?? 'stage:none',
     String(remix),
+    data.p2Difficulty === undefined ? 'difficulty:default' : `difficulty:${data.p2Difficulty}`,
   ];
 
   let hash = 0x811c9dc5;

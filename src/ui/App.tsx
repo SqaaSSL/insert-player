@@ -11,6 +11,18 @@ import { debugInfo, debugWarn } from '../services/DebugLog.ts';
 import type { AuthRouteState } from './authState.ts';
 import { readStoredMatch, writeStoredMatch } from './shared/storedMatch.ts';
 import { CacheStatusBanner, type CacheStatus } from './components/CacheStatusBanner.tsx';
+import { getActiveSpriteCacheScope } from '../services/SpriteCache.ts';
+import {
+  advanceArcadeRun,
+  buildRungMatchData,
+  clearArcadeRun,
+  currentRung,
+  isFinalRung,
+  readArcadeRun,
+  spendArcadeContinue,
+  writeArcadeRun,
+} from './shared/arcadeRun.ts';
+import type { LadderContext } from './routes/GamePage.tsx';
 
 const GalleryPage = lazy(() => import('./routes/GalleryPage.tsx').then((module) => ({
   default: module.GalleryPage,
@@ -27,9 +39,13 @@ const CommunityPage = lazy(() => import('./routes/CommunityPage.tsx').then((modu
 const ModerationPage = lazy(() => import('./routes/ModerationPage.tsx').then((module) => ({
   default: module.ModerationPage,
 })));
+const ArcadePage = lazy(() => import('./routes/ArcadePage.tsx').then((module) => ({
+  default: module.ArcadePage,
+})));
 
 type AppRoute =
   | '/menu'
+  | '/arcade'
   | '/gallery'
   | '/community'
   | '/moderation'
@@ -82,6 +98,7 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
     cleanedPath !== '/' && cleanedPath !== ''
       ? cleanedPath
       : (cleanedHash || '/menu');
+  if (cleaned === '/arcade') return '/arcade';
   if (cleaned === '/gallery') return '/gallery';
   if (cleaned === '/community') return '/community';
   if (cleaned === '/moderation') return '/moderation';
@@ -245,6 +262,67 @@ export function App({
     navigate(legalReturnRouteFromState(window.history.state), '', { replace: true });
   }, [navigate]);
 
+  const prepareChallenger = useCallback(async (fighterId: string | null) => {
+    if (!fighterId) return;
+    try {
+      const [{ listArcadeFighters, downloadArcadeFighterToLocal }, { captureApiRequestContext }] =
+        await Promise.all([
+          import('../services/CloudFighters.ts'),
+          import('../services/ApiClient.ts'),
+        ]);
+      const officials = await listArcadeFighters();
+      const challenger = officials.find((fighter) => fighter.id === fighterId);
+      if (challenger) await downloadArcadeFighterToLocal(challenger, captureApiRequestContext());
+    } catch (err: any) {
+      debugWarn('[Arcade] Challenger prefetch failed:', err?.message ?? err);
+    }
+  }, []);
+
+  const ladderContext = useMemo<LadderContext | null>(() => {
+    if (route !== '/fight' || !pendingMatch) return null;
+    const run = readArcadeRun(getActiveSpriteCacheScope());
+    if (!run) return null;
+    const rung = currentRung(run);
+    const isLadderMatch = Boolean(
+      pendingMatch.vsAI &&
+      !pendingMatch.cpuVsCpu &&
+      pendingMatch.p1PhotoHash === run.player.photoHash &&
+      pendingMatch.p2PhotoHash === rung.photoHash,
+    );
+    if (!isLadderMatch) return null;
+    const nextRungMeta = isFinalRung(run) ? null : run.rungs[run.currentRung + 1];
+    return {
+      rungIndex: run.currentRung,
+      rungTotal: run.rungs.length,
+      continuesLeft: run.continuesLeft,
+      continuesUsed: run.continuesUsed,
+      isFinal: isFinalRung(run),
+      nextName: nextRungMeta?.name ?? null,
+      onNext: async () => {
+        const latest = readArcadeRun(getActiveSpriteCacheScope());
+        if (!latest) return;
+        const advanced = advanceArcadeRun(latest);
+        await prepareChallenger(currentRung(advanced).fighterId);
+        writeArcadeRun(advanced);
+        startFight(buildRungMatchData(advanced));
+      },
+      onContinue: async () => {
+        const latest = readArcadeRun(getActiveSpriteCacheScope());
+        const next = latest ? spendArcadeContinue(latest) : null;
+        if (!next) return;
+        writeArcadeRun(next);
+        startFight(buildRungMatchData(next));
+      },
+      onExitLadder: () => {
+        clearArcadeRun();
+        navigate('/menu');
+      },
+      onPrefetchNext: () => {
+        if (nextRungMeta) void prepareChallenger(nextRungMeta.fighterId);
+      },
+    };
+  }, [route, pendingMatch, prepareChallenger, startFight, navigate]);
+
   const homePage = useMemo(
     () => (
       <HomePage
@@ -252,6 +330,7 @@ export function App({
         authSessionKey={authSessionKey}
         onCreateFighter={() => navigate('/fighters/new')}
         onNavigateLegal={navigateToLegal}
+        onOpenArcade={() => navigate('/arcade')}
         onOpenGallery={() => navigate('/gallery')}
         onOpenCommunity={() => navigate('/community')}
         onOpenWatchMode={() => navigate('/roster/watch')}
@@ -275,6 +354,17 @@ export function App({
     }
     if (route === '/menu') {
       return homePage;
+    }
+    if (route === '/arcade') {
+      return (
+        <ArcadePage
+          authStatus={authStatus}
+          authSessionKey={authSessionKey}
+          onBack={() => navigate('/menu')}
+          onCreateFighter={() => navigate('/fighters/new', 'tier=rookie')}
+          onStartFight={startFight}
+        />
+      );
     }
     if (route === '/gallery') {
       return (
@@ -335,7 +425,7 @@ export function App({
     if (!pendingMatch) {
       return <LoadingScreen label="Returning to the arcade..." />;
     }
-    return <GamePage launchTarget={launchTarget!} onComplete={finishFight} onExit={exitFight} />;
+    return <GamePage launchTarget={launchTarget!} onComplete={finishFight} onExit={exitFight} ladder={ladderContext} />;
   }, [
     route,
     navigate,
@@ -351,6 +441,7 @@ export function App({
     authSessionKey,
     homePage,
     configurationError,
+    ladderContext,
   ]);
 
   const routedContent = (

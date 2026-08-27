@@ -104,6 +104,7 @@ export class FightScene extends Phaser.Scene {
   private resolvedStageId: StageThemeId = "dojo";
   private matchSeed = 1;
   private remix = 0;
+  private p2Difficulty: number | null = null;
   private stageFloorY = GROUND_Y;
   private fighterRenderScale = 1;
   private fighterRenderYOffset = 0;
@@ -149,6 +150,7 @@ export class FightScene extends Phaser.Scene {
     this.customStageKey = data.customStageKey ?? null;
     this.customStageLabel = data.customStageLabel ?? null;
     this.remix = data.remix ?? 0;
+    this.p2Difficulty = data.p2Difficulty ?? null;
     this.matchSeed = buildMatchSeed({
       ...data,
       vsAI: this.isVsAI,
@@ -259,6 +261,7 @@ export class FightScene extends Phaser.Scene {
     this.ai = new AIController(
       new SeededRng(this.mixSeed(0x6d2b79f5)),
       p2Personality,
+      this.p2Difficulty ?? 1,
     );
     this.ai2 = new AIController(
       new SeededRng(this.mixSeed(0x1b873593)),
@@ -2123,6 +2126,7 @@ export class FightScene extends Phaser.Scene {
         customStageKey: this.customStageKey ?? undefined,
         customStageLabel: this.customStageLabel ?? undefined,
         remix,
+        p2Difficulty: this.p2Difficulty ?? undefined,
       });
     });
   }

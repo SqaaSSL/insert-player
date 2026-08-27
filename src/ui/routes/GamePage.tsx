@@ -11,14 +11,36 @@ import { MobileFightControls } from '../components/MobileFightControls.tsx';
 import { reportMatchCompletion } from '../../services/MatchReporting.ts';
 import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 
+export interface LadderContext {
+  rungIndex: number;
+  rungTotal: number;
+  continuesLeft: number;
+  continuesUsed: number;
+  isFinal: boolean;
+  nextName: string | null;
+  onNext: () => Promise<void>;
+  onContinue: () => Promise<void>;
+  onExitLadder: () => void;
+  onPrefetchNext: () => void;
+}
+
 interface GamePageProps {
   launchTarget: { sceneKey: string; data: MatchSceneData };
   onComplete: () => void;
   onExit: () => void;
+  ladder?: LadderContext | null;
 }
 
-export function GamePage({ launchTarget, onComplete, onExit }: GamePageProps) {
+export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageProps) {
   const [matchActionsVisible, setMatchActionsVisible] = useState(false);
+  const [winnerSlot, setWinnerSlot] = useState<'p1' | 'p2' | null>(null);
+  const [ladderBusy, setLadderBusy] = useState(false);
+
+  useEffect(() => {
+    // A new launch target means a fresh match: clear the previous outcome.
+    setWinnerSlot(null);
+    setLadderBusy(false);
+  }, [launchTarget]);
 
   useEffect(() => {
     const win = window as Window & {
@@ -61,6 +83,10 @@ export function GamePage({ launchTarget, onComplete, onExit }: GamePageProps) {
   useEffect(() => {
     const onMatchComplete = (event: WindowEventMap[typeof MATCH_COMPLETE_EVENT]) => {
       onComplete();
+      setWinnerSlot(event.detail.winnerSlot);
+      if (ladder && event.detail.winnerSlot === 'p1' && !ladder.isFinal) {
+        ladder.onPrefetchNext();
+      }
       void reportMatchCompletion(event.detail).catch((err: any) => {
         debugWarn('[MatchReporting] Failed to report match:', err?.message ?? err);
       });
@@ -69,7 +95,7 @@ export function GamePage({ launchTarget, onComplete, onExit }: GamePageProps) {
     return () => {
       window.removeEventListener(MATCH_COMPLETE_EVENT, onMatchComplete);
     };
-  }, [onComplete]);
+  }, [onComplete, ladder]);
 
   useEffect(() => {
     const onVisibilityChange = (
@@ -102,7 +128,78 @@ export function GamePage({ launchTarget, onComplete, onExit }: GamePageProps) {
           or play Arcade Mode on touch.
         </div>
       )}
-      {matchActionsVisible && (
+      {matchActionsVisible && ladder && winnerSlot === 'p1' && ladder.isFinal && (
+        <div className="match-actions" role="group" aria-label="Arcade champion">
+          <span className="match-actions__label">
+            You Conquered The Arcade · {ladder.rungTotal} challengers down · {ladder.continuesUsed}{' '}
+            {ladder.continuesUsed === 1 ? 'continue' : 'continues'} used
+          </span>
+          <button
+            type="button"
+            className="match-actions__button match-actions__button--primary"
+            onClick={ladder.onExitLadder}
+          >
+            Take The Crown
+          </button>
+        </div>
+      )}
+      {matchActionsVisible && ladder && winnerSlot === 'p1' && !ladder.isFinal && (
+        <div className="match-actions" role="group" aria-label="Ladder victory actions">
+          <span className="match-actions__label">
+            Rung {ladder.rungIndex + 1}/{ladder.rungTotal} cleared
+          </span>
+          <button
+            type="button"
+            className="match-actions__button match-actions__button--primary"
+            disabled={ladderBusy}
+            onClick={() => {
+              setLadderBusy(true);
+              void ladder.onNext().catch(() => setLadderBusy(false));
+            }}
+          >
+            {ladderBusy ? 'Loading...' : `Next: ${ladder.nextName ?? 'Challenger'}`}
+          </button>
+          <button type="button" className="match-actions__button" disabled={ladderBusy} onClick={ladder.onExitLadder}>
+            Quit Run
+          </button>
+        </div>
+      )}
+      {matchActionsVisible && ladder && winnerSlot === 'p2' && ladder.continuesLeft > 0 && (
+        <div className="match-actions" role="group" aria-label="Ladder continue actions">
+          <span className="match-actions__label">
+            Defeated at rung {ladder.rungIndex + 1}/{ladder.rungTotal}
+          </span>
+          <button
+            type="button"
+            className="match-actions__button match-actions__button--primary"
+            disabled={ladderBusy}
+            onClick={() => {
+              setLadderBusy(true);
+              void ladder.onContinue().catch(() => setLadderBusy(false));
+            }}
+          >
+            {ladderBusy ? 'Loading...' : `Continue · ${ladder.continuesLeft} left`}
+          </button>
+          <button type="button" className="match-actions__button" disabled={ladderBusy} onClick={ladder.onExitLadder}>
+            Give Up
+          </button>
+        </div>
+      )}
+      {matchActionsVisible && ladder && winnerSlot === 'p2' && ladder.continuesLeft <= 0 && (
+        <div className="match-actions" role="group" aria-label="Game over">
+          <span className="match-actions__label">
+            Game Over · Reached rung {ladder.rungIndex + 1}/{ladder.rungTotal}
+          </span>
+          <button
+            type="button"
+            className="match-actions__button match-actions__button--primary"
+            onClick={ladder.onExitLadder}
+          >
+            Back To The Arcade
+          </button>
+        </div>
+      )}
+      {matchActionsVisible && (!ladder || winnerSlot === null) && (
         <div className="match-actions" role="group" aria-label="Match complete actions">
           <span className="match-actions__label">Match Complete</span>
           <button

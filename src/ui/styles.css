@@ -1694,6 +1694,87 @@
   }
 
   /* ============================================================
+     ARCADE LADDER
+     ============================================================ */
+
+  .arcade-layout {
+    @apply grid gap-5 grid-cols-[minmax(0,1fr)_380px] max-[1100px]:grid-cols-1;
+  }
+
+  .arcade-resume {
+    @apply flex flex-wrap items-center gap-3;
+  }
+
+  .arcade-resume__actions {
+    @apply ml-auto flex flex-wrap items-center gap-2;
+  }
+
+  .arcade-player-grid {
+    @apply grid gap-2.5 grid-cols-[repeat(auto-fill,minmax(150px,1fr))];
+  }
+
+  .arcade-player-card {
+    @apply items-stretch text-center;
+  }
+
+  .arcade-player-card__surface {
+    @apply flex h-[130px] items-center justify-center overflow-hidden rounded-[4px]
+           border-2 border-asf-line-faint
+           [background:linear-gradient(180deg,rgba(6,5,20,0.95),rgba(2,1,10,0.98))];
+  }
+
+  .arcade-player-card__surface img {
+    @apply h-full w-full object-contain;
+  }
+
+  .arcade-start {
+    @apply w-full;
+  }
+
+  .arcade-ladder {
+    @apply m-0 flex list-none flex-col gap-2 p-0;
+  }
+
+  .arcade-ladder__rung {
+    @apply flex items-center gap-3 rounded-[4px] border-2 border-asf-line-faint
+           bg-asf-panel-alt px-3 py-2;
+  }
+
+  .arcade-ladder__rung.is-current {
+    @apply border-asf-gold;
+  }
+
+  .arcade-ladder__rung.is-cleared {
+    @apply opacity-55;
+  }
+
+  .arcade-ladder__rank {
+    @apply flex size-8 shrink-0 items-center justify-center rounded-[3px] border border-asf-line
+           bg-asf-bg-1 font-arcade text-[11px] text-asf-gold;
+  }
+
+  .arcade-ladder__who {
+    @apply flex min-w-0 flex-1 flex-col gap-0.5;
+  }
+
+  .arcade-ladder__who strong {
+    @apply truncate font-arcade text-[12px] tracking-[0.06em] uppercase text-asf-gold-bright;
+  }
+
+  .arcade-ladder__who small {
+    @apply truncate font-sans text-[11px] normal-case text-asf-muted;
+  }
+
+  .arcade-ladder__state {
+    @apply shrink-0 rounded-[3px] border border-asf-line px-2 py-1 font-arcade text-[11px]
+           uppercase text-asf-muted;
+  }
+
+  .arcade-ladder__state.is-next {
+    @apply border-asf-red text-asf-red;
+  }
+
+  /* ============================================================
      CODEX FEATURES — creation flow picker, grouped fighter list,
      sprite preview notes, intro video review
      ============================================================ */
@@ -2034,6 +2115,14 @@
     .tier-picker,
     .creation-flow-picker__options {
       @apply grid-cols-1;
+    }
+
+    .arcade-player-grid {
+      @apply grid-cols-2;
+    }
+
+    .arcade-resume__actions {
+      @apply ml-0 w-full;
     }
 
     .sf-vs-divider__text {

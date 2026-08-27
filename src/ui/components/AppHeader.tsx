@@ -2,19 +2,20 @@ import { BrandMark } from './BrandMark.tsx';
 import { PUBLIC_APP_NAME } from '../publicBrand.ts';
 
 export interface AppHeaderNavTarget {
-  route: '/menu' | '/gallery' | '/community';
+  route: '/menu' | '/arcade' | '/gallery' | '/community';
   label: string;
 }
 
 const NAV_TARGETS: AppHeaderNavTarget[] = [
-  { route: '/menu', label: 'Arcade' },
+  { route: '/menu', label: 'Home' },
+  { route: '/arcade', label: 'Arcade' },
   { route: '/gallery', label: 'Gallery' },
   { route: '/community', label: 'Community' },
 ];
 
 interface AppHeaderProps {
   currentRoute: string;
-  onNavigate: (route: '/menu' | '/gallery' | '/community') => void;
+  onNavigate: (route: '/menu' | '/arcade' | '/gallery' | '/community') => void;
 }
 
 /** Slim cabinet-style top bar on every non-fight screen. The Clerk auth dock

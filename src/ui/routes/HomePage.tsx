@@ -35,6 +35,7 @@ import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
 
 interface HomePageProps extends AuthRouteState {
   onCreateFighter: () => void;
+  onOpenArcade: () => void;
   onNavigateLegal: (route: LegalRoute) => void;
   onOpenGallery: () => void;
   onOpenCommunity: () => void;
@@ -59,6 +60,7 @@ export function HomePage({
   authStatus,
   authSessionKey,
   onCreateFighter,
+  onOpenArcade,
   onNavigateLegal,
   onOpenGallery,
   onOpenCommunity,
@@ -257,10 +259,10 @@ export function HomePage({
       ? 'Forge new challengers with credits. Every generated version stays yours.'
       : 'Upload a photo, get a playable fighter. Your first Rookie is free.';
   const arcadeModeHint = rookieStatus === 'included'
-    ? 'Your Rookie is included. Pick an official challenger.'
+    ? 'Your Rookie is included. Climb the machine roster.'
     : rookieStatus === 'credits'
-      ? 'Take your fighter into the CPU ladder.'
-      : 'Create a fighter or pick an official challenger.';
+      ? 'Climb the ladder: 13 challengers, 3 continues.'
+      : 'Create a fighter and climb the machine roster.';
 
   return (
     <div className="home-app">
@@ -278,9 +280,13 @@ export function HomePage({
       </div>
 
       <div className="home-menu">
-        <button type="button" className="home-menu__action is-primary" onClick={onOpenVsCpu}>
+        <button type="button" className="home-menu__action is-primary" onClick={onOpenArcade}>
           <span>Arcade Mode</span>
           <small>{arcadeModeHint}</small>
+        </button>
+        <button type="button" className="home-menu__action" onClick={onOpenVsCpu}>
+          <span>CPU Match</span>
+          <small>Pick The Matchup. Fight!</small>
         </button>
         <button type="button" className="home-menu__action" onClick={onOpenVsPlayer}>
           <span>Versus</span>
