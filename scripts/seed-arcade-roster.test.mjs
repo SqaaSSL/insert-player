@@ -1,8 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  REVIEWED_ARCADE_ACTIVATION_CONFIRMATION,
+  activateReviewedArcadeFighter,
   arcadeAdminAuthHeaders,
   assertApprovedArcadeGenerationContract,
+  assertReviewedActivationConfirmation,
   findCurrentArcadeEntry,
   planArcadeDraftRegistration,
   planFighterResume,
@@ -59,6 +62,76 @@ function completeSources(overrides = {}) {
 
 function championSprites(names) {
   return names.map((animationName) => ({ animationName, qualityTier: 'champion' }));
+}
+
+function reviewedAdminEntry(fighter, overrides = {}) {
+  return {
+    fighterId: 'a'.repeat(32),
+    fighterName: fighter.name,
+    qualityTier: 'champion',
+    public: false,
+    slug: fighter.slug,
+    rank: fighter.rank,
+    challengerLine: fighter.challengerLine,
+    defaultPersonality: fighter.defaultPersonality,
+    reference: {
+      kind: fighter.reference.kind,
+      sourceUrl: fighter.reference.sourceUrl,
+      license: fighter.reference.license,
+      credit: fighter.reference.credit,
+    },
+    generationPrompt: fighter.referencePrompt,
+    status: 'draft',
+    ...overrides,
+  };
+}
+
+function reviewedOwnedFighter(fighter, overrides = {}) {
+  const photoHash = fighter.reference.sourceSha256;
+  return {
+    id: 'a'.repeat(32),
+    name: fighter.name,
+    photoHash,
+    qualityTier: 'champion',
+    public: false,
+    sources: completeSources(),
+    sourceHashes: { original: photoHash },
+    sprites: animations.map((animationName) => ({
+      animationName,
+      qualityTier: 'champion',
+      url: `/${animationName}.png`,
+      rawUrl: `/${animationName}-raw.png`,
+    })),
+    ...overrides,
+  };
+}
+
+function reviewedActivationApi(fighter, { entry, owned } = {}) {
+  const resolvedEntry = entry ?? reviewedAdminEntry(fighter);
+  const resolvedOwned = owned ?? reviewedOwnedFighter(fighter);
+  const calls = [];
+  return {
+    calls,
+    requestApi: async (_baseUrl, _token, path, init = {}) => {
+      calls.push({ path, method: init.method ?? 'GET', body: init.body });
+      if (path === '/api/admin/arcade' && !init.method) {
+        return { fighters: [resolvedEntry] };
+      }
+      if (path === `/api/fighters/${resolvedEntry.fighterId}` && !init.method) {
+        return { fighter: resolvedOwned };
+      }
+      if (path === `/api/admin/arcade/${resolvedEntry.fighterId}` && init.method === 'PATCH') {
+        return {
+          fighter: {
+            ...resolvedEntry,
+            status: 'active',
+            public: true,
+          },
+        };
+      }
+      throw new Error(`Unexpected reviewed activation request: ${init.method ?? 'GET'} ${path}`);
+    },
+  };
 }
 
 describe('Arcade roster resume planning', () => {
@@ -200,6 +273,109 @@ describe('Arcade roster resume planning', () => {
   });
 });
 
+describe('Reviewed Arcade activation', () => {
+  const fighter = manifest.fighters.find((entry) => entry.slug === 'bad-bunny');
+
+  it('requires the dedicated activation phrase', () => {
+    expect(() => assertReviewedActivationConfirmation('GEMINI_ONLY_PRODUCTION'))
+      .toThrow(/ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION/);
+    expect(() => assertReviewedActivationConfirmation(REVIEWED_ARCADE_ACTIVATION_CONFIRMATION))
+      .not.toThrow();
+  });
+
+  it('activates a complete reviewed draft with only two reads and the final PATCH', async () => {
+    const api = reviewedActivationApi(fighter);
+    const activated = await activateReviewedArcadeFighter({
+      manifest,
+      fighter,
+      approvedPhotoHash: fighter.reference.sourceSha256,
+      baseUrl: 'https://api.insertplayer.ai',
+      token: async () => 'token',
+      requestApi: api.requestApi,
+    });
+
+    expect(activated).toMatchObject({
+      fighterId: 'a'.repeat(32),
+      status: 'active',
+      public: true,
+    });
+    expect(api.calls.map(({ method, path }) => `${method} ${path}`)).toEqual([
+      'GET /api/admin/arcade',
+      `GET /api/fighters/${'a'.repeat(32)}`,
+      `PATCH /api/admin/arcade/${'a'.repeat(32)}`,
+    ]);
+    expect(JSON.parse(api.calls[2].body)).toMatchObject({
+      slug: fighter.slug,
+      status: 'active',
+    });
+    expect(api.calls.some(({ path }) => /generation-contract|\/generate(?:\/|$)|\/sources(?:\/|$)/.test(path)))
+      .toBe(false);
+  });
+
+  it('blocks an incomplete draft before the activation PATCH', async () => {
+    const api = reviewedActivationApi(fighter, {
+      owned: reviewedOwnedFighter(fighter, {
+        sources: completeSources({ uprightRaw: null }),
+      }),
+    });
+
+    await expect(activateReviewedArcadeFighter({
+      manifest,
+      fighter,
+      approvedPhotoHash: fighter.reference.sourceSha256,
+      baseUrl: 'https://api.insertplayer.ai',
+      token: async () => 'token',
+      requestApi: api.requestApi,
+    })).rejects.toThrow(/incomplete.*source:upright/i);
+    expect(api.calls.every(({ method }) => method === 'GET')).toBe(true);
+
+    const missingRawSprite = reviewedActivationApi(fighter, {
+      owned: reviewedOwnedFighter(fighter, {
+        sprites: reviewedOwnedFighter(fighter).sprites.map((sprite) => (
+          sprite.animationName === 'high_kick' ? { ...sprite, rawUrl: null } : sprite
+        )),
+      }),
+    });
+    await expect(activateReviewedArcadeFighter({
+      manifest,
+      fighter,
+      approvedPhotoHash: fighter.reference.sourceSha256,
+      baseUrl: 'https://api.insertplayer.ai',
+      token: async () => 'token',
+      requestApi: missingRawSprite.requestApi,
+    })).rejects.toThrow(/sprite:high_kick:clean\/raw/i);
+    expect(missingRawSprite.calls.every(({ method }) => method === 'GET')).toBe(true);
+  });
+
+  it('blocks licensed-photo or manifest tampering before the activation PATCH', async () => {
+    const photoTamper = reviewedActivationApi(fighter, {
+      owned: reviewedOwnedFighter(fighter, { photoHash: '0'.repeat(64) }),
+    });
+    await expect(activateReviewedArcadeFighter({
+      manifest,
+      fighter,
+      approvedPhotoHash: fighter.reference.sourceSha256,
+      baseUrl: 'https://api.insertplayer.ai',
+      token: async () => 'token',
+      requestApi: photoTamper.requestApi,
+    })).rejects.toThrow(/licensed-photo hash/i);
+    expect(photoTamper.calls.every(({ method }) => method === 'GET')).toBe(true);
+
+    const manifestTamper = reviewedActivationApi(fighter, {
+      entry: reviewedAdminEntry(fighter, { generationPrompt: 'tampered prompt' }),
+    });
+    await expect(activateReviewedArcadeFighter({
+      manifest,
+      fighter,
+      approvedPhotoHash: fighter.reference.sourceSha256,
+      baseUrl: 'https://api.insertplayer.ai',
+      token: async () => 'token',
+      requestApi: manifestTamper.requestApi,
+    })).rejects.toThrow(/roster manifest.*generationPrompt/i);
+    expect(manifestTamper.calls.every(({ method }) => method === 'GET')).toBe(true);
+  });
+});
+
 describe('Arcade roster provider preflight', () => {
   const approved = {
     ready: true,
@@ -247,6 +423,14 @@ describe('Arcade roster provider preflight', () => {
     expect(productionWorkflow).toContain(
       '"$REQUESTED_OPERATION" != "dry-run" && "$REQUESTED_OPERATION" != "preflight"',
     );
+  });
+
+  it('keeps reviewed activation separate from generation and provider preflight', () => {
+    expect(productionWorkflow).toContain('- activate-reviewed');
+    expect(productionWorkflow).toContain('ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION');
+    expect(productionWorkflow).toContain("if: inputs.operation != 'activate-reviewed'");
+    expect(productionWorkflow).toContain('--activate-reviewed');
+    expect(productionWorkflow).toContain('--confirm-activation="$REQUESTED_CONFIRMATION"');
   });
 
   it('keeps canary preparation separate from the capped side inference', () => {

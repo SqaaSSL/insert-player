@@ -19,11 +19,14 @@ const targetArg = rawArgs.find((arg) => arg.startsWith('--target='));
 const slugArg = rawArgs.find((arg) => arg.startsWith('--slug='));
 const animationArg = rawArgs.find((arg) => arg.startsWith('--animation='));
 const sourceArg = rawArgs.find((arg) => arg.startsWith('--source='));
+const activationConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-activation='));
 const target = targetArg?.slice('--target='.length) ?? 'production';
 const animationName = animationArg?.slice('--animation='.length) ?? '';
 const sourceName = sourceArg?.slice('--source='.length) ?? '';
+const activationConfirmation = activationConfirmationArg?.slice('--confirm-activation='.length) ?? '';
 const dryRun = args.has('--dry-run');
 const activate = args.has('--activate');
+const activateReviewed = args.has('--activate-reviewed');
 const continueOnError = args.has('--continue-on-error');
 const all = args.has('--all');
 const resume = args.has('--resume');
@@ -56,6 +59,7 @@ const PLAYABLE_ANIMATION_NAMES = [
 const PLAYABLE_ANIMATIONS = new Set(PLAYABLE_ANIMATION_NAMES);
 const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'];
 const CANONICAL_SOURCES = new Set(CANONICAL_SOURCE_NAMES);
+export const REVIEWED_ARCADE_ACTIVATION_CONFIRMATION = 'ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION';
 const LICENSED_REFERENCE_PROMPT = /\blicensed reference photo\b|\bperson in (?:this|the) licensed photo\b/i;
 const IDENTITY_ERASING_PROMPT = /\bwritten description only\b|\b(?:new|own) clearly synthetic face\b/i;
 const APPROVED_ARCADE_PROVIDER_CONTRACT = {
@@ -282,34 +286,48 @@ export function validateManifest(manifest) {
   }
 }
 
+export function assertReviewedActivationConfirmation(value) {
+  if (value !== REVIEWED_ARCADE_ACTIVATION_CONFIRMATION) {
+    throw new Error(
+      `Reviewed Arcade activation requires --confirm-activation=${REVIEWED_ARCADE_ACTIVATION_CONFIRMATION}.`,
+    );
+  }
+}
+
 function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
   if (
     preflightOnly
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || animationName || sourceName)
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || animationName || sourceName)
   ) {
     throw new Error('--preflight-only requires one --slug and cannot be combined with a generation operation.');
   }
   if (animationName && sourceName) {
     throw new Error('Use either --animation or --source, not both.');
   }
-  if ((animationName || sourceName) && (all || !slugArg || activate)) {
-    throw new Error('--animation and --source require one --slug and cannot be combined with --all or --activate.');
+  if ((animationName || sourceName) && (all || !slugArg || activate || activateReviewed)) {
+    throw new Error('--animation and --source require one --slug and cannot be combined with an activation operation.');
   }
   if (resume && (animationName || sourceName)) {
     throw new Error('--resume fills an entire fighter and cannot be combined with --animation or --source.');
   }
-  if (restartDraft && (all || resume || prepareCanary || canarySide || probeSide || activate || animationName || sourceName || !slugArg)) {
+  if (restartDraft && (all || resume || prepareCanary || canarySide || probeSide || activate || activateReviewed || animationName || sourceName || !slugArg)) {
     throw new Error('--restart-draft requires one --slug and cannot be combined with --all, --resume, --activate, --animation, or --source.');
   }
-  if (prepareCanary && (all || resume || restartDraft || canarySide || probeSide || activate || animationName || sourceName || !slugArg)) {
+  if (prepareCanary && (all || resume || restartDraft || canarySide || probeSide || activate || activateReviewed || animationName || sourceName || !slugArg)) {
     throw new Error('--prepare-canary requires one --slug and cannot be combined with another generation operation.');
   }
-  if (canarySide && (all || resume || restartDraft || prepareCanary || probeSide || activate || animationName || sourceName || !slugArg)) {
+  if (canarySide && (all || resume || restartDraft || prepareCanary || probeSide || activate || activateReviewed || animationName || sourceName || !slugArg)) {
     throw new Error('--canary-side requires one --slug and cannot be combined with another generation operation.');
   }
-  if (probeSide && (all || resume || restartDraft || prepareCanary || canarySide || activate || animationName || sourceName || !slugArg)) {
+  if (probeSide && (all || resume || restartDraft || prepareCanary || canarySide || activate || activateReviewed || animationName || sourceName || !slugArg)) {
     throw new Error('--probe-side requires one --slug and cannot be combined with another generation operation.');
+  }
+  if (
+    activateReviewed
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || animationName || sourceName || !slugArg)
+  ) {
+    throw new Error('--activate-reviewed requires one --slug and cannot be combined with generation, resume, or dry-run.');
   }
   if (animationName && !PLAYABLE_ANIMATIONS.has(animationName)) {
     throw new Error(`Unknown playable animation: ${animationName}`);
@@ -484,6 +502,139 @@ export function planFighterResume(fighter) {
     animationNames,
     ready: sourceNames.length === 0 && animationNames.length === 0,
   };
+}
+
+export function assertReviewedActivationDraft({
+  manifest,
+  fighter,
+  entry,
+  owned,
+  approvedPhotoHash,
+}) {
+  if (!entry) {
+    throw new Error(`No current Arcade fighter exists for ${fighter.slug}. Stage and review its private draft first.`);
+  }
+  if (!/^[a-f0-9]{32}$/.test(entry.fighterId ?? '')) {
+    throw new Error(`Current Arcade fighter ${fighter.slug} has an invalid id.`);
+  }
+  if (entry.status !== 'draft') {
+    throw new Error(`Reviewed activation is restricted to draft fighters; ${fighter.slug} is ${entry.status}.`);
+  }
+
+  const reference = fighterReference(manifest, fighter);
+  const manifestMismatches = [
+    entry.slug === fighter.slug ? null : 'slug',
+    entry.rank === fighter.rank ? null : 'rank',
+    entry.fighterName === fighter.name ? null : 'name',
+    entry.qualityTier === 'champion' ? null : 'tier',
+    entry.public === false ? null : 'visibility',
+    entry.challengerLine === fighter.challengerLine ? null : 'challengerLine',
+    entry.defaultPersonality === fighter.defaultPersonality ? null : 'defaultPersonality',
+    entry.reference?.kind === reference.kind ? null : 'reference.kind',
+    entry.reference?.sourceUrl === reference.sourceUrl ? null : 'reference.sourceUrl',
+    entry.reference?.license === reference.license ? null : 'reference.license',
+    entry.reference?.credit === reference.credit ? null : 'reference.credit',
+    entry.generationPrompt === fighter.referencePrompt ? null : 'generationPrompt',
+  ].filter(Boolean);
+  if (manifestMismatches.length > 0) {
+    throw new Error(
+      `${fighter.name} draft does not match the reviewed roster manifest: ${manifestMismatches.join(', ')}.`,
+    );
+  }
+
+  if (approvedPhotoHash !== reference.sourceSha256) {
+    throw new Error(`${fighter.name} approved local source hash does not match the roster manifest.`);
+  }
+  if (!owned || owned.id !== entry.fighterId) {
+    throw new Error(`${fighter.name} private asset manifest is unavailable or belongs to another fighter.`);
+  }
+  if (
+    owned.name !== fighter.name
+    || owned.qualityTier !== 'champion'
+    || owned.public !== false
+  ) {
+    throw new Error(`${fighter.name} private fighter metadata changed after review.`);
+  }
+  if (
+    owned.photoHash !== approvedPhotoHash
+    || !owned.sources?.original
+    || owned.sourceHashes?.original !== approvedPhotoHash
+  ) {
+    throw new Error(`${fighter.name} private fighter does not match the approved licensed-photo hash.`);
+  }
+
+  const plan = planFighterResume(owned);
+  const currentSprites = new Map(
+    (Array.isArray(owned.sprites) ? owned.sprites : [])
+      .filter((sprite) => sprite?.qualityTier === 'champion')
+      .map((sprite) => [sprite.animationName, sprite]),
+  );
+  const missingSpritePointers = PLAYABLE_ANIMATION_NAMES.filter((name) => {
+    const sprite = currentSprites.get(name);
+    return !sprite?.url || !sprite?.rawUrl;
+  });
+  if (!plan.ready || missingSpritePointers.length > 0) {
+    const missing = [
+      ...plan.sourceNames.map((name) => `source:${name}`),
+      ...plan.animationNames.map((name) => `sprite:${name}`),
+      ...missingSpritePointers.map((name) => `sprite:${name}:clean/raw`),
+    ];
+    throw new Error(
+      `${fighter.name} reviewed draft is incomplete and cannot be activated: ${[...new Set(missing)].join(', ')}.`,
+    );
+  }
+
+  return { fighterId: entry.fighterId };
+}
+
+export async function activateReviewedArcadeFighter({
+  manifest,
+  fighter,
+  approvedPhotoHash,
+  baseUrl,
+  token,
+  requestApi = apiRequest,
+}) {
+  const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
+  const adminEntries = Array.isArray(admin.fighters) ? admin.fighters : [];
+  const entry = findCurrentArcadeEntry(adminEntries, fighter.slug);
+  if (!entry) {
+    throw new Error(`No current Arcade fighter exists for ${fighter.slug}. Stage and review its private draft first.`);
+  }
+  if (entry.status !== 'draft') {
+    throw new Error(`Reviewed activation is restricted to draft fighters; ${fighter.slug} is ${entry.status}.`);
+  }
+  if (!/^[a-f0-9]{32}$/.test(entry.fighterId ?? '')) {
+    throw new Error(`Current Arcade fighter ${fighter.slug} has an invalid id.`);
+  }
+
+  const detail = await requestApi(
+    baseUrl,
+    token,
+    `/api/fighters/${encodeURIComponent(entry.fighterId)}`,
+  );
+  const owned = detail.fighter;
+  assertReviewedActivationDraft({ manifest, fighter, entry, owned, approvedPhotoHash });
+
+  console.log(`\n${fighter.rank}. ${fighter.name} [reviewed activation only]`);
+  const result = await requestApi(
+    baseUrl,
+    token,
+    `/api/admin/arcade/${encodeURIComponent(entry.fighterId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(arcadePayload(manifest, fighter, 'active')),
+    },
+  );
+  if (
+    result.fighter?.fighterId !== entry.fighterId
+    || result.fighter?.status !== 'active'
+    || result.fighter?.public !== true
+  ) {
+    throw new Error(`${fighter.name} activation did not return a public active Arcade fighter.`);
+  }
+  console.log(`  active: ${entry.fighterId} (reviewed assets only; no generation requested)`);
+  return result.fighter;
 }
 
 function checkpointState(state, manifest, fighter, fighterId, photoHash, status, progress = {}) {
@@ -988,7 +1139,8 @@ async function main() {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   validateManifest(manifest);
   const selected = selectFighters(manifest);
-  mkdirSync(sourceDir, { recursive: true });
+  if (activateReviewed) assertReviewedActivationConfirmation(activationConfirmation);
+  if (!activateReviewed) mkdirSync(sourceDir, { recursive: true });
 
   if (dryRun) {
     for (const fighter of selected) {
@@ -999,6 +1151,9 @@ async function main() {
     }
     return;
   }
+  const reviewedActivationPhotoHash = activateReviewed
+    ? readApprovedSource(manifest, selected[0]).photoHash
+    : '';
 
   const env = readEnvValues();
   clerkBackendAuthBridgeSecret = envValue(env, 'CLERK_BACKEND_AUTH_BRIDGE_SECRET');
@@ -1029,6 +1184,17 @@ async function main() {
   const token = clerkSecretKey
     ? await createClerkAdminTokenProvider(clerkSecretKey, clerkUserId)
     : createStaticTokenProvider(staticToken);
+
+  if (activateReviewed) {
+    await activateReviewedArcadeFighter({
+      manifest,
+      fighter: selected[0],
+      approvedPhotoHash: reviewedActivationPhotoHash,
+      baseUrl,
+      token,
+    });
+    return;
+  }
 
   const providerPreflight = await apiRequest(
     baseUrl,
