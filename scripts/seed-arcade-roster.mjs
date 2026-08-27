@@ -60,6 +60,20 @@ const PLAYABLE_ANIMATION_NAMES = [
   'victory',
 ];
 const PLAYABLE_ANIMATIONS = new Set(PLAYABLE_ANIMATION_NAMES);
+export const REVIEW_GATED_VIDEO_ACTIONS = Object.freeze([
+  'idle',
+  'walk',
+  'high_punch',
+  'high_kick',
+  'low_punch',
+  'low_kick',
+  'jump',
+  'crouch',
+  'hit',
+  'ko',
+  'victory',
+]);
+const REVIEW_GATED_VIDEO_ACTION_SET = new Set(REVIEW_GATED_VIDEO_ACTIONS);
 const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'];
 const CANONICAL_SOURCES = new Set(CANONICAL_SOURCE_NAMES);
 export const REVIEWED_ARCADE_ACTIVATION_CONFIRMATION = 'ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION';
@@ -776,14 +790,14 @@ export function planReviewGatedVideoStep(jobs, fighterId) {
   );
 }
 
-function assertAwaitingVideoReview(review, job) {
+export function assertAwaitingVideoReview(review, job) {
   if (
     !review || review.jobId !== job.id || review.artifactRunId !== job.artifactRunId ||
     !/^[a-f0-9]{32}$/.test(review.candidateId ?? '') ||
     !Number.isInteger(review.revision) || review.revision < 1 ||
     !/^[a-f0-9]{64}$/.test(review.reportSha256 ?? '') ||
-    !PLAYABLE_ANIMATIONS.has(review.action) ||
-    review.sequenceOrder !== PLAYABLE_ANIMATION_NAMES.indexOf(review.action) ||
+    !REVIEW_GATED_VIDEO_ACTION_SET.has(review.action) ||
+    review.sequenceOrder !== REVIEW_GATED_VIDEO_ACTIONS.indexOf(review.action) ||
     review.status !== 'awaiting_review' ||
     !['technical_pass', 'needs_review', 'reject'].includes(review.technicalOutcome)
   ) {

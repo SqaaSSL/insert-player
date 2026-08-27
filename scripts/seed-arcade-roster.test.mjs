@@ -1,11 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { VIDEO_SPRITE_ACTIONS as WORKER_VIDEO_SPRITE_ACTIONS } from '../src/services/VideoSpriteCompileContract';
 import {
   REVIEW_GATED_VIDEO_STEP_CONFIRMATION,
+  REVIEW_GATED_VIDEO_ACTIONS,
   REVIEWED_ARCADE_ACTIVATION_CONFIRMATION,
   activateReviewedArcadeFighter,
   arcadeAdminAuthHeaders,
   assertApprovedArcadeGenerationContract,
+  assertAwaitingVideoReview,
   assertReviewGatedVideoStepConfirmation,
   assertReviewedActivationConfirmation,
   findCurrentArcadeEntry,
@@ -456,6 +459,19 @@ describe('Review-gated Arcade Video step', () => {
     requestApi,
     pause: async () => {},
     pollIntervalMs: 0,
+  });
+
+  it('uses the exact Worker action order for all eleven review sequence bindings', () => {
+    expect(REVIEW_GATED_VIDEO_ACTIONS).toEqual([...WORKER_VIDEO_SPRITE_ACTIONS]);
+    const job = videoJob();
+    for (const [sequenceOrder, action] of WORKER_VIDEO_SPRITE_ACTIONS.entries()) {
+      const review = videoReview(job, { action, sequenceOrder });
+      expect(assertAwaitingVideoReview(review, job)).toBe(review);
+      expect(() => assertAwaitingVideoReview({
+        ...review,
+        sequenceOrder: (sequenceOrder + 1) % WORKER_VIDEO_SPRITE_ACTIONS.length,
+      }, job)).toThrow(/sealed identity or technical-report contract/);
+    }
   });
 
   it('requires its own exact production confirmation', () => {
