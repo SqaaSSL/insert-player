@@ -41,6 +41,7 @@ export const XAI_CANONICAL_BUNDLE_MODEL = Object.freeze({
   provider: 'xai',
   backend: 'fal',
   catalogCostPerImage: 110000,
+  auditedCostMicrocredits: 110000,
   auditedCostUsd: 0.11,
   maxCostPerOutputUsd: 0.12,
   maxBundleCostUsd: 0.36,
@@ -539,11 +540,10 @@ async function downloadAuditAsset(asset, path, headers, fetchImpl) {
 async function archiveCompletedSource(options, slot, job, payload) {
   if (job.status !== 'completed') throw new Error(`${slot.sourceName} did not complete without fallback.`);
   if (
-    typeof job.cost !== 'number'
-    || !Number.isFinite(job.cost)
-    || Math.abs(job.cost - XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd) > 1e-9
+    !Number.isSafeInteger(job.cost)
+    || job.cost !== XAI_CANONICAL_BUNDLE_MODEL.auditedCostMicrocredits
   ) {
-    throw new Error(`${slot.sourceName} provider cost changed from the audited $0.11.`);
+    throw new Error(`${slot.sourceName} provider cost changed from the audited $0.11 (110000 microcredits).`);
   }
   const response = await options.fetchImpl(
     `${options.apiBase}/api/v1/jobs/${encodeURIComponent(slot.pixcliJobId)}/canva`,
@@ -558,11 +558,10 @@ async function archiveCompletedSource(options, slot, job, payload) {
   if (
     canva.job?.status !== 'completed'
     || canva.job?.job_id !== slot.pixcliJobId
-    || typeof canva.job?.cost !== 'number'
-    || !Number.isFinite(canva.job.cost)
-    || Math.abs(canva.job.cost - XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd) > 1e-9
+    || !Number.isSafeInteger(canva.job?.cost)
+    || canva.job.cost !== XAI_CANONICAL_BUNDLE_MODEL.auditedCostMicrocredits
   ) {
-    throw new Error(`${slot.sourceName} PixCLI audited job status, id, or $0.11 cost changed.`);
+    throw new Error(`${slot.sourceName} PixCLI audited job status, id, or $0.11 (110000-microcredit) cost changed.`);
   }
   if (
     providerRuns.length !== 1
@@ -607,7 +606,8 @@ async function archiveCompletedSource(options, slot, job, payload) {
       providerResponse: { ...providerResponse, path: relative(options.outputDirectory, join(auditDirectory, 'provider_response.json')) },
       providerRun: providerRuns[0],
       inputSha256: sha256(canonicalJson(payload)),
-      costUsd: job.cost,
+      costMicrocredits: job.cost,
+      costUsd: job.cost / 1_000_000,
     },
   };
 }

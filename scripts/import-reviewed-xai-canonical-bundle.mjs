@@ -285,6 +285,7 @@ function validateGenerationState(state, descriptor) {
       || slot.audit?.providerRun?.requestId !== reviewed.providerRequestId
       || slot.audit?.providerRun?.requestId !== reviewed.raw.providerRequestId
       || slot.audit?.inputSha256 !== reviewed.requestSha256
+      || slot.audit?.costMicrocredits !== XAI_CANONICAL_BUNDLE_MODEL.auditedCostMicrocredits
       || slot.audit?.costUsd !== 0.11
       || slot.cleanupFfmpegVersion !== XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion
     ) {

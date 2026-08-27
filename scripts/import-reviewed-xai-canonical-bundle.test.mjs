@@ -196,6 +196,7 @@ function bundleFixture() {
       audit: {
         providerRun: { requestId: sources[sourceName].providerRequestId },
         inputSha256: sources[sourceName].requestSha256,
+        costMicrocredits: 110000,
         costUsd: 0.11,
       },
       cleanupFfmpegVersion: '5.1.9-0+deb12u1',
@@ -342,6 +343,17 @@ describe('reviewed canonical bundle importer', () => {
       reviewedBy: '',
     })).rejects.toThrow(/review actor/i);
     expect(missingReviewerApi.requestApi).not.toHaveBeenCalled();
+
+    const wrongCostUnits = bundleFixture();
+    const wrongCostUnitsApi = apiFixture(wrongCostUnits);
+    wrongCostUnits.state.slots.side.audit.costMicrocredits = 0.11;
+    writeFileSync(
+      join(wrongCostUnits.bundleDirectory, 'generation-state.json'),
+      JSON.stringify(wrongCostUnits.state),
+    );
+    await expect(runReviewedCanonicalImport(options(wrongCostUnits, wrongCostUnitsApi)))
+      .rejects.toThrow(/exact completed reviewed source/i);
+    expect(wrongCostUnitsApi.requestApi).not.toHaveBeenCalled();
   });
 
   it('is idempotent after all six exact current hashes are present', async () => {
