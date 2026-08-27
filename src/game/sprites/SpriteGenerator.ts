@@ -46,6 +46,31 @@ export interface SpriteRuntimeProfile {
 
 export type HighKickRuntimeProfile = SpriteRuntimeProfile;
 
+/**
+ * Per-state visual presentation for a full-canvas sprite frame.
+ *
+ * `scale` and `offsetY` are composed with the stage-level render scale. The
+ * origin keeps the animation's measured root anchored to the fighter without
+ * rewriting the source atlas coordinates.
+ */
+export interface SpritePresentationProfile {
+  scale: number;
+  originX: number;
+  originY: number;
+  offsetY: number;
+}
+
+export const DEFAULT_SPRITE_PRESENTATION_PROFILE: Readonly<SpritePresentationProfile> = {
+  scale: 1,
+  originX: 0.5,
+  originY: 1,
+  offsetY: 0,
+};
+
+export interface ComposedSpritePresentation extends SpritePresentationProfile {
+  y: number;
+}
+
 const FORWARD_PING_PONG_STATES = new Set<FighterState>([
   FighterState.HIGH_PUNCH,
   FighterState.LOW_PUNCH,
@@ -118,6 +143,7 @@ export interface SpriteSheetLayout {
   frameCounts: Record<string, number>;
   playbackModes: Partial<Record<string, SpritePlaybackMode>>;
   durationTicks: Partial<Record<string, number>>;
+  presentationProfiles: Partial<Record<string, SpritePresentationProfile>>;
   totalColumns: number;
 }
 
@@ -127,11 +153,13 @@ export function createSpriteLayout(
   frameCountOverrides: Partial<Record<FighterState, number>> = {},
   playbackModeOverrides: Partial<Record<FighterState, SpritePlaybackMode>> = {},
   durationTickOverrides: Partial<Record<FighterState, number>> = {},
+  presentationProfileOverrides: Partial<Record<FighterState, SpritePresentationProfile>> = {},
 ): SpriteSheetLayout {
   const stateRow: Record<string, number> = {};
   const frameCounts = { ...STATE_FRAMES };
   const playbackModes: Partial<Record<string, SpritePlaybackMode>> = {};
   const durationTicks: Partial<Record<string, number>> = {};
+  const presentationProfiles: Partial<Record<string, SpritePresentationProfile>> = {};
 
   for (const [state, frameCount] of Object.entries(frameCountOverrides)) {
     if (Number.isInteger(frameCount) && frameCount > 0) {
@@ -144,13 +172,56 @@ export function createSpriteLayout(
   for (const [state, duration] of Object.entries(durationTickOverrides)) {
     if (Number.isInteger(duration) && duration > 0) durationTicks[state] = duration;
   }
+  for (const [state, profile] of Object.entries(presentationProfileOverrides)) {
+    if (
+      Number.isFinite(profile.scale) && profile.scale > 0 &&
+      Number.isFinite(profile.originX) &&
+      Number.isFinite(profile.originY) &&
+      Number.isFinite(profile.offsetY)
+    ) {
+      presentationProfiles[state] = { ...profile };
+    }
+  }
 
   let maxCols = 0;
   STATE_ORDER.forEach((state, row) => {
     stateRow[state] = row;
     maxCols = Math.max(maxCols, frameCounts[state]);
   });
-  return { stateRow, frameCounts, playbackModes, durationTicks, totalColumns: maxCols };
+  return {
+    stateRow,
+    frameCounts,
+    playbackModes,
+    durationTicks,
+    presentationProfiles,
+    totalColumns: maxCols,
+  };
+}
+
+export function getSpritePresentationProfile(
+  layout: SpriteSheetLayout,
+  state: FighterState,
+): Readonly<SpritePresentationProfile> {
+  return layout.presentationProfiles[state] ?? DEFAULT_SPRITE_PRESENTATION_PROFILE;
+}
+
+export function composeSpritePresentation(
+  profile: Readonly<SpritePresentationProfile>,
+  renderScale: number,
+  baseY: number,
+  renderYOffset = 0,
+): ComposedSpritePresentation {
+  return {
+    scale: profile.scale * renderScale,
+    originX: profile.originX,
+    originY: profile.originY,
+    offsetY: profile.offsetY,
+    y: baseY + renderYOffset + profile.offsetY * renderScale,
+  };
+}
+
+export function getFacingSpriteOriginX(sourceOriginX: number, flipped: boolean): number {
+  return flipped ? 1 - sourceOriginX : sourceOriginX;
 }
 
 export function getSpriteLayout(spriteKey?: string): SpriteSheetLayout {

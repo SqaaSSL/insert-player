@@ -18,7 +18,14 @@ import {
 } from '../constants.ts';
 import type { FighterInput } from '../systems/InputManager.ts';
 import { MotionInputs } from '../systems/MotionInputs.ts';
-import { getSpriteLayout, type SpriteSheetLayout } from '../sprites/SpriteGenerator.ts';
+import {
+  composeSpritePresentation,
+  getFacingSpriteOriginX,
+  getSpriteLayout,
+  getSpritePresentationProfile,
+  type ComposedSpritePresentation,
+  type SpriteSheetLayout,
+} from '../sprites/SpriteGenerator.ts';
 import { getActionAnimationFrame } from '../sprites/AnimationFrameMapping.ts';
 
 export interface FighterSnapshot {
@@ -75,15 +82,21 @@ export class Fighter {
   }
 
   createSprite(scene: Phaser.Scene): void {
-    this.shadowSprite = scene.add.sprite(this.x, this.y, this.spriteKey, 0);
+    const presentation = this.getComposedSpritePresentation();
+    const flipped = !this.facingRight;
+    this.shadowSprite = scene.add.sprite(this.x, presentation.y, this.spriteKey, 0);
     this.shadowSprite
-      .setOrigin(0.5, 1)
-      .setScale(this.renderScale * 1.015)
+      .setOrigin(presentation.originX, presentation.originY)
+      .setFlipX(flipped)
+      .setScale(presentation.scale * 1.015)
       .setTint(0x000000)
       .setAlpha(this.shadowAlpha)
       .setBlendMode(Phaser.BlendModes.MULTIPLY);
-    this.sprite = scene.add.sprite(this.x, this.y, this.spriteKey, 0);
-    this.sprite.setOrigin(0.5, 1).setScale(this.renderScale);
+    this.sprite = scene.add.sprite(this.x, presentation.y, this.spriteKey, 0);
+    this.sprite
+      .setOrigin(presentation.originX, presentation.originY)
+      .setFlipX(flipped)
+      .setScale(presentation.scale);
   }
 
   setRenderPresentation(scale: number, yOffset = 0): void {
@@ -92,15 +105,25 @@ export class Fighter {
     this.shadowOffsetX = Math.max(7, Math.round(8 * scale));
     this.shadowOffsetY = Math.max(7, Math.round(9 * scale));
     this.shadowAlpha = scale > 1 ? 0.18 : 0.14;
+    const presentation = this.getComposedSpritePresentation();
+    const flipped = !this.facingRight;
     if (this.shadowSprite) {
       this.shadowSprite
-        .setScale(scale * 1.015)
+        .setOrigin(presentation.originX, presentation.originY)
+        .setFlipX(flipped)
+        .setScale(presentation.scale * 1.015)
         .setAlpha(this.shadowAlpha)
-        .setPosition(this.x + this.shadowOffsetX, this.y + yOffset + this.shadowOffsetY);
+        .setPosition(
+          this.x + this.shadowOffsetX,
+          presentation.y + this.shadowOffsetY,
+        );
     }
     if (this.sprite) {
-      this.sprite.setScale(scale);
-      this.sprite.setY(this.y + yOffset);
+      this.sprite
+        .setOrigin(presentation.originX, presentation.originY)
+        .setFlipX(flipped)
+        .setScale(presentation.scale)
+        .setY(presentation.y);
     }
   }
 
@@ -440,23 +463,40 @@ export class Fighter {
   syncSprite(opponentX: number): void {
     if (!this.sprite) return;
     const spriteDepth = this.x < opponentX ? 10 : 11;
+    const presentation = this.getComposedSpritePresentation();
     if (this.shadowSprite) {
       this.shadowSprite.setPosition(
         this.x + this.shadowOffsetX,
-        this.getRenderY() + this.shadowOffsetY,
+        presentation.y + this.shadowOffsetY,
       );
+      this.shadowSprite.setOrigin(presentation.originX, presentation.originY);
       this.shadowSprite.setFlipX(!this.facingRight);
-      this.shadowSprite.setScale(this.renderScale * 1.015);
+      this.shadowSprite.setScale(presentation.scale * 1.015);
       this.shadowSprite.setDepth(spriteDepth - 0.5);
     }
-    this.sprite.setPosition(this.x, this.getRenderY());
+    this.sprite.setPosition(this.x, presentation.y);
+    this.sprite.setOrigin(presentation.originX, presentation.originY);
     this.sprite.setFlipX(!this.facingRight);
-    this.sprite.setScale(this.renderScale);
+    this.sprite.setScale(presentation.scale);
     this.sprite.setDepth(spriteDepth);
 
     const frameIndex = this.getFrameIndex();
     this.shadowSprite?.setFrame(frameIndex);
     this.sprite.setFrame(frameIndex);
+  }
+
+  private getComposedSpritePresentation(): ComposedSpritePresentation {
+    const presentation = composeSpritePresentation(
+      getSpritePresentationProfile(this.layout, this.state),
+      this.renderScale,
+      this.y,
+      this.renderYOffset,
+    );
+    presentation.originX = getFacingSpriteOriginX(
+      presentation.originX,
+      !this.facingRight,
+    );
+    return presentation;
   }
 
   private getFrameIndex(): number {
