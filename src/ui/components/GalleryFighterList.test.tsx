@@ -130,6 +130,34 @@ describe('GalleryFighterList', () => {
     expect(markup).not.toContain('Donald Trump cached copy');
   });
 
+  it('does not expose an official private backing row as an owned fighter', () => {
+    const privateElon = {
+      ...cachedMeta('private-elon-photo-hash', 'Editable Elon seed'),
+      cloudFighterId: 'elon-id',
+    };
+    const ownedMeta = cachedMeta('owned-photo-hash', 'Local Hero');
+    const sections = buildGalleryFighterSections([privateElon, ownedMeta], globals);
+
+    expect(sections.globals).toHaveLength(4);
+    expect(sections.globals.find(({ fighter }) => fighter?.id === 'elon-id')?.cachedMeta).toBeNull();
+    expect(sections.owned).toEqual([ownedMeta]);
+
+    const markup = renderToStaticMarkup(
+      <GalleryFighterList
+        metas={[privateElon, ownedMeta]}
+        arcadeFighters={globals}
+        selectedPhotoHash={ownedMeta.photoHash}
+        loadingArcadeId={null}
+        onSelectMeta={vi.fn()}
+        onSelectArcade={vi.fn()}
+        arcadeState="ready"
+      />,
+    );
+
+    expect(markup).not.toContain('Editable Elon seed');
+    expect(markup).toContain('aria-label="1 owned fighter"');
+  });
+
   it('matches legacy arcade cache keys without duplicating them as personal fighters', () => {
     const legacyElon = cachedMeta('arcade:elon-musk', 'Legacy Elon cache');
     const sections = buildGalleryFighterSections([legacyElon], globals);

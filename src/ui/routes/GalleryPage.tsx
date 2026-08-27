@@ -38,7 +38,6 @@ import {
   animLabel,
   defaultSourceForMeta,
   getSourceBlob,
-  isArcadeCachedMeta,
   type PreviewSelection,
   type PreviewSpriteLike,
   type SourceKey,
@@ -47,6 +46,13 @@ import {
   ensureGalleryArcadeFighterReady,
   findCachedArcadeMeta,
 } from '../shared/galleryArcadeRoster.ts';
+import {
+  arcadeRosterFighterIds,
+  galleryFighterIndexForSelection,
+  isGlobalRosterMeta,
+  markArcadeManagedMetas,
+  visibleGalleryMetas,
+} from '../shared/arcadeRosterIdentity.ts';
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
 import { shareCommunityFighter } from '../shared/communityShare.ts';
@@ -143,6 +149,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [arcadeFighters, setArcadeFighters] = useState<CloudFighter[]>([]);
   const [arcadeState, setArcadeState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [cloudSyncPending, setCloudSyncPending] = useState(true);
   const [loadingArcadeId, setLoadingArcadeId] = useState<string | null>(null);
   const [stages, setStages] = useState<CachedStageBackground[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -160,13 +167,30 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const publishConfirmRef = useRef<HTMLButtonElement>(null);
   const generationJobAbortRef = useRef<AbortController | null>(null);
   const assetLoadRequestRef = useRef(0);
+  const selectedPhotoHashRef = useRef<string | null>(null);
   const [recoveryJob, setRecoveryJob] = useState<GenerationJob | null>(null);
   const [resumableJobs, setResumableJobs] = useState<GenerationJob[]>([]);
   const [videoReviewJobs, setVideoReviewJobs] = useState<GenerationJob[]>([]);
 
   const meta = metas[currentIndex] ?? null;
-  const isArcadeFighter = isArcadeCachedMeta(meta);
+  const globalFighterIds = useMemo(
+    () => arcadeRosterFighterIds(metas, arcadeFighters),
+    [arcadeFighters, metas],
+  );
+  const isArcadeFighter = isGlobalRosterMeta(meta, globalFighterIds);
+  const ownerActionsReady = !isArcadeFighter && !cloudSyncPending;
   const pendingUpgrade = QUALITY_TIERS.find((tier) => tier.id === pendingUpgradeTier) ?? null;
+
+  const reconcileCurrentFighterIndex = (fighters: CachedMeta[]) => {
+    setCurrentIndex((current) => {
+      const selectedPhotoHash = selectedPhotoHashRef.current;
+      const nextIndex = galleryFighterIndexForSelection(fighters, selectedPhotoHash, current);
+      if (!selectedPhotoHash) {
+        selectedPhotoHashRef.current = fighters[nextIndex]?.photoHash ?? null;
+      }
+      return nextIndex;
+    });
+  };
 
   useEffect(() => {
     if (!pendingUpgradeTier) return;
@@ -195,11 +219,16 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
 
   useEffect(() => {
     const apiContext = captureApiRequestContext();
+    const ownerScope = getActiveSpriteCacheScope();
     let cancelled = false;
     setRecoveryJob(null);
     setResumableJobs([]);
     setVideoReviewJobs([]);
+    setPendingUpgradeTier(null);
+    setPublishConfirmOpen(false);
+    selectedPhotoHashRef.current = null;
     setArcadeState('loading');
+    setCloudSyncPending(true);
     const load = async () => {
       const checkoutStatus = consumeCheckoutStatus();
       const checkoutMessage = checkoutStatus ? checkoutStatusMessage(checkoutStatus) : null;
@@ -212,18 +241,38 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       let reviewCloudJobs: GenerationJob[] = [];
       let arcadeFailed = false;
       const [initialMetas, initialStages, globalRoster] = await Promise.all([
-        getAllCachedMetas(),
-        getAllCachedStageBackgrounds(),
+        getAllCachedMetas(ownerScope),
+        getAllCachedStageBackgrounds(ownerScope),
         listArcadeFighters().catch((err: any) => {
           arcadeFailed = true;
           debugWarn('[Gallery] Global roster unavailable:', err?.message ?? err);
           return [];
         }),
       ]);
-      let all = initialMetas;
+      const initiallyMarked = markArcadeManagedMetas(initialMetas, globalRoster);
+      let all = initiallyMarked.metas;
       let allStages = initialStages;
       if (!cancelled) {
+        const initialVisibleMetas = visibleGalleryMetas(
+          all.filter((item) => item.version === CACHE_VERSION && item.status === 'ready'),
+          globalRoster,
+        ).sort((a, b) => b.createdAt - a.createdAt);
+        const initialVisibleStages = initialStages
+          .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
+          .sort((a, b) => b.createdAt - a.createdAt);
+        setMetas(initialVisibleMetas);
+        setStages(initialVisibleStages);
         setArcadeFighters(globalRoster);
+        setArcadeState(arcadeFailed ? 'unavailable' : 'ready');
+        reconcileCurrentFighterIndex(initialVisibleMetas);
+        setCurrentStageIndex((current) => Math.min(current, Math.max(0, initialVisibleStages.length - 1)));
+      }
+      if (initiallyMarked.changed.length > 0) {
+        try {
+          await Promise.all(initiallyMarked.changed.map((item) => setCachedMeta(item, ownerScope)));
+        } catch (err: any) {
+          debugWarn('[Gallery] Global roster identity could not be persisted:', err?.message ?? err);
+        }
       }
       try {
         const [cloudSync, generationJobs] = await Promise.all([
@@ -243,20 +292,13 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         setVideoReviewJobs(reviewCloudJobs);
         cloudFailed = cloudSync.failed;
         cloudDrafts = cloudSync.drafts;
-        if (cloudSync.imported > 0 || cloudSync.updated > 0) {
-          cloudImported = cloudSync.imported;
-          cloudUpdated = cloudSync.updated;
-          [all, allStages] = await Promise.all([
-            getAllCachedMetas(),
-            getAllCachedStageBackgrounds(),
-          ]);
-        }
+        cloudImported = cloudSync.imported;
+        cloudUpdated = cloudSync.updated;
         const recoverableVideoFighterIds = new Set([
           ...(activeCloudJob?.creationFlow === 'video' ? [activeCloudJob] : []),
           ...reviewCloudJobs,
           ...resumableCloudJobs.filter((job) => job.creationFlow === 'video'),
         ].map((job) => job.fighterId));
-        let hydratedVideoDraft = false;
         for (const fighterId of recoverableVideoFighterIds) {
           const fighter = await getCloudFighter(fighterId, apiContext);
           if (!fighter?.photoHash) continue;
@@ -265,17 +307,25 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
             includeRawAssets: false,
             allowIncomplete: true,
           });
-          hydratedVideoDraft = true;
-        }
-        if (hydratedVideoDraft) {
-          [all, allStages] = await Promise.all([
-            getAllCachedMetas(),
-            getAllCachedStageBackgrounds(),
-          ]);
         }
       } catch (err: any) {
         if (cancelled) return;
         debugWarn('[Gallery] Cloud import skipped:', err?.message ?? err);
+      }
+      if (cancelled) return;
+      [all, allStages] = await Promise.all([
+        getAllCachedMetas(ownerScope),
+        getAllCachedStageBackgrounds(ownerScope),
+      ]);
+      if (cancelled) return;
+      const finallyMarked = markArcadeManagedMetas(all, globalRoster);
+      all = finallyMarked.metas;
+      if (finallyMarked.changed.length > 0) {
+        try {
+          await Promise.all(finallyMarked.changed.map((item) => setCachedMeta(item, ownerScope)));
+        } catch (err: any) {
+          debugWarn('[Gallery] Global roster identity could not be persisted:', err?.message ?? err);
+        }
       }
       if (cancelled) return;
       const visibleVideoFighterIds = new Set([
@@ -283,20 +333,20 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         ...reviewCloudJobs,
         ...resumableCloudJobs.filter((job) => job.creationFlow === 'video'),
       ].map((job) => job.fighterId));
-      const filtered = all
-        .filter((item) => item.version === CACHE_VERSION && (
+      const filtered = visibleGalleryMetas(
+        all.filter((item) => item.version === CACHE_VERSION && (
           item.status === 'ready' || (
             Boolean(item.cloudFighterId) && visibleVideoFighterIds.has(item.cloudFighterId as string)
           )
-        ))
-        .sort((a, b) => b.createdAt - a.createdAt);
+        )),
+        globalRoster,
+      ).sort((a, b) => b.createdAt - a.createdAt);
       const filteredStages = allStages
         .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
         .sort((a, b) => b.createdAt - a.createdAt);
       setMetas(filtered);
       setStages(filteredStages);
-      setArcadeState(arcadeFailed ? 'unavailable' : 'ready');
-      setCurrentIndex((current) => Math.min(current, Math.max(0, filtered.length - 1)));
+      reconcileCurrentFighterIndex(filtered);
       setCurrentStageIndex((current) => Math.min(current, Math.max(0, filteredStages.length - 1)));
       const cloudSyncStatus = formatCloudRosterSyncStatus({
         imported: cloudImported,
@@ -319,6 +369,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
             ? 'Ready'
             : 'No fighters or stages yet')),
       );
+      setCloudSyncPending(false);
     };
     void load();
     return () => { cancelled = true; };
@@ -384,9 +435,9 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
 
   const previewSourceBlob = useMemo(() => {
     if (!meta || selection.kind !== 'source') return null;
-    if (isArcadeCachedMeta(meta) && selection.source === 'original') return null;
+    if (isArcadeFighter && selection.source === 'original') return null;
     return getSourceBlob(meta, selection.source);
-  }, [meta, selection]);
+  }, [isArcadeFighter, meta, selection]);
 
   const previewBlob = selection.kind === 'source'
     ? previewSourceBlob
@@ -422,6 +473,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     ownerScope = getActiveSpriteCacheScope(),
   ) => {
     const currentPhotoHash = preferredPhotoHash;
+    if (currentPhotoHash) selectedPhotoHashRef.current = currentPhotoHash;
     assetLoadRequestRef.current += 1;
     const [all, allStages, nextSprites, nextIntro] = await Promise.all([
       getAllCachedMetas(ownerScope),
@@ -433,16 +485,16 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       throw new Error('Fighter cache session changed while loading');
     }
     assetLoadRequestRef.current += 1;
-    const filtered = all
-      .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
-      .sort((a, b) => b.createdAt - a.createdAt);
+    const filtered = visibleGalleryMetas(
+      all.filter((item) => item.version === CACHE_VERSION && item.status === 'ready'),
+      arcadeFighters,
+    ).sort((a, b) => b.createdAt - a.createdAt);
     const filteredStages = allStages
       .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
       .sort((a, b) => b.createdAt - a.createdAt);
     setMetas(filtered);
     setStages(filteredStages);
-    const nextIndex = currentPhotoHash ? filtered.findIndex((item) => item.photoHash === currentPhotoHash) : -1;
-    if (nextIndex >= 0) setCurrentIndex(nextIndex);
+    reconcileCurrentFighterIndex(filtered);
     setCurrentStageIndex((current) => Math.min(current, Math.max(0, filteredStages.length - 1)));
     setSprites(nextSprites);
     setIntro(nextIntro);
@@ -451,6 +503,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const selectCachedFighter = (selectedMeta: CachedMeta) => {
     const index = metas.findIndex((item) => item.photoHash === selectedMeta.photoHash);
     if (index < 0) return;
+    selectedPhotoHashRef.current = selectedMeta.photoHash;
     assetLoadRequestRef.current += 1;
     setSprites([]);
     setIntro(null);
@@ -462,6 +515,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     const ownerScope = getActiveSpriteCacheScope();
     const cached = findCachedArcadeMeta(metas, fighter);
     if (busy) return;
+    selectedPhotoHashRef.current = arcadeFighterPhotoHash(fighter);
     if (cached) selectCachedFighter(cached);
 
     setBusy(true);
@@ -613,6 +667,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   }, [recoveryJob?.id]);
 
   const resumeCloudGeneration = async (failedJob: GenerationJob) => {
+    if (cloudSyncPending) return;
     if (!legalAccepted) {
       setStatus('Accept the generation terms to resume preserved work');
       return;
@@ -675,6 +730,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const continueApprovedVideoJob = async (approvedJob: GenerationJob) => {
+    if (cloudSyncPending) return;
     if (!legalAccepted) {
       setStatus('Accept the generation terms to continue the video flow');
       return;
@@ -734,6 +790,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const restartRejectedVideoRun = async (rejectedJob: GenerationJob) => {
+    if (cloudSyncPending) return;
     if (!legalAccepted) {
       setStatus('Accept the generation terms to start a new complete Video run');
       return;
@@ -794,6 +851,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const finishApprovedVideoFighter = async (approvedJob: GenerationJob) => {
+    if (cloudSyncPending) return;
     setBusy(true);
     setStatus('All video actions approved. Syncing your private fighter...');
     const apiContext = captureApiRequestContext();
@@ -818,7 +876,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     operation: GenerationBillingOperation,
     creditCost: number,
   ) => {
-    if (!meta || isArcadeCachedMeta(meta)) return;
+    if (!meta || !ownerActionsReady) return;
     if (!legalAccepted) {
       setStatus('Accept the generation terms to continue');
       return;
@@ -929,7 +987,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const hasOutdatedSprites = sprites.some((sprite) => (sprite.processingVersion ?? 0) < SPRITE_PROCESSING_VERSION);
 
   const renameFighter = async () => {
-    if (!meta || isArcadeCachedMeta(meta)) return;
+    if (!meta || !ownerActionsReady) return;
     const nextName = window.prompt('Fighter name', meta.characterName);
     if (!nextName || !nextName.trim() || nextName.trim() === meta.characterName) return;
     const trimmedName = nextName.trim();
@@ -953,7 +1011,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const deleteFighter = async () => {
-    if (!meta || isArcadeCachedMeta(meta)) return;
+    if (!meta || !ownerActionsReady) return;
     if (!window.confirm(`Delete "${meta.characterName}"? This wipes sprites, intro video, and metadata. Cannot be undone.`)) {
       return;
     }
@@ -973,7 +1031,9 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       await deleteCharacter(removedHash);
       const nextMetas = metas.filter((item) => item.photoHash !== removedHash);
       setMetas(nextMetas);
-      setCurrentIndex((current) => Math.min(current, Math.max(0, nextMetas.length - 1)));
+      const nextIndex = Math.min(currentIndex, Math.max(0, nextMetas.length - 1));
+      selectedPhotoHashRef.current = nextMetas[nextIndex]?.photoHash ?? null;
+      setCurrentIndex(nextIndex);
       setSprites([]);
       setIntro(null);
       setSelection({ kind: 'source', source: 'original' });
@@ -990,7 +1050,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const rebuildHd = async () => {
-    if (!meta || isArcadeCachedMeta(meta)) return;
+    if (!meta || !ownerActionsReady) return;
     if (!window.confirm(`Rebuild all sprites for "${meta.characterName}" at HD resolution for free? Animations without a cached raw blob will be skipped.`)) {
       return;
     }
@@ -1040,7 +1100,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setStatus('Saving all sprites...');
     try {
       const sources: Array<[string, Blob | null | undefined]> = [
-        ...(!isArcadeCachedMeta(meta)
+        ...(!isArcadeFighter
           ? [['original', meta.originalPhotoBlob] as [string, Blob | null | undefined]]
           : []),
         ['side', meta.sideViewBlob],
@@ -1062,7 +1122,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const syncCloud = async () => {
-    if (!meta || isArcadeCachedMeta(meta)) return;
+    if (!meta || !ownerActionsReady) return;
     setBusy(true);
     setStatus('Syncing cloud roster...');
     const apiContext = captureApiRequestContext();
@@ -1084,7 +1144,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const togglePublic = async () => {
-    if (!meta || isArcadeCachedMeta(meta)) return;
+    if (!meta || !ownerActionsReady) return;
     setBusy(true);
     const nextPublic = !meta.cloudPublic;
     setStatus(nextPublic ? 'Publishing fighter...' : 'Making fighter private...');
@@ -1121,6 +1181,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const sharePublishedFighter = async () => {
+    if (!ownerActionsReady) return;
     if (!meta?.cloudFighterId) {
       setStatus('Sync cloud before sharing this fighter');
       return;
@@ -1139,7 +1200,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const upgradeToTier = async (toTier: QualityTier) => {
-    if (!meta || isArcadeCachedMeta(meta) || !legalAccepted) return;
+    if (!meta || !ownerActionsReady || !legalAccepted) return;
     const tier = QUALITY_TIERS.find((item) => item.id === toTier);
     if (!tier) return;
     clearDebugLog();
@@ -1383,7 +1444,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
               </div>
               <div className="roster-hero__actions">
                 <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
-                {!isArcadeFighter && resumableJob ? (
+                {ownerActionsReady && resumableJob ? (
                   <button
                     className="gallery-back"
                     disabled={busy || !legalAccepted}
@@ -1392,7 +1453,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                     Resume Preserved Work · Free
                   </button>
                 ) : null}
-                {!isArcadeFighter ? upgradeOptions.map((tier) => (
+                {ownerActionsReady ? upgradeOptions.map((tier) => (
                   <button
                     key={tier.id}
                     className="gallery-back"
@@ -1402,7 +1463,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                     {tier.label} {tier.priceLabel}
                   </button>
                 )) : null}
-                {!isArcadeFighter && hasOutdatedSprites ? (
+                {ownerActionsReady && hasOutdatedSprites ? (
                   <button className="gallery-back" disabled={busy} onClick={() => void rebuildHd()}>
                     Rebuild HD · Free
                   </button>
@@ -1410,7 +1471,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                 <button className="gallery-back" disabled={busy} onClick={() => void saveAll()}>
                   Save All
                 </button>
-                {!isArcadeFighter ? (
+                {ownerActionsReady ? (
                   <>
                     <button className="gallery-back" disabled={busy} onClick={() => void syncCloud()}>
                       Sync Cloud
@@ -1449,7 +1510,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
               />
             ) : null}
 
-            {!isArcadeFighter && videoReviewJob ? (
+            {ownerActionsReady && videoReviewJob ? (
               <VideoGenerationReviewGate
                 jobId={videoReviewJob.id}
                 disabled={busy}
@@ -1472,7 +1533,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                     onSelectSource={(source) => setSelection({ kind: 'source', source })}
                     regeneratingSource={retryingSource}
                     retryCreditCost={SOURCE_RETRY_CREDIT_COST}
-                    onRetry={isArcadeFighter ? undefined : {
+                    onRetry={!ownerActionsReady ? undefined : {
                       side: () => runRetry(
                         (context) => retrySideView(meta.photoHash, () => {}, context),
                         'Retrying side view...',
@@ -1525,7 +1586,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                     <p className="gallery-eyebrow">Preview</p>
                     <h3>
                       {selection.kind === 'source'
-                        ? selection.source === 'original' && isArcadeCachedMeta(meta)
+                        ? selection.source === 'original' && isArcadeFighter
                           ? 'PRIVATE REFERENCE'
                           : selection.source.toUpperCase()
                         : animLabel(selection.animationName)}
@@ -1550,7 +1611,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                           : 'Loading'
                     }
                     emptyLabel={selection.kind === 'source'
-                      ? selection.source === 'original' && isArcadeCachedMeta(meta)
+                      ? selection.source === 'original' && isArcadeFighter
                         ? 'Original reference is private'
                         : 'Missing source'
                       : 'No preview for this animation yet'}
@@ -1573,7 +1634,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                       Save RAW
                     </button>
                   ) : null}
-                  {selectedAnimName && !isArcadeFighter ? (
+                  {selectedAnimName && ownerActionsReady ? (
                     <button
                       disabled={busy}
                       onClick={() =>
