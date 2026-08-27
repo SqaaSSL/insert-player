@@ -975,18 +975,46 @@ export async function verifyReviewedVideoActivationProvenance({
   let artifactRunId = '';
   let jobId = finalJobId;
 
-  for (let sequenceOrder = REVIEW_GATED_VIDEO_ACTIONS.length - 1; sequenceOrder >= 0; sequenceOrder -= 1) {
-    if (!/^[a-f0-9]{32}$/.test(jobId) || seenJobs.has(jobId)) {
+  const readLineageJob = async (lineageJobId) => {
+    if (!/^[a-f0-9]{32}$/.test(lineageJobId) || seenJobs.has(lineageJobId)) {
       throw new Error('Reviewed Video job chain is invalid or cyclic.');
     }
-    seenJobs.add(jobId);
+    seenJobs.add(lineageJobId);
     const jobBody = await requestApi(
       baseUrl,
       token,
-      `/api/generation-jobs/${encodeURIComponent(jobId)}`,
+      `/api/generation-jobs/${encodeURIComponent(lineageJobId)}`,
     );
-    const job = assertReviewGatedVideoJob(jobBody.job, fighterId);
+    const job = assertReviewGatedVideoJob(
+      jobBody.job,
+      fighterId,
+      null,
+      { allowFullRunRestartRequired: true },
+    );
     if (!artifactRunId) artifactRunId = job.artifactRunId;
+    if (job.id !== lineageJobId || job.artifactRunId !== artifactRunId) {
+      throw new Error('Reviewed Video job chain crossed its sealed run identity.');
+    }
+    return job;
+  };
+
+  const assertObsoleteRetryJob = (job, sequenceOrder) => {
+    const mismatches = [
+      ['failed', 'cancelled'].includes(job.status) ? null : 'status',
+      job.reviewStatus === 'none' ? null : 'reviewStatus',
+      job.fullRunRestartRequired === false ? null : 'restartRequired',
+      job.resumable === false ? null : 'resumable',
+    ].filter(Boolean);
+    if (mismatches.length > 0) {
+      throw new Error(
+        `Reviewed Video retry predecessor before job ${sequenceOrder + 1}/11 failed its sealed contract: ${mismatches.join(', ')}.`,
+      );
+    }
+  };
+
+  let job = await readLineageJob(jobId);
+
+  for (let sequenceOrder = REVIEW_GATED_VIDEO_ACTIONS.length - 1; sequenceOrder >= 0; sequenceOrder -= 1) {
     const jobMismatches = [
       job.id === jobId ? null : 'id',
       job.artifactRunId === artifactRunId ? null : 'artifactRunId',
@@ -1084,15 +1112,28 @@ export async function verifyReviewedVideoActivationProvenance({
       rawSha256,
     });
 
-    const previousJobId = job.resumedFromJobId;
+    let previousJobId = job.resumedFromJobId;
+    let previousApprovedJob = null;
+    while (previousJobId != null) {
+      const predecessor = await readLineageJob(previousJobId);
+      if (predecessor.status === 'succeeded' && predecessor.reviewStatus === 'approved') {
+        previousApprovedJob = predecessor;
+        break;
+      }
+      assertObsoleteRetryJob(predecessor, sequenceOrder);
+      previousJobId = predecessor.resumedFromJobId;
+    }
     if (sequenceOrder === 0) {
-      if (previousJobId != null) {
+      if (previousApprovedJob) {
         throw new Error('Reviewed Video root job unexpectedly resumes another job.');
       }
-    } else if (typeof previousJobId !== 'string' || !/^[a-f0-9]{32}$/.test(previousJobId)) {
-      throw new Error(`Reviewed Video job ${sequenceOrder + 1}/11 has no sealed predecessor.`);
+    } else {
+      if (!previousApprovedJob) {
+        throw new Error(`Reviewed Video job ${sequenceOrder + 1}/11 has no sealed predecessor.`);
+      }
+      job = previousApprovedJob;
+      jobId = job.id;
     }
-    jobId = previousJobId ?? '';
   }
 
   if (

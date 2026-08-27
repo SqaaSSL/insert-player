@@ -111,6 +111,21 @@ const REVIEWED_VIDEO_DB_SEAL_SQL = `
       )
     ),
     (
+      SELECT COALESCE(json_group_array(job_row), '[]')
+      FROM (
+        SELECT json_array(
+          job.id, job.user_id, job.fighter_id, job.tier, job.creation_flow,
+          job.operation, job.target_kind, job.target_name, job.artifact_run_id,
+          job.resumed_from_job_id, job.status, job.review_status, job.stage,
+          job.failure_stage, job.progress_current, job.progress_total,
+          job.error_code, job.error_message, job.updated_at
+        ) AS job_row
+        FROM generation_jobs job
+        WHERE job.artifact_run_id = run.id
+        ORDER BY job.id ASC
+      )
+    ),
+    (
       SELECT COALESCE(json_group_array(checkpoint_row), '[]')
       FROM (
         SELECT json_array(

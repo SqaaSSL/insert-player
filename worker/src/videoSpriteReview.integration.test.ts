@@ -371,6 +371,41 @@ async function seedReviews(
   return reviews;
 }
 
+async function seedFailedResumePredecessor(
+  target: Harness,
+  reviews: ReviewSeed[],
+  action: VideoSpriteAction,
+): Promise<string> {
+  const index = reviews.findIndex((review) => review.action === action);
+  if (index < 1) throw new Error('failed resume predecessor requires a non-root action');
+  const resumed = reviews[index];
+  const previous = reviews[index - 1];
+  const failedJobId = hexId(0x900 + index);
+  await target.db.batch([
+    target.db.prepare(`INSERT INTO generation_jobs (
+      id, user_id, fighter_id, charge_id, provider_session_id, tier, creation_flow,
+      operation, target_kind, target_name, artifact_run_id, resumed_from_job_id, status,
+      review_status, stage, failure_stage, error_code, error_message,
+      progress_current, progress_total
+    ) VALUES (?, ?, ?, ?, ?, 'champion', 'video', 'fighter_generation', NULL, NULL,
+      ?, ?, 'failed', 'none', 'failed', 'video:compile', 'video_compile_failed',
+      'compiler capacity exhausted', ?, 14)`)
+      .bind(
+        failedJobId,
+        USER_ID,
+        FIGHTER_ID,
+        'failed-charge-' + index,
+        'failed-session-' + index,
+        RUN_ID,
+        previous.jobId,
+        index + 3,
+      ),
+    target.db.prepare(`UPDATE generation_jobs SET resumed_from_job_id = ? WHERE id = ?`)
+      .bind(failedJobId, resumed.jobId),
+  ]);
+  return failedJobId;
+}
+
 function decision(review: ReviewSeed, extra: Record<string, unknown> = {}): Request {
   return new Request('https://api.insertplayer.ai/review/' + review.jobId, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -761,6 +796,86 @@ describe('video sprite review handlers', () => {
         .bind(FIGHTER_ID).first()).toEqual({ status: 'active' });
       expect(await target.db.prepare(`SELECT public_flag FROM fighters WHERE id = ?`)
         .bind(FIGHTER_ID).first()).toEqual({ public_flag: 1 });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('activates through canonical approved actions after an exact failed resume predecessor', async () => {
+    const target = await createHarness();
+    try {
+      const reviews = await seedReviews(target, 10);
+      const failedJobId = await seedFailedResumePredecessor(target, reviews, 'hit');
+      const final = reviews.at(-1)!;
+      expect((await approveVideoSpriteReview(
+        decision(final), target.env, AUTH, final.jobId,
+      )).status).toBe(200);
+      const state = await target.db.prepare(`
+        SELECT arcade.updated_at AS arcade_updated_at, fighter.updated_at AS fighter_updated_at
+        FROM arcade_fighters arcade JOIN fighters fighter ON fighter.id = arcade.fighter_id
+        WHERE arcade.fighter_id = ?
+      `).bind(FIGHTER_ID).first<{
+        arcade_updated_at: string; fighter_updated_at: string;
+      }>();
+
+      const response = await activateReviewedVideoArcadeFighter(new Request(
+        `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/activate-reviewed-video`,
+        {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            finalJobId: final.jobId,
+            arcadeUpdatedAt: state!.arcade_updated_at,
+            fighterUpdatedAt: state!.fighter_updated_at,
+          }),
+        },
+      ), target.env, {
+        ...AUTH, user: { plan_tier: 'admin' },
+      } as AuthContext, FIGHTER_ID);
+
+      expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
+      expect(await target.db.prepare(`SELECT status, review_status FROM generation_jobs WHERE id = ?`)
+        .bind(failedJobId).first()).toEqual({ status: 'failed', review_status: 'none' });
+      expect(await target.db.prepare(`SELECT status FROM arcade_fighters WHERE fighter_id = ?`)
+        .bind(FIGHTER_ID).first()).toEqual({ status: 'active' });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('fails closed when a resumed predecessor is not an obsolete unreviewed failure', async () => {
+    const target = await createHarness();
+    try {
+      const reviews = await seedReviews(target, 10);
+      const failedJobId = await seedFailedResumePredecessor(target, reviews, 'hit');
+      const final = reviews.at(-1)!;
+      expect((await approveVideoSpriteReview(
+        decision(final), target.env, AUTH, final.jobId,
+      )).status).toBe(200);
+      await target.db.prepare(`UPDATE generation_jobs SET review_status = 'approved' WHERE id = ?`)
+        .bind(failedJobId).run();
+      const state = await target.db.prepare(`
+        SELECT arcade.updated_at AS arcade_updated_at, fighter.updated_at AS fighter_updated_at
+        FROM arcade_fighters arcade JOIN fighters fighter ON fighter.id = arcade.fighter_id
+        WHERE arcade.fighter_id = ?
+      `).bind(FIGHTER_ID).first<{
+        arcade_updated_at: string; fighter_updated_at: string;
+      }>();
+
+      const response = await activateReviewedVideoArcadeFighter(new Request(
+        `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/activate-reviewed-video`,
+        {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            finalJobId: final.jobId,
+            arcadeUpdatedAt: state!.arcade_updated_at,
+            fighterUpdatedAt: state!.fighter_updated_at,
+          }),
+        },
+      ), target.env, {
+        ...AUTH, user: { plan_tier: 'admin' },
+      } as AuthContext, FIGHTER_ID);
+
+      expect(response.status).toBe(409);
+      expect(await target.db.prepare(`SELECT status FROM arcade_fighters WHERE fighter_id = ?`)
+        .bind(FIGHTER_ID).first()).toEqual({ status: 'draft' });
+      expect(await target.db.prepare(`SELECT public_flag FROM fighters WHERE id = ?`)
+        .bind(FIGHTER_ID).first()).toEqual({ public_flag: 0 });
     } finally { await target.mf.dispose(); }
   }, 30_000);
 
