@@ -115,7 +115,9 @@ describe('Reviewed production Worker pin', () => {
     const calls = [];
     const request = async (url, init) => {
       calls.push({ url, init });
-      return Response.json({ ok: true });
+      return Response.json({ ok: true }, {
+        headers: { ETag: `"${'a'.repeat(64)}"` },
+      });
     };
     await clerkRequest('clerk-secret', '/sessions', {}, request);
     await apiRequest(
@@ -138,6 +140,61 @@ describe('Reviewed production Worker pin', () => {
       'Bearer admin-token',
       'Bearer admin-token',
     ]);
+  });
+});
+
+describe('Reviewed Video asset digest headers', () => {
+  const path = '/api/generation-jobs/job/video-review/assets/report?revision=1';
+  const bytes = Buffer.from('{"review":"sealed"}');
+  const sha256 = digest(bytes);
+  const response = (headers) => new Response(bytes, {
+    headers: { 'Content-Type': 'application/json', ...headers },
+  });
+
+  it.each([
+    ['strong', `"${sha256}"`],
+    ['weak', `W/"${sha256}"`],
+  ])('accepts one exact %s SHA-256 ETag and returns its digest', async (_kind, etag) => {
+    await expect(apiAssetRequest(
+      'https://api.insertplayer.ai', async () => 'admin-token', path,
+      async () => response({ ETag: etag }),
+    )).resolves.toMatchObject({ etag: sha256, contentType: 'application/json' });
+  });
+
+  it('accepts the exact content digest header and requires agreement with ETag', async () => {
+    await expect(apiAssetRequest(
+      'https://api.insertplayer.ai', async () => 'admin-token', path,
+      async () => response({ 'X-Content-SHA256': sha256 }),
+    )).resolves.toMatchObject({ etag: sha256 });
+    await expect(apiAssetRequest(
+      'https://api.insertplayer.ai', async () => 'admin-token', path,
+      async () => response({
+        ETag: `W/"${sha256}"`,
+        'X-Content-SHA256': 'b'.repeat(64),
+      }),
+    )).rejects.toThrow(/conflicting integrity digests/);
+  });
+
+  it('rejects a malformed content digest when ETag is absent', async () => {
+    await expect(apiAssetRequest(
+      'https://api.insertplayer.ai', async () => 'admin-token', path,
+      async () => response({ 'X-Content-SHA256': `W/"${sha256}"` }),
+    )).rejects.toThrow(/malformed content SHA-256/);
+  });
+
+  it.each([
+    ['missing', null],
+    ['unquoted', sha256],
+    ['lowercase weak prefix', `w/"${sha256}"`],
+    ['weak whitespace', `W/ "${sha256}"`],
+    ['trailing data', `W/"${sha256}" extra`],
+    ['multiple values', `"${sha256}", W/"${sha256}"`],
+    ['short digest', 'W/"abcd"'],
+  ])('rejects a %s ETag fail-closed', async (_kind, etag) => {
+    await expect(apiAssetRequest(
+      'https://api.insertplayer.ai', async () => 'admin-token', path,
+      async () => response(etag === null ? {} : { ETag: etag }),
+    )).rejects.toThrow(/integrity digest|malformed SHA-256 ETag/);
   });
 });
 
@@ -1298,6 +1355,22 @@ describe('Review-gated Arcade Video step', () => {
       if (path === `/api/generation-jobs/${job.id}` && !init.method) return { job };
       return api.requestApi(baseUrl, token, path, init);
     };
+    const fetchedAssets = [];
+    const requestAsset = (baseUrl, token, path) => apiAssetRequest(
+      baseUrl,
+      token,
+      path,
+      async () => {
+        fetchedAssets.push(path);
+        const asset = await boundReviewAsset(baseUrl, token, path);
+        const weak = path.includes('/assets/report?');
+        return new Response(asset.bytes, { headers: {
+          'Content-Type': asset.contentType,
+          ETag: `${weak ? 'W/' : ''}"${asset.etag}"`,
+          'X-Content-SHA256': asset.etag,
+        } });
+      },
+    );
     const destination = mkdtempSync(join(tmpdir(), 'arcade-video-review-'));
     try {
       const result = await runReviewGatedVideoInspection({
@@ -1310,7 +1383,7 @@ describe('Review-gated Arcade Video step', () => {
         revision: review.revision,
         reportSha256: review.reportSha256,
         destination,
-        requestAsset: boundReviewAsset,
+        requestAsset,
       });
       expect(result.descriptor).toMatchObject({
         schemaVersion: 1,
@@ -1334,6 +1407,7 @@ describe('Review-gated Arcade Video step', () => {
       expect(Object.keys(result.descriptor.assets)).toEqual([
         'video', 'contactSheet', 'uniqueSheet', 'runtime', 'raw', 'report',
       ]);
+      expect(fetchedAssets).toEqual(Object.values(review.assets));
       for (const filename of [
         'video.mp4', 'contact-sheet.png', 'unique-sheet.png',
         'runtime.png', 'raw.png', 'report.json', 'review-descriptor.json',

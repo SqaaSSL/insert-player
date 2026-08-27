@@ -430,14 +430,18 @@ describe('video sprite review handlers', () => {
         timestamp: '2026-08-27T00:00:00Z',
       };
       const reviewUrl = `https://api.insertplayer.ai/api/generation-jobs/${review.jobId}/video-review`;
-      const assetUrl = `${reviewUrl}/assets/runtime?revision=1`;
+      const assetUrl = `${reviewUrl}/assets/report?revision=1`;
 
       expect((await getVideoSpriteReview(
         new Request(reviewUrl), target.env, AUTH, review.jobId,
       )).status).toBe(200);
-      expect((await getVideoSpriteReviewAsset(
-        new Request(assetUrl), target.env, AUTH, review.jobId, 'runtime',
-      )).status).toBe(200);
+      const unpinnedAsset = await getVideoSpriteReviewAsset(
+        new Request(assetUrl), target.env, AUTH, review.jobId, 'report',
+      );
+      expect(unpinnedAsset.status).toBe(200);
+      const unpinnedAssetSha256 = await hashString(await unpinnedAsset.arrayBuffer());
+      expect(unpinnedAsset.headers.get('ETag')).toBe(`"${unpinnedAssetSha256}"`);
+      expect(unpinnedAsset.headers.get('X-Content-SHA256')).toBe(unpinnedAssetSha256);
 
       const staleRead = new Request(reviewUrl, {
         headers: { 'X-Insert-Player-Expected-Worker-Sha': '2'.repeat(40) },
@@ -449,7 +453,7 @@ describe('video sprite review handlers', () => {
         headers: { 'X-Insert-Player-Expected-Worker-Sha': '2'.repeat(40) },
       });
       expect((await getVideoSpriteReviewAsset(
-        staleAsset, target.env, AUTH, review.jobId, 'runtime',
+        staleAsset, target.env, AUTH, review.jobId, 'report',
       )).status).toBe(409);
 
       for (const handler of [
@@ -474,7 +478,7 @@ describe('video sprite review handlers', () => {
         headers: { 'X-Insert-Player-Expected-Worker-Sha': exactSha },
       });
       expect((await getVideoSpriteReviewAsset(
-        exactAsset, target.env, AUTH, review.jobId, 'runtime',
+        exactAsset, target.env, AUTH, review.jobId, 'report',
       )).status).toBe(200);
       expect((await approveVideoSpriteReview(
         decision(review), target.env, AUTH, review.jobId,
