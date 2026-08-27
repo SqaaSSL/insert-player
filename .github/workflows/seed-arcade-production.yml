@@ -18,12 +18,13 @@ on:
           - dry-run
           - seed
           - resume
+          - activate-reviewed
           - restart-draft
           - prepare-canary
           - canary-side
           - probe-side
       confirmation:
-        description: Enter GEMINI_ONLY_PRODUCTION for a production mutation or billable operation
+        description: Enter GEMINI_ONLY_PRODUCTION, or ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION for activate-reviewed
         required: false
         type: string
 
@@ -36,7 +37,7 @@ concurrency:
 
 jobs:
   seed:
-    name: Gemini-only Champion draft
+    name: Champion draft or reviewed activation
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment: production
@@ -62,7 +63,12 @@ jobs:
             printf '::error::Invalid Arcade fighter slug.\n'
             exit 1
           }
-          if [[ "$REQUESTED_OPERATION" != "dry-run" && "$REQUESTED_OPERATION" != "preflight" ]]; then
+          if [[ "$REQUESTED_OPERATION" == "activate-reviewed" ]]; then
+            [[ "$REQUESTED_CONFIRMATION" == "ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION" ]] || {
+              printf '::error::Reviewed activation requires its exact dedicated confirmation phrase.\n'
+              exit 1
+            }
+          elif [[ "$REQUESTED_OPERATION" != "dry-run" && "$REQUESTED_OPERATION" != "preflight" ]]; then
             [[ "$REQUESTED_CONFIRMATION" == "GEMINI_ONLY_PRODUCTION" ]] || {
               printf '::error::Production mutations and billable generation require the exact confirmation phrase.\n'
               exit 1
@@ -99,6 +105,7 @@ jobs:
         run: npm --prefix processor ci
 
       - name: Prove the approved image-provider boundary
+        if: inputs.operation != 'activate-reviewed'
         shell: bash
         run: |
           [[ -f processor/scripts/assert-approved-image-providers.mjs ]] || {
@@ -120,7 +127,7 @@ jobs:
         if: inputs.operation != 'preflight'
         run: npm run arcade:sources -- --target=production --slug="$REQUESTED_SLUG"
 
-      - name: Verify runtime or start the Champion draft
+      - name: Run the selected Champion roster operation
         shell: bash
         run: |
           seed_args=(--target=production --slug="$REQUESTED_SLUG")
@@ -136,6 +143,13 @@ jobs:
               ;;
             resume)
               seed_args+=(--resume --confirm-production)
+              ;;
+            activate-reviewed)
+              seed_args+=(
+                --activate-reviewed
+                --confirm-production
+                --confirm-activation="$REQUESTED_CONFIRMATION"
+              )
               ;;
             restart-draft)
               seed_args+=(--restart-draft --confirm-production)

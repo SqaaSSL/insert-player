@@ -1,16 +1,38 @@
-import { describe, expect, it } from 'vitest';
+import 'fake-indexeddb/auto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./ApiClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ApiClient')>();
+  return { ...actual, apiFetch: vi.fn() };
+});
+
+import { apiFetch, type ApiRequestContext } from './ApiClient.ts';
 import {
   arcadeFighterPhotoHash,
   buildSpriteDownloadPlan,
   buildSpriteUploadPlan,
+  cloudPlayableSpriteRefs,
+  cloudSpritesForImport,
   formatCloudRosterSyncStatus,
+  isCompleteCloudFighterRoster,
   isSourceOnlyCloudFighter,
   selectPlayableCloudSprites,
   shouldRefreshLocalFighter,
+  syncFighterToCloud,
   type CloudSprite,
   type FingerprintedSprite,
 } from './CloudFighters.ts';
-import type { CachedMeta, CachedSprite } from './SpriteCache.ts';
+import {
+  closeSpriteCacheDatabase,
+  configureSpriteCacheOwner,
+  getAllSpritesForHash,
+  getCachedMeta,
+  hashPhoto,
+  setCachedMeta,
+  setCachedSprite,
+  type CachedMeta,
+  type CachedSprite,
+} from './SpriteCache.ts';
 
 function candidate(
   versionId: string,
@@ -90,9 +112,21 @@ describe('buildSpriteUploadPlan', () => {
     const current = candidate('current', 2, 'current-hash');
 
     expect(buildSpriteUploadPlan([archived, current], [current], [], [])).toEqual([
-      { kind: 'upload', candidate: archived, setCurrent: true },
+      { kind: 'upload', candidate: archived, setCurrent: false },
       { kind: 'upload', candidate: current, setCurrent: true },
     ]);
+  });
+
+  it('never promotes a newer higher-tier candidate outside the authoritative playable set', () => {
+    const remoteCurrent = candidate('remote-current', 100, 'a'.repeat(64), 'contender');
+    const pendingCandidate = candidate('pending-candidate', 200, 'b'.repeat(64), 'champion');
+
+    expect(buildSpriteUploadPlan(
+      [remoteCurrent, pendingCandidate],
+      [remoteCurrent],
+      [cloudSprite('a'.repeat(64), 'contender')],
+      [cloudSprite('a'.repeat(64), 'contender')],
+    )).toEqual([{ kind: 'upload', candidate: pendingCandidate, setCurrent: false }]);
   });
 
   it('uploads non-current history without moving a matching current pointer', () => {
@@ -280,6 +314,41 @@ describe('cloud roster sync status', () => {
     })).toBe(false);
   });
 
+  it('requires all eleven current pointers and never counts archived private versions', () => {
+    const animationNames = [
+      'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
+      'jump', 'crouch', 'hit', 'ko', 'victory',
+    ];
+    const completeSprites = animationNames.map((animationName) => ({
+      ...cloudSprite(`current-${animationName}`),
+      animationName,
+    }));
+
+    expect(isCompleteCloudFighterRoster({ ...fighter, sprites: completeSprites })).toBe(true);
+    expect(isCompleteCloudFighterRoster({
+      ...fighter,
+      sprites: completeSprites.slice(0, 1),
+      spriteVersions: completeSprites,
+    })).toBe(false);
+    expect(cloudSpritesForImport({
+      ...fighter,
+      sprites: completeSprites.slice(0, 1),
+      spriteVersions: completeSprites,
+    }, {
+      includeArchivedVersions: false,
+    })).toHaveLength(1);
+    expect(() => cloudSpritesForImport({
+      ...fighter,
+      sprites: completeSprites,
+      spriteVersions: [
+        ...completeSprites,
+        { ...completeSprites[0], id: 'private-candidate', contentHash: 'private-candidate' },
+      ],
+    }, {
+      includeArchivedVersions: true,
+    })).toThrow(/cannot be imported into the playable cache/i);
+  });
+
   it('reports unfinished fighters without presenting them as download failures', () => {
     expect(formatCloudRosterSyncStatus({
       imported: 0,
@@ -306,7 +375,32 @@ describe('cloud roster sync status', () => {
 });
 
 describe('shouldRefreshLocalFighter', () => {
-  it('resumes an incomplete archived-version hydration', () => {
+  it('refreshes a migrated cloud fighter that has no exact current bindings', () => {
+    expect(shouldRefreshLocalFighter({
+      id: 'fighter-cloud',
+      name: 'Nova QA',
+      photoHash: 'fighter-hash',
+      qualityTier: 'champion',
+      public: false,
+      sources: {},
+      sprites: [{ ...cloudSprite('a'.repeat(64)), animationName: 'idle' }],
+      updatedAt: '2026-08-19T02:00:00.000Z',
+    }, {
+      photoHash: 'fighter-hash',
+      version: 1,
+      characterName: 'Nova QA',
+      qualityTier: 'champion',
+      cloudFighterId: 'fighter-cloud',
+      cloudSpriteVersionCount: 1,
+      status: 'ready',
+      animationsReady: ['idle'],
+      createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
+      updatedAt: Date.parse('2026-08-19T02:00:00.000Z'),
+    } as CachedMeta)).toBe(true);
+  });
+
+  it('does not refresh the playable cache solely for a new archived private version', () => {
+    const currentHash = 'a'.repeat(64);
     const fighter = {
       id: 'fighter-cloud',
       name: 'Nova QA',
@@ -314,9 +408,9 @@ describe('shouldRefreshLocalFighter', () => {
       qualityTier: 'champion' as const,
       public: false,
       sources: {},
-      sprites: [{ ...cloudSprite('current'), animationName: 'idle' }],
+      sprites: [{ ...cloudSprite(currentHash), animationName: 'idle' }],
       spriteVersions: [
-        { ...cloudSprite('current'), animationName: 'idle' },
+        { ...cloudSprite(currentHash), animationName: 'idle' },
         { ...cloudSprite('archived'), animationName: 'idle' },
       ],
       updatedAt: '2026-08-19T02:00:00.000Z',
@@ -328,19 +422,20 @@ describe('shouldRefreshLocalFighter', () => {
       qualityTier: 'champion' as const,
       cloudFighterId: 'fighter-cloud',
       cloudSpriteVersionCount: 1,
+      cloudPlayableSpriteRefs: cloudPlayableSpriteRefs(fighter.sprites),
       status: 'ready' as const,
       animationsReady: ['idle'],
       createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
       updatedAt: Date.parse('2026-08-19T02:00:00.000Z'),
     } as CachedMeta;
 
-    expect(shouldRefreshLocalFighter(fighter, existing)).toBe(true);
+    expect(shouldRefreshLocalFighter(fighter, existing)).toBe(false);
   });
 
   it('does not confuse three tier pointers with missing animation names', () => {
     const names = ['idle', 'walk', 'high_punch'];
     const sprites = (['rookie', 'contender', 'champion'] as const).flatMap((tier) =>
-      names.map((name) => ({ ...cloudSprite(`${tier}-${name}`, tier), animationName: name })),
+      names.map((name) => ({ ...cloudSprite('a'.repeat(64), tier), animationName: name })),
     );
     expect(shouldRefreshLocalFighter({
       id: 'fighter-cloud',
@@ -368,10 +463,145 @@ describe('shouldRefreshLocalFighter', () => {
       qualityTier: 'champion',
       cloudFighterId: 'fighter-cloud',
       cloudSpriteVersionCount: sprites.length,
+      cloudPlayableSpriteRefs: cloudPlayableSpriteRefs(sprites),
       status: 'ready',
       animationsReady: names,
       createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
       updatedAt: Date.parse('2026-08-19T02:00:00.000Z'),
     } as CachedMeta)).toBe(false);
+  });
+});
+
+const SYNC_CACHE_DB_NAME = 'ai-street-fighter';
+const SYNC_PHOTO_HASH = 'sync-original-photo';
+const SYNC_CONTEXT: ApiRequestContext = {
+  authRevision: -1,
+  tokenGetter: null,
+  providerSessionId: null,
+  detached: true,
+  apiBaseUrl: 'https://api.insertplayer.test',
+};
+
+function syncMeta(): CachedMeta {
+  return {
+    photoHash: SYNC_PHOTO_HASH,
+    version: 1,
+    originalPhotoBlob: null,
+    sideViewBlob: null,
+    sideViewRawBlob: null,
+    uprightViewBlob: null,
+    uprightViewRawBlob: null,
+    sideViewCleanBlob: null,
+    crouchViewBlob: null,
+    crouchViewRawBlob: null,
+    crouchViewCleanBlob: null,
+    noBgBlob: null,
+    characterName: 'Original Local Fighter',
+    qualityTier: 'champion',
+    status: 'ready',
+    animationsReady: ['walk'],
+    createdAt: 100,
+    updatedAt: 100,
+  };
+}
+
+function syncSprite(): CachedSprite {
+  const pngBytes = Uint8Array.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x61, 0x75, 0x74, 0x68,
+  ]);
+  return {
+    versionId: 'local-current-walk',
+    photoHash: SYNC_PHOTO_HASH,
+    animationName: 'walk',
+    qualityTier: 'champion',
+    pngBlob: new Blob([pngBytes], { type: 'image/png' }),
+    frameWidth: 256,
+    frameHeight: 256,
+    frameCount: 8,
+    animationFormat: 'legacy',
+    processingVersion: 5,
+    createdAt: 100,
+  };
+}
+
+function createdCloudFighter() {
+  return {
+    fighter: {
+      id: 'cloud-fighter-created',
+      name: 'Original Local Fighter',
+      photoHash: SYNC_PHOTO_HASH,
+      qualityTier: 'champion' as const,
+      public: false,
+      sources: {},
+      sourceHashes: {},
+      sprites: [],
+      spriteVersions: [],
+    },
+  };
+}
+
+async function resetSyncCache(): Promise<void> {
+  await closeSpriteCacheDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(SYNC_CACHE_DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error('Sync cache test database deletion was blocked'));
+  });
+  configureSpriteCacheOwner(null);
+}
+
+describe('first cloud association preserves the authoritative local playable set', () => {
+  beforeEach(async () => {
+    await resetSyncCache();
+    vi.mocked(apiFetch).mockReset();
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.insertplayer.test');
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await resetSyncCache();
+  });
+
+  it('keeps Original sprites playable when the first sprite upload fails after cloud creation', async () => {
+    const meta = syncMeta();
+    const sprite = syncSprite();
+    await setCachedMeta(meta);
+    await setCachedSprite(sprite, { preserveVersionId: true });
+    const playableBeforeSync = await getAllSpritesForHash(SYNC_PHOTO_HASH);
+    vi.mocked(apiFetch)
+      .mockResolvedValueOnce(Response.json(createdCloudFighter()))
+      .mockRejectedValueOnce(new Error('sprite upload unavailable'));
+
+    await expect(syncFighterToCloud(meta, playableBeforeSync, null, SYNC_CONTEXT))
+      .rejects.toThrow('sprite upload unavailable');
+
+    expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(2);
+    expect((await getAllSpritesForHash(SYNC_PHOTO_HASH)).map((item) => item.versionId))
+      .toEqual(['local-current-walk']);
+    const persisted = await getCachedMeta(SYNC_PHOTO_HASH);
+    expect(persisted?.cloudFighterId).toBe('cloud-fighter-created');
+    expect(persisted?.cloudPlayableSpriteRefs?.walk.contentHash)
+      .toBe(await hashPhoto(sprite.pngBlob));
+  });
+
+  it('keeps successful first sync pinned to the exact authoritative sprite hash', async () => {
+    const meta = syncMeta();
+    const sprite = syncSprite();
+    await setCachedMeta(meta);
+    await setCachedSprite(sprite, { preserveVersionId: true });
+    const playableBeforeSync = await getAllSpritesForHash(SYNC_PHOTO_HASH);
+    vi.mocked(apiFetch)
+      .mockResolvedValueOnce(Response.json(createdCloudFighter()))
+      .mockResolvedValueOnce(Response.json({ ok: true }));
+
+    await expect(syncFighterToCloud(meta, playableBeforeSync, null, SYNC_CONTEXT))
+      .resolves.toMatchObject({ status: 'synced', fighterId: 'cloud-fighter-created' });
+
+    expect((await getAllSpritesForHash(SYNC_PHOTO_HASH)).map((item) => item.versionId))
+      .toEqual(['local-current-walk']);
+    expect((await getCachedMeta(SYNC_PHOTO_HASH))?.cloudPlayableSpriteRefs?.walk.contentHash)
+      .toBe(await hashPhoto(sprite.pngBlob));
   });
 });

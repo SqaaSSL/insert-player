@@ -19,11 +19,17 @@ const targetArg = rawArgs.find((arg) => arg.startsWith('--target='));
 const slugArg = rawArgs.find((arg) => arg.startsWith('--slug='));
 const animationArg = rawArgs.find((arg) => arg.startsWith('--animation='));
 const sourceArg = rawArgs.find((arg) => arg.startsWith('--source='));
+const activationConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-activation='));
+const videoStepConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-video-step='));
 const target = targetArg?.slice('--target='.length) ?? 'production';
 const animationName = animationArg?.slice('--animation='.length) ?? '';
 const sourceName = sourceArg?.slice('--source='.length) ?? '';
+const activationConfirmation = activationConfirmationArg?.slice('--confirm-activation='.length) ?? '';
+const videoStepConfirmation = videoStepConfirmationArg?.slice('--confirm-video-step='.length) ?? '';
 const dryRun = args.has('--dry-run');
 const activate = args.has('--activate');
+const activateReviewed = args.has('--activate-reviewed');
+const videoStep = args.has('--video-step');
 const continueOnError = args.has('--continue-on-error');
 const all = args.has('--all');
 const resume = args.has('--resume');
@@ -54,8 +60,24 @@ const PLAYABLE_ANIMATION_NAMES = [
   'victory',
 ];
 const PLAYABLE_ANIMATIONS = new Set(PLAYABLE_ANIMATION_NAMES);
+export const REVIEW_GATED_VIDEO_ACTIONS = Object.freeze([
+  'idle',
+  'walk',
+  'high_punch',
+  'high_kick',
+  'low_punch',
+  'low_kick',
+  'jump',
+  'crouch',
+  'hit',
+  'ko',
+  'victory',
+]);
+const REVIEW_GATED_VIDEO_ACTION_SET = new Set(REVIEW_GATED_VIDEO_ACTIONS);
 const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'];
 const CANONICAL_SOURCES = new Set(CANONICAL_SOURCE_NAMES);
+export const REVIEWED_ARCADE_ACTIVATION_CONFIRMATION = 'ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION';
+export const REVIEW_GATED_VIDEO_STEP_CONFIRMATION = 'START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION';
 const LICENSED_REFERENCE_PROMPT = /\blicensed reference photo\b|\bperson in (?:this|the) licensed photo\b/i;
 const IDENTITY_ERASING_PROMPT = /\bwritten description only\b|\b(?:new|own) clearly synthetic face\b/i;
 const APPROVED_ARCADE_PROVIDER_CONTRACT = {
@@ -282,34 +304,62 @@ export function validateManifest(manifest) {
   }
 }
 
+export function assertReviewedActivationConfirmation(value) {
+  if (value !== REVIEWED_ARCADE_ACTIVATION_CONFIRMATION) {
+    throw new Error(
+      `Reviewed Arcade activation requires --confirm-activation=${REVIEWED_ARCADE_ACTIVATION_CONFIRMATION}.`,
+    );
+  }
+}
+
+export function assertReviewGatedVideoStepConfirmation(value) {
+  if (value !== REVIEW_GATED_VIDEO_STEP_CONFIRMATION) {
+    throw new Error(
+      `Review-gated Video generation requires --confirm-video-step=${REVIEW_GATED_VIDEO_STEP_CONFIRMATION}.`,
+    );
+  }
+}
+
 function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
   if (
     preflightOnly
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || animationName || sourceName)
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || animationName || sourceName)
   ) {
     throw new Error('--preflight-only requires one --slug and cannot be combined with a generation operation.');
   }
   if (animationName && sourceName) {
     throw new Error('Use either --animation or --source, not both.');
   }
-  if ((animationName || sourceName) && (all || !slugArg || activate)) {
-    throw new Error('--animation and --source require one --slug and cannot be combined with --all or --activate.');
+  if ((animationName || sourceName) && (all || !slugArg || activate || activateReviewed || videoStep)) {
+    throw new Error('--animation and --source require one --slug and cannot be combined with an activation operation.');
   }
   if (resume && (animationName || sourceName)) {
     throw new Error('--resume fills an entire fighter and cannot be combined with --animation or --source.');
   }
-  if (restartDraft && (all || resume || prepareCanary || canarySide || probeSide || activate || animationName || sourceName || !slugArg)) {
+  if (restartDraft && (all || resume || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || animationName || sourceName || !slugArg)) {
     throw new Error('--restart-draft requires one --slug and cannot be combined with --all, --resume, --activate, --animation, or --source.');
   }
-  if (prepareCanary && (all || resume || restartDraft || canarySide || probeSide || activate || animationName || sourceName || !slugArg)) {
+  if (prepareCanary && (all || resume || restartDraft || canarySide || probeSide || activate || activateReviewed || videoStep || animationName || sourceName || !slugArg)) {
     throw new Error('--prepare-canary requires one --slug and cannot be combined with another generation operation.');
   }
-  if (canarySide && (all || resume || restartDraft || prepareCanary || probeSide || activate || animationName || sourceName || !slugArg)) {
+  if (canarySide && (all || resume || restartDraft || prepareCanary || probeSide || activate || activateReviewed || videoStep || animationName || sourceName || !slugArg)) {
     throw new Error('--canary-side requires one --slug and cannot be combined with another generation operation.');
   }
-  if (probeSide && (all || resume || restartDraft || prepareCanary || canarySide || activate || animationName || sourceName || !slugArg)) {
+  if (probeSide && (all || resume || restartDraft || prepareCanary || canarySide || activate || activateReviewed || videoStep || animationName || sourceName || !slugArg)) {
     throw new Error('--probe-side requires one --slug and cannot be combined with another generation operation.');
+  }
+  if (
+    activateReviewed
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || videoStep || animationName || sourceName || !slugArg)
+  ) {
+    throw new Error('--activate-reviewed requires one --slug and cannot be combined with generation, resume, or dry-run.');
+  }
+  if (
+    videoStep
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || animationName || sourceName || !slugArg)
+  ) {
+    throw new Error('--video-step requires one --slug and cannot be combined with generation, resume, activation, or dry-run.');
   }
   if (animationName && !PLAYABLE_ANIMATIONS.has(animationName)) {
     throw new Error(`Unknown playable animation: ${animationName}`);
@@ -483,6 +533,433 @@ export function planFighterResume(fighter) {
     sourceNames,
     animationNames,
     ready: sourceNames.length === 0 && animationNames.length === 0,
+  };
+}
+
+export function assertReviewedActivationDraft({
+  manifest,
+  fighter,
+  entry,
+  owned,
+  approvedPhotoHash,
+}) {
+  if (!entry) {
+    throw new Error(`No current Arcade fighter exists for ${fighter.slug}. Stage and review its private draft first.`);
+  }
+  if (!/^[a-f0-9]{32}$/.test(entry.fighterId ?? '')) {
+    throw new Error(`Current Arcade fighter ${fighter.slug} has an invalid id.`);
+  }
+  if (entry.status !== 'draft') {
+    throw new Error(`Reviewed activation is restricted to draft fighters; ${fighter.slug} is ${entry.status}.`);
+  }
+
+  const reference = fighterReference(manifest, fighter);
+  const manifestMismatches = [
+    entry.slug === fighter.slug ? null : 'slug',
+    entry.rank === fighter.rank ? null : 'rank',
+    entry.fighterName === fighter.name ? null : 'name',
+    entry.qualityTier === 'champion' ? null : 'tier',
+    entry.public === false ? null : 'visibility',
+    entry.challengerLine === fighter.challengerLine ? null : 'challengerLine',
+    entry.defaultPersonality === fighter.defaultPersonality ? null : 'defaultPersonality',
+    entry.reference?.kind === reference.kind ? null : 'reference.kind',
+    entry.reference?.sourceUrl === reference.sourceUrl ? null : 'reference.sourceUrl',
+    entry.reference?.license === reference.license ? null : 'reference.license',
+    entry.reference?.credit === reference.credit ? null : 'reference.credit',
+    entry.generationPrompt === fighter.referencePrompt ? null : 'generationPrompt',
+  ].filter(Boolean);
+  if (manifestMismatches.length > 0) {
+    throw new Error(
+      `${fighter.name} draft does not match the reviewed roster manifest: ${manifestMismatches.join(', ')}.`,
+    );
+  }
+
+  if (approvedPhotoHash !== reference.sourceSha256) {
+    throw new Error(`${fighter.name} approved local source hash does not match the roster manifest.`);
+  }
+  if (!owned || owned.id !== entry.fighterId) {
+    throw new Error(`${fighter.name} private asset manifest is unavailable or belongs to another fighter.`);
+  }
+  if (
+    owned.name !== fighter.name
+    || owned.qualityTier !== 'champion'
+    || owned.public !== false
+  ) {
+    throw new Error(`${fighter.name} private fighter metadata changed after review.`);
+  }
+  if (
+    owned.photoHash !== approvedPhotoHash
+    || !owned.sources?.original
+    || owned.sourceHashes?.original !== approvedPhotoHash
+  ) {
+    throw new Error(`${fighter.name} private fighter does not match the approved licensed-photo hash.`);
+  }
+
+  const plan = planFighterResume(owned);
+  const currentSprites = new Map(
+    (Array.isArray(owned.sprites) ? owned.sprites : [])
+      .filter((sprite) => sprite?.qualityTier === 'champion')
+      .map((sprite) => [sprite.animationName, sprite]),
+  );
+  const missingSpritePointers = PLAYABLE_ANIMATION_NAMES.filter((name) => {
+    const sprite = currentSprites.get(name);
+    return !sprite?.url || !sprite?.rawUrl;
+  });
+  if (!plan.ready || missingSpritePointers.length > 0) {
+    const missing = [
+      ...plan.sourceNames.map((name) => `source:${name}`),
+      ...plan.animationNames.map((name) => `sprite:${name}`),
+      ...missingSpritePointers.map((name) => `sprite:${name}:clean/raw`),
+    ];
+    throw new Error(
+      `${fighter.name} reviewed draft is incomplete and cannot be activated: ${[...new Set(missing)].join(', ')}.`,
+    );
+  }
+
+  return { fighterId: entry.fighterId };
+}
+
+export async function activateReviewedArcadeFighter({
+  manifest,
+  fighter,
+  approvedPhotoHash,
+  baseUrl,
+  token,
+  requestApi = apiRequest,
+}) {
+  const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
+  const adminEntries = Array.isArray(admin.fighters) ? admin.fighters : [];
+  const entry = findCurrentArcadeEntry(adminEntries, fighter.slug);
+  if (!entry) {
+    throw new Error(`No current Arcade fighter exists for ${fighter.slug}. Stage and review its private draft first.`);
+  }
+  if (entry.status !== 'draft') {
+    throw new Error(`Reviewed activation is restricted to draft fighters; ${fighter.slug} is ${entry.status}.`);
+  }
+  if (!/^[a-f0-9]{32}$/.test(entry.fighterId ?? '')) {
+    throw new Error(`Current Arcade fighter ${fighter.slug} has an invalid id.`);
+  }
+
+  const detail = await requestApi(
+    baseUrl,
+    token,
+    `/api/fighters/${encodeURIComponent(entry.fighterId)}`,
+  );
+  const owned = detail.fighter;
+  assertReviewedActivationDraft({ manifest, fighter, entry, owned, approvedPhotoHash });
+
+  console.log(`\n${fighter.rank}. ${fighter.name} [reviewed activation only]`);
+  const result = await requestApi(
+    baseUrl,
+    token,
+    `/api/admin/arcade/${encodeURIComponent(entry.fighterId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(arcadePayload(manifest, fighter, 'active')),
+    },
+  );
+  if (
+    result.fighter?.fighterId !== entry.fighterId
+    || result.fighter?.status !== 'active'
+    || result.fighter?.public !== true
+  ) {
+    throw new Error(`${fighter.name} activation did not return a public active Arcade fighter.`);
+  }
+  console.log(`  active: ${entry.fighterId} (reviewed assets only; no generation requested)`);
+  return result.fighter;
+}
+
+export function assertReviewGatedVideoDraft({
+  manifest,
+  fighter,
+  entry,
+  owned,
+  approvedPhotoHash,
+}) {
+  if (!entry) {
+    throw new Error(`No current Arcade fighter exists for ${fighter.slug}. Stage its private draft first.`);
+  }
+  if (!/^[a-f0-9]{32}$/.test(entry.fighterId ?? '')) {
+    throw new Error(`Current Arcade fighter ${fighter.slug} has an invalid id.`);
+  }
+  const reference = fighterReference(manifest, fighter);
+  const mismatches = [
+    entry.slug === fighter.slug ? null : 'slug',
+    entry.rank === fighter.rank ? null : 'rank',
+    entry.fighterName === fighter.name ? null : 'name',
+    entry.qualityTier === 'champion' ? null : 'tier',
+    entry.public === false ? null : 'visibility',
+    entry.status === 'draft' ? null : 'status',
+    entry.challengerLine === fighter.challengerLine ? null : 'challengerLine',
+    entry.defaultPersonality === fighter.defaultPersonality ? null : 'defaultPersonality',
+    entry.reference?.kind === reference.kind ? null : 'reference.kind',
+    entry.reference?.sourceUrl === reference.sourceUrl ? null : 'reference.sourceUrl',
+    entry.reference?.license === reference.license ? null : 'reference.license',
+    entry.reference?.credit === reference.credit ? null : 'reference.credit',
+    entry.generationPrompt === fighter.referencePrompt ? null : 'generationPrompt',
+  ].filter(Boolean);
+  if (mismatches.length > 0) {
+    throw new Error(
+      `${fighter.name} is not the exact private Champion draft from the reviewed roster manifest: ${mismatches.join(', ')}.`,
+    );
+  }
+  if (approvedPhotoHash !== reference.sourceSha256) {
+    throw new Error(`${fighter.name} approved local source hash does not match the roster manifest.`);
+  }
+  if (
+    !owned || owned.id !== entry.fighterId || owned.name !== fighter.name ||
+    owned.qualityTier !== 'champion' || owned.public !== false
+  ) {
+    throw new Error(`${fighter.name} private Champion fighter metadata does not match its Arcade draft.`);
+  }
+  if (
+    owned.photoHash !== approvedPhotoHash || !owned.sources?.original ||
+    owned.sourceHashes?.original !== approvedPhotoHash
+  ) {
+    throw new Error(`${fighter.name} private original does not match the approved licensed-photo hash.`);
+  }
+  return { fighterId: entry.fighterId };
+}
+
+function assertReviewGatedVideoJob(job, fighterId) {
+  if (!job || !/^[a-f0-9]{32}$/.test(job.id ?? '')) {
+    throw new Error('Review-gated Video generation returned an invalid job id.');
+  }
+  const mismatches = [
+    job.fighterId === fighterId ? null : 'fighter',
+    job.tier === 'champion' ? null : 'tier',
+    job.creationFlow === 'video' ? null : 'creationFlow',
+    job.operation === 'fighter_generation' ? null : 'operation',
+    /^[a-f0-9]{32}$/.test(job.artifactRunId ?? '') ? null : 'artifactRunId',
+    job.targetKind == null ? null : 'targetKind',
+    job.targetName == null ? null : 'targetName',
+  ].filter(Boolean);
+  if (mismatches.length > 0) {
+    throw new Error(`Review-gated Video job crossed its sealed scope: ${mismatches.join(', ')}.`);
+  }
+  if (job.fullRunRestartRequired === true) {
+    throw new Error(`Video job ${job.id} requires an explicit full-run restart; video-step will not restart it.`);
+  }
+  return job;
+}
+
+export function planReviewGatedVideoStep(jobs, fighterId) {
+  const fighterJobs = (Array.isArray(jobs) ? jobs : []).filter((job) => job?.fighterId === fighterId);
+  const active = fighterJobs.filter((job) => job.status === 'queued' || job.status === 'running');
+  const awaiting = fighterJobs.filter((job) => job.reviewStatus === 'awaiting_review');
+  if (active.length > 1 || awaiting.length > 1 || (active.length > 0 && awaiting.length > 0)) {
+    throw new Error('Arcade Video job state is ambiguous; no generation was started.');
+  }
+  if (active.length === 1) {
+    assertReviewGatedVideoJob(active[0], fighterId);
+    return { action: 'poll', job: active[0] };
+  }
+  if (awaiting.length === 1) {
+    const job = assertReviewGatedVideoJob(awaiting[0], fighterId);
+    if (job.status !== 'succeeded') {
+      throw new Error(`Video job ${job.id} is awaiting review without a succeeded terminal state.`);
+    }
+    return { action: 'reuse-review', job };
+  }
+
+  const latest = fighterJobs.find((job) => job?.creationFlow === 'video');
+  if (!latest) return { action: 'start', job: null };
+  assertReviewGatedVideoJob(latest, fighterId);
+  if (latest.status === 'failed' || latest.status === 'cancelled') {
+    throw new Error(
+      `Video job ${latest.id} is ${latest.status}; video-step never retries or restarts a failed run automatically.`,
+    );
+  }
+  if (latest.status !== 'succeeded') {
+    throw new Error(`Video job ${latest.id} has unsupported status ${String(latest.status)}.`);
+  }
+  if (latest.reviewStatus === 'rejected') {
+    throw new Error(`Video job ${latest.id} was rejected and requires an explicit full-run restart.`);
+  }
+  if (latest.reviewStatus === 'approved') {
+    if (latest.resumable === true) return { action: 'continue', job: latest };
+    if (Array.isArray(latest.pendingStages) && latest.pendingStages.length === 0) {
+      return { action: 'complete', job: latest };
+    }
+    throw new Error(
+      `Approved Video job ${latest.id} is not safely continuable; inspect the run before any new generation.`,
+    );
+  }
+  throw new Error(
+    `Succeeded Video job ${latest.id} has unsupported review state ${String(latest.reviewStatus)}.`,
+  );
+}
+
+export function assertAwaitingVideoReview(review, job) {
+  if (
+    !review || review.jobId !== job.id || review.artifactRunId !== job.artifactRunId ||
+    !/^[a-f0-9]{32}$/.test(review.candidateId ?? '') ||
+    !Number.isInteger(review.revision) || review.revision < 1 ||
+    !/^[a-f0-9]{64}$/.test(review.reportSha256 ?? '') ||
+    !REVIEW_GATED_VIDEO_ACTION_SET.has(review.action) ||
+    review.sequenceOrder !== REVIEW_GATED_VIDEO_ACTIONS.indexOf(review.action) ||
+    review.status !== 'awaiting_review' ||
+    !['technical_pass', 'needs_review', 'reject'].includes(review.technicalOutcome)
+  ) {
+    throw new Error(`Video review for job ${job.id} failed its sealed identity or technical-report contract.`);
+  }
+  return review;
+}
+
+function printAwaitingVideoReview(fighter, review, mode) {
+  const summary = {
+    fighter: fighter.slug,
+    mode,
+    jobId: review.jobId,
+    artifactRunId: review.artifactRunId,
+    candidateId: review.candidateId,
+    revision: review.revision,
+    reportSha256: review.reportSha256,
+    action: review.action,
+    technicalOutcome: review.technicalOutcome,
+  };
+  console.log(`  awaiting-review: ${JSON.stringify(summary)}`);
+  console.log('  no approval, upload, activation, or additional action was performed');
+  return summary;
+}
+
+async function waitForAwaitingVideoReview({
+  baseUrl,
+  token,
+  fighter,
+  fighterId,
+  initialJob,
+  requestApi,
+  pause,
+  pollIntervalMs,
+  jobTimeoutMs,
+}) {
+  const startedAt = Date.now();
+  let job = initialJob;
+  let lastStage = '';
+  while (Date.now() - startedAt < jobTimeoutMs) {
+    assertReviewGatedVideoJob(job, fighterId);
+    const stage = `${job.status}:${job.reviewStatus ?? 'none'}:${job.stage}:${job.progressCurrent}/${job.progressTotal}`;
+    if (stage !== lastStage) {
+      console.log(`  ${fighter.name}: ${stage}`);
+      lastStage = stage;
+    }
+    if (job.status === 'succeeded' && job.reviewStatus === 'awaiting_review') return job;
+    if (job.status === 'failed' || job.status === 'cancelled') {
+      throw new Error(
+        `${fighter.name} Video generation ${job.status}: ${job.errorMessage ?? job.errorCode ?? 'unknown error'}; no restart was attempted.`,
+      );
+    }
+    if (job.status === 'succeeded') {
+      throw new Error(
+        `${fighter.name} Video generation succeeded without entering awaiting_review (${String(job.reviewStatus)}).`,
+      );
+    }
+    if (job.status !== 'queued' && job.status !== 'running') {
+      throw new Error(`${fighter.name} Video generation returned unsupported status ${String(job.status)}.`);
+    }
+    await pause(pollIntervalMs);
+    const refreshed = await requestApi(
+      baseUrl,
+      token,
+      `/api/generation-jobs/${encodeURIComponent(job.id)}`,
+    );
+    job = refreshed.job;
+  }
+  throw new Error(`${fighter.name} Video generation exceeded the two-hour safety timeout.`);
+}
+
+export async function runReviewGatedVideoStep({
+  manifest,
+  fighter,
+  approvedPhotoHash,
+  baseUrl,
+  token,
+  requestApi = apiRequest,
+  pause = sleep,
+  pollIntervalMs = POLL_INTERVAL_MS,
+  jobTimeoutMs = JOB_TIMEOUT_MS,
+}) {
+  const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
+  const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
+  if (!entry) throw new Error(`No current Arcade fighter exists for ${fighter.slug}.`);
+  const detail = await requestApi(
+    baseUrl,
+    token,
+    `/api/fighters/${encodeURIComponent(entry.fighterId)}`,
+  );
+  const { fighterId } = assertReviewGatedVideoDraft({
+    manifest,
+    fighter,
+    entry,
+    owned: detail.fighter,
+    approvedPhotoHash,
+  });
+  const listed = await requestApi(baseUrl, token, '/api/generation-jobs');
+  if (!Array.isArray(listed.jobs)) {
+    throw new Error('Generation job listing is unavailable; no Video generation was started.');
+  }
+  const plan = planReviewGatedVideoStep(listed.jobs, fighterId);
+
+  if (plan.action === 'complete') {
+    console.log(`  complete: ${fighter.slug} has no pending Video stages; no mutation was performed`);
+    return { mode: 'complete', mutated: false, job: plan.job, review: null };
+  }
+
+  let job = plan.job;
+  let mode = plan.action;
+  if (plan.action === 'start' || plan.action === 'continue') {
+    const started = await requestApi(
+      baseUrl,
+      token,
+      `/api/admin/arcade/${encodeURIComponent(fighterId)}/generate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          legal: generationLegal(manifest),
+          creationFlow: 'video',
+        }),
+      },
+    );
+    if (started.ready === true || !started.job) {
+      throw new Error(
+        `${fighter.name} Video endpoint returned no review-gated job; no fallback or restart was attempted.`,
+      );
+    }
+    job = assertReviewGatedVideoJob(started.job, fighterId);
+    mode = plan.action === 'continue' ? 'continued' : 'started';
+  } else if (plan.action === 'poll') {
+    mode = 'resumed-poll';
+  } else {
+    mode = 'reused-review';
+  }
+
+  if (plan.action !== 'reuse-review') {
+    job = await waitForAwaitingVideoReview({
+      baseUrl,
+      token,
+      fighter,
+      fighterId,
+      initialJob: job,
+      requestApi,
+      pause,
+      pollIntervalMs,
+      jobTimeoutMs,
+    });
+  }
+  assertReviewGatedVideoJob(job, fighterId);
+  const reviewBody = await requestApi(
+    baseUrl,
+    token,
+    `/api/generation-jobs/${encodeURIComponent(job.id)}/video-review`,
+  );
+  const review = assertAwaitingVideoReview(reviewBody.review, job);
+  printAwaitingVideoReview(fighter, review, mode);
+  return {
+    mode,
+    mutated: plan.action === 'start' || plan.action === 'continue',
+    job,
+    review,
   };
 }
 
@@ -988,7 +1465,9 @@ async function main() {
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   validateManifest(manifest);
   const selected = selectFighters(manifest);
-  mkdirSync(sourceDir, { recursive: true });
+  if (activateReviewed) assertReviewedActivationConfirmation(activationConfirmation);
+  if (videoStep) assertReviewGatedVideoStepConfirmation(videoStepConfirmation);
+  if (!activateReviewed) mkdirSync(sourceDir, { recursive: true });
 
   if (dryRun) {
     for (const fighter of selected) {
@@ -999,6 +1478,12 @@ async function main() {
     }
     return;
   }
+  const reviewedActivationPhotoHash = activateReviewed
+    ? readApprovedSource(manifest, selected[0]).photoHash
+    : '';
+  const reviewGatedVideoPhotoHash = videoStep
+    ? readApprovedSource(manifest, selected[0]).photoHash
+    : '';
 
   const env = readEnvValues();
   clerkBackendAuthBridgeSecret = envValue(env, 'CLERK_BACKEND_AUTH_BRIDGE_SECRET');
@@ -1029,6 +1514,28 @@ async function main() {
   const token = clerkSecretKey
     ? await createClerkAdminTokenProvider(clerkSecretKey, clerkUserId)
     : createStaticTokenProvider(staticToken);
+
+  if (activateReviewed) {
+    await activateReviewedArcadeFighter({
+      manifest,
+      fighter: selected[0],
+      approvedPhotoHash: reviewedActivationPhotoHash,
+      baseUrl,
+      token,
+    });
+    return;
+  }
+
+  if (videoStep) {
+    await runReviewGatedVideoStep({
+      manifest,
+      fighter: selected[0],
+      approvedPhotoHash: reviewGatedVideoPhotoHash,
+      baseUrl,
+      token,
+    });
+    return;
+  }
 
   const providerPreflight = await apiRequest(
     baseUrl,

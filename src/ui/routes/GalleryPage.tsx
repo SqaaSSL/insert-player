@@ -66,6 +66,7 @@ import {
 } from '../../services/ApiClient.ts';
 import { checkoutStatusMessage, consumeCheckoutStatus } from '../shared/checkoutStatus.ts';
 import { GenerationConsent } from '../components/LegalConsent.tsx';
+import { VideoGenerationReviewGate } from '../components/VideoGenerationReviewGate.tsx';
 import { currentGenerationLegalAttestation } from '../legal.ts';
 import {
   listGenerationJobs,
@@ -74,6 +75,12 @@ import {
   type GenerationJob,
 } from '../../services/GenerationJobs.ts';
 import type { AuthStatus } from '../authState.ts';
+import {
+  assertCreationFlowAcknowledged,
+  creationFlowForResume,
+  isVideoResumableJob,
+  isVideoReviewOrRestartJob,
+} from '../shared/creationFlow.ts';
 
 function formatDate(value: number): string {
   return new Date(value).toLocaleDateString('en-US', {
@@ -138,6 +145,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const generationJobAbortRef = useRef<AbortController | null>(null);
   const [recoveryJob, setRecoveryJob] = useState<GenerationJob | null>(null);
   const [resumableJobs, setResumableJobs] = useState<GenerationJob[]>([]);
+  const [videoReviewJobs, setVideoReviewJobs] = useState<GenerationJob[]>([]);
 
   const meta = metas[currentIndex] ?? null;
   const pendingUpgrade = QUALITY_TIERS.find((tier) => tier.id === pendingUpgradeTier) ?? null;
@@ -172,6 +180,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     let cancelled = false;
     setRecoveryJob(null);
     setResumableJobs([]);
+    setVideoReviewJobs([]);
     const load = async () => {
       const checkoutStatus = consumeCheckoutStatus();
       const checkoutMessage = checkoutStatus ? checkoutStatusMessage(checkoutStatus) : null;
@@ -181,6 +190,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       let cloudFailed = 0;
       let activeCloudJob: Awaited<ReturnType<typeof listGenerationJobs>>[number] | null = null;
       let resumableCloudJobs: GenerationJob[] = [];
+      let reviewCloudJobs: GenerationJob[] = [];
       let [all, allStages] = await Promise.all([
         getAllCachedMetas(),
         getAllCachedStageBackgrounds(),
@@ -191,13 +201,16 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           authStatus === 'signed-in' ? listGenerationJobs(apiContext) : Promise.resolve([]),
         ]);
         activeCloudJob = generationJobs.find((job) => job.status === 'queued' || job.status === 'running') ?? null;
+        reviewCloudJobs = generationJobs.filter(isVideoReviewOrRestartJob);
         resumableCloudJobs = generationJobs.filter((job) => (
-          (job.status === 'failed' || job.status === 'cancelled') &&
-          job.resumable &&
-          job.operation !== 'fighter_generation'
+          isVideoResumableJob(job) || (
+            (job.status === 'failed' || job.status === 'cancelled') &&
+            job.resumable && job.operation !== 'fighter_generation'
+          )
         ));
         setRecoveryJob(activeCloudJob);
         setResumableJobs(resumableCloudJobs);
+        setVideoReviewJobs(reviewCloudJobs);
         cloudFailed = cloudSync.failed;
         cloudDrafts = cloudSync.drafts;
         if (cloudSync.imported > 0 || cloudSync.updated > 0) {
@@ -208,13 +221,44 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
             getAllCachedStageBackgrounds(),
           ]);
         }
+        const recoverableVideoFighterIds = new Set([
+          ...(activeCloudJob?.creationFlow === 'video' ? [activeCloudJob] : []),
+          ...reviewCloudJobs,
+          ...resumableCloudJobs.filter((job) => job.creationFlow === 'video'),
+        ].map((job) => job.fighterId));
+        let hydratedVideoDraft = false;
+        for (const fighterId of recoverableVideoFighterIds) {
+          const fighter = await getCloudFighter(fighterId, apiContext);
+          if (!fighter?.photoHash) continue;
+          await downloadCloudFighterToLocal(fighter, apiContext, {
+            includeArchivedVersions: false,
+            includeRawAssets: false,
+            allowIncomplete: true,
+          });
+          hydratedVideoDraft = true;
+        }
+        if (hydratedVideoDraft) {
+          [all, allStages] = await Promise.all([
+            getAllCachedMetas(),
+            getAllCachedStageBackgrounds(),
+          ]);
+        }
       } catch (err: any) {
         if (cancelled) return;
         debugWarn('[Gallery] Cloud import skipped:', err?.message ?? err);
       }
       if (cancelled) return;
+      const visibleVideoFighterIds = new Set([
+        ...(activeCloudJob?.creationFlow === 'video' ? [activeCloudJob] : []),
+        ...reviewCloudJobs,
+        ...resumableCloudJobs.filter((job) => job.creationFlow === 'video'),
+      ].map((job) => job.fighterId));
       const filtered = all
-        .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
+        .filter((item) => item.version === CACHE_VERSION && (
+          item.status === 'ready' || (
+            Boolean(item.cloudFighterId) && visibleVideoFighterIds.has(item.cloudFighterId as string)
+          )
+        ))
         .sort((a, b) => b.createdAt - a.createdAt);
       const filteredStages = allStages
         .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
@@ -233,6 +277,8 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         checkoutMessage ??
         (activeCloudJob
           ? `${tierLabel(activeCloudJob.tier)} forge continues safely in the cloud (${activeCloudJob.progressCurrent}/${activeCloudJob.progressTotal})`
+          : reviewCloudJobs.some((job) => job.reviewStatus === 'awaiting_review')
+            ? 'A video action is paused safely for your review'
           : resumableCloudJobs.length > 0
             ? 'Paid generation work is preserved and ready to resume'
           : cloudSyncStatus ??
@@ -312,9 +358,15 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const resumableJob = meta?.cloudFighterId
     ? resumableJobs.find((job) => job.fighterId === meta.cloudFighterId) ?? null
     : null;
+  const videoReviewJob = meta?.cloudFighterId
+    ? videoReviewJobs.find((job) => job.fighterId === meta.cloudFighterId) ?? null
+    : null;
   const characterEmptyMessage = status && status !== 'No fighters or stages yet'
     ? status
     : 'Upload a photo to forge your first challenger.';
+
+  useEffect(() => {
+  }, [meta?.photoHash, selectedAnimName]);
 
   const refreshCurrent = async (preferredPhotoHash = meta?.photoHash ?? null) => {
     const currentPhotoHash = preferredPhotoHash;
@@ -364,6 +416,17 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       },
     });
     if (completed.status !== 'succeeded') {
+      if (completed.creationFlow === 'video' && completed.fullRunRestartRequired) {
+        setVideoReviewJobs((current) => [
+          completed,
+          ...current.filter((job) => job.fighterId !== completed.fighterId),
+        ]);
+        setResumableJobs((current) => (
+          current.filter((job) => job.artifactRunId !== completed.artifactRunId)
+        ));
+        setStatus('The Video run ended safely. Start a new complete run when you are ready.');
+        return completed;
+      }
       if (completed.resumable) {
         setResumableJobs((current) => [
           completed,
@@ -371,6 +434,17 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         ]);
       }
       throw new Error(completed.errorMessage ?? 'Generation stopped; review the job details or contact support.');
+    }
+    if (completed.creationFlow === 'video' && completed.reviewStatus === 'awaiting_review') {
+      setVideoReviewJobs((current) => [
+        completed,
+        ...current.filter((job) => job.fighterId !== completed.fighterId),
+      ]);
+      setResumableJobs((current) => (
+        current.filter((job) => job.artifactRunId !== completed.artifactRunId)
+      ));
+      setStatus(`${animLabel(completed.targetName ?? 'video')} is paused safely for review`);
+      return completed;
     }
     setResumableJobs((current) => (
       current.filter((job) => job.artifactRunId !== completed.artifactRunId)
@@ -394,7 +468,13 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     void monitorCloudGenerationJob(recoveryJob, apiContext, controller.signal)
       .then((completed) => {
         if (!disposed) {
-          setStatus(completed.targetName ? 'Done and synced' : `${tierLabel(completed.tier)} cloud forge synced`);
+          setStatus(
+            completed.creationFlow === 'video' && completed.fullRunRestartRequired
+              ? 'The Video run ended safely. Start a new complete run when you are ready.'
+              : completed.creationFlow === 'video' && completed.reviewStatus === 'awaiting_review'
+              ? 'A video action is paused safely for your review'
+              : completed.targetName ? 'Done and synced' : `${tierLabel(completed.tier)} cloud forge synced`,
+          );
         }
       })
       .catch((err: any) => {
@@ -426,7 +506,10 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setBusy(true);
     setStatus(`Restoring ${failedJob.preservedArtifactCount} completed stages without charging credits...`);
     const apiContext = captureApiRequestContext();
+    let purchaseId: string | undefined;
+    let backendOwnsPurchase = false;
     try {
+      const creationFlow = creationFlowForResume(failedJob.creationFlow);
       const authorization = await authorizeGeneration(
         failedJob.tier,
         failedJob.operation,
@@ -435,6 +518,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         currentGenerationLegalAttestation(),
         apiContext,
         failedJob.id,
+        creationFlow,
       );
       if (
         !authorization.authorized ||
@@ -444,23 +528,171 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       ) {
         throw new Error(authorization.error ?? 'Preserved generation could not be resumed');
       }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged(creationFlow, authorization.creationFlow);
       const job = await startGenerationJob({
         fighterId: failedJob.fighterId,
         purchaseId: authorization.purchaseId,
         providerSessionId: authorization.providerSessionId,
+        creationFlow,
         targetKind: failedJob.targetKind ?? undefined,
         targetName: failedJob.targetName ?? undefined,
       }, apiContext);
+      backendOwnsPurchase = true;
       const controller = new AbortController();
       generationJobAbortRef.current?.abort();
       generationJobAbortRef.current = controller;
       const completed = await monitorCloudGenerationJob(job, apiContext, controller.signal);
       setStatus(completed.targetName ? 'Done and synced' : `${tierLabel(completed.tier)} upgrade synced`);
     } catch (err: any) {
+      if (purchaseId && !backendOwnsPurchase) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, failedJob.fighterId, apiContext);
+        } catch (releaseErr: any) {
+          debugWarn('[Billing] Failed to release resume authorization:', releaseErr?.message ?? releaseErr);
+        }
+      }
       setStatus(err?.message ? `Resume failed: ${err.message}` : 'Resume failed');
     } finally {
       setBusy(false);
       setRetryingTarget(null);
+    }
+  };
+
+  const continueApprovedVideoJob = async (approvedJob: GenerationJob) => {
+    if (!legalAccepted) {
+      setStatus('Accept the generation terms to continue the video flow');
+      return;
+    }
+    setBusy(true);
+    setStatus('Preparing the next video action without charging more credits...');
+    const apiContext = captureApiRequestContext();
+    let purchaseId: string | undefined;
+    let backendOwnsPurchase = false;
+    try {
+      const authorization = await authorizeGeneration(
+        approvedJob.tier,
+        approvedJob.operation,
+        approvedJob.fighterId,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+        approvedJob.id,
+        'video',
+      );
+      if (
+        !authorization.authorized || authorization.mode !== 'continuation' ||
+        !authorization.purchaseId || !authorization.providerSessionId
+      ) {
+        throw new Error(authorization.error ?? 'The next video action could not be authorized');
+      }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('video', authorization.creationFlow);
+      const nextJob = await startGenerationJob({
+        fighterId: approvedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        creationFlow: 'video',
+      }, apiContext);
+      backendOwnsPurchase = true;
+      setVideoReviewJobs((current) => current.filter((job) => job.id !== approvedJob.id));
+      const controller = new AbortController();
+      generationJobAbortRef.current?.abort();
+      generationJobAbortRef.current = controller;
+      await monitorCloudGenerationJob(nextJob, apiContext, controller.signal);
+    } catch (cause) {
+      if (purchaseId && !backendOwnsPurchase) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, approvedJob.fighterId, apiContext);
+        } catch (settlementError: any) {
+          debugWarn(
+            '[Billing] Video continuation could not be released:',
+            settlementError?.message ?? settlementError,
+          );
+        }
+      }
+      setStatus(cause instanceof Error ? `Video continuation failed: ${cause.message}` : 'Video continuation failed');
+    } finally {
+      setBusy(false);
+      setRetryingTarget(null);
+    }
+  };
+
+  const restartRejectedVideoRun = async (rejectedJob: GenerationJob) => {
+    if (!legalAccepted) {
+      setStatus('Accept the generation terms to start a new complete Video run');
+      return;
+    }
+    const creditCost = QUALITY_TIERS.find((item) => item.id === rejectedJob.tier)?.creditCost ?? 18;
+    if (!window.confirm(
+      `Start a new complete Video run for ${creditCost} credits? The rejected run stays archived and will not be reused.`,
+    )) return;
+    setBusy(true);
+    setStatus('Preparing a new complete Video run...');
+    const apiContext = captureApiRequestContext();
+    let purchaseId: string | undefined;
+    let backendOwnsPurchase = false;
+    try {
+      const authorization = await authorizeGeneration(
+        rejectedJob.tier,
+        'fighter_generation',
+        rejectedJob.fighterId,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+        null,
+        'video',
+      );
+      if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
+        throw new Error(authorization.error ?? 'A new complete Video run could not be authorized');
+      }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('video', authorization.creationFlow);
+      const nextJob = await startGenerationJob({
+        fighterId: rejectedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        creationFlow: 'video',
+      }, apiContext);
+      backendOwnsPurchase = true;
+      setVideoReviewJobs((current) => current.filter((job) => job.id !== rejectedJob.id));
+      const controller = new AbortController();
+      generationJobAbortRef.current?.abort();
+      generationJobAbortRef.current = controller;
+      await monitorCloudGenerationJob(nextJob, apiContext, controller.signal);
+    } catch (cause) {
+      if (purchaseId && !backendOwnsPurchase) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, rejectedJob.fighterId, apiContext);
+        } catch (settlementError: any) {
+          debugWarn(
+            '[Billing] New Video run reservation could not be released:',
+            settlementError?.message ?? settlementError,
+          );
+        }
+      }
+      setStatus(cause instanceof Error ? `New Video run failed: ${cause.message}` : 'New Video run failed');
+    } finally {
+      setBusy(false);
+      setRetryingTarget(null);
+    }
+  };
+
+  const finishApprovedVideoFighter = async (approvedJob: GenerationJob) => {
+    setBusy(true);
+    setStatus('All video actions approved. Syncing your private fighter...');
+    const apiContext = captureApiRequestContext();
+    try {
+      const cloud = await getCloudFighter(approvedJob.fighterId, apiContext);
+      if (!cloud?.photoHash) throw new Error('Approved cloud fighter could not be loaded');
+      await downloadCloudFighterToLocal(cloud, apiContext);
+      await refreshCurrent(cloud.photoHash);
+      setVideoReviewJobs((current) => current.filter((job) => job.fighterId !== approvedJob.fighterId));
+      setStatus('All video actions approved, private, and synced');
+    } catch (cause) {
+      setStatus(cause instanceof Error ? `Approved fighter sync failed: ${cause.message}` : 'Approved fighter sync failed');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -508,11 +740,14 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         null,
         currentGenerationLegalAttestation(),
         apiContext,
+        null,
+        'original',
       );
       if (!authorization.authorized) {
         throw new Error(authorization.error ?? 'Generation not authorized');
       }
       purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('original', authorization.creationFlow);
       if (
         authStatus === 'signed-in' &&
         fighterId &&
@@ -523,6 +758,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           fighterId,
           purchaseId: authorization.purchaseId,
           providerSessionId: authorization.providerSessionId,
+          creationFlow: 'original',
           targetKind: target.kind,
           targetName: target.kind === 'animation' ? target.name : target.key,
         }, apiContext);
@@ -530,8 +766,12 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         const controller = new AbortController();
         generationJobAbortRef.current?.abort();
         generationJobAbortRef.current = controller;
-        await monitorCloudGenerationJob(job, apiContext, controller.signal);
-        setStatus('Done and synced');
+        const completed = await monitorCloudGenerationJob(job, apiContext, controller.signal);
+        setStatus(
+          completed.creationFlow === 'video' && completed.reviewStatus === 'awaiting_review'
+            ? 'A video action is paused safely for your review'
+            : 'Done and synced',
+        );
         return;
       }
       await runWithProviderSession(authorization.providerSessionId, action, apiContext);
@@ -1088,6 +1328,20 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
               onChange={setLegalAccepted}
             />
 
+            {videoReviewJob ? (
+              <VideoGenerationReviewGate
+                jobId={videoReviewJob.id}
+                disabled={busy}
+                fullRunRestartRequired={videoReviewJob.fullRunRestartRequired}
+                onContinue={() => continueApprovedVideoJob(videoReviewJob)}
+                onFinalApproval={() => finishApprovedVideoFighter(videoReviewJob)}
+                onRestart={() => restartRejectedVideoRun(videoReviewJob)}
+                onRejected={() => {
+                  setStatus('Video rejected. It remains private and no additional provider call was made.');
+                }}
+              />
+            ) : null}
+
             <section className="gallery-layout">
               <div className="gallery-column--side">
                 <div className="gallery-panel gallery-panel--sources">
@@ -1208,7 +1462,8 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                         )
                       }
                     >
-                      Retry Animation · {currentAnimationRetryCost}{' '}
+                      Retry Animation ·{' '}
+                      {currentAnimationRetryCost}{' '}
                       {currentAnimationRetryCost === 1 ? 'credit' : 'credits'}
                     </button>
                   ) : null}

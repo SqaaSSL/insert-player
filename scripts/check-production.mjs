@@ -1953,11 +1953,18 @@ function assertCrossDeviceRosterImportIsWired() {
     'Optional asset skipped',
     'Sprite skipped',
     'const spritePlan = buildSpriteDownloadPlan(spriteVersions, localFingerprints, options)',
-    'const availableAnimations = new Set(localSpriteVersions.map',
+    'const playableRefs = cloudPlayableSpriteRefs(spriteVersions)',
+    'selectPlayableCachedSprites(refreshedVersions, playableRefs)',
+    'remoteRosterComplete && allRemoteCurrentSpritesAvailable',
+    'await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope)',
+    'const initialPlayableRefs = fingerprintedPlayableSpriteRefs(',
+    'meta.cloudPlayableSpriteRefs = initialPlayableRefs',
     'spritesImported,',
-    'animationsReady: Array.from(availableAnimations)',
+    'animationsReady: Array.from(availableCurrentAnimations)',
     '...(existingMeta ?? {})',
-    'Cloud fighter ${fighter.name} has no playable sprite assets to import.',
+    'Cloud fighter ${fighter.name} is incomplete; missing current animations:',
+    'isCompleteCloudFighterRoster(fighter)',
+    'Archived sprite versions cannot be imported into the playable cache',
     'let imported = 0',
     'imported += 1',
     'summary.updated += 1',
@@ -2857,7 +2864,8 @@ function assertLocalCachePreservesSpriteVersions() {
     "it('clears only the active account scope'",
     "it('rejects a stale write after the active Clerk user changes'",
     'spriteVersions?: CloudSprite[]',
-    'const spriteVersions = fighter.spriteVersions?.length ? fighter.spriteVersions : fighter.sprites',
+    'Archived sprite versions cannot be imported into the playable cache',
+    'return selectPlayableCloudSprites(fighter.sprites)',
     'preserveVersionId: Boolean(sprite.id)',
     'buildSpriteUploadPlan(',
     'created.fighter?.spriteVersions ?? []',
@@ -2868,20 +2876,32 @@ function assertLocalCachePreservesSpriteVersions() {
     'contentHash?: string | null',
     'cloudSourceHashes?: Record<string, string | null>',
     'cloudSpriteVersionCount?: number',
+    'cloudPlayableSpriteRefs?: Record<string, CachedPlayableSpriteRef>',
+    'export function selectPlayableCachedSprites',
+    'const refs = meta?.cloudPlayableSpriteRefs ?? (meta?.cloudFighterId ? {} : undefined)',
+    'export async function setCachedArchivedSprite',
+    'await setCachedArchivedSprite(sprite, { preserveVersionId: true })',
+    'const contentHash = await hashPhoto(sprite.pngBlob)',
+    'await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope)',
     'buildSpriteDownloadPlan(',
     'selectPlayableCloudSprites',
     'includeArchivedVersions?: boolean',
     'includeRawAssets?: boolean',
     'includeArchivedVersions: false,',
     'includeRawAssets: false',
-    'queueArchivedCloudFighterImport',
-    'archivedCloudImportQueue',
     'const localFingerprints = await fingerprintSprites(localSpriteVersions)',
     'meta.cloudSourceHashes = remoteSourceHashes',
     "it('skips remote versions already present by content hash'",
     "it('downloads only a missing RAW blob for an imported version id'",
     "it('downloads both blobs for a genuinely missing remote version'",
     "it('does no writes when cloud history and current pointers already match'",
+    "it('requires all eleven current pointers and never counts archived private versions'",
+    "it('plays the exact remote-current sprite while keeping a newer archived candidate'",
+    "it('fails closed for a cloud fighter without an exact current binding'",
+    "it('keeps historical best-version selection for an Original local fighter'",
+    "it('never promotes a newer higher-tier candidate outside the authoritative playable set'",
+    "it('keeps Original sprites playable when the first sprite upload fails after cloud creation'",
+    "it('keeps successful first sync pinned to the exact authoritative sprite hash'",
     'const requestedTierAnimations = new Set(requestedTierSprites.map((sprite) => sprite.animationName))',
     'requestedTierAnimations.size >= ANIMATIONS.length',
     'spriteVersions: spriteVersions.map',
@@ -3341,6 +3361,22 @@ function assertVideoSpriteProductionToolchainGate() {
     if (!validation.includes('VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"')) {
       throw new Error(`${label} must mark the exact media test before the host production gate.`);
     }
+  }
+
+  const productionDeploy = readFileSync(join(root, '.github/workflows/deploy-production.yml'), 'utf8');
+  if (!/^\s{4}needs: validate$/m.test(productionDeploy)) {
+    throw new Error('Production deploy must remain blocked on the reusable validation job.');
+  }
+  const pagesStepStart = productionDeploy.indexOf('- name: Build, deploy, and smoke Pages');
+  const pagesStepEnd = productionDeploy.indexOf('\n      - name:', pagesStepStart + 1);
+  const pagesStep = pagesStepStart >= 0
+    ? productionDeploy.slice(pagesStepStart, pagesStepEnd >= 0 ? pagesStepEnd : undefined)
+    : '';
+  const proofAssignments = productionDeploy.match(/VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED:\s*"1"/g) ?? [];
+  if (proofAssignments.length !== 1 ||
+      !pagesStep.includes('VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"') ||
+      !pagesStep.includes('run: npm run deploy:frontend')) {
+    throw new Error('Only the Pages deploy step may inherit the exact media-toolchain proof from validation.');
   }
 }
 
