@@ -108,6 +108,7 @@ function assertNoLegacyApiRoutes() {
 function assertBillingUsesRequestOrigin() {
   const billing = readFileSync(join(root, 'worker/src/billing.ts'), 'utf8');
   const billingIntegrationTest = readFileSync(join(root, 'worker/src/billing.integration.test.ts'), 'utf8');
+  const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
   const billingClient = readFileSync(join(root, 'src/services/Billing.ts'), 'utf8');
   const cloudFighters = readFileSync(join(root, 'src/services/CloudFighters.ts'), 'utf8');
   const spriteCache = readFileSync(join(root, 'src/services/SpriteCache.ts'), 'utf8');
@@ -149,8 +150,16 @@ function assertBillingUsesRequestOrigin() {
     'consumePendingCheckout',
     "authStatus === 'loading'",
     "authStatus !== 'signed-in'",
-    'Checkout complete. Confirming credits...',
-    'CHECKOUT_PROFILE_REFRESH_DELAYS_MS',
+    'export async function getCreditCheckoutStatus',
+    'WHERE checkout_sessions.stripe_session_id = ?',
+    'AND checkout_sessions.user_id = ?',
+    "path === '/api/billing/checkout-status' && method === 'GET'",
+    'export async function verifyCreditCheckoutSession',
+    'checkout.sessionId !== expectedSessionId',
+    'Confirming the exact Stripe session...',
+    'CHECKOUT_SESSION_REFRESH_DELAYS_MS',
+    'balance alone does not confirm it',
+    'no credit success was assumed',
     'providerCallLimit?: number',
     'providerCallLimit: providerSession.providerCallLimit',
     "'fighter_upgrade'",
@@ -203,7 +212,7 @@ function assertBillingUsesRequestOrigin() {
     'reverses refunds once and restores credits after a won dispute',
     'withholds refunded credits when refund delivery precedes checkout completion',
   ];
-  const combined = `${billing}\n${billingIntegrationTest}\n${billingClient}\n${cloudFighters}\n${spriteCache}\n${createPage}\n${galleryPage}\n${homePage}\n${checkoutStatus}`;
+  const combined = `${billing}\n${billingIntegrationTest}\n${workerIndex}\n${billingClient}\n${cloudFighters}\n${spriteCache}\n${createPage}\n${galleryPage}\n${homePage}\n${checkoutStatus}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
     throw new Error(`Billing checkout origin handling is missing: ${missing.join(', ')}`);
@@ -1197,6 +1206,8 @@ function assertCommunityAssetsAreSanitized() {
   const fighterIntegrationTests = readFileSync(join(root, 'worker/src/fighters.integration.test.ts'), 'utf8');
   const gallery = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
   const community = readFileSync(join(root, 'src/ui/routes/CommunityPage.tsx'), 'utf8');
+  const communityState = readFileSync(join(root, 'src/ui/shared/communityState.ts'), 'utf8');
+  const communityStateTests = readFileSync(join(root, 'src/ui/shared/communityState.test.ts'), 'utf8');
   const share = readFileSync(join(root, 'src/ui/shared/communityShare.ts'), 'utf8');
   const index = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
   const liveSmoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
@@ -1218,9 +1229,16 @@ function assertCommunityAssetsAreSanitized() {
     'function publicSpriteAssetUrl',
     '/public-assets/fighters/',
     'export async function getCommunityFighter',
-    'getCommunityFighter(featuredId)',
-    'Featured fighter loaded',
-    'Shared fighter is no longer public',
+    'export async function listOwnedCommunityFighterIds',
+    "path === '/api/community/ownership'",
+    'JOIN fighters owned',
+    'listOwnedCommunityFighterIds(apiContext)',
+    'getCommunityFighter(featuredId, apiContext)',
+    "setLoadState({ phase: 'not-found' })",
+    'resolveFeaturedCommunityFighter(fighters, featuredId)',
+    'Fighter Not Found',
+    'This shared fighter is no longer public.',
+    'never substitutes the first fighter for an invalid shared id',
     'PUBLIC_CLONE_SOURCE_KINDS',
     "['side', 'upright', 'crouch']",
     'for (const kind of PUBLIC_CLONE_SOURCE_KINDS)',
@@ -1310,7 +1328,7 @@ function assertCommunityAssetsAreSanitized() {
   ) {
     throw new Error('Community payloads must not expose Clerk account profile fields.');
   }
-  const implementationCombined = `${fighters}\n${assetIndexes}\n${fighterIntegrationTests}\n${gallery}\n${community}\n${share}\n${index}`;
+  const implementationCombined = `${fighters}\n${assetIndexes}\n${fighterIntegrationTests}\n${gallery}\n${community}\n${communityState}\n${communityStateTests}\n${share}\n${index}`;
   const combined = `${implementationCombined}\n${liveSmoke}`;
   const foundForbidden = forbidden.filter((snippet) => implementationCombined.includes(snippet));
   if (foundForbidden.length > 0) {
@@ -1468,9 +1486,10 @@ function assertMatchReportingIsWired() {
   const matchConfig = readFileSync(join(root, 'src/game/match/MatchConfig.ts'), 'utf8');
   const reporting = readFileSync(join(root, 'src/services/MatchReporting.ts'), 'utf8');
   const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
+  const workerMatchReporting = readFileSync(join(root, 'worker/src/matchReporting.ts'), 'utf8');
   const leaderboard = readFileSync(join(root, 'worker/src/leaderboard.ts'), 'utf8');
   const smoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
-  const combined = `${app}\n${fightScene}\n${matchConfig}\n${reporting}\n${workerIndex}\n${leaderboard}\n${smoke}`;
+  const combined = `${app}\n${fightScene}\n${matchConfig}\n${reporting}\n${workerIndex}\n${workerMatchReporting}\n${leaderboard}\n${smoke}`;
   const required = [
     "MATCH_COMPLETE_EVENT = 'asf-match-complete'",
     'window.dispatchEvent(new CustomEvent(MATCH_COMPLETE_EVENT',
@@ -1482,14 +1501,17 @@ function assertMatchReportingIsWired() {
     'const MAX_MATCH_DURATION_SECONDS = 20 * 60',
     'function readBoundedInteger',
     'function readOptionalId',
-    'async function readOwnedFighterId',
-    'Match fighter does not belong to this user',
+    'readMatchFighterId',
+    "f.public_flag = 1 AND arcade.status = 'active'",
+    'Match fighter is not owned or an active Arcade fighter',
+    'isAttractModeMatchReport(body)',
+    'recorded: false',
     'const player2Id = systemOpponentId',
     "const winnerId = winnerSlot === 'p2' ? player2Id : auth.userId",
     'Stats are private',
     'signed-out /api/stats/:userId is protected',
-    'const p1FighterId = await readOwnedFighterId(env, auth.userId, body.p1FighterId)',
-    'const p2FighterId = await readOwnedFighterId(env, auth.userId, body.p2FighterId)',
+    'const p1FighterId = await readMatchFighterId(env, auth.userId, body.p1FighterId)',
+    'const p2FighterId = await readMatchFighterId(env, auth.userId, body.p2FighterId)',
     'roundsP1: readBoundedInteger(body.roundsP1, 0, MAX_MATCH_ROUNDS)',
     'duration: readBoundedInteger(body.duration, 0, MAX_MATCH_DURATION_SECONDS)',
     'p1FighterId,\n            p2FighterId',
@@ -1498,7 +1520,9 @@ function assertMatchReportingIsWired() {
     'function updateUnrankedRecord',
     'wins = wins + 1',
     'match reporting updates signed-in record',
-    'match reporting rejects foreign fighter ids',
+    'match reporting rejects foreign community fighter ids',
+    'Attract Mode does not persist history or change personal W/L',
+    'match reporting accepts active published Arcade fighter ids',
   ];
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
@@ -1668,6 +1692,15 @@ function assertLiveSmokeCoversCriticalPaths() {
     'community publishing requires the full launch animation set',
     'Community listing did not include the full launch animation set',
     'Community detail did not include the full launch animation set',
+    'const requiredProductionArcadeSlugs',
+    "'donald-trump'",
+    "'lamine-yamal'",
+    "'rosalia'",
+    "'elon-musk'",
+    'Official Arcade is missing required production fighter',
+    'Official Arcade fighter ${fighter.arcade.slug} is missing playable animation ${animationName}',
+    'Official Arcade fighter ${fighter.arcade.slug} has no immutable hash for ${animationName}',
+    'Official Arcade fighter ${fighter.arcade.slug} has invalid playback metadata for ${animationName}',
     'create same-photo clone target',
     'Community clone did not merge into the existing same-photo fighter',
     'Same-photo community clone merge should return cloned=false',
@@ -2006,8 +2039,8 @@ function assertCrossDeviceRosterImportIsWired() {
     'Fighter renamed in cloud. The preview cache will refresh when Gallery reloads.',
     'syncCloudFightersToLocal(all, apiContext)',
     'const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext)',
-    'p1CloudFighterId: p1Fighter.cloudFighterId',
-    'p2CloudFighterId: p2Fighter.cloudFighterId',
+    'p1CloudFighterId: selectedP1.cloudFighterId',
+    'p2CloudFighterId: selectedP2.cloudFighterId',
   ];
   const combined = `${cloud}\n${gallery}\n${roster}\n${cloudFirstRename}\n${cloudFirstDelete}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));

@@ -208,4 +208,17 @@ export class SoundManager {
         break;
     }
   }
+
+  destroy(): void {
+    this.masterGain?.disconnect();
+    this.masterGain = null;
+    this.noiseBuffer = null;
+    const context = this.ctx;
+    this.ctx = null;
+    if (context && context.state !== 'closed') {
+      void context.close().catch(() => {
+        // Audio teardown is best effort while the Phaser scene is leaving.
+      });
+    }
+  }
 }

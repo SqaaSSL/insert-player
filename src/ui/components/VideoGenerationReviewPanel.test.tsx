@@ -122,4 +122,30 @@ describe('VideoGenerationReviewPanel', () => {
     expect(markup).toContain('Start A New Complete Video Run');
     expect(markup).not.toContain('Continue To Next Action');
   });
+
+  it('keeps final sync failures visible and offers a download-only retry', () => {
+    const markup = renderToStaticMarkup(
+      <VideoGenerationReviewPanel
+        review={{
+          status: 'approved',
+          technicalOutcome: 'technical_pass',
+          animationLabel: 'Victory',
+          contactSheetUrl: 'blob:https://app.example/contact',
+          proposedIndices: [1, 4, 7, 10],
+          sourceFrameCount: 12,
+          reasonCodes: [],
+          continuationAvailable: false,
+        }}
+        error="The approved fighter could not be downloaded"
+        onApprove={vi.fn()}
+        onReject={vi.fn()}
+        onFinalSync={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('The approved fighter could not be downloaded');
+    expect(markup).toContain('Retry Fighter Sync');
+    expect(markup).not.toContain('Continue To Next Action');
+    expect(markup).not.toContain('Start A New Complete Video Run');
+  });
 });

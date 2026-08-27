@@ -9,12 +9,21 @@ interface ControlButtonProps {
   action: VirtualInputAction;
   className: string;
   label: string;
+  playerIndex: 0 | 1;
+  playerLabel: string;
   title: string;
 }
 
-function ControlButton({ action, className, label, title }: ControlButtonProps) {
+function ControlButton({
+  action,
+  className,
+  label,
+  playerIndex,
+  playerLabel,
+  title,
+}: ControlButtonProps) {
   const setPressed = (active: boolean) => {
-    setVirtualInputAction(0, action, active);
+    setVirtualInputAction(playerIndex, action, active);
   };
 
   const onPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
@@ -47,7 +56,7 @@ function ControlButton({ action, className, label, title }: ControlButtonProps) 
     <button
       type="button"
       className={`mobile-fight-control ${className}`}
-      aria-label={`${title}, player 1`}
+      aria-label={`${title}, ${playerLabel}`}
       title={title}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={onKeyDown}
@@ -62,9 +71,15 @@ function ControlButton({ action, className, label, title }: ControlButtonProps) 
   );
 }
 
-export function MobileFightControls() {
+export function MobileFightControls({
+  playerIndex = 0,
+  playerLabel = 'player 1',
+}: {
+  playerIndex?: 0 | 1;
+  playerLabel?: string;
+}) {
   useEffect(() => {
-    const releaseAll = () => resetVirtualInput(0);
+    const releaseAll = () => resetVirtualInput(playerIndex);
     window.addEventListener('blur', releaseAll);
     window.addEventListener('pagehide', releaseAll);
     return () => {
@@ -72,21 +87,21 @@ export function MobileFightControls() {
       window.removeEventListener('pagehide', releaseAll);
       releaseAll();
     };
-  }, []);
+  }, [playerIndex]);
 
   return (
-    <div className="mobile-fight-controls" aria-label="Player 1 controls">
+    <div className="mobile-fight-controls" aria-label={`${playerLabel} controls`}>
       <div className="mobile-fight-controls__dpad" role="group" aria-label="Movement">
-        <ControlButton action="up" className="is-up" label="↑" title="Jump" />
-        <ControlButton action="left" className="is-left" label="←" title="Move left" />
-        <ControlButton action="down" className="is-down" label="↓" title="Crouch" />
-        <ControlButton action="right" className="is-right" label="→" title="Move right" />
+        <ControlButton action="up" className="is-up" label="↑" playerIndex={playerIndex} playerLabel={playerLabel} title="Jump" />
+        <ControlButton action="left" className="is-left" label="←" playerIndex={playerIndex} playerLabel={playerLabel} title="Move left" />
+        <ControlButton action="down" className="is-down" label="↓" playerIndex={playerIndex} playerLabel={playerLabel} title="Crouch" />
+        <ControlButton action="right" className="is-right" label="→" playerIndex={playerIndex} playerLabel={playerLabel} title="Move right" />
       </div>
       <div className="mobile-fight-controls__actions" role="group" aria-label="Attacks">
-        <ControlButton action="fireball" className="is-fireball" label="F" title="Fireball" />
-        <ControlButton action="uppercut" className="is-uppercut" label="U" title="Uppercut" />
-        <ControlButton action="punch" className="is-punch" label="P" title="Punch" />
-        <ControlButton action="kick" className="is-kick" label="K" title="Kick" />
+        <ControlButton action="fireball" className="is-fireball" label="F" playerIndex={playerIndex} playerLabel={playerLabel} title="Fireball" />
+        <ControlButton action="uppercut" className="is-uppercut" label="U" playerIndex={playerIndex} playerLabel={playerLabel} title="Uppercut" />
+        <ControlButton action="punch" className="is-punch" label="P" playerIndex={playerIndex} playerLabel={playerLabel} title="Punch" />
+        <ControlButton action="kick" className="is-kick" label="K" playerIndex={playerIndex} playerLabel={playerLabel} title="Kick" />
       </div>
     </div>
   );

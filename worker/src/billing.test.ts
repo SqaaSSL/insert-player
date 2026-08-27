@@ -28,7 +28,7 @@ class FakeD1Statement {
     if (this.sql.includes('UPDATE users') && this.sql.includes('stripe_customer_id')) {
       storedStripeCustomerId ??= String(this.bindings[0]);
     }
-    return Promise.resolve({ success: true, meta: {} } as D1Result);
+    return Promise.resolve({ success: true, meta: { changes: 1 } } as D1Result);
   }
 }
 

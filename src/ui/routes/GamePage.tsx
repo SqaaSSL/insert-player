@@ -13,10 +13,11 @@ import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 
 interface GamePageProps {
   launchTarget: { sceneKey: string; data: MatchSceneData };
+  onComplete: () => void;
   onExit: () => void;
 }
 
-export function GamePage({ launchTarget, onExit }: GamePageProps) {
+export function GamePage({ launchTarget, onComplete, onExit }: GamePageProps) {
   const [matchActionsVisible, setMatchActionsVisible] = useState(false);
 
   useEffect(() => {
@@ -37,10 +38,16 @@ export function GamePage({ launchTarget, onExit }: GamePageProps) {
     });
     let disposed = false;
     let game: Phaser.Game | null = null;
-    void import('../../game/createGame.ts').then(({ createGame }) => {
-      if (disposed) return;
-      game = createGame('game-container', launchTarget);
-    });
+    void import('../../game/createGame.ts')
+      .then(({ createGame }) => {
+        if (disposed) return;
+        game = createGame('game-container', launchTarget);
+      })
+      .catch((err: unknown) => {
+        if (!disposed) {
+          debugWarn('[GamePage] Phaser runtime failed to mount:', err instanceof Error ? err.message : err);
+        }
+      });
     return () => {
       disposed = true;
       debugInfo('[GamePage] Destroying Phaser runtime', {
@@ -53,6 +60,7 @@ export function GamePage({ launchTarget, onExit }: GamePageProps) {
 
   useEffect(() => {
     const onMatchComplete = (event: WindowEventMap[typeof MATCH_COMPLETE_EVENT]) => {
+      onComplete();
       void reportMatchCompletion(event.detail).catch((err: any) => {
         debugWarn('[MatchReporting] Failed to report match:', err?.message ?? err);
       });
@@ -61,7 +69,7 @@ export function GamePage({ launchTarget, onExit }: GamePageProps) {
     return () => {
       window.removeEventListener(MATCH_COMPLETE_EVENT, onMatchComplete);
     };
-  }, []);
+  }, [onComplete]);
 
   useEffect(() => {
     const onVisibilityChange = (
@@ -85,7 +93,15 @@ export function GamePage({ launchTarget, onExit }: GamePageProps) {
       <div className="game-shell__surface">
         <div id="game-container" className="game-shell__canvas" />
       </div>
-      {!launchTarget.data.cpuVsCpu && !matchActionsVisible && <MobileFightControls />}
+      {!launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
+        <MobileFightControls playerIndex={0} playerLabel="player 1" />
+      )}
+      {!launchTarget.data.cpuVsCpu && launchTarget.data.vsAI === false && !matchActionsVisible && (
+        <div className="mobile-versus-unavailable" role="status">
+          Touch Versus needs two control sets and is unavailable on this screen. Use a keyboard or controllers,
+          or play Arcade Mode on touch.
+        </div>
+      )}
       {matchActionsVisible && (
         <div className="match-actions" role="group" aria-label="Match complete actions">
           <span className="match-actions__label">Match Complete</span>

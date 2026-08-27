@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { HomePage } from './routes/HomePage.tsx';
 import { GamePage } from './routes/GamePage.tsx';
 import type { MatchSceneData } from '../game/match/MatchConfig.ts';
@@ -6,8 +6,11 @@ import { AppHeader } from './components/AppHeader.tsx';
 import { LegalFooter, type LegalRoute } from './components/LegalFooter.tsx';
 import { LoadingScreen } from './components/LoadingScreen.tsx';
 import { LegalPage } from './routes/LegalPage.tsx';
+import { ConfigurationErrorPage } from './routes/ConfigurationErrorPage.tsx';
 import { debugInfo, debugWarn } from '../services/DebugLog.ts';
 import type { AuthRouteState } from './authState.ts';
+import { readStoredMatch, writeStoredMatch } from './shared/storedMatch.ts';
+import { CacheStatusBanner, type CacheStatus } from './components/CacheStatusBanner.tsx';
 
 const GalleryPage = lazy(() => import('./routes/GalleryPage.tsx').then((module) => ({
   default: module.GalleryPage,
@@ -36,46 +39,44 @@ type AppRoute =
   | '/roster/vs'
   | LegalRoute
   | '/fight';
-const LAST_MATCH_STORAGE_KEY = 'ai-street-fighter:last-match';
 
-function readStoredMatch(): MatchSceneData | null {
-  try {
-    const raw = window.sessionStorage.getItem(LAST_MATCH_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as MatchSceneData | null;
-    debugInfo('[AppRouter] Read stored match from sessionStorage', {
-      hasMatch: Boolean(parsed),
-      p1: parsed?.p1Name ?? null,
-      p2: parsed?.p2Name ?? null,
-    });
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch {
-    debugWarn('[AppRouter] Failed to parse stored match from sessionStorage');
-    return null;
-  }
+interface NavigationOptions {
+  replace?: boolean;
+  state?: Record<string, unknown>;
 }
 
-function writeStoredMatch(data: MatchSceneData | null): void {
-  try {
-    if (!data) {
-      window.sessionStorage.removeItem(LAST_MATCH_STORAGE_KEY);
-      debugInfo('[AppRouter] Cleared stored match');
-      return;
-    }
-    window.sessionStorage.setItem(LAST_MATCH_STORAGE_KEY, JSON.stringify(data));
-    debugInfo('[AppRouter] Stored match', {
-      p1: data.p1Name ?? null,
-      p2: data.p2Name ?? null,
-      vsAI: data.vsAI ?? null,
-      cpuVsCpu: data.cpuVsCpu ?? null,
-    });
-  } catch {
-    debugWarn('[AppRouter] Failed to write match to sessionStorage');
-  }
+interface AppProps extends Partial<AuthRouteState> {
+  authSlot?: ReactNode;
+  cacheStatus?: CacheStatus;
+  cacheMessage?: string | null;
+  onRetryCache?: () => void;
+  configurationError?: string | null;
 }
 
-function normalizeRoute(pathname: string, hash: string): AppRoute {
-  const cleanedPath = (pathname || '/menu').replace(/\/+$/, '') || '/menu';
+function isLegalRoute(route: AppRoute): route is LegalRoute {
+  return route === '/legal' || route === '/privacy' || route === '/terms' || route === '/refunds';
+}
+
+export function legalReturnRouteFromState(state: unknown): AppRoute {
+  if (!state || typeof state !== 'object') return '/menu';
+  const candidate = (state as { legalReturnTo?: unknown }).legalReturnTo;
+  if (
+    candidate === '/menu' ||
+    candidate === '/gallery' ||
+    candidate === '/community' ||
+    candidate === '/moderation' ||
+    candidate === '/fighters/new' ||
+    candidate === '/roster/watch' ||
+    candidate === '/roster/cpu' ||
+    candidate === '/roster/vs'
+  ) {
+    return candidate;
+  }
+  return '/menu';
+}
+
+export function normalizeRoute(pathname: string, hash: string): AppRoute {
+  const cleanedPath = (pathname || '/').replace(/\/+$/, '') || '/';
   const cleanedHash = hash.replace(/^#/, '').replace(/\/+$/, '');
   const cleaned =
     cleanedPath !== '/' && cleanedPath !== ''
@@ -96,7 +97,9 @@ function normalizeRoute(pathname: string, hash: string): AppRoute {
   return '/menu';
 }
 
-function useHashRoute(): [AppRoute, (route: AppRoute, search?: string) => void] {
+type Navigate = (route: AppRoute, search?: string, options?: NavigationOptions) => void;
+
+function useHashRoute(): [AppRoute, Navigate] {
   const [route, setRoute] = useState<AppRoute>(() =>
     normalizeRoute(window.location.pathname, window.location.hash),
   );
@@ -117,7 +120,11 @@ function useHashRoute(): [AppRoute, (route: AppRoute, search?: string) => void] 
     };
   }, []);
 
-  const navigate = (nextRoute: AppRoute, search = '') => {
+  const navigate = useCallback((
+    nextRoute: AppRoute,
+    search = '',
+    options: NavigationOptions = {},
+  ) => {
     const normalizedSearch = search && !search.startsWith('?') ? `?${search}` : search;
     if (
       normalizeRoute(window.location.pathname, window.location.hash) === nextRoute &&
@@ -126,9 +133,10 @@ function useHashRoute(): [AppRoute, (route: AppRoute, search?: string) => void] 
       setRoute(nextRoute);
       return;
     }
-    window.history.pushState({}, '', `${nextRoute}${normalizedSearch}`);
+    const method = options.replace ? 'replaceState' : 'pushState';
+    window.history[method](options.state ?? {}, '', `${nextRoute}${normalizedSearch}`);
     setRoute(nextRoute);
-  };
+  }, []);
 
   return [route, navigate];
 }
@@ -137,9 +145,44 @@ export function App({
   authStatus = 'local',
   authSessionKey = 'local',
   authSlot = null,
-}: Partial<AuthRouteState> & { authSlot?: ReactNode }) {
+  cacheStatus = 'ready',
+  cacheMessage = null,
+  onRetryCache,
+  configurationError = null,
+}: AppProps) {
   const [route, navigate] = useHashRoute();
-  const [pendingMatch, setPendingMatch] = useState<MatchSceneData | null>(() => readStoredMatch());
+  const [pendingMatchState, setPendingMatchState] = useState<{
+    authSessionKey: string;
+    data: MatchSceneData | null;
+  }>(() => ({ authSessionKey, data: readStoredMatch(authSessionKey) }));
+  const pendingMatch = pendingMatchState.authSessionKey === authSessionKey
+    ? pendingMatchState.data
+    : null;
+  const previousRouteRef = useRef<AppRoute>(route);
+
+  useEffect(() => {
+    setPendingMatchState({
+      authSessionKey,
+      data: readStoredMatch(authSessionKey),
+    });
+  }, [authSessionKey]);
+
+  useEffect(() => {
+    if (route !== '/fight' || pendingMatch) return;
+    debugWarn('[AppRouter] /fight requested without a valid match. Redirecting to the arcade.', {
+      pathname: window.location.pathname,
+      authSessionKey,
+    });
+    navigate('/menu', '', { replace: true });
+  }, [authSessionKey, navigate, pendingMatch, route]);
+
+  useEffect(() => {
+    const previousRoute = previousRouteRef.current;
+    previousRouteRef.current = route;
+    if (previousRoute !== '/fight' || route === '/fight') return;
+    writeStoredMatch(null, authSessionKey);
+    setPendingMatchState({ authSessionKey, data: null });
+  }, [authSessionKey, route]);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -156,16 +199,51 @@ export function App({
 
   const startFight = useCallback(
     (data: MatchSceneData) => {
-      writeStoredMatch(data);
-      setPendingMatch(data);
+      if (!writeStoredMatch(data, authSessionKey)) {
+        debugWarn('[AppRouter] Match could not be persisted for reload recovery');
+      }
+      setPendingMatchState({ authSessionKey, data });
       debugInfo('[AppRouter] Starting fight from roster', {
         p1: data.p1Name ?? null,
         p2: data.p2Name ?? null,
       });
       navigate('/fight');
     },
-    [navigate],
+    [authSessionKey, navigate],
   );
+
+  const finishFight = useCallback(() => {
+    writeStoredMatch(null, authSessionKey);
+    debugInfo('[AppRouter] Cleared completed match recovery state');
+  }, [authSessionKey]);
+
+  const exitFight = useCallback(() => {
+    writeStoredMatch(null, authSessionKey);
+    setPendingMatchState({ authSessionKey, data: null });
+    navigate('/menu');
+  }, [authSessionKey, navigate]);
+
+  const launchTarget = useMemo(
+    () => pendingMatch ? { sceneKey: 'FightScene', data: pendingMatch } : null,
+    [pendingMatch],
+  );
+
+  const navigateToLegal = useCallback((nextRoute: LegalRoute) => {
+    const returnTo = isLegalRoute(route)
+      ? legalReturnRouteFromState(window.history.state)
+      : route === '/fight' ? '/menu' : route;
+    navigate(nextRoute, '', { state: { legalReturnTo: returnTo } });
+  }, [navigate, route]);
+
+  const navigateWithinLegal = useCallback((nextRoute: LegalRoute) => {
+    navigate(nextRoute, '', {
+      state: { legalReturnTo: legalReturnRouteFromState(window.history.state) },
+    });
+  }, [navigate]);
+
+  const leaveLegal = useCallback(() => {
+    navigate(legalReturnRouteFromState(window.history.state), '', { replace: true });
+  }, [navigate]);
 
   const homePage = useMemo(
     () => (
@@ -173,7 +251,7 @@ export function App({
         authStatus={authStatus}
         authSessionKey={authSessionKey}
         onCreateFighter={() => navigate('/fighters/new')}
-        onNavigateLegal={(route) => navigate(route)}
+        onNavigateLegal={navigateToLegal}
         onOpenGallery={() => navigate('/gallery')}
         onOpenCommunity={() => navigate('/community')}
         onOpenWatchMode={() => navigate('/roster/watch')}
@@ -182,10 +260,19 @@ export function App({
         onOpenModeration={() => navigate('/moderation')}
       />
     ),
-    [authStatus, authSessionKey, navigate],
+    [authStatus, authSessionKey, navigate, navigateToLegal],
   );
 
   const content = useMemo(() => {
+    if (configurationError && route !== '/community' && !isLegalRoute(route)) {
+      return (
+        <ConfigurationErrorPage
+          message={configurationError}
+          onOpenCommunity={() => navigate('/community')}
+          onOpenLegal={() => navigateToLegal('/legal')}
+        />
+      );
+    }
     if (route === '/menu') {
       return homePage;
     }
@@ -196,7 +283,7 @@ export function App({
           authSessionKey={authSessionKey}
           onBack={() => navigate('/menu')}
           onCreateFighter={() => navigate('/fighters/new')}
-          onNavigateLegal={(route: LegalRoute) => navigate(route)}
+          onNavigateLegal={navigateToLegal}
         />
       );
     }
@@ -219,16 +306,16 @@ export function App({
           authSessionKey={authSessionKey}
           onBack={() => navigate('/gallery')}
           onComplete={() => navigate('/gallery')}
-          onNavigateLegal={(route: LegalRoute) => navigate(route)}
+          onNavigateLegal={navigateToLegal}
         />
       );
     }
-    if (route === '/legal' || route === '/privacy' || route === '/terms' || route === '/refunds') {
+    if (isLegalRoute(route)) {
       return (
         <LegalPage
           kind={route.slice(1) as 'legal' | 'privacy' | 'terms' | 'refunds'}
-          onBack={() => navigate('/menu')}
-          onNavigate={navigate}
+          onBack={leaveLegal}
+          onNavigate={navigateWithinLegal}
         />
       );
     }
@@ -246,14 +333,25 @@ export function App({
       );
     }
     if (!pendingMatch) {
-      debugWarn('[AppRouter] /fight requested without pending match. Falling back to menu shell.', {
-        pathname: window.location.pathname,
-        hash: window.location.hash,
-      });
-      return homePage;
+      return <LoadingScreen label="Returning to the arcade..." />;
     }
-    return <GamePage launchTarget={{ sceneKey: 'FightScene', data: pendingMatch }} onExit={() => navigate('/menu')} />;
-  }, [route, navigate, pendingMatch, startFight, authStatus, authSessionKey, homePage]);
+    return <GamePage launchTarget={launchTarget!} onComplete={finishFight} onExit={exitFight} />;
+  }, [
+    route,
+    navigate,
+    navigateToLegal,
+    navigateWithinLegal,
+    leaveLegal,
+    pendingMatch,
+    launchTarget,
+    finishFight,
+    exitFight,
+    startFight,
+    authStatus,
+    authSessionKey,
+    homePage,
+    configurationError,
+  ]);
 
   const routedContent = (
     <Suspense fallback={<LoadingScreen label="Loading cabinet..." />}>
@@ -261,14 +359,19 @@ export function App({
     </Suspense>
   );
 
-  if (route === '/fight') return routedContent;
+  if (route === '/fight' && !configurationError) return routedContent;
 
   return (
     <div className="app-route-shell">
       <AppHeader currentRoute={route} onNavigate={navigate} />
       {authSlot}
+      <CacheStatusBanner
+        status={cacheStatus}
+        message={cacheMessage}
+        onRetry={onRetryCache}
+      />
       <main className="app-main">{routedContent}</main>
-      <LegalFooter onNavigate={navigate} />
+      <LegalFooter onNavigate={navigateToLegal} />
     </div>
   );
 }

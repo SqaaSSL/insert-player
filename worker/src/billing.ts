@@ -131,6 +131,17 @@ interface CheckoutAdjustmentRow {
   dispute_event_created: number;
 }
 
+interface CheckoutVerificationRow {
+  stripe_session_id: string;
+  pack_id: string;
+  credits: number;
+  status: string;
+  credits_balance: number;
+  updated_at: string;
+}
+
+export type CreditCheckoutVerificationState = 'pending' | 'complete' | 'failed';
+
 type StripeCreditStatus = 'credited' | 'duplicate' | 'reversed' | 'restored' | 'ignored' | null;
 
 const CREDIT_PACKS: Record<string, CreditPack> = {
@@ -167,6 +178,63 @@ function json(data: unknown, status = 200): Response {
 export function creditPacksResponse(): Response {
   return json({
     packs: Object.values(CREDIT_PACKS).map(({ priceBinding: _priceBinding, ...pack }) => pack),
+  });
+}
+
+function validStripeCheckoutSessionId(value: string | null): value is string {
+  return Boolean(
+    value &&
+    value.length <= 255 &&
+    /^cs_[A-Za-z0-9_]+$/.test(value),
+  );
+}
+
+function checkoutVerificationState(status: string): CreditCheckoutVerificationState {
+  if (status === 'paid') return 'complete';
+  if (status === 'open' || status === 'crediting') return 'pending';
+  return 'failed';
+}
+
+export async function getCreditCheckoutStatus(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+): Promise<Response> {
+  const checkoutStatusJson = (data: unknown, status = 200) => {
+    const response = json(data, status);
+    response.headers.set('Cache-Control', 'private, no-store');
+    return response;
+  };
+  const sessionId = new URL(request.url).searchParams.get('session_id')?.trim() ?? null;
+  if (!validStripeCheckoutSessionId(sessionId)) {
+    return checkoutStatusJson({ error: 'A valid Stripe checkout session is required' }, 400);
+  }
+
+  const checkout = await env.DB.prepare(`
+    SELECT checkout_sessions.stripe_session_id,
+           checkout_sessions.pack_id,
+           checkout_sessions.credits,
+           checkout_sessions.status,
+           checkout_sessions.updated_at,
+           users.credits_balance
+    FROM checkout_sessions
+    INNER JOIN users ON users.id = checkout_sessions.user_id
+    WHERE checkout_sessions.stripe_session_id = ?
+      AND checkout_sessions.user_id = ?
+    LIMIT 1
+  `).bind(sessionId, auth.userId).first<CheckoutVerificationRow>();
+  if (!checkout) return checkoutStatusJson({ error: 'Checkout session not found' }, 404);
+
+  return checkoutStatusJson({
+    checkout: {
+      sessionId: checkout.stripe_session_id,
+      state: checkoutVerificationState(checkout.status),
+      processorStatus: checkout.status,
+      packId: checkout.pack_id,
+      credits: checkout.credits,
+      creditsBalance: checkout.credits_balance,
+      updatedAt: checkout.updated_at,
+    },
   });
 }
 
@@ -870,14 +938,19 @@ export async function createCreditCheckoutSession(
   }
 
   try {
-    await env.DB.prepare(`
+    const attached = await env.DB.prepare(`
       UPDATE checkout_sessions
       SET stripe_session_id = ?,
           updated_at = datetime('now')
       WHERE id = ? AND stripe_session_id = ? AND status = 'open'
     `).bind(checkout.id, sessionToken, pendingStripeSessionId).run();
+    if (attached.meta.changes !== 1) {
+      console.warn('Failed to attach Stripe checkout id: the pending session was not claimable');
+      return json({ error: 'Checkout session could not be recorded. No payment page was opened.' }, 503);
+    }
   } catch (err) {
     console.warn('Failed to attach Stripe checkout id to local session:', err instanceof Error ? err.message : err);
+    return json({ error: 'Checkout session could not be recorded. No payment page was opened.' }, 503);
   }
 
   return json({ checkoutUrl: checkout.url, sessionId: checkout.id, pack });

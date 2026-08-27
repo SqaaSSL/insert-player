@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   authorizeGenerationPurchase,
   completeGenerationPurchase,
+  getCreditCheckoutStatus,
   handleStripeWebhook,
   settleGenerationPurchase,
 } from './billing';
@@ -301,6 +302,115 @@ async function insertPaidCheckout(
     `).bind(sessionToken, stripeSessionId, paymentIntentId, userId, CURRENT_LEGAL_VERSION),
   ]);
 }
+
+describe('Exact checkout verification against D1', () => {
+  it('returns only the authenticated owner session with explicit terminal states', async () => {
+    const { mf, db, env } = await createBindings();
+    const ownerId = 'user-checkout-owner';
+    const otherId = 'user-checkout-other';
+    const auth = {
+      userId: ownerId,
+      claims: {},
+      user: { id: ownerId },
+    } as unknown as AuthContext;
+    try {
+      await insertPaidCheckout(
+        db,
+        ownerId,
+        'checkout-owner-paid',
+        'cs_live_owner_paid',
+        'pi_owner_paid',
+        42,
+      );
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES (?, ?, 'Other checkout owner', 999)
+        `).bind(otherId, otherId),
+        db.prepare(`
+          INSERT INTO checkout_sessions (
+            id, stripe_session_id, user_id, pack_id, credits, amount_cents, currency,
+            status, legal_version, terms_accepted, immediate_delivery_confirmed,
+            withdrawal_loss_acknowledged
+          ) VALUES (
+            'checkout-owner-open', 'cs_live_owner_open', ?, 'versus', 23, 2899, 'eur',
+            'open', ?, 1, 1, 1
+          )
+        `).bind(ownerId, CURRENT_LEGAL_VERSION),
+        db.prepare(`
+          INSERT INTO checkout_sessions (
+            id, stripe_session_id, user_id, pack_id, credits, amount_cents, currency,
+            status, legal_version, terms_accepted, immediate_delivery_confirmed,
+            withdrawal_loss_acknowledged
+          ) VALUES (
+            'checkout-owner-failed', 'cs_live_owner_failed', ?, 'arcade', 47, 5699, 'eur',
+            'failed', ?, 1, 1, 1
+          )
+        `).bind(ownerId, CURRENT_LEGAL_VERSION),
+        db.prepare(`
+          INSERT INTO checkout_sessions (
+            id, stripe_session_id, user_id, pack_id, credits, amount_cents, currency,
+            status, legal_version, terms_accepted, immediate_delivery_confirmed,
+            withdrawal_loss_acknowledged
+          ) VALUES (
+            'checkout-other-paid', 'cs_live_other_paid', ?, 'starter', 11, 1499, 'eur',
+            'paid', ?, 1, 1, 1
+          )
+        `).bind(otherId, CURRENT_LEGAL_VERSION),
+      ]);
+
+      const complete = await getCreditCheckoutStatus(new Request(
+        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=cs_live_owner_paid',
+      ), env, auth);
+      expect(complete.status).toBe(200);
+      expect(complete.headers.get('Cache-Control')).toBe('private, no-store');
+      expect(await complete.json()).toEqual({
+        checkout: {
+          sessionId: 'cs_live_owner_paid',
+          state: 'complete',
+          processorStatus: 'paid',
+          packId: 'starter',
+          credits: 11,
+          creditsBalance: 42,
+          updatedAt: expect.any(String),
+        },
+      });
+
+      const pending = await getCreditCheckoutStatus(new Request(
+        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=cs_live_owner_open',
+      ), env, auth);
+      expect(await pending.json()).toMatchObject({
+        checkout: {
+          sessionId: 'cs_live_owner_open',
+          state: 'pending',
+          processorStatus: 'open',
+          creditsBalance: 42,
+        },
+      });
+
+      const failed = await getCreditCheckoutStatus(new Request(
+        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=cs_live_owner_failed',
+      ), env, auth);
+      expect(await failed.json()).toMatchObject({
+        checkout: { sessionId: 'cs_live_owner_failed', state: 'failed', processorStatus: 'failed' },
+      });
+
+      const crossAccount = await getCreditCheckoutStatus(new Request(
+        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=cs_live_other_paid',
+      ), env, auth);
+      expect(crossAccount.status).toBe(404);
+      expect(crossAccount.headers.get('Cache-Control')).toBe('private, no-store');
+      expect(await crossAccount.json()).toEqual({ error: 'Checkout session not found' });
+
+      const malformed = await getCreditCheckoutStatus(new Request(
+        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=checkout-owner-paid',
+      ), env, auth);
+      expect(malformed.status).toBe(400);
+    } finally {
+      await mf.dispose();
+    }
+  });
+});
 
 describe('Generation purchase fighter linkage against D1', () => {
   it('rejects video action retries before reservation and permits a fresh full restart', async () => {

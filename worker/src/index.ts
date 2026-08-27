@@ -10,6 +10,7 @@ import {
   completeGenerationPurchase,
   createCreditCheckoutSession,
   creditPacksResponse,
+  getCreditCheckoutStatus,
   handleStripeWebhook,
   releaseExpiredGenerationCharges,
 } from './billing';
@@ -26,6 +27,7 @@ import {
   listAdminArcadeFighters,
   listArcadeFighters,
   listCommunityFighters,
+  listOwnedCommunityFighterIds,
   listFighters,
   listStages,
   patchFighter,
@@ -76,13 +78,13 @@ import {
   rejectVideoSpriteReview,
 } from './videoSpriteReview';
 import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
+import { isAttractModeMatchReport, readMatchFighterId } from './matchReporting';
 
 export { FighterGenerationWorkflow } from './generationWorkflow';
 export { ImageProcessorContainer } from './imageProcessorContainer';
 
 const MAX_MATCH_ROUNDS = 5;
 const MAX_MATCH_DURATION_SECONDS = 20 * 60;
-const MAX_MATCH_ID_LENGTH = 128;
 const MAX_MATCH_REPORT_BODY_BYTES = 16 * 1024;
 const ARCADE_ADMIN_SEED_HEADER = 'X-Insert-Player-Admin-Seed';
 
@@ -194,18 +196,8 @@ function readBoundedInteger(value: unknown, min: number, max: number): number {
 function readOptionalId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > MAX_MATCH_ID_LENGTH) return undefined;
+  if (!trimmed || trimmed.length > 128) return undefined;
   return /^[a-z0-9:_-]+$/i.test(trimmed) ? trimmed : undefined;
-}
-
-async function readOwnedFighterId(env: Env, userId: string, value: unknown): Promise<string | undefined | Response> {
-  const fighterId = readOptionalId(value);
-  if (!fighterId) return undefined;
-  const fighter = await env.DB.prepare(
-    'SELECT id FROM fighters WHERE id = ? AND owner_user_id = ?'
-  ).bind(fighterId, userId).first<{ id: string }>();
-  if (!fighter) return json({ error: 'Match fighter does not belong to this user' }, 403);
-  return fighter.id;
 }
 
 async function authenticatedLimited(
@@ -368,12 +360,28 @@ export default {
         );
       }
 
+      if (path === '/api/billing/checkout-status' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => getCreditCheckoutStatus(request, env, auth)),
+          request,
+          env,
+        );
+      }
+
       if (path === '/api/billing/stripe-webhook' && method === 'POST') {
         return addCors(await handleStripeWebhook(request, env), request, env);
       }
 
       if (path === '/api/community' && method === 'GET') {
         return addCors(await listCommunityFighters(request, env), request, env);
+      }
+
+      if (path === '/api/community/ownership' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => listOwnedCommunityFighterIds(env, auth)),
+          request,
+          env,
+        );
       }
 
       if (path === '/api/arcade' && method === 'GET') {
@@ -876,6 +884,9 @@ export default {
       if (path === '/api/matches' && method === 'POST') {
         return addCors(await authenticatedLimited(request, env, 'matches:report', async (auth) => {
           const body = await readJsonBody<Record<string, unknown>>(request, MAX_MATCH_REPORT_BODY_BYTES);
+          if (isAttractModeMatchReport(body)) {
+            return json({ success: true, recorded: false });
+          }
           const opponentKind = body.opponentKind === 'local' ? 'local' : 'cpu';
           const systemOpponentId = opponentKind === 'local' ? 'system:local-player' : 'system:cpu';
           const systemOpponentName = opponentKind === 'local' ? 'Local Player 2' : 'CPU Opponent';
@@ -883,10 +894,14 @@ export default {
           await ensureSystemUser(env, systemOpponentId, systemOpponentName);
           const winnerSlot = body.winnerSlot === 'p2' ? 'p2' : 'p1';
           const winnerId = winnerSlot === 'p2' ? player2Id : auth.userId;
-          const p1FighterId = await readOwnedFighterId(env, auth.userId, body.p1FighterId);
-          if (isResponse(p1FighterId)) return p1FighterId;
-          const p2FighterId = await readOwnedFighterId(env, auth.userId, body.p2FighterId);
-          if (isResponse(p2FighterId)) return p2FighterId;
+          const p1FighterId = await readMatchFighterId(env, auth.userId, body.p1FighterId);
+          if (body.p1FighterId && !p1FighterId) {
+            return json({ error: 'Match fighter is not owned or an active Arcade fighter' }, 403);
+          }
+          const p2FighterId = await readMatchFighterId(env, auth.userId, body.p2FighterId);
+          if (body.p2FighterId && !p2FighterId) {
+            return json({ error: 'Match fighter is not owned or an active Arcade fighter' }, 403);
+          }
           return reportMatchResult(env, {
             matchId: generateId(),
             player1Id: auth.userId,
