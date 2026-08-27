@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CACHE_VERSION,
   getAllCachedMetas,
@@ -46,8 +46,14 @@ import {
   markArcadeManagedMetas,
   ownedRosterMetas,
 } from '../shared/arcadeRosterIdentity.ts';
+import {
+  createAsyncEpochGuard,
+  isCpuRosterSlot,
+  personalityAfterFighterAssignment,
+  shouldBlockTouchVersus,
+  type RosterMode,
+} from '../shared/rosterMatch.ts';
 
-type RosterMode = 'watch' | 'cpu' | 'vs';
 type RosterFilter = 'official' | 'yours' | 'all';
 
 interface RosterPageProps {
@@ -292,12 +298,14 @@ function FighterSlotPanel({
   fighter,
   previewUrl,
   personalityId,
+  showPersonality,
   onPersonalityChange,
 }: {
   label: string;
   fighter: RosterFighterEntry | null;
   previewUrl: string | null;
   personalityId: FighterPersonalityId;
+  showPersonality: boolean;
   onPersonalityChange: (id: FighterPersonalityId) => void;
 }) {
   return (
@@ -321,20 +329,22 @@ function FighterSlotPanel({
           {fighter?.kind === 'arcade' ? <span>Official Arcade challenger</span> : null}
         </div>
       </div>
-      <div className="roster-personality" role="group" aria-label={`${label} personality`}>
-        {FIGHTER_PERSONALITIES.map((personality) => (
-          <button
-            type="button"
-            key={personality.id}
-            className={`gallery-chip${personalityId === personality.id ? ' is-active' : ''}`}
-            aria-pressed={personalityId === personality.id}
-            onClick={() => onPersonalityChange(personality.id)}
-          >
-            <span>{personality.label}</span>
-            <small>{personality.blurb}</small>
-          </button>
-        ))}
-      </div>
+      {showPersonality ? (
+        <div className="roster-personality" role="group" aria-label={`${label} CPU personality`}>
+          {FIGHTER_PERSONALITIES.map((personality) => (
+            <button
+              type="button"
+              key={personality.id}
+              className={`gallery-chip${personalityId === personality.id ? ' is-active' : ''}`}
+              aria-pressed={personalityId === personality.id}
+              onClick={() => onPersonalityChange(personality.id)}
+            >
+              <span>{personality.label}</span>
+              <small>{personality.blurb}</small>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -355,6 +365,38 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const [p2PersonalityId, setP2PersonalityId] = useState<FighterPersonalityId>(getDefaultPersonalityId(1));
   const [stageChoice, setStageChoice] = useState<StageChoice>({ kind: 'auto' });
   const [preparingFight, setPreparingFight] = useState(false);
+  const [hasCoarsePointer, setHasCoarsePointer] = useState(
+    () => window.matchMedia?.('(pointer: coarse)').matches ?? false,
+  );
+  const p1PersonalityExplicitRef = useRef(false);
+  const p2PersonalityExplicitRef = useRef(false);
+  const preparationGuardRef = useRef(createAsyncEpochGuard());
+
+  useEffect(() => {
+    const guard = preparationGuardRef.current;
+    guard.mount();
+    return () => guard.unmount();
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(pointer: coarse)');
+    if (!media) return;
+    const sync = () => setHasCoarsePointer(media.matches);
+    sync();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', sync);
+      return () => media.removeEventListener('change', sync);
+    }
+    media.addListener(sync);
+    return () => media.removeListener(sync);
+  }, []);
+
+  useEffect(() => {
+    preparationGuardRef.current.cancel();
+    setPreparingFight(false);
+    p1PersonalityExplicitRef.current = false;
+    p2PersonalityExplicitRef.current = false;
+  }, [authSessionKey, mode]);
 
   useEffect(() => {
     const apiContext = captureApiRequestContext();
@@ -405,10 +447,18 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         const firstOpponent = sections.official.find((entry) => entry.key !== firstPlayer?.key)
           ?? sections.owned.find((entry) => entry.key !== firstPlayer?.key)
           ?? firstPlayer;
-        const firstOpponentPersonality = firstOpponent?.defaultPersonality;
-        if (firstOpponentPersonality) {
-          setP2PersonalityId((current) => current === 'balanced' ? firstOpponentPersonality : current);
-        }
+        setP1PersonalityId((current) => personalityAfterFighterAssignment({
+          current,
+          fighterDefault: firstPlayer?.defaultPersonality ?? null,
+          isCpu: isCpuRosterSlot(mode, 'p1'),
+          wasExplicitlyChosen: p1PersonalityExplicitRef.current,
+        }));
+        setP2PersonalityId((current) => personalityAfterFighterAssignment({
+          current,
+          fighterDefault: firstOpponent?.defaultPersonality ?? null,
+          isCpu: isCpuRosterSlot(mode, 'p2'),
+          wasExplicitlyChosen: p2PersonalityExplicitRef.current,
+        }));
         if (sections.owned.length === 0 && sections.official.length > 0) {
           setRosterFilter('official');
         } else if (sections.official.length === 0 && sections.owned.length > 0) {
@@ -491,7 +541,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
       setRosterLoaded(true);
     });
     return () => { cancelled = true; };
-  }, [authSessionKey, authStatus]);
+  }, [authSessionKey, authStatus, mode]);
 
   const rosterSections = useMemo(
     () => buildRosterFighterSections(metas, arcadeFighters, arcadeUnavailable),
@@ -529,7 +579,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const effectiveStageTheme = effectiveStageId ? getStageTheme(effectiveStageId) : null;
   const stagePreviewUrl = photoStageUrl ?? effectiveStageTheme?.assetPath ?? null;
 
-  const canStartFight = Boolean(p1Fighter && p2Fighter);
+  const touchVersusBlocked = shouldBlockTouchVersus(mode, hasCoarsePointer);
+  const canStartFight = Boolean(p1Fighter && p2Fighter) && !touchVersusBlocked;
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
   const createLabel = rookieStatus === 'included' ? 'Create Free Rookie' : 'Create Rookie';
   const firstFighterCopy = rookieStatus === 'included'
@@ -547,21 +598,69 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         ? { label: getStageChoiceLabel(stageChoice.stageId), blurb: getStageChoiceBlurb(stageChoice.stageId) }
         : { label: selectedPhotoStage?.label ?? stageChoice.label, blurb: 'Custom photo stage from your local cache.' };
 
+  const cancelFightPreparation = (message = 'Preparation cancelled. Review the matchup and start again.') => {
+    if (!preparingFight) return;
+    preparationGuardRef.current.cancel();
+    setPreparingFight(false);
+    setStatus(message);
+  };
+
   const assignFighter = (slot: 'p1' | 'p2', fighter: RosterFighterEntry) => {
+    cancelFightPreparation();
     if (slot === 'p1') {
       setP1Key(fighter.key);
-      if (fighter.defaultPersonality) setP1PersonalityId(fighter.defaultPersonality);
+      setP1PersonalityId((current) => personalityAfterFighterAssignment({
+        current,
+        fighterDefault: fighter.defaultPersonality,
+        isCpu: isCpuRosterSlot(mode, 'p1'),
+        wasExplicitlyChosen: p1PersonalityExplicitRef.current,
+      }));
       return;
     }
     setP2Key(fighter.key);
-    if (fighter.defaultPersonality) setP2PersonalityId(fighter.defaultPersonality);
+    setP2PersonalityId((current) => personalityAfterFighterAssignment({
+      current,
+      fighterDefault: fighter.defaultPersonality,
+      isCpu: isCpuRosterSlot(mode, 'p2'),
+      wasExplicitlyChosen: p2PersonalityExplicitRef.current,
+    }));
+  };
+
+  const changePersonality = (slot: 'p1' | 'p2', personalityId: FighterPersonalityId) => {
+    cancelFightPreparation();
+    if (slot === 'p1') {
+      p1PersonalityExplicitRef.current = true;
+      setP1PersonalityId(personalityId);
+      return;
+    }
+    p2PersonalityExplicitRef.current = true;
+    setP2PersonalityId(personalityId);
+  };
+
+  const chooseStage = (choice: StageChoice) => {
+    cancelFightPreparation();
+    setStageChoice(choice);
+  };
+
+  const goBack = () => {
+    preparationGuardRef.current.cancel();
+    setPreparingFight(false);
+    onBack();
   };
 
   const launchFight = async () => {
-    if (!p1Fighter || !p2Fighter || preparingFight) return;
+    if (!p1Fighter || !p2Fighter || preparingFight || touchVersusBlocked) return;
     const ownerScope = getActiveSpriteCacheScope();
+    const preparationEpoch = preparationGuardRef.current.begin();
+    const selectedP1 = p1Fighter;
+    const selectedP2 = p2Fighter;
+    const selectedP1Personality = p1PersonalityId;
+    const selectedP2Personality = p2PersonalityId;
+    const selectedStageId = effectiveStageId;
+    const selectedStageChoice = stageChoice;
+    const selectedStage = selectedPhotoStage;
     setPreparingFight(true);
-    const officialNames = [p1Fighter, p2Fighter]
+    const officialNames = [selectedP1, selectedP2]
       .filter((fighter) => fighter.kind === 'arcade')
       .map((fighter) => fighter.name);
     setStatus(
@@ -571,7 +670,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     );
     try {
       const selected = Array.from(new Map(
-        [p1Fighter, p2Fighter].map((fighter) => [fighter.key, fighter]),
+        [selectedP1, selectedP2].map((fighter) => [fighter.key, fighter]),
       ).values());
       let upgraded = 0;
       for (const fighter of selected) {
@@ -580,32 +679,40 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         } else {
           upgraded += await ensurePlayableSpritesUpToDate(fighter.photoHash);
         }
+        if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
         const playableSprites = await getAllSpritesForHash(fighter.photoHash, ownerScope);
+        if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
         assertCompletePlayableSpriteSet(playableSprites, fighter.name);
       }
+      if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
       if (upgraded > 0) {
         setStatus(`Updated ${upgraded} cached animations`);
       }
       onStartFight({
         vsAI: modeMeta.vsAI,
         cpuVsCpu: modeMeta.cpuVsCpu,
-        p1PhotoHash: p1Fighter.photoHash,
-        p2PhotoHash: p2Fighter.photoHash,
-        p1CloudFighterId: p1Fighter.cloudFighterId,
-        p2CloudFighterId: p2Fighter.cloudFighterId,
-        p1Name: p1Fighter.name,
-        p2Name: p2Fighter.name,
-        p1PersonalityId,
-        p2PersonalityId,
-        stageId: effectiveStageId,
-        customStageKey: stageChoice.kind === 'photo' ? stageChoice.stageKey : undefined,
-        customStageLabel: stageChoice.kind === 'photo' ? (selectedPhotoStage?.label ?? stageChoice.label) : undefined,
+        p1PhotoHash: selectedP1.photoHash,
+        p2PhotoHash: selectedP2.photoHash,
+        p1CloudFighterId: selectedP1.cloudFighterId,
+        p2CloudFighterId: selectedP2.cloudFighterId,
+        p1Name: selectedP1.name,
+        p2Name: selectedP2.name,
+        p1PersonalityId: isCpuRosterSlot(mode, 'p1') ? selectedP1Personality : undefined,
+        p2PersonalityId: isCpuRosterSlot(mode, 'p2') ? selectedP2Personality : undefined,
+        stageId: selectedStageId,
+        customStageKey: selectedStageChoice.kind === 'photo' ? selectedStageChoice.stageKey : undefined,
+        customStageLabel: selectedStageChoice.kind === 'photo'
+          ? (selectedStage?.label ?? selectedStageChoice.label)
+          : undefined,
       });
     } catch (err: any) {
+      if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
       debugWarn('[Roster] Sprite preparation failed:', err?.message ?? err);
       setStatus(err?.message ? `Could not prepare fighters: ${err.message}` : 'Could not prepare fighters');
     } finally {
-      setPreparingFight(false);
+      if (preparationGuardRef.current.isCurrent(preparationEpoch)) {
+        setPreparingFight(false);
+      }
     }
   };
 
@@ -618,7 +725,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         </div>
         <div className="roster-hero__actions">
           <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
-          <Button onClick={onBack}>Back</Button>
+          <Button onClick={goBack}>{preparingFight ? 'Cancel & Back' : 'Back'}</Button>
         </div>
       </header>
 
@@ -629,7 +736,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
             fighter={p1Fighter}
             previewUrl={p1PreviewUrl}
             personalityId={p1PersonalityId}
-            onPersonalityChange={setP1PersonalityId}
+            showPersonality={isCpuRosterSlot(mode, 'p1')}
+            onPersonalityChange={(personalityId) => changePersonality('p1', personalityId)}
           />
 
           <div className="sf-vs-divider" aria-hidden="true">
@@ -643,7 +751,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
             fighter={p2Fighter}
             previewUrl={p2PreviewUrl}
             personalityId={p2PersonalityId}
-            onPersonalityChange={setP2PersonalityId}
+            showPersonality={isCpuRosterSlot(mode, 'p2')}
+            onPersonalityChange={(personalityId) => changePersonality('p2', personalityId)}
           />
         </div>
 
@@ -682,6 +791,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                   <small>
                     {preparingFight
                       ? 'Checking cached sprites'
+                      : touchVersusBlocked
+                      ? 'Touch Versus needs a keyboard or controllers'
                       : canStartFight
                       ? `${p1Fighter?.name ?? 'P1'} vs ${p2Fighter?.name ?? 'P2'}`
                       : 'Select both fighters first'}
@@ -689,6 +800,13 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                 </button>
               ) : null}
             </div>
+
+            {touchVersusBlocked ? (
+              <p className="roster-touch-notice" role="status">
+                Touch Versus needs two control sets, which do not fit safely on this screen. Open Versus on a
+                keyboard or controller device, or choose Arcade Mode on touch.
+              </p>
+            ) : null}
 
             <div className="roster-fighter-grid">
               {!rosterLoaded ? (
@@ -764,7 +882,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
             <div className="roster-stage-list">
               <button
                 className={`gallery-chip${stageChoice.kind === 'auto' ? ' is-active' : ''}`}
-                onClick={() => setStageChoice({ kind: 'auto' })}
+                onClick={() => chooseStage({ kind: 'auto' })}
               >
                 <span>AUTO</span>
                 <small>Let the fight choose</small>
@@ -773,7 +891,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                 <button
                   key={stage.id}
                   className={`gallery-chip${stageChoice.kind === 'built-in' && stageChoice.stageId === stage.id ? ' is-active' : ''}`}
-                  onClick={() => setStageChoice({ kind: 'built-in', stageId: stage.id })}
+                  onClick={() => chooseStage({ kind: 'built-in', stageId: stage.id })}
                 >
                   <span>{stage.label}</span>
                   <small>{stage.blurb}</small>
@@ -783,7 +901,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                 <button
                   key={stage.stageKey}
                   className={`gallery-chip${stageChoice.kind === 'photo' && stageChoice.stageKey === stage.stageKey ? ' is-active' : ''}`}
-                  onClick={() => setStageChoice({ kind: 'photo', stageKey: stage.stageKey, label: stage.label ?? 'PHOTO STAGE' })}
+                  onClick={() => chooseStage({ kind: 'photo', stageKey: stage.stageKey, label: stage.label ?? 'PHOTO STAGE' })}
                 >
                   <span>{stage.label ?? 'PHOTO STAGE'}</span>
                   <small>Cached custom stage</small>

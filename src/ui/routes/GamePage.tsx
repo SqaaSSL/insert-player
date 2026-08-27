@@ -87,7 +87,15 @@ export function GamePage({ launchTarget, onComplete, onExit }: GamePageProps) {
       <div className="game-shell__surface">
         <div id="game-container" className="game-shell__canvas" />
       </div>
-      {!launchTarget.data.cpuVsCpu && !matchActionsVisible && <MobileFightControls />}
+      {!launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
+        <MobileFightControls playerIndex={0} playerLabel="player 1" />
+      )}
+      {!launchTarget.data.cpuVsCpu && launchTarget.data.vsAI === false && !matchActionsVisible && (
+        <div className="mobile-versus-unavailable" role="status">
+          Touch Versus needs two control sets and is unavailable on this screen. Use a keyboard or controllers,
+          or play Arcade Mode on touch.
+        </div>
+      )}
       {matchActionsVisible && (
         <div className="match-actions" role="group" aria-label="Match complete actions">
           <span className="match-actions__label">Match Complete</span>

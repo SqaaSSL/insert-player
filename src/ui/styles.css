@@ -807,6 +807,12 @@
            items-end justify-between px-3 select-none;
   }
 
+  .mobile-versus-unavailable {
+    @apply fixed inset-x-3 bottom-[max(16px,env(safe-area-inset-bottom))] z-40 mx-auto hidden max-w-[560px]
+           rounded-[4px] border-2 border-asf-gold-deep bg-[rgba(5,5,12,0.94)] p-4 text-center
+           font-sans text-[14px] normal-case leading-[1.55] text-asf-cream shadow-[0_8px_0_rgba(0,0,0,0.72)];
+  }
+
   .mobile-fight-controls__dpad {
     @apply pointer-events-auto grid touch-none grid-cols-[52px_52px_52px] grid-rows-[52px_52px]
            gap-1;
@@ -860,6 +866,10 @@
   @media (pointer: coarse) {
     .mobile-fight-controls {
       @apply flex;
+    }
+
+    .mobile-versus-unavailable {
+      @apply block;
     }
   }
 
@@ -1058,6 +1068,11 @@
 
   .roster-fight-btn {
     @apply min-h-[96px] min-w-[230px];
+  }
+
+  .roster-touch-notice {
+    @apply m-0 rounded-[4px] border-2 border-asf-gold-deep bg-[rgba(255,206,58,0.08)] p-3
+           font-sans text-[14px] normal-case leading-[1.6] text-asf-cream;
   }
 
   .roster-filter-tabs {
