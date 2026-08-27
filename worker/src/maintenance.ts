@@ -342,6 +342,10 @@ export async function cleanupOperationalData(env: Env): Promise<void> {
       WHERE datetime(expires_at) <= datetime('now')
     `),
     env.DB.prepare(`
+      DELETE FROM client_errors
+      WHERE datetime(created_at) <= datetime('now', '-30 days')
+    `),
+    env.DB.prepare(`
       DELETE FROM provider_request_cache
       WHERE response_blob_key IS NULL
         AND artifact_run_id IN (

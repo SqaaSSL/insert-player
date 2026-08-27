@@ -114,6 +114,18 @@ const SCHEMA = `
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+  CREATE TABLE client_errors (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    clerk_user_id TEXT,
+    route TEXT NOT NULL,
+    message TEXT NOT NULL,
+    stack TEXT,
+    debug_tail TEXT,
+    app_context TEXT,
+    user_agent TEXT
+  );
+
   CREATE TABLE rate_limits (expires_at TEXT NOT NULL);
   CREATE TABLE provider_spend_reservations (created_at_epoch INTEGER NOT NULL);
   CREATE TABLE provider_capacity_windows (retry_at_epoch INTEGER NOT NULL);

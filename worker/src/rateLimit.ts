@@ -14,6 +14,10 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
     anonymous: { limit: 20, windowSeconds: 24 * 60 * 60 },
     signedIn: { limit: 1200, windowSeconds: 60 * 60 },
   },
+  'client:error': {
+    anonymous: { limit: 6, windowSeconds: 60 * 60 },
+    signedIn: { limit: 20, windowSeconds: 60 * 60 },
+  },
   'proxy:default': {
     anonymous: { limit: 80, windowSeconds: 60 * 60 },
     signedIn: { limit: 600, windowSeconds: 60 * 60 },

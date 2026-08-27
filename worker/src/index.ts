@@ -40,6 +40,7 @@ import {
 import { ensureSystemUser, getLeaderboard, getPlayerStats, reportMatchResult } from './leaderboard';
 import { getTempAsset, handleProxy, pixcliBaseUrl } from './proxy';
 import { enforceRateLimit } from './rateLimit';
+import { submitClientError } from './clientErrors';
 import { createFeatureProviderSession } from './providerSessions';
 import type { AuthContext, Env, PublicAuthContext, User } from './types';
 import { turnstileConfigurationStatus } from './turnstile';
@@ -846,6 +847,12 @@ export default {
           if (userId !== auth.userId) return Promise.resolve(json({ error: 'Stats are private' }, 403));
           return getPlayerStats(env, auth.userId);
         }), request, env);
+      }
+
+      if (path === '/api/client-errors' && method === 'POST') {
+        const limited = await enforceRateLimit(env, 'client:error', publicAuth);
+        if (limited) return addCors(limited, request, env);
+        return addCors(await submitClientError(request, env, publicAuth), request, env);
       }
 
       if (path === '/api/matches' && method === 'POST') {

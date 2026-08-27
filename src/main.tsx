@@ -12,11 +12,14 @@ import {
   spriteCacheScopeForOwner,
 } from './services/SpriteCache.ts';
 import { debugWarn } from './services/DebugLog.ts';
+import { installCrashReporting } from './services/CrashReporting.ts';
 import '@fontsource/press-start-2p/latin-400.css';
 import '@fontsource/space-grotesk/latin-400.css';
 import '@fontsource/space-grotesk/latin-500.css';
 import '@fontsource/space-grotesk/latin-700.css';
 import './ui/styles.css';
+
+installCrashReporting();
 
 const rootEl = document.getElementById('app');
 
