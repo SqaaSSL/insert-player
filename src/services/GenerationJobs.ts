@@ -4,6 +4,7 @@ import {
   type ApiRequestContext,
 } from './ApiClient';
 import type { GenerationBillingOperation, QualityTier } from './QualityTiers';
+import type { GenerationCreationFlow } from './GenerationCreationFlow';
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
@@ -18,6 +19,7 @@ export interface GenerationJob {
   id: string;
   fighterId: string;
   tier: QualityTier;
+  creationFlow: GenerationCreationFlow;
   operation: GenerationBillingOperation;
   targetKind: 'animation' | 'source' | null;
   targetName: string | null;
@@ -112,6 +114,7 @@ export async function startGenerationJob(
     fighterId: string;
     purchaseId: string;
     providerSessionId: string;
+    creationFlow?: GenerationCreationFlow;
     targetKind?: 'animation' | 'source';
     targetName?: string;
   },

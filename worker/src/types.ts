@@ -1,4 +1,5 @@
 import type { SpriteAnimationFormat } from './spriteAnimationFormat';
+import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
 
 export type QualityTier = 'rookie' | 'contender' | 'champion';
 
@@ -30,6 +31,7 @@ export interface GenerationJob {
   charge_id: string;
   provider_session_id: string;
   tier: QualityTier;
+  creation_flow: GenerationCreationFlow;
   operation: GenerationJobOperation;
   target_kind: 'animation' | 'source' | null;
   target_name: string | null;
@@ -60,6 +62,7 @@ export interface GenerationArtifactRun {
   user_id: string;
   fighter_id: string;
   tier: QualityTier;
+  creation_flow: GenerationCreationFlow;
   operation: GenerationJobOperation;
   target_kind: 'animation' | 'source' | null;
   target_name: string | null;

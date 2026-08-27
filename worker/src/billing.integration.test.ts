@@ -41,6 +41,7 @@ const SCHEMA = `
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     tier TEXT NOT NULL,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     credit_cost INTEGER NOT NULL DEFAULT 0,
     free_quota_delta INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL,
@@ -60,6 +61,7 @@ const SCHEMA = `
     user_id TEXT NOT NULL,
     rate_limit_key TEXT NOT NULL DEFAULT '',
     tier TEXT NOT NULL DEFAULT 'rookie',
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     purpose TEXT NOT NULL DEFAULT 'fighter_generation',
     charge_id TEXT,
     status TEXT NOT NULL DEFAULT 'active',
@@ -85,6 +87,7 @@ const SCHEMA = `
     charge_id TEXT,
     artifact_run_id TEXT,
     tier TEXT,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     operation TEXT,
     status TEXT NOT NULL DEFAULT 'queued'
   );
@@ -94,6 +97,7 @@ const SCHEMA = `
     user_id TEXT NOT NULL,
     fighter_id TEXT NOT NULL,
     tier TEXT NOT NULL,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     operation TEXT NOT NULL,
     status TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -368,6 +372,7 @@ describe('Generation purchase fighter linkage against D1', () => {
         resumedFromJobId: failedJobId,
         providerCallLimit: 219,
         providerCostLimitCents: 915,
+        creationFlow: 'original',
       });
       const duplicate = await authorizeGenerationPurchase(request(), env, auth);
       expect(duplicate.status).toBe(200);
@@ -380,7 +385,8 @@ describe('Generation purchase fighter linkage against D1', () => {
       expect((await db.prepare('SELECT credits_balance FROM users WHERE id = ?')
         .bind(userId).first<{ credits_balance: number }>())?.credits_balance).toBe(9);
       expect((await db.prepare(`
-        SELECT credit_cost, free_quota_delta, continuation_run_id, resumed_from_job_id
+        SELECT credit_cost, free_quota_delta, continuation_run_id, resumed_from_job_id,
+               creation_flow
         FROM generation_charges
         WHERE continuation_run_id = ?
       `).bind(failedJobId).first())).toEqual({
@@ -388,6 +394,7 @@ describe('Generation purchase fighter linkage against D1', () => {
         free_quota_delta: 0,
         continuation_run_id: failedJobId,
         resumed_from_job_id: failedJobId,
+        creation_flow: 'original',
       });
       expect((await db.prepare(`
         SELECT COUNT(*) AS count FROM generation_charges WHERE continuation_run_id = ?
@@ -400,11 +407,12 @@ describe('Generation purchase fighter linkage against D1', () => {
         SELECT COUNT(*) AS count FROM provider_sessions WHERE charge_id = ?
       `).bind(firstBody.purchaseId).first<{ count: number }>())?.count).toBe(1);
       expect(await db.prepare(`
-        SELECT provider_call_limit, provider_cost_limit_cents
+        SELECT provider_call_limit, provider_cost_limit_cents, creation_flow
         FROM provider_sessions WHERE charge_id = ?
       `).bind(firstBody.purchaseId).first()).toEqual({
         provider_call_limit: 219,
         provider_cost_limit_cents: 915,
+        creation_flow: 'original',
       });
     } finally {
       await mf.dispose();

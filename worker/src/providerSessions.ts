@@ -20,6 +20,7 @@ import {
 import { ResponseBodyTooLargeError } from './streamLimits';
 import { PROVIDER_REQUEST_BODY_LIMITS, type ProviderName } from './providerLimits';
 import { geminiEstimatedCostCents } from './geminiTransport';
+import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
 
 export const PROVIDER_SESSION_HEADER = 'X-ASF-Provider-Session';
 
@@ -686,6 +687,7 @@ export async function createProviderSession(
     tier: QualityTier;
     purpose: ProviderSessionPurpose;
     operation?: GenerationBillingOperation;
+    creationFlow?: GenerationCreationFlow;
     chargeId?: string | null;
     providerCallLimitCap?: number;
     providerCostLimitCentsCap?: number;
@@ -708,11 +710,11 @@ export async function createProviderSession(
   const sessionStatement = env.DB.prepare(`
     INSERT INTO provider_sessions (
       id, user_id, rate_limit_key, tier, purpose, charge_id, provider_call_limit,
-      provider_cost_limit_cents, expires_at,
+      provider_cost_limit_cents, expires_at, creation_flow,
       legal_version, age_confirmed, photo_rights_confirmed, ai_processing_confirmed,
       immediate_performance_confirmed, withdrawal_loss_acknowledged
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, 1)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, 1)
   `).bind(
     id,
     auth.userId,
@@ -723,6 +725,7 @@ export async function createProviderSession(
     providerCallLimit,
     providerCostLimitCents,
     sessionExpiresAt,
+    params.creationFlow ?? 'original',
     params.legal.legalVersion,
   );
   const acceptanceStatement = await prepareLegalAcceptance(

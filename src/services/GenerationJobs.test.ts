@@ -16,6 +16,7 @@ const JOB: GenerationJob = {
   id: '11111111111111111111111111111111',
   fighterId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   tier: 'rookie',
+  creationFlow: 'original',
   operation: 'fighter_generation',
   targetKind: null,
   targetName: null,

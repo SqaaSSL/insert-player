@@ -193,6 +193,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       jobId: job.id,
       userId: job.user_id,
       providerSessionId: job.provider_session_id,
+      creationFlow: job.creation_flow,
     });
     const container = this.env.IMAGE_PROCESSOR.getByName(job.id);
     const response = await container.fetch(new Request(`http://image-processor${path}`, {

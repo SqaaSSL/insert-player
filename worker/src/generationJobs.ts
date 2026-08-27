@@ -11,6 +11,11 @@ import type {
   GenerationJobOperation,
   QualityTier,
 } from './types';
+import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+import {
+  generationCreationFlowAvailable,
+  parseRequestedGenerationCreationFlow,
+} from './generationCreationFlow';
 
 const MAX_JOB_BODY_BYTES = 8 * 1024;
 const JOB_TTL_HOURS = 48;
@@ -32,6 +37,7 @@ const SOURCE_TARGETS = new Set(['side', 'upright', 'crouch']);
 interface GenerationJobAuthorizationRow {
   charge_id: string;
   charge_tier: QualityTier;
+  charge_creation_flow: GenerationCreationFlow;
   charge_reason: string;
   charge_status: 'reserved' | 'committed' | 'refunded';
   charge_fighter_id: string | null;
@@ -40,6 +46,7 @@ interface GenerationJobAuthorizationRow {
   resumed_from_job_id: string | null;
   provider_session_id: string;
   provider_tier: QualityTier;
+  provider_creation_flow: GenerationCreationFlow;
   provider_purpose: string;
   provider_status: string;
   provider_expires_at: string;
@@ -55,6 +62,7 @@ interface GenerationJobAuthorizationRow {
   resume_run_user_id: string | null;
   resume_run_fighter_id: string | null;
   resume_run_tier: QualityTier | null;
+  resume_run_creation_flow: GenerationCreationFlow | null;
   resume_run_operation: GenerationJobOperation | null;
   resume_run_target_kind: 'animation' | 'source' | null;
   resume_run_target_name: string | null;
@@ -102,6 +110,7 @@ function serializeJob(
     id: job.id,
     fighterId: job.fighter_id,
     tier: job.tier,
+    creationFlow: job.creation_flow,
     operation: job.operation,
     targetKind: job.target_kind,
     targetName: job.target_name,
@@ -179,13 +188,15 @@ function matchesJobRequest(
   providerSessionId: string,
   targetKind: 'animation' | 'source' | null,
   targetName: string | null,
+  creationFlow: GenerationCreationFlow,
 ): boolean {
   return job.id === purchaseId
     && job.charge_id === purchaseId
     && job.fighter_id === fighterId
     && job.provider_session_id === providerSessionId
     && job.target_kind === targetKind
-    && job.target_name === targetName;
+    && job.target_name === targetName
+    && job.creation_flow === creationFlow;
 }
 
 async function replayExistingJob(env: Env, userId: string, job: GenerationJob): Promise<Response> {
@@ -315,6 +326,7 @@ export async function createGenerationJob(
     providerSessionId?: string;
     targetKind?: string;
     targetName?: string;
+    creationFlow?: unknown;
   }>(request, MAX_JOB_BODY_BYTES);
   const fighterId = body.fighterId?.trim() ?? '';
   const purchaseId = body.purchaseId?.trim() ?? '';
@@ -323,6 +335,7 @@ export async function createGenerationJob(
     ? body.targetKind
     : null;
   const targetName = body.targetName?.trim().toLowerCase() || null;
+  const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
   if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
   if (!/^[a-f0-9]{32}$/.test(purchaseId)) return json({ error: 'A valid purchaseId is required' }, 400);
   if (!/^[a-f0-9]{32}$/.test(providerSessionId)) {
@@ -334,6 +347,18 @@ export async function createGenerationJob(
   if (targetName !== null && !/^[a-z_]{2,64}$/.test(targetName)) {
     return json({ error: 'A valid targetName is required' }, 400);
   }
+  if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
+  if (!generationCreationFlowAvailable(creationFlow)) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Video generation is not available on this release; the unused reservation was released',
+      503,
+      { code: 'generation_creation_flow_unavailable' },
+    );
+  }
 
   const existing = await env.DB.prepare(`
     SELECT * FROM generation_jobs
@@ -341,7 +366,15 @@ export async function createGenerationJob(
     LIMIT 1
   `).bind(auth.userId, purchaseId, providerSessionId).first<GenerationJob>();
   if (existing) {
-    if (!matchesJobRequest(existing, fighterId, purchaseId, providerSessionId, targetKind, targetName)) {
+    if (!matchesJobRequest(
+      existing,
+      fighterId,
+      purchaseId,
+      providerSessionId,
+      targetKind,
+      targetName,
+      creationFlow,
+    )) {
       return json({ error: 'Generation authorization is already attached to another job' }, 409);
     }
     return replayExistingJob(env, auth.userId, existing);
@@ -351,6 +384,7 @@ export async function createGenerationJob(
     SELECT
       gc.id AS charge_id,
       gc.tier AS charge_tier,
+      gc.creation_flow AS charge_creation_flow,
       gc.reason AS charge_reason,
       gc.status AS charge_status,
       gc.fighter_id AS charge_fighter_id,
@@ -359,6 +393,7 @@ export async function createGenerationJob(
       gc.resumed_from_job_id,
       ps.id AS provider_session_id,
       ps.tier AS provider_tier,
+      ps.creation_flow AS provider_creation_flow,
       ps.purpose AS provider_purpose,
       ps.status AS provider_status,
       ps.expires_at AS provider_expires_at,
@@ -374,6 +409,7 @@ export async function createGenerationJob(
       resume_run.user_id AS resume_run_user_id,
       resume_run.fighter_id AS resume_run_fighter_id,
       resume_run.tier AS resume_run_tier,
+      resume_run.creation_flow AS resume_run_creation_flow,
       resume_run.operation AS resume_run_operation,
       resume_run.target_kind AS resume_run_target_kind,
       resume_run.target_name AS resume_run_target_name,
@@ -392,7 +428,9 @@ export async function createGenerationJob(
   if (
     authorization.charge_status !== 'reserved' ||
     authorization.provider_status !== 'active' ||
-    authorization.charge_tier !== authorization.provider_tier
+    authorization.charge_tier !== authorization.provider_tier ||
+    authorization.charge_creation_flow !== creationFlow ||
+    authorization.provider_creation_flow !== creationFlow
   ) {
     if (authorization.charge_status === 'reserved') {
       return rejectReservedJob(
@@ -429,6 +467,7 @@ export async function createGenerationJob(
       authorization.resume_run_user_id === auth.userId &&
       authorization.resume_run_fighter_id === fighterId &&
       authorization.resume_run_tier === authorization.charge_tier &&
+      authorization.resume_run_creation_flow === creationFlow &&
       authorization.resume_run_operation === operation &&
       authorization.resume_run_status === 'partial' &&
       authorization.resume_run_target_kind === targetKind &&
@@ -525,6 +564,7 @@ export async function createGenerationJob(
       providerSessionId,
       targetKind,
       targetName,
+      creationFlow,
     )) {
       return replayExistingJob(env, auth.userId, activeFighterJob);
     }
@@ -565,9 +605,9 @@ export async function createGenerationJob(
         INSERT INTO generation_artifact_runs (
           id, user_id, fighter_id, tier, operation, target_kind, target_name,
           root_job_id, original_charge_id, original_blob_key,
-          source_manifest_json, generation_prompt
+          source_manifest_json, generation_prompt, creation_flow
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? IS NULL
       `).bind(
         runId,
@@ -582,6 +622,7 @@ export async function createGenerationJob(
         authorization.original_blob_key,
         sourceManifest,
         authorization.generation_prompt,
+        creationFlow,
         authorization.continuation_run_id,
       ),
       env.DB.prepare(`
@@ -594,8 +635,9 @@ export async function createGenerationJob(
         INSERT INTO generation_jobs (
           id, workflow_instance_id, user_id, fighter_id, charge_id,
           provider_session_id, tier, operation, target_kind, target_name,
-          artifact_run_id, resumed_from_job_id, progress_current, progress_total
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          artifact_run_id, resumed_from_job_id, progress_current, progress_total,
+          creation_flow
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         jobId,
         jobId,
@@ -611,6 +653,7 @@ export async function createGenerationJob(
         resumedFromJobId,
         Math.min(initialProgress, progressTotal),
         progressTotal,
+        creationFlow,
       ),
       env.DB.prepare(`
         UPDATE generation_charges
@@ -643,7 +686,15 @@ export async function createGenerationJob(
       LIMIT 1
     `).bind(fighterId).first<GenerationJob>();
     if (!racedJob) throw error;
-    if (matchesJobRequest(racedJob, fighterId, purchaseId, providerSessionId, targetKind, targetName)) {
+    if (matchesJobRequest(
+      racedJob,
+      fighterId,
+      purchaseId,
+      providerSessionId,
+      targetKind,
+      targetName,
+      creationFlow,
+    )) {
       return replayExistingJob(env, auth.userId, racedJob);
     }
     await settleGenerationPurchase(env, auth.userId, purchaseId, false, fighterId);

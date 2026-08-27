@@ -379,6 +379,7 @@ describe('backend-generated asset persistence', () => {
       fighter_id: FIGHTER_ID,
       charge_id: 'cccccccccccccccccccccccccccccccc',
       provider_session_id: 'dddddddddddddddddddddddddddddddd',
+      creation_flow: 'original',
       tier: 'champion',
       operation: 'fighter_generation',
       target_kind: null,
