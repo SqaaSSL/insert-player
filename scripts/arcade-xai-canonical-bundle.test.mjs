@@ -179,8 +179,27 @@ function providerFixture(options = {}) {
     const canvaMatch = parsed.pathname.match(/^\/api\/v1\/jobs\/(job-[0-9]+)\/canva$/);
     if (canvaMatch) {
       const jobId = canvaMatch[1];
-      const input = jobs.get(jobId);
-      const request = Buffer.from(JSON.stringify(input));
+      const submitted = jobs.get(jobId);
+      const imageUrls = submitted.image.map((hash) => `https://pixcli.example/api/v1/assets/${hash}`);
+      let input = {
+        ...submitted,
+        image_url: imageUrls[0],
+        image_urls: imageUrls,
+        enriched_prompt: submitted.prompt,
+      };
+      input = options.mutateCanvaInput?.(structuredClone(input)) ?? input;
+      let providerRequest = {
+        model: XAI_CANONICAL_BUNDLE_MODEL.endpoint,
+        input: {
+          ...submitted.params,
+          prompt: submitted.prompt,
+          image_urls: imageUrls,
+        },
+        retry_policy: 'none',
+        fallback_policy: 'none',
+      };
+      providerRequest = options.mutateProviderRequest?.(structuredClone(providerRequest)) ?? providerRequest;
+      const request = Buffer.from(JSON.stringify(providerRequest));
       const response = Buffer.from(JSON.stringify({ images: [`${jobId}.png`] }));
       const image = png(`raw-${jobId}`, 1024, 1536);
       artifacts.set(`${jobId}-request`, request);
@@ -190,10 +209,15 @@ function providerFixture(options = {}) {
         hash: sha256(bytes).slice(0, 32),
         url: `https://pixcli.example/artifacts/${jobId}-${kind}`,
         mime_type: mimeType,
-        metadata: kind === 'image' ? { content_sha256: sha256(bytes) } : {
+        metadata: kind === 'image' ? {
+          content_sha256: sha256(bytes),
+          model: XAI_CANONICAL_BUNDLE_MODEL.id,
+          prompt: submitted.prompt,
+        } : {
           artifact_kind: kind === 'request' ? 'provider_request' : 'provider_response',
           content_sha256: sha256(bytes),
-          provider_request_id: `fal-${jobId}`,
+          model: XAI_CANONICAL_BUNDLE_MODEL.id,
+          ...(kind === 'response' ? { provider_request_id: `fal-${jobId}` } : {}),
         },
       });
       return new Response(JSON.stringify({
@@ -298,6 +322,12 @@ describe('sealed XAI canonical bundle inputs', () => {
     expect(generation).toContain('--max-cost-usd="$MAX_COST_USD"');
     expect(generation).toContain('name: arcade-xai-canonical-bundle-${{ inputs.slug }}');
     expect(generation).toContain('name: arcade-xai-canonical-bundle-checkpoint-${{ inputs.slug }}');
+    expect(generation).toContain('- name: Repair private checkpoint ownership after the cleanup container');
+    expect(generation).toMatch(/- name: Repair private checkpoint ownership after the cleanup container\n\s+if: always\(\)/);
+    expect(generation).toContain('sudo chown -R --no-dereference -- "$(id -u):$(id -g)" "$work_root"');
+    expect(generation.indexOf('Repair private checkpoint ownership')).toBeLessThan(
+      generation.indexOf('Preserve the resumable private paid-call checkpoint'),
+    );
     expect(generation).not.toMatch(/\/api\/fighters|\/approve(?:\/|\s|$)|--activate/);
     expect(reviewedImport).toContain('--name "arcade-xai-canonical-bundle-$REQUESTED_SLUG"');
     expect(reviewedImport).toContain('name: arcade-reviewed-canonical-manifest-${{ inputs.slug }}');
@@ -406,6 +436,40 @@ describe('resumable exactly-once XAI canonical bundle', () => {
       expect(readFileSync(join(fixture.outputDirectory, 'sources', `${sourceName}.png`))).toBeTruthy();
     }
     expect(readFileSync(join(fixture.outputDirectory, 'review-descriptor.json'))).toBeTruthy();
+  });
+
+  it.each([
+    ['an extra stored input field', {
+      mutateCanvaInput: (input) => ({ ...input, unsealed: true }),
+      error: /normalized input keys are not sealed/i,
+    }],
+    ['a changed field from the sealed submitted request', {
+      mutateCanvaInput: (input) => ({ ...input, publish_name: `${input.publish_name}-changed` }),
+      error: /input does not match the sealed request/i,
+    }],
+    ['reordered normalized references', {
+      mutateCanvaInput: (input) => ({ ...input, image_urls: [...input.image_urls].reverse() }),
+      error: /normalized prompt or reference URLs changed/i,
+    }],
+    ['an enriched prompt despite enrichment being disabled', {
+      mutateCanvaInput: (input) => ({ ...input, enriched_prompt: `${input.enriched_prompt} changed` }),
+      error: /normalized prompt or reference URLs changed/i,
+    }],
+    ['a changed archived provider prompt', {
+      mutateProviderRequest: (request) => ({
+        ...request,
+        input: { ...request.input, prompt: `${request.input.prompt} changed` },
+      }),
+      error: /provider request does not match the sealed provider contract/i,
+    }],
+  ])('rejects %s without a second POST', async (_label, providerOptions) => {
+    const fixture = makeFixture();
+    const provider = providerFixture(providerOptions);
+    await expect(runXaiCanonicalBundle(runOptions(fixture, provider))).rejects.toThrow(providerOptions.error);
+    const paidPosts = provider.fetchImpl.mock.calls.filter(([url, init]) => (
+      new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
+    ));
+    expect(paidPosts).toHaveLength(1);
   });
 
   it('resumes a completed bundle without another provider request or upload', async () => {

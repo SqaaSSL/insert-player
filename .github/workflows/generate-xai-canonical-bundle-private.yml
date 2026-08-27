@@ -229,6 +229,20 @@ jobs:
                 --output-dir=/work/bundle
             '
 
+      - name: Repair private checkpoint ownership after the cleanup container
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          work_root="$RUNNER_TEMP/xai-canonical-work"
+          if [[ -e "$work_root" || -L "$work_root" ]]; then
+            [[ -d "$work_root" && ! -L "$work_root" ]] || {
+              printf '::error::Canonical work root is not a real directory.\n'
+              exit 1
+            }
+            sudo chown -R --no-dereference -- "$(id -u):$(id -g)" "$work_root"
+          fi
+
       - name: Publish the exact private bundle for independent human review
         uses: actions/upload-artifact@v6
         with:

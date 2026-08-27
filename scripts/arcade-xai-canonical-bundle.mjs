@@ -537,6 +537,54 @@ async function downloadAuditAsset(asset, path, headers, fetchImpl) {
   };
 }
 
+function verifyNormalizedPixcliInput(input, payload, apiBase, sourceName) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error(`${sourceName} PixCLI normalized input is invalid.`);
+  }
+  const serverDerivedKeys = ['image_url', 'image_urls', 'enriched_prompt'];
+  exactKeys(input, [...Object.keys(payload), ...serverDerivedKeys], `${sourceName} PixCLI normalized input`);
+
+  const submittedProjection = { ...input };
+  for (const key of serverDerivedKeys) delete submittedProjection[key];
+  if (sha256(canonicalJson(submittedProjection)) !== sha256(canonicalJson(payload))) {
+    throw new Error(`${sourceName} PixCLI input does not match the sealed request.`);
+  }
+
+  const expectedImageUrls = payload.image.map((hash) => `${apiBase}/api/v1/assets/${hash}`);
+  if (
+    input.enriched_prompt !== payload.prompt
+    || input.image_url !== expectedImageUrls[0]
+    || canonicalJson(input.image_urls) !== canonicalJson(expectedImageUrls)
+  ) {
+    throw new Error(`${sourceName} PixCLI normalized prompt or reference URLs changed.`);
+  }
+  return expectedImageUrls;
+}
+
+function verifyProviderRequestAudit(value, payload, imageUrls, sourceName) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${sourceName} PixCLI provider request audit is invalid.`);
+  }
+  exactKeys(
+    value,
+    ['model', 'input', 'retry_policy', 'fallback_policy'],
+    `${sourceName} PixCLI provider request audit`,
+  );
+  const expectedInput = {
+    ...payload.params,
+    prompt: payload.prompt,
+    image_urls: imageUrls,
+  };
+  if (
+    value.model !== XAI_CANONICAL_BUNDLE_MODEL.endpoint
+    || value.retry_policy !== 'none'
+    || value.fallback_policy !== 'none'
+    || canonicalJson(value.input) !== canonicalJson(expectedInput)
+  ) {
+    throw new Error(`${sourceName} PixCLI provider request does not match the sealed provider contract.`);
+  }
+}
+
 async function archiveCompletedSource(options, slot, job, payload) {
   if (job.status !== 'completed') throw new Error(`${slot.sourceName} did not complete without fallback.`);
   if (
@@ -551,9 +599,13 @@ async function archiveCompletedSource(options, slot, job, payload) {
   );
   const { body: canva } = await parseResponseJson(response, 'PixCLI Canva audit');
   if (!response.ok) throw new Error(`PixCLI Canva audit failed with HTTP ${response.status}.`);
-  if (sha256(canonicalJson(canva.input)) !== slot.requestSha256) {
-    throw new Error(`${slot.sourceName} PixCLI input does not match the sealed request.`);
-  }
+  const normalizedImageUrls = verifyNormalizedPixcliInput(
+    canva.input,
+    payload,
+    options.apiBase,
+    slot.sourceName,
+  );
+  if (sha256(canonicalJson(payload)) !== slot.requestSha256) throw new Error(`${slot.sourceName} request hash changed.`);
   const providerRuns = Array.isArray(canva.provider_runs) ? canva.provider_runs : [];
   if (
     canva.job?.status !== 'completed'
@@ -577,6 +629,17 @@ async function archiveCompletedSource(options, slot, job, payload) {
   for (const kind of ['provider_request', 'provider_response', 'image']) {
     if ((grouped[kind] ?? []).length !== 1) throw new Error(`${slot.sourceName} ${kind} output is missing or ambiguous.`);
   }
+  if (
+    grouped.provider_request[0].mime_type !== 'application/json'
+    || grouped.provider_response[0].mime_type !== 'application/json'
+    || grouped.provider_request[0]?.metadata?.model !== XAI_CANONICAL_BUNDLE_MODEL.id
+    || grouped.provider_response[0]?.metadata?.model !== XAI_CANONICAL_BUNDLE_MODEL.id
+    || grouped.provider_response[0]?.metadata?.provider_request_id !== providerRuns[0].requestId
+    || grouped.image[0]?.metadata?.model !== XAI_CANONICAL_BUNDLE_MODEL.id
+    || grouped.image[0]?.metadata?.prompt !== payload.prompt
+  ) {
+    throw new Error(`${slot.sourceName} PixCLI audit assets do not match the sealed job and provider run.`);
+  }
   const auditDirectory = join(options.outputDirectory, 'audit', slot.sourceName);
   mkdirSync(auditDirectory, { recursive: true, mode: 0o700 });
   const request = await downloadAuditAsset(
@@ -584,6 +647,12 @@ async function archiveCompletedSource(options, slot, job, payload) {
     join(auditDirectory, 'provider_request.json'),
     options.headers,
     options.fetchImpl,
+  );
+  verifyProviderRequestAudit(
+    JSON.parse(readFileSync(join(auditDirectory, 'provider_request.json'), 'utf8')),
+    payload,
+    normalizedImageUrls,
+    slot.sourceName,
   );
   const providerResponse = await downloadAuditAsset(
     grouped.provider_response[0],
