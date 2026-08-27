@@ -173,7 +173,7 @@ function providerFixture(options = {}) {
         status: 'completed',
         cost: Object.hasOwn(options, 'jobCost')
           ? options.jobCost
-          : XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd,
+          : XAI_CANONICAL_BUNDLE_MODEL.auditedCostMicrocredits,
       }), { status: 200 });
     }
     const canvaMatch = parsed.pathname.match(/^\/api\/v1\/jobs\/(job-[0-9]+)\/canva$/);
@@ -202,7 +202,7 @@ function providerFixture(options = {}) {
           status: 'completed',
           cost: Object.hasOwn(options, 'canvaCost')
             ? options.canvaCost
-            : XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd,
+            : XAI_CANONICAL_BUNDLE_MODEL.auditedCostMicrocredits,
         },
         input,
         provider_runs: [{
@@ -503,7 +503,7 @@ describe('resumable exactly-once XAI canonical bundle', () => {
 
   it('stops the bundle when the terminal charge is not exactly the audited $0.11', async () => {
     const fixture = makeFixture();
-    const provider = providerFixture({ jobCost: 0.12 });
+    const provider = providerFixture({ jobCost: 120000 });
     await expect(runXaiCanonicalBundle(runOptions(fixture, provider))).rejects.toThrow(/audited \$0\.11/i);
     const paidPosts = provider.fetchImpl.mock.calls.filter(([url, init]) => (
       new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
@@ -513,10 +513,12 @@ describe('resumable exactly-once XAI canonical bundle', () => {
 
   it.each([
     ['job null', { jobCost: null }],
-    ['job string', { jobCost: '0.11' }],
+    ['job USD instead of microcredits', { jobCost: 0.11 }],
+    ['job string', { jobCost: '110000' }],
     ['job NaN', { jobCost: Number.NaN }],
     ['Canva null', { canvaCost: null }],
-    ['Canva string', { canvaCost: '0.11' }],
+    ['Canva USD instead of microcredits', { canvaCost: 0.11 }],
+    ['Canva string', { canvaCost: '110000' }],
     ['Canva NaN', { canvaCost: Number.NaN }],
   ])('rejects unproved %s cost values', async (_label, overrides) => {
     const fixture = makeFixture();
