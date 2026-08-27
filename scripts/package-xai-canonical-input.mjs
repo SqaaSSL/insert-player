@@ -12,13 +12,11 @@ import {
   buildXaiCanonicalBundlePrompt,
   loadXaiCanonicalPoseManifest,
   resolveXaiCanonicalSingleSourcePromptProfile,
+  reviewedXaiCanonicalSingleSourcePromptSha256,
   validateXaiCanonicalPromptProfileReferences,
   XAI_CANONICAL_BUNDLE_SOURCE_NAMES,
   XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE,
-  XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG,
   XAI_CANONICAL_GLOBAL_SIDE_REFERENCES,
-  XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
-  XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256,
 } from './arcade-xai-canonical-bundle.mjs';
 import { verifyBakeoffSource } from './arcade-side-bakeoff.mjs';
 import { validateManifest } from './seed-arcade-roster.mjs';
@@ -197,15 +195,15 @@ export function packageXaiCanonicalInput(options = {}) {
     sourceNames,
     promptProfile,
   );
-  validateXaiCanonicalPromptProfileReferences(loaded, promptProfile);
+  validateXaiCanonicalPromptProfileReferences(loaded, promptProfile, fighter);
   const originalPath = join(options.sourceDir ?? DEFAULT_SOURCE_DIR, `${slug}.png`);
   const original = verifyBakeoffSource(fighter, originalPath);
   const promptSha256 = sourceName
     ? sha256(buildXaiCanonicalBundlePrompt(fighter, sourceName, { promptProfile }))
     : undefined;
-  const reviewedPromptSha256 = promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
-    ? XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256
-    : XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG[slug];
+  const reviewedPromptSha256 = promptProfile
+    ? reviewedXaiCanonicalSingleSourcePromptSha256(slug, sourceName, promptProfile)
+    : undefined;
   if (promptProfile && promptSha256 !== reviewedPromptSha256) {
     throw new Error(`The exact reviewed single-source prompt snapshot changed for ${slug}.`);
   }
@@ -262,7 +260,7 @@ export function packageXaiCanonicalInput(options = {}) {
     portablePoseManifestSha256,
     sourceNames,
   );
-  validateXaiCanonicalPromptProfileReferences(portableLoaded, promptProfile);
+  validateXaiCanonicalPromptProfileReferences(portableLoaded, promptProfile, fighter);
   const archiveStem = sourceName ? `${slug}-${sourceName}` : slug;
   const archivePath = join(outputDirectory, `${archiveStem}--canonical-input-v1.tar.gz`);
   runTar(archivePath, stagingParent);
