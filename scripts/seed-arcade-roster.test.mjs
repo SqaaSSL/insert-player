@@ -1,15 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  REVIEW_GATED_VIDEO_STEP_CONFIRMATION,
   REVIEWED_ARCADE_ACTIVATION_CONFIRMATION,
   activateReviewedArcadeFighter,
   arcadeAdminAuthHeaders,
   assertApprovedArcadeGenerationContract,
+  assertReviewGatedVideoStepConfirmation,
   assertReviewedActivationConfirmation,
   findCurrentArcadeEntry,
   planArcadeDraftRegistration,
   planFighterResume,
+  planReviewGatedVideoStep,
   planSideDraftPreparation,
+  runReviewGatedVideoStep,
   validateManifest,
 } from './seed-arcade-roster.mjs';
 
@@ -30,6 +34,10 @@ describe('Arcade admin backend authentication', () => {
 const manifest = JSON.parse(readFileSync(new URL('../arcade/roster-2026.json', import.meta.url), 'utf8'));
 const productionWorkflow = readFileSync(
   new URL('../.github/workflows/seed-arcade-production.yml', import.meta.url),
+  'utf8',
+);
+const videoStepWorkflow = readFileSync(
+  new URL('../.github/workflows/arcade-video-step-production.yml', import.meta.url),
   'utf8',
 );
 
@@ -130,6 +138,67 @@ function reviewedActivationApi(fighter, { entry, owned } = {}) {
         };
       }
       throw new Error(`Unexpected reviewed activation request: ${init.method ?? 'GET'} ${path}`);
+    },
+  };
+}
+
+const videoJobId = 'b'.repeat(32);
+const continuedVideoJobId = 'c'.repeat(32);
+const videoRunId = 'd'.repeat(32);
+
+function videoJob(overrides = {}) {
+  return {
+    id: videoJobId,
+    fighterId: 'a'.repeat(32),
+    tier: 'champion',
+    creationFlow: 'video',
+    operation: 'fighter_generation',
+    targetKind: null,
+    targetName: null,
+    artifactRunId: videoRunId,
+    status: 'succeeded',
+    reviewStatus: 'awaiting_review',
+    fullRunRestartRequired: false,
+    stage: 'awaiting_review',
+    progressCurrent: 4,
+    progressTotal: 14,
+    resumable: false,
+    pendingStages: ['sprite:walk'],
+    ...overrides,
+  };
+}
+
+function videoReview(job = videoJob(), overrides = {}) {
+  return {
+    jobId: job.id,
+    artifactRunId: job.artifactRunId,
+    candidateId: 'e'.repeat(32),
+    action: 'idle',
+    sequenceOrder: 0,
+    status: 'awaiting_review',
+    revision: 1,
+    reportSha256: 'f'.repeat(64),
+    technicalOutcome: 'technical_pass',
+    ...overrides,
+  };
+}
+
+function videoStepReadApi(fighter, jobs, reviews = new Map()) {
+  const entry = reviewedAdminEntry(fighter);
+  const owned = reviewedOwnedFighter(fighter);
+  const calls = [];
+  return {
+    calls,
+    requestApi: async (_baseUrl, _token, path, init = {}) => {
+      calls.push({ path, method: init.method ?? 'GET', body: init.body });
+      if (path === '/api/admin/arcade' && !init.method) return { fighters: [entry] };
+      if (path === `/api/fighters/${entry.fighterId}` && !init.method) return { fighter: owned };
+      if (path === '/api/generation-jobs' && !init.method) return { jobs };
+      const reviewMatch = path.match(/^\/api\/generation-jobs\/([a-f0-9]{32})\/video-review$/);
+      if (reviewMatch && !init.method && reviews.has(reviewMatch[1])) {
+        return { review: reviews.get(reviewMatch[1]) };
+      }
+      throw new Error(`Unexpected Video step request: ${init.method ?? 'GET'} ${path}`);
     },
   };
 }
@@ -373,6 +442,181 @@ describe('Reviewed Arcade activation', () => {
       requestApi: manifestTamper.requestApi,
     })).rejects.toThrow(/roster manifest.*generationPrompt/i);
     expect(manifestTamper.calls.every(({ method }) => method === 'GET')).toBe(true);
+  });
+});
+
+describe('Review-gated Arcade Video step', () => {
+  const fighter = manifest.fighters.find((entry) => entry.slug === 'bad-bunny');
+  const runnerOptions = (requestApi) => ({
+    manifest,
+    fighter,
+    approvedPhotoHash: fighter.reference.sourceSha256,
+    baseUrl: 'https://api.insertplayer.ai',
+    token: async () => 'token',
+    requestApi,
+    pause: async () => {},
+    pollIntervalMs: 0,
+  });
+
+  it('requires its own exact production confirmation', () => {
+    expect(() => assertReviewGatedVideoStepConfirmation('GEMINI_ONLY_PRODUCTION'))
+      .toThrow(/START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION/);
+    expect(() => assertReviewGatedVideoStepConfirmation(REVIEW_GATED_VIDEO_STEP_CONFIRMATION))
+      .not.toThrow();
+  });
+
+  it('returns an existing awaiting-review candidate without any mutation', async () => {
+    const job = videoJob();
+    const api = videoStepReadApi(fighter, [job], new Map([[job.id, videoReview(job)]]));
+    const result = await runReviewGatedVideoStep(runnerOptions(api.requestApi));
+
+    expect(result).toMatchObject({
+      mode: 'reused-review',
+      mutated: false,
+      job: { id: job.id, creationFlow: 'video', reviewStatus: 'awaiting_review' },
+      review: {
+        jobId: job.id,
+        candidateId: 'e'.repeat(32),
+        action: 'idle',
+        technicalOutcome: 'technical_pass',
+      },
+    });
+    expect(api.calls.map(({ method, path }) => `${method} ${path}`)).toEqual([
+      'GET /api/admin/arcade',
+      `GET /api/fighters/${'a'.repeat(32)}`,
+      'GET /api/generation-jobs',
+      `GET /api/generation-jobs/${job.id}/video-review`,
+    ]);
+    expect(api.calls.some(({ method, path }) => (
+      method !== 'GET' || /generation-contract|\/sources(?:\/|$)|\/approve$/.test(path)
+    ))).toBe(false);
+  });
+
+  it('refuses a roster entry that is not the exact private Champion draft', async () => {
+    const entry = reviewedAdminEntry(fighter, { public: true });
+    const calls = [];
+    const requestApi = async (_baseUrl, _token, path, init = {}) => {
+      calls.push({ path, method: init.method ?? 'GET' });
+      if (path === '/api/admin/arcade') return { fighters: [entry] };
+      if (path === `/api/fighters/${entry.fighterId}`) {
+        return { fighter: reviewedOwnedFighter(fighter) };
+      }
+      throw new Error(`Unexpected draft validation request: ${path}`);
+    };
+
+    await expect(runReviewGatedVideoStep(runnerOptions(requestApi)))
+      .rejects.toThrow(/exact private Champion draft.*visibility/);
+    expect(calls).toEqual([
+      { path: '/api/admin/arcade', method: 'GET' },
+      { path: `/api/fighters/${entry.fighterId}`, method: 'GET' },
+    ]);
+  });
+
+  it('continues an approved action through the same admin endpoint and stops at the next review', async () => {
+    const approved = videoJob({
+      status: 'succeeded',
+      reviewStatus: 'approved',
+      stage: 'review:approved',
+      resumable: true,
+    });
+    const queued = videoJob({
+      id: continuedVideoJobId,
+      status: 'queued',
+      reviewStatus: 'none',
+      stage: 'queued',
+      resumedFromJobId: approved.id,
+    });
+    const awaiting = {
+      ...queued,
+      status: 'succeeded',
+      reviewStatus: 'awaiting_review',
+      stage: 'awaiting_review',
+      progressCurrent: 5,
+    };
+    const nextReview = videoReview(awaiting, {
+      candidateId: '1'.repeat(32),
+      action: 'walk',
+      sequenceOrder: 1,
+      technicalOutcome: 'needs_review',
+    });
+    const entry = reviewedAdminEntry(fighter);
+    const owned = reviewedOwnedFighter(fighter);
+    const calls = [];
+    const requestApi = async (_baseUrl, _token, path, init = {}) => {
+      calls.push({ path, method: init.method ?? 'GET', body: init.body });
+      if (path === '/api/admin/arcade' && !init.method) return { fighters: [entry] };
+      if (path === `/api/fighters/${entry.fighterId}` && !init.method) return { fighter: owned };
+      if (path === '/api/generation-jobs' && !init.method) return { jobs: [approved] };
+      if (path === `/api/admin/arcade/${entry.fighterId}/generate` && init.method === 'POST') {
+        return { job: queued };
+      }
+      if (path === `/api/generation-jobs/${queued.id}` && !init.method) return { job: awaiting };
+      if (path === `/api/generation-jobs/${queued.id}/video-review` && !init.method) {
+        return { review: nextReview };
+      }
+      throw new Error(`Unexpected Video continuation request: ${init.method ?? 'GET'} ${path}`);
+    };
+
+    const result = await runReviewGatedVideoStep(runnerOptions(requestApi));
+    expect(result).toMatchObject({
+      mode: 'continued',
+      mutated: true,
+      job: { id: continuedVideoJobId, reviewStatus: 'awaiting_review' },
+      review: { action: 'walk', technicalOutcome: 'needs_review' },
+    });
+    const posts = calls.filter(({ method }) => method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(posts[0].path).toBe(`/api/admin/arcade/${entry.fighterId}/generate`);
+    expect(JSON.parse(posts[0].body)).toEqual({
+      legal: {
+        legalVersion: manifest.legalVersion,
+        ageConfirmed: true,
+        termsAccepted: true,
+        photoRightsConfirmed: true,
+        aiProcessingConfirmed: true,
+        immediatePerformanceConfirmed: true,
+        withdrawalLossAcknowledged: true,
+      },
+      creationFlow: 'video',
+    });
+    expect(calls.some(({ path }) => (
+      /generation-contract|\/sources(?:\/|$)|\/approve$|\/reject$|\/adjust$/.test(path)
+    ))).toBe(false);
+  });
+
+  it('fails closed on cross-flow, failed, rejected, or restart-required state', () => {
+    expect(() => planReviewGatedVideoStep([
+      videoJob({ status: 'running', reviewStatus: 'none', creationFlow: 'original' }),
+    ], 'a'.repeat(32))).toThrow(/crossed its sealed scope/);
+    expect(() => planReviewGatedVideoStep([
+      videoJob({ status: 'failed', reviewStatus: 'none' }),
+    ], 'a'.repeat(32))).toThrow(/never retries or restarts/);
+    expect(() => planReviewGatedVideoStep([
+      videoJob({ reviewStatus: 'rejected' }),
+    ], 'a'.repeat(32))).toThrow(/explicit full-run restart/);
+    expect(() => planReviewGatedVideoStep([
+      videoJob({ reviewStatus: 'approved', fullRunRestartRequired: true }),
+    ], 'a'.repeat(32))).toThrow(/explicit full-run restart/);
+  });
+
+  it('uses an additive per-fighter workflow with no Gemini-only preflight or review mutation', () => {
+    expect(videoStepWorkflow).toContain('workflow_dispatch:');
+    expect(videoStepWorkflow).toContain('START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION');
+    expect(videoStepWorkflow).toContain('group: production-arcade-video-${{ inputs.slug }}');
+    expect(videoStepWorkflow).toContain('cancel-in-progress: false');
+    expect(videoStepWorkflow).toContain('--video-step');
+    expect(videoStepWorkflow).toContain('--confirm-video-step="$REQUESTED_CONFIRMATION"');
+    expect(videoStepWorkflow).toContain('ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}');
+    expect(videoStepWorkflow).toContain('health?.status !== \'ok\'');
+    expect(videoStepWorkflow).toContain('health.environment !== \'production\'');
+    expect(videoStepWorkflow).toContain('health.workerVersion.tag.startsWith(expectedTagPrefix)');
+    expect(videoStepWorkflow).toContain('const expectedTagPrefix = `prod-${expectedSha}-`;');
+    expect(videoStepWorkflow).not.toContain('npm run check:production');
+    expect(videoStepWorkflow).not.toContain('docker build');
+    expect(videoStepWorkflow).not.toContain('generation-contract');
+    expect(videoStepWorkflow).not.toContain('assert-approved-image-providers');
+    expect(videoStepWorkflow).not.toContain('--activate');
+    expect(videoStepWorkflow).not.toContain('/approve');
   });
 });
 
