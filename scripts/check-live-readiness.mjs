@@ -32,6 +32,7 @@ const requiredSecrets = [
   'RUNWAY_API_KEY',
   'FREEPIK_API_KEY',
   'LUDO_API_KEY',
+  'PIXCLI_API_KEY',
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'CLERK_WEBHOOK_SIGNING_SECRET',
@@ -832,6 +833,7 @@ async function assertLiveHealth() {
     ['providerGlobalCaps', 'disabled'],
     ['geminiTransport', 'meterkey'],
     ['providers', 'configured'],
+    ['videoCreationTransport', 'configured'],
     ['durableGeneration', 'configured'],
     ['privacy', 'pseudonymized'],
   ];

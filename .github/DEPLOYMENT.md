@@ -88,6 +88,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | `RUNWAY_API_KEY` | Configured provider fallback |
 | `FREEPIK_API_KEY` | Configured provider fallback |
 | `LUDO_API_KEY` | Configured provider fallback |
+| `PIXCLI_API_KEY` | Server-only PixCLI transport for the opt-in video creation flow |
 | `STRIPE_SECRET_KEY` | Test in development, live in production |
 | `STRIPE_WEBHOOK_SECRET` | Matching environment billing endpoint |
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Matching environment user-lifecycle endpoint |

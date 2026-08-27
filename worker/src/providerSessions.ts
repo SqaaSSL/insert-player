@@ -1,6 +1,6 @@
 import { generateId, hashString } from './auth';
 import type { Env, PublicAuthContext, QualityTier } from './types';
-import { generationJobIdFromAuth } from './generationAuth';
+import { generationCreationFlowFromAuth, generationJobIdFromAuth } from './generationAuth';
 import {
   normalizeGenerationBillingOperation,
   normalizeQualityTier,
@@ -20,6 +20,7 @@ import {
 import { ResponseBodyTooLargeError } from './streamLimits';
 import { PROVIDER_REQUEST_BODY_LIMITS, type ProviderName } from './providerLimits';
 import { geminiEstimatedCostCents } from './geminiTransport';
+import { GENERATION_ANIMATION_NAMES } from './generationArtifacts';
 import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
 
 export const PROVIDER_SESSION_HEADER = 'X-ASF-Provider-Session';
@@ -43,6 +44,7 @@ interface ProviderSessionRow {
   provider_cost_used_cents?: number;
   provider_cost_limit_cents?: number;
   charge_reason?: string | null;
+  creation_flow?: GenerationCreationFlow;
   expires_at: string;
 }
 
@@ -130,12 +132,16 @@ interface ProviderRequestCacheClaim {
   callKind: string;
   ownerAttemptId: string;
   responseBlobKey: string;
+  terminalOnUpstreamResponse: boolean;
 }
 
 export interface ProviderRequestState {
   spendReservation: ProviderSpendReservation | null;
   cacheClaim: ProviderRequestCacheClaim | null;
-  requestMetadata: Omit<ProviderRequestCacheClaim, 'id' | 'ownerAttemptId' | 'responseBlobKey'> | null;
+  requestMetadata: Omit<
+    ProviderRequestCacheClaim,
+    'id' | 'ownerAttemptId' | 'responseBlobKey' | 'terminalOnUpstreamResponse'
+  > | null;
   upstreamAttemptKey: string | null;
 }
 
@@ -281,10 +287,28 @@ function providerCallKind(
     (route.provider === 'fal' && route.path.includes('birefnet')) ||
     (route.provider === 'freepik' && route.path.includes('remove-background'))
   ) return 'background_removal';
-  if (route.path.includes('image-to-video') || route.path.includes('image_to_video')) {
+  if (
+    route.path.includes('image-to-video') ||
+    route.path.includes('image_to_video') ||
+    (route.provider === 'pixcli' && route.path.endsWith('/video/advanced'))
+  ) {
     return 'video_generation';
   }
   return route.provider === 'gemini' ? 'image_generation' : 'provider_other';
+}
+
+function isPixcliAdvancedSubmission(
+  route: { provider: ProviderSessionProvider; path: string },
+): boolean {
+  return route.provider === 'pixcli' &&
+    route.path === '/proxy/pixcli/api/v1/video/advanced';
+}
+
+function isCanonicalPixcliDispatchKey(requestKey: string, artifactRunId: string): boolean {
+  const prefix = `run:${artifactRunId}:sprite:`;
+  if (!requestKey.startsWith(prefix)) return false;
+  const action = requestKey.slice(prefix.length);
+  return (GENERATION_ANIMATION_NAMES as readonly string[]).includes(action);
 }
 
 async function generationRequestContext(
@@ -413,13 +437,31 @@ async function beginProviderRequestCache(
   if (!/^[a-zA-Z0-9:_-]{1,200}$/.test(requestKey)) {
     return json({ error: 'A valid durable provider request key is required' }, 400);
   }
+  const terminalOnUpstreamResponse = isPixcliAdvancedSubmission(route);
+  if (
+    terminalOnUpstreamResponse &&
+    !isCanonicalPixcliDispatchKey(requestKey, artifactRunId)
+  ) {
+    return json({
+      error: 'PixCLI video dispatch requires the canonical run and action request key',
+      code: 'pixcli_dispatch_identity_invalid',
+    }, 400);
+  }
   let requestHash: string;
   try {
-    requestHash = await providerRequestHash(
+    const bodyHash = await providerRequestHash(
       request,
       requestKey,
       PROVIDER_REQUEST_BODY_LIMITS[route.provider],
     );
+    // A PixCLI upload can be recreated with a different multipart boundary or
+    // asset hash after a caller restart. The paid model submission must still
+    // remain one dispatch per durable run + action, independently of those
+    // caller-controlled bytes. Keep hashing the body above for the size gate,
+    // but persist a stable semantic dispatch hash for the advanced POST.
+    requestHash = terminalOnUpstreamResponse
+      ? await hashString(`pixcli-advanced-v1\n${artifactRunId}\n${requestKey}`)
+      : bodyHash;
   } catch (error) {
     if (error instanceof RequestBodyTooLargeError) {
       return json({ error: 'Provider request body is too large' }, 413);
@@ -448,13 +490,21 @@ async function beginProviderRequestCache(
     ownerAttemptId,
   ).run();
 
-  let row = await env.DB.prepare(`
-    SELECT id, status, response_blob_key, response_status, response_content_type,
-           owner_attempt_id, updated_at
-    FROM provider_request_cache
-    WHERE artifact_run_id = ? AND provider = ? AND method = ? AND request_path = ? AND request_hash = ?
-  `).bind(artifactRunId, route.provider, request.method, requestPath, requestHash)
-    .first<ProviderRequestCacheRow>();
+  let row = terminalOnUpstreamResponse
+    ? await env.DB.prepare(`
+        SELECT id, status, response_blob_key, response_status, response_content_type,
+               owner_attempt_id, updated_at
+        FROM provider_request_cache
+        WHERE artifact_run_id = ? AND provider = 'pixcli' AND method = 'POST'
+          AND request_path = ? AND request_key = ?
+      `).bind(artifactRunId, requestPath, requestKey).first<ProviderRequestCacheRow>()
+    : await env.DB.prepare(`
+        SELECT id, status, response_blob_key, response_status, response_content_type,
+               owner_attempt_id, updated_at
+        FROM provider_request_cache
+        WHERE artifact_run_id = ? AND provider = ? AND method = ? AND request_path = ? AND request_hash = ?
+      `).bind(artifactRunId, route.provider, request.method, requestPath, requestHash)
+      .first<ProviderRequestCacheRow>();
   if (!row) return json({ error: 'Provider request cache is unavailable' }, 503);
 
   const cached = await cachedProviderResponse(env, row);
@@ -471,6 +521,24 @@ async function beginProviderRequestCache(
   if (row.status === 'uncertain') {
     return json({
       error: 'The previous provider request has an unknown completion outcome and will not be submitted again automatically',
+      code: 'provider_request_outcome_unknown',
+    }, 409);
+  }
+
+  if (
+    terminalOnUpstreamResponse &&
+    row.status === 'failed' &&
+    row.response_status !== null
+  ) {
+    await env.DB.prepare(`
+      UPDATE provider_request_cache
+      SET status = 'uncertain',
+          error_message = 'A prior PixCLI response was received but is not replayable; automatic replay is disabled',
+          updated_at = datetime('now')
+      WHERE id = ? AND status = 'failed' AND response_status IS NOT NULL
+    `).bind(row.id).run();
+    return json({
+      error: 'The previous provider request has a received but unavailable response and will not be submitted again automatically',
       code: 'provider_request_outcome_unknown',
     }, 409);
   }
@@ -522,6 +590,7 @@ async function beginProviderRequestCache(
     callKind,
     ownerAttemptId,
     responseBlobKey: `users/${auth.userId}/generation-runs/${artifactRunId}/provider-responses/${row.id}.bin`,
+    terminalOnUpstreamResponse,
   };
 }
 
@@ -534,8 +603,8 @@ async function finalizeProviderRequestCache(
   state.cacheClaim = null;
   if (!claim) return response;
 
-  if (!response.ok) {
-    const unknownOutcome = response.headers.get('X-Insert-Player-Upstream-Outcome') === 'unknown';
+  const unknownOutcome = response.headers.get('X-Insert-Player-Upstream-Outcome') === 'unknown';
+  if (!response.ok && !(claim.terminalOnUpstreamResponse && !unknownOutcome)) {
     await env.DB.prepare(`
       UPDATE provider_request_cache
       SET status = ?, response_status = ?, error_message = ?, updated_at = datetime('now')
@@ -867,9 +936,11 @@ function billingOperationForSession(
 }
 
 function isAllowedProviderUse(
+  auth: PublicAuthContext,
   purpose: ProviderSessionPurpose,
   tier: QualityTier,
   chargeReason: string | null | undefined,
+  sessionCreationFlow: GenerationCreationFlow | undefined,
   provider: ProviderSessionProvider,
   path: string,
 ): boolean {
@@ -878,6 +949,7 @@ function isAllowedProviderUse(
     path.startsWith('/proxy/freepik/v1/ai/reference-to-video/');
   const isFalIntro = path.startsWith('/proxy/fal/fal-ai/ltx-2.3/image-to-video/');
   const isFalBgRemoval = path.startsWith('/proxy/fal/fal-ai/birefnet');
+  const isPixcliVideo = path.startsWith('/proxy/pixcli/api/v1/');
 
   const geminiModel = path.match(/^\/proxy\/gemini\/v1beta\/models\/([^/:]+):generateContent$/)?.[1];
 
@@ -890,6 +962,23 @@ function isAllowedProviderUse(
       isFreepikVideo ||
       isFalIntro
     );
+  }
+
+  // PixCLI is reserved for the explicitly selected video creation flow. The
+  // claim is minted by the durable generation token, never accepted from a
+  // public request header. Tokens from the original flow do not carry it and
+  // therefore fail closed even while this transport is deployed ahead of the
+  // video Workflow branch.
+  if (provider === 'pixcli') {
+    if (
+      !isPixcliVideo ||
+      sessionCreationFlow !== 'video' ||
+      generationCreationFlowFromAuth(auth) !== 'video'
+    ) return false;
+    if (purpose === 'fighter_retry') {
+      return billingOperationForSession(purpose, chargeReason) === 'fighter_retry_animation';
+    }
+    return purpose === 'fighter_generation' || purpose === 'fighter_upgrade';
   }
 
   if (provider === 'gemini') {
@@ -939,6 +1028,7 @@ function estimatedProviderCallCostCents(env: Env, provider: ProviderSessionProvi
   }
   if (provider === 'runway') return 100;
   if (provider === 'ludo') return 25;
+  if (provider === 'pixcli' && path === '/proxy/pixcli/api/v1/video/advanced') return 33;
   return null;
 }
 
@@ -1186,6 +1276,92 @@ export async function finalizeProviderRequest(
   return clientResponse;
 }
 
+function applyProviderRequestCacheState(
+  state: ProviderRequestState,
+  cache: ProviderRequestCacheClaim,
+): void {
+  state.cacheClaim = cache;
+  // PixCLI advanced is exactly one paid dispatch per semantic run + action,
+  // so its cache row remains the upstream identity across local ownership
+  // changes. Existing providers intentionally keep one key per owner attempt:
+  // a known non-dispatched/failed Gemini attempt may be retried as new work.
+  state.upstreamAttemptKey = cache.terminalOnUpstreamResponse
+    ? `ip:${cache.id}`
+    : `ip:${cache.id}:${cache.ownerAttemptId}`;
+  state.requestMetadata = {
+    jobId: cache.jobId,
+    artifactRunId: cache.artifactRunId,
+    requestKey: cache.requestKey,
+    stage: cache.stage,
+    callKind: cache.callKind,
+  };
+}
+
+/**
+ * Authorize and durably cache a provider-side transport operation which has
+ * no inference cost of its own (currently only PixCLI's input upload). This
+ * deliberately does not consume the paid-call or spend budget and therefore
+ * must never be used for a model submission route.
+ */
+export async function requireUnmeteredProviderSession(
+  request: Request,
+  env: Env,
+  auth: PublicAuthContext,
+  route: { provider: ProviderSessionProvider; path: string },
+  state: ProviderRequestState = createProviderRequestState(),
+): Promise<Response | null> {
+  if (
+    request.method !== 'POST' ||
+    route.provider !== 'pixcli' ||
+    route.path !== '/proxy/pixcli/api/v1/uploads'
+  ) {
+    return json({ error: 'Provider route cannot bypass paid-call accounting' }, 403);
+  }
+  const sessionId = request.headers.get(PROVIDER_SESSION_HEADER)?.trim();
+  if (!sessionId) return json({ error: 'Provider session required' }, 402);
+
+  const existing = await env.DB.prepare(`
+    SELECT ps.id, ps.charge_id, ps.tier, ps.purpose, ps.expires_at, ps.creation_flow,
+           gc.reason AS charge_reason
+    FROM provider_sessions ps
+    LEFT JOIN generation_charges gc ON gc.id = ps.charge_id
+    WHERE ps.id = ?
+      AND ps.status = 'active'
+      AND datetime(ps.expires_at) > datetime('now')
+      AND (
+        (ps.user_id IS NOT NULL AND ps.user_id = ?)
+        OR (ps.user_id IS NULL AND ps.rate_limit_key = ?)
+      )
+  `).bind(sessionId, auth.userId ?? '', auth.rateLimitKey).first<ProviderSessionRow>();
+  if (!existing) return json({ error: 'Provider session is invalid or expired' }, 402);
+  if (!isAllowedProviderUse(
+    auth,
+    existing.purpose,
+    existing.tier,
+    existing.charge_reason,
+    existing.creation_flow,
+    route.provider,
+    route.path,
+  )) {
+    return json({ error: 'Provider session is not valid for this provider route' }, 403);
+  }
+
+  const cache = await beginProviderRequestCache(request, env, auth, route);
+  if (cache instanceof Response) return cache;
+  if (
+    existing.charge_id &&
+    ['fighter_generation', 'fighter_retry', 'fighter_upgrade'].includes(existing.purpose) &&
+    !cache
+  ) {
+    return json({
+      error: 'Charged generation provider dispatch requires its signed durable job context',
+      code: 'durable_generation_context_missing',
+    }, 503);
+  }
+  if (cache) applyProviderRequestCacheState(state, cache);
+  return null;
+}
+
 export async function requireProviderSession(
   request: Request,
   env: Env,
@@ -1201,6 +1377,7 @@ export async function requireProviderSession(
   const existing = await env.DB.prepare(`
     SELECT ps.id, ps.charge_id, ps.tier, ps.purpose, ps.provider_calls_used, ps.provider_call_limit,
            ps.provider_cost_used_cents, ps.provider_cost_limit_cents, ps.expires_at,
+           ps.creation_flow,
            gc.reason AS charge_reason
     FROM provider_sessions ps
     LEFT JOIN generation_charges gc ON gc.id = ps.charge_id
@@ -1217,9 +1394,11 @@ export async function requireProviderSession(
     return json({ error: 'Provider session is invalid or expired' }, 402);
   }
   if (!isAllowedProviderUse(
+    auth,
     existing.purpose,
     existing.tier,
     existing.charge_reason,
+    existing.creation_flow,
     route.provider,
     route.path,
   )) {
@@ -1241,19 +1420,9 @@ export async function requireProviderSession(
     }, 503);
   }
   if (cache) {
-    state.cacheClaim = cache;
-    // The public request scope identifies a complete source/animation and is
-    // reused by several distinct provider bodies. Meterkey idempotency must
-    // identify only this durable dispatch attempt. A known failed request gets
-    // a new ownerAttemptId; a crash remains fail-closed in the local cache.
-    state.upstreamAttemptKey = `ip:${cache.id}:${cache.ownerAttemptId}`;
-    state.requestMetadata = {
-      jobId: cache.jobId,
-      artifactRunId: cache.artifactRunId,
-      requestKey: cache.requestKey,
-      stage: cache.stage,
-      callKind: cache.callKind,
-    };
+    // A known failed request gets a new ownerAttemptId; a crash remains
+    // fail-closed in the local cache.
+    applyProviderRequestCacheState(state, cache);
   }
   if ((existing.provider_calls_used ?? 0) >= (existing.provider_call_limit ?? 0)) {
     await abandonProviderRequestCache(env, state, 'Provider session call limit exceeded');

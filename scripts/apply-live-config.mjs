@@ -43,6 +43,7 @@ const secretKeys = [
   'RUNWAY_API_KEY',
   'FREEPIK_API_KEY',
   'LUDO_API_KEY',
+  'PIXCLI_API_KEY',
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'CLERK_WEBHOOK_SIGNING_SECRET',
@@ -67,6 +68,7 @@ const requiredKeys = [
   'GENERATION_JOB_SIGNING_SECRET',
   'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
   'METERKEY_API_KEY',
+  'PIXCLI_API_KEY',
 ];
 
 const sampleFragments = [
