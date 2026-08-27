@@ -29,6 +29,7 @@ const DEFAULT_OUTPUT_ROOT = join(root, '.artifacts/arcade-xai-canonical-bundles'
 const DEFAULT_STATE_ROOT = join(root, '.arcade-xai-canonical-bundle-states');
 const REQUEST_TIMEOUT_MS = 60_000;
 const MAX_PNG_BYTES = 12 * 1024 * 1024;
+const MAX_AUDIT_JSON_BYTES = 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export const XAI_CANONICAL_BUNDLE_BASE_COMMIT = 'fca24ac39763b879eb6072c0cfb39ea098e5705d';
@@ -733,18 +734,63 @@ function auditKind(asset) {
   return null;
 }
 
-async function downloadAuditAsset(asset, path, headers, fetchImpl) {
+async function readBoundedResponseBytes(response, maximumBytes, label) {
+  const declaredLength = Number(response.headers.get('content-length') ?? 0);
+  if (!Number.isFinite(declaredLength) || declaredLength < 0 || declaredLength > maximumBytes) {
+    throw new Error(`${label} has an invalid declared size.`);
+  }
+  if (!response.body) throw new Error(`${label} response body is missing.`);
+  const chunks = [];
+  let total = 0;
+  const reader = response.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maximumBytes) {
+      await reader.cancel();
+      throw new Error(`${label} exceeds the byte limit.`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  if (declaredLength > 0 && total !== declaredLength) {
+    throw new Error(`${label} size does not match Content-Length.`);
+  }
+  return Buffer.concat(chunks, total);
+}
+
+async function downloadAuditAsset(asset, path, headers, fetchImpl, options = {}) {
   requireString(asset?.hash, 'PixCLI audit asset hash', /^[a-f0-9]{32}$/);
-  requireString(asset?.url, 'PixCLI audit asset URL', /^https:\/\//);
-  requireString(asset?.metadata?.content_sha256, 'PixCLI audit content SHA-256', /^[a-f0-9]{64}$/);
+  const expectedUrl = `${options.apiBase}/api/v1/assets/${asset.hash}`;
+  if (asset?.url !== expectedUrl) throw new Error('PixCLI audit asset URL is not the exact authenticated asset route.');
+  const declaredContentSha256 = asset?.metadata?.content_sha256;
+  if (options.requireContentSha256 !== false) {
+    requireString(declaredContentSha256, 'PixCLI audit content SHA-256', /^[a-f0-9]{64}$/);
+  } else if (
+    declaredContentSha256 !== undefined
+    && declaredContentSha256 !== null
+    && !/^[a-f0-9]{64}$/.test(declaredContentSha256)
+  ) {
+    throw new Error('PixCLI audit content SHA-256 is invalid.');
+  }
   const response = await fetchImpl(asset.url, {
     headers,
+    redirect: 'manual',
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!response.ok) throw new Error(`PixCLI audit artifact download failed with HTTP ${response.status}.`);
-  const bytes = Buffer.from(await response.arrayBuffer());
+  const expectedMimeType = options.expectedMimeType ?? asset.mime_type;
+  const responseMimeType = response.headers.get('content-type')?.split(';', 1)[0]?.trim() ?? '';
+  if (responseMimeType !== expectedMimeType) {
+    throw new Error(`PixCLI audit artifact MIME mismatch for ${basename(path)}.`);
+  }
+  const bytes = await readBoundedResponseBytes(
+    response,
+    options.maximumBytes ?? MAX_AUDIT_JSON_BYTES,
+    `PixCLI audit artifact ${basename(path)}`,
+  );
   const actual = sha256(bytes);
-  if (asset.metadata.content_sha256 !== actual) {
+  if (declaredContentSha256 && declaredContentSha256 !== actual) {
     throw new Error(`PixCLI audit artifact hash mismatch for ${basename(path)}.`);
   }
   if (asset.mime_type === 'application/json') JSON.parse(bytes.toString('utf8'));
@@ -803,6 +849,43 @@ function verifyProviderRequestAudit(value, payload, imageUrls, sourceName) {
     || canonicalJson(value.input) !== canonicalJson(expectedInput)
   ) {
     throw new Error(`${sourceName} PixCLI provider request does not match the sealed provider contract.`);
+  }
+}
+
+function verifyProviderResponseAudit(value, imageAsset, sourceName) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${sourceName} PixCLI provider response audit is invalid.`);
+  }
+  exactKeys(value, ['images', 'revised_prompt'], `${sourceName} PixCLI provider response audit`);
+  if (value.revised_prompt !== null || !Array.isArray(value.images) || value.images.length !== 1) {
+    throw new Error(`${sourceName} PixCLI provider response is missing the sole unmodified output.`);
+  }
+  const [image] = value.images;
+  exactKeys(
+    image,
+    ['url', 'content_type', 'file_name', 'file_size', 'width', 'height'],
+    `${sourceName} PixCLI provider response image`,
+  );
+  let sourceUrl;
+  try {
+    sourceUrl = new URL(image.url);
+  } catch {
+    throw new Error(`${sourceName} PixCLI provider response image URL is invalid.`);
+  }
+  if (
+    sourceUrl.protocol !== 'https:'
+    || sourceUrl.hostname !== 'v3b.fal.media'
+    || sourceUrl.search !== ''
+    || sourceUrl.hash !== ''
+    || image.url !== imageAsset?.metadata?.source_url
+    || image.content_type !== 'image/png'
+    || image.file_name !== basename(sourceUrl.pathname)
+    || !image.file_name.endsWith('.png')
+    || (image.file_size !== null && image.file_size !== imageAsset.size_bytes)
+    || image.width !== imageAsset.width
+    || image.height !== imageAsset.height
+  ) {
+    throw new Error(`${sourceName} PixCLI provider response image does not match the stored output.`);
   }
 }
 
@@ -868,6 +951,7 @@ async function archiveCompletedSource(options, slot, job, payload) {
     join(auditDirectory, 'provider_request.json'),
     options.headers,
     options.fetchImpl,
+    { apiBase: options.apiBase, expectedMimeType: 'application/json', maximumBytes: MAX_AUDIT_JSON_BYTES },
   );
   verifyProviderRequestAudit(
     JSON.parse(readFileSync(join(auditDirectory, 'provider_request.json'), 'utf8')),
@@ -880,11 +964,33 @@ async function archiveCompletedSource(options, slot, job, payload) {
     join(auditDirectory, 'provider_response.json'),
     options.headers,
     options.fetchImpl,
+    { apiBase: options.apiBase, expectedMimeType: 'application/json', maximumBytes: MAX_AUDIT_JSON_BYTES },
+  );
+  verifyProviderResponseAudit(
+    JSON.parse(readFileSync(join(auditDirectory, 'provider_response.json'), 'utf8')),
+    grouped.image[0],
+    slot.sourceName,
   );
   const rawPath = join(options.outputDirectory, 'sources', `${slot.sourceName}_raw.png`);
-  const rawDownload = await downloadAuditAsset(grouped.image[0], rawPath, options.headers, options.fetchImpl);
+  const rawDownload = await downloadAuditAsset(
+    grouped.image[0],
+    rawPath,
+    options.headers,
+    options.fetchImpl,
+    {
+      apiBase: options.apiBase,
+      expectedMimeType: 'image/png',
+      maximumBytes: MAX_PNG_BYTES,
+      requireContentSha256: false,
+    },
+  );
   const rawInspected = inspectPng(readFileSync(rawPath), `${slot.sourceName} raw output`);
-  if (grouped.image[0].mime_type !== 'image/png') throw new Error(`${slot.sourceName} output is not PNG.`);
+  if (
+    grouped.image[0].mime_type !== 'image/png'
+    || grouped.image[0].size_bytes !== rawDownload.sizeBytes
+    || grouped.image[0].width !== rawInspected.width
+    || grouped.image[0].height !== rawInspected.height
+  ) throw new Error(`${slot.sourceName} output bytes or PNG shape do not match the PixCLI record.`);
   return {
     raw: {
       ...rawDownload,

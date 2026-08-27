@@ -221,19 +221,33 @@ function providerFixture(options = {}) {
       };
       providerRequest = options.mutateProviderRequest?.(structuredClone(providerRequest)) ?? providerRequest;
       const request = Buffer.from(JSON.stringify(providerRequest));
-      const response = Buffer.from(JSON.stringify({ images: [`${jobId}.png`] }));
       const image = png(`raw-${jobId}`, 1024, 1536);
-      artifacts.set(`${jobId}-request`, request);
-      artifacts.set(`${jobId}-response`, response);
-      artifacts.set(`${jobId}-image`, image);
+      const sourceUrl = `https://v3b.fal.media/files/test/${jobId}.png`;
+      let providerResponse = {
+        images: [{
+          url: sourceUrl,
+          content_type: 'image/png',
+          file_name: `${jobId}.png`,
+          file_size: null,
+          width: 1024,
+          height: 1536,
+        }],
+        revised_prompt: null,
+      };
+      providerResponse = options.mutateProviderResponse?.(structuredClone(providerResponse)) ?? providerResponse;
+      const response = Buffer.from(JSON.stringify(providerResponse));
       const asset = (kind, bytes, mimeType) => ({
         hash: sha256(bytes).slice(0, 32),
-        url: `https://pixcli.example/artifacts/${jobId}-${kind}`,
+        url: `https://pixcli.example/api/v1/assets/${sha256(bytes).slice(0, 32)}`,
         mime_type: mimeType,
+        size_bytes: bytes.byteLength,
+        width: kind === 'image' ? 1024 : null,
+        height: kind === 'image' ? 1536 : null,
         metadata: kind === 'image' ? {
-          content_sha256: sha256(bytes),
+          ...(options.includeImageContentSha ? { content_sha256: sha256(bytes) } : {}),
           model: XAI_CANONICAL_BUNDLE_MODEL.id,
           prompt: submitted.prompt,
+          source_url: sourceUrl,
         } : {
           artifact_kind: kind === 'request' ? 'provider_request' : 'provider_response',
           content_sha256: sha256(bytes),
@@ -241,6 +255,16 @@ function providerFixture(options = {}) {
           ...(kind === 'response' ? { provider_request_id: `fal-${jobId}` } : {}),
         },
       });
+      const assets = [
+        asset('request', request, 'application/json'),
+        asset('response', response, 'application/json'),
+        asset('image', image, 'image/png'),
+      ];
+      for (const [index, entry] of assets.entries()) {
+        const bytes = [request, response, image][index];
+        artifacts.set(entry.hash, { bytes, mimeType: entry.mime_type });
+      }
+      options.mutateCanvaAssets?.(assets);
       return new Response(JSON.stringify({
         job: {
           job_id: jobId,
@@ -255,16 +279,23 @@ function providerFixture(options = {}) {
           modelId: XAI_CANONICAL_BUNDLE_MODEL.id,
           requestId: `fal-${jobId}`,
         }],
-        assets: [
-          asset('request', request, 'application/json'),
-          asset('response', response, 'application/json'),
-          asset('image', image, 'image/png'),
-        ],
+        assets,
       }), { status: 200 });
     }
-    const artifactMatch = parsed.pathname.match(/^\/artifacts\/(job-[0-9]+)-(request|response|image)$/);
+    const artifactMatch = parsed.pathname.match(/^\/api\/v1\/assets\/([a-f0-9]{32})$/);
     if (artifactMatch) {
-      return new Response(artifacts.get(`${artifactMatch[1]}-${artifactMatch[2]}`), { status: 200 });
+      const artifact = artifacts.get(artifactMatch[1]);
+      if (!artifact) return new Response('missing', { status: 404 });
+      if (options.assetRedirect) {
+        return new Response(null, { status: 302, headers: { location: 'https://attacker.example/asset' } });
+      }
+      return new Response(artifact.bytes, {
+        status: 200,
+        headers: {
+          'content-type': options.assetMimeType ?? artifact.mimeType,
+          'content-length': String(options.assetContentLength ?? artifact.bytes.byteLength),
+        },
+      });
     }
     return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
   });
@@ -746,6 +777,14 @@ describe('resumable exactly-once XAI canonical bundle', () => {
       provider: { paidCalls: 1, actualCostUsd: 0.11, maximumBundleCostUsd: 0.11 },
       contactSheet: { width: 768, height: 512, layout: ['crouch_raw', 'crouch_clean'] },
     });
+    const rawBytes = readFileSync(join(options.outputDirectory, 'sources', 'crouch_raw.png'));
+    expect(result.descriptor.sources.crouch.raw).toMatchObject({
+      contentSha256: sha256(rawBytes),
+      sizeBytes: rawBytes.byteLength,
+      mimeType: 'image/png',
+      width: 1024,
+      height: 1536,
+    });
     expect(Object.keys(result.descriptor.sources)).toEqual(['crouch']);
     expect(existsSync(join(options.outputDirectory, 'sources', 'side.png'))).toBe(false);
     expect(existsSync(join(options.outputDirectory, 'sources', 'upright.png'))).toBe(false);
@@ -828,6 +867,95 @@ describe('resumable exactly-once XAI canonical bundle', () => {
       new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
     ));
     expect(paidPosts).toHaveLength(1);
+  });
+
+  it('accepts an optional correct image content hash but rejects a malformed or mismatched one', async () => {
+    const acceptedFixture = makeFixture();
+    const acceptedProvider = providerFixture({ includeImageContentSha: true });
+    await expect(runXaiCanonicalBundle(singleSourceRunOptions(acceptedFixture, acceptedProvider)))
+      .resolves.toMatchObject({ state: { status: 'awaiting_human_review' } });
+
+    for (const declaredContentSha256 of ['invalid', '0'.repeat(64)]) {
+      const fixture = makeFixture();
+      const provider = providerFixture({
+        mutateCanvaAssets: (assets) => {
+          const image = assets.find((asset) => asset.mime_type === 'image/png');
+          image.metadata.content_sha256 = declaredContentSha256;
+        },
+      });
+      await expect(runXaiCanonicalBundle(singleSourceRunOptions(fixture, provider)))
+        .rejects.toThrow(/content SHA-256 is invalid|artifact hash mismatch/i);
+      const paidPosts = provider.fetchImpl.mock.calls.filter(([url, init]) => (
+        new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
+      ));
+      expect(paidPosts).toHaveLength(1);
+    }
+  });
+
+  it.each([
+    ['an extra provider response field', (response) => ({ ...response, unsealed: true })],
+    ['a revised provider prompt', (response) => ({ ...response, revised_prompt: 'changed' })],
+    ['a changed provider output URL', (response) => ({
+      ...response,
+      images: [{ ...response.images[0], url: 'https://v3b.fal.media/files/test/changed.png' }],
+    })],
+    ['changed provider output dimensions', (response) => ({
+      ...response,
+      images: [{ ...response.images[0], width: response.images[0].width + 1 }],
+    })],
+  ])('rejects %s without another paid POST', async (_label, mutateProviderResponse) => {
+    const fixture = makeFixture();
+    const provider = providerFixture({ mutateProviderResponse });
+    await expect(runXaiCanonicalBundle(singleSourceRunOptions(fixture, provider)))
+      .rejects.toThrow(/provider response/i);
+    const paidPosts = provider.fetchImpl.mock.calls.filter(([url, init]) => (
+      new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
+    ));
+    expect(paidPosts).toHaveLength(1);
+  });
+
+  it.each([
+    ['a non-canonical authenticated asset URL', {
+      mutateCanvaAssets: (assets) => {
+        assets.find((asset) => asset.mime_type === 'image/png').url = 'https://attacker.example/output.png';
+      },
+      error: /exact authenticated asset route/i,
+    }],
+    ['an asset redirect', { assetRedirect: true, error: /HTTP 302/i }],
+    ['an asset MIME mismatch', { assetMimeType: 'text/plain', error: /MIME mismatch/i }],
+    ['an oversized declared asset', { assetContentLength: 13 * 1024 * 1024, error: /invalid declared size/i }],
+  ])('fails closed on %s', async (_label, providerOptions) => {
+    const fixture = makeFixture();
+    const provider = providerFixture(providerOptions);
+    await expect(runXaiCanonicalBundle(singleSourceRunOptions(fixture, provider)))
+      .rejects.toThrow(providerOptions.error);
+    const paidPosts = provider.fetchImpl.mock.calls.filter(([url, init]) => (
+      new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
+    ));
+    expect(paidPosts).toHaveLength(1);
+  });
+
+  it('resumes the exact completed single-source job after an audit failure without another POST', async () => {
+    const fixture = makeFixture();
+    let corruptImageSha = true;
+    const provider = providerFixture({
+      mutateCanvaAssets: (assets) => {
+        if (corruptImageSha) {
+          assets.find((asset) => asset.mime_type === 'image/png').metadata.content_sha256 = 'invalid';
+        }
+      },
+    });
+    const options = singleSourceRunOptions(fixture, provider);
+    await expect(runXaiCanonicalBundle(options)).rejects.toThrow(/content SHA-256 is invalid/i);
+    expect(JSON.parse(readFileSync(options.statePath, 'utf8')).slots.crouch.status).toBe('submitted');
+    corruptImageSha = false;
+    await expect(runXaiCanonicalBundle(options))
+      .resolves.toMatchObject({ state: { status: 'awaiting_human_review' } });
+    const paidPosts = provider.fetchImpl.mock.calls.filter(([url, init]) => (
+      new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
+    ));
+    expect(paidPosts).toHaveLength(1);
+    expect([...provider.jobs]).toHaveLength(1);
   });
 
   it('resumes a completed bundle without another provider request or upload', async () => {
