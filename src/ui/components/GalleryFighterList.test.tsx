@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CloudFighter, CloudSprite } from '../../services/CloudFighters.ts';
 import { arcadeFighterPhotoHash } from '../../services/CloudFighters.ts';
 import type { CachedMeta } from '../../services/SpriteCache.ts';
+import { PLAYABLE_ANIMATION_NAMES } from '../../services/PlayableFighterAssets.ts';
 import {
   buildGalleryFighterSections,
   GalleryFighterList,
@@ -68,10 +69,10 @@ function cachedMeta(photoHash: string, characterName: string): CachedMeta {
 }
 
 const globals = [
-  arcadeFighter('trump-id', 'donald-trump', 'Donald Trump', ['idle', 'idle', 'walk']),
-  arcadeFighter('elon-id', 'elon-musk', 'Elon Musk', ['idle', 'walk', 'victory']),
-  arcadeFighter('rosalia-id', 'rosalia', 'Rosalía', ['idle', 'victory']),
-  arcadeFighter('lamine-id', 'lamine-yamal', 'Lamine Yamal', ['idle', 'high_kick']),
+  arcadeFighter('trump-id', 'donald-trump', 'Donald Trump', ['idle', ...PLAYABLE_ANIMATION_NAMES]),
+  arcadeFighter('elon-id', 'elon-musk', 'Elon Musk', [...PLAYABLE_ANIMATION_NAMES]),
+  arcadeFighter('rosalia-id', 'rosalia', 'Rosalía', [...PLAYABLE_ANIMATION_NAMES]),
+  arcadeFighter('lamine-id', 'lamine-yamal', 'Lamine Yamal', [...PLAYABLE_ANIMATION_NAMES]),
 ];
 
 describe('GalleryFighterList', () => {
@@ -105,8 +106,9 @@ describe('GalleryFighterList', () => {
     expect(markup).toContain('Rosalía');
     expect(markup).toContain('Lamine Yamal');
     expect(markup.match(/Donald Trump/g)).toHaveLength(1);
-    expect(markup).toContain('Champion · 2 anims · Ready locally');
-    expect(markup.match(/Load on select/g)).toHaveLength(3);
+    expect(markup.match(/Champion · 11 anims · Playable/g)).toHaveLength(4);
+    expect(markup).not.toContain('Ready locally');
+    expect(markup).not.toContain('Load on select');
   });
 
   it('keeps owned fighters in a separate counted group and excludes cached globals', () => {
@@ -213,8 +215,27 @@ describe('GalleryFighterList', () => {
     expect(markup).toContain('aria-label="1 global fighter"');
     expect(markup).toContain('Global roster unavailable. Showing saved globals.');
     expect(markup).toContain('Donald Trump');
-    expect(markup).toContain('Champion · 2 anims · Saved offline');
+    expect(markup).toContain('Champion · 2 anims · Previously loaded');
     expect(markup).not.toContain('aria-label="1 owned fighter"');
+  });
+
+  it('does not render cached global ghosts while the authoritative roster is loading', () => {
+    const savedGhost = cachedMeta('arcade:retired-fighter:retired-id', 'Retired Fighter');
+    const markup = renderToStaticMarkup(
+      <GalleryFighterList
+        metas={[savedGhost]}
+        arcadeFighters={[]}
+        selectedPhotoHash={null}
+        loadingArcadeId={null}
+        onSelectMeta={vi.fn()}
+        onSelectArcade={vi.fn()}
+        arcadeState="loading"
+      />,
+    );
+
+    expect(markup).toContain('Loading global roster…');
+    expect(markup).not.toContain('Retired Fighter');
+    expect(markup).toContain('aria-label="0 global fighters"');
   });
 
   it('deduplicates current and legacy cache keys while offline', () => {
@@ -240,6 +261,6 @@ describe('GalleryFighterList', () => {
       />,
     );
 
-    expect(markup).toMatch(/<button[^>]+aria-busy="true"[^>]+disabled=""[^>]*>[^]*?Elon Musk[^]*?Loading…/);
+    expect(markup).toMatch(/<button[^>]+aria-busy="true"[^>]+disabled=""[^>]*>[^]*?Elon Musk[^]*?Loading previews…/);
   });
 });

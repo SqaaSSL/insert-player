@@ -178,7 +178,12 @@ const SCHEMA = `
     animation_name TEXT NOT NULL,
     quality_tier TEXT NOT NULL,
     blob_key TEXT,
-    raw_blob_key TEXT
+    raw_blob_key TEXT,
+    content_hash TEXT,
+    raw_content_hash TEXT,
+    frame_w INTEGER,
+    frame_h INTEGER,
+    frame_count INTEGER
   );
   CREATE TABLE generation_artifact_runs (
     id TEXT PRIMARY KEY,
@@ -423,14 +428,17 @@ async function stageCompleteChampionInventory(db: D1Database, env: Env): Promise
     ),
     ...VIDEO_ACTIONS.map((action, index) => db.prepare(`
       INSERT INTO sprites (
-        id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key
-      ) VALUES (?, ?, ?, 'champion', ?, ?)
+        id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+        content_hash, raw_content_hash, frame_w, frame_h, frame_count
+      ) VALUES (?, ?, ?, 'champion', ?, ?, ?, ?, 768, 1024, 8)
     `).bind(
       `champion-video-sprite-${index}`,
       FIGHTER_ID,
       action,
       `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${action}.png`,
       `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${action}-raw.png`,
+      'a'.repeat(64),
+      'b'.repeat(64),
     )),
   ]);
   await Promise.all([

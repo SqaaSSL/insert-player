@@ -82,7 +82,12 @@ const SCHEMA = `
     animation_name TEXT NOT NULL,
     quality_tier TEXT NOT NULL,
     blob_key TEXT,
-    raw_blob_key TEXT
+    raw_blob_key TEXT,
+    content_hash TEXT,
+    raw_content_hash TEXT,
+    frame_w INTEGER,
+    frame_h INTEGER,
+    frame_count INTEGER
   );
   CREATE TABLE credit_ledger (
     id TEXT PRIMARY KEY,
@@ -479,14 +484,17 @@ async function stageCompleteChampionInventory(
     ),
     ...ANIMATIONS.map((animation, index) => db.prepare(`
       INSERT INTO sprites (
-        id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key
-      ) VALUES (?, ?, ?, 'champion', ?, ?)
+        id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+        content_hash, raw_content_hash, frame_w, frame_h, frame_count
+      ) VALUES (?, ?, ?, 'champion', ?, ?, ?, ?, 768, 1024, 8)
     `).bind(
       `sprite-${index}`,
       FIGHTER_ID,
       animation,
       `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${animation}.png`,
       `users/${USER_ID}/fighters/${FIGHTER_ID}/sprites/${animation}-raw.png`,
+      'a'.repeat(64),
+      'b'.repeat(64),
     )),
   ]);
   if (!storeObjects) return;

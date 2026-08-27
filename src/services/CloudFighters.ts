@@ -28,6 +28,11 @@ import {
   type SpriteAnimationFormat,
 } from '../SpriteAnimationFormat.ts';
 import { prefersHighDensitySpriteTextures } from '../game/sprites/SpriteRenderQuality.ts';
+import {
+  PLAYABLE_ANIMATION_NAMES,
+  isCompletePlayableSpriteSet,
+  missingPlayableAnimationNames,
+} from './PlayableFighterAssets.ts';
 
 export interface CloudSprite {
   id?: string;
@@ -85,6 +90,19 @@ export interface CloudSyncResult {
   status: 'synced' | 'signed_out' | 'failed';
   fighterId?: string;
   message?: string;
+  retryable?: boolean;
+}
+
+export class CloudFighterRequestError extends Error {
+  readonly status: number;
+  readonly retryable: boolean;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'CloudFighterRequestError';
+    this.status = status;
+    this.retryable = status === 503;
+  }
 }
 
 export interface CloudImportResult {
@@ -128,6 +146,11 @@ export interface CommunityReportResult {
   duplicate?: boolean;
 }
 
+export interface CommunityCloneResult {
+  fighter: CloudFighter;
+  cloned: boolean;
+}
+
 const TIER_RANK: Record<CloudQualityTier, number> = {
   rookie: 1,
   contender: 2,
@@ -135,20 +158,6 @@ const TIER_RANK: Record<CloudQualityTier, number> = {
 };
 
 const CLOUD_SPRITE_IMPORT_CONCURRENCY = 4;
-const PLAYABLE_ANIMATION_NAMES = [
-  'idle',
-  'walk',
-  'high_punch',
-  'low_punch',
-  'high_kick',
-  'low_kick',
-  'jump',
-  'crouch',
-  'hit',
-  'ko',
-  'victory',
-] as const;
-
 export interface FingerprintedSprite {
   sprite: CachedSprite;
   contentHash: string;
@@ -442,9 +451,11 @@ function cloudPlayableRefsMatch(
   if (expectedEntries.length !== Object.keys(refs).length) return false;
   return expectedEntries.every(([animationName, remote]) => {
     const local = refs[animationName];
-    // Current-row ids are stable across promotion, so only the immutable processed
-    // hash plus its playback interpretation can prove which version is current.
-    return Boolean(remote.contentHash) && local?.contentHash === remote.contentHash &&
+    // Detail payloads include immutable hashes. Lightweight list payloads omit
+    // them, so compare playback metadata here and let the fighter updatedAt check
+    // below detect a promotion without downloading every unchanged fighter.
+    return Boolean(local) &&
+      (!remote.contentHash || local.contentHash === remote.contentHash) &&
       local.animationName === remote.animationName &&
       local.qualityTier === remote.qualityTier &&
       local.frameWidth === remote.frameWidth &&
@@ -460,8 +471,7 @@ export function isSourceOnlyCloudFighter(fighter: CloudFighter): boolean {
 }
 
 export function isCompleteCloudFighterRoster(fighter: CloudFighter): boolean {
-  const currentAnimations = new Set(fighter.sprites.map((sprite) => sprite.animationName));
-  return PLAYABLE_ANIMATION_NAMES.every((animationName) => currentAnimations.has(animationName));
+  return isCompletePlayableSpriteSet(fighter.sprites);
 }
 
 export function formatCloudRosterSyncStatus(
@@ -524,6 +534,14 @@ async function apiErrorMessage(res: Response, fallback: string): Promise<string>
     // Fall through to the trimmed response body.
   }
   return body.trim().slice(0, 180) || fallback;
+}
+
+async function cloudFighterRequestError(
+  res: Response,
+  operation: string,
+): Promise<CloudFighterRequestError> {
+  const detail = await apiErrorMessage(res, 'Cloud service temporarily unavailable');
+  return new CloudFighterRequestError(`${operation} failed (${res.status}): ${detail}`, res.status);
 }
 
 export function shouldRefreshLocalFighter(fighter: CloudFighter, existing: CachedMeta | null): boolean {
@@ -646,7 +664,8 @@ async function promoteSprite(
 export async function listCloudFighters(context?: ApiRequestContext): Promise<CloudFighter[]> {
   if (isLocalDevWithoutApi()) return [];
   const res = await apiFetch('/api/fighters', {}, context);
-  if (res.status === 401 || res.status === 503) return [];
+  if (res.status === 401) return [];
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Cloud fighters');
   if (!res.ok) throw new Error(`Cloud fighters failed (${res.status})`);
   const json = await res.json() as { fighters?: CloudFighter[] };
   return json.fighters ?? [];
@@ -655,7 +674,8 @@ export async function listCloudFighters(context?: ApiRequestContext): Promise<Cl
 export async function getCloudFighter(fighterId: string, context?: ApiRequestContext): Promise<CloudFighter | null> {
   if (isLocalDevWithoutApi()) return null;
   const res = await apiFetch(`/api/fighters/${encodeURIComponent(fighterId)}`, {}, context);
-  if (res.status === 401 || res.status === 503 || res.status === 404) return null;
+  if (res.status === 401 || res.status === 404) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Cloud fighter');
   if (!res.ok) throw new Error(`Cloud fighter failed (${res.status})`);
   const json = await res.json() as { fighter?: CloudFighter };
   return json.fighter ?? null;
@@ -699,12 +719,25 @@ export async function prepareCloudFighterGeneration(
   return { fighter: detailed, photoHash: params.photoHash };
 }
 
-export async function listCommunityFighters(): Promise<CloudFighter[]> {
+export async function listCommunityFighters(context?: ApiRequestContext): Promise<CloudFighter[]> {
   if (isLocalDevWithoutApi()) return [];
-  const res = await apiFetch('/api/community');
+  const res = await apiFetch('/api/community', {}, context);
   if (!res.ok) throw new Error(`Community fighters failed (${res.status})`);
   const json = await res.json() as { fighters?: CloudFighter[] };
   return json.fighters ?? [];
+}
+
+export async function listOwnedCommunityFighterIds(
+  context?: ApiRequestContext,
+): Promise<string[]> {
+  if (isLocalDevWithoutApi()) return [];
+  const res = await apiFetch('/api/community/ownership', {}, context);
+  if (!res.ok) throw new Error(`Community ownership check failed (${res.status})`);
+  const json = await res.json() as { fighterIds?: unknown };
+  if (!Array.isArray(json.fighterIds)) {
+    throw new Error('Community ownership check returned an invalid response');
+  }
+  return json.fighterIds.filter((id): id is string => typeof id === 'string' && Boolean(id));
 }
 
 export async function listArcadeFighters(): Promise<CloudFighter[]> {
@@ -719,9 +752,12 @@ export function arcadeFighterPhotoHash(fighter: CloudFighter): string {
   return `arcade:${fighter.arcade?.slug ?? fighter.id}:${fighter.id}`;
 }
 
-export async function getCommunityFighter(fighterId: string): Promise<CloudFighter | null> {
+export async function getCommunityFighter(
+  fighterId: string,
+  context?: ApiRequestContext,
+): Promise<CloudFighter | null> {
   if (isLocalDevWithoutApi()) return null;
-  const res = await apiFetch(`/api/community/${encodeURIComponent(fighterId)}`);
+  const res = await apiFetch(`/api/community/${encodeURIComponent(fighterId)}`, {}, context);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Community fighter failed (${res.status})`);
   const json = await res.json() as { fighter?: CloudFighter };
@@ -738,7 +774,8 @@ export async function setCloudFighterPublic(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ public: isPublic }),
   }, context);
-  if (res.status === 401 || res.status === 503) return null;
+  if (res.status === 401) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Share update');
   if (!res.ok) {
     throw new Error(`Share update failed (${res.status}): ${await apiErrorMessage(res, 'Publish update failed')}`);
   }
@@ -756,8 +793,9 @@ export async function renameCloudFighter(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   }, context);
-  if (res.status === 401 || res.status === 503) return null;
+  if (res.status === 401) return null;
   if (res.status === 404) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Cloud rename');
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Cloud rename failed (${res.status}): ${body.slice(0, 180)}`);
@@ -771,8 +809,15 @@ export async function deleteCloudFighter(
   context?: ApiRequestContext,
 ): Promise<CloudSyncResult> {
   const res = await apiFetch(`/api/fighters/${fighterId}`, { method: 'DELETE' }, context);
-  if (res.status === 401 || res.status === 503) {
+  if (res.status === 401) {
     return { status: 'signed_out', message: 'Sign in to delete this fighter from cloud sync.' };
+  }
+  if (res.status === 503) {
+    return {
+      status: 'failed',
+      retryable: true,
+      message: await apiErrorMessage(res, 'Cloud delete is temporarily unavailable. Try again.'),
+    };
   }
   if (res.status === 404) {
     return { status: 'synced', fighterId, message: 'Cloud fighter was already deleted.' };
@@ -787,12 +832,21 @@ export async function deleteCloudFighter(
 export async function cloneCommunityFighter(
   sourceFighterId: string,
   context?: ApiRequestContext,
-): Promise<CloudFighter | null> {
-  const res = await apiFetch(`/api/community/${sourceFighterId}/clone`, { method: 'POST' }, context);
-  if (res.status === 401 || res.status === 503) return null;
+): Promise<CommunityCloneResult | null> {
+  const res = await apiFetch(
+    `/api/community/${encodeURIComponent(sourceFighterId)}/clone`,
+    { method: 'POST' },
+    context,
+  );
+  if (res.status === 401) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Clone');
   if (!res.ok) throw new Error(`Clone failed (${res.status})`);
-  const json = await res.json() as { fighter?: CloudFighter };
-  return json.fighter ?? null;
+  const json = await res.json() as { fighter?: CloudFighter; cloned?: boolean };
+  if (!json.fighter) throw new Error('Clone response did not include a fighter');
+  return {
+    fighter: json.fighter,
+    cloned: typeof json.cloned === 'boolean' ? json.cloned : res.status === 201,
+  };
 }
 
 export async function reportCommunityFighter(
@@ -806,7 +860,8 @@ export async function reportCommunityFighter(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ reason, details: details.trim() || null }),
   }, context);
-  if (res.status === 401 || res.status === 503) return { status: 'signed_out' };
+  if (res.status === 401) return { status: 'signed_out' };
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Report');
   if (!res.ok) {
     throw new Error(await apiErrorMessage(res, `Report failed (${res.status})`));
   }
@@ -847,8 +902,15 @@ export async function syncFighterToCloud(
     body: JSON.stringify(createBody),
   }, requestContext);
 
-  if (createRes.status === 401 || createRes.status === 503) {
+  if (createRes.status === 401) {
     return { status: 'signed_out', message: 'Sign in to sync this fighter across devices.' };
+  }
+  if (createRes.status === 503) {
+    return {
+      status: 'failed',
+      retryable: true,
+      message: await apiErrorMessage(createRes, 'Cloud sync is temporarily unavailable. Try again.'),
+    };
   }
   if (!createRes.ok) {
     const body = await createRes.text();
@@ -1128,11 +1190,12 @@ export async function downloadCloudFighterToLocal(
   }
 
   const remoteRosterComplete = isCompleteCloudFighterRoster(fighter);
-  const currentAnimationNames = new Set(fighter.sprites.map((sprite) => sprite.animationName));
   if (!remoteRosterComplete && !options.allowIncomplete) {
-    const missing = PLAYABLE_ANIMATION_NAMES.filter((animationName) => !currentAnimationNames.has(animationName));
+    const missing = missingPlayableAnimationNames(fighter.sprites);
     throw new Error(
-      `Cloud fighter ${fighter.name} is incomplete; missing current animations: ${missing.join(', ')}.`,
+      missing.length > 0
+        ? `Cloud fighter ${fighter.name} is incomplete; missing current animations: ${missing.join(', ')}.`
+        : `Cloud fighter ${fighter.name} has invalid current animation assets.`,
     );
   }
 
@@ -1141,9 +1204,11 @@ export async function downloadCloudFighterToLocal(
   await fingerprintSprites(refreshedVersions);
   const exactPlayableSprites = selectPlayableCachedSprites(refreshedVersions, playableRefs);
   const availableCurrentAnimations = new Set(exactPlayableSprites.map((sprite) => sprite.animationName));
-  const allRemoteCurrentSpritesAvailable = Object.values(playableRefs).every((ref) =>
-    Boolean(ref.contentHash) && availableCurrentAnimations.has(ref.animationName),
-  );
+  const allRemoteCurrentSpritesAvailable = isCompletePlayableSpriteSet(exactPlayableSprites) &&
+    Object.values(playableRefs).length === PLAYABLE_ANIMATION_NAMES.length &&
+    Object.values(playableRefs).every((ref) =>
+      Boolean(ref.contentHash) && availableCurrentAnimations.has(ref.animationName),
+    );
 
   const meta = {
     ...(existingMeta ?? {}),
@@ -1186,6 +1251,16 @@ export async function downloadCloudFighterToLocal(
 
   await setCachedMeta(meta);
   await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope);
+
+  if (!options.allowIncomplete && !allRemoteCurrentSpritesAvailable) {
+    const missing = missingPlayableAnimationNames(exactPlayableSprites);
+    const detail = missing.length > 0
+      ? ` Missing: ${missing.join(', ')}.`
+      : '';
+    throw new Error(
+      `${fighter.name} did not finish downloading all 11 playable animations.${detail} Retry the sprite download.`,
+    );
+  }
 
   return {
     fighterId: fighter.id,

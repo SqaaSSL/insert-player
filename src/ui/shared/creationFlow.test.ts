@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   assertCreationFlowAcknowledged,
   creationFlowForResume,
+  durableRecoveryFailureNeedsRetry,
   isVideoResumableJob,
   isVideoReviewOrRestartJob,
+  videoReviewJobNeedsConsent,
+  videoReviewDecisionNeedsConsent,
   videoCreationFlowAvailability,
 } from './creationFlow';
 
@@ -62,5 +65,24 @@ describe('creation flow UI safeguards', () => {
     }))).toBe(true);
     expect(isVideoReviewOrRestartJob(job({ creationFlow: 'original' }))).toBe(false);
     expect(isVideoResumableJob(job({ status: 'failed', resumable: false }))).toBe(false);
+  });
+
+  it('requires fresh consent only before a continued or restarted Video generation', () => {
+    expect(videoReviewJobNeedsConsent(job())).toBe(false);
+    expect(videoReviewJobNeedsConsent(job({ reviewStatus: 'approved', resumable: true }))).toBe(true);
+    expect(videoReviewJobNeedsConsent(job({ reviewStatus: 'rejected' }))).toBe(true);
+    expect(videoReviewJobNeedsConsent(job({ fullRunRestartRequired: true }))).toBe(true);
+    expect(videoReviewJobNeedsConsent(null)).toBe(false);
+    expect(videoReviewDecisionNeedsConsent({ status: 'awaiting_review', continuationAvailable: true })).toBe(false);
+    expect(videoReviewDecisionNeedsConsent({ status: 'approved', continuationAvailable: true })).toBe(true);
+    expect(videoReviewDecisionNeedsConsent({ status: 'approved', continuationAvailable: false })).toBe(false);
+    expect(videoReviewDecisionNeedsConsent({ status: 'rejected', continuationAvailable: false })).toBe(true);
+    expect(videoReviewDecisionNeedsConsent(null, true)).toBe(true);
+  });
+
+  it('keeps a discovered durable job on a recovery-only retry path', () => {
+    expect(durableRecoveryFailureNeedsRetry(true, true)).toBe(true);
+    expect(durableRecoveryFailureNeedsRetry(false, true)).toBe(false);
+    expect(durableRecoveryFailureNeedsRetry(true, false)).toBe(false);
   });
 });

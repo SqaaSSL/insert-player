@@ -8,17 +8,25 @@ vi.mock('./ApiClient', async (importOriginal) => {
 
 import { apiFetch, type ApiRequestContext } from './ApiClient.ts';
 import {
+  CloudFighterRequestError,
   arcadeFighterPhotoHash,
   buildSpriteDownloadPlan,
   buildSpriteUploadPlan,
+  cloneCommunityFighter,
   cloudPlayableSpriteRefs,
   cloudSpritesForImport,
+  deleteCloudFighter,
   downloadArcadeFighterToLocal,
   downloadArcadeSpriteHighDensityToLocal,
   formatCloudRosterSyncStatus,
+  getCloudFighter,
   isCompleteCloudFighterRoster,
   isSourceOnlyCloudFighter,
+  listCloudFighters,
+  renameCloudFighter,
+  reportCommunityFighter,
   selectPlayableCloudSprites,
+  setCloudFighterPublic,
   shouldRefreshLocalFighter,
   syncFighterToCloud,
   type CloudSprite,
@@ -164,6 +172,41 @@ describe('buildSpriteUploadPlan', () => {
       [cloudSprite('same-hash')],
       [cloudSprite('same-hash')],
     )).toEqual([{ kind: 'upload', candidate: corrected, setCurrent: true }]);
+  });
+});
+
+describe('community clone responses', () => {
+  beforeEach(() => {
+    vi.mocked(apiFetch).mockReset();
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.insertplayer.test');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('preserves cloned false when the fighter already exists in the roster', async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(Response.json({
+      fighter: {
+        id: 'existing-fighter',
+        name: 'Existing Fighter',
+        qualityTier: 'champion',
+        public: false,
+        sources: {},
+        sprites: [],
+      },
+      cloned: false,
+    }));
+
+    await expect(cloneCommunityFighter('public/fighter', SYNC_CONTEXT)).resolves.toMatchObject({
+      fighter: { id: 'existing-fighter' },
+      cloned: false,
+    });
+    expect(vi.mocked(apiFetch)).toHaveBeenCalledWith(
+      '/api/community/public%2Ffighter/clone',
+      { method: 'POST' },
+      SYNC_CONTEXT,
+    );
   });
 });
 
@@ -478,6 +521,10 @@ describe('cloud roster sync status', () => {
     expect(isCompleteCloudFighterRoster({ ...fighter, sprites: completeSprites })).toBe(true);
     expect(isCompleteCloudFighterRoster({
       ...fighter,
+      sprites: completeSprites.map((sprite, index) => index === 0 ? { ...sprite, url: null } : sprite),
+    })).toBe(false);
+    expect(isCompleteCloudFighterRoster({
+      ...fighter,
       sprites: completeSprites.slice(0, 1),
       spriteVersions: completeSprites,
     })).toBe(false);
@@ -581,6 +628,43 @@ describe('shouldRefreshLocalFighter', () => {
     } as CachedMeta;
 
     expect(shouldRefreshLocalFighter(fighter, existing)).toBe(false);
+  });
+
+  it('uses timestamps and playback metadata when a lightweight list omits content hashes', () => {
+    const detailed = {
+      ...cloudSprite('a'.repeat(64)),
+      id: 'current-idle',
+      animationName: 'idle',
+    };
+    const summary = {
+      ...detailed,
+      contentHash: null,
+      rawContentHash: null,
+    };
+    const existing = {
+      photoHash: 'fighter-hash',
+      version: 1,
+      characterName: 'Nova QA',
+      qualityTier: 'champion' as const,
+      cloudFighterId: 'fighter-cloud',
+      cloudSpriteVersionCount: 1,
+      cloudPlayableSpriteRefs: cloudPlayableSpriteRefs([detailed]),
+      status: 'ready' as const,
+      animationsReady: ['idle'],
+      createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
+      updatedAt: Date.parse('2026-08-19T02:00:00.000Z'),
+    } as CachedMeta;
+
+    expect(shouldRefreshLocalFighter({
+      id: 'fighter-cloud',
+      name: 'Nova QA',
+      photoHash: 'fighter-hash',
+      qualityTier: 'champion',
+      public: false,
+      sources: {},
+      sprites: [summary],
+      updatedAt: '2026-08-19T02:00:00.000Z',
+    }, existing)).toBe(false);
   });
 
   it('does not confuse three tier pointers with missing animation names', () => {
@@ -702,6 +786,90 @@ async function resetSyncCache(): Promise<void> {
   });
   configureSpriteCacheOwner(null);
 }
+
+describe('cloud authentication and temporary availability', () => {
+  beforeEach(() => {
+    vi.mocked(apiFetch).mockReset();
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.insertplayer.test');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.each([
+    ['list', () => listCloudFighters(SYNC_CONTEXT)],
+    ['get', () => getCloudFighter('cloud-id', SYNC_CONTEXT)],
+    ['share', () => setCloudFighterPublic('cloud-id', true, SYNC_CONTEXT)],
+    ['rename', () => renameCloudFighter('cloud-id', 'Nova', SYNC_CONTEXT)],
+    ['clone', () => cloneCommunityFighter('source-id', SYNC_CONTEXT)],
+    ['report', () => reportCommunityFighter('source-id', 'spam', '', SYNC_CONTEXT)],
+  ])('surfaces %s HTTP 503 as a retryable error', async (_operation, invoke) => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(Response.json(
+      { error: 'Temporary cloud outage' },
+      { status: 503 },
+    ));
+
+    await expect(invoke()).rejects.toMatchObject({
+      name: 'CloudFighterRequestError',
+      status: 503,
+      retryable: true,
+      message: expect.stringContaining('Temporary cloud outage'),
+    } satisfies Partial<CloudFighterRequestError>);
+  });
+
+  it('returns a retryable failed result for cloud delete HTTP 503', async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(Response.json(
+      { error: 'Temporary cloud outage' },
+      { status: 503 },
+    ));
+
+    await expect(deleteCloudFighter('cloud-id', SYNC_CONTEXT)).resolves.toEqual({
+      status: 'failed',
+      retryable: true,
+      message: 'Temporary cloud outage',
+    });
+  });
+
+  it('keeps HTTP 404 delete idempotent and confirmed', async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(Response.json({}, { status: 404 }));
+    await expect(deleteCloudFighter('cloud-id', SYNC_CONTEXT)).resolves.toMatchObject({
+      status: 'synced',
+      fighterId: 'cloud-id',
+    });
+  });
+
+  it('returns a retryable failed result when initial cloud sync receives HTTP 503', async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(Response.json(
+      { error: 'Temporary cloud outage' },
+      { status: 503 },
+    ));
+
+    await expect(syncFighterToCloud(syncMeta(), [syncSprite()], null, SYNC_CONTEXT))
+      .resolves.toEqual({
+        status: 'failed',
+        retryable: true,
+        message: 'Temporary cloud outage',
+      });
+  });
+
+  it('still maps HTTP 401 to signed-out semantics', async () => {
+    vi.mocked(apiFetch).mockResolvedValue(Response.json({}, { status: 401 }));
+
+    await expect(listCloudFighters(SYNC_CONTEXT)).resolves.toEqual([]);
+    await expect(getCloudFighter('cloud-id', SYNC_CONTEXT)).resolves.toBeNull();
+    await expect(setCloudFighterPublic('cloud-id', true, SYNC_CONTEXT)).resolves.toBeNull();
+    await expect(renameCloudFighter('cloud-id', 'Nova', SYNC_CONTEXT)).resolves.toBeNull();
+    await expect(cloneCommunityFighter('source-id', SYNC_CONTEXT)).resolves.toBeNull();
+    await expect(reportCommunityFighter('source-id', 'spam', '', SYNC_CONTEXT))
+      .resolves.toEqual({ status: 'signed_out' });
+    await expect(deleteCloudFighter('cloud-id', SYNC_CONTEXT)).resolves.toMatchObject({
+      status: 'signed_out',
+    });
+    await expect(syncFighterToCloud(syncMeta(), [syncSprite()], null, SYNC_CONTEXT))
+      .resolves.toMatchObject({ status: 'signed_out' });
+  });
+});
 
 describe('first cloud association preserves the authoritative local playable set', () => {
   beforeEach(async () => {
