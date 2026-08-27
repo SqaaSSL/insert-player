@@ -3,6 +3,7 @@ import {
   type GenerationCreationFlow,
 } from '../../services/GenerationCreationFlow.ts';
 import type { QualityTier } from '../../services/QualityTiers.ts';
+import type { GenerationJob } from '../../services/GenerationJobs.ts';
 import type { AuthStatus } from '../authState.ts';
 
 export type CreationFlow = GenerationCreationFlow;
@@ -39,4 +40,26 @@ export function assertCreationFlowAcknowledged(
   if (requested === 'video' && acknowledged !== 'video') {
     throw new Error('Video creation is not enabled on this server; no generation job was started');
   }
+}
+
+type VideoRosterJobState = Pick<
+  GenerationJob,
+  'creationFlow' | 'operation' | 'status' | 'reviewStatus' | 'resumable' | 'fullRunRestartRequired'
+>;
+
+export function isVideoReviewOrRestartJob(job: VideoRosterJobState): boolean {
+  return job.creationFlow === 'video' && job.operation === 'fighter_generation' && (
+    job.fullRunRestartRequired || (
+      job.status === 'succeeded' && (
+        job.reviewStatus === 'awaiting_review' ||
+        job.reviewStatus === 'rejected' ||
+        (job.reviewStatus === 'approved' && job.resumable)
+      )
+    )
+  );
+}
+
+export function isVideoResumableJob(job: VideoRosterJobState): boolean {
+  return job.creationFlow === 'video' && job.operation === 'fighter_generation' &&
+    (job.status === 'failed' || job.status === 'cancelled') && job.resumable;
 }

@@ -2,8 +2,22 @@ import { describe, expect, it } from 'vitest';
 import {
   assertCreationFlowAcknowledged,
   creationFlowForResume,
+  isVideoResumableJob,
+  isVideoReviewOrRestartJob,
   videoCreationFlowAvailability,
 } from './creationFlow';
+
+function job(overrides: Record<string, unknown> = {}) {
+  return {
+    creationFlow: 'video',
+    operation: 'fighter_generation',
+    status: 'succeeded',
+    reviewStatus: 'awaiting_review',
+    resumable: false,
+    fullRunRestartRequired: false,
+    ...overrides,
+  } as any;
+}
 
 describe('creation flow UI safeguards', () => {
   it('defaults legacy jobs to Original but preserves an explicit Video job', () => {
@@ -36,5 +50,17 @@ describe('creation flow UI safeguards', () => {
       available: false,
       reason: 'Sign in to use the cloud Video flow.',
     });
+  });
+
+  it('keeps review, terminal restart, and transient resume states discoverable', () => {
+    expect(isVideoReviewOrRestartJob(job())).toBe(true);
+    expect(isVideoReviewOrRestartJob(job({
+      status: 'failed', reviewStatus: 'none', fullRunRestartRequired: true,
+    }))).toBe(true);
+    expect(isVideoResumableJob(job({
+      status: 'failed', reviewStatus: 'none', resumable: true,
+    }))).toBe(true);
+    expect(isVideoReviewOrRestartJob(job({ creationFlow: 'original' }))).toBe(false);
+    expect(isVideoResumableJob(job({ status: 'failed', resumable: false }))).toBe(false);
   });
 });

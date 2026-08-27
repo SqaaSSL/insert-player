@@ -78,6 +78,8 @@ import type { AuthStatus } from '../authState.ts';
 import {
   assertCreationFlowAcknowledged,
   creationFlowForResume,
+  isVideoResumableJob,
+  isVideoReviewOrRestartJob,
 } from '../shared/creationFlow.ts';
 
 function formatDate(value: number): string {
@@ -199,24 +201,12 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           authStatus === 'signed-in' ? listGenerationJobs(apiContext) : Promise.resolve([]),
         ]);
         activeCloudJob = generationJobs.find((job) => job.status === 'queued' || job.status === 'running') ?? null;
-        reviewCloudJobs = generationJobs.filter((job) => (
-          job.creationFlow === 'video' &&
-          (
-            job.fullRunRestartRequired ||
-            (
-              job.status === 'succeeded' &&
-              (
-                job.reviewStatus === 'awaiting_review' ||
-                job.reviewStatus === 'rejected' ||
-                (job.reviewStatus === 'approved' && job.resumable)
-              )
-            )
-          )
-        ));
+        reviewCloudJobs = generationJobs.filter(isVideoReviewOrRestartJob);
         resumableCloudJobs = generationJobs.filter((job) => (
-          (job.status === 'failed' || job.status === 'cancelled') &&
-          job.resumable &&
-          job.operation !== 'fighter_generation'
+          isVideoResumableJob(job) || (
+            (job.status === 'failed' || job.status === 'cancelled') &&
+            job.resumable && job.operation !== 'fighter_generation'
+          )
         ));
         setRecoveryJob(activeCloudJob);
         setResumableJobs(resumableCloudJobs);
@@ -231,13 +221,44 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
             getAllCachedStageBackgrounds(),
           ]);
         }
+        const recoverableVideoFighterIds = new Set([
+          ...(activeCloudJob?.creationFlow === 'video' ? [activeCloudJob] : []),
+          ...reviewCloudJobs,
+          ...resumableCloudJobs.filter((job) => job.creationFlow === 'video'),
+        ].map((job) => job.fighterId));
+        let hydratedVideoDraft = false;
+        for (const fighterId of recoverableVideoFighterIds) {
+          const fighter = await getCloudFighter(fighterId, apiContext);
+          if (!fighter?.photoHash) continue;
+          await downloadCloudFighterToLocal(fighter, apiContext, {
+            includeArchivedVersions: false,
+            includeRawAssets: false,
+            allowIncomplete: true,
+          });
+          hydratedVideoDraft = true;
+        }
+        if (hydratedVideoDraft) {
+          [all, allStages] = await Promise.all([
+            getAllCachedMetas(),
+            getAllCachedStageBackgrounds(),
+          ]);
+        }
       } catch (err: any) {
         if (cancelled) return;
         debugWarn('[Gallery] Cloud import skipped:', err?.message ?? err);
       }
       if (cancelled) return;
+      const visibleVideoFighterIds = new Set([
+        ...(activeCloudJob?.creationFlow === 'video' ? [activeCloudJob] : []),
+        ...reviewCloudJobs,
+        ...resumableCloudJobs.filter((job) => job.creationFlow === 'video'),
+      ].map((job) => job.fighterId));
       const filtered = all
-        .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
+        .filter((item) => item.version === CACHE_VERSION && (
+          item.status === 'ready' || (
+            Boolean(item.cloudFighterId) && visibleVideoFighterIds.has(item.cloudFighterId as string)
+          )
+        ))
         .sort((a, b) => b.createdAt - a.createdAt);
       const filteredStages = allStages
         .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
@@ -395,6 +416,17 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       },
     });
     if (completed.status !== 'succeeded') {
+      if (completed.creationFlow === 'video' && completed.fullRunRestartRequired) {
+        setVideoReviewJobs((current) => [
+          completed,
+          ...current.filter((job) => job.fighterId !== completed.fighterId),
+        ]);
+        setResumableJobs((current) => (
+          current.filter((job) => job.artifactRunId !== completed.artifactRunId)
+        ));
+        setStatus('The Video run ended safely. Start a new complete run when you are ready.');
+        return completed;
+      }
       if (completed.resumable) {
         setResumableJobs((current) => [
           completed,
@@ -437,7 +469,9 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       .then((completed) => {
         if (!disposed) {
           setStatus(
-            completed.creationFlow === 'video' && completed.reviewStatus === 'awaiting_review'
+            completed.creationFlow === 'video' && completed.fullRunRestartRequired
+              ? 'The Video run ended safely. Start a new complete run when you are ready.'
+              : completed.creationFlow === 'video' && completed.reviewStatus === 'awaiting_review'
               ? 'A video action is paused safely for your review'
               : completed.targetName ? 'Done and synced' : `${tierLabel(completed.tier)} cloud forge synced`,
           );

@@ -124,6 +124,19 @@ const TIER_RANK: Record<CloudQualityTier, number> = {
 };
 
 const CLOUD_SPRITE_IMPORT_CONCURRENCY = 4;
+const PLAYABLE_ANIMATION_NAMES = [
+  'idle',
+  'walk',
+  'high_punch',
+  'low_punch',
+  'high_kick',
+  'low_kick',
+  'jump',
+  'crouch',
+  'hit',
+  'ko',
+  'victory',
+] as const;
 
 export interface FingerprintedSprite {
   sprite: CachedSprite;
@@ -373,6 +386,11 @@ export function isSourceOnlyCloudFighter(fighter: CloudFighter): boolean {
   return fighter.sprites.length === 0 && (fighter.spriteVersions?.length ?? 0) === 0;
 }
 
+export function isCompleteCloudFighterRoster(fighter: CloudFighter): boolean {
+  const currentAnimations = new Set(fighter.sprites.map((sprite) => sprite.animationName));
+  return PLAYABLE_ANIMATION_NAMES.every((animationName) => currentAnimations.has(animationName));
+}
+
 export function formatCloudRosterSyncStatus(
   summary: Pick<CloudRosterSyncSummary, 'imported' | 'updated' | 'drafts' | 'failed'>,
 ): string | null {
@@ -388,16 +406,16 @@ export function formatCloudRosterSyncStatus(
   return null;
 }
 
-function cloudSpritesForImport(
+export function cloudSpritesForImport(
   fighter: CloudFighter,
   options: CloudImportOptions,
 ): CloudSprite[] {
-  const spriteVersions = fighter.spriteVersions?.length ? fighter.spriteVersions : fighter.sprites;
-  if (options.includeArchivedVersions !== false) return spriteVersions;
-  const currentSprites = fighter.sprites.length > 0
-    ? fighter.sprites
-    : spriteVersions;
-  return selectPlayableCloudSprites(currentSprites);
+  if (options.includeArchivedVersions === true) {
+    throw new Error('Archived sprite versions cannot be imported into the playable cache');
+  }
+  // Archived/private versions are not playable pointers. Falling back to them here can
+  // expose an unapproved review candidate or make a partial roster look complete.
+  return selectPlayableCloudSprites(fighter.sprites);
 }
 
 function isLocalDevWithoutApi(): boolean {
@@ -439,9 +457,7 @@ export function shouldRefreshLocalFighter(fighter: CloudFighter, existing: Cache
   if (!existing) return true;
   if (existing.cloudFighterId !== fighter.id) return true;
   if (TIER_RANK[fighter.qualityTier] > TIER_RANK[getMetaTier(existing)]) return true;
-  const remoteVersionCount = fighter.spriteVersions?.length
-    ? fighter.spriteVersions.length
-    : fighter.sprites.length;
+  const remoteVersionCount = fighter.sprites.length;
   if (remoteVersionCount > (existing.cloudSpriteVersionCount ?? 0)) return true;
   const remoteAnimationCount = new Set(fighter.sprites.map((sprite) => sprite.animationName)).size;
   const localAnimationCount = new Set(existing.animationsReady ?? []).size;
@@ -960,9 +976,7 @@ export async function downloadCloudFighterToLocal(
 
   const now = Date.now();
   const remoteUpdatedAt = cloudTimestampMs(fighter);
-  const remoteSpriteVersionCount = fighter.spriteVersions?.length
-    ? fighter.spriteVersions.length
-    : fighter.sprites.length;
+  const remoteSpriteVersionCount = fighter.sprites.length;
   const createdAt = Date.parse(
     String((fighter as CloudFighter & { createdAt?: string }).createdAt ?? ''),
   ) || remoteUpdatedAt || now;
@@ -1032,8 +1046,16 @@ export async function downloadCloudFighterToLocal(
     }));
   }
 
-  if (availableAnimations.size === 0 && !options.allowIncomplete) {
-    throw new Error(`Cloud fighter ${fighter.name} has no playable sprite assets to import.`);
+  const remoteRosterComplete = isCompleteCloudFighterRoster(fighter);
+  const currentAnimationNames = new Set(fighter.sprites.map((sprite) => sprite.animationName));
+  const availableCurrentAnimations = new Set(
+    Array.from(availableAnimations).filter((animationName) => currentAnimationNames.has(animationName)),
+  );
+  if (!remoteRosterComplete && !options.allowIncomplete) {
+    const missing = PLAYABLE_ANIMATION_NAMES.filter((animationName) => !currentAnimationNames.has(animationName));
+    throw new Error(
+      `Cloud fighter ${fighter.name} is incomplete; missing current animations: ${missing.join(', ')}.`,
+    );
   }
 
   const meta = {
@@ -1052,10 +1074,8 @@ export async function downloadCloudFighterToLocal(
     crouchViewCleanBlob: existingMeta?.crouchViewCleanBlob ?? crouchViewBlob,
     noBgBlob: existingMeta?.noBgBlob ?? null,
     characterName: fighter.name,
-    status: options.allowIncomplete && existingMeta?.status !== 'ready'
-      ? 'sprites_generating'
-      : 'ready',
-    animationsReady: Array.from(availableAnimations),
+    status: remoteRosterComplete ? 'ready' : 'sprites_generating',
+    animationsReady: Array.from(availableCurrentAnimations),
     createdAt,
     updatedAt: staleSourceKinds.size > 0 || spritesSkipped > 0
       ? existingMeta?.updatedAt ?? remoteUpdatedAt ?? now
@@ -1071,8 +1091,7 @@ export async function downloadCloudFighterToLocal(
         existingMeta?.cloudSourceHashes?.[kind] ?? null,
       ])),
     },
-    cloudSpriteVersionCount: options.includeArchivedVersions !== false &&
-      spritesSkipped === 0 && spriteRawAssetsSkipped === 0
+    cloudSpriteVersionCount: spritesSkipped === 0 && spriteRawAssetsSkipped === 0
       ? remoteSpriteVersionCount
       : existingMeta?.cloudSpriteVersionCount ?? 0,
   } satisfies CachedMeta & { qualityTier: CloudQualityTier };
@@ -1101,39 +1120,6 @@ export async function downloadArcadeFighterToLocal(
     includeArchivedVersions: false,
     includeRawAssets: false,
   });
-}
-
-const archivedCloudImportJobs = new Map<string, Promise<void>>();
-let archivedCloudImportQueue = Promise.resolve();
-
-function queueArchivedCloudFighterImport(
-  fighter: CloudFighter,
-  context: ApiRequestContext,
-): void {
-  const allVersions = fighter.spriteVersions?.length ? fighter.spriteVersions : fighter.sprites;
-  const hasDeferredRawAssets = allVersions.some((sprite) => Boolean(sprite.rawUrl)) ||
-    Boolean(fighter.sources.sideRaw || fighter.sources.uprightRaw || fighter.sources.crouchRaw);
-  if (
-    allVersions.length <= selectPlayableCloudSprites(fighter.sprites).length &&
-    !hasDeferredRawAssets
-  ) return;
-  if (archivedCloudImportJobs.has(fighter.id)) return;
-
-  let job: Promise<void>;
-  job = archivedCloudImportQueue
-    .then(async () => {
-      await downloadCloudFighterToLocal(fighter, context, { includeArchivedVersions: true });
-    })
-    .catch((err: any) => {
-      debugWarn(`[Cloud] Archived versions will resume later for ${fighter.name}:`, err?.message ?? err);
-    })
-    .finally(() => {
-      if (archivedCloudImportJobs.get(fighter.id) === job) {
-        archivedCloudImportJobs.delete(fighter.id);
-      }
-    });
-  archivedCloudImportJobs.set(fighter.id, job);
-  archivedCloudImportQueue = job;
 }
 
 export async function importMissingCloudFighters(
@@ -1176,8 +1162,6 @@ export async function syncCloudFightersToLocal(
     drafts: 0,
     failed: 0,
   };
-  const archiveCandidates: CloudFighter[] = [];
-
   for (const fighter of fighters) {
     const existing = localByCloudId.get(fighter.id) ?? (fighter.photoHash ? localByPhotoHash.get(fighter.photoHash) : undefined) ?? null;
     if (!shouldRefreshLocalFighter(fighter, existing)) {
@@ -1188,7 +1172,7 @@ export async function syncCloudFightersToLocal(
     try {
       const detailed = await getCloudFighter(fighter.id, requestContext);
       const manifest = detailed ?? fighter;
-      if (isSourceOnlyCloudFighter(manifest)) {
+      if (!isCompleteCloudFighterRoster(manifest)) {
         summary.drafts += 1;
         continue;
       }
@@ -1196,7 +1180,6 @@ export async function syncCloudFightersToLocal(
         includeArchivedVersions: false,
         includeRawAssets: false,
       });
-      archiveCandidates.push(manifest);
       if (existing) {
         summary.updated += 1;
       } else {
@@ -1207,10 +1190,6 @@ export async function syncCloudFightersToLocal(
       summary.failed += 1;
       debugWarn(`[Cloud] Fighter sync skipped for ${fighter.name}:`, err?.message ?? err);
     }
-  }
-
-  for (const fighter of archiveCandidates) {
-    queueArchivedCloudFighterImport(fighter, requestContext);
   }
 
   return summary;

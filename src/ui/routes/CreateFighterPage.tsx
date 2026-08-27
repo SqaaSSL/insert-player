@@ -64,6 +64,7 @@ import { includedRookieStatus, initialCreationTier } from '../shared/rookieEntit
 import {
   assertCreationFlowAcknowledged,
   creationFlowForResume,
+  isVideoReviewOrRestartJob,
   videoCreationFlowAvailability,
 } from '../shared/creationFlow.ts';
 
@@ -238,21 +239,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
           job.operation === 'fighter_generation' &&
           (job.status === 'queued' || job.status === 'running')
         ));
-        const videoReview = jobs.find((job) => (
-          job.operation === 'fighter_generation' &&
-          job.creationFlow === 'video' &&
-          (
-            job.fullRunRestartRequired ||
-            (
-              job.status === 'succeeded' &&
-              (
-                job.reviewStatus === 'awaiting_review' ||
-                job.reviewStatus === 'rejected' ||
-                (job.reviewStatus === 'approved' && job.resumable)
-              )
-            )
-          )
-        ));
+        const videoReview = jobs.find(isVideoReviewOrRestartJob);
         const resumable = jobs.find((job) => (
           job.operation === 'fighter_generation' && job.resumable
         ));
@@ -418,6 +405,25 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     job: GenerationJob,
     apiContext: ReturnType<typeof captureApiRequestContext>,
   ): Promise<void> {
+    if (job.creationFlow === 'video' && job.fullRunRestartRequired) {
+      setVideoReviewJob(job);
+      setResumableJob(null);
+      setError(null);
+      setStageText('The Video run ended safely. Start a new complete run when you are ready.');
+      setGenerating(new Set());
+      return;
+    }
+    if (job.creationFlow === 'video' && job.status !== 'succeeded' && job.resumable) {
+      setVideoReviewJob(null);
+      setResumableJob(job);
+      setError(
+        `${job.errorMessage ?? 'Generation paused.'} ` +
+        `${job.preservedArtifactCount} completed stages are preserved; resume continues without charging again.`,
+      );
+      setStageText('Video generation paused safely. Resume the preserved provider work when ready.');
+      setGenerating(new Set());
+      return;
+    }
     if (job.status !== 'succeeded') {
       throw new Error(job.errorMessage ?? 'Generation stopped; review the job details or contact support.');
     }

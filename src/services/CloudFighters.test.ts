@@ -3,7 +3,9 @@ import {
   arcadeFighterPhotoHash,
   buildSpriteDownloadPlan,
   buildSpriteUploadPlan,
+  cloudSpritesForImport,
   formatCloudRosterSyncStatus,
+  isCompleteCloudFighterRoster,
   isSourceOnlyCloudFighter,
   selectPlayableCloudSprites,
   shouldRefreshLocalFighter,
@@ -280,6 +282,41 @@ describe('cloud roster sync status', () => {
     })).toBe(false);
   });
 
+  it('requires all eleven current pointers and never counts archived private versions', () => {
+    const animationNames = [
+      'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
+      'jump', 'crouch', 'hit', 'ko', 'victory',
+    ];
+    const completeSprites = animationNames.map((animationName) => ({
+      ...cloudSprite(`current-${animationName}`),
+      animationName,
+    }));
+
+    expect(isCompleteCloudFighterRoster({ ...fighter, sprites: completeSprites })).toBe(true);
+    expect(isCompleteCloudFighterRoster({
+      ...fighter,
+      sprites: completeSprites.slice(0, 1),
+      spriteVersions: completeSprites,
+    })).toBe(false);
+    expect(cloudSpritesForImport({
+      ...fighter,
+      sprites: completeSprites.slice(0, 1),
+      spriteVersions: completeSprites,
+    }, {
+      includeArchivedVersions: false,
+    })).toHaveLength(1);
+    expect(() => cloudSpritesForImport({
+      ...fighter,
+      sprites: completeSprites,
+      spriteVersions: [
+        ...completeSprites,
+        { ...completeSprites[0], id: 'private-candidate', contentHash: 'private-candidate' },
+      ],
+    }, {
+      includeArchivedVersions: true,
+    })).toThrow(/cannot be imported into the playable cache/i);
+  });
+
   it('reports unfinished fighters without presenting them as download failures', () => {
     expect(formatCloudRosterSyncStatus({
       imported: 0,
@@ -306,7 +343,7 @@ describe('cloud roster sync status', () => {
 });
 
 describe('shouldRefreshLocalFighter', () => {
-  it('resumes an incomplete archived-version hydration', () => {
+  it('does not refresh the playable cache solely for a new archived private version', () => {
     const fighter = {
       id: 'fighter-cloud',
       name: 'Nova QA',
@@ -334,7 +371,7 @@ describe('shouldRefreshLocalFighter', () => {
       updatedAt: Date.parse('2026-08-19T02:00:00.000Z'),
     } as CachedMeta;
 
-    expect(shouldRefreshLocalFighter(fighter, existing)).toBe(true);
+    expect(shouldRefreshLocalFighter(fighter, existing)).toBe(false);
   });
 
   it('does not confuse three tier pointers with missing animation names', () => {
