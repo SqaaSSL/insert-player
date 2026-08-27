@@ -64,7 +64,7 @@ const expectedApiOrigin = isSandbox
   ? 'https://insert-player-api-sandbox.shellbot.workers.dev'
   : 'https://api.insertplayer.ai';
 const expectedAppName = envValue(env, 'ASF_PUBLIC_APP_NAME') || envValue(env, 'VITE_PUBLIC_APP_NAME') || 'Insert Player';
-const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v4.png';
+const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v5.png';
 const expectedAssetPath = envValue(env, 'ASF_EXPECTED_FRONTEND_ASSET_PATH');
 const assetProbeNonce = envValue(env, 'ASF_FRONTEND_ASSET_PROBE_NONCE');
 const FETCH_TIMEOUT_MS = parsePositiveTimeoutMs(
