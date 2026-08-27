@@ -5,11 +5,11 @@ interface ConsentProps {
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
-  /** SPA navigation for the policy links; plain hrefs (full reload) when omitted. */
+  /** Retained for caller compatibility. Policy links open separately to preserve form state. */
   onNavigate?: (route: LegalRoute) => void;
 }
 
-function LegalLinks({ onNavigate }: { onNavigate?: (route: LegalRoute) => void }) {
+function LegalLinks() {
   const links: ReadonlyArray<readonly [LegalRoute, string]> = [
     ['/terms', 'Terms'],
     ['/privacy', 'Privacy'],
@@ -21,12 +21,8 @@ function LegalLinks({ onNavigate }: { onNavigate?: (route: LegalRoute) => void }
         <a
           key={route}
           href={route}
-          onClick={onNavigate
-            ? (event) => {
-                event.preventDefault();
-                onNavigate(route);
-              }
-            : undefined}
+          target="_blank"
+          rel="noreferrer"
         >
           {label}
         </a>
@@ -35,7 +31,7 @@ function LegalLinks({ onNavigate }: { onNavigate?: (route: LegalRoute) => void }
   );
 }
 
-export function GenerationConsent({ checked, disabled, onChange, onNavigate }: ConsentProps) {
+export function GenerationConsent({ checked, disabled, onChange }: ConsentProps) {
   return (
     <div className="legal-consent">
       <label>
@@ -65,12 +61,12 @@ export function GenerationConsent({ checked, disabled, onChange, onNavigate }: C
           Mandatory consumer remedies still apply.
         </span>
       </label>
-      <LegalLinks onNavigate={onNavigate} />
+      <LegalLinks />
     </div>
   );
 }
 
-export function CheckoutConsent({ checked, disabled, onChange, onNavigate }: ConsentProps) {
+export function CheckoutConsent({ checked, disabled, onChange }: ConsentProps) {
   return (
     <div className="legal-consent legal-consent--checkout">
       <label>
@@ -86,7 +82,7 @@ export function CheckoutConsent({ checked, disabled, onChange, onNavigate }: Con
           has begun are not voluntarily refundable. Mandatory consumer rights still apply.
         </span>
       </label>
-      <LegalLinks onNavigate={onNavigate} />
+      <LegalLinks />
     </div>
   );
 }

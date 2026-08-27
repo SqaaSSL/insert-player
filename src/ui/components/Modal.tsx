@@ -1,4 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Button, type ButtonVariant } from './Button.tsx';
 
 const FOCUSABLE_SELECTOR =
@@ -19,6 +20,8 @@ interface ModalProps {
  * initial focus, and focus restoration to the opening control.
  */
 export function Modal({ title, titleAddon, onClose, busy = false, showClose = true, children }: ModalProps) {
+  const titleId = useId();
+  const backdropRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -28,8 +31,25 @@ export function Modal({ title, titleAddon, onClose, busy = false, showClose = tr
   useEffect(() => {
     const returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
-    const initial = dialog?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR);
+    const backdrop = backdropRef.current;
+    const initial = dialog?.querySelector<HTMLElement>('[autofocus]')
+      ?? dialog?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR)
+      ?? dialog;
     initial?.focus();
+
+    const backgroundElements = Array.from(document.body.children)
+      .filter((element): element is HTMLElement => element instanceof HTMLElement && element !== backdrop)
+      .map((element) => ({
+        element,
+        inert: element.inert,
+        ariaHidden: element.getAttribute('aria-hidden'),
+      }));
+    for (const item of backgroundElements) {
+      item.element.inert = true;
+      item.element.setAttribute('aria-hidden', 'true');
+    }
+    const bodyAlreadyLocked = document.body.classList.contains('asf-modal-open');
+    document.body.classList.add('asf-modal-open');
 
     const handleKeys = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !busyRef.current) {
@@ -39,10 +59,17 @@ export function Modal({ title, titleAddon, onClose, busy = false, showClose = tr
       }
       if (event.key !== 'Tab') return;
       const focusable = Array.from(dialog?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? []);
-      if (focusable.length === 0) return;
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog?.focus();
+        return;
+      }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (!dialog?.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -54,14 +81,22 @@ export function Modal({ title, titleAddon, onClose, busy = false, showClose = tr
     window.addEventListener('keydown', handleKeys);
     return () => {
       window.removeEventListener('keydown', handleKeys);
+      if (!bodyAlreadyLocked) document.body.classList.remove('asf-modal-open');
+      for (const item of backgroundElements) {
+        item.element.inert = item.inert;
+        if (item.ariaHidden === null) item.element.removeAttribute('aria-hidden');
+        else item.element.setAttribute('aria-hidden', item.ariaHidden);
+      }
       returnFocus?.focus();
     };
   }, []);
 
-  return (
+  const modal = (
     <div
+      ref={backdropRef}
       className="asf-modal-backdrop"
-      onClick={() => {
+      onClick={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (!busyRef.current) onCloseRef.current();
       }}
     >
@@ -69,12 +104,12 @@ export function Modal({ title, titleAddon, onClose, busy = false, showClose = tr
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-labelledby={titleId}
+        tabIndex={-1}
         className="asf-modal"
-        onClick={(event) => event.stopPropagation()}
       >
         <header className="asf-modal__header">
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           {titleAddon}
           {showClose && (
             <button
@@ -92,6 +127,7 @@ export function Modal({ title, titleAddon, onClose, busy = false, showClose = tr
       </div>
     </div>
   );
+  return typeof document === 'undefined' ? modal : createPortal(modal, document.body);
 }
 
 interface ConfirmDialogProps {

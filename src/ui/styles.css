@@ -90,6 +90,10 @@
            [background-image:radial-gradient(ellipse_at_top,rgba(255,42,42,0.22),transparent_55%),radial-gradient(ellipse_at_bottom_left,rgba(255,206,58,0.10),transparent_55%),repeating-linear-gradient(0deg,transparent_0,transparent_2px,rgba(255,255,255,0.025)_2px,rgba(255,255,255,0.025)_3px),linear-gradient(180deg,var(--color-asf-bg-1),var(--color-asf-bg-0))];
   }
 
+  body.asf-modal-open {
+    @apply overflow-hidden;
+  }
+
   button,
   input,
   textarea,
@@ -407,6 +411,24 @@
   .auth-dock__button.is-primary {
     @apply border-asf-red bg-asf-red-dark text-asf-gold-bright
            hover:border-asf-gold hover:bg-asf-red-deep;
+  }
+
+  .cache-status-banner {
+    @apply fixed left-4 right-4 top-[76px] z-40 mx-auto flex max-w-[880px] items-center
+           justify-between gap-4 rounded-[4px] border-2 border-asf-warn
+           bg-[rgba(38,22,10,0.98)] px-4 py-3 shadow-[0_12px_32px_rgba(0,0,0,0.5)];
+  }
+
+  .cache-status-banner.is-degraded {
+    @apply border-asf-red bg-[rgba(62,8,12,0.98)];
+  }
+
+  .cache-status-banner strong {
+    @apply font-arcade text-[11px] uppercase tracking-[0.08em] text-asf-gold-bright;
+  }
+
+  .cache-status-banner p {
+    @apply m-0 mt-1 font-sans text-[13px] leading-[1.5] text-asf-cream;
   }
 
   /* ---- Big arcade menu tiles ---- */
@@ -1492,6 +1514,27 @@
     @apply [display:contents];
   }
 
+  .configuration-error {
+    @apply mx-auto flex min-h-[calc(100vh-140px)] w-full max-w-[680px] flex-col items-start
+           justify-center gap-5 px-8 pb-16 pt-28;
+  }
+
+  .configuration-error__code {
+    @apply m-0 font-arcade text-[11px] uppercase tracking-[0.16em] text-asf-red;
+  }
+
+  .configuration-error h1 {
+    @apply text-[24px] leading-[1.4] text-asf-gold-bright;
+  }
+
+  .configuration-error > p:not(.configuration-error__code) {
+    @apply m-0 max-w-[62ch] font-sans text-[15px] leading-[1.7] text-asf-cream;
+  }
+
+  .configuration-error__actions {
+    @apply flex flex-wrap gap-3;
+  }
+
   .legal-footer {
     @apply flex flex-wrap items-center justify-between gap-4 border-t border-asf-line-faint
            bg-[rgba(4,4,13,0.88)] px-8 py-5 font-sans text-[12px] leading-[1.7] text-asf-muted;
@@ -2028,6 +2071,14 @@
     }
 
     .legal-footer {
+      @apply px-5;
+    }
+
+    .cache-status-banner {
+      @apply left-3 right-3 flex-col items-stretch;
+    }
+
+    .configuration-error {
       @apply px-5;
     }
 

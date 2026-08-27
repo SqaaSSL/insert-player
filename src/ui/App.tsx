@@ -6,9 +6,11 @@ import { AppHeader } from './components/AppHeader.tsx';
 import { LegalFooter, type LegalRoute } from './components/LegalFooter.tsx';
 import { LoadingScreen } from './components/LoadingScreen.tsx';
 import { LegalPage } from './routes/LegalPage.tsx';
+import { ConfigurationErrorPage } from './routes/ConfigurationErrorPage.tsx';
 import { debugInfo, debugWarn } from '../services/DebugLog.ts';
 import type { AuthRouteState } from './authState.ts';
 import { readStoredMatch, writeStoredMatch } from './shared/storedMatch.ts';
+import { CacheStatusBanner, type CacheStatus } from './components/CacheStatusBanner.tsx';
 
 const GalleryPage = lazy(() => import('./routes/GalleryPage.tsx').then((module) => ({
   default: module.GalleryPage,
@@ -37,6 +39,42 @@ type AppRoute =
   | '/roster/vs'
   | LegalRoute
   | '/fight';
+
+interface NavigationOptions {
+  replace?: boolean;
+  state?: Record<string, unknown>;
+}
+
+interface AppProps extends Partial<AuthRouteState> {
+  authSlot?: ReactNode;
+  cacheStatus?: CacheStatus;
+  cacheMessage?: string | null;
+  onRetryCache?: () => void;
+  configurationError?: string | null;
+}
+
+function isLegalRoute(route: AppRoute): route is LegalRoute {
+  return route === '/legal' || route === '/privacy' || route === '/terms' || route === '/refunds';
+}
+
+export function legalReturnRouteFromState(state: unknown): AppRoute {
+  if (!state || typeof state !== 'object') return '/menu';
+  const candidate = (state as { legalReturnTo?: unknown }).legalReturnTo;
+  if (
+    candidate === '/menu' ||
+    candidate === '/gallery' ||
+    candidate === '/community' ||
+    candidate === '/moderation' ||
+    candidate === '/fighters/new' ||
+    candidate === '/roster/watch' ||
+    candidate === '/roster/cpu' ||
+    candidate === '/roster/vs'
+  ) {
+    return candidate;
+  }
+  return '/menu';
+}
+
 export function normalizeRoute(pathname: string, hash: string): AppRoute {
   const cleanedPath = (pathname || '/').replace(/\/+$/, '') || '/';
   const cleanedHash = hash.replace(/^#/, '').replace(/\/+$/, '');
@@ -59,7 +97,7 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   return '/menu';
 }
 
-type Navigate = (route: AppRoute, search?: string, replace?: boolean) => void;
+type Navigate = (route: AppRoute, search?: string, options?: NavigationOptions) => void;
 
 function useHashRoute(): [AppRoute, Navigate] {
   const [route, setRoute] = useState<AppRoute>(() =>
@@ -82,7 +120,11 @@ function useHashRoute(): [AppRoute, Navigate] {
     };
   }, []);
 
-  const navigate = useCallback((nextRoute: AppRoute, search = '', replace = false) => {
+  const navigate = useCallback((
+    nextRoute: AppRoute,
+    search = '',
+    options: NavigationOptions = {},
+  ) => {
     const normalizedSearch = search && !search.startsWith('?') ? `?${search}` : search;
     if (
       normalizeRoute(window.location.pathname, window.location.hash) === nextRoute &&
@@ -91,8 +133,8 @@ function useHashRoute(): [AppRoute, Navigate] {
       setRoute(nextRoute);
       return;
     }
-    const updateHistory = replace ? window.history.replaceState : window.history.pushState;
-    updateHistory.call(window.history, {}, '', `${nextRoute}${normalizedSearch}`);
+    const method = options.replace ? 'replaceState' : 'pushState';
+    window.history[method](options.state ?? {}, '', `${nextRoute}${normalizedSearch}`);
     setRoute(nextRoute);
   }, []);
 
@@ -103,7 +145,11 @@ export function App({
   authStatus = 'local',
   authSessionKey = 'local',
   authSlot = null,
-}: Partial<AuthRouteState> & { authSlot?: ReactNode }) {
+  cacheStatus = 'ready',
+  cacheMessage = null,
+  onRetryCache,
+  configurationError = null,
+}: AppProps) {
   const [route, navigate] = useHashRoute();
   const [pendingMatchState, setPendingMatchState] = useState<{
     authSessionKey: string;
@@ -127,7 +173,7 @@ export function App({
       pathname: window.location.pathname,
       authSessionKey,
     });
-    navigate('/menu', '', true);
+    navigate('/menu', '', { replace: true });
   }, [authSessionKey, navigate, pendingMatch, route]);
 
   useEffect(() => {
@@ -182,13 +228,30 @@ export function App({
     [pendingMatch],
   );
 
+  const navigateToLegal = useCallback((nextRoute: LegalRoute) => {
+    const returnTo = isLegalRoute(route)
+      ? legalReturnRouteFromState(window.history.state)
+      : route === '/fight' ? '/menu' : route;
+    navigate(nextRoute, '', { state: { legalReturnTo: returnTo } });
+  }, [navigate, route]);
+
+  const navigateWithinLegal = useCallback((nextRoute: LegalRoute) => {
+    navigate(nextRoute, '', {
+      state: { legalReturnTo: legalReturnRouteFromState(window.history.state) },
+    });
+  }, [navigate]);
+
+  const leaveLegal = useCallback(() => {
+    navigate(legalReturnRouteFromState(window.history.state), '', { replace: true });
+  }, [navigate]);
+
   const homePage = useMemo(
     () => (
       <HomePage
         authStatus={authStatus}
         authSessionKey={authSessionKey}
         onCreateFighter={() => navigate('/fighters/new')}
-        onNavigateLegal={(route) => navigate(route)}
+        onNavigateLegal={navigateToLegal}
         onOpenGallery={() => navigate('/gallery')}
         onOpenCommunity={() => navigate('/community')}
         onOpenWatchMode={() => navigate('/roster/watch')}
@@ -197,10 +260,19 @@ export function App({
         onOpenModeration={() => navigate('/moderation')}
       />
     ),
-    [authStatus, authSessionKey, navigate],
+    [authStatus, authSessionKey, navigate, navigateToLegal],
   );
 
   const content = useMemo(() => {
+    if (configurationError && route !== '/community' && !isLegalRoute(route)) {
+      return (
+        <ConfigurationErrorPage
+          message={configurationError}
+          onOpenCommunity={() => navigate('/community')}
+          onOpenLegal={() => navigateToLegal('/legal')}
+        />
+      );
+    }
     if (route === '/menu') {
       return homePage;
     }
@@ -211,7 +283,7 @@ export function App({
           authSessionKey={authSessionKey}
           onBack={() => navigate('/menu')}
           onCreateFighter={() => navigate('/fighters/new')}
-          onNavigateLegal={(route: LegalRoute) => navigate(route)}
+          onNavigateLegal={navigateToLegal}
         />
       );
     }
@@ -234,16 +306,16 @@ export function App({
           authSessionKey={authSessionKey}
           onBack={() => navigate('/gallery')}
           onComplete={() => navigate('/gallery')}
-          onNavigateLegal={(route: LegalRoute) => navigate(route)}
+          onNavigateLegal={navigateToLegal}
         />
       );
     }
-    if (route === '/legal' || route === '/privacy' || route === '/terms' || route === '/refunds') {
+    if (isLegalRoute(route)) {
       return (
         <LegalPage
           kind={route.slice(1) as 'legal' | 'privacy' | 'terms' | 'refunds'}
-          onBack={() => navigate('/menu')}
-          onNavigate={navigate}
+          onBack={leaveLegal}
+          onNavigate={navigateWithinLegal}
         />
       );
     }
@@ -264,7 +336,22 @@ export function App({
       return <LoadingScreen label="Returning to the arcade..." />;
     }
     return <GamePage launchTarget={launchTarget!} onComplete={finishFight} onExit={exitFight} />;
-  }, [route, navigate, pendingMatch, launchTarget, finishFight, exitFight, startFight, authStatus, authSessionKey, homePage]);
+  }, [
+    route,
+    navigate,
+    navigateToLegal,
+    navigateWithinLegal,
+    leaveLegal,
+    pendingMatch,
+    launchTarget,
+    finishFight,
+    exitFight,
+    startFight,
+    authStatus,
+    authSessionKey,
+    homePage,
+    configurationError,
+  ]);
 
   const routedContent = (
     <Suspense fallback={<LoadingScreen label="Loading cabinet..." />}>
@@ -272,14 +359,19 @@ export function App({
     </Suspense>
   );
 
-  if (route === '/fight') return routedContent;
+  if (route === '/fight' && !configurationError) return routedContent;
 
   return (
     <div className="app-route-shell">
       <AppHeader currentRoute={route} onNavigate={navigate} />
       {authSlot}
+      <CacheStatusBanner
+        status={cacheStatus}
+        message={cacheMessage}
+        onRetry={onRetryCache}
+      />
       <main className="app-main">{routedContent}</main>
-      <LegalFooter onNavigate={navigate} />
+      <LegalFooter onNavigate={navigateToLegal} />
     </div>
   );
 }
