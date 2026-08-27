@@ -27,6 +27,7 @@ import {
   type SealedReviewedCanonicalSources,
 } from './reviewedCanonicalSources';
 import { requireReviewedProductionWorkerPin } from './reviewedDeploymentPin';
+import { readEligibleUnsealedVideoPartialRestart } from './videoRunRestart';
 
 const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
 const AUTHORIZATION_TTL_HOURS = 12;
@@ -456,11 +457,29 @@ export async function startAdminArcadeGeneration(
     ? await readLatestReviewedVideoRecoverySeal(env, auth, fighterId)
     : null;
   const initialRecoverySeal = recoveryFromJobId ? initialVideoSeal : null;
+  let unsealedVideoRestartFromJobId: string | null = null;
+  if (
+    recoveryFromJobId && restart && initialRecoverySeal &&
+    initialRecoverySeal.job_id === recoveryFromJobId &&
+    !exactReviewedRestartSource(initialRecoverySeal)
+  ) {
+    const eligibleUnsealedRestart = await readEligibleUnsealedVideoPartialRestart(
+      env,
+      auth.userId,
+      fighterId,
+      recoveryFromJobId,
+    );
+    if (eligibleUnsealedRestart) unsealedVideoRestartFromJobId = recoveryFromJobId;
+  }
   if (
     recoveryFromJobId && (
       !initialRecoverySeal
       || initialRecoverySeal.job_id !== recoveryFromJobId
-      || (restart && !exactReviewedRestartSource(initialRecoverySeal))
+      || (
+        restart &&
+        !exactReviewedRestartSource(initialRecoverySeal) &&
+        unsealedVideoRestartFromJobId !== recoveryFromJobId
+      )
     )
   ) {
     return reviewedRecoveryConflict(initialRecoverySeal?.job_id ?? null);
@@ -655,13 +674,23 @@ export async function startAdminArcadeGeneration(
   }
   if (recoveryFromJobId) {
     const finalRecoverySeal = await readLatestReviewedVideoRecoverySeal(env, auth, fighterId);
+    const finalUnsealedRestart = unsealedVideoRestartFromJobId
+      ? await readEligibleUnsealedVideoPartialRestart(
+          env,
+          auth.userId,
+          fighterId,
+          unsealedVideoRestartFromJobId,
+        )
+      : null;
     if (
       !initialRecoverySeal
       || !finalRecoverySeal
       || JSON.stringify(finalRecoverySeal) !== JSON.stringify(initialRecoverySeal)
       || finalRecoverySeal.job_id !== recoveryFromJobId
       || (restart
-        ? !exactReviewedRestartSource(finalRecoverySeal)
+        ? unsealedVideoRestartFromJobId
+          ? !finalUnsealedRestart
+          : !exactReviewedRestartSource(finalRecoverySeal)
         : !partial || partial.job_id !== recoveryFromJobId)
     ) {
       return reviewedRecoveryConflict(finalRecoverySeal?.job_id ?? null);
@@ -761,7 +790,10 @@ export async function startAdminArcadeGeneration(
       reusable.provider_session_id,
       undefined,
       creationFlow,
-    ), env, auth, { reviewedCanonicalSources });
+    ), env, auth, {
+      reviewedCanonicalSources,
+      unsealedVideoRestartFromJobId: unsealedVideoRestartFromJobId ?? undefined,
+    });
   }
 
   const authorization = await createAdminGenerationAuthorization(env, auth, fighterId, {
@@ -779,7 +811,10 @@ export async function startAdminArcadeGeneration(
     authorization.providerSessionId,
     undefined,
     creationFlow,
-  ), env, auth, { reviewedCanonicalSources });
+  ), env, auth, {
+    reviewedCanonicalSources,
+    unsealedVideoRestartFromJobId: unsealedVideoRestartFromJobId ?? undefined,
+  });
 }
 
 export async function startAdminArcadeAnimationGeneration(

@@ -215,7 +215,7 @@ function apiFixture(testFixture, options = {}) {
       },
       sourceHashes: {
         original: testFixture.fighter.reference.sourceSha256,
-        ...Object.fromEntries(Object.entries(current).map(([kind, record]) => [key(kind), record.contentSha256])),
+        ...Object.fromEntries(Object.entries(current).map(([kind, record]) => [kind, record.contentSha256])),
       },
     },
   });

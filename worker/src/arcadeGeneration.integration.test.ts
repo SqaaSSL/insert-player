@@ -112,12 +112,15 @@ const SCHEMA = `
   CREATE TABLE generation_jobs (
     id TEXT PRIMARY KEY,
     charge_id TEXT,
+    provider_session_id TEXT,
     user_id TEXT,
     fighter_id TEXT NOT NULL,
     artifact_run_id TEXT,
     tier TEXT,
     creation_flow TEXT NOT NULL DEFAULT 'original',
     operation TEXT,
+    target_kind TEXT,
+    target_name TEXT,
     resumed_from_job_id TEXT,
     status TEXT NOT NULL,
     review_status TEXT NOT NULL DEFAULT 'none',
@@ -136,9 +139,13 @@ const SCHEMA = `
     operation TEXT NOT NULL,
     target_kind TEXT,
     target_name TEXT,
+    root_job_id TEXT,
+    original_charge_id TEXT,
     source_manifest_json TEXT,
     status TEXT NOT NULL,
     failure_stage TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE generation_artifact_checkpoints (
@@ -176,8 +183,31 @@ const SCHEMA = `
     creation_flow TEXT NOT NULL DEFAULT 'original',
     purpose TEXT NOT NULL DEFAULT 'fighter_generation',
     status TEXT NOT NULL,
+    provider_calls_used INTEGER NOT NULL DEFAULT 0,
+    provider_cost_used_cents INTEGER NOT NULL DEFAULT 0,
     expires_at TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE provider_request_cache (
+    id TEXT PRIMARY KEY,
+    job_id TEXT,
+    artifact_run_id TEXT,
+    request_key TEXT,
+    status TEXT NOT NULL
+  );
+  CREATE TABLE provider_cost_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    charge_id TEXT,
+    job_id TEXT,
+    artifact_run_id TEXT,
+    request_key TEXT,
+    estimated_cost_cents INTEGER NOT NULL DEFAULT 0,
+    outcome TEXT NOT NULL,
+    upstream_outcome TEXT NOT NULL,
+    stage_outcome TEXT NOT NULL,
+    job_outcome TEXT NOT NULL,
+    finalized_at TEXT
   );
 `;
 
@@ -242,6 +272,74 @@ async function stageReviewedCanonicalSources(db: D1Database, bucket: R2Bucket) {
     crouch: { processedSha256: rows[4].hash, rawSha256: rows[5].hash },
   };
   return { rows, hashes };
+}
+
+const UNSEALED_VIDEO_JOB_ID = '81818181818181818181818181818181';
+
+async function stageTerminalUnsealedVideoPartial(db: D1Database): Promise<void> {
+  await db.batch([
+    db.prepare(`
+      INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+      VALUES ('unsealed-video-ledger', ?, 0, 'arcade_seed_generation', ?)
+    `).bind(USER_ID, FIGHTER_ID),
+    db.prepare(`
+      INSERT INTO generation_charges (
+        id, user_id, tier, creation_flow, credit_cost, free_quota_delta,
+        status, reason, fighter_id, ledger_id, expires_at
+      ) VALUES (?, ?, 'champion', 'video', 0, 0, 'committed',
+        'arcade_seed_generation', ?, 'unsealed-video-ledger', datetime('now', '+1 hour'))
+    `).bind(UNSEALED_VIDEO_JOB_ID, USER_ID, FIGHTER_ID),
+    db.prepare(`
+      INSERT INTO provider_sessions (
+        id, user_id, charge_id, creation_flow, status, provider_calls_used,
+        provider_cost_used_cents, expires_at
+      ) VALUES ('unsealed-video-session', ?, ?, 'video', 'cancelled', 1, 17,
+        datetime('now', '+1 hour'))
+    `).bind(USER_ID, UNSEALED_VIDEO_JOB_ID),
+    db.prepare(`
+      INSERT INTO generation_artifact_runs (
+        id, user_id, fighter_id, tier, creation_flow, operation,
+        root_job_id, original_charge_id, source_manifest_json,
+        status, failure_stage
+      ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', ?, ?,
+        json_object('side', NULL, 'sideRaw', NULL, 'upright', NULL,
+          'uprightRaw', NULL, 'crouch', NULL, 'crouchRaw', NULL),
+        'partial', 'source:side')
+    `).bind(
+      UNSEALED_VIDEO_JOB_ID,
+      USER_ID,
+      FIGHTER_ID,
+      UNSEALED_VIDEO_JOB_ID,
+      UNSEALED_VIDEO_JOB_ID,
+    ),
+    db.prepare(`
+      INSERT INTO generation_jobs (
+        id, charge_id, provider_session_id, user_id, fighter_id,
+        artifact_run_id, tier, creation_flow, operation, status,
+        review_status, stage, progress_current, progress_total
+      ) VALUES (?, ?, 'unsealed-video-session', ?, ?, ?, 'champion', 'video',
+        'fighter_generation', 'failed', 'none', 'source:side', 0, 14)
+    `).bind(
+      UNSEALED_VIDEO_JOB_ID,
+      UNSEALED_VIDEO_JOB_ID,
+      USER_ID,
+      FIGHTER_ID,
+      UNSEALED_VIDEO_JOB_ID,
+    ),
+    db.prepare(`
+      INSERT INTO provider_request_cache (
+        id, job_id, artifact_run_id, request_key, status
+      ) VALUES ('unsealed-video-request', ?, ?, 'run:unsealed:source:side', 'succeeded')
+    `).bind(UNSEALED_VIDEO_JOB_ID, UNSEALED_VIDEO_JOB_ID),
+    db.prepare(`
+      INSERT INTO provider_cost_events (
+        id, session_id, charge_id, job_id, artifact_run_id, request_key, estimated_cost_cents,
+        outcome, upstream_outcome, stage_outcome, job_outcome, finalized_at
+      ) VALUES ('unsealed-video-cost', 'unsealed-video-session', ?, ?, ?,
+        'run:unsealed:source:side', 17,
+        'succeeded', 'http_succeeded', 'failed', 'failed_partial', datetime('now'))
+    `).bind(UNSEALED_VIDEO_JOB_ID, UNSEALED_VIDEO_JOB_ID, UNSEALED_VIDEO_JOB_ID),
+  ]);
 }
 
 function reviewedGenerationRequest(
@@ -674,6 +772,338 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
       });
       expect(await db.prepare(`SELECT COALESCE(SUM(delta), 0) AS delta FROM credit_ledger`)
         .first()).toEqual({ delta: 0 });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('accepts explicit restart-full for the terminal unsealed zero-checkpoint Video shape', async () => {
+    const { mf, db, bucket, env } = await bindings();
+    try {
+      const staged = await stageReviewedCanonicalSources(db, bucket);
+      await stageTerminalUnsealedVideoPartial(db);
+
+      const response = await startAdminArcadeGeneration(
+        reviewedGenerationRequest(staged.hashes, true, UNSEALED_VIDEO_JOB_ID),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+      );
+
+      expect(response.status).toBe(201);
+      expect(createProviderSession).toHaveBeenCalledOnce();
+      expect(constrainProviderSessionToArtifactRunRemaining).not.toHaveBeenCalled();
+      expect(createGenerationJob).toHaveBeenCalledOnce();
+      const [, , , options] = vi.mocked(createGenerationJob).mock.calls[0];
+      expect(options).toMatchObject({
+        unsealedVideoRestartFromJobId: UNSEALED_VIDEO_JOB_ID,
+        reviewedCanonicalSources: {
+          mode: REVIEWED_CANONICAL_SOURCE_MODE,
+          fighterId: FIGHTER_ID,
+          ownerUserId: USER_ID,
+        },
+      });
+      expect(await db.prepare(`
+        SELECT status, failure_stage FROM generation_artifact_runs WHERE id = ?
+      `).bind(UNSEALED_VIDEO_JOB_ID).first()).toEqual({
+        status: 'partial',
+        failure_stage: 'source:side',
+      });
+      expect(await db.prepare(`
+        SELECT COUNT(*) AS count FROM generation_charges WHERE status = 'reserved'
+      `).first()).toEqual({ count: 1 });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it.each([
+    'different latest Video job',
+    'active fighter job',
+    'another live Video run',
+    'continuation child',
+    'artifact checkpoint',
+    'video candidate',
+    'provider request pending',
+    'provider request uncertain',
+    'unexpected provider request status',
+    'active old provider session',
+    'extra provider session',
+    'missing committed provider cost',
+    'missing all provider evidence',
+    'ambiguous committed provider cost',
+    'unexpected upstream outcome',
+    'unexpected stage outcome',
+    'unexpected job outcome',
+    'inconsistent succeeded job outcome',
+    'mismatched provider outcome',
+    'mismatched request outcome',
+    'provider accounting mismatch',
+    'provider call accounting mismatch',
+    'provider correlation mismatch',
+    'reserved continuation charge',
+    'sealed reviewed manifest',
+    'malformed source manifest',
+  ])('rejects unsealed restart-full before authorization when there is %s', async (failure) => {
+    const { mf, db, bucket, env } = await bindings();
+    try {
+      const staged = await stageReviewedCanonicalSources(db, bucket);
+      await stageTerminalUnsealedVideoPartial(db);
+      if (failure === 'different latest Video job') {
+        await db.prepare(`
+          INSERT INTO generation_jobs (
+            id, user_id, fighter_id, tier, creation_flow, operation,
+            status, review_status, stage, progress_current, progress_total
+          ) VALUES ('82828282828282828282828282828282', ?, ?, 'champion', 'video',
+            'fighter_generation', 'failed', 'none', 'video:provider', 0, 14)
+        `).bind(USER_ID, FIGHTER_ID).run();
+      }
+      if (failure === 'active fighter job') {
+        await db.prepare(`
+          INSERT INTO generation_jobs (
+            id, user_id, fighter_id, tier, creation_flow, operation,
+            status, review_status, stage, progress_current, progress_total
+          ) VALUES ('89898989898989898989898989898989', ?, ?, 'champion', 'original',
+            'fighter_generation', 'queued', 'none', 'queued', 0, 14)
+        `).bind(USER_ID, FIGHTER_ID).run();
+      }
+      if (failure === 'another live Video run') {
+        await db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, creation_flow, operation,
+            root_job_id, source_manifest_json, status
+          ) VALUES ('90909090909090909090909090909090', ?, ?, 'champion', 'video',
+            'fighter_generation', '90909090909090909090909090909090', '{}', 'partial')
+        `).bind(USER_ID, FIGHTER_ID).run();
+      }
+      if (failure === 'continuation child') {
+        await db.prepare(`
+          INSERT INTO generation_jobs (
+            id, user_id, fighter_id, tier, creation_flow, operation,
+            resumed_from_job_id, status, review_status, stage,
+            progress_current, progress_total
+          ) VALUES ('83838383838383838383838383838383', ?, ?, 'champion', 'video',
+            'fighter_generation', ?, 'failed', 'none', 'video:compile', 0, 14)
+        `).bind(USER_ID, FIGHTER_ID, UNSEALED_VIDEO_JOB_ID).run();
+      }
+      if (failure === 'artifact checkpoint') {
+        await db.prepare(`
+          INSERT INTO generation_artifact_checkpoints (
+            run_id, artifact_kind, artifact_name, stage_index, status
+          ) VALUES (?, 'source', 'side', 1, 'approved')
+        `).bind(UNSEALED_VIDEO_JOB_ID).run();
+      }
+      if (failure === 'video candidate') {
+        await db.prepare(`
+          INSERT INTO video_sprite_candidates (
+            id, run_id, job_id, user_id, fighter_id, action, sequence_order, status
+          ) VALUES ('unsealed-video-candidate', ?, ?, ?, ?, 'idle', 0, 'rejected')
+        `).bind(UNSEALED_VIDEO_JOB_ID, UNSEALED_VIDEO_JOB_ID, USER_ID, FIGHTER_ID).run();
+      }
+      if (failure === 'provider request pending') {
+        await db.prepare(`UPDATE provider_request_cache SET status = 'pending' WHERE id = 'unsealed-video-request'`).run();
+      }
+      if (failure === 'provider request uncertain') {
+        await db.prepare(`UPDATE provider_request_cache SET status = 'uncertain' WHERE id = 'unsealed-video-request'`).run();
+      }
+      if (failure === 'unexpected provider request status') {
+        await db.prepare(`UPDATE provider_request_cache SET status = 'garbage' WHERE id = 'unsealed-video-request'`).run();
+      }
+      if (failure === 'active old provider session') {
+        await db.prepare(`UPDATE provider_sessions SET status = 'active' WHERE id = 'unsealed-video-session'`).run();
+      }
+      if (failure === 'extra provider session') {
+        await db.prepare(`
+          INSERT INTO provider_sessions (
+            id, user_id, charge_id, creation_flow, status, expires_at
+          ) VALUES ('extra-unsealed-video-session', ?, ?, 'video', 'active',
+            datetime('now', '+1 hour'))
+        `).bind(USER_ID, UNSEALED_VIDEO_JOB_ID).run();
+      }
+      if (failure === 'ambiguous committed provider cost') {
+        await db.prepare(`
+          UPDATE provider_cost_events
+          SET upstream_outcome = 'unknown'
+          WHERE id = 'unsealed-video-cost'
+        `).run();
+      }
+      if (failure === 'unexpected upstream outcome') {
+        await db.prepare(`
+          UPDATE provider_cost_events
+          SET upstream_outcome = 'garbage'
+          WHERE id = 'unsealed-video-cost'
+        `).run();
+      }
+      if (failure === 'unexpected stage outcome') {
+        await db.prepare(`
+          UPDATE provider_cost_events
+          SET stage_outcome = 'garbage'
+          WHERE id = 'unsealed-video-cost'
+        `).run();
+      }
+      if (failure === 'unexpected job outcome') {
+        await db.prepare(`
+          UPDATE provider_cost_events
+          SET job_outcome = 'garbage'
+          WHERE id = 'unsealed-video-cost'
+        `).run();
+      }
+      if (failure === 'inconsistent succeeded job outcome') {
+        await db.prepare(`
+          UPDATE provider_cost_events
+          SET job_outcome = 'succeeded'
+          WHERE id = 'unsealed-video-cost'
+        `).run();
+      }
+      if (failure === 'mismatched provider outcome') {
+        await db.prepare(`
+          UPDATE provider_cost_events
+          SET outcome = 'failed'
+          WHERE id = 'unsealed-video-cost'
+        `).run();
+      }
+      if (failure === 'mismatched request outcome') {
+        await db.prepare(`
+          UPDATE provider_request_cache
+          SET status = 'failed'
+          WHERE id = 'unsealed-video-request'
+        `).run();
+      }
+      if (failure === 'missing committed provider cost') {
+        await db.prepare(`DELETE FROM provider_cost_events WHERE id = 'unsealed-video-cost'`).run();
+      }
+      if (failure === 'missing all provider evidence') {
+        await db.batch([
+          db.prepare(`DELETE FROM provider_cost_events WHERE id = 'unsealed-video-cost'`),
+          db.prepare(`DELETE FROM provider_request_cache WHERE id = 'unsealed-video-request'`),
+          db.prepare(`
+            UPDATE provider_sessions
+            SET provider_calls_used = 0, provider_cost_used_cents = 0
+            WHERE id = 'unsealed-video-session'
+          `),
+        ]);
+      }
+      if (failure === 'provider accounting mismatch') {
+        await db.prepare(`
+          UPDATE provider_sessions
+          SET provider_cost_used_cents = 16
+          WHERE id = 'unsealed-video-session'
+        `).run();
+      }
+      if (failure === 'provider call accounting mismatch') {
+        await db.prepare(`
+          UPDATE provider_sessions
+          SET provider_calls_used = 2
+          WHERE id = 'unsealed-video-session'
+        `).run();
+      }
+      if (failure === 'provider correlation mismatch') {
+        await db.prepare(`
+          UPDATE provider_cost_events
+          SET charge_id = NULL
+          WHERE id = 'unsealed-video-cost'
+        `).run();
+      }
+      if (failure === 'reserved continuation charge') {
+        await db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, creation_flow, credit_cost, free_quota_delta,
+            status, reason, fighter_id, ledger_id, continuation_run_id, expires_at
+          ) VALUES ('84848484848484848484848484848484', ?, 'champion', 'video', 0, 0,
+            'reserved', 'arcade_seed_generation', ?, 'unsealed-video-ledger', ?,
+            datetime('now', '+1 hour'))
+        `).bind(USER_ID, FIGHTER_ID, UNSEALED_VIDEO_JOB_ID).run();
+      }
+      if (failure === 'sealed reviewed manifest') {
+        await db.prepare(`
+          UPDATE generation_artifact_runs
+          SET source_manifest_json = '{"reviewedCanonicalSources":{"mode":"reviewed-current-v1"}}'
+          WHERE id = ?
+        `).bind(UNSEALED_VIDEO_JOB_ID).run();
+      }
+      if (failure === 'malformed source manifest') {
+        await db.prepare(`
+          UPDATE generation_artifact_runs
+          SET source_manifest_json = '{'
+          WHERE id = ?
+        `).bind(UNSEALED_VIDEO_JOB_ID).run();
+      }
+      const before = await db.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM generation_charges) AS charges,
+          (SELECT COUNT(*) FROM credit_ledger) AS ledger_entries,
+          (SELECT COUNT(*) FROM provider_sessions) AS provider_sessions
+      `).first();
+
+      const response = await startAdminArcadeGeneration(
+        reviewedGenerationRequest(staged.hashes, true, UNSEALED_VIDEO_JOB_ID),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+      );
+
+      expect(response.status).toBe(409);
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(createGenerationJob).not.toHaveBeenCalled();
+      expect(await db.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM generation_charges) AS charges,
+          (SELECT COUNT(*) FROM credit_ledger) AS ledger_entries,
+          (SELECT COUNT(*) FROM provider_sessions) AS provider_sessions
+      `).first()).toEqual(before);
+      expect(await db.prepare(`
+        SELECT status, failure_stage FROM generation_artifact_runs WHERE id = ?
+      `).bind(UNSEALED_VIDEO_JOB_ID).first()).toEqual({
+        status: 'partial',
+        failure_stage: 'source:side',
+      });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('fails closed when preserved work appears between the two unsealed restart seals', async () => {
+    const { mf, db, bucket, env } = await bindings();
+    try {
+      const staged = await stageReviewedCanonicalSources(db, bucket);
+      await stageTerminalUnsealedVideoPartial(db);
+      const originalBucket = env.SPRITES;
+      let interleaved = false;
+      env.SPRITES = new Proxy(originalBucket, {
+        get(target, property, receiver) {
+          if (property === 'get') {
+            return async (...args: Parameters<R2Bucket['get']>) => {
+              if (!interleaved) {
+                interleaved = true;
+                await db.prepare(`
+                  INSERT INTO generation_artifact_checkpoints (
+                    run_id, artifact_kind, artifact_name, stage_index, status
+                  ) VALUES (?, 'source', 'side', 1, 'approved')
+                `).bind(UNSEALED_VIDEO_JOB_ID).run();
+              }
+              return originalBucket.get(...args);
+            };
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+
+      const response = await startAdminArcadeGeneration(
+        reviewedGenerationRequest(staged.hashes, true, UNSEALED_VIDEO_JOB_ID),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+      );
+
+      expect(interleaved).toBe(true);
+      expect(response.status).toBe(409);
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(createGenerationJob).not.toHaveBeenCalled();
+      expect(await db.prepare(`SELECT COUNT(*) AS count FROM generation_charges`).first())
+        .toEqual({ count: 1 });
+      expect(await db.prepare(`SELECT status FROM generation_artifact_runs WHERE id = ?`)
+        .bind(UNSEALED_VIDEO_JOB_ID).first()).toEqual({ status: 'partial' });
     } finally {
       await mf.dispose();
     }

@@ -223,7 +223,7 @@ function apiFixture(value, options = {}) {
       sourceHashes: {
         original: value.target.photoHash,
         ...Object.fromEntries(SOURCE_KINDS.map((kind) => [
-          RESPONSE_KEYS[kind], kind === options.pointerWithoutHashKind
+          kind, kind === options.pointerWithoutHashKind
             ? null
             : current[kind]?.contentSha256 ?? null,
         ])),
@@ -231,6 +231,7 @@ function apiFixture(value, options = {}) {
     },
   });
   let posts = 0;
+  let committedAmbiguousPost = false;
   const requestApi = vi.fn(async (path, init = {}) => {
     if (path === '/api/admin/arcade') {
       return { fighters: [{ slug: value.plan.fighter.slug, fighterId: value.target.fighterId, status: 'draft' }] };
@@ -242,6 +243,10 @@ function apiFixture(value, options = {}) {
       const kind = init.body.get('kind');
       const bytes = Buffer.from(await init.body.get('file').arrayBuffer());
       current[kind] = record(kind, versionIds[kind], bytes, value.target.fighterId);
+      if (options.throwAfterCommittedPostKind === kind && !committedAmbiguousPost) {
+        committedAmbiguousPost = true;
+        throw new Error('simulated committed mutation with ambiguous response');
+      }
       return detail();
     }
     throw new Error(`Unexpected API request ${init.method ?? 'GET'} ${path}`);
@@ -467,5 +472,24 @@ describe('reviewed global SIDE alias + CROUCH importer', () => {
     expect(api.posts).toBe(1);
     await expect(runReviewedGlobalMixedCanonicalImport(options)).rejects.toThrow(/ambiguous prior POST/i);
     expect(api.posts).toBe(1);
+  });
+
+  it('reconciles a committed side_raw POST after an ambiguous response without re-posting it', async () => {
+    const value = fixture();
+    const api = apiFixture(value, { throwAfterCommittedPostKind: 'side_raw' });
+    const options = runOptions(value, api);
+
+    await expect(runReviewedGlobalMixedCanonicalImport(options))
+      .rejects.toThrow(/side_raw POST outcome is unknown/i);
+    expect(api.posts).toBe(2);
+    expect(api.current.side_raw?.contentSha256).toBe(value.plan.side.rawSha256);
+
+    const result = await runReviewedGlobalMixedCanonicalImport(options);
+
+    expect(api.posts).toBe(6);
+    expect(result.operatorManifest.safety.sourceMutationResults.side_raw).toEqual({
+      status: 'reconciled',
+      expectedSha256: value.plan.side.rawSha256,
+    });
   });
 });
