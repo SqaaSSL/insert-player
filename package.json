@@ -31,6 +31,8 @@
     "arcade:canary:xai-video": "node scripts/arcade-high-kick-xai-video-canary.mjs",
     "arcade:canary:xai-video-elon": "node scripts/arcade-high-kick-xai-video-elon-canary.mjs",
     "arcade:bundle:xai-canonical": "node scripts/arcade-xai-canonical-bundle.mjs",
+    "arcade:reclean:xai-canonical": "node scripts/reclean-xai-canonical-bundle.mjs",
+    "arcade:verify:xai-canonical-cleanup": "node scripts/verify-xai-canonical-cleanup-fixture.mjs",
     "arcade:bundle:xai-canonical:container": "node scripts/run-xai-canonical-bundle-container.mjs",
     "arcade:package:xai-canonical-input": "node scripts/package-xai-canonical-input.mjs",
     "arcade:package:reviewed-global-crouch-input": "node scripts/package-reviewed-global-crouch-input.mjs",

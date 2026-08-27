@@ -12,9 +12,12 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   XAI_CANONICAL_BUNDLE_CLEANUP,
+  XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE,
   XAI_CANONICAL_BUNDLE_CONFIRMATION,
+  XAI_CANONICAL_BUNDLE_LEGACY_CLEANUP,
   XAI_CANONICAL_BUNDLE_MODEL,
   XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION,
+  XAI_CANONICAL_BUNDLE_RECLEAN_CONFIRMATION,
   XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE,
   XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE,
   XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_SHA256_BY_SLUG,
@@ -31,10 +34,13 @@ import {
   buildXaiCanonicalBundlePrompt,
   loadXaiCanonicalPoseManifest,
   parseXaiCanonicalBundleCliArgs,
+  recleanXaiCanonicalBundle,
   resolveXaiCanonicalSingleSourcePromptProfile,
   runXaiCanonicalBundle,
+  verifyCanonicalCleanupFixture,
   validateXaiCanonicalPromptProfileReferences,
 } from './arcade-xai-canonical-bundle.mjs';
+import { parseXaiCanonicalRecleanCliArgs } from './reclean-xai-canonical-bundle.mjs';
 import { buildXaiCanonicalContainerPlan } from './run-xai-canonical-bundle-container.mjs';
 import {
   PRIVATE_INPUT_CONFIRMATION,
@@ -46,6 +52,12 @@ const temporaryDirectories = [];
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function canonicalJson(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
 }
 
 function png(label, width = 128, height = 192) {
@@ -140,7 +152,7 @@ function commandFixture() {
       return { stdout: `ffmpeg version ${XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion} Copyright\n`, stderr: '' };
     }
     const outputPath = args.at(-1);
-    const contact = args.includes('-filter_complex');
+    const contact = args.includes('[review]');
     const contactInputs = args.filter((arg) => arg === '-i').length;
     writeFileSync(
       outputPath,
@@ -363,6 +375,51 @@ function singleSourceRunOptions(fixture, provider, runCommand = commandFixture()
   };
 }
 
+function rewriteCompletedBundleAsLegacyCleanup(outputDirectory) {
+  const descriptorPath = join(outputDirectory, 'review-descriptor.json');
+  const statePath = join(outputDirectory, 'generation-state.json');
+  const descriptor = JSON.parse(readFileSync(descriptorPath, 'utf8'));
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  const sourceNames = descriptor.sourceNames ?? ['side', 'upright', 'crouch'];
+  for (const sourceName of sourceNames) {
+    const cleanBytes = png(`legacy-green-edge-${sourceName}`, 128, 192);
+    writeFileSync(join(outputDirectory, 'sources', `${sourceName}.png`), cleanBytes);
+    const clean = {
+      width: 128,
+      height: 192,
+      sizeBytes: cleanBytes.byteLength,
+      contentSha256: sha256(cleanBytes),
+      path: `sources/${sourceName}.png`,
+    };
+    descriptor.sources[sourceName].raw.providerRequestId = null;
+    descriptor.sources[sourceName].clean = clean;
+    state.slots[sourceName].raw.providerRequestId = null;
+    state.slots[sourceName].clean = clean;
+    state.slots[sourceName].cleanupFfmpegVersion =
+      `ffmpeg version ${XAI_CANONICAL_BUNDLE_LEGACY_CLEANUP.ffmpegVersion} Copyright`;
+    delete state.slots[sourceName].cleanupFilter;
+  }
+  const contactBytes = png(
+    'legacy-green-contact',
+    sourceNames.length === 1 ? 768 : 1152,
+    sourceNames.length === 1 ? 512 : 1024,
+  );
+  writeFileSync(join(outputDirectory, 'contact-sheet.png'), contactBytes);
+  descriptor.cleanup = { ...XAI_CANONICAL_BUNDLE_LEGACY_CLEANUP };
+  descriptor.contactSheet = {
+    ...descriptor.contactSheet,
+    contentSha256: sha256(contactBytes),
+    sizeBytes: contactBytes.byteLength,
+  };
+  const { descriptorSha256: _oldDescriptorSha256, ...unsignedDescriptor } = descriptor;
+  descriptor.descriptorSha256 = sha256(canonicalJson(unsignedDescriptor));
+  state.descriptorSha256 = descriptor.descriptorSha256;
+  state.contactSheetSha256 = descriptor.contactSheet.contentSha256;
+  writeFileSync(descriptorPath, JSON.stringify(descriptor));
+  writeFileSync(statePath, JSON.stringify(state));
+  return { descriptor, state };
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -398,6 +455,34 @@ describe('sealed XAI canonical bundle inputs', () => {
     expect(plan.run.join(' ')).not.toContain('test-key');
   });
 
+  it('seals a synthetic gradient/edge fixture to the pinned key and despill contract', () => {
+    const fixturePath = new URL(`../${XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.path}`, import.meta.url);
+    expect(sha256(readFileSync(fixturePath))).toBe(XAI_CANONICAL_BUNDLE_CLEANUP_FIXTURE.inputSha256);
+    expect(XAI_CANONICAL_BUNDLE_CLEANUP.filter).toContain("between(alpha(X,Y),1,254)");
+    expect(XAI_CANONICAL_BUNDLE_CLEANUP.filter).toContain("g(X,Y)-(255-alpha(X,Y))");
+    expect(XAI_CANONICAL_BUNDLE_CLEANUP.filter).toContain("g(X,Y)-max(r(X,Y),b(X,Y)),4");
+    expect(XAI_CANONICAL_BUNDLE_CLEANUP.filter).toContain("b(X,Y)-r(X,Y),12");
+    expect(XAI_CANONICAL_BUNDLE_CLEANUP.filter).toContain("if(eq(val,255),255,0)");
+    const opaqueErosionBand = XAI_CANONICAL_BUNDLE_CLEANUP.filter
+      .match(/\[opaque_for_erode\]([^[]+)\[opaque_eroded\]/)?.[1]
+      .split(',');
+    expect(opaqueErosionBand).toHaveLength(24);
+    expect(opaqueErosionBand.every((filter) => filter === 'erosion')).toBe(true);
+    expect(XAI_CANONICAL_BUNDLE_CLEANUP.filter).toContain('despill=green:mix=1:expand=0.15');
+    expect(XAI_CANONICAL_BUNDLE_CLEANUP.filter).toContain("if(gt(val,0),255,0)");
+    expect(readFileSync(fixturePath, 'utf8')).toContain('0 96 96   0 96 96');
+    const directory = mkdtempSync(join(tmpdir(), 'insert-player-cleanup-fixture-'));
+    temporaryDirectories.push(directory);
+    const runCommand = commandFixture();
+    expect(() => verifyCanonicalCleanupFixture({
+      outputPath: join(directory, 'clean.png'),
+      runCommand,
+    })).toThrow(/key\/despill output changed/i);
+    expect(runCommand.mock.calls.some(([, args]) => (
+      args.includes('-filter_complex') && args.includes(XAI_CANONICAL_BUNDLE_CLEANUP.filter)
+    ))).toBe(true);
+  });
+
   it('publishes the exact private artifact consumed by the separate reviewed importer', () => {
     const generation = readFileSync(new URL(
       '../.github/workflows/generate-xai-canonical-bundle-private.yml',
@@ -411,6 +496,20 @@ describe('sealed XAI canonical bundle inputs', () => {
     expect(generation).toContain('printf \'%s  %s\\n\' "$INPUT_BUNDLE_SHA256" "$archive" | sha256sum --check --strict');
     expect(generation).toContain('printf \'%s  %s\\n\' "$POSE_MANIFEST_SHA256" "$input_root/pose/pose-manifest.json" | sha256sum --check --strict');
     expect(generation).toContain('ffmpeg=7:5.1.9-0+deb12u1');
+    expect(generation).toContain('npm run arcade:verify:xai-canonical-cleanup -- --output=/tmp/xai-canonical-cleanup-fixture.png');
+    expect(generation).toContain('reclean_bundle_run_id:');
+    expect(generation).toContain("if: inputs.reclean_bundle_run_id == ''");
+    expect(generation).toContain("if: inputs.reclean_bundle_run_id != ''");
+    expect(generation).toContain('RECLEAN_XAI_CANONICAL_BUNDLE_OFFLINE_V1');
+    expect(generation).toContain('--network none');
+    expect(generation).toContain('--bundle-dir=/input');
+    expect(generation).toContain('--reviewed-descriptor-sha256="$1"');
+    expect(generation).toContain('workflowName\' <<<"$prior")" == "Generate one private XAI canonical bundle"');
+    const offlineJob = generation.slice(generation.indexOf('  reclean-private-bundle:'));
+    expect(offlineJob).not.toContain('secrets.PIXCLI_API_KEY');
+    expect(offlineJob).not.toContain('secrets.CLOUDFLARE_API_TOKEN');
+    expect(offlineJob).not.toContain('wrangler r2 object get');
+    expect(offlineJob).not.toContain('/api/v1/edit/advanced');
     expect(generation).toContain('--max-cost-usd="$MAX_COST_USD"');
     expect(generation).toContain('REQUESTED_SOURCE: ${{ inputs.source }}');
     expect(generation).toContain('PROMPT_SHA256: ${{ inputs.prompt_sha256 }}');
@@ -1068,6 +1167,78 @@ describe('resumable exactly-once XAI canonical bundle', () => {
     expect(paidPosts).toHaveLength(3);
   });
 
+  it('re-cleans a sealed legacy bundle offline and rebuilds its descriptor without uploads or paid POSTs', async () => {
+    const fixture = makeFixture();
+    const provider = providerFixture();
+    const generated = await runXaiCanonicalBundle(singleSourceRunOptions(fixture, provider));
+    const legacy = rewriteCompletedBundleAsLegacyCleanup(generated.outputDirectory);
+    const providerCallsBeforeReclean = provider.fetchImpl.mock.calls.length;
+    const paidPostsBeforeReclean = provider.fetchImpl.mock.calls.filter(([url, init]) => (
+      new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
+    )).length;
+    const outputDirectory = join(fixture.directory, 'offline-recleaned');
+    const runCommand = commandFixture();
+
+    const result = recleanXaiCanonicalBundle({
+      confirmation: XAI_CANONICAL_BUNDLE_RECLEAN_CONFIRMATION,
+      bundleDirectory: generated.outputDirectory,
+      outputDirectory,
+      reviewedDescriptorSha256: legacy.descriptor.descriptorSha256,
+      runCommand,
+    });
+
+    expect(provider.fetchImpl.mock.calls).toHaveLength(providerCallsBeforeReclean);
+    expect(provider.fetchImpl.mock.calls.filter(([url, init]) => (
+      new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
+    ))).toHaveLength(paidPostsBeforeReclean);
+    expect(result.descriptor.descriptorSha256).not.toBe(legacy.descriptor.descriptorSha256);
+    expect(result.descriptor.cleanup).toEqual(XAI_CANONICAL_BUNDLE_CLEANUP);
+    expect(result.descriptor.sources.crouch.raw.contentSha256)
+      .toBe(legacy.descriptor.sources.crouch.raw.contentSha256);
+    expect(result.descriptor.sources.crouch.raw.providerRequestId)
+      .toBe(result.descriptor.sources.crouch.providerRequestId);
+    expect(result.descriptor.sources.crouch.clean.contentSha256)
+      .not.toBe(legacy.descriptor.sources.crouch.clean.contentSha256);
+    expect(result.state.slots.crouch).toMatchObject({
+      cleanupFfmpegVersion: XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion,
+      cleanupFilter: XAI_CANONICAL_BUNDLE_CLEANUP.filter,
+    });
+    expect(readFileSync(join(outputDirectory, 'audit/crouch/provider_request.json')))
+      .toEqual(readFileSync(join(generated.outputDirectory, 'audit/crouch/provider_request.json')));
+    expect(runCommand.mock.calls.some(([, args]) => (
+      args.includes('-filter_complex') && args.includes(XAI_CANONICAL_BUNDLE_CLEANUP.filter)
+    ))).toBe(true);
+    expect(parseXaiCanonicalRecleanCliArgs([
+      '--execute',
+      `--confirm=${XAI_CANONICAL_BUNDLE_RECLEAN_CONFIRMATION}`,
+      `--bundle-dir=${generated.outputDirectory}`,
+      `--output-dir=${join(fixture.directory, 'parsed-output')}`,
+      `--reviewed-descriptor-sha256=${legacy.descriptor.descriptorSha256}`,
+    ])).toEqual({
+      confirmation: XAI_CANONICAL_BUNDLE_RECLEAN_CONFIRMATION,
+      bundleDirectory: generated.outputDirectory,
+      outputDirectory: join(fixture.directory, 'parsed-output'),
+      reviewedDescriptorSha256: legacy.descriptor.descriptorSha256,
+    });
+  });
+
+  it('rejects tampered offline audit bytes before invoking the cleanup toolchain', async () => {
+    const fixture = makeFixture();
+    const provider = providerFixture();
+    const generated = await runXaiCanonicalBundle(singleSourceRunOptions(fixture, provider));
+    const legacy = rewriteCompletedBundleAsLegacyCleanup(generated.outputDirectory);
+    writeFileSync(join(generated.outputDirectory, 'audit/crouch/provider_response.json'), '{"tampered":true}');
+    const runCommand = commandFixture();
+    expect(() => recleanXaiCanonicalBundle({
+      confirmation: XAI_CANONICAL_BUNDLE_RECLEAN_CONFIRMATION,
+      bundleDirectory: generated.outputDirectory,
+      outputDirectory: join(fixture.directory, 'must-not-exist'),
+      reviewedDescriptorSha256: legacy.descriptor.descriptorSha256,
+      runCommand,
+    })).toThrow(/audit.*tampered/i);
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
   it('serializes concurrent invocations before state, output, or provider mutation', async () => {
     const fixture = makeFixture();
     const provider = providerFixture();
@@ -1120,12 +1291,12 @@ describe('resumable exactly-once XAI canonical bundle', () => {
       if (args[0] === '-version') {
         return { stdout: `ffmpeg version ${XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion} Copyright\n`, stderr: '' };
       }
-      if (!failedCleanup && !args.includes('-filter_complex')) {
+      if (!failedCleanup && args.includes('[out]')) {
         failedCleanup = true;
         throw new Error('simulated host cleanup crash');
       }
       const outputPath = args.at(-1);
-      const contact = args.includes('-filter_complex');
+      const contact = args.includes('[review]');
       writeFileSync(outputPath, png(contact ? 'contact-sheet' : 'clean-source', contact ? 1152 : 128, contact ? 1024 : 192));
       return { stdout: '', stderr: '' };
     });
