@@ -101,20 +101,16 @@ function updateManifest({ name, shortName, description }) {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
-function splitSocialCardTitle(name) {
-  const words = name.toUpperCase().split(/\s+/).filter(Boolean);
-  if (words.length <= 1) return [words[0] ?? name.toUpperCase(), ''];
-  const mid = Math.ceil(words.length / 2);
-  return [words.slice(0, mid).join(' '), words.slice(mid).join(' ')];
-}
-
 function updateSocialSvg({ name, description }) {
   let text = readFileSync(join(root, 'public/assets/social-card.svg'), 'utf8');
-  const [lineOne, lineTwo] = splitSocialCardTitle(name);
   text = replaceRequired(text, /<title id="title">[^<]+<\/title>/, `<title id="title">${name} social card</title>`, 'social SVG title');
   text = replaceRequired(text, /<desc id="desc">[^<]+<\/desc>/, `<desc id="desc">${description}</desc>`, 'social SVG desc');
-  text = replaceRequired(text, /<text x="96" y="256"[^>]*>[^<]*<\/text>/, `<text x="96" y="256" fill="#f4f0dd" font-family="Impact, Arial Black, sans-serif" font-size="104">${lineOne}</text>`, 'social SVG title line one');
-  text = replaceRequired(text, /<text x="94" y="362"[^>]*>[^<]*<\/text>/, `<text x="94" y="362" fill="#ffe878" font-family="Impact, Arial Black, sans-serif" font-size="126">${lineTwo || 'FIGHT'}</text>`, 'social SVG title line two');
+  text = replaceRequired(
+    text,
+    /(<text id="social-card-brand"[^>]*>)[^<]*(<\/text>)/,
+    `$1${name.toUpperCase()}$2`,
+    'social SVG brand name',
+  );
   return text;
 }
 
@@ -122,7 +118,12 @@ function updateIconSvg({ name, shortName }) {
   let text = readFileSync(join(root, 'public/assets/app-icon.svg'), 'utf8');
   text = replaceRequired(text, /<title id="title">[^<]+<\/title>/, `<title id="title">${name} app icon</title>`, 'icon SVG title');
   text = replaceRequired(text, /<desc id="desc">[^<]+<\/desc>/, `<desc id="desc">Arcade badge with the letters ${shortName}.</desc>`, 'icon SVG desc');
-  text = replaceRequired(text, /<text x="256" y="282"[^>]*>[^<]*<\/text>/, `<text x="256" y="282" text-anchor="middle" dominant-baseline="middle" fill="#f4f0dd" font-family="Impact, Arial Black, sans-serif" font-size="132">${shortName}</text>`, 'icon SVG initials');
+  text = replaceRequired(
+    text,
+    /(<text x="256" y="286"[^>]*>)[^<]*(<\/text>)/,
+    `$1${shortName}$2`,
+    'icon SVG initials',
+  );
   return text;
 }
 
@@ -153,7 +154,7 @@ function main() {
     2,
   );
   const origin = normalizeOrigin(argValue('--origin') || envValue(env, 'ASF_FRONTEND_URL') || envValue(env, 'ASF_FRONTEND_ORIGIN'));
-  const socialCardPath = argValue('--social-card') || envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card.png';
+  const socialCardPath = argValue('--social-card') || envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v2.png';
   const description = argValue('--description') || envValue(env, 'ASF_PUBLIC_APP_DESCRIPTION') || `Turn a photo into a playable arcade character in ${name}.`;
 
   const updates = {

@@ -3061,8 +3061,9 @@ function assertLaunchMetadataIsWired() {
     'public/assets/app-icon-192.png',
     'public/assets/app-icon-512.png',
     'public/assets/app-maskable-512.png',
-    'public/assets/social-card.png',
+    'public/assets/social-card-v2.png',
     'public/assets/social-card.svg',
+    'public/assets/social-card-visual.png',
     'public/robots.txt',
     'public/sitemap.xml',
     'scripts/frontend-security-headers.mjs',
@@ -3192,7 +3193,8 @@ function readPngSize(relPath) {
 
 function assertLaunchRasterAssetsAreFresh() {
   const assets = [
-    ['public/assets/social-card.svg', 'public/assets/social-card.png', 1200, 630],
+    ['public/assets/social-card.svg', 'public/assets/social-card-v2.png', 1200, 630],
+    ['public/assets/social-card-visual.png', 'public/assets/social-card-v2.png', 1200, 630],
     ['public/assets/app-icon.svg', 'public/assets/app-icon-192.png', 192, 192],
     ['public/assets/app-icon.svg', 'public/assets/app-icon-512.png', 512, 512],
     ['public/assets/app-icon.svg', 'public/assets/app-maskable-512.png', 512, 512],

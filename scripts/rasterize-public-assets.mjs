@@ -11,7 +11,8 @@ const assets = [
   {
     label: 'social card',
     input: 'public/assets/social-card.svg',
-    output: 'public/assets/social-card.png',
+    background: 'public/assets/social-card-visual.png',
+    output: 'public/assets/social-card-v2.png',
     size: '1200x630!',
     width: 1200,
     height: 630,
@@ -66,6 +67,15 @@ function assertAssetFresh(asset) {
   if (raster.mtimeMs + 1000 < source.mtimeMs) {
     throw new Error(`${asset.output} is older than ${asset.input}. Run npm run brand:rasterize.`);
   }
+  if (asset.background) {
+    if (!existsSync(abs(asset.background))) {
+      throw new Error(`${asset.background} is missing.`);
+    }
+    const background = statSync(abs(asset.background));
+    if (raster.mtimeMs + 1000 < background.mtimeMs) {
+      throw new Error(`${asset.output} is older than ${asset.background}. Run npm run brand:rasterize.`);
+    }
+  }
   const size = readPngSize(abs(asset.output));
   if (size.width !== asset.width || size.height !== asset.height) {
     throw new Error(`${asset.output} is ${size.width}x${size.height}; expected ${asset.width}x${asset.height}.`);
@@ -91,14 +101,40 @@ function readPngSize(path) {
 }
 
 function rasterize(command, asset) {
-  const result = spawnSync(command, [
-    '-background',
-    'none',
-    abs(asset.input),
-    '-resize',
-    asset.size,
-    `PNG32:${abs(asset.output)}`,
-  ], {
+  const commandArgs = asset.background
+    ? [
+        abs(asset.background),
+        '-resize',
+        `${asset.width}x${asset.height}^`,
+        '-gravity',
+        'center',
+        '-extent',
+        `${asset.width}x${asset.height}`,
+        '(',
+        '-background',
+        'none',
+        '-gravity',
+        'northwest',
+        abs(asset.input),
+        ')',
+        '-gravity',
+        'northwest',
+        '-compose',
+        'over',
+        '-composite',
+        '-strip',
+        `PNG32:${abs(asset.output)}`,
+      ]
+    : [
+        '-background',
+        'none',
+        abs(asset.input),
+        '-resize',
+        asset.size,
+        `PNG32:${abs(asset.output)}`,
+      ];
+  const result = spawnSync(command, commandArgs, {
+    cwd: dirname(abs(asset.input)),
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
