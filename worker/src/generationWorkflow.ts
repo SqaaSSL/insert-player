@@ -34,6 +34,13 @@ import {
 } from './videoSpriteWorkflow';
 import type { VideoSpriteAction } from '../../src/services/VideoSpriteCompileContract';
 import { videoAction } from './videoSpriteGeneration';
+import {
+  importReviewedCanonicalSourceCheckpoint,
+  parseSealedReviewedCanonicalSources,
+  ReviewedCanonicalSourceError,
+  type ReviewedCanonicalSourceName,
+  type SealedReviewedCanonicalSources,
+} from './reviewedCanonicalSources';
 
 interface FighterGenerationParams {
   jobId: string;
@@ -199,21 +206,52 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
   ): Promise<void> {
     let sources: GenerationSources;
     if (job.operation === 'fighter_generation') {
-      if (!artifactRun.original_blob_key) throw new Error('Durable original source photo is missing');
-      const side = await step.do('video: resolve canonical side source', STEP_CONFIG, () => this.generateSourcePair(job, {
-        operation: 'repose', cleanKind: 'side', rawKind: 'side_raw',
-        inputKey: artifactRun.original_blob_key!, generationPrompt, progressCurrent: 1,
-      }));
-      const upright = await step.do('video: resolve canonical upright source', STEP_CONFIG, () => this.generateSourcePair(job, {
-        operation: 'upright', cleanKind: 'upright', rawKind: 'upright_raw',
-        inputKey: side.rawKey, generationPrompt, progressCurrent: 2,
-      }));
-      const crouch = await step.do('video: resolve canonical crouch source', STEP_CONFIG, () => this.generateSourcePair(job, {
-        operation: 'crouch', cleanKind: 'crouch', rawKind: 'crouch_raw',
-        inputKey: upright.rawKey, normalizationSourceKey: upright.cleanKey,
-        generationPrompt, progressCurrent: 3,
-      }));
-      sources = { side, upright, crouch, crouchNormalizationReference: crouch.normalizationReference };
+      let reviewedSources: SealedReviewedCanonicalSources | null;
+      try {
+        reviewedSources = parseSealedReviewedCanonicalSources(artifactRun.source_manifest_json);
+      } catch (error) {
+        if (error instanceof ReviewedCanonicalSourceError) {
+          throw new NonRetryableError(error.message);
+        }
+        throw error;
+      }
+      if (reviewedSources) {
+        if (reviewedSources.fighterId !== job.fighter_id || reviewedSources.ownerUserId !== job.user_id) {
+          throw new NonRetryableError('Sealed reviewed canonical sources do not match this Video job');
+        }
+        const side = await step.do(
+          'video: import reviewed canonical side source',
+          STEP_CONFIG,
+          () => this.importReviewedSourcePair(job, reviewedSources!, 'side', 1),
+        );
+        const upright = await step.do(
+          'video: import reviewed canonical upright source',
+          STEP_CONFIG,
+          () => this.importReviewedSourcePair(job, reviewedSources!, 'upright', 2),
+        );
+        const crouch = await step.do(
+          'video: import reviewed canonical crouch source',
+          STEP_CONFIG,
+          () => this.importReviewedSourcePair(job, reviewedSources!, 'crouch', 3),
+        );
+        sources = { side, upright, crouch };
+      } else {
+        if (!artifactRun.original_blob_key) throw new Error('Durable original source photo is missing');
+        const side = await step.do('video: resolve canonical side source', STEP_CONFIG, () => this.generateSourcePair(job, {
+          operation: 'repose', cleanKind: 'side', rawKind: 'side_raw',
+          inputKey: artifactRun.original_blob_key!, generationPrompt, progressCurrent: 1,
+        }));
+        const upright = await step.do('video: resolve canonical upright source', STEP_CONFIG, () => this.generateSourcePair(job, {
+          operation: 'upright', cleanKind: 'upright', rawKind: 'upright_raw',
+          inputKey: side.rawKey, generationPrompt, progressCurrent: 2,
+        }));
+        const crouch = await step.do('video: resolve canonical crouch source', STEP_CONFIG, () => this.generateSourcePair(job, {
+          operation: 'crouch', cleanKind: 'crouch', rawKind: 'crouch_raw',
+          inputKey: upright.rawKey, normalizationSourceKey: upright.cleanKey,
+          generationPrompt, progressCurrent: 3,
+        }));
+        sources = { side, upright, crouch, crouchNormalizationReference: crouch.normalizationReference };
+      }
     } else {
       throw new NonRetryableError('The review-gated video flow supports full fighter generation only');
     }
@@ -228,6 +266,35 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       bytes: canonicalBytes,
       sha256: await hashString(canonicalBytes),
     }, generationPrompt);
+  }
+
+  private async importReviewedSourcePair(
+    job: GenerationJob,
+    sealed: SealedReviewedCanonicalSources,
+    sourceName: ReviewedCanonicalSourceName,
+    progressCurrent: number,
+  ): Promise<SourcePair> {
+    const stage = `source:${sourceName}`;
+    await this.recordStageStarted(job, stage);
+    try {
+      const pair = await importReviewedCanonicalSourceCheckpoint(
+        this.env,
+        job,
+        sealed,
+        sourceName,
+        progressCurrent,
+      );
+      await this.recordProgress(
+        job,
+        stage,
+        progressCurrent,
+        `${sourceName} source imported from the sealed reviewed canonical manifest`,
+      );
+      return pair;
+    } catch (error) {
+      if (error instanceof ReviewedCanonicalSourceError) throw new NonRetryableError(error.message);
+      throw error;
+    }
   }
 
   private async callProcessor<T>(

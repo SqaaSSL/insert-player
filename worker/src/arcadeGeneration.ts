@@ -18,6 +18,14 @@ import {
 import { geminiEstimatedCostCents } from './geminiTransport';
 import { parseRequestedGenerationCreationFlow } from './generationCreationFlow';
 import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+import {
+  assertReviewedCanonicalRequestMatchesSealed,
+  parseReviewedCanonicalSourceRequest,
+  parseSealedReviewedCanonicalSources,
+  ReviewedCanonicalSourceError,
+  validateReviewedCanonicalSourcesCurrent,
+  type SealedReviewedCanonicalSources,
+} from './reviewedCanonicalSources';
 
 const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
 const AUTHORIZATION_TTL_HOURS = 12;
@@ -73,6 +81,7 @@ interface ActiveArcadeJobRow {
   stage: string;
   progress_current: number;
   progress_total: number;
+  artifact_run_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -85,6 +94,7 @@ interface ReusableArcadeAuthorizationRow {
 interface ResumableArcadeRunRow {
   job_id: string;
   run_id: string;
+  source_manifest_json: string | null;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -329,6 +339,8 @@ export async function startAdminArcadeGeneration(
     legal?: unknown;
     restart?: unknown;
     creationFlow?: unknown;
+    canonicalSourceMode?: unknown;
+    canonicalSourceHashes?: unknown;
   }>(
     request,
     MAX_ADMIN_GENERATION_BODY_BYTES,
@@ -339,6 +351,19 @@ export async function startAdminArcadeGeneration(
   const restart = body.restart === true;
   const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
   if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
+  let reviewedCanonicalRequest;
+  try {
+    reviewedCanonicalRequest = parseReviewedCanonicalSourceRequest(
+      body.canonicalSourceMode,
+      body.canonicalSourceHashes,
+    );
+  } catch (error) {
+    if (error instanceof ReviewedCanonicalSourceError) return json({ error: error.message }, error.status);
+    throw error;
+  }
+  if (reviewedCanonicalRequest && creationFlow !== 'video') {
+    return json({ error: 'Reviewed canonical sources are supported only by the Video creation flow' }, 400);
+  }
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
     return json({
@@ -364,6 +389,7 @@ export async function startAdminArcadeGeneration(
 
   const active = await env.DB.prepare(`
     SELECT id, fighter_id, creation_flow, status, stage, progress_current, progress_total,
+      artifact_run_id,
       created_at, updated_at
     FROM generation_jobs
     WHERE fighter_id = ? AND status IN ('queued', 'running')
@@ -403,6 +429,28 @@ export async function startAdminArcadeGeneration(
         jobId: active.id,
       }, 409);
     }
+    if (reviewedCanonicalRequest) {
+      const activeRun = active.artifact_run_id
+        ? await env.DB.prepare(`
+            SELECT source_manifest_json
+            FROM generation_artifact_runs
+            WHERE id = ? AND fighter_id = ? AND user_id = ?
+            LIMIT 1
+          `).bind(active.artifact_run_id, fighterId, auth.userId)
+          .first<{ source_manifest_json: string | null }>()
+        : null;
+      try {
+        assertReviewedCanonicalRequestMatchesSealed(
+          reviewedCanonicalRequest,
+          parseSealedReviewedCanonicalSources(activeRun?.source_manifest_json ?? null),
+          fighterId,
+          auth.userId,
+        );
+      } catch (error) {
+        if (error instanceof ReviewedCanonicalSourceError) return json({ error: error.message }, error.status);
+        throw error;
+      }
+    }
     return json({
       job: {
         id: active.id,
@@ -424,7 +472,7 @@ export async function startAdminArcadeGeneration(
   let partial: ResumableArcadeRunRow | null = null;
   if (!restart && creationFlow === 'video') {
     partial = await env.DB.prepare(`
-      SELECT gj.id AS job_id, gj.artifact_run_id AS run_id
+      SELECT gj.id AS job_id, gj.artifact_run_id AS run_id, run.source_manifest_json
       FROM generation_jobs gj
       JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
       LEFT JOIN video_sprite_candidates candidate
@@ -470,7 +518,7 @@ export async function startAdminArcadeGeneration(
       .first<ResumableArcadeRunRow>();
   } else if (!restart) {
     partial = await env.DB.prepare(`
-      SELECT gj.id AS job_id, gj.artifact_run_id AS run_id
+      SELECT gj.id AS job_id, gj.artifact_run_id AS run_id, run.source_manifest_json
       FROM generation_jobs gj
       JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
       WHERE gj.fighter_id = ? AND gj.user_id = ?
@@ -492,6 +540,31 @@ export async function startAdminArcadeGeneration(
       ORDER BY gj.created_at DESC
       LIMIT 1
     `).bind(fighterId, auth.userId).first<ResumableArcadeRunRow>();
+  }
+  let reviewedCanonicalSources: SealedReviewedCanonicalSources | undefined;
+  try {
+    if (partial) {
+      const sealed = parseSealedReviewedCanonicalSources(partial.source_manifest_json);
+      if (reviewedCanonicalRequest) {
+        assertReviewedCanonicalRequestMatchesSealed(
+          reviewedCanonicalRequest,
+          sealed,
+          fighterId,
+          auth.userId,
+        );
+      }
+      reviewedCanonicalSources = sealed ?? undefined;
+    } else if (reviewedCanonicalRequest) {
+      reviewedCanonicalSources = await validateReviewedCanonicalSourcesCurrent(
+        env,
+        fighterId,
+        auth.userId,
+        reviewedCanonicalRequest,
+      );
+    }
+  } catch (error) {
+    if (error instanceof ReviewedCanonicalSourceError) return json({ error: error.message }, error.status);
+    throw error;
   }
   if (partial) {
     const reusableContinuation = await env.DB.prepare(`
@@ -548,7 +621,7 @@ export async function startAdminArcadeGeneration(
       continuation.providerSessionId,
       undefined,
       creationFlow,
-    ), env, auth);
+    ), env, auth, { reviewedCanonicalSources });
   }
 
   const reusable = restart ? null : await env.DB.prepare(`
@@ -587,7 +660,7 @@ export async function startAdminArcadeGeneration(
       reusable.provider_session_id,
       undefined,
       creationFlow,
-    ), env, auth);
+    ), env, auth, { reviewedCanonicalSources });
   }
 
   const authorization = await createAdminGenerationAuthorization(env, auth, fighterId, {
@@ -605,7 +678,7 @@ export async function startAdminArcadeGeneration(
     authorization.providerSessionId,
     undefined,
     creationFlow,
-  ), env, auth);
+  ), env, auth, { reviewedCanonicalSources });
 }
 
 export async function startAdminArcadeAnimationGeneration(

@@ -13,6 +13,8 @@ import {
 } from './providerSessions';
 import type { AuthContext, Env } from './types';
 import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
+import { hashString } from './auth';
+import { REVIEWED_CANONICAL_SOURCE_MODE } from './reviewedCanonicalSources';
 
 vi.mock('./generationJobs', () => ({
   createGenerationJob: vi.fn(),
@@ -65,6 +67,14 @@ const SCHEMA = `
   CREATE TABLE arcade_fighters (
     fighter_id TEXT PRIMARY KEY,
     status TEXT NOT NULL
+  );
+  CREATE TABLE source_versions (
+    id TEXT PRIMARY KEY,
+    fighter_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    blob_key TEXT NOT NULL,
+    content_hash TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE sprites (
     id TEXT PRIMARY KEY,
@@ -126,6 +136,7 @@ const SCHEMA = `
     operation TEXT NOT NULL,
     target_kind TEXT,
     target_name TEXT,
+    source_manifest_json TEXT,
     status TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -182,6 +193,7 @@ const adminAuth = {
 function generationRequest(
   restart = false,
   creationFlow?: 'original' | 'video',
+  reviewed?: { canonicalSourceMode?: unknown; canonicalSourceHashes?: unknown },
 ): Request {
   return new Request(`https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/generate`, {
     method: 'POST',
@@ -190,7 +202,47 @@ function generationRequest(
       legal: LEGAL,
       ...(restart ? { restart: true } : {}),
       ...(creationFlow ? { creationFlow } : {}),
+      ...reviewed,
     }),
+  });
+}
+
+async function stageReviewedCanonicalSources(db: D1Database, bucket: R2Bucket) {
+  const definitions = [
+    ['side', 'side_view_blob_key', 1],
+    ['side_raw', 'side_view_raw_blob_key', 2],
+    ['upright', 'upright_view_blob_key', 3],
+    ['upright_raw', 'upright_view_raw_blob_key', 4],
+    ['crouch', 'crouch_view_blob_key', 5],
+    ['crouch_raw', 'crouch_view_raw_blob_key', 6],
+  ] as const;
+  const rows = [];
+  for (const [kind, column, index] of definitions) {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, index]);
+    const hash = await hashString(bytes.buffer);
+    const versionId = String(index).repeat(32);
+    const blobKey = `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/reviewed-${kind}.png`;
+    await bucket.put(blobKey, bytes, { customMetadata: { contentHash: hash } });
+    await db.prepare(`
+      INSERT INTO source_versions (id, fighter_id, kind, blob_key, content_hash)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(versionId, FIGHTER_ID, kind, blobKey, hash).run();
+    await db.prepare(`UPDATE fighters SET ${column} = ? WHERE id = ?`)
+      .bind(blobKey, FIGHTER_ID).run();
+    rows.push({ kind, column, versionId, blobKey, hash, bytes });
+  }
+  const hashes = {
+    side: { processedSha256: rows[0].hash, rawSha256: rows[1].hash },
+    upright: { processedSha256: rows[2].hash, rawSha256: rows[3].hash },
+    crouch: { processedSha256: rows[4].hash, rawSha256: rows[5].hash },
+  };
+  return { rows, hashes };
+}
+
+function reviewedGenerationRequest(hashes: unknown): Request {
+  return generationRequest(false, 'video', {
+    canonicalSourceMode: REVIEWED_CANONICAL_SOURCE_MODE,
+    canonicalSourceHashes: hashes,
   });
 }
 
@@ -459,6 +511,121 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
       expect(await db.prepare(`
         SELECT COALESCE(SUM(delta), 0) AS delta FROM credit_ledger
       `).first()).toEqual({ delta: 0 });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('accepts only the exact six current reviewed source identities before authorization', async () => {
+    const { mf, db, bucket, env } = await bindings();
+    try {
+      const staged = await stageReviewedCanonicalSources(db, bucket);
+      const response = await startAdminArcadeGeneration(
+        reviewedGenerationRequest(staged.hashes),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+      );
+
+      expect(response.status).toBe(201);
+      expect(createProviderSession).toHaveBeenCalledOnce();
+      expect(createGenerationJob).toHaveBeenCalledOnce();
+      const options = vi.mocked(createGenerationJob).mock.calls[0][3];
+      expect(options?.reviewedCanonicalSources).toEqual({
+        schemaVersion: 1,
+        mode: REVIEWED_CANONICAL_SOURCE_MODE,
+        fighterId: FIGHTER_ID,
+        ownerUserId: USER_ID,
+        sources: {
+          side: {
+            processed: {
+              versionId: staged.rows[0].versionId,
+              blobKey: staged.rows[0].blobKey,
+              contentSha256: staged.rows[0].hash,
+            },
+            raw: {
+              versionId: staged.rows[1].versionId,
+              blobKey: staged.rows[1].blobKey,
+              contentSha256: staged.rows[1].hash,
+            },
+          },
+          upright: {
+            processed: {
+              versionId: staged.rows[2].versionId,
+              blobKey: staged.rows[2].blobKey,
+              contentSha256: staged.rows[2].hash,
+            },
+            raw: {
+              versionId: staged.rows[3].versionId,
+              blobKey: staged.rows[3].blobKey,
+              contentSha256: staged.rows[3].hash,
+            },
+          },
+          crouch: {
+            processed: {
+              versionId: staged.rows[4].versionId,
+              blobKey: staged.rows[4].blobKey,
+              contentSha256: staged.rows[4].hash,
+            },
+            raw: {
+              versionId: staged.rows[5].versionId,
+              blobKey: staged.rows[5].blobKey,
+              contentSha256: staged.rows[5].hash,
+            },
+          },
+        },
+      });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it.each([
+    'missing hashes',
+    'tampered requested hash',
+    'cross-fighter version',
+    'stale current key',
+    'database hash mismatch',
+    'R2 byte mismatch',
+    'R2 object missing',
+  ])('rejects reviewed sources fail-closed before job or charge: %s', async (failure) => {
+    const { mf, db, bucket, env } = await bindings();
+    try {
+      const staged = await stageReviewedCanonicalSources(db, bucket);
+      let request: Request;
+      if (failure === 'missing hashes') {
+        request = generationRequest(false, 'video', {
+          canonicalSourceMode: REVIEWED_CANONICAL_SOURCE_MODE,
+        });
+      } else {
+        const hashes = structuredClone(staged.hashes);
+        if (failure === 'tampered requested hash') hashes.side.processedSha256 = 'f'.repeat(64);
+        if (failure === 'cross-fighter version') {
+          await db.prepare("UPDATE source_versions SET fighter_id = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' WHERE kind = 'side'").run();
+        }
+        if (failure === 'stale current key') {
+          await db.prepare("UPDATE fighters SET side_view_blob_key = 'users/stale/current.png' WHERE id = ?")
+            .bind(FIGHTER_ID).run();
+        }
+        if (failure === 'database hash mismatch') {
+          await db.prepare("UPDATE source_versions SET content_hash = ? WHERE kind = 'side'")
+            .bind('e'.repeat(64)).run();
+        }
+        if (failure === 'R2 byte mismatch') {
+          await bucket.put(staged.rows[0].blobKey, new Uint8Array([9, 9, 9]));
+        }
+        if (failure === 'R2 object missing') await bucket.delete(staged.rows[0].blobKey);
+        request = reviewedGenerationRequest(hashes);
+      }
+
+      const response = await startAdminArcadeGeneration(request, env, adminAuth, FIGHTER_ID);
+      expect([400, 409]).toContain(response.status);
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(createGenerationJob).not.toHaveBeenCalled();
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first())
+        .toEqual({ count: 0 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM credit_ledger').first())
+        .toEqual({ count: 0 });
     } finally {
       await mf.dispose();
     }

@@ -11,9 +11,14 @@ on:
         description: Enter START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION
         required: true
         type: string
+      reviewed_manifest_run_id:
+        description: Optional completed workflow run containing the separately reviewed canonical manifest artifact
+        required: false
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: production-arcade-video-${{ inputs.slug }}
@@ -28,6 +33,7 @@ jobs:
     env:
       REQUESTED_SLUG: ${{ inputs.slug }}
       REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      REVIEWED_MANIFEST_RUN_ID: ${{ inputs.reviewed_manifest_run_id }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
@@ -59,6 +65,12 @@ jobs:
             printf '::error::ASF_ARCADE_ADMIN_CLERK_USER_ID is unavailable in the production environment.\n'
             exit 1
           }
+          if [[ -n "$REVIEWED_MANIFEST_RUN_ID" ]]; then
+            [[ "$REVIEWED_MANIFEST_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+              printf '::error::reviewed_manifest_run_id must be a numeric GitHub Actions run id.\n'
+              exit 1
+            }
+          fi
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -102,11 +114,36 @@ jobs:
       - name: Restore and verify the private licensed source
         run: npm run arcade:sources -- --target=production --slug="$REQUESTED_SLUG"
 
+      - name: Download the separately reviewed canonical manifest
+        if: ${{ inputs.reviewed_manifest_run_id != '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          destination="$RUNNER_TEMP/reviewed-canonical"
+          mkdir -p "$destination"
+          gh run download "$REVIEWED_MANIFEST_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-reviewed-canonical-manifest-$REQUESTED_SLUG" \
+            --dir "$destination"
+          manifest="$destination/reviewed-canonical-manifest.json"
+          [[ -f "$manifest" ]] || {
+            printf '::error::The reviewed artifact did not contain reviewed-canonical-manifest.json.\n'
+            exit 1
+          }
+          printf 'REVIEWED_CANONICAL_MANIFEST_ARG=--reviewed-canonical-manifest=%s\n' "$manifest" >> "$GITHUB_ENV"
+
       - name: Start or reuse exactly one review-gated Video action
-        run: >-
-          npm run arcade:seed --
-          --target=production
-          --slug="$REQUESTED_SLUG"
-          --video-step
-          --confirm-production
-          --confirm-video-step="$REQUESTED_CONFIRMATION"
+        shell: bash
+        run: |
+          args=(
+            --target=production
+            --slug="$REQUESTED_SLUG"
+            --video-step
+            --confirm-production
+            --confirm-video-step="$REQUESTED_CONFIRMATION"
+          )
+          if [[ -n "${REVIEWED_CANONICAL_MANIFEST_ARG:-}" ]]; then
+            args+=("$REVIEWED_CANONICAL_MANIFEST_ARG")
+          fi
+          npm run arcade:seed -- "${args[@]}"

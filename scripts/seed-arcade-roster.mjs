@@ -21,11 +21,14 @@ const animationArg = rawArgs.find((arg) => arg.startsWith('--animation='));
 const sourceArg = rawArgs.find((arg) => arg.startsWith('--source='));
 const activationConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-activation='));
 const videoStepConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-video-step='));
+const reviewedCanonicalManifestArg = rawArgs.find((arg) => arg.startsWith('--reviewed-canonical-manifest='));
 const target = targetArg?.slice('--target='.length) ?? 'production';
 const animationName = animationArg?.slice('--animation='.length) ?? '';
 const sourceName = sourceArg?.slice('--source='.length) ?? '';
 const activationConfirmation = activationConfirmationArg?.slice('--confirm-activation='.length) ?? '';
 const videoStepConfirmation = videoStepConfirmationArg?.slice('--confirm-video-step='.length) ?? '';
+const reviewedCanonicalManifestPath = reviewedCanonicalManifestArg
+  ?.slice('--reviewed-canonical-manifest='.length) ?? '';
 const dryRun = args.has('--dry-run');
 const activate = args.has('--activate');
 const activateReviewed = args.has('--activate-reviewed');
@@ -78,6 +81,7 @@ const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'];
 const CANONICAL_SOURCES = new Set(CANONICAL_SOURCE_NAMES);
 export const REVIEWED_ARCADE_ACTIVATION_CONFIRMATION = 'ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION';
 export const REVIEW_GATED_VIDEO_STEP_CONFIRMATION = 'START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION';
+export const REVIEWED_CANONICAL_SOURCE_MODE = 'reviewed-current-v1';
 const LICENSED_REFERENCE_PROMPT = /\blicensed reference photo\b|\bperson in (?:this|the) licensed photo\b/i;
 const IDENTITY_ERASING_PROMPT = /\bwritten description only\b|\b(?:new|own) clearly synthetic face\b/i;
 const APPROVED_ARCADE_PROVIDER_CONTRACT = {
@@ -320,6 +324,51 @@ export function assertReviewGatedVideoStepConfirmation(value) {
   }
 }
 
+function hasExactKeys(value, keys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const actual = Object.keys(value).sort();
+  const expected = [...keys].sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+export function assertReviewedCanonicalManifest(value, expected = {}) {
+  if (!hasExactKeys(value, [
+    'schemaVersion',
+    'canonicalSourceMode',
+    'slug',
+    'fighterId',
+    'photoHash',
+    'canonicalSourceHashes',
+  ])) {
+    throw new Error('Reviewed canonical manifest must use the exact reviewed-current-v1 schema.');
+  }
+  if (
+    value.schemaVersion !== 1 || value.canonicalSourceMode !== REVIEWED_CANONICAL_SOURCE_MODE ||
+    typeof value.slug !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.slug) ||
+    typeof value.fighterId !== 'string' || !/^[a-f0-9]{32}$/.test(value.fighterId) ||
+    typeof value.photoHash !== 'string' || !/^[a-f0-9]{64}$/.test(value.photoHash) ||
+    !hasExactKeys(value.canonicalSourceHashes, CANONICAL_SOURCE_NAMES)
+  ) {
+    throw new Error('Reviewed canonical manifest identity or source hash schema is invalid.');
+  }
+  for (const sourceName of CANONICAL_SOURCE_NAMES) {
+    const pair = value.canonicalSourceHashes[sourceName];
+    if (
+      !hasExactKeys(pair, ['processedSha256', 'rawSha256']) ||
+      typeof pair.processedSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(pair.processedSha256) ||
+      typeof pair.rawSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(pair.rawSha256)
+    ) {
+      throw new Error(`Reviewed canonical manifest ${sourceName} hashes are invalid.`);
+    }
+  }
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    if (expectedValue !== undefined && value[key] !== expectedValue) {
+      throw new Error(`Reviewed canonical manifest ${key} does not match the selected fighter.`);
+    }
+  }
+  return value;
+}
+
 function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
   if (
@@ -360,6 +409,9 @@ function selectFighters(manifest) {
     && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--video-step requires one --slug and cannot be combined with generation, resume, activation, or dry-run.');
+  }
+  if (reviewedCanonicalManifestPath && !videoStep) {
+    throw new Error('--reviewed-canonical-manifest is supported only with --video-step.');
   }
   if (animationName && !PLAYABLE_ANIMATIONS.has(animationName)) {
     throw new Error(`Unknown playable animation: ${animationName}`);
@@ -879,6 +931,7 @@ export async function runReviewGatedVideoStep({
   pause = sleep,
   pollIntervalMs = POLL_INTERVAL_MS,
   jobTimeoutMs = JOB_TIMEOUT_MS,
+  reviewedCanonicalManifest = null,
 }) {
   const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
   const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
@@ -895,6 +948,13 @@ export async function runReviewGatedVideoStep({
     owned: detail.fighter,
     approvedPhotoHash,
   });
+  if (reviewedCanonicalManifest) {
+    assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
+      slug: fighter.slug,
+      fighterId,
+      photoHash: approvedPhotoHash,
+    });
+  }
   const listed = await requestApi(baseUrl, token, '/api/generation-jobs');
   if (!Array.isArray(listed.jobs)) {
     throw new Error('Generation job listing is unavailable; no Video generation was started.');
@@ -918,6 +978,10 @@ export async function runReviewGatedVideoStep({
         body: JSON.stringify({
           legal: generationLegal(manifest),
           creationFlow: 'video',
+          ...(reviewedCanonicalManifest ? {
+            canonicalSourceMode: reviewedCanonicalManifest.canonicalSourceMode,
+            canonicalSourceHashes: reviewedCanonicalManifest.canonicalSourceHashes,
+          } : {}),
         }),
       },
     );
@@ -1484,6 +1548,15 @@ async function main() {
   const reviewGatedVideoPhotoHash = videoStep
     ? readApprovedSource(manifest, selected[0]).photoHash
     : '';
+  const reviewedCanonicalManifest = reviewedCanonicalManifestPath
+    ? assertReviewedCanonicalManifest(
+        JSON.parse(readFileSync(resolve(reviewedCanonicalManifestPath), 'utf8')),
+        {
+          slug: selected[0].slug,
+          photoHash: reviewGatedVideoPhotoHash,
+        },
+      )
+    : null;
 
   const env = readEnvValues();
   clerkBackendAuthBridgeSecret = envValue(env, 'CLERK_BACKEND_AUTH_BRIDGE_SECRET');
@@ -1522,6 +1595,7 @@ async function main() {
       approvedPhotoHash: reviewedActivationPhotoHash,
       baseUrl,
       token,
+      reviewedCanonicalManifest,
     });
     return;
   }
@@ -1533,6 +1607,7 @@ async function main() {
       approvedPhotoHash: reviewGatedVideoPhotoHash,
       baseUrl,
       token,
+      reviewedCanonicalManifest,
     });
     return;
   }

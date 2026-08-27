@@ -17,6 +17,12 @@ import {
   generationCreationFlowAvailable,
   parseRequestedGenerationCreationFlow,
 } from './generationCreationFlow';
+import {
+  generationSourceManifest,
+  parseSealedReviewedCanonicalSources,
+  ReviewedCanonicalSourceError,
+  type SealedReviewedCanonicalSources,
+} from './reviewedCanonicalSources';
 
 const MAX_JOB_BODY_BYTES = 8 * 1024;
 const JOB_TTL_HOURS = 48;
@@ -68,6 +74,7 @@ interface GenerationJobAuthorizationRow {
   resume_run_target_kind: 'animation' | 'source' | null;
   resume_run_target_name: string | null;
   resume_run_status: string | null;
+  resume_run_source_manifest_json: string | null;
   resume_run_approved_action_count: number | null;
   resume_job_status: string | null;
   resume_job_review_status: string | null;
@@ -342,6 +349,7 @@ export async function createGenerationJob(
   request: Request,
   env: Env,
   auth: AuthContext,
+  options: { reviewedCanonicalSources?: SealedReviewedCanonicalSources } = {},
 ): Promise<Response> {
   const body = await readJsonBody<{
     fighterId?: string;
@@ -456,6 +464,7 @@ export async function createGenerationJob(
       resume_run.target_kind AS resume_run_target_kind,
       resume_run.target_name AS resume_run_target_name,
       resume_run.status AS resume_run_status,
+      resume_run.source_manifest_json AS resume_run_source_manifest_json,
       (SELECT COUNT(*) FROM video_sprite_candidates approved
         WHERE approved.run_id = resume_run.id AND approved.status = 'approved')
         AS resume_run_approved_action_count,
@@ -541,6 +550,55 @@ export async function createGenerationJob(
       400,
       { code: 'video_creation_operation_unsupported' },
     );
+  }
+  const reviewedCanonicalSources = options.reviewedCanonicalSources;
+  if (reviewedCanonicalSources) {
+    const keysMatchAuthorization =
+      authorization.side_view_blob_key === reviewedCanonicalSources.sources.side.processed.blobKey &&
+      authorization.side_view_raw_blob_key === reviewedCanonicalSources.sources.side.raw.blobKey &&
+      authorization.upright_view_blob_key === reviewedCanonicalSources.sources.upright.processed.blobKey &&
+      authorization.upright_view_raw_blob_key === reviewedCanonicalSources.sources.upright.raw.blobKey &&
+      authorization.crouch_view_blob_key === reviewedCanonicalSources.sources.crouch.processed.blobKey &&
+      authorization.crouch_view_raw_blob_key === reviewedCanonicalSources.sources.crouch.raw.blobKey;
+    if (
+      auth.user.plan_tier !== 'admin' || creationFlow !== 'video' || operation !== 'fighter_generation' ||
+      reviewedCanonicalSources.fighterId !== fighterId ||
+      reviewedCanonicalSources.ownerUserId !== auth.userId ||
+      (!authorization.continuation_run_id && !keysMatchAuthorization)
+    ) {
+      return rejectReservedJob(
+        env,
+        auth.userId,
+        purchaseId,
+        fighterId,
+        'Reviewed canonical source authorization does not match this job; the unused reservation was released',
+        403,
+        { code: 'reviewed_canonical_source_authorization_mismatch' },
+      );
+    }
+    if (authorization.continuation_run_id) {
+      try {
+        const sealedRunSources = parseSealedReviewedCanonicalSources(
+          authorization.resume_run_source_manifest_json,
+        );
+        if (!sealedRunSources || JSON.stringify(sealedRunSources) !== JSON.stringify(reviewedCanonicalSources)) {
+          throw new ReviewedCanonicalSourceError(
+            'Reviewed canonical source identities cannot change during a continuation',
+          );
+        }
+      } catch (error) {
+        if (!(error instanceof ReviewedCanonicalSourceError)) throw error;
+        return rejectReservedJob(
+          env,
+          auth.userId,
+          purchaseId,
+          fighterId,
+          `${error.message}; the unused reservation was released`,
+          error.status,
+          { code: 'reviewed_canonical_source_continuation_mismatch' },
+        );
+      }
+    }
   }
   const lockedVideoRun = await env.DB.prepare(`
     SELECT id
@@ -708,14 +766,14 @@ export async function createGenerationJob(
         WHERE run_id = ? AND status = 'approved'
       `).bind(runId).first<{ count: number }>())?.count ?? 0
     : 0;
-  const sourceManifest = JSON.stringify({
+  const sourceManifest = JSON.stringify(generationSourceManifest({
     side: authorization.side_view_blob_key,
     sideRaw: authorization.side_view_raw_blob_key,
     upright: authorization.upright_view_blob_key,
     uprightRaw: authorization.upright_view_raw_blob_key,
     crouch: authorization.crouch_view_blob_key,
     crouchRaw: authorization.crouch_view_raw_blob_key,
-  });
+  }, reviewedCanonicalSources));
   const extendedExpiry = new Date(Date.now() + JOB_TTL_HOURS * 60 * 60 * 1_000).toISOString();
   try {
     await env.DB.batch([

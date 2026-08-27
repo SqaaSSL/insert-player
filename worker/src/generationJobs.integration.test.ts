@@ -4,6 +4,7 @@ import { startAdminArcadeGeneration } from './arcadeGeneration';
 import { createGenerationJob, getGenerationJob } from './generationJobs';
 import { GEMINI_PRO_IMAGE_MODEL, recordProviderDailyQuota } from './providerCapacity';
 import type { AuthContext, Env } from './types';
+import type { SealedReviewedCanonicalSources } from './reviewedCanonicalSources';
 
 const USER_ID = 'user-generation-job';
 const FIGHTER_ID = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -42,6 +43,29 @@ const LEGAL = {
   immediatePerformanceConfirmed: true,
   withdrawalLossAcknowledged: true,
 };
+
+function sealedReviewedSources(): SealedReviewedCanonicalSources {
+  return {
+    schemaVersion: 1,
+    mode: 'reviewed-current-v1',
+    fighterId: FIGHTER_ID,
+    ownerUserId: USER_ID,
+    sources: {
+      side: {
+        processed: { versionId: '1'.repeat(32), blobKey: SOURCE_KEYS.side, contentSha256: '1'.repeat(64) },
+        raw: { versionId: '2'.repeat(32), blobKey: SOURCE_KEYS.sideRaw, contentSha256: '2'.repeat(64) },
+      },
+      upright: {
+        processed: { versionId: '3'.repeat(32), blobKey: SOURCE_KEYS.upright, contentSha256: '3'.repeat(64) },
+        raw: { versionId: '4'.repeat(32), blobKey: SOURCE_KEYS.uprightRaw, contentSha256: '4'.repeat(64) },
+      },
+      crouch: {
+        processed: { versionId: '5'.repeat(32), blobKey: SOURCE_KEYS.crouch, contentSha256: '5'.repeat(64) },
+        raw: { versionId: '6'.repeat(32), blobKey: SOURCE_KEYS.crouchRaw, contentSha256: '6'.repeat(64) },
+      },
+    },
+  };
+}
 
 const SCHEMA = `
   CREATE TABLE users (
@@ -587,6 +611,103 @@ describe('durable generation job creation', () => {
       await mf.dispose();
     }
   }, 15_000);
+
+  it('seals reviewed identities without a migration and preserves the exact manifest on continuation', async () => {
+    const { mf, db, env } = await bindings();
+    const sealed = sealedReviewedSources();
+    const continuationPurchaseId = '77777777777777777777777777777777';
+    const continuationSessionId = '88888888888888888888888888888888';
+    try {
+      await db.batch([
+        db.prepare("UPDATE credit_ledger SET delta = 0, reason = 'arcade_seed_generation' WHERE id = 'ledger-first'"),
+        db.prepare(`
+          UPDATE generation_charges
+          SET tier = 'champion', creation_flow = 'video', credit_cost = 0,
+              free_quota_delta = 0, reason = 'arcade_seed_generation'
+          WHERE id = ?
+        `).bind(PURCHASE_ID),
+        db.prepare(`
+          UPDATE provider_sessions
+          SET tier = 'champion', creation_flow = 'video', purpose = 'fighter_generation'
+          WHERE id = ?
+        `).bind(SESSION_ID),
+      ]);
+      await stageCompleteChampionInventory(db, env);
+
+      const initial = await createGenerationJob(
+        request(PURCHASE_ID, SESSION_ID, undefined, 'video'),
+        env,
+        adminAuth,
+        { reviewedCanonicalSources: sealed },
+      );
+      expect(initial.status).toBe(202);
+      const initialManifest = (await db.prepare(`
+        SELECT source_manifest_json FROM generation_artifact_runs WHERE id = ?
+      `).bind(PURCHASE_ID).first<{ source_manifest_json: string }>())?.source_manifest_json;
+      expect(JSON.parse(initialManifest ?? '{}')).toEqual({
+        side: SOURCE_KEYS.side,
+        sideRaw: SOURCE_KEYS.sideRaw,
+        upright: SOURCE_KEYS.upright,
+        uprightRaw: SOURCE_KEYS.uprightRaw,
+        crouch: SOURCE_KEYS.crouch,
+        crouchRaw: SOURCE_KEYS.crouchRaw,
+        reviewedCanonicalSources: sealed,
+      });
+
+      await db.batch([
+        db.prepare("UPDATE generation_charges SET status = 'committed' WHERE id = ?").bind(PURCHASE_ID),
+        db.prepare("UPDATE provider_sessions SET status = 'completed' WHERE id = ?").bind(SESSION_ID),
+        db.prepare(`
+          UPDATE generation_jobs
+          SET status = 'succeeded', review_status = 'approved', stage = 'review:approved'
+          WHERE id = ?
+        `).bind(PURCHASE_ID),
+        db.prepare("UPDATE generation_artifact_runs SET status = 'partial' WHERE id = ?").bind(PURCHASE_ID),
+        db.prepare(`
+          INSERT INTO video_sprite_candidates (
+            id, run_id, job_id, user_id, fighter_id, action, sequence_order,
+            status, current_revision, approved_revision
+          ) VALUES ('sealed-video-candidate', ?, ?, ?, ?, 'idle', 0, 'approved', 1, 1)
+        `).bind(PURCHASE_ID, PURCHASE_ID, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO video_sprite_candidate_revisions (candidate_id, revision, report_sha256)
+          VALUES ('sealed-video-candidate', 1, ?)
+        `).bind('a'.repeat(64)),
+        db.prepare(`
+          INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+          VALUES ('sealed-continuation-ledger', ?, 0, 'arcade_seed_generation', ?)
+        `).bind(USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_charges (
+            id, user_id, tier, creation_flow, credit_cost, free_quota_delta,
+            status, reason, fighter_id, ledger_id, continuation_run_id,
+            resumed_from_job_id, expires_at
+          ) VALUES (?, ?, 'champion', 'video', 0, 0, 'reserved',
+            'arcade_seed_generation', ?, 'sealed-continuation-ledger', ?, ?, datetime('now', '+12 hours'))
+        `).bind(continuationPurchaseId, USER_ID, FIGHTER_ID, PURCHASE_ID, PURCHASE_ID),
+        db.prepare(`
+          INSERT INTO provider_sessions (
+            id, user_id, rate_limit_key, tier, creation_flow, purpose,
+            charge_id, status, expires_at
+          ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', ?, 'active', datetime('now', '+12 hours'))
+        `).bind(continuationSessionId, USER_ID, `user:${USER_ID}`, continuationPurchaseId),
+      ]);
+
+      const continuation = await createGenerationJob(
+        request(continuationPurchaseId, continuationSessionId, undefined, 'video'),
+        env,
+        adminAuth,
+        { reviewedCanonicalSources: sealed },
+      );
+      expect(continuation.status).toBe(202);
+      expect((await db.prepare(`
+        SELECT source_manifest_json FROM generation_artifact_runs WHERE id = ?
+      `).bind(PURCHASE_ID).first<{ source_manifest_json: string }>())?.source_manifest_json)
+        .toBe(initialManifest);
+    } finally {
+      await mf.dispose();
+    }
+  }, 30_000);
 
   it('continues an approved Video action through the admin endpoint on the same run', async () => {
     const { mf, db, env, workflowStarts } = await bindings();
