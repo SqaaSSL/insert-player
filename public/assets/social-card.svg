@@ -1,48 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
   <title id="title">Insert Player social card</title>
-  <desc id="desc">Insert yourself into the game with Insert Player.</desc>
+  <desc id="desc">A real person on the left and their arcade fighter on the right.</desc>
   <defs>
-    <linearGradient id="cardBg" x1="0" y1="0" x2="1200" y2="630" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#242735" />
-      <stop offset="0.46" stop-color="#111216" />
-      <stop offset="1" stop-color="#050507" />
-    </linearGradient>
-    <linearGradient id="screen" x1="744" y1="92" x2="1114" y2="528" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#171f48" />
-      <stop offset="0.56" stop-color="#0a0a20" />
-      <stop offset="1" stop-color="#050507" />
-    </linearGradient>
-    <pattern id="scan" width="8" height="8" patternUnits="userSpaceOnUse">
-      <path d="M0 7h8" stroke="#fff4d6" stroke-opacity="0.08" stroke-width="1" />
-    </pattern>
+    <filter id="plateShadow" x="-20%" y="-40%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#050507" flood-opacity="0.5" />
+    </filter>
   </defs>
-  <rect width="1200" height="630" fill="url(#cardBg)" />
-  <rect width="1200" height="630" fill="url(#scan)" />
-  <path d="M0 478h1200v152H0z" fill="#050507" opacity="0.78" />
-  <rect x="38" y="38" width="1124" height="554" rx="26" fill="none" stroke="#f4f0dd" stroke-width="10" />
-  <rect x="60" y="60" width="1080" height="510" rx="16" fill="none" stroke="#d22727" stroke-width="6" />
 
-  <rect x="92" y="86" width="560" height="54" rx="8" fill="#d22727" />
-  <rect x="112" y="104" width="520" height="16" rx="8" fill="#ffe878" />
-  <text x="94" y="260" fill="#f4f0dd" font-family="Impact, Arial Black, sans-serif" font-size="108">INSERT</text>
-  <text x="92" y="372" fill="#ffe878" font-family="Impact, Arial Black, sans-serif" font-size="132">PLAYER</text>
-  <text x="100" y="440" fill="#f4f0dd" font-family="Arial, sans-serif" font-size="36">Insert yourself into the game.</text>
-  <text x="100" y="494" fill="#f4f0dd" font-family="Arial, sans-serif" font-size="28">Create. Upgrade. Clone challengers.</text>
-  <text x="100" y="548" fill="#ffe878" font-family="Arial, sans-serif" font-size="30">Rookie / Contender / Champion</text>
-
-  <rect x="748" y="86" width="350" height="456" rx="34" fill="#171922" stroke="#f4f0dd" stroke-width="8" />
-  <rect x="782" y="124" width="282" height="296" rx="20" fill="url(#screen)" stroke="#ffce3a" stroke-width="10" />
-  <text x="923" y="286" text-anchor="middle" dominant-baseline="middle" fill="#f4f0dd" font-family="Impact, Arial Black, sans-serif" font-size="146">P1</text>
-  <path d="M820 450h206v40H820z" fill="#050507" stroke="#f4f0dd" stroke-width="8" />
-  <path d="M852 470h142" stroke="#ffe878" stroke-width="10" stroke-linecap="round" />
-  <circle cx="1028" cy="470" r="13" fill="#d22727" stroke="#ffe878" stroke-width="5" />
-
-  <g font-family="Arial, sans-serif" font-size="19" font-weight="700" text-anchor="middle">
-    <rect x="756" y="502" width="88" height="30" rx="4" fill="#d22727" />
-    <text x="800" y="523" fill="#fff4d6">PHOTO</text>
-    <rect x="866" y="502" width="88" height="30" rx="4" fill="#ffce3a" />
-    <text x="910" y="523" fill="#050507">SPRITE</text>
-    <rect x="976" y="502" width="88" height="30" rx="4" fill="#7b3dff" />
-    <text x="1020" y="523" fill="#fff4d6">FIGHT</text>
+  <g filter="url(#plateShadow)">
+    <rect x="410" y="38" width="380" height="92" rx="8" fill="#050507" fill-opacity="0.88" stroke="#f4f0dd" stroke-width="2" />
+    <rect x="410" y="38" width="380" height="10" rx="5" fill="#d22727" />
+    <rect x="426" y="41" width="348" height="4" rx="2" fill="#ffe878" />
+    <text id="social-card-brand" x="430" y="103" fill="#ffe878" font-family="Impact, Arial Black, sans-serif" font-size="48" font-weight="900" letter-spacing="0">INSERT PLAYER</text>
   </g>
 </svg>

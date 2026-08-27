@@ -49,7 +49,7 @@ jobs:
       TURNSTILE_HOSTNAMES: ${{ vars.TURNSTILE_HOSTNAMES }}
       ASF_PUBLIC_APP_NAME: Insert Player
       ASF_PUBLIC_APP_SHORT_NAME: P1
-      ASF_SOCIAL_CARD_PATH: /assets/social-card.png
+      ASF_SOCIAL_CARD_PATH: /assets/social-card-v2.png
       ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
       ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
       ASF_FRONTEND_URL: ${{ vars.ASF_FRONTEND_URL }}
