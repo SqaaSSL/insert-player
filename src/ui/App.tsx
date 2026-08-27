@@ -265,7 +265,8 @@ export function App({
 
   return (
     <div className="app-route-shell">
-      <AppHeader currentRoute={route} onNavigate={navigate} authSlot={authSlot} />
+      <AppHeader currentRoute={route} onNavigate={navigate} />
+      {authSlot}
       <main className="app-main">{routedContent}</main>
       <LegalFooter onNavigate={navigate} />
     </div>

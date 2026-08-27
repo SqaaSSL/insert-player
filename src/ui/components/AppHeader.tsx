@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import { BrandMark } from './BrandMark.tsx';
 import { PUBLIC_APP_NAME } from '../publicBrand.ts';
 
@@ -16,11 +15,12 @@ const NAV_TARGETS: AppHeaderNavTarget[] = [
 interface AppHeaderProps {
   currentRoute: string;
   onNavigate: (route: '/menu' | '/gallery' | '/community') => void;
-  authSlot?: ReactNode;
 }
 
-/** Slim cabinet-style top bar on every non-fight screen. */
-export function AppHeader({ currentRoute, onNavigate, authSlot }: AppHeaderProps) {
+/** Slim cabinet-style top bar on every non-fight screen. The Clerk auth dock
+ * renders outside this header: its backdrop-filter would otherwise become the
+ * containing block for the dock's fixed bottom-left positioning. */
+export function AppHeader({ currentRoute, onNavigate }: AppHeaderProps) {
   return (
     <header className="app-header">
       <a
@@ -49,7 +49,6 @@ export function AppHeader({ currentRoute, onNavigate, authSlot }: AppHeaderProps
           </a>
         ))}
       </nav>
-      <div className="app-header__auth">{authSlot}</div>
     </header>
   );
 }

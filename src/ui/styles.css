@@ -207,10 +207,6 @@
     @apply border-asf-red text-asf-gold;
   }
 
-  .app-header__auth {
-    @apply ml-auto;
-  }
-
   /* ---- Page header / eyebrow ---- */
 
   .asf-page-head {
