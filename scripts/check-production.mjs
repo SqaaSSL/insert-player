@@ -1521,6 +1521,8 @@ function assertMatchReportingIsWired() {
     'wins = wins + 1',
     'match reporting updates signed-in record',
     'match reporting rejects foreign community fighter ids',
+    "'authenticated Arcade roster'",
+    'const activeArcadeFighterId = authenticatedArcadeBody.fighters[0]?.id ?? null',
     'Attract Mode does not persist history or change personal W/L',
     'match reporting accepts active published Arcade fighter ids',
   ];

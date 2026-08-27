@@ -1173,7 +1173,15 @@ async function runAuthenticatedSmoke() {
   });
   assert(Array.isArray(statsBeforeMatch.recentMatches), '/api/stats did not include recentMatches');
 
-  const activeArcadeFighterId = arcadeBody.fighters[0]?.id ?? null;
+  const authenticatedArcadeBody = await expectJson(
+    'authenticated Arcade roster',
+    '/api/arcade',
+  );
+  assert(
+    Array.isArray(authenticatedArcadeBody.fighters),
+    'Authenticated Arcade roster did not include fighters',
+  );
+  const activeArcadeFighterId = authenticatedArcadeBody.fighters[0]?.id ?? null;
   if (activeArcadeFighterId) {
     const attractReport = await expectJson('Attract Mode match report', '/api/matches', 200, {
       method: 'POST',
