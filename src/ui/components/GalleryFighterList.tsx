@@ -1,5 +1,8 @@
 import type { CloudFighter } from '../../services/CloudFighters.ts';
-import { arcadeFighterPhotoHash } from '../../services/CloudFighters.ts';
+import {
+  arcadeFighterPhotoHash,
+  isCompleteCloudFighterRoster,
+} from '../../services/CloudFighters.ts';
 import type { CachedMeta } from '../../services/SpriteCache.ts';
 import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
 import { isArcadeCachedMeta } from '../shared/fighterPreview.ts';
@@ -194,10 +197,10 @@ export function GalleryFighterList({
               <span className="gallery-fighter-card__meta">
                 {tierLabel(qualityTier)} · {animationLabel(animationCount)} · {
                   isLoading
-                    ? 'Loading…'
+                    ? 'Loading previews…'
                     : fighter
-                      ? cachedMeta ? 'Ready locally' : 'Load on select'
-                      : 'Saved offline'
+                      ? isCompleteCloudFighterRoster(fighter) ? 'Playable' : 'Unavailable'
+                      : 'Previously loaded'
                 }
               </span>
             </button>

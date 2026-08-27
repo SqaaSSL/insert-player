@@ -28,6 +28,11 @@ import {
   type SpriteAnimationFormat,
 } from '../SpriteAnimationFormat.ts';
 import { prefersHighDensitySpriteTextures } from '../game/sprites/SpriteRenderQuality.ts';
+import {
+  PLAYABLE_ANIMATION_NAMES,
+  isCompletePlayableSpriteSet,
+  missingPlayableAnimationNames,
+} from './PlayableFighterAssets.ts';
 
 export interface CloudSprite {
   id?: string;
@@ -131,20 +136,6 @@ const TIER_RANK: Record<CloudQualityTier, number> = {
 };
 
 const CLOUD_SPRITE_IMPORT_CONCURRENCY = 4;
-const PLAYABLE_ANIMATION_NAMES = [
-  'idle',
-  'walk',
-  'high_punch',
-  'low_punch',
-  'high_kick',
-  'low_kick',
-  'jump',
-  'crouch',
-  'hit',
-  'ko',
-  'victory',
-] as const;
-
 export interface FingerprintedSprite {
   sprite: CachedSprite;
   contentHash: string;
@@ -438,9 +429,11 @@ function cloudPlayableRefsMatch(
   if (expectedEntries.length !== Object.keys(refs).length) return false;
   return expectedEntries.every(([animationName, remote]) => {
     const local = refs[animationName];
-    // Current-row ids are stable across promotion, so only the immutable processed
-    // hash plus its playback interpretation can prove which version is current.
-    return Boolean(remote.contentHash) && local?.contentHash === remote.contentHash &&
+    // Detail payloads include immutable hashes. Lightweight list payloads omit
+    // them, so compare playback metadata here and let the fighter updatedAt check
+    // below detect a promotion without downloading every unchanged fighter.
+    return Boolean(local) &&
+      (!remote.contentHash || local.contentHash === remote.contentHash) &&
       local.animationName === remote.animationName &&
       local.qualityTier === remote.qualityTier &&
       local.frameWidth === remote.frameWidth &&
@@ -456,8 +449,7 @@ export function isSourceOnlyCloudFighter(fighter: CloudFighter): boolean {
 }
 
 export function isCompleteCloudFighterRoster(fighter: CloudFighter): boolean {
-  const currentAnimations = new Set(fighter.sprites.map((sprite) => sprite.animationName));
-  return PLAYABLE_ANIMATION_NAMES.every((animationName) => currentAnimations.has(animationName));
+  return isCompletePlayableSpriteSet(fighter.sprites);
 }
 
 export function formatCloudRosterSyncStatus(
@@ -1124,11 +1116,12 @@ export async function downloadCloudFighterToLocal(
   }
 
   const remoteRosterComplete = isCompleteCloudFighterRoster(fighter);
-  const currentAnimationNames = new Set(fighter.sprites.map((sprite) => sprite.animationName));
   if (!remoteRosterComplete && !options.allowIncomplete) {
-    const missing = PLAYABLE_ANIMATION_NAMES.filter((animationName) => !currentAnimationNames.has(animationName));
+    const missing = missingPlayableAnimationNames(fighter.sprites);
     throw new Error(
-      `Cloud fighter ${fighter.name} is incomplete; missing current animations: ${missing.join(', ')}.`,
+      missing.length > 0
+        ? `Cloud fighter ${fighter.name} is incomplete; missing current animations: ${missing.join(', ')}.`
+        : `Cloud fighter ${fighter.name} has invalid current animation assets.`,
     );
   }
 
@@ -1137,9 +1130,11 @@ export async function downloadCloudFighterToLocal(
   await fingerprintSprites(refreshedVersions);
   const exactPlayableSprites = selectPlayableCachedSprites(refreshedVersions, playableRefs);
   const availableCurrentAnimations = new Set(exactPlayableSprites.map((sprite) => sprite.animationName));
-  const allRemoteCurrentSpritesAvailable = Object.values(playableRefs).every((ref) =>
-    Boolean(ref.contentHash) && availableCurrentAnimations.has(ref.animationName),
-  );
+  const allRemoteCurrentSpritesAvailable = isCompletePlayableSpriteSet(exactPlayableSprites) &&
+    Object.values(playableRefs).length === PLAYABLE_ANIMATION_NAMES.length &&
+    Object.values(playableRefs).every((ref) =>
+      Boolean(ref.contentHash) && availableCurrentAnimations.has(ref.animationName),
+    );
 
   const meta = {
     ...(existingMeta ?? {}),
@@ -1182,6 +1177,16 @@ export async function downloadCloudFighterToLocal(
 
   await setCachedMeta(meta);
   await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope);
+
+  if (!options.allowIncomplete && !allRemoteCurrentSpritesAvailable) {
+    const missing = missingPlayableAnimationNames(exactPlayableSprites);
+    const detail = missing.length > 0
+      ? ` Missing: ${missing.join(', ')}.`
+      : '';
+    throw new Error(
+      `${fighter.name} did not finish downloading all 11 playable animations.${detail} Retry the sprite download.`,
+    );
+  }
 
   return {
     fighterId: fighter.id,

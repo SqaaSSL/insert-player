@@ -3,6 +3,7 @@ import {
   CACHE_VERSION,
   getAllCachedMetas,
   getAllCachedStageBackgrounds,
+  getAllSpritesForHash,
   getActiveSpriteCacheScope,
   setCachedMeta,
   type CachedMeta,
@@ -35,6 +36,7 @@ import { ensurePlayableSpritesUpToDate } from '../../services/CharacterPipeline.
 import { getBillingProfile, type BillingProfile } from '../../services/Billing.ts';
 import type { AuthStatus } from '../authState.ts';
 import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
+import { assertCompletePlayableSpriteSet } from '../../services/PlayableFighterAssets.ts';
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { cloudPreviewUrl, isArcadeCachedMeta, tierLabel } from '../shared/fighterPreview.ts';
 import { Button } from '../components/Button.tsx';
@@ -557,6 +559,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
   const launchFight = async () => {
     if (!p1Fighter || !p2Fighter || preparingFight) return;
+    const ownerScope = getActiveSpriteCacheScope();
     setPreparingFight(true);
     const officialNames = [p1Fighter, p2Fighter]
       .filter((fighter) => fighter.kind === 'arcade')
@@ -577,6 +580,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         } else {
           upgraded += await ensurePlayableSpritesUpToDate(fighter.photoHash);
         }
+        const playableSprites = await getAllSpritesForHash(fighter.photoHash, ownerScope);
+        assertCompletePlayableSpriteSet(playableSprites, fighter.name);
       }
       if (upgraded > 0) {
         setStatus(`Updated ${upgraded} cached animations`);

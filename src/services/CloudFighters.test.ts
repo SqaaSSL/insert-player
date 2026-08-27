@@ -408,6 +408,10 @@ describe('cloud roster sync status', () => {
     expect(isCompleteCloudFighterRoster({ ...fighter, sprites: completeSprites })).toBe(true);
     expect(isCompleteCloudFighterRoster({
       ...fighter,
+      sprites: completeSprites.map((sprite, index) => index === 0 ? { ...sprite, url: null } : sprite),
+    })).toBe(false);
+    expect(isCompleteCloudFighterRoster({
+      ...fighter,
       sprites: completeSprites.slice(0, 1),
       spriteVersions: completeSprites,
     })).toBe(false);
@@ -511,6 +515,43 @@ describe('shouldRefreshLocalFighter', () => {
     } as CachedMeta;
 
     expect(shouldRefreshLocalFighter(fighter, existing)).toBe(false);
+  });
+
+  it('uses timestamps and playback metadata when a lightweight list omits content hashes', () => {
+    const detailed = {
+      ...cloudSprite('a'.repeat(64)),
+      id: 'current-idle',
+      animationName: 'idle',
+    };
+    const summary = {
+      ...detailed,
+      contentHash: null,
+      rawContentHash: null,
+    };
+    const existing = {
+      photoHash: 'fighter-hash',
+      version: 1,
+      characterName: 'Nova QA',
+      qualityTier: 'champion' as const,
+      cloudFighterId: 'fighter-cloud',
+      cloudSpriteVersionCount: 1,
+      cloudPlayableSpriteRefs: cloudPlayableSpriteRefs([detailed]),
+      status: 'ready' as const,
+      animationsReady: ['idle'],
+      createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
+      updatedAt: Date.parse('2026-08-19T02:00:00.000Z'),
+    } as CachedMeta;
+
+    expect(shouldRefreshLocalFighter({
+      id: 'fighter-cloud',
+      name: 'Nova QA',
+      photoHash: 'fighter-hash',
+      qualityTier: 'champion',
+      public: false,
+      sources: {},
+      sprites: [summary],
+      updatedAt: '2026-08-19T02:00:00.000Z',
+    }, existing)).toBe(false);
   });
 
   it('does not confuse three tier pointers with missing animation names', () => {

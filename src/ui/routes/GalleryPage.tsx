@@ -7,7 +7,6 @@ import {
   getCachedMeta,
   getCachedIntro,
   setCachedMeta,
-  setCloudPlayableSpriteRefs,
   deleteCachedStageBackground,
   deleteCharacter,
   renameCachedStageBackground,
@@ -60,6 +59,10 @@ import {
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
 import { shareCommunityFighter } from '../shared/communityShare.ts';
+import {
+  CloudFirstRenameCacheError,
+  renameFighterCloudFirst,
+} from '../shared/cloudFirstRename.ts';
 import {
   arcadeFighterPhotoHash,
   deleteCloudFighter,
@@ -175,10 +178,12 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const [renameRequest, setRenameRequest] = useState<{ kind: 'fighter' | 'stage'; current: string } | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [shareLinkUrl, setShareLinkUrl] = useState<string | null>(null);
+  const [shareLinkError, setShareLinkError] = useState<string | null>(null);
   const generationJobAbortRef = useRef<AbortController | null>(null);
   const assetLoadRequestRef = useRef(0);
   const selectedPhotoHashRef = useRef<string | null>(null);
   const hqPreviewRequestsRef = useRef(new Set<string>());
+  const checkedArcadeFighterIdsRef = useRef(new Set<string>());
   const [recoveryJob, setRecoveryJob] = useState<GenerationJob | null>(null);
   const [resumableJobs, setResumableJobs] = useState<GenerationJob[]>([]);
   const [videoReviewJobs, setVideoReviewJobs] = useState<GenerationJob[]>([]);
@@ -220,7 +225,9 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setConfirmRequest(null);
     setRenameRequest(null);
     setShareLinkUrl(null);
+    setShareLinkError(null);
     selectedPhotoHashRef.current = null;
+    checkedArcadeFighterIdsRef.current.clear();
     setArcadeState('loading');
     setCloudSyncPending(true);
     const load = async () => {
@@ -542,6 +549,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     const ownerScope = getActiveSpriteCacheScope();
     const cached = findCachedArcadeMeta(metas, fighter);
     if (busy) return;
+    checkedArcadeFighterIdsRef.current.add(fighter.id);
     selectedPhotoHashRef.current = arcadeFighterPhotoHash(fighter);
     if (cached) selectCachedFighter(cached);
 
@@ -550,7 +558,6 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setStatus(cached
       ? `Checking ${fighter.name} for global roster updates...`
       : `Loading ${fighter.name} from the global roster...`);
-    let downloadedReady = false;
     try {
       const apiContext = captureApiRequestContext();
       const prepared = await ensureGalleryArcadeFighterReady(fighter, {
@@ -559,35 +566,34 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         }),
         getMeta: (hash) => getCachedMeta(hash, ownerScope),
       });
-      downloadedReady = true;
       await refreshCurrent(prepared.photoHash, ownerScope);
       setSelection({ kind: 'source', source: 'side' });
       setStatus(`${fighter.name} is ready from the global roster`);
     } catch (err: any) {
-      if (!downloadedReady && cached?.photoHash === arcadeFighterPhotoHash(fighter)) {
-        try {
-          await setCachedMeta(cached, ownerScope);
-          await setCloudPlayableSpriteRefs(
-            cached.photoHash,
-            cached.cloudPlayableSpriteRefs ?? {},
-            ownerScope,
-          );
-          await refreshCurrent(cached.photoHash, ownerScope);
-        } catch (restoreError: any) {
-          debugWarn('[Gallery] Saved global cache restore skipped:', restoreError?.message ?? restoreError);
-        }
-      }
-      const detail = err?.message ? `: ${err.message}` : '';
       if (getActiveSpriteCacheScope() === ownerScope) {
-        setStatus(cached
-          ? `${fighter.name} is available from saved assets; update check failed${detail}`
-          : `Global fighter could not be loaded${detail}`);
+        try {
+          await refreshCurrent(arcadeFighterPhotoHash(fighter), ownerScope);
+        } catch (refreshError: any) {
+          debugWarn('[Gallery] Partial global cache refresh skipped:', refreshError?.message ?? refreshError);
+        }
+        const detail = err?.message ? ` ${err.message}` : '';
+        setStatus(`Could not load every preview for ${fighter.name}.${detail} Select the fighter to retry.`);
       }
     } finally {
       setLoadingArcadeId(null);
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!meta || arcadeState !== 'ready' || busy || loadingArcadeId) return;
+    const fighter = arcadeFighters.find((candidate) => (
+      findCachedArcadeMeta([meta], candidate)?.photoHash === meta.photoHash
+    ));
+    if (!fighter || checkedArcadeFighterIdsRef.current.has(fighter.id)) return;
+    checkedArcadeFighterIdsRef.current.add(fighter.id);
+    void selectArcadeFighter(fighter);
+  }, [arcadeFighters, arcadeState, busy, loadingArcadeId, meta?.photoHash]);
 
   const monitorCloudGenerationJob = async (
     initial: GenerationJob,
@@ -1053,16 +1059,16 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setStatus('Renaming...');
     const apiContext = captureApiRequestContext();
     try {
-      await renameCharacter(meta.photoHash, trimmedName);
-      let cloudRenamed = false;
-      if (meta.cloudFighterId) {
-        const updated = await renameCloudFighter(meta.cloudFighterId, trimmedName, apiContext);
-        cloudRenamed = Boolean(updated);
-      }
+      await renameFighterCloudFirst(meta, trimmedName, {
+        renameCloud: (fighterId, name) => renameCloudFighter(fighterId, name, apiContext),
+        renameCache: (photoHash, name) => renameCharacter(photoHash, name),
+      });
       await refreshCurrent();
-      setStatus(meta.cloudFighterId && !cloudRenamed ? 'Fighter renamed locally; cloud update skipped' : 'Fighter renamed');
+      setStatus('Fighter renamed');
     } catch (err: any) {
-      setStatus(err?.message ? `Rename failed: ${err.message}` : 'Rename failed');
+      setStatus(err instanceof CloudFirstRenameCacheError
+        ? 'Fighter renamed in cloud. The preview cache will refresh when Gallery reloads.'
+        : err?.message ? `Rename failed: ${err.message}` : 'Rename failed');
     } finally {
       setBusy(false);
     }
@@ -1274,6 +1280,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     } else if (share.mode === 'cancelled') {
       setStatus('Community share cancelled');
     } else {
+      setShareLinkError(null);
       setShareLinkUrl(share.url);
       setStatus('Community share link ready');
     }
@@ -1900,7 +1907,13 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       ) : null}
 
       {shareLinkUrl ? (
-        <Modal title="Share Fighter Link" onClose={() => setShareLinkUrl(null)}>
+        <Modal
+          title="Share Fighter Link"
+          onClose={() => {
+            setShareLinkError(null);
+            setShareLinkUrl(null);
+          }}
+        >
           <p className="asf-modal__copy">Copy this link to share the published fighter.</p>
           <input
             className="asf-modal__link"
@@ -1909,14 +1922,26 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
             value={shareLinkUrl}
             onFocus={(event) => event.target.select()}
           />
+          {shareLinkError ? <p className="create-intro__error" role="alert">{shareLinkError}</p> : null}
           <div className="asf-modal__actions">
-            <Button onClick={() => setShareLinkUrl(null)}>Close</Button>
+            <Button onClick={() => {
+              setShareLinkError(null);
+              setShareLinkUrl(null);
+            }}>Close</Button>
             <Button
               variant="primary"
               onClick={() => {
-                void navigator.clipboard?.writeText(shareLinkUrl).catch(() => {});
-                setShareLinkUrl(null);
-                setStatus('Community share link copied');
+                if (!navigator.clipboard?.writeText) {
+                  setShareLinkError('Automatic copy is unavailable. Select the link above and copy it manually.');
+                  return;
+                }
+                void navigator.clipboard.writeText(shareLinkUrl).then(() => {
+                  setShareLinkError(null);
+                  setShareLinkUrl(null);
+                  setStatus('Community share link copied');
+                }).catch(() => {
+                  setShareLinkError('The link could not be copied. Select it above and copy it manually.');
+                });
               }}
             >
               Copy Link
