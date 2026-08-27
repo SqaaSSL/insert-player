@@ -750,6 +750,26 @@ export async function listCommunityFighters(request: Request, env: Env): Promise
   }, 200, PUBLIC_COMMUNITY_CACHE_HEADERS);
 }
 
+export async function listOwnedCommunityFighterIds(
+  env: Env,
+  auth: AuthContext,
+): Promise<Response> {
+  const { results } = await env.DB.prepare(`
+    SELECT DISTINCT source.id
+    FROM fighters source
+    JOIN fighters owned
+      ON owned.photo_hash = source.photo_hash
+     AND owned.owner_user_id = ?
+    WHERE source.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = source.id
+      )
+      AND ${playableSpriteSetSql('source')}
+    ORDER BY source.id ASC
+  `).bind(auth.userId).all<{ id: string }>();
+  return json({ fighterIds: (results ?? []).map(({ id }) => id) }, 200, NO_STORE_HEADERS);
+}
+
 export async function listArcadeFighters(request: Request, env: Env): Promise<Response> {
   const { results } = await env.DB.prepare(arcadeFighterSelectSql(
     `WHERE af.status = 'active'

@@ -6,7 +6,7 @@ import {
   PUBLIC_ORIGIN,
   SUPPORT_EMAIL,
 } from '../legal.ts';
-import type { LegalRoute } from '../components/LegalFooter.tsx';
+import { shouldUseSpaNavigation, type LegalRoute } from '../components/LegalFooter.tsx';
 
 type LegalPageKind = 'legal' | 'privacy' | 'terms' | 'refunds';
 
@@ -398,30 +398,35 @@ function CancellationAndRemediesPolicy() {
 }
 
 export function LegalPage({ kind, backLabel = 'Back to game', onBack, onNavigate }: LegalPageProps) {
+  const navigate = (event: React.MouseEvent<HTMLAnchorElement>, route: LegalRoute) => {
+    if (!shouldUseSpaNavigation(event)) return;
+    event.preventDefault();
+    onNavigate(route);
+  };
   return (
-    <main className="legal-page">
+    <div className="legal-page">
       <div className="legal-page__toolbar">
         <Button onClick={onBack}>{backLabel}</Button>
         <nav aria-label="Legal documents">
           <a
             href="/legal"
             aria-current={kind === 'legal' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); onNavigate('/legal'); }}
+            onClick={(event) => navigate(event, '/legal')}
           >Legal Notice</a>
           <a
             href="/privacy"
             aria-current={kind === 'privacy' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); onNavigate('/privacy'); }}
+            onClick={(event) => navigate(event, '/privacy')}
           >Privacy</a>
           <a
             href="/terms"
             aria-current={kind === 'terms' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); onNavigate('/terms'); }}
+            onClick={(event) => navigate(event, '/terms')}
           >Terms</a>
           <a
             href="/refunds"
             aria-current={kind === 'refunds' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); onNavigate('/refunds'); }}
+            onClick={(event) => navigate(event, '/refunds')}
           >Cancellations</a>
         </nav>
       </div>
@@ -436,6 +441,6 @@ export function LegalPage({ kind, backLabel = 'Back to game', onBack, onNavigate
               : <CancellationAndRemediesPolicy />}
         <p className="legal-page__updated">Effective {LEGAL_EFFECTIVE_DATE} · {PUBLIC_ORIGIN}</p>
       </article>
-    </main>
+    </div>
   );
 }

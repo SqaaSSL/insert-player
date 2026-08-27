@@ -1,66 +1,67 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDetachedApiRequestContext } from './ApiClient.ts';
-import { verifyCreditCheckoutSession } from './Billing.ts';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const context = createDetachedApiRequestContext({
-  apiBaseUrl: 'https://api.insertplayer.ai',
-  authorizationToken: 'checkout-token',
+vi.mock('./ApiClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ApiClient')>();
+  return { ...actual, apiFetch: vi.fn() };
 });
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
+import { apiFetch } from './ApiClient.ts';
+import { loadBillingProfile, loadCreditPacks } from './Billing.ts';
 
-describe('exact checkout verification client', () => {
-  it('requests the exact session with auth and accepts the matching response', async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      expect(String(input)).toBe(
-        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=cs_live_exact_123',
-      );
-      expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer checkout-token');
-      return Response.json({
-        checkout: {
-          sessionId: 'cs_live_exact_123',
-          state: 'complete',
-          processorStatus: 'paid',
-          packId: 'starter',
-          credits: 11,
-          creditsBalance: 18,
-          updatedAt: '2026-08-28T00:00:00.000Z',
-        },
-      });
+describe('billing load states', () => {
+  beforeEach(() => {
+    vi.mocked(apiFetch).mockReset();
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.insertplayer.test');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('distinguishes an unavailable pack endpoint from a valid empty catalog', async () => {
+    vi.mocked(apiFetch)
+      .mockResolvedValueOnce(Response.json({ error: 'Temporarily unavailable' }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ packs: [] }));
+
+    await expect(loadCreditPacks()).resolves.toMatchObject({
+      status: 'unavailable',
+      packs: [],
     });
-    vi.stubGlobal('fetch', fetchMock);
+    await expect(loadCreditPacks()).resolves.toEqual({ status: 'ready', packs: [] });
+  });
 
-    await expect(verifyCreditCheckoutSession('cs_live_exact_123', context)).resolves.toEqual({
-      checkout: {
-        sessionId: 'cs_live_exact_123',
-        state: 'complete',
-        processorStatus: 'paid',
-        packId: 'starter',
-        credits: 11,
-        creditsBalance: 18,
-        updatedAt: '2026-08-28T00:00:00.000Z',
-      },
+  it('distinguishes signed out from a failed credit-balance request', async () => {
+    vi.mocked(apiFetch)
+      .mockResolvedValueOnce(Response.json({ user: null }))
+      .mockRejectedValueOnce(new Error('network offline'));
+
+    await expect(loadBillingProfile()).resolves.toEqual({
+      status: 'signed-out',
+      profile: null,
+    });
+    await expect(loadBillingProfile()).resolves.toMatchObject({
+      status: 'unavailable',
+      profile: null,
+      message: 'network offline',
     });
   });
 
-  it('rejects a successful response for a different Stripe session', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
-      checkout: {
-        sessionId: 'cs_live_someone_else',
-        state: 'complete',
-        processorStatus: 'paid',
-        packId: 'starter',
-        credits: 11,
-        creditsBalance: 1_000,
-        updatedAt: '2026-08-28T00:00:00.000Z',
+  it('returns the verified balance only after a successful profile response', async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(Response.json({
+      user: {
+        creditsBalance: 42,
+        freeRookieGenerationsUsed: 1,
+        planTier: 'pro',
       },
-    })));
+    }));
 
-    await expect(verifyCreditCheckoutSession('cs_live_expected', context)).resolves.toEqual({
-      error: 'Checkout verification returned an invalid session.',
-      retryable: true,
+    await expect(loadBillingProfile()).resolves.toEqual({
+      status: 'ready',
+      profile: {
+        creditsBalance: 42,
+        freeRookieGenerationsUsed: 1,
+        planTier: 'pro',
+      },
     });
   });
 });

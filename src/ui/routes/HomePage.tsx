@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
-  getBillingProfile,
-  listCreditPacks,
+  loadBillingProfile,
+  loadCreditPacks,
   startCreditCheckout,
   verifyCreditCheckoutSession,
   type BillingProfile,
@@ -101,24 +101,32 @@ export function HomePage({
       const exactVerificationActive = Boolean(checkoutSessionId && authStatus === 'signed-in');
 
       void Promise.all([
-        listCreditPacks(apiContext),
-        getBillingProfile(apiContext),
-      ]).then(([packs, profile]) => {
+        loadCreditPacks(apiContext),
+        loadBillingProfile(apiContext),
+      ]).then(([packsResult, profileResult]) => {
         if (cancelled) return;
-        latestProfile = profile;
-        setCreditPacks(packs);
-        setBillingProfile(profile && verifiedBalance !== null
-          ? { ...profile, creditsBalance: verifiedBalance }
-          : profile);
+        latestProfile = profileResult.profile;
+        setCreditPacks(packsResult.packs);
+        setBillingProfile(profileResult.profile && verifiedBalance !== null
+          ? { ...profileResult.profile, creditsBalance: verifiedBalance }
+          : profileResult.profile);
         if (exactVerificationActive || returnedSuccess) return;
-        if (packs.length === 0) {
-          setBillingStatus(checkoutMessage ?? 'Credits offline in local mode');
-        } else if (profile) {
-          setBillingStatus(checkoutMessage ?? 'Credits ready');
-        } else if (authStatus === 'signed-in') {
-          setBillingStatus(checkoutMessage ?? 'Cloud profile unavailable');
+        if (checkoutMessage) {
+          setBillingStatus(checkoutMessage);
+        } else if (packsResult.status === 'local') {
+          setBillingStatus('Credit packs are disabled in local development');
+        } else if (packsResult.status === 'unavailable') {
+          setBillingStatus('Credit packs unavailable. Try again later.');
+        } else if (profileResult.status === 'unavailable' && authStatus === 'signed-in') {
+          setBillingStatus('Credit balance unavailable. Try again later.');
+        } else if (profileResult.profile) {
+          setBillingStatus(`${profileResult.profile.creditsBalance} credits ready`);
+        } else if (profileResult.status === 'signed-out' && authStatus === 'signed-in') {
+          setBillingStatus('Sign in again to load your credit balance');
+        } else if (packsResult.packs.length === 0) {
+          setBillingStatus('No credit packs are available');
         } else {
-          setBillingStatus(checkoutMessage ?? 'Sign in for cloud credits');
+          setBillingStatus('Sign in for cloud credits');
         }
       });
 

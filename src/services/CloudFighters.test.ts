@@ -174,6 +174,41 @@ describe('buildSpriteUploadPlan', () => {
   });
 });
 
+describe('community clone responses', () => {
+  beforeEach(() => {
+    vi.mocked(apiFetch).mockReset();
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.insertplayer.test');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('preserves cloned false when the fighter already exists in the roster', async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(Response.json({
+      fighter: {
+        id: 'existing-fighter',
+        name: 'Existing Fighter',
+        qualityTier: 'champion',
+        public: false,
+        sources: {},
+        sprites: [],
+      },
+      cloned: false,
+    }));
+
+    await expect(cloneCommunityFighter('public/fighter', SYNC_CONTEXT)).resolves.toMatchObject({
+      fighter: { id: 'existing-fighter' },
+      cloned: false,
+    });
+    expect(vi.mocked(apiFetch)).toHaveBeenCalledWith(
+      '/api/community/public%2Ffighter/clone',
+      { method: 'POST' },
+      SYNC_CONTEXT,
+    );
+  });
+});
+
 describe('buildSpriteDownloadPlan', () => {
   it('skips remote versions already present by content hash', () => {
     const local = candidate('local-version', 1, 'same-hash');

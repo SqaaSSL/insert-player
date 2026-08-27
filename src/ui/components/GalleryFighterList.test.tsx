@@ -219,6 +219,25 @@ describe('GalleryFighterList', () => {
     expect(markup).not.toContain('aria-label="1 owned fighter"');
   });
 
+  it('does not render cached global ghosts while the authoritative roster is loading', () => {
+    const savedGhost = cachedMeta('arcade:retired-fighter:retired-id', 'Retired Fighter');
+    const markup = renderToStaticMarkup(
+      <GalleryFighterList
+        metas={[savedGhost]}
+        arcadeFighters={[]}
+        selectedPhotoHash={null}
+        loadingArcadeId={null}
+        onSelectMeta={vi.fn()}
+        onSelectArcade={vi.fn()}
+        arcadeState="loading"
+      />,
+    );
+
+    expect(markup).toContain('Loading global roster…');
+    expect(markup).not.toContain('Retired Fighter');
+    expect(markup).toContain('aria-label="0 global fighters"');
+  });
+
   it('deduplicates current and legacy cache keys while offline', () => {
     const current = cachedMeta('arcade:elon-musk:elon-id', 'Elon Musk');
     const legacy = cachedMeta('arcade:elon-musk', 'Old Elon cache');

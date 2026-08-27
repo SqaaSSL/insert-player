@@ -57,6 +57,18 @@ export interface CreditCheckoutVerificationResult {
   retryable?: boolean;
 }
 
+export interface CreditPackLoadResult {
+  status: 'ready' | 'local' | 'unavailable';
+  packs: CreditPack[];
+  message?: string;
+}
+
+export interface BillingProfileLoadResult {
+  status: 'ready' | 'signed-out' | 'local' | 'unavailable';
+  profile: BillingProfile | null;
+  message?: string;
+}
+
 export type ProviderSessionPurpose = 'stage_background' | 'intro_video';
 
 export interface ProviderSessionAuthorization {
@@ -97,17 +109,31 @@ function formatBillingError(body: BillingErrorBody, fallback: string): string {
   return fallback;
 }
 
-export async function listCreditPacks(context?: ApiRequestContext): Promise<CreditPack[]> {
-  if (isLocalDevWithoutApi()) return [];
+export async function loadCreditPacks(context?: ApiRequestContext): Promise<CreditPackLoadResult> {
+  if (isLocalDevWithoutApi()) return { status: 'local', packs: [] };
 
   try {
     const res = await apiFetch('/api/billing/packs', {}, context);
-    if (!res.ok) return [];
-    const json = await res.json() as { packs?: CreditPack[] };
-    return json.packs ?? [];
-  } catch {
-    return [];
+    const json = await readBillingJson<{ packs?: CreditPack[] }>(res);
+    if (!res.ok) {
+      return {
+        status: 'unavailable',
+        packs: [],
+        message: formatBillingError(json, `Credit packs failed (${res.status})`),
+      };
+    }
+    return { status: 'ready', packs: json.packs ?? [] };
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      packs: [],
+      message: error instanceof Error ? error.message : 'Credit packs request failed',
+    };
   }
+}
+
+export async function listCreditPacks(context?: ApiRequestContext): Promise<CreditPack[]> {
+  return (await loadCreditPacks(context)).packs;
 }
 
 export async function startCreditCheckout(
@@ -194,12 +220,18 @@ export async function verifyCreditCheckoutSession(
   }
 }
 
-export async function getBillingProfile(context?: ApiRequestContext): Promise<BillingProfile | null> {
-  if (isLocalDevWithoutApi()) return null;
+export async function loadBillingProfile(context?: ApiRequestContext): Promise<BillingProfileLoadResult> {
+  if (isLocalDevWithoutApi()) return { status: 'local', profile: null };
 
   try {
     const res = await apiFetch('/auth/me', {}, context);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      return {
+        status: 'unavailable',
+        profile: null,
+        message: `Credit balance failed (${res.status})`,
+      };
+    }
     const json = await res.json() as {
       user?: {
         creditsBalance?: number;
@@ -207,15 +239,26 @@ export async function getBillingProfile(context?: ApiRequestContext): Promise<Bi
         planTier?: BillingProfile['planTier'];
       } | null;
     };
-    if (!json.user) return null;
+    if (!json.user) return { status: 'signed-out', profile: null };
     return {
-      creditsBalance: Number(json.user.creditsBalance ?? 0),
-      freeRookieGenerationsUsed: Number(json.user.freeRookieGenerationsUsed ?? 0),
-      planTier: json.user.planTier ?? 'free',
+      status: 'ready',
+      profile: {
+        creditsBalance: Number(json.user.creditsBalance ?? 0),
+        freeRookieGenerationsUsed: Number(json.user.freeRookieGenerationsUsed ?? 0),
+        planTier: json.user.planTier ?? 'free',
+      },
     };
-  } catch {
-    return null;
+  } catch (error) {
+    return {
+      status: 'unavailable',
+      profile: null,
+      message: error instanceof Error ? error.message : 'Credit balance request failed',
+    };
   }
+}
+
+export async function getBillingProfile(context?: ApiRequestContext): Promise<BillingProfile | null> {
+  return (await loadBillingProfile(context)).profile;
 }
 
 export async function authorizeGeneration(

@@ -129,7 +129,7 @@ export function GalleryFighterList({
   const { globals, owned } = buildGalleryFighterSections(
     metas,
     arcadeFighters,
-    arcadeState !== 'ready',
+    arcadeState === 'unavailable',
   );
   const globalStatus = arcadeState === 'loading'
     ? 'Loading global roster…'

@@ -10,6 +10,7 @@ import {
   listArcadeFighters,
   listAdminArcadeFighters,
   listCommunityFighters,
+  listOwnedCommunityFighterIds,
   listFighters,
   promoteFighterSpriteVersion,
   reportCommunityFighter,
@@ -357,6 +358,51 @@ function sha256Fixture(value: number): string {
 }
 
 describe('fighter uploads against real D1 and R2 bindings', () => {
+  it('maps cloned same-photo fighters back to their public community source', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      const sourceId = 'community-source';
+      const animations = [
+        'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
+        'jump', 'crouch', 'hit', 'ko', 'victory',
+      ];
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name)
+          VALUES ('community-owner', 'community-owner', 'Community Owner')
+        `),
+        db.prepare(`
+          INSERT INTO fighters (
+            id, owner_user_id, name, photo_hash, quality_tier, public_flag
+          ) VALUES (?, 'community-owner', 'Shared Fighter', 'target-photo', 'contender', 1)
+        `).bind(sourceId),
+        ...animations.map((animationName, index) => db.prepare(`
+          INSERT INTO sprites (
+            id, fighter_id, animation_name, quality_tier, blob_key, content_hash,
+            frame_w, frame_h, frame_count, processing_version
+          ) VALUES (?, ?, ?, 'contender', ?, ?, 256, 256, 8, 4)
+        `).bind(
+          `community-sprite-${index}`,
+          sourceId,
+          animationName,
+          `users/community-owner/fighters/${sourceId}/sprites/${animationName}.png`,
+          index.toString(16).padStart(64, '0'),
+        )),
+      ]);
+
+      const response = await listOwnedCommunityFighterIds(env, auth);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+      expect(await response.json()).toEqual({ fighterIds: [sourceId] });
+
+      await db.prepare(`UPDATE fighters SET photo_hash = 'different-photo' WHERE id = 'fighter-target'`).run();
+      expect(await listOwnedCommunityFighterIds(env, auth).then((next) => next.json()))
+        .toEqual({ fighterIds: [] });
+    } finally {
+      await mf.dispose();
+    }
+  }, INTEGRATION_TEST_TIMEOUT_MS);
+
   it('activates, lists, and retires a private-by-default official Arcade fighter', async () => {
     const { mf, db, bucket, env } = await createBindings();
     const fighterId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
