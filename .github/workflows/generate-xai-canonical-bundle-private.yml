@@ -20,7 +20,7 @@ on:
         required: true
         type: string
       source:
-        description: Leave empty for the original three-source bundle; use crouch for Elon or side for a sealed global SIDE run
+        description: Leave empty for original three-source; use side for global SIDE or crouch for Elon/reviewed-global CROUCH
         required: false
         type: string
       prompt_sha256:
@@ -125,6 +125,15 @@ jobs:
                 ;;
               lamine-yamal:side)
                 expected_prompt_sha256="27b1a65908a402f491e24b55ba1bccce97a07bc6a915356a16e65ff8c5a3be39"
+                ;;
+              rosalia:crouch)
+                expected_prompt_sha256="e8b11ecca2a2a1fbb958c427804631ec7eed5f901ae00bd6117a5b7f87c1cb82"
+                ;;
+              ibai-llanos:crouch)
+                expected_prompt_sha256="76e68a0c698326333e070bf5c3901570f994a24584fe3b65bad25b13a985becc"
+                ;;
+              lamine-yamal:crouch)
+                expected_prompt_sha256="800a2b5a1c1a90749490497f5b06a92707b3a35ed4784627b22b186a952224cf"
                 ;;
               *)
                 printf '::error::The single-source fighter/source tuple is not sealed.\n'
@@ -244,8 +253,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          prior="$(gh run view "$RESUME_RUN_ID" --repo "$GITHUB_REPOSITORY" --json databaseId,status)"
-          [[ "$(jq -r '.databaseId' <<<"$prior")" == "$RESUME_RUN_ID" && "$(jq -r '.status' <<<"$prior")" == "completed" ]] || {
+          prior="$(gh run view "$RESUME_RUN_ID" --repo "$GITHUB_REPOSITORY" --json databaseId,status,workflowName)"
+          [[ "$(jq -r '.databaseId' <<<"$prior")" == "$RESUME_RUN_ID" \
+            && "$(jq -r '.status' <<<"$prior")" == "completed" \
+            && "$(jq -r '.workflowName' <<<"$prior")" == "Generate one private XAI canonical bundle" ]] || {
             printf '::error::The requested checkpoint run is not a completed exact run.\n'
             exit 1
           }

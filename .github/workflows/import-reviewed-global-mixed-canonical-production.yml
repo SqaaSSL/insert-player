@@ -1,0 +1,308 @@
+name: Import reviewed global SIDE alias and CROUCH
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: Exact reviewed global roster slug
+        required: true
+        type: string
+      side_bundle_run_id:
+        description: Successful reviewed one-call SIDE workflow run
+        required: true
+        type: string
+      reviewed_side_descriptor_sha256:
+        description: Exact human-reviewed SIDE descriptor SHA-256
+        required: true
+        type: string
+      crouch_bundle_run_id:
+        description: Successful reviewed one-call CROUCH workflow run
+        required: true
+        type: string
+      reviewed_crouch_descriptor_sha256:
+        description: Exact human-reviewed CROUCH descriptor SHA-256
+        required: true
+        type: string
+      qa_decision:
+        description: Enter APPROVE_GLOBAL_SIDE_ALIAS_AND_CROUCH_V1
+        required: true
+        type: string
+      confirmation:
+        description: Enter IMPORT_REVIEWED_GLOBAL_MIXED_CANONICAL_SET_V1
+        required: true
+        type: string
+      safety_confirmation:
+        description: Enter SOURCES_ONLY_NO_PROVIDER_NO_GENERATION_NO_ACTIVATION
+        required: true
+        type: string
+      resume_import_run_id:
+        description: Prior failed exact import run; only for checkpoint reconciliation
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  import-reviewed-global-sources:
+    name: Import SIDE + exact UPRIGHT alias + CROUCH without activation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      REQUESTED_SLUG: ${{ inputs.slug }}
+      SIDE_BUNDLE_RUN_ID: ${{ inputs.side_bundle_run_id }}
+      REVIEWED_SIDE_DESCRIPTOR_SHA256: ${{ inputs.reviewed_side_descriptor_sha256 }}
+      CROUCH_BUNDLE_RUN_ID: ${{ inputs.crouch_bundle_run_id }}
+      REVIEWED_CROUCH_DESCRIPTOR_SHA256: ${{ inputs.reviewed_crouch_descriptor_sha256 }}
+      QA_DECISION: ${{ inputs.qa_decision }}
+      IMPORT_CONFIRMATION: ${{ inputs.confirmation }}
+      SAFETY_CONFIRMATION: ${{ inputs.safety_confirmation }}
+      RESUME_IMPORT_RUN_ID: ${{ inputs.resume_import_run_id }}
+      ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+      ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+      ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate the explicit two-review source-only request
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$REQUESTED_SLUG" in
+            rosalia|ibai-llanos|lamine-yamal) ;;
+            *)
+              printf '::error::Global mixed import is not sealed for this slug.\n'
+              exit 1
+              ;;
+          esac
+          [[ "$SIDE_BUNDLE_RUN_ID" =~ ^[1-9][0-9]*$ \
+            && "$CROUCH_BUNDLE_RUN_ID" =~ ^[1-9][0-9]*$ \
+            && "$SIDE_BUNDLE_RUN_ID" != "$CROUCH_BUNDLE_RUN_ID" ]] || {
+            printf '::error::Distinct positive SIDE and CROUCH workflow run ids are required.\n'
+            exit 1
+          }
+          [[ "$REVIEWED_SIDE_DESCRIPTOR_SHA256" =~ ^[a-f0-9]{64}$ \
+            && "$REVIEWED_CROUCH_DESCRIPTOR_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+            printf '::error::Exact lowercase reviewed descriptor SHA-256 values are required.\n'
+            exit 1
+          }
+          [[ "$QA_DECISION" == "APPROVE_GLOBAL_SIDE_ALIAS_AND_CROUCH_V1" ]] || {
+            printf '::error::The exact independent SIDE/alias/CROUCH QA decision is required.\n'
+            exit 1
+          }
+          [[ "$IMPORT_CONFIRMATION" == "IMPORT_REVIEWED_GLOBAL_MIXED_CANONICAL_SET_V1" ]] || {
+            printf '::error::The exact global mixed import confirmation is required.\n'
+            exit 1
+          }
+          [[ "$SAFETY_CONFIRMATION" == "SOURCES_ONLY_NO_PROVIDER_NO_GENERATION_NO_ACTIVATION" ]] || {
+            printf '::error::The exact source-only safety confirmation is required.\n'
+            exit 1
+          }
+          [[ -z "$RESUME_IMPORT_RUN_ID" || "$RESUME_IMPORT_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            printf '::error::resume_import_run_id must be empty or a positive prior run id.\n'
+            exit 1
+          }
+          [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" \
+            && ${#CLERK_BACKEND_AUTH_BRIDGE_SECRET} -ge 32 ]] || {
+            printf '::error::Production Clerk admin secrets are unavailable.\n'
+            exit 1
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+            processor/package-lock.json
+
+      - name: Install pinned dependencies
+        run: |
+          npm ci
+          npm --prefix worker ci
+          npm --prefix processor ci
+
+      - name: Gate the exact global source transport and production toolchain
+        run: |
+          npm run test:arcade:xai-canonical-bundle
+          npm run test:arcade:reviewed-global-mixed
+          docker build --file Dockerfile.processor --target video-sprite-test .
+          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED=1 npm run check:production
+
+      - name: Require a healthy live production Worker
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const configured = process.env.ASF_WORKER_HEALTH_URL?.trim();
+          const workerBase = process.env.ASF_WORKER_URL?.trim().replace(/\/+$/, '');
+          const target = configured || (workerBase ? `${workerBase}/health` : '');
+          if (!target) throw new Error('Worker health URL is required.');
+          const url = new URL(target);
+          const workerUrl = new URL(workerBase);
+          if (
+            workerUrl.origin !== 'https://api.insertplayer.ai'
+            || workerUrl.username || workerUrl.password || workerUrl.pathname !== '/'
+            || workerUrl.search || workerUrl.hash
+          ) throw new Error('Production Worker API origin is not exact.');
+          if (
+            url.origin !== workerUrl.origin || url.pathname !== '/health'
+            || url.username || url.password || url.search || url.hash
+          ) throw new Error('Worker health URL is not the exact production endpoint.');
+          const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+          if (!response.ok) throw new Error(`Worker health failed with HTTP ${response.status}.`);
+          const health = await response.json();
+          if (
+            health?.status !== 'ok' || health.environment !== 'production'
+            || health.storage?.d1 !== 'bound' || health.storage?.r2 !== 'bound'
+          ) throw new Error('Live Worker is not a healthy production D1/R2 deployment.');
+          NODE
+
+      - name: Download both exact successful reviewed bundles
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          download_reviewed_bundle() {
+            local run_id="$1"
+            local descriptor_sha="$2"
+            local source_name="$3"
+            local output_dir="$4"
+            local run_json
+            run_json="$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json databaseId,status,conclusion,workflowName)"
+            [[ "$(jq -r '.databaseId' <<<"$run_json")" == "$run_id" \
+              && "$(jq -r '.status' <<<"$run_json")" == "completed" \
+              && "$(jq -r '.conclusion' <<<"$run_json")" == "success" \
+              && "$(jq -r '.workflowName' <<<"$run_json")" == "Generate one private XAI canonical bundle" ]] || return 1
+            mkdir -p "$output_dir"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --name "arcade-xai-canonical-bundle-$REQUESTED_SLUG" --dir "$output_dir"
+            [[ -f "$output_dir/review-descriptor.json" && -f "$output_dir/generation-state.json" ]] || return 1
+            [[ "$(jq -r '.descriptorSha256' "$output_dir/review-descriptor.json")" == "$descriptor_sha" \
+              && "$(jq -r '.fighter.slug' "$output_dir/review-descriptor.json")" == "$REQUESTED_SLUG" \
+              && "$(jq -c '.sourceNames' "$output_dir/review-descriptor.json")" == "[\"$source_name\"]" ]] || return 1
+          }
+          side_dir="$RUNNER_TEMP/reviewed-global-side-bundle"
+          crouch_dir="$RUNNER_TEMP/reviewed-global-crouch-bundle"
+          download_reviewed_bundle "$SIDE_BUNDLE_RUN_ID" "$REVIEWED_SIDE_DESCRIPTOR_SHA256" side "$side_dir" || {
+            printf '::error::The exact reviewed SIDE bundle is unavailable or mismatched.\n'
+            exit 1
+          }
+          download_reviewed_bundle "$CROUCH_BUNDLE_RUN_ID" "$REVIEWED_CROUCH_DESCRIPTOR_SHA256" crouch "$crouch_dir" || {
+            printf '::error::The exact reviewed CROUCH bundle is unavailable or mismatched.\n'
+            exit 1
+          }
+          printf 'SIDE_BUNDLE_DIRECTORY=%s\n' "$side_dir" >> "$GITHUB_ENV"
+          printf 'CROUCH_BUNDLE_DIRECTORY=%s\n' "$crouch_dir" >> "$GITHUB_ENV"
+          printf 'IMPORT_OUTPUT_DIRECTORY=%s\n' "$RUNNER_TEMP/reviewed-global-mixed-import" >> "$GITHUB_ENV"
+
+      - name: Restore one immutable failed import checkpoint
+        if: inputs.resume_import_run_id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prior="$(gh run view "$RESUME_IMPORT_RUN_ID" --repo "$GITHUB_REPOSITORY" --json databaseId,status,workflowName)"
+          [[ "$(jq -r '.databaseId' <<<"$prior")" == "$RESUME_IMPORT_RUN_ID" \
+            && "$(jq -r '.status' <<<"$prior")" == "completed" \
+            && "$(jq -r '.workflowName' <<<"$prior")" == "Import reviewed global SIDE alias and CROUCH" ]] || {
+            printf '::error::The requested checkpoint run is not exact and completed.\n'
+            exit 1
+          }
+          mkdir -p "$IMPORT_OUTPUT_DIRECTORY"
+          gh run download "$RESUME_IMPORT_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-reviewed-global-mixed-import-checkpoint-$RESUME_IMPORT_RUN_ID" \
+            --dir "$IMPORT_OUTPUT_DIRECTORY"
+          plan="$IMPORT_OUTPUT_DIRECTORY/assembly-plan.json"
+          [[ -f "$IMPORT_OUTPUT_DIRECTORY/import-state.json" && -f "$plan" \
+            && -f "$IMPORT_OUTPUT_DIRECTORY/qa-evidence.json" ]] || {
+            printf '::error::The import checkpoint is incomplete.\n'
+            exit 1
+          }
+          [[ "$(jq -r '.fighter.slug' "$plan")" == "$REQUESTED_SLUG" \
+            && "$(jq -r '.side.bundleRunId' "$plan")" == "$SIDE_BUNDLE_RUN_ID" \
+            && "$(jq -r '.side.reviewedDescriptorSha256' "$plan")" == "$REVIEWED_SIDE_DESCRIPTOR_SHA256" \
+            && "$(jq -r '.crouch.bundleRunId' "$plan")" == "$CROUCH_BUNDLE_RUN_ID" \
+            && "$(jq -r '.crouch.reviewedDescriptorSha256' "$plan")" == "$REVIEWED_CROUCH_DESCRIPTOR_SHA256" ]] || {
+            printf '::error::Checkpoint lineage differs from this exact reviewed request.\n'
+            exit 1
+          }
+          printf 'ASSEMBLY_PLAN_SHA256=%s\n' "$(sha256sum "$plan" | awk '{print $1}')" >> "$GITHUB_ENV"
+
+      - name: Assemble the exact reviewed SIDE alias and CROUCH QA evidence
+        if: inputs.resume_import_run_id == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed_at="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          receipt="$(npm run --silent arcade:assemble:reviewed-global-mixed -- \
+            --slug="$REQUESTED_SLUG" \
+            --reviewed-by="$GITHUB_ACTOR" \
+            --reviewed-at="$reviewed_at" \
+            --side-bundle-dir="$SIDE_BUNDLE_DIRECTORY" \
+            --side-bundle-run-id="$SIDE_BUNDLE_RUN_ID" \
+            --reviewed-side-descriptor-sha256="$REVIEWED_SIDE_DESCRIPTOR_SHA256" \
+            --crouch-bundle-dir="$CROUCH_BUNDLE_DIRECTORY" \
+            --crouch-bundle-run-id="$CROUCH_BUNDLE_RUN_ID" \
+            --reviewed-crouch-descriptor-sha256="$REVIEWED_CROUCH_DESCRIPTOR_SHA256" \
+            --output-dir="$IMPORT_OUTPUT_DIRECTORY" \
+            --qa-decision="$QA_DECISION" \
+            --confirm="ASSEMBLE_REVIEWED_GLOBAL_MIXED_CANONICAL_SET_V1")"
+          plan_sha="$(jq -r '.assemblyPlanSha256' <<<"$receipt")"
+          [[ "$plan_sha" =~ ^[a-f0-9]{64}$ ]] || {
+            printf '::error::Global assembly receipt did not return an exact plan hash.\n'
+            exit 1
+          }
+          printf 'ASSEMBLY_PLAN_SHA256=%s\n' "$plan_sha" >> "$GITHUB_ENV"
+
+      - name: Import exactly SIDE, its UPRIGHT byte alias, and CROUCH
+        shell: bash
+        run: |
+          npm run arcade:import:reviewed-global-mixed-canonical -- \
+            --execute-production \
+            --side-bundle-dir="$SIDE_BUNDLE_DIRECTORY" \
+            --crouch-bundle-dir="$CROUCH_BUNDLE_DIRECTORY" \
+            --assembly-plan="$IMPORT_OUTPUT_DIRECTORY/assembly-plan.json" \
+            --assembly-plan-sha256="$ASSEMBLY_PLAN_SHA256" \
+            --output-dir="$IMPORT_OUTPUT_DIRECTORY" \
+            --confirm="$IMPORT_CONFIRMATION" \
+            --confirm-safety="$SAFETY_CONFIRMATION" \
+            --reviewed-by="$GITHUB_ACTOR"
+
+      - name: Publish reviewed-current-v1 source handoff and operator evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-reviewed-canonical-manifest-${{ inputs.slug }}
+          path: |
+            ${{ runner.temp }}/reviewed-global-mixed-import/reviewed-canonical-manifest.json
+            ${{ runner.temp }}/reviewed-global-mixed-import/reviewed-canonical-operator-manifest.json
+            ${{ runner.temp }}/reviewed-global-mixed-import/import-receipt.json
+            ${{ runner.temp }}/reviewed-global-mixed-import/assembly-plan.json
+            ${{ runner.temp }}/reviewed-global-mixed-import/qa-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve the exactly-once source-import checkpoint
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-reviewed-global-mixed-import-checkpoint-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/reviewed-global-mixed-import/import-state.json
+            ${{ runner.temp }}/reviewed-global-mixed-import/assembly-plan.json
+            ${{ runner.temp }}/reviewed-global-mixed-import/qa-evidence.json
+          if-no-files-found: ignore
+          retention-days: 30

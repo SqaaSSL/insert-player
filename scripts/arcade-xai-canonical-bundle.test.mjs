@@ -15,6 +15,9 @@ import {
   XAI_CANONICAL_BUNDLE_CONFIRMATION,
   XAI_CANONICAL_BUNDLE_MODEL,
   XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION,
+  XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE,
+  XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE,
+  XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_SHA256_BY_SLUG,
   XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE,
   XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG,
   XAI_CANONICAL_GLOBAL_SIDE_REFERENCES,
@@ -596,6 +599,7 @@ describe('sealed XAI canonical bundle inputs', () => {
       expect(prompt).toContain('IMAGE 2 = APPROVED MILEI RENDERING-LANGUAGE ONLY');
       expect(prompt).toContain('it supplies no clothing/body instructions');
       expect(prompt).toContain('strict lateral profile facing screen-right');
+      expect(prompt).not.toContain('3/4');
       expect(prompt).toContain('not frontal, three-quarter, or screen-left; do not mirror');
       expect(prompt).toContain('Wardrobe/garments/footwear/palette/design ONLY from ROSTER');
       expect(prompt).toContain('pure bright green (#00FF00), flat/uniform');
@@ -642,6 +646,97 @@ describe('sealed XAI canonical bundle inputs', () => {
     expect(JSON.stringify(payload)).not.toMatch(/fallback|retry/i);
   });
 
+  it('seals global CROUCH to original identity + Trump crouch + that fighter reviewed SIDE raw', () => {
+    const expectedPromptBytes = {
+      rosalia: 3820,
+      'ibai-llanos': 3824,
+      'lamine-yamal': 3848,
+    };
+    for (const slug of XAI_CANONICAL_GLOBAL_SIDE_SLUGS) {
+      const fighter = roster.fighters.find((entry) => entry.slug === slug);
+      expect(resolveXaiCanonicalSingleSourcePromptProfile(slug, 'crouch'))
+        .toBe(XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE);
+      const prompt = buildXaiCanonicalBundlePrompt(fighter, 'crouch', {
+        promptProfile: XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE,
+      });
+      expect(sha256(prompt)).toBe(XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_SHA256_BY_SLUG[slug]);
+      expect(Buffer.byteLength(prompt, 'utf8')).toBe(expectedPromptBytes[slug]);
+      expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(XAI_CANONICAL_PIXCLI_PROMPT_MAX);
+      expect(prompt).toContain(`IMAGE 3 = REAL ${fighter.name.toUpperCase()}`);
+      expect(prompt).toContain('IMAGE 1 = APPROVED TRUMP CROUCH STRUCTURE ONLY');
+      expect(prompt).toContain(`IMAGE 2 = APPROVED ${fighter.name.toUpperCase()} SIDE RAW; RENDERING/WARDROBE ONLY`);
+      expect(prompt).toContain('strict lateral profile facing screen-right');
+      expect(prompt).not.toContain('3/4');
+      expect(prompt).toContain('both soles planted on one shared ground line');
+      expect(prompt).toContain('two distinct complete hands close to face/upper chest');
+      expect(prompt).toContain('no model memory, celebrity prior, web knowledge, generic substitute');
+      expect(prompt.indexOf('IMAGE 3 = REAL')).toBeLessThan(prompt.indexOf('IMAGE 1 = APPROVED TRUMP'));
+      expect(prompt.indexOf('1) ')).toBeLessThan(prompt.indexOf('2) deep strict screen-right CROUCH'));
+    }
+
+    const rosalia = roster.fighters.find((entry) => entry.slug === 'rosalia');
+    const renderingHash = 'a'.repeat(64);
+    const approvalRecord = {
+      schemaVersion: 1,
+      evidenceType: 'reviewed_global_side_for_crouch_v1',
+      status: 'approved',
+      decision: 'APPROVE_REVIEWED_GLOBAL_SIDE_FOR_CROUCH_V1',
+      sideBundleRunId: '33040000000',
+      reviewedDescriptorSha256: 'b'.repeat(64),
+      fighter: { slug: 'rosalia', name: rosalia.name, photoHash: rosalia.reference.sourceSha256 },
+      side: {
+        bundleId: 'arcade-xai-canonical-source-rosalia-side-v1',
+        rawSha256: renderingHash,
+      },
+      blockingFindings: [],
+    };
+    const validReferences = {
+      sources: {
+        crouch: {
+          pose: { ...XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE },
+          rendering: {
+            id: 'reviewed-rosalia-side-raw-v1',
+            contentSha256: renderingHash,
+            approvalRecord,
+          },
+        },
+      },
+    };
+    expect(validateXaiCanonicalPromptProfileReferences(
+      validReferences,
+      XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE,
+      rosalia,
+    )).toBe(validReferences);
+    expect(() => validateXaiCanonicalPromptProfileReferences({
+      sources: {
+        crouch: {
+          pose: { ...XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE, contentSha256: 'b'.repeat(64) },
+          rendering: validReferences.sources.crouch.rendering,
+        },
+      },
+    }, XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE, rosalia)).toThrow(/reviewed Trump crouch/i);
+    expect(() => validateXaiCanonicalPromptProfileReferences({
+      sources: {
+        crouch: {
+          pose: { ...XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE },
+          rendering: { id: 'milei-side-reviewed-v1', contentSha256: renderingHash, approvalRecord },
+        },
+      },
+    }, XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE, rosalia)).toThrow(/reviewed SIDE raw/i);
+    expect(() => validateXaiCanonicalPromptProfileReferences({
+      sources: {
+        crouch: {
+          pose: { ...XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE },
+          rendering: {
+            id: 'reviewed-rosalia-side-raw-v1',
+            contentSha256: renderingHash,
+            approvalRecord: { ...approvalRecord, blockingFindings: ['identity mismatch'] },
+          },
+        },
+      },
+    }, XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE, rosalia)).toThrow(/unblocked SIDE review lineage/i);
+  });
+
   it('fails closed on global SIDE reference roles, slugs, sources, and cross-identity names', async () => {
     const validReferences = {
       sources: {
@@ -668,7 +763,8 @@ describe('sealed XAI canonical bundle inputs', () => {
     }, XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE)).toThrow(/exact single-side/i);
 
     expect(() => resolveXaiCanonicalSingleSourcePromptProfile('aitana', 'side')).toThrow(/not sealed/i);
-    expect(() => resolveXaiCanonicalSingleSourcePromptProfile('rosalia', 'crouch')).toThrow(/not sealed/i);
+    expect(resolveXaiCanonicalSingleSourcePromptProfile('rosalia', 'crouch'))
+      .toBe(XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE);
     expect(() => resolveXaiCanonicalSingleSourcePromptProfile('elon-musk', 'side')).toThrow(/not sealed/i);
     expect(resolveXaiCanonicalSingleSourcePromptProfile('elon-musk', 'crouch'))
       .toBe(XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE);

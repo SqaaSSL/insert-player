@@ -16,7 +16,7 @@ import {
   XAI_CANONICAL_BUNDLE_BASE_COMMIT,
   XAI_CANONICAL_BUNDLE_CLEANUP,
   XAI_CANONICAL_BUNDLE_MODEL,
-  XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
+  resolveXaiCanonicalSingleSourcePromptProfile,
 } from './arcade-xai-canonical-bundle.mjs';
 import { validateManifest } from './seed-arcade-roster.mjs';
 
@@ -306,7 +306,7 @@ function validateGenerationState(state, descriptor) {
       || slot.renderingSha256 !== reviewed.references.rendering.contentSha256
       || slot.promptSha256 !== reviewed.promptSha256
       || slot.promptProfile !== (sourceNames.length === 1
-        ? XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
+        ? resolveXaiCanonicalSingleSourcePromptProfile(descriptor.fighter.slug, sourceName)
         : undefined)
       || slot.modelId !== XAI_CANONICAL_BUNDLE_MODEL.id
       || slot.requestSha256 !== reviewed.requestSha256
@@ -340,7 +340,7 @@ function reviewedUpload(state, reference, label) {
 
 export function validateBundlePromptAndRequest(bundle, rosterFighter) {
   const promptProfile = bundle.sourceNames.length === 1
-    ? XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
+    ? resolveXaiCanonicalSingleSourcePromptProfile(rosterFighter.slug, bundle.sourceNames[0])
     : undefined;
   const identityReference = {
     id: `identity-${rosterFighter.slug}`,

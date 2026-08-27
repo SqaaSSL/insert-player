@@ -38,6 +38,8 @@ export const XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION = 'GENERATE_XAI_CANONICAL_
 export const XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION = 'PRIVATE_ARTIFACTS_ONLY_HUMAN_REVIEW';
 export const XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE = 'elon_crouch_identity_hard_gate_v1';
 export const XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE = 'global_side_identity_hard_gate_v1';
+export const XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE =
+  'global_crouch_from_reviewed_side_identity_hard_gate_v1';
 // Mirrors PixCLI EditAdvancedRequestSchema.promptSchema (`z.string().max(4000)`).
 // We additionally seal UTF-8 bytes to the same ceiling so every accepted local
 // payload is guaranteed to fit the remote character contract.
@@ -57,12 +59,24 @@ export const XAI_CANONICAL_GLOBAL_SIDE_REFERENCES = Object.freeze({
     contentSha256: '41dcb1e372fdfd36b7f53ba461198fdf26e645b637e3b4417a0833414a702559',
   }),
 });
+export const XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE = Object.freeze({
+  id: 'trump-crouch-reviewed-v1',
+  contentSha256: 'eec0779f6120b9f89fb5fc87d7c3e65e8bd285eb220d52f37466ccdc78069749',
+});
 export const XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256 =
   'c7be4746256d2e39b39dd61ba50d4abb887742ff69ce148a36f00672e4283acb';
 export const XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG = Object.freeze({
   rosalia: 'eb0142fe810eda52e711a5e8acc58f06fa0370721be0e06cf7e45dcb612fdb78',
   'ibai-llanos': '47aeadbceef3c883a26c7de9f6d925de153239d8f7d28d0ae5ce96dad17c449b',
   'lamine-yamal': '27b1a65908a402f491e24b55ba1bccce97a07bc6a915356a16e65ff8c5a3be39',
+});
+// Updated only through the reviewed prompt snapshot tests below. These values
+// intentionally differ by fighter because IMAGE 3 identity and roster wardrobe
+// remain explicit hard gates.
+export const XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_SHA256_BY_SLUG = Object.freeze({
+  rosalia: 'e8b11ecca2a2a1fbb958c427804631ec7eed5f901ae00bd6117a5b7f87c1cb82',
+  'ibai-llanos': '76e68a0c698326333e070bf5c3901570f994a24584fe3b65bad25b13a985becc',
+  'lamine-yamal': '800a2b5a1c1a90749490497f5b06a92707b3a35ed4784627b22b186a952224cf',
 });
 export const XAI_CANONICAL_BUNDLE_SOURCE_NAMES = Object.freeze(['side', 'upright', 'crouch']);
 export const XAI_CANONICAL_BUNDLE_MODEL = Object.freeze({
@@ -171,23 +185,87 @@ export function resolveXaiCanonicalSingleSourcePromptProfile(slug, sourceName) {
   if (sourceName === 'side' && XAI_CANONICAL_GLOBAL_SIDE_SLUGS.includes(slug)) {
     return XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE;
   }
+  if (sourceName === 'crouch' && XAI_CANONICAL_GLOBAL_SIDE_SLUGS.includes(slug)) {
+    return XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE;
+  }
   throw new Error(`Single-source canonical generation is not sealed for ${String(slug)} ${String(sourceName).toUpperCase()}.`);
 }
 
-export function validateXaiCanonicalPromptProfileReferences(poseBundle, promptProfile) {
-  if (promptProfile !== XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE) return poseBundle;
-  const side = poseBundle?.sources?.side;
-  if (!side || Object.keys(poseBundle.sources).length !== 1) {
-    throw new Error('The global SIDE profile requires an exact single-side pose manifest.');
-  }
-  for (const role of ['pose', 'rendering']) {
-    const expected = XAI_CANONICAL_GLOBAL_SIDE_REFERENCES[role];
-    const actual = side[role];
-    if (actual?.id !== expected.id || actual?.contentSha256 !== expected.contentSha256) {
-      throw new Error(`The global SIDE ${role} reference is not the sealed ${expected.id} asset.`);
+export function validateXaiCanonicalPromptProfileReferences(poseBundle, promptProfile, fighter = null) {
+  if (promptProfile === XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE) {
+    const side = poseBundle?.sources?.side;
+    if (!side || Object.keys(poseBundle.sources).length !== 1) {
+      throw new Error('The global SIDE profile requires an exact single-side pose manifest.');
     }
+    for (const role of ['pose', 'rendering']) {
+      const expected = XAI_CANONICAL_GLOBAL_SIDE_REFERENCES[role];
+      const actual = side[role];
+      if (actual?.id !== expected.id || actual?.contentSha256 !== expected.contentSha256) {
+        throw new Error(`The global SIDE ${role} reference is not the sealed ${expected.id} asset.`);
+      }
+    }
+  } else if (promptProfile === XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE) {
+    const crouch = poseBundle?.sources?.crouch;
+    if (!crouch || Object.keys(poseBundle.sources).length !== 1) {
+      throw new Error('The global CROUCH profile requires an exact single-crouch pose manifest.');
+    }
+    if (
+      crouch.pose?.id !== XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE.id
+      || crouch.pose?.contentSha256 !== XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE.contentSha256
+    ) {
+      throw new Error('The global CROUCH pose is not the sealed reviewed Trump crouch asset.');
+    }
+    const expectedRenderingId = fighter?.slug ? `reviewed-${fighter.slug}-side-raw-v1` : null;
+    const approval = crouch.rendering?.approvalRecord;
+    if (
+      !expectedRenderingId
+      || crouch.rendering?.id !== expectedRenderingId
+      || !/^[a-f0-9]{64}$/.test(crouch.rendering?.contentSha256 ?? '')
+      || crouch.rendering.contentSha256 === crouch.pose.contentSha256
+    ) {
+      throw new Error('The global CROUCH rendering reference is not one exact reviewed SIDE raw asset.');
+    }
+    if (
+      approval?.schemaVersion !== 1
+      || approval.evidenceType !== 'reviewed_global_side_for_crouch_v1'
+      || approval.status !== 'approved'
+      || approval.decision !== 'APPROVE_REVIEWED_GLOBAL_SIDE_FOR_CROUCH_V1'
+      || approval.fighter?.slug !== fighter.slug
+      || approval.fighter?.name !== fighter.name
+      || approval.fighter?.photoHash !== fighter.reference?.sourceSha256
+      || approval.side?.bundleId !== `arcade-xai-canonical-source-${fighter.slug}-side-v1`
+      || approval.side?.rawSha256 !== crouch.rendering.contentSha256
+      || !/^[1-9][0-9]*$/.test(approval.sideBundleRunId ?? '')
+      || !/^[a-f0-9]{64}$/.test(approval.reviewedDescriptorSha256 ?? '')
+      || !Array.isArray(approval.blockingFindings)
+      || approval.blockingFindings.length !== 0
+    ) throw new Error('The global CROUCH rendering reference lacks exact unblocked SIDE review lineage.');
   }
   return poseBundle;
+}
+
+export function reviewedXaiCanonicalSingleSourcePromptSha256(slug, sourceName, promptProfile) {
+  if (promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE) {
+    if (slug !== 'elon-musk' || sourceName !== 'crouch') {
+      throw new Error('The Elon CROUCH prompt snapshot tuple is invalid.');
+    }
+    return XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256;
+  }
+  if (promptProfile === XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE && sourceName === 'side') {
+    return requireString(
+      XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG[slug],
+      'reviewed global SIDE prompt SHA-256',
+      /^[a-f0-9]{64}$/,
+    );
+  }
+  if (promptProfile === XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE && sourceName === 'crouch') {
+    return requireString(
+      XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_SHA256_BY_SLUG[slug],
+      'reviewed global CROUCH prompt SHA-256',
+      /^[a-f0-9]{64}$/,
+    );
+  }
+  throw new Error(`No reviewed single-source prompt snapshot for ${String(slug)} ${String(sourceName)}.`);
 }
 
 function canonicalBundlePolicy(sourceNames) {
@@ -365,7 +443,7 @@ function readApprovedReference(reference, baseDirectory, label) {
   if (canonicalJson(selected) !== canonicalJson(reference.approvalEvidence.expectedValue)) {
     throw new Error(`${label} approval evidence selector did not match.`);
   }
-  return { ...reference, absolutePath: path, bytes };
+  return { ...reference, absolutePath: path, bytes, approvalRecord: evidence };
 }
 
 export function loadXaiCanonicalPoseManifest(
@@ -428,7 +506,10 @@ function sourcePoseInstruction(sourceName, options = {}) {
     return 'an upright neutral full-body ready stance in 3/4 view facing right, balanced and suitable as the standing canonical anchor';
   }
   if (sourceName === 'crouch') {
-    if (options.promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE) {
+    if (
+      options.promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
+      || options.promptProfile === XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE
+    ) {
       return 'a deep compact balanced crouching guard, strict lateral profile facing screen-right (not frontal, three-quarter, or screen-left; do not mirror); head/hips substantially lowered; both soles planted on one shared ground line; two distinct complete hands close to face/upper chest in closed defensive guard; static—no attack, lunge, jump, kneel, or motion; complete silhouette, generous overscan, no crop';
     }
     return 'a deep but anatomically balanced crouching guard in 3/4 view facing right, with both feet and the complete silhouette visible';
@@ -452,6 +533,7 @@ function buildIdentityHardGatePrompt(
   sourceName,
   options,
   globalSideIdentityHardGate,
+  globalCrouchIdentityHardGate,
   globalIdentity,
 ) {
   const referenceRoles = globalSideIdentityHardGate ? [
@@ -459,20 +541,29 @@ function buildIdentityHardGatePrompt(
     `1) IMAGE 3 = REAL ${fighter.name.toUpperCase()}; IDENTITY/SEX/FACE/PHYSIQUE hard gate. Render ${fighter.name} exactly as IMAGE 3—no model memory, celebrity prior, web knowledge, generic approximation, substitute. Preserve exact face, hair, skin, age, distinctive features, sex, natural build; unrecognizable = invalid. Ignore its crop, camera, background, photo style.`,
     '2) IMAGE 1 = APPROVED TRUMP UPRIGHT POSE/COMPOSITION ONLY: strict screen-right combat-guard joints/direction/balance/full-body frame/distance/foot baseline/silhouette. TARGET/OUTPUT override perspective/yaw/frame/facing/crop/floor/shadow/background. Never copy Trump identity, face, hair, skin, sex, physique, age, wardrobe, colors, logos, accessories.',
     '3) IMAGE 2 = APPROVED MILEI RENDERING-LANGUAGE ONLY: grounded premium fighting-game rendering, materials, controlled studio light, crisp edges. Never copy Milei identity, face, hair, sex, physique, age, pose, perspective, wardrobe, colors, insignia, accessories, floor, shadow, background; it supplies no clothing/body instructions.',
+  ] : globalCrouchIdentityHardGate ? [
+    'REFERENCE ROLES — HARD; NEVER BLEND:',
+    `1) IMAGE 3 = REAL ${fighter.name.toUpperCase()}; IDENTITY/SEX/FACE/PHYSIQUE hard gate. Render ${fighter.name} exactly—no model memory, celebrity prior, web knowledge, generic substitute. Preserve exact face, hair, skin, age, features, sex, natural build; unrecognizable = invalid. Ignore clothes/crop/camera/background/style.`,
+    '2) IMAGE 1 = APPROVED TRUMP CROUCH STRUCTURE ONLY: deep compact joints, two-hand guard, both soles, balance, full-body frame/baseline. Rotate to strict screen-right lateral TARGET; TARGET/OUTPUT override yaw/perspective/facing/frame/crop/floor/shadow/background. Never copy Trump identity, body, wardrobe, colors, logos, accessories.',
+    `3) IMAGE 2 = APPROVED ${fighter.name.toUpperCase()} SIDE RAW; RENDERING/WARDROBE ONLY: fighting-game render, materials, light, edges, exact garments/colors. Never identity/body authority; never copy standing pose/perspective/frame/floor/shadow/background. IMAGE 3 controls identity/build; TARGET crouch; OUTPUT background.`,
   ] : [
     'REFERENCE ROLES — HARD; NEVER BLEND:',
     '1) IMAGE 3 = REAL IDENTITY/PHYSIQUE; hard gate. Render Elon Musk exactly as shown, never model memory/generic substitute. Preserve face geometry, hair, skin, age, distinctive features, rounded-square face, broad natural build; never narrow, angularize, or slim. Never copy its clothing/suit/shirt/tie/colors/accessories (IMAGE 2 controls wardrobe), crop, camera, background, photo rendering.',
     '2) IMAGE 1 = CROUCH STRUCTURE only: joints, depth, two-hand guard. Rotate/recompose to strict screen-right lateral TARGET. TARGET/OUTPUT override yaw, perspective, facing, framing, silhouette, foot baseline, background. Never copy identity, face, hair, physique, clothing, colors, logos, accessories.',
     '3) IMAGE 2 = RENDERING/WARDROBE only: premium fighting-game rendering, material detail, controlled light, crisp edges, garments/colors/style. Never copy identity, face, hair, physique, background/green vignette/gradient/logos, or accessories conflicting with ROSTER. IMAGE 3 alone controls build; OUTPUT alone background.',
   ];
-  const identityAndAnatomy = globalSideIdentityHardGate
+  const identityAndAnatomy = globalSideIdentityHardGate || globalCrouchIdentityHardGate
     ? `IMAGES 1/2 -> ${fighter.name} from IMAGE 3; never blend face, sex, physique, identity. Coherent adult anatomy: natural head/joints, two distinct complete hands/feet. ${globalIdentity.safeguard}`
     : 'Replace people in IMAGES 1/2 with Elon Musk from IMAGE 3; never blend faces/identities. Keep coherent adult anatomy, natural head/joints, two distinct complete hands and feet.';
   const rosterWardrobeGate = globalSideIdentityHardGate
     ? 'Wardrobe/garments/footwear/palette/design ONLY from ROSTER; never IMAGES 1/2, celebrity memory, teams, performances, events.'
+    : globalCrouchIdentityHardGate
+    ? 'Wardrobe/render only approved IMAGE 2 plus ROSTER; ROSTER wins. Never IMAGE 1/3 clothing, celebrity memory, teams, events.'
     : 'ROSTER may refine details but never weaken IMAGE 3 identity; IMAGE 2 remains wardrobe master.';
   const finalPriority = globalSideIdentityHardGate
     ? `1) ${fighter.name.toUpperCase()} IDENTITY/SEX/FACE/PHYSIQUE, IMAGE 3 hard gate; 2) strict screen-right pose, IMAGE 1 under TARGET/OUTPUT; 3) render only IMAGE 2; 4) wardrobe/details only ROSTER. Roles stay separate.`
+    : globalCrouchIdentityHardGate
+    ? `1) ${fighter.name.toUpperCase()} IDENTITY/SEX/FACE/PHYSIQUE, IMAGE 3 hard gate; 2) deep strict screen-right CROUCH from IMAGE 1 under TARGET/OUTPUT; 3) rendering/wardrobe from approved IMAGE 2 plus ROSTER. Roles stay separate.`
     : '1) IDENTITY/PHYSIQUE from IMAGE 3 — hard gate; 2) CROUCH joints from IMAGE 1 subject to TARGET/OUTPUT; 3) rendering/wardrobe from IMAGE 2. Roster may refine but never weaken identity; assigned roles never overwrite each other.';
   return [
     ...referenceRoles,
@@ -495,7 +586,8 @@ function buildIdentityHardGatePrompt(
 export function buildXaiCanonicalBundlePrompt(fighter, sourceName, options = {}) {
   const elonIdentityHardGate = options.promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE;
   const globalSideIdentityHardGate = options.promptProfile === XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE;
-  const identityHardGate = elonIdentityHardGate || globalSideIdentityHardGate;
+  const globalCrouchIdentityHardGate = options.promptProfile === XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE;
+  const identityHardGate = elonIdentityHardGate || globalSideIdentityHardGate || globalCrouchIdentityHardGate;
   if (options.promptProfile !== undefined && !identityHardGate) {
     throw new Error(`Unsupported canonical prompt profile: ${String(options.promptProfile)}.`);
   }
@@ -510,12 +602,20 @@ export function buildXaiCanonicalBundlePrompt(fighter, sourceName, options = {})
   )) {
     throw new Error('The global identity-first SIDE profile is sealed only for Rosalía, Ibai Llanos, and Lamine Yamal with their exact roster identities.');
   }
+  if (globalCrouchIdentityHardGate && (
+    sourceName !== 'crouch'
+    || !XAI_CANONICAL_GLOBAL_SIDE_SLUGS.includes(fighter.slug)
+    || globalIdentity?.name !== fighter.name
+  )) {
+    throw new Error('The global identity-first CROUCH profile is sealed only for Rosalía, Ibai Llanos, and Lamine Yamal with their exact roster identities.');
+  }
   if (identityHardGate) {
     return assertXaiCanonicalPromptFitsPixcliSchema(buildIdentityHardGatePrompt(
       fighter,
       sourceName,
       options,
       globalSideIdentityHardGate,
+      globalCrouchIdentityHardGate,
       globalIdentity,
     ));
   }
@@ -1048,9 +1148,9 @@ function buildBundleMatrix(fighter, poseBundle, sourceNames) {
     const source = poseBundle.sources[sourceName];
     const prompt = buildXaiCanonicalBundlePrompt(fighter, sourceName, { promptProfile });
     const promptSha256 = sha256(prompt);
-    const reviewedPromptSha256 = promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
-      ? XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256
-      : XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG[fighter.slug];
+    const reviewedPromptSha256 = promptProfile
+      ? reviewedXaiCanonicalSingleSourcePromptSha256(fighter.slug, sourceName, promptProfile)
+      : undefined;
     if (promptProfile && promptSha256 !== reviewedPromptSha256) {
       throw new Error(`The exact reviewed single-source prompt snapshot changed for ${fighter.slug}.`);
     }
@@ -1199,7 +1299,7 @@ export async function runXaiCanonicalBundle(options = {}) {
   const promptProfile = singleSource
     ? resolveXaiCanonicalSingleSourcePromptProfile(fighter.slug, sourceNames[0])
     : undefined;
-  validateXaiCanonicalPromptProfileReferences(poseBundle, promptProfile);
+  validateXaiCanonicalPromptProfileReferences(poseBundle, promptProfile, fighter);
   const sourcePath = join(options.sourceDir ?? DEFAULT_SOURCE_DIR, `${slug}.png`);
   const original = verifyBakeoffSource(fighter, sourcePath);
   for (const sourceName of sourceNames) {

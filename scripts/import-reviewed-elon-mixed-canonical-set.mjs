@@ -20,7 +20,11 @@ import {
   loadReviewedCanonicalBundle,
   validateBundlePromptAndRequest,
 } from './import-reviewed-xai-canonical-bundle.mjs';
-import { inspectPng } from './arcade-xai-canonical-bundle.mjs';
+import {
+  inspectPng,
+  XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE,
+  XAI_CANONICAL_GLOBAL_SIDE_SLUGS,
+} from './arcade-xai-canonical-bundle.mjs';
 import {
   REVIEWED_CANONICAL_SOURCE_MODE,
   validateManifest,
@@ -31,6 +35,9 @@ const DEFAULT_ROSTER_PATH = join(root, 'arcade/roster-2026.json');
 const MAX_PNG_BYTES = 12 * 1024 * 1024;
 const SOURCE_NAMES = Object.freeze(['side', 'upright', 'crouch']);
 const MUTATED_KINDS = Object.freeze(['upright', 'upright_raw', 'crouch', 'crouch_raw']);
+const GLOBAL_MUTATED_KINDS = Object.freeze([
+  'side', 'side_raw', 'upright', 'upright_raw', 'crouch', 'crouch_raw',
+]);
 const RESPONSE_KEYS = Object.freeze({
   side: 'side',
   side_raw: 'sideRaw',
@@ -44,7 +51,30 @@ export const ELON_MIXED_IMPORT_CONFIRMATION = 'IMPORT_REVIEWED_ELON_MIXED_CANONI
 export const ELON_MIXED_IMPORT_SAFETY_CONFIRMATION = 'SOURCES_ONLY_NO_PROVIDER_NO_GENERATION_NO_ACTIVATION';
 export const ELON_MIXED_QA_DECISION = 'APPROVE_ELON_SIDE_ALIAS_AND_CROUCH_V1';
 export const ELON_UPRIGHT_ALIAS_DECISION = 'ALIAS_EXACT_REVIEWED_SIDE_BYTES_AS_UPRIGHT_V1';
+export const GLOBAL_MIXED_IMPORT_CONFIRMATION = 'IMPORT_REVIEWED_GLOBAL_MIXED_CANONICAL_SET_V1';
+export const GLOBAL_MIXED_IMPORT_SAFETY_CONFIRMATION =
+  'SOURCES_ONLY_NO_PROVIDER_NO_GENERATION_NO_ACTIVATION';
+export const GLOBAL_MIXED_QA_DECISION = 'APPROVE_GLOBAL_SIDE_ALIAS_AND_CROUCH_V1';
+export const GLOBAL_UPRIGHT_ALIAS_DECISION = 'ALIAS_EXACT_REVIEWED_SIDE_BYTES_AS_UPRIGHT_V1';
 export const INSERT_PLAYER_PRODUCTION_WORKER_ORIGIN = 'https://api.insertplayer.ai';
+
+export const GLOBAL_MIXED_TARGETS = Object.freeze({
+  rosalia: Object.freeze({
+    fighterId: '860569c6fc600667575298108debbdf1',
+    name: 'Rosalía',
+    photoHash: '1b24f41867329bf1a84773773906ae2a21010bf0a03a3164ace8c57b69afab30',
+  }),
+  'ibai-llanos': Object.freeze({
+    fighterId: 'dfe44b90cd1ce74ffe1044988eb6c1b5',
+    name: 'Ibai Llanos',
+    photoHash: 'b25a718f057956b0b74502574e49d48d95e1b09d37a046b088352ce7602cb488',
+  }),
+  'lamine-yamal': Object.freeze({
+    fighterId: '60606abbeb5cefa7dc50ca1d1ea117b0',
+    name: 'Lamine Yamal',
+    photoHash: 'e4dae2540e85991fd337558d8a53b5fba022aaea9629bc2577dbdaba3a49a8e8',
+  }),
+});
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -226,6 +256,117 @@ function validateQaEvidence(plan, planPath) {
   return { evidence, evidencePath, contentSha256: plan.qaEvidence.contentSha256 };
 }
 
+function validateReviewedBundleLineage(value, sourceName, fighter, label) {
+  exactKeys(value, [
+    'bundleRunId', 'bundleId', 'reviewedDescriptorSha256', 'processedSha256', 'rawSha256',
+  ], label);
+  requireString(value.bundleRunId, `${label} run id`, /^[1-9][0-9]*$/);
+  if (value.bundleId !== `arcade-xai-canonical-source-${fighter.slug}-${sourceName}-v1`) {
+    throw new Error(`${label} bundle id is not sealed to the fighter/source tuple.`);
+  }
+  for (const key of ['reviewedDescriptorSha256', 'processedSha256', 'rawSha256']) {
+    requireString(value[key], `${label} ${key}`, /^[a-f0-9]{64}$/);
+  }
+  if (value.processedSha256 === value.rawSha256) {
+    throw new Error(`${label} reviewed clean/raw pair is not distinct.`);
+  }
+  return value;
+}
+
+function validateGlobalAssemblyPlan(plan) {
+  exactKeys(plan, [
+    'schemaVersion', 'planType', 'fighter', 'side', 'uprightAlias', 'crouch',
+    'qaEvidence', 'safety',
+  ], 'global mixed canonical assembly plan');
+  if (plan.schemaVersion !== 1 || plan.planType !== 'global_reviewed_mixed_canonical_set_v1') {
+    throw new Error('Global mixed canonical assembly plan schema is invalid.');
+  }
+  exactKeys(plan.fighter, ['slug', 'fighterId', 'name', 'photoHash'], 'global assembly fighter');
+  const expectedTarget = GLOBAL_MIXED_TARGETS[plan.fighter?.slug];
+  if (
+    !XAI_CANONICAL_GLOBAL_SIDE_SLUGS.includes(plan.fighter?.slug)
+    || canonicalJson(expectedTarget) !== canonicalJson({
+      fighterId: plan.fighter.fighterId,
+      name: plan.fighter.name,
+      photoHash: plan.fighter.photoHash,
+    })
+  ) throw new Error('Global assembly plan is not sealed to an approved production fighter and photo.');
+  validateReviewedBundleLineage(plan.side, 'side', plan.fighter, 'global assembly SIDE');
+  validateReviewedBundleLineage(plan.crouch, 'crouch', plan.fighter, 'global assembly CROUCH');
+  if (
+    plan.side.bundleRunId === plan.crouch.bundleRunId
+    || plan.side.reviewedDescriptorSha256 === plan.crouch.reviewedDescriptorSha256
+  ) throw new Error('Global SIDE and CROUCH must come from two distinct reviewed one-call bundles.');
+  exactKeys(plan.uprightAlias, [
+    'decision', 'fromProcessedSha256', 'fromRawSha256',
+  ], 'global UPRIGHT alias decision');
+  if (
+    plan.uprightAlias.decision !== GLOBAL_UPRIGHT_ALIAS_DECISION
+    || plan.uprightAlias.fromProcessedSha256 !== plan.side.processedSha256
+    || plan.uprightAlias.fromRawSha256 !== plan.side.rawSha256
+  ) throw new Error('Global UPRIGHT alias is not sealed to the reviewed SIDE pair.');
+  exactKeys(plan.qaEvidence, ['path', 'contentSha256'], 'global assembly QA evidence');
+  requireString(plan.qaEvidence.contentSha256, 'global assembly QA evidence hash', /^[a-f0-9]{64}$/);
+  exactKeys(plan.safety, [
+    'providerCalls', 'generationStarted', 'activated', 'preexistingSourceOverwrite',
+    'allowedSourcePosts',
+  ], 'global assembly safety policy');
+  if (
+    plan.safety.providerCalls !== 0
+    || plan.safety.generationStarted !== false
+    || plan.safety.activated !== false
+    || plan.safety.preexistingSourceOverwrite !== false
+    || canonicalJson(plan.safety.allowedSourcePosts) !== canonicalJson(GLOBAL_MUTATED_KINDS)
+  ) throw new Error('Global assembly safety policy changed.');
+  return plan;
+}
+
+function validateGlobalQaEvidence(plan, planPath) {
+  const evidencePath = safeSibling(planPath, plan.qaEvidence.path, 'global QA evidence');
+  const bytes = readFileSync(evidencePath);
+  if (sha256(bytes) !== plan.qaEvidence.contentSha256) {
+    throw new Error('Global QA evidence SHA-256 mismatch.');
+  }
+  const evidence = parseJsonBytes(bytes, 'global QA evidence');
+  exactKeys(evidence, [
+    'schemaVersion', 'evidenceType', 'status', 'decision', 'reviewedBy', 'reviewedAt',
+    'fighter', 'side', 'uprightAlias', 'crouch', 'blockingFindings',
+  ], 'global mixed canonical QA evidence');
+  if (
+    evidence.schemaVersion !== 1
+    || evidence.evidenceType !== 'global_mixed_canonical_human_review_v1'
+    || evidence.status !== 'approved'
+    || evidence.decision !== GLOBAL_MIXED_QA_DECISION
+    || !/^\d{4}-\d{2}-\d{2}T/.test(evidence.reviewedAt ?? '')
+    || !Array.isArray(evidence.blockingFindings)
+    || evidence.blockingFindings.length !== 0
+  ) throw new Error('Global mixed canonical QA evidence is not an unblocked explicit approval.');
+  requireString(evidence.reviewedBy, 'global mixed canonical QA reviewer');
+  if (canonicalJson(evidence.fighter) !== canonicalJson(plan.fighter)) {
+    throw new Error('Global QA evidence fighter binding changed.');
+  }
+  for (const sourceName of ['side', 'crouch']) {
+    exactKeys(evidence[sourceName], [
+      'bundleRunId', 'bundleId', 'descriptorSha256', 'processedSha256', 'rawSha256',
+    ], `global QA ${sourceName.toUpperCase()}`);
+    const planned = plan[sourceName];
+    if (
+      evidence[sourceName].bundleRunId !== planned.bundleRunId
+      || evidence[sourceName].bundleId !== planned.bundleId
+      || evidence[sourceName].descriptorSha256 !== planned.reviewedDescriptorSha256
+      || evidence[sourceName].processedSha256 !== planned.processedSha256
+      || evidence[sourceName].rawSha256 !== planned.rawSha256
+    ) throw new Error(`Global QA evidence does not bind the exact ${sourceName.toUpperCase()} pair.`);
+  }
+  exactKeys(evidence.uprightAlias, ['decision', 'processedSha256', 'rawSha256'], 'global QA UPRIGHT alias');
+  if (
+    evidence.uprightAlias.decision !== GLOBAL_UPRIGHT_ALIAS_DECISION
+    || evidence.uprightAlias.processedSha256 !== plan.side.processedSha256
+    || evidence.uprightAlias.rawSha256 !== plan.side.rawSha256
+  ) throw new Error('Global QA evidence does not approve the exact SIDE byte alias.');
+  return { evidence, evidencePath, contentSha256: plan.qaEvidence.contentSha256 };
+}
+
 function assertProductionFighter(detail, plan, rosterFighter) {
   const fighter = detail?.fighter;
   if (
@@ -366,6 +507,22 @@ function initialState(planSha256, plan) {
   };
 }
 
+function initialGlobalState(planSha256, plan) {
+  return {
+    schemaVersion: 1,
+    status: 'importing',
+    planSha256,
+    sideDescriptorSha256: plan.side.reviewedDescriptorSha256,
+    crouchDescriptorSha256: plan.crouch.reviewedDescriptorSha256,
+    fighterId: plan.fighter.fighterId,
+    photoHash: plan.fighter.photoHash,
+    qaEvidenceSha256: plan.qaEvidence.contentSha256,
+    aliasDecision: GLOBAL_UPRIGHT_ALIAS_DECISION,
+    allowedKinds: [...GLOBAL_MUTATED_KINDS],
+    uploads: {},
+  };
+}
+
 function validateState(state, expected) {
   exactKeys(state, state.status === 'completed'
     ? [...Object.keys(expected), 'operatorManifestSha256', 'reviewedManifestSha256']
@@ -374,11 +531,25 @@ function validateState(state, expected) {
   for (const key of [
     'schemaVersion', 'planSha256', 'descriptorSha256', 'fighterId', 'photoHash',
     'qaEvidenceSha256', 'aliasDecision',
-  ]) if (state[key] !== expected[key]) throw new Error(`Mixed import checkpoint mismatch: ${key}.`);
+  ]) {
+    if (Object.hasOwn(expected, key) && state[key] !== expected[key]) {
+      throw new Error(`Mixed import checkpoint mismatch: ${key}.`);
+    }
+  }
+  for (const key of ['sideDescriptorSha256', 'crouchDescriptorSha256']) {
+    if (Object.hasOwn(expected, key) && state[key] !== expected[key]) {
+      throw new Error(`Mixed import checkpoint mismatch: ${key}.`);
+    }
+  }
+  if (
+    Object.hasOwn(expected, 'allowedKinds')
+    && canonicalJson(state.allowedKinds) !== canonicalJson(expected.allowedKinds)
+  ) throw new Error('Mixed import checkpoint allowed source kinds changed.');
   if (!state.uploads || typeof state.uploads !== 'object' || Array.isArray(state.uploads)) {
     throw new Error('Mixed import checkpoint uploads are invalid.');
   }
-  if (Object.keys(state.uploads).some((kind) => !MUTATED_KINDS.includes(kind))) {
+  const allowedKinds = expected.allowedKinds ?? MUTATED_KINDS;
+  if (Object.keys(state.uploads).some((kind) => !allowedKinds.includes(kind))) {
     throw new Error('Mixed import checkpoint contains an unauthorized source mutation.');
   }
   for (const [kind, upload] of Object.entries(state.uploads)) {
@@ -402,7 +573,104 @@ async function uploadSource(requestApi, fighterId, operation) {
   });
 }
 
+function preflightReviewedSourceOperations(operations) {
+  for (const operation of operations) {
+    if (sha256(operation.bytes) !== operation.expectedSha256) {
+      throw new Error(`${operation.kind} local reviewed bytes changed.`);
+    }
+    if (operation.bytes.byteLength > MAX_PNG_BYTES) {
+      throw new Error(`${operation.kind} local reviewed source exceeds the byte limit.`);
+    }
+    const inspected = inspectPng(operation.bytes, `${operation.kind} local reviewed source`);
+    if (
+      inspected.width < 64 || inspected.width > 4096
+      || inspected.height < 64 || inspected.height > 4096
+    ) throw new Error(`${operation.kind} local reviewed source dimensions are outside the safe bounds.`);
+  }
+}
+
+async function executeReviewedSourceOperations({
+  operations,
+  state,
+  saveState,
+  requestApi,
+  fighterId,
+  loadFighter,
+  beforeOperation,
+  verifyCurrent,
+  allowReviewedOverwrite = false,
+}) {
+  preflightReviewedSourceOperations(operations);
+  let fighter;
+  for (const operation of operations) {
+    fighter = await loadFighter();
+    await beforeOperation(fighter, operation);
+    const previous = state.uploads[operation.kind] ?? null;
+    const current = remoteHash(fighter, operation.kind);
+    if (previous) {
+      if (previous.expectedSha256 !== operation.expectedSha256) {
+        throw new Error(`${operation.kind} checkpoint hash changed.`);
+      }
+      if (['verified', 'verified_existing', 'reconciled'].includes(previous.status)) {
+        if (current !== operation.expectedSha256) throw new Error(`${operation.kind} changed after verification.`);
+        await verifyCurrent(fighter, operation.kind);
+        continue;
+      }
+      if (['uploading', 'outcome_unknown'].includes(previous.status)) {
+        if (current === operation.expectedSha256) {
+          await verifyCurrent(fighter, operation.kind);
+          state.uploads[operation.kind] = {
+            status: 'reconciled',
+            expectedSha256: operation.expectedSha256,
+          };
+          saveState();
+          continue;
+        }
+        throw new Error(`${operation.kind} has an ambiguous prior POST and cannot be re-POSTed.`);
+      }
+    }
+    if (current === operation.expectedSha256) {
+      await verifyCurrent(fighter, operation.kind);
+      state.uploads[operation.kind] = {
+        status: 'verified_existing',
+        expectedSha256: operation.expectedSha256,
+      };
+      saveState();
+      continue;
+    }
+    if (!allowReviewedOverwrite && current !== null && current !== undefined) {
+      throw new Error(`${operation.kind} has an unreviewed current source and will not be overwritten.`);
+    }
+    state.uploads[operation.kind] = { status: 'uploading', expectedSha256: operation.expectedSha256 };
+    saveState();
+    try {
+      await uploadSource(requestApi, fighterId, operation);
+    } catch (error) {
+      state.uploads[operation.kind] = {
+        status: 'outcome_unknown',
+        expectedSha256: operation.expectedSha256,
+        error: error instanceof Error ? error.message : String(error),
+      };
+      saveState();
+      throw new Error(`${operation.kind} POST outcome is unknown; automatic re-POST is forbidden.`);
+    }
+    fighter = await loadFighter();
+    if (remoteHash(fighter, operation.kind) !== operation.expectedSha256) {
+      state.uploads[operation.kind] = { status: 'outcome_unknown', expectedSha256: operation.expectedSha256 };
+      saveState();
+      throw new Error(`${operation.kind} did not become the exact reviewed current source.`);
+    }
+    await verifyCurrent(fighter, operation.kind);
+    await beforeOperation(fighter, operation);
+    state.uploads[operation.kind] = { status: 'verified', expectedSha256: operation.expectedSha256 };
+    saveState();
+  }
+  return fighter;
+}
+
 function reviewedCurrentManifest(plan) {
+  const sideProcessedSha256 = plan.side.processedSha256 ?? plan.side.processed?.contentSha256;
+  const sideRawSha256 = plan.side.rawSha256 ?? plan.side.raw?.contentSha256;
   return {
     schemaVersion: 1,
     canonicalSourceMode: REVIEWED_CANONICAL_SOURCE_MODE,
@@ -411,12 +679,12 @@ function reviewedCurrentManifest(plan) {
     photoHash: plan.fighter.photoHash,
     canonicalSourceHashes: {
       side: {
-        processedSha256: plan.side.processed.contentSha256,
-        rawSha256: plan.side.raw.contentSha256,
+        processedSha256: sideProcessedSha256,
+        rawSha256: sideRawSha256,
       },
       upright: {
-        processedSha256: plan.side.processed.contentSha256,
-        rawSha256: plan.side.raw.contentSha256,
+        processedSha256: sideProcessedSha256,
+        rawSha256: sideRawSha256,
       },
       crouch: {
         processedSha256: plan.crouch.processedSha256,
@@ -522,75 +790,27 @@ export async function runReviewedElonMixedCanonicalImport(options = {}) {
         expectedSha256: plan.crouch.rawSha256,
       },
     ];
-    for (const operation of operations) {
-      if (sha256(operation.bytes) !== operation.expectedSha256) {
-        throw new Error(`${operation.kind} local reviewed bytes changed.`);
-      }
-      if (operation.bytes.byteLength > MAX_PNG_BYTES) {
-        throw new Error(`${operation.kind} local reviewed source exceeds the byte limit.`);
-      }
-      const inspected = inspectPng(operation.bytes, `${operation.kind} local reviewed source`);
-      if (
-        inspected.width < 64 || inspected.width > 4096
-        || inspected.height < 64 || inspected.height > 4096
-      ) throw new Error(`${operation.kind} local reviewed source dimensions are outside the safe bounds.`);
-    }
-    for (const operation of operations) {
-      detail = await requestApi(`/api/fighters/${encodeURIComponent(plan.fighter.fighterId)}`);
-      fighter = assertProductionFighter(detail, plan, rosterFighter);
-      side = await verifySidePair(fighter, plan, expectedOrigin, requestAsset);
-      const previous = state.uploads[operation.kind] ?? null;
-      const current = remoteHash(fighter, operation.kind);
-      if (previous) {
-        if (previous.expectedSha256 !== operation.expectedSha256) {
-          throw new Error(`${operation.kind} checkpoint hash changed.`);
-        }
-        if (['verified', 'verified_existing', 'reconciled'].includes(previous.status)) {
-          if (current !== operation.expectedSha256) throw new Error(`${operation.kind} changed after verification.`);
-          await verifyRemoteSource({ fighter, kind: operation.kind, expectedOrigin, requestAsset });
-          continue;
-        }
-        if (['uploading', 'outcome_unknown'].includes(previous.status)) {
-          if (current === operation.expectedSha256) {
-            await verifyRemoteSource({ fighter, kind: operation.kind, expectedOrigin, requestAsset });
-            state.uploads[operation.kind] = { status: 'reconciled', expectedSha256: operation.expectedSha256 };
-            saveState();
-            continue;
-          }
-          throw new Error(`${operation.kind} has an ambiguous prior POST and cannot be re-POSTed.`);
-        }
-      }
-      if (current === operation.expectedSha256) {
-        await verifyRemoteSource({ fighter, kind: operation.kind, expectedOrigin, requestAsset });
-        state.uploads[operation.kind] = { status: 'verified_existing', expectedSha256: operation.expectedSha256 };
-        saveState();
-        continue;
-      }
-      state.uploads[operation.kind] = { status: 'uploading', expectedSha256: operation.expectedSha256 };
-      saveState();
-      try {
-        await uploadSource(requestApi, plan.fighter.fighterId, operation);
-      } catch (error) {
-        state.uploads[operation.kind] = {
-          status: 'outcome_unknown',
-          expectedSha256: operation.expectedSha256,
-          error: error instanceof Error ? error.message : String(error),
-        };
-        saveState();
-        throw new Error(`${operation.kind} POST outcome is unknown; automatic re-POST is forbidden.`);
-      }
-      detail = await requestApi(`/api/fighters/${encodeURIComponent(plan.fighter.fighterId)}`);
-      fighter = assertProductionFighter(detail, plan, rosterFighter);
-      if (remoteHash(fighter, operation.kind) !== operation.expectedSha256) {
-        state.uploads[operation.kind] = { status: 'outcome_unknown', expectedSha256: operation.expectedSha256 };
-        saveState();
-        throw new Error(`${operation.kind} did not become the exact reviewed current source.`);
-      }
-      await verifyRemoteSource({ fighter, kind: operation.kind, expectedOrigin, requestAsset });
-      await verifySidePair(fighter, plan, expectedOrigin, requestAsset);
-      state.uploads[operation.kind] = { status: 'verified', expectedSha256: operation.expectedSha256 };
-      saveState();
-    }
+    fighter = await executeReviewedSourceOperations({
+      operations,
+      state,
+      saveState,
+      requestApi,
+      fighterId: plan.fighter.fighterId,
+      loadFighter: async () => {
+        detail = await requestApi(`/api/fighters/${encodeURIComponent(plan.fighter.fighterId)}`);
+        return assertProductionFighter(detail, plan, rosterFighter);
+      },
+      beforeOperation: async (currentFighter) => {
+        side = await verifySidePair(currentFighter, plan, expectedOrigin, requestAsset);
+      },
+      verifyCurrent: (currentFighter, kind) => verifyRemoteSource({
+        fighter: currentFighter,
+        kind,
+        expectedOrigin,
+        requestAsset,
+      }),
+      allowReviewedOverwrite: true,
+    });
 
     detail = await requestApi(`/api/fighters/${encodeURIComponent(plan.fighter.fighterId)}`);
     fighter = assertProductionFighter(detail, plan, rosterFighter);
@@ -656,6 +876,272 @@ export async function runReviewedElonMixedCanonicalImport(options = {}) {
         activated: false,
         sideMutated: false,
         allowedSourcePosts: MUTATED_KINDS,
+        sourceMutationResults: state.uploads,
+      },
+    };
+    const operatorManifest = {
+      ...operatorUnsigned,
+      operatorManifestSha256: sha256(canonicalJson(operatorUnsigned)),
+    };
+    writeJsonAtomic(join(outputDirectory, 'reviewed-canonical-operator-manifest.json'), operatorManifest);
+    writeJsonAtomic(join(outputDirectory, 'reviewed-canonical-manifest.json'), reviewedManifest);
+    writeJsonAtomic(join(outputDirectory, 'import-receipt.json'), {
+      schemaVersion: 1,
+      status: 'completed_sources_only',
+      fighter: plan.fighter,
+      operatorManifestSha256: operatorManifest.operatorManifestSha256,
+      reviewedManifestSha256,
+      providerCalls: 0,
+      generationStarted: false,
+      activated: false,
+    });
+    state.status = 'completed';
+    state.operatorManifestSha256 = operatorManifest.operatorManifestSha256;
+    state.reviewedManifestSha256 = reviewedManifestSha256;
+    saveState();
+    return { state, operatorManifest, reviewedManifest, outputDirectory };
+  } finally {
+    releaseLock(lock);
+  }
+}
+
+export async function runReviewedGlobalMixedCanonicalImport(options = {}) {
+  if (options.confirmation !== GLOBAL_MIXED_IMPORT_CONFIRMATION) {
+    throw new Error(`Global mixed import requires confirmation ${GLOBAL_MIXED_IMPORT_CONFIRMATION}.`);
+  }
+  if (options.safetyConfirmation !== GLOBAL_MIXED_IMPORT_SAFETY_CONFIRMATION) {
+    throw new Error(
+      `Global mixed import requires safety confirmation ${GLOBAL_MIXED_IMPORT_SAFETY_CONFIRMATION}.`,
+    );
+  }
+  const planPath = resolve(requireString(options.assemblyPlanPath, 'global assembly plan path'));
+  const planSha256 = requireString(
+    options.assemblyPlanSha256,
+    'global assembly plan SHA-256',
+    /^[a-f0-9]{64}$/,
+  );
+  const planBytes = readFileSync(planPath);
+  if (sha256(planBytes) !== planSha256) throw new Error('Global assembly plan SHA-256 mismatch.');
+  const plan = validateGlobalAssemblyPlan(parseJsonBytes(planBytes, 'global assembly plan'));
+  const qa = validateGlobalQaEvidence(plan, planPath);
+  const reviewedBy = requireString(options.reviewedBy, 'global review actor');
+  if (reviewedBy !== qa.evidence.reviewedBy) {
+    throw new Error('Global review actor does not match the sealed QA evidence.');
+  }
+
+  const loadBundle = options.loadReviewedBundle ?? loadReviewedCanonicalBundle;
+  const sideBundle = loadBundle({
+    bundleDirectory: requireString(options.sideBundleDirectory, 'private SIDE bundle directory'),
+    reviewedDescriptorSha256: plan.side.reviewedDescriptorSha256,
+  });
+  const crouchBundle = loadBundle({
+    bundleDirectory: requireString(options.crouchBundleDirectory, 'private CROUCH bundle directory'),
+    reviewedDescriptorSha256: plan.crouch.reviewedDescriptorSha256,
+  });
+  for (const [sourceName, bundle, planned] of [
+    ['side', sideBundle, plan.side],
+    ['crouch', crouchBundle, plan.crouch],
+  ]) {
+    if (
+      canonicalJson(bundle.sourceNames) !== canonicalJson([sourceName])
+      || bundle.descriptor.bundleId !== planned.bundleId
+      || bundle.descriptor.fighter.slug !== plan.fighter.slug
+      || bundle.descriptor.fighter.name !== plan.fighter.name
+      || bundle.descriptor.fighter.originalSha256 !== plan.fighter.photoHash
+      || bundle.descriptor.sources[sourceName].clean.contentSha256 !== planned.processedSha256
+      || bundle.descriptor.sources[sourceName].raw.contentSha256 !== planned.rawSha256
+    ) throw new Error(`Reviewed ${sourceName.toUpperCase()} bundle does not match the exact global assembly plan.`);
+  }
+  const crouchReferences = crouchBundle.descriptor.sources.crouch.references;
+  if (
+    crouchReferences.pose.id !== XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE.id
+    || crouchReferences.pose.contentSha256 !== XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE.contentSha256
+    || crouchReferences.rendering.contentSha256 !== plan.side.rawSha256
+    || crouchReferences.identity.contentSha256 !== plan.fighter.photoHash
+  ) throw new Error('Reviewed CROUCH does not bind Trump pose + exact SIDE raw + original identity.');
+
+  const roster = JSON.parse(readFileSync(options.rosterPath ?? DEFAULT_ROSTER_PATH, 'utf8'));
+  validateManifest(roster);
+  const matches = roster.fighters.filter((fighter) => fighter.slug === plan.fighter.slug);
+  if (matches.length !== 1) throw new Error('Global fighter is missing or ambiguous in the reviewed roster.');
+  const rosterFighter = matches[0];
+  if (
+    rosterFighter.name !== plan.fighter.name
+    || rosterFighter.reference.sourceSha256 !== plan.fighter.photoHash
+  ) throw new Error('Global assembly fighter or licensed photo does not match the roster.');
+  const validateReviewedBundle = options.validateReviewedBundle ?? validateBundlePromptAndRequest;
+  validateReviewedBundle(sideBundle, rosterFighter);
+  validateReviewedBundle(crouchBundle, rosterFighter);
+
+  const requestApi = options.requestApi;
+  const requestAsset = options.requestAsset;
+  if (typeof requestApi !== 'function' || typeof requestAsset !== 'function') {
+    throw new Error('Authenticated production JSON and bounded asset clients are required.');
+  }
+  const expectedOrigin = new URL(requireString(options.workerUrl, 'Worker URL')).origin;
+  const admin = await requestApi('/api/admin/arcade');
+  const entries = (Array.isArray(admin?.fighters) ? admin.fighters : [])
+    .filter((entry) => entry?.slug === plan.fighter.slug && entry?.status !== 'retired');
+  if (
+    entries.length !== 1
+    || entries[0].status !== 'draft'
+    || entries[0].fighterId !== plan.fighter.fighterId
+  ) throw new Error('Global mixed import requires the exact current private fighter draft.');
+
+  let detail;
+  const loadFighter = async () => {
+    detail = await requestApi(`/api/fighters/${encodeURIComponent(plan.fighter.fighterId)}`);
+    return assertProductionFighter(detail, plan, rosterFighter);
+  };
+  await loadFighter();
+  const outputDirectory = resolve(requireString(options.outputDirectory, 'global mixed import output directory'));
+  const statePath = resolve(options.statePath ?? join(outputDirectory, 'import-state.json'));
+  mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
+  const lock = acquireLock(statePath);
+  try {
+    const expectedState = initialGlobalState(planSha256, plan);
+    let state = existsSync(statePath) ? readJson(statePath, 'global mixed import checkpoint') : expectedState;
+    validateState(state, expectedState);
+    const saveState = () => writeJsonAtomic(statePath, state);
+    saveState();
+
+    const sideProcessedBytes = readFileSync(sideBundle.sources.side.processed.absolutePath);
+    const sideRawBytes = readFileSync(sideBundle.sources.side.raw.absolutePath);
+    const operations = [
+      { kind: 'side', bytes: sideProcessedBytes, expectedSha256: plan.side.processedSha256 },
+      { kind: 'side_raw', bytes: sideRawBytes, expectedSha256: plan.side.rawSha256 },
+      { kind: 'upright', bytes: sideProcessedBytes, expectedSha256: plan.side.processedSha256 },
+      { kind: 'upright_raw', bytes: sideRawBytes, expectedSha256: plan.side.rawSha256 },
+      {
+        kind: 'crouch',
+        bytes: readFileSync(crouchBundle.sources.crouch.processed.absolutePath),
+        expectedSha256: plan.crouch.processedSha256,
+      },
+      {
+        kind: 'crouch_raw',
+        bytes: readFileSync(crouchBundle.sources.crouch.raw.absolutePath),
+        expectedSha256: plan.crouch.rawSha256,
+      },
+    ];
+    const expectedHashByKind = Object.fromEntries(
+      operations.map((operation) => [operation.kind, operation.expectedSha256]),
+    );
+    const assertNoUnreviewedSource = async (fighter) => {
+      for (const kind of GLOBAL_MUTATED_KINDS) {
+        const current = remoteHash(fighter, kind);
+        const pointer = fighter.sources?.[RESPONSE_KEYS[kind]];
+        const hasCurrentHash = current !== null && current !== undefined;
+        const hasCurrentPointer = pointer !== null && pointer !== undefined;
+        if (hasCurrentHash !== hasCurrentPointer) {
+          throw new Error(`${kind} has inconsistent current source pointer/hash lineage and global import is fail-closed.`);
+        }
+        if (!hasCurrentPointer) continue;
+        if (typeof pointer !== 'string' || !pointer) {
+          throw new Error(`${kind} has an invalid current source pointer and global import is fail-closed.`);
+        }
+        if (current !== expectedHashByKind[kind]) {
+          throw new Error(`${kind} has an unreviewed current source and global import is fail-closed.`);
+        }
+        if (!state.uploads[kind]) {
+          throw new Error(`${kind} pre-existed without this exact import checkpoint.`);
+        }
+      }
+    };
+    let fighter = await executeReviewedSourceOperations({
+      operations,
+      state,
+      saveState,
+      requestApi,
+      fighterId: plan.fighter.fighterId,
+      loadFighter,
+      beforeOperation: assertNoUnreviewedSource,
+      verifyCurrent: (currentFighter, kind) => verifyRemoteSource({
+        fighter: currentFighter,
+        kind,
+        expectedOrigin,
+        requestAsset,
+      }),
+      allowReviewedOverwrite: false,
+    });
+
+    fighter = await loadFighter();
+    await assertNoUnreviewedSource(fighter);
+    const records = {};
+    const ownerUserIds = new Set();
+    for (const kind of GLOBAL_MUTATED_KINDS) {
+      const verified = await verifyRemoteSource({
+        fighter,
+        kind,
+        expectedOrigin,
+        requestAsset,
+      });
+      if (verified.record.contentSha256 !== expectedHashByKind[kind]) {
+        throw new Error(`${kind} final R2 bytes do not match the reviewed global plan.`);
+      }
+      records[kind] = verified.record;
+      ownerUserIds.add(verified.ownerUserId);
+    }
+    if (ownerUserIds.size !== 1) {
+      throw new Error('Final global mixed sources do not share one exact R2 owner namespace.');
+    }
+    if (
+      records.upright.contentSha256 !== records.side.contentSha256
+      || records.upright_raw.contentSha256 !== records.side_raw.contentSha256
+      || records.crouch.contentSha256 !== plan.crouch.processedSha256
+      || records.crouch_raw.contentSha256 !== plan.crouch.rawSha256
+    ) throw new Error('Final global source hashes do not match SIDE alias + reviewed CROUCH.');
+    if (new Set(Object.values(records).map((record) => record.blobKey)).size !== 6) {
+      throw new Error('Final global sources are not six distinct versioned R2 pointers.');
+    }
+
+    const reviewedManifest = reviewedCurrentManifest(plan);
+    const reviewedManifestSha256 = sha256(canonicalJson(reviewedManifest));
+    const operatorUnsigned = {
+      schemaVersion: 1,
+      manifestType: 'global_reviewed_mixed_canonical_operator_manifest_v1',
+      status: 'completed_sources_only',
+      fighter: plan.fighter,
+      assemblyPlanSha256: planSha256,
+      qaEvidence: {
+        contentSha256: qa.contentSha256,
+        decision: qa.evidence.decision,
+        reviewedBy: qa.evidence.reviewedBy,
+        reviewedAt: qa.evidence.reviewedAt,
+      },
+      sideBundle: {
+        runId: plan.side.bundleRunId,
+        bundleId: plan.side.bundleId,
+        descriptorSha256: plan.side.reviewedDescriptorSha256,
+      },
+      crouchBundle: {
+        runId: plan.crouch.bundleRunId,
+        bundleId: plan.crouch.bundleId,
+        descriptorSha256: plan.crouch.reviewedDescriptorSha256,
+        poseSha256: XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE.contentSha256,
+        renderingSideRawSha256: plan.side.rawSha256,
+        identityPhotoSha256: plan.fighter.photoHash,
+      },
+      sources: {
+        side: { processed: records.side, raw: records.side_raw },
+        upright: { processed: records.upright, raw: records.upright_raw },
+        crouch: { processed: records.crouch, raw: records.crouch_raw },
+      },
+      aliasDecision: {
+        decision: GLOBAL_UPRIGHT_ALIAS_DECISION,
+        from: 'side',
+        to: 'upright',
+        processedByteSha256: records.side.contentSha256,
+        rawByteSha256: records.side_raw.contentSha256,
+      },
+      reviewedCurrentManifest: reviewedManifest,
+      reviewedCurrentManifestSha256: reviewedManifestSha256,
+      safety: {
+        providerCalls: 0,
+        generationStarted: false,
+        approvedAutomatically: false,
+        activated: false,
+        preexistingSourcesOverwritten: false,
+        allowedSourcePosts: GLOBAL_MUTATED_KINDS,
         sourceMutationResults: state.uploads,
       },
     };
