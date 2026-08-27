@@ -1105,10 +1105,10 @@ async function runAuthenticatedSmoke() {
     const foreignMatch = await readJson(foreignMatchRes);
     assert(foreignMatchRes.status === 403, `foreign fighter match report expected 403, got ${foreignMatchRes.status}`);
     assert(
-      /does not belong/i.test(String(foreignMatch.error ?? '')),
+      /not owned or an active Arcade fighter/i.test(String(foreignMatch.error ?? '')),
       'Foreign fighter match report did not reject by ownership',
     );
-    log('match reporting rejects foreign fighter ids');
+    log('match reporting rejects foreign community fighter ids');
   } else {
     if (requireCloneSmoke) {
       throw new Error('ASF_CLERK_JWT_CLONE is required for launch clone/privacy smoke. Pass a token from a second Clerk user.');
@@ -1120,6 +1120,36 @@ async function runAuthenticatedSmoke() {
     headers: authHeaders(),
   });
   assert(Array.isArray(statsBeforeMatch.recentMatches), '/api/stats did not include recentMatches');
+
+  const activeArcadeFighterId = arcadeBody.fighters[0]?.id ?? null;
+  if (activeArcadeFighterId) {
+    const attractReport = await expectJson('Attract Mode match report', '/api/matches', 200, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        winnerSlot: 'p1',
+        roundsP1: 2,
+        roundsP2: 1,
+        duration: 42,
+        p1FighterId: activeArcadeFighterId,
+        p2FighterId: activeArcadeFighterId,
+        opponentKind: 'cpu',
+        cpuVsCpu: true,
+        isRanked: false,
+      }),
+    });
+    assert(attractReport.recorded === false, 'Attract Mode match report was persisted');
+    const statsAfterAttract = await expectJson('player stats after Attract Mode', '/api/stats', 200, {
+      headers: authHeaders(),
+    });
+    assert(
+      Number(statsAfterAttract.player?.wins ?? 0) === Number(statsBeforeMatch.player?.wins ?? 0)
+        && Number(statsAfterAttract.player?.losses ?? 0) === Number(statsBeforeMatch.player?.losses ?? 0)
+        && (statsAfterAttract.recentMatches ?? []).length === (statsBeforeMatch.recentMatches ?? []).length,
+      'Attract Mode changed the signed-in player record',
+    );
+    log('Attract Mode does not persist history or change personal W/L');
+  }
   if (preserveSmokeUserState) {
     log('player stats are readable without mutating persistent production QA records');
   } else {
@@ -1133,8 +1163,9 @@ async function runAuthenticatedSmoke() {
         roundsP2: 0,
         duration: 42,
         p1FighterId: smokeFighterId,
-        p2FighterId: smokeFighterId,
+        p2FighterId: activeArcadeFighterId ?? smokeFighterId,
         opponentKind: 'cpu',
+        cpuVsCpu: false,
         isRanked: false,
       }),
     });
@@ -1145,6 +1176,7 @@ async function runAuthenticatedSmoke() {
     assert(Number(stats.player?.wins ?? 0) >= winsBeforeMatch + 1, 'Unranked match win did not update signed-in record');
     log('match reporting persists unranked match history');
     log('match reporting updates signed-in record');
+    if (activeArcadeFighterId) log('match reporting accepts active published Arcade fighter ids');
   }
 
   await expectJson('unpublish fighter', `/api/fighters/${smokeFighterId}`, 200, {

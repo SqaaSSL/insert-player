@@ -1468,9 +1468,10 @@ function assertMatchReportingIsWired() {
   const matchConfig = readFileSync(join(root, 'src/game/match/MatchConfig.ts'), 'utf8');
   const reporting = readFileSync(join(root, 'src/services/MatchReporting.ts'), 'utf8');
   const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
+  const workerMatchReporting = readFileSync(join(root, 'worker/src/matchReporting.ts'), 'utf8');
   const leaderboard = readFileSync(join(root, 'worker/src/leaderboard.ts'), 'utf8');
   const smoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
-  const combined = `${app}\n${fightScene}\n${matchConfig}\n${reporting}\n${workerIndex}\n${leaderboard}\n${smoke}`;
+  const combined = `${app}\n${fightScene}\n${matchConfig}\n${reporting}\n${workerIndex}\n${workerMatchReporting}\n${leaderboard}\n${smoke}`;
   const required = [
     "MATCH_COMPLETE_EVENT = 'asf-match-complete'",
     'window.dispatchEvent(new CustomEvent(MATCH_COMPLETE_EVENT',
@@ -1482,14 +1483,17 @@ function assertMatchReportingIsWired() {
     'const MAX_MATCH_DURATION_SECONDS = 20 * 60',
     'function readBoundedInteger',
     'function readOptionalId',
-    'async function readOwnedFighterId',
-    'Match fighter does not belong to this user',
+    'readMatchFighterId',
+    "f.public_flag = 1 AND arcade.status = 'active'",
+    'Match fighter is not owned or an active Arcade fighter',
+    'isAttractModeMatchReport(body)',
+    'recorded: false',
     'const player2Id = systemOpponentId',
     "const winnerId = winnerSlot === 'p2' ? player2Id : auth.userId",
     'Stats are private',
     'signed-out /api/stats/:userId is protected',
-    'const p1FighterId = await readOwnedFighterId(env, auth.userId, body.p1FighterId)',
-    'const p2FighterId = await readOwnedFighterId(env, auth.userId, body.p2FighterId)',
+    'const p1FighterId = await readMatchFighterId(env, auth.userId, body.p1FighterId)',
+    'const p2FighterId = await readMatchFighterId(env, auth.userId, body.p2FighterId)',
     'roundsP1: readBoundedInteger(body.roundsP1, 0, MAX_MATCH_ROUNDS)',
     'duration: readBoundedInteger(body.duration, 0, MAX_MATCH_DURATION_SECONDS)',
     'p1FighterId,\n            p2FighterId',
@@ -1498,7 +1502,9 @@ function assertMatchReportingIsWired() {
     'function updateUnrankedRecord',
     'wins = wins + 1',
     'match reporting updates signed-in record',
-    'match reporting rejects foreign fighter ids',
+    'match reporting rejects foreign community fighter ids',
+    'Attract Mode does not persist history or change personal W/L',
+    'match reporting accepts active published Arcade fighter ids',
   ];
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
