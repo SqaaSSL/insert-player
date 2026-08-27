@@ -138,13 +138,18 @@ function isTransientFrontendStatus(status) {
   return [404, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(status);
 }
 
-async function waitForFrontendText(label, pathOrUrl, { readinessError } = {}) {
-  const target = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : url(pathOrUrl);
+async function waitForFrontendText(label, pathOrUrl, { readinessError, targetForAttempt } = {}) {
+  const canonicalTarget = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : url(pathOrUrl);
   const started = Date.now();
   let lastError = null;
+  let lastTarget = canonicalTarget;
+  let attempt = 0;
 
   while (Date.now() - started <= FRONTEND_READY_TIMEOUT_MS) {
     try {
+      const attemptTarget = targetForAttempt?.(attempt) ?? canonicalTarget;
+      const target = /^https?:\/\//i.test(attemptTarget) ? attemptTarget : url(attemptTarget);
+      lastTarget = target;
       const res = await fetchWithTimeout(label, target);
       if (res.ok) {
         const candidate = {
@@ -162,6 +167,7 @@ async function waitForFrontendText(label, pathOrUrl, { readinessError } = {}) {
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
     }
+    attempt += 1;
     const elapsed = Date.now() - started;
     const remaining = FRONTEND_READY_TIMEOUT_MS - elapsed;
     if (remaining <= 0) break;
@@ -170,7 +176,7 @@ async function waitForFrontendText(label, pathOrUrl, { readinessError } = {}) {
 
   const waitedSeconds = Math.round((Date.now() - started) / 1000);
   const detail = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`${label} did not become ready after ${waitedSeconds}s at ${target}: ${detail}`);
+  throw new Error(`${label} did not become ready after ${waitedSeconds}s at ${canonicalTarget} (last probe ${lastTarget}): ${detail}`);
 }
 
 function extractAssetPaths(html) {
@@ -332,8 +338,13 @@ async function main() {
   }
   const jsTexts = [];
   for (const assetPath of assetPaths.filter((path) => path.endsWith('.js'))) {
-    const assetProbeUrl = frontendAssetProbeUrl(frontendUrl, assetPath, assetProbeNonce);
-    const asset = await waitForFrontendText(`frontend asset ${assetPath}`, assetProbeUrl, {
+    const asset = await waitForFrontendText(`frontend asset ${assetPath}`, assetPath, {
+      // Pages can cache the SPA fallback for a not-yet-propagated hashed asset
+      // with the asset's immutable headers, so every propagation retry needs a
+      // fresh cache key. The later canonical smoke has no nonce and stays exact.
+      targetForAttempt: assetProbeNonce
+        ? (attempt) => frontendAssetProbeUrl(frontendUrl, assetPath, assetProbeNonce, attempt)
+        : undefined,
       readinessError: ({ res }) => {
         const contentType = res.headers.get('Content-Type') ?? '';
         if (!/javascript/i.test(contentType)) return `expected JavaScript, got ${contentType || 'no content type'}`;

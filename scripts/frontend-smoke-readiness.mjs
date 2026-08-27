@@ -7,9 +7,17 @@ export function parseContentSecurityPolicy(value) {
   return directives;
 }
 
-export function frontendAssetProbeUrl(frontendUrl, assetPath, nonce) {
+export function frontendAssetProbeUrl(frontendUrl, assetPath, nonce, attempt) {
   const target = new URL(assetPath, `${frontendUrl.replace(/\/+$/, '')}/`);
-  if (nonce) target.searchParams.set('__insert_player_readiness', nonce);
+  if (nonce) {
+    target.searchParams.set('__insert_player_readiness', nonce);
+    if (attempt !== undefined) {
+      if (!Number.isSafeInteger(attempt) || attempt < 0) {
+        throw new Error('frontend asset probe attempt must be a non-negative integer');
+      }
+      target.searchParams.set('__insert_player_readiness_attempt', String(attempt));
+    }
+  }
   return target.toString();
 }
 
