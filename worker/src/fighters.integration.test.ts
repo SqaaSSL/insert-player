@@ -4,7 +4,7 @@ import {
   cloneCommunityFighter,
   getAsset,
   getCommunityFighter,
-  getPublicArcadeSpriteRawAsset,
+  getPublicArcadeSpriteHighDensityAsset,
   getPublicFighterSourceAsset,
   getPublicFighterSpriteAsset,
   listArcadeFighters,
@@ -507,30 +507,35 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         (sprite: Record<string, unknown>) => sprite.animationName === 'idle',
       );
       expect(arcadeIdle).toMatchObject({
-        rawFrameWidth: 768,
-        rawFrameHeight: 1024,
-        rawFrameCount: 8,
+        rawUrl: null,
+        rawFrameWidth: null,
+        rawFrameHeight: null,
+        rawFrameCount: null,
+        hqFrameWidth: 768,
+        hqFrameHeight: 1024,
+        hqFrameCount: 8,
       });
       expect(activeBody.fighters[0]?.sprites.find(
         (sprite: Record<string, unknown>) => sprite.animationName === 'high_punch',
       )).toMatchObject({
         frameCount: 11,
-        rawFrameWidth: 768,
-        rawFrameHeight: 1024,
-        rawFrameCount: 6,
+        rawUrl: null,
+        hqFrameWidth: 768,
+        hqFrameHeight: 1024,
+        hqFrameCount: 6,
       });
-      expect(arcadeIdle?.rawUrl).toContain(
-        `/public-assets/arcade/${fighterId}/sprites/arcade-sprite-0/raw/idle-raw.png`,
+      expect(arcadeIdle?.hqUrl).toContain(
+        `/public-assets/arcade/${fighterId}/sprites/arcade-sprite-0/hq/idle-raw.png`,
       );
-      const publicRaw = await getPublicArcadeSpriteRawAsset(
+      const publicHighDensity = await getPublicArcadeSpriteHighDensityAsset(
         env,
         fighterId,
         'arcade-sprite-0',
         'idle-raw.png',
       );
-      expect(publicRaw.status).toBe(200);
-      expect(Array.from(new Uint8Array(await publicRaw.arrayBuffer()))).toEqual([7, 8, 9]);
-      expect((await getPublicArcadeSpriteRawAsset(
+      expect(publicHighDensity.status).toBe(200);
+      expect(Array.from(new Uint8Array(await publicHighDensity.arrayBuffer()))).toEqual([7, 8, 9]);
+      expect((await getPublicArcadeSpriteHighDensityAsset(
         env,
         fighterId,
         'arcade-sprite-0',
@@ -572,6 +577,12 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect(retired.fighters).toHaveLength(0);
       expect((await db.prepare('SELECT public_flag FROM fighters WHERE id = ?')
         .bind(fighterId).first<{ public_flag: number }>())?.public_flag).toBe(0);
+      expect((await getPublicArcadeSpriteHighDensityAsset(
+        env,
+        fighterId,
+        'arcade-sprite-0',
+        'idle-raw.png',
+      )).status).toBe(404);
 
       expect((await upsertAdminArcadeFighter(
         arcadeRequest('draft'), env, adminAuth, fighterId,
@@ -661,6 +672,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect(fighter).not.toHaveProperty('photoHash');
       expect(fighter.sources).toMatchObject({ original: null, sideRaw: null });
       expect(fighter.sprites.every((sprite: Record<string, unknown>) => sprite.rawUrl === null)).toBe(true);
+      expect(fighter.sprites.every((sprite: Record<string, unknown>) => sprite.hqUrl == null)).toBe(true);
       expect(fighter.sources.side).toContain(
         '/public-assets/fighters/fighter-target/sources/side/side.png',
       );
