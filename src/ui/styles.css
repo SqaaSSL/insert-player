@@ -285,6 +285,45 @@
     @apply block text-[12px] tracking-[0.1em] uppercase text-asf-gold-bright;
   }
 
+  .gallery-fighter-card:disabled {
+    @apply cursor-not-allowed opacity-55;
+  }
+
+  .gallery-fighter-list {
+    @apply gap-5;
+  }
+
+  .gallery-fighter-list__group {
+    @apply flex flex-col gap-2;
+  }
+
+  .gallery-fighter-list__group + .gallery-fighter-list__group {
+    @apply border-t-[2px] border-[rgba(255,206,58,0.18)] pt-4;
+  }
+
+  .gallery-fighter-list__header {
+    @apply flex items-center justify-between gap-3 px-1;
+  }
+
+  .gallery-fighter-list__title {
+    @apply text-[10px] tracking-[0.12em] text-asf-gold;
+  }
+
+  .gallery-fighter-list__count {
+    @apply min-w-7 rounded-[3px] border border-[rgba(255,206,58,0.32)]
+           bg-[rgba(10,8,24,0.82)] px-2 py-1 text-center font-sans text-[11px]
+           leading-none text-asf-gold-bright;
+  }
+
+  .gallery-fighter-list__status {
+    @apply m-0 rounded-[3px] bg-[rgba(10,8,24,0.62)] px-3 py-2 font-sans
+           text-[11px] normal-case leading-[1.5] text-asf-muted;
+  }
+
+  .gallery-fighter-list__card[aria-busy='true'] {
+    @apply border-asf-blue opacity-100;
+  }
+
   /* ============== Status / warnings ============== */
 
   .gallery-hero__status {
