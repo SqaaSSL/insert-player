@@ -10,6 +10,7 @@ import {
   assertApprovedArcadeGenerationContract,
   assertAwaitingVideoReview,
   assertReviewGatedVideoStepConfirmation,
+  assertReviewedCanonicalManifest,
   assertReviewedActivationConfirmation,
   findCurrentArcadeEntry,
   planArcadeDraftRegistration,
@@ -41,6 +42,10 @@ const productionWorkflow = readFileSync(
 );
 const videoStepWorkflow = readFileSync(
   new URL('../.github/workflows/arcade-video-step-production.yml', import.meta.url),
+  'utf8',
+);
+const seedRosterScript = readFileSync(
+  new URL('./seed-arcade-roster.mjs', import.meta.url),
   'utf8',
 );
 
@@ -460,6 +465,18 @@ describe('Review-gated Arcade Video step', () => {
     pause: async () => {},
     pollIntervalMs: 0,
   });
+  const reviewedManifest = {
+    schemaVersion: 1,
+    canonicalSourceMode: 'reviewed-current-v1',
+    slug: fighter.slug,
+    fighterId: 'a'.repeat(32),
+    photoHash: fighter.reference.sourceSha256,
+    canonicalSourceHashes: {
+      side: { processedSha256: '1'.repeat(64), rawSha256: '2'.repeat(64) },
+      upright: { processedSha256: '3'.repeat(64), rawSha256: '4'.repeat(64) },
+      crouch: { processedSha256: '5'.repeat(64), rawSha256: '6'.repeat(64) },
+    },
+  };
 
   it('uses the exact Worker action order for all eleven review sequence bindings', () => {
     expect(REVIEW_GATED_VIDEO_ACTIONS).toEqual([...WORKER_VIDEO_SPRITE_ACTIONS]);
@@ -479,6 +496,25 @@ describe('Review-gated Arcade Video step', () => {
       .toThrow(/START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION/);
     expect(() => assertReviewGatedVideoStepConfirmation(REVIEW_GATED_VIDEO_STEP_CONFIRMATION))
       .not.toThrow();
+  });
+
+  it('accepts only an exact separately reviewed canonical manifest', () => {
+    expect(assertReviewedCanonicalManifest(reviewedManifest, {
+      slug: fighter.slug,
+      fighterId: 'a'.repeat(32),
+      photoHash: fighter.reference.sourceSha256,
+    })).toBe(reviewedManifest);
+    expect(() => assertReviewedCanonicalManifest({
+      ...reviewedManifest,
+      canonicalSourceHashes: {
+        ...reviewedManifest.canonicalSourceHashes,
+        side: { ...reviewedManifest.canonicalSourceHashes.side, extra: true },
+      },
+    })).toThrow(/side hashes are invalid/i);
+    expect(() => assertReviewedCanonicalManifest({
+      ...reviewedManifest,
+      fighterId: 'b'.repeat(32),
+    }, { fighterId: 'a'.repeat(32) })).toThrow(/does not match the selected fighter/i);
   });
 
   it('returns an existing awaiting-review candidate without any mutation', async () => {
@@ -573,7 +609,10 @@ describe('Review-gated Arcade Video step', () => {
       throw new Error(`Unexpected Video continuation request: ${init.method ?? 'GET'} ${path}`);
     };
 
-    const result = await runReviewGatedVideoStep(runnerOptions(requestApi));
+    const result = await runReviewGatedVideoStep({
+      ...runnerOptions(requestApi),
+      reviewedCanonicalManifest: reviewedManifest,
+    });
     expect(result).toMatchObject({
       mode: 'continued',
       mutated: true,
@@ -594,6 +633,8 @@ describe('Review-gated Arcade Video step', () => {
         withdrawalLossAcknowledged: true,
       },
       creationFlow: 'video',
+      canonicalSourceMode: 'reviewed-current-v1',
+      canonicalSourceHashes: reviewedManifest.canonicalSourceHashes,
     });
     expect(calls.some(({ path }) => (
       /generation-contract|\/sources(?:\/|$)|\/approve$|\/reject$|\/adjust$/.test(path)
@@ -622,6 +663,9 @@ describe('Review-gated Arcade Video step', () => {
     expect(videoStepWorkflow).toContain('cancel-in-progress: false');
     expect(videoStepWorkflow).toContain('--video-step');
     expect(videoStepWorkflow).toContain('--confirm-video-step="$REQUESTED_CONFIRMATION"');
+    expect(videoStepWorkflow).toContain('reviewed_manifest_run_id:');
+    expect(videoStepWorkflow).toContain('arcade-reviewed-canonical-manifest-$REQUESTED_SLUG');
+    expect(videoStepWorkflow).toContain('--reviewed-canonical-manifest=%s');
     expect(videoStepWorkflow).toContain('ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}');
     expect(videoStepWorkflow).toContain('health?.status !== \'ok\'');
     expect(videoStepWorkflow).toContain('health.environment !== \'production\'');
@@ -633,6 +677,14 @@ describe('Review-gated Arcade Video step', () => {
     expect(videoStepWorkflow).not.toContain('assert-approved-image-providers');
     expect(videoStepWorkflow).not.toContain('--activate');
     expect(videoStepWorkflow).not.toContain('/approve');
+    expect(videoStepWorkflow).not.toContain('/sources');
+    expect(videoStepWorkflow).not.toContain('generate-source');
+  });
+
+  it('wires the separately reviewed manifest from the CLI into the exact Video POST path', () => {
+    expect(seedRosterScript).toMatch(
+      /if \(videoStep\) \{[\s\S]*?runReviewGatedVideoStep\(\{[\s\S]*?reviewedCanonicalManifest,[\s\S]*?\}\);/,
+    );
   });
 });
 
