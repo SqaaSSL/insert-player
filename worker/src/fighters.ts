@@ -68,6 +68,14 @@ const MAX_COMMUNITY_REPORT_DETAILS_CHARS = 500;
 const MAX_SPRITE_FRAME_DIMENSION = 4096;
 const MAX_SPRITE_FRAME_COUNT = 64;
 const MAX_PROCESSING_VERSION = 100;
+const HIGH_DENSITY_SPRITE_FRAME_WIDTH = 768;
+const HIGH_DENSITY_SPRITE_FRAME_HEIGHT = 1024;
+const VIDEO_DENSE_PING_PONG_ANIMATIONS = new Set([
+  'high_punch',
+  'low_punch',
+  'high_kick',
+  'low_kick',
+]);
 const MAX_FIGHTER_NAME_CHARS = 48;
 const MAX_ARCADE_CHALLENGER_LINE_CHARS = 120;
 const MAX_ARCADE_REFERENCE_TEXT_CHARS = 240;
@@ -271,6 +279,17 @@ function publicSpriteAssetUrl(
   return `${url.origin}/public-assets/fighters/${encodeURIComponent(fighterId)}/sprites/${encodeURIComponent(sprite.id)}/${encodeURIComponent(revision)}`;
 }
 
+function publicArcadeSpriteRawAssetUrl(
+  request: Request,
+  fighterId: string,
+  sprite: SpriteAsset,
+): string | null {
+  const revision = publicAssetRevision(sprite.raw_blob_key);
+  if (!revision) return null;
+  const url = new URL(request.url);
+  return `${url.origin}/public-assets/arcade/${encodeURIComponent(fighterId)}/sprites/${encodeURIComponent(sprite.id)}/raw/${encodeURIComponent(revision)}`;
+}
+
 function decodeAssetKey(key: string): string | Response {
   let decodedKey: string;
   try {
@@ -359,6 +378,14 @@ function serializeSprite(
   sprite: SpriteAsset | SpriteVersion,
   includeContentHashes = false,
 ) {
+  const hasKnownHighDensityRaw = Boolean(sprite.raw_blob_key) &&
+    normalizeSpriteAnimationFormat(sprite.animation_format) === 'video-dense-v1';
+  const rawFrameCount = hasKnownHighDensityRaw &&
+    normalizeSpriteAnimationFormat(sprite.animation_format) === 'video-dense-v1' &&
+    VIDEO_DENSE_PING_PONG_ANIMATIONS.has(sprite.animation_name) &&
+    sprite.frame_count % 2 === 1
+    ? (sprite.frame_count + 1) / 2
+    : hasKnownHighDensityRaw ? sprite.frame_count : null;
   const serialized = {
     id: sprite.id,
     animationName: sprite.animation_name,
@@ -368,6 +395,9 @@ function serializeSprite(
     frameWidth: sprite.frame_w,
     frameHeight: sprite.frame_h,
     frameCount: sprite.frame_count,
+    rawFrameWidth: hasKnownHighDensityRaw ? HIGH_DENSITY_SPRITE_FRAME_WIDTH : null,
+    rawFrameHeight: hasKnownHighDensityRaw ? HIGH_DENSITY_SPRITE_FRAME_HEIGHT : null,
+    rawFrameCount,
     animationFormat: normalizeSpriteAnimationFormat(sprite.animation_format),
     processingVersion: sprite.processing_version,
     createdAt: sprite.created_at,
@@ -477,8 +507,19 @@ function serializeArcadeFighter(
   fighter: ArcadeFighterRow,
   sprites: SpriteAsset[] = [],
 ) {
+  const serialized = serializeCommunityFighter(request, fighter, sprites);
+  const spriteById = new Map(sprites.map((sprite) => [sprite.id, sprite]));
   return {
-    ...serializeCommunityFighter(request, fighter, sprites),
+    ...serialized,
+    sprites: serialized.sprites.map((sprite) => {
+      const source = spriteById.get(sprite.id);
+      return {
+        ...sprite,
+        rawUrl: source
+          ? publicArcadeSpriteRawAssetUrl(request, fighter.id, source)
+          : null,
+      };
+    }),
     arcade: {
       slug: fighter.arcade_slug,
       rank: fighter.arcade_sort_order,
@@ -2119,4 +2160,26 @@ export async function getPublicFighterSpriteAsset(
     return json({ error: 'Public asset not found' }, 404, NO_STORE_HEADERS);
   }
   return publicAssetResponse(env, sprite.blob_key);
+}
+
+export async function getPublicArcadeSpriteRawAsset(
+  env: Env,
+  fighterId: string,
+  spriteId: string,
+  revision: string,
+): Promise<Response> {
+  const sprite = await env.DB.prepare(`
+    SELECT s.raw_blob_key
+    FROM sprites s
+    JOIN fighters f ON f.id = s.fighter_id
+    JOIN arcade_fighters af ON af.fighter_id = f.id
+    WHERE f.id = ? AND f.public_flag = 1 AND f.quality_tier = 'champion'
+      AND af.status = 'active' AND s.id = ? AND s.quality_tier = 'champion'
+      AND ${playableSpriteSetSql('f', 'champion')}
+    LIMIT 1
+  `).bind(fighterId, spriteId).first<{ raw_blob_key: string | null }>();
+  if (!sprite?.raw_blob_key || publicAssetRevision(sprite.raw_blob_key) !== revision) {
+    return json({ error: 'Public asset not found' }, 404, NO_STORE_HEADERS);
+  }
+  return publicAssetResponse(env, sprite.raw_blob_key);
 }

@@ -77,6 +77,20 @@ describe('sprite layouts', () => {
       scale: 0.8,
       y: 488,
     });
+
+    expect(composeSpritePresentation(
+      { scale: 1.25, originX: 0.42, originY: 1, offsetY: 6 },
+      0.8,
+      500,
+      -12,
+      2,
+    )).toEqual({
+      scale: 0.5,
+      originX: 0.42,
+      originY: 1,
+      offsetY: 6,
+      y: 492.8,
+    });
   });
 
   it('keeps an asymmetric source root at local x zero in both facings', () => {

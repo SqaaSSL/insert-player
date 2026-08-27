@@ -4,6 +4,7 @@ import {
   cloneCommunityFighter,
   getAsset,
   getCommunityFighter,
+  getPublicArcadeSpriteRawAsset,
   getPublicFighterSourceAsset,
   getPublicFighterSpriteAsset,
   listArcadeFighters,
@@ -397,6 +398,19 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
         'jump', 'crouch', 'hit', 'ko', 'victory',
       ];
+      const denseFrameCounts: Record<string, number> = {
+        idle: 8,
+        walk: 12,
+        high_punch: 11,
+        low_punch: 13,
+        high_kick: 23,
+        low_kick: 17,
+        jump: 8,
+        crouch: 6,
+        hit: 6,
+        ko: 12,
+        victory: 12,
+      };
       const sourceKeys = {
         original: `users/user-target/fighters/${fighterId}/sources/original.png`,
         side: `users/user-target/fighters/${fighterId}/sources/side.png`,
@@ -430,14 +444,15 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         ...animationNames.map((animationName, index) => db.prepare(`
           INSERT INTO sprites (
             id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
-            frame_w, frame_h, frame_count, processing_version
-          ) VALUES (?, ?, ?, 'champion', ?, ?, 768, 1024, 8, 5)
+            frame_w, frame_h, frame_count, animation_format, processing_version
+          ) VALUES (?, ?, ?, 'champion', ?, ?, 192, 256, ?, 'video-dense-v1', 5)
         `).bind(
           `arcade-sprite-${index}`,
           fighterId,
           animationName,
           `users/user-target/fighters/${fighterId}/sprites/${animationName}.png`,
           `users/user-target/fighters/${fighterId}/sprites/${animationName}-raw.png`,
+          denseFrameCounts[animationName],
         )),
       ]);
 
@@ -488,6 +503,39 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect(activeBody.fighters[0]).not.toHaveProperty('photoHash');
       expect(activeBody.fighters[0]).not.toHaveProperty('ownerUserId');
       expect(activeBody.fighters[0]).not.toHaveProperty('generationPrompt');
+      const arcadeIdle = activeBody.fighters[0]?.sprites.find(
+        (sprite: Record<string, unknown>) => sprite.animationName === 'idle',
+      );
+      expect(arcadeIdle).toMatchObject({
+        rawFrameWidth: 768,
+        rawFrameHeight: 1024,
+        rawFrameCount: 8,
+      });
+      expect(activeBody.fighters[0]?.sprites.find(
+        (sprite: Record<string, unknown>) => sprite.animationName === 'high_punch',
+      )).toMatchObject({
+        frameCount: 11,
+        rawFrameWidth: 768,
+        rawFrameHeight: 1024,
+        rawFrameCount: 6,
+      });
+      expect(arcadeIdle?.rawUrl).toContain(
+        `/public-assets/arcade/${fighterId}/sprites/arcade-sprite-0/raw/idle-raw.png`,
+      );
+      const publicRaw = await getPublicArcadeSpriteRawAsset(
+        env,
+        fighterId,
+        'arcade-sprite-0',
+        'idle-raw.png',
+      );
+      expect(publicRaw.status).toBe(200);
+      expect(Array.from(new Uint8Array(await publicRaw.arrayBuffer()))).toEqual([7, 8, 9]);
+      expect((await getPublicArcadeSpriteRawAsset(
+        env,
+        fighterId,
+        'arcade-sprite-0',
+        'wrong.png',
+      )).status).toBe(404);
       const communityBody = await listCommunityFighters(
         new Request('https://api.insertplayer.ai/api/community'), env,
       ).then((response) => response.json() as Promise<{ fighters: unknown[] }>);

@@ -27,6 +27,7 @@ import {
   normalizeSpriteAnimationFormat,
   type SpriteAnimationFormat,
 } from '../SpriteAnimationFormat.ts';
+import { prefersHighDensitySpriteTextures } from '../game/sprites/SpriteRenderQuality.ts';
 
 export interface CloudSprite {
   id?: string;
@@ -37,6 +38,9 @@ export interface CloudSprite {
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  rawFrameWidth?: number | null;
+  rawFrameHeight?: number | null;
+  rawFrameCount?: number | null;
   animationFormat?: SpriteAnimationFormat;
   processingVersion: number;
   createdAt?: string;
@@ -1100,6 +1104,9 @@ export async function downloadCloudFighterToLocal(
           frameWidth: sprite.frameWidth,
           frameHeight: sprite.frameHeight,
           frameCount: sprite.frameCount,
+          rawFrameWidth: sprite.rawFrameWidth ?? action.existing?.rawFrameWidth,
+          rawFrameHeight: sprite.rawFrameHeight ?? action.existing?.rawFrameHeight,
+          rawFrameCount: sprite.rawFrameCount ?? action.existing?.rawFrameCount,
           animationFormat: normalizeSpriteAnimationFormat(sprite.animationFormat),
           processingVersion: sprite.processingVersion,
           contentHash: sprite.contentHash ?? action.existing?.contentHash ?? null,
@@ -1187,6 +1194,7 @@ export async function downloadCloudFighterToLocal(
 export async function downloadArcadeFighterToLocal(
   fighter: CloudFighter,
   context?: ApiRequestContext,
+  options: { includeHighResolutionAssets?: boolean } = {},
 ): Promise<CloudImportResult> {
   if (!fighter.arcade || !fighter.public) {
     throw new Error(`${fighter.name} is not an active Arcade fighter.`);
@@ -1196,8 +1204,68 @@ export async function downloadArcadeFighterToLocal(
     photoHash: arcadeFighterPhotoHash(fighter),
   }, context, {
     includeArchivedVersions: false,
-    includeRawAssets: false,
+    includeRawAssets: options.includeHighResolutionAssets ?? prefersHighDensitySpriteTextures(),
   });
+}
+
+export async function downloadArcadeSpriteRawToLocal(
+  fighter: CloudFighter,
+  animationName: string,
+  context?: ApiRequestContext,
+): Promise<boolean> {
+  if (!fighter.arcade || !fighter.public) {
+    throw new Error(`${fighter.name} is not an active Arcade fighter.`);
+  }
+  const remote = selectPlayableCloudSprites(fighter.sprites)
+    .find((sprite) => sprite.animationName === animationName);
+  if (
+    !remote?.rawUrl ||
+    !remote.rawFrameWidth ||
+    !remote.rawFrameHeight ||
+    !remote.rawFrameCount
+  ) {
+    return false;
+  }
+
+  const ownerScope = getActiveSpriteCacheScope();
+  const photoHash = arcadeFighterPhotoHash(fighter);
+  const versions = await getAllSpriteVersionsForHash(photoHash, ownerScope);
+  const existing = versions.find((sprite) => (
+    Boolean(remote.id) && sprite.versionId === remote.id
+  )) ?? versions.find((sprite) => (
+    sprite.animationName === remote.animationName &&
+    sprite.qualityTier === remote.qualityTier &&
+    Boolean(remote.contentHash) &&
+    sprite.contentHash === remote.contentHash
+  ));
+  if (!existing) {
+    throw new Error(`${fighter.name} ${animationName} must be downloaded before its HQ preview.`);
+  }
+  if (
+    existing.rawPngBlob &&
+    existing.rawFrameWidth === remote.rawFrameWidth &&
+    existing.rawFrameHeight === remote.rawFrameHeight &&
+    existing.rawFrameCount === remote.rawFrameCount
+  ) {
+    return false;
+  }
+
+  const requestContext = context ?? captureApiRequestContext();
+  const rawPngBlob = await fetchRequiredBlob(
+    remote.rawUrl,
+    `${fighter.name} ${animationName} HQ sprite`,
+    requestContext,
+  );
+  if (!rawPngBlob) return false;
+  await setCachedArchivedSprite({
+    ...existing,
+    ownerScope,
+    rawPngBlob,
+    rawFrameWidth: remote.rawFrameWidth,
+    rawFrameHeight: remote.rawFrameHeight,
+    rawFrameCount: remote.rawFrameCount,
+  }, { preserveVersionId: true, ownerScope });
+  return true;
 }
 
 export async function importMissingCloudFighters(

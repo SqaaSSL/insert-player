@@ -491,6 +491,7 @@ export class Fighter {
       this.renderScale,
       this.y,
       this.renderYOffset,
+      this.layout.textureDensity,
     );
     presentation.originX = getFacingSpriteOriginX(
       presentation.originX,

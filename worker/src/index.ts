@@ -20,6 +20,7 @@ import {
   getAsset,
   getCommunityFighter,
   getFighter,
+  getPublicArcadeSpriteRawAsset,
   getPublicFighterSourceAsset,
   getPublicFighterSpriteAsset,
   listAdminArcadeFighters,
@@ -424,6 +425,23 @@ export default {
         if (isResponse(revision)) return addCors(revision, request, env);
         return addCors(
           await getPublicFighterSpriteAsset(env, fighterId, spriteId, revision),
+          request,
+          env,
+        );
+      }
+
+      const publicArcadeRawSpriteAssetMatch = path.match(
+        /^\/public-assets\/arcade\/([^/]+)\/sprites\/([^/]+)\/raw\/([^/]+)$/,
+      );
+      if (publicArcadeRawSpriteAssetMatch && method === 'GET') {
+        const fighterId = decodePathParam(publicArcadeRawSpriteAssetMatch[1]);
+        const spriteId = decodePathParam(publicArcadeRawSpriteAssetMatch[2]);
+        const revision = decodePathParam(publicArcadeRawSpriteAssetMatch[3]);
+        if (isResponse(fighterId)) return addCors(fighterId, request, env);
+        if (isResponse(spriteId)) return addCors(spriteId, request, env);
+        if (isResponse(revision)) return addCors(revision, request, env);
+        return addCors(
+          await getPublicArcadeSpriteRawAsset(env, fighterId, spriteId, revision),
           request,
           env,
         );

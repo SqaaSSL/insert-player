@@ -28,6 +28,9 @@ interface CachedSprite {
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  rawFrameWidth?: number;
+  rawFrameHeight?: number;
+  rawFrameCount?: number;
   animationFormat?: SpriteAnimationFormat;
   processingVersion?: number;
   contentHash?: string | null;

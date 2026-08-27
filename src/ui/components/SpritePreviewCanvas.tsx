@@ -5,6 +5,7 @@ interface SpritePreviewCanvasProps {
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  playbackFrameIndices?: readonly number[];
   className?: string;
 }
 
@@ -14,9 +15,10 @@ export function spritePreviewRenderSize(frameWidth: number, frameHeight: number)
   width: number;
   height: number;
 } {
+  const scale = frameWidth <= 192 && frameHeight <= 256 ? SPRITE_PREVIEW_RENDER_SCALE : 1;
   return {
-    width: Math.max(1, Math.round(frameWidth * SPRITE_PREVIEW_RENDER_SCALE)),
-    height: Math.max(1, Math.round(frameHeight * SPRITE_PREVIEW_RENDER_SCALE)),
+    width: Math.max(1, Math.round(frameWidth * scale)),
+    height: Math.max(1, Math.round(frameHeight * scale)),
   };
 }
 
@@ -25,6 +27,7 @@ export function SpritePreviewCanvas({
   frameWidth,
   frameHeight,
   frameCount,
+  playbackFrameIndices,
   className,
 }: SpritePreviewCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -43,17 +46,19 @@ export function SpritePreviewCanvas({
     };
   }, [blob]);
 
-  useEffect(() => {
-    setFrameIndex(0);
-  }, [blob, frameCount]);
+  const playbackFrameCount = playbackFrameIndices?.length ?? frameCount;
 
   useEffect(() => {
-    if (frameCount <= 1) return;
+    setFrameIndex(0);
+  }, [blob, playbackFrameCount]);
+
+  useEffect(() => {
+    if (playbackFrameCount <= 1) return;
     const timer = window.setInterval(() => {
-      setFrameIndex((current) => (current + 1) % frameCount);
+      setFrameIndex((current) => (current + 1) % playbackFrameCount);
     }, 120);
     return () => window.clearInterval(timer);
-  }, [frameCount]);
+  }, [playbackFrameCount]);
 
   useEffect(() => {
     if (!image || !canvasRef.current) return;
@@ -65,8 +70,9 @@ export function SpritePreviewCanvas({
     ctx.clearRect(0, 0, renderSize.width, renderSize.height);
 
     const gridCols = Math.max(1, Math.round(image.width / frameWidth));
-    const sourceCol = frameIndex % gridCols;
-    const sourceRow = Math.floor(frameIndex / gridCols);
+    const sourceFrameIndex = playbackFrameIndices?.[frameIndex] ?? frameIndex;
+    const sourceCol = sourceFrameIndex % gridCols;
+    const sourceRow = Math.floor(sourceFrameIndex / gridCols);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(
@@ -80,7 +86,7 @@ export function SpritePreviewCanvas({
       renderSize.width,
       renderSize.height,
     );
-  }, [image, frameWidth, frameHeight, frameIndex, renderSize.width, renderSize.height]);
+  }, [image, frameWidth, frameHeight, frameIndex, playbackFrameIndices, renderSize.width, renderSize.height]);
 
   return (
     <canvas

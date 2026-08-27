@@ -13,6 +13,7 @@ import {
   buildSpriteUploadPlan,
   cloudPlayableSpriteRefs,
   cloudSpritesForImport,
+  downloadArcadeSpriteRawToLocal,
   formatCloudRosterSyncStatus,
   isCompleteCloudFighterRoster,
   isSourceOnlyCloudFighter,
@@ -260,6 +261,86 @@ describe('official Arcade cache identity', () => {
         },
       },
     })).toBe('arcade:headline-fighter:fighter-official');
+  });
+});
+
+describe('official Arcade HQ sprite hydration', () => {
+  beforeEach(async () => {
+    await resetSyncCache();
+    vi.mocked(apiFetch).mockReset();
+  });
+
+  afterEach(async () => {
+    await resetSyncCache();
+  });
+
+  it('adds the selected raw master to the existing immutable cached version', async () => {
+    const fighter = {
+      id: 'fighter-official',
+      name: 'Headline Fighter',
+      qualityTier: 'champion' as const,
+      public: true,
+      sources: {},
+      sprites: [] as CloudSprite[],
+      arcade: {
+        slug: 'headline-fighter',
+        rank: 1,
+        challengerLine: 'Fight the headline.',
+        defaultPersonality: 'showboat' as const,
+        reference: {
+          kind: 'licensed' as const,
+          sourceUrl: null,
+          license: 'Licensed',
+          credit: 'Studio',
+        },
+      },
+    };
+    const photoHash = arcadeFighterPhotoHash(fighter);
+    await setCachedSprite({
+      versionId: 'remote-idle-version',
+      photoHash,
+      animationName: 'idle',
+      qualityTier: 'champion',
+      pngBlob: new Blob(['runtime'], { type: 'image/png' }),
+      frameWidth: 192,
+      frameHeight: 256,
+      frameCount: 8,
+      animationFormat: 'video-dense-v1',
+      processingVersion: 5,
+      createdAt: 100,
+    }, { preserveVersionId: true });
+    const [cached] = await getAllSpritesForHash(photoHash);
+    fighter.sprites = [{
+      id: 'remote-idle-version',
+      animationName: 'idle',
+      qualityTier: 'champion',
+      url: 'https://api.insertplayer.test/runtime.png',
+      rawUrl: 'https://api.insertplayer.test/raw.png',
+      frameWidth: 192,
+      frameHeight: 256,
+      frameCount: 8,
+      rawFrameWidth: 768,
+      rawFrameHeight: 1024,
+      rawFrameCount: 8,
+      animationFormat: 'video-dense-v1',
+      processingVersion: 5,
+      contentHash: cached.contentHash,
+    }];
+    vi.mocked(apiFetch).mockResolvedValueOnce(new Response(
+      new Blob(['hq-master'], { type: 'image/png' }),
+      { status: 200 },
+    ));
+
+    await expect(downloadArcadeSpriteRawToLocal(fighter, 'idle', SYNC_CONTEXT))
+      .resolves.toBe(true);
+
+    const [hydrated] = await getAllSpritesForHash(photoHash);
+    expect(hydrated.versionId).toBe('remote-idle-version');
+    expect(hydrated.rawFrameWidth).toBe(768);
+    expect(hydrated.rawFrameHeight).toBe(1024);
+    expect(hydrated.rawFrameCount).toBe(8);
+    expect(await hydrated.rawPngBlob?.text()).toBe('hq-master');
+    expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(1);
   });
 });
 

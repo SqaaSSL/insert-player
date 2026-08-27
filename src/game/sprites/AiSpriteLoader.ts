@@ -9,11 +9,16 @@ import {
   type SpritePresentationProfile,
   type SpriteRuntimeProfile,
 } from './SpriteGenerator.ts';
-import { debugInfo } from '../../services/DebugLog.ts';
+import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 import {
   VIDEO_DENSE_SPRITE_ANIMATION_FORMAT,
   type SpriteAnimationFormat,
 } from '../../SpriteAnimationFormat.ts';
+import {
+  chooseSpriteTextureDensity,
+  detectSpriteRenderCapabilities,
+  type SpriteTextureDensity,
+} from './SpriteRenderQuality.ts';
 
 const ANIM_NAME_TO_STATE: Record<string, FighterState> = {
   idle: FighterState.IDLE,
@@ -44,7 +49,13 @@ const LOOPING_STATES = new Set<FighterState>([
   FighterState.WALK_BACKWARD,
 ]);
 
-type LoadedAnimation = { img: HTMLImageElement; sprite: CachedSprite };
+type LoadedAnimation = {
+  img: HTMLImageElement | HTMLCanvasElement;
+  sprite: CachedSprite;
+  frameWidth: number;
+  frameHeight: number;
+  frameCount: number;
+};
 
 const DENSE_ALPHA_THRESHOLD = 32;
 const DENSE_ROOT_ALPHA_THRESHOLD = 96;
@@ -71,18 +82,74 @@ export async function loadAiSprites(
   const cached = await getAllSpritesForHash(photoHash);
   if (cached.length === 0) return false;
 
-  const spritesByAnim = new Map<string, CachedSprite>();
-  for (const s of cached) {
-    spritesByAnim.set(s.animationName, s);
+  const rendererContext = (scene.game.renderer as unknown as {
+    gl?: WebGLRenderingContext | WebGL2RenderingContext;
+  }).gl ?? null;
+  const highResolutionSourcesAvailable = cached.every((sprite) => (
+    sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT &&
+    sprite.rawPngBlob instanceof Blob &&
+    Number.isInteger(sprite.rawFrameWidth) && (sprite.rawFrameWidth ?? 0) > 0 &&
+    Number.isInteger(sprite.rawFrameHeight) && (sprite.rawFrameHeight ?? 0) > 0 &&
+    Number.isInteger(sprite.rawFrameCount) && (sprite.rawFrameCount ?? 0) > 0
+  ));
+  const textureDensity: SpriteTextureDensity = chooseSpriteTextureDensity(
+    detectSpriteRenderCapabilities(rendererContext),
+    {
+      atlasWidthAt1x: 12 * FIGHTER_WIDTH,
+      atlasHeightAt1x: 16 * FIGHTER_HEIGHT,
+      highResolutionSourcesAvailable,
+    },
+  );
+  try {
+    return await loadAiSpritesAtDensity(scene, spriteKey, cached, textureDensity);
+  } catch (error) {
+    if (textureDensity !== 2) throw error;
+    debugWarn(
+      `[AiSpriteLoader] 2x atlas failed for "${spriteKey}"; retrying the preserved 1x assets:`,
+      error instanceof Error ? error.message : error,
+    );
+    return loadAiSpritesAtDensity(scene, spriteKey, cached, 1);
   }
+}
+
+async function loadAiSpritesAtDensity(
+  scene: Phaser.Scene,
+  spriteKey: string,
+  cached: CachedSprite[],
+  textureDensity: SpriteTextureDensity,
+): Promise<boolean> {
+  const spritesByAnim = new Map<string, CachedSprite>();
+  for (const sprite of cached) {
+    spritesByAnim.set(sprite.animationName, sprite);
+  }
+
+  const atlasFrameWidth = FIGHTER_WIDTH * textureDensity;
+  const atlasFrameHeight = FIGHTER_HEIGHT * textureDensity;
 
   const loadedAnims = new Map<string, LoadedAnimation>();
 
   for (const [animName, sprite] of spritesByAnim) {
     if (!ANIM_NAME_TO_STATE[animName]) continue;
-    const img = await blobToImage(sprite.pngBlob);
-    loadedAnims.set(animName, { img, sprite });
-    debugInfo(`[AiSpriteLoader] ${animName}: ${img.width}x${img.height}, frame ${sprite.frameWidth}x${sprite.frameHeight}, count ${sprite.frameCount}`);
+    const useHighResolutionSource = textureDensity === 2 && Boolean(sprite.rawPngBlob);
+    const loadedImage = await blobToImage(useHighResolutionSource ? sprite.rawPngBlob! : sprite.pngBlob);
+    const sourceFrameWidth = useHighResolutionSource ? sprite.rawFrameWidth! : sprite.frameWidth;
+    const sourceFrameHeight = useHighResolutionSource ? sprite.rawFrameHeight! : sprite.frameHeight;
+    const frameCount = useHighResolutionSource ? sprite.rawFrameCount! : sprite.frameCount;
+    const img = useHighResolutionSource
+      ? resizeSpriteSheetFrames(
+          loadedImage,
+          sourceFrameWidth,
+          sourceFrameHeight,
+          frameCount,
+          atlasFrameWidth,
+          atlasFrameHeight,
+        )
+      : loadedImage;
+    if (useHighResolutionSource) loadedImage.src = '';
+    const frameWidth = useHighResolutionSource ? atlasFrameWidth : sourceFrameWidth;
+    const frameHeight = useHighResolutionSource ? atlasFrameHeight : sourceFrameHeight;
+    loadedAnims.set(animName, { img, sprite, frameWidth, frameHeight, frameCount });
+    debugInfo(`[AiSpriteLoader] ${animName}: ${img.width}x${img.height}, frame ${frameWidth}x${frameHeight}, count ${frameCount}, density ${textureDensity}x`);
   }
   if (loadedAnims.size === 0) return false;
 
@@ -105,7 +172,7 @@ export async function loadAiSprites(
       : state;
     const profile = getAnimationRuntimeProfile(
       profileState,
-      usesDenseSource ? resolved?.anim.sprite.frameCount : undefined,
+      usesDenseSource ? resolved?.anim.frameCount : undefined,
       usesDenseSource ? resolved?.anim.sprite.animationFormat : undefined,
     );
     runtimeProfiles.set(state, profile);
@@ -128,23 +195,23 @@ export async function loadAiSprites(
     const nativeState = ANIM_NAME_TO_STATE[animName];
     const nativeProfile = getAnimationRuntimeProfile(
       nativeState,
-      sprite.frameCount,
+      anim.frameCount,
       sprite.animationFormat,
     );
-    const gridCols = Math.round(sourceImg.width / sprite.frameWidth);
+    const gridCols = Math.round(sourceImg.width / anim.frameWidth);
     const extractedFrames = extractFrames(
       sourceImg,
-      sprite.frameWidth,
-      sprite.frameHeight,
-      sprite.frameCount,
+      anim.frameWidth,
+      anim.frameHeight,
+      anim.frameCount,
       gridCols,
     );
     extractedFramesByAnimation.set(animName, extractedFrames);
     const stableFrames = selectStableFramesForState(
       nativeState,
       extractedFrames,
-      sprite.frameWidth,
-      sprite.frameHeight,
+      anim.frameWidth,
+      anim.frameHeight,
       nativeProfile.frameCount,
     );
     const nativeRuntimeFrames = selectSourceFramesForAtlas(
@@ -161,8 +228,8 @@ export async function loadAiSprites(
       animName,
       calculateDensePresentationProfileFromFrames(
         nativeRuntimeFrames,
-        sprite.frameWidth,
-        sprite.frameHeight,
+        anim.frameWidth,
+        anim.frameHeight,
         nativeState,
       ),
     );
@@ -179,13 +246,14 @@ export async function loadAiSprites(
     playbackModeOverrides,
     durationTickOverrides,
     presentationProfiles,
+    textureDensity,
   );
   const cols = layout.totalColumns;
   const rows = Object.keys(layout.stateRow).length;
 
   const canvas = document.createElement('canvas');
-  canvas.width = cols * FIGHTER_WIDTH;
-  canvas.height = rows * FIGHTER_HEIGHT;
+  canvas.width = cols * atlasFrameWidth;
+  canvas.height = rows * atlasFrameHeight;
   const ctx = canvas.getContext('2d')!;
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
@@ -207,10 +275,10 @@ export async function loadAiSprites(
     if (animName !== directAnimName) fallbackFillCount += 1;
 
     const { img: sourceImg, sprite } = anim;
-    const srcTotal = sprite.frameCount;
+    const srcTotal = anim.frameCount;
 
-    const srcW = sprite.frameWidth;
-    const srcH = sprite.frameHeight;
+    const srcW = anim.frameWidth;
+    const srcH = anim.frameHeight;
     const gridCols = Math.round(sourceImg.width / srcW);
     const extractedFrames = extractedFramesByAnimation.get(animName) ??
       extractFrames(sourceImg, srcW, srcH, srcTotal, gridCols);
@@ -240,11 +308,13 @@ export async function loadAiSprites(
       srcH,
       contentBox,
       sprite.animationFormat,
+      atlasFrameWidth,
+      atlasFrameHeight,
     );
 
     for (let f = 0; f < targetFrameCount; f++) {
-      const dstX = f * FIGHTER_WIDTH;
-      const dstY = row * FIGHTER_HEIGHT;
+      const dstX = f * atlasFrameWidth;
+      const dstY = row * atlasFrameHeight;
 
       ctx.drawImage(
         frames[f],
@@ -260,14 +330,14 @@ export async function loadAiSprites(
     }
   }
 
-  debugInfo(`[AiSpriteLoader] Built ${canvas.width}x${canvas.height} sheet for "${spriteKey}" (${loadedAnims.size} anims, ${fallbackFillCount} fallback-filled states, ${cols}x${rows} cells of ${FIGHTER_WIDTH}x${FIGHTER_HEIGHT})`);
+  debugInfo(`[AiSpriteLoader] Built ${canvas.width}x${canvas.height} sheet for "${spriteKey}" (${loadedAnims.size} anims, ${fallbackFillCount} fallback-filled states, ${cols}x${rows} cells of ${atlasFrameWidth}x${atlasFrameHeight}, density ${textureDensity}x)`);
 
   if (scene.textures.exists(spriteKey)) {
     scene.textures.remove(spriteKey);
   }
   scene.textures.addSpriteSheet(spriteKey, canvas as unknown as HTMLImageElement, {
-    frameWidth: FIGHTER_WIDTH,
-    frameHeight: FIGHTER_HEIGHT,
+    frameWidth: atlasFrameWidth,
+    frameHeight: atlasFrameHeight,
   });
   registerSpriteLayout(spriteKey, layout);
 
@@ -378,8 +448,47 @@ function blobToImage(blob: Blob): Promise<HTMLImageElement> {
   });
 }
 
-function extractFrames(
+function resizeSpriteSheetFrames(
   sheet: HTMLImageElement,
+  sourceFrameWidth: number,
+  sourceFrameHeight: number,
+  frameCount: number,
+  targetFrameWidth: number,
+  targetFrameHeight: number,
+): HTMLCanvasElement {
+  const sourceColumns = Math.max(1, Math.round(sheet.width / sourceFrameWidth));
+  const outputColumns = Math.min(sourceColumns, frameCount);
+  const outputRows = Math.ceil(frameCount / outputColumns);
+  const output = document.createElement('canvas');
+  output.width = outputColumns * targetFrameWidth;
+  output.height = outputRows * targetFrameHeight;
+  const context = output.getContext('2d');
+  if (!context) throw new Error('Could not allocate the high-density sprite canvas');
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.clearRect(0, 0, output.width, output.height);
+  for (let index = 0; index < frameCount; index += 1) {
+    const sourceColumn = index % sourceColumns;
+    const sourceRow = Math.floor(index / sourceColumns);
+    const outputColumn = index % outputColumns;
+    const outputRow = Math.floor(index / outputColumns);
+    context.drawImage(
+      sheet,
+      sourceColumn * sourceFrameWidth,
+      sourceRow * sourceFrameHeight,
+      sourceFrameWidth,
+      sourceFrameHeight,
+      outputColumn * targetFrameWidth,
+      outputRow * targetFrameHeight,
+      targetFrameWidth,
+      targetFrameHeight,
+    );
+  }
+  return output;
+}
+
+function extractFrames(
+  sheet: HTMLImageElement | HTMLCanvasElement,
   frameW: number, frameH: number,
   count: number, cols: number,
 ): HTMLCanvasElement[] {
@@ -407,18 +516,20 @@ export function calculateAtlasFrameTransform(
   sourceHeight: number,
   contentBox: BBox | null,
   animationFormat: SpriteAnimationFormat | undefined,
+  targetWidth = FIGHTER_WIDTH,
+  targetHeight = FIGHTER_HEIGHT,
 ): AtlasFrameTransform {
   const source = animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT
     ? { x: 0, y: 0, w: sourceWidth, h: sourceHeight }
     : contentBox ?? { x: 0, y: 0, w: sourceWidth, h: sourceHeight };
-  const scale = Math.min(FIGHTER_WIDTH / source.w, FIGHTER_HEIGHT / source.h);
+  const scale = Math.min(targetWidth / source.w, targetHeight / source.h);
   const drawWidth = Math.round(source.w * scale);
   const drawHeight = Math.round(source.h * scale);
   return {
     source,
     destination: {
-      x: Math.round((FIGHTER_WIDTH - drawWidth) / 2),
-      y: FIGHTER_HEIGHT - drawHeight,
+      x: Math.round((targetWidth - drawWidth) / 2),
+      y: targetHeight - drawHeight,
       w: drawWidth,
       h: drawHeight,
     },

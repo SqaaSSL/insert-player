@@ -124,4 +124,22 @@ describe('fighter sprite presentation', () => {
     expect(sprite.x).toBe(250);
     expect(sprite.y).toBe(GROUND_Y);
   });
+
+  it('keeps the same logical size for a 2x texture atlas', () => {
+    const spriteKey = 'retina-fighter';
+    registerSpriteLayout(spriteKey, createSpriteLayout({}, {}, {}, {
+      [FighterState.IDLE]: { scale: 1.25, originX: 0.37, originY: 0.92, offsetY: -6 },
+    }, 2));
+    const fighter = new Fighter(0, 'Retina', spriteKey, 250, true);
+    const { scene, sprites } = createMockScene();
+
+    fighter.createSprite(scene as never);
+    fighter.setRenderPresentation(1.2, 0);
+    fighter.syncSprite(500);
+
+    const [, sprite] = sprites;
+    expect(sprite.scale).toBeCloseTo(1.25 * 1.2 / 2);
+    expect(sprite.originX).toBeCloseTo(0.37);
+    expect(sprite.y).toBeCloseTo(GROUND_Y - 6 * 1.2);
+  });
 });
