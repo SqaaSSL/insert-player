@@ -1936,6 +1936,7 @@ function assertCrossDeviceRosterImportIsWired() {
   const cloud = readFileSync(join(root, 'src/services/CloudFighters.ts'), 'utf8');
   const gallery = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
   const roster = readFileSync(join(root, 'src/ui/routes/RosterPage.tsx'), 'utf8');
+  const cloudFirstRename = readFileSync(join(root, 'src/ui/shared/cloudFirstRename.ts'), 'utf8');
   const forbidden = [
     'createBody.public = meta.cloudPublic',
   ];
@@ -1990,15 +1991,18 @@ function assertCrossDeviceRosterImportIsWired() {
     'json.missingAnimations.map(formatMissingAnimationName)',
     "throw new Error(`Share update failed (${res.status}): ${await apiErrorMessage(res, 'Publish update failed')}`)",
     'setCloudFighterPublic(fighterId, true, requestContext)',
-    'await renameCloudFighter(meta.cloudFighterId, trimmedName, apiContext)',
+    'await renameFighterCloudFirst(meta, trimmedName, {',
+    'const updated = await dependencies.renameCloud(fighter.cloudFighterId, name)',
+    'await dependencies.renameCache(fighter.photoHash, name)',
+    'The cloud rename could not be confirmed. Your fighter name was not changed.',
     'const cloudDelete = await deleteCloudFighter(meta.cloudFighterId, apiContext)',
-    'Fighter renamed locally; cloud update skipped',
+    'Fighter renamed in cloud. The preview cache will refresh when Gallery reloads.',
     'syncCloudFightersToLocal(all, apiContext)',
     'const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext)',
     'p1CloudFighterId: p1Fighter.cloudFighterId',
     'p2CloudFighterId: p2Fighter.cloudFighterId',
   ];
-  const combined = `${cloud}\n${gallery}\n${roster}`;
+  const combined = `${cloud}\n${gallery}\n${roster}\n${cloudFirstRename}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0 || foundForbidden.length > 0) {
