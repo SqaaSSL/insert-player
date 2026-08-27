@@ -114,6 +114,24 @@ function updateSocialSvg({ name, description }) {
   return text;
 }
 
+function updateSocialCardTemplate({ name, description }) {
+  let text = readFileSync(join(root, 'scripts/assets/social-card.html'), 'utf8');
+  text = replaceRequired(text, /<title>[^<]+<\/title>/, `<title>${name} social card</title>`, 'social card title');
+  text = replaceRequired(
+    text,
+    /<meta name="description" content="[^"]*" \/>/,
+    `<meta name="description" content="${description}" />`,
+    'social card description',
+  );
+  text = replaceRequired(
+    text,
+    /(<h1 id="social-card-brand"[^>]*>)[^<]*(<\/h1>)/,
+    `$1${name.toUpperCase()}$2`,
+    'social card brand name',
+  );
+  return text;
+}
+
 function updateIconSvg({ name, shortName }) {
   let text = readFileSync(join(root, 'public/assets/app-icon.svg'), 'utf8');
   text = replaceRequired(text, /<title id="title">[^<]+<\/title>/, `<title id="title">${name} app icon</title>`, 'icon SVG title');
@@ -154,12 +172,13 @@ function main() {
     2,
   );
   const origin = normalizeOrigin(argValue('--origin') || envValue(env, 'ASF_FRONTEND_URL') || envValue(env, 'ASF_FRONTEND_ORIGIN'));
-  const socialCardPath = argValue('--social-card') || envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v5.png';
+  const socialCardPath = argValue('--social-card') || envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v6.png';
   const description = argValue('--description') || envValue(env, 'ASF_PUBLIC_APP_DESCRIPTION') || `Turn a photo into a playable arcade character in ${name}.`;
 
   const updates = {
     'index.html': updateHtml({ name, origin, socialCardPath, description }),
     'public/site.webmanifest': updateManifest({ name, shortName, description }),
+    'scripts/assets/social-card.html': updateSocialCardTemplate({ name, description }),
     'public/assets/social-card.svg': updateSocialSvg({ name, description }),
     'public/assets/app-icon.svg': updateIconSvg({ name, shortName }),
     '.env.production.example': updateEnvExample('.env.production.example', {
@@ -184,7 +203,7 @@ function main() {
   }
   console.log(`Applied public brand: ${name} (${shortName})`);
   console.log(changed.length > 0 ? `Updated: ${changed.join(', ')}` : 'No files changed.');
-  console.log('Run npm run brand:rasterize to regenerate PNG social card and app icons from the updated SVG/art before launch.');
+  console.log('Run npm run brand:rasterize to regenerate the PNG social card and app icons from their sources before launch.');
 }
 
 try {
