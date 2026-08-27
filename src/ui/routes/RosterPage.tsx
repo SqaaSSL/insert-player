@@ -16,6 +16,8 @@ import {
   STAGE_THEMES,
   getStageChoiceBlurb,
   getStageChoiceLabel,
+  getStageTheme,
+  resolveRosterStageThemeId,
   type StageThemeId,
 } from '../../game/match/StageConfig.ts';
 import {
@@ -61,6 +63,7 @@ interface RosterFighterEntry {
   previewUrl: string | null;
   challengerLine: string | null;
   defaultPersonality: FighterPersonalityId | null;
+  arcadeSlug: string | null;
   meta: CachedMeta | null;
   cloud: CloudFighter | null;
 }
@@ -128,6 +131,12 @@ function formatTier(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
+function getCachedArcadeSlug(photoHash: string): string | null {
+  if (!photoHash.startsWith('arcade:')) return null;
+  const slug = photoHash.slice('arcade:'.length).split(':', 1)[0]?.trim();
+  return slug || null;
+}
+
 function localRosterEntry(meta: CachedMeta): RosterFighterEntry {
   return {
     key: `local:${meta.photoHash}`,
@@ -141,6 +150,7 @@ function localRosterEntry(meta: CachedMeta): RosterFighterEntry {
     previewUrl: null,
     challengerLine: null,
     defaultPersonality: null,
+    arcadeSlug: getCachedArcadeSlug(meta.photoHash),
     meta,
     cloud: null,
   };
@@ -159,6 +169,7 @@ function arcadeRosterEntry(fighter: CloudFighter): RosterFighterEntry {
     previewUrl: getCloudPreviewUrl(fighter),
     challengerLine: fighter.arcade?.challengerLine ?? null,
     defaultPersonality: fighter.arcade?.defaultPersonality ?? null,
+    arcadeSlug: fighter.arcade?.slug ?? null,
     meta: null,
     cloud: fighter,
   };
@@ -358,6 +369,14 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     [photoStages, stageChoice],
   );
   const photoStageUrl = useObjectUrl(selectedPhotoStage?.pngBlob ?? null);
+  const effectiveStageId = resolveRosterStageThemeId({
+    manualStageId: stageChoice.kind === 'built-in' ? stageChoice.stageId : null,
+    hasCustomPhotoStage: stageChoice.kind === 'photo',
+    p1ArcadeSlug: p1Fighter?.arcadeSlug,
+    p2ArcadeSlug: p2Fighter?.arcadeSlug,
+  });
+  const effectiveStageTheme = effectiveStageId ? getStageTheme(effectiveStageId) : null;
+  const stagePreviewUrl = photoStageUrl ?? effectiveStageTheme?.assetPath ?? null;
 
   const canStartFight = Boolean(p1Fighter && p2Fighter);
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
@@ -370,7 +389,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
   const stageSummary =
     stageChoice.kind === 'auto'
-      ? { label: 'AUTO', blurb: 'Let the matchup choose the arena.' }
+      ? effectiveStageTheme
+        ? { label: `AUTO · ${effectiveStageTheme.label}`, blurb: effectiveStageTheme.blurb }
+        : { label: 'AUTO', blurb: 'Let the matchup choose the arena.' }
       : stageChoice.kind === 'built-in'
         ? { label: getStageChoiceLabel(stageChoice.stageId), blurb: getStageChoiceBlurb(stageChoice.stageId) }
         : { label: selectedPhotoStage?.label ?? stageChoice.label, blurb: 'Custom photo stage from your local cache.' };
@@ -422,7 +443,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         p2Name: p2Fighter.name,
         p1PersonalityId,
         p2PersonalityId,
-        stageId: stageChoice.kind === 'built-in' ? stageChoice.stageId : undefined,
+        stageId: effectiveStageId,
         customStageKey: stageChoice.kind === 'photo' ? stageChoice.stageKey : undefined,
         customStageLabel: stageChoice.kind === 'photo' ? (selectedPhotoStage?.label ?? stageChoice.label) : undefined,
       });
@@ -626,7 +647,11 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
           <div className="gallery-panel">
             <h3>Stage</h3>
             <div className="roster-stage-preview">
-              {photoStageUrl ? <img src={photoStageUrl} alt="" /> : <div className="gallery-preview__empty">{stageSummary.label}</div>}
+              {stagePreviewUrl ? (
+                <img src={stagePreviewUrl} alt={`${stageSummary.label} stage preview`} />
+              ) : (
+                <div className="gallery-preview__empty">{stageSummary.label}</div>
+              )}
             </div>
             <div className="roster-stage-summary">
               <strong>{stageSummary.label}</strong>
