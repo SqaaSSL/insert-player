@@ -13,10 +13,11 @@ import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 
 interface GamePageProps {
   launchTarget: { sceneKey: string; data: MatchSceneData };
+  onComplete: () => void;
   onExit: () => void;
 }
 
-export function GamePage({ launchTarget, onExit }: GamePageProps) {
+export function GamePage({ launchTarget, onComplete, onExit }: GamePageProps) {
   const [matchActionsVisible, setMatchActionsVisible] = useState(false);
 
   useEffect(() => {
@@ -53,6 +54,7 @@ export function GamePage({ launchTarget, onExit }: GamePageProps) {
 
   useEffect(() => {
     const onMatchComplete = (event: WindowEventMap[typeof MATCH_COMPLETE_EVENT]) => {
+      onComplete();
       void reportMatchCompletion(event.detail).catch((err: any) => {
         debugWarn('[MatchReporting] Failed to report match:', err?.message ?? err);
       });
@@ -61,7 +63,7 @@ export function GamePage({ launchTarget, onExit }: GamePageProps) {
     return () => {
       window.removeEventListener(MATCH_COMPLETE_EVENT, onMatchComplete);
     };
-  }, []);
+  }, [onComplete]);
 
   useEffect(() => {
     const onVisibilityChange = (
