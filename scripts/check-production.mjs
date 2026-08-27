@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import ts from 'typescript';
 import { frontendHeadersForTarget } from './frontend-security-headers.mjs';
 import { readImageSize } from './image-dimensions.mjs';
 import { textReferencesHostname, textReferencesOrigin } from './url-reference.mjs';
@@ -1713,6 +1714,30 @@ function assertLiveSmokeCoversCriticalPaths() {
   if (missing.length > 0) {
     throw new Error(`Live smoke coverage is missing: ${missing.join(', ')}`);
   }
+}
+
+function assertLiveSmokeHasNoUndefinedNames() {
+  const smokePath = join(root, 'scripts/smoke-live.mjs');
+  const program = ts.createProgram([smokePath], {
+    allowJs: true,
+    checkJs: true,
+    noEmit: true,
+    skipLibCheck: true,
+    target: ts.ScriptTarget.ES2024,
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+  });
+  const undefinedNameDiagnostics = ts.getPreEmitDiagnostics(program)
+    .filter((diagnostic) => diagnostic.code === 2304 || diagnostic.code === 2552);
+  if (undefinedNameDiagnostics.length === 0) return;
+
+  const offenders = undefinedNameDiagnostics.map((diagnostic) => {
+    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n');
+    if (!diagnostic.file || diagnostic.start === undefined) return message;
+    const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start);
+    return `${relative(root, diagnostic.file.fileName)}:${position.line + 1}:${position.character + 1}: ${message}`;
+  });
+  throw new Error(`Live smoke contains undefined names:\n${offenders.join('\n')}`);
 }
 
 function assertLaunchGateIsWired() {
@@ -3985,6 +4010,7 @@ assertVideoSpriteProductionToolchainGate();
 run('frontend style guard', npm, ['run', 'check:frontend']);
 run('tier parity guard', node, ['scripts/check-tier-parity.mjs']);
 run('approved image-provider boundary', node, ['processor/scripts/assert-approved-image-providers.mjs']);
+assertLiveSmokeHasNoUndefinedNames();
 run('unit tests', npm, ['test']);
 run(
   'deterministic video sprite compiler tests',
