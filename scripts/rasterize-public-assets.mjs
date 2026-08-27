@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { chromium } from 'playwright';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const args = new Set(process.argv.slice(2));
@@ -10,15 +11,19 @@ const checkOnly = args.has('--check');
 const assets = [
   {
     label: 'social card',
-    input: 'public/assets/social-card.svg',
-    background: 'public/assets/social-card-visual-v3.png',
-    output: 'public/assets/social-card-v5.png',
-    size: '1200x630!',
+    renderer: 'browser',
+    input: 'scripts/assets/social-card.html',
+    dependencies: [
+      'scripts/assets/social-card.css',
+      'public/assets/social-card-visual-v3.png',
+    ],
+    output: 'public/assets/social-card-v6.png',
     width: 1200,
     height: 630,
   },
   {
     label: '192px app icon',
+    renderer: 'imagemagick',
     input: 'public/assets/app-icon.svg',
     output: 'public/assets/app-icon-192.png',
     size: '192x192!',
@@ -27,6 +32,7 @@ const assets = [
   },
   {
     label: '512px app icon',
+    renderer: 'imagemagick',
     input: 'public/assets/app-icon.svg',
     output: 'public/assets/app-icon-512.png',
     size: '512x512!',
@@ -35,6 +41,7 @@ const assets = [
   },
   {
     label: '512px maskable app icon',
+    renderer: 'imagemagick',
     input: 'public/assets/app-icon.svg',
     output: 'public/assets/app-maskable-512.png',
     size: '512x512!',
@@ -56,24 +63,20 @@ function findMagickCommand() {
 }
 
 function assertAssetFresh(asset) {
-  if (!existsSync(abs(asset.input))) {
-    throw new Error(`${asset.input} is missing.`);
+  const sources = [asset.input, ...(asset.dependencies ?? [])];
+  for (const sourcePath of sources) {
+    if (!existsSync(abs(sourcePath))) {
+      throw new Error(`${sourcePath} is missing.`);
+    }
   }
   if (!existsSync(abs(asset.output))) {
     throw new Error(`${asset.output} is missing. Run npm run brand:rasterize.`);
   }
-  const source = statSync(abs(asset.input));
   const raster = statSync(abs(asset.output));
-  if (raster.mtimeMs + 1000 < source.mtimeMs) {
-    throw new Error(`${asset.output} is older than ${asset.input}. Run npm run brand:rasterize.`);
-  }
-  if (asset.background) {
-    if (!existsSync(abs(asset.background))) {
-      throw new Error(`${asset.background} is missing.`);
-    }
-    const background = statSync(abs(asset.background));
-    if (raster.mtimeMs + 1000 < background.mtimeMs) {
-      throw new Error(`${asset.output} is older than ${asset.background}. Run npm run brand:rasterize.`);
+  for (const sourcePath of sources) {
+    const source = statSync(abs(sourcePath));
+    if (raster.mtimeMs + 1000 < source.mtimeMs) {
+      throw new Error(`${asset.output} is older than ${sourcePath}. Run npm run brand:rasterize.`);
     }
   }
   const size = readPngSize(abs(asset.output));
@@ -100,39 +103,15 @@ function readPngSize(path) {
   };
 }
 
-function rasterize(command, asset) {
-  const commandArgs = asset.background
-    ? [
-        abs(asset.background),
-        '-resize',
-        `${asset.width}x${asset.height}^`,
-        '-gravity',
-        'center',
-        '-extent',
-        `${asset.width}x${asset.height}`,
-        '(',
-        '-background',
-        'none',
-        '-gravity',
-        'northwest',
-        abs(asset.input),
-        ')',
-        '-gravity',
-        'northwest',
-        '-compose',
-        'over',
-        '-composite',
-        '-strip',
-        `PNG32:${abs(asset.output)}`,
-      ]
-    : [
-        '-background',
-        'none',
-        abs(asset.input),
-        '-resize',
-        asset.size,
-        `PNG32:${abs(asset.output)}`,
-      ];
+function rasterizeWithImageMagick(command, asset) {
+  const commandArgs = [
+    '-background',
+    'none',
+    abs(asset.input),
+    '-resize',
+    asset.size,
+    `PNG32:${abs(asset.output)}`,
+  ];
   const result = spawnSync(command, commandArgs, {
     cwd: dirname(abs(asset.input)),
     encoding: 'utf8',
@@ -144,21 +123,47 @@ function rasterize(command, asset) {
   }
 }
 
-function main() {
+async function rasterizeWithBrowser(asset) {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage({
+      viewport: { width: asset.width, height: asset.height },
+      deviceScaleFactor: 1,
+    });
+    await page.goto(pathToFileURL(abs(asset.input)).href, { waitUntil: 'load' });
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+    });
+    await page.screenshot({
+      path: abs(asset.output),
+      type: 'png',
+    });
+  } finally {
+    await browser.close();
+  }
+}
+
+async function main() {
   if (checkOnly) {
     for (const asset of assets) assertAssetFresh(asset);
-    console.log('Public PNG assets are fresh relative to their SVG sources.');
+    console.log('Public PNG assets are fresh relative to their sources.');
     return;
   }
 
   const command = findMagickCommand();
-  for (const asset of assets) rasterize(command, asset);
-  console.log(`Rasterized public PNG assets with ${command}:`);
+  for (const asset of assets) {
+    if (asset.renderer === 'browser') {
+      await rasterizeWithBrowser(asset);
+    } else {
+      rasterizeWithImageMagick(command, asset);
+    }
+  }
+  console.log(`Rasterized public PNG assets with Playwright and ${command}:`);
   for (const asset of assets) console.log(`- ${asset.output}`);
 }
 
 try {
-  main();
+  await main();
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
