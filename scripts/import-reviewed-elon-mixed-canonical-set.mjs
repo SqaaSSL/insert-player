@@ -383,7 +383,7 @@ function assertProductionFighter(detail, plan, rosterFighter) {
 }
 
 function remoteHash(fighter, kind) {
-  return fighter.sourceHashes?.[RESPONSE_KEYS[kind]] ?? null;
+  return fighter.sourceHashes?.[kind] ?? null;
 }
 
 function parsePrivateSourceUrl(urlValue, expectedOrigin, fighterId, kind) {

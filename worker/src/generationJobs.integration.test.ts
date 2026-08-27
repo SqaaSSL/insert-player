@@ -5,6 +5,7 @@ import { createGenerationJob, getGenerationJob, listGenerationJobs } from './gen
 import { GEMINI_PRO_IMAGE_MODEL, recordProviderDailyQuota } from './providerCapacity';
 import type { AuthContext, Env } from './types';
 import type { SealedReviewedCanonicalSources } from './reviewedCanonicalSources';
+import { UNSEALED_VIDEO_RESTART_FAILURE_STAGE } from './videoRunRestart';
 
 const USER_ID = 'user-generation-job';
 const FIGHTER_ID = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -241,6 +242,27 @@ const SCHEMA = `
     report_sha256 TEXT NOT NULL,
     PRIMARY KEY(candidate_id, revision)
   );
+  CREATE TABLE provider_request_cache (
+    id TEXT PRIMARY KEY,
+    job_id TEXT,
+    artifact_run_id TEXT,
+    request_key TEXT,
+    status TEXT NOT NULL
+  );
+  CREATE TABLE provider_cost_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    charge_id TEXT,
+    job_id TEXT,
+    artifact_run_id TEXT,
+    request_key TEXT,
+    estimated_cost_cents INTEGER NOT NULL DEFAULT 0,
+    outcome TEXT NOT NULL,
+    upstream_outcome TEXT NOT NULL,
+    stage_outcome TEXT NOT NULL,
+    job_outcome TEXT NOT NULL,
+    finalized_at TEXT
+  );
   CREATE TABLE provider_capacity_windows (
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
@@ -430,6 +452,136 @@ async function stageCompleteChampionInventory(db: D1Database, env: Env): Promise
   ]);
 }
 
+const UNSEALED_VIDEO_JOB_ID = '81818181818181818181818181818181';
+const UNSEALED_VIDEO_CHARGE_ID = '82828282828282828282828282828282';
+const UNSEALED_VIDEO_SESSION_ID = '83838383838383838383838383838383';
+
+async function stageReviewedVideoAuthorization(
+  db: D1Database,
+  purchaseId = PURCHASE_ID,
+  sessionId = SESSION_ID,
+): Promise<void> {
+  if (purchaseId === PURCHASE_ID) {
+    await db.batch([
+      db.prepare(`
+        UPDATE credit_ledger
+        SET delta = 0, reason = 'arcade_seed_generation'
+        WHERE id = 'ledger-first'
+      `),
+      db.prepare(`
+        UPDATE generation_charges
+        SET tier = 'champion', creation_flow = 'video', credit_cost = 0,
+            free_quota_delta = 0, reason = 'arcade_seed_generation'
+        WHERE id = ?
+      `).bind(purchaseId),
+      db.prepare(`
+        UPDATE provider_sessions
+        SET tier = 'champion', creation_flow = 'video', purpose = 'fighter_generation'
+        WHERE id = ?
+      `).bind(sessionId),
+    ]);
+    return;
+  }
+  await db.batch([
+    db.prepare(`
+      INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+      VALUES (?, ?, 0, 'arcade_seed_generation', ?)
+    `).bind(`ledger-${purchaseId}`, USER_ID, FIGHTER_ID),
+    db.prepare(`
+      INSERT INTO generation_charges (
+        id, user_id, tier, creation_flow, credit_cost, free_quota_delta,
+        status, reason, fighter_id, ledger_id, expires_at
+      ) VALUES (?, ?, 'champion', 'video', 0, 0, 'reserved',
+        'arcade_seed_generation', ?, ?, datetime('now', '+12 hours'))
+    `).bind(purchaseId, USER_ID, FIGHTER_ID, `ledger-${purchaseId}`),
+    db.prepare(`
+      INSERT INTO provider_sessions (
+        id, user_id, rate_limit_key, tier, creation_flow, purpose,
+        charge_id, status, expires_at
+      ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', ?,
+        'active', datetime('now', '+12 hours'))
+    `).bind(sessionId, USER_ID, `user:${USER_ID}`, purchaseId),
+  ]);
+}
+
+async function stageTerminalUnsealedVideoPartial(db: D1Database): Promise<void> {
+  await db.batch([
+    db.prepare(`
+      INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+      VALUES ('unsealed-video-ledger', ?, 0, 'arcade_seed_generation', ?)
+    `).bind(USER_ID, FIGHTER_ID),
+    db.prepare(`
+      INSERT INTO generation_charges (
+        id, user_id, tier, creation_flow, credit_cost, free_quota_delta,
+        status, reason, fighter_id, ledger_id, expires_at
+      ) VALUES (?, ?, 'champion', 'video', 0, 0, 'committed',
+        'arcade_seed_generation', ?, 'unsealed-video-ledger', datetime('now', '+12 hours'))
+    `).bind(UNSEALED_VIDEO_CHARGE_ID, USER_ID, FIGHTER_ID),
+    db.prepare(`
+      INSERT INTO provider_sessions (
+        id, user_id, rate_limit_key, tier, creation_flow, purpose,
+        charge_id, status, provider_calls_used, provider_cost_used_cents, expires_at
+      ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', ?,
+        'cancelled', 1, 17, datetime('now', '+12 hours'))
+    `).bind(
+      UNSEALED_VIDEO_SESSION_ID,
+      USER_ID,
+      `user:${USER_ID}`,
+      UNSEALED_VIDEO_CHARGE_ID,
+    ),
+    db.prepare(`
+      INSERT INTO generation_artifact_runs (
+        id, user_id, fighter_id, tier, creation_flow, operation,
+        root_job_id, original_charge_id, original_blob_key,
+        source_manifest_json, status, failure_stage
+      ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', ?, ?, ?,
+        json_object('side', NULL, 'sideRaw', NULL, 'upright', NULL,
+          'uprightRaw', NULL, 'crouch', NULL, 'crouchRaw', NULL),
+        'partial', 'source:side')
+    `).bind(
+      UNSEALED_VIDEO_JOB_ID,
+      USER_ID,
+      FIGHTER_ID,
+      UNSEALED_VIDEO_JOB_ID,
+      UNSEALED_VIDEO_CHARGE_ID,
+      ORIGINAL_KEY,
+    ),
+    db.prepare(`
+      INSERT INTO generation_jobs (
+        id, workflow_instance_id, user_id, fighter_id, charge_id,
+        provider_session_id, tier, creation_flow, operation, artifact_run_id,
+        status, review_status, stage, failure_stage
+      ) VALUES (?, ?, ?, ?, ?, ?, 'champion', 'video', 'fighter_generation', ?,
+        'failed', 'none', 'source:side', 'source:side')
+    `).bind(
+      UNSEALED_VIDEO_JOB_ID,
+      UNSEALED_VIDEO_JOB_ID,
+      USER_ID,
+      FIGHTER_ID,
+      UNSEALED_VIDEO_CHARGE_ID,
+      UNSEALED_VIDEO_SESSION_ID,
+      UNSEALED_VIDEO_JOB_ID,
+    ),
+    db.prepare(`
+      INSERT INTO provider_request_cache (
+        id, job_id, artifact_run_id, request_key, status
+      ) VALUES ('unsealed-video-request', ?, ?, 'run:unsealed:source:side', 'succeeded')
+    `).bind(UNSEALED_VIDEO_JOB_ID, UNSEALED_VIDEO_JOB_ID),
+    db.prepare(`
+      INSERT INTO provider_cost_events (
+        id, session_id, charge_id, job_id, artifact_run_id, request_key, estimated_cost_cents,
+        outcome, upstream_outcome, stage_outcome, job_outcome, finalized_at
+      ) VALUES ('unsealed-video-cost', ?, ?, ?, ?, 'run:unsealed:source:side', 17,
+        'succeeded', 'http_succeeded', 'failed', 'failed_partial', datetime('now'))
+    `).bind(
+      UNSEALED_VIDEO_SESSION_ID,
+      UNSEALED_VIDEO_CHARGE_ID,
+      UNSEALED_VIDEO_JOB_ID,
+      UNSEALED_VIDEO_JOB_ID,
+    ),
+  ]);
+}
+
 async function seedAnimationRetry(db: D1Database, env: Env): Promise<void> {
   await db.batch([
     db.prepare(`
@@ -537,6 +689,151 @@ describe('durable generation job creation', () => {
       await mf.dispose();
     }
   }, 15_000);
+
+  it('atomically retires the terminal unsealed root and creates one fresh reviewed-current root', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      await stageReviewedVideoAuthorization(db);
+      await stageTerminalUnsealedVideoPartial(db);
+      await stageCompleteChampionInventory(db, env);
+      const sealed = sealedReviewedSources();
+
+      const before = await getGenerationJob(env, adminAuth, UNSEALED_VIDEO_JOB_ID);
+      expect(await before.json()).toMatchObject({ job: {
+        id: UNSEALED_VIDEO_JOB_ID,
+        status: 'failed',
+        canonicalSourceMode: null,
+        fullRunRestartRequired: true,
+        resumable: false,
+      } });
+
+      const created = await createGenerationJob(
+        request(PURCHASE_ID, SESSION_ID, undefined, 'video'),
+        env,
+        adminAuth,
+        {
+          reviewedCanonicalSources: sealed,
+          unsealedVideoRestartFromJobId: UNSEALED_VIDEO_JOB_ID,
+        },
+      );
+
+      expect(created.status).toBe(202);
+      expect(workflowStarts).toEqual([PURCHASE_ID]);
+      expect(await db.prepare(`
+        SELECT status, failure_stage, completed_at
+        FROM generation_artifact_runs WHERE id = ?
+      `).bind(UNSEALED_VIDEO_JOB_ID).first()).toEqual({
+        status: 'failed',
+        failure_stage: UNSEALED_VIDEO_RESTART_FAILURE_STAGE,
+        completed_at: expect.any(String),
+      });
+      const fresh = await db.prepare(`
+        SELECT id, root_job_id, status, creation_flow, source_manifest_json
+        FROM generation_artifact_runs WHERE id = ?
+      `).bind(PURCHASE_ID).first<{
+        id: string;
+        root_job_id: string;
+        status: string;
+        creation_flow: string;
+        source_manifest_json: string;
+      }>();
+      expect(fresh).toMatchObject({
+        id: PURCHASE_ID,
+        root_job_id: PURCHASE_ID,
+        status: 'active',
+        creation_flow: 'video',
+      });
+      expect(JSON.parse(fresh?.source_manifest_json ?? '{}').reviewedCanonicalSources)
+        .toEqual(sealed);
+      expect(await db.prepare(`
+        SELECT artifact_run_id, resumed_from_job_id, creation_flow, status
+        FROM generation_jobs WHERE id = ?
+      `).bind(PURCHASE_ID).first()).toEqual({
+        artifact_run_id: PURCHASE_ID,
+        resumed_from_job_id: null,
+        creation_flow: 'video',
+        status: 'queued',
+      });
+      expect(await db.prepare(`
+        SELECT stage, status, detail FROM generation_job_events
+        WHERE job_id = ? AND stage = 'restart:full'
+      `).bind(UNSEALED_VIDEO_JOB_ID).first()).toEqual({
+        stage: 'restart:full',
+        status: 'failed',
+        detail: expect.stringContaining(PURCHASE_ID),
+      });
+      expect(await db.prepare(`
+        SELECT status FROM generation_charges WHERE id = ?
+      `).bind(UNSEALED_VIDEO_CHARGE_ID).first()).toEqual({ status: 'committed' });
+      expect(await db.prepare(`
+        SELECT status FROM provider_sessions WHERE id = ?
+      `).bind(UNSEALED_VIDEO_SESSION_ID).first()).toEqual({ status: 'cancelled' });
+    } finally {
+      await mf.dispose();
+    }
+  }, 30_000);
+
+  it('allows exactly one concurrent unsealed restart CAS and refunds the losing authorization', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    const secondPurchaseId = '85858585858585858585858585858585';
+    const secondSessionId = '86868686868686868686868686868686';
+    try {
+      await stageReviewedVideoAuthorization(db);
+      await stageReviewedVideoAuthorization(db, secondPurchaseId, secondSessionId);
+      await stageTerminalUnsealedVideoPartial(db);
+      await stageCompleteChampionInventory(db, env);
+      const options = {
+        reviewedCanonicalSources: sealedReviewedSources(),
+        unsealedVideoRestartFromJobId: UNSEALED_VIDEO_JOB_ID,
+      };
+
+      const responses = await Promise.all([
+        createGenerationJob(
+          request(PURCHASE_ID, SESSION_ID, undefined, 'video'),
+          env,
+          adminAuth,
+          options,
+        ),
+        createGenerationJob(
+          request(secondPurchaseId, secondSessionId, undefined, 'video'),
+          env,
+          adminAuth,
+          options,
+        ),
+      ]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([202, 409]);
+      expect(workflowStarts).toHaveLength(1);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM generation_job_events
+        WHERE job_id = ? AND stage = 'restart:full'
+      `).bind(UNSEALED_VIDEO_JOB_ID).first<{ count: number }>())?.count).toBe(1);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM generation_artifact_runs
+        WHERE fighter_id = ? AND creation_flow = 'video'
+      `).bind(FIGHTER_ID).first<{ count: number }>())?.count).toBe(2);
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM generation_jobs
+        WHERE fighter_id = ? AND creation_flow = 'video'
+      `).bind(FIGHTER_ID).first<{ count: number }>())?.count).toBe(2);
+      expect(await db.prepare(`
+        SELECT status, COUNT(*) AS count FROM generation_charges
+        WHERE id IN (?, ?) GROUP BY status ORDER BY status
+      `).bind(PURCHASE_ID, secondPurchaseId).all()).toMatchObject({ results: [
+        { status: 'refunded', count: 1 },
+        { status: 'reserved', count: 1 },
+      ] });
+      expect(await db.prepare(`
+        SELECT status, COUNT(*) AS count FROM provider_sessions
+        WHERE id IN (?, ?) GROUP BY status ORDER BY status
+      `).bind(SESSION_ID, secondSessionId).all()).toMatchObject({ results: [
+        { status: 'active', count: 1 },
+        { status: 'cancelled', count: 1 },
+      ] });
+    } finally {
+      await mf.dispose();
+    }
+  }, 30_000);
 
   it('creates a fresh video run after a rejected full run was terminally abandoned', async () => {
     const { mf, db, env, workflowStarts } = await bindings();

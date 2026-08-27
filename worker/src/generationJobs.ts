@@ -24,6 +24,11 @@ import {
   ReviewedCanonicalSourceError,
   type SealedReviewedCanonicalSources,
 } from './reviewedCanonicalSources';
+import {
+  prepareUnsealedVideoRestartAudit,
+  prepareUnsealedVideoRestartRetirement,
+  readEligibleUnsealedVideoPartialRestart,
+} from './videoRunRestart';
 
 const MAX_JOB_BODY_BYTES = 8 * 1024;
 const JOB_TTL_HOURS = 48;
@@ -119,6 +124,7 @@ interface GenerationRunSnapshot {
   continuationConsumed: boolean;
   canonicalSourceMode: 'reviewed-current-v1' | null;
   canonicalSourceHashes: ReturnType<typeof reviewedCanonicalHashesFromSealed> | null;
+  unsealedVideoRestartRequired: boolean;
 }
 
 function serializeJob(
@@ -139,7 +145,9 @@ function serializeJob(
     status: job.status,
     reviewStatus: job.review_status ?? 'none',
     fullRunRestartRequired: job.creation_flow === 'video' &&
-      job.operation === 'fighter_generation' && run?.status === 'failed',
+      job.operation === 'fighter_generation' && (
+        run?.status === 'failed' || run?.unsealedVideoRestartRequired === true
+      ),
     stage: job.stage,
     failureStage: job.failure_stage ?? run?.failureStage ?? null,
     progressCurrent: job.progress_current,
@@ -153,7 +161,7 @@ function serializeJob(
     resumable: (
       (job.status === 'failed' || job.status === 'cancelled') ||
       (job.creation_flow === 'video' && job.status === 'succeeded' && job.review_status === 'approved')
-    ) && run?.status === 'partial' && (
+    ) && run?.status === 'partial' && run.unsealedVideoRestartRequired !== true && (
       job.creation_flow !== 'video' || !run.continuationConsumed
     ) && (
       job.creation_flow !== 'video' || run.pendingStages.length > 0
@@ -182,6 +190,16 @@ async function getRunSnapshot(env: Env, job: GenerationJob): Promise<GenerationR
   `).bind(job.artifact_run_id, job.user_id, job.fighter_id).first<GenerationArtifactRun>();
   if (!run) return undefined;
   const reviewedCanonicalSources = parseSealedReviewedCanonicalSources(run.source_manifest_json);
+  const unsealedVideoRestartRequired = job.creation_flow === 'video' &&
+    job.operation === 'fighter_generation' &&
+    (job.status === 'failed' || job.status === 'cancelled') &&
+    run.status === 'partial' &&
+    Boolean(await readEligibleUnsealedVideoPartialRestart(
+      env,
+      job.user_id,
+      job.fighter_id,
+      job.id,
+    ));
   return {
     status: run.status,
     failureStage: run.failure_stage,
@@ -193,6 +211,7 @@ async function getRunSnapshot(env: Env, job: GenerationJob): Promise<GenerationR
     canonicalSourceHashes: reviewedCanonicalSources
       ? reviewedCanonicalHashesFromSealed(reviewedCanonicalSources)
       : null,
+    unsealedVideoRestartRequired,
   };
 }
 
@@ -359,7 +378,10 @@ export async function createGenerationJob(
   request: Request,
   env: Env,
   auth: AuthContext,
-  options: { reviewedCanonicalSources?: SealedReviewedCanonicalSources } = {},
+  options: {
+    reviewedCanonicalSources?: SealedReviewedCanonicalSources;
+    unsealedVideoRestartFromJobId?: string;
+  } = {},
 ): Promise<Response> {
   const body = await readJsonBody<{
     fighterId?: string;
@@ -377,6 +399,7 @@ export async function createGenerationJob(
     : null;
   const targetName = body.targetName?.trim().toLowerCase() || null;
   const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
+  const unsealedVideoRestartFromJobId = options.unsealedVideoRestartFromJobId?.trim() ?? '';
   if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
   if (!/^[a-f0-9]{32}$/.test(purchaseId)) return json({ error: 'A valid purchaseId is required' }, 400);
   if (!/^[a-f0-9]{32}$/.test(providerSessionId)) {
@@ -389,6 +412,24 @@ export async function createGenerationJob(
     return json({ error: 'A valid targetName is required' }, 400);
   }
   if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
+  if (
+    unsealedVideoRestartFromJobId && (
+      !/^[a-f0-9]{32}$/.test(unsealedVideoRestartFromJobId) ||
+      creationFlow !== 'video' ||
+      auth.user.plan_tier !== 'admin' ||
+      !options.reviewedCanonicalSources
+    )
+  ) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Unsealed Video restart authorization is invalid; the unused reservation was released',
+      403,
+      { code: 'unsealed_video_restart_authorization_invalid' },
+    );
+  }
   if (!generationCreationFlowAvailable(creationFlow)) {
     return rejectReservedJob(
       env,
@@ -610,14 +651,56 @@ export async function createGenerationJob(
       }
     }
   }
+  const eligibleUnsealedVideoRestart = unsealedVideoRestartFromJobId
+    ? await readEligibleUnsealedVideoPartialRestart(
+        env,
+        auth.userId,
+        fighterId,
+        unsealedVideoRestartFromJobId,
+      )
+    : null;
+  if (unsealedVideoRestartFromJobId && !eligibleUnsealedVideoRestart) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Unsealed Video restart state changed; the unused reservation was released',
+      409,
+      { code: 'unsealed_video_restart_state_changed' },
+    );
+  }
+  if (
+    unsealedVideoRestartFromJobId &&
+    (authorization.continuation_run_id || authorization.resumed_from_job_id)
+  ) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Unsealed Video restart requires a fresh authorization; the unused reservation was released',
+      409,
+      { code: 'unsealed_video_restart_authorization_not_fresh' },
+    );
+  }
   const lockedVideoRun = await env.DB.prepare(`
-    SELECT id
+    SELECT id, root_job_id
     FROM generation_artifact_runs
     WHERE fighter_id = ? AND user_id = ? AND creation_flow = 'video' AND status = 'partial'
     ORDER BY updated_at DESC
     LIMIT 1
-  `).bind(fighterId, auth.userId).first<{ id: string }>();
-  if (lockedVideoRun && authorization.continuation_run_id !== lockedVideoRun.id) {
+  `).bind(fighterId, auth.userId).first<{ id: string; root_job_id: string }>();
+  const restartingLockedUnsealedRun = Boolean(
+    unsealedVideoRestartFromJobId &&
+    eligibleUnsealedVideoRestart?.run_id === lockedVideoRun?.id &&
+    lockedVideoRun?.root_job_id === unsealedVideoRestartFromJobId,
+  );
+  if (
+    lockedVideoRun &&
+    authorization.continuation_run_id !== lockedVideoRun.id &&
+    !restartingLockedUnsealedRun
+  ) {
     return rejectReservedJob(
       env,
       auth.userId,
@@ -785,8 +868,29 @@ export async function createGenerationJob(
     crouchRaw: authorization.crouch_view_raw_blob_key,
   }, reviewedCanonicalSources));
   const extendedExpiry = new Date(Date.now() + JOB_TTL_HOURS * 60 * 60 * 1_000).toISOString();
+  const restartAuditEventId = unsealedVideoRestartFromJobId ? generateId() : null;
+  const restartGuardBindings = [
+    restartAuditEventId,
+    restartAuditEventId ?? '',
+    unsealedVideoRestartFromJobId,
+  ] as const;
   try {
     await env.DB.batch([
+      ...(restartAuditEventId ? [
+        prepareUnsealedVideoRestartAudit(env, {
+          eventId: restartAuditEventId,
+          userId: auth.userId,
+          fighterId,
+          recoveryFromJobId: unsealedVideoRestartFromJobId,
+          newJobId: jobId,
+        }),
+        prepareUnsealedVideoRestartRetirement(env, {
+          auditEventId: restartAuditEventId,
+          userId: auth.userId,
+          fighterId,
+          recoveryFromJobId: unsealedVideoRestartFromJobId,
+        }),
+      ] : []),
       env.DB.prepare(`
         INSERT INTO generation_artifact_runs (
           id, user_id, fighter_id, tier, operation, target_kind, target_name,
@@ -795,6 +899,14 @@ export async function createGenerationJob(
         )
         SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? IS NULL
+          AND (
+            ? IS NULL OR EXISTS (
+              SELECT 1 FROM generation_job_events restart_audit
+              WHERE restart_audit.id = ?
+                AND restart_audit.job_id = ?
+                AND restart_audit.stage = 'restart:full'
+            )
+          )
       `).bind(
         runId,
         auth.userId,
@@ -810,6 +922,7 @@ export async function createGenerationJob(
         authorization.generation_prompt,
         creationFlow,
         authorization.continuation_run_id,
+        ...restartGuardBindings,
       ),
       env.DB.prepare(`
         UPDATE generation_artifact_runs
@@ -823,7 +936,14 @@ export async function createGenerationJob(
           provider_session_id, tier, operation, target_kind, target_name,
           artifact_run_id, resumed_from_job_id, progress_current, progress_total,
           creation_flow
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE ? IS NULL OR EXISTS (
+          SELECT 1 FROM generation_job_events restart_audit
+          WHERE restart_audit.id = ?
+            AND restart_audit.job_id = ?
+            AND restart_audit.stage = 'restart:full'
+        )
       `).bind(
         jobId,
         jobId,
@@ -840,28 +960,54 @@ export async function createGenerationJob(
         Math.min(initialProgress, progressTotal),
         progressTotal,
         creationFlow,
+        ...restartGuardBindings,
       ),
       env.DB.prepare(`
         UPDATE generation_charges
         SET fighter_id = COALESCE(fighter_id, ?), expires_at = ?, updated_at = datetime('now')
         WHERE id = ? AND user_id = ? AND status = 'reserved'
-      `).bind(fighterId, extendedExpiry, purchaseId, auth.userId),
+          AND (
+            ? IS NULL OR EXISTS (
+              SELECT 1 FROM generation_job_events restart_audit
+              WHERE restart_audit.id = ?
+                AND restart_audit.job_id = ?
+                AND restart_audit.stage = 'restart:full'
+            )
+          )
+      `).bind(fighterId, extendedExpiry, purchaseId, auth.userId, ...restartGuardBindings),
       env.DB.prepare(`
         UPDATE provider_sessions
         SET expires_at = ?, updated_at = datetime('now')
         WHERE id = ? AND user_id = ? AND status = 'active'
-      `).bind(extendedExpiry, providerSessionId, auth.userId),
+          AND (
+            ? IS NULL OR EXISTS (
+              SELECT 1 FROM generation_job_events restart_audit
+              WHERE restart_audit.id = ?
+                AND restart_audit.job_id = ?
+                AND restart_audit.stage = 'restart:full'
+            )
+          )
+      `).bind(extendedExpiry, providerSessionId, auth.userId, ...restartGuardBindings),
       env.DB.prepare(`
         INSERT INTO generation_job_events (id, job_id, stage, status, detail)
-        VALUES (?, ?, 'queued', 'queued', ?)
+        SELECT ?, ?, 'queued', 'queued', ?
+        WHERE ? IS NULL OR EXISTS (
+          SELECT 1 FROM generation_job_events restart_audit
+          WHERE restart_audit.id = ?
+            AND restart_audit.job_id = ?
+            AND restart_audit.stage = 'restart:full'
+        )
       `).bind(
         generateId(),
         jobId,
-        resumedFromJobId
+        unsealedVideoRestartFromJobId
+          ? `Fresh reviewed Video root accepted after audited restart of ${unsealedVideoRestartFromJobId}`
+          : resumedFromJobId
           ? `Generation continuation accepted; ${initialProgress} immutable stages preserved`
           : targetName
             ? `${operation} ${targetName} accepted by the backend`
             : 'Generation accepted by the backend',
+        ...restartGuardBindings,
       ),
     ]);
   } catch (error) {
@@ -888,6 +1034,26 @@ export async function createGenerationJob(
       error: 'A generation is already running for this fighter; the unused reservation was released',
       job: await serializeOwnedJob(env, racedJob, await getJobEvents(env, racedJob.id)),
     }, 409);
+  }
+
+  if (unsealedVideoRestartFromJobId) {
+    const restartedJob = await env.DB.prepare(`
+      SELECT id FROM generation_jobs
+      WHERE id = ? AND user_id = ? AND fighter_id = ?
+        AND artifact_run_id = ? AND creation_flow = 'video'
+      LIMIT 1
+    `).bind(jobId, auth.userId, fighterId, jobId).first<{ id: string }>();
+    if (!restartedJob) {
+      return rejectReservedJob(
+        env,
+        auth.userId,
+        purchaseId,
+        fighterId,
+        'Unsealed Video restart state changed; the unused reservation was released',
+        409,
+        { code: 'unsealed_video_restart_state_changed' },
+      );
+    }
   }
 
   try {
