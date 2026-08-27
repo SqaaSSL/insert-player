@@ -33,6 +33,35 @@ describe('frontend deployment propagation readiness', () => {
     )).toBe('https://insertplayer.ai/assets/index-current.js');
   });
 
+  it('rotates the immutable asset cache key for every propagation retry', () => {
+    const firstProbe = new URL(frontendAssetProbeUrl(
+      'https://insertplayer.ai',
+      '/assets/index-current.js',
+      'deploy-123',
+      0,
+    ));
+    const secondProbe = new URL(frontendAssetProbeUrl(
+      'https://insertplayer.ai',
+      '/assets/index-current.js',
+      'deploy-123',
+      1,
+    ));
+
+    expect(firstProbe.searchParams.get('__insert_player_readiness')).toBe('deploy-123');
+    expect(firstProbe.searchParams.get('__insert_player_readiness_attempt')).toBe('0');
+    expect(secondProbe.searchParams.get('__insert_player_readiness_attempt')).toBe('1');
+    expect(secondProbe.toString()).not.toBe(firstProbe.toString());
+  });
+
+  it('rejects invalid asset probe attempt numbers', () => {
+    expect(() => frontendAssetProbeUrl(
+      'https://insertplayer.ai',
+      '/assets/index-current.js',
+      'deploy-123',
+      -1,
+    )).toThrow('frontend asset probe attempt must be a non-negative integer');
+  });
+
   it('keeps waiting while the custom domain serves the prelaunch CSP', () => {
     expect(frontendShellReadinessError({
       html: appShell,
