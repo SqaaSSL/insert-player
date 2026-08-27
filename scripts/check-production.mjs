@@ -1937,14 +1937,18 @@ function assertCrossDeviceRosterImportIsWired() {
   const gallery = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
   const roster = readFileSync(join(root, 'src/ui/routes/RosterPage.tsx'), 'utf8');
   const cloudFirstRename = readFileSync(join(root, 'src/ui/shared/cloudFirstRename.ts'), 'utf8');
+  const cloudFirstDelete = readFileSync(join(root, 'src/ui/shared/cloudFirstDelete.ts'), 'utf8');
   const forbidden = [
     'createBody.public = meta.cloudPublic',
+    'res.status === 401 || res.status === 503',
   ];
   const required = [
     'export async function importMissingCloudFighters',
     'export async function syncCloudFightersToLocal',
     'export async function renameCloudFighter',
     'export async function deleteCloudFighter',
+    'export class CloudFighterRequestError',
+    'this.retryable = status === 503',
     'if (res.status === 404) return null',
     "return { status: 'synced', fighterId, message: 'Cloud fighter was already deleted.' }",
     'export async function getCloudFighter',
@@ -1996,13 +2000,16 @@ function assertCrossDeviceRosterImportIsWired() {
     'await dependencies.renameCache(fighter.photoHash, name)',
     'The cloud rename could not be confirmed. Your fighter name was not changed.',
     'const cloudDelete = await deleteCloudFighter(meta.cloudFighterId, apiContext)',
+    'await deleteFighterCacheAfterCloudConfirmation(',
+    "cloudDelete.status !== 'synced'",
+    'The local fighter was preserved.',
     'Fighter renamed in cloud. The preview cache will refresh when Gallery reloads.',
     'syncCloudFightersToLocal(all, apiContext)',
     'const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext)',
     'p1CloudFighterId: p1Fighter.cloudFighterId',
     'p2CloudFighterId: p2Fighter.cloudFighterId',
   ];
-  const combined = `${cloud}\n${gallery}\n${roster}\n${cloudFirstRename}`;
+  const combined = `${cloud}\n${gallery}\n${roster}\n${cloudFirstRename}\n${cloudFirstDelete}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0 || foundForbidden.length > 0) {
@@ -3402,6 +3409,7 @@ function assertOfficialArcadeIsWired() {
   const migration = readFileSync(join(root, 'worker/migrations/0020_official_arcade.sql'), 'utf8');
   const promptMigration = readFileSync(join(root, 'worker/migrations/0021_arcade_generation_prompts.sql'), 'utf8');
   const fighters = readFileSync(join(root, 'worker/src/fighters.ts'), 'utf8');
+  const arcadeAssets = readFileSync(join(root, 'worker/src/arcadeAssets.ts'), 'utf8');
   const generation = readFileSync(join(root, 'worker/src/arcadeGeneration.ts'), 'utf8');
   const workflow = readFileSync(join(root, 'worker/src/generationWorkflow.ts'), 'utf8');
   const processor = readFileSync(join(root, 'processor/src/server.ts'), 'utf8');
@@ -3474,6 +3482,7 @@ function assertOfficialArcadeIsWired() {
     migration,
     promptMigration,
     fighters,
+    arcadeAssets,
     generation,
     workflow,
     processor,
@@ -3518,6 +3527,15 @@ function assertOfficialArcadeIsWired() {
     "auth.user.plan_tier !== 'admin'",
     "type RosterFilter = 'official' | 'yours' | 'all'",
     "playableSpriteSetSql('f', 'champion')",
+    'length(s.content_hash) = 64',
+    "s.content_hash NOT GLOB '*[^0-9A-Fa-f]*'",
+    "typeof(s.frame_w) = 'integer'",
+    's.frame_count BETWEEN 1 AND ${MAX_SPRITE_FRAME_COUNT}',
+    'FROM sprites higher',
+    'higher.animation_name = s.animation_name',
+    'SHA256_PATTERN.test(sprite.content_hash)',
+    'SHA256_PATTERN.test(sprite.raw_content_hash)',
+    'sprite:${animationName}:frame-metadata',
     '"arcade:seed": "node scripts/seed-arcade-roster.mjs"',
     '--confirm-production',
     '.arcade-sources/',

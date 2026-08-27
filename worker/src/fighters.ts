@@ -319,12 +319,36 @@ function namespacedAssetOwner(key: string): string | null {
 }
 
 function playableSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): string {
-  const tierCondition = qualityTier ? `AND s.quality_tier = '${qualityTier}'` : '';
+  const tierCondition = qualityTier
+    ? `AND s.quality_tier = '${qualityTier}'`
+    : `AND NOT EXISTS (
+        SELECT 1
+        FROM sprites higher
+        WHERE higher.fighter_id = s.fighter_id
+          AND higher.animation_name = s.animation_name
+          AND CASE higher.quality_tier
+            WHEN 'champion' THEN 3
+            WHEN 'contender' THEN 2
+            ELSE 1
+          END > CASE s.quality_tier
+            WHEN 'champion' THEN 3
+            WHEN 'contender' THEN 2
+            ELSE 1
+          END
+      )`;
   return `(
     SELECT COUNT(DISTINCT s.animation_name)
     FROM sprites s
     WHERE s.fighter_id = ${fighterAlias}.id
       AND s.animation_name IN (${PLAYABLE_ANIMATION_SQL_LIST})
+      AND length(s.content_hash) = 64
+      AND s.content_hash NOT GLOB '*[^0-9A-Fa-f]*'
+      AND typeof(s.frame_w) = 'integer'
+      AND s.frame_w BETWEEN 1 AND ${MAX_SPRITE_FRAME_DIMENSION}
+      AND typeof(s.frame_h) = 'integer'
+      AND s.frame_h BETWEEN 1 AND ${MAX_SPRITE_FRAME_DIMENSION}
+      AND typeof(s.frame_count) = 'integer'
+      AND s.frame_count BETWEEN 1 AND ${MAX_SPRITE_FRAME_COUNT}
       ${tierCondition}
   ) = ${PLAYABLE_ANIMATION_COUNT}`;
 }

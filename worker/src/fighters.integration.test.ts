@@ -352,6 +352,10 @@ async function createBindings(): Promise<{
 
 const INTEGRATION_TEST_TIMEOUT_MS = 15_000;
 
+function sha256Fixture(value: number): string {
+  return value.toString(16).padStart(64, '0');
+}
+
 describe('fighter uploads against real D1 and R2 bindings', () => {
   it('activates, lists, and retires a private-by-default official Arcade fighter', async () => {
     const { mf, db, bucket, env } = await createBindings();
@@ -444,14 +448,17 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         ...animationNames.map((animationName, index) => db.prepare(`
           INSERT INTO sprites (
             id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+            content_hash, raw_content_hash,
             frame_w, frame_h, frame_count, animation_format, processing_version
-          ) VALUES (?, ?, ?, 'champion', ?, ?, 192, 256, ?, 'video-dense-v1', 5)
+          ) VALUES (?, ?, ?, 'champion', ?, ?, ?, ?, 192, 256, ?, 'video-dense-v1', 5)
         `).bind(
           `arcade-sprite-${index}`,
           fighterId,
           animationName,
           `users/user-target/fighters/${fighterId}/sprites/${animationName}.png`,
           `users/user-target/fighters/${fighterId}/sprites/${animationName}-raw.png`,
+          sha256Fixture(index + 1),
+          sha256Fixture(index + 101),
           denseFrameCounts[animationName],
         )),
       ]);
@@ -478,9 +485,72 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         ]),
       ]);
 
+      await db.prepare(`
+        UPDATE sprites SET content_hash = 'not-a-sha256'
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+      `).bind(fighterId).run();
+      const invalidHashResponse = await upsertAdminArcadeFighter(
+        arcadeRequest('active'), env, adminAuth, fighterId,
+      );
+      expect(invalidHashResponse.status).toBe(409);
+      expect(await invalidHashResponse.json()).toMatchObject({
+        missingAssets: expect.arrayContaining(['sprite:idle:content-hash']),
+      });
+
+      await db.prepare(`
+        UPDATE sprites SET content_hash = ?, raw_content_hash = 'not-a-sha256'
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+      `).bind(sha256Fixture(1), fighterId).run();
+      const invalidRawHashResponse = await upsertAdminArcadeFighter(
+        arcadeRequest('active'), env, adminAuth, fighterId,
+      );
+      expect(invalidRawHashResponse.status).toBe(409);
+      expect(await invalidRawHashResponse.json()).toMatchObject({
+        missingAssets: expect.arrayContaining(['sprite:idle:raw-content-hash']),
+      });
+
+      await db.prepare(`
+        UPDATE sprites SET raw_content_hash = ?, frame_count = 0
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+      `).bind(sha256Fixture(101), fighterId).run();
+      const invalidMetadataResponse = await upsertAdminArcadeFighter(
+        arcadeRequest('active'), env, adminAuth, fighterId,
+      );
+      expect(invalidMetadataResponse.status).toBe(409);
+      expect(await invalidMetadataResponse.json()).toMatchObject({
+        missingAssets: expect.arrayContaining(['sprite:idle:frame-metadata']),
+      });
+      await db.prepare(`
+        UPDATE sprites SET frame_count = 8
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+      `).bind(fighterId).run();
+
       expect((await upsertAdminArcadeFighter(
         arcadeRequest('active'), env, adminAuth, fighterId,
       )).status).toBe(200);
+
+      await db.prepare(`
+        UPDATE sprites SET content_hash = 'not-a-sha256'
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+      `).bind(fighterId).run();
+      const invalidHashArcadeBody = await listArcadeFighters(
+        new Request('https://api.insertplayer.ai/api/arcade'), env,
+      ).then((response) => response.json() as Promise<{ fighters: unknown[] }>);
+      expect(invalidHashArcadeBody.fighters).toHaveLength(0);
+
+      await db.prepare(`
+        UPDATE sprites SET content_hash = ?, frame_w = 0
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+      `).bind(sha256Fixture(1), fighterId).run();
+      const invalidMetadataArcadeBody = await listArcadeFighters(
+        new Request('https://api.insertplayer.ai/api/arcade'), env,
+      ).then((response) => response.json() as Promise<{ fighters: unknown[] }>);
+      expect(invalidMetadataArcadeBody.fighters).toHaveLength(0);
+      await db.prepare(`
+        UPDATE sprites SET frame_w = 768
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+      `).bind(fighterId).run();
+
       const activeResponse = await listArcadeFighters(
         new Request('https://api.insertplayer.ai/api/arcade'), env,
       );
@@ -631,8 +701,8 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
           animationName,
           `users/user-target/fighters/fighter-target/sprites/${animationName}.png`,
           `users/user-target/fighters/fighter-target/sprites/${animationName}-raw.png`,
-          `public-content-${index}`,
-          `private-raw-content-${index}`,
+          sha256Fixture(index + 201),
+          sha256Fixture(index + 301),
         )),
       ]);
       await Promise.all([
@@ -668,7 +738,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect(idleSprite?.url).toContain(
         '/public-assets/fighters/fighter-target/sprites/sprite-public-0/idle.png',
       );
-      expect(idleSprite?.contentHash).toBe('public-content-0');
+      expect(idleSprite?.contentHash).toBe(sha256Fixture(201));
       expect(idleSprite).not.toHaveProperty('rawContentHash');
       expect(JSON.stringify(fighter)).not.toContain('/assets/users/');
       expect(JSON.stringify(fighter)).not.toContain('user-target');
@@ -695,6 +765,29 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         'public, max-age=60, s-maxage=300, must-revalidate',
       );
       expect(publicSprite.status).toBe(200);
+
+      await db.prepare(`
+        INSERT INTO sprites (
+          id, fighter_id, animation_name, quality_tier, blob_key,
+          content_hash, frame_w, frame_h, frame_count, processing_version
+        ) VALUES (
+          'sprite-invalid-champion-idle', 'fighter-target', 'idle', 'champion',
+          'users/user-target/fighters/fighter-target/sprites/invalid-champion-idle.png',
+          'not-a-sha256', 256, 256, 8, 4
+        )
+      `).run();
+      const invalidHighestTierBody = await listCommunityFighters(
+        new Request('https://api.insertplayer.ai/api/community'),
+        env,
+      ).then((result) => result.json() as Promise<{ fighters: unknown[] }>);
+      expect(invalidHighestTierBody.fighters).toHaveLength(0);
+      expect((await getPublicFighterSpriteAsset(
+        env,
+        'fighter-target',
+        'sprite-public-0',
+        'idle.png',
+      )).status).toBe(404);
+      await db.prepare("DELETE FROM sprites WHERE id = 'sprite-invalid-champion-idle'").run();
 
       await db.prepare('UPDATE fighters SET public_flag = 0 WHERE id = ?').bind('fighter-target').run();
       const revokedSource = await getPublicFighterSourceAsset(env, 'fighter-target', 'side', 'side.png');

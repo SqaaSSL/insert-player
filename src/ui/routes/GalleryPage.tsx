@@ -63,6 +63,7 @@ import {
   CloudFirstRenameCacheError,
   renameFighterCloudFirst,
 } from '../shared/cloudFirstRename.ts';
+import { deleteFighterCacheAfterCloudConfirmation } from '../shared/cloudFirstDelete.ts';
 import {
   arcadeFighterPhotoHash,
   deleteCloudFighter,
@@ -1095,15 +1096,16 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setStatus(`Deleting ${meta.characterName}...`);
     const apiContext = captureApiRequestContext();
     try {
-      let cloudDeleteStatus: 'synced' | 'signed_out' | 'failed' | null = null;
+      let confirmedCloudDelete: Awaited<ReturnType<typeof deleteCloudFighter>> | null = null;
       if (meta.cloudFighterId) {
         const cloudDelete = await deleteCloudFighter(meta.cloudFighterId, apiContext);
-        cloudDeleteStatus = cloudDelete.status;
-        if (cloudDelete.status === 'failed') {
-          throw new Error(cloudDelete.message ?? 'Cloud delete failed');
-        }
+        confirmedCloudDelete = cloudDelete;
       }
-      await deleteCharacter(removedHash);
+      await deleteFighterCacheAfterCloudConfirmation(
+        removedHash,
+        confirmedCloudDelete,
+        deleteCharacter,
+      );
       const nextMetas = metas.filter((item) => item.photoHash !== removedHash);
       setMetas(nextMetas);
       const nextIndex = Math.min(currentIndex, Math.max(0, nextMetas.length - 1));
@@ -1112,11 +1114,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       setSprites([]);
       setIntro(null);
       setSelection({ kind: 'source', source: 'original' });
-      setStatus(
-        cloudDeleteStatus === 'signed_out'
-          ? 'Fighter deleted locally; sign in to delete cloud copy'
-          : nextMetas.length > 0 ? 'Fighter deleted' : 'No fighters left',
-      );
+      setStatus(nextMetas.length > 0 ? 'Fighter deleted' : 'No fighters left');
     } catch (err: any) {
       setStatus(err?.message ? `Delete failed: ${err.message}` : 'Delete failed');
     } finally {

@@ -86,6 +86,19 @@ export interface CloudSyncResult {
   status: 'synced' | 'signed_out' | 'failed';
   fighterId?: string;
   message?: string;
+  retryable?: boolean;
+}
+
+export class CloudFighterRequestError extends Error {
+  readonly status: number;
+  readonly retryable: boolean;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'CloudFighterRequestError';
+    this.status = status;
+    this.retryable = status === 503;
+  }
 }
 
 export interface CloudImportResult {
@@ -514,6 +527,14 @@ async function apiErrorMessage(res: Response, fallback: string): Promise<string>
   return body.trim().slice(0, 180) || fallback;
 }
 
+async function cloudFighterRequestError(
+  res: Response,
+  operation: string,
+): Promise<CloudFighterRequestError> {
+  const detail = await apiErrorMessage(res, 'Cloud service temporarily unavailable');
+  return new CloudFighterRequestError(`${operation} failed (${res.status}): ${detail}`, res.status);
+}
+
 export function shouldRefreshLocalFighter(fighter: CloudFighter, existing: CachedMeta | null): boolean {
   if (!existing) return true;
   if (existing.cloudFighterId !== fighter.id) return true;
@@ -634,7 +655,8 @@ async function promoteSprite(
 export async function listCloudFighters(context?: ApiRequestContext): Promise<CloudFighter[]> {
   if (isLocalDevWithoutApi()) return [];
   const res = await apiFetch('/api/fighters', {}, context);
-  if (res.status === 401 || res.status === 503) return [];
+  if (res.status === 401) return [];
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Cloud fighters');
   if (!res.ok) throw new Error(`Cloud fighters failed (${res.status})`);
   const json = await res.json() as { fighters?: CloudFighter[] };
   return json.fighters ?? [];
@@ -643,7 +665,8 @@ export async function listCloudFighters(context?: ApiRequestContext): Promise<Cl
 export async function getCloudFighter(fighterId: string, context?: ApiRequestContext): Promise<CloudFighter | null> {
   if (isLocalDevWithoutApi()) return null;
   const res = await apiFetch(`/api/fighters/${encodeURIComponent(fighterId)}`, {}, context);
-  if (res.status === 401 || res.status === 503 || res.status === 404) return null;
+  if (res.status === 401 || res.status === 404) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Cloud fighter');
   if (!res.ok) throw new Error(`Cloud fighter failed (${res.status})`);
   const json = await res.json() as { fighter?: CloudFighter };
   return json.fighter ?? null;
@@ -726,7 +749,8 @@ export async function setCloudFighterPublic(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ public: isPublic }),
   }, context);
-  if (res.status === 401 || res.status === 503) return null;
+  if (res.status === 401) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Share update');
   if (!res.ok) {
     throw new Error(`Share update failed (${res.status}): ${await apiErrorMessage(res, 'Publish update failed')}`);
   }
@@ -744,8 +768,9 @@ export async function renameCloudFighter(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   }, context);
-  if (res.status === 401 || res.status === 503) return null;
+  if (res.status === 401) return null;
   if (res.status === 404) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Cloud rename');
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Cloud rename failed (${res.status}): ${body.slice(0, 180)}`);
@@ -759,8 +784,15 @@ export async function deleteCloudFighter(
   context?: ApiRequestContext,
 ): Promise<CloudSyncResult> {
   const res = await apiFetch(`/api/fighters/${fighterId}`, { method: 'DELETE' }, context);
-  if (res.status === 401 || res.status === 503) {
+  if (res.status === 401) {
     return { status: 'signed_out', message: 'Sign in to delete this fighter from cloud sync.' };
+  }
+  if (res.status === 503) {
+    return {
+      status: 'failed',
+      retryable: true,
+      message: await apiErrorMessage(res, 'Cloud delete is temporarily unavailable. Try again.'),
+    };
   }
   if (res.status === 404) {
     return { status: 'synced', fighterId, message: 'Cloud fighter was already deleted.' };
@@ -777,7 +809,8 @@ export async function cloneCommunityFighter(
   context?: ApiRequestContext,
 ): Promise<CloudFighter | null> {
   const res = await apiFetch(`/api/community/${sourceFighterId}/clone`, { method: 'POST' }, context);
-  if (res.status === 401 || res.status === 503) return null;
+  if (res.status === 401) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Clone');
   if (!res.ok) throw new Error(`Clone failed (${res.status})`);
   const json = await res.json() as { fighter?: CloudFighter };
   return json.fighter ?? null;
@@ -794,7 +827,8 @@ export async function reportCommunityFighter(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ reason, details: details.trim() || null }),
   }, context);
-  if (res.status === 401 || res.status === 503) return { status: 'signed_out' };
+  if (res.status === 401) return { status: 'signed_out' };
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Report');
   if (!res.ok) {
     throw new Error(await apiErrorMessage(res, `Report failed (${res.status})`));
   }
@@ -835,8 +869,15 @@ export async function syncFighterToCloud(
     body: JSON.stringify(createBody),
   }, requestContext);
 
-  if (createRes.status === 401 || createRes.status === 503) {
+  if (createRes.status === 401) {
     return { status: 'signed_out', message: 'Sign in to sync this fighter across devices.' };
+  }
+  if (createRes.status === 503) {
+    return {
+      status: 'failed',
+      retryable: true,
+      message: await apiErrorMessage(createRes, 'Cloud sync is temporarily unavailable. Try again.'),
+    };
   }
   if (!createRes.ok) {
     const body = await createRes.text();
