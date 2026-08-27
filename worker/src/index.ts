@@ -10,6 +10,7 @@ import {
   completeGenerationPurchase,
   createCreditCheckoutSession,
   creditPacksResponse,
+  getCreditCheckoutStatus,
   handleStripeWebhook,
   releaseExpiredGenerationCharges,
 } from './billing';
@@ -353,6 +354,14 @@ export default {
             'billing:checkout',
             (auth) => createCreditCheckoutSession(request, env, auth),
           ),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/billing/checkout-status' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => getCreditCheckoutStatus(request, env, auth)),
           request,
           env,
         );

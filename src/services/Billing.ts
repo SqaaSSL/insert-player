@@ -39,6 +39,24 @@ export interface BillingProfile {
   planTier: 'free' | 'pro' | 'studio' | 'admin';
 }
 
+export type CreditCheckoutVerificationState = 'pending' | 'complete' | 'failed';
+
+export interface CreditCheckoutVerification {
+  sessionId: string;
+  state: CreditCheckoutVerificationState;
+  processorStatus: string;
+  packId: string;
+  credits: number;
+  creditsBalance: number;
+  updatedAt: string;
+}
+
+export interface CreditCheckoutVerificationResult {
+  checkout?: CreditCheckoutVerification;
+  error?: string;
+  retryable?: boolean;
+}
+
 export type ProviderSessionPurpose = 'stage_background' | 'intro_video';
 
 export interface ProviderSessionAuthorization {
@@ -96,21 +114,82 @@ export async function startCreditCheckout(
   packId: string,
   legal: CheckoutLegalAttestation,
   context?: ApiRequestContext,
-): Promise<{ checkoutUrl?: string; error?: string }> {
+): Promise<{ checkoutUrl?: string; sessionId?: string; error?: string }> {
   try {
     const res = await apiFetch('/api/billing/checkout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ packId, legal }),
     }, context);
-    const json = await readBillingJson<{ checkoutUrl?: string }>(res);
+    const json = await readBillingJson<{ checkoutUrl?: string; sessionId?: string }>(res);
     if (!res.ok) {
       return { error: formatBillingError(json, `Checkout failed (${res.status})`) };
     }
-    return { checkoutUrl: json.checkoutUrl };
+    if (
+      typeof json.checkoutUrl !== 'string' || !json.checkoutUrl ||
+      typeof json.sessionId !== 'string' || json.sessionId.length > 255 ||
+      !/^cs_[A-Za-z0-9_]+$/.test(json.sessionId)
+    ) {
+      return { error: 'Checkout failed: the Stripe session could not be recorded' };
+    }
+    return { checkoutUrl: json.checkoutUrl, sessionId: json.sessionId };
   } catch (err: any) {
     return {
       error: err?.message ? `Checkout failed: ${err.message}` : 'Checkout failed',
+    };
+  }
+}
+
+function parseCreditCheckoutVerification(
+  value: unknown,
+  expectedSessionId: string,
+): CreditCheckoutVerification | null {
+  if (!value || typeof value !== 'object') return null;
+  const checkout = value as Partial<CreditCheckoutVerification>;
+  if (
+    checkout.sessionId !== expectedSessionId ||
+    !['pending', 'complete', 'failed'].includes(checkout.state ?? '') ||
+    typeof checkout.processorStatus !== 'string' || !checkout.processorStatus ||
+    typeof checkout.packId !== 'string' || !checkout.packId ||
+    !Number.isSafeInteger(checkout.credits) || Number(checkout.credits) <= 0 ||
+    !Number.isSafeInteger(checkout.creditsBalance) ||
+    typeof checkout.updatedAt !== 'string' || !checkout.updatedAt
+  ) return null;
+  return checkout as CreditCheckoutVerification;
+}
+
+export async function verifyCreditCheckoutSession(
+  sessionId: string,
+  context?: ApiRequestContext,
+): Promise<CreditCheckoutVerificationResult> {
+  const normalizedSessionId = sessionId.trim();
+  if (!/^cs_[A-Za-z0-9_]+$/.test(normalizedSessionId) || normalizedSessionId.length > 255) {
+    return { error: 'Checkout verification requires a valid Stripe session.' };
+  }
+  if (isLocalDevWithoutApi() && !context?.apiBaseUrl) {
+    return { error: 'Checkout verification requires cloud billing.' };
+  }
+
+  try {
+    const res = await apiFetch(
+      `/api/billing/checkout-status?session_id=${encodeURIComponent(normalizedSessionId)}`,
+      {},
+      context,
+    );
+    const json = await readBillingJson<{ checkout?: unknown }>(res);
+    if (!res.ok) {
+      return {
+        error: formatBillingError(json, `Checkout verification failed (${res.status})`),
+        retryable: res.status === 404 || res.status >= 500,
+      };
+    }
+    const checkout = parseCreditCheckoutVerification(json.checkout, normalizedSessionId);
+    if (!checkout) return { error: 'Checkout verification returned an invalid session.', retryable: true };
+    return { checkout };
+  } catch (err: any) {
+    return {
+      error: err?.message ? `Checkout verification failed: ${err.message}` : 'Checkout verification failed',
+      retryable: true,
     };
   }
 }

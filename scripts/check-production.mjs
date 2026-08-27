@@ -108,6 +108,7 @@ function assertNoLegacyApiRoutes() {
 function assertBillingUsesRequestOrigin() {
   const billing = readFileSync(join(root, 'worker/src/billing.ts'), 'utf8');
   const billingIntegrationTest = readFileSync(join(root, 'worker/src/billing.integration.test.ts'), 'utf8');
+  const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
   const billingClient = readFileSync(join(root, 'src/services/Billing.ts'), 'utf8');
   const cloudFighters = readFileSync(join(root, 'src/services/CloudFighters.ts'), 'utf8');
   const spriteCache = readFileSync(join(root, 'src/services/SpriteCache.ts'), 'utf8');
@@ -149,8 +150,16 @@ function assertBillingUsesRequestOrigin() {
     'consumePendingCheckout',
     "authStatus === 'loading'",
     "authStatus !== 'signed-in'",
-    'Checkout complete. Confirming credits...',
-    'CHECKOUT_PROFILE_REFRESH_DELAYS_MS',
+    'export async function getCreditCheckoutStatus',
+    'WHERE checkout_sessions.stripe_session_id = ?',
+    'AND checkout_sessions.user_id = ?',
+    "path === '/api/billing/checkout-status' && method === 'GET'",
+    'export async function verifyCreditCheckoutSession',
+    'checkout.sessionId !== expectedSessionId',
+    'Confirming the exact Stripe session...',
+    'CHECKOUT_SESSION_REFRESH_DELAYS_MS',
+    'balance alone does not confirm it',
+    'no credit success was assumed',
     'providerCallLimit?: number',
     'providerCallLimit: providerSession.providerCallLimit',
     "'fighter_upgrade'",
@@ -203,7 +212,7 @@ function assertBillingUsesRequestOrigin() {
     'reverses refunds once and restores credits after a won dispute',
     'withholds refunded credits when refund delivery precedes checkout completion',
   ];
-  const combined = `${billing}\n${billingIntegrationTest}\n${billingClient}\n${cloudFighters}\n${spriteCache}\n${createPage}\n${galleryPage}\n${homePage}\n${checkoutStatus}`;
+  const combined = `${billing}\n${billingIntegrationTest}\n${workerIndex}\n${billingClient}\n${cloudFighters}\n${spriteCache}\n${createPage}\n${galleryPage}\n${homePage}\n${checkoutStatus}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
     throw new Error(`Billing checkout origin handling is missing: ${missing.join(', ')}`);

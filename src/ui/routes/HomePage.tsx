@@ -3,6 +3,7 @@ import {
   getBillingProfile,
   listCreditPacks,
   startCreditCheckout,
+  verifyCreditCheckoutSession,
   type BillingProfile,
   type CreditPack,
 } from '../../services/Billing.ts';
@@ -16,9 +17,11 @@ import {
 import type { AuthRouteState } from '../authState.ts';
 import {
   clearPendingCheckout,
+  clearPendingCheckoutForSession,
+  checkoutReturnFromUrl,
   checkoutStatusMessage,
-  consumeCheckoutStatus,
-  expectedCheckoutBalance,
+  checkoutVerificationMessage,
+  consumeCheckoutReturn,
   readPendingCheckout,
   rememberPendingCheckout,
 } from '../shared/checkoutStatus.ts';
@@ -41,7 +44,7 @@ interface HomePageProps extends AuthRouteState {
   onOpenModeration: () => void;
 }
 
-const CHECKOUT_PROFILE_REFRESH_DELAYS_MS = [1_500, 3_500, 7_000, 12_000];
+const CHECKOUT_SESSION_REFRESH_DELAYS_MS = [0, 1_500, 3_500, 7_000, 12_000];
 
 function recordLabel(wins: number, losses: number): string {
   return `${wins}W ${losses}L`;
@@ -77,71 +80,106 @@ export function HomePage({
     const apiContext = captureApiRequestContext();
     let cancelled = false;
     let refreshTimer: number | null = null;
-    const loadBilling = async () => {
+    let latestProfile: BillingProfile | null = null;
+    let verifiedBalance: number | null = null;
+    const loadBilling = () => {
       if (authStatus === 'loading') {
         setBillingStatus('Loading credits...');
         return;
       }
-      const checkoutStatus = consumeCheckoutStatus(authSessionKey);
-      const pendingCheckout = checkoutStatus === 'success' ? readPendingCheckout(authSessionKey) : null;
-      const checkoutMessage = checkoutStatus ? checkoutStatusMessage(checkoutStatus) : null;
-      const [packs, profile] = await Promise.all([
+      const checkoutReturn = authStatus === 'signed-in'
+        ? consumeCheckoutReturn(authSessionKey)
+        : checkoutReturnFromUrl(window.location.href);
+      const pendingCheckout = readPendingCheckout(authSessionKey);
+      const checkoutMessage = checkoutReturn ? checkoutStatusMessage(checkoutReturn.status) : null;
+      const returnedSuccess = checkoutReturn?.status === 'success';
+      const checkoutSessionId = returnedSuccess
+        ? checkoutReturn.sessionId
+        : checkoutReturn
+          ? null
+          : pendingCheckout?.sessionId ?? null;
+      const exactVerificationActive = Boolean(checkoutSessionId && authStatus === 'signed-in');
+
+      void Promise.all([
         listCreditPacks(apiContext),
         getBillingProfile(apiContext),
-      ]);
-      if (cancelled) return;
-      setCreditPacks(packs);
-      setBillingProfile(profile);
-      const expectedBalance = expectedCheckoutBalance(pendingCheckout);
-      if (checkoutStatus === 'success' && authStatus === 'signed-in') {
-        if (profile && expectedBalance !== null && profile.creditsBalance >= expectedBalance) {
-          clearPendingCheckout(authSessionKey);
-          setBillingStatus(`${profile.creditsBalance} credits ready`);
-          return;
+      ]).then(([packs, profile]) => {
+        if (cancelled) return;
+        latestProfile = profile;
+        setCreditPacks(packs);
+        setBillingProfile(profile && verifiedBalance !== null
+          ? { ...profile, creditsBalance: verifiedBalance }
+          : profile);
+        if (exactVerificationActive || returnedSuccess) return;
+        if (packs.length === 0) {
+          setBillingStatus(checkoutMessage ?? 'Credits offline in local mode');
+        } else if (profile) {
+          setBillingStatus(checkoutMessage ?? 'Credits ready');
+        } else if (authStatus === 'signed-in') {
+          setBillingStatus(checkoutMessage ?? 'Cloud profile unavailable');
+        } else {
+          setBillingStatus(checkoutMessage ?? 'Sign in for cloud credits');
         }
-        setBillingStatus('Checkout complete. Confirming credits...');
-        const pollProfile = (index: number, previousDelay = 0) => {
-          const targetDelay = CHECKOUT_PROFILE_REFRESH_DELAYS_MS[index];
-          refreshTimer = window.setTimeout(async () => {
-            const refreshed = await getBillingProfile(apiContext);
-            if (cancelled) return;
-            if (refreshed) setBillingProfile(refreshed);
-            const credited = refreshed && expectedBalance !== null && refreshed.creditsBalance >= expectedBalance;
-            if (credited) {
-              clearPendingCheckout(authSessionKey);
-              setBillingStatus(`${refreshed.creditsBalance} credits ready`);
-              return;
-            }
-            if (index < CHECKOUT_PROFILE_REFRESH_DELAYS_MS.length - 1) {
-              pollProfile(index + 1, targetDelay);
-              return;
-            }
-            if (refreshed && expectedBalance !== null) {
-              setBillingStatus(
-                `Checkout complete. Waiting for ${expectedBalance} credits (currently ${refreshed.creditsBalance}).`,
-              );
-            } else if (refreshed) {
-              setBillingStatus(`Checkout complete. Credits are still confirming. Current balance: ${refreshed.creditsBalance}.`);
-            } else {
-              setBillingStatus(checkoutStatusMessage('success'));
-            }
-            clearPendingCheckout(authSessionKey);
-          }, Math.max(0, targetDelay - previousDelay));
-        };
-        pollProfile(0);
+      });
+
+      if (returnedSuccess && !checkoutSessionId) {
+        setBillingStatus('Checkout returned without a valid Stripe session. No credit success was assumed.');
         return;
       }
-      if (packs.length === 0) {
-        setBillingStatus(checkoutMessage ?? 'Credits offline in local mode');
-      } else if (profile) {
-        setBillingStatus(checkoutMessage ?? 'Credits ready');
-      } else if (authStatus === 'signed-in') {
-        setBillingStatus(checkoutMessage ?? 'Cloud profile unavailable');
-      } else {
-        setBillingStatus(checkoutMessage ?? 'Sign in for cloud credits');
+      if (exactVerificationActive && checkoutSessionId) {
+        setBillingStatus('Confirming the exact Stripe session...');
+        const pollCheckout = async (index: number) => {
+          const verification = await verifyCreditCheckoutSession(checkoutSessionId, apiContext);
+          if (cancelled) return;
+          const checkout = verification.checkout;
+          if (checkout) {
+            verifiedBalance = checkout.creditsBalance;
+            setBillingProfile((current) => (
+              current ? { ...current, creditsBalance: checkout.creditsBalance } : current
+            ));
+            if (checkout.state === 'complete') {
+              clearPendingCheckoutForSession(authSessionKey, checkoutSessionId);
+              setBillingStatus(checkoutVerificationMessage(checkout));
+              return;
+            }
+            if (checkout.state === 'failed') {
+              clearPendingCheckoutForSession(authSessionKey, checkoutSessionId);
+              setBillingStatus(checkoutVerificationMessage(checkout));
+              return;
+            }
+          }
+
+          const hasNextAttempt = index < CHECKOUT_SESSION_REFRESH_DELAYS_MS.length - 1;
+          const shouldRetry = checkout?.state === 'pending' || (!checkout && verification.retryable === true);
+          if (hasNextAttempt && shouldRetry) {
+            const currentDelay = CHECKOUT_SESSION_REFRESH_DELAYS_MS[index];
+            const nextDelay = CHECKOUT_SESSION_REFRESH_DELAYS_MS[index + 1];
+            refreshTimer = window.setTimeout(
+              () => { void pollCheckout(index + 1); },
+              Math.max(0, nextDelay - currentDelay),
+            );
+            return;
+          }
+
+          if (checkout?.state === 'pending') {
+            setBillingStatus(`${checkoutVerificationMessage(checkout)} Refresh to retry this exact session.`);
+          } else {
+            const balance = latestProfile ? ` Current balance: ${latestProfile.creditsBalance}.` : '';
+            setBillingStatus(
+              `This Stripe session could not be verified; no credit success was assumed.${balance}` +
+              (verification.error ? ` ${verification.error}` : ''),
+            );
+          }
+        };
+        void pollCheckout(0);
+        return;
+      }
+      if (returnedSuccess) {
+        setBillingStatus('Sign in to the purchasing account to verify this Stripe session.');
+        return;
       }
     };
-    void loadBilling();
+    loadBilling();
     return () => {
       cancelled = true;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
@@ -190,11 +228,11 @@ export function HomePage({
       currentCheckoutLegalAttestation(),
       captureApiRequestContext(),
     );
-    if (checkout.checkoutUrl) {
+    if (checkout.checkoutUrl && checkout.sessionId) {
       rememberPendingCheckout({
+        sessionId: checkout.sessionId,
         packId: pack.id,
         credits: pack.credits,
-        balanceBefore: billingProfile?.creditsBalance ?? null,
       }, authSessionKey);
       window.location.assign(checkout.checkoutUrl);
       return;
