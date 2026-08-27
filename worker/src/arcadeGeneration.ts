@@ -16,6 +16,8 @@ import {
   OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
 } from '../../src/services/ImageProviderContract';
 import { geminiEstimatedCostCents } from './geminiTransport';
+import { parseRequestedGenerationCreationFlow } from './generationCreationFlow';
+import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
 
 const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
 const AUTHORIZATION_TTL_HOURS = 12;
@@ -66,6 +68,7 @@ interface ArcadeGenerationFighterRow {
 interface ActiveArcadeJobRow {
   id: string;
   fighter_id: string;
+  creation_flow: GenerationCreationFlow;
   status: 'queued' | 'running';
   stage: string;
   progress_current: number;
@@ -174,6 +177,7 @@ function generationJobRequest(
   purchaseId: string,
   providerSessionId: string,
   target?: { kind: 'animation' | 'source'; name: string },
+  creationFlow: GenerationCreationFlow = 'original',
 ): Request {
   return new Request(request.url, {
     method: 'POST',
@@ -182,6 +186,7 @@ function generationJobRequest(
       fighterId,
       purchaseId,
       providerSessionId,
+      creationFlow,
       ...(target ? { targetKind: target.kind, targetName: target.name } : {}),
     }),
   });
@@ -198,11 +203,13 @@ async function createAdminGenerationAuthorization(
     legal: NonNullable<ReturnType<typeof parseGenerationLegalAttestation>>;
     continuation?: { runId: string; fromJobId: string };
     providerLimits?: { calls: number; costCents: number };
+    creationFlow?: GenerationCreationFlow;
   },
 ): Promise<{ purchaseId: string; providerSessionId: string }> {
   const purchaseId = generateId();
   const ledgerId = generateId();
   const expiresAt = authorizationExpiresAt();
+  const creationFlow = params.creationFlow ?? 'original';
   await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
@@ -212,8 +219,8 @@ async function createAdminGenerationAuthorization(
       INSERT INTO generation_charges (
         id, user_id, tier, credit_cost, free_quota_delta, status,
         reason, fighter_id, ledger_id, expires_at,
-        continuation_run_id, resumed_from_job_id
-      ) VALUES (?, ?, 'champion', 0, 0, 'reserved', ?, ?, ?, ?, ?, ?)
+        continuation_run_id, resumed_from_job_id, creation_flow
+      ) VALUES (?, ?, 'champion', 0, 0, 'reserved', ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       purchaseId,
       auth.userId,
@@ -223,6 +230,7 @@ async function createAdminGenerationAuthorization(
       expiresAt,
       params.continuation?.runId ?? null,
       params.continuation?.fromJobId ?? null,
+      creationFlow,
     ),
   ]);
 
@@ -232,6 +240,7 @@ async function createAdminGenerationAuthorization(
       tier: 'champion',
       purpose: params.purpose,
       operation: params.operation,
+      creationFlow,
       chargeId: purchaseId,
       providerCallLimitCap: params.providerLimits?.calls,
       providerCostLimitCentsCap: params.providerLimits?.costCents,
@@ -282,6 +291,8 @@ async function findResumableArcadeRun(
       AND gj.status IN ('failed', 'cancelled')
       AND run.status = 'partial'
       AND run.tier = 'champion'
+      AND gj.creation_flow = 'original'
+      AND run.creation_flow = 'original'
       AND run.operation = ?
       AND run.target_kind = ?
       AND run.target_name = ?
@@ -290,6 +301,8 @@ async function findResumableArcadeRun(
         FROM generation_jobs paid_job
         JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
         WHERE paid_job.artifact_run_id = run.id
+          AND paid_job.creation_flow = 'original'
+          AND paid_charge.creation_flow = 'original'
           AND paid_charge.status = 'committed'
       )
     ORDER BY gj.created_at DESC
@@ -312,7 +325,11 @@ export async function startAdminArcadeGeneration(
   if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
   if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
 
-  const body = await readJsonBody<{ legal?: unknown; restart?: unknown }>(
+  const body = await readJsonBody<{
+    legal?: unknown;
+    restart?: unknown;
+    creationFlow?: unknown;
+  }>(
     request,
     MAX_ADMIN_GENERATION_BODY_BYTES,
   );
@@ -320,6 +337,8 @@ export async function startAdminArcadeGeneration(
     return json({ error: 'restart must be a boolean' }, 400);
   }
   const restart = body.restart === true;
+  const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
+  if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
     return json({
@@ -343,8 +362,32 @@ export async function startAdminArcadeGeneration(
     return json({ error: 'Upload the private reference image before generation' }, 409);
   }
 
+  const active = await env.DB.prepare(`
+    SELECT id, fighter_id, creation_flow, status, stage, progress_current, progress_total,
+      created_at, updated_at
+    FROM generation_jobs
+    WHERE fighter_id = ? AND status IN ('queued', 'running')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).bind(fighterId).first<ActiveArcadeJobRow>();
+
+  const videoRunInProgress = creationFlow === 'video'
+    ? await env.DB.prepare(`
+        SELECT id
+        FROM generation_artifact_runs
+        WHERE fighter_id = ? AND user_id = ?
+          AND creation_flow = 'video' AND operation = 'fighter_generation'
+          AND status IN ('active', 'partial')
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `).bind(fighterId, auth.userId).first<{ id: string }>()
+    : null;
+
   const assetIntegrity = await inspectArcadeAssetIntegrity(env, fighterId);
-  if (assetIntegrity.ready && !restart) {
+  if (
+    assetIntegrity.ready && !restart &&
+    !(creationFlow === 'video' && (active || videoRunInProgress))
+  ) {
     return json({
       ready: true,
       fighterId,
@@ -353,19 +396,19 @@ export async function startAdminArcadeGeneration(
     });
   }
 
-  const active = await env.DB.prepare(`
-    SELECT id, fighter_id, status, stage, progress_current, progress_total, created_at, updated_at
-    FROM generation_jobs
-    WHERE fighter_id = ? AND status IN ('queued', 'running')
-    ORDER BY created_at DESC
-    LIMIT 1
-  `).bind(fighterId).first<ActiveArcadeJobRow>();
   if (active) {
+    if (active.creation_flow !== creationFlow) {
+      return json({
+        error: 'Another creation flow is already active for this fighter',
+        jobId: active.id,
+      }, 409);
+    }
     return json({
       job: {
         id: active.id,
         fighterId: active.fighter_id,
         tier: 'champion',
+        creationFlow: active.creation_flow,
         operation: 'fighter_generation',
         status: active.status,
         stage: active.stage,
@@ -378,37 +421,100 @@ export async function startAdminArcadeGeneration(
     });
   }
 
-  const partial = restart ? null : await env.DB.prepare(`
-    SELECT gj.id AS job_id, gj.artifact_run_id AS run_id
-    FROM generation_jobs gj
-    JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
-    WHERE gj.fighter_id = ? AND gj.user_id = ?
-      AND gj.status IN ('failed', 'cancelled')
-      AND run.status = 'partial'
-      AND run.tier = 'champion'
-      AND run.operation = 'fighter_generation'
-      AND EXISTS (
-        SELECT 1
-        FROM generation_jobs paid_job
-        JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
-        WHERE paid_job.artifact_run_id = run.id
-          AND paid_charge.status = 'committed'
-      )
-    ORDER BY gj.created_at DESC
-    LIMIT 1
-  `).bind(fighterId, auth.userId).first<{ job_id: string; run_id: string }>();
+  let partial: ResumableArcadeRunRow | null = null;
+  if (!restart && creationFlow === 'video') {
+    partial = await env.DB.prepare(`
+      SELECT gj.id AS job_id, gj.artifact_run_id AS run_id
+      FROM generation_jobs gj
+      JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+      LEFT JOIN video_sprite_candidates candidate
+        ON candidate.job_id = gj.id
+        AND candidate.run_id = run.id
+        AND candidate.fighter_id = gj.fighter_id
+        AND candidate.user_id = gj.user_id
+      LEFT JOIN video_sprite_candidate_revisions revision
+        ON revision.candidate_id = candidate.id
+        AND revision.revision = candidate.current_revision
+      WHERE gj.fighter_id = ? AND gj.user_id = ?
+        AND run.status = 'partial' AND run.tier = 'champion'
+        AND gj.creation_flow = 'video' AND run.creation_flow = 'video'
+        AND gj.operation = 'fighter_generation' AND run.operation = 'fighter_generation'
+        AND NOT EXISTS (
+          SELECT 1 FROM generation_jobs child WHERE child.resumed_from_job_id = gj.id
+        )
+        AND (
+          SELECT COUNT(*) FROM video_sprite_candidates approved
+          WHERE approved.run_id = run.id AND approved.status = 'approved'
+        ) < ?
+        AND (
+          (gj.status IN ('failed', 'cancelled') AND candidate.id IS NULL)
+          OR (
+            gj.status = 'succeeded' AND gj.review_status = 'approved'
+            AND candidate.status = 'approved'
+            AND candidate.current_revision = candidate.approved_revision
+            AND revision.report_sha256 IS NOT NULL
+          )
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM generation_jobs paid_job
+          JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
+          WHERE paid_job.artifact_run_id = run.id
+            AND paid_job.creation_flow = 'video'
+            AND paid_charge.creation_flow = 'video'
+            AND paid_charge.status = 'committed'
+        )
+      ORDER BY gj.created_at DESC
+      LIMIT 1
+    `).bind(fighterId, auth.userId, PLAYABLE_ANIMATION_NAMES.length)
+      .first<ResumableArcadeRunRow>();
+  } else if (!restart) {
+    partial = await env.DB.prepare(`
+      SELECT gj.id AS job_id, gj.artifact_run_id AS run_id
+      FROM generation_jobs gj
+      JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+      WHERE gj.fighter_id = ? AND gj.user_id = ?
+        AND gj.status IN ('failed', 'cancelled')
+        AND run.status = 'partial'
+        AND run.tier = 'champion'
+        AND gj.creation_flow = 'original'
+        AND run.creation_flow = 'original'
+        AND run.operation = 'fighter_generation'
+        AND EXISTS (
+          SELECT 1
+          FROM generation_jobs paid_job
+          JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
+          WHERE paid_job.artifact_run_id = run.id
+            AND paid_job.creation_flow = 'original'
+            AND paid_charge.creation_flow = 'original'
+            AND paid_charge.status = 'committed'
+        )
+      ORDER BY gj.created_at DESC
+      LIMIT 1
+    `).bind(fighterId, auth.userId).first<ResumableArcadeRunRow>();
+  }
   if (partial) {
     const reusableContinuation = await env.DB.prepare(`
       SELECT gc.id AS purchase_id, ps.id AS provider_session_id
       FROM generation_charges gc
+      JOIN credit_ledger cl
+        ON cl.id = gc.ledger_id
+        AND cl.user_id = gc.user_id
+        AND cl.reason = 'arcade_seed_generation'
+        AND cl.delta = 0
       JOIN provider_sessions ps
         ON ps.charge_id = gc.id
         AND ps.user_id = gc.user_id
+        AND ps.tier = 'champion'
+        AND ps.purpose = 'fighter_generation'
         AND ps.status = 'active'
         AND datetime(ps.expires_at) > datetime('now')
       LEFT JOIN generation_jobs continuation_job ON continuation_job.charge_id = gc.id
       WHERE gc.user_id = ? AND gc.fighter_id = ?
-        AND gc.status = 'reserved' AND gc.credit_cost = 0
+        AND gc.tier = 'champion'
+        AND gc.status = 'reserved' AND gc.credit_cost = 0 AND gc.free_quota_delta = 0
+        AND gc.reason = 'arcade_seed_generation'
+        AND gc.creation_flow = ? AND ps.creation_flow = ?
         AND gc.continuation_run_id = ? AND gc.resumed_from_job_id = ?
         AND datetime(gc.expires_at) > datetime('now')
         AND continuation_job.id IS NULL
@@ -417,6 +523,8 @@ export async function startAdminArcadeGeneration(
     `).bind(
       auth.userId,
       fighterId,
+      creationFlow,
+      creationFlow,
       partial.run_id,
       partial.job_id,
     ).first<ReusableArcadeAuthorizationRow>();
@@ -429,6 +537,7 @@ export async function startAdminArcadeGeneration(
           chargeReason: 'arcade_seed_generation',
           purpose: 'fighter_generation',
           operation: 'fighter_generation',
+          creationFlow,
           legal,
           continuation: { runId: partial.run_id, fromJobId: partial.job_id },
         });
@@ -437,6 +546,8 @@ export async function startAdminArcadeGeneration(
       fighterId,
       continuation.purchaseId,
       continuation.providerSessionId,
+      undefined,
+      creationFlow,
     ), env, auth);
   }
 
@@ -460,17 +571,22 @@ export async function startAdminArcadeGeneration(
       AND gc.free_quota_delta = 0
       AND gc.status = 'reserved'
       AND gc.reason = 'arcade_seed_generation'
+      AND gc.creation_flow = ?
+      AND ps.creation_flow = ?
       AND datetime(gc.expires_at) > datetime('now')
       AND gj.id IS NULL
     ORDER BY gc.created_at DESC
     LIMIT 1
-  `).bind(auth.userId, fighterId).first<ReusableArcadeAuthorizationRow>();
+  `).bind(auth.userId, fighterId, creationFlow, creationFlow)
+    .first<ReusableArcadeAuthorizationRow>();
   if (reusable) {
     return createGenerationJob(generationJobRequest(
       request,
       fighterId,
       reusable.purchase_id,
       reusable.provider_session_id,
+      undefined,
+      creationFlow,
     ), env, auth);
   }
 
@@ -478,6 +594,7 @@ export async function startAdminArcadeGeneration(
     chargeReason: 'arcade_seed_generation',
     purpose: 'fighter_generation',
     operation: 'fighter_generation',
+    creationFlow,
     legal,
   });
 
@@ -486,6 +603,8 @@ export async function startAdminArcadeGeneration(
     fighterId,
     authorization.purchaseId,
     authorization.providerSessionId,
+    undefined,
+    creationFlow,
   ), env, auth);
 }
 
