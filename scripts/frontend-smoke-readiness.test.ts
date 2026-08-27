@@ -96,9 +96,9 @@ describe('frontend deployment propagation readiness', () => {
 
   it('keeps waiting for metadata-only releases that reuse the same JavaScript asset', () => {
     const sharedAsset = '<script type="module" src="/assets/index-current.js"></script>';
-    const expectedSocialCard = 'property="og:image" content="https://insertplayer.ai/assets/social-card-v4.png"';
+    const expectedSocialCard = 'property="og:image" content="https://insertplayer.ai/assets/social-card-v5.png"';
     expect(frontendShellReadinessError({
-      html: `${appShell}${sharedAsset}<meta property="og:image" content="https://insertplayer.ai/assets/social-card-v3.png" />`,
+      html: `${appShell}${sharedAsset}<meta property="og:image" content="https://insertplayer.ai/assets/social-card-v4.png" />`,
       cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
       expectedClerkOrigin: clerkOrigin,
       expectedAssetPath: '/assets/index-current.js',
