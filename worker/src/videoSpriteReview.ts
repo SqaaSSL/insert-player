@@ -13,6 +13,7 @@ import {
   canonicalJson,
   PIXCLI_VIDEO_MODEL,
   projectCompilerReport,
+  videoAction,
   type VideoSpriteCandidateReportProjection,
 } from './videoSpriteGeneration';
 import { parseSealedReviewedCanonicalSources } from './reviewedCanonicalSources';
@@ -22,6 +23,7 @@ const MAX_REVIEW_BODY_BYTES = 16 * 1024;
 const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
 const MAX_AUDIT_BYTES = 1024 * 1024;
 const MAX_COMPILER_RESPONSE_BYTES = 96 * 1024 * 1024;
+const MAX_REVIEWED_CANONICAL_SOURCE_BYTES = 12 * 1024 * 1024;
 
 export type VideoSpriteCandidateStatus = 'awaiting_review' | 'approved' | 'rejected';
 
@@ -452,6 +454,149 @@ interface CandidateSpriteVersionRow {
   processing_version: number;
 }
 
+function digestHex(digest: ArrayBuffer): string {
+  return Array.from(
+    new Uint8Array(digest),
+    (byte) => byte.toString(16).padStart(2, '0'),
+  ).join('');
+}
+
+async function hashReviewedCanonicalObject(object: R2ObjectBody): Promise<string> {
+  if (object.size > MAX_REVIEWED_CANONICAL_SOURCE_BYTES) {
+    throw new Error('Video review canonical source exceeds its integrity size limit');
+  }
+  if (typeof DigestStream === 'undefined') {
+    const bytes = await object.arrayBuffer();
+    if (
+      bytes.byteLength !== object.size ||
+      bytes.byteLength > MAX_REVIEWED_CANONICAL_SOURCE_BYTES
+    ) {
+      throw new Error('Video review canonical source size failed integrity validation');
+    }
+    return hashString(bytes);
+  }
+
+  const digestStream = new DigestStream('SHA-256');
+  const writer = digestStream.getWriter();
+  const reader = object.body.getReader();
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_REVIEWED_CANONICAL_SOURCE_BYTES) {
+        throw new Error('Video review canonical source exceeds its integrity size limit');
+      }
+      await writer.write(value);
+    }
+    await writer.close();
+    if (totalBytes !== object.size) {
+      throw new Error('Video review canonical source size failed integrity validation');
+    }
+    return digestHex(await digestStream.digest);
+  } catch (error) {
+    await Promise.allSettled([reader.cancel(error), writer.abort(error)]);
+    void digestStream.digest.catch(() => undefined);
+    throw error;
+  }
+}
+
+async function requireReviewedCanonicalIntegrity(
+  env: Env,
+  row: OwnedReviewRow,
+  object: R2ObjectBody,
+): Promise<boolean> {
+  const sealed = parseSealedReviewedCanonicalSources(row.run_source_manifest_json);
+  if (!sealed) return false;
+  if (sealed.fighterId !== row.fighter_id || sealed.ownerUserId !== row.user_id) {
+    throw new Error('Video review canonical source manifest failed integrity validation');
+  }
+
+  const sourceName = videoAction(row.action).canonical;
+  const source = sealed.sources[sourceName];
+  if (
+    row.canonical_blob_key !== source.raw.blobKey ||
+    row.canonical_sha256 !== source.raw.contentSha256
+  ) {
+    throw new Error('Video review canonical source does not match its sealed action source');
+  }
+
+  const currentProcessedColumn = sourceName === 'side'
+    ? 'side_view_blob_key'
+    : 'crouch_view_blob_key';
+  const currentRawColumn = sourceName === 'side'
+    ? 'side_view_raw_blob_key'
+    : 'crouch_view_raw_blob_key';
+  const seal = await env.DB.prepare(`
+    SELECT raw_source.id AS raw_version_id
+    FROM generation_artifact_runs run
+    JOIN fighters fighter
+      ON fighter.id = run.fighter_id AND fighter.owner_user_id = run.user_id
+    JOIN source_versions processed_source ON processed_source.id = ?
+    JOIN source_versions raw_source ON raw_source.id = ?
+    JOIN generation_artifact_checkpoints checkpoint
+      ON checkpoint.run_id = run.id
+      AND checkpoint.artifact_kind = 'source'
+      AND checkpoint.artifact_name = ?
+    WHERE run.id = ? AND run.user_id = ? AND run.fighter_id = ?
+      AND run.source_manifest_json = ?
+      AND fighter.${currentProcessedColumn} = ?
+      AND fighter.${currentRawColumn} = ?
+      AND processed_source.fighter_id = ? AND processed_source.kind = ?
+      AND processed_source.blob_key = ? AND processed_source.content_hash = ?
+      AND raw_source.fighter_id = ? AND raw_source.kind = ?
+      AND raw_source.blob_key = ? AND raw_source.content_hash = ?
+      AND checkpoint.stage_index = ? AND checkpoint.tier = 'champion'
+      AND checkpoint.status = 'approved'
+      AND checkpoint.clean_version_id = ? AND checkpoint.raw_version_id = ?
+      AND checkpoint.clean_blob_key = ? AND checkpoint.raw_blob_key = ?
+      AND checkpoint.clean_content_hash = ? AND checkpoint.raw_content_hash = ?
+    LIMIT 1
+  `).bind(
+    source.processed.versionId,
+    source.raw.versionId,
+    sourceName,
+    row.run_id,
+    row.user_id,
+    row.fighter_id,
+    row.run_source_manifest_json,
+    source.processed.blobKey,
+    source.raw.blobKey,
+    row.fighter_id,
+    sourceName,
+    source.processed.blobKey,
+    source.processed.contentSha256,
+    row.fighter_id,
+    `${sourceName}_raw`,
+    source.raw.blobKey,
+    source.raw.contentSha256,
+    sourceName === 'side' ? 1 : 3,
+    source.processed.versionId,
+    source.raw.versionId,
+    source.processed.blobKey,
+    source.raw.blobKey,
+    source.processed.contentSha256,
+    source.raw.contentSha256,
+  ).first<{ raw_version_id: string }>();
+  if (seal?.raw_version_id !== source.raw.versionId) {
+    throw new Error('Video review canonical source seal failed integrity validation');
+  }
+
+  for (const metadataHash of [
+    object.customMetadata?.contentSha256,
+    object.customMetadata?.contentHash,
+  ]) {
+    if (metadataHash !== undefined && metadataHash !== row.canonical_sha256) {
+      throw new Error('Video review canonical source metadata failed integrity validation');
+    }
+  }
+  if (await hashReviewedCanonicalObject(object) !== row.canonical_sha256) {
+    throw new Error('Video review canonical source failed integrity validation');
+  }
+  return true;
+}
+
 async function requireApprovalIntegrity(env: Env, row: OwnedReviewRow): Promise<CandidateSpriteVersionRow> {
   const objectBindings = [
     [row.processed_blob_key, row.processed_sha256],
@@ -459,11 +604,13 @@ async function requireApprovalIntegrity(env: Env, row: OwnedReviewRow): Promise<
     [row.contact_sheet_blob_key, row.contact_sheet_sha256],
     [row.unique_sheet_blob_key, row.unique_sheet_sha256],
     [row.report_blob_key, row.report_content_sha256],
-    [row.canonical_blob_key, row.canonical_sha256],
     [row.provider_audit_blob_key, row.provider_audit_sha256],
     [row.video_blob_key, row.video_sha256],
   ] as const;
-  const objects = await Promise.all(objectBindings.map(([key]) => env.SPRITES.get(key)));
+  const [objects, canonicalObject] = await Promise.all([
+    Promise.all(objectBindings.map(([key]) => env.SPRITES.get(key))),
+    env.SPRITES.get(row.canonical_blob_key),
+  ]);
   for (let index = 0; index < objects.length; index += 1) {
     const object = objects[index];
     if (!object) throw new Error('Video review artifact is unavailable');
@@ -476,7 +623,19 @@ async function requireApprovalIntegrity(env: Env, row: OwnedReviewRow): Promise<
       throw new Error('Video review artifact failed integrity validation');
     }
   }
-  if (objects[7]!.size !== row.video_size_bytes) {
+  if (!canonicalObject) throw new Error('Video review artifact is unavailable');
+  const reviewedCanonical = await requireReviewedCanonicalIntegrity(env, row, canonicalObject);
+  if (!reviewedCanonical) {
+    const storedHash = canonicalObject.customMetadata?.contentSha256 ??
+      canonicalObject.customMetadata?.contentHash;
+    if (storedHash !== row.canonical_sha256) {
+      throw new Error('Video review artifact metadata failed integrity validation');
+    }
+    if (await hashString(await canonicalObject.arrayBuffer()) !== row.canonical_sha256) {
+      throw new Error('Video review artifact failed integrity validation');
+    }
+  }
+  if (objects[6]!.size !== row.video_size_bytes) {
     throw new Error('Video review source size changed');
   }
   const version = await env.DB.prepare(`
@@ -719,6 +878,7 @@ const TERMINAL_REVIEW_INTEGRITY_MESSAGES = [
   'Video review artifact is unavailable',
   'Video review artifact metadata failed integrity validation',
   'Video review artifact failed integrity validation',
+  'Video review canonical source',
   'Video review source size changed',
   'Private sprite version does not match the sealed candidate revision',
   'Private sprite version artifacts failed integrity validation',
