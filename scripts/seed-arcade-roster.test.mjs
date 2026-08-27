@@ -310,7 +310,7 @@ function reviewedOwnedFighter(fighter, overrides = {}) {
   };
 }
 
-function reviewedActivationApi(fighter, { entry, owned } = {}) {
+function reviewedActivationApi(fighter, { entry, owned, failedRetryAtAction = null } = {}) {
   const resolvedEntry = entry ?? reviewedAdminEntry(fighter);
   const resolvedOwned = owned ?? reviewedOwnedFighter(fighter);
   const calls = [];
@@ -344,6 +344,22 @@ function reviewedActivationApi(fighter, { entry, owned } = {}) {
       preservedArtifactCount: completedStages.length,
     }];
   }));
+  const failedRetryIndex = WORKER_VIDEO_SPRITE_ACTIONS.indexOf(failedRetryAtAction);
+  const failedRetryJobId = failedRetryIndex >= 0 ? activationVideoJobId(99) : null;
+  if (failedRetryJobId) {
+    const resumed = jobs.get(activationVideoJobId(failedRetryIndex));
+    jobs.set(failedRetryJobId, {
+      ...resumed,
+      id: failedRetryJobId,
+      resumedFromJobId: resumed.resumedFromJobId,
+      status: 'failed',
+      reviewStatus: 'none',
+      fullRunRestartRequired: false,
+      stage: 'failed',
+      resumable: false,
+    });
+    resumed.resumedFromJobId = failedRetryJobId;
+  }
   const reviews = new Map(WORKER_VIDEO_SPRITE_ACTIONS.map((action, index) => {
     const jobId = activationVideoJobId(index);
     return [jobId, {
@@ -366,6 +382,7 @@ function reviewedActivationApi(fighter, { entry, owned } = {}) {
   return {
     calls,
     assetCalls,
+    failedRetryJobId,
     finalJobId: activationVideoJobId(WORKER_VIDEO_SPRITE_ACTIONS.length - 1),
     requestApi: async (_baseUrl, _token, path, init = {}) => {
       calls.push({ path, method: init.method ?? 'GET', body: init.body });
@@ -703,6 +720,49 @@ describe('Reviewed Arcade activation', () => {
     });
     expect(api.calls.some(({ path }) => /generation-contract|\/generate(?:\/|$)|\/sources(?:\/|$)/.test(path)))
       .toBe(false);
+  });
+
+  it('uses each canonical approved action while skipping an exact obsolete failed retry predecessor', async () => {
+    const api = reviewedActivationApi(fighter, { failedRetryAtAction: 'hit' });
+    const activated = await activateReviewedArcadeFighter({
+      manifest,
+      fighter,
+      approvedPhotoHash: fighter.reference.sourceSha256,
+      reviewedVideoFinalJobId: api.finalJobId,
+      baseUrl: 'https://api.insertplayer.ai',
+      token: async () => 'token',
+      requestApi: api.requestApi,
+      requestAsset: api.requestAsset,
+    });
+
+    expect(activated).toMatchObject({ status: 'active', public: true });
+    expect(api.calls.filter(({ path }) => /^\/api\/generation-jobs\/[a-f0-9]{32}$/.test(path)))
+      .toHaveLength(12);
+    expect(api.calls.filter(({ path }) => /\/video-review$/.test(path))).toHaveLength(11);
+    expect(api.calls.at(-1)?.path).toMatch(/\/activate-reviewed-video$/);
+  });
+
+  it('fails closed when an obsolete retry predecessor claims an approved review', async () => {
+    const api = reviewedActivationApi(fighter, { failedRetryAtAction: 'hit' });
+    const requestApi = async (baseUrl, token, path, init) => {
+      const body = await api.requestApi(baseUrl, token, path, init);
+      if (path === `/api/generation-jobs/${api.failedRetryJobId}`) {
+        return { job: { ...body.job, reviewStatus: 'approved' } };
+      }
+      return body;
+    };
+
+    await expect(activateReviewedArcadeFighter({
+      manifest,
+      fighter,
+      approvedPhotoHash: fighter.reference.sourceSha256,
+      reviewedVideoFinalJobId: api.finalJobId,
+      baseUrl: 'https://api.insertplayer.ai',
+      token: async () => 'token',
+      requestApi,
+      requestAsset: api.requestAsset,
+    })).rejects.toThrow(/retry predecessor.*reviewStatus/i);
+    expect(api.calls.some(({ path }) => path.endsWith('/activate-reviewed-video'))).toBe(false);
   });
 
   it('blocks an incomplete draft before the activation PATCH', async () => {

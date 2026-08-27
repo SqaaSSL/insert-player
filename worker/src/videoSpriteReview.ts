@@ -1119,6 +1119,21 @@ interface ActivationCandidateRow {
   sequence_order: number;
 }
 
+interface ActivationLineageJobRow {
+  id: string;
+  user_id: string;
+  fighter_id: string;
+  tier: string;
+  creation_flow: string;
+  operation: string;
+  target_kind: string | null;
+  target_name: string | null;
+  artifact_run_id: string;
+  resumed_from_job_id: string | null;
+  status: string;
+  review_status: string;
+}
+
 interface ActivationCheckpointRow {
   clean_version_id: string;
   clean_blob_key: string;
@@ -1236,16 +1251,38 @@ export async function verifyReviewedVideoRunForActivation(
     candidates.length !== VIDEO_SPRITE_ACTIONS.length ||
     candidates.some((candidate, index) => (
       candidate.action !== VIDEO_SPRITE_ACTIONS[index] || candidate.sequence_order !== index
-    )) || candidates.at(-1)?.job_id !== finalJobId
+    )) || candidates.at(-1)?.job_id !== finalJobId ||
+    new Set(candidates.map((candidate) => candidate.job_id)).size !== candidates.length
   ) {
     throw new ReviewedVideoActivationError(
       'Completed reviewed Video run does not contain the exact eleven-action lineage',
     );
   }
 
+  const { results: lineageJobResults } = await env.DB.prepare(`
+    SELECT id, user_id, fighter_id, tier, creation_flow, operation, target_kind,
+      target_name, artifact_run_id, resumed_from_job_id, status, review_status
+    FROM generation_jobs
+    WHERE artifact_run_id = ?
+    ORDER BY id ASC
+  `).bind(final.run_id).all<ActivationLineageJobRow>();
+  const lineageJobs = lineageJobResults ?? [];
+  const lineageJobsById = new Map(lineageJobs.map((job) => [job.id, job]));
+  const canonicalJobIds = new Set(candidates.map((candidate) => candidate.job_id));
+  const consumedLineageJobIds = new Set<string>();
+  if (
+    lineageJobs.length < candidates.length ||
+    lineageJobsById.size !== lineageJobs.length
+  ) {
+    throw new ReviewedVideoActivationError(
+      'Completed reviewed Video run contains an invalid job lineage',
+    );
+  }
+
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
     const review = await ownedReview(env, auth.userId, candidate.job_id);
+    const lineageJob = lineageJobsById.get(candidate.job_id);
     if (
       !review || review.run_id !== final.run_id || review.fighter_id !== fighterId ||
       review.action !== candidate.action || review.sequence_order !== index ||
@@ -1257,11 +1294,39 @@ export async function verifyReviewedVideoRunForActivation(
       review.run_status !== 'succeeded' || review.run_id !== final.run_id ||
       review.animation_format !== 'video-dense-v1' || review.processing_version !== 5 ||
       review.frame_w !== 192 || review.frame_h !== 256 ||
-      review.job_resumed_from_job_id !== (index === 0 ? null : candidates[index - 1].job_id)
+      !lineageJob || lineageJob.user_id !== auth.userId ||
+      lineageJob.fighter_id !== fighterId || lineageJob.tier !== 'champion' ||
+      lineageJob.creation_flow !== 'video' || lineageJob.operation !== 'fighter_generation' ||
+      lineageJob.target_kind !== null || lineageJob.target_name !== null ||
+      lineageJob.artifact_run_id !== final.run_id || lineageJob.status !== 'succeeded' ||
+      lineageJob.review_status !== 'approved' ||
+      lineageJob.resumed_from_job_id !== review.job_resumed_from_job_id
     ) {
       throw new ReviewedVideoActivationError(
         `Approved ${candidate.action} Video lineage changed before activation`,
       );
+    }
+    consumedLineageJobIds.add(lineageJob.id);
+    const expectedPredecessorJobId = index === 0 ? null : candidates[index - 1].job_id;
+    let predecessorJobId = lineageJob.resumed_from_job_id;
+    while (predecessorJobId !== expectedPredecessorJobId) {
+      const predecessor = predecessorJobId ? lineageJobsById.get(predecessorJobId) : null;
+      if (
+        !predecessor || canonicalJobIds.has(predecessor.id) ||
+        consumedLineageJobIds.has(predecessor.id) ||
+        predecessor.user_id !== auth.userId || predecessor.fighter_id !== fighterId ||
+        predecessor.tier !== 'champion' || predecessor.creation_flow !== 'video' ||
+        predecessor.operation !== 'fighter_generation' || predecessor.target_kind !== null ||
+        predecessor.target_name !== null || predecessor.artifact_run_id !== final.run_id ||
+        !['failed', 'cancelled'].includes(predecessor.status) ||
+        predecessor.review_status !== 'none'
+      ) {
+        throw new ReviewedVideoActivationError(
+          `Approved ${candidate.action} Video lineage changed before activation`,
+        );
+      }
+      consumedLineageJobIds.add(predecessor.id);
+      predecessorJobId = predecessor.resumed_from_job_id;
     }
     let version: CandidateSpriteVersionRow;
     try {
@@ -1295,6 +1360,12 @@ export async function verifyReviewedVideoRunForActivation(
       );
     }
     await requireCurrentVideoSpriteIntegrity(env, review, version);
+  }
+
+  if (consumedLineageJobIds.size !== lineageJobs.length) {
+    throw new ReviewedVideoActivationError(
+      'Completed reviewed Video run contains jobs outside its canonical approval lineage',
+    );
   }
 
   for (const [index, sourceName] of ['side', 'upright', 'crouch'].entries()) {
