@@ -17,8 +17,9 @@ import type { AuthRouteState } from '../authState.ts';
 import {
   clearPendingCheckout,
   checkoutStatusMessage,
-  consumePendingCheckout,
   consumeCheckoutStatus,
+  expectedCheckoutBalance,
+  readPendingCheckout,
   rememberPendingCheckout,
 } from '../shared/checkoutStatus.ts';
 import { PUBLIC_APP_NAME } from '../publicBrand.ts';
@@ -75,14 +76,14 @@ export function HomePage({
   useEffect(() => {
     const apiContext = captureApiRequestContext();
     let cancelled = false;
-    let refreshTimers: number[] = [];
+    let refreshTimer: number | null = null;
     const loadBilling = async () => {
       if (authStatus === 'loading') {
         setBillingStatus('Loading credits...');
         return;
       }
-      const checkoutStatus = consumeCheckoutStatus();
-      const pendingCheckout = checkoutStatus === 'success' ? consumePendingCheckout() : null;
+      const checkoutStatus = consumeCheckoutStatus(authSessionKey);
+      const pendingCheckout = checkoutStatus === 'success' ? readPendingCheckout(authSessionKey) : null;
       const checkoutMessage = checkoutStatus ? checkoutStatusMessage(checkoutStatus) : null;
       const [packs, profile] = await Promise.all([
         listCreditPacks(apiContext),
@@ -91,30 +92,43 @@ export function HomePage({
       if (cancelled) return;
       setCreditPacks(packs);
       setBillingProfile(profile);
-      const expectedBalance = pendingCheckout && pendingCheckout.balanceBefore !== null
-        ? pendingCheckout.balanceBefore + pendingCheckout.credits
-        : null;
+      const expectedBalance = expectedCheckoutBalance(pendingCheckout);
       if (checkoutStatus === 'success' && authStatus === 'signed-in') {
         if (profile && expectedBalance !== null && profile.creditsBalance >= expectedBalance) {
+          clearPendingCheckout(authSessionKey);
           setBillingStatus(`${profile.creditsBalance} credits ready`);
           return;
         }
         setBillingStatus('Checkout complete. Confirming credits...');
-        refreshTimers = CHECKOUT_PROFILE_REFRESH_DELAYS_MS.map((delay, index) => window.setTimeout(async () => {
-          const refreshed = await getBillingProfile(apiContext);
-          if (cancelled) return;
-          if (refreshed) setBillingProfile(refreshed);
-          const credited = refreshed && expectedBalance !== null && refreshed.creditsBalance >= expectedBalance;
-          if (credited) {
-            setBillingStatus(`${refreshed.creditsBalance} credits ready`);
-            refreshTimers.forEach((timer) => window.clearTimeout(timer));
-            refreshTimers = [];
-            return;
-          }
-          if (index === CHECKOUT_PROFILE_REFRESH_DELAYS_MS.length - 1) {
-            setBillingStatus(refreshed ? 'Credits ready' : checkoutStatusMessage('success'));
-          }
-        }, delay));
+        const pollProfile = (index: number, previousDelay = 0) => {
+          const targetDelay = CHECKOUT_PROFILE_REFRESH_DELAYS_MS[index];
+          refreshTimer = window.setTimeout(async () => {
+            const refreshed = await getBillingProfile(apiContext);
+            if (cancelled) return;
+            if (refreshed) setBillingProfile(refreshed);
+            const credited = refreshed && expectedBalance !== null && refreshed.creditsBalance >= expectedBalance;
+            if (credited) {
+              clearPendingCheckout(authSessionKey);
+              setBillingStatus(`${refreshed.creditsBalance} credits ready`);
+              return;
+            }
+            if (index < CHECKOUT_PROFILE_REFRESH_DELAYS_MS.length - 1) {
+              pollProfile(index + 1, targetDelay);
+              return;
+            }
+            if (refreshed && expectedBalance !== null) {
+              setBillingStatus(
+                `Checkout complete. Waiting for ${expectedBalance} credits (currently ${refreshed.creditsBalance}).`,
+              );
+            } else if (refreshed) {
+              setBillingStatus(`Checkout complete. Credits are still confirming. Current balance: ${refreshed.creditsBalance}.`);
+            } else {
+              setBillingStatus(checkoutStatusMessage('success'));
+            }
+            clearPendingCheckout(authSessionKey);
+          }, Math.max(0, targetDelay - previousDelay));
+        };
+        pollProfile(0);
         return;
       }
       if (packs.length === 0) {
@@ -130,7 +144,7 @@ export function HomePage({
     void loadBilling();
     return () => {
       cancelled = true;
-      refreshTimers.forEach((timer) => window.clearTimeout(timer));
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
   }, [authStatus, authSessionKey]);
 
@@ -165,12 +179,12 @@ export function HomePage({
       setBillingStatus('Sign in to buy credits');
       return;
     }
-    setCheckoutPackId(pack.id);
-    setBillingStatus(`Opening ${pack.label}...`);
     if (!checkoutConsentAccepted) {
       setBillingStatus('Accept the purchase terms to continue');
       return;
     }
+    setCheckoutPackId(pack.id);
+    setBillingStatus(`Opening ${pack.label}...`);
     const checkout = await startCreditCheckout(
       pack.id,
       currentCheckoutLegalAttestation(),
@@ -181,11 +195,11 @@ export function HomePage({
         packId: pack.id,
         credits: pack.credits,
         balanceBefore: billingProfile?.creditsBalance ?? null,
-      });
+      }, authSessionKey);
       window.location.assign(checkout.checkoutUrl);
       return;
     }
-    clearPendingCheckout();
+    clearPendingCheckout(authSessionKey);
     setBillingStatus(checkout.error ?? 'Checkout unavailable');
     setCheckoutPackId(null);
   };

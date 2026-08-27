@@ -232,7 +232,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setArcadeState('loading');
     setCloudSyncPending(true);
     const load = async () => {
-      const checkoutStatus = consumeCheckoutStatus();
+      const checkoutStatus = consumeCheckoutStatus(authSessionKey);
       const checkoutMessage = checkoutStatus ? checkoutStatusMessage(checkoutStatus) : null;
       let cloudImported = 0;
       let cloudUpdated = 0;

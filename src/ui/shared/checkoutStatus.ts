@@ -1,7 +1,9 @@
 export type CheckoutStatus = 'success' | 'cancelled';
 
-const CHECKOUT_STATUS_KEY = 'ai-street-fighter:checkout-status';
-const CHECKOUT_PENDING_KEY = 'ai-street-fighter:pending-checkout';
+const CHECKOUT_STATUS_PREFIX = 'ai-street-fighter:checkout-status:v1:';
+const CHECKOUT_PENDING_PREFIX = 'ai-street-fighter:pending-checkout:v1:';
+const LEGACY_CHECKOUT_STATUS_KEY = 'ai-street-fighter:checkout-status';
+const LEGACY_CHECKOUT_PENDING_KEY = 'ai-street-fighter:pending-checkout';
 const CHECKOUT_STATUS_TTL_MS = 3_000;
 const CHECKOUT_PENDING_TTL_MS = 30 * 60_000;
 
@@ -15,50 +17,105 @@ function isCheckoutStatus(value: string | null): value is CheckoutStatus {
   return value === 'success' || value === 'cancelled';
 }
 
-function isPendingCheckout(value: unknown): value is PendingCheckout {
-  if (!value || typeof value !== 'object') return false;
-  const pending = value as Partial<PendingCheckout>;
-  return Boolean(
-    typeof pending.packId === 'string' &&
-    typeof pending.credits === 'number' &&
-    Number.isFinite(pending.credits) &&
-    (pending.balanceBefore === null || typeof pending.balanceBefore === 'number'),
-  );
+function validAuthSessionKey(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256;
 }
 
-function takeStoredStatus(): CheckoutStatus | null {
+function scopedKey(prefix: string, authSessionKey: string): string {
+  return `${prefix}${encodeURIComponent(authSessionKey)}`;
+}
+
+function browserSessionStorage(): Storage | null {
   try {
-    const raw = window.sessionStorage.getItem(CHECKOUT_STATUS_KEY);
-    if (!raw) return null;
-    window.sessionStorage.removeItem(CHECKOUT_STATUS_KEY);
-    const stored = JSON.parse(raw) as { status?: string; createdAt?: number };
-    const fresh = typeof stored.createdAt === 'number' && Date.now() - stored.createdAt <= CHECKOUT_STATUS_TTL_MS;
-    const status = stored.status ?? null;
-    return fresh && isCheckoutStatus(status) ? status : null;
+    return typeof window === 'undefined' ? null : window.sessionStorage;
   } catch {
     return null;
   }
 }
 
-export function rememberPendingCheckout(pending: PendingCheckout): void {
+function removeLegacyCheckoutState(storage: Storage): void {
+  storage.removeItem(LEGACY_CHECKOUT_STATUS_KEY);
+  storage.removeItem(LEGACY_CHECKOUT_PENDING_KEY);
+}
+
+function isPendingCheckout(value: unknown): value is PendingCheckout {
+  if (!value || typeof value !== 'object') return false;
+  const pending = value as Partial<PendingCheckout>;
+  return Boolean(
+    typeof pending.packId === 'string' &&
+    pending.packId.length > 0 &&
+    pending.packId.length <= 80 &&
+    typeof pending.credits === 'number' &&
+    Number.isSafeInteger(pending.credits) &&
+    pending.credits > 0 &&
+    pending.credits <= 100_000 &&
+    (
+      pending.balanceBefore === null
+      || (
+        typeof pending.balanceBefore === 'number'
+        && Number.isSafeInteger(pending.balanceBefore)
+        && pending.balanceBefore >= 0
+      )
+    ),
+  );
+}
+
+function takeStoredStatus(
+  authSessionKey: string,
+  storage: Storage | null = browserSessionStorage(),
+  now = Date.now(),
+): CheckoutStatus | null {
+  if (!storage || !validAuthSessionKey(authSessionKey)) return null;
   try {
-    window.sessionStorage.setItem(
-      CHECKOUT_PENDING_KEY,
-      JSON.stringify({ ...pending, createdAt: Date.now() }),
+    removeLegacyCheckoutState(storage);
+    const key = scopedKey(CHECKOUT_STATUS_PREFIX, authSessionKey);
+    const raw = storage.getItem(key);
+    if (!raw) return null;
+    storage.removeItem(key);
+    const stored = JSON.parse(raw) as { status?: string; createdAt?: number; authSessionKey?: string };
+    const age = typeof stored.createdAt === 'number' ? now - stored.createdAt : Number.POSITIVE_INFINITY;
+    const fresh = age >= -60_000 && age <= CHECKOUT_STATUS_TTL_MS;
+    const status = stored.status ?? null;
+    return fresh && stored.authSessionKey === authSessionKey && isCheckoutStatus(status) ? status : null;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberPendingCheckout(
+  pending: PendingCheckout,
+  authSessionKey: string,
+  storage: Storage | null = browserSessionStorage(),
+  now = Date.now(),
+): void {
+  if (!storage || !validAuthSessionKey(authSessionKey)) return;
+  try {
+    removeLegacyCheckoutState(storage);
+    storage.setItem(
+      scopedKey(CHECKOUT_PENDING_PREFIX, authSessionKey),
+      JSON.stringify({ ...pending, authSessionKey, createdAt: now }),
     );
   } catch {
     // best effort only
   }
 }
 
-export function consumePendingCheckout(): PendingCheckout | null {
+export function consumePendingCheckout(
+  authSessionKey: string,
+  storage: Storage | null = browserSessionStorage(),
+  now = Date.now(),
+): PendingCheckout | null {
+  if (!storage || !validAuthSessionKey(authSessionKey)) return null;
   try {
-    const raw = window.sessionStorage.getItem(CHECKOUT_PENDING_KEY);
+    removeLegacyCheckoutState(storage);
+    const key = scopedKey(CHECKOUT_PENDING_PREFIX, authSessionKey);
+    const raw = storage.getItem(key);
     if (!raw) return null;
-    window.sessionStorage.removeItem(CHECKOUT_PENDING_KEY);
-    const stored = JSON.parse(raw) as PendingCheckout & { createdAt?: number };
-    const fresh = typeof stored.createdAt === 'number' && Date.now() - stored.createdAt <= CHECKOUT_PENDING_TTL_MS;
-    return fresh && isPendingCheckout(stored)
+    storage.removeItem(key);
+    const stored = JSON.parse(raw) as PendingCheckout & { createdAt?: number; authSessionKey?: string };
+    const age = typeof stored.createdAt === 'number' ? now - stored.createdAt : Number.POSITIVE_INFINITY;
+    const fresh = age >= -60_000 && age <= CHECKOUT_PENDING_TTL_MS;
+    return fresh && stored.authSessionKey === authSessionKey && isPendingCheckout(stored)
       ? { packId: stored.packId, credits: stored.credits, balanceBefore: stored.balanceBefore }
       : null;
   } catch {
@@ -66,22 +123,55 @@ export function consumePendingCheckout(): PendingCheckout | null {
   }
 }
 
-export function clearPendingCheckout(): void {
+export function readPendingCheckout(
+  authSessionKey: string,
+  storage: Storage | null = browserSessionStorage(),
+  now = Date.now(),
+): PendingCheckout | null {
+  if (!storage || !validAuthSessionKey(authSessionKey)) return null;
   try {
-    window.sessionStorage.removeItem(CHECKOUT_PENDING_KEY);
+    removeLegacyCheckoutState(storage);
+    const key = scopedKey(CHECKOUT_PENDING_PREFIX, authSessionKey);
+    const raw = storage.getItem(key);
+    if (!raw) return null;
+    const stored = JSON.parse(raw) as PendingCheckout & { createdAt?: number; authSessionKey?: string };
+    const age = typeof stored.createdAt === 'number' ? now - stored.createdAt : Number.POSITIVE_INFINITY;
+    const fresh = age >= -60_000 && age <= CHECKOUT_PENDING_TTL_MS;
+    if (fresh && stored.authSessionKey === authSessionKey && isPendingCheckout(stored)) {
+      return { packId: stored.packId, credits: stored.credits, balanceBefore: stored.balanceBefore };
+    }
+    storage.removeItem(key);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingCheckout(
+  authSessionKey: string,
+  storage: Storage | null = browserSessionStorage(),
+): void {
+  if (!storage || !validAuthSessionKey(authSessionKey)) return;
+  try {
+    removeLegacyCheckoutState(storage);
+    storage.removeItem(scopedKey(CHECKOUT_PENDING_PREFIX, authSessionKey));
   } catch {
     // best effort only
   }
 }
 
-function rememberStatus(status: CheckoutStatus): void {
+function rememberStatus(status: CheckoutStatus, authSessionKey: string): void {
+  const storage = browserSessionStorage();
+  if (!storage || !validAuthSessionKey(authSessionKey)) return;
   try {
-    const payload = JSON.stringify({ status, createdAt: Date.now() });
-    window.sessionStorage.setItem(CHECKOUT_STATUS_KEY, payload);
+    removeLegacyCheckoutState(storage);
+    const key = scopedKey(CHECKOUT_STATUS_PREFIX, authSessionKey);
+    const payload = JSON.stringify({ status, authSessionKey, createdAt: Date.now() });
+    storage.setItem(key, payload);
     window.setTimeout(() => {
       try {
-        if (window.sessionStorage.getItem(CHECKOUT_STATUS_KEY) === payload) {
-          window.sessionStorage.removeItem(CHECKOUT_STATUS_KEY);
+        if (storage.getItem(key) === payload) {
+          storage.removeItem(key);
         }
       } catch {
         // best effort only
@@ -92,19 +182,25 @@ function rememberStatus(status: CheckoutStatus): void {
   }
 }
 
-export function consumeCheckoutStatus(): CheckoutStatus | null {
+export function consumeCheckoutStatus(authSessionKey: string): CheckoutStatus | null {
   if (typeof window === 'undefined') return null;
   const url = new URL(window.location.href);
   const status = url.searchParams.get('checkout');
-  if (!isCheckoutStatus(status)) return takeStoredStatus();
+  if (!isCheckoutStatus(status)) return takeStoredStatus(authSessionKey);
 
   url.searchParams.delete('checkout');
   url.searchParams.delete('session_id');
   const nextUrl = `${url.pathname}${url.search}${url.hash}`;
   window.history.replaceState(window.history.state, '', nextUrl || '/menu');
-  if (status === 'cancelled') clearPendingCheckout();
-  rememberStatus(status);
+  if (status === 'cancelled') clearPendingCheckout(authSessionKey);
+  rememberStatus(status, authSessionKey);
   return status;
+}
+
+export function expectedCheckoutBalance(pending: PendingCheckout | null): number | null {
+  return pending && pending.balanceBefore !== null
+    ? pending.balanceBefore + pending.credits
+    : null;
 }
 
 export function checkoutStatusMessage(status: CheckoutStatus): string {
