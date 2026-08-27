@@ -1461,6 +1461,25 @@
            px-4 py-3 font-arcade text-[11px] tracking-[0.1em] uppercase text-asf-gold-bright;
   }
 
+  .create-recovery-error {
+    @apply flex flex-col items-start gap-2 rounded-[4px] border border-asf-red
+           bg-[rgba(80,10,10,0.72)] px-4 py-3 text-left;
+  }
+
+  .create-recovery-error strong {
+    @apply font-arcade text-[11px] tracking-[0.1em] uppercase text-asf-gold-bright;
+  }
+
+  .create-recovery-error p {
+    @apply m-0 font-sans text-[13px] normal-case leading-[1.55] text-asf-cream;
+  }
+
+  .create-recovery-error button {
+    @apply rounded-[3px] border border-asf-gold bg-asf-panel px-3 py-2 font-arcade
+           text-[10px] tracking-[0.08em] uppercase text-asf-gold-bright
+           hover:bg-asf-panel-alt disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
   /* ============================================================
      LEGAL / TRUST SURFACES
      ============================================================ */

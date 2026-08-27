@@ -46,6 +46,8 @@ export function VideoGenerationReviewGate({
   const [reasonCodes, setReasonCodes] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reviewReloadSignal, setReviewReloadSignal] = useState(0);
+  const [mediaReloadSignal, setMediaReloadSignal] = useState(0);
   const videoUrl = useObjectUrl(videoBlob);
   const contactSheetUrl = useObjectUrl(contactSheetBlob);
   const reportUrl = useObjectUrl(reportBlob);
@@ -61,7 +63,7 @@ export function VideoGenerationReviewGate({
       if (!disposed) setError(cause instanceof Error ? cause.message : 'Video review could not be loaded');
     });
     return () => { disposed = true; };
-  }, [jobId]);
+  }, [jobId, reviewReloadSignal]);
 
   useEffect(() => {
     if (!review) return;
@@ -87,7 +89,7 @@ export function VideoGenerationReviewGate({
       if (!disposed) setError(cause instanceof Error ? cause.message : 'Private review media could not be loaded');
     });
     return () => { disposed = true; };
-  }, [review?.jobId, review?.revision]);
+  }, [mediaReloadSignal, review?.jobId, review?.revision]);
 
   const assetsReady = Boolean(videoUrl && contactSheetUrl && reportUrl);
   const view = useMemo(() => review && contactSheetUrl ? {
@@ -154,8 +156,21 @@ export function VideoGenerationReviewGate({
     }
   };
 
+  const syncFinalFighter = async () => {
+    if (!review || busy || review.status !== 'approved' || review.continuationAvailable) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onFinalApproval(review);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Approved fighter could not be synced');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!review || !view) {
-    if (fullRunRestartRequired && error && onRestart) {
+    if (!review && fullRunRestartRequired && error && onRestart) {
       return (
         <section className="video-review" aria-live="polite">
           <header className="video-review__header">
@@ -182,6 +197,21 @@ export function VideoGenerationReviewGate({
         <p className={error ? 'video-review__error' : 'video-review__intro'}>
           {error ?? 'Loading the private video and deterministic frame report...'}
         </p>
+        {error ? (
+          <div className="video-review__actions">
+            <button
+              type="button"
+              disabled={disabled || busy}
+              onClick={() => {
+                setError(null);
+                if (review) setMediaReloadSignal((current) => current + 1);
+                else setReviewReloadSignal((current) => current + 1);
+              }}
+            >
+              {review ? 'Retry Review Media' : 'Retry Review Check'}
+            </button>
+          </div>
+        ) : null}
       </section>
     );
   }
@@ -194,6 +224,7 @@ export function VideoGenerationReviewGate({
       onApprove={(indices) => { void approve(indices); }}
       onReject={() => { void reject(); }}
       onContinue={() => { void onContinue(review); }}
+      onFinalSync={() => { void syncFinalFighter(); }}
       onRestart={() => { void onRestart?.(review); }}
     />
   );

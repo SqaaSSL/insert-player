@@ -21,6 +21,7 @@ interface VideoGenerationReviewPanelProps {
   onApprove: (selectedIndices: number[]) => void;
   onReject: () => void;
   onContinue?: () => void;
+  onFinalSync?: () => void;
   onRestart?: () => void;
 }
 
@@ -57,6 +58,7 @@ export function VideoGenerationReviewPanel({
   onApprove,
   onReject,
   onContinue,
+  onFinalSync,
   onRestart,
 }: VideoGenerationReviewPanelProps) {
   const id = useId();
@@ -109,7 +111,9 @@ export function VideoGenerationReviewPanel({
           : awaitingReview
           ? 'The compiler has proposed a frame sequence. Nothing is promoted until you approve it.'
           : status === 'approved'
-            ? 'This exact private revision is approved and promoted. Continue when you are ready for the next action.'
+            ? review.continuationAvailable
+              ? 'This exact private revision is approved and promoted. Continue when you are ready for the next action.'
+              : 'This exact private revision is approved in the cloud. Sync the completed fighter to this device.'
             : 'This video remains archived privately and will not be promoted or continued.'}
       </p>
 
@@ -212,23 +216,33 @@ export function VideoGenerationReviewPanel({
           ) : null}
         </div>
       </form> : (
-        <div className="video-review__actions">
-          {status === 'approved' && !restartRequired && review.continuationAvailable && onContinue ? (
-            <button type="button" disabled={busy} onClick={onContinue}>
-              {busy ? 'Preparing Next Action...' : 'Continue To Next Action'}
-            </button>
+        <>
+          {error ? (
+            <p id={errorId} className="video-review__error" role="alert">{error}</p>
           ) : null}
-          {restartRequired && onRestart ? (
-            <button type="button" disabled={busy} onClick={onRestart}>
-              {busy ? 'Preparing New Run...' : 'Start A New Complete Video Run'}
-            </button>
-          ) : null}
-          {review.reportUrl ? (
-            <a href={review.reportUrl} target="_blank" rel="noreferrer">
-              Open Technical Report
-            </a>
-          ) : null}
-        </div>
+          <div className="video-review__actions">
+            {status === 'approved' && !restartRequired && review.continuationAvailable && onContinue ? (
+              <button type="button" disabled={busy} onClick={onContinue}>
+                {busy ? 'Preparing Next Action...' : 'Continue To Next Action'}
+              </button>
+            ) : null}
+            {status === 'approved' && !restartRequired && !review.continuationAvailable && onFinalSync ? (
+              <button type="button" disabled={busy} onClick={onFinalSync}>
+                {busy ? 'Syncing Fighter...' : error ? 'Retry Fighter Sync' : 'Sync Approved Fighter'}
+              </button>
+            ) : null}
+            {restartRequired && onRestart ? (
+              <button type="button" disabled={busy} onClick={onRestart}>
+                {busy ? 'Preparing New Run...' : 'Start A New Complete Video Run'}
+              </button>
+            ) : null}
+            {review.reportUrl ? (
+              <a href={review.reportUrl} target="_blank" rel="noreferrer">
+                Open Technical Report
+              </a>
+            ) : null}
+          </div>
+        </>
       )}
     </section>
   );
