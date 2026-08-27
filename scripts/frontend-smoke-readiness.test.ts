@@ -65,6 +65,26 @@ describe('frontend deployment propagation readiness', () => {
     })).toBe('');
   });
 
+  it('keeps waiting for metadata-only releases that reuse the same JavaScript asset', () => {
+    const sharedAsset = '<script type="module" src="/assets/index-current.js"></script>';
+    const expectedSocialCard = 'property="og:image" content="https://insertplayer.ai/assets/social-card-v3.png"';
+    expect(frontendShellReadinessError({
+      html: `${appShell}${sharedAsset}<meta property="og:image" content="https://insertplayer.ai/assets/social-card-v2.png" />`,
+      cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
+      expectedClerkOrigin: clerkOrigin,
+      expectedAssetPath: '/assets/index-current.js',
+      expectedHtmlFragments: [expectedSocialCard],
+    })).toBe(`the app shell is missing release marker ${expectedSocialCard}`);
+
+    expect(frontendShellReadinessError({
+      html: `${appShell}${sharedAsset}<meta ${expectedSocialCard} />`,
+      cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
+      expectedClerkOrigin: clerkOrigin,
+      expectedAssetPath: '/assets/index-current.js',
+      expectedHtmlFragments: [expectedSocialCard],
+    })).toBe('');
+  });
+
   it('does not accept an unrelated successful HTML response', () => {
     expect(frontendShellReadinessError({
       html: '<!doctype html><main>Coming soon</main>',

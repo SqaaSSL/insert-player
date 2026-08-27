@@ -214,6 +214,9 @@ async function main() {
       cspHeader: res.headers.get('Content-Security-Policy') ?? '',
       expectedClerkOrigin,
       expectedAssetPath,
+      expectedHtmlFragments: isSandbox
+        ? []
+        : [`property="og:image" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`],
     }),
   });
   assert(home.res.headers.get('X-Content-Type-Options') === 'nosniff', 'Frontend shell missing nosniff header');

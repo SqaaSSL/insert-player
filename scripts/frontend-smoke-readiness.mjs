@@ -27,12 +27,18 @@ export function frontendShellReadinessError({
   cspHeader,
   expectedClerkOrigin,
   expectedAssetPath = '',
+  expectedHtmlFragments = [],
 }) {
   if (!html.includes('<div id="app"></div>')) {
     return 'the current response is not the app shell';
   }
   if (expectedAssetPath && !html.includes(`src="${expectedAssetPath}"`)) {
     return `the app shell does not reference deployed asset ${expectedAssetPath}`;
+  }
+  for (const fragment of expectedHtmlFragments) {
+    if (fragment && !html.includes(fragment)) {
+      return `the app shell is missing release marker ${fragment}`;
+    }
   }
   if (!cspHeader) {
     return 'the current response has no Content Security Policy';
