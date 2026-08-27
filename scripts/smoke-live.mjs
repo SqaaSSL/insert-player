@@ -168,7 +168,12 @@ function assertCommunityOwner(owner, label) {
   assert(!Object.hasOwn(owner, 'avatarUrl'), `${label} exposed the Clerk profile photo`);
 }
 
-function assertOpaqueCommunityAssets(fighter, label) {
+function assertOpaqueCommunityAssets(fighter, label, options = {}) {
+  // Official Arcade fighters are operator-owned parody assets: their RAW
+  // sheets may be published for the high-density gallery preview, but only
+  // through the opaque revisioned arcade route. User/community fighters must
+  // never expose RAW anything.
+  const allowArcadeRawSprites = options.allowArcadeRawSprites ?? false;
   const urls = [
     fighter?.sources?.side,
     fighter?.sources?.upright,
@@ -181,10 +186,24 @@ function assertOpaqueCommunityAssets(fighter, label) {
       .every((value) => value === null),
     `${label} exposed a RAW source view`,
   );
-  assert(
-    (fighter?.sprites ?? []).every((sprite) => sprite?.rawUrl === null),
-    `${label} exposed a RAW sprite URL`,
-  );
+  if (allowArcadeRawSprites) {
+    for (const sprite of fighter?.sprites ?? []) {
+      if (sprite?.rawUrl === null || sprite?.rawUrl === undefined) continue;
+      const rawPath = new URL(sprite.rawUrl).pathname;
+      assert(
+        rawPath.startsWith(`/public-assets/arcade/${encodeURIComponent(fighter.id)}/sprites/`) &&
+          rawPath.includes('/raw/'),
+        `${label} RAW sprite URL is not the opaque arcade raw route`,
+      );
+      assert(!rawPath.includes('/users/'), `${label} RAW sprite URL exposed an owner-scoped R2 path`);
+      assert(!/user_[A-Za-z0-9]+/.test(rawPath), `${label} RAW sprite URL exposed a Clerk user id`);
+    }
+  } else {
+    assert(
+      (fighter?.sprites ?? []).every((sprite) => sprite?.rawUrl === null),
+      `${label} exposed a RAW sprite URL`,
+    );
+  }
   for (const assetUrl of urls) {
     const parsed = new URL(assetUrl);
     assert(
@@ -491,7 +510,7 @@ async function runPublicSmoke() {
     assert(!Object.hasOwn(fighter, 'ownerUserId'), 'Official Arcade exposed ownerUserId');
     assert(!Object.hasOwn(fighter, 'photoHash'), 'Official Arcade exposed photoHash');
     assertCommunityOwner(fighter.owner, 'Official Arcade');
-    assertOpaqueCommunityAssets(fighter, 'Official Arcade');
+    assertOpaqueCommunityAssets(fighter, 'Official Arcade', { allowArcadeRawSprites: true });
     assert(typeof fighter.arcade?.slug === 'string' && fighter.arcade.slug, 'Official Arcade fighter is missing its slug');
     assert(Number(fighter.arcade?.rank) > previousRank, 'Official Arcade fighters are not in stable rank order');
     assert(typeof fighter.arcade?.challengerLine === 'string', 'Official Arcade fighter is missing its challenger line');
