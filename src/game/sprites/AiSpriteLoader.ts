@@ -114,6 +114,7 @@ export async function loadAiSprites(
     .map(([state]) => state as FighterState);
 
   let fallbackFillCount = 0;
+  const denseTransforms = new Map<string, AtlasFrameTransform>();
   for (const state of stateOrder) {
     const row = layout.stateRow[state];
     const targetFrameCount = layout.frameCounts[state];
@@ -150,15 +151,21 @@ export async function loadAiSprites(
         animationFormat: sprite.animationFormat,
       },
     );
-    const contentBox = sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT
-      ? null
-      : findUnionBBox(frames, srcW, srcH);
-    const transform = calculateAtlasFrameTransform(
-      srcW,
-      srcH,
-      contentBox,
-      sprite.animationFormat,
-    );
+    const denseSource = sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT;
+    let transform = denseSource ? denseTransforms.get(animName) : undefined;
+    if (!transform) {
+      // Dense video sheets preserve the provider's whole 192x256 canvas. Their
+      // transparent padding varies between actions, so drawing that whole canvas
+      // makes otherwise valid fighters change apparent size. Normalize one union
+      // box for the complete source animation: every frame receives the same
+      // transform, fallbacks stay consistent with their source action, and motion
+      // inside the cell is preserved without frame-by-frame zoom pumping.
+      const contentBox = denseSource
+        ? findAlphaUnionBBox(extractedFrames, srcW, srcH)
+        : findUnionBBox(frames, srcW, srcH);
+      transform = calculateAtlasFrameTransform(srcW, srcH, contentBox);
+      if (denseSource) denseTransforms.set(animName, transform);
+    }
 
     for (let f = 0; f < targetFrameCount; f++) {
       const dstX = f * FIGHTER_WIDTH;
@@ -315,7 +322,7 @@ function extractFrames(
   return frames;
 }
 
-interface BBox { x: number; y: number; w: number; h: number }
+export interface BBox { x: number; y: number; w: number; h: number }
 
 export interface AtlasFrameTransform {
   source: BBox;
@@ -326,11 +333,8 @@ export function calculateAtlasFrameTransform(
   sourceWidth: number,
   sourceHeight: number,
   contentBox: BBox | null,
-  animationFormat: SpriteAnimationFormat | undefined,
 ): AtlasFrameTransform {
-  const source = animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT
-    ? { x: 0, y: 0, w: sourceWidth, h: sourceHeight }
-    : contentBox ?? { x: 0, y: 0, w: sourceWidth, h: sourceHeight };
+  const source = contentBox ?? { x: 0, y: 0, w: sourceWidth, h: sourceHeight };
   const scale = Math.min(FIGHTER_WIDTH / source.w, FIGHTER_HEIGHT / source.h);
   const drawWidth = Math.round(source.w * scale);
   const drawHeight = Math.round(source.h * scale);
@@ -463,6 +467,64 @@ function findUnionBBox(frames: HTMLCanvasElement[], frameW: number, frameH: numb
   maxY = Math.min(frameH - 1, maxY + marginY);
 
   return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+function findAlphaUnionBBox(
+  frames: HTMLCanvasElement[],
+  frameW: number,
+  frameH: number,
+): BBox | null {
+  let minX = frameW;
+  let minY = frameH;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (const frame of frames) {
+    const data = frame.getContext('2d')!.getImageData(0, 0, frameW, frameH).data;
+    const bounds = measureAlphaBBox(data, frameW, frameH);
+    if (!bounds) continue;
+    minX = Math.min(minX, bounds.x);
+    minY = Math.min(minY, bounds.y);
+    maxX = Math.max(maxX, bounds.x + bounds.w - 1);
+    maxY = Math.max(maxY, bounds.y + bounds.h - 1);
+  }
+
+  if (maxX < minX || maxY < minY) return null;
+
+  const marginX = Math.round(frameW * 0.04);
+  const marginY = Math.round(frameH * 0.04);
+  minX = Math.max(0, minX - marginX);
+  minY = Math.max(0, minY - marginY);
+  maxX = Math.min(frameW - 1, maxX + marginX);
+  maxY = Math.min(frameH - 1, maxY + marginY);
+
+  return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+export function measureAlphaBBox(
+  data: Uint8ClampedArray,
+  frameW: number,
+  frameH: number,
+): BBox | null {
+  let minX = frameW;
+  let minY = frameH;
+  let maxX = -1;
+  let maxY = -1;
+  const alphaThreshold = 32;
+
+  for (let y = 0; y < frameH; y++) {
+    for (let x = 0; x < frameW; x++) {
+      if (data[(y * frameW + x) * 4 + 3] < alphaThreshold) continue;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  return maxX < minX || maxY < minY
+    ? null
+    : { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
 }
 
 function getFrameBBox(frame: HTMLCanvasElement, frameW: number, frameH: number): BBox | null {

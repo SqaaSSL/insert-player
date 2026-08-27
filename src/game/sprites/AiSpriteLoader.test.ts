@@ -4,7 +4,11 @@ import { FighterState } from '../constants.ts';
 vi.mock('phaser', () => ({ default: {} }));
 vi.mock('../../services/SpriteCache.ts', () => ({ getAllSpritesForHash: vi.fn() }));
 
-import { calculateAtlasFrameTransform, selectSourceFramesForAtlas } from './AiSpriteLoader.ts';
+import {
+  calculateAtlasFrameTransform,
+  measureAlphaBBox,
+  selectSourceFramesForAtlas,
+} from './AiSpriteLoader.ts';
 import { getAnimationRuntimeProfile, getHighKickRuntimeProfile } from './SpriteGenerator.ts';
 
 describe('AI sprite loader high-kick frame selection', () => {
@@ -93,25 +97,48 @@ describe('AI sprite loader high-kick frame selection', () => {
     )).toEqual(['ko-11', 'ko-11']);
   });
 
-  it('keeps one common canvas transform across dense standing, crouch, and low attacks', () => {
-    const contentBoxes = [
-      { x: 110, y: 90, w: 540, h: 880 },
-      { x: 120, y: 410, w: 530, h: 550 },
-      { x: 70, y: 430, w: 650, h: 500 },
-    ];
-    const transforms = contentBoxes.map((contentBox) => calculateAtlasFrameTransform(
-      768,
-      1024,
-      contentBox,
-      'video-dense-v1',
-    ));
+  it('normalizes one animation union to the fighter cell and keeps it ground anchored', () => {
+    expect(calculateAtlasFrameTransform(
+      192,
+      256,
+      { x: 55, y: 35, w: 82, h: 205 },
+    )).toEqual({
+      source: { x: 55, y: 35, w: 82, h: 205 },
+      destination: { x: 45, y: 0, w: 102, h: 256 },
+    });
+  });
 
-    expect(new Set(transforms.map((transform) => JSON.stringify(transform))).size).toBe(1);
-    expect(transforms[0]).toEqual({
-      source: { x: 0, y: 0, w: 768, h: 1024 },
+  it('fits wide action unions without clipping and still anchors them to the floor', () => {
+    const transform = calculateAtlasFrameTransform(
+      192,
+      256,
+      { x: 18, y: 52, w: 158, h: 189 },
+    );
+
+    expect(transform.destination).toEqual({ x: 0, y: 26, w: 192, h: 230 });
+    expect(transform.destination.x).toBeGreaterThanOrEqual(0);
+    expect(transform.destination.y).toBeGreaterThanOrEqual(0);
+    expect(transform.destination.x + transform.destination.w).toBeLessThanOrEqual(192);
+    expect(transform.destination.y + transform.destination.h).toBe(256);
+  });
+
+  it('falls back to the full canvas when an animation has no measurable content', () => {
+    expect(calculateAtlasFrameTransform(192, 256, null)).toEqual({
+      source: { x: 0, y: 0, w: 192, h: 256 },
       destination: { x: 0, y: 0, w: 192, h: 256 },
     });
-    expect(calculateAtlasFrameTransform(768, 1024, contentBoxes[1], 'legacy'))
-      .not.toEqual(transforms[1]);
+  });
+
+  it('measures black fighter pixels by alpha and ignores translucent specks', () => {
+    const pixels = new Uint8ClampedArray(4 * 4 * 4);
+    pixels[(1 * 4 + 1) * 4 + 3] = 255;
+    pixels[(2 * 4 + 2) * 4] = 240;
+    pixels[(2 * 4 + 2) * 4 + 1] = 240;
+    pixels[(2 * 4 + 2) * 4 + 2] = 240;
+    pixels[(2 * 4 + 2) * 4 + 3] = 32;
+    pixels[(3 * 4 + 3) * 4 + 3] = 31;
+
+    expect(measureAlphaBBox(pixels, 4, 4)).toEqual({ x: 1, y: 1, w: 2, h: 2 });
+    expect(measureAlphaBBox(new Uint8ClampedArray(4 * 4 * 4), 4, 4)).toBeNull();
   });
 });
