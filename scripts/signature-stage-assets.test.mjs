@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const assetDirectory = join(root, 'public/assets/stages/signature');
 const expectedFiles = [
-  'executive-rumble-v1.png',
+  'executive-rumble-v2.png',
   'la-jaula-304-v1.png',
   'mars-incorporated-v1.png',
   'tablao-3000-v1.png',
