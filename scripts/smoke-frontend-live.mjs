@@ -64,7 +64,12 @@ const expectedApiOrigin = isSandbox
   ? 'https://insert-player-api-sandbox.shellbot.workers.dev'
   : 'https://api.insertplayer.ai';
 const expectedAppName = envValue(env, 'ASF_PUBLIC_APP_NAME') || envValue(env, 'VITE_PUBLIC_APP_NAME') || 'Insert Player';
-const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card.png';
+const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v7.jpg';
+const expectedSocialCardMime = /\.jpe?g(?:$|[?#])/i.test(expectedSocialCardPath)
+  ? 'image/jpeg'
+  : /\.webp(?:$|[?#])/i.test(expectedSocialCardPath)
+    ? 'image/webp'
+    : 'image/png';
 const expectedAssetPath = envValue(env, 'ASF_EXPECTED_FRONTEND_ASSET_PATH');
 const assetProbeNonce = envValue(env, 'ASF_FRONTEND_ASSET_PROBE_NONCE');
 const FETCH_TIMEOUT_MS = parsePositiveTimeoutMs(
@@ -138,13 +143,18 @@ function isTransientFrontendStatus(status) {
   return [404, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(status);
 }
 
-async function waitForFrontendText(label, pathOrUrl, { readinessError } = {}) {
-  const target = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : url(pathOrUrl);
+async function waitForFrontendText(label, pathOrUrl, { readinessError, targetForAttempt } = {}) {
+  const canonicalTarget = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : url(pathOrUrl);
   const started = Date.now();
   let lastError = null;
+  let lastTarget = canonicalTarget;
+  let attempt = 0;
 
   while (Date.now() - started <= FRONTEND_READY_TIMEOUT_MS) {
     try {
+      const attemptTarget = targetForAttempt?.(attempt) ?? canonicalTarget;
+      const target = /^https?:\/\//i.test(attemptTarget) ? attemptTarget : url(attemptTarget);
+      lastTarget = target;
       const res = await fetchWithTimeout(label, target);
       if (res.ok) {
         const candidate = {
@@ -162,6 +172,7 @@ async function waitForFrontendText(label, pathOrUrl, { readinessError } = {}) {
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
     }
+    attempt += 1;
     const elapsed = Date.now() - started;
     const remaining = FRONTEND_READY_TIMEOUT_MS - elapsed;
     if (remaining <= 0) break;
@@ -170,7 +181,7 @@ async function waitForFrontendText(label, pathOrUrl, { readinessError } = {}) {
 
   const waitedSeconds = Math.round((Date.now() - started) / 1000);
   const detail = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`${label} did not become ready after ${waitedSeconds}s at ${target}: ${detail}`);
+  throw new Error(`${label} did not become ready after ${waitedSeconds}s at ${canonicalTarget} (last probe ${lastTarget}): ${detail}`);
 }
 
 function extractAssetPaths(html) {
@@ -214,6 +225,13 @@ async function main() {
       cspHeader: res.headers.get('Content-Security-Policy') ?? '',
       expectedClerkOrigin,
       expectedAssetPath,
+      expectedHtmlFragments: isSandbox
+        ? []
+        : [
+            `property="og:image" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`,
+            `property="og:image:secure_url" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`,
+            `property="og:image:type" content="${expectedSocialCardMime}"`,
+          ],
     }),
   });
   assert(home.res.headers.get('X-Content-Type-Options') === 'nosniff', 'Frontend shell missing nosniff header');
@@ -276,9 +294,18 @@ async function main() {
   if (isSandbox) {
     assert(home.text.includes('property="og:image"'), 'Home HTML missing social preview image metadata');
   } else {
+    const expectedSocialCardUrl = absoluteFrontendUrl(expectedSocialCardPath);
     assert(
-      home.text.includes(`property="og:image" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`),
+      home.text.includes(`property="og:image" content="${expectedSocialCardUrl}"`),
       'Home HTML missing social preview image',
+    );
+    assert(
+      home.text.includes(`property="og:image:secure_url" content="${expectedSocialCardUrl}"`),
+      'Home HTML missing secure social preview image metadata',
+    );
+    assert(
+      home.text.includes(`property="og:image:type" content="${expectedSocialCardMime}"`),
+      'Home HTML missing social preview image MIME metadata',
     );
   }
   assert(home.text.includes('name="twitter:card" content="summary_large_image"'), 'Home HTML missing large Twitter/X card metadata');
@@ -293,7 +320,12 @@ async function main() {
   assert((manifestJson.icons ?? []).some((icon) => icon.src === '/assets/app-icon-512.png'), 'Manifest missing 512px app icon');
   const socialCard = await fetchWithTimeout('social card image', url(expectedSocialCardPath));
   assert(socialCard.ok, 'Social card image is not reachable');
-  assert((socialCard.headers.get('Content-Type') ?? '').includes('image/'), 'Social card is not served as an image');
+  assert(
+    (socialCard.headers.get('Content-Type') ?? '').includes(expectedSocialCardMime),
+    `Social card is not served as ${expectedSocialCardMime}`,
+  );
+  const socialCardBytes = (await socialCard.arrayBuffer()).byteLength;
+  assert(socialCardBytes <= 300_000, `Social card is too large for reliable unfurls (${socialCardBytes} bytes)`);
   log('frontend exposes launch metadata, manifest, and social card assets');
 
   const robots = await fetchText('robots policy', '/robots.txt');
@@ -329,8 +361,13 @@ async function main() {
   }
   const jsTexts = [];
   for (const assetPath of assetPaths.filter((path) => path.endsWith('.js'))) {
-    const assetProbeUrl = frontendAssetProbeUrl(frontendUrl, assetPath, assetProbeNonce);
-    const asset = await waitForFrontendText(`frontend asset ${assetPath}`, assetProbeUrl, {
+    const asset = await waitForFrontendText(`frontend asset ${assetPath}`, assetPath, {
+      // Pages can cache the SPA fallback for a not-yet-propagated hashed asset
+      // with the asset's immutable headers, so every propagation retry needs a
+      // fresh cache key. The later canonical smoke has no nonce and stays exact.
+      targetForAttempt: assetProbeNonce
+        ? (attempt) => frontendAssetProbeUrl(frontendUrl, assetPath, assetProbeNonce, attempt)
+        : undefined,
       readinessError: ({ res }) => {
         const contentType = res.headers.get('Content-Type') ?? '';
         if (!/javascript/i.test(contentType)) return `expected JavaScript, got ${contentType || 'no content type'}`;

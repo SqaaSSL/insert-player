@@ -34,16 +34,6 @@ describe('Gemini request policy', () => {
     expect(error.retryAfterMs).toBe(12_250);
   });
 
-  it('does not retry hard provider budgets', () => {
-    const error = geminiErrorFromResponse(
-      'gemini-3-pro-image',
-      new Response(null, { status: 503, headers: { 'Retry-After': '86400' } }),
-      JSON.stringify({ code: 'provider_monthly_budget_exhausted', error: 'Capacity exhausted' }),
-    );
-
-    expect(error.retryable).toBe(false);
-  });
-
   it('recognizes the structured per-model daily quota and preserves its reset delay', () => {
     const error = geminiErrorFromResponse(
       'gemini-3-pro-image',
@@ -73,6 +63,36 @@ describe('Gemini request policy', () => {
       dailyQuotaExhausted: true,
       retryAfterMs: 85_783_000,
     });
+  });
+
+  it.each(['daily_cap_exceeded', 'monthly_cap_exceeded'])(
+    'does not retry a Meterkey %s cap rejection',
+    (code) => {
+      const error = geminiErrorFromResponse(
+        'gemini-3-pro-image',
+        new Response(null, { status: 429, headers: { 'Retry-After': '3600' } }),
+        JSON.stringify({ error: { code, message: 'request rejected before provider dispatch' } }),
+        0,
+      );
+
+      expect(error).toMatchObject({ code, retryable: false, retryAfterMs: 3_600_000 });
+    },
+  );
+
+  it.each([
+    ['unknown', 'provider_request_outcome_unknown'],
+    ['not-dispatched', 'provider_request_not_dispatched'],
+  ])('does not retry a Meterkey %s upstream outcome', (outcome, code) => {
+    const error = geminiErrorFromResponse(
+      'gemini-3-pro-image',
+      new Response(null, {
+        status: 503,
+        headers: { 'X-Insert-Player-Upstream-Outcome': outcome },
+      }),
+      JSON.stringify({ error: { code: 'service_unavailable', message: 'gateway failure' } }),
+    );
+
+    expect(error).toMatchObject({ code, retryable: false });
   });
 
   it('allows only the two production Gemini image models', () => {

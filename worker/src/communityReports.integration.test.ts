@@ -36,6 +36,10 @@ const SCHEMA = `
     UNIQUE(owner_user_id, photo_hash)
   );
 
+  CREATE TABLE arcade_fighters (
+    fighter_id TEXT PRIMARY KEY REFERENCES fighters(id) ON DELETE CASCADE
+  );
+
   CREATE TABLE community_reports (
     id TEXT PRIMARY KEY,
     fighter_id TEXT NOT NULL,

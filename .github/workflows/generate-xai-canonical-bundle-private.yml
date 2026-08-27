@@ -1,0 +1,548 @@
+name: Generate one private XAI canonical bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: Exact roster slug to generate
+        required: true
+        type: string
+      input_bundle_r2_key:
+        description: Private EU R2 tar.gz containing canonical-input-v1/pose and canonical-input-v1/sources
+        required: false
+        default: ''
+        type: string
+      input_bundle_sha256:
+        description: Exact lowercase SHA-256 of the private compressed input bundle
+        required: false
+        default: ''
+        type: string
+      pose_manifest_sha256:
+        description: Exact lowercase SHA-256 of canonical-input-v1/pose/pose-manifest.json
+        required: false
+        default: ''
+        type: string
+      source:
+        description: Leave empty for original three-source; use side for global SIDE or crouch for Elon/reviewed-global CROUCH
+        required: false
+        default: ''
+        type: string
+      request_version:
+        description: Leave empty for v1; exact sealed version only for an explicitly approved retry
+        required: false
+        default: ''
+        type: string
+      prompt_sha256:
+        description: Exact reviewed prompt SHA-256; required for every single-source run
+        required: false
+        default: ''
+        type: string
+      confirmation:
+        description: Enter GENERATE_XAI_CANONICAL_BUNDLE_PRIVATE_V1
+        required: false
+        default: ''
+        type: string
+      private_confirmation:
+        description: Enter PRIVATE_ARTIFACTS_ONLY_HUMAN_REVIEW
+        required: false
+        default: ''
+        type: string
+      max_cost_usd:
+        description: Enter the exact maximum paid bundle cost 0.36
+        required: false
+        default: ''
+        type: string
+      resume_run_id:
+        description: Optional prior run ID containing the immutable private checkpoint
+        required: false
+        default: ''
+        type: string
+      reclean_bundle_run_id:
+        description: Completed run ID whose exact private bundle artifact must be re-cleaned offline
+        required: false
+        default: ''
+        type: string
+      reviewed_descriptor_sha256:
+        description: Exact lowercase SHA-256 recorded inside the old reviewed descriptor
+        required: false
+        default: ''
+        type: string
+      reclean_confirmation:
+        description: Enter RECLEAN_XAI_CANONICAL_BUNDLE_OFFLINE_V1 for zero-provider recovery
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: xai-canonical-bundle-${{ inputs.slug }}
+  cancel-in-progress: false
+
+jobs:
+  generate-private-bundle:
+    name: At most three paid outputs into a private human-review artifact
+    if: inputs.reclean_bundle_run_id == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment: production
+    env:
+      REQUESTED_SLUG: ${{ inputs.slug }}
+      INPUT_BUNDLE_R2_KEY: ${{ inputs.input_bundle_r2_key }}
+      INPUT_BUNDLE_SHA256: ${{ inputs.input_bundle_sha256 }}
+      POSE_MANIFEST_SHA256: ${{ inputs.pose_manifest_sha256 }}
+      REQUESTED_SOURCE: ${{ inputs.source }}
+      REQUEST_VERSION: ${{ inputs.request_version }}
+      PROMPT_SHA256: ${{ inputs.prompt_sha256 }}
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      PRIVATE_CONFIRMATION: ${{ inputs.private_confirmation }}
+      MAX_COST_USD: ${{ inputs.max_cost_usd }}
+      RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+      RECLEAN_REVIEWED_DESCRIPTOR_SHA256: ${{ inputs.reviewed_descriptor_sha256 }}
+      RECLEAN_CONFIRMATION: ${{ inputs.reclean_confirmation }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
+      PIXCLI_BASE_URL: https://pixcli.hilo.cx
+
+    steps:
+      - name: Check out the reviewed generator commit
+        uses: actions/checkout@v6
+
+      - name: Validate the paid private request before any provider access
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_SLUG" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || {
+            printf '::error::Invalid roster slug.\n'
+            exit 1
+          }
+          [[ -z "$RECLEAN_REVIEWED_DESCRIPTOR_SHA256" && -z "$RECLEAN_CONFIRMATION" ]] || {
+            printf '::error::Offline re-clean inputs are mutually exclusive with paid generation.\n'
+            exit 1
+          }
+          archive_stem="$REQUESTED_SLUG"
+          if [[ -n "$REQUESTED_SOURCE" ]]; then
+            archive_stem="$REQUESTED_SLUG-$REQUESTED_SOURCE"
+          fi
+          expected_r2_key="temp/arcade-xai-canonical-inputs-v1/$REQUESTED_SLUG/$archive_stem--${INPUT_BUNDLE_SHA256:0:16}.tar.gz"
+          [[ "$INPUT_BUNDLE_R2_KEY" == "$expected_r2_key" ]] || {
+            printf '::error::The input bundle key is not sealed to the fighter, source selection, and archive hash.\n'
+            exit 1
+          }
+          [[ "$INPUT_BUNDLE_SHA256" =~ ^[a-f0-9]{64}$ && "$POSE_MANIFEST_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+            printf '::error::Exact lowercase input and pose-manifest SHA-256 values are required.\n'
+            exit 1
+          }
+          if [[ -z "$REQUESTED_SOURCE" ]]; then
+            [[ -z "$REQUEST_VERSION" ]] || {
+              printf '::error::request_version must be empty for the original three-source flow.\n'
+              exit 1
+            }
+            [[ -z "$PROMPT_SHA256" ]] || {
+              printf '::error::prompt_sha256 must be empty for the original three-source flow.\n'
+              exit 1
+            }
+            [[ "$REQUESTED_CONFIRMATION" == "GENERATE_XAI_CANONICAL_BUNDLE_PRIVATE_V1" ]] || {
+              printf '::error::The exact three-output paid confirmation is required.\n'
+              exit 1
+            }
+            [[ "$MAX_COST_USD" == "0.36" ]] || {
+              printf '::error::The explicit maximum cost must be exactly 0.36 USD.\n'
+              exit 1
+            }
+          else
+            if [[ "$REQUEST_VERSION" == "lamine-crouch-headwear-reject-v2" ]]; then
+              [[ "$REQUESTED_SLUG:$REQUESTED_SOURCE" == "lamine-yamal:crouch" \
+                && "$INPUT_BUNDLE_R2_KEY" == "temp/arcade-xai-canonical-inputs-v1/lamine-yamal/lamine-yamal-crouch--6f17ae7ad19f6695.tar.gz" \
+                && "$INPUT_BUNDLE_SHA256" == "6f17ae7ad19f6695a673b54938b1f5709e1ead790a26f20a5566083c2f0da418" \
+                && "$POSE_MANIFEST_SHA256" == "cc7ae95fbab0e2b6843b19380b611f11cc84a6dc48025fdf678b8f6c912df053" ]] || {
+                printf '::error::The Lamine CROUCH v2 retry requires the exact previously approved input archive and pose manifest.\n'
+                exit 1
+              }
+              expected_prompt_sha256="b626d61e7dd60f46b894ee1bdd26a270acd38f23e3fcfb82305692e45caaa3c0"
+              expected_confirmation="GENERATE_LAMINE_CROUCH_HEADWEAR_REJECT_RETRY_PRIVATE_V2"
+            else
+              [[ -z "$REQUEST_VERSION" ]] || {
+                printf '::error::The requested retry version is not sealed.\n'
+                exit 1
+              }
+              case "$REQUESTED_SLUG:$REQUESTED_SOURCE" in
+                elon-musk:crouch)
+                  expected_prompt_sha256="c7be4746256d2e39b39dd61ba50d4abb887742ff69ce148a36f00672e4283acb"
+                  ;;
+                rosalia:side)
+                  expected_prompt_sha256="eb0142fe810eda52e711a5e8acc58f06fa0370721be0e06cf7e45dcb612fdb78"
+                  ;;
+                ibai-llanos:side)
+                  expected_prompt_sha256="47aeadbceef3c883a26c7de9f6d925de153239d8f7d28d0ae5ce96dad17c449b"
+                  ;;
+                lamine-yamal:side)
+                  expected_prompt_sha256="27b1a65908a402f491e24b55ba1bccce97a07bc6a915356a16e65ff8c5a3be39"
+                  ;;
+                rosalia:crouch)
+                  expected_prompt_sha256="e8b11ecca2a2a1fbb958c427804631ec7eed5f901ae00bd6117a5b7f87c1cb82"
+                  ;;
+                ibai-llanos:crouch)
+                  expected_prompt_sha256="76e68a0c698326333e070bf5c3901570f994a24584fe3b65bad25b13a985becc"
+                  ;;
+                lamine-yamal:crouch)
+                  expected_prompt_sha256="800a2b5a1c1a90749490497f5b06a92707b3a35ed4784627b22b186a952224cf"
+                  ;;
+                *)
+                  printf '::error::The single-source fighter/source tuple is not sealed.\n'
+                  exit 1
+                  ;;
+              esac
+              expected_confirmation="GENERATE_XAI_CANONICAL_SOURCE_PRIVATE_V1"
+            fi
+            [[ "$PROMPT_SHA256" == "$expected_prompt_sha256" ]] || {
+              printf '::error::The exact reviewed prompt SHA-256 for this fighter/source tuple is required.\n'
+              exit 1
+            }
+            [[ "$REQUESTED_CONFIRMATION" == "$expected_confirmation" ]] || {
+              printf '::error::The exact single-output paid confirmation is required.\n'
+              exit 1
+            }
+            [[ "$MAX_COST_USD" == "0.11" ]] || {
+              printf '::error::The explicit single-output maximum cost must be exactly 0.11 USD.\n'
+              exit 1
+            }
+          fi
+          [[ "$PRIVATE_CONFIRMATION" == "PRIVATE_ARTIFACTS_ONLY_HUMAN_REVIEW" ]] || {
+            printf '::error::The exact private-only confirmation is required.\n'
+            exit 1
+          }
+          [[ -z "$RESUME_RUN_ID" || "$RESUME_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            printf '::error::resume_run_id must be empty or a positive GitHub Actions run ID.\n'
+            exit 1
+          }
+          [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$PIXCLI_API_KEY" ]] || {
+            printf '::error::Private R2 or PixCLI production secrets are unavailable.\n'
+            exit 1
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+            processor/package-lock.json
+
+      - name: Install pinned dependencies
+        run: |
+          npm ci
+          npm --prefix worker ci
+          npm --prefix processor ci
+
+      - name: Gate the exact generator and media toolchain before paid execution
+        run: |
+          npm run test:arcade:xai-canonical-bundle
+          npm run test:arcade:reviewed-xai-canonical-import
+          docker build --file Dockerfile.processor --target video-sprite-test .
+          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED=1 npm run check:production
+
+      - name: Download and verify the hash-bound private EU R2 inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xai-canonical-input.tar.gz"
+          npm exec --prefix worker -- wrangler r2 object get \
+            "insert-player-assets/$INPUT_BUNDLE_R2_KEY" \
+            --remote \
+            --jurisdiction eu \
+            --file "$archive"
+          printf '%s  %s\n' "$INPUT_BUNDLE_SHA256" "$archive" | sha256sum --check --strict
+
+      - name: Extract only the sealed regular-file input tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/xai-canonical-input.tar.gz"
+          extract_root="$RUNNER_TEMP/xai-canonical-input"
+          mkdir -p "$extract_root"
+          while IFS= read -r member; do
+            [[ -n "$member" && "$member" != /* && "$member" != *\\* ]] || {
+              printf '::error::Input archive contains an empty, absolute, or backslash path.\n'
+              exit 1
+            }
+            [[ "$member" == "canonical-input-v1" || "$member" == "canonical-input-v1/"* ]] || {
+              printf '::error::Input archive contains a member outside canonical-input-v1.\n'
+              exit 1
+            }
+            [[ "/$member/" != *"/../"* && "/$member/" != *"/./"* ]] || {
+              printf '::error::Input archive contains path traversal.\n'
+              exit 1
+            }
+          done < <(tar -tzf "$archive")
+          tar -tvzf "$archive" | awk 'substr($1, 1, 1) != "-" && substr($1, 1, 1) != "d" { exit 1 }' || {
+            printf '::error::Input archive contains a link or special file.\n'
+            exit 1
+          }
+          tar -xzf "$archive" --directory "$extract_root" --no-same-owner --no-same-permissions
+          input_root="$extract_root/canonical-input-v1"
+          [[ -f "$input_root/pose/pose-manifest.json" && -f "$input_root/sources/$REQUESTED_SLUG.png" ]] || {
+            printf '::error::Input archive is missing the exact pose manifest or licensed roster source.\n'
+            exit 1
+          }
+          printf '%s  %s\n' "$POSE_MANIFEST_SHA256" "$input_root/pose/pose-manifest.json" | sha256sum --check --strict
+          actual_sources="$(jq -c '.sources | keys | sort' "$input_root/pose/pose-manifest.json")"
+          if [[ -z "$REQUESTED_SOURCE" ]]; then
+            expected_sources='["crouch","side","upright"]'
+          else
+            expected_sources="[\"$REQUESTED_SOURCE\"]"
+          fi
+          [[ "$actual_sources" == "$expected_sources" ]] || {
+            printf '::error::The input pose manifest does not contain the exact requested source selection.\n'
+            exit 1
+          }
+          printf 'CANONICAL_INPUT_ROOT=%s\n' "$input_root" >> "$GITHUB_ENV"
+          printf 'CANONICAL_WORK_ROOT=%s\n' "$RUNNER_TEMP/xai-canonical-work" >> "$GITHUB_ENV"
+
+      - name: Restore one immutable private checkpoint
+        if: inputs.resume_run_id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prior="$(gh run view "$RESUME_RUN_ID" --repo "$GITHUB_REPOSITORY" --json databaseId,status,workflowName)"
+          [[ "$(jq -r '.databaseId' <<<"$prior")" == "$RESUME_RUN_ID" \
+            && "$(jq -r '.status' <<<"$prior")" == "completed" \
+            && "$(jq -r '.workflowName' <<<"$prior")" == "Generate one private XAI canonical bundle" ]] || {
+            printf '::error::The requested checkpoint run is not a completed exact run.\n'
+            exit 1
+          }
+          mkdir -p "$CANONICAL_WORK_ROOT"
+          gh run download "$RESUME_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-xai-canonical-bundle-checkpoint-$REQUESTED_SLUG" \
+            --dir "$CANONICAL_WORK_ROOT"
+
+      - name: Execute at most three pinned one-output calls in the exact cleanup container
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$CANONICAL_WORK_ROOT"
+          docker run --rm \
+            --env PIXCLI_API_KEY \
+            --env PIXCLI_BASE_URL \
+            --env REQUESTED_SLUG \
+            --env POSE_MANIFEST_SHA256 \
+            --env REQUESTED_SOURCE \
+            --env REQUEST_VERSION \
+            --env PROMPT_SHA256 \
+            --env REQUESTED_CONFIRMATION \
+            --env PRIVATE_CONFIRMATION \
+            --env MAX_COST_USD \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$CANONICAL_INPUT_ROOT:/input:ro" \
+            --volume "$CANONICAL_WORK_ROOT:/work" \
+            --workdir /workspace \
+            node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 \
+            bash -euo pipefail -c '
+              apt-get update
+              apt-get install -y --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1
+              ffmpeg -version | head -n 1 | grep -F "ffmpeg version 5.1.9-0+deb12u1 "
+              npm run arcade:verify:xai-canonical-cleanup -- --output=/tmp/xai-canonical-cleanup-fixture.png
+              source_args=()
+              if [[ -n "$REQUESTED_SOURCE" ]]; then
+                source_args+=("--source=$REQUESTED_SOURCE" "--prompt-sha256=$PROMPT_SHA256")
+              fi
+              if [[ -n "$REQUEST_VERSION" ]]; then
+                source_args+=("--request-version=$REQUEST_VERSION")
+              fi
+              npm run arcade:bundle:xai-canonical -- \
+                --execute \
+                --slug="$REQUESTED_SLUG" \
+                "${source_args[@]}" \
+                --confirm="$REQUESTED_CONFIRMATION" \
+                --confirm-private="$PRIVATE_CONFIRMATION" \
+                --max-cost-usd="$MAX_COST_USD" \
+                --manifest=/workspace/arcade/roster-2026.json \
+                --source-dir=/input/sources \
+                --pose-manifest=/input/pose/pose-manifest.json \
+                --pose-manifest-sha256="$POSE_MANIFEST_SHA256" \
+                --state=/work/state.json \
+                --output-dir=/work/bundle
+            '
+
+      - name: Repair private checkpoint ownership after the cleanup container
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          work_root="$RUNNER_TEMP/xai-canonical-work"
+          if [[ -e "$work_root" || -L "$work_root" ]]; then
+            [[ -d "$work_root" && ! -L "$work_root" ]] || {
+              printf '::error::Canonical work root is not a real directory.\n'
+              exit 1
+            }
+            sudo chown -R --no-dereference -- "$(id -u):$(id -g)" "$work_root"
+          fi
+
+      - name: Publish the exact private bundle for independent human review
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-xai-canonical-bundle-${{ inputs.slug }}
+          path: ${{ runner.temp }}/xai-canonical-work/bundle/
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: true
+
+      - name: Preserve the resumable private paid-call checkpoint
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-xai-canonical-bundle-checkpoint-${{ inputs.slug }}
+          path: |
+            ${{ runner.temp }}/xai-canonical-work/state.json
+            ${{ runner.temp }}/xai-canonical-work/bundle/
+          if-no-files-found: warn
+          retention-days: 30
+          include-hidden-files: true
+
+  reclean-private-bundle:
+    name: Re-clean one completed private bundle with zero provider access
+    if: inputs.reclean_bundle_run_id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      REQUESTED_SLUG: ${{ inputs.slug }}
+      REQUESTED_SOURCE: ${{ inputs.source }}
+      REQUEST_VERSION: ${{ inputs.request_version }}
+      RECLEAN_BUNDLE_RUN_ID: ${{ inputs.reclean_bundle_run_id }}
+      REVIEWED_DESCRIPTOR_SHA256: ${{ inputs.reviewed_descriptor_sha256 }}
+      RECLEAN_CONFIRMATION: ${{ inputs.reclean_confirmation }}
+      INPUT_BUNDLE_R2_KEY: ${{ inputs.input_bundle_r2_key }}
+      INPUT_BUNDLE_SHA256: ${{ inputs.input_bundle_sha256 }}
+      POSE_MANIFEST_SHA256: ${{ inputs.pose_manifest_sha256 }}
+      PROMPT_SHA256: ${{ inputs.prompt_sha256 }}
+      PAID_CONFIRMATION: ${{ inputs.confirmation }}
+      PRIVATE_CONFIRMATION: ${{ inputs.private_confirmation }}
+      MAX_COST_USD: ${{ inputs.max_cost_usd }}
+      RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+
+    steps:
+      - name: Check out the reviewed offline re-clean commit
+        uses: actions/checkout@v6
+
+      - name: Validate the zero-provider recovery request
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RECLEAN_BUNDLE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            printf '::error::reclean_bundle_run_id must be a positive completed GitHub Actions run ID.\n'
+            exit 1
+          }
+          [[ "$REVIEWED_DESCRIPTOR_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+            printf '::error::The exact old reviewed descriptor SHA-256 is required.\n'
+            exit 1
+          }
+          [[ "$RECLEAN_CONFIRMATION" == "RECLEAN_XAI_CANONICAL_BUNDLE_OFFLINE_V1" ]] || {
+            printf '::error::The exact zero-provider re-clean confirmation is required.\n'
+            exit 1
+          }
+          case "$REQUESTED_SLUG:$REQUESTED_SOURCE" in
+            elon-musk:crouch|rosalia:side|lamine-yamal:side) ;;
+            *)
+              printf '::error::Only the three explicitly reviewed recovery tuples are sealed.\n'
+              exit 1
+              ;;
+          esac
+          [[ -z "$INPUT_BUNDLE_R2_KEY" \
+            && -z "$INPUT_BUNDLE_SHA256" \
+            && -z "$POSE_MANIFEST_SHA256" \
+            && -z "$PROMPT_SHA256" \
+            && -z "$PAID_CONFIRMATION" \
+            && -z "$PRIVATE_CONFIRMATION" \
+            && -z "$MAX_COST_USD" \
+            && -z "$RESUME_RUN_ID" \
+            && -z "$REQUEST_VERSION" ]] || {
+            printf '::error::Paid generation and resume inputs must all be empty in offline re-clean mode.\n'
+            exit 1
+          }
+
+      - name: Download the exact completed private bundle artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prior="$(gh run view "$RECLEAN_BUNDLE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json databaseId,status,conclusion,workflowName)"
+          [[ "$(jq -r '.databaseId' <<<"$prior")" == "$RECLEAN_BUNDLE_RUN_ID" \
+            && "$(jq -r '.status' <<<"$prior")" == "completed" \
+            && "$(jq -r '.conclusion' <<<"$prior")" == "success" \
+            && "$(jq -r '.workflowName' <<<"$prior")" == "Generate one private XAI canonical bundle" ]] || {
+            printf '::error::The recovery source is not a successful completed run of this exact workflow.\n'
+            exit 1
+          }
+          input_root="$RUNNER_TEMP/xai-canonical-reclean-input"
+          output_root="$RUNNER_TEMP/xai-canonical-reclean-output"
+          mkdir -p "$input_root" "$output_root"
+          gh run download "$RECLEAN_BUNDLE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-xai-canonical-bundle-$REQUESTED_SLUG" \
+            --dir "$input_root"
+          [[ -f "$input_root/review-descriptor.json" \
+            && -f "$input_root/generation-state.json" \
+            && -z "$(find "$input_root" -type l -print -quit)" \
+            && -z "$(find "$input_root" ! -type d ! -type f -print -quit)" ]] || {
+            printf '::error::The downloaded private bundle tree is incomplete or unsafe.\n'
+            exit 1
+          }
+          printf 'RECLEAN_INPUT_ROOT=%s\n' "$input_root" >> "$GITHUB_ENV"
+          printf 'RECLEAN_OUTPUT_ROOT=%s\n' "$output_root" >> "$GITHUB_ENV"
+
+      - name: Build the exact pinned cleanup runtime
+        run: |
+          docker build \
+            --file Dockerfile.processor \
+            --target media-runtime \
+            --tag insert-player-xai-canonical-media-runtime:v1 \
+            .
+
+      - name: Re-clean and rebuild review evidence offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --user "$(id -u):$(id -g)" \
+            --tmpfs /tmp:rw,nosuid,nodev,noexec \
+            --volume "$GITHUB_WORKSPACE:/workspace:ro" \
+            --volume "$RECLEAN_INPUT_ROOT:/input:ro" \
+            --volume "$RECLEAN_OUTPUT_ROOT:/output" \
+            --workdir /workspace \
+            insert-player-xai-canonical-media-runtime:v1 \
+            bash -euo pipefail -c '
+              [[ -z "${PIXCLI_API_KEY+x}" && -z "${CLOUDFLARE_API_TOKEN+x}" ]]
+              ffmpeg -version | head -n 1 | grep -F "ffmpeg version 5.1.9-0+deb12u1 "
+              node scripts/verify-xai-canonical-cleanup-fixture.mjs \
+                --output=/tmp/xai-canonical-cleanup-fixture.png
+              node scripts/reclean-xai-canonical-bundle.mjs \
+                --execute \
+                --bundle-dir=/input \
+                --output-dir=/output/bundle \
+                --reviewed-descriptor-sha256="$1" \
+                --confirm=RECLEAN_XAI_CANONICAL_BUNDLE_OFFLINE_V1
+            ' -- "$REVIEWED_DESCRIPTOR_SHA256"
+
+      - name: Publish the replacement private bundle for independent human review
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-xai-canonical-bundle-${{ inputs.slug }}
+          path: ${{ runner.temp }}/xai-canonical-reclean-output/bundle/
+          if-no-files-found: error
+          retention-days: 30
+          include-hidden-files: true

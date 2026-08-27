@@ -28,6 +28,23 @@ npm run benchmark:providers:execute -- --execute --confirm-paid-benchmark=phase0
 
 Artifacts are written under `.qa/provider-benchmark/phase0-20260822-v1/`, which is ignored by Git. Re-running `execute` resumes polling or skips completed requests; it does not submit them again.
 
+## Immutable QA pose atlas
+
+The pose atlas selects the strongest preserved Nova QA or Rafa QA sequence per move. It freezes the source export, sprite version, sheet hash, playback order, and the three-reference transfer contract. The builder only reads local lossless exports and writes local review artifacts; it never calls a provider.
+
+```bash
+npm --prefix processor run qa:pose-atlas:test
+npm run arcade:qa-pose-atlas -- plan
+npm run arcade:qa-pose-atlas -- build \
+  --source=nova-qa=/absolute/path/to/extracted-nova-export \
+  --source=rafa-qa=/absolute/path/to/extracted-rafa-export \
+  --archive=nova-qa=/absolute/path/to/localhost--nova-qa--2d8fbd6e1b7feb4b.tar \
+  --archive=rafa-qa=/absolute/path/to/127.0.0.1--rafa-qa--9c0c3defc483cfc8.tar \
+  --output-dir=/absolute/path/to/new-output-directory
+```
+
+Every build refuses to overwrite an existing output directory. Review `qa-pose-atlas-review.png` before using any extracted frame in a paid canary.
+
 ## FLUX.2 Flash sequence gate
 
 The follow-up gate reuses the already generated HIGH_KICK impact frame, submits the other three unique keyframes to FLUX.2 Flash, applies four no-fallback BiRefNet cleanups, expands `0,1,2,3` to `0,1,2,3,2,1,0`, and runs the production normalization path. The original preflight guard was USD 0.048; fal's model page revealed a pricing-API mismatch, so the corrected guard is USD 0.057 under the approved USD 0.06 ceiling. The final report reconciles every request against fal's billing-events API rather than inferring cost from model response timings.

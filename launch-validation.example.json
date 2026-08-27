@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 5,
+  "schemaVersion": 6,
   "validatedAt": "2026-05-17T00:00:00.000Z",
   "legalVersion": "2026-08-23.1",
   "frontendUrl": "https://insertplayer.ai",
@@ -57,10 +57,6 @@
     "stripe_checkout_consent_tax_customer": {
       "passed": true,
       "evidence": "evidence_replace_me: Checkout stayed disabled until purchase consent, collected Stripe Terms consent, calculated tax from an inclusive EUR price, and reused the same Stripe Customer for the Clerk user."
-    },
-    "stripe_live_checkout_credit": {
-      "passed": true,
-      "evidence": "evidence_replace_me: In the isolated live Insert Player Stripe account, a real Starter purchase credited exactly 11 credits once and appeared with the expected EUR tax treatment."
     },
     "rookie_generation_commit": {
       "passed": true,

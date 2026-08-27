@@ -11,15 +11,24 @@ on:
       operation:
         description: Keep activation separate until visual QA passes
         required: true
-        default: dry-run
+        default: preflight
         type: choice
         options:
+          - preflight
           - dry-run
           - seed
           - resume
+          - activate-reviewed
           - restart-draft
+          - prepare-canary
+          - canary-side
+          - probe-side
       confirmation:
-        description: Enter GEMINI_ONLY_PRODUCTION for a billable operation
+        description: Enter GEMINI_ONLY_PRODUCTION, or ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION for activate-reviewed
+        required: false
+        type: string
+      reviewed_video_final_job_id:
+        description: Required final victory job id for activate-reviewed; rejected for every other operation
         required: false
         type: string
 
@@ -27,12 +36,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-arcade-seed
+  group: production-worker-mutations
   cancel-in-progress: false
 
 jobs:
   seed:
-    name: Gemini-only Champion draft
+    name: Champion draft or reviewed activation
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment: production
@@ -40,11 +49,14 @@ jobs:
       REQUESTED_SLUG: ${{ inputs.slug }}
       REQUESTED_OPERATION: ${{ inputs.operation }}
       REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      REVIEWED_VIDEO_FINAL_JOB_ID: ${{ inputs.reviewed_video_final_job_id }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
       ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
       ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+      ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
 
     steps:
       - name: Check out repository
@@ -57,11 +69,26 @@ jobs:
             printf '::error::Invalid Arcade fighter slug.\n'
             exit 1
           }
-          if [[ "$REQUESTED_OPERATION" != "dry-run" ]]; then
-            [[ "$REQUESTED_CONFIRMATION" == "GEMINI_ONLY_PRODUCTION" ]] || {
-              printf '::error::Billable production generation requires the exact confirmation phrase.\n'
+          if [[ "$REQUESTED_OPERATION" == "activate-reviewed" ]]; then
+            [[ "$REQUESTED_CONFIRMATION" == "ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION" ]] || {
+              printf '::error::Reviewed activation requires its exact dedicated confirmation phrase.\n'
               exit 1
             }
+            [[ "$REVIEWED_VIDEO_FINAL_JOB_ID" =~ ^[a-f0-9]{32}$ ]] || {
+              printf '::error::activate-reviewed requires the exact final victory Video job id.\n'
+              exit 1
+            }
+          elif [[ "$REQUESTED_OPERATION" != "dry-run" && "$REQUESTED_OPERATION" != "preflight" ]]; then
+            [[ "$REQUESTED_CONFIRMATION" == "GEMINI_ONLY_PRODUCTION" ]] || {
+              printf '::error::Production mutations and billable generation require the exact confirmation phrase.\n'
+              exit 1
+            }
+          fi
+          if [[ "$REQUESTED_OPERATION" != "activate-reviewed" && -n "$REVIEWED_VIDEO_FINAL_JOB_ID" ]]; then
+            printf '::error::reviewed_video_final_job_id is accepted only by activate-reviewed.\n'
+            exit 1
+          fi
+          if [[ "$REQUESTED_OPERATION" != "dry-run" ]]; then
             [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" ]] || {
               printf '::error::ASF_LAUNCH_SMOKE_CLERK_KEY is unavailable in the production environment.\n'
               exit 1
@@ -82,6 +109,47 @@ jobs:
             worker/package-lock.json
             processor/package-lock.json
 
+      - name: Pin the live Worker to this reviewed commit before activation
+        if: inputs.operation == 'activate-reviewed'
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const configured = process.env.ASF_WORKER_HEALTH_URL?.trim() ?? '';
+          const workerBase = process.env.ASF_WORKER_URL?.trim() ?? '';
+          if (workerBase !== 'https://api.insertplayer.ai') {
+            throw new Error(
+              'Reviewed production operations require exact ASF_WORKER_URL=https://api.insertplayer.ai.',
+            );
+          }
+          const expectedSha = process.env.GITHUB_SHA?.trim() ?? '';
+          const expectedTarget = workerBase ? `${workerBase}/health` : '';
+          const target = configured || expectedTarget;
+          if (!target || !expectedTarget || !/^[a-f0-9]{40}$/.test(expectedSha)) {
+            throw new Error('Worker health URL and full reviewed commit SHA are required.');
+          }
+          const url = new URL(target);
+          if (url.protocol !== 'https:' || url.toString() !== new URL(expectedTarget).toString()) {
+            throw new Error('Worker health pin must use ASF_WORKER_URL/health over HTTPS.');
+          }
+          const response = await fetch(url, {
+            redirect: 'error',
+            signal: AbortSignal.timeout(30_000),
+          });
+          if (!response.ok) throw new Error(`Worker health failed with HTTP ${response.status}.`);
+          const health = await response.json();
+          const expectedTag = new RegExp(`^prod-${expectedSha}-[1-9][0-9]*$`);
+          if (
+            health?.status !== 'ok' || health.environment !== 'production' ||
+            health.storage?.d1 !== 'bound' || health.storage?.r2 !== 'bound' ||
+            typeof health.workerVersion?.id !== 'string' || !health.workerVersion.id ||
+            typeof health.workerVersion?.tag !== 'string' ||
+            !expectedTag.test(health.workerVersion.tag)
+          ) {
+            throw new Error(`Live Worker is not the healthy production deployment for exact SHA ${expectedSha}.`);
+          }
+          console.log(`Worker health pinned to ${health.workerVersion.tag}.`);
+          NODE
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -92,6 +160,7 @@ jobs:
         run: npm --prefix processor ci
 
       - name: Prove the approved image-provider boundary
+        if: inputs.operation != 'activate-reviewed'
         shell: bash
         run: |
           [[ -f processor/scripts/assert-approved-image-providers.mjs ]] || {
@@ -101,17 +170,26 @@ jobs:
           node processor/scripts/assert-approved-image-providers.mjs
           npm --prefix processor run build
 
+      - name: Test video compiler with production FFmpeg toolchain
+        run: docker build --file Dockerfile.processor --target video-sprite-test .
+
       - name: Run production gate
+        env:
+          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"
         run: npm run check:production
 
       - name: Restore and verify the private licensed source
+        if: inputs.operation != 'preflight'
         run: npm run arcade:sources -- --target=production --slug="$REQUESTED_SLUG"
 
-      - name: Start or inspect the Champion draft
+      - name: Run the selected Champion roster operation
         shell: bash
         run: |
           seed_args=(--target=production --slug="$REQUESTED_SLUG")
           case "$REQUESTED_OPERATION" in
+            preflight)
+              seed_args+=(--preflight-only)
+              ;;
             dry-run)
               seed_args+=(--dry-run)
               ;;
@@ -121,8 +199,26 @@ jobs:
             resume)
               seed_args+=(--resume --confirm-production)
               ;;
+            activate-reviewed)
+              seed_args+=(
+                --activate-reviewed
+                --confirm-production
+                --confirm-activation="$REQUESTED_CONFIRMATION"
+                --reviewed-video-final-job-id="$REVIEWED_VIDEO_FINAL_JOB_ID"
+                --expected-deployed-sha="$GITHUB_SHA"
+              )
+              ;;
             restart-draft)
               seed_args+=(--restart-draft --confirm-production)
+              ;;
+            prepare-canary)
+              seed_args+=(--prepare-canary --confirm-production)
+              ;;
+            canary-side)
+              seed_args+=(--canary-side --confirm-production)
+              ;;
+            probe-side)
+              seed_args+=(--probe-side --confirm-production)
               ;;
             *)
               printf '::error::Unsupported Arcade seed operation.\n'

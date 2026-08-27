@@ -1,8 +1,19 @@
 import Phaser from 'phaser';
 import { FighterState, FIGHTER_WIDTH, FIGHTER_HEIGHT } from '../constants.ts';
 import { getAllSpritesForHash, type CachedSprite } from '../../services/SpriteCache.ts';
-import { getSpriteLayout } from './SpriteGenerator.ts';
+import {
+  createSpriteLayout,
+  DEFAULT_SPRITE_PRESENTATION_PROFILE,
+  getAnimationRuntimeProfile,
+  registerSpriteLayout,
+  type SpritePresentationProfile,
+  type SpriteRuntimeProfile,
+} from './SpriteGenerator.ts';
 import { debugInfo } from '../../services/DebugLog.ts';
+import {
+  VIDEO_DENSE_SPRITE_ANIMATION_FORMAT,
+  type SpriteAnimationFormat,
+} from '../../SpriteAnimationFormat.ts';
 
 const ANIM_NAME_TO_STATE: Record<string, FighterState> = {
   idle: FighterState.IDLE,
@@ -35,6 +46,23 @@ const LOOPING_STATES = new Set<FighterState>([
 
 type LoadedAnimation = { img: HTMLImageElement; sprite: CachedSprite };
 
+const DENSE_ALPHA_THRESHOLD = 32;
+const DENSE_ROOT_ALPHA_THRESHOLD = 96;
+const DENSE_CONTENT_MARGIN_RATIO = 0.04;
+const DENSE_MAX_PRESENTATION_SCALE = 1.5;
+const DENSE_UPRIGHT_TARGET_HEIGHT_RATIO = 0.90;
+const DENSE_LOW_ATTACK_TARGET_HEIGHT_RATIO = 0.75;
+// Keep the measured root slightly above the logical floor. The visible pixel
+// edge then lands roughly 3-5px above it after presentation scaling.
+const DENSE_FOOT_GAP = 6;
+
+export interface BBox { x: number; y: number; w: number; h: number }
+
+export interface DenseFramePresentationMeasurement {
+  bounds: BBox;
+  root: { x: number; y: number };
+}
+
 export async function loadAiSprites(
   scene: Phaser.Scene,
   spriteKey: string,
@@ -48,7 +76,110 @@ export async function loadAiSprites(
     spritesByAnim.set(s.animationName, s);
   }
 
-  const layout = getSpriteLayout();
+  const loadedAnims = new Map<string, LoadedAnimation>();
+
+  for (const [animName, sprite] of spritesByAnim) {
+    if (!ANIM_NAME_TO_STATE[animName]) continue;
+    const img = await blobToImage(sprite.pngBlob);
+    loadedAnims.set(animName, { img, sprite });
+    debugInfo(`[AiSpriteLoader] ${animName}: ${img.width}x${img.height}, frame ${sprite.frameWidth}x${sprite.frameHeight}, count ${sprite.frameCount}`);
+  }
+  if (loadedAnims.size === 0) return false;
+
+  const runtimeProfiles = new Map<FighterState, SpriteRuntimeProfile>();
+  const frameCountOverrides: Partial<Record<FighterState, number>> = {};
+  const playbackModeOverrides: Partial<Record<FighterState, SpriteRuntimeProfile['playbackMode']>> = {};
+  const durationTickOverrides: Partial<Record<FighterState, number>> = {};
+  const resolvedAnimationNames = new Map<FighterState, string>();
+
+  for (const state of Object.values(FighterState)) {
+    const directAnimName = stateToAnimName(state);
+    const resolved = resolveLoadedAnimationForState(state, loadedAnims);
+    if (resolved) resolvedAnimationNames.set(state, resolved.animName);
+    const usesDenseSource = resolved && (
+      resolved.animName === directAnimName ||
+      (state === FighterState.WALK_BACKWARD && resolved.animName === 'walk')
+    );
+    const profileState = state === FighterState.WALK_BACKWARD
+      ? FighterState.WALK_FORWARD
+      : state;
+    const profile = getAnimationRuntimeProfile(
+      profileState,
+      usesDenseSource ? resolved?.anim.sprite.frameCount : undefined,
+      usesDenseSource ? resolved?.anim.sprite.animationFormat : undefined,
+    );
+    runtimeProfiles.set(state, profile);
+    frameCountOverrides[state] = profile.frameCount;
+    playbackModeOverrides[state] = profile.playbackMode;
+    if (profile.durationTicks) durationTickOverrides[state] = profile.durationTicks;
+  }
+
+  // Dense sheets deliberately share one full compiler canvas. Keep those
+  // pixels untouched in the atlas and describe their visual normalization as
+  // a presentation profile instead. The profile is measured once from the
+  // native action's actual runtime-selected poses, then shared by every state
+  // that resolves to that action (for example fireball -> high_punch).
+  const extractedFramesByAnimation = new Map<string, HTMLCanvasElement[]>();
+  const densePresentationByAnimation = new Map<string, SpritePresentationProfile>();
+  for (const [animName, anim] of loadedAnims) {
+    const { img: sourceImg, sprite } = anim;
+    if (sprite.animationFormat !== VIDEO_DENSE_SPRITE_ANIMATION_FORMAT) continue;
+
+    const nativeState = ANIM_NAME_TO_STATE[animName];
+    const nativeProfile = getAnimationRuntimeProfile(
+      nativeState,
+      sprite.frameCount,
+      sprite.animationFormat,
+    );
+    const gridCols = Math.round(sourceImg.width / sprite.frameWidth);
+    const extractedFrames = extractFrames(
+      sourceImg,
+      sprite.frameWidth,
+      sprite.frameHeight,
+      sprite.frameCount,
+      gridCols,
+    );
+    extractedFramesByAnimation.set(animName, extractedFrames);
+    const stableFrames = selectStableFramesForState(
+      nativeState,
+      extractedFrames,
+      sprite.frameWidth,
+      sprite.frameHeight,
+      nativeProfile.frameCount,
+    );
+    const nativeRuntimeFrames = selectSourceFramesForAtlas(
+      nativeState,
+      stableFrames,
+      nativeProfile.frameCount,
+      nativeProfile,
+      {
+        sourceState: nativeState,
+        animationFormat: sprite.animationFormat,
+      },
+    );
+    densePresentationByAnimation.set(
+      animName,
+      calculateDensePresentationProfileFromFrames(
+        nativeRuntimeFrames,
+        sprite.frameWidth,
+        sprite.frameHeight,
+        nativeState,
+      ),
+    );
+  }
+
+  const presentationProfiles = mapPresentationProfilesByResolvedAnimation(
+    Object.values(FighterState),
+    resolvedAnimationNames,
+    densePresentationByAnimation,
+  );
+
+  const layout = createSpriteLayout(
+    frameCountOverrides,
+    playbackModeOverrides,
+    durationTickOverrides,
+    presentationProfiles,
+  );
   const cols = layout.totalColumns;
   const rows = Object.keys(layout.stateRow).length;
 
@@ -59,16 +190,6 @@ export async function loadAiSprites(
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  const loadedAnims = new Map<string, LoadedAnimation>();
-
-  for (const [animName, sprite] of spritesByAnim) {
-    if (!ANIM_NAME_TO_STATE[animName]) continue;
-    const img = await blobToImage(sprite.pngBlob);
-    loadedAnims.set(animName, { img, sprite });
-    debugInfo(`[AiSpriteLoader] ${animName}: ${img.width}x${img.height}, frame ${sprite.frameWidth}x${sprite.frameHeight}, count ${sprite.frameCount}`);
-  }
-  if (loadedAnims.size === 0) return false;
 
   const stateOrder = Object.entries(layout.stateRow)
     .sort(([, a], [, b]) => a - b)
@@ -91,33 +212,50 @@ export async function loadAiSprites(
     const srcW = sprite.frameWidth;
     const srcH = sprite.frameHeight;
     const gridCols = Math.round(sourceImg.width / srcW);
-    const gridRows = Math.round(sourceImg.height / srcH);
-
-    const extractedFrames = extractFrames(sourceImg, srcW, srcH, srcTotal, gridCols);
-    const frames = selectStableFramesForState(state, extractedFrames, srcW, srcH, targetFrameCount);
-    const sourceFrameCount = frames.length;
-    const unionBox = findUnionBBox(frames, srcW, srcH);
-
-    const cropW = unionBox.w;
-    const cropH = unionBox.h;
-
-    const scale = Math.min(FIGHTER_WIDTH / cropW, FIGHTER_HEIGHT / cropH);
-    const drawW = Math.round(cropW * scale);
-    const drawH = Math.round(cropH * scale);
+    const extractedFrames = extractedFramesByAnimation.get(animName) ??
+      extractFrames(sourceImg, srcW, srcH, srcTotal, gridCols);
+    extractedFramesByAnimation.set(animName, extractedFrames);
+    const stableFrames = selectStableFramesForState(
+      state,
+      extractedFrames,
+      srcW,
+      srcH,
+      targetFrameCount,
+    );
+    const frames = selectSourceFramesForAtlas(
+      state,
+      stableFrames,
+      targetFrameCount,
+      runtimeProfiles.get(state) ?? getAnimationRuntimeProfile(state),
+      {
+        sourceState: ANIM_NAME_TO_STATE[animName],
+        animationFormat: sprite.animationFormat,
+      },
+    );
+    const contentBox = sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT
+      ? null
+      : findUnionBBox(frames, srcW, srcH);
+    const transform = calculateAtlasFrameTransform(
+      srcW,
+      srcH,
+      contentBox,
+      sprite.animationFormat,
+    );
 
     for (let f = 0; f < targetFrameCount; f++) {
-      const srcIdx = selectSourceFrameIndex(state, f, targetFrameCount, sourceFrameCount);
-
       const dstX = f * FIGHTER_WIDTH;
       const dstY = row * FIGHTER_HEIGHT;
 
-      const offsetX = Math.round((FIGHTER_WIDTH - drawW) / 2);
-      const offsetY = FIGHTER_HEIGHT - drawH;
-
       ctx.drawImage(
-        frames[srcIdx],
-        unionBox.x, unionBox.y, cropW, cropH,
-        dstX + offsetX, dstY + offsetY, drawW, drawH,
+        frames[f],
+        transform.source.x,
+        transform.source.y,
+        transform.source.w,
+        transform.source.h,
+        dstX + transform.destination.x,
+        dstY + transform.destination.y,
+        transform.destination.w,
+        transform.destination.h,
       );
     }
   }
@@ -131,6 +269,7 @@ export async function loadAiSprites(
     frameWidth: FIGHTER_WIDTH,
     frameHeight: FIGHTER_HEIGHT,
   });
+  registerSpriteLayout(spriteKey, layout);
 
   return true;
 }
@@ -162,6 +301,40 @@ function resolveLoadedAnimationForState(
 
   const firstLoaded = loadedAnims.entries().next().value;
   return firstLoaded ? { animName: firstLoaded[0], anim: firstLoaded[1] } : null;
+}
+
+export function selectSourceFramesForAtlas<T>(
+  state: FighterState,
+  sourceFrames: T[],
+  targetFrameCount: number,
+  runtimeProfile: SpriteRuntimeProfile,
+  sourceContext?: {
+    sourceState?: FighterState;
+    animationFormat?: SpriteAnimationFormat;
+  },
+): T[] {
+  const runtimeSourceFrames = runtimeProfile.sourceFormat === 'expanded-ping-pong'
+    ? sourceFrames.slice(0, runtimeProfile.frameCount)
+    : sourceFrames;
+
+  const holdsDenseKnockdownTerminalPose =
+    state === FighterState.DEFEAT &&
+    sourceContext?.sourceState === FighterState.KNOCKDOWN &&
+    sourceContext.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT;
+  if (holdsDenseKnockdownTerminalPose && runtimeSourceFrames.length > 0) {
+    const finalFrame = runtimeSourceFrames[runtimeSourceFrames.length - 1];
+    return Array.from({ length: targetFrameCount }, () => finalFrame);
+  }
+
+  return Array.from({ length: targetFrameCount }, (_, frameIndex) => {
+    const sourceIndex = selectSourceFrameIndex(
+      state,
+      frameIndex,
+      targetFrameCount,
+      runtimeSourceFrames.length,
+    );
+    return runtimeSourceFrames[sourceIndex];
+  });
 }
 
 function selectSourceFrameIndex(
@@ -224,7 +397,166 @@ function extractFrames(
   return frames;
 }
 
-interface BBox { x: number; y: number; w: number; h: number }
+export interface AtlasFrameTransform {
+  source: BBox;
+  destination: BBox;
+}
+
+export function calculateAtlasFrameTransform(
+  sourceWidth: number,
+  sourceHeight: number,
+  contentBox: BBox | null,
+  animationFormat: SpriteAnimationFormat | undefined,
+): AtlasFrameTransform {
+  const source = animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT
+    ? { x: 0, y: 0, w: sourceWidth, h: sourceHeight }
+    : contentBox ?? { x: 0, y: 0, w: sourceWidth, h: sourceHeight };
+  const scale = Math.min(FIGHTER_WIDTH / source.w, FIGHTER_HEIGHT / source.h);
+  const drawWidth = Math.round(source.w * scale);
+  const drawHeight = Math.round(source.h * scale);
+  return {
+    source,
+    destination: {
+      x: Math.round((FIGHTER_WIDTH - drawWidth) / 2),
+      y: FIGHTER_HEIGHT - drawHeight,
+      w: drawWidth,
+      h: drawHeight,
+    },
+  };
+}
+
+export function mapPresentationProfilesByResolvedAnimation<T>(
+  states: readonly FighterState[],
+  resolvedAnimationNames: ReadonlyMap<FighterState, string>,
+  presentationByAnimation: ReadonlyMap<string, T>,
+): Partial<Record<FighterState, T>> {
+  const profiles: Partial<Record<FighterState, T>> = {};
+  for (const state of states) {
+    const animName = resolvedAnimationNames.get(state);
+    if (!animName) continue;
+    const profile = presentationByAnimation.get(animName);
+    if (profile !== undefined) profiles[state] = profile;
+  }
+  return profiles;
+}
+
+function calculateDensePresentationProfileFromFrames(
+  frames: readonly HTMLCanvasElement[],
+  frameWidth: number,
+  frameHeight: number,
+  state: FighterState,
+): SpritePresentationProfile {
+  const measurements = frames.map((frame) => {
+    const data = frame.getContext('2d')!.getImageData(0, 0, frameWidth, frameHeight).data;
+    return measureDenseFramePresentation(data, frameWidth, frameHeight);
+  });
+  return calculateDensePresentationProfile(frameWidth, frameHeight, measurements, state);
+}
+
+export function calculateDensePresentationProfile(
+  frameWidth: number,
+  frameHeight: number,
+  measurements: readonly (DenseFramePresentationMeasurement | null)[],
+  state: FighterState = FighterState.IDLE,
+): SpritePresentationProfile {
+  const measurable = measurements.filter(
+    (measurement): measurement is DenseFramePresentationMeasurement => measurement !== null,
+  );
+  if (measurable.length === 0 || frameWidth <= 0 || frameHeight <= 0) {
+    return { ...DEFAULT_SPRITE_PRESENTATION_PROFILE };
+  }
+
+  let minX = frameWidth;
+  let maxX = -1;
+  for (const { bounds } of measurable) {
+    minX = Math.min(minX, bounds.x);
+    maxX = Math.max(maxX, bounds.x + bounds.w - 1);
+  }
+
+  const marginX = Math.round(frameWidth * DENSE_CONTENT_MARGIN_RATIO);
+  minX = Math.max(0, minX - marginX);
+  maxX = Math.min(frameWidth - 1, maxX + marginX);
+
+  // Convert source metrics into the actual atlas-cell coordinate system. This
+  // also handles a future dense provider whose native frame is not 192x256.
+  const atlasTransform = calculateAtlasFrameTransform(
+    frameWidth,
+    frameHeight,
+    null,
+    VIDEO_DENSE_SPRITE_ANIMATION_FORMAT,
+  );
+  const sourceToAtlasX = atlasTransform.destination.w / frameWidth;
+  const sourceToAtlasY = atlasTransform.destination.h / frameHeight;
+  const contentWidth = (maxX - minX + 1) * sourceToAtlasX;
+  const referenceHeight = LOOPING_STATES.has(state)
+    ? median(measurable.map(({ bounds }) => bounds.h))
+    : measurable[0].bounds.h;
+  const anchorHeight = referenceHeight * sourceToAtlasY;
+  const targetHeightRatio = state === FighterState.LOW_PUNCH || state === FighterState.LOW_KICK
+    ? DENSE_LOW_ATTACK_TARGET_HEIGHT_RATIO
+    : DENSE_UPRIGHT_TARGET_HEIGHT_RATIO;
+  const fitScale = Math.min(
+    FIGHTER_WIDTH / contentWidth,
+    (FIGHTER_HEIGHT * targetHeightRatio) / anchorHeight,
+  );
+  const scale = Math.min(
+    DENSE_MAX_PRESENTATION_SCALE,
+    Math.max(1, fitScale),
+  );
+
+  // Root-registered actions use their first pose as the common compiler pivot.
+  // Using that same first measurable root as the Phaser origin means switching
+  // actions cannot translate the fighter relative to gameplay x/y. KO retains
+  // its deliberate unregistered fall relative to this opening root.
+  const anchorRoot = measurable[0].root;
+  const rootX = atlasTransform.destination.x + anchorRoot.x * sourceToAtlasX;
+  const rootY = atlasTransform.destination.y + anchorRoot.y * sourceToAtlasY;
+  return {
+    scale,
+    originX: rootX / FIGHTER_WIDTH,
+    originY: rootY / FIGHTER_HEIGHT,
+    offsetY: -DENSE_FOOT_GAP,
+  };
+}
+
+export function measureDenseFramePresentation(
+  data: Uint8ClampedArray,
+  frameWidth: number,
+  frameHeight: number,
+): DenseFramePresentationMeasurement | null {
+  const bounds = measureAlphaBBox(data, frameWidth, frameHeight);
+  if (!bounds) return null;
+
+  const maxY = bounds.y + bounds.h - 1;
+  const rootBandStart = maxY - Math.max(2, Math.floor(bounds.h * 0.10));
+  let rootWeight = 0;
+  let weightedRootX = 0;
+  let alphaWeight = 0;
+  let weightedAlphaX = 0;
+
+  for (let y = bounds.y; y <= maxY; y++) {
+    for (let x = bounds.x; x < bounds.x + bounds.w; x++) {
+      const alpha = data[(y * frameWidth + x) * 4 + 3];
+      if (alpha >= DENSE_ALPHA_THRESHOLD) {
+        alphaWeight += alpha;
+        weightedAlphaX += x * alpha;
+      }
+      if (y < rootBandStart || alpha < DENSE_ROOT_ALPHA_THRESHOLD) continue;
+      rootWeight += alpha;
+      weightedRootX += x * alpha;
+    }
+  }
+
+  return {
+    bounds,
+    root: {
+      x: rootWeight > 0
+        ? weightedRootX / rootWeight
+        : weightedAlphaX / alphaWeight,
+      y: maxY,
+    },
+  };
+}
 const FRAGMENTED_STATES = new Set([FighterState.JUMP, FighterState.HIT_STUN]);
 
 function selectStableFramesForState(
@@ -344,6 +676,31 @@ function findUnionBBox(frames: HTMLCanvasElement[], frameW: number, frameH: numb
   maxY = Math.min(frameH - 1, maxY + marginY);
 
   return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+}
+
+export function measureAlphaBBox(
+  data: Uint8ClampedArray,
+  frameW: number,
+  frameH: number,
+): BBox | null {
+  let minX = frameW;
+  let minY = frameH;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < frameH; y++) {
+    for (let x = 0; x < frameW; x++) {
+      if (data[(y * frameW + x) * 4 + 3] < DENSE_ALPHA_THRESHOLD) continue;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+
+  return maxX < minX || maxY < minY
+    ? null
+    : { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
 }
 
 function getFrameBBox(frame: HTMLCanvasElement, frameW: number, frameH: number): BBox | null {

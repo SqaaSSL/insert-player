@@ -1,4 +1,5 @@
 import {
+  clerkAuthOptionsForRequest,
   generateId,
   hasValidClerkBackendAuthBridge,
   optionalAuth,
@@ -37,7 +38,7 @@ import {
   upsertAdminArcadeFighter,
 } from './fighters';
 import { ensureSystemUser, getLeaderboard, getPlayerStats, reportMatchResult } from './leaderboard';
-import { getTempAsset, handleProxy } from './proxy';
+import { getTempAsset, handleProxy, pixcliBaseUrl } from './proxy';
 import { enforceRateLimit } from './rateLimit';
 import { createFeatureProviderSession } from './providerSessions';
 import type { AuthContext, Env, PublicAuthContext, User } from './types';
@@ -48,6 +49,7 @@ import { listCommunityReports, moderateCommunityReport } from './moderation';
 import { CURRENT_LEGAL_VERSION } from './legal';
 import { optionalGenerationJobAuth } from './generationAuth';
 import {
+  readAdminArcadeGenerationContract,
   startAdminArcadeAnimationGeneration,
   startAdminArcadeGeneration,
   startAdminArcadeSourceGeneration,
@@ -63,6 +65,15 @@ import {
   readJsonBody,
   RequestBodyTooLargeError,
 } from './requestBody';
+import { geminiTransportStatus } from './geminiTransport';
+import {
+  adjustVideoSpriteReview,
+  approveVideoSpriteReview,
+  getVideoSpriteReview,
+  getVideoSpriteReviewAsset,
+  rejectVideoSpriteReview,
+} from './videoSpriteReview';
+import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
 
 export { FighterGenerationWorkflow } from './generationWorkflow';
 export { ImageProcessorContainer } from './imageProcessorContainer';
@@ -132,10 +143,9 @@ async function authenticated(
   handler: (auth: AuthContext) => Promise<Response>,
 ): Promise<Response> {
   const isArcadeAdminSeed = request.headers.get(ARCADE_ADMIN_SEED_HEADER) === 'clerk-backend';
-  const isClerkBackendBridge = await hasValidClerkBackendAuthBridge(request, env);
-  const auth = await requireAuth(request, env, {
-    allowMissingAuthorizedParty: isArcadeAdminSeed || isClerkBackendBridge,
-  });
+  const auth = await requireAuth(request, env, await clerkAuthOptionsForRequest(request, env, {
+    allowMissingAuthorizedParty: isArcadeAdminSeed,
+  }));
   if (isResponse(auth)) return auth;
   if (isArcadeAdminSeed && auth.user.plan_tier !== 'admin') {
     return json({ error: 'Admin access required' }, 403);
@@ -168,7 +178,7 @@ async function sensitiveOptionalAuth(
     if (isResponse(auth)) return auth;
     return authAsPublicContext(auth);
   }
-  const bridgedAuth = await requireAuth(request, env, { allowMissingAuthorizedParty: true });
+  const bridgedAuth = await requireAuth(request, env, await clerkAuthOptionsForRequest(request, env));
   if (isResponse(bridgedAuth)) return bridgedAuth;
   return authAsPublicContext(bridgedAuth);
 }
@@ -210,8 +220,9 @@ async function authenticatedLimited(
 }
 
 function healthResponse(env: Env): Response {
+  const geminiTransport = geminiTransportStatus(env);
   const providerSecrets = {
-    gemini: Boolean(env.GEMINI_API_KEY),
+    gemini: geminiTransport.configured,
     fal: Boolean(env.FAL_API_KEY),
     runway: Boolean(env.RUNWAY_API_KEY),
     freepik: Boolean(env.FREEPIK_API_KEY),
@@ -230,7 +241,14 @@ function healthResponse(env: Env): Response {
 
   return json({
     status: 'ok',
-    version: '0.17.0',
+    version: '0.19.0',
+    workerVersionId: env.WORKER_VERSION_METADATA?.id ?? null,
+    workerVersion: env.WORKER_VERSION_METADATA
+      ? {
+          id: env.WORKER_VERSION_METADATA.id,
+          tag: env.WORKER_VERSION_METADATA.tag || null,
+        }
+      : null,
     legalVersion: CURRENT_LEGAL_VERSION,
     environment: env.ENVIRONMENT ?? 'unknown',
     cors: env.CORS_ORIGIN ? 'configured' : 'wildcard',
@@ -239,12 +257,10 @@ function healthResponse(env: Env): Response {
     billing: stripeLiveConfigured ? 'stripe' : stripeTestConfigured ? 'stripe_test' : 'not_configured',
     turnstile: turnstileConfigurationStatus(env),
     anonymousRookie: env.ANONYMOUS_ROOKIE_ENABLED === 'false' ? 'disabled' : 'enabled',
-    providerBudget: /^\d+$/.test(env.PROVIDER_MONTHLY_BUDGET_USD_CENTS ?? '')
-      ? 'configured'
-      : 'not_configured',
-    providerSpendRate: /^\d+$/.test(env.GEMINI_SPEND_RATE_LIMIT_USD_CENTS ?? '')
-      ? 'configured'
-      : 'not_configured',
+    providerAccounting: 'durable',
+    geminiTransport: geminiTransport.transport ?? 'invalid',
+    providerSessionLimits: 'configured',
+    providerGlobalCaps: 'disabled',
     storage: {
       d1: env.DB ? 'bound' : 'missing',
       r2: env.SPRITES ? 'bound' : 'missing',
@@ -257,6 +273,9 @@ function healthResponse(env: Env): Response {
     rateLimit: 'd1',
     privacy: anonymousIdentifiersProtected ? 'pseudonymized' : 'not_configured',
     providers: allProvidersConfigured ? 'configured' : 'partial',
+    videoCreationTransport: env.PIXCLI_API_KEY && pixcliBaseUrl(env.PIXCLI_BASE_URL)
+      ? 'configured'
+      : 'not_configured',
   });
 }
 
@@ -281,9 +300,11 @@ export default {
       if (generationAuth instanceof Response) {
         return addCors(generationAuth, request, env);
       }
-      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(request, env, {
-        allowMissingAuthorizedParty: await hasValidClerkBackendAuthBridge(request, env),
-      });
+      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(
+        request,
+        env,
+        await clerkAuthOptionsForRequest(request, env),
+      );
       const proxied = path.startsWith('/proxy/')
         ? await handleProxy(request, env, publicAuth)
         : null;
@@ -466,6 +487,19 @@ export default {
         );
       }
 
+      if (path === '/api/admin/arcade/generation-contract' && method === 'GET') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => readAdminArcadeGenerationContract(env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
       const arcadeAdminMatch = path.match(/^\/api\/admin\/arcade\/([^/]+)$/);
       if (arcadeAdminMatch && method === 'PATCH') {
         const arcadeFighterId = decodePathParam(arcadeAdminMatch[1]);
@@ -476,6 +510,26 @@ export default {
             env,
             'admin:arcade',
             (auth) => upsertAdminArcadeFighter(request, env, auth, arcadeFighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const reviewedArcadeActivationMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/activate-reviewed-video$/,
+      );
+      if (reviewedArcadeActivationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(reviewedArcadeActivationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => activateReviewedVideoArcadeFighter(
+              request, env, auth, arcadeFighterId,
+            ),
           ),
           request,
           env,
@@ -596,7 +650,7 @@ export default {
 
       if (path === '/api/generation-jobs' && method === 'GET') {
         return addCors(
-          await authenticated(request, env, (auth) => listGenerationJobs(env, auth)),
+          await authenticated(request, env, (auth) => listGenerationJobs(request, env, auth)),
           request,
           env,
         );
@@ -621,6 +675,53 @@ export default {
         if (isResponse(jobId)) return addCors(jobId, request, env);
         return addCors(
           await authenticated(request, env, (auth) => getGenerationJob(env, auth, jobId)),
+          request,
+          env,
+        );
+      }
+
+      const videoReviewMatch = path.match(/^\/api\/generation-jobs\/([^/]+)\/video-review$/);
+      if (videoReviewMatch) {
+        const jobId = decodePathParam(videoReviewMatch[1]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        if (method === 'GET') {
+          return addCors(await authenticated(
+            request,
+            env,
+            (auth) => getVideoSpriteReview(request, env, auth, jobId),
+          ), request, env);
+        }
+      }
+
+      const videoReviewDecisionMatch = path.match(
+        /^\/api\/generation-jobs\/([^/]+)\/video-review\/(approve|reject|adjust)$/,
+      );
+      if (videoReviewDecisionMatch && method === 'POST') {
+        const jobId = decodePathParam(videoReviewDecisionMatch[1]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        const decision = videoReviewDecisionMatch[2];
+        return addCors(await authenticatedLimited(
+          request,
+          env,
+          'generation:video-review',
+          (auth) => decision === 'approve'
+            ? approveVideoSpriteReview(request, env, auth, jobId)
+            : decision === 'reject'
+              ? rejectVideoSpriteReview(request, env, auth, jobId)
+              : adjustVideoSpriteReview(request, env, auth, jobId),
+        ), request, env);
+      }
+
+      const videoReviewAssetMatch = path.match(
+        /^\/api\/generation-jobs\/([^/]+)\/video-review\/assets\/([^/]+)$/,
+      );
+      if (videoReviewAssetMatch && method === 'GET') {
+        const jobId = decodePathParam(videoReviewAssetMatch[1]);
+        const kind = decodePathParam(videoReviewAssetMatch[2]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        if (isResponse(kind)) return addCors(kind, request, env);
+        return addCors(
+          await authenticated(request, env, (auth) => getVideoSpriteReviewAsset(request, env, auth, jobId, kind)),
           request,
           env,
         );

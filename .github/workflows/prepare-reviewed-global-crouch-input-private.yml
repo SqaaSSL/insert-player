@@ -1,0 +1,284 @@
+name: Prepare reviewed global CROUCH input privately
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: Exact approved global roster slug
+        required: true
+        type: string
+      side_bundle_run_id:
+        description: Successful one-call SIDE workflow run reviewed by a human
+        required: true
+        type: string
+      reviewed_side_descriptor_sha256:
+        description: Exact reviewed SIDE descriptor SHA-256
+        required: true
+        type: string
+      identity_input_bundle_r2_key:
+        description: Exact private global SIDE input archive containing the licensed original
+        required: true
+        type: string
+      identity_input_bundle_sha256:
+        description: Exact SHA-256 of the private global SIDE input archive
+        required: true
+        type: string
+      pose_input_bundle_r2_key:
+        description: Exact private Elon CROUCH input archive containing reviewed Trump crouch
+        required: true
+        type: string
+      pose_input_bundle_sha256:
+        description: Exact SHA-256 of the private Trump crouch input archive
+        required: true
+        type: string
+      pose_manifest_sha256:
+        description: Exact SHA-256 of the Trump crouch pose manifest inside that archive
+        required: true
+        type: string
+      side_review_decision:
+        description: Enter APPROVE_REVIEWED_GLOBAL_SIDE_FOR_CROUCH_V1 after human review
+        required: true
+        type: string
+      confirmation:
+        description: Enter PREPARE_GLOBAL_CROUCH_FROM_REVIEWED_SIDE_PRIVATE_V1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: prepare-reviewed-global-crouch-${{ inputs.slug }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-private-input:
+    name: Bind reviewed SIDE raw to one private CROUCH input without provider access
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      REQUESTED_SLUG: ${{ inputs.slug }}
+      SIDE_BUNDLE_RUN_ID: ${{ inputs.side_bundle_run_id }}
+      REVIEWED_SIDE_DESCRIPTOR_SHA256: ${{ inputs.reviewed_side_descriptor_sha256 }}
+      IDENTITY_INPUT_BUNDLE_R2_KEY: ${{ inputs.identity_input_bundle_r2_key }}
+      IDENTITY_INPUT_BUNDLE_SHA256: ${{ inputs.identity_input_bundle_sha256 }}
+      POSE_INPUT_BUNDLE_R2_KEY: ${{ inputs.pose_input_bundle_r2_key }}
+      POSE_INPUT_BUNDLE_SHA256: ${{ inputs.pose_input_bundle_sha256 }}
+      POSE_MANIFEST_SHA256: ${{ inputs.pose_manifest_sha256 }}
+      SIDE_REVIEW_DECISION: ${{ inputs.side_review_decision }}
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+
+    steps:
+      - name: Validate the explicit private source-only request
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$REQUESTED_SLUG" in
+            rosalia|ibai-llanos|lamine-yamal) ;;
+            *)
+              printf '::error::The global CROUCH input path is not sealed for this slug.\n'
+              exit 1
+              ;;
+          esac
+          [[ "$SIDE_BUNDLE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            printf '::error::A positive SIDE bundle run id is required.\n'
+            exit 1
+          }
+          for value in \
+            "$REVIEWED_SIDE_DESCRIPTOR_SHA256" \
+            "$IDENTITY_INPUT_BUNDLE_SHA256" \
+            "$POSE_INPUT_BUNDLE_SHA256" \
+            "$POSE_MANIFEST_SHA256"; do
+            [[ "$value" =~ ^[a-f0-9]{64}$ ]] || {
+              printf '::error::Every reviewed input requires an exact lowercase SHA-256.\n'
+              exit 1
+            }
+          done
+          expected_identity_key="temp/arcade-xai-canonical-inputs-v1/$REQUESTED_SLUG/$REQUESTED_SLUG-side--${IDENTITY_INPUT_BUNDLE_SHA256:0:16}.tar.gz"
+          [[ "$IDENTITY_INPUT_BUNDLE_R2_KEY" == "$expected_identity_key" ]] || {
+            printf '::error::Licensed identity archive key is not bound to this fighter and hash.\n'
+            exit 1
+          }
+          expected_pose_key="temp/arcade-xai-canonical-inputs-v1/elon-musk/elon-musk-crouch--${POSE_INPUT_BUNDLE_SHA256:0:16}.tar.gz"
+          [[ "$POSE_INPUT_BUNDLE_R2_KEY" == "$expected_pose_key" ]] || {
+            printf '::error::Trump crouch pose archive key is not the sealed Elon CROUCH input.\n'
+            exit 1
+          }
+          [[ "$SIDE_REVIEW_DECISION" == "APPROVE_REVIEWED_GLOBAL_SIDE_FOR_CROUCH_V1" ]] || {
+            printf '::error::The exact human SIDE review decision is required.\n'
+            exit 1
+          }
+          [[ "$REQUESTED_CONFIRMATION" == "PREPARE_GLOBAL_CROUCH_FROM_REVIEWED_SIDE_PRIVATE_V1" ]] || {
+            printf '::error::The exact private CROUCH input confirmation is required.\n'
+            exit 1
+          }
+          [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]] || {
+            printf '::error::Private EU R2 credentials are unavailable.\n'
+            exit 1
+          }
+
+      - name: Check out the reviewed source-only code
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+
+      - name: Install pinned dependencies and gate the packaging contracts
+        run: |
+          npm ci
+          npm --prefix worker ci
+          npm run test:arcade:xai-canonical-bundle
+          npm run test:arcade:reviewed-global-mixed
+
+      - name: Download the exact successful reviewed SIDE artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh run view "$SIDE_BUNDLE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json databaseId,status,conclusion,workflowName)"
+          [[ "$(jq -r '.databaseId' <<<"$run_json")" == "$SIDE_BUNDLE_RUN_ID" \
+            && "$(jq -r '.status' <<<"$run_json")" == "completed" \
+            && "$(jq -r '.conclusion' <<<"$run_json")" == "success" \
+            && "$(jq -r '.workflowName' <<<"$run_json")" == "Generate one private XAI canonical bundle" ]] || {
+            printf '::error::The reviewed SIDE run is not the exact successful run.\n'
+            exit 1
+          }
+          side_dir="$RUNNER_TEMP/reviewed-side-bundle"
+          mkdir -p "$side_dir"
+          gh run download "$SIDE_BUNDLE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-xai-canonical-bundle-$REQUESTED_SLUG" \
+            --dir "$side_dir"
+          [[ -f "$side_dir/review-descriptor.json" && -f "$side_dir/generation-state.json" ]] || {
+            printf '::error::The reviewed SIDE artifact is incomplete.\n'
+            exit 1
+          }
+          [[ "$(jq -r '.descriptorSha256' "$side_dir/review-descriptor.json")" == "$REVIEWED_SIDE_DESCRIPTOR_SHA256" ]] || {
+            printf '::error::The downloaded SIDE descriptor does not match the explicit human review seal.\n'
+            exit 1
+          }
+          printf 'SIDE_BUNDLE_DIRECTORY=%s\n' "$side_dir" >> "$GITHUB_ENV"
+
+      - name: Download the two hash-bound private EU R2 input archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity_archive="$RUNNER_TEMP/identity-input.tar.gz"
+          pose_archive="$RUNNER_TEMP/pose-input.tar.gz"
+          npm exec --prefix worker -- wrangler r2 object get \
+            "insert-player-assets/$IDENTITY_INPUT_BUNDLE_R2_KEY" \
+            --remote --jurisdiction eu --file "$identity_archive"
+          npm exec --prefix worker -- wrangler r2 object get \
+            "insert-player-assets/$POSE_INPUT_BUNDLE_R2_KEY" \
+            --remote --jurisdiction eu --file "$pose_archive"
+          printf '%s  %s\n' "$IDENTITY_INPUT_BUNDLE_SHA256" "$identity_archive" | sha256sum --check --strict
+          printf '%s  %s\n' "$POSE_INPUT_BUNDLE_SHA256" "$pose_archive" | sha256sum --check --strict
+
+      - name: Extract only regular canonical-input-v1 files
+        shell: bash
+        run: |
+          set -euo pipefail
+          extract_canonical() {
+            local archive="$1"
+            local destination="$2"
+            mkdir -p "$destination"
+            while IFS= read -r member; do
+              [[ -n "$member" && "$member" != /* && "$member" != *\\* \
+                && "/$member/" != *"/../"* && "/$member/" != *"/./"* ]] || return 1
+              [[ "$member" == "canonical-input-v1" \
+                || "$member" == "canonical-input-v1/"* ]] || return 1
+            done < <(tar -tzf "$archive")
+            tar -tvzf "$archive" | awk 'substr($1, 1, 1) != "-" && substr($1, 1, 1) != "d" { exit 1 }'
+            tar -xzf "$archive" --directory "$destination" --no-same-owner --no-same-permissions
+          }
+          identity_root="$RUNNER_TEMP/identity-input"
+          pose_root="$RUNNER_TEMP/pose-input"
+          extract_canonical "$RUNNER_TEMP/identity-input.tar.gz" "$identity_root" || {
+            printf '::error::Identity archive contains an unsafe member.\n'
+            exit 1
+          }
+          extract_canonical "$RUNNER_TEMP/pose-input.tar.gz" "$pose_root" || {
+            printf '::error::Pose archive contains an unsafe member.\n'
+            exit 1
+          }
+          identity_source_dir="$identity_root/canonical-input-v1/sources"
+          pose_manifest="$pose_root/canonical-input-v1/pose/pose-manifest.json"
+          [[ -f "$identity_source_dir/$REQUESTED_SLUG.png" && -f "$pose_manifest" ]] || {
+            printf '::error::Licensed identity or reviewed pose manifest is missing.\n'
+            exit 1
+          }
+          printf '%s  %s\n' "$POSE_MANIFEST_SHA256" "$pose_manifest" | sha256sum --check --strict
+          printf 'IDENTITY_SOURCE_DIRECTORY=%s\n' "$identity_source_dir" >> "$GITHUB_ENV"
+          printf 'POSE_MANIFEST_PATH=%s\n' "$pose_manifest" >> "$GITHUB_ENV"
+          printf 'CROUCH_INPUT_OUTPUT=%s\n' "$RUNNER_TEMP/reviewed-global-crouch-input" >> "$GITHUB_ENV"
+
+      - name: Package Trump CROUCH + approved SIDE raw + original identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          reviewed_at="$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
+          npm run arcade:package:reviewed-global-crouch-input -- \
+            --slug="$REQUESTED_SLUG" \
+            --side-bundle-run-id="$SIDE_BUNDLE_RUN_ID" \
+            --reviewed-side-descriptor-sha256="$REVIEWED_SIDE_DESCRIPTOR_SHA256" \
+            --reviewed-by="$GITHUB_ACTOR" \
+            --reviewed-at="$reviewed_at" \
+            --side-bundle-dir="$SIDE_BUNDLE_DIRECTORY" \
+            --pose-manifest="$POSE_MANIFEST_PATH" \
+            --pose-manifest-sha256="$POSE_MANIFEST_SHA256" \
+            --source-dir="$IDENTITY_SOURCE_DIRECTORY" \
+            --output-dir="$CROUCH_INPUT_OUTPUT" \
+            --side-review-decision="$SIDE_REVIEW_DECISION" \
+            --confirm="$REQUESTED_CONFIRMATION"
+
+      - name: Upload once to private EU R2 and re-download exact bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt="$CROUCH_INPUT_OUTPUT/reviewed-global-crouch-input-receipt.json"
+          archive="$(jq -r '.crouchInput.archivePath' "$receipt")"
+          archive_sha="$(jq -r '.crouchInput.archiveSha256' "$receipt")"
+          r2_key="$(jq -r '.crouchInput.r2Key' "$receipt")"
+          [[ -f "$archive" && "$archive_sha" =~ ^[a-f0-9]{64}$ ]] || {
+            printf '::error::Packaged CROUCH input receipt is incomplete.\n'
+            exit 1
+          }
+          printf '%s  %s\n' "$archive_sha" "$archive" | sha256sum --check --strict
+          npm exec --prefix worker -- wrangler r2 object put \
+            "insert-player-assets/$r2_key" \
+            --remote --jurisdiction eu --file "$archive"
+          verified="$RUNNER_TEMP/reviewed-global-crouch-r2-verified.tar.gz"
+          npm exec --prefix worker -- wrangler r2 object get \
+            "insert-player-assets/$r2_key" \
+            --remote --jurisdiction eu --file "$verified"
+          printf '%s  %s\n' "$archive_sha" "$verified" | sha256sum --check --strict
+          jq -n \
+            --arg slug "$REQUESTED_SLUG" \
+            --arg r2Key "$r2_key" \
+            --arg archiveSha256 "$archive_sha" \
+            --arg sideBundleRunId "$SIDE_BUNDLE_RUN_ID" \
+            --arg reviewedSideDescriptorSha256 "$REVIEWED_SIDE_DESCRIPTOR_SHA256" \
+            '{schemaVersion:1,status:"uploaded_private_eu_r2_verified",slug:$slug,r2Key:$r2Key,archiveSha256:$archiveSha256,sideBundleRunId:$sideBundleRunId,reviewedSideDescriptorSha256:$reviewedSideDescriptorSha256,providerCalled:false,imported:false,activated:false}' \
+            > "$CROUCH_INPUT_OUTPUT/r2-upload-evidence.json"
+
+      - name: Publish only receipts and lineage for the next paid workflow
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-reviewed-global-crouch-input-${{ inputs.slug }}
+          path: |
+            ${{ runner.temp }}/reviewed-global-crouch-input/input-receipt.json
+            ${{ runner.temp }}/reviewed-global-crouch-input/reviewed-global-crouch-input-receipt.json
+            ${{ runner.temp }}/reviewed-global-crouch-input/r2-upload-evidence.json
+          if-no-files-found: error
+          retention-days: 30

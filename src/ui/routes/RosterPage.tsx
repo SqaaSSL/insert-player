@@ -3,6 +3,8 @@ import {
   CACHE_VERSION,
   getAllCachedMetas,
   getAllCachedStageBackgrounds,
+  getActiveSpriteCacheScope,
+  setCachedMeta,
   type CachedMeta,
   type CachedStageBackground,
 } from '../../services/SpriteCache.ts';
@@ -16,6 +18,8 @@ import {
   STAGE_THEMES,
   getStageChoiceBlurb,
   getStageChoiceLabel,
+  getStageTheme,
+  resolveRosterStageThemeId,
   type StageThemeId,
 } from '../../game/match/StageConfig.ts';
 import {
@@ -32,9 +36,14 @@ import { getBillingProfile, type BillingProfile } from '../../services/Billing.t
 import type { AuthStatus } from '../authState.ts';
 import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
-import { cloudPreviewUrl, tierLabel } from '../shared/fighterPreview.ts';
+import { cloudPreviewUrl, isArcadeCachedMeta, tierLabel } from '../shared/fighterPreview.ts';
 import { Button } from '../components/Button.tsx';
 import { TierBadge } from '../components/TierBadge.tsx';
+import { cachedArcadeSlug } from '../shared/galleryArcadeRoster.ts';
+import {
+  markArcadeManagedMetas,
+  ownedRosterMetas,
+} from '../shared/arcadeRosterIdentity.ts';
 
 type RosterMode = 'watch' | 'cpu' | 'vs';
 type RosterFilter = 'official' | 'yours' | 'all';
@@ -53,7 +62,7 @@ type StageChoice =
   | { kind: 'built-in'; stageId: StageThemeId }
   | { kind: 'photo'; stageKey: string; label: string };
 
-interface RosterFighterEntry {
+export interface RosterFighterEntry {
   key: string;
   kind: 'local' | 'arcade';
   name: string;
@@ -65,6 +74,7 @@ interface RosterFighterEntry {
   previewUrl: string | null;
   challengerLine: string | null;
   defaultPersonality: FighterPersonalityId | null;
+  arcadeSlug: string | null;
   meta: CachedMeta | null;
   cloud: CloudFighter | null;
 }
@@ -121,8 +131,17 @@ function localRosterEntry(meta: CachedMeta): RosterFighterEntry {
     previewUrl: null,
     challengerLine: null,
     defaultPersonality: null,
+    arcadeSlug: cachedArcadeSlug(meta.photoHash),
     meta,
     cloud: null,
+  };
+}
+
+function cachedArcadeRosterEntry(meta: CachedMeta): RosterFighterEntry {
+  return {
+    ...localRosterEntry(meta),
+    key: `arcade-cache:${meta.photoHash}`,
+    kind: 'arcade',
   };
 }
 
@@ -139,8 +158,64 @@ function arcadeRosterEntry(fighter: CloudFighter): RosterFighterEntry {
     previewUrl: cloudPreviewUrl(fighter),
     challengerLine: fighter.arcade?.challengerLine ?? null,
     defaultPersonality: fighter.arcade?.defaultPersonality ?? null,
+    arcadeSlug: fighter.arcade?.slug ?? null,
     meta: null,
     cloud: fighter,
+  };
+}
+
+export interface RosterFighterSections {
+  official: RosterFighterEntry[];
+  owned: RosterFighterEntry[];
+  all: RosterFighterEntry[];
+}
+
+export function buildRosterFighterSections(
+  metas: CachedMeta[],
+  arcadeFighters: CloudFighter[],
+  includeCachedFallback = false,
+): RosterFighterSections {
+  const official = arcadeFighters.map(arcadeRosterEntry);
+  const representedIds = new Set(arcadeFighters.map((fighter) => fighter.id));
+  const representedSlugs = new Set(
+    arcadeFighters
+      .map((fighter) => fighter.arcade?.slug)
+      .filter((slug): slug is string => Boolean(slug)),
+  );
+  const representedCacheKeys = new Set<string>();
+  const cachedFallbacks = includeCachedFallback
+    ? metas
+      .filter(isArcadeCachedMeta)
+      .sort((left, right) => {
+        const leftSlug = cachedArcadeSlug(left.photoHash);
+        const rightSlug = cachedArcadeSlug(right.photoHash);
+        const leftHasCurrentKey = leftSlug !== null && left.photoHash !== `arcade:${leftSlug}`;
+        const rightHasCurrentKey = rightSlug !== null && right.photoHash !== `arcade:${rightSlug}`;
+        return Number(rightHasCurrentKey) - Number(leftHasCurrentKey);
+      })
+    : [];
+
+  for (const meta of cachedFallbacks) {
+    const slug = cachedArcadeSlug(meta.photoHash);
+    if (meta.cloudFighterId && representedIds.has(meta.cloudFighterId)) continue;
+    if (slug && representedSlugs.has(slug)) continue;
+    const identity = meta.cloudFighterId
+      ? `id:${meta.cloudFighterId}`
+      : slug
+        ? `slug:${slug}`
+        : `hash:${meta.photoHash}`;
+    if (representedCacheKeys.has(identity)) continue;
+    representedCacheKeys.add(identity);
+    if (meta.cloudFighterId) representedIds.add(meta.cloudFighterId);
+    if (slug) representedSlugs.add(slug);
+    official.push(cachedArcadeRosterEntry(meta));
+  }
+
+  const owned = ownedRosterMetas(metas, arcadeFighters).map(localRosterEntry);
+  return {
+    official,
+    owned,
+    all: [...official, ...owned],
   };
 }
 
@@ -266,6 +341,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const modeMeta = getModeMeta(mode);
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [arcadeFighters, setArcadeFighters] = useState<CloudFighter[]>([]);
+  const [arcadeUnavailable, setArcadeUnavailable] = useState(false);
   const [photoStages, setPhotoStages] = useState<CachedStageBackground[]>([]);
   const [status, setStatus] = useState('Loading roster...');
   const [rosterLoaded, setRosterLoaded] = useState(false);
@@ -280,18 +356,94 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
   useEffect(() => {
     const apiContext = captureApiRequestContext();
+    const ownerScope = getActiveSpriteCacheScope();
     let cancelled = false;
     const load = async () => {
       setRosterLoaded(false);
+      setArcadeUnavailable(false);
+      let officialRosterUnavailable = false;
       let [allMetas, allStages, officialFighters, profile] = await Promise.all([
-        getAllCachedMetas(),
-        getAllCachedStageBackgrounds(),
+        getAllCachedMetas(ownerScope),
+        getAllCachedStageBackgrounds(ownerScope),
         listArcadeFighters().catch((err: any) => {
+          officialRosterUnavailable = true;
           debugWarn('[Roster] Official Arcade roster unavailable:', err?.message ?? err);
           return [];
         }),
         authStatus === 'signed-in' ? getBillingProfile(apiContext) : Promise.resolve(null),
       ]);
+      let marked = markArcadeManagedMetas(allMetas, officialFighters);
+      allMetas = marked.metas;
+
+      const publishRosterSnapshot = (
+        sourceMetas: CachedMeta[],
+        sourceStages: CachedStageBackground[],
+        statusFor: (sections: RosterFighterSections) => string,
+      ) => {
+        const filteredMetas = sourceMetas
+          .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
+          .sort((a, b) => b.createdAt - a.createdAt);
+        const filteredStages = sourceStages
+          .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
+          .sort((a, b) => b.createdAt - a.createdAt);
+        const sections = buildRosterFighterSections(
+          filteredMetas,
+          officialFighters,
+          officialRosterUnavailable,
+        );
+        setMetas(filteredMetas);
+        setArcadeFighters(officialFighters);
+        setArcadeUnavailable(officialRosterUnavailable);
+        setPhotoStages(filteredStages);
+        setBillingProfile(profile);
+        setRosterLoaded(true);
+        setStatus(statusFor(sections));
+
+        const firstPlayer = sections.owned[0] ?? sections.official[0] ?? null;
+        const firstOpponent = sections.official.find((entry) => entry.key !== firstPlayer?.key)
+          ?? sections.owned.find((entry) => entry.key !== firstPlayer?.key)
+          ?? firstPlayer;
+        const firstOpponentPersonality = firstOpponent?.defaultPersonality;
+        if (firstOpponentPersonality) {
+          setP2PersonalityId((current) => current === 'balanced' ? firstOpponentPersonality : current);
+        }
+        if (sections.owned.length === 0 && sections.official.length > 0) {
+          setRosterFilter('official');
+        } else if (sections.official.length === 0 && sections.owned.length > 0) {
+          setRosterFilter('yours');
+        }
+        setP1Key((current) => (
+          current && sections.all.some((entry) => entry.key === current)
+            ? current
+            : firstPlayer?.key ?? null
+        ));
+        setP2Key((current) => (
+          current && sections.all.some((entry) => entry.key === current)
+            ? current
+            : firstOpponent?.key ?? null
+        ));
+      };
+
+      if (cancelled) return;
+      publishRosterSnapshot(allMetas, allStages, (sections) => (
+        authStatus === 'signed-in'
+          ? sections.official.length > 0
+            ? `${sections.official.length} official challengers ready · Syncing your fighters…`
+            : 'Syncing your roster…'
+          : sections.official.length > 0
+            ? `${sections.official.length} official challengers ready`
+            : sections.owned.length > 0
+              ? 'Roster ready'
+              : 'No fighters yet'
+      ));
+      if (marked.changed.length > 0) {
+        try {
+          await Promise.all(marked.changed.map((item) => setCachedMeta(item, ownerScope)));
+        } catch (err: any) {
+          debugWarn('[Roster] Official roster identity could not be persisted:', err?.message ?? err);
+        }
+      }
+
       let cloudImported = 0;
       let cloudUpdated = 0;
       try {
@@ -300,8 +452,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
           cloudImported = cloudSync.imported;
           cloudUpdated = cloudSync.updated;
           [allMetas, allStages] = await Promise.all([
-            getAllCachedMetas(),
-            getAllCachedStageBackgrounds(),
+            getAllCachedMetas(ownerScope),
+            getAllCachedStageBackgrounds(ownerScope),
           ]);
         }
       } catch (err: any) {
@@ -309,54 +461,25 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         debugWarn('[Roster] Cloud import skipped:', err?.message ?? err);
       }
       if (cancelled) return;
-      const filteredMetas = allMetas
-        .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
-        .sort((a, b) => b.createdAt - a.createdAt);
-      const filteredStages = allStages
-        .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
-        .sort((a, b) => b.createdAt - a.createdAt);
-      setMetas(filteredMetas);
-      setArcadeFighters(officialFighters);
-      setPhotoStages(filteredStages);
-      setBillingProfile(profile);
-      setRosterLoaded(true);
-      setStatus(
+      marked = markArcadeManagedMetas(allMetas, officialFighters);
+      allMetas = marked.metas;
+      if (marked.changed.length > 0) {
+        try {
+          await Promise.all(marked.changed.map((item) => setCachedMeta(item, ownerScope)));
+        } catch (err: any) {
+          debugWarn('[Roster] Official roster identity could not be persisted:', err?.message ?? err);
+        }
+      }
+      if (cancelled) return;
+      publishRosterSnapshot(allMetas, allStages, (sections) => (
         cloudImported > 0 || cloudUpdated > 0
           ? `Cloud synced: ${cloudImported} imported, ${cloudUpdated} updated`
-          : officialFighters.length > 0
-            ? `${officialFighters.length} official challengers ready`
-            : filteredMetas.length > 0
+          : sections.official.length > 0
+            ? `${sections.official.length} official challengers ready`
+            : sections.owned.length > 0
               ? 'Roster ready'
-              : 'No fighters yet',
-      );
-
-      const localEntries = filteredMetas.map(localRosterEntry);
-      const officialEntries = officialFighters.map(arcadeRosterEntry);
-      const firstPlayer = localEntries[0] ?? officialEntries[0] ?? null;
-      const firstOpponent = officialEntries.find((entry) => entry.key !== firstPlayer?.key)
-        ?? localEntries.find((entry) => entry.key !== firstPlayer?.key)
-        ?? firstPlayer;
-      const firstOpponentPersonality = firstOpponent?.defaultPersonality;
-      if (firstOpponentPersonality) {
-        setP2PersonalityId((current) => current === 'balanced' ? firstOpponentPersonality : current);
-      }
-      if (filteredMetas.length === 0 && officialEntries.length > 0) {
-        setRosterFilter('official');
-      } else if (officialEntries.length === 0 && filteredMetas.length > 0) {
-        setRosterFilter('yours');
-      }
-      setP1Key((current) => {
-        const available = [...localEntries, ...officialEntries];
-        return current && available.some((entry) => entry.key === current)
-          ? current
-          : firstPlayer?.key ?? null;
-      });
-      setP2Key((current) => {
-        const available = [...localEntries, ...officialEntries];
-        return current && available.some((entry) => entry.key === current)
-          ? current
-          : firstOpponent?.key ?? null;
-      });
+              : 'No fighters yet'
+      ));
     };
     void load().catch((err: any) => {
       if (cancelled) return;
@@ -368,9 +491,13 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     return () => { cancelled = true; };
   }, [authSessionKey, authStatus]);
 
-  const localEntries = useMemo(() => metas.map(localRosterEntry), [metas]);
-  const officialEntries = useMemo(() => arcadeFighters.map(arcadeRosterEntry), [arcadeFighters]);
-  const rosterEntries = useMemo(() => [...officialEntries, ...localEntries], [officialEntries, localEntries]);
+  const rosterSections = useMemo(
+    () => buildRosterFighterSections(metas, arcadeFighters, arcadeUnavailable),
+    [arcadeFighters, arcadeUnavailable, metas],
+  );
+  const localEntries = rosterSections.owned;
+  const officialEntries = rosterSections.official;
+  const rosterEntries = rosterSections.all;
   const visibleEntries = useMemo(() => {
     if (rosterFilter === 'official') return officialEntries;
     if (rosterFilter === 'yours') return localEntries;
@@ -391,6 +518,14 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     [photoStages, stageChoice],
   );
   const photoStageUrl = useObjectUrl(selectedPhotoStage?.pngBlob ?? null);
+  const effectiveStageId = resolveRosterStageThemeId({
+    manualStageId: stageChoice.kind === 'built-in' ? stageChoice.stageId : null,
+    hasCustomPhotoStage: stageChoice.kind === 'photo',
+    p1ArcadeSlug: p1Fighter?.arcadeSlug,
+    p2ArcadeSlug: p2Fighter?.arcadeSlug,
+  });
+  const effectiveStageTheme = effectiveStageId ? getStageTheme(effectiveStageId) : null;
+  const stagePreviewUrl = photoStageUrl ?? effectiveStageTheme?.assetPath ?? null;
 
   const canStartFight = Boolean(p1Fighter && p2Fighter);
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
@@ -403,7 +538,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
   const stageSummary =
     stageChoice.kind === 'auto'
-      ? { label: 'AUTO', blurb: 'Let the matchup choose the arena.' }
+      ? effectiveStageTheme
+        ? { label: `AUTO · ${effectiveStageTheme.label}`, blurb: effectiveStageTheme.blurb }
+        : { label: 'AUTO', blurb: 'Let the matchup choose the arena.' }
       : stageChoice.kind === 'built-in'
         ? { label: getStageChoiceLabel(stageChoice.stageId), blurb: getStageChoiceBlurb(stageChoice.stageId) }
         : { label: selectedPhotoStage?.label ?? stageChoice.label, blurb: 'Custom photo stage from your local cache.' };
@@ -455,7 +592,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         p2Name: p2Fighter.name,
         p1PersonalityId,
         p2PersonalityId,
-        stageId: stageChoice.kind === 'built-in' ? stageChoice.stageId : undefined,
+        stageId: effectiveStageId,
         customStageKey: stageChoice.kind === 'photo' ? stageChoice.stageKey : undefined,
         customStageLabel: stageChoice.kind === 'photo' ? (selectedPhotoStage?.label ?? stageChoice.label) : undefined,
       });
@@ -609,7 +746,11 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
           <div className="gallery-panel">
             <h2>Stage</h2>
             <div className="roster-stage-preview">
-              {photoStageUrl ? <img src={photoStageUrl} alt="" /> : <div className="gallery-preview__empty">{stageSummary.label}</div>}
+              {stagePreviewUrl ? (
+                <img src={stagePreviewUrl} alt={`${stageSummary.label} stage preview`} />
+              ) : (
+                <div className="gallery-preview__empty">{stageSummary.label}</div>
+              )}
             </div>
             <div className="roster-stage-summary">
               <strong>{stageSummary.label}</strong>

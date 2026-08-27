@@ -1,3 +1,8 @@
+import {
+  normalizeSpriteAnimationFormat,
+  type SpriteAnimationFormat,
+} from '../SpriteAnimationFormat.ts';
+
 const DB_NAME = 'ai-street-fighter';
 const DB_VERSION = 5;
 const STORE_SPRITES = 'sprites';
@@ -23,10 +28,23 @@ interface CachedSprite {
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  animationFormat?: SpriteAnimationFormat;
   processingVersion?: number;
   contentHash?: string | null;
   rawContentHash?: string | null;
   createdAt: number;
+}
+
+export interface CachedPlayableSpriteRef {
+  versionId: string | null;
+  contentHash: string | null;
+  animationName: string;
+  qualityTier: QualityTier;
+  frameWidth: number;
+  frameHeight: number;
+  frameCount: number;
+  animationFormat: SpriteAnimationFormat;
+  processingVersion: number;
 }
 
 interface CachedFailedAnimationArtifact {
@@ -106,8 +124,10 @@ interface CachedMeta {
   qualityTier?: 'rookie' | 'contender' | 'champion';
   cloudFighterId?: string | null;
   cloudPublic?: boolean;
+  cloudManagement?: 'arcade';
   cloudSourceHashes?: Record<string, string | null>;
   cloudSpriteVersionCount?: number;
+  cloudPlayableSpriteRefs?: Record<string, CachedPlayableSpriteRef>;
   pendingGenerationPurchaseId?: string | null;
   introVideoPrompt?: string | null;
   introVideoModel?: 'freepik-auto' | 'kling-v2-1-std' | 'veo-3-1' | 'runway-gen4-turbo' | 'fal-ltx-v2-3-fast' | 'fal-kling-v2-6-pro' | 'fal-vidu-q3' | null;
@@ -245,6 +265,7 @@ function normalizeCachedSpriteRecord(raw: any): CachedSprite | null {
     ...raw,
     ownerScope: normalizeCacheScope(raw.ownerScope),
     qualityTier: normalizeQualityTier(raw.qualityTier),
+    animationFormat: normalizeSpriteAnimationFormat(raw.animationFormat),
     createdAt: typeof raw.createdAt === 'number' ? raw.createdAt : Date.now(),
   } as CachedSprite;
   normalized.versionId = typeof raw.versionId === 'string' && raw.versionId
@@ -310,6 +331,57 @@ function bestSpritesByAnimation(sprites: CachedSprite[]): CachedSprite[] {
   return Array.from(best.values()).sort((a, b) => a.animationName.localeCompare(b.animationName));
 }
 
+function normalizedSpriteContentHash(value: unknown): string | null {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value.trim())
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function playableSpriteRefFor(sprite: CachedSprite): CachedPlayableSpriteRef {
+  return {
+    versionId: typeof sprite.versionId === 'string' && sprite.versionId ? sprite.versionId : null,
+    contentHash: normalizedSpriteContentHash(sprite.contentHash),
+    animationName: sprite.animationName,
+    qualityTier: normalizeQualityTier(sprite.qualityTier),
+    frameWidth: sprite.frameWidth,
+    frameHeight: sprite.frameHeight,
+    frameCount: sprite.frameCount,
+    animationFormat: normalizeSpriteAnimationFormat(sprite.animationFormat),
+    processingVersion: sprite.processingVersion ?? 0,
+  };
+}
+
+function spriteMatchesPlayableRef(sprite: CachedSprite, ref: CachedPlayableSpriteRef): boolean {
+  const expectedHash = normalizedSpriteContentHash(ref.contentHash);
+  if (!expectedHash || normalizedSpriteContentHash(sprite.contentHash) !== expectedHash) return false;
+  if (ref.qualityTier !== 'rookie' && ref.qualityTier !== 'contender' && ref.qualityTier !== 'champion') return false;
+  if (ref.animationFormat !== 'legacy' && ref.animationFormat !== 'video-dense-v1') return false;
+  return sprite.animationName === ref.animationName &&
+    normalizeQualityTier(sprite.qualityTier) === ref.qualityTier &&
+    sprite.frameWidth === ref.frameWidth &&
+    sprite.frameHeight === ref.frameHeight &&
+    sprite.frameCount === ref.frameCount &&
+    normalizeSpriteAnimationFormat(sprite.animationFormat) === ref.animationFormat &&
+    (sprite.processingVersion ?? 0) === ref.processingVersion;
+}
+
+export function selectPlayableCachedSprites(
+  versions: CachedSprite[],
+  refs?: Record<string, CachedPlayableSpriteRef>,
+): CachedSprite[] {
+  if (refs === undefined) return bestSpritesByAnimation(versions);
+
+  const selected: CachedSprite[] = [];
+  for (const [animationName, ref] of Object.entries(refs)) {
+    if (!ref || ref.animationName !== animationName) continue;
+    const matches = versions
+      .filter((sprite) => spriteMatchesPlayableRef(sprite, ref))
+      .sort(compareSpritesByTierAndTime);
+    if (matches[0]) selected.push(matches[0]);
+  }
+  return selected.sort((a, b) => a.animationName.localeCompare(b.animationName));
+}
+
 function transactionDone(tx: IDBTransaction): Promise<void> {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
@@ -354,6 +426,7 @@ function mergeClaimedMeta(existing: CachedMeta | undefined, local: CachedMeta, o
     qualityTier: maxOptionalTier(existing.qualityTier, local.qualityTier),
     cloudFighterId: existing.cloudFighterId ?? local.cloudFighterId ?? null,
     cloudPublic: existing.cloudPublic ?? local.cloudPublic ?? false,
+    cloudPlayableSpriteRefs: existing.cloudPlayableSpriteRefs ?? local.cloudPlayableSpriteRefs,
     animationsReady: Array.from(new Set([
       ...(existing.animationsReady ?? []),
       ...(local.animationsReady ?? []),
@@ -494,9 +567,48 @@ export async function setCachedMeta(meta: CachedMeta, ownerScope = meta.ownerSco
   meta.ownerScope = scope;
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_META, 'readwrite');
-    tx.objectStore(STORE_META).put({ ...meta, ownerScope: scope });
+    const store = tx.objectStore(STORE_META);
+    const existingRequest = store.get([scope, meta.photoHash]);
+    existingRequest.onsuccess = () => {
+      const existing = existingRequest.result as CachedMeta | undefined;
+      store.put({
+        ...meta,
+        ownerScope: scope,
+        cloudPlayableSpriteRefs: existing?.cloudPlayableSpriteRefs ?? meta.cloudPlayableSpriteRefs,
+      });
+    };
+    existingRequest.onerror = () => tx.abort();
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error('Sprite metadata update failed'));
+  });
+}
+
+export async function setCloudPlayableSpriteRefs(
+  photoHash: string,
+  refs: Record<string, CachedPlayableSpriteRef>,
+  ownerScope = activeCacheScope,
+): Promise<void> {
+  const scope = requestedCacheScope(ownerScope);
+  assertActiveCacheScope(scope);
+  const db = await openDB();
+  assertActiveCacheScope(scope);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_META, 'readwrite');
+    const store = tx.objectStore(STORE_META);
+    const request = store.get([scope, photoHash]);
+    request.onsuccess = () => {
+      const meta = request.result as CachedMeta | undefined;
+      if (!meta) {
+        tx.abort();
+        return;
+      }
+      store.put({ ...meta, cloudPlayableSpriteRefs: refs });
+    };
+    request.onerror = () => tx.abort();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error('Playable sprite refs update failed'));
+    tx.onabort = () => reject(tx.error ?? new Error('Playable sprite refs update failed'));
   });
 }
 
@@ -565,8 +677,12 @@ export async function getAllSpritesForHash(
   photoHash: string,
   ownerScope = activeCacheScope,
 ): Promise<CachedSprite[]> {
-  const versions = await getAllSpriteVersionsForHash(photoHash, ownerScope);
-  return bestSpritesByAnimation(versions);
+  const [versions, meta] = await Promise.all([
+    getAllSpriteVersionsForHash(photoHash, ownerScope),
+    getCachedMeta(photoHash, ownerScope),
+  ]);
+  const refs = meta?.cloudPlayableSpriteRefs ?? (meta?.cloudFighterId ? {} : undefined);
+  return selectPlayableCachedSprites(versions, refs);
 }
 
 export async function getAllSpriteVersionsForHash(
@@ -592,25 +708,63 @@ export async function setCachedSprite(
   sprite: CachedSprite,
   options: { preserveVersionId?: boolean; ownerScope?: string } = {},
 ): Promise<void> {
+  return writeCachedSprite(sprite, options, true);
+}
+
+export async function setCachedArchivedSprite(
+  sprite: CachedSprite,
+  options: { preserveVersionId?: boolean; ownerScope?: string } = {},
+): Promise<void> {
+  return writeCachedSprite(sprite, options, false);
+}
+
+async function writeCachedSprite(
+  sprite: CachedSprite,
+  options: { preserveVersionId?: boolean; ownerScope?: string },
+  makePlayable: boolean,
+): Promise<void> {
   const scope = requestedCacheScope(options.ownerScope ?? sprite.ownerScope);
   assertActiveCacheScope(scope);
   const db = await openDB();
   assertActiveCacheScope(scope);
   sprite.ownerScope = scope;
+  const contentHash = makePlayable
+    ? await hashPhoto(sprite.pngBlob)
+    : normalizedSpriteContentHash(sprite.contentHash);
   const normalized = {
     ...sprite,
     ownerScope: scope,
     qualityTier: normalizeQualityTier(sprite.qualityTier, 'contender'),
+    animationFormat: normalizeSpriteAnimationFormat(sprite.animationFormat),
+    contentHash,
     createdAt: typeof sprite.createdAt === 'number' ? sprite.createdAt : Date.now(),
   };
   normalized.versionId = options.preserveVersionId && sprite.versionId
     ? sprite.versionId
     : createSpriteVersionId(normalized);
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_SPRITES, 'readwrite');
+    const storeNames = makePlayable ? [STORE_SPRITES, STORE_META] : [STORE_SPRITES];
+    const tx = db.transaction(storeNames, 'readwrite');
     tx.objectStore(STORE_SPRITES).put(normalized);
+    if (makePlayable) {
+      const metaStore = tx.objectStore(STORE_META);
+      const metaRequest = metaStore.get([scope, sprite.photoHash]);
+      metaRequest.onsuccess = () => {
+        const meta = metaRequest.result as CachedMeta | undefined;
+        if (!meta?.cloudPlayableSpriteRefs) return;
+        metaStore.put({
+          ...meta,
+          cloudPlayableSpriteRefs: {
+            ...meta.cloudPlayableSpriteRefs,
+            [normalized.animationName]: playableSpriteRefFor(normalized),
+          },
+        });
+      };
+      metaRequest.onerror = () => tx.abort();
+    }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error('Cached sprite write failed'));
   });
 }
 

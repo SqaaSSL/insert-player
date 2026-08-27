@@ -4,6 +4,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { frontendHeadersForTarget } from './frontend-security-headers.mjs';
+import { readImageSize } from './image-dimensions.mjs';
 import { textReferencesHostname, textReferencesOrigin } from './url-reference.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -19,11 +20,11 @@ function assertNodeVersion() {
   }
 }
 
-function run(label, command, args, cwd = root) {
+function run(label, command, args, cwd = root, envOverrides = {}) {
   const result = spawnSync(command, args, {
     cwd,
     stdio: 'inherit',
-    env: process.env,
+    env: { ...process.env, ...envOverrides },
   });
   if (result.status !== 0) {
     throw new Error(`${label} failed with exit code ${result.status ?? 'unknown'}`);
@@ -234,6 +235,7 @@ function assertProxyIsProductionScoped() {
     'Provider proxy route is not allowed',
     "enforceProviderRouteAllowlist('gemini'",
     "enforceProviderRouteAllowlist('fal'",
+    "enforceProviderRouteAllowlist('pixcli'",
     'function detectImageFormat',
     "const TEMP_ASSET_PATH_PREFIX = '/temp-assets/';",
     'Invalid temp asset path',
@@ -287,6 +289,9 @@ function assertProxyIsProductionScoped() {
     "await requireProviderSession(request, env, auth, { provider: 'gemini', path }, providerState)",
     "await requireProviderSession(request, env, auth, { provider: 'freepik', path }, providerState)",
     "await requireProviderSession(request, env, auth, { provider: 'fal', path }, providerState)",
+    'requireUnmeteredProviderSession',
+    "generationCreationFlowFromAuth(auth) !== 'video'",
+    "path === '/proxy/pixcli/api/v1/video/advanced') return 33",
     'Provider session is not valid for this provider route',
     'function isAllowedProviderUse',
     "purpose === 'intro_video'",
@@ -306,6 +311,9 @@ function assertProxyIsProductionScoped() {
     'Provider session required',
     "it('revalidates every redirect and blocks a public URL redirecting private'",
     "it('cancels an upstream body as soon as the streamed byte cap is crossed'",
+    "it('proxies an allowlisted PixCLI poll without forwarding client credentials'",
+    "it('caches a PixCLI upload without consuming spend or committing the charge'",
+    "it('reserves exactly 33 cents for one PixCLI video submission'",
   ];
   const combined = `${proxy}\n${proxyTests}\n${workerIndex}\n${apiClient}\n${providerSessions}\n${providerLimits}\n${streamLimits}\n${providerSessionIntegrationTests}\n${billingClient}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
@@ -454,6 +462,7 @@ function assertApiOperationsAreSessionScoped() {
   const providerSpendMigration = readFileSync(join(root, 'worker/migrations/0014_provider_spend_budgets.sql'), 'utf8');
   const providerSpendRateMigration = readFileSync(join(root, 'worker/migrations/0016_provider_spend_rate_window.sql'), 'utf8');
   const providerCostEventsMigration = readFileSync(join(root, 'worker/migrations/0017_provider_cost_events.sql'), 'utf8');
+  const zeroCostEventsMigration = readFileSync(join(root, 'worker/migrations/0026_zero_cost_not_dispatched_events.sql'), 'utf8');
   const geminiPolicy = readFileSync(join(root, 'src/services/GeminiRequestPolicy.ts'), 'utf8');
   const geminiPolicyTests = readFileSync(join(root, 'src/services/GeminiRequestPolicy.test.ts'), 'utf8');
   const productionWrangler = readFileSync(join(root, 'worker/wrangler.toml'), 'utf8');
@@ -480,38 +489,41 @@ function assertApiOperationsAreSessionScoped() {
     'provider_cost_used_cents',
     'provider_cost_limit_cents',
     'provider_spend_months',
-    'PROVIDER_MONTHLY_BUDGET_USD_CENTS = "50000"',
-    'PROVIDER_MONTHLY_BUDGET_USD_CENTS = "5000"',
-    'GEMINI_SPEND_RATE_LIMIT_USD_CENTS = "900"',
-    "code: 'provider_monthly_budget_exhausted'",
-    "code: 'provider_global_spend_rate'",
-    'provider_spend_reservations',
+    'INSERT INTO provider_spend_months',
+    'ON CONFLICT(period) DO UPDATE SET',
     'provider_cost_events',
+    'estimated_cost_cents >= 0',
     'billing_operation',
     'export async function finalizeProviderRequest',
     "SET status = 'committed', updated_at = datetime('now')",
     "it('keeps attempted provider spend after an upstream failure'",
     "it('keeps the committed charge and provider spend after an upstream failure'",
+    "it('records spend without blocking a valid session after high aggregate usage'",
+    "it('fails closed when durable monthly accounting cannot be recorded'",
     "it('fails closed without cost residue when the charge was released concurrently'",
     'PRO_REQUEST_START_INTERVAL_MS = 11_000',
     'err instanceof GeminiRequestError && err.retryable',
     'maxAttempts ?? 5',
     "it('honors Google RetryInfo and identifies spend-based limits'",
-    "it('defers Gemini globally before consuming a session call'",
   ];
   const forbidden = [
     'let providerSessionId',
     'runtimeAnimModelOverride',
     'setGeminiAnimModelOverride',
     'releaseProviderSpend(env, reservation, providerStatus)',
+    'PROVIDER_MONTHLY_BUDGET_USD_CENTS',
+    'GEMINI_SPEND_RATE_LIMIT_USD_CENTS',
+    'provider_monthly_budget_exhausted',
+    'provider_global_spend_rate',
   ];
   const combined = `${apiClient}\n${apiClientTests}\n${createPage}\n${galleryPage}\n${cloudFighters}\n${gemini}\n${geminiPolicy}\n${geminiPolicyTests}\n${providerSessions}\n${providerSessionTests}\n${providerSessionIntegrationTests}\n${providerSpendMigration}\n${providerSpendRateMigration}\n${providerCostEventsMigration}\n${productionWrangler}\n${sandboxWrangler}`;
-  const missing = required.filter((snippet) => !combined.includes(snippet));
+  const migrationCombined = `${combined}\n${zeroCostEventsMigration}`;
+  const missing = required.filter((snippet) => !migrationCombined.includes(snippet));
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
   if (missing.length > 0 || foundForbidden.length > 0) {
     throw new Error([
       missing.length > 0 ? `session-scoped API operations are missing: ${missing.join(', ')}` : '',
-      foundForbidden.length > 0 ? `mutable cross-request API state remains: ${foundForbidden.join(', ')}` : '',
+      foundForbidden.length > 0 ? `obsolete or mutable provider state remains: ${foundForbidden.join(', ')}` : '',
     ].filter(Boolean).join('; '));
   }
 }
@@ -571,6 +583,8 @@ function assertFrontendDeployIsProductionScoped() {
     "'--branch'",
     'builtFrontendAssetPath',
     'Frontend release asset:',
+    'CANONICAL_SMOKE_READY_TIMEOUT_MS = 240_000',
+    'String(CANONICAL_SMOKE_READY_TIMEOUT_MS)',
     'npm run smoke:frontend-live',
   ];
   const deployFrontend = readFileSync(join(root, 'scripts/deploy-frontend-pages.mjs'), 'utf8');
@@ -688,7 +702,11 @@ function assertLiveConfigHelperIsWired() {
     'CLERK_ISSUER',
     'must be an HTTPS Clerk issuer URL',
     "spawnSync(npx, ['wrangler', 'secret', 'put', key]",
-    "spawnSync(npx, ['wrangler', 'deploy', '--keep-vars']",
+    "'--no-install',\n      'wrangler',\n      'deploy',\n      '--keep-vars',\n      '--strict'",
+    "'--containers-rollout',\n      'immediate'",
+    "args.has('--dry-run-worker-deploy')",
+    'mkdtempSync',
+    'rmSync(tempDirectory, { recursive: true, force: true })',
     'SECRET_PUT_TIMEOUT_MS',
     'DEPLOY_TIMEOUT_MS',
     'PRODUCTION_CHECK_TIMEOUT_MS',
@@ -928,6 +946,7 @@ function assertSandboxIsolationIsWired() {
     'RUNWAY_API_KEY',
     'FREEPIK_API_KEY',
     'LUDO_API_KEY',
+    'PIXCLI_API_KEY',
     'STRIPE_SECRET_KEY',
     'STRIPE_WEBHOOK_SECRET',
     'CLERK_WEBHOOK_SIGNING_SECRET',
@@ -1521,6 +1540,8 @@ function assertLeaderboardSurfaceIsWired() {
 
 function assertLiveSmokeCoversCriticalPaths() {
   const smoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
+  const smokeFetch = readFileSync(join(root, 'scripts/live-smoke-fetch.mjs'), 'utf8');
+  const smokeFetchTests = readFileSync(join(root, 'scripts/live-smoke-fetch.test.mjs'), 'utf8');
   const packageJson = readFileSync(join(root, 'package.json'), 'utf8');
   const runbook = readFileSync(join(root, 'PRODUCTION_READINESS.md'), 'utf8');
   const required = [
@@ -1534,7 +1555,14 @@ function assertLiveSmokeCoversCriticalPaths() {
     "envValue(env, 'ASF_CLERK_JWT')",
     'FETCH_TIMEOUT_MS',
     'ASF_LIVE_SMOKE_TIMEOUT_MS',
-    'AbortSignal.timeout(FETCH_TIMEOUT_MS)',
+    'fetchWithTransientNetworkRetry',
+    'ASF_LIVE_SMOKE_SAFE_FETCH_ATTEMPTS',
+    'ASF_LIVE_SMOKE_SAFE_FETCH_RETRY_DELAY_MS',
+    "const RETRYABLE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])",
+    'const retryable = RETRYABLE_METHODS.has(method) && !init.signal',
+    'signal: init.signal ?? AbortSignal.timeout(timeoutMs)',
+    "it('never retries a mutating request'",
+    "it('does not retry when the caller owns the abort signal'",
     'Request failed for ${target}',
     'ASF_SMOKE_REQUIRE_AUTH',
     'ASF_SMOKE_REQUIRE_CLONE',
@@ -1645,7 +1673,7 @@ function assertLiveSmokeCoversCriticalPaths() {
     'Same-photo community clone merge should return cloned=false',
     'same-photo community clone merge copies only public playable assets',
   ];
-  const combined = `${smoke}\n${packageJson}\n${runbook}`;
+  const combined = `${smoke}\n${smokeFetch}\n${smokeFetchTests}\n${packageJson}\n${runbook}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
     throw new Error(`Live smoke coverage is missing: ${missing.join(', ')}`);
@@ -1788,6 +1816,7 @@ function assertBrandingPlumbingIsWired() {
     'must not use existing fighting-game franchise wording',
     'updateHtml',
     'updateManifest',
+    'updateSocialCardTemplate',
     'updateSocialSvg',
     'run npm run brand:rasterize before launch',
     'const assets = [',
@@ -1935,11 +1964,18 @@ function assertCrossDeviceRosterImportIsWired() {
     'Optional asset skipped',
     'Sprite skipped',
     'const spritePlan = buildSpriteDownloadPlan(spriteVersions, localFingerprints, options)',
-    'const availableAnimations = new Set(localSpriteVersions.map',
+    'const playableRefs = cloudPlayableSpriteRefs(spriteVersions)',
+    'selectPlayableCachedSprites(refreshedVersions, playableRefs)',
+    'remoteRosterComplete && allRemoteCurrentSpritesAvailable',
+    'await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope)',
+    'const initialPlayableRefs = fingerprintedPlayableSpriteRefs(',
+    'meta.cloudPlayableSpriteRefs = initialPlayableRefs',
     'spritesImported,',
-    'animationsReady: Array.from(availableAnimations)',
+    'animationsReady: Array.from(availableCurrentAnimations)',
     '...(existingMeta ?? {})',
-    'Cloud fighter ${fighter.name} has no playable sprite assets to import.',
+    'Cloud fighter ${fighter.name} is incomplete; missing current animations:',
+    'isCompleteCloudFighterRoster(fighter)',
+    'Archived sprite versions cannot be imported into the playable cache',
     'let imported = 0',
     'imported += 1',
     'summary.updated += 1',
@@ -2136,7 +2172,16 @@ function replayMigrations() {
     '.read worker/migrations/0019_durable_retry_jobs.sql',
     '.read worker/migrations/0020_official_arcade.sql',
     '.read worker/migrations/0021_arcade_generation_prompts.sql',
-    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters");',
+    '.read worker/migrations/0022_provider_capacity_windows.sql',
+    '.read worker/migrations/0023_durable_artifact_resume.sql',
+    '.read worker/migrations/0024_durable_asset_deletions.sql',
+    '.read worker/migrations/0025_meterkey_capacity_windows.sql',
+    '.read worker/migrations/0026_zero_cost_not_dispatched_events.sql',
+    '.read worker/migrations/0027_immutable_arcade_experiments.sql',
+    "INSERT INTO sprites (id, fighter_id, animation_name, quality_tier, blob_key, frame_w, frame_h, frame_count, processing_version) VALUES ('legacy-current', 'f1', 'idle', 'rookie', 'legacy-current.png', 192, 256, 4, 3);",
+    '.read worker/migrations/0028_sprite_animation_format.sql',
+    '.read worker/migrations/0029_generation_creation_flow.sql',
+    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters", "arcade_generation_experiments", "arcade_generation_experiment_slots", "arcade_generation_experiment_artifacts");',
   ];
   try {
     run('D1 migration replay', sqlite, migrationArgs);
@@ -2146,6 +2191,48 @@ function replayMigrations() {
     ]);
     if (legacyCount !== '2') {
       throw new Error(`Legacy sprite archive rows were not preserved through 0006; got ${legacyCount}`);
+    }
+
+    const legacyAnimationFormatCount = runCapture('D1 sprite animation format backfill check', sqlite, [
+      dbPath,
+      "SELECT COUNT(*) FROM sprite_versions WHERE fighter_id = 'f1' AND animation_format = 'legacy';",
+    ]);
+    if (legacyAnimationFormatCount !== '2') {
+      throw new Error(`Legacy sprite versions were not backfilled with animation_format=legacy; got ${legacyAnimationFormatCount}`);
+    }
+    const legacyCurrentAnimationFormat = runCapture('D1 current sprite animation format backfill check', sqlite, [
+      dbPath,
+      "SELECT animation_format FROM sprites WHERE id = 'legacy-current';",
+    ]);
+    if (legacyCurrentAnimationFormat !== 'legacy') {
+      throw new Error(`Current sprites were not backfilled with animation_format=legacy; got ${legacyCurrentAnimationFormat}`);
+    }
+    const checkpointAnimationFormatColumn = runCapture('D1 sprite checkpoint animation format check', sqlite, [
+      dbPath,
+      "SELECT COUNT(*) FROM pragma_table_info('generation_artifact_checkpoints') WHERE name = 'animation_format' AND dflt_value = \"'legacy'\";",
+    ]);
+    if (checkpointAnimationFormatColumn !== '1') {
+      throw new Error('Durable sprite checkpoints are missing the legacy-default animation format contract');
+    }
+
+    const generationCreationFlowColumns = runCapture('D1 generation creation flow check', sqlite, [
+      dbPath,
+      `
+        SELECT COUNT(*)
+        FROM (
+          SELECT name, dflt_value FROM pragma_table_info('generation_charges') WHERE name = 'creation_flow'
+          UNION ALL
+          SELECT name, dflt_value FROM pragma_table_info('provider_sessions') WHERE name = 'creation_flow'
+          UNION ALL
+          SELECT name, dflt_value FROM pragma_table_info('generation_jobs') WHERE name = 'creation_flow'
+          UNION ALL
+          SELECT name, dflt_value FROM pragma_table_info('generation_artifact_runs') WHERE name = 'creation_flow'
+        )
+        WHERE name = 'creation_flow' AND dflt_value = "'original'";
+      `,
+    ]);
+    if (generationCreationFlowColumns !== '4') {
+      throw new Error(`Generation creation flow was not sealed across all durable records; got ${generationCreationFlowColumns}/4`);
     }
 
     const duplicateCount = runCapture('D1 sprite content index check', sqlite, [
@@ -2174,6 +2261,28 @@ function replayMigrations() {
     ]);
     if (duplicateCount !== '1') {
       throw new Error(`Sprite content unique index did not collapse duplicate uploads; got ${duplicateCount}`);
+    }
+
+
+    const distinctAnimationFormatCount = runCapture('D1 sprite animation format identity check', sqlite, [
+      dbPath,
+      `
+        INSERT INTO sprite_versions (
+          id, fighter_id, animation_name, quality_tier, blob_key, content_hash, raw_content_hash,
+          frame_w, frame_h, frame_count, processing_version, animation_format
+        ) VALUES (
+          'hashed-dense', 'f1', 'walk', 'rookie', 'hashed-dense.png', 'same-content', NULL,
+          192, 256, 4, 3, 'video-dense-v1'
+        );
+        SELECT COUNT(*) FROM sprite_versions
+        WHERE fighter_id = 'f1'
+          AND animation_name = 'walk'
+          AND quality_tier = 'rookie'
+          AND content_hash = 'same-content';
+      `,
+    ]);
+    if (distinctAnimationFormatCount !== '2') {
+      throw new Error(`Sprite animation formats did not remain distinct in immutable history; got ${distinctAnimationFormatCount}`);
     }
 
     const sourceDuplicateCount = runCapture('D1 source content index check', sqlite, [
@@ -2222,13 +2331,6 @@ function replayMigrations() {
 	               WHERE s.fighter_id = f.id
 	                 AND s.animation_name IN ('idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick', 'jump', 'crouch', 'hit', 'ko', 'victory')
 	             ) = 11) || '|';
-	        INSERT INTO sprites (
-	          id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
-	          content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
-	        ) VALUES (
-	          'community-sprite-1', 'f1', 'idle', 'rookie', 'community-sprite-1.png', NULL,
-	          'community-sprite-content', NULL, 192, 256, 4, 3
-	        );
 	        SELECT
 	          (SELECT COUNT(*) FROM fighters f
 	           WHERE f.public_flag = 1
@@ -2775,7 +2877,8 @@ function assertLocalCachePreservesSpriteVersions() {
     "it('clears only the active account scope'",
     "it('rejects a stale write after the active Clerk user changes'",
     'spriteVersions?: CloudSprite[]',
-    'const spriteVersions = fighter.spriteVersions?.length ? fighter.spriteVersions : fighter.sprites',
+    'Archived sprite versions cannot be imported into the playable cache',
+    'return selectPlayableCloudSprites(fighter.sprites)',
     'preserveVersionId: Boolean(sprite.id)',
     'buildSpriteUploadPlan(',
     'created.fighter?.spriteVersions ?? []',
@@ -2786,20 +2889,32 @@ function assertLocalCachePreservesSpriteVersions() {
     'contentHash?: string | null',
     'cloudSourceHashes?: Record<string, string | null>',
     'cloudSpriteVersionCount?: number',
+    'cloudPlayableSpriteRefs?: Record<string, CachedPlayableSpriteRef>',
+    'export function selectPlayableCachedSprites',
+    'const refs = meta?.cloudPlayableSpriteRefs ?? (meta?.cloudFighterId ? {} : undefined)',
+    'export async function setCachedArchivedSprite',
+    'await setCachedArchivedSprite(sprite, { preserveVersionId: true })',
+    'const contentHash = await hashPhoto(sprite.pngBlob)',
+    'await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope)',
     'buildSpriteDownloadPlan(',
     'selectPlayableCloudSprites',
     'includeArchivedVersions?: boolean',
     'includeRawAssets?: boolean',
     'includeArchivedVersions: false,',
     'includeRawAssets: false',
-    'queueArchivedCloudFighterImport',
-    'archivedCloudImportQueue',
     'const localFingerprints = await fingerprintSprites(localSpriteVersions)',
     'meta.cloudSourceHashes = remoteSourceHashes',
     "it('skips remote versions already present by content hash'",
     "it('downloads only a missing RAW blob for an imported version id'",
     "it('downloads both blobs for a genuinely missing remote version'",
     "it('does no writes when cloud history and current pointers already match'",
+    "it('requires all eleven current pointers and never counts archived private versions'",
+    "it('plays the exact remote-current sprite while keeping a newer archived candidate'",
+    "it('fails closed for a cloud fighter without an exact current binding'",
+    "it('keeps historical best-version selection for an Original local fighter'",
+    "it('never promotes a newer higher-tier candidate outside the authoritative playable set'",
+    "it('keeps Original sprites playable when the first sprite upload fails after cloud creation'",
+    "it('keeps successful first sync pinned to the exact authoritative sprite hash'",
     'const requestedTierAnimations = new Set(requestedTierSprites.map((sprite) => sprite.animationName))',
     'requestedTierAnimations.size >= ANIMATIONS.length',
     'spriteVersions: spriteVersions.map',
@@ -2938,6 +3053,8 @@ function assertLaunchMetadataIsWired() {
     'rel="apple-touch-icon" href="/assets/app-icon-192.png"',
     'property="og:title"',
     'property="og:image"',
+    'property="og:image:secure_url"',
+    'property="og:image:type" content="image/jpeg"',
     'property="og:image:width" content="1200"',
     'property="og:image:height" content="630"',
     'name="twitter:card" content="summary_large_image"',
@@ -2959,8 +3076,13 @@ function assertLaunchMetadataIsWired() {
     'public/assets/app-icon-192.png',
     'public/assets/app-icon-512.png',
     'public/assets/app-maskable-512.png',
-    'public/assets/social-card.png',
+    'public/assets/social-card-v6.png',
+    'public/assets/social-card-v7.jpg',
+    'public/assets/social-card-v7.webp',
     'public/assets/social-card.svg',
+    'public/assets/social-card-visual-v3.png',
+    'scripts/assets/social-card.html',
+    'scripts/assets/social-card.css',
     'public/robots.txt',
     'public/sitemap.xml',
     'scripts/frontend-security-headers.mjs',
@@ -3016,6 +3138,10 @@ function assertLaunchMetadataIsWired() {
     'expectedAppName',
     "manifestJson.name === expectedAppName",
     'expectedSocialCardPath',
+    'expectedSocialCardMime',
+    'property="og:image:secure_url"',
+    'property="og:image:type"',
+    'socialCardBytes <= 300_000',
     'Home HTML missing canonical production origin',
     'robots.txt missing canonical sitemap',
     'Sitemap must not publish private roster routes',
@@ -3070,41 +3196,31 @@ function assertLaunchMetadataIsWired() {
   }
 }
 
-function readPngSize(relPath) {
-  const bytes = readFileSync(join(root, relPath));
-  const isPng = bytes.length >= 24
-    && bytes[0] === 0x89
-    && bytes[1] === 0x50
-    && bytes[2] === 0x4e
-    && bytes[3] === 0x47
-    && bytes[4] === 0x0d
-    && bytes[5] === 0x0a
-    && bytes[6] === 0x1a
-    && bytes[7] === 0x0a;
-  if (!isPng) throw new Error(`${relPath} is not a PNG file.`);
-  return {
-    width: bytes.readUInt32BE(16),
-    height: bytes.readUInt32BE(20),
-  };
-}
-
 function assertLaunchRasterAssetsAreFresh() {
   const assets = [
-    ['public/assets/social-card.svg', 'public/assets/social-card.png', 1200, 630],
+    ['scripts/assets/social-card.html', 'public/assets/social-card-v7.jpg', 1200, 630, 300_000],
+    ['scripts/assets/social-card.css', 'public/assets/social-card-v7.jpg', 1200, 630, 300_000],
+    ['public/assets/social-card-visual-v3.png', 'public/assets/social-card-v7.jpg', 1200, 630, 300_000],
+    ['scripts/assets/social-card.html', 'public/assets/social-card-v7.webp', 1200, 630, 150_000],
+    ['scripts/assets/social-card.css', 'public/assets/social-card-v7.webp', 1200, 630, 150_000],
+    ['public/assets/social-card-visual-v3.png', 'public/assets/social-card-v7.webp', 1200, 630, 150_000],
     ['public/assets/app-icon.svg', 'public/assets/app-icon-192.png', 192, 192],
     ['public/assets/app-icon.svg', 'public/assets/app-icon-512.png', 512, 512],
     ['public/assets/app-icon.svg', 'public/assets/app-maskable-512.png', 512, 512],
   ];
 
-  for (const [sourcePath, rasterPath, expectedWidth, expectedHeight] of assets) {
+  for (const [sourcePath, rasterPath, expectedWidth, expectedHeight, maxBytes] of assets) {
     const source = statSync(join(root, sourcePath));
     const raster = statSync(join(root, rasterPath));
     if (raster.mtimeMs + 1000 < source.mtimeMs) {
       throw new Error(`${rasterPath} is older than ${sourcePath}. Run npm run brand:rasterize.`);
     }
-    const { width, height } = readPngSize(rasterPath);
+    const { width, height } = readImageSize(join(root, rasterPath));
     if (width !== expectedWidth || height !== expectedHeight) {
       throw new Error(`${rasterPath} is ${width}x${height}; expected ${expectedWidth}x${expectedHeight}.`);
+    }
+    if (maxBytes && raster.size > maxBytes) {
+      throw new Error(`${rasterPath} is ${raster.size} bytes; expected no more than ${maxBytes}.`);
     }
   }
 }
@@ -3226,6 +3342,55 @@ function assertDurableGenerationIsWired() {
     if (/^\s*GENERATION_JOB_SIGNING_SECRET\s*=/m.test(config)) {
       throw new Error(`${label} generation job signing key must remain a Worker secret.`);
     }
+  }
+}
+
+function assertVideoSpriteProductionToolchainGate() {
+  const dockerfile = readFileSync(join(root, 'Dockerfile.processor'), 'utf8');
+  const dockerRequired = [
+    'AS media-runtime',
+    'ENV VIDEO_SPRITE_APPROVED_FFMPEG_VERSION=5.1.9-0+deb12u1',
+    'ffmpeg=7:5.1.9-0+deb12u1',
+    'ffmpeg version 5.1.9-0+deb12u1',
+    'ffprobe version 5.1.9-0+deb12u1',
+    'FROM media-runtime AS video-sprite-test',
+    'COPY --from=build /app /app',
+    'VIDEO_SPRITE_TEST_FFMPEG=1 npm --prefix processor run test:video-sprite',
+    'FROM media-runtime AS runtime',
+  ];
+  const missingDocker = dockerRequired.filter((snippet) => !dockerfile.includes(snippet));
+  if (missingDocker.length > 0) {
+    throw new Error(`Video sprite production toolchain is incomplete: ${missingDocker.join(', ')}`);
+  }
+  for (const [label, path] of [
+    ['reusable validation', '.github/workflows/validate.yml'],
+    ['production Arcade seed', '.github/workflows/seed-arcade-production.yml'],
+  ]) {
+    const validation = readFileSync(join(root, path), 'utf8');
+    const toolchainStep = validation.indexOf('--target video-sprite-test');
+    const productionGate = validation.indexOf('run: npm run check:production');
+    if (toolchainStep < 0 || productionGate < 0 || toolchainStep >= productionGate) {
+      throw new Error(`${label} must test the production video-sprite image before check:production.`);
+    }
+    if (!validation.includes('VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"')) {
+      throw new Error(`${label} must mark the exact media test before the host production gate.`);
+    }
+  }
+
+  const productionDeploy = readFileSync(join(root, '.github/workflows/deploy-production.yml'), 'utf8');
+  if (!/^\s{4}needs: validate$/m.test(productionDeploy)) {
+    throw new Error('Production deploy must remain blocked on the reusable validation job.');
+  }
+  const pagesStepStart = productionDeploy.indexOf('- name: Build, deploy, and smoke Pages');
+  const pagesStepEnd = productionDeploy.indexOf('\n      - name:', pagesStepStart + 1);
+  const pagesStep = pagesStepStart >= 0
+    ? productionDeploy.slice(pagesStepStart, pagesStepEnd >= 0 ? pagesStepEnd : undefined)
+    : '';
+  const proofAssignments = productionDeploy.match(/VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED:\s*"1"/g) ?? [];
+  if (proofAssignments.length !== 1 ||
+      !pagesStep.includes('VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"') ||
+      !pagesStep.includes('run: npm run deploy:frontend')) {
+    throw new Error('Only the Pages deploy step may inherit the exact media-toolchain proof from validation.');
   }
 }
 
@@ -3366,6 +3531,10 @@ function assertGithubActionsAreWired() {
     ci: '.github/workflows/ci.yml',
     development: '.github/workflows/deploy-development.yml',
     production: '.github/workflows/deploy-production.yml',
+    xaiCanary: '.github/workflows/arcade-side-xai-canary-production.yml',
+    xaiGlobal: '.github/workflows/arcade-side-xai-global-production.yml',
+    xaiHighKick: '.github/workflows/arcade-high-kick-xai-canary-production.yml',
+    xaiQaMotion: '.github/workflows/arcade-qa-motion-xai-canary-production.yml',
     codeql: '.github/workflows/codeql.yml',
     dependabot: '.github/dependabot.yml',
     codeowners: '.github/CODEOWNERS',
@@ -3406,21 +3575,110 @@ function assertGithubActionsAreWired() {
       'secrets.CLOUDFLARE_API_TOKEN',
       'secrets.ANONYMIZATION_SECRET',
       'secrets.GENERATION_JOB_SIGNING_SECRET',
+      'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
     ],
     production: [
-      'group: deploy-production',
+      'group: production-worker-mutations',
       'cancel-in-progress: false',
       'name: production',
       'BRAND_CLEARANCE_JSON',
       'ASF_BRAND_CLEARANCE_FILE=$ASF_BRAND_CLEARANCE_FILE" >> "$GITHUB_ENV',
+      'npm run check:meterkey-auth',
+      'ASF_METERKEY_EXPECTED_KEY_ID:',
+      'ASF_METERKEY_EXPECTED_USER_ID:',
+      'ASF_METERKEY_EXPECTED_WALLET_ID:',
+      'ASF_METERKEY_MIN_AVAILABLE_UC:',
+      'ASF_METERKEY_EXPECTED_PER_REQUEST_CAP_UC:',
+      'node scripts/worker-version-rollout.mjs guard-full',
+      'node scripts/apply-live-config.mjs --skip-production-check --dry-run-worker-deploy',
       'npm --prefix worker run db:migrate',
+      'node scripts/check-generation-idle.mjs',
       'node scripts/apply-live-config.mjs --skip-production-check --deploy-worker',
+      'ASF_EXPECTED_WORKER_VERSION_TAG:',
+      'ASF_ARCADE_PREFLIGHT_KEY:',
+      '--preflight-only',
+      'node scripts/worker-version-rollout.mjs rollback',
       'npm run smoke:live',
       'npm run deploy:frontend',
       'npm run check:live-readiness',
       'secrets.CLOUDFLARE_API_TOKEN',
       'secrets.CLERK_WEBHOOK_SIGNING_SECRET',
       'secrets.GENERATION_JOB_SIGNING_SECRET',
+      'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+    ],
+    xaiCanary: [
+      'workflow_dispatch:',
+      'ARCADE_SIDE_XAI_TRUMP_POSE_TRANSFER_V2',
+      'authorize exactly one paid two-reference SIDE call',
+      'group: production-worker-mutations',
+      'cancel-in-progress: false',
+      'npm --prefix worker ci',
+      'npm run test:arcade:xai-canary',
+      '--slug=donald-trump',
+      'npm run arcade:pose-master',
+      '--master=xai-milei-side-v1',
+      'npm run arcade:canary:xai-side',
+      '--state=.arcade-side-xai-pose-transfer-canary-state.json',
+      '--pose-master-upload-state=.arcade-xai-pose-master-upload-state.json',
+      'arcade-side-xai-trump-pose-transfer-v2-state',
+      'secrets.PIXCLI_API_KEY',
+      'secrets.CLOUDFLARE_API_TOKEN',
+    ],
+    xaiGlobal: [
+      'workflow_dispatch:',
+      'ARCADE_SIDE_XAI_GLOBAL_4_V1',
+      'authorize exactly four paid two-reference SIDE calls',
+      'group: production-worker-mutations',
+      'cancel-in-progress: false',
+      'npm --prefix worker ci',
+      'npm run test:arcade:xai-global',
+      'for slug in cristiano-ronaldo lionel-messi bad-bunny mrbeast',
+      'npm run arcade:pose-master',
+      '--master=xai-milei-side-v1',
+      'npm run arcade:batch:xai-global-sides',
+      '--state=.arcade-side-xai-global-pose-transfer-state.json',
+      '--pose-master-upload-state=.arcade-xai-pose-master-upload-state.json',
+      'arcade-side-xai-global-pose-transfer-v1-state',
+      'secrets.PIXCLI_API_KEY',
+      'secrets.CLOUDFLARE_API_TOKEN',
+    ],
+    xaiHighKick: [
+      'workflow_dispatch:',
+      'ARCADE_HIGH_KICK_XAI_TRUMP_IMPACT_V1',
+      'authorize exactly one paid three-reference frame',
+      'group: production-worker-mutations',
+      'cancel-in-progress: false',
+      'npm run test:arcade:xai-high-kick',
+      'gh run download "32889507819"',
+      'arcade-side-xai-trump-pose-transfer-v2-state',
+      '--slug=donald-trump',
+      'npm run arcade:motion-master',
+      '--master=xai-high-kick-impact-v1',
+      'npm run arcade:canary:xai-high-kick',
+      '--state=.arcade-high-kick-xai-trump-impact-state.json',
+      '--motion-master-upload-state=.arcade-xai-high-kick-impact-upload-state.json',
+      '--canonical-upload-state=.arcade-xai-trump-canonical-upload-state.json',
+      'arcade-high-kick-xai-trump-impact-v1-state',
+      'secrets.PIXCLI_API_KEY',
+      'secrets.CLOUDFLARE_API_TOKEN',
+    ],
+    xaiQaMotion: [
+      'workflow_dispatch:',
+      'ARCADE_QA_MILEI_HIGH_PUNCH_F4_XAI_V1',
+      'authorize exactly one paid three-reference frame (estimated USD 0.07)',
+      'group: production-worker-mutations',
+      'cancel-in-progress: false',
+      'npm run test:arcade:xai-qa-motion',
+      '--slug=javier-milei',
+      'npm run arcade:qa-motion-references',
+      '--candidate=arcade-qa-milei-high-punch-f4-xai-v1',
+      'npm run arcade:canary:xai-qa-motion',
+      '--state=.arcade-qa-milei-high-punch-f4-xai-state.json',
+      '--pose-upload-state=.arcade-qa-high-punch-f4-upload-state.json',
+      '--canonical-upload-state=.arcade-qa-milei-canonical-upload-state.json',
+      'arcade-qa-milei-high-punch-f4-xai-v1-state',
+      'secrets.PIXCLI_API_KEY',
+      'secrets.CLOUDFLARE_API_TOKEN',
     ],
     codeql: [
       'github/codeql-action/init@v4',
@@ -3452,6 +3710,15 @@ function assertGithubActionsAreWired() {
     throw new Error(`GitHub delivery wiring is incomplete:\n- ${missingSnippets.join('\n- ')}`);
   }
 
+  const backendBridgeEnv = 'CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}';
+  const productionBridgeUses = text.production.split(backendBridgeEnv).length - 1;
+  const developmentBridgeUses = text.development.split(backendBridgeEnv).length - 1;
+  if (productionBridgeUses < 2 || developmentBridgeUses < 1) {
+    throw new Error(
+      'GitHub deploy workflows must pass CLERK_BACKEND_AUTH_BRIDGE_SECRET to validation and Worker upload steps.',
+    );
+  }
+
   const githubText = Object.values(text).join('\n');
   if (
     /(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}/.test(githubText)
@@ -3463,11 +3730,215 @@ function assertGithubActionsAreWired() {
   }
 }
 
+function assertXaiArcadeSidePromptIsProviderScoped() {
+  const prompts = readFileSync(join(root, 'scripts/arcade-provider-prompts.mjs'), 'utf8');
+  const promptTests = readFileSync(join(root, 'scripts/arcade-provider-prompts.test.mjs'), 'utf8');
+  const canary = readFileSync(join(root, 'scripts/arcade-side-xai-canary.mjs'), 'utf8');
+  const canaryTests = readFileSync(join(root, 'scripts/arcade-side-xai-canary.test.mjs'), 'utf8');
+  const globalBatch = readFileSync(join(root, 'scripts/arcade-side-xai-global-batch.mjs'), 'utf8');
+  const globalBatchTests = readFileSync(join(root, 'scripts/arcade-side-xai-global-batch.test.mjs'), 'utf8');
+  const highKickCanary = readFileSync(join(root, 'scripts/arcade-high-kick-xai-canary.mjs'), 'utf8');
+  const highKickCanaryTests = readFileSync(join(root, 'scripts/arcade-high-kick-xai-canary.test.mjs'), 'utf8');
+  const qaMotionCandidate = readFileSync(join(root, 'arcade/qa-motion-canary-2026.json'), 'utf8');
+  const qaMotionCandidateCode = readFileSync(join(root, 'scripts/arcade-qa-motion-candidate.mjs'), 'utf8');
+  const qaMotionCandidateTests = readFileSync(join(root, 'scripts/arcade-qa-motion-candidate.test.mjs'), 'utf8');
+  const qaMotionCanary = readFileSync(join(root, 'scripts/arcade-motion-xai-canary.mjs'), 'utf8');
+  const qaMotionCanaryTests = readFileSync(join(root, 'scripts/arcade-motion-xai-canary.test.mjs'), 'utf8');
+  const qaMotionReferenceFetch = readFileSync(join(root, 'scripts/fetch-arcade-qa-motion-references.mjs'), 'utf8');
+  const poseMasterFetch = readFileSync(join(root, 'scripts/fetch-arcade-pose-master.mjs'), 'utf8');
+  const motionMasterFetch = readFileSync(join(root, 'scripts/fetch-arcade-motion-master.mjs'), 'utf8');
+  const sealedRunner = readFileSync(join(root, 'scripts/arcade-side-bakeoff.mjs'), 'utf8');
+  const packageJson = readFileSync(join(root, 'package.json'), 'utf8');
+  const combined = [
+    prompts,
+    promptTests,
+    canary,
+    canaryTests,
+    globalBatch,
+    globalBatchTests,
+    highKickCanary,
+    highKickCanaryTests,
+    qaMotionCandidate,
+    qaMotionCandidateCode,
+    qaMotionCandidateTests,
+    qaMotionCanary,
+    qaMotionCanaryTests,
+    qaMotionReferenceFetch,
+    poseMasterFetch,
+    motionMasterFetch,
+    sealedRunner,
+    packageJson,
+  ].join('\n');
+  const required = [
+    "canonical: 'canonical-v1'",
+    "xaiRealisticAdult: 'xai-realistic-adult-v1'",
+    "xaiIdentityPoseTransfer: 'xai-identity-pose-transfer-v1'",
+    "xaiCanonicalMotionTransfer: 'xai-canonical-motion-transfer-v1'",
+    'The supplied image is a close facial identity reference.',
+    'premium semi-realistic 3D fighting-game roster art',
+    'never stylize anatomy, head size, apparent age, or identity',
+    'approximately 7.5 heads',
+    'about 13 percent of total body height',
+    '70-85 mm equivalent camera',
+    'no oversized head',
+    'IMAGE 1 is the POSE, COMPOSITION, AND RENDERING MASTER only',
+    'IMAGE 2 is the IDENTITY AND PHYSIQUE ANCHOR only',
+    'Never blend the two faces',
+    'IMAGE 1 is the MOTION POSE AND COMPOSITION MASTER only',
+    'IMAGE 2 is the APPROVED CANONICAL CHARACTER AND RENDERING MASTER',
+    'IMAGE 3 is the REAL IDENTITY SAFEGUARD only',
+    'not a sprite sheet, contact sheet, sequence, or collage',
+    'expect(prompt).not.toContain(\'neutral ready stance\')',
+    'expect(prompt).not.toMatch(/clearly AI-generated|realistic 2\\.5D|documentary photography/i)',
+    "XAI_SIDE_CANARY_EXPERIMENT_ID = 'arcade-side-xai-trump-pose-transfer-v2'",
+    "XAI_SIDE_CANARY_SLUG = 'donald-trump'",
+    "XAI_GLOBAL_SIDE_BATCH_EXPERIMENT_ID = 'arcade-side-xai-global-pose-transfer-v1'",
+    "XAI_GLOBAL_SIDE_BATCH_CONFIRMATION = 'ARCADE_SIDE_XAI_GLOBAL_4_V1'",
+    "XAI_HIGH_KICK_CANARY_EXPERIMENT_ID = 'arcade-high-kick-xai-trump-impact-v1'",
+    "XAI_HIGH_KICK_CANARY_CONFIRMATION = 'ARCADE_HIGH_KICK_XAI_TRUMP_IMPACT_V1'",
+    'arcade-qa-milei-high-punch-f4-xai-v1',
+    'ARCADE_QA_MILEI_HIGH_PUNCH_F4_XAI_V1',
+    'qa-atlas-high-punch-playback-04-v1',
+    'gemini-javier-milei-side-clean-v1',
+    'exact standing high-punch impact pose from IMAGE 1',
+    'providerCatalogCostPerImage',
+    'maxEstimatedCostUsd',
+    'Pinned PixCLI model contract or price changed; new human approval is required.',
+    'image: [poseAssetHash, canonicalAssetHash, sourceAssetHash]',
+    'ip-motion-v1-${fighter.slug}-${candidate.motion.animation.replaceAll',
+    "'cristiano-ronaldo'",
+    "'lionel-messi'",
+    "'bad-bunny'",
+    "'mrbeast'",
+    "id: 'grok-imagine-image-2-edit'",
+    "endpoint: 'xai/grok-imagine-image/v2.0/edit'",
+    "aspect_ratio: 'auto'",
+    "resolution: '2k'",
+    'expectedPaidCalls: 1',
+    'expectedPaidCalls: XAI_GLOBAL_SIDE_BATCH_SLUGS.length',
+    'enrich_prompt: false',
+    "fallback: 'none'",
+    'activation: false',
+    'image: [poseMasterAssetHash, sourceAssetHash]',
+    'referenceInputs: model.referenceInputs ?? []',
+    "id: 'xai-milei-side-v1'",
+    "contentSha256: '89bbecdfe8fc9cd08126f1c60b90e35ecc16427e3d0a227f0a4c1832f0960309'",
+    "contentSha256: '43086a8d96acd9b153a1c38c3dd622bf0b7140d90d067a4459a0d3b7fd637bed'",
+    "contentSha256: '9429960a62d833e1899d8572efde3f7df2cceb88ff1510b3c146e8489bf7f2c0'",
+    'promptBuilder: buildXaiSideCanaryPrompt',
+    'buildXaiSidePoseTransferPayload',
+    'image: [motionMasterAssetHash, canonicalAssetHash, sourceAssetHash]',
+    'plan.length !== expectedPaidCalls',
+    'state.experimentId !== experimentId',
+    'options.experimentId ?? BAKEOFF_EXPERIMENT_ID',
+    '"arcade:pose-master": "node scripts/fetch-arcade-pose-master.mjs"',
+    '"arcade:canary:xai-side": "node scripts/arcade-side-xai-canary.mjs"',
+    '"arcade:batch:xai-global-sides": "node scripts/arcade-side-xai-global-batch.mjs"',
+    '"arcade:motion-master": "node scripts/fetch-arcade-motion-master.mjs"',
+    '"arcade:canary:xai-high-kick": "node scripts/arcade-high-kick-xai-canary.mjs"',
+    '"arcade:qa-motion-references": "node scripts/fetch-arcade-qa-motion-references.mjs"',
+    '"arcade:canary:xai-qa-motion": "node scripts/arcade-motion-xai-canary.mjs"',
+    '"test:arcade:xai-qa-motion": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-qa-motion-candidate.test.mjs scripts/arcade-motion-xai-canary.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-bakeoff.test.mjs"',
+    '"test:arcade:xai-global": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-xai-global-batch.test.mjs scripts/arcade-side-bakeoff.test.mjs"',
+    '"test:arcade:xai-high-kick": "vitest run scripts/arcade-provider-prompts.test.mjs scripts/arcade-high-kick-xai-canary.test.mjs scripts/arcade-side-xai-canary.test.mjs scripts/arcade-side-bakeoff.test.mjs"',
+  ];
+  const missing = required.filter((snippet) => !combined.includes(snippet));
+  if (missing.length > 0) {
+    throw new Error(`XAI Arcade provider prompt isolation is incomplete: ${missing.join(', ')}`);
+  }
+}
+
+function assertArcadeExperimentArchiveIsImmutable() {
+  const archive = readFileSync(join(root, 'scripts/archive-arcade-experiment.mjs'), 'utf8');
+  const archiveTests = readFileSync(join(root, 'scripts/archive-arcade-experiment.test.mjs'), 'utf8');
+  const archiveUploader = readFileSync(join(root, 'scripts/archive-r2-upload-worker.mjs'), 'utf8');
+  const archiveUploaderTests = readFileSync(
+    join(root, 'scripts/archive-r2-upload-worker.test.mjs'),
+    'utf8',
+  );
+  const archiveUploaderConfig = readFileSync(
+    join(root, 'scripts/wrangler.archive-uploader.jsonc'),
+    'utf8',
+  );
+  const catalog = readFileSync(join(root, 'arcade/experiment-archive-2026.json'), 'utf8');
+  const migration = readFileSync(
+    join(root, 'worker/migrations/0027_immutable_arcade_experiments.sql'),
+    'utf8',
+  );
+  const migrationTests = readFileSync(
+    join(root, 'worker/src/arcadeExperimentMigration.integration.test.ts'),
+    'utf8',
+  );
+  const workflow = readFileSync(
+    join(root, '.github/workflows/archive-arcade-experiment-production.yml'),
+    'utf8',
+  );
+  const combined = [
+    archive,
+    archiveTests,
+    archiveUploader,
+    archiveUploaderTests,
+    archiveUploaderConfig,
+    catalog,
+    migration,
+    migrationTests,
+    workflow,
+  ].join('\n');
+  const required = [
+    "const ARCHIVE_PREFIX = 'arcade-experiments/v1'",
+    "const R2_JURISDICTION = 'eu'",
+    'Artifact bytes do not match the sealed state',
+    'R2 round-trip hash mismatch',
+    "const ARCHIVE_PREFIX = 'arcade-experiments/v1/'",
+    "onlyIf: { etagDoesNotMatch: '*' }",
+    'immutable_archive_conflict',
+    'ARCADE_ARCHIVE_UPLOAD_URL',
+    'Delete isolated R2 upload bridge',
+    '--request DELETE',
+    '/workers/scripts/$ARCADE_ARCHIVE_WORKER_NAME',
+    'scripts/wrangler.archive-uploader.jsonc',
+    'D1 archive index verification failed',
+    'INSERT OR IGNORE INTO arcade_generation_experiments',
+    'arcade_generation_experiments_immutable_update',
+    'arcade_generation_experiments_immutable_delete',
+    'arcade_generation_experiment_slots_immutable_update',
+    'arcade_generation_experiment_artifacts_immutable_delete',
+    'ARCHIVE_IMMUTABLE_ARCADE_EXPERIMENT_V1',
+    'Verify all local bytes without mutating production',
+    'Provider calls: `0`',
+    'arcade-side-xai-trump-pose-transfer-v2',
+    'arcade-side-xai-global-pose-transfer-v1',
+    'arcade-high-kick-xai-trump-impact-v1',
+  ];
+  const missing = required.filter((snippet) => !combined.includes(snippet));
+  if (missing.length > 0) {
+    throw new Error(`Immutable Arcade experiment archive is incomplete: ${missing.join(', ')}`);
+  }
+  if (workflow.includes('PIXCLI_API_KEY') || workflow.includes('arcade:canary:')) {
+    throw new Error('The immutable Arcade archive workflow must never have provider access.');
+  }
+  if (/r2\s+object\s+delete/i.test(archive) || /DELETE\s+FROM\s+arcade_generation/i.test(archive)) {
+    throw new Error('The immutable Arcade archive path must be append-only.');
+  }
+}
+
 assertNodeVersion();
 assertGeminiImageModelsAreGa();
+assertVideoSpriteProductionToolchainGate();
 run('frontend style guard', npm, ['run', 'check:frontend']);
 run('tier parity guard', node, ['scripts/check-tier-parity.mjs']);
+run('approved image-provider boundary', node, ['processor/scripts/assert-approved-image-providers.mjs']);
 run('unit tests', npm, ['test']);
+run(
+  'deterministic video sprite compiler tests',
+  npm,
+  ['--prefix', 'processor', 'run', 'test:video-sprite'],
+  root,
+  {
+    VIDEO_SPRITE_TEST_FFMPEG:
+      process.env.VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED === '1' ? '0' : '1',
+  },
+);
 run('processor benchmark tests', npm, ['--prefix', 'processor', 'run', 'benchmark:providers:test']);
 run('frontend typecheck', npx, ['tsc', '--noEmit']);
 run('Worker binding type drift check', npm, ['--prefix', 'worker', 'run', 'types:check']);
@@ -3510,6 +3981,8 @@ assertLaunchMetadataIsWired();
 assertLaunchRasterAssetsAreFresh();
 assertOfficialArcadeIsWired();
 assertDurableGenerationIsWired();
+assertXaiArcadeSidePromptIsProviderScoped();
+assertArcadeExperimentArchiveIsImmutable();
 assertGithubActionsAreWired();
 run('prelaunch bundle isolation', node, ['scripts/build-prelaunch.mjs', '--skip-checks']);
 

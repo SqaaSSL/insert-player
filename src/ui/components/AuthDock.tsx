@@ -12,7 +12,10 @@ interface AuthDockProps {
  */
 export function AuthDock({ isLoaded, isSignedIn, displayName }: AuthDockProps) {
   return (
-    <div className="auth-dock">
+    <div
+      className="auth-dock"
+      data-auth-state={!isLoaded ? 'loading' : isSignedIn ? 'signed-in' : 'signed-out'}
+    >
       {!isLoaded ? (
         <span className="auth-dock__label">Loading...</span>
       ) : isSignedIn ? (

@@ -59,6 +59,14 @@ export type PreviewSelection =
   | { kind: 'source'; source: SourceKey }
   | { kind: 'animation'; animationName: string };
 
+export function isArcadeCachedMeta(meta: Pick<CachedMeta, 'photoHash'> | null): boolean {
+  return meta?.photoHash.startsWith('arcade:') ?? false;
+}
+
+export function defaultSourceForMeta(meta: Pick<CachedMeta, 'photoHash'> | null): SourceKey {
+  return isArcadeCachedMeta(meta) ? 'side' : 'original';
+}
+
 export interface PreviewSpriteLike {
   blob: Blob;
   rawBlob?: Blob;

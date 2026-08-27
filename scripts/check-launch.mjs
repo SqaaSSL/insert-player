@@ -35,7 +35,8 @@ const REQUIRED_MANUAL_CHECKS = [
   'clerk_account_deletion_purge',
   'stripe_test_checkout_credit',
   'stripe_checkout_consent_tax_customer',
-  'stripe_live_checkout_credit',
+  // Legacy stripe_live_checkout_credit was retired: Live billing is verified read-only.
+  // Real-money Checkout is never a launch or CI/CD smoke.
   'rookie_generation_commit',
   'contender_generation_commit_cloud_sync',
   'champion_generation_commit_cloud_sync',
@@ -360,8 +361,8 @@ function assertManualLaunchValidation(values, workerUrl, frontendUrl, primaryJwt
     return;
   }
 
-  if (validation.schemaVersion !== 5) {
-    fail('Manual launch validation schemaVersion must be 5.');
+  if (validation.schemaVersion !== 6) {
+    fail('Manual launch validation schemaVersion must be 6.');
   }
   if (String(validation.legalVersion ?? '').trim() !== CURRENT_LEGAL_VERSION) {
     fail(`Manual launch validation legalVersion must match ${CURRENT_LEGAL_VERSION}.`);

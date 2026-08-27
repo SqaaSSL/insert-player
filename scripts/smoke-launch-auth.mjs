@@ -386,6 +386,10 @@ function sleep(ms) {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
+export function authMeRejectsDeletedIdentity(status, body) {
+  return status === 401 || (status === 200 && body?.user === null);
+}
+
 async function waitForDeletedTokenRejection({ token, workerUrl, frontendOrigin, role }) {
   const started = Date.now();
   let lastStatus = 0;
@@ -398,12 +402,15 @@ async function waitForDeletedTokenRejection({ token, workerUrl, frontendOrigin, 
       signal: AbortSignal.timeout(15_000),
     });
     lastStatus = response.status;
-    if (response.status === 401) {
-      await response.body?.cancel().catch(() => {});
+    const body = response.status === 200
+      ? await response.json().catch(() => null)
+      : null;
+    if (authMeRejectsDeletedIdentity(response.status, body)) {
+      if (response.body) await response.body.cancel().catch(() => {});
       console.log(`\u2713 ${role} Clerk deletion tombstones its still-valid session token`);
       return;
     }
-    await response.body?.cancel().catch(() => {});
+    if (response.body) await response.body.cancel().catch(() => {});
     await sleep(2_000);
   }
   throw new Error(`${role} deleted Clerk token remained usable (last HTTP ${lastStatus || 'unknown'}).`);

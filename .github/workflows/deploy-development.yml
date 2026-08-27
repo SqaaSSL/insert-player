@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - develop
+    paths-ignore:
+      - '**/*.md'
   workflow_dispatch:
 
 permissions:
@@ -83,12 +85,14 @@ jobs:
           RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
           FREEPIK_API_KEY: ${{ secrets.FREEPIK_API_KEY }}
           LUDO_API_KEY: ${{ secrets.LUDO_API_KEY }}
+          PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
           TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
         run: npm run config:sandbox
 
       - name: Build, deploy, and smoke Pages

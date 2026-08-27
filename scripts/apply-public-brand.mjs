@@ -60,6 +60,14 @@ function normalizeOrigin(value) {
   return origin;
 }
 
+function socialImageMimeType(path) {
+  const normalized = String(path ?? '').split(/[?#]/, 1)[0].toLowerCase();
+  if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) return 'image/jpeg';
+  if (normalized.endsWith('.png')) return 'image/png';
+  if (normalized.endsWith('.webp')) return 'image/webp';
+  throw new Error('Social card path must end in .jpg, .jpeg, .png, or .webp.');
+}
+
 function writeIfChanged(path, text, changed) {
   const abs = join(root, path);
   const before = readFileSync(abs, 'utf8');
@@ -77,6 +85,7 @@ function replaceRequired(text, pattern, replacement, label) {
 function updateHtml({ name, origin, socialCardPath, description }) {
   let text = readFileSync(join(root, 'index.html'), 'utf8');
   const imageUrl = `${origin}${socialCardPath.startsWith('/') ? socialCardPath : `/${socialCardPath}`}`;
+  const imageType = socialImageMimeType(socialCardPath);
   text = replaceRequired(text, /<title>[^<]+<\/title>/, `<title>${name}</title>`, 'HTML title');
   text = replaceRequired(text, /<meta\s+name="description"\s+content="[^"]*"\s*\/>/, `<meta name="description" content="${description}" />`, 'HTML description');
   for (const attr of ['application-name', 'apple-mobile-web-app-title']) {
@@ -87,6 +96,8 @@ function updateHtml({ name, origin, socialCardPath, description }) {
   }
   text = replaceRequired(text, /<meta\s+property="og:url"\s+content="[^"]*"\s*\/>/, `<meta property="og:url" content="${origin}/" />`, 'HTML og:url');
   text = replaceRequired(text, /<meta\s+property="og:image"\s+content="[^"]*"\s*\/>/, `<meta property="og:image" content="${imageUrl}" />`, 'HTML og:image');
+  text = replaceRequired(text, /<meta\s+property="og:image:secure_url"\s+content="[^"]*"\s*\/>/, `<meta property="og:image:secure_url" content="${imageUrl}" />`, 'HTML og:image:secure_url');
+  text = replaceRequired(text, /<meta\s+property="og:image:type"\s+content="[^"]*"\s*\/>/, `<meta property="og:image:type" content="${imageType}" />`, 'HTML og:image:type');
   text = replaceRequired(text, /<meta\s+name="twitter:title"\s+content="[^"]*"\s*\/>/, `<meta name="twitter:title" content="${name}" />`, 'HTML twitter:title');
   text = replaceRequired(text, /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/>/, `<meta name="twitter:image" content="${imageUrl}" />`, 'HTML twitter:image');
   return text;
@@ -101,20 +112,34 @@ function updateManifest({ name, shortName, description }) {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
-function splitSocialCardTitle(name) {
-  const words = name.toUpperCase().split(/\s+/).filter(Boolean);
-  if (words.length <= 1) return [words[0] ?? name.toUpperCase(), ''];
-  const mid = Math.ceil(words.length / 2);
-  return [words.slice(0, mid).join(' '), words.slice(mid).join(' ')];
-}
-
 function updateSocialSvg({ name, description }) {
   let text = readFileSync(join(root, 'public/assets/social-card.svg'), 'utf8');
-  const [lineOne, lineTwo] = splitSocialCardTitle(name);
   text = replaceRequired(text, /<title id="title">[^<]+<\/title>/, `<title id="title">${name} social card</title>`, 'social SVG title');
   text = replaceRequired(text, /<desc id="desc">[^<]+<\/desc>/, `<desc id="desc">${description}</desc>`, 'social SVG desc');
-  text = replaceRequired(text, /<text x="94" y="260"[^>]*>[^<]*<\/text>/, `<text x="94" y="260" fill="#f4f0dd" font-family="Impact, Arial Black, sans-serif" font-size="108">${lineOne}</text>`, 'social SVG title line one');
-  text = replaceRequired(text, /<text x="92" y="372"[^>]*>[^<]*<\/text>/, `<text x="92" y="372" fill="#ffe878" font-family="Impact, Arial Black, sans-serif" font-size="132">${lineTwo || 'FIGHT'}</text>`, 'social SVG title line two');
+  text = replaceRequired(
+    text,
+    /(<text id="social-card-brand"[^>]*>)[^<]*(<\/text>)/,
+    `$1${name.toUpperCase()}$2`,
+    'social SVG brand name',
+  );
+  return text;
+}
+
+function updateSocialCardTemplate({ name, description }) {
+  let text = readFileSync(join(root, 'scripts/assets/social-card.html'), 'utf8');
+  text = replaceRequired(text, /<title>[^<]+<\/title>/, `<title>${name} social card</title>`, 'social card title');
+  text = replaceRequired(
+    text,
+    /<meta name="description" content="[^"]*" \/>/,
+    `<meta name="description" content="${description}" />`,
+    'social card description',
+  );
+  text = replaceRequired(
+    text,
+    /(<h1 id="social-card-brand"[^>]*>)[^<]*(<\/h1>)/,
+    `$1${name.toUpperCase()}$2`,
+    'social card brand name',
+  );
   return text;
 }
 
@@ -159,12 +184,13 @@ function main() {
     2,
   );
   const origin = normalizeOrigin(argValue('--origin') || envValue(env, 'ASF_FRONTEND_URL') || envValue(env, 'ASF_FRONTEND_ORIGIN'));
-  const socialCardPath = argValue('--social-card') || envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card.png';
+  const socialCardPath = argValue('--social-card') || envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v7.jpg';
   const description = argValue('--description') || envValue(env, 'ASF_PUBLIC_APP_DESCRIPTION') || `Turn a photo into a playable arcade character in ${name}.`;
 
   const updates = {
     'index.html': updateHtml({ name, origin, socialCardPath, description }),
     'public/site.webmanifest': updateManifest({ name, shortName, description }),
+    'scripts/assets/social-card.html': updateSocialCardTemplate({ name, description }),
     'public/assets/social-card.svg': updateSocialSvg({ name, description }),
     'public/assets/app-icon.svg': updateIconSvg({ name, shortName }, 'public/assets/app-icon.svg', 'app icon'),
     'public/assets/app-maskable.svg': updateIconSvg({ name, shortName }, 'public/assets/app-maskable.svg', 'maskable app icon'),
@@ -180,7 +206,7 @@ function main() {
   if (dryRun) {
     console.log(`Public brand dry run: ${name} (${shortName}) at ${origin}`);
     console.log(`Would update: ${Object.keys(updates).join(', ')}`);
-    console.log('PNG assets are not regenerated by this script; run npm run brand:rasterize before launch.');
+    console.log('Raster assets are not regenerated by this script; run npm run brand:rasterize before launch.');
     return;
   }
 
@@ -190,7 +216,7 @@ function main() {
   }
   console.log(`Applied public brand: ${name} (${shortName})`);
   console.log(changed.length > 0 ? `Updated: ${changed.join(', ')}` : 'No files changed.');
-  console.log('Run npm run brand:rasterize to regenerate PNG social card and app icons from the updated SVG/art before launch.');
+  console.log('Run npm run brand:rasterize to regenerate the social card formats and app icons from their sources before launch.');
 }
 
 try {

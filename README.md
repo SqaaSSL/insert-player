@@ -36,7 +36,7 @@ Operational and product references:
 | QA | [insert-player-sandbox.pages.dev](https://insert-player-sandbox.pages.dev) | `https://insert-player-api-sandbox.shellbot.workers.dev` | Clerk Development, dedicated Stripe sandbox | Isolated sandbox D1/R2 |
 | Production | [insertplayer.ai](https://insertplayer.ai) | [api.insertplayer.ai](https://api.insertplayer.ai) | Clerk Production, dedicated Stripe live | Isolated production D1/R2 |
 
-Production serves the full app with Clerk Production, dedicated live Stripe configuration, and Cloudflare Workflow/Container generation. QA remains the environment for paid-provider generation and test Checkout. Promotion from `main` runs migrations, checks, Worker/Container deploy, Worker smoke, Pages deploy, and readiness. The last full protected deployment is proven, but the temporary Cloudflare OAuth token stored in GitHub has since expired (`9109 Invalid access token`), so current production/development Actions stop at their first remote Cloudflare operation. Replace it with a long-lived token for the exact SqaaS account that includes Worker Scripts, D1, R2, Pages, Containers, Workflows, and Cache Purge access.
+Production serves the full app with Clerk Production, dedicated live Stripe configuration, and Cloudflare Workflow/Container generation. QA remains the environment for paid-provider generation and test Checkout. The protected `main` and `develop` branches are byte-for-byte aligned; both databases are migrated through `0024` and both Workers report healthy `0.18.0` runtimes. Production Actions `32767504225` / `32769749516` and development Actions `32767773857` / `32770040565` passed their complete checks, migrations, Worker/Container/Workflow deploys, API smokes, Pages deploys, and readiness checks with the durable account-owned Cloudflare token. Authenticated sandbox Action `32768251105` also passed two-user Clerk, D1/R2, billing-reservation, privacy, clone, match, cleanup, webhook, and tombstone validation without inference or Stripe charges. Promotion from protected branches is the canonical team release path; Markdown-only changes are CI-validated without redeploying unchanged infrastructure.
 
 Never point a local or QA build at production storage, Clerk, Stripe, or Worker secrets. Never install test Stripe credentials on the production Worker.
 
@@ -86,6 +86,16 @@ Open `http://127.0.0.1:5173`. The frontend calls the local Worker at `http://127
 
 The Vite development proxy remains available for focused frontend work, but production-shaped auth, billing, provider sessions, D1, and R2 behavior should be tested through the Worker.
 
+### Recover a legacy browser cache
+
+Older paid generations can be inventoried and exported from the exact local origin that created them without mutating IndexedDB:
+
+```bash
+npm run cache:audit -- --port=5173
+```
+
+Open both `http://localhost:5173` and `http://127.0.0.1:5173`, because browser storage is isolated by hostname. Each export is a lossless TAR containing the fighter metadata, source views, every preserved sprite version, and intro media. Archives are written with unique timestamped names to ignored `.local/legacy-cache-rescue/`; verify and move them into account-owned cloud storage before clearing browser data. Use another `--port` for a cache created by a different Vite origin.
+
 ## Required Checks
 
 Run the full gate before requesting review or deploying:
@@ -94,7 +104,7 @@ Run the full gate before requesting review or deploying:
 npm run check:production
 ```
 
-This includes frontend style guards, TypeScript, 283 tests across 57 files, Worker typechecking, a clean replay of D1 migrations through `0019`, the provider benchmark, a credential-free prelaunch scan, durable-job race/recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
+This includes frontend style guards, TypeScript, 328 tests across 63 files, Worker typechecking, a clean replay of D1 migrations through `0024`, the provider benchmark, a credential-free prelaunch scan, per-artifact checkpoint/resume and crash-recovery checks, billing reconciliation, provider-session controls, bounded streaming provider caches, durable cost accounting, privacy checks, and tier profitability.
 
 Useful focused commands:
 
@@ -153,7 +163,7 @@ npm run check:live-readiness
 npm run smoke:live
 ```
 
-Official Arcade roster generation is operator-only through the `Seed Arcade roster (production)` GitHub workflow. It restores the manifest-pinned source from private R2, verifies its exact SHA-256 hash, accepts only explicit `dry-run`, `seed`, `resume`, or `restart-draft` operations, and never activates a fighter automatically. Billable runs require the exact `GEMINI_ONLY_PRODUCTION` confirmation and fail closed unless the approved-provider guard can prove the production processor is Gemini-only before the first call.
+Official Arcade roster generation is operator-only through the `Seed Arcade roster (production)` GitHub workflow. It accepts an authenticated, non-billable `preflight` that verifies the deployed Container without restoring or mutating fighter data; generation operations restore the manifest-pinned source from private R2 and verify its exact SHA-256 hash. The Action accepts only explicit `preflight`, `dry-run`, `seed`, `resume`, `restart-draft`, `prepare-canary`, or `canary-side` operations and never activates a fighter automatically. `prepare-canary` repairs and freezes source/prompt state without inference; `canary-side` starts one fresh side-only run capped at two Pro calls / `$0.30`. Billable runs require the exact `GEMINI_ONLY_PRODUCTION` confirmation and fail closed unless the approved-provider guard can prove the production processor is Gemini-only before the first call. Normal application and infrastructure deployments never seed, regenerate, or activate Arcade fighters. Production currently exposes zero official fighters, and no paid roster inference may run without a separate explicit owner approval.
 
 ## Architecture
 
@@ -167,7 +177,8 @@ Browser
 Cloudflare Worker
   Clerk JWT verification
   credit reservations and Stripe webhooks
-  provider-session and spend enforcement
+  provider-session enforcement and durable cost accounting
+  immutable artifact checkpoints and resumable generation runs
   fighter/community/moderation APIs
        |
        +--> Workflow + Container: durable generation, upgrades, and retries
@@ -176,7 +187,7 @@ Cloudflare Worker
        +--> Gemini / fal / Runway / Freepik / Ludo via server-side secrets
 ```
 
-The browser never receives provider or Stripe secret keys. Provider calls require short-lived, purpose-scoped Worker sessions so direct proxy calls cannot bypass billing or spend controls.
+The browser never receives provider or Stripe secret keys. Provider calls require short-lived, purpose-scoped Worker sessions so direct proxy calls cannot bypass billing, route, call-count, or per-session cost controls. D1 keeps atomic monthly aggregates and permanent per-call cost events for profitability and operations, but aggregate spend is observability rather than a global kill switch.
 
 ## Non-Negotiable Rules
 
@@ -193,6 +204,7 @@ The browser never receives provider or Stripe secret keys. Provider calls requir
 - Keep Stripe refund/dispute reconciliation because it removes credits only after Stripe or a bank has already reversed money. Do not add an API path that voluntarily initiates generation refunds.
 - Keep local, QA, and production identity, billing, storage, CSP, and environment files isolated.
 - Do not expose internal provider cost estimates through public APIs.
+- Do not reintroduce a global monthly or rolling provider-spend cap. Scale is controlled by paid credits, per-session route/call/cost bounds, user/IP rate limits, Turnstile, and the provider's real quotas while durable accounting remains mandatory.
 - Do not weaken legal consent, rate limits, Turnstile, ownership checks, or cost-event retention to simplify a feature.
 
 ## Git Workflow

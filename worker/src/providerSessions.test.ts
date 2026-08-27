@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createProviderRequestState,
   createFeatureProviderSession,
+  createProviderSession,
   finalizeProviderRequest,
   PROVIDER_SESSION_HEADER,
   requireProviderSession,
@@ -9,6 +10,51 @@ import {
 import type { Env, PublicAuthContext } from './types';
 
 describe('provider session usage', () => {
+  it('persists a stricter server-side call and cost cap for a canary session', async () => {
+    const prepared: Array<{ sql: string; values: unknown[] }> = [];
+    const database = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            prepared.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
+            return this;
+          },
+        };
+      },
+      async batch() { return []; },
+    };
+    const auth: PublicAuthContext = {
+      userId: 'user-canary',
+      user: { id: 'user-canary' } as PublicAuthContext['user'],
+      claims: {},
+      rateLimitKey: 'user:user-canary',
+    };
+
+    const session = await createProviderSession({
+      DB: database as unknown as D1Database,
+    } as Env, auth, {
+      tier: 'champion',
+      purpose: 'fighter_retry',
+      operation: 'fighter_retry_source',
+      chargeId: 'charge-canary',
+      providerCallLimitCap: 2,
+      providerCostLimitCentsCap: 30,
+      legal: {
+        legalVersion: '2026-08-23.1',
+        ageConfirmed: true,
+        termsAccepted: true,
+        photoRightsConfirmed: true,
+        aiProcessingConfirmed: true,
+        immediatePerformanceConfirmed: true,
+        withdrawalLossAcknowledged: true,
+      },
+    });
+
+    expect(session).toMatchObject({ providerCallLimit: 2, providerCostLimitCents: 30 });
+    const insert = prepared.find((entry) => entry.sql.includes('INSERT INTO provider_sessions'));
+    expect(insert?.values.slice(6, 8)).toEqual([2, 30]);
+  });
+
   it('rejects a feature session without current generation consent', async () => {
     const env = { DB: {} as D1Database } as Env;
     const auth: PublicAuthContext = {
@@ -332,26 +378,28 @@ describe('provider session usage', () => {
     expect(await response?.json()).toMatchObject({ code: 'provider_session_spend_limit' });
   });
 
-  it('fails closed when the global monthly provider ceiling is exhausted', async () => {
+  it('fails closed when durable monthly accounting cannot be recorded', async () => {
     const expiresAt = new Date(Date.now() + 30_000).toISOString();
+    let providerUsageReleased = false;
     const database = {
       prepare(sql: string) {
+        if (sql.includes('provider_calls_used = MAX')) providerUsageReleased = true;
         return {
           bind() {
             return {
               async first() {
                 if (sql.includes('UPDATE provider_sessions')) {
                   return {
-                    id: 'session-global',
+                    id: 'session-accounting',
                     provider_calls_used: 1,
                     provider_call_limit: 48,
                     provider_cost_used_cents: 8,
                     provider_cost_limit_cents: 300,
                   };
                 }
-                if (sql.includes('UPDATE provider_spend_months')) return null;
+                if (sql.includes('INSERT INTO provider_spend_months')) return null;
                 return {
-                  id: 'session-global',
+                  id: 'session-accounting',
                   tier: 'rookie',
                   purpose: 'fighter_generation',
                   provider_calls_used: 0,
@@ -372,13 +420,10 @@ describe('provider session usage', () => {
         return [];
       },
     };
-    const env = {
-      DB: database as unknown as D1Database,
-      PROVIDER_MONTHLY_BUDGET_USD_CENTS: '100',
-    } as Env;
+    const env = { DB: database as unknown as D1Database } as Env;
     const request = new Request('https://api.insertplayer.ai/proxy/gemini', {
       method: 'POST',
-      headers: { [PROVIDER_SESSION_HEADER]: 'session-global' },
+      headers: { [PROVIDER_SESSION_HEADER]: 'session-accounting' },
     });
 
     const response = await requireProviderSession(request, env, {
@@ -392,65 +437,10 @@ describe('provider session usage', () => {
     });
 
     expect(response?.status).toBe(503);
-    expect(await response?.json()).toMatchObject({ code: 'provider_monthly_budget_exhausted' });
-  });
-
-  it('defers Gemini globally before consuming a session call', async () => {
-    const nowEpoch = Math.floor(Date.now() / 1_000);
-    let sessionUpdateAttempted = false;
-    const database = {
-      prepare(sql: string) {
-        if (sql.includes('UPDATE provider_sessions')) sessionUpdateAttempted = true;
-        return {
-          bind() {
-            return {
-              async first() {
-                if (sql.includes('FROM provider_sessions')) {
-                  return {
-                    id: 'session-rate',
-                    tier: 'champion',
-                    purpose: 'fighter_upgrade',
-                    provider_calls_used: 0,
-                    provider_call_limit: 320,
-                    provider_cost_used_cents: 0,
-                    provider_cost_limit_cents: 1_800,
-                    expires_at: new Date(Date.now() + 30_000).toISOString(),
-                  };
-                }
-                if (sql.includes('INSERT INTO provider_spend_reservations')) return null;
-                if (sql.includes('MIN(created_at_epoch)')) {
-                  return { created_at_epoch: nowEpoch - 120 };
-                }
-                return null;
-              },
-            };
-          },
-        };
-      },
-    };
-    const env = {
-      DB: database as unknown as D1Database,
-      GEMINI_SPEND_RATE_LIMIT_USD_CENTS: '900',
-    } as Env;
-    const request = new Request('https://api.insertplayer.ai/proxy/gemini', {
-      method: 'POST',
-      headers: { [PROVIDER_SESSION_HEADER]: 'session-rate' },
+    expect(await response?.json()).toMatchObject({
+      error: 'Provider cost accounting is temporarily unavailable',
     });
-
-    const response = await requireProviderSession(request, env, {
-      userId: 'user-1',
-      user: null,
-      claims: null,
-      rateLimitKey: 'user:user-1',
-    }, {
-      provider: 'gemini',
-      path: '/proxy/gemini/v1beta/models/gemini-3-pro-image:generateContent',
-    });
-
-    expect(response?.status).toBe(429);
-    expect(await response?.json()).toMatchObject({ code: 'provider_global_spend_rate' });
-    expect(Number(response?.headers.get('Retry-After'))).toBeGreaterThan(0);
-    expect(sessionUpdateAttempted).toBe(false);
+    expect(providerUsageReleased).toBe(true);
   });
 
   it('keeps attempted provider spend after an upstream failure', async () => {
@@ -476,7 +466,7 @@ describe('provider session usage', () => {
                     provider_cost_limit_cents: 300,
                   };
                 }
-                if (sql.includes('UPDATE provider_spend_months')) return { period: '2026-08' };
+                if (sql.includes('INSERT INTO provider_spend_months')) return { period: '2026-08' };
                 return {
                   id: 'session-release',
                   tier: 'rookie',
@@ -500,10 +490,7 @@ describe('provider session usage', () => {
         return [{ results: [{ id: 'event-1' }] }];
       },
     };
-    const env = {
-      DB: database as unknown as D1Database,
-      PROVIDER_MONTHLY_BUDGET_USD_CENTS: '1000',
-    } as Env;
+    const env = { DB: database as unknown as D1Database } as Env;
     const request = new Request('https://api.insertplayer.ai/proxy/gemini', {
       method: 'POST',
       headers: { [PROVIDER_SESSION_HEADER]: 'session-release' },

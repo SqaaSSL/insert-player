@@ -1,0 +1,203 @@
+name: Import one reviewed XAI canonical bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: Exact draft fighter slug reviewed in the private bundle
+        required: true
+        type: string
+      bundle_run_id:
+        description: Successful GitHub Actions run containing the private canonical bundle artifact
+        required: true
+        type: string
+      reviewed_descriptor_sha256:
+        description: Exact SHA-256 shown in review-descriptor.json after human visual QA
+        required: true
+        type: string
+      qa_decision:
+        description: Enter APPROVE_XAI_CANONICAL_BUNDLE_FOR_SOURCE_IMPORT_V1
+        required: true
+        type: string
+      confirmation:
+        description: Enter IMPORT_REVIEWED_XAI_CANONICAL_BUNDLE_PRODUCTION_V1
+        required: true
+        type: string
+      safety_confirmation:
+        description: Enter SOURCES_ONLY_NO_GENERATION_NO_ACTIVATION
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  import-reviewed-sources:
+    name: Import reviewed sources without generation or activation
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      REQUESTED_SLUG: ${{ inputs.slug }}
+      BUNDLE_RUN_ID: ${{ inputs.bundle_run_id }}
+      REVIEWED_DESCRIPTOR_SHA256: ${{ inputs.reviewed_descriptor_sha256 }}
+      QA_DECISION: ${{ inputs.qa_decision }}
+      IMPORT_CONFIRMATION: ${{ inputs.confirmation }}
+      SAFETY_CONFIRMATION: ${{ inputs.safety_confirmation }}
+      ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+      ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+      ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate the independent human-reviewed request
+        shell: bash
+        run: |
+          [[ "$REQUESTED_SLUG" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || {
+            printf '::error::Invalid Arcade fighter slug.\n'
+            exit 1
+          }
+          [[ "$BUNDLE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            printf '::error::bundle_run_id must be a positive GitHub Actions run id.\n'
+            exit 1
+          }
+          [[ "$REVIEWED_DESCRIPTOR_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+            printf '::error::reviewed_descriptor_sha256 must be a lowercase SHA-256.\n'
+            exit 1
+          }
+          [[ "$QA_DECISION" == "APPROVE_XAI_CANONICAL_BUNDLE_FOR_SOURCE_IMPORT_V1" ]] || {
+            printf '::error::The exact independent QA decision is required.\n'
+            exit 1
+          }
+          [[ "$IMPORT_CONFIRMATION" == "IMPORT_REVIEWED_XAI_CANONICAL_BUNDLE_PRODUCTION_V1" ]] || {
+            printf '::error::The exact reviewed import confirmation is required.\n'
+            exit 1
+          }
+          [[ "$SAFETY_CONFIRMATION" == "SOURCES_ONLY_NO_GENERATION_NO_ACTIVATION" ]] || {
+            printf '::error::The exact source-only safety confirmation is required.\n'
+            exit 1
+          }
+          [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" ]] || {
+            printf '::error::Production Arcade Clerk admin secrets are unavailable.\n'
+            exit 1
+          }
+          [[ ${#CLERK_BACKEND_AUTH_BRIDGE_SECRET} -ge 32 ]] || {
+            printf '::error::Production Clerk backend-auth bridge secret is unavailable.\n'
+            exit 1
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+            processor/package-lock.json
+
+      - name: Install pinned dependencies
+        run: |
+          npm ci
+          npm --prefix worker ci
+          npm --prefix processor ci
+
+      - name: Run the production gate with the exact media toolchain
+        run: |
+          docker build --file Dockerfile.processor --target video-sprite-test .
+          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED=1 npm run check:production
+
+      - name: Pin the live Worker to this reviewed commit
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const configured = process.env.ASF_WORKER_HEALTH_URL?.trim();
+          const workerBase = process.env.ASF_WORKER_URL?.trim().replace(/\/+$/, '');
+          const target = configured || (workerBase ? `${workerBase}/health` : '');
+          const expectedSha = process.env.GITHUB_SHA?.trim() ?? '';
+          if (!target || !/^[a-f0-9]{40}$/.test(expectedSha)) {
+            throw new Error('Worker health URL and full reviewed commit SHA are required.');
+          }
+          const url = new URL(target);
+          if (url.protocol !== 'https:') throw new Error('Worker health pin requires HTTPS.');
+          const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+          if (!response.ok) throw new Error(`Worker health failed with HTTP ${response.status}.`);
+          const health = await response.json();
+          if (
+            health?.status !== 'ok' || health.environment !== 'production' ||
+            health.storage?.d1 !== 'bound' || health.storage?.r2 !== 'bound' ||
+            typeof health.workerVersion?.tag !== 'string' ||
+            !health.workerVersion.tag.startsWith(`prod-${expectedSha}-`)
+          ) throw new Error(`Live Worker is not the healthy production deployment for ${expectedSha}.`);
+          console.log(`Worker health pinned to ${health.workerVersion.tag}.`);
+          NODE
+
+      - name: Download the exact private canonical bundle run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_json="$(gh run view "$BUNDLE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json databaseId,status,conclusion)"
+          [[ "$(jq -r '.databaseId' <<<"$run_json")" == "$BUNDLE_RUN_ID" ]] || {
+            printf '::error::GitHub returned a different bundle run id.\n'
+            exit 1
+          }
+          [[ "$(jq -r '.status' <<<"$run_json")" == "completed" && "$(jq -r '.conclusion' <<<"$run_json")" == "success" ]] || {
+            printf '::error::The private bundle run is not completed successfully.\n'
+            exit 1
+          }
+          bundle_dir="$RUNNER_TEMP/reviewed-canonical-bundle"
+          mkdir -p "$bundle_dir"
+          gh run download "$BUNDLE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-xai-canonical-bundle-$REQUESTED_SLUG" \
+            --dir "$bundle_dir"
+          [[ -f "$bundle_dir/review-descriptor.json" && -f "$bundle_dir/generation-state.json" ]] || {
+            printf '::error::The exact private bundle artifact is incomplete.\n'
+            exit 1
+          }
+          printf 'BUNDLE_DIRECTORY=%s\n' "$bundle_dir" >> "$GITHUB_ENV"
+          printf 'IMPORT_OUTPUT_DIRECTORY=%s\n' "$RUNNER_TEMP/reviewed-canonical-import" >> "$GITHUB_ENV"
+
+      - name: Import only the six separately reviewed source assets
+        shell: bash
+        run: |
+          npm run arcade:import:reviewed-xai-canonical -- \
+            --execute-production \
+            --slug="$REQUESTED_SLUG" \
+            --bundle-run-id="$BUNDLE_RUN_ID" \
+            --bundle-dir="$BUNDLE_DIRECTORY" \
+            --output-dir="$IMPORT_OUTPUT_DIRECTORY" \
+            --reviewed-descriptor-sha256="$REVIEWED_DESCRIPTOR_SHA256" \
+            --qa-decision="$QA_DECISION" \
+            --confirm="$IMPORT_CONFIRMATION" \
+            --confirm-safety="$SAFETY_CONFIRMATION" \
+            --reviewed-by="$GITHUB_ACTOR"
+
+      - name: Publish the reviewed-current-v1 handoff for Video
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-reviewed-canonical-manifest-${{ inputs.slug }}
+          path: |
+            ${{ runner.temp }}/reviewed-canonical-import/reviewed-canonical-manifest.json
+            ${{ runner.temp }}/reviewed-canonical-import/import-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve the source-import checkpoint
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-reviewed-canonical-import-checkpoint-${{ inputs.slug }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/reviewed-canonical-import/import-state.json
+          if-no-files-found: ignore
+          retention-days: 30

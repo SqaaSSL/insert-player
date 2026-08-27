@@ -2,6 +2,7 @@ import type { CachedMeta } from '../../services/SpriteCache.ts';
 import {
   SOURCE_VIEWS,
   getSourceBlob,
+  isArcadeCachedMeta,
   type SourceKey,
 } from '../shared/fighterPreview.ts';
 
@@ -37,16 +38,21 @@ export function SourceViewsPanel({
         {SOURCE_VIEWS.map(([key, label]) => {
           const blob = getSourceBlob(meta, key);
           const isRegen = regeneratingSource === key;
+          const isPrivateReference = key === 'original' && isArcadeCachedMeta(meta);
           return (
             <button
               type="button"
               key={key}
-              className={`gallery-chip${selectedSource === key ? ' is-active' : ''}`}
-              aria-pressed={selectedSource === key}
+              className={`gallery-chip${selectedSource === key && !isPrivateReference ? ' is-active' : ''}`}
+              aria-pressed={selectedSource === key && !isPrivateReference}
+              disabled={isPrivateReference}
               onClick={() => onSelectSource(key)}
+              title={isPrivateReference ? 'The original reference stays private for Arcade globals.' : undefined}
             >
               <span>{label}</span>
-              <small>{isRegen ? 'Regenerating...' : blob ? 'Ready' : 'Missing'}</small>
+              <small>
+                {isPrivateReference ? 'Private reference' : isRegen ? 'Regenerating...' : blob ? 'Ready' : 'Missing'}
+              </small>
             </button>
           );
         })}

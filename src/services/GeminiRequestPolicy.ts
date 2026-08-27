@@ -62,8 +62,11 @@ export class GeminiRequestError extends Error {
 }
 
 const NON_RETRYABLE_CAPACITY_CODES = new Set([
-  'provider_monthly_budget_exhausted',
   'provider_session_spend_limit',
+  'daily_cap_exceeded',
+  'monthly_cap_exceeded',
+  'provider_request_not_dispatched',
+  'provider_request_outcome_unknown',
 ]);
 
 const RETRYABLE_STATUSES = new Set([0, 408, 425, 429, 500, 502, 503, 504]);
@@ -139,7 +142,12 @@ export function geminiErrorFromResponse(
   nowMs = Date.now(),
 ): GeminiRequestError {
   const parsed = parseGeminiErrorBody(body);
-  const code = parsed.code?.toLowerCase() ?? null;
+  const upstreamOutcome = response.headers.get('X-Insert-Player-Upstream-Outcome')?.trim().toLowerCase();
+  const code = upstreamOutcome === 'unknown'
+    ? 'provider_request_outcome_unknown'
+    : upstreamOutcome === 'not-dispatched'
+      ? 'provider_request_not_dispatched'
+      : parsed.code?.toLowerCase() ?? null;
   const message = parsed.message.trim() || `HTTP ${response.status}`;
   const retryAfterMs = Math.max(
     parseRetryAfterMs(response.headers.get('Retry-After'), nowMs) ?? 0,
@@ -149,12 +157,10 @@ export function geminiErrorFromResponse(
   const nonRetryableCapacity =
     (code ? NON_RETRYABLE_CAPACITY_CODES.has(code) : false) ||
     capacityMessage.includes('provider session call limit') ||
-    capacityMessage.includes('provider session spend limit') ||
-    capacityMessage.includes('monthly budget');
+    capacityMessage.includes('provider session spend limit');
   const spendRateLimited =
     capacityMessage.includes('spend-based rate limit') ||
-    capacityMessage.includes('spending rate') ||
-    capacityMessage.includes('provider_global_spend_rate');
+    capacityMessage.includes('spending rate');
   const dailyQuotaExhausted = response.status === 429 && (
     parsed.quotaMetrics.some((metric) => metric.endsWith('/generate_requests_per_model_per_day')) ||
     parsed.quotaIds.some((quotaId) => quotaId.toLowerCase().includes('requestsperday')) ||

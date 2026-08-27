@@ -13,11 +13,15 @@ import {
   isApprovedGeminiImageModel,
   retryGeminiRequest,
 } from './GeminiRequestPolicy';
+import {
+  GEMINI_FLASH_IMAGE_MODEL,
+  OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+} from './ImageProviderContract';
 
 const GEMINI_BASE = '/proxy/gemini/v1beta/models';
-const DEFAULT_GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image';
+const DEFAULT_GEMINI_IMAGE_MODEL = GEMINI_FLASH_IMAGE_MODEL;
 const DEFAULT_GEMINI_SOURCE_MODEL = 'gemini-3-pro-image';
-const OFFICIAL_GEMINI_REVIEW_MODEL = DEFAULT_GEMINI_SOURCE_MODEL;
+const OFFICIAL_GEMINI_REVIEW_MODEL = OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.championAnimation.reviewModel;
 const PRO_REQUEST_START_INTERVAL_MS = 11_000;
 const geminiRequestPacer = new RequestStartPacer();
 
@@ -202,7 +206,14 @@ async function callGemini(
     try {
       response = await apiFetch(`${GEMINI_BASE}/${model}:generateContent`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(context?.detached ? {
+            'X-Insert-Player-Provider-Call-Kind': responseModalities.length === 1 && responseModalities[0] === 'TEXT'
+              ? 'quality_review'
+              : 'image_generation',
+          } : {}),
+        },
         body: JSON.stringify({
           contents: [{ parts: reqParts }],
           generationConfig: { responseModalities },
@@ -317,6 +328,10 @@ export async function geminiReposeDetailed(
     rawBase64 = result.imageBase64;
   } catch (err: any) {
     if (isGeminiContentBlockedError(err)) {
+      if (promptOverride?.trim()) {
+        debugWarn('[GeminiApi] Official licensed reference declined; skipping a duplicate paid retry.');
+        throw err;
+      }
       debugWarn('[GeminiApi] Repose declined by the provider, retrying as an explicitly synthetic transformation...');
     } else {
       throw err;
@@ -325,21 +340,15 @@ export async function geminiReposeDetailed(
 
   if (!rawBase64) {
     debugInfo('[GeminiApi] Retrying repose with the safe synthetic-avatar prompt...');
-    try {
-      const result = await callGemini(
-        syntheticTransformationFallback(prompt),
-        photoBase64,
-        'image/png',
-        undefined,
-        model,
-        context,
-      );
-      rawBase64 = result.imageBase64;
-    } catch (err: unknown) {
-      if (!isGeminiContentBlockedError(err) || !promptOverride?.trim()) throw err;
-      debugWarn('[GeminiApi] Licensed public reference declined twice; failing closed to preserve the approved identity input.');
-      throw err;
-    }
+    const result = await callGemini(
+      syntheticTransformationFallback(prompt),
+      photoBase64,
+      'image/png',
+      undefined,
+      model,
+      context,
+    );
+    rawBase64 = result.imageBase64;
   }
 
   if (!rawBase64) throw new Error('Gemini repose returned no image');

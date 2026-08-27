@@ -39,13 +39,15 @@ async function main() {
   const health = await fetchJson('sandbox health', `/health?smoke=${Date.now()}`);
   assert(health.response.ok, `Sandbox health returned HTTP ${health.response.status}.`);
   assert(health.body.status === 'ok', 'Sandbox health did not report status=ok.');
-  assert(health.body.version === '0.17.0', `Expected Worker 0.17.0, got ${health.body.version}.`);
+  assert(health.body.version === '0.19.0', `Expected Worker 0.19.0, got ${health.body.version}.`);
   assert(health.body.environment === 'sandbox', `Expected sandbox environment, got ${health.body.environment}.`);
   assert(health.body.storage?.d1 === 'bound' && health.body.storage?.r2 === 'bound', 'Sandbox D1/R2 bindings are not healthy.');
   assert(health.body.privacy === 'pseudonymized', 'Sandbox anonymous identifiers are not pseudonymized.');
   assert(health.body.providers === 'configured', 'Sandbox provider secrets are incomplete.');
-  assert(health.body.providerBudget === 'configured', 'Sandbox provider spend ceiling is missing.');
-  assert(health.body.providerSpendRate === 'configured', 'Sandbox Gemini rolling spend-rate guard is missing.');
+  assert(health.body.geminiTransport === 'google-direct', 'Sandbox must remain on its separate direct Google credential.');
+  assert(health.body.providerAccounting === 'durable', 'Sandbox provider cost accounting is not durable.');
+  assert(health.body.providerSessionLimits === 'configured', 'Sandbox per-session provider limits are missing.');
+  assert(health.body.providerGlobalCaps === 'disabled', 'Sandbox still reports a global provider spend cap.');
   assert(health.body.durableGeneration === 'configured', 'Sandbox durable generation bindings or signing are incomplete.');
   assert(health.body.turnstile === 'disabled', 'Sandbox Turnstile should remain disabled for deterministic QA.');
   assert(health.body.anonymousRookie === 'disabled', 'Sandbox must disable public anonymous Rookie generation.');

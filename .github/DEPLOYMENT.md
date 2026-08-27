@@ -25,6 +25,12 @@ GitHub Actions is the canonical team deployment path. Local deployment commands 
 - `codeql.yml`: JavaScript/TypeScript code scanning on pull requests, protected branches, and weekly schedule.
 - `dependabot.yml`: weekly frontend, Worker, and GitHub Actions updates.
 
+## Current Deployment Credential Status
+
+Protected production `main` and sandbox `develop` are byte-for-byte aligned, live, and smoke-verified with D1 migration `0024`; both Workers report healthy `0.18.0` runtimes.
+
+The `CLOUDFLARE_API_TOKEN` stored in both GitHub environments is the same durable account-owned token scoped to the Insert Player Cloudflare account and zone. Production Action `32767504225` and development Action `32767773857` passed their complete remote migrations, Worker/Container/Workflow deploys, API smokes, Pages deploys, and readiness checks. Cloudflare audit logs identify their actor as an account API token, not a temporary Wrangler OAuth session. Authenticated sandbox Action `32768251105` also passes with the Development Clerk backend key and private bridge secret. Rotate this token deliberately through both environments together; never replace it with a Global API Key or temporary Wrangler OAuth token.
+
 ## GitHub Environments
 
 The repository uses environments named exactly `development` and `production`.
@@ -76,11 +82,13 @@ Use the same variable and secret names in both environments. Values must remain 
 | Secret | Purpose |
 |---|---|
 | `CLOUDFLARE_API_TOKEN` | Least-privilege Wrangler token scoped to the Insert Player account and zone |
-| `GEMINI_API_KEY` | Server-side image generation |
+| `METERKEY_API_KEY` | Production Gemini transport through the dedicated Insert Player Meterkey wallet and Google BYOK |
+| `GEMINI_API_KEY` | Direct Google rollback credential; production does not read it while `GEMINI_TRANSPORT=meterkey` |
 | `FAL_API_KEY` | Background removal and video generation |
 | `RUNWAY_API_KEY` | Configured provider fallback |
 | `FREEPIK_API_KEY` | Configured provider fallback |
 | `LUDO_API_KEY` | Configured provider fallback |
+| `PIXCLI_API_KEY` | Server-only PixCLI transport for the opt-in video creation flow |
 | `STRIPE_SECRET_KEY` | Test in development, live in production |
 | `STRIPE_WEBHOOK_SECRET` | Matching environment billing endpoint |
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Matching environment user-lifecycle endpoint |
@@ -93,9 +101,14 @@ Use the same variable and secret names in both environments. Values must remain 
 | `GENERATION_JOB_SIGNING_SECRET` | Stable random HMAC secret for scoped processor job tokens, at least 32 characters |
 | `BRAND_CLEARANCE_JSON` | Production only; exact JSON from the local cleared brand record |
 
-The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit, Pages edit, Containers write, zone Cache Purge, and the route/resource permissions required by the checked-in Worker/Workflow bindings. Scope it to Cloudflare account `61fc998aa16c1c11a949d982e7a65dcb` and zone `insertplayer.ai`; do not use a Global API Key. A `7403` response from the first D1 migration means the token is for the wrong account or cannot access D1, even if its permission names otherwise look correct. Production Pages deploys probe a fresh immutable asset under an isolated cache key, purge the exact apex and `www` asset URLs after propagation, then run a second smoke against the canonical URL so an SPA fallback can never remain cached as JavaScript.
+The Cloudflare token needs account-scoped Worker Scripts edit, D1 edit, R2 edit, Pages edit, Containers write, Workflows edit, zone Cache Purge, and the route/resource permissions required by the checked-in Worker/Workflow bindings. Scope it to Cloudflare account `61fc998aa16c1c11a949d982e7a65dcb` and zone `insertplayer.ai`; do not use a Global API Key or a temporary Wrangler OAuth access token. A `7403` response from the first D1 migration means the token is for the wrong account or cannot access D1, even if its permission names otherwise look correct. A `9109` response means the stored token is expired or invalid. Production Pages deploys probe a fresh immutable asset under an isolated cache key, purge the exact apex and `www` asset URLs after propagation, then run a second smoke against the canonical URL so an SPA fallback can never remain cached as JavaScript.
 
 Never use one GitHub environment as a fallback for another. A missing value must fail the deployment rather than silently reuse a test or live credential.
+
+Production secrets are supplied to `wrangler deploy --secrets-file` together with
+the Worker version. Do not replace this with a loop of `wrangler secret put`:
+each individual put creates a deployment and can expose a half-configured
+transport between secret updates.
 
 Neither authenticated smoke consumes AI inference or charges Stripe. The development workflow creates two identified `+clerk_test` users, establishes browser sessions through Clerk Agent Tasks, runs the complete authenticated D1/R2/billing-reservation/match/community-clone/privacy smoke, deletes both users, and verifies that the deletion webhook tombstones their still-valid tokens. Clerk Agent Task tokens omit the browser `azp` claim, so these two workflows send a private backend bridge header. The Worker accepts a missing `azp` only when that header matches `CLERK_BACKEND_AUTH_BRIDGE_SECRET`; an incorrect `azp` is still rejected, and the header is deliberately absent from CORS.
 

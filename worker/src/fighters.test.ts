@@ -177,6 +177,7 @@ function fakeSprite(overrides: Partial<SpriteAsset> = {}): SpriteAsset {
     frame_w: 256,
     frame_h: 256,
     frame_count: 8,
+    animation_format: 'legacy',
     processing_version: 4,
     created_at: '2026-08-17T00:00:00.000Z',
     ...overrides,
@@ -208,13 +209,14 @@ function sourceUploadRequest(): Request {
   });
 }
 
-function spriteUploadRequest(includeRaw = false): Request {
+function spriteUploadRequest(includeRaw = false, animationFormat?: string): Request {
   const formData = new FormData();
   formData.set('animationName', 'idle');
   formData.set('qualityTier', 'contender');
   formData.set('frameWidth', '256');
   formData.set('frameHeight', '256');
   formData.set('frameCount', '8');
+  if (animationFormat) formData.set('animationFormat', animationFormat);
   formData.set('processingVersion', '4');
   formData.set('file', tinyPngFile('idle.png'));
   if (includeRaw) formData.set('rawFile', tinyPngFile('idle-raw.png'));
@@ -225,6 +227,28 @@ function spriteUploadRequest(includeRaw = false): Request {
 }
 
 describe('community fighter asset persistence', () => {
+  it('rejects unknown sprite animation formats before writing bytes', async () => {
+    const database = new FakeD1Database();
+    database.existingOwnedFighter = fakeFighter({
+      id: 'fighter-target',
+      owner_user_id: auth.userId,
+      public_flag: 0,
+    });
+    const bucket = new FakeR2Bucket();
+
+    const response = await uploadFighterSprite(
+      spriteUploadRequest(false, 'future-format'),
+      fakeEnv(database, bucket),
+      auth,
+      'fighter-target',
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Invalid animationFormat' });
+    expect(bucket.objects.size).toBe(0);
+    expect(database.batches).toEqual([]);
+  });
+
   it('removes earlier source copies when a later R2 copy fails', async () => {
     const database = new FakeD1Database();
     const bucket = new FakeR2Bucket();

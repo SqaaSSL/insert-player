@@ -1,5 +1,9 @@
 import { generateId, hashString } from './auth';
 import type { Env, Fighter, QualityTier, SourceVersion, SpriteVersion } from './types';
+import {
+  normalizeSpriteAnimationFormat,
+  type SpriteAnimationFormat,
+} from './spriteAnimationFormat';
 
 export type GeneratedSourceKind =
   | 'side'
@@ -49,6 +53,7 @@ export interface PersistedGeneratedSprite extends PersistedGeneratedAsset {
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  animationFormat: SpriteAnimationFormat;
 }
 
 function isPng(bytes: ArrayBuffer): boolean {
@@ -195,18 +200,27 @@ function currentSpriteStatement(
     tier: QualityTier;
     contentHash: string;
     rawContentHash: string | null;
+    animationFormat: SpriteAnimationFormat;
+    frameWidth: number;
+    frameHeight: number;
+    frameCount: number;
+    processingVersion: number;
   },
 ): D1PreparedStatement {
   return env.DB.prepare(`
     INSERT INTO sprites (
       id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
       content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
+      , animation_format
     )
     SELECT ?, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
-      content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
+      content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version,
+      animation_format
     FROM sprite_versions
     WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
       AND content_hash = ? AND COALESCE(raw_content_hash, '') = COALESCE(?, '')
+      AND animation_format = ?
+      AND frame_w = ? AND frame_h = ? AND frame_count = ? AND processing_version = ?
     ORDER BY created_at DESC
     LIMIT 1
     ON CONFLICT(fighter_id, animation_name, quality_tier) DO UPDATE SET
@@ -218,6 +232,7 @@ function currentSpriteStatement(
       frame_h = excluded.frame_h,
       frame_count = excluded.frame_count,
       processing_version = excluded.processing_version,
+      animation_format = excluded.animation_format,
       created_at = datetime('now')
   `).bind(
     generateId(),
@@ -226,6 +241,11 @@ function currentSpriteStatement(
     params.tier,
     params.contentHash,
     params.rawContentHash,
+    params.animationFormat,
+    params.frameWidth,
+    params.frameHeight,
+    params.frameCount,
+    params.processingVersion,
   );
 }
 
@@ -243,6 +263,9 @@ export async function persistGeneratedSprite(
     frameHeight: number;
     frameCount: number;
     processingVersion: number;
+    animationFormat?: SpriteAnimationFormat;
+    /** Keep false for private review candidates. Existing callers promote immediately. */
+    setCurrent?: boolean;
   },
 ): Promise<PersistedGeneratedSprite> {
   if (!PLAYABLE_ANIMATIONS.has(params.animationName)) {
@@ -268,10 +291,13 @@ export async function persistGeneratedSprite(
   await requireOwnedFighter(env, params.userId, params.fighterId);
   const contentHash = await hashString(params.bytes);
   const rawContentHash = params.rawBytes ? await hashString(params.rawBytes) : null;
+  const animationFormat = normalizeSpriteAnimationFormat(params.animationFormat);
   const duplicate = await env.DB.prepare(`
     SELECT * FROM sprite_versions
     WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
       AND content_hash = ? AND COALESCE(raw_content_hash, '') = COALESCE(?, '')
+      AND animation_format = ?
+      AND frame_w = ? AND frame_h = ? AND frame_count = ? AND processing_version = ?
     ORDER BY created_at DESC
     LIMIT 1
   `).bind(
@@ -280,6 +306,11 @@ export async function persistGeneratedSprite(
     params.tier,
     contentHash,
     rawContentHash,
+    animationFormat,
+    params.frameWidth,
+    params.frameHeight,
+    params.frameCount,
+    params.processingVersion,
   ).first<SpriteVersion>();
 
   if (duplicate) {
@@ -287,6 +318,7 @@ export async function persistGeneratedSprite(
       contentHash,
       jobId: params.jobId,
       animationName: params.animationName,
+      animationFormat,
       qualityTier: params.tier,
     });
     if (duplicate.raw_blob_key && params.rawBytes && rawContentHash) {
@@ -294,17 +326,25 @@ export async function persistGeneratedSprite(
         contentHash: rawContentHash,
         jobId: params.jobId,
         animationName: params.animationName,
+        animationFormat,
         qualityTier: params.tier,
         raw: 'true',
       });
     }
-    await currentSpriteStatement(env, {
-      fighterId: params.fighterId,
-      animationName: params.animationName,
-      tier: params.tier,
-      contentHash,
-      rawContentHash,
-    }).run();
+    if (params.setCurrent !== false) {
+      await currentSpriteStatement(env, {
+        fighterId: params.fighterId,
+        animationName: params.animationName,
+        tier: params.tier,
+        contentHash,
+        rawContentHash,
+        animationFormat,
+        frameWidth: params.frameWidth,
+        frameHeight: params.frameHeight,
+        frameCount: params.frameCount,
+        processingVersion: params.processingVersion,
+      }).run();
+    }
     return {
       versionId: duplicate.id,
       blobKey: duplicate.blob_key,
@@ -314,12 +354,13 @@ export async function persistGeneratedSprite(
       frameWidth: duplicate.frame_w,
       frameHeight: duplicate.frame_h,
       frameCount: duplicate.frame_count,
+      animationFormat: normalizeSpriteAnimationFormat(duplicate.animation_format),
       reused: true,
     };
   }
 
   const versionId = (await hashString(
-    `${params.jobId}:sprite:${params.animationName}:${params.tier}:${contentHash}:${rawContentHash ?? ''}`
+    `${params.jobId}:sprite:${params.animationName}:${params.tier}:${animationFormat}:${params.frameWidth}x${params.frameHeight}:${params.frameCount}:${params.processingVersion}:${contentHash}:${rawContentHash ?? ''}`
   )).slice(0, 32);
   const safeAnimation = params.animationName.replace(/[^a-z0-9_-]/gi, '_');
   const key = `users/${params.userId}/fighters/${params.fighterId}/sprites/${safeAnimation}_${params.tier}_${versionId}.png`;
@@ -332,6 +373,7 @@ export async function persistGeneratedSprite(
       contentHash,
       jobId: params.jobId,
       animationName: params.animationName,
+      animationFormat,
       qualityTier: params.tier,
     });
     if (wroteSprite) stagedKeys.push(key);
@@ -340,17 +382,19 @@ export async function persistGeneratedSprite(
         contentHash: rawContentHash,
         jobId: params.jobId,
         animationName: params.animationName,
+        animationFormat,
         qualityTier: params.tier,
         raw: 'true',
       });
       if (wroteRaw) stagedKeys.push(rawKey);
     }
-    await env.DB.batch([
+    const statements = [
       env.DB.prepare(`
         INSERT OR IGNORE INTO sprite_versions (
           id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
           content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          , animation_format
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         versionId,
         params.fighterId,
@@ -364,15 +408,24 @@ export async function persistGeneratedSprite(
         params.frameHeight,
         params.frameCount,
         params.processingVersion,
+        animationFormat,
       ),
-      currentSpriteStatement(env, {
+    ];
+    if (params.setCurrent !== false) {
+      statements.push(currentSpriteStatement(env, {
         fighterId: params.fighterId,
         animationName: params.animationName,
         tier: params.tier,
         contentHash,
         rawContentHash,
-      }),
-    ]);
+        animationFormat,
+        frameWidth: params.frameWidth,
+        frameHeight: params.frameHeight,
+        frameCount: params.frameCount,
+        processingVersion: params.processingVersion,
+      }));
+    }
+    await env.DB.batch(statements);
   } catch (error) {
     await deleteKeys(env, stagedKeys);
     throw error;
@@ -382,6 +435,8 @@ export async function persistGeneratedSprite(
     SELECT * FROM sprite_versions
     WHERE fighter_id = ? AND animation_name = ? AND quality_tier = ?
       AND content_hash = ? AND COALESCE(raw_content_hash, '') = COALESCE(?, '')
+      AND animation_format = ?
+      AND frame_w = ? AND frame_h = ? AND frame_count = ? AND processing_version = ?
     ORDER BY created_at DESC
     LIMIT 1
   `).bind(
@@ -390,6 +445,11 @@ export async function persistGeneratedSprite(
     params.tier,
     contentHash,
     rawContentHash,
+    animationFormat,
+    params.frameWidth,
+    params.frameHeight,
+    params.frameCount,
+    params.processingVersion,
   ).first<SpriteVersion>();
   if (!persisted) {
     await deleteKeys(env, stagedKeys);
@@ -408,6 +468,93 @@ export async function persistGeneratedSprite(
     frameWidth: persisted.frame_w,
     frameHeight: persisted.frame_h,
     frameCount: persisted.frame_count,
+    animationFormat: normalizeSpriteAnimationFormat(persisted.animation_format),
     reused: persisted.id !== versionId,
   };
+}
+
+export async function promoteGeneratedSourceVersion(
+  env: Env,
+  params: {
+    userId: string;
+    fighterId: string;
+    kind: GeneratedSourceKind;
+    versionId: string;
+  },
+): Promise<SourceVersion> {
+  await requireOwnedFighter(env, params.userId, params.fighterId);
+  const version = await env.DB.prepare(`
+    SELECT *
+    FROM source_versions
+    WHERE id = ? AND fighter_id = ? AND kind = ?
+    LIMIT 1
+  `).bind(params.versionId, params.fighterId, params.kind).first<SourceVersion>();
+  if (!version) throw new Error(`Checkpointed ${params.kind} source version is unavailable`);
+
+  const column = SOURCE_COLUMNS[params.kind];
+  await env.DB.prepare(`
+    UPDATE fighters
+    SET ${column} = ?, updated_at = datetime('now')
+    WHERE id = ? AND owner_user_id = ?
+  `).bind(version.blob_key, params.fighterId, params.userId).run();
+  return version;
+}
+
+export async function promoteGeneratedSpriteVersion(
+  env: Env,
+  params: {
+    userId: string;
+    fighterId: string;
+    tier: QualityTier;
+    animationName: string;
+    versionId: string;
+  },
+): Promise<SpriteVersion> {
+  await requireOwnedFighter(env, params.userId, params.fighterId);
+  const version = await env.DB.prepare(`
+    SELECT *
+    FROM sprite_versions
+    WHERE id = ? AND fighter_id = ? AND animation_name = ? AND quality_tier = ?
+    LIMIT 1
+  `).bind(
+    params.versionId,
+    params.fighterId,
+    params.animationName,
+    params.tier,
+  ).first<SpriteVersion>();
+  if (!version) throw new Error(`Checkpointed ${params.animationName} sprite version is unavailable`);
+
+  await env.DB.prepare(`
+    INSERT INTO sprites (
+      id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+      content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
+      , animation_format
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(fighter_id, animation_name, quality_tier) DO UPDATE SET
+      blob_key = excluded.blob_key,
+      raw_blob_key = excluded.raw_blob_key,
+      content_hash = excluded.content_hash,
+      raw_content_hash = excluded.raw_content_hash,
+      frame_w = excluded.frame_w,
+      frame_h = excluded.frame_h,
+      frame_count = excluded.frame_count,
+      processing_version = excluded.processing_version,
+      animation_format = excluded.animation_format,
+      created_at = datetime('now')
+  `).bind(
+    generateId(),
+    version.fighter_id,
+    version.animation_name,
+    version.quality_tier,
+    version.blob_key,
+    version.raw_blob_key,
+    version.content_hash,
+    version.raw_content_hash,
+    version.frame_w,
+    version.frame_h,
+    version.frame_count,
+    version.processing_version,
+    normalizeSpriteAnimationFormat(version.animation_format),
+  ).run();
+  return version;
 }

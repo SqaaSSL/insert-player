@@ -1,5 +1,6 @@
 import { apiFetch, type ApiRequestContext } from './ApiClient';
 import type { GenerationBillingOperation, QualityTier } from './QualityTiers';
+import type { GenerationCreationFlow } from './GenerationCreationFlow';
 import {
   storedGenerationLegalAttestation,
   type CheckoutLegalAttestation,
@@ -8,10 +9,15 @@ import {
 
 export interface GenerationAuthorization {
   authorized: boolean;
+  creationFlow?: GenerationCreationFlow;
   purchaseId?: string;
   providerSessionId?: string;
   providerSessionExpiresAt?: string;
   providerCallLimit?: number;
+  providerCostLimitCents?: number;
+  mode?: 'anonymous_rookie' | 'free_rookie' | 'credits' | 'continuation';
+  artifactRunId?: string;
+  resumedFromJobId?: string;
   message?: string;
   error?: string;
   requiredCredits?: number;
@@ -140,6 +146,8 @@ export async function authorizeGeneration(
   turnstileToken?: string | null,
   legal?: GenerationLegalAttestation | null,
   context?: ApiRequestContext,
+  resumeJobId?: string | null,
+  creationFlow: GenerationCreationFlow = 'original',
 ): Promise<GenerationAuthorization> {
   if (isLocalDevWithoutApi()) {
     return { authorized: true, message: 'Local generation authorization skipped.' };
@@ -153,8 +161,10 @@ export async function authorizeGeneration(
         tier,
         operation,
         fighterId: fighterId ?? null,
+        resumeJobId: resumeJobId ?? null,
         turnstileToken: turnstileToken ?? null,
         legal: legal ?? null,
+        creationFlow,
       }),
     }, context);
     const json = await readBillingJson<GenerationAuthorization>(res);

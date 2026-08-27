@@ -211,10 +211,6 @@
     @apply ml-auto;
   }
 
-  .app-header .auth-dock {
-    @apply static m-0 max-w-none border-0 bg-transparent p-0 shadow-none;
-  }
-
   /* ---- Page header / eyebrow ---- */
 
   .asf-page-head {
@@ -396,7 +392,7 @@
   }
 
   .auth-dock {
-    @apply sticky top-[max(12px,env(safe-area-inset-top))] z-50 ml-auto mr-4 mt-4 flex w-fit max-w-[calc(100%-2rem)] items-center gap-2 rounded-[4px]
+    @apply fixed bottom-[max(16px,env(safe-area-inset-bottom))] left-[max(16px,env(safe-area-inset-left))] z-50 m-0 flex w-fit max-w-[calc(100%-2rem)] items-center gap-2 rounded-[4px]
            border-2 border-asf-gold-deep bg-asf-panel px-3 py-2
            shadow-[0_10px_24px_rgba(0,0,0,0.38)];
   }
@@ -1607,14 +1603,253 @@
   }
 
   /* ============================================================
+     CODEX FEATURES — creation flow picker, grouped fighter list,
+     sprite preview notes, intro video review
+     ============================================================ */
+
+  .gallery-chip:disabled {
+    @apply cursor-not-allowed opacity-55 hover:translate-y-0 hover:border-[rgba(255,206,58,0.18)];
+  }
+
+  .gallery-fighter-card:disabled {
+    @apply cursor-not-allowed opacity-55;
+  }
+
+  .gallery-fighter-list {
+    @apply gap-5;
+  }
+
+  .gallery-fighter-list__group {
+    @apply flex flex-col gap-2;
+  }
+
+  .gallery-fighter-list__group + .gallery-fighter-list__group {
+    @apply border-t-[2px] border-[rgba(255,206,58,0.18)] pt-4;
+  }
+
+  .gallery-fighter-list__header {
+    @apply flex items-center justify-between gap-3 px-1;
+  }
+
+  .gallery-fighter-list__title {
+    @apply text-[11px] tracking-[0.12em] text-asf-gold;
+  }
+
+  .gallery-fighter-list__count {
+    @apply min-w-7 rounded-[3px] border border-[rgba(255,206,58,0.32)]
+           bg-[rgba(10,8,24,0.82)] px-2 py-1 text-center font-sans text-[11px]
+           leading-none text-asf-gold-bright;
+  }
+
+  .gallery-fighter-list__status {
+    @apply m-0 rounded-[3px] bg-[rgba(10,8,24,0.62)] px-3 py-2 font-sans
+           text-[11px] normal-case leading-[1.5] text-asf-muted;
+  }
+
+  .gallery-fighter-list__card[aria-busy='true'] {
+    @apply border-asf-blue opacity-100;
+  }
+
+  .gallery-preview__sprite {
+    @apply flex w-full flex-col items-center gap-3;
+  }
+
+  .gallery-preview__sprite-note {
+    @apply font-sans text-[11px] normal-case tracking-[0.04em] text-asf-muted;
+  }
+
+  .creation-flow-picker {
+    @apply m-0 min-w-0 border-0 p-0;
+  }
+
+  .creation-flow-picker legend {
+    @apply mb-2 text-[11px] tracking-[0.22em] uppercase text-asf-gold;
+  }
+
+  .creation-flow-picker__options {
+    @apply grid grid-cols-2 gap-3;
+  }
+
+  .creation-flow-picker__option {
+    @apply flex min-h-[112px] cursor-pointer items-start gap-3 rounded-[4px] border-[2px]
+           border-asf-gold-deep bg-asf-panel-alt p-3 text-left transition-colors
+           hover:border-asf-gold hover:bg-asf-panel;
+  }
+
+  .creation-flow-picker__option.is-active {
+    @apply border-asf-red bg-[rgba(80,10,10,0.92)]
+           shadow-[0_0_22px_rgba(255,42,42,0.22)];
+  }
+
+  .creation-flow-picker__option:focus-within {
+    @apply outline-2 outline-offset-2 outline-asf-blue;
+  }
+
+  .creation-flow-picker__option.is-unavailable,
+  .creation-flow-picker.is-disabled .creation-flow-picker__option {
+    @apply cursor-not-allowed opacity-55;
+  }
+
+  .creation-flow-picker__radio {
+    @apply mt-0.5 h-5 w-5 shrink-0 cursor-pointer accent-asf-red disabled:cursor-not-allowed;
+  }
+
+  .creation-flow-picker__copy {
+    @apply flex min-w-0 flex-1 flex-col gap-2;
+  }
+
+  .creation-flow-picker__heading {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .creation-flow-picker__heading strong {
+    @apply text-[11px] font-normal tracking-[0.16em] uppercase text-asf-gold-bright;
+  }
+
+  .creation-flow-picker__badge {
+    @apply rounded-[3px] border border-asf-violet px-1.5 py-1 text-[11px] tracking-[0.12em]
+           uppercase text-asf-text;
+  }
+
+  .creation-flow-picker__copy small {
+    @apply font-sans text-[12px] normal-case leading-[1.55] text-asf-muted;
+  }
+
+  .creation-flow-picker__reason {
+    @apply text-asf-gold;
+  }
+
+  .creation-flow-picker.is-compact .creation-flow-picker__option {
+    @apply min-h-[92px];
+  }
+
+  .video-review {
+    @apply flex flex-col gap-4 rounded-[6px] border-[2px] border-asf-violet bg-asf-panel p-5
+           shadow-[inset_0_0_0_1px_rgba(123,61,255,0.28),_0_12px_32px_rgba(0,0,0,0.48)];
+  }
+
+  .video-review__header {
+    @apply flex flex-wrap items-start justify-between gap-3;
+  }
+
+  .video-review__header h3 {
+    @apply mt-2 text-[14px] tracking-[0.16em] uppercase text-asf-gold;
+  }
+
+  .video-review__status {
+    @apply rounded-[3px] border border-asf-violet px-2 py-1.5 text-[11px] tracking-[0.14em]
+           uppercase text-asf-text;
+  }
+
+  .video-review__status.is-approved {
+    @apply border-asf-ok text-asf-ok;
+  }
+
+  .video-review__status.is-rejected {
+    @apply border-asf-red text-asf-red;
+  }
+
+  .video-review__intro,
+  .video-review__findings,
+  .video-review__figure figcaption,
+  .video-review__form small {
+    @apply font-sans text-[12px] normal-case leading-[1.55] text-asf-muted;
+  }
+
+  .video-review__figure {
+    @apply m-0 overflow-hidden rounded-[4px] border-[2px] border-[rgba(255,206,58,0.28)]
+           bg-asf-bg-1;
+  }
+
+  .video-review__figure img {
+    @apply block h-auto max-h-[560px] w-full object-contain;
+  }
+
+  .video-review__figure video {
+    @apply block aspect-video max-h-[560px] w-full bg-black object-contain;
+  }
+
+  .video-review__figure figcaption {
+    @apply border-t border-[rgba(255,206,58,0.28)] px-3 py-2;
+  }
+
+  .video-review__findings {
+    @apply rounded-[4px] border border-asf-warn bg-[rgba(255,178,26,0.08)] p-3;
+  }
+
+  .video-review__findings.is-clear {
+    @apply border-asf-ok bg-[rgba(46,204,113,0.08)] text-asf-ok;
+  }
+
+  .video-review__findings strong,
+  .video-review__form label {
+    @apply text-[11px] font-normal tracking-[0.16em] uppercase text-asf-gold-bright;
+  }
+
+  .video-review__findings ul {
+    @apply mt-2 list-disc space-y-1 pl-5;
+  }
+
+  .video-review__form {
+    @apply flex flex-col gap-2;
+  }
+
+  .video-review__form input {
+    @apply min-h-11 min-w-0 rounded-[4px] border-[2px] border-asf-gold-deep bg-asf-bg-1
+           px-3 py-2 font-sans text-[14px] text-asf-text hover:border-asf-gold
+           focus:border-asf-gold focus:outline-none disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .video-review__error {
+    @apply font-sans text-[12px] leading-[1.5] text-asf-red;
+  }
+
+  .video-review__actions {
+    @apply mt-2 flex flex-wrap gap-2;
+  }
+
+  .video-review__actions button,
+  .video-review__actions a {
+    @apply inline-flex min-h-11 cursor-pointer items-center justify-center rounded-[4px] border-[2px]
+           border-asf-gold-deep px-3 py-2 text-center text-[11px] tracking-[0.14em] uppercase
+           text-asf-gold transition-colors hover:border-asf-gold hover:text-asf-gold-bright
+           disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .video-review__actions button:first-child {
+    @apply border-asf-ok text-asf-ok;
+  }
+
+  .video-review__actions .is-danger {
+    @apply border-asf-red text-asf-red;
+  }
+
+  .auth-dock__button:focus-visible,
+  .asf-action:focus-visible,
+  .game-shell__gallery-link:focus-visible,
+  .gallery-back:focus-visible,
+  .gallery-actions button:focus-visible,
+  .home-menu__action:focus-visible,
+  .home-credit-pack:focus-visible,
+  .gallery-chip:focus-visible,
+  .gallery-tab:focus-visible,
+  .tier-picker__option:focus-visible,
+  .creation-flow-picker__radio:focus-visible,
+  .video-review__form input:focus-visible,
+  .video-review__actions button:focus-visible,
+  .video-review__actions a:focus-visible,
+  .create-form__field input:focus-visible,
+  .community-report-form select:focus-visible,
+  .community-report-form textarea:focus-visible,
+  .moderation-report__note textarea:focus-visible {
+    @apply outline-2 outline-offset-2 outline-asf-blue;
+  }
+
+  /* ============================================================
      RESPONSIVE — small screens
      ============================================================ */
 
   @media (max-width: 640px) {
-    .auth-dock {
-      @apply static mx-3 mt-3 max-w-[calc(100%-1.5rem)] flex-wrap;
-    }
-
     .home-app {
       @apply gap-6 px-4 pb-8 pt-6;
     }
@@ -1705,7 +1940,8 @@
       @apply p-5;
     }
 
-    .tier-picker {
+    .tier-picker,
+    .creation-flow-picker__options {
       @apply grid-cols-1;
     }
 

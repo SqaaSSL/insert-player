@@ -1,3 +1,6 @@
+import type { SpriteAnimationFormat } from './spriteAnimationFormat';
+import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+
 export type QualityTier = 'rookie' | 'contender' | 'champion';
 
 type OptionalCloudflareBindings = Partial<
@@ -14,6 +17,7 @@ export interface Env extends OptionalCloudflareBindings {
 }
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type GenerationJobReviewStatus = 'none' | 'awaiting_review' | 'approved' | 'rejected';
 export type GenerationJobOperation =
   | 'fighter_generation'
   | 'fighter_upgrade'
@@ -28,11 +32,16 @@ export interface GenerationJob {
   charge_id: string;
   provider_session_id: string;
   tier: QualityTier;
+  creation_flow: GenerationCreationFlow;
   operation: GenerationJobOperation;
   target_kind: 'animation' | 'source' | null;
   target_name: string | null;
+  artifact_run_id: string | null;
+  resumed_from_job_id: string | null;
   status: GenerationJobStatus;
+  review_status?: GenerationJobReviewStatus;
   stage: string;
+  failure_stage: string | null;
   progress_current: number;
   progress_total: number;
   error_code: string | null;
@@ -41,6 +50,59 @@ export interface GenerationJob {
   finished_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type GenerationArtifactRunStatus =
+  | 'active'
+  | 'partial'
+  | 'succeeded'
+  | 'failed'
+  | 'superseded';
+
+export interface GenerationArtifactRun {
+  id: string;
+  user_id: string;
+  fighter_id: string;
+  tier: QualityTier;
+  creation_flow: GenerationCreationFlow;
+  operation: GenerationJobOperation;
+  target_kind: 'animation' | 'source' | null;
+  target_name: string | null;
+  root_job_id: string;
+  original_charge_id: string | null;
+  original_blob_key: string | null;
+  source_manifest_json: string | null;
+  generation_prompt: string | null;
+  pipeline_version: number;
+  status: GenerationArtifactRunStatus;
+  failure_stage: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface GenerationArtifactCheckpoint {
+  run_id: string;
+  artifact_kind: 'source' | 'sprite';
+  artifact_name: string;
+  stage_index: number;
+  tier: QualityTier;
+  status: 'approved' | 'corrupt';
+  clean_version_id: string;
+  raw_version_id: string | null;
+  clean_blob_key: string;
+  raw_blob_key: string | null;
+  clean_content_hash: string | null;
+  raw_content_hash: string | null;
+  frame_w: number | null;
+  frame_h: number | null;
+  frame_count: number | null;
+  animation_format: SpriteAnimationFormat;
+  processing_version: number | null;
+  metadata_json: string | null;
+  completed_by_job_id: string;
+  created_at: string;
+  verified_at: string | null;
 }
 
 export interface User {
@@ -124,6 +186,7 @@ export interface SpriteAsset {
   frame_w: number;
   frame_h: number;
   frame_count: number;
+  animation_format: SpriteAnimationFormat;
   processing_version: number;
   created_at: string;
 }
