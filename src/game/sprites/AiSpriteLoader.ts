@@ -78,8 +78,10 @@ export async function loadAiSprites(
   scene: Phaser.Scene,
   spriteKey: string,
   photoHash: string,
+  isCurrent: () => boolean = () => true,
 ): Promise<boolean> {
   const cached = await getAllSpritesForHash(photoHash);
+  if (!isCurrent()) return false;
   if (cached.length === 0) return false;
 
   const rendererContext = (scene.game.renderer as unknown as {
@@ -101,14 +103,14 @@ export async function loadAiSprites(
     },
   );
   try {
-    return await loadAiSpritesAtDensity(scene, spriteKey, cached, textureDensity);
+    return await loadAiSpritesAtDensity(scene, spriteKey, cached, textureDensity, isCurrent);
   } catch (error) {
     if (textureDensity !== 2) throw error;
     debugWarn(
       `[AiSpriteLoader] 2x atlas failed for "${spriteKey}"; retrying the preserved 1x assets:`,
       error instanceof Error ? error.message : error,
     );
-    return loadAiSpritesAtDensity(scene, spriteKey, cached, 1);
+    return loadAiSpritesAtDensity(scene, spriteKey, cached, 1, isCurrent);
   }
 }
 
@@ -117,6 +119,7 @@ async function loadAiSpritesAtDensity(
   spriteKey: string,
   cached: CachedSprite[],
   textureDensity: SpriteTextureDensity,
+  isCurrent: () => boolean,
 ): Promise<boolean> {
   const spritesByAnim = new Map<string, CachedSprite>();
   for (const sprite of cached) {
@@ -132,6 +135,7 @@ async function loadAiSpritesAtDensity(
     if (!ANIM_NAME_TO_STATE[animName]) continue;
     const useHighResolutionSource = textureDensity === 2 && Boolean(sprite.rawPngBlob);
     const loadedImage = await blobToImage(useHighResolutionSource ? sprite.rawPngBlob! : sprite.pngBlob);
+    if (!isCurrent()) return false;
     const sourceFrameWidth = useHighResolutionSource ? sprite.rawFrameWidth! : sprite.frameWidth;
     const sourceFrameHeight = useHighResolutionSource ? sprite.rawFrameHeight! : sprite.frameHeight;
     const frameCount = useHighResolutionSource ? sprite.rawFrameCount! : sprite.frameCount;
@@ -332,6 +336,7 @@ async function loadAiSpritesAtDensity(
 
   debugInfo(`[AiSpriteLoader] Built ${canvas.width}x${canvas.height} sheet for "${spriteKey}" (${loadedAnims.size} anims, ${fallbackFillCount} fallback-filled states, ${cols}x${rows} cells of ${atlasFrameWidth}x${atlasFrameHeight}, density ${textureDensity}x)`);
 
+  if (!isCurrent()) return false;
   if (scene.textures.exists(spriteKey)) {
     scene.textures.remove(spriteKey);
   }

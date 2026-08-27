@@ -38,10 +38,16 @@ export function GamePage({ launchTarget, onComplete, onExit }: GamePageProps) {
     });
     let disposed = false;
     let game: Phaser.Game | null = null;
-    void import('../../game/createGame.ts').then(({ createGame }) => {
-      if (disposed) return;
-      game = createGame('game-container', launchTarget);
-    });
+    void import('../../game/createGame.ts')
+      .then(({ createGame }) => {
+        if (disposed) return;
+        game = createGame('game-container', launchTarget);
+      })
+      .catch((err: unknown) => {
+        if (!disposed) {
+          debugWarn('[GamePage] Phaser runtime failed to mount:', err instanceof Error ? err.message : err);
+        }
+      });
     return () => {
       disposed = true;
       debugInfo('[GamePage] Destroying Phaser runtime', {

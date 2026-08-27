@@ -44,6 +44,7 @@ import {
   type StageThemeId,
 } from "../match/StageConfig.ts";
 import { debugInfo, debugWarn } from "../../services/DebugLog.ts";
+import { resetVirtualInput } from "../systems/VirtualInput.ts";
 
 enum RoundPhase {
   INTRO = 0,
@@ -126,6 +127,8 @@ export class FightScene extends Phaser.Scene {
   private introVideoUrl?: string;
   private matchStartedAt = 0;
   private matchReported = false;
+  private sceneLifecycleEpoch = 0;
+  private sceneLifecycleActive = false;
 
   constructor() {
     super({ key: "FightScene" });
@@ -190,6 +193,7 @@ export class FightScene extends Phaser.Scene {
   }
 
   async create(): Promise<void> {
+    const lifecycleEpoch = this.beginSceneLifecycle();
     window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
     window.addEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
 
@@ -230,7 +234,8 @@ export class FightScene extends Phaser.Scene {
       Phaser.Input.Keyboard.KeyCodes.SPACE,
     );
 
-    await this.loadAiSpritesIfNeeded();
+    await this.loadAiSpritesIfNeeded(lifecycleEpoch);
+    if (!this.isCurrentSceneLifecycle(lifecycleEpoch)) return;
 
     this.drawStage();
     if (this.customStageKey) {
@@ -272,12 +277,14 @@ export class FightScene extends Phaser.Scene {
     return normalized === 0 ? salt >>> 0 : normalized;
   }
 
-  private async loadAiSpritesIfNeeded(): Promise<void> {
+  private async loadAiSpritesIfNeeded(lifecycleEpoch: number): Promise<void> {
     const loads: Promise<void>[] = [];
+    const isCurrent = () => this.isCurrentSceneLifecycle(lifecycleEpoch);
 
     if (this.p1PhotoHash) {
       loads.push(
-        loadAiSprites(this, "fighter_p1", this.p1PhotoHash).then((ok) => {
+        loadAiSprites(this, "fighter_p1", this.p1PhotoHash, isCurrent).then((ok) => {
+          if (!isCurrent()) return;
           if (ok) debugInfo("Loaded AI sprites for P1");
           else debugWarn("No AI sprites found for P1, using procedural");
         }),
@@ -286,7 +293,8 @@ export class FightScene extends Phaser.Scene {
 
     if (this.p2PhotoHash) {
       loads.push(
-        loadAiSprites(this, "fighter_p2", this.p2PhotoHash).then((ok) => {
+        loadAiSprites(this, "fighter_p2", this.p2PhotoHash, isCurrent).then((ok) => {
+          if (!isCurrent()) return;
           if (ok) debugInfo("Loaded AI sprites for P2");
           else debugWarn("No AI sprites found for P2, using procedural");
         }),
@@ -2133,9 +2141,31 @@ export class FightScene extends Phaser.Scene {
     );
   }
 
-  shutdown(): void {
+  private beginSceneLifecycle(): number {
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.onSceneLifecycleEnd);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.onSceneLifecycleEnd);
+    this.sceneLifecycleActive = true;
+    this.sceneLifecycleEpoch += 1;
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.onSceneLifecycleEnd);
+    this.events.once(Phaser.Scenes.Events.DESTROY, this.onSceneLifecycleEnd);
+    return this.sceneLifecycleEpoch;
+  }
+
+  private isCurrentSceneLifecycle(epoch: number): boolean {
+    return this.sceneLifecycleActive && this.sceneLifecycleEpoch === epoch;
+  }
+
+  private readonly onSceneLifecycleEnd = (): void => {
+    if (!this.sceneLifecycleActive) return;
+    this.sceneLifecycleActive = false;
+    this.sceneLifecycleEpoch += 1;
+    this.ready = false;
+    this.stageLoadId += 1;
+    this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.onSceneLifecycleEnd);
+    this.events.off(Phaser.Scenes.Events.DESTROY, this.onSceneLifecycleEnd);
     window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
     this.cleanupMatchOverUI();
+    resetVirtualInput();
     this.introVideoSequenceActive = false;
     this.introVideoSequenceToken++;
     this.destroyIntroVideoOverlay();
@@ -2147,11 +2177,9 @@ export class FightScene extends Phaser.Scene {
       this.textures.exists(this.stageBackdropTextureKey)
     ) {
       this.textures.remove(this.stageBackdropTextureKey);
-      this.stageBackdropTextureKey = undefined;
     }
-  }
-
-  destroy(): void {
-    this.shutdown();
-  }
+    this.stageBackdropTextureKey = undefined;
+    this.projectiles = [];
+    this.sound_mgr?.destroy();
+  };
 }
