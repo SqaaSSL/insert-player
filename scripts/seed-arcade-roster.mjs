@@ -1883,9 +1883,25 @@ export async function runReviewGatedVideoStep({
     restartFromJobId,
   });
   if (plan.job && reviewedCanonicalManifest) {
-    assertReviewGatedVideoJob(plan.job, fighterId, reviewedCanonicalManifest, {
-      allowFullRunRestartRequired: plan.action === 'restart-full',
-    });
+    const exactUnsealedLegacyRestartRoot = plan.action === 'restart-full'
+      && ['failed', 'cancelled'].includes(plan.job.status)
+      && plan.job.reviewStatus === 'none'
+      && plan.job.fullRunRestartRequired === true
+      && plan.job.resumable === false
+      && plan.job.artifactRunId === plan.job.id
+      && plan.job.canonicalSourceMode == null
+      && plan.job.canonicalSourceHashes == null
+      && plan.job.preservedArtifactCount === 0
+      && Array.isArray(plan.job.completedStages)
+      && plan.job.completedStages.length === 0;
+    assertReviewGatedVideoJob(
+      plan.job,
+      fighterId,
+      exactUnsealedLegacyRestartRoot ? null : reviewedCanonicalManifest,
+      {
+        allowFullRunRestartRequired: plan.action === 'restart-full',
+      },
+    );
   }
 
   if (plan.action === 'complete') {

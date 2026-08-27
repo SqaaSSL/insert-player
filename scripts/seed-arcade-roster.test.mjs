@@ -991,6 +991,32 @@ describe('Review-gated Arcade Video step', () => {
     ))).toBe(false);
   });
 
+  it('plans only an explicit exact unsealed zero-checkpoint legacy root for full restart', () => {
+    const unsealed = videoJob({
+      artifactRunId: videoJobId,
+      status: 'failed',
+      reviewStatus: 'none',
+      stage: 'source:side',
+      resumable: false,
+      fullRunRestartRequired: true,
+      canonicalSourceMode: null,
+      canonicalSourceHashes: null,
+      preservedArtifactCount: 0,
+      completedStages: [],
+    });
+
+    expect(planReviewGatedVideoStep(
+      [unsealed],
+      unsealed.fighterId,
+      { restartFromJobId: unsealed.id },
+    )).toEqual({ action: 'restart-full', job: unsealed });
+    expect(() => planReviewGatedVideoStep(
+      [{ ...unsealed, fullRunRestartRequired: false }],
+      unsealed.fighterId,
+      { restartFromJobId: unsealed.id },
+    )).toThrow(/not an exact terminal restart-required run/);
+  });
+
   it('persists the exact recovery job binding before a later poll failure', async () => {
     const entry = reviewedAdminEntry(fighter);
     const owned = reviewedOwnedFighter(fighter);
@@ -1078,10 +1104,13 @@ describe('Review-gated Arcade Video step', () => {
     {
       operation: 'restart-full',
       source: videoJob({
+        artifactRunId: videoJobId,
         status: 'failed', reviewStatus: 'none', stage: 'video:provider',
         resumable: false, fullRunRestartRequired: true,
-        canonicalSourceMode: reviewedManifest.canonicalSourceMode,
-        canonicalSourceHashes: reviewedManifest.canonicalSourceHashes,
+        canonicalSourceMode: null,
+        canonicalSourceHashes: null,
+        preservedArtifactCount: 0,
+        completedStages: [],
       }),
       expectedMode: 'restarted-full',
       expectedRestart: true,
@@ -1156,6 +1185,92 @@ describe('Review-gated Arcade Video step', () => {
       ...(expectedRestart ? { restart: true } : {}),
       recoveryFromJobId: source.id,
       canonicalSourceMode: 'reviewed-current-v1',
+      canonicalSourceHashes: reviewedManifest.canonicalSourceHashes,
+    });
+  });
+
+  it('keeps a sealed restart root bound to the exact reviewed manifest before POST', async () => {
+    const sealedMismatch = videoJob({
+      status: 'failed',
+      reviewStatus: 'none',
+      stage: 'video:provider',
+      resumable: false,
+      fullRunRestartRequired: true,
+      canonicalSourceMode: reviewedManifest.canonicalSourceMode,
+      canonicalSourceHashes: {
+        ...reviewedManifest.canonicalSourceHashes,
+        side: {
+          ...reviewedManifest.canonicalSourceHashes.side,
+          rawSha256: '9'.repeat(64),
+        },
+      },
+    });
+    const api = videoStepReadApi(fighter, [sealedMismatch]);
+
+    await expect(runReviewGatedVideoStep({
+      ...runnerOptions(api.requestApi),
+      reviewedCanonicalManifest: reviewedManifest,
+      restartFromJobId: sealedMismatch.id,
+    })).rejects.toThrow(/not sealed to the separately reviewed canonical manifest/i);
+    expect(api.calls.some(({ method }) => method === 'POST')).toBe(false);
+  });
+
+  it('still rejects a fresh restart root that is not strictly sealed to the manifest', async () => {
+    const unsealed = videoJob({
+      artifactRunId: videoJobId,
+      status: 'failed',
+      reviewStatus: 'none',
+      stage: 'source:side',
+      resumable: false,
+      fullRunRestartRequired: true,
+      canonicalSourceMode: null,
+      canonicalSourceHashes: null,
+      preservedArtifactCount: 0,
+      completedStages: [],
+    });
+    const freshMismatch = videoJob({
+      id: continuedVideoJobId,
+      artifactRunId: continuedVideoJobId,
+      status: 'queued',
+      reviewStatus: 'none',
+      stage: 'queued',
+      canonicalSourceMode: reviewedManifest.canonicalSourceMode,
+      canonicalSourceHashes: {
+        ...reviewedManifest.canonicalSourceHashes,
+        crouch: {
+          ...reviewedManifest.canonicalSourceHashes.crouch,
+          processedSha256: '9'.repeat(64),
+        },
+      },
+    });
+    const entry = reviewedAdminEntry(fighter);
+    const owned = reviewedOwnedFighter(fighter);
+    const calls = [];
+    const requestApi = async (_baseUrl, _token, path, init = {}) => {
+      calls.push({ path, method: init.method ?? 'GET', body: init.body });
+      if (path === '/api/admin/arcade' && !init.method) return { fighters: [entry] };
+      if (path === `/api/fighters/${entry.fighterId}` && !init.method) return { fighter: owned };
+      if (path === `/api/generation-jobs?fighterId=${entry.fighterId}` && !init.method) {
+        return { jobs: [unsealed] };
+      }
+      if (path === `/api/admin/arcade/${entry.fighterId}/generate` && init.method === 'POST') {
+        return { job: freshMismatch };
+      }
+      throw new Error(`Unexpected strict restart request: ${init.method ?? 'GET'} ${path}`);
+    };
+
+    await expect(runReviewGatedVideoStep({
+      ...runnerOptions(requestApi),
+      reviewedCanonicalManifest: reviewedManifest,
+      restartFromJobId: unsealed.id,
+    })).rejects.toThrow(/not sealed to the separately reviewed canonical manifest/i);
+    const posts = calls.filter(({ method }) => method === 'POST');
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(posts[0].body)).toMatchObject({
+      creationFlow: 'video',
+      restart: true,
+      recoveryFromJobId: unsealed.id,
+      canonicalSourceMode: reviewedManifest.canonicalSourceMode,
       canonicalSourceHashes: reviewedManifest.canonicalSourceHashes,
     });
   });

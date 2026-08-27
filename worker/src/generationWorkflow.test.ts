@@ -41,10 +41,104 @@ describe('generation workflow processor failure policy', () => {
     expect(isTerminalVideoProviderFailure(message)).toBe(true);
   });
 
+  it.each([
+    'Error: Pinned PixCLI video job terminated as failed',
+    'Error: NonRetryableError: Pinned PixCLI video response is terminal and cannot be replayed safely: submission returned HTTP 422',
+    'Error: TerminalVideoAuditInvariantError: Pinned completed PixCLI video audit is terminal and cannot be replayed safely: PixCLI audit asset exceeds its local download limit',
+    'TerminalVideoProviderResponseError: Pinned PixCLI video response is terminal and cannot be replayed safely: provider_request_outcome_unknown',
+  ])('classifies only known serialized error wrappers before a terminal prefix: %s', (message) => {
+    expect(isTerminalVideoProviderFailure(message)).toBe(true);
+  });
+
   it('keeps transport failures with no received PixCLI response resumable', () => {
     expect(isTerminalVideoProviderFailure('fetch failed before receiving a response')).toBe(false);
     expect(isTerminalVideoProviderFailure('PixCLI audit asset abc failed with HTTP 503')).toBe(false);
     expect(isTerminalVideoProviderFailure('Video compiler rejected the provider asset (503)')).toBe(false);
+    expect(isTerminalVideoProviderFailure(
+      'transport Error: TerminalVideoAuditInvariantError: ' +
+      'Pinned completed PixCLI video audit is terminal and cannot be replayed safely: hash changed',
+    )).toBe(false);
+    expect(isTerminalVideoProviderFailure(
+      'Error: SomeOtherError: ' +
+      'Pinned completed PixCLI video audit is terminal and cannot be replayed safely: hash changed',
+    )).toBe(false);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['blank', ''],
+  ])('downloads an exact bounded audit asset with a %s Content-Length header', async (_label, header) => {
+    const env = {
+      ENVIRONMENT: 'development',
+      GENERATION_API_BASE_URL: 'https://insert-player.example',
+      GENERATION_JOB_SIGNING_SECRET: 'test-generation-signing-secret',
+    } as unknown as Env;
+    const job = {
+      id: 'a'.repeat(32),
+      user_id: 'user-1',
+      provider_session_id: 'b'.repeat(32),
+    } as GenerationJob;
+    const bytes = new Uint8Array(12);
+    bytes.set(new TextEncoder().encode('ftyp'), 4);
+    const headers = new Headers({ 'Content-Type': 'video/mp4' });
+    if (header !== undefined) headers.set('Content-Length', header);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(bytes, { status: 200, headers })));
+    try {
+      const downloaded = await downloadPixcliAuditAsset(
+        env,
+        job,
+        'run:test:sprite:idle',
+        {
+          hash: 'c'.repeat(32),
+          contentSha256: null,
+          sizeBytes: bytes.byteLength,
+          mimeType: 'video/mp4',
+        },
+      );
+      expect(new Uint8Array(downloaded)).toEqual(bytes);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it.each([
+    ['zero', '0'],
+    ['oversize', String(16 * 1024 * 1024 + 1)],
+  ])('rejects an explicit %s audit asset Content-Length', async (_label, contentLength) => {
+    const env = {
+      ENVIRONMENT: 'development',
+      GENERATION_API_BASE_URL: 'https://insert-player.example',
+      GENERATION_JOB_SIGNING_SECRET: 'test-generation-signing-secret',
+    } as unknown as Env;
+    const job = {
+      id: 'a'.repeat(32),
+      user_id: 'user-1',
+      provider_session_id: 'b'.repeat(32),
+    } as GenerationJob;
+    const bytes = new Uint8Array(12);
+    bytes.set(new TextEncoder().encode('ftyp'), 4);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(bytes, {
+      status: 200,
+      headers: { 'Content-Type': 'video/mp4', 'Content-Length': contentLength },
+    })));
+    try {
+      await expect(downloadPixcliAuditAsset(
+        env,
+        job,
+        'run:test:sprite:idle',
+        {
+          hash: 'c'.repeat(32),
+          contentSha256: null,
+          sizeBytes: bytes.byteLength,
+          mimeType: 'video/mp4',
+        },
+      )).rejects.toMatchObject({
+        name: 'NonRetryableError',
+        message: expect.stringContaining('exceeds its local download limit'),
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('terminalizes an immutable completed-audit size mismatch but keeps network I/O resumable', async () => {
@@ -74,6 +168,7 @@ describe('generation workflow processor failure policy', () => {
       env, job, 'run:test:sprite:idle', asset,
     ).then(() => null, (error: unknown) => error instanceof Error ? error : new Error(String(error)));
     expect(immutableFailure).not.toBeNull();
+    expect(immutableFailure!.name).toBe('NonRetryableError');
     expect(isTerminalVideoProviderFailure(immutableFailure!.message)).toBe(true);
 
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('network unavailable')));
@@ -101,6 +196,7 @@ describe('generation workflow processor failure policy', () => {
       (error: unknown) => error instanceof Error ? error : new Error(String(error)),
     );
     expect(failure).not.toBeNull();
+    expect(failure!.name).toBe('NonRetryableError');
     expect(isTerminalVideoProviderFailure(failure!.message)).toBe(true);
   });
 
