@@ -11,8 +11,8 @@ const assets = [
   {
     label: 'social card',
     input: 'public/assets/social-card.svg',
-    background: 'public/assets/social-card-visual.png',
-    output: 'public/assets/social-card-v2.png',
+    background: 'public/assets/social-card-visual-v3.png',
+    output: 'public/assets/social-card-v3.png',
     size: '1200x630!',
     width: 1200,
     height: 630,
