@@ -87,7 +87,9 @@ name = "insert-player-image-processor"
 class_name = "ImageProcessorContainer"
 image = "../Dockerfile.processor"
 image_build_context = ".."
-max_instances = 20
+# Reviewed video batches retain named processors across a rollout; leave headroom
+# for the next review-gated action while older instances finish going idle.
+max_instances = 32
 instance_type = "basic"
 
 [containers.constraints]
