@@ -61,6 +61,29 @@ function job(overrides: Partial<GenerationJob> = {}): GenerationJob {
   };
 }
 
+function arcadeFighter(id: string, slug: string): CloudFighter {
+  return {
+    id,
+    name: 'Global Fighter',
+    qualityTier: 'champion',
+    public: true,
+    sources: {},
+    sprites: [],
+    arcade: {
+      slug,
+      rank: 1,
+      challengerLine: 'Ready',
+      defaultPersonality: 'balanced',
+      reference: {
+        kind: 'generated',
+        sourceUrl: null,
+        license: 'Internal',
+        credit: 'Insert Player',
+      },
+    },
+  };
+}
+
 describe('visibleGalleryMetasForJobs', () => {
   it('keeps a Video review fighter visible across every Gallery refresh', () => {
     const draft = meta({
@@ -97,6 +120,66 @@ describe('visibleGalleryMetasForJobs', () => {
         resumable: true,
       }),
     ])).toEqual([active, resumable]);
+  });
+
+  it('keeps multiple active and resumable Original fighter generations visible', () => {
+    const active = meta({
+      photoHash: 'original-active',
+      status: 'sprites_generating',
+      cloudFighterId: 'fighter-original-active',
+    });
+    const resumable = meta({
+      photoHash: 'original-resumable',
+      status: 'error',
+      cloudFighterId: 'fighter-original-resumable',
+    });
+
+    expect(visibleGalleryMetasForJobs([active, resumable], [], [
+      job({
+        id: 'job-original-active',
+        fighterId: 'fighter-original-active',
+        creationFlow: 'original',
+        status: 'running',
+        reviewStatus: 'none',
+      }),
+      job({
+        id: 'job-original-resumable',
+        fighterId: 'fighter-original-resumable',
+        creationFlow: 'original',
+        status: 'failed',
+        reviewStatus: 'none',
+        resumable: true,
+      }),
+    ])).toEqual([active, resumable]);
+  });
+
+  it('drops cached global ghosts only when Arcade returned an authoritative roster', () => {
+    const ghost = meta({
+      photoHash: 'arcade:retired-fighter:retired-id',
+      characterName: 'Retired Fighter',
+    });
+
+    expect(visibleGalleryMetasForJobs([ghost], [], [], true)).toEqual([]);
+    expect(visibleGalleryMetasForJobs([ghost], [], [], false)).toEqual([ghost]);
+  });
+
+  it('retains an authoritative global cache when either its id or slug still matches', () => {
+    const legacy = meta({
+      photoHash: 'arcade:donald-trump',
+      characterName: 'Donald Trump',
+    });
+    const current = meta({
+      photoHash: 'arcade:elon-musk:elon-id',
+      cloudFighterId: 'elon-id',
+      characterName: 'Elon Musk',
+    });
+
+    expect(visibleGalleryMetasForJobs(
+      [legacy, current],
+      [arcadeFighter('trump-id', 'donald-trump'), arcadeFighter('elon-id', 'elon-musk')],
+      [],
+      true,
+    )).toEqual([legacy, current]);
   });
 
   it('always keeps a ready fighter even when no durable job exists', () => {

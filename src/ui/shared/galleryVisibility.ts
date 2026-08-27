@@ -2,8 +2,9 @@ import type { CloudFighter } from '../../services/CloudFighters.ts';
 import { CACHE_VERSION, type CachedMeta } from '../../services/SpriteCache.ts';
 import type { GenerationJob } from '../../services/GenerationJobs.ts';
 import { visibleGalleryMetas } from './arcadeRosterIdentity.ts';
+import { findCachedArcadeMeta } from './galleryArcadeRoster.ts';
+import { isArcadeCachedMeta } from './fighterPreview.ts';
 import {
-  isVideoResumableJob,
   isVideoReviewOrRestartJob,
 } from './creationFlow.ts';
 
@@ -19,25 +20,30 @@ type GalleryGenerationJob = Pick<
 >;
 
 function keepsIncompleteFighterVisible(job: GalleryGenerationJob): boolean {
-  if (job.creationFlow !== 'video' || job.operation !== 'fighter_generation') return false;
+  if (job.operation !== 'fighter_generation') return false;
   return job.status === 'queued' || job.status === 'running' ||
-    isVideoReviewOrRestartJob(job) || isVideoResumableJob(job);
+    isVideoReviewOrRestartJob(job) || (
+      (job.status === 'failed' || job.status === 'cancelled') && job.resumable
+    );
 }
 
 /**
  * Applies the one Gallery visibility contract used by initial load and refreshes.
- * Incomplete cached fighters remain discoverable only while a durable Video job
- * still has an action the user can monitor, review, restart, or resume.
+ * Incomplete cached fighters remain discoverable only while a durable job still
+ * has an action the user can monitor, review, restart, or resume. When Arcade's
+ * response is authoritative, cached globals absent by both id and slug are
+ * removed instead of surviving as unselectable ghosts.
  */
 export function visibleGalleryMetasForJobs(
   metas: CachedMeta[],
   arcadeFighters: CloudFighter[],
   generationJobs: GalleryGenerationJob[],
+  arcadeRosterAuthoritative = true,
 ): CachedMeta[] {
   const recoverableFighterIds = new Set(
     generationJobs.filter(keepsIncompleteFighterVisible).map((job) => job.fighterId),
   );
-  return visibleGalleryMetas(
+  const visible = visibleGalleryMetas(
     metas.filter((item) => item.version === CACHE_VERSION && (
       item.status === 'ready' || (
         Boolean(item.cloudFighterId) && recoverableFighterIds.has(item.cloudFighterId as string)
@@ -45,4 +51,14 @@ export function visibleGalleryMetasForJobs(
     )),
     arcadeFighters,
   );
+  if (!arcadeRosterAuthoritative) return visible;
+
+  const representedArcadeHashes = new Set(
+    arcadeFighters
+      .map((fighter) => findCachedArcadeMeta(visible, fighter)?.photoHash ?? null)
+      .filter((photoHash): photoHash is string => photoHash !== null),
+  );
+  return visible.filter((meta) => (
+    !isArcadeCachedMeta(meta) || representedArcadeHashes.has(meta.photoHash)
+  ));
 }
