@@ -115,16 +115,16 @@ jobs:
           else
             case "$REQUESTED_SLUG:$REQUESTED_SOURCE" in
               elon-musk:crouch)
-                expected_prompt_sha256="fbcc5f15fa7fd0f75793fb7dedf602b4d4b5e170c39451e939a4c091ba5e32e5"
+                expected_prompt_sha256="c7be4746256d2e39b39dd61ba50d4abb887742ff69ce148a36f00672e4283acb"
                 ;;
               rosalia:side)
-                expected_prompt_sha256="1a54024b2cd4bf6abf9f019cccc4daa950290328ec501c35821b7339e9753756"
+                expected_prompt_sha256="eb0142fe810eda52e711a5e8acc58f06fa0370721be0e06cf7e45dcb612fdb78"
                 ;;
               ibai-llanos:side)
-                expected_prompt_sha256="076119e904c4bde8c78bd33d4de1f87f07511d5bb50aca42426a02245c7ddc74"
+                expected_prompt_sha256="47aeadbceef3c883a26c7de9f6d925de153239d8f7d28d0ae5ce96dad17c449b"
                 ;;
               lamine-yamal:side)
-                expected_prompt_sha256="8c3fe7ae2e614efd35adb9a77686190b561ec1dfaebcb377f99d5a163499fa60"
+                expected_prompt_sha256="27b1a65908a402f491e24b55ba1bccce97a07bc6a915356a16e65ff8c5a3be39"
                 ;;
               *)
                 printf '::error::The single-source fighter/source tuple is not sealed.\n'
