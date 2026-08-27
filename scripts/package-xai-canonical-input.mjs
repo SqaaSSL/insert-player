@@ -17,6 +17,8 @@ import {
   XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE,
   XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG,
   XAI_CANONICAL_GLOBAL_SIDE_REFERENCES,
+  XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
+  XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256,
 } from './arcade-xai-canonical-bundle.mjs';
 import { verifyBakeoffSource } from './arcade-side-bakeoff.mjs';
 import { validateManifest } from './seed-arcade-roster.mjs';
@@ -201,11 +203,11 @@ export function packageXaiCanonicalInput(options = {}) {
   const promptSha256 = sourceName
     ? sha256(buildXaiCanonicalBundlePrompt(fighter, sourceName, { promptProfile }))
     : undefined;
-  if (
-    promptProfile === XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE
-    && promptSha256 !== XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG[slug]
-  ) {
-    throw new Error(`The exact reviewed global SIDE prompt snapshot changed for ${slug}.`);
+  const reviewedPromptSha256 = promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
+    ? XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256
+    : XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG[slug];
+  if (promptProfile && promptSha256 !== reviewedPromptSha256) {
+    throw new Error(`The exact reviewed single-source prompt snapshot changed for ${slug}.`);
   }
   const outputDirectory = resolve(requireString(options.outputDirectory, 'private output directory'));
   const stagingParent = join(outputDirectory, 'staging');

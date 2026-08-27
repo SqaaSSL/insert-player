@@ -19,8 +19,11 @@ import {
   XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG,
   XAI_CANONICAL_GLOBAL_SIDE_REFERENCES,
   XAI_CANONICAL_GLOBAL_SIDE_SLUGS,
+  XAI_CANONICAL_PIXCLI_PROMPT_MAX,
   XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION,
   XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
+  XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256,
+  assertXaiCanonicalPromptFitsPixcliSchema,
   buildXaiCanonicalBundlePayload,
   buildXaiCanonicalBundlePrompt,
   loadXaiCanonicalPoseManifest,
@@ -384,7 +387,7 @@ describe('sealed XAI canonical bundle inputs', () => {
     expect(generation).toContain('lamine-yamal:side)');
     expect(generation).not.toContain('aitana:side)');
     for (const promptSha256 of [
-      'fbcc5f15fa7fd0f75793fb7dedf602b4d4b5e170c39451e939a4c091ba5e32e5',
+      XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256,
       ...Object.values(XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG),
     ]) expect(generation).toContain(promptSha256);
     expect(generation).toContain('actual_sources="$(jq -c \'.sources | keys | sort\' "$input_root/pose/pose-manifest.json")"');
@@ -454,35 +457,67 @@ describe('sealed XAI canonical bundle inputs', () => {
     expect(JSON.stringify(payload)).not.toMatch(/fallback|retry/i);
   });
 
+  it('mirrors the PixCLI EditAdvanced prompt schema and seals UTF-8 bytes fail-closed', () => {
+    expect(XAI_CANONICAL_PIXCLI_PROMPT_MAX).toBe(4000);
+    const exactAsciiBoundary = 'x'.repeat(XAI_CANONICAL_PIXCLI_PROMPT_MAX);
+    expect(assertXaiCanonicalPromptFitsPixcliSchema(exactAsciiBoundary)).toBe(exactAsciiBoundary);
+    expect(() => assertXaiCanonicalPromptFitsPixcliSchema(`${exactAsciiBoundary}x`))
+      .toThrow(/exceeds max 4000 \(4001 characters, 4001 UTF-8 bytes\)/i);
+    expect(() => assertXaiCanonicalPromptFitsPixcliSchema(
+      `${'x'.repeat(XAI_CANONICAL_PIXCLI_PROMPT_MAX - 1)}é`,
+    )).toThrow(/4000 characters, 4001 UTF-8 bytes/i);
+  });
+
+  it('preserves every original three-source prompt byte-for-byte', () => {
+    const snapshots = [];
+    for (const fighter of roster.fighters) {
+      for (const sourceName of ['side', 'upright', 'crouch']) {
+        const prompt = buildXaiCanonicalBundlePrompt(fighter, sourceName);
+        snapshots.push([
+          fighter.slug,
+          sourceName,
+          sha256(prompt),
+          Buffer.byteLength(prompt, 'utf8'),
+          prompt.length,
+        ]);
+      }
+    }
+    expect(sha256(JSON.stringify(snapshots)))
+      .toBe('7415c82e9130840939192f1d969207362480ce25fb00e23db5146455f0de029a');
+  });
+
   it('seals the single CROUCH identity-first prompt and wires its reviewed hash through the CLI', () => {
     const fixture = makeFixture();
     const prompt = buildXaiCanonicalBundlePrompt(fixture.fighter, 'crouch', {
       promptProfile: XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
     });
     const promptSha256 = sha256(prompt);
-    expect(promptSha256).toBe('fbcc5f15fa7fd0f75793fb7dedf602b4d4b5e170c39451e939a4c091ba5e32e5');
+    expect(promptSha256).toBe(XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256);
+    expect(prompt.length).toBe(3653);
+    expect(Buffer.byteLength(prompt, 'utf8')).toBe(3661);
+    expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(XAI_CANONICAL_PIXCLI_PROMPT_MAX);
     expect(prompt).toContain('strict lateral profile facing screen-right');
     expect(prompt).not.toContain('3/4');
-    expect(prompt).toContain('both soles visibly planted on one shared ground line');
-    expect(prompt).toContain('two distinct complete hands held close to the face and upper chest in a closed defensive guard');
-    expect(prompt).toContain('not frontal, not three-quarter, not screen-left, and do not mirror');
-    expect(prompt).toContain('Use only its joint arrangement, crouch depth, and two-hand defensive guard');
-    expect(prompt).toContain('override any torso yaw, perspective, facing, framing, silhouette placement, or foot-baseline ambiguity in IMAGE 1');
-    expect(prompt).toContain('static held pose with no attack, lunge, jump, kneel, or motion');
+    expect(prompt).toContain('both soles planted on one shared ground line');
+    expect(prompt).toContain('two distinct complete hands close to face/upper chest in closed defensive guard');
+    expect(prompt).toContain('not frontal, three-quarter, or screen-left; do not mirror');
+    expect(prompt).toContain('IMAGE 1 = CROUCH STRUCTURE only: joints, depth, two-hand guard');
+    expect(prompt).toContain('TARGET/OUTPUT override yaw, perspective, facing, framing, silhouette, foot baseline, background');
+    expect(prompt).toContain('static—no attack, lunge, jump, kneel, or motion');
     expect(prompt).toContain('generous overscan');
-    expect(prompt).toContain('HARD OUTPUT CONTRACT, EVEN IF ANY REFERENCE CONTRADICTS IT');
-    expect(prompt).toContain('Elon Musk exactly as shown in IMAGE 3, not a model-memory approximation');
-    expect(prompt).toContain('Never copy IMAGE 3 clothing, suit, shirt, tie, colors, or accessories');
-    expect(prompt).toContain('Never copy its identity, face, hair, physique, background, green vignette, gradient');
-    expect(prompt).toContain('the HARD OUTPUT CONTRACT alone controls the background');
-    expect(prompt).toContain('no shadow, floor, gradient, text, watermark, logo, badge, emblem, brand-like symbol, prop, or border');
-    expect(prompt.indexOf('IMAGE 3 is the REAL IDENTITY')).toBeLessThan(
-      prompt.indexOf('IMAGE 1 is the CROUCH STRUCTURE MASTER'),
+    expect(prompt).toContain('OUTPUT — HARD EVEN IF A REFERENCE CONFLICTS');
+    expect(prompt).toContain('Render Elon Musk exactly as shown, never model memory/generic substitute');
+    expect(prompt).toContain('Never copy its clothing/suit/shirt/tie/colors/accessories');
+    expect(prompt).toContain('Never copy identity, face, hair, physique, background/green vignette/gradient/logos');
+    expect(prompt).toContain('OUTPUT alone background');
+    expect(prompt).toContain('no shadow, floor, gradient, text, watermark, logo, badge, emblem, brand-like symbol, prop, border');
+    expect(prompt.indexOf('IMAGE 3 = REAL IDENTITY')).toBeLessThan(
+      prompt.indexOf('IMAGE 1 = CROUCH STRUCTURE'),
     );
-    expect(prompt.indexOf('1) IDENTITY AND PHYSIQUE FROM IMAGE 3')).toBeLessThan(
-      prompt.indexOf('2) CROUCH JOINT STRUCTURE FROM IMAGE 1'),
+    expect(prompt.indexOf('1) IDENTITY/PHYSIQUE from IMAGE 3')).toBeLessThan(
+      prompt.indexOf('2) CROUCH joints from IMAGE 1'),
     );
-    expect(prompt).toContain('always subject to TARGET SOURCE and HARD OUTPUT CONTRACT');
+    expect(prompt).toContain('subject to TARGET/OUTPUT');
     expect(() => buildXaiCanonicalBundlePrompt(fixture.fighter, 'side', {
       promptProfile: XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
     })).toThrow(/only for Elon Musk CROUCH/i);
@@ -507,6 +542,11 @@ describe('sealed XAI canonical bundle inputs', () => {
 
   it('seals one distinct identity-first global SIDE prompt per allowed roster identity', () => {
     const prompts = new Map();
+    const expectedPromptBytes = {
+      rosalia: 3855,
+      'ibai-llanos': 3856,
+      'lamine-yamal': 3879,
+    };
     for (const slug of XAI_CANONICAL_GLOBAL_SIDE_SLUGS) {
       const fighter = roster.fighters.find((entry) => entry.slug === slug);
       expect(resolveXaiCanonicalSingleSourcePromptProfile(slug, 'side'))
@@ -516,25 +556,28 @@ describe('sealed XAI canonical bundle inputs', () => {
       });
       const promptSha256 = sha256(prompt);
       expect(promptSha256).toBe(XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG[slug]);
-      expect(prompt).toContain(`Render ${fighter.name} exactly as shown in IMAGE 3`);
-      expect(prompt).toContain('Do not use model memory, learned celebrity priors, web knowledge, or a generic approximation');
-      expect(prompt).toContain('IMAGE 1 is the APPROVED TRUMP UPRIGHT POSE AND COMPOSITION MASTER only');
-      expect(prompt).toContain('TARGET SOURCE and HARD OUTPUT CONTRACT below override any perspective');
-      expect(prompt).toContain('IMAGE 2 is the APPROVED MILEI CANONICAL RENDERING-LANGUAGE MASTER only');
-      expect(prompt).toContain('IMAGE 2 provides no clothing or body instructions');
+      expect(Buffer.byteLength(prompt, 'utf8')).toBe(expectedPromptBytes[slug]);
+      expect(Buffer.byteLength(prompt, 'utf8')).toBeLessThanOrEqual(XAI_CANONICAL_PIXCLI_PROMPT_MAX);
+      expect(prompt).toContain(`Render ${fighter.name} exactly as IMAGE 3`);
+      expect(prompt).toContain('no model memory, celebrity prior, web knowledge, generic approximation, substitute');
+      expect(prompt).toContain('IMAGE 1 = APPROVED TRUMP UPRIGHT POSE/COMPOSITION ONLY');
+      expect(prompt).toContain('TARGET/OUTPUT override perspective/yaw/frame/facing/crop/floor/shadow/background');
+      expect(prompt).toContain('IMAGE 2 = APPROVED MILEI RENDERING-LANGUAGE ONLY');
+      expect(prompt).toContain('it supplies no clothing/body instructions');
       expect(prompt).toContain('strict lateral profile facing screen-right');
-      expect(prompt).toContain('not frontal, not three-quarter, not screen-left, and do not mirror');
-      expect(prompt).toContain('All wardrobe, garment, footwear, palette, and character-design instructions come exclusively from the ROSTER REQUIREMENTS');
-      expect(prompt).toContain('pure bright green (#00FF00), flat and uniform');
+      expect(prompt).toContain('not frontal, three-quarter, or screen-left; do not mirror');
+      expect(prompt).toContain('Wardrobe/garments/footwear/palette/design ONLY from ROSTER');
+      expect(prompt).toContain('pure bright green (#00FF00), flat/uniform');
       expect(prompt).toContain('generous green overscan');
-      expect(prompt.indexOf('IMAGE 3 is the REAL')).toBeLessThan(prompt.indexOf('IMAGE 1 is the APPROVED TRUMP'));
-      expect(prompt.indexOf('1) ')).toBeLessThan(prompt.indexOf('2) Strict screen-right pose'));
+      expect(prompt.indexOf('IMAGE 3 = REAL')).toBeLessThan(prompt.indexOf('IMAGE 1 = APPROVED TRUMP'));
+      expect(prompt.indexOf(`1) ${fighter.name.toUpperCase()} IDENTITY`))
+        .toBeLessThan(prompt.indexOf('2) strict screen-right pose'));
       prompts.set(slug, prompt);
     }
     expect(new Set([...prompts.values()].map(sha256)).size).toBe(3);
-    expect(prompts.get('rosalia')).toContain('Never masculinize her face, jaw, neck, shoulders, torso, limbs, or body proportions');
-    expect(prompts.get('ibai-llanos')).toContain('Absolutely no microphone, headset, headphones, earbuds');
-    expect(prompts.get('lamine-yamal')).toContain('Absolutely no athletic tape, kinesiology tape, bandage');
+    expect(prompts.get('rosalia')).toContain('Never masculinize face, jaw, neck, shoulders, torso, limbs, or proportions');
+    expect(prompts.get('ibai-llanos')).toContain('Absolutely no mic, microphone, headset, headphones, earbuds');
+    expect(prompts.get('lamine-yamal')).toContain('Absolutely no athletic/kinesiology tape, bandage');
     expect(prompts.get('lamine-yamal')).toContain('number, lettering, text, logo');
 
     const payload = buildXaiCanonicalBundlePayload({
@@ -546,6 +589,19 @@ describe('sealed XAI canonical bundle inputs', () => {
       identityAssetHash: '3'.repeat(32),
     });
     expect(payload.image).toEqual(['1'.repeat(32), '2'.repeat(32), '3'.repeat(32)]);
+    expect(payload.prompt).toBe(prompts.get('rosalia'));
+    expect(Buffer.byteLength(payload.prompt, 'utf8')).toBe(3855);
+    expect(Object.keys(payload).sort()).toEqual([
+      'enrich_prompt',
+      'image',
+      'model',
+      'output_format',
+      'params',
+      'prompt',
+      'publish',
+      'publish_name',
+      'search',
+    ]);
     expect(payload).toMatchObject({
       enrich_prompt: false,
       search: false,
@@ -632,6 +688,27 @@ describe('sealed XAI canonical bundle inputs', () => {
       runCommand: () => ({ stdout: 'ffmpeg version 7.0 unknown\n', stderr: '' }),
     })).rejects.toThrow(/toolchain/i);
     expect(provider.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized single-source prompt before uploads, preflight, or edit POST', async () => {
+    const fixture = makeFixture();
+    const oversizedRoster = JSON.parse(readFileSync(fixture.rosterPath, 'utf8'));
+    oversizedRoster.fighters.find((entry) => entry.slug === fixture.fighter.slug).referencePrompt
+      += ` ${'licensed detail '.repeat(50)}`;
+    writeFileSync(fixture.rosterPath, JSON.stringify(oversizedRoster));
+    const provider = providerFixture();
+    const selected = selectedPoseManifest(fixture, 'crouch');
+    await expect(runXaiCanonicalBundle({
+      ...runOptions(fixture, provider),
+      confirmation: XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION,
+      maxCostUsd: 0.11,
+      sourceName: 'crouch',
+      promptSha256: '0'.repeat(64),
+      ...selected,
+    })).rejects.toThrow(/PixCLI EditAdvanced prompt exceeds max 4000/i);
+    expect(provider.fetchImpl).not.toHaveBeenCalled();
+    expect(existsSync(fixture.statePath)).toBe(false);
+    expect(existsSync(fixture.outputDirectory)).toBe(false);
   });
 });
 
@@ -948,7 +1025,7 @@ describe('portable private canonical input packaging', () => {
     expect(receipt).toMatchObject({
       sourceNames: ['crouch'],
       promptProfile: XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
-      promptSha256: 'fbcc5f15fa7fd0f75793fb7dedf602b4d4b5e170c39451e939a4c091ba5e32e5',
+      promptSha256: XAI_CANONICAL_SINGLE_SOURCE_PROMPT_SHA256,
       uploaded: false,
       providerCalled: false,
     });
