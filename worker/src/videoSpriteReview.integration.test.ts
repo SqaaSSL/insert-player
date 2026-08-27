@@ -6,7 +6,7 @@ import {
   type VideoSpriteCompileResponse,
 } from '../../src/services/VideoSpriteCompileContract';
 import { hashString } from './auth';
-import { canonicalJson, PIXCLI_VIDEO_MODEL } from './videoSpriteGeneration';
+import { canonicalJson, PIXCLI_VIDEO_MODEL, videoAction } from './videoSpriteGeneration';
 import {
   adjustVideoSpriteReview,
   approveVideoSpriteReview,
@@ -26,7 +26,15 @@ const SCHEMA = `
   CREATE TABLE fighters (
     id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, quality_tier TEXT NOT NULL,
     public_flag INTEGER NOT NULL DEFAULT 0,
+    side_view_blob_key TEXT, side_view_raw_blob_key TEXT,
+    upright_view_blob_key TEXT, upright_view_raw_blob_key TEXT,
+    crouch_view_blob_key TEXT, crouch_view_raw_blob_key TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE source_versions (
+    id TEXT PRIMARY KEY, fighter_id TEXT NOT NULL, kind TEXT NOT NULL,
+    blob_key TEXT NOT NULL, content_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE arcade_fighters (
     fighter_id TEXT PRIMARY KEY, status TEXT NOT NULL,
@@ -136,6 +144,7 @@ interface Harness { mf: Miniflare; db: D1Database; bucket: R2Bucket; env: Env }
 interface ReviewSeed {
   action: VideoSpriteAction; candidateId: string; jobId: string;
   reportSha256: string; runtimeKey: string; runtimeBytes: ArrayBuffer;
+  canonicalKey: string; canonicalBytes: ArrayBuffer;
 }
 
 async function createHarness(): Promise<Harness> {
@@ -179,15 +188,28 @@ async function seedReviews(
   const allActions: VideoSpriteAction[] = operation === 'fighter_retry_animation'
     ? ['idle'] : [...VIDEO_SPRITE_ACTIONS];
   const actions = allActions.slice(0, actionLimit ?? allActions.length);
-  const sourceIdentity = (seed: string) => ({
-    versionId: seed.repeat(32),
-    blobKey: `source/${seed}`,
-    contentSha256: seed.repeat(64),
+  const sourceKinds = [
+    'side', 'side_raw', 'upright', 'upright_raw', 'crouch', 'crouch_raw',
+  ] as const;
+  type SourceKind = typeof sourceKinds[number];
+  const sourceSeed: Record<SourceKind, string> = {
+    side: '1', side_raw: '2', upright: '3', upright_raw: '4', crouch: '5', crouch_raw: '6',
+  };
+  const sourceBytes = Object.fromEntries(sourceKinds.map((kind) => [
+    kind, buffer(`reviewed-source:${kind}`),
+  ])) as Record<SourceKind, ArrayBuffer>;
+  const sourceHashes = Object.fromEntries(await Promise.all(sourceKinds.map(async (kind) => [
+    kind, await hashString(sourceBytes[kind]),
+  ]))) as Record<SourceKind, string>;
+  const sourceIdentity = (kind: SourceKind) => ({
+    versionId: sourceSeed[kind].repeat(32),
+    blobKey: `source/${kind}`,
+    contentSha256: sourceHashes[kind],
   });
   const sealedSources = {
-    side: { processed: sourceIdentity('1'), raw: sourceIdentity('2') },
-    upright: { processed: sourceIdentity('3'), raw: sourceIdentity('4') },
-    crouch: { processed: sourceIdentity('5'), raw: sourceIdentity('6') },
+    side: { processed: sourceIdentity('side'), raw: sourceIdentity('side_raw') },
+    upright: { processed: sourceIdentity('upright'), raw: sourceIdentity('upright_raw') },
+    crouch: { processed: sourceIdentity('crouch'), raw: sourceIdentity('crouch_raw') },
   };
   const sourceManifest = JSON.stringify({
     side: sealedSources.side.processed.blobKey, sideRaw: sealedSources.side.raw.blobKey,
@@ -210,6 +232,37 @@ async function seedReviews(
     operation === 'fighter_retry_animation' ? 'idle' : null,
     hexId(0x100), sourceManifest,
   ).run();
+  await Promise.all(sourceKinds.map((kind) => put(
+    target.bucket,
+    sourceIdentity(kind).blobKey,
+    sourceBytes[kind],
+    sourceHashes[kind],
+  )));
+  await target.db.batch([
+    ...sourceKinds.map((kind) => target.db.prepare(`INSERT INTO source_versions (
+      id, fighter_id, kind, blob_key, content_hash
+    ) VALUES (?, ?, ?, ?, ?)`).bind(
+      sourceIdentity(kind).versionId,
+      FIGHTER_ID,
+      kind,
+      sourceIdentity(kind).blobKey,
+      sourceHashes[kind],
+    )),
+    target.db.prepare(`UPDATE fighters SET
+      side_view_blob_key = ?, side_view_raw_blob_key = ?,
+      upright_view_blob_key = ?, upright_view_raw_blob_key = ?,
+      crouch_view_blob_key = ?, crouch_view_raw_blob_key = ?
+      WHERE id = ? AND owner_user_id = ?`).bind(
+      sealedSources.side.processed.blobKey,
+      sealedSources.side.raw.blobKey,
+      sealedSources.upright.processed.blobKey,
+      sealedSources.upright.raw.blobKey,
+      sealedSources.crouch.processed.blobKey,
+      sealedSources.crouch.raw.blobKey,
+      FIGHTER_ID,
+      USER_ID,
+    ),
+  ]);
   const reviews: ReviewSeed[] = [];
   for (let index = 0; index < actions.length; index += 1) {
     const action = actions[index];
@@ -230,17 +283,21 @@ async function seedReviews(
         approved ? 'review:approved' : 'awaiting_review', index + 3,
         operation === 'fighter_retry_animation' ? 1 : 14,
       ).run();
+    const canonicalName = videoAction(action).canonical;
+    const canonicalKind = `${canonicalName}_raw` as const;
     const values = {
       runtime: buffer(action + ':runtime'), raw: buffer(action + ':raw'),
       contact: buffer(action + ':contact'), unique: buffer(action + ':unique'),
-      report: buffer(action + ':report'), canonical: buffer(action + ':canonical'),
+      report: buffer(action + ':report'), canonical: sourceBytes[canonicalKind],
       audit: buffer(action + ':audit'), video: mp4(action + ':video'),
     };
     const hashes = Object.fromEntries(await Promise.all(Object.entries(values)
       .map(async ([name, value]) => [name, await hashString(value)]))) as Record<string, string>;
     const prefix = 'review/' + candidateId;
-    const keys = Object.fromEntries(Object.keys(values).map((name) => [name, prefix + '/' + name])) as
-      Record<keyof typeof values, string>;
+    const keys = {
+      ...Object.fromEntries(Object.keys(values).map((name) => [name, prefix + '/' + name])),
+      canonical: sealedSources[canonicalName].raw.blobKey,
+    } as Record<keyof typeof values, string>;
     await Promise.all(Object.entries(values).map(([name, value]) => put(
       target.bucket, keys[name as keyof typeof values], value, hashes[name],
       name === 'runtime' ? {
@@ -297,7 +354,8 @@ async function seedReviews(
       .bind(RUN_ID, action, operation === 'fighter_generation' ? index + 4 : 1,
         versionId, keys.runtime, keys.raw, hashes.runtime, hashes.raw, jobId).run();
     reviews.push({ action, candidateId, jobId, reportSha256,
-      runtimeKey: keys.runtime, runtimeBytes: values.runtime });
+      runtimeKey: keys.runtime, runtimeBytes: values.runtime,
+      canonicalKey: keys.canonical, canonicalBytes: values.canonical });
   }
   if (operation === 'fighter_generation') for (const [index, source] of ['side', 'upright', 'crouch'].entries()) {
     const sealed = sealedSources[source as keyof typeof sealedSources];
@@ -319,6 +377,32 @@ function decision(review: ReviewSeed, extra: Record<string, unknown> = {}): Requ
     body: JSON.stringify({ candidateId: review.candidateId, revision: 1,
       reportSha256: review.reportSha256, ...extra }),
   });
+}
+
+async function approvalMutationState(target: Harness, review: ReviewSeed): Promise<Record<string, unknown>> {
+  const [candidate, job, sprites, spriteCheckpoints, events] = await Promise.all([
+    target.db.prepare(`SELECT status, approved_revision, reviewed_at, reviewed_by_user_id
+      FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first(),
+    target.db.prepare(`SELECT review_status, stage FROM generation_jobs WHERE id = ?`)
+      .bind(review.jobId).first(),
+    target.db.prepare(`SELECT COUNT(*) AS count FROM sprites WHERE fighter_id = ?`)
+      .bind(FIGHTER_ID).first(),
+    target.db.prepare(`SELECT COUNT(*) AS count FROM generation_artifact_checkpoints
+      WHERE run_id = ? AND artifact_kind = 'sprite'`).bind(RUN_ID).first(),
+    target.db.prepare(`SELECT COUNT(*) AS count FROM generation_job_events WHERE job_id = ?`)
+      .bind(review.jobId).first(),
+  ]);
+  return { candidate, job, sprites, spriteCheckpoints, events };
+}
+
+async function expectApprovalIntegrityFailureWithoutWrites(
+  target: Harness,
+  review: ReviewSeed,
+): Promise<void> {
+  const before = await approvalMutationState(target, review);
+  const response = await approveVideoSpriteReview(decision(review), target.env, AUTH, review.jobId);
+  expect(response.status).toBe(409);
+  expect(await approvalMutationState(target, review)).toEqual(before);
 }
 
 function png(width: number, height: number, marker: number): Uint8Array {
@@ -488,6 +572,99 @@ describe('video sprite review handlers', () => {
       expect((await approveVideoSpriteReview(
         exactApproval, target.env, AUTH, review.jobId,
       )).status).toBe(200);
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('approves an exact metadata-less reviewed side_raw after validating every durable seal', async () => {
+    const target = await createHarness();
+    try {
+      const review = (await seedReviews(target, 0, 'fighter_generation', 1))[0];
+      await target.bucket.put(review.canonicalKey, review.canonicalBytes);
+
+      const response = await approveVideoSpriteReview(decision(review), target.env, AUTH, review.jobId);
+
+      expect(response.status).toBe(200);
+      expect(await target.db.prepare(`SELECT status, approved_revision
+        FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first())
+        .toEqual({ status: 'approved', approved_revision: 1 });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('approves an exact metadata-less reviewed crouch_raw for its mapped low action', async () => {
+    const target = await createHarness();
+    try {
+      const reviews = await seedReviews(target, 4, 'fighter_generation', 5);
+      const review = reviews.find(({ action }) => action === 'low_punch')!;
+      await target.bucket.put(review.canonicalKey, review.canonicalBytes);
+
+      const response = await approveVideoSpriteReview(decision(review), target.env, AUTH, review.jobId);
+
+      expect(response.status).toBe(200);
+      expect(await target.db.prepare(`SELECT status, approved_revision
+        FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first())
+        .toEqual({ status: 'approved', approved_revision: 1 });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('rejects incorrect present canonical metadata even when another hash field is exact', async () => {
+    const target = await createHarness();
+    try {
+      const review = (await seedReviews(target, 0, 'fighter_generation', 1))[0];
+      await target.bucket.put(review.canonicalKey, review.canonicalBytes, { customMetadata: {
+        contentSha256: await hashString(review.canonicalBytes),
+        contentHash: '0'.repeat(64),
+      } });
+      await expectApprovalIntegrityFailureWithoutWrites(target, review);
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('rejects wrong metadata-less canonical bytes without approval side effects', async () => {
+    const target = await createHarness();
+    try {
+      const review = (await seedReviews(target, 0, 'fighter_generation', 1))[0];
+      await target.bucket.put(review.canonicalKey, buffer('tampered-reviewed-canonical'));
+      await expectApprovalIntegrityFailureWithoutWrites(target, review);
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('keeps candidate-owned asset metadata mandatory', async () => {
+    const target = await createHarness();
+    try {
+      const review = (await seedReviews(target, 0, 'fighter_generation', 1))[0];
+      await target.bucket.put(review.runtimeKey, review.runtimeBytes);
+      await expectApprovalIntegrityFailureWithoutWrites(target, review);
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('rejects a stale canonical current pointer without approval side effects', async () => {
+    const target = await createHarness();
+    try {
+      const review = (await seedReviews(target, 0, 'fighter_generation', 1))[0];
+      await target.db.prepare(`UPDATE fighters SET side_view_raw_blob_key = ? WHERE id = ?`)
+        .bind('source/stale-side_raw', FIGHTER_ID).run();
+      await expectApprovalIntegrityFailureWithoutWrites(target, review);
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('rejects a canonical version rebound to another fighter without approval side effects', async () => {
+    const target = await createHarness();
+    try {
+      const review = (await seedReviews(target, 0, 'fighter_generation', 1))[0];
+      await target.db.prepare(`UPDATE source_versions SET fighter_id = ? WHERE blob_key = ?`)
+        .bind('e'.repeat(32), review.canonicalKey).run();
+      await expectApprovalIntegrityFailureWithoutWrites(target, review);
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('rejects a source checkpoint that no longer matches the artifact-run manifest', async () => {
+    const target = await createHarness();
+    try {
+      const review = (await seedReviews(target, 0, 'fighter_generation', 1))[0];
+      await target.db.prepare(`UPDATE generation_artifact_checkpoints
+        SET raw_content_hash = ?
+        WHERE run_id = ? AND artifact_kind = 'source' AND artifact_name = 'side'`)
+        .bind('0'.repeat(64), RUN_ID).run();
+      await expectApprovalIntegrityFailureWithoutWrites(target, review);
     } finally { await target.mf.dispose(); }
   }, 30_000);
 
@@ -714,6 +891,39 @@ describe('video sprite review handlers', () => {
         .bind(RUN_ID).first()).toEqual({ status: 'failed' });
       expect(await target.db.prepare('SELECT quality_tier FROM fighters WHERE id = ?')
         .bind(FIGHTER_ID).first()).toEqual({ quality_tier: 'contender' });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('terminalizes a fully-approved run when an earlier crouch canonical seal is corrupt', async () => {
+    const target = await createHarness();
+    try {
+      const reviews = await seedReviews(target, 10);
+      const final = reviews.at(-1)!;
+      await target.db.prepare(`UPDATE generation_artifact_checkpoints
+        SET raw_content_hash = ?
+        WHERE run_id = ? AND artifact_kind = 'source' AND artifact_name = 'crouch'`)
+        .bind('0'.repeat(64), RUN_ID).run();
+
+      const response = await approveVideoSpriteReview(decision(final), target.env, AUTH, final.jobId);
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        error: expect.stringContaining('canonical source seal failed integrity validation'),
+        review: { status: 'approved', fullRunRestartRequired: true, continuationAvailable: false },
+      });
+      expect(await target.db.prepare(`SELECT status, failure_stage
+        FROM generation_artifact_runs WHERE id = ?`).bind(RUN_ID).first()).toEqual({
+        status: 'failed', failure_stage: 'review:integrity',
+      });
+      expect(await target.db.prepare(`SELECT stage, failure_stage, error_code
+        FROM generation_jobs WHERE id = ?`).bind(final.jobId).first()).toEqual({
+        stage: 'review:restart_required',
+        failure_stage: 'review:integrity',
+        error_code: 'video_review_integrity_failed',
+      });
+      expect((await target.db.prepare(`SELECT COUNT(*) AS count
+        FROM video_sprite_candidates WHERE run_id = ? AND status = 'approved'`)
+        .bind(RUN_ID).first<{ count: number }>())?.count).toBe(VIDEO_SPRITE_ACTIONS.length);
     } finally { await target.mf.dispose(); }
   }, 30_000);
 
