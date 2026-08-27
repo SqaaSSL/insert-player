@@ -64,7 +64,12 @@ const expectedApiOrigin = isSandbox
   ? 'https://insert-player-api-sandbox.shellbot.workers.dev'
   : 'https://api.insertplayer.ai';
 const expectedAppName = envValue(env, 'ASF_PUBLIC_APP_NAME') || envValue(env, 'VITE_PUBLIC_APP_NAME') || 'Insert Player';
-const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v6.png';
+const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v7.jpg';
+const expectedSocialCardMime = /\.jpe?g(?:$|[?#])/i.test(expectedSocialCardPath)
+  ? 'image/jpeg'
+  : /\.webp(?:$|[?#])/i.test(expectedSocialCardPath)
+    ? 'image/webp'
+    : 'image/png';
 const expectedAssetPath = envValue(env, 'ASF_EXPECTED_FRONTEND_ASSET_PATH');
 const assetProbeNonce = envValue(env, 'ASF_FRONTEND_ASSET_PROBE_NONCE');
 const FETCH_TIMEOUT_MS = parsePositiveTimeoutMs(
@@ -222,7 +227,11 @@ async function main() {
       expectedAssetPath,
       expectedHtmlFragments: isSandbox
         ? []
-        : [`property="og:image" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`],
+        : [
+            `property="og:image" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`,
+            `property="og:image:secure_url" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`,
+            `property="og:image:type" content="${expectedSocialCardMime}"`,
+          ],
     }),
   });
   assert(home.res.headers.get('X-Content-Type-Options') === 'nosniff', 'Frontend shell missing nosniff header');
@@ -285,9 +294,18 @@ async function main() {
   if (isSandbox) {
     assert(home.text.includes('property="og:image"'), 'Home HTML missing social preview image metadata');
   } else {
+    const expectedSocialCardUrl = absoluteFrontendUrl(expectedSocialCardPath);
     assert(
-      home.text.includes(`property="og:image" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`),
+      home.text.includes(`property="og:image" content="${expectedSocialCardUrl}"`),
       'Home HTML missing social preview image',
+    );
+    assert(
+      home.text.includes(`property="og:image:secure_url" content="${expectedSocialCardUrl}"`),
+      'Home HTML missing secure social preview image metadata',
+    );
+    assert(
+      home.text.includes(`property="og:image:type" content="${expectedSocialCardMime}"`),
+      'Home HTML missing social preview image MIME metadata',
     );
   }
   assert(home.text.includes('name="twitter:card" content="summary_large_image"'), 'Home HTML missing large Twitter/X card metadata');
@@ -302,7 +320,12 @@ async function main() {
   assert((manifestJson.icons ?? []).some((icon) => icon.src === '/assets/app-icon-512.png'), 'Manifest missing 512px app icon');
   const socialCard = await fetchWithTimeout('social card image', url(expectedSocialCardPath));
   assert(socialCard.ok, 'Social card image is not reachable');
-  assert((socialCard.headers.get('Content-Type') ?? '').includes('image/'), 'Social card is not served as an image');
+  assert(
+    (socialCard.headers.get('Content-Type') ?? '').includes(expectedSocialCardMime),
+    `Social card is not served as ${expectedSocialCardMime}`,
+  );
+  const socialCardBytes = (await socialCard.arrayBuffer()).byteLength;
+  assert(socialCardBytes <= 300_000, `Social card is too large for reliable unfurls (${socialCardBytes} bytes)`);
   log('frontend exposes launch metadata, manifest, and social card assets');
 
   const robots = await fetchText('robots policy', '/robots.txt');
