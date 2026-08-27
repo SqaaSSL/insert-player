@@ -827,6 +827,12 @@ export async function syncFighterToCloud(
     photoHash: meta.photoHash,
     qualityTier: tier,
   };
+  // Fingerprint the caller's authoritative playable set before creating any
+  // cloud association. The first cloudFighterId write must never exist without
+  // exact refs, otherwise a later upload failure would hide a valid local fighter.
+  const initialPlayableRefs = fingerprintedPlayableSpriteRefs(
+    await fingerprintSprites(sprites),
+  );
   const createRes = await apiFetch('/api/fighters', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -846,6 +852,7 @@ export async function syncFighterToCloud(
   if (!fighterId) return { status: 'failed', message: 'Cloud API returned no fighter id.' };
   meta.cloudFighterId = fighterId;
   meta.cloudPublic = created.fighter?.public ?? meta.cloudPublic ?? false;
+  meta.cloudPlayableSpriteRefs = initialPlayableRefs;
   await setCachedMeta(meta);
 
   const remoteSourceHashes = { ...(created.fighter?.sourceHashes ?? {}) };

@@ -1,4 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import 'fake-indexeddb/auto';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./ApiClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./ApiClient')>();
+  return { ...actual, apiFetch: vi.fn() };
+});
+
+import { apiFetch, type ApiRequestContext } from './ApiClient.ts';
 import {
   arcadeFighterPhotoHash,
   buildSpriteDownloadPlan,
@@ -10,10 +18,21 @@ import {
   isSourceOnlyCloudFighter,
   selectPlayableCloudSprites,
   shouldRefreshLocalFighter,
+  syncFighterToCloud,
   type CloudSprite,
   type FingerprintedSprite,
 } from './CloudFighters.ts';
-import type { CachedMeta, CachedSprite } from './SpriteCache.ts';
+import {
+  closeSpriteCacheDatabase,
+  configureSpriteCacheOwner,
+  getAllSpritesForHash,
+  getCachedMeta,
+  hashPhoto,
+  setCachedMeta,
+  setCachedSprite,
+  type CachedMeta,
+  type CachedSprite,
+} from './SpriteCache.ts';
 
 function candidate(
   versionId: string,
@@ -450,5 +469,139 @@ describe('shouldRefreshLocalFighter', () => {
       createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
       updatedAt: Date.parse('2026-08-19T02:00:00.000Z'),
     } as CachedMeta)).toBe(false);
+  });
+});
+
+const SYNC_CACHE_DB_NAME = 'ai-street-fighter';
+const SYNC_PHOTO_HASH = 'sync-original-photo';
+const SYNC_CONTEXT: ApiRequestContext = {
+  authRevision: -1,
+  tokenGetter: null,
+  providerSessionId: null,
+  detached: true,
+  apiBaseUrl: 'https://api.insertplayer.test',
+};
+
+function syncMeta(): CachedMeta {
+  return {
+    photoHash: SYNC_PHOTO_HASH,
+    version: 1,
+    originalPhotoBlob: null,
+    sideViewBlob: null,
+    sideViewRawBlob: null,
+    uprightViewBlob: null,
+    uprightViewRawBlob: null,
+    sideViewCleanBlob: null,
+    crouchViewBlob: null,
+    crouchViewRawBlob: null,
+    crouchViewCleanBlob: null,
+    noBgBlob: null,
+    characterName: 'Original Local Fighter',
+    qualityTier: 'champion',
+    status: 'ready',
+    animationsReady: ['walk'],
+    createdAt: 100,
+    updatedAt: 100,
+  };
+}
+
+function syncSprite(): CachedSprite {
+  const pngBytes = Uint8Array.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    0x61, 0x75, 0x74, 0x68,
+  ]);
+  return {
+    versionId: 'local-current-walk',
+    photoHash: SYNC_PHOTO_HASH,
+    animationName: 'walk',
+    qualityTier: 'champion',
+    pngBlob: new Blob([pngBytes], { type: 'image/png' }),
+    frameWidth: 256,
+    frameHeight: 256,
+    frameCount: 8,
+    animationFormat: 'legacy',
+    processingVersion: 5,
+    createdAt: 100,
+  };
+}
+
+function createdCloudFighter() {
+  return {
+    fighter: {
+      id: 'cloud-fighter-created',
+      name: 'Original Local Fighter',
+      photoHash: SYNC_PHOTO_HASH,
+      qualityTier: 'champion' as const,
+      public: false,
+      sources: {},
+      sourceHashes: {},
+      sprites: [],
+      spriteVersions: [],
+    },
+  };
+}
+
+async function resetSyncCache(): Promise<void> {
+  await closeSpriteCacheDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase(SYNC_CACHE_DB_NAME);
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+    request.onblocked = () => reject(new Error('Sync cache test database deletion was blocked'));
+  });
+  configureSpriteCacheOwner(null);
+}
+
+describe('first cloud association preserves the authoritative local playable set', () => {
+  beforeEach(async () => {
+    await resetSyncCache();
+    vi.mocked(apiFetch).mockReset();
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.insertplayer.test');
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await resetSyncCache();
+  });
+
+  it('keeps Original sprites playable when the first sprite upload fails after cloud creation', async () => {
+    const meta = syncMeta();
+    const sprite = syncSprite();
+    await setCachedMeta(meta);
+    await setCachedSprite(sprite, { preserveVersionId: true });
+    const playableBeforeSync = await getAllSpritesForHash(SYNC_PHOTO_HASH);
+    vi.mocked(apiFetch)
+      .mockResolvedValueOnce(Response.json(createdCloudFighter()))
+      .mockRejectedValueOnce(new Error('sprite upload unavailable'));
+
+    await expect(syncFighterToCloud(meta, playableBeforeSync, null, SYNC_CONTEXT))
+      .rejects.toThrow('sprite upload unavailable');
+
+    expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(2);
+    expect((await getAllSpritesForHash(SYNC_PHOTO_HASH)).map((item) => item.versionId))
+      .toEqual(['local-current-walk']);
+    const persisted = await getCachedMeta(SYNC_PHOTO_HASH);
+    expect(persisted?.cloudFighterId).toBe('cloud-fighter-created');
+    expect(persisted?.cloudPlayableSpriteRefs?.walk.contentHash)
+      .toBe(await hashPhoto(sprite.pngBlob));
+  });
+
+  it('keeps successful first sync pinned to the exact authoritative sprite hash', async () => {
+    const meta = syncMeta();
+    const sprite = syncSprite();
+    await setCachedMeta(meta);
+    await setCachedSprite(sprite, { preserveVersionId: true });
+    const playableBeforeSync = await getAllSpritesForHash(SYNC_PHOTO_HASH);
+    vi.mocked(apiFetch)
+      .mockResolvedValueOnce(Response.json(createdCloudFighter()))
+      .mockResolvedValueOnce(Response.json({ ok: true }));
+
+    await expect(syncFighterToCloud(meta, playableBeforeSync, null, SYNC_CONTEXT))
+      .resolves.toMatchObject({ status: 'synced', fighterId: 'cloud-fighter-created' });
+
+    expect((await getAllSpritesForHash(SYNC_PHOTO_HASH)).map((item) => item.versionId))
+      .toEqual(['local-current-walk']);
+    expect((await getCachedMeta(SYNC_PHOTO_HASH))?.cloudPlayableSpriteRefs?.walk.contentHash)
+      .toBe(await hashPhoto(sprite.pngBlob));
   });
 });
