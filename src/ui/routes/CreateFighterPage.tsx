@@ -13,10 +13,8 @@ import {
   type PipelineStatus,
   type StatusCallback,
 } from '../../services/CharacterPipeline.ts';
-import { AnimationGrid } from '../components/AnimationGrid.tsx';
-import { SourceViewsPanel } from '../components/SourceViewsPanel.tsx';
-import { SpritePreviewSurface } from '../components/SpritePreviewSurface.tsx';
-import { DebugFeed } from '../components/DebugFeed.tsx';
+import { FighterPreviewColumn, useFighterPreview } from '../components/FighterPreviewColumn.tsx';
+import { Button } from '../components/Button.tsx';
 import { PipelineProgress } from '../components/PipelineProgress.tsx';
 import { TurnstileChallenge } from '../components/TurnstileChallenge.tsx';
 import { GenerationConsent } from '../components/LegalConsent.tsx';
@@ -24,9 +22,7 @@ import {
   animLabel,
   getSourceBlob,
   type PreviewSelection,
-  type PreviewSpriteLike,
 } from '../shared/fighterPreview.ts';
-import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
 import { exportAnimationGif } from '../../services/GifExportService.ts';
 import {
@@ -62,6 +58,7 @@ interface CreateFighterPageProps {
   authSessionKey: string;
   onBack: () => void;
   onComplete: (photoHash: string) => void;
+  onNavigateLegal?: (route: '/legal' | '/privacy' | '/terms' | '/refunds') => void;
 }
 
 const DEFAULT_NAME = 'New Fighter';
@@ -136,7 +133,7 @@ function describeDurableJob(job: GenerationJob): string {
   return 'Forging safely in the cloud...';
 }
 
-export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComplete }: CreateFighterPageProps) {
+export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComplete, onNavigateLegal }: CreateFighterPageProps) {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState(DEFAULT_NAME);
   const [tier, setTier] = useState<QualityTier>(() => initialQualityTier(authStatus));
@@ -527,35 +524,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
 
   const selectedAnimName = selection.kind === 'animation' ? selection.animationName : null;
 
-  const previewSprite = useMemo<PreviewSpriteLike | null>(() => {
-    if (!meta || selection.kind !== 'animation') return null;
-    const cached = sprites.find((item) => item.animationName === selection.animationName);
-    if (cached) {
-      return {
-        blob: cached.pngBlob,
-        rawBlob: cached.rawPngBlob,
-        frameWidth: cached.frameWidth,
-        frameHeight: cached.frameHeight,
-        frameCount: cached.frameCount,
-      };
-    }
-    const failed = meta.failedAnimationArtifacts?.[selection.animationName];
-    if (!failed) return null;
-    return {
-      blob: failed.pngBlob,
-      rawBlob: failed.rawPngBlob,
-      frameWidth: failed.frameWidth,
-      frameHeight: failed.frameHeight,
-      frameCount: failed.frameCount,
-      failed: true,
-      reason: failed.reason,
-    };
-  }, [meta, selection, sprites]);
-
-  const previewSourceBlob = selection.kind === 'source' ? getSourceBlob(meta, selection.source) : null;
-  const previewSourceUrl = useObjectUrl(previewSourceBlob);
-
-  const previewBlob = selection.kind === 'source' ? previewSourceBlob : previewSprite?.blob ?? null;
+  const { previewSprite, previewSourceBlob } = useFighterPreview(meta, sprites, selection);
   const safeName = (name.trim() || DEFAULT_NAME).replace(/[^a-z0-9]/gi, '_');
   const cachedSelectedSprite = selectedAnimName
     ? sprites.find((item) => item.animationName === selectedAnimName)
@@ -598,16 +567,13 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       <section className="create-app">
         <header className="roster-hero">
           <div>
-            <p className="gallery-eyebrow">New Fighter</p>
             <h1>Make Yourself Playable</h1>
             <p className="roster-hero__copy">
               Upload one photo. We build a fighter you can take straight into Arcade Mode.
             </p>
           </div>
           <div className="roster-hero__actions">
-            <button className="gallery-back" onClick={onBack}>
-              Back
-            </button>
+            <Button onClick={onBack}>Back</Button>
           </div>
         </header>
 
@@ -662,6 +628,9 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
               );
             })}
           </div>
+          <p className="tier-picker__note">
+            Source views are always generated at premium quality. Animation fidelity and detail scale with the tier.
+          </p>
           {requiresTurnstile ? (
             <TurnstileChallenge
               siteKey={turnstileSiteKey}
@@ -673,6 +642,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             checked={legalAccepted}
             disabled={running}
             onChange={setLegalAccepted}
+            onNavigate={onNavigateLegal}
           />
           {error ? <p className="create-intro__error" role="alert">{error}</p> : null}
           <button
@@ -701,17 +671,15 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             {Math.round(percent * 100)}%
           </div>
           {done && meta ? (
-            <button className="gallery-back" onClick={() => void saveAll()}>
-              Save All
-            </button>
+            <Button variant="ghost" onClick={() => void saveAll()}>Save All</Button>
           ) : null}
-          <button
-            className="gallery-back"
+          <Button
+            variant={done ? 'primary' : 'secondary'}
             disabled={running && authStatus !== 'signed-in'}
             onClick={done && photoHash ? () => onComplete(photoHash) : onBack}
           >
             {done ? 'Open In Gallery' : running && authStatus !== 'signed-in' ? 'Running...' : 'Back'}
-          </button>
+          </Button>
         </div>
       </header>
 
@@ -741,89 +709,27 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
         </div>
       ) : null}
 
-      <section className="gallery-layout">
-        <div className="gallery-column--side">
-          <div className="gallery-panel gallery-panel--sources">
-            <SourceViewsPanel
-              meta={meta}
-              selectedSource={selection.kind === 'source' ? selection.source : null}
-              onSelectSource={(source) => setSelection({ kind: 'source', source })}
-            />
-          </div>
-
-          <div className="gallery-panel gallery-panel--anims">
-            <h3>Animations</h3>
-            <AnimationGrid
-              sprites={sprites}
-              failedArtifacts={meta?.failedAnimationArtifacts ?? null}
-              generating={generating}
-              selectedName={selectedAnimName}
-              onSelect={(animationName) => setSelection({ kind: 'animation', animationName })}
-            />
-            <DebugFeed />
-          </div>
-        </div>
-
-        <div className="gallery-panel gallery-panel--preview">
-          <div className="gallery-preview__header">
-            <div>
-              <p className="gallery-eyebrow">Preview</p>
-              <h3>
-                {selection.kind === 'source'
-                  ? selection.source.toUpperCase()
-                  : animLabel(selection.animationName)}
-              </h3>
-            </div>
-          </div>
-          <div className="gallery-preview__surface">
-            <SpritePreviewSurface
-              sourceImageUrl={selection.kind === 'source' ? previewSourceUrl : null}
-              sprite={selection.kind === 'animation' ? previewSprite : null}
-              loading={
-                running &&
-                (selection.kind === 'source'
-                  ? !previewSourceBlob
-                  : !previewSprite || generating.has(selection.animationName))
-              }
-              loadingLabel={
-                selection.kind === 'animation'
-                  ? `Generating ${animLabel(selection.animationName)}`
-                  : 'Generating'
-              }
-              emptyLabel={selection.kind === 'source' ? 'Missing source' : 'Waiting for pipeline'}
-            />
-          </div>
-
-          {previewBlob || cachedSelectedSprite || previewSprite?.rawBlob ? (
-            <div className="gallery-actions">
-              {previewBlob ? (
-                <button
-                  onClick={() =>
-                    downloadBlob(
-                      previewBlob,
-                      `${safeName}_${selection.kind === 'source' ? selection.source : selection.animationName}.png`,
-                    )
-                  }
-                >
-                  Save PNG
-                </button>
-              ) : null}
-              {cachedSelectedSprite ? (
-                <button onClick={() => void saveGif()}>Save GIF</button>
-              ) : null}
-              {previewSprite?.rawBlob ? (
-                <button
-                  onClick={() =>
-                    downloadBlob(previewSprite.rawBlob!, `${safeName}_${selectedAnimName}_RAW.png`)
-                  }
-                >
-                  Save RAW
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </section>
+      <FighterPreviewColumn
+        meta={meta}
+        sprites={sprites}
+        selection={selection}
+        onSelectionChange={setSelection}
+        generating={generating}
+        loading={
+          running &&
+          (selection.kind === 'source'
+            ? !previewSourceBlob
+            : !previewSprite || generating.has(selection.animationName))
+        }
+        loadingLabel={
+          selection.kind === 'animation'
+            ? `Generating ${animLabel(selection.animationName)}`
+            : 'Generating'
+        }
+        emptyLabel={selection.kind === 'source' ? 'Missing source' : 'Waiting for pipeline'}
+        safeName={safeName}
+        onSaveGif={() => void saveGif()}
+      />
     </section>
   );
 }

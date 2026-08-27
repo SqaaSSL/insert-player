@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   cloneCommunityFighter,
   downloadCloudFighterToLocal,
@@ -11,6 +11,9 @@ import {
 import { shareCommunityFighter } from '../shared/communityShare.ts';
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import type { AuthStatus } from '../authState.ts';
+import { cloudPreviewUrl, tierLabel } from '../shared/fighterPreview.ts';
+import { Button } from '../components/Button.tsx';
+import { Modal } from '../components/Modal.tsx';
 
 interface CommunityPageProps {
   authStatus: AuthStatus;
@@ -29,14 +32,6 @@ const REPORT_REASONS: Array<{ value: CommunityReportReason; label: string }> = [
   { value: 'other', label: 'Something else' },
 ];
 
-function getPreviewUrl(fighter: CloudFighter): string | null {
-  return fighter.sources.side ?? fighter.sources.upright ?? fighter.sources.original ?? null;
-}
-
-function formatTier(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
 function readFeaturedFighterId(): string | null {
   return new URLSearchParams(window.location.search).get('fighter')?.trim() || null;
 }
@@ -47,17 +42,10 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
   const [busyId, setBusyId] = useState<string | null>(null);
   const [featuredId, setFeaturedId] = useState<string | null>(() => readFeaturedFighterId());
   const [reportTarget, setReportTarget] = useState<CloudFighter | null>(null);
+  const [shareLinkUrl, setShareLinkUrl] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState<CommunityReportReason>('non_consensual_person');
   const [reportDetails, setReportDetails] = useState('');
   const [reportBusy, setReportBusy] = useState(false);
-  const reportReasonRef = useRef<HTMLSelectElement>(null);
-  const reportDialogRef = useRef<HTMLElement>(null);
-  const reportReturnFocusRef = useRef<HTMLElement | null>(null);
-  const reportBusyRef = useRef(false);
-
-  useEffect(() => {
-    reportBusyRef.current = reportBusy;
-  }, [reportBusy]);
 
   useEffect(() => {
     const load = async () => {
@@ -85,43 +73,11 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
     void load();
   }, []);
 
-  useEffect(() => {
-    if (!reportTarget) return;
-    reportReasonRef.current?.focus();
-    const handleDialogKeys = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !reportBusyRef.current) {
-        event.preventDefault();
-        setReportTarget(null);
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const focusable = Array.from(reportDialogRef.current?.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
-      ) ?? []);
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener('keydown', handleDialogKeys);
-    return () => {
-      window.removeEventListener('keydown', handleDialogKeys);
-      reportReturnFocusRef.current?.focus();
-      reportReturnFocusRef.current = null;
-    };
-  }, [reportTarget]);
-
   const featured = useMemo(
     () => fighters.find((fighter) => fighter.id === featuredId) ?? fighters[0] ?? null,
     [featuredId, fighters],
   );
-  const featuredPreviewUrl = featured ? getPreviewUrl(featured) : null;
+  const featuredPreviewUrl = featured ? cloudPreviewUrl(featured) : null;
 
   const shareFighter = async (fighter: CloudFighter) => {
     const share = await shareCommunityFighter(fighter.id, fighter.name);
@@ -134,7 +90,7 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
     } else if (share.mode === 'cancelled') {
       setStatus(`Share cancelled for ${fighter.name}`);
     } else {
-      window.prompt('Share fighter link', share.url);
+      setShareLinkUrl(share.url);
       setStatus(`Share link ready for ${fighter.name}`);
     }
   };
@@ -164,9 +120,6 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
       setStatus('Sign in to report a public fighter');
       return;
     }
-    reportReturnFocusRef.current = document.activeElement instanceof HTMLElement
-      ? document.activeElement
-      : null;
     setReportTarget(fighter);
     setReportReason('non_consensual_person');
     setReportDetails('');
@@ -200,7 +153,6 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
     <div className="roster-app">
       <header className="roster-hero">
         <div>
-          <p className="gallery-eyebrow">World Warriors</p>
           <h1>Community</h1>
           <p className="roster-hero__copy">
             Discover public fighters and clone them into your roster.
@@ -208,9 +160,7 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
         </div>
         <div className="roster-hero__actions">
           <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
-          <button className="gallery-back" onClick={onBack}>
-            Back
-          </button>
+          <Button onClick={onBack}>Back</Button>
         </div>
       </header>
 
@@ -228,37 +178,30 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
             )}
           </div>
           <div>
-            <p className="gallery-eyebrow">Featured Fighter</p>
-            <h3>{featured.name}</h3>
+            <h2>Featured: {featured.name}</h2>
             <p className="community-feature__meta">
-              AI-generated · {formatTier(featured.qualityTier)} · {featured.sprites.length} anims · by {featured.owner?.name ?? 'Player'}
+              AI-generated · {tierLabel(featured.qualityTier)} · {featured.sprites.length} anims · by {featured.owner?.name ?? 'Player'}
             </p>
           </div>
           <div className="community-feature__actions">
-            <button
-              className="home-menu__action is-primary"
+            <Button
+              variant="primary"
+              size="lg"
               disabled={busyId === featured.id}
               onClick={() => void addToRoster(featured)}
             >
-              <span>{busyId === featured.id ? 'Adding...' : 'Add To Roster'}</span>
-              <small>Clone A Playable Copy</small>
-            </button>
-            <button
-              className="home-menu__action"
-              disabled={busyId !== null}
-              onClick={() => void shareFighter(featured)}
-            >
-              <span>Share Link</span>
-              <small>Invite A Challenger</small>
-            </button>
-            <button
-              className="home-menu__action"
+              {busyId === featured.id ? 'Adding...' : 'Clone To Roster'}
+            </Button>
+            <Button disabled={busyId !== null} onClick={() => void shareFighter(featured)}>
+              Share Link
+            </Button>
+            <Button
+              variant="ghost"
               disabled={busyId !== null || reportBusy}
               onClick={() => openReport(featured)}
             >
-              <span>Report</span>
-              <small>Flag For Review</small>
-            </button>
+              Report
+            </Button>
           </div>
         </section>
       ) : null}
@@ -271,9 +214,9 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
       ) : (
         <section className="roster-fighter-grid">
           {fighters.map((fighter) => {
-            const previewUrl = getPreviewUrl(fighter);
+            const previewUrl = cloudPreviewUrl(fighter);
             return (
-              <article className="roster-fighter-card gallery-panel community-card" key={fighter.id}>
+              <article className="roster-fighter-card community-card" key={fighter.id}>
                 <div className="roster-fighter-card__surface">
                   {previewUrl ? (
                     <img
@@ -287,34 +230,27 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
                 </div>
                 <div className="roster-fighter-card__meta">
                   <strong>{fighter.name}</strong>
-                  <span>AI-generated · {formatTier(fighter.qualityTier)} · {fighter.sprites.length} anims</span>
+                  <span>AI-generated · {tierLabel(fighter.qualityTier)} · {fighter.sprites.length} anims</span>
                   <span>By {fighter.owner?.name ?? 'Player'}</span>
                 </div>
                 <div className="roster-fighter-card__actions">
-                  <button
-                    className="gallery-chip is-active"
+                  <Button
+                    variant="primary"
                     disabled={busyId !== null}
                     onClick={() => void addToRoster(fighter)}
                   >
-                    <span>{busyId === fighter.id ? 'Adding' : 'Add'}</span>
-                    <small>To Roster</small>
-                  </button>
-                  <button
-                    className="gallery-chip"
-                    disabled={busyId !== null}
-                    onClick={() => void shareFighter(fighter)}
-                  >
-                    <span>Share</span>
-                    <small>Copy Link</small>
-                  </button>
-                  <button
-                    className="gallery-chip"
+                    {busyId === fighter.id ? 'Adding...' : 'Clone To Roster'}
+                  </Button>
+                  <Button disabled={busyId !== null} onClick={() => void shareFighter(fighter)}>
+                    Share
+                  </Button>
+                  <Button
+                    variant="ghost"
                     disabled={busyId !== null || reportBusy}
                     onClick={() => openReport(fighter)}
                   >
-                    <span>Report</span>
-                    <small>Flag Content</small>
-                  </button>
+                    Report
+                  </Button>
                 </div>
               </article>
             );
@@ -323,76 +259,77 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
       )}
 
       {reportTarget ? (
-        <div className="community-report-backdrop">
-          <section
-            ref={reportDialogRef}
-            className="community-report-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="community-report-title"
+        <Modal
+          title={`Report ${reportTarget.name}`}
+          onClose={() => setReportTarget(null)}
+          busy={reportBusy}
+        >
+          <form
+            className="community-report-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitReport();
+            }}
           >
-            <div className="community-report-dialog__header">
-              <div>
-                <p className="gallery-eyebrow">Community Safety</p>
-                <h2 id="community-report-title">Report {reportTarget.name}</h2>
-              </div>
-              <button
-                className="community-report-dialog__close"
-                type="button"
-                aria-label="Close report form"
+            <label>
+              <span>Reason</span>
+              <select
+                value={reportReason}
                 disabled={reportBusy}
-                onClick={() => setReportTarget(null)}
+                onChange={(event) => setReportReason(event.target.value as CommunityReportReason)}
               >
-                X
-              </button>
+                {REPORT_REASONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Details <small>Optional</small></span>
+              <textarea
+                value={reportDetails}
+                maxLength={500}
+                rows={4}
+                disabled={reportBusy}
+                placeholder="Add context that will help us review this fighter."
+                onChange={(event) => setReportDetails(event.target.value)}
+              />
+            </label>
+            <div className="asf-modal__actions">
+              <Button disabled={reportBusy} onClick={() => setReportTarget(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" type="submit" disabled={reportBusy}>
+                {reportBusy ? 'Sending...' : 'Send Report'}
+              </Button>
             </div>
-            <form
-              className="community-report-form"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void submitReport();
+          </form>
+        </Modal>
+      ) : null}
+
+      {shareLinkUrl ? (
+        <Modal title="Share Fighter Link" onClose={() => setShareLinkUrl(null)}>
+          <p className="asf-modal__copy">Copy this link to share the fighter.</p>
+          <input
+            className="asf-modal__link"
+            type="text"
+            readOnly
+            value={shareLinkUrl}
+            onFocus={(event) => event.target.select()}
+          />
+          <div className="asf-modal__actions">
+            <Button onClick={() => setShareLinkUrl(null)}>Close</Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                void navigator.clipboard?.writeText(shareLinkUrl).catch(() => {});
+                setShareLinkUrl(null);
+                setStatus('Share link copied');
               }}
             >
-              <label>
-                <span>Reason</span>
-                <select
-                  ref={reportReasonRef}
-                  value={reportReason}
-                  disabled={reportBusy}
-                  onChange={(event) => setReportReason(event.target.value as CommunityReportReason)}
-                >
-                  {REPORT_REASONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Details <small>Optional</small></span>
-                <textarea
-                  value={reportDetails}
-                  maxLength={500}
-                  rows={4}
-                  disabled={reportBusy}
-                  placeholder="Add context that will help us review this fighter."
-                  onChange={(event) => setReportDetails(event.target.value)}
-                />
-              </label>
-              <div className="community-report-form__actions">
-                <button
-                  className="gallery-chip"
-                  type="button"
-                  disabled={reportBusy}
-                  onClick={() => setReportTarget(null)}
-                >
-                  <span>Cancel</span>
-                </button>
-                <button className="gallery-chip is-active" type="submit" disabled={reportBusy}>
-                  <span>{reportBusy ? 'Sending...' : 'Send Report'}</span>
-                </button>
-              </div>
-            </form>
-          </section>
-        </div>
+              Copy Link
+            </Button>
+          </div>
+        </Modal>
       ) : null}
     </div>
   );

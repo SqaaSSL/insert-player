@@ -13,13 +13,17 @@ export function DebugFeed({
   defaultOpen = false,
 }: DebugFeedProps) {
   const [lines, setLines] = useState<string[]>([]);
+  const enabled = import.meta.env.DEV;
 
   useEffect(() => {
+    if (!enabled) return;
     const onDebug = () => setLines(getDebugLogLines().slice(-maxLines));
     window.addEventListener(DEBUG_EVENT_NAME, onDebug);
     onDebug();
     return () => window.removeEventListener(DEBUG_EVENT_NAME, onDebug);
-  }, [maxLines]);
+  }, [maxLines, enabled]);
+
+  if (!enabled) return null;
 
   return (
     <details className="gallery-debug" open={defaultOpen}>

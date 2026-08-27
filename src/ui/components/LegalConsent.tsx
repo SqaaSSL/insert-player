@@ -1,22 +1,41 @@
 import { rememberCurrentGenerationConsent } from '../legal.ts';
+import type { LegalRoute } from './LegalFooter.tsx';
 
 interface ConsentProps {
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
+  /** SPA navigation for the policy links; plain hrefs (full reload) when omitted. */
+  onNavigate?: (route: LegalRoute) => void;
 }
 
-function LegalLinks() {
+function LegalLinks({ onNavigate }: { onNavigate?: (route: LegalRoute) => void }) {
+  const links: ReadonlyArray<readonly [LegalRoute, string]> = [
+    ['/terms', 'Terms'],
+    ['/privacy', 'Privacy'],
+    ['/refunds', 'Cancellations'],
+  ];
   return (
     <span className="legal-consent__links">
-      <a href="/terms">Terms</a>
-      <a href="/privacy">Privacy</a>
-      <a href="/refunds">Cancellations</a>
+      {links.map(([route, label]) => (
+        <a
+          key={route}
+          href={route}
+          onClick={onNavigate
+            ? (event) => {
+                event.preventDefault();
+                onNavigate(route);
+              }
+            : undefined}
+        >
+          {label}
+        </a>
+      ))}
     </span>
   );
 }
 
-export function GenerationConsent({ checked, disabled, onChange }: ConsentProps) {
+export function GenerationConsent({ checked, disabled, onChange, onNavigate }: ConsentProps) {
   return (
     <div className="legal-consent">
       <label>
@@ -46,12 +65,12 @@ export function GenerationConsent({ checked, disabled, onChange }: ConsentProps)
           Mandatory consumer remedies still apply.
         </span>
       </label>
-      <LegalLinks />
+      <LegalLinks onNavigate={onNavigate} />
     </div>
   );
 }
 
-export function CheckoutConsent({ checked, disabled, onChange }: ConsentProps) {
+export function CheckoutConsent({ checked, disabled, onChange, onNavigate }: ConsentProps) {
   return (
     <div className="legal-consent legal-consent--checkout">
       <label>
@@ -67,7 +86,7 @@ export function CheckoutConsent({ checked, disabled, onChange }: ConsentProps) {
           has begun are not voluntarily refundable. Mandatory consumer rights still apply.
         </span>
       </label>
-      <LegalLinks />
+      <LegalLinks onNavigate={onNavigate} />
     </div>
   );
 }

@@ -1,32 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
   <title id="title">Insert Player app icon</title>
-  <desc id="desc">Arcade cabinet badge with the letters P1 and an insert slot.</desc>
-  <defs>
-    <linearGradient id="cabinet" x1="72" y1="32" x2="440" y2="492" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#242735" />
-      <stop offset="0.48" stop-color="#111216" />
-      <stop offset="1" stop-color="#050507" />
-    </linearGradient>
-    <linearGradient id="screen" x1="112" y1="142" x2="400" y2="388" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#151a3a" />
-      <stop offset="0.52" stop-color="#0a0a20" />
-      <stop offset="1" stop-color="#050507" />
-    </linearGradient>
-    <pattern id="scan" width="8" height="8" patternUnits="userSpaceOnUse">
-      <path d="M0 7h8" stroke="#fff4d6" stroke-opacity="0.08" stroke-width="1" />
-    </pattern>
-  </defs>
-  <rect width="512" height="512" rx="96" fill="url(#cabinet)" />
-  <rect width="512" height="512" rx="96" fill="url(#scan)" />
-  <rect x="44" y="44" width="424" height="424" rx="76" fill="none" stroke="#f4f0dd" stroke-width="14" />
-  <rect x="69" y="69" width="374" height="374" rx="54" fill="none" stroke="#050507" stroke-width="10" opacity="0.72" />
-  <rect x="92" y="84" width="328" height="56" rx="10" fill="#d22727" />
-  <rect x="118" y="103" width="276" height="16" rx="8" fill="#ffe878" />
-  <rect x="88" y="160" width="336" height="218" rx="28" fill="url(#screen)" stroke="#ffce3a" stroke-width="10" />
-  <path d="M126 258h44l-26-30 12-14 58 52-58 52-12-14 26-30h-44z" fill="#ffce3a" />
-  <path d="M386 274h-44l26 30-12 14-58-52 58-52 12 14-26 30h44z" fill="#ffce3a" />
-  <text x="256" y="286" text-anchor="middle" dominant-baseline="middle" fill="#f4f0dd" font-family="Impact, Arial Black, sans-serif" font-size="140">P1</text>
-  <path d="M132 406h248v38H132z" fill="#050507" stroke="#f4f0dd" stroke-width="8" />
-  <path d="M168 422h176" stroke="#ffe878" stroke-width="10" stroke-linecap="round" />
-  <circle cx="256" cy="444" r="12" fill="#d22727" stroke="#ffe878" stroke-width="5" />
+  <desc id="desc">Red arcade start button with the pixel letters P1.</desc>
+  <!-- Cabinet background -->
+  <rect width="512" height="512" rx="96" fill="#04040d" />
+  <rect x="18" y="18" width="476" height="476" rx="82" fill="none" stroke="#13102d" stroke-width="12" />
+  <!-- Button housing recess -->
+  <circle cx="256" cy="262" r="206" fill="#050507" />
+  <!-- Cream bezel ring -->
+  <circle cx="256" cy="256" r="196" fill="#f4f0dd" />
+  <!-- Dark button rim -->
+  <circle cx="256" cy="256" r="168" fill="#6a0a0a" />
+  <!-- Red dome (raised) -->
+  <circle cx="256" cy="250" r="160" fill="#d22727" />
+  <!-- Flat specular highlight -->
+  <ellipse cx="256" cy="172" rx="104" ry="34" fill="#ff5347" opacity="0.75" />
+  <!-- P1 pixel mark: shadow layer -->
+  <g fill="#5a0808">
+    <path d="M136 168h90v30h-90zM136 198h30v30h-30zM226 198h30v30h-30zM136 228h30v30h-30zM226 228h30v30h-30zM136 258h90v30h-90zM136 288h30v30h-30zM136 318h30v30h-30z" />
+    <path d="M316 168h30v30h-30zM286 198h60v30h-60zM316 228h30v30h-30zM316 258h30v30h-30zM316 288h30v30h-30zM286 318h90v30h-90z" />
+  </g>
+  <!-- P1 pixel mark -->
+  <g fill="#fff4d6">
+    <path d="M136 160h90v30h-90zM136 190h30v30h-30zM226 190h30v30h-30zM136 220h30v30h-30zM226 220h30v30h-30zM136 250h90v30h-90zM136 280h30v30h-30zM136 310h30v30h-30z" />
+    <path d="M316 160h30v30h-30zM286 190h60v30h-60zM316 220h30v30h-30zM316 250h30v30h-30zM316 280h30v30h-30zM286 310h90v30h-90z" />
+  </g>
 </svg>

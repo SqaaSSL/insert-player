@@ -27,16 +27,15 @@ import {
 } from '../../services/CharacterPipeline.ts';
 import { clearDebugLog, debugWarn } from '../../services/DebugLog.ts';
 import { exportAnimationGif } from '../../services/GifExportService.ts';
-import { AnimationGrid } from '../components/AnimationGrid.tsx';
-import { SourceViewsPanel } from '../components/SourceViewsPanel.tsx';
-import { SpritePreviewSurface } from '../components/SpritePreviewSurface.tsx';
-import { DebugFeed } from '../components/DebugFeed.tsx';
+import { FighterPreviewColumn } from '../components/FighterPreviewColumn.tsx';
+import { Button } from '../components/Button.tsx';
+import { TierBadge } from '../components/TierBadge.tsx';
+import { Modal, ConfirmDialog } from '../components/Modal.tsx';
 import {
   animLabel,
-  getSourceBlob,
   type PreviewSelection,
-  type PreviewSpriteLike,
   type SourceKey,
+  tierLabel,
 } from '../shared/fighterPreview.ts';
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
@@ -91,13 +90,10 @@ function tierIndex(tier: QualityTier): number {
   return QUALITY_TIERS.findIndex((item) => item.id === tier);
 }
 
-function tierLabel(tier: QualityTier | undefined): string {
-  return QUALITY_TIERS.find((item) => item.id === tier)?.label ?? 'Contender';
-}
-
 interface GalleryPageProps {
   authStatus: AuthStatus;
   authSessionKey: string;
+  onNavigateLegal?: (route: '/legal' | '/privacy' | '/terms' | '/refunds') => void;
   onBack: () => void;
   onCreateFighter: () => void;
 }
@@ -118,7 +114,7 @@ function retryTargetForJob(job: GenerationJob): RetryTarget | null {
   return null;
 }
 
-export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighter }: GalleryPageProps) {
+export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighter, onNavigateLegal }: GalleryPageProps) {
   const [activeTab, setActiveTab] = useState<'characters' | 'stages'>('characters');
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [stages, setStages] = useState<CachedStageBackground[]>([]);
@@ -133,33 +129,21 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [pendingUpgradeTier, setPendingUpgradeTier] = useState<QualityTier | null>(null);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
-  const upgradeConfirmRef = useRef<HTMLButtonElement>(null);
-  const publishConfirmRef = useRef<HTMLButtonElement>(null);
+  const [confirmRequest, setConfirmRequest] = useState<{
+    title: string;
+    body: string;
+    confirmLabel: string;
+    variant?: 'primary' | 'danger';
+    onConfirm: () => void;
+  } | null>(null);
+  const [renameRequest, setRenameRequest] = useState<{ kind: 'fighter' | 'stage'; current: string } | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [shareLinkUrl, setShareLinkUrl] = useState<string | null>(null);
   const generationJobAbortRef = useRef<AbortController | null>(null);
   const [recoveryJob, setRecoveryJob] = useState<GenerationJob | null>(null);
 
   const meta = metas[currentIndex] ?? null;
   const pendingUpgrade = QUALITY_TIERS.find((tier) => tier.id === pendingUpgradeTier) ?? null;
-
-  useEffect(() => {
-    if (!pendingUpgradeTier) return;
-    upgradeConfirmRef.current?.focus();
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPendingUpgradeTier(null);
-    };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [pendingUpgradeTier]);
-
-  useEffect(() => {
-    if (!publishConfirmOpen) return;
-    publishConfirmRef.current?.focus();
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPublishConfirmOpen(false);
-    };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [publishConfirmOpen]);
 
   useEffect(() => () => {
     generationJobAbortRef.current?.abort();
@@ -254,40 +238,6 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setLegalAccepted(false);
   }, [meta?.photoHash]);
 
-  const previewSprite = useMemo<PreviewSpriteLike | null>(() => {
-    if (!meta || selection.kind !== 'animation') return null;
-    const cached = sprites.find((item) => item.animationName === selection.animationName);
-    if (cached) {
-      return {
-        blob: cached.pngBlob,
-        rawBlob: cached.rawPngBlob,
-        frameWidth: cached.frameWidth,
-        frameHeight: cached.frameHeight,
-        frameCount: cached.frameCount,
-      };
-    }
-    const failed = meta.failedAnimationArtifacts?.[selection.animationName];
-    if (!failed) return null;
-    return {
-      blob: failed.pngBlob,
-      rawBlob: failed.rawPngBlob,
-      frameWidth: failed.frameWidth,
-      frameHeight: failed.frameHeight,
-      frameCount: failed.frameCount,
-      failed: true,
-      reason: failed.reason,
-    };
-  }, [meta, selection, sprites]);
-
-  const previewSourceBlob = useMemo(() => {
-    if (!meta || selection.kind !== 'source') return null;
-    return getSourceBlob(meta, selection.source);
-  }, [meta, selection]);
-
-  const previewBlob = selection.kind === 'source'
-    ? previewSourceBlob
-    : previewSprite?.blob ?? null;
-  const previewUrl = useObjectUrl(selection.kind === 'source' ? previewSourceBlob : null);
   const introUrl = useObjectUrl(getPrimaryIntroBlob(intro));
   const currentStage = stages[currentStageIndex] ?? null;
   const stagePreviewUrl = useObjectUrl(currentStage?.pngBlob ?? null);
@@ -407,11 +357,25 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     }
     const retryLabel = target.kind === 'animation' ? animLabel(target.name) : `${target.key} source`;
     const creditLabel = creditCost === 1 ? 'credit' : 'credits';
-    if (!window.confirm(
-      `Regenerate ${retryLabel} for ${creditCost} ${creditLabel}? Existing versions will be kept.`,
-    )) {
-      return;
-    }
+    setConfirmRequest({
+      title: `Regenerate ${retryLabel}`,
+      body: `Regenerate ${retryLabel} for ${creditCost} ${creditLabel}? Existing versions will be kept.`,
+      confirmLabel: `Regenerate · ${creditCost} ${creditLabel}`,
+      variant: 'primary',
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void executeRetry(action, nextStatus, target, operation);
+      },
+    });
+  };
+
+  const executeRetry = async (
+    action: (context: ApiRequestContext) => Promise<void>,
+    nextStatus: string,
+    target: RetryTarget,
+    operation: GenerationBillingOperation,
+  ) => {
+    if (!meta) return;
     clearDebugLog();
     setBusy(true);
     setRetryingTarget(target);
@@ -502,10 +466,15 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
 
   const hasOutdatedSprites = sprites.some((sprite) => (sprite.processingVersion ?? 0) < SPRITE_PROCESSING_VERSION);
 
-  const renameFighter = async () => {
+  const renameFighter = () => {
     if (!meta) return;
-    const nextName = window.prompt('Fighter name', meta.characterName);
-    if (!nextName || !nextName.trim() || nextName.trim() === meta.characterName) return;
+    setRenameDraft(meta.characterName);
+    setRenameRequest({ kind: 'fighter', current: meta.characterName });
+  };
+
+  const executeRenameFighter = async (nextName: string) => {
+    if (!meta) return;
+    if (!nextName.trim() || nextName.trim() === meta.characterName) return;
     const trimmedName = nextName.trim();
     setBusy(true);
     setStatus('Renaming...');
@@ -526,11 +495,22 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     }
   };
 
-  const deleteFighter = async () => {
+  const deleteFighter = () => {
     if (!meta) return;
-    if (!window.confirm(`Delete "${meta.characterName}"? This wipes sprites, intro video, and metadata. Cannot be undone.`)) {
-      return;
-    }
+    setConfirmRequest({
+      title: `Delete ${meta.characterName}`,
+      body: `Delete "${meta.characterName}"? This wipes sprites, intro video, and metadata. Cannot be undone.`,
+      confirmLabel: 'Delete Fighter',
+      variant: 'danger',
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void executeDeleteFighter();
+      },
+    });
+  };
+
+  const executeDeleteFighter = async () => {
+    if (!meta) return;
     const removedHash = meta.photoHash;
     setBusy(true);
     setStatus(`Deleting ${meta.characterName}...`);
@@ -563,11 +543,22 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     }
   };
 
-  const rebuildHd = async () => {
+  const rebuildHd = () => {
     if (!meta) return;
-    if (!window.confirm(`Rebuild all sprites for "${meta.characterName}" at HD resolution for free? Animations without a cached raw blob will be skipped.`)) {
-      return;
-    }
+    setConfirmRequest({
+      title: 'Rebuild HD',
+      body: `Rebuild all sprites for "${meta.characterName}" at HD resolution for free? Animations without a cached raw blob will be skipped.`,
+      confirmLabel: 'Rebuild HD · Free',
+      variant: 'primary',
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void executeRebuildHd();
+      },
+    });
+  };
+
+  const executeRebuildHd = async () => {
+    if (!meta) return;
     clearDebugLog();
     setBusy(true);
     setStatus('Rebuilding at HD...');
@@ -705,7 +696,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     } else if (share.mode === 'cancelled') {
       setStatus('Community share cancelled');
     } else {
-      window.prompt('Share fighter link', share.url);
+      setShareLinkUrl(share.url);
       setStatus('Community share link ready');
     }
   };
@@ -829,10 +820,15 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     }
   };
 
-  const renameStage = async () => {
+  const renameStage = () => {
     if (!currentStage) return;
-    const nextName = window.prompt('Stage name', currentStage.label ?? 'PHOTO STAGE');
-    if (!nextName || !nextName.trim()) return;
+    setRenameDraft(currentStage.label ?? 'PHOTO STAGE');
+    setRenameRequest({ kind: 'stage', current: currentStage.label ?? 'PHOTO STAGE' });
+  };
+
+  const executeRenameStage = async (nextName: string) => {
+    if (!currentStage) return;
+    if (!nextName.trim()) return;
     setBusy(true);
     setStatus('Renaming stage...');
     try {
@@ -846,9 +842,22 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     }
   };
 
-  const deleteStage = async () => {
+  const deleteStage = () => {
     if (!currentStage) return;
-    if (!window.confirm(`Delete stage "${currentStage.label ?? 'PHOTO STAGE'}"?`)) return;
+    setConfirmRequest({
+      title: 'Delete Stage',
+      body: `Delete stage "${currentStage.label ?? 'PHOTO STAGE'}"?`,
+      confirmLabel: 'Delete Stage',
+      variant: 'danger',
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void executeDeleteStage();
+      },
+    });
+  };
+
+  const executeDeleteStage = async () => {
+    if (!currentStage) return;
     setBusy(true);
     setStatus('Deleting stage...');
     try {
@@ -868,31 +877,30 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     <div className="gallery-app">
       <aside className="gallery-sidebar">
         <div className="gallery-sidebar__header">
-          <div>
-            <p className="gallery-eyebrow">Archive</p>
-            <h1>Training Room</h1>
-          </div>
-          <button className="gallery-back" onClick={onBack}>
-            Back
-          </button>
+          <h1>Training Room</h1>
+          <Button onClick={onBack}>Back</Button>
         </div>
 
         <div className="gallery-tab-row">
           <button
+            type="button"
             className={`gallery-tab${activeTab === 'characters' ? ' is-active' : ''}`}
+            aria-pressed={activeTab === 'characters'}
             onClick={() => setActiveTab('characters')}
           >
             Characters
           </button>
           <button
+            type="button"
             className={`gallery-tab${activeTab === 'stages' ? ' is-active' : ''}`}
+            aria-pressed={activeTab === 'stages'}
             onClick={() => setActiveTab('stages')}
           >
             Stages
           </button>
         </div>
 
-        <button className="home-menu__action is-primary" onClick={onCreateFighter}>
+        <button type="button" className="home-menu__action is-primary" onClick={onCreateFighter}>
           <span>New Fighter</span>
           <small>Upload A Photo</small>
         </button>
@@ -901,16 +909,19 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           <div className="gallery-sidebar__list">
             {metas.map((item, index) => (
               <button
+                type="button"
                 key={item.photoHash}
                 className={`gallery-fighter-card${index === currentIndex ? ' is-active' : ''}`}
+                aria-pressed={index === currentIndex}
                 onClick={() => {
                   setCurrentIndex(index);
                   setSelection({ kind: 'source', source: 'original' });
                 }}
               >
                 <span className="gallery-fighter-card__name">{item.characterName}</span>
+                <TierBadge tier={item.qualityTier} />
                 <span className="gallery-fighter-card__meta">
-                  {tierLabel(item.qualityTier)} · {formatDate(item.createdAt)} · {item.animationsReady.length} anims
+                  {formatDate(item.createdAt)} · {item.animationsReady.length} anims
                 </span>
               </button>
             ))}
@@ -919,8 +930,10 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           <div className="gallery-sidebar__list">
             {stages.map((stage, index) => (
               <button
+                type="button"
                 key={stage.stageKey}
                 className={`gallery-fighter-card${index === currentStageIndex ? ' is-active' : ''}`}
+                aria-pressed={index === currentStageIndex}
                 onClick={() => setCurrentStageIndex(index)}
               >
                 <span className="gallery-fighter-card__name">{(stage.label ?? 'PHOTO STAGE').toUpperCase()}</span>
@@ -938,7 +951,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           <section className="gallery-empty">
             <h2>No Fighters Yet</h2>
             <p>{characterEmptyMessage}</p>
-            <button className="home-menu__action is-primary" onClick={onCreateFighter}>
+            <button type="button" className="home-menu__action is-primary" onClick={onCreateFighter}>
               <span>Forge Fighter</span>
               <small>Start The Pipeline</small>
             </button>
@@ -947,58 +960,59 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           <>
             <header className="gallery-hero">
               <div>
-                <p className="gallery-eyebrow">
-                  Fighter {currentIndex + 1} / {metas.length}
-                </p>
-                <h2>{meta.characterName}</h2>
+                <h2>
+                  {meta.characterName}
+                  <TierBadge tier={currentTier} className="gallery-hero__badge" />
+                </h2>
                 <p className="gallery-hero__meta">
-                  Status: {meta.status} · Tier {tierLabel(currentTier)} · Created {formatDate(meta.createdAt)} · Hash {meta.photoHash.slice(0, 10)}...
+                  Fighter {currentIndex + 1} of {metas.length} · Status {meta.status} · Created {formatDate(meta.createdAt)}
                 </p>
               </div>
               <div className="roster-hero__actions">
                 <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
-                {upgradeOptions.map((tier) => (
-                  <button
-                    key={tier.id}
-                    className="gallery-back"
-                    disabled={busy || !legalAccepted}
-                    onClick={() => setPendingUpgradeTier(tier.id)}
+                <div className="asf-toolbar">
+                  {upgradeOptions.map((tier, index) => (
+                    <Button
+                      key={tier.id}
+                      variant={index === 0 ? 'primary' : 'secondary'}
+                      disabled={busy || !legalAccepted}
+                      onClick={() => setPendingUpgradeTier(tier.id)}
+                    >
+                      Upgrade to {tier.label} · {tier.priceLabel}
+                    </Button>
+                  ))}
+                  {hasOutdatedSprites ? (
+                    <Button disabled={busy} onClick={() => rebuildHd()}>
+                      Rebuild HD · Free
+                    </Button>
+                  ) : null}
+                  <Button disabled={busy} onClick={() => void syncCloud()}>
+                    Sync Cloud
+                  </Button>
+                  <Button
+                    disabled={busy}
+                    onClick={() => {
+                      if (meta.cloudPublic) void togglePublic();
+                      else setPublishConfirmOpen(true);
+                    }}
                   >
-                    {tier.label} {tier.priceLabel}
-                  </button>
-                ))}
-                {hasOutdatedSprites ? (
-                  <button className="gallery-back" disabled={busy} onClick={() => void rebuildHd()}>
-                    Rebuild HD · Free
-                  </button>
-                ) : null}
-                <button className="gallery-back" disabled={busy} onClick={() => void saveAll()}>
-                  Save All
-                </button>
-                <button className="gallery-back" disabled={busy} onClick={() => void syncCloud()}>
-                  Sync Cloud
-                </button>
-                <button
-                  className="gallery-back"
-                  disabled={busy}
-                  onClick={() => {
-                    if (meta.cloudPublic) void togglePublic();
-                    else setPublishConfirmOpen(true);
-                  }}
-                >
-                  {meta.cloudPublic ? 'Unpublish' : 'Publish'}
-                </button>
-                {meta.cloudPublic && meta.cloudFighterId ? (
-                  <button className="gallery-back" disabled={busy} onClick={() => void sharePublishedFighter()}>
-                    Share Link
-                  </button>
-                ) : null}
-                <button className="gallery-back" disabled={busy} onClick={() => void renameFighter()}>
-                  Rename
-                </button>
-                <button className="gallery-back" disabled={busy} onClick={() => void deleteFighter()}>
-                  Delete
-                </button>
+                    {meta.cloudPublic ? 'Unpublish' : 'Publish'}
+                  </Button>
+                  {meta.cloudPublic && meta.cloudFighterId ? (
+                    <Button variant="ghost" disabled={busy} onClick={() => void sharePublishedFighter()}>
+                      Share Link
+                    </Button>
+                  ) : null}
+                  <Button variant="ghost" disabled={busy} onClick={() => void saveAll()}>
+                    Save All
+                  </Button>
+                  <Button variant="ghost" disabled={busy} onClick={() => renameFighter()}>
+                    Rename
+                  </Button>
+                  <Button variant="danger" disabled={busy} onClick={() => deleteFighter()}>
+                    Delete
+                  </Button>
+                </div>
               </div>
             </header>
 
@@ -1006,135 +1020,85 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
               checked={legalAccepted}
               disabled={busy}
               onChange={setLegalAccepted}
+              onNavigate={onNavigateLegal}
             />
 
-            <section className="gallery-layout">
-              <div className="gallery-column--side">
-                <div className="gallery-panel gallery-panel--sources">
-                  <SourceViewsPanel
-                    meta={meta}
-                    selectedSource={selection.kind === 'source' ? selection.source : null}
-                    onSelectSource={(source) => setSelection({ kind: 'source', source })}
-                    regeneratingSource={retryingSource}
-                    retryCreditCost={SOURCE_RETRY_CREDIT_COST}
-                    onRetry={{
-                      side: () => runRetry(
-                        (context) => retrySideView(meta.photoHash, () => {}, context),
-                        'Retrying side view...',
-                        { kind: 'source', key: 'side' },
-                        'fighter_retry_source',
-                        SOURCE_RETRY_CREDIT_COST,
-                      ),
-                      upright: () => runRetry(
-                        (context) => retryUprightView(meta.photoHash, () => {}, context),
-                        'Retrying upright...',
-                        { kind: 'source', key: 'upright' },
-                        'fighter_retry_source',
-                        SOURCE_RETRY_CREDIT_COST,
-                      ),
-                      crouch: () => runRetry(
-                        (context) => retryCrouchView(meta.photoHash, () => {}, context),
-                        'Retrying crouch...',
-                        { kind: 'source', key: 'crouch' },
-                        'fighter_retry_source',
-                        SOURCE_RETRY_CREDIT_COST,
-                      ),
-                    }}
-                    busy={busy || !legalAccepted}
-                  />
-
-                  {introUrl ? (
-                    <div className="gallery-intro-card">
-                      <h4>Intro Video</h4>
-                      <video src={introUrl} controls loop muted className="gallery-intro-card__video" />
-                    </div>
-                  ) : null}
+            <FighterPreviewColumn
+              meta={meta}
+              sprites={sprites}
+              selection={selection}
+              onSelectionChange={setSelection}
+              generating={retryingAnim ? new Set([retryingAnim]) : undefined}
+              loading={
+                busy &&
+                ((selection.kind === 'animation' && retryingAnim !== null && selection.animationName === retryingAnim) ||
+                  (selection.kind === 'source' && retryingSource !== null && selection.source === retryingSource))
+              }
+              loadingLabel={
+                retryingAnim
+                  ? `Rebuilding ${animLabel(retryingAnim)}`
+                  : retryingSource
+                    ? `Rebuilding ${retryingSource.toUpperCase()} view`
+                    : 'Loading'
+              }
+              safeName={safeName}
+              onSaveGif={() => void saveGif()}
+              saveGifDisabled={busy}
+              sourceRetry={{
+                regeneratingSource: retryingSource,
+                creditCost: SOURCE_RETRY_CREDIT_COST,
+                busy: busy || !legalAccepted,
+                actions: {
+                  side: () => runRetry(
+                    (context) => retrySideView(meta.photoHash, () => {}, context),
+                    'Retrying side view...',
+                    { kind: 'source', key: 'side' },
+                    'fighter_retry_source',
+                    SOURCE_RETRY_CREDIT_COST,
+                  ),
+                  upright: () => runRetry(
+                    (context) => retryUprightView(meta.photoHash, () => {}, context),
+                    'Retrying upright...',
+                    { kind: 'source', key: 'upright' },
+                    'fighter_retry_source',
+                    SOURCE_RETRY_CREDIT_COST,
+                  ),
+                  crouch: () => runRetry(
+                    (context) => retryCrouchView(meta.photoHash, () => {}, context),
+                    'Retrying crouch...',
+                    { kind: 'source', key: 'crouch' },
+                    'fighter_retry_source',
+                    SOURCE_RETRY_CREDIT_COST,
+                  ),
+                },
+              }}
+              sourcePanelExtra={introUrl ? (
+                <div className="gallery-intro-card">
+                  <h4>Intro Video</h4>
+                  <video src={introUrl} controls loop muted className="gallery-intro-card__video" />
                 </div>
-
-                <div className="gallery-panel gallery-panel--anims">
-                  <h3>Animations</h3>
-                  <AnimationGrid
-                    sprites={sprites}
-                    failedArtifacts={meta.failedAnimationArtifacts ?? null}
-                    generating={retryingAnim ? new Set([retryingAnim]) : undefined}
-                    selectedName={selectedAnimName}
-                    onSelect={(animationName) => setSelection({ kind: 'animation', animationName })}
-                  />
-                  <DebugFeed />
-                </div>
-              </div>
-
-              <div className="gallery-panel gallery-panel--preview">
-                <div className="gallery-preview__header">
-                  <div>
-                    <p className="gallery-eyebrow">Preview</p>
-                    <h3>
-                      {selection.kind === 'source'
-                        ? selection.source.toUpperCase()
-                        : animLabel(selection.animationName)}
-                    </h3>
-                  </div>
-                </div>
-
-                <div className="gallery-preview__surface">
-                  <SpritePreviewSurface
-                    sourceImageUrl={selection.kind === 'source' ? previewUrl : null}
-                    sprite={selection.kind === 'animation' ? previewSprite : null}
-                    loading={
-                      busy &&
-                      ((selection.kind === 'animation' && retryingAnim !== null && selection.animationName === retryingAnim) ||
-                        (selection.kind === 'source' && retryingSource !== null && selection.source === retryingSource))
-                    }
-                    loadingLabel={
-                      retryingAnim
-                        ? `Rebuilding ${animLabel(retryingAnim)}`
-                        : retryingSource
-                          ? `Rebuilding ${retryingSource.toUpperCase()} view`
-                          : 'Loading'
-                    }
-                    emptyLabel={selection.kind === 'source' ? 'Missing source' : 'No preview for this animation yet'}
-                  />
-                </div>
-
-                <div className="gallery-actions">
-                  {previewBlob ? (
-                    <button onClick={() => downloadBlob(previewBlob, `${safeName}_${selection.kind === 'source' ? selection.source : selection.animationName}.png`)}>
-                      Save PNG
-                    </button>
-                  ) : null}
-                  {selectedAnimName && sprites.some((item) => item.animationName === selectedAnimName) ? (
-                    <button disabled={busy} onClick={() => void saveGif()}>
-                      Save GIF
-                    </button>
-                  ) : null}
-                  {previewSprite?.rawBlob ? (
-                    <button onClick={() => downloadBlob(previewSprite.rawBlob!, `${safeName}_${selectedAnimName}_RAW.png`)}>
-                      Save RAW
-                    </button>
-                  ) : null}
-                  {selectedAnimName ? (
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        void runRetry(
-                          (context) => retryAnimation(meta.photoHash, selectedAnimName, () => {}, {
-                            tier: currentTier,
-                            apiContext: context,
-                          }),
-                          `Retrying ${selectedAnimName} (${tierLabel(currentTier)})...`,
-                          { kind: 'animation', name: selectedAnimName },
-                          'fighter_retry_animation',
-                          currentAnimationRetryCost,
-                        )
-                      }
-                    >
-                      Retry Animation · {currentAnimationRetryCost}{' '}
-                      {currentAnimationRetryCost === 1 ? 'credit' : 'credits'}
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            </section>
+              ) : null}
+              extraActions={selectedAnimName ? (
+                <Button
+                  disabled={busy}
+                  onClick={() =>
+                    void runRetry(
+                      (context) => retryAnimation(meta.photoHash, selectedAnimName, () => {}, {
+                        tier: currentTier,
+                        apiContext: context,
+                      }),
+                      `Retrying ${selectedAnimName} (${tierLabel(currentTier)})...`,
+                      { kind: 'animation', name: selectedAnimName },
+                      'fighter_retry_animation',
+                      currentAnimationRetryCost,
+                    )
+                  }
+                >
+                  Retry Animation · {currentAnimationRetryCost}{' '}
+                  {currentAnimationRetryCost === 1 ? 'credit' : 'credits'}
+                </Button>
+              ) : null}
+            />
           </>
         ) : !currentStage ? (
           <section className="gallery-empty">
@@ -1193,93 +1157,112 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       </main>
 
       {pendingUpgrade ? (
-        <div className="upgrade-confirm-backdrop">
-          <section
-            className="upgrade-confirm-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="upgrade-confirm-title"
-            aria-describedby="upgrade-confirm-description"
-          >
-            <div className="upgrade-confirm-dialog__header">
-              <div>
-                <p className="gallery-eyebrow">Quality Upgrade</p>
-                <h2 id="upgrade-confirm-title">Upgrade to {pendingUpgrade.label}</h2>
-              </div>
-              <strong>{pendingUpgrade.priceLabel}</strong>
-            </div>
-            <p id="upgrade-confirm-description" className="upgrade-confirm-dialog__copy">
-              All 11 animations will be regenerated from the canonical Pro source views.
-              Every existing local and cloud version remains preserved.
-            </p>
-            <div className="upgrade-confirm-dialog__actions">
-              <button
-                className="gallery-chip"
-                type="button"
-                onClick={() => setPendingUpgradeTier(null)}
-              >
-                <span>Cancel</span>
-              </button>
-              <button
-                ref={upgradeConfirmRef}
-                className="gallery-chip is-active"
-                type="button"
-                onClick={() => {
-                  const tier = pendingUpgrade.id;
-                  setPendingUpgradeTier(null);
-                  void upgradeToTier(tier);
-                }}
-              >
-                <span>Regenerate for {pendingUpgrade.priceLabel}</span>
-              </button>
-            </div>
-          </section>
-        </div>
+        <ConfirmDialog
+          title={`Upgrade to ${pendingUpgrade.label}`}
+          confirmLabel={`Regenerate for ${pendingUpgrade.priceLabel}`}
+          confirmVariant="primary"
+          onCancel={() => setPendingUpgradeTier(null)}
+          onConfirm={() => {
+            const tier = pendingUpgrade.id;
+            setPendingUpgradeTier(null);
+            void upgradeToTier(tier);
+          }}
+        >
+          Regenerate all 11 animations at {pendingUpgrade.label} quality. This costs{' '}
+          {pendingUpgrade.priceLabel} and takes about {pendingUpgrade.estimatedTime}. Existing
+          animations are kept in cache and remain accessible.
+        </ConfirmDialog>
       ) : null}
 
       {publishConfirmOpen && meta ? (
-        <div className="publish-confirm-backdrop">
-          <section
-            className="publish-confirm-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="publish-confirm-title"
-            aria-describedby="publish-confirm-description"
+        <ConfirmDialog
+          title={`Publish ${meta.characterName}?`}
+          confirmLabel="Publish Fighter"
+          cancelLabel="Keep Private"
+          confirmVariant="primary"
+          onCancel={() => setPublishConfirmOpen(false)}
+          onConfirm={() => {
+            setPublishConfirmOpen(false);
+            void togglePublic();
+          }}
+        >
+          This makes the fighter name, tier, clean generated source views, and playable
+          animations public under the neutral author label Player. Your account name, email,
+          Clerk profile photo, original photo, RAW intermediates, private hashes, and
+          generation history stay private. You can unpublish at any time.
+        </ConfirmDialog>
+      ) : null}
+
+      {confirmRequest ? (
+        <ConfirmDialog
+          title={confirmRequest.title}
+          confirmLabel={confirmRequest.confirmLabel}
+          confirmVariant={confirmRequest.variant ?? 'primary'}
+          onCancel={() => setConfirmRequest(null)}
+          onConfirm={confirmRequest.onConfirm}
+        >
+          {confirmRequest.body}
+        </ConfirmDialog>
+      ) : null}
+
+      {renameRequest ? (
+        <Modal
+          title={renameRequest.kind === 'fighter' ? 'Rename Fighter' : 'Rename Stage'}
+          onClose={() => setRenameRequest(null)}
+        >
+          <form
+            className="asf-modal__form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const request = renameRequest;
+              setRenameRequest(null);
+              if (request.kind === 'fighter') void executeRenameFighter(renameDraft);
+              else void executeRenameStage(renameDraft);
+            }}
           >
-            <div className="publish-confirm-dialog__header">
-              <div>
-                <p className="gallery-eyebrow">Community Sharing</p>
-                <h2 id="publish-confirm-title">Publish {meta.characterName}?</h2>
-              </div>
+            <label className="create-form__field">
+              <span>{renameRequest.kind === 'fighter' ? 'Fighter Name' : 'Stage Name'}</span>
+              <input
+                type="text"
+                value={renameDraft}
+                maxLength={48}
+                onChange={(event) => setRenameDraft(event.target.value)}
+              />
+            </label>
+            <div className="asf-modal__actions">
+              <Button onClick={() => setRenameRequest(null)}>Cancel</Button>
+              <Button variant="primary" type="submit" disabled={!renameDraft.trim()}>
+                Save Name
+              </Button>
             </div>
-            <p id="publish-confirm-description" className="publish-confirm-dialog__copy">
-              This makes the fighter name, tier, clean generated source views, and playable
-              animations public under the neutral author label Player. Your account name, email,
-              Clerk profile photo, original photo, RAW intermediates, private hashes, and
-              generation history stay private. You can unpublish at any time.
-            </p>
-            <div className="publish-confirm-dialog__actions">
-              <button
-                className="gallery-chip"
-                type="button"
-                onClick={() => setPublishConfirmOpen(false)}
-              >
-                <span>Keep Private</span>
-              </button>
-              <button
-                ref={publishConfirmRef}
-                className="gallery-chip is-active"
-                type="button"
-                onClick={() => {
-                  setPublishConfirmOpen(false);
-                  void togglePublic();
-                }}
-              >
-                <span>Publish Fighter</span>
-              </button>
-            </div>
-          </section>
-        </div>
+          </form>
+        </Modal>
+      ) : null}
+
+      {shareLinkUrl ? (
+        <Modal title="Share Fighter Link" onClose={() => setShareLinkUrl(null)}>
+          <p className="asf-modal__copy">Copy this link to share the published fighter.</p>
+          <input
+            className="asf-modal__link"
+            type="text"
+            readOnly
+            value={shareLinkUrl}
+            onFocus={(event) => event.target.select()}
+          />
+          <div className="asf-modal__actions">
+            <Button onClick={() => setShareLinkUrl(null)}>Close</Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                void navigator.clipboard?.writeText(shareLinkUrl).catch(() => {});
+                setShareLinkUrl(null);
+                setStatus('Community share link copied');
+              }}
+            >
+              Copy Link
+            </Button>
+          </div>
+        </Modal>
       ) : null}
     </div>
   );

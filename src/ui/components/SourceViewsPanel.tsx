@@ -33,14 +33,16 @@ export function SourceViewsPanel({
   return (
     <>
       <h3>Source Views</h3>
-      <div className="gallery-source-grid">
+      <div className="gallery-source-grid" role="group" aria-label="Source views">
         {SOURCE_VIEWS.map(([key, label]) => {
           const blob = getSourceBlob(meta, key);
           const isRegen = regeneratingSource === key;
           return (
             <button
+              type="button"
               key={key}
               className={`gallery-chip${selectedSource === key ? ' is-active' : ''}`}
+              aria-pressed={selectedSource === key}
               onClick={() => onSelectSource(key)}
             >
               <span>{label}</span>
@@ -52,17 +54,17 @@ export function SourceViewsPanel({
       {onRetry ? (
         <div className="gallery-actions">
           {onRetry.side ? (
-            <button disabled={busy} onClick={() => void onRetry.side!()}>
+            <button type="button" disabled={busy} onClick={() => void onRetry.side!()}>
               Retry Side · {retryCreditCost} credit
             </button>
           ) : null}
           {onRetry.upright ? (
-            <button disabled={busy} onClick={() => void onRetry.upright!()}>
+            <button type="button" disabled={busy} onClick={() => void onRetry.upright!()}>
               Retry Upright · {retryCreditCost} credit
             </button>
           ) : null}
           {onRetry.crouch ? (
-            <button disabled={busy} onClick={() => void onRetry.crouch!()}>
+            <button type="button" disabled={busy} onClick={() => void onRetry.crouch!()}>
               Retry Crouch · {retryCreditCost} credit
             </button>
           ) : null}

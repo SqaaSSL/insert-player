@@ -1,7 +1,9 @@
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ClerkProvider, SignInButton, SignUpButton, UserButton, useAuth, useUser } from '@clerk/react';
+import { ClerkProvider, useAuth, useUser } from '@clerk/react';
 import { App } from './ui/App.tsx';
+import { AuthDock } from './ui/components/AuthDock.tsx';
+import { LoadingScreen } from './ui/components/LoadingScreen.tsx';
 import type { AuthStatus } from './ui/authState.ts';
 import { configureApiAuth } from './services/ApiClient.ts';
 import {
@@ -11,6 +13,9 @@ import {
 } from './services/SpriteCache.ts';
 import { debugWarn } from './services/DebugLog.ts';
 import '@fontsource/press-start-2p/latin-400.css';
+import '@fontsource/space-grotesk/latin-400.css';
+import '@fontsource/space-grotesk/latin-500.css';
+import '@fontsource/space-grotesk/latin-700.css';
 import './ui/styles.css';
 
 const rootEl = document.getElementById('app');
@@ -61,37 +66,18 @@ function ClerkSessionBridge() {
 
   const cacheReady = authReady && preparedCacheScope === cacheScope;
   const authDock = (
-    <div className="auth-dock">
-      {!isLoaded ? (
-        <span className="auth-dock__label">Loading...</span>
-      ) : isSignedIn ? (
-        <>
-          <span className="auth-dock__label">{user?.firstName ?? user?.username ?? 'Player'}</span>
-          <UserButton />
-        </>
-      ) : (
-        <>
-          <SignInButton mode="modal">
-            <button className="auth-dock__button">Sign In</button>
-          </SignInButton>
-          <SignUpButton mode="modal">
-            <button className="auth-dock__button is-primary">Join</button>
-          </SignUpButton>
-        </>
-      )}
-    </div>
+    <AuthDock
+      isLoaded={isLoaded}
+      isSignedIn={Boolean(isSignedIn)}
+      displayName={user?.firstName ?? user?.username ?? 'Player'}
+    />
   );
 
   return (
     cacheReady ? (
       <App authStatus={authStatus} authSessionKey={authSessionKey} authSlot={authDock} />
     ) : (
-      <>
-        {authDock}
-        <main className="session-loading" aria-live="polite">
-          <p>{cacheError ?? 'Loading player data...'}</p>
-        </main>
-      </>
+      <LoadingScreen label={cacheError ?? 'Loading player data...'} />
     )
   );
 }

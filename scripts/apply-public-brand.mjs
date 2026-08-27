@@ -113,16 +113,22 @@ function updateSocialSvg({ name, description }) {
   const [lineOne, lineTwo] = splitSocialCardTitle(name);
   text = replaceRequired(text, /<title id="title">[^<]+<\/title>/, `<title id="title">${name} social card</title>`, 'social SVG title');
   text = replaceRequired(text, /<desc id="desc">[^<]+<\/desc>/, `<desc id="desc">${description}</desc>`, 'social SVG desc');
-  text = replaceRequired(text, /<text x="96" y="256"[^>]*>[^<]*<\/text>/, `<text x="96" y="256" fill="#f4f0dd" font-family="Impact, Arial Black, sans-serif" font-size="104">${lineOne}</text>`, 'social SVG title line one');
-  text = replaceRequired(text, /<text x="94" y="362"[^>]*>[^<]*<\/text>/, `<text x="94" y="362" fill="#ffe878" font-family="Impact, Arial Black, sans-serif" font-size="126">${lineTwo || 'FIGHT'}</text>`, 'social SVG title line two');
+  text = replaceRequired(text, /<text x="94" y="260"[^>]*>[^<]*<\/text>/, `<text x="94" y="260" fill="#f4f0dd" font-family="Impact, Arial Black, sans-serif" font-size="108">${lineOne}</text>`, 'social SVG title line one');
+  text = replaceRequired(text, /<text x="92" y="372"[^>]*>[^<]*<\/text>/, `<text x="92" y="372" fill="#ffe878" font-family="Impact, Arial Black, sans-serif" font-size="132">${lineTwo || 'FIGHT'}</text>`, 'social SVG title line two');
   return text;
 }
 
-function updateIconSvg({ name, shortName }) {
-  let text = readFileSync(join(root, 'public/assets/app-icon.svg'), 'utf8');
-  text = replaceRequired(text, /<title id="title">[^<]+<\/title>/, `<title id="title">${name} app icon</title>`, 'icon SVG title');
-  text = replaceRequired(text, /<desc id="desc">[^<]+<\/desc>/, `<desc id="desc">Arcade badge with the letters ${shortName}.</desc>`, 'icon SVG desc');
-  text = replaceRequired(text, /<text x="256" y="282"[^>]*>[^<]*<\/text>/, `<text x="256" y="282" text-anchor="middle" dominant-baseline="middle" fill="#f4f0dd" font-family="Impact, Arial Black, sans-serif" font-size="132">${shortName}</text>`, 'icon SVG initials');
+function updateIconSvg({ name, shortName }, file, label) {
+  // The P1 mark is hand-drawn vector art (pixel-glyph paths), not templated
+  // text. A different short name requires redrawing the mark; fail closed
+  // instead of silently shipping an icon that no longer matches the brand.
+  if (shortName !== 'P1') {
+    throw new Error(
+      `${file} carries a hand-drawn "P1" pixel mark. Redraw the icon art for short name "${shortName}" before running brand:apply.`,
+    );
+  }
+  let text = readFileSync(join(root, file), 'utf8');
+  text = replaceRequired(text, /<title id="title">[^<]+<\/title>/, `<title id="title">${name} ${label}</title>`, `${label} SVG title`);
   return text;
 }
 
@@ -160,7 +166,8 @@ function main() {
     'index.html': updateHtml({ name, origin, socialCardPath, description }),
     'public/site.webmanifest': updateManifest({ name, shortName, description }),
     'public/assets/social-card.svg': updateSocialSvg({ name, description }),
-    'public/assets/app-icon.svg': updateIconSvg({ name, shortName }),
+    'public/assets/app-icon.svg': updateIconSvg({ name, shortName }, 'public/assets/app-icon.svg', 'app icon'),
+    'public/assets/app-maskable.svg': updateIconSvg({ name, shortName }, 'public/assets/app-maskable.svg', 'maskable app icon'),
     '.env.production.example': updateEnvExample('.env.production.example', {
       VITE_PUBLIC_APP_NAME: name,
       VITE_PUBLIC_APP_SHORT_NAME: shortName,

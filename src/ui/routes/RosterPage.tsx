@@ -31,6 +31,10 @@ import { ensurePlayableSpritesUpToDate } from '../../services/CharacterPipeline.
 import { getBillingProfile, type BillingProfile } from '../../services/Billing.ts';
 import type { AuthStatus } from '../authState.ts';
 import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
+import { useObjectUrl } from '../shared/useObjectUrl.ts';
+import { cloudPreviewUrl, tierLabel } from '../shared/fighterPreview.ts';
+import { Button } from '../components/Button.tsx';
+import { TierBadge } from '../components/TierBadge.tsx';
 
 type RosterMode = 'watch' | 'cpu' | 'vs';
 type RosterFilter = 'official' | 'yours' | 'all';
@@ -63,22 +67,6 @@ interface RosterFighterEntry {
   defaultPersonality: FighterPersonalityId | null;
   meta: CachedMeta | null;
   cloud: CloudFighter | null;
-}
-
-function useObjectUrl(blob: Blob | null | undefined): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!blob) {
-      setUrl(null);
-      return;
-    }
-    const nextUrl = URL.createObjectURL(blob);
-    setUrl(nextUrl);
-    return () => URL.revokeObjectURL(nextUrl);
-  }, [blob]);
-
-  return url;
 }
 
 function getModeMeta(mode: RosterMode) {
@@ -120,14 +108,6 @@ function getPreviewBlob(meta: CachedMeta | null): Blob | null {
   return meta.sideViewBlob ?? meta.uprightViewBlob ?? meta.originalPhotoBlob ?? null;
 }
 
-function getCloudPreviewUrl(fighter: CloudFighter): string | null {
-  return fighter.sources.side ?? fighter.sources.upright ?? fighter.sources.crouch ?? null;
-}
-
-function formatTier(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
 function localRosterEntry(meta: CachedMeta): RosterFighterEntry {
   return {
     key: `local:${meta.photoHash}`,
@@ -156,7 +136,7 @@ function arcadeRosterEntry(fighter: CloudFighter): RosterFighterEntry {
     qualityTier: fighter.qualityTier,
     animationCount: new Set(fighter.sprites.map((sprite) => sprite.animationName)).size,
     previewBlob: null,
-    previewUrl: getCloudPreviewUrl(fighter),
+    previewUrl: cloudPreviewUrl(fighter),
     challengerLine: fighter.arcade?.challengerLine ?? null,
     defaultPersonality: fighter.arcade?.defaultPersonality ?? null,
     meta: null,
@@ -202,7 +182,7 @@ function FighterRosterCard({
           <strong>{fighter.name}</strong>
           {fighter.kind === 'arcade' ? <span className="roster-official-badge">Official</span> : null}
         </div>
-        <span>{formatTier(fighter.qualityTier)} · {fighter.animationCount} anims</span>
+        <span><TierBadge tier={fighter.qualityTier} /> · {fighter.animationCount} anims</span>
         {fighter.challengerLine ? <span>{fighter.challengerLine}</span> : null}
         {fighter.cloud?.arcade?.reference.sourceUrl ? (
           <a
@@ -216,14 +196,67 @@ function FighterRosterCard({
         ) : null}
       </div>
       <div className="roster-fighter-card__actions">
-        <button className={`gallery-chip${isP1Selected ? ' is-active' : ''}`} onClick={onAssignP1}>
+        <button type="button" className={`gallery-chip${isP1Selected ? ' is-active' : ''}`} onClick={onAssignP1}>
           <span>{p1Label}</span>
           <small>{isP1Selected ? 'Selected' : 'Assign'}</small>
         </button>
-        <button className={`gallery-chip${isP2Selected ? ' is-active' : ''}`} onClick={onAssignP2}>
+        <button type="button" className={`gallery-chip${isP2Selected ? ' is-active' : ''}`} onClick={onAssignP2}>
           <span>{p2Label}</span>
           <small>{isP2Selected ? 'Selected' : 'Assign'}</small>
         </button>
+      </div>
+    </div>
+  );
+}
+
+
+function FighterSlotPanel({
+  label,
+  fighter,
+  previewUrl,
+  personalityId,
+  onPersonalityChange,
+}: {
+  label: string;
+  fighter: RosterFighterEntry | null;
+  previewUrl: string | null;
+  personalityId: FighterPersonalityId;
+  onPersonalityChange: (id: FighterPersonalityId) => void;
+}) {
+  return (
+    <div className="gallery-panel">
+      <h2>{label}</h2>
+      <div className="roster-slot-card">
+        <div className="roster-slot-card__preview">
+          {previewUrl ? (
+            <img src={previewUrl} alt={fighter ? `${fighter.name} preview` : ''} />
+          ) : (
+            <div className="gallery-preview__empty">No preview</div>
+          )}
+        </div>
+        <div className="roster-slot-card__meta">
+          <strong>{fighter?.name ?? 'Pick fighter'}</strong>
+          <span>
+            {fighter
+              ? `${tierLabel(fighter.qualityTier)} · ${fighter.animationCount} animations ready`
+              : 'Select a fighter below'}
+          </span>
+          {fighter?.kind === 'arcade' ? <span>Official Arcade challenger</span> : null}
+        </div>
+      </div>
+      <div className="roster-personality" role="group" aria-label={`${label} personality`}>
+        {FIGHTER_PERSONALITIES.map((personality) => (
+          <button
+            type="button"
+            key={personality.id}
+            className={`gallery-chip${personalityId === personality.id ? ' is-active' : ''}`}
+            aria-pressed={personalityId === personality.id}
+            onClick={() => onPersonalityChange(personality.id)}
+          >
+            <span>{personality.label}</span>
+            <small>{personality.blurb}</small>
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -438,49 +471,24 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     <div className="roster-app">
       <header className="roster-hero">
         <div>
-          <p className="gallery-eyebrow">Select Your Fighter</p>
           <h1>{modeMeta.title}</h1>
           <p className="roster-hero__copy">{modeMeta.description}</p>
         </div>
         <div className="roster-hero__actions">
           <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
-          <button className="gallery-back" onClick={onBack}>
-            Back
-          </button>
+          <Button onClick={onBack}>Back</Button>
         </div>
       </header>
 
       <section className="roster-layout">
         <div className="roster-column">
-          <div className="gallery-panel">
-            <h3>{modeMeta.p1Label}</h3>
-            <div className="roster-slot-card">
-              <div className="roster-slot-card__preview">
-                {p1PreviewUrl ? <img src={p1PreviewUrl} alt="" /> : <div className="gallery-preview__empty">No preview</div>}
-              </div>
-              <div className="roster-slot-card__meta">
-                <strong>{p1Fighter?.name ?? 'Pick fighter'}</strong>
-                <span>
-                  {p1Fighter
-                    ? `${formatTier(p1Fighter.qualityTier)} · ${p1Fighter.animationCount} animations ready`
-                    : 'Select a fighter below'}
-                </span>
-                {p1Fighter?.kind === 'arcade' ? <span>Official Arcade challenger</span> : null}
-              </div>
-            </div>
-            <div className="roster-personality">
-              {FIGHTER_PERSONALITIES.map((personality) => (
-                <button
-                  key={personality.id}
-                  className={`gallery-chip${p1PersonalityId === personality.id ? ' is-active' : ''}`}
-                  onClick={() => setP1PersonalityId(personality.id)}
-                >
-                  <span>{personality.label}</span>
-                  <small>{personality.blurb}</small>
-                </button>
-              ))}
-            </div>
-          </div>
+          <FighterSlotPanel
+            label={modeMeta.p1Label}
+            fighter={p1Fighter}
+            previewUrl={p1PreviewUrl}
+            personalityId={p1PersonalityId}
+            onPersonalityChange={setP1PersonalityId}
+          />
 
           <div className="sf-vs-divider" aria-hidden="true">
             <span className="sf-vs-divider__line" />
@@ -488,43 +496,20 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
             <span className="sf-vs-divider__line" />
           </div>
 
-          <div className="gallery-panel">
-            <h3>{modeMeta.p2Label}</h3>
-            <div className="roster-slot-card">
-              <div className="roster-slot-card__preview">
-                {p2PreviewUrl ? <img src={p2PreviewUrl} alt="" /> : <div className="gallery-preview__empty">No preview</div>}
-              </div>
-              <div className="roster-slot-card__meta">
-                <strong>{p2Fighter?.name ?? 'Pick fighter'}</strong>
-                <span>
-                  {p2Fighter
-                    ? `${formatTier(p2Fighter.qualityTier)} · ${p2Fighter.animationCount} animations ready`
-                    : 'Select a fighter below'}
-                </span>
-                {p2Fighter?.kind === 'arcade' ? <span>Official Arcade challenger</span> : null}
-              </div>
-            </div>
-            <div className="roster-personality">
-              {FIGHTER_PERSONALITIES.map((personality) => (
-                <button
-                  key={personality.id}
-                  className={`gallery-chip${p2PersonalityId === personality.id ? ' is-active' : ''}`}
-                  onClick={() => setP2PersonalityId(personality.id)}
-                >
-                  <span>{personality.label}</span>
-                  <small>{personality.blurb}</small>
-                </button>
-              ))}
-            </div>
-          </div>
+          <FighterSlotPanel
+            label={modeMeta.p2Label}
+            fighter={p2Fighter}
+            previewUrl={p2PreviewUrl}
+            personalityId={p2PersonalityId}
+            onPersonalityChange={setP2PersonalityId}
+          />
         </div>
 
         <div className="roster-column roster-column--fighters">
           <div className="gallery-panel">
             <div className="roster-panel__header">
               <div>
-                <p className="gallery-eyebrow">Roster</p>
-                <h3>Select Fighters</h3>
+                <h2>Select Fighters</h2>
                 <div className="roster-filter-tabs" role="group" aria-label="Roster source">
                   <button
                     className={`roster-filter-tab${rosterFilter === 'official' ? ' is-active' : ''}`}
@@ -550,7 +535,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                 </div>
               </div>
               {rosterLoaded && rosterEntries.length > 0 ? (
-                <button className="home-menu__action is-primary roster-fight-btn" disabled={!canStartFight || preparingFight} onClick={() => void launchFight()}>
+                <button type="button" className="home-menu__action is-primary roster-fight-btn" disabled={!canStartFight || preparingFight} onClick={() => void launchFight()}>
                   <span>{preparingFight ? 'Preparing...' : modeMeta.actionLabel}</span>
                   <small>
                     {preparingFight
@@ -573,7 +558,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                 <section className="gallery-empty roster-empty">
                   <h2>Make Yourself Playable</h2>
                   <p>{firstFighterCopy}</p>
-                  <button className="home-menu__action is-primary" onClick={onCreateFighter}>
+                  <button type="button" className="home-menu__action is-primary" onClick={onCreateFighter}>
                     <span>{createLabel}</span>
                     <small>One photo · about 2 minutes</small>
                   </button>
@@ -585,16 +570,14 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                       <h2>Official Challengers Incoming</h2>
                       <p>The headline roster is being prepared in Champion quality.</p>
                       {localEntries.length > 0 ? (
-                        <button className="gallery-back" onClick={() => setRosterFilter('yours')}>
-                          View Your Fighters
-                        </button>
+                        <Button onClick={() => setRosterFilter('yours')}>View Your Fighters</Button>
                       ) : null}
                     </>
                   ) : (
                     <>
                       <h2>Create Your First Fighter</h2>
                       <p>{firstFighterCopy}</p>
-                      <button className="home-menu__action is-primary" onClick={onCreateFighter}>
+                      <button type="button" className="home-menu__action is-primary" onClick={onCreateFighter}>
                         <span>{createLabel}</span>
                         <small>Start with one photo</small>
                       </button>
@@ -624,7 +607,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
         <div className="roster-column">
           <div className="gallery-panel">
-            <h3>Stage</h3>
+            <h2>Stage</h2>
             <div className="roster-stage-preview">
               {photoStageUrl ? <img src={photoStageUrl} alt="" /> : <div className="gallery-preview__empty">{stageSummary.label}</div>}
             </div>

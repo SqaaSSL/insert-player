@@ -32,7 +32,16 @@
 
   <rect x="748" y="86" width="350" height="456" rx="34" fill="#171922" stroke="#f4f0dd" stroke-width="8" />
   <rect x="782" y="124" width="282" height="296" rx="20" fill="url(#screen)" stroke="#ffce3a" stroke-width="10" />
-  <text x="923" y="286" text-anchor="middle" dominant-baseline="middle" fill="#f4f0dd" font-family="Impact, Arial Black, sans-serif" font-size="146">P1</text>
+  <g transform="translate(923 272) scale(0.9) translate(-256 -250)">
+    <g fill="#5a0808">
+      <path d="M136 168h90v30h-90zM136 198h30v30h-30zM226 198h30v30h-30zM136 228h30v30h-30zM226 228h30v30h-30zM136 258h90v30h-90zM136 288h30v30h-30zM136 318h30v30h-30z" />
+      <path d="M316 168h30v30h-30zM286 198h60v30h-60zM316 228h30v30h-30zM316 258h30v30h-30zM316 288h30v30h-30zM286 318h90v30h-90z" />
+    </g>
+    <g fill="#f4f0dd">
+      <path d="M136 160h90v30h-90zM136 190h30v30h-30zM226 190h30v30h-30zM136 220h30v30h-30zM226 220h30v30h-30zM136 250h90v30h-90zM136 280h30v30h-30zM136 310h30v30h-30z" />
+      <path d="M316 160h30v30h-30zM286 190h60v30h-60zM316 220h30v30h-30zM316 250h30v30h-30zM316 280h30v30h-30zM286 310h90v30h-90z" />
+    </g>
+  </g>
   <path d="M820 450h206v40H820z" fill="#050507" stroke="#f4f0dd" stroke-width="8" />
   <path d="M852 470h142" stroke="#ffe878" stroke-width="10" stroke-linecap="round" />
   <circle cx="1028" cy="470" r="13" fill="#d22727" stroke="#ffe878" stroke-width="5" />

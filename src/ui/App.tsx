@@ -1,17 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type Phaser from 'phaser';
 import { HomePage } from './routes/HomePage.tsx';
-import {
-  MATCH_ACTION_EVENT,
-  MATCH_ACTIONS_VISIBILITY_EVENT,
-  MATCH_COMPLETE_EVENT,
-  type MatchAction,
-  type MatchSceneData,
-} from '../game/match/MatchConfig.ts';
-import { MobileFightControls } from './components/MobileFightControls.tsx';
+import { GamePage } from './routes/GamePage.tsx';
+import type { MatchSceneData } from '../game/match/MatchConfig.ts';
+import { AppHeader } from './components/AppHeader.tsx';
 import { LegalFooter, type LegalRoute } from './components/LegalFooter.tsx';
+import { LoadingScreen } from './components/LoadingScreen.tsx';
 import { LegalPage } from './routes/LegalPage.tsx';
-import { reportMatchCompletion } from '../services/MatchReporting.ts';
 import { debugInfo, debugWarn } from '../services/DebugLog.ts';
 import type { AuthRouteState } from './authState.ts';
 
@@ -139,106 +133,6 @@ function useHashRoute(): [AppRoute, (route: AppRoute, search?: string) => void] 
   return [route, navigate];
 }
 
-function GamePage({
-  launchTarget,
-  onExit,
-}: {
-  launchTarget: { sceneKey: string; data: MatchSceneData };
-  onExit: () => void;
-}) {
-  const [matchActionsVisible, setMatchActionsVisible] = useState(false);
-
-  useEffect(() => {
-    const win = window as Window & {
-      __ASF_EXIT_TO_MENU__?: () => void;
-    };
-    const previous = win.__ASF_EXIT_TO_MENU__;
-    win.__ASF_EXIT_TO_MENU__ = () => onExit();
-    return () => {
-      win.__ASF_EXIT_TO_MENU__ = previous;
-    };
-  }, [onExit]);
-
-  useEffect(() => {
-    debugInfo('[GamePage] Mounting Phaser runtime', {
-      sceneKey: launchTarget.sceneKey,
-      hasData: Boolean(launchTarget.data),
-    });
-    let disposed = false;
-    let game: Phaser.Game | null = null;
-    void import('../game/createGame.ts').then(({ createGame }) => {
-      if (disposed) return;
-      game = createGame('game-container', launchTarget);
-    });
-    return () => {
-      disposed = true;
-      debugInfo('[GamePage] Destroying Phaser runtime', {
-        sceneKey: launchTarget.sceneKey,
-      });
-      game?.destroy(true);
-      game = null;
-    };
-  }, [launchTarget]);
-
-  useEffect(() => {
-    const onMatchComplete = (event: WindowEventMap[typeof MATCH_COMPLETE_EVENT]) => {
-      void reportMatchCompletion(event.detail).catch((err: any) => {
-        debugWarn('[MatchReporting] Failed to report match:', err?.message ?? err);
-      });
-    };
-    window.addEventListener(MATCH_COMPLETE_EVENT, onMatchComplete);
-    return () => {
-      window.removeEventListener(MATCH_COMPLETE_EVENT, onMatchComplete);
-    };
-  }, []);
-
-  useEffect(() => {
-    const onVisibilityChange = (
-      event: WindowEventMap[typeof MATCH_ACTIONS_VISIBILITY_EVENT],
-    ) => {
-      setMatchActionsVisible(event.detail.visible);
-    };
-    window.addEventListener(MATCH_ACTIONS_VISIBILITY_EVENT, onVisibilityChange);
-    return () => {
-      window.removeEventListener(MATCH_ACTIONS_VISIBILITY_EVENT, onVisibilityChange);
-    };
-  }, []);
-
-  const chooseMatchAction = (action: MatchAction) => {
-    setMatchActionsVisible(false);
-    window.dispatchEvent(new CustomEvent(MATCH_ACTION_EVENT, { detail: { action } }));
-  };
-
-  return (
-    <div className="game-shell">
-      <div className="game-shell__surface">
-        <div id="game-container" className="game-shell__canvas" />
-      </div>
-      {!launchTarget.data.cpuVsCpu && !matchActionsVisible && <MobileFightControls />}
-      {matchActionsVisible && (
-        <div className="match-actions" role="group" aria-label="Match complete actions">
-          <span className="match-actions__label">Match Complete</span>
-          <button
-            className="match-actions__button match-actions__button--primary"
-            onClick={() => chooseMatchAction('run_it_back')}
-          >
-            Run It Back
-          </button>
-          <button className="match-actions__button" onClick={() => chooseMatchAction('remix')}>
-            Remix
-          </button>
-          <button className="match-actions__button" onClick={() => chooseMatchAction('menu')}>
-            Menu
-          </button>
-        </div>
-      )}
-      <button className="game-shell__gallery-link" onClick={onExit}>
-        Back
-      </button>
-    </div>
-  );
-}
-
 export function App({
   authStatus = 'local',
   authSessionKey = 'local',
@@ -273,20 +167,27 @@ export function App({
     [navigate],
   );
 
+  const homePage = useMemo(
+    () => (
+      <HomePage
+        authStatus={authStatus}
+        authSessionKey={authSessionKey}
+        onCreateFighter={() => navigate('/fighters/new')}
+        onNavigateLegal={(route) => navigate(route)}
+        onOpenGallery={() => navigate('/gallery')}
+        onOpenCommunity={() => navigate('/community')}
+        onOpenWatchMode={() => navigate('/roster/watch')}
+        onOpenVsCpu={() => navigate('/roster/cpu')}
+        onOpenVsPlayer={() => navigate('/roster/vs')}
+        onOpenModeration={() => navigate('/moderation')}
+      />
+    ),
+    [authStatus, authSessionKey, navigate],
+  );
+
   const content = useMemo(() => {
     if (route === '/menu') {
-      return (
-        <HomePage
-          authStatus={authStatus}
-          authSessionKey={authSessionKey}
-          onOpenGallery={() => navigate('/gallery')}
-          onOpenCommunity={() => navigate('/community')}
-          onOpenWatchMode={() => navigate('/roster/watch')}
-          onOpenVsCpu={() => navigate('/roster/cpu')}
-          onOpenVsPlayer={() => navigate('/roster/vs')}
-          onOpenModeration={() => navigate('/moderation')}
-        />
-      );
+      return homePage;
     }
     if (route === '/gallery') {
       return (
@@ -295,6 +196,7 @@ export function App({
           authSessionKey={authSessionKey}
           onBack={() => navigate('/menu')}
           onCreateFighter={() => navigate('/fighters/new')}
+          onNavigateLegal={(route: LegalRoute) => navigate(route)}
         />
       );
     }
@@ -317,6 +219,7 @@ export function App({
           authSessionKey={authSessionKey}
           onBack={() => navigate('/gallery')}
           onComplete={() => navigate('/gallery')}
+          onNavigateLegal={(route: LegalRoute) => navigate(route)}
         />
       );
     }
@@ -347,30 +250,13 @@ export function App({
         pathname: window.location.pathname,
         hash: window.location.hash,
       });
-      return (
-        <HomePage
-          authStatus={authStatus}
-          authSessionKey={authSessionKey}
-          onOpenGallery={() => navigate('/gallery')}
-          onOpenCommunity={() => navigate('/community')}
-          onOpenWatchMode={() => navigate('/roster/watch')}
-          onOpenVsCpu={() => navigate('/roster/cpu')}
-          onOpenVsPlayer={() => navigate('/roster/vs')}
-          onOpenModeration={() => navigate('/moderation')}
-        />
-      );
+      return homePage;
     }
     return <GamePage launchTarget={{ sceneKey: 'FightScene', data: pendingMatch }} onExit={() => navigate('/menu')} />;
-  }, [route, navigate, pendingMatch, startFight, authStatus, authSessionKey]);
+  }, [route, navigate, pendingMatch, startFight, authStatus, authSessionKey, homePage]);
 
   const routedContent = (
-    <Suspense
-      fallback={(
-        <main className="session-loading" aria-live="polite">
-          <p>Loading cabinet...</p>
-        </main>
-      )}
-    >
+    <Suspense fallback={<LoadingScreen label="Loading cabinet..." />}>
       {content}
     </Suspense>
   );
@@ -379,8 +265,8 @@ export function App({
 
   return (
     <div className="app-route-shell">
-      {authSlot}
-      {routedContent}
+      <AppHeader currentRoute={route} onNavigate={navigate} authSlot={authSlot} />
+      <main className="app-main">{routedContent}</main>
       <LegalFooter onNavigate={navigate} />
     </div>
   );

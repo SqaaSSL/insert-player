@@ -34,7 +34,7 @@ const assets = [
   },
   {
     label: '512px maskable app icon',
-    input: 'public/assets/app-icon.svg',
+    input: 'public/assets/app-maskable.svg',
     output: 'public/assets/app-maskable-512.png',
     size: '512x512!',
     width: 512,

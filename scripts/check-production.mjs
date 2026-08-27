@@ -1071,7 +1071,12 @@ function assertLegalConsentAndPrivacyIsWired() {
 }
 
 function assertClerkAuthIsWired() {
-  const main = readFileSync(join(root, 'src/main.tsx'), 'utf8');
+  // The Clerk buttons render in AuthDock.tsx, which main.tsx mounts inside
+  // ClerkProvider; both files together form the auth/user bridge.
+  const main = [
+    readFileSync(join(root, 'src/main.tsx'), 'utf8'),
+    readFileSync(join(root, 'src/ui/components/AuthDock.tsx'), 'utf8'),
+  ].join('\n');
   const apiClient = readFileSync(join(root, 'src/services/ApiClient.ts'), 'utf8');
   const auth = readFileSync(join(root, 'worker/src/auth.ts'), 'utf8');
   const index = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
@@ -1435,7 +1440,11 @@ function assertAppConsoleLogsAreDebugGated() {
 }
 
 function assertMatchReportingIsWired() {
-  const app = readFileSync(join(root, 'src/ui/App.tsx'), 'utf8');
+  // GamePage owns the match-complete listener; App.tsx routes to it.
+  const app = [
+    readFileSync(join(root, 'src/ui/App.tsx'), 'utf8'),
+    readFileSync(join(root, 'src/ui/routes/GamePage.tsx'), 'utf8'),
+  ].join('\n');
   const fightScene = readFileSync(join(root, 'src/game/scenes/FightScene.ts'), 'utf8');
   const matchConfig = readFileSync(join(root, 'src/game/match/MatchConfig.ts'), 'utf8');
   const reporting = readFileSync(join(root, 'src/services/MatchReporting.ts'), 'utf8');
@@ -2073,8 +2082,10 @@ function assertTierPricingAndPipelineParity() {
     'const lockPaidTiers = paidTiersLocked(authStatus)',
     "setTier('rookie')",
     'setPendingUpgradeTier(tier.id)',
-    'aria-labelledby="upgrade-confirm-title"',
-    'Every existing local and cloud version remains preserved.',
+    // Upgrade confirmation runs through the shared ConfirmDialog (Modal sets
+    // aria-modal + aria-label from the title) with the QUALITY_TIERS copy.
+    'Upgrade to ${pendingUpgrade.label}',
+    'animations are kept in cache and remain accessible.',
     'tier: currentTier,',
     'syncFighterToCloud(updatedMeta, updatedSprites, intro, apiContext)',
     "setStatus('Done and synced')",

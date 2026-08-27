@@ -24,10 +24,14 @@ import {
 import { PUBLIC_APP_NAME } from '../publicBrand.ts';
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import { CheckoutConsent } from '../components/LegalConsent.tsx';
+import { Button } from '../components/Button.tsx';
+import type { LegalRoute } from '../components/LegalFooter.tsx';
 import { currentCheckoutLegalAttestation } from '../legal.ts';
 import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
 
 interface HomePageProps extends AuthRouteState {
+  onCreateFighter: () => void;
+  onNavigateLegal: (route: LegalRoute) => void;
   onOpenGallery: () => void;
   onOpenCommunity: () => void;
   onOpenWatchMode: () => void;
@@ -50,6 +54,8 @@ function recentResultLabel(match: RecentMatch, playerId: string): string {
 export function HomePage({
   authStatus,
   authSessionKey,
+  onCreateFighter,
+  onNavigateLegal,
   onOpenGallery,
   onOpenCommunity,
   onOpenWatchMode,
@@ -185,6 +191,11 @@ export function HomePage({
   };
 
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
+  const heroNote = rookieStatus === 'included'
+    ? 'Your first fighter is free in Rookie quality. Upgrade anytime to bring out the detail.'
+    : rookieStatus === 'credits'
+      ? 'Forge new challengers with credits. Every generated version stays yours.'
+      : 'Upload a photo, get a playable fighter. Your first Rookie is free.';
   const arcadeModeHint = rookieStatus === 'included'
     ? 'Your Rookie is included. Pick an official challenger.'
     : rookieStatus === 'credits'
@@ -194,36 +205,41 @@ export function HomePage({
   return (
     <div className="home-app">
       <div className="home-hero">
-        <p className="gallery-eyebrow">Insert Coin</p>
         <h1>{PUBLIC_APP_NAME}</h1>
         <p className="home-hero__copy">
           Insert yourself into the game. Upload a photo, build a playable fighter, and sync your roster across devices.
         </p>
+        <div className="home-hero__cta">
+          <Button variant="primary" size="lg" onClick={onCreateFighter}>
+            Create Fighter
+          </Button>
+          <p className="home-hero__note">{heroNote}</p>
+        </div>
       </div>
 
       <div className="home-menu">
-        <button className="home-menu__action is-primary" onClick={onOpenVsCpu}>
+        <button type="button" className="home-menu__action is-primary" onClick={onOpenVsCpu}>
           <span>Arcade Mode</span>
           <small>{arcadeModeHint}</small>
         </button>
-        <button className="home-menu__action" onClick={onOpenVsPlayer}>
+        <button type="button" className="home-menu__action" onClick={onOpenVsPlayer}>
           <span>Versus</span>
           <small>Local 1P vs 2P Showdown</small>
         </button>
-        <button className="home-menu__action" onClick={onOpenWatchMode}>
+        <button type="button" className="home-menu__action" onClick={onOpenWatchMode}>
           <span>Attract Mode</span>
           <small>Watch The CPUs Fight</small>
         </button>
-        <button className="home-menu__action is-secondary" onClick={onOpenGallery}>
+        <button type="button" className="home-menu__action is-secondary" onClick={onOpenGallery}>
           <span>Roster Lab</span>
           <small>Browse Your Roster</small>
         </button>
-        <button className="home-menu__action" onClick={onOpenCommunity}>
+        <button type="button" className="home-menu__action" onClick={onOpenCommunity}>
           <span>Community</span>
           <small>Clone Public Fighters</small>
         </button>
         {billingProfile?.planTier === 'admin' ? (
-          <button className="home-menu__action" onClick={onOpenModeration}>
+          <button type="button" className="home-menu__action" onClick={onOpenModeration}>
             <span>Moderation</span>
             <small>Review Community Reports</small>
           </button>
@@ -232,14 +248,10 @@ export function HomePage({
 
       <section className="home-credits" aria-label="Credits">
         <div className="home-credits__header">
-          <div>
-            <p className="gallery-eyebrow">Credits</p>
-            <h2>
-              {billingProfile
-                ? `${billingProfile.creditsBalance} Ready`
-                : 'Cloud Wallet'}
-            </h2>
-          </div>
+          <h2>
+            Credits
+            {billingProfile ? <em className="home-credits__balance">{billingProfile.creditsBalance}</em> : null}
+          </h2>
           <span role="status" aria-live="polite">{billingStatus}</span>
         </div>
 
@@ -249,10 +261,12 @@ export function HomePage({
               checked={checkoutConsentAccepted}
               disabled={checkoutPackId !== null}
               onChange={setCheckoutConsentAccepted}
+              onNavigate={onNavigateLegal}
             />
             <div className="home-credits__grid">
               {creditPacks.map((pack) => (
                 <button
+                  type="button"
                   key={pack.id}
                   className="home-credit-pack"
                   disabled={checkoutPackId !== null || !checkoutConsentAccepted}
@@ -274,10 +288,7 @@ export function HomePage({
       <section className="home-dashboard" aria-label="Arena records">
         <div className="home-board">
           <div className="home-board__header">
-            <div>
-              <p className="gallery-eyebrow">Arena</p>
-              <h2>Your Record</h2>
-            </div>
+            <h2>Your Record</h2>
             <span role="status" aria-live="polite">{arenaStatus}</span>
           </div>
 
@@ -318,10 +329,7 @@ export function HomePage({
 
         <div className="home-board">
           <div className="home-board__header">
-            <div>
-              <p className="gallery-eyebrow">Rankings</p>
-              <h2>Fight Board</h2>
-            </div>
+            <h2>Fight Board</h2>
           </div>
 
           <div className="home-board__rows">

@@ -11,8 +11,8 @@ export function PipelineProgress({ percent }: PipelineProgressProps) {
       <svg className="create-progress__bar" viewBox="0 0 100 6" preserveAspectRatio="none">
         <defs>
           <linearGradient id="asfProgressFill" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stopColor="#ff2a2a" />
-            <stop offset="1" stopColor="#ffce3a" />
+            <stop offset="0" className="create-progress__stop-start" />
+            <stop offset="1" className="create-progress__stop-end" />
           </linearGradient>
         </defs>
         <rect x="0" y="0" width={width} height="6" fill="url(#asfProgressFill)" />

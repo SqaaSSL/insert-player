@@ -6,6 +6,8 @@ import {
   type ModerationStatus,
 } from '../../services/CommunityModeration.ts';
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
+import { Button } from '../components/Button.tsx';
+import { ConfirmDialog } from '../components/Modal.tsx';
 
 interface ModerationPageProps {
   onBack: () => void;
@@ -44,6 +46,7 @@ export function ModerationPage({ onBack }: ModerationPageProps) {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [busyId, setBusyId] = useState<string | null>(null);
   const [status, setStatus] = useState('Loading moderation queue...');
+  const [removalTarget, setRemovalTarget] = useState<CommunityModerationReport | null>(null);
 
   useEffect(() => {
     const apiContext = captureApiRequestContext();
@@ -79,7 +82,6 @@ export function ModerationPage({ onBack }: ModerationPageProps) {
       setStatus('Add a moderation note before closing the report');
       return;
     }
-    if (unpublishFighter && !window.confirm(`Remove ${report.fighterName} from the public community?`)) return;
 
     setBusyId(report.id);
     setStatus(`Updating ${report.fighterName}...`);
@@ -109,28 +111,34 @@ export function ModerationPage({ onBack }: ModerationPageProps) {
     }
   };
 
+  const closeActioned = (report: CommunityModerationReport) => {
+    if (report.fighterPublic) {
+      setRemovalTarget(report);
+      return;
+    }
+    void reviewReport(report, 'actioned', false);
+  };
+
   return (
     <div className="moderation-app">
       <header className="roster-hero">
         <div>
-          <p className="gallery-eyebrow">Operations</p>
           <h1>Moderation</h1>
           <p className="roster-hero__copy">Review player reports and make deliberate community decisions.</p>
         </div>
         <div className="roster-hero__actions">
-          <div className="gallery-hero__status" aria-live="polite">{status}</div>
-          <button className="gallery-back" onClick={onBack}>Back</button>
+          <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
+          <Button onClick={onBack}>Back</Button>
         </div>
       </header>
 
-      <div className="moderation-tabs" role="tablist" aria-label="Report status">
+      <div className="moderation-tabs" role="group" aria-label="Report status filter">
         {STATUS_OPTIONS.map((option) => (
           <button
             key={option.value}
             className={`gallery-tab${filter === option.value ? ' is-active' : ''}`}
             type="button"
-            role="tab"
-            aria-selected={filter === option.value}
+            aria-pressed={filter === option.value}
             onClick={() => setFilter(option.value)}
           >
             {option.label}
@@ -152,8 +160,10 @@ export function ModerationPage({ onBack }: ModerationPageProps) {
               <article className="moderation-report" key={report.id}>
                 <header className="moderation-report__header">
                   <div>
-                    <p className="gallery-eyebrow">{REASON_LABELS[report.reason] ?? report.reason}</p>
                     <h2>{report.fighterName}</h2>
+                    <span className="asf-badge moderation-report__reason">
+                      {REASON_LABELS[report.reason] ?? report.reason}
+                    </span>
                   </div>
                   <div className="moderation-report__state">
                     <strong>{report.status}</strong>
@@ -184,34 +194,27 @@ export function ModerationPage({ onBack }: ModerationPageProps) {
 
                 <div className="moderation-report__actions">
                   {report.status === 'open' ? (
-                    <button
-                      className="gallery-chip"
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void reviewReport(report, 'reviewing')}
-                    >
-                      <span>Start Review</span>
-                    </button>
+                    <Button disabled={busy} onClick={() => void reviewReport(report, 'reviewing')}>
+                      Start Review
+                    </Button>
                   ) : null}
                   {report.status !== 'dismissed' && report.status !== 'actioned' ? (
-                    <button
-                      className="gallery-chip"
-                      type="button"
+                    <Button
+                      variant="ghost"
                       disabled={busy || !note.trim()}
                       onClick={() => void reviewReport(report, 'dismissed')}
                     >
-                      <span>Dismiss</span>
-                    </button>
+                      Dismiss
+                    </Button>
                   ) : null}
                   {report.status !== 'dismissed' && report.status !== 'actioned' ? (
-                    <button
-                      className="gallery-chip is-active"
-                      type="button"
+                    <Button
+                      variant={report.fighterPublic ? 'danger' : 'primary'}
                       disabled={busy || !note.trim()}
-                      onClick={() => void reviewReport(report, 'actioned', report.fighterPublic)}
+                      onClick={() => closeActioned(report)}
                     >
-                      <span>{report.fighterPublic ? 'Remove Fighter' : 'Close Actioned'}</span>
-                    </button>
+                      {report.fighterPublic ? 'Remove Fighter' : 'Close Actioned'}
+                    </Button>
                   ) : null}
                 </div>
               </article>
@@ -219,6 +222,24 @@ export function ModerationPage({ onBack }: ModerationPageProps) {
           })}
         </section>
       )}
+
+      {removalTarget ? (
+        <ConfirmDialog
+          title={`Remove ${removalTarget.fighterName}`}
+          confirmLabel="Remove Fighter"
+          confirmVariant="danger"
+          busy={busyId === removalTarget.id}
+          onCancel={() => setRemovalTarget(null)}
+          onConfirm={() => {
+            const report = removalTarget;
+            setRemovalTarget(null);
+            void reviewReport(report, 'actioned', true);
+          }}
+        >
+          Remove {removalTarget.fighterName} from the public community? The owner keeps their
+          private fighter; only the public listing is taken down.
+        </ConfirmDialog>
+      ) : null}
     </div>
   );
 }
