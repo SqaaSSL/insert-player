@@ -3,17 +3,30 @@ name: Start one reviewed Arcade Video step
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: Normal step, exact same-run failed recovery, or exact terminal restart-required full restart
+        required: true
+        default: step
+        type: choice
+        options:
+          - step
+          - resume-failed
+          - restart-full
       slug:
         description: One draft fighter slug from arcade/roster-2026.json
         required: true
         type: string
       confirmation:
-        description: Enter START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION
+        description: Enter the exact confirmation phrase for the selected operation
         required: true
         type: string
-      reviewed_manifest_run_id:
-        description: Optional completed workflow run containing the separately reviewed canonical manifest artifact
+      recovery_from_job_id:
+        description: Exact latest failed or terminal restart-required Video job id; empty for step
         required: false
+        type: string
+      reviewed_manifest_run_id:
+        description: Required completed workflow run containing the separately reviewed canonical manifest artifact
+        required: true
         type: string
 
 permissions:
@@ -21,7 +34,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: production-arcade-video-${{ inputs.slug }}
+  group: production-worker-mutations
   cancel-in-progress: false
 
 jobs:
@@ -32,7 +45,9 @@ jobs:
     environment: production
     env:
       REQUESTED_SLUG: ${{ inputs.slug }}
+      REQUESTED_OPERATION: ${{ inputs.operation }}
       REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      RECOVERY_FROM_JOB_ID: ${{ inputs.recovery_from_job_id }}
       REVIEWED_MANIFEST_RUN_ID: ${{ inputs.reviewed_manifest_run_id }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -53,8 +68,35 @@ jobs:
             printf '::error::Invalid Arcade fighter slug.\n'
             exit 1
           }
-          [[ "$REQUESTED_CONFIRMATION" == "START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION" ]] || {
-            printf '::error::Video step requires its exact dedicated confirmation phrase.\n'
+          case "$REQUESTED_OPERATION" in
+            step)
+              [[ -z "$RECOVERY_FROM_JOB_ID" ]] || {
+                printf '::error::step cannot bind a recovery_from_job_id.\n'
+                exit 1
+              }
+              expected_confirmation="START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION"
+              ;;
+            resume-failed)
+              [[ "$RECOVERY_FROM_JOB_ID" =~ ^[a-f0-9]{32}$ ]] || {
+                printf '::error::resume-failed requires an exact recovery_from_job_id.\n'
+                exit 1
+              }
+              expected_confirmation="RESUME_FAILED_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION"
+              ;;
+            restart-full)
+              [[ "$RECOVERY_FROM_JOB_ID" =~ ^[a-f0-9]{32}$ ]] || {
+                printf '::error::restart-full requires an exact recovery_from_job_id.\n'
+                exit 1
+              }
+              expected_confirmation="RESTART_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION"
+              ;;
+            *)
+              printf '::error::Unsupported Video operation.\n'
+              exit 1
+              ;;
+          esac
+          [[ "$REQUESTED_CONFIRMATION" == "$expected_confirmation" ]] || {
+            printf '::error::Video operation requires its exact dedicated confirmation phrase.\n'
             exit 1
           }
           [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" ]] || {
@@ -65,12 +107,10 @@ jobs:
             printf '::error::ASF_ARCADE_ADMIN_CLERK_USER_ID is unavailable in the production environment.\n'
             exit 1
           }
-          if [[ -n "$REVIEWED_MANIFEST_RUN_ID" ]]; then
-            [[ "$REVIEWED_MANIFEST_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
-              printf '::error::reviewed_manifest_run_id must be a numeric GitHub Actions run id.\n'
-              exit 1
-            }
-          fi
+          [[ "$REVIEWED_MANIFEST_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            printf '::error::reviewed_manifest_run_id must be a required numeric GitHub Actions run id.\n'
+            exit 1
+          }
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -83,25 +123,36 @@ jobs:
         shell: bash
         run: |
           node --input-type=module <<'NODE'
-          const configured = process.env.ASF_WORKER_HEALTH_URL?.trim();
-          const workerBase = process.env.ASF_WORKER_URL?.trim().replace(/\/+$/, '');
-          const target = configured || (workerBase ? `${workerBase}/health` : '');
+          const configured = process.env.ASF_WORKER_HEALTH_URL?.trim() ?? '';
+          const workerBase = process.env.ASF_WORKER_URL?.trim() ?? '';
+          if (workerBase !== 'https://api.insertplayer.ai') {
+            throw new Error(
+              'Reviewed production operations require exact ASF_WORKER_URL=https://api.insertplayer.ai.',
+            );
+          }
           const expectedSha = process.env.GITHUB_SHA?.trim() ?? '';
-          if (!target || !/^[a-f0-9]{40}$/.test(expectedSha)) {
+          const expectedTarget = workerBase ? `${workerBase}/health` : '';
+          const target = configured || expectedTarget;
+          if (!target || !expectedTarget || !/^[a-f0-9]{40}$/.test(expectedSha)) {
             throw new Error('Worker health URL and full reviewed commit SHA are required.');
           }
           const url = new URL(target);
-          if (url.protocol !== 'https:') throw new Error('Worker health pin requires HTTPS.');
-          const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+          if (url.protocol !== 'https:' || url.toString() !== new URL(expectedTarget).toString()) {
+            throw new Error('Worker health pin must use ASF_WORKER_URL/health over HTTPS.');
+          }
+          const response = await fetch(url, {
+            redirect: 'error',
+            signal: AbortSignal.timeout(30_000),
+          });
           if (!response.ok) throw new Error(`Worker health failed with HTTP ${response.status}.`);
           const health = await response.json();
-          const expectedTagPrefix = `prod-${expectedSha}-`;
+          const expectedTag = new RegExp(`^prod-${expectedSha}-[1-9][0-9]*$`);
           if (
             health?.status !== 'ok' || health.environment !== 'production' ||
             health.storage?.d1 !== 'bound' || health.storage?.r2 !== 'bound' ||
             typeof health.workerVersion?.id !== 'string' || !health.workerVersion.id ||
             typeof health.workerVersion?.tag !== 'string' ||
-            !health.workerVersion.tag.startsWith(expectedTagPrefix)
+            !expectedTag.test(health.workerVersion.tag)
           ) {
             throw new Error(`Live Worker is not the healthy production deployment for ${expectedSha}.`);
           }
@@ -115,11 +166,34 @@ jobs:
         run: npm run arcade:sources -- --target=production --slug="$REQUESTED_SLUG"
 
       - name: Download the separately reviewed canonical manifest
-        if: ${{ inputs.reviewed_manifest_run_id != '' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          run_metadata="$RUNNER_TEMP/reviewed-canonical-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REVIEWED_MANIFEST_RUN_ID" > "$run_metadata"
+          REVIEWED_RUN_METADATA="$run_metadata" node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const run = JSON.parse(readFileSync(process.env.REVIEWED_RUN_METADATA, 'utf8'));
+          const allowedProducerPaths = new Set([
+            '.github/workflows/import-reviewed-xai-canonical-production.yml',
+            '.github/workflows/import-reviewed-elon-mixed-canonical-production.yml',
+            '.github/workflows/import-reviewed-global-mixed-canonical-production.yml',
+          ]);
+          const producerPath = String(run.path ?? '').split('@', 1)[0];
+          const expectedId = Number(process.env.REVIEWED_MANIFEST_RUN_ID);
+          if (
+            run.id !== expectedId || run.status !== 'completed' || run.conclusion !== 'success' ||
+            run.event !== 'workflow_dispatch' ||
+            run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            !allowedProducerPaths.has(producerPath)
+          ) {
+            throw new Error(
+              'reviewed_manifest_run_id is not a successful completed run of an approved canonical-import workflow in this repository.',
+            );
+          }
+          console.log(`Reviewed manifest producer pinned to ${producerPath} run ${run.id}.`);
+          NODE
           destination="$RUNNER_TEMP/reviewed-canonical"
           mkdir -p "$destination"
           gh run download "$REVIEWED_MANIFEST_RUN_ID" \
@@ -143,7 +217,27 @@ jobs:
             --confirm-production
             --confirm-video-step="$REQUESTED_CONFIRMATION"
           )
-          if [[ -n "${REVIEWED_CANONICAL_MANIFEST_ARG:-}" ]]; then
-            args+=("$REVIEWED_CANONICAL_MANIFEST_ARG")
-          fi
+          [[ -n "${REVIEWED_CANONICAL_MANIFEST_ARG:-}" ]] || {
+            printf '::error::The required reviewed canonical manifest was not bound.\n'
+            exit 1
+          }
+          args+=(
+            "$REVIEWED_CANONICAL_MANIFEST_ARG"
+            --reviewed-manifest-run-id="$REVIEWED_MANIFEST_RUN_ID"
+            --expected-deployed-sha="$GITHUB_SHA"
+            --video-review-export-dir="$RUNNER_TEMP/video-review"
+          )
+          case "$REQUESTED_OPERATION" in
+            resume-failed) args+=(--resume-video-run-from="$RECOVERY_FROM_JOB_ID") ;;
+            restart-full) args+=(--restart-video-run-from="$RECOVERY_FROM_JOB_ID") ;;
+          esac
           npm run arcade:seed -- "${args[@]}"
+
+      - name: Upload the private bound Video review media
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: arcade-video-review-${{ inputs.slug }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/video-review
+          if-no-files-found: warn
+          retention-days: 14

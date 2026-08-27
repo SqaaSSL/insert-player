@@ -1,7 +1,7 @@
 import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 import { startAdminArcadeGeneration } from './arcadeGeneration';
-import { createGenerationJob, getGenerationJob } from './generationJobs';
+import { createGenerationJob, getGenerationJob, listGenerationJobs } from './generationJobs';
 import { GEMINI_PRO_IMAGE_MODEL, recordProviderDailyQuota } from './providerCapacity';
 import type { AuthContext, Env } from './types';
 import type { SealedReviewedCanonicalSources } from './reviewedCanonicalSources';
@@ -468,6 +468,41 @@ async function seedAnimationRetry(db: D1Database, env: Env): Promise<void> {
 }
 
 describe('durable generation job creation', () => {
+  it('filters by fighter before the global recent-job limit', async () => {
+    const { mf, db, env } = await bindings();
+    const targetJobId = 'abababababababababababababababab';
+    try {
+      const insertJob = (id: string, fighterId: string, index: number) => db.prepare(`
+        INSERT INTO generation_jobs (
+          id, workflow_instance_id, user_id, fighter_id, charge_id,
+          provider_session_id, tier, creation_flow, operation, status
+        ) VALUES (?, ?, ?, ?, ?, ?, 'champion', 'video', 'fighter_generation', 'failed')
+      `).bind(id, id, USER_ID, fighterId, `list-charge-${index}`, `list-session-${index}`);
+      await db.batch([
+        insertJob(targetJobId, FIGHTER_ID, 0),
+        ...Array.from({ length: 25 }, (_, index) => insertJob(
+          (index + 1).toString(16).padStart(32, '0'),
+          'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          index + 1,
+        )),
+      ]);
+
+      const filtered = await listGenerationJobs(new Request(
+        `https://api.insertplayer.ai/api/generation-jobs?fighterId=${FIGHTER_ID}`,
+      ), env, auth);
+      expect(filtered.status).toBe(200);
+      expect(await filtered.json()).toMatchObject({ jobs: [{ id: targetJobId }] });
+      const unfiltered = await listGenerationJobs(new Request(
+        'https://api.insertplayer.ai/api/generation-jobs',
+      ), env, auth);
+      const unfilteredBody = await unfiltered.json() as { jobs: Array<{ id: string }> };
+      expect(unfilteredBody.jobs).toHaveLength(20);
+      expect(unfilteredBody.jobs.some((job) => job.id === targetJobId)).toBe(false);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
   it('serializes every terminal full video run as requiring a fresh full restart', async () => {
     const { mf, db, env } = await bindings();
     const jobId = '46464646464646464646464646464646';
@@ -641,6 +676,15 @@ describe('durable generation job creation', () => {
         { reviewedCanonicalSources: sealed },
       );
       expect(initial.status).toBe(202);
+      const serializedInitial = await getGenerationJob(env, adminAuth, PURCHASE_ID);
+      expect(await serializedInitial.json()).toMatchObject({ job: {
+        canonicalSourceMode: 'reviewed-current-v1',
+        canonicalSourceHashes: {
+          side: { processedSha256: '1'.repeat(64), rawSha256: '2'.repeat(64) },
+          upright: { processedSha256: '3'.repeat(64), rawSha256: '4'.repeat(64) },
+          crouch: { processedSha256: '5'.repeat(64), rawSha256: '6'.repeat(64) },
+        },
+      } });
       const initialManifest = (await db.prepare(`
         SELECT source_manifest_json FROM generation_artifact_runs WHERE id = ?
       `).bind(PURCHASE_ID).first<{ source_manifest_json: string }>())?.source_manifest_json;

@@ -15,6 +15,8 @@ import {
   projectCompilerReport,
   type VideoSpriteCandidateReportProjection,
 } from './videoSpriteGeneration';
+import { parseSealedReviewedCanonicalSources } from './reviewedCanonicalSources';
+import { validateOptionalReviewedProductionWorkerPin } from './reviewedDeploymentPin';
 
 const MAX_REVIEW_BODY_BYTES = 16 * 1024;
 const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
@@ -89,12 +91,18 @@ export interface VideoSpriteCandidateRevisionRow {
 interface OwnedReviewRow extends VideoSpriteCandidateRow, VideoSpriteCandidateRevisionRow {
   job_status: string;
   job_review_status: string;
+  job_stage: string;
+  job_target_kind: string | null;
+  job_resumed_from_job_id: string | null;
   tier: 'champion';
   operation: GenerationJob['operation'];
   target_name: string | null;
   run_operation: GenerationJob['operation'];
+  run_target_kind: string | null;
   run_target_name: string | null;
   run_status: string;
+  run_completed_at: string | null;
+  run_source_manifest_json: string | null;
   approved_action_count: number;
   successor_job_id: string | null;
 }
@@ -174,12 +182,18 @@ async function ownedReview(
       revision.*,
       job.status AS job_status,
       job.review_status AS job_review_status,
+      job.stage AS job_stage,
+      job.target_kind AS job_target_kind,
+      job.resumed_from_job_id AS job_resumed_from_job_id,
       job.tier,
       job.operation,
       job.target_name,
       run.operation AS run_operation,
+      run.target_kind AS run_target_kind,
       run.target_name AS run_target_name,
       run.status AS run_status,
+      run.completed_at AS run_completed_at,
+      run.source_manifest_json AS run_source_manifest_json,
       (SELECT COUNT(*) FROM video_sprite_candidates approved
         WHERE approved.run_id = candidate.run_id AND approved.status = 'approved') AS approved_action_count,
       successor.id AS successor_job_id
@@ -501,10 +515,13 @@ async function requireApprovalIntegrity(env: Env, row: OwnedReviewRow): Promise<
 }
 
 export async function getVideoSpriteReview(
+  request: Request,
   env: Env,
   auth: AuthContext,
   jobId: string,
 ): Promise<Response> {
+  const deploymentPinFailure = validateOptionalReviewedProductionWorkerPin(request, env);
+  if (deploymentPinFailure) return deploymentPinFailure;
   if (!/^[a-f0-9]{32}$/.test(jobId)) return json({ error: 'Video review not found' }, 404);
   let row = await ownedReview(env, auth.userId, jobId);
   if (!row) return json({ error: 'Video review not found' }, 404);
@@ -529,6 +546,8 @@ export async function approveVideoSpriteReview(
   auth: AuthContext,
   jobId: string,
 ): Promise<Response> {
+  const deploymentPinFailure = validateOptionalReviewedProductionWorkerPin(request, env);
+  if (deploymentPinFailure) return deploymentPinFailure;
   const body = await readJsonBody<Record<string, unknown>>(request, MAX_REVIEW_BODY_BYTES);
   const binding = reviewBinding(body);
   if (!binding) return json({ error: 'Exact candidate revision binding is required' }, 400);
@@ -916,12 +935,283 @@ async function reconcileApprovedVideoRunUnchecked(env: Env, row: OwnedReviewRow)
   }
 }
 
+export interface ReviewedVideoActivationProvenance {
+  schemaVersion: 1;
+  fighterId: string;
+  artifactRunId: string;
+  finalJobId: string;
+  approvedActionCount: number;
+  finalAction: 'victory';
+  animationFormat: 'video-dense-v1';
+  currentSpritesVerified: true;
+}
+
+export class ReviewedVideoActivationError extends Error {
+  constructor(message: string, readonly status = 409) {
+    super(message);
+    this.name = 'ReviewedVideoActivationError';
+  }
+}
+
+interface ActivationCandidateRow {
+  job_id: string;
+  action: VideoSpriteAction;
+  sequence_order: number;
+}
+
+interface ActivationCheckpointRow {
+  clean_version_id: string;
+  clean_blob_key: string;
+  raw_blob_key: string | null;
+  clean_content_hash: string | null;
+  raw_content_hash: string | null;
+  frame_w: number | null;
+  frame_h: number | null;
+  frame_count: number | null;
+  animation_format: string;
+  processing_version: number | null;
+  status: string;
+  completed_by_job_id: string;
+}
+
+interface ActivationCheckpointCountRow {
+  total_count: number;
+  approved_count: number;
+  source_count: number;
+  sprite_count: number;
+}
+
+async function requireCurrentVideoSpriteIntegrity(
+  env: Env,
+  review: OwnedReviewRow,
+  version: CandidateSpriteVersionRow,
+): Promise<void> {
+  const current = await env.DB.prepare(`
+    SELECT id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+      content_hash, raw_content_hash, frame_w, frame_h, frame_count,
+      animation_format, processing_version
+    FROM sprites
+    WHERE fighter_id = ? AND animation_name = ? AND quality_tier = 'champion'
+    LIMIT 1
+  `).bind(review.fighter_id, review.action).first<CandidateSpriteVersionRow>();
+  if (
+    !current || current.fighter_id !== review.fighter_id || current.animation_name !== review.action ||
+    current.quality_tier !== 'champion' || current.blob_key !== version.blob_key ||
+    current.raw_blob_key !== version.raw_blob_key || current.content_hash !== version.content_hash ||
+    current.raw_content_hash !== version.raw_content_hash || current.frame_w !== 192 ||
+    current.frame_h !== 256 || current.frame_count !== version.frame_count ||
+    current.animation_format !== 'video-dense-v1' || current.processing_version !== 5
+  ) {
+    throw new ReviewedVideoActivationError(
+      `Current ${review.action} sprite no longer matches its approved Video revision`,
+    );
+  }
+  const [runtime, raw] = await Promise.all([
+    env.SPRITES.get(current.blob_key),
+    current.raw_blob_key ? env.SPRITES.get(current.raw_blob_key) : Promise.resolve(null),
+  ]);
+  if (
+    !runtime || !raw || await hashString(await runtime.arrayBuffer()) !== current.content_hash ||
+    await hashString(await raw.arrayBuffer()) !== current.raw_content_hash ||
+    runtime.customMetadata?.contentHash !== current.content_hash ||
+    raw.customMetadata?.contentHash !== current.raw_content_hash ||
+    runtime.customMetadata?.animationName !== review.action ||
+    raw.customMetadata?.animationName !== review.action ||
+    runtime.customMetadata?.animationFormat !== 'video-dense-v1' ||
+    raw.customMetadata?.animationFormat !== 'video-dense-v1' ||
+    runtime.customMetadata?.qualityTier !== 'champion' ||
+    raw.customMetadata?.qualityTier !== 'champion' || raw.customMetadata?.raw !== 'true'
+  ) {
+    throw new ReviewedVideoActivationError(
+      `Current ${review.action} sprite bytes failed approved Video integrity validation`,
+    );
+  }
+}
+
+export async function verifyReviewedVideoRunForActivation(
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+  finalJobId: string,
+): Promise<ReviewedVideoActivationProvenance> {
+  if (!/^[a-f0-9]{32}$/.test(fighterId) || !/^[a-f0-9]{32}$/.test(finalJobId)) {
+    throw new ReviewedVideoActivationError('Exact fighter and final Video job ids are required', 400);
+  }
+  const final = await ownedReview(env, auth.userId, finalJobId);
+  if (!final || final.fighter_id !== fighterId) {
+    throw new ReviewedVideoActivationError('Completed reviewed Video run not found', 404);
+  }
+  const sealedSources = parseSealedReviewedCanonicalSources(final.run_source_manifest_json);
+  if (
+    !sealedSources || sealedSources.mode !== 'reviewed-current-v1' ||
+    sealedSources.fighterId !== fighterId || sealedSources.ownerUserId !== auth.userId
+  ) {
+    throw new ReviewedVideoActivationError(
+      'Completed Video run is not sealed to the reviewed-current-v1 canonical sources',
+    );
+  }
+  if (
+    final.action !== 'victory' || final.sequence_order !== VIDEO_SPRITE_ACTIONS.length - 1 ||
+    final.job_id !== finalJobId || final.job_status !== 'succeeded' ||
+    final.job_review_status !== 'approved' || final.job_stage !== 'complete' ||
+    final.tier !== 'champion' || final.operation !== 'fighter_generation' ||
+    final.job_target_kind !== null || final.target_name !== null ||
+    final.run_operation !== 'fighter_generation' || final.run_target_kind !== null ||
+    final.run_target_name !== null || final.run_status !== 'succeeded' ||
+    !final.run_completed_at
+  ) {
+    throw new ReviewedVideoActivationError(
+      'Final victory job is not the completed approved terminal Video job',
+    );
+  }
+
+  const { results } = await env.DB.prepare(`
+    SELECT job_id, action, sequence_order
+    FROM video_sprite_candidates
+    WHERE run_id = ?
+    ORDER BY sequence_order ASC
+  `).bind(final.run_id).all<ActivationCandidateRow>();
+  const candidates = results ?? [];
+  if (
+    candidates.length !== VIDEO_SPRITE_ACTIONS.length ||
+    candidates.some((candidate, index) => (
+      candidate.action !== VIDEO_SPRITE_ACTIONS[index] || candidate.sequence_order !== index
+    )) || candidates.at(-1)?.job_id !== finalJobId
+  ) {
+    throw new ReviewedVideoActivationError(
+      'Completed reviewed Video run does not contain the exact eleven-action lineage',
+    );
+  }
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    const review = await ownedReview(env, auth.userId, candidate.job_id);
+    if (
+      !review || review.run_id !== final.run_id || review.fighter_id !== fighterId ||
+      review.action !== candidate.action || review.sequence_order !== index ||
+      review.status !== 'approved' || review.approved_revision !== review.current_revision ||
+      !review.reviewed_at || !review.reviewed_by_user_id ||
+      review.job_status !== 'succeeded' || review.job_review_status !== 'approved' ||
+      review.tier !== 'champion' || review.operation !== 'fighter_generation' ||
+      review.job_target_kind !== null || review.target_name !== null ||
+      review.run_status !== 'succeeded' || review.run_id !== final.run_id ||
+      review.animation_format !== 'video-dense-v1' || review.processing_version !== 5 ||
+      review.frame_w !== 192 || review.frame_h !== 256 ||
+      review.job_resumed_from_job_id !== (index === 0 ? null : candidates[index - 1].job_id)
+    ) {
+      throw new ReviewedVideoActivationError(
+        `Approved ${candidate.action} Video lineage changed before activation`,
+      );
+    }
+    let version: CandidateSpriteVersionRow;
+    try {
+      version = await requireApprovalIntegrity(env, review);
+    } catch (error) {
+      throw new ReviewedVideoActivationError(
+        error instanceof Error ? error.message : `Approved ${candidate.action} Video integrity failed`,
+      );
+    }
+    const checkpoint = await env.DB.prepare(`
+      SELECT clean_version_id, clean_blob_key, raw_blob_key, clean_content_hash,
+        raw_content_hash, frame_w, frame_h, frame_count, animation_format,
+        processing_version, status, completed_by_job_id
+      FROM generation_artifact_checkpoints
+      WHERE run_id = ? AND artifact_kind = 'sprite' AND artifact_name = ?
+      LIMIT 1
+    `).bind(final.run_id, candidate.action).first<ActivationCheckpointRow>();
+    if (
+      !checkpoint || checkpoint.status !== 'approved' ||
+      checkpoint.completed_by_job_id !== candidate.job_id ||
+      checkpoint.clean_version_id !== version.id || checkpoint.clean_blob_key !== version.blob_key ||
+      checkpoint.raw_blob_key !== version.raw_blob_key ||
+      checkpoint.clean_content_hash !== version.content_hash ||
+      checkpoint.raw_content_hash !== version.raw_content_hash ||
+      checkpoint.frame_w !== 192 || checkpoint.frame_h !== 256 ||
+      checkpoint.frame_count !== version.frame_count ||
+      checkpoint.animation_format !== 'video-dense-v1' || checkpoint.processing_version !== 5
+    ) {
+      throw new ReviewedVideoActivationError(
+        `Approved ${candidate.action} Video checkpoint changed before activation`,
+      );
+    }
+    await requireCurrentVideoSpriteIntegrity(env, review, version);
+  }
+
+  for (const [index, sourceName] of ['side', 'upright', 'crouch'].entries()) {
+    const sealed = sealedSources.sources[sourceName as keyof typeof sealedSources.sources];
+    const checkpoint = await env.DB.prepare(`
+      SELECT clean_version_id, raw_version_id, clean_blob_key, raw_blob_key,
+        clean_content_hash, raw_content_hash, stage_index, tier, status
+      FROM generation_artifact_checkpoints
+      WHERE run_id = ? AND artifact_kind = 'source' AND artifact_name = ?
+      LIMIT 1
+    `).bind(final.run_id, sourceName).first<{
+      clean_version_id: string;
+      raw_version_id: string | null;
+      clean_blob_key: string;
+      raw_blob_key: string | null;
+      clean_content_hash: string | null;
+      raw_content_hash: string | null;
+      stage_index: number;
+      tier: string;
+      status: string;
+    }>();
+    if (
+      !checkpoint || checkpoint.status !== 'approved' || checkpoint.tier !== 'champion' ||
+      checkpoint.stage_index !== index + 1 ||
+      checkpoint.clean_version_id !== sealed.processed.versionId ||
+      checkpoint.raw_version_id !== sealed.raw.versionId ||
+      checkpoint.clean_blob_key !== sealed.processed.blobKey ||
+      checkpoint.raw_blob_key !== sealed.raw.blobKey ||
+      checkpoint.clean_content_hash !== sealed.processed.contentSha256 ||
+      checkpoint.raw_content_hash !== sealed.raw.contentSha256
+    ) {
+      throw new ReviewedVideoActivationError(
+        `Reviewed ${sourceName} canonical checkpoint changed before activation`,
+      );
+    }
+  }
+
+  const checkpointCounts = await env.DB.prepare(`
+    SELECT
+      COUNT(*) AS total_count,
+      SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved_count,
+      SUM(CASE WHEN artifact_kind = 'source' AND artifact_name IN ('side', 'upright', 'crouch')
+        THEN 1 ELSE 0 END) AS source_count,
+      SUM(CASE WHEN artifact_kind = 'sprite' THEN 1 ELSE 0 END) AS sprite_count
+    FROM generation_artifact_checkpoints
+    WHERE run_id = ?
+  `).bind(final.run_id).first<ActivationCheckpointCountRow>();
+  if (
+    !checkpointCounts || checkpointCounts.total_count !== 14 ||
+    checkpointCounts.approved_count !== 14 || checkpointCounts.source_count !== 3 ||
+    checkpointCounts.sprite_count !== VIDEO_SPRITE_ACTIONS.length
+  ) {
+    throw new ReviewedVideoActivationError(
+      'Completed reviewed Video run does not contain exactly fourteen approved durable stages',
+    );
+  }
+
+  return {
+    schemaVersion: 1,
+    fighterId,
+    artifactRunId: final.run_id,
+    finalJobId,
+    approvedActionCount: VIDEO_SPRITE_ACTIONS.length,
+    finalAction: 'victory',
+    animationFormat: 'video-dense-v1',
+    currentSpritesVerified: true,
+  };
+}
+
 export async function rejectVideoSpriteReview(
   request: Request,
   env: Env,
   auth: AuthContext,
   jobId: string,
 ): Promise<Response> {
+  const deploymentPinFailure = validateOptionalReviewedProductionWorkerPin(request, env);
+  if (deploymentPinFailure) return deploymentPinFailure;
   const body = await readJsonBody<Record<string, unknown>>(request, MAX_REVIEW_BODY_BYTES);
   const binding = reviewBinding(body);
   if (!binding) return json({ error: 'Exact candidate revision binding is required' }, 400);
@@ -1035,6 +1325,8 @@ export async function adjustVideoSpriteReview(
   auth: AuthContext,
   jobId: string,
 ): Promise<Response> {
+  const deploymentPinFailure = validateOptionalReviewedProductionWorkerPin(request, env);
+  if (deploymentPinFailure) return deploymentPinFailure;
   const body = await readJsonBody<Record<string, unknown>>(request, MAX_REVIEW_BODY_BYTES);
   const binding = reviewBinding(body);
   if (!binding || !Array.isArray(body.selectedVideoIndices) ||
@@ -1265,6 +1557,8 @@ export async function getVideoSpriteReviewAsset(
   jobId: string,
   kind: string,
 ): Promise<Response> {
+  const deploymentPinFailure = validateOptionalReviewedProductionWorkerPin(request, env);
+  if (deploymentPinFailure) return deploymentPinFailure;
   const revision = Number(new URL(request.url).searchParams.get('revision'));
   if (!/^[a-f0-9]{32}$/.test(jobId) || !Number.isInteger(revision) || revision < 1 || revision > 100) {
     return json({ error: 'Video review asset not found' }, 404);

@@ -20,6 +20,7 @@ import {
 import {
   generationSourceManifest,
   parseSealedReviewedCanonicalSources,
+  reviewedCanonicalHashesFromSealed,
   ReviewedCanonicalSourceError,
   type SealedReviewedCanonicalSources,
 } from './reviewedCanonicalSources';
@@ -116,6 +117,8 @@ interface GenerationRunSnapshot {
   pendingStages: string[];
   preservedArtifactCount: number;
   continuationConsumed: boolean;
+  canonicalSourceMode: 'reviewed-current-v1' | null;
+  canonicalSourceHashes: ReturnType<typeof reviewedCanonicalHashesFromSealed> | null;
 }
 
 function serializeJob(
@@ -159,6 +162,8 @@ function serializeJob(
     pendingStages: run?.pendingStages ?? generationStagesForOperation(job.operation, job.target_name)
       .map((entry) => entry.key),
     preservedArtifactCount: run?.preservedArtifactCount ?? 0,
+    canonicalSourceMode: run?.canonicalSourceMode ?? null,
+    canonicalSourceHashes: run?.canonicalSourceHashes ?? null,
     events: events.map((event) => ({
       stage: event.stage,
       status: event.status,
@@ -176,6 +181,7 @@ async function getRunSnapshot(env: Env, job: GenerationJob): Promise<GenerationR
     LIMIT 1
   `).bind(job.artifact_run_id, job.user_id, job.fighter_id).first<GenerationArtifactRun>();
   if (!run) return undefined;
+  const reviewedCanonicalSources = parseSealedReviewedCanonicalSources(run.source_manifest_json);
   return {
     status: run.status,
     failureStage: run.failure_stage,
@@ -183,6 +189,10 @@ async function getRunSnapshot(env: Env, job: GenerationJob): Promise<GenerationR
     continuationConsumed: Boolean(await env.DB.prepare(`
       SELECT 1 AS present FROM generation_jobs WHERE resumed_from_job_id = ? LIMIT 1
     `).bind(job.id).first()),
+    canonicalSourceMode: reviewedCanonicalSources?.mode ?? null,
+    canonicalSourceHashes: reviewedCanonicalSources
+      ? reviewedCanonicalHashesFromSealed(reviewedCanonicalSources)
+      : null,
   };
 }
 
@@ -928,12 +938,28 @@ export async function getGenerationJob(
   return json({ job: await serializeOwnedJob(env, job, await getJobEvents(env, job.id)) });
 }
 
-export async function listGenerationJobs(env: Env, auth: AuthContext): Promise<Response> {
-  const { results } = await env.DB.prepare(`
-    SELECT * FROM generation_jobs
-    WHERE user_id = ?
-    ORDER BY created_at DESC
-    LIMIT 20
-  `).bind(auth.userId).all<GenerationJob>();
+export async function listGenerationJobs(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+): Promise<Response> {
+  const fighterId = new URL(request.url).searchParams.get('fighterId');
+  if (fighterId !== null && !/^[a-f0-9]{32}$/.test(fighterId)) {
+    return json({ error: 'A valid fighterId filter is required' }, 400);
+  }
+  const statement = fighterId === null
+    ? env.DB.prepare(`
+        SELECT * FROM generation_jobs
+        WHERE user_id = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 20
+      `).bind(auth.userId)
+    : env.DB.prepare(`
+        SELECT * FROM generation_jobs
+        WHERE user_id = ? AND fighter_id = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 100
+      `).bind(auth.userId, fighterId);
+  const { results } = await statement.all<GenerationJob>();
   return json({ jobs: await Promise.all((results ?? []).map((job) => serializeOwnedJob(env, job))) });
 }

@@ -138,6 +138,7 @@ const SCHEMA = `
     target_name TEXT,
     source_manifest_json TEXT,
     status TEXT NOT NULL,
+    failure_stage TEXT,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE generation_artifact_checkpoints (
@@ -193,7 +194,11 @@ const adminAuth = {
 function generationRequest(
   restart = false,
   creationFlow?: 'original' | 'video',
-  reviewed?: { canonicalSourceMode?: unknown; canonicalSourceHashes?: unknown },
+  reviewed?: {
+    canonicalSourceMode?: unknown;
+    canonicalSourceHashes?: unknown;
+    recoveryFromJobId?: unknown;
+  },
 ): Request {
   return new Request(`https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/generate`, {
     method: 'POST',
@@ -239,10 +244,15 @@ async function stageReviewedCanonicalSources(db: D1Database, bucket: R2Bucket) {
   return { rows, hashes };
 }
 
-function reviewedGenerationRequest(hashes: unknown): Request {
-  return generationRequest(false, 'video', {
+function reviewedGenerationRequest(
+  hashes: unknown,
+  restart = false,
+  recoveryFromJobId?: string,
+): Request {
+  return generationRequest(restart, 'video', {
     canonicalSourceMode: REVIEWED_CANONICAL_SOURCE_MODE,
     canonicalSourceHashes: hashes,
+    ...(recoveryFromJobId ? { recoveryFromJobId } : {}),
   });
 }
 
@@ -575,6 +585,198 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
           },
         },
       });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('starts the first reviewed Video root over an already complete Original inventory', async () => {
+    const { mf, db, bucket, env } = await bindings();
+    try {
+      await stageCompleteChampionInventory(db, bucket, true);
+      const staged = await stageReviewedCanonicalSources(db, bucket);
+
+      const response = await startAdminArcadeGeneration(
+        reviewedGenerationRequest(staged.hashes), env, adminAuth, FIGHTER_ID,
+      );
+
+      expect(response.status).toBe(201);
+      expect(createProviderSession).toHaveBeenCalledOnce();
+      expect(createGenerationJob).toHaveBeenCalledOnce();
+      expect(await db.prepare(`
+        SELECT creation_flow, credit_cost, continuation_run_id, resumed_from_job_id
+        FROM generation_charges WHERE status = 'reserved'
+      `).first()).toEqual({
+        creation_flow: 'video',
+        credit_cost: 0,
+        continuation_run_id: null,
+        resumed_from_job_id: null,
+      });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('restarts a reviewed terminal Video run as one fresh zero-credit sealed root', async () => {
+    const { mf, db, bucket, env } = await bindings();
+    const terminalJobId = '91919191919191919191919191919191';
+    try {
+      const staged = await stageReviewedCanonicalSources(db, bucket);
+      await db.batch([
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, creation_flow, operation, status
+          ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', 'failed')
+        `).bind(terminalJobId, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, user_id, fighter_id, artifact_run_id, tier, creation_flow, operation,
+            status, review_status, stage, progress_current, progress_total
+          ) VALUES (?, ?, ?, ?, 'champion', 'video', 'fighter_generation',
+            'succeeded', 'rejected', 'review:rejected', 4, 14)
+        `).bind(terminalJobId, USER_ID, FIGHTER_ID, terminalJobId),
+      ]);
+
+      const unbound = await startAdminArcadeGeneration(
+        reviewedGenerationRequest(staged.hashes, true), env, adminAuth, FIGHTER_ID,
+      );
+      expect(unbound.status).toBe(400);
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(createGenerationJob).not.toHaveBeenCalled();
+
+      const response = await startAdminArcadeGeneration(
+        reviewedGenerationRequest(staged.hashes, true, terminalJobId), env, adminAuth, FIGHTER_ID,
+      );
+
+      expect(response.status).toBe(201);
+      expect(createProviderSession).toHaveBeenCalledOnce();
+      expect(constrainProviderSessionToArtifactRunRemaining).not.toHaveBeenCalled();
+      expect(createGenerationJob).toHaveBeenCalledOnce();
+      const [jobRequest, , , options] = vi.mocked(createGenerationJob).mock.calls[0];
+      expect(await jobRequest.clone().json()).toMatchObject({
+        fighterId: FIGHTER_ID,
+        creationFlow: 'video',
+      });
+      expect(options?.reviewedCanonicalSources).toMatchObject({
+        schemaVersion: 1,
+        mode: REVIEWED_CANONICAL_SOURCE_MODE,
+        fighterId: FIGHTER_ID,
+        ownerUserId: USER_ID,
+      });
+      expect(await db.prepare(`
+        SELECT creation_flow, credit_cost, continuation_run_id, resumed_from_job_id
+        FROM generation_charges WHERE status = 'reserved'
+      `).first()).toEqual({
+        creation_flow: 'video',
+        credit_cost: 0,
+        continuation_run_id: null,
+        resumed_from_job_id: null,
+      });
+      expect(await db.prepare(`SELECT COALESCE(SUM(delta), 0) AS delta FROM credit_ledger`)
+        .first()).toEqual({ delta: 0 });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('rejects a reviewed recovery when a newer UI job appears between its two seals', async () => {
+    const { mf, db, bucket, env } = await bindings();
+    const recoveryJobId = '92929292929292929292929292929292';
+    const newerJobId = '93939393939393939393939393939393';
+    try {
+      const staged = await stageReviewedCanonicalSources(db, bucket);
+      await db.batch([
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, creation_flow, operation, status
+          ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', 'failed')
+        `).bind(recoveryJobId, USER_ID, FIGHTER_ID),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, user_id, fighter_id, artifact_run_id, tier, creation_flow, operation,
+            status, review_status, stage, progress_current, progress_total
+          ) VALUES (?, ?, ?, ?, 'champion', 'video', 'fighter_generation',
+            'succeeded', 'rejected', 'review:rejected', 4, 14)
+        `).bind(recoveryJobId, USER_ID, FIGHTER_ID, recoveryJobId),
+      ]);
+      const originalBucket = env.SPRITES;
+      let interleaved = false;
+      env.SPRITES = new Proxy(originalBucket, {
+        get(target, property, receiver) {
+          if (property === 'get') {
+            return async (...args: Parameters<R2Bucket['get']>) => {
+              if (!interleaved) {
+                interleaved = true;
+                await db.batch([
+                  db.prepare(`
+                    INSERT INTO generation_artifact_runs (
+                      id, user_id, fighter_id, tier, creation_flow, operation, status
+                    ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', 'failed')
+                  `).bind(newerJobId, USER_ID, FIGHTER_ID),
+                  db.prepare(`
+                    INSERT INTO generation_jobs (
+                      id, user_id, fighter_id, artifact_run_id, tier, creation_flow, operation,
+                      status, review_status, stage, progress_current, progress_total
+                    ) VALUES (?, ?, ?, ?, 'champion', 'video', 'fighter_generation',
+                      'failed', 'none', 'video:provider', 4, 14)
+                  `).bind(newerJobId, USER_ID, FIGHTER_ID, newerJobId),
+                ]);
+              }
+              return originalBucket.get(...args);
+            };
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+
+      const response = await startAdminArcadeGeneration(
+        reviewedGenerationRequest(staged.hashes, true, recoveryJobId),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+      );
+
+      expect(interleaved).toBe(true);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        code: 'reviewed_video_recovery_source_changed',
+        latestJobId: newerJobId,
+      });
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(createGenerationJob).not.toHaveBeenCalled();
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first())
+        .toEqual({ count: 0 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM credit_ledger').first())
+        .toEqual({ count: 0 });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('requires the exact deployed Worker SHA before a reviewed production Video mutation', async () => {
+    const { mf, db, bucket, env } = await bindings();
+    const expectedSha = 'a'.repeat(40);
+    try {
+      const staged = await stageReviewedCanonicalSources(db, bucket);
+      env.ENVIRONMENT = 'production';
+      env.WORKER_VERSION_METADATA = {
+        id: 'worker-version', tag: `prod-${expectedSha}-3`, timestamp: '2026-08-27T00:00:00Z',
+      };
+      const missing = await startAdminArcadeGeneration(
+        reviewedGenerationRequest(staged.hashes), env, adminAuth, FIGHTER_ID,
+      );
+      expect(missing.status).toBe(428);
+      const staleRequest = reviewedGenerationRequest(staged.hashes);
+      staleRequest.headers.set('X-Insert-Player-Expected-Worker-Sha', 'b'.repeat(40));
+      const stale = await startAdminArcadeGeneration(
+        staleRequest, env, adminAuth, FIGHTER_ID,
+      );
+      expect(stale.status).toBe(409);
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(createGenerationJob).not.toHaveBeenCalled();
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first())
+        .toEqual({ count: 0 });
     } finally {
       await mf.dispose();
     }

@@ -11,8 +11,10 @@ import {
   adjustVideoSpriteReview,
   approveVideoSpriteReview,
   getVideoSpriteReview,
+  getVideoSpriteReviewAsset,
   rejectVideoSpriteReview,
 } from './videoSpriteReview';
+import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
 import type { AuthContext, Env } from './types';
 
 const USER_ID = 'video-review-user';
@@ -23,6 +25,11 @@ const AUTH = { userId: USER_ID } as AuthContext;
 const SCHEMA = `
   CREATE TABLE fighters (
     id TEXT PRIMARY KEY, owner_user_id TEXT NOT NULL, quality_tier TEXT NOT NULL,
+    public_flag INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE arcade_fighters (
+    fighter_id TEXT PRIMARY KEY, status TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE sprite_versions (
@@ -47,13 +54,14 @@ const SCHEMA = `
   CREATE TABLE generation_artifact_runs (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, fighter_id TEXT NOT NULL,
     tier TEXT NOT NULL, creation_flow TEXT NOT NULL, operation TEXT NOT NULL,
-    target_name TEXT, status TEXT NOT NULL, failure_stage TEXT,
+    target_kind TEXT, target_name TEXT, root_job_id TEXT NOT NULL,
+    source_manifest_json TEXT, status TEXT NOT NULL, failure_stage TEXT,
     completed_at TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE generation_jobs (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, fighter_id TEXT NOT NULL,
     charge_id TEXT NOT NULL, provider_session_id TEXT NOT NULL, tier TEXT NOT NULL,
-    creation_flow TEXT NOT NULL, operation TEXT NOT NULL, target_name TEXT,
+    creation_flow TEXT NOT NULL, operation TEXT NOT NULL, target_kind TEXT, target_name TEXT,
     artifact_run_id TEXT NOT NULL, resumed_from_job_id TEXT, status TEXT NOT NULL,
     review_status TEXT NOT NULL, stage TEXT NOT NULL, failure_stage TEXT,
     error_code TEXT, error_message TEXT,
@@ -148,6 +156,8 @@ async function createHarness(): Promise<Harness> {
     .map((statement) => db.prepare(statement)));
   await db.prepare(`INSERT INTO fighters (id, owner_user_id, quality_tier)
     VALUES (?, ?, 'contender')`).bind(FIGHTER_ID, USER_ID).run();
+  await db.prepare(`INSERT INTO arcade_fighters (fighter_id, status)
+    VALUES (?, 'draft')`).bind(FIGHTER_ID).run();
   return { mf, db, bucket, env: { DB: db, SPRITES: bucket } as Env };
 }
 
@@ -169,10 +179,36 @@ async function seedReviews(
   const allActions: VideoSpriteAction[] = operation === 'fighter_retry_animation'
     ? ['idle'] : [...VIDEO_SPRITE_ACTIONS];
   const actions = allActions.slice(0, actionLimit ?? allActions.length);
+  const sourceIdentity = (seed: string) => ({
+    versionId: seed.repeat(32),
+    blobKey: `source/${seed}`,
+    contentSha256: seed.repeat(64),
+  });
+  const sealedSources = {
+    side: { processed: sourceIdentity('1'), raw: sourceIdentity('2') },
+    upright: { processed: sourceIdentity('3'), raw: sourceIdentity('4') },
+    crouch: { processed: sourceIdentity('5'), raw: sourceIdentity('6') },
+  };
+  const sourceManifest = JSON.stringify({
+    side: sealedSources.side.processed.blobKey, sideRaw: sealedSources.side.raw.blobKey,
+    upright: sealedSources.upright.processed.blobKey,
+    uprightRaw: sealedSources.upright.raw.blobKey,
+    crouch: sealedSources.crouch.processed.blobKey,
+    crouchRaw: sealedSources.crouch.raw.blobKey,
+    reviewedCanonicalSources: {
+      schemaVersion: 1, mode: 'reviewed-current-v1',
+      fighterId: FIGHTER_ID, ownerUserId: USER_ID,
+      sources: sealedSources,
+    },
+  });
   await target.db.prepare(`INSERT INTO generation_artifact_runs (
-    id, user_id, fighter_id, tier, creation_flow, operation, target_name, status
-  ) VALUES (?, ?, ?, 'champion', 'video', ?, ?, 'partial')`).bind(
-    RUN_ID, USER_ID, FIGHTER_ID, operation, operation === 'fighter_retry_animation' ? 'idle' : null,
+    id, user_id, fighter_id, tier, creation_flow, operation, target_kind, target_name,
+    root_job_id, source_manifest_json, status
+  ) VALUES (?, ?, ?, 'champion', 'video', ?, ?, ?, ?, ?, 'partial')`).bind(
+    RUN_ID, USER_ID, FIGHTER_ID, operation,
+    operation === 'fighter_retry_animation' ? 'animation' : null,
+    operation === 'fighter_retry_animation' ? 'idle' : null,
+    hexId(0x100), sourceManifest,
   ).run();
   const reviews: ReviewSeed[] = [];
   for (let index = 0; index < actions.length; index += 1) {
@@ -182,11 +218,12 @@ async function seedReviews(
     const approved = index < approvedCount;
     await target.db.prepare(`INSERT INTO generation_jobs (
       id, user_id, fighter_id, charge_id, provider_session_id, tier, creation_flow,
-      operation, target_name, artifact_run_id, resumed_from_job_id, status,
+      operation, target_kind, target_name, artifact_run_id, resumed_from_job_id, status,
       review_status, stage, progress_current, progress_total
-    ) VALUES (?, ?, ?, ?, ?, 'champion', 'video', ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?)`)
+    ) VALUES (?, ?, ?, ?, ?, 'champion', 'video', ?, ?, ?, ?, ?, 'succeeded', ?, ?, ?, ?)`)
       .bind(
         jobId, USER_ID, FIGHTER_ID, 'charge-' + index, 'session-' + index, operation,
+        operation === 'fighter_retry_animation' ? 'animation' : null,
         operation === 'fighter_retry_animation' ? action : null, RUN_ID,
         index ? hexId(0x100 + index - 1) : null,
         approved ? 'approved' : 'awaiting_review',
@@ -223,10 +260,12 @@ async function seedReviews(
         .bind(versionId, FIGHTER_ID, action, keys.runtime, keys.raw, hashes.runtime, hashes.raw),
       target.db.prepare(`INSERT INTO video_sprite_candidates (
         id, run_id, job_id, user_id, fighter_id, action, sequence_order,
-        status, current_revision, approved_revision
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`)
+        status, current_revision, approved_revision, reviewed_at, reviewed_by_user_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
         .bind(candidateId, RUN_ID, jobId, USER_ID, FIGHTER_ID, action,
-          VIDEO_SPRITE_ACTIONS.indexOf(action), approved ? 'approved' : 'awaiting_review', approved ? 1 : null),
+          VIDEO_SPRITE_ACTIONS.indexOf(action), approved ? 'approved' : 'awaiting_review',
+          approved ? 1 : null, approved ? '2026-08-27 00:00:00' : null,
+          approved ? USER_ID : null),
       target.db.prepare(`INSERT INTO video_sprite_candidate_revisions (
         candidate_id, revision, compiler_outcome, sprite_version_id, provider_model,
         pixcli_job_id, provider_request_id, prompt_sha256, canonical_blob_key,
@@ -261,12 +300,15 @@ async function seedReviews(
       runtimeKey: keys.runtime, runtimeBytes: values.runtime });
   }
   if (operation === 'fighter_generation') for (const [index, source] of ['side', 'upright', 'crouch'].entries()) {
+    const sealed = sealedSources[source as keyof typeof sealedSources];
     await target.db.prepare(`INSERT INTO generation_artifact_checkpoints (
       run_id, artifact_kind, artifact_name, stage_index, tier, status, clean_version_id,
-      raw_version_id, clean_blob_key, raw_blob_key, animation_format, completed_by_job_id
-    ) VALUES (?, 'source', ?, ?, 'champion', 'approved', ?, ?, ?, ?, 'legacy', ?)`)
-      .bind(RUN_ID, source, index + 1, 'clean-' + source, 'raw-' + source,
-        'source/' + source, 'source/' + source + '-raw', reviews[0].jobId).run();
+      raw_version_id, clean_blob_key, raw_blob_key, clean_content_hash, raw_content_hash,
+      animation_format, completed_by_job_id
+    ) VALUES (?, 'source', ?, ?, 'champion', 'approved', ?, ?, ?, ?, ?, ?, 'legacy', ?)`)
+      .bind(RUN_ID, source, index + 1, sealed.processed.versionId, sealed.raw.versionId,
+        sealed.processed.blobKey, sealed.raw.blobKey, sealed.processed.contentSha256,
+        sealed.raw.contentSha256, reviews[0].jobId).run();
   }
   return reviews;
 }
@@ -376,6 +418,75 @@ async function installAdjustmentProcessor(target: Harness, review: ReviewSeed): 
 }
 
 describe('video sprite review handlers', () => {
+  it('validates every supplied production review pin while preserving unpinned browser review', async () => {
+    const target = await createHarness();
+    const exactSha = '1'.repeat(40);
+    try {
+      const review = (await seedReviews(target, 0, 'fighter_generation', 1))[0];
+      target.env.ENVIRONMENT = 'production';
+      target.env.WORKER_VERSION_METADATA = {
+        id: 'video-review-worker',
+        tag: `prod-${exactSha}-4`,
+        timestamp: '2026-08-27T00:00:00Z',
+      };
+      const reviewUrl = `https://api.insertplayer.ai/api/generation-jobs/${review.jobId}/video-review`;
+      const assetUrl = `${reviewUrl}/assets/runtime?revision=1`;
+
+      expect((await getVideoSpriteReview(
+        new Request(reviewUrl), target.env, AUTH, review.jobId,
+      )).status).toBe(200);
+      expect((await getVideoSpriteReviewAsset(
+        new Request(assetUrl), target.env, AUTH, review.jobId, 'runtime',
+      )).status).toBe(200);
+
+      const staleRead = new Request(reviewUrl, {
+        headers: { 'X-Insert-Player-Expected-Worker-Sha': '2'.repeat(40) },
+      });
+      expect((await getVideoSpriteReview(
+        staleRead, target.env, AUTH, review.jobId,
+      )).status).toBe(409);
+      const staleAsset = new Request(assetUrl, {
+        headers: { 'X-Insert-Player-Expected-Worker-Sha': '2'.repeat(40) },
+      });
+      expect((await getVideoSpriteReviewAsset(
+        staleAsset, target.env, AUTH, review.jobId, 'runtime',
+      )).status).toBe(409);
+
+      for (const handler of [
+        approveVideoSpriteReview,
+        rejectVideoSpriteReview,
+        adjustVideoSpriteReview,
+      ]) {
+        const stale = decision(review, { selectedVideoIndices: [0, 1] });
+        stale.headers.set('X-Insert-Player-Expected-Worker-Sha', '2'.repeat(40));
+        expect((await handler(stale, target.env, AUTH, review.jobId)).status).toBe(409);
+      }
+      expect(await target.db.prepare(`SELECT status FROM video_sprite_candidates WHERE id = ?`)
+        .bind(review.candidateId).first()).toEqual({ status: 'awaiting_review' });
+
+      const exactRead = new Request(reviewUrl, {
+        headers: { 'X-Insert-Player-Expected-Worker-Sha': exactSha },
+      });
+      expect((await getVideoSpriteReview(
+        exactRead, target.env, AUTH, review.jobId,
+      )).status).toBe(200);
+      const exactAsset = new Request(assetUrl, {
+        headers: { 'X-Insert-Player-Expected-Worker-Sha': exactSha },
+      });
+      expect((await getVideoSpriteReviewAsset(
+        exactAsset, target.env, AUTH, review.jobId, 'runtime',
+      )).status).toBe(200);
+      expect((await approveVideoSpriteReview(
+        decision(review), target.env, AUTH, review.jobId,
+      )).status).toBe(200);
+      const exactApproval = decision(review);
+      exactApproval.headers.set('X-Insert-Player-Expected-Worker-Sha', exactSha);
+      expect((await approveVideoSpriteReview(
+        exactApproval, target.env, AUTH, review.jobId,
+      )).status).toBe(200);
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
   it('rejects atomically and only offers a fresh full-run restart', async () => {
     const target = await createHarness();
     try {
@@ -427,6 +538,163 @@ describe('video sprite review handlers', () => {
     } finally { await target.mf.dispose(); }
   }, 30_000);
 
+  it('activates a draft only through the exact completed reviewed Video provenance', async () => {
+    const target = await createHarness();
+    try {
+      const reviews = await seedReviews(target, 10);
+      const final = reviews.at(-1)!;
+      expect((await approveVideoSpriteReview(
+        decision(final), target.env, AUTH, final.jobId,
+      )).status).toBe(200);
+      const state = await target.db.prepare(`
+        SELECT arcade.updated_at AS arcade_updated_at, fighter.updated_at AS fighter_updated_at
+        FROM arcade_fighters arcade JOIN fighters fighter ON fighter.id = arcade.fighter_id
+        WHERE arcade.fighter_id = ?
+      `).bind(FIGHTER_ID).first<{
+        arcade_updated_at: string; fighter_updated_at: string;
+      }>();
+      const response = await activateReviewedVideoArcadeFighter(new Request(
+        `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/activate-reviewed-video`,
+        {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            finalJobId: final.jobId,
+            arcadeUpdatedAt: state!.arcade_updated_at,
+            fighterUpdatedAt: state!.fighter_updated_at,
+          }),
+        },
+      ), target.env, {
+        ...AUTH, user: { plan_tier: 'admin' },
+      } as AuthContext, FIGHTER_ID);
+      const responseBody = await response.json();
+      expect(response.status, JSON.stringify(responseBody)).toBe(200);
+      expect(responseBody).toMatchObject({
+        fighter: { fighterId: FIGHTER_ID, status: 'active', public: true },
+        provenance: {
+          artifactRunId: RUN_ID, finalJobId: final.jobId,
+          approvedActionCount: 11, finalAction: 'victory',
+          animationFormat: 'video-dense-v1', currentSpritesVerified: true,
+        },
+      });
+      expect(await target.db.prepare(`SELECT status FROM arcade_fighters WHERE fighter_id = ?`)
+        .bind(FIGHTER_ID).first()).toEqual({ status: 'active' });
+      expect(await target.db.prepare(`SELECT public_flag FROM fighters WHERE id = ?`)
+        .bind(FIGHTER_ID).first()).toEqual({ public_flag: 1 });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('rejects a same-timestamp pointer mutation after validation but before the second seal', async () => {
+    const target = await createHarness();
+    try {
+      const reviews = await seedReviews(target, 10);
+      const final = reviews.at(-1)!;
+      expect((await approveVideoSpriteReview(
+        decision(final), target.env, AUTH, final.jobId,
+      )).status).toBe(200);
+      const state = await target.db.prepare(`
+        SELECT arcade.updated_at AS arcade_updated_at, fighter.updated_at AS fighter_updated_at
+        FROM arcade_fighters arcade JOIN fighters fighter ON fighter.id = arcade.fighter_id
+        WHERE arcade.fighter_id = ?
+      `).bind(FIGHTER_ID).first<{
+        arcade_updated_at: string; fighter_updated_at: string;
+      }>();
+      const base = target.db;
+      let sealReads = 0;
+      target.env.DB = {
+        prepare: (query: string) => {
+          const statement = base.prepare(query);
+          if (!query.trimStart().startsWith('SELECT json_array(')) return statement;
+          const sealRead = ++sealReads;
+          return {
+            bind: (...values: unknown[]) => {
+              const bound = statement.bind(...values);
+              return {
+                first: async <T>() => {
+                  if (sealRead === 2) {
+                    await base.prepare(`UPDATE sprites SET content_hash = ?
+                      WHERE fighter_id = ? AND animation_name = 'idle'
+                        AND quality_tier = 'champion'`)
+                      .bind('0'.repeat(64), FIGHTER_ID).run();
+                  }
+                  return bound.first<T>();
+                },
+              } as unknown as D1PreparedStatement;
+            },
+          } as unknown as D1PreparedStatement;
+        },
+        batch: base.batch.bind(base),
+      } as unknown as D1Database;
+      const response = await activateReviewedVideoArcadeFighter(new Request(
+        `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/activate-reviewed-video`,
+        {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            finalJobId: final.jobId,
+            arcadeUpdatedAt: state!.arcade_updated_at,
+            fighterUpdatedAt: state!.fighter_updated_at,
+          }),
+        },
+      ), target.env, {
+        ...AUTH, user: { plan_tier: 'admin' },
+      } as AuthContext, FIGHTER_ID);
+      expect(response.status).toBe(409);
+      expect(sealReads).toBe(2);
+      expect(await base.prepare(`SELECT status FROM arcade_fighters WHERE fighter_id = ?`)
+        .bind(FIGHTER_ID).first()).toEqual({ status: 'draft' });
+      expect(await base.prepare(`SELECT public_flag, updated_at FROM fighters WHERE id = ?`)
+        .bind(FIGHTER_ID).first()).toEqual({
+          public_flag: 0,
+          updated_at: state!.fighter_updated_at,
+        });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('loses the atomic activation CAS if a current pointer changes after the second seal', async () => {
+    const target = await createHarness();
+    try {
+      const reviews = await seedReviews(target, 10);
+      const final = reviews.at(-1)!;
+      expect((await approveVideoSpriteReview(
+        decision(final), target.env, AUTH, final.jobId,
+      )).status).toBe(200);
+      const state = await target.db.prepare(`
+        SELECT arcade.updated_at AS arcade_updated_at, fighter.updated_at AS fighter_updated_at
+        FROM arcade_fighters arcade JOIN fighters fighter ON fighter.id = arcade.fighter_id
+        WHERE arcade.fighter_id = ?
+      `).bind(FIGHTER_ID).first<{
+        arcade_updated_at: string; fighter_updated_at: string;
+      }>();
+      const base = target.db;
+      target.env.DB = {
+        prepare: base.prepare.bind(base),
+        batch: async (statements: D1PreparedStatement[]) => {
+          await base.prepare(`UPDATE sprites SET content_hash = ?
+            WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'`)
+            .bind('0'.repeat(64), FIGHTER_ID).run();
+          return base.batch(statements);
+        },
+      } as unknown as D1Database;
+      const response = await activateReviewedVideoArcadeFighter(new Request(
+        `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}/activate-reviewed-video`,
+        {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            finalJobId: final.jobId,
+            arcadeUpdatedAt: state!.arcade_updated_at,
+            fighterUpdatedAt: state!.fighter_updated_at,
+          }),
+        },
+      ), target.env, {
+        ...AUTH, user: { plan_tier: 'admin' },
+      } as AuthContext, FIGHTER_ID);
+      expect(response.status).toBe(409);
+      expect(await base.prepare(`SELECT status FROM arcade_fighters WHERE fighter_id = ?`)
+        .bind(FIGHTER_ID).first()).toEqual({ status: 'draft' });
+      expect(await base.prepare(`SELECT public_flag FROM fighters WHERE id = ?`)
+        .bind(FIGHTER_ID).first()).toEqual({ public_flag: 0 });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
   it('refuses final success when an earlier approved artifact is missing', async () => {
     const target = await createHarness();
     try {
@@ -451,7 +719,12 @@ describe('video sprite review handlers', () => {
       const reviews = await seedReviews(target, VIDEO_SPRITE_ACTIONS.length);
       const first = reviews[0];
       const final = reviews.at(-1)!;
-      const response = await getVideoSpriteReview(target.env, AUTH, first.jobId);
+      const response = await getVideoSpriteReview(
+        new Request(`https://api.insertplayer.ai/api/generation-jobs/${first.jobId}/video-review`),
+        target.env,
+        AUTH,
+        first.jobId,
+      );
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({ review: {
         status: 'approved',
@@ -477,7 +750,12 @@ describe('video sprite review handlers', () => {
       const first = reviews[0];
       const final = reviews.at(-1)!;
       await target.bucket.delete(first.runtimeKey);
-      const response = await getVideoSpriteReview(target.env, AUTH, first.jobId);
+      const response = await getVideoSpriteReview(
+        new Request(`https://api.insertplayer.ai/api/generation-jobs/${first.jobId}/video-review`),
+        target.env,
+        AUTH,
+        first.jobId,
+      );
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({
         finalizationError: expect.any(String),
@@ -561,7 +839,12 @@ describe('video sprite review handlers', () => {
         review.candidateId,
       ).run();
 
-      const pending = await getVideoSpriteReview(target.env, AUTH, review.jobId);
+      const pending = await getVideoSpriteReview(
+        new Request(`https://api.insertplayer.ai/api/generation-jobs/${review.jobId}/video-review`),
+        target.env,
+        AUTH,
+        review.jobId,
+      );
       expect(await pending.json()).toMatchObject({ review: {
         revision: 1,
         pendingAdjustmentIndices: selectedVideoIndices,

@@ -147,6 +147,14 @@ const SCHEMA = `
   CREATE UNIQUE INDEX idx_arcade_fighters_live_slug
     ON arcade_fighters(slug)
     WHERE status IN ('draft', 'active');
+
+  CREATE TABLE generation_artifact_runs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    fighter_id TEXT NOT NULL REFERENCES fighters(id) ON DELETE CASCADE,
+    creation_flow TEXT NOT NULL CHECK (creation_flow IN ('original', 'video')),
+    source_manifest_json TEXT
+  );
 `;
 
 function fakeUser(): User {
@@ -482,6 +490,33 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect(retired.fighters).toHaveLength(0);
       expect((await db.prepare('SELECT public_flag FROM fighters WHERE id = ?')
         .bind(fighterId).first<{ public_flag: number }>())?.public_flag).toBe(0);
+
+      expect((await upsertAdminArcadeFighter(
+        arcadeRequest('draft'), env, adminAuth, fighterId,
+      )).status).toBe(200);
+      await db.prepare(`
+        INSERT INTO generation_artifact_runs (
+          id, user_id, fighter_id, creation_flow, source_manifest_json
+        ) VALUES (?, ?, ?, 'video', ?)
+      `).bind(
+        'reviewed-video-run',
+        auth.userId,
+        fighterId,
+        JSON.stringify({ reviewedCanonicalSources: { mode: 'reviewed-current-v1' } }),
+      ).run();
+      const legacyActivation = await upsertAdminArcadeFighter(
+        arcadeRequest('active'), env, adminAuth, fighterId,
+      );
+      expect(legacyActivation.status).toBe(409);
+      expect(await legacyActivation.json()).toEqual({
+        error: 'Reviewed Video fighters must use the dedicated reviewed activation endpoint',
+      });
+      expect(await db.prepare(`
+        SELECT arcade.status, fighter.public_flag
+        FROM arcade_fighters arcade
+        JOIN fighters fighter ON fighter.id = arcade.fighter_id
+        WHERE arcade.fighter_id = ?
+      `).bind(fighterId).first()).toEqual({ status: 'draft', public_flag: 0 });
     } finally {
       await mf.dispose();
     }
