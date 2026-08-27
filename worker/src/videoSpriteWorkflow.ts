@@ -47,14 +47,12 @@ const TERMINAL_VIDEO_AUDIT_PREFIX = 'Pinned completed PixCLI video audit is term
 class TerminalVideoProviderResponseError extends NonRetryableError {
   constructor(detail: string) {
     super(`${TERMINAL_VIDEO_RESPONSE_PREFIX} ${detail}`);
-    this.name = 'TerminalVideoProviderResponseError';
   }
 }
 
 class TerminalVideoAuditInvariantError extends NonRetryableError {
   constructor(detail: string) {
     super(`${TERMINAL_VIDEO_AUDIT_PREFIX} ${detail}`);
-    this.name = 'TerminalVideoAuditInvariantError';
   }
 }
 
@@ -168,9 +166,13 @@ async function responseJson(response: Response, label: string): Promise<unknown>
 }
 
 export function isTerminalVideoProviderFailure(message: string): boolean {
-  return message.startsWith('Pinned PixCLI video job terminated as ') ||
-    message.startsWith(TERMINAL_VIDEO_RESPONSE_PREFIX) ||
-    message.startsWith(TERMINAL_VIDEO_AUDIT_PREFIX);
+  const normalized = message.trimStart().replace(
+    /^(?:(?:Error|NonRetryableError|TerminalVideoProviderResponseError|TerminalVideoAuditInvariantError):\s*)+/,
+    '',
+  );
+  return normalized.startsWith('Pinned PixCLI video job terminated as ') ||
+    normalized.startsWith(TERMINAL_VIDEO_RESPONSE_PREFIX) ||
+    normalized.startsWith(TERMINAL_VIDEO_AUDIT_PREFIX);
 }
 
 export async function parsePixcliVideoSubmissionResponse(response: Response) {
@@ -204,10 +206,13 @@ export async function downloadPixcliAuditAsset(
     throw new TerminalVideoAuditInvariantError('PixCLI audit asset MIME type changed after Canva validation');
   }
   const maxBytes = asset.mimeType === 'video/mp4' ? MAX_VIDEO_BYTES : MAX_JSON_ASSET_BYTES;
-  const contentLength = Number(response.headers.get('Content-Length'));
-  if (Number.isFinite(contentLength) && (contentLength < 2 || contentLength > maxBytes)) {
-    await response.body?.cancel();
-    throw new TerminalVideoAuditInvariantError('PixCLI audit asset exceeds its local download limit');
+  const contentLengthHeader = response.headers.get('Content-Length');
+  if (contentLengthHeader !== null && contentLengthHeader.trim() !== '') {
+    const contentLength = Number(contentLengthHeader);
+    if (!Number.isFinite(contentLength) || contentLength < 2 || contentLength > maxBytes) {
+      await response.body?.cancel();
+      throw new TerminalVideoAuditInvariantError('PixCLI audit asset exceeds its local download limit');
+    }
   }
   if (!response.body) throw new TerminalVideoAuditInvariantError('PixCLI audit asset has an empty body');
   let bytes: ArrayBuffer;
