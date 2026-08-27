@@ -32,6 +32,7 @@
     "arcade:canary:xai-video-elon": "node scripts/arcade-high-kick-xai-video-elon-canary.mjs",
     "arcade:bundle:xai-canonical": "node scripts/arcade-xai-canonical-bundle.mjs",
     "arcade:bundle:xai-canonical:container": "node scripts/run-xai-canonical-bundle-container.mjs",
+    "arcade:package:xai-canonical-input": "node scripts/package-xai-canonical-input.mjs",
     "arcade:import:reviewed-xai-canonical": "node scripts/import-reviewed-xai-canonical-bundle.mjs",
     "arcade:archive-experiment": "node scripts/archive-arcade-experiment.mjs",
     "arcade:package:trump-video-roster": "node scripts/package-trump-video-roster.mjs",

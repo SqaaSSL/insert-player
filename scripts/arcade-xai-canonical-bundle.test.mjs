@@ -20,6 +20,10 @@ import {
   runXaiCanonicalBundle,
 } from './arcade-xai-canonical-bundle.mjs';
 import { buildXaiCanonicalContainerPlan } from './run-xai-canonical-bundle-container.mjs';
+import {
+  PRIVATE_INPUT_CONFIRMATION,
+  packageXaiCanonicalInput,
+} from './package-xai-canonical-input.mjs';
 
 const roster = JSON.parse(readFileSync(new URL('../arcade/roster-2026.json', import.meta.url), 'utf8'));
 const temporaryDirectories = [];
@@ -518,5 +522,56 @@ describe('resumable exactly-once XAI canonical bundle', () => {
     const fixture = makeFixture();
     const provider = providerFixture(overrides);
     await expect(runXaiCanonicalBundle(runOptions(fixture, provider))).rejects.toThrow(/\$0\.11/i);
+  });
+});
+
+describe('portable private canonical input packaging', () => {
+  it('rewrites reviewed references into a sealed portable tree and creates a private R2 handoff', () => {
+    const fixture = makeFixture();
+    const outputDirectory = join(fixture.directory, 'portable-input');
+    const receipt = packageXaiCanonicalInput({
+      confirmation: PRIVATE_INPUT_CONFIRMATION,
+      slug: 'elon-musk',
+      rosterPath: fixture.rosterPath,
+      sourceDir: fixture.sourceDir,
+      poseManifestPath: fixture.poseManifestPath,
+      poseManifestSha256: fixture.poseManifestSha256,
+      outputDirectory,
+    });
+    expect(receipt).toMatchObject({
+      status: 'prepared_private_local',
+      slug: 'elon-musk',
+      originalSha256: fixture.fighter.reference.sourceSha256,
+      sourcePoseManifestSha256: fixture.poseManifestSha256,
+      r2Bucket: 'insert-player-assets',
+      r2Jurisdiction: 'eu',
+      lifecyclePrefix: 'temp/',
+      uploaded: false,
+      providerCalled: false,
+    });
+    expect(receipt.r2Key).toMatch(/^temp\/arcade-xai-canonical-inputs-v1\/elon-musk\/elon-musk--[a-f0-9]{16}\.tar\.gz$/);
+    expect(sha256(readFileSync(receipt.archivePath))).toBe(receipt.archiveSha256);
+    const portablePose = join(outputDirectory, 'staging/canonical-input-v1/pose/pose-manifest.json');
+    const portable = loadXaiCanonicalPoseManifest(portablePose, receipt.portablePoseManifestSha256);
+    expect(portable.manifest.sources.side.pose.path).toMatch(/^references\/[a-f0-9]{64}\.png$/);
+    expect(portable.manifest.sources.side.pose.approvalEvidence.path).toMatch(/^evidence\/[a-f0-9]{64}\.json$/);
+    expect(readFileSync(join(outputDirectory, 'staging/canonical-input-v1/sources/elon-musk.png'))).toEqual(
+      readFileSync(join(fixture.sourceDir, 'elon-musk.png')),
+    );
+  });
+
+  it('fails before producing an archive when the reviewed pose seal is wrong', () => {
+    const fixture = makeFixture();
+    const outputDirectory = join(fixture.directory, 'portable-input');
+    expect(() => packageXaiCanonicalInput({
+      confirmation: PRIVATE_INPUT_CONFIRMATION,
+      slug: 'elon-musk',
+      rosterPath: fixture.rosterPath,
+      sourceDir: fixture.sourceDir,
+      poseManifestPath: fixture.poseManifestPath,
+      poseManifestSha256: '0'.repeat(64),
+      outputDirectory,
+    })).toThrow(/pose manifest SHA-256 mismatch/i);
+    expect(existsSync(join(outputDirectory, 'elon-musk--canonical-input-v1.tar.gz'))).toBe(false);
   });
 });
