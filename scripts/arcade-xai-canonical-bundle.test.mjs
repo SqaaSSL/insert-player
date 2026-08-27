@@ -15,13 +15,19 @@ import {
   XAI_CANONICAL_BUNDLE_CONFIRMATION,
   XAI_CANONICAL_BUNDLE_MODEL,
   XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION,
+  XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE,
+  XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG,
+  XAI_CANONICAL_GLOBAL_SIDE_REFERENCES,
+  XAI_CANONICAL_GLOBAL_SIDE_SLUGS,
   XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION,
   XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
   buildXaiCanonicalBundlePayload,
   buildXaiCanonicalBundlePrompt,
   loadXaiCanonicalPoseManifest,
   parseXaiCanonicalBundleCliArgs,
+  resolveXaiCanonicalSingleSourcePromptProfile,
   runXaiCanonicalBundle,
+  validateXaiCanonicalPromptProfileReferences,
 } from './arcade-xai-canonical-bundle.mjs';
 import { buildXaiCanonicalContainerPlan } from './run-xai-canonical-bundle-container.mjs';
 import {
@@ -47,7 +53,7 @@ function png(label, width = 128, height = 192) {
   return bytes;
 }
 
-function makeFixture() {
+function makeFixture(slug = 'elon-musk') {
   const directory = mkdtempSync(join(tmpdir(), 'insert-player-canonical-bundle-'));
   temporaryDirectories.push(directory);
   const sourceDir = join(directory, 'sources');
@@ -55,10 +61,10 @@ function makeFixture() {
   mkdirSync(sourceDir);
   mkdirSync(poseDir);
   const controlledRoster = structuredClone(roster);
-  const fighter = controlledRoster.fighters.find((entry) => entry.slug === 'elon-musk');
-  const identity = png('identity-elon', 256, 256);
+  const fighter = controlledRoster.fighters.find((entry) => entry.slug === slug);
+  const identity = png(`identity-${slug}`, 256, 256);
   fighter.reference.sourceSha256 = sha256(identity);
-  writeFileSync(join(sourceDir, 'elon-musk.png'), identity);
+  writeFileSync(join(sourceDir, `${slug}.png`), identity);
   const rosterPath = join(directory, 'roster.json');
   writeFileSync(rosterPath, JSON.stringify(controlledRoster));
 
@@ -267,7 +273,7 @@ function runOptions(fixture, provider, runCommand = commandFixture()) {
     confirmation: XAI_CANONICAL_BUNDLE_CONFIRMATION,
     privateConfirmation: XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION,
     maxCostUsd: 0.36,
-    slug: 'elon-musk',
+    slug: fixture.fighter.slug,
     apiKey: 'test-key',
     apiBase: 'https://pixcli.example',
     manifestPath: fixture.rosterPath,
@@ -283,32 +289,38 @@ function runOptions(fixture, provider, runCommand = commandFixture()) {
   };
 }
 
-function singleSourcePoseOptions(fixture) {
+function selectedPoseManifest(fixture, sourceName) {
   const poseManifest = {
     ...fixture.poseManifest,
-    sources: { crouch: fixture.poseManifest.sources.crouch },
+    sources: { [sourceName]: fixture.poseManifest.sources[sourceName] },
   };
   const poseManifestBytes = Buffer.from(JSON.stringify(poseManifest));
-  const poseManifestPath = join(fixture.poseDir, 'crouch-pose-manifest.json');
+  const poseManifestPath = join(fixture.poseDir, `${sourceName}-pose-manifest.json`);
   writeFileSync(poseManifestPath, poseManifestBytes);
+  return {
+    poseManifestPath,
+    poseManifestSha256: sha256(poseManifestBytes),
+  };
+}
+
+function singleSourcePoseOptions(fixture) {
+  const selected = selectedPoseManifest(fixture, 'crouch');
   const prompt = buildXaiCanonicalBundlePrompt(fixture.fighter, 'crouch', {
     promptProfile: XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
   });
   return {
-    poseManifestPath,
-    poseManifestSha256: sha256(poseManifestBytes),
+    ...selected,
     promptSha256: sha256(prompt),
   };
 }
 
 function singleSourceRunOptions(fixture, provider, runCommand = commandFixture()) {
-  const singlePose = singleSourcePoseOptions(fixture);
   return {
     ...runOptions(fixture, provider, runCommand),
     confirmation: XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION,
     maxCostUsd: 0.11,
     sourceName: 'crouch',
-    ...singlePose,
+    ...singleSourcePoseOptions(fixture),
     statePath: join(fixture.directory, 'crouch-state.json'),
     outputDirectory: join(fixture.directory, 'crouch-output'),
   };
@@ -358,7 +370,7 @@ describe('sealed XAI canonical bundle inputs', () => {
       '../.github/workflows/import-reviewed-xai-canonical-production.yml',
       import.meta.url,
     ), 'utf8');
-    expect(generation).toContain('temp/arcade-xai-canonical-inputs-v1/$REQUESTED_SLUG/');
+    expect(generation).toContain('expected_r2_key="temp/arcade-xai-canonical-inputs-v1/$REQUESTED_SLUG/$archive_stem--${INPUT_BUNDLE_SHA256:0:16}.tar.gz"');
     expect(generation).toContain('printf \'%s  %s\\n\' "$INPUT_BUNDLE_SHA256" "$archive" | sha256sum --check --strict');
     expect(generation).toContain('printf \'%s  %s\\n\' "$POSE_MANIFEST_SHA256" "$input_root/pose/pose-manifest.json" | sha256sum --check --strict');
     expect(generation).toContain('ffmpeg=7:5.1.9-0+deb12u1');
@@ -366,7 +378,16 @@ describe('sealed XAI canonical bundle inputs', () => {
     expect(generation).toContain('REQUESTED_SOURCE: ${{ inputs.source }}');
     expect(generation).toContain('PROMPT_SHA256: ${{ inputs.prompt_sha256 }}');
     expect(generation).toContain('"--source=$REQUESTED_SOURCE" "--prompt-sha256=$PROMPT_SHA256"');
-    expect(generation).toContain('[[ "$REQUESTED_SLUG" == "elon-musk" && "$REQUESTED_SOURCE" == "crouch" ]]');
+    expect(generation).toContain('elon-musk:crouch)');
+    expect(generation).toContain('rosalia:side)');
+    expect(generation).toContain('ibai-llanos:side)');
+    expect(generation).toContain('lamine-yamal:side)');
+    expect(generation).not.toContain('aitana:side)');
+    for (const promptSha256 of [
+      'fbcc5f15fa7fd0f75793fb7dedf602b4d4b5e170c39451e939a4c091ba5e32e5',
+      ...Object.values(XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG),
+    ]) expect(generation).toContain(promptSha256);
+    expect(generation).toContain('actual_sources="$(jq -c \'.sources | keys | sort\' "$input_root/pose/pose-manifest.json")"');
     expect(generation).toContain('[[ "$MAX_COST_USD" == "0.11" ]]');
     expect(generation).toContain('name: arcade-xai-canonical-bundle-${{ inputs.slug }}');
     expect(generation).toContain('name: arcade-xai-canonical-bundle-checkpoint-${{ inputs.slug }}');
@@ -482,6 +503,122 @@ describe('sealed XAI canonical bundle inputs', () => {
       maxCostUsd: '0.11',
       apiKey: 'private-test-key',
     });
+  });
+
+  it('seals one distinct identity-first global SIDE prompt per allowed roster identity', () => {
+    const prompts = new Map();
+    for (const slug of XAI_CANONICAL_GLOBAL_SIDE_SLUGS) {
+      const fighter = roster.fighters.find((entry) => entry.slug === slug);
+      expect(resolveXaiCanonicalSingleSourcePromptProfile(slug, 'side'))
+        .toBe(XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE);
+      const prompt = buildXaiCanonicalBundlePrompt(fighter, 'side', {
+        promptProfile: XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE,
+      });
+      const promptSha256 = sha256(prompt);
+      expect(promptSha256).toBe(XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG[slug]);
+      expect(prompt).toContain(`Render ${fighter.name} exactly as shown in IMAGE 3`);
+      expect(prompt).toContain('Do not use model memory, learned celebrity priors, web knowledge, or a generic approximation');
+      expect(prompt).toContain('IMAGE 1 is the APPROVED TRUMP UPRIGHT POSE AND COMPOSITION MASTER only');
+      expect(prompt).toContain('TARGET SOURCE and HARD OUTPUT CONTRACT below override any perspective');
+      expect(prompt).toContain('IMAGE 2 is the APPROVED MILEI CANONICAL RENDERING-LANGUAGE MASTER only');
+      expect(prompt).toContain('IMAGE 2 provides no clothing or body instructions');
+      expect(prompt).toContain('strict lateral profile facing screen-right');
+      expect(prompt).toContain('not frontal, not three-quarter, not screen-left, and do not mirror');
+      expect(prompt).toContain('All wardrobe, garment, footwear, palette, and character-design instructions come exclusively from the ROSTER REQUIREMENTS');
+      expect(prompt).toContain('pure bright green (#00FF00), flat and uniform');
+      expect(prompt).toContain('generous green overscan');
+      expect(prompt.indexOf('IMAGE 3 is the REAL')).toBeLessThan(prompt.indexOf('IMAGE 1 is the APPROVED TRUMP'));
+      expect(prompt.indexOf('1) ')).toBeLessThan(prompt.indexOf('2) Strict screen-right pose'));
+      prompts.set(slug, prompt);
+    }
+    expect(new Set([...prompts.values()].map(sha256)).size).toBe(3);
+    expect(prompts.get('rosalia')).toContain('Never masculinize her face, jaw, neck, shoulders, torso, limbs, or body proportions');
+    expect(prompts.get('ibai-llanos')).toContain('Absolutely no microphone, headset, headphones, earbuds');
+    expect(prompts.get('lamine-yamal')).toContain('Absolutely no athletic tape, kinesiology tape, bandage');
+    expect(prompts.get('lamine-yamal')).toContain('number, lettering, text, logo');
+
+    const payload = buildXaiCanonicalBundlePayload({
+      fighter: roster.fighters.find((entry) => entry.slug === 'rosalia'),
+      sourceName: 'side',
+      promptProfile: XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE,
+      poseAssetHash: '1'.repeat(32),
+      renderingAssetHash: '2'.repeat(32),
+      identityAssetHash: '3'.repeat(32),
+    });
+    expect(payload.image).toEqual(['1'.repeat(32), '2'.repeat(32), '3'.repeat(32)]);
+    expect(payload).toMatchObject({
+      enrich_prompt: false,
+      search: false,
+      publish: false,
+      params: { num_images: 1 },
+    });
+    expect(JSON.stringify(payload)).not.toMatch(/fallback|retry/i);
+  });
+
+  it('fails closed on global SIDE reference roles, slugs, sources, and cross-identity names', async () => {
+    const validReferences = {
+      sources: {
+        side: {
+          pose: { ...XAI_CANONICAL_GLOBAL_SIDE_REFERENCES.pose },
+          rendering: { ...XAI_CANONICAL_GLOBAL_SIDE_REFERENCES.rendering },
+        },
+      },
+    };
+    expect(validateXaiCanonicalPromptProfileReferences(
+      validReferences,
+      XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE,
+    )).toBe(validReferences);
+    expect(() => validateXaiCanonicalPromptProfileReferences({
+      sources: {
+        side: {
+          pose: { ...XAI_CANONICAL_GLOBAL_SIDE_REFERENCES.rendering },
+          rendering: { ...XAI_CANONICAL_GLOBAL_SIDE_REFERENCES.pose },
+        },
+      },
+    }, XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE)).toThrow(/global SIDE pose reference/i);
+    expect(() => validateXaiCanonicalPromptProfileReferences({
+      sources: { ...validReferences.sources, upright: validReferences.sources.side },
+    }, XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE)).toThrow(/exact single-side/i);
+
+    expect(() => resolveXaiCanonicalSingleSourcePromptProfile('aitana', 'side')).toThrow(/not sealed/i);
+    expect(() => resolveXaiCanonicalSingleSourcePromptProfile('rosalia', 'crouch')).toThrow(/not sealed/i);
+    expect(() => resolveXaiCanonicalSingleSourcePromptProfile('elon-musk', 'side')).toThrow(/not sealed/i);
+    expect(resolveXaiCanonicalSingleSourcePromptProfile('elon-musk', 'crouch'))
+      .toBe(XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE);
+    expect(() => buildXaiCanonicalBundlePrompt(
+      { ...roster.fighters.find((entry) => entry.slug === 'rosalia'), name: 'Aitana' },
+      'side',
+      { promptProfile: XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE },
+    )).toThrow(/exact roster identities/i);
+    expect(() => buildXaiCanonicalBundlePrompt(
+      roster.fighters.find((entry) => entry.slug === 'rosalia'),
+      'side',
+      { promptProfile: XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE },
+    )).toThrow(/only for Elon Musk CROUCH/i);
+
+    const fixture = makeFixture('rosalia');
+    const provider = providerFixture();
+    const selected = selectedPoseManifest(fixture, 'side');
+    await expect(runXaiCanonicalBundle({
+      ...runOptions(fixture, provider),
+      confirmation: XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION,
+      maxCostUsd: 0.11,
+      sourceName: 'side',
+      promptSha256: XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG.rosalia,
+      ...selected,
+    })).rejects.toThrow(/global SIDE pose reference/i);
+    expect(provider.fetchImpl).not.toHaveBeenCalled();
+
+    const parsed = parseXaiCanonicalBundleCliArgs([
+      '--execute',
+      '--slug=rosalia',
+      '--source=side',
+      `--prompt-sha256=${XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG.rosalia}`,
+      `--confirm=${XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION}`,
+      `--confirm-private=${XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION}`,
+      '--max-cost-usd=0.11',
+    ], { PIXCLI_API_KEY: 'private-test-key' });
+    expect(parsed).toMatchObject({ slug: 'rosalia', sourceName: 'side', maxCostUsd: '0.11' });
   });
 
   it('fails before provider access when confirmation, cap, manifest hash, or toolchain is wrong', async () => {
@@ -792,6 +929,56 @@ describe('portable private canonical input packaging', () => {
     expect(readFileSync(join(outputDirectory, 'staging/canonical-input-v1/sources/elon-musk.png'))).toEqual(
       readFileSync(join(fixture.sourceDir, 'elon-musk.png')),
     );
+  });
+
+  it('packages an exact one-source tree and binds its source-specific prompt and R2 key', () => {
+    const fixture = makeFixture();
+    const selected = selectedPoseManifest(fixture, 'crouch');
+    const outputDirectory = join(fixture.directory, 'portable-crouch-input');
+    const receipt = packageXaiCanonicalInput({
+      confirmation: PRIVATE_INPUT_CONFIRMATION,
+      slug: 'elon-musk',
+      sourceName: 'crouch',
+      rosterPath: fixture.rosterPath,
+      sourceDir: fixture.sourceDir,
+      poseManifestPath: selected.poseManifestPath,
+      poseManifestSha256: selected.poseManifestSha256,
+      outputDirectory,
+    });
+    expect(receipt).toMatchObject({
+      sourceNames: ['crouch'],
+      promptProfile: XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
+      promptSha256: 'fbcc5f15fa7fd0f75793fb7dedf602b4d4b5e170c39451e939a4c091ba5e32e5',
+      uploaded: false,
+      providerCalled: false,
+    });
+    expect(receipt.r2Key).toMatch(/^temp\/arcade-xai-canonical-inputs-v1\/elon-musk\/elon-musk-crouch--[a-f0-9]{16}\.tar\.gz$/);
+    expect(receipt.archivePath).toBe(join(outputDirectory, 'elon-musk-crouch--canonical-input-v1.tar.gz'));
+    const portablePose = join(outputDirectory, 'staging/canonical-input-v1/pose/pose-manifest.json');
+    const portable = loadXaiCanonicalPoseManifest(
+      portablePose,
+      receipt.portablePoseManifestSha256,
+      ['crouch'],
+    );
+    expect(Object.keys(portable.manifest.sources)).toEqual(['crouch']);
+    expect(existsSync(join(outputDirectory, 'staging/canonical-input-v1/pose/references'))).toBe(true);
+  });
+
+  it('refuses to package a global SIDE archive with swapped or unsealed masters', () => {
+    const fixture = makeFixture('rosalia');
+    const selected = selectedPoseManifest(fixture, 'side');
+    const outputDirectory = join(fixture.directory, 'portable-global-side-input');
+    expect(() => packageXaiCanonicalInput({
+      confirmation: PRIVATE_INPUT_CONFIRMATION,
+      slug: 'rosalia',
+      sourceName: 'side',
+      rosterPath: fixture.rosterPath,
+      sourceDir: fixture.sourceDir,
+      poseManifestPath: selected.poseManifestPath,
+      poseManifestSha256: selected.poseManifestSha256,
+      outputDirectory,
+    })).toThrow(/global SIDE pose reference/i);
+    expect(existsSync(join(outputDirectory, 'rosalia-side--canonical-input-v1.tar.gz'))).toBe(false);
   });
 
   it('fails before producing an archive when the reviewed pose seal is wrong', () => {

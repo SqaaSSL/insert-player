@@ -36,6 +36,27 @@ export const XAI_CANONICAL_BUNDLE_CONFIRMATION = 'GENERATE_XAI_CANONICAL_BUNDLE_
 export const XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION = 'GENERATE_XAI_CANONICAL_SOURCE_PRIVATE_V1';
 export const XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION = 'PRIVATE_ARTIFACTS_ONLY_HUMAN_REVIEW';
 export const XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE = 'elon_crouch_identity_hard_gate_v1';
+export const XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE = 'global_side_identity_hard_gate_v1';
+export const XAI_CANONICAL_GLOBAL_SIDE_SLUGS = Object.freeze([
+  'rosalia',
+  'ibai-llanos',
+  'lamine-yamal',
+]);
+export const XAI_CANONICAL_GLOBAL_SIDE_REFERENCES = Object.freeze({
+  pose: Object.freeze({
+    id: 'trump-upright-reviewed-v1',
+    contentSha256: '7d66134eb21a42ca54c2d2205c952204886cb59f69cb35349416359c36ccd2a7',
+  }),
+  rendering: Object.freeze({
+    id: 'milei-side-reviewed-v1',
+    contentSha256: '41dcb1e372fdfd36b7f53ba461198fdf26e645b637e3b4417a0833414a702559',
+  }),
+});
+export const XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG = Object.freeze({
+  rosalia: '1a54024b2cd4bf6abf9f019cccc4daa950290328ec501c35821b7339e9753756',
+  'ibai-llanos': '076119e904c4bde8c78bd33d4de1f87f07511d5bb50aca42426a02245c7ddc74',
+  'lamine-yamal': '8c3fe7ae2e614efd35adb9a77686190b561ec1dfaebcb377f99d5a163499fa60',
+});
 export const XAI_CANONICAL_BUNDLE_SOURCE_NAMES = Object.freeze(['side', 'upright', 'crouch']);
 export const XAI_CANONICAL_BUNDLE_MODEL = Object.freeze({
   id: 'grok-imagine-image-2-edit',
@@ -103,6 +124,47 @@ function selectedCanonicalSourceNames(sourceName) {
     throw new Error(`Unsupported canonical source: ${String(sourceName)}.`);
   }
   return Object.freeze([sourceName]);
+}
+
+const GLOBAL_SIDE_IDENTITY_CONTRACTS = Object.freeze({
+  rosalia: Object.freeze({
+    name: 'Rosalía',
+    safeguard: 'Rosalía is a young adult woman. Preserve her female facial anatomy, light-olive skin, very long near-black center-parted hair, and slim athletic female build exactly from IMAGE 3. Never masculinize her face, jaw, neck, shoulders, torso, limbs, or body proportions; never add facial hair or substitute a male body.',
+  }),
+  'ibai-llanos': Object.freeze({
+    name: 'Ibai Llanos',
+    safeguard: 'Preserve Ibai Llanos as the broad heavyset young adult man in IMAGE 3, including his round face, receding dark-brown hair, and dense reddish-brown beard and moustache. Absolutely no microphone, headset, headphones, earbuds, boom arm, cable, streaming accessory, or handheld prop.',
+  }),
+  'lamine-yamal': Object.freeze({
+    name: 'Lamine Yamal',
+    safeguard: 'Preserve Lamine Yamal as the very young adult man in IMAGE 3, including his medium-brown skin, narrow oval face, dense high curls with honey-blond tips, and lean elite-athlete build. Absolutely no athletic tape, kinesiology tape, bandage, club or sponsor mark, flag, number, lettering, text, logo, badge, ball, or prop.',
+  }),
+});
+
+export function resolveXaiCanonicalSingleSourcePromptProfile(slug, sourceName) {
+  if (slug === 'elon-musk' && sourceName === 'crouch') {
+    return XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE;
+  }
+  if (sourceName === 'side' && XAI_CANONICAL_GLOBAL_SIDE_SLUGS.includes(slug)) {
+    return XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE;
+  }
+  throw new Error(`Single-source canonical generation is not sealed for ${String(slug)} ${String(sourceName).toUpperCase()}.`);
+}
+
+export function validateXaiCanonicalPromptProfileReferences(poseBundle, promptProfile) {
+  if (promptProfile !== XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE) return poseBundle;
+  const side = poseBundle?.sources?.side;
+  if (!side || Object.keys(poseBundle.sources).length !== 1) {
+    throw new Error('The global SIDE profile requires an exact single-side pose manifest.');
+  }
+  for (const role of ['pose', 'rendering']) {
+    const expected = XAI_CANONICAL_GLOBAL_SIDE_REFERENCES[role];
+    const actual = side[role];
+    if (actual?.id !== expected.id || actual?.contentSha256 !== expected.contentSha256) {
+      throw new Error(`The global SIDE ${role} reference is not the sealed ${expected.id} asset.`);
+    }
+  }
+  return poseBundle;
 }
 
 function canonicalBundlePolicy(sourceNames) {
@@ -334,6 +396,9 @@ export function loadXaiCanonicalPoseManifest(
 
 function sourcePoseInstruction(sourceName, options = {}) {
   if (sourceName === 'side') {
+    if (options.promptProfile === XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE) {
+      return 'a neutral full-body combat guard in a strict lateral profile facing screen-right, not frontal, not three-quarter, not screen-left, and do not mirror; grounded balanced stance with both complete feet visibly planted on one shared ground line; both complete hands held in a compact defensive guard; static held pose with no attack, lunge, jump, crouch, kneel, or motion; complete silhouette visible with generous overscan and no crop';
+    }
     return 'a neutral full-body combat guard in a clear 3/4 side presentation facing right, with both feet fully visible and stable';
   }
   if (sourceName === 'upright') {
@@ -360,14 +425,29 @@ function fighterRequirements(fighter, sourceName, options = {}) {
 }
 
 export function buildXaiCanonicalBundlePrompt(fighter, sourceName, options = {}) {
-  const identityHardGate = options.promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE;
+  const elonIdentityHardGate = options.promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE;
+  const globalSideIdentityHardGate = options.promptProfile === XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE;
+  const identityHardGate = elonIdentityHardGate || globalSideIdentityHardGate;
   if (options.promptProfile !== undefined && !identityHardGate) {
     throw new Error(`Unsupported canonical prompt profile: ${String(options.promptProfile)}.`);
   }
-  if (identityHardGate && (fighter.slug !== 'elon-musk' || sourceName !== 'crouch')) {
+  if (elonIdentityHardGate && (fighter.slug !== 'elon-musk' || sourceName !== 'crouch')) {
     throw new Error('The reviewed identity-first wardrobe profile is sealed only for Elon Musk CROUCH.');
   }
-  const referenceRoles = identityHardGate ? [
+  const globalIdentity = GLOBAL_SIDE_IDENTITY_CONTRACTS[fighter.slug];
+  if (globalSideIdentityHardGate && (
+    sourceName !== 'side'
+    || !XAI_CANONICAL_GLOBAL_SIDE_SLUGS.includes(fighter.slug)
+    || globalIdentity?.name !== fighter.name
+  )) {
+    throw new Error('The global identity-first SIDE profile is sealed only for Rosalía, Ibai Llanos, and Lamine Yamal with their exact roster identities.');
+  }
+  const referenceRoles = globalSideIdentityHardGate ? [
+    'REFERENCE ROLES — KEEP ALL THREE STRICTLY SEPARATE:',
+    `IMAGE 3 is the REAL ${fighter.name.toUpperCase()} IDENTITY, SEX, FACE, AND PHYSIQUE ANCHOR and the acceptance hard gate. Render ${fighter.name} exactly as shown in IMAGE 3. Do not use model memory, learned celebrity priors, web knowledge, or a generic approximation. Preserve the exact facial geometry, hair, skin tone, apparent age, distinguishing features, sex presentation, and natural body build visible in IMAGE 3. If the result is not immediately recognizable as the same person in IMAGE 3, the result is invalid. Never copy the portrait crop, camera, background, or photographic rendering.`,
+    'IMAGE 1 is the APPROVED TRUMP UPRIGHT POSE AND COMPOSITION MASTER only. Use only its strict screen-right combat-guard joint arrangement, facing direction, balance, full-body framing, camera distance, foot baseline, and silhouette placement. The TARGET SOURCE and HARD OUTPUT CONTRACT below override any perspective, torso yaw, framing, facing, crop, floor, shadow, or background in IMAGE 1. Never copy Donald Trump\'s identity, face, hair, skin, sex, physique, age, wardrobe, colors, logos, or accessories.',
+    'IMAGE 2 is the APPROVED MILEI CANONICAL RENDERING-LANGUAGE MASTER only. Use only its grounded premium fighting-game rendering language, material fidelity, controlled studio lighting, and crisp edge treatment. Never copy Javier Milei\'s identity, face, hair, sex, physique, age, pose, perspective, wardrobe, colors, insignia, accessories, floor, shadow, or background. IMAGE 2 provides no clothing or body instructions.',
+  ] : elonIdentityHardGate ? [
     'REFERENCE ROLES — KEEP ALL THREE STRICTLY SEPARATE:',
     'IMAGE 3 is the REAL IDENTITY AND PHYSIQUE ANCHOR and the acceptance hard gate. Render Elon Musk exactly as shown in IMAGE 3, not a model-memory approximation. Preserve his facial geometry, hair, skin tone, apparent age, distinguishing features, and natural body build. If the result is not immediately recognizable as IMAGE 3, the result is invalid. Do not replace IMAGE 3 with a generic, narrower, or more angular substitute; do not slim his rounded-square facial structure or broad build. Never copy IMAGE 3 clothing, suit, shirt, tie, colors, or accessories; IMAGE 2 alone controls wardrobe. Never copy the portrait crop, camera, background, or photographic rendering.',
     'IMAGE 1 is the CROUCH STRUCTURE MASTER only. Use only its joint arrangement, crouch depth, and two-hand defensive guard. Rotate and recompose the target into the strict screen-right lateral profile required below. The TARGET SOURCE and HARD OUTPUT CONTRACT override any torso yaw, perspective, facing, framing, silhouette placement, or foot-baseline ambiguity in IMAGE 1. Never copy its identity, face, hair, physique, clothes, colors, logos, or accessories.',
@@ -378,7 +458,9 @@ export function buildXaiCanonicalBundlePrompt(fighter, sourceName, options = {})
     'IMAGE 2 is the CANONICAL RENDERING MASTER only. Match its grounded premium fighting-game rendering language, natural adult proportions, material detail, controlled lighting, crisp edge treatment, and green-screen presentation. Never copy its identity, face, hair, clothes, colors, logos, or accessories.',
     'IMAGE 3 is the REAL IDENTITY AND PHYSIQUE ANCHOR only. Preserve this person\'s facial geometry, hair, skin tone, apparent age, distinguishing features, and natural body build. Never copy the portrait crop, camera, background, or photographic rendering.',
   ];
-  const finalPriority = identityHardGate
+  const finalPriority = globalSideIdentityHardGate
+    ? `1) ${fighter.name.toUpperCase()} IDENTITY, SEX, FACE, AND PHYSIQUE FROM IMAGE 3 — HARD ACCEPTANCE GATE. 2) Strict screen-right pose and composition from IMAGE 1, subject to the TARGET SOURCE and HARD OUTPUT CONTRACT. 3) Rendering language only from IMAGE 2. 4) Wardrobe and character details exclusively from the written ROSTER REQUIREMENTS. Do not use model memory and never let one reference overwrite another reference's assigned role.`
+    : elonIdentityHardGate
     ? '1) IDENTITY AND PHYSIQUE FROM IMAGE 3 — HARD ACCEPTANCE GATE. 2) CROUCH JOINT STRUCTURE FROM IMAGE 1, always subject to TARGET SOURCE and HARD OUTPUT CONTRACT. 3) Rendering language and wardrobe from IMAGE 2. Written roster requirements may refine details but must never weaken the IMAGE 3 identity gate. Never let one reference overwrite another reference\'s assigned role.'
     : '1) Pose and composition from IMAGE 1. 2) Rendering language only from IMAGE 2. 3) Identity and physique from IMAGE 3. 4) Wardrobe and character details from the written roster requirements. Never let one reference overwrite another reference\'s assigned role.';
   return [
@@ -388,10 +470,15 @@ export function buildXaiCanonicalBundlePrompt(fighter, sourceName, options = {})
     `Produce exactly one ${sourceName.toUpperCase()} canonical source: ${sourcePoseInstruction(sourceName, options)}.`,
     '',
     'IDENTITY, ANATOMY, AND CONSISTENCY:',
-    'Replace every person in IMAGE 1 and IMAGE 2 with the person from IMAGE 3. Never blend faces or identities. Keep normal adult anatomy, a natural head scale, complete hands and feet, and coherent joints. The result must be immediately recognizable as IMAGE 3 while using only the assigned pose and rendering roles from the other references.',
+    globalSideIdentityHardGate
+      ? `Replace every person in IMAGE 1 and IMAGE 2 with ${fighter.name} from IMAGE 3. Never blend faces, sexes, physiques, or identities. Keep anatomically coherent adult proportions, a natural head scale, two distinct complete hands, two complete feet, and coherent joints. ${globalIdentity.safeguard}`
+      : 'Replace every person in IMAGE 1 and IMAGE 2 with the person from IMAGE 3. Never blend faces or identities. Keep normal adult anatomy, a natural head scale, complete hands and feet, and coherent joints. The result must be immediately recognizable as IMAGE 3 while using only the assigned pose and rendering roles from the other references.',
     '',
     'ROSTER REQUIREMENTS:',
     fighterRequirements(fighter, sourceName, options),
+    ...(globalSideIdentityHardGate ? [
+      'All wardrobe, garment, footwear, palette, and character-design instructions come exclusively from the ROSTER REQUIREMENTS above. Do not infer wardrobe from IMAGE 1, IMAGE 2, celebrity memory, real teams, real performances, or real events.',
+    ] : []),
     '',
     'OUTPUT CONTRACT:',
     identityHardGate
@@ -791,11 +878,18 @@ async function ensureUploadedReference(options, reference, state, saveState) {
 
 function buildBundleMatrix(fighter, poseBundle, sourceNames) {
   const promptProfile = sourceNames.length === 1
-    ? XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
+    ? resolveXaiCanonicalSingleSourcePromptProfile(fighter.slug, sourceNames[0])
     : undefined;
   return sourceNames.map((sourceName) => {
     const source = poseBundle.sources[sourceName];
     const prompt = buildXaiCanonicalBundlePrompt(fighter, sourceName, { promptProfile });
+    const promptSha256 = sha256(prompt);
+    if (
+      promptProfile === XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE
+      && promptSha256 !== XAI_CANONICAL_GLOBAL_SIDE_PROMPT_SHA256_BY_SLUG[fighter.slug]
+    ) {
+      throw new Error(`The exact reviewed global SIDE prompt snapshot changed for ${fighter.slug}.`);
+    }
     return {
       sourceName,
       fighterSlug: fighter.slug,
@@ -804,7 +898,7 @@ function buildBundleMatrix(fighter, poseBundle, sourceNames) {
       poseSha256: source.pose.contentSha256,
       renderingId: source.rendering.id,
       renderingSha256: source.rendering.contentSha256,
-      promptSha256: sha256(prompt),
+      promptSha256,
       ...(promptProfile ? { promptProfile } : {}),
       modelId: XAI_CANONICAL_BUNDLE_MODEL.id,
       params: XAI_CANONICAL_BUNDLE_MODEL.params,
@@ -938,6 +1032,10 @@ export async function runXaiCanonicalBundle(options = {}) {
     options.poseManifestSha256,
     sourceNames,
   );
+  const promptProfile = singleSource
+    ? resolveXaiCanonicalSingleSourcePromptProfile(fighter.slug, sourceNames[0])
+    : undefined;
+  validateXaiCanonicalPromptProfileReferences(poseBundle, promptProfile);
   const sourcePath = join(options.sourceDir ?? DEFAULT_SOURCE_DIR, `${slug}.png`);
   const original = verifyBakeoffSource(fighter, sourcePath);
   for (const sourceName of sourceNames) {

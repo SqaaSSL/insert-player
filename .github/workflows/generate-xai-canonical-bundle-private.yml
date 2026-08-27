@@ -20,11 +20,11 @@ on:
         required: true
         type: string
       source:
-        description: Leave empty for the original three-source bundle; enter crouch for the sealed Elon single-source run
+        description: Leave empty for the original three-source bundle; use crouch for Elon or side for a sealed global SIDE run
         required: false
         type: string
       prompt_sha256:
-        description: Exact reviewed prompt SHA-256; required only when source=crouch
+        description: Exact reviewed prompt SHA-256; required for every single-source run
         required: false
         type: string
       confirmation:
@@ -54,7 +54,7 @@ concurrency:
 
 jobs:
   generate-private-bundle:
-    name: Three paid outputs into a private human-review artifact
+    name: At most three paid outputs into a private human-review artifact
     runs-on: ubuntu-latest
     timeout-minutes: 75
     environment: production
@@ -86,8 +86,13 @@ jobs:
             printf '::error::Invalid roster slug.\n'
             exit 1
           }
-          [[ "$INPUT_BUNDLE_R2_KEY" =~ ^temp/arcade-xai-canonical-inputs-v1/$REQUESTED_SLUG/[a-z0-9][a-z0-9._-]{0,127}\.tar\.gz$ ]] || {
-            printf '::error::The input bundle must use the fixed private per-fighter R2 prefix.\n'
+          archive_stem="$REQUESTED_SLUG"
+          if [[ -n "$REQUESTED_SOURCE" ]]; then
+            archive_stem="$REQUESTED_SLUG-$REQUESTED_SOURCE"
+          fi
+          expected_r2_key="temp/arcade-xai-canonical-inputs-v1/$REQUESTED_SLUG/$archive_stem--${INPUT_BUNDLE_SHA256:0:16}.tar.gz"
+          [[ "$INPUT_BUNDLE_R2_KEY" == "$expected_r2_key" ]] || {
+            printf '::error::The input bundle key is not sealed to the fighter, source selection, and archive hash.\n'
             exit 1
           }
           [[ "$INPUT_BUNDLE_SHA256" =~ ^[a-f0-9]{64}$ && "$POSE_MANIFEST_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
@@ -108,12 +113,26 @@ jobs:
               exit 1
             }
           else
-            [[ "$REQUESTED_SLUG" == "elon-musk" && "$REQUESTED_SOURCE" == "crouch" ]] || {
-              printf '::error::The single-source workflow is sealed only for Elon Musk CROUCH.\n'
-              exit 1
-            }
-            [[ "$PROMPT_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
-              printf '::error::The exact reviewed single-source prompt SHA-256 is required.\n'
+            case "$REQUESTED_SLUG:$REQUESTED_SOURCE" in
+              elon-musk:crouch)
+                expected_prompt_sha256="fbcc5f15fa7fd0f75793fb7dedf602b4d4b5e170c39451e939a4c091ba5e32e5"
+                ;;
+              rosalia:side)
+                expected_prompt_sha256="1a54024b2cd4bf6abf9f019cccc4daa950290328ec501c35821b7339e9753756"
+                ;;
+              ibai-llanos:side)
+                expected_prompt_sha256="076119e904c4bde8c78bd33d4de1f87f07511d5bb50aca42426a02245c7ddc74"
+                ;;
+              lamine-yamal:side)
+                expected_prompt_sha256="8c3fe7ae2e614efd35adb9a77686190b561ec1dfaebcb377f99d5a163499fa60"
+                ;;
+              *)
+                printf '::error::The single-source fighter/source tuple is not sealed.\n'
+                exit 1
+                ;;
+            esac
+            [[ "$PROMPT_SHA256" == "$expected_prompt_sha256" ]] || {
+              printf '::error::The exact reviewed prompt SHA-256 for this fighter/source tuple is required.\n'
               exit 1
             }
             [[ "$REQUESTED_CONFIRMATION" == "GENERATE_XAI_CANONICAL_SOURCE_PRIVATE_V1" ]] || {
@@ -205,6 +224,16 @@ jobs:
             exit 1
           }
           printf '%s  %s\n' "$POSE_MANIFEST_SHA256" "$input_root/pose/pose-manifest.json" | sha256sum --check --strict
+          actual_sources="$(jq -c '.sources | keys | sort' "$input_root/pose/pose-manifest.json")"
+          if [[ -z "$REQUESTED_SOURCE" ]]; then
+            expected_sources='["crouch","side","upright"]'
+          else
+            expected_sources="[\"$REQUESTED_SOURCE\"]"
+          fi
+          [[ "$actual_sources" == "$expected_sources" ]] || {
+            printf '::error::The input pose manifest does not contain the exact requested source selection.\n'
+            exit 1
+          }
           printf 'CANONICAL_INPUT_ROOT=%s\n' "$input_root" >> "$GITHUB_ENV"
           printf 'CANONICAL_WORK_ROOT=%s\n' "$RUNNER_TEMP/xai-canonical-work" >> "$GITHUB_ENV"
 
