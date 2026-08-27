@@ -120,6 +120,17 @@ describe('AI sprite loader high-kick frame selection', () => {
     });
     expect(calculateAtlasFrameTransform(768, 1024, contentBoxes[1], 'legacy'))
       .not.toEqual(transforms[1]);
+    expect(calculateAtlasFrameTransform(
+      768,
+      1024,
+      null,
+      'video-dense-v1',
+      384,
+      512,
+    )).toEqual({
+      source: { x: 0, y: 0, w: 768, h: 1024 },
+      destination: { x: 0, y: 0, w: 384, h: 512 },
+    });
   });
 
   it('measures black fighter pixels by alpha and ignores translucent specks', () => {

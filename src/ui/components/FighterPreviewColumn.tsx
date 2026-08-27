@@ -35,9 +35,14 @@ export function useFighterPreview(
       return {
         blob: cached.pngBlob,
         rawBlob: cached.rawPngBlob,
+        animationName: cached.animationName,
+        animationFormat: cached.animationFormat,
         frameWidth: cached.frameWidth,
         frameHeight: cached.frameHeight,
         frameCount: cached.frameCount,
+        rawFrameWidth: cached.rawFrameWidth,
+        rawFrameHeight: cached.rawFrameHeight,
+        rawFrameCount: cached.rawFrameCount,
       };
     }
     const failed = meta.failedAnimationArtifacts?.[selection.animationName];

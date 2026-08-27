@@ -27,4 +27,8 @@ describe('SpritePreviewCanvas', () => {
   it('never creates a zero-sized backing buffer', () => {
     expect(spritePreviewRenderSize(0, 0)).toEqual({ width: 1, height: 1 });
   });
+
+  it('keeps an HQ source at native resolution instead of enlarging it again', () => {
+    expect(spritePreviewRenderSize(768, 1024)).toEqual({ width: 768, height: 1024 });
+  });
 });

@@ -145,6 +145,7 @@ export interface SpriteSheetLayout {
   durationTicks: Partial<Record<string, number>>;
   presentationProfiles: Partial<Record<string, SpritePresentationProfile>>;
   totalColumns: number;
+  textureDensity: number;
 }
 
 const registeredLayouts = new Map<string, SpriteSheetLayout>();
@@ -154,6 +155,7 @@ export function createSpriteLayout(
   playbackModeOverrides: Partial<Record<FighterState, SpritePlaybackMode>> = {},
   durationTickOverrides: Partial<Record<FighterState, number>> = {},
   presentationProfileOverrides: Partial<Record<FighterState, SpritePresentationProfile>> = {},
+  textureDensity = 1,
 ): SpriteSheetLayout {
   const stateRow: Record<string, number> = {};
   const frameCounts = { ...STATE_FRAMES };
@@ -195,6 +197,9 @@ export function createSpriteLayout(
     durationTicks,
     presentationProfiles,
     totalColumns: maxCols,
+    textureDensity: Number.isFinite(textureDensity) && textureDensity > 0
+      ? textureDensity
+      : 1,
   };
 }
 
@@ -210,9 +215,13 @@ export function composeSpritePresentation(
   renderScale: number,
   baseY: number,
   renderYOffset = 0,
+  textureDensity = 1,
 ): ComposedSpritePresentation {
+  const normalizedTextureDensity = Number.isFinite(textureDensity) && textureDensity > 0
+    ? textureDensity
+    : 1;
   return {
-    scale: profile.scale * renderScale,
+    scale: profile.scale * renderScale / normalizedTextureDensity,
     originX: profile.originX,
     originY: profile.originY,
     offsetY: profile.offsetY,

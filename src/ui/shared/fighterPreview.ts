@@ -1,6 +1,7 @@
 import type { CachedMeta } from '../../services/SpriteCache.ts';
 import type { CloudFighter } from '../../services/CloudFighters.ts';
 import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
+import type { SpriteAnimationFormat } from '../../SpriteAnimationFormat.ts';
 
 /**
  * Single source of truth for user-facing tier names. Accepts both typed
@@ -70,9 +71,14 @@ export function defaultSourceForMeta(meta: Pick<CachedMeta, 'photoHash'> | null)
 export interface PreviewSpriteLike {
   blob: Blob;
   rawBlob?: Blob;
+  animationName?: string;
+  animationFormat?: SpriteAnimationFormat;
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  rawFrameWidth?: number;
+  rawFrameHeight?: number;
+  rawFrameCount?: number;
   failed?: boolean;
   reason?: string;
 }

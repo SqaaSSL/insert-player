@@ -64,6 +64,7 @@ import {
   arcadeFighterPhotoHash,
   deleteCloudFighter,
   downloadArcadeFighterToLocal,
+  downloadArcadeSpriteRawToLocal,
   downloadCloudFighterToLocal,
   formatCloudRosterSyncStatus,
   getCloudFighter,
@@ -177,6 +178,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const generationJobAbortRef = useRef<AbortController | null>(null);
   const assetLoadRequestRef = useRef(0);
   const selectedPhotoHashRef = useRef<string | null>(null);
+  const hqPreviewRequestsRef = useRef(new Set<string>());
   const [recoveryJob, setRecoveryJob] = useState<GenerationJob | null>(null);
   const [resumableJobs, setResumableJobs] = useState<GenerationJob[]>([]);
   const [videoReviewJobs, setVideoReviewJobs] = useState<GenerationJob[]>([]);
@@ -407,9 +409,14 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       return {
         blob: cached.pngBlob,
         rawBlob: cached.rawPngBlob,
+        animationName: cached.animationName,
+        animationFormat: cached.animationFormat,
         frameWidth: cached.frameWidth,
         frameHeight: cached.frameHeight,
         frameCount: cached.frameCount,
+        rawFrameWidth: cached.rawFrameWidth,
+        rawFrameHeight: cached.rawFrameHeight,
+        rawFrameCount: cached.rawFrameCount,
       };
     }
     const failed = meta.failedAnimationArtifacts?.[selection.animationName];
@@ -424,6 +431,34 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       reason: failed.reason,
     };
   }, [meta, selection, sprites]);
+
+  useEffect(() => {
+    if (!meta || !isArcadeFighter || selection.kind !== 'animation') return;
+    const cached = sprites.find((item) => item.animationName === selection.animationName);
+    if (!cached || cached.rawPngBlob) return;
+    const fighter = arcadeFighters.find((item) => item.id === meta.cloudFighterId);
+    const remote = fighter?.sprites.find((item) => item.animationName === selection.animationName);
+    if (!fighter || !remote?.rawUrl) return;
+
+    const requestKey = `${fighter.id}:${selection.animationName}`;
+    if (hqPreviewRequestsRef.current.has(requestKey)) return;
+    hqPreviewRequestsRef.current.add(requestKey);
+    const ownerScope = getActiveSpriteCacheScope();
+    const photoHash = meta.photoHash;
+    const apiContext = captureApiRequestContext();
+    void downloadArcadeSpriteRawToLocal(fighter, selection.animationName, apiContext)
+      .then(async (updated) => {
+        if (!updated || getActiveSpriteCacheScope() !== ownerScope) return;
+        if (selectedPhotoHashRef.current !== photoHash) return;
+        setSprites(await getAllSpritesForHash(photoHash, ownerScope));
+      })
+      .catch((error: any) => {
+        debugWarn('[Gallery] HQ Arcade preview skipped:', error?.message ?? error);
+      })
+      .finally(() => {
+        hqPreviewRequestsRef.current.delete(requestKey);
+      });
+  }, [arcadeFighters, isArcadeFighter, meta, selection, sprites]);
 
   const previewSourceBlob = useMemo(() => {
     if (!meta || selection.kind !== 'source') return null;
@@ -519,7 +554,9 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     try {
       const apiContext = captureApiRequestContext();
       const prepared = await ensureGalleryArcadeFighterReady(fighter, {
-        download: (candidate) => downloadArcadeFighterToLocal(candidate, apiContext),
+        download: (candidate) => downloadArcadeFighterToLocal(candidate, apiContext, {
+          includeHighResolutionAssets: false,
+        }),
         getMeta: (hash) => getCachedMeta(hash, ownerScope),
       });
       downloadedReady = true;
