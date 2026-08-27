@@ -78,6 +78,12 @@ export function packageXaiCanonicalInput(options = {}) {
     throw new Error(`Private input packaging requires confirmation ${PRIVATE_INPUT_CONFIRMATION}.`);
   }
   const slug = requireString(options.slug, 'roster slug', /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+  const sourceNames = options.sourceName
+    ? [requireString(options.sourceName, 'single canonical source', /^crouch$/)]
+    : SOURCE_NAMES;
+  if (sourceNames.length === 1 && slug !== 'elon-musk') {
+    throw new Error('Single-source private packaging is sealed only for Elon Musk CROUCH.');
+  }
   const roster = JSON.parse(readFileSync(options.rosterPath ?? DEFAULT_ROSTER_PATH, 'utf8'));
   validateManifest(roster);
   const matches = roster.fighters.filter((fighter) => fighter.slug === slug);
@@ -89,7 +95,11 @@ export function packageXaiCanonicalInput(options = {}) {
     'pose manifest SHA-256',
     /^[a-f0-9]{64}$/,
   );
-  const loaded = loadXaiCanonicalPoseManifest(poseManifestPath, expectedPoseManifestSha256);
+  const loaded = loadXaiCanonicalPoseManifest(
+    poseManifestPath,
+    expectedPoseManifestSha256,
+    sourceNames,
+  );
   const originalPath = join(options.sourceDir ?? DEFAULT_SOURCE_DIR, `${slug}.png`);
   const original = verifyBakeoffSource(fighter, originalPath);
   const outputDirectory = resolve(requireString(options.outputDirectory, 'private output directory'));
@@ -108,7 +118,7 @@ export function packageXaiCanonicalInput(options = {}) {
   const manifestDirectory = dirname(poseManifestPath);
   const writtenReferences = new Set();
   const writtenEvidence = new Set();
-  for (const sourceName of SOURCE_NAMES) {
+  for (const sourceName of sourceNames) {
     for (const role of ['pose', 'rendering']) {
       const source = loaded.sources[sourceName][role];
       const referenceName = `${source.contentSha256}.png`;
@@ -140,16 +150,18 @@ export function packageXaiCanonicalInput(options = {}) {
   writeFileSync(join(sourcesRoot, `${slug}.png`), original.bytes, { mode: 0o600 });
 
   const portablePoseManifestSha256 = sha256(portableManifestBytes);
-  loadXaiCanonicalPoseManifest(portableManifestPath, portablePoseManifestSha256);
-  const archivePath = join(outputDirectory, `${slug}--canonical-input-v1.tar.gz`);
+  loadXaiCanonicalPoseManifest(portableManifestPath, portablePoseManifestSha256, sourceNames);
+  const archiveStem = sourceNames.length === 1 ? `${slug}-${sourceNames[0]}` : slug;
+  const archivePath = join(outputDirectory, `${archiveStem}--canonical-input-v1.tar.gz`);
   runTar(archivePath, stagingParent);
   const archiveBytes = readFileSync(archivePath);
   const archiveSha256 = sha256(archiveBytes);
-  const r2Key = `temp/arcade-xai-canonical-inputs-v1/${slug}/${slug}--${archiveSha256.slice(0, 16)}.tar.gz`;
+  const r2Key = `temp/arcade-xai-canonical-inputs-v1/${slug}/${archiveStem}--${archiveSha256.slice(0, 16)}.tar.gz`;
   const receipt = {
     schemaVersion: 1,
     status: 'prepared_private_local',
     slug,
+    ...(sourceNames.length === 1 ? { sourceName: sourceNames[0] } : {}),
     fighterName: fighter.name,
     originalSha256: original.sourceSha256,
     sourcePoseManifestSha256: expectedPoseManifestSha256,
@@ -177,6 +189,7 @@ async function main() {
   const receipt = packageXaiCanonicalInput({
     confirmation: parseArg(args, '--confirm-private-input'),
     slug: parseArg(args, '--slug'),
+    sourceName: parseArg(args, '--source'),
     rosterPath: parseArg(args, '--roster', DEFAULT_ROSTER_PATH),
     sourceDir: parseArg(args, '--source-dir', DEFAULT_SOURCE_DIR),
     poseManifestPath: parseArg(args, '--pose-manifest'),

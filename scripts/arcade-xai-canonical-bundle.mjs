@@ -33,7 +33,9 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 
 export const XAI_CANONICAL_BUNDLE_BASE_COMMIT = 'fca24ac39763b879eb6072c0cfb39ea098e5705d';
 export const XAI_CANONICAL_BUNDLE_CONFIRMATION = 'GENERATE_XAI_CANONICAL_BUNDLE_PRIVATE_V1';
+export const XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION = 'GENERATE_XAI_CANONICAL_SOURCE_PRIVATE_V1';
 export const XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION = 'PRIVATE_ARTIFACTS_ONLY_HUMAN_REVIEW';
+export const XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE = 'elon_crouch_identity_hard_gate_v1';
 export const XAI_CANONICAL_BUNDLE_SOURCE_NAMES = Object.freeze(['side', 'upright', 'crouch']);
 export const XAI_CANONICAL_BUNDLE_MODEL = Object.freeze({
   id: 'grok-imagine-image-2-edit',
@@ -44,6 +46,7 @@ export const XAI_CANONICAL_BUNDLE_MODEL = Object.freeze({
   auditedCostMicrocredits: 110000,
   auditedCostUsd: 0.11,
   maxCostPerOutputUsd: 0.12,
+  singleSourceMaxCostUsd: 0.11,
   maxBundleCostUsd: 0.36,
   params: Object.freeze({
     num_images: 1,
@@ -90,6 +93,40 @@ function requireString(value, label, pattern) {
 function requireInteger(value, label, minimum = 0) {
   if (!Number.isSafeInteger(value) || value < minimum) throw new Error(`${label} is invalid.`);
   return value;
+}
+
+function selectedCanonicalSourceNames(sourceName) {
+  if (sourceName === undefined || sourceName === null || sourceName === '') {
+    return XAI_CANONICAL_BUNDLE_SOURCE_NAMES;
+  }
+  if (!XAI_CANONICAL_BUNDLE_SOURCE_NAMES.includes(sourceName)) {
+    throw new Error(`Unsupported canonical source: ${String(sourceName)}.`);
+  }
+  return Object.freeze([sourceName]);
+}
+
+function canonicalBundlePolicy(sourceNames) {
+  const singleSource = sourceNames.length === 1;
+  const expectedPaidCalls = sourceNames.length;
+  const maximumBundleCostUsd = singleSource
+    ? XAI_CANONICAL_BUNDLE_MODEL.singleSourceMaxCostUsd
+    : XAI_CANONICAL_BUNDLE_MODEL.maxBundleCostUsd;
+  return {
+    expectedPaidCalls,
+    maximumPaidCalls: expectedPaidCalls,
+    automaticRetries: 0,
+    fallback: 'none',
+    promptEnrichment: false,
+    catalogCostPerOutputUsd: XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd,
+    maximumCostPerOutputUsd: singleSource
+      ? XAI_CANONICAL_BUNDLE_MODEL.singleSourceMaxCostUsd
+      : XAI_CANONICAL_BUNDLE_MODEL.maxCostPerOutputUsd,
+    maximumBundleCostUsd,
+    outputVisibility: 'private_local',
+    import: false,
+    activation: false,
+    humanReviewRequired: true,
+  };
 }
 
 function writeJsonAtomic(path, value) {
@@ -246,7 +283,11 @@ function readApprovedReference(reference, baseDirectory, label) {
   return { ...reference, absolutePath: path, bytes };
 }
 
-export function loadXaiCanonicalPoseManifest(path, expectedSha256) {
+export function loadXaiCanonicalPoseManifest(
+  path,
+  expectedSha256,
+  expectedSourceNames = XAI_CANONICAL_BUNDLE_SOURCE_NAMES,
+) {
   requireString(path, 'pose manifest path');
   requireString(expectedSha256, 'pose manifest SHA-256', /^[a-f0-9]{64}$/);
   const bytes = readFileSync(path);
@@ -270,10 +311,15 @@ export function loadXaiCanonicalPoseManifest(path, expectedSha256) {
   ])) {
     throw new Error('Pose manifest reference order changed.');
   }
-  exactKeys(manifest.sources, XAI_CANONICAL_BUNDLE_SOURCE_NAMES, 'pose manifest sources');
+  if (
+    !Array.isArray(expectedSourceNames)
+    || ![1, XAI_CANONICAL_BUNDLE_SOURCE_NAMES.length].includes(expectedSourceNames.length)
+    || expectedSourceNames.some((sourceName) => !XAI_CANONICAL_BUNDLE_SOURCE_NAMES.includes(sourceName))
+  ) throw new Error('Expected pose manifest sources are invalid.');
+  exactKeys(manifest.sources, expectedSourceNames, 'pose manifest sources');
   const baseDirectory = dirname(resolve(path));
   const sources = {};
-  for (const sourceName of XAI_CANONICAL_BUNDLE_SOURCE_NAMES) {
+  for (const sourceName of expectedSourceNames) {
     const source = manifest.sources[sourceName];
     exactKeys(source, ['pose', 'rendering'], `pose manifest ${sourceName}`);
     const pose = readApprovedReference(source.pose, baseDirectory, `${sourceName} pose`);
@@ -286,7 +332,7 @@ export function loadXaiCanonicalPoseManifest(path, expectedSha256) {
   return { manifest, manifestSha256: expectedSha256, sources };
 }
 
-function sourcePoseInstruction(sourceName) {
+function sourcePoseInstruction(sourceName, options = {}) {
   if (sourceName === 'side') {
     return 'a neutral full-body combat guard in a clear 3/4 side presentation facing right, with both feet fully visible and stable';
   }
@@ -294,43 +340,66 @@ function sourcePoseInstruction(sourceName) {
     return 'an upright neutral full-body ready stance in 3/4 view facing right, balanced and suitable as the standing canonical anchor';
   }
   if (sourceName === 'crouch') {
+    if (options.promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE) {
+      return 'a deep, compact, anatomically balanced crouching guard in a strict lateral profile facing screen-right, not frontal, not three-quarter, not screen-left, and do not mirror; head and hips substantially lowered; both soles visibly planted on one shared ground line; two distinct complete hands held close to the face and upper chest in a closed defensive guard; static held pose with no attack, lunge, jump, kneel, or motion; complete silhouette visible with generous overscan and no crop';
+    }
     return 'a deep but anatomically balanced crouching guard in 3/4 view facing right, with both feet and the complete silhouette visible';
   }
   throw new Error(`Unsupported canonical source: ${String(sourceName)}.`);
 }
 
-function fighterRequirements(fighter, sourceName) {
+function fighterRequirements(fighter, sourceName, options = {}) {
   const original = fighter.referencePrompt?.trim() ?? '';
   if (original.length < 180) throw new Error(`Roster prompt is incomplete for ${fighter.slug}.`);
   const replaced = original.replace(
     /Show the complete figure head-to-toe in [^,]+,\s*3\/4 view facing right,/i,
-    `Show the complete figure head-to-toe in ${sourcePoseInstruction(sourceName)},`,
+    `Show the complete figure head-to-toe in ${sourcePoseInstruction(sourceName, options)},`,
   );
   if (replaced === original) throw new Error(`Roster prompt pose contract is unsupported for ${fighter.slug}.`);
   return replaced;
 }
 
-export function buildXaiCanonicalBundlePrompt(fighter, sourceName) {
-  return [
+export function buildXaiCanonicalBundlePrompt(fighter, sourceName, options = {}) {
+  const identityHardGate = options.promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE;
+  if (options.promptProfile !== undefined && !identityHardGate) {
+    throw new Error(`Unsupported canonical prompt profile: ${String(options.promptProfile)}.`);
+  }
+  if (identityHardGate && (fighter.slug !== 'elon-musk' || sourceName !== 'crouch')) {
+    throw new Error('The reviewed identity-first wardrobe profile is sealed only for Elon Musk CROUCH.');
+  }
+  const referenceRoles = identityHardGate ? [
+    'REFERENCE ROLES — KEEP ALL THREE STRICTLY SEPARATE:',
+    'IMAGE 3 is the REAL IDENTITY AND PHYSIQUE ANCHOR and the acceptance hard gate. Render Elon Musk exactly as shown in IMAGE 3, not a model-memory approximation. Preserve his facial geometry, hair, skin tone, apparent age, distinguishing features, and natural body build. If the result is not immediately recognizable as IMAGE 3, the result is invalid. Do not replace IMAGE 3 with a generic, narrower, or more angular substitute; do not slim his rounded-square facial structure or broad build. Never copy IMAGE 3 clothing, suit, shirt, tie, colors, or accessories; IMAGE 2 alone controls wardrobe. Never copy the portrait crop, camera, background, or photographic rendering.',
+    'IMAGE 1 is the CROUCH STRUCTURE MASTER only. Use only its joint arrangement, crouch depth, and two-hand defensive guard. Rotate and recompose the target into the strict screen-right lateral profile required below. The TARGET SOURCE and HARD OUTPUT CONTRACT override any torso yaw, perspective, facing, framing, silhouette placement, or foot-baseline ambiguity in IMAGE 1. Never copy its identity, face, hair, physique, clothes, colors, logos, or accessories.',
+    'IMAGE 2 is the CANONICAL RENDERING AND WARDROBE MASTER only. Match its grounded premium fighting-game rendering language, material detail, controlled lighting, crisp edge treatment, garments, colors, and character styling. Never copy its identity, face, hair, physique, background, green vignette, gradient, logos, or accessories that conflict with the written roster requirements; IMAGE 3 alone controls body build and proportions, and the HARD OUTPUT CONTRACT alone controls the background.',
+  ] : [
     'REFERENCE ROLES — KEEP ALL THREE STRICTLY SEPARATE:',
     'IMAGE 1 is the POSE AND COMPOSITION MASTER only. Match its body pose, facing direction, balance, full-body framing, camera distance, and silhouette placement. Never copy its identity, face, hair, physique, clothes, colors, logos, or accessories.',
     'IMAGE 2 is the CANONICAL RENDERING MASTER only. Match its grounded premium fighting-game rendering language, natural adult proportions, material detail, controlled lighting, crisp edge treatment, and green-screen presentation. Never copy its identity, face, hair, clothes, colors, logos, or accessories.',
     'IMAGE 3 is the REAL IDENTITY AND PHYSIQUE ANCHOR only. Preserve this person\'s facial geometry, hair, skin tone, apparent age, distinguishing features, and natural body build. Never copy the portrait crop, camera, background, or photographic rendering.',
+  ];
+  const finalPriority = identityHardGate
+    ? '1) IDENTITY AND PHYSIQUE FROM IMAGE 3 — HARD ACCEPTANCE GATE. 2) CROUCH JOINT STRUCTURE FROM IMAGE 1, always subject to TARGET SOURCE and HARD OUTPUT CONTRACT. 3) Rendering language and wardrobe from IMAGE 2. Written roster requirements may refine details but must never weaken the IMAGE 3 identity gate. Never let one reference overwrite another reference\'s assigned role.'
+    : '1) Pose and composition from IMAGE 1. 2) Rendering language only from IMAGE 2. 3) Identity and physique from IMAGE 3. 4) Wardrobe and character details from the written roster requirements. Never let one reference overwrite another reference\'s assigned role.';
+  return [
+    ...referenceRoles,
     '',
     'TARGET SOURCE:',
-    `Produce exactly one ${sourceName.toUpperCase()} canonical source: ${sourcePoseInstruction(sourceName)}.`,
+    `Produce exactly one ${sourceName.toUpperCase()} canonical source: ${sourcePoseInstruction(sourceName, options)}.`,
     '',
     'IDENTITY, ANATOMY, AND CONSISTENCY:',
     'Replace every person in IMAGE 1 and IMAGE 2 with the person from IMAGE 3. Never blend faces or identities. Keep normal adult anatomy, a natural head scale, complete hands and feet, and coherent joints. The result must be immediately recognizable as IMAGE 3 while using only the assigned pose and rendering roles from the other references.',
     '',
     'ROSTER REQUIREMENTS:',
-    fighterRequirements(fighter, sourceName),
+    fighterRequirements(fighter, sourceName, options),
     '',
     'OUTPUT CONTRACT:',
-    'Return exactly one full-body character image, not a sprite sheet, sequence, collage, comparison, or contact sheet. Background must be pure bright green (#00FF00), flat and uniform, with no shadow, floor, gradient, text, watermark, logo, badge, emblem, brand-like symbol, prop, or border.',
+    identityHardGate
+      ? 'HARD OUTPUT CONTRACT, EVEN IF ANY REFERENCE CONTRADICTS IT: Return exactly one full-body character image with generous green overscan around the complete head, hands, body, and both feet; no part may touch or cross the frame edge. Do not return a sprite sheet, sequence, collage, comparison, or contact sheet. Background must be pure bright green (#00FF00), flat and uniform, with no shadow, floor, gradient, text, watermark, logo, badge, emblem, brand-like symbol, prop, or border.'
+      : 'Return exactly one full-body character image, not a sprite sheet, sequence, collage, comparison, or contact sheet. Background must be pure bright green (#00FF00), flat and uniform, with no shadow, floor, gradient, text, watermark, logo, badge, emblem, brand-like symbol, prop, or border.',
     '',
     'FINAL PRIORITY ORDER:',
-    '1) Pose and composition from IMAGE 1. 2) Rendering language only from IMAGE 2. 3) Identity and physique from IMAGE 3. 4) Wardrobe and character details from the written roster requirements. Never let one reference overwrite another reference\'s assigned role.',
+    finalPriority,
   ].join('\n');
 }
 
@@ -340,6 +409,7 @@ export function buildXaiCanonicalBundlePayload({
   poseAssetHash,
   renderingAssetHash,
   identityAssetHash,
+  promptProfile,
 }) {
   for (const [label, hash] of [
     ['pose', poseAssetHash],
@@ -354,7 +424,7 @@ export function buildXaiCanonicalBundlePayload({
   const marker = `ip-canonical-v1-${fighter.slug}-${sourceName}`;
   if (marker.length > 60) throw new Error(`PixCLI marker exceeds 60 characters: ${marker}.`);
   return {
-    prompt: buildXaiCanonicalBundlePrompt(fighter, sourceName),
+    prompt: buildXaiCanonicalBundlePrompt(fighter, sourceName, { promptProfile }),
     model: XAI_CANONICAL_BUNDLE_MODEL.id,
     image: [poseAssetHash, renderingAssetHash, identityAssetHash],
     params: { ...XAI_CANONICAL_BUNDLE_MODEL.params },
@@ -441,17 +511,21 @@ function runCanonicalCleanup(rawPath, cleanPath, options = {}) {
   return { ...inspectPng(bytes, 'canonical clean output'), path: cleanPath };
 }
 
-function createContactSheet(sourceArtifacts, outputPath, options = {}) {
+function createContactSheet(sourceArtifacts, sourceNames, outputPath, options = {}) {
   const temporary = `${outputPath}.writing-${process.pid}.png`;
   const inputArgs = [];
-  for (const name of XAI_CANONICAL_BUNDLE_SOURCE_NAMES) {
+  for (const name of sourceNames) {
     inputArgs.push('-i', sourceArtifacts[name].raw.absolutePath, '-i', sourceArtifacts[name].clean.absolutePath);
   }
   const filters = [];
-  for (let index = 0; index < 6; index += 1) {
+  for (let index = 0; index < sourceNames.length * 2; index += 1) {
     filters.push(`[${index}:v]scale=384:512:force_original_aspect_ratio=decrease:flags=lanczos,pad=384:512:(ow-iw)/2:(oh-ih)/2:color=0x202226,format=rgba[t${index}]`);
   }
-  filters.push('[t0][t2][t4][t1][t3][t5]xstack=inputs=6:layout=0_0|384_0|768_0|0_512|384_512|768_512:fill=0x202226[review]');
+  if (sourceNames.length === 1) {
+    filters.push('[t0][t1]xstack=inputs=2:layout=0_0|384_0:fill=0x202226[review]');
+  } else {
+    filters.push('[t0][t2][t4][t1][t3][t5]xstack=inputs=6:layout=0_0|384_0|768_0|0_512|384_512|768_512:fill=0x202226[review]');
+  }
   (options.runCommand ?? defaultCommand)(options.ffmpegBinary ?? 'ffmpeg', [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-threads', '1', '-filter_threads', '1',
     ...inputArgs,
@@ -460,7 +534,9 @@ function createContactSheet(sourceArtifacts, outputPath, options = {}) {
   if (!existsSync(temporary)) throw new Error('ffmpeg did not produce the contact sheet.');
   const bytes = readFileSync(temporary);
   const inspected = inspectPng(bytes, 'canonical contact sheet');
-  if (inspected.width !== 1152 || inspected.height !== 1024) {
+  const expectedWidth = sourceNames.length === 1 ? 768 : 1152;
+  const expectedHeight = sourceNames.length === 1 ? 512 : 1024;
+  if (inspected.width !== expectedWidth || inspected.height !== expectedHeight) {
     throw new Error('Canonical contact sheet dimensions changed.');
   }
   chmodSync(temporary, 0o600);
@@ -713,10 +789,13 @@ async function ensureUploadedReference(options, reference, state, saveState) {
   });
 }
 
-function buildBundleMatrix(fighter, poseBundle) {
-  return XAI_CANONICAL_BUNDLE_SOURCE_NAMES.map((sourceName) => {
+function buildBundleMatrix(fighter, poseBundle, sourceNames) {
+  const promptProfile = sourceNames.length === 1
+    ? XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
+    : undefined;
+  return sourceNames.map((sourceName) => {
     const source = poseBundle.sources[sourceName];
-    const prompt = buildXaiCanonicalBundlePrompt(fighter, sourceName);
+    const prompt = buildXaiCanonicalBundlePrompt(fighter, sourceName, { promptProfile });
     return {
       sourceName,
       fighterSlug: fighter.slug,
@@ -726,16 +805,20 @@ function buildBundleMatrix(fighter, poseBundle) {
       renderingId: source.rendering.id,
       renderingSha256: source.rendering.contentSha256,
       promptSha256: sha256(prompt),
+      ...(promptProfile ? { promptProfile } : {}),
       modelId: XAI_CANONICAL_BUNDLE_MODEL.id,
       params: XAI_CANONICAL_BUNDLE_MODEL.params,
     };
   });
 }
 
-function buildInitialState({ fighter, poseBundle, matrixSha256 }) {
+function buildInitialState({ fighter, poseBundle, matrixSha256, sourceNames }) {
+  const singleSource = sourceNames.length === 1;
   return {
     schemaVersion: 1,
-    bundleId: `arcade-xai-canonical-bundle-${fighter.slug}-v1`,
+    bundleId: singleSource
+      ? `arcade-xai-canonical-source-${fighter.slug}-${sourceNames[0]}-v1`
+      : `arcade-xai-canonical-bundle-${fighter.slug}-v1`,
     fighterSlug: fighter.slug,
     fighterName: fighter.name,
     originalSha256: fighter.reference.sourceSha256,
@@ -745,26 +828,14 @@ function buildInitialState({ fighter, poseBundle, matrixSha256 }) {
     status: 'running',
     createdAt: nowIso(),
     updatedAt: nowIso(),
-    policy: {
-      expectedPaidCalls: 3,
-      maximumPaidCalls: 3,
-      automaticRetries: 0,
-      fallback: 'none',
-      promptEnrichment: false,
-      catalogCostPerOutputUsd: 0.11,
-      maximumCostPerOutputUsd: 0.12,
-      maximumBundleCostUsd: 0.36,
-      outputVisibility: 'private_local',
-      import: false,
-      activation: false,
-      humanReviewRequired: true,
-    },
+    ...(singleSource ? { sourceNames: [...sourceNames] } : {}),
+    policy: canonicalBundlePolicy(sourceNames),
     uploads: {},
     slots: {},
   };
 }
 
-function buildDescriptor(state, matrix, artifacts, contactSheet, outputDirectory) {
+function buildDescriptor(state, matrix, artifacts, sourceNames, contactSheet, outputDirectory) {
   const portableArtifact = (artifact) => {
     const { absolutePath: _absolutePath, ...portable } = artifact;
     return portable;
@@ -784,15 +855,16 @@ function buildDescriptor(state, matrix, artifacts, contactSheet, outputDirectory
       id: state.poseManifestId,
       contentSha256: state.poseManifestSha256,
     },
+    ...(sourceNames.length === 1 ? { sourceNames: [...sourceNames] } : {}),
     provider: {
       modelId: XAI_CANONICAL_BUNDLE_MODEL.id,
       endpoint: XAI_CANONICAL_BUNDLE_MODEL.endpoint,
       provider: XAI_CANONICAL_BUNDLE_MODEL.provider,
       backend: XAI_CANONICAL_BUNDLE_MODEL.backend,
       auditedCostPerOutputUsd: XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd,
-      maximumCostPerOutputUsd: XAI_CANONICAL_BUNDLE_MODEL.maxCostPerOutputUsd,
-      maximumBundleCostUsd: XAI_CANONICAL_BUNDLE_MODEL.maxBundleCostUsd,
-      paidCalls: 3,
+      maximumCostPerOutputUsd: state.policy.maximumCostPerOutputUsd,
+      maximumBundleCostUsd: state.policy.maximumBundleCostUsd,
+      paidCalls: sourceNames.length,
       actualCostUsd: Number(Object.values(state.slots).reduce((sum, slot) => sum + slot.audit.costUsd, 0).toFixed(2)),
     },
     cleanup: {
@@ -800,7 +872,7 @@ function buildDescriptor(state, matrix, artifacts, contactSheet, outputDirectory
       filter: XAI_CANONICAL_BUNDLE_CLEANUP.filter,
     },
     policy: state.policy,
-    sources: Object.fromEntries(XAI_CANONICAL_BUNDLE_SOURCE_NAMES.map((sourceName) => {
+    sources: Object.fromEntries(sourceNames.map((sourceName) => {
       const slot = state.slots[sourceName];
       const sealed = matrix.find((entry) => entry.sourceName === sourceName);
       return [sourceName, {
@@ -823,21 +895,31 @@ function buildDescriptor(state, matrix, artifacts, contactSheet, outputDirectory
       sizeBytes: contactSheet.sizeBytes,
       width: contactSheet.width,
       height: contactSheet.height,
-      layout: ['side_raw', 'upright_raw', 'crouch_raw', 'side_clean', 'upright_clean', 'crouch_clean'],
+      layout: sourceNames.length === 1
+        ? [`${sourceNames[0]}_raw`, `${sourceNames[0]}_clean`]
+        : ['side_raw', 'upright_raw', 'crouch_raw', 'side_clean', 'upright_clean', 'crouch_clean'],
     },
   };
   return { ...descriptor, descriptorSha256: sha256(canonicalJson(descriptor)) };
 }
 
 export async function runXaiCanonicalBundle(options = {}) {
-  if (options.confirmation !== XAI_CANONICAL_BUNDLE_CONFIRMATION) {
-    throw new Error(`Paid execution requires confirmation ${XAI_CANONICAL_BUNDLE_CONFIRMATION}.`);
+  const sourceNames = selectedCanonicalSourceNames(options.sourceName);
+  const singleSource = sourceNames.length === 1;
+  const requiredConfirmation = singleSource
+    ? XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION
+    : XAI_CANONICAL_BUNDLE_CONFIRMATION;
+  if (options.confirmation !== requiredConfirmation) {
+    throw new Error(`Paid execution requires confirmation ${requiredConfirmation}.`);
   }
   if (options.privateConfirmation !== XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION) {
     throw new Error(`Private-only execution requires confirmation ${XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION}.`);
   }
-  if (Number(options.maxCostUsd) !== XAI_CANONICAL_BUNDLE_MODEL.maxBundleCostUsd) {
-    throw new Error('Explicit --max-cost-usd=0.36 is required.');
+  const requiredMaxCostUsd = singleSource
+    ? XAI_CANONICAL_BUNDLE_MODEL.singleSourceMaxCostUsd
+    : XAI_CANONICAL_BUNDLE_MODEL.maxBundleCostUsd;
+  if (Number(options.maxCostUsd) !== requiredMaxCostUsd) {
+    throw new Error(`Explicit --max-cost-usd=${requiredMaxCostUsd.toFixed(2)} is required.`);
   }
   const slug = requireString(options.slug, 'explicit roster slug', /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
   const apiKey = options.apiKey ?? '';
@@ -851,10 +933,14 @@ export async function runXaiCanonicalBundle(options = {}) {
   const matches = manifest.fighters.filter((entry) => entry.slug === slug);
   if (matches.length !== 1) throw new Error(`Roster slug is missing or ambiguous: ${slug}.`);
   const fighter = matches[0];
-  const poseBundle = loadXaiCanonicalPoseManifest(options.poseManifestPath, options.poseManifestSha256);
+  const poseBundle = loadXaiCanonicalPoseManifest(
+    options.poseManifestPath,
+    options.poseManifestSha256,
+    sourceNames,
+  );
   const sourcePath = join(options.sourceDir ?? DEFAULT_SOURCE_DIR, `${slug}.png`);
   const original = verifyBakeoffSource(fighter, sourcePath);
-  for (const sourceName of XAI_CANONICAL_BUNDLE_SOURCE_NAMES) {
+  for (const sourceName of sourceNames) {
     const referenceHashes = [
       poseBundle.sources[sourceName].pose.contentSha256,
       poseBundle.sources[sourceName].rendering.contentSha256,
@@ -862,16 +948,27 @@ export async function runXaiCanonicalBundle(options = {}) {
     ];
     if (new Set(referenceHashes).size !== 3) throw new Error(`${sourceName} references are not three distinct assets.`);
   }
-  const matrix = buildBundleMatrix(fighter, poseBundle);
+  const matrix = buildBundleMatrix(fighter, poseBundle, sourceNames);
+  if (singleSource) {
+    const expectedPromptSha256 = requireString(
+      options.promptSha256,
+      'explicit single-source prompt SHA-256',
+      /^[a-f0-9]{64}$/,
+    );
+    if (matrix[0].promptSha256 !== expectedPromptSha256) {
+      throw new Error('Single-source prompt SHA-256 does not match the reviewed prompt snapshot.');
+    }
+  }
   const matrixSha256 = sha256(canonicalJson(matrix));
-  const statePath = resolve(options.statePath ?? join(DEFAULT_STATE_ROOT, `${slug}.json`));
-  const outputDirectory = resolve(options.outputDirectory ?? join(DEFAULT_OUTPUT_ROOT, slug));
+  const stateStem = singleSource ? `${slug}-${sourceNames[0]}` : slug;
+  const statePath = resolve(options.statePath ?? join(DEFAULT_STATE_ROOT, `${stateStem}.json`));
+  const outputDirectory = resolve(options.outputDirectory ?? join(DEFAULT_OUTPUT_ROOT, stateStem));
   const locks = acquireExclusiveBundleLocks(statePath, outputDirectory);
   try {
     mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
     mkdirSync(join(outputDirectory, 'sources'), { recursive: true, mode: 0o700 });
-    let state = readState(statePath) ?? buildInitialState({ fighter, poseBundle, matrixSha256 });
-  const expected = buildInitialState({ fighter, poseBundle, matrixSha256 });
+    let state = readState(statePath) ?? buildInitialState({ fighter, poseBundle, matrixSha256, sourceNames });
+  const expected = buildInitialState({ fighter, poseBundle, matrixSha256, sourceNames });
   for (const key of [
     'schemaVersion', 'bundleId', 'fighterSlug', 'originalSha256', 'poseManifestId',
     'poseManifestSha256', 'matrixSha256',
@@ -881,7 +978,10 @@ export async function runXaiCanonicalBundle(options = {}) {
   if (canonicalJson(state.policy) !== canonicalJson(expected.policy)) {
     throw new Error('Existing canonical bundle state policy changed.');
   }
-  const unknownSlots = Object.keys(state.slots ?? {}).filter((name) => !XAI_CANONICAL_BUNDLE_SOURCE_NAMES.includes(name));
+  if (canonicalJson(state.sourceNames) !== canonicalJson(expected.sourceNames)) {
+    throw new Error('Existing canonical bundle state source selection changed.');
+  }
+  const unknownSlots = Object.keys(state.slots ?? {}).filter((name) => !sourceNames.includes(name));
   if (unknownSlots.length > 0) throw new Error('Existing canonical bundle state contains an unknown paid-call slot.');
   const saveState = () => {
     state.updatedAt = nowIso();
@@ -912,7 +1012,7 @@ export async function runXaiCanonicalBundle(options = {}) {
     if (previous) {
       for (const key of [
         'sourceName', 'fighterSlug', 'originalSha256', 'poseSha256', 'renderingSha256',
-        'promptSha256', 'modelId',
+        'promptSha256', 'promptProfile', 'modelId',
       ]) {
         if (previous[key] !== sealed[key]) throw new Error(`${sourceName} state invariant mismatch: ${key}.`);
       }
@@ -936,6 +1036,7 @@ export async function runXaiCanonicalBundle(options = {}) {
       const payload = buildXaiCanonicalBundlePayload({
         fighter,
         sourceName,
+        promptProfile: sealed.promptProfile,
         poseAssetHash: poseUpload.pixcliAssetHash,
         renderingAssetHash: renderingUpload.pixcliAssetHash,
         identityAssetHash: identityUpload.pixcliAssetHash,
@@ -972,6 +1073,7 @@ export async function runXaiCanonicalBundle(options = {}) {
       return buildXaiCanonicalBundlePayload({
         fighter,
         sourceName,
+        promptProfile: sealed.promptProfile,
         poseAssetHash: poseUpload.pixcliAssetHash,
         renderingAssetHash: renderingUpload.pixcliAssetHash,
         identityAssetHash: identityUpload.pixcliAssetHash,
@@ -1023,18 +1125,23 @@ export async function runXaiCanonicalBundle(options = {}) {
     }
   }
 
-  const artifacts = Object.fromEntries(XAI_CANONICAL_BUNDLE_SOURCE_NAMES.map((sourceName) => {
+  const artifacts = Object.fromEntries(sourceNames.map((sourceName) => {
     const slot = state.slots[sourceName];
     return [sourceName, {
       raw: verifyStoredArtifact(slot.raw, outputDirectory, `${sourceName} raw`),
       clean: verifyStoredArtifact(slot.clean, outputDirectory, `${sourceName} clean`),
     }];
   }));
-  const contactSheet = createContactSheet(artifacts, join(outputDirectory, 'contact-sheet.png'), options);
+  const contactSheet = createContactSheet(
+    artifacts,
+    sourceNames,
+    join(outputDirectory, 'contact-sheet.png'),
+    options,
+  );
   if (state.contactSheetSha256 && state.contactSheetSha256 !== contactSheet.contentSha256) {
     throw new Error('Canonical contact sheet changed on deterministic resume.');
   }
-  const descriptor = buildDescriptor(state, matrix, artifacts, contactSheet, outputDirectory);
+  const descriptor = buildDescriptor(state, matrix, artifacts, sourceNames, contactSheet, outputDirectory);
   writeJsonAtomic(join(outputDirectory, 'review-descriptor.json'), descriptor);
   state.status = 'awaiting_human_review';
   state.descriptorSha256 = descriptor.descriptorSha256;
@@ -1051,24 +1158,31 @@ function parseArg(rawArgs, name, fallback = '') {
   return rawArgs.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1) ?? fallback;
 }
 
-async function main() {
-  const rawArgs = process.argv.slice(2);
+export function parseXaiCanonicalBundleCliArgs(rawArgs, environment = process.env) {
   if (!rawArgs.includes('--execute')) throw new Error('Paid execution requires --execute.');
   const slug = parseArg(rawArgs, '--slug');
-  const result = await runXaiCanonicalBundle({
+  const sourceName = parseArg(rawArgs, '--source');
+  const stateStem = sourceName ? `${slug}-${sourceName}` : slug;
+  return {
     confirmation: parseArg(rawArgs, '--confirm'),
     privateConfirmation: parseArg(rawArgs, '--confirm-private'),
     maxCostUsd: parseArg(rawArgs, '--max-cost-usd'),
     slug,
-    apiKey: process.env.PIXCLI_API_KEY,
-    apiBase: process.env.PIXCLI_BASE_URL,
+    sourceName,
+    promptSha256: parseArg(rawArgs, '--prompt-sha256'),
+    apiKey: environment.PIXCLI_API_KEY,
+    apiBase: environment.PIXCLI_BASE_URL,
     manifestPath: parseArg(rawArgs, '--manifest', DEFAULT_MANIFEST_PATH),
     sourceDir: parseArg(rawArgs, '--source-dir', DEFAULT_SOURCE_DIR),
     poseManifestPath: parseArg(rawArgs, '--pose-manifest'),
     poseManifestSha256: parseArg(rawArgs, '--pose-manifest-sha256'),
-    statePath: parseArg(rawArgs, '--state', join(DEFAULT_STATE_ROOT, `${slug}.json`)),
-    outputDirectory: parseArg(rawArgs, '--output-dir', join(DEFAULT_OUTPUT_ROOT, slug)),
-  });
+    statePath: parseArg(rawArgs, '--state', join(DEFAULT_STATE_ROOT, `${stateStem}.json`)),
+    outputDirectory: parseArg(rawArgs, '--output-dir', join(DEFAULT_OUTPUT_ROOT, stateStem)),
+  };
+}
+
+async function main() {
+  const result = await runXaiCanonicalBundle(parseXaiCanonicalBundleCliArgs(process.argv.slice(2)));
   console.log(`Canonical bundle ${result.state.bundleId} is awaiting human review.`);
   console.log(`Review descriptor: ${join(result.outputDirectory, 'review-descriptor.json')}`);
 }
