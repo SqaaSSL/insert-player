@@ -279,7 +279,7 @@ function publicSpriteAssetUrl(
   return `${url.origin}/public-assets/fighters/${encodeURIComponent(fighterId)}/sprites/${encodeURIComponent(sprite.id)}/${encodeURIComponent(revision)}`;
 }
 
-function publicArcadeSpriteRawAssetUrl(
+function publicArcadeSpriteHighDensityAssetUrl(
   request: Request,
   fighterId: string,
   sprite: SpriteAsset,
@@ -287,7 +287,7 @@ function publicArcadeSpriteRawAssetUrl(
   const revision = publicAssetRevision(sprite.raw_blob_key);
   if (!revision) return null;
   const url = new URL(request.url);
-  return `${url.origin}/public-assets/arcade/${encodeURIComponent(fighterId)}/sprites/${encodeURIComponent(sprite.id)}/raw/${encodeURIComponent(revision)}`;
+  return `${url.origin}/public-assets/arcade/${encodeURIComponent(fighterId)}/sprites/${encodeURIComponent(sprite.id)}/hq/${encodeURIComponent(revision)}`;
 }
 
 function decodeAssetKey(key: string): string | Response {
@@ -519,6 +519,9 @@ function serializeCommunityFighter(
       contentHash: sprite.content_hash,
       url: publicSpriteAssetUrl(request, fighter.id, sprite),
       rawUrl: null,
+      rawFrameWidth: null,
+      rawFrameHeight: null,
+      rawFrameCount: null,
     })),
     owner: {
       name: 'Player',
@@ -537,11 +540,23 @@ function serializeArcadeFighter(
     ...serialized,
     sprites: serialized.sprites.map((sprite) => {
       const source = spriteById.get(sprite.id);
+      const highDensity = source
+        ? serializeSprite(request, source)
+        : null;
+      const hasPublicHighDensityAsset = Boolean(
+        source && highDensity?.rawFrameWidth && highDensity.rawFrameHeight && highDensity.rawFrameCount,
+      );
       return {
         ...sprite,
-        rawUrl: source
-          ? publicArcadeSpriteRawAssetUrl(request, fighter.id, source)
+        // video-dense RAW rows are compiler-normalized, alpha-cleaned and reviewed.
+        // Publish them only as an Arcade gameplay derivative; rawUrl and raw
+        // metadata remain private on every public fighter payload.
+        hqUrl: source && hasPublicHighDensityAsset
+          ? publicArcadeSpriteHighDensityAssetUrl(request, fighter.id, source)
           : null,
+        hqFrameWidth: highDensity?.rawFrameWidth ?? null,
+        hqFrameHeight: highDensity?.rawFrameHeight ?? null,
+        hqFrameCount: highDensity?.rawFrameCount ?? null,
       };
     }),
     arcade: {
@@ -2206,7 +2221,7 @@ export async function getPublicFighterSpriteAsset(
   return publicAssetResponse(env, sprite.blob_key);
 }
 
-export async function getPublicArcadeSpriteRawAsset(
+export async function getPublicArcadeSpriteHighDensityAsset(
   env: Env,
   fighterId: string,
   spriteId: string,
@@ -2219,6 +2234,7 @@ export async function getPublicArcadeSpriteRawAsset(
     JOIN arcade_fighters af ON af.fighter_id = f.id
     WHERE f.id = ? AND f.public_flag = 1 AND f.quality_tier = 'champion'
       AND af.status = 'active' AND s.id = ? AND s.quality_tier = 'champion'
+      AND s.animation_format = 'video-dense-v1'
       AND ${playableSpriteSetSql('f', 'champion')}
     LIMIT 1
   `).bind(fighterId, spriteId).first<{ raw_blob_key: string | null }>();

@@ -40,12 +40,16 @@ export interface CloudSprite {
   qualityTier: CloudQualityTier;
   url: string | null;
   rawUrl: string | null;
+  hqUrl?: string | null;
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
   rawFrameWidth?: number | null;
   rawFrameHeight?: number | null;
   rawFrameCount?: number | null;
+  hqFrameWidth?: number | null;
+  hqFrameHeight?: number | null;
+  hqFrameCount?: number | null;
   animationFormat?: SpriteAnimationFormat;
   processingVersion: number;
   createdAt?: string;
@@ -1274,16 +1278,27 @@ export async function downloadArcadeFighterToLocal(
   if (!fighter.arcade || !fighter.public) {
     throw new Error(`${fighter.name} is not an active Arcade fighter.`);
   }
+  const includeHighResolutionAssets = options.includeHighResolutionAssets ??
+    prefersHighDensitySpriteTextures();
   return downloadCloudFighterToLocal({
     ...fighter,
     photoHash: arcadeFighterPhotoHash(fighter),
+    sprites: fighter.sprites.map((sprite) => ({
+      ...sprite,
+      // The cache already stores preserved high-density gameplay frames in its
+      // internal RAW slot. The public API still exposes only the Arcade HQ route.
+      rawUrl: sprite.hqUrl ?? null,
+      rawFrameWidth: sprite.hqFrameWidth ?? null,
+      rawFrameHeight: sprite.hqFrameHeight ?? null,
+      rawFrameCount: sprite.hqFrameCount ?? null,
+    })),
   }, context, {
     includeArchivedVersions: false,
-    includeRawAssets: options.includeHighResolutionAssets ?? prefersHighDensitySpriteTextures(),
+    includeRawAssets: includeHighResolutionAssets,
   });
 }
 
-export async function downloadArcadeSpriteRawToLocal(
+export async function downloadArcadeSpriteHighDensityToLocal(
   fighter: CloudFighter,
   animationName: string,
   context?: ApiRequestContext,
@@ -1294,10 +1309,10 @@ export async function downloadArcadeSpriteRawToLocal(
   const remote = selectPlayableCloudSprites(fighter.sprites)
     .find((sprite) => sprite.animationName === animationName);
   if (
-    !remote?.rawUrl ||
-    !remote.rawFrameWidth ||
-    !remote.rawFrameHeight ||
-    !remote.rawFrameCount
+    !remote?.hqUrl ||
+    !remote.hqFrameWidth ||
+    !remote.hqFrameHeight ||
+    !remote.hqFrameCount
   ) {
     return false;
   }
@@ -1318,16 +1333,16 @@ export async function downloadArcadeSpriteRawToLocal(
   }
   if (
     existing.rawPngBlob &&
-    existing.rawFrameWidth === remote.rawFrameWidth &&
-    existing.rawFrameHeight === remote.rawFrameHeight &&
-    existing.rawFrameCount === remote.rawFrameCount
+    existing.rawFrameWidth === remote.hqFrameWidth &&
+    existing.rawFrameHeight === remote.hqFrameHeight &&
+    existing.rawFrameCount === remote.hqFrameCount
   ) {
     return false;
   }
 
   const requestContext = context ?? captureApiRequestContext();
   const rawPngBlob = await fetchRequiredBlob(
-    remote.rawUrl,
+    remote.hqUrl,
     `${fighter.name} ${animationName} HQ sprite`,
     requestContext,
   );
@@ -1336,9 +1351,9 @@ export async function downloadArcadeSpriteRawToLocal(
     ...existing,
     ownerScope,
     rawPngBlob,
-    rawFrameWidth: remote.rawFrameWidth,
-    rawFrameHeight: remote.rawFrameHeight,
-    rawFrameCount: remote.rawFrameCount,
+    rawFrameWidth: remote.hqFrameWidth,
+    rawFrameHeight: remote.hqFrameHeight,
+    rawFrameCount: remote.hqFrameCount,
   }, { preserveVersionId: true, ownerScope });
   return true;
 }

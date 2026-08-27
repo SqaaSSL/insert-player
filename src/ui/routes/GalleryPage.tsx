@@ -76,7 +76,7 @@ import {
   arcadeFighterPhotoHash,
   deleteCloudFighter,
   downloadArcadeFighterToLocal,
-  downloadArcadeSpriteRawToLocal,
+  downloadArcadeSpriteHighDensityToLocal,
   downloadCloudFighterToLocal,
   formatCloudRosterSyncStatus,
   getCloudFighter,
@@ -577,7 +577,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     if (!cached || cached.rawPngBlob) return;
     const fighter = arcadeFighters.find((item) => item.id === meta.cloudFighterId);
     const remote = fighter?.sprites.find((item) => item.animationName === selection.animationName);
-    if (!fighter || !remote?.rawUrl) return;
+    if (!fighter || !remote?.hqUrl) return;
 
     const requestKey = `${fighter.id}:${selection.animationName}`;
     if (hqPreviewRequestsRef.current.has(requestKey)) return;
@@ -585,7 +585,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     const ownerScope = getActiveSpriteCacheScope();
     const photoHash = meta.photoHash;
     const apiContext = captureApiRequestContext();
-    void downloadArcadeSpriteRawToLocal(fighter, selection.animationName, apiContext)
+    void downloadArcadeSpriteHighDensityToLocal(fighter, selection.animationName, apiContext)
       .then(async (updated) => {
         if (!updated || getActiveSpriteCacheScope() !== ownerScope) return;
         if (selectedPhotoHashRef.current !== photoHash) return;

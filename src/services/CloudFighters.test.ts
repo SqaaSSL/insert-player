@@ -15,8 +15,9 @@ import {
   cloneCommunityFighter,
   cloudPlayableSpriteRefs,
   cloudSpritesForImport,
-  downloadArcadeSpriteRawToLocal,
   deleteCloudFighter,
+  downloadArcadeFighterToLocal,
+  downloadArcadeSpriteHighDensityToLocal,
   formatCloudRosterSyncStatus,
   getCloudFighter,
   isCompleteCloudFighterRoster,
@@ -317,7 +318,7 @@ describe('official Arcade HQ sprite hydration', () => {
     await resetSyncCache();
   });
 
-  it('adds the selected raw master to the existing immutable cached version', async () => {
+  it('adds the selected HQ gameplay sheet to the existing immutable cached version', async () => {
     const fighter = {
       id: 'fighter-official',
       name: 'Headline Fighter',
@@ -358,13 +359,14 @@ describe('official Arcade HQ sprite hydration', () => {
       animationName: 'idle',
       qualityTier: 'champion',
       url: 'https://api.insertplayer.test/runtime.png',
-      rawUrl: 'https://api.insertplayer.test/raw.png',
+      rawUrl: null,
+      hqUrl: 'https://api.insertplayer.test/hq.png',
       frameWidth: 192,
       frameHeight: 256,
       frameCount: 8,
-      rawFrameWidth: 768,
-      rawFrameHeight: 1024,
-      rawFrameCount: 8,
+      hqFrameWidth: 768,
+      hqFrameHeight: 1024,
+      hqFrameCount: 8,
       animationFormat: 'video-dense-v1',
       processingVersion: 5,
       contentHash: cached.contentHash,
@@ -374,7 +376,7 @@ describe('official Arcade HQ sprite hydration', () => {
       { status: 200 },
     ));
 
-    await expect(downloadArcadeSpriteRawToLocal(fighter, 'idle', SYNC_CONTEXT))
+    await expect(downloadArcadeSpriteHighDensityToLocal(fighter, 'idle', SYNC_CONTEXT))
       .resolves.toBe(true);
 
     const [hydrated] = await getAllSpritesForHash(photoHash);
@@ -384,6 +386,74 @@ describe('official Arcade HQ sprite hydration', () => {
     expect(hydrated.rawFrameCount).toBe(8);
     expect(await hydrated.rawPngBlob?.text()).toBe('hq-master');
     expect(vi.mocked(apiFetch)).toHaveBeenCalledTimes(1);
+  });
+
+  it('hydrates every HQ gameplay sheet for a capable fight without exposing raw URLs', async () => {
+    const animationNames = [
+      'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
+      'jump', 'crouch', 'hit', 'ko', 'victory',
+    ];
+    const runtimeBlob = new Blob(['runtime'], { type: 'image/png' });
+    const contentHash = await hashPhoto(runtimeBlob);
+    const fighter = {
+      id: 'fighter-official-full',
+      name: 'Headline Fighter',
+      qualityTier: 'champion' as const,
+      public: true,
+      sources: {},
+      sprites: animationNames.map((animationName, index): CloudSprite => ({
+        id: `remote-${animationName}`,
+        animationName,
+        qualityTier: 'champion',
+        url: `https://api.insertplayer.test/runtime/${animationName}.png`,
+        rawUrl: null,
+        hqUrl: `https://api.insertplayer.test/hq/${animationName}.png`,
+        frameWidth: 192,
+        frameHeight: 256,
+        frameCount: 8,
+        hqFrameWidth: 768,
+        hqFrameHeight: 1024,
+        hqFrameCount: 8,
+        animationFormat: 'video-dense-v1',
+        processingVersion: 5,
+        contentHash,
+        createdAt: new Date(100 + index).toISOString(),
+      })),
+      arcade: {
+        slug: 'headline-fighter-full',
+        rank: 1,
+        challengerLine: 'Fight the headline.',
+        defaultPersonality: 'showboat' as const,
+        reference: {
+          kind: 'licensed' as const,
+          sourceUrl: null,
+          license: 'Licensed',
+          credit: 'Studio',
+        },
+      },
+    };
+    vi.mocked(apiFetch).mockImplementation(async (input) => new Response(
+      String(input).includes('/hq/')
+        ? new Blob(['hq-master'], { type: 'image/png' })
+        : runtimeBlob,
+      { status: 200 },
+    ));
+
+    await expect(downloadArcadeFighterToLocal(fighter, SYNC_CONTEXT, {
+      includeHighResolutionAssets: true,
+    })).resolves.toMatchObject({ spritesImported: 11, spritesSkipped: 0 });
+
+    const cached = await getAllSpritesForHash(arcadeFighterPhotoHash(fighter));
+    expect(cached).toHaveLength(11);
+    expect(cached.every((sprite) => (
+      sprite.rawPngBlob instanceof Blob &&
+      sprite.rawFrameWidth === 768 &&
+      sprite.rawFrameHeight === 1024 &&
+      sprite.rawFrameCount === 8
+    ))).toBe(true);
+    const requestedUrls = vi.mocked(apiFetch).mock.calls.map(([input]) => String(input));
+    expect(requestedUrls.filter((url) => url.includes('/hq/'))).toHaveLength(11);
+    expect(fighter.sprites.every((sprite) => sprite.rawUrl === null)).toBe(true);
   });
 });
 

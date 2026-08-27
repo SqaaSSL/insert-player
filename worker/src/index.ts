@@ -21,7 +21,7 @@ import {
   getAsset,
   getCommunityFighter,
   getFighter,
-  getPublicArcadeSpriteRawAsset,
+  getPublicArcadeSpriteHighDensityAsset,
   getPublicFighterSourceAsset,
   getPublicFighterSpriteAsset,
   listAdminArcadeFighters,
@@ -439,18 +439,18 @@ export default {
         );
       }
 
-      const publicArcadeRawSpriteAssetMatch = path.match(
-        /^\/public-assets\/arcade\/([^/]+)\/sprites\/([^/]+)\/raw\/([^/]+)$/,
+      const publicArcadeHighDensitySpriteAssetMatch = path.match(
+        /^\/public-assets\/arcade\/([^/]+)\/sprites\/([^/]+)\/hq\/([^/]+)$/,
       );
-      if (publicArcadeRawSpriteAssetMatch && method === 'GET') {
-        const fighterId = decodePathParam(publicArcadeRawSpriteAssetMatch[1]);
-        const spriteId = decodePathParam(publicArcadeRawSpriteAssetMatch[2]);
-        const revision = decodePathParam(publicArcadeRawSpriteAssetMatch[3]);
+      if (publicArcadeHighDensitySpriteAssetMatch && method === 'GET') {
+        const fighterId = decodePathParam(publicArcadeHighDensitySpriteAssetMatch[1]);
+        const spriteId = decodePathParam(publicArcadeHighDensitySpriteAssetMatch[2]);
+        const revision = decodePathParam(publicArcadeHighDensitySpriteAssetMatch[3]);
         if (isResponse(fighterId)) return addCors(fighterId, request, env);
         if (isResponse(spriteId)) return addCors(spriteId, request, env);
         if (isResponse(revision)) return addCors(revision, request, env);
         return addCors(
-          await getPublicArcadeSpriteRawAsset(env, fighterId, spriteId, revision),
+          await getPublicArcadeSpriteHighDensityAsset(env, fighterId, spriteId, revision),
           request,
           env,
         );
