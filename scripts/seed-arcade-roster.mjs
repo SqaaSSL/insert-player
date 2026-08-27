@@ -698,6 +698,29 @@ export async function apiRequest(baseUrl, getToken, path, init = {}, request = f
   return body;
 }
 
+function exactReviewedVideoAssetDigest(headers) {
+  const rawEtag = headers.get('ETag');
+  const etagMatch = rawEtag === null
+    ? null
+    : /^(?:W\/)?"([a-f0-9]{64})"$/.exec(rawEtag);
+  if (rawEtag !== null && !etagMatch) {
+    throw new Error('Reviewed Video provenance asset returned a malformed SHA-256 ETag.');
+  }
+  const rawContentSha256 = headers.get('X-Content-SHA256');
+  if (rawContentSha256 !== null && !/^[a-f0-9]{64}$/.test(rawContentSha256)) {
+    throw new Error('Reviewed Video provenance asset returned a malformed content SHA-256.');
+  }
+  const etagDigest = etagMatch?.[1] ?? null;
+  if (etagDigest && rawContentSha256 && etagDigest !== rawContentSha256) {
+    throw new Error('Reviewed Video provenance asset returned conflicting integrity digests.');
+  }
+  const digest = rawContentSha256 ?? etagDigest;
+  if (!digest) {
+    throw new Error('Reviewed Video provenance asset returned no exact integrity digest.');
+  }
+  return digest;
+}
+
 export async function apiAssetRequest(baseUrl, getToken, path, request = fetch) {
   if (typeof path !== 'string' || !path.startsWith('/api/generation-jobs/')) {
     throw new Error('Reviewed Video provenance attempted to read an untrusted asset path.');
@@ -716,6 +739,7 @@ export async function apiAssetRequest(baseUrl, getToken, path, request = fetch) 
   if (!response.ok) {
     throw new Error(`GET ${path} failed with HTTP ${response.status}.`);
   }
+  const assetDigest = exactReviewedVideoAssetDigest(response.headers);
   const declaredLength = Number(response.headers.get('Content-Length') ?? 0);
   if (Number.isFinite(declaredLength) && declaredLength > MAX_REVIEWED_VIDEO_ASSET_BYTES) {
     throw new Error(`Reviewed Video provenance asset exceeds ${MAX_REVIEWED_VIDEO_ASSET_BYTES} bytes.`);
@@ -726,7 +750,7 @@ export async function apiAssetRequest(baseUrl, getToken, path, request = fetch) 
   }
   return {
     bytes,
-    etag: response.headers.get('ETag')?.replace(/^"|"$/g, '') ?? '',
+    etag: assetDigest,
     contentType: response.headers.get('Content-Type')?.split(';', 1)[0]?.trim() ?? '',
   };
 }

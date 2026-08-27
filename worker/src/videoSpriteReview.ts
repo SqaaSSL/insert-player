@@ -1587,6 +1587,7 @@ export async function getVideoSpriteReviewAsset(
     'Content-Type': selected.type,
     'Cache-Control': 'private, no-store',
     ETag: `"${row.sha256}"`,
+    'X-Content-SHA256': row.sha256,
     'X-Content-Type-Options': 'nosniff',
   });
   return new Response(object.body, { headers });
