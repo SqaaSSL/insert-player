@@ -1,0 +1,376 @@
+name: Import reviewed Elon mixed canonical set
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_run_id:
+        description: Successful one-call CROUCH workflow run containing the reviewed private bundle
+        required: true
+        type: string
+      reviewed_descriptor_sha256:
+        description: Exact review-descriptor SHA-256 approved after visual QA
+        required: true
+        type: string
+      qa_decision:
+        description: Enter APPROVE_ELON_SIDE_ALIAS_AND_CROUCH_V1
+        required: true
+        type: string
+      confirmation:
+        description: Enter IMPORT_REVIEWED_ELON_MIXED_CANONICAL_SET_V1
+        required: true
+        type: string
+      safety_confirmation:
+        description: Enter SOURCES_ONLY_NO_PROVIDER_NO_GENERATION_NO_ACTIVATION
+        required: true
+        type: string
+      resume_import_run_id:
+        description: Prior failed import run containing the immutable checkpoint; required for reconciliation after a failed attempt
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  import-reviewed-mixed-sources:
+    name: Alias reviewed SIDE as UPRIGHT and import reviewed CROUCH
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      BUNDLE_RUN_ID: ${{ inputs.bundle_run_id }}
+      REVIEWED_DESCRIPTOR_SHA256: ${{ inputs.reviewed_descriptor_sha256 }}
+      QA_DECISION: ${{ inputs.qa_decision }}
+      IMPORT_CONFIRMATION: ${{ inputs.confirmation }}
+      SAFETY_CONFIRMATION: ${{ inputs.safety_confirmation }}
+      RESUME_IMPORT_RUN_ID: ${{ inputs.resume_import_run_id }}
+      ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+      ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+      ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate the independent reviewed source-only request
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BUNDLE_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            printf '::error::bundle_run_id must be a positive GitHub Actions run id.\n'
+            exit 1
+          }
+          [[ "$REVIEWED_DESCRIPTOR_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+            printf '::error::reviewed_descriptor_sha256 must be a lowercase SHA-256.\n'
+            exit 1
+          }
+          [[ "$QA_DECISION" == "APPROVE_ELON_SIDE_ALIAS_AND_CROUCH_V1" ]] || {
+            printf '::error::The exact independent mixed-set QA decision is required.\n'
+            exit 1
+          }
+          [[ "$IMPORT_CONFIRMATION" == "IMPORT_REVIEWED_ELON_MIXED_CANONICAL_SET_V1" ]] || {
+            printf '::error::The exact mixed source import confirmation is required.\n'
+            exit 1
+          }
+          [[ "$SAFETY_CONFIRMATION" == "SOURCES_ONLY_NO_PROVIDER_NO_GENERATION_NO_ACTIVATION" ]] || {
+            printf '::error::The exact zero-provider source-only safety confirmation is required.\n'
+            exit 1
+          }
+          [[ -z "$RESUME_IMPORT_RUN_ID" || "$RESUME_IMPORT_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+            printf '::error::resume_import_run_id must be empty or a positive prior workflow run id.\n'
+            exit 1
+          }
+          [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" ]] || {
+            printf '::error::Production Arcade Clerk admin secrets are unavailable.\n'
+            exit 1
+          }
+          [[ ${#CLERK_BACKEND_AUTH_BRIDGE_SECRET} -ge 32 ]] || {
+            printf '::error::Production Clerk backend-auth bridge secret is unavailable.\n'
+            exit 1
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+            processor/package-lock.json
+
+      - name: Install pinned dependencies
+        run: |
+          npm ci
+          npm --prefix worker ci
+          npm --prefix processor ci
+
+      - name: Run the production gate with the exact media toolchain
+        run: |
+          docker build --file Dockerfile.processor --target video-sprite-test .
+          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED=1 npm run check:production
+
+      - name: Require a healthy live production Worker
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const configured = process.env.ASF_WORKER_HEALTH_URL?.trim();
+          const workerBase = process.env.ASF_WORKER_URL?.trim().replace(/\/+$/, '');
+          const target = configured || (workerBase ? `${workerBase}/health` : '');
+          if (!target) throw new Error('Worker health URL is required.');
+          const url = new URL(target);
+          const workerUrl = new URL(workerBase);
+          if (
+            workerUrl.origin !== 'https://api.insertplayer.ai'
+            || workerUrl.username || workerUrl.password || workerUrl.pathname !== '/'
+            || workerUrl.search || workerUrl.hash
+          ) throw new Error('Production Worker API origin is not the exact sealed origin.');
+          if (
+            url.origin !== workerUrl.origin || url.pathname !== '/health'
+            || url.username || url.password || url.search || url.hash
+          ) throw new Error('Worker health URL is not the exact production API health endpoint.');
+          const response = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(30_000) });
+          if (!response.ok) throw new Error(`Worker health failed with HTTP ${response.status}.`);
+          const health = await response.json();
+          if (
+            health?.status !== 'ok' || health.environment !== 'production'
+            || health.storage?.d1 !== 'bound' || health.storage?.r2 !== 'bound'
+          ) throw new Error('Live Worker is not a healthy production D1/R2 deployment.');
+          NODE
+
+      - name: Download the exact reviewed one-call CROUCH bundle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh run view "$BUNDLE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json databaseId,status,conclusion)"
+          [[ "$(jq -r '.databaseId' <<<"$run_json")" == "$BUNDLE_RUN_ID" ]] || {
+            printf '::error::GitHub returned a different bundle run id.\n'
+            exit 1
+          }
+          [[ "$(jq -r '.status' <<<"$run_json")" == "completed" && "$(jq -r '.conclusion' <<<"$run_json")" == "success" ]] || {
+            printf '::error::The private CROUCH bundle run is not completed successfully.\n'
+            exit 1
+          }
+          bundle_dir="$RUNNER_TEMP/reviewed-elon-crouch-bundle"
+          mkdir -p "$bundle_dir"
+          gh run download "$BUNDLE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-xai-canonical-bundle-elon-musk" \
+            --dir "$bundle_dir"
+          [[ -f "$bundle_dir/review-descriptor.json" && -f "$bundle_dir/generation-state.json" ]] || {
+            printf '::error::The exact private CROUCH bundle artifact is incomplete.\n'
+            exit 1
+          }
+          printf 'BUNDLE_DIRECTORY=%s\n' "$bundle_dir" >> "$GITHUB_ENV"
+          printf 'IMPORT_OUTPUT_DIRECTORY=%s\n' "$RUNNER_TEMP/reviewed-elon-mixed-import" >> "$GITHUB_ENV"
+          printf 'ASSEMBLY_DIRECTORY=%s\n' "$RUNNER_TEMP/reviewed-elon-mixed-import" >> "$GITHUB_ENV"
+
+      - name: Restore the immutable source-import checkpoint for reconciliation
+        if: inputs.resume_import_run_id != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          prior="$(gh run view "$RESUME_IMPORT_RUN_ID" --repo "$GITHUB_REPOSITORY" --json databaseId,status)"
+          [[ "$(jq -r '.databaseId' <<<"$prior")" == "$RESUME_IMPORT_RUN_ID" && "$(jq -r '.status' <<<"$prior")" == "completed" ]] || {
+            printf '::error::The requested import checkpoint run is not an exact completed run.\n'
+            exit 1
+          }
+          mkdir -p "$IMPORT_OUTPUT_DIRECTORY"
+          gh run download "$RESUME_IMPORT_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-reviewed-elon-mixed-import-checkpoint-$RESUME_IMPORT_RUN_ID" \
+            --dir "$IMPORT_OUTPUT_DIRECTORY"
+          [[ -f "$IMPORT_OUTPUT_DIRECTORY/import-state.json" \
+            && -f "$IMPORT_OUTPUT_DIRECTORY/assembly-plan.json" \
+            && -f "$IMPORT_OUTPUT_DIRECTORY/qa-evidence.json" ]] || {
+            printf '::error::The requested import checkpoint is missing state or sealed assembly evidence.\n'
+            exit 1
+          }
+          [[ "$(jq -r '.crouch.bundleRunId' "$IMPORT_OUTPUT_DIRECTORY/assembly-plan.json")" == "$BUNDLE_RUN_ID" ]] || {
+            printf '::error::Resume must use the same sealed CROUCH bundle run id.\n'
+            exit 1
+          }
+          [[ "$(jq -r '.crouch.reviewedDescriptorSha256' "$IMPORT_OUTPUT_DIRECTORY/assembly-plan.json")" == "$REVIEWED_DESCRIPTOR_SHA256" ]] || {
+            printf '::error::Resume must use the same sealed reviewed descriptor SHA-256.\n'
+            exit 1
+          }
+          plan_sha="$(sha256sum "$IMPORT_OUTPUT_DIRECTORY/assembly-plan.json" | awk '{print $1}')"
+          printf 'ASSEMBLY_PLAN_SHA256=%s\n' "$plan_sha" >> "$GITHUB_ENV"
+
+      - name: Seal the exact approved SIDE lineage, explicit alias, CROUCH bundle, and QA decision
+        if: inputs.resume_import_run_id == ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$ASSEMBLY_DIRECTORY"
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+          const descriptorPath = join(process.env.BUNDLE_DIRECTORY, 'review-descriptor.json');
+          const descriptorBytes = readFileSync(descriptorPath);
+          const descriptor = JSON.parse(descriptorBytes);
+          const expectedDescriptorSha256 = process.env.REVIEWED_DESCRIPTOR_SHA256;
+          if (descriptor.descriptorSha256 !== expectedDescriptorSha256) {
+            throw new Error('Reviewed descriptor seal does not match the explicit QA input.');
+          }
+          if (
+            descriptor.bundleId !== 'arcade-xai-canonical-source-elon-musk-crouch-v1'
+            || JSON.stringify(descriptor.sourceNames) !== JSON.stringify(['crouch'])
+            || descriptor.fighter?.slug !== 'elon-musk'
+            || descriptor.fighter?.originalSha256 !== '110a0f41f9c4b8e75a0ab30ce13e0db651c516621ad893b3f0459d24416fe27e'
+          ) throw new Error('Downloaded artifact is not the exact single-source Elon CROUCH bundle.');
+          const crouch = descriptor.sources?.crouch;
+          for (const hash of [crouch?.clean?.contentSha256, crouch?.raw?.contentSha256]) {
+            if (!/^[a-f0-9]{64}$/.test(hash ?? '')) throw new Error('Reviewed CROUCH pair is incomplete.');
+          }
+          const fighter = {
+            slug: 'elon-musk',
+            fighterId: '285a8f6c99c4cb5da859a61820caff2c',
+            name: 'Elon Musk',
+            photoHash: '110a0f41f9c4b8e75a0ab30ce13e0db651c516621ad893b3f0459d24416fe27e',
+          };
+          const side = {
+            processed: {
+              versionId: 'a8064b8a7118283bd4a53f92d09b8dc6',
+              blobKey: 'users/user_3IHDkjy0fm7LmuNGKkz3OAv71RW/fighters/285a8f6c99c4cb5da859a61820caff2c/sources/side_a8064b8a7118283bd4a53f92d09b8dc6.png',
+              contentSha256: '7ffc7bc23f8d74438f4e85cf722400979111f757b4fdd1cb751b225c06045cf4',
+              sizeBytes: 431645,
+              width: 896,
+              height: 1195,
+            },
+            raw: {
+              versionId: 'dc745247e2bac87911721c71fc468cbb',
+              blobKey: 'users/user_3IHDkjy0fm7LmuNGKkz3OAv71RW/fighters/285a8f6c99c4cb5da859a61820caff2c/sources/side_raw_dc745247e2bac87911721c71fc468cbb.png',
+              contentSha256: '38354aafc02505c69de9163a4dfaeeab15a2d084c1e5f5d981f9b6cde9cdb5d2',
+              sizeBytes: 990502,
+              width: 896,
+              height: 1195,
+            },
+          };
+          const sideApproval = {
+            status: 'approved',
+            runId: '6a38a579a42cb869e6e65acac67eafc2',
+            jobId: '6a38a579a42cb869e6e65acac67eafc2',
+            completedByJobId: '6a38a579a42cb869e6e65acac67eafc2',
+            artifactKind: 'source',
+            artifactName: 'side',
+            stageIndex: 1,
+            qualityTier: 'champion',
+            createdAt: '2026-08-25 13:59:21',
+            verifiedAt: null,
+          };
+          const qaEvidence = {
+            schemaVersion: 1,
+            evidenceType: 'elon_mixed_canonical_human_review_v1',
+            status: 'approved',
+            decision: process.env.QA_DECISION,
+            reviewedBy: process.env.GITHUB_ACTOR,
+            reviewedAt: new Date().toISOString(),
+            fighter,
+            side: {
+              processedVersionId: side.processed.versionId,
+              processedSha256: side.processed.contentSha256,
+              rawVersionId: side.raw.versionId,
+              rawSha256: side.raw.contentSha256,
+              approvalLineage: sideApproval,
+            },
+            uprightAlias: {
+              decision: 'ALIAS_EXACT_REVIEWED_SIDE_BYTES_AS_UPRIGHT_V1',
+              processedSha256: side.processed.contentSha256,
+              rawSha256: side.raw.contentSha256,
+            },
+            crouch: {
+              bundleRunId: process.env.BUNDLE_RUN_ID,
+              descriptorSha256: expectedDescriptorSha256,
+              processedSha256: crouch.clean.contentSha256,
+              rawSha256: crouch.raw.contentSha256,
+            },
+            blockingFindings: [],
+          };
+          const qaBytes = Buffer.from(`${JSON.stringify(qaEvidence, null, 2)}\n`);
+          const qaPath = join(process.env.ASSEMBLY_DIRECTORY, 'qa-evidence.json');
+          writeFileSync(qaPath, qaBytes, { mode: 0o600 });
+          const plan = {
+            schemaVersion: 1,
+            planType: 'elon_reviewed_mixed_canonical_set_v1',
+            fighter,
+            side,
+            sideApproval,
+            uprightAlias: {
+              decision: 'ALIAS_EXACT_REVIEWED_SIDE_BYTES_AS_UPRIGHT_V1',
+              fromProcessedVersionId: side.processed.versionId,
+              fromRawVersionId: side.raw.versionId,
+            },
+            crouch: {
+              bundleRunId: process.env.BUNDLE_RUN_ID,
+              bundleId: descriptor.bundleId,
+              reviewedDescriptorSha256: expectedDescriptorSha256,
+              processedSha256: crouch.clean.contentSha256,
+              rawSha256: crouch.raw.contentSha256,
+            },
+            qaEvidence: { path: 'qa-evidence.json', contentSha256: sha256(qaBytes) },
+            safety: {
+              providerCalls: 0,
+              generationStarted: false,
+              activated: false,
+              sideMutation: false,
+              allowedSourcePosts: ['upright', 'upright_raw', 'crouch', 'crouch_raw'],
+            },
+          };
+          const planBytes = Buffer.from(`${JSON.stringify(plan, null, 2)}\n`);
+          const planPath = join(process.env.ASSEMBLY_DIRECTORY, 'assembly-plan.json');
+          writeFileSync(planPath, planBytes, { mode: 0o600 });
+          console.log(`ASSEMBLY_PLAN_SHA256=${sha256(planBytes)}`);
+          writeFileSync(process.env.GITHUB_ENV, `ASSEMBLY_PLAN_SHA256=${sha256(planBytes)}\n`, { flag: 'a' });
+          NODE
+
+      - name: Import only UPRIGHT alias and reviewed CROUCH through the existing source API
+        shell: bash
+        run: |
+          npm run arcade:import:reviewed-elon-mixed-canonical -- \
+            --execute-production \
+            --bundle-dir="$BUNDLE_DIRECTORY" \
+            --assembly-plan="$ASSEMBLY_DIRECTORY/assembly-plan.json" \
+            --assembly-plan-sha256="$ASSEMBLY_PLAN_SHA256" \
+            --output-dir="$IMPORT_OUTPUT_DIRECTORY" \
+            --confirm="$IMPORT_CONFIRMATION" \
+            --confirm-safety="$SAFETY_CONFIRMATION" \
+            --reviewed-by="$GITHUB_ACTOR"
+
+      - name: Publish the reviewed-current-v1 handoff and full operator evidence
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-reviewed-canonical-manifest-elon-musk
+          path: |
+            ${{ runner.temp }}/reviewed-elon-mixed-import/reviewed-canonical-manifest.json
+            ${{ runner.temp }}/reviewed-elon-mixed-import/reviewed-canonical-operator-manifest.json
+            ${{ runner.temp }}/reviewed-elon-mixed-import/import-receipt.json
+            ${{ runner.temp }}/reviewed-elon-mixed-import/assembly-plan.json
+            ${{ runner.temp }}/reviewed-elon-mixed-import/qa-evidence.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Preserve the source-import checkpoint
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-reviewed-elon-mixed-import-checkpoint-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/reviewed-elon-mixed-import/import-state.json
+            ${{ runner.temp }}/reviewed-elon-mixed-import/assembly-plan.json
+            ${{ runner.temp }}/reviewed-elon-mixed-import/qa-evidence.json
+          if-no-files-found: ignore
+          retention-days: 30
