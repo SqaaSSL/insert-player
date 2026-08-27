@@ -710,7 +710,7 @@ async function clerkJson(secretKey, path, init = {}) {
   return body;
 }
 
-async function createAdminTokenProvider(secretKey, userId) {
+export async function createAdminTokenProvider(secretKey, userId) {
   const listed = await clerkJson(secretKey, `/sessions?${new URLSearchParams({ user_id: userId, status: 'active', limit: '20' })}`);
   const sessions = Array.isArray(listed.data) ? listed.data : Array.isArray(listed) ? listed : [];
   const session = sessions.find((entry) => entry?.user_id === userId && entry?.status === 'active');
@@ -732,7 +732,7 @@ async function createAdminTokenProvider(secretKey, userId) {
   };
 }
 
-function authenticatedRequestClient(baseUrl, getToken, bridgeSecret) {
+export function authenticatedRequestClient(baseUrl, getToken, bridgeSecret) {
   return async (path, init = {}) => {
     const token = await getToken();
     const response = await fetch(`${baseUrl}${path}`, {
@@ -743,8 +743,12 @@ function authenticatedRequestClient(baseUrl, getToken, bridgeSecret) {
         'X-Insert-Player-Clerk-Backend-Auth': bridgeSecret,
         ...(init.headers ?? {}),
       },
+      redirect: 'manual',
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error(`${init.method ?? 'GET'} ${path} redirected; authenticated API redirects are forbidden.`);
+    }
     const text = await response.text();
     let body;
     try {
@@ -754,6 +758,24 @@ function authenticatedRequestClient(baseUrl, getToken, bridgeSecret) {
     }
     if (!response.ok) throw new Error(`${init.method ?? 'GET'} ${path} failed with HTTP ${response.status}.`);
     return body;
+  };
+}
+
+export function authenticatedAssetClient(baseUrl, getToken, bridgeSecret) {
+  return async (path) => {
+    if (typeof path !== 'string' || !path.startsWith('/assets/') || path.includes('?') || path.includes('#')) {
+      throw new Error('Private source asset path is invalid.');
+    }
+    const token = await getToken();
+    return fetch(`${baseUrl}${path}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Insert-Player-Admin-Seed': 'clerk-backend',
+        'X-Insert-Player-Clerk-Backend-Auth': bridgeSecret,
+      },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
   };
 }
 
