@@ -1,24 +1,42 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   cloneCommunityFighter,
   downloadCloudFighterToLocal,
   getCommunityFighter,
+  listCloudFighters,
   listCommunityFighters,
   reportCommunityFighter,
-  type CloudFighter,
   type CommunityReportReason,
 } from '../../services/CloudFighters.ts';
 import { shareCommunityFighter } from '../shared/communityShare.ts';
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import type { AuthStatus } from '../authState.ts';
 import { cloudPreviewUrl, tierLabel } from '../shared/fighterPreview.ts';
+import {
+  markOwnedCommunityFighters,
+  resolveFeaturedCommunityFighter,
+  type CommunityFighterView,
+} from '../shared/communityState.ts';
 import { Button } from '../components/Button.tsx';
 import { Modal } from '../components/Modal.tsx';
+import { StatusMessage } from '../components/StatusMessage.tsx';
 
 interface CommunityPageProps {
   authStatus: AuthStatus;
   onBack: () => void;
   onOpenGallery: () => void;
+}
+
+type CommunityLoadState =
+  | { phase: 'loading' }
+  | { phase: 'ready' }
+  | { phase: 'empty' }
+  | { phase: 'not-found' }
+  | { phase: 'error'; message: string };
+
+interface CommunityOperation {
+  kind: 'clone' | 'share' | 'report';
+  fighterId: string;
 }
 
 const REPORT_REASONS: Array<{ value: CommunityReportReason; label: string }> = [
@@ -36,99 +54,173 @@ function readFeaturedFighterId(): string | null {
   return new URLSearchParams(window.location.search).get('fighter')?.trim() || null;
 }
 
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
+}
+
+function loadStatusMessage(state: CommunityLoadState, fighterCount: number): string {
+  if (state.phase === 'loading') return 'Loading community roster...';
+  if (state.phase === 'error') return state.message;
+  if (state.phase === 'not-found') return 'Shared fighter not found';
+  if (state.phase === 'empty') return 'No public fighters yet';
+  return fighterCount === 1 ? '1 public fighter ready' : `${fighterCount} public fighters ready`;
+}
+
 export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPageProps) {
-  const [fighters, setFighters] = useState<CloudFighter[]>([]);
-  const [status, setStatus] = useState('Loading community roster...');
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [fighters, setFighters] = useState<CommunityFighterView[]>([]);
+  const [loadState, setLoadState] = useState<CommunityLoadState>({ phase: 'loading' });
+  const [loadAttempt, setLoadAttempt] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [operation, setOperation] = useState<CommunityOperation | null>(null);
   const [featuredId, setFeaturedId] = useState<string | null>(() => readFeaturedFighterId());
-  const [reportTarget, setReportTarget] = useState<CloudFighter | null>(null);
+  const [reportTarget, setReportTarget] = useState<CommunityFighterView | null>(null);
   const [shareLinkUrl, setShareLinkUrl] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState<CommunityReportReason>('non_consensual_person');
   const [reportDetails, setReportDetails] = useState('');
-  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const requestEpoch = useRef(0);
 
   useEffect(() => {
+    const epoch = ++requestEpoch.current;
+    const apiContext = captureApiRequestContext();
+    setLoadState({ phase: 'loading' });
+    setFighters([]);
+    setNotice(null);
+
     const load = async () => {
       try {
-        const next = await listCommunityFighters();
-        let resolved = next;
-        let loadedFeatured = false;
-        if (featuredId && !next.some((fighter) => fighter.id === featuredId)) {
-          const detail = await getCommunityFighter(featuredId);
-          if (detail) {
-            resolved = [detail, ...next.filter((fighter) => fighter.id !== detail.id)];
-            loadedFeatured = true;
+        const [publicFighters, ownedFighters] = await Promise.all([
+          listCommunityFighters(apiContext),
+          authStatus === 'signed-in'
+            ? listCloudFighters(apiContext).catch(() => [])
+            : Promise.resolve([]),
+        ]);
+        if (requestEpoch.current !== epoch) return;
+
+        const ownedIds = new Set(ownedFighters.map((fighter) => fighter.id));
+        let resolved = markOwnedCommunityFighters(publicFighters, ownedIds);
+        if (featuredId && !resolved.some((fighter) => fighter.id === featuredId)) {
+          const detail = await getCommunityFighter(featuredId, apiContext);
+          if (requestEpoch.current !== epoch) return;
+          if (!detail) {
+            setFighters(resolved);
+            setLoadState({ phase: 'not-found' });
+            return;
           }
+          resolved = [
+            ...markOwnedCommunityFighters([detail], ownedIds),
+            ...resolved.filter((fighter) => fighter.id !== detail.id),
+          ];
         }
+
         setFighters(resolved);
-        setStatus(
-          resolved.length > 0
-            ? loadedFeatured ? 'Featured fighter loaded' : 'Community ready'
-            : featuredId ? 'Shared fighter is no longer public' : 'No public fighters yet',
-        );
-      } catch (err: any) {
-        setStatus(err?.message ? `Community failed: ${err.message}` : 'Community failed');
+        setLoadState({ phase: resolved.length > 0 ? 'ready' : 'empty' });
+      } catch (error) {
+        if (requestEpoch.current !== epoch) return;
+        setFighters([]);
+        setLoadState({
+          phase: 'error',
+          message: `Community roster unavailable. ${errorMessage(error, 'Check your connection and try again.')}`,
+        });
       }
     };
     void load();
-  }, []);
+    return () => {
+      if (requestEpoch.current === epoch) requestEpoch.current += 1;
+    };
+  }, [authStatus, loadAttempt]);
 
   const featured = useMemo(
-    () => fighters.find((fighter) => fighter.id === featuredId) ?? fighters[0] ?? null,
+    () => resolveFeaturedCommunityFighter(fighters, featuredId),
     [featuredId, fighters],
   );
   const featuredPreviewUrl = featured ? cloudPreviewUrl(featured) : null;
+  const isBusy = operation !== null;
+  const reportBusy = operation?.kind === 'report';
+  const headerStatus = notice ?? loadStatusMessage(loadState, fighters.length);
 
-  const shareFighter = async (fighter: CloudFighter) => {
-    const share = await shareCommunityFighter(fighter.id, fighter.name);
-    setFeaturedId(fighter.id);
-    window.history.replaceState({}, '', `/community?fighter=${encodeURIComponent(fighter.id)}`);
-    if (share.mode === 'native') {
-      setStatus(`Share sheet opened for ${fighter.name}`);
-    } else if (share.mode === 'clipboard') {
-      setStatus(`Share link copied for ${fighter.name}`);
-    } else if (share.mode === 'cancelled') {
-      setStatus(`Share cancelled for ${fighter.name}`);
-    } else {
-      setShareLinkUrl(share.url);
-      setStatus(`Share link ready for ${fighter.name}`);
+  const shareFighter = async (fighter: CommunityFighterView) => {
+    if (operation) return;
+    setOperation({ kind: 'share', fighterId: fighter.id });
+    setNotice(`Preparing a share link for ${fighter.name}...`);
+    try {
+      const share = await shareCommunityFighter(fighter.id, fighter.name);
+      setFeaturedId(fighter.id);
+      window.history.replaceState(
+        window.history.state,
+        '',
+        `/community?fighter=${encodeURIComponent(fighter.id)}`,
+      );
+      if (share.mode === 'native') {
+        setNotice(`Share sheet opened for ${fighter.name}`);
+      } else if (share.mode === 'clipboard') {
+        setNotice(`Share link copied for ${fighter.name}`);
+      } else if (share.mode === 'cancelled') {
+        setNotice(`Share cancelled for ${fighter.name}`);
+      } else {
+        setShareLinkUrl(share.url);
+        setNotice(`Share link ready for ${fighter.name}`);
+      }
+    } catch (error) {
+      setNotice(`Share failed. ${errorMessage(error, 'Try again.')}`);
+    } finally {
+      setOperation(null);
     }
   };
 
-  const addToRoster = async (fighter: CloudFighter) => {
+  const addToRoster = async (fighter: CommunityFighterView) => {
+    if (operation) return;
+    if (fighter.isOwned) {
+      onOpenGallery();
+      return;
+    }
     const apiContext = captureApiRequestContext();
-    setBusyId(fighter.id);
-    setStatus(`Adding ${fighter.name}...`);
+    setOperation({ kind: 'clone', fighterId: fighter.id });
+    setNotice(`Adding ${fighter.name} to your roster...`);
     try {
-      const cloned = await cloneCommunityFighter(fighter.id, apiContext);
-      if (!cloned) {
-        setStatus('Sign in to add fighters to your roster');
+      const result = await cloneCommunityFighter(fighter.id, apiContext);
+      if (!result) {
+        setNotice('Sign in to add fighters to your roster');
         return;
       }
-      await downloadCloudFighterToLocal(cloned, apiContext);
-      setStatus(`${cloned.name} added to your roster`);
+      await downloadCloudFighterToLocal(result.fighter, apiContext);
+      setFighters((current) => current.map((item) => (
+        item.id === fighter.id ? { ...item, isOwned: true } : item
+      )));
+      setNotice(
+        result.cloned
+          ? `${result.fighter.name} added to your roster`
+          : `${result.fighter.name} was already in your roster and is now up to date`,
+      );
       onOpenGallery();
-    } catch (err: any) {
-      setStatus(err?.message ? `Add failed: ${err.message}` : 'Add failed');
+    } catch (error) {
+      setNotice(`Add failed. ${errorMessage(error, 'Try again.')}`);
     } finally {
-      setBusyId(null);
+      setOperation(null);
     }
   };
 
-  const openReport = (fighter: CloudFighter) => {
+  const openReport = (fighter: CommunityFighterView) => {
+    if (operation) return;
+    if (fighter.isOwned) {
+      setNotice('You cannot report your own fighter. Manage it from Roster Lab.');
+      return;
+    }
     if (authStatus !== 'signed-in') {
-      setStatus('Sign in to report a public fighter');
+      setNotice('Sign in to report a public fighter');
       return;
     }
     setReportTarget(fighter);
     setReportReason('non_consensual_person');
     setReportDetails('');
+    setReportError(null);
   };
 
   const submitReport = async () => {
-    if (!reportTarget || reportBusy) return;
+    if (!reportTarget || operation) return;
     const apiContext = captureApiRequestContext();
-    setReportBusy(true);
+    setOperation({ kind: 'report', fighterId: reportTarget.id });
+    setReportError(null);
     try {
       const result = await reportCommunityFighter(
         reportTarget.id,
@@ -137,17 +229,40 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
         apiContext,
       );
       if (result.status === 'signed_out') {
-        setStatus('Sign in to report a public fighter');
-      } else {
-        setStatus(result.duplicate ? 'Your report was updated for review' : 'Report sent for review');
+        setReportError('Your session expired. Sign in again, then resend the report.');
+        return;
       }
+      setNotice(result.duplicate ? 'Your report was updated for review' : 'Report sent for review');
       setReportTarget(null);
-    } catch (err: any) {
-      setStatus(err?.message ? `Report failed: ${err.message}` : 'Report failed');
+    } catch (error) {
+      setReportError(`We could not send this report. ${errorMessage(error, 'Try again.')}`);
     } finally {
-      setReportBusy(false);
+      setOperation(null);
     }
   };
+
+  const fighterActions = (fighter: CommunityFighterView, featuredCard = false) => (
+    <>
+      <Button
+        variant="primary"
+        size={featuredCard ? 'lg' : 'md'}
+        disabled={isBusy}
+        onClick={() => void addToRoster(fighter)}
+      >
+        {operation?.kind === 'clone' && operation.fighterId === fighter.id
+          ? 'Adding...'
+          : fighter.isOwned ? 'Open In Roster' : 'Clone To Roster'}
+      </Button>
+      <Button disabled={isBusy} onClick={() => void shareFighter(fighter)}>
+        {operation?.kind === 'share' && operation.fighterId === fighter.id ? 'Sharing...' : 'Share'}
+      </Button>
+      {!fighter.isOwned ? (
+        <Button variant="ghost" disabled={isBusy} onClick={() => openReport(fighter)}>
+          Report
+        </Button>
+      ) : null}
+    </>
+  );
 
   return (
     <div className="roster-app">
@@ -159,10 +274,40 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
           </p>
         </div>
         <div className="roster-hero__actions">
-          <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
+          <div
+            className="gallery-hero__status"
+            role={loadState.phase === 'error' ? 'alert' : 'status'}
+            aria-live="polite"
+          >
+            {headerStatus}
+          </div>
           <Button onClick={onBack}>Back</Button>
         </div>
       </header>
+
+      {loadState.phase === 'loading' ? (
+        <section className="gallery-empty community-route-state" role="status" aria-busy="true">
+          <h2>Loading Fighters</h2>
+          <p>Fetching the public roster...</p>
+        </section>
+      ) : null}
+
+      {loadState.phase === 'error' ? (
+        <section className="gallery-empty community-route-state" role="alert">
+          <h2>Community Unavailable</h2>
+          <p>{loadState.message}</p>
+          <Button variant="primary" onClick={() => setLoadAttempt((current) => current + 1)}>
+            Retry Community
+          </Button>
+        </section>
+      ) : null}
+
+      {loadState.phase === 'not-found' ? (
+        <section className="gallery-empty community-route-state" role="alert">
+          <h2>Fighter Not Found</h2>
+          <p>This shared fighter is no longer public. You can still browse the current roster below.</p>
+        </section>
+      ) : null}
 
       {featured ? (
         <section className="gallery-panel community-feature">
@@ -182,37 +327,23 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
             <p className="community-feature__meta">
               AI-generated · {tierLabel(featured.qualityTier)} · {featured.sprites.length} anims · by {featured.owner?.name ?? 'Player'}
             </p>
+            {featured.isOwned ? <span className="asf-badge community-owned-badge">In your roster</span> : null}
           </div>
           <div className="community-feature__actions">
-            <Button
-              variant="primary"
-              size="lg"
-              disabled={busyId === featured.id}
-              onClick={() => void addToRoster(featured)}
-            >
-              {busyId === featured.id ? 'Adding...' : 'Clone To Roster'}
-            </Button>
-            <Button disabled={busyId !== null} onClick={() => void shareFighter(featured)}>
-              Share Link
-            </Button>
-            <Button
-              variant="ghost"
-              disabled={busyId !== null || reportBusy}
-              onClick={() => openReport(featured)}
-            >
-              Report
-            </Button>
+            {fighterActions(featured, true)}
           </div>
         </section>
       ) : null}
 
-      {fighters.length === 0 ? (
-        <section className="gallery-empty">
+      {loadState.phase === 'empty' ? (
+        <section className="gallery-empty community-route-state">
           <h2>No Public Fighters</h2>
-          <p>Publish a fighter from Training Room to seed the community.</p>
+          <p>Publish a fighter from Roster Lab to seed the community.</p>
         </section>
-      ) : (
-        <section className="roster-fighter-grid">
+      ) : null}
+
+      {(loadState.phase === 'ready' || loadState.phase === 'not-found') && fighters.length > 0 ? (
+        <section className="roster-fighter-grid" aria-label="Community fighters">
           {fighters.map((fighter) => {
             const previewUrl = cloudPreviewUrl(fighter);
             return (
@@ -232,36 +363,23 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
                   <strong>{fighter.name}</strong>
                   <span>AI-generated · {tierLabel(fighter.qualityTier)} · {fighter.sprites.length} anims</span>
                   <span>By {fighter.owner?.name ?? 'Player'}</span>
+                  {fighter.isOwned ? <span className="asf-badge community-owned-badge">In your roster</span> : null}
                 </div>
                 <div className="roster-fighter-card__actions">
-                  <Button
-                    variant="primary"
-                    disabled={busyId !== null}
-                    onClick={() => void addToRoster(fighter)}
-                  >
-                    {busyId === fighter.id ? 'Adding...' : 'Clone To Roster'}
-                  </Button>
-                  <Button disabled={busyId !== null} onClick={() => void shareFighter(fighter)}>
-                    Share
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={busyId !== null || reportBusy}
-                    onClick={() => openReport(fighter)}
-                  >
-                    Report
-                  </Button>
+                  {fighterActions(fighter)}
                 </div>
               </article>
             );
           })}
         </section>
-      )}
+      ) : null}
 
       {reportTarget ? (
         <Modal
           title={`Report ${reportTarget.name}`}
-          onClose={() => setReportTarget(null)}
+          onClose={() => {
+            if (!reportBusy) setReportTarget(null);
+          }}
           busy={reportBusy}
         >
           <form
@@ -271,6 +389,7 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
               void submitReport();
             }}
           >
+            {reportError ? <StatusMessage severity="error">{reportError}</StatusMessage> : null}
             <label>
               <span>Reason</span>
               <select
@@ -296,7 +415,7 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
             </label>
             <div className="asf-modal__actions">
               <Button disabled={reportBusy} onClick={() => setReportTarget(null)}>
-                Cancel
+                Keep Browsing
               </Button>
               <Button variant="primary" type="submit" disabled={reportBusy}>
                 {reportBusy ? 'Sending...' : 'Send Report'}
@@ -323,7 +442,7 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
               onClick={() => {
                 void navigator.clipboard?.writeText(shareLinkUrl).catch(() => {});
                 setShareLinkUrl(null);
-                setStatus('Share link copied');
+                setNotice('Share link copied');
               }}
             >
               Copy Link

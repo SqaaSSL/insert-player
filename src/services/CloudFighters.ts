@@ -142,6 +142,11 @@ export interface CommunityReportResult {
   duplicate?: boolean;
 }
 
+export interface CommunityCloneResult {
+  fighter: CloudFighter;
+  cloned: boolean;
+}
+
 const TIER_RANK: Record<CloudQualityTier, number> = {
   rookie: 1,
   contender: 2,
@@ -710,9 +715,9 @@ export async function prepareCloudFighterGeneration(
   return { fighter: detailed, photoHash: params.photoHash };
 }
 
-export async function listCommunityFighters(): Promise<CloudFighter[]> {
+export async function listCommunityFighters(context?: ApiRequestContext): Promise<CloudFighter[]> {
   if (isLocalDevWithoutApi()) return [];
-  const res = await apiFetch('/api/community');
+  const res = await apiFetch('/api/community', {}, context);
   if (!res.ok) throw new Error(`Community fighters failed (${res.status})`);
   const json = await res.json() as { fighters?: CloudFighter[] };
   return json.fighters ?? [];
@@ -730,9 +735,12 @@ export function arcadeFighterPhotoHash(fighter: CloudFighter): string {
   return `arcade:${fighter.arcade?.slug ?? fighter.id}:${fighter.id}`;
 }
 
-export async function getCommunityFighter(fighterId: string): Promise<CloudFighter | null> {
+export async function getCommunityFighter(
+  fighterId: string,
+  context?: ApiRequestContext,
+): Promise<CloudFighter | null> {
   if (isLocalDevWithoutApi()) return null;
-  const res = await apiFetch(`/api/community/${encodeURIComponent(fighterId)}`);
+  const res = await apiFetch(`/api/community/${encodeURIComponent(fighterId)}`, {}, context);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Community fighter failed (${res.status})`);
   const json = await res.json() as { fighter?: CloudFighter };
@@ -807,13 +815,21 @@ export async function deleteCloudFighter(
 export async function cloneCommunityFighter(
   sourceFighterId: string,
   context?: ApiRequestContext,
-): Promise<CloudFighter | null> {
-  const res = await apiFetch(`/api/community/${sourceFighterId}/clone`, { method: 'POST' }, context);
+): Promise<CommunityCloneResult | null> {
+  const res = await apiFetch(
+    `/api/community/${encodeURIComponent(sourceFighterId)}/clone`,
+    { method: 'POST' },
+    context,
+  );
   if (res.status === 401) return null;
   if (res.status === 503) throw await cloudFighterRequestError(res, 'Clone');
   if (!res.ok) throw new Error(`Clone failed (${res.status})`);
-  const json = await res.json() as { fighter?: CloudFighter };
-  return json.fighter ?? null;
+  const json = await res.json() as { fighter?: CloudFighter; cloned?: boolean };
+  if (!json.fighter) throw new Error('Clone response did not include a fighter');
+  return {
+    fighter: json.fighter,
+    cloned: typeof json.cloned === 'boolean' ? json.cloned : res.status === 201,
+  };
 }
 
 export async function reportCommunityFighter(
