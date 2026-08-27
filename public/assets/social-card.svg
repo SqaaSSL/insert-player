@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
   <title id="title">Insert Player social card</title>
-  <desc id="desc">A real person on the left and their arcade fighter on the right.</desc>
+  <desc id="desc">A real person on the left transforms into their Insert Player arcade fighter on the right.</desc>
   <defs>
     <filter id="plateShadow" x="-20%" y="-40%" width="140%" height="180%">
       <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#050507" flood-opacity="0.5" />
@@ -8,9 +8,10 @@
   </defs>
 
   <g filter="url(#plateShadow)">
-    <rect x="410" y="38" width="380" height="92" rx="8" fill="#050507" fill-opacity="0.88" stroke="#f4f0dd" stroke-width="2" />
-    <rect x="410" y="38" width="380" height="10" rx="5" fill="#d22727" />
-    <rect x="426" y="41" width="348" height="4" rx="2" fill="#ffe878" />
-    <text id="social-card-brand" x="430" y="103" fill="#ffe878" font-family="Impact, Arial Black, sans-serif" font-size="48" font-weight="900" letter-spacing="0">INSERT PLAYER</text>
+    <rect x="400" y="38" width="400" height="118" rx="8" fill="#050507" fill-opacity="0.88" stroke="#f4f0dd" stroke-width="2" />
+    <rect x="400" y="38" width="400" height="10" rx="5" fill="#d22727" />
+    <rect x="416" y="41" width="368" height="4" rx="2" fill="#ffe878" />
+    <text id="social-card-brand" x="600" y="98" text-anchor="middle" fill="#ffe878" font-family="Impact, Arial Black, sans-serif" font-size="48" font-weight="900" letter-spacing="0">INSERT PLAYER</text>
+    <text id="social-card-tagline" x="600" y="134" text-anchor="middle" fill="#f4f0dd" font-family="Arial, sans-serif" font-size="18" font-weight="700" letter-spacing="0">TURN YOUR PHOTO INTO A FIGHTER</text>
   </g>
 </svg>
