@@ -3,6 +3,7 @@ import {
   arcadeFighterPhotoHash,
   buildSpriteDownloadPlan,
   buildSpriteUploadPlan,
+  cloudPlayableSpriteRefs,
   cloudSpritesForImport,
   formatCloudRosterSyncStatus,
   isCompleteCloudFighterRoster,
@@ -92,9 +93,21 @@ describe('buildSpriteUploadPlan', () => {
     const current = candidate('current', 2, 'current-hash');
 
     expect(buildSpriteUploadPlan([archived, current], [current], [], [])).toEqual([
-      { kind: 'upload', candidate: archived, setCurrent: true },
+      { kind: 'upload', candidate: archived, setCurrent: false },
       { kind: 'upload', candidate: current, setCurrent: true },
     ]);
+  });
+
+  it('never promotes a newer higher-tier candidate outside the authoritative playable set', () => {
+    const remoteCurrent = candidate('remote-current', 100, 'a'.repeat(64), 'contender');
+    const pendingCandidate = candidate('pending-candidate', 200, 'b'.repeat(64), 'champion');
+
+    expect(buildSpriteUploadPlan(
+      [remoteCurrent, pendingCandidate],
+      [remoteCurrent],
+      [cloudSprite('a'.repeat(64), 'contender')],
+      [cloudSprite('a'.repeat(64), 'contender')],
+    )).toEqual([{ kind: 'upload', candidate: pendingCandidate, setCurrent: false }]);
   });
 
   it('uploads non-current history without moving a matching current pointer', () => {
@@ -343,7 +356,32 @@ describe('cloud roster sync status', () => {
 });
 
 describe('shouldRefreshLocalFighter', () => {
+  it('refreshes a migrated cloud fighter that has no exact current bindings', () => {
+    expect(shouldRefreshLocalFighter({
+      id: 'fighter-cloud',
+      name: 'Nova QA',
+      photoHash: 'fighter-hash',
+      qualityTier: 'champion',
+      public: false,
+      sources: {},
+      sprites: [{ ...cloudSprite('a'.repeat(64)), animationName: 'idle' }],
+      updatedAt: '2026-08-19T02:00:00.000Z',
+    }, {
+      photoHash: 'fighter-hash',
+      version: 1,
+      characterName: 'Nova QA',
+      qualityTier: 'champion',
+      cloudFighterId: 'fighter-cloud',
+      cloudSpriteVersionCount: 1,
+      status: 'ready',
+      animationsReady: ['idle'],
+      createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
+      updatedAt: Date.parse('2026-08-19T02:00:00.000Z'),
+    } as CachedMeta)).toBe(true);
+  });
+
   it('does not refresh the playable cache solely for a new archived private version', () => {
+    const currentHash = 'a'.repeat(64);
     const fighter = {
       id: 'fighter-cloud',
       name: 'Nova QA',
@@ -351,9 +389,9 @@ describe('shouldRefreshLocalFighter', () => {
       qualityTier: 'champion' as const,
       public: false,
       sources: {},
-      sprites: [{ ...cloudSprite('current'), animationName: 'idle' }],
+      sprites: [{ ...cloudSprite(currentHash), animationName: 'idle' }],
       spriteVersions: [
-        { ...cloudSprite('current'), animationName: 'idle' },
+        { ...cloudSprite(currentHash), animationName: 'idle' },
         { ...cloudSprite('archived'), animationName: 'idle' },
       ],
       updatedAt: '2026-08-19T02:00:00.000Z',
@@ -365,6 +403,7 @@ describe('shouldRefreshLocalFighter', () => {
       qualityTier: 'champion' as const,
       cloudFighterId: 'fighter-cloud',
       cloudSpriteVersionCount: 1,
+      cloudPlayableSpriteRefs: cloudPlayableSpriteRefs(fighter.sprites),
       status: 'ready' as const,
       animationsReady: ['idle'],
       createdAt: Date.parse('2026-08-19T01:00:00.000Z'),
@@ -377,7 +416,7 @@ describe('shouldRefreshLocalFighter', () => {
   it('does not confuse three tier pointers with missing animation names', () => {
     const names = ['idle', 'walk', 'high_punch'];
     const sprites = (['rookie', 'contender', 'champion'] as const).flatMap((tier) =>
-      names.map((name) => ({ ...cloudSprite(`${tier}-${name}`, tier), animationName: name })),
+      names.map((name) => ({ ...cloudSprite('a'.repeat(64), tier), animationName: name })),
     );
     expect(shouldRefreshLocalFighter({
       id: 'fighter-cloud',
@@ -405,6 +444,7 @@ describe('shouldRefreshLocalFighter', () => {
       qualityTier: 'champion',
       cloudFighterId: 'fighter-cloud',
       cloudSpriteVersionCount: sprites.length,
+      cloudPlayableSpriteRefs: cloudPlayableSpriteRefs(sprites),
       status: 'ready',
       animationsReady: names,
       createdAt: Date.parse('2026-08-19T01:00:00.000Z'),

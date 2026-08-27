@@ -10,10 +10,13 @@ import {
   getAllSpriteVersionsForHash,
   getCachedMeta,
   hashPhoto,
+  selectPlayableCachedSprites,
+  setCachedArchivedSprite,
+  setCloudPlayableSpriteRefs,
   setCachedMeta,
-  setCachedSprite,
   type CachedIntro,
   type CachedMeta,
+  type CachedPlayableSpriteRef,
   type CachedSprite,
 } from './SpriteCache';
 import type { QualityTier as CloudQualityTier } from './QualityTiers';
@@ -181,13 +184,8 @@ export function buildSpriteUploadPlan(
   remoteCurrent: CloudSprite[],
 ): SpriteUploadAction[] {
   const currentByPair = new Map<string, FingerprintedSprite>();
-  for (const candidate of localVersions) {
-    const key = spritePairKey(candidate.sprite.animationName, candidate.sprite.qualityTier);
-    const existing = currentByPair.get(key);
-    if (!existing || candidate.sprite.createdAt > existing.sprite.createdAt) {
-      currentByPair.set(key, candidate);
-    }
-  }
+  // The caller's playable selection is authoritative. Local history can contain a
+  // newer pending/rejected candidate (or a higher tier) and must never promote it.
   for (const candidate of currentFallback) {
     const key = spritePairKey(candidate.sprite.animationName, candidate.sprite.qualityTier);
     const existing = currentByPair.get(key);
@@ -382,6 +380,73 @@ export function selectPlayableCloudSprites(sprites: CloudSprite[]): CloudSprite[
   return Array.from(bestByAnimation.values());
 }
 
+function normalizedCloudContentHash(value: unknown): string | null {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value.trim())
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+export function cloudPlayableSpriteRefs(
+  sprites: CloudSprite[],
+): Record<string, CachedPlayableSpriteRef> {
+  return Object.fromEntries(selectPlayableCloudSprites(sprites).map((sprite) => [
+    sprite.animationName,
+    {
+      versionId: typeof sprite.id === 'string' && sprite.id ? sprite.id : null,
+      contentHash: normalizedCloudContentHash(sprite.contentHash),
+      animationName: sprite.animationName,
+      qualityTier: sprite.qualityTier,
+      frameWidth: sprite.frameWidth,
+      frameHeight: sprite.frameHeight,
+      frameCount: sprite.frameCount,
+      animationFormat: normalizeSpriteAnimationFormat(sprite.animationFormat),
+      processingVersion: sprite.processingVersion ?? 0,
+    },
+  ]));
+}
+
+function fingerprintedPlayableSpriteRefs(
+  sprites: FingerprintedSprite[],
+): Record<string, CachedPlayableSpriteRef> {
+  return Object.fromEntries(sprites.map(({ sprite, contentHash }) => [
+    sprite.animationName,
+    {
+      versionId: sprite.versionId ?? null,
+      contentHash: normalizedCloudContentHash(contentHash),
+      animationName: sprite.animationName,
+      qualityTier: sprite.qualityTier,
+      frameWidth: sprite.frameWidth,
+      frameHeight: sprite.frameHeight,
+      frameCount: sprite.frameCount,
+      animationFormat: normalizeSpriteAnimationFormat(sprite.animationFormat),
+      processingVersion: sprite.processingVersion ?? 0,
+    },
+  ]));
+}
+
+function cloudPlayableRefsMatch(
+  fighter: CloudFighter,
+  refs: Record<string, CachedPlayableSpriteRef> | undefined,
+): boolean {
+  if (!refs) return false;
+  const expected = cloudPlayableSpriteRefs(fighter.sprites);
+  const expectedEntries = Object.entries(expected);
+  if (expectedEntries.length !== Object.keys(refs).length) return false;
+  return expectedEntries.every(([animationName, remote]) => {
+    const local = refs[animationName];
+    // Current-row ids are stable across promotion, so only the immutable processed
+    // hash plus its playback interpretation can prove which version is current.
+    return Boolean(remote.contentHash) && local?.contentHash === remote.contentHash &&
+      local.animationName === remote.animationName &&
+      local.qualityTier === remote.qualityTier &&
+      local.frameWidth === remote.frameWidth &&
+      local.frameHeight === remote.frameHeight &&
+      local.frameCount === remote.frameCount &&
+      normalizeSpriteAnimationFormat(local.animationFormat) === remote.animationFormat &&
+      local.processingVersion === remote.processingVersion;
+  });
+}
+
 export function isSourceOnlyCloudFighter(fighter: CloudFighter): boolean {
   return fighter.sprites.length === 0 && (fighter.spriteVersions?.length ?? 0) === 0;
 }
@@ -456,6 +521,7 @@ async function apiErrorMessage(res: Response, fallback: string): Promise<string>
 export function shouldRefreshLocalFighter(fighter: CloudFighter, existing: CachedMeta | null): boolean {
   if (!existing) return true;
   if (existing.cloudFighterId !== fighter.id) return true;
+  if (!cloudPlayableRefsMatch(fighter, existing.cloudPlayableSpriteRefs)) return true;
   if (TIER_RANK[fighter.qualityTier] > TIER_RANK[getMetaTier(existing)]) return true;
   const remoteVersionCount = fighter.sprites.length;
   if (remoteVersionCount > (existing.cloudSpriteVersionCount ?? 0)) return true;
@@ -528,20 +594,14 @@ async function uploadSprite(
 async function fingerprintSprites(sprites: CachedSprite[]): Promise<FingerprintedSprite[]> {
   const fingerprints: FingerprintedSprite[] = [];
   for (const sprite of sprites) {
-    const cachedContentHash = typeof sprite.contentHash === 'string' && /^[a-f0-9]{64}$/i.test(sprite.contentHash)
-      ? sprite.contentHash.toLowerCase()
-      : null;
-    const cachedRawContentHash = typeof sprite.rawContentHash === 'string' && /^[a-f0-9]{64}$/i.test(sprite.rawContentHash)
-      ? sprite.rawContentHash.toLowerCase()
-      : null;
-    const contentHash = cachedContentHash ?? await hashPhoto(sprite.pngBlob);
+    const contentHash = await hashPhoto(sprite.pngBlob);
     const rawContentHash = sprite.rawPngBlob
-      ? cachedRawContentHash ?? await hashPhoto(sprite.rawPngBlob)
+      ? await hashPhoto(sprite.rawPngBlob)
       : null;
     if (sprite.contentHash !== contentHash || sprite.rawContentHash !== rawContentHash) {
       sprite.contentHash = contentHash;
       sprite.rawContentHash = rawContentHash;
-      await setCachedSprite(sprite, { preserveVersionId: true });
+      await setCachedArchivedSprite(sprite, { preserveVersionId: true });
     }
     fingerprints.push({ sprite, contentHash, rawContentHash });
   }
@@ -853,6 +913,11 @@ export async function syncFighterToCloud(
 
   meta.updatedAt = Date.now();
   await setCachedMeta(meta);
+  await setCloudPlayableSpriteRefs(
+    meta.photoHash,
+    fingerprintedPlayableSpriteRefs(currentFingerprints),
+    meta.ownerScope,
+  );
 
   if (meta.pendingGenerationPurchaseId) {
     try {
@@ -980,7 +1045,6 @@ export async function downloadCloudFighterToLocal(
   const createdAt = Date.parse(
     String((fighter as CloudFighter & { createdAt?: string }).createdAt ?? ''),
   ) || remoteUpdatedAt || now;
-  const availableAnimations = new Set(localSpriteVersions.map((sprite) => sprite.animationName));
   let spritesImported = 0;
   let optionalAssetsSkipped = [
     fighter.sources.original && !originalPhotoBlob,
@@ -1019,7 +1083,7 @@ export async function downloadCloudFighterToLocal(
           spriteRawAssetsSkipped += 1;
         }
         if (!action.downloadProcessed && action.downloadRaw && !downloadedRawBlob) return;
-        await setCachedSprite({
+        await setCachedArchivedSprite({
           ownerScope,
           versionId: action.existing?.versionId ?? sprite.id,
           photoHash,
@@ -1036,7 +1100,6 @@ export async function downloadCloudFighterToLocal(
           createdAt: Date.parse(String(sprite.createdAt ?? '')) || now,
           qualityTier: sprite.qualityTier,
         } as CachedSprite & { qualityTier: CloudQualityTier }, { preserveVersionId: Boolean(sprite.id) });
-        availableAnimations.add(sprite.animationName);
         spritesImported += 1;
       } catch (err: any) {
         if (err instanceof ApiSessionChangedError) throw err;
@@ -1048,15 +1111,21 @@ export async function downloadCloudFighterToLocal(
 
   const remoteRosterComplete = isCompleteCloudFighterRoster(fighter);
   const currentAnimationNames = new Set(fighter.sprites.map((sprite) => sprite.animationName));
-  const availableCurrentAnimations = new Set(
-    Array.from(availableAnimations).filter((animationName) => currentAnimationNames.has(animationName)),
-  );
   if (!remoteRosterComplete && !options.allowIncomplete) {
     const missing = PLAYABLE_ANIMATION_NAMES.filter((animationName) => !currentAnimationNames.has(animationName));
     throw new Error(
       `Cloud fighter ${fighter.name} is incomplete; missing current animations: ${missing.join(', ')}.`,
     );
   }
+
+  const playableRefs = cloudPlayableSpriteRefs(spriteVersions);
+  const refreshedVersions = await getAllSpriteVersionsForHash(photoHash, ownerScope);
+  await fingerprintSprites(refreshedVersions);
+  const exactPlayableSprites = selectPlayableCachedSprites(refreshedVersions, playableRefs);
+  const availableCurrentAnimations = new Set(exactPlayableSprites.map((sprite) => sprite.animationName));
+  const allRemoteCurrentSpritesAvailable = Object.values(playableRefs).every((ref) =>
+    Boolean(ref.contentHash) && availableCurrentAnimations.has(ref.animationName),
+  );
 
   const meta = {
     ...(existingMeta ?? {}),
@@ -1074,7 +1143,7 @@ export async function downloadCloudFighterToLocal(
     crouchViewCleanBlob: existingMeta?.crouchViewCleanBlob ?? crouchViewBlob,
     noBgBlob: existingMeta?.noBgBlob ?? null,
     characterName: fighter.name,
-    status: remoteRosterComplete ? 'ready' : 'sprites_generating',
+    status: remoteRosterComplete && allRemoteCurrentSpritesAvailable ? 'ready' : 'sprites_generating',
     animationsReady: Array.from(availableCurrentAnimations),
     createdAt,
     updatedAt: staleSourceKinds.size > 0 || spritesSkipped > 0
@@ -1094,9 +1163,11 @@ export async function downloadCloudFighterToLocal(
     cloudSpriteVersionCount: spritesSkipped === 0 && spriteRawAssetsSkipped === 0
       ? remoteSpriteVersionCount
       : existingMeta?.cloudSpriteVersionCount ?? 0,
+    cloudPlayableSpriteRefs: playableRefs,
   } satisfies CachedMeta & { qualityTier: CloudQualityTier };
 
   await setCachedMeta(meta);
+  await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope);
 
   return {
     fighterId: fighter.id,
