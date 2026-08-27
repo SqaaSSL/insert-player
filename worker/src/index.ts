@@ -27,6 +27,7 @@ import {
   listAdminArcadeFighters,
   listArcadeFighters,
   listCommunityFighters,
+  listOwnedCommunityFighterIds,
   listFighters,
   listStages,
   patchFighter,
@@ -373,6 +374,14 @@ export default {
 
       if (path === '/api/community' && method === 'GET') {
         return addCors(await listCommunityFighters(request, env), request, env);
+      }
+
+      if (path === '/api/community/ownership' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => listOwnedCommunityFighterIds(env, auth)),
+          request,
+          env,
+        );
       }
 
       if (path === '/api/arcade' && method === 'GET') {

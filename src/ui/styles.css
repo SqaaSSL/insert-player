@@ -90,6 +90,10 @@
            [background-image:radial-gradient(ellipse_at_top,rgba(255,42,42,0.22),transparent_55%),radial-gradient(ellipse_at_bottom_left,rgba(255,206,58,0.10),transparent_55%),repeating-linear-gradient(0deg,transparent_0,transparent_2px,rgba(255,255,255,0.025)_2px,rgba(255,255,255,0.025)_3px),linear-gradient(180deg,var(--color-asf-bg-1),var(--color-asf-bg-0))];
   }
 
+  body.asf-modal-open {
+    @apply overflow-hidden;
+  }
+
   button,
   input,
   textarea,
@@ -272,7 +276,8 @@
     @apply text-[22px] tracking-[0.14em] text-asf-gold [text-shadow:0_2px_0_#a80d0d];
   }
 
-  .asf-empty p {
+  .asf-empty p,
+  .gallery-empty p {
     @apply m-0 max-w-[52ch] font-sans text-[14px] normal-case leading-[1.65] text-asf-muted;
   }
 
@@ -409,6 +414,24 @@
            hover:border-asf-gold hover:bg-asf-red-deep;
   }
 
+  .cache-status-banner {
+    @apply fixed left-4 right-4 top-[76px] z-40 mx-auto flex max-w-[880px] items-center
+           justify-between gap-4 rounded-[4px] border-2 border-asf-warn
+           bg-[rgba(38,22,10,0.98)] px-4 py-3 shadow-[0_12px_32px_rgba(0,0,0,0.5)];
+  }
+
+  .cache-status-banner.is-degraded {
+    @apply border-asf-red bg-[rgba(62,8,12,0.98)];
+  }
+
+  .cache-status-banner strong {
+    @apply font-arcade text-[11px] uppercase tracking-[0.08em] text-asf-gold-bright;
+  }
+
+  .cache-status-banner p {
+    @apply m-0 mt-1 font-sans text-[13px] leading-[1.5] text-asf-cream;
+  }
+
   /* ---- Big arcade menu tiles ---- */
 
   .home-menu__action {
@@ -490,6 +513,10 @@
     @apply min-h-11 cursor-pointer rounded-[4px] border-2 border-asf-gold-deep
            bg-asf-panel-alt px-2 py-2.5 font-arcade text-[11px] tracking-[0.04em] uppercase text-asf-muted
            transition-colors hover:text-asf-gold-bright hover:border-asf-gold;
+  }
+
+  .gallery-tab:disabled {
+    @apply cursor-not-allowed opacity-45;
   }
 
   .gallery-tab.is-active {
@@ -1214,6 +1241,14 @@
     @apply min-h-[360px];
   }
 
+  .community-route-state {
+    @apply min-h-[280px] rounded-[6px] border-2 border-asf-line bg-asf-panel;
+  }
+
+  .community-owned-badge {
+    @apply mt-2 w-fit border-asf-ok text-asf-ok;
+  }
+
   .community-report-form {
     @apply flex flex-col gap-5;
   }
@@ -1361,6 +1396,11 @@
     @apply min-h-[280px];
   }
 
+  .moderation-dialog-error {
+    @apply m-0 rounded-[4px] border-2 border-asf-red bg-[rgba(80,10,10,0.92)] px-3 py-2
+           font-sans text-[13px] leading-[1.55] text-asf-text;
+  }
+
   /* ============================================================
      CREATE FIGHTER
      ============================================================ */
@@ -1490,6 +1530,27 @@
 
   .app-main {
     @apply [display:contents];
+  }
+
+  .configuration-error {
+    @apply mx-auto flex min-h-[calc(100vh-140px)] w-full max-w-[680px] flex-col items-start
+           justify-center gap-5 px-8 pb-16 pt-28;
+  }
+
+  .configuration-error__code {
+    @apply m-0 font-arcade text-[11px] uppercase tracking-[0.16em] text-asf-red;
+  }
+
+  .configuration-error h1 {
+    @apply text-[24px] leading-[1.4] text-asf-gold-bright;
+  }
+
+  .configuration-error > p:not(.configuration-error__code) {
+    @apply m-0 max-w-[62ch] font-sans text-[15px] leading-[1.7] text-asf-cream;
+  }
+
+  .configuration-error__actions {
+    @apply flex flex-wrap gap-3;
   }
 
   .legal-footer {
@@ -2028,6 +2089,14 @@
     }
 
     .legal-footer {
+      @apply px-5;
+    }
+
+    .cache-status-banner {
+      @apply left-3 right-3 flex-col items-stretch;
+    }
+
+    .configuration-error {
       @apply px-5;
     }
 

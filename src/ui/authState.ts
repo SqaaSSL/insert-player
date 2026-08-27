@@ -5,6 +5,16 @@ export interface AuthRouteState {
   authSessionKey: string;
 }
 
+export type AuthBootstrapMode = 'clerk' | 'local-dev' | 'misconfigured';
+
+export function resolveAuthBootstrapMode(
+  clerkPublishableKey: unknown,
+  isDev: boolean,
+): AuthBootstrapMode {
+  if (typeof clerkPublishableKey === 'string' && clerkPublishableKey.trim()) return 'clerk';
+  return isDev ? 'local-dev' : 'misconfigured';
+}
+
 function isLocalDevWithoutApi(): boolean {
   return import.meta.env.DEV && !String(import.meta.env.VITE_API_BASE_URL ?? '').trim();
 }

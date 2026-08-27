@@ -89,6 +89,12 @@ const requiredPlayableAnimations = [
   'ko',
   'victory',
 ];
+const requiredProductionArcadeSlugs = [
+  'donald-trump',
+  'lamine-yamal',
+  'rosalia',
+  'elon-musk',
+];
 const generationLegal = {
   legalVersion: '2026-08-23.1',
   ageConfirmed: true,
@@ -504,6 +510,14 @@ async function runPublicSmoke() {
   );
   const arcadeBody = await readJson(arcadeFeed);
   assert(Array.isArray(arcadeBody.fighters), 'Official Arcade feed did not return a fighters array');
+  if (!isSandboxSmoke) {
+    const activeSlugs = new Set(
+      arcadeBody.fighters.map((fighter) => fighter?.arcade?.slug).filter(Boolean),
+    );
+    for (const slug of requiredProductionArcadeSlugs) {
+      assert(activeSlugs.has(slug), `Official Arcade is missing required production fighter ${slug}`);
+    }
+  }
   let previousRank = 0;
   for (const fighter of arcadeBody.fighters) {
     assert(fighter.qualityTier === 'champion', 'Official Arcade exposed a non-Champion fighter');
@@ -514,6 +528,28 @@ async function runPublicSmoke() {
     assert(typeof fighter.arcade?.slug === 'string' && fighter.arcade.slug, 'Official Arcade fighter is missing its slug');
     assert(Number(fighter.arcade?.rank) > previousRank, 'Official Arcade fighters are not in stable rank order');
     assert(typeof fighter.arcade?.challengerLine === 'string', 'Official Arcade fighter is missing its challenger line');
+    const animationNames = new Set(
+      (fighter.sprites ?? []).map((sprite) => sprite?.animationName).filter(Boolean),
+    );
+    for (const animationName of requiredPlayableAnimations) {
+      const sprite = (fighter.sprites ?? []).find(
+        (candidate) => candidate?.animationName === animationName,
+      );
+      assert(
+        animationNames.has(animationName),
+        `Official Arcade fighter ${fighter.arcade.slug} is missing playable animation ${animationName}`,
+      );
+      assert(
+        /^[a-f0-9]{64}$/i.test(sprite?.contentHash ?? ''),
+        `Official Arcade fighter ${fighter.arcade.slug} has no immutable hash for ${animationName}`,
+      );
+      assert(
+        Number.isSafeInteger(sprite?.frameWidth) && sprite.frameWidth > 0 &&
+          Number.isSafeInteger(sprite?.frameHeight) && sprite.frameHeight > 0 &&
+          Number.isSafeInteger(sprite?.frameCount) && sprite.frameCount > 0,
+        `Official Arcade fighter ${fighter.arcade.slug} has invalid playback metadata for ${animationName}`,
+      );
+    }
     assert(
       fighter.arcade?.reference?.kind === 'licensed'
         && /^https:\/\//.test(fighter.arcade.reference.sourceUrl ?? '')

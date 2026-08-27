@@ -63,3 +63,30 @@ export function isVideoResumableJob(job: VideoRosterJobState): boolean {
   return job.creationFlow === 'video' && job.operation === 'fighter_generation' &&
     (job.status === 'failed' || job.status === 'cancelled') && job.resumable;
 }
+
+export function videoReviewJobNeedsConsent(
+  job: Pick<GenerationJob, 'fullRunRestartRequired' | 'reviewStatus' | 'resumable'> | null,
+): boolean {
+  return Boolean(job && (
+    job.fullRunRestartRequired ||
+    job.reviewStatus === 'rejected' ||
+    (job.reviewStatus === 'approved' && job.resumable)
+  ));
+}
+
+export function videoReviewDecisionNeedsConsent(
+  review: { status: string; continuationAvailable: boolean } | null,
+  fullRunRestartRequired = false,
+): boolean {
+  return fullRunRestartRequired || Boolean(review && (
+    review.status === 'rejected' ||
+    (review.status === 'approved' && review.continuationAvailable)
+  ));
+}
+
+export function durableRecoveryFailureNeedsRetry(
+  recoveryLookupCompleted: boolean,
+  recoverableJobFound: boolean,
+): boolean {
+  return recoveryLookupCompleted && recoverableJobFound;
+}
