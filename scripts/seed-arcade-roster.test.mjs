@@ -1441,7 +1441,12 @@ describe('Review-gated Arcade Video step', () => {
           : { ...review, status: 'rejected', fullRunRestartRequired: true };
       const calls = [];
       const requestApi = async (_baseUrl, _token, path, init = {}) => {
-        calls.push({ path, method: init.method ?? 'GET', body: init.body });
+        calls.push({
+          path,
+          method: init.method ?? 'GET',
+          body: init.body,
+          requestTimeoutMs: init.requestTimeoutMs,
+        });
         if (path === '/api/admin/arcade' && !init.method) return { fighters: [entry] };
         if (path === `/api/fighters/${entry.fighterId}` && !init.method) return { fighter: owned };
         if (path === `/api/generation-jobs/${job.id}` && !init.method) return { job };
@@ -1476,6 +1481,7 @@ describe('Review-gated Arcade Video step', () => {
         expect(result.descriptor === null).toBe(decision !== 'adjust');
         const posts = calls.filter(({ method }) => method === 'POST');
         expect(posts).toHaveLength(1);
+        expect(posts[0].requestTimeoutMs).toBe(decision === 'adjust' ? 180_000 : undefined);
         expect(JSON.parse(posts[0].body)).toEqual({
           candidateId: review.candidateId,
           revision: review.revision,
