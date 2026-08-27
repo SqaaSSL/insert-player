@@ -4,10 +4,14 @@ import { FighterState } from '../constants.ts';
 vi.mock('phaser', () => ({ default: {} }));
 
 import {
+  composeSpritePresentation,
   createSpriteLayout,
+  DEFAULT_SPRITE_PRESENTATION_PROFILE,
   getAnimationRuntimeProfile,
+  getFacingSpriteOriginX,
   getHighKickRuntimeProfile,
   getSpriteLayout,
+  getSpritePresentationProfile,
   registerSpriteLayout,
 } from './SpriteGenerator.ts';
 
@@ -17,6 +21,76 @@ describe('sprite layouts', () => {
 
     expect(layout.frameCounts[FighterState.HIGH_KICK]).toBe(4);
     expect(layout.playbackModes[FighterState.HIGH_KICK]).toBeUndefined();
+    expect(getSpritePresentationProfile(layout, FighterState.HIGH_KICK)).toBe(
+      DEFAULT_SPRITE_PRESENTATION_PROFILE,
+    );
+  });
+
+  it('stores valid per-state presentation without changing legacy defaults', () => {
+    const idlePresentation = {
+      scale: 1.25,
+      originX: 0.42,
+      originY: 1,
+      offsetY: 7,
+    };
+    const layout = createSpriteLayout({}, {}, {}, {
+      [FighterState.IDLE]: idlePresentation,
+      [FighterState.HIGH_KICK]: {
+        scale: 0,
+        originX: 0.5,
+        originY: 1,
+        offsetY: 0,
+      },
+    });
+
+    expect(getSpritePresentationProfile(layout, FighterState.IDLE)).toEqual(idlePresentation);
+    expect(layout.presentationProfiles[FighterState.IDLE]).not.toBe(idlePresentation);
+    expect(getSpritePresentationProfile(layout, FighterState.HIGH_KICK)).toBe(
+      DEFAULT_SPRITE_PRESENTATION_PROFILE,
+    );
+    expect(getSpritePresentationProfile(layout, FighterState.WALK_FORWARD)).toBe(
+      DEFAULT_SPRITE_PRESENTATION_PROFILE,
+    );
+  });
+
+  it('composes action presentation with stage scale and vertical offset', () => {
+    expect(composeSpritePresentation(
+      { scale: 1.25, originX: 0.42, originY: 1, offsetY: 6 },
+      0.8,
+      500,
+      -12,
+    )).toEqual({
+      scale: 1,
+      originX: 0.42,
+      originY: 1,
+      offsetY: 6,
+      y: 492.8,
+    });
+
+    expect(composeSpritePresentation(
+      DEFAULT_SPRITE_PRESENTATION_PROFILE,
+      0.8,
+      500,
+      -12,
+    )).toEqual({
+      ...DEFAULT_SPRITE_PRESENTATION_PROFILE,
+      scale: 0.8,
+      y: 488,
+    });
+  });
+
+  it('keeps an asymmetric source root at local x zero in both facings', () => {
+    const frameWidth = 192;
+    const sourceOriginX = 0.37;
+    const sourceRootX = sourceOriginX * frameWidth;
+
+    for (const flipped of [false, true]) {
+      const displayedRootX = flipped ? frameWidth - sourceRootX : sourceRootX;
+      const effectiveOriginX = getFacingSpriteOriginX(sourceOriginX, flipped);
+      const renderedRootX = displayedRootX - effectiveOriginX * frameWidth;
+
+      expect(renderedRootX).toBeCloseTo(0, 10);
+    }
   });
 
   it('preserves legacy seven-frame assets as complete timelines', () => {
