@@ -4,6 +4,7 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { frontendHeadersForTarget } from './frontend-security-headers.mjs';
+import { readImageSize } from './image-dimensions.mjs';
 import { textReferencesHostname, textReferencesOrigin } from './url-reference.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -3041,6 +3042,8 @@ function assertLaunchMetadataIsWired() {
     'rel="apple-touch-icon" href="/assets/app-icon-192.png"',
     'property="og:title"',
     'property="og:image"',
+    'property="og:image:secure_url"',
+    'property="og:image:type" content="image/jpeg"',
     'property="og:image:width" content="1200"',
     'property="og:image:height" content="630"',
     'name="twitter:card" content="summary_large_image"',
@@ -3063,6 +3066,8 @@ function assertLaunchMetadataIsWired() {
     'public/assets/app-icon-512.png',
     'public/assets/app-maskable-512.png',
     'public/assets/social-card-v6.png',
+    'public/assets/social-card-v7.jpg',
+    'public/assets/social-card-v7.webp',
     'public/assets/social-card.svg',
     'public/assets/social-card-visual-v3.png',
     'scripts/assets/social-card.html',
@@ -3122,6 +3127,10 @@ function assertLaunchMetadataIsWired() {
     'expectedAppName',
     "manifestJson.name === expectedAppName",
     'expectedSocialCardPath',
+    'expectedSocialCardMime',
+    'property="og:image:secure_url"',
+    'property="og:image:type"',
+    'socialCardBytes <= 300_000',
     'Home HTML missing canonical production origin',
     'robots.txt missing canonical sitemap',
     'Sitemap must not publish private roster routes',
@@ -3176,43 +3185,31 @@ function assertLaunchMetadataIsWired() {
   }
 }
 
-function readPngSize(relPath) {
-  const bytes = readFileSync(join(root, relPath));
-  const isPng = bytes.length >= 24
-    && bytes[0] === 0x89
-    && bytes[1] === 0x50
-    && bytes[2] === 0x4e
-    && bytes[3] === 0x47
-    && bytes[4] === 0x0d
-    && bytes[5] === 0x0a
-    && bytes[6] === 0x1a
-    && bytes[7] === 0x0a;
-  if (!isPng) throw new Error(`${relPath} is not a PNG file.`);
-  return {
-    width: bytes.readUInt32BE(16),
-    height: bytes.readUInt32BE(20),
-  };
-}
-
 function assertLaunchRasterAssetsAreFresh() {
   const assets = [
-    ['scripts/assets/social-card.html', 'public/assets/social-card-v6.png', 1200, 630],
-    ['scripts/assets/social-card.css', 'public/assets/social-card-v6.png', 1200, 630],
-    ['public/assets/social-card-visual-v3.png', 'public/assets/social-card-v6.png', 1200, 630],
+    ['scripts/assets/social-card.html', 'public/assets/social-card-v7.jpg', 1200, 630, 300_000],
+    ['scripts/assets/social-card.css', 'public/assets/social-card-v7.jpg', 1200, 630, 300_000],
+    ['public/assets/social-card-visual-v3.png', 'public/assets/social-card-v7.jpg', 1200, 630, 300_000],
+    ['scripts/assets/social-card.html', 'public/assets/social-card-v7.webp', 1200, 630, 150_000],
+    ['scripts/assets/social-card.css', 'public/assets/social-card-v7.webp', 1200, 630, 150_000],
+    ['public/assets/social-card-visual-v3.png', 'public/assets/social-card-v7.webp', 1200, 630, 150_000],
     ['public/assets/app-icon.svg', 'public/assets/app-icon-192.png', 192, 192],
     ['public/assets/app-icon.svg', 'public/assets/app-icon-512.png', 512, 512],
     ['public/assets/app-icon.svg', 'public/assets/app-maskable-512.png', 512, 512],
   ];
 
-  for (const [sourcePath, rasterPath, expectedWidth, expectedHeight] of assets) {
+  for (const [sourcePath, rasterPath, expectedWidth, expectedHeight, maxBytes] of assets) {
     const source = statSync(join(root, sourcePath));
     const raster = statSync(join(root, rasterPath));
     if (raster.mtimeMs + 1000 < source.mtimeMs) {
       throw new Error(`${rasterPath} is older than ${sourcePath}. Run npm run brand:rasterize.`);
     }
-    const { width, height } = readPngSize(rasterPath);
+    const { width, height } = readImageSize(join(root, rasterPath));
     if (width !== expectedWidth || height !== expectedHeight) {
       throw new Error(`${rasterPath} is ${width}x${height}; expected ${expectedWidth}x${expectedHeight}.`);
+    }
+    if (maxBytes && raster.size > maxBytes) {
+      throw new Error(`${rasterPath} is ${raster.size} bytes; expected no more than ${maxBytes}.`);
     }
   }
 }
