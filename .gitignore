@@ -30,6 +30,7 @@ worker/.prod.vars
 .arcade-side-xai-canary-state.json
 .arcade-side-xai-pose-transfer-canary-state.json
 .arcade-side-xai-global-pose-transfer-state.json
+.arcade-xai-canonical-bundle-states/
 .arcade-xai-pose-master-upload-state.json
 .arcade-high-kick-xai-trump-impact-state.json
 .arcade-high-kick-xai-video-canary-state.json

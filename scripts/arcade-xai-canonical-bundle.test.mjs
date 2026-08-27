@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -18,6 +19,7 @@ import {
   loadXaiCanonicalPoseManifest,
   runXaiCanonicalBundle,
 } from './arcade-xai-canonical-bundle.mjs';
+import { buildXaiCanonicalContainerPlan } from './run-xai-canonical-bundle-container.mjs';
 
 const roster = JSON.parse(readFileSync(new URL('../arcade/roster-2026.json', import.meta.url), 'utf8'));
 const temporaryDirectories = [];
@@ -165,7 +167,9 @@ function providerFixture(options = {}) {
       return new Response(JSON.stringify({
         job_id: jobMatch[1],
         status: 'completed',
-        cost: options.jobCost ?? XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd,
+        cost: Object.hasOwn(options, 'jobCost')
+          ? options.jobCost
+          : XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd,
       }), { status: 200 });
     }
     const canvaMatch = parsed.pathname.match(/^\/api\/v1\/jobs\/(job-[0-9]+)\/canva$/);
@@ -189,7 +193,13 @@ function providerFixture(options = {}) {
         },
       });
       return new Response(JSON.stringify({
-        job: { job_id: jobId, status: 'completed', cost: 0.11 },
+        job: {
+          job_id: jobId,
+          status: 'completed',
+          cost: Object.hasOwn(options, 'canvaCost')
+            ? options.canvaCost
+            : XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd,
+        },
         input,
         provider_runs: [{
           provider: XAI_CANONICAL_BUNDLE_MODEL.backend,
@@ -238,6 +248,57 @@ afterEach(() => {
 });
 
 describe('sealed XAI canonical bundle inputs', () => {
+  it('provides a supported exact 5.1.9 container command with private read-only inputs', () => {
+    const fixture = makeFixture();
+    const writableRoot = mkdtempSync(join(tmpdir(), 'insert-player-canonical-container-output-'));
+    temporaryDirectories.push(writableRoot);
+    const statePath = join(writableRoot, 'state.json');
+    const outputDirectory = join(writableRoot, 'bundle');
+    const plan = buildXaiCanonicalContainerPlan([
+      '--execute',
+      '--slug=elon-musk',
+      `--manifest=${fixture.rosterPath}`,
+      `--source-dir=${fixture.sourceDir}`,
+      `--pose-manifest=${fixture.poseManifestPath}`,
+      `--pose-manifest-sha256=${fixture.poseManifestSha256}`,
+      `--state=${statePath}`,
+      `--output-dir=${outputDirectory}`,
+      `--confirm=${XAI_CANONICAL_BUNDLE_CONFIRMATION}`,
+      `--confirm-private=${XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION}`,
+      '--max-cost-usd=0.36',
+    ], { repositoryRoot: fixture.directory, uid: 501, gid: 20 });
+    expect(plan.build).toContain('media-runtime');
+    expect(plan.run).toContain('insert-player-xai-canonical-media-runtime:v1');
+    expect(plan.run).toContain(`${fixture.sourceDir}:/private-sources:ro`);
+    expect(plan.run).toContain(`${fixture.poseDir}:/private-pose:ro`);
+    expect(plan.run).toContain(`${writableRoot}:/private-work`);
+    expect(plan.run).toContain('--state=/private-work/state.json');
+    expect(plan.run).toContain('--output-dir=/private-work/bundle');
+    expect(plan.run).toContain('PIXCLI_API_KEY');
+    expect(plan.run.join(' ')).not.toContain('test-key');
+  });
+
+  it('publishes the exact private artifact consumed by the separate reviewed importer', () => {
+    const generation = readFileSync(new URL(
+      '../.github/workflows/generate-xai-canonical-bundle-private.yml',
+      import.meta.url,
+    ), 'utf8');
+    const reviewedImport = readFileSync(new URL(
+      '../.github/workflows/import-reviewed-xai-canonical-production.yml',
+      import.meta.url,
+    ), 'utf8');
+    expect(generation).toContain('temp/arcade-xai-canonical-inputs-v1/$REQUESTED_SLUG/');
+    expect(generation).toContain('printf \'%s  %s\\n\' "$INPUT_BUNDLE_SHA256" "$archive" | sha256sum --check --strict');
+    expect(generation).toContain('printf \'%s  %s\\n\' "$POSE_MANIFEST_SHA256" "$input_root/pose/pose-manifest.json" | sha256sum --check --strict');
+    expect(generation).toContain('ffmpeg=7:5.1.9-0+deb12u1');
+    expect(generation).toContain('--max-cost-usd="$MAX_COST_USD"');
+    expect(generation).toContain('name: arcade-xai-canonical-bundle-${{ inputs.slug }}');
+    expect(generation).toContain('name: arcade-xai-canonical-bundle-checkpoint-${{ inputs.slug }}');
+    expect(generation).not.toMatch(/\/api\/fighters|\/approve(?:\/|\s|$)|--activate/);
+    expect(reviewedImport).toContain('--name "arcade-xai-canonical-bundle-$REQUESTED_SLUG"');
+    expect(reviewedImport).toContain('name: arcade-reviewed-canonical-manifest-${{ inputs.slug }}');
+  });
+
   it('requires a hash-bound reviewed pose manifest with exact artifacts and evidence', () => {
     const fixture = makeFixture();
     const loaded = loadXaiCanonicalPoseManifest(fixture.poseManifestPath, fixture.poseManifestSha256);
@@ -249,6 +310,28 @@ describe('sealed XAI canonical bundle inputs', () => {
       fixture.poseManifestPath,
       fixture.poseManifestSha256,
     )).toThrow(/descriptor/i);
+  });
+
+  it('accepts only affirmative approval evidence and requires the selector to exist', () => {
+    for (const expectedValue of [false, null, 'pending', { approved: true }]) {
+      const fixture = makeFixture();
+      fixture.poseManifest.sources.side.pose.approvalEvidence.expectedValue = expectedValue;
+      const bytes = Buffer.from(JSON.stringify(fixture.poseManifest));
+      writeFileSync(fixture.poseManifestPath, bytes);
+      expect(() => loadXaiCanonicalPoseManifest(
+        fixture.poseManifestPath,
+        sha256(bytes),
+      )).toThrow(/not an affirmative sealed decision/i);
+    }
+    const fixture = makeFixture();
+    fixture.poseManifest.sources.side.pose.approvalEvidence.selector = 'approved.missing-reference';
+    fixture.poseManifest.sources.side.pose.approvalEvidence.expectedValue = true;
+    const bytes = Buffer.from(JSON.stringify(fixture.poseManifest));
+    writeFileSync(fixture.poseManifestPath, bytes);
+    expect(() => loadXaiCanonicalPoseManifest(
+      fixture.poseManifestPath,
+      sha256(bytes),
+    )).toThrow(/selector does not exist/i);
   });
 
   it('orders three distinct references and disables enrichment, publishing, retries, and fallback', () => {
@@ -335,6 +418,36 @@ describe('resumable exactly-once XAI canonical bundle', () => {
     expect(paidPosts).toHaveLength(3);
   });
 
+  it('serializes concurrent invocations before state, output, or provider mutation', async () => {
+    const fixture = makeFixture();
+    const provider = providerFixture();
+    const options = runOptions(fixture, provider);
+    const results = await Promise.allSettled([
+      runXaiCanonicalBundle(options),
+      runXaiCanonicalBundle(options),
+    ]);
+    expect(results.filter(({ status }) => status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(({ status }) => status === 'rejected')).toHaveLength(1);
+    expect(results.find(({ status }) => status === 'rejected').reason.message).toMatch(/lock exists.*manual reconciliation/i);
+    const paidPosts = provider.fetchImpl.mock.calls.filter(([url, init]) => (
+      new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
+    ));
+    expect(paidPosts).toHaveLength(3);
+    expect(existsSync(`${fixture.statePath}.lock`)).toBe(false);
+    expect(existsSync(`${fixture.outputDirectory}.lock`)).toBe(false);
+  });
+
+  it('never deletes or bypasses a stale lock automatically', async () => {
+    const fixture = makeFixture();
+    const provider = providerFixture();
+    const staleLock = `${fixture.statePath}.lock`;
+    writeFileSync(staleLock, JSON.stringify({ nonce: 'manual-reconciliation-required' }));
+    await expect(runXaiCanonicalBundle(runOptions(fixture, provider)))
+      .rejects.toThrow(/lock exists.*manual reconciliation/i);
+    expect(existsSync(staleLock)).toBe(true);
+    expect(provider.fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('records an ambiguous POST before failure and never re-POSTs that source', async () => {
     const fixture = makeFixture();
     const provider = providerFixture({ submitThrows: true });
@@ -347,6 +460,33 @@ describe('resumable exactly-once XAI canonical bundle', () => {
     expect(paidCalls()).toBe(1);
     await expect(runXaiCanonicalBundle(options)).rejects.toThrow(/ambiguous POST/i);
     expect(paidCalls()).toBe(1);
+  });
+
+  it('resumes provider-completed work in the approved cleanup toolchain without another POST', async () => {
+    const fixture = makeFixture();
+    const provider = providerFixture();
+    let failedCleanup = false;
+    const crashingCleanup = vi.fn((binary, args) => {
+      if (args[0] === '-version') {
+        return { stdout: `ffmpeg version ${XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion} Copyright\n`, stderr: '' };
+      }
+      if (!failedCleanup && !args.includes('-filter_complex')) {
+        failedCleanup = true;
+        throw new Error('simulated host cleanup crash');
+      }
+      const outputPath = args.at(-1);
+      const contact = args.includes('-filter_complex');
+      writeFileSync(outputPath, png(contact ? 'contact-sheet' : 'clean-source', contact ? 1152 : 128, contact ? 1024 : 192));
+      return { stdout: '', stderr: '' };
+    });
+    await expect(runXaiCanonicalBundle(runOptions(fixture, provider, crashingCleanup)))
+      .rejects.toThrow(/simulated host cleanup crash/i);
+    expect(JSON.parse(readFileSync(fixture.statePath, 'utf8')).slots.side.status).toBe('provider_completed');
+    await runXaiCanonicalBundle(runOptions(fixture, provider));
+    const paidPosts = provider.fetchImpl.mock.calls.filter(([url, init]) => (
+      new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
+    ));
+    expect(paidPosts).toHaveLength(3);
   });
 
   it('rejects model or audited-price drift before uploads or paid calls', async () => {
@@ -365,5 +505,18 @@ describe('resumable exactly-once XAI canonical bundle', () => {
       new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
     ));
     expect(paidPosts).toHaveLength(1);
+  });
+
+  it.each([
+    ['job null', { jobCost: null }],
+    ['job string', { jobCost: '0.11' }],
+    ['job NaN', { jobCost: Number.NaN }],
+    ['Canva null', { canvaCost: null }],
+    ['Canva string', { canvaCost: '0.11' }],
+    ['Canva NaN', { canvaCost: Number.NaN }],
+  ])('rejects unproved %s cost values', async (_label, overrides) => {
+    const fixture = makeFixture();
+    const provider = providerFixture(overrides);
+    await expect(runXaiCanonicalBundle(runOptions(fixture, provider))).rejects.toThrow(/\$0\.11/i);
   });
 });

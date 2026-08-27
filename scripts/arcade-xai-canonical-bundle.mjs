@@ -1,11 +1,15 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -96,6 +100,58 @@ function writeJsonAtomic(path, value) {
   chmodSync(path, 0o600);
 }
 
+function acquireExclusiveBundleLocks(statePath, outputDirectory) {
+  const nonce = randomUUID();
+  const lockPaths = [...new Set([`${statePath}.lock`, `${outputDirectory}.lock`])].sort();
+  const owned = [];
+  try {
+    for (const lockPath of lockPaths) {
+      mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
+      let descriptor;
+      try {
+        descriptor = openSync(lockPath, 'wx', 0o600);
+      } catch (error) {
+        if (error?.code === 'EEXIST') {
+          throw new Error(`Canonical bundle lock exists and requires manual reconciliation: ${lockPath}.`);
+        }
+        throw error;
+      }
+      owned.push({ lockPath, descriptor, nonce });
+      const record = {
+        schemaVersion: 1,
+        nonce,
+        pid: process.pid,
+        statePath,
+        outputDirectory,
+        acquiredAt: nowIso(),
+      };
+      writeFileSync(descriptor, `${JSON.stringify(record, null, 2)}\n`);
+      fsyncSync(descriptor);
+    }
+  } catch (error) {
+    releaseExclusiveBundleLocks(owned);
+    throw error;
+  }
+  return owned;
+}
+
+function releaseExclusiveBundleLocks(owned) {
+  let releaseError = null;
+  for (const lock of [...owned].reverse()) {
+    try {
+      closeSync(lock.descriptor);
+      const current = JSON.parse(readFileSync(lock.lockPath, 'utf8'));
+      if (current.nonce !== lock.nonce) {
+        throw new Error(`Canonical bundle lock ownership changed: ${lock.lockPath}.`);
+      }
+      unlinkSync(lock.lockPath);
+    } catch (error) {
+      releaseError ??= error;
+    }
+  }
+  if (releaseError) throw releaseError;
+}
+
 function writeBytesAtomic(path, bytes) {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const temporary = `${path}.writing-${process.pid}`;
@@ -146,6 +202,13 @@ function readApprovedReference(reference, baseDirectory, label) {
   ], `${label}.approvalEvidence`);
   requireString(reference.approvalEvidence.contentSha256, `${label}.approvalEvidence.contentSha256`, /^[a-f0-9]{64}$/);
   requireString(reference.approvalEvidence.selector, `${label}.approvalEvidence.selector`, /^[A-Za-z0-9_.-]+$/);
+  const affirmativeDecision = reference.approvalEvidence.expectedValue === true
+    || reference.approvalEvidence.expectedValue === 'approved'
+    || (
+      typeof reference.approvalEvidence.expectedValue === 'string'
+      && /^[a-f0-9]{64}$/.test(reference.approvalEvidence.expectedValue)
+    );
+  if (!affirmativeDecision) throw new Error(`${label} approval evidence is not an affirmative sealed decision.`);
 
   const path = resolvePrivateInput(baseDirectory, reference.path, label);
   const evidencePath = resolvePrivateInput(
@@ -169,7 +232,13 @@ function readApprovedReference(reference, baseDirectory, label) {
   } catch {
     throw new Error(`${label} approval evidence is not JSON.`);
   }
-  const selected = reference.approvalEvidence.selector.split('.').reduce((value, key) => value?.[key], evidence);
+  let selected = evidence;
+  for (const key of reference.approvalEvidence.selector.split('.')) {
+    if (!selected || typeof selected !== 'object' || !Object.hasOwn(selected, key)) {
+      throw new Error(`${label} approval evidence selector does not exist.`);
+    }
+    selected = selected[key];
+  }
   if (canonicalJson(selected) !== canonicalJson(reference.approvalEvidence.expectedValue)) {
     throw new Error(`${label} approval evidence selector did not match.`);
   }
@@ -469,7 +538,11 @@ async function downloadAuditAsset(asset, path, headers, fetchImpl) {
 
 async function archiveCompletedSource(options, slot, job, payload) {
   if (job.status !== 'completed') throw new Error(`${slot.sourceName} did not complete without fallback.`);
-  if (Math.abs(Number(job.cost) - XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd) > 1e-9) {
+  if (
+    typeof job.cost !== 'number'
+    || !Number.isFinite(job.cost)
+    || Math.abs(job.cost - XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd) > 1e-9
+  ) {
     throw new Error(`${slot.sourceName} provider cost changed from the audited $0.11.`);
   }
   const response = await options.fetchImpl(
@@ -485,7 +558,9 @@ async function archiveCompletedSource(options, slot, job, payload) {
   if (
     canva.job?.status !== 'completed'
     || canva.job?.job_id !== slot.pixcliJobId
-    || Math.abs(Number(canva.job?.cost) - XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd) > 1e-9
+    || typeof canva.job?.cost !== 'number'
+    || !Number.isFinite(canva.job.cost)
+    || Math.abs(canva.job.cost - XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd) > 1e-9
   ) {
     throw new Error(`${slot.sourceName} PixCLI audited job status, id, or $0.11 cost changed.`);
   }
@@ -532,7 +607,7 @@ async function archiveCompletedSource(options, slot, job, payload) {
       providerResponse: { ...providerResponse, path: relative(options.outputDirectory, join(auditDirectory, 'provider_response.json')) },
       providerRun: providerRuns[0],
       inputSha256: sha256(canonicalJson(payload)),
-      costUsd: Number(job.cost),
+      costUsd: job.cost,
     },
   };
 }
@@ -720,11 +795,13 @@ export async function runXaiCanonicalBundle(options = {}) {
   }
   const matrix = buildBundleMatrix(fighter, poseBundle);
   const matrixSha256 = sha256(canonicalJson(matrix));
-  const statePath = options.statePath ?? join(DEFAULT_STATE_ROOT, `${slug}.json`);
-  const outputDirectory = options.outputDirectory ?? join(DEFAULT_OUTPUT_ROOT, slug);
-  mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
-  mkdirSync(join(outputDirectory, 'sources'), { recursive: true, mode: 0o700 });
-  let state = readState(statePath) ?? buildInitialState({ fighter, poseBundle, matrixSha256 });
+  const statePath = resolve(options.statePath ?? join(DEFAULT_STATE_ROOT, `${slug}.json`));
+  const outputDirectory = resolve(options.outputDirectory ?? join(DEFAULT_OUTPUT_ROOT, slug));
+  const locks = acquireExclusiveBundleLocks(statePath, outputDirectory);
+  try {
+    mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
+    mkdirSync(join(outputDirectory, 'sources'), { recursive: true, mode: 0o700 });
+    let state = readState(statePath) ?? buildInitialState({ fighter, poseBundle, matrixSha256 });
   const expected = buildInitialState({ fighter, poseBundle, matrixSha256 });
   for (const key of [
     'schemaVersion', 'bundleId', 'fighterSlug', 'originalSha256', 'poseManifestId',
@@ -894,7 +971,11 @@ export async function runXaiCanonicalBundle(options = {}) {
   state.descriptorSha256 = descriptor.descriptorSha256;
   state.contactSheetSha256 = contactSheet.contentSha256;
   saveState();
-  return { state, descriptor, outputDirectory, statePath };
+  writeJsonAtomic(join(outputDirectory, 'generation-state.json'), state);
+    return { state, descriptor, outputDirectory, statePath };
+  } finally {
+    releaseExclusiveBundleLocks(locks);
+  }
 }
 
 function parseArg(rawArgs, name, fallback = '') {
