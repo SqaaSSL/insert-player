@@ -4,7 +4,7 @@ These four static backgrounds were generated with OpenAI ImageGen for the offici
 
 | Arcade fighter | Stage | Public asset |
 | --- | --- | --- |
-| `donald-trump` | Executive Rumble | `/assets/stages/signature/executive-rumble-v1.png` |
+| `donald-trump` | Executive Rumble | `/assets/stages/signature/executive-rumble-v2.png` |
 | `elon-musk` | Mars Incorporated | `/assets/stages/signature/mars-incorporated-v1.png` |
 | `rosalia` | Tablao 3000 | `/assets/stages/signature/tablao-3000-v1.png` |
 | `lamine-yamal` | La Jaula 304 | `/assets/stages/signature/la-jaula-304-v1.png` |
@@ -23,3 +23,5 @@ Stage-specific direction:
 - **La Jaula 304:** A fenced Mediterranean neighbourhood football court at golden hour; dense apartment terraces and laundry behind it, blank dark scoreboard over a small goal, faded geometric murals and bunting, and a wide empty concrete court with strong perspective and no players.
 
 The Executive Rumble source received one ImageGen cleanup pass to remove a spurious corner signature. Its delivery derivative was then cropped slightly at the bottom and sides. All four sources were center-cropped where necessary, resized to 1024 x 576, stripped of metadata, and losslessly encoded as PNG. Original ImageGen outputs remain outside the repository in the local generated-image store.
+
+`executive-rumble-v2.png` rotates only the immutable public cache key after a pre-publication fallback response was cached at the original URL; its reviewed image bytes are unchanged.

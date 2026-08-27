@@ -13,7 +13,7 @@ describe('signature stage configuration', () => {
     expect(SIGNATURE_STAGE_THEMES).toMatchObject([
       {
         id: 'executive-rumble',
-        assetPath: '/assets/stages/signature/executive-rumble-v1.png',
+        assetPath: '/assets/stages/signature/executive-rumble-v2.png',
         signatureForArcadeSlug: 'donald-trump',
       },
       {

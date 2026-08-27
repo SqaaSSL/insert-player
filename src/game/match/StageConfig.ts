@@ -54,7 +54,7 @@ export const SIGNATURE_STAGE_THEMES: StageTheme[] = [
     id: 'executive-rumble',
     label: 'EXECUTIVE RUMBLE',
     blurb: 'White House lawn, press lights, and executive-order chaos.',
-    assetPath: '/assets/stages/signature/executive-rumble-v1.png',
+    assetPath: '/assets/stages/signature/executive-rumble-v2.png',
     signatureForArcadeSlug: 'donald-trump',
   },
   {
