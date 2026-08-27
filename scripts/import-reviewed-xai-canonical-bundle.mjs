@@ -16,6 +16,7 @@ import {
   XAI_CANONICAL_BUNDLE_BASE_COMMIT,
   XAI_CANONICAL_BUNDLE_CLEANUP,
   XAI_CANONICAL_BUNDLE_MODEL,
+  XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
 } from './arcade-xai-canonical-bundle.mjs';
 import { validateManifest } from './seed-arcade-roster.mjs';
 
@@ -26,20 +27,26 @@ const TOKEN_REFRESH_SKEW_MS = 2 * 60 * 1000;
 const TOKEN_TTL_SECONDS = 900;
 const SOURCE_NAMES = Object.freeze(['side', 'upright', 'crouch']);
 const SOURCE_KINDS = Object.freeze(SOURCE_NAMES.flatMap((sourceName) => [sourceName, `${sourceName}_raw`]));
-const SEALED_POLICY = Object.freeze({
-  expectedPaidCalls: 3,
-  maximumPaidCalls: 3,
-  automaticRetries: 0,
-  fallback: 'none',
-  promptEnrichment: false,
-  catalogCostPerOutputUsd: 0.11,
-  maximumCostPerOutputUsd: 0.12,
-  maximumBundleCostUsd: 0.36,
-  outputVisibility: 'private_local',
-  import: false,
-  activation: false,
-  humanReviewRequired: true,
-});
+
+function sealedPolicy(sourceNames) {
+  const singleSource = sourceNames.length === 1;
+  return {
+    expectedPaidCalls: sourceNames.length,
+    maximumPaidCalls: sourceNames.length,
+    automaticRetries: 0,
+    fallback: 'none',
+    promptEnrichment: false,
+    catalogCostPerOutputUsd: 0.11,
+    maximumCostPerOutputUsd: singleSource ? 0.11 : 0.12,
+    maximumBundleCostUsd: singleSource ? 0.11 : 0.36,
+    outputVisibility: 'private_local',
+    import: false,
+    activation: false,
+    humanReviewRequired: true,
+  };
+}
+
+const SEALED_POLICY = Object.freeze(sealedPolicy(SOURCE_NAMES));
 
 export const REVIEWED_CANONICAL_IMPORT_CONFIRMATION = 'IMPORT_REVIEWED_XAI_CANONICAL_BUNDLE_PRODUCTION_V1';
 export const REVIEWED_CANONICAL_QA_DECISION = 'APPROVE_XAI_CANONICAL_BUNDLE_FOR_SOURCE_IMPORT_V1';
@@ -124,9 +131,18 @@ function portableArtifact(artifact, bundleDirectory, expectedPath, label, raw) {
 }
 
 function validateReviewDescriptor(descriptor, bundleDirectory, expectedDescriptorSha256) {
+  const sourceNames = descriptor?.sourceNames === undefined ? SOURCE_NAMES : descriptor.sourceNames;
+  if (
+    !Array.isArray(sourceNames)
+    || ![1, SOURCE_NAMES.length].includes(sourceNames.length)
+    || sourceNames.some((sourceName) => !SOURCE_NAMES.includes(sourceName))
+    || new Set(sourceNames).size !== sourceNames.length
+    || (sourceNames.length === SOURCE_NAMES.length && canonicalJson(sourceNames) !== canonicalJson(SOURCE_NAMES))
+  ) throw new Error('Review descriptor source selection is invalid.');
   exactKeys(descriptor, [
     'schemaVersion', 'descriptorType', 'bundleId', 'status', 'baseCommit', 'fighter',
-    'poseManifest', 'provider', 'cleanup', 'policy', 'sources', 'contactSheet', 'descriptorSha256',
+    'poseManifest', ...(sourceNames.length === 1 ? ['sourceNames'] : []),
+    'provider', 'cleanup', 'policy', 'sources', 'contactSheet', 'descriptorSha256',
   ], 'review descriptor');
   if (
     descriptor.schemaVersion !== 1
@@ -160,10 +176,10 @@ function validateReviewDescriptor(descriptor, bundleDirectory, expectedDescripto
     || descriptor.provider.provider !== XAI_CANONICAL_BUNDLE_MODEL.provider
     || descriptor.provider.backend !== XAI_CANONICAL_BUNDLE_MODEL.backend
     || descriptor.provider.auditedCostPerOutputUsd !== XAI_CANONICAL_BUNDLE_MODEL.auditedCostUsd
-    || descriptor.provider.maximumCostPerOutputUsd !== XAI_CANONICAL_BUNDLE_MODEL.maxCostPerOutputUsd
-    || descriptor.provider.maximumBundleCostUsd !== XAI_CANONICAL_BUNDLE_MODEL.maxBundleCostUsd
-    || descriptor.provider.paidCalls !== 3
-    || descriptor.provider.actualCostUsd !== 0.33
+    || descriptor.provider.maximumCostPerOutputUsd !== sealedPolicy(sourceNames).maximumCostPerOutputUsd
+    || descriptor.provider.maximumBundleCostUsd !== sealedPolicy(sourceNames).maximumBundleCostUsd
+    || descriptor.provider.paidCalls !== sourceNames.length
+    || descriptor.provider.actualCostUsd !== Number((sourceNames.length * 0.11).toFixed(2))
   ) {
     throw new Error('Review descriptor generation or private-review policy changed.');
   }
@@ -172,13 +188,14 @@ function validateReviewDescriptor(descriptor, bundleDirectory, expectedDescripto
     descriptor.cleanup.ffmpegVersion !== XAI_CANONICAL_BUNDLE_CLEANUP.ffmpegVersion
     || descriptor.cleanup.filter !== XAI_CANONICAL_BUNDLE_CLEANUP.filter
   ) throw new Error('Review descriptor cleanup contract changed.');
-  exactKeys(descriptor.policy, Object.keys(SEALED_POLICY), 'review descriptor policy');
-  if (canonicalJson(descriptor.policy) !== canonicalJson(SEALED_POLICY)) {
+  const expectedPolicy = sealedPolicy(sourceNames);
+  exactKeys(descriptor.policy, Object.keys(expectedPolicy), 'review descriptor policy');
+  if (canonicalJson(descriptor.policy) !== canonicalJson(expectedPolicy)) {
     throw new Error('Review descriptor generation or private-review policy changed.');
   }
-  exactKeys(descriptor.sources, SOURCE_NAMES, 'review descriptor sources');
+  exactKeys(descriptor.sources, sourceNames, 'review descriptor sources');
   const sources = {};
-  for (const sourceName of SOURCE_NAMES) {
+  for (const sourceName of sourceNames) {
     const source = descriptor.sources[sourceName];
     exactKeys(source, [
       'references', 'promptSha256', 'requestSha256', 'pixcliJobId', 'providerRequestId', 'raw', 'clean',
@@ -226,18 +243,28 @@ function validateReviewDescriptor(descriptor, bundleDirectory, expectedDescripto
   for (const key of ['contentSha256', 'sizeBytes', 'width', 'height']) {
     if (contact[key] !== descriptor.contactSheet[key]) throw new Error(`Contact sheet ${key} was tampered.`);
   }
-  if (canonicalJson(descriptor.contactSheet.layout) !== canonicalJson([
-    'side_raw', 'upright_raw', 'crouch_raw', 'side_clean', 'upright_clean', 'crouch_clean',
-  ])) {
+  const expectedLayout = sourceNames.length === 1
+    ? [`${sourceNames[0]}_raw`, `${sourceNames[0]}_clean`]
+    : ['side_raw', 'upright_raw', 'crouch_raw', 'side_clean', 'upright_clean', 'crouch_clean'];
+  const expectedContactSize = sourceNames.length === 1
+    ? { width: 768, height: 512 }
+    : { width: 1152, height: 1024 };
+  if (
+    canonicalJson(descriptor.contactSheet.layout) !== canonicalJson(expectedLayout)
+    || descriptor.contactSheet.width !== expectedContactSize.width
+    || descriptor.contactSheet.height !== expectedContactSize.height
+  ) {
     throw new Error('Contact sheet review layout changed.');
   }
-  return { descriptor, sources };
+  return { descriptor, sources, sourceNames };
 }
 
 function validateGenerationState(state, descriptor) {
+  const sourceNames = descriptor.sourceNames === undefined ? SOURCE_NAMES : descriptor.sourceNames;
   exactKeys(state, [
     'schemaVersion', 'bundleId', 'fighterSlug', 'fighterName', 'originalSha256', 'poseManifestId',
     'poseManifestSha256', 'matrixSha256', 'status', 'createdAt', 'updatedAt', 'policy', 'uploads',
+    ...(sourceNames.length === 1 ? ['sourceNames'] : []),
     'slots', 'lastCatalogPreflight', 'descriptorSha256', 'contactSheetSha256',
   ], 'generation state');
   if (
@@ -254,7 +281,8 @@ function validateGenerationState(state, descriptor) {
     || !/^[a-f0-9]{64}$/.test(state.matrixSha256 ?? '')
     || !/^\d{4}-\d{2}-\d{2}T/.test(state.createdAt ?? '')
     || !/^\d{4}-\d{2}-\d{2}T/.test(state.updatedAt ?? '')
-    || canonicalJson(state.policy) !== canonicalJson(SEALED_POLICY)
+    || canonicalJson(state.policy) !== canonicalJson(sealedPolicy(sourceNames))
+    || canonicalJson(state.sourceNames) !== canonicalJson(descriptor.sourceNames)
     || !state.uploads || typeof state.uploads !== 'object' || Array.isArray(state.uploads)
   ) {
     throw new Error('Generation state does not match the reviewed descriptor.');
@@ -265,8 +293,8 @@ function validateGenerationState(state, descriptor) {
     || !/^[a-f0-9]{64}$/.test(state.lastCatalogPreflight.catalogSha256 ?? '')
     || !/^\d{4}-\d{2}-\d{2}T/.test(state.lastCatalogPreflight.checkedAt ?? '')
   ) throw new Error('Generation model preflight does not match the sealed model.');
-  exactKeys(state.slots, SOURCE_NAMES, 'generation state slots');
-  for (const sourceName of SOURCE_NAMES) {
+  exactKeys(state.slots, sourceNames, 'generation state slots');
+  for (const sourceName of sourceNames) {
     const slot = state.slots[sourceName];
     const reviewed = descriptor.sources[sourceName];
     if (
@@ -277,6 +305,9 @@ function validateGenerationState(state, descriptor) {
       || slot.poseSha256 !== reviewed.references.pose.contentSha256
       || slot.renderingSha256 !== reviewed.references.rendering.contentSha256
       || slot.promptSha256 !== reviewed.promptSha256
+      || slot.promptProfile !== (sourceNames.length === 1
+        ? XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
+        : undefined)
       || slot.modelId !== XAI_CANONICAL_BUNDLE_MODEL.id
       || slot.requestSha256 !== reviewed.requestSha256
       || slot.pixcliJobId !== reviewed.pixcliJobId
@@ -307,14 +338,21 @@ function reviewedUpload(state, reference, label) {
   return upload;
 }
 
-function validateBundlePromptAndRequest(bundle, rosterFighter) {
+export function validateBundlePromptAndRequest(bundle, rosterFighter) {
+  const promptProfile = bundle.sourceNames.length === 1
+    ? XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
+    : undefined;
   const identityReference = {
     id: `identity-${rosterFighter.slug}`,
     contentSha256: rosterFighter.reference.sourceSha256,
   };
-  for (const sourceName of SOURCE_NAMES) {
+  for (const sourceName of bundle.sourceNames) {
     const reviewed = bundle.descriptor.sources[sourceName];
-    if (sha256(buildXaiCanonicalBundlePrompt(rosterFighter, sourceName)) !== reviewed.promptSha256) {
+    if (sha256(buildXaiCanonicalBundlePrompt(
+      rosterFighter,
+      sourceName,
+      { promptProfile },
+    )) !== reviewed.promptSha256) {
       throw new Error(`${sourceName} reviewed prompt does not match the immutable roster prompt.`);
     }
     const pose = reviewedUpload(bundle.state, reviewed.references.pose, `${sourceName} pose`);
@@ -323,6 +361,7 @@ function validateBundlePromptAndRequest(bundle, rosterFighter) {
     const payload = buildXaiCanonicalBundlePayload({
       fighter: rosterFighter,
       sourceName,
+      promptProfile,
       poseAssetHash: pose.pixcliAssetHash,
       renderingAssetHash: rendering.pixcliAssetHash,
       identityAssetHash: identity.pixcliAssetHash,
@@ -520,6 +559,9 @@ export async function runReviewedCanonicalImport(options = {}) {
   requireString(options.bundleDirectory, 'private bundle directory');
   const outputDirectoryInput = requireString(options.outputDirectory, 'private import output directory');
   const bundle = loadReviewedCanonicalBundle(options);
+  if (canonicalJson(bundle.sourceNames) !== canonicalJson(SOURCE_NAMES)) {
+    throw new Error('The six-source importer requires a complete three-source reviewed bundle.');
+  }
   if (bundle.descriptor.fighter.slug !== slug) throw new Error('Reviewed bundle belongs to a different fighter slug.');
 
   const roster = JSON.parse(readFileSync(options.rosterPath ?? DEFAULT_ROSTER_PATH, 'utf8'));

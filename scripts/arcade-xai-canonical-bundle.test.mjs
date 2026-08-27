@@ -15,8 +15,12 @@ import {
   XAI_CANONICAL_BUNDLE_CONFIRMATION,
   XAI_CANONICAL_BUNDLE_MODEL,
   XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION,
+  XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION,
+  XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
   buildXaiCanonicalBundlePayload,
+  buildXaiCanonicalBundlePrompt,
   loadXaiCanonicalPoseManifest,
+  parseXaiCanonicalBundleCliArgs,
   runXaiCanonicalBundle,
 } from './arcade-xai-canonical-bundle.mjs';
 import { buildXaiCanonicalContainerPlan } from './run-xai-canonical-bundle-container.mjs';
@@ -125,7 +129,15 @@ function commandFixture() {
     }
     const outputPath = args.at(-1);
     const contact = args.includes('-filter_complex');
-    writeFileSync(outputPath, png(contact ? 'contact-sheet' : 'clean-source', contact ? 1152 : 128, contact ? 1024 : 192));
+    const contactInputs = args.filter((arg) => arg === '-i').length;
+    writeFileSync(
+      outputPath,
+      png(
+        contact ? 'contact-sheet' : 'clean-source',
+        contact ? (contactInputs === 2 ? 768 : 1152) : 128,
+        contact ? (contactInputs === 2 ? 512 : 1024) : 192,
+      ),
+    );
     return { stdout: '', stderr: '' };
   });
 }
@@ -271,6 +283,37 @@ function runOptions(fixture, provider, runCommand = commandFixture()) {
   };
 }
 
+function singleSourcePoseOptions(fixture) {
+  const poseManifest = {
+    ...fixture.poseManifest,
+    sources: { crouch: fixture.poseManifest.sources.crouch },
+  };
+  const poseManifestBytes = Buffer.from(JSON.stringify(poseManifest));
+  const poseManifestPath = join(fixture.poseDir, 'crouch-pose-manifest.json');
+  writeFileSync(poseManifestPath, poseManifestBytes);
+  const prompt = buildXaiCanonicalBundlePrompt(fixture.fighter, 'crouch', {
+    promptProfile: XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
+  });
+  return {
+    poseManifestPath,
+    poseManifestSha256: sha256(poseManifestBytes),
+    promptSha256: sha256(prompt),
+  };
+}
+
+function singleSourceRunOptions(fixture, provider, runCommand = commandFixture()) {
+  const singlePose = singleSourcePoseOptions(fixture);
+  return {
+    ...runOptions(fixture, provider, runCommand),
+    confirmation: XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION,
+    maxCostUsd: 0.11,
+    sourceName: 'crouch',
+    ...singlePose,
+    statePath: join(fixture.directory, 'crouch-state.json'),
+    outputDirectory: join(fixture.directory, 'crouch-output'),
+  };
+}
+
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -320,6 +363,11 @@ describe('sealed XAI canonical bundle inputs', () => {
     expect(generation).toContain('printf \'%s  %s\\n\' "$POSE_MANIFEST_SHA256" "$input_root/pose/pose-manifest.json" | sha256sum --check --strict');
     expect(generation).toContain('ffmpeg=7:5.1.9-0+deb12u1');
     expect(generation).toContain('--max-cost-usd="$MAX_COST_USD"');
+    expect(generation).toContain('REQUESTED_SOURCE: ${{ inputs.source }}');
+    expect(generation).toContain('PROMPT_SHA256: ${{ inputs.prompt_sha256 }}');
+    expect(generation).toContain('"--source=$REQUESTED_SOURCE" "--prompt-sha256=$PROMPT_SHA256"');
+    expect(generation).toContain('[[ "$REQUESTED_SLUG" == "elon-musk" && "$REQUESTED_SOURCE" == "crouch" ]]');
+    expect(generation).toContain('[[ "$MAX_COST_USD" == "0.11" ]]');
     expect(generation).toContain('name: arcade-xai-canonical-bundle-${{ inputs.slug }}');
     expect(generation).toContain('name: arcade-xai-canonical-bundle-checkpoint-${{ inputs.slug }}');
     expect(generation).toContain('- name: Repair private checkpoint ownership after the cleanup container');
@@ -385,6 +433,57 @@ describe('sealed XAI canonical bundle inputs', () => {
     expect(JSON.stringify(payload)).not.toMatch(/fallback|retry/i);
   });
 
+  it('seals the single CROUCH identity-first prompt and wires its reviewed hash through the CLI', () => {
+    const fixture = makeFixture();
+    const prompt = buildXaiCanonicalBundlePrompt(fixture.fighter, 'crouch', {
+      promptProfile: XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
+    });
+    const promptSha256 = sha256(prompt);
+    expect(promptSha256).toBe('fbcc5f15fa7fd0f75793fb7dedf602b4d4b5e170c39451e939a4c091ba5e32e5');
+    expect(prompt).toContain('strict lateral profile facing screen-right');
+    expect(prompt).not.toContain('3/4');
+    expect(prompt).toContain('both soles visibly planted on one shared ground line');
+    expect(prompt).toContain('two distinct complete hands held close to the face and upper chest in a closed defensive guard');
+    expect(prompt).toContain('not frontal, not three-quarter, not screen-left, and do not mirror');
+    expect(prompt).toContain('Use only its joint arrangement, crouch depth, and two-hand defensive guard');
+    expect(prompt).toContain('override any torso yaw, perspective, facing, framing, silhouette placement, or foot-baseline ambiguity in IMAGE 1');
+    expect(prompt).toContain('static held pose with no attack, lunge, jump, kneel, or motion');
+    expect(prompt).toContain('generous overscan');
+    expect(prompt).toContain('HARD OUTPUT CONTRACT, EVEN IF ANY REFERENCE CONTRADICTS IT');
+    expect(prompt).toContain('Elon Musk exactly as shown in IMAGE 3, not a model-memory approximation');
+    expect(prompt).toContain('Never copy IMAGE 3 clothing, suit, shirt, tie, colors, or accessories');
+    expect(prompt).toContain('Never copy its identity, face, hair, physique, background, green vignette, gradient');
+    expect(prompt).toContain('the HARD OUTPUT CONTRACT alone controls the background');
+    expect(prompt).toContain('no shadow, floor, gradient, text, watermark, logo, badge, emblem, brand-like symbol, prop, or border');
+    expect(prompt.indexOf('IMAGE 3 is the REAL IDENTITY')).toBeLessThan(
+      prompt.indexOf('IMAGE 1 is the CROUCH STRUCTURE MASTER'),
+    );
+    expect(prompt.indexOf('1) IDENTITY AND PHYSIQUE FROM IMAGE 3')).toBeLessThan(
+      prompt.indexOf('2) CROUCH JOINT STRUCTURE FROM IMAGE 1'),
+    );
+    expect(prompt).toContain('always subject to TARGET SOURCE and HARD OUTPUT CONTRACT');
+    expect(() => buildXaiCanonicalBundlePrompt(fixture.fighter, 'side', {
+      promptProfile: XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE,
+    })).toThrow(/only for Elon Musk CROUCH/i);
+
+    const parsed = parseXaiCanonicalBundleCliArgs([
+      '--execute',
+      '--slug=elon-musk',
+      '--source=crouch',
+      `--prompt-sha256=${promptSha256}`,
+      `--confirm=${XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION}`,
+      `--confirm-private=${XAI_CANONICAL_BUNDLE_PRIVATE_CONFIRMATION}`,
+      '--max-cost-usd=0.11',
+    ], { PIXCLI_API_KEY: 'private-test-key', PIXCLI_BASE_URL: 'https://pixcli.example' });
+    expect(parsed).toMatchObject({
+      slug: 'elon-musk',
+      sourceName: 'crouch',
+      promptSha256,
+      maxCostUsd: '0.11',
+      apiKey: 'private-test-key',
+    });
+  });
+
   it('fails before provider access when confirmation, cap, manifest hash, or toolchain is wrong', async () => {
     const fixture = makeFixture();
     const provider = providerFixture();
@@ -400,6 +499,51 @@ describe('sealed XAI canonical bundle inputs', () => {
 });
 
 describe('resumable exactly-once XAI canonical bundle', () => {
+  it('isolates one CROUCH call behind a source-specific state and an exact $0.11 ceiling', async () => {
+    const fixture = makeFixture();
+    const provider = providerFixture();
+    const options = singleSourceRunOptions(fixture, provider);
+    const result = await runXaiCanonicalBundle(options);
+    const paidPosts = provider.fetchImpl.mock.calls.filter(([url, init]) => (
+      new URL(url).pathname === '/api/v1/edit/advanced' && init.method === 'POST'
+    ));
+    expect(paidPosts).toHaveLength(1);
+    expect([...provider.jobs.values()]).toHaveLength(1);
+    expect([...provider.jobs.values()][0]).toMatchObject({
+      publish_name: 'ip-canonical-v1-elon-musk-crouch',
+      publish: false,
+      enrich_prompt: false,
+      search: false,
+    });
+    expect(result.state).toMatchObject({
+      bundleId: 'arcade-xai-canonical-source-elon-musk-crouch-v1',
+      sourceNames: ['crouch'],
+      policy: {
+        expectedPaidCalls: 1,
+        maximumPaidCalls: 1,
+        maximumCostPerOutputUsd: 0.11,
+        maximumBundleCostUsd: 0.11,
+        automaticRetries: 0,
+        fallback: 'none',
+      },
+    });
+    expect(result.descriptor).toMatchObject({
+      sourceNames: ['crouch'],
+      provider: { paidCalls: 1, actualCostUsd: 0.11, maximumBundleCostUsd: 0.11 },
+      contactSheet: { width: 768, height: 512, layout: ['crouch_raw', 'crouch_clean'] },
+    });
+    expect(Object.keys(result.descriptor.sources)).toEqual(['crouch']);
+    expect(existsSync(join(options.outputDirectory, 'sources', 'side.png'))).toBe(false);
+    expect(existsSync(join(options.outputDirectory, 'sources', 'upright.png'))).toBe(false);
+
+    const rejectedProvider = providerFixture();
+    await expect(runXaiCanonicalBundle({
+      ...singleSourceRunOptions(makeFixture(), rejectedProvider),
+      maxCostUsd: 0.12,
+    })).rejects.toThrow(/max-cost-usd=0\.11/i);
+    expect(rejectedProvider.fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('produces three raw/clean pairs, a contact sheet, and a sealed private review descriptor', async () => {
     const fixture = makeFixture();
     const provider = providerFixture();
@@ -592,6 +736,30 @@ describe('resumable exactly-once XAI canonical bundle', () => {
 });
 
 describe('portable private canonical input packaging', () => {
+  it('packages an exact one-source CROUCH tree for the sealed $0.11 workflow', () => {
+    const fixture = makeFixture();
+    const singlePose = singleSourcePoseOptions(fixture);
+    const outputDirectory = join(fixture.directory, 'portable-crouch-input');
+    const receipt = packageXaiCanonicalInput({
+      confirmation: PRIVATE_INPUT_CONFIRMATION,
+      slug: 'elon-musk',
+      sourceName: 'crouch',
+      rosterPath: fixture.rosterPath,
+      sourceDir: fixture.sourceDir,
+      ...singlePose,
+      outputDirectory,
+    });
+    expect(receipt).toMatchObject({
+      slug: 'elon-musk',
+      sourceName: 'crouch',
+      portablePoseManifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      uploaded: false,
+      providerCalled: false,
+    });
+    expect(receipt.archivePath).toContain('elon-musk-crouch--canonical-input-v1.tar.gz');
+    expect(receipt.r2Key).toMatch(/^temp\/arcade-xai-canonical-inputs-v1\/elon-musk\/elon-musk-crouch--[a-f0-9]{16}\.tar\.gz$/);
+  });
+
   it('rewrites reviewed references into a sealed portable tree and creates a private R2 handoff', () => {
     const fixture = makeFixture();
     const outputDirectory = join(fixture.directory, 'portable-input');
