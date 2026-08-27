@@ -124,7 +124,7 @@
   }
 
   .auth-dock {
-    @apply sticky top-[max(12px,env(safe-area-inset-top))] z-50 ml-auto mr-4 mt-4 flex w-fit max-w-[calc(100%-2rem)] items-center gap-2 rounded-[4px]
+    @apply fixed bottom-[max(16px,env(safe-area-inset-bottom))] left-[max(16px,env(safe-area-inset-left))] z-50 m-0 flex w-fit max-w-[calc(100%-2rem)] items-center gap-2 rounded-[4px]
            border-[2px] border-asf-gold-deep bg-asf-panel px-3 py-2
            shadow-[0_10px_24px_rgba(0,0,0,0.38)];
   }
@@ -724,7 +724,7 @@
 
   .gallery-sidebar {
     @apply sticky top-0 flex max-h-screen flex-col gap-4 overflow-hidden
-           border-r-[2px] border-asf-gold-deep p-6
+           border-r-[2px] border-asf-gold-deep p-6 min-[1281px]:pb-24
            [background:linear-gradient(180deg,rgba(14,10,36,0.98),rgba(4,3,14,0.98))]
            max-[1280px]:static max-[1280px]:max-h-[280px] max-[1280px]:border-r-0 max-[1280px]:border-b-[2px];
   }
@@ -1714,7 +1714,15 @@
 
   @media (max-width: 640px) {
     .auth-dock {
-      @apply static mx-3 mt-3 max-w-[calc(100%-1.5rem)] flex-wrap;
+      @apply fixed bottom-[max(12px,env(safe-area-inset-bottom))] left-[max(12px,env(safe-area-inset-left))] m-0 max-w-[calc(100%-1.5rem)] flex-wrap;
+    }
+
+    .auth-dock[data-auth-state="signed-in"] {
+      @apply p-2;
+    }
+
+    .auth-dock[data-auth-state="signed-in"] .auth-dock__label {
+      @apply hidden;
     }
 
     .home-app {

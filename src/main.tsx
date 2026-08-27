@@ -61,7 +61,10 @@ function ClerkSessionBridge() {
 
   const cacheReady = authReady && preparedCacheScope === cacheScope;
   const authDock = (
-    <div className="auth-dock">
+    <div
+      className="auth-dock"
+      data-auth-state={!isLoaded ? 'loading' : isSignedIn ? 'signed-in' : 'signed-out'}
+    >
       {!isLoaded ? (
         <span className="auth-dock__label">Loading...</span>
       ) : isSignedIn ? (
