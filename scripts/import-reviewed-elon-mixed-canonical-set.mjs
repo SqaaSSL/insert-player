@@ -24,6 +24,8 @@ import {
   inspectPng,
   XAI_CANONICAL_GLOBAL_CROUCH_POSE_REFERENCE,
   XAI_CANONICAL_GLOBAL_SIDE_SLUGS,
+  XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION,
+  resolveXaiCanonicalSingleSourceRequest,
 } from './arcade-xai-canonical-bundle.mjs';
 import {
   REVIEWED_CANONICAL_SOURCE_MODE,
@@ -75,6 +77,16 @@ export const GLOBAL_MIXED_TARGETS = Object.freeze({
     photoHash: 'e4dae2540e85991fd337558d8a53b5fba022aaea9629bc2577dbdaba3a49a8e8',
   }),
 });
+
+export function expectedGlobalMixedSourceBundleId(slug, sourceName) {
+  if (!XAI_CANONICAL_GLOBAL_SIDE_SLUGS.includes(slug) || !['side', 'crouch'].includes(sourceName)) {
+    throw new Error('Global mixed source bundle identity is not sealed for this fighter/source tuple.');
+  }
+  const requestVersion = slug === 'lamine-yamal' && sourceName === 'crouch'
+    ? XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION
+    : '';
+  return resolveXaiCanonicalSingleSourceRequest(slug, sourceName, requestVersion).bundleId;
+}
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -261,7 +273,7 @@ function validateReviewedBundleLineage(value, sourceName, fighter, label) {
     'bundleRunId', 'bundleId', 'reviewedDescriptorSha256', 'processedSha256', 'rawSha256',
   ], label);
   requireString(value.bundleRunId, `${label} run id`, /^[1-9][0-9]*$/);
-  if (value.bundleId !== `arcade-xai-canonical-source-${fighter.slug}-${sourceName}-v1`) {
+  if (value.bundleId !== expectedGlobalMixedSourceBundleId(fighter.slug, sourceName)) {
     throw new Error(`${label} bundle id is not sealed to the fighter/source tuple.`);
   }
   for (const key of ['reviewedDescriptorSha256', 'processedSha256', 'rawSha256']) {

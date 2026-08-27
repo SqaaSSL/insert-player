@@ -43,6 +43,12 @@ export const XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE = 'elon_crouch_identity_
 export const XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE = 'global_side_identity_hard_gate_v1';
 export const XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE =
   'global_crouch_from_reviewed_side_identity_hard_gate_v1';
+export const XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION =
+  'lamine-crouch-headwear-reject-v2';
+export const XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE =
+  'lamine_crouch_no_headwear_identity_hard_gate_v2';
+export const XAI_CANONICAL_LAMINE_CROUCH_RETRY_CONFIRMATION =
+  'GENERATE_LAMINE_CROUCH_HEADWEAR_REJECT_RETRY_PRIVATE_V2';
 // Mirrors PixCLI EditAdvancedRequestSchema.promptSchema (`z.string().max(4000)`).
 // We additionally seal UTF-8 bytes to the same ceiling so every accepted local
 // payload is guaranteed to fit the remote character contract.
@@ -80,6 +86,13 @@ export const XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_SHA256_BY_SLUG = Object.freeze({
   rosalia: 'e8b11ecca2a2a1fbb958c427804631ec7eed5f901ae00bd6117a5b7f87c1cb82',
   'ibai-llanos': '76e68a0c698326333e070bf5c3901570f994a24584fe3b65bad25b13a985becc',
   'lamine-yamal': '800a2b5a1c1a90749490497f5b06a92707b3a35ed4784627b22b186a952224cf',
+});
+export const XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_SHA256 =
+  'b626d61e7dd60f46b894ee1bdd26a270acd38f23e3fcfb82305692e45caaa3c0';
+export const XAI_CANONICAL_LAMINE_CROUCH_RETRY_INPUT = Object.freeze({
+  bundleR2Key: 'temp/arcade-xai-canonical-inputs-v1/lamine-yamal/lamine-yamal-crouch--6f17ae7ad19f6695.tar.gz',
+  bundleSha256: '6f17ae7ad19f6695a673b54938b1f5709e1ead790a26f20a5566083c2f0da418',
+  poseManifestSha256: 'cc7ae95fbab0e2b6843b19380b611f11cc84a6dc48025fdf678b8f6c912df053',
 });
 export const XAI_CANONICAL_BUNDLE_SOURCE_NAMES = Object.freeze(['side', 'upright', 'crouch']);
 export const XAI_CANONICAL_BUNDLE_MODEL = Object.freeze({
@@ -225,6 +238,9 @@ const GLOBAL_SIDE_IDENTITY_CONTRACTS = Object.freeze({
   }),
 });
 
+const LAMINE_CROUCH_RETRY_SAFEGUARD =
+  'Lamine: preserve IMAGE 3 very-young-adult male, medium-brown skin, narrow oval face, lean elite-athlete build. Hair exactly as IMAGE 2 SIDE RAW and IMAGE 3 original: uncovered dense high curls/honey-blond tips, same hairline/shape/color/volume. Absolutely no headband, headwear, hair accessory, or other accessory, athletic/kinesiology tape, bandage, wrap, club/sponsor mark, flag, number, lettering, text, logo, badge, ball, or prop.';
+
 export function resolveXaiCanonicalSingleSourcePromptProfile(slug, sourceName) {
   if (slug === 'elon-musk' && sourceName === 'crouch') {
     return XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE;
@@ -236,6 +252,50 @@ export function resolveXaiCanonicalSingleSourcePromptProfile(slug, sourceName) {
     return XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE;
   }
   throw new Error(`Single-source canonical generation is not sealed for ${String(slug)} ${String(sourceName).toUpperCase()}.`);
+}
+
+export function resolveXaiCanonicalSingleSourceRequest(slug, sourceName, requestVersion = '') {
+  if (requestVersion === '') {
+    return Object.freeze({
+      requestVersion: '',
+      promptProfile: resolveXaiCanonicalSingleSourcePromptProfile(slug, sourceName),
+      confirmation: XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION,
+      bundleId: `arcade-xai-canonical-source-${slug}-${sourceName}-v1`,
+      stateStem: `${slug}-${sourceName}`,
+      publishMarkerVersion: 'v1',
+    });
+  }
+  if (
+    requestVersion === XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION
+    && slug === 'lamine-yamal'
+    && sourceName === 'crouch'
+  ) {
+    return Object.freeze({
+      requestVersion,
+      promptProfile: XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE,
+      confirmation: XAI_CANONICAL_LAMINE_CROUCH_RETRY_CONFIRMATION,
+      bundleId: 'arcade-xai-canonical-source-lamine-yamal-crouch-v2',
+      stateStem: 'lamine-yamal-crouch-v2',
+      publishMarkerVersion: 'v2',
+    });
+  }
+  throw new Error(
+    `Canonical retry request version ${String(requestVersion)} is not sealed for ${String(slug)} ${String(sourceName).toUpperCase()}.`,
+  );
+}
+
+export function resolveXaiCanonicalSingleSourceRequestByBundleId(slug, sourceName, bundleId) {
+  const legacy = resolveXaiCanonicalSingleSourceRequest(slug, sourceName);
+  if (bundleId === legacy.bundleId) return legacy;
+  if (slug === 'lamine-yamal' && sourceName === 'crouch') {
+    const retry = resolveXaiCanonicalSingleSourceRequest(
+      slug,
+      sourceName,
+      XAI_CANONICAL_LAMINE_CROUCH_RETRY_REQUEST_VERSION,
+    );
+    if (bundleId === retry.bundleId) return retry;
+  }
+  throw new Error(`Canonical bundle identity is not sealed for ${String(slug)} ${String(sourceName).toUpperCase()}.`);
 }
 
 export function validateXaiCanonicalPromptProfileReferences(poseBundle, promptProfile, fighter = null) {
@@ -251,7 +311,10 @@ export function validateXaiCanonicalPromptProfileReferences(poseBundle, promptPr
         throw new Error(`The global SIDE ${role} reference is not the sealed ${expected.id} asset.`);
       }
     }
-  } else if (promptProfile === XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE) {
+  } else if (
+    promptProfile === XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE
+    || promptProfile === XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE
+  ) {
     const crouch = poseBundle?.sources?.crouch;
     if (!crouch || Object.keys(poseBundle.sources).length !== 1) {
       throw new Error('The global CROUCH profile requires an exact single-crouch pose manifest.');
@@ -312,6 +375,11 @@ export function reviewedXaiCanonicalSingleSourcePromptSha256(slug, sourceName, p
       /^[a-f0-9]{64}$/,
     );
   }
+  if (
+    promptProfile === XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE
+    && slug === 'lamine-yamal'
+    && sourceName === 'crouch'
+  ) return XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_SHA256;
   throw new Error(`No reviewed single-source prompt snapshot for ${String(slug)} ${String(sourceName)}.`);
 }
 
@@ -556,6 +624,7 @@ function sourcePoseInstruction(sourceName, options = {}) {
     if (
       options.promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE
       || options.promptProfile === XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE
+      || options.promptProfile === XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE
     ) {
       return 'a deep compact balanced crouching guard, strict lateral profile facing screen-right (not frontal, three-quarter, or screen-left; do not mirror); head/hips substantially lowered; both soles planted on one shared ground line; two distinct complete hands close to face/upper chest in closed defensive guard; static—no attack, lunge, jump, kneel, or motion; complete silhouette, generous overscan, no crop';
     }
@@ -583,6 +652,7 @@ function buildIdentityHardGatePrompt(
   globalCrouchIdentityHardGate,
   globalIdentity,
 ) {
+  const lamineCrouchRetry = options.promptProfile === XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE;
   const referenceRoles = globalSideIdentityHardGate ? [
     'REFERENCE ROLES — HARD; NEVER BLEND:',
     `1) IMAGE 3 = REAL ${fighter.name.toUpperCase()}; IDENTITY/SEX/FACE/PHYSIQUE hard gate. Render ${fighter.name} exactly as IMAGE 3—no model memory, celebrity prior, web knowledge, generic approximation, substitute. Preserve exact face, hair, skin, age, distinctive features, sex, natural build; unrecognizable = invalid. Ignore its crop, camera, background, photo style.`,
@@ -592,7 +662,9 @@ function buildIdentityHardGatePrompt(
     'REFERENCE ROLES — HARD; NEVER BLEND:',
     `1) IMAGE 3 = REAL ${fighter.name.toUpperCase()}; IDENTITY/SEX/FACE/PHYSIQUE hard gate. Render ${fighter.name} exactly—no model memory, celebrity prior, web knowledge, generic substitute. Preserve exact face, hair, skin, age, features, sex, natural build; unrecognizable = invalid. Ignore clothes/crop/camera/background/style.`,
     '2) IMAGE 1 = APPROVED TRUMP CROUCH STRUCTURE ONLY: deep compact joints, two-hand guard, both soles, balance, full-body frame/baseline. Rotate to strict screen-right lateral TARGET; TARGET/OUTPUT override yaw/perspective/facing/frame/crop/floor/shadow/background. Never copy Trump identity, body, wardrobe, colors, logos, accessories.',
-    `3) IMAGE 2 = APPROVED ${fighter.name.toUpperCase()} SIDE RAW; RENDERING/WARDROBE ONLY: fighting-game render, materials, light, edges, exact garments/colors. Never identity/body authority; never copy standing pose/perspective/frame/floor/shadow/background. IMAGE 3 controls identity/build; TARGET crouch; OUTPUT background.`,
+    lamineCrouchRetry
+      ? `3) IMAGE 2 = APPROVED ${fighter.name.toUpperCase()} SIDE RAW; RENDERING/WARDROBE/HAIR ONLY: light, edges, garments/colors and uncovered hair shape/color. No face/body authority or standing pose/perspective/frame/floor/shadow/background. IMAGE 3 controls identity/build; TARGET crouch; OUTPUT background.`
+      : `3) IMAGE 2 = APPROVED ${fighter.name.toUpperCase()} SIDE RAW; RENDERING/WARDROBE ONLY: fighting-game render, materials, light, edges, exact garments/colors. Never identity/body authority; never copy standing pose/perspective/frame/floor/shadow/background. IMAGE 3 controls identity/build; TARGET crouch; OUTPUT background.`,
   ] : [
     'REFERENCE ROLES — HARD; NEVER BLEND:',
     '1) IMAGE 3 = REAL IDENTITY/PHYSIQUE; hard gate. Render Elon Musk exactly as shown, never model memory/generic substitute. Preserve face geometry, hair, skin, age, distinctive features, rounded-square face, broad natural build; never narrow, angularize, or slim. Never copy its clothing/suit/shirt/tie/colors/accessories (IMAGE 2 controls wardrobe), crop, camera, background, photo rendering.',
@@ -633,7 +705,9 @@ function buildIdentityHardGatePrompt(
 export function buildXaiCanonicalBundlePrompt(fighter, sourceName, options = {}) {
   const elonIdentityHardGate = options.promptProfile === XAI_CANONICAL_SINGLE_SOURCE_PROMPT_PROFILE;
   const globalSideIdentityHardGate = options.promptProfile === XAI_CANONICAL_GLOBAL_SIDE_PROMPT_PROFILE;
-  const globalCrouchIdentityHardGate = options.promptProfile === XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE;
+  const lamineCrouchRetry = options.promptProfile === XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE;
+  const globalCrouchIdentityHardGate =
+    options.promptProfile === XAI_CANONICAL_GLOBAL_CROUCH_PROMPT_PROFILE || lamineCrouchRetry;
   const identityHardGate = elonIdentityHardGate || globalSideIdentityHardGate || globalCrouchIdentityHardGate;
   if (options.promptProfile !== undefined && !identityHardGate) {
     throw new Error(`Unsupported canonical prompt profile: ${String(options.promptProfile)}.`);
@@ -656,6 +730,9 @@ export function buildXaiCanonicalBundlePrompt(fighter, sourceName, options = {})
   )) {
     throw new Error('The global identity-first CROUCH profile is sealed only for Rosalía, Ibai Llanos, and Lamine Yamal with their exact roster identities.');
   }
+  if (lamineCrouchRetry && fighter.slug !== 'lamine-yamal') {
+    throw new Error('The v2 no-headwear CROUCH retry profile is sealed only for Lamine Yamal.');
+  }
   if (identityHardGate) {
     return assertXaiCanonicalPromptFitsPixcliSchema(buildIdentityHardGatePrompt(
       fighter,
@@ -663,7 +740,9 @@ export function buildXaiCanonicalBundlePrompt(fighter, sourceName, options = {})
       options,
       globalSideIdentityHardGate,
       globalCrouchIdentityHardGate,
-      globalIdentity,
+      lamineCrouchRetry
+        ? { ...globalIdentity, safeguard: LAMINE_CROUCH_RETRY_SAFEGUARD }
+        : globalIdentity,
     ));
   }
   const referenceRoles = [
@@ -711,7 +790,10 @@ export function buildXaiCanonicalBundlePayload({
   if (new Set([poseAssetHash, renderingAssetHash, identityAssetHash]).size !== 3) {
     throw new Error(`${sourceName} must use three distinct PixCLI reference assets.`);
   }
-  const marker = `ip-canonical-v1-${fighter.slug}-${sourceName}`;
+  const markerVersion = promptProfile === XAI_CANONICAL_LAMINE_CROUCH_RETRY_PROMPT_PROFILE
+    ? 'v2'
+    : 'v1';
+  const marker = `ip-canonical-${markerVersion}-${fighter.slug}-${sourceName}`;
   if (marker.length > 60) throw new Error(`PixCLI marker exceeds 60 characters: ${marker}.`);
   const prompt = assertXaiCanonicalPromptFitsPixcliSchema(
     buildXaiCanonicalBundlePrompt(fighter, sourceName, { promptProfile }),
@@ -1270,10 +1352,7 @@ async function ensureUploadedReference(options, reference, state, saveState) {
   });
 }
 
-function buildBundleMatrix(fighter, poseBundle, sourceNames) {
-  const promptProfile = sourceNames.length === 1
-    ? resolveXaiCanonicalSingleSourcePromptProfile(fighter.slug, sourceNames[0])
-    : undefined;
+function buildBundleMatrix(fighter, poseBundle, sourceNames, promptProfile) {
   return sourceNames.map((sourceName) => {
     const source = poseBundle.sources[sourceName];
     const prompt = buildXaiCanonicalBundlePrompt(fighter, sourceName, { promptProfile });
@@ -1300,12 +1379,12 @@ function buildBundleMatrix(fighter, poseBundle, sourceNames) {
   });
 }
 
-function buildInitialState({ fighter, poseBundle, matrixSha256, sourceNames }) {
+function buildInitialState({ fighter, poseBundle, matrixSha256, sourceNames, requestIdentity }) {
   const singleSource = sourceNames.length === 1;
   return {
     schemaVersion: 1,
     bundleId: singleSource
-      ? `arcade-xai-canonical-source-${fighter.slug}-${sourceNames[0]}-v1`
+      ? requestIdentity.bundleId
       : `arcade-xai-canonical-bundle-${fighter.slug}-v1`,
     fighterSlug: fighter.slug,
     fighterName: fighter.name,
@@ -1394,9 +1473,14 @@ function buildDescriptor(state, matrix, artifacts, sourceNames, contactSheet, ou
 export async function runXaiCanonicalBundle(options = {}) {
   const sourceNames = selectedCanonicalSourceNames(options.sourceName);
   const singleSource = sourceNames.length === 1;
-  const requiredConfirmation = singleSource
-    ? XAI_CANONICAL_SINGLE_SOURCE_CONFIRMATION
-    : XAI_CANONICAL_BUNDLE_CONFIRMATION;
+  const slug = requireString(options.slug, 'explicit roster slug', /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+  if (!singleSource && options.requestVersion) {
+    throw new Error('A canonical retry request version is valid only for one sealed source.');
+  }
+  const requestIdentity = singleSource
+    ? resolveXaiCanonicalSingleSourceRequest(slug, sourceNames[0], options.requestVersion ?? '')
+    : null;
+  const requiredConfirmation = requestIdentity?.confirmation ?? XAI_CANONICAL_BUNDLE_CONFIRMATION;
   if (options.confirmation !== requiredConfirmation) {
     throw new Error(`Paid execution requires confirmation ${requiredConfirmation}.`);
   }
@@ -1409,7 +1493,6 @@ export async function runXaiCanonicalBundle(options = {}) {
   if (Number(options.maxCostUsd) !== requiredMaxCostUsd) {
     throw new Error(`Explicit --max-cost-usd=${requiredMaxCostUsd.toFixed(2)} is required.`);
   }
-  const slug = requireString(options.slug, 'explicit roster slug', /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
   const apiKey = options.apiKey ?? '';
   if (!apiKey) throw new Error('PIXCLI_API_KEY is required.');
   const apiBase = (options.apiBase ?? 'https://pixcli.hilo.cx').replace(/\/$/, '');
@@ -1426,9 +1509,7 @@ export async function runXaiCanonicalBundle(options = {}) {
     options.poseManifestSha256,
     sourceNames,
   );
-  const promptProfile = singleSource
-    ? resolveXaiCanonicalSingleSourcePromptProfile(fighter.slug, sourceNames[0])
-    : undefined;
+  const promptProfile = requestIdentity?.promptProfile;
   validateXaiCanonicalPromptProfileReferences(poseBundle, promptProfile, fighter);
   const sourcePath = join(options.sourceDir ?? DEFAULT_SOURCE_DIR, `${slug}.png`);
   const original = verifyBakeoffSource(fighter, sourcePath);
@@ -1440,7 +1521,7 @@ export async function runXaiCanonicalBundle(options = {}) {
     ];
     if (new Set(referenceHashes).size !== 3) throw new Error(`${sourceName} references are not three distinct assets.`);
   }
-  const matrix = buildBundleMatrix(fighter, poseBundle, sourceNames);
+  const matrix = buildBundleMatrix(fighter, poseBundle, sourceNames, promptProfile);
   if (singleSource) {
     const expectedPromptSha256 = requireString(
       options.promptSha256,
@@ -1452,15 +1533,27 @@ export async function runXaiCanonicalBundle(options = {}) {
     }
   }
   const matrixSha256 = sha256(canonicalJson(matrix));
-  const stateStem = singleSource ? `${slug}-${sourceNames[0]}` : slug;
+  const stateStem = requestIdentity?.stateStem ?? slug;
   const statePath = resolve(options.statePath ?? join(DEFAULT_STATE_ROOT, `${stateStem}.json`));
   const outputDirectory = resolve(options.outputDirectory ?? join(DEFAULT_OUTPUT_ROOT, stateStem));
   const locks = acquireExclusiveBundleLocks(statePath, outputDirectory);
   try {
     mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
     mkdirSync(join(outputDirectory, 'sources'), { recursive: true, mode: 0o700 });
-    let state = readState(statePath) ?? buildInitialState({ fighter, poseBundle, matrixSha256, sourceNames });
-  const expected = buildInitialState({ fighter, poseBundle, matrixSha256, sourceNames });
+    let state = readState(statePath) ?? buildInitialState({
+      fighter,
+      poseBundle,
+      matrixSha256,
+      sourceNames,
+      requestIdentity,
+    });
+  const expected = buildInitialState({
+    fighter,
+    poseBundle,
+    matrixSha256,
+    sourceNames,
+    requestIdentity,
+  });
   for (const key of [
     'schemaVersion', 'bundleId', 'fighterSlug', 'originalSha256', 'poseManifestId',
     'poseManifestSha256', 'matrixSha256',
@@ -2060,13 +2153,17 @@ export function parseXaiCanonicalBundleCliArgs(rawArgs, environment = process.en
   if (!rawArgs.includes('--execute')) throw new Error('Paid execution requires --execute.');
   const slug = parseArg(rawArgs, '--slug');
   const sourceName = parseArg(rawArgs, '--source');
-  const stateStem = sourceName ? `${slug}-${sourceName}` : slug;
+  const requestVersion = parseArg(rawArgs, '--request-version');
+  const stateStem = sourceName
+    ? resolveXaiCanonicalSingleSourceRequest(slug, sourceName, requestVersion).stateStem
+    : slug;
   return {
     confirmation: parseArg(rawArgs, '--confirm'),
     privateConfirmation: parseArg(rawArgs, '--confirm-private'),
     maxCostUsd: parseArg(rawArgs, '--max-cost-usd'),
     slug,
     sourceName,
+    requestVersion,
     promptSha256: parseArg(rawArgs, '--prompt-sha256'),
     apiKey: environment.PIXCLI_API_KEY,
     apiBase: environment.PIXCLI_BASE_URL,
