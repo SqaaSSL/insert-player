@@ -20,6 +20,7 @@ on:
           - resume
           - activate-reviewed
           - restart-draft
+          - register-draft
           - prepare-canary
           - canary-side
           - probe-side
@@ -210,6 +211,9 @@ jobs:
               ;;
             restart-draft)
               seed_args+=(--restart-draft --confirm-production)
+              ;;
+            register-draft)
+              seed_args+=(--register-draft --confirm-production)
               ;;
             prepare-canary)
               seed_args+=(--prepare-canary --confirm-production)

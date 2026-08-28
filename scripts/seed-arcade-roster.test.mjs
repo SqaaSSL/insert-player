@@ -20,6 +20,7 @@ import {
   arcadeAdminAuthHeaders,
   assertApprovedArcadeGenerationContract,
   assertAwaitingVideoReview,
+  assertNewArcadeDraftIdentity,
   assertPinnedProductionWorkerHealth,
   assertPostApprovedRecurationConfirmation,
   assertPostApprovedRecurationDescriptor,
@@ -889,6 +890,14 @@ describe('Arcade roster resume planning', () => {
       allowCreate: true,
       mode: 'probe',
     })).toThrow(/restricted to draft fighters/);
+  });
+
+  it('refuses to register a draft when the photo resolves to an existing Arcade identity', () => {
+    const fighterId = 'a'.repeat(32);
+    expect(assertNewArcadeDraftIdentity([], fighterId, 'rosalia-v2')).toBe(fighterId);
+    expect(() => assertNewArcadeDraftIdentity([
+      { fighterId, slug: 'rosalia', status: 'active' },
+    ], fighterId, 'rosalia-v2')).toThrow(/refusing to mutate a reused photo identity/);
   });
 
   it('restarts only the matching content-addressed draft', () => {
@@ -1900,6 +1909,7 @@ describe('Review-gated Arcade Video step', () => {
     expect(videoStepWorkflow).toContain('import-reviewed-xai-canonical-production.yml');
     expect(videoStepWorkflow).toContain('import-reviewed-elon-mixed-canonical-production.yml');
     expect(videoStepWorkflow).toContain('import-reviewed-global-mixed-canonical-production.yml');
+    expect(videoStepWorkflow).toContain('import-reviewed-manual-canonical-production.yml');
     expect(videoStepWorkflow).toContain('arcade-reviewed-canonical-manifest-$REQUESTED_SLUG');
     expect(videoStepWorkflow).toContain('--reviewed-canonical-manifest=%s');
     expect(videoStepWorkflow).toContain('--expected-deployed-sha="$GITHUB_SHA"');
@@ -1943,6 +1953,7 @@ describe('Review-gated Arcade Video step', () => {
     expect(videoReviewWorkflow).toContain("if: inputs.operation != 'inspect'");
     expect(videoReviewWorkflow).toContain('run.head_sha !== process.env.GITHUB_SHA');
     expect(videoReviewWorkflow).toContain('arcade-video-step-production.yml');
+    expect(videoReviewWorkflow).toContain('import-reviewed-manual-canonical-production.yml');
     expect(videoReviewWorkflow).toContain('arcade-video-review-$REQUESTED_SLUG-$INSPECTION_RUN_ID');
     expect(videoReviewWorkflow).toContain('review-descriptor.json');
     expect(videoReviewWorkflow).toContain('reviewedManifestSha256 === manifestSha');
@@ -2288,6 +2299,8 @@ describe('Arcade roster provider preflight', () => {
   });
 
   it('keeps canary preparation separate from the capped side inference', () => {
+    expect(productionWorkflow).toContain('- register-draft');
+    expect(productionWorkflow).toContain('seed_args+=(--register-draft --confirm-production)');
     expect(productionWorkflow).toContain('seed_args+=(--prepare-canary --confirm-production)');
     expect(productionWorkflow).toContain('seed_args+=(--canary-side --confirm-production)');
   });

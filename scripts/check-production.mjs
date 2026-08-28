@@ -3496,6 +3496,7 @@ function assertOfficialArcadeIsWired() {
     'javier-milei',
     'lionel-messi',
     'perro-sanxe',
+    'rosalia-v2',
   ];
   if (manifest.qualityTier !== 'champion') {
     throw new Error('The official Arcade manifest must stay Champion-only.');

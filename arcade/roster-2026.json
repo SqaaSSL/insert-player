@@ -263,6 +263,26 @@
         "sourceSha256": "2ffb5a186881b2b89df9be15dcc46db0946366435510b5fa42a9ecf8834b6eeb"
       },
       "referencePrompt": "Using the licensed reference photo as the identity anchor, create an unofficial premium realistic 2.5D full-body arcade fighter. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Supplement the reference with these design details: a tall middle-aged man with fair-to-light-olive skin and a lean build; a long oval face, straight dark brows, brown eyes, a prominent friendly smile, and a clean-shaven jaw; and short salt-and-pepper dark hair neatly combed with a precise side part. Keep the expression confident rather than comic. Show the complete figure head-to-toe in a composed neutral ready stance, 3/4 view facing right, wearing an original charcoal tailored suit, white shirt, burgundy tie, restrained blue details, and polished dark shoes. No party marks, government insignia, flags, slogans, text, logos, animal features, props, or protected game styling. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Not cartoon, chibi, anime, cel-shaded, grotesque caricature, or photorealistic documentary photography."
+    },
+    {
+      "slug": "rosalia-v2",
+      "name": "Rosalía V2",
+      "identityName": "Rosalía Vila Tobella",
+      "rank": 14,
+      "challengerLine": "Changes the rhythm, owns the round.",
+      "defaultPersonality": "showboat",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://commons.wikimedia.org/wiki/File:Premios_Goya_2019_-_Rosal%C3%ADa.jpg",
+        "license": "CC BY-SA 4.0",
+        "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+        "credit": "Pedro J Pacheco (2019), via Wikimedia Commons; resized and converted to PNG by Insert Player.",
+        "author": "Pedro J Pacheco",
+        "sourceDate": "2019-02-02",
+        "verification": "Photographer-uploaded full-body Wikimedia Commons source; derivative portrait independently verified",
+        "sourceSha256": "1ac0e6562015961764579ec168ba1091c1059c217ba7484616d1ce3fcab12dac"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Treat that photograph and the separately reviewed V2 canonical source views as the sole identity authority. Preserve Rosalía Vila Tobella's exact cheek width, cheekbones, eye shape and spacing, brows, nose, lips, jaw, chin, facial asymmetry, hairline, and long center-parted near-black hair. Preserve the reviewed V2 fighter's exact slim adult proportions and original black, deep-crimson, and chrome performance outfit across every frame. Show the complete figure head-to-toe in a composed neutral fighting stance, 3/4 view facing right, with coherent anatomy and a readable silhouette. Never substitute a generic model face, narrow or lengthen the face, masculinize anatomy, reuse another person's pose identity, or redesign the outfit. Keep hands, boots, hair, scale, and silhouette stable; no text, logos, props, protected game styling, green spill, extra limbs, or cropped body parts. The result is premium realistic 2.5D game artwork, not documentary photography, cartoon, anime, cel shading, or caricature."
     }
   ]
 }
