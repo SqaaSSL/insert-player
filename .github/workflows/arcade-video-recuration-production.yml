@@ -1,0 +1,474 @@
+name: Recurate one approved Arcade Video action
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Stage a shadow revision, promote it, or roll back through the same sealed descriptor
+        required: true
+        default: stage
+        type: choice
+        options:
+          - stage
+          - promote
+          - rollback
+      slug:
+        description: Exact active global fighter slug
+        required: true
+        type: string
+      action:
+        description: Exact approved Video action
+        required: true
+        default: idle
+        type: choice
+        options:
+          - idle
+          - walk
+          - high_punch
+          - high_kick
+          - low_punch
+          - low_kick
+          - jump
+          - crouch
+          - hit
+          - ko
+          - victory
+      job_id:
+        description: Stage only — exact approved Video generation job id
+        required: false
+        type: string
+      candidate_id:
+        description: Stage only — exact approved Video review candidate id
+        required: false
+        type: string
+      revision:
+        description: Stage only — exact currently approved revision
+        required: false
+        type: string
+      report_sha256:
+        description: Stage only — exact current semantic report SHA-256
+        required: false
+        type: string
+      selected_video_indices:
+        description: Stage only — exact JSON array of new source-frame indices
+        required: false
+        type: string
+      stage_artifact_binding:
+        description: Promote/rollback only — JSON with runId, descriptorSha256, and acceptNeedsReview
+        required: false
+        type: string
+      confirmation:
+        description: Exact dedicated confirmation phrase for the selected operation
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  recuration:
+    name: ${{ inputs.operation }} ${{ inputs.slug }} ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      REQUESTED_OPERATION: ${{ inputs.operation }}
+      REQUESTED_SLUG: ${{ inputs.slug }}
+      REQUESTED_ACTION: ${{ inputs.action }}
+      JOB_ID: ${{ inputs.job_id }}
+      CANDIDATE_ID: ${{ inputs.candidate_id }}
+      REVISION: ${{ inputs.revision }}
+      REPORT_SHA256: ${{ inputs.report_sha256 }}
+      SELECTED_VIDEO_INDICES: ${{ inputs.selected_video_indices }}
+      STAGE_ARTIFACT_BINDING: ${{ inputs.stage_artifact_binding }}
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+      ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+      ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+
+    steps:
+      - name: Check out the exact reviewed commit
+        uses: actions/checkout@v6
+
+      - name: Validate the exact operation-specific request
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_SLUG" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || {
+            printf '::error::Invalid active global slug.\n'
+            exit 1
+          }
+          case "$REQUESTED_ACTION" in
+            idle|walk|high_punch|high_kick|low_punch|low_kick|jump|crouch|hit|ko|victory) ;;
+            *)
+              printf '::error::Unsupported Video action.\n'
+              exit 1
+              ;;
+          esac
+          [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" ]] || {
+            printf '::error::Production Clerk admin credentials are unavailable.\n'
+            exit 1
+          }
+          [[ -z "$CLERK_BACKEND_AUTH_BRIDGE_SECRET" || ${#CLERK_BACKEND_AUTH_BRIDGE_SECRET} -ge 32 ]] || {
+            printf '::error::The optional Clerk backend bridge secret is malformed.\n'
+            exit 1
+          }
+          case "$REQUESTED_OPERATION" in
+            stage)
+              expected_confirmation="STAGE_POST_APPROVED_RECURATION_PRODUCTION"
+              [[ "$JOB_ID" =~ ^[a-f0-9]{32}$ ]] || exit 1
+              [[ "$CANDIDATE_ID" =~ ^[a-f0-9]{32}$ ]] || exit 1
+              [[ "$REVISION" =~ ^([1-9]|[1-9][0-9]|100)$ ]] || exit 1
+              [[ "$REPORT_SHA256" =~ ^[a-f0-9]{64}$ ]] || exit 1
+              [[ -n "$SELECTED_VIDEO_INDICES" && ${#SELECTED_VIDEO_INDICES} -le 256 ]] || exit 1
+              [[ -z "$STAGE_ARTIFACT_BINDING" ]] || exit 1
+              SELECTED_VIDEO_INDICES="$SELECTED_VIDEO_INDICES" node --input-type=module <<'NODE'
+          const value = JSON.parse(process.env.SELECTED_VIDEO_INDICES ?? '');
+          if (
+            !Array.isArray(value) || value.length < 2 || value.length > 12 ||
+            !value.every((entry, index) => (
+              Number.isSafeInteger(entry) && entry >= 0 &&
+              (index === 0 || entry > value[index - 1])
+            ))
+          ) throw new Error('selected_video_indices must be 2-12 strictly increasing non-negative integers.');
+          NODE
+              ;;
+            promote)
+              expected_confirmation="PROMOTE_POST_APPROVED_RECURATION_PRODUCTION"
+              [[ -n "$STAGE_ARTIFACT_BINDING" && ${#STAGE_ARTIFACT_BINDING} -le 256 ]] || exit 1
+              [[ -z "$JOB_ID" && -z "$CANDIDATE_ID" && -z "$REVISION" ]] || exit 1
+              [[ -z "$REPORT_SHA256" && -z "$SELECTED_VIDEO_INDICES" ]] || exit 1
+              ;;
+            rollback)
+              expected_confirmation="ROLLBACK_POST_APPROVED_RECURATION_PRODUCTION"
+              [[ -n "$STAGE_ARTIFACT_BINDING" && ${#STAGE_ARTIFACT_BINDING} -le 256 ]] || exit 1
+              [[ -z "$JOB_ID" && -z "$CANDIDATE_ID" && -z "$REVISION" ]] || exit 1
+              [[ -z "$REPORT_SHA256" && -z "$SELECTED_VIDEO_INDICES" ]] || exit 1
+              ;;
+            *)
+              printf '::error::Unsupported recuration operation.\n'
+              exit 1
+              ;;
+          esac
+          [[ "$REQUESTED_CONFIRMATION" == "$expected_confirmation" ]] || {
+            printf '::error::The operation requires its exact dedicated confirmation phrase.\n'
+            exit 1
+          }
+          if [[ "$REQUESTED_OPERATION" != "stage" ]]; then
+            STAGE_ARTIFACT_BINDING="$STAGE_ARTIFACT_BINDING" node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          const value = JSON.parse(process.env.STAGE_ARTIFACT_BINDING ?? '');
+          const keys = value && typeof value === 'object' && !Array.isArray(value)
+            ? Object.keys(value).sort()
+            : [];
+          if (
+            JSON.stringify(keys) !== JSON.stringify([
+              'acceptNeedsReview', 'descriptorSha256', 'runId',
+            ]) ||
+            typeof value.runId !== 'string' || !/^[1-9][0-9]*$/.test(value.runId) ||
+            typeof value.descriptorSha256 !== 'string' ||
+            !/^[a-f0-9]{64}$/.test(value.descriptorSha256) ||
+            typeof value.acceptNeedsReview !== 'boolean'
+          ) throw new Error('stage_artifact_binding must use the exact sealed JSON schema.');
+          const output = process.env.GITHUB_ENV;
+          if (!output) throw new Error('GITHUB_ENV is unavailable.');
+          appendFileSync(output, [
+            `STAGE_RUN_ID=${value.runId}`,
+            `DESCRIPTOR_SHA256=${value.descriptorSha256}`,
+            `ACCEPT_NEEDS_REVIEW=${value.acceptNeedsReview}`,
+            '',
+          ].join('\n'));
+          NODE
+          fi
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Pin the live Worker to this exact commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const workerBase = process.env.ASF_WORKER_URL?.trim() ?? '';
+          const configuredHealth = process.env.ASF_WORKER_HEALTH_URL?.trim() ?? '';
+          const expectedSha = process.env.GITHUB_SHA?.trim() ?? '';
+          if (workerBase !== 'https://api.insertplayer.ai') {
+            throw new Error('Recuration requires exact ASF_WORKER_URL=https://api.insertplayer.ai.');
+          }
+          const expectedHealth = `${workerBase}/health`;
+          const healthUrl = configuredHealth || expectedHealth;
+          if (
+            !/^[a-f0-9]{40}$/.test(expectedSha) ||
+            new URL(healthUrl).toString() !== expectedHealth
+          ) throw new Error('The production health endpoint or exact commit SHA is invalid.');
+          const response = await fetch(healthUrl, {
+            redirect: 'error',
+            signal: AbortSignal.timeout(30_000),
+          });
+          if (!response.ok) throw new Error(`Worker health failed with HTTP ${response.status}.`);
+          const health = await response.json();
+          const expectedTag = new RegExp(`^prod-${expectedSha}-[1-9][0-9]*$`);
+          if (
+            health?.status !== 'ok' || health.environment !== 'production' ||
+            health.storage?.d1 !== 'bound' || health.storage?.r2 !== 'bound' ||
+            typeof health.workerVersion?.id !== 'string' || !health.workerVersion.id ||
+            typeof health.workerVersion?.tag !== 'string' ||
+            !expectedTag.test(health.workerVersion.tag)
+          ) throw new Error(`Live Worker is not the exact healthy deployment for ${expectedSha}.`);
+          console.log(`Worker health pinned to ${health.workerVersion.tag}.`);
+          NODE
+
+      - name: Validate the checked-out recuration CLI
+        run: node --check scripts/seed-arcade-roster.mjs
+
+      - name: Download the exact private stage bundle
+        if: inputs.operation != 'stage'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/recuration-stage-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGE_RUN_ID" > "$metadata"
+          STAGE_RUN_METADATA="$metadata" node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const run = JSON.parse(readFileSync(process.env.STAGE_RUN_METADATA, 'utf8'));
+          const workflowPath = String(run.path ?? '').split('@', 1)[0];
+          const expectedId = Number(process.env.STAGE_RUN_ID);
+          if (
+            !Number.isSafeInteger(expectedId) || run.id !== expectedId ||
+            run.status !== 'completed' || run.conclusion !== 'success' ||
+            run.event !== 'workflow_dispatch' ||
+            workflowPath !== '.github/workflows/arcade-video-recuration-production.yml' ||
+            run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            run.head_sha !== process.env.GITHUB_SHA
+          ) throw new Error('stage_run_id is not a successful stage workflow on this exact commit.');
+          NODE
+          destination="$RUNNER_TEMP/video-recuration"
+          mkdir -m 700 -p "$destination"
+          gh run download "$STAGE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-video-recuration-$REQUESTED_SLUG-$REQUESTED_ACTION-$STAGE_RUN_ID" \
+            --dir "$destination"
+
+      - name: Stage one immutable shadow revision without a provider call
+        if: inputs.operation == 'stage'
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          npm run arcade:seed -- \
+            --target=production \
+            --slug="$REQUESTED_SLUG" \
+            --animation="$REQUESTED_ACTION" \
+            --post-approved-recuration=stage \
+            --confirm-production \
+            --confirm-recuration="$REQUESTED_CONFIRMATION" \
+            --expected-deployed-sha="$GITHUB_SHA" \
+            --video-review-job-id="$JOB_ID" \
+            --video-review-candidate-id="$CANDIDATE_ID" \
+            --video-review-revision="$REVISION" \
+            --video-review-report-sha256="$REPORT_SHA256" \
+            --video-review-selected-indices="$SELECTED_VIDEO_INDICES" \
+            --video-review-export-dir="$RUNNER_TEMP/video-recuration"
+
+      - name: Verify the complete sealed private bundle
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod 700 "$RUNNER_TEMP/video-recuration"
+          BUNDLE_DIRECTORY="$RUNNER_TEMP/video-recuration" node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { lstatSync, readFileSync, readdirSync } from 'node:fs';
+          import { join } from 'node:path';
+
+          const directory = process.env.BUNDLE_DIRECTORY;
+          const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+          const exactKeys = (value, keys) => {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+            const actual = Object.keys(value).sort();
+            const expected = [...keys].sort();
+            return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+          };
+          const definitions = {
+            runtime: ['runtime.png', 'image/png'],
+            raw: ['raw.png', 'image/png'],
+            contactSheet: ['contact-sheet.png', 'image/png'],
+            uniqueSheet: ['unique-sheet.png', 'image/png'],
+            report: ['report.json', 'application/json'],
+            video: ['video.mp4', 'video/mp4'],
+          };
+          const expectedFiles = [
+            ...Object.values(definitions).map(([filename]) => filename),
+            'recuration-descriptor.json',
+            'recuration-descriptor.sha256',
+          ].sort();
+          const actualFiles = readdirSync(directory).sort();
+          if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
+            throw new Error('The recuration artifact does not contain the exact private bundle.');
+          }
+          for (const filename of actualFiles) {
+            const stat = lstatSync(join(directory, filename));
+            if (!stat.isFile() || stat.isSymbolicLink()) {
+              throw new Error(`Private evidence ${filename} is not a direct regular file.`);
+            }
+          }
+          const descriptorPath = join(directory, 'recuration-descriptor.json');
+          const descriptorBytes = readFileSync(descriptorPath);
+          if (descriptorBytes.byteLength < 2 || descriptorBytes.byteLength > 1024 * 1024) {
+            throw new Error('The recuration descriptor size is invalid.');
+          }
+          const descriptorDigest = sha256(descriptorBytes);
+          const requestedDigest = process.env.DESCRIPTOR_SHA256 ?? '';
+          if (
+            process.env.REQUESTED_OPERATION === 'stage'
+              ? requestedDigest !== ''
+              : requestedDigest !== descriptorDigest
+          ) throw new Error('The downloaded descriptor does not match descriptor_sha256.');
+          const sidecar = readFileSync(join(directory, 'recuration-descriptor.sha256'), 'utf8');
+          if (sidecar !== `${descriptorDigest}  recuration-descriptor.json\n`) {
+            throw new Error('The descriptor SHA-256 sidecar is not exact.');
+          }
+          const descriptor = JSON.parse(descriptorBytes.toString('utf8'));
+          if (
+            !exactKeys(descriptor, [
+              'schemaVersion', 'kind', 'target', 'expectedWorkerSha', 'fighter',
+              'jobId', 'artifactRunId', 'candidateId', 'action', 'from', 'to', 'assets',
+            ]) ||
+            descriptor.schemaVersion !== 1 ||
+            descriptor.kind !== 'post-approved-video-recuration-v1' ||
+            descriptor.target !== 'production' ||
+            descriptor.expectedWorkerSha !== process.env.GITHUB_SHA ||
+            !exactKeys(descriptor.fighter, ['slug', 'fighterId']) ||
+            descriptor.fighter.slug !== process.env.REQUESTED_SLUG ||
+            !/^[a-f0-9]{32}$/.test(descriptor.fighter.fighterId ?? '') ||
+            !/^[a-f0-9]{32}$/.test(descriptor.jobId ?? '') ||
+            !/^[a-f0-9]{32}$/.test(descriptor.artifactRunId ?? '') ||
+            !/^[a-f0-9]{32}$/.test(descriptor.candidateId ?? '') ||
+            descriptor.action !== process.env.REQUESTED_ACTION ||
+            !exactKeys(descriptor.assets, Object.keys(definitions))
+          ) throw new Error('The recuration descriptor identity or schema is invalid.');
+          const validateSide = (side, label) => {
+            if (
+              !exactKeys(side, [
+                'revision', 'reportSha256', 'processedSha256', 'rawSha256',
+                'processingVersion', 'technicalOutcome', 'selectedVideoIndices',
+                'frameCount', 'rawFrameCount',
+              ]) ||
+              !Number.isInteger(side.revision) || side.revision < 1 || side.revision > 100 ||
+              !/^[a-f0-9]{64}$/.test(side.reportSha256 ?? '') ||
+              !/^[a-f0-9]{64}$/.test(side.processedSha256 ?? '') ||
+              !/^[a-f0-9]{64}$/.test(side.rawSha256 ?? '') ||
+              ![5, 6].includes(side.processingVersion) ||
+              !['technical_pass', 'needs_review'].includes(side.technicalOutcome) ||
+              !Array.isArray(side.selectedVideoIndices) ||
+              side.selectedVideoIndices.length < 2 || side.selectedVideoIndices.length > 12 ||
+              !side.selectedVideoIndices.every((value, index) => (
+                Number.isSafeInteger(value) && value >= 0 &&
+                (index === 0 || value > side.selectedVideoIndices[index - 1])
+              )) ||
+              !Number.isInteger(side.frameCount) || side.frameCount < 2 ||
+              !Number.isInteger(side.rawFrameCount) || side.rawFrameCount < 2
+            ) throw new Error(`The descriptor ${label} revision binding is invalid.`);
+          };
+          validateSide(descriptor.from, 'from');
+          validateSide(descriptor.to, 'to');
+          if (
+            descriptor.to.revision <= descriptor.from.revision ||
+            descriptor.to.processingVersion !== 6 ||
+            descriptor.to.reportSha256 === descriptor.from.reportSha256 ||
+            descriptor.to.processedSha256 === descriptor.from.processedSha256
+          ) throw new Error('The descriptor does not seal one new compiler-v6 shadow revision.');
+          const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+          const assetBytes = {};
+          for (const [name, [filename, contentType]] of Object.entries(definitions)) {
+            const metadata = descriptor.assets[name];
+            const path = join(directory, filename);
+            const bytes = readFileSync(path);
+            if (
+              !exactKeys(metadata, ['filename', 'sha256', 'contentType', 'byteLength']) ||
+              metadata.filename !== filename || metadata.contentType !== contentType ||
+              !/^[a-f0-9]{64}$/.test(metadata.sha256 ?? '') ||
+              metadata.byteLength !== bytes.byteLength || bytes.byteLength < 1 ||
+              bytes.byteLength > 32 * 1024 * 1024 || sha256(bytes) !== metadata.sha256
+            ) throw new Error(`Private ${name} evidence failed its exact digest binding.`);
+            if (contentType === 'image/png' && (
+              bytes.byteLength <= pngSignature.byteLength ||
+              !bytes.subarray(0, pngSignature.byteLength).equals(pngSignature)
+            )) throw new Error(`Private ${name} evidence is not a PNG.`);
+            if (contentType === 'video/mp4' && (
+              bytes.byteLength < 12 || bytes.subarray(4, 8).toString('ascii') !== 'ftyp'
+            )) throw new Error('Private video evidence is not an MP4.');
+            assetBytes[name] = bytes;
+          }
+          if (
+            descriptor.assets.runtime.sha256 !== descriptor.to.processedSha256 ||
+            descriptor.assets.raw.sha256 !== descriptor.to.rawSha256
+          ) throw new Error('The descriptor target does not match its staged PNG bytes.');
+          const report = JSON.parse(assetBytes.report.toString('utf8'));
+          if (
+            report.action !== descriptor.action ||
+            report.animationFormat !== 'video-dense-v1' ||
+            report.processingVersion !== descriptor.to.processingVersion ||
+            report.reportSha256 !== descriptor.to.reportSha256 ||
+            JSON.stringify(report.extraction?.selectedVideoIndices) !==
+              JSON.stringify(descriptor.to.selectedVideoIndices) ||
+            report.contract?.playbackFrameCount !== descriptor.to.frameCount ||
+            report.artifacts?.runtimeSheet?.sha256 !== descriptor.to.processedSha256 ||
+            report.artifacts?.rawUniqueFramesSheet?.sha256 !== descriptor.to.rawSha256 ||
+            report.artifacts?.rawUniqueFramesSheet?.frameCount !== descriptor.to.rawFrameCount ||
+            report.decision?.outcome !== descriptor.to.technicalOutcome
+          ) throw new Error('The staged compiler report does not bind the descriptor target.');
+          process.stdout.write(`descriptor_sha256=${descriptorDigest}\n`);
+          const output = process.env.GITHUB_OUTPUT;
+          if (!output) throw new Error('GITHUB_OUTPUT is unavailable.');
+          await import('node:fs').then(({ appendFileSync }) => {
+            appendFileSync(output, `descriptor_sha256=${descriptorDigest}\n`);
+          });
+          NODE
+          descriptor_digest="$(awk 'NR == 1 { print $1 }' "$RUNNER_TEMP/video-recuration/recuration-descriptor.sha256")"
+          [[ "$descriptor_digest" =~ ^[a-f0-9]{64}$ ]] || exit 1
+          printf '### Sealed post-approved recuration bundle\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- Fighter/action: `%s` / `%s`\n' "$REQUESTED_SLUG" "$REQUESTED_ACTION" >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- Descriptor SHA-256: `%s`\n' "$descriptor_digest" >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- Provider calls: `0`\n' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Promote or roll back the exact sealed revision
+        if: inputs.operation != 'stage'
+        shell: bash
+        env:
+          SEALED_DESCRIPTOR_SHA256: ${{ steps.bundle.outputs.descriptor_sha256 }}
+        run: |
+          set -euo pipefail
+          args=(
+            --target=production
+            --slug="$REQUESTED_SLUG"
+            --animation="$REQUESTED_ACTION"
+            --post-approved-recuration="$REQUESTED_OPERATION"
+            --confirm-production
+            --confirm-recuration="$REQUESTED_CONFIRMATION"
+            --expected-deployed-sha="$GITHUB_SHA"
+            --recuration-descriptor="$RUNNER_TEMP/video-recuration/recuration-descriptor.json"
+            --recuration-descriptor-sha256="$SEALED_DESCRIPTOR_SHA256"
+          )
+          [[ "$ACCEPT_NEEDS_REVIEW" != "true" ]] || args+=(--accept-needs-review)
+          npm run arcade:seed -- "${args[@]}"
+
+      - name: Upload the private staged recuration bundle
+        if: inputs.operation == 'stage'
+        uses: actions/upload-artifact@v7
+        with:
+          name: arcade-video-recuration-${{ inputs.slug }}-${{ inputs.action }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/video-recuration
+          if-no-files-found: error
+          retention-days: 30
