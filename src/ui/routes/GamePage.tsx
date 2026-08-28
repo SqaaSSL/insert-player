@@ -9,7 +9,6 @@ import {
 } from '../../game/match/MatchConfig.ts';
 import { MobileFightControls } from '../components/MobileFightControls.tsx';
 import { FightControlsHint } from '../components/FightControlsHint.tsx';
-import { RotateDeviceOverlay } from '../components/RotateDeviceOverlay.tsx';
 import { FightHud } from '../components/FightHud.tsx';
 import { FightIntroOverlay } from '../components/FightIntroOverlay.tsx';
 import { FightAnnouncement } from '../components/FightAnnouncement.tsx';
@@ -244,7 +243,6 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
         </div>
       )}
       <FightControlsHint />
-      <RotateDeviceOverlay />
       <button type="button" className="game-shell__gallery-link" onClick={onExit}>
         Back
       </button>

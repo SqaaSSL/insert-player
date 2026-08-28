@@ -796,6 +796,17 @@
     @apply relative h-screen w-full overflow-hidden;
   }
 
+  /* Phones in portrait: rotate the entire arena (canvas + DOM chrome) 90deg
+     instead of asking the user to defeat their OS rotation lock. Layout size
+     is the swapped viewport; the transform only changes presentation, so DOM
+     touch controls keep working and Phaser FIT sees the swapped bounds. */
+  @media (pointer: coarse) and (orientation: portrait) {
+    .game-shell {
+      @apply fixed left-0 top-0 z-40 h-[100dvw] w-[100dvh]
+             [transform:rotate(90deg)_translateY(-100%)] [transform-origin:top_left];
+    }
+  }
+
   .game-shell__surface,
   .game-shell__canvas {
     @apply h-full w-full;
@@ -803,6 +814,17 @@
 
   .game-shell__canvas {
     @apply relative overflow-hidden;
+  }
+
+  /* Touch devices: Phaser scale management is off (see createGame), so the
+     stylesheet does the FIT — the canvas element fills the shell and
+     object-contain letterboxes the 1024x576 drawing inside it, in any
+     orientation, including the rotated portrait shell where script
+     measurement would see swapped bounds. */
+  @media (pointer: coarse) {
+    .game-shell__canvas canvas {
+      @apply !block !h-full !w-full object-contain;
+    }
   }
 
   .game-shell__gallery-link {
@@ -908,10 +930,6 @@
   }
 
   @media (pointer: coarse) and (orientation: portrait) {
-    .game-shell__surface {
-      @apply h-[58vh];
-    }
-
     .mobile-fight-controls {
       @apply bottom-[max(18px,env(safe-area-inset-bottom))];
     }
@@ -2699,57 +2717,8 @@
     @apply bottom-[30%];
   }
 
-  /* ============================================================
-     ROTATE DEVICE OVERLAY (coarse-pointer portrait only)
-     ============================================================ */
-
-  .rotate-overlay {
-    @apply absolute inset-0 z-50 hidden flex-col items-center justify-center
-           gap-4 bg-asf-bg-0 text-center;
-  }
-
-  @media (pointer: coarse) and (orientation: portrait) {
-    .rotate-overlay {
-      @apply flex;
-    }
-  }
-
-  .rotate-overlay__phone {
-    @apply block h-16 w-9 rounded-lg border-4 border-asf-gold
-           [animation:rotate-overlay-turn_1.6s_ease-in-out_infinite]
-           motion-reduce:animate-none;
-  }
-
-  .rotate-overlay__title {
-    @apply font-arcade text-[14px] text-asf-cream;
-  }
-
-  .rotate-overlay__copy {
-    @apply max-w-72 text-sm text-asf-muted;
-  }
-
-  .rotate-overlay--tap {
-    @apply cursor-pointer appearance-none border-0;
-  }
-
-  .rotate-overlay--tap .rotate-overlay__title {
-    @apply rounded-lg border-2 border-asf-gold px-5 py-3
-           shadow-[0_0_18px_rgba(255,206,58,0.45)]
-           [animation:meter-ready-pulse_1.2s_ease-in-out_infinite]
-           motion-reduce:animate-none;
-  }
 }
 
-@keyframes rotate-overlay-turn {
-  0%,
-  20% {
-    transform: rotate(0deg);
-  }
-  60%,
-  100% {
-    transform: rotate(90deg);
-  }
-}
 
 @keyframes meter-ready-pulse {
   0%,
