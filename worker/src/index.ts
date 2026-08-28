@@ -81,6 +81,12 @@ import {
 } from './videoSpriteReview';
 import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
 import { isAttractModeMatchReport, readMatchFighterId } from './matchReporting';
+import {
+  getImportedGlobalVideoRecurationAsset,
+  promoteImportedGlobalVideoRecuration,
+  rollbackImportedGlobalVideoRecuration,
+  stageImportedGlobalVideoRecuration,
+} from './importedGlobalVideoRecuration';
 
 export { FighterGenerationWorkflow } from './generationWorkflow';
 export { ImageProcessorContainer } from './imageProcessorContainer';
@@ -113,6 +119,8 @@ function corsHeaders(request: Request, env: Env): HeadersInit {
   if (origin !== '*') {
     headers['Access-Control-Allow-Credentials'] = 'true';
   }
+  headers['Access-Control-Allow-Headers'] =
+    `${headers['Access-Control-Allow-Headers']}, X-Insert-Player-Expected-Worker-Sha`;
   return headers;
 }
 
@@ -560,6 +568,48 @@ export default {
               request, env, auth, arcadeFighterId,
             ),
           ),
+          request,
+          env,
+        );
+      }
+
+      const importedVideoRecurationMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/imported-video-recuration\/(stage|promote|rollback)$/,
+      );
+      if (importedVideoRecurationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(importedVideoRecurationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        const operation = importedVideoRecurationMatch[2];
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade-imported-video-recuration',
+            (auth) => operation === 'stage'
+              ? stageImportedGlobalVideoRecuration(request, env, auth, arcadeFighterId)
+              : operation === 'promote'
+                ? promoteImportedGlobalVideoRecuration(request, env, auth, arcadeFighterId)
+                : rollbackImportedGlobalVideoRecuration(request, env, auth, arcadeFighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const importedVideoRecurationAssetMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/imported-video-recuration\/([^/]+)\/assets\/([^/]+)$/,
+      );
+      if (importedVideoRecurationAssetMatch && method === 'GET') {
+        const arcadeFighterId = decodePathParam(importedVideoRecurationAssetMatch[1]);
+        const proposalId = decodePathParam(importedVideoRecurationAssetMatch[2]);
+        const kind = decodePathParam(importedVideoRecurationAssetMatch[3]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        if (isResponse(proposalId)) return addCors(proposalId, request, env);
+        if (isResponse(kind)) return addCors(kind, request, env);
+        return addCors(
+          await authenticated(request, env, (auth) => getImportedGlobalVideoRecurationAsset(
+            request, env, auth, arcadeFighterId, proposalId, kind,
+          )),
           request,
           env,
         );
