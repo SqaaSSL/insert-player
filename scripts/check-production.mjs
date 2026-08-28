@@ -3136,7 +3136,7 @@ function assertLaunchMetadataIsWired() {
     '"id": "/"',
     '"start_url": "/menu"',
     '"display": "standalone"',
-    '"orientation": "any"',
+    '"orientation": "landscape"',
     '"/assets/app-icon-192.png"',
     '"/assets/app-icon-512.png"',
     '"/assets/app-maskable-512.png"',

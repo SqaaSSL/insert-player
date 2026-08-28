@@ -284,80 +284,9 @@ export class FightScene extends Phaser.Scene {
 
     this.startRound();
     this.emitHudState();
-    this.showControlsHint();
     this.ready = true;
   }
 
-  /** First-round desktop onboarding: drawn keycaps + the combo recipe. */
-  private showControlsHint(): void {
-    if (this.cpuVsCpu) return;
-    const coarse = typeof window !== 'undefined' &&
-      window.matchMedia?.('(pointer: coarse)').matches;
-    if (coarse) return;
-
-    const container = this.add.container(GAME_WIDTH / 2, GAME_HEIGHT - 96)
-      .setDepth(150)
-      .setScrollFactor(0);
-
-    const KEY = 26;
-    const keycap = (x: number, y: number, label: string, caption: string, accent = false) => {
-      const gfx = this.add.graphics();
-      gfx.fillStyle(accent ? 0x8f1616 : 0x10142e, 0.92);
-      gfx.fillRoundedRect(x - KEY / 2, y - KEY / 2, KEY, KEY, 4);
-      gfx.lineStyle(2, accent ? 0xff5a3c : 0xc88a00, 0.95);
-      gfx.strokeRoundedRect(x - KEY / 2, y - KEY / 2, KEY, KEY, 4);
-      const keyText = this.add.text(x, y, label, {
-        fontFamily: '"Press Start 2P", monospace',
-        fontSize: '10px',
-        color: '#fff4d6',
-      }).setOrigin(0.5);
-      const captionText = this.add.text(x, y + KEY / 2 + 10, caption, {
-        fontFamily: '"Press Start 2P", monospace',
-        fontSize: '7px',
-        color: '#c9c0a8',
-      }).setOrigin(0.5, 0);
-      container.add([gfx, keyText, captionText]);
-    };
-
-    // Row 1 — movement & defense
-    const row1: Array<[string, string]> = [['A', ''], ['D', 'MOVE'], ['W', 'JUMP'], ['S', 'CROUCH'], ['G', 'GUARD']];
-    const r1Width = 70 * (row1.length - 1);
-    row1.forEach(([key, caption], index) => {
-      keycap(-r1Width / 2 + index * 70 - (key === 'A' ? 20 : 0), -34, key, caption);
-    });
-
-    // Row 2 — attacks
-    const row2: Array<[string, string]> = [['U', 'PUNCH'], ['J', 'KICK'], ['I', 'FIREBALL'], ['K', 'UPPERCUT']];
-    const r2Width = 92 * (row2.length - 1);
-    row2.forEach(([key, caption], index) => {
-      keycap(-r2Width / 2 + index * 92, 22, key, caption);
-    });
-
-    // Combo recipe line with highlighted keys
-    const comboY = 78;
-    keycap(-96, comboY, 'U', '', true);
-    const arrow = this.add.text(-64, comboY, '\u25B6', {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: '10px',
-      color: '#ffce3a',
-    }).setOrigin(0.5);
-    keycap(-32, comboY, 'I', '', true);
-    const comboLabel = this.add.text(-6, comboY, 'ON HIT = FIREBALL COMBO', {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: '8px',
-      color: '#ffe9b0',
-    }).setOrigin(0, 0.5);
-    container.add([arrow, comboLabel]);
-
-    this.markUi(container);
-    this.tweens.add({
-      targets: container,
-      alpha: 0,
-      delay: 9000,
-      duration: 600,
-      onComplete: () => container.destroy(),
-    });
-  }
 
   private mixSeed(salt: number): number {
     const mixed = Math.imul(this.matchSeed ^ salt, 0x45d9f3b);

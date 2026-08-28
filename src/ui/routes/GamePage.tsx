@@ -8,6 +8,8 @@ import {
   type MatchSceneData,
 } from '../../game/match/MatchConfig.ts';
 import { MobileFightControls } from '../components/MobileFightControls.tsx';
+import { FightControlsHint } from '../components/FightControlsHint.tsx';
+import { RotateDeviceOverlay } from '../components/RotateDeviceOverlay.tsx';
 import { FightHud } from '../components/FightHud.tsx';
 import { FightIntroOverlay } from '../components/FightIntroOverlay.tsx';
 import { FightAnnouncement } from '../components/FightAnnouncement.tsx';
@@ -44,6 +46,21 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
     setWinnerSlot(null);
     setLadderBusy(false);
   }, [launchTarget]);
+
+  useEffect(() => {
+    if (window.matchMedia?.('(pointer: coarse)').matches) {
+      const orientation = screen.orientation as ScreenOrientation & {
+        lock?: (mode: string) => Promise<void>;
+      };
+      orientation?.lock?.('landscape').catch(() => {
+        // iOS and non-fullscreen contexts reject; the rotate overlay covers it.
+      });
+    }
+    return () => {
+      const orientation = screen.orientation as ScreenOrientation & { unlock?: () => void };
+      try { orientation?.unlock?.(); } catch { /* best effort */ }
+    };
+  }, []);
 
   useEffect(() => {
     const win = window as Window & {
@@ -223,6 +240,8 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
           </button>
         </div>
       )}
+      <FightControlsHint />
+      <RotateDeviceOverlay />
       <button type="button" className="game-shell__gallery-link" onClick={onExit}>
         Back
       </button>

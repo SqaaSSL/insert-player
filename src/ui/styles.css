@@ -2579,4 +2579,117 @@
     @apply relative z-10 font-arcade text-[11px] text-asf-blue
            [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
   }
+
+  /* ============================================================
+     FIGHT CONTROLS HINT (first-round keyboard display)
+     ============================================================ */
+
+  .fight-keys {
+    @apply pointer-events-none absolute inset-x-0 bottom-[8%] z-20 flex flex-col
+           items-center gap-3 opacity-100 [transition:opacity_700ms_ease-out]
+           motion-reduce:transition-none;
+  }
+
+  .fight-keys.is-leaving {
+    @apply opacity-0;
+  }
+
+  .fight-keys__board {
+    @apply flex items-end gap-10 rounded-xl border border-asf-line
+           bg-[rgba(6,7,20,0.82)] px-6 py-4 backdrop-blur-sm;
+  }
+
+  .fight-keys__cluster {
+    @apply flex flex-col items-center gap-1.5;
+  }
+
+  .fight-keys__row {
+    @apply flex justify-center gap-2;
+  }
+
+  .fight-keys__key {
+    @apply flex w-12 flex-col items-center gap-1 opacity-35;
+  }
+
+  .fight-keys__key.is-active {
+    @apply opacity-100;
+  }
+
+  .fight-keys__key kbd {
+    @apply flex h-8 w-8 items-center justify-center rounded-md border-2
+           border-asf-line bg-asf-panel font-arcade text-[10px] text-asf-cream
+           shadow-[0_3px_0_rgba(0,0,0,0.6)];
+  }
+
+  .fight-keys__key.is-active kbd {
+    @apply border-asf-gold bg-[#1a1030] text-asf-gold
+           shadow-[0_3px_0_rgba(0,0,0,0.6),0_0_14px_rgba(255,206,58,0.35)];
+  }
+
+  .fight-keys__key small {
+    @apply min-h-3 font-arcade text-[7px] leading-none text-asf-muted;
+  }
+
+  .fight-keys__key.is-active small {
+    @apply text-asf-cream;
+  }
+
+  .fight-keys__recipe {
+    @apply flex items-center gap-1.5 rounded-lg border border-asf-line
+           bg-[rgba(6,7,20,0.82)] px-4 py-2 font-arcade text-[9px]
+           text-asf-cream backdrop-blur-sm;
+  }
+
+  .fight-keys__recipe kbd {
+    @apply mx-0.5 inline-flex h-6 w-6 items-center justify-center rounded
+           border-2 border-asf-red bg-[#2b0b0b] text-[9px] text-asf-cream;
+  }
+
+  .fight-keys__arrow {
+    @apply text-asf-gold;
+  }
+
+  .fight-keys--touch {
+    @apply bottom-[30%];
+  }
+
+  /* ============================================================
+     ROTATE DEVICE OVERLAY (coarse-pointer portrait only)
+     ============================================================ */
+
+  .rotate-overlay {
+    @apply absolute inset-0 z-50 hidden flex-col items-center justify-center
+           gap-4 bg-asf-bg-0 text-center;
+  }
+
+  @media (pointer: coarse) and (orientation: portrait) {
+    .rotate-overlay {
+      @apply flex;
+    }
+  }
+
+  .rotate-overlay__phone {
+    @apply block h-16 w-9 rounded-lg border-4 border-asf-gold
+           [animation:rotate-overlay-turn_1.6s_ease-in-out_infinite]
+           motion-reduce:animate-none;
+  }
+
+  .rotate-overlay__title {
+    @apply font-arcade text-[14px] text-asf-cream;
+  }
+
+  .rotate-overlay__copy {
+    @apply text-sm text-asf-muted;
+  }
+}
+
+@keyframes rotate-overlay-turn {
+  0%,
+  20% {
+    transform: rotate(0deg);
+  }
+  60%,
+  100% {
+    transform: rotate(90deg);
+  }
 }
