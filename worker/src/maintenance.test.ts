@@ -44,8 +44,11 @@ describe('operational data retention', () => {
       sql.includes('FROM provider_cost_events cost_event')
     ));
     const jobPurgeIndex = statements.findIndex((sql) => sql.startsWith('DELETE FROM generation_jobs'));
+    const jobPurge = statements[jobPurgeIndex];
     expect(reconciliationQueryIndex).toBeGreaterThanOrEqual(0);
     expect(reconciliationQueryIndex).toBeLessThan(jobPurgeIndex);
+    expect(jobPurge).toContain('FROM video_sprite_candidates candidate');
+    expect(jobPurge).toContain('candidate.job_id = generation_jobs.id');
     expect(combined).not.toContain('fighters');
     expect(combined).not.toContain('sprites');
     expect(combined).not.toContain('credit_ledger');
