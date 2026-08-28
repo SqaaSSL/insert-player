@@ -2725,7 +2725,18 @@
   }
 
   .rotate-overlay__copy {
-    @apply text-sm text-asf-muted;
+    @apply max-w-72 text-sm text-asf-muted;
+  }
+
+  .rotate-overlay--tap {
+    @apply cursor-pointer appearance-none border-0;
+  }
+
+  .rotate-overlay--tap .rotate-overlay__title {
+    @apply rounded-lg border-2 border-asf-gold px-5 py-3
+           shadow-[0_0_18px_rgba(255,206,58,0.45)]
+           [animation:meter-ready-pulse_1.2s_ease-in-out_infinite]
+           motion-reduce:animate-none;
   }
 }
 

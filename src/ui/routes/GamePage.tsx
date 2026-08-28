@@ -59,6 +59,9 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
     return () => {
       const orientation = screen.orientation as ScreenOrientation & { unlock?: () => void };
       try { orientation?.unlock?.(); } catch { /* best effort */ }
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
     };
   }, []);
 
