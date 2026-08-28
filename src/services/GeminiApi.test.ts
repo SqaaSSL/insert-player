@@ -7,6 +7,7 @@ import {
   geminiOfficialCorrectionUsesCanonicalPoseGuide,
   geminiOfficialRefinePrompt,
   geminiOfficialReviewCorrection,
+  geminiRefinedFrameSizeValidation,
   geminiOfficialSpriteReviewPrompt,
   geminiOfficialSpritePrompt,
   geminiSpriteSequenceEndNote,
@@ -15,6 +16,35 @@ import {
 } from './GeminiApi';
 
 describe('Gemini content-block handling', () => {
+  it('allows only a narrow second-attempt size recovery for low attacks', () => {
+    const baseHeightRatio = 0.6884765625;
+    const refinedHeightRatio = 0.906276150627615;
+
+    expect(geminiRefinedFrameSizeValidation(
+      'low_kick',
+      baseHeightRatio,
+      refinedHeightRatio,
+    ).ok).toBe(false);
+    expect(geminiRefinedFrameSizeValidation(
+      'low_kick',
+      baseHeightRatio,
+      refinedHeightRatio,
+      true,
+    )).toMatchObject({ ok: true, maxRatio: 1.35 });
+    expect(geminiRefinedFrameSizeValidation(
+      'high_kick',
+      baseHeightRatio,
+      refinedHeightRatio,
+      true,
+    )).toMatchObject({ ok: false, maxRatio: 1.3 });
+    expect(geminiRefinedFrameSizeValidation(
+      'low_kick',
+      baseHeightRatio,
+      baseHeightRatio * 1.36,
+      true,
+    ).ok).toBe(false);
+  });
+
   it('classifies HTTP-200 responses that contain only a prompt block', () => {
     expect(geminiContentBlockReason({
       promptFeedback: { blockReason: 'OTHER' },

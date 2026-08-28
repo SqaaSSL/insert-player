@@ -1661,6 +1661,27 @@ async function singleRefineAttempt(
 
 const REFINE_SIZE_MIN_RATIO = 0.75;
 const REFINE_SIZE_MAX_RATIO = 1.3;
+const LOW_ATTACK_RECOVERY_SIZE_MAX_RATIO = 1.35;
+
+export function geminiRefinedFrameSizeValidation(
+  animName: string,
+  baseHeightRatio: number,
+  refinedHeightRatio: number,
+  recoveryAttempt = false,
+): { ok: boolean; ratio: number; minRatio: number; maxRatio: number } {
+  const maxRatio = recoveryAttempt && (animName === 'low_punch' || animName === 'low_kick')
+    ? LOW_ATTACK_RECOVERY_SIZE_MAX_RATIO
+    : REFINE_SIZE_MAX_RATIO;
+  const ratio = baseHeightRatio > 0
+    ? refinedHeightRatio / baseHeightRatio
+    : Number.POSITIVE_INFINITY;
+  return {
+    ok: ratio >= REFINE_SIZE_MIN_RATIO && ratio <= maxRatio,
+    ratio,
+    minRatio: REFINE_SIZE_MIN_RATIO,
+    maxRatio,
+  };
+}
 
 async function refineSheetCell(
   characterBase64: string,
@@ -1677,7 +1698,10 @@ async function refineSheetCell(
   const start = Date.now();
   const baseBounds = await measureGreenBackedCharacterBounds(cellBase64);
 
-  const validateSize = async (candidate: string): Promise<{ ok: boolean; reason: string }> => {
+  const validateSize = async (
+    candidate: string,
+    recoveryAttempt = false,
+  ): Promise<{ ok: boolean; reason: string }> => {
     if (!baseBounds) return { ok: true, reason: 'no base bounds to compare against' };
     const bounds = await measureGreenBackedCharacterBounds(candidate);
     if (!bounds) return { ok: false, reason: 'could not measure refined bounds' };
@@ -1685,14 +1709,21 @@ async function refineSheetCell(
     // height. The base sheet cell is ~256px tall and the refined output is
     // ~1024px tall — pixel ratios are meaningless. What matters is that the
     // character fills a similar fraction of the cell in both.
-    const ratio = bounds.heightRatio / baseBounds.heightRatio;
-    if (ratio < REFINE_SIZE_MIN_RATIO || ratio > REFINE_SIZE_MAX_RATIO) {
+    const validation = geminiRefinedFrameSizeValidation(
+      animName,
+      baseBounds.heightRatio,
+      bounds.heightRatio,
+      recoveryAttempt,
+    );
+    if (!validation.ok) {
       return {
         ok: false,
-        reason: `size drift ratio=${ratio.toFixed(2)} base=${baseBounds.heightRatio.toFixed(2)} refined=${bounds.heightRatio.toFixed(2)}`,
+        reason: `size drift ratio=${validation.ratio.toFixed(2)} ` +
+          `allowed=${validation.minRatio.toFixed(2)}-${validation.maxRatio.toFixed(2)} ` +
+          `base=${baseBounds.heightRatio.toFixed(2)} refined=${bounds.heightRatio.toFixed(2)}`,
       };
     }
-    return { ok: true, reason: `ratio=${ratio.toFixed(2)}` };
+    return { ok: true, reason: `ratio=${validation.ratio.toFixed(2)}` };
   };
 
   // Attempt 1 — standard prompt
@@ -1744,7 +1775,7 @@ async function refineSheetCell(
     stricterOfficialCorrection,
   );
   if (second) {
-    const check = await validateSize(second);
+    const check = await validateSize(second, true);
     if (check.ok) {
       publishDebugLog(
         `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total}: recovered on attempt 2 in ${((Date.now() - start) / 1000).toFixed(1)}s (${check.reason})`,
