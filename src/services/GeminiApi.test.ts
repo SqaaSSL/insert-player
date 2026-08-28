@@ -6,6 +6,7 @@ import {
   geminiFinishReasonBlockReason,
   geminiOfficialCorrectionUsesCanonicalPoseGuide,
   geminiOfficialFrameFramingValidation,
+  geminiOfficialFramingRecoveryPrompt,
   geminiOfficialRefinePrompt,
   geminiOfficialReviewCorrection,
   geminiRefinedFrameSizeValidation,
@@ -44,6 +45,24 @@ describe('Gemini content-block handling', () => {
       imageW: 896,
       imageH: 1152,
     })).toEqual({ ok: false, croppedEdges: ['right', 'top', 'bottom'] });
+  });
+
+  it('shows framing recovery the rejected render without weakening pose or identity anchors', () => {
+    const prompt = geminiOfficialFramingRecoveryPrompt(
+      'Original fighter in a black leather jacket.',
+      'low_kick',
+      'low sweeping kick',
+      3,
+      4,
+      ['left'],
+    );
+
+    expect(prompt).toContain('IMAGE 1 is the canonical identity');
+    expect(prompt).toContain('IMAGE 2 is the exact pose');
+    expect(prompt).toContain('IMAGE 3 is the previous rejected render');
+    expect(prompt).toContain('Do not return IMAGE 3 unchanged');
+    expect(prompt).toContain('at least 2% of the canvas width at the left edge');
+    expect(prompt).toContain('Keep IMAGE 2\'s exact pose and floor line');
   });
 
   it('allows only a narrow second-attempt size recovery for low attacks', () => {

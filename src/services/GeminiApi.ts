@@ -1813,6 +1813,96 @@ async function refineSheetCell(
   return cellBase64;
 }
 
+export function geminiOfficialFramingRecoveryPrompt(
+  description: string,
+  animName: string,
+  motion: string,
+  frameIndex: number,
+  total: number,
+  croppedEdges: OfficialFrameEdge[],
+): string {
+  const edgeLabel = croppedEdges.join(' and ');
+  return [
+    geminiOfficialRefinePrompt(
+      description,
+      animName,
+      motion,
+      frameIndex,
+      total,
+      `The previous render touched the ${edgeLabel} image edge and cropped the fighter. Reconstruct the missing contour and keep the complete body inside the canvas.`,
+    ),
+    ``,
+    `FRAMING RECOVERY INPUT (CRITICAL):`,
+    `- IMAGE 3 is the previous rejected render. It is supplied only so you can see the exact edge crop and preserve its otherwise approved face, outfit, materials, pose, and rendering quality.`,
+    `- Do not return IMAGE 3 unchanged. Reconstruct any anatomy or clothing lost beyond the ${edgeLabel} edge using IMAGE 1 and IMAGE 2, then move the entire unchanged fighter inward.`,
+    `- Keep IMAGE 2's exact pose and floor line. Use a slightly wider camera only if translation alone cannot create clearance.`,
+    `- Leave a clearly visible pure-green buffer on all four sides, including at least 2% of the canvas width at the ${edgeLabel} edge.`,
+    `- Return one corrected full-body frame only. Do not add, remove, or redesign any body part, clothing detail, prop, shadow, or scenery.`,
+  ].join('\n');
+}
+
+async function recoverOfficialFrameFraming(
+  characterBase64: string,
+  poseGuideBase64: string,
+  rejectedFrameBase64: string,
+  animName: string,
+  motion: string,
+  model: string,
+  frameIndex: number,
+  total: number,
+  description: string,
+  croppedEdges: OfficialFrameEdge[],
+  context?: ApiRequestContext,
+): Promise<string> {
+  const prompt = geminiOfficialFramingRecoveryPrompt(
+    description,
+    animName,
+    motion,
+    frameIndex,
+    total,
+    croppedEdges,
+  );
+  const result = await callGemini(
+    prompt,
+    characterBase64,
+    'image/png',
+    [
+      { data: poseGuideBase64, mime: 'image/png' },
+      { data: rejectedFrameBase64, mime: 'image/png' },
+    ],
+    model,
+    context,
+  );
+  if (!result.imageBase64) {
+    throw new GeminiOfficialSpriteQualityError(
+      `Gemini official ${animName} frame ${frameIndex + 1}/${total} framing recovery returned no image`,
+    );
+  }
+
+  const [guideBounds, recoveredBounds] = await Promise.all([
+    measureGreenBackedCharacterBounds(poseGuideBase64),
+    measureGreenBackedCharacterBounds(result.imageBase64),
+  ]);
+  if (!guideBounds || !recoveredBounds) {
+    throw new GeminiOfficialSpriteQualityError(
+      `Gemini official ${animName} frame ${frameIndex + 1}/${total} framing recovery could not be measured`,
+    );
+  }
+  const sizeValidation = geminiRefinedFrameSizeValidation(
+    animName,
+    guideBounds.heightRatio,
+    recoveredBounds.heightRatio,
+    true,
+  );
+  if (!sizeValidation.ok) {
+    throw new GeminiOfficialSpriteQualityError(
+      `Gemini official ${animName} frame ${frameIndex + 1}/${total} framing recovery changed scale ` +
+      `(ratio ${sizeValidation.ratio.toFixed(2)}, allowed ${sizeValidation.minRatio.toFixed(2)}-${sizeValidation.maxRatio.toFixed(2)})`,
+    );
+  }
+  return result.imageBase64;
+}
+
 const OFFICIAL_REVIEW_CORRECTIONS: Record<GeminiOfficialSpriteReviewIssue, string> = {
   anatomy: 'Restore plausible adult anatomy with exactly two correctly attached arms, hands, legs, and feet.',
   complete_body: 'Render the complete head-to-toe body with green margin around every extremity.',
@@ -2177,20 +2267,18 @@ export async function geminiSheetRefined(
         ).join(', ')}`,
       );
       for (const { frameIndex, croppedEdges } of framingRecovery) {
-        const edgeCorrection =
-          `${OFFICIAL_REVIEW_CORRECTIONS.complete_body} The previous render touched the ${croppedEdges.join(' and ')} ` +
-          `image edge. Recenter the unchanged pose with visible pure-green clearance on all four sides.`;
-        refinedCells[frameIndex] = await refineSheetCell(
+        refinedCells[frameIndex] = await recoverOfficialFrameFraming(
           characterBase64,
           sheetCells[frameIndex],
+          refinedCells[frameIndex],
           animName,
-          refinePrompt,
+          motion,
           renderModel,
           frameIndex,
           sheetCells.length,
-          context,
           official,
-          edgeCorrection,
+          croppedEdges,
+          context,
         );
 
         const recoveredBounds = await measureGreenBackedCharacterBounds(refinedCells[frameIndex]);
