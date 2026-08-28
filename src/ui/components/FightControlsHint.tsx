@@ -8,7 +8,13 @@ interface KeyDef {
 }
 
 const MOVE_ROWS: KeyDef[][] = [
-  [{ label: 'Q' }, { label: 'W', caption: 'JUMP' }, { label: 'E' }, { label: 'R' }],
+  [
+    { label: 'Q' },
+    { label: 'W', caption: 'JUMP' },
+    { label: 'E' },
+    { label: 'R' },
+    { label: 'T' },
+  ],
   [
     { label: 'A', caption: 'MOVE' },
     { label: 'S', caption: 'CROUCH' },
@@ -20,11 +26,14 @@ const MOVE_ROWS: KeyDef[][] = [
 
 const ATTACK_ROWS: KeyDef[][] = [
   [
+    { label: 'Y' },
     { label: 'U', caption: 'PUNCH' },
     { label: 'I', caption: 'FIREBALL' },
     { label: 'O' },
+    { label: 'P' },
   ],
   [
+    { label: 'H' },
     { label: 'J', caption: 'KICK' },
     { label: 'K', caption: 'UPPERCUT' },
     { label: 'L' },
@@ -44,7 +53,7 @@ function Cluster({ rows, label }: { rows: KeyDef[][]; label: string }) {
   return (
     <div className="fight-keys__cluster" role="group" aria-label={label}>
       {rows.map((row, index) => (
-        <div className="fight-keys__row" key={index}>
+        <div className={`fight-keys__row${index > 0 ? ' fight-keys__row--home' : ''}`} key={index}>
           {row.map((def) => (
             <Key key={def.label} def={def} />
           ))}

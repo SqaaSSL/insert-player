@@ -2600,11 +2600,15 @@
   }
 
   .fight-keys__cluster {
-    @apply flex flex-col items-center gap-1.5;
+    @apply flex flex-col items-start gap-1.5;
   }
 
   .fight-keys__row {
-    @apply flex justify-center gap-2;
+    @apply flex justify-start gap-2;
+  }
+
+  .fight-keys__row--home {
+    @apply ml-3.5;
   }
 
   .fight-keys__key {
