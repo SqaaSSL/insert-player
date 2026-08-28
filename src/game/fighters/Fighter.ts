@@ -55,6 +55,12 @@ export class Fighter {
   comboCount = 0;
   stunFrames = 0;
   crouchBlocking = false;
+  // Attack-button buffer: presses landing during recovery/stun are kept for a
+  // few frames and fire on the first actionable frame (classic leniency).
+  private bufferedPunch = 0;
+  private bufferedKick = 0;
+  private bufferedFireball = 0;
+  private bufferedUppercut = 0;
 
   readonly playerIndex: number;
   readonly name: string;
@@ -254,6 +260,19 @@ export class Fighter {
 
     this.stateFrame++;
 
+    // Capture attack presses while locked; decay the buffer each frame.
+    const BUFFER_FRAMES = 7;
+    if (!this.isActionable()) {
+      if (input.punch) this.bufferedPunch = BUFFER_FRAMES;
+      if (input.kick) this.bufferedKick = BUFFER_FRAMES;
+      if (input.fireball) this.bufferedFireball = BUFFER_FRAMES;
+      if (input.uppercut) this.bufferedUppercut = BUFFER_FRAMES;
+    }
+    if (this.bufferedPunch > 0) this.bufferedPunch--;
+    if (this.bufferedKick > 0) this.bufferedKick--;
+    if (this.bufferedFireball > 0) this.bufferedFireball--;
+    if (this.bufferedUppercut > 0) this.bufferedUppercut--;
+
     if (this.state === FighterState.VICTORY || this.state === FighterState.DEFEAT) {
       return;
     }
@@ -278,6 +297,34 @@ export class Fighter {
     if (this.isInAttack()) {
       const atk = this.getAttackData()!;
       const totalFrames = atk.startup + atk.active + atk.recovery;
+
+      // Special cancel: a normal that CONNECTED (hit or block) can cancel
+      // into a special from its active frames through half its recovery —
+      // the classic SF2 chain that makes punch->fireball a real combo.
+      const isNormal =
+        this.state === FighterState.HIGH_PUNCH ||
+        this.state === FighterState.LOW_PUNCH ||
+        this.state === FighterState.HIGH_KICK ||
+        this.state === FighterState.LOW_KICK;
+      const cancelWindowEnd = atk.startup + atk.active + Math.floor(atk.recovery / 2);
+      if (isNormal && this.attackHit && this.stateFrame <= cancelWindowEnd) {
+        this.motionInputs.feedInput(input, this.facingRight);
+        const motion = this.motionInputs.checkMotion();
+        if (input.uppercut || (motion === 'dp' && input.punch)) {
+          this.setState(FighterState.UPPERCUT);
+          this.vx = 0;
+          this.vy = -500;
+          this.applyPhysics(dt);
+          return;
+        }
+        if (input.fireball || (motion === 'qcf' && input.punch)) {
+          this.setState(FighterState.FIREBALL);
+          this.vx = 0;
+          this.applyPhysics(dt);
+          return;
+        }
+      }
+
       if (this.stateFrame >= totalFrames) {
         this.setState(FighterState.IDLE);
         this.wasCrouching = false;
@@ -301,6 +348,21 @@ export class Fighter {
     }
 
     this.motionInputs.feedInput(input, this.facingRight);
+
+    // Replay buffered presses now that we are actionable.
+    if (this.bufferedPunch > 0 || this.bufferedKick > 0 || this.bufferedFireball > 0 || this.bufferedUppercut > 0) {
+      input = {
+        ...input,
+        punch: input.punch || this.bufferedPunch > 0,
+        kick: input.kick || this.bufferedKick > 0,
+        fireball: input.fireball || this.bufferedFireball > 0,
+        uppercut: input.uppercut || this.bufferedUppercut > 0,
+      };
+      this.bufferedPunch = 0;
+      this.bufferedKick = 0;
+      this.bufferedFireball = 0;
+      this.bufferedUppercut = 0;
+    }
 
     const isHoldingBack = this.facingRight ? input.left : input.right;
     const holdingDown = input.down;
@@ -433,6 +495,11 @@ export class Fighter {
         this.vx = (this.facingRight ? -1 : 1) * atk.pushback;
       }
     }
+  }
+
+  /** Uppercut startup is invincible — the reversal the genre expects. */
+  isInvulnerable(): boolean {
+    return this.state === FighterState.UPPERCUT && this.stateFrame < 6;
   }
 
   forceState(state: FighterState): void {

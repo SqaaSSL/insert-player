@@ -1919,11 +1919,7 @@ export class FightScene extends Phaser.Scene {
       const pHitbox = proj.getHitbox();
 
       if (this.aabbOverlap(pHitbox, hurtbox)) {
-        const isBlocking =
-          (defender.state === FighterState.WALK_BACKWARD ||
-            defender.state === FighterState.CROUCH ||
-            defender.state === FighterState.BLOCK) &&
-          defender.isGrounded();
+        const isBlocking = this.combat.isBlockingProjectile(defender);
 
         const fakeAtk = {
           damage: proj.damage,
@@ -1936,6 +1932,7 @@ export class FightScene extends Phaser.Scene {
           hitbox: { x: 0, y: 0, width: 0, height: 0 },
         };
 
+        if (defender.isInvulnerable()) continue;
         defender.takeDamage(fakeAtk, isBlocking);
 
         this.hitSparks.emitParticleAt(
@@ -2012,13 +2009,34 @@ export class FightScene extends Phaser.Scene {
       this.hitstopFrames = Math.max(this.hitstopFrames, 3);
       this.cameras.main.shake(50, 0.0015);
     } else if (event.damage > 50) {
-      this.hitstopFrames = Math.max(this.hitstopFrames, 10);
+      this.hitstopFrames = Math.max(this.hitstopFrames, event.counter ? 12 : 10);
       this.cameras.main.shake(120, 0.006);
       ScreenEffects.flashRed(this, 150);
     } else {
-      this.hitstopFrames = Math.max(this.hitstopFrames, 6);
+      this.hitstopFrames = Math.max(this.hitstopFrames, event.counter ? 8 : 6);
       this.cameras.main.shake(80, 0.003);
       ScreenEffects.flashWhite(this, 60);
+    }
+
+    if (event.counter && !event.blocked) {
+      const counterText = this.add
+        .text(defender.x, defender.getRenderY() - 190, 'COUNTER!', {
+          fontFamily: '"Press Start 2P", monospace',
+          fontSize: '14px',
+          color: '#ffdd33',
+          stroke: '#000000',
+          strokeThickness: 4,
+        })
+        .setOrigin(0.5)
+        .setDepth(106);
+      this.tweens.add({
+        targets: counterText,
+        y: counterText.y - 40,
+        alpha: 0,
+        duration: 700,
+        ease: 'Cubic.easeOut',
+        onComplete: () => counterText.destroy(),
+      });
     }
 
     // Sparks
@@ -2075,11 +2093,22 @@ export class FightScene extends Phaser.Scene {
 
     let winner: Fighter;
     if (this.p1.health <= 0 && this.p2.health <= 0) {
+      // Double KO: both take the round; a tied match plays extra rounds
+      // until someone is ahead (sudden-death, handled by the win check).
+      this.p1Wins++;
+      this.p2Wins++;
+      this.hud.updateRoundWins(this.p1Wins, this.p2Wins);
       this.hud.showAnnouncement("DOUBLE K.O.!", 2500);
       this.hitstopFrames = 14;
       this.cameras.main.shake(250, 0.01);
       this.sound_mgr.playKO();
       this.sound_mgr.playAnnounce("ko");
+      this.p1.syncSprite(this.p2.x);
+      this.p2.syncSprite(this.p1.x);
+      return;
+    } else if (this.p1.health === this.p2.health) {
+      // Timed-out dead-even round: a draw. Nobody scores; replay the round.
+      this.hud.showAnnouncement("DRAW", 2000);
       this.p1.syncSprite(this.p2.x);
       this.p2.syncSprite(this.p1.x);
       return;
@@ -2115,7 +2144,10 @@ export class FightScene extends Phaser.Scene {
 
     this.hud.updateRoundWins(this.p1Wins, this.p2Wins);
 
-    if (this.p1Wins >= ROUNDS_TO_WIN || this.p2Wins >= ROUNDS_TO_WIN) {
+    if (
+      (this.p1Wins >= ROUNDS_TO_WIN || this.p2Wins >= ROUNDS_TO_WIN) &&
+      this.p1Wins !== this.p2Wins
+    ) {
       this.phase = RoundPhase.MATCH_END;
       this.phaseTimer = 300; // 5 seconds
       this.reportMatchComplete(winner === this.p1 ? "p1" : "p2");
