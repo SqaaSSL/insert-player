@@ -5,6 +5,7 @@ import {
   type VirtualInputAction,
 } from '../../game/systems/VirtualInput.ts';
 import { HUD_STATE_EVENT } from '../../game/match/MatchConfig.ts';
+import { VirtualJoystick } from './VirtualJoystick.tsx';
 
 interface ControlButtonProps {
   action: VirtualInputAction;
@@ -103,12 +104,7 @@ export function MobileFightControls({
 
   return (
     <div className="mobile-fight-controls" aria-label={`${playerLabel} controls`}>
-      <div className="mobile-fight-controls__dpad" role="group" aria-label="Movement">
-        <ControlButton action="up" className="is-up" label="↑" playerIndex={playerIndex} playerLabel={playerLabel} title="Jump" />
-        <ControlButton action="left" className="is-left" label="←" playerIndex={playerIndex} playerLabel={playerLabel} title="Move left" />
-        <ControlButton action="down" className="is-down" label="↓" playerIndex={playerIndex} playerLabel={playerLabel} title="Crouch" />
-        <ControlButton action="right" className="is-right" label="→" playerIndex={playerIndex} playerLabel={playerLabel} title="Move right" />
-      </div>
+      <VirtualJoystick playerIndex={playerIndex} playerLabel={playerLabel} />
       <div className="mobile-fight-controls__actions" role="group" aria-label="Attacks">
         {superReady ? (
           <ControlButton action="super" className="is-super" label="S!" playerIndex={playerIndex} playerLabel={playerLabel} title="Super fireball" />
@@ -117,6 +113,7 @@ export function MobileFightControls({
         <ControlButton action="uppercut" className="is-uppercut" label="U" playerIndex={playerIndex} playerLabel={playerLabel} title="Uppercut" />
         <ControlButton action="punch" className="is-punch" label="P" playerIndex={playerIndex} playerLabel={playerLabel} title="Punch" />
         <ControlButton action="kick" className="is-kick" label="K" playerIndex={playerIndex} playerLabel={playerLabel} title="Kick" />
+        <ControlButton action="guard" className="is-guard" label="G" playerIndex={playerIndex} playerLabel={playerLabel} title="Guard (hold)" />
       </div>
     </div>
   );

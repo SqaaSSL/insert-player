@@ -862,14 +862,54 @@
            font-sans text-[14px] normal-case leading-[1.55] text-asf-cream shadow-[0_8px_0_rgba(0,0,0,0.72)];
   }
 
-  .mobile-fight-controls__dpad {
-    @apply pointer-events-auto grid touch-none grid-cols-[52px_52px_52px] grid-rows-[52px_52px]
-           gap-1;
+  .virtual-joystick {
+    @apply pointer-events-auto relative flex h-[132px] w-[132px] touch-none items-center
+           justify-center rounded-full border-2 border-[rgba(255,206,58,0.5)]
+           bg-[rgba(5,5,7,0.55)] [backdrop-filter:blur(5px)]
+           shadow-[inset_0_4px_12px_rgba(0,0,0,0.65)];
+  }
+
+  .virtual-joystick__knob {
+    @apply block h-14 w-14 rounded-full border-2 border-asf-gold
+           bg-[rgba(106,10,10,0.9)] shadow-[0_4px_0_rgba(0,0,0,0.7)]
+           transition-transform duration-75 motion-reduce:transition-none;
+  }
+
+  .virtual-joystick__knob.is-n {
+    @apply -translate-y-7;
+  }
+
+  .virtual-joystick__knob.is-s {
+    @apply translate-y-7;
+  }
+
+  .virtual-joystick__knob.is-e {
+    @apply translate-x-7;
+  }
+
+  .virtual-joystick__knob.is-w {
+    @apply -translate-x-7;
+  }
+
+  .virtual-joystick__knob.is-ne {
+    @apply -translate-y-5 translate-x-5;
+  }
+
+  .virtual-joystick__knob.is-nw {
+    @apply -translate-x-5 -translate-y-5;
+  }
+
+  .virtual-joystick__knob.is-se {
+    @apply translate-x-5 translate-y-5;
+  }
+
+  .virtual-joystick__knob.is-sw {
+    @apply -translate-x-5 translate-y-5;
   }
 
   .mobile-fight-controls__actions {
-    @apply pointer-events-auto grid touch-none grid-cols-[54px_54px] grid-rows-[54px_54px]
-           gap-2 [transform:rotate(-8deg)];
+    @apply pointer-events-auto grid touch-none grid-cols-[54px_54px]
+           grid-rows-[54px_54px_54px] gap-2 [transform:rotate(-8deg)];
   }
 
   .mobile-fight-control {
@@ -880,22 +920,6 @@
            transition-[transform,background-color,border-color] duration-100
            active:translate-y-[3px] active:border-asf-gold-bright active:bg-asf-red-dark
            active:shadow-[0_2px_0_rgba(0,0,0,0.72)];
-  }
-
-  .mobile-fight-control.is-up {
-    @apply col-start-2 row-start-1;
-  }
-
-  .mobile-fight-control.is-left {
-    @apply col-start-1 row-start-2;
-  }
-
-  .mobile-fight-control.is-down {
-    @apply col-start-2 row-start-2;
-  }
-
-  .mobile-fight-control.is-right {
-    @apply col-start-3 row-start-2;
   }
 
   .mobile-fight-controls__actions .mobile-fight-control {
@@ -910,6 +934,11 @@
   .mobile-fight-control.is-fireball,
   .mobile-fight-control.is-uppercut {
     @apply border-asf-violet bg-[rgba(48,24,96,0.86)];
+  }
+
+  .mobile-fight-control.is-guard {
+    @apply col-span-2 w-full border-asf-blue bg-[rgba(10,30,66,0.88)] text-asf-blue
+           [text-shadow:0_2px_0_rgba(0,0,0,0.8)];
   }
 
   .mobile-fight-control.is-super {
