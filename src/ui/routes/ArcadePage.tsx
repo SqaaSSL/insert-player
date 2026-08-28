@@ -15,8 +15,6 @@ import { ensurePlayableSpritesUpToDate } from '../../services/CharacterPipeline.
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import {
-  FIGHTER_PERSONALITIES,
-  type FighterPersonalityId,
   type MatchSceneData,
   getDefaultPersonalityId,
 } from '../../game/match/MatchConfig.ts';
@@ -99,7 +97,6 @@ export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState('Loading the arcade...');
   const [playerKey, setPlayerKey] = useState<string | null>(null);
-  const [personalityId, setPersonalityId] = useState<FighterPersonalityId>(getDefaultPersonalityId(0));
   const [starting, setStarting] = useState(false);
   const [existingRun, setExistingRun] = useState<ArcadeRunState | null>(null);
 
@@ -166,7 +163,9 @@ export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter
           photoHash: player.photoHash,
           cloudFighterId: player.cloudFighterId,
           name: player.name,
-          personalityId,
+          // You drive your own fighter in the ladder; the personality field
+          // only matters for CPU-controlled slots.
+          personalityId: getDefaultPersonalityId(0),
         },
         officials.map(rungFromCloudFighter),
         ownerScope,
@@ -263,21 +262,6 @@ export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter
                     selected={player?.key === entry.key}
                     onSelect={() => setPlayerKey(entry.key)}
                   />
-                ))}
-              </div>
-              <h2>Fighting Style</h2>
-              <div className="roster-personality" role="group" aria-label="Your fighting style">
-                {FIGHTER_PERSONALITIES.map((personality) => (
-                  <button
-                    type="button"
-                    key={personality.id}
-                    className={`gallery-chip${personalityId === personality.id ? ' is-active' : ''}`}
-                    aria-pressed={personalityId === personality.id}
-                    onClick={() => setPersonalityId(personality.id)}
-                  >
-                    <span>{personality.label}</span>
-                    <small>{personality.blurb}</small>
-                  </button>
                 ))}
               </div>
               <button
