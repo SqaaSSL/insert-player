@@ -35,6 +35,9 @@ import {
 
 const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
 const AUTHORIZATION_TTL_HOURS = 12;
+const VIDEO_SPRITE_PREFLIGHT_CONTAINER_NAME =
+  `official-arcade-${OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.processorRuntimeRevision}`
+  + `-video-v${VIDEO_SPRITE_PROCESSING_VERSION}`;
 const PLAYABLE_ANIMATION_NAMES = [
   'idle',
   'walk',
@@ -180,7 +183,9 @@ export async function readAdminArcadeGenerationContract(
   }
 
   try {
-    const processor = env.IMAGE_PROCESSOR.getByName('official-arcade-provider-contract-v1');
+    // Version the singleton name so a deploy probes a fresh Container instead of
+    // keeping an incompatible sleeping-policy predecessor alive with health polls.
+    const processor = env.IMAGE_PROCESSOR.getByName(VIDEO_SPRITE_PREFLIGHT_CONTAINER_NAME);
     const response = await processor.fetch(new Request('http://image-processor/health'));
     if (!response.ok) {
       return json({
