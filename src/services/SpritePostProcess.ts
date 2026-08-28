@@ -11,7 +11,11 @@ import { getAnimationProfile, type AnimationProfile } from './AnimationProfiles'
 import { debugInfo, publishDebugLog } from './DebugLog';
 import { decontaminateGreenEdges } from './AlphaMask';
 import { expandMirroredSequence } from './FrameSequence';
-import { inferSpriteGridFromSubjects, type SubjectBox } from './SpriteGrid';
+import {
+  inferSpriteGridFromSubjects,
+  selectPlausibleSpriteSubjects,
+  type SubjectBox,
+} from './SpriteGrid';
 
 const ALPHA_THRESHOLD = 15;
 // CELL_W/CELL_H is the per-frame resolution stored in the IndexedDB sprite
@@ -31,6 +35,7 @@ const GREEN_BRIGHT_MIN = 30;
 interface ReliableFrameConfig {
   minFrames: number;
   maxFrames: number;
+  extractSubjectsOnGridMismatch?: boolean;
   allowBestEffortFill?: boolean;
   referenceMode?: 'median' | 'upper-percentile';
   minAreaRatio?: number;
@@ -66,6 +71,30 @@ const CRITICAL_ANIMATION_CONFIG: Partial<Record<string, ReliableFrameConfig>> = 
   },
   jump: { minFrames: 3, maxFrames: 4 },
   hit: { minFrames: 2, maxFrames: 4 },
+  high_punch: {
+    minFrames: 4,
+    maxFrames: 4,
+    extractSubjectsOnGridMismatch: true,
+    allowBestEffortFill: false,
+    referenceMode: 'upper-percentile',
+    minAreaRatio: 0.25,
+    minHeightRatio: 0.75,
+    minWidthRatio: 0.2,
+    minVerticalFill: 0.68,
+    edgeMargin: 3,
+  },
+  high_kick: {
+    minFrames: 4,
+    maxFrames: 4,
+    extractSubjectsOnGridMismatch: true,
+    allowBestEffortFill: false,
+    referenceMode: 'upper-percentile',
+    minAreaRatio: 0.25,
+    minHeightRatio: 0.75,
+    minWidthRatio: 0.2,
+    minVerticalFill: 0.68,
+    edgeMargin: 3,
+  },
   low_punch: { minFrames: 3, maxFrames: 4 },
   low_kick: { minFrames: 3, maxFrames: 4 },
   ko: {
@@ -408,6 +437,87 @@ function inferSpriteGrid(
   );
 }
 
+function orderSubjectsByReadingPosition(subjects: SubjectBox[]): SubjectBox[] {
+  if (subjects.length <= 1) return subjects.slice();
+
+  const rowThreshold = Math.max(8, median(subjects.map((subject) => subject.h)) * 0.45);
+  const rows: Array<{ centerY: number; subjects: SubjectBox[] }> = [];
+  const sorted = subjects.slice().sort((a, b) =>
+    (a.y + a.h / 2) - (b.y + b.h / 2),
+  );
+
+  for (const subject of sorted) {
+    const centerY = subject.y + subject.h / 2;
+    const row = rows.find((candidate) => Math.abs(candidate.centerY - centerY) <= rowThreshold);
+    if (!row) {
+      rows.push({ centerY, subjects: [subject] });
+      continue;
+    }
+    row.subjects.push(subject);
+    row.centerY = row.subjects.reduce(
+      (sum, entry) => sum + entry.y + entry.h / 2,
+      0,
+    ) / row.subjects.length;
+  }
+
+  return rows
+    .sort((a, b) => a.centerY - b.centerY)
+    .flatMap((row) => row.subjects.sort((a, b) => a.x + a.w / 2 - (b.x + b.w / 2)));
+}
+
+function extractSubjectFrames(
+  img: HTMLImageElement,
+  bgIsGreen: boolean,
+  expectedFrameCount: number,
+): { frames: HTMLCanvasElement[]; frameW: number; frameH: number; subjectCount: number } | null {
+  const source = document.createElement('canvas');
+  source.width = img.width;
+  source.height = img.height;
+  const sourceContext = source.getContext('2d')!;
+  sourceContext.drawImage(img, 0, 0);
+  const data = sourceContext.getImageData(0, 0, source.width, source.height);
+  if (bgIsGreen) {
+    chromaKeyRemove(data);
+  } else {
+    lightBgRemove(data);
+  }
+  erodeAlphaEdge(data);
+  sourceContext.putImageData(data, 0, 0);
+
+  const subjects = orderSubjectsByReadingPosition(selectPlausibleSpriteSubjects(
+    img.width,
+    img.height,
+    findOpaqueSubjectBoxes(data),
+  ));
+  if (subjects.length < expectedFrameCount) return null;
+
+  const padding = 8;
+  const frameW = Math.max(...subjects.map((subject) => subject.w)) + padding * 2;
+  const frameH = Math.max(...subjects.map((subject) => subject.h)) + padding * 2;
+  const frames = subjects.map((subject) => {
+    const frame = document.createElement('canvas');
+    frame.width = frameW;
+    frame.height = frameH;
+    const context = frame.getContext('2d')!;
+    const x = Math.round((frameW - subject.w) / 2);
+    const y = frameH - padding - subject.h;
+    context.drawImage(
+      source,
+      subject.x,
+      subject.y,
+      subject.w,
+      subject.h,
+      x,
+      y,
+      subject.w,
+      subject.h,
+    );
+    return frame;
+  });
+
+  return { frames, frameW, frameH, subjectCount: subjects.length };
+}
+
 export async function cleanSpriteSheet(
   base64: string,
   expectedFrameCount: number,
@@ -425,6 +535,7 @@ export async function cleanSpriteSheet(
   const inferredGrid = inferSpriteGrid(img, bgIsGreen, expectedFrameCount);
   const gridCols = inferredGrid?.cols ?? expectedGridCols;
   const gridRows = inferredGrid?.rows ?? expectedGridRows;
+  const criticalConfig = CRITICAL_ANIMATION_CONFIG[animationName];
   if (gridCols !== expectedGridCols || gridRows !== expectedGridRows) {
     debugInfo(
       `[SpritePostProcess] Inferred ${gridCols}x${gridRows} grid from ${inferredGrid?.subjectCount ?? 0} subjects; ` +
@@ -434,10 +545,23 @@ export async function cleanSpriteSheet(
     debugInfo(`[SpritePostProcess] Using ${gridCols}x${gridRows} grid (${expectedFrameCount} requested frames)`);
   }
 
-  const srcFrameW = Math.round(img.width / gridCols);
-  const srcFrameH = Math.round(img.height / gridRows);
-
-  const rawFrames = sliceImageIntoGrid(img, gridCols, gridRows);
+  let srcFrameW = Math.round(img.width / gridCols);
+  let srcFrameH = Math.round(img.height / gridRows);
+  let rawFrames: HTMLCanvasElement[];
+  const gridMismatched = gridCols !== expectedGridCols || gridRows !== expectedGridRows;
+  const extracted = criticalConfig?.extractSubjectsOnGridMismatch && gridMismatched
+    ? extractSubjectFrames(img, bgIsGreen, expectedFrameCount)
+    : null;
+  if (extracted) {
+    rawFrames = extracted.frames;
+    srcFrameW = extracted.frameW;
+    srcFrameH = extracted.frameH;
+    debugInfo(
+      `[SpritePostProcess] ${animationName}: extracted ${extracted.subjectCount} complete subject candidates from malformed grid`,
+    );
+  } else {
+    rawFrames = sliceImageIntoGrid(img, gridCols, gridRows);
+  }
 
   for (const frame of rawFrames) {
     const ctx = frame.getContext('2d')!;
@@ -467,7 +591,6 @@ export async function cleanSpriteSheet(
 
   let workingFrames = rawFrames;
   let frameBBoxes = rawFrames.map((frame) => getCanvasBoundingBox(frame));
-  const criticalConfig = CRITICAL_ANIMATION_CONFIG[animationName];
   if (criticalConfig) {
     const filtered = filterCriticalAnimationFrames(
       workingFrames,

@@ -65,4 +65,60 @@ describe('critical sprite frame validation', () => {
 
     expect(result.frameCount).toBe(6);
   });
+
+  it('rejects detached high-kick fragments from a malformed oversized grid', async () => {
+    const sheet = syntheticSheet(4, 2, (context, index, width, height) => {
+      context.fillStyle = '#9e2638';
+      if (index < 4) {
+        context.fillRect(30, 14, 58, 136);
+      } else if (index < 7) {
+        context.save();
+        context.translate(width * 0.1, height * 0.76);
+        context.rotate(-0.35);
+        context.fillRect(0, 0, width * 0.82, 26);
+        context.restore();
+      }
+    });
+
+    const result = await cleanSpriteSheet(sheet, 4, 2, 2, 'high_kick');
+
+    expect(result.frameCount).toBe(4);
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = reject;
+      image.src = `data:image/png;base64,${result.base64}`;
+    });
+    const frameWidth = image.width / result.gridCols;
+    const frameHeight = image.height / result.gridRows;
+    for (let index = 0; index < result.frameCount; index += 1) {
+      const canvas = document.createElement('canvas');
+      canvas.width = frameWidth;
+      canvas.height = frameHeight;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Test canvas is unavailable');
+      context.drawImage(
+        image,
+        (index % result.gridCols) * frameWidth,
+        Math.floor(index / result.gridCols) * frameHeight,
+        frameWidth,
+        frameHeight,
+        0,
+        0,
+        frameWidth,
+        frameHeight,
+      );
+      const pixels = context.getImageData(0, 0, frameWidth, frameHeight).data;
+      let minY = frameHeight;
+      let maxY = -1;
+      for (let y = 0; y < frameHeight; y += 1) {
+        for (let x = 0; x < frameWidth; x += 1) {
+          if (pixels[(y * frameWidth + x) * 4 + 3] <= 15) continue;
+          minY = Math.min(minY, y);
+          maxY = Math.max(maxY, y);
+        }
+      }
+      expect((maxY - minY + 1) / frameHeight).toBeGreaterThan(0.75);
+    }
+  });
 });
