@@ -24,16 +24,21 @@ import {
   FighterState,
 } from "../constants.ts";
 import { loadAiSprites } from "../sprites/AiSpriteLoader.ts";
-import { getCachedIntro, getCachedMeta, getCachedStageBackground } from "../../services/SpriteCache.ts";
+import { getCachedIntro, getCachedStageBackground } from "../../services/SpriteCache.ts";
 import {
+  ANNOUNCE_EVENT,
   buildMatchSeed,
   getDefaultPersonalityId,
   getFighterPersonality,
   getMatchLabel,
+  HUD_STATE_EVENT,
+  INTRO_STATE_EVENT,
   MATCH_ACTION_EVENT,
   MATCH_ACTIONS_VISIBILITY_EVENT,
   MATCH_COMPLETE_EVENT,
+  type AnnounceDetail,
   type FighterPersonalityId,
+  type HudStateDetail,
   type MatchAction,
   type MatchCompletionDetail,
   type MatchSceneData,
@@ -107,6 +112,7 @@ export class FightScene extends Phaser.Scene {
   private p2Difficulty: number | null = null;
   private hitstopFrames = 0;
   private uiCam: Phaser.Cameras.Scene2D.Camera | null = null;
+  private lastHudState: HudStateDetail | null = null;
   private uiObjects = new Set<Phaser.GameObjects.GameObject>();
   private latchedP1: FighterInput | null = null;
   private latchedP2: FighterInput | null = null;
@@ -121,8 +127,7 @@ export class FightScene extends Phaser.Scene {
   private introHasPlayed = false;
   private cinematicIntroActive = false;
   private introCanSkip = false;
-  private introOverlay?: Phaser.GameObjects.Container;
-  private introPortraitTextureKeys: string[] = [];
+  private introRoundNumber = 1;
   private introEvents: Phaser.Time.TimerEvent[] = [];
   private introEnterKey?: Phaser.Input.Keyboard.Key;
   private introSpaceKey?: Phaser.Input.Keyboard.Key;
@@ -253,15 +258,6 @@ export class FightScene extends Phaser.Scene {
     this.createFighters();
 
     this.hud = new HUD(this);
-    this.hud.create(
-      this.p1.name,
-      this.p2.name,
-      this.cpuVsCpu ? p1Personality.label : undefined,
-      this.isVsAI ? p2Personality.label : undefined,
-      matchLabel,
-      this.p1PhotoHash,
-      this.p2PhotoHash,
-    );
 
     this.ai = new AIController(
       new SeededRng(this.mixSeed(0x6d2b79f5)),
@@ -279,7 +275,6 @@ export class FightScene extends Phaser.Scene {
     // Split rendering into a world camera (zooms/shakes) and a UI camera
     // (HUD/overlays, never scales). Everything created up to this point is
     // world unless registered as UI; runtime spawns use markWorld/markUi.
-    for (const obj of this.hud.getUiObjects()) this.uiObjects.add(obj);
     this.uiObjects.add(crt);
     this.hud.onRuntimeObject = (obj) => this.markUi(obj);
     this.uiCam = this.cameras.add(0, 0, GAME_WIDTH, GAME_HEIGHT);
@@ -288,6 +283,7 @@ export class FightScene extends Phaser.Scene {
     this.uiCam.ignore(this.children.list.filter((obj) => !this.uiObjects.has(obj)));
 
     this.startRound();
+    this.emitHudState();
     this.showControlsHint();
     this.ready = true;
   }
@@ -1201,78 +1197,7 @@ export class FightScene extends Phaser.Scene {
       this.clearIntroEvents();
       this.introCanSkip = false;
     }
-    if (!this.introOverlay) {
-      for (const texKey of this.introPortraitTextureKeys) {
-        if (this.textures.exists(texKey)) this.textures.remove(texKey);
-      }
-      this.introPortraitTextureKeys = [];
-      return;
-    }
-
-    const overlay = this.introOverlay;
-    this.introOverlay = undefined;
-
-    const cleanup = () => {
-      overlay.destroy(true);
-      for (const texKey of this.introPortraitTextureKeys) {
-        if (this.textures.exists(texKey)) this.textures.remove(texKey);
-      }
-      this.introPortraitTextureKeys = [];
-    };
-
-    if (immediate) {
-      cleanup();
-      return;
-    }
-
-    this.tweens.add({
-      targets: overlay,
-      alpha: 0,
-      duration: 220,
-      ease: "Sine.easeInOut",
-      onComplete: cleanup,
-    });
-  }
-
-  private async renderIntroPortrait(blob: Blob, size: number): Promise<HTMLCanvasElement> {
-    const img = await this.loadBlobImage(blob);
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#081018";
-    ctx.fillRect(0, 0, size, size);
-    const inset = 8;
-    const innerSize = size - inset * 2;
-    const scale = Math.max(innerSize / img.width, innerSize / img.height);
-    const drawW = img.width * scale;
-    const drawH = img.height * scale;
-    const dx = Math.round((size - drawW) / 2);
-    const dy = Math.round((size - drawH) / 2);
-    ctx.drawImage(img, dx, dy, drawW, drawH);
-    return canvas;
-  }
-
-  private async attachIntroPortrait(
-    parent: Phaser.GameObjects.Container,
-    photoHash: string | null,
-    x: number,
-    y: number,
-    size: number,
-  ): Promise<void> {
-    if (!photoHash) return;
-    const meta = await getCachedMeta(photoHash);
-    if (!meta?.originalPhotoBlob || !this.introOverlay) return;
-    const canvas = await this.renderIntroPortrait(meta.originalPhotoBlob, size);
-    if (!this.introOverlay || parent.parentContainer !== this.introOverlay) return;
-
-    const texKey = `fight_intro_portrait_${photoHash.slice(0, 12)}_${Date.now()}`;
-    if (this.textures.exists(texKey)) this.textures.remove(texKey);
-    this.textures.addCanvas(texKey, canvas);
-    this.introPortraitTextureKeys.push(texKey);
-
-    const image = this.add.image(x, y, texKey).setDepth(162);
-    parent.add(image);
+    this.emitIntroState(false, this.introRoundNumber);
   }
 
   private getActiveIntroBlob(intro: Awaited<ReturnType<typeof getCachedIntro>>): Blob | null {
@@ -1488,59 +1413,6 @@ export class FightScene extends Phaser.Scene {
     this.playMatchIntro(roundNum);
   }
 
-  private createIntroCard(
-    x: number,
-    y: number,
-    width: number,
-    height: number,
-    align: "left" | "right",
-    name: string,
-    tag: string,
-    accent: string,
-  ): Phaser.GameObjects.Container {
-    const card = this.add.container(x, y).setDepth(161);
-    const bg = this.add.graphics();
-    bg.fillStyle(0x050811, 0.88);
-    bg.fillRoundedRect(-width / 2, -height / 2, width, height, 12);
-    bg.lineStyle(3, Phaser.Display.Color.HexStringToColor(accent).color, 0.85);
-    bg.strokeRoundedRect(-width / 2, -height / 2, width, height, 12);
-    bg.fillStyle(0xffffff, 0.08);
-    bg.fillRect(-width / 2, -height / 2, width, 34);
-    card.add(bg);
-
-    const portraitOffset = align === "left" ? -width / 2 + 62 : width / 2 - 62;
-    const portraitFrame = this.add.graphics();
-    portraitFrame.fillStyle(0x0b1020, 0.95);
-    portraitFrame.fillRoundedRect(portraitOffset - 46, -46, 92, 92, 10);
-    portraitFrame.lineStyle(2, 0xffffff, 0.4);
-    portraitFrame.strokeRoundedRect(portraitOffset - 46, -46, 92, 92, 10);
-    card.add(portraitFrame);
-
-    const textX = align === "left" ? -20 : 20;
-    const originX = align === "left" ? 0 : 1;
-    const nameText = this.add.text(textX, -34, name.toUpperCase(), {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: "13px",
-      color: "#ffffff",
-      stroke: "#000000",
-      strokeThickness: 4,
-      align,
-      wordWrap: { width: 160 },
-    }).setOrigin(originX, 0.5);
-    const tagText = this.add.text(textX, 8, tag, {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: "8px",
-      color: accent,
-      stroke: "#000000",
-      strokeThickness: 3,
-      align,
-      wordWrap: { width: 170 },
-    }).setOrigin(originX, 0.5);
-    card.add([nameText, tagText]);
-
-    return card;
-  }
-
   private finishCinematicIntro(showFightAnnouncement: boolean): void {
     this.cinematicIntroActive = false;
     this.introVideoSequenceActive = false;
@@ -1562,7 +1434,7 @@ export class FightScene extends Phaser.Scene {
     this.p2.syncSprite(this.p1.x);
 
     if (showFightAnnouncement) {
-      this.hud.showAnnouncement("FIGHT!", 800);
+      this.dispatchAnnounce({ kind: 'fight' });
       this.sound_mgr.playAnnounce("fight");
     }
 
@@ -1588,96 +1460,9 @@ export class FightScene extends Phaser.Scene {
     this.p1.forceState(FighterState.IDLE);
     this.p2.forceState(FighterState.IDLE);
 
-    const overlay = this.add.container(0, 0).setDepth(160).setAlpha(1);
-    this.markUi(overlay);
-    this.introOverlay = overlay;
+    this.introRoundNumber = roundNum;
+    this.emitIntroState(true, roundNum);
 
-    const dimmer = this.add.rectangle(
-      GAME_WIDTH / 2,
-      GAME_HEIGHT / 2,
-      GAME_WIDTH,
-      GAME_HEIGHT,
-      0x000000,
-      0.28,
-    ).setDepth(160);
-    overlay.add(dimmer);
-
-    const stageText = this.add.text(GAME_WIDTH / 2, 76, this.stageDisplayLabel, {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: "12px",
-      color: "#ffdd66",
-      stroke: "#000000",
-      strokeThickness: 4,
-      align: "center",
-    }).setOrigin(0.5).setDepth(161);
-    const matchText = this.add.text(GAME_WIDTH / 2, 102, this.matchLabel, {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: "7px",
-      color: "#b9d8ff",
-      stroke: "#000000",
-      strokeThickness: 3,
-      align: "center",
-    }).setOrigin(0.5).setDepth(161);
-    const vsText = this.add.text(GAME_WIDTH / 2, 314, "VS", {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: "30px",
-      color: "#ffffff",
-      stroke: "#000000",
-      strokeThickness: 5,
-    }).setOrigin(0.5).setDepth(162);
-    const skipText = this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 34, "ENTER / SPACE: SKIP", {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: "7px",
-      color: "#9ad6ff",
-      stroke: "#000000",
-      strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(161);
-    overlay.add([stageText, matchText, vsText, skipText]);
-
-    const leftCard = this.createIntroCard(
-      -170,
-      320,
-      260,
-      126,
-      "left",
-      this.p1Name,
-      this.p1DisplayTag || "CHALLENGER",
-      "#ff6b6b",
-    );
-    const rightCard = this.createIntroCard(
-      GAME_WIDTH + 170,
-      320,
-      260,
-      126,
-      "right",
-      this.p2Name,
-      this.p2DisplayTag || (this.isVsAI ? "CPU" : "RIVAL"),
-      "#66ccff",
-    );
-    overlay.add([leftCard, rightCard]);
-
-    void this.attachIntroPortrait(leftCard, this.p1PhotoHash, -68, 0, 84);
-    void this.attachIntroPortrait(rightCard, this.p2PhotoHash, 68, 0, 84);
-
-    this.tweens.add({
-      targets: leftCard,
-      x: 188,
-      duration: 500,
-      ease: "Cubic.easeOut",
-    });
-    this.tweens.add({
-      targets: rightCard,
-      x: GAME_WIDTH - 188,
-      duration: 500,
-      ease: "Cubic.easeOut",
-    });
-    this.tweens.add({
-      targets: [stageText, matchText, vsText],
-      alpha: { from: 0, to: 1 },
-      y: "-=10",
-      duration: 360,
-      ease: "Sine.easeOut",
-    });
     this.tweens.add({
       targets: cam,
       zoom: 1,
@@ -1690,12 +1475,12 @@ export class FightScene extends Phaser.Scene {
     });
     this.scheduleIntroEvent(760, () => {
       if (this.phase !== RoundPhase.INTRO) return;
-      this.hud.showAnnouncement(`ROUND ${roundNum}`, 1200);
+      this.dispatchAnnounce({ kind: 'round', roundNumber: roundNum });
       this.sound_mgr.playAnnounce("round");
     });
     this.scheduleIntroEvent(1750, () => {
       if (this.phase !== RoundPhase.INTRO) return;
-      this.hud.showAnnouncement("FIGHT!", 800);
+      this.dispatchAnnounce({ kind: 'fight' });
       this.sound_mgr.playAnnounce("fight");
     });
     this.scheduleIntroEvent(1900, () => {
@@ -1755,11 +1540,11 @@ export class FightScene extends Phaser.Scene {
       return;
     }
 
-    this.hud.showAnnouncement(`ROUND ${roundNum}`, 1200);
+    this.dispatchAnnounce({ kind: 'round', roundNumber: roundNum });
     this.sound_mgr.playAnnounce("round");
     this.time.delayedCall(1300, () => {
       if (this.phase === RoundPhase.INTRO) {
-        this.hud.showAnnouncement("FIGHT!", 800);
+        this.dispatchAnnounce({ kind: 'fight' });
         this.sound_mgr.playAnnounce("fight");
       }
     });
@@ -1825,7 +1610,7 @@ export class FightScene extends Phaser.Scene {
     this.p1.syncSprite(this.p2.x);
     this.p2.syncSprite(this.p1.x);
     this.updateWorldCamera(delta);
-    this.hud.update(this.p1.health, this.p2.health, this.roundTimer);
+    this.emitHudState();
   }
 
   private updateRoundEndPresentation(delta: number): void {
@@ -1944,6 +1729,63 @@ export class FightScene extends Phaser.Scene {
     const targetCenterX = 512 + (mid - 512) * 0.68;
     const desiredScrollX = targetCenterX - cam.width / 2;
     cam.scrollX += (desiredScrollX - cam.scrollX) * Math.min(1, dt * 3.2);
+  }
+
+  private dispatchAnnounce(detail: AnnounceDetail): void {
+    window.dispatchEvent(new CustomEvent(ANNOUNCE_EVENT, { detail }));
+  }
+
+  private emitHudState(): void {
+    const detail: HudStateDetail = {
+      visible: !this.cinematicIntroActive && !this.introVideoSequenceActive,
+      p1Health: Math.max(0, Math.round(this.p1.health)),
+      p2Health: Math.max(0, Math.round(this.p2.health)),
+      maxHealth: MAX_HEALTH,
+      timer: Math.max(0, Math.ceil(this.roundTimer)),
+      p1Wins: this.p1Wins,
+      p2Wins: this.p2Wins,
+      roundsToWin: ROUNDS_TO_WIN,
+      p1Name: this.p1.name,
+      p2Name: this.p2.name,
+      p1Tag: this.p1DisplayTag || null,
+      p2Tag: this.p2DisplayTag || null,
+      p1PhotoHash: this.p1PhotoHash,
+      p2PhotoHash: this.p2PhotoHash,
+      matchLabel: this.matchLabel,
+    };
+    const last = this.lastHudState;
+    if (
+      last &&
+      last.visible === detail.visible &&
+      last.p1Health === detail.p1Health &&
+      last.p2Health === detail.p2Health &&
+      last.timer === detail.timer &&
+      last.p1Wins === detail.p1Wins &&
+      last.p2Wins === detail.p2Wins &&
+      last.p1Name === detail.p1Name &&
+      last.p2Name === detail.p2Name
+    ) {
+      return;
+    }
+    this.lastHudState = detail;
+    window.dispatchEvent(new CustomEvent(HUD_STATE_EVENT, { detail }));
+  }
+
+  private emitIntroState(visible: boolean, roundNumber: number): void {
+    window.dispatchEvent(new CustomEvent(INTRO_STATE_EVENT, {
+      detail: {
+        visible,
+        p1Name: this.p1.name,
+        p2Name: this.p2.name,
+        p1Tag: this.p1DisplayTag || "CHALLENGER",
+        p2Tag: this.p2DisplayTag || (this.isVsAI ? "CPU" : "RIVAL"),
+        p1PhotoHash: this.p1PhotoHash,
+        p2PhotoHash: this.p2PhotoHash,
+        stageLabel: this.stageDisplayLabel,
+        matchLabel: this.matchLabel,
+        roundNumber,
+      },
+    }));
   }
 
   private latchHumanInputs(): void {
@@ -2251,8 +2093,8 @@ export class FightScene extends Phaser.Scene {
       // until someone is ahead (sudden-death, handled by the win check).
       this.p1Wins++;
       this.p2Wins++;
-      this.hud.updateRoundWins(this.p1Wins, this.p2Wins);
-      this.hud.showAnnouncement("DOUBLE K.O.!", 2500);
+      this.emitHudState();
+      this.dispatchAnnounce({ kind: 'double_ko' });
       this.hitstopFrames = 14;
       this.cameras.main.shake(250, 0.01);
       this.sound_mgr.playKO();
@@ -2262,7 +2104,7 @@ export class FightScene extends Phaser.Scene {
       return;
     } else if (this.p1.health === this.p2.health) {
       // Timed-out dead-even round: a draw. Nobody scores; replay the round.
-      this.hud.showAnnouncement("DRAW", 2000);
+      this.dispatchAnnounce({ kind: 'draw' });
       this.p1.syncSprite(this.p2.x);
       this.p2.syncSprite(this.p1.x);
       return;
@@ -2281,7 +2123,7 @@ export class FightScene extends Phaser.Scene {
       if (loser.state !== FighterState.KNOCKDOWN) {
         loser.forceState(FighterState.KNOCKDOWN);
       }
-      this.hud.showAnnouncement("K.O.!", 2000);
+      this.dispatchAnnounce({ kind: 'ko' });
       this.sound_mgr.playKO();
       this.sound_mgr.playAnnounce("ko");
       this.markUi(ScreenEffects.flashWhite(this, 200));
@@ -2295,7 +2137,7 @@ export class FightScene extends Phaser.Scene {
       loser.forceState(FighterState.DEFEAT);
     }
 
-    this.hud.updateRoundWins(this.p1Wins, this.p2Wins);
+    this.emitHudState();
 
     if (
       (this.p1Wins >= ROUNDS_TO_WIN || this.p2Wins >= ROUNDS_TO_WIN) &&
@@ -2305,7 +2147,7 @@ export class FightScene extends Phaser.Scene {
       this.phaseTimer = 300; // 5 seconds
       this.reportMatchComplete(winner === this.p1 ? "p1" : "p2");
       this.time.delayedCall(2200, () => {
-        this.hud.showAnnouncement(`${winner.name.toUpperCase()} WINS!`, 0);
+        this.dispatchAnnounce({ kind: 'wins', winnerName: winner.name.toUpperCase() });
         this.sound_mgr.playAnnounce("wins");
       });
     }

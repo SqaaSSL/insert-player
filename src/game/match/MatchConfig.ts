@@ -41,6 +41,9 @@ export interface MatchSceneData {
 export const MATCH_COMPLETE_EVENT = 'asf-match-complete';
 export const MATCH_ACTION_EVENT = 'asf-match-action';
 export const MATCH_ACTIONS_VISIBILITY_EVENT = 'asf-match-actions-visibility';
+export const HUD_STATE_EVENT = 'asf-hud-state';
+export const ANNOUNCE_EVENT = 'asf-announce';
+export const INTRO_STATE_EVENT = 'asf-intro';
 
 export type MatchAction = 'run_it_back' | 'remix' | 'menu';
 
@@ -64,11 +67,55 @@ export interface MatchActionsVisibilityDetail {
   visible: boolean;
 }
 
+/** Fight HUD snapshot for the React chrome; dispatched only when it changes. */
+export interface HudStateDetail {
+  visible: boolean;
+  p1Health: number;
+  p2Health: number;
+  maxHealth: number;
+  timer: number;
+  p1Wins: number;
+  p2Wins: number;
+  roundsToWin: number;
+  p1Name: string;
+  p2Name: string;
+  p1Tag: string | null;
+  p2Tag: string | null;
+  p1PhotoHash: string | null;
+  p2PhotoHash: string | null;
+  matchLabel: string;
+}
+
+export type AnnounceKind = 'round' | 'fight' | 'ko' | 'double_ko' | 'draw' | 'wins';
+
+export interface AnnounceDetail {
+  kind: AnnounceKind;
+  roundNumber?: number;
+  winnerName?: string;
+}
+
+/** Versus-screen ("cortinilla") state for the React intro overlay. */
+export interface IntroStateDetail {
+  visible: boolean;
+  p1Name: string;
+  p2Name: string;
+  p1Tag: string | null;
+  p2Tag: string | null;
+  p1PhotoHash: string | null;
+  p2PhotoHash: string | null;
+  stageLabel: string;
+  matchLabel: string;
+  roundNumber: number;
+}
+
 declare global {
   interface WindowEventMap {
     [MATCH_COMPLETE_EVENT]: CustomEvent<MatchCompletionDetail>;
     [MATCH_ACTION_EVENT]: CustomEvent<MatchActionDetail>;
     [MATCH_ACTIONS_VISIBILITY_EVENT]: CustomEvent<MatchActionsVisibilityDetail>;
+    [HUD_STATE_EVENT]: CustomEvent<HudStateDetail>;
+    [ANNOUNCE_EVENT]: CustomEvent<AnnounceDetail>;
+    [INTRO_STATE_EVENT]: CustomEvent<IntroStateDetail>;
   }
 }
 

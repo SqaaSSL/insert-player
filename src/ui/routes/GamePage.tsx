@@ -8,6 +8,9 @@ import {
   type MatchSceneData,
 } from '../../game/match/MatchConfig.ts';
 import { MobileFightControls } from '../components/MobileFightControls.tsx';
+import { FightHud } from '../components/FightHud.tsx';
+import { FightIntroOverlay } from '../components/FightIntroOverlay.tsx';
+import { FightAnnouncement } from '../components/FightAnnouncement.tsx';
 import { reportMatchCompletion } from '../../services/MatchReporting.ts';
 import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 
@@ -119,6 +122,9 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
       <div className="game-shell__surface">
         <div id="game-container" className="game-shell__canvas" />
       </div>
+      <FightHud />
+      <FightIntroOverlay />
+      <FightAnnouncement />
       {!launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
         <MobileFightControls playerIndex={0} playerLabel="player 1" />
       )}

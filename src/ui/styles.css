@@ -2231,3 +2231,352 @@
     }
   }
 }
+
+/* ============================================================
+   FIGHT CHROME KEYFRAMES (DOM-over-canvas HUD / cortinilla /
+   announcements — raw declarations allowed outside @layer)
+   ============================================================ */
+
+@keyframes fight-announce-life {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  14% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+  22% {
+    transform: scale(1);
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+@keyframes fight-intro-card-p1 {
+  from {
+    opacity: 0;
+    transform: translateX(-70%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fight-intro-card-p2 {
+  from {
+    opacity: 0;
+    transform: translateX(70%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fight-intro-vs-slam {
+  0% {
+    opacity: 0;
+    transform: scale(2.6) rotate(-6deg);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(0.9) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes fight-intro-heading-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@layer components {
+  /* ============================================================
+     FIGHT HUD (React DOM chrome above the Phaser canvas)
+     ============================================================ */
+
+  .fight-hud {
+    @apply pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between
+           gap-3 px-[max(12px,env(safe-area-inset-left))] pt-[max(10px,env(safe-area-inset-top))];
+  }
+
+  .fight-hud__side {
+    @apply flex min-w-0 flex-1 items-start gap-2;
+  }
+
+  .fight-hud__side--p2 {
+    @apply flex-row-reverse;
+  }
+
+  .fight-hud__portrait {
+    @apply h-12 w-12 shrink-0 overflow-hidden rounded-[3px] border-2 border-asf-gold-deep
+           bg-asf-well shadow-[0_3px_0_rgba(0,0,0,0.6)];
+  }
+
+  .fight-hud__portrait-img {
+    @apply h-full w-full object-cover object-top;
+  }
+
+  .fight-hud__portrait-fallback {
+    @apply flex h-full w-full items-center justify-center font-arcade text-[16px] text-asf-gold;
+  }
+
+  .fight-hud__column {
+    @apply flex min-w-0 flex-1 flex-col gap-1;
+  }
+
+  .fight-hud__identity {
+    @apply flex min-w-0 items-baseline gap-2;
+  }
+
+  .fight-hud__side--p2 .fight-hud__identity {
+    @apply flex-row-reverse;
+  }
+
+  .fight-hud__name {
+    @apply truncate font-arcade text-[12px] leading-none text-asf-cream
+           [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
+  }
+
+  .fight-hud__tag {
+    @apply truncate font-arcade text-[11px] leading-none text-asf-blue
+           [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
+  }
+
+  .fight-hud__bar-frame {
+    @apply h-[22px] w-full max-w-[330px] skew-x-[-8deg] overflow-hidden rounded-[2px]
+           border-2 border-asf-gold-deep bg-asf-well shadow-[0_3px_0_rgba(0,0,0,0.6)];
+  }
+
+  .fight-hud__side--p2 .fight-hud__bar-frame {
+    @apply ml-auto skew-x-[8deg];
+  }
+
+  .fight-hud__bar {
+    @apply block h-full w-full;
+  }
+
+  .fight-hud__bar--mirrored {
+    @apply -scale-x-100;
+  }
+
+  .fight-hud__bar-bg {
+    @apply fill-[#160b12];
+  }
+
+  .fight-hud__bar-ghost {
+    @apply fill-[#dd5533] [transition:width_900ms_ease-out_250ms]
+           motion-reduce:transition-none;
+  }
+
+  .fight-hud__bar-fill {
+    @apply [transition:width_140ms_ease-out] motion-reduce:transition-none;
+  }
+
+  .fight-hud__bar-fill--ok {
+    @apply fill-[#44cc44];
+  }
+
+  .fight-hud__bar-fill--warn {
+    @apply fill-[#cccc44];
+  }
+
+  .fight-hud__bar-fill--low {
+    @apply fill-[#cc4444];
+  }
+
+  .fight-hud__pips {
+    @apply flex gap-1.5;
+  }
+
+  .fight-hud__side--p2 .fight-hud__pips {
+    @apply flex-row-reverse;
+  }
+
+  .fight-hud__pip {
+    @apply h-3 w-3 rounded-full border-2 border-asf-gold-deep bg-asf-well;
+  }
+
+  .fight-hud__pip.is-won {
+    @apply border-asf-gold bg-asf-gold shadow-[0_0_6px_rgba(255,206,58,0.8)];
+  }
+
+  .fight-hud__center {
+    @apply flex shrink-0 flex-col items-center gap-1;
+  }
+
+  .fight-hud__timer {
+    @apply font-arcade text-[26px] leading-none text-asf-cream
+           [text-shadow:0_3px_0_rgba(0,0,0,0.85)];
+  }
+
+  .fight-hud__timer--low {
+    @apply text-asf-red;
+  }
+
+  .fight-hud__match-label {
+    @apply max-w-[220px] truncate text-center font-arcade text-[11px] leading-tight
+           text-asf-gold [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
+  }
+
+  /* ============================================================
+     FIGHT ANNOUNCEMENTS (ROUND N / FIGHT! / K.O. / WINS)
+     ============================================================ */
+
+  .fight-announce {
+    @apply pointer-events-none absolute inset-0 z-30 flex items-center justify-center;
+  }
+
+  .fight-announce__text {
+    @apply [animation:fight-announce-life_1200ms_ease-out_both] text-center font-arcade
+           text-[clamp(24px,5vw,48px)] leading-tight text-asf-cream
+           [text-shadow:0_4px_0_rgba(0,0,0,0.9),0_0_24px_rgba(255,42,42,0.5)]
+           motion-reduce:animate-none;
+  }
+
+  .fight-announce__text--fight {
+    @apply [animation-duration:800ms] text-asf-red;
+  }
+
+  .fight-announce__text--ko,
+  .fight-announce__text--double_ko {
+    @apply [animation-duration:2000ms] text-asf-red;
+  }
+
+  .fight-announce__text--draw {
+    @apply [animation-duration:2000ms] text-asf-muted;
+  }
+
+  .fight-announce__text--wins {
+    @apply [animation-duration:2600ms] px-4 text-asf-gold;
+  }
+
+  /* ============================================================
+     FIGHT INTRO CORTINILLA (versus screen before each match)
+     ============================================================ */
+
+  .fight-intro {
+    @apply pointer-events-none absolute inset-0 z-30 flex flex-col items-center
+           justify-center gap-6 overflow-hidden bg-[rgba(4,4,13,0.62)]
+           opacity-100 [transition:opacity_400ms_ease-in-out]
+           motion-reduce:transition-none;
+  }
+
+  .fight-intro.is-exiting {
+    @apply opacity-0;
+  }
+
+  .fight-intro__energy {
+    @apply pointer-events-none absolute inset-0
+           bg-[radial-gradient(ellipse_at_center,rgba(123,61,255,0.28)_0%,rgba(255,42,42,0.14)_45%,transparent_75%)];
+  }
+
+  .fight-intro__heading {
+    @apply relative z-10 flex flex-col items-center gap-1.5 text-center
+           [animation:fight-intro-heading-in_360ms_ease-out_both]
+           motion-reduce:animate-none;
+  }
+
+  .fight-intro__stage {
+    @apply font-arcade text-[15px] text-asf-gold [text-shadow:0_3px_0_rgba(0,0,0,0.85)];
+  }
+
+  .fight-intro__match {
+    @apply font-arcade text-[11px] text-asf-blue [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
+  }
+
+  .fight-intro__round {
+    @apply font-arcade text-[11px] text-asf-muted [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
+  }
+
+  .fight-intro__cards {
+    @apply relative z-10 flex w-full max-w-[860px] items-center justify-center gap-4 px-4;
+  }
+
+  .fight-intro__card {
+    @apply flex min-w-0 flex-1 items-center gap-3 rounded-[4px] border-2 border-asf-gold-deep
+           bg-asf-panel p-3 shadow-[0_8px_0_rgba(0,0,0,0.72)];
+  }
+
+  .fight-intro__card--p1 {
+    @apply border-l-4 border-l-asf-red
+           [animation:fight-intro-card-p1_500ms_cubic-bezier(0.22,1,0.36,1)_both]
+           motion-reduce:animate-none;
+  }
+
+  .fight-intro__card--p2 {
+    @apply flex-row-reverse border-r-4 border-r-asf-blue text-right
+           [animation:fight-intro-card-p2_500ms_cubic-bezier(0.22,1,0.36,1)_both]
+           motion-reduce:animate-none;
+  }
+
+  .fight-intro__portrait {
+    @apply h-20 w-20 shrink-0 overflow-hidden rounded-[3px] border-2 border-asf-gold-deep
+           bg-asf-well;
+  }
+
+  .fight-intro__portrait-img {
+    @apply h-full w-full object-cover object-top;
+  }
+
+  .fight-intro__portrait-fallback {
+    @apply flex h-full w-full items-center justify-center font-arcade text-[24px] text-asf-gold;
+  }
+
+  .fight-intro__copy {
+    @apply flex min-w-0 flex-col gap-1.5;
+  }
+
+  .fight-intro__copy small {
+    @apply font-arcade text-[11px] text-asf-muted;
+  }
+
+  .fight-intro__copy strong {
+    @apply font-arcade text-[14px] leading-snug break-words text-asf-cream
+           [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
+  }
+
+  .fight-intro__copy span {
+    @apply font-arcade text-[11px] text-asf-blue;
+  }
+
+  .fight-intro__card--p2 .fight-intro__copy span {
+    @apply text-asf-red;
+  }
+
+  .fight-intro__vs {
+    @apply relative z-10 flex shrink-0 items-center font-arcade text-[34px] text-asf-cream
+           [animation:fight-intro-vs-slam_460ms_260ms_ease-out_both]
+           [text-shadow:0_4px_0_rgba(0,0,0,0.9),0_0_28px_rgba(255,42,42,0.65)]
+           motion-reduce:animate-none;
+  }
+
+  .fight-intro__vs i {
+    @apply not-italic;
+  }
+
+  .fight-intro__vs i:last-child {
+    @apply text-asf-red;
+  }
+
+  .fight-intro__skip {
+    @apply relative z-10 font-arcade text-[11px] text-asf-blue
+           [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
+  }
+}
