@@ -853,7 +853,7 @@
 
   .mobile-fight-controls {
     @apply pointer-events-none absolute inset-x-0 bottom-[max(12px,env(safe-area-inset-bottom))] z-30 hidden
-           items-end justify-between px-3 select-none;
+           items-end justify-end px-3 select-none;
   }
 
   .mobile-versus-unavailable {
@@ -862,11 +862,20 @@
            font-sans text-[14px] normal-case leading-[1.55] text-asf-cream shadow-[0_8px_0_rgba(0,0,0,0.72)];
   }
 
+  /* The whole left side of the arena catches movement touches; the drawn
+     stick below is only a visual reference of the resting center. Inside
+     the rotated portrait shell, `fixed` resolves against the transformed
+     shell, so the zone tracks the arena in both orientations. */
+  .virtual-joystick-zone {
+    @apply pointer-events-auto fixed left-0 top-0 z-30 h-full w-[45%] touch-none
+           select-none;
+  }
+
   .virtual-joystick {
-    @apply pointer-events-auto relative flex h-[132px] w-[132px] touch-none items-center
-           justify-center rounded-full border-2 border-[rgba(255,206,58,0.5)]
-           bg-[rgba(5,5,7,0.55)] [backdrop-filter:blur(5px)]
-           shadow-[inset_0_4px_12px_rgba(0,0,0,0.65)];
+    @apply pointer-events-none absolute bottom-[max(16px,env(safe-area-inset-bottom))]
+           left-4 flex h-[132px] w-[132px] items-center justify-center rounded-full
+           border-2 border-[rgba(255,206,58,0.5)] bg-[rgba(5,5,7,0.55)]
+           [backdrop-filter:blur(5px)] shadow-[inset_0_4px_12px_rgba(0,0,0,0.65)];
   }
 
   .virtual-joystick__knob {

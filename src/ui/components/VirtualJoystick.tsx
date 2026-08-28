@@ -3,10 +3,12 @@ import { setVirtualInputAction } from '../../game/systems/VirtualInput.ts';
 
 type Dir = 'left' | 'right' | 'up' | 'down';
 
-const X_THRESHOLD = 18;
-const DOWN_THRESHOLD = 22;
-/** Jumping is committal — demand a clearly vertical flick before firing it. */
-const UP_THRESHOLD = 34;
+const X_THRESHOLD = 20;
+const DOWN_THRESHOLD = 24;
+/** Jumping is committal — demand a clearly vertical pull before firing it. */
+const UP_THRESHOLD = 40;
+
+const ROTATED_QUERY = '(pointer: coarse) and (orientation: portrait)';
 
 function directionsFor(dx: number, dy: number): Set<Dir> {
   const dirs = new Set<Dir>();
@@ -25,9 +27,15 @@ function knobClassFor(dirs: Set<Dir>): string {
 }
 
 /**
- * Eight-way virtual stick for the touch fight controls. Directions are held
- * VirtualInput states (down = crouch, down+attack = low, up = jump); the
- * knob snaps to the active compass point.
+ * Driving-game style movement control: the whole left side of the arena is
+ * the touch zone, and the point where the finger lands becomes the stick's
+ * origin — drag relative to it to walk, pull down to crouch, pull clearly
+ * up to jump. The drawn stick is a visual reference of the resting center;
+ * its knob mirrors the active direction.
+ *
+ * Inside the CSS-rotated portrait shell, pointer coordinates arrive in
+ * screen (portrait) space while the game reads shell-space directions, so
+ * deltas are axis-mapped before thresholding.
  */
 export function VirtualJoystick({
   playerIndex = 0,
@@ -36,8 +44,8 @@ export function VirtualJoystick({
   playerIndex?: 0 | 1;
   playerLabel?: string;
 }) {
-  const baseRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<number | null>(null);
+  const originRef = useRef<{ x: number; y: number } | null>(null);
   const activeRef = useRef<Set<Dir>>(new Set());
   const [knobClass, setKnobClass] = useState('');
 
@@ -54,6 +62,7 @@ export function VirtualJoystick({
 
   const release = () => {
     pointerRef.current = null;
+    originRef.current = null;
     applyDirections(new Set());
   };
 
@@ -70,11 +79,14 @@ export function VirtualJoystick({
   }, [playerIndex]);
 
   const track = (event: PointerEvent<HTMLDivElement>) => {
-    const base = baseRef.current;
-    if (!base) return;
-    const rect = base.getBoundingClientRect();
-    const dx = event.clientX - (rect.left + rect.width / 2);
-    const dy = event.clientY - (rect.top + rect.height / 2);
+    const origin = originRef.current;
+    if (!origin) return;
+    const sdx = event.clientX - origin.x;
+    const sdy = event.clientY - origin.y;
+    // Rotated shell: screen-down is shell-right, screen-right is shell-up.
+    const rotated = window.matchMedia?.(ROTATED_QUERY).matches;
+    const dx = rotated ? sdy : sdx;
+    const dy = rotated ? -sdx : sdy;
     applyDirections(directionsFor(dx, dy));
   };
 
@@ -82,8 +94,8 @@ export function VirtualJoystick({
     event.preventDefault();
     if (pointerRef.current !== null) return;
     pointerRef.current = event.pointerId;
+    originRef.current = { x: event.clientX, y: event.clientY };
     event.currentTarget.setPointerCapture(event.pointerId);
-    track(event);
   };
 
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
@@ -101,10 +113,9 @@ export function VirtualJoystick({
 
   return (
     <div
-      ref={baseRef}
-      className="virtual-joystick"
+      className="virtual-joystick-zone"
       role="application"
-      aria-label={`Movement stick, ${playerLabel}. Drag to walk, down to crouch, up to jump.`}
+      aria-label={`Movement zone, ${playerLabel}. Touch anywhere on the left side and drag: sideways to walk, down to crouch, up to jump.`}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -112,7 +123,9 @@ export function VirtualJoystick({
       onPointerCancel={onPointerEnd}
       onLostPointerCapture={release}
     >
-      <span className={`virtual-joystick__knob${knobClass}`} aria-hidden="true" />
+      <div className="virtual-joystick" aria-hidden="true">
+        <span className={`virtual-joystick__knob${knobClass}`} />
+      </div>
     </div>
   );
 }
