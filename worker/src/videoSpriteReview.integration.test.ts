@@ -12,7 +12,9 @@ import {
   approveVideoSpriteReview,
   getVideoSpriteReview,
   getVideoSpriteReviewAsset,
+  promoteApprovedVideoSpriteRecuration,
   rejectVideoSpriteReview,
+  stageApprovedVideoSpriteRecuration,
 } from './videoSpriteReview';
 import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
 import type { AuthContext, Env } from './types';
@@ -21,6 +23,16 @@ const USER_ID = 'video-review-user';
 const FIGHTER_ID = 'f'.repeat(32);
 const RUN_ID = 'a'.repeat(32);
 const AUTH = { userId: USER_ID } as AuthContext;
+const ADMIN_AUTH = {
+  userId: USER_ID,
+  user: { plan_tier: 'admin' },
+  claims: {},
+} as AuthContext;
+const NON_ADMIN_AUTH = {
+  userId: USER_ID,
+  user: { plan_tier: 'studio' },
+  claims: {},
+} as AuthContext;
 
 const SCHEMA = `
   CREATE TABLE fighters (
@@ -453,6 +465,7 @@ function png(width: number, height: number, marker: number): Uint8Array {
 async function adjustedResponse(params: {
   jobId: string; selected: number[]; canonicalSha: string; videoSha: string;
   canonicalSize: number; videoSize: number;
+  outcome?: 'technical_pass' | 'needs_review';
 }): Promise<VideoSpriteCompileResponse> {
   const runtime = png(1536, 256, params.selected[0] ?? 1);
   const raw = png(3072, 2048, params.selected[1] ?? 2);
@@ -491,7 +504,11 @@ async function adjustedResponse(params: {
       uniqueFrameCount: 8, playbackFrameCount: 8, frameWidth: 192, frameHeight: 256,
       allowStatic: true, playback: [0, 1, 2, 3, 4, 5, 6, 7],
     },
-    decision: { outcome: 'technical_pass', reasonCodes: [], semanticPromotionApproved: false },
+    decision: {
+      outcome: params.outcome ?? 'technical_pass',
+      reasonCodes: params.outcome === 'needs_review' ? ['safe_subject_margin'] : [],
+      semanticPromotionApproved: false,
+    },
     artifacts: {
       runtimeSheet: { sha256: hashes.runtime, sizeBytes: runtime.byteLength, width: 1536, height: 256 },
       rawUniqueFramesSheet: { sha256: hashes.raw, sizeBytes: raw.byteLength, width: 3072, height: 2048 },
@@ -513,7 +530,11 @@ async function adjustedResponse(params: {
   } as unknown as VideoSpriteCompileResponse;
 }
 
-async function installAdjustmentProcessor(target: Harness, review: ReviewSeed): Promise<void> {
+async function installAdjustmentProcessor(
+  target: Harness,
+  review: ReviewSeed,
+  outcome: 'technical_pass' | 'needs_review' = 'technical_pass',
+): Promise<void> {
   const revision = await target.db.prepare(`SELECT canonical_sha256, canonical_blob_key,
     video_sha256, video_blob_key FROM video_sprite_candidate_revisions
     WHERE candidate_id = ? AND revision = 1`).bind(review.candidateId).first<{
@@ -530,10 +551,104 @@ async function installAdjustmentProcessor(target: Harness, review: ReviewSeed): 
       jobId: review.jobId, selected: body.selectedVideoIndices,
       canonicalSha: revision.canonical_sha256, videoSha: revision.video_sha256,
       canonicalSize: canonical!.size, videoSize: video!.size,
+      outcome,
     }));
   });
   target.env.IMAGE_PROCESSOR = { getByName: vi.fn(() => ({ fetch })) } as unknown as
     NonNullable<Env['IMAGE_PROCESSOR']>;
+}
+
+async function prepareCompletedGlobalReview(
+  target: Harness,
+  outcome: 'technical_pass' | 'needs_review' = 'technical_pass',
+): Promise<ReviewSeed> {
+  const reviews = await seedReviews(target, VIDEO_SPRITE_ACTIONS.length);
+  await target.db.batch([
+    target.db.prepare(`UPDATE generation_artifact_runs
+      SET status = 'succeeded', completed_at = datetime('now') WHERE id = ?`).bind(RUN_ID),
+    target.db.prepare(`UPDATE fighters SET quality_tier = 'champion' WHERE id = ?`)
+      .bind(FIGHTER_ID),
+    target.db.prepare(`UPDATE fighters SET public_flag = 1 WHERE id = ?`).bind(FIGHTER_ID),
+    target.db.prepare(`UPDATE arcade_fighters SET status = 'active' WHERE fighter_id = ?`)
+      .bind(FIGHTER_ID),
+    target.db.prepare(`INSERT INTO sprites (
+      id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+      frame_w, frame_h, frame_count, processing_version, content_hash,
+      raw_content_hash, animation_format
+    ) SELECT 'current-' || candidate.id, version.fighter_id, version.animation_name,
+      version.quality_tier, version.blob_key, version.raw_blob_key,
+      version.frame_w, version.frame_h, version.frame_count, version.processing_version,
+      version.content_hash, version.raw_content_hash, version.animation_format
+    FROM video_sprite_candidates candidate
+    JOIN video_sprite_candidate_revisions revision
+      ON revision.candidate_id = candidate.id AND revision.revision = candidate.current_revision
+    JOIN sprite_versions version ON version.id = revision.sprite_version_id`),
+  ]);
+  const review = reviews[0];
+  await installAdjustmentProcessor(target, review, outcome);
+  return review;
+}
+
+function recurationStageRequest(review: ReviewSeed, selectedVideoIndices: number[]): Request {
+  return new Request(`https://api.insertplayer.ai/api/generation-jobs/${review.jobId}/video-review/recuration/stage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      candidateId: review.candidateId,
+      revision: 1,
+      reportSha256: review.reportSha256,
+      selectedVideoIndices,
+    }),
+  });
+}
+
+interface RecurationProposalBody {
+  proposal: {
+    jobId: string;
+    candidateId: string;
+    action: VideoSpriteAction;
+    fromRevision: number;
+    fromReportSha256: string;
+    revision: number;
+    reportSha256: string;
+    processedSha256: string;
+    processingVersion: number;
+    technicalOutcome: string;
+    selectedVideoIndices: number[];
+    frameCount: number;
+    rawFrameCount: number;
+    assets: Record<string, string>;
+  };
+}
+
+function recurationPromoteRequest(input: {
+  review: ReviewSeed;
+  fromRevision: number;
+  fromReportSha256: string;
+  fromProcessedSha256: string;
+  toRevision: number;
+  toReportSha256: string;
+  toProcessedSha256: string;
+  acceptNeedsReview?: boolean;
+}): Request {
+  return new Request(
+    `https://api.insertplayer.ai/api/generation-jobs/${input.review.jobId}/video-review/recuration/promote`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        candidateId: input.review.candidateId,
+        fromRevision: input.fromRevision,
+        fromReportSha256: input.fromReportSha256,
+        fromProcessedSha256: input.fromProcessedSha256,
+        toRevision: input.toRevision,
+        toReportSha256: input.toReportSha256,
+        toProcessedSha256: input.toProcessedSha256,
+        ...(input.acceptNeedsReview === undefined
+          ? {} : { acceptNeedsReview: input.acceptNeedsReview }),
+      }),
+    },
+  );
 }
 
 describe('video sprite review handlers', () => {
@@ -1221,6 +1336,371 @@ describe('video sprite review handlers', () => {
       expect((await target.db.prepare(`SELECT COUNT(*) AS count
         FROM video_sprite_candidate_revisions WHERE candidate_id = ?`).bind(review.candidateId)
         .first<{ count: number }>())?.count).toBe(2);
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('stages one immutable v6 shadow revision idempotently without moving approved current state', async () => {
+    const target = await createHarness();
+    try {
+      const review = await prepareCompletedGlobalReview(target);
+      const selectedVideoIndices = [0, 1, 2, 3, 4, 5, 6, 7];
+      const before = await Promise.all([
+        target.db.prepare(`SELECT current_revision, approved_revision, status
+          FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first(),
+        target.db.prepare(`SELECT blob_key, raw_blob_key, content_hash, raw_content_hash,
+          processing_version FROM sprites WHERE fighter_id = ? AND animation_name = 'idle'`)
+          .bind(FIGHTER_ID).first(),
+        target.db.prepare(`SELECT clean_version_id, clean_blob_key, raw_blob_key,
+          clean_content_hash, raw_content_hash, processing_version
+          FROM generation_artifact_checkpoints WHERE run_id = ?
+            AND artifact_kind = 'sprite' AND artifact_name = 'idle'`).bind(RUN_ID).first(),
+      ]);
+
+      const staged = await stageApprovedVideoSpriteRecuration(
+        recurationStageRequest(review, selectedVideoIndices), target.env, ADMIN_AUTH, review.jobId,
+      );
+      expect(staged.status).toBe(200);
+      const body = await staged.json() as RecurationProposalBody;
+      expect(body.proposal).toMatchObject({
+        jobId: review.jobId,
+        candidateId: review.candidateId,
+        action: 'idle',
+        fromRevision: 1,
+        fromReportSha256: review.reportSha256,
+        revision: 2,
+        processingVersion: 6,
+        technicalOutcome: 'technical_pass',
+        selectedVideoIndices,
+        frameCount: 8,
+        rawFrameCount: 8,
+        assets: {
+          runtime: `/api/generation-jobs/${review.jobId}/video-review/assets/runtime?revision=2`,
+          report: `/api/generation-jobs/${review.jobId}/video-review/assets/report?revision=2`,
+          video: `/api/generation-jobs/${review.jobId}/video-review/assets/video?revision=2`,
+        },
+      });
+      expect(body.proposal.reportSha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(body.proposal.processedSha256).toMatch(/^[a-f0-9]{64}$/);
+
+      const after = await Promise.all([
+        target.db.prepare(`SELECT current_revision, approved_revision, status
+          FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first(),
+        target.db.prepare(`SELECT blob_key, raw_blob_key, content_hash, raw_content_hash,
+          processing_version FROM sprites WHERE fighter_id = ? AND animation_name = 'idle'`)
+          .bind(FIGHTER_ID).first(),
+        target.db.prepare(`SELECT clean_version_id, clean_blob_key, raw_blob_key,
+          clean_content_hash, raw_content_hash, processing_version
+          FROM generation_artifact_checkpoints WHERE run_id = ?
+            AND artifact_kind = 'sprite' AND artifact_name = 'idle'`).bind(RUN_ID).first(),
+      ]);
+      expect(after).toEqual(before);
+      expect((await target.db.prepare(`SELECT COUNT(*) AS count
+        FROM video_sprite_candidate_revisions WHERE candidate_id = ?`)
+        .bind(review.candidateId).first<{ count: number }>())?.count).toBe(2);
+
+      const replayClaim = await hashString(canonicalJson({
+        operation: 'post-approved-video-recuration',
+        candidateId: review.candidateId,
+        fromRevision: 1,
+        fromReportSha256: review.reportSha256,
+        selectedVideoIndices,
+      }));
+      await target.db.prepare(`UPDATE video_sprite_candidates
+        SET adjustment_claim_token = ?, adjustment_claim_revision = 1,
+          adjustment_claim_indices_json = ? WHERE id = ?`)
+        .bind(replayClaim, JSON.stringify(selectedVideoIndices), review.candidateId).run();
+      const replay = await stageApprovedVideoSpriteRecuration(
+        recurationStageRequest(review, selectedVideoIndices), target.env, ADMIN_AUTH, review.jobId,
+      );
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({ proposal: {
+        revision: 2,
+        reportSha256: body.proposal.reportSha256,
+        processedSha256: body.proposal.processedSha256,
+      } });
+      expect((await target.db.prepare(`SELECT COUNT(*) AS count
+        FROM video_sprite_candidate_revisions WHERE candidate_id = ?`)
+        .bind(review.candidateId).first<{ count: number }>())?.count).toBe(2);
+      expect(await target.db.prepare(`SELECT adjustment_claim_token
+        FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first())
+        .toEqual({ adjustment_claim_token: null });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('keeps post-approval recuration admin-only and rejects stale approved bindings', async () => {
+    const target = await createHarness();
+    try {
+      const review = await prepareCompletedGlobalReview(target);
+      const selected = [0, 1, 2, 3, 4, 5, 6, 7];
+      expect((await stageApprovedVideoSpriteRecuration(
+        recurationStageRequest(review, selected), target.env, NON_ADMIN_AUTH, review.jobId,
+      )).status).toBe(403);
+
+      const stale = recurationStageRequest(review, selected);
+      const staleBody = await stale.json() as Record<string, unknown>;
+      staleBody.reportSha256 = '0'.repeat(64);
+      const staleRequest = new Request(stale.url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(staleBody),
+      });
+      expect((await stageApprovedVideoSpriteRecuration(
+        staleRequest, target.env, ADMIN_AUTH, review.jobId,
+      )).status).toBe(409);
+      expect((await target.db.prepare(`SELECT COUNT(*) AS count
+        FROM video_sprite_candidate_revisions WHERE candidate_id = ?`)
+        .bind(review.candidateId).first<{ count: number }>())?.count).toBe(1);
+
+      await target.db.prepare(`UPDATE arcade_fighters SET status = 'draft' WHERE fighter_id = ?`)
+        .bind(FIGHTER_ID).run();
+      expect((await stageApprovedVideoSpriteRecuration(
+        recurationStageRequest(review, selected), target.env, ADMIN_AUTH, review.jobId,
+      )).status).toBe(409);
+      await target.db.batch([
+        target.db.prepare(`UPDATE arcade_fighters SET status = 'active' WHERE fighter_id = ?`)
+          .bind(FIGHTER_ID),
+        target.db.prepare(`UPDATE fighters SET public_flag = 0 WHERE id = ?`).bind(FIGHTER_ID),
+      ]);
+      expect((await stageApprovedVideoSpriteRecuration(
+        recurationStageRequest(review, selected), target.env, ADMIN_AUTH, review.jobId,
+      )).status).toBe(409);
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('recovers an interrupted exact stage claim without allowing a different selection through', async () => {
+    const target = await createHarness();
+    try {
+      const review = await prepareCompletedGlobalReview(target);
+      const selected = [0, 1, 2, 3, 4, 5, 6, 7];
+      const claimToken = await hashString(canonicalJson({
+        operation: 'post-approved-video-recuration',
+        candidateId: review.candidateId,
+        fromRevision: 1,
+        fromReportSha256: review.reportSha256,
+        selectedVideoIndices: selected,
+      }));
+      await target.db.prepare(`UPDATE video_sprite_candidates
+        SET adjustment_claim_token = ?, adjustment_claim_revision = 1,
+          adjustment_claim_indices_json = ? WHERE id = ?`)
+        .bind(claimToken, JSON.stringify(selected), review.candidateId).run();
+
+      expect((await stageApprovedVideoSpriteRecuration(
+        recurationStageRequest(review, [0, 1, 2, 3, 4, 5, 6, 8]),
+        target.env,
+        ADMIN_AUTH,
+        review.jobId,
+      )).status).toBe(409);
+      const recovered = await stageApprovedVideoSpriteRecuration(
+        recurationStageRequest(review, selected), target.env, ADMIN_AUTH, review.jobId,
+      );
+      expect(recovered.status).toBe(200);
+      expect(await target.db.prepare(`SELECT adjustment_claim_token, current_revision
+        FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first())
+        .toEqual({ adjustment_claim_token: null, current_revision: 1 });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('requires an exact production Worker pin for stage and promote mutations', async () => {
+    const target = await createHarness();
+    const exactSha = '7'.repeat(40);
+    try {
+      const review = await prepareCompletedGlobalReview(target);
+      const selected = [0, 1, 2, 3, 4, 5, 6, 7];
+      target.env.ENVIRONMENT = 'production';
+      target.env.WORKER_VERSION_METADATA = {
+        id: 'recuration-worker', tag: `prod-${exactSha}-2`,
+        timestamp: '2026-08-28T00:00:00.000Z',
+      };
+
+      expect((await stageApprovedVideoSpriteRecuration(
+        recurationStageRequest(review, selected), target.env, ADMIN_AUTH, review.jobId,
+      )).status).toBe(428);
+      const stale = recurationStageRequest(review, selected);
+      stale.headers.set('X-Insert-Player-Expected-Worker-Sha', '8'.repeat(40));
+      expect((await stageApprovedVideoSpriteRecuration(
+        stale, target.env, ADMIN_AUTH, review.jobId,
+      )).status).toBe(409);
+      const exact = recurationStageRequest(review, selected);
+      exact.headers.set('X-Insert-Player-Expected-Worker-Sha', exactSha);
+      const staged = await stageApprovedVideoSpriteRecuration(
+        exact, target.env, ADMIN_AUTH, review.jobId,
+      );
+      expect(staged.status).toBe(200);
+      const proposal = ((await staged.json()) as RecurationProposalBody).proposal;
+      const revisionOne = await target.db.prepare(`SELECT report_sha256, processed_sha256
+        FROM video_sprite_candidate_revisions WHERE candidate_id = ? AND revision = 1`)
+        .bind(review.candidateId).first<{ report_sha256: string; processed_sha256: string }>();
+      const promoteInput = {
+        review,
+        fromRevision: 1,
+        fromReportSha256: revisionOne!.report_sha256,
+        fromProcessedSha256: revisionOne!.processed_sha256,
+        toRevision: proposal.revision,
+        toReportSha256: proposal.reportSha256,
+        toProcessedSha256: proposal.processedSha256,
+      };
+      expect((await promoteApprovedVideoSpriteRecuration(
+        recurationPromoteRequest(promoteInput), target.env, ADMIN_AUTH, review.jobId,
+      )).status).toBe(428);
+      const exactPromote = recurationPromoteRequest(promoteInput);
+      exactPromote.headers.set('X-Insert-Player-Expected-Worker-Sha', exactSha);
+      expect((await promoteApprovedVideoSpriteRecuration(
+        exactPromote, target.env, ADMIN_AUTH, review.jobId,
+      )).status).toBe(200);
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('promotes atomically from exact seals and supports an exact rollback to an earlier revision', async () => {
+    const target = await createHarness();
+    try {
+      const review = await prepareCompletedGlobalReview(target);
+      const revisionOne = await target.db.prepare(`SELECT report_sha256, processed_sha256
+        FROM video_sprite_candidate_revisions WHERE candidate_id = ? AND revision = 1`)
+        .bind(review.candidateId).first<{ report_sha256: string; processed_sha256: string }>();
+      const staged = await stageApprovedVideoSpriteRecuration(
+        recurationStageRequest(review, [0, 1, 2, 3, 4, 5, 6, 7]),
+        target.env,
+        ADMIN_AUTH,
+        review.jobId,
+      );
+      const proposal = ((await staged.json()) as RecurationProposalBody).proposal;
+      const promoteInput = {
+        review,
+        fromRevision: 1,
+        fromReportSha256: revisionOne!.report_sha256,
+        fromProcessedSha256: revisionOne!.processed_sha256,
+        toRevision: proposal.revision,
+        toReportSha256: proposal.reportSha256,
+        toProcessedSha256: proposal.processedSha256,
+      };
+
+      await target.db.prepare(`UPDATE generation_artifact_checkpoints
+        SET processing_version = 99 WHERE run_id = ?
+          AND artifact_kind = 'sprite' AND artifact_name = 'idle'`).bind(RUN_ID).run();
+      const currentBeforeRejectedPromotion = await target.db.prepare(`SELECT content_hash
+        FROM sprites WHERE fighter_id = ? AND animation_name = 'idle'`).bind(FIGHTER_ID).first();
+      expect((await promoteApprovedVideoSpriteRecuration(
+        recurationPromoteRequest(promoteInput), target.env, ADMIN_AUTH, review.jobId,
+      )).status).toBe(409);
+      expect(await target.db.prepare(`SELECT current_revision, approved_revision
+        FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first())
+        .toEqual({ current_revision: 1, approved_revision: 1 });
+      expect(await target.db.prepare(`SELECT content_hash
+        FROM sprites WHERE fighter_id = ? AND animation_name = 'idle'`).bind(FIGHTER_ID).first())
+        .toEqual(currentBeforeRejectedPromotion);
+
+      await target.db.prepare(`UPDATE generation_artifact_checkpoints
+        SET processing_version = 5 WHERE run_id = ?
+          AND artifact_kind = 'sprite' AND artifact_name = 'idle'`).bind(RUN_ID).run();
+      const stateBeforePromotion = await Promise.all([
+        target.db.prepare(`SELECT status, review_status FROM generation_jobs WHERE id = ?`)
+          .bind(review.jobId).first(),
+        target.db.prepare(`SELECT status, completed_at FROM generation_artifact_runs WHERE id = ?`)
+          .bind(RUN_ID).first(),
+      ]);
+      const promoted = await promoteApprovedVideoSpriteRecuration(
+        recurationPromoteRequest(promoteInput), target.env, ADMIN_AUTH, review.jobId,
+      );
+      expect(promoted.status).toBe(200);
+      expect(await promoted.json()).toMatchObject({ review: {
+        candidateId: review.candidateId,
+        status: 'approved',
+        revision: 2,
+        reportSha256: proposal.reportSha256,
+        processingVersion: 6,
+      } });
+      expect(await target.db.prepare(`SELECT current_revision, approved_revision
+        FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first())
+        .toEqual({ current_revision: 2, approved_revision: 2 });
+      expect(await target.db.prepare(`SELECT content_hash, processing_version
+        FROM sprites WHERE fighter_id = ? AND animation_name = 'idle'`).bind(FIGHTER_ID).first())
+        .toEqual({ content_hash: proposal.processedSha256, processing_version: 6 });
+      expect(await target.db.prepare(`SELECT clean_content_hash, processing_version
+        FROM generation_artifact_checkpoints WHERE run_id = ?
+          AND artifact_kind = 'sprite' AND artifact_name = 'idle'`).bind(RUN_ID).first())
+        .toEqual({ clean_content_hash: proposal.processedSha256, processing_version: 6 });
+      expect(await Promise.all([
+        target.db.prepare(`SELECT status, review_status FROM generation_jobs WHERE id = ?`)
+          .bind(review.jobId).first(),
+        target.db.prepare(`SELECT status, completed_at FROM generation_artifact_runs WHERE id = ?`)
+          .bind(RUN_ID).first(),
+      ])).toEqual(stateBeforePromotion);
+
+      const rolledBack = await promoteApprovedVideoSpriteRecuration(
+        recurationPromoteRequest({
+          review,
+          fromRevision: proposal.revision,
+          fromReportSha256: proposal.reportSha256,
+          fromProcessedSha256: proposal.processedSha256,
+          toRevision: 1,
+          toReportSha256: revisionOne!.report_sha256,
+          toProcessedSha256: revisionOne!.processed_sha256,
+        }),
+        target.env,
+        ADMIN_AUTH,
+        review.jobId,
+      );
+      expect(rolledBack.status).toBe(200);
+      expect(await rolledBack.json()).toMatchObject({ review: {
+        revision: 1,
+        reportSha256: revisionOne!.report_sha256,
+        processingVersion: 5,
+      } });
+      expect(await target.db.prepare(`SELECT current_revision, approved_revision
+        FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first())
+        .toEqual({ current_revision: 1, approved_revision: 1 });
+      expect(await target.db.prepare(`SELECT content_hash, processing_version
+        FROM sprites WHERE fighter_id = ? AND animation_name = 'idle'`).bind(FIGHTER_ID).first())
+        .toEqual({ content_hash: revisionOne!.processed_sha256, processing_version: 5 });
+
+      expect((await promoteApprovedVideoSpriteRecuration(
+        recurationPromoteRequest(promoteInput), target.env, ADMIN_AUTH, review.jobId,
+      )).status).toBe(409);
+      expect(await target.db.prepare(`SELECT current_revision, approved_revision
+        FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first())
+        .toEqual({ current_revision: 1, approved_revision: 1 });
+      expect(await target.db.prepare(`SELECT content_hash, processing_version
+        FROM sprites WHERE fighter_id = ? AND animation_name = 'idle'`).bind(FIGHTER_ID).first())
+        .toEqual({ content_hash: revisionOne!.processed_sha256, processing_version: 5 });
+    } finally { await target.mf.dispose(); }
+  }, 30_000);
+
+  it('requires explicit acceptance before promoting a needs-review shadow revision', async () => {
+    const target = await createHarness();
+    try {
+      const review = await prepareCompletedGlobalReview(target, 'needs_review');
+      const revisionOne = await target.db.prepare(`SELECT report_sha256, processed_sha256
+        FROM video_sprite_candidate_revisions WHERE candidate_id = ? AND revision = 1`)
+        .bind(review.candidateId).first<{ report_sha256: string; processed_sha256: string }>();
+      const staged = await stageApprovedVideoSpriteRecuration(
+        recurationStageRequest(review, [0, 1, 2, 3, 4, 5, 6, 7]),
+        target.env,
+        ADMIN_AUTH,
+        review.jobId,
+      );
+      expect(staged.status).toBe(200);
+      const proposal = ((await staged.json()) as RecurationProposalBody).proposal;
+      expect(proposal.technicalOutcome).toBe('needs_review');
+      const input = {
+        review,
+        fromRevision: 1,
+        fromReportSha256: revisionOne!.report_sha256,
+        fromProcessedSha256: revisionOne!.processed_sha256,
+        toRevision: proposal.revision,
+        toReportSha256: proposal.reportSha256,
+        toProcessedSha256: proposal.processedSha256,
+      };
+      expect((await promoteApprovedVideoSpriteRecuration(
+        recurationPromoteRequest(input), target.env, ADMIN_AUTH, review.jobId,
+      )).status).toBe(422);
+      expect(await target.db.prepare(`SELECT current_revision
+        FROM video_sprite_candidates WHERE id = ?`).bind(review.candidateId).first())
+        .toEqual({ current_revision: 1 });
+      expect((await promoteApprovedVideoSpriteRecuration(
+        recurationPromoteRequest({ ...input, acceptNeedsReview: true }),
+        target.env,
+        ADMIN_AUTH,
+        review.jobId,
+      )).status).toBe(200);
     } finally { await target.mf.dispose(); }
   }, 30_000);
 });

@@ -17,7 +17,10 @@ import {
   type VideoSpriteCandidateReportProjection,
 } from './videoSpriteGeneration';
 import { parseSealedReviewedCanonicalSources } from './reviewedCanonicalSources';
-import { validateOptionalReviewedProductionWorkerPin } from './reviewedDeploymentPin';
+import {
+  requireReviewedProductionWorkerPin,
+  validateOptionalReviewedProductionWorkerPin,
+} from './reviewedDeploymentPin';
 
 const MAX_REVIEW_BODY_BYTES = 16 * 1024;
 const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
@@ -1782,6 +1785,826 @@ export async function adjustVideoSpriteReview(
   }
   const adjusted = await ownedReview(env, auth.userId, jobId);
   return adjusted ? json({ review: serializeReview(adjusted) }) : json({ error: 'Adjusted review could not be reloaded' }, 500);
+}
+
+interface RecurationArcadeFighterRow {
+  owner_user_id: string;
+  arcade_status: string;
+  public_flag: number;
+  quality_tier: string;
+}
+
+interface RecurationCheckpointRow {
+  clean_version_id: string;
+  clean_blob_key: string;
+  raw_blob_key: string | null;
+  clean_content_hash: string | null;
+  raw_content_hash: string | null;
+  frame_w: number | null;
+  frame_h: number | null;
+  frame_count: number | null;
+  animation_format: string;
+  processing_version: number | null;
+  status: string;
+  completed_by_job_id: string;
+}
+
+interface RecurationStageBinding {
+  candidateId: string;
+  revision: number;
+  reportSha256: string;
+  selectedVideoIndices: number[];
+}
+
+interface RecurationPromoteBinding {
+  candidateId: string;
+  fromRevision: number;
+  fromReportSha256: string;
+  fromProcessedSha256: string;
+  toRevision: number;
+  toReportSha256: string;
+  toProcessedSha256: string;
+  acceptNeedsReview: boolean;
+}
+
+function recurationStageBinding(body: Record<string, unknown>): RecurationStageBinding | null {
+  const exact = reviewBinding(body);
+  const selectedVideoIndices = body.selectedVideoIndices;
+  if (
+    !exact || !Array.isArray(selectedVideoIndices) ||
+    selectedVideoIndices.length < 2 || selectedVideoIndices.length > 12 ||
+    !selectedVideoIndices.every((value) => Number.isSafeInteger(value) && value >= 0)
+  ) return null;
+  return { ...exact, selectedVideoIndices: selectedVideoIndices as number[] };
+}
+
+function recurationPromoteBinding(body: Record<string, unknown>): RecurationPromoteBinding | null {
+  const candidateId = typeof body.candidateId === 'string' ? body.candidateId : '';
+  const fromRevision = Number(body.fromRevision);
+  const toRevision = Number(body.toRevision);
+  const fromReportSha256 = typeof body.fromReportSha256 === 'string' ? body.fromReportSha256 : '';
+  const fromProcessedSha256 = typeof body.fromProcessedSha256 === 'string'
+    ? body.fromProcessedSha256 : '';
+  const toReportSha256 = typeof body.toReportSha256 === 'string' ? body.toReportSha256 : '';
+  const toProcessedSha256 = typeof body.toProcessedSha256 === 'string'
+    ? body.toProcessedSha256 : '';
+  if (
+    !/^[a-f0-9]{32}$/.test(candidateId) ||
+    !Number.isInteger(fromRevision) || fromRevision < 1 || fromRevision > 100 ||
+    !Number.isInteger(toRevision) || toRevision < 1 || toRevision > 100 ||
+    fromRevision === toRevision ||
+    ![fromReportSha256, fromProcessedSha256, toReportSha256, toProcessedSha256]
+      .every((value) => /^[a-f0-9]{64}$/.test(value)) ||
+    (body.acceptNeedsReview !== undefined && typeof body.acceptNeedsReview !== 'boolean')
+  ) return null;
+  return {
+    candidateId,
+    fromRevision,
+    fromReportSha256,
+    fromProcessedSha256,
+    toRevision,
+    toReportSha256,
+    toProcessedSha256,
+    acceptNeedsReview: body.acceptNeedsReview === true,
+  };
+}
+
+async function requirePostApprovalArcadeReview(
+  env: Env,
+  auth: AuthContext,
+  jobId: string,
+  expected?: { candidateId: string; revision: number; reportSha256: string },
+): Promise<{ row: OwnedReviewRow } | Response> {
+  if (auth.user?.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  if (!/^[a-f0-9]{32}$/.test(jobId)) return json({ error: 'Approved Arcade video review not found' }, 404);
+  const row = await ownedReview(env, auth.userId, jobId, expected);
+  if (!row) return json({ error: 'Approved Arcade video revision changed; reload before continuing' }, 409);
+  const arcade = await env.DB.prepare(`
+    SELECT fighter.owner_user_id, fighter.public_flag, fighter.quality_tier,
+      arcade.status AS arcade_status
+    FROM fighters fighter
+    JOIN arcade_fighters arcade ON arcade.fighter_id = fighter.id
+    WHERE fighter.id = ? AND fighter.owner_user_id = ?
+    LIMIT 1
+  `).bind(row.fighter_id, auth.userId).first<RecurationArcadeFighterRow>();
+  if (!arcade || arcade.owner_user_id !== auth.userId) {
+    return json({ error: 'Approved Arcade video review not found' }, 404);
+  }
+  if (
+    arcade.arcade_status !== 'active' || arcade.public_flag !== 1 ||
+    arcade.quality_tier !== 'champion'
+  ) {
+    return json({ error: 'Post-approval recuration requires an active public Arcade fighter' }, 409);
+  }
+  if (
+    row.status !== 'approved' || row.approved_revision !== row.current_revision ||
+    row.job_status !== 'succeeded' ||
+    row.job_review_status !== 'approved' || row.run_status !== 'succeeded' ||
+    row.tier !== 'champion' || row.operation !== 'fighter_generation' ||
+    row.run_operation !== 'fighter_generation' || row.animation_format !== 'video-dense-v1'
+  ) return json({ error: 'Video review is not a completed approved Arcade action' }, 409);
+  return { row };
+}
+
+async function revisionForCandidate(
+  env: Env,
+  candidateId: string,
+  revision: number,
+): Promise<VideoSpriteCandidateRevisionRow | null> {
+  return env.DB.prepare(`
+    SELECT * FROM video_sprite_candidate_revisions
+    WHERE candidate_id = ? AND revision = ?
+    LIMIT 1
+  `).bind(candidateId, revision).first<VideoSpriteCandidateRevisionRow>();
+}
+
+function reviewAtRevision(
+  row: OwnedReviewRow,
+  revision: VideoSpriteCandidateRevisionRow,
+): OwnedReviewRow {
+  return { ...row, ...revision };
+}
+
+async function requireRecurationCheckpointIntegrity(
+  env: Env,
+  row: OwnedReviewRow,
+  version: CandidateSpriteVersionRow,
+): Promise<RecurationCheckpointRow> {
+  const checkpoint = await env.DB.prepare(`
+    SELECT clean_version_id, clean_blob_key, raw_blob_key, clean_content_hash,
+      raw_content_hash, frame_w, frame_h, frame_count, animation_format,
+      processing_version, status, completed_by_job_id
+    FROM generation_artifact_checkpoints
+    WHERE run_id = ? AND artifact_kind = 'sprite' AND artifact_name = ?
+    LIMIT 1
+  `).bind(row.run_id, row.action).first<RecurationCheckpointRow>();
+  if (
+    !checkpoint || checkpoint.status !== 'approved' ||
+    checkpoint.completed_by_job_id !== row.job_id ||
+    checkpoint.clean_version_id !== version.id || checkpoint.clean_blob_key !== version.blob_key ||
+    checkpoint.raw_blob_key !== version.raw_blob_key ||
+    checkpoint.clean_content_hash !== version.content_hash ||
+    checkpoint.raw_content_hash !== version.raw_content_hash ||
+    checkpoint.frame_w !== version.frame_w || checkpoint.frame_h !== version.frame_h ||
+    checkpoint.frame_count !== version.frame_count ||
+    checkpoint.animation_format !== version.animation_format ||
+    checkpoint.processing_version !== version.processing_version
+  ) throw new Error('Approved video checkpoint no longer matches its current revision');
+  return checkpoint;
+}
+
+async function requireCurrentRecurationIntegrity(
+  env: Env,
+  row: OwnedReviewRow,
+): Promise<{ version: CandidateSpriteVersionRow; checkpoint: RecurationCheckpointRow }> {
+  const version = await requireApprovalIntegrity(env, row);
+  await requireCurrentVideoSpriteIntegrity(env, row, version);
+  const checkpoint = await requireRecurationCheckpointIntegrity(env, row, version);
+  return { version, checkpoint };
+}
+
+function serializeRecurationProposal(
+  row: OwnedReviewRow,
+  from: { revision: number; reportSha256: string },
+) {
+  const suffix = `/api/generation-jobs/${row.job_id}/video-review/assets`;
+  return {
+    jobId: row.job_id,
+    candidateId: row.id,
+    action: row.action,
+    fromRevision: from.revision,
+    fromReportSha256: from.reportSha256,
+    revision: row.revision,
+    reportSha256: row.report_sha256,
+    processedSha256: row.processed_sha256,
+    processingVersion: row.processing_version,
+    technicalOutcome: row.compiler_outcome,
+    selectedVideoIndices: JSON.parse(row.selected_indices_json) as number[],
+    frameCount: row.frame_count,
+    rawFrameCount: row.raw_frame_count,
+    assets: {
+      runtime: `${suffix}/runtime?revision=${row.revision}`,
+      raw: `${suffix}/raw?revision=${row.revision}`,
+      contactSheet: `${suffix}/contact-sheet?revision=${row.revision}`,
+      uniqueSheet: `${suffix}/unique-sheet?revision=${row.revision}`,
+      report: `${suffix}/report?revision=${row.revision}`,
+      video: `${suffix}/video?revision=${row.revision}`,
+    },
+  };
+}
+
+async function matchingShadowRevision(
+  env: Env,
+  row: OwnedReviewRow,
+  selectedIndicesJson: string,
+): Promise<VideoSpriteCandidateRevisionRow | null> {
+  return env.DB.prepare(`
+    SELECT revision.*
+    FROM video_sprite_candidate_revisions revision
+    JOIN video_sprite_candidates candidate ON candidate.id = revision.candidate_id
+    WHERE revision.candidate_id = ? AND revision.revision <> ?
+      AND revision.processing_version = 6
+      AND revision.video_blob_key = ? AND revision.video_sha256 = ?
+      AND revision.canonical_blob_key = ? AND revision.canonical_sha256 = ?
+      AND revision.selected_indices_json = ?
+      AND candidate.user_id = ? AND candidate.status = 'approved'
+      AND candidate.current_revision = ? AND candidate.approved_revision = ?
+    ORDER BY revision.revision DESC
+    LIMIT 1
+  `).bind(
+    row.id,
+    row.current_revision,
+    row.video_blob_key,
+    row.video_sha256,
+    row.canonical_blob_key,
+    row.canonical_sha256,
+    selectedIndicesJson,
+    row.user_id,
+    row.current_revision,
+    row.current_revision,
+  ).first<VideoSpriteCandidateRevisionRow>();
+}
+
+export async function stageApprovedVideoSpriteRecuration(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  jobId: string,
+): Promise<Response> {
+  const deploymentPinFailure = requireReviewedProductionWorkerPin(request, env);
+  if (deploymentPinFailure) return deploymentPinFailure;
+  if (auth.user?.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  const body = await readJsonBody<Record<string, unknown>>(request, MAX_REVIEW_BODY_BYTES);
+  const binding = recurationStageBinding(body);
+  if (!binding) {
+    return json({ error: 'Exact approved revision binding and selectedVideoIndices are required' }, 400);
+  }
+  const owned = await requirePostApprovalArcadeReview(env, auth, jobId, binding);
+  if (owned instanceof Response) return owned;
+  const row = owned.row;
+  if (row.current_revision >= 100) {
+    return json({ error: 'Video review reached its revision limit' }, 409);
+  }
+  try {
+    await requireCurrentRecurationIntegrity(env, row);
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : 'Current Arcade sprite integrity failed' }, 409);
+  }
+
+  const selectedIndicesJson = JSON.stringify(binding.selectedVideoIndices);
+  const claimToken = await hashString(canonicalJson({
+    operation: 'post-approved-video-recuration',
+    candidateId: row.id,
+    fromRevision: row.current_revision,
+    fromReportSha256: row.report_sha256,
+    selectedVideoIndices: binding.selectedVideoIndices,
+  }));
+  const claim = await env.DB.prepare(`
+    UPDATE video_sprite_candidates
+    SET adjustment_claim_token = ?, adjustment_claim_revision = ?,
+      adjustment_claim_indices_json = ?
+    WHERE id = ? AND job_id = ? AND user_id = ? AND status = 'approved'
+      AND current_revision = ? AND approved_revision = ?
+      AND (
+        adjustment_claim_token IS NULL OR
+        (adjustment_claim_token = ? AND adjustment_claim_revision = ?
+          AND adjustment_claim_indices_json = ?)
+      )
+      AND EXISTS (
+        SELECT 1 FROM video_sprite_candidate_revisions revision
+        WHERE revision.candidate_id = video_sprite_candidates.id
+          AND revision.revision = ? AND revision.report_sha256 = ?
+      )
+      AND EXISTS (
+        SELECT 1 FROM generation_jobs job
+        WHERE job.id = video_sprite_candidates.job_id AND job.status = 'succeeded'
+          AND job.review_status = 'approved'
+      )
+      AND EXISTS (
+        SELECT 1 FROM generation_artifact_runs run
+        WHERE run.id = video_sprite_candidates.run_id AND run.status = 'succeeded'
+      )
+  `).bind(
+    claimToken,
+    row.current_revision,
+    selectedIndicesJson,
+    row.id,
+    jobId,
+    auth.userId,
+    row.current_revision,
+    row.current_revision,
+    claimToken,
+    row.current_revision,
+    selectedIndicesJson,
+    row.current_revision,
+    row.report_sha256,
+  ).run();
+  if ((claim.meta.changes ?? 0) !== 1) {
+    return json({ error: 'Another post-approval recuration is already being staged' }, 409);
+  }
+
+  let committed = false;
+  try {
+    const latest = await matchingShadowRevision(env, row, selectedIndicesJson);
+    if (latest) {
+      await env.DB.prepare(`
+        UPDATE video_sprite_candidates
+        SET adjustment_claim_token = NULL, adjustment_claim_revision = NULL,
+          adjustment_claim_indices_json = NULL
+        WHERE id = ? AND adjustment_claim_token = ?
+      `).bind(row.id, claimToken).run();
+      committed = true;
+      const proposal = reviewAtRevision(row, latest);
+      await requireApprovalIntegrity(env, proposal);
+      return json({ proposal: serializeRecurationProposal(proposal, {
+        revision: row.current_revision,
+        reportSha256: row.report_sha256,
+      }) });
+    }
+
+    const maximum = await env.DB.prepare(`
+      SELECT MAX(revision) AS maximum_revision
+      FROM video_sprite_candidate_revisions
+      WHERE candidate_id = ?
+    `).bind(row.id).first<{ maximum_revision: number | null }>();
+    const nextRevision = (maximum?.maximum_revision ?? 0) + 1;
+    if (nextRevision > 100) return json({ error: 'Video review reached its revision limit' }, 409);
+
+    const [videoObject, canonicalObject, job] = await Promise.all([
+      env.SPRITES.get(row.video_blob_key),
+      env.SPRITES.get(row.canonical_blob_key),
+      env.DB.prepare('SELECT * FROM generation_jobs WHERE id = ? AND user_id = ?')
+        .bind(jobId, auth.userId).first<GenerationJob>(),
+    ]);
+    if (!videoObject || !canonicalObject) return json({ error: 'Private source media is unavailable' }, 410);
+    if (!job) return json({ error: 'Generation job not found' }, 404);
+    const [videoBytes, canonicalBytes] = await Promise.all([
+      videoObject.arrayBuffer(), canonicalObject.arrayBuffer(),
+    ]);
+    if (
+      videoBytes.byteLength !== row.video_size_bytes ||
+      await hashString(videoBytes) !== row.video_sha256 ||
+      await hashString(canonicalBytes) !== row.canonical_sha256
+    ) return json({ error: 'Private source media failed integrity validation' }, 409);
+
+    const lineage = {
+      jobId,
+      runId: row.run_id,
+      fighterId: row.fighter_id,
+      provider: 'fal' as const,
+      modelId: row.provider_model,
+      providerRequestId: row.provider_request_id,
+      promptSha256: row.prompt_sha256,
+      videoSha256: row.video_sha256,
+      canonicalSha256: row.canonical_sha256,
+    };
+    const response = await callCompiler(env, jobId, {
+      schemaVersion: 1,
+      action: row.action,
+      expectedFacing: 'right',
+      videoBase64: arrayBufferToBase64(videoBytes),
+      canonicalFrameBase64: arrayBufferToBase64(canonicalBytes),
+      selectedVideoIndices: binding.selectedVideoIndices,
+      lineage,
+    });
+    if (response.processingVersion !== 6) {
+      return json({ error: 'Post-approval recuration requires compiler processing version 6' }, 409);
+    }
+    const projection = await projectCompilerReport(response, row.action, {
+      facing: 'right',
+      lineage,
+      videoSizeBytes: videoBytes.byteLength,
+      canonicalSizeBytes: canonicalBytes.byteLength,
+      selectedVideoIndices: binding.selectedVideoIndices,
+      operatorAdjustmentApplied: true,
+    });
+    const objects = await persistRevisionObjects(env, {
+      job,
+      candidateId: row.id,
+      revision: nextRevision,
+      action: row.action,
+      response,
+      projection,
+    });
+    const result = await env.DB.batch([
+      env.DB.prepare(`
+        INSERT OR IGNORE INTO video_sprite_candidate_revisions (
+          candidate_id, revision, compiler_outcome, sprite_version_id,
+          provider_model, pixcli_job_id, provider_request_id, prompt_sha256,
+          canonical_blob_key, canonical_sha256, provider_audit_blob_key, provider_audit_sha256,
+          video_blob_key, video_sha256, video_size_bytes,
+          processed_blob_key, processed_sha256, raw_blob_key, raw_sha256,
+          contact_sheet_blob_key, contact_sheet_sha256, unique_sheet_blob_key, unique_sheet_sha256,
+          report_blob_key, report_sha256, report_content_sha256, frame_w, frame_h, frame_count,
+          raw_frame_w, raw_frame_h, raw_frame_count, source_frame_count, animation_format,
+          processing_version, selected_indices_json, playback_json, translations_json
+        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE EXISTS (
+          SELECT 1 FROM video_sprite_candidates candidate
+          JOIN video_sprite_candidate_revisions current_revision
+            ON current_revision.candidate_id = candidate.id
+            AND current_revision.revision = candidate.current_revision
+          WHERE candidate.id = ? AND candidate.user_id = ? AND candidate.status = 'approved'
+            AND candidate.current_revision = ? AND candidate.approved_revision = ?
+            AND candidate.adjustment_claim_token = ?
+            AND candidate.adjustment_claim_revision = ?
+            AND candidate.adjustment_claim_indices_json = ?
+            AND current_revision.report_sha256 = ?
+        )
+      `).bind(
+        row.id, nextRevision, projection.outcome, objects.sprite.versionId,
+        row.provider_model, row.pixcli_job_id, row.provider_request_id, row.prompt_sha256,
+        row.canonical_blob_key, row.canonical_sha256,
+        row.provider_audit_blob_key, row.provider_audit_sha256,
+        row.video_blob_key, row.video_sha256, row.video_size_bytes,
+        objects.processedKey, projection.hashes.processed,
+        objects.rawKey, projection.hashes.raw,
+        objects.contactSheetKey, projection.hashes.contactSheet,
+        objects.uniqueSheetKey, projection.hashes.uniqueSheet,
+        objects.reportKey, projection.reportSha256, projection.reportContentSha256,
+        response.frameW, response.frameH, response.frameCount,
+        response.rawFrameW, response.rawFrameH, response.rawFrameCount,
+        projection.sourceFrameCount, response.animationFormat, response.processingVersion,
+        JSON.stringify(projection.selectedIndices), JSON.stringify(projection.playback),
+        JSON.stringify(projection.translations),
+        row.id, auth.userId, row.current_revision, row.current_revision,
+        claimToken, row.current_revision, selectedIndicesJson, row.report_sha256,
+      ),
+      env.DB.prepare(`
+        UPDATE video_sprite_candidates
+        SET adjustment_claim_token = NULL, adjustment_claim_revision = NULL,
+          adjustment_claim_indices_json = NULL
+        WHERE id = ? AND user_id = ? AND status = 'approved'
+          AND current_revision = ? AND approved_revision = ?
+          AND adjustment_claim_token = ? AND adjustment_claim_revision = ?
+          AND adjustment_claim_indices_json = ?
+          AND EXISTS (
+            SELECT 1 FROM video_sprite_candidate_revisions revision
+            WHERE revision.candidate_id = video_sprite_candidates.id
+              AND revision.revision = ? AND revision.report_sha256 = ?
+              AND revision.processing_version = 6
+          )
+      `).bind(
+        row.id, auth.userId, row.current_revision, row.current_revision,
+        claimToken, row.current_revision, selectedIndicesJson,
+        nextRevision, projection.reportSha256,
+      ),
+      env.DB.prepare(`
+        INSERT OR IGNORE INTO generation_job_events (id, job_id, stage, status, detail)
+        SELECT ?, ?, 'review:recuration_staged', 'succeeded', ?
+        WHERE EXISTS (
+          SELECT 1 FROM video_sprite_candidate_revisions
+          WHERE candidate_id = ? AND revision = ? AND report_sha256 = ?
+        )
+      `).bind(
+        `${row.id}:r${nextRevision}:recuration-staged`,
+        jobId,
+        `${row.action} revision ${nextRevision} staged without a provider call`,
+        row.id,
+        nextRevision,
+        projection.reportSha256,
+      ),
+    ]);
+    if ((result[0].meta.changes ?? 0) !== 1 || (result[1].meta.changes ?? 0) !== 1) {
+      const replay = await matchingShadowRevision(env, row, selectedIndicesJson);
+      if (!replay) return json({ error: 'Video recuration changed concurrently; retry' }, 409);
+      committed = true;
+      return json({ proposal: serializeRecurationProposal(reviewAtRevision(row, replay), {
+        revision: row.current_revision,
+        reportSha256: row.report_sha256,
+      }) });
+    }
+    committed = true;
+    const inserted = await revisionForCandidate(env, row.id, nextRevision);
+    if (!inserted || inserted.report_sha256 !== projection.reportSha256) {
+      return json({ error: 'Staged recuration revision could not be reloaded' }, 500);
+    }
+    return json({ proposal: serializeRecurationProposal(reviewAtRevision(row, inserted), {
+      revision: row.current_revision,
+      reportSha256: row.report_sha256,
+    }) });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : 'Video recuration failed validation' }, 422);
+  } finally {
+    if (!committed) {
+      await env.DB.prepare(`
+        UPDATE video_sprite_candidates
+        SET adjustment_claim_token = NULL, adjustment_claim_revision = NULL,
+          adjustment_claim_indices_json = NULL
+        WHERE id = ? AND user_id = ? AND adjustment_claim_token = ?
+      `).bind(row.id, auth.userId, claimToken).run();
+    }
+  }
+}
+
+function recurationEventId(binding: RecurationPromoteBinding): string {
+  return `${binding.candidateId}:r${binding.fromRevision}-r${binding.toRevision}:${binding.toProcessedSha256.slice(0, 16)}`;
+}
+
+export async function promoteApprovedVideoSpriteRecuration(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  jobId: string,
+): Promise<Response> {
+  const deploymentPinFailure = requireReviewedProductionWorkerPin(request, env);
+  if (deploymentPinFailure) return deploymentPinFailure;
+  if (auth.user?.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  const body = await readJsonBody<Record<string, unknown>>(request, MAX_REVIEW_BODY_BYTES);
+  const binding = recurationPromoteBinding(body);
+  if (!binding) return json({ error: 'Exact from/to revision and SHA bindings are required' }, 400);
+
+  const current = await ownedReview(env, auth.userId, jobId);
+  if (!current) return json({ error: 'Approved Arcade video review not found' }, 404);
+  const transitionEventId = recurationEventId(binding);
+  const event = await env.DB.prepare(`
+    SELECT id FROM generation_job_events WHERE id = ? AND job_id = ? LIMIT 1
+  `).bind(transitionEventId, jobId).first<{ id: string }>();
+  if (
+    current.id === binding.candidateId && current.current_revision === binding.toRevision &&
+    current.approved_revision === binding.toRevision &&
+    current.report_sha256 === binding.toReportSha256 &&
+    current.processed_sha256 === binding.toProcessedSha256
+  ) {
+    if (event) {
+      const replay = await requirePostApprovalArcadeReview(env, auth, jobId, {
+        candidateId: binding.candidateId,
+        revision: binding.toRevision,
+        reportSha256: binding.toReportSha256,
+      });
+      if (replay instanceof Response) return replay;
+      if (replay.row.adjustment_claim_token !== null) {
+        return json({ error: 'A post-approval recuration is still being staged' }, 409);
+      }
+      try {
+        await requireCurrentRecurationIntegrity(env, replay.row);
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : 'Recuration integrity failed' }, 409);
+      }
+      return json({ review: serializeReview(replay.row) });
+    }
+  }
+  if (event) {
+    return json({ error: 'This exact recuration transition was already consumed' }, 409);
+  }
+
+  const owned = await requirePostApprovalArcadeReview(env, auth, jobId, {
+    candidateId: binding.candidateId,
+    revision: binding.fromRevision,
+    reportSha256: binding.fromReportSha256,
+  });
+  if (owned instanceof Response) return owned;
+  const row = owned.row;
+  if (row.adjustment_claim_token !== null) {
+    return json({ error: 'A post-approval recuration is still being staged' }, 409);
+  }
+  if (row.processed_sha256 !== binding.fromProcessedSha256) {
+    return json({ error: 'Current runtime SHA changed; reload before promoting' }, 409);
+  }
+  const targetRevision = await revisionForCandidate(env, row.id, binding.toRevision);
+  if (
+    !targetRevision || targetRevision.report_sha256 !== binding.toReportSha256 ||
+    targetRevision.processed_sha256 !== binding.toProcessedSha256
+  ) return json({ error: 'Target recuration revision changed or is unavailable' }, 409);
+  if (
+    targetRevision.video_blob_key !== row.video_blob_key ||
+    targetRevision.video_sha256 !== row.video_sha256 ||
+    targetRevision.video_size_bytes !== row.video_size_bytes ||
+    targetRevision.canonical_blob_key !== row.canonical_blob_key ||
+    targetRevision.canonical_sha256 !== row.canonical_sha256 ||
+    targetRevision.provider_audit_blob_key !== row.provider_audit_blob_key ||
+    targetRevision.provider_audit_sha256 !== row.provider_audit_sha256 ||
+    targetRevision.provider_model !== row.provider_model ||
+    targetRevision.pixcli_job_id !== row.pixcli_job_id ||
+    targetRevision.provider_request_id !== row.provider_request_id ||
+    targetRevision.prompt_sha256 !== row.prompt_sha256
+  ) return json({ error: 'Target recuration source lineage does not match the approved action' }, 409);
+  if (targetRevision.compiler_outcome === 'reject') {
+    return json({ error: 'A technically rejected recuration cannot be promoted' }, 422);
+  }
+  if (targetRevision.compiler_outcome === 'needs_review' && !binding.acceptNeedsReview) {
+    return json({ error: 'acceptNeedsReview=true is required for this technical outcome' }, 422);
+  }
+
+  const target = reviewAtRevision(row, targetRevision);
+  let currentIntegrity: { version: CandidateSpriteVersionRow; checkpoint: RecurationCheckpointRow };
+  let targetVersion: CandidateSpriteVersionRow;
+  try {
+    currentIntegrity = await requireCurrentRecurationIntegrity(env, row);
+    targetVersion = await requireApprovalIntegrity(env, target);
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : 'Recuration integrity failed' }, 409);
+  }
+  const { version: fromVersion, checkpoint: fromCheckpoint } = currentIntegrity;
+  const result = await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE video_sprite_candidates
+      SET current_revision = ?, approved_revision = ?, reviewed_at = datetime('now'),
+        reviewed_by_user_id = ?, review_reason = NULL
+      WHERE id = ? AND job_id = ? AND user_id = ? AND status = 'approved'
+        AND current_revision = ? AND approved_revision = ?
+        AND adjustment_claim_token IS NULL
+        AND EXISTS (
+          SELECT 1 FROM video_sprite_candidate_revisions revision
+          WHERE revision.candidate_id = video_sprite_candidates.id
+            AND revision.revision = ? AND revision.report_sha256 = ?
+            AND revision.processed_sha256 = ?
+        )
+        AND EXISTS (
+          SELECT 1 FROM video_sprite_candidate_revisions target
+          WHERE target.candidate_id = video_sprite_candidates.id
+            AND target.revision = ? AND target.report_sha256 = ?
+            AND target.processed_sha256 = ? AND target.compiler_outcome <> 'reject'
+        )
+        AND EXISTS (
+          SELECT 1 FROM sprites sprite
+          WHERE sprite.fighter_id = video_sprite_candidates.fighter_id
+            AND sprite.animation_name = video_sprite_candidates.action
+            AND sprite.quality_tier = 'champion'
+            AND sprite.blob_key = ? AND sprite.raw_blob_key = ?
+            AND sprite.content_hash = ? AND sprite.raw_content_hash = ?
+            AND sprite.frame_w = ? AND sprite.frame_h = ? AND sprite.frame_count = ?
+            AND sprite.animation_format = ? AND sprite.processing_version = ?
+        )
+        AND EXISTS (
+          SELECT 1 FROM generation_artifact_checkpoints checkpoint
+          WHERE checkpoint.run_id = video_sprite_candidates.run_id
+            AND checkpoint.artifact_kind = 'sprite'
+            AND checkpoint.artifact_name = video_sprite_candidates.action
+            AND checkpoint.status = 'approved' AND checkpoint.clean_version_id = ?
+            AND checkpoint.clean_blob_key = ? AND checkpoint.raw_blob_key = ?
+            AND checkpoint.clean_content_hash = ? AND checkpoint.raw_content_hash = ?
+            AND checkpoint.frame_w = ? AND checkpoint.frame_h = ?
+            AND checkpoint.frame_count = ? AND checkpoint.animation_format = ?
+            AND checkpoint.processing_version = ? AND checkpoint.completed_by_job_id = ?
+        )
+        AND EXISTS (
+          SELECT 1 FROM generation_jobs job
+          WHERE job.id = video_sprite_candidates.job_id AND job.status = 'succeeded'
+            AND job.review_status = 'approved'
+        )
+        AND EXISTS (
+          SELECT 1 FROM generation_artifact_runs run
+          WHERE run.id = video_sprite_candidates.run_id AND run.status = 'succeeded'
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM generation_job_events event
+          WHERE event.id = ? AND event.job_id = ?
+        )
+    `).bind(
+      binding.toRevision,
+      binding.toRevision,
+      auth.userId,
+      row.id,
+      jobId,
+      auth.userId,
+      binding.fromRevision,
+      binding.fromRevision,
+      binding.fromRevision,
+      binding.fromReportSha256,
+      binding.fromProcessedSha256,
+      binding.toRevision,
+      binding.toReportSha256,
+      binding.toProcessedSha256,
+      fromVersion.blob_key,
+      fromVersion.raw_blob_key,
+      fromVersion.content_hash,
+      fromVersion.raw_content_hash,
+      fromVersion.frame_w,
+      fromVersion.frame_h,
+      fromVersion.frame_count,
+      fromVersion.animation_format,
+      fromVersion.processing_version,
+      fromCheckpoint.clean_version_id,
+      fromCheckpoint.clean_blob_key,
+      fromCheckpoint.raw_blob_key,
+      fromCheckpoint.clean_content_hash,
+      fromCheckpoint.raw_content_hash,
+      fromCheckpoint.frame_w,
+      fromCheckpoint.frame_h,
+      fromCheckpoint.frame_count,
+      fromCheckpoint.animation_format,
+      fromCheckpoint.processing_version,
+      fromCheckpoint.completed_by_job_id,
+      transitionEventId,
+      jobId,
+    ),
+    env.DB.prepare(`
+      INSERT INTO sprites (
+        id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+        content_hash, raw_content_hash, frame_w, frame_h, frame_count,
+        processing_version, animation_format
+      ) SELECT ?, version.fighter_id, version.animation_name, version.quality_tier,
+        version.blob_key, version.raw_blob_key, version.content_hash, version.raw_content_hash,
+        version.frame_w, version.frame_h, version.frame_count, version.processing_version,
+        version.animation_format
+      FROM sprite_versions version
+      JOIN video_sprite_candidate_revisions revision ON revision.sprite_version_id = version.id
+      JOIN video_sprite_candidates candidate ON candidate.id = revision.candidate_id
+      WHERE candidate.id = ? AND candidate.user_id = ? AND candidate.status = 'approved'
+        AND candidate.current_revision = ? AND candidate.approved_revision = ?
+        AND revision.revision = ? AND revision.report_sha256 = ?
+        AND revision.processed_sha256 = ?
+      ON CONFLICT(fighter_id, animation_name, quality_tier) DO UPDATE SET
+        blob_key = excluded.blob_key, raw_blob_key = excluded.raw_blob_key,
+        content_hash = excluded.content_hash, raw_content_hash = excluded.raw_content_hash,
+        frame_w = excluded.frame_w, frame_h = excluded.frame_h,
+        frame_count = excluded.frame_count, processing_version = excluded.processing_version,
+        animation_format = excluded.animation_format, created_at = datetime('now')
+    `).bind(
+      generateId(), row.id, auth.userId, binding.toRevision, binding.toRevision,
+      binding.toRevision, binding.toReportSha256, binding.toProcessedSha256,
+    ),
+    env.DB.prepare(`
+      UPDATE generation_artifact_checkpoints
+      SET clean_version_id = ?, clean_blob_key = ?, raw_blob_key = ?,
+        clean_content_hash = ?, raw_content_hash = ?, frame_w = ?, frame_h = ?,
+        frame_count = ?, animation_format = ?, processing_version = ?,
+        verified_at = datetime('now')
+      WHERE run_id = ? AND artifact_kind = 'sprite' AND artifact_name = ?
+        AND status = 'approved' AND clean_version_id = ? AND clean_blob_key = ?
+        AND raw_blob_key = ? AND clean_content_hash = ? AND raw_content_hash = ?
+        AND frame_w = ? AND frame_h = ? AND frame_count = ?
+        AND animation_format = ? AND processing_version = ? AND completed_by_job_id = ?
+        AND EXISTS (
+          SELECT 1 FROM video_sprite_candidates candidate
+          JOIN video_sprite_candidate_revisions revision
+            ON revision.candidate_id = candidate.id
+            AND revision.revision = candidate.current_revision
+          WHERE candidate.id = ? AND candidate.user_id = ? AND candidate.status = 'approved'
+            AND candidate.current_revision = ? AND candidate.approved_revision = ?
+            AND revision.report_sha256 = ? AND revision.processed_sha256 = ?
+        )
+    `).bind(
+      targetVersion.id,
+      targetVersion.blob_key,
+      targetVersion.raw_blob_key,
+      targetVersion.content_hash,
+      targetVersion.raw_content_hash,
+      targetVersion.frame_w,
+      targetVersion.frame_h,
+      targetVersion.frame_count,
+      targetVersion.animation_format,
+      targetVersion.processing_version,
+      row.run_id,
+      row.action,
+      fromCheckpoint.clean_version_id,
+      fromCheckpoint.clean_blob_key,
+      fromCheckpoint.raw_blob_key,
+      fromCheckpoint.clean_content_hash,
+      fromCheckpoint.raw_content_hash,
+      fromCheckpoint.frame_w,
+      fromCheckpoint.frame_h,
+      fromCheckpoint.frame_count,
+      fromCheckpoint.animation_format,
+      fromCheckpoint.processing_version,
+      fromCheckpoint.completed_by_job_id,
+      row.id,
+      auth.userId,
+      binding.toRevision,
+      binding.toRevision,
+      binding.toReportSha256,
+      binding.toProcessedSha256,
+    ),
+    env.DB.prepare(`
+      INSERT OR IGNORE INTO generation_job_events (id, job_id, stage, status, detail)
+      SELECT ?, ?, 'review:recuration_promoted', 'succeeded', ?
+      WHERE EXISTS (
+        SELECT 1 FROM video_sprite_candidates candidate
+        JOIN video_sprite_candidate_revisions revision
+          ON revision.candidate_id = candidate.id
+          AND revision.revision = candidate.current_revision
+        WHERE candidate.id = ? AND candidate.current_revision = ?
+          AND candidate.approved_revision = ? AND revision.report_sha256 = ?
+          AND revision.processed_sha256 = ?
+      )
+    `).bind(
+      transitionEventId,
+      jobId,
+      `${row.action} promoted from revision ${binding.fromRevision} to ${binding.toRevision}`,
+      row.id,
+      binding.toRevision,
+      binding.toRevision,
+      binding.toReportSha256,
+      binding.toProcessedSha256,
+    ),
+  ]);
+  if (
+    (result[0].meta.changes ?? 0) !== 1 ||
+    (result[1].meta.changes ?? 0) !== 1 ||
+    (result[2].meta.changes ?? 0) !== 1
+  ) return json({ error: 'Video recuration changed concurrently; no promotion was applied' }, 409);
+
+  const promoted = await ownedReview(env, auth.userId, jobId, {
+    candidateId: row.id,
+    revision: binding.toRevision,
+    reportSha256: binding.toReportSha256,
+  });
+  if (!promoted || promoted.processed_sha256 !== binding.toProcessedSha256) {
+    return json({ error: 'Promoted video review could not be reloaded' }, 500);
+  }
+  return json({ review: serializeReview(promoted) });
 }
 
 export async function getVideoSpriteReviewAsset(
