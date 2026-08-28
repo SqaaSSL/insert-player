@@ -38,5 +38,5 @@
     "games",
     "entertainment"
   ],
-  "orientation": "landscape"
+  "orientation": "any"
 }
