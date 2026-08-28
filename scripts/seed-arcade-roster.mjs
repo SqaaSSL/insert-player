@@ -84,6 +84,7 @@ const continueOnError = args.has('--continue-on-error');
 const all = args.has('--all');
 const resume = args.has('--resume');
 const restartDraft = args.has('--restart-draft');
+const registerDraft = args.has('--register-draft');
 const prepareCanary = args.has('--prepare-canary');
 const canarySide = args.has('--canary-side');
 const probeSide = args.has('--probe-side');
@@ -547,7 +548,7 @@ function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
   if (
     preflightOnly
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName)
+    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName)
   ) {
     throw new Error('--preflight-only requires one --slug and cannot be combined with a generation operation.');
   }
@@ -563,38 +564,41 @@ function selectFighters(manifest) {
   if (resume && (animationName || sourceName)) {
     throw new Error('--resume fills an entire fighter and cannot be combined with --animation or --source.');
   }
-  if (restartDraft && (all || resume || prepareCanary || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
+  if (restartDraft && (all || resume || registerDraft || prepareCanary || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--restart-draft requires one --slug and cannot be combined with --all, --resume, --activate, --animation, or --source.');
   }
-  if (prepareCanary && (all || resume || restartDraft || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
+  if (registerDraft && (all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
+    throw new Error('--register-draft requires one --slug and cannot be combined with another generation operation.');
+  }
+  if (prepareCanary && (all || resume || restartDraft || registerDraft || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--prepare-canary requires one --slug and cannot be combined with another generation operation.');
   }
-  if (canarySide && (all || resume || restartDraft || prepareCanary || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
+  if (canarySide && (all || resume || restartDraft || registerDraft || prepareCanary || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--canary-side requires one --slug and cannot be combined with another generation operation.');
   }
-  if (probeSide && (all || resume || restartDraft || prepareCanary || canarySide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
+  if (probeSide && (all || resume || restartDraft || registerDraft || prepareCanary || canarySide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--probe-side requires one --slug and cannot be combined with another generation operation.');
   }
   if (
     activateReviewed
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || videoStep || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || videoStep || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--activate-reviewed requires one --slug and cannot be combined with generation, resume, or dry-run.');
   }
   if (
     videoStep
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--video-step requires one --slug and cannot be combined with generation, resume, activation, or dry-run.');
   }
   if (
     videoReview
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--video-review-decision requires one --slug and cannot be combined with generation, resume, activation, or dry-run.');
   }
   if (postApprovedRecurationOperation && (
-    dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide
+    dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide
     || activate || activateReviewed || videoStep || videoReview || sourceName || !slugArg || !animationName
   )) {
     throw new Error(
@@ -833,6 +837,17 @@ export function planSideDraftPreparation(entry, slug, { allowCreate = false, mod
     throw new Error(`Arcade ${mode}s are restricted to draft fighters; ${slug} is ${entry.status}.`);
   }
   return { action: 'reuse', entry };
+}
+
+export function assertNewArcadeDraftIdentity(adminEntries, fighterId, slug) {
+  const collision = adminEntries.find((entry) => entry?.fighterId === fighterId);
+  if (collision) {
+    throw new Error(
+      `${slug} resolved to existing Arcade fighter ${collision.slug ?? fighterId}; `
+      + 'refusing to mutate a reused photo identity.',
+    );
+  }
+  return fighterId;
 }
 
 export function planArcadeDraftRegistration(current, fighterId, slug, photoHash, shouldRestartDraft) {
@@ -3395,8 +3410,9 @@ async function prepareSideDraft({
     });
     const fighterId = created.fighter?.id;
     if (!/^[a-f0-9]{32}$/.test(fighterId ?? '')) {
-      throw new Error(`${fighter.name} did not return a fighter id while staging its probe.`);
+      throw new Error(`${fighter.name} did not return a fighter id while staging its ${mode}.`);
     }
+    assertNewArcadeDraftIdentity(adminEntries, fighterId, fighter.slug);
     entry = { fighterId, slug: fighter.slug, status: 'draft' };
   }
 
@@ -3421,7 +3437,9 @@ async function prepareSideDraft({
   }
   const progress = mode === 'probe'
     ? { probe: 'side', probePrepared: true, probeReady: false }
-    : { canary: 'side', canaryPrepared: true, canaryReady: false };
+    : mode === 'register'
+      ? { draftRegistered: true }
+      : { canary: 'side', canaryPrepared: true, canaryReady: false };
   checkpointState(state, manifest, fighter, entry.fighterId, photoHash, 'draft', {
     complete: false,
     ...progress,
@@ -3434,6 +3452,10 @@ async function prepareSideDraft({
 
 async function prepareSideCanary(options) {
   return prepareSideDraft({ ...options, mode: 'canary' });
+}
+
+async function registerArcadeDraft(options) {
+  return prepareSideDraft({ ...options, mode: 'register', allowCreate: true });
 }
 
 async function main() {
@@ -3522,7 +3544,7 @@ async function main() {
     for (const fighter of selected) {
       const { photoHash } = readApprovedSource(manifest, fighter);
       console.log(
-        `ready  ${fighter.slug}  Champion${animationName ? `:${animationName}` : sourceName ? `:source:${sourceName}` : prepareCanary ? ':prepare-canary' : canarySide ? ':canary-side' : probeSide ? ':probe-side' : resume ? ':resume' : restartDraft ? ':restart-draft' : ''}  licensed:${photoHash.slice(0, 12)}`,
+        `ready  ${fighter.slug}  Champion${animationName ? `:${animationName}` : sourceName ? `:source:${sourceName}` : registerDraft ? ':register-draft' : prepareCanary ? ':prepare-canary' : canarySide ? ':canary-side' : probeSide ? ':probe-side' : resume ? ':resume' : restartDraft ? ':restart-draft' : ''}  licensed:${photoHash.slice(0, 12)}`,
       );
     }
     return;
@@ -3735,6 +3757,17 @@ async function main() {
     return;
   }
   const state = readState();
+  if (registerDraft) {
+    await registerArcadeDraft({
+      manifest,
+      fighter: selected[0],
+      baseUrl,
+      token,
+      adminEntries,
+      state,
+    });
+    return;
+  }
   if (prepareCanary) {
     await prepareSideCanary({
       manifest,

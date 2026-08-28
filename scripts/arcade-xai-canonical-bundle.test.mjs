@@ -633,7 +633,7 @@ describe('sealed XAI canonical bundle inputs', () => {
       }
     }
     expect(sha256(JSON.stringify(snapshots)))
-      .toBe('7415c82e9130840939192f1d969207362480ce25fb00e23db5146455f0de029a');
+      .toBe('21217a5e71a9a4a3c0cd75fb8da48a89190823a75ac4e5fa98231be65ef91f4c');
   });
 
   it('seals the single CROUCH identity-first prompt and wires its reviewed hash through the CLI', () => {

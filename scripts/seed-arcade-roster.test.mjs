@@ -20,6 +20,7 @@ import {
   arcadeAdminAuthHeaders,
   assertApprovedArcadeGenerationContract,
   assertAwaitingVideoReview,
+  assertNewArcadeDraftIdentity,
   assertPinnedProductionWorkerHealth,
   assertPostApprovedRecurationConfirmation,
   assertPostApprovedRecurationDescriptor,
@@ -889,6 +890,14 @@ describe('Arcade roster resume planning', () => {
       allowCreate: true,
       mode: 'probe',
     })).toThrow(/restricted to draft fighters/);
+  });
+
+  it('refuses to register a draft when the photo resolves to an existing Arcade identity', () => {
+    const fighterId = 'a'.repeat(32);
+    expect(assertNewArcadeDraftIdentity([], fighterId, 'rosalia-v2')).toBe(fighterId);
+    expect(() => assertNewArcadeDraftIdentity([
+      { fighterId, slug: 'rosalia', status: 'active' },
+    ], fighterId, 'rosalia-v2')).toThrow(/refusing to mutate a reused photo identity/);
   });
 
   it('restarts only the matching content-addressed draft', () => {
@@ -2288,6 +2297,8 @@ describe('Arcade roster provider preflight', () => {
   });
 
   it('keeps canary preparation separate from the capped side inference', () => {
+    expect(productionWorkflow).toContain('- register-draft');
+    expect(productionWorkflow).toContain('seed_args+=(--register-draft --confirm-production)');
     expect(productionWorkflow).toContain('seed_args+=(--prepare-canary --confirm-production)');
     expect(productionWorkflow).toContain('seed_args+=(--canary-side --confirm-production)');
   });
