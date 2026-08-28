@@ -30,6 +30,7 @@ The official Arcade roster uses real, reusable photographs as identity reference
 | Javier Milei | [Official portrait](https://commons.wikimedia.org/wiki/File:Retrato_oficial_del_Presidente_Javier_(cropped).jpeg) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0) | Gobierno Argentino / Argentina.gob.ar, 2024 |
 | Lionel Messi | [New England v Miami portrait](https://commons.wikimedia.org/wiki/File:Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-043_(cropped).jpg) | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) | Bryan Berlin / WikiPortraits, 2025 |
 | Perro Sanxe / Pedro Sánchez | [Pedro Sánchez with Ursula von der Leyen](https://commons.wikimedia.org/wiki/File:Pedro_S%C3%A1nchez_with_Ursula_von_der_Leyen_-_2025_(P-067042).jpg) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0) | European Union, 2026; source image dated 2025 |
+| Rosalía V2 candidate | [Premios Goya 2019 — Rosalía](https://commons.wikimedia.org/wiki/File:Premios_Goya_2019_-_Rosal%C3%ADa.jpg) | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) | Pedro J Pacheco, 2019 |
 
 ## Publication
 
