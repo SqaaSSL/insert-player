@@ -283,6 +283,26 @@
         "sourceSha256": "1ac0e6562015961764579ec168ba1091c1059c217ba7484616d1ce3fcab12dac"
       },
       "referencePrompt": "Using the licensed reference photo as the identity anchor. Preserve the person's recognizable facial structure, hair, skin tone, apparent age, and build faithfully while rendering the result as clearly AI-generated game artwork rather than documentary photography. Treat that photograph and the separately reviewed V2 canonical source views as the sole identity authority. Preserve Rosalía Vila Tobella's exact cheek width, cheekbones, eye shape and spacing, brows, nose, lips, jaw, chin, facial asymmetry, hairline, and long center-parted near-black hair. Preserve the reviewed V2 fighter's exact slim adult proportions and original black, deep-crimson, and chrome performance outfit across every frame. Show the complete figure head-to-toe in a composed neutral fighting stance, 3/4 view facing right, with coherent anatomy and a readable silhouette. Never substitute a generic model face, narrow or lengthen the face, masculinize anatomy, reuse another person's pose identity, or redesign the outfit. Keep hands, boots, hair, scale, and silhouette stable; no text, logos, props, protected game styling, green spill, extra limbs, or cropped body parts. The result is premium realistic 2.5D game artwork, not documentary photography, cartoon, anime, cel shading, or caricature."
+    },
+    {
+      "slug": "player-one",
+      "name": "Player One",
+      "identityName": "Insert Player Original",
+      "rank": 15,
+      "challengerLine": "Every legend starts with one photo.",
+      "defaultPersonality": "balanced",
+      "reference": {
+        "kind": "licensed",
+        "sourceUrl": "https://insertplayer.ai/",
+        "license": "Proprietary; commercial use licensed to Insert Player",
+        "licenseUrl": "https://insertplayer.ai/terms",
+        "credit": "Insert Player original synthetic reference (2026).",
+        "author": "Insert Player",
+        "sourceDate": "2026-08-28",
+        "verification": "Original synthetic identity commissioned for Insert Player; no real person's identity is claimed",
+        "sourceSha256": "ce829cd0362084a3bc729963a06dba00b26a3898d81da02972663c732a8fd11d"
+      },
+      "referencePrompt": "Using the licensed reference photo as the identity anchor, create an original premium realistic 2.5D full-body arcade fighter. Preserve the synthetic woman's recognizable facial structure, olive skin tone, apparent adult age, athletic build, and short dark naturally wavy asymmetrical bob faithfully. Preserve her softly angular oval face, strong dark brows, almond-shaped brown eyes, straight nose, defined lips, subtle facial asymmetry, and calm self-assured expression. Show the complete figure head-to-toe in a grounded neutral ready stance, 3/4 view facing right, wearing an original fitted black technical fighting jacket with restrained deep-crimson and brushed-chrome details, black combat trousers, fingerless gloves, and practical dark boots. Keep the design modern, tactile, and premium rather than futuristic or superhero-like. No text, logos, symbols, props, protected game styling, green spill, extra limbs, duplicate body parts, or cropped hands and feet. Pure bright green (#00FF00) background, flat and uniform with no shadows, floor, or gradients. Even studio light, crisp silhouette, realistic adult proportions, detailed hands and shoes. Clearly AI-generated game artwork, not documentary photography, cartoon, chibi, anime, cel shading, or caricature."
     }
   ]
 }
