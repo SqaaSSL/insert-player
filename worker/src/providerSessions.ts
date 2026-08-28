@@ -98,7 +98,7 @@ const FIGHTER_GENERATION_COST_LIMITS_CENTS: Record<QualityTier, number> = {
 const FIGHTER_RETRY_COST_LIMITS_CENTS: Record<QualityTier, number> = {
   rookie: 50,
   contender: 300,
-  champion: 500,
+  champion: 700,
 };
 const SOURCE_RETRY_COST_LIMIT_CENTS = 75;
 const FEATURE_PROVIDER_COST_LIMITS_CENTS: Record<'stage_background' | 'intro_video', number> = {
