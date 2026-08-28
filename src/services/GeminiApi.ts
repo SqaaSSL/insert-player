@@ -2239,7 +2239,7 @@ async function unionMasksPreserveForeground(
   const chromaData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const birefData = birefCtx.getImageData(0, 0, birefCanvas.width, birefCanvas.height);
 
-  unionForegroundMasks(chromaData.data, birefData.data);
+  unionForegroundMasks(chromaData.data, birefData.data, canvas.width, canvas.height);
   decontaminateGreenEdges(chromaData.data, canvas.width, canvas.height);
 
   ctx.putImageData(chromaData, 0, 0);
