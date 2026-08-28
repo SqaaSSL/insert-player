@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "kind": "imported-global-video-recuration-source-v1",
+  "target": "production",
+  "fighter": {
+    "slug": "donald-trump",
+    "fighterId": "8555abdb8beeb6e03679474c24be982f"
+  },
+  "action": "idle",
+  "current": {
+    "spriteId": "3eb24536c790e63f75b78075b856fd2f",
+    "processedSha256": "5a846707222a1454d97d187174e4ddfe4ce70eb1fcfff03450e1a7cea795af54",
+    "rawSha256": "2a6f87dd93ab265ff10c228f844b840feeab94e75de80decd5fbe8fb221b67c8",
+    "frameWidth": 192,
+    "frameHeight": 256,
+    "frameCount": 8,
+    "animationFormat": "video-dense-v1",
+    "processingVersion": 5
+  },
+  "canonical": {
+    "kind": "upright_raw",
+    "sha256": "7d66134eb21a42ca54c2d2205c952204886cb59f69cb35349416359c36ccd2a7"
+  },
+  "source": {
+    "url": "https://v3b.fal.media/files/b/0aa7e7fd/-_3VOuI9cJEPXLSxLZucU_8PZ5KBdR.mp4",
+    "sha256": "bb2f52a06ca6085465bb97d22d758695c19937db4a24bf635d7f23f9190b273c",
+    "sizeBytes": 653683,
+    "provider": "fal",
+    "modelId": "grok-imagine-i2v-pinned",
+    "providerEndpoint": "xai/grok-imagine-video/v1.5/image-to-video",
+    "pixcliJobId": "15fcd11590a68fa0e7662e0a901962f5",
+    "providerRequestId": "01a03ed6-2308-7fc2-87e3-ecfb8e87f6b1",
+    "promptSha256": "15687c130a6c49a882ac93cbf91248f0a0de6b534595281735452005025ed552",
+    "providerRequestAuditSha256": "8ec8151e614cfa2dd9cf0c096a371d90ec3e9b14649021f6a4beccdb70e53a25",
+    "providerResponseSha256": "cec6d5145fe374b2510419b0e511f96624201208d81a08b8a499d15ae3447cf2"
+  },
+  "selectedVideoIndices": [
+    40,
+    41,
+    42,
+    43,
+    44,
+    45,
+    46,
+    47
+  ]
+}

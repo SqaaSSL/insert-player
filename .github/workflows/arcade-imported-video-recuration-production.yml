@@ -1,0 +1,377 @@
+name: Recurate one imported Arcade Video action
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Stage, promote, or roll back one sealed imported/legacy Video action
+        required: true
+        default: stage
+        type: choice
+        options:
+          - stage
+          - promote
+          - rollback
+      slug:
+        description: Exact active global fighter slug
+        required: true
+        type: string
+      action:
+        description: Exact imported Video action
+        required: true
+        default: idle
+        type: choice
+        options:
+          - idle
+          - walk
+          - high_punch
+          - high_kick
+          - low_punch
+          - low_kick
+          - jump
+          - crouch
+          - hit
+          - ko
+          - victory
+      source_binding_path:
+        description: Stage only — reviewed repo-relative source binding JSON
+        required: false
+        type: string
+      source_binding_sha256:
+        description: Stage only — exact source binding SHA-256
+        required: false
+        type: string
+      stage_artifact_binding:
+        description: Promote/rollback — JSON with runId, descriptorSha256, acceptNeedsReview
+        required: false
+        type: string
+      confirmation:
+        description: Exact operation-specific production confirmation phrase
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  recuration:
+    name: ${{ inputs.operation }} ${{ inputs.slug }} ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      REQUESTED_OPERATION: ${{ inputs.operation }}
+      REQUESTED_SLUG: ${{ inputs.slug }}
+      REQUESTED_ACTION: ${{ inputs.action }}
+      SOURCE_BINDING_PATH: ${{ inputs.source_binding_path }}
+      SOURCE_BINDING_SHA256: ${{ inputs.source_binding_sha256 }}
+      STAGE_ARTIFACT_BINDING: ${{ inputs.stage_artifact_binding }}
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Check out the exact reviewed commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+
+      - name: Validate the exact operation request
+        shell: bash
+        env:
+          ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+          ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+          ARCADE_RECURATION_ARTIFACT_KEY: ${{ secrets.ARCADE_RECURATION_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_SLUG" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || {
+            printf '::error::Invalid active global slug.\n'
+            exit 1
+          }
+          case "$REQUESTED_ACTION" in
+            idle|walk|high_punch|high_kick|low_punch|low_kick|jump|crouch|hit|ko|victory) ;;
+            *) printf '::error::Unsupported Video action.\n'; exit 1 ;;
+          esac
+          [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" ]] || {
+            printf '::error::Production Clerk admin credentials are unavailable.\n'
+            exit 1
+          }
+          [[ -z "$CLERK_BACKEND_AUTH_BRIDGE_SECRET" || ${#CLERK_BACKEND_AUTH_BRIDGE_SECRET} -ge 32 ]] || {
+            printf '::error::The optional Clerk backend bridge secret is malformed.\n'
+            exit 1
+          }
+          [[ "$ARCADE_RECURATION_ARTIFACT_KEY" =~ ^[a-fA-F0-9]{64}$ ]] || {
+            printf '::error::The production recuration artifact encryption key is unavailable.\n'
+            exit 1
+          }
+          case "$REQUESTED_OPERATION" in
+            stage)
+              expected_confirmation="STAGE_IMPORTED_GLOBAL_VIDEO_RECURATION_PRODUCTION"
+              [[ "$SOURCE_BINDING_PATH" =~ ^arcade/imported-video-recurations/[a-z0-9._-]+\.json$ ]] || exit 1
+              [[ "$SOURCE_BINDING_SHA256" =~ ^[a-f0-9]{64}$ ]] || exit 1
+              [[ -z "$STAGE_ARTIFACT_BINDING" ]] || exit 1
+              ;;
+            promote)
+              expected_confirmation="PROMOTE_IMPORTED_GLOBAL_VIDEO_RECURATION_PRODUCTION"
+              [[ -z "$SOURCE_BINDING_PATH" && -z "$SOURCE_BINDING_SHA256" ]] || exit 1
+              [[ -n "$STAGE_ARTIFACT_BINDING" && ${#STAGE_ARTIFACT_BINDING} -le 512 ]] || exit 1
+              ;;
+            rollback)
+              expected_confirmation="ROLLBACK_IMPORTED_GLOBAL_VIDEO_RECURATION_PRODUCTION"
+              [[ -z "$SOURCE_BINDING_PATH" && -z "$SOURCE_BINDING_SHA256" ]] || exit 1
+              [[ -n "$STAGE_ARTIFACT_BINDING" && ${#STAGE_ARTIFACT_BINDING} -le 512 ]] || exit 1
+              ;;
+            *) printf '::error::Unsupported operation.\n'; exit 1 ;;
+          esac
+          [[ "$REQUESTED_CONFIRMATION" == "$expected_confirmation" ]] || {
+            printf '::error::The exact operation confirmation phrase is required.\n'
+            exit 1
+          }
+          node --check scripts/imported-global-video-recuration.mjs
+          node --check scripts/encrypted-workflow-bundle.mjs
+
+      - name: Resolve sealed artifact bindings
+        if: inputs.operation != 'stage'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+
+          const exactKeys = (value, expected) => {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+            const actual = Object.keys(value).sort();
+            const sorted = [...expected].sort();
+            return actual.length === sorted.length && actual.every((key, index) => key === sorted[index]);
+          };
+          const stage = JSON.parse(process.env.STAGE_ARTIFACT_BINDING ?? '');
+          if (
+            !exactKeys(stage, ['runId', 'descriptorSha256', 'acceptNeedsReview']) ||
+            typeof stage.runId !== 'string' || !/^[1-9][0-9]*$/.test(stage.runId) ||
+            typeof stage.descriptorSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(stage.descriptorSha256) ||
+            typeof stage.acceptNeedsReview !== 'boolean'
+          ) throw new Error('stage_artifact_binding does not use the exact sealed schema.');
+          const lines = [
+            `STAGE_RUN_ID=${stage.runId}`,
+            `DESCRIPTOR_SHA256=${stage.descriptorSha256}`,
+            `ACCEPT_NEEDS_REVIEW=${stage.acceptNeedsReview}`,
+          ];
+          const output = process.env.GITHUB_ENV;
+          if (!output) throw new Error('GITHUB_ENV is unavailable.');
+          appendFileSync(output, `${lines.join('\n')}\n`);
+          NODE
+
+      - name: Validate stage source binding inside the reviewed checkout
+        if: inputs.operation == 'stage'
+        shell: bash
+        run: |
+          set -euo pipefail
+          binding_real="$(realpath "$SOURCE_BINDING_PATH")"
+          allowed_root="$(realpath arcade/imported-video-recurations)"
+          [[ "$binding_real" == "$allowed_root/"* && -f "$binding_real" && ! -L "$binding_real" ]] || {
+            printf '::error::Source binding escaped its reviewed repository directory.\n'
+            exit 1
+          }
+          actual_sha="$(sha256sum "$binding_real" | awk '{print $1}')"
+          [[ "$actual_sha" == "$SOURCE_BINDING_SHA256" ]] || {
+            printf '::error::Source binding bytes changed.\n'
+            exit 1
+          }
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const binding = JSON.parse(readFileSync(process.env.SOURCE_BINDING_PATH, 'utf8'));
+          if (
+            binding?.fighter?.slug !== process.env.REQUESTED_SLUG ||
+            binding?.action !== process.env.REQUESTED_ACTION
+          ) throw new Error('Source binding fighter/action does not match the workflow request.');
+          NODE
+
+      - name: Download the exact sealed stage artifact
+        if: inputs.operation != 'stage'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCADE_RECURATION_ARTIFACT_KEY: ${{ secrets.ARCADE_RECURATION_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          metadata="$RUNNER_TEMP/stage-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$STAGE_RUN_ID" > "$metadata"
+          RUN_METADATA="$metadata" EXPECTED_RUN_ID="$STAGE_RUN_ID" EXPECTED_OPERATION="stage" node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const run = JSON.parse(readFileSync(process.env.RUN_METADATA, 'utf8'));
+          const workflowPath = String(run.path ?? '').split('@', 1)[0];
+          const stageSha = typeof run.head_sha === 'string' ? run.head_sha : '';
+          if (
+            run.id !== Number(process.env.EXPECTED_RUN_ID) || run.status !== 'completed' ||
+            run.conclusion !== 'success' || run.event !== 'workflow_dispatch' ||
+            workflowPath !== '.github/workflows/arcade-imported-video-recuration-production.yml' ||
+            run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            !/^[a-f0-9]{40}$/.test(stageSha) ||
+            (process.env.REQUESTED_OPERATION === 'promote' && stageSha !== process.env.GITHUB_SHA)
+          ) throw new Error('Stage run is not a successful exact-commit workflow dispatch.');
+          NODE
+          stage_head_sha="$(RUN_METADATA="$metadata" node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          process.stdout.write(JSON.parse(readFileSync(process.env.RUN_METADATA, 'utf8')).head_sha);
+          NODE
+          )"
+          export STAGE_HEAD_SHA="$stage_head_sha"
+          printf 'STAGE_HEAD_SHA=%s\n' "$stage_head_sha" >> "$GITHUB_ENV"
+          mkdir -m 700 -p "$RUNNER_TEMP/imported-stage-artifact"
+          gh run download "$STAGE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "imported-video-recuration-stage-$REQUESTED_SLUG-$REQUESTED_ACTION-$STAGE_RUN_ID" \
+            --dir "$RUNNER_TEMP/imported-stage-artifact"
+          node scripts/encrypted-workflow-bundle.mjs \
+            --operation=open \
+            --bundle="$RUNNER_TEMP/imported-stage-artifact/bundle.enc" \
+            --destination-dir="$RUNNER_TEMP/imported-stage"
+          DESCRIPTOR="$RUNNER_TEMP/imported-stage/recuration-descriptor.json" node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const descriptor = JSON.parse(readFileSync(process.env.DESCRIPTOR, 'utf8'));
+          if (
+            descriptor?.fighter?.slug !== process.env.REQUESTED_SLUG ||
+            descriptor?.action !== process.env.REQUESTED_ACTION ||
+            descriptor?.expectedWorkerSha !== process.env.STAGE_HEAD_SHA
+          ) throw new Error('Downloaded descriptor identity does not match this exact workflow request.');
+          NODE
+
+      - name: Stage one immutable imported revision with zero provider calls
+        if: inputs.operation == 'stage'
+        shell: bash
+        env:
+          ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+          ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          node scripts/imported-global-video-recuration.mjs \
+            --operation=stage \
+            --confirm="$REQUESTED_CONFIRMATION" \
+            --expected-deployed-sha="$GITHUB_SHA" \
+            --source-binding="$SOURCE_BINDING_PATH" \
+            --source-binding-sha256="$SOURCE_BINDING_SHA256" \
+            --export-dir="$RUNNER_TEMP/imported-stage"
+
+      - name: Promote the exact visually reviewed shadow revision
+        if: inputs.operation == 'promote'
+        shell: bash
+        env:
+          ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+          ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          needs_review=()
+          [[ "$ACCEPT_NEEDS_REVIEW" == "true" ]] && needs_review+=(--accept-needs-review)
+          node scripts/imported-global-video-recuration.mjs \
+            --operation=promote \
+            --confirm="$REQUESTED_CONFIRMATION" \
+            --expected-deployed-sha="$GITHUB_SHA" \
+            --descriptor="$RUNNER_TEMP/imported-stage/recuration-descriptor.json" \
+            --descriptor-sha256="$DESCRIPTOR_SHA256" \
+            --receipt-dir="$RUNNER_TEMP/imported-transition" \
+            "${needs_review[@]}"
+
+      - name: Roll back only the exact recorded promotion
+        if: inputs.operation == 'rollback'
+        shell: bash
+        env:
+          ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+          ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+        run: |
+          set -euo pipefail
+          umask 077
+          node scripts/imported-global-video-recuration.mjs \
+            --operation=rollback \
+            --confirm="$REQUESTED_CONFIRMATION" \
+            --expected-deployed-sha="$GITHUB_SHA" \
+            --descriptor="$RUNNER_TEMP/imported-stage/recuration-descriptor.json" \
+            --descriptor-sha256="$DESCRIPTOR_SHA256" \
+            --receipt-dir="$RUNNER_TEMP/imported-transition"
+
+      - name: Publish the sealed operation summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '### Imported global Video recuration\n\n' >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- Operation: `%s`\n' "$REQUESTED_OPERATION" >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- Fighter/action: `%s` / `%s`\n' "$REQUESTED_SLUG" "$REQUESTED_ACTION" >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- Exact Worker commit: `%s`\n' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          printf -- '- Provider calls: `0`\n' >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$REQUESTED_OPERATION" == "stage" ]]; then
+            digest="$(awk 'NR == 1 { print $1 }' "$RUNNER_TEMP/imported-stage/recuration-descriptor.sha256")"
+            printf -- '- Descriptor SHA-256: `%s`\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
+            printf -- '- Next binding: `{"runId":"%s","descriptorSha256":"%s","acceptNeedsReview":false}`\n' \
+              "$GITHUB_RUN_ID" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          else
+            receipt_name="$([[ "$REQUESTED_OPERATION" == "promote" ]] && printf promotion || printf rollback)-receipt.json"
+            digest="$(sha256sum "$RUNNER_TEMP/imported-transition/$receipt_name" | awk '{print $1}')"
+            printf -- '- Transition receipt SHA-256: `%s`\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
+            [[ "$REQUESTED_OPERATION" != "promote" ]] || \
+              printf -- '- Rollback source: authoritative transition stored in D1\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Encrypt the private staged evidence
+        if: inputs.operation == 'stage'
+        shell: bash
+        env:
+          ARCADE_RECURATION_ARTIFACT_KEY: ${{ secrets.ARCADE_RECURATION_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          node scripts/encrypted-workflow-bundle.mjs \
+            --operation=seal \
+            --source-dir="$RUNNER_TEMP/imported-stage" \
+            --bundle="$RUNNER_TEMP/imported-stage-artifact/bundle.enc"
+
+      - name: Encrypt the transition receipt
+        id: encrypt-transition
+        if: always() && inputs.operation != 'stage'
+        shell: bash
+        env:
+          ARCADE_RECURATION_ARTIFACT_KEY: ${{ secrets.ARCADE_RECURATION_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          receipt_name="$([[ "$REQUESTED_OPERATION" == "promote" ]] && printf promotion || printf rollback)-receipt.json"
+          if [[ ! -f "$RUNNER_TEMP/imported-transition/$receipt_name" || \
+                ! -f "$RUNNER_TEMP/imported-transition/$receipt_name.sha256" ]]; then
+            printf 'available=false\n' >> "$GITHUB_OUTPUT"
+            printf 'No transition receipt was produced before the operation failed.\n'
+            exit 0
+          fi
+          node scripts/encrypted-workflow-bundle.mjs \
+            --operation=seal \
+            --source-dir="$RUNNER_TEMP/imported-transition" \
+            --bundle="$RUNNER_TEMP/imported-transition-artifact/bundle.enc"
+          printf 'available=true\n' >> "$GITHUB_OUTPUT"
+
+      - name: Upload only the encrypted staged evidence
+        if: inputs.operation == 'stage'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: imported-video-recuration-stage-${{ inputs.slug }}-${{ inputs.action }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/imported-stage-artifact
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+      - name: Upload only the encrypted transition receipt
+        if: always() && steps.encrypt-transition.outputs.available == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: imported-video-recuration-${{ inputs.operation }}-${{ inputs.slug }}-${{ inputs.action }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/imported-transition-artifact
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0

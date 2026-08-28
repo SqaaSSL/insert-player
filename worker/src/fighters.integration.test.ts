@@ -600,6 +600,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       const activeResponse = await listArcadeFighters(
         new Request('https://api.insertplayer.ai/api/arcade'), env,
       );
+      expect(activeResponse.headers.get('Cache-Control')).toBe('no-store');
       const activeBody = await activeResponse.json() as { fighters: Array<Record<string, any>> };
       expect(activeBody.fighters).toHaveLength(1);
       expect(activeBody.fighters[0]?.name).toBe('Headline Fighter');

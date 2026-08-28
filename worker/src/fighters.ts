@@ -626,6 +626,18 @@ async function getOwnedFighter(env: Env, fighterId: string, userId: string): Pro
   ).bind(fighterId, userId).first<Fighter>();
 }
 
+async function isActiveArcadeFighter(env: Env, fighterId: string): Promise<boolean> {
+  return Boolean(await env.DB.prepare(`
+    SELECT 1 FROM arcade_fighters WHERE fighter_id = ? AND status = 'active' LIMIT 1
+  `).bind(fighterId).first());
+}
+
+function activeArcadeMutationFailure(): Response {
+  return json({
+    error: 'Active Arcade globals can only change through a sealed reviewed transition',
+  }, 409, NO_STORE_HEADERS);
+}
+
 async function getOwnedFighterByPhotoHash(env: Env, userId: string, photoHash: string): Promise<Fighter | null> {
   return env.DB.prepare(
     'SELECT * FROM fighters WHERE owner_user_id = ? AND photo_hash = ?'
@@ -786,6 +798,8 @@ export async function listOwnedCommunityFighterIds(
 }
 
 export async function listArcadeFighters(request: Request, env: Env): Promise<Response> {
+  // Arcade globals can change through reviewed promote/rollback operations. Keep
+  // the roster uncached across colos; each sprite URL remains content-addressed.
   const { results } = await env.DB.prepare(arcadeFighterSelectSql(
     `WHERE af.status = 'active'
       AND f.public_flag = 1
@@ -808,7 +822,7 @@ export async function listArcadeFighters(request: Request, env: Env): Promise<Re
       fighter,
       spritesByFighter.get(fighter.id) ?? [],
     )),
-  }, 200, PUBLIC_COMMUNITY_CACHE_HEADERS);
+  }, 200, NO_STORE_HEADERS);
 }
 
 export async function listAdminArcadeFighters(env: Env, auth: AuthContext): Promise<Response> {
@@ -1696,6 +1710,7 @@ export async function uploadFighterSource(
 ): Promise<Response> {
   const fighter = await getOwnedFighter(env, fighterId, auth.userId);
   if (!fighter) return json({ error: 'Fighter not found' }, 404);
+  if (await isActiveArcadeFighter(env, fighterId)) return activeArcadeMutationFailure();
 
   const formData = await readMultipartFormData(request, MAX_SOURCE_MULTIPART_BODY_BYTES);
   const kind = formData.get('kind');
@@ -1803,6 +1818,9 @@ export async function uploadFighterSprite(
     return json({ error: 'setCurrent must be true or false' }, 400);
   }
   const setCurrent = setCurrentValue !== 'false';
+  if (setCurrent && await isActiveArcadeFighter(env, fighterId)) {
+    return activeArcadeMutationFailure();
+  }
   const animationFormat = animationFormatValue === null || animationFormatValue === ''
     ? normalizeSpriteAnimationFormat(undefined)
     : typeof animationFormatValue === 'string' && isSpriteAnimationFormat(animationFormatValue)
@@ -2005,6 +2023,7 @@ export async function promoteFighterSpriteVersion(
 ): Promise<Response> {
   const fighter = await getOwnedFighter(env, fighterId, auth.userId);
   if (!fighter) return json({ error: 'Fighter not found' }, 404);
+  if (await isActiveArcadeFighter(env, fighterId)) return activeArcadeMutationFailure();
 
   const body = await readJsonBody<{
     animationName?: string;
