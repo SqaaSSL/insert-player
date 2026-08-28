@@ -72,22 +72,22 @@ jobs:
       SOURCE_BINDING_SHA256: ${{ inputs.source_binding_sha256 }}
       STAGE_ARTIFACT_BINDING: ${{ inputs.stage_artifact_binding }}
       REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
-      ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
-      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
-      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
-      ARCADE_RECURATION_ARTIFACT_KEY: ${{ secrets.ARCADE_RECURATION_ARTIFACT_KEY }}
-
     steps:
       - name: Check out the exact reviewed commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
       - name: Set up pinned Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 22
 
       - name: Validate the exact operation request
         shell: bash
+        env:
+          ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+          ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+          ARCADE_RECURATION_ARTIFACT_KEY: ${{ secrets.ARCADE_RECURATION_ARTIFACT_KEY }}
         run: |
           set -euo pipefail
           [[ "$REQUESTED_SLUG" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || {
@@ -197,6 +197,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          ARCADE_RECURATION_ARTIFACT_KEY: ${{ secrets.ARCADE_RECURATION_ARTIFACT_KEY }}
         run: |
           set -euo pipefail
           metadata="$RUNNER_TEMP/stage-run.json"
@@ -244,6 +245,10 @@ jobs:
       - name: Stage one immutable imported revision with zero provider calls
         if: inputs.operation == 'stage'
         shell: bash
+        env:
+          ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+          ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
         run: |
           set -euo pipefail
           umask 077
@@ -258,6 +263,10 @@ jobs:
       - name: Promote the exact visually reviewed shadow revision
         if: inputs.operation == 'promote'
         shell: bash
+        env:
+          ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+          ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
         run: |
           set -euo pipefail
           umask 077
@@ -275,6 +284,10 @@ jobs:
       - name: Roll back only the exact recorded promotion
         if: inputs.operation == 'rollback'
         shell: bash
+        env:
+          ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+          ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
         run: |
           set -euo pipefail
           umask 077
@@ -311,6 +324,8 @@ jobs:
       - name: Encrypt the private staged evidence
         if: inputs.operation == 'stage'
         shell: bash
+        env:
+          ARCADE_RECURATION_ARTIFACT_KEY: ${{ secrets.ARCADE_RECURATION_ARTIFACT_KEY }}
         run: |
           set -euo pipefail
           umask 077
@@ -323,6 +338,8 @@ jobs:
         id: encrypt-transition
         if: always() && inputs.operation != 'stage'
         shell: bash
+        env:
+          ARCADE_RECURATION_ARTIFACT_KEY: ${{ secrets.ARCADE_RECURATION_ARTIFACT_KEY }}
         run: |
           set -euo pipefail
           umask 077
@@ -341,7 +358,7 @@ jobs:
 
       - name: Upload only the encrypted staged evidence
         if: inputs.operation == 'stage'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: imported-video-recuration-stage-${{ inputs.slug }}-${{ inputs.action }}-${{ github.run_id }}
           path: ${{ runner.temp }}/imported-stage-artifact
@@ -351,7 +368,7 @@ jobs:
 
       - name: Upload only the encrypted transition receipt
         if: always() && steps.encrypt-transition.outputs.available == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: imported-video-recuration-${{ inputs.operation }}-${{ inputs.slug }}-${{ inputs.action }}-${{ github.run_id }}
           path: ${{ runner.temp }}/imported-transition-artifact

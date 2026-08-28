@@ -11,6 +11,10 @@ import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const script = new URL('./encrypted-workflow-bundle.mjs', import.meta.url);
+const workflow = new URL(
+  '../.github/workflows/arcade-imported-video-recuration-production.yml',
+  import.meta.url,
+);
 const roots = [];
 const key = '17'.repeat(32);
 
@@ -32,6 +36,18 @@ afterEach(() => {
 });
 
 describe('encrypted production workflow bundle', () => {
+  it('keeps long-lived secrets step-scoped and pins every external action immutably', () => {
+    const source = readFileSync(workflow, 'utf8');
+    expect(source).not.toMatch(/^ {6}(?:ASF_ARCADE_CLERK|ASF_ARCADE_ADMIN|CLERK_BACKEND|ARCADE_RECURATION).*secrets\./m);
+    const uses = [...source.matchAll(/^\s+uses:\s+([^\s#]+)/gm)].map((match) => match[1]);
+    expect(uses.length).toBeGreaterThan(0);
+    expect(uses.every((reference) => /@[a-f0-9]{40}$/.test(reference))).toBe(true);
+    expect(source).toContain('path: ${{ runner.temp }}/imported-stage-artifact');
+    expect(source).toContain('path: ${{ runner.temp }}/imported-transition-artifact');
+    expect(source).not.toContain('path: ${{ runner.temp }}/imported-stage\n');
+    expect(source).not.toContain('path: ${{ runner.temp }}/imported-transition\n');
+  });
+
   it('round-trips private evidence without exposing its plaintext in the artifact', () => {
     const directory = root();
     const source = join(directory, 'source');
