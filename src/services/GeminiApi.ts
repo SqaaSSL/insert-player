@@ -722,6 +722,26 @@ const IDLE_FRAME_DIRECTIONS = [
   'neutral ready guard again so the loop connects cleanly back to frame 1',
 ];
 
+export function geminiSpriteSequenceEndNote(
+  animName: string,
+  frameCount: number,
+  hasTwoRefs: boolean,
+  shouldMirror: boolean,
+): string {
+  if (animName === 'idle') {
+    return hasTwoRefs
+      ? `- IMAGE 1 shows the START guard (frame 1) and IMAGE 2 shows the required END guard (frame ${frameCount}). Frames 2 through ${frameCount - 1} may show only subtle breathing and weight shift. Frame ${frameCount} must return to IMAGE 2's fighting-ready pose with both fists raised, feet planted, and a silhouette that connects cleanly back to frame 1.`
+      : `- Frame 1 starts in a fighting-ready guard with both fists raised and feet planted. Middle frames show only subtle breathing and weight shift. Frame ${frameCount} must return to the same raised guard, silhouette, floor line, and body alignment as frame 1 so the loop closes cleanly.`;
+  }
+  if (hasTwoRefs) {
+    return `- IMAGE 1 (first reference) shows the START pose (frame 1). IMAGE 2 (second reference) shows the END pose (frame ${frameCount}). The animation must smoothly transition between these two poses across all ${frameCount} frames.`;
+  }
+  if (shouldMirror) {
+    return `- Frame 1 is the resting stance. Each subsequent frame progresses the motion further. Frame ${frameCount} is the peak/impact moment of the action. Do NOT show the character returning to stance — only the wind-up through impact.`;
+  }
+  return `- Frame 1 starts in the base stance. The motion progresses gradually through the middle frames. The final frame returns to or finishes the pose.`;
+}
+
 function getMinimumReliableFrames(animName: string): number {
   if (animName === 'idle') return 8;
   if (animName === 'walk') return 12;
@@ -1077,14 +1097,7 @@ export async function geminiSpriteSheet(
 
   const hasTwoRefs = !!secondaryBase64;
 
-  let endNote: string;
-  if (hasTwoRefs) {
-    endNote = `- IMAGE 1 (first reference) shows the START pose (frame 1). IMAGE 2 (second reference) shows the END pose (frame ${genFrames}). The animation must smoothly transition between these two poses across all ${genFrames} frames.`;
-  } else if (shouldMirror) {
-    endNote = `- Frame 1 is the resting stance. Each subsequent frame progresses the motion further. Frame ${genFrames} is the peak/impact moment of the action. Do NOT show the character returning to stance — only the wind-up through impact.`;
-  } else {
-    endNote = `- Frame 1 starts in the base stance. The motion progresses gradually through the middle frames. The final frame returns to or finishes the pose.`;
-  }
+  const endNote = geminiSpriteSequenceEndNote(animName, genFrames, hasTwoRefs, shouldMirror);
 
   const targetHeightPct = Math.round(((normalizationReference?.targetDrawHeight ?? CELL_H * profile.targetHeightRatio) / CELL_H) * 100);
   const targetWidthPct = Math.round(((normalizationReference?.targetDrawWidth ?? CELL_W * profile.targetWidthRatio) / CELL_W) * 100);
@@ -1101,6 +1114,10 @@ export async function geminiSpriteSheet(
     `- Frames are read left-to-right, top-to-bottom (frame 1 is top-left, frame ${genFrames} is bottom-right).`,
     `- The frames must form a smooth, sequential animation — each frame shows the next step of the motion.`,
     endNote,
+    ...(animName === 'idle' ? [
+      `- This is a closed idle loop, never a transition into a relaxed neutral pose. Keep both hands in a raised combat guard in every frame.`,
+      `- The final frame must visually match the first frame's raised guard closely enough that playback has no posture jump.`,
+    ] : []),
     `- The character must face right in every frame.`,
     ...profile.promptRules.map((rule) => `- ${rule}`),
     ``,
@@ -1763,13 +1780,39 @@ const OFFICIAL_REVIEW_CORRECTIONS: Record<GeminiOfficialSpriteReviewIssue, strin
   extra_elements: 'Remove every prop, logo, word, UI element, motion trail, detached object, and extra figure.',
 };
 
-function officialReviewCorrection(
+export function geminiOfficialReviewCorrection(
   review: GeminiOfficialSpriteReview,
   frameIndex: number,
+  animName?: string,
+  total?: number,
 ): string {
-  return (review.issues[String(frameIndex)] ?? [])
+  const issues = review.issues[String(frameIndex)] ?? [];
+  const corrections = issues
     .map((issue) => OFFICIAL_REVIEW_CORRECTIONS[issue])
     .join(' ');
+  if (
+    animName === 'idle' &&
+    total !== undefined &&
+    frameIndex === total - 1 &&
+    issues.includes('animation_fidelity')
+  ) {
+    return [
+      corrections,
+      `This is the closing idle-loop frame: return to IMAGE 1's fighting-ready guard with both fists raised, feet planted, and the same silhouette, floor line, and body alignment as frame 1. Do not lower either arm or finish in a relaxed neutral pose.`,
+    ].filter(Boolean).join(' ');
+  }
+  return corrections;
+}
+
+export function geminiOfficialCorrectionUsesCanonicalPoseGuide(
+  review: GeminiOfficialSpriteReview,
+  animName: string,
+  frameIndex: number,
+  total: number,
+): boolean {
+  return animName === 'idle' &&
+    frameIndex === total - 1 &&
+    (review.issues[String(frameIndex)] ?? []).includes('animation_fidelity');
 }
 
 function mergeOfficialSpriteReviews(
@@ -1911,12 +1954,15 @@ export async function geminiSheetRefined(
       );
     }
   } else {
+    const scaffoldEndGuide = official && animName === 'idle'
+      ? characterBase64
+      : secondaryBase64;
     const sheet = await geminiSpriteSheet(
       characterBase64,
       animName,
       motion,
       frames,
-      secondaryBase64,
+      scaffoldEndGuide,
       maxScale,
       normalizationReference,
       context,
@@ -2020,9 +2066,17 @@ export async function geminiSheetRefined(
         `[GeminiApi] Official ${animName} QA: rerendering ${initialReview.retry.length}/${refinedCells.length} rejected frames with ${renderModel}...`,
       );
       for (const frameIndex of initialReview.retry) {
+        const poseGuide = geminiOfficialCorrectionUsesCanonicalPoseGuide(
+          initialReview,
+          animName,
+          frameIndex,
+          sheetCells.length,
+        )
+          ? characterBase64
+          : sheetCells[frameIndex];
         refinedCells[frameIndex] = await refineSheetCell(
           characterBase64,
-          sheetCells[frameIndex],
+          poseGuide,
           animName,
           refinePrompt,
           renderModel,
@@ -2030,7 +2084,12 @@ export async function geminiSheetRefined(
           sheetCells.length,
           context,
           official,
-          officialReviewCorrection(initialReview, frameIndex),
+          geminiOfficialReviewCorrection(
+            initialReview,
+            frameIndex,
+            animName,
+            sheetCells.length,
+          ),
         );
       }
 
