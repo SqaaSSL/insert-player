@@ -80,6 +80,7 @@ jobs:
       ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
       ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
       CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+      ARCADE_RECURATION_ARTIFACT_KEY: ${{ secrets.ARCADE_RECURATION_ARTIFACT_KEY }}
 
     steps:
       - name: Check out the exact reviewed commit
@@ -110,6 +111,10 @@ jobs:
             printf '::error::The optional Clerk backend bridge secret is malformed.\n'
             exit 1
           }
+          [[ "$ARCADE_RECURATION_ARTIFACT_KEY" =~ ^[a-fA-F0-9]{64}$ ]] || {
+            printf '::error::The production recuration artifact encryption key is unavailable.\n'
+            exit 1
+          }
           case "$REQUESTED_OPERATION" in
             stage)
               expected_confirmation="STAGE_IMPORTED_GLOBAL_VIDEO_RECURATION_PRODUCTION"
@@ -136,6 +141,7 @@ jobs:
             exit 1
           }
           node --check scripts/imported-global-video-recuration.mjs
+          node --check scripts/encrypted-workflow-bundle.mjs
 
       - name: Resolve sealed artifact bindings
         if: inputs.operation != 'stage'
@@ -233,11 +239,15 @@ jobs:
           )"
           export STAGE_HEAD_SHA="$stage_head_sha"
           printf 'STAGE_HEAD_SHA=%s\n' "$stage_head_sha" >> "$GITHUB_ENV"
-          mkdir -m 700 -p "$RUNNER_TEMP/imported-stage"
+          mkdir -m 700 -p "$RUNNER_TEMP/imported-stage-artifact"
           gh run download "$STAGE_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
             --name "imported-video-recuration-stage-$REQUESTED_SLUG-$REQUESTED_ACTION-$STAGE_RUN_ID" \
-            --dir "$RUNNER_TEMP/imported-stage"
+            --dir "$RUNNER_TEMP/imported-stage-artifact"
+          node scripts/encrypted-workflow-bundle.mjs \
+            --operation=open \
+            --bundle="$RUNNER_TEMP/imported-stage-artifact/bundle.enc" \
+            --destination-dir="$RUNNER_TEMP/imported-stage"
           DESCRIPTOR="$RUNNER_TEMP/imported-stage/recuration-descriptor.json" node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs';
           const descriptor = JSON.parse(readFileSync(process.env.DESCRIPTOR, 'utf8'));
@@ -269,11 +279,15 @@ jobs:
             run.head_sha !== process.env.STAGE_HEAD_SHA
           ) throw new Error('Promotion run is not a successful exact-commit workflow dispatch.');
           NODE
-          mkdir -m 700 -p "$RUNNER_TEMP/imported-promotion"
+          mkdir -m 700 -p "$RUNNER_TEMP/imported-promotion-artifact"
           gh run download "$PROMOTION_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
             --name "imported-video-recuration-promote-$REQUESTED_SLUG-$REQUESTED_ACTION-$PROMOTION_RUN_ID" \
-            --dir "$RUNNER_TEMP/imported-promotion"
+            --dir "$RUNNER_TEMP/imported-promotion-artifact"
+          node scripts/encrypted-workflow-bundle.mjs \
+            --operation=open \
+            --bundle="$RUNNER_TEMP/imported-promotion-artifact/bundle.enc" \
+            --destination-dir="$RUNNER_TEMP/imported-promotion"
 
       - name: Stage one immutable imported revision with zero provider calls
         if: inputs.operation == 'stage'
@@ -346,22 +360,44 @@ jobs:
             fi
           fi
 
-      - name: Upload the private staged evidence
+      - name: Encrypt the private staged evidence
+        if: inputs.operation == 'stage'
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          node scripts/encrypted-workflow-bundle.mjs \
+            --operation=seal \
+            --source-dir="$RUNNER_TEMP/imported-stage" \
+            --bundle="$RUNNER_TEMP/imported-stage-artifact/bundle.enc"
+
+      - name: Encrypt the transition receipt
+        if: inputs.operation != 'stage'
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          node scripts/encrypted-workflow-bundle.mjs \
+            --operation=seal \
+            --source-dir="$RUNNER_TEMP/imported-transition" \
+            --bundle="$RUNNER_TEMP/imported-transition-artifact/bundle.enc"
+
+      - name: Upload only the encrypted staged evidence
         if: inputs.operation == 'stage'
         uses: actions/upload-artifact@v7
         with:
           name: imported-video-recuration-stage-${{ inputs.slug }}-${{ inputs.action }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/imported-stage
+          path: ${{ runner.temp }}/imported-stage-artifact
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
 
-      - name: Upload the transition receipt
+      - name: Upload only the encrypted transition receipt
         if: inputs.operation != 'stage'
         uses: actions/upload-artifact@v7
         with:
           name: imported-video-recuration-${{ inputs.operation }}-${{ inputs.slug }}-${{ inputs.action }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/imported-transition
+          path: ${{ runner.temp }}/imported-transition-artifact
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
