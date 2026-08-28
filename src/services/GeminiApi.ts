@@ -1570,13 +1570,15 @@ export function parseGeminiOfficialSpriteReview(
 
 async function measureGreenBackedCharacterBounds(
   base64: string,
-): Promise<{ w: number; h: number; imageW: number; imageH: number; widthRatio: number; heightRatio: number } | null> {
+): Promise<{ x: number; y: number; w: number; h: number; imageW: number; imageH: number; widthRatio: number; heightRatio: number } | null> {
   try {
     const cleaned = await cleanReposedImagePreserveCanvas(base64);
     const bbox = await measureOpaqueBoundsFromBase64(cleaned);
     const dims = await getImageDimensions(cleaned);
     if (!bbox || dims.width <= 0 || dims.height <= 0) return null;
     return {
+      x: bbox.x,
+      y: bbox.y,
       w: bbox.w,
       h: bbox.h,
       imageW: dims.width,
@@ -1662,6 +1664,21 @@ async function singleRefineAttempt(
 const REFINE_SIZE_MIN_RATIO = 0.75;
 const REFINE_SIZE_MAX_RATIO = 1.3;
 const LOW_ATTACK_RECOVERY_SIZE_MAX_RATIO = 1.35;
+const OFFICIAL_FRAME_EDGE_MARGIN_PX = 3;
+
+type OfficialFrameEdge = 'left' | 'right' | 'top' | 'bottom';
+
+export function geminiOfficialFrameFramingValidation(
+  bounds: { x: number; y: number; w: number; h: number; imageW: number; imageH: number },
+  edgeMargin = OFFICIAL_FRAME_EDGE_MARGIN_PX,
+): { ok: boolean; croppedEdges: OfficialFrameEdge[] } {
+  const croppedEdges: OfficialFrameEdge[] = [];
+  if (bounds.x <= edgeMargin) croppedEdges.push('left');
+  if (bounds.x + bounds.w >= bounds.imageW - edgeMargin) croppedEdges.push('right');
+  if (bounds.y <= edgeMargin) croppedEdges.push('top');
+  if (bounds.y + bounds.h >= bounds.imageH - edgeMargin) croppedEdges.push('bottom');
+  return { ok: croppedEdges.length === 0, croppedEdges };
+}
 
 export function geminiRefinedFrameSizeValidation(
   animName: string,
@@ -2135,6 +2152,69 @@ export async function geminiSheetRefined(
       if (finalReview.retry.length > 0) {
         throw new GeminiOfficialSpriteQualityError(
           `Gemini official ${animName} visual QA still rejected frames ${finalReview.retry.map((idx) => idx + 1).join(', ')} after selective rerender`,
+        );
+      }
+    }
+
+    const framingRecovery: Array<{ frameIndex: number; croppedEdges: OfficialFrameEdge[] }> = [];
+    for (let frameIndex = 0; frameIndex < refinedCells.length; frameIndex++) {
+      const bounds = await measureGreenBackedCharacterBounds(refinedCells[frameIndex]);
+      if (!bounds) {
+        throw new GeminiOfficialSpriteQualityError(
+          `Gemini official ${animName} frame ${frameIndex + 1}/${refinedCells.length} could not be measured for complete-body framing`,
+        );
+      }
+      const validation = geminiOfficialFrameFramingValidation(bounds);
+      if (!validation.ok) {
+        framingRecovery.push({ frameIndex, croppedEdges: validation.croppedEdges });
+      }
+    }
+
+    if (framingRecovery.length > 0) {
+      debugInfo(
+        `[GeminiApi] Official ${animName} framing gate: selectively rerendering ${framingRecovery.map(({ frameIndex, croppedEdges }) =>
+          `${frameIndex + 1} (${croppedEdges.join('/')})`,
+        ).join(', ')}`,
+      );
+      for (const { frameIndex, croppedEdges } of framingRecovery) {
+        const edgeCorrection =
+          `${OFFICIAL_REVIEW_CORRECTIONS.complete_body} The previous render touched the ${croppedEdges.join(' and ')} ` +
+          `image edge. Recenter the unchanged pose with visible pure-green clearance on all four sides.`;
+        refinedCells[frameIndex] = await refineSheetCell(
+          characterBase64,
+          sheetCells[frameIndex],
+          animName,
+          refinePrompt,
+          renderModel,
+          frameIndex,
+          sheetCells.length,
+          context,
+          official,
+          edgeCorrection,
+        );
+
+        const recoveredBounds = await measureGreenBackedCharacterBounds(refinedCells[frameIndex]);
+        const recoveredValidation = recoveredBounds
+          ? geminiOfficialFrameFramingValidation(recoveredBounds)
+          : null;
+        if (!recoveredValidation?.ok) {
+          throw new GeminiOfficialSpriteQualityError(
+            `Gemini official ${animName} frame ${frameIndex + 1}/${refinedCells.length} still touches an image edge after selective framing recovery`,
+          );
+        }
+      }
+
+      const framingReview = await reviewOfficialRefinedCells(
+        refinedCells,
+        official,
+        animName,
+        motion,
+        'post-framing-recovery',
+        context,
+      );
+      if (framingReview.retry.length > 0) {
+        throw new GeminiOfficialSpriteQualityError(
+          `Gemini official ${animName} visual QA rejected frames ${framingReview.retry.map((idx) => idx + 1).join(', ')} after framing recovery`,
         );
       }
     }

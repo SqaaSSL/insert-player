@@ -5,6 +5,7 @@ import {
   geminiContentBlockReason,
   geminiFinishReasonBlockReason,
   geminiOfficialCorrectionUsesCanonicalPoseGuide,
+  geminiOfficialFrameFramingValidation,
   geminiOfficialRefinePrompt,
   geminiOfficialReviewCorrection,
   geminiRefinedFrameSizeValidation,
@@ -16,6 +17,35 @@ import {
 } from './GeminiApi';
 
 describe('Gemini content-block handling', () => {
+  it('selectively rejects official renders that touch an image edge', () => {
+    expect(geminiOfficialFrameFramingValidation({
+      x: 0,
+      y: 180,
+      w: 846,
+      h: 960,
+      imageW: 896,
+      imageH: 1152,
+    })).toEqual({ ok: false, croppedEdges: ['left'] });
+
+    expect(geminiOfficialFrameFramingValidation({
+      x: 24,
+      y: 120,
+      w: 820,
+      h: 990,
+      imageW: 896,
+      imageH: 1152,
+    })).toEqual({ ok: true, croppedEdges: [] });
+
+    expect(geminiOfficialFrameFramingValidation({
+      x: 24,
+      y: 2,
+      w: 869,
+      h: 1147,
+      imageW: 896,
+      imageH: 1152,
+    })).toEqual({ ok: false, croppedEdges: ['right', 'top', 'bottom'] });
+  });
+
   it('allows only a narrow second-attempt size recovery for low attacks', () => {
     const baseHeightRatio = 0.6884765625;
     const refinedHeightRatio = 0.906276150627615;
