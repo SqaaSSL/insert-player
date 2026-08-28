@@ -1,6 +1,6 @@
 # Official Arcade photo sources
 
-The official Arcade roster uses real, reusable photographs as identity references. The photographs are private generation inputs and are not shipped to the browser. Their exact post-crop/post-conversion SHA-256 hashes and generation prompts live in [`roster-2026.json`](./roster-2026.json).
+The official Arcade roster uses reviewed, reusable images as identity references. Most are licensed photographs; original synthetic identities are allowed only when their provenance and commercial-use permission are recorded explicitly. Every reference remains a private generation input and is not shipped to the browser. Exact post-crop/post-conversion SHA-256 hashes and generation prompts live in [`roster-2026.json`](./roster-2026.json).
 
 ## Rules
 
@@ -31,6 +31,7 @@ The official Arcade roster uses real, reusable photographs as identity reference
 | Lionel Messi | [New England v Miami portrait](https://commons.wikimedia.org/wiki/File:Lionel_Messi_NE_Revolution_Inter_Miami_7.9.25-043_(cropped).jpg) | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) | Bryan Berlin / WikiPortraits, 2025 |
 | Perro Sanxe / Pedro Sánchez | [Pedro Sánchez with Ursula von der Leyen](https://commons.wikimedia.org/wiki/File:Pedro_S%C3%A1nchez_with_Ursula_von_der_Leyen_-_2025_(P-067042).jpg) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0) | European Union, 2026; source image dated 2025 |
 | Rosalía V2 candidate | [Premios Goya 2019 — Rosalía](https://commons.wikimedia.org/wiki/File:Premios_Goya_2019_-_Rosal%C3%ADa.jpg) | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0) | Pedro J Pacheco, 2019 |
+| Player One | Private original synthetic identity | Proprietary; commercial use licensed to Insert Player | Insert Player, 2026 |
 
 ## Publication
 
