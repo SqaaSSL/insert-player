@@ -381,6 +381,11 @@ export async function cleanupOperationalData(env: Env): Promise<void> {
           WHERE run.id = generation_jobs.artifact_run_id
             AND run.status = 'partial'
         )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM video_sprite_candidates candidate
+          WHERE candidate.job_id = generation_jobs.id
+        )
     `),
     env.DB.prepare(`
       DELETE FROM provider_sessions

@@ -80,6 +80,16 @@ const SCHEMA = `
     failure_stage TEXT,
     updated_at TEXT NOT NULL
   );
+  CREATE TABLE video_sprite_candidates (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES generation_artifact_runs(id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL UNIQUE REFERENCES generation_jobs(id) ON DELETE CASCADE
+  );
+  CREATE TABLE video_sprite_candidate_revisions (
+    candidate_id TEXT NOT NULL REFERENCES video_sprite_candidates(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    PRIMARY KEY(candidate_id, revision)
+  );
   CREATE TABLE generation_artifact_checkpoints (
     run_id TEXT NOT NULL REFERENCES generation_artifact_runs(id) ON DELETE CASCADE,
     status TEXT NOT NULL
@@ -234,6 +244,75 @@ describe('operational generation retention against D1 and R2', () => {
         .first<{ count: number }>())?.count).toBe(1);
       expect((await db.prepare('SELECT COUNT(*) AS count FROM generation_charges')
         .first<{ count: number }>())?.count).toBe(1);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('retains terminal jobs that own archived video review revisions', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      await db.batch([
+        db.prepare("INSERT INTO users (id) VALUES ('user-1')"),
+        db.prepare("INSERT INTO fighters (id, owner_user_id) VALUES ('fighter-1', 'user-1')"),
+        db.prepare(`
+          INSERT INTO generation_charges (id, user_id)
+          VALUES ('charge-reviewed', 'user-1'), ('charge-expired', 'user-1')
+        `),
+        db.prepare(`
+          INSERT INTO provider_sessions (id, user_id, expires_at)
+          VALUES
+            ('session-reviewed', 'user-1', datetime('now', '-8 days')),
+            ('session-expired', 'user-1', datetime('now', '-8 days'))
+        `),
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (id, status, updated_at)
+          VALUES
+            ('run-reviewed', 'succeeded', datetime('now', '-8 days')),
+            ('run-expired', 'succeeded', datetime('now', '-8 days'))
+        `),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, user_id, fighter_id, charge_id, provider_session_id,
+            artifact_run_id, status, stage, finished_at, updated_at
+          ) VALUES
+            (
+              'job-reviewed', 'user-1', 'fighter-1', 'charge-reviewed', 'session-reviewed',
+              'run-reviewed', 'succeeded', 'complete',
+              datetime('now', '-8 days'), datetime('now', '-8 days')
+            ),
+            (
+              'job-expired', 'user-1', 'fighter-1', 'charge-expired', 'session-expired',
+              'run-expired', 'succeeded', 'complete',
+              datetime('now', '-8 days'), datetime('now', '-8 days')
+            )
+        `),
+        db.prepare(`
+          INSERT INTO video_sprite_candidates (id, run_id, job_id)
+          VALUES ('candidate-reviewed', 'run-reviewed', 'job-reviewed')
+        `),
+        db.prepare(`
+          INSERT INTO video_sprite_candidate_revisions (candidate_id, revision)
+          VALUES ('candidate-reviewed', 1), ('candidate-reviewed', 2)
+        `),
+      ]);
+
+      await cleanupOperationalData(env);
+
+      expect((await db.prepare('SELECT id FROM generation_jobs ORDER BY id').all()).results)
+        .toEqual([{ id: 'job-reviewed' }]);
+      expect((await db.prepare('SELECT id, job_id FROM video_sprite_candidates').all()).results)
+        .toEqual([{ id: 'candidate-reviewed', job_id: 'job-reviewed' }]);
+      expect((await db.prepare(`
+        SELECT candidate_id, revision
+        FROM video_sprite_candidate_revisions
+        ORDER BY revision
+      `).all()).results).toEqual([
+        { candidate_id: 'candidate-reviewed', revision: 1 },
+        { candidate_id: 'candidate-reviewed', revision: 2 },
+      ]);
+      expect((await db.prepare('SELECT id FROM provider_sessions ORDER BY id').all()).results)
+        .toEqual([{ id: 'session-reviewed' }]);
     } finally {
       await mf.dispose();
     }
