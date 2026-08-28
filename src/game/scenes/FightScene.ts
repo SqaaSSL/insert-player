@@ -232,7 +232,6 @@ export class FightScene extends Phaser.Scene {
     this.combat = new CombatSystem();
     this.inputMgr = new InputManager(this);
     this.sound_mgr = new SoundManager();
-    this.sound_mgr.preloadSamples();
     this.introEnterKey = this.input.keyboard?.addKey(
       Phaser.Input.Keyboard.KeyCodes.ENTER,
     );
@@ -1631,8 +1630,6 @@ export class FightScene extends Phaser.Scene {
     this.hitstopFrames = 0;
     this.latchedP1 = null;
     this.latchedP2 = null;
-    this.cameras.main.zoomTo(1, 200, 'Sine.easeOut');
-    this.cameras.main.pan(512, 288, 200, 'Sine.easeOut', true);
     this.cinematicIntroActive = false;
     this.introVideoSequenceActive = false;
     this.introCanSkip = false;
@@ -2131,13 +2128,12 @@ export class FightScene extends Phaser.Scene {
       this.sound_mgr.playKO();
       this.sound_mgr.playAnnounce("ko");
       ScreenEffects.flashWhite(this, 200);
-      // KO drama: long freeze, big shake, slow-motion effects, camera punch-in.
+      // KO drama: long freeze, big shake, slow-motion effects. (Camera
+      // punch-in removed: with a single camera it scales the HUD too —
+      // needs a dedicated UI camera before it can come back.)
       this.hitstopFrames = 14;
       this.cameras.main.shake(250, 0.01);
       ScreenEffects.slowMotion(this, 700, 0.3);
-      const koMidX = (this.p1.x + this.p2.x) / 2;
-      this.cameras.main.pan(koMidX, 330, 400, 'Sine.easeOut', true);
-      this.cameras.main.zoomTo(1.12, 400, 'Sine.easeOut');
     } else {
       loser.forceState(FighterState.DEFEAT);
     }
