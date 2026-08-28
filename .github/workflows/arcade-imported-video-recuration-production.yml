@@ -45,10 +45,6 @@ on:
         description: Promote/rollback — JSON with runId, descriptorSha256, acceptNeedsReview
         required: false
         type: string
-      promotion_artifact_binding:
-        description: Rollback only — JSON with runId and receiptSha256
-        required: false
-        type: string
       confirmation:
         description: Exact operation-specific production confirmation phrase
         required: true
@@ -75,7 +71,6 @@ jobs:
       SOURCE_BINDING_PATH: ${{ inputs.source_binding_path }}
       SOURCE_BINDING_SHA256: ${{ inputs.source_binding_sha256 }}
       STAGE_ARTIFACT_BINDING: ${{ inputs.stage_artifact_binding }}
-      PROMOTION_ARTIFACT_BINDING: ${{ inputs.promotion_artifact_binding }}
       REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
       ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
       ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
@@ -120,19 +115,17 @@ jobs:
               expected_confirmation="STAGE_IMPORTED_GLOBAL_VIDEO_RECURATION_PRODUCTION"
               [[ "$SOURCE_BINDING_PATH" =~ ^arcade/imported-video-recurations/[a-z0-9._-]+\.json$ ]] || exit 1
               [[ "$SOURCE_BINDING_SHA256" =~ ^[a-f0-9]{64}$ ]] || exit 1
-              [[ -z "$STAGE_ARTIFACT_BINDING" && -z "$PROMOTION_ARTIFACT_BINDING" ]] || exit 1
+              [[ -z "$STAGE_ARTIFACT_BINDING" ]] || exit 1
               ;;
             promote)
               expected_confirmation="PROMOTE_IMPORTED_GLOBAL_VIDEO_RECURATION_PRODUCTION"
               [[ -z "$SOURCE_BINDING_PATH" && -z "$SOURCE_BINDING_SHA256" ]] || exit 1
               [[ -n "$STAGE_ARTIFACT_BINDING" && ${#STAGE_ARTIFACT_BINDING} -le 512 ]] || exit 1
-              [[ -z "$PROMOTION_ARTIFACT_BINDING" ]] || exit 1
               ;;
             rollback)
               expected_confirmation="ROLLBACK_IMPORTED_GLOBAL_VIDEO_RECURATION_PRODUCTION"
               [[ -z "$SOURCE_BINDING_PATH" && -z "$SOURCE_BINDING_SHA256" ]] || exit 1
               [[ -n "$STAGE_ARTIFACT_BINDING" && ${#STAGE_ARTIFACT_BINDING} -le 512 ]] || exit 1
-              [[ -n "$PROMOTION_ARTIFACT_BINDING" && ${#PROMOTION_ARTIFACT_BINDING} -le 512 ]] || exit 1
               ;;
             *) printf '::error::Unsupported operation.\n'; exit 1 ;;
           esac
@@ -169,16 +162,6 @@ jobs:
             `DESCRIPTOR_SHA256=${stage.descriptorSha256}`,
             `ACCEPT_NEEDS_REVIEW=${stage.acceptNeedsReview}`,
           ];
-          if (process.env.REQUESTED_OPERATION === 'rollback') {
-            const promotion = JSON.parse(process.env.PROMOTION_ARTIFACT_BINDING ?? '');
-            if (
-              !exactKeys(promotion, ['runId', 'receiptSha256']) ||
-              typeof promotion.runId !== 'string' || !/^[1-9][0-9]*$/.test(promotion.runId) ||
-              typeof promotion.receiptSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(promotion.receiptSha256)
-            ) throw new Error('promotion_artifact_binding does not use the exact sealed schema.');
-            lines.push(`PROMOTION_RUN_ID=${promotion.runId}`);
-            lines.push(`PROMOTION_RECEIPT_SHA256=${promotion.receiptSha256}`);
-          }
           const output = process.env.GITHUB_ENV;
           if (!output) throw new Error('GITHUB_ENV is unavailable.');
           appendFileSync(output, `${lines.join('\n')}\n`);
@@ -258,37 +241,6 @@ jobs:
           ) throw new Error('Downloaded descriptor identity does not match this exact workflow request.');
           NODE
 
-      - name: Download the exact promotion receipt
-        if: inputs.operation == 'rollback'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          metadata="$RUNNER_TEMP/promotion-run.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$PROMOTION_RUN_ID" > "$metadata"
-          RUN_METADATA="$metadata" EXPECTED_RUN_ID="$PROMOTION_RUN_ID" node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs';
-          const run = JSON.parse(readFileSync(process.env.RUN_METADATA, 'utf8'));
-          const workflowPath = String(run.path ?? '').split('@', 1)[0];
-          if (
-            run.id !== Number(process.env.EXPECTED_RUN_ID) || run.status !== 'completed' ||
-            run.conclusion !== 'success' || run.event !== 'workflow_dispatch' ||
-            workflowPath !== '.github/workflows/arcade-imported-video-recuration-production.yml' ||
-            run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY ||
-            run.head_sha !== process.env.STAGE_HEAD_SHA
-          ) throw new Error('Promotion run is not a successful exact-commit workflow dispatch.');
-          NODE
-          mkdir -m 700 -p "$RUNNER_TEMP/imported-promotion-artifact"
-          gh run download "$PROMOTION_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name "imported-video-recuration-promote-$REQUESTED_SLUG-$REQUESTED_ACTION-$PROMOTION_RUN_ID" \
-            --dir "$RUNNER_TEMP/imported-promotion-artifact"
-          node scripts/encrypted-workflow-bundle.mjs \
-            --operation=open \
-            --bundle="$RUNNER_TEMP/imported-promotion-artifact/bundle.enc" \
-            --destination-dir="$RUNNER_TEMP/imported-promotion"
-
       - name: Stage one immutable imported revision with zero provider calls
         if: inputs.operation == 'stage'
         shell: bash
@@ -332,8 +284,6 @@ jobs:
             --expected-deployed-sha="$GITHUB_SHA" \
             --descriptor="$RUNNER_TEMP/imported-stage/recuration-descriptor.json" \
             --descriptor-sha256="$DESCRIPTOR_SHA256" \
-            --promotion-receipt="$RUNNER_TEMP/imported-promotion/promotion-receipt.json" \
-            --promotion-receipt-sha256="$PROMOTION_RECEIPT_SHA256" \
             --receipt-dir="$RUNNER_TEMP/imported-transition"
 
       - name: Publish the sealed operation summary
@@ -354,10 +304,8 @@ jobs:
             receipt_name="$([[ "$REQUESTED_OPERATION" == "promote" ]] && printf promotion || printf rollback)-receipt.json"
             digest="$(sha256sum "$RUNNER_TEMP/imported-transition/$receipt_name" | awk '{print $1}')"
             printf -- '- Transition receipt SHA-256: `%s`\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
-            if [[ "$REQUESTED_OPERATION" == "promote" ]]; then
-              printf -- '- Rollback binding: `{"runId":"%s","receiptSha256":"%s"}`\n' \
-                "$GITHUB_RUN_ID" "$digest" >> "$GITHUB_STEP_SUMMARY"
-            fi
+            [[ "$REQUESTED_OPERATION" != "promote" ]] || \
+              printf -- '- Rollback source: authoritative transition stored in D1\n' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Encrypt the private staged evidence
@@ -372,15 +320,24 @@ jobs:
             --bundle="$RUNNER_TEMP/imported-stage-artifact/bundle.enc"
 
       - name: Encrypt the transition receipt
-        if: inputs.operation != 'stage'
+        id: encrypt-transition
+        if: always() && inputs.operation != 'stage'
         shell: bash
         run: |
           set -euo pipefail
           umask 077
+          receipt_name="$([[ "$REQUESTED_OPERATION" == "promote" ]] && printf promotion || printf rollback)-receipt.json"
+          if [[ ! -f "$RUNNER_TEMP/imported-transition/$receipt_name" || \
+                ! -f "$RUNNER_TEMP/imported-transition/$receipt_name.sha256" ]]; then
+            printf 'available=false\n' >> "$GITHUB_OUTPUT"
+            printf 'No transition receipt was produced before the operation failed.\n'
+            exit 0
+          fi
           node scripts/encrypted-workflow-bundle.mjs \
             --operation=seal \
             --source-dir="$RUNNER_TEMP/imported-transition" \
             --bundle="$RUNNER_TEMP/imported-transition-artifact/bundle.enc"
+          printf 'available=true\n' >> "$GITHUB_OUTPUT"
 
       - name: Upload only the encrypted staged evidence
         if: inputs.operation == 'stage'
@@ -393,7 +350,7 @@ jobs:
           compression-level: 0
 
       - name: Upload only the encrypted transition receipt
-        if: inputs.operation != 'stage'
+        if: always() && steps.encrypt-transition.outputs.available == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: imported-video-recuration-${{ inputs.operation }}-${{ inputs.slug }}-${{ inputs.action }}-${{ github.run_id }}
