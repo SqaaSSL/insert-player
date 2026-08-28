@@ -13,22 +13,22 @@ describe('signature stage configuration', () => {
     expect(SIGNATURE_STAGE_THEMES).toMatchObject([
       {
         id: 'executive-rumble',
-        assetPath: '/assets/stages/signature/executive-rumble-v2.png',
+        assetPath: '/assets/stages/signature/executive-rumble-pipeline-v1.png',
         signatureForArcadeSlug: 'donald-trump',
       },
       {
         id: 'mars-incorporated',
-        assetPath: '/assets/stages/signature/mars-incorporated-v1.png',
+        assetPath: '/assets/stages/signature/mars-incorporated-pipeline-v1.png',
         signatureForArcadeSlug: 'elon-musk',
       },
       {
         id: 'tablao-3000',
-        assetPath: '/assets/stages/signature/tablao-3000-v1.png',
+        assetPath: '/assets/stages/signature/tablao-3000-pipeline-v1.png',
         signatureForArcadeSlug: 'rosalia',
       },
       {
         id: 'la-jaula-304',
-        assetPath: '/assets/stages/signature/la-jaula-304-v1.png',
+        assetPath: '/assets/stages/signature/la-jaula-304-pipeline-v1.png',
         signatureForArcadeSlug: 'lamine-yamal',
       },
     ]);

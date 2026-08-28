@@ -1,15 +1,15 @@
 # Signature stage assets
 
-These four static backgrounds were generated with OpenAI ImageGen for the official Arcade roster. The checked-in files are immutable, versioned 1024 x 576 PNG derivatives sized to the game's logical viewport.
+The original OpenAI ImageGen backgrounds are immutable visual seeds for the official Arcade roster. Each active background was created by feeding its seed through Insert Player's own photo-stage pipeline, then normalized to the game's 1024 x 576 logical viewport. Seeds and active outputs remain checked in side by side; upgrades never overwrite an earlier version.
 
-| Arcade fighter | Stage | Public asset |
-| --- | --- | --- |
-| `donald-trump` | Executive Rumble | `/assets/stages/signature/executive-rumble-v2.png` |
-| `elon-musk` | Mars Incorporated | `/assets/stages/signature/mars-incorporated-v1.png` |
-| `rosalia` | Tablao 3000 | `/assets/stages/signature/tablao-3000-v1.png` |
-| `lamine-yamal` | La Jaula 304 | `/assets/stages/signature/la-jaula-304-v1.png` |
+| Arcade fighter | Stage | Immutable seed | Active pipeline output |
+| --- | --- | --- | --- |
+| `donald-trump` | Executive Rumble | `/assets/stages/signature/executive-rumble-v2.png` | `/assets/stages/signature/executive-rumble-pipeline-v1.png` |
+| `elon-musk` | Mars Incorporated | `/assets/stages/signature/mars-incorporated-v1.png` | `/assets/stages/signature/mars-incorporated-pipeline-v1.png` |
+| `rosalia` | Tablao 3000 | `/assets/stages/signature/tablao-3000-v1.png` | `/assets/stages/signature/tablao-3000-pipeline-v1.png` |
+| `lamine-yamal` | La Jaula 304 | `/assets/stages/signature/la-jaula-304-v1.png` | `/assets/stages/signature/la-jaula-304-pipeline-v1.png` |
 
-## Generation contract
+## Seed contract
 
 Shared direction for every prompt:
 
@@ -25,3 +25,15 @@ Stage-specific direction:
 The Executive Rumble source received one ImageGen cleanup pass to remove a spurious corner signature. Its delivery derivative was then cropped slightly at the bottom and sides. All four sources were center-cropped where necessary, resized to 1024 x 576, stripped of metadata, and losslessly encoded as PNG. Original ImageGen outputs remain outside the repository in the local generated-image store.
 
 `executive-rumble-v2.png` rotates only the immutable public cache key after a pre-publication fallback response was cached at the original URL; its reviewed image bytes are unchanged.
+
+## Insert Player pipeline pass
+
+The active `pipeline-v1` files were produced on 2026-08-28 by the same product path used for an uploaded photo stage:
+
+- operation `stage_background` with `gemini-3.1-flash-image`;
+- `geminiStageBackground` with `sourceMode: 'transform-scene'`;
+- the stage's production label and blurb from `StageConfig.ts`;
+- product normalization with `bottomShadeAlpha: 0.04` and `verticalBias: 0.92`;
+- lossless removal of the fully opaque alpha channel after generation.
+
+The transform preserves the seed's location and composition while reinterpreting it as stylized 2D fighting-game art with a readable side-on floor. The exact seed and output hashes are pinned in `arcade/signature-stage-pipeline-2026.json` and verified by CI.
