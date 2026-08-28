@@ -52,8 +52,33 @@ export class HUD {
   private ghostP1Health = MAX_HEALTH;
   private ghostP2Health = MAX_HEALTH;
 
+  /** Invoked for HUD objects created after scene setup (combo banners) so
+   * the scene can route them to the right camera. */
+  onRuntimeObject: ((obj: Phaser.GameObjects.GameObject) => void) | null = null;
+
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
+  }
+
+  /** Every persistent HUD display object, for camera routing. */
+  getUiObjects(): Phaser.GameObjects.GameObject[] {
+    return [
+      this.p1HealthBar,
+      this.p2HealthBar,
+      this.p1NameText,
+      this.p2NameText,
+      this.p1TagText,
+      this.p2TagText,
+      this.timerText,
+      this.matchLabelText,
+      this.announceText,
+      ...this.p1RoundIndicators,
+      ...this.p2RoundIndicators,
+      ...(this.p1PortraitFrame ? [this.p1PortraitFrame] : []),
+      ...(this.p2PortraitFrame ? [this.p2PortraitFrame] : []),
+      ...(this.p1PortraitImage ? [this.p1PortraitImage] : []),
+      ...(this.p2PortraitImage ? [this.p2PortraitImage] : []),
+    ].filter(Boolean) as Phaser.GameObjects.GameObject[];
   }
 
   create(
@@ -210,6 +235,7 @@ export class HUD {
       strokeThickness: 4,
     }).setOrigin(0.5).setDepth(110).setScale(0.3).setAlpha(1);
 
+    this.onRuntimeObject?.(text);
     this.comboTexts[playerIndex] = text;
 
     this.scene.tweens.add({

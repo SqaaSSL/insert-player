@@ -106,6 +106,8 @@ export class FightScene extends Phaser.Scene {
   private remix = 0;
   private p2Difficulty: number | null = null;
   private hitstopFrames = 0;
+  private uiCam: Phaser.Cameras.Scene2D.Camera | null = null;
+  private uiObjects = new Set<Phaser.GameObjects.GameObject>();
   private latchedP1: FighterInput | null = null;
   private latchedP2: FighterInput | null = null;
   private stageFloorY = GROUND_Y;
@@ -272,9 +274,52 @@ export class FightScene extends Phaser.Scene {
     );
 
     this.createParticles();
-    ScreenEffects.createCRTOverlay(this);
+    const crt = ScreenEffects.createCRTOverlay(this);
+
+    // Split rendering into a world camera (zooms/shakes) and a UI camera
+    // (HUD/overlays, never scales). Everything created up to this point is
+    // world unless registered as UI; runtime spawns use markWorld/markUi.
+    for (const obj of this.hud.getUiObjects()) this.uiObjects.add(obj);
+    this.uiObjects.add(crt);
+    this.hud.onRuntimeObject = (obj) => this.markUi(obj);
+    this.uiCam = this.cameras.add(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    this.cameras.main.setBounds(0, 0, GAME_WIDTH, GAME_HEIGHT);
+    this.cameras.main.ignore([...this.uiObjects]);
+    this.uiCam.ignore(this.children.list.filter((obj) => !this.uiObjects.has(obj)));
+
     this.startRound();
+    this.showControlsHint();
     this.ready = true;
+  }
+
+  /** First-round desktop onboarding: controls + the combo recipe. */
+  private showControlsHint(): void {
+    if (this.cpuVsCpu) return;
+    const coarse = typeof window !== 'undefined' &&
+      window.matchMedia?.('(pointer: coarse)').matches;
+    if (coarse) return;
+    const lines = [
+      'A/D MOVE · W JUMP · S CROUCH · G GUARD · U PUNCH · J KICK · I FIREBALL · K UPPERCUT',
+      'COMBO: LAND A PUNCH, THEN I — CANCEL INTO FIREBALL',
+    ];
+    const hint = this.markUi(
+      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 40, lines.join('\n'), {
+        fontFamily: '"Press Start 2P", monospace',
+        fontSize: '9px',
+        color: '#ffe9b0',
+        stroke: '#000000',
+        strokeThickness: 3,
+        align: 'center',
+        lineSpacing: 8,
+      }).setOrigin(0.5, 1).setDepth(150).setScrollFactor(0),
+    );
+    this.tweens.add({
+      targets: hint,
+      alpha: 0,
+      delay: 7000,
+      duration: 600,
+      onComplete: () => hint.destroy(),
+    });
   }
 
   private mixSeed(salt: number): number {
@@ -1503,6 +1548,7 @@ export class FightScene extends Phaser.Scene {
     this.p2.forceState(FighterState.IDLE);
 
     const overlay = this.add.container(0, 0).setDepth(160).setAlpha(1);
+    this.markUi(overlay);
     this.introOverlay = overlay;
 
     const dimmer = this.add.rectangle(
@@ -1710,6 +1756,7 @@ export class FightScene extends Phaser.Scene {
       } else {
         this.updateRoundEndPresentation(delta);
       }
+      this.updateWorldCamera(delta);
       this.p1.syncSprite(this.p2.x);
       this.p2.syncSprite(this.p1.x);
 
@@ -1736,6 +1783,7 @@ export class FightScene extends Phaser.Scene {
 
     this.p1.syncSprite(this.p2.x);
     this.p2.syncSprite(this.p1.x);
+    this.updateWorldCamera(delta);
     this.hud.update(this.p1.health, this.p2.health, this.roundTimer);
   }
 
@@ -1827,6 +1875,36 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
+  /** Route a runtime-created world object to the world camera only. */
+  private markWorld<T extends Phaser.GameObjects.GameObject>(obj: T): T {
+    this.uiCam?.ignore(obj);
+    return obj;
+  }
+
+  /** Route a runtime-created HUD/overlay object to the UI camera only. */
+  private markUi<T extends Phaser.GameObjects.GameObject>(obj: T): T {
+    this.uiObjects.add(obj);
+    this.cameras.main.ignore(obj);
+    return obj;
+  }
+
+  /**
+   * Continuous framing (Power-Clash style): the world camera eases toward the
+   * fighters' midpoint and tightens as they close in. Purely visual, runs on
+   * render delta; the HUD lives on its own camera and never scales.
+   */
+  private updateWorldCamera(delta: number): void {
+    const cam = this.cameras.main;
+    const dt = Math.min(delta, 100) / 1000;
+    const mid = (this.p1.x + this.p2.x) / 2;
+    const dist = Math.abs(this.p1.x - this.p2.x);
+    const desiredZoom = Math.max(1, Math.min(1.14, 1.14 - Math.max(0, dist - 180) * 0.00032));
+    cam.zoom += (desiredZoom - cam.zoom) * Math.min(1, dt * 3.5);
+    const targetCenterX = 512 + (mid - 512) * 0.68;
+    const desiredScrollX = targetCenterX - cam.width / 2;
+    cam.scrollX += (desiredScrollX - cam.scrollX) * Math.min(1, dt * 3.2);
+  }
+
   private latchHumanInputs(): void {
     if (!this.cpuVsCpu) {
       this.latchedP1 = this.orInputs(this.latchedP1, this.inputMgr.readPlayer1());
@@ -1898,6 +1976,7 @@ export class FightScene extends Phaser.Scene {
       fighter.playerIndex,
       false,
     );
+    this.markWorld(proj.sprite);
     this.projectiles.push(proj);
   }
 
@@ -1942,7 +2021,7 @@ export class FightScene extends Phaser.Scene {
         const actualDmg = isBlocking
           ? Math.floor(proj.damage * 0.1)
           : proj.damage;
-        const dmgText = this.add
+        const dmgText = this.markWorld(this.add
           .text(
             defender.x + (defender.facingRight ? -10 : 10),
             defender.getRenderY() - 100,
@@ -1956,7 +2035,7 @@ export class FightScene extends Phaser.Scene {
             },
           )
           .setOrigin(0.5)
-          .setDepth(105);
+          .setDepth(105));
 
         this.tweens.add({
           targets: dmgText,
@@ -2008,15 +2087,15 @@ export class FightScene extends Phaser.Scene {
     } else if (event.damage > 50) {
       this.hitstopFrames = Math.max(this.hitstopFrames, event.counter ? 12 : 10);
       this.cameras.main.shake(120, 0.006);
-      ScreenEffects.flashRed(this, 150);
+      this.markUi(ScreenEffects.flashRed(this, 150));
     } else {
       this.hitstopFrames = Math.max(this.hitstopFrames, event.counter ? 8 : 6);
       this.cameras.main.shake(80, 0.003);
-      ScreenEffects.flashWhite(this, 60);
+      this.markUi(ScreenEffects.flashWhite(this, 60));
     }
 
     if (event.counter && !event.blocked) {
-      const counterText = this.add
+      const counterText = this.markWorld(this.add
         .text(defender.x, defender.getRenderY() - 190, 'COUNTER!', {
           fontFamily: '"Press Start 2P", monospace',
           fontSize: '14px',
@@ -2025,7 +2104,7 @@ export class FightScene extends Phaser.Scene {
           strokeThickness: 4,
         })
         .setOrigin(0.5)
-        .setDepth(106);
+        .setDepth(106));
       this.tweens.add({
         targets: counterText,
         y: counterText.y - 40,
@@ -2055,7 +2134,7 @@ export class FightScene extends Phaser.Scene {
 
     // Floating damage number
     const dmgColor = event.blocked ? "#999999" : "#ff4444";
-    const dmgText = this.add
+    const dmgText = this.markWorld(this.add
       .text(
         defender.x + (defender.facingRight ? -10 : 10),
         defender.getRenderY() - 100,
@@ -2069,7 +2148,7 @@ export class FightScene extends Phaser.Scene {
         },
       )
       .setOrigin(0.5)
-      .setDepth(105);
+      .setDepth(105));
 
     this.tweens.add({
       targets: dmgText,
@@ -2127,7 +2206,7 @@ export class FightScene extends Phaser.Scene {
       this.hud.showAnnouncement("K.O.!", 2000);
       this.sound_mgr.playKO();
       this.sound_mgr.playAnnounce("ko");
-      ScreenEffects.flashWhite(this, 200);
+      this.markUi(ScreenEffects.flashWhite(this, 200));
       // KO drama: long freeze, big shake, slow-motion effects. (Camera
       // punch-in removed: with a single camera it scales the HUD too —
       // needs a dedicated UI camera before it can come back.)

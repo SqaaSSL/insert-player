@@ -41,6 +41,7 @@ export class SoundManager {
     volume: number,
     attackMs = 2,
     decayMs?: number,
+    filterType: BiquadFilterType = 'bandpass',
   ): void {
     const ctx = this.ensureContext();
     const master = this.getMaster();
@@ -51,7 +52,7 @@ export class SoundManager {
     source.buffer = this.noiseBuffer!;
 
     const bandpass = ctx.createBiquadFilter();
-    bandpass.type = 'bandpass';
+    bandpass.type = filterType;
     bandpass.frequency.value = frequency;
     bandpass.Q.value = bandQ;
 
@@ -102,12 +103,14 @@ export class SoundManager {
   }
 
   playHit(heavy: boolean): void {
+    // Bassy arcade thump: low square drop + lowpass-filtered noise.
     if (heavy) {
-      this.noiseBurst(180, 800, 2, 0.7, 2, 160);
-      this.osc('sine', 200, 60, 120, 0.5);
+      this.osc('square', 95, 38, 170, 0.5);
+      this.noiseBurst(200, 200, 1, 0.65, 2, 180, 'lowpass');
+      this.osc('sine', 70, 34, 200, 0.35);
     } else {
-      this.noiseBurst(100, 2000, 3, 0.5, 1, 80);
-      this.osc('sine', 400, 150, 60, 0.3);
+      this.osc('square', 120, 50, 110, 0.4);
+      this.noiseBurst(130, 240, 1, 0.5, 1, 110, 'lowpass');
     }
   }
 
@@ -121,12 +124,12 @@ export class SoundManager {
 
     const lowpass = ctx.createBiquadFilter();
     lowpass.type = 'lowpass';
-    lowpass.frequency.value = 600;
+    lowpass.frequency.value = 900;
     lowpass.Q.value = 1;
 
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.25, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+    gain.gain.setValueAtTime(0.22, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
 
     source.connect(lowpass);
     lowpass.connect(gain);
@@ -135,7 +138,7 @@ export class SoundManager {
     source.start(now);
     source.stop(now + 0.12);
 
-    this.osc('triangle', 150, 80, 80, 0.15);
+    this.osc('triangle', 680, 260, 90, 0.16);
   }
 
   playWhoosh(): void {

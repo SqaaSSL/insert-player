@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT } from '../constants.ts';
 
 export class ScreenEffects {
-  static flashWhite(scene: Phaser.Scene, duration = 80): void {
+  static flashWhite(scene: Phaser.Scene, duration = 80): Phaser.GameObjects.Graphics {
     const overlay = scene.add.graphics().setDepth(999).setScrollFactor(0);
     overlay.fillStyle(0xffffff, 0.6);
     overlay.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
@@ -14,9 +14,10 @@ export class ScreenEffects {
       ease: 'Cubic.easeOut',
       onComplete: () => overlay.destroy(),
     });
+    return overlay;
   }
 
-  static flashRed(scene: Phaser.Scene, duration = 120): void {
+  static flashRed(scene: Phaser.Scene, duration = 120): Phaser.GameObjects.Graphics {
     const overlay = scene.add.graphics().setDepth(999).setScrollFactor(0);
     overlay.fillStyle(0xff0000, 0.35);
     overlay.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
@@ -28,6 +29,7 @@ export class ScreenEffects {
       ease: 'Cubic.easeOut',
       onComplete: () => overlay.destroy(),
     });
+    return overlay;
   }
 
   static slowMotion(scene: Phaser.Scene, durationMs: number, scale = 0.05): void {
