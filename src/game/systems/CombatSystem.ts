@@ -102,23 +102,15 @@ export class CombatSystem {
 
     if (!inBlockState) return false;
 
-    const attackState = attacker.state;
-    const isLowAttack =
-      attackState === FighterState.LOW_PUNCH ||
-      attackState === FighterState.LOW_KICK;
-    const isHighAttack =
-      attackState === FighterState.HIGH_PUNCH ||
-      attackState === FighterState.HIGH_KICK;
-    // Mids (uppercut today, overheads later) are blockable from either stance.
-    const isMidAttack = attackState === FighterState.UPPERCUT;
+    const attackData = attacker.getAttackData();
+    if (!attackData) return false;
 
+    // Tekken guard triangle: mids CRUSH crouch guard, lows beat standing
+    // guard, highs whiff over crouchers (geometry already handles that).
     if (defender.crouchBlocking) {
-      // Classic-lite: crouch block covers lows and mids, loses to highs
-      // (which whiff over crouchers geometrically anyway).
-      return isLowAttack || isMidAttack;
+      return attackData.hitLevel === 'low';
     }
-    // Standing block covers highs and mids, loses to lows.
-    return isHighAttack || isMidAttack;
+    return attackData.hitLevel === 'high' || attackData.hitLevel === 'mid';
   }
 
   /**

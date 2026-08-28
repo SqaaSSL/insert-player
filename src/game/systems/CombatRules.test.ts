@@ -53,6 +53,16 @@ function activeFrameOf(state: FighterState): number {
 }
 
 describe('combat rules', () => {
+  it('every attack declares its Tekken hit level and the sweep knocks down', () => {
+    expect(ATTACKS[FighterState.HIGH_PUNCH].hitLevel).toBe('high');
+    expect(ATTACKS[FighterState.LOW_PUNCH].hitLevel).toBe('low');
+    expect(ATTACKS[FighterState.HIGH_KICK].hitLevel).toBe('high');
+    expect(ATTACKS[FighterState.LOW_KICK].hitLevel).toBe('low');
+    expect(ATTACKS[FighterState.LOW_KICK].knockdown).toBe(true);
+    expect(ATTACKS[FighterState.FIREBALL].hitLevel).toBe('high');
+    expect(ATTACKS[FighterState.UPPERCUT].hitLevel).toBe('mid');
+  });
+
   it('standing block stops highs and mids but loses to lows', () => {
     const combat = new CombatSystem();
     for (const [attack, blocked] of [
@@ -70,12 +80,12 @@ describe('combat rules', () => {
     }
   });
 
-  it('crouch block stops lows and mids but loses to highs', () => {
+  it('crouch block only stops lows — mids crush it (Tekken triangle)', () => {
     const combat = new CombatSystem();
     for (const [attack, blocked] of [
       [FighterState.LOW_PUNCH, true],
       [FighterState.LOW_KICK, true],
-      [FighterState.UPPERCUT, true],
+      [FighterState.UPPERCUT, false],
       [FighterState.HIGH_PUNCH, false],
     ] as const) {
       const attacker = stub({ playerIndex: 0, attacking: attack, stateFrame: activeFrameOf(attack) });

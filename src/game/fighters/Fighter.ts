@@ -490,6 +490,13 @@ export class Fighter {
         this.vy = -400;
         this.vx = (this.facingRight ? -1 : 1) * 200;
         this.stunFrames = 0;
+      } else if (atk.knockdown) {
+        // Sweep: soft knockdown with a small pop; the existing KNOCKDOWN
+        // get-up logic (30 grounded frames) plays it out.
+        this.setState(FighterState.KNOCKDOWN);
+        this.vy = -260;
+        this.vx = (this.facingRight ? -1 : 1) * Math.max(atk.pushback, 120);
+        this.stunFrames = 0;
       } else {
         this.setState(FighterState.HIT_STUN);
         this.vx = (this.facingRight ? -1 : 1) * atk.pushback;
@@ -497,8 +504,11 @@ export class Fighter {
     }
   }
 
-  /** Uppercut startup is invincible — the reversal the genre expects. */
+  /** Uppercut startup is invincible (the classic reversal), and a downed
+   * fighter can't be hit again until they're back up (OTG protection —
+   * without it a sweep would loop into itself forever). */
   isInvulnerable(): boolean {
+    if (this.state === FighterState.KNOCKDOWN) return true;
     return this.state === FighterState.UPPERCUT && this.stateFrame < 6;
   }
 

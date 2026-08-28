@@ -9,7 +9,7 @@ export class Projectile {
   y: number;
   vx: number;
   active = true;
-  readonly ownerIndex: number;
+  ownerIndex: number;
   readonly damage: number;
   sprite: Phaser.GameObjects.Sprite;
 
@@ -31,6 +31,14 @@ export class Projectile {
     this.sprite.setOrigin(0.5, 0.5);
     this.sprite.setDepth(15);
     this.sprite.setFlipX(!facingRight);
+  }
+
+  /** Standing-guard reflect: the ball changes sides and comes back faster. */
+  reflect(newOwnerIndex: number): void {
+    this.ownerIndex = newOwnerIndex;
+    this.vx = -this.vx * 1.3;
+    this.sprite.setFlipX(this.vx < 0);
+    this.sprite.setTint(0x9ee7ff);
   }
 
   update(dt: number): void {

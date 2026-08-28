@@ -292,33 +292,74 @@ export class FightScene extends Phaser.Scene {
     this.ready = true;
   }
 
-  /** First-round desktop onboarding: controls + the combo recipe. */
+  /** First-round desktop onboarding: drawn keycaps + the combo recipe. */
   private showControlsHint(): void {
     if (this.cpuVsCpu) return;
     const coarse = typeof window !== 'undefined' &&
       window.matchMedia?.('(pointer: coarse)').matches;
     if (coarse) return;
-    const lines = [
-      'A/D MOVE · W JUMP · S CROUCH · G GUARD · U PUNCH · J KICK · I FIREBALL · K UPPERCUT',
-      'COMBO: LAND A PUNCH, THEN I — CANCEL INTO FIREBALL',
-    ];
-    const hint = this.markUi(
-      this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 40, lines.join('\n'), {
+
+    const container = this.add.container(GAME_WIDTH / 2, GAME_HEIGHT - 96)
+      .setDepth(150)
+      .setScrollFactor(0);
+
+    const KEY = 26;
+    const keycap = (x: number, y: number, label: string, caption: string, accent = false) => {
+      const gfx = this.add.graphics();
+      gfx.fillStyle(accent ? 0x8f1616 : 0x10142e, 0.92);
+      gfx.fillRoundedRect(x - KEY / 2, y - KEY / 2, KEY, KEY, 4);
+      gfx.lineStyle(2, accent ? 0xff5a3c : 0xc88a00, 0.95);
+      gfx.strokeRoundedRect(x - KEY / 2, y - KEY / 2, KEY, KEY, 4);
+      const keyText = this.add.text(x, y, label, {
         fontFamily: '"Press Start 2P", monospace',
-        fontSize: '9px',
-        color: '#ffe9b0',
-        stroke: '#000000',
-        strokeThickness: 3,
-        align: 'center',
-        lineSpacing: 8,
-      }).setOrigin(0.5, 1).setDepth(150).setScrollFactor(0),
-    );
+        fontSize: '10px',
+        color: '#fff4d6',
+      }).setOrigin(0.5);
+      const captionText = this.add.text(x, y + KEY / 2 + 10, caption, {
+        fontFamily: '"Press Start 2P", monospace',
+        fontSize: '7px',
+        color: '#c9c0a8',
+      }).setOrigin(0.5, 0);
+      container.add([gfx, keyText, captionText]);
+    };
+
+    // Row 1 — movement & defense
+    const row1: Array<[string, string]> = [['A', ''], ['D', 'MOVE'], ['W', 'JUMP'], ['S', 'CROUCH'], ['G', 'GUARD']];
+    const r1Width = 70 * (row1.length - 1);
+    row1.forEach(([key, caption], index) => {
+      keycap(-r1Width / 2 + index * 70 - (key === 'A' ? 20 : 0), -34, key, caption);
+    });
+
+    // Row 2 — attacks
+    const row2: Array<[string, string]> = [['U', 'PUNCH'], ['J', 'KICK'], ['I', 'FIREBALL'], ['K', 'UPPERCUT']];
+    const r2Width = 92 * (row2.length - 1);
+    row2.forEach(([key, caption], index) => {
+      keycap(-r2Width / 2 + index * 92, 22, key, caption);
+    });
+
+    // Combo recipe line with highlighted keys
+    const comboY = 78;
+    keycap(-96, comboY, 'U', '', true);
+    const arrow = this.add.text(-64, comboY, '\u25B6', {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: '10px',
+      color: '#ffce3a',
+    }).setOrigin(0.5);
+    keycap(-32, comboY, 'I', '', true);
+    const comboLabel = this.add.text(-6, comboY, 'ON HIT = FIREBALL COMBO', {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: '8px',
+      color: '#ffe9b0',
+    }).setOrigin(0, 0.5);
+    container.add([arrow, comboLabel]);
+
+    this.markUi(container);
     this.tweens.add({
-      targets: hint,
+      targets: container,
       alpha: 0,
-      delay: 7000,
+      delay: 9000,
       duration: 600,
-      onComplete: () => hint.destroy(),
+      onComplete: () => container.destroy(),
     });
   }
 
@@ -1961,13 +2002,17 @@ export class FightScene extends Phaser.Scene {
 
   private checkFireballSpawn(fighter: Fighter): void {
     if (fighter.state !== FighterState.FIREBALL) return;
+    // Classic one-projectile rule: with your ball still live, the throw
+    // animation plays but nothing comes out.
+    if (this.projectiles.some((proj) => proj.ownerIndex === fighter.playerIndex)) return;
     const startup = ATTACKS[FighterState.FIREBALL].startup;
     if (fighter.stateFrame !== startup) return;
 
     const spawnX =
       fighter.x +
       (fighter.facingRight ? fighter.getBodyWidth() : -fighter.getBodyWidth());
-    const spawnY = fighter.getRenderY() - fighter.getBodyHeight() * 0.56;
+    // High trajectory: crouching ducks clean under the ball (Tekken rules).
+    const spawnY = fighter.getRenderY() - fighter.getBodyHeight() * 0.78;
     const proj = new Projectile(
       this,
       spawnX,
@@ -1990,25 +2035,58 @@ export class FightScene extends Phaser.Scene {
         continue;
       }
 
+      // Projectile clash: opposing fireballs cancel each other out.
+      const rival = this.projectiles.find(
+        (other) => other !== proj && other.active && other.ownerIndex !== proj.ownerIndex &&
+          this.aabbOverlap(proj.getHitbox(), other.getHitbox()),
+      );
+      if (rival) {
+        this.hitSparks.emitParticleAt((proj.x + rival.x) / 2, proj.y, 10);
+        this.sound_mgr.playBlock();
+        rival.destroy();
+        proj.destroy();
+        this.projectiles.splice(i, 1);
+        const rivalIndex = this.projectiles.indexOf(rival);
+        if (rivalIndex >= 0) this.projectiles.splice(rivalIndex, 1);
+        continue;
+      }
+
       const defender = proj.ownerIndex === 0 ? this.p2 : this.p1;
       const hurtbox = defender.getHurtbox();
       const pHitbox = proj.getHitbox();
 
       if (this.aabbOverlap(pHitbox, hurtbox)) {
+        if (defender.isInvulnerable()) continue;
+
+        // Standing guard-button block REFLECTS the ball back, faster.
+        // Walk-back block absorbs it with chip as usual; crouching simply
+        // ducks under it (the ball flies high).
+        if (
+          defender.state === FighterState.BLOCK &&
+          !defender.crouchBlocking &&
+          defender.isGrounded()
+        ) {
+          proj.reflect(defender.playerIndex);
+          this.hitSparks.emitParticleAt(proj.x, proj.y, 8);
+          this.sound_mgr.playBlock();
+          this.hitstopFrames = Math.max(this.hitstopFrames, 4);
+          continue;
+        }
+
         const isBlocking = this.combat.isBlockingProjectile(defender);
 
         const fakeAtk = {
           damage: proj.damage,
-          hitStunFrames: 20,
+          hitStunFrames: 18,
           blockStunFrames: 10,
           pushback: 120,
           startup: 0,
           active: 0,
           recovery: 0,
           hitbox: { x: 0, y: 0, width: 0, height: 0 },
+          hitLevel: 'high' as const,
         };
 
-        if (defender.isInvulnerable()) continue;
         defender.takeDamage(fakeAtk, isBlocking);
 
         this.hitSparks.emitParticleAt(
