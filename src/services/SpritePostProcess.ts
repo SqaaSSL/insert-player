@@ -1179,7 +1179,19 @@ function filterCriticalAnimationFrames(
       heightRatio >= minHeightRatio &&
       widthRatio >= minWidthRatio &&
       verticalFill >= minVerticalFill;
-    return { index, score, valid };
+    return {
+      index,
+      score,
+      valid,
+      areaRatio,
+      heightRatio,
+      widthRatio,
+      verticalFill,
+      touchesLeft,
+      touchesRight,
+      touchesTop,
+      touchesBottom,
+    };
   });
 
   let selectedIndices = scored.filter((entry) => entry.valid).map((entry) => entry.index);
@@ -1199,6 +1211,21 @@ function filterCriticalAnimationFrames(
   debugInfo(
     `[SpritePostProcess] ${animationName}: kept ${selectedIndices.length}/${frames.length} reliable critical frames`,
   );
+  const rejected = scored.filter((entry) => !entry.valid);
+  if (rejected.length > 0) {
+    debugInfo(
+      `[SpritePostProcess] ${animationName}: rejected ${rejected.map((entry) =>
+        `#${entry.index + 1} score=${entry.score} area=${entry.areaRatio.toFixed(2)} ` +
+        `height=${entry.heightRatio.toFixed(2)} width=${entry.widthRatio.toFixed(2)} ` +
+        `fill=${entry.verticalFill.toFixed(2)} edges=${[
+          entry.touchesLeft ? 'L' : '',
+          entry.touchesRight ? 'R' : '',
+          entry.touchesTop ? 'T' : '',
+          entry.touchesBottom ? 'B' : '',
+        ].join('') || 'none'}`,
+      ).join('; ')}`,
+    );
+  }
 
   return {
     frames: selectedIndices.map((index) => frames[index]),
