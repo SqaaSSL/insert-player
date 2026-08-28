@@ -3,6 +3,12 @@ import { Fighter } from "../fighters/Fighter.ts";
 import { Projectile } from "../fighters/Projectile.ts";
 import { CombatSystem, type HitEvent } from "../systems/CombatSystem.ts";
 import { AIController } from "../systems/AIController.ts";
+import {
+  METER_MAX,
+  REFLECT_METER_GAIN,
+  attackerMeterGain,
+  defenderMeterGain,
+} from "../systems/Meter.ts";
 import { InputManager, type FighterInput } from "../systems/InputManager.ts";
 import { SoundManager } from "../systems/SoundManager.ts";
 import { HUD } from "../ui/HUD.ts";
@@ -1593,6 +1599,11 @@ export class FightScene extends Phaser.Scene {
       return;
     }
 
+    // One-projectile rule feeds the fighters so a super is never wasted on
+    // a throw that cannot spawn.
+    this.p1.canFireProjectile = !this.projectiles.some((proj) => proj?.ownerIndex === 0);
+    this.p2.canFireProjectile = !this.projectiles.some((proj) => proj?.ownerIndex === 1);
+
     // Read inputs
     const p1Input = this.cpuVsCpu
       ? this.ai2.getInput(this.p1, this.p2)
@@ -1670,6 +1681,9 @@ export class FightScene extends Phaser.Scene {
       p1Health: Math.max(0, Math.round(this.p1.health)),
       p2Health: Math.max(0, Math.round(this.p2.health)),
       maxHealth: MAX_HEALTH,
+      p1Meter: this.p1.meter,
+      p2Meter: this.p2.meter,
+      meterMax: METER_MAX,
       timer: Math.max(0, Math.ceil(this.roundTimer)),
       p1Wins: this.p1Wins,
       p2Wins: this.p2Wins,
@@ -1688,6 +1702,8 @@ export class FightScene extends Phaser.Scene {
       last.visible === detail.visible &&
       last.p1Health === detail.p1Health &&
       last.p2Health === detail.p2Health &&
+      last.p1Meter === detail.p1Meter &&
+      last.p2Meter === detail.p2Meter &&
       last.timer === detail.timer &&
       last.p1Wins === detail.p1Wins &&
       last.p2Wins === detail.p2Wins &&
@@ -1737,6 +1753,7 @@ export class FightScene extends Phaser.Scene {
       punch: base.punch || next.punch,
       kick: base.kick || next.kick,
       fireball: base.fireball || next.fireball,
+      super: base.super || next.super,
       uppercut: base.uppercut || next.uppercut,
     };
   }
@@ -1784,16 +1801,42 @@ export class FightScene extends Phaser.Scene {
       (fighter.facingRight ? fighter.getBodyWidth() : -fighter.getBodyWidth());
     // High trajectory: crouching ducks clean under the ball (Tekken rules).
     const spawnY = fighter.getRenderY() - fighter.getBodyHeight() * 0.78;
+    const isSuper = fighter.pendingSuper;
+    fighter.pendingSuper = false;
+    // Super flies at mid height: crouching does not duck it.
+    const superY = fighter.getRenderY() - fighter.getBodyHeight() * 0.45;
     const proj = new Projectile(
       this,
       spawnX,
-      spawnY,
+      isSuper ? superY : spawnY,
       fighter.facingRight,
       fighter.playerIndex,
       false,
+      isSuper,
     );
     this.markWorld(proj.sprite);
     this.projectiles.push(proj);
+    if (isSuper) {
+      this.sound_mgr.playHit(true);
+      const superText = this.markWorld(this.add
+        .text(fighter.x, fighter.getRenderY() - 210, 'SUPER!', {
+          fontFamily: '"Press Start 2P", monospace',
+          fontSize: '16px',
+          color: '#ffce3a',
+          stroke: '#000000',
+          strokeThickness: 4,
+        })
+        .setOrigin(0.5)
+        .setDepth(106));
+      this.tweens.add({
+        targets: superText,
+        y: superText.y - 44,
+        alpha: 0,
+        duration: 800,
+        ease: 'Cubic.easeOut',
+        onComplete: () => superText.destroy(),
+      });
+    }
   }
 
   private updateProjectiles(dt: number): void {
@@ -1817,12 +1860,20 @@ export class FightScene extends Phaser.Scene {
       if (rival) {
         this.hitSparks.emitParticleAt((proj.x + rival.x) / 2, proj.y, 10);
         this.sound_mgr.playBlock();
-        rival.destroy();
-        proj.destroy();
-        this.projectiles = this.projectiles.filter(
-          (other) => other !== proj && other !== rival,
-        );
-        continue;
+        if (proj.isSuper !== rival.isSuper) {
+          // A super burns through a normal fireball and keeps travelling.
+          const loser = proj.isSuper ? rival : proj;
+          loser.destroy();
+          this.projectiles = this.projectiles.filter((other) => other !== loser);
+          if (loser === proj) continue;
+        } else {
+          rival.destroy();
+          proj.destroy();
+          this.projectiles = this.projectiles.filter(
+            (other) => other !== proj && other !== rival,
+          );
+          continue;
+        }
       }
 
       const defender = proj.ownerIndex === 0 ? this.p2 : this.p1;
@@ -1836,10 +1887,12 @@ export class FightScene extends Phaser.Scene {
         // Walk-back block absorbs it with chip as usual; crouching simply
         // ducks under it (the ball flies high).
         if (
+          !proj.isSuper &&
           defender.state === FighterState.BLOCK &&
           !defender.crouchBlocking &&
           defender.isGrounded()
         ) {
+          defender.gainMeter(REFLECT_METER_GAIN);
           proj.reflect(defender.playerIndex);
           this.hitSparks.emitParticleAt(proj.x, proj.y, 8);
           this.sound_mgr.playBlock();
@@ -1847,21 +1900,26 @@ export class FightScene extends Phaser.Scene {
           continue;
         }
 
-        const isBlocking = this.combat.isBlockingProjectile(defender);
+        // Super is a MID: standing guard blocks it, crouch guard is crushed.
+        const isBlocking = this.combat.isBlockingProjectile(defender) &&
+          (!proj.isSuper || !defender.crouchBlocking);
 
         const fakeAtk = {
           damage: proj.damage,
-          hitStunFrames: 18,
-          blockStunFrames: 10,
-          pushback: 120,
+          hitStunFrames: proj.isSuper ? 24 : 18,
+          blockStunFrames: proj.isSuper ? 14 : 10,
+          pushback: proj.isSuper ? 200 : 120,
           startup: 0,
           active: 0,
           recovery: 0,
           hitbox: { x: 0, y: 0, width: 0, height: 0 },
-          hitLevel: 'high' as const,
+          hitLevel: (proj.isSuper ? 'mid' : 'high') as 'mid' | 'high',
         };
 
         defender.takeDamage(fakeAtk, isBlocking);
+        const shooter = proj.ownerIndex === 0 ? this.p1 : this.p2;
+        shooter.gainMeter(attackerMeterGain({ blocked: isBlocking }));
+        defender.gainMeter(defenderMeterGain({ blocked: isBlocking }));
 
         this.hitSparks.emitParticleAt(
           defender.x + (defender.facingRight ? -20 : 20),
@@ -1924,6 +1982,10 @@ export class FightScene extends Phaser.Scene {
   private onHit(event: HitEvent): void {
     const defender = event.defender === 0 ? this.p1 : this.p2;
     const attacker = event.attacker === 0 ? this.p1 : this.p2;
+
+    // Every exchange feeds the super meter.
+    attacker.gainMeter(attackerMeterGain({ blocked: event.blocked, counter: event.counter }));
+    defender.gainMeter(defenderMeterGain({ blocked: event.blocked }));
 
     // Sound
     if (event.blocked) {

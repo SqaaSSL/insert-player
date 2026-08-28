@@ -29,7 +29,7 @@ const ATTACK_ROWS: KeyDef[][] = [
     { label: 'Y' },
     { label: 'U', caption: 'PUNCH' },
     { label: 'I', caption: 'FIREBALL' },
-    { label: 'O' },
+    { label: 'O', caption: 'SUPER' },
     { label: 'P' },
   ],
   [

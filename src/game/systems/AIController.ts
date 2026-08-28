@@ -1,4 +1,5 @@
 import type { FighterInput } from './InputManager.ts';
+import { METER_MAX } from './Meter.ts';
 import type { Fighter } from '../fighters/Fighter.ts';
 import type { SeededRng } from '../utils/SeededRng.ts';
 import { FighterState, MAX_HEALTH, STAGE_LEFT, STAGE_RIGHT } from '../constants.ts';
@@ -292,6 +293,16 @@ export class AIController {
       }
     }
     if (choice.forceState !== undefined) {
+      // A full bar upgrades the fireball it was going to throw into a SUPER.
+      if (
+        choice.forceState === FighterState.FIREBALL &&
+        self.meter >= METER_MAX &&
+        self.canFireProjectile &&
+        this.difficulty >= 0.5
+      ) {
+        self.meter = 0;
+        self.pendingSuper = true;
+      }
       self.forceState(choice.forceState);
       this.specialCooldown = choice.specialCooldown ?? this.specialCooldown;
     }
@@ -352,6 +363,7 @@ export class AIController {
       kick: this.currentAction.kick ?? false,
       fireball: this.currentAction.fireball ?? false,
       uppercut: this.currentAction.uppercut ?? false,
+      super: this.currentAction.super ?? false,
     };
   }
 }

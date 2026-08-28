@@ -11,6 +11,8 @@ export interface FighterInput {
   kick: boolean;
   fireball: boolean;
   uppercut: boolean;
+  /** One-shot: spend a full super meter on a SUPER FIREBALL. */
+  super: boolean;
 }
 
 export const EMPTY_INPUT: FighterInput = {
@@ -23,6 +25,7 @@ export const EMPTY_INPUT: FighterInput = {
   kick: false,
   fireball: false,
   uppercut: false,
+  super: false,
 };
 
 export class InputManager {
@@ -49,6 +52,7 @@ export class InputManager {
       kick: kb.addKey(Phaser.Input.Keyboard.KeyCodes.J),
       fireball: kb.addKey(Phaser.Input.Keyboard.KeyCodes.I),
       uppercut: kb.addKey(Phaser.Input.Keyboard.KeyCodes.K),
+      super: kb.addKey(Phaser.Input.Keyboard.KeyCodes.O),
     };
 
     this.keys2 = {
@@ -61,6 +65,7 @@ export class InputManager {
       kick: kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ONE),
       fireball: kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_FIVE),
       uppercut: kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_TWO),
+      super: kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SIX),
     };
   }
 
@@ -91,6 +96,7 @@ export class InputManager {
       kick: Phaser.Input.Keyboard.JustDown(keys.kick),
       fireball: Phaser.Input.Keyboard.JustDown(keys.fireball),
       uppercut: Phaser.Input.Keyboard.JustDown(keys.uppercut),
+      super: Phaser.Input.Keyboard.JustDown(keys.super),
     };
   }
 
@@ -119,11 +125,12 @@ export class InputManager {
       right: axisX > 0.35 || isPressed(15),
       up: axisY < -0.35 || isPressed(12),
       down: axisY > 0.35 || isPressed(13),
-      guard: isPressed(4) || isPressed(5) || isPressed(6) || isPressed(7),
+      guard: isPressed(4) || isPressed(5) || isPressed(6),
       punch: justPressed(0),
       kick: justPressed(1),
       fireball: justPressed(2),
       uppercut: justPressed(3),
+      super: justPressed(7),
     };
   }
 
@@ -138,6 +145,7 @@ export class InputManager {
       kick: inputs.some((input) => input.kick),
       fireball: inputs.some((input) => input.fireball),
       uppercut: inputs.some((input) => input.uppercut),
+      super: inputs.some((input) => input.super),
     };
   }
 }

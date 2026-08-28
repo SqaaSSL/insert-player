@@ -18,14 +18,18 @@ interface HudSideProps {
   photoHash: string | null;
   health: number;
   maxHealth: number;
+  meter: number;
+  meterMax: number;
   wins: number;
   roundsToWin: number;
 }
 
-function HudSide({ side, name, tag, photoHash, health, maxHealth, wins, roundsToWin }: HudSideProps) {
+function HudSide({ side, name, tag, photoHash, health, maxHealth, meter, meterMax, wins, roundsToWin }: HudSideProps) {
   const portraitUrl = useFighterPortrait(photoHash);
   const ratio = maxHealth > 0 ? Math.max(0, Math.min(1, health / maxHealth)) : 0;
   const fillWidth = Math.round(ratio * BAR_WIDTH);
+  const meterRatio = meterMax > 0 ? Math.max(0, Math.min(1, meter / meterMax)) : 0;
+  const meterFull = meterRatio >= 1;
   const pips = Array.from({ length: Math.max(0, roundsToWin) }, (_, i) => i < wins);
 
   return (
@@ -65,6 +69,27 @@ function HudSide({ side, name, tag, photoHash, health, maxHealth, wins, roundsTo
             <span key={i} className={won ? 'fight-hud__pip is-won' : 'fight-hud__pip'} />
           ))}
         </div>
+        <div
+          className={meterFull ? 'fight-hud__meter is-full' : 'fight-hud__meter'}
+          data-testid={`meter-${side}`}
+          aria-hidden="true"
+        >
+          <svg
+            className={side === 'p1' ? 'fight-hud__meter-bar fight-hud__meter-bar--mirrored' : 'fight-hud__meter-bar'}
+            viewBox={`0 0 ${BAR_WIDTH} 10`}
+            preserveAspectRatio="none"
+          >
+            <rect className="fight-hud__meter-bg" x={0} y={0} width={BAR_WIDTH} height={10} />
+            <rect
+              className={meterFull ? 'fight-hud__meter-fill is-full' : 'fight-hud__meter-fill'}
+              x={0}
+              y={0}
+              width={Math.round(meterRatio * BAR_WIDTH)}
+              height={10}
+            />
+          </svg>
+          {meterFull ? <span className="fight-hud__meter-ready">SUPER</span> : null}
+        </div>
       </div>
     </div>
   );
@@ -99,6 +124,8 @@ export function FightHud({ initialState = null }: FightHudProps) {
         photoHash={state.p1PhotoHash}
         health={state.p1Health}
         maxHealth={state.maxHealth}
+        meter={state.p1Meter}
+        meterMax={state.meterMax}
         wins={state.p1Wins}
         roundsToWin={state.roundsToWin}
       />
@@ -118,6 +145,8 @@ export function FightHud({ initialState = null }: FightHudProps) {
         photoHash={state.p2PhotoHash}
         health={state.p2Health}
         maxHealth={state.maxHealth}
+        meter={state.p2Meter}
+        meterMax={state.meterMax}
         wins={state.p2Wins}
         roundsToWin={state.roundsToWin}
       />

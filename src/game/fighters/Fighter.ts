@@ -1,3 +1,4 @@
+import { METER_MAX, clampMeter } from '../systems/Meter.ts';
 import Phaser from 'phaser';
 import {
   FighterState,
@@ -34,6 +35,8 @@ export interface FighterSnapshot {
   vx: number;
   vy: number;
   health: number;
+  meter: number;
+  pendingSuper: boolean;
   state: FighterState;
   stateFrame: number;
   facingRight: boolean;
@@ -48,6 +51,12 @@ export class Fighter {
   vx = 0;
   vy = 0;
   health = MAX_HEALTH;
+  /** Super meter, 0..METER_MAX. Persists across rounds within a match. */
+  meter = 0;
+  /** Set when a SUPER FIREBALL was paid for; consumed at projectile spawn. */
+  pendingSuper = false;
+  /** Scene-fed each frame: false while this fighter's projectile is live. */
+  canFireProjectile = true;
   state = FighterState.IDLE;
   stateFrame = 0;
   facingRight: boolean;
@@ -60,6 +69,7 @@ export class Fighter {
   private bufferedPunch = 0;
   private bufferedKick = 0;
   private bufferedFireball = 0;
+  private bufferedSuper = 0;
   private bufferedUppercut = 0;
 
   readonly playerIndex: number;
@@ -144,6 +154,8 @@ export class Fighter {
       vx: this.vx,
       vy: this.vy,
       health: this.health,
+      meter: this.meter,
+      pendingSuper: this.pendingSuper,
       state: this.state,
       stateFrame: this.stateFrame,
       facingRight: this.facingRight,
@@ -159,12 +171,18 @@ export class Fighter {
     this.vx = snap.vx;
     this.vy = snap.vy;
     this.health = snap.health;
+    this.meter = snap.meter;
+    this.pendingSuper = snap.pendingSuper;
     this.state = snap.state;
     this.stateFrame = snap.stateFrame;
     this.facingRight = snap.facingRight;
     this.attackHit = snap.attackHit;
     this.comboCount = snap.comboCount;
     this.stunFrames = snap.stunFrames;
+  }
+
+  gainMeter(amount: number): void {
+    this.meter = clampMeter(this.meter + amount);
   }
 
   isGrounded(): boolean {
@@ -266,11 +284,13 @@ export class Fighter {
       if (input.punch) this.bufferedPunch = BUFFER_FRAMES;
       if (input.kick) this.bufferedKick = BUFFER_FRAMES;
       if (input.fireball) this.bufferedFireball = BUFFER_FRAMES;
+      if (input.super) this.bufferedSuper = BUFFER_FRAMES;
       if (input.uppercut) this.bufferedUppercut = BUFFER_FRAMES;
     }
     if (this.bufferedPunch > 0) this.bufferedPunch--;
     if (this.bufferedKick > 0) this.bufferedKick--;
     if (this.bufferedFireball > 0) this.bufferedFireball--;
+    if (this.bufferedSuper > 0) this.bufferedSuper--;
     if (this.bufferedUppercut > 0) this.bufferedUppercut--;
 
     if (this.state === FighterState.VICTORY || this.state === FighterState.DEFEAT) {
@@ -350,18 +370,20 @@ export class Fighter {
     this.motionInputs.feedInput(input, this.facingRight);
 
     // Replay buffered presses now that we are actionable.
-    if (this.bufferedPunch > 0 || this.bufferedKick > 0 || this.bufferedFireball > 0 || this.bufferedUppercut > 0) {
+    if (this.bufferedPunch > 0 || this.bufferedKick > 0 || this.bufferedFireball > 0 || this.bufferedUppercut > 0 || this.bufferedSuper > 0) {
       input = {
         ...input,
         punch: input.punch || this.bufferedPunch > 0,
         kick: input.kick || this.bufferedKick > 0,
         fireball: input.fireball || this.bufferedFireball > 0,
         uppercut: input.uppercut || this.bufferedUppercut > 0,
+        super: input.super || this.bufferedSuper > 0,
       };
       this.bufferedPunch = 0;
       this.bufferedKick = 0;
       this.bufferedFireball = 0;
       this.bufferedUppercut = 0;
+      this.bufferedSuper = 0;
     }
 
     const isHoldingBack = this.facingRight ? input.left : input.right;
@@ -369,6 +391,14 @@ export class Fighter {
 
     // Shortcut keys for specials
     if (this.isActionable()) {
+      if (input.super && this.meter >= METER_MAX && this.canFireProjectile) {
+        this.meter = 0;
+        this.pendingSuper = true;
+        this.setState(FighterState.FIREBALL);
+        this.vx = 0;
+        this.applyPhysics(dt);
+        return;
+      }
       if (input.uppercut) {
         this.setState(FighterState.UPPERCUT);
         this.vx = 0;

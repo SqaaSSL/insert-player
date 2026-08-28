@@ -73,6 +73,9 @@ export interface HudStateDetail {
   p1Health: number;
   p2Health: number;
   maxHealth: number;
+  p1Meter: number;
+  p2Meter: number;
+  meterMax: number;
   timer: number;
   p1Wins: number;
   p2Wins: number;

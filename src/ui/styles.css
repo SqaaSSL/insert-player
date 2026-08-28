@@ -890,6 +890,13 @@
     @apply border-asf-violet bg-[rgba(48,24,96,0.86)];
   }
 
+  .mobile-fight-control.is-super {
+    @apply border-asf-gold bg-[rgba(120,74,0,0.9)] text-asf-gold-bright
+           shadow-[0_0_14px_rgba(255,206,58,0.75)]
+           [animation:meter-ready-pulse_900ms_ease-in-out_infinite]
+           motion-reduce:animate-none;
+  }
+
   @media (pointer: coarse) {
     .mobile-fight-controls {
       @apply flex;
@@ -2417,6 +2424,41 @@
     @apply border-asf-gold bg-asf-gold shadow-[0_0_6px_rgba(255,206,58,0.8)];
   }
 
+  .fight-hud__meter {
+    @apply relative mt-1 flex items-center;
+  }
+
+  .fight-hud__meter-bar {
+    @apply block h-2 w-full border border-asf-gold-deep bg-asf-well;
+  }
+
+  .fight-hud__meter-bar--mirrored {
+    @apply -scale-x-100;
+  }
+
+  .fight-hud__meter-bg {
+    @apply fill-[rgba(4,4,13,0.9)];
+  }
+
+  .fight-hud__meter-fill {
+    @apply fill-[#3a7bd5];
+  }
+
+  .fight-hud__meter-fill.is-full {
+    @apply fill-asf-gold;
+  }
+
+  .fight-hud__meter.is-full .fight-hud__meter-bar {
+    @apply border-asf-gold shadow-[0_0_10px_rgba(255,206,58,0.7)]
+           [animation:meter-ready-pulse_900ms_ease-in-out_infinite]
+           motion-reduce:animate-none;
+  }
+
+  .fight-hud__meter-ready {
+    @apply absolute inset-0 flex items-center justify-center font-arcade
+           text-[7px] leading-none text-asf-bg-0;
+  }
+
   .fight-hud__center {
     @apply flex shrink-0 flex-col items-center gap-1;
   }
@@ -2695,5 +2737,15 @@
   60%,
   100% {
     transform: rotate(90deg);
+  }
+}
+
+@keyframes meter-ready-pulse {
+  0%,
+  100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.45);
   }
 }
