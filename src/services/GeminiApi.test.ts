@@ -6,6 +6,7 @@ import {
   geminiFinishReasonBlockReason,
   geminiOfficialCorrectionUsesCanonicalPoseGuide,
   geminiOfficialFrameFramingValidation,
+  geminiOfficialFramingRecoveryInsetLayout,
   geminiOfficialFramingRecoveryPrompt,
   geminiOfficialRefinePrompt,
   geminiOfficialReviewCorrection,
@@ -61,8 +62,18 @@ describe('Gemini content-block handling', () => {
     expect(prompt).toContain('IMAGE 2 is the exact pose');
     expect(prompt).toContain('IMAGE 3 is the previous rejected render');
     expect(prompt).toContain('Do not return IMAGE 3 unchanged');
-    expect(prompt).toContain('at least 2% of the canvas width at the left edge');
-    expect(prompt).toContain('Keep IMAGE 2\'s exact pose and floor line');
+    expect(prompt).toContain('flat cut line inside IMAGE 3');
+    expect(prompt).toContain('at least 5% of the canvas width at the left edge');
+    expect(prompt).toContain('IMAGE 2 defines the final camera distance and framing');
+  });
+
+  it('insets framing recovery inputs while preserving their original canvas', () => {
+    expect(geminiOfficialFramingRecoveryInsetLayout(896, 1195)).toEqual({
+      x: 72,
+      y: 155,
+      width: 753,
+      height: 1004,
+    });
   });
 
   it('allows only a narrow second-attempt size recovery for low attacks', () => {

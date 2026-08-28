@@ -1665,8 +1665,47 @@ const REFINE_SIZE_MIN_RATIO = 0.75;
 const REFINE_SIZE_MAX_RATIO = 1.3;
 const LOW_ATTACK_RECOVERY_SIZE_MAX_RATIO = 1.35;
 const OFFICIAL_FRAME_EDGE_MARGIN_PX = 3;
+const OFFICIAL_FRAMING_RECOVERY_INSET_SCALE = 0.84;
+const OFFICIAL_FRAMING_RECOVERY_BOTTOM_MARGIN_RATIO = 0.03;
 
 type OfficialFrameEdge = 'left' | 'right' | 'top' | 'bottom';
+
+export function geminiOfficialFramingRecoveryInsetLayout(
+  width: number,
+  height: number,
+): { x: number; y: number; width: number; height: number } {
+  const insetWidth = Math.max(1, Math.round(width * OFFICIAL_FRAMING_RECOVERY_INSET_SCALE));
+  const insetHeight = Math.max(1, Math.round(height * OFFICIAL_FRAMING_RECOVERY_INSET_SCALE));
+  const bottomMargin = Math.max(1, Math.round(height * OFFICIAL_FRAMING_RECOVERY_BOTTOM_MARGIN_RATIO));
+  return {
+    x: Math.round((width - insetWidth) / 2),
+    y: Math.max(0, height - insetHeight - bottomMargin),
+    width: insetWidth,
+    height: insetHeight,
+  };
+}
+
+async function insetGreenBackedFramingInput(base64: string): Promise<string> {
+  const transparentBase64 = await cleanReposedImagePreserveCanvas(base64);
+  const image = await loadAlphaImage(`data:image/png;base64,${transparentBase64}`);
+  if (!image.width || !image.height) {
+    throw new GeminiOfficialSpriteQualityError('Gemini official framing recovery received an empty image');
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new GeminiOfficialSpriteQualityError('Gemini official framing recovery could not create an inset canvas');
+  }
+
+  context.fillStyle = '#00FF00';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const layout = geminiOfficialFramingRecoveryInsetLayout(canvas.width, canvas.height);
+  context.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+  return canvas.toDataURL('image/png').split(',')[1];
+}
 
 export function geminiOfficialFrameFramingValidation(
   bounds: { x: number; y: number; w: number; h: number; imageW: number; imageH: number },
@@ -1833,10 +1872,11 @@ export function geminiOfficialFramingRecoveryPrompt(
     ),
     ``,
     `FRAMING RECOVERY INPUT (CRITICAL):`,
-    `- IMAGE 3 is the previous rejected render. It is supplied only so you can see the exact edge crop and preserve its otherwise approved face, outfit, materials, pose, and rendering quality.`,
-    `- Do not return IMAGE 3 unchanged. Reconstruct any anatomy or clothing lost beyond the ${edgeLabel} edge using IMAGE 1 and IMAGE 2, then move the entire unchanged fighter inward.`,
-    `- Keep IMAGE 2's exact pose and floor line. Use a slightly wider camera only if translation alone cannot create clearance.`,
-    `- Leave a clearly visible pure-green buffer on all four sides, including at least 2% of the canvas width at the ${edgeLabel} edge.`,
+    `- IMAGE 2 is deliberately reduced and inset on a green canvas. Its smaller scale, centered framing, exact pose, and floor line are mandatory.`,
+    `- IMAGE 3 is the previous rejected render, also deliberately reduced and inset. Preserve its otherwise approved face, outfit, materials, pose, and rendering quality.`,
+    `- The old ${edgeLabel} canvas edge now appears as a flat cut line inside IMAGE 3. Reconstruct the missing anatomy or clothing across that internal cut line using IMAGE 1 and IMAGE 2.`,
+    `- Do not return IMAGE 3 unchanged and do not enlarge the fighter back to its old scale. IMAGE 2 defines the final camera distance and framing.`,
+    `- Leave a clearly visible pure-green buffer on all four sides, including at least 5% of the canvas width at the ${edgeLabel} edge.`,
     `- Return one corrected full-body frame only. Do not add, remove, or redesign any body part, clothing detail, prop, shadow, or scenery.`,
   ].join('\n');
 }
@@ -1862,13 +1902,17 @@ async function recoverOfficialFrameFraming(
     total,
     croppedEdges,
   );
+  const [insetPoseGuideBase64, insetRejectedFrameBase64] = await Promise.all([
+    insetGreenBackedFramingInput(poseGuideBase64),
+    insetGreenBackedFramingInput(rejectedFrameBase64),
+  ]);
   const result = await callGemini(
     prompt,
     characterBase64,
     'image/png',
     [
-      { data: poseGuideBase64, mime: 'image/png' },
-      { data: rejectedFrameBase64, mime: 'image/png' },
+      { data: insetPoseGuideBase64, mime: 'image/png' },
+      { data: insetRejectedFrameBase64, mime: 'image/png' },
     ],
     model,
     context,
@@ -1880,7 +1924,7 @@ async function recoverOfficialFrameFraming(
   }
 
   const [guideBounds, recoveredBounds] = await Promise.all([
-    measureGreenBackedCharacterBounds(poseGuideBase64),
+    measureGreenBackedCharacterBounds(insetPoseGuideBase64),
     measureGreenBackedCharacterBounds(result.imageBase64),
   ]);
   if (!guideBounds || !recoveredBounds) {
