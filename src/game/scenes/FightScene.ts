@@ -1870,6 +1870,9 @@ export class FightScene extends Phaser.Scene {
   private updateProjectiles(dt: number): void {
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const proj = this.projectiles[i];
+      // A clash removes two entries in one pass, so the walking index can
+      // briefly point past the end of the array.
+      if (!proj) continue;
       proj.update(dt);
 
       if (!proj.active) {
@@ -1887,9 +1890,9 @@ export class FightScene extends Phaser.Scene {
         this.sound_mgr.playBlock();
         rival.destroy();
         proj.destroy();
-        this.projectiles.splice(i, 1);
-        const rivalIndex = this.projectiles.indexOf(rival);
-        if (rivalIndex >= 0) this.projectiles.splice(rivalIndex, 1);
+        this.projectiles = this.projectiles.filter(
+          (other) => other !== proj && other !== rival,
+        );
         continue;
       }
 
