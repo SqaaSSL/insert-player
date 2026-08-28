@@ -8,6 +8,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const script = new URL('./encrypted-workflow-bundle.mjs', import.meta.url);
@@ -25,7 +26,7 @@ function root() {
 }
 
 function run(args) {
-  return spawnSync(process.execPath, [script.pathname, ...args], {
+  return spawnSync(process.execPath, [fileURLToPath(script), ...args], {
     encoding: 'utf8',
     env: { ...process.env, ARCADE_RECURATION_ARTIFACT_KEY: key },
   });
@@ -96,7 +97,7 @@ describe('encrypted production workflow bundle', () => {
     writeFileSync(join(otherSource, 'raw.png'), 'private-raw');
     expect(run(['--operation=seal', `--source-dir=${otherSource}`, `--bundle=${otherBundle}`]).status).toBe(0);
     const wrongKey = spawnSync(process.execPath, [
-      script.pathname,
+      fileURLToPath(script),
       '--operation=open',
       `--bundle=${otherBundle}`,
       `--destination-dir=${join(other, 'wrong-key')}`,

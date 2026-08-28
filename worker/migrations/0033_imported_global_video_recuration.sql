@@ -148,7 +148,8 @@ END;
 CREATE TRIGGER imported_global_video_recurations_exact_binding
 BEFORE INSERT ON imported_global_video_recurations
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'imported recuration requires active public Champion admin owner')
+  WHERE NOT EXISTS (
     SELECT 1 FROM fighters fighter
     JOIN arcade_fighters arcade ON arcade.fighter_id = fighter.id
     JOIN users owner ON owner.id = fighter.owner_user_id
@@ -156,9 +157,10 @@ BEGIN
       AND fighter.owner_user_id = NEW.owner_user_id
       AND fighter.public_flag = 1 AND fighter.quality_tier = 'champion'
       AND arcade.status = 'active' AND owner.plan_tier = 'admin'
-  ) THEN RAISE(ABORT, 'imported recuration requires active public Champion admin owner') END;
+  );
 
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'imported recuration current sprite binding changed')
+  WHERE NOT EXISTS (
     SELECT 1 FROM sprites current
     JOIN sprite_versions source_version ON source_version.id = NEW.from_sprite_version_id
     WHERE current.id = NEW.from_sprite_id
@@ -184,9 +186,10 @@ BEGIN
       AND source_version.frame_count = NEW.from_frame_count
       AND source_version.animation_format = NEW.from_animation_format
       AND source_version.processing_version = NEW.from_processing_version
-  ) THEN RAISE(ABORT, 'imported recuration current sprite binding changed') END;
+  );
 
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'imported recuration active canonical binding changed')
+  WHERE NOT EXISTS (
     SELECT 1 FROM source_versions canonical
     JOIN fighters fighter ON fighter.id = canonical.fighter_id
     WHERE canonical.id = NEW.canonical_version_id
@@ -194,14 +197,18 @@ BEGIN
       AND canonical.kind = NEW.canonical_kind
       AND canonical.blob_key = NEW.canonical_blob_key
       AND canonical.content_hash = NEW.canonical_sha256
-      AND CASE NEW.canonical_kind
-        WHEN 'side_raw' THEN fighter.side_view_raw_blob_key
-        WHEN 'upright_raw' THEN fighter.upright_view_raw_blob_key
-        WHEN 'crouch_raw' THEN fighter.crouch_view_raw_blob_key
-      END = NEW.canonical_blob_key
-  ) THEN RAISE(ABORT, 'imported recuration active canonical binding changed') END;
+      AND (
+        (NEW.canonical_kind = 'side_raw'
+          AND fighter.side_view_raw_blob_key = NEW.canonical_blob_key)
+        OR (NEW.canonical_kind = 'upright_raw'
+          AND fighter.upright_view_raw_blob_key = NEW.canonical_blob_key)
+        OR (NEW.canonical_kind = 'crouch_raw'
+          AND fighter.crouch_view_raw_blob_key = NEW.canonical_blob_key)
+      )
+  );
 
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'imported recuration target sprite version changed')
+  WHERE NOT EXISTS (
     SELECT 1 FROM sprite_versions target
     WHERE target.id = NEW.target_sprite_version_id
       AND target.fighter_id = NEW.fighter_id AND target.animation_name = NEW.action
@@ -214,7 +221,7 @@ BEGIN
       AND target.frame_count = NEW.target_frame_count
       AND target.animation_format = NEW.target_animation_format
       AND target.processing_version = NEW.target_processing_version
-  ) THEN RAISE(ABORT, 'imported recuration target sprite version changed') END;
+  );
 END;
 
 CREATE TRIGGER imported_global_video_recuration_transitions_immutable_update
@@ -227,7 +234,8 @@ END;
 CREATE TRIGGER imported_global_video_recuration_transition_exact_binding
 BEFORE INSERT ON imported_global_video_recuration_transitions
 BEGIN
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'imported recuration transition lost active admin-owner binding')
+  WHERE NOT EXISTS (
     SELECT 1 FROM imported_global_video_recurations proposal
     JOIN fighters fighter ON fighter.id = proposal.fighter_id
     JOIN arcade_fighters arcade ON arcade.fighter_id = fighter.id
@@ -239,9 +247,10 @@ BEGIN
       AND fighter.owner_user_id = NEW.actor_user_id
       AND fighter.public_flag = 1 AND fighter.quality_tier = 'champion'
       AND arcade.status = 'active' AND actor.plan_tier = 'admin'
-  ) THEN RAISE(ABORT, 'imported recuration transition lost active admin-owner binding') END;
+  );
 
-  SELECT CASE WHEN NEW.operation = 'promote' AND NOT EXISTS (
+  SELECT RAISE(ABORT, 'imported recuration transition lost active canonical binding')
+  WHERE NEW.operation = 'promote' AND NOT EXISTS (
     SELECT 1 FROM imported_global_video_recurations proposal
     JOIN source_versions canonical ON canonical.id = proposal.canonical_version_id
     JOIN fighters fighter ON fighter.id = proposal.fighter_id
@@ -250,14 +259,18 @@ BEGIN
       AND canonical.kind = proposal.canonical_kind
       AND canonical.blob_key = proposal.canonical_blob_key
       AND canonical.content_hash = proposal.canonical_sha256
-      AND CASE proposal.canonical_kind
-        WHEN 'side_raw' THEN fighter.side_view_raw_blob_key
-        WHEN 'upright_raw' THEN fighter.upright_view_raw_blob_key
-        WHEN 'crouch_raw' THEN fighter.crouch_view_raw_blob_key
-      END = proposal.canonical_blob_key
-  ) THEN RAISE(ABORT, 'imported recuration transition lost active canonical binding') END;
+      AND (
+        (proposal.canonical_kind = 'side_raw'
+          AND fighter.side_view_raw_blob_key = proposal.canonical_blob_key)
+        OR (proposal.canonical_kind = 'upright_raw'
+          AND fighter.upright_view_raw_blob_key = proposal.canonical_blob_key)
+        OR (proposal.canonical_kind = 'crouch_raw'
+          AND fighter.crouch_view_raw_blob_key = proposal.canonical_blob_key)
+      )
+  );
 
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'imported recuration immutable version lineage changed')
+  WHERE NOT EXISTS (
     SELECT 1 FROM imported_global_video_recurations proposal
     JOIN sprite_versions original ON original.id = proposal.from_sprite_version_id
     JOIN sprite_versions target ON target.id = proposal.target_sprite_version_id
@@ -282,9 +295,10 @@ BEGIN
       AND target.frame_count = proposal.target_frame_count
       AND target.animation_format = proposal.target_animation_format
       AND target.processing_version = proposal.target_processing_version
-  ) THEN RAISE(ABORT, 'imported recuration immutable version lineage changed') END;
+  );
 
-  SELECT CASE WHEN NEW.operation = 'promote' AND NOT EXISTS (
+  SELECT RAISE(ABORT, 'imported recuration promote lost exact CAS binding')
+  WHERE NEW.operation = 'promote' AND NOT EXISTS (
     SELECT 1 FROM imported_global_video_recurations proposal
     JOIN sprites current ON current.id = proposal.from_sprite_id
     WHERE proposal.id = NEW.proposal_id AND NEW.rollback_of_transition_id IS NULL
@@ -309,9 +323,10 @@ BEGIN
       AND current.processing_version = proposal.from_processing_version
       AND NOT EXISTS (SELECT 1 FROM imported_global_video_recuration_transitions prior
         WHERE prior.proposal_id = proposal.id)
-  ) THEN RAISE(ABORT, 'imported recuration promote lost exact CAS binding') END;
+  );
 
-  SELECT CASE WHEN NEW.operation = 'rollback' AND NOT EXISTS (
+  SELECT RAISE(ABORT, 'imported recuration rollback lost exact promote/CAS binding')
+  WHERE NEW.operation = 'rollback' AND NOT EXISTS (
     SELECT 1 FROM imported_global_video_recurations proposal
     JOIN imported_global_video_recuration_transitions promoted
       ON promoted.id = NEW.rollback_of_transition_id
@@ -339,7 +354,7 @@ BEGIN
       AND current.processing_version = proposal.target_processing_version
       AND NOT EXISTS (SELECT 1 FROM imported_global_video_recuration_transitions rolled_back
         WHERE rolled_back.proposal_id = proposal.id AND rolled_back.operation = 'rollback')
-  ) THEN RAISE(ABORT, 'imported recuration rollback lost exact promote/CAS binding') END;
+  );
 END;
 
 -- This transition INSERT and its pointer update are one SQLite statement. Any
@@ -368,7 +383,8 @@ BEGIN
 
   UPDATE fighters SET updated_at = datetime('now') WHERE id = NEW.fighter_id;
 
-  SELECT CASE WHEN NOT EXISTS (
+  SELECT RAISE(ABORT, 'imported recuration atomic pointer update failed')
+  WHERE NOT EXISTS (
     SELECT 1 FROM imported_global_video_recurations proposal
     JOIN sprite_versions target ON target.id = NEW.to_sprite_version_id
     JOIN sprites current ON current.id = proposal.from_sprite_id
@@ -382,5 +398,5 @@ BEGIN
       AND current.frame_count = target.frame_count
       AND current.animation_format = target.animation_format
       AND current.processing_version = target.processing_version
-  ) THEN RAISE(ABORT, 'imported recuration atomic pointer update failed') END;
+  );
 END;
