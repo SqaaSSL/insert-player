@@ -2080,7 +2080,9 @@ describe('official Arcade deployed provider preflight', () => {
         processingVersion: VIDEO_SPRITE_PROCESSING_VERSION,
       },
     });
-    expect(getByName).toHaveBeenCalledWith('official-arcade-provider-contract-v1');
+    expect(getByName).toHaveBeenCalledWith(
+      'official-arcade-meterkey-transport-v1-video-v6',
+    );
     expect(processorFetch).toHaveBeenCalledOnce();
     const [healthRequest] = processorFetch.mock.calls[0] as [Request];
     expect(healthRequest.url).toBe('http://image-processor/health');
