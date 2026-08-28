@@ -3,6 +3,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
 } from 'node:fs';
@@ -35,6 +36,10 @@ const videoReviewExportDirArg = rawArgs.find((arg) => arg.startsWith('--video-re
 const reviewedCanonicalManifestArg = rawArgs.find((arg) => arg.startsWith('--reviewed-canonical-manifest='));
 const reviewedVideoFinalJobIdArg = rawArgs.find((arg) => arg.startsWith('--reviewed-video-final-job-id='));
 const expectedDeployedShaArg = rawArgs.find((arg) => arg.startsWith('--expected-deployed-sha='));
+const postApprovedRecurationArg = rawArgs.find((arg) => arg.startsWith('--post-approved-recuration='));
+const recurationDescriptorArg = rawArgs.find((arg) => arg.startsWith('--recuration-descriptor='));
+const recurationDescriptorSha256Arg = rawArgs.find((arg) => arg.startsWith('--recuration-descriptor-sha256='));
+const recurationConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-recuration='));
 const target = targetArg?.slice('--target='.length) ?? 'production';
 const animationName = animationArg?.slice('--animation='.length) ?? '';
 const sourceName = sourceArg?.slice('--source='.length) ?? '';
@@ -58,13 +63,23 @@ const reviewedCanonicalManifestPath = reviewedCanonicalManifestArg
 const reviewedVideoFinalJobId = reviewedVideoFinalJobIdArg
   ?.slice('--reviewed-video-final-job-id='.length) ?? '';
 const expectedDeployedSha = expectedDeployedShaArg?.slice('--expected-deployed-sha='.length) ?? '';
+const postApprovedRecuration = postApprovedRecurationArg
+  ?.slice('--post-approved-recuration='.length) ?? '';
+const recurationDescriptorPath = recurationDescriptorArg
+  ?.slice('--recuration-descriptor='.length) ?? '';
+const recurationDescriptorSha256 = recurationDescriptorSha256Arg
+  ?.slice('--recuration-descriptor-sha256='.length) ?? '';
+const recurationConfirmation = recurationConfirmationArg
+  ?.slice('--confirm-recuration='.length) ?? '';
 const dryRun = args.has('--dry-run');
 const activate = args.has('--activate');
 const activateReviewed = args.has('--activate-reviewed');
 const videoStep = args.has('--video-step');
 const videoReviewInspect = args.has('--video-review-inspect');
 const videoReview = videoReviewDecision.length > 0 || videoReviewInspect;
-const reviewedVideoOperation = activateReviewed || videoStep || videoReview;
+const postApprovedRecurationOperation = postApprovedRecuration.length > 0;
+const reviewedVideoOperation = activateReviewed || videoStep || videoReview || postApprovedRecurationOperation;
+const acceptRecurationNeedsReview = args.has('--accept-needs-review');
 const continueOnError = args.has('--continue-on-error');
 const all = args.has('--all');
 const resume = args.has('--resume');
@@ -124,6 +139,12 @@ export const REVIEW_GATED_VIDEO_REVIEW_CONFIRMATIONS = Object.freeze({
   adjust: 'ADJUST_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION',
   reject: 'REJECT_AND_ABANDON_REVIEW_GATED_VIDEO_RUN_PRODUCTION',
 });
+export const POST_APPROVED_RECURATION_CONFIRMATIONS = Object.freeze({
+  stage: 'STAGE_POST_APPROVED_RECURATION_PRODUCTION',
+  promote: 'PROMOTE_POST_APPROVED_RECURATION_PRODUCTION',
+  rollback: 'ROLLBACK_POST_APPROVED_RECURATION_PRODUCTION',
+});
+export const POST_APPROVED_RECURATION_DESCRIPTOR_KIND = 'post-approved-video-recuration-v1';
 export const REVIEWED_CANONICAL_SOURCE_MODE = 'reviewed-current-v1';
 export const VIDEO_DENSE_ANIMATION_FORMAT = 'video-dense-v1';
 export const VIDEO_DENSE_PROCESSING_VERSION = 6;
@@ -395,6 +416,16 @@ export function assertReviewGatedVideoReviewConfirmation(decision, value) {
   }
 }
 
+export function assertPostApprovedRecurationConfirmation(operation, value) {
+  const expected = POST_APPROVED_RECURATION_CONFIRMATIONS[operation];
+  if (!expected || value !== expected) {
+    throw new Error(
+      `Post-approved Video recuration ${operation} requires --confirm-recuration=${expected ?? 'a supported recuration confirmation'}.`,
+    );
+  }
+  return expected;
+}
+
 function exactVideoJobId(value, label) {
   if (typeof value !== 'string' || !/^[a-f0-9]{32}$/.test(value)) {
     throw new Error(`${label} must be an exact 32-character lowercase hex Video job id.`);
@@ -523,7 +554,10 @@ function selectFighters(manifest) {
   if (animationName && sourceName) {
     throw new Error('Use either --animation or --source, not both.');
   }
-  if ((animationName || sourceName) && (all || !slugArg || activate || reviewedVideoOperation)) {
+  if (
+    (animationName || sourceName)
+    && (all || !slugArg || activate || (reviewedVideoOperation && !postApprovedRecurationOperation))
+  ) {
     throw new Error('--animation and --source require one --slug and cannot be combined with an activation operation.');
   }
   if (resume && (animationName || sourceName)) {
@@ -543,21 +577,32 @@ function selectFighters(manifest) {
   }
   if (
     activateReviewed
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || videoStep || videoReview || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || videoStep || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--activate-reviewed requires one --slug and cannot be combined with generation, resume, or dry-run.');
   }
   if (
     videoStep
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoReview || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--video-step requires one --slug and cannot be combined with generation, resume, activation, or dry-run.');
   }
   if (
     videoReview
-    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--video-review-decision requires one --slug and cannot be combined with generation, resume, activation, or dry-run.');
+  }
+  if (postApprovedRecurationOperation && (
+    dryRun || all || resume || restartDraft || prepareCanary || canarySide || probeSide
+    || activate || activateReviewed || videoStep || videoReview || sourceName || !slugArg || !animationName
+  )) {
+    throw new Error(
+      '--post-approved-recuration requires exactly one --slug and --animation and cannot be combined with generation, review, activation, or dry-run.',
+    );
+  }
+  if (postApprovedRecurationOperation && !['stage', 'promote', 'rollback'].includes(postApprovedRecuration)) {
+    throw new Error('--post-approved-recuration must be stage, promote, or rollback.');
   }
   if (resumeVideoRunFrom && restartVideoRunFrom) {
     throw new Error('Choose exactly one of --resume-video-run-from or --restart-video-run-from.');
@@ -573,8 +618,9 @@ function selectFighters(manifest) {
     && !videoStep
     && !videoReviewInspect
     && videoReviewDecision !== 'adjust'
+    && postApprovedRecuration !== 'stage'
   ) {
-    throw new Error('Video review export requires --video-step, --video-review-inspect, or adjust.');
+    throw new Error('Video review export requires --video-step, --video-review-inspect, adjust, or post-approved recuration stage.');
   }
   if (videoReviewDecision === 'adjust' && !videoReviewExportDir) {
     throw new Error('Video review adjust requires a private export destination for the new revision.');
@@ -590,6 +636,10 @@ function selectFighters(manifest) {
   }
   if (expectedDeployedSha && !reviewedVideoOperation) {
     throw new Error('--expected-deployed-sha is supported only with a reviewed Video operation.');
+  }
+  if ((recurationDescriptorPath || recurationDescriptorSha256 || recurationConfirmation || acceptRecurationNeedsReview)
+    && !postApprovedRecurationOperation) {
+    throw new Error('Recuration descriptor, confirmation, and needs-review arguments require --post-approved-recuration.');
   }
   if (animationName && !PLAYABLE_ANIMATIONS.has(animationName)) {
     throw new Error(`Unknown playable animation: ${animationName}`);
@@ -1853,6 +1903,794 @@ async function exportAwaitingVideoReviewArtifact({
   return descriptor;
 }
 
+const POST_APPROVED_RECURATION_ASSETS = Object.freeze([
+  ['runtime', 'runtime', 'runtime.png', 'image/png'],
+  ['raw', 'raw', 'raw.png', 'image/png'],
+  ['contactSheet', 'contact-sheet', 'contact-sheet.png', 'image/png'],
+  ['uniqueSheet', 'unique-sheet', 'unique-sheet.png', 'image/png'],
+  ['report', 'report', 'report.json', 'application/json'],
+  ['video', 'video', 'video.mp4', 'video/mp4'],
+]);
+
+function exactSha256(value, label) {
+  if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) {
+    throw new Error(`${label} must be an exact lowercase SHA-256.`);
+  }
+  return value;
+}
+
+function exactRecurationRevision(value, label) {
+  const revision = Number(value);
+  if (!Number.isSafeInteger(revision) || revision < 1 || revision > 10_000) {
+    throw new Error(`${label} must be an exact integer from 1 to 10000.`);
+  }
+  return revision;
+}
+
+function assertPngBytes(bytes, label) {
+  if (!Buffer.isBuffer(bytes) || bytes.byteLength <= PNG_SIGNATURE.byteLength
+    || !bytes.subarray(0, PNG_SIGNATURE.byteLength).equals(PNG_SIGNATURE)) {
+    throw new Error(`${label} is not a PNG.`);
+  }
+}
+
+function assertMp4Bytes(bytes, label) {
+  if (!Buffer.isBuffer(bytes) || bytes.byteLength < 12
+    || bytes.subarray(4, 8).toString('ascii') !== 'ftyp') {
+    throw new Error(`${label} is not an ISO BMFF/MP4 video.`);
+  }
+}
+
+function assertJsonBytes(bytes, label) {
+  try {
+    const parsed = JSON.parse(bytes.toString('utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not object');
+    return parsed;
+  } catch {
+    throw new Error(`${label} is not a JSON object.`);
+  }
+}
+
+function exactCurrentChampionSprite(owned, action) {
+  const matches = (Array.isArray(owned?.sprites) ? owned.sprites : []).filter(
+    (sprite) => sprite?.animationName === action && sprite?.qualityTier === 'champion',
+  );
+  if (matches.length !== 1) {
+    throw new Error(`Active global has ${matches.length} current Champion ${action} sprites; expected exactly one.`);
+  }
+  const sprite = matches[0];
+  if (
+    sprite.animationFormat !== VIDEO_DENSE_ANIMATION_FORMAT
+    || !VIDEO_DENSE_PROCESSING_VERSIONS.has(sprite.processingVersion)
+    || !Number.isInteger(sprite.frameCount) || sprite.frameCount < 2
+    || !Number.isInteger(sprite.rawFrameCount) || sprite.rawFrameCount < 2
+    || !/^[a-f0-9]{64}$/.test(sprite.contentHash ?? '')
+    || !/^[a-f0-9]{64}$/.test(sprite.rawContentHash ?? '')
+    || typeof sprite.url !== 'string' || !sprite.url
+    || typeof sprite.rawUrl !== 'string' || !sprite.rawUrl
+  ) {
+    throw new Error(`Active global ${action} sprite is not a sealed ${VIDEO_DENSE_ANIMATION_FORMAT} Champion asset.`);
+  }
+  return sprite;
+}
+
+async function readExactActiveGlobal({ fighter, action, baseUrl, token, requestApi }) {
+  const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
+  const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
+  if (
+    !entry || entry.slug !== fighter.slug || entry.fighterName !== fighter.name
+    || !/^[a-f0-9]{32}$/.test(entry.fighterId ?? '')
+    || entry.qualityTier !== 'champion' || entry.status !== 'active' || entry.public !== true
+  ) {
+    throw new Error(`${fighter.name} is not the exact active public Champion global.`);
+  }
+  const detail = await requestApi(baseUrl, token, `/api/fighters/${encodeURIComponent(entry.fighterId)}`);
+  const owned = detail.fighter;
+  if (
+    !owned || owned.id !== entry.fighterId || owned.name !== fighter.name
+    || owned.qualityTier !== 'champion' || owned.public !== true
+  ) {
+    throw new Error(`${fighter.name} private owner view does not match the active global.`);
+  }
+  return { entry, owned, sprite: exactCurrentChampionSprite(owned, action) };
+}
+
+function assertApprovedRecurationSourceReview(review, job, binding) {
+  const mismatches = [
+    review?.jobId === job.id ? null : 'jobId',
+    review?.artifactRunId === job.artifactRunId ? null : 'artifactRunId',
+    review?.candidateId === binding.candidateId ? null : 'candidateId',
+    review?.action === binding.action ? null : 'action',
+    review?.status === 'approved' ? null : 'status',
+    review?.revision === binding.revision ? null : 'revision',
+    review?.reportSha256 === binding.reportSha256 ? null : 'reportSha256',
+    ['technical_pass', 'needs_review'].includes(review?.technicalOutcome) ? null : 'technicalOutcome',
+    review?.animationFormat === VIDEO_DENSE_ANIMATION_FORMAT ? null : 'animationFormat',
+    VIDEO_DENSE_PROCESSING_VERSIONS.has(review?.processingVersion) ? null : 'processingVersion',
+    Array.isArray(review?.selectedVideoIndices) ? null : 'selectedVideoIndices',
+    Number.isInteger(review?.frameCount) && review.frameCount >= 2 ? null : 'frameCount',
+    Number.isInteger(review?.rawFrameCount) && review.rawFrameCount >= 2 ? null : 'rawFrameCount',
+  ].filter(Boolean);
+  if (mismatches.length > 0) {
+    throw new Error(`Post-approved recuration source crossed its sealed approval: ${mismatches.join(', ')}.`);
+  }
+  return review;
+}
+
+function assertPostApprovedRecurationProposal(proposal, binding) {
+  if (!hasExactKeys(proposal, [
+    'jobId', 'candidateId', 'action', 'fromRevision', 'fromReportSha256',
+    'revision', 'reportSha256', 'processedSha256', 'processingVersion',
+    'technicalOutcome', 'selectedVideoIndices', 'frameCount', 'rawFrameCount', 'assets',
+  ])) {
+    throw new Error('Post-approved recuration stage returned an unexpected proposal schema.');
+  }
+  const revision = exactRecurationRevision(proposal.revision, 'Proposal revision');
+  const mismatches = [
+    proposal.jobId === binding.jobId ? null : 'jobId',
+    proposal.candidateId === binding.candidateId ? null : 'candidateId',
+    proposal.action === binding.action ? null : 'action',
+    proposal.fromRevision === binding.revision ? null : 'fromRevision',
+    proposal.fromReportSha256 === binding.reportSha256 ? null : 'fromReportSha256',
+    revision > binding.revision ? null : 'revision',
+    /^[a-f0-9]{64}$/.test(proposal.reportSha256 ?? '') ? null : 'reportSha256',
+    /^[a-f0-9]{64}$/.test(proposal.processedSha256 ?? '') ? null : 'processedSha256',
+    proposal.processedSha256 !== binding.processedSha256 ? null : 'processedSha256Changed',
+    proposal.processingVersion === VIDEO_DENSE_PROCESSING_VERSION ? null : 'processingVersion',
+    ['technical_pass', 'needs_review'].includes(proposal.technicalOutcome) ? null : 'technicalOutcome',
+    JSON.stringify(proposal.selectedVideoIndices) === JSON.stringify(binding.selectedVideoIndices)
+      ? null : 'selectedVideoIndices',
+    Number.isInteger(proposal.frameCount) && proposal.frameCount >= 2 ? null : 'frameCount',
+    Number.isInteger(proposal.rawFrameCount) && proposal.rawFrameCount >= 2 ? null : 'rawFrameCount',
+    hasExactKeys(proposal.assets, POST_APPROVED_RECURATION_ASSETS.map(([name]) => name))
+      ? null : 'assets',
+  ].filter(Boolean);
+  if (mismatches.length > 0) {
+    throw new Error(`Post-approved recuration proposal changed its exact binding: ${mismatches.join(', ')}.`);
+  }
+  return proposal;
+}
+
+function assertEmptyPrivateExportDestination(destination) {
+  if (typeof destination !== 'string' || !destination.trim()) {
+    throw new Error('Post-approved recuration stage requires a private export destination.');
+  }
+  const path = resolve(destination);
+  if (existsSync(path) && readdirSync(path).length > 0) {
+    throw new Error('Post-approved recuration export destination must be empty; existing evidence is never overwritten.');
+  }
+  return path;
+}
+
+async function exportPostApprovedRecurationProposal({
+  baseUrl,
+  token,
+  fighter,
+  job,
+  sourceReview,
+  sourceSprite,
+  proposal,
+  destination,
+  expectedWorkerSha,
+  requestAsset = apiAssetRequest,
+}) {
+  const privateDestination = assertEmptyPrivateExportDestination(destination);
+  const fetched = await Promise.all(POST_APPROVED_RECURATION_ASSETS.map(async (
+    [assetName, routeKind, filename, expectedContentType],
+  ) => {
+    const expectedPath = `/api/generation-jobs/${encodeURIComponent(job.id)}/video-review/assets/${routeKind}?revision=${proposal.revision}`;
+    if (proposal.assets[assetName] !== expectedPath) {
+      throw new Error(`Post-approved recuration ${assetName} path is not bound to staged revision ${proposal.revision}.`);
+    }
+    const result = await requestAsset(baseUrl, token, expectedPath);
+    const digest = sha256(result.bytes);
+    if (result.contentType !== expectedContentType || result.etag !== digest) {
+      throw new Error(`Post-approved recuration ${assetName} failed MIME or immutable digest verification.`);
+    }
+    if (expectedContentType === 'image/png') assertPngBytes(result.bytes, assetName);
+    if (expectedContentType === 'application/json') assertJsonBytes(result.bytes, assetName);
+    if (expectedContentType === 'video/mp4') assertMp4Bytes(result.bytes, assetName);
+    return {
+      assetName,
+      filename,
+      result,
+      metadata: {
+        filename,
+        sha256: digest,
+        contentType: result.contentType,
+        byteLength: result.bytes.byteLength,
+      },
+    };
+  }));
+  const assets = Object.fromEntries(fetched.map(({ assetName, metadata }) => [assetName, metadata]));
+  if (assets.runtime.sha256 !== proposal.processedSha256) {
+    throw new Error('Staged runtime bytes do not match proposal processedSha256.');
+  }
+  const reportJson = assertJsonBytes(
+    fetched.find(({ assetName }) => assetName === 'report').result.bytes,
+    'report',
+  );
+  if (
+    reportJson.action !== proposal.action
+    || reportJson.processingVersion !== proposal.processingVersion
+    || reportJson.animationFormat !== VIDEO_DENSE_ANIMATION_FORMAT
+    || reportJson.reportSha256 !== proposal.reportSha256
+    || JSON.stringify(reportJson.extraction?.selectedVideoIndices)
+      !== JSON.stringify(proposal.selectedVideoIndices)
+    || reportJson.contract?.playbackFrameCount !== proposal.frameCount
+    || reportJson.artifacts?.runtimeSheet?.sha256 !== proposal.processedSha256
+    || reportJson.artifacts?.rawUniqueFramesSheet?.sha256 !== assets.raw.sha256
+    || reportJson.artifacts?.rawUniqueFramesSheet?.frameCount !== proposal.rawFrameCount
+    || reportJson.decision?.outcome !== proposal.technicalOutcome
+  ) {
+    throw new Error('Staged report JSON does not bind the proposed frames and emitted assets.');
+  }
+  const descriptor = assertPostApprovedRecurationDescriptor({
+    schemaVersion: 1,
+    kind: POST_APPROVED_RECURATION_DESCRIPTOR_KIND,
+    target: 'production',
+    expectedWorkerSha,
+    fighter: { slug: fighter.slug, fighterId: job.fighterId },
+    jobId: job.id,
+    artifactRunId: job.artifactRunId,
+    candidateId: proposal.candidateId,
+    action: proposal.action,
+    from: {
+      revision: sourceReview.revision,
+      reportSha256: sourceReview.reportSha256,
+      processedSha256: sourceSprite.contentHash,
+      rawSha256: sourceSprite.rawContentHash,
+      processingVersion: sourceSprite.processingVersion,
+      technicalOutcome: sourceReview.technicalOutcome,
+      selectedVideoIndices: sourceReview.selectedVideoIndices,
+      frameCount: sourceSprite.frameCount,
+      rawFrameCount: sourceSprite.rawFrameCount,
+    },
+    to: {
+      revision: proposal.revision,
+      reportSha256: proposal.reportSha256,
+      processedSha256: proposal.processedSha256,
+      rawSha256: assets.raw.sha256,
+      processingVersion: proposal.processingVersion,
+      technicalOutcome: proposal.technicalOutcome,
+      selectedVideoIndices: proposal.selectedVideoIndices,
+      frameCount: proposal.frameCount,
+      rawFrameCount: proposal.rawFrameCount,
+    },
+    assets,
+  });
+  const descriptorBytes = Buffer.from(`${JSON.stringify(descriptor, null, 2)}\n`);
+  const descriptorSha256 = sha256(descriptorBytes);
+  mkdirSync(privateDestination, { recursive: true, mode: 0o700 });
+  chmodSync(privateDestination, 0o700);
+  for (const { filename, result } of fetched) {
+    writeFileSync(join(privateDestination, filename), result.bytes, { mode: 0o600 });
+  }
+  const descriptorPath = join(privateDestination, 'recuration-descriptor.json');
+  writeFileSync(descriptorPath, descriptorBytes, { mode: 0o600 });
+  writeFileSync(
+    join(privateDestination, 'recuration-descriptor.sha256'),
+    `${descriptorSha256}  recuration-descriptor.json\n`,
+    { mode: 0o600 },
+  );
+  console.log(`  post-approved-recuration-artifact: ${privateDestination}`);
+  console.log(`  sealed-descriptor-sha256: ${descriptorSha256}`);
+  return { descriptor, descriptorPath, descriptorSha256 };
+}
+
+function assertRecurationSide(value, label) {
+  if (!hasExactKeys(value, [
+    'revision', 'reportSha256', 'processedSha256', 'rawSha256', 'processingVersion',
+    'technicalOutcome', 'selectedVideoIndices', 'frameCount', 'rawFrameCount',
+  ])) {
+    throw new Error(`Recuration descriptor ${label} binding has an unexpected schema.`);
+  }
+  exactRecurationRevision(value.revision, `${label} revision`);
+  exactSha256(value.reportSha256, `${label} reportSha256`);
+  exactSha256(value.processedSha256, `${label} processedSha256`);
+  exactSha256(value.rawSha256, `${label} rawSha256`);
+  exactSelectedVideoIndices(value.selectedVideoIndices, `${label} selectedVideoIndices`);
+  if (
+    !VIDEO_DENSE_PROCESSING_VERSIONS.has(value.processingVersion)
+    || !['technical_pass', 'needs_review'].includes(value.technicalOutcome)
+    || !Number.isInteger(value.frameCount) || value.frameCount < 2
+    || !Number.isInteger(value.rawFrameCount) || value.rawFrameCount < 2
+  ) {
+    throw new Error(`Recuration descriptor ${label} metadata is invalid.`);
+  }
+}
+
+export function assertPostApprovedRecurationDescriptor(value, expected = {}) {
+  if (!hasExactKeys(value, [
+    'schemaVersion', 'kind', 'target', 'expectedWorkerSha', 'fighter', 'jobId',
+    'artifactRunId', 'candidateId', 'action', 'from', 'to', 'assets',
+  ])) {
+    throw new Error('Post-approved recuration descriptor has an unexpected schema.');
+  }
+  if (
+    value.schemaVersion !== 1 || value.kind !== POST_APPROVED_RECURATION_DESCRIPTOR_KIND
+    || value.target !== 'production' || !/^[a-f0-9]{40}$/.test(value.expectedWorkerSha ?? '')
+    || !hasExactKeys(value.fighter, ['slug', 'fighterId'])
+    || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value.fighter.slug ?? '')
+    || !/^[a-f0-9]{32}$/.test(value.fighter.fighterId ?? '')
+    || !/^[a-f0-9]{32}$/.test(value.jobId ?? '')
+    || !/^[a-f0-9]{32}$/.test(value.artifactRunId ?? '')
+    || !/^[a-f0-9]{32}$/.test(value.candidateId ?? '')
+    || !REVIEW_GATED_VIDEO_ACTION_SET.has(value.action)
+    || !hasExactKeys(value.assets, POST_APPROVED_RECURATION_ASSETS.map(([name]) => name))
+  ) {
+    throw new Error('Post-approved recuration descriptor identity is invalid.');
+  }
+  assertRecurationSide(value.from, 'from');
+  assertRecurationSide(value.to, 'to');
+  if (
+    value.to.revision <= value.from.revision
+    || value.to.reportSha256 === value.from.reportSha256
+    || value.to.processedSha256 === value.from.processedSha256
+  ) {
+    throw new Error('Post-approved recuration descriptor does not describe a new immutable revision.');
+  }
+  for (const [assetName, _routeKind, filename, contentType] of POST_APPROVED_RECURATION_ASSETS) {
+    const asset = value.assets[assetName];
+    if (
+      !hasExactKeys(asset, ['filename', 'sha256', 'contentType', 'byteLength'])
+      || asset.filename !== filename || asset.contentType !== contentType
+      || !/^[a-f0-9]{64}$/.test(asset.sha256 ?? '')
+      || !Number.isSafeInteger(asset.byteLength) || asset.byteLength < 1
+    ) {
+      throw new Error(`Post-approved recuration descriptor ${assetName} evidence is invalid.`);
+    }
+  }
+  if (
+    value.assets.runtime.sha256 !== value.to.processedSha256
+    || value.assets.raw.sha256 !== value.to.rawSha256
+  ) {
+    throw new Error('Post-approved recuration descriptor assets do not seal the target revision.');
+  }
+  for (const [key, expectedValue] of Object.entries(expected)) {
+    const actualValue = key === 'slug' ? value.fighter.slug
+      : key === 'fighterId' ? value.fighter.fighterId
+        : value[key];
+    if (expectedValue !== undefined && actualValue !== expectedValue) {
+      throw new Error(`Post-approved recuration descriptor ${key} does not match the requested operation.`);
+    }
+  }
+  return value;
+}
+
+export function readSealedPostApprovedRecurationDescriptor(path, expectedSha256, expected = {}) {
+  exactSha256(expectedSha256, 'Recuration descriptor SHA-256');
+  if (typeof path !== 'string' || !path.trim()) {
+    throw new Error('Promote/rollback requires --recuration-descriptor.');
+  }
+  const bytes = readFileSync(resolve(path));
+  if (sha256(bytes) !== expectedSha256) {
+    throw new Error('Recuration descriptor bytes do not match --recuration-descriptor-sha256.');
+  }
+  let value;
+  try {
+    value = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new Error('Recuration descriptor is not valid JSON.');
+  }
+  const descriptor = assertPostApprovedRecurationDescriptor(value, expected);
+  const evidenceDirectory = dirname(resolve(path));
+  const evidenceBytes = {};
+  for (const [assetName, _routeKind, filename, contentType] of POST_APPROVED_RECURATION_ASSETS) {
+    const bytes = readFileSync(join(evidenceDirectory, filename));
+    const sealed = descriptor.assets[assetName];
+    if (bytes.byteLength !== sealed.byteLength || sha256(bytes) !== sealed.sha256) {
+      throw new Error(`Recuration descriptor ${assetName} evidence no longer matches its sealed bytes.`);
+    }
+    if (contentType === 'image/png') assertPngBytes(bytes, `${assetName} evidence`);
+    if (contentType === 'application/json') assertJsonBytes(bytes, `${assetName} evidence`);
+    if (contentType === 'video/mp4') assertMp4Bytes(bytes, `${assetName} evidence`);
+    evidenceBytes[assetName] = bytes;
+  }
+  const report = assertJsonBytes(evidenceBytes.report, 'report evidence');
+  if (
+    report.action !== descriptor.action
+    || report.processingVersion !== descriptor.to.processingVersion
+    || report.animationFormat !== VIDEO_DENSE_ANIMATION_FORMAT
+    || report.reportSha256 !== descriptor.to.reportSha256
+    || JSON.stringify(report.extraction?.selectedVideoIndices)
+      !== JSON.stringify(descriptor.to.selectedVideoIndices)
+    || report.contract?.playbackFrameCount !== descriptor.to.frameCount
+    || report.artifacts?.runtimeSheet?.sha256 !== descriptor.to.processedSha256
+    || report.artifacts?.rawUniqueFramesSheet?.sha256 !== descriptor.to.rawSha256
+    || report.artifacts?.rawUniqueFramesSheet?.frameCount !== descriptor.to.rawFrameCount
+    || report.decision?.outcome !== descriptor.to.technicalOutcome
+  ) {
+    throw new Error('Recuration descriptor report evidence no longer binds the staged target.');
+  }
+  return descriptor;
+}
+
+export async function stagePostApprovedVideoRecuration({
+  fighter,
+  action,
+  baseUrl,
+  token,
+  jobId,
+  candidateId,
+  revision,
+  reportSha256,
+  selectedVideoIndices,
+  destination,
+  expectedWorkerSha,
+  requestApi = apiRequest,
+  requestAsset = apiAssetRequest,
+}) {
+  assertReviewedProductionApiOrigin(baseUrl);
+  exactVideoJobId(jobId, 'Post-approved recuration jobId');
+  exactVideoJobId(candidateId, 'Post-approved recuration candidateId');
+  const exactRevision = exactRecurationRevision(revision, 'Post-approved recuration revision');
+  exactSha256(reportSha256, 'Post-approved recuration reportSha256');
+  const requestedIndices = exactSelectedVideoIndices(
+    selectedVideoIndices,
+    'Post-approved recuration selected indices',
+  );
+  if (!REVIEW_GATED_VIDEO_ACTION_SET.has(action)) throw new Error(`Unknown recuration action: ${action}`);
+  if (!/^[a-f0-9]{40}$/.test(expectedWorkerSha ?? '')) {
+    throw new Error('Post-approved recuration requires the exact deployed Worker SHA.');
+  }
+  assertEmptyPrivateExportDestination(destination);
+  const { entry, sprite } = await readExactActiveGlobal({
+    fighter, action, baseUrl, token, requestApi,
+  });
+  const jobBody = await requestApi(baseUrl, token, `/api/generation-jobs/${encodeURIComponent(jobId)}`);
+  const job = assertReviewGatedVideoJob(jobBody.job, entry.fighterId, null, {
+    allowFullRunRestartRequired: true,
+  });
+  if (job.id !== jobId) throw new Error('Post-approved recuration job identity changed before stage.');
+  const reviewPath = `/api/generation-jobs/${encodeURIComponent(jobId)}/video-review`;
+  const reviewBody = await requestApi(baseUrl, token, reviewPath);
+  const review = assertApprovedRecurationSourceReview(reviewBody.review, job, {
+    candidateId, action, revision: exactRevision, reportSha256,
+  });
+  if (
+    review.processingVersion !== sprite.processingVersion
+    || review.frameCount !== sprite.frameCount
+    || review.rawFrameCount !== sprite.rawFrameCount
+  ) {
+    throw new Error('Post-approved recuration source review does not match the active sprite metadata.');
+  }
+  if (JSON.stringify(requestedIndices) === JSON.stringify(review.selectedVideoIndices)) {
+    throw new Error('Post-approved recuration requires a deliberately different exact frame selection.');
+  }
+  const result = await requestApi(baseUrl, token, `${reviewPath}/recuration/stage`, {
+    method: 'POST',
+    body: JSON.stringify({
+      candidateId,
+      revision: exactRevision,
+      reportSha256,
+      selectedVideoIndices: requestedIndices,
+    }),
+    requestTimeoutMs: VIDEO_REVIEW_ADJUST_TIMEOUT_MS,
+  });
+  const proposal = assertPostApprovedRecurationProposal(result.proposal, {
+    jobId,
+    candidateId,
+    action,
+    revision: exactRevision,
+    reportSha256,
+    processedSha256: sprite.contentHash,
+    selectedVideoIndices: requestedIndices,
+  });
+  const exported = await exportPostApprovedRecurationProposal({
+    baseUrl,
+    token,
+    fighter,
+    job,
+    sourceReview: review,
+    sourceSprite: sprite,
+    proposal,
+    destination,
+    expectedWorkerSha,
+    requestAsset,
+  });
+  console.log(`  post-approved-recuration-stage: ${JSON.stringify({
+    fighter: fighter.slug,
+    action,
+    jobId,
+    candidateId,
+    fromRevision: exactRevision,
+    toRevision: proposal.revision,
+    reportSha256: proposal.reportSha256,
+    processedSha256: proposal.processedSha256,
+    technicalOutcome: proposal.technicalOutcome,
+    providerCalls: 0,
+  })}`);
+  return { job, review, proposal, ...exported };
+}
+
+export async function publicArcadeSmokeRequest(baseUrl, path, request = fetch) {
+  assertReviewedProductionApiOrigin(baseUrl);
+  if (typeof path !== 'string' || !path.startsWith('/api/arcade?recurationSmoke=')) {
+    throw new Error('Public recuration smoke attempted an untrusted API path.');
+  }
+  const response = await request(`${baseUrl}${path}`, {
+    redirect: 'error',
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    headers: { 'Cache-Control': 'no-cache' },
+  });
+  if (!response?.ok) throw new Error(`Public Arcade recuration smoke failed with HTTP ${response?.status ?? 'unknown'}.`);
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error('Public Arcade recuration smoke returned non-JSON.');
+  }
+}
+
+export async function recurationSpriteAssetRequest({
+  baseUrl,
+  token,
+  url,
+  publicAsset,
+  request = fetch,
+}) {
+  const base = new URL(assertReviewedProductionApiOrigin(baseUrl));
+  const assetUrl = new URL(url);
+  const expectedPrefix = publicAsset ? '/public-assets/' : '/assets/';
+  if (
+    assetUrl.origin !== base.origin || assetUrl.username || assetUrl.password
+    || assetUrl.search || assetUrl.hash || !assetUrl.pathname.startsWith(expectedPrefix)
+  ) {
+    throw new Error(`Recuration smoke attempted an untrusted ${publicAsset ? 'public' : 'private'} asset URL.`);
+  }
+  const headers = publicAsset ? {} : {
+    ...arcadeAdminAuthHeaders(await token(), clerkBackendAuthBridgeSecret),
+    ...(expectedDeployedSha
+      ? { 'X-Insert-Player-Expected-Worker-Sha': expectedDeployedSha }
+      : {}),
+  };
+  const response = await request(assetUrl.toString(), {
+    headers,
+    redirect: 'error',
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  if (!response?.ok) throw new Error(`Recuration asset smoke failed with HTTP ${response?.status ?? 'unknown'}.`);
+  const declaredLength = Number(response.headers.get('Content-Length') ?? 0);
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_REVIEWED_VIDEO_ASSET_BYTES) {
+    throw new Error('Recuration smoke asset exceeds the reviewed asset limit.');
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.byteLength > MAX_REVIEWED_VIDEO_ASSET_BYTES) {
+    throw new Error('Recuration smoke asset exceeds the reviewed asset limit.');
+  }
+  return {
+    bytes,
+    contentType: response.headers.get('Content-Type')?.split(';', 1)[0]?.trim() ?? '',
+  };
+}
+
+function assertSmokeSprite(fighter, action, binding, label) {
+  const matches = (Array.isArray(fighter?.sprites) ? fighter.sprites : []).filter(
+    (sprite) => sprite?.animationName === action && sprite?.qualityTier === 'champion',
+  );
+  const sprite = matches[0];
+  if (
+    matches.length !== 1 || sprite.contentHash !== binding.processedSha256
+    || sprite.processingVersion !== binding.processingVersion
+    || sprite.frameCount !== binding.frameCount
+    || sprite.animationFormat !== VIDEO_DENSE_ANIMATION_FORMAT
+    || typeof sprite.url !== 'string' || !sprite.url
+  ) {
+    throw new Error(`${label} smoke did not expose the exact promoted ${action} runtime.`);
+  }
+  return sprite;
+}
+
+export async function verifyPostApprovedRecurationSmoke({
+  baseUrl,
+  token,
+  descriptor,
+  targetBinding,
+  requestApi = apiRequest,
+  requestPublicApi = publicArcadeSmokeRequest,
+  requestSpriteAsset = recurationSpriteAssetRequest,
+}) {
+  const privateBody = await requestApi(
+    baseUrl,
+    token,
+    `/api/fighters/${encodeURIComponent(descriptor.fighter.fighterId)}`,
+  );
+  if (
+    privateBody.fighter?.id !== descriptor.fighter.fighterId
+    || privateBody.fighter?.public !== true
+    || privateBody.fighter?.qualityTier !== 'champion'
+  ) {
+    throw new Error('Private recuration smoke crossed the active global identity.');
+  }
+  const privateSprite = assertSmokeSprite(
+    privateBody.fighter, descriptor.action, targetBinding, 'Private',
+  );
+  if (
+    privateSprite.rawContentHash !== targetBinding.rawSha256
+    || typeof privateSprite.rawUrl !== 'string' || !privateSprite.rawUrl
+  ) {
+    throw new Error('Private recuration smoke did not expose the exact promoted HQ asset.');
+  }
+  const publicBody = await requestPublicApi(
+    baseUrl,
+    `/api/arcade?recurationSmoke=${targetBinding.processedSha256}`,
+  );
+  const publicMatches = (Array.isArray(publicBody.fighters) ? publicBody.fighters : []).filter(
+    (entry) => entry?.id === descriptor.fighter.fighterId
+      && entry?.arcade?.slug === descriptor.fighter.slug,
+  );
+  if (publicMatches.length !== 1 || publicMatches[0].public !== true) {
+    throw new Error('Public recuration smoke did not return the exact active global.');
+  }
+  const publicSprite = assertSmokeSprite(
+    publicMatches[0], descriptor.action, targetBinding, 'Public',
+  );
+  if (typeof publicSprite.hqUrl !== 'string' || !publicSprite.hqUrl) {
+    throw new Error('Public recuration smoke did not expose the promoted HQ gameplay derivative.');
+  }
+  const [privateRuntime, privateRaw, publicRuntime, publicRaw] = await Promise.all([
+    requestSpriteAsset({ baseUrl, token, url: privateSprite.url, publicAsset: false }),
+    requestSpriteAsset({ baseUrl, token, url: privateSprite.rawUrl, publicAsset: false }),
+    requestSpriteAsset({ baseUrl, token, url: publicSprite.url, publicAsset: true }),
+    requestSpriteAsset({ baseUrl, token, url: publicSprite.hqUrl, publicAsset: true }),
+  ]);
+  for (const [label, result, expectedSha256] of [
+    ['private runtime', privateRuntime, targetBinding.processedSha256],
+    ['private raw', privateRaw, targetBinding.rawSha256],
+    ['public runtime', publicRuntime, targetBinding.processedSha256],
+    ['public HQ', publicRaw, targetBinding.rawSha256],
+  ]) {
+    if (result.contentType !== 'image/png') throw new Error(`${label} smoke returned the wrong MIME type.`);
+    assertPngBytes(result.bytes, `${label} smoke`);
+    if (sha256(result.bytes) !== expectedSha256) {
+      throw new Error(`${label} smoke bytes do not match the exact promoted digest.`);
+    }
+  }
+  return {
+    privateCurrentVerified: true,
+    publicCurrentVerified: true,
+    processedSha256: targetBinding.processedSha256,
+    rawSha256: targetBinding.rawSha256,
+  };
+}
+
+export async function purgePostApprovedRecurationCache(context, purge = null) {
+  if (purge == null) {
+    return { configured: false, purged: false, reason: 'no-cache-purge-integration' };
+  }
+  if (typeof purge !== 'function') throw new Error('Recuration cache purge integration must be a function.');
+  const result = await purge(Object.freeze({ ...context }));
+  if (result !== true && result?.purged !== true) {
+    throw new Error('Configured recuration cache purge did not prove success.');
+  }
+  return { configured: true, purged: true };
+}
+
+function assertPromotedRecurationReview(review, descriptor, targetBinding) {
+  const mismatches = [
+    review?.jobId === descriptor.jobId ? null : 'jobId',
+    review?.artifactRunId === descriptor.artifactRunId ? null : 'artifactRunId',
+    review?.candidateId === descriptor.candidateId ? null : 'candidateId',
+    review?.action === descriptor.action ? null : 'action',
+    review?.status === 'approved' ? null : 'status',
+    review?.revision === targetBinding.revision ? null : 'revision',
+    review?.reportSha256 === targetBinding.reportSha256 ? null : 'reportSha256',
+    review?.technicalOutcome === targetBinding.technicalOutcome ? null : 'technicalOutcome',
+    review?.animationFormat === VIDEO_DENSE_ANIMATION_FORMAT ? null : 'animationFormat',
+    review?.processingVersion === targetBinding.processingVersion ? null : 'processingVersion',
+    review?.frameCount === targetBinding.frameCount ? null : 'frameCount',
+    review?.rawFrameCount === targetBinding.rawFrameCount ? null : 'rawFrameCount',
+    JSON.stringify(review?.selectedVideoIndices) === JSON.stringify(targetBinding.selectedVideoIndices)
+      ? null : 'selectedVideoIndices',
+  ].filter(Boolean);
+  if (mismatches.length > 0) {
+    throw new Error(`Post-approved recuration promote response changed its sealed target: ${mismatches.join(', ')}.`);
+  }
+  return review;
+}
+
+export async function promotePostApprovedVideoRecuration({
+  operation,
+  fighter,
+  action,
+  descriptor,
+  baseUrl,
+  token,
+  acceptNeedsReview = false,
+  requestApi = apiRequest,
+  requestPublicApi = publicArcadeSmokeRequest,
+  requestSpriteAsset = recurationSpriteAssetRequest,
+  purgeCache = null,
+}) {
+  assertReviewedProductionApiOrigin(baseUrl);
+  if (!['promote', 'rollback'].includes(operation)) {
+    throw new Error('Post-approved recuration mutation must be promote or rollback.');
+  }
+  assertPostApprovedRecurationDescriptor(descriptor, { slug: fighter.slug, action });
+  const currentBinding = operation === 'promote' ? descriptor.from : descriptor.to;
+  const targetBinding = operation === 'promote' ? descriptor.to : descriptor.from;
+  if (targetBinding.technicalOutcome === 'needs_review' && acceptNeedsReview !== true) {
+    throw new Error(`${operation} of a needs_review revision requires --accept-needs-review.`);
+  }
+  const { entry, sprite } = await readExactActiveGlobal({
+    fighter, action, baseUrl, token, requestApi,
+  });
+  if (
+    entry.fighterId !== descriptor.fighter.fighterId
+    || sprite.contentHash !== currentBinding.processedSha256
+    || sprite.rawContentHash !== currentBinding.rawSha256
+    || sprite.processingVersion !== currentBinding.processingVersion
+    || sprite.frameCount !== currentBinding.frameCount
+    || sprite.rawFrameCount !== currentBinding.rawFrameCount
+  ) {
+    throw new Error(`Post-approved recuration ${operation} current pointer does not match the descriptor source.`);
+  }
+  const jobBody = await requestApi(
+    baseUrl, token, `/api/generation-jobs/${encodeURIComponent(descriptor.jobId)}`,
+  );
+  const job = assertReviewGatedVideoJob(jobBody.job, entry.fighterId, null, {
+    allowFullRunRestartRequired: true,
+  });
+  if (job.id !== descriptor.jobId || job.artifactRunId !== descriptor.artifactRunId) {
+    throw new Error(`Post-approved recuration ${operation} crossed its sealed job lineage.`);
+  }
+  const reviewPath = `/api/generation-jobs/${encodeURIComponent(descriptor.jobId)}/video-review`;
+  const currentReviewBody = await requestApi(baseUrl, token, reviewPath);
+  assertApprovedRecurationSourceReview(currentReviewBody.review, job, {
+    candidateId: descriptor.candidateId,
+    action,
+    revision: currentBinding.revision,
+    reportSha256: currentBinding.reportSha256,
+  });
+  const body = {
+    candidateId: descriptor.candidateId,
+    fromRevision: currentBinding.revision,
+    fromReportSha256: currentBinding.reportSha256,
+    fromProcessedSha256: currentBinding.processedSha256,
+    toRevision: targetBinding.revision,
+    toReportSha256: targetBinding.reportSha256,
+    toProcessedSha256: targetBinding.processedSha256,
+    ...(targetBinding.technicalOutcome === 'needs_review' ? { acceptNeedsReview: true } : {}),
+  };
+  const result = await requestApi(baseUrl, token, `${reviewPath}/recuration/promote`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  const review = assertPromotedRecurationReview(result.review, descriptor, targetBinding);
+  const cache = await purgePostApprovedRecurationCache({
+    operation,
+    fighterId: descriptor.fighter.fighterId,
+    slug: descriptor.fighter.slug,
+    action,
+    processedSha256: targetBinding.processedSha256,
+  }, purgeCache);
+  const smoke = await verifyPostApprovedRecurationSmoke({
+    baseUrl,
+    token,
+    descriptor,
+    targetBinding,
+    requestApi,
+    requestPublicApi,
+    requestSpriteAsset,
+  });
+  console.log(`  post-approved-recuration-${operation}: ${JSON.stringify({
+    fighter: fighter.slug,
+    action,
+    jobId: descriptor.jobId,
+    candidateId: descriptor.candidateId,
+    fromRevision: currentBinding.revision,
+    toRevision: targetBinding.revision,
+    reportSha256: targetBinding.reportSha256,
+    processedSha256: targetBinding.processedSha256,
+    publicCurrentVerified: smoke.publicCurrentVerified,
+    privateCurrentVerified: smoke.privateCurrentVerified,
+    cachePurgeConfigured: cache.configured,
+    providerCalls: 0,
+  })}`);
+  return { operation, review, body, cache, smoke };
+}
+
 async function waitForAwaitingVideoReview({
   baseUrl,
   token,
@@ -2624,6 +3462,38 @@ async function main() {
       videoStepConfirmation,
     );
   }
+  if (postApprovedRecurationOperation) {
+    if (target !== 'production') {
+      throw new Error('Post-approved global recuration is production-only.');
+    }
+    assertPostApprovedRecurationConfirmation(postApprovedRecuration, recurationConfirmation);
+    if (videoReviewReason) {
+      throw new Error('Post-approved recuration does not accept a rejection reason.');
+    }
+    if (postApprovedRecuration === 'stage') {
+      if (
+        !videoReviewJobId || !videoReviewCandidateId || !videoReviewRevision
+        || !videoReviewReportSha256 || !videoReviewSelectedIndices || !videoReviewExportDir
+      ) {
+        throw new Error(
+          'Recuration stage requires exact video review job, candidate, revision, report SHA, selected indices, and private export dir.',
+        );
+      }
+      if (recurationDescriptorPath || recurationDescriptorSha256 || acceptRecurationNeedsReview) {
+        throw new Error('Recuration stage does not accept a descriptor or --accept-needs-review.');
+      }
+    } else {
+      if (!recurationDescriptorPath || !recurationDescriptorSha256) {
+        throw new Error('Recuration promote/rollback requires a descriptor path and explicit descriptor SHA-256.');
+      }
+      if (
+        videoReviewJobId || videoReviewCandidateId || videoReviewRevision
+        || videoReviewReportSha256 || videoReviewSelectedIndices || videoReviewExportDir
+      ) {
+        throw new Error('Recuration promote/rollback takes every mutable binding only from the sealed descriptor.');
+      }
+    }
+  }
   if (activateReviewed) assertReviewedVideoFinalJobId(reviewedVideoFinalJobId);
   if (target === 'production' && (videoStep || videoReview) && !reviewedCanonicalManifestPath) {
     throw new Error(
@@ -2644,7 +3514,9 @@ async function main() {
       'Production reviewed Video operations require --expected-deployed-sha=<full lowercase GITHUB_SHA>.',
     );
   }
-  if (!activateReviewed) mkdirSync(sourceDir, { recursive: true });
+  if (!activateReviewed && !postApprovedRecurationOperation) {
+    mkdirSync(sourceDir, { recursive: true });
+  }
 
   if (dryRun) {
     for (const fighter of selected) {
@@ -2713,6 +3585,49 @@ async function main() {
   const token = clerkSecretKey
     ? await createClerkAdminTokenProvider(clerkSecretKey, clerkUserId)
     : createStaticTokenProvider(staticToken);
+
+  if (postApprovedRecurationOperation) {
+    if (postApprovedRecuration === 'stage') {
+      await stagePostApprovedVideoRecuration({
+        fighter: selected[0],
+        action: animationName,
+        baseUrl,
+        token,
+        jobId: videoReviewJobId,
+        candidateId: videoReviewCandidateId,
+        revision: videoReviewRevision,
+        reportSha256: videoReviewReportSha256,
+        selectedVideoIndices: videoReviewSelectedIndices,
+        destination: videoReviewExportDir,
+        expectedWorkerSha: expectedDeployedSha,
+      });
+      return;
+    }
+    const descriptor = readSealedPostApprovedRecurationDescriptor(
+      recurationDescriptorPath,
+      recurationDescriptorSha256,
+      {
+        slug: selected[0].slug,
+        action: animationName,
+        expectedWorkerSha: expectedDeployedSha,
+      },
+    );
+    const result = await promotePostApprovedVideoRecuration({
+      operation: postApprovedRecuration,
+      fighter: selected[0],
+      action: animationName,
+      descriptor,
+      baseUrl,
+      token,
+      acceptNeedsReview: acceptRecurationNeedsReview,
+    });
+    if (!result.cache.configured) {
+      console.warn(
+        '  cache-purge: no integration configured; exact private/public cache-busted byte smokes passed instead.',
+      );
+    }
+    return;
+  }
 
   if (activateReviewed) {
     await activateReviewedArcadeFighter({

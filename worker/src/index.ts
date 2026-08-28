@@ -75,7 +75,9 @@ import {
   approveVideoSpriteReview,
   getVideoSpriteReview,
   getVideoSpriteReviewAsset,
+  promoteApprovedVideoSpriteRecuration,
   rejectVideoSpriteReview,
+  stageApprovedVideoSpriteRecuration,
 } from './videoSpriteReview';
 import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
 import { isAttractModeMatchReport, readMatchFighterId } from './matchReporting';
@@ -736,6 +738,23 @@ export default {
             : decision === 'reject'
               ? rejectVideoSpriteReview(request, env, auth, jobId)
               : adjustVideoSpriteReview(request, env, auth, jobId),
+        ), request, env);
+      }
+
+      const videoReviewRecurationMatch = path.match(
+        /^\/api\/generation-jobs\/([^/]+)\/video-review\/recuration\/(stage|promote)$/,
+      );
+      if (videoReviewRecurationMatch && method === 'POST') {
+        const jobId = decodePathParam(videoReviewRecurationMatch[1]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        const operation = videoReviewRecurationMatch[2];
+        return addCors(await authenticatedLimited(
+          request,
+          env,
+          'generation:video-review-recuration',
+          (auth) => operation === 'stage'
+            ? stageApprovedVideoSpriteRecuration(request, env, auth, jobId)
+            : promoteApprovedVideoSpriteRecuration(request, env, auth, jobId),
         ), request, env);
       }
 

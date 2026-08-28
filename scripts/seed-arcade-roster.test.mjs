@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { VIDEO_SPRITE_ACTIONS as WORKER_VIDEO_SPRITE_ACTIONS } from '../src/services/VideoSpriteCompileContract';
 import {
+  POST_APPROVED_RECURATION_CONFIRMATIONS,
+  POST_APPROVED_RECURATION_DESCRIPTOR_KIND,
   REVIEW_GATED_VIDEO_STEP_CONFIRMATION,
   REVIEW_GATED_VIDEO_RESUME_CONFIRMATION,
   REVIEW_GATED_VIDEO_RESTART_CONFIRMATION,
@@ -19,6 +21,8 @@ import {
   assertApprovedArcadeGenerationContract,
   assertAwaitingVideoReview,
   assertPinnedProductionWorkerHealth,
+  assertPostApprovedRecurationConfirmation,
+  assertPostApprovedRecurationDescriptor,
   assertReviewGatedVideoStepConfirmation,
   assertReviewGatedVideoRecoveryConfirmation,
   assertReviewGatedVideoReviewConfirmation,
@@ -33,10 +37,15 @@ import {
   planReviewGatedVideoStep,
   planSideDraftPreparation,
   pinProductionWorkerHealth,
+  promotePostApprovedVideoRecuration,
+  purgePostApprovedRecurationCache,
+  readSealedPostApprovedRecurationDescriptor,
   runReviewGatedVideoStep,
   runReviewGatedVideoDecision,
   runReviewGatedVideoInspection,
+  stagePostApprovedVideoRecuration,
   validateManifest,
+  verifyPostApprovedRecurationSmoke,
   verifyReviewedVideoActivationProvenance,
 } from './seed-arcade-roster.mjs';
 
@@ -254,6 +263,274 @@ function approvedVideoBytes(animationName, kind) {
 
 function digest(bytes) {
   return createHash('sha256').update(bytes).digest('hex');
+}
+
+function pngFixture(label) {
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from(`sealed:${label}`),
+  ]);
+}
+
+function mp4Fixture(label) {
+  return Buffer.concat([
+    Buffer.from([0x00, 0x00, 0x00, 0x18]),
+    Buffer.from('ftypisom', 'ascii'),
+    Buffer.from(`sealed:${label}`),
+  ]);
+}
+
+function postApprovedRecurationEvidence() {
+  const runtime = pngFixture('runtime-v2');
+  const raw = pngFixture('raw-v2');
+  const reportSha256 = '3'.repeat(64);
+  const assetBytes = {
+    runtime,
+    raw,
+    contactSheet: pngFixture('contact-v2'),
+    uniqueSheet: pngFixture('unique-v2'),
+    report: Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      action: 'idle',
+      animationFormat: 'video-dense-v1',
+      processingVersion: VIDEO_DENSE_PROCESSING_VERSION,
+      reportSha256,
+      extraction: { selectedVideoIndices: [1, 3, 5, 7] },
+      contract: { playbackFrameCount: 7 },
+      decision: { outcome: 'technical_pass' },
+      artifacts: {
+        runtimeSheet: { sha256: digest(runtime) },
+        rawUniqueFramesSheet: { sha256: digest(raw), frameCount: 4 },
+      },
+    })),
+    video: mp4Fixture('source-video'),
+  };
+  const assets = Object.fromEntries(Object.entries(assetBytes).map(([assetName, bytes]) => [
+    assetName,
+    {
+      filename: {
+        runtime: 'runtime.png',
+        raw: 'raw.png',
+        contactSheet: 'contact-sheet.png',
+        uniqueSheet: 'unique-sheet.png',
+        report: 'report.json',
+        video: 'video.mp4',
+      }[assetName],
+      sha256: digest(bytes),
+      contentType: {
+        runtime: 'image/png',
+        raw: 'image/png',
+        contactSheet: 'image/png',
+        uniqueSheet: 'image/png',
+        report: 'application/json',
+        video: 'video/mp4',
+      }[assetName],
+      byteLength: bytes.byteLength,
+    },
+  ]));
+  return { assetBytes, assets, reportSha256 };
+}
+
+function postApprovedRecurationDescriptor(overrides = {}) {
+  const { assets, reportSha256 } = postApprovedRecurationEvidence();
+  const previousRuntime = pngFixture('runtime-v1');
+  const previousRaw = pngFixture('raw-v1');
+  return {
+    schemaVersion: 1,
+    kind: POST_APPROVED_RECURATION_DESCRIPTOR_KIND,
+    target: 'production',
+    expectedWorkerSha: '7'.repeat(40),
+    fighter: { slug: 'bad-bunny', fighterId: 'a'.repeat(32) },
+    jobId: videoJobId,
+    artifactRunId: videoRunId,
+    candidateId: 'e'.repeat(32),
+    action: 'idle',
+    from: {
+      revision: 1,
+      reportSha256: 'f'.repeat(64),
+      processedSha256: digest(previousRuntime),
+      rawSha256: digest(previousRaw),
+      processingVersion: 5,
+      technicalOutcome: 'technical_pass',
+      selectedVideoIndices: [0, 2, 4, 6],
+      frameCount: 7,
+      rawFrameCount: 4,
+    },
+    to: {
+      revision: 2,
+      reportSha256,
+      processedSha256: assets.runtime.sha256,
+      rawSha256: assets.raw.sha256,
+      processingVersion: VIDEO_DENSE_PROCESSING_VERSION,
+      technicalOutcome: 'technical_pass',
+      selectedVideoIndices: [1, 3, 5, 7],
+      frameCount: 7,
+      rawFrameCount: 4,
+    },
+    assets,
+    ...overrides,
+  };
+}
+
+function postApprovedStageHarness(fighter, overrides = {}) {
+  const baseUrl = 'https://api.insertplayer.ai';
+  const { assetBytes, assets } = postApprovedRecurationEvidence();
+  const descriptor = postApprovedRecurationDescriptor();
+  const entry = reviewedAdminEntry(fighter, { public: true, status: 'active' });
+  const currentSprite = {
+    animationName: descriptor.action,
+    qualityTier: 'champion',
+    url: `${baseUrl}/assets/current-runtime.png`,
+    rawUrl: `${baseUrl}/assets/current-raw.png`,
+    contentHash: descriptor.from.processedSha256,
+    rawContentHash: descriptor.from.rawSha256,
+    frameWidth: 192,
+    frameHeight: 256,
+    frameCount: descriptor.from.frameCount,
+    rawFrameCount: descriptor.from.rawFrameCount,
+    animationFormat: 'video-dense-v1',
+    processingVersion: descriptor.from.processingVersion,
+  };
+  const owned = reviewedOwnedFighter(fighter, { public: true, sprites: [currentSprite] });
+  const job = videoJob({ reviewStatus: 'approved', stage: 'review:approved' });
+  const review = videoReview(job, {
+    status: 'approved',
+    revision: descriptor.from.revision,
+    reportSha256: descriptor.from.reportSha256,
+    technicalOutcome: descriptor.from.technicalOutcome,
+    selectedVideoIndices: descriptor.from.selectedVideoIndices,
+    processingVersion: descriptor.from.processingVersion,
+    frameCount: descriptor.from.frameCount,
+    rawFrameCount: descriptor.from.rawFrameCount,
+  });
+  const routes = {
+    runtime: 'runtime', raw: 'raw', contactSheet: 'contact-sheet',
+    uniqueSheet: 'unique-sheet', report: 'report', video: 'video',
+  };
+  const proposal = {
+    jobId: job.id,
+    candidateId: review.candidateId,
+    action: descriptor.action,
+    fromRevision: review.revision,
+    fromReportSha256: review.reportSha256,
+    revision: descriptor.to.revision,
+    reportSha256: descriptor.to.reportSha256,
+    processedSha256: assets.runtime.sha256,
+    processingVersion: descriptor.to.processingVersion,
+    technicalOutcome: descriptor.to.technicalOutcome,
+    selectedVideoIndices: descriptor.to.selectedVideoIndices,
+    frameCount: descriptor.to.frameCount,
+    rawFrameCount: descriptor.to.rawFrameCount,
+    assets: Object.fromEntries(Object.entries(routes).map(([name, route]) => [
+      name,
+      `/api/generation-jobs/${job.id}/video-review/assets/${route}?revision=${descriptor.to.revision}`,
+    ])),
+    ...(overrides.proposal ?? {}),
+  };
+  const calls = [];
+  const requestApi = async (_baseUrl, _token, path, init = {}) => {
+    calls.push({ path, method: init.method ?? 'GET', body: init.body });
+    if (path === '/api/admin/arcade' && !init.method) return { fighters: [entry] };
+    if (path === `/api/fighters/${entry.fighterId}` && !init.method) return { fighter: owned };
+    if (path === `/api/generation-jobs/${job.id}` && !init.method) return { job };
+    if (path === `/api/generation-jobs/${job.id}/video-review` && !init.method) return { review };
+    if (path === `/api/generation-jobs/${job.id}/video-review/recuration/stage`
+      && init.method === 'POST') return { proposal };
+    throw new Error(`Unexpected recuration stage request: ${init.method ?? 'GET'} ${path}`);
+  };
+  const routeToAsset = Object.fromEntries(Object.entries(routes).map(([name, route]) => [route, name]));
+  const requestAsset = async (_baseUrl, _token, path) => {
+    const route = path.match(/\/assets\/(runtime|raw|contact-sheet|unique-sheet|report|video)\?revision=\d+$/)?.[1];
+    const assetName = routeToAsset[route];
+    if (!assetName) throw new Error(`Unexpected staged asset ${path}`);
+    const bytes = overrides.assetBytes?.[assetName] ?? assetBytes[assetName];
+    return {
+      bytes,
+      etag: digest(bytes),
+      contentType: assets[assetName].contentType,
+    };
+  };
+  return {
+    baseUrl, assetBytes, assets, descriptor, entry, currentSprite, owned, job, review,
+    proposal, calls, requestApi, requestAsset,
+  };
+}
+
+function postApprovedMutationHarness(fighter, operation) {
+  const baseUrl = 'https://api.insertplayer.ai';
+  const descriptor = postApprovedRecurationDescriptor();
+  const currentBinding = operation === 'promote' ? descriptor.from : descriptor.to;
+  const targetBinding = operation === 'promote' ? descriptor.to : descriptor.from;
+  const evidence = postApprovedRecurationEvidence();
+  const targetBytes = targetBinding === descriptor.to
+    ? { runtime: evidence.assetBytes.runtime, raw: evidence.assetBytes.raw }
+    : { runtime: pngFixture('runtime-v1'), raw: pngFixture('raw-v1') };
+  const entry = reviewedAdminEntry(fighter, { public: true, status: 'active' });
+  const job = videoJob({ reviewStatus: 'approved', artifactRunId: descriptor.artifactRunId });
+  let current = currentBinding;
+  const reviewFor = (binding) => videoReview(job, {
+    status: 'approved', candidateId: descriptor.candidateId, action: descriptor.action,
+    revision: binding.revision, reportSha256: binding.reportSha256,
+    technicalOutcome: binding.technicalOutcome,
+    selectedVideoIndices: binding.selectedVideoIndices,
+    processingVersion: binding.processingVersion,
+    frameCount: binding.frameCount, rawFrameCount: binding.rawFrameCount,
+  });
+  const privateFighter = () => reviewedOwnedFighter(fighter, {
+    public: true,
+    sprites: [{
+      animationName: descriptor.action, qualityTier: 'champion',
+      url: `${baseUrl}/assets/${current.processedSha256}.png`,
+      rawUrl: `${baseUrl}/assets/${current.rawSha256}.png`,
+      contentHash: current.processedSha256, rawContentHash: current.rawSha256,
+      frameCount: current.frameCount, rawFrameCount: current.rawFrameCount,
+      animationFormat: 'video-dense-v1', processingVersion: current.processingVersion,
+    }],
+  });
+  const publicFighter = () => ({
+    id: descriptor.fighter.fighterId,
+    name: fighter.name,
+    public: true,
+    qualityTier: 'champion',
+    arcade: { slug: fighter.slug },
+    sprites: [{
+      animationName: descriptor.action, qualityTier: 'champion',
+      url: `${baseUrl}/public-assets/${current.processedSha256}.png`,
+      hqUrl: `${baseUrl}/public-assets/${current.rawSha256}.png`,
+      contentHash: current.processedSha256,
+      frameCount: current.frameCount,
+      animationFormat: 'video-dense-v1', processingVersion: current.processingVersion,
+    }],
+  });
+  const calls = [];
+  const requestApi = async (_baseUrl, _token, path, init = {}) => {
+    calls.push({ path, method: init.method ?? 'GET', body: init.body });
+    if (path === '/api/admin/arcade' && !init.method) return { fighters: [entry] };
+    if (path === `/api/fighters/${entry.fighterId}` && !init.method) return { fighter: privateFighter() };
+    if (path === `/api/generation-jobs/${job.id}` && !init.method) return { job };
+    if (path === `/api/generation-jobs/${job.id}/video-review` && !init.method) {
+      return { review: reviewFor(current) };
+    }
+    if (path === `/api/generation-jobs/${job.id}/video-review/recuration/promote`
+      && init.method === 'POST') {
+      current = targetBinding;
+      return { review: reviewFor(targetBinding) };
+    }
+    throw new Error(`Unexpected ${operation} request: ${init.method ?? 'GET'} ${path}`);
+  };
+  const publicCalls = [];
+  const requestPublicApi = async (_baseUrl, path) => {
+    publicCalls.push(path);
+    return { fighters: [publicFighter()] };
+  };
+  const requestSpriteAsset = async ({ url }) => ({
+    bytes: url.includes(targetBinding.rawSha256) ? targetBytes.raw : targetBytes.runtime,
+    contentType: 'image/png',
+  });
+  return {
+    baseUrl, descriptor, currentBinding, targetBinding, calls, publicCalls,
+    requestApi, requestPublicApi, requestSpriteAsset,
+  };
 }
 
 function activationVideoJobId(index) {
@@ -1685,6 +1962,244 @@ describe('Review-gated Arcade Video step', () => {
     expect(videoReviewWorkflow).toContain("redirect: 'error'");
     expect(videoReviewWorkflow).not.toContain('/generate');
     expect(videoReviewWorkflow).not.toContain('generation-contract');
+  });
+});
+
+describe('Post-approved global Video recuration', () => {
+  const fighter = manifest.fighters.find((entry) => entry.slug === 'bad-bunny');
+  const token = async () => 'admin-token';
+
+  it('requires a distinct exact production confirmation for every mutation', () => {
+    for (const operation of ['stage', 'promote', 'rollback']) {
+      expect(() => assertPostApprovedRecurationConfirmation(
+        operation, POST_APPROVED_RECURATION_CONFIRMATIONS[operation],
+      )).not.toThrow();
+      expect(() => assertPostApprovedRecurationConfirmation(operation, 'CONFIRM_PRODUCTION'))
+        .toThrow(new RegExp(POST_APPROVED_RECURATION_CONFIRMATIONS[operation]));
+    }
+  });
+
+  it('stages one exact approved candidate and privately exports a sealed descriptor', async () => {
+    const harness = postApprovedStageHarness(fighter);
+    const destination = mkdtempSync(join(tmpdir(), 'post-approved-recuration-'));
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const result = await stagePostApprovedVideoRecuration({
+        fighter,
+        action: harness.descriptor.action,
+        baseUrl: harness.baseUrl,
+        token,
+        jobId: harness.job.id,
+        candidateId: harness.review.candidateId,
+        revision: harness.review.revision,
+        reportSha256: harness.review.reportSha256,
+        selectedVideoIndices: harness.proposal.selectedVideoIndices,
+        destination,
+        expectedWorkerSha: harness.descriptor.expectedWorkerSha,
+        requestApi: harness.requestApi,
+        requestAsset: harness.requestAsset,
+      });
+      const posts = harness.calls.filter(({ method }) => method === 'POST');
+      expect(posts).toHaveLength(1);
+      expect(posts[0].path).toMatch(/\/video-review\/recuration\/stage$/);
+      expect(JSON.parse(posts[0].body)).toEqual({
+        candidateId: harness.review.candidateId,
+        revision: harness.review.revision,
+        reportSha256: harness.review.reportSha256,
+        selectedVideoIndices: harness.proposal.selectedVideoIndices,
+      });
+      expect(log.mock.calls.flat().join('\n')).toContain('"providerCalls":0');
+      expect(readFileSync(join(destination, 'runtime.png'))).toEqual(harness.assetBytes.runtime);
+      expect(readFileSync(join(destination, 'video.mp4'))).toEqual(harness.assetBytes.video);
+      const sealed = readSealedPostApprovedRecurationDescriptor(
+        result.descriptorPath,
+        result.descriptorSha256,
+        {
+          slug: fighter.slug,
+          action: harness.descriptor.action,
+          expectedWorkerSha: harness.descriptor.expectedWorkerSha,
+        },
+      );
+      expect(sealed).toEqual(result.descriptor);
+      expect(sealed).toMatchObject({
+        from: {
+          revision: 1,
+          processedSha256: harness.currentSprite.contentHash,
+        },
+        to: {
+          revision: 2,
+          processedSha256: harness.proposal.processedSha256,
+        },
+        assets: {
+          runtime: { sha256: harness.proposal.processedSha256, contentType: 'image/png' },
+          report: { sha256: harness.assets.report.sha256, contentType: 'application/json' },
+          video: { contentType: 'video/mp4' },
+        },
+      });
+    } finally {
+      log.mockRestore();
+      rmSync(destination, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed on malformed staged PNG evidence before writing any file', async () => {
+    const harness = postApprovedStageHarness(fighter, {
+      assetBytes: { runtime: Buffer.from('not-png') },
+      proposal: { processedSha256: digest(Buffer.from('not-png')) },
+    });
+    const destination = mkdtempSync(join(tmpdir(), 'post-approved-recuration-bad-'));
+    try {
+      await expect(stagePostApprovedVideoRecuration({
+        fighter,
+        action: harness.descriptor.action,
+        baseUrl: harness.baseUrl,
+        token,
+        jobId: harness.job.id,
+        candidateId: harness.review.candidateId,
+        revision: harness.review.revision,
+        reportSha256: harness.review.reportSha256,
+        selectedVideoIndices: harness.proposal.selectedVideoIndices,
+        destination,
+        expectedWorkerSha: harness.descriptor.expectedWorkerSha,
+        requestApi: harness.requestApi,
+        requestAsset: harness.requestAsset,
+      })).rejects.toThrow(/not a PNG/);
+      expect(() => readFileSync(join(destination, 'recuration-descriptor.json'))).toThrow();
+    } finally {
+      rmSync(destination, { recursive: true, force: true });
+    }
+  });
+
+  it('never overwrites an existing private evidence directory', async () => {
+    const harness = postApprovedStageHarness(fighter);
+    const destination = mkdtempSync(join(tmpdir(), 'post-approved-recuration-existing-'));
+    writeFileSync(join(destination, 'operator-notes.txt'), 'keep', { mode: 0o600 });
+    try {
+      await expect(stagePostApprovedVideoRecuration({
+        fighter,
+        action: harness.descriptor.action,
+        baseUrl: harness.baseUrl,
+        token,
+        jobId: harness.job.id,
+        candidateId: harness.review.candidateId,
+        revision: harness.review.revision,
+        reportSha256: harness.review.reportSha256,
+        selectedVideoIndices: harness.proposal.selectedVideoIndices,
+        destination,
+        expectedWorkerSha: harness.descriptor.expectedWorkerSha,
+        requestApi: harness.requestApi,
+        requestAsset: harness.requestAsset,
+      })).rejects.toThrow(/must be empty/);
+      expect(harness.calls).toHaveLength(0);
+      expect(readFileSync(join(destination, 'operator-notes.txt'), 'utf8')).toBe('keep');
+    } finally {
+      rmSync(destination, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['promote', 'rollback'])(
+    'performs exact %s binding, cache hook, and private/public byte smokes',
+    async (operation) => {
+      const harness = postApprovedMutationHarness(fighter, operation);
+      expect(assertPostApprovedRecurationDescriptor(harness.descriptor))
+        .toBe(harness.descriptor);
+      const purge = vi.fn(async () => ({ purged: true }));
+      const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const result = await promotePostApprovedVideoRecuration({
+          operation,
+          fighter,
+          action: harness.descriptor.action,
+          descriptor: harness.descriptor,
+          baseUrl: harness.baseUrl,
+          token,
+          requestApi: harness.requestApi,
+          requestPublicApi: harness.requestPublicApi,
+          requestSpriteAsset: harness.requestSpriteAsset,
+          purgeCache: purge,
+        });
+        const expectedBody = {
+          candidateId: harness.descriptor.candidateId,
+          fromRevision: harness.currentBinding.revision,
+          fromReportSha256: harness.currentBinding.reportSha256,
+          fromProcessedSha256: harness.currentBinding.processedSha256,
+          toRevision: harness.targetBinding.revision,
+          toReportSha256: harness.targetBinding.reportSha256,
+          toProcessedSha256: harness.targetBinding.processedSha256,
+        };
+        expect(result.body).toEqual(expectedBody);
+        expect(JSON.parse(harness.calls.find(({ method }) => method === 'POST').body))
+          .toEqual(expectedBody);
+        expect(result.smoke).toMatchObject({
+          privateCurrentVerified: true,
+          publicCurrentVerified: true,
+          processedSha256: harness.targetBinding.processedSha256,
+          rawSha256: harness.targetBinding.rawSha256,
+        });
+        expect(harness.publicCalls).toEqual([
+          `/api/arcade?recurationSmoke=${harness.targetBinding.processedSha256}`,
+        ]);
+        expect(purge).toHaveBeenCalledWith({
+          operation,
+          fighterId: harness.descriptor.fighter.fighterId,
+          slug: fighter.slug,
+          action: harness.descriptor.action,
+          processedSha256: harness.targetBinding.processedSha256,
+        });
+        expect(log.mock.calls.flat().join('\n')).toContain('"providerCalls":0');
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+
+  it('requires explicit needs-review acceptance and rejects descriptor tampering', async () => {
+    const base = postApprovedRecurationDescriptor();
+    const descriptor = postApprovedRecurationDescriptor({
+      to: { ...base.to, technicalOutcome: 'needs_review' },
+    });
+    await expect(promotePostApprovedVideoRecuration({
+      operation: 'promote',
+      fighter,
+      action: descriptor.action,
+      descriptor,
+      baseUrl: 'https://api.insertplayer.ai',
+      token,
+    })).rejects.toThrow(/requires --accept-needs-review/);
+    expect(() => assertPostApprovedRecurationDescriptor({
+      ...base,
+      to: { ...base.to, processedSha256: '9'.repeat(64) },
+    })).toThrow(/assets do not seal/);
+  });
+
+  it('pins descriptor bytes and leaves cache purge optional but injectable', async () => {
+    const descriptor = postApprovedRecurationDescriptor();
+    const evidence = postApprovedRecurationEvidence();
+    const destination = mkdtempSync(join(tmpdir(), 'sealed-recuration-descriptor-'));
+    const descriptorPath = join(destination, 'descriptor.json');
+    const bytes = Buffer.from(`${JSON.stringify(descriptor, null, 2)}\n`);
+    writeFileSync(descriptorPath, bytes, { mode: 0o600 });
+    for (const [assetName, asset] of Object.entries(descriptor.assets)) {
+      writeFileSync(join(destination, asset.filename), evidence.assetBytes[assetName], { mode: 0o600 });
+    }
+    try {
+      expect(() => readSealedPostApprovedRecurationDescriptor(
+        descriptorPath, '0'.repeat(64),
+      )).toThrow(/do not match/);
+      expect(readSealedPostApprovedRecurationDescriptor(descriptorPath, digest(bytes)))
+        .toEqual(descriptor);
+    } finally {
+      rmSync(destination, { recursive: true, force: true });
+    }
+    await expect(purgePostApprovedRecurationCache({ action: 'idle' }))
+      .resolves.toEqual({
+        configured: false,
+        purged: false,
+        reason: 'no-cache-purge-integration',
+      });
+    await expect(purgePostApprovedRecurationCache(
+      { action: 'idle' }, async () => ({ purged: false }),
+    )).rejects.toThrow(/did not prove success/);
   });
 });
 
