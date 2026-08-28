@@ -502,8 +502,8 @@ async function runPublicSmoke() {
 
   const arcadeFeed = await expectStatus('official Arcade cache headers', '/api/arcade', 200);
   assert(
-    (arcadeFeed.headers.get('Cache-Control') ?? '').includes('s-maxage=300'),
-    'Official Arcade feed is missing short shared-cache headers',
+    (arcadeFeed.headers.get('Cache-Control') ?? '').includes('no-store'),
+    'Official Arcade feed must stay uncached so reviewed recurations propagate immediately',
   );
   const arcadeBody = await readJson(arcadeFeed);
   assert(Array.isArray(arcadeBody.fighters), 'Official Arcade feed did not return a fighters array');
