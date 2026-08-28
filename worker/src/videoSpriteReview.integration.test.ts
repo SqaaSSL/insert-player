@@ -475,7 +475,7 @@ async function adjustedResponse(params: {
     schema: 'video-sprite-compile-report.v1', schemaVersion: 1,
     compilerVersion: '1.0.0', policyVersion: 'video-sprite-policy.v1',
     action: 'idle', expectedFacing: 'right', animationFormat: 'video-dense-v1',
-    processingVersion: 5, lineage,
+    processingVersion: 6, lineage,
     inputs: {
       videoSha256: params.videoSha, canonicalSha256: params.canonicalSha,
       videoSizeBytes: params.videoSize, canonicalSizeBytes: params.canonicalSize,
@@ -503,7 +503,7 @@ async function adjustedResponse(params: {
     },
   };
   return {
-    schemaVersion: 1, animationFormat: 'video-dense-v1', processingVersion: 5,
+    schemaVersion: 1, animationFormat: 'video-dense-v1', processingVersion: 6,
     frameW: 192, frameH: 256, frameCount: 8,
     spriteBase64: Buffer.from(runtime).toString('base64'),
     rawBase64: Buffer.from(raw).toString('base64'), rawFrameW: 768, rawFrameH: 1024,

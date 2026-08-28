@@ -13,6 +13,10 @@ import {
 } from './providerSessions';
 import type { AuthContext, Env } from './types';
 import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
+import {
+  VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+  VIDEO_SPRITE_PROCESSING_VERSION,
+} from '../../src/services/VideoSpriteCompileContract';
 import { hashString } from './auth';
 import { REVIEWED_CANONICAL_SOURCE_MODE } from './reviewedCanonicalSources';
 
@@ -2059,6 +2063,10 @@ describe('official Arcade deployed provider preflight', () => {
       status: 'ok',
       runtime: 'canvas-skia',
       imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      videoSpriteCompiler: {
+        schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+        processingVersion: VIDEO_SPRITE_PROCESSING_VERSION,
+      },
     });
     const response = await readAdminArcadeGenerationContract(env, adminAuth);
 
@@ -2067,12 +2075,34 @@ describe('official Arcade deployed provider preflight', () => {
       ready: true,
       runtime: 'canvas-skia',
       contract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      videoSpriteCompiler: {
+        schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+        processingVersion: VIDEO_SPRITE_PROCESSING_VERSION,
+      },
     });
     expect(getByName).toHaveBeenCalledWith('official-arcade-provider-contract-v1');
     expect(processorFetch).toHaveBeenCalledOnce();
     const [healthRequest] = processorFetch.mock.calls[0] as [Request];
     expect(healthRequest.url).toBe('http://image-processor/health');
     expect(healthRequest.method).toBe('GET');
+  });
+
+  it('fails closed while the deployed processor still advertises the previous Video compiler', async () => {
+    const { env } = contractEnv({
+      status: 'ok',
+      runtime: 'canvas-skia',
+      imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      videoSpriteCompiler: {
+        schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+        processingVersion: VIDEO_SPRITE_PROCESSING_VERSION - 1,
+      },
+    });
+    const response = await readAdminArcadeGenerationContract(env, adminAuth);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: 'Image processor Video sprite compiler is incompatible',
+      reason: 'processor_video_compiler_incompatible',
+    });
   });
 
   it('fails closed when the processor advertises another generation provider', async () => {

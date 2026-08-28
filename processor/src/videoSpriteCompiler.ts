@@ -379,7 +379,7 @@ export async function compileExtractedVideoSprite(
         Math.round(index * 1000 / media.toolchain.sampleFps)
       )),
       frameTranslations: compiled.translations,
-      registrationAlgorithm: 'alpha-root-integer-v1',
+      registrationAlgorithm: 'alpha-root-safe-clamped-integer-v2',
       canonicalDerivedF0: profile.sequenceFormat !== 'loop',
       normalizedFramePngSha256: media.videoFramePngs.map((bytes) => sha256(bytes)),
       uniqueFrameArtifacts: uniqueFramePngs.map((bytes, uniqueIndex) => ({

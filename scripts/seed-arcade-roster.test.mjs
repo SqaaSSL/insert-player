@@ -10,6 +10,7 @@ import {
   REVIEW_GATED_VIDEO_RESTART_CONFIRMATION,
   REVIEW_GATED_VIDEO_REVIEW_CONFIRMATIONS,
   REVIEW_GATED_VIDEO_ACTIONS,
+  VIDEO_DENSE_PROCESSING_VERSION,
   REVIEWED_ARCADE_ACTIVATION_CONFIRMATION,
   activateReviewedArcadeFighter,
   apiAssetRequest,
@@ -304,7 +305,7 @@ function reviewedOwnedFighter(fighter, overrides = {}) {
       frameHeight: 256,
       frameCount: 8,
       animationFormat: 'video-dense-v1',
-      processingVersion: 5,
+      processingVersion: 6,
     })),
     ...overrides,
   };
@@ -373,7 +374,7 @@ function reviewedActivationApi(fighter, { entry, owned, failedRetryAtAction = nu
       reportSha256: String(index + 1).repeat(64).slice(0, 64),
       technicalOutcome: 'technical_pass',
       animationFormat: 'video-dense-v1',
-      processingVersion: 5,
+      processingVersion: 6,
       frameCount: 8,
       rawFrameCount: 8,
       reviewedAt: '2026-08-27T03:00:00.000Z',
@@ -480,7 +481,7 @@ function videoReview(job = videoJob(), overrides = {}) {
     selectedVideoIndices: [0, 2, 4, 6],
     sourceFrameCount: 12,
     animationFormat: 'video-dense-v1',
-    processingVersion: 5,
+    processingVersion: 6,
     assets: {
       video: `/api/generation-jobs/${job.id}/video-review/assets/video?revision=${revision}`,
       contactSheet: `/api/generation-jobs/${job.id}/video-review/assets/contact-sheet?revision=${revision}`,
@@ -1460,7 +1461,7 @@ describe('Review-gated Arcade Video step', () => {
         selectedVideoIndices: review.selectedVideoIndices,
         sourceFrameCount: 12,
         animationFormat: 'video-dense-v1',
-        processingVersion: 5,
+        processingVersion: 6,
         reviewedManifestRunId: '123',
         reviewedManifestSha256: '8'.repeat(64),
       });
@@ -1691,6 +1692,10 @@ describe('Arcade roster provider preflight', () => {
   const approved = {
     ready: true,
     runtime: 'canvas-skia',
+    videoSpriteCompiler: {
+      schemaVersion: 1,
+      processingVersion: VIDEO_DENSE_PROCESSING_VERSION,
+    },
     contract: {
       schemaVersion: 1,
       processorRuntimeRevision: 'meterkey-transport-v1',
@@ -1725,6 +1730,10 @@ describe('Arcade roster provider preflight', () => {
     const unavailable = structuredClone(approved);
     unavailable.ready = false;
     expect(() => assertApprovedArcadeGenerationContract(unavailable)).toThrow(/aborted before mutation/);
+
+    const staleVideoCompiler = structuredClone(approved);
+    staleVideoCompiler.videoSpriteCompiler.processingVersion = VIDEO_DENSE_PROCESSING_VERSION - 1;
+    expect(() => assertApprovedArcadeGenerationContract(staleVideoCompiler)).toThrow(/aborted before mutation/);
   });
 
   it('keeps a non-billable preflight as the production workflow default', () => {

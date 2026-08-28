@@ -484,6 +484,49 @@ function registrationTranslation(
   };
 }
 
+const REGISTRATION_EDGE_MARGIN_PX = 2;
+
+function clampInteger(value: number, minimum: number, maximum: number): number {
+  return Math.min(maximum, Math.max(minimum, value));
+}
+
+function safeRegistrationAxis(
+  requested: number,
+  start: number,
+  length: number,
+  extent: number,
+): number {
+  const end = start + length;
+  if (start === 0 || end === extent) return 0;
+  const preferredMinimum = REGISTRATION_EDGE_MARGIN_PX - start;
+  const preferredMaximum = extent - REGISTRATION_EDGE_MARGIN_PX - end;
+  if (preferredMinimum <= preferredMaximum) {
+    return clampInteger(requested, preferredMinimum, preferredMaximum);
+  }
+  return 0;
+}
+
+/**
+ * Root registration must never turn a complete source pose into a cropped emitted frame.
+ * Keep the requested integer alignment whenever it fits inside a two-pixel alpha runtime
+ * margin; otherwise retain that axis at its complete source position.
+ */
+function safeRegistrationTranslation(
+  anchor: VideoSpriteFrameMetrics,
+  candidate: VideoSpriteFrameMetrics,
+  width: number,
+  height: number,
+  mode: VideoSpriteActionProfile['registration'],
+): { dx: number; dy: number } {
+  const requested = registrationTranslation(anchor, candidate, width, height, mode);
+  const bounds = candidate.bounds;
+  if (!bounds) return requested;
+  return {
+    dx: safeRegistrationAxis(requested.dx, bounds.x, bounds.width, width),
+    dy: safeRegistrationAxis(requested.dy, bounds.y, bounds.height, height),
+  };
+}
+
 function maximum(values: number[]): number {
   return values.length === 0 ? 0 : Math.max(...values);
 }
@@ -731,7 +774,13 @@ export function compileVideoSpriteFrames(
   const translations = sourceSelectedMetrics.map((metric, index) => (
     !rawOnlyLoop && index === 0
       ? { dx: 0, dy: 0 }
-      : registrationTranslation(canonicalMetric, metric, canonical.width, canonical.height, profile.registration)
+      : safeRegistrationTranslation(
+          canonicalMetric,
+          metric,
+          canonical.width,
+          canonical.height,
+          profile.registration,
+        )
   ));
   const uniqueFrames = selectedSources.map((frame, index) => (
     translateVideoSpriteFrame(frame, translations[index].dx, translations[index].dy)
