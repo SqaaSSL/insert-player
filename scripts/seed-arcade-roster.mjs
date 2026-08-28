@@ -73,12 +73,14 @@ const recurationConfirmation = recurationConfirmationArg
   ?.slice('--confirm-recuration='.length) ?? '';
 const dryRun = args.has('--dry-run');
 const activate = args.has('--activate');
+const activateDraft = args.has('--activate-draft');
 const activateReviewed = args.has('--activate-reviewed');
 const videoStep = args.has('--video-step');
 const videoReviewInspect = args.has('--video-review-inspect');
 const videoReview = videoReviewDecision.length > 0 || videoReviewInspect;
 const postApprovedRecurationOperation = postApprovedRecuration.length > 0;
 const reviewedVideoOperation = activateReviewed || videoStep || videoReview || postApprovedRecurationOperation;
+const pinnedProductionOperation = reviewedVideoOperation || activateDraft;
 const acceptRecurationNeedsReview = args.has('--accept-needs-review');
 const continueOnError = args.has('--continue-on-error');
 const all = args.has('--all');
@@ -131,6 +133,7 @@ const REVIEW_GATED_VIDEO_ACTION_SET = new Set(REVIEW_GATED_VIDEO_ACTIONS);
 const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'];
 const CANONICAL_SOURCES = new Set(CANONICAL_SOURCE_NAMES);
 export const REVIEWED_ARCADE_ACTIVATION_CONFIRMATION = 'ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION';
+export const COMPLETE_DRAFT_ACTIVATION_CONFIRMATION = 'ACTIVATE_COMPLETE_ARCADE_DRAFT_PRODUCTION';
 export const REVIEW_GATED_VIDEO_STEP_CONFIRMATION = 'START_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION';
 export const REVIEW_GATED_VIDEO_RESUME_CONFIRMATION = 'RESUME_FAILED_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION';
 export const REVIEW_GATED_VIDEO_RESTART_CONFIRMATION = 'RESTART_REVIEW_GATED_VIDEO_ARCADE_PRODUCTION';
@@ -391,6 +394,14 @@ export function assertReviewedActivationConfirmation(value) {
   }
 }
 
+export function assertCompleteDraftActivationConfirmation(value) {
+  if (value !== COMPLETE_DRAFT_ACTIVATION_CONFIRMATION) {
+    throw new Error(
+      `Complete Arcade draft activation requires --confirm-activation=${COMPLETE_DRAFT_ACTIVATION_CONFIRMATION}.`,
+    );
+  }
+}
+
 export function assertReviewGatedVideoStepConfirmation(value) {
   if (value !== REVIEW_GATED_VIDEO_STEP_CONFIRMATION) {
     throw new Error(
@@ -548,7 +559,7 @@ function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
   if (
     preflightOnly
-    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName)
+    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || activateDraft || reviewedVideoOperation || animationName || sourceName)
   ) {
     throw new Error('--preflight-only requires one --slug and cannot be combined with a generation operation.');
   }
@@ -557,49 +568,55 @@ function selectFighters(manifest) {
   }
   if (
     (animationName || sourceName)
-    && (all || !slugArg || activate || (reviewedVideoOperation && !postApprovedRecurationOperation))
+    && (all || !slugArg || activate || activateDraft || (reviewedVideoOperation && !postApprovedRecurationOperation))
   ) {
     throw new Error('--animation and --source require one --slug and cannot be combined with an activation operation.');
   }
   if (resume && (animationName || sourceName)) {
     throw new Error('--resume fills an entire fighter and cannot be combined with --animation or --source.');
   }
-  if (restartDraft && (all || resume || registerDraft || prepareCanary || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
+  if (restartDraft && (all || resume || registerDraft || prepareCanary || canarySide || probeSide || activate || activateDraft || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--restart-draft requires one --slug and cannot be combined with --all, --resume, --activate, --animation, or --source.');
   }
-  if (registerDraft && (all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
+  if (registerDraft && (all || resume || restartDraft || prepareCanary || canarySide || probeSide || activate || activateDraft || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--register-draft requires one --slug and cannot be combined with another generation operation.');
   }
-  if (prepareCanary && (all || resume || restartDraft || registerDraft || canarySide || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
+  if (prepareCanary && (all || resume || restartDraft || registerDraft || canarySide || probeSide || activate || activateDraft || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--prepare-canary requires one --slug and cannot be combined with another generation operation.');
   }
-  if (canarySide && (all || resume || restartDraft || registerDraft || prepareCanary || probeSide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
+  if (canarySide && (all || resume || restartDraft || registerDraft || prepareCanary || probeSide || activate || activateDraft || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--canary-side requires one --slug and cannot be combined with another generation operation.');
   }
-  if (probeSide && (all || resume || restartDraft || registerDraft || prepareCanary || canarySide || activate || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
+  if (probeSide && (all || resume || restartDraft || registerDraft || prepareCanary || canarySide || activate || activateDraft || reviewedVideoOperation || animationName || sourceName || !slugArg)) {
     throw new Error('--probe-side requires one --slug and cannot be combined with another generation operation.');
   }
   if (
     activateReviewed
-    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || videoStep || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || activateDraft || videoStep || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--activate-reviewed requires one --slug and cannot be combined with generation, resume, or dry-run.');
   }
   if (
+    activateDraft
+    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
+  ) {
+    throw new Error('--activate-draft requires one --slug and cannot be combined with generation, resume, or dry-run.');
+  }
+  if (
     videoStep
-    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || activateDraft || activateReviewed || videoReview || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--video-step requires one --slug and cannot be combined with generation, resume, activation, or dry-run.');
   }
   if (
     videoReview
-    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || activateReviewed || videoStep || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
+    && (dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide || activate || activateDraft || activateReviewed || videoStep || postApprovedRecurationOperation || animationName || sourceName || !slugArg)
   ) {
     throw new Error('--video-review-decision requires one --slug and cannot be combined with generation, resume, activation, or dry-run.');
   }
   if (postApprovedRecurationOperation && (
     dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide
-    || activate || activateReviewed || videoStep || videoReview || sourceName || !slugArg || !animationName
+    || activate || activateDraft || activateReviewed || videoStep || videoReview || sourceName || !slugArg || !animationName
   )) {
     throw new Error(
       '--post-approved-recuration requires exactly one --slug and --animation and cannot be combined with generation, review, activation, or dry-run.',
@@ -638,8 +655,8 @@ function selectFighters(manifest) {
   if (reviewedVideoFinalJobId && !activateReviewed) {
     throw new Error('--reviewed-video-final-job-id is supported only with --activate-reviewed.');
   }
-  if (expectedDeployedSha && !reviewedVideoOperation) {
-    throw new Error('--expected-deployed-sha is supported only with a reviewed Video operation.');
+  if (expectedDeployedSha && !pinnedProductionOperation) {
+    throw new Error('--expected-deployed-sha is supported only with activation or a reviewed Video operation.');
   }
   if ((recurationDescriptorPath || recurationDescriptorSha256 || recurationConfirmation || acceptRecurationNeedsReview)
     && !postApprovedRecurationOperation) {
@@ -1297,6 +1314,62 @@ export async function activateReviewedArcadeFighter({
   console.log(
     `  active: ${entry.fighterId} (11/11 ${provenance.animationFormat} approvals from ${provenance.artifactRunId}; no generation requested)`,
   );
+  return result.fighter;
+}
+
+export async function activateCompleteArcadeDraft({
+  manifest,
+  fighter,
+  approvedPhotoHash,
+  baseUrl,
+  token,
+  requestApi = apiRequest,
+}) {
+  const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
+  const adminEntries = Array.isArray(admin.fighters) ? admin.fighters : [];
+  const entry = findCurrentArcadeEntry(adminEntries, fighter.slug);
+  if (!entry) {
+    throw new Error(`No current Arcade fighter exists for ${fighter.slug}. Generate its private draft first.`);
+  }
+
+  const detail = await requestApi(
+    baseUrl,
+    token,
+    `/api/fighters/${encodeURIComponent(entry.fighterId)}`,
+  );
+  const owned = detail.fighter;
+  assertReviewedActivationDraft({ manifest, fighter, entry, owned, approvedPhotoHash });
+
+  const jobsResult = await requestApi(
+    baseUrl,
+    token,
+    `/api/generation-jobs?fighterId=${encodeURIComponent(entry.fighterId)}`,
+  );
+  const activeJobs = (Array.isArray(jobsResult.jobs) ? jobsResult.jobs : []).filter(
+    (job) => job?.status === 'queued' || job?.status === 'running',
+  );
+  if (activeJobs.length > 0) {
+    throw new Error(`${fighter.name} still has an active generation job; activation remains blocked.`);
+  }
+
+  console.log(`\n${fighter.rank}. ${fighter.name} [complete draft activation only]`);
+  const result = await requestApi(
+    baseUrl,
+    token,
+    `/api/admin/arcade/${encodeURIComponent(entry.fighterId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(arcadePayload(manifest, fighter, 'active')),
+    },
+  );
+  if (
+    result.fighter?.fighterId !== entry.fighterId
+    || result.fighter?.status !== 'active'
+    || result.fighter?.public !== true
+  ) {
+    throw new Error(`${fighter.name} activation did not return the complete public Arcade fighter.`);
+  }
+  console.log(`  active: ${entry.fighterId} (3 sources, 11 Champion animations; no generation requested)`);
   return result.fighter;
 }
 
@@ -3467,6 +3540,7 @@ async function main() {
   validateManifest(manifest);
   const selected = selectFighters(manifest);
   if (activateReviewed) assertReviewedActivationConfirmation(activationConfirmation);
+  if (activateDraft) assertCompleteDraftActivationConfirmation(activationConfirmation);
   if (videoStep) {
     if (resumeVideoRunFrom) {
       exactVideoJobId(resumeVideoRunFrom, 'Video resume source');
@@ -3531,9 +3605,9 @@ async function main() {
       'Production review-gated Video operations require --reviewed-manifest-run-id from the approved producer.',
     );
   }
-  if (target === 'production' && reviewedVideoOperation && !/^[a-f0-9]{40}$/.test(expectedDeployedSha)) {
+  if (target === 'production' && pinnedProductionOperation && !/^[a-f0-9]{40}$/.test(expectedDeployedSha)) {
     throw new Error(
-      'Production reviewed Video operations require --expected-deployed-sha=<full lowercase GITHUB_SHA>.',
+      'Production activation and reviewed Video operations require --expected-deployed-sha=<full lowercase GITHUB_SHA>.',
     );
   }
   if (!activateReviewed && !postApprovedRecurationOperation) {
@@ -3549,7 +3623,7 @@ async function main() {
     }
     return;
   }
-  const reviewedActivationPhotoHash = activateReviewed
+  const reviewedActivationPhotoHash = activateReviewed || activateDraft
     ? readApprovedSource(manifest, selected[0]).photoHash
     : '';
   const reviewGatedVideoPhotoHash = videoStep || videoReview
@@ -3581,10 +3655,10 @@ async function main() {
     || envValue(env, 'VITE_API_BASE_URL')
     || defaultBaseUrl
   );
-  const baseUrl = target === 'production' && reviewedVideoOperation
+  const baseUrl = target === 'production' && pinnedProductionOperation
     ? assertReviewedProductionApiOrigin(configuredBaseUrl)
     : configuredBaseUrl.replace(/\/+$/, '');
-  if (target === 'production' && reviewedVideoOperation) {
+  if (target === 'production' && pinnedProductionOperation) {
     await pinProductionWorkerHealth({
       baseUrl,
       configuredHealthUrl: envValue(env, 'ASF_WORKER_HEALTH_URL'),
@@ -3657,6 +3731,17 @@ async function main() {
       fighter: selected[0],
       approvedPhotoHash: reviewedActivationPhotoHash,
       reviewedVideoFinalJobId,
+      baseUrl,
+      token,
+    });
+    return;
+  }
+
+  if (activateDraft) {
+    await activateCompleteArcadeDraft({
+      manifest,
+      fighter: selected[0],
+      approvedPhotoHash: reviewedActivationPhotoHash,
       baseUrl,
       token,
     });

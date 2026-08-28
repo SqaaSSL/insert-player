@@ -4,9 +4,12 @@ import {
   GeminiOfficialSpriteQualityError,
   geminiContentBlockReason,
   geminiFinishReasonBlockReason,
+  geminiOfficialCorrectionUsesCanonicalPoseGuide,
   geminiOfficialRefinePrompt,
+  geminiOfficialReviewCorrection,
   geminiOfficialSpriteReviewPrompt,
   geminiOfficialSpritePrompt,
+  geminiSpriteSequenceEndNote,
   isGeminiContentBlockedError,
   parseGeminiOfficialSpriteReview,
 } from './GeminiApi';
@@ -74,6 +77,31 @@ describe('Gemini content-block handling', () => {
 
     expect(prompt).toContain('QUALITY CORRECTION (CRITICAL)');
     expect(prompt).toContain('dimensional realistic 2.5D shading');
+  });
+
+  it('closes an idle scaffold on the raised canonical guard', () => {
+    const endNote = geminiSpriteSequenceEndNote('idle', 8, true, false);
+
+    expect(endNote).toContain('IMAGE 2 shows the required END guard (frame 8)');
+    expect(endNote).toContain('both fists raised');
+    expect(endNote).toContain('connects cleanly back to frame 1');
+  });
+
+  it('replaces a rejected final idle pose guide with the canonical guard', () => {
+    const review = {
+      retry: [7],
+      issues: { '7': ['animation_fidelity' as const] },
+    };
+
+    expect(geminiOfficialCorrectionUsesCanonicalPoseGuide(review, 'idle', 7, 8)).toBe(true);
+    expect(geminiOfficialCorrectionUsesCanonicalPoseGuide(review, 'idle', 6, 8)).toBe(false);
+    expect(geminiOfficialCorrectionUsesCanonicalPoseGuide(review, 'walk', 7, 8)).toBe(false);
+    expect(geminiOfficialReviewCorrection(review, 7, 'idle', 8)).toContain(
+      "return to IMAGE 1's fighting-ready guard with both fists raised",
+    );
+    expect(geminiOfficialReviewCorrection(review, 7, 'idle', 8)).toContain(
+      'Do not lower either arm',
+    );
   });
 
   it('reviews official sprite sheets without asking Gemini to identify the avatar', () => {

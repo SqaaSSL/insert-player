@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { VIDEO_SPRITE_ACTIONS as WORKER_VIDEO_SPRITE_ACTIONS } from '../src/services/VideoSpriteCompileContract';
 import {
+  COMPLETE_DRAFT_ACTIVATION_CONFIRMATION,
   POST_APPROVED_RECURATION_CONFIRMATIONS,
   POST_APPROVED_RECURATION_DESCRIPTOR_KIND,
   REVIEW_GATED_VIDEO_STEP_CONFIRMATION,
@@ -14,12 +15,14 @@ import {
   REVIEW_GATED_VIDEO_ACTIONS,
   VIDEO_DENSE_PROCESSING_VERSION,
   REVIEWED_ARCADE_ACTIVATION_CONFIRMATION,
+  activateCompleteArcadeDraft,
   activateReviewedArcadeFighter,
   apiAssetRequest,
   apiRequest,
   arcadeAdminAuthHeaders,
   assertApprovedArcadeGenerationContract,
   assertAwaitingVideoReview,
+  assertCompleteDraftActivationConfirmation,
   assertNewArcadeDraftIdentity,
   assertPinnedProductionWorkerHealth,
   assertPostApprovedRecurationConfirmation,
@@ -950,6 +953,92 @@ describe('Arcade roster resume planning', () => {
       'b8cdec38c5a7e804',
       false,
     )).toThrow(/use --resume or --restart-draft/);
+  });
+});
+
+describe('Complete Original Arcade draft activation', () => {
+  const fighter = manifest.fighters.find((entry) => entry.slug === 'bad-bunny');
+
+  function activationApi({ owned = reviewedOwnedFighter(fighter), jobs = [] } = {}) {
+    const entry = reviewedAdminEntry(fighter);
+    const calls = [];
+    return {
+      calls,
+      requestApi: async (_baseUrl, _token, path, init = {}) => {
+        calls.push({ path, method: init.method ?? 'GET', body: init.body });
+        if (path === '/api/admin/arcade' && !init.method) return { fighters: [entry] };
+        if (path === `/api/fighters/${entry.fighterId}` && !init.method) return { fighter: owned };
+        if (path === `/api/generation-jobs?fighterId=${entry.fighterId}` && !init.method) {
+          return { jobs };
+        }
+        if (path === `/api/admin/arcade/${entry.fighterId}` && init.method === 'PATCH') {
+          return { fighter: { ...entry, status: 'active', public: true } };
+        }
+        throw new Error(`Unexpected complete draft activation request: ${init.method ?? 'GET'} ${path}`);
+      },
+    };
+  }
+
+  it('requires a dedicated non-generation confirmation phrase', () => {
+    expect(() => assertCompleteDraftActivationConfirmation('GEMINI_ONLY_PRODUCTION'))
+      .toThrow(/ACTIVATE_COMPLETE_ARCADE_DRAFT_PRODUCTION/);
+    expect(() => assertCompleteDraftActivationConfirmation(COMPLETE_DRAFT_ACTIVATION_CONFIRMATION))
+      .not.toThrow();
+  });
+
+  it('publishes one exact complete draft without requesting generation', async () => {
+    const api = activationApi({ jobs: [{ status: 'succeeded' }] });
+    await expect(activateCompleteArcadeDraft({
+      manifest,
+      fighter,
+      approvedPhotoHash: fighter.reference.sourceSha256,
+      baseUrl: 'https://api.insertplayer.ai',
+      token: async () => 'token',
+      requestApi: api.requestApi,
+    })).resolves.toMatchObject({ status: 'active', public: true });
+
+    expect(api.calls.map(({ method, path }) => `${method} ${path}`)).toEqual([
+      'GET /api/admin/arcade',
+      `GET /api/fighters/${'a'.repeat(32)}`,
+      `GET /api/generation-jobs?fighterId=${'a'.repeat(32)}`,
+      `PATCH /api/admin/arcade/${'a'.repeat(32)}`,
+    ]);
+    expect(JSON.parse(api.calls.at(-1).body)).toMatchObject({
+      slug: fighter.slug,
+      status: 'active',
+    });
+    expect(api.calls.some(({ path }) => /generation-contract|\/generate(?:\/|$)|\/sources(?:\/|$)/.test(path)))
+      .toBe(false);
+  });
+
+  it('fails closed while generation is active or an immutable artifact is missing', async () => {
+    const active = activationApi({ jobs: [{ status: 'running' }] });
+    await expect(activateCompleteArcadeDraft({
+      manifest,
+      fighter,
+      approvedPhotoHash: fighter.reference.sourceSha256,
+      baseUrl: 'https://api.insertplayer.ai',
+      token: async () => 'token',
+      requestApi: active.requestApi,
+    })).rejects.toThrow(/active generation job/);
+    expect(active.calls.every(({ method }) => method === 'GET')).toBe(true);
+
+    const incomplete = activationApi({
+      owned: reviewedOwnedFighter(fighter, {
+        sprites: reviewedOwnedFighter(fighter).sprites.filter(
+          (sprite) => sprite.animationName !== 'victory',
+        ),
+      }),
+    });
+    await expect(activateCompleteArcadeDraft({
+      manifest,
+      fighter,
+      approvedPhotoHash: fighter.reference.sourceSha256,
+      baseUrl: 'https://api.insertplayer.ai',
+      token: async () => 'token',
+      requestApi: incomplete.requestApi,
+    })).rejects.toThrow(/incomplete.*sprite:victory/i);
+    expect(incomplete.calls.every(({ method }) => method === 'GET')).toBe(true);
   });
 });
 
@@ -2274,13 +2363,17 @@ describe('Arcade roster provider preflight', () => {
   it('keeps reviewed activation separate from generation and provider preflight', () => {
     expect(productionWorkflow).toContain('- activate-reviewed');
     expect(productionWorkflow).toContain('ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION');
-    expect(productionWorkflow).toContain("if: inputs.operation != 'activate-reviewed'");
+    expect(productionWorkflow).toContain(
+      "if: inputs.operation != 'activate-draft' && inputs.operation != 'activate-reviewed'",
+    );
     expect(productionWorkflow).toContain('--activate-reviewed');
     expect(productionWorkflow).toContain('--confirm-activation="$REQUESTED_CONFIRMATION"');
     expect(productionWorkflow).toContain('reviewed_video_final_job_id:');
     expect(productionWorkflow).toContain('--reviewed-video-final-job-id="$REVIEWED_VIDEO_FINAL_JOB_ID"');
     expect(productionWorkflow).toContain('--expected-deployed-sha="$GITHUB_SHA"');
-    expect(productionWorkflow).toContain("if: inputs.operation == 'activate-reviewed'");
+    expect(productionWorkflow).toContain(
+      "if: inputs.operation == 'activate-draft' || inputs.operation == 'activate-reviewed'",
+    );
     expect(productionWorkflow).toContain('expectedTag.test(health.workerVersion.tag)');
     expect(productionWorkflow).toContain("workerBase !== 'https://api.insertplayer.ai'");
     expect(productionWorkflow).toContain("redirect: 'error'");
@@ -2290,12 +2383,24 @@ describe('Arcade roster provider preflight', () => {
   });
 
   it('keeps the Original operations free of reviewed Video-only requirements', () => {
-    expect(productionWorkflow).toContain("if: inputs.operation == 'activate-reviewed'");
+    expect(productionWorkflow).toContain(
+      "if: inputs.operation == 'activate-draft' || inputs.operation == 'activate-reviewed'",
+    );
     expect(productionWorkflow).toContain(
       'if [[ "$REQUESTED_OPERATION" != "activate-reviewed" && -n "$REVIEWED_VIDEO_FINAL_JOB_ID" ]]',
     );
     expect(productionWorkflow).toContain('seed_args+=(--confirm-production)');
     expect(productionWorkflow).toContain('seed_args+=(--resume --confirm-production)');
+  });
+
+  it('exposes complete draft activation as a pinned non-generation operation', () => {
+    expect(productionWorkflow).toContain('- activate-draft');
+    expect(productionWorkflow).toContain('ACTIVATE_COMPLETE_ARCADE_DRAFT_PRODUCTION');
+    expect(productionWorkflow).toContain('--activate-draft');
+    expect(productionWorkflow).toContain('--expected-deployed-sha="$GITHUB_SHA"');
+    expect(seedRosterScript).toContain('activateCompleteArcadeDraft');
+    expect(seedRosterScript).toContain('still has an active generation job');
+    expect(seedRosterScript).toContain('3 sources, 11 Champion animations; no generation requested');
   });
 
   it('keeps canary preparation separate from the capped side inference', () => {
