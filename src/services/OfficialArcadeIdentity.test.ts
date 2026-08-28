@@ -30,7 +30,7 @@ describe('official Arcade identity pipeline', () => {
       fighters: Array<{ referencePrompt: string }>;
     };
 
-    expect(manifest.fighters).toHaveLength(14);
+    expect(manifest.fighters).toHaveLength(15);
     for (const fighter of manifest.fighters) {
       expect(fighter.referencePrompt).toContain('licensed reference photo as the identity anchor');
       expect(fighter.referencePrompt).toContain("Preserve the person's recognizable facial structure");
