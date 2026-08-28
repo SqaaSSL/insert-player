@@ -1,7 +1,16 @@
+const SAMPLE_GROUPS: Record<string, string[]> = {
+  'hit-light': [0, 1, 2, 3, 4].map((i) => `/assets/audio/impactPunch_light_00${i}.m4a`),
+  'hit-heavy': [0, 1, 2, 3, 4].map((i) => `/assets/audio/impactPunch_heavy_00${i}.m4a`),
+  'block': [0, 1, 2].map((i) => `/assets/audio/impactPlate_light_00${i}.m4a`),
+};
+
 export class SoundManager {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
+  private samples = new Map<string, AudioBuffer[]>();
+  private sampleCursor = new Map<string, number>();
+  private samplesRequested = false;
 
   private ensureContext(): AudioContext {
     if (!this.ctx) {
@@ -15,6 +24,49 @@ export class SoundManager {
       this.ctx.resume();
     }
     return this.ctx;
+  }
+
+  /**
+   * Fire-and-forget load of the CC0 Kenney impact samples. Failures leave the
+   * procedural synth fallback in place; call after a user gesture.
+   */
+  preloadSamples(): void {
+    if (this.samplesRequested) return;
+    this.samplesRequested = true;
+    const ctx = this.ensureContext();
+    for (const [group, urls] of Object.entries(SAMPLE_GROUPS)) {
+      for (const url of urls) {
+        void fetch(url)
+          .then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error(String(res.status)))))
+          .then((bytes) => ctx.decodeAudioData(bytes))
+          .then((buffer) => {
+            const list = this.samples.get(group) ?? [];
+            list.push(buffer);
+            this.samples.set(group, list);
+          })
+          .catch(() => {
+            // Missing or undecodable sample: the synth fallback covers it.
+          });
+      }
+    }
+  }
+
+  private playSample(group: string, volume: number): boolean {
+    const list = this.samples.get(group);
+    if (!list || list.length === 0 || !this.ctx) return false;
+    const cursor = this.sampleCursor.get(group) ?? 0;
+    this.sampleCursor.set(group, (cursor + 1) % list.length);
+    const ctx = this.ensureContext();
+    const source = ctx.createBufferSource();
+    source.buffer = list[cursor];
+    // Small pitch jitter keeps repeated impacts from sounding machine-gunned.
+    source.playbackRate.value = 0.94 + Math.random() * 0.12;
+    const gain = ctx.createGain();
+    gain.gain.value = volume;
+    source.connect(gain);
+    gain.connect(this.getMaster());
+    source.start();
+    return true;
   }
 
   private getMaster(): GainNode {
@@ -102,6 +154,10 @@ export class SoundManager {
   }
 
   playHit(heavy: boolean): void {
+    if (this.playSample(heavy ? 'hit-heavy' : 'hit-light', heavy ? 1.15 : 0.9)) {
+      if (heavy) this.osc('sine', 180, 50, 140, 0.35); // sub-thump under the sample
+      return;
+    }
     if (heavy) {
       this.noiseBurst(180, 800, 2, 0.7, 2, 160);
       this.osc('sine', 200, 60, 120, 0.5);
@@ -112,6 +168,7 @@ export class SoundManager {
   }
 
   playBlock(): void {
+    if (this.playSample('block', 0.65)) return;
     const ctx = this.ensureContext();
     const master = this.getMaster();
     const now = ctx.currentTime;
@@ -210,6 +267,8 @@ export class SoundManager {
   }
 
   destroy(): void {
+    this.samples.clear();
+    this.sampleCursor.clear();
     this.masterGain?.disconnect();
     this.masterGain = null;
     this.noiseBuffer = null;

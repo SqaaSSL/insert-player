@@ -47,6 +47,10 @@ export class HUD {
   private p2Health = MAX_HEALTH;
   private displayP1Health = MAX_HEALTH;
   private displayP2Health = MAX_HEALTH;
+  // Ghost bars trail behind real damage so the player reads how much the
+  // last exchange cost (classic SF/Tekken delayed drain).
+  private ghostP1Health = MAX_HEALTH;
+  private ghostP2Health = MAX_HEALTH;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -136,6 +140,12 @@ export class HUD {
 
     this.displayP1Health += (this.p1Health - this.displayP1Health) * 0.15;
     this.displayP2Health += (this.p2Health - this.displayP2Health) * 0.15;
+    this.ghostP1Health = this.p1Health > this.ghostP1Health
+      ? this.p1Health
+      : this.ghostP1Health + (this.p1Health - this.ghostP1Health) * 0.03;
+    this.ghostP2Health = this.p2Health > this.ghostP2Health
+      ? this.p2Health
+      : this.ghostP2Health + (this.p2Health - this.ghostP2Health) * 0.03;
 
     this.timerText.setText(Math.ceil(timer).toString().padStart(2, '0'));
     this.drawHealthBars();
@@ -315,6 +325,15 @@ export class HUD {
     this.p1HealthBar.fillStyle(0x222222);
     this.p1HealthBar.fillRoundedRect(BAR_X, BAR_Y, BAR_WIDTH, BAR_HEIGHT, 4);
     const p1Ratio = Math.max(0, this.displayP1Health / MAX_HEALTH);
+    const p1Ghost = Math.max(p1Ratio, this.ghostP1Health / MAX_HEALTH);
+    this.p1HealthBar.fillStyle(0xdd5533, 0.85);
+    this.p1HealthBar.fillRoundedRect(
+      BAR_X + BAR_WIDTH * (1 - p1Ghost),
+      BAR_Y,
+      BAR_WIDTH * p1Ghost,
+      BAR_HEIGHT,
+      4,
+    );
     const p1Color = p1Ratio > 0.3 ? 0x44cc44 : p1Ratio > 0.15 ? 0xcccc44 : 0xcc4444;
     this.p1HealthBar.fillStyle(p1Color);
     this.p1HealthBar.fillRoundedRect(
@@ -332,6 +351,9 @@ export class HUD {
     this.p2HealthBar.fillStyle(0x222222);
     this.p2HealthBar.fillRoundedRect(p2BarX, BAR_Y, BAR_WIDTH, BAR_HEIGHT, 4);
     const p2Ratio = Math.max(0, this.displayP2Health / MAX_HEALTH);
+    const p2Ghost = Math.max(p2Ratio, this.ghostP2Health / MAX_HEALTH);
+    this.p2HealthBar.fillStyle(0xdd5533, 0.85);
+    this.p2HealthBar.fillRoundedRect(p2BarX, BAR_Y, BAR_WIDTH * p2Ghost, BAR_HEIGHT, 4);
     const p2Color = p2Ratio > 0.3 ? 0x44cc44 : p2Ratio > 0.15 ? 0xcccc44 : 0xcc4444;
     this.p2HealthBar.fillStyle(p2Color);
     this.p2HealthBar.fillRoundedRect(p2BarX, BAR_Y, BAR_WIDTH * p2Ratio, BAR_HEIGHT, 4);

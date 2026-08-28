@@ -3,7 +3,7 @@ import { Fighter } from "../fighters/Fighter.ts";
 import { Projectile } from "../fighters/Projectile.ts";
 import { CombatSystem, type HitEvent } from "../systems/CombatSystem.ts";
 import { AIController } from "../systems/AIController.ts";
-import { InputManager } from "../systems/InputManager.ts";
+import { InputManager, type FighterInput } from "../systems/InputManager.ts";
 import { SoundManager } from "../systems/SoundManager.ts";
 import { HUD } from "../ui/HUD.ts";
 import { SeededRng } from "../utils/SeededRng.ts";
@@ -105,6 +105,9 @@ export class FightScene extends Phaser.Scene {
   private matchSeed = 1;
   private remix = 0;
   private p2Difficulty: number | null = null;
+  private hitstopFrames = 0;
+  private latchedP1: FighterInput | null = null;
+  private latchedP2: FighterInput | null = null;
   private stageFloorY = GROUND_Y;
   private fighterRenderScale = 1;
   private fighterRenderYOffset = 0;
@@ -229,6 +232,7 @@ export class FightScene extends Phaser.Scene {
     this.combat = new CombatSystem();
     this.inputMgr = new InputManager(this);
     this.sound_mgr = new SoundManager();
+    this.sound_mgr.preloadSamples();
     this.introEnterKey = this.input.keyboard?.addKey(
       Phaser.Input.Keyboard.KeyCodes.ENTER,
     );
@@ -1624,6 +1628,11 @@ export class FightScene extends Phaser.Scene {
     this.phaseTimer = 120;
     this.roundTimer = ROUND_TIME;
     this.frameCount = 0;
+    this.hitstopFrames = 0;
+    this.latchedP1 = null;
+    this.latchedP2 = null;
+    this.cameras.main.zoomTo(1, 200, 'Sine.easeOut');
+    this.cameras.main.pan(512, 288, 200, 'Sine.easeOut', true);
     this.cinematicIntroActive = false;
     this.introVideoSequenceActive = false;
     this.introCanSkip = false;
@@ -1698,7 +1707,12 @@ export class FightScene extends Phaser.Scene {
       this.phase === RoundPhase.MATCH_END
     ) {
       this.phaseTimer--;
-      this.updateRoundEndPresentation(delta);
+      if (this.hitstopFrames > 0) {
+        // KO freeze: hold the death pop for a beat before it plays out.
+        this.hitstopFrames--;
+      } else {
+        this.updateRoundEndPresentation(delta);
+      }
       this.p1.syncSprite(this.p2.x);
       this.p2.syncSprite(this.p1.x);
 
@@ -1761,6 +1775,16 @@ export class FightScene extends Phaser.Scene {
     this.frameCount++;
     const dt = FIXED_TIMESTEP / 1000;
 
+    // Hitstop: freeze the whole combat sim for a few frames on impact.
+    // Human button presses during the freeze are latched so mashed inputs
+    // still come out on unfreeze; AI sides are simply not ticked (keeps the
+    // seeded RNG stream untouched).
+    if (this.hitstopFrames > 0) {
+      this.hitstopFrames--;
+      this.latchHumanInputs();
+      return;
+    }
+
     // Timer
     this.roundTimer -= dt;
     if (this.roundTimer <= 0) {
@@ -1772,14 +1796,20 @@ export class FightScene extends Phaser.Scene {
     // Read inputs
     const p1Input = this.cpuVsCpu
       ? this.ai2.getInput(this.p1, this.p2)
-      : this.inputMgr.readPlayer1();
+      : this.mergeLatched(this.inputMgr.readPlayer1(), this.latchedP1);
     const p2Input = this.isVsAI
       ? this.ai.getInput(this.p2, this.p1)
-      : this.inputMgr.readPlayer2();
+      : this.mergeLatched(this.inputMgr.readPlayer2(), this.latchedP2);
+    this.latchedP1 = null;
+    this.latchedP2 = null;
 
     // Update fighters
+    const p1PrevState = this.p1.state;
+    const p2PrevState = this.p2.state;
     this.p1.update(dt, p1Input, this.p2.x);
     this.p2.update(dt, p2Input, this.p1.x);
+    this.emitAttackAudio(p1PrevState, this.p1.state);
+    this.emitAttackAudio(p2PrevState, this.p2.state);
 
     // Spawn fireballs at release frame
     this.checkFireballSpawn(this.p1);
@@ -1797,6 +1827,60 @@ export class FightScene extends Phaser.Scene {
     // Check KO
     if (this.p1.health <= 0 || this.p2.health <= 0) {
       this.endRound();
+    }
+  }
+
+  private latchHumanInputs(): void {
+    if (!this.cpuVsCpu) {
+      this.latchedP1 = this.orInputs(this.latchedP1, this.inputMgr.readPlayer1());
+    }
+    if (!this.isVsAI) {
+      this.latchedP2 = this.orInputs(this.latchedP2, this.inputMgr.readPlayer2());
+    }
+  }
+
+  private orInputs(base: FighterInput | null, next: FighterInput): FighterInput {
+    if (!base) return { ...next };
+    return {
+      left: next.left,
+      right: next.right,
+      up: base.up || next.up,
+      down: next.down,
+      guard: next.guard,
+      punch: base.punch || next.punch,
+      kick: base.kick || next.kick,
+      fireball: base.fireball || next.fireball,
+      uppercut: base.uppercut || next.uppercut,
+    };
+  }
+
+  private mergeLatched(current: FighterInput, latched: FighterInput | null): FighterInput {
+    if (!latched) return current;
+    return {
+      ...current,
+      up: current.up || latched.up,
+      punch: current.punch || latched.punch,
+      kick: current.kick || latched.kick,
+      fireball: current.fireball || latched.fireball,
+      uppercut: current.uppercut || latched.uppercut,
+    };
+  }
+
+  private emitAttackAudio(prev: FighterState, next: FighterState): void {
+    if (prev === next) return;
+    switch (next) {
+      case FighterState.HIGH_PUNCH:
+      case FighterState.LOW_PUNCH:
+      case FighterState.HIGH_KICK:
+      case FighterState.LOW_KICK:
+        this.sound_mgr.playWhoosh();
+        break;
+      case FighterState.FIREBALL:
+        this.sound_mgr.playFireball();
+        break;
+      case FighterState.UPPERCUT:
+        this.sound_mgr.playUppercut();
+        break;
     }
   }
 
@@ -1923,16 +2007,18 @@ export class FightScene extends Phaser.Scene {
       this.sound_mgr.playHit(event.damage > 50);
     }
 
-    // Hit freeze + screen effects for unblocked hits
-    if (!event.blocked) {
-      const freezeDuration = event.damage > 50 ? 100 : 60;
-      ScreenEffects.slowMotion(this, freezeDuration, 0.05);
-
-      if (event.damage > 50) {
-        ScreenEffects.flashRed(this, 150);
-      } else {
-        ScreenEffects.flashWhite(this, 60);
-      }
+    // Impact: deterministic sim freeze + camera shake scaled by weight.
+    if (event.blocked) {
+      this.hitstopFrames = Math.max(this.hitstopFrames, 3);
+      this.cameras.main.shake(50, 0.0015);
+    } else if (event.damage > 50) {
+      this.hitstopFrames = Math.max(this.hitstopFrames, 10);
+      this.cameras.main.shake(120, 0.006);
+      ScreenEffects.flashRed(this, 150);
+    } else {
+      this.hitstopFrames = Math.max(this.hitstopFrames, 6);
+      this.cameras.main.shake(80, 0.003);
+      ScreenEffects.flashWhite(this, 60);
     }
 
     // Sparks
@@ -1990,6 +2076,8 @@ export class FightScene extends Phaser.Scene {
     let winner: Fighter;
     if (this.p1.health <= 0 && this.p2.health <= 0) {
       this.hud.showAnnouncement("DOUBLE K.O.!", 2500);
+      this.hitstopFrames = 14;
+      this.cameras.main.shake(250, 0.01);
       this.sound_mgr.playKO();
       this.sound_mgr.playAnnounce("ko");
       this.p1.syncSprite(this.p2.x);
@@ -2014,6 +2102,13 @@ export class FightScene extends Phaser.Scene {
       this.sound_mgr.playKO();
       this.sound_mgr.playAnnounce("ko");
       ScreenEffects.flashWhite(this, 200);
+      // KO drama: long freeze, big shake, slow-motion effects, camera punch-in.
+      this.hitstopFrames = 14;
+      this.cameras.main.shake(250, 0.01);
+      ScreenEffects.slowMotion(this, 700, 0.3);
+      const koMidX = (this.p1.x + this.p2.x) / 2;
+      this.cameras.main.pan(koMidX, 330, 400, 'Sine.easeOut', true);
+      this.cameras.main.zoomTo(1.12, 400, 'Sine.easeOut');
     } else {
       loser.forceState(FighterState.DEFEAT);
     }
