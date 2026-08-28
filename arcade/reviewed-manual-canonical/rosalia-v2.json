@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "descriptorType": "reviewed_manual_canonical_set_v1",
+  "status": "approved",
+  "fighter": {
+    "slug": "rosalia-v2",
+    "name": "Rosalía V2",
+    "photoHash": "1ac0e6562015961764579ec168ba1091c1059c217ba7484616d1ce3fcab12dac"
+  },
+  "r2": {
+    "bucket": "insert-player-assets",
+    "jurisdiction": "eu",
+    "prefix": "official-roster-canonical-inputs/rosalia-v2"
+  },
+  "review": {
+    "decision": "APPROVE_REVIEWED_MANUAL_CANONICAL_SET_V1",
+    "blockingFindings": []
+  },
+  "sources": {
+    "side": {
+      "kind": "side",
+      "r2ObjectKey": "official-roster-canonical-inputs/rosalia-v2/side_ec8944f1dd55dbdff19d8a6df5e3a5a4d3a964ab9eaf2cbaff1219b20538c3ff.png",
+      "contentSha256": "ec8944f1dd55dbdff19d8a6df5e3a5a4d3a964ab9eaf2cbaff1219b20538c3ff",
+      "sizeBytes": 674069,
+      "width": 1086,
+      "height": 1448,
+      "mimeType": "image/png"
+    },
+    "side_raw": {
+      "kind": "side_raw",
+      "r2ObjectKey": "official-roster-canonical-inputs/rosalia-v2/side_raw_7a5cd6e8ebb6d50e3a366c1c83fdb149bf42865bff87ec6189e1f200a1393577.png",
+      "contentSha256": "7a5cd6e8ebb6d50e3a366c1c83fdb149bf42865bff87ec6189e1f200a1393577",
+      "sizeBytes": 1396810,
+      "width": 1086,
+      "height": 1448,
+      "mimeType": "image/png"
+    },
+    "upright": {
+      "kind": "upright",
+      "r2ObjectKey": "official-roster-canonical-inputs/rosalia-v2/upright_96aec505cb21a34a14c3c6ac79279641543ebe14f85fcbc099f9a74caae8e6e0.png",
+      "contentSha256": "96aec505cb21a34a14c3c6ac79279641543ebe14f85fcbc099f9a74caae8e6e0",
+      "sizeBytes": 684917,
+      "width": 1086,
+      "height": 1448,
+      "mimeType": "image/png"
+    },
+    "upright_raw": {
+      "kind": "upright_raw",
+      "r2ObjectKey": "official-roster-canonical-inputs/rosalia-v2/upright_raw_a27d2f7cee284c0fdb8273bd25a3f6d805deb7d4c22f5808b72a60752b4db12b.png",
+      "contentSha256": "a27d2f7cee284c0fdb8273bd25a3f6d805deb7d4c22f5808b72a60752b4db12b",
+      "sizeBytes": 1390516,
+      "width": 1086,
+      "height": 1448,
+      "mimeType": "image/png"
+    },
+    "crouch": {
+      "kind": "crouch",
+      "r2ObjectKey": "official-roster-canonical-inputs/rosalia-v2/crouch_e1594ece4ec8aa64f6168a21a5960cac2e78943422ffe0d22720e5264febf03a.png",
+      "contentSha256": "e1594ece4ec8aa64f6168a21a5960cac2e78943422ffe0d22720e5264febf03a",
+      "sizeBytes": 731573,
+      "width": 1086,
+      "height": 1448,
+      "mimeType": "image/png"
+    },
+    "crouch_raw": {
+      "kind": "crouch_raw",
+      "r2ObjectKey": "official-roster-canonical-inputs/rosalia-v2/crouch_raw_102b340e188d18d7591548bd141c1d5f15e198864a9214efe9275e4fa3e23f81.png",
+      "contentSha256": "102b340e188d18d7591548bd141c1d5f15e198864a9214efe9275e4fa3e23f81",
+      "sizeBytes": 1423426,
+      "width": 1086,
+      "height": 1448,
+      "mimeType": "image/png"
+    }
+  },
+  "safety": {
+    "providerCalls": 0,
+    "generationStarted": false,
+    "activated": false,
+    "allowedSourcePosts": [
+      "side",
+      "side_raw",
+      "upright",
+      "upright_raw",
+      "crouch",
+      "crouch_raw"
+    ]
+  }
+}

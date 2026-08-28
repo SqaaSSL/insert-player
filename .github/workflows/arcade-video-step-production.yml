@@ -179,6 +179,7 @@ jobs:
             '.github/workflows/import-reviewed-xai-canonical-production.yml',
             '.github/workflows/import-reviewed-elon-mixed-canonical-production.yml',
             '.github/workflows/import-reviewed-global-mixed-canonical-production.yml',
+            '.github/workflows/import-reviewed-manual-canonical-production.yml',
           ]);
           const producerPath = String(run.path ?? '').split('@', 1)[0];
           const expectedId = Number(process.env.REVIEWED_MANIFEST_RUN_ID);

@@ -180,6 +180,7 @@ jobs:
             '.github/workflows/import-reviewed-xai-canonical-production.yml',
             '.github/workflows/import-reviewed-elon-mixed-canonical-production.yml',
             '.github/workflows/import-reviewed-global-mixed-canonical-production.yml',
+            '.github/workflows/import-reviewed-manual-canonical-production.yml',
           ]);
           const path = String(run.path ?? '').split('@', 1)[0];
           if (

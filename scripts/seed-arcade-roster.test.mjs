@@ -1909,6 +1909,7 @@ describe('Review-gated Arcade Video step', () => {
     expect(videoStepWorkflow).toContain('import-reviewed-xai-canonical-production.yml');
     expect(videoStepWorkflow).toContain('import-reviewed-elon-mixed-canonical-production.yml');
     expect(videoStepWorkflow).toContain('import-reviewed-global-mixed-canonical-production.yml');
+    expect(videoStepWorkflow).toContain('import-reviewed-manual-canonical-production.yml');
     expect(videoStepWorkflow).toContain('arcade-reviewed-canonical-manifest-$REQUESTED_SLUG');
     expect(videoStepWorkflow).toContain('--reviewed-canonical-manifest=%s');
     expect(videoStepWorkflow).toContain('--expected-deployed-sha="$GITHUB_SHA"');
@@ -1952,6 +1953,7 @@ describe('Review-gated Arcade Video step', () => {
     expect(videoReviewWorkflow).toContain("if: inputs.operation != 'inspect'");
     expect(videoReviewWorkflow).toContain('run.head_sha !== process.env.GITHUB_SHA');
     expect(videoReviewWorkflow).toContain('arcade-video-step-production.yml');
+    expect(videoReviewWorkflow).toContain('import-reviewed-manual-canonical-production.yml');
     expect(videoReviewWorkflow).toContain('arcade-video-review-$REQUESTED_SLUG-$INSPECTION_RUN_ID');
     expect(videoReviewWorkflow).toContain('review-descriptor.json');
     expect(videoReviewWorkflow).toContain('reviewedManifestSha256 === manifestSha');
