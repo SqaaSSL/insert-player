@@ -133,7 +133,7 @@ async function compilerFixture(operatorAdjustmentApplied = false, rawByteLength 
     action: 'idle',
     expectedFacing: 'right',
     animationFormat: 'video-dense-v1',
-    processingVersion: 5,
+    processingVersion: 6,
     lineage,
     inputs: {
       videoSha256: lineage.videoSha256,
@@ -189,7 +189,7 @@ async function compilerFixture(operatorAdjustmentApplied = false, rawByteLength 
   const response = {
     schemaVersion: 1,
     animationFormat: 'video-dense-v1',
-    processingVersion: 5,
+    processingVersion: 6,
     frameW: 192,
     frameH: 256,
     frameCount: 8,

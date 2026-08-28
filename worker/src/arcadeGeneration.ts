@@ -28,6 +28,10 @@ import {
 } from './reviewedCanonicalSources';
 import { requireReviewedProductionWorkerPin } from './reviewedDeploymentPin';
 import { readEligibleUnsealedVideoPartialRestart } from './videoRunRestart';
+import {
+  VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+  VIDEO_SPRITE_PROCESSING_VERSION,
+} from '../../src/services/VideoSpriteCompileContract';
 
 const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
 const AUTHORIZATION_TTL_HOURS = 12;
@@ -189,6 +193,10 @@ export async function readAdminArcadeGenerationContract(
       status?: unknown;
       runtime?: unknown;
       imageProviderContract?: unknown;
+      videoSpriteCompiler?: {
+        schemaVersion?: unknown;
+        processingVersion?: unknown;
+      };
     }>();
     if (payload.status !== 'ok') {
       return json({
@@ -214,10 +222,23 @@ export async function readAdminArcadeGenerationContract(
         reason: 'processor_contract_unapproved',
       }, 503);
     }
+    if (
+      payload.videoSpriteCompiler?.schemaVersion !== VIDEO_SPRITE_COMPILE_SCHEMA_VERSION ||
+      payload.videoSpriteCompiler.processingVersion !== VIDEO_SPRITE_PROCESSING_VERSION
+    ) {
+      return json({
+        error: 'Image processor Video sprite compiler is incompatible',
+        reason: 'processor_video_compiler_incompatible',
+      }, 503);
+    }
     return json({
       ready: true,
       runtime: payload.runtime,
       contract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      videoSpriteCompiler: {
+        schemaVersion: payload.videoSpriteCompiler.schemaVersion,
+        processingVersion: payload.videoSpriteCompiler.processingVersion,
+      },
     });
   } catch {
     return json({

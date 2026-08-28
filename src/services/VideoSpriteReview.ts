@@ -20,7 +20,7 @@ export interface VideoSpriteReview {
   rawFrameCount: number;
   sourceFrameCount: number;
   animationFormat: 'video-dense-v1';
-  processingVersion: 5;
+  processingVersion: 5 | 6;
   createdAt: string;
   reviewedAt: string | null;
   continuationAvailable: boolean;

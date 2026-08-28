@@ -38,7 +38,8 @@
     "db:execute:0028": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0028_sprite_animation_format.sql",
     "db:execute:0029": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0029_generation_creation_flow.sql",
     "db:execute:0030": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0030_pixcli_transport.sql",
-    "db:execute:0031": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0031_video_sprite_review.sql"
+    "db:execute:0031": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0031_video_sprite_review.sql",
+    "db:execute:0032": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0032_video_sprite_safe_registration.sql"
   },
   "devDependencies": {
     "wrangler": "^4.125.0"

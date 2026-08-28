@@ -83,7 +83,7 @@ export interface VideoSpriteCandidateRevisionRow {
   raw_frame_count: number;
   source_frame_count: number;
   animation_format: 'video-dense-v1';
-  processing_version: 5;
+  processing_version: 5 | 6;
   selected_indices_json: string;
   playback_json: string;
   translations_json: string;
@@ -1175,7 +1175,8 @@ async function requireCurrentVideoSpriteIntegrity(
     current.raw_blob_key !== version.raw_blob_key || current.content_hash !== version.content_hash ||
     current.raw_content_hash !== version.raw_content_hash || current.frame_w !== 192 ||
     current.frame_h !== 256 || current.frame_count !== version.frame_count ||
-    current.animation_format !== 'video-dense-v1' || current.processing_version !== 5
+    current.animation_format !== 'video-dense-v1' ||
+    current.processing_version !== review.processing_version
   ) {
     throw new ReviewedVideoActivationError(
       `Current ${review.action} sprite no longer matches its approved Video revision`,
@@ -1292,7 +1293,8 @@ export async function verifyReviewedVideoRunForActivation(
       review.tier !== 'champion' || review.operation !== 'fighter_generation' ||
       review.job_target_kind !== null || review.target_name !== null ||
       review.run_status !== 'succeeded' || review.run_id !== final.run_id ||
-      review.animation_format !== 'video-dense-v1' || review.processing_version !== 5 ||
+      review.animation_format !== 'video-dense-v1' ||
+      ![5, 6].includes(review.processing_version) ||
       review.frame_w !== 192 || review.frame_h !== 256 ||
       !lineageJob || lineageJob.user_id !== auth.userId ||
       lineageJob.fighter_id !== fighterId || lineageJob.tier !== 'champion' ||
@@ -1353,7 +1355,8 @@ export async function verifyReviewedVideoRunForActivation(
       checkpoint.raw_content_hash !== version.raw_content_hash ||
       checkpoint.frame_w !== 192 || checkpoint.frame_h !== 256 ||
       checkpoint.frame_count !== version.frame_count ||
-      checkpoint.animation_format !== 'video-dense-v1' || checkpoint.processing_version !== 5
+      checkpoint.animation_format !== 'video-dense-v1' ||
+      checkpoint.processing_version !== review.processing_version
     ) {
       throw new ReviewedVideoActivationError(
         `Approved ${candidate.action} Video checkpoint changed before activation`,

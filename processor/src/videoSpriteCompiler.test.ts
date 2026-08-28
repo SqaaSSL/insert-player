@@ -4,6 +4,7 @@ import test from 'node:test';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { processorErrorResponse } from './providerErrorResponse.ts';
 import { compileVideoSprite } from './videoSpriteCompiler.ts';
+import { VIDEO_SPRITE_PROCESSING_VERSION } from './videoSpriteContract.ts';
 import {
   VideoSpriteCompileError,
   parseVideoSpriteCompileRequest,
@@ -107,7 +108,7 @@ test('compiles an extracted video into a reproducible dense sheet and hash-bound
   const first = await compileVideoSprite(body, { mediaAdapter });
   const second = await compileVideoSprite(body, { mediaAdapter });
   assert.equal(first.animationFormat, 'video-dense-v1');
-  assert.equal(first.processingVersion, 5);
+  assert.equal(first.processingVersion, VIDEO_SPRITE_PROCESSING_VERSION);
   assert.equal(first.frameW, 192);
   assert.equal(first.frameH, 256);
   assert.equal(first.frameCount, 11);

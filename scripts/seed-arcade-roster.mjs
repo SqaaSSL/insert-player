@@ -126,7 +126,8 @@ export const REVIEW_GATED_VIDEO_REVIEW_CONFIRMATIONS = Object.freeze({
 });
 export const REVIEWED_CANONICAL_SOURCE_MODE = 'reviewed-current-v1';
 export const VIDEO_DENSE_ANIMATION_FORMAT = 'video-dense-v1';
-export const VIDEO_DENSE_PROCESSING_VERSION = 5;
+export const VIDEO_DENSE_PROCESSING_VERSION = 6;
+const VIDEO_DENSE_PROCESSING_VERSIONS = new Set([5, VIDEO_DENSE_PROCESSING_VERSION]);
 const COMPLETE_REVIEWED_VIDEO_STAGES = Object.freeze([
   ...CANONICAL_SOURCE_NAMES.map((name) => `source:${name}`),
   ...REVIEW_GATED_VIDEO_ACTIONS.map((name) => `sprite:${name}`),
@@ -156,6 +157,8 @@ export function assertApprovedArcadeGenerationContract(payload) {
   const expected = APPROVED_ARCADE_PROVIDER_CONTRACT;
   const approved = payload?.ready === true
     && payload?.runtime === 'canvas-skia'
+    && payload?.videoSpriteCompiler?.schemaVersion === 1
+    && payload?.videoSpriteCompiler?.processingVersion === VIDEO_DENSE_PROCESSING_VERSION
     && contract?.schemaVersion === expected.schemaVersion
     && contract?.processorRuntimeRevision === expected.processorRuntimeRevision
     && Array.isArray(providers)
@@ -941,7 +944,7 @@ function assertApprovedVideoReviewForActivation(review, job, expectedAction, seq
     /^[a-f0-9]{64}$/.test(review?.reportSha256 ?? '') ? null : 'reportSha256',
     ['technical_pass', 'needs_review'].includes(review?.technicalOutcome) ? null : 'technicalOutcome',
     review?.animationFormat === VIDEO_DENSE_ANIMATION_FORMAT ? null : 'animationFormat',
-    review?.processingVersion === VIDEO_DENSE_PROCESSING_VERSION ? null : 'processingVersion',
+    VIDEO_DENSE_PROCESSING_VERSIONS.has(review?.processingVersion) ? null : 'processingVersion',
     Number.isInteger(review?.frameCount) && review.frameCount >= 2 ? null : 'frameCount',
     Number.isInteger(review?.rawFrameCount) && review.rawFrameCount >= 2 ? null : 'rawFrameCount',
     typeof review?.reviewedAt === 'string' && review.reviewedAt ? null : 'reviewedAt',
@@ -1065,7 +1068,7 @@ export async function verifyReviewedVideoActivationProvenance({
       sprite ? null : 'missing',
       sprite?.qualityTier === 'champion' ? null : 'tier',
       sprite?.animationFormat === VIDEO_DENSE_ANIMATION_FORMAT ? null : 'animationFormat',
-      sprite?.processingVersion === VIDEO_DENSE_PROCESSING_VERSION ? null : 'processingVersion',
+      VIDEO_DENSE_PROCESSING_VERSIONS.has(sprite?.processingVersion) ? null : 'processingVersion',
       sprite?.frameWidth === 192 ? null : 'frameWidth',
       sprite?.frameHeight === 256 ? null : 'frameHeight',
       sprite?.frameCount === review.frameCount ? null : 'frameCount',
@@ -1467,7 +1470,7 @@ function assertExactVideoReviewBinding(review, job, binding) {
     review.revision === binding.revision ? null : 'revision',
     review.reportSha256 === binding.reportSha256 ? null : 'reportSha256',
     review.animationFormat === VIDEO_DENSE_ANIMATION_FORMAT ? null : 'animationFormat',
-    review.processingVersion === VIDEO_DENSE_PROCESSING_VERSION ? null : 'processingVersion',
+    VIDEO_DENSE_PROCESSING_VERSIONS.has(review.processingVersion) ? null : 'processingVersion',
     Number.isInteger(review.sourceFrameCount) && review.sourceFrameCount >= 2
       ? null : 'sourceFrameCount',
     Array.isArray(review.selectedVideoIndices) ? null : 'selectedVideoIndices',
@@ -1595,7 +1598,7 @@ export async function runReviewGatedVideoDecision({
     || updated.action !== review.action
     || updated.sequenceOrder !== review.sequenceOrder
     || updated.animationFormat !== VIDEO_DENSE_ANIMATION_FORMAT
-    || updated.processingVersion !== VIDEO_DENSE_PROCESSING_VERSION;
+    || !VIDEO_DENSE_PROCESSING_VERSIONS.has(updated.processingVersion);
   if (identityChanged) {
     throw new Error('Video review decision response crossed its sealed job, run, or action identity.');
   }

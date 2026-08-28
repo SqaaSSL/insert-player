@@ -2,6 +2,7 @@ import { hashString } from './auth';
 import {
   VIDEO_SPRITE_ACTION_PROFILES,
   VIDEO_SPRITE_ACTIONS,
+  VIDEO_SPRITE_PROCESSING_VERSION,
   type VideoSpriteAction,
   type VideoSpriteCompileResponse,
 } from '../../src/services/VideoSpriteCompileContract';
@@ -622,7 +623,7 @@ export async function projectCompilerReport(
   if (
     response.schemaVersion !== 1 ||
     response.animationFormat !== 'video-dense-v1' ||
-    response.processingVersion !== 5 ||
+    response.processingVersion !== VIDEO_SPRITE_PROCESSING_VERSION ||
     response.frameW !== 192 || response.frameH !== 256 ||
     response.rawFrameW !== 768 || response.rawFrameH !== 1024 ||
     report.schema !== 'video-sprite-compile-report.v1' ||

@@ -144,6 +144,48 @@ test('root-registers vertical video motion with bounded integer translations', (
   assert.notEqual(compiled.decision, 'reject');
 });
 
+test('clamps root registration before it crops a complete wide contact pose', () => {
+  const width = 32;
+  const height = 48;
+  const canonical = drawSubject(width, height, { x: 14 });
+  const frames = Array.from({ length: 24 }, (_, sourceIndex) => ({
+    ...drawSubject(width, height, { x: 2, armExtension: 18 }),
+    sourceIndex,
+  }));
+  const compiled = compileVideoSpriteFrames(
+    'high_punch',
+    canonical,
+    frames,
+    [0, 1, 2, 3, 4],
+  );
+  assert.ok(compiled.translations.slice(1).every(({ dx }) => dx === 1));
+  assert.ok(compiled.selectedMetrics.slice(1).every((metric) => metric.margins?.right === 2 / width));
+  assert.ok(!compiled.reasonCodes.includes('subject_not_cropped'));
+  assert.ok(!compiled.reasonCodes.includes('registration_preserves_subject'));
+  assert.notEqual(compiled.decision, 'reject');
+});
+
+test('preserves a complete pose when it only has a one-pixel edge margin', () => {
+  const width = 32;
+  const height = 48;
+  const canonical = drawSubject(width, height, { x: 14 });
+  const frames = Array.from({ length: 24 }, (_, sourceIndex) => ({
+    ...drawSubject(width, height, { x: 1, armExtension: 21 }),
+    sourceIndex,
+  }));
+  const compiled = compileVideoSpriteFrames(
+    'high_punch',
+    canonical,
+    frames,
+    [0, 1, 2, 3, 4],
+  );
+  assert.ok(compiled.translations.slice(1).every(({ dx }) => dx === 0));
+  assert.ok(compiled.selectedMetrics.slice(1).every((metric) => metric.margins?.right === 1 / width));
+  assert.ok(!compiled.reasonCodes.includes('subject_not_cropped'));
+  assert.ok(!compiled.reasonCodes.includes('registration_preserves_subject'));
+  assert.notEqual(compiled.decision, 'reject');
+});
+
 test('routes disconnected foreground to review and edge-cropped foreground to reject', () => {
   const width = 32;
   const height = 48;

@@ -262,7 +262,7 @@ jobs:
             Number.isInteger(descriptor.sourceFrameCount) && descriptor.sourceFrameCount >= 2
               ? null : 'sourceFrameCount',
             descriptor.animationFormat === 'video-dense-v1' ? null : 'animationFormat',
-            descriptor.processingVersion === 5 ? null : 'processingVersion',
+            [5, 6].includes(descriptor.processingVersion) ? null : 'processingVersion',
             Array.isArray(descriptor.selectedVideoIndices) && descriptor.selectedVideoIndices.length >= 2 &&
               descriptor.selectedVideoIndices.every((value) => Number.isSafeInteger(value) && value >= 0) &&
               new Set(descriptor.selectedVideoIndices).size === descriptor.selectedVideoIndices.length

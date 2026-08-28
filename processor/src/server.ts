@@ -6,6 +6,7 @@ import { compileVideoSprite } from './videoSpriteCompiler.ts';
 import {
   VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
   VIDEO_SPRITE_COMPILER_VERSION,
+  VIDEO_SPRITE_PROCESSING_VERSION,
 } from './videoSpriteContract.ts';
 import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
 
@@ -215,6 +216,7 @@ const server = createServer(async (request, response) => {
         videoSpriteCompiler: {
           schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
           compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
+          processingVersion: VIDEO_SPRITE_PROCESSING_VERSION,
         },
       });
       return;
