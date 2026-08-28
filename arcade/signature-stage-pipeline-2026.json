@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-28",
+  "pipeline": {
+    "operation": "stage_background",
+    "sourceMode": "transform-scene",
+    "model": "gemini-3.1-flash-image",
+    "output": {
+      "format": "png",
+      "width": 1024,
+      "height": 576
+    },
+    "normalization": {
+      "bottomShadeAlpha": 0.04,
+      "verticalBias": 0.92
+    }
+  },
+  "stages": [
+    {
+      "id": "executive-rumble",
+      "seed": {
+        "path": "/assets/stages/signature/executive-rumble-v2.png",
+        "sha256": "c01374d735cb8d3f1d49b1292f5c15c13d4960f05c8997b361bac2d752d03a0c"
+      },
+      "active": {
+        "path": "/assets/stages/signature/executive-rumble-pipeline-v1.png",
+        "sha256": "a93c60e3af03bd8625ed6b1d067321b7dd89e2e9795943400bdcaa3b52c1a310"
+      }
+    },
+    {
+      "id": "mars-incorporated",
+      "seed": {
+        "path": "/assets/stages/signature/mars-incorporated-v1.png",
+        "sha256": "79a18fd6a10d435b6fcac13a1022d88e12a9b10510ffe5c7142a9377cc4711f3"
+      },
+      "active": {
+        "path": "/assets/stages/signature/mars-incorporated-pipeline-v1.png",
+        "sha256": "a06e3b6b832d58b62f5ffe2a9d142bb3c5931963303d002e788207b7e239cd6b"
+      }
+    },
+    {
+      "id": "tablao-3000",
+      "seed": {
+        "path": "/assets/stages/signature/tablao-3000-v1.png",
+        "sha256": "e7107130571f27f83660c54e324a284c2e7c6a9c7d2de3f31a89e50873e0cc1a"
+      },
+      "active": {
+        "path": "/assets/stages/signature/tablao-3000-pipeline-v1.png",
+        "sha256": "c6e857bfb6bc9fbf3d67aceb59a2738d1ec5372c0e1808e7e12454b369a1e844"
+      }
+    },
+    {
+      "id": "la-jaula-304",
+      "seed": {
+        "path": "/assets/stages/signature/la-jaula-304-v1.png",
+        "sha256": "d3abf7c8558dce811fbeffdbbdf5defa671e62a5e6e99ef8f81a88d87f5d705f"
+      },
+      "active": {
+        "path": "/assets/stages/signature/la-jaula-304-pipeline-v1.png",
+        "sha256": "fc2b64e96472e895548aaccfec71e45899884eb08fd92299426f5395d0c0f945"
+      }
+    }
+  ]
+}

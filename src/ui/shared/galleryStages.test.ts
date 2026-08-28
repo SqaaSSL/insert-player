@@ -35,10 +35,10 @@ describe('Roster Lab stage catalog', () => {
       'global:la-jaula-304',
     ]);
     expect(GLOBAL_GALLERY_STAGES.map((stage) => stage.assetPath)).toEqual([
-      '/assets/stages/signature/executive-rumble-v2.png',
-      '/assets/stages/signature/mars-incorporated-v1.png',
-      '/assets/stages/signature/tablao-3000-v1.png',
-      '/assets/stages/signature/la-jaula-304-v1.png',
+      '/assets/stages/signature/executive-rumble-pipeline-v1.png',
+      '/assets/stages/signature/mars-incorporated-pipeline-v1.png',
+      '/assets/stages/signature/tablao-3000-pipeline-v1.png',
+      '/assets/stages/signature/la-jaula-304-pipeline-v1.png',
     ]);
   });
 
