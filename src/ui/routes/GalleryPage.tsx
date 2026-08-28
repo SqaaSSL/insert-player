@@ -32,6 +32,7 @@ import { Button } from '../components/Button.tsx';
 import { TierBadge } from '../components/TierBadge.tsx';
 import { Modal, ConfirmDialog } from '../components/Modal.tsx';
 import { GalleryFighterList } from '../components/GalleryFighterList.tsx';
+import { GalleryStageList } from '../components/GalleryStageList.tsx';
 import { SourceViewsPanel } from '../components/SourceViewsPanel.tsx';
 import { SpritePreviewSurface } from '../components/SpritePreviewSurface.tsx';
 import { DebugFeed } from '../components/DebugFeed.tsx';
@@ -55,6 +56,10 @@ import {
   markArcadeManagedMetas,
 } from '../shared/arcadeRosterIdentity.ts';
 import { visibleGalleryMetasForJobs } from '../shared/galleryVisibility.ts';
+import {
+  buildGalleryStageEntries,
+  clampGalleryStageIndex,
+} from '../shared/galleryStages.ts';
 import {
   loadGalleryCacheSnapshot,
   withGalleryTimeout,
@@ -332,7 +337,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       setMetas(initialVisibleMetas);
       setStages(initialVisibleStages);
       reconcileCurrentFighterIndex(initialVisibleMetas);
-      setCurrentStageIndex((current) => Math.min(current, Math.max(0, initialVisibleStages.length - 1)));
+      setCurrentStageIndex((current) => clampGalleryStageIndex(current, initialVisibleStages.length));
 
       if (initiallyMarked.changed.length > 0) {
         try {
@@ -454,7 +459,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       setMetas(filtered);
       setStages(filteredStages);
       reconcileCurrentFighterIndex(filtered);
-      setCurrentStageIndex((current) => Math.min(current, Math.max(0, filteredStages.length - 1)));
+      setCurrentStageIndex((current) => clampGalleryStageIndex(current, filteredStages.length));
       const cloudSyncStatus = formatCloudRosterSyncStatus({
         imported: cloudImported,
         updated: cloudUpdated,
@@ -610,8 +615,13 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     : previewSprite?.blob ?? null;
   const previewUrl = useObjectUrl(selection.kind === 'source' ? previewSourceBlob : null);
   const introUrl = useObjectUrl(getPrimaryIntroBlob(intro));
-  const currentStage = stages[currentStageIndex] ?? null;
-  const stagePreviewUrl = useObjectUrl(currentStage?.pngBlob ?? null);
+  const stageEntries = useMemo(() => buildGalleryStageEntries(stages), [stages]);
+  const currentStageEntry = stageEntries[currentStageIndex] ?? null;
+  const currentStage = currentStageEntry?.scope === 'owned' ? currentStageEntry.stage : null;
+  const currentGlobalStage = currentStageEntry?.scope === 'global' ? currentStageEntry.theme : null;
+  const ownedStagePreviewUrl = useObjectUrl(currentStage?.pngBlob ?? null);
+  const stagePreviewUrl = currentGlobalStage?.assetPath ?? ownedStagePreviewUrl;
+  const currentStageLabel = currentGlobalStage?.label ?? currentStage?.label ?? 'PHOTO STAGE';
 
   const safeName = (meta?.characterName || 'fighter').replace(/[^a-z0-9]/gi, '_');
   const selectedAnimName = selection.kind === 'animation' ? selection.animationName : null;
@@ -633,6 +643,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     : status && status !== 'No fighters or stages yet'
       ? status
       : 'Upload a photo to forge your first challenger.';
+  const stageStatus = status === 'No fighters or stages yet' ? 'Global stages ready' : status;
 
   useEffect(() => {
   }, [meta?.photoHash, selectedAnimName]);
@@ -667,7 +678,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setMetas(filtered);
     setStages(filteredStages);
     reconcileCurrentFighterIndex(filtered);
-    setCurrentStageIndex((current) => Math.min(current, Math.max(0, filteredStages.length - 1)));
+    setCurrentStageIndex((current) => clampGalleryStageIndex(current, filteredStages.length));
     setSprites(nextSprites);
     setIntro(nextIntro);
   };
@@ -1655,6 +1666,26 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     });
   };
 
+  const saveCurrentStagePng = async () => {
+    if (currentStage) {
+      const filename = `${(currentStage.label ?? 'photo_stage')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/gi, '_')
+        .replace(/^_+|_+$/g, '') || 'photo_stage'}.png`;
+      downloadBlob(currentStage.pngBlob, filename);
+      return;
+    }
+    if (!currentGlobalStage) return;
+
+    try {
+      const response = await fetch(currentGlobalStage.assetPath);
+      if (!response.ok) throw new Error(`Stage asset returned ${response.status}`);
+      downloadBlob(await response.blob(), `${currentGlobalStage.id}.png`);
+    } catch (err: any) {
+      setStatus(err?.message ? `Download failed: ${err.message}` : 'Download failed');
+    }
+  };
+
   const executeDeleteStage = async () => {
     if (!currentStage) return;
     setBusy(true);
@@ -1716,22 +1747,12 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
             onSelectArcade={(fighter) => void selectArcadeFighter(fighter)}
           />
         ) : (
-          <div className="gallery-sidebar__list">
-            {stages.map((stage, index) => (
-              <button
-                type="button"
-                key={stage.stageKey}
-                className={`gallery-fighter-card${index === currentStageIndex ? ' is-active' : ''}`}
-                aria-pressed={index === currentStageIndex}
-                onClick={() => setCurrentStageIndex(index)}
-              >
-                <span className="gallery-fighter-card__name">{(stage.label ?? 'PHOTO STAGE').toUpperCase()}</span>
-                <span className="gallery-fighter-card__meta">
-                  {formatDate(stage.createdAt)} · {stage.kind === 'photo-direct' ? 'direct photo' : 'forged'}
-                </span>
-              </button>
-            ))}
-          </div>
+          <GalleryStageList
+            entries={stageEntries}
+            selectedIndex={currentStageIndex}
+            disabled={busy}
+            onSelect={setCurrentStageIndex}
+          />
         )}
       </aside>
 
@@ -1992,21 +2013,24 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
               </div>
             </section>
           </>
-        ) : !currentStage ? (
+        ) : !currentStageEntry ? (
           <section className="gallery-empty">
-            <h2>No Custom Stages</h2>
-            <p>Stages forged from your own photos will appear here.</p>
+            <h2>No Stages Available</h2>
+            <p>Arcade and personal stages will appear here.</p>
           </section>
         ) : (
           <>
             <header className="gallery-hero">
               <div>
-                <h2>{(currentStage.label ?? 'PHOTO STAGE').toUpperCase()}</h2>
+                <h2>{currentStageLabel.toUpperCase()}</h2>
                 <p className="gallery-hero__meta">
-                  Stage {currentStageIndex + 1} of {stages.length} · Created {formatDate(currentStage.createdAt)} · Kind {currentStage.kind ?? 'photo'}
+                  Stage {currentStageIndex + 1} of {stageEntries.length} ·{' '}
+                  {currentGlobalStage
+                    ? 'Official global Arcade arena'
+                    : `Created ${formatDate(currentStage!.createdAt)} · Kind ${currentStage!.kind ?? 'photo'}`}
                 </p>
               </div>
-              <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
+              <div className="gallery-hero__status" role="status" aria-live="polite">{stageStatus}</div>
             </header>
 
             <section className="gallery-stage-layout">
@@ -2014,7 +2038,11 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                 <h3>Preview</h3>
                 <div className="gallery-stage-preview">
                   {stagePreviewUrl ? (
-                    <img src={stagePreviewUrl} alt="" className="gallery-stage-preview__image" />
+                    <img
+                      src={stagePreviewUrl}
+                      alt={`${currentStageLabel} stage`}
+                      className="gallery-stage-preview__image"
+                    />
                   ) : (
                     <div className="gallery-preview__empty">Missing stage image</div>
                   )}
@@ -2024,20 +2052,33 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
               <div className="gallery-panel">
                 <h3>Details</h3>
                 <div className="gallery-stage-meta">
-                  <p><strong>Label</strong> {(currentStage.label ?? 'PHOTO STAGE').toUpperCase()}</p>
-                  <p><strong>Kind</strong> {currentStage.kind === 'photo-direct' ? 'DIRECT PHOTO' : 'FORGED PHOTO STAGE'}</p>
-                  <p><strong>Created</strong> {formatDate(currentStage.createdAt)}</p>
+                  <p><strong>Label</strong> {currentStageLabel.toUpperCase()}</p>
+                  <p>
+                    <strong>Kind</strong>{' '}
+                    {currentGlobalStage
+                      ? 'OFFICIAL ARCADE STAGE'
+                      : currentStage!.kind === 'photo-direct' ? 'DIRECT PHOTO' : 'FORGED PHOTO STAGE'}
+                  </p>
+                  {currentGlobalStage ? (
+                    <p><strong>Arena</strong> {currentGlobalStage.blurb}</p>
+                  ) : (
+                    <p><strong>Created</strong> {formatDate(currentStage!.createdAt)}</p>
+                  )}
                 </div>
                 <div className="gallery-actions">
-                  <button type="button" disabled={!currentStage.pngBlob} onClick={() => downloadBlob(currentStage.pngBlob, `${((currentStage.label ?? 'photo_stage').toLowerCase().replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '')) || 'photo_stage'}.png`)}>
+                  <button type="button" disabled={!stagePreviewUrl} onClick={() => void saveCurrentStagePng()}>
                     Save PNG
                   </button>
-                  <button type="button" disabled={busy} onClick={() => renameStage()}>
-                    Rename
-                  </button>
-                  <button type="button" disabled={busy} onClick={() => deleteStage()}>
-                    Delete
-                  </button>
+                  {currentStage ? (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => renameStage()}>
+                        Rename
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => deleteStage()}>
+                        Delete
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               </div>
             </section>
