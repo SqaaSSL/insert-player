@@ -166,6 +166,26 @@ interface TransitionBody {
   promoteTransitionId: string | null;
 }
 
+interface ImportedRecurationTransitionRow {
+  id: string;
+  proposal_id: string;
+  fighter_id: string;
+  action: VideoSpriteAction;
+  operation: 'promote' | 'rollback';
+  actor_user_id: string;
+  from_sprite_version_id: string;
+  from_processed_sha256: string;
+  from_raw_sha256: string;
+  to_sprite_version_id: string;
+  to_processed_sha256: string;
+  to_raw_sha256: string;
+  expected_worker_sha: string;
+  visual_review_accepted: number;
+  needs_review_accepted: number;
+  rollback_of_transition_id: string | null;
+  created_at: string;
+}
+
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: { 'Cache-Control': 'no-store' } });
 }
@@ -931,6 +951,67 @@ async function transitionEvent(
   }>();
 }
 
+async function exactPromoteTransition(
+  env: Env,
+  proposalId: string,
+): Promise<ImportedRecurationTransitionRow | null> {
+  return env.DB.prepare(`
+    SELECT
+      id, proposal_id, fighter_id, action, operation, actor_user_id,
+      from_sprite_version_id, from_processed_sha256, from_raw_sha256,
+      to_sprite_version_id, to_processed_sha256, to_raw_sha256,
+      expected_worker_sha, visual_review_accepted, needs_review_accepted,
+      rollback_of_transition_id, created_at
+    FROM imported_global_video_recuration_transitions
+    WHERE proposal_id = ? AND operation = 'promote'
+    LIMIT 1
+  `).bind(proposalId).first<ImportedRecurationTransitionRow>();
+}
+
+function promoteTransitionMatchesProposal(
+  transition: ImportedRecurationTransitionRow,
+  proposal: ImportedRecurationProposalRow,
+): boolean {
+  return transition.proposal_id === proposal.id &&
+    transition.fighter_id === proposal.fighter_id && transition.action === proposal.action &&
+    transition.operation === 'promote' && transition.actor_user_id === proposal.owner_user_id &&
+    transition.from_sprite_version_id === proposal.from_sprite_version_id &&
+    transition.from_processed_sha256 === proposal.from_processed_sha256 &&
+    transition.from_raw_sha256 === proposal.from_raw_sha256 &&
+    transition.to_sprite_version_id === proposal.target_sprite_version_id &&
+    transition.to_processed_sha256 === proposal.target_processed_sha256 &&
+    transition.to_raw_sha256 === proposal.target_raw_sha256 &&
+    transition.expected_worker_sha === proposal.expected_worker_sha &&
+    transition.visual_review_accepted === 1 &&
+    transition.needs_review_accepted === (proposal.compiler_outcome === 'needs_review' ? 1 : 0) &&
+    transition.rollback_of_transition_id === null;
+}
+
+function serializePromoteTransition(transition: ImportedRecurationTransitionRow) {
+  return {
+    transitionId: transition.id,
+    proposalId: transition.proposal_id,
+    fighterId: transition.fighter_id,
+    action: transition.action,
+    operation: transition.operation,
+    actorUserId: transition.actor_user_id,
+    from: {
+      spriteVersionId: transition.from_sprite_version_id,
+      processedSha256: transition.from_processed_sha256,
+      rawSha256: transition.from_raw_sha256,
+    },
+    to: {
+      spriteVersionId: transition.to_sprite_version_id,
+      processedSha256: transition.to_processed_sha256,
+      rawSha256: transition.to_raw_sha256,
+    },
+    expectedWorkerSha: transition.expected_worker_sha,
+    visualReviewAccepted: transition.visual_review_accepted === 1,
+    needsReviewAccepted: transition.needs_review_accepted === 1,
+    createdAt: transition.created_at,
+  };
+}
+
 async function purgeArcadeRosterCache(request: Request): Promise<{
   localArcadeCachePurgeAttempted: boolean;
   localArcadeCacheEntryDeleted: boolean;
@@ -1157,6 +1238,54 @@ export function rollbackImportedGlobalVideoRecuration(
   fighterId: string,
 ): Promise<Response> {
   return transitionImportedGlobalVideoRecuration(request, env, auth, fighterId, 'rollback');
+}
+
+export async function getImportedGlobalVideoRecurationPromoteTransition(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+  proposalId: string,
+): Promise<Response> {
+  const pin = requiredWorkerPin(request, env);
+  if (pin instanceof Response) return pin;
+  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  if (!exactId(fighterId) || !exactId(proposalId)) {
+    return json({ error: 'Imported recuration promote transition not found' }, 404);
+  }
+  const proposal = await proposalById(env, fighterId, auth.userId, proposalId);
+  if (!proposal) return json({ error: 'Imported recuration promote transition not found' }, 404);
+  const current = await currentActiveGlobal(env, auth, fighterId, proposal.action);
+  const globalFailure = activeGlobalFailure(current);
+  if (globalFailure) return globalFailure;
+  const transition = await exactPromoteTransition(env, proposal.id);
+  if (!transition) return json({ error: 'Imported recuration promote transition not found' }, 404);
+  const [fromVersion, toVersion] = await Promise.all([
+    exactProposalVersion(env, proposal, 'from'),
+    exactProposalVersion(env, proposal, 'to'),
+  ]);
+  const expectedTransitionId = await hashString(canonicalJson({
+    proposalId: proposal.id,
+    operation: 'promote',
+    actorUserId: proposal.owner_user_id,
+    expectedWorkerSha: proposal.expected_worker_sha,
+    rollbackOfTransitionId: null,
+    fromProcessed: proposal.from_processed_sha256,
+    fromRaw: proposal.from_raw_sha256,
+    toProcessed: proposal.target_processed_sha256,
+    toRaw: proposal.target_raw_sha256,
+  }));
+  if (
+    transition.id !== expectedTransitionId || !promoteTransitionMatchesProposal(transition, proposal) ||
+    !versionMatchesProposal(fromVersion, proposal, 'from') ||
+    !versionMatchesProposal(toVersion, proposal, 'to')
+  ) {
+    return json({ error: 'Imported recuration promote transition lost its exact binding' }, 409);
+  }
+  return json({
+    transition: serializePromoteTransition(transition),
+    proposal: serializeProposal(proposal),
+  });
 }
 
 export async function getImportedGlobalVideoRecurationAsset(

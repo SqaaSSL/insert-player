@@ -70,12 +70,27 @@ function exactArray(value) {
 }
 
 function exactSpriteGeometry(value, { raw = false } = {}) {
-  return value?.frameWidth === 192 && value?.frameHeight === 256 &&
-    Number.isSafeInteger(value.frameCount) && value.frameCount >= 2 && value.frameCount <= 64 &&
-    (!raw || (
-      value.rawFrameWidth === 768 && value.rawFrameHeight === 1024 &&
-      value.rawFrameCount === value.frameCount
-    ));
+  if (
+    value?.frameWidth !== 192 || value?.frameHeight !== 256 ||
+    !Number.isSafeInteger(value.frameCount) || value.frameCount < 2 || value.frameCount > 64
+  ) return false;
+  if (!raw) return true;
+  const playback = value.playback;
+  return value.rawFrameWidth === 768 && value.rawFrameHeight === 1024 &&
+    Array.isArray(playback) && playback.length === value.frameCount &&
+    playback.every((entry) => Number.isSafeInteger(entry) && entry >= 0) &&
+    Number.isSafeInteger(value.rawFrameCount) && value.rawFrameCount >= 2 &&
+    value.rawFrameCount <= 12 && value.rawFrameCount === Math.max(...playback) + 1;
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function assertDirectFile(path, maximumBytes = MAX_JSON_BYTES) {
@@ -632,14 +647,80 @@ export function assertPromotionReceipt(value, descriptor, descriptorSha256) {
     value.schemaVersion !== 1 || value.kind !== RECEIPT_KIND || value.target !== 'production' ||
     value.operation !== 'promote' || value.stageWorkerSha !== descriptor.expectedWorkerSha ||
     value.executingWorkerSha !== descriptor.expectedWorkerSha ||
-    value.descriptorSha256 !== descriptorSha256 || value.fighter?.fighterId !== descriptor.fighter.fighterId ||
+    value.descriptorSha256 !== descriptorSha256 ||
+    canonicalJson(value.fighter) !== canonicalJson(descriptor.fighter) ||
     value.action !== descriptor.action || value.proposalId !== descriptor.proposalId ||
     !exactSha(value.transitionId) || typeof value.localArcadeCachePurgeAttempted !== 'boolean' ||
     typeof value.localArcadeCacheEntryDeleted !== 'boolean' || value.providerCalls !== 0 ||
-    value.from?.processedSha256 !== descriptor.from.processedSha256 ||
-    value.to?.processedSha256 !== descriptor.to.processedSha256
+    canonicalJson(value.from) !== canonicalJson(descriptor.from) ||
+    canonicalJson(value.to) !== canonicalJson(descriptor.to)
   ) throw new Error('Promotion receipt does not bind this exact promoted proposal.');
   return value;
+}
+
+function boundedString(value, maximum = 200) {
+  return typeof value === 'string' && value.length >= 1 && value.length <= maximum;
+}
+
+export function assertPromoteTransitionLookup(value, descriptor) {
+  if (!exactKeys(value, ['transition', 'proposal'])) {
+    throw new Error('Promote transition lookup has an unexpected schema.');
+  }
+  const transition = value.transition;
+  if (
+    !exactKeys(transition, [
+      'transitionId', 'proposalId', 'fighterId', 'action', 'operation', 'actorUserId',
+      'from', 'to', 'expectedWorkerSha', 'visualReviewAccepted',
+      'needsReviewAccepted', 'createdAt',
+    ]) ||
+    !exactKeys(transition?.from, ['spriteVersionId', 'processedSha256', 'rawSha256']) ||
+    !exactKeys(transition?.to, ['spriteVersionId', 'processedSha256', 'rawSha256']) ||
+    !exactSha(transition.transitionId) || transition.proposalId !== descriptor.proposalId ||
+    transition.fighterId !== descriptor.fighter.fighterId || transition.action !== descriptor.action ||
+    transition.operation !== 'promote' || !boundedString(transition.actorUserId) ||
+    transition.expectedWorkerSha !== descriptor.expectedWorkerSha ||
+    transition.visualReviewAccepted !== true ||
+    transition.needsReviewAccepted !== (descriptor.to.technicalOutcome === 'needs_review') ||
+    !boundedString(transition.createdAt) ||
+    transition.from.spriteVersionId !== descriptor.from.spriteVersionId ||
+    transition.from.processedSha256 !== descriptor.from.processedSha256 ||
+    transition.from.rawSha256 !== descriptor.from.rawSha256 ||
+    transition.to.spriteVersionId !== descriptor.to.spriteVersionId ||
+    transition.to.processedSha256 !== descriptor.to.processedSha256 ||
+    transition.to.rawSha256 !== descriptor.to.rawSha256
+  ) throw new Error('Promote transition lookup does not bind this exact descriptor.');
+  const proposal = value.proposal;
+  if (
+    !exactKeys(proposal, [
+      'proposalId', 'fighterId', 'action', 'worker', 'from', 'to', 'source',
+      'evidenceSha256', 'createdAt', 'assets',
+    ]) ||
+    proposal.proposalId !== descriptor.proposalId ||
+    proposal.fighterId !== descriptor.fighter.fighterId || proposal.action !== descriptor.action ||
+    !boundedString(proposal.createdAt) ||
+    canonicalJson(proposal.worker) !== canonicalJson(descriptor.worker) ||
+    canonicalJson(proposal.from) !== canonicalJson(descriptor.from) ||
+    canonicalJson(proposal.to) !== canonicalJson(descriptor.to) ||
+    canonicalJson(proposal.source) !== canonicalJson(descriptor.source) ||
+    proposal.evidenceSha256 !== descriptor.evidenceSha256 ||
+    canonicalJson(proposal.assets) !== canonicalJson(descriptor.assetRoutes)
+  ) throw new Error('Promote transition lookup returned a different proposal snapshot.');
+  return value;
+}
+
+export function assertReceiptMatchesPromoteTransition(receipt, authoritative) {
+  if (receipt.transitionId !== authoritative.transition.transitionId) {
+    throw new Error('Promotion receipt does not match the authoritative transition.');
+  }
+  return receipt;
+}
+
+export async function persistTransitionReceiptWithSmoke(persist, smoke) {
+  // The transition mutates production before smoke reads several eventually
+  // cached surfaces, so its local proof must survive a smoke failure.
+  const written = persist();
+  await smoke();
+  return written;
 }
 
 async function main() {
@@ -696,6 +777,9 @@ async function main() {
     'descriptor-sha256', 'receipt-dir', 'promotion-receipt', 'promotion-receipt-sha256',
   ]);
   for (const key of values.keys()) if (!allowed.has(key)) throw new Error(`Unexpected transition argument: --${key}`);
+  if (operation === 'promote' && (
+    values.has('promotion-receipt') || values.has('promotion-receipt-sha256')
+  )) throw new Error('Promotion receipt input is only valid for rollback.');
   const descriptorPath = resolve(values.get('descriptor') ?? '');
   const loaded = readExactJson(descriptorPath);
   if (loaded.digest !== values.get('descriptor-sha256')) throw new Error('Descriptor SHA-256 changed.');
@@ -718,17 +802,29 @@ async function main() {
   };
   if (operation === 'rollback') {
     if (flags.size > 0) throw new Error('Rollback accepts no boolean flags.');
-    const receiptPath = resolve(values.get('promotion-receipt') ?? '');
-    const receipt = readExactJson(receiptPath);
-    if (receipt.digest !== values.get('promotion-receipt-sha256')) {
-      throw new Error('Promotion receipt SHA-256 changed.');
+    const authoritative = assertPromoteTransitionLookup(await apiJson(
+      context,
+      `${basePath}/${descriptor.proposalId}/promote-transition`,
+    ), descriptor);
+    const receiptPathValue = values.get('promotion-receipt');
+    const receiptSha256 = values.get('promotion-receipt-sha256');
+    if (Boolean(receiptPathValue) !== Boolean(receiptSha256)) {
+      throw new Error('Promotion receipt path and SHA-256 must be supplied together.');
     }
-    const promotion = assertPromotionReceipt(receipt.value, descriptor, loaded.digest);
-    const sidecar = readFileSync(`${receiptPath}.sha256`, 'utf8');
-    if (sidecar !== `${receipt.digest}  promotion-receipt.json\n`) {
-      throw new Error('Promotion receipt sidecar is not exact.');
+    if (receiptPathValue && receiptSha256) {
+      const receiptPath = resolve(receiptPathValue);
+      const receipt = readExactJson(receiptPath);
+      if (receipt.digest !== receiptSha256) {
+        throw new Error('Promotion receipt SHA-256 changed.');
+      }
+      const promotion = assertPromotionReceipt(receipt.value, descriptor, loaded.digest);
+      const sidecar = readFileSync(`${receiptPath}.sha256`, 'utf8');
+      if (sidecar !== `${receipt.digest}  promotion-receipt.json\n`) {
+        throw new Error('Promotion receipt sidecar is not exact.');
+      }
+      assertReceiptMatchesPromoteTransition(promotion, authoritative);
     }
-    body.promoteTransitionId = promotion.transitionId;
+    body.promoteTransitionId = authoritative.transition.transitionId;
   } else if (descriptor.to.technicalOutcome === 'needs_review' && !flags.has('accept-needs-review')) {
     throw new Error('A needs_review target requires --accept-needs-review after visual acceptance.');
   } else if (descriptor.to.technicalOutcome === 'technical_pass' && flags.has('accept-needs-review')) {
@@ -743,11 +839,13 @@ async function main() {
     typeof result.localArcadeCacheEntryDeleted !== 'boolean' ||
     result.proposal?.proposalId !== descriptor.proposalId
   ) throw new Error(`${operation} response did not prove the exact transition and cache purge.`);
-  await smokeTransition(context, descriptor, operation === 'promote' ? descriptor.to : descriptor.from);
   const receipt = transitionReceipt(
     operation, descriptor, loaded.digest, expectedWorkerSha, result,
   );
-  const written = writeReceipt(values.get('receipt-dir') ?? '', receipt);
+  const written = await persistTransitionReceiptWithSmoke(
+    () => writeReceipt(values.get('receipt-dir') ?? '', receipt),
+    () => smokeTransition(context, descriptor, operation === 'promote' ? descriptor.to : descriptor.from),
+  );
   console.log(JSON.stringify({
     operation, fighter: descriptor.fighter.slug, action: descriptor.action,
     proposalId: descriptor.proposalId, transitionId: result.transitionId,

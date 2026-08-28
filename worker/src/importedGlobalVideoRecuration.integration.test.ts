@@ -12,6 +12,7 @@ import {
 } from './fighters';
 import {
   getImportedGlobalVideoRecurationAsset,
+  getImportedGlobalVideoRecurationPromoteTransition,
   promoteImportedGlobalVideoRecuration,
   rollbackImportedGlobalVideoRecuration,
   stageImportedGlobalVideoRecuration,
@@ -443,6 +444,17 @@ function transitionRequest(
   );
 }
 
+function promoteTransitionReceiptRequest(
+  proposalId: string,
+  workerSha = WORKER_SHA,
+): Request {
+  return new Request(
+    `https://api.insertplayer.ai/api/admin/arcade/${FIGHTER_ID}` +
+      `/imported-video-recuration/${proposalId}/promote-transition`,
+    { headers: headers(workerSha) },
+  );
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -648,6 +660,13 @@ describe('imported global Video recuration Worker flow', () => {
     const target = await createHarness();
     try {
       const result = await stage(target);
+      expect((await getImportedGlobalVideoRecurationPromoteTransition(
+        promoteTransitionReceiptRequest(result.proposal.proposalId),
+        target.env,
+        ADMIN_AUTH,
+        FIGHTER_ID,
+        result.proposal.proposalId,
+      )).status).toBe(404);
       vi.stubGlobal('caches', {
         default: { delete: vi.fn(async () => false) },
       });
@@ -688,6 +707,53 @@ describe('imported global Video recuration Worker flow', () => {
       expect(await target.db.prepare(`SELECT COUNT(*) AS count
         FROM imported_global_video_recuration_transitions`).first()).toEqual({ count: 1 });
 
+      expect((await getImportedGlobalVideoRecurationPromoteTransition(
+        promoteTransitionReceiptRequest(result.proposal.proposalId),
+        target.env,
+        NON_ADMIN_AUTH,
+        FIGHTER_ID,
+        result.proposal.proposalId,
+      )).status).toBe(403);
+      expect((await getImportedGlobalVideoRecurationPromoteTransition(
+        promoteTransitionReceiptRequest(result.proposal.proposalId),
+        target.env,
+        { ...ADMIN_AUTH, userId: OTHER_USER_ID } as AuthContext,
+        FIGHTER_ID,
+        result.proposal.proposalId,
+      )).status).toBe(404);
+      const recoveredPromote = await getImportedGlobalVideoRecurationPromoteTransition(
+        promoteTransitionReceiptRequest(result.proposal.proposalId),
+        target.env,
+        ADMIN_AUTH,
+        FIGHTER_ID,
+        result.proposal.proposalId,
+      );
+      expect(recoveredPromote.status, await recoveredPromote.clone().text()).toBe(200);
+      expect(await recoveredPromote.json()).toMatchObject({
+        transition: {
+          transitionId: promotedBody.transitionId,
+          proposalId: result.proposal.proposalId,
+          fighterId: FIGHTER_ID,
+          action: 'idle',
+          operation: 'promote',
+          actorUserId: USER_ID,
+          from: {
+            spriteVersionId: result.proposal.from.spriteVersionId,
+            processedSha256: result.proposal.from.processedSha256,
+            rawSha256: result.proposal.from.rawSha256,
+          },
+          to: {
+            spriteVersionId: result.proposal.to.spriteVersionId,
+            processedSha256: result.proposal.to.processedSha256,
+            rawSha256: result.proposal.to.rawSha256,
+          },
+          expectedWorkerSha: WORKER_SHA,
+          visualReviewAccepted: true,
+          needsReviewAccepted: false,
+        },
+        proposal: { proposalId: result.proposal.proposalId },
+      });
+
       const promoteReplay = await promoteImportedGlobalVideoRecuration(
         transitionRequest('promote', result.proposal), target.env, ADMIN_AUTH, FIGHTER_ID,
       );
@@ -721,6 +787,27 @@ describe('imported global Video recuration Worker flow', () => {
         tag: `prod-${NEXT_WORKER_SHA}-1`,
         timestamp: '2026-08-29T00:00:00Z',
       };
+      expect((await getImportedGlobalVideoRecurationPromoteTransition(
+        promoteTransitionReceiptRequest(result.proposal.proposalId),
+        target.env,
+        ADMIN_AUTH,
+        FIGHTER_ID,
+        result.proposal.proposalId,
+      )).status).toBe(409);
+      const recoveredAfterDeploy = await getImportedGlobalVideoRecurationPromoteTransition(
+        promoteTransitionReceiptRequest(result.proposal.proposalId, NEXT_WORKER_SHA),
+        target.env,
+        ADMIN_AUTH,
+        FIGHTER_ID,
+        result.proposal.proposalId,
+      );
+      expect(recoveredAfterDeploy.status, await recoveredAfterDeploy.clone().text()).toBe(200);
+      expect(await recoveredAfterDeploy.json()).toMatchObject({
+        transition: {
+          transitionId: promotedBody.transitionId,
+          expectedWorkerSha: WORKER_SHA,
+        },
+      });
       const rolledBack = await rollbackImportedGlobalVideoRecuration(
         transitionRequest('rollback', result.proposal, {
           promoteTransitionId: promotedBody.transitionId,
@@ -784,6 +871,19 @@ describe('imported global Video recuration Worker flow', () => {
       await expect(target.db.prepare(`UPDATE imported_global_video_recuration_transitions
         SET actor_user_id = ? WHERE id = ?`)
         .bind(OTHER_USER_ID, promotedBody.transitionId).run()).rejects.toThrow(/immutable/);
+      await target.db.prepare(
+        'DROP TRIGGER imported_global_video_recuration_transitions_immutable_update',
+      ).run();
+      await target.db.prepare(`UPDATE imported_global_video_recuration_transitions
+        SET from_processed_sha256 = ? WHERE id = ?`)
+        .bind('f'.repeat(64), promotedBody.transitionId).run();
+      expect((await getImportedGlobalVideoRecurationPromoteTransition(
+        promoteTransitionReceiptRequest(result.proposal.proposalId, NEXT_WORKER_SHA),
+        target.env,
+        ADMIN_AUTH,
+        FIGHTER_ID,
+        result.proposal.proposalId,
+      )).status).toBe(409);
       await target.db.prepare(`INSERT INTO imported_global_video_recuration_claims (
         fighter_id, action, claim_token, claimed_at, lease_expires_at
       ) VALUES (?, 'idle', ?, datetime('now'), datetime('now', '+15 minutes'))`)

@@ -83,6 +83,7 @@ import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
 import { isAttractModeMatchReport, readMatchFighterId } from './matchReporting';
 import {
   getImportedGlobalVideoRecurationAsset,
+  getImportedGlobalVideoRecurationPromoteTransition,
   promoteImportedGlobalVideoRecuration,
   rollbackImportedGlobalVideoRecuration,
   stageImportedGlobalVideoRecuration,
@@ -591,6 +592,24 @@ export default {
                 ? promoteImportedGlobalVideoRecuration(request, env, auth, arcadeFighterId)
                 : rollbackImportedGlobalVideoRecuration(request, env, auth, arcadeFighterId),
           ),
+          request,
+          env,
+        );
+      }
+
+      const importedVideoRecurationPromoteTransitionMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/imported-video-recuration\/([^/]+)\/promote-transition$/,
+      );
+      if (importedVideoRecurationPromoteTransitionMatch && method === 'GET') {
+        const arcadeFighterId = decodePathParam(importedVideoRecurationPromoteTransitionMatch[1]);
+        const proposalId = decodePathParam(importedVideoRecurationPromoteTransitionMatch[2]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        if (isResponse(proposalId)) return addCors(proposalId, request, env);
+        return addCors(
+          await authenticated(request, env, (auth) =>
+            getImportedGlobalVideoRecurationPromoteTransition(
+              request, env, auth, arcadeFighterId, proposalId,
+            )),
           request,
           env,
         );
