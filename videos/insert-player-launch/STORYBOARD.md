@@ -54,7 +54,7 @@ roles: The portrait is the identity anchor; the electric seam is the transformat
 - beat: excitement -> triumph
 - blueprint: device-surface-showcase
 - blueprint_adaptation: Four full-bleed, one-second production cuts with no decorative device frame; a 0.25-second final-frame hold protects the exit transition.
-- asset_candidates: assets/fight-montage-four-stages.mp4 — four telemetry-trimmed production fights with Player One, the real HUD, and four signature stages
+- asset_candidates: assets/fight-montage-four-stages-hd.mp4 — four telemetry-trimmed production fights with Player One's Champion 2x atlas, the real HUD, and four signature stages
 - sfx: .media/audio/sfx/sfx_004.mp3 at 3.65s
 
 narrativeRole: Cash in the promise: this is not an avatar or a still image. It is one playable character fighting a varied global roster inside the real game.

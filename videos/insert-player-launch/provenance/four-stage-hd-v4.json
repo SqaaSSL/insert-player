@@ -1,0 +1,92 @@
+{
+  "version": 4,
+  "project": "insert-player-launch",
+  "acceptance": "approved_for_release",
+  "parentProvenance": {
+    "file": "provenance/four-stage-v3.json",
+    "sha256": "9c4c66dabfd2445f60e8ecc6f0acf51bebda32c2de25dec139023333c0f82730"
+  },
+  "change": "Recapture the unchanged four-fight sequence after the Champion legacy density fix, preserving the previous montage and all source captures.",
+  "renderer": {
+    "densityFixCommit": "6259e93d8af8f5d7bf11208d0bf2bc8c494b0424",
+    "captureDeviceMemoryGb": 8,
+    "captureMaxTextureSize": 8192,
+    "playerOneSourceFrame": "768x1024",
+    "playerOneAtlasFrame": "384x512",
+    "playerOneTextureDensity": 2,
+    "evidence": "Each capture manifest retains the production AiSpriteLoader log for fighter_p1: a 2688x8192 atlas with 384x512 cells at density 2x."
+  },
+  "gameplayCapture": {
+    "source": "https://insertplayer.ai/roster/watch",
+    "captureScript": "scripts/capture-player-one-fight.mjs",
+    "captureScriptSha256": "f1dbe346b5ce4a369e94317545054a71a16c70fb2800bfc0042207bcbd39d7a1",
+    "montageScript": "scripts/build-fight-montage.mjs",
+    "montageScriptSha256": "401e015e007086f3a0b85784469e1305f6778f4ec518893800cea031f562c0c9",
+    "montageManifest": "assets/fight-montage-four-stages-hd.json",
+    "montageManifestSha256": "39171557622532afb4afc5057bef0df865e18a85f2892027e08e7af399724a88",
+    "montageFile": "assets/fight-montage-four-stages-hd.mp4",
+    "montageSha256": "1afd23ae8ee1838b0c0b0ddcc351abedf2b5f0aecd462b40ccbcd4e862b3d987",
+    "preservedPreviousMontage": "assets/fight-montage-four-stages.mp4",
+    "preservedPreviousMontageSha256": "484b2bfa30bb2989be95a2588281a695cd9e3e8f2852a1e890ac3258b26385b9",
+    "contentDurationSeconds": 4,
+    "transitionHoldSeconds": 0.25,
+    "captures": [
+      {
+        "captureId": "trump-hd",
+        "opponent": "Donald Trump",
+        "stage": "EXECUTIVE RUMBLE",
+        "capturedAt": "2026-08-29T09:17:43.961Z",
+        "videoSha256": "8d5b4aeaa8d453c34077eb9ba3c1cc4a928bdd28217d8182a224281a4b423f57",
+        "eventsSha256": "e4d05cfc2040e8c01c9245dc04bbc8ac1c3e2b769a4310e247837a92b8cd73e4"
+      },
+      {
+        "captureId": "lamine-hd",
+        "opponent": "Lamine Yamal",
+        "stage": "LA JAULA 304",
+        "capturedAt": "2026-08-29T09:19:15.090Z",
+        "videoSha256": "4b10b56baac5cf135c8a54e9c4ffae2b7805bd1b3db16e8cba34a8adb5fde3df",
+        "eventsSha256": "0054271d0060cfb2ce83c43d9d321d25d0dea7a3979817b2981891194aed2c49"
+      },
+      {
+        "captureId": "rosalia-hd",
+        "opponent": "Rosalía V2",
+        "stage": "DOJO AT DUSK",
+        "capturedAt": "2026-08-29T09:20:15.680Z",
+        "videoSha256": "b8dbee0ce0ff3835fb8568e3da272f4a37614696fa0282a93472041e7dd8fa63",
+        "eventsSha256": "40462bc20df4399d03b8da78200c2115842dda1d94d77a7cc8e320a85609cc6b"
+      },
+      {
+        "captureId": "elon-hd",
+        "opponent": "Elon Musk",
+        "stage": "MARS INCORPORATED",
+        "capturedAt": "2026-08-29T09:21:11.540Z",
+        "videoSha256": "b813e44814eff9a593a6127a853e02d47dce7e32d79a6a2a4f6e6ae98c19e8b7",
+        "eventsSha256": "1c5fd7525ae6db7f968c880e98ffefe50395fea3eabdf027525c46f588e640cb"
+      }
+    ]
+  },
+  "finalRender": {
+    "sourceFile": "renders/insert-player-launch-four-stage-hd-v4.mp4",
+    "sourceSha256": "c3faae9c020d358b22d992107a0151068c7c90bc28f953d2b15a1032c5b5bd91",
+    "publicFile": "../../public/assets/insert-player-launch-6c33c9c8.mp4",
+    "publicSha256": "6c33c9c89d5551d050e298897dc18ea6b94228ee2b554b0499d3b447ca90644a",
+    "durationSeconds": 12.01,
+    "sizeBytes": 6088052,
+    "width": 1920,
+    "height": 1080,
+    "framesPerSecond": 30,
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "integratedLoudnessLufs": -17.0,
+    "truePeakDbfs": -2.4,
+    "sourceToWebSsim": 0.996230,
+    "nearBlackIntervals": 0,
+    "hyperframesVersion": "0.8.17",
+    "webEncoding": {
+      "preset": "slow",
+      "crf": 18,
+      "audioBitrateKbps": 192,
+      "fastStart": true
+    }
+  }
+}
