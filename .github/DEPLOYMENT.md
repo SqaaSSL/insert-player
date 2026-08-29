@@ -132,3 +132,13 @@ For `main`, also require CodeQL. Restrict direct pushes and force pushes; a sepa
 If Worker deployment fails after a migration, fix forward; D1 migrations are transactional and recorded. If a newly deployed Worker is unhealthy, use Wrangler deployment history to roll back the Worker version, then investigate without deleting D1 or R2 data. Pages retains prior deployments that can be promoted from Cloudflare.
 
 Never delete fighter assets or historical versions as part of rollback or cleanup.
+
+## Durable Object lifecycle changes
+
+`deploy-production` refuses a push that adds, renames, or deletes a Durable Object
+class (`[[migrations]]` in `worker/wrangler.toml`): Cloudflare cannot roll a Worker
+back across a DO migration, so the automatic rollback path would be gone. To ship
+one deliberately, run the workflow by hand with **Actions → Deploy production →
+Run workflow → `allow_durable_object_lifecycle` = true**. That single rollout is
+one-way; every later push is rollback-safe again because the stable base moves
+past the migration. Deploy the same change to the sandbox (`develop`) first.

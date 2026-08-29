@@ -88,8 +88,18 @@ async function main() {
       'diff', '--unified=0', base, head, '--',
       'worker/wrangler.toml', 'worker/wrangler.sandbox.toml',
     ]);
-    if (action === 'guard-full') assertFullDeployCompatible(wranglerDiff);
-    else assertVersionUploadCompatible(files, wranglerDiff);
+    if (action === 'guard-full') {
+      const allowDurableObjectLifecycle = String(process.env.ASF_ALLOW_DURABLE_OBJECT_LIFECYCLE || '').trim() === '1';
+      if (allowDurableObjectLifecycle) {
+        console.warn(
+          'ASF_ALLOW_DURABLE_OBJECT_LIFECYCLE=1: this rollout may ship Durable Object lifecycle changes '
+          + 'and cannot be rolled back to the previous Worker version.',
+        );
+      }
+      assertFullDeployCompatible(wranglerDiff, { allowDurableObjectLifecycle });
+    } else {
+      assertVersionUploadCompatible(files, wranglerDiff);
+    }
     return;
   }
 

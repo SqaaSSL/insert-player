@@ -94,6 +94,11 @@ describe('Worker version rollout parsing', () => {
     expect(() => assertFullDeployCompatible('+new_classes = ["GenerationState"]'))
       .toThrow('Durable Object lifecycle');
     expect(() => assertFullDeployCompatible('+[version_metadata]')).not.toThrow();
+    // An operator can accept a one-way rollout explicitly; nothing else unlocks it.
+    expect(() => assertFullDeployCompatible('+new_sqlite_classes = ["MatchRoom"]', { allowDurableObjectLifecycle: true }))
+      .not.toThrow();
+    expect(() => assertFullDeployCompatible('+new_sqlite_classes = ["MatchRoom"]', { allowDurableObjectLifecycle: 'yes' as never }))
+      .toThrow('Durable Object lifecycle');
   });
 
   it('reads the exact structured Wrangler version-upload record', () => {

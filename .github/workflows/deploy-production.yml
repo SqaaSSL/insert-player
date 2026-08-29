@@ -7,6 +7,13 @@ on:
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
+    inputs:
+      allow_durable_object_lifecycle:
+        description: >-
+          Ship Durable Object lifecycle changes (new/renamed/deleted classes).
+          The resulting Worker version cannot be rolled back to the previous one.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -136,6 +143,7 @@ jobs:
         env:
           ROLLOUT_BASE_SHA: ${{ steps.stable-worker.outputs.stable_git_sha }}
           ROLLOUT_HEAD_SHA: ${{ github.sha }}
+          ASF_ALLOW_DURABLE_OBJECT_LIFECYCLE: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_durable_object_lifecycle == true && '1' || '0' }}
         run: node scripts/worker-version-rollout.mjs guard-full
 
       - name: Dry-run exact Worker and Container bundle

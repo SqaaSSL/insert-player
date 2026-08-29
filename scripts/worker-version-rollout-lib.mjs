@@ -73,7 +73,14 @@ export function assertVersionUploadCompatible(files, wranglerDiff = '') {
   assertNoDurableObjectLifecycleChange(wranglerDiff);
 }
 
-export function assertFullDeployCompatible(wranglerDiff = '') {
+/**
+ * A full deploy stays rollback-safe unless it ships a Durable Object lifecycle
+ * change: Cloudflare cannot roll a Worker back across a DO class migration, so
+ * such a deploy is only allowed when an operator explicitly accepts losing the
+ * rollback path for that one rollout (`allowDurableObjectLifecycle`).
+ */
+export function assertFullDeployCompatible(wranglerDiff = '', options = {}) {
+  if (options.allowDurableObjectLifecycle === true) return;
   assertNoDurableObjectLifecycleChange(wranglerDiff);
 }
 
