@@ -22,19 +22,24 @@ import {
 import { getAnimationProfile, JUMP_ANIMATION_MOTION } from './AnimationProfiles';
 
 describe('Gemini content-block handling', () => {
-  it('accepts an immutable official jump guide set without rewriting it', () => {
-    const guides = Array.from({ length: 4 }, (_, index) => `pose-${index}-${'x'.repeat(32)}`);
+  it.each([
+    ['jump', 4],
+    ['hit', 4],
+    ['ko', 8],
+    ['victory', 8],
+  ])('accepts the immutable official %s guide set without rewriting it', (animationName, frameCount) => {
+    const guides = Array.from({ length: frameCount }, (_, index) => `pose-${index}-${'x'.repeat(32)}`);
 
     expect(geminiOfficialPoseGuideCells(
-      'jump',
-      4,
+      animationName,
+      frameCount,
       'Approved fighter description',
-      'arcade-qa-pose-atlas-2026-v1:jump',
+      `arcade-qa-pose-atlas-2026-v1:${animationName}`,
       guides,
     )).toEqual(guides);
   });
 
-  it('rejects pose-master injection outside the approved official jump contract', () => {
+  it('rejects pose-master injection outside the approved official contract', () => {
     const guides = Array.from({ length: 4 }, (_, index) => `pose-${index}-${'x'.repeat(32)}`);
 
     expect(() => geminiOfficialPoseGuideCells(
@@ -44,7 +49,10 @@ describe('Gemini content-block handling', () => {
       'idle', 4, 'Approved fighter description', 'atlas:jump', guides,
     )).toThrow('not approved for this animation');
     expect(() => geminiOfficialPoseGuideCells(
-      'jump', 4, 'Approved fighter description', 'atlas:jump', guides.slice(0, 3),
+      'hit', 4, 'Approved fighter description', 'arcade-qa-pose-atlas-2026-v1:jump', guides,
+    )).toThrow('not approved for this animation');
+    expect(() => geminiOfficialPoseGuideCells(
+      'jump', 4, 'Approved fighter description', 'arcade-qa-pose-atlas-2026-v1:jump', guides.slice(0, 3),
     )).toThrow('expected 4 frames');
   });
 
