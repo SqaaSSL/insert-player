@@ -27,7 +27,7 @@ not like an AI avatar advertisement or a software walkthrough.
 - `assets/generated/player-one-upright-canonical.png` - exact approved production upright cutout for Player One.
 - `assets/generated/player-one-final-frame.png` - deterministic arena composite using that exact cutout.
 - `references/neon-arena-creative-fingerprint-v1.json` - private-reference fingerprint derived from the supplied Suno track; the source MP3 is not distributed.
-- `assets/generated/lyria-launch-bed-v2-neon-reference.mp3` - fully original private Lyria 3 Pro instrumental source composition.
+- `assets/generated/launch-mix-original-neon-gameplay-v3.wav` - hybrid mix preserving the approved `Ready... Insert Player` opening and introducing the user-supplied `Neon Arena` recording at the gameplay cut.
 - `assets/generated/tts-announcer-v1.wav` - private Gemini TTS announcer line.
 - `assets/generated/omni-photo-to-fighter-v2-neon-sync.mp4` - private Omni timing canary, retained for audit but rejected from the final cut because its target was not the immutable global Champion frame.
 - `assets/fight-montage-four-stages-hd-lowfix.mp4` - four telemetry-trimmed, one-second production matches captured from the Champion 2x atlas, with the Elon cut recorded after the legacy low-attack presentation fix.
@@ -35,8 +35,8 @@ not like an AI avatar advertisement or a software walkthrough.
 ## Customizations
 
 - Borrow the structural idea from Hilo's product promos: real footage, a few crisp branded action beats, and a strong end card.
-- Preserve the original cabinet SFX, use the original Lyria v2 composition for the music bed, and add only one short Gemini TTS announcer line.
-- Use only the reference track's high-level tempo, energy, instrumentation, and structural arc. Never ship it or reproduce its melody, harmony, motifs, lyrics, artist identity, or exact sound design.
+- Preserve the approved opening mix and Gemini TTS announcer unchanged through `4.65s`. Start the user-supplied `Neon Arena` recording from its beginning exactly when gameplay enters, retaining the cabinet fight SFX above it.
+- Keep the private full-length recording outside the repository. Publish only the `7.35s` gameplay excerpt embedded in this approved twelve-second launch cut.
 - Keep the transformation literal and readable: `YOUR PHOTO`, the official P1 + `INSERT PLAYER` reveal, then `YOUR FIGHT`.
 
 ## Notes

@@ -5,12 +5,12 @@ message: "A real person can become a recognizable, playable arcade fighter"
 arc: Transformation hook -> Brand reveal -> Four-stage gameplay proof -> CTA
 audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
 mode: autonomous
-music: "assets/generated/lyria-launch-bed-v2-neon-reference.mp3 - original Lyria 3 Pro source arranged from a private high-level creative fingerprint"
+music: "assets/generated/launch-mix-original-neon-gameplay-v3.wav - approved announcer opening followed by the original Neon Arena recording at gameplay"
 ---
 
 ## Video direction
 
-The film moves from recognition to proof to action. Real media always outranks decorative graphics: first the exact source portrait reveals the exact production Player One fighter, then four one-second production fights place that same fighter against each current global rival, then a clean Insert Player lockup closes the piece. Camera movement is restrained and seek-safe; motion comes from the deterministic transformation seam, the recorded game, and the final P1 assembly. One short announcer line adds cabinet energy without explaining what the picture already proves. The Lyria arrangement stays tense under the transformation, drops into its full 145 BPM groove at the gameplay cut, and resolves under the brand hold. Keep all essential text outside the bottom 17 percent caption band. Use cabinet black as the visual ground, coin red for action, coin gold for reward, CRT cream for text, and glass blue only as a counterpoint.
+The film moves from recognition to proof to action. Real media always outranks decorative graphics: first the exact source portrait reveals the exact production Player One fighter, then four one-second production fights place that same fighter against each current global rival, then a clean Insert Player lockup closes the piece. Camera movement is restrained and seek-safe; motion comes from the deterministic transformation seam, the recorded game, and the final P1 assembly. Preserve the approved announcer opening exactly as heard in v5. At the `4.65s` gameplay cut, switch to the beginning of the original `Neon Arena` recording and keep the cabinet fight effects legible above it. Keep all essential text outside the bottom 17 percent caption band. Use cabinet black as the visual ground, coin red for action, coin gold for reward, CRT cream for text, and glass blue only as a counterpoint.
 
 ## Frame 1 — Your Photo. Your Fighter.
 

@@ -1,0 +1,80 @@
+{
+  "version": 6,
+  "project": "insert-player-launch",
+  "acceptance": "approved_for_release",
+  "parentProvenance": {
+    "file": "provenance/four-stage-hd-lowfix-v5.json",
+    "sha256": "ad1a1cba58e084043ec01d41595da3e4bcd6046e44d050a93eae79e0ff791509"
+  },
+  "change": "Preserve the approved v5 opening through 4.65 seconds, then replace only the gameplay-and-lockup music with the beginning of the user-supplied Neon Arena recording. Keep the production fight montage, announcer and gameplay effects.",
+  "audioMix": {
+    "buildScript": "scripts/build-launch-mix-original-neon.mjs",
+    "buildScriptSha256": "47b0d5094e8123d3acf10b6b0b3b5abadb184429cffcf22d1cfc1930066f3a66",
+    "privateMusicSource": {
+      "fileName": "Neon Arena.mp3",
+      "sha256": "0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05",
+      "committed": false,
+      "fullLengthPublished": false,
+      "sourceSeconds": [0, 7.35],
+      "timelineSeconds": [4.65, 12],
+      "handling": "User supplied and explicitly requested direct use in this cut; only the mixed gameplay excerpt is published."
+    },
+    "preservedIntro": {
+      "sourceFile": "assets/generated/launch-mix-google-v2-neon-reference.wav",
+      "sourceSha256": "3efb9c5339aec3860e56d3dd444411f05f00163d6f652da82f0bf7375e17360a",
+      "timelineSeconds": [0, 4.65],
+      "sourcePcmSha256": "fdb7176ad26fc2f5aef41d5b8b3eedcb61168ded6281d0afa75031e1ad9e8f22",
+      "outputPcmSha256": "fdb7176ad26fc2f5aef41d5b8b3eedcb61168ded6281d0afa75031e1ad9e8f22",
+      "pcmByteIdentical": true
+    },
+    "gameplayEffects": {
+      "sourceFile": "assets/launch-mix.wav",
+      "sourceSha256": "bc728626c994a5cff0b7ffe947f9bae5e1e39efd594f85c778de93af5c154c6b",
+      "sourceSeconds": [4.65, 12]
+    },
+    "outputFile": "assets/generated/launch-mix-original-neon-gameplay-v3.wav",
+    "outputSha256": "0cf1ad7b8a2d42ac8d0b330c4f0ca4af2b909096fe905bae25a82aba8052e2b9",
+    "durationSeconds": 12,
+    "bytes": 2304078,
+    "sampleRateHz": 48000,
+    "channels": 2,
+    "paidInference": false
+  },
+  "visuals": {
+    "unchangedFromV5": true,
+    "fightMontageFile": "assets/fight-montage-four-stages-hd-lowfix.mp4",
+    "fightMontageSha256": "5dfebecc74cbd97538e77f056c12ccf3fed9e7fac07c21f96de3d1359688152a"
+  },
+  "validation": {
+    "hyperframesCheck": {
+      "errors": 0,
+      "warnings": 0,
+      "sampleSeconds": [0.8, 4.64, 4.66, 7.9, 11.5]
+    },
+    "nearBlackIntervals": 0,
+    "renderedIntegratedLoudnessLufs": -16.59,
+    "renderedTruePeakDbfs": -1.28
+  },
+  "finalRender": {
+    "sourceFile": "renders/insert-player-launch-original-neon-gameplay-v6.mp4",
+    "sourceSha256": "f5d22081e4607606abf941172287048aca0df9b0987ff7b5d6cf6c9b48841b9e",
+    "sourceSizeBytes": 10330827,
+    "publicFile": "../../public/assets/insert-player-launch-f086cb4d.mp4",
+    "publicSha256": "f086cb4dd110acf3dbf24294ce9a3e523f76677934cef2ab9c0c7514186d5893",
+    "durationSeconds": 12.01,
+    "sizeBytes": 5909262,
+    "width": 1920,
+    "height": 1080,
+    "framesPerSecond": 30,
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "sourceToWebSsim": 0.996157,
+    "hyperframesVersion": "0.8.17",
+    "webEncoding": {
+      "preset": "slow",
+      "crf": 18,
+      "audioBitrateKbps": 192,
+      "fastStart": true
+    }
+  }
+}
