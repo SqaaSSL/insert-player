@@ -15,6 +15,7 @@ import {
   registerSpriteLayout,
   calculateLegacyCrouchPresentationScale,
   LEGACY_CROUCH_DISPLAY_HEIGHT_RATIO,
+  LEGACY_LOW_ATTACK_DISPLAY_HEIGHT_RATIO,
 } from './SpriteGenerator.ts';
 
 describe('sprite layouts', () => {
@@ -244,6 +245,14 @@ describe('calculateLegacyCrouchPresentationScale', () => {
 
   it('clamps extreme corrections to the minimum presentation scale', () => {
     expect(calculateLegacyCrouchPresentationScale(100, 400)).toBe(0.45);
+  });
+
+  it('pins low attacks to their taller display ratio', () => {
+    expect(calculateLegacyCrouchPresentationScale(
+      240,
+      240,
+      LEGACY_LOW_ATTACK_DISPLAY_HEIGHT_RATIO,
+    )).toBeCloseTo(LEGACY_LOW_ATTACK_DISPLAY_HEIGHT_RATIO);
   });
 
   it('falls back to identity for unusable measurements', () => {

@@ -232,26 +232,32 @@ export function composeSpritePresentation(
 /** Displayed crouch height relative to the idle; mirrors the 0.6x gameplay
  * hurtbox with a little visual headroom. */
 export const LEGACY_CROUCH_DISPLAY_HEIGHT_RATIO = 0.62;
+/** Crouched attacks extend limbs, so they sit taller than the idle crouch —
+ * same 0.75/0.90 proportion the dense pipeline uses for low attacks. */
+export const LEGACY_LOW_ATTACK_DISPLAY_HEIGHT_RATIO = 0.83;
 const LEGACY_CROUCH_MIN_PRESENTATION_SCALE = 0.45;
 
 /**
  * Legacy sheets normalize every animation's content to fill its atlas cell,
- * erasing the pose's real height — an AI-drawn crouch renders as tall as the
- * idle. Given the drawn content heights of both cells, return the CROUCH
- * presentation scale that pins its displayed height to the idle's. Never
- * upscales (a naturally short crouch fit stays as drawn).
+ * erasing the pose's real height — an AI-drawn crouch or low attack renders
+ * as tall as the idle. Given the drawn content heights of both cells, return
+ * the presentation scale that pins the pose's displayed height to the given
+ * ratio of the idle's. Never upscales (a naturally short pose stays as
+ * drawn).
  */
 export function calculateLegacyCrouchPresentationScale(
   idleContentHeight: number,
-  crouchContentHeight: number,
+  poseContentHeight: number,
+  targetRatio = LEGACY_CROUCH_DISPLAY_HEIGHT_RATIO,
 ): number {
   if (
     !Number.isFinite(idleContentHeight) || idleContentHeight <= 0 ||
-    !Number.isFinite(crouchContentHeight) || crouchContentHeight <= 0
+    !Number.isFinite(poseContentHeight) || poseContentHeight <= 0 ||
+    !Number.isFinite(targetRatio) || targetRatio <= 0
   ) {
     return 1;
   }
-  const scale = (LEGACY_CROUCH_DISPLAY_HEIGHT_RATIO * idleContentHeight) / crouchContentHeight;
+  const scale = (targetRatio * idleContentHeight) / poseContentHeight;
   return Math.min(1, Math.max(LEGACY_CROUCH_MIN_PRESENTATION_SCALE, scale));
 }
 

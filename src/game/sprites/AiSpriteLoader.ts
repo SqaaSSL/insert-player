@@ -4,6 +4,8 @@ import { getAllSpritesForHash, type CachedSprite } from '../../services/SpriteCa
 import {
   calculateLegacyCrouchPresentationScale,
   createSpriteLayout,
+  LEGACY_CROUCH_DISPLAY_HEIGHT_RATIO,
+  LEGACY_LOW_ATTACK_DISPLAY_HEIGHT_RATIO,
   DEFAULT_SPRITE_PRESENTATION_PROFILE,
   getAnimationRuntimeProfile,
   registerSpriteLayout,
@@ -282,18 +284,26 @@ async function loadAiSpritesAtDensity(
     );
     return transform.destination.h;
   };
-  if (presentationProfiles[FighterState.CROUCH] === undefined) {
-    const idleContentHeight = legacyDrawnContentHeight('idle');
-    const crouchContentHeight = legacyDrawnContentHeight('crouch');
-    if (idleContentHeight !== null && crouchContentHeight !== null) {
-      const crouchScale = calculateLegacyCrouchPresentationScale(
-        idleContentHeight,
-        crouchContentHeight,
+  const legacyPoseHeightTargets: Array<[FighterState, string, number]> = [
+    [FighterState.CROUCH, 'crouch', LEGACY_CROUCH_DISPLAY_HEIGHT_RATIO],
+    [FighterState.LOW_PUNCH, 'low_punch', LEGACY_LOW_ATTACK_DISPLAY_HEIGHT_RATIO],
+    [FighterState.LOW_KICK, 'low_kick', LEGACY_LOW_ATTACK_DISPLAY_HEIGHT_RATIO],
+  ];
+  const legacyIdleContentHeight = legacyDrawnContentHeight('idle');
+  if (legacyIdleContentHeight !== null) {
+    for (const [state, animName, targetRatio] of legacyPoseHeightTargets) {
+      if (presentationProfiles[state] !== undefined) continue;
+      const poseContentHeight = legacyDrawnContentHeight(animName);
+      if (poseContentHeight === null) continue;
+      const poseScale = calculateLegacyCrouchPresentationScale(
+        legacyIdleContentHeight,
+        poseContentHeight,
+        targetRatio,
       );
-      if (crouchScale < 1) {
-        presentationProfiles[FighterState.CROUCH] = {
+      if (poseScale < 1) {
+        presentationProfiles[state] = {
           ...DEFAULT_SPRITE_PRESENTATION_PROFILE,
-          scale: crouchScale,
+          scale: poseScale,
         };
       }
     }
