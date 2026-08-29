@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, '..');
 const capturesDir = resolve(projectRoot, 'assets/captures');
+const captureSuffix = String(process.env.INSERT_PLAYER_CAPTURE_SUFFIX ?? '').trim();
 const outputPath = resolve(
   process.argv[2] ?? resolve(projectRoot, 'assets/fight-montage-four-stages.mp4'),
 );
@@ -31,8 +32,9 @@ function firstDamageEvent(events) {
 }
 
 const clips = fights.map(({ id, expectedOpponent }) => {
-  const eventsPath = resolve(capturesDir, `${id}-events.json`);
-  const masterPath = resolve(capturesDir, `${id}-master.webm`);
+  const captureId = `${id}${captureSuffix}`;
+  const eventsPath = resolve(capturesDir, `${captureId}-events.json`);
+  const masterPath = resolve(capturesDir, `${captureId}-master.webm`);
   const capture = JSON.parse(readFileSync(eventsPath, 'utf8'));
   const damage = firstDamageEvent(capture.events);
 
@@ -52,6 +54,7 @@ const clips = fights.map(({ id, expectedOpponent }) => {
 
   return {
     id,
+    captureId,
     opponent: capture.opponent,
     stage: String(damage.detail?.matchLabel ?? '').replace(/ · SIGNATURE MATCH$/, ''),
     source: masterPath,
@@ -116,6 +119,7 @@ writeFileSync(
   `${JSON.stringify({
     outputFile: basename(outputPath),
     contentDurationSeconds: clips.length * clipDurationSeconds,
+    captureSuffix,
     transitionHoldSeconds,
     totalDurationSeconds: clips.length * clipDurationSeconds + transitionHoldSeconds,
     leadInSeconds,
