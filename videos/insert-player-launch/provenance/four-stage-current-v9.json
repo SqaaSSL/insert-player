@@ -1,0 +1,94 @@
+{
+  "version": 9,
+  "project": "insert-player-launch",
+  "acceptance": "awaiting_studio_approval",
+  "parentProvenance": {
+    "file": "provenance/four-stage-current-v8.json",
+    "sha256": "d372b7d52164dbb2cda9656ae4b4b3a726ec36577670e595ebb5fb3203a92f0b"
+  },
+  "change": "Re-record all four gameplay cuts after visual review found an undesirable low-attack scale jump in the previous take. Preserve the previous montage and every approved non-gameplay element.",
+  "productionSource": {
+    "url": "https://insertplayer.ai/roster/watch",
+    "commit": "af2e3b5569824ed038e56f54db085d0a0dd28904",
+    "workerVersionId": "3a770e5b-b73c-4b42-9966-b8ddaf92981f",
+    "workerTag": "prod-af2e3b5569824ed038e56f54db085d0a0dd28904-1"
+  },
+  "renderer": {
+    "championLegacyDensityFixCommit": "6259e93d8af8f5d7bf11208d0bf2bc8c494b0424",
+    "legacyLowAttackFixCommit": "d3b0efedda8d87dae412aa8162b45a88801527cb",
+    "roundEndAndLegacyGuardFixCommit": "0c16d327eb76870aaf10837d5a6849d5713f1678",
+    "standingGuardMomentumFixCommit": "f33b3ac1eae0c0b42c4d212e9433ddee95006e11",
+    "captureDeviceMemoryGb": 8,
+    "captureMaxTextureSize": 8192,
+    "captureSaveData": false,
+    "captureCoarsePointer": false,
+    "playerOneAtlasFrame": "384x512",
+    "playerOneTextureDensity": 2,
+    "playerOneAtlasEvidence": "[AiSpriteLoader] Built 2688x8192 sheet for fighter_p1 with 384x512 cells at density 2x"
+  },
+  "visualQa": {
+    "method": "Inspect the full four-second montage at 12 fps, then inspect a 4 fps 4x4 review grid at readable scale.",
+    "framesReviewed": 48,
+    "result": "pass",
+    "assertions": [
+      "No pose makes Player One jump to a full-cell giant scale.",
+      "Crouch and low-attack presentation stay proportional to standing idle.",
+      "All four cuts contain real action and the intended current stage."
+    ]
+  },
+  "gameplayCapture": {
+    "captureScript": "scripts/capture-player-one-fight.mjs",
+    "captureScriptSha256": "f1dbe346b5ce4a369e94317545054a71a16c70fb2800bfc0042207bcbd39d7a1",
+    "montageScript": "scripts/build-fight-montage.mjs",
+    "montageScriptSha256": "abb1ba47dbcd033f6388912cda01bef266abf452d2fc539fc38f105eb92b73e9",
+    "montageManifest": "assets/fight-montage-four-stages-current2.json",
+    "montageManifestSha256": "8e7052ac05939175ef4ab15082422c8bb2c5dea509f9c0dde464de493923606a",
+    "montageFile": "assets/fight-montage-four-stages-current2.mp4",
+    "montageSha256": "36c4569cc549ca4996c246a42bc3b06fc131f37f207f3b3790322665e3e52ca8",
+    "montageDurationSeconds": 4.266667,
+    "montageSizeBytes": 11661830,
+    "width": 1920,
+    "height": 1080,
+    "framesPerSecond": 30,
+    "videoCodec": "h264",
+    "captures": [
+      {
+        "captureId": "trump-current2",
+        "opponent": "Donald Trump",
+        "stage": "EXECUTIVE RUMBLE",
+        "capturedAt": "2026-08-29T15:34:54.013Z",
+        "videoSha256": "e2fed43e7087e4a53e0a6134846d808691cbef5beaa83b27951f1aa3d90a57e5",
+        "eventsSha256": "620b3b2db99c064c200113f3d2ddd59a3241e28a957ff4f2e4f0774114b8ad30"
+      },
+      {
+        "captureId": "lamine-current2",
+        "opponent": "Lamine Yamal",
+        "stage": "LA JAULA 304",
+        "capturedAt": "2026-08-29T15:35:28.578Z",
+        "videoSha256": "48a5a5fb8a76f5b3ef8e79e741c0de05f9f17c4dbc613a3e26f249cfc5986bdb",
+        "eventsSha256": "83054f9dafea5c89abe97c85e7280e8084c3fe29a257a158684a93386bdd9820"
+      },
+      {
+        "captureId": "rosalia-current2",
+        "opponent": "Rosalía",
+        "stage": "TABLAO 3000",
+        "capturedAt": "2026-08-29T15:36:08.280Z",
+        "videoSha256": "407f07c4c8850c1a82603d531024fbeb793b49a9599f5314702ba1e7dfcc6fbd",
+        "eventsSha256": "b99ee385699f0e95d1ffeb21c92e0783c19d18618e801c710f17099a40e42a83"
+      },
+      {
+        "captureId": "elon-current2",
+        "opponent": "Elon Musk",
+        "stage": "MARS INCORPORATED",
+        "capturedAt": "2026-08-29T15:36:42.471Z",
+        "videoSha256": "e5725aa2e37bfc2d462fff92ef929718a326d864b58a20e4dd65ff1e293959f6",
+        "eventsSha256": "fbd43a0b482d84fffcd0aa6d04ca485454d7a4dd9068b3c7b26ee363cde8f135"
+      }
+    ]
+  },
+  "cost": {
+    "providerCalls": 0,
+    "inferenceCostUsd": 0,
+    "note": "Browser capture and local deterministic editing only."
+  }
+}

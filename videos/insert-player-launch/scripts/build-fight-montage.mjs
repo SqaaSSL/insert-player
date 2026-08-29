@@ -28,14 +28,24 @@ const outputPath = resolve(
 );
 const manifestPath = outputPath.replace(/\.mp4$/i, '.json');
 const leadInSeconds = 0.45;
-const clipDurationSeconds = 1;
+const requestedClipDurationSeconds = Number(
+  process.env.INSERT_PLAYER_CLIP_DURATION_SECONDS ?? 1,
+);
+const clipDurationSeconds = Number.isFinite(requestedClipDurationSeconds)
+  ? Math.min(2, Math.max(0.75, requestedClipDurationSeconds))
+  : 1;
 const transitionHoldSeconds = 0.25;
+const outputFrameRate = 30;
+const clipFrameCount = Math.round(clipDurationSeconds * outputFrameRate);
+const renderedClipDurationSeconds = clipFrameCount / outputFrameRate;
+const transitionHoldFrameCount = Math.round(transitionHoldSeconds * outputFrameRate);
+const renderedTransitionHoldSeconds = transitionHoldFrameCount / outputFrameRate;
 
 const fights = [
-  { id: 'trump', expectedOpponent: 'Donald Trump' },
-  { id: 'lamine', expectedOpponent: 'Lamine Yamal' },
-  { id: 'rosalia', expectedOpponent: 'Rosalía V2' },
-  { id: 'elon', expectedOpponent: 'Elon Musk' },
+  { id: 'trump', expectedOpponents: ['Donald Trump'] },
+  { id: 'lamine', expectedOpponents: ['Lamine Yamal'] },
+  { id: 'rosalia', expectedOpponents: ['Rosalía', 'Rosalía V2'] },
+  { id: 'elon', expectedOpponents: ['Elon Musk'] },
 ];
 
 const unknownOverride = Object.keys(captureIdOverrides)
@@ -53,7 +63,7 @@ function firstDamageEvent(events) {
   });
 }
 
-const clips = fights.map(({ id, expectedOpponent }) => {
+const clips = fights.map(({ id, expectedOpponents }) => {
   const captureId = captureIdOverrides[id] ?? `${id}${captureSuffix}`;
   const eventsPath = resolve(capturesDir, `${captureId}-events.json`);
   const masterPath = resolve(capturesDir, `${captureId}-master.webm`);
@@ -61,9 +71,9 @@ const clips = fights.map(({ id, expectedOpponent }) => {
   const damage = firstDamageEvent(capture.events);
 
   if (!damage) throw new Error(`No damage event found for ${id}`);
-  if (capture.opponent !== expectedOpponent) {
+  if (!expectedOpponents.includes(capture.opponent)) {
     throw new Error(
-      `Expected ${expectedOpponent} for ${id}, received ${capture.opponent}`,
+      `Expected ${expectedOpponents.join(' or ')} for ${id}, received ${capture.opponent}`,
     );
   }
 
@@ -97,12 +107,14 @@ const inputArgs = clips.flatMap((clip) => [
 ]);
 const filters = clips.map(
   (_, index) =>
-    `[${index}:v]trim=start=0:duration=${clipDurationSeconds},setpts=PTS-STARTPTS,`
-    + `fps=30,scale=1920:1080:flags=lanczos,setsar=1[v${index}]`,
+    `[${index}:v]fps=${outputFrameRate},trim=start_frame=0:end_frame=${clipFrameCount},`
+    + `setpts=N/(${outputFrameRate}*TB),scale=1920:1080:flags=lanczos,setsar=1[v${index}]`,
 );
+const totalFrameCount = clips.length * clipFrameCount + transitionHoldFrameCount;
 filters.push(
   `${clips.map((_, index) => `[v${index}]`).join('')}concat=n=${clips.length}:v=1:a=0[montage]`,
-  `[montage]tpad=stop_mode=clone:stop_duration=${transitionHoldSeconds}[vout]`,
+  `[montage]tpad=stop_mode=clone:stop_duration=${renderedTransitionHoldSeconds},`
+    + `trim=start_frame=0:end_frame=${totalFrameCount},setpts=N/(${outputFrameRate}*TB)[vout]`,
 );
 
 const result = spawnSync(
@@ -140,11 +152,14 @@ writeFileSync(
   manifestPath,
   `${JSON.stringify({
     outputFile: basename(outputPath),
-    contentDurationSeconds: clips.length * clipDurationSeconds,
+    contentDurationSeconds: clips.length * renderedClipDurationSeconds,
     captureSuffix,
     captureIdOverrides,
-    transitionHoldSeconds,
-    totalDurationSeconds: clips.length * clipDurationSeconds + transitionHoldSeconds,
+    transitionHoldSeconds: renderedTransitionHoldSeconds,
+    totalDurationSeconds: totalFrameCount / outputFrameRate,
+    outputFrameRate,
+    clipFrameCount,
+    transitionHoldFrameCount,
     leadInSeconds,
     clips: clips.map(({ source, ...clip }) => clip),
   }, null, 2)}\n`,

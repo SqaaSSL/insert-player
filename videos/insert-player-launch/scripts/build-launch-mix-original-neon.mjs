@@ -23,12 +23,17 @@ const effectsPath = resolve(
 );
 const outputPath = resolve(
   process.argv[5] ??
-    join(projectRoot, 'assets/generated/launch-mix-original-neon-gameplay-v3.wav'),
+    join(projectRoot, 'assets/generated/launch-mix-original-neon-gameplay-v4.wav'),
 );
 const expectedMusicSha256 =
   '0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05';
 const musicSha256 = createHash('sha256').update(readFileSync(musicPath)).digest('hex');
 const audibleFloorDb = -50;
+const introDurationSeconds = 4.65;
+const musicDurationSeconds = 8.7;
+const totalDurationSeconds = introDurationSeconds + musicDurationSeconds;
+const musicFadeDurationSeconds = 0.85;
+const musicFadeStartSeconds = musicDurationSeconds - musicFadeDurationSeconds;
 
 if (musicSha256 !== expectedMusicSha256) {
   throw new Error(
@@ -91,9 +96,9 @@ const gameplayNormalizedPath = join(workDir, 'gameplay-normalized.wav');
 
 try {
   const gameplayArrangement = [
-    '[0:a]atrim=start=0:end=7.35,asetpts=PTS-STARTPTS,volume=-2dB,afade=t=in:st=0:d=0.04,afade=t=out:st=6.50:d=0.85[neon]',
-    '[1:a]atrim=start=4.65:end=12,asetpts=PTS-STARTPTS,volume=4dB[gameplay_effects]',
-    '[neon][gameplay_effects]amix=inputs=2:duration=longest:dropout_transition=0,highpass=f=45,acompressor=threshold=-12dB:ratio=2:attack=10:release=120:makeup=2,apad=pad_dur=7.35,atrim=end_sample=352800,asetpts=PTS-STARTPTS[gameplay]',
+    `[0:a]atrim=start=0:end=${musicDurationSeconds},asetpts=PTS-STARTPTS,volume=-2dB,afade=t=in:st=0:d=0.04,afade=t=out:st=${musicFadeStartSeconds}:d=${musicFadeDurationSeconds}[neon]`,
+    `[1:a]atrim=start=${introDurationSeconds}:end=${totalDurationSeconds},asetpts=PTS-STARTPTS,volume=4dB[gameplay_effects]`,
+    `[neon][gameplay_effects]amix=inputs=2:duration=longest:dropout_transition=0,highpass=f=45,acompressor=threshold=-12dB:ratio=2:attack=10:release=120:makeup=2,apad=whole_dur=${musicDurationSeconds},atrim=end=${musicDurationSeconds},asetpts=PTS-STARTPTS[gameplay]`,
   ].join(';');
 
   runFfmpeg([
@@ -153,9 +158,9 @@ try {
     '-i',
     gameplayPremixPath,
     '-af',
-    `${normalize},aresample=48000,apad=whole_dur=7.35,atrim=end=7.35`,
+    `${normalize},aresample=48000,apad=whole_dur=${musicDurationSeconds},atrim=end=${musicDurationSeconds}`,
     '-t',
-    '7.35',
+    String(musicDurationSeconds),
     '-ar',
     '48000',
     '-ac',
@@ -170,7 +175,7 @@ try {
   const continuityChecks = [
     assertAudibleWindow(
       gameplayNormalizedPath,
-      5.15,
+      musicDurationSeconds - 2.2,
       0.5,
       'Neon Arena late-gameplay window',
     ),
@@ -185,11 +190,11 @@ try {
     '-i',
     gameplayNormalizedPath,
     '-filter_complex',
-    '[0:a]atrim=end_sample=223200,asetpts=PTS-STARTPTS[intro];[1:a]atrim=end_sample=352800,asetpts=PTS-STARTPTS,adelay=4650:all=1[gameplay];[intro][gameplay]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,apad=pad_dur=12,atrim=end_sample=576000[out]',
+    `[0:a]atrim=end_sample=223200,asetpts=PTS-STARTPTS[intro];[1:a]atrim=end=${musicDurationSeconds},asetpts=PTS-STARTPTS,adelay=4650:all=1[gameplay];[intro][gameplay]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,apad=whole_dur=${totalDurationSeconds},atrim=end=${totalDurationSeconds}[out]`,
     '-map',
     '[out]',
     '-t',
-    '12',
+    String(totalDurationSeconds),
     '-ar',
     '48000',
     '-ac',
@@ -202,8 +207,8 @@ try {
   ]);
 
   continuityChecks.push(
-    assertAudibleWindow(outputPath, 10.2, 0.5, 'Final mix late-gameplay window'),
-    assertAudibleWindow(outputPath, 11.25, 0.4, 'Final mix closing-fade window'),
+    assertAudibleWindow(outputPath, 11.8, 0.5, 'Final mix late-gameplay window'),
+    assertAudibleWindow(outputPath, 12.75, 0.4, 'Final mix closing-fade window'),
   );
 
   const size = readFileSync(outputPath).byteLength;
@@ -213,13 +218,13 @@ try {
         output: outputPath,
         outputFile: basename(outputPath),
         bytes: size,
-        durationSeconds: 12,
+        durationSeconds: totalDurationSeconds,
         gameplayIntegratedLoudnessTargetLufs: -16.3,
         truePeakTargetDbfs: -1.5,
         musicSourceSha256: musicSha256,
-        preservedIntroSeconds: [0, 4.65],
-        musicSourceSeconds: [0, 7.35],
-        musicTimelineSeconds: [4.65, 12],
+        preservedIntroSeconds: [0, introDurationSeconds],
+        musicSourceSeconds: [0, musicDurationSeconds],
+        musicTimelineSeconds: [introDurationSeconds, totalDurationSeconds],
         audibleFloorDb,
         continuityChecks,
       },
