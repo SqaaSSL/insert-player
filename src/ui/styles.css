@@ -3232,7 +3232,6 @@
     transform: translateX(-50%) rotate(7deg) scaleY(1);
   }
 }
-
 @layer components {
   /* ============================================================
      FIGHT LOADING CURTAIN (React-owned shell before Phaser ready)
@@ -3299,7 +3298,6 @@
   .fight-loader.is-opening .fight-loader__slash {
     @apply opacity-0 [transition:opacity_180ms_ease-out];
   }
-
   .fight-loader__panel-label {
     @apply absolute bottom-6 font-arcade text-[64px] leading-none text-asf-cream opacity-[0.045]
            sm:text-[84px];
