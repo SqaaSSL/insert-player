@@ -37,3 +37,17 @@ The active `pipeline-v1` files were produced on 2026-08-28 by the same product p
 - lossless removal of the fully opaque alpha channel after generation.
 
 The transform preserves the seed's location and composition while reinterpreting it as stylized 2D fighting-game art with a readable side-on floor. The exact seed and output hashes are pinned in `arcade/signature-stage-pipeline-2026.json` and verified by CI.
+
+## Publishing another official stage
+
+Unpublished seeds live under `arcade/stage-publication-seeds/`, outside the public asset tree. A sealed request in `arcade/stage-publication-requests/` pins its label, blurb, source hash, approved model, output dimensions, and normalization contract.
+
+Run **Generate production signature stage** with the exact `GENERATE_ONE_STAGE_PRODUCTION` confirmation. The production-environment job:
+
+- verifies the live Worker is healthy and reports `geminiTransport=meterkey`;
+- mints a short-lived Clerk token from environment secrets;
+- obtains a `stage_background` provider session capped at one call and 10 estimated cents;
+- sends the shared product prompt to `gemini-3.1-flash-image` exactly once, with no retry, fallback, resubmit, or alternate model;
+- preserves both the provider output and the normalized 1024 x 576 PNG in an immutable review artifact, alongside hashes and provenance.
+
+Generation does not publish. After visual review, commit the seed and active derivative together, append both hashes to `arcade/signature-stage-pipeline-2026.json`, and add the versioned active path to `StageConfig.ts`. Existing versions remain immutable.
