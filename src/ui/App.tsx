@@ -470,7 +470,7 @@ export function App({
   return (
     <div className="app-route-shell">
       <AppHeader currentRoute={route} onNavigate={navigate} />
-      {authSlot}
+      {route === '/' ? null : authSlot}
       <CacheStatusBanner
         status={cacheStatus}
         message={cacheMessage}
