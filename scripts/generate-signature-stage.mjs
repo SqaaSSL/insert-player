@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
-import { createServer } from 'vite';
+import { transformWithEsbuild } from 'vite';
 
 const execFileAsync = promisify(execFile);
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -133,20 +133,17 @@ async function mintAdminToken(secretKey, userId) {
 }
 
 async function loadPromptBuilder() {
-  const vite = await createServer({
-    root,
-    configFile: false,
-    appType: 'custom',
-    logLevel: 'error',
-    server: { middlewareMode: true },
+  const sourcePath = join(root, 'src/services/StageBackgroundPrompt.ts');
+  const source = await readFile(sourcePath, 'utf8');
+  const transformed = await transformWithEsbuild(source, sourcePath, {
+    loader: 'ts',
+    format: 'esm',
+    target: 'es2022',
   });
-  try {
-    const module = await vite.ssrLoadModule('/src/services/StageBackgroundPrompt.ts');
-    invariant(typeof module.buildGeminiStageBackgroundPrompt === 'function', 'Stage prompt builder did not load.');
-    return module.buildGeminiStageBackgroundPrompt;
-  } finally {
-    await vite.close();
-  }
+  const moduleUrl = `data:text/javascript;base64,${Buffer.from(transformed.code).toString('base64')}`;
+  const module = await import(moduleUrl);
+  invariant(typeof module.buildGeminiStageBackgroundPrompt === 'function', 'Stage prompt builder did not load.');
+  return module.buildGeminiStageBackgroundPrompt;
 }
 
 async function normalizeStageImage(rawBytes, mime, request, outputPath) {
@@ -234,11 +231,20 @@ async function productionPreflight(request) {
   return health;
 }
 
-async function createStageProviderSession(token, request) {
+export function backendAuthHeaders(token, backendBridgeSecret) {
+  invariant(backendBridgeSecret.length >= 32, 'Clerk backend auth bridge secret is invalid.');
+  return {
+    Authorization: `Bearer ${token}`,
+    'X-Insert-Player-Admin-Seed': 'clerk-backend',
+    'X-Insert-Player-Clerk-Backend-Auth': backendBridgeSecret,
+  };
+}
+
+async function createStageProviderSession(token, backendBridgeSecret, request) {
   const response = await fetch(`${productionApiOrigin}/api/provider-sessions`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${token}`,
+      ...backendAuthHeaders(token, backendBridgeSecret),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -255,13 +261,13 @@ async function createStageProviderSession(token, request) {
   return session;
 }
 
-async function generateOnce(token, providerSessionId, prompt, seed, request) {
+async function generateOnce(token, backendBridgeSecret, providerSessionId, prompt, seed, request) {
   const response = await fetch(
     `${productionApiOrigin}/proxy/gemini/v1beta/models/${approvedModel}:generateContent`,
     {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
+        ...backendAuthHeaders(token, backendBridgeSecret),
         'Content-Type': 'application/json',
         'X-ASF-Provider-Session': providerSessionId,
         'X-Insert-Player-Provider-Call-Kind': 'image_generation',
@@ -293,7 +299,8 @@ export async function generateSignatureStage({ requestPath, outputDirectory }) {
   const health = await productionPreflight(request);
   const clerkSecretKey = process.env.ASF_ARCADE_CLERK_SECRET_KEY?.trim() ?? '';
   const clerkUserId = process.env.ASF_ARCADE_ADMIN_CLERK_USER_ID?.trim() ?? '';
-  invariant(clerkSecretKey && clerkUserId, 'Production Clerk admin credentials are required.');
+  const backendBridgeSecret = process.env.CLERK_BACKEND_AUTH_BRIDGE_SECRET?.trim() ?? '';
+  invariant(clerkSecretKey && clerkUserId && backendBridgeSecret, 'Production Clerk automation credentials are required.');
   const token = await mintAdminToken(clerkSecretKey, clerkUserId);
   const buildPrompt = await loadPromptBuilder();
   const prompt = buildPrompt({
@@ -302,10 +309,17 @@ export async function generateSignatureStage({ requestPath, outputDirectory }) {
     sourceImage: { data: seed.toString('base64'), mime: request.seed.mime },
     sourceMode: request.sourceMode,
   });
-  const providerSession = await createStageProviderSession(token, request);
+  const providerSession = await createStageProviderSession(token, backendBridgeSecret, request);
 
   // Deliberately one call: no retry, fallback, resubmit, or alternate model.
-  const response = await generateOnce(token, providerSession.providerSessionId, prompt, seed, request);
+  const response = await generateOnce(
+    token,
+    backendBridgeSecret,
+    providerSession.providerSessionId,
+    prompt,
+    seed,
+    request,
+  );
   const generated = parseGeminiStageImage(response);
 
   const resolvedOutputDirectory = isAbsolute(outputDirectory)
