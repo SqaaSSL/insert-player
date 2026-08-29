@@ -1,8 +1,13 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { purgeExactCloudflareFiles } from './cloudflare-cache.mjs';
+import {
+  chunkFrontendReleaseAssets,
+  collectFrontendReleaseAssetPaths,
+  expectedMediaContentType,
+} from './frontend-release-assets.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -124,7 +129,20 @@ function builtFrontendAssetPath() {
   return paths[0];
 }
 
-async function purgeLiveAssetCache(values, assetPath) {
+function builtFrontendReleaseAssetPaths(entryAssetPath) {
+  const distDir = join(root, 'dist');
+  const assetsDir = join(distDir, 'assets');
+  const sourcePaths = [join(distDir, 'index.html')];
+  for (const name of readdirSync(assetsDir)) {
+    if (/\.(?:css|js)$/.test(name)) sourcePaths.push(join(assetsDir, name));
+  }
+  return collectFrontendReleaseAssetPaths({
+    entryAssetPath,
+    sourceTexts: sourcePaths.map((path) => readFileSync(path, 'utf8')),
+  });
+}
+
+async function purgeLiveAssetCache(values, assetPaths) {
   if (isSandbox) return;
   const token = envValue(values, 'CLOUDFLARE_API_TOKEN');
   const zoneId = envValue(values, 'ASF_CLOUDFLARE_ZONE_ID', 'CLOUDFLARE_ZONE_ID');
@@ -136,17 +154,41 @@ async function purgeLiveAssetCache(values, assetPath) {
     throw new Error('ASF_CLOUDFLARE_ZONE_ID must be a 32-character Cloudflare zone id.');
   }
 
-  const result = await purgeExactCloudflareFiles({
-    token,
-    zoneId,
-    files: LIVE_FRONTEND_ORIGINS.map((origin) => `${origin}${assetPath}`),
-  });
-
-  if (!result.purged) {
-    console.warn(`${result.warning}; continuing to the authoritative canonical smoke.`);
-    return;
+  const chunks = chunkFrontendReleaseAssets(assetPaths, LIVE_FRONTEND_ORIGINS);
+  for (const files of chunks) {
+    const result = await purgeExactCloudflareFiles({ token, zoneId, files });
+    if (!result.purged) {
+      console.warn(`${result.warning}; continuing to the authoritative canonical smoke.`);
+      return;
+    }
   }
-  console.log(`Purged live cache entries for ${assetPath}.`);
+  console.log(`Purged live cache entries for ${assetPaths.length} release assets.`);
+}
+
+async function verifyLiveMediaAssets(assetPaths) {
+  if (isSandbox) return;
+  const mediaAssets = assetPaths
+    .map((path) => ({ path, expectedType: expectedMediaContentType(path) }))
+    .filter(({ expectedType }) => expectedType);
+  for (const { path, expectedType } of mediaAssets) {
+    const response = await fetch(`${LIVE_FRONTEND_ORIGINS[0]}${path}`, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(30_000),
+    });
+    const actualType = response.headers.get('content-type')?.split(';')[0].trim() ?? '';
+    const contentLengthHeader = response.headers.get('content-length');
+    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
+    if (
+      !response.ok ||
+      actualType !== expectedType ||
+      (contentLength !== null && (!Number.isFinite(contentLength) || contentLength <= 0))
+    ) {
+      throw new Error(
+        `Live media verification failed for ${path}: status=${response.status} type=${actualType || 'missing'} bytes=${contentLength ?? 'unspecified'}.`,
+      );
+    }
+    console.log(`Verified live media ${path} (${actualType}, ${contentLength ?? 'unspecified'} bytes).`);
+  }
 }
 
 async function main() {
@@ -185,7 +227,9 @@ async function main() {
     ['scripts/configure-frontend-dist.mjs', `--target=${isSandbox ? 'sandbox' : 'live'}`],
   );
   const expectedAssetPath = builtFrontendAssetPath();
+  const releaseAssetPaths = builtFrontendReleaseAssetPaths(expectedAssetPath);
   console.log(`Frontend release asset: ${expectedAssetPath}`);
+  console.log(`Frontend referenced release assets: ${releaseAssetPaths.length}`);
   run(
     'Cloudflare Pages deploy',
     node,
@@ -213,7 +257,8 @@ async function main() {
       ASF_FRONTEND_ASSET_PROBE_NONCE: `deploy-${Date.now()}`,
     },
   );
-  await purgeLiveAssetCache(values, expectedAssetPath);
+  await purgeLiveAssetCache(values, releaseAssetPaths);
+  await verifyLiveMediaAssets(releaseAssetPaths);
   run(
     isSandbox ? 'frontend sandbox canonical smoke' : 'frontend live canonical smoke',
     npm,
