@@ -18,14 +18,17 @@ const auth: PublicAuthContext = {
   rateLimitKey: 'user:user-1',
 };
 
-function fakeEnv(hasSession: boolean) {
+function fakeEnv(hasSession: boolean, artifactRunId: string | null = null) {
   const writes: Array<{ key: string; bytes: number }> = [];
   const database = {
-    prepare() {
+    prepare(sql: string) {
       return {
         bind() {
           return {
             async first() {
+              if (sql.includes('FROM generation_jobs')) {
+                return artifactRunId ? { artifact_run_id: artifactRunId } : null;
+              }
               return hasSession ? {
                 id: 'session-1',
                 tier: 'champion',
@@ -85,6 +88,28 @@ describe('temporary provider uploads', () => {
     expect(writes).toHaveLength(1);
     expect(writes[0]?.key).toMatch(/^temp\/[a-f0-9]{32}\.png$/);
     expect(writes[0]?.bytes).toBeGreaterThan(8);
+  });
+
+  it('uses the artifact run identity for stable uploads across continuation jobs', async () => {
+    const artifactRunId = 'b'.repeat(32);
+    const { env, writes } = fakeEnv(true, artifactRunId);
+    const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';
+    const upload = (jobId: string) => handleProxy(new Request('https://api.insertplayer.ai/proxy/upload-temp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        [PROVIDER_SESSION_HEADER]: 'session-1',
+      },
+      body: JSON.stringify({ image: tinyPng }),
+    }), env, {
+      ...auth,
+      claims: { generation_job_id: jobId } as PublicAuthContext['claims'],
+    });
+
+    expect((await upload(artifactRunId))?.status).toBe(200);
+    expect((await upload('c'.repeat(32)))?.status).toBe(200);
+    expect(writes).toHaveLength(2);
+    expect(writes[0]?.key).toBe(writes[1]?.key);
   });
 });
 

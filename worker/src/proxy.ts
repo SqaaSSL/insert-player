@@ -567,8 +567,17 @@ async function handleTempUpload(request: Request, env: Env, auth: PublicAuthCont
   }
 
   const jobId = generationJobIdFromAuth(auth);
-  const id = jobId
-    ? (await hashString(`${jobId}:${await hashString(bytes.buffer as ArrayBuffer)}`)).slice(0, 32)
+  const artifactRunId = jobId
+    ? (await env.DB.prepare(`
+        SELECT artifact_run_id
+        FROM generation_jobs
+        WHERE id = ? AND user_id = ?
+        LIMIT 1
+      `).bind(jobId, auth.userId ?? '').first<{ artifact_run_id: string | null }>())?.artifact_run_id
+    : null;
+  const durableNamespace = artifactRunId || jobId;
+  const id = durableNamespace
+    ? (await hashString(`${durableNamespace}:${await hashString(bytes.buffer as ArrayBuffer)}`)).slice(0, 32)
     : generateId();
   const expiresAt = new Date(Date.now() + TEMP_ASSET_TTL_SECONDS * 1000).toISOString();
   await env.SPRITES.put(`temp/${id}.${format.ext}`, bytes, {
