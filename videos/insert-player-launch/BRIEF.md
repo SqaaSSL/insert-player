@@ -30,7 +30,7 @@ not like an AI avatar advertisement or a software walkthrough.
 - `assets/generated/lyria-launch-bed-v2-neon-reference.mp3` - fully original private Lyria 3 Pro instrumental source composition.
 - `assets/generated/tts-announcer-v1.wav` - private Gemini TTS announcer line.
 - `assets/generated/omni-photo-to-fighter-v2-neon-sync.mp4` - private Omni timing canary, retained for audit but rejected from the final cut because its target was not the immutable global Champion frame.
-- `assets/fight-montage-four-stages-hd.mp4` - four telemetry-trimmed, one-second production matches captured from the Champion 2x atlas against the current global roster.
+- `assets/fight-montage-four-stages-hd-lowfix.mp4` - four telemetry-trimmed, one-second production matches captured from the Champion 2x atlas, with the Elon cut recorded after the legacy low-attack presentation fix.
 
 ## Customizations
 

@@ -1,0 +1,71 @@
+{
+  "version": 5,
+  "project": "insert-player-launch",
+  "acceptance": "approved_for_release",
+  "parentProvenance": {
+    "file": "provenance/four-stage-hd-v4.json",
+    "sha256": "8a52dd6d830ea4b40ceba86385a3598469a4324b30cf08eeae939cd407c4d32b"
+  },
+  "change": "Replace only the Elon gameplay second after the legacy low-attack display-height fix; preserve the three other HD captures, the v4 montage, and both Elon raws.",
+  "renderer": {
+    "lowAttackFixCommit": "d3b0efedda8d87dae412aa8162b45a88801527cb",
+    "captureDeviceMemoryGb": 8,
+    "captureMaxTextureSize": 8192,
+    "playerOneAtlasFrame": "384x512",
+    "playerOneTextureDensity": 2,
+    "playerOneAtlasEvidence": "[AiSpriteLoader] Built 2688x8192 sheet for fighter_p1 with 384x512 cells at density 2x"
+  },
+  "gameplayCapture": {
+    "source": "https://insertplayer.ai/roster/watch",
+    "captureScript": "scripts/capture-player-one-fight.mjs",
+    "captureScriptSha256": "f1dbe346b5ce4a369e94317545054a71a16c70fb2800bfc0042207bcbd39d7a1",
+    "montageScript": "scripts/build-fight-montage.mjs",
+    "montageScriptSha256": "2fd40759b2e2ee2bf7eeaa2a4194700e5cdba86f5535fafcb4df41e44c1e5171",
+    "montageManifest": "assets/fight-montage-four-stages-hd-lowfix.json",
+    "montageManifestSha256": "0d96cecfba54c0852b4518e198db2f3be0d8861d4fd5197779b3d333cf868a1a",
+    "montageFile": "assets/fight-montage-four-stages-hd-lowfix.mp4",
+    "montageSha256": "5dfebecc74cbd97538e77f056c12ccf3fed9e7fac07c21f96de3d1359688152a",
+    "preservedPreviousMontage": "assets/fight-montage-four-stages-hd.mp4",
+    "preservedPreviousMontageSha256": "1afd23ae8ee1838b0c0b0ddcc351abedf2b5f0aecd462b40ccbcd4e862b3d987",
+    "captureIdOverrides": {
+      "elon": "elon-hd-lowfix"
+    },
+    "reusedCaptureIds": [
+      "trump-hd",
+      "lamine-hd",
+      "rosalia-hd"
+    ],
+    "replacementCapture": {
+      "captureId": "elon-hd-lowfix",
+      "opponent": "Elon Musk",
+      "stage": "MARS INCORPORATED",
+      "capturedAt": "2026-08-29T09:49:01.642Z",
+      "videoSha256": "81eb04297b9c43d65ea7b70e34965887db58c7e8d12bea4b7f532e1e2805cefd",
+      "eventsSha256": "9817bd7c0b02c754e4749f553fa4e919a69bb08728df018be4460765dd2871e3"
+    }
+  },
+  "finalRender": {
+    "sourceFile": "renders/insert-player-launch-four-stage-hd-lowfix-v5.mp4",
+    "sourceSha256": "2f963932b10bbfea2f5c012b47e46f7408bc6902d3c9dc737eff24a7ac31c77c",
+    "publicFile": "../../public/assets/insert-player-launch-0e13c328.mp4",
+    "publicSha256": "0e13c328a9efe05bdc414757f0c9f21abf271944bb4d703582f6fb7167ad424f",
+    "durationSeconds": 12.01,
+    "sizeBytes": 6054074,
+    "width": 1920,
+    "height": 1080,
+    "framesPerSecond": 30,
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "integratedLoudnessLufs": -17.0,
+    "truePeakDbfs": -2.4,
+    "sourceToWebSsim": 0.996162,
+    "nearBlackIntervals": 0,
+    "hyperframesVersion": "0.8.17",
+    "webEncoding": {
+      "preset": "slow",
+      "crf": 18,
+      "audioBitrateKbps": 192,
+      "fastStart": true
+    }
+  }
+}
