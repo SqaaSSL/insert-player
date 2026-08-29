@@ -550,6 +550,17 @@ export class Fighter {
     if (state === FighterState.UPPERCUT) {
       this.vy = -500;
     }
+    // Round-end presentation states happen on the floor. Winning or losing
+    // mid-jump used to freeze the fighter at their airborne y forever.
+    if (
+      state === FighterState.VICTORY ||
+      state === FighterState.DEFEAT ||
+      state === FighterState.KNOCKDOWN ||
+      state === FighterState.IDLE
+    ) {
+      this.y = GROUND_Y;
+      this.vy = 0;
+    }
   }
 
   private setState(state: FighterState): void {

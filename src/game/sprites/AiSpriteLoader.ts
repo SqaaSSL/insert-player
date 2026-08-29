@@ -286,6 +286,9 @@ async function loadAiSpritesAtDensity(
   };
   const legacyPoseHeightTargets: Array<[FighterState, string, number]> = [
     [FighterState.CROUCH, 'crouch', LEGACY_CROUCH_DISPLAY_HEIGHT_RATIO],
+    // BLOCK has no drawn animation and renders the crouch cells; without the
+    // same corrective scale the standing guard shows a full-height squat.
+    [FighterState.BLOCK, 'crouch', LEGACY_CROUCH_DISPLAY_HEIGHT_RATIO],
     [FighterState.LOW_PUNCH, 'low_punch', LEGACY_LOW_ATTACK_DISPLAY_HEIGHT_RATIO],
     [FighterState.LOW_KICK, 'low_kick', LEGACY_LOW_ATTACK_DISPLAY_HEIGHT_RATIO],
   ];
