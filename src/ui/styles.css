@@ -2768,8 +2768,18 @@
   }
 
   .fight-hud__portrait {
-    @apply h-12 w-12 shrink-0 overflow-hidden rounded-[3px] border-2 border-asf-gold-deep
-           bg-asf-well shadow-[0_3px_0_rgba(0,0,0,0.6)];
+    @apply h-20 w-20 shrink-0 overflow-hidden rounded-[4px] border-[3px] border-asf-gold-deep
+           bg-asf-well shadow-[0_4px_0_rgba(0,0,0,0.65)]
+           [@media(pointer:coarse)]:h-14 [@media(pointer:coarse)]:w-14;
+  }
+
+  /* Player color coding under the portrait: P1 coin red, P2 glass blue. */
+  .fight-hud__side--p1 .fight-hud__portrait {
+    @apply border-b-4 border-b-asf-red;
+  }
+
+  .fight-hud__side--p2 .fight-hud__portrait {
+    @apply border-b-4 border-b-asf-blue;
   }
 
   .fight-hud__portrait-img {
@@ -2777,7 +2787,8 @@
   }
 
   .fight-hud__portrait-fallback {
-    @apply flex h-full w-full items-center justify-center font-arcade text-[16px] text-asf-gold;
+    @apply flex h-full w-full items-center justify-center font-arcade text-[26px] text-asf-gold
+           [@media(pointer:coarse)]:text-[18px];
   }
 
   .fight-hud__column {
@@ -2785,7 +2796,7 @@
   }
 
   .fight-hud__identity {
-    @apply flex min-w-0 items-baseline gap-2;
+    @apply flex min-w-0 items-center gap-2;
   }
 
   .fight-hud__side--p2 .fight-hud__identity {
@@ -2793,13 +2804,15 @@
   }
 
   .fight-hud__name {
-    @apply truncate font-arcade text-[12px] leading-none text-asf-cream
-           [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
+    @apply truncate font-arcade text-[17px] leading-none text-asf-cream
+           [text-shadow:0_3px_0_rgba(0,0,0,0.9),0_0_14px_rgba(0,0,0,0.6)]
+           [@media(pointer:coarse)]:text-[13px];
   }
 
   .fight-hud__tag {
-    @apply truncate font-arcade text-[11px] leading-none text-asf-blue
-           [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
+    @apply shrink-0 rounded-[2px] border border-asf-blue bg-[rgba(5,5,12,0.85)] px-1.5
+           py-1 font-arcade text-[11px] leading-none text-asf-blue
+           [@media(pointer:coarse)]:text-[10px];
   }
 
   .fight-hud__bar-frame {
