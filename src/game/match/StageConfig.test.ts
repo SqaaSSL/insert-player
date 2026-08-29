@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CLASSIC_STAGE_THEMES,
   SIGNATURE_STAGE_THEMES,
+  STAGE_THEMES,
   getSignatureStageThemeIdForArcadeSlug,
   pickStageThemeIdFromSeed,
   resolveAutoSignatureStageThemeId,
@@ -53,10 +53,10 @@ describe('signature stage configuration', () => {
 
   it('preserves manual and photo choices instead of applying AUTO', () => {
     expect(resolveRosterStageThemeId({
-      manualStageId: 'sunset-pier',
+      manualStageId: 'insert-player-arena',
       p1ArcadeSlug: 'elon-musk',
       p2ArcadeSlug: 'donald-trump',
-    })).toBe('sunset-pier');
+    })).toBe('insert-player-arena');
 
     expect(resolveRosterStageThemeId({
       hasCustomPhotoStage: true,
@@ -70,16 +70,18 @@ describe('signature stage configuration', () => {
     })).toBeUndefined();
   });
 
-  it('keeps random AUTO stages inside the original five-stage pool', () => {
-    const classicIds = new Set(CLASSIC_STAGE_THEMES.map((stage) => stage.id));
+  it('lists and randomly chooses only the five published stage assets', () => {
+    const publishedIds = new Set(SIGNATURE_STAGE_THEMES.map((stage) => stage.id));
     const pickedIds = new Set(
       Array.from({ length: 200 }, (_, seed) => pickStageThemeIdFromSeed(seed * 7919)),
     );
 
-    expect(classicIds.size).toBe(5);
-    expect(pickedIds).toEqual(classicIds);
+    expect(STAGE_THEMES).toEqual(SIGNATURE_STAGE_THEMES);
+    expect(STAGE_THEMES.every((stage) => Boolean(stage.assetPath))).toBe(true);
+    expect(publishedIds.size).toBe(5);
+    expect(pickedIds).toEqual(publishedIds);
     for (const id of pickedIds) {
-      expect(classicIds.has(id)).toBe(true);
+      expect(publishedIds.has(id)).toBe(true);
     }
   });
 });

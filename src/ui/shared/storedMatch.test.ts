@@ -55,6 +55,7 @@ describe('stored match', () => {
     const storage = new MemoryStorage();
     expect(writeStoredMatch({ ...match, p1Name: '' }, 'user-a', storage)).toBe(false);
     expect(writeStoredMatch({ ...match, vsAI: undefined }, 'user-a', storage)).toBe(false);
+    expect(writeStoredMatch({ ...match, stageId: 'dojo' }, 'user-a', storage)).toBe(false);
 
     const invalid = JSON.stringify({
       version: 1,

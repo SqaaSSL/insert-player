@@ -1,4 +1,6 @@
-export type ClassicStageThemeId =
+// Kept only so an already-running legacy scene can still render safely. These
+// procedural placeholders are not part of the selectable or random stage catalog.
+export type LegacyProceduralStageThemeId =
   | 'dojo'
   | 'neon-rooftop'
   | 'sunset-pier'
@@ -12,7 +14,7 @@ export type SignatureStageThemeId =
   | 'tablao-3000'
   | 'la-jaula-304';
 
-export type StageThemeId = ClassicStageThemeId | SignatureStageThemeId;
+export type StageThemeId = LegacyProceduralStageThemeId | SignatureStageThemeId;
 
 export interface StageTheme {
   id: StageThemeId;
@@ -21,34 +23,6 @@ export interface StageTheme {
   assetPath?: string;
   signatureForArcadeSlug?: string;
 }
-
-export const CLASSIC_STAGE_THEMES: StageTheme[] = [
-  {
-    id: 'dojo',
-    label: 'DOJO AT DUSK',
-    blurb: 'Lanterns, clouds, and old-school tournament energy.',
-  },
-  {
-    id: 'neon-rooftop',
-    label: 'NEON ROOFTOP',
-    blurb: 'City lights, billboards, and midnight hype.',
-  },
-  {
-    id: 'sunset-pier',
-    label: 'SUNSET PIER',
-    blurb: 'Warm skies, ocean shimmer, and postcard drama.',
-  },
-  {
-    id: 'moonlit-garden',
-    label: 'MOONLIT GARDEN',
-    blurb: 'Moon glow, drifting mist, and quiet menace.',
-  },
-  {
-    id: 'subway-platform',
-    label: 'SUBWAY PLATFORM',
-    blurb: 'Fluorescent grime, rails, and last-train tension.',
-  },
-];
 
 export const SIGNATURE_STAGE_THEMES: StageTheme[] = [
   {
@@ -87,10 +61,7 @@ export const SIGNATURE_STAGE_THEMES: StageTheme[] = [
   },
 ];
 
-export const STAGE_THEMES: StageTheme[] = [
-  ...CLASSIC_STAGE_THEMES,
-  ...SIGNATURE_STAGE_THEMES,
-];
+export const STAGE_THEMES: StageTheme[] = [...SIGNATURE_STAGE_THEMES];
 
 export interface ResolveRosterStageThemeInput {
   manualStageId?: StageThemeId | null;
@@ -148,7 +119,7 @@ export function getStageChoiceBlurb(id?: StageThemeId | null): string {
   return id ? getStageTheme(id).blurb : 'Let the matchup choose the arena.';
 }
 
-export function pickStageThemeIdFromSeed(seed: number): ClassicStageThemeId {
-  const idx = Math.abs(seed >>> 0) % CLASSIC_STAGE_THEMES.length;
-  return CLASSIC_STAGE_THEMES[idx].id as ClassicStageThemeId;
+export function pickStageThemeIdFromSeed(seed: number): SignatureStageThemeId {
+  const idx = Math.abs(seed >>> 0) % SIGNATURE_STAGE_THEMES.length;
+  return SIGNATURE_STAGE_THEMES[idx].id as SignatureStageThemeId;
 }
