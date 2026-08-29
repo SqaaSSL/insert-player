@@ -1669,6 +1669,14 @@ const OFFICIAL_FRAMING_RECOVERY_INSET_SCALE = 0.84;
 const OFFICIAL_FRAMING_RECOVERY_BOTTOM_MARGIN_RATIO = 0.03;
 
 type OfficialFrameEdge = 'left' | 'right' | 'top' | 'bottom';
+type OfficialFrameBounds = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  imageW: number;
+  imageH: number;
+};
 
 export function geminiOfficialFramingRecoveryInsetLayout(
   width: number,
@@ -1704,6 +1712,72 @@ async function insetGreenBackedFramingInput(base64: string): Promise<string> {
   context.fillRect(0, 0, canvas.width, canvas.height);
   const layout = geminiOfficialFramingRecoveryInsetLayout(canvas.width, canvas.height);
   context.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+  return canvas.toDataURL('image/png').split(',')[1];
+}
+
+export function geminiOfficialFramingRecoveryRestoreLayout(
+  recovered: OfficialFrameBounds,
+  rejected: OfficialFrameBounds,
+): { x: number; y: number; width: number; height: number } {
+  const margin = Math.max(
+    OFFICIAL_FRAME_EDGE_MARGIN_PX + 1,
+    Math.round(Math.min(recovered.imageW, recovered.imageH) * 0.02),
+  );
+  const desiredScale = Math.min(
+    rejected.w / recovered.w,
+    rejected.h / recovered.h,
+  );
+  const maximumScale = Math.min(
+    (recovered.imageW - margin * 2) / recovered.w,
+    (recovered.imageH - margin * 2) / recovered.h,
+  );
+  const scale = Math.min(desiredScale, maximumScale);
+  const width = Math.max(1, Math.round(recovered.w * scale));
+  const height = Math.max(1, Math.round(recovered.h * scale));
+  return {
+    x: Math.max(margin, Math.min(rejected.x, recovered.imageW - width - margin)),
+    y: Math.max(margin, Math.min(rejected.y, recovered.imageH - height - margin)),
+    width,
+    height,
+  };
+}
+
+async function restoreRecoveredFrameScale(
+  recoveredFrameBase64: string,
+  rejectedFrameBase64: string,
+): Promise<string> {
+  const [transparentRecoveredBase64, recoveredBounds, rejectedBounds] = await Promise.all([
+    cleanReposedImagePreserveCanvas(recoveredFrameBase64),
+    measureGreenBackedCharacterBounds(recoveredFrameBase64),
+    measureGreenBackedCharacterBounds(rejectedFrameBase64),
+  ]);
+  if (!recoveredBounds || !rejectedBounds) {
+    throw new GeminiOfficialSpriteQualityError('Gemini official framing recovery could not restore sequence scale');
+  }
+
+  const image = await loadAlphaImage(`data:image/png;base64,${transparentRecoveredBase64}`);
+  const canvas = document.createElement('canvas');
+  canvas.width = recoveredBounds.imageW;
+  canvas.height = recoveredBounds.imageH;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new GeminiOfficialSpriteQualityError('Gemini official framing recovery could not create a restore canvas');
+  }
+
+  context.fillStyle = '#00FF00';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const layout = geminiOfficialFramingRecoveryRestoreLayout(recoveredBounds, rejectedBounds);
+  context.drawImage(
+    image,
+    recoveredBounds.x,
+    recoveredBounds.y,
+    recoveredBounds.w,
+    recoveredBounds.h,
+    layout.x,
+    layout.y,
+    layout.width,
+    layout.height,
+  );
   return canvas.toDataURL('image/png').split(',')[1];
 }
 
@@ -1922,20 +1996,24 @@ async function recoverOfficialFrameFraming(
       `Gemini official ${animName} frame ${frameIndex + 1}/${total} framing recovery returned no image`,
     );
   }
+  const restoredFrameBase64 = await restoreRecoveredFrameScale(
+    result.imageBase64,
+    rejectedFrameBase64,
+  );
 
-  const [guideBounds, recoveredBounds] = await Promise.all([
-    measureGreenBackedCharacterBounds(insetPoseGuideBase64),
-    measureGreenBackedCharacterBounds(result.imageBase64),
+  const [rejectedBounds, restoredBounds] = await Promise.all([
+    measureGreenBackedCharacterBounds(rejectedFrameBase64),
+    measureGreenBackedCharacterBounds(restoredFrameBase64),
   ]);
-  if (!guideBounds || !recoveredBounds) {
+  if (!rejectedBounds || !restoredBounds) {
     throw new GeminiOfficialSpriteQualityError(
       `Gemini official ${animName} frame ${frameIndex + 1}/${total} framing recovery could not be measured`,
     );
   }
   const sizeValidation = geminiRefinedFrameSizeValidation(
     animName,
-    guideBounds.heightRatio,
-    recoveredBounds.heightRatio,
+    rejectedBounds.heightRatio,
+    restoredBounds.heightRatio,
     true,
   );
   if (!sizeValidation.ok) {
@@ -1944,7 +2022,7 @@ async function recoverOfficialFrameFraming(
       `(ratio ${sizeValidation.ratio.toFixed(2)}, allowed ${sizeValidation.minRatio.toFixed(2)}-${sizeValidation.maxRatio.toFixed(2)})`,
     );
   }
-  return result.imageBase64;
+  return restoredFrameBase64;
 }
 
 const OFFICIAL_REVIEW_CORRECTIONS: Record<GeminiOfficialSpriteReviewIssue, string> = {

@@ -8,6 +8,7 @@ import {
   geminiOfficialFrameFramingValidation,
   geminiOfficialFramingRecoveryInsetLayout,
   geminiOfficialFramingRecoveryPrompt,
+  geminiOfficialFramingRecoveryRestoreLayout,
   geminiOfficialRefinePrompt,
   geminiOfficialReviewCorrection,
   geminiRefinedFrameSizeValidation,
@@ -73,6 +74,18 @@ describe('Gemini content-block handling', () => {
       y: 155,
       width: 753,
       height: 1004,
+    });
+  });
+
+  it('restores a completed recovery to the rejected sequence scale inside safe margins', () => {
+    expect(geminiOfficialFramingRecoveryRestoreLayout(
+      { x: 74, y: 520, w: 707, h: 616, imageW: 896, imageH: 1195 },
+      { x: 0, y: 434, w: 844, h: 735, imageW: 896, imageH: 1195 },
+    )).toEqual({
+      x: 18,
+      y: 434,
+      width: 844,
+      height: 735,
     });
   });
 
