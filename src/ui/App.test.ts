@@ -3,6 +3,7 @@ import { normalizeRoute } from './App';
 
 describe('App route normalization', () => {
   it('preserves valid direct routes', () => {
+    expect(normalizeRoute('/', '')).toBe('/');
     expect(normalizeRoute('/fight', '')).toBe('/fight');
     expect(normalizeRoute('/roster/vs/', '')).toBe('/roster/vs');
   });

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { HomePage } from './routes/HomePage.tsx';
+import { LandingPage } from './routes/LandingPage.tsx';
 import { GamePage } from './routes/GamePage.tsx';
 import type { MatchSceneData } from '../game/match/MatchConfig.ts';
 import { AppHeader } from './components/AppHeader.tsx';
@@ -44,6 +45,7 @@ const ArcadePage = lazy(() => import('./routes/ArcadePage.tsx').then((module) =>
 })));
 
 type AppRoute =
+  | '/'
   | '/menu'
   | '/arcade'
   | '/gallery'
@@ -77,6 +79,7 @@ export function legalReturnRouteFromState(state: unknown): AppRoute {
   if (!state || typeof state !== 'object') return '/menu';
   const candidate = (state as { legalReturnTo?: unknown }).legalReturnTo;
   if (
+    candidate === '/' ||
     candidate === '/menu' ||
     candidate === '/gallery' ||
     candidate === '/community' ||
@@ -97,7 +100,8 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   const cleaned =
     cleanedPath !== '/' && cleanedPath !== ''
       ? cleanedPath
-      : (cleanedHash || '/menu');
+      : (cleanedHash || '/');
+  if (cleaned === '/') return '/';
   if (cleaned === '/arcade') return '/arcade';
   if (cleaned === '/gallery') return '/gallery';
   if (cleaned === '/community') return '/community';
@@ -122,10 +126,6 @@ function useHashRoute(): [AppRoute, Navigate] {
   );
 
   useEffect(() => {
-    if (!window.location.hash && (window.location.pathname === '/' || window.location.pathname === '')) {
-      window.history.replaceState({}, '', '/menu');
-      setRoute('/menu');
-    }
     const syncRoute = () => setRoute(normalizeRoute(window.location.pathname, window.location.hash));
     const onHashChange = () => syncRoute();
     const onPopState = () => syncRoute();
@@ -342,8 +342,19 @@ export function App({
     [authStatus, authSessionKey, navigate, navigateToLegal],
   );
 
+  const landingPage = useMemo(
+    () => (
+      <LandingPage
+        onCreateFighter={() => navigate('/fighters/new', 'tier=rookie')}
+        onOpenArcade={() => navigate('/arcade')}
+        onOpenWatchMode={() => navigate('/roster/watch')}
+      />
+    ),
+    [navigate],
+  );
+
   const content = useMemo(() => {
-    if (configurationError && route !== '/community' && !isLegalRoute(route)) {
+    if (configurationError && route !== '/' && route !== '/community' && !isLegalRoute(route)) {
       return (
         <ConfigurationErrorPage
           message={configurationError}
@@ -351,6 +362,9 @@ export function App({
           onOpenLegal={() => navigateToLegal('/legal')}
         />
       );
+    }
+    if (route === '/') {
+      return landingPage;
     }
     if (route === '/menu') {
       return homePage;
@@ -440,6 +454,7 @@ export function App({
     authStatus,
     authSessionKey,
     homePage,
+    landingPage,
     configurationError,
     ladderContext,
   ]);
