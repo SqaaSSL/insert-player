@@ -6,6 +6,9 @@ export interface AnimationProfile {
   promptRules: string[];
 }
 
+export const JUMP_ANIMATION_MOTION =
+  'four clear vertical-movement key poses: balanced bent-knee preparation, upward body extension, a compact highest-point pose with both feet visibly clear of the floor, and a balanced grounded recovery guard; keep the apparent body size constant and let the game engine handle on-screen height';
+
 const DEFAULT_PROFILE: AnimationProfile = {
   targetHeightRatio: 0.84,
   targetWidthRatio: 0.8,
@@ -98,10 +101,11 @@ const PROFILES: Record<string, AnimationProfile> = {
     targetWidthRatio: 0.8,
     baselineRatio: 0.95,
     promptRules: [
-      'This jump is exactly four key poses: anticipation, lift-off, apex, and landing.',
+      'Use exactly four athletic key poses: bent-knee preparation, upward body extension, compact highest point, and balanced grounded recovery.',
       'Keep the character the same apparent size as the standing pose in every frame.',
-      'Do not animate the character physically traveling upward inside the frame.',
-      'The game engine handles vertical movement. Only show the pose progression of anticipation, airborne posture, and landing.',
+      'Keep every pose at the same vertical registration inside its cell; gameplay applies the on-screen height change.',
+      'In pose three, show both complete feet visibly clear of the floor while the character remains centered and controlled.',
+      'This is a benign athletic game-animation reference with no contact, injury, distress, or real-world event.',
       'Every frame must stay inside its own cell with margin on the left and right. Never let the body cross a cell boundary.',
       'Each frame must contain exactly one complete character silhouette. No duplicate limbs, no echo trails, and no detached body fragments.',
     ],
