@@ -18,13 +18,15 @@ on:
           - dry-run
           - seed
           - resume
+          - activate-draft
           - activate-reviewed
           - restart-draft
+          - register-draft
           - prepare-canary
           - canary-side
           - probe-side
       confirmation:
-        description: Enter GEMINI_ONLY_PRODUCTION, or ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION for activate-reviewed
+        description: Enter GEMINI_ONLY_PRODUCTION, ACTIVATE_COMPLETE_ARCADE_DRAFT_PRODUCTION, or ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION
         required: false
         type: string
       reviewed_video_final_job_id:
@@ -69,7 +71,12 @@ jobs:
             printf '::error::Invalid Arcade fighter slug.\n'
             exit 1
           }
-          if [[ "$REQUESTED_OPERATION" == "activate-reviewed" ]]; then
+          if [[ "$REQUESTED_OPERATION" == "activate-draft" ]]; then
+            [[ "$REQUESTED_CONFIRMATION" == "ACTIVATE_COMPLETE_ARCADE_DRAFT_PRODUCTION" ]] || {
+              printf '::error::Complete draft activation requires its exact dedicated confirmation phrase.\n'
+              exit 1
+            }
+          elif [[ "$REQUESTED_OPERATION" == "activate-reviewed" ]]; then
             [[ "$REQUESTED_CONFIRMATION" == "ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION" ]] || {
               printf '::error::Reviewed activation requires its exact dedicated confirmation phrase.\n'
               exit 1
@@ -110,7 +117,7 @@ jobs:
             processor/package-lock.json
 
       - name: Pin the live Worker to this reviewed commit before activation
-        if: inputs.operation == 'activate-reviewed'
+        if: inputs.operation == 'activate-draft' || inputs.operation == 'activate-reviewed'
         shell: bash
         run: |
           node --input-type=module <<'NODE'
@@ -160,7 +167,7 @@ jobs:
         run: npm --prefix processor ci
 
       - name: Prove the approved image-provider boundary
-        if: inputs.operation != 'activate-reviewed'
+        if: inputs.operation != 'activate-draft' && inputs.operation != 'activate-reviewed'
         shell: bash
         run: |
           [[ -f processor/scripts/assert-approved-image-providers.mjs ]] || {
@@ -199,6 +206,14 @@ jobs:
             resume)
               seed_args+=(--resume --confirm-production)
               ;;
+            activate-draft)
+              seed_args+=(
+                --activate-draft
+                --confirm-production
+                --confirm-activation="$REQUESTED_CONFIRMATION"
+                --expected-deployed-sha="$GITHUB_SHA"
+              )
+              ;;
             activate-reviewed)
               seed_args+=(
                 --activate-reviewed
@@ -210,6 +225,9 @@ jobs:
               ;;
             restart-draft)
               seed_args+=(--restart-draft --confirm-production)
+              ;;
+            register-draft)
+              seed_args+=(--register-draft --confirm-production)
               ;;
             prepare-canary)
               seed_args+=(--prepare-canary --confirm-production)

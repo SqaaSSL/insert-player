@@ -88,12 +88,12 @@ function buildSupportedGreenMap(
     const component: number[] = [];
     const stack = [start];
     visited[start] = 1;
-    let reachesInterior = false;
+    let interiorPixels = 0;
     while (stack.length > 0) {
       const index = stack.pop()!;
       component.push(index);
-      if (rgba[index * 4 + 3] >= 220 && alphaDistances[index] > 8) {
-        reachesInterior = true;
+      if (rgba[index * 4 + 3] >= 220 && alphaDistances[index] > 12) {
+        interiorPixels += 1;
       }
       const x = index % width;
       const y = Math.floor(index / width);
@@ -110,7 +110,8 @@ function buildSupportedGreenMap(
         }
       }
     }
-    if (reachesInterior) {
+    const minimumInteriorPixels = Math.max(16, Math.ceil(component.length * 0.08));
+    if (interiorPixels >= minimumInteriorPixels) {
       for (const index of component) supported[index] = 1;
     }
   }
@@ -179,12 +180,15 @@ export function decontaminateGreenEdges(
       if (source[i + 3] === 0) continue;
       if (!isChromaGreen(source[i], source[i + 1], source[i + 2])) continue;
       const index = y * width + x;
-      if (alphaDistances[index] > 6) continue;
+      if (alphaDistances[index] > 12) continue;
       if (source[i + 3] < 30) {
         rgba[i + 3] = 0;
         continue;
       }
-      if (supportedGreen[index]) continue;
+      if (
+        supportedGreen[index] &&
+        !isPureChromaGreen(source[i], source[i + 1], source[i + 2])
+      ) continue;
       replaceWithNearestInteriorColor(rgba, source, width, height, x, y);
     }
   }
@@ -244,9 +248,58 @@ export function decontaminateGreenEdges(
 export function unionForegroundMasks(
   chroma: Uint8ClampedArray,
   dnn: Uint8ClampedArray,
+  width: number,
+  height: number,
 ): void {
   if (chroma.length !== dnn.length || chroma.length % 4 !== 0) {
     throw new Error('Mask buffers must be equally sized RGBA data.');
+  }
+  if (
+    !Number.isInteger(width) || !Number.isInteger(height) ||
+    width <= 0 || height <= 0 || width * height * 4 !== chroma.length
+  ) {
+    throw new Error('Mask dimensions do not match the RGBA buffers.');
+  }
+
+  // Chroma can treat non-green or isolated green background patches as
+  // foreground. Classify the DNN background topologically: anything connected
+  // to the canvas edge is external background and cannot be restored by the
+  // chroma mask. DNN holes enclosed by foreground remain eligible for union,
+  // which protects facial highlights and clothing details.
+  const externalDnnBackground = new Uint8Array(width * height);
+  const queue: number[] = [];
+  const enqueue = (pixelIndex: number): void => {
+    if (externalDnnBackground[pixelIndex] || dnn[pixelIndex * 4 + 3] > 32) return;
+    externalDnnBackground[pixelIndex] = 1;
+    queue.push(pixelIndex);
+  };
+
+  for (let x = 0; x < width; x += 1) {
+    enqueue(x);
+    enqueue((height - 1) * width + x);
+  }
+  for (let y = 0; y < height; y += 1) {
+    enqueue(y * width);
+    enqueue(y * width + width - 1);
+  }
+
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const pixelIndex = queue[cursor];
+    const x = pixelIndex % width;
+    const y = Math.floor(pixelIndex / width);
+    if (x > 0) enqueue(pixelIndex - 1);
+    if (x + 1 < width) enqueue(pixelIndex + 1);
+    if (y > 0) enqueue(pixelIndex - width);
+    if (y + 1 < height) enqueue(pixelIndex + width);
+  }
+
+  for (const pixelIndex of queue) {
+    const offset = pixelIndex * 4;
+    if (chroma[offset + 3] <= dnn[offset + 3]) continue;
+    chroma[offset] = dnn[offset];
+    chroma[offset + 1] = dnn[offset + 1];
+    chroma[offset + 2] = dnn[offset + 2];
+    chroma[offset + 3] = dnn[offset + 3];
   }
 
   for (let i = 0; i < chroma.length; i += 4) {

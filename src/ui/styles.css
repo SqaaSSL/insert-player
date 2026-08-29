@@ -973,6 +973,17 @@
     @apply relative h-screen w-full overflow-hidden;
   }
 
+  /* Phones in portrait: rotate the entire arena (canvas + DOM chrome) 90deg
+     instead of asking the user to defeat their OS rotation lock. Layout size
+     is the swapped viewport; the transform only changes presentation, so DOM
+     touch controls keep working and Phaser FIT sees the swapped bounds. */
+  @media (pointer: coarse) and (orientation: portrait) {
+    .game-shell {
+      @apply fixed left-0 top-0 z-40 h-[100dvw] w-[100dvh]
+             [transform:rotate(90deg)_translateY(-100%)] [transform-origin:top_left];
+    }
+  }
+
   .game-shell__surface,
   .game-shell__canvas {
     @apply h-full w-full;
@@ -980,6 +991,17 @@
 
   .game-shell__canvas {
     @apply relative overflow-hidden;
+  }
+
+  /* Touch devices: Phaser scale management is off (see createGame), so the
+     stylesheet does the FIT — the canvas element fills the shell and
+     object-contain letterboxes the 1024x576 drawing inside it, in any
+     orientation, including the rotated portrait shell where script
+     measurement would see swapped bounds. */
+  @media (pointer: coarse) {
+    .game-shell__canvas canvas {
+      @apply !block !h-full !w-full object-contain;
+    }
   }
 
   .game-shell__gallery-link {
@@ -1008,7 +1030,7 @@
 
   .mobile-fight-controls {
     @apply pointer-events-none absolute inset-x-0 bottom-[max(12px,env(safe-area-inset-bottom))] z-30 hidden
-           items-end justify-between px-3 select-none;
+           items-end justify-end px-3 select-none;
   }
 
   .mobile-versus-unavailable {
@@ -1017,14 +1039,63 @@
            font-sans text-[14px] normal-case leading-[1.55] text-asf-cream shadow-[0_8px_0_rgba(0,0,0,0.72)];
   }
 
-  .mobile-fight-controls__dpad {
-    @apply pointer-events-auto grid touch-none grid-cols-[52px_52px_52px] grid-rows-[52px_52px]
-           gap-1;
+  /* The whole left side of the arena catches movement touches; the drawn
+     stick below is only a visual reference of the resting center. Inside
+     the rotated portrait shell, `fixed` resolves against the transformed
+     shell, so the zone tracks the arena in both orientations. */
+  .virtual-joystick-zone {
+    @apply pointer-events-auto fixed left-0 top-0 z-30 h-full w-[45%] touch-none
+           select-none;
+  }
+
+  .virtual-joystick {
+    @apply pointer-events-none absolute bottom-[max(16px,env(safe-area-inset-bottom))]
+           left-4 flex h-[132px] w-[132px] items-center justify-center rounded-full
+           border-2 border-[rgba(255,206,58,0.5)] bg-[rgba(5,5,7,0.55)]
+           [backdrop-filter:blur(5px)] shadow-[inset_0_4px_12px_rgba(0,0,0,0.65)];
+  }
+
+  .virtual-joystick__knob {
+    @apply block h-14 w-14 rounded-full border-2 border-asf-gold
+           bg-[rgba(106,10,10,0.9)] shadow-[0_4px_0_rgba(0,0,0,0.7)]
+           transition-transform duration-75 motion-reduce:transition-none;
+  }
+
+  .virtual-joystick__knob.is-n {
+    @apply -translate-y-7;
+  }
+
+  .virtual-joystick__knob.is-s {
+    @apply translate-y-7;
+  }
+
+  .virtual-joystick__knob.is-e {
+    @apply translate-x-7;
+  }
+
+  .virtual-joystick__knob.is-w {
+    @apply -translate-x-7;
+  }
+
+  .virtual-joystick__knob.is-ne {
+    @apply -translate-y-5 translate-x-5;
+  }
+
+  .virtual-joystick__knob.is-nw {
+    @apply -translate-x-5 -translate-y-5;
+  }
+
+  .virtual-joystick__knob.is-se {
+    @apply translate-x-5 translate-y-5;
+  }
+
+  .virtual-joystick__knob.is-sw {
+    @apply -translate-x-5 translate-y-5;
   }
 
   .mobile-fight-controls__actions {
-    @apply pointer-events-auto grid touch-none grid-cols-[54px_54px] grid-rows-[54px_54px]
-           gap-2 [transform:rotate(-8deg)];
+    @apply pointer-events-auto grid touch-none grid-cols-[54px_54px]
+           grid-rows-[54px_54px_54px] gap-2 [transform:rotate(-8deg)];
   }
 
   .mobile-fight-control {
@@ -1035,22 +1106,6 @@
            transition-[transform,background-color,border-color] duration-100
            active:translate-y-[3px] active:border-asf-gold-bright active:bg-asf-red-dark
            active:shadow-[0_2px_0_rgba(0,0,0,0.72)];
-  }
-
-  .mobile-fight-control.is-up {
-    @apply col-start-2 row-start-1;
-  }
-
-  .mobile-fight-control.is-left {
-    @apply col-start-1 row-start-2;
-  }
-
-  .mobile-fight-control.is-down {
-    @apply col-start-2 row-start-2;
-  }
-
-  .mobile-fight-control.is-right {
-    @apply col-start-3 row-start-2;
   }
 
   .mobile-fight-controls__actions .mobile-fight-control {
@@ -1065,6 +1120,11 @@
   .mobile-fight-control.is-fireball,
   .mobile-fight-control.is-uppercut {
     @apply border-asf-violet bg-[rgba(48,24,96,0.86)];
+  }
+
+  .mobile-fight-control.is-guard {
+    @apply col-span-2 w-full border-asf-blue bg-[rgba(10,30,66,0.88)] text-asf-blue
+           [text-shadow:0_2px_0_rgba(0,0,0,0.8)];
   }
 
   .mobile-fight-control.is-super {
@@ -1085,10 +1145,6 @@
   }
 
   @media (pointer: coarse) and (orientation: portrait) {
-    .game-shell__surface {
-      @apply h-[58vh];
-    }
-
     .mobile-fight-controls {
       @apply bottom-[max(18px,env(safe-area-inset-bottom))];
     }
@@ -2876,57 +2932,8 @@
     @apply bottom-[30%];
   }
 
-  /* ============================================================
-     ROTATE DEVICE OVERLAY (coarse-pointer portrait only)
-     ============================================================ */
-
-  .rotate-overlay {
-    @apply absolute inset-0 z-50 hidden flex-col items-center justify-center
-           gap-4 bg-asf-bg-0 text-center;
-  }
-
-  @media (pointer: coarse) and (orientation: portrait) {
-    .rotate-overlay {
-      @apply flex;
-    }
-  }
-
-  .rotate-overlay__phone {
-    @apply block h-16 w-9 rounded-lg border-4 border-asf-gold
-           [animation:rotate-overlay-turn_1.6s_ease-in-out_infinite]
-           motion-reduce:animate-none;
-  }
-
-  .rotate-overlay__title {
-    @apply font-arcade text-[14px] text-asf-cream;
-  }
-
-  .rotate-overlay__copy {
-    @apply max-w-72 text-sm text-asf-muted;
-  }
-
-  .rotate-overlay--tap {
-    @apply cursor-pointer appearance-none border-0;
-  }
-
-  .rotate-overlay--tap .rotate-overlay__title {
-    @apply rounded-lg border-2 border-asf-gold px-5 py-3
-           shadow-[0_0_18px_rgba(255,206,58,0.45)]
-           [animation:meter-ready-pulse_1.2s_ease-in-out_infinite]
-           motion-reduce:animate-none;
-  }
 }
 
-@keyframes rotate-overlay-turn {
-  0%,
-  20% {
-    transform: rotate(0deg);
-  }
-  60%,
-  100% {
-    transform: rotate(90deg);
-  }
-}
 
 @keyframes meter-ready-pulse {
   0%,

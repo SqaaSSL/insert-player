@@ -12,6 +12,22 @@ export interface InferredSpriteGrid {
   subjectCount: number;
 }
 
+export function selectPlausibleSpriteSubjects(
+  imageWidth: number,
+  imageHeight: number,
+  subjects: SubjectBox[],
+): SubjectBox[] {
+  if (imageWidth <= 0 || imageHeight <= 0 || subjects.length === 0) return [];
+
+  const largestArea = Math.max(...subjects.map((subject) => subject.area));
+  const minArea = Math.max(120, largestArea * 0.28, imageWidth * imageHeight * 0.001);
+  return subjects.filter((subject) =>
+    subject.area >= minArea &&
+    subject.w >= imageWidth * 0.035 &&
+    subject.h >= imageHeight * 0.07,
+  );
+}
+
 interface AxisCluster {
   center: number;
   count: number;
@@ -66,13 +82,7 @@ export function inferSpriteGridFromSubjects(
     return null;
   }
 
-  const largestArea = Math.max(...subjects.map((subject) => subject.area));
-  const minArea = Math.max(120, largestArea * 0.28, imageWidth * imageHeight * 0.001);
-  const candidates = subjects.filter((subject) =>
-    subject.area >= minArea &&
-    subject.w >= imageWidth * 0.035 &&
-    subject.h >= imageHeight * 0.07,
-  );
+  const candidates = selectPlausibleSpriteSubjects(imageWidth, imageHeight, subjects);
 
   if (candidates.length < expectedFrameCount) return null;
 

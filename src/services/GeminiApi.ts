@@ -722,6 +722,26 @@ const IDLE_FRAME_DIRECTIONS = [
   'neutral ready guard again so the loop connects cleanly back to frame 1',
 ];
 
+export function geminiSpriteSequenceEndNote(
+  animName: string,
+  frameCount: number,
+  hasTwoRefs: boolean,
+  shouldMirror: boolean,
+): string {
+  if (animName === 'idle') {
+    return hasTwoRefs
+      ? `- IMAGE 1 shows the START guard (frame 1) and IMAGE 2 shows the required END guard (frame ${frameCount}). Frames 2 through ${frameCount - 1} may show only subtle breathing and weight shift. Frame ${frameCount} must return to IMAGE 2's fighting-ready pose with both fists raised, feet planted, and a silhouette that connects cleanly back to frame 1.`
+      : `- Frame 1 starts in a fighting-ready guard with both fists raised and feet planted. Middle frames show only subtle breathing and weight shift. Frame ${frameCount} must return to the same raised guard, silhouette, floor line, and body alignment as frame 1 so the loop closes cleanly.`;
+  }
+  if (hasTwoRefs) {
+    return `- IMAGE 1 (first reference) shows the START pose (frame 1). IMAGE 2 (second reference) shows the END pose (frame ${frameCount}). The animation must smoothly transition between these two poses across all ${frameCount} frames.`;
+  }
+  if (shouldMirror) {
+    return `- Frame 1 is the resting stance. Each subsequent frame progresses the motion further. Frame ${frameCount} is the peak/impact moment of the action. Do NOT show the character returning to stance — only the wind-up through impact.`;
+  }
+  return `- Frame 1 starts in the base stance. The motion progresses gradually through the middle frames. The final frame returns to or finishes the pose.`;
+}
+
 function getMinimumReliableFrames(animName: string): number {
   if (animName === 'idle') return 8;
   if (animName === 'walk') return 12;
@@ -1077,14 +1097,7 @@ export async function geminiSpriteSheet(
 
   const hasTwoRefs = !!secondaryBase64;
 
-  let endNote: string;
-  if (hasTwoRefs) {
-    endNote = `- IMAGE 1 (first reference) shows the START pose (frame 1). IMAGE 2 (second reference) shows the END pose (frame ${genFrames}). The animation must smoothly transition between these two poses across all ${genFrames} frames.`;
-  } else if (shouldMirror) {
-    endNote = `- Frame 1 is the resting stance. Each subsequent frame progresses the motion further. Frame ${genFrames} is the peak/impact moment of the action. Do NOT show the character returning to stance — only the wind-up through impact.`;
-  } else {
-    endNote = `- Frame 1 starts in the base stance. The motion progresses gradually through the middle frames. The final frame returns to or finishes the pose.`;
-  }
+  const endNote = geminiSpriteSequenceEndNote(animName, genFrames, hasTwoRefs, shouldMirror);
 
   const targetHeightPct = Math.round(((normalizationReference?.targetDrawHeight ?? CELL_H * profile.targetHeightRatio) / CELL_H) * 100);
   const targetWidthPct = Math.round(((normalizationReference?.targetDrawWidth ?? CELL_W * profile.targetWidthRatio) / CELL_W) * 100);
@@ -1101,6 +1114,10 @@ export async function geminiSpriteSheet(
     `- Frames are read left-to-right, top-to-bottom (frame 1 is top-left, frame ${genFrames} is bottom-right).`,
     `- The frames must form a smooth, sequential animation — each frame shows the next step of the motion.`,
     endNote,
+    ...(animName === 'idle' ? [
+      `- This is a closed idle loop, never a transition into a relaxed neutral pose. Keep both hands in a raised combat guard in every frame.`,
+      `- The final frame must visually match the first frame's raised guard closely enough that playback has no posture jump.`,
+    ] : []),
     `- The character must face right in every frame.`,
     ...profile.promptRules.map((rule) => `- ${rule}`),
     ``,
@@ -1553,13 +1570,15 @@ export function parseGeminiOfficialSpriteReview(
 
 async function measureGreenBackedCharacterBounds(
   base64: string,
-): Promise<{ w: number; h: number; imageW: number; imageH: number; widthRatio: number; heightRatio: number } | null> {
+): Promise<{ x: number; y: number; w: number; h: number; imageW: number; imageH: number; widthRatio: number; heightRatio: number } | null> {
   try {
     const cleaned = await cleanReposedImagePreserveCanvas(base64);
     const bbox = await measureOpaqueBoundsFromBase64(cleaned);
     const dims = await getImageDimensions(cleaned);
     if (!bbox || dims.width <= 0 || dims.height <= 0) return null;
     return {
+      x: bbox.x,
+      y: bbox.y,
       w: bbox.w,
       h: bbox.h,
       imageW: dims.width,
@@ -1644,6 +1663,155 @@ async function singleRefineAttempt(
 
 const REFINE_SIZE_MIN_RATIO = 0.75;
 const REFINE_SIZE_MAX_RATIO = 1.3;
+const LOW_ATTACK_RECOVERY_SIZE_MAX_RATIO = 1.35;
+const OFFICIAL_FRAME_EDGE_MARGIN_PX = 3;
+const OFFICIAL_FRAMING_RECOVERY_INSET_SCALE = 0.84;
+const OFFICIAL_FRAMING_RECOVERY_BOTTOM_MARGIN_RATIO = 0.03;
+
+type OfficialFrameEdge = 'left' | 'right' | 'top' | 'bottom';
+type OfficialFrameBounds = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  imageW: number;
+  imageH: number;
+};
+
+export function geminiOfficialFramingRecoveryInsetLayout(
+  width: number,
+  height: number,
+): { x: number; y: number; width: number; height: number } {
+  const insetWidth = Math.max(1, Math.round(width * OFFICIAL_FRAMING_RECOVERY_INSET_SCALE));
+  const insetHeight = Math.max(1, Math.round(height * OFFICIAL_FRAMING_RECOVERY_INSET_SCALE));
+  const bottomMargin = Math.max(1, Math.round(height * OFFICIAL_FRAMING_RECOVERY_BOTTOM_MARGIN_RATIO));
+  return {
+    x: Math.round((width - insetWidth) / 2),
+    y: Math.max(0, height - insetHeight - bottomMargin),
+    width: insetWidth,
+    height: insetHeight,
+  };
+}
+
+async function insetGreenBackedFramingInput(base64: string): Promise<string> {
+  const transparentBase64 = await cleanReposedImagePreserveCanvas(base64);
+  const image = await loadAlphaImage(`data:image/png;base64,${transparentBase64}`);
+  if (!image.width || !image.height) {
+    throw new GeminiOfficialSpriteQualityError('Gemini official framing recovery received an empty image');
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = image.width;
+  canvas.height = image.height;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new GeminiOfficialSpriteQualityError('Gemini official framing recovery could not create an inset canvas');
+  }
+
+  context.fillStyle = '#00FF00';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const layout = geminiOfficialFramingRecoveryInsetLayout(canvas.width, canvas.height);
+  context.drawImage(image, layout.x, layout.y, layout.width, layout.height);
+  return canvas.toDataURL('image/png').split(',')[1];
+}
+
+export function geminiOfficialFramingRecoveryRestoreLayout(
+  recovered: OfficialFrameBounds,
+  rejected: OfficialFrameBounds,
+): { x: number; y: number; width: number; height: number } {
+  const margin = Math.max(
+    OFFICIAL_FRAME_EDGE_MARGIN_PX + 1,
+    Math.round(Math.min(recovered.imageW, recovered.imageH) * 0.02),
+  );
+  const desiredScale = Math.min(
+    rejected.w / recovered.w,
+    rejected.h / recovered.h,
+  );
+  const maximumScale = Math.min(
+    (recovered.imageW - margin * 2) / recovered.w,
+    (recovered.imageH - margin * 2) / recovered.h,
+  );
+  const scale = Math.min(desiredScale, maximumScale);
+  const width = Math.max(1, Math.round(recovered.w * scale));
+  const height = Math.max(1, Math.round(recovered.h * scale));
+  return {
+    x: Math.max(margin, Math.min(rejected.x, recovered.imageW - width - margin)),
+    y: Math.max(margin, Math.min(rejected.y, recovered.imageH - height - margin)),
+    width,
+    height,
+  };
+}
+
+async function restoreRecoveredFrameScale(
+  recoveredFrameBase64: string,
+  rejectedFrameBase64: string,
+): Promise<string> {
+  const [transparentRecoveredBase64, recoveredBounds, rejectedBounds] = await Promise.all([
+    cleanReposedImagePreserveCanvas(recoveredFrameBase64),
+    measureGreenBackedCharacterBounds(recoveredFrameBase64),
+    measureGreenBackedCharacterBounds(rejectedFrameBase64),
+  ]);
+  if (!recoveredBounds || !rejectedBounds) {
+    throw new GeminiOfficialSpriteQualityError('Gemini official framing recovery could not restore sequence scale');
+  }
+
+  const image = await loadAlphaImage(`data:image/png;base64,${transparentRecoveredBase64}`);
+  const canvas = document.createElement('canvas');
+  canvas.width = recoveredBounds.imageW;
+  canvas.height = recoveredBounds.imageH;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new GeminiOfficialSpriteQualityError('Gemini official framing recovery could not create a restore canvas');
+  }
+
+  context.fillStyle = '#00FF00';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const layout = geminiOfficialFramingRecoveryRestoreLayout(recoveredBounds, rejectedBounds);
+  context.drawImage(
+    image,
+    recoveredBounds.x,
+    recoveredBounds.y,
+    recoveredBounds.w,
+    recoveredBounds.h,
+    layout.x,
+    layout.y,
+    layout.width,
+    layout.height,
+  );
+  return canvas.toDataURL('image/png').split(',')[1];
+}
+
+export function geminiOfficialFrameFramingValidation(
+  bounds: { x: number; y: number; w: number; h: number; imageW: number; imageH: number },
+  edgeMargin = OFFICIAL_FRAME_EDGE_MARGIN_PX,
+): { ok: boolean; croppedEdges: OfficialFrameEdge[] } {
+  const croppedEdges: OfficialFrameEdge[] = [];
+  if (bounds.x <= edgeMargin) croppedEdges.push('left');
+  if (bounds.x + bounds.w >= bounds.imageW - edgeMargin) croppedEdges.push('right');
+  if (bounds.y <= edgeMargin) croppedEdges.push('top');
+  if (bounds.y + bounds.h >= bounds.imageH - edgeMargin) croppedEdges.push('bottom');
+  return { ok: croppedEdges.length === 0, croppedEdges };
+}
+
+export function geminiRefinedFrameSizeValidation(
+  animName: string,
+  baseHeightRatio: number,
+  refinedHeightRatio: number,
+  recoveryAttempt = false,
+): { ok: boolean; ratio: number; minRatio: number; maxRatio: number } {
+  const maxRatio = recoveryAttempt && (animName === 'low_punch' || animName === 'low_kick')
+    ? LOW_ATTACK_RECOVERY_SIZE_MAX_RATIO
+    : REFINE_SIZE_MAX_RATIO;
+  const ratio = baseHeightRatio > 0
+    ? refinedHeightRatio / baseHeightRatio
+    : Number.POSITIVE_INFINITY;
+  return {
+    ok: ratio >= REFINE_SIZE_MIN_RATIO && ratio <= maxRatio,
+    ratio,
+    minRatio: REFINE_SIZE_MIN_RATIO,
+    maxRatio,
+  };
+}
 
 async function refineSheetCell(
   characterBase64: string,
@@ -1660,7 +1828,10 @@ async function refineSheetCell(
   const start = Date.now();
   const baseBounds = await measureGreenBackedCharacterBounds(cellBase64);
 
-  const validateSize = async (candidate: string): Promise<{ ok: boolean; reason: string }> => {
+  const validateSize = async (
+    candidate: string,
+    recoveryAttempt = false,
+  ): Promise<{ ok: boolean; reason: string }> => {
     if (!baseBounds) return { ok: true, reason: 'no base bounds to compare against' };
     const bounds = await measureGreenBackedCharacterBounds(candidate);
     if (!bounds) return { ok: false, reason: 'could not measure refined bounds' };
@@ -1668,14 +1839,21 @@ async function refineSheetCell(
     // height. The base sheet cell is ~256px tall and the refined output is
     // ~1024px tall — pixel ratios are meaningless. What matters is that the
     // character fills a similar fraction of the cell in both.
-    const ratio = bounds.heightRatio / baseBounds.heightRatio;
-    if (ratio < REFINE_SIZE_MIN_RATIO || ratio > REFINE_SIZE_MAX_RATIO) {
+    const validation = geminiRefinedFrameSizeValidation(
+      animName,
+      baseBounds.heightRatio,
+      bounds.heightRatio,
+      recoveryAttempt,
+    );
+    if (!validation.ok) {
       return {
         ok: false,
-        reason: `size drift ratio=${ratio.toFixed(2)} base=${baseBounds.heightRatio.toFixed(2)} refined=${bounds.heightRatio.toFixed(2)}`,
+        reason: `size drift ratio=${validation.ratio.toFixed(2)} ` +
+          `allowed=${validation.minRatio.toFixed(2)}-${validation.maxRatio.toFixed(2)} ` +
+          `base=${baseBounds.heightRatio.toFixed(2)} refined=${bounds.heightRatio.toFixed(2)}`,
       };
     }
-    return { ok: true, reason: `ratio=${ratio.toFixed(2)}` };
+    return { ok: true, reason: `ratio=${validation.ratio.toFixed(2)}` };
   };
 
   // Attempt 1 — standard prompt
@@ -1727,7 +1905,7 @@ async function refineSheetCell(
     stricterOfficialCorrection,
   );
   if (second) {
-    const check = await validateSize(second);
+    const check = await validateSize(second, true);
     if (check.ok) {
       publishDebugLog(
         `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total}: recovered on attempt 2 in ${((Date.now() - start) / 1000).toFixed(1)}s (${check.reason})`,
@@ -1748,6 +1926,105 @@ async function refineSheetCell(
   return cellBase64;
 }
 
+export function geminiOfficialFramingRecoveryPrompt(
+  description: string,
+  animName: string,
+  motion: string,
+  frameIndex: number,
+  total: number,
+  croppedEdges: OfficialFrameEdge[],
+): string {
+  const edgeLabel = croppedEdges.join(' and ');
+  return [
+    geminiOfficialRefinePrompt(
+      description,
+      animName,
+      motion,
+      frameIndex,
+      total,
+      `The previous render touched the ${edgeLabel} image edge and cropped the fighter. Reconstruct the missing contour and keep the complete body inside the canvas.`,
+    ),
+    ``,
+    `FRAMING RECOVERY INPUT (CRITICAL):`,
+    `- IMAGE 2 is deliberately reduced and inset on a green canvas. Its smaller scale, centered framing, exact pose, and floor line are mandatory.`,
+    `- IMAGE 3 is the previous rejected render, also deliberately reduced and inset. Preserve its otherwise approved face, outfit, materials, pose, and rendering quality.`,
+    `- The old ${edgeLabel} canvas edge now appears as a flat cut line inside IMAGE 3. Reconstruct the missing anatomy or clothing across that internal cut line using IMAGE 1 and IMAGE 2.`,
+    `- Do not return IMAGE 3 unchanged and do not enlarge the fighter back to its old scale. IMAGE 2 defines the final camera distance and framing.`,
+    `- Leave a clearly visible pure-green buffer on all four sides, including at least 5% of the canvas width at the ${edgeLabel} edge.`,
+    `- Return one corrected full-body frame only. Do not add, remove, or redesign any body part, clothing detail, prop, shadow, or scenery.`,
+  ].join('\n');
+}
+
+async function recoverOfficialFrameFraming(
+  characterBase64: string,
+  poseGuideBase64: string,
+  rejectedFrameBase64: string,
+  animName: string,
+  motion: string,
+  model: string,
+  frameIndex: number,
+  total: number,
+  description: string,
+  croppedEdges: OfficialFrameEdge[],
+  context?: ApiRequestContext,
+): Promise<string> {
+  const prompt = geminiOfficialFramingRecoveryPrompt(
+    description,
+    animName,
+    motion,
+    frameIndex,
+    total,
+    croppedEdges,
+  );
+  const [insetPoseGuideBase64, insetRejectedFrameBase64] = await Promise.all([
+    insetGreenBackedFramingInput(poseGuideBase64),
+    insetGreenBackedFramingInput(rejectedFrameBase64),
+  ]);
+  const result = await callGemini(
+    prompt,
+    characterBase64,
+    'image/png',
+    [
+      { data: insetPoseGuideBase64, mime: 'image/png' },
+      { data: insetRejectedFrameBase64, mime: 'image/png' },
+    ],
+    model,
+    context,
+  );
+  if (!result.imageBase64) {
+    throw new GeminiOfficialSpriteQualityError(
+      `Gemini official ${animName} frame ${frameIndex + 1}/${total} framing recovery returned no image`,
+    );
+  }
+  const restoredFrameBase64 = await restoreRecoveredFrameScale(
+    result.imageBase64,
+    rejectedFrameBase64,
+  );
+
+  const [rejectedBounds, restoredBounds] = await Promise.all([
+    measureGreenBackedCharacterBounds(rejectedFrameBase64),
+    measureGreenBackedCharacterBounds(restoredFrameBase64),
+  ]);
+  if (!rejectedBounds || !restoredBounds) {
+    throw new GeminiOfficialSpriteQualityError(
+      `Gemini official ${animName} frame ${frameIndex + 1}/${total} framing recovery could not be measured`,
+    );
+  }
+  const sizeValidation = geminiRefinedFrameSizeValidation(
+    animName,
+    rejectedBounds.heightRatio,
+    restoredBounds.heightRatio,
+    true,
+  );
+  if (!sizeValidation.ok) {
+    throw new GeminiOfficialSpriteQualityError(
+      `Gemini official ${animName} frame ${frameIndex + 1}/${total} framing recovery changed scale ` +
+      `(ratio ${sizeValidation.ratio.toFixed(2)}, allowed ${sizeValidation.minRatio.toFixed(2)}-${sizeValidation.maxRatio.toFixed(2)})`,
+    );
+  }
+  return restoredFrameBase64;
+}
+
 const OFFICIAL_REVIEW_CORRECTIONS: Record<GeminiOfficialSpriteReviewIssue, string> = {
   anatomy: 'Restore plausible adult anatomy with exactly two correctly attached arms, hands, legs, and feet.',
   complete_body: 'Render the complete head-to-toe body with green margin around every extremity.',
@@ -1763,13 +2040,39 @@ const OFFICIAL_REVIEW_CORRECTIONS: Record<GeminiOfficialSpriteReviewIssue, strin
   extra_elements: 'Remove every prop, logo, word, UI element, motion trail, detached object, and extra figure.',
 };
 
-function officialReviewCorrection(
+export function geminiOfficialReviewCorrection(
   review: GeminiOfficialSpriteReview,
   frameIndex: number,
+  animName?: string,
+  total?: number,
 ): string {
-  return (review.issues[String(frameIndex)] ?? [])
+  const issues = review.issues[String(frameIndex)] ?? [];
+  const corrections = issues
     .map((issue) => OFFICIAL_REVIEW_CORRECTIONS[issue])
     .join(' ');
+  if (
+    animName === 'idle' &&
+    total !== undefined &&
+    frameIndex === total - 1 &&
+    issues.includes('animation_fidelity')
+  ) {
+    return [
+      corrections,
+      `This is the closing idle-loop frame: return to IMAGE 1's fighting-ready guard with both fists raised, feet planted, and the same silhouette, floor line, and body alignment as frame 1. Do not lower either arm or finish in a relaxed neutral pose.`,
+    ].filter(Boolean).join(' ');
+  }
+  return corrections;
+}
+
+export function geminiOfficialCorrectionUsesCanonicalPoseGuide(
+  review: GeminiOfficialSpriteReview,
+  animName: string,
+  frameIndex: number,
+  total: number,
+): boolean {
+  return animName === 'idle' &&
+    frameIndex === total - 1 &&
+    (review.issues[String(frameIndex)] ?? []).includes('animation_fidelity');
 }
 
 function mergeOfficialSpriteReviews(
@@ -1911,12 +2214,15 @@ export async function geminiSheetRefined(
       );
     }
   } else {
+    const scaffoldEndGuide = official && animName === 'idle'
+      ? characterBase64
+      : secondaryBase64;
     const sheet = await geminiSpriteSheet(
       characterBase64,
       animName,
       motion,
       frames,
-      secondaryBase64,
+      scaffoldEndGuide,
       maxScale,
       normalizationReference,
       context,
@@ -2020,9 +2326,17 @@ export async function geminiSheetRefined(
         `[GeminiApi] Official ${animName} QA: rerendering ${initialReview.retry.length}/${refinedCells.length} rejected frames with ${renderModel}...`,
       );
       for (const frameIndex of initialReview.retry) {
+        const poseGuide = geminiOfficialCorrectionUsesCanonicalPoseGuide(
+          initialReview,
+          animName,
+          frameIndex,
+          sheetCells.length,
+        )
+          ? characterBase64
+          : sheetCells[frameIndex];
         refinedCells[frameIndex] = await refineSheetCell(
           characterBase64,
-          sheetCells[frameIndex],
+          poseGuide,
           animName,
           refinePrompt,
           renderModel,
@@ -2030,7 +2344,12 @@ export async function geminiSheetRefined(
           sheetCells.length,
           context,
           official,
-          officialReviewCorrection(initialReview, frameIndex),
+          geminiOfficialReviewCorrection(
+            initialReview,
+            frameIndex,
+            animName,
+            sheetCells.length,
+          ),
         );
       }
 
@@ -2045,6 +2364,67 @@ export async function geminiSheetRefined(
       if (finalReview.retry.length > 0) {
         throw new GeminiOfficialSpriteQualityError(
           `Gemini official ${animName} visual QA still rejected frames ${finalReview.retry.map((idx) => idx + 1).join(', ')} after selective rerender`,
+        );
+      }
+    }
+
+    const framingRecovery: Array<{ frameIndex: number; croppedEdges: OfficialFrameEdge[] }> = [];
+    for (let frameIndex = 0; frameIndex < refinedCells.length; frameIndex++) {
+      const bounds = await measureGreenBackedCharacterBounds(refinedCells[frameIndex]);
+      if (!bounds) {
+        throw new GeminiOfficialSpriteQualityError(
+          `Gemini official ${animName} frame ${frameIndex + 1}/${refinedCells.length} could not be measured for complete-body framing`,
+        );
+      }
+      const validation = geminiOfficialFrameFramingValidation(bounds);
+      if (!validation.ok) {
+        framingRecovery.push({ frameIndex, croppedEdges: validation.croppedEdges });
+      }
+    }
+
+    if (framingRecovery.length > 0) {
+      debugInfo(
+        `[GeminiApi] Official ${animName} framing gate: selectively rerendering ${framingRecovery.map(({ frameIndex, croppedEdges }) =>
+          `${frameIndex + 1} (${croppedEdges.join('/')})`,
+        ).join(', ')}`,
+      );
+      for (const { frameIndex, croppedEdges } of framingRecovery) {
+        refinedCells[frameIndex] = await recoverOfficialFrameFraming(
+          characterBase64,
+          sheetCells[frameIndex],
+          refinedCells[frameIndex],
+          animName,
+          motion,
+          renderModel,
+          frameIndex,
+          sheetCells.length,
+          official,
+          croppedEdges,
+          context,
+        );
+
+        const recoveredBounds = await measureGreenBackedCharacterBounds(refinedCells[frameIndex]);
+        const recoveredValidation = recoveredBounds
+          ? geminiOfficialFrameFramingValidation(recoveredBounds)
+          : null;
+        if (!recoveredValidation?.ok) {
+          throw new GeminiOfficialSpriteQualityError(
+            `Gemini official ${animName} frame ${frameIndex + 1}/${refinedCells.length} still touches an image edge after selective framing recovery`,
+          );
+        }
+      }
+
+      const framingReview = await reviewOfficialRefinedCells(
+        refinedCells,
+        official,
+        animName,
+        motion,
+        'post-framing-recovery',
+        context,
+      );
+      if (framingReview.retry.length > 0) {
+        throw new GeminiOfficialSpriteQualityError(
+          `Gemini official ${animName} visual QA rejected frames ${framingReview.retry.map((idx) => idx + 1).join(', ')} after framing recovery`,
         );
       }
     }
@@ -2180,7 +2560,7 @@ async function unionMasksPreserveForeground(
   const chromaData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const birefData = birefCtx.getImageData(0, 0, birefCanvas.width, birefCanvas.height);
 
-  unionForegroundMasks(chromaData.data, birefData.data);
+  unionForegroundMasks(chromaData.data, birefData.data, canvas.width, canvas.height);
   decontaminateGreenEdges(chromaData.data, canvas.width, canvas.height);
 
   ctx.putImageData(chromaData, 0, 0);

@@ -10,6 +10,49 @@ import {
 import type { Env, PublicAuthContext } from './types';
 
 describe('provider session usage', () => {
+  it('budgets a Champion animation retry through its final post-correction QA', async () => {
+    const prepared: Array<{ sql: string; values: unknown[] }> = [];
+    const database = {
+      prepare(sql: string) {
+        return {
+          bind(...values: unknown[]) {
+            prepared.push({ sql: sql.replace(/\s+/g, ' ').trim(), values });
+            return this;
+          },
+        };
+      },
+      async batch() { return []; },
+    };
+    const auth: PublicAuthContext = {
+      userId: 'user-champion-retry',
+      user: { id: 'user-champion-retry' } as PublicAuthContext['user'],
+      claims: {},
+      rateLimitKey: 'user:user-champion-retry',
+    };
+
+    const session = await createProviderSession({
+      DB: database as unknown as D1Database,
+    } as Env, auth, {
+      tier: 'champion',
+      purpose: 'fighter_retry',
+      operation: 'fighter_retry_animation',
+      chargeId: 'charge-champion-retry',
+      legal: {
+        legalVersion: '2026-08-23.1',
+        ageConfirmed: true,
+        termsAccepted: true,
+        photoRightsConfirmed: true,
+        aiProcessingConfirmed: true,
+        immediatePerformanceConfirmed: true,
+        withdrawalLossAcknowledged: true,
+      },
+    });
+
+    expect(session).toMatchObject({ providerCallLimit: 72, providerCostLimitCents: 700 });
+    const insert = prepared.find((entry) => entry.sql.includes('INSERT INTO provider_sessions'));
+    expect(insert?.values.slice(6, 8)).toEqual([72, 700]);
+  });
+
   it('persists a stricter server-side call and cost cap for a canary session', async () => {
     const prepared: Array<{ sql: string; values: unknown[] }> = [];
     const database = {
