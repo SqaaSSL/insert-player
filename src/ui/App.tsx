@@ -34,6 +34,9 @@ const RosterPage = lazy(() => import('./routes/RosterPage.tsx').then((module) =>
 const CreateFighterPage = lazy(() => import('./routes/CreateFighterPage.tsx').then((module) => ({
   default: module.CreateFighterPage,
 })));
+const OnlineVersusPage = lazy(() => import('./routes/OnlineVersusPage.tsx').then((module) => ({
+  default: module.OnlineVersusPage,
+})));
 const CommunityPage = lazy(() => import('./routes/CommunityPage.tsx').then((module) => ({
   default: module.CommunityPage,
 })));
@@ -55,6 +58,7 @@ type AppRoute =
   | '/roster/watch'
   | '/roster/cpu'
   | '/roster/vs'
+  | '/versus/online'
   | LegalRoute
   | '/fight';
 
@@ -87,7 +91,8 @@ export function legalReturnRouteFromState(state: unknown): AppRoute {
     candidate === '/fighters/new' ||
     candidate === '/roster/watch' ||
     candidate === '/roster/cpu' ||
-    candidate === '/roster/vs'
+    candidate === '/roster/vs' ||
+    candidate === '/versus/online'
   ) {
     return candidate;
   }
@@ -110,6 +115,7 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   if (cleaned === '/roster/watch') return '/roster/watch';
   if (cleaned === '/roster/cpu') return '/roster/cpu';
   if (cleaned === '/roster/vs') return '/roster/vs';
+  if (cleaned === '/versus/online') return '/versus/online';
   if (cleaned === '/legal') return '/legal';
   if (cleaned === '/privacy') return '/privacy';
   if (cleaned === '/terms') return '/terms';
@@ -336,6 +342,7 @@ export function App({
         onOpenWatchMode={() => navigate('/roster/watch')}
         onOpenVsCpu={() => navigate('/roster/cpu')}
         onOpenVsPlayer={() => navigate('/roster/vs')}
+        onOpenOnlineVersus={() => navigate('/versus/online')}
         onOpenModeration={() => navigate('/moderation')}
       />
     ),
@@ -402,6 +409,15 @@ export function App({
     }
     if (route === '/moderation') {
       return <ModerationPage onBack={() => navigate('/menu')} />;
+    }
+    if (route === '/versus/online') {
+      return (
+        <OnlineVersusPage
+          authStatus={authStatus}
+          onBack={() => navigate('/menu')}
+          onStartFight={startFight}
+        />
+      );
     }
     if (route === '/fighters/new') {
       return (

@@ -7,6 +7,50 @@
 
 ## Snapshot — 2026-08-28
 
+### Active priority — polish the four global fighters
+
+The current product priority is the quality of the four active global fighters — Donald Trump,
+Lamine Yamal, Rosalía, and Elon Musk — across all 44 gameplay animations. Treat the roster as one
+release: audit every animation before replacing individual assets, then promote only reviewed,
+immutable versions.
+
+Every global animation must pass the same gate in both the Gallery preview and gameplay at 1x/2x:
+
+- recognisable identity and consistent wardrobe/body proportions;
+- the requested action reads unambiguously (a kick cannot read as a knee strike, for example);
+- coherent anatomy, direction, contact pose, recovery, and loop/ping-pong continuity;
+- stable gameplay scale, feet/root alignment, framing, transparency, and clean edges;
+- runtime/HQ geometry, frame count, hashes, and metadata agree with the actual PNG bytes.
+
+Known failures entering the audit:
+
+- Donald Trump `idle`: the runtime is nearly static and the published HQ is a mislabeled,
+  low-resolution opaque green sheet.
+- Elon Musk `high_kick`: the source video contains a clear leg extension from about frame 24, but
+  the published selection stops at frame 23 and therefore reads as a knee strike. Recurate it
+  locally before requesting any new inference.
+- Rosalía: identity likeness is not acceptable and must be evaluated across the source views and
+  all animations, not patched in one pose.
+- Lamine Yamal: no animation is assumed approved until the same visual and technical audit passes.
+
+The per-animation production audit and delivery waves are tracked in
+[`docs/global-roster-polish-2026-08-28.md`](docs/global-roster-polish-2026-08-28.md).
+
+Source retention is part of this priority: preserve review jobs/revisions past the generic
+seven-day operational purge, seal the 33 modern source-video R2 keys/hashes, and keep Trump's 15
+verified source/alternate MP4s outside ephemeral storage. Re-selection and deterministic
+recompilation must be exhausted before paying for a replacement source video.
+
+### Parked — keep, but do not displace global polish
+
+- Animated signature stages / engine-driven stage layers.
+- A deliberate public-reference-photo experience for official globals, subject to the existing
+  privacy, provenance, and licensing boundary.
+- Show official signature stages in the Gallery Stages inventory, not only in fight selection.
+- Replace stale roster copy/counts with live manifest data and prevent a default Arcade mirror
+  match against the selected fighter.
+- Revisit the low-risk offline legacy/current cache dedupe edge after the global roster is clean.
+
 - **Authenticated generation is now backend-owned, durable, and spend-aligned**: Create, tier upgrades, animation Retry, and canonical Pro source Retry start a signed Cloudflare Workflow job instead of depending on the page remaining alive. D1 records progress/events and idempotent provider writes, while the `IMAGE_PROCESSOR` Container runs the existing TypeScript pipeline. Reopening Create/Gallery discovers and reconnects to an active job; closing the tab or losing connectivity does not cancel generation. An unused reservation is released only before any external AI request; the charge is committed atomically with the first billable provider attempt and remains consumed after provider failure. Identical concurrent starts replay one job/reservation, while a genuinely different competing authorization releases its unused reservation.
 - **Sprite delivery is capability-adaptive instead of globally mobile-capped**: video-dense Champion assets retain the 192×256 atlas on coarse-pointer, constrained, and Data Saver devices, while fine-pointer browsers reporting at least 8 GB of memory and sufficient WebGL texture capacity build a 384×512-per-frame gameplay atlas from the already archived, approved frames. Logical fighter dimensions, origins, hitboxes, and animation timing stay identical at both densities; allocation failure retries safely at 1×. Gallery fetches only the selected official Arcade animation's HQ gameplay sheet and renders its 768×1024 frames natively. Public `rawUrl` fields remain null and the opaque HQ route is restricted to complete, active Champion Arcade fighters. Existing D1/R2/IndexedDB versions are reused unchanged, so this requires no inference, regeneration, or destructive cache migration.
 - **Generation now resumes from immutable artifact checkpoints instead of repaying completed work**: migration `0023` records a durable run plus one approved checkpoint per canonical source or animation, with exact clean/RAW version ids, R2 keys, hashes, frame metadata, and stage outcome. Provider successes are cached with response blobs before the next stage starts, so Workflow retry, rollout, request replay, or process crash cannot duplicate an upstream write that already completed. Failed job `f3b6c650cbb2e1bf796eebb79edff5c7` was backfilled as a partial run at `sprite:low_punch`; its side, upright, crouch, idle, walk, high_punch, and high_kick checkpoints remain approved and reusable. Resume therefore starts at low_punch and makes zero provider calls for those seven preserved artifacts. Its 101 upstream HTTP 200 responses and internal `$8.85` conservative reservation are recorded as potential provider work, not presented as an invoice. No paid inference was used to deploy or validate this repair.
@@ -220,6 +264,19 @@ For PROD:
 Status: credit packs and operation-specific billing are implemented. Packs are locked at 11 credits / €14.99, 20 / €24.99, and 47 / €56.99. New generation/upgrades cost 2/11/18; animation retries cost 1/2/4; Pro source retries cost 1; local RAW rebuilds are free. Bootstrap preserves old products/prices as inactive history while reconciling v2. A signed-in sandbox v2 Starter purchase granted 11 credits and left the historical 6-credit Checkout/ledger untouched. Live keys, catalog, account pin, prices, and webhook are configured and verified without charging a real card. Subscriptions are not required for v1.
 
 ---
+
+## Phase J — Online versus (rollback netplay)
+
+Decision (2026-08-29): two players from their own homes use **deterministic lockstep → rollback netcode over P2P**, inputs only, no server-side simulation and no game streaming. Streaming (emulator on bare metal + LiveKit video) was evaluated and rejected: right for ROMs you cannot modify, wrong for a 1v1 fighter we own — it adds the full RTT to every input and per-minute server cost. Rollback hides a 100–150 ms RTT behind 2–3 frames of input delay and needs zero match-time compute.
+
+Status: **steps 1–6 implemented in the working tree (2026-08-29)**; pending: deploy (DO migration `match-room-v1`), optional Realtime TURN secrets, and a real two-account browser session.
+
+- [x] **1. Determinism.** `src/game/sim/MatchSimulation.ts` (Phaser-free): fighters/projectiles as pure data, every phase timer in ticks (the intro, round-end and match-end used to count render frames — a 120 Hz display ran them twice as fast), CPU controllers stepped inside the tick with snapshot-able RNG, hitstop/latched inputs in state, clamped accumulator (no spiral after a backgrounded tab), fireball spawn from sim `y` (photo stages had the ball 18 px lower than hurtboxes). `snapshot()/restore()` are exact; `checksum()` digests raw float bytes. `MatchSceneData.seed` is an explicit uint32 that wins over the derived hash. Tests: two sims bit-identical for 4 000 ticks in H-vs-H / H-vs-CPU / CPU-vs-CPU, restore replays the same future, GGPO-style rollback with mispredicted remote inputs converges to ground truth, tick-driven round flow, a full CPU-vs-CPU match to `matchOver`. Verified in a real headless-Chromium match: round/fight/KO cues, 3 s round-end, timer, health, zero console errors.
+- [x] **2. Input recording/replay** (2026-08-29) — `src/game/sim/MatchReplay.ts`: `MatchRecorder` (packed `p1 | p2 << 10 | skipIntro` word per tick, RLE, checksum every 60 ticks), `replayMatch()` with desync pinpointing and scrubbing, `isValidMatchRecording`. `FightScene` records every match and exposes `window.__ASF_MATCH_RECORDING__()`. Proof: a 4 203-tick CPU-vs-CPU match played in headless Chromium replayed in Node with all 70 sampled checksums equal and the same 2-1 result. Later this lets the Worker validate a reported online result from the input log.
+- [x] **3. Transport** (2026-08-29) — `MATCH_ROOM` Durable Object (`worker/src/matchRoom.ts`) with hibernating WebSockets, HMAC room tickets, seat rules, signal/relay/ping, size caps and idle TTL; `/api/versus/rooms`, `/join`, `/ws`, `/ice-servers` (Cloudflare STUN + optional Realtime TURN via `REALTIME_TURN_KEY_ID`/`REALTIME_TURN_API_TOKEN`, fail-open to STUN). Client `PeerTransport` (`src/game/net/`) negotiates WebRTC `inputs` (unreliable) + `control` (reliable) channels through the room and falls back to relay. `/versus/online` React page: create/join by code, status, path, ping, probe. Proof: 21/21 end-to-end checks against the real DO under `wrangler dev` (auth 401, seats, 409 for a third player, bad ticket rejected on upgrade, relay both ways, ping, invalid/oversized rejected, leave/rejoin), plus two real Chrome contexts reaching `connected/p2p` with inputs both ways at ~2 ms RTT. Note: Playwright's bundled headless Chromium cannot complete ICE on this Mac (firewall) — it fell back to relay correctly; use `channel: 'chrome'` for P2P smoke. Remaining for production: deploy the DO migration `match-room-v1` (wrangler.toml + sandbox already declare it) and optionally provision Realtime TURN secrets.
+- [x] **4. Netcode** (2026-08-29) — `src/game/net/RollbackSession.ts` + `InputPackets.ts`: 2-frame input delay, 8-word redundancy per packet, prediction + rollback via `snapshot/restore`, stall cap at 8 unconfirmed ticks plus a soft throttle when ahead of the peer, checksum exchange every 60 confirmed ticks with desync freeze, intro skip inside the tick word. Tests: perfect link stays identical with zero rollbacks; 4–7 frames latency + jitter + 10 % loss converges to an independent replay of the confirmed input log; silent peer stalls instead of running away; forged checksum trips the desync. Real proof: two Chrome pages running the actual `FightScene` online over the real room DO + P2P for 35 s, both at tick 2 348 with identical health (P2 at 480), one rollback absorbed, 4/4 interval checksums equal, zero console errors.
+- [x] **5. Match-session assets** (2026-08-29) — `POST /api/versus/rooms/:code/fighter` (owned or active Arcade only), `GET …/opponent-fighter` (community privacy shape, room-scoped URLs), `GET …/fighters/:id/(sprites|sources)/…/:revision` (authenticated seat, `no-store`, no RAW route), client `fetchVersusOpponentFighter` → `downloadCloudFighterToLocal` under `versus:<id>`. Proof: 21/21 checks against `wrangler dev` with a seeded fighter (manifest has no `ownerUserId`/`photoHash`/RAW, third user 403, anonymous 401, wrong revision 404, host serial/idempotent report).
+- [x] **6. UI** (2026-08-29) — `/versus/online` lobby: create/join by code, fighter picker (synced own fighters + Arcade), Ready handshake over the control channel, host starts once both are ready and both machines enter `/fight` together; in-match net badge (path, ping, rollbacks, stalled/desync/rival-left states); local player always on the Player 1 control set including touch; online match end offers only "Back To Lobby" and notifies the peer; results reported with `opponentKind: 'online'` (idempotent by room serial). Not yet exercised end-to-end through Clerk sign-in in a browser (the smoke drives the same modules directly); the first real two-account run on QA/production is the remaining validation, plus deploying the DO migration `match-room-v1`.
 
 ## Open decisions / questions
 

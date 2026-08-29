@@ -12,7 +12,7 @@ export function shouldReportMatchCompletion(detail: MatchCompletionDetail): bool
 export async function reportMatchCompletion(detail: MatchCompletionDetail): Promise<void> {
   if (!shouldReportMatchCompletion(detail) || isLocalDevWithoutApi()) return;
 
-  const opponentKind = detail.cpuVsCpu || detail.vsAI ? 'cpu' : 'local';
+  const opponentKind = detail.online ? 'online' : detail.cpuVsCpu || detail.vsAI ? 'cpu' : 'local';
   const res = await apiFetch('/api/matches', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -26,6 +26,9 @@ export async function reportMatchCompletion(detail: MatchCompletionDetail): Prom
       opponentKind,
       cpuVsCpu: detail.cpuVsCpu,
       isRanked: false,
+      ...(detail.online
+        ? { roomCode: detail.online.roomCode, matchSerial: detail.online.matchSerial }
+        : {}),
     }),
   });
 

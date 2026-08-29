@@ -77,6 +77,16 @@ class_name = "ImageProcessorContainer"
 tag = "image-processor-v1"
 new_sqlite_classes = ["ImageProcessorContainer"]
 
+# Online versus rooms: one hibernating Durable Object per room code relays
+# WebRTC signalling (and input frames as a fallback) between two seated players.
+[[durable_objects.bindings]]
+name = "MATCH_ROOM"
+class_name = "MatchRoom"
+
+[[migrations]]
+tag = "match-room-v1"
+new_sqlite_classes = ["MatchRoom"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "insert-player-sandbox-db"

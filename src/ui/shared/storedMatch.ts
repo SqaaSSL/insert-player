@@ -1,5 +1,6 @@
 import {
   FIGHTER_PERSONALITIES,
+  isValidMatchSeed,
   type FighterPersonalityId,
   type MatchSceneData,
 } from '../../game/match/MatchConfig.ts';
@@ -59,6 +60,15 @@ export function isValidStoredMatchData(value: unknown): value is MatchSceneData 
     || data.remix < 0
     || data.remix > 1_000
   )) return false;
+  if (data.seed !== undefined && !isValidMatchSeed(data.seed)) return false;
+  if (data.online !== undefined) {
+    const online = data.online as Record<string, unknown> | null;
+    if (!online || typeof online !== 'object') return false;
+    if (typeof online.roomCode !== 'string' || !/^[A-Z2-9]{6}$/.test(online.roomCode)) return false;
+    if (online.localSlot !== 0 && online.localSlot !== 1) return false;
+    if (!Number.isSafeInteger(online.matchSerial) || (online.matchSerial as number) < 1) return false;
+    if (!Number.isSafeInteger(online.inputDelay) || (online.inputDelay as number) < 0 || (online.inputDelay as number) > 10) return false;
+  }
   return true;
 }
 

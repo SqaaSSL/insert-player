@@ -6,7 +6,15 @@ vi.mock('phaser', () => ({
 }));
 
 import { Fighter } from './Fighter.ts';
+import { FighterView } from './FighterView.ts';
 import { createSpriteLayout, registerSpriteLayout } from '../sprites/SpriteGenerator.ts';
+import { StateHasher } from '../sim/StateHasher.ts';
+
+function digest(fighter: Fighter): number {
+  const hasher = new StateHasher();
+  fighter.hashInto(hasher);
+  return hasher.digest();
+}
 
 function createMockSprite() {
   return {
@@ -47,6 +55,7 @@ function createMockSprite() {
     setAlpha() { return this; },
     setBlendMode() { return this; },
     setDepth() { return this; },
+    destroy() {},
   };
 }
 
@@ -75,12 +84,13 @@ describe('fighter sprite presentation', () => {
       [FighterState.IDLE]: { scale: 1.25, originX: 0.37, originY: 0.92, offsetY: -6 },
       [FighterState.LOW_PUNCH]: { scale: 1.1, originX: 0.44, originY: 0.9, offsetY: -4 },
     }));
-    const fighter = new Fighter(1, 'Profiled', spriteKey, 250, false);
+    const fighter = new Fighter(1, 'Profiled', 250, false);
+    const view = new FighterView(fighter, spriteKey);
     const { scene, sprites } = createMockScene();
 
-    fighter.createSprite(scene as never);
-    fighter.setRenderPresentation(1.2, 18);
-    fighter.syncSprite(100);
+    view.createSprite(scene as never);
+    view.setRenderPresentation(1.2, 18);
+    view.syncSprite(100);
 
     const [shadow, sprite] = sprites;
     expect(sprite.originX).toBeCloseTo(0.63);
@@ -92,10 +102,11 @@ describe('fighter sprite presentation', () => {
     expect(shadow.originX).toBeCloseTo(sprite.originX);
     expect(shadow.originY).toBe(sprite.originY);
     expect(shadow.scale).toBeCloseTo(sprite.scale * 1.015);
+    expect(view.getRenderY()).toBe(GROUND_Y + 18);
 
     fighter.facingRight = true;
     fighter.forceState(FighterState.LOW_PUNCH);
-    fighter.syncSprite(100);
+    view.syncSprite(100);
 
     expect(sprite.originX).toBeCloseTo(0.44);
     expect(sprite.originY).toBe(0.9);
@@ -109,12 +120,13 @@ describe('fighter sprite presentation', () => {
   it('leaves legacy presentation behavior unchanged', () => {
     const spriteKey = 'legacy-fighter';
     registerSpriteLayout(spriteKey, createSpriteLayout());
-    const fighter = new Fighter(0, 'Legacy', spriteKey, 250, true);
+    const fighter = new Fighter(0, 'Legacy', 250, true);
+    const view = new FighterView(fighter, spriteKey);
     const { scene, sprites } = createMockScene();
 
-    fighter.createSprite(scene as never);
-    fighter.setRenderPresentation(1.03, 0);
-    fighter.syncSprite(500);
+    view.createSprite(scene as never);
+    view.setRenderPresentation(1.03, 0);
+    view.syncSprite(500);
 
     const [, sprite] = sprites;
     expect(sprite.originX).toBe(0.5);
@@ -130,16 +142,43 @@ describe('fighter sprite presentation', () => {
     registerSpriteLayout(spriteKey, createSpriteLayout({}, {}, {}, {
       [FighterState.IDLE]: { scale: 1.25, originX: 0.37, originY: 0.92, offsetY: -6 },
     }, 2));
-    const fighter = new Fighter(0, 'Retina', spriteKey, 250, true);
+    const fighter = new Fighter(0, 'Retina', 250, true);
+    const view = new FighterView(fighter, spriteKey);
     const { scene, sprites } = createMockScene();
 
-    fighter.createSprite(scene as never);
-    fighter.setRenderPresentation(1.2, 0);
-    fighter.syncSprite(500);
+    view.createSprite(scene as never);
+    view.setRenderPresentation(1.2, 0);
+    view.syncSprite(500);
 
     const [, sprite] = sprites;
     expect(sprite.scale).toBeCloseTo(1.25 * 1.2 / 2);
     expect(sprite.originX).toBeCloseTo(0.37);
     expect(sprite.y).toBeCloseTo(GROUND_Y - 6 * 1.2);
+  });
+});
+
+describe('fighter simulation snapshot', () => {
+  it('round-trips every field that affects a move outcome', () => {
+    const fighter = new Fighter(0, 'Snap', 300, true);
+    const holdDown = { left: false, right: false, up: false, down: true, guard: false, punch: false, kick: false, fireball: false, uppercut: false, super: false };
+    const pressPunch = { ...holdDown, down: false, right: true, punch: true };
+    // Feed a motion so the ring buffer and press buffer both hold state.
+    for (let i = 0; i < 6; i++) fighter.update(1 / 60, holdDown, 600);
+    fighter.update(1 / 60, pressPunch, 600);
+    fighter.update(1 / 60, { ...pressPunch, punch: false, kick: true }, 600);
+
+    const snap = fighter.snapshot();
+    const before = digest(fighter);
+    const other = new Fighter(0, 'Snap', 0, false);
+    other.restore(snap);
+
+    expect(other.snapshot()).toEqual(snap);
+    expect(digest(other)).toBe(before);
+    expect(other.state).toBe(fighter.state);
+    expect(other.stateFrame).toBe(fighter.stateFrame);
+
+    // Snapshots are decoupled copies, not shared references.
+    fighter.update(1 / 60, holdDown, 600);
+    expect(other.snapshot()).toEqual(snap);
   });
 });

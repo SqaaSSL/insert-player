@@ -74,6 +74,14 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
     anonymous: { limit: 4, windowSeconds: 60 * 60 },
     signedIn: { limit: 240, windowSeconds: 60 * 60 },
   },
+  'versus:room': {
+    anonymous: { limit: 1, windowSeconds: 60 * 60 },
+    signedIn: { limit: 60, windowSeconds: 60 * 60 },
+  },
+  'versus:ice': {
+    anonymous: { limit: 1, windowSeconds: 60 * 60 },
+    signedIn: { limit: 120, windowSeconds: 60 * 60 },
+  },
 };
 
 function getLimit(routeKey: string, auth: PublicAuthContext): LimitRule {

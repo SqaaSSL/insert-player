@@ -82,6 +82,18 @@ import {
 import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
 import { isAttractModeMatchReport, readMatchFighterId } from './matchReporting';
 import {
+  allocateVersusMatch,
+  connectVersusRoom,
+  createVersusRoom,
+  declareVersusFighter,
+  getVersusOpponentFighter,
+  getVersusRoomAsset,
+  joinVersusRoom,
+  onlineVersusStatus,
+  resolveVersusMatchParticipants,
+  versusIceServers,
+} from './matchRoomRoutes';
+import {
   getImportedGlobalVideoRecurationAsset,
   getImportedGlobalVideoRecurationPromoteTransition,
   promoteImportedGlobalVideoRecuration,
@@ -91,6 +103,7 @@ import {
 
 export { FighterGenerationWorkflow } from './generationWorkflow';
 export { ImageProcessorContainer } from './imageProcessorContainer';
+export { MatchRoom } from './matchRoom';
 
 const MAX_MATCH_ROUNDS = 5;
 const MAX_MATCH_DURATION_SECONDS = 20 * 60;
@@ -276,6 +289,7 @@ function healthResponse(env: Env): Response {
       ? 'configured'
       : 'not_configured',
     rateLimit: 'd1',
+    onlineVersus: onlineVersusStatus(env),
     privacy: anonymousIdentifiersProtected ? 'pseudonymized' : 'not_configured',
     providers: allProvidersConfigured ? 'configured' : 'partial',
     videoCreationTransport: env.PIXCLI_API_KEY && pixcliBaseUrl(env.PIXCLI_BASE_URL)
@@ -963,6 +977,79 @@ export default {
         }), request, env);
       }
 
+      if (path === '/api/versus/rooms' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(request, env, 'versus:room', (auth) => createVersusRoom(env, auth)),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/versus/ice-servers' && method === 'GET') {
+        return addCors(
+          await authenticatedLimited(request, env, 'versus:ice', () => versusIceServers(env)),
+          request,
+          env,
+        );
+      }
+
+      const versusRoomAssetMatch = path.match(
+        /^\/api\/versus\/rooms\/([^/]+)\/fighters\/([^/]+)\/(sprites|sources)\/([^/]+)\/([^/]+)$/,
+      );
+      if (versusRoomAssetMatch && method === 'GET') {
+        const params = versusRoomAssetMatch.slice(1).map(decodePathParam);
+        const invalid = params.find(isResponse);
+        if (invalid) return addCors(invalid, request, env);
+        const [roomCode, fighterId, kind, id, revision] = params as string[];
+        return addCors(
+          await authenticated(request, env, (auth) => getVersusRoomAsset(
+            env, auth, roomCode, fighterId, kind as 'sprites' | 'sources', id, revision,
+          )),
+          request,
+          env,
+        );
+      }
+
+      const versusRoomMatch = path.match(/^\/api\/versus\/rooms\/([^/]+)\/(join|ws|fighter|opponent-fighter|match)$/);
+      if (versusRoomMatch) {
+        const roomCode = decodePathParam(versusRoomMatch[1]);
+        if (isResponse(roomCode)) return addCors(roomCode, request, env);
+        if (versusRoomMatch[2] === 'join' && method === 'POST') {
+          return addCors(
+            await authenticatedLimited(request, env, 'versus:room', (auth) => joinVersusRoom(request, env, auth, roomCode)),
+            request,
+            env,
+          );
+        }
+        if (versusRoomMatch[2] === 'fighter' && method === 'POST') {
+          return addCors(
+            await authenticatedLimited(request, env, 'versus:room', (auth) => declareVersusFighter(request, env, auth, roomCode)),
+            request,
+            env,
+          );
+        }
+        if (versusRoomMatch[2] === 'opponent-fighter' && method === 'GET') {
+          return addCors(
+            await authenticated(request, env, (auth) => getVersusOpponentFighter(request, env, auth, roomCode)),
+            request,
+            env,
+          );
+        }
+        if (versusRoomMatch[2] === 'match' && method === 'POST') {
+          return addCors(
+            await authenticatedLimited(request, env, 'versus:room', (auth) => allocateVersusMatch(env, auth, roomCode)),
+            request,
+            env,
+          );
+        }
+        if (versusRoomMatch[2] === 'ws' && method === 'GET') {
+          // WebSocket upgrade: the room ticket is the credential; the 101
+          // response must be returned untouched (no CORS header rewrite).
+          const upgraded = await connectVersusRoom(request, env, roomCode);
+          return upgraded.status === 101 ? upgraded : addCors(upgraded, request, env);
+        }
+      }
+
       if (path === '/api/client-errors' && method === 'POST') {
         const limited = await enforceRateLimit(env, 'client:error', publicAuth);
         if (limited) return addCors(limited, request, env);
@@ -974,6 +1061,26 @@ export default {
           const body = await readJsonBody<Record<string, unknown>>(request, MAX_MATCH_REPORT_BODY_BYTES);
           if (isAttractModeMatchReport(body)) {
             return json({ success: true, recorded: false });
+          }
+          if (body.opponentKind === 'online') {
+            const participants = await resolveVersusMatchParticipants(env, auth, body.roomCode, body.matchSerial);
+            if (!participants) return json({ error: 'Online match not found for this account' }, 403);
+            const existing = await env.DB.prepare('SELECT id FROM matches WHERE id = ? LIMIT 1')
+              .bind(participants.matchId).first<{ id: string }>();
+            if (existing) return json({ success: true, recorded: false, matchId: participants.matchId });
+            const winnerSlot = body.winnerSlot === 'p2' ? 'p2' : 'p1';
+            return reportMatchResult(env, {
+              matchId: participants.matchId,
+              player1Id: participants.hostUserId,
+              player2Id: participants.guestUserId,
+              winnerId: winnerSlot === 'p1' ? participants.hostUserId : participants.guestUserId,
+              roundsP1: readBoundedInteger(body.roundsP1, 0, MAX_MATCH_ROUNDS),
+              roundsP2: readBoundedInteger(body.roundsP2, 0, MAX_MATCH_ROUNDS),
+              duration: readBoundedInteger(body.duration, 0, MAX_MATCH_DURATION_SECONDS),
+              p1FighterId: participants.hostFighterId ?? undefined,
+              p2FighterId: participants.guestFighterId ?? undefined,
+              isRanked: false,
+            });
           }
           const opponentKind = body.opponentKind === 'local' ? 'local' : 'cpu';
           const systemOpponentId = opponentKind === 'local' ? 'system:local-player' : 'system:cpu';

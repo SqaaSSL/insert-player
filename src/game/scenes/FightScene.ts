@@ -1,19 +1,26 @@
 import Phaser from "phaser";
-import { Fighter } from "../fighters/Fighter.ts";
-import { Projectile } from "../fighters/Projectile.ts";
-import { CombatSystem, type HitEvent } from "../systems/CombatSystem.ts";
-import { AIController } from "../systems/AIController.ts";
-import {
-  METER_MAX,
-  REFLECT_METER_GAIN,
-  attackerMeterGain,
-  defenderMeterGain,
-} from "../systems/Meter.ts";
-import { InputManager, type FighterInput } from "../systems/InputManager.ts";
+import type { Fighter } from "../fighters/Fighter.ts";
+import { FighterView } from "../fighters/FighterView.ts";
+import { ProjectileViewPool } from "../fighters/ProjectileView.ts";
+import { METER_MAX } from "../systems/Meter.ts";
+import { InputManager } from "../systems/InputManager.ts";
 import { SoundManager } from "../systems/SoundManager.ts";
 import { HUD } from "../ui/HUD.ts";
-import { SeededRng } from "../utils/SeededRng.ts";
 import { ScreenEffects } from "../effects/ScreenEffects.ts";
+import {
+  MatchSimulation,
+  RoundPhase,
+  type MatchSimEvent,
+} from "../sim/MatchSimulation.ts";
+import { MatchRecorder, type MatchRecording } from "../sim/MatchReplay.ts";
+import { RollbackSession } from "../net/RollbackSession.ts";
+import {
+  endActiveOnlineSession,
+  getActiveOnlineSession,
+  isOnlineControlMessage,
+  type OnlineMatchSession,
+} from "../net/onlineSession.ts";
+import type { PeerTransportState } from "../net/PeerTransport.ts";
 import {
   ensureStageBackground,
   getCachedStageBackgroundForRequest,
@@ -23,10 +30,8 @@ import {
   GAME_HEIGHT,
   GROUND_Y,
   FIXED_TIMESTEP,
-  ROUND_TIME,
   ROUNDS_TO_WIN,
   MAX_HEALTH,
-  ATTACKS,
   FighterState,
 } from "../constants.ts";
 import { loadAiSprites } from "../sprites/AiSpriteLoader.ts";
@@ -42,7 +47,10 @@ import {
   MATCH_ACTION_EVENT,
   MATCH_ACTIONS_VISIBILITY_EVENT,
   MATCH_COMPLETE_EVENT,
+  NET_STATE_EVENT,
   type AnnounceDetail,
+  type NetStateDetail,
+  type OnlineMatchInfo,
   type FighterPersonalityId,
   type HudStateDetail,
   type MatchAction,
@@ -57,34 +65,51 @@ import {
 import { debugInfo, debugWarn } from "../../services/DebugLog.ts";
 import { resetVirtualInput } from "../systems/VirtualInput.ts";
 
-enum RoundPhase {
-  INTRO = 0,
-  FIGHTING = 1,
-  ROUND_END = 2,
-  MATCH_END = 3,
-}
+/**
+ * Upper bound on simulation ticks run in one render frame. A backgrounded tab
+ * returns with a huge delta; instead of spiralling to catch up, the scene
+ * drops the excess time.
+ */
+const MAX_TICKS_PER_FRAME = 5;
 
 function getSignatureStageTextureKey(stageId: StageThemeId): string {
   return `stage_signature_${stageId}`;
 }
 
 export class FightScene extends Phaser.Scene {
-  private p1!: Fighter;
-  private p2!: Fighter;
-  private combat!: CombatSystem;
+  /**
+   * The whole match state lives in the headless simulation; this scene only
+   * samples inputs, steps it on a fixed 60 Hz tick, and renders its state
+   * and events. Nothing here may mutate `sim` outside `sim.step()` /
+   * `sim.requestIntroSkip()`, or two netplay peers would drift apart.
+   */
+  private sim!: MatchSimulation;
+  /**
+   * Every tick fed to the sim, plus periodic checksums. Exposed as
+   * `window.__ASF_MATCH_RECORDING__()` so a match can be dumped and replayed
+   * headlessly (`replayMatch`) — the desync harness for netplay.
+   */
+  private recorder!: MatchRecorder;
+  /**
+   * Online versus: the sim is driven through rollback netcode instead of
+   * being stepped directly. `online` mirrors `MatchSceneData.online`.
+   */
+  private online: OnlineMatchInfo | null = null;
+  private onlineSession: OnlineMatchSession | null = null;
+  private rollback: RollbackSession | null = null;
+  private onlineUnsubscribe: Array<() => void> = [];
+  private lastNetState: NetStateDetail | null = null;
+  private netStateFrame = 0;
+  private opponentLeft = false;
+  private opponentLeftAt = 0;
+  private p1View!: FighterView;
+  private p2View!: FighterView;
+  private projectileViews!: ProjectileViewPool;
   private inputMgr!: InputManager;
-  private ai!: AIController;
-  private ai2!: AIController;
   private hud!: HUD;
   private sound_mgr!: SoundManager;
 
   private accumulator = 0;
-  private frameCount = 0;
-  private roundTimer = ROUND_TIME;
-  private phase = RoundPhase.INTRO;
-  private phaseTimer = 0;
-  private p1Wins = 0;
-  private p2Wins = 0;
   private isVsAI = true;
   private cpuVsCpu = false;
 
@@ -96,7 +121,6 @@ export class FightScene extends Phaser.Scene {
   private ambientLayers: Phaser.GameObjects.Graphics[] = [];
   private stageLoadId = 0;
 
-  private projectiles: Projectile[] = [];
   private matchActionKeys: Phaser.Input.Keyboard.Key[] = [];
   private matchActionsVisible = false;
   private matchActionCommitted = false;
@@ -114,14 +138,12 @@ export class FightScene extends Phaser.Scene {
   private customStageLabel: string | null = null;
   private resolvedStageId: StageThemeId = "insert-player-arena";
   private matchSeed = 1;
+  private explicitSeed: number | undefined;
   private remix = 0;
   private p2Difficulty: number | null = null;
-  private hitstopFrames = 0;
   private uiCam: Phaser.Cameras.Scene2D.Camera | null = null;
   private lastHudState: HudStateDetail | null = null;
   private uiObjects = new Set<Phaser.GameObjects.GameObject>();
-  private latchedP1: FighterInput | null = null;
-  private latchedP2: FighterInput | null = null;
   private stageFloorY = GROUND_Y;
   private fighterRenderScale = 1;
   private fighterRenderYOffset = 0;
@@ -130,11 +152,12 @@ export class FightScene extends Phaser.Scene {
   private stageDisplayLabel = "";
   private p1DisplayTag = "";
   private p2DisplayTag = "";
-  private introHasPlayed = false;
   private cinematicIntroActive = false;
-  private introCanSkip = false;
+  /** The "FIGHT" cue already fired this intro; a late skip must not repeat it. */
+  private fightCueFired = false;
+  /** Sim is paused while the round-1 intro video/clip loading runs. */
+  private introHold = false;
   private introRoundNumber = 1;
-  private introEvents: Phaser.Time.TimerEvent[] = [];
   private introEnterKey?: Phaser.Input.Keyboard.Key;
   private introSpaceKey?: Phaser.Input.Keyboard.Key;
   private introVideoSequenceActive = false;
@@ -146,6 +169,14 @@ export class FightScene extends Phaser.Scene {
   private matchReported = false;
   private sceneLifecycleEpoch = 0;
   private sceneLifecycleActive = false;
+
+  private get p1(): Fighter {
+    return this.sim.p1;
+  }
+
+  private get p2(): Fighter {
+    return this.sim.p2;
+  }
 
   constructor() {
     super({ key: "FightScene" });
@@ -167,6 +198,10 @@ export class FightScene extends Phaser.Scene {
     this.customStageLabel = data.customStageLabel ?? null;
     this.remix = data.remix ?? 0;
     this.p2Difficulty = data.p2Difficulty ?? null;
+    this.explicitSeed = data.seed;
+    this.online = data.online ?? null;
+    this.opponentLeft = false;
+    this.lastNetState = null;
     this.matchSeed = buildMatchSeed({
       ...data,
       vsAI: this.isVsAI,
@@ -181,9 +216,8 @@ export class FightScene extends Phaser.Scene {
       customStageKey: this.customStageKey ?? undefined,
       customStageLabel: this.customStageLabel ?? undefined,
       remix: this.remix,
+      seed: this.explicitSeed,
     });
-    this.p1Wins = 0;
-    this.p2Wins = 0;
     this.accumulator = 0;
     this.waitingForMatchInput = false;
     this.matchActionCommitted = false;
@@ -192,9 +226,8 @@ export class FightScene extends Phaser.Scene {
     this.stageDisplayLabel = "";
     this.p1DisplayTag = "";
     this.p2DisplayTag = "";
-    this.introHasPlayed = false;
     this.cinematicIntroActive = false;
-    this.introCanSkip = false;
+    this.introHold = false;
     this.matchStartedAt = Date.now();
     this.matchReported = false;
   }
@@ -242,7 +275,6 @@ export class FightScene extends Phaser.Scene {
     this.p1DisplayTag = this.cpuVsCpu ? p1Personality.label : "";
     this.p2DisplayTag = this.isVsAI ? p2Personality.label : "";
 
-    this.combat = new CombatSystem();
     this.inputMgr = new InputManager(this);
     this.sound_mgr = new SoundManager();
     this.introEnterKey = this.input.keyboard?.addKey(
@@ -261,19 +293,28 @@ export class FightScene extends Phaser.Scene {
     } else if (!this.stageId) {
       void this.loadAiStageBackground();
     }
+    const simConfig = {
+      seed: this.matchSeed,
+      vsAI: this.isVsAI,
+      cpuVsCpu: this.cpuVsCpu,
+      p1Name: this.p1Name,
+      p2Name: this.p2Name,
+      p1Personality,
+      p2Personality,
+      p2Difficulty: this.p2Difficulty ?? 1,
+    };
+    this.sim = new MatchSimulation(simConfig);
+    this.recorder = new MatchRecorder(simConfig);
+    this.installRecordingHook();
+    if (this.online && !this.attachOnlineSession(this.online)) {
+      // No live transport (hard reload at /fight, expired room): bail out.
+      debugWarn("[FightScene] Online match has no live session; returning to menu");
+      this.exitToMenu();
+      return;
+    }
     this.createFighters();
 
     this.hud = new HUD(this);
-
-    this.ai = new AIController(
-      new SeededRng(this.mixSeed(0x6d2b79f5)),
-      p2Personality,
-      this.p2Difficulty ?? 1,
-    );
-    this.ai2 = new AIController(
-      new SeededRng(this.mixSeed(0x1b873593)),
-      p1Personality,
-    );
 
     this.createParticles();
     const crt = ScreenEffects.createCRTOverlay(this);
@@ -288,16 +329,10 @@ export class FightScene extends Phaser.Scene {
     this.cameras.main.ignore([...this.uiObjects]);
     this.uiCam.ignore(this.children.list.filter((obj) => !this.uiObjects.has(obj)));
 
-    this.startRound();
-    this.emitHudState();
     this.ready = true;
-  }
-
-
-  private mixSeed(salt: number): number {
-    const mixed = Math.imul(this.matchSeed ^ salt, 0x45d9f3b);
-    const normalized = mixed >>> 0;
-    return normalized === 0 ? salt >>> 0 : normalized;
+    this.handleSimEvents(this.sim.start());
+    this.syncViews();
+    this.emitHudState();
   }
 
   private async loadAiSpritesIfNeeded(lifecycleEpoch: number): Promise<void> {
@@ -983,7 +1018,8 @@ export class FightScene extends Phaser.Scene {
     if (!this.isActiveStageLoad(loadId)) return false;
     if (
       beforeFirstExchangeOnly &&
-      (this.phase !== RoundPhase.INTRO || this.frameCount > 0)
+      this.sim &&
+      (this.sim.phase !== RoundPhase.INTRO || this.sim.fightTicks > 0)
     ) {
       return false;
     }
@@ -1072,27 +1108,28 @@ export class FightScene extends Phaser.Scene {
   }
 
   private createFighters(): void {
-    this.p1 = new Fighter(0, this.p1Name, "fighter_p1", 250, true);
-    this.p2 = new Fighter(
-      1,
-      this.p2Name,
-      "fighter_p2",
-      GAME_WIDTH - 250,
-      false,
+    this.p1View = new FighterView(this.sim.p1, "fighter_p1");
+    this.p2View = new FighterView(this.sim.p2, "fighter_p2");
+    this.p1View.createSprite(this);
+    this.p2View.createSprite(this);
+    this.p1View.setRenderPresentation(
+      this.fighterRenderScale,
+      this.fighterRenderYOffset,
     );
+    this.p2View.setRenderPresentation(
+      this.fighterRenderScale,
+      this.fighterRenderYOffset,
+    );
+    this.p1View.sprite.setDepth(10);
+    this.p2View.sprite.setDepth(10);
+    this.projectileViews = new ProjectileViewPool(this, (sprite) => this.markWorld(sprite));
+    this.projectileViews.setRenderYOffset(this.fighterRenderYOffset);
+  }
 
-    this.p1.createSprite(this);
-    this.p2.createSprite(this);
-    this.p1.setRenderPresentation(
-      this.fighterRenderScale,
-      this.fighterRenderYOffset,
-    );
-    this.p2.setRenderPresentation(
-      this.fighterRenderScale,
-      this.fighterRenderYOffset,
-    );
-    this.p1.sprite.setDepth(10);
-    this.p2.sprite.setDepth(10);
+  private syncViews(): void {
+    this.p1View.syncSprite(this.p2.x);
+    this.p2View.syncSprite(this.p1.x);
+    this.projectileViews.sync(this.sim.projectiles);
   }
 
   private createParticles(): void {
@@ -1108,30 +1145,172 @@ export class FightScene extends Phaser.Scene {
   }
 
   private shouldSkipIntro(): boolean {
-    if (!this.introCanSkip) return false;
+    if (!this.introVideoSequenceActive && !this.sim.canSkipIntro) return false;
     return Boolean(
       (this.introEnterKey && Phaser.Input.Keyboard.JustDown(this.introEnterKey)) ||
       (this.introSpaceKey && Phaser.Input.Keyboard.JustDown(this.introSpaceKey)),
     );
   }
 
-  private clearIntroEvents(): void {
-    for (const event of this.introEvents) {
-      event.remove(false);
+  /** Returns true when a sim intro skip was requested (a recorded action). */
+  private skipIntro(): boolean {
+    if (this.introVideoSequenceActive) {
+      // Abort the clip sequence; playCachedIntroVideos falls through to the
+      // cinematic card, which the player can skip again.
+      this.introVideoSequenceActive = false;
+      return false;
     }
-    this.introEvents = [];
+    // Online: the skip travels inside the tick word so both peers apply it
+    // on the same tick; the rollback session calls requestIntroSkip itself.
+    if (this.rollback) return this.sim.canSkipIntro;
+    return this.sim.requestIntroSkip();
   }
 
-  private scheduleIntroEvent(delayMs: number, callback: () => void): void {
-    const event = this.time.delayedCall(delayMs, callback);
-    this.introEvents.push(event);
+  // ---------------------------------------------------------------- online
+
+  private attachOnlineSession(online: OnlineMatchInfo): boolean {
+    const session = getActiveOnlineSession();
+    if (!session || session.roomCode !== online.roomCode) return false;
+    this.onlineSession = session;
+    const transport = session.transport;
+    this.rollback = new RollbackSession({
+      sim: this.sim,
+      localSlot: online.localSlot,
+      inputDelay: online.inputDelay,
+      send: (packet) => {
+        transport.sendInput(packet);
+      },
+    });
+    this.onlineUnsubscribe.push(
+      transport.onInput((bytes) => {
+        this.rollback?.receiveInputPacket(bytes);
+      }),
+      transport.onControl((payload) => {
+        if (!isOnlineControlMessage(payload)) return;
+        if (payload.t === "sync") {
+          this.rollback?.receiveChecksumReport({ tick: payload.tick, checksum: payload.checksum });
+        } else if (payload.t === "quit") {
+          this.onOpponentLeft();
+        }
+      }),
+      transport.onState((state) => this.onTransportState(state)),
+    );
+    this.installNetDebugHook();
+    return true;
   }
 
-  private destroyIntroOverlay(immediate = true): void {
-    if (immediate) {
-      this.clearIntroEvents();
-      this.introCanSkip = false;
+  private installNetDebugHook(): void {
+    const target = window as Window & { __ASF_NET_DEBUG__?: () => unknown };
+    target.__ASF_NET_DEBUG__ = () => {
+      const rollback = this.rollback;
+      if (!rollback) return null;
+      const stats = rollback.stats();
+      const interval = rollback.checksumInterval;
+      const checksums: Array<[number, number]> = [];
+      for (let tick = interval; tick <= stats.confirmedTick; tick += interval) {
+        const digest = rollback.localChecksumAt(tick);
+        if (digest !== undefined) checksums.push([tick, digest]);
+      }
+      return {
+        ...stats,
+        phase: this.sim.phase,
+        p1Health: this.p1.health,
+        p2Health: this.p2.health,
+        p1Wins: this.sim.p1Wins,
+        p2Wins: this.sim.p2Wins,
+        transport: this.onlineSession?.transport.getState() ?? null,
+        checksums,
+      };
+    };
+  }
+
+  private detachOnlineSession(): void {
+    delete (window as Window & { __ASF_NET_DEBUG__?: unknown }).__ASF_NET_DEBUG__;
+    for (const unsubscribe of this.onlineUnsubscribe) unsubscribe();
+    this.onlineUnsubscribe = [];
+    this.rollback = null;
+    this.onlineSession = null;
+  }
+
+  private flushNetChecksums(): void {
+    if (!this.rollback || !this.onlineSession) return;
+    for (const report of this.rollback.takeChecksumReports()) {
+      this.onlineSession.transport.sendControl({ t: "sync", tick: report.tick, checksum: report.checksum });
     }
+  }
+
+  private onTransportState(state: PeerTransportState): void {
+    if (!this.ready) return;
+    if (!state.peerPresent && (state.phase === "waiting_peer" || state.phase === "closed" || state.phase === "error")) {
+      this.onOpponentLeft();
+    }
+  }
+
+  private onOpponentLeft(): void {
+    if (this.opponentLeft) return;
+    this.opponentLeft = true;
+    this.opponentLeftAt = Date.now();
+    debugWarn("[FightScene] Opponent left the online match");
+    this.emitNetState(true);
+    if (this.sim.phase !== RoundPhase.MATCH_OVER && !this.waitingForMatchInput) {
+      this.showMatchOverUI();
+    }
+  }
+
+  private emitNetState(force = false): void {
+    if (!this.rollback || !this.onlineSession) return;
+    this.netStateFrame++;
+    if (!force && this.netStateFrame % 10 !== 0) return;
+    const transport = this.onlineSession.transport.getState();
+    const stats = this.rollback.stats();
+    const detail: NetStateDetail = {
+      connected: transport.phase === "connected",
+      peerPresent: transport.peerPresent && !this.opponentLeft,
+      path: transport.path,
+      rttMs: transport.rttMs,
+      rollbacks: stats.rollbacks,
+      stalled: stats.localTick - stats.confirmedTick >= this.rollback.maxRollback,
+      desynced: this.rollback.isDesynced,
+      abandoned: this.opponentLeft,
+    };
+    const last = this.lastNetState;
+    if (
+      last &&
+      last.connected === detail.connected &&
+      last.peerPresent === detail.peerPresent &&
+      last.path === detail.path &&
+      last.rttMs === detail.rttMs &&
+      last.rollbacks === detail.rollbacks &&
+      last.stalled === detail.stalled &&
+      last.desynced === detail.desynced &&
+      last.abandoned === detail.abandoned
+    ) {
+      return;
+    }
+    this.lastNetState = detail;
+    window.dispatchEvent(new CustomEvent(NET_STATE_EVENT, { detail }));
+  }
+
+  private exitToMenu(): void {
+    const exitToMenu = (window as Window & { __ASF_EXIT_TO_MENU__?: () => void }).__ASF_EXIT_TO_MENU__;
+    if (exitToMenu) {
+      exitToMenu();
+    } else {
+      window.location.href = "/menu";
+    }
+  }
+
+  private installRecordingHook(): void {
+    const target = window as Window & { __ASF_MATCH_RECORDING__?: () => MatchRecording | null };
+    target.__ASF_MATCH_RECORDING__ = () => (this.recorder ? this.recorder.toRecording() : null);
+  }
+
+  private removeRecordingHook(): void {
+    const target = window as Window & { __ASF_MATCH_RECORDING__?: () => MatchRecording | null };
+    delete target.__ASF_MATCH_RECORDING__;
+  }
+
+  private destroyIntroOverlay(): void {
     this.emitIntroState(false, this.introRoundNumber);
   }
 
@@ -1316,7 +1495,10 @@ export class FightScene extends Phaser.Scene {
       ),
     ])).filter((clip): clip is { title: string; subtitle: string; blob: Blob } => !!clip);
 
-    if (token !== this.introVideoSequenceToken || this.phase !== RoundPhase.INTRO) return;
+    if (token !== this.introVideoSequenceToken || this.sim.phase !== RoundPhase.INTRO) {
+      this.introHold = false;
+      return;
+    }
 
     if (clips.length === 0) {
       this.playMatchIntro(roundNum);
@@ -1324,15 +1506,15 @@ export class FightScene extends Phaser.Scene {
     }
 
     this.introVideoSequenceActive = true;
-    this.introCanSkip = true;
-    this.p1.forceState(FighterState.IDLE);
-    this.p2.forceState(FighterState.IDLE);
-    this.p1.syncSprite(this.p2.x);
-    this.p2.syncSprite(this.p1.x);
+    this.syncViews();
 
     try {
       for (const clip of clips) {
-        if (token !== this.introVideoSequenceToken || this.phase !== RoundPhase.INTRO) return;
+        if (
+          token !== this.introVideoSequenceToken ||
+          this.sim.phase !== RoundPhase.INTRO ||
+          !this.introVideoSequenceActive
+        ) break;
         await this.playIntroVideoClip(clip, token);
       }
     } catch (err) {
@@ -1344,16 +1526,18 @@ export class FightScene extends Phaser.Scene {
       }
     }
 
-    if (token !== this.introVideoSequenceToken || this.phase !== RoundPhase.INTRO) return;
+    if (token !== this.introVideoSequenceToken || this.sim.phase !== RoundPhase.INTRO) {
+      this.introHold = false;
+      return;
+    }
     this.playMatchIntro(roundNum);
   }
 
   private finishCinematicIntro(showFightAnnouncement: boolean): void {
     this.cinematicIntroActive = false;
+    this.introHold = false;
     this.introVideoSequenceActive = false;
-    this.introCanSkip = false;
-    this.clearIntroEvents();
-    this.destroyIntroOverlay(true);
+    this.destroyIntroOverlay();
     this.destroyIntroVideoOverlay();
 
     const cam = this.cameras.main;
@@ -1361,39 +1545,27 @@ export class FightScene extends Phaser.Scene {
     cam.setZoom(1);
     cam.centerOn(GAME_WIDTH / 2, GAME_HEIGHT / 2);
 
-    this.p1.x = 250;
-    this.p2.x = GAME_WIDTH - 250;
-    this.p1.forceState(FighterState.IDLE);
-    this.p2.forceState(FighterState.IDLE);
-    this.p1.syncSprite(this.p2.x);
-    this.p2.syncSprite(this.p1.x);
-
-    if (showFightAnnouncement) {
+    if (showFightAnnouncement && !this.fightCueFired) {
       this.dispatchAnnounce({ kind: 'fight' });
       this.sound_mgr.playAnnounce("fight");
     }
-
-    this.phaseTimer = 0;
-    this.phase = RoundPhase.FIGHTING;
+    this.fightCueFired = false;
   }
 
+  /**
+   * Round-1 versus card. Purely presentational: the sim's INTRO phase owns
+   * the timing and emits `introCue`s; this just releases the hold so it
+   * starts ticking.
+   */
   private playMatchIntro(roundNum: number): void {
     this.cinematicIntroActive = true;
     this.introVideoSequenceActive = false;
-    this.introCanSkip = false;
-    this.destroyIntroOverlay(true);
     this.destroyIntroVideoOverlay();
-    this.phaseTimer = 150;
 
     const cam = this.cameras.main;
     cam.stopFollow();
     cam.setZoom(1.03);
     cam.centerOn(GAME_WIDTH / 2, GAME_HEIGHT / 2);
-
-    this.p1.x = 250;
-    this.p2.x = GAME_WIDTH - 250;
-    this.p1.forceState(FighterState.IDLE);
-    this.p2.forceState(FighterState.IDLE);
 
     this.introRoundNumber = roundNum;
     this.emitIntroState(true, roundNum);
@@ -1405,42 +1577,14 @@ export class FightScene extends Phaser.Scene {
       ease: "Sine.easeInOut",
     });
 
-    this.scheduleIntroEvent(420, () => {
-      this.introCanSkip = true;
-    });
-    this.scheduleIntroEvent(760, () => {
-      if (this.phase !== RoundPhase.INTRO) return;
-      this.dispatchAnnounce({ kind: 'round', roundNumber: roundNum });
-      this.sound_mgr.playAnnounce("round");
-    });
-    this.scheduleIntroEvent(1750, () => {
-      if (this.phase !== RoundPhase.INTRO) return;
-      this.dispatchAnnounce({ kind: 'fight' });
-      this.sound_mgr.playAnnounce("fight");
-    });
-    this.scheduleIntroEvent(1900, () => {
-      if (this.phase !== RoundPhase.INTRO) return;
-      this.destroyIntroOverlay(false);
-    });
+    this.introHold = false;
   }
 
-  private skipCinematicIntro(): void {
-    if (!this.cinematicIntroActive) return;
-    this.finishCinematicIntro(true);
-  }
-
-  private startRound(): void {
-    this.phase = RoundPhase.INTRO;
-    this.phaseTimer = 120;
-    this.roundTimer = ROUND_TIME;
-    this.frameCount = 0;
-    this.hitstopFrames = 0;
-    this.latchedP1 = null;
-    this.latchedP2 = null;
+  private onRoundStart(roundNumber: number, cinematic: boolean): void {
     this.cinematicIntroActive = false;
+    this.fightCueFired = false;
     this.introVideoSequenceActive = false;
-    this.introCanSkip = false;
-    this.destroyIntroOverlay(true);
+    this.destroyIntroOverlay();
     this.destroyIntroVideoOverlay();
 
     const cam = this.cameras.main;
@@ -1448,197 +1592,72 @@ export class FightScene extends Phaser.Scene {
     cam.setZoom(1);
     cam.centerOn(GAME_WIDTH / 2, GAME_HEIGHT / 2);
 
-    for (const proj of this.projectiles) proj.destroy();
-    this.projectiles = [];
-
-    this.p1.health = MAX_HEALTH;
-    this.p2.health = MAX_HEALTH;
-    this.p1.x = 250;
-    this.p2.x = GAME_WIDTH - 250;
-    this.p1.y = GROUND_Y;
-    this.p2.y = GROUND_Y;
-    this.p1.vx = 0;
-    this.p2.vx = 0;
-    this.p1.vy = 0;
-    this.p2.vy = 0;
-    this.p1.forceState(FighterState.IDLE);
-    this.p2.forceState(FighterState.IDLE);
-    this.p1.stunFrames = 0;
-    this.p2.stunFrames = 0;
-    this.p1.comboCount = 0;
-    this.p2.comboCount = 0;
-
-    const roundNum = this.p1Wins + this.p2Wins + 1;
-    if (!this.introHasPlayed && roundNum === 1) {
-      this.introHasPlayed = true;
-      void this.playCachedIntroVideos(roundNum);
-      return;
+    if (cinematic && this.online) {
+      // Intro clips live in the local cache only, so they would desync the
+      // two intro durations; online goes straight to the versus card.
+      this.playMatchIntro(roundNumber);
+    } else if (cinematic) {
+      // Hold the sim while cached intro clips load/play; the cinematic card
+      // then runs on sim ticks.
+      this.introHold = true;
+      void this.playCachedIntroVideos(roundNumber);
     }
-
-    this.dispatchAnnounce({ kind: 'round', roundNumber: roundNum });
-    this.sound_mgr.playAnnounce("round");
-    this.time.delayedCall(1300, () => {
-      if (this.phase === RoundPhase.INTRO) {
-        this.dispatchAnnounce({ kind: 'fight' });
-        this.sound_mgr.playAnnounce("fight");
-      }
-    });
   }
 
   update(time: number, delta: number): void {
     if (!this.ready) return;
 
-    if (this.phase === RoundPhase.INTRO) {
-      if ((this.cinematicIntroActive || this.introVideoSequenceActive) && this.shouldSkipIntro()) {
-        this.skipCinematicIntro();
-      }
-      if (this.introVideoSequenceActive) return;
-      this.phaseTimer--;
-      if (this.phaseTimer <= 0) {
-        if (this.cinematicIntroActive) {
-          this.finishCinematicIntro(false);
-        } else {
-          this.phase = RoundPhase.FIGHTING;
-        }
-      }
-      this.p1.syncSprite(this.p2.x);
-      this.p2.syncSprite(this.p1.x);
-      return;
+    this.inputMgr.poll();
+
+    let skipRequested = false;
+    if (this.sim.phase === RoundPhase.INTRO && this.shouldSkipIntro()) {
+      skipRequested = this.skipIntro();
     }
 
-    if (
-      this.phase === RoundPhase.ROUND_END ||
-      this.phase === RoundPhase.MATCH_END
-    ) {
-      this.phaseTimer--;
-      if (this.hitstopFrames > 0) {
-        // KO freeze: hold the death pop for a beat before it plays out.
-        this.hitstopFrames--;
-      } else {
-        this.updateRoundEndPresentation(delta);
+    const holding = this.introHold || this.introVideoSequenceActive;
+    if (!holding && this.sim.phase !== RoundPhase.MATCH_OVER) {
+      // Fixed timestep accumulator: the sim only ever advances in whole
+      // 60 Hz ticks, whatever the display refresh rate.
+      this.accumulator = Math.min(
+        this.accumulator + delta,
+        FIXED_TIMESTEP * MAX_TICKS_PER_FRAME,
+      );
+      while (this.accumulator >= FIXED_TIMESTEP) {
+        this.accumulator -= FIXED_TIMESTEP;
+        if (this.rollback) {
+          // Online: the local player always uses the Player 1 control set
+          // (keyboard WASD, pad 0, touch), whichever fighter slot they own.
+          // The input is stamped for a future tick and the session decides
+          // how many ticks to run (or to stall).
+          const localInput = this.inputMgr.readPlayer1();
+          this.inputMgr.readPlayer2();
+          const result = this.rollback.advanceFrame(localInput, skipRequested);
+          skipRequested = false;
+          this.handleSimEvents(result.events);
+          if (!this.ready) return;
+          this.flushNetChecksums();
+          continue;
+        }
+        const p1Input = this.inputMgr.readPlayer1();
+        const p2Input = this.inputMgr.readPlayer2();
+        this.recorder.recordTick(p1Input, p2Input, skipRequested);
+        skipRequested = false;
+        this.handleSimEvents(this.sim.step(p1Input, p2Input));
+        if (!this.ready) return;
+        this.recorder.sampleChecksum(this.sim);
       }
+    }
+    if (this.rollback) this.emitNetState();
+
+    const phase = this.sim.phase;
+    if (phase === RoundPhase.FIGHTING) {
+      this.updateClouds(time);
+    }
+    this.syncViews();
+    if (phase !== RoundPhase.INTRO) {
       this.updateWorldCamera(delta);
-      this.p1.syncSprite(this.p2.x);
-      this.p2.syncSprite(this.p1.x);
-
-      if (this.phaseTimer <= 0) {
-        if (this.phase === RoundPhase.MATCH_END) {
-          if (!this.waitingForMatchInput) {
-            this.showMatchOverUI();
-          }
-          return;
-        }
-        this.startRound();
-      }
-      return;
     }
-
-    // Fixed timestep accumulator for determinism
-    this.accumulator += delta;
-    while (this.accumulator >= FIXED_TIMESTEP) {
-      this.fixedUpdate();
-      this.accumulator -= FIXED_TIMESTEP;
-    }
-
-    this.updateClouds(time);
-
-    this.p1.syncSprite(this.p2.x);
-    this.p2.syncSprite(this.p1.x);
-    this.updateWorldCamera(delta);
     this.emitHudState();
-  }
-
-  private updateRoundEndPresentation(delta: number): void {
-    const dt = Math.min(delta, FIXED_TIMESTEP * 2) / 1000;
-    this.advanceFighterPresentation(this.p1, this.p2.x, dt);
-    this.advanceFighterPresentation(this.p2, this.p1.x, dt);
-  }
-
-  private advanceFighterPresentation(
-    fighter: Fighter,
-    opponentX: number,
-    dt: number,
-  ): void {
-    if (Math.abs(opponentX - fighter.x) > 4) {
-      fighter.facingRight = opponentX > fighter.x;
-    }
-
-    fighter.stateFrame++;
-
-    if (fighter.state === FighterState.KNOCKDOWN) {
-      fighter.applyPhysics(dt);
-      if (
-        fighter.health <= 0 &&
-        fighter.isGrounded() &&
-        fighter.stateFrame >= 30
-      ) {
-        fighter.forceState(FighterState.DEFEAT);
-      }
-    }
-  }
-
-  private fixedUpdate(): void {
-    this.frameCount++;
-    const dt = FIXED_TIMESTEP / 1000;
-
-    // Hitstop: freeze the whole combat sim for a few frames on impact.
-    // Human button presses during the freeze are latched so mashed inputs
-    // still come out on unfreeze; AI sides are simply not ticked (keeps the
-    // seeded RNG stream untouched).
-    if (this.hitstopFrames > 0) {
-      this.hitstopFrames--;
-      this.latchHumanInputs();
-      return;
-    }
-
-    // Timer
-    this.roundTimer -= dt;
-    if (this.roundTimer <= 0) {
-      this.roundTimer = 0;
-      this.endRound();
-      return;
-    }
-
-    // One-projectile rule feeds the fighters so a super is never wasted on
-    // a throw that cannot spawn.
-    this.p1.canFireProjectile = !this.projectiles.some((proj) => proj?.ownerIndex === 0);
-    this.p2.canFireProjectile = !this.projectiles.some((proj) => proj?.ownerIndex === 1);
-
-    // Read inputs
-    const p1Input = this.cpuVsCpu
-      ? this.ai2.getInput(this.p1, this.p2)
-      : this.mergeLatched(this.inputMgr.readPlayer1(), this.latchedP1);
-    const p2Input = this.isVsAI
-      ? this.ai.getInput(this.p2, this.p1)
-      : this.mergeLatched(this.inputMgr.readPlayer2(), this.latchedP2);
-    this.latchedP1 = null;
-    this.latchedP2 = null;
-
-    // Update fighters
-    const p1PrevState = this.p1.state;
-    const p2PrevState = this.p2.state;
-    this.p1.update(dt, p1Input, this.p2.x);
-    this.p2.update(dt, p2Input, this.p1.x);
-    this.emitAttackAudio(p1PrevState, this.p1.state);
-    this.emitAttackAudio(p2PrevState, this.p2.state);
-
-    // Spawn fireballs at release frame
-    this.checkFireballSpawn(this.p1);
-    this.checkFireballSpawn(this.p2);
-
-    // Update projectiles
-    this.updateProjectiles(dt);
-
-    // Resolve combat
-    const events = this.combat.resolve(this.p1, this.p2);
-    for (const evt of events) {
-      this.onHit(evt);
-    }
-
-    // Check KO
-    if (this.p1.health <= 0 || this.p2.health <= 0) {
-      this.endRound();
-    }
   }
 
   /** Route a runtime-created world object to the world camera only. */
@@ -1677,16 +1696,16 @@ export class FightScene extends Phaser.Scene {
 
   private emitHudState(): void {
     const detail: HudStateDetail = {
-      visible: !this.cinematicIntroActive && !this.introVideoSequenceActive,
+      visible: !this.cinematicIntroActive && !this.introVideoSequenceActive && !this.introHold,
       p1Health: Math.max(0, Math.round(this.p1.health)),
       p2Health: Math.max(0, Math.round(this.p2.health)),
       maxHealth: MAX_HEALTH,
       p1Meter: this.p1.meter,
       p2Meter: this.p2.meter,
       meterMax: METER_MAX,
-      timer: Math.max(0, Math.ceil(this.roundTimer)),
-      p1Wins: this.p1Wins,
-      p2Wins: this.p2Wins,
+      timer: this.sim.timerSeconds,
+      p1Wins: this.sim.p1Wins,
+      p2Wins: this.sim.p2Wins,
       roundsToWin: ROUNDS_TO_WIN,
       p1Name: this.p1.name,
       p2Name: this.p2.name,
@@ -1733,45 +1752,91 @@ export class FightScene extends Phaser.Scene {
     }));
   }
 
-  private latchHumanInputs(): void {
-    if (!this.cpuVsCpu) {
-      this.latchedP1 = this.orInputs(this.latchedP1, this.inputMgr.readPlayer1());
+  // ------------------------------------------------------------ sim events
+
+  /**
+   * Presentation for everything the simulation reported this tick: sounds,
+   * sparks, shakes, announcements, HUD, match reporting. The sim already
+   * applied the state changes; nothing here feeds back into it.
+   */
+  private handleSimEvents(events: MatchSimEvent[]): void {
+    for (const event of events) {
+      switch (event.type) {
+        case "roundStart":
+          this.onRoundStart(event.roundNumber, event.cinematic);
+          break;
+        case "introCue":
+          this.onIntroCue(event.cue, event.roundNumber);
+          break;
+        case "fightStart":
+          if (this.cinematicIntroActive || this.introHold || this.introVideoSequenceActive) {
+            this.finishCinematicIntro(event.skipped);
+          }
+          break;
+        case "attackStart":
+          this.emitAttackAudio(event.state);
+          break;
+        case "hit":
+          this.onHit(event);
+          break;
+        case "projectileHit":
+          this.onProjectileHit(event);
+          break;
+        case "reflect":
+          this.hitSparks.emitParticleAt(event.x, event.y + this.fighterRenderYOffset, 8);
+          this.sound_mgr.playBlock();
+          break;
+        case "clash":
+          this.hitSparks.emitParticleAt(event.x, event.y + this.fighterRenderYOffset, 10);
+          this.sound_mgr.playBlock();
+          break;
+        case "superFireball":
+          this.onSuperFireball(event.playerIndex);
+          break;
+        case "roundEnd":
+          this.onRoundEnd(event.outcome);
+          break;
+        case "matchEnd":
+          this.reportMatchComplete(event.winner === 0 ? "p1" : "p2");
+          debugInfo(
+            `[FightScene] Match recorded: ${this.recorder.tickCount} ticks, seed ${this.matchSeed >>> 0}, checksum ${this.sim.checksum()}`,
+          );
+          break;
+        case "winsCue": {
+          const winner = event.winner === 0 ? this.p1 : this.p2;
+          this.dispatchAnnounce({ kind: 'wins', winnerName: winner.name.toUpperCase() });
+          this.sound_mgr.playAnnounce("wins");
+          break;
+        }
+        case "matchOver":
+          if (!this.waitingForMatchInput) {
+            this.showMatchOverUI();
+          }
+          break;
+      }
     }
-    if (!this.isVsAI) {
-      this.latchedP2 = this.orInputs(this.latchedP2, this.inputMgr.readPlayer2());
+  }
+
+  private onIntroCue(cue: "skippable" | "round" | "fight" | "hide", roundNumber: number): void {
+    switch (cue) {
+      case "skippable":
+        break;
+      case "round":
+        this.dispatchAnnounce({ kind: 'round', roundNumber });
+        this.sound_mgr.playAnnounce("round");
+        break;
+      case "fight":
+        this.fightCueFired = true;
+        this.dispatchAnnounce({ kind: 'fight' });
+        this.sound_mgr.playAnnounce("fight");
+        break;
+      case "hide":
+        this.destroyIntroOverlay();
+        break;
     }
   }
 
-  private orInputs(base: FighterInput | null, next: FighterInput): FighterInput {
-    if (!base) return { ...next };
-    return {
-      left: next.left,
-      right: next.right,
-      up: base.up || next.up,
-      down: next.down,
-      guard: next.guard,
-      punch: base.punch || next.punch,
-      kick: base.kick || next.kick,
-      fireball: base.fireball || next.fireball,
-      super: base.super || next.super,
-      uppercut: base.uppercut || next.uppercut,
-    };
-  }
-
-  private mergeLatched(current: FighterInput, latched: FighterInput | null): FighterInput {
-    if (!latched) return current;
-    return {
-      ...current,
-      up: current.up || latched.up,
-      punch: current.punch || latched.punch,
-      kick: current.kick || latched.kick,
-      fireball: current.fireball || latched.fireball,
-      uppercut: current.uppercut || latched.uppercut,
-    };
-  }
-
-  private emitAttackAudio(prev: FighterState, next: FighterState): void {
-    if (prev === next) return;
+  private emitAttackAudio(next: FighterState): void {
     switch (next) {
       case FighterState.HIGH_PUNCH:
       case FighterState.LOW_PUNCH:
@@ -1788,204 +1853,76 @@ export class FightScene extends Phaser.Scene {
     }
   }
 
-  private checkFireballSpawn(fighter: Fighter): void {
-    if (fighter.state !== FighterState.FIREBALL) return;
-    // Classic one-projectile rule: with your ball still live, the throw
-    // animation plays but nothing comes out.
-    if (this.projectiles.some((proj) => proj.ownerIndex === fighter.playerIndex)) return;
-    const startup = ATTACKS[FighterState.FIREBALL].startup;
-    if (fighter.stateFrame !== startup) return;
+  private fighterView(index: 0 | 1): FighterView {
+    return index === 0 ? this.p1View : this.p2View;
+  }
 
-    const spawnX =
-      fighter.x +
-      (fighter.facingRight ? fighter.getBodyWidth() : -fighter.getBodyWidth());
-    // High trajectory: crouching ducks clean under the ball (Tekken rules).
-    const spawnY = fighter.getRenderY() - fighter.getBodyHeight() * 0.78;
-    const isSuper = fighter.pendingSuper;
-    fighter.pendingSuper = false;
-    // Super flies at mid height: crouching does not duck it.
-    const superY = fighter.getRenderY() - fighter.getBodyHeight() * 0.45;
-    const proj = new Projectile(
-      this,
-      spawnX,
-      isSuper ? superY : spawnY,
-      fighter.facingRight,
-      fighter.playerIndex,
-      false,
-      isSuper,
+  private spawnFloatingText(
+    x: number,
+    y: number,
+    text: string,
+    color: string,
+    fontSize: string,
+    strokeThickness: number,
+    rise: number,
+    duration: number,
+    depth: number,
+  ): void {
+    const label = this.markWorld(this.add
+      .text(x, y, text, {
+        fontFamily: '"Press Start 2P", monospace',
+        fontSize,
+        color,
+        stroke: "#000000",
+        strokeThickness,
+      })
+      .setOrigin(0.5)
+      .setDepth(depth));
+    this.tweens.add({
+      targets: label,
+      y: label.y - rise,
+      alpha: 0,
+      duration,
+      ease: "Cubic.easeOut",
+      onComplete: () => label.destroy(),
+    });
+  }
+
+  private onSuperFireball(playerIndex: 0 | 1): void {
+    const fighter = playerIndex === 0 ? this.p1 : this.p2;
+    const view = this.fighterView(playerIndex);
+    this.sound_mgr.playHit(true);
+    this.spawnFloatingText(fighter.x, view.getRenderY() - 210, 'SUPER!', '#ffce3a', '16px', 4, 44, 800, 106);
+  }
+
+  private onProjectileHit(event: Extract<MatchSimEvent, { type: "projectileHit" }>): void {
+    const defender = event.defender === 0 ? this.p1 : this.p2;
+    const defenderView = this.fighterView(event.defender);
+
+    this.hitSparks.emitParticleAt(
+      defender.x + (defender.facingRight ? -20 : 20),
+      defenderView.getRenderY() - 80,
+      event.blocked ? 5 : 12,
     );
-    this.markWorld(proj.sprite);
-    this.projectiles.push(proj);
-    if (isSuper) {
-      this.sound_mgr.playHit(true);
-      const superText = this.markWorld(this.add
-        .text(fighter.x, fighter.getRenderY() - 210, 'SUPER!', {
-          fontFamily: '"Press Start 2P", monospace',
-          fontSize: '16px',
-          color: '#ffce3a',
-          stroke: '#000000',
-          strokeThickness: 4,
-        })
-        .setOrigin(0.5)
-        .setDepth(106));
-      this.tweens.add({
-        targets: superText,
-        y: superText.y - 44,
-        alpha: 0,
-        duration: 800,
-        ease: 'Cubic.easeOut',
-        onComplete: () => superText.destroy(),
-      });
-    }
-  }
 
-  private updateProjectiles(dt: number): void {
-    for (let i = this.projectiles.length - 1; i >= 0; i--) {
-      const proj = this.projectiles[i];
-      // A clash removes two entries in one pass, so the walking index can
-      // briefly point past the end of the array.
-      if (!proj) continue;
-      proj.update(dt);
-
-      if (!proj.active) {
-        this.projectiles.splice(i, 1);
-        continue;
-      }
-
-      // Projectile clash: opposing fireballs cancel each other out.
-      const rival = this.projectiles.find(
-        (other) => other !== proj && other.active && other.ownerIndex !== proj.ownerIndex &&
-          this.aabbOverlap(proj.getHitbox(), other.getHitbox()),
-      );
-      if (rival) {
-        this.hitSparks.emitParticleAt((proj.x + rival.x) / 2, proj.y, 10);
-        this.sound_mgr.playBlock();
-        if (proj.isSuper !== rival.isSuper) {
-          // A super burns through a normal fireball and keeps travelling.
-          const loser = proj.isSuper ? rival : proj;
-          loser.destroy();
-          this.projectiles = this.projectiles.filter((other) => other !== loser);
-          if (loser === proj) continue;
-        } else {
-          rival.destroy();
-          proj.destroy();
-          this.projectiles = this.projectiles.filter(
-            (other) => other !== proj && other !== rival,
-          );
-          continue;
-        }
-      }
-
-      const defender = proj.ownerIndex === 0 ? this.p2 : this.p1;
-      const hurtbox = defender.getHurtbox();
-      const pHitbox = proj.getHitbox();
-
-      if (this.aabbOverlap(pHitbox, hurtbox)) {
-        if (defender.isInvulnerable()) continue;
-
-        // Standing guard-button block REFLECTS the ball back, faster.
-        // Walk-back block absorbs it with chip as usual; crouching simply
-        // ducks under it (the ball flies high).
-        if (
-          !proj.isSuper &&
-          defender.state === FighterState.BLOCK &&
-          !defender.crouchBlocking &&
-          defender.isGrounded()
-        ) {
-          defender.gainMeter(REFLECT_METER_GAIN);
-          proj.reflect(defender.playerIndex);
-          this.hitSparks.emitParticleAt(proj.x, proj.y, 8);
-          this.sound_mgr.playBlock();
-          this.hitstopFrames = Math.max(this.hitstopFrames, 4);
-          continue;
-        }
-
-        // Super is a MID: standing guard blocks it, crouch guard is crushed.
-        const isBlocking = this.combat.isBlockingProjectile(defender) &&
-          (!proj.isSuper || !defender.crouchBlocking);
-
-        const fakeAtk = {
-          damage: proj.damage,
-          hitStunFrames: proj.isSuper ? 24 : 18,
-          blockStunFrames: proj.isSuper ? 14 : 10,
-          pushback: proj.isSuper ? 200 : 120,
-          startup: 0,
-          active: 0,
-          recovery: 0,
-          hitbox: { x: 0, y: 0, width: 0, height: 0 },
-          hitLevel: (proj.isSuper ? 'mid' : 'high') as 'mid' | 'high',
-        };
-
-        defender.takeDamage(fakeAtk, isBlocking);
-        const shooter = proj.ownerIndex === 0 ? this.p1 : this.p2;
-        shooter.gainMeter(attackerMeterGain({ blocked: isBlocking }));
-        defender.gainMeter(defenderMeterGain({ blocked: isBlocking }));
-
-        this.hitSparks.emitParticleAt(
-          defender.x + (defender.facingRight ? -20 : 20),
-          defender.getRenderY() - 80,
-          isBlocking ? 5 : 12,
-        );
-
-        const dmgColor = isBlocking ? "#999999" : "#ff8844";
-        const actualDmg = isBlocking
-          ? Math.floor(proj.damage * 0.1)
-          : proj.damage;
-        const dmgText = this.markWorld(this.add
-          .text(
-            defender.x + (defender.facingRight ? -10 : 10),
-            defender.getRenderY() - 100,
-            actualDmg.toString(),
-            {
-              fontFamily: '"Press Start 2P", monospace',
-              fontSize: "12px",
-              color: dmgColor,
-              stroke: "#000000",
-              strokeThickness: 3,
-            },
-          )
-          .setOrigin(0.5)
-          .setDepth(105));
-
-        this.tweens.add({
-          targets: dmgText,
-          y: dmgText.y - 50,
-          alpha: 0,
-          duration: 800,
-          ease: "Cubic.easeOut",
-          onComplete: () => dmgText.destroy(),
-        });
-
-        proj.destroy();
-        this.projectiles.splice(i, 1);
-
-        if (defender.health <= 0) {
-          this.endRound();
-          return;
-        }
-      }
-    }
-  }
-
-  private aabbOverlap(
-    a: { x: number; y: number; width: number; height: number },
-    b: { x: number; y: number; width: number; height: number },
-  ): boolean {
-    return (
-      a.x < b.x + b.width &&
-      a.x + a.width > b.x &&
-      a.y < b.y + b.height &&
-      a.y + a.height > b.y
+    this.spawnFloatingText(
+      defender.x + (defender.facingRight ? -10 : 10),
+      defenderView.getRenderY() - 100,
+      event.damage.toString(),
+      event.blocked ? "#999999" : "#ff8844",
+      "12px",
+      3,
+      50,
+      800,
+      105,
     );
   }
 
-  private onHit(event: HitEvent): void {
+  private onHit(event: Extract<MatchSimEvent, { type: "hit" }>): void {
     const defender = event.defender === 0 ? this.p1 : this.p2;
     const attacker = event.attacker === 0 ? this.p1 : this.p2;
-
-    // Every exchange feeds the super meter.
-    attacker.gainMeter(attackerMeterGain({ blocked: event.blocked, counter: event.counter }));
-    defender.gainMeter(defenderMeterGain({ blocked: event.blocked }));
+    const defenderView = this.fighterView(event.defender);
+    const attackerView = this.fighterView(event.attacker);
 
     // Sound
     if (event.blocked) {
@@ -1994,157 +1931,78 @@ export class FightScene extends Phaser.Scene {
       this.sound_mgr.playHit(event.damage > 50);
     }
 
-    // Impact: deterministic sim freeze + camera shake scaled by weight.
+    // Impact: the sim already froze itself (hitstop); shake/flash here.
     if (event.blocked) {
-      this.hitstopFrames = Math.max(this.hitstopFrames, 3);
       this.cameras.main.shake(50, 0.0015);
     } else if (event.damage > 50) {
-      this.hitstopFrames = Math.max(this.hitstopFrames, event.counter ? 12 : 10);
       this.cameras.main.shake(120, 0.006);
       this.markUi(ScreenEffects.flashRed(this, 150));
     } else {
-      this.hitstopFrames = Math.max(this.hitstopFrames, event.counter ? 8 : 6);
       this.cameras.main.shake(80, 0.003);
       this.markUi(ScreenEffects.flashWhite(this, 60));
     }
 
     if (event.counter && !event.blocked) {
-      const counterText = this.markWorld(this.add
-        .text(defender.x, defender.getRenderY() - 190, 'COUNTER!', {
-          fontFamily: '"Press Start 2P", monospace',
-          fontSize: '14px',
-          color: '#ffdd33',
-          stroke: '#000000',
-          strokeThickness: 4,
-        })
-        .setOrigin(0.5)
-        .setDepth(106));
-      this.tweens.add({
-        targets: counterText,
-        y: counterText.y - 40,
-        alpha: 0,
-        duration: 700,
-        ease: 'Cubic.easeOut',
-        onComplete: () => counterText.destroy(),
-      });
+      this.spawnFloatingText(defender.x, defenderView.getRenderY() - 190, 'COUNTER!', '#ffdd33', '14px', 4, 40, 700, 106);
     }
 
     // Sparks
     this.hitSparks.emitParticleAt(
       defender.x + (defender.facingRight ? -20 : 20),
-      defender.getRenderY() - 80,
+      defenderView.getRenderY() - 80,
       event.blocked ? 5 : 12,
     );
 
     // Combo counter
-    if (!event.blocked && defender.comboCount >= 2) {
+    if (!event.blocked && event.comboCount >= 2) {
       this.hud.showCombo(
         attacker.x,
-        attacker.getRenderY(),
-        defender.comboCount,
+        attackerView.getRenderY(),
+        event.comboCount,
         attacker.playerIndex,
       );
     }
 
     // Floating damage number
-    const dmgColor = event.blocked ? "#999999" : "#ff4444";
-    const dmgText = this.markWorld(this.add
-      .text(
-        defender.x + (defender.facingRight ? -10 : 10),
-        defender.getRenderY() - 100,
-        event.damage.toString(),
-        {
-          fontFamily: '"Press Start 2P", monospace',
-          fontSize: "12px",
-          color: dmgColor,
-          stroke: "#000000",
-          strokeThickness: 3,
-        },
-      )
-      .setOrigin(0.5)
-      .setDepth(105));
-
-    this.tweens.add({
-      targets: dmgText,
-      y: dmgText.y - 50,
-      alpha: 0,
-      duration: 800,
-      ease: "Cubic.easeOut",
-      onComplete: () => dmgText.destroy(),
-    });
+    this.spawnFloatingText(
+      defender.x + (defender.facingRight ? -10 : 10),
+      defenderView.getRenderY() - 100,
+      event.damage.toString(),
+      event.blocked ? "#999999" : "#ff4444",
+      "12px",
+      3,
+      50,
+      800,
+      105,
+    );
   }
 
-  private endRound(): void {
-    if (this.phase !== RoundPhase.FIGHTING) return;
-
-    this.phase = RoundPhase.ROUND_END;
-    this.phaseTimer = 180; // 3 seconds
-    this.accumulator = 0;
-
-    let winner: Fighter;
-    if (this.p1.health <= 0 && this.p2.health <= 0) {
-      // Double KO: both take the round; a tied match plays extra rounds
-      // until someone is ahead (sudden-death, handled by the win check).
-      this.p1Wins++;
-      this.p2Wins++;
-      this.emitHudState();
-      this.dispatchAnnounce({ kind: 'double_ko' });
-      this.hitstopFrames = 14;
-      this.cameras.main.shake(250, 0.01);
-      this.sound_mgr.playKO();
-      this.sound_mgr.playAnnounce("ko");
-      this.p1.syncSprite(this.p2.x);
-      this.p2.syncSprite(this.p1.x);
-      return;
-    } else if (this.p1.health === this.p2.health) {
-      // Timed-out dead-even round: a draw. Nobody scores; replay the round.
-      this.dispatchAnnounce({ kind: 'draw' });
-      this.p1.syncSprite(this.p2.x);
-      this.p2.syncSprite(this.p1.x);
-      return;
-    } else if (this.p1.health > this.p2.health) {
-      winner = this.p1;
-      this.p1Wins++;
-    } else {
-      winner = this.p2;
-      this.p2Wins++;
+  private onRoundEnd(outcome: "ko" | "double_ko" | "draw" | "decision"): void {
+    switch (outcome) {
+      case "double_ko":
+        this.dispatchAnnounce({ kind: 'double_ko' });
+        this.cameras.main.shake(250, 0.01);
+        this.sound_mgr.playKO();
+        this.sound_mgr.playAnnounce("ko");
+        break;
+      case "draw":
+        this.dispatchAnnounce({ kind: 'draw' });
+        break;
+      case "ko":
+        this.dispatchAnnounce({ kind: 'ko' });
+        this.sound_mgr.playKO();
+        this.sound_mgr.playAnnounce("ko");
+        this.markUi(ScreenEffects.flashWhite(this, 200));
+        // KO drama: the sim holds a long freeze; big shake and slow-motion
+        // effects are presentation only.
+        this.cameras.main.shake(250, 0.01);
+        ScreenEffects.slowMotion(this, 700, 0.3);
+        break;
+      case "decision":
+        break;
     }
-
-    const loser = winner === this.p1 ? this.p2 : this.p1;
-
-    winner.forceState(FighterState.VICTORY);
-    if (loser.health <= 0) {
-      if (loser.state !== FighterState.KNOCKDOWN) {
-        loser.forceState(FighterState.KNOCKDOWN);
-      }
-      this.dispatchAnnounce({ kind: 'ko' });
-      this.sound_mgr.playKO();
-      this.sound_mgr.playAnnounce("ko");
-      this.markUi(ScreenEffects.flashWhite(this, 200));
-      // KO drama: long freeze, big shake, slow-motion effects. (Camera
-      // punch-in removed: with a single camera it scales the HUD too —
-      // needs a dedicated UI camera before it can come back.)
-      this.hitstopFrames = 14;
-      this.cameras.main.shake(250, 0.01);
-      ScreenEffects.slowMotion(this, 700, 0.3);
-    } else {
-      loser.forceState(FighterState.DEFEAT);
-    }
-
+    this.syncViews();
     this.emitHudState();
-
-    if (
-      (this.p1Wins >= ROUNDS_TO_WIN || this.p2Wins >= ROUNDS_TO_WIN) &&
-      this.p1Wins !== this.p2Wins
-    ) {
-      this.phase = RoundPhase.MATCH_END;
-      this.phaseTimer = 300; // 5 seconds
-      this.reportMatchComplete(winner === this.p1 ? "p1" : "p2");
-      this.time.delayedCall(2200, () => {
-        this.dispatchAnnounce({ kind: 'wins', winnerName: winner.name.toUpperCase() });
-        this.sound_mgr.playAnnounce("wins");
-      });
-    }
   }
 
   private reportMatchComplete(winnerSlot: "p1" | "p2"): void {
@@ -2153,14 +2011,15 @@ export class FightScene extends Phaser.Scene {
 
     const detail: MatchCompletionDetail = {
       winnerSlot,
-      roundsP1: this.p1Wins,
-      roundsP2: this.p2Wins,
+      roundsP1: this.sim.p1Wins,
+      roundsP2: this.sim.p2Wins,
       durationSeconds: Math.max(0, Math.round((Date.now() - this.matchStartedAt) / 1000)),
       vsAI: this.isVsAI,
       cpuVsCpu: this.cpuVsCpu,
       p1FighterId: this.p1CloudFighterId,
       p2FighterId: this.p2CloudFighterId,
       isRanked: false,
+      ...(this.online ? { online: this.online } : {}),
     };
     window.dispatchEvent(new CustomEvent(MATCH_COMPLETE_EVENT, { detail }));
   }
@@ -2202,11 +2061,14 @@ export class FightScene extends Phaser.Scene {
     this.matchActionCommitted = true;
     this.cleanupMatchOverUI();
 
-    if (action === "run_it_back") {
+    if (this.online) {
+      // Re-running an online match needs a fresh room handshake; every
+      // action returns to the lobby.
+      this.onlineSession?.transport.sendControl({ t: "quit" });
+    } else if (action === "run_it_back") {
       this.restartMatch(this.remix);
       return;
-    }
-    if (action === "remix") {
+    } else if (action === "remix") {
       this.restartMatch(this.remix + 1);
       return;
     }
@@ -2243,6 +2105,7 @@ export class FightScene extends Phaser.Scene {
         customStageLabel: this.customStageLabel ?? undefined,
         remix,
         p2Difficulty: this.p2Difficulty ?? undefined,
+        seed: this.explicitSeed,
       });
     });
   }
@@ -2257,7 +2120,9 @@ export class FightScene extends Phaser.Scene {
     if (this.matchActionsVisible === visible) return;
     this.matchActionsVisible = visible;
     window.dispatchEvent(
-      new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible } }),
+      new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, {
+        detail: { visible, online: Boolean(this.online) },
+      }),
     );
   }
 
@@ -2284,12 +2149,19 @@ export class FightScene extends Phaser.Scene {
     this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.onSceneLifecycleEnd);
     this.events.off(Phaser.Scenes.Events.DESTROY, this.onSceneLifecycleEnd);
     window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
+    this.removeRecordingHook();
+    if (this.online) {
+      this.detachOnlineSession();
+      endActiveOnlineSession();
+    }
     this.cleanupMatchOverUI();
     resetVirtualInput();
+    this.inputMgr?.reset();
     this.introVideoSequenceActive = false;
+    this.introHold = false;
     this.introVideoSequenceToken++;
     this.destroyIntroVideoOverlay();
-    this.destroyIntroOverlay(true);
+    this.destroyIntroOverlay();
     this.stageBackdrop?.destroy();
     this.stageBackdrop = undefined;
     if (
@@ -2299,7 +2171,7 @@ export class FightScene extends Phaser.Scene {
       this.textures.remove(this.stageBackdropTextureKey);
     }
     this.stageBackdropTextureKey = undefined;
-    this.projectiles = [];
+    this.projectileViews?.clear();
     this.sound_mgr?.destroy();
   };
 }

@@ -42,6 +42,7 @@ interface HomePageProps extends AuthRouteState {
   onOpenWatchMode: () => void;
   onOpenVsCpu: () => void;
   onOpenVsPlayer: () => void;
+  onOpenOnlineVersus: () => void;
   onOpenModeration: () => void;
 }
 
@@ -67,6 +68,7 @@ export function HomePage({
   onOpenWatchMode,
   onOpenVsCpu,
   onOpenVsPlayer,
+  onOpenOnlineVersus,
   onOpenModeration,
 }: HomePageProps) {
   const [creditPacks, setCreditPacks] = useState<CreditPack[]>([]);
@@ -291,6 +293,10 @@ export function HomePage({
         <button type="button" className="home-menu__action" onClick={onOpenVsPlayer}>
           <span>Versus</span>
           <small>Local 1P vs 2P Showdown</small>
+        </button>
+        <button type="button" className="home-menu__action" onClick={onOpenOnlineVersus}>
+          <span>Online Versus</span>
+          <small>Room Code · Play From Home (Beta)</small>
         </button>
         <button type="button" className="home-menu__action" onClick={onOpenWatchMode}>
           <span>Attract Mode</span>

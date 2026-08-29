@@ -55,6 +55,10 @@ STRIPE_PRICE_ARCADE = "price_1U7DsKCPjQq08iG98e4ZosBp"
 # wrangler secret put GENERATION_JOB_SIGNING_SECRET
 # Private bridge for Clerk Agent Task launch smoke; never expose it through CORS.
 # wrangler secret put CLERK_BACKEND_AUTH_BRIDGE_SECRET
+# Optional Cloudflare Realtime TURN credentials for online versus. Without them
+# /api/versus/ice-servers returns STUN only and rooms fall back to relay.
+# wrangler secret put REALTIME_TURN_KEY_ID
+# wrangler secret put REALTIME_TURN_API_TOKEN
 
 [secrets]
 required = [
@@ -102,6 +106,16 @@ class_name = "ImageProcessorContainer"
 [[migrations]]
 tag = "image-processor-v1"
 new_sqlite_classes = ["ImageProcessorContainer"]
+
+# Online versus rooms: one hibernating Durable Object per room code relays
+# WebRTC signalling (and input frames as a fallback) between two seated players.
+[[durable_objects.bindings]]
+name = "MATCH_ROOM"
+class_name = "MatchRoom"
+
+[[migrations]]
+tag = "match-room-v1"
+new_sqlite_classes = ["MatchRoom"]
 
 [[d1_databases]]
 binding = "DB"

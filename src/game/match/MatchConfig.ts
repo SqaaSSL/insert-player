@@ -36,6 +36,23 @@ export interface MatchSceneData {
   remix?: number;
   /** Arcade-ladder AI strength for the P2 CPU, 0..1. Omitted = full strength. */
   p2Difficulty?: number;
+  /**
+   * Explicit simulation seed (uint32). When present it wins over the derived
+   * match-identity hash, so two machines can agree on one seed for netplay
+   * or replays regardless of local cache identities.
+   */
+  seed?: number;
+  /** Present for an online versus match; the live transport is in `onlineSession.ts`. */
+  online?: OnlineMatchInfo;
+}
+
+export interface OnlineMatchInfo {
+  roomCode: string;
+  /** Fighter slot the local player controls: 0 = host / P1, 1 = guest / P2. */
+  localSlot: 0 | 1;
+  /** Room match serial allocated by the host; makes result reports idempotent. */
+  matchSerial: number;
+  inputDelay: number;
 }
 
 export const MATCH_COMPLETE_EVENT = 'asf-match-complete';
@@ -44,6 +61,7 @@ export const MATCH_ACTIONS_VISIBILITY_EVENT = 'asf-match-actions-visibility';
 export const HUD_STATE_EVENT = 'asf-hud-state';
 export const ANNOUNCE_EVENT = 'asf-announce';
 export const INTRO_STATE_EVENT = 'asf-intro';
+export const NET_STATE_EVENT = 'asf-net-state';
 
 export type MatchAction = 'run_it_back' | 'remix' | 'menu';
 
@@ -57,6 +75,7 @@ export interface MatchCompletionDetail {
   p1FighterId?: string | null;
   p2FighterId?: string | null;
   isRanked?: boolean;
+  online?: OnlineMatchInfo;
 }
 
 export interface MatchActionDetail {
@@ -65,6 +84,21 @@ export interface MatchActionDetail {
 
 export interface MatchActionsVisibilityDetail {
   visible: boolean;
+  /** Online matches cannot be re-run or remixed unilaterally. */
+  online?: boolean;
+}
+
+/** Netcode telemetry for the React overlay during an online match. */
+export interface NetStateDetail {
+  connected: boolean;
+  peerPresent: boolean;
+  path: 'none' | 'p2p' | 'relay';
+  rttMs: number | null;
+  rollbacks: number;
+  stalled: boolean;
+  desynced: boolean;
+  /** Set when the opponent left; the match cannot continue. */
+  abandoned: boolean;
 }
 
 /** Fight HUD snapshot for the React chrome; dispatched only when it changes. */
@@ -119,6 +153,7 @@ declare global {
     [HUD_STATE_EVENT]: CustomEvent<HudStateDetail>;
     [ANNOUNCE_EVENT]: CustomEvent<AnnounceDetail>;
     [INTRO_STATE_EVENT]: CustomEvent<IntroStateDetail>;
+    [NET_STATE_EVENT]: CustomEvent<NetStateDetail>;
   }
 }
 
@@ -194,7 +229,14 @@ export function nextFighterPersonalityId(current: FighterPersonalityId): Fighter
   return FIGHTER_PERSONALITIES[nextIdx].id;
 }
 
+export function isValidMatchSeed(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
+}
+
 export function buildMatchSeed(data: MatchSceneData): number {
+  if (isValidMatchSeed(data.seed)) {
+    return data.seed === 0 ? 0x13579bdf : data.seed;
+  }
   const remix = data.remix ?? 0;
   const parts = [
     'cinematic-match-v1',

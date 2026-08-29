@@ -4,8 +4,10 @@ import {
   MATCH_ACTION_EVENT,
   MATCH_ACTIONS_VISIBILITY_EVENT,
   MATCH_COMPLETE_EVENT,
+  NET_STATE_EVENT,
   type MatchAction,
   type MatchSceneData,
+  type NetStateDetail,
 } from '../../game/match/MatchConfig.ts';
 import { MobileFightControls } from '../components/MobileFightControls.tsx';
 import { FightControlsHint } from '../components/FightControlsHint.tsx';
@@ -35,8 +37,30 @@ interface GamePageProps {
   ladder?: LadderContext | null;
 }
 
+function NetStatusBadge({ state }: { state: NetStateDetail }) {
+  const quality = state.rttMs === null ? 'unknown' : state.rttMs < 60 ? 'great' : state.rttMs < 140 ? 'good' : 'rough';
+  const label = state.abandoned
+    ? 'Rival left'
+    : state.desynced
+      ? 'Desync — match void'
+      : !state.connected
+        ? 'Reconnecting…'
+        : state.stalled
+          ? 'Waiting for rival…'
+          : state.path === 'p2p' ? 'P2P' : 'Relay';
+  return (
+    <div className={`net-badge is-${quality}${state.abandoned || state.desynced ? ' is-alert' : ''}`} role="status" aria-live="polite">
+      <span className="net-badge__label">{label}</span>
+      <span className="net-badge__rtt">{state.rttMs === null ? '—' : `${Math.round(state.rttMs)} ms`}</span>
+      {state.rollbacks > 0 ? <span className="net-badge__rollbacks">rb {state.rollbacks}</span> : null}
+    </div>
+  );
+}
+
 export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageProps) {
   const [matchActionsVisible, setMatchActionsVisible] = useState(false);
+  const [netState, setNetState] = useState<NetStateDetail | null>(null);
+  const online = launchTarget.data.online ?? null;
   const [winnerSlot, setWinnerSlot] = useState<'p1' | 'p2' | null>(null);
   const [ladderBusy, setLadderBusy] = useState(false);
 
@@ -44,7 +68,15 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
     // A new launch target means a fresh match: clear the previous outcome.
     setWinnerSlot(null);
     setLadderBusy(false);
+    setNetState(null);
   }, [launchTarget]);
+
+  useEffect(() => {
+    if (!online) return;
+    const onNetState = (event: WindowEventMap[typeof NET_STATE_EVENT]) => setNetState(event.detail);
+    window.addEventListener(NET_STATE_EVENT, onNetState);
+    return () => window.removeEventListener(NET_STATE_EVENT, onNetState);
+  }, [online]);
 
   useEffect(() => {
     if (window.matchMedia?.('(pointer: coarse)').matches) {
@@ -144,10 +176,14 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
       <FightHud />
       <FightIntroOverlay />
       <FightAnnouncement />
-      {!launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
+      {online && netState ? <NetStatusBadge state={netState} /> : null}
+      {online && !matchActionsVisible && (
+        <MobileFightControls playerIndex={0} playerLabel={online.localSlot === 0 ? 'player 1' : 'player 2'} />
+      )}
+      {!online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
         <MobileFightControls playerIndex={0} playerLabel="player 1" />
       )}
-      {!launchTarget.data.cpuVsCpu && launchTarget.data.vsAI === false && !matchActionsVisible && (
+      {!online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI === false && !matchActionsVisible && (
         <div className="mobile-versus-unavailable" role="status">
           Touch Versus needs two control sets and is unavailable on this screen. Use a keyboard or controllers,
           or play Arcade Mode on touch.
@@ -224,7 +260,27 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
           </button>
         </div>
       )}
-      {matchActionsVisible && (!ladder || winnerSlot === null) && (
+      {matchActionsVisible && online && (
+        <div className="match-actions" role="group" aria-label="Online match complete">
+          <span className="match-actions__label">
+            {netState?.abandoned
+              ? 'Your rival left the match'
+              : netState?.desynced
+                ? 'The match desynced and cannot continue'
+                : winnerSlot === null
+                  ? 'Match Complete'
+                  : (winnerSlot === 'p1') === (online.localSlot === 0) ? 'You Win' : 'You Lose'}
+          </span>
+          <button
+            type="button"
+            className="match-actions__button match-actions__button--primary"
+            onClick={() => chooseMatchAction('menu')}
+          >
+            Back To Lobby
+          </button>
+        </div>
+      )}
+      {matchActionsVisible && !online && (!ladder || winnerSlot === null) && (
         <div className="match-actions" role="group" aria-label="Match complete actions">
           <span className="match-actions__label">Match Complete</span>
           <button

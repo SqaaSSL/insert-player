@@ -1,4 +1,4 @@
-import type { FighterInput } from './InputManager.ts';
+import type { FighterInput } from '../sim/FighterInput.ts';
 
 export type MotionType = 'qcf' | 'dp';
 
@@ -16,9 +16,30 @@ const BUFFER_SIZE = 40;
 const QCF_WINDOW = 20;
 const DP_WINDOW = 24;
 
+export interface MotionInputsSnapshot {
+  buffer: number[];
+  lastConsumedIndex: number;
+}
+
 export class MotionInputs {
   private buffer: Dir[] = [];
   private lastConsumedIndex = -1;
+
+  snapshot(): MotionInputsSnapshot {
+    return { buffer: this.buffer.slice(), lastConsumedIndex: this.lastConsumedIndex };
+  }
+
+  restore(snap: MotionInputsSnapshot): void {
+    this.buffer = snap.buffer.slice() as Dir[];
+    this.lastConsumedIndex = snap.lastConsumedIndex;
+  }
+
+  /** Deterministic digest input for desync checks. */
+  hashInto(hasher: { num(value: number): void }): void {
+    hasher.num(this.buffer.length);
+    for (const dir of this.buffer) hasher.num(dir);
+    hasher.num(this.lastConsumedIndex);
+  }
 
   feedInput(input: FighterInput, facingRight: boolean): void {
     const forward = facingRight ? input.right : input.left;

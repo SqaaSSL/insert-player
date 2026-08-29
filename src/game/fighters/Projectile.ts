@@ -1,11 +1,28 @@
-import Phaser from 'phaser';
 import { GAME_WIDTH } from '../constants.ts';
 import { SUPER_FIREBALL_DAMAGE, SUPER_FIREBALL_SPEED_SCALE } from '../systems/Meter.ts';
 
 const PROJECTILE_SPEED = 500;
 const HITBOX_SIZE = 30;
 
+export interface ProjectileSnapshot {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  active: boolean;
+  ownerIndex: number;
+  damage: number;
+  isSuper: boolean;
+  reflected: boolean;
+}
+
+/**
+ * Pure projectile simulation. The scene mirrors these into sprites by `id`
+ * (see `ProjectileView`), so creating or rewinding one never touches Phaser.
+ */
 export class Projectile {
+  /** Stable per-match id so a view can be matched across rollbacks. */
+  readonly id: number;
   x: number;
   y: number;
   vx: number;
@@ -14,10 +31,11 @@ export class Projectile {
   readonly damage: number;
   /** Super fireball: mid-height, unreflectable, wins clashes, hits harder. */
   readonly isSuper: boolean;
-  sprite: Phaser.GameObjects.Sprite;
+  /** Bounced back by a standing guard (presentation tint). */
+  reflected = false;
 
   constructor(
-    scene: Phaser.Scene,
+    id: number,
     x: number,
     y: number,
     facingRight: boolean,
@@ -25,6 +43,7 @@ export class Projectile {
     isHeavy: boolean,
     isSuper = false,
   ) {
+    this.id = id;
     this.x = x;
     this.y = y;
     const speed = PROJECTILE_SPEED * (isSuper ? SUPER_FIREBALL_SPEED_SCALE : 1);
@@ -32,29 +51,57 @@ export class Projectile {
     this.ownerIndex = ownerIndex;
     this.isSuper = isSuper;
     this.damage = isSuper ? SUPER_FIREBALL_DAMAGE : isHeavy ? 80 : 60;
+  }
 
-    this.sprite = scene.add.sprite(this.x, this.y, 'fireball_projectile');
-    this.sprite.setOrigin(0.5, 0.5);
-    this.sprite.setDepth(15);
-    this.sprite.setFlipX(!facingRight);
-    if (isSuper) {
-      this.sprite.setScale(1.6);
-      this.sprite.setTint(0xffce3a);
-    }
+  static fromSnapshot(snap: ProjectileSnapshot): Projectile {
+    const proj = new Projectile(snap.id, snap.x, snap.y, snap.vx >= 0, snap.ownerIndex, false, snap.isSuper);
+    proj.vx = snap.vx;
+    proj.active = snap.active;
+    proj.reflected = snap.reflected;
+    (proj as { damage: number }).damage = snap.damage;
+    return proj;
+  }
+
+  snapshot(): ProjectileSnapshot {
+    return {
+      id: this.id,
+      x: this.x,
+      y: this.y,
+      vx: this.vx,
+      active: this.active,
+      ownerIndex: this.ownerIndex,
+      damage: this.damage,
+      isSuper: this.isSuper,
+      reflected: this.reflected,
+    };
+  }
+
+  hashInto(hasher: { num(value: number): void }): void {
+    hasher.num(this.id);
+    hasher.num(this.x);
+    hasher.num(this.y);
+    hasher.num(this.vx);
+    hasher.num(this.active ? 1 : 0);
+    hasher.num(this.ownerIndex);
+    hasher.num(this.damage);
+    hasher.num(this.isSuper ? 1 : 0);
+    hasher.num(this.reflected ? 1 : 0);
+  }
+
+  get facingRight(): boolean {
+    return this.vx >= 0;
   }
 
   /** Standing-guard reflect: the ball changes sides and comes back faster. */
   reflect(newOwnerIndex: number): void {
     this.ownerIndex = newOwnerIndex;
     this.vx = -this.vx * 1.3;
-    this.sprite.setFlipX(this.vx < 0);
-    this.sprite.setTint(0x9ee7ff);
+    this.reflected = true;
   }
 
   update(dt: number): void {
     if (!this.active) return;
     this.x += this.vx * dt;
-    this.sprite.setPosition(this.x, this.y);
 
     if (this.x < -50 || this.x > GAME_WIDTH + 50) {
       this.destroy();
@@ -72,6 +119,5 @@ export class Projectile {
 
   destroy(): void {
     this.active = false;
-    this.sprite.destroy();
   }
 }

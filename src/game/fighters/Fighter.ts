@@ -1,5 +1,4 @@
 import { METER_MAX, clampMeter } from '../systems/Meter.ts';
-import Phaser from 'phaser';
 import {
   FighterState,
   GRAVITY,
@@ -10,25 +9,18 @@ import {
   STAGE_RIGHT,
   MAX_HEALTH,
   ATTACKS,
-  FIGHTER_WIDTH,
-  FIGHTER_HEIGHT,
   BODY_WIDTH,
   BODY_HEIGHT,
-  PUSHBACK_SPEED,
   type AttackData,
 } from '../constants.ts';
-import type { FighterInput } from '../systems/InputManager.ts';
-import { MotionInputs } from '../systems/MotionInputs.ts';
-import {
-  composeSpritePresentation,
-  getFacingSpriteOriginX,
-  getSpriteLayout,
-  getSpritePresentationProfile,
-  type ComposedSpritePresentation,
-  type SpriteSheetLayout,
-} from '../sprites/SpriteGenerator.ts';
-import { getActionAnimationFrame } from '../sprites/AnimationFrameMapping.ts';
+import type { FighterInput } from '../sim/FighterInput.ts';
+import { MotionInputs, type MotionInputsSnapshot } from '../systems/MotionInputs.ts';
 
+/**
+ * Complete simulation state of a fighter. Everything that can change a move
+ * outcome is here (including the attack-press buffer and the motion-input
+ * ring), so `restore(snapshot())` is exact — that is what rollback relies on.
+ */
 export interface FighterSnapshot {
   x: number;
   y: number;
@@ -37,14 +29,36 @@ export interface FighterSnapshot {
   health: number;
   meter: number;
   pendingSuper: boolean;
+  canFireProjectile: boolean;
   state: FighterState;
   stateFrame: number;
   facingRight: boolean;
   attackHit: boolean;
   comboCount: number;
   stunFrames: number;
+  crouchBlocking: boolean;
+  wasCrouching: boolean;
+  bufferedPunch: number;
+  bufferedKick: number;
+  bufferedFireball: number;
+  bufferedSuper: number;
+  bufferedUppercut: number;
+  motionInputs: MotionInputsSnapshot;
 }
 
+const FIGHTER_STATE_CODES: Record<FighterState, number> = Object.values(FighterState).reduce(
+  (acc, state, index) => {
+    acc[state] = index;
+    return acc;
+  },
+  {} as Record<FighterState, number>,
+);
+
+/**
+ * Pure fighter simulation. No Phaser, no wall clock, no randomness: given the
+ * same input sequence it always produces the same state. Rendering lives in
+ * `FighterView`.
+ */
 export class Fighter {
   x: number;
   y: number;
@@ -55,7 +69,7 @@ export class Fighter {
   meter = 0;
   /** Set when a SUPER FIREBALL was paid for; consumed at projectile spawn. */
   pendingSuper = false;
-  /** Scene-fed each frame: false while this fighter's projectile is live. */
+  /** Sim-fed each tick: false while this fighter's projectile is live. */
   canFireProjectile = true;
   state = FighterState.IDLE;
   stateFrame = 0;
@@ -74,77 +88,15 @@ export class Fighter {
 
   readonly playerIndex: number;
   readonly name: string;
-  private spriteKey: string;
-  private layout: SpriteSheetLayout;
   private motionInputs = new MotionInputs();
   private wasCrouching = false;
-  private renderScale = 1;
-  private renderYOffset = 0;
-  private shadowOffsetX = 8;
-  private shadowOffsetY = 8;
-  private shadowAlpha = 0.16;
 
-  sprite!: Phaser.GameObjects.Sprite;
-  shadowSprite?: Phaser.GameObjects.Sprite;
-
-  constructor(playerIndex: number, name: string, spriteKey: string, x: number, facingRight: boolean) {
+  constructor(playerIndex: number, name: string, x: number, facingRight: boolean) {
     this.playerIndex = playerIndex;
     this.name = name;
-    this.spriteKey = spriteKey;
-    this.layout = getSpriteLayout(spriteKey);
     this.x = x;
     this.y = GROUND_Y;
     this.facingRight = facingRight;
-  }
-
-  createSprite(scene: Phaser.Scene): void {
-    const presentation = this.getComposedSpritePresentation();
-    const flipped = !this.facingRight;
-    this.shadowSprite = scene.add.sprite(this.x, presentation.y, this.spriteKey, 0);
-    this.shadowSprite
-      .setOrigin(presentation.originX, presentation.originY)
-      .setFlipX(flipped)
-      .setScale(presentation.scale * 1.015)
-      .setTint(0x000000)
-      .setAlpha(this.shadowAlpha)
-      .setBlendMode(Phaser.BlendModes.MULTIPLY);
-    this.sprite = scene.add.sprite(this.x, presentation.y, this.spriteKey, 0);
-    this.sprite
-      .setOrigin(presentation.originX, presentation.originY)
-      .setFlipX(flipped)
-      .setScale(presentation.scale);
-  }
-
-  setRenderPresentation(scale: number, yOffset = 0): void {
-    this.renderScale = scale;
-    this.renderYOffset = yOffset;
-    this.shadowOffsetX = Math.max(7, Math.round(8 * scale));
-    this.shadowOffsetY = Math.max(7, Math.round(9 * scale));
-    this.shadowAlpha = scale > 1 ? 0.18 : 0.14;
-    const presentation = this.getComposedSpritePresentation();
-    const flipped = !this.facingRight;
-    if (this.shadowSprite) {
-      this.shadowSprite
-        .setOrigin(presentation.originX, presentation.originY)
-        .setFlipX(flipped)
-        .setScale(presentation.scale * 1.015)
-        .setAlpha(this.shadowAlpha)
-        .setPosition(
-          this.x + this.shadowOffsetX,
-          presentation.y + this.shadowOffsetY,
-        );
-    }
-    if (this.sprite) {
-      this.sprite
-        .setOrigin(presentation.originX, presentation.originY)
-        .setFlipX(flipped)
-        .setScale(presentation.scale)
-        .setY(presentation.y);
-    }
-  }
-
-  getRenderY(): number {
-    return this.y + this.renderYOffset;
   }
 
   snapshot(): FighterSnapshot {
@@ -156,12 +108,21 @@ export class Fighter {
       health: this.health,
       meter: this.meter,
       pendingSuper: this.pendingSuper,
+      canFireProjectile: this.canFireProjectile,
       state: this.state,
       stateFrame: this.stateFrame,
       facingRight: this.facingRight,
       attackHit: this.attackHit,
       comboCount: this.comboCount,
       stunFrames: this.stunFrames,
+      crouchBlocking: this.crouchBlocking,
+      wasCrouching: this.wasCrouching,
+      bufferedPunch: this.bufferedPunch,
+      bufferedKick: this.bufferedKick,
+      bufferedFireball: this.bufferedFireball,
+      bufferedSuper: this.bufferedSuper,
+      bufferedUppercut: this.bufferedUppercut,
+      motionInputs: this.motionInputs.snapshot(),
     };
   }
 
@@ -173,12 +134,69 @@ export class Fighter {
     this.health = snap.health;
     this.meter = snap.meter;
     this.pendingSuper = snap.pendingSuper;
+    this.canFireProjectile = snap.canFireProjectile;
     this.state = snap.state;
     this.stateFrame = snap.stateFrame;
     this.facingRight = snap.facingRight;
     this.attackHit = snap.attackHit;
     this.comboCount = snap.comboCount;
     this.stunFrames = snap.stunFrames;
+    this.crouchBlocking = snap.crouchBlocking;
+    this.wasCrouching = snap.wasCrouching;
+    this.bufferedPunch = snap.bufferedPunch;
+    this.bufferedKick = snap.bufferedKick;
+    this.bufferedFireball = snap.bufferedFireball;
+    this.bufferedSuper = snap.bufferedSuper;
+    this.bufferedUppercut = snap.bufferedUppercut;
+    this.motionInputs.restore(snap.motionInputs);
+  }
+
+  /** Feed every state field into a digest (desync detection). */
+  hashInto(hasher: { num(value: number): void }): void {
+    hasher.num(this.x);
+    hasher.num(this.y);
+    hasher.num(this.vx);
+    hasher.num(this.vy);
+    hasher.num(this.health);
+    hasher.num(this.meter);
+    hasher.num(this.pendingSuper ? 1 : 0);
+    hasher.num(this.canFireProjectile ? 1 : 0);
+    hasher.num(FIGHTER_STATE_CODES[this.state]);
+    hasher.num(this.stateFrame);
+    hasher.num(this.facingRight ? 1 : 0);
+    hasher.num(this.attackHit ? 1 : 0);
+    hasher.num(this.comboCount);
+    hasher.num(this.stunFrames);
+    hasher.num(this.crouchBlocking ? 1 : 0);
+    hasher.num(this.wasCrouching ? 1 : 0);
+    hasher.num(this.bufferedPunch);
+    hasher.num(this.bufferedKick);
+    hasher.num(this.bufferedFireball);
+    hasher.num(this.bufferedSuper);
+    hasher.num(this.bufferedUppercut);
+    this.motionInputs.hashInto(hasher);
+  }
+
+  /** Round reset: full health, neutral pose at `x`, meter preserved. */
+  resetForRound(x: number): void {
+    this.health = MAX_HEALTH;
+    this.x = x;
+    this.y = GROUND_Y;
+    this.vx = 0;
+    this.vy = 0;
+    this.forceState(FighterState.IDLE);
+    this.stunFrames = 0;
+    this.comboCount = 0;
+    this.crouchBlocking = false;
+    this.wasCrouching = false;
+    this.pendingSuper = false;
+    this.canFireProjectile = true;
+    this.bufferedPunch = 0;
+    this.bufferedKick = 0;
+    this.bufferedFireball = 0;
+    this.bufferedSuper = 0;
+    this.bufferedUppercut = 0;
+    this.motionInputs.reset();
   }
 
   gainMeter(amount: number): void {
@@ -564,6 +582,25 @@ export class Fighter {
     }
   }
 
+  /**
+   * Round-end pose playback: the sim keeps ticking a downed fighter until
+   * they settle into DEFEAT, so the KO pop plays out identically everywhere.
+   */
+  advancePresentation(dt: number, opponentX: number): void {
+    if (Math.abs(opponentX - this.x) > 4) {
+      this.facingRight = opponentX > this.x;
+    }
+
+    this.stateFrame++;
+
+    if (this.state === FighterState.KNOCKDOWN) {
+      this.applyPhysics(dt);
+      if (this.health <= 0 && this.isGrounded() && this.stateFrame >= 30) {
+        this.forceState(FighterState.DEFEAT);
+      }
+    }
+  }
+
   private setState(state: FighterState): void {
     if (this.state !== state) {
       this.state = state;
@@ -576,122 +613,6 @@ export class Fighter {
       ) {
         this.comboCount = 0;
       }
-    }
-  }
-
-  syncSprite(opponentX: number): void {
-    if (!this.sprite) return;
-    const spriteDepth = this.x < opponentX ? 10 : 11;
-    const presentation = this.getComposedSpritePresentation();
-    if (this.shadowSprite) {
-      this.shadowSprite.setPosition(
-        this.x + this.shadowOffsetX,
-        presentation.y + this.shadowOffsetY,
-      );
-      this.shadowSprite.setOrigin(presentation.originX, presentation.originY);
-      this.shadowSprite.setFlipX(!this.facingRight);
-      this.shadowSprite.setScale(presentation.scale * 1.015);
-      this.shadowSprite.setDepth(spriteDepth - 0.5);
-    }
-    this.sprite.setPosition(this.x, presentation.y);
-    this.sprite.setOrigin(presentation.originX, presentation.originY);
-    this.sprite.setFlipX(!this.facingRight);
-    this.sprite.setScale(presentation.scale);
-    this.sprite.setDepth(spriteDepth);
-
-    const frameIndex = this.getFrameIndex();
-    this.shadowSprite?.setFrame(frameIndex);
-    this.sprite.setFrame(frameIndex);
-  }
-
-  private getComposedSpritePresentation(): ComposedSpritePresentation {
-    const presentationState = this.state === FighterState.BLOCK && this.crouchBlocking
-      ? FighterState.CROUCH
-      : this.state;
-    const presentation = composeSpritePresentation(
-      getSpritePresentationProfile(this.layout, presentationState),
-      this.renderScale,
-      this.y,
-      this.renderYOffset,
-      this.layout.textureDensity,
-    );
-    presentation.originX = getFacingSpriteOriginX(
-      presentation.originX,
-      !this.facingRight,
-    );
-    return presentation;
-  }
-
-  private getFrameIndex(): number {
-    const row = this.layout.stateRow[this.state] ?? 0;
-    const maxFrames = this.layout.frameCounts[this.state] ?? 1;
-    const cols = this.layout.totalColumns;
-
-    let animFrame: number;
-    if (
-      this.state === FighterState.IDLE ||
-      this.state === FighterState.WALK_FORWARD
-    ) {
-      const cycleTicks = this.layout.durationTicks[this.state];
-      if (cycleTicks) {
-        animFrame = Math.min(
-          Math.floor(((this.stateFrame % cycleTicks) / cycleTicks) * maxFrames),
-          maxFrames - 1,
-        );
-      } else {
-        const animSpeed = this.state === FighterState.IDLE ? 10 : 6;
-        animFrame = Math.floor(this.stateFrame / animSpeed) % maxFrames;
-      }
-    } else if (this.state === FighterState.WALK_BACKWARD) {
-      const cycleTicks = this.layout.durationTicks[this.state];
-      const forwardFrame = cycleTicks
-        ? Math.min(
-          Math.floor(((this.stateFrame % cycleTicks) / cycleTicks) * maxFrames),
-          maxFrames - 1,
-        )
-        : Math.floor(this.stateFrame / 6) % maxFrames;
-      animFrame = (maxFrames - 1) - forwardFrame;
-    } else if (
-      this.state === FighterState.VICTORY ||
-      this.state === FighterState.DEFEAT
-    ) {
-      const durationTicks = this.layout.durationTicks[this.state];
-      animFrame = durationTicks
-        ? getActionAnimationFrame({
-          stateFrame: this.stateFrame,
-          frameCount: maxFrames,
-          totalDuration: durationTicks,
-          playbackMode: 'timeline',
-        })
-        : Math.min(Math.floor(this.stateFrame / 15), maxFrames - 1);
-    } else {
-      const totalDuration = this.layout.durationTicks[this.state] ?? this.getStateDuration();
-      animFrame = getActionAnimationFrame({
-        stateFrame: this.stateFrame,
-        frameCount: maxFrames,
-        totalDuration,
-        playbackMode: this.layout.playbackModes[this.state] ?? 'timeline',
-        attack: ATTACKS[this.state],
-      });
-    }
-
-    return row * cols + animFrame;
-  }
-
-  private getStateDuration(): number {
-    if (this.state === FighterState.FIREBALL) return 32;
-    if (this.state === FighterState.UPPERCUT) return 37;
-    const atk = ATTACKS[this.state];
-    if (atk) {
-      return atk.startup + atk.active + atk.recovery;
-    }
-    switch (this.state) {
-      case FighterState.JUMP:       return 30;
-      case FighterState.CROUCH:     return 8;
-      case FighterState.BLOCK:      return 12;
-      case FighterState.HIT_STUN:   return 14;
-      case FighterState.KNOCKDOWN:  return 40;
-      default:                      return 16;
     }
   }
 }

@@ -2220,6 +2220,112 @@ export async function getPublicFighterSourceAsset(
   return publicAssetResponse(env, fighter.blob_key);
 }
 
+/**
+ * Online versus: the opponent's fighter for one room. Same privacy shape as
+ * the community manifest (clean sources + playable sprites only, neutral
+ * owner label, no photo hash, RAW, or ids) but the asset URLs are room
+ * routes that require an authenticated seat — a private fighter is shared
+ * with exactly the person you chose to fight, for as long as the room lives.
+ */
+export async function loadVersusRoomFighterManifest(
+  request: Request,
+  env: Env,
+  roomCode: string,
+  fighterId: string,
+): Promise<Record<string, unknown> | null> {
+  const fighter = await env.DB.prepare(`
+    SELECT f.*
+    FROM fighters f
+    WHERE f.id = ? AND ${playableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId).first<Fighter>();
+  if (!fighter) return null;
+  const sprites = await getSpritesForFighters(env, [fighterId]);
+  const origin = new URL(request.url).origin;
+  const roomBase = `${origin}/api/versus/rooms/${encodeURIComponent(roomCode)}/fighters/${encodeURIComponent(fighter.id)}`;
+  const sourceUrl = (kind: PublicSourceKind, key: string | null): string | null => {
+    const revision = publicAssetRevision(key);
+    return revision ? `${roomBase}/sources/${kind}/${encodeURIComponent(revision)}` : null;
+  };
+  const community = serializeCommunityFighter(request, fighter, sprites);
+  return {
+    ...community,
+    sources: {
+      original: null,
+      side: sourceUrl('side', fighter.side_view_blob_key),
+      sideRaw: null,
+      upright: sourceUrl('upright', fighter.upright_view_blob_key),
+      uprightRaw: null,
+      crouch: sourceUrl('crouch', fighter.crouch_view_blob_key),
+      crouchRaw: null,
+    },
+    sprites: sprites.map((sprite) => {
+      const revision = publicAssetRevision(sprite.blob_key);
+      return {
+        ...serializeSprite(request, sprite),
+        contentHash: sprite.content_hash,
+        url: revision ? `${roomBase}/sprites/${encodeURIComponent(sprite.id)}/${encodeURIComponent(revision)}` : null,
+        rawUrl: null,
+        rawFrameWidth: null,
+        rawFrameHeight: null,
+        rawFrameCount: null,
+      };
+    }),
+  };
+}
+
+/** Clean playable sprite bytes for a fighter declared in a room (seat already verified). */
+export async function getVersusRoomFighterSpriteAsset(
+  env: Env,
+  fighterId: string,
+  spriteId: string,
+  revision: string,
+): Promise<Response> {
+  const sprite = await env.DB.prepare(`
+    SELECT s.blob_key
+    FROM sprites s
+    JOIN fighters f ON f.id = s.fighter_id
+    WHERE f.id = ? AND s.id = ?
+      AND ${playableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId, spriteId).first<{ blob_key: string }>();
+  if (!sprite?.blob_key || publicAssetRevision(sprite.blob_key) !== revision) {
+    return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  }
+  return privateAssetResponse(env, sprite.blob_key);
+}
+
+/** Clean (non-RAW) source view for a fighter declared in a room (seat already verified). */
+export async function getVersusRoomFighterSourceAsset(
+  env: Env,
+  fighterId: string,
+  kind: PublicSourceKind,
+  revision: string,
+): Promise<Response> {
+  const column = PUBLIC_SOURCE_COLUMNS[kind];
+  if (!column) return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  const fighter = await env.DB.prepare(`
+    SELECT f.${column} AS blob_key
+    FROM fighters f
+    WHERE f.id = ? AND ${playableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId).first<{ blob_key: string | null }>();
+  if (!fighter?.blob_key || publicAssetRevision(fighter.blob_key) !== revision) {
+    return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  }
+  return privateAssetResponse(env, fighter.blob_key);
+}
+
+async function privateAssetResponse(env: Env, blobKey: string): Promise<Response> {
+  const object = await env.SPRITES.get(blobKey);
+  if (!object) return json({ error: 'Asset missing' }, 404, NO_STORE_HEADERS);
+  const headers = new Headers();
+  headers.set('Content-Type', object.httpMetadata?.contentType ?? 'application/octet-stream');
+  headers.set('Cache-Control', 'private, no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  return new Response(object.body, { headers });
+}
+
 export async function getPublicFighterSpriteAsset(
   env: Env,
   fighterId: string,

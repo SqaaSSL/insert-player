@@ -1,4 +1,4 @@
-import type { FighterInput } from './InputManager.ts';
+import type { FighterInput } from '../sim/FighterInput.ts';
 import { METER_MAX } from './Meter.ts';
 import type { Fighter } from '../fighters/Fighter.ts';
 import type { SeededRng } from '../utils/SeededRng.ts';
@@ -17,6 +17,13 @@ interface PlannedAction {
 interface WeightedAction {
   weight: number;
   action: PlannedAction;
+}
+
+export interface AIControllerSnapshot {
+  rngState: number;
+  actionCooldown: number;
+  currentAction: Partial<FighterInput>;
+  specialCooldown: number;
 }
 
 export class AIController {
@@ -40,6 +47,29 @@ export class AIController {
 
   setPersonality(personality: FighterPersonality): void {
     this.personality = personality;
+  }
+
+  snapshot(): AIControllerSnapshot {
+    return {
+      rngState: this.rng.getState(),
+      actionCooldown: this.actionCooldown,
+      currentAction: { ...this.currentAction },
+      specialCooldown: this.specialCooldown,
+    };
+  }
+
+  restore(snap: AIControllerSnapshot): void {
+    this.rng.setState(snap.rngState);
+    this.actionCooldown = snap.actionCooldown;
+    this.currentAction = { ...snap.currentAction };
+    this.specialCooldown = snap.specialCooldown;
+  }
+
+  hashInto(hasher: { num(value: number): void }): void {
+    hasher.num(this.rng.getState());
+    hasher.num(this.actionCooldown);
+    hasher.num(this.specialCooldown);
+    hasher.num(packPartialInput(this.currentAction));
   }
 
   getInput(self: Fighter, opponent: Fighter): FighterInput {
@@ -366,4 +396,19 @@ export class AIController {
       super: this.currentAction.super ?? false,
     };
   }
+}
+
+function packPartialInput(input: Partial<FighterInput>): number {
+  return (
+    (input.left ? 1 : 0) |
+    (input.right ? 2 : 0) |
+    (input.up ? 4 : 0) |
+    (input.down ? 8 : 0) |
+    (input.guard ? 16 : 0) |
+    (input.punch ? 32 : 0) |
+    (input.kick ? 64 : 0) |
+    (input.fireball ? 128 : 0) |
+    (input.uppercut ? 256 : 0) |
+    (input.super ? 512 : 0)
+  );
 }
