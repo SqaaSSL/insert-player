@@ -28,6 +28,7 @@ const outputPath = resolve(
 const expectedMusicSha256 =
   '0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05';
 const musicSha256 = createHash('sha256').update(readFileSync(musicPath)).digest('hex');
+const audibleFloorDb = -50;
 
 if (musicSha256 !== expectedMusicSha256) {
   throw new Error(
@@ -45,6 +46,43 @@ function runFfmpeg(args, options = {}) {
     throw new Error(`ffmpeg failed${detail ? `: ${detail}` : ''}`);
   }
   return result;
+}
+
+function measureMeanVolumeDb(filePath, startSeconds, durationSeconds) {
+  const measurement = runFfmpeg(
+    [
+      '-hide_banner',
+      '-nostats',
+      '-ss',
+      String(startSeconds),
+      '-t',
+      String(durationSeconds),
+      '-i',
+      filePath,
+      '-vn',
+      '-af',
+      'volumedetect',
+      '-f',
+      'null',
+      '-',
+    ],
+    { capture: true },
+  );
+  const match = measurement.stderr.match(/mean_volume:\s*(-?\d+(?:\.\d+)?)\s+dB/i);
+  if (!match) {
+    throw new Error(`Could not measure mean volume for ${basename(filePath)}`);
+  }
+  return Number(match[1]);
+}
+
+function assertAudibleWindow(filePath, startSeconds, durationSeconds, label) {
+  const meanVolumeDb = measureMeanVolumeDb(filePath, startSeconds, durationSeconds);
+  if (meanVolumeDb <= audibleFloorDb) {
+    throw new Error(
+      `${label} is effectively silent (${meanVolumeDb.toFixed(1)} dBFS; expected above ${audibleFloorDb} dBFS)`,
+    );
+  }
+  return { label, startSeconds, durationSeconds, meanVolumeDb };
 }
 
 const workDir = mkdtempSync(join(tmpdir(), 'insert-player-audio-'));
@@ -115,7 +153,7 @@ try {
     '-i',
     gameplayPremixPath,
     '-af',
-    `${normalize},apad=pad_dur=7.35,atrim=end_sample=352800`,
+    `${normalize},aresample=48000,apad=whole_dur=7.35,atrim=end=7.35`,
     '-t',
     '7.35',
     '-ar',
@@ -128,6 +166,15 @@ try {
     'pcm_s16le',
     gameplayNormalizedPath,
   ]);
+
+  const continuityChecks = [
+    assertAudibleWindow(
+      gameplayNormalizedPath,
+      5.15,
+      0.5,
+      'Neon Arena late-gameplay window',
+    ),
+  ];
 
   runFfmpeg([
     '-y',
@@ -154,6 +201,11 @@ try {
     outputPath,
   ]);
 
+  continuityChecks.push(
+    assertAudibleWindow(outputPath, 10.2, 0.5, 'Final mix late-gameplay window'),
+    assertAudibleWindow(outputPath, 11.25, 0.4, 'Final mix closing-fade window'),
+  );
+
   const size = readFileSync(outputPath).byteLength;
   console.log(
     JSON.stringify(
@@ -168,6 +220,8 @@ try {
         preservedIntroSeconds: [0, 4.65],
         musicSourceSeconds: [0, 7.35],
         musicTimelineSeconds: [4.65, 12],
+        audibleFloorDb,
+        continuityChecks,
       },
       null,
       2,

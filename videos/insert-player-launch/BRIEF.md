@@ -27,7 +27,7 @@ not like an AI avatar advertisement or a software walkthrough.
 - `assets/generated/player-one-upright-canonical.png` - exact approved production upright cutout for Player One.
 - `assets/generated/player-one-final-frame.png` - deterministic arena composite using that exact cutout.
 - `references/neon-arena-creative-fingerprint-v1.json` - private-reference fingerprint derived from the supplied Suno track; the source MP3 is not distributed.
-- `assets/generated/launch-mix-original-neon-gameplay-v3.wav` - hybrid mix preserving the approved `Ready... Insert Player` opening and introducing the user-supplied `Neon Arena` recording at the gameplay cut.
+- `assets/generated/launch-mix-original-neon-gameplay-v3.wav` - hybrid mix preserving the approved `Ready... Insert Player` opening and carrying the user-supplied `Neon Arena` recording continuously from the gameplay cut through the closing lockup.
 - `assets/generated/tts-announcer-v1.wav` - private Gemini TTS announcer line.
 - `assets/generated/omni-photo-to-fighter-v2-neon-sync.mp4` - private Omni timing canary, retained for audit but rejected from the final cut because its target was not the immutable global Champion frame.
 - `assets/fight-montage-four-stages-hd-lowfix.mp4` - four telemetry-trimmed, one-second production matches captured from the Champion 2x atlas, with the Elon cut recorded after the legacy low-attack presentation fix.
@@ -36,6 +36,7 @@ not like an AI avatar advertisement or a software walkthrough.
 
 - Borrow the structural idea from Hilo's product promos: real footage, a few crisp branded action beats, and a strong end card.
 - Preserve the approved opening mix and Gemini TTS announcer unchanged through `4.65s`. Start the user-supplied `Neon Arena` recording from its beginning exactly when gameplay enters, retaining the cabinet fight SFX above it.
+- Reject the mix if any measured late-gameplay or closing-fade window falls below `-50 dBFS`; `loudnorm` may change its internal sample rate, so post-normalization trims must be time-based.
 - Keep the private full-length recording outside the repository. Publish only the `7.35s` gameplay excerpt embedded in this approved twelve-second launch cut.
 - Keep the transformation literal and readable: `YOUR PHOTO`, the official P1 + `INSERT PLAYER` reveal, then `YOUR FIGHT`.
 

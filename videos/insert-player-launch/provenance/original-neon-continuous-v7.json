@@ -1,0 +1,98 @@
+{
+  "version": 7,
+  "project": "insert-player-launch",
+  "acceptance": "approved_for_release",
+  "parentProvenance": {
+    "file": "provenance/original-neon-gameplay-v6.json",
+    "sha256": "0159a822bd20bead26bcc56d664c6b9d8d707948b5cde5ad053124b2e6da766a"
+  },
+  "change": "Fix the silent tail introduced after Neon Arena entered at 4.65 seconds. Preserve the approved intro and every video frame, then carry music and cabinet effects continuously through the closing lockup.",
+  "rootCause": {
+    "filter": "loudnorm followed by atrim=end_sample=352800",
+    "failure": "loudnorm temporarily emitted 192 kHz audio, so the sample-count trim retained only 1.8375 seconds before padding the rest with digital silence.",
+    "fix": "Resample explicitly to 48 kHz, pad to a whole duration, and trim by timeline seconds rather than the upstream filter sample count."
+  },
+  "audioMix": {
+    "buildScript": "scripts/build-launch-mix-original-neon.mjs",
+    "buildScriptSha256": "bed19602f03315cb2ff6d2c8c9f60de20d9df6ae4104f147dcf964d20d049e80",
+    "privateMusicSource": {
+      "fileName": "Neon Arena.mp3",
+      "sha256": "0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05",
+      "committed": false,
+      "fullLengthPublished": false,
+      "sourceSeconds": [0, 7.35],
+      "timelineSeconds": [4.65, 12]
+    },
+    "outputFile": "assets/generated/launch-mix-original-neon-gameplay-v3.wav",
+    "outputSha256": "2c9cfb9c824c1e2cdf6653ca8ff196612a50ba4d411091dc1901dc6a0ae7d67e",
+    "durationSeconds": 12,
+    "sampleRateHz": 48000,
+    "channels": 2,
+    "paidInference": false,
+    "continuityGate": {
+      "audibleFloorDb": -50,
+      "windows": [
+        {
+          "label": "Neon Arena late-gameplay window",
+          "timelineSeconds": [9.8, 10.3],
+          "meanVolumeDb": -18.4
+        },
+        {
+          "label": "Final mix late-gameplay window",
+          "timelineSeconds": [10.2, 10.7],
+          "meanVolumeDb": -17.9
+        },
+        {
+          "label": "Final mix closing-fade window",
+          "timelineSeconds": [11.25, 11.65],
+          "meanVolumeDb": -23.7
+        }
+      ]
+    }
+  },
+  "visuals": {
+    "unchangedFromV6": true,
+    "sourcePublicFile": "../../public/assets/insert-player-launch-f086cb4d.mp4",
+    "sourcePublicSha256": "f086cb4dd110acf3dbf24294ce9a3e523f76677934cef2ab9c0c7514186d5893",
+    "sourceVideoStreamSha256": "7c2ca1ad013a9b68d0689803af150d45ed7a7ef5361c176f0ad66ad9a7448c98",
+    "outputVideoStreamSha256": "7c2ca1ad013a9b68d0689803af150d45ed7a7ef5361c176f0ad66ad9a7448c98",
+    "method": "FFmpeg video stream copy with corrected PCM mix encoded as AAC"
+  },
+  "validation": {
+    "audioRegression": {
+      "file": "scripts/build-launch-mix-original-neon.test.mjs",
+      "tests": 2,
+      "result": "passed",
+      "approvedIntroPcmByteIdentical": true
+    },
+    "hyperframesCheck": {
+      "errors": 0,
+      "warnings": 0,
+      "layoutIssues": 0,
+      "contrastChecksPassed": 8
+    },
+    "renderedIntegratedLoudnessLufs": -16.19,
+    "renderedTruePeakDbfs": -1.54,
+    "gameplaySilenceDetection": {
+      "timelineSeconds": [4.65, 12],
+      "thresholdDb": -60,
+      "minimumDurationSeconds": 0.3,
+      "detectedIntervals": 0
+    }
+  },
+  "finalRender": {
+    "sourceFile": "renders/insert-player-launch-original-neon-continuous-v7.mp4",
+    "sourceSha256": "02541fe415d05d83e96544466c0f8eb011f8a9a4387e535cdf4fbecba8078d07",
+    "publicFile": "../../public/assets/insert-player-launch-02541fe4.mp4",
+    "publicSha256": "02541fe415d05d83e96544466c0f8eb011f8a9a4387e535cdf4fbecba8078d07",
+    "durationSeconds": 12,
+    "sizeBytes": 6043603,
+    "width": 1920,
+    "height": 1080,
+    "framesPerSecond": 30,
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "audioBitrateKbps": 192,
+    "fastStart": true
+  }
+}
