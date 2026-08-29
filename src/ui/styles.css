@@ -190,7 +190,31 @@
            border-b-2 border-asf-gold-deep bg-[rgba(5,5,12,0.94)] px-5 py-2
            shadow-[0_10px_24px_rgba(0,0,0,0.38)] [backdrop-filter:blur(6px)]
            pt-[max(8px,env(safe-area-inset-top))]
-           max-[640px]:gap-x-3 max-[640px]:gap-y-0 max-[640px]:px-4;
+           max-[720px]:relative max-[720px]:flex-nowrap max-[720px]:justify-between
+           max-[720px]:gap-x-3 max-[720px]:px-4;
+  }
+
+  /* Mobile: the nav collapses behind a burger; the bar stays one row tall. */
+  .app-header__burger {
+    @apply hidden max-[720px]:flex h-11 w-11 shrink-0 cursor-pointer flex-col
+           items-center justify-center gap-[5px] rounded-[4px] border-2
+           border-asf-gold-deep bg-transparent;
+  }
+
+  .app-header__burger span {
+    @apply block h-[2px] w-5 bg-asf-gold transition-transform duration-150;
+  }
+
+  .is-menu-open .app-header__burger span:nth-child(1) {
+    @apply translate-y-[7px] rotate-45;
+  }
+
+  .is-menu-open .app-header__burger span:nth-child(2) {
+    @apply opacity-0;
+  }
+
+  .is-menu-open .app-header__burger span:nth-child(3) {
+    @apply -translate-y-[7px] -rotate-45;
   }
 
   .app-header__brand {
@@ -200,14 +224,27 @@
 
   .app-header__nav {
     @apply flex flex-wrap items-center gap-1;
+    @apply max-[720px]:absolute max-[720px]:inset-x-0 max-[720px]:top-full
+           max-[720px]:hidden max-[720px]:flex-col max-[720px]:items-stretch
+           max-[720px]:gap-0 max-[720px]:border-b-2 max-[720px]:border-asf-gold-deep
+           max-[720px]:bg-[rgba(5,5,12,0.97)] max-[720px]:shadow-[0_16px_28px_rgba(0,0,0,0.5)]
+           max-[720px]:[backdrop-filter:blur(8px)];
+  }
+
+  .is-menu-open .app-header__nav {
+    @apply max-[720px]:flex;
   }
 
   .app-header__nav a {
     @apply inline-flex min-h-11 items-center border-b-2 border-transparent px-3
            font-arcade text-[11px] uppercase tracking-[0.1em] text-asf-muted no-underline
            transition-colors duration-150 hover:text-asf-gold-bright
-           max-[640px]:min-h-9 max-[640px]:px-2 max-[640px]:text-[10px]
-           max-[640px]:tracking-[0.04em];
+           max-[720px]:min-h-12 max-[720px]:border-b max-[720px]:border-asf-line-faint
+           max-[720px]:px-5 max-[720px]:last:border-b-0;
+  }
+
+  .app-header__nav a[aria-current="page"] {
+    @apply max-[720px]:border-l-4 max-[720px]:border-l-asf-red;
   }
 
   .app-header__nav a[aria-current="page"] {

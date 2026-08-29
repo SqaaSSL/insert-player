@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { BrandMark } from './BrandMark.tsx';
 import { PUBLIC_APP_NAME } from '../publicBrand.ts';
 
@@ -22,12 +23,35 @@ interface AppHeaderProps {
  * renders outside this header: its backdrop-filter would otherwise become the
  * containing block for the dock's fixed bottom-left positioning. */
 export function AppHeader({ currentRoute, onNavigate }: AppHeaderProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (!headerRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [currentRoute]);
+
   const className = currentRoute === '/menu'
     ? 'app-header app-header--menu'
     : 'app-header';
 
   return (
-    <header className={className}>
+    <header className={menuOpen ? `${className} is-menu-open` : className} ref={headerRef}>
       <a
         href="/"
         className="app-header__brand"
@@ -40,7 +64,19 @@ export function AppHeader({ currentRoute, onNavigate }: AppHeaderProps) {
         <BrandMark size={34} />
         <span>{PUBLIC_APP_NAME}</span>
       </a>
-      <nav className="app-header__nav" aria-label="Primary">
+      <button
+        type="button"
+        className="app-header__burger"
+        aria-expanded={menuOpen}
+        aria-controls="app-header-nav"
+        aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+        onClick={() => setMenuOpen((open) => !open)}
+      >
+        <span aria-hidden="true" />
+        <span aria-hidden="true" />
+        <span aria-hidden="true" />
+      </button>
+      <nav className="app-header__nav" id="app-header-nav" aria-label="Primary">
         {NAV_TARGETS.map((target) => (
           <a
             key={target.route}
