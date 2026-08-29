@@ -360,8 +360,8 @@ export class MatchSimulation {
     this.latchedP2 = null;
     this.projectiles = [];
 
-    this.p1.resetForRound(P1_START_X);
-    this.p2.resetForRound(P2_START_X);
+    this.p1.resetForRound(P1_START_X, true);
+    this.p2.resetForRound(P2_START_X, false);
 
     events.push({ type: 'roundStart', roundNumber, cinematic });
     if (!cinematic) {

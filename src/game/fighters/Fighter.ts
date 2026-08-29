@@ -178,12 +178,16 @@ export class Fighter {
   }
 
   /** Round reset: full health, neutral pose at `x`, meter preserved. */
-  resetForRound(x: number): void {
+  resetForRound(x: number, facingRight: boolean): void {
     this.health = MAX_HEALTH;
     this.x = x;
     this.y = GROUND_Y;
     this.vx = 0;
     this.vy = 0;
+    // Rounds always open squared up and with an empty bar: whatever side or
+    // charge the previous round ended with does not carry over.
+    this.facingRight = facingRight;
+    this.meter = 0;
     this.forceState(FighterState.IDLE);
     this.stunFrames = 0;
     this.comboCount = 0;
