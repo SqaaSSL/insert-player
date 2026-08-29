@@ -19,6 +19,13 @@
     "normalization": {
       "bottomShadeAlpha": 0.04,
       "verticalBias": 0.92
+    },
+    "cleanup": {
+      "method": "interpolate-empty-panels-v1",
+      "regions": [
+        { "x": 184, "y": 177, "width": 184, "height": 50 },
+        { "x": 668, "y": 177, "width": 170, "height": 50 }
+      ]
     }
   }
 }

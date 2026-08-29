@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   backendAuthHeaders,
+  buildPanelCleanupFilter,
   parseGeminiStageImage,
   validateFfmpegVersionOutput,
   validateStagePublicationRequest,
@@ -25,6 +26,13 @@ const validRequest = {
     width: 1024,
     height: 576,
     normalization: { bottomShadeAlpha: 0.04, verticalBias: 0.92 },
+    cleanup: {
+      method: 'interpolate-empty-panels-v1',
+      regions: [
+        { x: 184, y: 177, width: 184, height: 50 },
+        { x: 668, y: 177, width: 170, height: 50 },
+      ],
+    },
   },
 };
 
@@ -35,6 +43,16 @@ describe('signature stage production generator', () => {
       .toThrow('Stage model must be gemini-3.1-flash-image');
     expect(() => validateStagePublicationRequest({ ...validRequest, sourceMode: 'inspire' }))
       .toThrow('Only transform-scene publication is allowed');
+    expect(() => validateStagePublicationRequest({
+      ...validRequest,
+      output: {
+        ...validRequest.output,
+        cleanup: {
+          method: 'interpolate-empty-panels-v1',
+          regions: [{ x: 1000, y: 0, width: 40, height: 20 }],
+        },
+      },
+    })).toThrow('cleanup region exceeds output width');
   });
 
   it('uses the established Clerk backend bridge for server-to-server requests', () => {
@@ -49,6 +67,21 @@ describe('signature stage production generator', () => {
   it('fails before generation when the deterministic encoder is unavailable', () => {
     expect(validateFfmpegVersionOutput('ffmpeg version 7.1 Copyright')).toBe('ffmpeg version 7.1 Copyright');
     expect(() => validateFfmpegVersionOutput('command not found')).toThrow('ffmpeg runtime is unavailable');
+  });
+
+  it('builds a bounded deterministic empty-panel cleanup filter', () => {
+    expect(buildPanelCleanupFilter(validRequest.output.cleanup.regions)).toBe(
+      '[0:v]split=5[base][top0][bottom0][top1][bottom1];'
+      + '[top0]crop=184:1:184:177[topCrop0];'
+      + '[bottom0]crop=184:1:184:226[bottomCrop0];'
+      + '[topCrop0][bottomCrop0]vstack=inputs=2,scale=184:50:flags=bilinear,gblur=sigma=1.5[patch0];'
+      + '[top1]crop=170:1:668:177[topCrop1];'
+      + '[bottom1]crop=170:1:668:226[bottomCrop1];'
+      + '[topCrop1][bottomCrop1]vstack=inputs=2,scale=170:50:flags=bilinear,gblur=sigma=1.5[patch1];'
+      + '[base][patch0]overlay=184:177[clean0];'
+      + '[clean0][patch1]overlay=668:177[out]',
+    );
+    expect(buildPanelCleanupFilter([])).toBeNull();
   });
 
   it('accepts exactly one supported image from Gemini', () => {

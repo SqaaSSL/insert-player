@@ -8,12 +8,14 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const assetDirectory = join(root, 'public/assets/stages/signature');
 const seedFiles = [
   'executive-rumble-v2.png',
+  'insert-player-arena-seed-v1.png',
   'la-jaula-304-v1.png',
   'mars-incorporated-v1.png',
   'tablao-3000-v1.png',
 ];
 const activeFiles = [
   'executive-rumble-pipeline-v1.png',
+  'insert-player-arena-pipeline-v1.png',
   'la-jaula-304-pipeline-v1.png',
   'mars-incorporated-pipeline-v1.png',
   'tablao-3000-pipeline-v1.png',
@@ -53,7 +55,7 @@ describe('signature stage assets', () => {
       output: { format: 'png', width: 1024, height: 576 },
       normalization: { bottomShadeAlpha: 0.04, verticalBias: 0.92 },
     });
-    expect(manifest.stages).toHaveLength(4);
+    expect(manifest.stages).toHaveLength(5);
 
     const manifestFiles = manifest.stages
       .flatMap((stage) => [stage.seed, stage.active])

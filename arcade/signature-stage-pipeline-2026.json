@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-28",
+  "generatedAt": "2026-08-29",
   "pipeline": {
     "operation": "stage_background",
     "sourceMode": "transform-scene",
@@ -16,6 +16,18 @@
     }
   },
   "stages": [
+    {
+      "id": "insert-player-arena",
+      "seed": {
+        "path": "/assets/stages/signature/insert-player-arena-seed-v1.png",
+        "sha256": "d3ac993af36e26c5ed3e4576472a531e142c5a939057b11780a4156d32e6fa5c"
+      },
+      "active": {
+        "path": "/assets/stages/signature/insert-player-arena-pipeline-v1.png",
+        "sha256": "fc014c0b3fee22ae18c70f683058b8861249090f2974e83c8321f95b7fa07df6"
+      },
+      "provenance": "arcade/generated/stages/insert-player-arena-pipeline-v1.provenance.json"
+    },
     {
       "id": "executive-rumble",
       "seed": {
