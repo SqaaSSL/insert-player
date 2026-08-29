@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "project": "insert-player-launch",
+  "acceptance": "candidate",
+  "generatedMedia": [
+    {
+      "role": "photo-to-fighter bridge",
+      "model": "gemini-omni-1.1-flash",
+      "accessPath": "Gemini Interactions API",
+      "httpOutcome": 200,
+      "providerInteractionId": null,
+      "meteredCost": null,
+      "documentedCostEstimateUsd": 0.4,
+      "promptFile": "prompts/omni-photo-to-fighter-v1.txt",
+      "promptSha256": "9c91d4d2bbe88522bdcec491010f385ba2299c3df5bf7b032ebf93d5464648af",
+      "generationInputSha256": [
+        "cc967a3b8ea923a107bf1f9b28e1ee712bfd87bfb21620057283da5c436dacb5",
+        "d6c5156168e0c878ec8c976ac4e8f9415dd3e905da34a1d267df89b6f123c9df"
+      ],
+      "outputFile": "assets/generated/omni-photo-to-fighter-v1.mp4",
+      "outputSha256": "efdb522f154ce8838bebc749a822541650024566396b07bbfe48315c8a82e8e8",
+      "durationSeconds": 4.01,
+      "notes": "One request, inline delivery, store=false. No retry or fallback. The second local reference was reconstructed after QA; the generation-time hash remains authoritative."
+    },
+    {
+      "role": "instrumental music source",
+      "model": "lyria-3-pro",
+      "upstreamModel": "lyria-3-pro-preview",
+      "accessPath": "PixCLI through Meterkey and FAL",
+      "providerJobId": "5171a5b3292f561c80227c3c64ff4063",
+      "meteredCostMicrocredits": 95000,
+      "promptFile": "prompts/lyria-launch-bed-v1.txt",
+      "promptSha256": "14774178928a8798c88cb054bef068f9dc8c9af52d592830e6e1523c1c5779e6",
+      "outputFile": "assets/generated/lyria-launch-bed-v1.mp3",
+      "outputSha256": "df9d9e041cdc77dcdb1556b1b5823a99f14176c77c123bc24a2a8a0069536dcd",
+      "durationSeconds": 60.159958,
+      "published": false
+    },
+    {
+      "role": "arcade announcer",
+      "model": "gemini-tts",
+      "upstreamModel": "gemini-3.1-flash-tts-preview",
+      "accessPath": "PixCLI through Meterkey",
+      "providerJobId": "83244fc18f9d4153eefd6c01b07b7d65",
+      "meteredCostMicrocredits": 60000,
+      "promptFile": "prompts/tts-announcer-v1.txt",
+      "promptSha256": "f67c4b5b31898529611c09b9fcc9ee54025be7251bebbd519bd71b7ff140c7e1",
+      "voice": "Orus",
+      "language": "en",
+      "outputFile": "assets/generated/tts-announcer-v1.wav",
+      "outputSha256": "2a18513403537b25a0971600727ca59d8bd4adf44796c81bd747e8a7db95a0c3",
+      "durationSeconds": 3.4,
+      "published": false
+    }
+  ],
+  "localMix": {
+    "outputFile": "assets/generated/launch-mix-google-v1.wav",
+    "outputSha256": "ac5c51f4159270b76e903845299f8e9a6bc981c07ac61ee0453374d9b6d305e1",
+    "durationSeconds": 19,
+    "sources": [
+      "assets/generated/lyria-launch-bed-v1.mp3",
+      "assets/generated/tts-announcer-v1.wav",
+      "assets/launch-mix.wav"
+    ],
+    "sourceEffectsSha256": "bc728626c994a5cff0b7ffe947f9bae5e1e39efd594f85c778de93af5c154c6b",
+    "integratedLoudnessLufs": -19.3,
+    "truePeakDbfs": -3.0
+  }
+}

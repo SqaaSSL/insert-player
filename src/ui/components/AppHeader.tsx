@@ -7,7 +7,7 @@ export interface AppHeaderNavTarget {
 }
 
 const NAV_TARGETS: AppHeaderNavTarget[] = [
-  { route: '/menu', label: 'Home' },
+  { route: '/menu', label: 'Play' },
   { route: '/arcade', label: 'Arcade' },
   { route: '/gallery', label: 'Gallery' },
   { route: '/community', label: 'Community' },
@@ -15,7 +15,7 @@ const NAV_TARGETS: AppHeaderNavTarget[] = [
 
 interface AppHeaderProps {
   currentRoute: string;
-  onNavigate: (route: '/menu' | '/arcade' | '/gallery' | '/community') => void;
+  onNavigate: (route: '/' | '/menu' | '/arcade' | '/gallery' | '/community') => void;
 }
 
 /** Slim cabinet-style top bar on every non-fight screen. The Clerk auth dock
@@ -25,11 +25,12 @@ export function AppHeader({ currentRoute, onNavigate }: AppHeaderProps) {
   return (
     <header className="app-header">
       <a
-        href="/menu"
+        href="/"
         className="app-header__brand"
+        aria-current={currentRoute === '/' ? 'page' : undefined}
         onClick={(event) => {
           event.preventDefault();
-          onNavigate('/menu');
+          onNavigate('/');
         }}
       >
         <BrandMark size={34} />

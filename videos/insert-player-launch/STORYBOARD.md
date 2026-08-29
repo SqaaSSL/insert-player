@@ -1,0 +1,98 @@
+---
+format: 1920x1080
+duration: 12s
+message: "A real person can become a recognizable, playable arcade fighter"
+arc: Transformation hook -> Product promise -> Real gameplay proof -> CTA
+audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
+mode: autonomous
+music: "assets/generated/lyria-launch-bed-v1.mp3 - Lyria 3 Pro source, locally trimmed and mixed"
+---
+
+## Video direction
+
+The film moves from recognition to proof to action. Real media always outranks decorative graphics: first the exact source portrait reveals the exact production Player One fighter, then a short production fight starring Player One, then a clean Insert Player lockup. Camera movement is restrained and seek-safe; motion comes from the deterministic transformation seam, the recorded game, and the final P1 assembly. One short announcer line adds cabinet energy without explaining what the picture already proves. Keep all essential text outside the bottom 17 percent caption band. Use cabinet black as the visual ground, coin red for action, coin gold for reward, CRT cream for text, and glass blue only as a counterpoint.
+
+## Frame 1 — Your Photo. Your Fighter.
+
+- scene: A moving cabinet-light seam reveals the exact production Player One fighter generated from the same portrait.
+- voiceover: "Ready... Insert Player."
+- duration: 4.65s
+- poster: 4.1s
+- transition_in: cut
+- status: animated
+- src: compositions/frames/01-transform.html
+- type: hook
+- persuasion: Show-don't-tell transformation
+- beat: recognition -> surprise
+- blueprint: compose
+- blueprint_adaptation: Deterministic photo-to-canonical-fighter reveal; the right-hand image is byte-identical to Player One's approved production upright source.
+- asset_candidates: assets/generated/player-one-final-frame.png — approved composite using the immutable Player One upright cutout
+- sfx: .media/audio/sfx/sfx_002.mp3 at 0.35s; .media/audio/sfx/sfx_001.mp3 at 2.15s
+
+narrativeRole: Prove the magic before naming any feature. The viewer should understand the product with the sound off.
+keyMessage: Your photo can become a fighter while remaining recognizably you.
+focal: The same woman's recognizable face on both sides of the transformation.
+roles: The portrait is the identity anchor; the electric seam is the transformation mechanism; the fighter is the payoff; labels only clarify the sequence.
+
+### Video direction
+
+- Scene 1 (0.00-0.42s): Hold the exact source portrait and settle `YOUR PHOTO` in the upper-left safe area so recognition happens first.
+- Scene 2 (0.42-3.14s): Move a single red-and-gold cabinet seam from right to left, preserving the exact source portrait on the left while revealing the exact approved Player One upright cutout on the right. No generated intermediate can replace or redraw the fighter.
+- Scene 3 (3.14-4.65s): Hold the canonical fighter. `YOUR FIGHTER` lands on the right before the transition into real gameplay.
+
+## Frame 2 — Your Fight
+
+- scene: The electric split opens into a genuine production match starring Player One.
+- voiceover: ""
+- duration: 3.25s
+- poster: 2.65s
+- transition_in: zoom-through 0.35s
+- status: animated
+- src: compositions/frames/02-fight.html
+- type: feature_showcase
+- persuasion: Product proof through real gameplay
+- beat: excitement -> triumph
+- blueprint: device-surface-showcase
+- blueprint_adaptation: Full-bleed gameplay with no decorative device frame.
+- asset_candidates: assets/fight-capture.mp4 — 3.25-second production cut with Player One, the real HUD, generated stage, and a decisive exchange
+- sfx: .media/audio/sfx/sfx_004.mp3 at 2.65s
+
+narrativeRole: Cash in the promise: this is not an avatar or a still image. It is a playable character inside a real game.
+keyMessage: Your generated fighter actually fights.
+focal: The two generated fighters and the real K.O. inside the production game.
+roles: The fight capture is primary proof; the `YOUR FIGHT` label is a brief orientation beat; HUD and stage remain untouched evidence.
+
+### Video direction
+
+- Scene 1 (0.00-0.55s): Enter the physically trimmed production recording. The clip is full-bleed with no browser chrome, fake cursor, device shell, or decorative preview card. `YOUR FIGHT` lands briefly in the upper safe area, then reduces to a quiet label.
+- Scene 2 (0.55-2.65s): Keep only the strongest real exchange. The camera remains static and the HUD, fighters, and stage remain untouched evidence.
+- Scene 3 (2.65-3.25s): Preserve the decisive impact and hold just long enough to register before the CTA.
+
+## Frame 3 — Insert Player
+
+- scene: The K.O. clears into the P1 cabinet mark, Insert Player wordmark, tagline, and URL.
+- voiceover: ""
+- duration: 4.1s
+- poster: 2.75s
+- transition_in: squeeze DOWN 0.25s
+- status: animated
+- src: compositions/frames/03-insert-player.html
+- type: cta
+- persuasion: Identity and direct action
+- beat: motivation
+- blueprint: logo-assemble-lockup
+- blueprint_adaptation: P1 frame assembles first, wordmark follows, URL lands last.
+- asset_candidates: assets/logo-12e1869b.svg — captured official P1 brand mark
+- sfx: .media/audio/sfx/sfx_003.mp3 at 0.55s
+
+narrativeRole: Turn the proof into one memorable brand and one action.
+keyMessage: Insert yourself into the game at insertplayer.ai.
+focal: The official P1 mark and INSERT PLAYER wordmark.
+roles: The P1 outline is the brand ignition; the wordmark names the product; the tagline explains the action; the URL is the final response target.
+
+### Video direction
+
+- Scene 1 (0.00-0.58s): Clear the fight into cabinet black. Thin coin-gold and coin-red guide lines briefly trace the P1 insertion frame without becoming a decorative grid.
+- Scene 2 (0.18-1.24s): Assemble the official P1 mark, then reveal `INSERT PLAYER` beside it with a crisp left-to-right lockup build. No Hilo marks, colors, or phrasing.
+- Scene 3 (1.38-2.20s): Reveal `INSERT YOURSELF INTO THE GAME.` beneath the lockup in Space Grotesk. The line is supporting copy, not a second headline.
+- Scene 4 (2.38-4.10s): Land `INSERTPLAYER.AI` above the bottom caption keep-out with a short coin-red insertion bar. Hold the final lockup dead still for memorability.

@@ -15,6 +15,7 @@ describe('auth and navigation hardening', () => {
   });
 
   it('accepts only safe app routes as legal return targets', () => {
+    expect(legalReturnRouteFromState({ legalReturnTo: '/' })).toBe('/');
     expect(legalReturnRouteFromState({ legalReturnTo: '/fighters/new' })).toBe('/fighters/new');
     expect(legalReturnRouteFromState({ legalReturnTo: '/fight' })).toBe('/menu');
     expect(legalReturnRouteFromState({ legalReturnTo: 'https://example.com' })).toBe('/menu');

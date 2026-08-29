@@ -1,0 +1,368 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Press Start 2P";
+      font-weight: 400;
+      font-style: normal;
+      font-display: block;
+      src: url("assets/fonts/PressStart2P-400.woff2") format("woff2");
+    }
+
+    @font-face {
+      font-family: "Space Grotesk";
+      font-weight: 400;
+      font-style: normal;
+      font-display: block;
+      src: url("assets/fonts/SpaceGrotesk-400.woff2") format("woff2");
+    }
+
+    @font-face {
+      font-family: "Space Grotesk";
+      font-weight: 500;
+      font-style: normal;
+      font-display: block;
+      src: url("assets/fonts/SpaceGrotesk-500.woff2") format("woff2");
+    }
+
+    @font-face {
+      font-family: "Space Grotesk";
+      font-weight: 700;
+      font-style: normal;
+      font-display: block;
+      src: url("assets/fonts/SpaceGrotesk-700.woff2") format("woff2");
+    }
+
+    #root {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #fff4d6;
+      font-family: "Space Grotesk", sans-serif;
+    }
+
+    #root *,
+    #root *::before,
+    #root *::after {
+      box-sizing: border-box;
+    }
+
+    [data-frame-element="01-transform-ground"] {
+      position: absolute;
+      inset: 0;
+      background: #04040d;
+    }
+
+    [data-frame-element="01-transform-stage"] {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      isolation: isolate;
+      background: #04040d;
+    }
+
+    [data-frame-element^="01-transform-media-"] {
+      position: absolute;
+      inset: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center center;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    [data-frame-element="01-transform-media-start"] {
+      z-index: 1;
+    }
+
+    [data-frame-element="01-transform-media-reveal"] {
+      position: absolute;
+      z-index: 2;
+      inset: 0;
+      overflow: hidden;
+      clip-path: inset(0 0 0 100%);
+      will-change: clip-path;
+    }
+
+    [data-frame-element="01-transform-media-final"] {
+      z-index: 1;
+    }
+
+    [data-frame-element="01-transform-energy"] {
+      position: absolute;
+      z-index: 4;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 32px;
+      pointer-events: none;
+      will-change: transform, opacity;
+    }
+
+    [data-frame-element="01-transform-energy-band"] {
+      position: absolute;
+      inset: 0 auto 0 -14px;
+      width: 32px;
+      background: rgba(255, 42, 42, 0.2);
+      border-left: 1px solid rgba(255, 244, 214, 0.55);
+      border-right: 1px solid rgba(255, 206, 58, 0.72);
+    }
+
+    [data-frame-element="01-transform-energy-core"] {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 0;
+      width: 3px;
+      background: #ffce3a;
+      transform-origin: 50% 50%;
+    }
+
+    [data-frame-element="01-transform-energy-flare"] {
+      position: absolute;
+      top: 11%;
+      bottom: 9%;
+      left: -5px;
+      width: 13px;
+      border-left: 2px solid #fff4d6;
+      border-right: 2px solid #ff2a2a;
+    }
+
+    [data-frame-element^="01-transform-spark-"] {
+      position: absolute;
+      width: 12px;
+      height: 3px;
+      background: #ffce3a;
+    }
+
+    [data-frame-element="01-transform-spark-a"] {
+      top: 19%;
+      left: -20px;
+    }
+
+    [data-frame-element="01-transform-spark-b"] {
+      top: 43%;
+      left: 12px;
+      width: 17px;
+      background: #ff2a2a;
+    }
+
+    [data-frame-element="01-transform-spark-c"] {
+      top: 68%;
+      left: -13px;
+      width: 8px;
+      background: #fff4d6;
+    }
+
+    [data-frame-element="01-transform-photo-label"],
+    [data-frame-element="01-transform-fighter-label"] {
+      position: absolute;
+      z-index: 6;
+      top: 68px;
+      display: flex;
+      align-items: center;
+      min-height: 58px;
+      padding: 0 22px 0 18px;
+      font-family: "Space Grotesk", sans-serif;
+      font-size: 1cqw;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    [data-frame-element="01-transform-photo-label"] {
+      left: 5.5cqw;
+      color: #fff4d6;
+      background: #04040d;
+      border-left: 6px solid #ff2a2a;
+    }
+
+    [data-frame-element="01-transform-fighter-label"] {
+      right: 5.5cqw;
+      color: #04040d;
+      background: #ff2a2a;
+      border: 1px solid #ffce3a;
+      outline: 6px solid #04040d;
+    }
+
+    [data-frame-element="01-transform-label-marker"] {
+      width: 10px;
+      height: 10px;
+      margin-right: 14px;
+      flex: 0 0 auto;
+      background: #ff2a2a;
+    }
+
+    [data-frame-element="01-transform-fighter-label"]
+      [data-frame-element="01-transform-label-marker"] {
+      background: #04040d;
+    }
+
+    [data-frame-element="01-transform-fighter-rule"] {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: -13px;
+      height: 3px;
+      background: #ffce3a;
+      transform-origin: 0 50%;
+      will-change: transform;
+    }
+  </style>
+
+  <div data-hf-id="hf-1v72" id="root" data-composition-id="01-transform" data-duration="4.95" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-ax0d" id="frame01-ground" class="clip" data-frame-element="01-transform-ground" data-start="0" data-duration="4.95" data-track-index="0"></div>
+
+    <section data-hf-id="hf-x3b0" id="frame01-stage" data-frame-element="01-transform-stage" aria-label="Portrait transforming into a fighter">
+      <img data-hf-id="hf-dd56" id="frame01-start-frame" class="clip" data-frame-element="01-transform-media-start" src="assets/generated/player-one-photo-start.png" alt="" draggable="false" data-start="0" data-duration="4.95" data-track-index="1">
+      <div data-hf-id="hf-34mo" id="frame01-fighter-reveal" class="clip" data-frame-element="01-transform-media-reveal" data-start="0" data-duration="4.95" data-track-index="2">
+        <img data-hf-id="hf-8wqf" data-frame-element="01-transform-media-final" src="assets/generated/player-one-final-frame.png" alt="" draggable="false">
+      </div>
+
+      <div data-hf-id="hf-74ce" data-frame-element="01-transform-energy" aria-hidden="true">
+        <span data-hf-id="hf-rg52" data-frame-element="01-transform-energy-band"></span>
+        <span data-hf-id="hf-kts7" data-frame-element="01-transform-energy-core"></span>
+        <span data-hf-id="hf-7jdo" data-frame-element="01-transform-energy-flare"></span>
+        <span data-hf-id="hf-wm0f" data-frame-element="01-transform-spark-a"></span>
+        <span data-hf-id="hf-a4t0" data-frame-element="01-transform-spark-b"></span>
+        <span data-hf-id="hf-zc74" data-frame-element="01-transform-spark-c"></span>
+      </div>
+
+      <div data-hf-id="hf-p889" data-frame-element="01-transform-photo-label">
+        <span data-hf-id="hf-x25g" data-frame-element="01-transform-label-marker"></span>
+        <span data-hf-id="hf-kore">Your Photo</span>
+      </div>
+
+      <div data-hf-id="hf-x9o6" data-frame-element="01-transform-fighter-label">
+        <span data-hf-id="hf-0a1o" data-frame-element="01-transform-label-marker"></span>
+        <span data-hf-id="hf-k58b">Your Fighter</span>
+        <span data-hf-id="hf-mfbr" data-frame-element="01-transform-fighter-rule"></span>
+      </div>
+    </section>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script>
+    (() => {
+      const root = document.querySelector(
+        '[data-composition-id="01-transform"]'
+      );
+      const select = gsap.utils.selector(root);
+      const photoLabel = select(
+        '[data-frame-element="01-transform-photo-label"]'
+      )[0];
+      const fighterLabel = select(
+        '[data-frame-element="01-transform-fighter-label"]'
+      )[0];
+      const fighterRule = select(
+        '[data-frame-element="01-transform-fighter-rule"]'
+      )[0];
+      const fighterReveal = select(
+        '[data-frame-element="01-transform-media-reveal"]'
+      )[0];
+      const energy = select(
+        '[data-frame-element="01-transform-energy"]'
+      )[0];
+      const sparks = select(
+        '[data-frame-element^="01-transform-spark-"]'
+      );
+
+      const tl = gsap.timeline({ paused: true });
+
+      tl.set(photoLabel, { opacity: 0 }, 0);
+      tl.set(fighterLabel, { opacity: 0 }, 0);
+      tl.set(fighterRule, { scaleX: 0 }, 0);
+      tl.set(fighterReveal, { clipPath: "inset(0% 0% 0% 100%)" }, 0);
+      tl.set(energy, { x: 1936, opacity: 0 }, 0);
+
+      tl.fromTo(
+        photoLabel,
+        { y: -24, scale: 1.04, opacity: 0 },
+        {
+          y: 0,
+          scale: 1,
+          opacity: 1,
+          duration: 0.46,
+          ease: "back.out(1.7)",
+          immediateRender: false
+        },
+        0.18
+      );
+
+      tl.fromTo(
+        energy,
+        { x: 1936, opacity: 0 },
+        {
+          x: -48,
+          opacity: 1,
+          duration: 2.72,
+          ease: "power2.inOut",
+          immediateRender: false
+        },
+        0.42
+      );
+      tl.to(energy, { opacity: 0, duration: 0.18, ease: "power1.out" }, 3.06);
+      tl.to(
+        fighterReveal,
+        {
+          clipPath: "inset(0% 0% 0% 0%)",
+          duration: 2.72,
+          ease: "power2.inOut"
+        },
+        0.42
+      );
+      tl.fromTo(
+        sparks,
+        { x: -10, opacity: 0.2, scaleX: 0.6 },
+        {
+          x: 10,
+          opacity: 1,
+          scaleX: 1.35,
+          duration: 0.16,
+          stagger: 0.08,
+          repeat: 7,
+          yoyo: true,
+          ease: "power1.inOut"
+        },
+        0.48
+      );
+      tl.to(photoLabel, { opacity: 0, y: -12, duration: 0.24 }, 2.66);
+
+      tl.fromTo(
+        fighterLabel,
+        { y: -34, scale: 1.08, opacity: 0 },
+        {
+          y: 0,
+          scale: 1,
+          opacity: 1,
+          duration: 0.56,
+          ease: "back.out(2)",
+          immediateRender: false
+        },
+        3.02
+      );
+      tl.fromTo(
+        fighterRule,
+        { scaleX: 0 },
+        {
+          scaleX: 1,
+          duration: 0.36,
+          ease: "power4.out",
+          immediateRender: false
+        },
+        3.24
+      );
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["01-transform"] = tl;
+    })();
+  </script>
+</template>
