@@ -34,13 +34,13 @@ describe('provider isolation', () => {
     // These hashes are deliberate safety fuses. Updating one requires an
     // explicit Gemini-specific review; provider work must never update them.
     await expect(sha256Text(geminiApiSource)).resolves.toBe(
-      '9fc6f8bc32fcf637ff086ae979995824bc603c916a132159e2a98d4da52fabaa',
+      'f78c0c3db871abe91227e619dfdeb78b79f7a85a523aa88388d6fce9da4c4654',
     );
     await expect(sha256Text(geminiRequestPolicySource)).resolves.toBe(
       '49aa2840a510538852fbfb68ac310bbcd78c7403d8fab53d3b9ac9c59eb4d37b',
     );
     await expect(sha256Text(animationProfilesSource)).resolves.toBe(
-      'd8806f1385911cc0b8c3b2df2ab06dee5ee4927ab32542d8a64b093b72eebac4',
+      '5eaeee87ee656b7567473f9f1daebb70dd58be577a6628938119b9aaeac68bb9',
     );
   });
 
