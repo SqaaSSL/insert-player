@@ -5,6 +5,7 @@ import {
   MATCH_ACTIONS_VISIBILITY_EVENT,
   MATCH_COMPLETE_EVENT,
   NET_STATE_EVENT,
+  RUNTIME_READY_EVENT,
   type MatchAction,
   type MatchSceneData,
   type NetStateDetail,
@@ -14,6 +15,10 @@ import { FightControlsHint } from '../components/FightControlsHint.tsx';
 import { FightHud } from '../components/FightHud.tsx';
 import { FightIntroOverlay } from '../components/FightIntroOverlay.tsx';
 import { FightAnnouncement } from '../components/FightAnnouncement.tsx';
+import {
+  FightLoadingCurtain,
+  type FightLoadingPhase,
+} from '../components/FightLoadingCurtain.tsx';
 import { reportMatchCompletion } from '../../services/MatchReporting.ts';
 import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 
@@ -63,12 +68,14 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
   const online = launchTarget.data.online ?? null;
   const [winnerSlot, setWinnerSlot] = useState<'p1' | 'p2' | null>(null);
   const [ladderBusy, setLadderBusy] = useState(false);
+  const [loadingPhase, setLoadingPhase] = useState<FightLoadingPhase | 'hidden'>('loading');
 
   useEffect(() => {
     // A new launch target means a fresh match: clear the previous outcome.
     setWinnerSlot(null);
     setLadderBusy(false);
     setNetState(null);
+    setLoadingPhase('loading');
   }, [launchTarget]);
 
   useEffect(() => {
@@ -114,6 +121,31 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
     });
     let disposed = false;
     let game: Phaser.Game | null = null;
+    let readyHandled = false;
+    let openingTimer: number | undefined;
+    let hideTimer: number | undefined;
+    let loadTimeout: number | undefined;
+    const startedAt = performance.now();
+    const onRuntimeReady = () => {
+      if (disposed || readyHandled) return;
+      readyHandled = true;
+      window.clearTimeout(loadTimeout);
+      const minimumClosedMs = 500;
+      const openingDelay = Math.max(0, minimumClosedMs - (performance.now() - startedAt));
+      openingTimer = window.setTimeout(() => {
+        setLoadingPhase('opening');
+        const reduceMotion =
+          window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+        hideTimer = window.setTimeout(
+          () => setLoadingPhase('hidden'),
+          reduceMotion ? 180 : 720,
+        );
+      }, openingDelay);
+    };
+    window.addEventListener(RUNTIME_READY_EVENT, onRuntimeReady);
+    loadTimeout = window.setTimeout(() => {
+      if (!disposed && !readyHandled) setLoadingPhase('error');
+    }, 30_000);
     void import('../../game/createGame.ts')
       .then(({ createGame }) => {
         if (disposed) return;
@@ -122,10 +154,15 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
       .catch((err: unknown) => {
         if (!disposed) {
           debugWarn('[GamePage] Phaser runtime failed to mount:', err instanceof Error ? err.message : err);
+          setLoadingPhase('error');
         }
       });
     return () => {
       disposed = true;
+      window.removeEventListener(RUNTIME_READY_EVENT, onRuntimeReady);
+      window.clearTimeout(openingTimer);
+      window.clearTimeout(hideTimer);
+      window.clearTimeout(loadTimeout);
       debugInfo('[GamePage] Destroying Phaser runtime', {
         sceneKey: launchTarget.sceneKey,
       });
@@ -176,6 +213,14 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
       <FightHud />
       <FightIntroOverlay />
       <FightAnnouncement />
+      {loadingPhase !== 'hidden' ? (
+        <FightLoadingCurtain
+          phase={loadingPhase}
+          p1Name={launchTarget.data.p1Name ?? 'Player One'}
+          p2Name={launchTarget.data.p2Name ?? 'Player Two'}
+          onExit={onExit}
+        />
+      ) : null}
       {online && netState ? <NetStatusBadge state={netState} /> : null}
       {online && !matchActionsVisible && (
         <MobileFightControls playerIndex={0} playerLabel={online.localSlot === 0 ? 'player 1' : 'player 2'} />

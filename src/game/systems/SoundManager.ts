@@ -1,7 +1,55 @@
+export const BATTLE_MUSIC_URL = '/assets/audio/neon-arena-battle-v1.mp3';
+export const BATTLE_MUSIC_VOLUME = 0.06;
+
 export class SoundManager {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
+  private battleMusic: HTMLAudioElement | null = null;
+  private removeMusicUnlockListeners: (() => void) | null = null;
+
+  startBattleMusic(): void {
+    if (typeof Audio === 'undefined') return;
+
+    if (!this.battleMusic) {
+      this.battleMusic = new Audio(BATTLE_MUSIC_URL);
+      this.battleMusic.loop = true;
+      this.battleMusic.preload = 'auto';
+      this.battleMusic.volume = BATTLE_MUSIC_VOLUME;
+    }
+
+    this.tryPlayBattleMusic();
+  }
+
+  stopBattleMusic(): void {
+    this.removeMusicUnlockListeners?.();
+    this.removeMusicUnlockListeners = null;
+    if (!this.battleMusic) return;
+    this.battleMusic.pause();
+    this.battleMusic.currentTime = 0;
+  }
+
+  private tryPlayBattleMusic(): void {
+    const playback = this.battleMusic?.play();
+    if (!playback || typeof playback.catch !== 'function') return;
+    void playback.catch(() => this.armMusicUnlock());
+  }
+
+  private armMusicUnlock(): void {
+    if (this.removeMusicUnlockListeners || typeof window === 'undefined') return;
+
+    const unlock = () => {
+      this.removeMusicUnlockListeners?.();
+      this.removeMusicUnlockListeners = null;
+      this.tryPlayBattleMusic();
+    };
+    window.addEventListener('pointerdown', unlock, { once: true });
+    window.addEventListener('keydown', unlock, { once: true });
+    this.removeMusicUnlockListeners = () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }
 
   private ensureContext(): AudioContext {
     if (!this.ctx) {
@@ -213,6 +261,12 @@ export class SoundManager {
   }
 
   destroy(): void {
+    this.stopBattleMusic();
+    if (this.battleMusic) {
+      this.battleMusic.removeAttribute('src');
+      this.battleMusic.load();
+      this.battleMusic = null;
+    }
     this.masterGain?.disconnect();
     this.masterGain = null;
     this.noiseBuffer = null;

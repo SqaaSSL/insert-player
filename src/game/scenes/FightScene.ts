@@ -48,6 +48,7 @@ import {
   MATCH_ACTIONS_VISIBILITY_EVENT,
   MATCH_COMPLETE_EVENT,
   NET_STATE_EVENT,
+  RUNTIME_READY_EVENT,
   type AnnounceDetail,
   type NetStateDetail,
   type OnlineMatchInfo,
@@ -330,9 +331,15 @@ export class FightScene extends Phaser.Scene {
     this.uiCam.ignore(this.children.list.filter((obj) => !this.uiObjects.has(obj)));
 
     this.ready = true;
+    this.sound_mgr.startBattleMusic();
     this.handleSimEvents(this.sim.start());
     this.syncViews();
     this.emitHudState();
+    window.dispatchEvent(
+      new CustomEvent(RUNTIME_READY_EVENT, {
+        detail: { matchSeed: this.matchSeed },
+      }),
+    );
   }
 
   private async loadAiSpritesIfNeeded(lifecycleEpoch: number): Promise<void> {
@@ -2025,6 +2032,7 @@ export class FightScene extends Phaser.Scene {
   }
 
   private showMatchOverUI(): void {
+    this.sound_mgr.stopBattleMusic();
     this.waitingForMatchInput = true;
     this.setMatchActionsVisible(true);
 

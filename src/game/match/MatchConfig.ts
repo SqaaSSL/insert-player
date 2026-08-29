@@ -62,6 +62,7 @@ export const HUD_STATE_EVENT = 'asf-hud-state';
 export const ANNOUNCE_EVENT = 'asf-announce';
 export const INTRO_STATE_EVENT = 'asf-intro';
 export const NET_STATE_EVENT = 'asf-net-state';
+export const RUNTIME_READY_EVENT = 'asf-runtime-ready';
 
 export type MatchAction = 'run_it_back' | 'remix' | 'menu';
 
@@ -86,6 +87,10 @@ export interface MatchActionsVisibilityDetail {
   visible: boolean;
   /** Online matches cannot be re-run or remixed unilaterally. */
   online?: boolean;
+}
+
+export interface RuntimeReadyDetail {
+  matchSeed: number;
 }
 
 /** Netcode telemetry for the React overlay during an online match. */
@@ -154,6 +159,7 @@ declare global {
     [ANNOUNCE_EVENT]: CustomEvent<AnnounceDetail>;
     [INTRO_STATE_EVENT]: CustomEvent<IntroStateDetail>;
     [NET_STATE_EVENT]: CustomEvent<NetStateDetail>;
+    [RUNTIME_READY_EVENT]: CustomEvent<RuntimeReadyDetail>;
   }
 }
 
