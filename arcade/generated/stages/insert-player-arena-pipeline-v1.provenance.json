@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-29T11:34:31Z",
+  "finalizedAt": "2026-08-29T11:41:26Z",
+  "request": "arcade/stage-publication-requests/insert-player-arena.json",
+  "stageId": "insert-player-arena",
+  "operation": "stage_background",
+  "sourceMode": "transform-scene",
+  "model": "gemini-3.1-flash-image",
+  "transport": "meterkey",
+  "workerVersionId": "3d182f14-b1ef-4839-97e0-72fe884f96bd",
+  "workerTag": "prod-3c3a75ce72606c297b1e581e6047e27b49b3eb68-1",
+  "promptSha256": "db5dfb80890d80c1cd994d3cc98d59afdec06736ec0875f7022c63835dfd2e4f",
+  "seed": {
+    "path": "arcade/stage-publication-seeds/insert-player-arena-seed-v1.png",
+    "sha256": "d3ac993af36e26c5ed3e4576472a531e142c5a939057b11780a4156d32e6fa5c",
+    "bytes": 598342
+  },
+  "attempts": [
+    {
+      "workflowRunId": 33250018182,
+      "providerSessionId": "070f3c15693112ccbab02fe34300c55e",
+      "providerCostEventId": "bace8054969afee90e71c1184e71cef4",
+      "providerCalls": 1,
+      "estimatedCostCents": 9,
+      "httpStatus": 200,
+      "upstreamOutcome": "http_succeeded",
+      "result": "provider_output_lost_after_runner_packaging_failure",
+      "failure": "spawn ffmpeg ENOENT"
+    },
+    {
+      "workflowRunId": 33250349311,
+      "artifactId": 9714187444,
+      "providerSessionId": "be6a4ab581166a8e86d71a0c2b0043b4",
+      "providerCostEventId": "e0810e0043d4151f11262c31dda3cc08",
+      "providerCalls": 1,
+      "estimatedCostCents": 9,
+      "httpStatus": 200,
+      "upstreamOutcome": "http_succeeded",
+      "result": "provider_and_pre_clean_outputs_archived"
+    }
+  ],
+  "estimatedCost": {
+    "totalCents": 18,
+    "basis": "Insert Player provider cost-event reservations; not an upstream invoice"
+  },
+  "providerOutput": {
+    "path": "arcade/generated/stages/insert-player-arena-pipeline-v1-provider-raw.jpg",
+    "mime": "image/jpeg",
+    "sha256": "7bd859b59c7fb412d47dec023da21be48a8273170c5ca835db9c0dca08daee2b",
+    "bytes": 705896,
+    "width": 1376,
+    "height": 768
+  },
+  "normalizedPreClean": {
+    "path": "arcade/generated/stages/insert-player-arena-pipeline-v1-normalized-pre-clean.png",
+    "sha256": "cb716f528cf771b34e9032d20dc48dc1ba66856bb6c15ef68593399400073ef7",
+    "bytes": 1416873,
+    "reviewOutcome": "rejected_invented_pseudo_text_and_size_limit"
+  },
+  "cleanup": {
+    "method": "interpolate-empty-panels-v1",
+    "regions": [
+      { "x": 184, "y": 177, "width": 184, "height": 50 },
+      { "x": 668, "y": 177, "width": 170, "height": 50 }
+    ],
+    "toolchain": {
+      "playwrightChromium": "151.0.7922.34",
+      "ffmpeg": "8.1"
+    }
+  },
+  "activeOutput": {
+    "path": "public/assets/stages/signature/insert-player-arena-pipeline-v1.png",
+    "mime": "image/png",
+    "sha256": "fc014c0b3fee22ae18c70f683058b8861249090f2974e83c8321f95b7fa07df6",
+    "bytes": 706774,
+    "width": 1024,
+    "height": 576,
+    "normalization": {
+      "bottomShadeAlpha": 0.04,
+      "verticalBias": 0.92
+    },
+    "reviewOutcome": "approved"
+  }
+}

@@ -9,8 +9,12 @@ import {
 } from './StageConfig.ts';
 
 describe('signature stage configuration', () => {
-  it('maps every launch Arcade slug to its signature PNG', () => {
+  it('publishes the brand arena and maps every launch Arcade slug to its signature PNG', () => {
     expect(SIGNATURE_STAGE_THEMES).toMatchObject([
+      {
+        id: 'insert-player-arena',
+        assetPath: '/assets/stages/signature/insert-player-arena-pipeline-v1.png',
+      },
       {
         id: 'executive-rumble',
         assetPath: '/assets/stages/signature/executive-rumble-pipeline-v1.png',

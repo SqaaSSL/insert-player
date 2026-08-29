@@ -6,6 +6,7 @@ export type ClassicStageThemeId =
   | 'subway-platform';
 
 export type SignatureStageThemeId =
+  | 'insert-player-arena'
   | 'executive-rumble'
   | 'mars-incorporated'
   | 'tablao-3000'
@@ -50,6 +51,12 @@ export const CLASSIC_STAGE_THEMES: StageTheme[] = [
 ];
 
 export const SIGNATURE_STAGE_THEMES: StageTheme[] = [
+  {
+    id: 'insert-player-arena',
+    label: 'INSERT PLAYER ARENA',
+    blurb: 'Red corner, blue corner, main-event lights, and a rain-slick tournament floor.',
+    assetPath: '/assets/stages/signature/insert-player-arena-pipeline-v1.png',
+  },
   {
     id: 'executive-rumble',
     label: 'EXECUTIVE RUMBLE',

@@ -57,6 +57,17 @@ export function validateStagePublicationRequest(value) {
   invariant(value.output?.width === 1024 && value.output?.height === 576, 'Stage output must be 1024x576.');
   invariant(value.output?.normalization?.bottomShadeAlpha === 0.04, 'Stage bottom shade must remain 0.04.');
   invariant(value.output?.normalization?.verticalBias === 0.92, 'Stage vertical bias must remain 0.92.');
+  if (value.output.cleanup !== undefined) {
+    invariant(value.output.cleanup?.method === 'interpolate-empty-panels-v1', 'Stage cleanup method is invalid.');
+    invariant(Array.isArray(value.output.cleanup?.regions) && value.output.cleanup.regions.length > 0, 'Stage cleanup regions are required.');
+    for (const region of value.output.cleanup.regions) {
+      const coordinates = [region?.x, region?.y, region?.width, region?.height];
+      invariant(coordinates.every(Number.isInteger), 'Stage cleanup regions must use integer coordinates.');
+      invariant(region.x >= 0 && region.y >= 0 && region.width >= 2 && region.height >= 2, 'Stage cleanup region dimensions are invalid.');
+      invariant(region.x + region.width <= value.output.width, 'Stage cleanup region exceeds output width.');
+      invariant(region.y + region.height <= value.output.height, 'Stage cleanup region exceeds output height.');
+    }
+  }
   return value;
 }
 
@@ -90,6 +101,32 @@ function rawExtension(mime) {
 export function validateFfmpegVersionOutput(stdout) {
   invariant(typeof stdout === 'string' && /^ffmpeg version\s+/m.test(stdout), 'ffmpeg runtime is unavailable.');
   return stdout.split(/\r?\n/, 1)[0];
+}
+
+export function buildPanelCleanupFilter(regions) {
+  if (!regions?.length) return null;
+  const splitLabels = ['base'];
+  for (let index = 0; index < regions.length; index += 1) {
+    splitLabels.push(`top${index}`, `bottom${index}`);
+  }
+  const filters = [
+    `[0:v]split=${splitLabels.length}${splitLabels.map((label) => `[${label}]`).join('')}`,
+  ];
+  for (const [index, region] of regions.entries()) {
+    const bottomY = region.y + region.height - 1;
+    filters.push(
+      `[top${index}]crop=${region.width}:1:${region.x}:${region.y}[topCrop${index}]`,
+      `[bottom${index}]crop=${region.width}:1:${region.x}:${bottomY}[bottomCrop${index}]`,
+      `[topCrop${index}][bottomCrop${index}]vstack=inputs=2,scale=${region.width}:${region.height}:flags=bilinear,gblur=sigma=1.5[patch${index}]`,
+    );
+  }
+  let base = 'base';
+  for (const [index, region] of regions.entries()) {
+    const next = index === regions.length - 1 ? 'out' : `clean${index}`;
+    filters.push(`[${base}][patch${index}]overlay=${region.x}:${region.y}[${next}]`);
+    base = next;
+  }
+  return filters.join(';');
 }
 
 async function readJsonResponse(response, label) {
@@ -151,7 +188,7 @@ async function loadPromptBuilder() {
   return module.buildGeminiStageBackgroundPrompt;
 }
 
-async function normalizeStageImage(rawBytes, mime, request, outputPath) {
+export async function normalizeStageImage(rawBytes, mime, request, outputPath) {
   const browser = await chromium.launch({ headless: true });
   let rgbaPng;
   try {
@@ -203,14 +240,21 @@ async function normalizeStageImage(rawBytes, mime, request, outputPath) {
   const rgbaPath = join(tempDirectory, 'rgba.png');
   try {
     await writeFile(rgbaPath, Buffer.from(rgbaPng, 'base64'));
-    await execFileAsync('ffmpeg', [
+    const cleanupFilter = buildPanelCleanupFilter(request.output.cleanup?.regions);
+    const ffmpegArguments = [
       '-hide_banner', '-loglevel', 'error', '-y',
       '-i', rgbaPath,
+    ];
+    if (cleanupFilter) {
+      ffmpegArguments.push('-filter_complex', cleanupFilter, '-map', '[out]');
+    }
+    ffmpegArguments.push(
       '-frames:v', '1',
       '-pix_fmt', 'rgb24',
       '-compression_level', '9',
       outputPath,
-    ]);
+    );
+    await execFileAsync('ffmpeg', ffmpegArguments);
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
   }
@@ -399,6 +443,7 @@ export async function generateSignatureStage({ requestPath, outputDirectory }) {
       width: request.output.width,
       height: request.output.height,
       normalization: request.output.normalization,
+      cleanup: request.output.cleanup ?? null,
     },
   };
   const provenancePath = join(resolvedOutputDirectory, `${request.output.baseName}.provenance.json`);
