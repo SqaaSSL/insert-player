@@ -23,6 +23,7 @@
     "arcade:motion-master": "node scripts/fetch-arcade-motion-master.mjs",
     "arcade:qa-motion-references": "node scripts/fetch-arcade-qa-motion-references.mjs",
     "arcade:seed": "node scripts/seed-arcade-roster.mjs",
+    "arcade:stage:generate": "node scripts/generate-signature-stage.mjs",
     "arcade:bakeoff:side": "node scripts/arcade-side-bakeoff.mjs",
     "arcade:canary:xai-side": "node scripts/arcade-side-xai-canary.mjs",
     "arcade:batch:xai-global-sides": "node scripts/arcade-side-xai-global-batch.mjs",
