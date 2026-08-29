@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 const projectRoot = resolve(import.meta.dirname, '..');
 const mixPath = resolve(
   projectRoot,
-  'assets/generated/launch-mix-original-neon-gameplay-v3.wav',
+  'assets/generated/launch-mix-original-neon-gameplay-v4.wav',
 );
 const approvedIntroPath = resolve(
   projectRoot,
@@ -80,7 +80,7 @@ describe('original Neon Arena launch mix', () => {
 
   it('keeps Neon Arena audible throughout gameplay and the closing lockup', () => {
     const mix = readPcm16Wav(mixPath);
-    const windows = [5.15, 7.25, 9.25, 10.2, 11.25];
+    const windows = [5.15, 7.25, 9.25, 11.8, 12.75];
 
     for (const startSeconds of windows) {
       expect(meanVolumeDb(mix, startSeconds, 0.4)).toBeGreaterThan(-50);

@@ -1,22 +1,22 @@
 ---
 format: 1920x1080
-duration: 12s
+duration: 13.35s
 message: "A real person can become a recognizable, playable arcade fighter"
 arc: Transformation hook -> Brand reveal -> Four-stage gameplay proof -> CTA
 audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
 mode: autonomous
-music: "assets/generated/launch-mix-original-neon-gameplay-v3.wav - approved announcer opening followed by the original Neon Arena recording at gameplay"
+music: "assets/generated/launch-mix-original-neon-gameplay-v4.wav - approved announcer opening followed by the original Neon Arena recording through its next clean exit"
 ---
 
 ## Video direction
 
-The film moves from recognition to proof to action. Real media always outranks decorative graphics: first the exact source portrait reveals the exact production Player One fighter, then four one-second production fights place that same fighter against each current global rival, then a clean Insert Player lockup closes the piece. Camera movement is restrained and seek-safe; motion comes from the deterministic transformation seam, the recorded game, and the final P1 assembly. Preserve the approved announcer opening exactly as heard in v5. At the `4.65s` gameplay cut, switch to the beginning of the original `Neon Arena` recording and keep the cabinet fight effects legible above it. Keep all essential text outside the bottom 17 percent caption band. Use cabinet black as the visual ground, coin red for action, coin gold for reward, CRT cream for text, and glass blue only as a counterpoint.
+The film moves from recognition to proof to action. Real media always outranks decorative graphics: first the exact source portrait reveals the exact production Player One fighter, then four `1.1s` production fights place that same fighter against each current global rival, then a clean Insert Player lockup closes the piece. Camera movement is restrained and seek-safe; motion comes from the deterministic transformation seam, the recorded game, and the final P1 assembly. Preserve the approved announcer opening exactly as heard in v5. At the `4.65s` gameplay cut, switch to the beginning of the original `Neon Arena` recording and keep the cabinet fight effects legible above it. Hold the final lockup until the next low-energy musical exit at `13.35s`. Keep all essential text outside the bottom 17 percent caption band. Use cabinet black as the visual ground, coin red for action, coin gold for reward, CRT cream for text, and glass blue only as a counterpoint.
 
 ## Frame 1 — Your Photo. Your Fighter.
 
 - scene: A left-to-right cabinet-light seam reveals the exact production Player One fighter generated from the same portrait, then lands the P1 mark and game title in the open left field.
 - voiceover: "Ready... Insert Player."
-- duration: 4.65s
+- duration: 4.67s
 - poster: 4.1s
 - transition_in: cut
 - status: animated
@@ -42,9 +42,9 @@ roles: The portrait is the identity anchor; the electric seam is the transformat
 
 ## Frame 2 — Your Fight
 
-- scene: Four genuine production matches place Player One against Donald Trump, Lamine Yamal, Rosalía V2, and Elon Musk in their four signature stages.
+- scene: Four genuine production matches place Player One against Donald Trump, Lamine Yamal, Rosalía, and Elon Musk in their four signature stages.
 - voiceover: ""
-- duration: 4.25s
+- duration: 4.65s
 - poster: 3.15s
 - transition_in: zoom-through 0.35s
 - status: animated
@@ -53,8 +53,8 @@ roles: The portrait is the identity anchor; the electric seam is the transformat
 - persuasion: Product proof through real gameplay
 - beat: excitement -> triumph
 - blueprint: device-surface-showcase
-- blueprint_adaptation: Four full-bleed, one-second production cuts with no decorative device frame; a 0.25-second final-frame hold protects the exit transition.
-- asset_candidates: assets/fight-montage-four-stages-hd-lowfix.mp4 — four telemetry-trimmed production fights with Player One's Champion 2x atlas, corrected low-attack presentation, the real HUD, and four signature stages
+- blueprint_adaptation: Four full-bleed, `1.1s` production cuts with no decorative device frame; a 0.25-second final-frame hold protects the exit transition.
+- asset_candidates: assets/fight-montage-four-stages-current2-extended.mp4 — the second newly captured production set, extended to 33 frames per rival, with Player One's Champion 2x atlas, frame-sequence-verified low poses, the real HUD, and four current signature stages
 - sfx: .media/audio/sfx/sfx_004.mp3 at 3.65s
 
 narrativeRole: Cash in the promise: this is not an avatar or a still image. It is one playable character fighting a varied global roster inside the real game.
@@ -64,16 +64,16 @@ roles: The fight captures are primary proof; the `YOUR FIGHT` label is a brief o
 
 ### Video direction
 
-- Scene 1 (0.00-1.00s): Player One fights Donald Trump in `EXECUTIVE RUMBLE`. `YOUR FIGHT` lands briefly in the upper safe area, then reduces to a quiet label.
-- Scene 2 (1.00-2.00s): Cut on action to Lamine Yamal in `LA JAULA 304`.
-- Scene 3 (2.00-3.00s): Cut on action to Rosalía V2 in `DOJO AT DUSK`.
-- Scene 4 (3.00-4.00s): Cut on action to Elon Musk in `MARS INCORPORATED`, then retain the final frame for 0.25s while the CTA squeezes in.
+- Scene 1 (0.00-1.10s): Player One fights Donald Trump in `EXECUTIVE RUMBLE`. `YOUR FIGHT` lands briefly in the upper safe area, then reduces to a quiet label.
+- Scene 2 (1.10-2.20s): Cut on action to Lamine Yamal in `LA JAULA 304`.
+- Scene 3 (2.20-3.30s): Cut on action to Rosalía in `TABLAO 3000`.
+- Scene 4 (3.30-4.40s): Cut on action to Elon Musk in `MARS INCORPORATED`, then retain the final frame for 0.25s while the CTA squeezes in.
 
 ## Frame 3 — Insert Player
 
 - scene: The K.O. clears into the P1 cabinet mark, Insert Player wordmark, tagline, and URL.
 - voiceover: ""
-- duration: 3.35s
+- duration: 4.30s
 - poster: 2.75s
 - transition_in: squeeze DOWN 0.25s
 - status: animated
@@ -96,4 +96,4 @@ roles: The P1 outline is the brand ignition; the wordmark names the product; the
 - Scene 1 (0.00-0.58s): Clear the fight into cabinet black. Thin coin-gold and coin-red guide lines briefly trace the P1 insertion frame without becoming a decorative grid.
 - Scene 2 (0.18-1.24s): Assemble the official P1 mark, then reveal `INSERT PLAYER` beside it with a crisp left-to-right lockup build. No Hilo marks, colors, or phrasing.
 - Scene 3 (1.38-2.20s): Reveal `INSERT YOURSELF INTO THE GAME.` beneath the lockup in Space Grotesk. The line is supporting copy, not a second headline.
-- Scene 4 (2.38-3.35s): Land `INSERTPLAYER.AI` above the bottom caption keep-out with a short coin-red insertion bar. Hold the final lockup dead still for memorability.
+- Scene 4 (2.38-4.30s): Land `INSERTPLAYER.AI` above the bottom caption keep-out with a short coin-red insertion bar. Hold the final lockup dead still through the musical exit.

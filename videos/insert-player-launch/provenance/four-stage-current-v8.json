@@ -1,0 +1,84 @@
+{
+  "version": 8,
+  "project": "insert-player-launch",
+  "acceptance": "awaiting_studio_approval",
+  "parentProvenance": {
+    "file": "provenance/four-stage-hd-lowfix-v5.json",
+    "sha256": "ad1a1cba58e084043ec01d41595da3e4bcd6046e44d050a93eae79e0ff791509"
+  },
+  "change": "Replace all four gameplay seconds with fresh captures from the current production renderer; preserve the approved transformation, announcer opening, original Neon Arena gameplay bed, and closing lockup.",
+  "productionSource": {
+    "url": "https://insertplayer.ai/roster/watch",
+    "commit": "af2e3b5569824ed038e56f54db085d0a0dd28904",
+    "workerVersionId": "3a770e5b-b73c-4b42-9966-b8ddaf92981f",
+    "workerTag": "prod-af2e3b5569824ed038e56f54db085d0a0dd28904-1"
+  },
+  "renderer": {
+    "championLegacyDensityFixCommit": "6259e93d8af8f5d7bf11208d0bf2bc8c494b0424",
+    "legacyLowAttackFixCommit": "d3b0efedda8d87dae412aa8162b45a88801527cb",
+    "roundEndAndLegacyGuardFixCommit": "0c16d327eb76870aaf10837d5a6849d5713f1678",
+    "standingGuardMomentumFixCommit": "f33b3ac1eae0c0b42c4d212e9433ddee95006e11",
+    "captureDeviceMemoryGb": 8,
+    "captureMaxTextureSize": 8192,
+    "captureSaveData": false,
+    "captureCoarsePointer": false,
+    "playerOneAtlasFrame": "384x512",
+    "playerOneTextureDensity": 2,
+    "playerOneAtlasEvidence": "[AiSpriteLoader] Built 2688x8192 sheet for fighter_p1 with 384x512 cells at density 2x"
+  },
+  "gameplayCapture": {
+    "captureScript": "scripts/capture-player-one-fight.mjs",
+    "captureScriptSha256": "f1dbe346b5ce4a369e94317545054a71a16c70fb2800bfc0042207bcbd39d7a1",
+    "montageScript": "scripts/build-fight-montage.mjs",
+    "montageScriptSha256": "abb1ba47dbcd033f6388912cda01bef266abf452d2fc539fc38f105eb92b73e9",
+    "montageManifest": "assets/fight-montage-four-stages-current.json",
+    "montageManifestSha256": "44764a9b30e228f9d5d45a6f4d08e180222bda5af1ce8e4f0c1de7faacf81de4",
+    "montageFile": "assets/fight-montage-four-stages-current.mp4",
+    "montageSha256": "9ee9a0a802dfadac43a6ed926b624b2f35a6d6fb0400969f838077cf7491559f",
+    "montageDurationSeconds": 4.266667,
+    "montageSizeBytes": 11859285,
+    "width": 1920,
+    "height": 1080,
+    "framesPerSecond": 30,
+    "videoCodec": "h264",
+    "captures": [
+      {
+        "captureId": "trump-current",
+        "opponent": "Donald Trump",
+        "stage": "EXECUTIVE RUMBLE",
+        "capturedAt": "2026-08-29T15:14:59.274Z",
+        "videoSha256": "121f48f643c065c42a022c03cc7d591ddff94ca4c97bcb674cd702a344e6880f",
+        "eventsSha256": "f51babd4256821925cb2d6f07b6342e049add590705c35a68a9f3dd07c7af5ab"
+      },
+      {
+        "captureId": "lamine-current",
+        "opponent": "Lamine Yamal",
+        "stage": "LA JAULA 304",
+        "capturedAt": "2026-08-29T15:15:31.315Z",
+        "videoSha256": "db8fcf8f89db3352773dea7d2685152a06cb9934dcfbf986fed7734d5ba8dc2a",
+        "eventsSha256": "3be99a8e143d9ed4bafe25a57d5bf03578abb4c0dc916a52b8b6005623bdb120"
+      },
+      {
+        "captureId": "rosalia-current",
+        "opponent": "Rosalía",
+        "stage": "TABLAO 3000",
+        "capturedAt": "2026-08-29T15:15:59.948Z",
+        "videoSha256": "c13607024a4133969898f4c13d98dda0d9ffaf860df003154b4a1e8aff7d277b",
+        "eventsSha256": "6caad0eb459f337e471078059ceacf2d9be8fe04b66aa7696c0dd2656af3dabd"
+      },
+      {
+        "captureId": "elon-current",
+        "opponent": "Elon Musk",
+        "stage": "MARS INCORPORATED",
+        "capturedAt": "2026-08-29T15:16:27.515Z",
+        "videoSha256": "5e17e89bb9a486b9d62ca1b15ded3a7a051f963d00b4ca09b603774ba16b6865",
+        "eventsSha256": "0254a68834a51c3dd756f492d9173849eecc172819ca5e4bf42d07a555641c52"
+      }
+    ]
+  },
+  "cost": {
+    "providerCalls": 0,
+    "inferenceCostUsd": 0,
+    "note": "Browser capture and local deterministic editing only."
+  }
+}
