@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { legalReturnRouteFromState } from './App.tsx';
+import { legalReturnRouteFromState, shouldCommitTrialLaunch } from './App.tsx';
 import { resolveAuthBootstrapMode } from './authState.ts';
 import { CacheStatusBanner } from './components/CacheStatusBanner.tsx';
 import { GenerationConsent } from './components/LegalConsent.tsx';
@@ -16,10 +16,18 @@ describe('auth and navigation hardening', () => {
 
   it('accepts only safe app routes as legal return targets', () => {
     expect(legalReturnRouteFromState({ legalReturnTo: '/' })).toBe('/');
+    expect(legalReturnRouteFromState({ legalReturnTo: '/arcade' })).toBe('/arcade');
     expect(legalReturnRouteFromState({ legalReturnTo: '/fighters/new' })).toBe('/fighters/new');
     expect(legalReturnRouteFromState({ legalReturnTo: '/fight' })).toBe('/menu');
     expect(legalReturnRouteFromState({ legalReturnTo: 'https://example.com' })).toBe('/menu');
     expect(legalReturnRouteFromState(null)).toBe('/menu');
+  });
+
+  it('commits a loaded trial only while the same request still owns the landing route', () => {
+    expect(shouldCommitTrialLaunch(4, 4, '/', '')).toBe(true);
+    expect(shouldCommitTrialLaunch(4, 5, '/', '')).toBe(false);
+    expect(shouldCommitTrialLaunch(4, 4, '/arcade', '')).toBe(false);
+    expect(shouldCommitTrialLaunch(4, 4, '/', '#/gallery')).toBe(false);
   });
 
   it('keeps modified legal-link clicks under native browser control', () => {
@@ -42,6 +50,14 @@ describe('auth and navigation hardening', () => {
     );
     expect(markup.match(/target="_blank"/g)).toHaveLength(3);
     expect(markup.match(/rel="noreferrer"/g)).toHaveLength(3);
+  });
+
+  it('describes anonymous storage as device-local rather than inventing an account', () => {
+    const markup = renderToStaticMarkup(
+      <GenerationConsent checked={false} storageMode="device" onChange={vi.fn()} />,
+    );
+    expect(markup).toContain('privately store this fighter on this device');
+    expect(markup).not.toContain('in my Insert Player account');
   });
 
   it('renders degraded cache recovery as an actionable alert', () => {

@@ -1,4 +1,31 @@
 import type { StageThemeId } from './StageConfig.ts';
+import { ROUNDS_TO_WIN } from '../constants.ts';
+
+export type MatchExperience = 'standard' | 'trial';
+
+export const MIN_MATCH_ROUNDS_TO_WIN = 1;
+export const MAX_MATCH_ROUNDS_TO_WIN = 5;
+
+export function isValidMatchExperience(value: unknown): value is MatchExperience {
+  return value === 'standard' || value === 'trial';
+}
+
+export function isValidMatchRoundsToWin(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= MIN_MATCH_ROUNDS_TO_WIN &&
+    value <= MAX_MATCH_ROUNDS_TO_WIN
+  );
+}
+
+export function resolveMatchRoundsToWin(
+  value: unknown,
+  fallback = ROUNDS_TO_WIN,
+): number {
+  if (isValidMatchRoundsToWin(value)) return value;
+  return isValidMatchRoundsToWin(fallback) ? fallback : ROUNDS_TO_WIN;
+}
 
 export type FighterPersonalityId =
   | 'balanced'
@@ -20,6 +47,10 @@ export interface FighterPersonality {
 }
 
 export interface MatchSceneData {
+  /** Product context for this match. Omitted means a normal, reportable match. */
+  experience?: MatchExperience;
+  /** Number of round wins needed. Omitted preserves the normal best-of-three match. */
+  roundsToWin?: number;
   vsAI?: boolean;
   cpuVsCpu?: boolean;
   p1PhotoHash?: string;
@@ -46,6 +77,24 @@ export interface MatchSceneData {
   online?: OnlineMatchInfo;
 }
 
+export type MatchRestartFormat = Pick<MatchSceneData, 'experience' | 'roundsToWin'>;
+
+/** Preserve only explicit, valid format overrides when Phaser restarts a match. */
+export function matchRestartFormat(data: MatchRestartFormat): MatchRestartFormat {
+  return {
+    ...(isValidMatchExperience(data.experience) ? { experience: data.experience } : {}),
+    ...(isValidMatchRoundsToWin(data.roundsToWin) ? { roundsToWin: data.roundsToWin } : {}),
+  };
+}
+
+/**
+ * Trial results use React-owned calls to action. Let Enter and Space reach the
+ * focused DOM button instead of having Phaser prevent their browser defaults.
+ */
+export function shouldCaptureMatchIntroKeys(experience: MatchExperience): boolean {
+  return experience !== 'trial';
+}
+
 export interface OnlineMatchInfo {
   roomCode: string;
   /** Fighter slot the local player controls: 0 = host / P1, 1 = guest / P2. */
@@ -66,6 +115,8 @@ export const NET_STATE_EVENT = 'asf-net-state';
 export type MatchAction = 'run_it_back' | 'remix' | 'menu';
 
 export interface MatchCompletionDetail {
+  /** Trial completions are intentionally excluded from player history and W/L. */
+  experience?: MatchExperience;
   winnerSlot: 'p1' | 'p2';
   roundsP1: number;
   roundsP2: number;
@@ -251,6 +302,8 @@ export function buildMatchSeed(data: MatchSceneData): number {
     String(remix),
     data.p2Difficulty === undefined ? 'difficulty:default' : `difficulty:${data.p2Difficulty}`,
   ];
+  if (data.experience !== undefined) parts.push(`experience:${data.experience}`);
+  if (data.roundsToWin !== undefined) parts.push(`rounds-to-win:${data.roundsToWin}`);
 
   let hash = 0x811c9dc5;
   const text = parts.join('|');

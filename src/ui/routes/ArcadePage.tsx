@@ -29,7 +29,9 @@ import {
   buildRungMatchData,
   clearArcadeRun,
   createArcadeRun,
+  currentRung,
   readArcadeRun,
+  sanitizeArcadeRunRungs,
   writeArcadeRun,
   type ArcadeRunRung,
   type ArcadeRunState,
@@ -41,6 +43,7 @@ import { EmptyState } from '../components/EmptyState.tsx';
 interface ArcadePageProps {
   authStatus: AuthStatus;
   authSessionKey: string;
+  preferredPlayerPhotoHash?: string | null;
   onBack: () => void;
   onCreateFighter: () => void;
   onStartFight: (data: MatchSceneData) => void;
@@ -90,7 +93,14 @@ function PlayerCard({
   );
 }
 
-export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter, onStartFight }: ArcadePageProps) {
+export function ArcadePage({
+  authStatus,
+  authSessionKey,
+  preferredPlayerPhotoHash = null,
+  onBack,
+  onCreateFighter,
+  onStartFight,
+}: ArcadePageProps) {
   const ownerScope = getActiveSpriteCacheScope();
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [officials, setOfficials] = useState<CloudFighter[]>([]);
@@ -121,7 +131,7 @@ export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter
       setLoaded(true);
       setStatus(
         arcadeFighters.length > 0
-          ? `${arcadeFighters.length} challengers are waiting`
+          ? 'Machine roster ready. Choose your fighter.'
           : 'The machine roster is unavailable right now',
       );
     };
@@ -139,8 +149,23 @@ export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter
   );
   const playable = sections.all;
   const player = playable.find((entry) => entry.key === playerKey)
+    ?? playable.find((entry) => entry.photoHash === preferredPlayerPhotoHash)
+    ?? playable.find((entry) => entry.photoHash === existingRun?.player.photoHash)
+    ?? sections.owned[0]
+    ?? sections.official.find((entry) => entry.arcadeSlug === 'player-one')
     ?? playable[0]
     ?? null;
+  const playerRunData = useMemo(() => player ? {
+    key: player.key,
+    photoHash: player.photoHash,
+    cloudFighterId: player.cloudFighterId,
+    name: player.name,
+    personalityId: getDefaultPersonalityId(0),
+  } : null, [player]);
+  const availableRungs = useMemo(() => playerRunData
+    ? sanitizeArcadeRunRungs(playerRunData, officials.map(rungFromCloudFighter))
+    : officials.map(rungFromCloudFighter), [officials, playerRunData]);
+  const visibleRungs = existingRun?.rungs ?? availableRungs;
 
   const prepareEntry = async (entry: RosterFighterEntry) => {
     if (entry.kind === 'arcade' && entry.cloud) {
@@ -153,24 +178,19 @@ export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter
   const startRun = async () => {
     if (!player || officials.length === 0 || starting) return;
     setStarting(true);
-    setStatus(`Warming up against ${officials[0].name}...`);
     try {
-      await prepareEntry(player);
-      await downloadArcadeFighterToLocal(officials[0], captureApiRequestContext());
       const run = createArcadeRun(
-        {
-          key: player.key,
-          photoHash: player.photoHash,
-          cloudFighterId: player.cloudFighterId,
-          name: player.name,
-          // You drive your own fighter in the ladder; the personality field
-          // only matters for CPU-controlled slots.
-          personalityId: getDefaultPersonalityId(0),
-        },
+        playerRunData!,
         officials.map(rungFromCloudFighter),
         ownerScope,
         Date.now(),
       );
+      const firstRung = currentRung(run);
+      setStatus(`Warming up against ${firstRung.name}...`);
+      await prepareEntry(player);
+      const firstChallenger = officials.find((fighter) => fighter.id === firstRung.fighterId);
+      if (!firstChallenger) throw new Error('The first challenger is unavailable.');
+      await downloadArcadeFighterToLocal(firstChallenger, captureApiRequestContext());
       writeArcadeRun(run);
       onStartFight(buildRungMatchData(run));
     } catch (err: any) {
@@ -208,7 +228,7 @@ export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter
         <div>
           <h1>Arcade Mode</h1>
           <p className="roster-hero__copy">
-            Pick your fighter and climb the machine's roster — {officials.length || 13} challengers, easiest to hardest. Three continues. One crown.
+            Pick your fighter and climb the machine's roster — {visibleRungs.length || 'the full ladder'} challengers, easiest to hardest. Three continues. One crown.
           </p>
         </div>
         <div className="roster-hero__actions">
@@ -235,7 +255,10 @@ export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter
 
       <section className="arcade-layout">
         <div className="gallery-panel">
-          <h2>Your Fighter</h2>
+          <div className="arcade-panel-heading">
+            <h2>Your Fighter</h2>
+            <Button variant="ghost" onClick={onCreateFighter}>Create Another</Button>
+          </div>
           {!loaded ? (
             <EmptyState title="Loading Roster">
               <p>Checking this device and the machine roster.</p>
@@ -270,7 +293,7 @@ export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter
                 disabled={!player || officials.length === 0 || starting}
                 onClick={() => void startRun()}
               >
-                <span>{starting ? 'Loading...' : 'Insert Coin'}</span>
+                <span>{starting ? 'Loading...' : existingRun ? 'Start New Run' : 'Insert Coin'}</span>
                 <small>
                   {officials.length === 0
                     ? 'Machine roster unavailable'
@@ -284,25 +307,25 @@ export function ArcadePage({ authStatus, authSessionKey, onBack, onCreateFighter
         </div>
 
         <div className="gallery-panel">
-          <h2>The Ladder</h2>
-          {officials.length === 0 && loaded ? (
+          <h2>{existingRun ? 'Current Run Ladder' : 'The Ladder'}</h2>
+          {visibleRungs.length === 0 && loaded ? (
             <EmptyState title="Machine Offline">
               <p>The official challengers could not be loaded. Try again in a moment.</p>
             </EmptyState>
           ) : (
             <ol className="arcade-ladder" aria-label="Challenger ladder">
-              {officials.map((fighter, index) => {
+              {visibleRungs.map((fighter, index) => {
                 const cleared = existingRun ? index < existingRun.currentRung : false;
                 const current = existingRun ? index === existingRun.currentRung : index === 0;
                 return (
                   <li
-                    key={fighter.id}
+                    key={fighter.fighterId ?? `${fighter.photoHash}:${index}`}
                     className={`arcade-ladder__rung${cleared ? ' is-cleared' : ''}${current ? ' is-current' : ''}`}
                   >
                     <span className="arcade-ladder__rank">{index + 1}</span>
                     <span className="arcade-ladder__who">
                       <strong>{fighter.name}</strong>
-                      {fighter.arcade?.challengerLine ? <small>{fighter.arcade.challengerLine}</small> : null}
+                      {fighter.challengerLine ? <small>{fighter.challengerLine}</small> : null}
                     </span>
                     {cleared ? <span className="arcade-ladder__state">KO</span> : null}
                     {current ? <span className="arcade-ladder__state is-next">Next</span> : null}

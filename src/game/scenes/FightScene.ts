@@ -42,6 +42,9 @@ import {
   getDefaultPersonalityId,
   getFighterPersonality,
   getMatchLabel,
+  matchRestartFormat,
+  resolveMatchRoundsToWin,
+  shouldCaptureMatchIntroKeys,
   HUD_STATE_EVENT,
   INTRO_STATE_EVENT,
   MATCH_ACTION_EVENT,
@@ -55,6 +58,8 @@ import {
   type HudStateDetail,
   type MatchAction,
   type MatchCompletionDetail,
+  type MatchExperience,
+  type MatchRestartFormat,
   type MatchSceneData,
 } from "../match/MatchConfig.ts";
 import {
@@ -112,6 +117,9 @@ export class FightScene extends Phaser.Scene {
   private accumulator = 0;
   private isVsAI = true;
   private cpuVsCpu = false;
+  private experience: MatchExperience = "standard";
+  private roundsToWin = ROUNDS_TO_WIN;
+  private restartFormat: MatchRestartFormat = {};
 
   private hitSparks!: Phaser.GameObjects.Particles.ParticleEmitter;
   private stageGfx!: Phaser.GameObjects.Graphics;
@@ -183,6 +191,12 @@ export class FightScene extends Phaser.Scene {
   }
 
   init(data: MatchSceneData): void {
+    this.restartFormat = matchRestartFormat(data);
+    this.experience = data.experience === "trial" ? "trial" : "standard";
+    this.roundsToWin = resolveMatchRoundsToWin(
+      data.roundsToWin,
+      this.experience === "trial" ? 1 : ROUNDS_TO_WIN,
+    );
     this.cpuVsCpu = data.cpuVsCpu === true;
     this.isVsAI = data.vsAI !== false || this.cpuVsCpu;
     this.p1PhotoHash = data.p1PhotoHash ?? null;
@@ -277,12 +291,16 @@ export class FightScene extends Phaser.Scene {
 
     this.inputMgr = new InputManager(this);
     this.sound_mgr = new SoundManager();
-    this.introEnterKey = this.input.keyboard?.addKey(
+    const keyboard = this.input.keyboard;
+    const introKeys = [
       Phaser.Input.Keyboard.KeyCodes.ENTER,
-    );
-    this.introSpaceKey = this.input.keyboard?.addKey(
       Phaser.Input.Keyboard.KeyCodes.SPACE,
-    );
+    ];
+    const captureIntroKeys = shouldCaptureMatchIntroKeys(this.experience);
+    this.introEnterKey = keyboard?.addKey(introKeys[0], captureIntroKeys);
+    this.introSpaceKey = keyboard?.addKey(introKeys[1], captureIntroKeys);
+    if (captureIntroKeys) keyboard?.addCapture(introKeys);
+    else keyboard?.removeCapture(introKeys);
 
     await this.loadAiSpritesIfNeeded(lifecycleEpoch);
     if (!this.isCurrentSceneLifecycle(lifecycleEpoch)) return;
@@ -299,6 +317,7 @@ export class FightScene extends Phaser.Scene {
       cpuVsCpu: this.cpuVsCpu,
       p1Name: this.p1Name,
       p2Name: this.p2Name,
+      roundsToWin: this.roundsToWin,
       p1Personality,
       p2Personality,
       p2Difficulty: this.p2Difficulty ?? 1,
@@ -1706,7 +1725,7 @@ export class FightScene extends Phaser.Scene {
       timer: this.sim.timerSeconds,
       p1Wins: this.sim.p1Wins,
       p2Wins: this.sim.p2Wins,
-      roundsToWin: ROUNDS_TO_WIN,
+      roundsToWin: this.sim.roundsToWin,
       p1Name: this.p1.name,
       p2Name: this.p2.name,
       p1Tag: this.p1DisplayTag || null,
@@ -1726,6 +1745,7 @@ export class FightScene extends Phaser.Scene {
       last.timer === detail.timer &&
       last.p1Wins === detail.p1Wins &&
       last.p2Wins === detail.p2Wins &&
+      last.roundsToWin === detail.roundsToWin &&
       last.p1Name === detail.p1Name &&
       last.p2Name === detail.p2Name
     ) {
@@ -2010,6 +2030,7 @@ export class FightScene extends Phaser.Scene {
     this.matchReported = true;
 
     const detail: MatchCompletionDetail = {
+      experience: this.experience,
       winnerSlot,
       roundsP1: this.sim.p1Wins,
       roundsP2: this.sim.p2Wins,
@@ -2028,24 +2049,26 @@ export class FightScene extends Phaser.Scene {
     this.waitingForMatchInput = true;
     this.setMatchActionsVisible(true);
 
-    const enterKey = this.input.keyboard!.addKey(
-      Phaser.Input.Keyboard.KeyCodes.ENTER,
-    );
     const escKey = this.input.keyboard!.addKey(
       Phaser.Input.Keyboard.KeyCodes.ESC,
     );
-    const remixKey = this.input.keyboard!.addKey(
-      Phaser.Input.Keyboard.KeyCodes.R,
-    );
-    this.matchActionKeys = [enterKey, escKey, remixKey];
+    this.matchActionKeys = [escKey];
 
-    enterKey.once("down", () => {
-      this.performMatchAction("run_it_back");
-    });
-
-    remixKey.once("down", () => {
-      this.performMatchAction("remix");
-    });
+    if (this.experience !== "trial") {
+      const enterKey = this.input.keyboard!.addKey(
+        Phaser.Input.Keyboard.KeyCodes.ENTER,
+      );
+      const remixKey = this.input.keyboard!.addKey(
+        Phaser.Input.Keyboard.KeyCodes.R,
+      );
+      this.matchActionKeys.push(enterKey, remixKey);
+      enterKey.once("down", () => {
+        this.performMatchAction("run_it_back");
+      });
+      remixKey.once("down", () => {
+        this.performMatchAction("remix");
+      });
+    }
 
     escKey.once("down", () => {
       this.performMatchAction("menu");
@@ -2090,6 +2113,7 @@ export class FightScene extends Phaser.Scene {
     this.cameras.main.flash(200, 255, 255, 255);
     this.time.delayedCall(200, () => {
       this.scene.restart({
+        ...this.restartFormat,
         vsAI: this.isVsAI,
         cpuVsCpu: this.cpuVsCpu,
         p1PhotoHash: this.p1PhotoHash ?? undefined,

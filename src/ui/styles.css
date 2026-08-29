@@ -698,6 +698,13 @@
            max-[640px]:px-2 max-[640px]:py-1.5 max-[640px]:text-[10px];
   }
 
+  .landing-panel__motion-toggle {
+    @apply absolute bottom-2 right-2 z-20 rounded-[4px] border-2 border-asf-gold-deep
+           bg-[rgba(5,5,12,0.92)] px-2.5 py-2 font-arcade text-[8px] uppercase
+           text-asf-gold-bright hover:border-asf-gold-bright focus-visible:outline-2
+           focus-visible:outline-offset-2 focus-visible:outline-asf-blue;
+  }
+
   .landing-triptych__arrow {
     @apply self-center font-arcade text-[18px] text-asf-gold
            [text-shadow:0_0_14px_rgba(255,206,58,0.65)] max-[900px]:hidden;
@@ -730,7 +737,18 @@
   }
 
   .landing-hero__note {
-    @apply m-0 font-sans text-[13px] normal-case leading-[1.5] text-asf-gold;
+    @apply m-0 flex flex-wrap items-center gap-x-1 font-sans text-[13px] normal-case leading-[1.5] text-asf-gold;
+  }
+
+  .landing-hero__error {
+    @apply m-0 rounded-[4px] border border-asf-red bg-[rgba(80,10,10,0.72)] px-3 py-2
+           font-sans text-[13px] normal-case leading-[1.5] text-asf-cream;
+  }
+
+  .landing-hero__arcade-link {
+    @apply min-h-11 cursor-pointer border-0 bg-transparent p-0 font-sans text-[13px]
+           normal-case text-asf-muted underline decoration-asf-line underline-offset-4
+           hover:text-asf-gold-bright disabled:cursor-wait disabled:opacity-50;
   }
 
   .landing-loop {
@@ -937,6 +955,30 @@
     @apply grid gap-3 grid-cols-[repeat(auto-fit,minmax(180px,1fr))];
   }
 
+  .home-credits__creation-intent {
+    @apply flex items-center justify-between gap-4 rounded-[4px] border-2 border-asf-red
+           bg-[rgba(94,13,20,0.36)] p-4 max-[720px]:flex-col max-[720px]:items-stretch;
+  }
+
+  .home-credits__creation-intent > div {
+    @apply flex flex-col gap-1.5;
+  }
+
+  .home-credits__creation-intent strong {
+    @apply font-arcade text-[12px] uppercase text-asf-gold-bright;
+  }
+
+  .home-credits__creation-intent span {
+    @apply font-sans text-[13px] normal-case text-asf-cream;
+  }
+
+  .home-credits__creation-intent button {
+    @apply min-h-11 rounded-[4px] border-2 border-asf-gold bg-asf-red px-4 py-3
+           font-arcade text-[9px] uppercase text-asf-gold-bright hover:border-asf-gold-bright
+           disabled:cursor-not-allowed disabled:border-asf-line disabled:bg-asf-panel-alt
+           disabled:text-asf-muted;
+  }
+
   .home-credit-pack {
     @apply flex min-h-[120px] cursor-pointer flex-col items-start justify-between gap-2 rounded-[4px]
            border-2 border-asf-line bg-asf-panel-alt p-4 text-left
@@ -1100,6 +1142,24 @@
 
   .match-actions__button--primary {
     @apply border-asf-gold bg-asf-red-dark text-white;
+  }
+
+  .trial-match-badge {
+    @apply fixed left-1/2 top-[96px] z-40 -translate-x-1/2 rounded-[3px] border-2 border-asf-gold-deep
+           bg-[rgba(5,5,12,0.9)] px-3 py-2 font-arcade text-[10px] uppercase
+           tracking-[0.08em] text-asf-gold-bright shadow-[0_5px_0_rgba(0,0,0,0.58)];
+  }
+
+  .match-actions--trial {
+    @apply w-[min(680px,calc(100%-1.5rem))] px-5 py-4;
+  }
+
+  .match-actions__eyebrow {
+    @apply w-full text-center font-arcade text-[10px] uppercase tracking-[0.12em] text-asf-red;
+  }
+
+  .match-actions__copy {
+    @apply w-full text-center font-sans text-[13px] normal-case leading-[1.5] text-asf-cream;
   }
 
   .mobile-fight-controls {
@@ -1875,20 +1935,41 @@
   }
 
   .tier-picker {
-    @apply grid gap-3 grid-cols-[repeat(auto-fit,minmax(180px,1fr))];
+    @apply m-0 grid min-w-0 gap-3 border-0 p-0 grid-cols-[repeat(auto-fit,minmax(180px,1fr))];
+  }
+
+  .tier-picker__legend {
+    @apply col-span-full mb-1 flex w-full flex-wrap items-center justify-between gap-2 p-0
+           font-arcade text-[11px] tracking-[0.14em] uppercase text-asf-gold;
+  }
+
+  .tier-picker__legend small {
+    @apply font-sans text-[12px] normal-case tracking-normal text-asf-muted;
   }
 
   .tier-picker__option {
     @apply flex min-h-[130px] cursor-pointer flex-col items-start justify-between gap-2
            rounded-[4px] border-2 border-asf-gold-deep bg-asf-panel-alt p-3 text-left
-           hover:border-asf-gold hover:bg-asf-panel disabled:cursor-not-allowed disabled:opacity-50;
+           hover:border-asf-gold hover:bg-asf-panel;
   }
 
   .tier-picker__option.is-active {
     @apply border-asf-red bg-[rgba(80,10,10,0.92)];
   }
 
-  .tier-picker__option span {
+  .tier-picker__option:has(input:disabled) {
+    @apply cursor-not-allowed opacity-50 hover:border-asf-gold-deep hover:bg-asf-panel-alt;
+  }
+
+  .tier-picker__choice {
+    @apply flex w-full items-center gap-2;
+  }
+
+  .tier-picker__choice input {
+    @apply size-5 shrink-0 cursor-pointer accent-asf-red disabled:cursor-not-allowed;
+  }
+
+  .tier-picker__choice > span {
     @apply font-arcade text-[11px] tracking-[0.14em] uppercase text-asf-gold-bright;
   }
 
@@ -2138,6 +2219,14 @@
 
   .arcade-layout {
     @apply grid gap-5 grid-cols-[minmax(0,1fr)_380px] max-[1100px]:grid-cols-1;
+  }
+
+  .arcade-panel-heading {
+    @apply flex flex-wrap items-center justify-between gap-3;
+  }
+
+  .arcade-panel-heading h2 {
+    @apply m-0;
   }
 
   .arcade-resume {
@@ -2437,6 +2526,8 @@
 
   .auth-dock__button:focus-visible,
   .asf-action:focus-visible,
+  .landing-hero__arcade-link:focus-visible,
+  .match-actions__button:focus-visible,
   .game-shell__gallery-link:focus-visible,
   .gallery-back:focus-visible,
   .gallery-actions button:focus-visible,
@@ -2445,6 +2536,7 @@
   .gallery-chip:focus-visible,
   .gallery-tab:focus-visible,
   .tier-picker__option:focus-visible,
+  .tier-picker__option:has(input:focus-visible),
   .creation-flow-picker__radio:focus-visible,
   .video-review__form input:focus-visible,
   .video-review__actions button:focus-visible,
@@ -3083,6 +3175,14 @@
 
   .fight-keys.is-leaving {
     @apply opacity-0;
+  }
+
+  .fight-keys__toggle {
+    @apply absolute bottom-3 left-1/2 z-30 -translate-x-1/2 rounded-[4px] border-2
+           border-asf-gold-deep bg-[rgba(6,7,20,0.9)] px-3 py-2 font-arcade text-[8px]
+           uppercase text-asf-gold transition-colors hover:border-asf-gold-bright
+           hover:text-asf-gold-bright focus-visible:outline-2 focus-visible:outline-offset-2
+           focus-visible:outline-asf-blue;
   }
 
   .fight-keys__board {

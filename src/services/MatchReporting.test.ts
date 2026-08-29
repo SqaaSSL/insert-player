@@ -19,8 +19,13 @@ describe('match reporting', () => {
     expect(shouldReportMatchCompletion(detail({ cpuVsCpu: true }))).toBe(false);
   });
 
+  it('does not report trial completions as personal matches', () => {
+    expect(shouldReportMatchCompletion(detail({ experience: 'trial' }))).toBe(false);
+  });
+
   it('keeps human matches reportable, including matches against the CPU', () => {
     expect(shouldReportMatchCompletion(detail())).toBe(true);
+    expect(shouldReportMatchCompletion(detail({ experience: 'standard' }))).toBe(true);
     expect(shouldReportMatchCompletion(detail({ vsAI: false }))).toBe(true);
   });
 });

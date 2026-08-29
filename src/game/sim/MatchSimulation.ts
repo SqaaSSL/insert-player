@@ -13,10 +13,13 @@ import {
   FIXED_TIMESTEP,
   FighterState,
   GAME_WIDTH,
-  ROUNDS_TO_WIN,
   ROUND_TIME,
 } from '../constants.ts';
-import { getFighterPersonality, type FighterPersonality } from '../match/MatchConfig.ts';
+import {
+  getFighterPersonality,
+  resolveMatchRoundsToWin,
+  type FighterPersonality,
+} from '../match/MatchConfig.ts';
 import { EMPTY_INPUT, packInput, unpackInput, type FighterInput } from './FighterInput.ts';
 import { StateHasher } from './StateHasher.ts';
 
@@ -94,6 +97,8 @@ export interface MatchSimConfig {
   cpuVsCpu: boolean;
   p1Name: string;
   p2Name: string;
+  /** Round wins needed for the match. Omitted preserves the normal value. */
+  roundsToWin?: number;
   p1Personality?: FighterPersonality;
   p2Personality?: FighterPersonality;
   /** Arcade-ladder AI strength for the P2 CPU, 0..1. */
@@ -156,6 +161,7 @@ export class MatchSimulation {
   readonly p2: Fighter;
   readonly p1IsCpu: boolean;
   readonly p2IsCpu: boolean;
+  readonly roundsToWin: number;
   projectiles: Projectile[] = [];
 
   /** Total ticks stepped since the match began (all phases). */
@@ -186,7 +192,13 @@ export class MatchSimulation {
   constructor(config: MatchSimConfig) {
     const cpuVsCpu = config.cpuVsCpu === true;
     const vsAI = config.vsAI || cpuVsCpu;
-    this.config = Object.freeze({ ...config, vsAI, cpuVsCpu });
+    this.roundsToWin = resolveMatchRoundsToWin(config.roundsToWin);
+    this.config = Object.freeze({
+      ...config,
+      vsAI,
+      cpuVsCpu,
+      roundsToWin: this.roundsToWin,
+    });
     this.p1IsCpu = cpuVsCpu;
     this.p2IsCpu = vsAI;
 
@@ -480,7 +492,7 @@ export class MatchSimulation {
     }
 
     if (
-      (this.p1Wins >= ROUNDS_TO_WIN || this.p2Wins >= ROUNDS_TO_WIN) &&
+      (this.p1Wins >= this.roundsToWin || this.p2Wins >= this.roundsToWin) &&
       this.p1Wins !== this.p2Wins
     ) {
       this.phase = RoundPhase.MATCH_END;

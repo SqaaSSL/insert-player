@@ -10,6 +10,7 @@ import { LegalPage } from './routes/LegalPage.tsx';
 import { ConfigurationErrorPage } from './routes/ConfigurationErrorPage.tsx';
 import { debugInfo, debugWarn } from '../services/DebugLog.ts';
 import type { AuthRouteState } from './authState.ts';
+import type { BillingProfile } from '../services/Billing.ts';
 import { readStoredMatch, writeStoredMatch } from './shared/storedMatch.ts';
 import { CacheStatusBanner, type CacheStatus } from './components/CacheStatusBanner.tsx';
 import { getActiveSpriteCacheScope } from '../services/SpriteCache.ts';
@@ -18,12 +19,22 @@ import {
   buildRungMatchData,
   clearArcadeRun,
   currentRung,
+  isMatchForArcadeRun,
   isFinalRung,
   readArcadeRun,
   spendArcadeContinue,
   writeArcadeRun,
 } from './shared/arcadeRun.ts';
 import type { LadderContext } from './routes/GamePage.tsx';
+import {
+  buildArcadeSelectionSearch,
+  buildCreationSearch,
+  clearCreationPurchaseIntent,
+  readCreationPurchaseIntent,
+  readCreationNavigationContext,
+  readPreferredArcadePlayerPhotoHash,
+  rememberCreationPurchaseIntent,
+} from './shared/onboardingFlow.ts';
 
 const GalleryPage = lazy(() => import('./routes/GalleryPage.tsx').then((module) => ({
   default: module.GalleryPage,
@@ -85,6 +96,7 @@ export function legalReturnRouteFromState(state: unknown): AppRoute {
   if (
     candidate === '/' ||
     candidate === '/menu' ||
+    candidate === '/arcade' ||
     candidate === '/gallery' ||
     candidate === '/community' ||
     candidate === '/moderation' ||
@@ -122,6 +134,15 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   if (cleaned === '/refunds') return '/refunds';
   if (cleaned === '/fight') return '/fight';
   return '/menu';
+}
+
+export function shouldCommitTrialLaunch(
+  launchEpoch: number,
+  currentEpoch: number,
+  pathname: string,
+  hash: string,
+): boolean {
+  return launchEpoch === currentEpoch && normalizeRoute(pathname, hash) === '/';
 }
 
 type Navigate = (route: AppRoute, search?: string, options?: NavigationOptions) => void;
@@ -182,6 +203,13 @@ export function App({
     ? pendingMatchState.data
     : null;
   const previousRouteRef = useRef<AppRoute>(route);
+  const trialLaunchEpochRef = useRef(0);
+  const [landingBillingProfile, setLandingBillingProfile] = useState<BillingProfile | null>(null);
+  const [landingBillingChecked, setLandingBillingChecked] = useState(authStatus !== 'signed-in');
+  const creationPurchaseIntent = useMemo(
+    () => route === '/menu' ? readCreationPurchaseIntent(authSessionKey) : null,
+    [authSessionKey, route],
+  );
 
   useEffect(() => {
     setPendingMatchState({
@@ -189,6 +217,31 @@ export function App({
       data: readStoredMatch(authSessionKey),
     });
   }, [authSessionKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLandingBillingProfile(null);
+    setLandingBillingChecked(authStatus !== 'signed-in');
+    if (route !== '/' || authStatus !== 'signed-in') return () => { cancelled = true; };
+    void Promise.all([
+      import('../services/Billing.ts'),
+      import('../services/ApiClient.ts'),
+    ]).then(async ([{ getBillingProfile }, { captureApiRequestContext }]) => {
+      const profile = await getBillingProfile(captureApiRequestContext());
+      if (!cancelled) {
+        setLandingBillingProfile(profile);
+        setLandingBillingChecked(true);
+      }
+    }).catch((error: unknown) => {
+      debugWarn('[Landing] Rookie pass check failed:', error instanceof Error ? error.message : error);
+      if (!cancelled) setLandingBillingChecked(true);
+    });
+    return () => { cancelled = true; };
+  }, [authSessionKey, authStatus, route]);
+
+  useEffect(() => {
+    trialLaunchEpochRef.current += 1;
+  }, [route]);
 
   useEffect(() => {
     if (route !== '/fight' || pendingMatch) return;
@@ -235,16 +288,68 @@ export function App({
     [authSessionKey, navigate],
   );
 
+  const startTrial = useCallback(async () => {
+    const launchEpoch = ++trialLaunchEpochRef.current;
+    const [cloud, trial, api] = await Promise.all([
+      import('../services/CloudFighters.ts'),
+      import('./shared/trialMatch.ts'),
+      import('../services/ApiClient.ts'),
+    ]);
+    const context = api.captureApiRequestContext();
+    const cloudPair = (async () => {
+      const officials = await cloud.listArcadeFighters().catch((error: unknown) => {
+        debugWarn('[Landing] Public trial roster unavailable; using built-in fighters:',
+          error instanceof Error ? error.message : error);
+        return [];
+      });
+      const pair = trial.selectTrialFighters(officials);
+      const downloadTrialFighter = async (
+        fighter: typeof pair.player,
+        slot: 'player' | 'opponent',
+      ) => {
+        if (!fighter) return null;
+        try {
+          await cloud.downloadArcadeFighterToLocal(fighter, context);
+          return fighter;
+        } catch (error) {
+          debugWarn(`[Landing] Trial ${slot} download failed; using built-in fighter:`,
+            error instanceof Error ? error.message : error);
+          return null;
+        }
+      };
+      const [player, opponent] = await Promise.all([
+        downloadTrialFighter(pair.player, 'player'),
+        downloadTrialFighter(pair.opponent, 'opponent'),
+      ]);
+      return { player, opponent };
+    })();
+    const loadedPair = await trial.trialAssetsBeforeDeadline(cloudPair);
+    if (!shouldCommitTrialLaunch(
+      launchEpoch,
+      trialLaunchEpochRef.current,
+      window.location.pathname,
+      window.location.hash,
+    )) return;
+    if (!loadedPair) {
+      debugWarn('[Landing] Trial cloud assets exceeded the startup deadline; using built-in fighters');
+    }
+    startFight(trial.buildTrialMatchData(loadedPair ?? { player: null, opponent: null }));
+  }, [startFight]);
+
   const finishFight = useCallback(() => {
     writeStoredMatch(null, authSessionKey);
     debugInfo('[AppRouter] Cleared completed match recovery state');
   }, [authSessionKey]);
 
-  const exitFight = useCallback(() => {
+  const leaveFight = useCallback((nextRoute: AppRoute, search = '') => {
     writeStoredMatch(null, authSessionKey);
     setPendingMatchState({ authSessionKey, data: null });
-    navigate('/menu');
+    navigate(nextRoute, search);
   }, [authSessionKey, navigate]);
+
+  const exitFight = useCallback(() => {
+    leaveFight(pendingMatch?.experience === 'trial' ? '/' : '/menu');
+  }, [leaveFight, pendingMatch?.experience]);
 
   const launchTarget = useMemo(
     () => pendingMatch ? { sceneKey: 'FightScene', data: pendingMatch } : null,
@@ -286,15 +391,11 @@ export function App({
 
   const ladderContext = useMemo<LadderContext | null>(() => {
     if (route !== '/fight' || !pendingMatch) return null;
+    if (pendingMatch.experience === 'trial') return null;
     const run = readArcadeRun(getActiveSpriteCacheScope());
     if (!run) return null;
     const rung = currentRung(run);
-    const isLadderMatch = Boolean(
-      pendingMatch.vsAI &&
-      !pendingMatch.cpuVsCpu &&
-      pendingMatch.p1PhotoHash === run.player.photoHash &&
-      pendingMatch.p2PhotoHash === rung.photoHash,
-    );
+    const isLadderMatch = isMatchForArcadeRun(pendingMatch, run);
     if (!isLadderMatch) return null;
     const nextRungMeta = isFinalRung(run) ? null : run.rungs[run.currentRung + 1];
     return {
@@ -334,6 +435,15 @@ export function App({
       <HomePage
         authStatus={authStatus}
         authSessionKey={authSessionKey}
+        creationPurchaseIntent={creationPurchaseIntent}
+        onContinuePurchaseIntent={creationPurchaseIntent ? () => {
+          clearCreationPurchaseIntent(authSessionKey);
+          navigate('/fighters/new', buildCreationSearch({
+            tier: creationPurchaseIntent.tier,
+            returnTo: creationPurchaseIntent.returnTo,
+            source: creationPurchaseIntent.source,
+          }));
+        } : undefined}
         onCreateFighter={() => navigate('/fighters/new')}
         onNavigateLegal={navigateToLegal}
         onOpenArcade={() => navigate('/arcade')}
@@ -346,18 +456,26 @@ export function App({
         onOpenModeration={() => navigate('/moderation')}
       />
     ),
-    [authStatus, authSessionKey, navigate, navigateToLegal],
+    [authStatus, authSessionKey, creationPurchaseIntent, navigate, navigateToLegal],
   );
 
   const landingPage = useMemo(
     () => (
       <LandingPage
-        onCreateFighter={() => navigate('/fighters/new', 'tier=rookie')}
+        authStatus={authStatus}
+        billingProfile={landingBillingProfile}
+        billingProfileChecked={landingBillingChecked}
+        onPlayTrial={startTrial}
+        onCreateFighter={() => navigate('/fighters/new', buildCreationSearch({
+          tier: 'rookie',
+          returnTo: 'arcade',
+          source: 'landing',
+        }))}
         onOpenArcade={() => navigate('/arcade')}
         onOpenWatchMode={() => navigate('/roster/watch')}
       />
     ),
-    [navigate],
+    [authStatus, landingBillingChecked, landingBillingProfile, navigate, startTrial],
   );
 
   const content = useMemo(() => {
@@ -381,8 +499,13 @@ export function App({
         <ArcadePage
           authStatus={authStatus}
           authSessionKey={authSessionKey}
+          preferredPlayerPhotoHash={readPreferredArcadePlayerPhotoHash(window.location.search)}
           onBack={() => navigate('/menu')}
-          onCreateFighter={() => navigate('/fighters/new', 'tier=rookie')}
+          onCreateFighter={() => navigate('/fighters/new', buildCreationSearch({
+            tier: 'rookie',
+            returnTo: 'arcade',
+            source: 'arcade',
+          }))}
           onStartFight={startFight}
         />
       );
@@ -420,12 +543,31 @@ export function App({
       );
     }
     if (route === '/fighters/new') {
+      const creationContext = readCreationNavigationContext(window.location.search);
+      const returnToArcade = creationContext.returnTo === 'arcade';
+      const backRoute: AppRoute = creationContext.source === 'landing' || creationContext.source === 'trial'
+        ? '/'
+        : returnToArcade ? '/arcade' : '/gallery';
       return (
         <CreateFighterPage
           authStatus={authStatus}
           authSessionKey={authSessionKey}
-          onBack={() => navigate('/gallery')}
-          onComplete={() => navigate('/gallery')}
+          completionLabel={returnToArcade ? 'Enter Arcade' : 'Open In Gallery'}
+          onBack={() => navigate(backRoute)}
+          onComplete={(photoHash) => returnToArcade
+            ? navigate('/arcade', buildArcadeSelectionSearch(photoHash))
+            : navigate('/gallery')}
+          onGetCredits={(tier) => {
+            const stored = rememberCreationPurchaseIntent(authSessionKey, {
+              tier,
+              returnTo: creationContext.returnTo,
+              source: creationContext.source ?? 'menu',
+            });
+            if (!stored) {
+              debugWarn('[Create] Could not preserve the selected tier before opening credits');
+            }
+            navigate('/menu');
+          }}
           onNavigateLegal={navigateToLegal}
         />
       );
@@ -455,7 +597,20 @@ export function App({
     if (!pendingMatch) {
       return <LoadingScreen label="Returning to the arcade..." />;
     }
-    return <GamePage launchTarget={launchTarget!} onComplete={finishFight} onExit={exitFight} ladder={ladderContext} />;
+    return (
+      <GamePage
+        launchTarget={launchTarget!}
+        onComplete={finishFight}
+        onExit={exitFight}
+        onCreateFighter={() => leaveFight('/fighters/new', buildCreationSearch({
+          tier: 'rookie',
+          returnTo: 'arcade',
+          source: 'trial',
+        }))}
+        onOpenArcade={() => leaveFight('/arcade')}
+        ladder={ladderContext}
+      />
+    );
   }, [
     route,
     navigate,
@@ -466,6 +621,7 @@ export function App({
     launchTarget,
     finishFight,
     exitFight,
+    leaveFight,
     startFight,
     authStatus,
     authSessionKey,

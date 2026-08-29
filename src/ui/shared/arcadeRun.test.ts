@@ -6,9 +6,12 @@ import {
   buildRungMatchData,
   clearArcadeRun,
   createArcadeRun,
+  currentRung,
   isFinalRung,
+  isMatchForArcadeRun,
   readArcadeRun,
   rungDifficulty,
+  sanitizeArcadeRunRungs,
   spendArcadeContinue,
   writeArcadeRun,
   type ArcadeRunRung,
@@ -60,6 +63,38 @@ describe('arcadeRun', () => {
     expect(() => createArcadeRun(PLAYER, [], 'owner:a', 123)).toThrow();
   });
 
+  it('excludes the selected global and deduplicates repeated roster identities', () => {
+    const globalPlayer = {
+      ...PLAYER,
+      photoHash: 'arcade:challenger-2:cloud-2',
+      cloudFighterId: 'cloud-2',
+    };
+    const duplicateById = { ...rung(1), slug: 'replacement-slug', photoHash: 'replacement-hash' };
+    const duplicateBySlug = { ...rung(1), fighterId: 'replacement-id', photoHash: 'other-hash' };
+    const run = createArcadeRun(
+      globalPlayer,
+      [rung(1), duplicateById, duplicateBySlug, rung(2), rung(3)],
+      'owner:a',
+      123,
+    );
+
+    expect(run.rungs.map((entry) => entry.fighterId)).toEqual(['cloud-1', 'cloud-3']);
+    expect(sanitizeArcadeRunRungs(globalPlayer, [rung(2)])).toEqual([]);
+  });
+
+  it('recognizes a legacy Arcade cache key as the same global by slug', () => {
+    const legacyPlayer = {
+      ...PLAYER,
+      photoHash: 'arcade:challenger-2',
+      cloudFighterId: null,
+    };
+    expect(createArcadeRun(legacyPlayer, RUNGS, 'owner:a', 123).rungs)
+      .toEqual([rung(1), rung(3)]);
+    expect(() => createArcadeRun(legacyPlayer, [rung(2)], 'owner:a', 123)).toThrow(
+      /at least one challenger/i,
+    );
+  });
+
   it('escalates difficulty from 0.25 to 1.0 across the ladder', () => {
     expect(rungDifficulty(0, 13)).toBe(0.25);
     expect(rungDifficulty(12, 13)).toBe(1);
@@ -102,6 +137,8 @@ describe('arcadeRun', () => {
     expect(data.p2Name).toBe('Challenger 2');
     expect(data.p2PersonalityId).toBe('brawler');
     expect(data.p2Difficulty).toBe(rungDifficulty(1, 3));
+    expect(isMatchForArcadeRun(data, run)).toBe(true);
+    expect(isMatchForArcadeRun({ ...data, experience: 'trial' }, run)).toBe(false);
   });
 
   it('persists per owner scope and rejects other owners or garbage', () => {
@@ -113,5 +150,49 @@ describe('arcadeRun', () => {
     expect(readArcadeRun('owner:a')).toBeNull();
     clearArcadeRun();
     expect(readArcadeRun('owner:a')).toBeNull();
+  });
+
+  it('repairs a legacy persisted mirror rung and keeps progress on a valid challenger', () => {
+    const globalPlayer = {
+      ...PLAYER,
+      photoHash: 'arcade:challenger-2:cloud-2',
+      cloudFighterId: 'cloud-2',
+    };
+    storage.set(ARCADE_RUN_STORAGE_KEY, JSON.stringify({
+      ownerScope: 'owner:a',
+      player: globalPlayer,
+      rungs: RUNGS,
+      currentRung: 1,
+      continuesLeft: 2,
+      continuesUsed: 1,
+      startedAt: 123,
+    }));
+
+    const repaired = readArcadeRun('owner:a');
+    expect(repaired?.rungs.map((entry) => entry.fighterId)).toEqual(['cloud-1', 'cloud-3']);
+    expect(repaired?.currentRung).toBe(1);
+    expect(currentRung(repaired!).fighterId).toBe('cloud-3');
+    expect(JSON.parse(storage.get(ARCADE_RUN_STORAGE_KEY)!).rungs).toHaveLength(2);
+  });
+
+  it('does not advance the cursor when a later legacy mirror is removed', () => {
+    const globalPlayer = {
+      ...PLAYER,
+      photoHash: 'arcade:challenger-2:cloud-2',
+      cloudFighterId: 'cloud-2',
+    };
+    storage.set(ARCADE_RUN_STORAGE_KEY, JSON.stringify({
+      ownerScope: 'owner:a',
+      player: globalPlayer,
+      rungs: RUNGS,
+      currentRung: 0,
+      continuesLeft: 3,
+      continuesUsed: 0,
+      startedAt: 123,
+    }));
+
+    const repaired = readArcadeRun('owner:a');
+    expect(repaired?.currentRung).toBe(0);
+    expect(currentRung(repaired!).fighterId).toBe('cloud-1');
   });
 });

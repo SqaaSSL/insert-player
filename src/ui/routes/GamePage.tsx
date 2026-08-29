@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type Phaser from 'phaser';
 import {
   MATCH_ACTION_EVENT,
@@ -34,6 +34,8 @@ interface GamePageProps {
   launchTarget: { sceneKey: string; data: MatchSceneData };
   onComplete: () => void;
   onExit: () => void;
+  onCreateFighter: () => void;
+  onOpenArcade: () => void;
   ladder?: LadderContext | null;
 }
 
@@ -57,12 +59,22 @@ function NetStatusBadge({ state }: { state: NetStateDetail }) {
   );
 }
 
-export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageProps) {
+export function GamePage({
+  launchTarget,
+  onComplete,
+  onExit,
+  onCreateFighter,
+  onOpenArcade,
+  ladder,
+}: GamePageProps) {
   const [matchActionsVisible, setMatchActionsVisible] = useState(false);
   const [netState, setNetState] = useState<NetStateDetail | null>(null);
   const online = launchTarget.data.online ?? null;
+  const trial = launchTarget.data.experience === 'trial';
+  const trialPlayerName = launchTarget.data.p1Name?.trim() || 'Player One';
   const [winnerSlot, setWinnerSlot] = useState<'p1' | 'p2' | null>(null);
   const [ladderBusy, setLadderBusy] = useState(false);
+  const trialPrimaryActionRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     // A new launch target means a fresh match: clear the previous outcome.
@@ -70,6 +82,12 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
     setLadderBusy(false);
     setNetState(null);
   }, [launchTarget]);
+
+  useEffect(() => {
+    if (!trial || !matchActionsVisible) return;
+    const frame = window.requestAnimationFrame(() => trialPrimaryActionRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [matchActionsVisible, trial]);
 
   useEffect(() => {
     if (!online) return;
@@ -176,6 +194,9 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
       <FightHud />
       <FightIntroOverlay />
       <FightAnnouncement />
+      {trial && !matchActionsVisible ? (
+        <div className="trial-match-badge" role="status">Playable demo · free round</div>
+      ) : null}
       {online && netState ? <NetStatusBadge state={netState} /> : null}
       {online && !matchActionsVisible && (
         <MobileFightControls playerIndex={0} playerLabel={online.localSlot === 0 ? 'player 1' : 'player 2'} />
@@ -280,7 +301,32 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
           </button>
         </div>
       )}
-      {matchActionsVisible && !online && (!ladder || winnerSlot === null) && (
+      {matchActionsVisible && trial && (
+        <div className="match-actions match-actions--trial" role="group" aria-label="Free round complete">
+          <span className="match-actions__eyebrow">Free round complete</span>
+          <span className="match-actions__label">
+            {winnerSlot === 'p1'
+              ? `You won with ${trialPlayerName}.`
+              : `${trialPlayerName} was the demo. Your fighter is next.`}
+          </span>
+          <span className="match-actions__copy">Create your Rookie, make yourself playable, and enter the Arcade.</span>
+          <button
+            ref={trialPrimaryActionRef}
+            type="button"
+            className="match-actions__button match-actions__button--primary"
+            onClick={onCreateFighter}
+          >
+            Create My Fighter
+          </button>
+          <button type="button" className="match-actions__button" onClick={() => chooseMatchAction('run_it_back')}>
+            Play Again
+          </button>
+          <button type="button" className="match-actions__button" onClick={onOpenArcade}>
+            Explore Arcade
+          </button>
+        </div>
+      )}
+      {matchActionsVisible && !trial && !online && (!ladder || winnerSlot === null) && (
         <div className="match-actions" role="group" aria-label="Match complete actions">
           <span className="match-actions__label">Match Complete</span>
           <button
@@ -300,7 +346,7 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
       )}
       <FightControlsHint />
       <button type="button" className="game-shell__gallery-link" onClick={onExit}>
-        Back
+        {trial ? 'Exit Demo' : 'Back'}
       </button>
     </div>
   );
