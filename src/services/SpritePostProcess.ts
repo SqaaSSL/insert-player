@@ -39,6 +39,7 @@ interface ReliableFrameConfig {
   allowBestEffortFill?: boolean;
   referenceMode?: 'median' | 'upper-percentile';
   minAreaRatio?: number;
+  maxAreaRatio?: number;
   minHeightRatio?: number;
   minWidthRatio?: number;
   minVerticalFill?: number;
@@ -102,6 +103,10 @@ const CRITICAL_ANIMATION_CONFIG: Partial<Record<string, ReliableFrameConfig>> = 
     maxFrames: 8,
     allowBestEffortFill: false,
     minAreaRatio: 0.3,
+    // A KO deliberately transitions from a tall standing/falling silhouette
+    // into much shorter horizontal poses. Those complete early frames can be
+    // over twice the median bounding-box area of the grounded frames.
+    maxAreaRatio: 2.6,
     minHeightRatio: 0.25,
     minWidthRatio: 0.35,
     minVerticalFill: 0.18,
@@ -1264,6 +1269,7 @@ function filterCriticalAnimationFrames(
   const medianWidth = config.referenceMode === 'upper-percentile' ? upperPercentile(widths, 0.75) : median(widths);
   const edgeMargin = config.edgeMargin ?? 2;
   const minAreaRatio = config.minAreaRatio ?? 0.55;
+  const maxAreaRatio = config.maxAreaRatio ?? 1.75;
   const minHeightRatio = config.minHeightRatio ?? 0.7;
   const minWidthRatio = config.minWidthRatio ?? 0.45;
   const minVerticalFill = config.minVerticalFill ?? 0.38;
@@ -1286,7 +1292,7 @@ function filterCriticalAnimationFrames(
     if (touchesTop) score -= 35;
     if (requireBottomMargin && touchesBottom) score -= 45;
     if (areaRatio < minAreaRatio) score -= 55;
-    if (areaRatio > 1.75) score -= 50;
+    if (areaRatio > maxAreaRatio) score -= 50;
     if (heightRatio < minHeightRatio) score -= 40;
     if (widthRatio < minWidthRatio) score -= 25;
     if (verticalFill < minVerticalFill) score -= 45;
@@ -1299,6 +1305,7 @@ function filterCriticalAnimationFrames(
       !touchesTop &&
       (!requireBottomMargin || !touchesBottom) &&
       areaRatio >= minAreaRatio &&
+      areaRatio <= maxAreaRatio &&
       heightRatio >= minHeightRatio &&
       widthRatio >= minWidthRatio &&
       verticalFill >= minVerticalFill;

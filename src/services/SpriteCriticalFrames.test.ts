@@ -51,6 +51,25 @@ describe('critical sprite frame validation', () => {
     expect(result.frameCount).toBe(8);
   });
 
+  it('keeps a complete KO transition from vertical falling poses to grounded poses', async () => {
+    const sheet = syntheticSheet(2, 4, (context, index) => {
+      context.fillStyle = '#9e2638';
+      if (index === 0) {
+        context.fillRect(25, 16, 70, 130);
+      } else if (index === 1) {
+        context.fillRect(24, 18, 72, 126);
+      } else if (index === 2) {
+        context.fillRect(20, 34, 80, 94);
+      } else {
+        context.fillRect(8, 82, 104, 42);
+      }
+    });
+
+    const result = await cleanSpriteSheet(sheet, 8, 2, 4, 'ko');
+
+    expect(result.frameCount).toBe(8);
+  });
+
   it('keeps complete victory poses and rejects frames cropped at the feet', async () => {
     const sheet = syntheticSheet(4, 2, (context, index, _width, height) => {
       context.fillStyle = '#9e2638';
