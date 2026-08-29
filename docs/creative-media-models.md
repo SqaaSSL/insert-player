@@ -4,7 +4,7 @@ This guide records the approved creative-media path for Insert Player launch
 assets. It is deliberately separate from the fighter-generation runtime.
 Nothing in this document changes the production Gemini-only fighter pipeline.
 
-Last verified: 2026-08-28.
+Last verified: 2026-08-29.
 
 ## Decision table
 
@@ -32,6 +32,7 @@ Relevant capabilities:
 - `16:9` and `9:16`; 720p is the native default and higher resolutions are upscaled.
 - Native audio is generated with the video, but the launch edit may mute it and use the controlled Lyria/TTS mix.
 - SynthID is embedded in generated video.
+- The current Interactions API accepts text, image, and video inputs for this model, but not an uploaded audio reference. Translate a music reference into a written beat and timecode plan before calling Omni.
 
 Pricing is token-based. At 720p, the documented effective output price is about
 `$0.10/second`. A four-second candidate is therefore roughly `$0.40`, excluding
@@ -48,6 +49,7 @@ the prompt is guidance rather than a billing limit.
 - Use `store: false`, `background: false`, and `stream: false` for this one-shot asset.
 - Request inline video bytes. URI delivery currently requires `store: true`, which is unnecessary for this private build artifact.
 - One request only. A rejected or poor candidate falls back to the deterministic HyperFrames transition; it is not retried automatically.
+- A visually plausible candidate still fails if its final fighter is not the exact production fighter. Preserve the candidate and metadata, but do not integrate it.
 
 The project runner is:
 
@@ -122,6 +124,35 @@ Rules:
 - Name tempo, instrumentation, arc, and prohibited genre cliches.
 - Generate one source composition, then trim/fade/duck locally.
 - Music never replaces gameplay impact sounds around hits and K.O.
+
+## 4. Private audio references
+
+A user-supplied track may be analyzed privately as a creative reference when its
+distribution rights are unclear. It is not copied into the repository, passed
+to Lyria, uploaded to Omni, or included in a rendered asset.
+
+The allowed handoff is a compact written fingerprint:
+
+- Approximate tempo, meter, energy curve, instrumentation families, mix density, and section boundaries.
+- New, independently composed musical instructions that fit the Insert Player timeline.
+- Explicit prohibitions against copying melody, chord progression, lyrics, motifs, artist identity, or exact sound effects.
+
+For the launch v2 build, `Neon Arena.mp3` was analyzed privately with
+`gemini-3.5-flash` and local signal tools. Only
+`videos/insert-player-launch/references/neon-arena-creative-fingerprint-v1.json`
+is retained. Lyria received the derived text brief, while Omni received only a
+textual 145 BPM timecode plan. The raw MP3 is neither committed nor published.
+
+The reproducible local arrangement is built with:
+
+```bash
+node videos/insert-player-launch/scripts/build-launch-mix.mjs
+```
+
+It uses the opening as transformation tension, cuts to the first sustained
+Lyria groove at `4.65s`, preserves the local gameplay impacts, ducks beneath the
+announcer, and normalizes the final 12 seconds to `-16 LUFS` with a `-1.5 dBFS`
+true-peak ceiling.
 
 ## Provenance and acceptance
 

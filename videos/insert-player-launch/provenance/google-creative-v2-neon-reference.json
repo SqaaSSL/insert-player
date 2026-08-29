@@ -1,0 +1,101 @@
+{
+  "version": 2,
+  "project": "insert-player-launch",
+  "acceptance": "approved",
+  "creativeReference": {
+    "sourceFile": "Neon Arena.mp3",
+    "sourceSha256": "0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05",
+    "committed": false,
+    "published": false,
+    "analysisModel": "gemini-3.5-flash",
+    "analysisInputTokens": 7376,
+    "analysisTotalTokens": 10918,
+    "fingerprintFile": "references/neon-arena-creative-fingerprint-v1.json",
+    "fingerprintSha256": "d1d308588f5d876f4f14aafad7893b0a6fb7d40a29e38fb64f79b57144c68766",
+    "policy": "Transfer only tempo, meter, energy, instrumentation families, dynamics, and section shape. Do not copy melody, harmony, lyrics, motifs, artist identity, or exact sound effects."
+  },
+  "generatedMedia": [
+    {
+      "role": "instrumental music source",
+      "acceptance": "approved_for_mix",
+      "model": "lyria-3-pro",
+      "upstreamModel": "lyria-3-pro-preview",
+      "accessPath": "PixCLI through Meterkey and FAL",
+      "providerJobId": "fba8b4fb441459dbf95427474d12b6b9",
+      "meteredCostMicrocredits": 95000,
+      "promptFile": "prompts/lyria-launch-bed-v2-neon-reference.txt",
+      "promptSha256": "c9c933bfa37279a9d8ac5734fcbc65f6462dba60a0a002de80a57fecb21c7ee2",
+      "outputFile": "assets/generated/lyria-launch-bed-v2-neon-reference.mp3",
+      "outputSha256": "055bb7327811a0ee3132f68a0fba3c34c773965cd0ccdfda0637c2cc50d3cc6f",
+      "durationSeconds": 151.510167,
+      "published": false,
+      "retries": 0,
+      "fallbacks": 0
+    },
+    {
+      "role": "photo-to-fighter timing canary",
+      "acceptance": "rejected_for_final",
+      "model": "gemini-omni-1.1-flash",
+      "accessPath": "Gemini Interactions API",
+      "httpOutcome": 200,
+      "providerInteractionId": null,
+      "meteredCost": null,
+      "documentedCostEstimateUsd": 0.5,
+      "promptFile": "prompts/omni-photo-to-fighter-v2-neon-sync.txt",
+      "promptSha256": "8055b9a6fa913b8546e3668dda04f92afd7b86aea89910b70886698b49bcc8e8",
+      "generationInputSha256": [
+        "cc967a3b8ea923a107bf1f9b28e1ee712bfd87bfb21620057283da5c436dacb5",
+        "e2a040dc79afea0cc1a6e5be6c3b8fa65a1618d377e5f3d4ed9c6bdc10ae828b"
+      ],
+      "outputFile": "assets/generated/omni-photo-to-fighter-v2-neon-sync.mp4",
+      "outputSha256": "e32b3524c302e82d2758a605d82be45384f701baf020bd6fc87bb027484678e4",
+      "durationSeconds": 5.013,
+      "published": false,
+      "retries": 0,
+      "fallbacks": 0,
+      "acceptanceReason": "The generated motion and anatomy passed, but the end reference was the earlier burgundy-jacket concept rather than the immutable global Player One Champion. The deterministic canonical reveal remains in the final cut."
+    },
+    {
+      "role": "arcade announcer reused from v1",
+      "acceptance": "approved",
+      "model": "gemini-tts",
+      "upstreamModel": "gemini-3.1-flash-tts-preview",
+      "providerJobId": "83244fc18f9d4153eefd6c01b07b7d65",
+      "outputFile": "assets/generated/tts-announcer-v1.wav",
+      "outputSha256": "2a18513403537b25a0971600727ca59d8bd4adf44796c81bd747e8a7db95a0c3",
+      "durationSeconds": 3.4,
+      "published": false
+    }
+  ],
+  "localMix": {
+    "outputFile": "assets/generated/launch-mix-google-v2-neon-reference.wav",
+    "outputSha256": "3efb9c5339aec3860e56d3dd444411f05f00163d6f652da82f0bf7375e17360a",
+    "durationSeconds": 12,
+    "sources": [
+      "assets/generated/lyria-launch-bed-v2-neon-reference.mp3",
+      "assets/generated/tts-announcer-v1.wav",
+      "assets/launch-mix.wav"
+    ],
+    "buildScript": "scripts/build-launch-mix.mjs",
+    "buildScriptSha256": "1d3c41d869b3f8e0ec6636a6868d02d22614bde3c0fa38ddb642d0dd387e01d5",
+    "musicIntroSeconds": [0, 4.65],
+    "musicGrooveSourceSeconds": [13.24, 20.59],
+    "musicGrooveTimelineSeconds": [4.65, 12],
+    "integratedLoudnessLufs": -15.9,
+    "truePeakDbfs": -1.5
+  },
+  "finalRender": {
+    "sourceFile": "renders/insert-player-launch-neon-v2.mp4",
+    "publicFile": "../../public/assets/insert-player-launch-f57aa4fb.mp4",
+    "sha256": "f57aa4fb3027a1a40b766bc8055a53287fc1be997da4467b924662d4af992074",
+    "durationSeconds": 12,
+    "width": 1920,
+    "height": 1080,
+    "framesPerSecond": 30,
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "renderedIntegratedLoudnessLufs": -16.9,
+    "renderedTruePeakDbfs": -2.3,
+    "hyperframesVersion": "0.8.17"
+  }
+}

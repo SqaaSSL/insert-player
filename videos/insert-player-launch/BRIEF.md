@@ -26,14 +26,17 @@ not like an AI avatar advertisement or a software walkthrough.
 - `assets/generated/player-one-photo-start.png` - deterministic 16:9 start frame built from the exact source portrait.
 - `assets/generated/player-one-upright-canonical.png` - exact approved production upright cutout for Player One.
 - `assets/generated/player-one-final-frame.png` - deterministic arena composite using that exact cutout.
-- `assets/generated/lyria-launch-bed-v1.mp3` - private Lyria 3 Pro instrumental source composition.
+- `references/neon-arena-creative-fingerprint-v1.json` - private-reference fingerprint derived from the supplied Suno track; the source MP3 is not distributed.
+- `assets/generated/lyria-launch-bed-v2-neon-reference.mp3` - fully original private Lyria 3 Pro instrumental source composition.
 - `assets/generated/tts-announcer-v1.wav` - private Gemini TTS announcer line.
+- `assets/generated/omni-photo-to-fighter-v2-neon-sync.mp4` - private Omni timing canary, retained for audit but rejected from the final cut because its target was not the immutable global Champion frame.
 - `assets/fight-capture.mp4` - frozen, genuine production match starring Player One.
 
 ## Customizations
 
 - Borrow the structural idea from Hilo's product promos: real footage, a few crisp branded action beats, and a strong end card.
-- Preserve the original cabinet SFX, use Lyria for the music bed, and add only one short Gemini TTS announcer line.
+- Preserve the original cabinet SFX, use the original Lyria v2 composition for the music bed, and add only one short Gemini TTS announcer line.
+- Use only the reference track's high-level tempo, energy, instrumentation, and structural arc. Never ship it or reproduce its melody, harmony, motifs, lyrics, artist identity, or exact sound design.
 - Keep the transformation literal and readable: `YOUR PHOTO`, `YOUR FIGHTER`, `YOUR FIGHT`.
 
 ## Notes
@@ -44,4 +47,5 @@ not like an AI avatar advertisement or a software walkthrough.
 - Keep the production gameplay proof to roughly 3.2 seconds and feature the same Player One shown in the transformation.
 - Avoid franchise imitation, cartoon exaggeration, generic AI language, and slow cinematic choreography.
 - Generated media is private and single-candidate: no automatic retries, fallbacks, or publishing.
+- A generative transition may enter the final cut only when it preserves the exact global Champion. The current Omni v2 canary did not pass that gate, so the deterministic transformation remains authoritative.
 - Respect reduced-motion in the website hero even though the rendered promo itself is energetic.
