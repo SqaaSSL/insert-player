@@ -41,7 +41,7 @@ not like an AI avatar advertisement or a software walkthrough.
 - Use Insert Player branding only: P1, cabinet black, coin red, coin gold, CRT cream, and glass blue.
 - Never reproduce Hilo's logo, purple palette, typography, wording, action pills, or other proprietary brand elements.
 - Show real gameplay and real generated fighters. Do not fake a fight in motion graphics.
-- Keep the production gameplay proof to roughly 4.5 seconds and feature the same Player One shown in the transformation.
+- Keep the production gameplay proof to roughly 3.2 seconds and feature the same Player One shown in the transformation.
 - Avoid franchise imitation, cartoon exaggeration, generic AI language, and slow cinematic choreography.
 - Generated media is private and single-candidate: no automatic retries, fallbacks, or publishing.
 - Respect reduced-motion in the website hero even though the rendered promo itself is energetic.

@@ -16,8 +16,8 @@ The film moves from recognition to proof to action. Real media always outranks d
 
 - scene: A moving cabinet-light seam reveals the exact production Player One fighter generated from the same portrait.
 - voiceover: "Ready... Insert Player."
-- duration: 4.1s
-- poster: 3.55s
+- duration: 4.65s
+- poster: 4.1s
 - transition_in: cut
 - status: animated
 - src: compositions/frames/01-transform.html
@@ -38,14 +38,14 @@ roles: The portrait is the identity anchor; the electric seam is the transformat
 
 - Scene 1 (0.00-0.42s): Hold the exact source portrait and settle `YOUR PHOTO` in the upper-left safe area so recognition happens first.
 - Scene 2 (0.42-3.14s): Move a single red-and-gold cabinet seam from right to left, preserving the exact source portrait on the left while revealing the exact approved Player One upright cutout on the right. No generated intermediate can replace or redraw the fighter.
-- Scene 3 (3.14-4.10s): Hold the canonical fighter. `YOUR FIGHTER` lands on the right before the transition into real gameplay.
+- Scene 3 (3.14-4.65s): Hold the canonical fighter. `YOUR FIGHTER` lands on the right before the transition into real gameplay.
 
 ## Frame 2 — Your Fight
 
 - scene: The electric split opens into a genuine production match starring Player One.
 - voiceover: ""
-- duration: 4.45s
-- poster: 3.75s
+- duration: 3.25s
+- poster: 2.65s
 - transition_in: zoom-through 0.35s
 - status: animated
 - src: compositions/frames/02-fight.html
@@ -54,8 +54,8 @@ roles: The portrait is the identity anchor; the electric seam is the transformat
 - beat: excitement -> triumph
 - blueprint: device-surface-showcase
 - blueprint_adaptation: Full-bleed gameplay with no decorative device frame.
-- asset_candidates: assets/fight-capture.mp4 — 4.45-second production cut with Player One, the real HUD, generated stage, and a decisive exchange
-- sfx: .media/audio/sfx/sfx_004.mp3 at 3.75s
+- asset_candidates: assets/fight-capture.mp4 — 3.25-second production cut with Player One, the real HUD, generated stage, and a decisive exchange
+- sfx: .media/audio/sfx/sfx_004.mp3 at 2.65s
 
 narrativeRole: Cash in the promise: this is not an avatar or a still image. It is a playable character inside a real game.
 keyMessage: Your generated fighter actually fights.
@@ -65,14 +65,14 @@ roles: The fight capture is primary proof; the `YOUR FIGHT` label is a brief ori
 ### Video direction
 
 - Scene 1 (0.00-0.55s): Enter the physically trimmed production recording. The clip is full-bleed with no browser chrome, fake cursor, device shell, or decorative preview card. `YOUR FIGHT` lands briefly in the upper safe area, then reduces to a quiet label.
-- Scene 2 (0.55-3.75s): Keep only the strongest real exchange. The camera remains static and the HUD, fighters, and stage remain untouched evidence.
-- Scene 3 (3.75-4.45s): Preserve the decisive impact and hold just long enough to register before the CTA.
+- Scene 2 (0.55-2.65s): Keep only the strongest real exchange. The camera remains static and the HUD, fighters, and stage remain untouched evidence.
+- Scene 3 (2.65-3.25s): Preserve the decisive impact and hold just long enough to register before the CTA.
 
 ## Frame 3 — Insert Player
 
 - scene: The K.O. clears into the P1 cabinet mark, Insert Player wordmark, tagline, and URL.
 - voiceover: ""
-- duration: 3.45s
+- duration: 4.1s
 - poster: 2.75s
 - transition_in: squeeze DOWN 0.25s
 - status: animated
@@ -95,4 +95,4 @@ roles: The P1 outline is the brand ignition; the wordmark names the product; the
 - Scene 1 (0.00-0.58s): Clear the fight into cabinet black. Thin coin-gold and coin-red guide lines briefly trace the P1 insertion frame without becoming a decorative grid.
 - Scene 2 (0.18-1.24s): Assemble the official P1 mark, then reveal `INSERT PLAYER` beside it with a crisp left-to-right lockup build. No Hilo marks, colors, or phrasing.
 - Scene 3 (1.38-2.20s): Reveal `INSERT YOURSELF INTO THE GAME.` beneath the lockup in Space Grotesk. The line is supporting copy, not a second headline.
-- Scene 4 (2.38-3.45s): Land `INSERTPLAYER.AI` above the bottom caption keep-out with a short coin-red insertion bar. Hold the final lockup dead still for memorability.
+- Scene 4 (2.38-4.10s): Land `INSERTPLAYER.AI` above the bottom caption keep-out with a short coin-red insertion bar. Hold the final lockup dead still for memorability.
