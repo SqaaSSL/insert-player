@@ -7,6 +7,22 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, '..');
 const capturesDir = resolve(projectRoot, 'assets/captures');
 const captureSuffix = String(process.env.INSERT_PLAYER_CAPTURE_SUFFIX ?? '').trim();
+const captureIdOverrides = (() => {
+  const value = String(process.env.INSERT_PLAYER_CAPTURE_ID_OVERRIDES ?? '').trim();
+  if (!value) return {};
+
+  const parsed = JSON.parse(value);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('INSERT_PLAYER_CAPTURE_ID_OVERRIDES must be a JSON object');
+  }
+
+  return Object.fromEntries(Object.entries(parsed).map(([id, captureId]) => {
+    if (typeof captureId !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(captureId)) {
+      throw new Error(`Invalid capture ID override for ${id}`);
+    }
+    return [id, captureId];
+  }));
+})();
 const outputPath = resolve(
   process.argv[2] ?? resolve(projectRoot, 'assets/fight-montage-four-stages.mp4'),
 );
@@ -22,6 +38,12 @@ const fights = [
   { id: 'elon', expectedOpponent: 'Elon Musk' },
 ];
 
+const unknownOverride = Object.keys(captureIdOverrides)
+  .find((id) => !fights.some((fight) => fight.id === id));
+if (unknownOverride) {
+  throw new Error(`Unknown fight capture override: ${unknownOverride}`);
+}
+
 function firstDamageEvent(events) {
   return events.find((event) => {
     if (event.type !== 'asf-hud-state') return false;
@@ -32,7 +54,7 @@ function firstDamageEvent(events) {
 }
 
 const clips = fights.map(({ id, expectedOpponent }) => {
-  const captureId = `${id}${captureSuffix}`;
+  const captureId = captureIdOverrides[id] ?? `${id}${captureSuffix}`;
   const eventsPath = resolve(capturesDir, `${captureId}-events.json`);
   const masterPath = resolve(capturesDir, `${captureId}-master.webm`);
   const capture = JSON.parse(readFileSync(eventsPath, 'utf8'));
@@ -120,6 +142,7 @@ writeFileSync(
     outputFile: basename(outputPath),
     contentDurationSeconds: clips.length * clipDurationSeconds,
     captureSuffix,
+    captureIdOverrides,
     transitionHoldSeconds,
     totalDurationSeconds: clips.length * clipDurationSeconds + transitionHoldSeconds,
     leadInSeconds,
