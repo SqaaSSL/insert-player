@@ -1,0 +1,140 @@
+name: Deploy frontend only
+
+# Ships Pages (landing + app UI) without touching the Worker, D1, or any
+# Durable Object lifecycle. Use for frontend-only changes so they never
+# queue behind — or share risk with — Worker rollouts. Pages deployments
+# are immutable per-deploy, so rolling back is redeploying the previous
+# build.
+
+on:
+  workflow_dispatch:
+    inputs:
+      acknowledge_worker_drift:
+        description: >-
+          The Worker sources changed between the live Worker and this commit.
+          Confirm the frontend at this commit does not depend on undeployed
+          Worker APIs before shipping it alone.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  deploy-frontend:
+    name: Build, deploy, and smoke Pages only
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://insertplayer.ai
+    env:
+      VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
+      VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
+      VITE_PUBLIC_APP_NAME: Insert Player
+      VITE_PUBLIC_APP_SHORT_NAME: P1
+      VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+      VITE_GEMINI_IMAGE_MODEL_REPOSE: ${{ vars.VITE_GEMINI_IMAGE_MODEL_REPOSE }}
+      VITE_GEMINI_IMAGE_MODEL_UPRIGHT: ${{ vars.VITE_GEMINI_IMAGE_MODEL_UPRIGHT }}
+      VITE_GEMINI_IMAGE_MODEL_CROUCH: ${{ vars.VITE_GEMINI_IMAGE_MODEL_CROUCH }}
+      VITE_BG_REMOVAL_PROVIDER: ${{ vars.VITE_BG_REMOVAL_PROVIDER }}
+      VITE_INTRO_VIDEO_PROVIDER: ${{ vars.VITE_INTRO_VIDEO_PROVIDER }}
+      ASF_PUBLIC_APP_NAME: Insert Player
+      ASF_PUBLIC_APP_SHORT_NAME: P1
+      ASF_SOCIAL_CARD_PATH: /assets/social-card-v7.jpg
+      ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+      ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
+      ASF_FRONTEND_URL: ${{ vars.ASF_FRONTEND_URL }}
+      ASF_FRONTEND_ORIGIN: ${{ vars.ASF_FRONTEND_ORIGIN }}
+      ASF_PAGES_PROJECT_NAME: ${{ vars.ASF_PAGES_PROJECT_NAME }}
+      ASF_PAGES_BRANCH: main
+      ASF_CLOUDFLARE_ZONE_ID: ${{ vars.ASF_CLOUDFLARE_ZONE_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+            processor/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Install Worker dependencies
+        run: npm --prefix worker ci
+
+      - name: Install processor dependencies
+        run: npm --prefix processor ci
+
+      - name: Materialize brand clearance
+        env:
+          ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
+          BRAND_CLEARANCE_JSON: ${{ secrets.BRAND_CLEARANCE_JSON }}
+        run: |
+          if [ -z "$BRAND_CLEARANCE_JSON" ]; then
+            printf '%s\n' 'BRAND_CLEARANCE_JSON is required.' >&2
+            exit 1
+          fi
+          install -m 600 /dev/null "$ASF_BRAND_CLEARANCE_FILE"
+          printf '%s' "$BRAND_CLEARANCE_JSON" > "$ASF_BRAND_CLEARANCE_FILE"
+          node -e 'JSON.parse(require("node:fs").readFileSync(process.env.ASF_BRAND_CLEARANCE_FILE, "utf8"))'
+          printf '%s\n' "ASF_BRAND_CLEARANCE_FILE=$ASF_BRAND_CLEARANCE_FILE" >> "$GITHUB_ENV"
+
+      - name: Guard frontend/Worker contract drift
+        env:
+          ACKNOWLEDGE_WORKER_DRIFT: ${{ inputs.acknowledge_worker_drift == true && '1' || '0' }}
+        run: |
+          LIVE_SHA=$(curl -sf "$ASF_WORKER_HEALTH_URL" | grep -o '"tag":"prod-[a-f0-9]*' | sed 's/.*prod-//')
+          if [ -z "$LIVE_SHA" ]; then
+            printf '%s\n' 'Could not resolve the live Worker git SHA from /health.' >&2
+            exit 1
+          fi
+          printf 'Live Worker SHA: %s\n' "$LIVE_SHA"
+          if ! git cat-file -e "$LIVE_SHA^{commit}" 2>/dev/null; then
+            printf '%s\n' 'Live Worker SHA is not in this history; treating as drift.' >&2
+            CHANGED=worker-history-diverged
+          else
+            CHANGED=$(git diff --name-only "$LIVE_SHA"..HEAD -- worker/ wrangler.toml | head -40)
+          fi
+          if [ -n "$CHANGED" ] && [ "$ACKNOWLEDGE_WORKER_DRIFT" != "1" ]; then
+            printf '%s\n' 'Worker sources changed since the live Worker version:' >&2
+            printf '%s\n' "$CHANGED" >&2
+            printf '%s\n' 'A frontend built from this commit may call Worker APIs that are not deployed.' >&2
+            printf '%s\n' 'Re-run with acknowledge_worker_drift=true after confirming the frontend does not depend on them.' >&2
+            exit 1
+          fi
+
+      - name: Build, deploy, and smoke Pages
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Pages-only rollout: the FFmpeg/Container toolchain is untouched, so
+          # the video-compiler revalidation from the full pipeline is skipped.
+          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"
+        run: npm run deploy:frontend
+
+      - name: Publish deployment summary
+        run: |
+          printf '%s\n' '## Frontend-only production deployment' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '- Frontend: https://insertplayer.ai' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' '- Worker: untouched' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove temporary launch files
+        if: always()
+        env:
+          ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
+        run: rm -f "$ASF_BRAND_CLEARANCE_FILE"
