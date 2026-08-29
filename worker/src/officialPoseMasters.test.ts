@@ -15,6 +15,21 @@ describe('official pose masters', () => {
     ]);
   });
 
+  it.each([
+    ['hit', 4],
+    ['ko', 8],
+    ['victory', 8],
+  ])('pins the approved %s atlas for official Champion fighters', (animationName, frameCount) => {
+    const master = officialPoseMasterFor(animationName, 'champion', 'Approved fighter description');
+
+    expect(master?.id).toBe(`arcade-qa-pose-atlas-2026-v1:${animationName}`);
+    expect(master?.frames).toHaveLength(frameCount);
+    expect(master?.frames.every((frame) => (
+      frame.objectKey.includes(`/arcade-qa-pose-atlas-2026-v1/${animationName}/`)
+      && /^[a-f0-9]{64}$/.test(frame.sha256)
+    ))).toBe(true);
+  });
+
   it('never injects the atlas into personal, lower-tier, or unrelated generations', () => {
     expect(officialPoseMasterFor('jump', 'champion', undefined)).toBeNull();
     expect(officialPoseMasterFor('jump', 'contender', 'Approved fighter description')).toBeNull();
