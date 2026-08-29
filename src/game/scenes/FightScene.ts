@@ -112,7 +112,7 @@ export class FightScene extends Phaser.Scene {
   private stageId: StageThemeId | null = null;
   private customStageKey: string | null = null;
   private customStageLabel: string | null = null;
-  private resolvedStageId: StageThemeId = "dojo";
+  private resolvedStageId: StageThemeId = "insert-player-arena";
   private matchSeed = 1;
   private remix = 0;
   private p2Difficulty: number | null = null;
