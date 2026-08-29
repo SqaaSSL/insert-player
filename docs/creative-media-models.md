@@ -150,6 +150,12 @@ are present from the `4.65s` gameplay cut onward, under the existing fight
 effects. The build script verifies the private source SHA-256 before producing
 the derived mix.
 
+For the game runtime, the user subsequently selected the complete original
+`Neon Arena` recording as low-level battle music. The shipped runtime copy is
+`public/assets/audio/neon-arena-battle-v1.mp3`: embedded artwork and metadata
+are removed, while the original MP3 audio stream is preserved. This explicit
+runtime selection is separate from the Lyria-derived launch candidates above.
+
 The reproducible local arrangement is built with:
 
 ```bash

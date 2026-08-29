@@ -2749,7 +2749,165 @@
   }
 }
 
+@keyframes fight-loader-mark {
+  0%, 100% {
+    filter: drop-shadow(0 0 8px rgba(255, 206, 58, 0.35));
+    transform: scale(0.96);
+  }
+  50% {
+    filter: drop-shadow(0 0 22px rgba(255, 42, 42, 0.72));
+    transform: scale(1);
+  }
+}
+
+@keyframes fight-loader-meter {
+  0%, 24% {
+    opacity: 0.22;
+    transform: scaleY(0.45);
+  }
+  45%, 70% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  100% {
+    opacity: 0.22;
+    transform: scaleY(0.45);
+  }
+}
+
 @layer components {
+  /* ============================================================
+     FIGHT LOADING CURTAIN (React-owned shell before Phaser ready)
+     ============================================================ */
+
+  .fight-loader {
+    @apply absolute inset-0 z-50 isolate overflow-hidden bg-asf-bg-deep;
+  }
+
+  .fight-loader__panel {
+    @apply absolute inset-y-0 w-[56%] overflow-hidden
+           [transition:transform_700ms_cubic-bezier(0.76,0,0.24,1)]
+           motion-reduce:duration-150;
+  }
+
+  .fight-loader__panel--p1 {
+    @apply left-0 border-r-2 border-asf-gold-deep
+           [clip-path:polygon(0_0,100%_0,88%_100%,0_100%)]
+           [background:repeating-linear-gradient(90deg,transparent_0,transparent_72px,rgba(255,206,58,0.035)_72px,rgba(255,206,58,0.035)_73px),linear-gradient(135deg,#250506_0%,#08050d_62%,#04040d_100%)];
+  }
+
+  .fight-loader__panel--p2 {
+    @apply right-0 border-l-2 border-asf-gold-deep
+           [clip-path:polygon(12%_0,100%_0,100%_100%,0_100%)]
+           [background:repeating-linear-gradient(90deg,transparent_0,transparent_72px,rgba(79,179,255,0.035)_72px,rgba(79,179,255,0.035)_73px),linear-gradient(225deg,#171033_0%,#08050d_62%,#04040d_100%)];
+  }
+
+  .fight-loader.is-opening .fight-loader__panel--p1 {
+    @apply [transform:translateX(-105%)];
+  }
+
+  .fight-loader.is-opening .fight-loader__panel--p2 {
+    @apply [transform:translateX(105%)];
+  }
+
+  .fight-loader__panel-label {
+    @apply absolute bottom-6 font-arcade text-[64px] leading-none text-asf-cream opacity-[0.045]
+           sm:text-[84px];
+  }
+
+  .fight-loader__panel--p1 .fight-loader__panel-label {
+    @apply left-8;
+  }
+
+  .fight-loader__panel--p2 .fight-loader__panel-label {
+    @apply right-8;
+  }
+
+  .fight-loader__scanlines {
+    @apply pointer-events-none absolute inset-0 z-10 opacity-45
+           [background:repeating-linear-gradient(0deg,transparent_0,transparent_2px,rgba(255,255,255,0.035)_2px,rgba(255,255,255,0.035)_3px)];
+  }
+
+  .fight-loader__content {
+    @apply absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 px-6 text-center
+           opacity-100 [transition:opacity_220ms_ease-out,transform_220ms_ease-out];
+  }
+
+  .fight-loader.is-opening .fight-loader__content {
+    @apply scale-90 opacity-0;
+  }
+
+  .fight-loader__mark {
+    @apply h-[78px] w-[78px] [animation:fight-loader-mark_1500ms_ease-in-out_infinite]
+           motion-reduce:animate-none;
+  }
+
+  .fight-loader__brand {
+    @apply font-arcade text-[20px] leading-tight text-asf-cream
+           [text-shadow:0_3px_0_rgba(0,0,0,0.9),0_0_20px_rgba(255,42,42,0.42)]
+           sm:text-[28px];
+  }
+
+  .fight-loader__matchup {
+    @apply grid w-full max-w-[720px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]
+           items-center gap-3 font-arcade text-[11px] leading-relaxed text-asf-muted
+           sm:gap-5 sm:text-[13px];
+  }
+
+  .fight-loader__matchup span {
+    @apply min-w-0 break-words;
+  }
+
+  .fight-loader__matchup span:first-child {
+    @apply text-right text-asf-red;
+  }
+
+  .fight-loader__matchup span:last-child {
+    @apply text-left text-asf-blue;
+  }
+
+  .fight-loader__matchup b {
+    @apply text-[15px] text-asf-gold;
+  }
+
+  .fight-loader__status {
+    @apply font-arcade text-[10px] text-asf-gold;
+  }
+
+  .fight-loader__status--error {
+    @apply text-asf-red;
+  }
+
+  .fight-loader__meter {
+    @apply flex h-5 items-end gap-1.5;
+  }
+
+  .fight-loader__meter i {
+    @apply h-4 w-2 origin-bottom bg-asf-gold not-italic
+           [animation:fight-loader-meter_900ms_ease-in-out_infinite]
+           motion-reduce:animate-none;
+  }
+
+  .fight-loader__meter i:nth-child(2) {
+    @apply [animation-delay:90ms];
+  }
+
+  .fight-loader__meter i:nth-child(3) {
+    @apply [animation-delay:180ms];
+  }
+
+  .fight-loader__meter i:nth-child(4) {
+    @apply [animation-delay:270ms];
+  }
+
+  .fight-loader__meter i:nth-child(5) {
+    @apply [animation-delay:360ms];
+  }
+
+  .fight-loader__exit {
+    @apply mt-1;
+  }
+
   /* ============================================================
      FIGHT HUD (React DOM chrome above the Phaser canvas)
      ============================================================ */
