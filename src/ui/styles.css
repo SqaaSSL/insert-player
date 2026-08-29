@@ -189,7 +189,8 @@
     @apply sticky top-0 z-50 flex min-h-[60px] flex-wrap items-center gap-x-6 gap-y-2
            border-b-2 border-asf-gold-deep bg-[rgba(5,5,12,0.94)] px-5 py-2
            shadow-[0_10px_24px_rgba(0,0,0,0.38)] [backdrop-filter:blur(6px)]
-           pt-[max(8px,env(safe-area-inset-top))];
+           pt-[max(8px,env(safe-area-inset-top))]
+           max-[640px]:gap-x-3 max-[640px]:gap-y-0 max-[640px]:px-4;
   }
 
   .app-header__brand {
@@ -204,7 +205,9 @@
   .app-header__nav a {
     @apply inline-flex min-h-11 items-center border-b-2 border-transparent px-3
            font-arcade text-[11px] uppercase tracking-[0.1em] text-asf-muted no-underline
-           transition-colors duration-150 hover:text-asf-gold-bright;
+           transition-colors duration-150 hover:text-asf-gold-bright
+           max-[640px]:min-h-9 max-[640px]:px-2 max-[640px]:text-[10px]
+           max-[640px]:tracking-[0.04em];
   }
 
   .app-header__nav a[aria-current="page"] {
@@ -616,18 +619,18 @@
   .landing-hero {
     @apply relative isolate h-[calc(100svh-116px)] min-h-[560px] max-h-[800px]
            overflow-hidden border-b-2 border-asf-gold-deep bg-asf-bg-0
-           max-[640px]:h-[calc(100svh-160px)] max-[640px]:min-h-[480px]
-           max-[640px]:max-h-[550px];
+           max-[640px]:h-auto max-[640px]:min-h-0 max-[640px]:max-h-none;
   }
 
   .landing-hero__image {
     @apply absolute inset-0 -z-20 h-full w-full object-cover object-center
-           max-[640px]:h-[44%] max-[640px]:object-contain max-[640px]:object-top;
+           max-[640px]:static max-[640px]:h-[240px] max-[640px]:object-cover
+           max-[640px]:object-top;
   }
 
   .landing-hero__shade {
     @apply absolute inset-x-0 bottom-0 -z-10 h-[43%] bg-[rgba(4,4,13,0.88)]
-           max-[640px]:h-[56%];
+           max-[640px]:hidden;
   }
 
   .landing-hero__labels {
@@ -637,10 +640,32 @@
   }
 
   .landing-hero__copy {
-    @apply absolute inset-x-0 bottom-0 mx-auto flex w-full max-w-[1480px] flex-col
-           items-start gap-4 px-[5vw] pb-8 pt-7 max-[640px]:gap-3 max-[640px]:px-5 max-[640px]:pb-6;
-    @apply max-[640px]:top-[44%] max-[640px]:bottom-auto max-[640px]:h-[56%]
-           max-[640px]:justify-center max-[640px]:py-5;
+    @apply absolute inset-x-0 bottom-0 mx-auto grid w-full max-w-[1480px]
+           grid-cols-[minmax(0,1fr)_minmax(280px,420px)] items-end gap-8
+           px-[5vw] pb-8 pt-7;
+    @apply max-[900px]:grid-cols-1;
+    @apply max-[640px]:static max-[640px]:gap-4 max-[640px]:px-5 max-[640px]:py-6;
+  }
+
+  .landing-hero__copytext {
+    @apply flex flex-col items-start gap-4 max-[640px]:gap-3;
+  }
+
+  /* GIF-style silent gameplay loop framed like a cabinet screen. */
+  .landing-hero__fight {
+    @apply relative z-10 overflow-hidden rounded-[6px] border-2 border-asf-gold-deep
+           bg-asf-well shadow-[0_10px_0_rgba(0,0,0,0.6)]
+           max-[900px]:max-w-[520px];
+  }
+
+  .landing-hero__fight-label {
+    @apply absolute left-0 top-0 z-10 rounded-br-[6px] border-b-2 border-r-2
+           border-asf-gold-deep bg-[rgba(5,5,12,0.92)] px-3 py-2 font-arcade
+           text-[10px] uppercase tracking-[0.08em] text-asf-gold-bright;
+  }
+
+  .landing-hero__fight-video {
+    @apply block aspect-video w-full object-cover;
   }
 
   .landing-hero__copy h1 {

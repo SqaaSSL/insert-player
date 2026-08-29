@@ -8,6 +8,10 @@ interface LandingPageProps {
 
 const TRANSFORMATION_IMAGE = '/assets/landing-transformation.webp';
 const LAUNCH_VIDEO = '/assets/insert-player-launch-02541fe4.mp4';
+// GIF-style silent gameplay loop (~200 KB): real production footage, cut from
+// the launch capture. The full 12s film with audio stays in the proof section.
+const FIGHT_LOOP_VIDEO = '/assets/landing-fight-loop-77974cfb.mp4';
+const FIGHT_LOOP_POSTER = '/assets/landing-fight-poster-90b5173e.jpg';
 
 export function LandingPage({
   onCreateFighter,
@@ -29,20 +33,37 @@ export function LandingPage({
           <span>Your fighter</span>
         </div>
         <div className="landing-hero__copy">
-          <h1 id="landing-title">Insert Player</h1>
-          <p>
-            Turn one photo into a fighter you can actually play. Build your roster,
-            enter the arcade, and keep every version across devices.
-          </p>
-          <div className="landing-hero__actions">
-            <Button variant="primary" size="lg" onClick={onCreateFighter}>
-              Create fighter
-            </Button>
-            <Button variant="ghost" size="lg" onClick={onOpenArcade}>
-              Enter arcade
-            </Button>
+          <div className="landing-hero__copytext">
+            <h1 id="landing-title">Insert Player</h1>
+            <p>
+              Turn one photo into a fighter you can actually play. Build your roster,
+              enter the arcade, and keep every version across devices.
+            </p>
+            <div className="landing-hero__actions">
+              <Button variant="primary" size="lg" onClick={onCreateFighter}>
+                Create fighter
+              </Button>
+              <Button variant="ghost" size="lg" onClick={onOpenArcade}>
+                Enter arcade
+              </Button>
+            </div>
+            <p className="landing-hero__note">Your first Rookie fighter is included.</p>
           </div>
-          <p className="landing-hero__note">Your first Rookie fighter is included.</p>
+          <div className="landing-hero__fight">
+            <span className="landing-hero__fight-label" aria-hidden="true">Your fight</span>
+            <video
+              className="landing-hero__fight-video"
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="auto"
+              poster={FIGHT_LOOP_POSTER}
+              aria-label="Silent looping clip of real Insert Player gameplay"
+            >
+              <source src={FIGHT_LOOP_VIDEO} type="video/mp4" />
+            </video>
+          </div>
         </div>
       </section>
 
