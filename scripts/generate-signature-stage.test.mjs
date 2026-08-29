@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  backendAuthHeaders,
   parseGeminiStageImage,
   validateStagePublicationRequest,
 } from './generate-signature-stage.mjs';
@@ -33,6 +34,15 @@ describe('signature stage production generator', () => {
       .toThrow('Stage model must be gemini-3.1-flash-image');
     expect(() => validateStagePublicationRequest({ ...validRequest, sourceMode: 'inspire' }))
       .toThrow('Only transform-scene publication is allowed');
+  });
+
+  it('uses the established Clerk backend bridge for server-to-server requests', () => {
+    expect(backendAuthHeaders('jwt', 'b'.repeat(32))).toEqual({
+      Authorization: 'Bearer jwt',
+      'X-Insert-Player-Admin-Seed': 'clerk-backend',
+      'X-Insert-Player-Clerk-Backend-Auth': 'b'.repeat(32),
+    });
+    expect(() => backendAuthHeaders('jwt', 'short')).toThrow('bridge secret is invalid');
   });
 
   it('accepts exactly one supported image from Gemini', () => {
