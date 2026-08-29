@@ -464,6 +464,7 @@ export class Fighter {
       if (input.guard) {
         this.setState(FighterState.BLOCK);
         this.crouchBlocking = false;
+        this.vx = 0;
       } else {
         this.setState(FighterState.WALK_BACKWARD);
         this.vx = this.facingRight ? -WALK_SPEED : WALK_SPEED;
