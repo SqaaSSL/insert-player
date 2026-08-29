@@ -2153,12 +2153,19 @@ export function geminiOfficialPoseGuideCells(
   poseMasterId: string | undefined,
   poseGuideBase64s: string[] | undefined,
 ): string[] | null {
+  const approvedPoseMasterIds: Readonly<Record<string, string>> = {
+    jump: 'arcade-qa-pose-atlas-2026-v1:jump',
+    hit: 'arcade-qa-pose-atlas-2026-v1:hit',
+    ko: 'arcade-qa-pose-atlas-2026-v1:ko',
+    victory: 'arcade-qa-pose-atlas-2026-v1:victory',
+  };
   const hasPoseMasterInput = poseMasterId !== undefined || poseGuideBase64s !== undefined;
   if (!hasPoseMasterInput) return null;
   if (!officialDescription?.trim()) {
     throw new GeminiOfficialSpriteQualityError('Official pose guides require an approved character brief');
   }
-  if (animName !== 'jump') {
+  const approvedPoseMasterId = approvedPoseMasterIds[animName];
+  if (!approvedPoseMasterId || poseMasterId !== approvedPoseMasterId) {
     throw new GeminiOfficialSpriteQualityError('The supplied official pose master is not approved for this animation');
   }
   if (!poseMasterId?.trim() || !Array.isArray(poseGuideBase64s)) {
