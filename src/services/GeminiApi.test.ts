@@ -5,6 +5,7 @@ import {
   geminiContentBlockReason,
   geminiFinishReasonBlockReason,
   geminiOfficialCorrectionUsesCanonicalPoseGuide,
+  geminiOfficialPoseGuideCells,
   geminiOfficialFrameFramingValidation,
   geminiOfficialFramingRecoveryInsetLayout,
   geminiOfficialFramingRecoveryPrompt,
@@ -21,6 +22,32 @@ import {
 import { getAnimationProfile, JUMP_ANIMATION_MOTION } from './AnimationProfiles';
 
 describe('Gemini content-block handling', () => {
+  it('accepts an immutable official jump guide set without rewriting it', () => {
+    const guides = Array.from({ length: 4 }, (_, index) => `pose-${index}-${'x'.repeat(32)}`);
+
+    expect(geminiOfficialPoseGuideCells(
+      'jump',
+      4,
+      'Approved fighter description',
+      'arcade-qa-pose-atlas-2026-v1:jump',
+      guides,
+    )).toEqual(guides);
+  });
+
+  it('rejects pose-master injection outside the approved official jump contract', () => {
+    const guides = Array.from({ length: 4 }, (_, index) => `pose-${index}-${'x'.repeat(32)}`);
+
+    expect(() => geminiOfficialPoseGuideCells(
+      'jump', 4, undefined, 'atlas:jump', guides,
+    )).toThrow('approved character brief');
+    expect(() => geminiOfficialPoseGuideCells(
+      'idle', 4, 'Approved fighter description', 'atlas:jump', guides,
+    )).toThrow('not approved for this animation');
+    expect(() => geminiOfficialPoseGuideCells(
+      'jump', 4, 'Approved fighter description', 'atlas:jump', guides.slice(0, 3),
+    )).toThrow('expected 4 frames');
+  });
+
   it('describes the vertical-movement scaffold without known blocked motion terms', () => {
     const promptText = [
       JUMP_ANIMATION_MOTION,

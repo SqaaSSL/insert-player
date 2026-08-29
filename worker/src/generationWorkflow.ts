@@ -41,6 +41,7 @@ import {
   type ReviewedCanonicalSourceName,
   type SealedReviewedCanonicalSources,
 } from './reviewedCanonicalSources';
+import { officialPoseMasterFor } from './officialPoseMasters';
 
 interface FighterGenerationParams {
   jobId: string;
@@ -196,6 +197,32 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     const object = await this.env.SPRITES.get(key);
     if (!object) throw new Error('Required generation asset is missing');
     return object.arrayBuffer();
+  }
+
+  private async loadOfficialPoseMaster(
+    job: GenerationJob,
+    animation: AnimationDefinition,
+    generationPrompt: string | undefined,
+  ): Promise<{ id: string; frameBase64s: string[] } | null> {
+    const master = officialPoseMasterFor(animation.name, job.tier, generationPrompt);
+    if (!master) return null;
+    if (master.frames.length !== animation.frames) {
+      throw new NonRetryableError(
+        `Official pose master ${master.id} has ${master.frames.length} frames; expected ${animation.frames}`,
+      );
+    }
+
+    const frameBase64s = await Promise.all(master.frames.map(async (frame) => {
+      const bytes = await this.loadAssetBytes(frame.objectKey);
+      const actualHash = await hashString(bytes);
+      if (actualHash !== frame.sha256) {
+        throw new NonRetryableError(
+          `Official pose master ${master.id} failed immutable hash verification`,
+        );
+      }
+      return arrayBufferToBase64(bytes);
+    }));
+    return { id: master.id, frameBase64s };
   }
 
   private async runVideoFlow(
@@ -565,6 +592,11 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     const normalizationReference = isCrouchFamily && sources.crouchNormalizationReference?.baselineRatio
       ? { baselineRatio: sources.crouchNormalizationReference.baselineRatio }
       : undefined;
+    const officialPoseMaster = await this.loadOfficialPoseMaster(
+      job,
+      animation,
+      generationPrompt,
+    );
     const result = await this.callProcessor<ProcessorSpriteResult>(job, '/v1/generate-sprite', {
       requestScope: `job:${requireArtifactRunId(job)}:sprite:${animation.name}`,
       tier: job.tier,
@@ -573,6 +605,8 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       secondaryBase64: secondaryKey ? await this.loadAssetBase64(secondaryKey) : undefined,
       generationPrompt,
       normalizationReference,
+      officialPoseMasterId: officialPoseMaster?.id,
+      officialPoseGuideBase64s: officialPoseMaster?.frameBase64s,
     });
     const persisted = await persistGeneratedSprite(this.env, {
       jobId: job.id,
