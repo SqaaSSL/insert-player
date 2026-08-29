@@ -10,7 +10,7 @@ const TRANSFORMATION_IMAGE = '/assets/landing-transformation.webp';
 const LAUNCH_VIDEO = '/assets/insert-player-launch-bb1325da.mp4';
 // GIF-style silent gameplay loop (~200 KB): real production footage, cut from
 // the launch capture. The full film with audio stays in the proof section.
-const FIGHT_LOOP_VIDEO = '/assets/landing-fight-loop-3e034726.mp4?v=71f8030';
+const FIGHT_LOOP_VIDEO = '/assets/landing-fight-loop-e40898d3.mp4';
 const FIGHT_LOOP_POSTER = '/assets/landing-fight-poster-90b5173e.jpg';
 const PANEL_PHOTO = '/assets/landing-panel-photo-b7ad6ddc.webp';
 const PANEL_FIGHTER = '/assets/landing-panel-fighter-c2d0a569.webp';
