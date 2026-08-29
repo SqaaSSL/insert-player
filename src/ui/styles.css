@@ -2797,6 +2797,58 @@
   }
 }
 
+@keyframes fight-loader-fighter-p1 {
+  from {
+    opacity: 0;
+    filter: blur(14px) brightness(1.8);
+    transform: translateX(-22%) scale(1.08);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0) brightness(1);
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes fight-loader-fighter-p2 {
+  from {
+    opacity: 0;
+    filter: blur(14px) brightness(1.8);
+    transform: translateX(22%) scale(1.08);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0) brightness(1);
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes fight-loader-vs-slam {
+  0% {
+    opacity: 0;
+    transform: rotate(-8deg) scale(2.8);
+  }
+  58% {
+    opacity: 1;
+    transform: rotate(2deg) scale(0.88);
+  }
+  100% {
+    opacity: 1;
+    transform: rotate(-4deg) scale(1);
+  }
+}
+
+@keyframes fight-loader-slash {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) rotate(7deg) scaleY(0);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) rotate(7deg) scaleY(1);
+  }
+}
+
 @layer components {
   /* ============================================================
      FIGHT LOADING CURTAIN (React-owned shell before Phaser ready)
@@ -2832,6 +2884,38 @@
     @apply [transform:translateX(105%)];
   }
 
+  .fight-loader__energy {
+    @apply pointer-events-none absolute inset-0 z-[2]
+           [background:linear-gradient(118deg,rgba(255,42,42,0.18),transparent_42%),linear-gradient(298deg,rgba(79,179,255,0.2),transparent_42%)];
+  }
+
+  .fight-loader__energy::before,
+  .fight-loader__energy::after {
+    @apply absolute h-[2px] w-[65vw] bg-current opacity-65 content-['']
+           shadow-[0_0_34px_currentColor];
+  }
+
+  .fight-loader__energy::before {
+    @apply -left-[8%] top-[24%] -rotate-[9deg] text-asf-red;
+  }
+
+  .fight-loader__energy::after {
+    @apply -right-[8%] top-[72%] -rotate-[9deg] text-asf-blue;
+  }
+
+  .fight-loader__slash {
+    @apply pointer-events-none absolute -top-[18%] bottom-[-18%] left-1/2 z-[18]
+           w-[6px] origin-center bg-asf-cream
+           shadow-[-14px_0_36px_rgba(255,42,42,0.78),14px_0_36px_rgba(79,179,255,0.78)]
+           [animation:fight-loader-slash_520ms_420ms_cubic-bezier(0.16,1,0.3,1)_both]
+           motion-reduce:animate-none;
+  }
+
+  .fight-loader.is-opening .fight-loader__energy,
+  .fight-loader.is-opening .fight-loader__slash {
+    @apply opacity-0 [transition:opacity_180ms_ease-out];
+  }
+
   .fight-loader__panel-label {
     @apply absolute bottom-6 font-arcade text-[64px] leading-none text-asf-cream opacity-[0.045]
            sm:text-[84px];
@@ -2850,8 +2934,96 @@
            [background:repeating-linear-gradient(0deg,transparent_0,transparent_2px,rgba(255,255,255,0.035)_2px,rgba(255,255,255,0.035)_3px)];
   }
 
+  .fight-loader__stage {
+    @apply absolute inset-x-0 top-[7%] z-20 flex flex-col items-center gap-2 px-6 text-center
+           [transition:opacity_180ms_ease-out,transform_180ms_ease-out];
+  }
+
+  .fight-loader__stage span {
+    @apply font-arcade text-[8px] text-asf-muted sm:text-[10px];
+  }
+
+  .fight-loader__stage strong {
+    @apply max-w-[82vw] break-words font-arcade text-[11px] leading-relaxed text-asf-gold
+           [text-shadow:0_3px_0_rgba(0,0,0,0.88)] sm:text-[13px];
+  }
+
+  .fight-loader__fighters {
+    @apply pointer-events-none absolute inset-0 z-[6] flex;
+  }
+
+  .fight-loader__fighter {
+    @apply relative h-full min-w-0 flex-1 overflow-hidden;
+  }
+
+  .fight-loader__fighter--p1 {
+    @apply [animation:fight-loader-fighter-p1_680ms_80ms_cubic-bezier(0.16,1,0.3,1)_both]
+           motion-reduce:animate-none;
+  }
+
+  .fight-loader__fighter--p2 {
+    @apply [animation:fight-loader-fighter-p2_680ms_150ms_cubic-bezier(0.16,1,0.3,1)_both]
+           motion-reduce:animate-none;
+  }
+
+  .fight-loader.is-opening .fight-loader__fighter--p1 {
+    @apply -translate-x-full opacity-0 [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_160ms_ease-out];
+  }
+
+  .fight-loader.is-opening .fight-loader__fighter--p2 {
+    @apply translate-x-full opacity-0 [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_160ms_ease-out];
+  }
+
+  .fight-loader__figure {
+    @apply absolute inset-x-[4%] bottom-[-7%] top-[13%] flex items-end justify-center;
+  }
+
+  .fight-loader__figure-img {
+    @apply h-full w-full object-contain object-bottom
+           [filter:drop-shadow(0_22px_28px_rgba(0,0,0,0.68))];
+  }
+
+  .fight-loader__fighter--p2 .fight-loader__figure-img {
+    @apply -scale-x-100;
+  }
+
+  .fight-loader__figure-fallback {
+    @apply mb-[12%] font-arcade text-[clamp(120px,28vw,390px)] leading-none text-asf-cream opacity-[0.06];
+  }
+
+  .fight-loader__player-label,
+  .fight-loader__fighter-name {
+    @apply absolute z-10 font-arcade [text-shadow:0_4px_0_rgba(0,0,0,0.92)];
+  }
+
+  .fight-loader__player-label {
+    @apply bottom-[19%] text-[8px] text-asf-muted sm:text-[10px];
+  }
+
+  .fight-loader__fighter-name {
+    @apply bottom-[9%] max-w-[42vw] break-words text-[clamp(13px,2.2vw,28px)] leading-relaxed text-asf-cream;
+  }
+
+  .fight-loader__fighter--p1 .fight-loader__player-label,
+  .fight-loader__fighter--p1 .fight-loader__fighter-name {
+    @apply left-[7%] text-left;
+  }
+
+  .fight-loader__fighter--p2 .fight-loader__player-label,
+  .fight-loader__fighter--p2 .fight-loader__fighter-name {
+    @apply right-[7%] text-right;
+  }
+
+  .fight-loader__fighter--p1 .fight-loader__fighter-name {
+    @apply text-asf-red;
+  }
+
+  .fight-loader__fighter--p2 .fight-loader__fighter-name {
+    @apply text-asf-blue;
+  }
+
   .fight-loader__content {
-    @apply absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 px-6 text-center
+    @apply pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 px-6 text-center
            opacity-100 [transition:opacity_220ms_ease-out,transform_220ms_ease-out];
   }
 
@@ -2860,7 +3032,7 @@
   }
 
   .fight-loader__mark {
-    @apply h-[78px] w-[78px] [animation:fight-loader-mark_1500ms_ease-in-out_infinite]
+    @apply h-[62px] w-[62px] [animation:fight-loader-mark_1500ms_ease-in-out_infinite]
            motion-reduce:animate-none;
   }
 
@@ -2870,30 +3042,27 @@
            sm:text-[28px];
   }
 
-  .fight-loader__matchup {
-    @apply grid w-full max-w-[720px] grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]
-           items-center gap-3 font-arcade text-[11px] leading-relaxed text-asf-muted
-           sm:gap-5 sm:text-[13px];
+  .fight-loader__vs {
+    @apply flex items-center font-arcade text-[clamp(34px,6vw,72px)] leading-none text-asf-cream
+           [animation:fight-loader-vs-slam_480ms_520ms_cubic-bezier(0.16,1,0.3,1)_both]
+           [filter:drop-shadow(0_8px_14px_rgba(0,0,0,0.78))]
+           motion-reduce:animate-none;
   }
 
-  .fight-loader__matchup span {
-    @apply min-w-0 break-words;
+  .fight-loader__vs i {
+    @apply not-italic;
   }
 
-  .fight-loader__matchup span:first-child {
-    @apply text-right text-asf-red;
+  .fight-loader__vs i:first-child {
+    @apply text-asf-red;
   }
 
-  .fight-loader__matchup span:last-child {
-    @apply text-left text-asf-blue;
-  }
-
-  .fight-loader__matchup b {
-    @apply text-[15px] text-asf-gold;
+  .fight-loader__vs i:last-child {
+    @apply text-asf-blue;
   }
 
   .fight-loader__status {
-    @apply font-arcade text-[10px] text-asf-gold;
+    @apply mt-2 font-arcade text-[9px] text-asf-gold;
   }
 
   .fight-loader__status--error {
@@ -2927,7 +3096,7 @@
   }
 
   .fight-loader__exit {
-    @apply mt-1;
+    @apply pointer-events-auto mt-1;
   }
 
   /* ============================================================
