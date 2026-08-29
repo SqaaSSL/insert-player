@@ -4,6 +4,7 @@ import {
   MATCH_ACTION_EVENT,
   MATCH_ACTIONS_VISIBILITY_EVENT,
   MATCH_COMPLETE_EVENT,
+  PAUSE_EVENT,
   NET_STATE_EVENT,
   RUNTIME_READY_EVENT,
   type MatchAction,
@@ -63,6 +64,14 @@ function NetStatusBadge({ state }: { state: NetStateDetail }) {
 }
 
 export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageProps) {
+  const [paused, setPaused] = useState(false);
+  const onlineMatch = Boolean(launchTarget.data.online);
+
+  const setPauseState = (next: boolean) => {
+    setPaused(next);
+    window.dispatchEvent(new CustomEvent(PAUSE_EVENT, { detail: { paused: next } }));
+  };
+
   const [matchActionsVisible, setMatchActionsVisible] = useState(false);
   const [netState, setNetState] = useState<NetStateDetail | null>(null);
   const online = launchTarget.data.online ?? null;
@@ -341,6 +350,37 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
           <button type="button" className="match-actions__button" onClick={() => chooseMatchAction('menu')}>
             Menu
           </button>
+        </div>
+      )}
+      {!onlineMatch && !matchActionsVisible && !paused && (
+        <button
+          type="button"
+          className="fight-pause-button"
+          aria-label="Pause"
+          onClick={() => setPauseState(true)}
+        >
+          <span aria-hidden="true" />
+          <span aria-hidden="true" />
+        </button>
+      )}
+      {paused && (
+        <div className="fight-pause-overlay" role="dialog" aria-label="Game paused">
+          <p className="fight-pause-overlay__title">Paused</p>
+          <div className="fight-pause-overlay__actions">
+            <button type="button" className="asf-btn asf-btn--primary" onClick={() => setPauseState(false)}>
+              Resume
+            </button>
+            <button
+              type="button"
+              className="asf-btn asf-btn--ghost"
+              onClick={() => {
+                setPauseState(false);
+                onExit();
+              }}
+            >
+              Quit
+            </button>
+          </div>
         </div>
       )}
       <FightControlsHint />

@@ -61,6 +61,7 @@ export const MATCH_ACTIONS_VISIBILITY_EVENT = 'asf-match-actions-visibility';
 export const HUD_STATE_EVENT = 'asf-hud-state';
 export const ANNOUNCE_EVENT = 'asf-announce';
 export const INTRO_STATE_EVENT = 'asf-intro';
+export const PAUSE_EVENT = 'asf-pause';
 export const NET_STATE_EVENT = 'asf-net-state';
 export const RUNTIME_READY_EVENT = 'asf-runtime-ready';
 
@@ -128,6 +129,10 @@ export interface HudStateDetail {
   matchLabel: string;
 }
 
+export interface PauseDetail {
+  paused: boolean;
+}
+
 export type AnnounceKind = 'round' | 'fight' | 'ko' | 'double_ko' | 'draw' | 'wins';
 
 export interface AnnounceDetail {
@@ -160,6 +165,7 @@ declare global {
     [INTRO_STATE_EVENT]: CustomEvent<IntroStateDetail>;
     [NET_STATE_EVENT]: CustomEvent<NetStateDetail>;
     [RUNTIME_READY_EVENT]: CustomEvent<RuntimeReadyDetail>;
+    [PAUSE_EVENT]: CustomEvent<PauseDetail>;
   }
 }
 

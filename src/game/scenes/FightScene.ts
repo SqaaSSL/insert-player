@@ -44,6 +44,7 @@ import {
   getMatchLabel,
   HUD_STATE_EVENT,
   INTRO_STATE_EVENT,
+  PAUSE_EVENT,
   MATCH_ACTION_EVENT,
   MATCH_ACTIONS_VISIBILITY_EVENT,
   MATCH_COMPLETE_EVENT,
@@ -111,6 +112,13 @@ export class FightScene extends Phaser.Scene {
   private sound_mgr!: SoundManager;
 
   private accumulator = 0;
+  /** Offline pause: freezes the fixed-timestep loop. Never set online. */
+  private paused = false;
+  private onPauseEvent = (event: WindowEventMap[typeof PAUSE_EVENT]): void => {
+    if (this.rollback) return;
+    this.paused = event.detail.paused;
+    if (this.paused) this.accumulator = 0;
+  };
   private isVsAI = true;
   private cpuVsCpu = false;
 
@@ -330,6 +338,10 @@ export class FightScene extends Phaser.Scene {
     this.cameras.main.ignore([...this.uiObjects]);
     this.uiCam.ignore(this.children.list.filter((obj) => !this.uiObjects.has(obj)));
 
+    window.addEventListener(PAUSE_EVENT, this.onPauseEvent);
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      window.removeEventListener(PAUSE_EVENT, this.onPauseEvent);
+    });
     this.ready = true;
     this.sound_mgr.startBattleMusic();
     this.handleSimEvents(this.sim.start());
@@ -1613,6 +1625,7 @@ export class FightScene extends Phaser.Scene {
 
   update(time: number, delta: number): void {
     if (!this.ready) return;
+    if (this.paused) return;
 
     this.inputMgr.poll();
 

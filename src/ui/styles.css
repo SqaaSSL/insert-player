@@ -1079,7 +1079,7 @@
   }
 
   .game-shell__gallery-link {
-    @apply fixed top-24 right-5 z-40;
+    @apply fixed top-24 right-5 z-40 [@media(pointer:coarse)]:hidden;
   }
 
   .match-actions {
@@ -1168,8 +1168,12 @@
   }
 
   .mobile-fight-controls__actions {
-    @apply pointer-events-auto grid touch-none grid-cols-[54px_54px]
-           grid-rows-[54px_54px_54px] gap-2 [transform:rotate(-8deg)];
+    @apply pointer-events-auto grid touch-none grid-cols-[48px_48px]
+           grid-rows-[48px_48px_44px] gap-2 [transform:rotate(-8deg)];
+  }
+
+  .mobile-fight-controls__slot {
+    @apply block h-[48px] w-[48px];
   }
 
   .mobile-fight-control {
@@ -1183,7 +1187,7 @@
   }
 
   .mobile-fight-controls__actions .mobile-fight-control {
-    @apply h-[54px] w-[54px] [transform:rotate(8deg)];
+    @apply h-[48px] w-[48px] [transform:rotate(8deg)] opacity-90;
   }
 
   .mobile-fight-control.is-punch,
@@ -1197,7 +1201,7 @@
   }
 
   .mobile-fight-control.is-guard {
-    @apply col-span-2 w-full border-asf-blue bg-[rgba(10,30,66,0.88)] text-asf-blue
+    @apply col-span-2 h-[44px] w-full border-asf-blue bg-[rgba(10,30,66,0.88)] text-asf-blue
            [text-shadow:0_2px_0_rgba(0,0,0,0.8)];
   }
 
@@ -3227,6 +3231,33 @@
   .fight-intro__skip {
     @apply relative z-10 font-arcade text-[11px] text-asf-blue
            [text-shadow:0_2px_0_rgba(0,0,0,0.85)];
+  }
+
+  /* Subtle offline pause: two bars, top right, out of the HUD's way. */
+  .fight-pause-button {
+    @apply pointer-events-auto absolute right-3 top-[104px] z-40 flex h-10 w-10
+           cursor-pointer items-center justify-center gap-[5px] rounded-[4px]
+           border-2 border-[rgba(255,206,58,0.45)] bg-[rgba(5,5,7,0.55)]
+           [backdrop-filter:blur(4px)]
+           [@media(pointer:coarse)]:right-[max(12px,env(safe-area-inset-right))];
+  }
+
+  .fight-pause-button span {
+    @apply block h-4 w-[3px] bg-asf-gold;
+  }
+
+  .fight-pause-overlay {
+    @apply pointer-events-auto absolute inset-0 z-50 flex flex-col items-center
+           justify-center gap-5 bg-[rgba(4,4,13,0.82)] [backdrop-filter:blur(3px)];
+  }
+
+  .fight-pause-overlay__title {
+    @apply m-0 font-arcade text-[26px] uppercase text-asf-gold-bright
+           [text-shadow:0_4px_0_rgba(0,0,0,0.9)];
+  }
+
+  .fight-pause-overlay__actions {
+    @apply flex items-center gap-3;
   }
 
   /* ============================================================
