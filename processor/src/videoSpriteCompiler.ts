@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { ImageData, createCanvas, loadImage } from '@napi-rs/canvas';
 import {
+  DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY,
   VIDEO_SPRITE_ACTION_PROFILES,
   VIDEO_SPRITE_ANIMATION_FORMAT,
   VIDEO_SPRITE_COMPILER_VERSION,
@@ -244,6 +245,8 @@ export async function compileExtractedVideoSprite(
   videoSha256: string,
   canonicalSha256: string,
 ): Promise<VideoSpriteCompileResult> {
+  const automaticSelectionPolicy = request.automaticSelectionPolicy ??
+    DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY;
   const [canonical, ...videoFrames] = await Promise.all([
     decodeNormalizedPng(media.canonicalPng, null),
     ...media.videoFramePngs.map((bytes, index) => decodeNormalizedPng(bytes, index)),
@@ -255,6 +258,7 @@ export async function compileExtractedVideoSprite(
       canonical,
       videoFrames,
       request.selectedVideoIndices,
+      automaticSelectionPolicy,
     );
   } catch (error) {
     throw new VideoSpriteCompileError(
@@ -373,7 +377,7 @@ export async function compileExtractedVideoSprite(
       selectedVideoIndices: compiled.selectedVideoIndices,
       selectionAlgorithm: request.selectedVideoIndices
         ? 'operator-selected-indices-v1'
-        : 'cumulative-motion-quantiles-v2',
+        : automaticSelectionPolicy,
       operatorAdjustmentApplied: Boolean(request.selectedVideoIndices),
       selectedTimeMs: compiled.selectedVideoIndices.map((index) => (
         Math.round(index * 1000 / media.toolchain.sampleFps)

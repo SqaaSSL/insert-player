@@ -14,9 +14,12 @@ import {
 import type { AuthContext, Env } from './types';
 import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
 import {
+  VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
   VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+  VIDEO_SPRITE_COMPILER_VERSION,
   VIDEO_SPRITE_PROCESSING_VERSION,
 } from '../../src/services/VideoSpriteCompileContract';
+import { STUDIO_CURATED_VIDEO_POLICY } from '../../src/services/VideoGenerationPolicy';
 import { hashString } from './auth';
 import { REVIEWED_CANONICAL_SOURCE_MODE } from './reviewedCanonicalSources';
 
@@ -145,6 +148,7 @@ const SCHEMA = `
     fighter_id TEXT NOT NULL,
     tier TEXT NOT NULL,
     creation_flow TEXT NOT NULL DEFAULT 'original',
+    video_generation_policy TEXT,
     operation TEXT NOT NULL,
     target_kind TEXT,
     target_name TEXT,
@@ -604,7 +608,7 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
         operation: 'fighter_generation',
         creationFlow: 'video',
       });
-      const [jobRequest] = vi.mocked(createGenerationJob).mock.calls[0];
+      const [jobRequest, , , jobOptions] = vi.mocked(createGenerationJob).mock.calls[0];
       const jobBody = await jobRequest.clone().json() as {
         fighterId: string;
         purchaseId: string;
@@ -616,6 +620,9 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
         purchaseId: expect.stringMatching(/^[a-f0-9]{32}$/),
         providerSessionId: 'provider-session',
         creationFlow: 'video',
+      });
+      expect(jobOptions).toMatchObject({
+        videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY,
       });
       expect(await db.prepare(`
         SELECT tier, creation_flow, credit_cost, free_quota_delta, status, reason
@@ -631,6 +638,45 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
       expect(await db.prepare(`
         SELECT COALESCE(SUM(delta), 0) AS delta FROM credit_ledger
       `).first()).toEqual({ delta: 0 });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('does not let the admin endpoint adopt an active self-service Video run', async () => {
+    const { mf, db, env } = await bindings();
+    const runId = '12121212121212121212121212121212';
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO generation_artifact_runs (
+            id, user_id, fighter_id, tier, creation_flow, video_generation_policy,
+            operation, root_job_id, status
+          ) VALUES (?, ?, ?, 'champion', 'video', 'self_service_v1',
+            'fighter_generation', ?, 'active')
+        `).bind(runId, USER_ID, FIGHTER_ID, runId),
+        db.prepare(`
+          INSERT INTO generation_jobs (
+            id, user_id, fighter_id, artifact_run_id, tier, creation_flow,
+            operation, status, stage, progress_current, progress_total
+          ) VALUES (?, ?, ?, ?, 'champion', 'video', 'fighter_generation',
+            'running', 'sprite:idle', 3, 14)
+        `).bind(runId, USER_ID, FIGHTER_ID, runId),
+      ]);
+
+      const response = await startAdminArcadeGeneration(
+        generationRequest(false, 'video'),
+        env,
+        adminAuth,
+        FIGHTER_ID,
+      );
+
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        code: 'video_generation_policy_conflict',
+      });
+      expect(createProviderSession).not.toHaveBeenCalled();
+      expect(createGenerationJob).not.toHaveBeenCalled();
     } finally {
       await mf.dispose();
     }
@@ -2065,7 +2111,9 @@ describe('official Arcade deployed provider preflight', () => {
       imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
       videoSpriteCompiler: {
         schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+        compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
         processingVersion: VIDEO_SPRITE_PROCESSING_VERSION,
+        automaticSelectionPolicies: VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
       },
     });
     const response = await readAdminArcadeGenerationContract(env, adminAuth);
@@ -2077,11 +2125,14 @@ describe('official Arcade deployed provider preflight', () => {
       contract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
       videoSpriteCompiler: {
         schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+        compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
         processingVersion: VIDEO_SPRITE_PROCESSING_VERSION,
+        automaticSelectionPolicies: VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
       },
+      adminVideoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY,
     });
     expect(getByName).toHaveBeenCalledWith(
-      'official-arcade-meterkey-transport-v1-video-v6',
+      'official-arcade-meterkey-transport-v1-video-v6-compiler-1-0-0',
     );
     expect(processorFetch).toHaveBeenCalledOnce();
     const [healthRequest] = processorFetch.mock.calls[0] as [Request];

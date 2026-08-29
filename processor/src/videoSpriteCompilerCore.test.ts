@@ -90,6 +90,34 @@ test('builds the exact dense physical playback contracts', () => {
   ]);
 });
 
+test('uses fixed action-profile temporal anchors for guided self-service videos', () => {
+  const canonical = drawSubject(32, 48);
+  const frames = Array.from({ length: 49 }, (_, sourceIndex) => ({
+    ...drawSubject(32, 48, { armExtension: Math.min(10, Math.floor(sourceIndex / 3)) }),
+    sourceIndex,
+  }));
+
+  const idle = compileVideoSpriteFrames(
+    'idle',
+    canonical,
+    frames,
+    undefined,
+    'action-profile-temporal-anchors-v1',
+  );
+  const highPunch = compileVideoSpriteFrames(
+    'high_punch',
+    canonical,
+    frames,
+    undefined,
+    'action-profile-temporal-anchors-v1',
+  );
+
+  assert.deepEqual(idle.selectedVideoIndices, [0, 6, 12, 18, 24, 31, 37, 43]);
+  assert.deepEqual(highPunch.selectedVideoIndices, [10, 19, 29, 38, 48]);
+  assert.equal(highPunch.uniqueFrames[0].sourceIndex, null);
+  assert.equal(highPunch.uniqueFrames.at(-1)?.sourceIndex, 48);
+});
+
 test('matches the committed deterministic selection and decision goldens', async () => {
   const manifest = await loadGoldens();
   assert.equal(manifest.schemaVersion, 1);

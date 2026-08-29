@@ -10,6 +10,17 @@ export const VIDEO_SPRITE_RAW_FRAME_WIDTH = 768 as const;
 export const VIDEO_SPRITE_RAW_FRAME_HEIGHT = 1024 as const;
 export const VIDEO_SPRITE_SAMPLE_FPS = 24 as const;
 
+export const VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES = [
+  'cumulative-motion-quantiles-v2',
+  'action-profile-temporal-anchors-v1',
+] as const;
+
+export type VideoSpriteAutomaticSelectionPolicy =
+  typeof VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES[number];
+
+export const DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY:
+  VideoSpriteAutomaticSelectionPolicy = 'cumulative-motion-quantiles-v2';
+
 export const VIDEO_SPRITE_ACTIONS = [
   'idle', 'walk', 'high_punch', 'high_kick', 'low_punch', 'low_kick',
   'jump', 'crouch', 'hit', 'ko', 'victory',
@@ -123,6 +134,8 @@ export interface VideoSpriteCompileRequest {
   expectedFacing: VideoSpriteFacing;
   videoBase64: string;
   canonicalFrameBase64: string;
+  /** Automatic selector used when selectedVideoIndices is not supplied. */
+  automaticSelectionPolicy?: VideoSpriteAutomaticSelectionPolicy;
   /** Optional human-authored re-curation from the same decoded MP4. */
   selectedVideoIndices?: number[];
   lineage?: VideoSpriteLineage;

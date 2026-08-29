@@ -29,6 +29,12 @@ import {
   prepareUnsealedVideoRestartRetirement,
   readEligibleUnsealedVideoPartialRestart,
 } from './videoRunRestart';
+import {
+  SELF_SERVICE_VIDEO_POLICY,
+  STUDIO_CURATED_VIDEO_POLICY,
+  storedVideoGenerationPolicy,
+  type VideoGenerationPolicy,
+} from '../../src/services/VideoGenerationPolicy';
 
 const MAX_JOB_BODY_BYTES = 8 * 1024;
 const JOB_TTL_HOURS = 48;
@@ -76,6 +82,7 @@ interface GenerationJobAuthorizationRow {
   resume_run_fighter_id: string | null;
   resume_run_tier: QualityTier | null;
   resume_run_creation_flow: GenerationCreationFlow | null;
+  resume_run_video_generation_policy: VideoGenerationPolicy | null;
   resume_run_operation: GenerationJobOperation | null;
   resume_run_target_kind: 'animation' | 'source' | null;
   resume_run_target_name: string | null;
@@ -381,6 +388,7 @@ export async function createGenerationJob(
   options: {
     reviewedCanonicalSources?: SealedReviewedCanonicalSources;
     unsealedVideoRestartFromJobId?: string;
+    videoGenerationPolicy?: VideoGenerationPolicy;
   } = {},
 ): Promise<Response> {
   const body = await readJsonBody<{
@@ -412,6 +420,31 @@ export async function createGenerationJob(
     return json({ error: 'A valid targetName is required' }, 400);
   }
   if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
+  if (options.videoGenerationPolicy && creationFlow !== 'video') {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'A Video generation policy cannot authorize the Original creation flow',
+      400,
+      { code: 'video_generation_policy_flow_mismatch' },
+    );
+  }
+  if (
+    options.videoGenerationPolicy === STUDIO_CURATED_VIDEO_POLICY
+    && auth.user?.plan_tier !== 'admin'
+  ) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'The Studio Curated Video policy requires an admin API authorization',
+      403,
+      { code: 'studio_curated_video_admin_required' },
+    );
+  }
   if (
     unsealedVideoRestartFromJobId && (
       !/^[a-f0-9]{32}$/.test(unsealedVideoRestartFromJobId) ||
@@ -511,6 +544,7 @@ export async function createGenerationJob(
       resume_run.fighter_id AS resume_run_fighter_id,
       resume_run.tier AS resume_run_tier,
       resume_run.creation_flow AS resume_run_creation_flow,
+      resume_run.video_generation_policy AS resume_run_video_generation_policy,
       resume_run.operation AS resume_run_operation,
       resume_run.target_kind AS resume_run_target_kind,
       resume_run.target_name AS resume_run_target_name,
@@ -712,6 +746,22 @@ export async function createGenerationJob(
     );
   }
   if (authorization.continuation_run_id) {
+    if (creationFlow === 'video' && options.videoGenerationPolicy) {
+      const resumedPolicy = storedVideoGenerationPolicy(
+        authorization.resume_run_video_generation_policy,
+      );
+      if (resumedPolicy !== options.videoGenerationPolicy) {
+        return rejectReservedJob(
+          env,
+          auth.userId,
+          purchaseId,
+          fighterId,
+          'Video generation policy cannot change during a continuation',
+          409,
+          { code: 'video_generation_policy_continuation_mismatch' },
+        );
+      }
+    }
     const validResumeState = creationFlow === 'video'
       ? (
           (authorization.resume_job_status === 'failed' || authorization.resume_job_status === 'cancelled') &&
@@ -852,6 +902,11 @@ export async function createGenerationJob(
       : 1;
   const runId = authorization.continuation_run_id ?? jobId;
   const resumedFromJobId = authorization.resumed_from_job_id ?? null;
+  const videoGenerationPolicy = creationFlow === 'video'
+    ? authorization.continuation_run_id
+      ? storedVideoGenerationPolicy(authorization.resume_run_video_generation_policy)
+      : options.videoGenerationPolicy ?? SELF_SERVICE_VIDEO_POLICY
+    : null;
   const initialProgress = authorization.continuation_run_id
     ? (await env.DB.prepare(`
         SELECT COUNT(*) AS count
@@ -895,9 +950,9 @@ export async function createGenerationJob(
         INSERT INTO generation_artifact_runs (
           id, user_id, fighter_id, tier, operation, target_kind, target_name,
           root_job_id, original_charge_id, original_blob_key,
-          source_manifest_json, generation_prompt, creation_flow
+          source_manifest_json, generation_prompt, creation_flow, video_generation_policy
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? IS NULL
           AND (
             ? IS NULL OR EXISTS (
@@ -921,6 +976,7 @@ export async function createGenerationJob(
         sourceManifest,
         authorization.generation_prompt,
         creationFlow,
+        videoGenerationPolicy,
         authorization.continuation_run_id,
         ...restartGuardBindings,
       ),

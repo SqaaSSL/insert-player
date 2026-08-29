@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
+  DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY,
   VIDEO_SPRITE_ACTION_PROFILES,
+  type VideoSpriteAutomaticSelectionPolicy,
   type VideoSpriteActionProfile,
   type VideoSpriteDecision,
 } from './videoSpriteContract.ts';
@@ -374,6 +376,8 @@ export function selectVideoSpriteFrames(
   frames: VideoSpriteRgbaFrame[],
   profile: VideoSpriteActionProfile,
   selectedVideoIndices?: number[],
+  automaticSelectionPolicy: VideoSpriteAutomaticSelectionPolicy =
+    DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY,
 ): { indices: number[]; metrics: VideoSpriteFrameMetrics[]; transitions: VideoSpriteTransitionMetrics[] } {
   const rawOnlyLoop = profile.sequenceFormat === 'loop';
   const needed = rawOnlyLoop ? profile.uniqueFrameCount : profile.uniqueFrameCount - 1;
@@ -396,6 +400,22 @@ export function selectVideoSpriteFrames(
       throw new Error(`Action ${profile.action} received an invalid explicit frame selection.`);
     }
     return { indices: [...selectedVideoIndices], metrics, transitions };
+  }
+  if (automaticSelectionPolicy === 'action-profile-temporal-anchors-v1') {
+    const temporal = frames.map((_, index) => index);
+    const targets = Array.from({ length: needed }, (_, index) => (
+      rawOnlyLoop
+        ? index * frames.length / profile.uniqueFrameCount
+        : (index + 1) * (frames.length - 1) / needed
+    ));
+    return {
+      indices: chooseStrictIndices(temporal, targets, rawOnlyLoop ? 0 : frames.length > needed ? 1 : 0),
+      metrics,
+      transitions,
+    };
+  }
+  if (automaticSelectionPolicy !== DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY) {
+    throw new Error(`Action ${profile.action} received an unsupported automatic frame selector.`);
   }
   const cumulative = [0];
   for (const transition of transitions) {
@@ -760,11 +780,18 @@ export function compileVideoSpriteFrames(
   canonical: VideoSpriteRgbaFrame,
   videoFrames: VideoSpriteRgbaFrame[],
   selectedVideoIndices?: number[],
+  automaticSelectionPolicy: VideoSpriteAutomaticSelectionPolicy =
+    DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY,
 ): VideoSpriteCoreCompileResult {
   assertFrame(canonical);
   for (const frame of videoFrames) assertFrame(frame, canonical);
   const profile = VIDEO_SPRITE_ACTION_PROFILES[action];
-  const selection = selectVideoSpriteFrames(videoFrames, profile, selectedVideoIndices);
+  const selection = selectVideoSpriteFrames(
+    videoFrames,
+    profile,
+    selectedVideoIndices,
+    automaticSelectionPolicy,
+  );
   const rawOnlyLoop = profile.sequenceFormat === 'loop';
   const selectedSources = rawOnlyLoop
     ? selection.indices.map((index) => videoFrames[index])

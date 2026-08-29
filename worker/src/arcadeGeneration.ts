@@ -29,15 +29,22 @@ import {
 import { requireReviewedProductionWorkerPin } from './reviewedDeploymentPin';
 import { readEligibleUnsealedVideoPartialRestart } from './videoRunRestart';
 import {
+  VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
   VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+  VIDEO_SPRITE_COMPILER_VERSION,
   VIDEO_SPRITE_PROCESSING_VERSION,
 } from '../../src/services/VideoSpriteCompileContract';
+import {
+  STUDIO_CURATED_VIDEO_POLICY,
+  storedVideoGenerationPolicy,
+} from '../../src/services/VideoGenerationPolicy';
 
 const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
 const AUTHORIZATION_TTL_HOURS = 12;
 const VIDEO_SPRITE_PREFLIGHT_CONTAINER_NAME =
   `official-arcade-${OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.processorRuntimeRevision}`
-  + `-video-v${VIDEO_SPRITE_PROCESSING_VERSION}`;
+  + `-video-v${VIDEO_SPRITE_PROCESSING_VERSION}`
+  + `-compiler-${VIDEO_SPRITE_COMPILER_VERSION.replaceAll('.', '-')}`;
 const PLAYABLE_ANIMATION_NAMES = [
   'idle',
   'walk',
@@ -91,6 +98,7 @@ interface ActiveArcadeJobRow {
   progress_current: number;
   progress_total: number;
   artifact_run_id: string | null;
+  video_generation_policy: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -113,6 +121,7 @@ interface ReviewedVideoRecoverySeal {
   review_status: string;
   run_status: string | null;
   failure_stage: string | null;
+  video_generation_policy: string | null;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -131,10 +140,10 @@ async function readLatestReviewedVideoRecoverySeal(
   auth: AuthContext,
   fighterId: string,
 ): Promise<ReviewedVideoRecoverySeal | null> {
-  return env.DB.prepare(`
+  const seal = await env.DB.prepare(`
     SELECT gj.id AS job_id, gj.artifact_run_id,
       gj.status AS job_status, gj.review_status,
-      run.status AS run_status, run.failure_stage
+      run.status AS run_status, run.failure_stage, run.video_generation_policy
     FROM generation_jobs gj
     LEFT JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
     WHERE gj.fighter_id = ? AND gj.user_id = ?
@@ -142,6 +151,9 @@ async function readLatestReviewedVideoRecoverySeal(
     ORDER BY gj.created_at DESC, gj.rowid DESC
     LIMIT 1
   `).bind(fighterId, auth.userId).first<ReviewedVideoRecoverySeal>();
+  return seal && storedVideoGenerationPolicy(seal.video_generation_policy) === STUDIO_CURATED_VIDEO_POLICY
+    ? seal
+    : null;
 }
 
 function reviewedRecoveryConflict(actualJobId: string | null): Response {
@@ -200,7 +212,9 @@ export async function readAdminArcadeGenerationContract(
       imageProviderContract?: unknown;
       videoSpriteCompiler?: {
         schemaVersion?: unknown;
+        compilerVersion?: unknown;
         processingVersion?: unknown;
+        automaticSelectionPolicies?: unknown;
       };
     }>();
     if (payload.status !== 'ok') {
@@ -229,7 +243,10 @@ export async function readAdminArcadeGenerationContract(
     }
     if (
       payload.videoSpriteCompiler?.schemaVersion !== VIDEO_SPRITE_COMPILE_SCHEMA_VERSION ||
-      payload.videoSpriteCompiler.processingVersion !== VIDEO_SPRITE_PROCESSING_VERSION
+      payload.videoSpriteCompiler.compilerVersion !== VIDEO_SPRITE_COMPILER_VERSION ||
+      payload.videoSpriteCompiler.processingVersion !== VIDEO_SPRITE_PROCESSING_VERSION ||
+      JSON.stringify(payload.videoSpriteCompiler.automaticSelectionPolicies) !==
+        JSON.stringify(VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES)
     ) {
       return json({
         error: 'Image processor Video sprite compiler is incompatible',
@@ -242,8 +259,11 @@ export async function readAdminArcadeGenerationContract(
       contract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
       videoSpriteCompiler: {
         schemaVersion: payload.videoSpriteCompiler.schemaVersion,
+        compilerVersion: payload.videoSpriteCompiler.compilerVersion,
         processingVersion: payload.videoSpriteCompiler.processingVersion,
+        automaticSelectionPolicies: payload.videoSpriteCompiler.automaticSelectionPolicies,
       },
+      adminVideoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY,
     });
   } catch {
     return json({
@@ -512,26 +532,44 @@ export async function startAdminArcadeGeneration(
   }
 
   const active = await env.DB.prepare(`
-    SELECT id, fighter_id, creation_flow, status, stage, progress_current, progress_total,
-      artifact_run_id,
-      created_at, updated_at
-    FROM generation_jobs
-    WHERE fighter_id = ? AND status IN ('queued', 'running')
-    ORDER BY created_at DESC
+    SELECT job.id, job.fighter_id, job.creation_flow, job.status, job.stage,
+      job.progress_current, job.progress_total, job.artifact_run_id,
+      run.video_generation_policy, job.created_at, job.updated_at
+    FROM generation_jobs job
+    LEFT JOIN generation_artifact_runs run ON run.id = job.artifact_run_id
+    WHERE job.fighter_id = ? AND job.status IN ('queued', 'running')
+    ORDER BY job.created_at DESC
     LIMIT 1
   `).bind(fighterId).first<ActiveArcadeJobRow>();
 
   const videoRunInProgress = creationFlow === 'video'
     ? await env.DB.prepare(`
-        SELECT id
+        SELECT id, video_generation_policy
         FROM generation_artifact_runs
         WHERE fighter_id = ? AND user_id = ?
           AND creation_flow = 'video' AND operation = 'fighter_generation'
           AND status IN ('active', 'partial')
         ORDER BY updated_at DESC
         LIMIT 1
-      `).bind(fighterId, auth.userId).first<{ id: string }>()
+      `).bind(fighterId, auth.userId).first<{
+        id: string;
+        video_generation_policy: string | null;
+      }>()
     : null;
+
+  if (
+    creationFlow === 'video' && (
+      (active?.creation_flow === 'video' &&
+        storedVideoGenerationPolicy(active.video_generation_policy) !== STUDIO_CURATED_VIDEO_POLICY) ||
+      (videoRunInProgress &&
+        storedVideoGenerationPolicy(videoRunInProgress.video_generation_policy) !== STUDIO_CURATED_VIDEO_POLICY)
+    )
+  ) {
+    return json({
+      error: 'The current Video run belongs to the self-service policy and cannot cross into Studio Curated',
+      code: 'video_generation_policy_conflict',
+    }, 409);
+  }
 
   const assetIntegrity = await inspectArcadeAssetIntegrity(env, fighterId);
   if (
@@ -612,6 +650,7 @@ export async function startAdminArcadeGeneration(
       WHERE gj.fighter_id = ? AND gj.user_id = ?
         AND run.status = 'partial' AND run.tier = 'champion'
         AND gj.creation_flow = 'video' AND run.creation_flow = 'video'
+        AND (run.video_generation_policy = ? OR run.video_generation_policy IS NULL)
         AND gj.operation = 'fighter_generation' AND run.operation = 'fighter_generation'
         AND NOT EXISTS (
           SELECT 1 FROM generation_jobs child WHERE child.resumed_from_job_id = gj.id
@@ -640,7 +679,12 @@ export async function startAdminArcadeGeneration(
         )
       ORDER BY gj.created_at DESC
       LIMIT 1
-    `).bind(fighterId, auth.userId, PLAYABLE_ANIMATION_NAMES.length)
+    `).bind(
+      fighterId,
+      auth.userId,
+      STUDIO_CURATED_VIDEO_POLICY,
+      PLAYABLE_ANIMATION_NAMES.length,
+    )
       .first<ResumableArcadeRunRow>();
   } else if (!restart) {
     partial = await env.DB.prepare(`
@@ -777,7 +821,12 @@ export async function startAdminArcadeGeneration(
       continuation.providerSessionId,
       undefined,
       creationFlow,
-    ), env, auth, { reviewedCanonicalSources });
+    ), env, auth, {
+      reviewedCanonicalSources,
+      ...(creationFlow === 'video'
+        ? { videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY }
+        : {}),
+    });
   }
 
   const reusable = restart ? null : await env.DB.prepare(`
@@ -819,6 +868,9 @@ export async function startAdminArcadeGeneration(
     ), env, auth, {
       reviewedCanonicalSources,
       unsealedVideoRestartFromJobId: unsealedVideoRestartFromJobId ?? undefined,
+      ...(creationFlow === 'video'
+        ? { videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY }
+        : {}),
     });
   }
 
@@ -840,6 +892,9 @@ export async function startAdminArcadeGeneration(
   ), env, auth, {
     reviewedCanonicalSources,
     unsealedVideoRestartFromJobId: unsealedVideoRestartFromJobId ?? undefined,
+    ...(creationFlow === 'video'
+      ? { videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY }
+      : {}),
   });
 }
 

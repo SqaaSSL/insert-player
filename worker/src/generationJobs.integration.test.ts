@@ -6,6 +6,10 @@ import { GEMINI_PRO_IMAGE_MODEL, recordProviderDailyQuota } from './providerCapa
 import type { AuthContext, Env } from './types';
 import type { SealedReviewedCanonicalSources } from './reviewedCanonicalSources';
 import { UNSEALED_VIDEO_RESTART_FAILURE_STAGE } from './videoRunRestart';
+import {
+  SELF_SERVICE_VIDEO_POLICY,
+  STUDIO_CURATED_VIDEO_POLICY,
+} from '../../src/services/VideoGenerationPolicy';
 
 const USER_ID = 'user-generation-job';
 const FIGHTER_ID = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -191,6 +195,7 @@ const SCHEMA = `
     fighter_id TEXT NOT NULL,
     tier TEXT NOT NULL,
     creation_flow TEXT NOT NULL DEFAULT 'original',
+    video_generation_policy TEXT,
     operation TEXT NOT NULL,
     target_kind TEXT,
     target_name TEXT,
@@ -722,6 +727,7 @@ describe('durable generation job creation', () => {
         {
           reviewedCanonicalSources: sealed,
           unsealedVideoRestartFromJobId: UNSEALED_VIDEO_JOB_ID,
+          videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY,
         },
       );
 
@@ -793,6 +799,7 @@ describe('durable generation job creation', () => {
       const options = {
         reviewedCanonicalSources: sealedReviewedSources(),
         unsealedVideoRestartFromJobId: UNSEALED_VIDEO_JOB_ID,
+        videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY,
       };
 
       const responses = await Promise.all([
@@ -871,11 +878,21 @@ describe('durable generation job creation', () => {
       expect(created.status).toBe(202);
       expect(workflowStarts).toEqual([PURCHASE_ID]);
       expect(await db.prepare(`
-        SELECT id, creation_flow, status FROM generation_artifact_runs
+        SELECT id, creation_flow, video_generation_policy, status FROM generation_artifact_runs
         WHERE id IN (?, ?) ORDER BY id
       `).bind(PURCHASE_ID, rejectedRunId).all()).toMatchObject({ results: [
-        { id: PURCHASE_ID, creation_flow: 'video', status: 'active' },
-        { id: rejectedRunId, creation_flow: 'video', status: 'failed' },
+        {
+          id: PURCHASE_ID,
+          creation_flow: 'video',
+          video_generation_policy: SELF_SERVICE_VIDEO_POLICY,
+          status: 'active',
+        },
+        {
+          id: rejectedRunId,
+          creation_flow: 'video',
+          video_generation_policy: null,
+          status: 'failed',
+        },
       ] });
     } finally {
       await mf.dispose();
@@ -907,7 +924,8 @@ describe('durable generation job creation', () => {
       const created = await createGenerationJob(
         request(PURCHASE_ID, SESSION_ID, undefined, 'video'),
         env,
-        auth,
+        adminAuth,
+        { videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY },
       );
 
       expect(created.status).toBe(202);
@@ -939,14 +957,54 @@ describe('durable generation job creation', () => {
         SELECT creation_flow FROM generation_jobs WHERE id = ?
       `).bind(PURCHASE_ID).first()).toEqual({ creation_flow: 'video' });
       expect(await db.prepare(`
-        SELECT creation_flow FROM generation_artifact_runs WHERE id = ?
-      `).bind(PURCHASE_ID).first()).toEqual({ creation_flow: 'video' });
+        SELECT creation_flow, video_generation_policy
+        FROM generation_artifact_runs WHERE id = ?
+      `).bind(PURCHASE_ID).first()).toEqual({
+        creation_flow: 'video',
+        video_generation_policy: STUDIO_CURATED_VIDEO_POLICY,
+      });
       expect((await db.prepare(`
         SELECT credits_balance FROM users WHERE id = ?
       `).bind(USER_ID).first<{ credits_balance: number }>())?.credits_balance).toBe(7);
       expect(await db.prepare(`
         SELECT delta, reason FROM credit_ledger WHERE id = 'ledger-first'
       `).first()).toEqual({ delta: 0, reason: 'arcade_seed_generation' });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('does not admit Studio Curated through a non-admin generation-job call', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      await db.batch([
+        db.prepare(`
+          UPDATE generation_charges
+          SET tier = 'champion', creation_flow = 'video', credit_cost = 18
+          WHERE id = ?
+        `).bind(PURCHASE_ID),
+        db.prepare(`
+          UPDATE provider_sessions SET tier = 'champion', creation_flow = 'video'
+          WHERE id = ?
+        `).bind(SESSION_ID),
+      ]);
+
+      const response = await createGenerationJob(
+        request(PURCHASE_ID, SESSION_ID, undefined, 'video'),
+        env,
+        auth,
+        { videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY },
+      );
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({
+        code: 'studio_curated_video_admin_required',
+      });
+      expect(workflowStarts).toEqual([]);
+      expect(await db.prepare(`SELECT COUNT(*) AS count FROM generation_artifact_runs`)
+        .first()).toEqual({ count: 0 });
+      expect(await db.prepare(`SELECT status FROM generation_charges WHERE id = ?`)
+        .bind(PURCHASE_ID).first()).toEqual({ status: 'refunded' });
     } finally {
       await mf.dispose();
     }
@@ -978,7 +1036,10 @@ describe('durable generation job creation', () => {
         request(PURCHASE_ID, SESSION_ID, undefined, 'video'),
         env,
         adminAuth,
-        { reviewedCanonicalSources: sealed },
+        {
+          reviewedCanonicalSources: sealed,
+          videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY,
+        },
       );
       expect(initial.status).toBe(202);
       const serializedInitial = await getGenerationJob(env, adminAuth, PURCHASE_ID);
@@ -1046,7 +1107,10 @@ describe('durable generation job creation', () => {
         request(continuationPurchaseId, continuationSessionId, undefined, 'video'),
         env,
         adminAuth,
-        { reviewedCanonicalSources: sealed },
+        {
+          reviewedCanonicalSources: sealed,
+          videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY,
+        },
       );
       expect(continuation.status).toBe(202);
       expect((await db.prepare(`
@@ -1085,7 +1149,8 @@ describe('durable generation job creation', () => {
       const initial = await createGenerationJob(
         request(PURCHASE_ID, SESSION_ID, undefined, 'video'),
         env,
-        auth,
+        adminAuth,
+        { videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY },
       );
       expect(initial.status).toBe(202);
       expect(workflowStarts).toEqual([PURCHASE_ID]);

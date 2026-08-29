@@ -23,7 +23,17 @@
     "benchmark:flash-sequence:execute": "tsx src/benchmark/flashSequenceBenchmarkCli.ts execute",
     "qa:pose-atlas:test": "tsx --test src/benchmark/qaPoseAtlas.test.ts",
     "qa:pose-atlas": "tsx src/benchmark/qaPoseAtlasCli.ts",
-    "test:video-sprite": "tsx --test src/videoSprite*.test.ts"
+    "test:video-sprite": "tsx --test src/videoSprite*.test.ts",
+    "benchmark:klein-sequence:test": "tsx --test src/benchmark/kleinSequenceBenchmark.test.ts",
+    "benchmark:klein-sequence:plan": "tsx src/benchmark/kleinSequenceBenchmarkCli.ts plan",
+    "benchmark:klein-sequence:pricing": "tsx src/benchmark/kleinSequenceBenchmarkCli.ts pricing",
+    "benchmark:klein-sequence:repair-cleanup": "tsx src/benchmark/kleinSequenceBenchmarkCli.ts repair-cleanup",
+    "benchmark:klein-sequence:execute": "tsx src/benchmark/kleinSequenceBenchmarkCli.ts execute",
+    "benchmark:trump-prod-flow:test": "tsx --test src/benchmark/trumpProdFlowBenchmark.test.ts",
+    "benchmark:trump-prod-flow:plan": "tsx src/benchmark/trumpProdFlowBenchmarkCli.ts",
+    "benchmark:provider-matrix:test": "tsx --test src/benchmark/providerMatrix/*.test.ts",
+    "benchmark:provider-matrix:plan": "tsx src/benchmark/providerMatrix/cli.ts",
+    "benchmark:provider-matrix:execute": "tsx src/benchmark/providerMatrix/cli.ts --execute"
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.7"

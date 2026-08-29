@@ -7,10 +7,16 @@ import type { Env, GenerationJob } from './types';
 import { pixcliBaseUrl } from './proxy';
 import { stripTrailingSlashes } from './url';
 import {
+  DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY,
   VIDEO_SPRITE_ACTIONS,
   type VideoSpriteAction,
   type VideoSpriteCompileResponse,
 } from '../../src/services/VideoSpriteCompileContract';
+import {
+  STUDIO_CURATED_VIDEO_POLICY,
+  videoGenerationPolicyContract,
+  type VideoGenerationPolicy,
+} from '../../src/services/VideoGenerationPolicy';
 import {
   buildPixcliVideoPayload,
   buildVideoSpritePrompt,
@@ -283,6 +289,7 @@ async function compileAndPersistCandidate(
   requestKey: string,
   pixcliJobId: string,
   payload: PixcliVideoPayload,
+  videoGenerationPolicy: VideoGenerationPolicy,
 ): Promise<{ candidateId: string; revision: number }> {
   const pixcli = pixcliBaseUrl(env.PIXCLI_BASE_URL);
   if (!pixcli) throw new NonRetryableError('PixCLI base URL is unavailable');
@@ -362,6 +369,9 @@ async function compileAndPersistCandidate(
     videoSha256,
     canonicalSha256: canonical.sha256,
   };
+  const automaticSelectionPolicy = videoGenerationPolicyContract(
+    videoGenerationPolicy,
+  ).automaticSelectionPolicy;
   const compilerResponse = await env.IMAGE_PROCESSOR.getByName(job.id).fetch(new Request(
     'http://image-processor/v1/compile-video-sprite',
     {
@@ -373,6 +383,9 @@ async function compileAndPersistCandidate(
         expectedFacing: 'right',
         videoBase64: toBase64(videoBytes),
         canonicalFrameBase64: toBase64(canonical.bytes),
+        ...(automaticSelectionPolicy === DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY
+          ? {}
+          : { automaticSelectionPolicy }),
         lineage,
       }),
     },
@@ -412,6 +425,7 @@ async function compileAndPersistCandidate(
       lineage,
       videoSizeBytes: videoBytes.byteLength,
       canonicalSizeBytes: canonical.bytes.byteLength,
+      automaticSelectionPolicy,
       operatorAdjustmentApplied: false,
     });
   } catch (error) {
@@ -439,13 +453,14 @@ export async function runVideoSpriteAction(
   action: VideoSpriteAction,
   canonical: VideoWorkflowCanonical,
   generationPrompt?: string,
+  videoGenerationPolicy: VideoGenerationPolicy = STUDIO_CURATED_VIDEO_POLICY,
 ): Promise<{ candidateId: string; revision: number }> {
   if (job.creation_flow !== 'video' || job.tier !== 'champion' || !job.artifact_run_id) {
     throw new NonRetryableError('Video Workflow requires a signed-in Champion artifact run');
   }
   const definition = videoAction(action);
   if (definition.action !== action) throw new NonRetryableError('Video action contract is unavailable');
-  const prompt = buildVideoSpritePrompt(action, generationPrompt);
+  const prompt = buildVideoSpritePrompt(action, generationPrompt, videoGenerationPolicy);
   const promptSha256 = await hashString(prompt);
   const requestKey = `run:${job.artifact_run_id}:sprite:${action}`;
   const multipart = deterministicCanonicalMultipart(
@@ -501,6 +516,7 @@ export async function runVideoSpriteAction(
       requestKey,
       submission.jobId,
       payload,
+      videoGenerationPolicy,
     )
   ));
   await step.do(`video ${action}: settle awaiting review`, VIDEO_STEP_CONFIG, () => (

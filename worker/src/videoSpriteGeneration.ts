@@ -4,8 +4,14 @@ import {
   VIDEO_SPRITE_ACTIONS,
   VIDEO_SPRITE_PROCESSING_VERSION,
   type VideoSpriteAction,
+  type VideoSpriteAutomaticSelectionPolicy,
   type VideoSpriteCompileResponse,
 } from '../../src/services/VideoSpriteCompileContract';
+import {
+  SELF_SERVICE_VIDEO_POLICY,
+  STUDIO_CURATED_VIDEO_POLICY,
+  type VideoGenerationPolicy,
+} from '../../src/services/VideoGenerationPolicy';
 
 export const PIXCLI_VIDEO_MODEL = 'grok-imagine-i2v-pinned' as const;
 export const PIXCLI_VIDEO_PROVIDER_ENDPOINT = 'xai/grok-imagine-video/v1.5/image-to-video' as const;
@@ -86,6 +92,100 @@ export const VIDEO_SPRITE_GENERATION_ACTIONS: readonly VideoSpriteGenerationActi
   },
 ] as const;
 
+const SELF_SERVICE_VIDEO_CHOREOGRAPHY: Readonly<Record<VideoSpriteAction, string>> =
+  Object.freeze({
+    idle: [
+      'Create one subtle breathing loop only.',
+      '0.00-0.20s: preserve the exact supplied guard and planted feet.',
+      '0.20-0.95s: make one small inhale, lifting only the chest and guarded hands by a few pixels.',
+      '0.95-1.75s: exhale smoothly back toward the supplied pose.',
+      '1.75-2.00s: match and hold the exact 0.00s pose so the loop closes cleanly.',
+      'No step, strike, guard swap, head turn, or secondary gesture.',
+    ].join(' '),
+    walk: [
+      'Create exactly one in-place combat walk cycle toward screen-right while keeping the torso in the supplied guard.',
+      '0.00-0.15s: exact supplied contact pose.',
+      '0.15-0.60s: first controlled step and first passing pose.',
+      '0.60-1.10s: opposite contact pose.',
+      '1.10-1.65s: opposite passing pose.',
+      '1.65-2.00s: return to the exact supplied contact pose to close one loop.',
+      'The fighter stays centered; the cycle conveys travel but has no net translation.',
+    ].join(' '),
+    high_punch: [
+      'Create exactly one grounded high jab toward screen-right.',
+      '0.00-0.15s: exact supplied stance.',
+      '0.15-0.55s: compact shoulder-led wind-up with both feet planted.',
+      '0.55-1.45s: extend one near arm toward head height while the other fist keeps the original guard.',
+      '1.45-2.00s: hold the single strongest impact pose without retracting.',
+      'No second punch, step, kick, guard swap, or recovery.',
+    ].join(' '),
+    high_kick: [
+      'Create exactly one grounded high roundhouse kick toward screen-right.',
+      '0.00-0.15s: exact supplied stance.',
+      '0.15-0.55s: transfer weight onto the support leg and chamber the near kicking leg.',
+      '0.55-1.45s: rotate only enough to extend that same leg to head height while both arms keep a coherent guard.',
+      '1.45-2.00s: hold the strongest fully extended impact pose without retracting.',
+      'Keep one unmistakable support leg connected to the floor; no jump, spin, second kick, or recovery.',
+    ].join(' '),
+    low_punch: [
+      'Create exactly one low jab toward screen-right without leaving the supplied crouch.',
+      '0.00-0.15s: exact supplied crouched guard.',
+      '0.15-0.55s: compact low wind-up with both feet planted.',
+      '0.55-1.45s: extend one near arm at waist height while the other fist keeps the guard.',
+      '1.45-2.00s: hold the strongest low impact pose without retracting or standing.',
+      'No second punch, kick, step, guard swap, or recovery.',
+    ].join(' '),
+    low_kick: [
+      'Create exactly one grounded low sweep kick toward screen-right while remaining compact and low.',
+      '0.00-0.15s: exact supplied crouched guard.',
+      '0.15-0.55s: load the support leg and chamber the near kicking leg.',
+      '0.55-1.45s: extend that same leg close to the floor with a readable continuous arc.',
+      '1.45-2.00s: hold the strongest low impact pose without retracting or standing.',
+      'Keep the support leg attached and grounded; no spin, second kick, or recovery.',
+    ].join(' '),
+    jump: [
+      'Create exactly one complete vertical fighting-game jump in place.',
+      '0.00-0.20s: exact supplied stance and brief anticipation.',
+      '0.20-0.65s: lift off with both feet leaving the floor.',
+      '0.65-1.00s: clear apex with the body compact and fully visible.',
+      '1.00-1.55s: controlled descent along the same vertical path.',
+      '1.55-1.80s: land on the original floor line.',
+      '1.80-2.00s: settle into the exact supplied guard.',
+      'No forward travel, aerial strike, flip, scale change, or second jump.',
+    ].join(' '),
+    crouch: [
+      'Create exactly one monotonic transition from the supplied standing guard into a compact crouch.',
+      '0.00-0.20s: exact supplied stance.',
+      '0.20-1.25s: bend both knees and lower the hips continuously while the feet stay planted and the guard stays coherent.',
+      '1.25-2.00s: hold one stable final crouch.',
+      'Do not rise again, kneel, sit, step, strike, or change facing.',
+    ].join(' '),
+    hit: [
+      'Create exactly one grounded hit reaction from an impact arriving from screen-right.',
+      '0.00-0.15s: exact supplied stance.',
+      '0.15-0.75s: recoil clearly toward screen-left with one readable torso compression and guarded arms reacting together.',
+      '0.75-1.05s: reach the single maximum recoil pose.',
+      '1.05-1.75s: recover without attacking or falling.',
+      '1.75-2.00s: hold a stable grounded guard on the original floor line.',
+      'No counterattack, second impact, spin, or knockdown.',
+    ].join(' '),
+    ko: [
+      'Create exactly one terminal backward knock-out fall.',
+      '0.00-0.15s: exact supplied stance.',
+      '0.15-0.55s: one clear backward recoil toward screen-left.',
+      '0.55-1.45s: the whole connected body falls as one articulated figure until torso, shoulder, and head visibly reach the floor.',
+      '1.45-2.00s: hold a fully lying, unsupported knock-out pose.',
+      'Never finish kneeling, sitting, braced on a hand or elbow, standing, or recovering.',
+    ].join(' '),
+    victory: [
+      'Create exactly one readable arcade victory celebration while still facing screen-right.',
+      '0.00-0.15s: exact supplied stance.',
+      '0.15-1.15s: raise one or both attached arms into one proud champion gesture while both feet stay planted.',
+      '1.15-2.00s: hold the final celebration pose steadily.',
+      'No jump, spin, walk, weapon, prop, second gesture, or camera-facing turn.',
+    ].join(' '),
+  });
+
 const ACTION_BY_NAME = new Map(
   VIDEO_SPRITE_GENERATION_ACTIONS.map((entry) => [entry.action, entry]),
 );
@@ -99,9 +199,27 @@ export function videoAction(action: VideoSpriteAction): VideoSpriteGenerationAct
 export function buildVideoSpritePrompt(
   action: VideoSpriteAction,
   generationPrompt?: string,
+  policy: VideoGenerationPolicy = STUDIO_CURATED_VIDEO_POLICY,
 ): string {
   const definition = videoAction(action);
   const identityBrief = generationPrompt?.replace(/\s+/g, ' ').trim().slice(0, 2_400);
+  if (policy === SELF_SERVICE_VIDEO_POLICY) {
+    return [
+      'Generate exactly one continuous two-second fighting-game sprite-source clip from IMAGE 1.',
+      `The only requested action is ${action.toUpperCase()}.`,
+      'Treat the following timestamps as a hard choreography contract. Frames are sampled at fixed action-profile time anchors, so every stated phase must be present at its stated time.',
+      SELF_SERVICE_VIDEO_CHOREOGRAPHY[action],
+      'IMAGE 1 is the immutable identity, face, hair, body proportions, outfit, materials, rendering style, starting scale, floor line, and screen-right-facing master.',
+      identityBrief ? `Preserve this approved character brief: ${identityBrief}` : '',
+      'At every instant show exactly one connected adult fighter with one head, one torso, exactly two attached arms and hands, and exactly two attached legs and feet. Keep every joint anatomically connected and every limb attributable to the same body. Never duplicate, delete, merge, detach, regrow, swap, or morph a limb, hand, foot, face, person, prop, trail, or afterimage.',
+      'Preserve the same costume, colors, facial features, hair, body proportions, near-side and far-side limb ownership, and guard handedness throughout. Do not improvise any action, flourish, recovery, or secondary motion outside the timed choreography.',
+      'Use a strict locked 2D orthographic side profile. The nose and all attacks point to the RIGHT EDGE OF IMAGE / positive X unless the choreography explicitly says recoil toward screen-left. Never turn frontal, three-quarter, backward, or horizontally flip. Keep the whole body visible with generous transparent-safe margin and the original floor line. No crop, zoom, pan, cut, shake, camera turn, perspective change, or character scale change.',
+      'Keep a perfectly flat uniform pure #00FF00 background. No floor graphic, shadow, scenery, text, particles, motion blur, lighting change, or transparency.',
+    ].filter(Boolean).join(' ');
+  }
+  if (policy !== STUDIO_CURATED_VIDEO_POLICY) {
+    throw new Error('Unsupported Video generation prompt policy.');
+  }
   return [
     'Create one continuous two-second fighting-game sprite-source clip from IMAGE 1.',
     `The requested action is ${action.toUpperCase()}.`,
@@ -589,6 +707,7 @@ export async function projectCompilerReport(
     videoSizeBytes: number;
     canonicalSizeBytes: number;
     selectedVideoIndices?: number[];
+    automaticSelectionPolicy?: VideoSpriteAutomaticSelectionPolicy;
     operatorAdjustmentApplied: boolean;
   },
 ): Promise<VideoSpriteCandidateReportProjection> {
@@ -680,7 +799,7 @@ export async function projectCompilerReport(
     || extraction?.selectionAlgorithm !== (
       expected.operatorAdjustmentApplied
         ? 'operator-selected-indices-v1'
-        : 'cumulative-motion-quantiles-v2'
+        : expected.automaticSelectionPolicy ?? 'cumulative-motion-quantiles-v2'
     )
     || (expected.selectedVideoIndices !== undefined &&
       canonicalJson(selectedIndices) !== canonicalJson(expected.selectedVideoIndices))

@@ -140,6 +140,23 @@ test('compiles an extracted video into a reproducible dense sheet and hash-bound
   ]);
 });
 
+test('records and applies the guided temporal selector without changing the compile schema', async () => {
+  const video = mp4Fixture();
+  const canonical = Buffer.from('synthetic canonical input');
+  const mediaAdapter = await syntheticAdapter(video.byteLength);
+  const compiled = await compileVideoSprite({
+    ...request(video, canonical),
+    automaticSelectionPolicy: 'action-profile-temporal-anchors-v1',
+  }, { mediaAdapter });
+  const extraction = compiled.report.extraction as {
+    selectionAlgorithm: string;
+    selectedVideoIndices: number[];
+  };
+  assert.equal(compiled.schemaVersion, 1);
+  assert.equal(extraction.selectionAlgorithm, 'action-profile-temporal-anchors-v1');
+  assert.deepEqual(extraction.selectedVideoIndices, [5, 9, 14, 18, 23]);
+});
+
 test('rejects stale lineage hashes before invoking media tools', async () => {
   const video = mp4Fixture();
   const canonical = Buffer.from('synthetic canonical input');
@@ -173,6 +190,14 @@ test('validates the bounded request and maps compiler failures to stable API res
   assert.deepEqual(
     processorErrorResponse(new VideoSpriteCompileError('unsupported_video', 'bad video', 422)),
     { status: 422, body: { error: 'bad video', code: 'unsupported_video' } },
+  );
+  assert.throws(
+    () => parseVideoSpriteCompileRequest({
+      ...request(mp4Fixture(), Buffer.from('canonical')),
+      automaticSelectionPolicy: 'model-decides',
+    }),
+    (error: unknown) => error instanceof VideoSpriteCompileError &&
+      error.code === 'invalid_automatic_selection_policy',
   );
 });
 

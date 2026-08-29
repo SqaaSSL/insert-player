@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import type { VideoSpriteCompileResponse } from '../../src/services/VideoSpriteCompileContract';
+import {
+  VIDEO_SPRITE_ACTIONS,
+  type VideoSpriteAutomaticSelectionPolicy,
+  type VideoSpriteCompileResponse,
+} from '../../src/services/VideoSpriteCompileContract';
+import {
+  SELF_SERVICE_VIDEO_POLICY,
+  STUDIO_CURATED_VIDEO_POLICY,
+  videoGenerationPolicyContract,
+} from '../../src/services/VideoGenerationPolicy';
 import { hashString } from './auth';
 import {
   PIXCLI_VIDEO_MODEL,
   PIXCLI_VIDEO_PROVIDER_ENDPOINT,
   buildPixcliVideoPayload,
+  buildVideoSpritePrompt,
   canonicalJson,
   projectCompilerReport,
   validatePixcliProviderRequestAudit,
@@ -14,6 +24,19 @@ import {
 
 const PIXCLI_ORIGIN = 'https://pixcli.example';
 const PROMPT = 'Pinned screen-right high kick prompt with an approved identity anchor.';
+const STUDIO_PROMPT_SHA256 = {
+  idle: '23fe26b48f606ab2bfd041df36770614f131343855657847f00376860243d0d0',
+  walk: '7d484f588962efe7f0f897c725fb70c6a5c5c0bc2a8ac4eb46edea7d067a0443',
+  high_punch: '005777f720531162e3b9a6aa35216e46dd22563166f5848d74964e542d78376b',
+  high_kick: 'cb2b36ecc865d8d88bc02626f3b387dd8f10b8340e4769c66ab65c490d624eb8',
+  low_punch: 'b79f1d3c5aab70391fe6c9da32c64b591b26050bceae133294cb9cdd514dd4c6',
+  low_kick: '239c8430cfb6930b83f178016b880f9d831ac3a3e93e3b67ce0424c96f735c51',
+  jump: 'e637dfe2338757e10b7605c358e5c1cd1214962ebd41fc74d7b37a40aad3f9fc',
+  crouch: '0686b15fb84e48b0b181ed5ae61f3630f92ba608c0245ca03feaf43fc8737316',
+  hit: '76d4048b05a830b92a970900cbaf976d014eb9823217c518e6689d83b2036699',
+  ko: '3c69f80a848f177d9da647a56afc6293d7d01eae5cd010a24800407e2c4cbee3',
+  victory: 'b01dd6004363d0b003f554e7cc9496e242da50127343ef12e456942ade76e717',
+} as const;
 
 function liveCanvaFixture() {
   const canonicalHash = 'a'.repeat(32);
@@ -98,7 +121,11 @@ function exactBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
 
-async function compilerFixture(operatorAdjustmentApplied = false, rawByteLength = 25) {
+async function compilerFixture(
+  operatorAdjustmentApplied = false,
+  rawByteLength = 25,
+  automaticSelectionPolicy: VideoSpriteAutomaticSelectionPolicy = 'cumulative-motion-quantiles-v2',
+) {
   const selected = operatorAdjustmentApplied
     ? [1, 2, 3, 4, 5, 6, 7, 9]
     : [0, 1, 2, 3, 4, 5, 6, 7];
@@ -149,7 +176,7 @@ async function compilerFixture(operatorAdjustmentApplied = false, rawByteLength 
       operatorAdjustmentApplied,
       selectionAlgorithm: operatorAdjustmentApplied
         ? 'operator-selected-indices-v1'
-        : 'cumulative-motion-quantiles-v2',
+        : automaticSelectionPolicy,
     },
     contract: {
       sequenceFormat: 'loop',
@@ -206,6 +233,44 @@ async function compilerFixture(operatorAdjustmentApplied = false, rawByteLength 
 }
 
 describe('video sprite generation contracts', () => {
+  it('freezes Studio Curated while giving self-service every action a timed anatomy-safe prompt', async () => {
+    const studioIdle = buildVideoSpritePrompt(
+      'idle',
+      '  Approved   identity brief  ',
+      STUDIO_CURATED_VIDEO_POLICY,
+    );
+    expect(studioIdle).toContain('A completely motionless result is valid and preferred');
+    expect(studioIdle).not.toContain('hard choreography contract');
+    expect(studioIdle).toContain('Preserve this approved character brief: Approved identity brief');
+    for (const action of VIDEO_SPRITE_ACTIONS) {
+      expect(await hashString(buildVideoSpritePrompt(
+        action,
+        undefined,
+        STUDIO_CURATED_VIDEO_POLICY,
+      ))).toBe(STUDIO_PROMPT_SHA256[action]);
+    }
+
+    const prompts = VIDEO_SPRITE_ACTIONS.map((action) => (
+      buildVideoSpritePrompt(action, 'Approved identity brief', SELF_SERVICE_VIDEO_POLICY)
+    ));
+    expect(new Set(prompts).size).toBe(VIDEO_SPRITE_ACTIONS.length);
+    for (const prompt of prompts) {
+      expect(prompt.length).toBeLessThanOrEqual(8_000);
+      expect(prompt).toContain('hard choreography contract');
+      expect(prompt).toContain('exactly two attached arms and hands');
+      expect(prompt).toContain('Do not improvise any action');
+      expect(prompt).not.toContain('completely motionless result');
+    }
+    expect(prompts[VIDEO_SPRITE_ACTIONS.indexOf('idle')]).toContain('subtle breathing loop only');
+    expect(prompts[VIDEO_SPRITE_ACTIONS.indexOf('high_kick')]).toContain('one unmistakable support leg');
+    expect(prompts[VIDEO_SPRITE_ACTIONS.indexOf('ko')]).toContain('1.45-2.00s: hold a fully lying');
+    expect(videoGenerationPolicyContract(SELF_SERVICE_VIDEO_POLICY)).toMatchObject({
+      promptVersion: 'self-service-video-prompt.v2',
+      automaticSelectionPolicy: 'action-profile-temporal-anchors-v1',
+      humanReviewRequired: true,
+    });
+  });
+
   it('accepts the live Canva shape while deriving the MP4 hash only from downloaded bytes', async () => {
     const fixture = liveCanvaFixture();
     const audit = await validatePixcliVideoAudit(fixture.document, {
@@ -310,6 +375,27 @@ describe('video sprite generation contracts', () => {
       selectedVideoIndices: adjusted.selected,
       operatorAdjustmentApplied: true,
     })).resolves.toMatchObject({ selectedIndices: adjusted.selected });
+  });
+
+  it('binds an automatic self-service compile to the temporal selector', async () => {
+    const guided = await compilerFixture(false, 25, 'action-profile-temporal-anchors-v1');
+    await expect(projectCompilerReport(guided.response, 'idle', {
+      facing: 'right',
+      lineage: guided.lineage,
+      videoSizeBytes: 621_474,
+      canonicalSizeBytes: 4_096,
+      automaticSelectionPolicy: 'action-profile-temporal-anchors-v1',
+      operatorAdjustmentApplied: false,
+    })).resolves.toMatchObject({ selectedIndices: guided.selected });
+
+    await expect(projectCompilerReport(guided.response, 'idle', {
+      facing: 'right',
+      lineage: guided.lineage,
+      videoSizeBytes: 621_474,
+      canonicalSizeBytes: 4_096,
+      automaticSelectionPolicy: 'cumulative-motion-quantiles-v2',
+      operatorAdjustmentApplied: false,
+    })).rejects.toThrow(/action or artifact counts/);
   });
 
   it('decodes a compiler PNG whose base64 crosses the Workerd RegExp stack limit', async () => {

@@ -4,6 +4,7 @@ import { processorErrorResponse } from './providerErrorResponse';
 import { sourceGenerationStrategy } from './sourceGenerationPolicy';
 import { compileVideoSprite } from './videoSpriteCompiler.ts';
 import {
+  VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
   VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
   VIDEO_SPRITE_COMPILER_VERSION,
   VIDEO_SPRITE_PROCESSING_VERSION,
@@ -223,6 +224,7 @@ const server = createServer(async (request, response) => {
           schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
           compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
           processingVersion: VIDEO_SPRITE_PROCESSING_VERSION,
+          automaticSelectionPolicies: VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
         },
       });
       return;

@@ -1,5 +1,6 @@
 import type { SpriteAnimationFormat } from './spriteAnimationFormat';
 import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+import type { VideoGenerationPolicy } from '../../src/services/VideoGenerationPolicy';
 
 export type QualityTier = 'rookie' | 'contender' | 'champion';
 
@@ -14,6 +15,9 @@ export interface Env extends OptionalCloudflareBindings {
   CORS_ORIGIN: Cloudflare.Env['CORS_ORIGIN'];
   CLERK_JWKS_URL?: string;
   CLERK_BACKEND_AUTH_BRIDGE_SECRET?: string;
+  /** Optional Cloudflare Realtime TURN credentials for online versus. */
+  REALTIME_TURN_KEY_ID?: string;
+  REALTIME_TURN_API_TOKEN?: string;
 }
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
@@ -65,6 +69,7 @@ export interface GenerationArtifactRun {
   fighter_id: string;
   tier: QualityTier;
   creation_flow: GenerationCreationFlow;
+  video_generation_policy: VideoGenerationPolicy | null;
   operation: GenerationJobOperation;
   target_kind: 'animation' | 'source' | null;
   target_name: string | null;

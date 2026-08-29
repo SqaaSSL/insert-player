@@ -1,8 +1,11 @@
 import {
+  DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY,
   VIDEO_SPRITE_ACTIONS,
   VIDEO_SPRITE_ACTION_PROFILES,
+  VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
   VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
   type VideoSpriteAction,
+  type VideoSpriteAutomaticSelectionPolicy,
   type VideoSpriteCompileRequest,
   type VideoSpriteLineage,
 } from '../../src/services/VideoSpriteCompileContract.ts';
@@ -92,6 +95,20 @@ export function parseVideoSpriteCompileRequest(value: unknown): VideoSpriteCompi
   decodeStrictBase64(value.videoBase64, 'videoBase64', MAX_VIDEO_BYTES);
   decodeStrictBase64(value.canonicalFrameBase64, 'canonicalFrameBase64', MAX_CANONICAL_BYTES);
   const profile = VIDEO_SPRITE_ACTION_PROFILES[value.action as VideoSpriteAction];
+  const automaticSelectionPolicy = value.automaticSelectionPolicy ??
+    DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY;
+  if (
+    typeof automaticSelectionPolicy !== 'string' ||
+    !VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES.includes(
+      automaticSelectionPolicy as VideoSpriteAutomaticSelectionPolicy,
+    )
+  ) {
+    throw new VideoSpriteCompileError(
+      'invalid_automatic_selection_policy',
+      'automaticSelectionPolicy is unsupported.',
+      400,
+    );
+  }
   const expectedSelectionCount = profile.sequenceFormat === 'loop'
     ? profile.uniqueFrameCount
     : profile.uniqueFrameCount - 1;
@@ -119,6 +136,7 @@ export function parseVideoSpriteCompileRequest(value: unknown): VideoSpriteCompi
     expectedFacing,
     videoBase64: value.videoBase64 as string,
     canonicalFrameBase64: value.canonicalFrameBase64 as string,
+    automaticSelectionPolicy: automaticSelectionPolicy as VideoSpriteAutomaticSelectionPolicy,
     selectedVideoIndices,
     lineage: parseLineage(value.lineage),
   };

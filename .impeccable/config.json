@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/ui/styles.css"
+        ],
+        "createdAt": "2026-08-28T13:32:47.806Z",
+        "reason": "fighting-game versus screen: mirrored P1-red/P2-blue side accents are genre-standard player color coding, not a card accent tell"
+      }
+    ]
+  }
+}

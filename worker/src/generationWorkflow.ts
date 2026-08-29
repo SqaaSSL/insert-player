@@ -42,6 +42,10 @@ import {
   type SealedReviewedCanonicalSources,
 } from './reviewedCanonicalSources';
 import { officialPoseMasterFor } from './officialPoseMasters';
+import {
+  storedVideoGenerationPolicy,
+  type VideoGenerationPolicy,
+} from '../../src/services/VideoGenerationPolicy';
 
 interface FighterGenerationParams {
   jobId: string;
@@ -229,6 +233,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     job: GenerationJob,
     artifactRun: GenerationArtifactRun,
     generationPrompt: string | undefined,
+    videoGenerationPolicy: VideoGenerationPolicy,
     step: WorkflowStep,
   ): Promise<void> {
     let sources: GenerationSources;
@@ -295,7 +300,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       blobKey: canonicalKey,
       bytes: canonicalBytes,
       sha256: await hashString(canonicalBytes),
-    }, generationPrompt);
+    }, generationPrompt, videoGenerationPolicy);
   }
 
   private async importReviewedSourcePair(
@@ -679,7 +684,13 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       );
 
       if (activeJob.creation_flow === 'video') {
-        await this.runVideoFlow(activeJob, artifactRun, generationPrompt, step);
+        await this.runVideoFlow(
+          activeJob,
+          artifactRun,
+          generationPrompt,
+          storedVideoGenerationPolicy(artifactRun.video_generation_policy),
+          step,
+        );
         return { jobId, status: 'succeeded', reviewStatus: 'awaiting_review' };
       }
 
