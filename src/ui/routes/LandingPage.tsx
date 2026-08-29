@@ -12,6 +12,8 @@ const LAUNCH_VIDEO = '/assets/insert-player-launch-02541fe4.mp4';
 // the launch capture. The full 12s film with audio stays in the proof section.
 const FIGHT_LOOP_VIDEO = '/assets/landing-fight-loop-77974cfb.mp4';
 const FIGHT_LOOP_POSTER = '/assets/landing-fight-poster-90b5173e.jpg';
+const PANEL_PHOTO = '/assets/landing-panel-photo-b7ad6ddc.webp';
+const PANEL_FIGHTER = '/assets/landing-panel-fighter-c2d0a569.webp';
 
 export function LandingPage({
   onCreateFighter,
@@ -21,38 +23,27 @@ export function LandingPage({
   return (
     <div className="landing-page">
       <section className="landing-hero" aria-labelledby="landing-title">
-        <img
-          className="landing-hero__image"
-          src={TRANSFORMATION_IMAGE}
-          alt="A real person on the left and her recognizable arcade fighter on the right"
-          fetchPriority="high"
-        />
-        <div className="landing-hero__shade" aria-hidden="true" />
-        <div className="landing-hero__labels" aria-hidden="true">
-          <span>Your photo</span>
-          <span>Your fighter</span>
-        </div>
-        <div className="landing-hero__copy">
-          <div className="landing-hero__copytext">
-            <h1 id="landing-title">Insert Player</h1>
-            <p>
-              Turn one photo into a fighter you can actually play. Build your roster,
-              enter the arcade, and keep every version across devices.
-            </p>
-            <div className="landing-hero__actions">
-              <Button variant="primary" size="lg" onClick={onCreateFighter}>
-                Create fighter
-              </Button>
-              <Button variant="ghost" size="lg" onClick={onOpenArcade}>
-                Enter arcade
-              </Button>
-            </div>
-            <p className="landing-hero__note">Your first Rookie fighter is included.</p>
-          </div>
-          <div className="landing-hero__fight">
-            <span className="landing-hero__fight-label" aria-hidden="true">Your fight</span>
+        <div className="landing-triptych">
+          <figure className="landing-panel landing-panel--photo">
+            <span className="landing-panel__chip" aria-hidden="true">Your photo</span>
+            <img
+              src={PANEL_PHOTO}
+              alt="A real person's portrait"
+              fetchPriority="high"
+            />
+          </figure>
+          <span className="landing-triptych__arrow" aria-hidden="true">&#9654;</span>
+          <figure className="landing-panel landing-panel--fighter">
+            <span className="landing-panel__chip" aria-hidden="true">Your fighter</span>
+            <img
+              src={PANEL_FIGHTER}
+              alt="The same person as a recognizable arcade fighter"
+            />
+          </figure>
+          <span className="landing-triptych__arrow" aria-hidden="true">&#9654;</span>
+          <figure className="landing-panel landing-panel--fight">
+            <span className="landing-panel__chip" aria-hidden="true">Your fight</span>
             <video
-              className="landing-hero__fight-video"
               autoPlay
               muted
               loop
@@ -63,20 +54,42 @@ export function LandingPage({
             >
               <source src={FIGHT_LOOP_VIDEO} type="video/mp4" />
             </video>
+          </figure>
+        </div>
+        <div className="landing-hero__copy">
+          <h1 id="landing-title">Insert Player</h1>
+          <p>
+            Turn one photo into a fighter you can actually play. Build your roster,
+            enter the arcade, and keep every version across devices.
+          </p>
+          <div className="landing-hero__actions">
+            <Button variant="primary" size="lg" onClick={onCreateFighter}>
+              Create fighter
+            </Button>
+            <Button variant="ghost" size="lg" onClick={onOpenArcade}>
+              Enter arcade
+            </Button>
           </div>
+          <p className="landing-hero__note">
+            Your first Rookie fighter is included.
+            <span className="landing-coin-blink" aria-hidden="true"> &middot; Insert coin</span>
+          </p>
         </div>
       </section>
 
       <section className="landing-loop" aria-label="How Insert Player works">
         <div>
+          <i className="landing-loop__num" aria-hidden="true">01</i>
           <strong>Photo</strong>
           <span>Start with a real person</span>
         </div>
         <div>
+          <i className="landing-loop__num" aria-hidden="true">02</i>
           <strong>Fighter</strong>
           <span>Keep the face and build the moves</span>
         </div>
         <div>
+          <i className="landing-loop__num" aria-hidden="true">03</i>
           <strong>Fight</strong>
           <span>Play the character in the browser</span>
         </div>

@@ -617,55 +617,58 @@
   }
 
   .landing-hero {
-    @apply relative isolate h-[calc(100svh-116px)] min-h-[560px] max-h-[800px]
-           overflow-hidden border-b-2 border-asf-gold-deep bg-asf-bg-0
-           max-[640px]:h-auto max-[640px]:min-h-0 max-[640px]:max-h-none;
+    @apply border-b-2 border-asf-gold-deep bg-asf-bg-0 px-[5vw] pb-10 pt-8
+           max-[640px]:px-4 max-[640px]:pb-8 max-[640px]:pt-4;
   }
 
-  .landing-hero__image {
-    @apply absolute inset-0 -z-20 h-full w-full object-cover object-center
-           max-[640px]:static max-[640px]:h-[240px] max-[640px]:object-cover
-           max-[640px]:object-top;
+  /* Cabinet triptych: photo -> fighter -> fight, the fight screen widest. */
+  .landing-triptych {
+    @apply mx-auto grid w-full max-w-[1480px]
+           grid-cols-[1fr_auto_1fr_auto_1.55fr] items-stretch gap-3
+           max-[900px]:grid-cols-2;
   }
 
-  .landing-hero__shade {
-    @apply absolute inset-x-0 bottom-0 -z-10 h-[43%] bg-[rgba(4,4,13,0.88)]
-           max-[640px]:hidden;
+  .landing-panel {
+    @apply relative m-0 h-[380px] overflow-hidden rounded-[6px] border-2
+           border-asf-gold-deep bg-asf-well shadow-[0_8px_0_rgba(0,0,0,0.55)]
+           after:pointer-events-none after:absolute after:inset-0
+           after:bg-[repeating-linear-gradient(0deg,rgba(0,0,0,0.14)_0px,rgba(0,0,0,0.14)_1px,transparent_1px,transparent_3px)]
+           after:shadow-[inset_0_0_64px_rgba(0,0,0,0.5)] after:content-['']
+           max-[900px]:h-[300px] max-[640px]:h-[230px];
   }
 
-  .landing-hero__labels {
-    @apply absolute inset-x-0 top-0 flex items-center justify-between px-[5vw] py-5
-           font-arcade text-[10px] uppercase tracking-[0.08em] text-asf-gold-bright
-           [text-shadow:0_2px_0_rgba(0,0,0,0.9)];
+  .landing-panel img,
+  .landing-panel video {
+    @apply block h-full w-full object-cover object-top;
+  }
+
+  .landing-panel--fighter img {
+    @apply object-center;
+  }
+
+  .landing-panel--fight {
+    @apply max-[900px]:col-span-2 max-[900px]:h-[340px] max-[640px]:h-[212px];
+  }
+
+  .landing-panel--fight video {
+    @apply object-center;
+  }
+
+  .landing-panel__chip {
+    @apply absolute left-0 top-0 z-10 rounded-br-[6px] border-b-2 border-r-2
+           border-asf-gold-deep bg-[rgba(5,5,12,0.92)] px-3 py-2 font-arcade
+           text-[11px] uppercase tracking-[0.08em] text-asf-gold-bright
+           max-[640px]:px-2 max-[640px]:py-1.5 max-[640px]:text-[10px];
+  }
+
+  .landing-triptych__arrow {
+    @apply self-center font-arcade text-[18px] text-asf-gold
+           [text-shadow:0_0_14px_rgba(255,206,58,0.65)] max-[900px]:hidden;
   }
 
   .landing-hero__copy {
-    @apply absolute inset-x-0 bottom-0 mx-auto grid w-full max-w-[1480px]
-           grid-cols-[minmax(0,1fr)_minmax(280px,420px)] items-end gap-8
-           px-[5vw] pb-8 pt-7;
-    @apply max-[900px]:grid-cols-1;
-    @apply max-[640px]:static max-[640px]:gap-4 max-[640px]:px-5 max-[640px]:py-6;
-  }
-
-  .landing-hero__copytext {
-    @apply flex flex-col items-start gap-4 max-[640px]:gap-3;
-  }
-
-  /* GIF-style silent gameplay loop framed like a cabinet screen. */
-  .landing-hero__fight {
-    @apply relative z-10 overflow-hidden rounded-[6px] border-2 border-asf-gold-deep
-           bg-asf-well shadow-[0_10px_0_rgba(0,0,0,0.6)]
-           max-[900px]:max-w-[520px];
-  }
-
-  .landing-hero__fight-label {
-    @apply absolute left-0 top-0 z-10 rounded-br-[6px] border-b-2 border-r-2
-           border-asf-gold-deep bg-[rgba(5,5,12,0.92)] px-3 py-2 font-arcade
-           text-[10px] uppercase tracking-[0.08em] text-asf-gold-bright;
-  }
-
-  .landing-hero__fight-video {
-    @apply block aspect-video w-full object-cover;
+    @apply mx-auto mt-8 flex w-full max-w-[1480px] flex-col items-start gap-4
+           max-[640px]:mt-6 max-[640px]:gap-3;
   }
 
   .landing-hero__copy h1 {
@@ -703,6 +706,15 @@
            first:pl-0 last:border-r-0 last:pr-0
            max-[720px]:min-h-[92px] max-[720px]:border-r-0 max-[720px]:border-b
            max-[720px]:px-0 max-[720px]:last:border-b-0;
+  }
+
+  .landing-coin-blink {
+    @apply font-arcade text-[11px] uppercase tracking-[0.08em] text-asf-red
+           [animation:coin-blink_1.3s_steps(2)_infinite] motion-reduce:animate-none;
+  }
+
+  .landing-loop__num {
+    @apply font-arcade text-[11px] not-italic leading-none text-asf-red;
   }
 
   .landing-loop strong {
@@ -747,7 +759,7 @@
 
   .landing-film__meta {
     @apply flex flex-wrap items-center justify-between gap-3 border-t border-asf-line
-           bg-asf-bg-1 px-4 py-3 font-arcade text-[9px] uppercase tracking-[0.06em]
+           bg-asf-bg-1 px-4 py-3 font-arcade text-[11px] uppercase tracking-[0.06em]
            text-asf-gold;
   }
 
@@ -777,7 +789,7 @@
   }
 
   .landing-identity__facts dt {
-    @apply font-arcade text-[10px] uppercase tracking-[0] text-asf-gold-bright;
+    @apply font-arcade text-[11px] uppercase tracking-[0] text-asf-gold-bright;
   }
 
   .landing-identity__facts dd {
@@ -3096,5 +3108,11 @@
   }
   50% {
     filter: brightness(1.45);
+  }
+}
+
+@keyframes coin-blink {
+  50% {
+    opacity: 0;
   }
 }
