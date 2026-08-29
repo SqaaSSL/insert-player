@@ -2146,6 +2146,35 @@ async function reviewOfficialRefinedCells(
   );
 }
 
+export function geminiOfficialPoseGuideCells(
+  animName: string,
+  frames: number,
+  officialDescription: string | undefined,
+  poseMasterId: string | undefined,
+  poseGuideBase64s: string[] | undefined,
+): string[] | null {
+  const hasPoseMasterInput = poseMasterId !== undefined || poseGuideBase64s !== undefined;
+  if (!hasPoseMasterInput) return null;
+  if (!officialDescription?.trim()) {
+    throw new GeminiOfficialSpriteQualityError('Official pose guides require an approved character brief');
+  }
+  if (animName !== 'jump') {
+    throw new GeminiOfficialSpriteQualityError('The supplied official pose master is not approved for this animation');
+  }
+  if (!poseMasterId?.trim() || !Array.isArray(poseGuideBase64s)) {
+    throw new GeminiOfficialSpriteQualityError('Official pose master metadata is incomplete');
+  }
+  if (
+    poseGuideBase64s.length !== frames ||
+    poseGuideBase64s.some((value) => typeof value !== 'string' || value.length < 32)
+  ) {
+    throw new GeminiOfficialSpriteQualityError(
+      `Official pose master ${poseMasterId} does not contain the expected ${frames} frames`,
+    );
+  }
+  return [...poseGuideBase64s];
+}
+
 export async function geminiSheetRefined(
   characterBase64: string,
   animName: string,
@@ -2154,7 +2183,11 @@ export async function geminiSheetRefined(
   secondaryBase64?: string,
   maxScale?: number,
   normalizationReference?: NormalizationReference,
-  options?: { enableBgRemoval?: boolean },
+  options?: {
+    enableBgRemoval?: boolean;
+    officialPoseMasterId?: string;
+    officialPoseGuideBase64s?: string[];
+  },
   context?: ApiRequestContext,
   modelOverride?: string,
   officialDescription?: string,
@@ -2170,13 +2203,27 @@ export async function geminiSheetRefined(
     : renderModel;
   const shouldMirror = MIRROR_ANIMS.has(animName);
 
-  // Step 1: coherent base sheet — fixes pose sequence + style across all frames.
-  debugInfo(
-    `[GeminiApi] Sheet-refine ${animName}: generating pose scaffold with ${scaffoldModel} ` +
-    `(final frames: ${renderModel})...`,
+  const suppliedPoseGuides = geminiOfficialPoseGuideCells(
+    animName,
+    frames,
+    official,
+    options?.officialPoseMasterId,
+    options?.officialPoseGuideBase64s,
   );
+
+  // Step 1: coherent base sheet — fixes pose sequence + style across all frames.
   let sheetCells: string[];
-  if (official && animName === 'walk' && frames === 16 && !shouldMirror) {
+  if (suppliedPoseGuides) {
+    sheetCells = suppliedPoseGuides;
+    debugInfo(
+      `[GeminiApi] Sheet-refine ${animName}: using ${sheetCells.length} immutable pose guides ` +
+      `from ${options?.officialPoseMasterId}; skipping generated scaffold (final frames: ${renderModel})...`,
+    );
+  } else if (official && animName === 'walk' && frames === 16 && !shouldMirror) {
+    debugInfo(
+      `[GeminiApi] Sheet-refine ${animName}: generating pose scaffold with ${scaffoldModel} ` +
+      `(final frames: ${renderModel})...`,
+    );
     const phaseMotions = [
       `${motion}. Generate frames 1 through 8 of a 16-frame seamless cycle: begin at a clear forward-leg contact pose, pass through the balanced mid-step, and finish just before the opposite-leg contact. Keep both fists raised in a consistent combat guard and the upper body ready throughout. Do not return to the starting contact pose in this half.`,
       `${motion}. Generate frames 9 through 16 of a 16-frame seamless cycle: begin at the opposite-leg contact pose, pass through the balanced return step, and finish at the original forward-leg contact so the full 16-frame loop closes cleanly. Keep both fists raised in the same combat guard and preserve the exact body proportions, framing, and floor line established by the first half.`,
@@ -2214,6 +2261,10 @@ export async function geminiSheetRefined(
       );
     }
   } else {
+    debugInfo(
+      `[GeminiApi] Sheet-refine ${animName}: generating pose scaffold with ${scaffoldModel} ` +
+      `(final frames: ${renderModel})...`,
+    );
     const scaffoldEndGuide = official && animName === 'idle'
       ? characterBase64
       : secondaryBase64;

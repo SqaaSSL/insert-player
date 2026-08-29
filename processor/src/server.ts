@@ -53,6 +53,8 @@ interface GenerateSpriteRequest extends ProviderContextRequest {
   };
   primaryBase64: string;
   secondaryBase64?: string;
+  officialPoseMasterId?: string;
+  officialPoseGuideBase64s?: string[];
   generationPrompt?: string;
   normalizationReference?: {
     targetDrawHeight?: number;
@@ -161,7 +163,11 @@ async function generateSprite(body: GenerateSpriteRequest) {
       body.secondaryBase64,
       undefined,
       body.normalizationReference,
-      { enableBgRemoval: true },
+      {
+        enableBgRemoval: true,
+        officialPoseMasterId: body.officialPoseMasterId,
+        officialPoseGuideBase64s: body.officialPoseGuideBase64s,
+      },
       context,
       model,
       body.generationPrompt,
@@ -292,7 +298,14 @@ const server = createServer(async (request, response) => {
         !body.primaryBase64 ||
         !body.animation?.name ||
         !body.animation.motion ||
-        !Number.isInteger(body.animation.frames)
+        !Number.isInteger(body.animation.frames) ||
+        ((body.officialPoseGuideBase64s !== undefined || body.officialPoseMasterId !== undefined) && (
+          !Array.isArray(body.officialPoseGuideBase64s) ||
+          body.officialPoseGuideBase64s.length !== body.animation.frames ||
+          body.officialPoseGuideBase64s.some((value) => typeof value !== 'string' || value.length < 32) ||
+          typeof body.officialPoseMasterId !== 'string' ||
+          !/^[a-zA-Z0-9:_-]{1,160}$/.test(body.officialPoseMasterId)
+        ))
       ) {
         sendJson(response, 400, { error: 'Invalid generate-sprite request' });
         return;
