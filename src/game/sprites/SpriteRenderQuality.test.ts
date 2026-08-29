@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chooseSpriteTextureDensity } from './SpriteRenderQuality.ts';
+import { chooseSpriteTextureDensity, spriteSupportsHighResolutionAtlas } from './SpriteRenderQuality.ts';
 
 const REQUEST = {
   atlasWidthAt1x: 12 * 192,
@@ -72,5 +72,54 @@ describe('adaptive sprite texture density', () => {
       saveData: false,
       coarsePointer: true,
     }, REQUEST)).toBe(1);
+  });
+});
+
+describe('spriteSupportsHighResolutionAtlas', () => {
+  const target = { w: 384, h: 512 };
+
+  it('accepts a video-dense sprite with complete RAW metadata', () => {
+    expect(spriteSupportsHighResolutionAtlas({
+      animationFormat: 'video-dense-v1',
+      frameWidth: 192,
+      frameHeight: 256,
+      rawPngBlob: new Blob(['x']),
+      rawFrameWidth: 768,
+      rawFrameHeight: 1024,
+      rawFrameCount: 4,
+    }, target.w, target.h)).toBe(true);
+  });
+
+  it('rejects a video-dense sprite missing its RAW blob', () => {
+    expect(spriteSupportsHighResolutionAtlas({
+      animationFormat: 'video-dense-v1',
+      frameWidth: 192,
+      frameHeight: 256,
+      rawPngBlob: null,
+      rawFrameWidth: 768,
+      rawFrameHeight: 1024,
+      rawFrameCount: 4,
+    }, target.w, target.h)).toBe(false);
+  });
+
+  it('accepts a legacy Champion sheet whose processed frames are 2x or larger', () => {
+    expect(spriteSupportsHighResolutionAtlas({
+      animationFormat: 'legacy',
+      frameWidth: 768,
+      frameHeight: 1024,
+    }, target.w, target.h)).toBe(true);
+  });
+
+  it('rejects a legacy Rookie/Contender sheet below the 2x cell size', () => {
+    expect(spriteSupportsHighResolutionAtlas({
+      animationFormat: 'legacy',
+      frameWidth: 192,
+      frameHeight: 256,
+    }, target.w, target.h)).toBe(false);
+    expect(spriteSupportsHighResolutionAtlas({
+      animationFormat: 'legacy',
+      frameWidth: 384,
+      frameHeight: 500,
+    }, target.w, target.h)).toBe(false);
   });
 });

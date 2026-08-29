@@ -13,6 +13,8 @@ import {
   getSpriteLayout,
   getSpritePresentationProfile,
   registerSpriteLayout,
+  calculateLegacyCrouchPresentationScale,
+  LEGACY_CROUCH_DISPLAY_HEIGHT_RATIO,
 } from './SpriteGenerator.ts';
 
 describe('sprite layouts', () => {
@@ -225,5 +227,27 @@ describe('sprite layouts', () => {
 
     expect(getSpriteLayout('test-legacy-fighter').frameCounts[FighterState.HIGH_KICK]).toBe(7);
     expect(getSpriteLayout('test-dense-fighter').frameCounts[FighterState.HIGH_KICK]).toBe(12);
+  });
+});
+
+describe('calculateLegacyCrouchPresentationScale', () => {
+  it('shrinks an idle-height crouch to the target display ratio', () => {
+    expect(calculateLegacyCrouchPresentationScale(240, 240)).toBeCloseTo(
+      LEGACY_CROUCH_DISPLAY_HEIGHT_RATIO,
+    );
+  });
+
+  it('leaves a naturally short crouch untouched (never upscales)', () => {
+    expect(calculateLegacyCrouchPresentationScale(240, 148)).toBe(1);
+    expect(calculateLegacyCrouchPresentationScale(240, 100)).toBe(1);
+  });
+
+  it('clamps extreme corrections to the minimum presentation scale', () => {
+    expect(calculateLegacyCrouchPresentationScale(100, 400)).toBe(0.45);
+  });
+
+  it('falls back to identity for unusable measurements', () => {
+    expect(calculateLegacyCrouchPresentationScale(0, 240)).toBe(1);
+    expect(calculateLegacyCrouchPresentationScale(240, Number.NaN)).toBe(1);
   });
 });

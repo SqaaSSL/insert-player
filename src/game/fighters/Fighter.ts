@@ -593,8 +593,11 @@ export class Fighter {
   }
 
   private getComposedSpritePresentation(): ComposedSpritePresentation {
+    const presentationState = this.state === FighterState.BLOCK && this.crouchBlocking
+      ? FighterState.CROUCH
+      : this.state;
     const presentation = composeSpritePresentation(
-      getSpritePresentationProfile(this.layout, this.state),
+      getSpritePresentationProfile(this.layout, presentationState),
       this.renderScale,
       this.y,
       this.renderYOffset,

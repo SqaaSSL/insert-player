@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { FighterState, FIGHTER_WIDTH, FIGHTER_HEIGHT } from '../constants.ts';
 import { getAllSpritesForHash, type CachedSprite } from '../../services/SpriteCache.ts';
 import {
+  calculateLegacyCrouchPresentationScale,
   createSpriteLayout,
   DEFAULT_SPRITE_PRESENTATION_PROFILE,
   getAnimationRuntimeProfile,
@@ -17,6 +18,7 @@ import {
 import {
   chooseSpriteTextureDensity,
   detectSpriteRenderCapabilities,
+  spriteSupportsHighResolutionAtlas,
   type SpriteTextureDensity,
 } from './SpriteRenderQuality.ts';
 
@@ -87,13 +89,9 @@ export async function loadAiSprites(
   const rendererContext = (scene.game.renderer as unknown as {
     gl?: WebGLRenderingContext | WebGL2RenderingContext;
   }).gl ?? null;
-  const highResolutionSourcesAvailable = cached.every((sprite) => (
-    sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT &&
-    sprite.rawPngBlob instanceof Blob &&
-    Number.isInteger(sprite.rawFrameWidth) && (sprite.rawFrameWidth ?? 0) > 0 &&
-    Number.isInteger(sprite.rawFrameHeight) && (sprite.rawFrameHeight ?? 0) > 0 &&
-    Number.isInteger(sprite.rawFrameCount) && (sprite.rawFrameCount ?? 0) > 0
-  ));
+  const highResolutionSourcesAvailable = cached.every((sprite) =>
+    spriteSupportsHighResolutionAtlas(sprite, FIGHTER_WIDTH * 2, FIGHTER_HEIGHT * 2),
+  );
   const textureDensity: SpriteTextureDensity = chooseSpriteTextureDensity(
     detectSpriteRenderCapabilities(rendererContext),
     {
@@ -244,6 +242,62 @@ async function loadAiSpritesAtDensity(
     resolvedAnimationNames,
     densePresentationByAnimation,
   );
+
+  // Legacy sheets get their content fit-scaled to fill each atlas cell, so a
+  // crouch always comes out idle-height regardless of how the AI drew it.
+  // Measure the actual drawn content height of both cells and shrink the
+  // CROUCH presentation to track the idle. BLOCK deliberately keeps the
+  // default profile: standing guard reuses the crouch cells at full height,
+  // and the crouch-block presentation is resolved per-frame by the Fighter.
+  const legacyDrawnContentHeight = (animName: string): number | null => {
+    const anim = loadedAnims.get(animName);
+    if (!anim || anim.sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT) {
+      return null;
+    }
+    const state = ANIM_NAME_TO_STATE[animName];
+    const profile = runtimeProfiles.get(state) ?? getAnimationRuntimeProfile(state);
+    const gridCols = Math.round(anim.img.width / anim.frameWidth);
+    const extractedFrames = extractedFramesByAnimation.get(animName) ??
+      extractFrames(anim.img, anim.frameWidth, anim.frameHeight, anim.frameCount, gridCols);
+    extractedFramesByAnimation.set(animName, extractedFrames);
+    const stableFrames = selectStableFramesForState(
+      state,
+      extractedFrames,
+      anim.frameWidth,
+      anim.frameHeight,
+      profile.frameCount,
+    );
+    const frames = selectSourceFramesForAtlas(state, stableFrames, profile.frameCount, profile, {
+      sourceState: state,
+      animationFormat: anim.sprite.animationFormat,
+    });
+    const contentBox = findUnionBBox(frames, anim.frameWidth, anim.frameHeight);
+    const transform = calculateAtlasFrameTransform(
+      anim.frameWidth,
+      anim.frameHeight,
+      contentBox,
+      anim.sprite.animationFormat,
+      atlasFrameWidth,
+      atlasFrameHeight,
+    );
+    return transform.destination.h;
+  };
+  if (presentationProfiles[FighterState.CROUCH] === undefined) {
+    const idleContentHeight = legacyDrawnContentHeight('idle');
+    const crouchContentHeight = legacyDrawnContentHeight('crouch');
+    if (idleContentHeight !== null && crouchContentHeight !== null) {
+      const crouchScale = calculateLegacyCrouchPresentationScale(
+        idleContentHeight,
+        crouchContentHeight,
+      );
+      if (crouchScale < 1) {
+        presentationProfiles[FighterState.CROUCH] = {
+          ...DEFAULT_SPRITE_PRESENTATION_PROFILE,
+          scale: crouchScale,
+        };
+      }
+    }
+  }
 
   const layout = createSpriteLayout(
     frameCountOverrides,

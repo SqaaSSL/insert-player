@@ -7,6 +7,41 @@ export interface SpriteRenderCapabilities {
   coarsePointer: boolean;
 }
 
+/** Minimal sprite shape needed to decide 2x-atlas eligibility. */
+export interface HighResolutionSpriteSource {
+  animationFormat?: string | null;
+  frameWidth: number;
+  frameHeight: number;
+  rawPngBlob?: Blob | null;
+  rawFrameWidth?: number | null;
+  rawFrameHeight?: number | null;
+  rawFrameCount?: number | null;
+}
+
+/**
+ * A sprite can feed the 2x atlas either through its preserved RAW video
+ * frames (video-dense) or directly through its processed sheet when that
+ * sheet was generated at high resolution (Champion legacy sheets store
+ * 768x1024 cells — four times the 1x atlas cell in each axis). Without the
+ * second branch, a paid Champion legacy fighter renders at Rookie density
+ * while its HD pixels sit unused in the cache.
+ */
+export function spriteSupportsHighResolutionAtlas(
+  sprite: HighResolutionSpriteSource,
+  targetFrameWidth: number,
+  targetFrameHeight: number,
+): boolean {
+  if (sprite.animationFormat === 'video-dense-v1') {
+    return (
+      sprite.rawPngBlob instanceof Blob &&
+      Number.isInteger(sprite.rawFrameWidth) && (sprite.rawFrameWidth ?? 0) > 0 &&
+      Number.isInteger(sprite.rawFrameHeight) && (sprite.rawFrameHeight ?? 0) > 0 &&
+      Number.isInteger(sprite.rawFrameCount) && (sprite.rawFrameCount ?? 0) > 0
+    );
+  }
+  return sprite.frameWidth >= targetFrameWidth && sprite.frameHeight >= targetFrameHeight;
+}
+
 export interface SpriteDensityRequest {
   atlasWidthAt1x: number;
   atlasHeightAt1x: number;
