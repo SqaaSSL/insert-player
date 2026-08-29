@@ -106,14 +106,12 @@ export function MobileFightControls({
     <div className="mobile-fight-controls" aria-label={`${playerLabel} controls`}>
       <VirtualJoystick playerIndex={playerIndex} playerLabel={playerLabel} />
       <div className="mobile-fight-controls__actions" role="group" aria-label="Attacks">
+        <ControlButton action="punch" className="is-punch" label="P" playerIndex={playerIndex} playerLabel={playerLabel} title="Punch" />
+        <ControlButton action="kick" className="is-kick" label="K" playerIndex={playerIndex} playerLabel={playerLabel} title="Kick" />
         <ControlButton action="fireball" className="is-fireball" label="F" playerIndex={playerIndex} playerLabel={playerLabel} title="Fireball" />
         {superReady ? (
           <ControlButton action="super" className="is-super" label="S!" playerIndex={playerIndex} playerLabel={playerLabel} title="Super fireball" />
-        ) : (
-          <span className="mobile-fight-controls__slot" aria-hidden="true" />
-        )}
-        <ControlButton action="punch" className="is-punch" label="P" playerIndex={playerIndex} playerLabel={playerLabel} title="Punch" />
-        <ControlButton action="kick" className="is-kick" label="K" playerIndex={playerIndex} playerLabel={playerLabel} title="Kick" />
+        ) : null}
         <ControlButton action="guard" className="is-guard" label="G" playerIndex={playerIndex} playerLabel={playerLabel} title="Guard (hold)" />
       </div>
     </div>

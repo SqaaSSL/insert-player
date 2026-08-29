@@ -1126,7 +1126,12 @@
     @apply pointer-events-none absolute bottom-[max(16px,env(safe-area-inset-bottom))]
            left-4 flex h-[132px] w-[132px] items-center justify-center rounded-full
            border-2 border-[rgba(255,206,58,0.5)] bg-[rgba(5,5,7,0.55)]
-           [backdrop-filter:blur(5px)] shadow-[inset_0_4px_12px_rgba(0,0,0,0.65)];
+           [backdrop-filter:blur(5px)] shadow-[inset_0_4px_12px_rgba(0,0,0,0.65)]
+           opacity-0 transition-opacity duration-150 motion-reduce:transition-none;
+  }
+
+  .virtual-joystick-zone.is-active .virtual-joystick {
+    @apply opacity-100;
   }
 
   .virtual-joystick__knob {
@@ -1167,13 +1172,10 @@
     @apply -translate-x-5 translate-y-5;
   }
 
+  /* Wild Rift-style corner fan: primary punch anchors the corner, the rest
+     arc around it. Every button is a circle. */
   .mobile-fight-controls__actions {
-    @apply pointer-events-auto grid touch-none grid-cols-[48px_48px]
-           grid-rows-[48px_48px_44px] gap-2 [transform:rotate(-8deg)];
-  }
-
-  .mobile-fight-controls__slot {
-    @apply block h-[48px] w-[48px];
+    @apply pointer-events-auto relative h-[150px] w-[224px] touch-none;
   }
 
   .mobile-fight-control {
@@ -1187,7 +1189,23 @@
   }
 
   .mobile-fight-controls__actions .mobile-fight-control {
-    @apply h-[48px] w-[48px] [transform:rotate(8deg)] opacity-90;
+    @apply absolute rounded-full opacity-90;
+  }
+
+  .mobile-fight-control.is-punch {
+    @apply bottom-1 right-1 h-[70px] w-[70px] text-[20px];
+  }
+
+  .mobile-fight-control.is-kick {
+    @apply bottom-1 right-[92px] h-[56px] w-[56px];
+  }
+
+  .mobile-fight-control.is-fireball {
+    @apply bottom-[74px] right-[74px] h-[56px] w-[56px];
+  }
+
+  .mobile-fight-control.is-super {
+    @apply bottom-[94px] right-1 h-[56px] w-[56px];
   }
 
   .mobile-fight-control.is-punch,
@@ -1195,13 +1213,13 @@
     @apply border-asf-gold bg-[rgba(106,10,10,0.86)];
   }
 
-  .mobile-fight-control.is-fireball,
-  .mobile-fight-control.is-uppercut {
+  .mobile-fight-control.is-fireball {
     @apply border-asf-violet bg-[rgba(48,24,96,0.86)];
   }
 
   .mobile-fight-control.is-guard {
-    @apply col-span-2 h-[44px] w-full border-asf-blue bg-[rgba(10,30,66,0.88)] text-asf-blue
+    @apply bottom-1 right-[164px] h-[58px] w-[58px] border-asf-blue
+           bg-[rgba(10,30,66,0.88)] text-asf-blue
            [text-shadow:0_2px_0_rgba(0,0,0,0.8)];
   }
 

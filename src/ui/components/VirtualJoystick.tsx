@@ -48,6 +48,7 @@ export function VirtualJoystick({
   const originRef = useRef<{ x: number; y: number } | null>(null);
   const activeRef = useRef<Set<Dir>>(new Set());
   const [knobClass, setKnobClass] = useState('');
+  const [active, setActive] = useState(false);
 
   const applyDirections = (next: Set<Dir>) => {
     for (const dir of ['left', 'right', 'up', 'down'] as Dir[]) {
@@ -63,6 +64,7 @@ export function VirtualJoystick({
   const release = () => {
     pointerRef.current = null;
     originRef.current = null;
+    setActive(false);
     applyDirections(new Set());
   };
 
@@ -93,6 +95,7 @@ export function VirtualJoystick({
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     if (pointerRef.current !== null) return;
+    setActive(true);
     pointerRef.current = event.pointerId;
     originRef.current = { x: event.clientX, y: event.clientY };
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -113,7 +116,7 @@ export function VirtualJoystick({
 
   return (
     <div
-      className="virtual-joystick-zone"
+      className={active ? 'virtual-joystick-zone is-active' : 'virtual-joystick-zone'}
       role="application"
       aria-label={`Movement zone, ${playerLabel}. Touch anywhere on the left side and drag: sideways to walk, down to crouch, up to jump.`}
       onContextMenu={(event) => event.preventDefault()}
