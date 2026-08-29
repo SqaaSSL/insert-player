@@ -6,7 +6,7 @@ function isLocalDevWithoutApi(): boolean {
 }
 
 export function shouldReportMatchCompletion(detail: MatchCompletionDetail): boolean {
-  return !detail.cpuVsCpu;
+  return !detail.cpuVsCpu && detail.experience !== 'trial';
 }
 
 export async function reportMatchCompletion(detail: MatchCompletionDetail): Promise<void> {

@@ -32,8 +32,12 @@ import { Button } from '../components/Button.tsx';
 import type { LegalRoute } from '../components/LegalFooter.tsx';
 import { currentCheckoutLegalAttestation } from '../legal.ts';
 import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
+import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
+import type { CreationPurchaseIntent } from '../shared/onboardingFlow.ts';
 
 interface HomePageProps extends AuthRouteState {
+  creationPurchaseIntent?: CreationPurchaseIntent | null;
+  onContinuePurchaseIntent?: () => void;
   onCreateFighter: () => void;
   onOpenArcade: () => void;
   onNavigateLegal: (route: LegalRoute) => void;
@@ -70,6 +74,8 @@ export function HomePage({
   onOpenVsPlayer,
   onOpenOnlineVersus,
   onOpenModeration,
+  creationPurchaseIntent = null,
+  onContinuePurchaseIntent,
 }: HomePageProps) {
   const [creditPacks, setCreditPacks] = useState<CreditPack[]>([]);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
@@ -265,6 +271,15 @@ export function HomePage({
     : rookieStatus === 'credits'
       ? 'Climb the ladder: 13 challengers, 3 continues.'
       : 'Create a fighter and climb the machine roster.';
+  const purchaseTier = QUALITY_TIERS.find((item) => item.id === creationPurchaseIntent?.tier) ?? null;
+  const purchaseCreditsNeeded = purchaseTier && billingProfile
+    ? Math.max(0, purchaseTier.creditCost - billingProfile.creditsBalance)
+    : purchaseTier?.creditCost ?? 0;
+  const purchaseIntentReady = Boolean(
+    purchaseTier
+    && billingProfile
+    && billingProfile.creditsBalance >= purchaseTier.creditCost,
+  );
 
   return (
     <div className="home-app">
@@ -326,6 +341,28 @@ export function HomePage({
           </h2>
           <span role="status" aria-live="polite">{billingStatus}</span>
         </div>
+
+        {creationPurchaseIntent && purchaseTier ? (
+          <div className="home-credits__creation-intent" role="status">
+            <div>
+              <strong>{purchaseTier.label} selected</strong>
+              <span>
+                {purchaseIntentReady
+                  ? 'Your balance is ready. Continue with the fighter you chose.'
+                  : `${purchaseTier.creditCost} credits required · ${purchaseCreditsNeeded} more needed`}
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={!purchaseIntentReady || !onContinuePurchaseIntent}
+              onClick={onContinuePurchaseIntent}
+            >
+              {purchaseIntentReady
+                ? `Continue ${purchaseTier.label} Creation`
+                : 'Choose A Credit Pack Below'}
+            </button>
+          </div>
+        ) : null}
 
         {creditPacks.length > 0 ? (
           <>

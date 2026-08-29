@@ -31,6 +31,48 @@ export interface ArcadeRunState {
   startedAt: number;
 }
 
+function arcadeSlugFromPhotoHash(photoHash: string): string | null {
+  if (!photoHash.startsWith('arcade:')) return null;
+  const slug = photoHash.slice('arcade:'.length).split(':', 1)[0]?.trim();
+  return slug || null;
+}
+
+function sameFighter(player: ArcadeRunPlayer, rung: ArcadeRunRung): boolean {
+  if (player.cloudFighterId && rung.fighterId === player.cloudFighterId) return true;
+  if (player.photoHash === rung.photoHash) return true;
+  const playerSlug = arcadeSlugFromPhotoHash(player.photoHash);
+  return Boolean(playerSlug && rung.slug && playerSlug === rung.slug);
+}
+
+function rungIdentityKeys(rung: ArcadeRunRung): string[] {
+  return [
+    rung.fighterId ? `id:${rung.fighterId}` : null,
+    rung.photoHash ? `hash:${rung.photoHash}` : null,
+    rung.slug ? `slug:${rung.slug}` : null,
+  ].filter((key): key is string => Boolean(key));
+}
+
+/**
+ * Enforces the ladder identity invariant at its domain boundary: the player
+ * never appears as a challenger and repeated versions of one global appear
+ * only once. The first reviewed roster occurrence wins, preserving rank order.
+ */
+export function sanitizeArcadeRunRungs(
+  player: ArcadeRunPlayer,
+  rungs: ArcadeRunRung[],
+): ArcadeRunRung[] {
+  const seen = new Set<string>();
+  const sanitized: ArcadeRunRung[] = [];
+  for (const rung of rungs) {
+    if (sameFighter(player, rung)) continue;
+    const identityKeys = rungIdentityKeys(rung);
+    if (identityKeys.some((key) => seen.has(key))) continue;
+    sanitized.push(rung);
+    identityKeys.forEach((key) => seen.add(key));
+  }
+  return sanitized;
+}
+
 /**
  * Difficulty curve for rung `index` of `total`: eases from 0.25 up to 1.0 so
  * the first challengers are forgiving and the boss plays at full strength.
@@ -47,13 +89,14 @@ export function createArcadeRun(
   ownerScope: string,
   startedAt: number,
 ): ArcadeRunState {
-  if (rungs.length === 0) {
+  const sanitizedRungs = sanitizeArcadeRunRungs(player, rungs);
+  if (sanitizedRungs.length === 0) {
     throw new Error('Arcade run requires at least one challenger');
   }
   return {
     ownerScope,
     player,
-    rungs,
+    rungs: sanitizedRungs,
     currentRung: 0,
     continuesLeft: ARCADE_RUN_CONTINUES,
     continuesUsed: 0,
@@ -110,6 +153,17 @@ export function buildRungMatchData(run: ArcadeRunState): MatchSceneData {
   };
 }
 
+export function isMatchForArcadeRun(data: MatchSceneData, run: ArcadeRunState): boolean {
+  const rung = currentRung(run);
+  return Boolean(
+    data.experience !== 'trial' &&
+    data.vsAI &&
+    !data.cpuVsCpu &&
+    data.p1PhotoHash === run.player.photoHash &&
+    data.p2PhotoHash === rung.photoHash,
+  );
+}
+
 function isValidRun(value: unknown): value is ArcadeRunState {
   if (!value || typeof value !== 'object') return false;
   const run = value as Partial<ArcadeRunState>;
@@ -123,6 +177,32 @@ function isValidRun(value: unknown): value is ArcadeRunState {
   );
 }
 
+function normalizeStoredRun(run: ArcadeRunState): ArcadeRunState | null {
+  const sanitizedRungs = sanitizeArcadeRunRungs(run.player, run.rungs);
+  if (sanitizedRungs.length === 0) return null;
+  if (sanitizedRungs.length === run.rungs.length) {
+    return {
+      ...run,
+      currentRung: Math.min(Math.max(0, Math.trunc(run.currentRung)), run.rungs.length - 1),
+    };
+  }
+
+  const originalCurrent = Math.min(Math.max(0, Math.trunc(run.currentRung)), run.rungs.length - 1);
+  // Count retained challengers through the old cursor. If the current legacy
+  // rung was removed, this lands on the next valid challenger when one exists.
+  const retainedThroughCurrent = sanitizeArcadeRunRungs(
+    run.player,
+    run.rungs.slice(0, originalCurrent + 1),
+  ).length;
+  const oldCurrentRung = run.rungs[originalCurrent];
+  const currentWasRetained = sanitizedRungs.includes(oldCurrentRung);
+  const migratedCursor = currentWasRetained
+    ? retainedThroughCurrent - 1
+    : retainedThroughCurrent;
+  const currentRung = Math.min(Math.max(0, migratedCursor), sanitizedRungs.length - 1);
+  return { ...run, rungs: sanitizedRungs, currentRung };
+}
+
 export function readArcadeRun(ownerScope: string): ArcadeRunState | null {
   try {
     const raw = window.sessionStorage.getItem(ARCADE_RUN_STORAGE_KEY);
@@ -132,7 +212,18 @@ export function readArcadeRun(ownerScope: string): ArcadeRunState | null {
     // A run belongs to the account that started it; never resume another
     // owner's ladder after a shared-browser account switch.
     if (parsed.ownerScope !== ownerScope) return null;
-    return parsed;
+    const normalized = normalizeStoredRun(parsed);
+    if (!normalized) {
+      window.sessionStorage.removeItem(ARCADE_RUN_STORAGE_KEY);
+      return null;
+    }
+    if (
+      normalized.rungs.length !== parsed.rungs.length
+      || normalized.currentRung !== parsed.currentRung
+    ) {
+      window.sessionStorage.setItem(ARCADE_RUN_STORAGE_KEY, JSON.stringify(normalized));
+    }
+    return normalized;
   } catch {
     return null;
   }

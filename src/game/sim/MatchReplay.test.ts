@@ -97,6 +97,10 @@ describe('tick packing and run-length frames', () => {
     const sim = toSimConfig(rec);
     expect(sim.p2Personality?.id).toBe('counter');
     expect(sim.p1Personality?.id).toBe('balanced');
+
+    const trialRec = toRecordingConfig({ ...CONFIG, roundsToWin: 1 });
+    expect(trialRec.roundsToWin).toBe(1);
+    expect(toSimConfig(trialRec).roundsToWin).toBe(1);
   });
 });
 
@@ -165,6 +169,10 @@ describe('replayMatch', () => {
     expect(isValidMatchRecording(null)).toBe(false);
     expect(isValidMatchRecording({ ...recording, version: 99 })).toBe(false);
     expect(isValidMatchRecording({ ...recording, frames: [1] })).toBe(false);
+    expect(isValidMatchRecording({
+      ...recording,
+      config: { ...recording.config, roundsToWin: 0 },
+    })).toBe(false);
     expect(() => replayMatch({ ...recording, tickCount: 5 })).toThrow(/tick count/);
   });
 });
