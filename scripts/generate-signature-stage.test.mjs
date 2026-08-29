@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   backendAuthHeaders,
   parseGeminiStageImage,
+  validateFfmpegVersionOutput,
   validateStagePublicationRequest,
 } from './generate-signature-stage.mjs';
 
@@ -43,6 +44,11 @@ describe('signature stage production generator', () => {
       'X-Insert-Player-Clerk-Backend-Auth': 'b'.repeat(32),
     });
     expect(() => backendAuthHeaders('jwt', 'short')).toThrow('bridge secret is invalid');
+  });
+
+  it('fails before generation when the deterministic encoder is unavailable', () => {
+    expect(validateFfmpegVersionOutput('ffmpeg version 7.1 Copyright')).toBe('ffmpeg version 7.1 Copyright');
+    expect(() => validateFfmpegVersionOutput('command not found')).toThrow('ffmpeg runtime is unavailable');
   });
 
   it('accepts exactly one supported image from Gemini', () => {
