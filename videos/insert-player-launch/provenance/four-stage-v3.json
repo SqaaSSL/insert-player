@@ -1,0 +1,79 @@
+{
+  "version": 3,
+  "project": "insert-player-launch",
+  "acceptance": "approved_for_release",
+  "parentProvenance": {
+    "file": "provenance/google-creative-v2-neon-reference.json",
+    "sha256": "17993615681fdb1b09083a451aa4b2a26565e97c3a975db95112fdc8d1d2808f"
+  },
+  "changes": [
+    "Reverse the deterministic transformation seam so it moves left to right.",
+    "Assemble the official P1 mark and INSERT PLAYER title in the open left field when the transformation completes.",
+    "Replace the single gameplay proof with four one-second production fights across four signature stages."
+  ],
+  "gameplayCapture": {
+    "source": "https://insertplayer.ai/roster/watch",
+    "captureScript": "scripts/capture-player-one-fight.mjs",
+    "captureScriptSha256": "d988b259820176eaa846a82b08722b0e8e7d9f7ff34aa6083a34d0b18032c23e",
+    "montageScript": "scripts/build-fight-montage.mjs",
+    "montageScriptSha256": "76fa759aa949d7690eb5191bb67e10cd83da8c61f1833cb68187b3a9cae4573a",
+    "montageManifest": "assets/fight-montage-four-stages.json",
+    "montageManifestSha256": "617084fc8f42d691c36e4cec89dc728a211551c3465a9bb89a360c382765894d",
+    "montageFile": "assets/fight-montage-four-stages.mp4",
+    "montageSha256": "484b2bfa30bb2989be95a2588281a695cd9e3e8f2852a1e890ac3258b26385b9",
+    "contentDurationSeconds": 4,
+    "transitionHoldSeconds": 0.25,
+    "captures": [
+      {
+        "opponent": "Donald Trump",
+        "stage": "EXECUTIVE RUMBLE",
+        "capturedAt": "2026-08-29T08:41:22.690Z",
+        "videoSha256": "73549148de6249ce66e8caf5dab678f9939c64380ee46fa5dd5493f845870c05",
+        "eventsSha256": "cf8c2e97968cecdbb664a3110b7403a39447277cdd39131ee82b2fd97e54df7e"
+      },
+      {
+        "opponent": "Lamine Yamal",
+        "stage": "LA JAULA 304",
+        "capturedAt": "2026-08-29T08:36:30.685Z",
+        "videoSha256": "1f3c5a53a7474b4bfa869385e3a44b0c8502384f434405584e1ec33137b7a531",
+        "eventsSha256": "cfc7b629592c3258660fd14132b96c011348f9d0f6774446628c6370bfc07af0"
+      },
+      {
+        "opponent": "Rosalía V2",
+        "stage": "DOJO AT DUSK",
+        "capturedAt": "2026-08-29T08:37:17.697Z",
+        "videoSha256": "519b600ad82efd3e40f5c263ded499702f3ce2c5c35bc638cca53922c8d7999c",
+        "eventsSha256": "9bcd7a3785f191e9fc7b8cc38b123bcaa07ba63368d68e553c13f38b577502ef"
+      },
+      {
+        "opponent": "Elon Musk",
+        "stage": "MARS INCORPORATED",
+        "capturedAt": "2026-08-29T08:42:39.702Z",
+        "videoSha256": "5a0775c0fb7e3df5e48ea188e8b467aacc17dbbefec1237dd7275a38156a5cb2",
+        "eventsSha256": "b2f34e891ddfc529d15833ee757aefb967eb38b92b96b2ca46f076d10a1a47a7"
+      }
+    ]
+  },
+  "finalRender": {
+    "sourceFile": "renders/insert-player-launch-four-stage-v3.mp4",
+    "sourceSha256": "7d2530e02e78cb95fc28b0a9d03a817ac93550cc857243bc038268bb16795eed",
+    "publicFile": "../../public/assets/insert-player-launch-58cdf92f.mp4",
+    "publicSha256": "58cdf92fc21c77c55610de3300314711092213a3e25c6dfe84de031762258733",
+    "durationSeconds": 12.01,
+    "sizeBytes": 6077856,
+    "width": 1920,
+    "height": 1080,
+    "framesPerSecond": 30,
+    "videoCodec": "h264",
+    "audioCodec": "aac",
+    "renderedIntegratedLoudnessLufs": -17.48,
+    "renderedTruePeakDbfs": -2.39,
+    "hyperframesVersion": "0.8.17",
+    "webEncoding": {
+      "preset": "slow",
+      "crf": 18,
+      "audioBitrateKbps": 192,
+      "fastStart": true
+    }
+  }
+}
