@@ -87,6 +87,11 @@ function rawExtension(mime) {
   return 'png';
 }
 
+export function validateFfmpegVersionOutput(stdout) {
+  invariant(typeof stdout === 'string' && /^ffmpeg version\s+/m.test(stdout), 'ffmpeg runtime is unavailable.');
+  return stdout.split(/\r?\n/, 1)[0];
+}
+
 async function readJsonResponse(response, label) {
   const text = await response.text();
   let body;
@@ -211,6 +216,24 @@ async function normalizeStageImage(rawBytes, mime, request, outputPath) {
   }
 }
 
+async function localRuntimePreflight(seed, request) {
+  const ffmpeg = await execFileAsync('ffmpeg', ['-version']);
+  const ffmpegVersion = validateFfmpegVersionOutput(ffmpeg.stdout);
+  const tempDirectory = await mkdtemp(join(tmpdir(), 'insert-player-stage-preflight-'));
+  const outputPath = join(tempDirectory, 'normalized-seed.png');
+  try {
+    // Exercise the exact decode, Canvas transform, Chromium launch, and PNG
+    // encoding path before any provider session or paid request exists.
+    await normalizeStageImage(seed, request.seed.mime, request, outputPath);
+    const output = await readFile(outputPath);
+    invariant(output.length > 8, 'Stage normalization preflight produced an empty image.');
+    invariant(output.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])), 'Stage normalization preflight did not produce PNG.');
+  } finally {
+    await rm(tempDirectory, { recursive: true, force: true });
+  }
+  return { ffmpegVersion };
+}
+
 function generationLegalAttestation(legalVersion) {
   return Object.fromEntries([
     ['legalVersion', legalVersion],
@@ -296,6 +319,13 @@ export async function generateSignatureStage({ requestPath, outputDirectory }) {
   invariant(seed.length <= maxSeedBytes, `Stage seed exceeds ${maxSeedBytes} bytes.`);
   invariant(sha256(seed) === request.seed.sha256, 'Stage seed hash does not match the sealed request.');
 
+  const resolvedOutputDirectory = isAbsolute(outputDirectory)
+    ? outputDirectory
+    : resolve(root, outputDirectory);
+  await mkdir(resolvedOutputDirectory, { recursive: true });
+
+  const runtime = await localRuntimePreflight(seed, request);
+
   const health = await productionPreflight(request);
   const clerkSecretKey = process.env.ASF_ARCADE_CLERK_SECRET_KEY?.trim() ?? '';
   const clerkUserId = process.env.ASF_ARCADE_ADMIN_CLERK_USER_ID?.trim() ?? '';
@@ -322,10 +352,6 @@ export async function generateSignatureStage({ requestPath, outputDirectory }) {
   );
   const generated = parseGeminiStageImage(response);
 
-  const resolvedOutputDirectory = isAbsolute(outputDirectory)
-    ? outputDirectory
-    : resolve(root, outputDirectory);
-  await mkdir(resolvedOutputDirectory, { recursive: true });
   const rawPath = join(
     resolvedOutputDirectory,
     `${request.output.baseName}-provider-raw.${rawExtension(generated.mime)}`,
@@ -347,6 +373,7 @@ export async function generateSignatureStage({ requestPath, outputDirectory }) {
     transport: health.geminiTransport,
     workerVersionId: health.workerVersionId ?? null,
     workerTag: health.workerVersion?.tag ?? null,
+    runtime,
     limits: {
       providerCalls: providerSession.providerCallLimit,
       estimatedCostCents: providerSession.providerCostLimitCents,

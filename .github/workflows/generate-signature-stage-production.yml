@@ -67,7 +67,12 @@ jobs:
         run: npm ci
 
       - name: Install deterministic image runtime
-        run: npx playwright install --with-deps chromium
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg
+          npx playwright install --with-deps chromium
+          ffmpeg -version
 
       - name: Generate one stage with no retry or fallback
         run: >-
@@ -76,14 +81,16 @@ jobs:
           --output-dir=stage-publication-output
 
       - name: Publish immutable review artifact
+        if: always()
         uses: actions/upload-artifact@v6
         with:
           name: insert-player-arena-pipeline-v1-${{ github.run_id }}
           path: stage-publication-output/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
 
       - name: Summarize sealed output
+        if: success()
         shell: bash
         run: |
           jq -r '
