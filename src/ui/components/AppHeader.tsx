@@ -22,8 +22,12 @@ interface AppHeaderProps {
  * renders outside this header: its backdrop-filter would otherwise become the
  * containing block for the dock's fixed bottom-left positioning. */
 export function AppHeader({ currentRoute, onNavigate }: AppHeaderProps) {
+  const className = currentRoute === '/menu'
+    ? 'app-header app-header--menu'
+    : 'app-header';
+
   return (
-    <header className="app-header">
+    <header className={className}>
       <a
         href="/"
         className="app-header__brand"

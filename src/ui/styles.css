@@ -2262,6 +2262,10 @@
      ============================================================ */
 
   @media (max-width: 640px) {
+    .app-header--menu {
+      @apply hidden;
+    }
+
     .home-app {
       @apply gap-6 px-4 pb-8 pt-6;
     }
