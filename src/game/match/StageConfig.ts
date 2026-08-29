@@ -76,7 +76,7 @@ export const SIGNATURE_STAGE_THEMES: StageTheme[] = [
     label: 'TABLAO 3000',
     blurb: 'Flamenco heat, workshop steel, and roses under red curtains.',
     assetPath: '/assets/stages/signature/tablao-3000-pipeline-v1.png',
-    signatureForArcadeSlug: 'rosalia',
+    signatureForArcadeSlug: 'rosalia-v2',
   },
   {
     id: 'la-jaula-304',

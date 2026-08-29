@@ -92,7 +92,7 @@ const requiredPlayableAnimations = [
 const requiredProductionArcadeSlugs = [
   'donald-trump',
   'lamine-yamal',
-  'rosalia',
+  'rosalia-v2',
   'elon-musk',
 ];
 const generationLegal = {
@@ -514,6 +514,12 @@ async function runPublicSmoke() {
     for (const slug of requiredProductionArcadeSlugs) {
       assert(activeSlugs.has(slug), `Official Arcade is missing required production fighter ${slug}`);
     }
+    assert(!activeSlugs.has('rosalia'), 'Official Arcade still exposes the superseded Rosalía fighter');
+    const promotedRosalia = arcadeBody.fighters.find(
+      (fighter) => fighter?.arcade?.slug === 'rosalia-v2',
+    );
+    assert(promotedRosalia?.name === 'Rosalía', 'Promoted Rosalía has the wrong public display name');
+    assert(promotedRosalia?.arcade?.rank === 5, 'Promoted Rosalía did not inherit the legacy roster rank');
   }
   let previousRank = 0;
   let firstArcadeHighDensityUrl = null;

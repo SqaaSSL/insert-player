@@ -28,7 +28,7 @@ describe('signature stage configuration', () => {
       {
         id: 'tablao-3000',
         assetPath: '/assets/stages/signature/tablao-3000-pipeline-v1.png',
-        signatureForArcadeSlug: 'rosalia',
+        signatureForArcadeSlug: 'rosalia-v2',
       },
       {
         id: 'la-jaula-304',
@@ -39,14 +39,15 @@ describe('signature stage configuration', () => {
 
     expect(getSignatureStageThemeIdForArcadeSlug('donald-trump')).toBe('executive-rumble');
     expect(getSignatureStageThemeIdForArcadeSlug('elon-musk')).toBe('mars-incorporated');
-    expect(getSignatureStageThemeIdForArcadeSlug('rosalia')).toBe('tablao-3000');
+    expect(getSignatureStageThemeIdForArcadeSlug('rosalia-v2')).toBe('tablao-3000');
+    expect(getSignatureStageThemeIdForArcadeSlug('rosalia')).toBeNull();
     expect(getSignatureStageThemeIdForArcadeSlug('lamine-yamal')).toBe('la-jaula-304');
     expect(getSignatureStageThemeIdForArcadeSlug('custom-rookie')).toBeNull();
   });
 
   it('uses the P2 signature stage first, then falls back to P1', () => {
     expect(resolveAutoSignatureStageThemeId('elon-musk', 'donald-trump')).toBe('executive-rumble');
-    expect(resolveAutoSignatureStageThemeId('rosalia', 'custom-rookie')).toBe('tablao-3000');
+    expect(resolveAutoSignatureStageThemeId('rosalia-v2', 'custom-rookie')).toBe('tablao-3000');
     expect(resolveAutoSignatureStageThemeId('custom-rookie', 'another-rookie')).toBeNull();
   });
 

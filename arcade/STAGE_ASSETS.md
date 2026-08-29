@@ -7,7 +7,7 @@ The original OpenAI ImageGen backgrounds are immutable visual seeds for the offi
 | global | Insert Player Arena | `/assets/stages/signature/insert-player-arena-seed-v1.png` | `/assets/stages/signature/insert-player-arena-pipeline-v1.png` |
 | `donald-trump` | Executive Rumble | `/assets/stages/signature/executive-rumble-v2.png` | `/assets/stages/signature/executive-rumble-pipeline-v1.png` |
 | `elon-musk` | Mars Incorporated | `/assets/stages/signature/mars-incorporated-v1.png` | `/assets/stages/signature/mars-incorporated-pipeline-v1.png` |
-| `rosalia` | Tablao 3000 | `/assets/stages/signature/tablao-3000-v1.png` | `/assets/stages/signature/tablao-3000-pipeline-v1.png` |
+| `rosalia-v2` | Tablao 3000 | `/assets/stages/signature/tablao-3000-v1.png` | `/assets/stages/signature/tablao-3000-pipeline-v1.png` |
 | `lamine-yamal` | La Jaula 304 | `/assets/stages/signature/la-jaula-304-v1.png` | `/assets/stages/signature/la-jaula-304-pipeline-v1.png` |
 
 ## Seed contract

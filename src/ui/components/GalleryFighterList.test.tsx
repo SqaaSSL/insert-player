@@ -71,7 +71,7 @@ function cachedMeta(photoHash: string, characterName: string): CachedMeta {
 const globals = [
   arcadeFighter('trump-id', 'donald-trump', 'Donald Trump', ['idle', ...PLAYABLE_ANIMATION_NAMES]),
   arcadeFighter('elon-id', 'elon-musk', 'Elon Musk', [...PLAYABLE_ANIMATION_NAMES]),
-  arcadeFighter('rosalia-id', 'rosalia', 'Rosalía', [...PLAYABLE_ANIMATION_NAMES]),
+  arcadeFighter('rosalia-v2-id', 'rosalia-v2', 'Rosalía', [...PLAYABLE_ANIMATION_NAMES]),
   arcadeFighter('lamine-id', 'lamine-yamal', 'Lamine Yamal', [...PLAYABLE_ANIMATION_NAMES]),
 ];
 
