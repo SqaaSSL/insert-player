@@ -5,12 +5,12 @@ message: "A real person can become a recognizable, playable arcade fighter"
 arc: Transformation hook -> Product promise -> Real gameplay proof -> CTA
 audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
 mode: autonomous
-music: "assets/generated/lyria-launch-bed-v1.mp3 - Lyria 3 Pro source, locally trimmed and mixed"
+music: "assets/generated/lyria-launch-bed-v2-neon-reference.mp3 - original Lyria 3 Pro source arranged from a private high-level creative fingerprint"
 ---
 
 ## Video direction
 
-The film moves from recognition to proof to action. Real media always outranks decorative graphics: first the exact source portrait reveals the exact production Player One fighter, then a short production fight starring Player One, then a clean Insert Player lockup. Camera movement is restrained and seek-safe; motion comes from the deterministic transformation seam, the recorded game, and the final P1 assembly. One short announcer line adds cabinet energy without explaining what the picture already proves. Keep all essential text outside the bottom 17 percent caption band. Use cabinet black as the visual ground, coin red for action, coin gold for reward, CRT cream for text, and glass blue only as a counterpoint.
+The film moves from recognition to proof to action. Real media always outranks decorative graphics: first the exact source portrait reveals the exact production Player One fighter, then a short production fight starring Player One, then a clean Insert Player lockup. Camera movement is restrained and seek-safe; motion comes from the deterministic transformation seam, the recorded game, and the final P1 assembly. One short announcer line adds cabinet energy without explaining what the picture already proves. The Lyria arrangement stays tense under the transformation, drops into its full 145 BPM groove at the gameplay cut, and resolves under the brand hold. Keep all essential text outside the bottom 17 percent caption band. Use cabinet black as the visual ground, coin red for action, coin gold for reward, CRT cream for text, and glass blue only as a counterpoint.
 
 ## Frame 1 — Your Photo. Your Fighter.
 
