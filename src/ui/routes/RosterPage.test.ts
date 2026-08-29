@@ -53,7 +53,7 @@ function meta(photoHash: string, cloudFighterId: string | null, name = photoHash
 const globals = [
   fighter('trump-id', 'donald-trump', 'Donald Trump'),
   fighter('elon-id', 'elon-musk', 'Elon Musk'),
-  fighter('rosalia-id', 'rosalia', 'Rosalía'),
+  fighter('rosalia-v2-id', 'rosalia-v2', 'Rosalía'),
   fighter('lamine-id', 'lamine-yamal', 'Lamine Yamal'),
 ];
 

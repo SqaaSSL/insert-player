@@ -40,7 +40,8 @@
     "db:execute:0030": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0030_pixcli_transport.sql",
     "db:execute:0031": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0031_video_sprite_review.sql",
     "db:execute:0032": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0032_video_sprite_safe_registration.sql",
-    "db:execute:0033": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0033_imported_global_video_recuration.sql"
+    "db:execute:0033": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0033_imported_global_video_recuration.sql",
+    "db:execute:0034": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0034_promote_rosalia_v2.sql"
   },
   "devDependencies": {
     "wrangler": "^4.125.0"
