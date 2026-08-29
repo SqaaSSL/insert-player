@@ -7,6 +7,7 @@ import {
   PAUSE_EVENT,
   NET_STATE_EVENT,
   RUNTIME_READY_EVENT,
+  buildMatchSeed,
   type MatchAction,
   type MatchSceneData,
   type NetStateDetail,
@@ -22,6 +23,7 @@ import {
 } from '../components/FightLoadingCurtain.tsx';
 import { reportMatchCompletion } from '../../services/MatchReporting.ts';
 import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
+import { getStageTheme, pickStageThemeIdFromSeed } from '../../game/match/StageConfig.ts';
 
 export interface LadderContext {
   rungIndex: number;
@@ -139,7 +141,7 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
       if (disposed || readyHandled) return;
       readyHandled = true;
       window.clearTimeout(loadTimeout);
-      const minimumClosedMs = 500;
+      const minimumClosedMs = 1_100;
       const openingDelay = Math.max(0, minimumClosedMs - (performance.now() - startedAt));
       openingTimer = window.setTimeout(() => {
         setLoadingPhase('opening');
@@ -227,6 +229,15 @@ export function GamePage({ launchTarget, onComplete, onExit, ladder }: GamePageP
           phase={loadingPhase}
           p1Name={launchTarget.data.p1Name ?? 'Player One'}
           p2Name={launchTarget.data.p2Name ?? 'Player Two'}
+          p1PhotoHash={launchTarget.data.p1PhotoHash ?? null}
+          p2PhotoHash={launchTarget.data.p2PhotoHash ?? null}
+          stageLabel={
+            launchTarget.data.customStageLabel ??
+            getStageTheme(
+              launchTarget.data.stageId ??
+              pickStageThemeIdFromSeed(buildMatchSeed(launchTarget.data)),
+            ).label
+          }
           onExit={onExit}
         />
       ) : null}
