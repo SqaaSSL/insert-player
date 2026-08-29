@@ -29,7 +29,6 @@ describe('official pose masters', () => {
       && /^[a-f0-9]{64}$/.test(frame.sha256)
     ))).toBe(true);
   });
-
   it('never injects the atlas into personal, lower-tier, or unrelated generations', () => {
     expect(officialPoseMasterFor('jump', 'champion', undefined)).toBeNull();
     expect(officialPoseMasterFor('jump', 'contender', 'Approved fighter description')).toBeNull();

@@ -141,7 +141,6 @@ const OFFICIAL_POSE_MASTERS = new Map<string, OfficialPoseMaster>([
   [OFFICIAL_KO_MASTER.animationName, OFFICIAL_KO_MASTER],
   [OFFICIAL_VICTORY_MASTER.animationName, OFFICIAL_VICTORY_MASTER],
 ]);
-
 export function officialPoseMasterFor(
   animationName: string,
   tier: QualityTier,
