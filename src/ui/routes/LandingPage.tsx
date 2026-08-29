@@ -66,7 +66,7 @@ export function LandingPage({
           <h2 id="landing-proof-title">The fighter actually fights.</h2>
           <p>
             This is recorded gameplay from the production build. Generated fighters,
-            a generated stage, the real HUD, and a real K.O.
+            a generated stage, the real HUD, and a real exchange.
           </p>
         </header>
         <div className="landing-film">
