@@ -30,21 +30,21 @@ not like an AI avatar advertisement or a software walkthrough.
 - `assets/generated/lyria-launch-bed-v2-neon-reference.mp3` - fully original private Lyria 3 Pro instrumental source composition.
 - `assets/generated/tts-announcer-v1.wav` - private Gemini TTS announcer line.
 - `assets/generated/omni-photo-to-fighter-v2-neon-sync.mp4` - private Omni timing canary, retained for audit but rejected from the final cut because its target was not the immutable global Champion frame.
-- `assets/fight-capture.mp4` - frozen, genuine production match starring Player One.
+- `assets/fight-montage-four-stages.mp4` - four telemetry-trimmed, one-second production matches starring Player One against the current global roster.
 
 ## Customizations
 
 - Borrow the structural idea from Hilo's product promos: real footage, a few crisp branded action beats, and a strong end card.
 - Preserve the original cabinet SFX, use the original Lyria v2 composition for the music bed, and add only one short Gemini TTS announcer line.
 - Use only the reference track's high-level tempo, energy, instrumentation, and structural arc. Never ship it or reproduce its melody, harmony, motifs, lyrics, artist identity, or exact sound design.
-- Keep the transformation literal and readable: `YOUR PHOTO`, `YOUR FIGHTER`, `YOUR FIGHT`.
+- Keep the transformation literal and readable: `YOUR PHOTO`, the official P1 + `INSERT PLAYER` reveal, then `YOUR FIGHT`.
 
 ## Notes
 
 - Use Insert Player branding only: P1, cabinet black, coin red, coin gold, CRT cream, and glass blue.
 - Never reproduce Hilo's logo, purple palette, typography, wording, action pills, or other proprietary brand elements.
 - Show real gameplay and real generated fighters. Do not fake a fight in motion graphics.
-- Keep the production gameplay proof to roughly 3.2 seconds and feature the same Player One shown in the transformation.
+- Keep the production gameplay proof to four one-second cuts and feature the same Player One shown in the transformation across all four signature stages.
 - Avoid franchise imitation, cartoon exaggeration, generic AI language, and slow cinematic choreography.
 - Generated media is private and single-candidate: no automatic retries, fallbacks, or publishing.
 - A generative transition may enter the final cut only when it preserves the exact global Champion. The current Omni v2 canary did not pass that gate, so the deterministic transformation remains authoritative.

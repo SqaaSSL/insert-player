@@ -159,8 +159,7 @@
       background: #fff4d6;
     }
 
-    [data-frame-element="01-transform-photo-label"],
-    [data-frame-element="01-transform-fighter-label"] {
+    [data-frame-element="01-transform-photo-label"] {
       position: absolute;
       z-index: 6;
       top: 68px;
@@ -185,14 +184,6 @@
       border-left: 6px solid #ff2a2a;
     }
 
-    [data-frame-element="01-transform-fighter-label"] {
-      right: 5.5cqw;
-      color: #04040d;
-      background: #ff2a2a;
-      border: 1px solid #ffce3a;
-      outline: 6px solid #04040d;
-    }
-
     [data-frame-element="01-transform-label-marker"] {
       width: 10px;
       height: 10px;
@@ -201,18 +192,54 @@
       background: #ff2a2a;
     }
 
-    [data-frame-element="01-transform-fighter-label"]
-      [data-frame-element="01-transform-label-marker"] {
-      background: #04040d;
+    [data-frame-element="01-transform-brand-lockup"] {
+      position: absolute;
+      z-index: 6;
+      left: 6.8cqw;
+      top: 31.5cqh;
+      width: 43cqw;
+      display: flex;
+      align-items: center;
+      gap: 2.1cqw;
+      color: #fff4d6;
+      will-change: transform, opacity;
     }
 
-    [data-frame-element="01-transform-fighter-rule"] {
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: -13px;
-      height: 3px;
-      background: #ffce3a;
+    [data-frame-element="01-transform-brand-mark"] {
+      width: 9.4cqw;
+      height: 9.4cqw;
+      flex: 0 0 auto;
+      object-fit: contain;
+      filter: drop-shadow(8px 8px 0 rgba(4, 4, 13, 0.72));
+      will-change: transform, opacity;
+    }
+
+    [data-frame-element="01-transform-brand-title"] {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 1.1cqh;
+      font-family: "Press Start 2P", monospace;
+      font-size: 4cqw;
+      font-weight: 400;
+      line-height: 1.03;
+      letter-spacing: 0;
+      text-shadow: 5px 5px 0 #6a0a0a;
+    }
+
+    [data-frame-element="01-transform-brand-line"] {
+      display: block;
+      white-space: nowrap;
+      will-change: transform, opacity;
+    }
+
+    [data-frame-element="01-transform-brand-rule"] {
+      display: block;
+      width: 100%;
+      height: 4px;
+      margin-top: 1.1cqh;
+      background: #ff2a2a;
       transform-origin: 0 50%;
       will-change: transform;
     }
@@ -241,10 +268,13 @@
         <span data-hf-id="hf-kore">Your Photo</span>
       </div>
 
-      <div data-hf-id="hf-x9o6" data-frame-element="01-transform-fighter-label">
-        <span data-hf-id="hf-0a1o" data-frame-element="01-transform-label-marker"></span>
-        <span data-hf-id="hf-k58b">Your Fighter</span>
-        <span data-hf-id="hf-mfbr" data-frame-element="01-transform-fighter-rule"></span>
+      <div data-hf-id="hf-x9o6" data-frame-element="01-transform-brand-lockup" aria-label="Insert Player">
+        <img data-hf-id="hf-0a1o" data-frame-element="01-transform-brand-mark" src="assets/logo-12e1869b.svg" alt="" draggable="false">
+        <div data-hf-id="hf-k58b" data-frame-element="01-transform-brand-title">
+          <span data-hf-id="hf-mfbr" data-frame-element="01-transform-brand-line">INSERT</span>
+          <span data-hf-id="hf-cx31" data-frame-element="01-transform-brand-line">PLAYER</span>
+          <span data-hf-id="hf-h4eb" data-frame-element="01-transform-brand-rule" aria-hidden="true"></span>
+        </div>
       </div>
     </section>
   </div>
@@ -259,11 +289,17 @@
       const photoLabel = select(
         '[data-frame-element="01-transform-photo-label"]'
       )[0];
-      const fighterLabel = select(
-        '[data-frame-element="01-transform-fighter-label"]'
+      const brandLockup = select(
+        '[data-frame-element="01-transform-brand-lockup"]'
       )[0];
-      const fighterRule = select(
-        '[data-frame-element="01-transform-fighter-rule"]'
+      const brandMark = select(
+        '[data-frame-element="01-transform-brand-mark"]'
+      )[0];
+      const brandLines = select(
+        '[data-frame-element="01-transform-brand-line"]'
+      );
+      const brandRule = select(
+        '[data-frame-element="01-transform-brand-rule"]'
       )[0];
       const fighterReveal = select(
         '[data-frame-element="01-transform-media-reveal"]'
@@ -278,10 +314,10 @@
       const tl = gsap.timeline({ paused: true });
 
       tl.set(photoLabel, { opacity: 0 }, 0);
-      tl.set(fighterLabel, { opacity: 0 }, 0);
-      tl.set(fighterRule, { scaleX: 0 }, 0);
-      tl.set(fighterReveal, { clipPath: "inset(0% 0% 0% 100%)" }, 0);
-      tl.set(energy, { x: 1936, opacity: 0 }, 0);
+      tl.set(brandLockup, { opacity: 0 }, 0);
+      tl.set(brandRule, { scaleX: 0 }, 0);
+      tl.set(fighterReveal, { clipPath: "inset(0% 100% 0% 0%)" }, 0);
+      tl.set(energy, { x: -48, opacity: 0 }, 0);
 
       tl.fromTo(
         photoLabel,
@@ -299,9 +335,9 @@
 
       tl.fromTo(
         energy,
-        { x: 1936, opacity: 0 },
+        { x: -48, opacity: 0 },
         {
-          x: -48,
+          x: 1936,
           opacity: 1,
           duration: 2.72,
           ease: "power2.inOut",
@@ -337,20 +373,44 @@
       tl.to(photoLabel, { opacity: 0, y: -12, duration: 0.24 }, 2.66);
 
       tl.fromTo(
-        fighterLabel,
-        { y: -34, scale: 1.08, opacity: 0 },
+        brandLockup,
+        { x: -30, opacity: 0 },
         {
-          y: 0,
-          scale: 1,
+          x: 0,
           opacity: 1,
-          duration: 0.56,
-          ease: "back.out(2)",
+          duration: 0.42,
+          ease: "power3.out",
           immediateRender: false
         },
-        3.02
+        3.08
       );
       tl.fromTo(
-        fighterRule,
+        brandMark,
+        { scale: 0.8, rotation: -5 },
+        {
+          scale: 1,
+          rotation: 0,
+          duration: 0.48,
+          ease: "back.out(1.5)",
+          immediateRender: false
+        },
+        3.08
+      );
+      tl.fromTo(
+        brandLines,
+        { x: -18, opacity: 0 },
+        {
+          x: 0,
+          opacity: 1,
+          duration: 0.34,
+          stagger: 0.08,
+          ease: "power3.out",
+          immediateRender: false
+        },
+        3.16
+      );
+      tl.fromTo(
+        brandRule,
         { scaleX: 0 },
         {
           scaleX: 1,
@@ -358,7 +418,7 @@
           ease: "power4.out",
           immediateRender: false
         },
-        3.24
+        3.46
       );
 
       window.__timelines = window.__timelines || {};

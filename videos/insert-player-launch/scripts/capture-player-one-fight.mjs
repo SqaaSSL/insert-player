@@ -5,9 +5,22 @@ import { chromium } from 'playwright';
 const projectRoot = resolve(import.meta.dirname, '..');
 const baseUrl = String(process.env.INSERT_PLAYER_CAPTURE_URL ?? 'https://insertplayer.ai').replace(/\/$/, '');
 const opponentName = String(process.env.INSERT_PLAYER_CAPTURE_OPPONENT ?? 'Elon Musk').trim();
+const captureId = String(process.env.INSERT_PLAYER_CAPTURE_ID ?? opponentName)
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-')
+  .replace(/^-+|-+$/g, '') || 'fight';
+const captureDurationMs = Math.max(
+  4_000,
+  Number(process.env.INSERT_PLAYER_CAPTURE_DURATION_MS ?? 18_000),
+);
+const readyTimeoutMs = Math.max(
+  60_000,
+  Number(process.env.INSERT_PLAYER_CAPTURE_READY_TIMEOUT_MS ?? 120_000),
+);
 const captureDir = resolve(projectRoot, 'assets/captures');
-const masterPath = resolve(captureDir, 'player-one-fight-master.webm');
-const eventsPath = resolve(captureDir, 'player-one-fight-events.json');
+const masterPath = resolve(captureDir, `${captureId}-master.webm`);
+const eventsPath = resolve(captureDir, `${captureId}-events.json`);
 
 await mkdir(captureDir, { recursive: true });
 
@@ -75,7 +88,21 @@ try {
   });
 
   await page.getByRole('button', { name: /Start Match/ }).click();
-  await page.locator('#game-container canvas').waitFor({ timeout: 60_000 });
+  try {
+    await page.locator('#game-container canvas').waitFor({ timeout: readyTimeoutMs });
+  } catch (error) {
+    const status = (await page.locator('[role="status"]').allTextContents())
+      .map((value) => value.trim())
+      .filter(Boolean);
+    await page.screenshot({
+      path: resolve(captureDir, `${captureId}-failed.png`),
+      fullPage: true,
+    });
+    throw new Error(
+      `Fight canvas did not appear for ${resolvedOpponent}. Status: ${status.join(' | ') || 'none'}`,
+      { cause: error },
+    );
+  }
   await page.waitForFunction(
     () => window.__INSERT_PLAYER_CAPTURE_EVENTS__?.some(
       (event) => event.type === 'asf-announce' && event.detail?.kind === 'fight',
@@ -84,14 +111,17 @@ try {
     { timeout: 60_000 },
   );
 
-  await page.waitForTimeout(18_000);
+  await page.waitForTimeout(captureDurationMs);
 
   const events = await page.evaluate(() => window.__INSERT_PLAYER_CAPTURE_EVENTS__ ?? []);
   await writeFile(eventsPath, `${JSON.stringify({
     baseUrl,
+    captureId,
     fighter: 'Player One',
     opponent: resolvedOpponent,
     personalities: { playerOne: 'brawler', opponent: 'showboat' },
+    captureDurationMs,
+    readyTimeoutMs,
     videoStartedAt,
     capturedAt: new Date().toISOString(),
     events,

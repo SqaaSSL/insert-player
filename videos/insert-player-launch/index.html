@@ -45,11 +45,11 @@
     <div data-hf-id="hf-i7xc" id="root" data-composition-id="main" data-start="0" data-duration="12" data-width="1920" data-height="1080">
       <div data-hf-id="hf-pu6a" id="el-01-transform" class="scene" data-composition-id="01-transform" data-composition-src="compositions/frames/01-transform.html" data-start="0" data-duration="4.95" data-track-index="0"></div>
 
-      <div data-hf-id="hf-3gyo" id="el-02-fight" class="scene" data-composition-id="02-fight" data-composition-src="compositions/frames/02-fight.html" data-start="4.65" data-duration="3.5" data-track-index="1"></div>
+      <div data-hf-id="hf-3gyo" id="el-02-fight" class="scene" data-composition-id="02-fight" data-composition-src="compositions/frames/02-fight.html" data-start="4.65" data-duration="4.25" data-track-index="1"></div>
 
-      <div data-hf-id="hf-097h" id="el-03-insert-player" class="scene" data-composition-id="03-insert-player" data-composition-src="compositions/frames/03-insert-player.html" data-start="7.9" data-duration="4.1" data-track-index="0"></div>
+      <div data-hf-id="hf-097h" id="el-03-insert-player" class="scene" data-composition-id="03-insert-player" data-composition-src="compositions/frames/03-insert-player.html" data-start="8.65" data-duration="3.35" data-track-index="0"></div>
 
-      <video data-hf-id="hf-brcq" id="fight-capture-video" class="clip product-fight-video" src="assets/fight-capture.mp4" preload="auto" aria-label="Player One fighting in the production game" muted playsinline data-start="4.65" data-duration="3.25" data-track-index="2001" data-frame-video-source-start="0" data-frame-video-x="0" data-frame-video-y="0" data-frame-video-width="1920" data-frame-video-height="1080" data-frame-video-fit="cover"></video>
+      <video data-hf-id="hf-brcq" id="fight-capture-video" class="clip product-fight-video" src="assets/fight-montage-four-stages.mp4" preload="auto" aria-label="Player One fighting four global rivals across four stages" muted playsinline data-start="4.65" data-duration="4.25" data-track-index="2001" data-frame-video-source-start="0" data-frame-video-x="0" data-frame-video-y="0" data-frame-video-width="1920" data-frame-video-height="1080" data-frame-video-fit="cover"></video>
 
       <audio data-hf-id="hf-7bis" id="launch-mix" src="assets/generated/launch-mix-google-v2-neon-reference.wav" data-start="0" data-duration="12" data-track-index="11" data-volume="1" data-fx-chain="{&quot;version&quot;:1,&quot;nodes&quot;:[{&quot;type&quot;:&quot;highpass&quot;,&quot;id&quot;:&quot;n1&quot;,&quot;fromPreset&quot;:&quot;rumble-cut&quot;,&quot;label&quot;:&quot;Cut Rumble&quot;,&quot;params&quot;:{&quot;frequency&quot;:100,&quot;q&quot;:0.707,&quot;poles&quot;:&quot;2&quot;}}]}"></audio>
 
@@ -62,8 +62,8 @@
       (function () { var tl = window.__timelines["main"];
         tl.to("#el-01-transform", { scale: 2.35, opacity: 0, filter: "blur(7px)", duration: 0.3, ease: "power3.in" }, 4.65);
         tl.fromTo("#el-02-fight", { scale: 0.55, opacity: 0, filter: "blur(7px)" }, { scale: 1, opacity: 1, filter: "blur(0px)", duration: 0.3, ease: "power3.out" }, 4.65);
-        tl.to("#el-02-fight", { scaleX: 0, transformOrigin: "left center", duration: 0.25, ease: "power3.inOut" }, 7.9);
-        tl.fromTo("#el-03-insert-player", { scaleX: 0, transformOrigin: "right center", opacity: 1 }, { scaleX: 1, transformOrigin: "right center", duration: 0.25, ease: "power3.inOut" }, 7.9);
+        tl.to("#el-02-fight", { scaleX: 0, transformOrigin: "left center", duration: 0.25, ease: "power3.inOut" }, 8.65);
+        tl.fromTo("#el-03-insert-player", { scaleX: 0, transformOrigin: "right center", opacity: 1 }, { scaleX: 1, transformOrigin: "right center", duration: 0.25, ease: "power3.inOut" }, 8.65);
         tl.to({}, { duration: 12 }, 0); // full-span anchor — main.duration() == composition total (Studio master duration)
       })();
     </script>
