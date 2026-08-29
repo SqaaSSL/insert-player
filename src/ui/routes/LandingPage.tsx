@@ -7,7 +7,7 @@ interface LandingPageProps {
 }
 
 const TRANSFORMATION_IMAGE = '/assets/landing-transformation.webp';
-const LAUNCH_VIDEO = '/assets/insert-player-launch-58cdf92f.mp4';
+const LAUNCH_VIDEO = '/assets/insert-player-launch-6c33c9c8.mp4';
 
 export function LandingPage({
   onCreateFighter,

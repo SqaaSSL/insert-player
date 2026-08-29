@@ -30,7 +30,7 @@ not like an AI avatar advertisement or a software walkthrough.
 - `assets/generated/lyria-launch-bed-v2-neon-reference.mp3` - fully original private Lyria 3 Pro instrumental source composition.
 - `assets/generated/tts-announcer-v1.wav` - private Gemini TTS announcer line.
 - `assets/generated/omni-photo-to-fighter-v2-neon-sync.mp4` - private Omni timing canary, retained for audit but rejected from the final cut because its target was not the immutable global Champion frame.
-- `assets/fight-montage-four-stages.mp4` - four telemetry-trimmed, one-second production matches starring Player One against the current global roster.
+- `assets/fight-montage-four-stages-hd.mp4` - four telemetry-trimmed, one-second production matches captured from the Champion 2x atlas against the current global roster.
 
 ## Customizations
 
@@ -45,6 +45,7 @@ not like an AI avatar advertisement or a software walkthrough.
 - Never reproduce Hilo's logo, purple palette, typography, wording, action pills, or other proprietary brand elements.
 - Show real gameplay and real generated fighters. Do not fake a fight in motion graphics.
 - Keep the production gameplay proof to four one-second cuts and feature the same Player One shown in the transformation across all four signature stages.
+- Capture desktop gameplay with an explicit 8 GB capability profile and retain the loader logs proving that Player One used 384x512 atlas cells at density 2x.
 - Avoid franchise imitation, cartoon exaggeration, generic AI language, and slow cinematic choreography.
 - Generated media is private and single-candidate: no automatic retries, fallbacks, or publishing.
 - A generative transition may enter the final cut only when it preserves the exact global Champion. The current Omni v2 canary did not pass that gate, so the deterministic transformation remains authoritative.

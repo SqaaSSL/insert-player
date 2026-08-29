@@ -18,6 +18,13 @@ const readyTimeoutMs = Math.max(
   60_000,
   Number(process.env.INSERT_PLAYER_CAPTURE_READY_TIMEOUT_MS ?? 120_000),
 );
+const requestedDeviceMemoryGb = Number(
+  process.env.INSERT_PLAYER_CAPTURE_DEVICE_MEMORY_GB ?? 8,
+);
+const captureDeviceMemoryGb = Number.isFinite(requestedDeviceMemoryGb)
+  && requestedDeviceMemoryGb > 0
+  ? requestedDeviceMemoryGb
+  : 8;
 const captureDir = resolve(projectRoot, 'assets/captures');
 const masterPath = resolve(captureDir, `${captureId}-master.webm`);
 const eventsPath = resolve(captureDir, `${captureId}-events.json`);
@@ -36,6 +43,27 @@ const context = await browser.newContext({
 const page = await context.newPage();
 const video = page.video();
 const videoStartedAt = Date.now();
+const rendererLogs = [];
+
+page.on('console', (message) => {
+  const value = message.text();
+  if (value.includes('[AiSpriteLoader]')) {
+    rendererLogs.push({
+      at: Date.now(),
+      level: message.type(),
+      message: value,
+    });
+  }
+});
+
+// Headless Chromium hides deviceMemory; pin promo captures to a real desktop profile.
+await page.addInitScript((deviceMemoryGb) => {
+  Object.defineProperty(Navigator.prototype, 'deviceMemory', {
+    configurable: true,
+    get: () => deviceMemoryGb,
+  });
+  window.localStorage.setItem('asf:debug', '1');
+}, captureDeviceMemoryGb);
 
 try {
   await page.goto(`${baseUrl}/roster/watch`, { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -114,6 +142,23 @@ try {
   await page.waitForTimeout(captureDurationMs);
 
   const events = await page.evaluate(() => window.__INSERT_PLAYER_CAPTURE_EVENTS__ ?? []);
+  const renderCapabilities = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl');
+    const maxTextureSize = gl
+      ? Number(gl.getParameter(gl.MAX_TEXTURE_SIZE)) || 0
+      : 0;
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+
+    return {
+      deviceMemoryGb: typeof navigator.deviceMemory === 'number'
+        ? navigator.deviceMemory
+        : null,
+      maxTextureSize,
+      saveData: navigator.connection?.saveData === true,
+      coarsePointer: window.matchMedia('(pointer: coarse)').matches,
+    };
+  });
   await writeFile(eventsPath, `${JSON.stringify({
     baseUrl,
     captureId,
@@ -122,6 +167,8 @@ try {
     personalities: { playerOne: 'brawler', opponent: 'showboat' },
     captureDurationMs,
     readyTimeoutMs,
+    renderCapabilities,
+    rendererLogs,
     videoStartedAt,
     capturedAt: new Date().toISOString(),
     events,
