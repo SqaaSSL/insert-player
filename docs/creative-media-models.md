@@ -143,6 +143,13 @@ For the launch v2 build, `Neon Arena.mp3` was analyzed privately with
 is retained. Lyria received the derived text brief, while Omni received only a
 textual 145 BPM timecode plan. The raw MP3 is neither committed nor published.
 
+For launch v6, the user explicitly selected the original recording for the
+gameplay section while preserving the approved Lyria-and-announcer opening. The
+private full-length MP3 remains outside the repository; only its first `7.35s`
+are present from the `4.65s` gameplay cut onward, under the existing fight
+effects. The build script verifies the private source SHA-256 before producing
+the derived mix.
+
 The reproducible local arrangement is built with:
 
 ```bash
