@@ -14,7 +14,7 @@ import {
 } from './SpriteCache';
 import { geminiReposeDetailed, geminiUprightReposeDetailed, geminiCrouchRepose, geminiCrouchReposeDetailed, geminiSpriteSheet, geminiSheetRefined, geminiIdleFrameSequence, PartialSpriteGenerationError } from './GeminiApi';
 import { CELL_H, CELL_W, cleanSpriteSheet, mirrorCleanFrames, computeGridCols, measureOpaqueBoundsFromBase64, type NormalizationReference } from './SpritePostProcess';
-import { getAnimationProfile } from './AnimationProfiles';
+import { getAnimationProfile, JUMP_ANIMATION_MOTION } from './AnimationProfiles';
 import { debugInfo, debugWarn, publishDebugLog } from './DebugLog';
 import { getConfiguredBgRemovalProvider, removeBackgroundWithConfiguredProvider } from './BackgroundRemovalService';
 import {
@@ -104,7 +104,7 @@ const ANIMATIONS: AnimDef[] = [
   { name: 'high_kick',  motion: 'powerful grounded standing roundhouse kick swinging the right leg in a high arc while the support foot stays planted, then returning to stance', frames: 7, duration: 1.2, loop: false, base: 'standing' },
   { name: 'low_punch',  motion: 'quick low jab punch from an extreme low-profile crouch, extending the right arm forward while staying low throughout, with hips dropped very low and thighs near-parallel to the ground, then retracting', frames: 7, duration: 1.0, loop: false, base: 'crouched' },
   { name: 'low_kick',   motion: 'low grounded sweep kick extending the right leg along the floor from an extreme low-profile crouch while staying low throughout, with hips dropped very low and thighs near-parallel to the ground, then retracting', frames: 7, duration: 1.2, loop: false, base: 'crouched' },
-  { name: 'jump',       motion: 'four clear jump key poses: grounded anticipation, airborne lift-off, apex airborne pose, and grounded landing recovery, with the character staying the same size in frame and not physically traveling upward inside the frame', frames: 4, duration: 1.5, loop: false, base: 'standing' },
+  { name: 'jump',       motion: JUMP_ANIMATION_MOTION, frames: 4, duration: 1.5, loop: false, base: 'standing' },
   { name: 'crouch',     motion: 'transitioning from standing fighting stance down into an extreme low-profile crouch with visibly dropped hips, bent knees, thighs near-parallel to the ground, a tightly compressed torso, and a much lower head position by the final frame, while keeping the head facing the same direction', frames: 4, duration: 1.2, loop: false, base: 'crouched' },
   { name: 'hit',        motion: 'four clear hit-reaction key poses: impact, recoil, stagger, and grounded recovery without falling or becoming airborne', frames: 4,  duration: 1.0, loop: false, base: 'standing' },
   { name: 'ko',         motion: 'eight clear key poses of falling backward into a compact knocked-out pose that stays fully inside each frame, ending diagonally on the ground with bent knees', frames: 8, duration: 2, loop: false, base: 'standing' },

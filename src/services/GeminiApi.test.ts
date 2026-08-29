@@ -18,8 +18,20 @@ import {
   isGeminiContentBlockedError,
   parseGeminiOfficialSpriteReview,
 } from './GeminiApi';
+import { getAnimationProfile, JUMP_ANIMATION_MOTION } from './AnimationProfiles';
 
 describe('Gemini content-block handling', () => {
+  it('describes the vertical-movement scaffold without known blocked motion terms', () => {
+    const promptText = [
+      JUMP_ANIMATION_MOTION,
+      ...getAnimationProfile('jump').promptRules,
+    ].join('\n');
+
+    expect(promptText).toContain('both feet visibly clear of the floor');
+    expect(promptText).toContain('benign athletic game-animation reference');
+    expect(promptText).not.toMatch(/\b(?:jump|airborne|lift-off|apex|landing)\b/i);
+  });
+
   it('selectively rejects official renders that touch an image edge', () => {
     expect(geminiOfficialFrameFramingValidation({
       x: 0,
