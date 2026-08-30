@@ -28,9 +28,9 @@ const REQUEST_TIMEOUT_MS = 60_000;
 export const HUMANOID_TEMPLATE_SUBMISSION_TIMEOUT_MS = 180_000;
 const TEMPORARY_UPLOAD_TTL_MS = 23 * 60 * 60 * 1000;
 
-export const HUMANOID_TEMPLATE_EXPERIMENT_ID = 'humanoid-neutral-medium-xai-template-v3';
-export const HUMANOID_TEMPLATE_CANARY_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V3';
-export const HUMANOID_TEMPLATE_FULL_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V3';
+export const HUMANOID_TEMPLATE_EXPERIMENT_ID = 'humanoid-neutral-medium-xai-template-v4';
+export const HUMANOID_TEMPLATE_CANARY_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V4';
+export const HUMANOID_TEMPLATE_FULL_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V4';
 export const HUMANOID_TEMPLATE_SOURCE_ENDPOINT = 'https://api.insertplayer.ai/api/arcade';
 export const HUMANOID_TEMPLATE_MODEL = Object.freeze({
   id: 'grok-imagine-image-2-edit',
@@ -103,7 +103,11 @@ export const HUMANOID_TEMPLATE_POLICY = Object.freeze({
 
 export const HUMANOID_TEMPLATE_PROMPT = `EDIT IMAGE 1 ONLY. IMAGE 1 controls the exact pixel-space pose, silhouette, joint and limb geometry, facing, occlusion, balance, foot contact or airborne height, camera, scale, placement, and pure-green canvas. Keep all of them exactly. Do not copy IMAGE 2's pose or composition.
 
-Use IMAGE 2 only for identity, physique surface, clothing, material, and render finish. It is a torso identity close-up and supplies no leg pose. Replace the person in IMAGE 1 with that exact generic bald androgynous adult humanoid: neutral human face, medium athletic build, warm neutral skin, complete bare human hands, and a seamless matte medium-gray fitted bodysuit over anatomically complete feet. Remove every Donald Trump trait, suit, tie, shoe, hair, logo, and accessory.
+OUTFIT LOCK: the seamless matte medium-gray bodysuit is footed and encloses both ankles, heels, soles, and every toe. ZERO visible skin exists below either ankle. Never output bare feet, bare toes, toenails, ankle gaps, shoes, separate socks, or detached foot coverings.
+
+IDENTITY LOCK: preserve IMAGE 2's exact skull, jaw, nose, lips, eyes, ears, skin tone, and apparent age in every frame. Do not masculinize, feminize, beautify, or redesign the face or body.
+
+Use IMAGE 2 only for identity, physique surface, clothing, material, and render finish. It is a torso identity close-up and supplies no leg pose. Replace the person in IMAGE 1 with that exact generic bald androgynous adult humanoid: neutral human face, medium athletic build, warm neutral skin, complete bare human hands, and one seamless matte medium-gray fitted bodysuit that fully encloses both anatomically complete feet and every toe. The gray fabric must continue uninterrupted from each leg over each ankle and entire foot in every frame: zero bare skin, toenails, soles, socks, shoes, or separate foot coverings below either ankle. Remove every Donald Trump trait, suit, tie, shoe, hair, logo, and accessory.
 
 Return one coherent full body and one animation frame only. No extra, missing, fused, duplicated, or detached anatomy; no motion blur, trails, props, text, floor, shadow, scenery, gradient, border, or watermark. Keep the background perfectly flat pure #00FF00 and keep IMAGE 1's green margin.`;
 
@@ -643,7 +647,7 @@ export function buildHumanoidTemplatePayload({ poseAssetHash, identityAssetHash,
   invariant(poseAssetHash !== identityAssetHash, 'Pose and identity references must be distinct.');
   invariant(/^pose-[0-9]{3}-[a-f0-9]{12}$/.test(pose?.poseId ?? ''), 'Pose id is invalid.');
   const prompt = buildHumanoidTemplatePrompt(pose);
-  const publishName = `ip-humanoid-template-v3-${pose.poseId.slice(5, 8)}`;
+  const publishName = `ip-humanoid-template-v4-${pose.poseId.slice(5, 8)}`;
   return {
     prompt,
     model: HUMANOID_TEMPLATE_MODEL.id,
@@ -1272,7 +1276,7 @@ export function parseHumanoidTemplateCliArgs(rawArgs) {
   const prepare = rawArgs.includes('--prepare');
   const execute = rawArgs.includes('--execute');
   invariant(prepare !== execute, 'Choose exactly one of --prepare or --execute.');
-  const workDirectory = resolve(parseArg(rawArgs, '--work-dir', join(root, '.humanoid-template-v3-work')));
+  const workDirectory = resolve(parseArg(rawArgs, '--work-dir', join(root, '.humanoid-template-v4-work')));
   const mode = parseArg(rawArgs, '--mode');
   if (execute) invariant(mode === 'canary' || mode === 'full', '--mode=canary or --mode=full is required.');
   return {
