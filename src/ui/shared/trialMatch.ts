@@ -8,7 +8,7 @@ import { resolveRosterStageThemeId } from '../../game/match/StageConfig.ts';
 export const TRIAL_PLAYER_SLUG = 'player-one';
 export const TRIAL_PREFERRED_OPPONENT_SLUG = 'donald-trump';
 export const TRIAL_OPPONENT_DIFFICULTY = 0.25;
-export const TRIAL_CLOUD_ASSET_DEADLINE_MS = 3_000;
+export const TRIAL_CLOUD_ASSET_DEADLINE_MS = 12_000;
 export const TRIAL_FALLBACK_PLAYER_NAME = 'Player One';
 export const TRIAL_FALLBACK_OPPONENT_NAME = 'CPU Rival';
 export const TRIAL_FALLBACK_STAGE_ID = 'insert-player-arena';
