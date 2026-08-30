@@ -65,6 +65,13 @@ describe('humanoid Grok pose-template contract', () => {
     expect(HUMANOID_TEMPLATE_PROMPT).toContain('Use IMAGE 2 only for identity');
     expect(HUMANOID_TEMPLATE_PROMPT).toContain('supplies no leg pose');
     expect(HUMANOID_TEMPLATE_PROMPT).not.toContain('IMAGE 3');
+    expect(HUMANOID_TEMPLATE_PROMPT).toContain('OUTFIT LOCK:');
+    expect(HUMANOID_TEMPLATE_PROMPT).toContain('ZERO visible skin exists below either ankle');
+    expect(HUMANOID_TEMPLATE_PROMPT).toContain('IDENTITY LOCK:');
+    expect(HUMANOID_TEMPLATE_PROMPT).toContain("preserve IMAGE 2's exact skull, jaw, nose, lips, eyes, ears, skin tone, and apparent age");
+    expect(HUMANOID_TEMPLATE_PROMPT).toContain('fully encloses both anatomically complete feet and every toe');
+    expect(HUMANOID_TEMPLATE_PROMPT).toContain('continue uninterrupted from each leg over each ankle and entire foot');
+    expect(HUMANOID_TEMPLATE_PROMPT).toContain('zero bare skin, toenails, soles, socks, shoes, or separate foot coverings');
     expect(HUMANOID_TEMPLATE_PROMPT).toContain('Remove every Donald Trump trait');
     expect(HUMANOID_TEMPLATE_PROMPT).toContain('pure #00FF00');
 
@@ -111,7 +118,7 @@ describe('humanoid Grok pose-template contract', () => {
       search: false,
       output_format: 'url',
       publish: false,
-      publish_name: 'ip-humanoid-template-v3-017',
+      publish_name: 'ip-humanoid-template-v4-017',
     });
     expect(HUMANOID_TEMPLATE_MODEL.expectedTwoReferenceCostMicrocredits).toBe(100_000);
     expect(HUMANOID_TEMPLATE_MODEL.catalogMaximumCostMicrocredits).toBe(110_000);
@@ -154,8 +161,8 @@ describe('humanoid Grok pose-template contract', () => {
   });
 
   it('accepts only one exact sealed PixCLI audit tuple', () => {
-    mkdirSync(resolve('.humanoid-template-v3-work'), { recursive: true });
-    const directory = mkdtempSync(resolve('.humanoid-template-v3-work/audit-test-'));
+    mkdirSync(resolve('.humanoid-template-v4-work'), { recursive: true });
+    const directory = mkdtempSync(resolve('.humanoid-template-v4-work/audit-test-'));
     try {
     const active = { pixcliJobId: 'job-1', submittedAt: '2026-08-30T21:18:56.000Z' };
     const job = { status: 'completed', cost: 100_000 };
@@ -306,13 +313,13 @@ describe('humanoid Grok pose-template contract', () => {
     expect(parsed.inputDirectory).toBe(resolve('/tmp/humanoid-input'));
     expect(parsed.outputDirectory).toBe(resolve('/tmp/humanoid-output'));
     expect(parsed.statePath).toBe(resolve('/tmp/humanoid-state.json'));
-    expect(HUMANOID_TEMPLATE_EXPERIMENT_ID).toBe('humanoid-neutral-medium-xai-template-v3');
-    expect(HUMANOID_TEMPLATE_CANARY_CONFIRMATION).toBe('GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V3');
-    expect(HUMANOID_TEMPLATE_FULL_CONFIRMATION).toBe('GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V3');
+    expect(HUMANOID_TEMPLATE_EXPERIMENT_ID).toBe('humanoid-neutral-medium-xai-template-v4');
+    expect(HUMANOID_TEMPLATE_CANARY_CONFIRMATION).toBe('GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V4');
+    expect(HUMANOID_TEMPLATE_FULL_CONFIRMATION).toBe('GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V4');
     const prepared = parseHumanoidTemplateCliArgs(['--prepare']);
-    expect(prepared.inputDirectory).toContain('/.humanoid-template-v3-work/inputs');
-    expect(prepared.outputDirectory).toContain('/.humanoid-template-v3-work/outputs');
-    expect(prepared.statePath).toContain('/.humanoid-template-v3-work/state.json');
+    expect(prepared.inputDirectory).toContain('/.humanoid-template-v4-work/inputs');
+    expect(prepared.outputDirectory).toContain('/.humanoid-template-v4-work/outputs');
+    expect(prepared.statePath).toContain('/.humanoid-template-v4-work/state.json');
   });
 
   it('keeps the original QA flow and uses an encrypted, commit-bound, single-use workflow', () => {
@@ -324,13 +331,16 @@ describe('humanoid Grok pose-template contract', () => {
     expect(workflow).toContain('gh api --paginate');
     expect(workflow).toContain('This exact paid authorization was already consumed');
     expect(workflow).toContain('scripts/encrypted-humanoid-bundle.mjs');
-    expect(workflow).toContain('humanoid-neutral-medium-xai-template-v3-encrypted');
-    expect(workflow).toContain('HUMANOID_WORK_DIR: .humanoid-template-v3-work');
-    expect(workflow).toContain('humanoid-template-v3-checkpoint.tar.gz.ipenc');
+    expect(workflow).toContain('humanoid-neutral-medium-xai-template-v4-encrypted');
+    expect(workflow).toContain('HUMANOID_WORK_DIR: .humanoid-template-v4-work');
+    expect(workflow).toContain('humanoid-template-v4-checkpoint.tar.gz.ipenc');
+    expect(workflow).toContain('run-name: humanoid-xai-v5-');
+    expect(workflow).not.toContain('humanoid-neutral-medium-xai-template-v3-encrypted');
+    expect(workflow).not.toContain('GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V3');
     expect(workflow).not.toContain('humanoid-neutral-medium-xai-template-v2-encrypted');
     expect(workflow).not.toContain('GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V2');
     expect(readFileSync(resolve('scripts/encrypted-humanoid-bundle.mjs'), 'utf8')).toContain("createCipheriv('aes-256-gcm'");
-    expect(workflow).not.toContain('path: .humanoid-template-v3-work/');
+    expect(workflow).not.toContain('path: .humanoid-template-v4-work/');
     expect(workflow).toContain('full_interrupted_manual_review_required');
   });
 
