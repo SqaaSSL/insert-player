@@ -1,6 +1,6 @@
 name: Generate encrypted humanoid XAI pose template
 
-run-name: humanoid-xai-v2-${{ inputs.confirmation == 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V1' && 'canary' || 'full' }}-resume-${{ inputs.resume_run_id || 'none' }}
+run-name: humanoid-xai-v3-${{ inputs.confirmation == 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V2' && 'canary' || 'full' }}-resume-${{ inputs.resume_run_id || 'none' }}
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: humanoid-neutral-medium-xai-template-v1
+  group: humanoid-neutral-medium-xai-template-v2
   cancel-in-progress: false
 
 jobs:
@@ -33,7 +33,7 @@ jobs:
       RESUME_RUN_ID: ${{ inputs.resume_run_id }}
       PIXCLI_BASE_URL: https://pixcli.hilo.cx
       HUMANOID_WORK_DIR: .humanoid-template-work
-      HUMANOID_ARTIFACT_NAME: humanoid-neutral-medium-xai-template-v1-encrypted
+      HUMANOID_ARTIFACT_NAME: humanoid-neutral-medium-xai-template-v2-encrypted
 
     steps:
       - name: Validate one-use authorization and resolve the pinned generator
@@ -47,8 +47,8 @@ jobs:
             printf '::error::Paid workflow reruns are forbidden; resume from the resulting encrypted checkpoint instead.\n'
             exit 1
           }
-          canary='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V1'
-          full='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V1'
+          canary='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V2'
+          full='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V2'
           if [[ "$REQUESTED_CONFIRMATION" == "$canary" ]]; then
             [[ -z "$RESUME_RUN_ID" ]] || {
               printf '::error::CANARY cannot resume another paid run.\n'
@@ -95,7 +95,7 @@ jobs:
               --dir "$checkpoint_dir"
             metadata="$checkpoint_dir/checkpoint-metadata.json"
             [[ "$(jq -r '.schemaVersion' "$metadata")" == '1' \
-              && "$(jq -r '.experimentId' "$metadata")" == 'humanoid-neutral-medium-xai-template-v1' \
+              && "$(jq -r '.experimentId' "$metadata")" == 'humanoid-neutral-medium-xai-template-v2' \
               && "$(jq -r '.runId' "$metadata")" == "$RESUME_RUN_ID" ]] || {
               printf '::error::Public checkpoint metadata does not match the selected run.\n'
               exit 1
@@ -195,7 +195,7 @@ jobs:
             | awk '$0 !~ /^\.humanoid-template-work\// || $0 ~ /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'
           tar -xzf "$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-checkpoint.tar.gz"
           state="$HUMANOID_WORK_DIR/state.json"
-          [[ "$(jq -r '.experimentId' "$state")" == 'humanoid-neutral-medium-xai-template-v1' \
+          [[ "$(jq -r '.experimentId' "$state")" == 'humanoid-neutral-medium-xai-template-v2' \
             && "$(jq -r '.generatorCommitSha' "$state")" == "$GENERATOR_SHA" \
             && "$(jq -r '.completedPoseCount' "$state")" -ge 5 \
             && "$(jq -r '.completedPoseCount' "$state")" -lt 94 ]] || {
@@ -238,7 +238,7 @@ jobs:
           if [[ -f "$state" && -f "$manifest" ]]; then
             paid="$(jq -r '[.slots[] | .costMicrocredits // empty] | add // 0' "$state")"
             {
-              printf '## Humanoid neutral medium — XAI pose template v1\n\n'
+              printf '## Humanoid neutral medium — XAI pose template v2\n\n'
               printf -- '- Mode: `%s`\n' "$HUMANOID_MODE"
               printf -- '- Status: `%s`\n' "$(jq -r '.status' "$state")"
               printf -- '- Completed distinct poses: `%s / 94`\n' "$(jq -r '.completedPoseCount // 0' "$state")"
@@ -268,7 +268,7 @@ jobs:
             > .humanoid-encrypted-artifact/humanoid-template-checkpoint.tar.gz.ipenc.sha256
           jq -n \
             --argjson schemaVersion 1 \
-            --arg experimentId 'humanoid-neutral-medium-xai-template-v1' \
+            --arg experimentId 'humanoid-neutral-medium-xai-template-v2' \
             --arg runId "$GITHUB_RUN_ID" \
             --arg generatorCommitSha "$(jq -r '.generatorCommitSha' "$HUMANOID_WORK_DIR/state.json")" \
             --arg status "$(jq -r '.status' "$HUMANOID_WORK_DIR/state.json")" \
@@ -281,7 +281,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: humanoid-neutral-medium-xai-template-v1-encrypted
+          name: humanoid-neutral-medium-xai-template-v2-encrypted
           path: |
             .humanoid-encrypted-artifact/humanoid-template-checkpoint.tar.gz.ipenc
             .humanoid-encrypted-artifact/humanoid-template-checkpoint.tar.gz.ipenc.sha256
