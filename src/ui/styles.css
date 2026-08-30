@@ -838,6 +838,10 @@
            shadow-[0_18px_48px_rgba(0,0,0,0.52)];
   }
 
+  .landing-proof__media {
+    @apply grid grid-cols-2 gap-6 max-[900px]:grid-cols-1;
+  }
+
   .landing-film__video {
     @apply block aspect-video w-full bg-asf-bg-deep object-cover;
   }
