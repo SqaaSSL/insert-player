@@ -23,6 +23,11 @@ const TRANSFORMATION_EXAMPLES = [
     photo: '/assets/landing-panel-photo-a6cda804.webp',
     fighter: '/assets/landing-panel-fighter-c2d0a569.webp',
   },
+  // Fully synthetic casual-selfie example: nobody real, no licensing.
+  {
+    photo: '/assets/landing-panel-photo2-2de4f7af.webp',
+    fighter: '/assets/landing-panel-fighter2-e9c8ad75.webp',
+  },
 ];
 const EXAMPLE_ROTATION_MS = 7000;
 
@@ -63,7 +68,8 @@ export function LandingPage({
           >
             <span className="landing-panel__chip" aria-hidden="true">Your photo</span>
             <img
-              className={personalized ? 'landing-panel__avatar' : undefined}
+              key={userImageUrl ?? example.photo}
+              className={personalized ? 'landing-panel__avatar' : 'landing-panel__media'}
               src={userImageUrl ?? example.photo}
               alt=""
               fetchPriority="high"
@@ -85,6 +91,8 @@ export function LandingPage({
           >
             <span className="landing-panel__chip" aria-hidden="true">Your fighter</span>
             <img
+              key={example.fighter}
+              className="landing-panel__media"
               src={example.fighter}
               alt=""
             />

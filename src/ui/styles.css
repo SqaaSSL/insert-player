@@ -700,6 +700,10 @@
     @apply object-cover object-center;
   }
 
+  .landing-panel__media {
+    @apply [animation:panel-fade_450ms_ease] motion-reduce:animate-none;
+  }
+
   /* Their fighter does not exist yet: show the silhouette tease. */
   .landing-panel.is-mystery img {
     @apply brightness-[0.18] saturate-50;
@@ -3583,6 +3587,12 @@
 
 @keyframes coin-blink {
   50% {
+    opacity: 0;
+  }
+}
+
+@keyframes panel-fade {
+  from {
     opacity: 0;
   }
 }
