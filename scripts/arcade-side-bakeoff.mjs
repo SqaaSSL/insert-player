@@ -378,6 +378,7 @@ export async function submitBakeoffSlot(options) {
   const submitting = {
     ...options.invariants,
     status: 'submitting',
+    submissionTimeoutMs: options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS,
     submissionStartedAt: nowIso(),
   };
   save(submitting);
@@ -392,7 +393,7 @@ export async function submitBakeoffSlot(options) {
         'User-Agent': 'insert-player-arcade-side-bakeoff/1.0',
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
     const unknown = {
@@ -487,6 +488,11 @@ export async function archiveJob(options, slot, job) {
     { fetchImpl: options.fetchImpl, sleepImpl: options.sleepImpl },
   );
   const assets = Array.isArray(canva.assets) ? canva.assets : [];
+  const assetCounts = {
+    provider_request: assets.filter((asset) => assetKind(asset) === 'provider_request').length,
+    provider_response: assets.filter((asset) => assetKind(asset) === 'provider_response').length,
+    image: assets.filter((asset) => assetKind(asset) === 'image').length,
+  };
   const selected = new Map();
   for (const asset of assets) {
     const kind = assetKind(asset);
@@ -507,6 +513,12 @@ export async function archiveJob(options, slot, job) {
       mimeType: asset.mime_type,
       contentSha256: stored.contentSha256,
       sizeBytes: stored.sizeBytes,
+      declaredSizeBytes: asset.size_bytes ?? null,
+      width: asset.width ?? null,
+      height: asset.height ?? null,
+      modelId: asset?.metadata?.model ?? null,
+      prompt: asset?.metadata?.prompt ?? null,
+      sourceUrl: asset?.metadata?.source_url ?? null,
       path: relative(root, outputPath),
       providerRequestId: asset?.metadata?.provider_request_id ?? null,
     };
@@ -544,6 +556,9 @@ export async function archiveJob(options, slot, job) {
   }
   return {
     artifacts: archived,
+    assetCounts,
+    canvaInput: canva?.input ?? null,
+    canvaJob: canva?.job ?? null,
     providerRuns,
     pixcliCostEstimate: canva?.job?.cost ?? job.cost ?? null,
     pixcliInputSha256: sha256(canonicalJson(canva.input ?? null)),

@@ -43,6 +43,10 @@ worker/.prod.vars
 .arcade-qa-milei-high-punch-f4-xai-state.json
 .arcade-qa-high-punch-f4-upload-state.json
 .arcade-qa-milei-canonical-upload-state.json
+.humanoid-template-work/
+arcade/pose-master-seeds/humanoid-neutral-medium-canonical-v1.png
+arcade/pose-master-seeds/humanoid-neutral-medium-canonical-v1-normalized.png
+arcade/pose-master-seeds/humanoid-neutral-medium-identity-close-v1.png
 .launch-validation.json
 launch-validation.local.json
 .brand-clearance.json
