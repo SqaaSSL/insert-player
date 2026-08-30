@@ -11,22 +11,44 @@ interface LandingPageProps {
 }
 
 const TRANSFORMATION_IMAGE = '/assets/landing-transformation.webp';
-const LAUNCH_VIDEO = '/assets/insert-player-launch-bb1325da.mp4';
+const LAUNCH_VIDEO = '/assets/insert-player-launch-3dfeedd6.mp4';
+const GAMEPLAY_REEL_VIDEO = '/assets/insert-player-gameplay-5a19b606.mp4';
+const GAMEPLAY_REEL_GIF = '/assets/insert-player-gameplay-0e5dc078.gif';
 // GIF-style silent gameplay loop (~200 KB): real production footage, cut from
 // the launch capture. The full film with audio stays in the proof section.
 const FIGHT_LOOP_VIDEO = '/assets/landing-fight-loop-e40898d3.mp4';
 const FIGHT_LOOP_POSTER = '/assets/landing-fight-poster-90b5173e.jpg';
-/** Signed-out example pairs (photo -> fighter), all licensed or synthetic.
- * Add new entries here as approved pairs land in /assets. */
-const TRANSFORMATION_EXAMPLES = [
+const CASUAL_FIGHT_LOOP_VIDEO = '/assets/landing-fight-loop-casual-1f510ac6.mp4';
+const CASUAL_FIGHT_LOOP_POSTER = '/assets/landing-fight-poster-casual-5ce10ee4.jpg';
+
+export interface LandingStory {
+  id: string;
+  name: string;
+  photo: string;
+  fighter: string;
+  fightVideo: string;
+  fightPoster: string;
+}
+
+/** Complete photo -> fighter -> fight stories. Every fight must feature the
+ * person shown in that same story; do not reuse footage across entries. */
+export const LANDING_STORIES: LandingStory[] = [
   {
+    id: 'player-one',
+    name: 'Player One',
     photo: '/assets/landing-panel-photo-a6cda804.webp',
     fighter: '/assets/landing-panel-fighter-c2d0a569.webp',
+    fightVideo: FIGHT_LOOP_VIDEO,
+    fightPoster: FIGHT_LOOP_POSTER,
   },
   // Fully synthetic casual-selfie example: nobody real, no licensing.
   {
+    id: 'casual',
+    name: 'Casual',
     photo: '/assets/landing-panel-photo2-2de4f7af.webp',
     fighter: '/assets/landing-panel-fighter2-e9c8ad75.webp',
+    fightVideo: CASUAL_FIGHT_LOOP_VIDEO,
+    fightPoster: CASUAL_FIGHT_LOOP_POSTER,
   },
 ];
 const EXAMPLE_ROTATION_MS = 7000;
@@ -41,14 +63,23 @@ export function LandingPage({
   // Both stock stories always rotate; a signed-in visitor's own photo joins
   // the loop as the third stop, with the fighter panel as the locked tease.
   const entries = [
-    ...TRANSFORMATION_EXAMPLES.map((example) => ({ ...example, isYou: false })),
+    ...LANDING_STORIES.map((story) => ({ ...story, isYou: false })),
     ...(userImageUrl
-      ? [{ photo: userImageUrl, fighter: TRANSFORMATION_EXAMPLES[0].fighter, isYou: true }]
+      ? [{
+        id: 'you',
+        name: 'You',
+        photo: userImageUrl,
+        fighter: LANDING_STORIES[0].fighter,
+        fightVideo: null,
+        fightPoster: LANDING_STORIES[0].fightPoster,
+        isYou: true,
+      }]
       : []),
   ];
   const [exampleIndex, setExampleIndex] = useState(0);
   useEffect(() => {
     if (entries.length < 2) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const timer = window.setInterval(
       () => setExampleIndex((index) => (index + 1) % entries.length),
       EXAMPLE_ROTATION_MS,
@@ -114,23 +145,35 @@ export function LandingPage({
           <span className="landing-triptych__arrow" aria-hidden="true">&#9654;</span>
           <button
             type="button"
-            className="landing-panel landing-panel--fight"
-            onClick={onOpenArcade}
-            aria-label="Play the arcade now"
+            className={isYou
+              ? 'landing-panel landing-panel--fight is-mystery'
+              : 'landing-panel landing-panel--fight'}
+            onClick={isYou ? onCreateFighter : onOpenArcade}
+            aria-label={isYou ? 'Create your fighter to unlock your fight' : `Play as ${example.name}`}
           >
             <span className="landing-panel__chip" aria-hidden="true">Your fight</span>
-            <video
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="auto"
-              poster={FIGHT_LOOP_POSTER}
-              aria-label="Silent looping clip of real Insert Player gameplay"
-            >
-              <source src={FIGHT_LOOP_VIDEO} type="video/mp4" />
-            </video>
-            <span className="landing-panel__cta">Play now &#9654;</span>
+            {example.fightVideo ? (
+              <video
+                key={example.fightVideo}
+                autoPlay
+                muted
+                loop
+                playsInline
+                preload="auto"
+                poster={example.fightPoster}
+                aria-label={`Silent looping clip of ${example.name} in real Insert Player gameplay`}
+              >
+                <source src={example.fightVideo} type="video/mp4" />
+              </video>
+            ) : (
+              <img src={example.fightPoster} alt="" />
+            )}
+            {isYou ? (
+              <span className="landing-panel__mystery" aria-hidden="true">?</span>
+            ) : null}
+            <span className="landing-panel__cta">
+              {isYou ? <>Unlock it &#9654;</> : <>Play now &#9654;</>}
+            </span>
           </button>
         </div>
         <div className="landing-hero__copy">
@@ -175,19 +218,43 @@ export function LandingPage({
             a generated stage, the real HUD, and a real exchange.
           </p>
         </header>
-        <div className="landing-film">
-          <video
-            className="landing-film__video"
-            controls
-            playsInline
-            preload="metadata"
-            poster={TRANSFORMATION_IMAGE}
-          >
-            <source src={LAUNCH_VIDEO} type="video/mp4" />
-          </video>
-          <div className="landing-film__meta">
-            <span>Production gameplay</span>
-            <span>CPU vs CPU</span>
+        <div className="landing-proof__media">
+          <div className="landing-film">
+            <video
+              className="landing-film__video"
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="none"
+              aria-label="Eight real Insert Player matches featuring two personal fighters and four global opponents"
+            >
+              <source src={GAMEPLAY_REEL_VIDEO} type="video/mp4" />
+              <img
+                src={GAMEPLAY_REEL_GIF}
+                alt="Eight real Insert Player matches featuring two personal fighters and four global opponents"
+                loading="lazy"
+              />
+            </video>
+            <div className="landing-film__meta">
+              <span>8-match reel</span>
+              <span>Real gameplay</span>
+            </div>
+          </div>
+          <div className="landing-film">
+            <video
+              className="landing-film__video"
+              controls
+              playsInline
+              preload="metadata"
+              poster={TRANSFORMATION_IMAGE}
+            >
+              <source src={LAUNCH_VIDEO} type="video/mp4" />
+            </video>
+            <div className="landing-film__meta">
+              <span>Launch film</span>
+              <span>Sound on</span>
+            </div>
           </div>
         </div>
       </section>
