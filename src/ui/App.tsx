@@ -30,6 +30,7 @@ import {
   buildArcadeSelectionSearch,
   buildCreationSearch,
   clearCreationPurchaseIntent,
+  consumePostSignUpTrialIntent,
   readCreationPurchaseIntent,
   readCreationNavigationContext,
   readPreferredArcadePlayerPhotoHash,
@@ -80,6 +81,7 @@ interface NavigationOptions {
 
 interface AppProps extends Partial<AuthRouteState> {
   userImageUrl?: string | null;
+  isNewAccount?: boolean;
   authSlot?: ReactNode;
   cacheStatus?: CacheStatus;
   cacheMessage?: string | null;
@@ -190,6 +192,7 @@ export function App({
   authStatus = 'local',
   authSessionKey = 'local',
   userImageUrl = null,
+  isNewAccount = false,
   authSlot = null,
   cacheStatus = 'ready',
   cacheMessage = null,
@@ -208,6 +211,7 @@ export function App({
   const trialLaunchEpochRef = useRef(0);
   const [landingBillingProfile, setLandingBillingProfile] = useState<BillingProfile | null>(null);
   const [landingBillingChecked, setLandingBillingChecked] = useState(authStatus !== 'signed-in');
+  const [postSignUpTrialRequested, setPostSignUpTrialRequested] = useState(false);
   const creationPurchaseIntent = useMemo(
     () => route === '/menu' ? readCreationPurchaseIntent(authSessionKey) : null,
     [authSessionKey, route],
@@ -337,6 +341,26 @@ export function App({
     }
     startFight(trial.buildTrialMatchData(loadedPair ?? { player: null, opponent: null }));
   }, [startFight]);
+
+  useEffect(() => {
+    if (authStatus !== 'signed-in') return;
+    if (!consumePostSignUpTrialIntent()) return;
+    if (!isNewAccount) {
+      debugInfo('[Onboarding] Ignored a stale sign-up trial intent for an existing account');
+      return;
+    }
+    setPostSignUpTrialRequested(true);
+    if (route !== '/') navigate('/', '', { replace: true });
+  }, [authStatus, isNewAccount, navigate, route]);
+
+  useEffect(() => {
+    if (!postSignUpTrialRequested || authStatus !== 'signed-in' || route !== '/') return;
+    setPostSignUpTrialRequested(false);
+    void startTrial().catch((error: unknown) => {
+      debugWarn('[Onboarding] Post-sign-up trial failed to start:',
+        error instanceof Error ? error.message : error);
+    });
+  }, [authStatus, postSignUpTrialRequested, route, startTrial]);
 
   const finishFight = useCallback(() => {
     writeStoredMatch(null, authSessionKey);

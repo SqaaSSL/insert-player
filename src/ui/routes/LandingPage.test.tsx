@@ -7,6 +7,7 @@ const callbacks = {
   onCreateFighter: vi.fn(),
   onOpenArcade: vi.fn(),
   onOpenWatchMode: vi.fn(),
+  onOpenCommunity: vi.fn(),
 };
 
 describe('LandingPage onboarding offer', () => {
@@ -19,7 +20,7 @@ describe('LandingPage onboarding offer', () => {
     expect(markup).toContain('Playable demo · no account, upload, or credits');
     expect(markup).toContain('Free Rookie · human check at creation');
     expect(markup).toContain('Create your fighter');
-    expect(markup).toContain('aria-label="Pause gameplay preview"');
+    expect(markup).toContain('real Insert Player gameplay');
   });
 
   it('only calls the Rookie pass available after checking a signed-in account', () => {

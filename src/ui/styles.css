@@ -740,13 +740,6 @@
            max-[640px]:px-2 max-[640px]:py-1.5 max-[640px]:text-[10px];
   }
 
-  .landing-panel__motion-toggle {
-    @apply absolute bottom-2 right-2 z-20 rounded-[4px] border-2 border-asf-gold-deep
-           bg-[rgba(5,5,12,0.92)] px-2.5 py-2 font-arcade text-[8px] uppercase
-           text-asf-gold-bright hover:border-asf-gold-bright focus-visible:outline-2
-           focus-visible:outline-offset-2 focus-visible:outline-asf-blue;
-  }
-
   .landing-triptych__arrow {
     @apply self-center font-arcade text-[18px] text-asf-gold
            [text-shadow:0_0_14px_rgba(255,206,58,0.65)] max-[900px]:hidden;

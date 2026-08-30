@@ -1104,7 +1104,9 @@ function assertClerkAuthIsWired() {
   // ClerkProvider; both files together form the auth/user bridge.
   const main = [
     readFileSync(join(root, 'src/main.tsx'), 'utf8'),
+    readFileSync(join(root, 'src/ui/App.tsx'), 'utf8'),
     readFileSync(join(root, 'src/ui/components/AuthDock.tsx'), 'utf8'),
+    readFileSync(join(root, 'src/ui/shared/onboardingFlow.ts'), 'utf8'),
   ].join('\n');
   const apiClient = readFileSync(join(root, 'src/services/ApiClient.ts'), 'utf8');
   const auth = readFileSync(join(root, 'worker/src/auth.ts'), 'utf8');
@@ -1113,6 +1115,11 @@ function assertClerkAuthIsWired() {
     'ClerkProvider',
     'SignInButton',
     'SignUpButton',
+    'onBeginSignUp={rememberPostSignUpTrialIntent}',
+    'onBeginSignIn={clearPostSignUpTrialIntent}',
+    'isNewAccountForOnboarding(user?.createdAt)',
+    'consumePostSignUpTrialIntent()',
+    'void startTrial()',
     'UserButton',
     'isLoaded',
     "'loading'",

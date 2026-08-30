@@ -37,6 +37,8 @@ const CREATION_ENTRY_SOURCES = new Set<CreationEntrySource>([
 const GENERATED_PHOTO_HASH_PATTERN = /^[a-f0-9]{64}$/;
 const CREATION_PURCHASE_INTENT_PREFIX = 'asf:creation-purchase-intent:';
 const CREATION_PURCHASE_INTENT_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const POST_SIGN_UP_TRIAL_INTENT_KEY = 'asf:onboarding:post-sign-up-trial';
+const POST_SIGN_UP_TRIAL_INTENT_MAX_AGE_MS = 30 * 60 * 1_000;
 
 function searchParams(search: string): URLSearchParams {
   return new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
@@ -124,6 +126,44 @@ export function clearCreationPurchaseIntent(authSessionKey: string): void {
     window.sessionStorage.removeItem(creationPurchaseIntentKey(authSessionKey));
   } catch {
     // A blocked storage surface should not trap the user in billing.
+  }
+}
+
+export function isFreshPostSignUpTrialIntent(value: unknown, now = Date.now()): boolean {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return false;
+  return value <= now + 60_000 && now - value <= POST_SIGN_UP_TRIAL_INTENT_MAX_AGE_MS;
+}
+
+export function isNewAccountForOnboarding(value: unknown, now = Date.now()): boolean {
+  if (!(value instanceof Date)) return false;
+  return isFreshPostSignUpTrialIntent(value.getTime(), now);
+}
+
+export function rememberPostSignUpTrialIntent(): void {
+  try {
+    window.sessionStorage.setItem(POST_SIGN_UP_TRIAL_INTENT_KEY, String(Date.now()));
+  } catch {
+    // Clerk still works when session storage is blocked; only the automatic handoff degrades.
+  }
+}
+
+export function clearPostSignUpTrialIntent(): void {
+  try {
+    window.sessionStorage.removeItem(POST_SIGN_UP_TRIAL_INTENT_KEY);
+  } catch {
+    // Best effort: a blocked storage surface cannot hold a usable intent anyway.
+  }
+}
+
+/** Consumes the marker before launch so StrictMode, reloads, and retries cannot replay it. */
+export function consumePostSignUpTrialIntent(now = Date.now()): boolean {
+  try {
+    const raw = window.sessionStorage.getItem(POST_SIGN_UP_TRIAL_INTENT_KEY);
+    window.sessionStorage.removeItem(POST_SIGN_UP_TRIAL_INTENT_KEY);
+    if (!raw) return false;
+    return isFreshPostSignUpTrialIntent(Number(raw), now);
+  } catch {
+    return false;
   }
 }
 

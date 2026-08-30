@@ -1,14 +1,23 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildArcadeSelectionSearch,
   buildCreationSearch,
+  consumePostSignUpTrialIntent,
   parseCreationPurchaseIntent,
   isGeneratedPhotoHash,
+  isNewAccountForOnboarding,
+  isFreshPostSignUpTrialIntent,
   readCreationNavigationContext,
   readPreferredArcadePlayerPhotoHash,
+  rememberPostSignUpTrialIntent,
 } from './onboardingFlow.ts';
 
 const PHOTO_HASH = 'a'.repeat(64);
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe('onboardingFlow', () => {
   it('round-trips the whitelisted trial creation context', () => {
@@ -77,5 +86,38 @@ describe('onboardingFlow', () => {
       source: 'landing',
       createdAt: now - 25 * 60 * 60 * 1_000,
     }, now)).toBeNull();
+  });
+
+  it('accepts only a fresh post-sign-up trial marker', () => {
+    const now = 1_900_000_000_000;
+    expect(isFreshPostSignUpTrialIntent(now - 1_000, now)).toBe(true);
+    expect(isFreshPostSignUpTrialIntent(now - 31 * 60 * 1_000, now)).toBe(false);
+    expect(isFreshPostSignUpTrialIntent(now + 61_000, now)).toBe(false);
+    expect(isFreshPostSignUpTrialIntent('1900000000000', now)).toBe(false);
+  });
+
+  it('starts automatic onboarding only for a newly-created Clerk account', () => {
+    const now = 1_900_000_000_000;
+    expect(isNewAccountForOnboarding(new Date(now - 1_000), now)).toBe(true);
+    expect(isNewAccountForOnboarding(new Date(now - 31 * 60 * 1_000), now)).toBe(false);
+    expect(isNewAccountForOnboarding(new Date(now + 61_000), now)).toBe(false);
+    expect(isNewAccountForOnboarding(null, now)).toBe(false);
+  });
+
+  it('consumes the post-sign-up intent exactly once', () => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal('window', {
+      sessionStorage: {
+        getItem: (key: string) => storage.get(key) ?? null,
+        setItem: (key: string, value: string) => storage.set(key, value),
+        removeItem: (key: string) => storage.delete(key),
+      },
+    });
+    vi.spyOn(Date, 'now').mockReturnValue(1_900_000_000_000);
+
+    rememberPostSignUpTrialIntent();
+
+    expect(consumePostSignUpTrialIntent(1_900_000_001_000)).toBe(true);
+    expect(consumePostSignUpTrialIntent(1_900_000_001_000)).toBe(false);
   });
 });
