@@ -1,6 +1,6 @@
 name: Generate encrypted humanoid XAI pose template
 
-run-name: humanoid-xai-${{ inputs.confirmation == 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V1' && 'canary' || 'full' }}-resume-${{ inputs.resume_run_id || 'none' }}
+run-name: humanoid-xai-v2-${{ inputs.confirmation == 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V1' && 'canary' || 'full' }}-resume-${{ inputs.resume_run_id || 'none' }}
 
 on:
   workflow_dispatch:
