@@ -25,6 +25,13 @@ export function LandingPage({
   return (
     <div className="landing-page">
       <section className="landing-hero" aria-labelledby="landing-title">
+        <div className="landing-hero__intro">
+          <h1 id="landing-title">Insert Player</h1>
+          <p>
+            Turn one photo into a fighter you can actually play. Build your roster,
+            enter the arcade, and keep every version across devices.
+          </p>
+        </div>
         <div className="landing-triptych">
           <button
             type="button"
@@ -77,11 +84,6 @@ export function LandingPage({
           </button>
         </div>
         <div className="landing-hero__copy">
-          <h1 id="landing-title">Insert Player</h1>
-          <p>
-            Turn one photo into a fighter you can actually play. Build your roster,
-            enter the arcade, and keep every version across devices.
-          </p>
           <div className="landing-hero__actions">
             <Button variant="primary" size="lg" onClick={onCreateFighter}>
               Create fighter

@@ -724,18 +724,23 @@
            [text-shadow:0_0_14px_rgba(255,206,58,0.65)] max-[900px]:hidden;
   }
 
-  .landing-hero__copy {
-    @apply mx-auto mt-8 flex w-full max-w-[1480px] flex-col items-start gap-4
-           max-[640px]:mt-6 max-[640px]:gap-3;
+  .landing-hero__intro {
+    @apply mx-auto mb-7 flex w-full max-w-[1480px] flex-col items-start gap-3
+           max-[640px]:mb-5 max-[640px]:gap-2;
   }
 
-  .landing-hero__copy h1 {
+  .landing-hero__copy {
+    @apply mx-auto mt-7 flex w-full max-w-[1480px] flex-col items-start gap-4
+           max-[640px]:mt-5 max-[640px]:gap-3;
+  }
+
+  .landing-hero__intro h1 {
     @apply text-[56px] leading-[1.05] tracking-[0] text-asf-gold-bright
            [text-shadow:0_3px_0_#a80d0d,_0_6px_0_#4a0505]
            max-[640px]:text-[34px] max-[640px]:leading-[1.2];
   }
 
-  .landing-hero__copy > p:not(.landing-hero__note) {
+  .landing-hero__intro > p {
     @apply m-0 max-w-[62ch] font-sans text-[17px] normal-case leading-[1.55] text-asf-cream
            max-[640px]:text-[15px];
   }
@@ -767,7 +772,8 @@
   }
 
   .landing-coin-blink {
-    @apply font-arcade text-[11px] uppercase tracking-[0.08em] text-asf-red
+    @apply inline-block whitespace-nowrap font-arcade text-[11px] uppercase
+           tracking-[0.08em] text-asf-red
            [animation:coin-blink_1.3s_steps(2)_infinite] motion-reduce:animate-none;
   }
 
