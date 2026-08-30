@@ -1,6 +1,6 @@
 name: Generate encrypted humanoid XAI pose template
 
-run-name: humanoid-xai-v3-${{ inputs.confirmation == 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V2' && 'canary' || 'full' }}-resume-${{ inputs.resume_run_id || 'none' }}
+run-name: humanoid-xai-v4-${{ inputs.confirmation == 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V3' && 'canary' || 'full' }}-resume-${{ inputs.resume_run_id || 'none' }}
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: humanoid-neutral-medium-xai-template-v2
+  group: humanoid-neutral-medium-xai-template-v3
   cancel-in-progress: false
 
 jobs:
@@ -32,8 +32,8 @@ jobs:
       REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
       RESUME_RUN_ID: ${{ inputs.resume_run_id }}
       PIXCLI_BASE_URL: https://pixcli.hilo.cx
-      HUMANOID_WORK_DIR: .humanoid-template-work
-      HUMANOID_ARTIFACT_NAME: humanoid-neutral-medium-xai-template-v2-encrypted
+      HUMANOID_WORK_DIR: .humanoid-template-v3-work
+      HUMANOID_ARTIFACT_NAME: humanoid-neutral-medium-xai-template-v3-encrypted
 
     steps:
       - name: Validate one-use authorization and resolve the pinned generator
@@ -47,8 +47,8 @@ jobs:
             printf '::error::Paid workflow reruns are forbidden; resume from the resulting encrypted checkpoint instead.\n'
             exit 1
           }
-          canary='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V2'
-          full='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V2'
+          canary='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V3'
+          full='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V3'
           if [[ "$REQUESTED_CONFIRMATION" == "$canary" ]]; then
             [[ -z "$RESUME_RUN_ID" ]] || {
               printf '::error::CANARY cannot resume another paid run.\n'
@@ -94,8 +94,8 @@ jobs:
               --name "$HUMANOID_ARTIFACT_NAME" \
               --dir "$checkpoint_dir"
             metadata="$checkpoint_dir/checkpoint-metadata.json"
-            [[ "$(jq -r '.schemaVersion' "$metadata")" == '1' \
-              && "$(jq -r '.experimentId' "$metadata")" == 'humanoid-neutral-medium-xai-template-v2' \
+            [[ "$(jq -r '.schemaVersion' "$metadata")" == '2' \
+              && "$(jq -r '.experimentId' "$metadata")" == 'humanoid-neutral-medium-xai-template-v3' \
               && "$(jq -r '.runId' "$metadata")" == "$RESUME_RUN_ID" ]] || {
               printf '::error::Public checkpoint metadata does not match the selected run.\n'
               exit 1
@@ -178,11 +178,11 @@ jobs:
           HUMANOID_ARTIFACT_KEY: ${{ secrets.HUMANOID_ARTIFACT_KEY }}
         run: |
           set -euo pipefail
-          encrypted="$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-checkpoint.tar.gz.ipenc"
+          encrypted="$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-v3-checkpoint.tar.gz.ipenc"
           metadata="$CHECKPOINT_DOWNLOAD_DIR/checkpoint-metadata.json"
           expected="$(jq -r '.encryptedSha256' "$metadata")"
           actual="$(sha256sum "$encrypted" | cut -d ' ' -f 1)"
-          declared="$(cut -d ' ' -f 1 "$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-checkpoint.tar.gz.ipenc.sha256")"
+          declared="$(cut -d ' ' -f 1 "$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-v3-checkpoint.tar.gz.ipenc.sha256")"
           [[ "$actual" == "$expected" && "$actual" == "$declared" ]] || {
             printf '::error::Encrypted checkpoint SHA-256 mismatch.\n'
             exit 1
@@ -190,12 +190,13 @@ jobs:
           node scripts/encrypted-humanoid-bundle.mjs \
             --decrypt \
             --input="$encrypted" \
-            --output="$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-checkpoint.tar.gz"
-          tar -tzf "$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-checkpoint.tar.gz" \
-            | awk '$0 !~ /^\.humanoid-template-work\// || $0 ~ /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'
-          tar -xzf "$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-checkpoint.tar.gz"
+            --output="$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-v3-checkpoint.tar.gz"
+          tar -tzf "$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-v3-checkpoint.tar.gz" \
+            | awk '$0 !~ /^\.humanoid-template-v3-work\// || $0 ~ /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'
+          tar -xzf "$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-v3-checkpoint.tar.gz"
           state="$HUMANOID_WORK_DIR/state.json"
-          [[ "$(jq -r '.experimentId' "$state")" == 'humanoid-neutral-medium-xai-template-v2' \
+          [[ "$(jq -r '.schemaVersion' "$state")" == '2' \
+            && "$(jq -r '.experimentId' "$state")" == 'humanoid-neutral-medium-xai-template-v3' \
             && "$(jq -r '.generatorCommitSha' "$state")" == "$GENERATOR_SHA" \
             && "$(jq -r '.completedPoseCount' "$state")" -ge 5 \
             && "$(jq -r '.completedPoseCount' "$state")" -lt 94 ]] || {
@@ -238,7 +239,7 @@ jobs:
           if [[ -f "$state" && -f "$manifest" ]]; then
             paid="$(jq -r '[.slots[] | .costMicrocredits // empty] | add // 0' "$state")"
             {
-              printf '## Humanoid neutral medium — XAI pose template v2\n\n'
+              printf '## Humanoid neutral medium — XAI pose template v3\n\n'
               printf -- '- Mode: `%s`\n' "$HUMANOID_MODE"
               printf -- '- Status: `%s`\n' "$(jq -r '.status' "$state")"
               printf -- '- Completed distinct poses: `%s / 94`\n' "$(jq -r '.completedPoseCount // 0' "$state")"
@@ -257,35 +258,35 @@ jobs:
         run: |
           set -euo pipefail
           [[ -d "$HUMANOID_WORK_DIR" && -f "$HUMANOID_WORK_DIR/state.json" ]] || exit 0
-          mkdir -p .humanoid-encrypted-artifact
-          tar -czf .humanoid-encrypted-artifact/humanoid-template-checkpoint.tar.gz "$HUMANOID_WORK_DIR"
+          mkdir -p .humanoid-v3-encrypted-artifact
+          tar -czf .humanoid-v3-encrypted-artifact/humanoid-template-v3-checkpoint.tar.gz "$HUMANOID_WORK_DIR"
           node scripts/encrypted-humanoid-bundle.mjs \
             --encrypt \
-            --input=.humanoid-encrypted-artifact/humanoid-template-checkpoint.tar.gz \
-            --output=.humanoid-encrypted-artifact/humanoid-template-checkpoint.tar.gz.ipenc
-          encrypted_sha="$(sha256sum .humanoid-encrypted-artifact/humanoid-template-checkpoint.tar.gz.ipenc | cut -d ' ' -f 1)"
-          printf '%s  %s\n' "$encrypted_sha" 'humanoid-template-checkpoint.tar.gz.ipenc' \
-            > .humanoid-encrypted-artifact/humanoid-template-checkpoint.tar.gz.ipenc.sha256
+            --input=.humanoid-v3-encrypted-artifact/humanoid-template-v3-checkpoint.tar.gz \
+            --output=.humanoid-v3-encrypted-artifact/humanoid-template-v3-checkpoint.tar.gz.ipenc
+          encrypted_sha="$(sha256sum .humanoid-v3-encrypted-artifact/humanoid-template-v3-checkpoint.tar.gz.ipenc | cut -d ' ' -f 1)"
+          printf '%s  %s\n' "$encrypted_sha" 'humanoid-template-v3-checkpoint.tar.gz.ipenc' \
+            > .humanoid-v3-encrypted-artifact/humanoid-template-v3-checkpoint.tar.gz.ipenc.sha256
           jq -n \
-            --argjson schemaVersion 1 \
-            --arg experimentId 'humanoid-neutral-medium-xai-template-v2' \
+            --argjson schemaVersion 2 \
+            --arg experimentId 'humanoid-neutral-medium-xai-template-v3' \
             --arg runId "$GITHUB_RUN_ID" \
             --arg generatorCommitSha "$(jq -r '.generatorCommitSha' "$HUMANOID_WORK_DIR/state.json")" \
             --arg status "$(jq -r '.status' "$HUMANOID_WORK_DIR/state.json")" \
             --argjson completedPoseCount "$(jq -r '.completedPoseCount // 0' "$HUMANOID_WORK_DIR/state.json")" \
             --arg encryptedSha256 "$encrypted_sha" \
             '{schemaVersion: $schemaVersion, experimentId: $experimentId, runId: $runId, generatorCommitSha: $generatorCommitSha, status: $status, completedPoseCount: $completedPoseCount, encryptedSha256: $encryptedSha256}' \
-            > .humanoid-encrypted-artifact/checkpoint-metadata.json
+            > .humanoid-v3-encrypted-artifact/checkpoint-metadata.json
 
       - name: Preserve only ciphertext, checksum, and non-sensitive lineage
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: humanoid-neutral-medium-xai-template-v2-encrypted
+          name: humanoid-neutral-medium-xai-template-v3-encrypted
           path: |
-            .humanoid-encrypted-artifact/humanoid-template-checkpoint.tar.gz.ipenc
-            .humanoid-encrypted-artifact/humanoid-template-checkpoint.tar.gz.ipenc.sha256
-            .humanoid-encrypted-artifact/checkpoint-metadata.json
+            .humanoid-v3-encrypted-artifact/humanoid-template-v3-checkpoint.tar.gz.ipenc
+            .humanoid-v3-encrypted-artifact/humanoid-template-v3-checkpoint.tar.gz.ipenc.sha256
+            .humanoid-v3-encrypted-artifact/checkpoint-metadata.json
           if-no-files-found: warn
           retention-days: 90
           include-hidden-files: true

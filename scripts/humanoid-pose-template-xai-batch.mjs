@@ -28,9 +28,9 @@ const REQUEST_TIMEOUT_MS = 60_000;
 export const HUMANOID_TEMPLATE_SUBMISSION_TIMEOUT_MS = 180_000;
 const TEMPORARY_UPLOAD_TTL_MS = 23 * 60 * 60 * 1000;
 
-export const HUMANOID_TEMPLATE_EXPERIMENT_ID = 'humanoid-neutral-medium-xai-template-v2';
-export const HUMANOID_TEMPLATE_CANARY_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V2';
-export const HUMANOID_TEMPLATE_FULL_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V2';
+export const HUMANOID_TEMPLATE_EXPERIMENT_ID = 'humanoid-neutral-medium-xai-template-v3';
+export const HUMANOID_TEMPLATE_CANARY_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V3';
+export const HUMANOID_TEMPLATE_FULL_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V3';
 export const HUMANOID_TEMPLATE_SOURCE_ENDPOINT = 'https://api.insertplayer.ai/api/arcade';
 export const HUMANOID_TEMPLATE_MODEL = Object.freeze({
   id: 'grok-imagine-image-2-edit',
@@ -101,22 +101,56 @@ export const HUMANOID_TEMPLATE_POLICY = Object.freeze({
   humanReviewRequired: true,
 });
 
-export const HUMANOID_TEMPLATE_PROMPT = `REFERENCE ROLES — HARD; NEVER BLEND:
+export const HUMANOID_TEMPLATE_PROMPT = `EDIT IMAGE 1 ONLY. IMAGE 1 controls the exact pixel-space pose, silhouette, joint and limb geometry, facing, occlusion, balance, foot contact or airborne height, camera, scale, placement, and pure-green canvas. Keep all of them exactly. Do not copy IMAGE 2's pose or composition.
 
-IMAGE 1 is the POSE AND COMPOSITION MASTER only. Reproduce its exact joint positions, limb angles, natural occlusions, torso and head angle, facing direction, balance, foot contact or airborne height, camera, full-body placement, and overall silhouette scale. Never copy this person's identity, face, hair, age, sex, physique, clothing, colors, materials, or accessories.
+Use IMAGE 2 only for identity, physique surface, clothing, material, and render finish. It is a torso identity close-up and supplies no leg pose. Replace the person in IMAGE 1 with that exact generic bald androgynous adult humanoid: neutral human face, medium athletic build, warm neutral skin, complete bare human hands, and a seamless matte medium-gray fitted bodysuit over anatomically complete feet. Remove every Donald Trump trait, suit, tie, shoe, hair, logo, and accessory.
 
-IMAGE 2 is the APPROVED CANONICAL HUMANOID AND RENDERING MASTER only. Repose this exact single character: a generic non-celebrity androgynous adult human, bald, neutral human face, medium athletic build, natural adult proportions, warm neutral skin, bare complete human hands, and a seamless matte medium-gray fitted bodysuit continuing over anatomically complete feet, with no shoes. Preserve this character's face, skin, body volume, limb proportions, gray clothing construction, material, lighting, and premium grounded fighting-game render finish. Never copy IMAGE 2's pose, placement, camera, or former background gradient.
+Return one coherent full body and one animation frame only. No extra, missing, fused, duplicated, or detached anatomy; no motion blur, trails, props, text, floor, shadow, scenery, gradient, border, or watermark. Keep the background perfectly flat pure #00FF00 and keep IMAGE 1's green margin.`;
 
-Replace the person in IMAGE 1 completely with the canonical humanoid from IMAGE 2. The output must contain zero Donald Trump traits: no blond hair, older male celebrity face, Trump physique, navy suit, lapels, shirt, tie, belt, dress shoes, or red/navy wardrobe colors.
+const HUMANOID_TEMPLATE_ANIMATION_DIRECTIVES = Object.freeze({
+  crouch: 'Preserve the exact crouch depth, both knee bends, hip height, guard, and both foot contacts from IMAGE 1.',
+  high_kick: 'Preserve the exact high-kick phase, support leg, kicking-leg angle, raised-foot height, guard, and torso lean from IMAGE 1.',
+  high_punch: 'Preserve the exact high-punch extension, striking arm, rear guard, shoulder turn, stance, and balance from IMAGE 1.',
+  hit: 'Preserve the exact hit-reaction recoil, torso bend, head angle, limb positions, stance, and balance from IMAGE 1.',
+  idle: 'Preserve the exact idle guard, stance width, knee bends, hand positions, and weight distribution from IMAGE 1.',
+  jump: 'Preserve the exact jump phase, airborne height, leg tuck or extension, arm positions, and torso angle from IMAGE 1.',
+  ko: 'Preserve the exact knockout fall phase, body orientation, floor contact, limb positions, and silhouette from IMAGE 1.',
+  low_kick: 'Preserve the exact low-kick phase, support foot, kicking-leg angle and height, guard, and torso lean from IMAGE 1.',
+  low_punch: 'Preserve the exact low-punch extension, striking arm, rear guard, stance depth, and torso rotation from IMAGE 1.',
+  victory: 'Preserve the exact victory pose, arm gesture, stance, head angle, placement, and silhouette from IMAGE 1.',
+  walk: 'Preserve the exact walk stride, leading leg, foot contacts or airborne foot, arm swing, and torso lean from IMAGE 1.',
+});
 
-Exactly one connected adult body: one head, one torso, two anatomically coherent arms and hands, two anatomically coherent legs and feet, five fingers on every visible hand, natural joints and natural occlusions. No duplicated, fused, detached, missing, or extra anatomy. No motion blur, trails, props, logos, text, or accessories.
+const HUMANOID_TEMPLATE_CANARY_DIRECTIVES = Object.freeze({
+  'crouch:6': 'POSE CHECK — CROUCH FRAME 6: deep squat with both knees visibly bent and hips near knee height, while preserving IMAGE 1 exactly. Do not output an upright neutral guard.',
+  'high_kick:7': 'POSE CHECK — HIGH KICK FRAME 7: exactly one support foot on the ground; the other knee is raised to waist height and its foot is clearly airborne, while preserving IMAGE 1 exactly. Do not output a neutral guard.',
+  'high_kick:12': 'POSE CHECK — HIGH KICK FRAME 12: exactly one support foot on the ground and the kicking leg is fully extended near horizontal, while preserving IMAGE 1 exactly. Do not reduce it to a knee chamber or neutral guard.',
+  'ko:12': 'POSE CHECK — KO FRAME 12: the entire body is horizontal and prone with the exact floor contacts and limb arrangement from IMAGE 1. Do not output a standing or crouching guard.',
+  'walk:7': 'POSE CHECK — WALK FRAME 7: preserve exactly which leg leads, which foot contacts the ground, the airborne foot height, arm swing, and torso lean from IMAGE 1. Do not output a neutral guard.',
+});
 
-Return exactly one full-body animation frame, not a sprite sheet, sequence, collage, or comparison. Preserve IMAGE 1's framing and green margin. Background pure #00FF00, perfectly flat and uniform, with no floor, shadow, gradient, scenery, border, or watermark.
+function normalizePoseSourceSlots(pose) {
+  invariant(Array.isArray(pose?.sourceSlots) && pose.sourceSlots.length > 0, 'Pose source slots are required.');
+  return pose.sourceSlots.map((slot) => {
+    invariant(Object.hasOwn(HUMANOID_TEMPLATE_SOURCE_SHEETS, slot?.animationName), 'Pose animation name is invalid.');
+    invariant(Number.isSafeInteger(slot?.frameNumber) && slot.frameNumber >= 1, 'Pose frame number is invalid.');
+    return { animationName: slot.animationName, frameNumber: slot.frameNumber };
+  }).sort((left, right) => left.animationName.localeCompare(right.animationName) || left.frameNumber - right.frameNumber);
+}
 
-FINAL PRIORITY:
-1) Exact pose, camera, placement, and scale from IMAGE 1.
-2) Exact humanoid appearance, physique, material, and rendering from IMAGE 2.
-3) Output and anatomy constraints above.`;
+export function buildHumanoidTemplatePoseDirective(pose) {
+  const sourceSlots = normalizePoseSourceSlots(pose);
+  const exactCanaryDirectives = sourceSlots
+    .map((slot) => HUMANOID_TEMPLATE_CANARY_DIRECTIVES[`${slot.animationName}:${slot.frameNumber}`])
+    .filter(Boolean);
+  if (exactCanaryDirectives.length > 0) return [...new Set(exactCanaryDirectives)].join(' ');
+  const animationNames = [...new Set(sourceSlots.map((slot) => slot.animationName))];
+  return animationNames.map((animationName) => HUMANOID_TEMPLATE_ANIMATION_DIRECTIVES[animationName]).join(' ');
+}
+
+export function buildHumanoidTemplatePrompt(pose) {
+  return `${HUMANOID_TEMPLATE_PROMPT}\n\n${buildHumanoidTemplatePoseDirective(pose)}`;
+}
 
 function sha256(value) {
   return createHash('sha256').update(value).digest('hex');
@@ -158,7 +192,14 @@ function inspectPng(bytes, label = 'PNG') {
   const width = bytes.readUInt32BE(16);
   const height = bytes.readUInt32BE(20);
   invariant(width >= 64 && height >= 64 && width <= 16_384 && height <= 16_384, `${label} dimensions are invalid.`);
-  return { width, height, sizeBytes: bytes.byteLength, contentSha256: sha256(bytes) };
+  return {
+    width,
+    height,
+    bitDepth: bytes.byteLength >= 26 ? bytes[24] : null,
+    colorType: bytes.byteLength >= 26 ? bytes[25] : null,
+    sizeBytes: bytes.byteLength,
+    contentSha256: sha256(bytes),
+  };
 }
 
 async function readBoundedResponse(response, maximumBytes, label) {
@@ -196,8 +237,9 @@ async function parseJsonResponse(response, label) {
 function runCommand(binary, args, options = {}) {
   const result = spawnSync(binary, args, {
     encoding: options.binary ? null : 'utf8',
+    input: options.input,
     maxBuffer: options.maxBuffer ?? 128 * 1024 * 1024,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
   });
   if (result.error || result.status !== 0) {
     const stderr = Buffer.isBuffer(result.stderr) ? result.stderr.toString('utf8') : result.stderr;
@@ -244,6 +286,70 @@ function extractCell(sheetPath, outputPath, frameIndex, sheetWidth, frameWidth, 
   ]);
   renameSync(temporary, outputPath);
   return inspectPng(readFileSync(outputPath), `extracted frame ${frameIndex + 1}`);
+}
+
+export function inspectOpaqueChromaPose(path, ffmpegBinary = 'ffmpeg') {
+  const bytes = readFileSync(path);
+  const inspected = inspectPng(bytes, 'opaque chroma pose');
+  invariant(inspected.bitDepth === 8 && inspected.colorType === 2, 'Opaque chroma pose must be an 8-bit RGB24 PNG.');
+  const rgb = runCommand(ffmpegBinary, [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '1',
+    '-i', path, '-map', '0:v:0', '-frames:v', '1',
+    '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1',
+  ], { binary: true });
+  invariant(rgb.byteLength === inspected.width * inspected.height * 3, 'Opaque chroma pose decoded size is invalid.');
+  const cornerOffsets = [
+    0,
+    (inspected.width - 1) * 3,
+    (inspected.height - 1) * inspected.width * 3,
+    ((inspected.height * inspected.width) - 1) * 3,
+  ];
+  for (const offset of cornerOffsets) {
+    invariant(rgb[offset] === 0 && rgb[offset + 1] === 255 && rgb[offset + 2] === 0, 'Opaque chroma pose corners must be pure #00FF00.');
+  }
+  return { ...inspected, inputPixelSha256: pixelSha256(path, ffmpegBinary) };
+}
+
+export function compositeRgbaOnChroma(rgba, width, height) {
+  invariant(Buffer.isBuffer(rgba), 'Source pose RGBA pixels are required.');
+  invariant(Number.isSafeInteger(width) && width > 0, 'Source pose width is invalid.');
+  invariant(Number.isSafeInteger(height) && height > 0, 'Source pose height is invalid.');
+  invariant(rgba.byteLength === width * height * 4, 'Source pose decoded size is invalid.');
+  const rgb = Buffer.allocUnsafe(width * height * 3);
+  for (let sourceOffset = 0, outputOffset = 0; sourceOffset < rgba.byteLength; sourceOffset += 4, outputOffset += 3) {
+    const alpha = rgba[sourceOffset + 3];
+    const inverseAlpha = 255 - alpha;
+    rgb[outputOffset] = Math.round((rgba[sourceOffset] * alpha) / 255);
+    rgb[outputOffset + 1] = Math.round(((rgba[sourceOffset + 1] * alpha) + (255 * inverseAlpha)) / 255);
+    rgb[outputOffset + 2] = Math.round((rgba[sourceOffset + 2] * alpha) / 255);
+  }
+  return rgb;
+}
+
+export function flattenPoseOnChroma(inputPath, outputPath, ffmpegBinary = 'ffmpeg') {
+  const source = inspectPng(readFileSync(inputPath), 'source pose');
+  const rgba = runCommand(ffmpegBinary, [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '1',
+    '-i', inputPath, '-map', '0:v:0', '-frames:v', '1',
+    '-f', 'rawvideo', '-pix_fmt', 'rgba', 'pipe:1',
+  ], { binary: true });
+  const rgb = compositeRgbaOnChroma(rgba, source.width, source.height);
+  mkdirSync(dirname(outputPath), { recursive: true, mode: 0o700 });
+  const temporary = `${outputPath}.writing-${process.pid}-${randomUUID()}.png`;
+  try {
+    runCommand(ffmpegBinary, [
+      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-threads', '1',
+      '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', `${source.width}x${source.height}`, '-i', 'pipe:0',
+      '-frames:v', '1', '-pix_fmt', 'rgb24', '-compression_level', '9', temporary,
+    ], { input: rgb });
+    const flattened = inspectOpaqueChromaPose(temporary, ffmpegBinary);
+    invariant(flattened.width === source.width && flattened.height === source.height, 'Flattened pose dimensions changed.');
+    renameSync(temporary, outputPath);
+    return flattened;
+  } catch (error) {
+    if (existsSync(temporary)) unlinkSync(temporary);
+    throw error;
+  }
 }
 
 function resolveFighter(payload) {
@@ -356,15 +462,18 @@ export async function prepareHumanoidTemplateInputs(options = {}) {
       if (!pose) {
         const poseId = `pose-${String(uniqueByPixelHash.size + 1).padStart(3, '0')}-${pixelHash.slice(0, 12)}`;
         const posePath = join(outputDirectory, 'poses', `${poseId}.png`);
-        mkdirSync(dirname(posePath), { recursive: true, mode: 0o700 });
-        copyFileSync(extractedPath, posePath);
+        const flattened = flattenPoseOnChroma(extractedPath, posePath, ffmpegBinary);
         pose = {
           poseId,
           pixelSha256: pixelHash,
-          contentSha256: frame.contentSha256,
-          sizeBytes: frame.sizeBytes,
-          width: frame.width,
-          height: frame.height,
+          inputPixelSha256: flattened.inputPixelSha256,
+          sourceContentSha256: frame.contentSha256,
+          contentSha256: flattened.contentSha256,
+          sizeBytes: flattened.sizeBytes,
+          width: flattened.width,
+          height: flattened.height,
+          bitDepth: flattened.bitDepth,
+          colorType: flattened.colorType,
           path: relative(outputDirectory, posePath),
           sourceSlots: [],
         };
@@ -376,6 +485,10 @@ export async function prepareHumanoidTemplateInputs(options = {}) {
   }
 
   const uniquePoses = [...uniqueByPixelHash.values()];
+  for (const pose of uniquePoses) {
+    pose.poseDirective = buildHumanoidTemplatePoseDirective(pose);
+    pose.promptSha256 = sha256(buildHumanoidTemplatePrompt(pose));
+  }
   invariant(frameSlots.length === 98, `Expected 98 HQ forward frame slots, received ${frameSlots.length}.`);
   invariant(uniquePoses.length === 94, `Expected 94 distinct HQ poses, received ${uniquePoses.length}.`);
   const duplicateGroups = uniquePoses.filter((pose) => pose.sourceSlots.length > 1);
@@ -389,14 +502,14 @@ export async function prepareHumanoidTemplateInputs(options = {}) {
   invariant(new Set(canaryPoseIds).size === HUMANOID_TEMPLATE_CANARY_FRAMES.length, 'Canary frames are not five distinct poses.');
 
   const manifestCore = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     experimentId: HUMANOID_TEMPLATE_EXPERIMENT_ID,
     sourceEndpoint: HUMANOID_TEMPLATE_SOURCE_ENDPOINT,
     sourceFighter: { id: '8555abdb8beeb6e03679474c24be982f', slug: 'donald-trump' },
     model: HUMANOID_TEMPLATE_MODEL,
-    prompt: HUMANOID_TEMPLATE_PROMPT,
-    promptSha256: sha256(HUMANOID_TEMPLATE_PROMPT),
-    referenceOrder: ['pose_frame', 'canonical_humanoid'],
+    promptBase: HUMANOID_TEMPLATE_PROMPT,
+    promptBaseSha256: sha256(HUMANOID_TEMPLATE_PROMPT),
+    referenceOrder: ['pose_flat_chroma', 'identity_close'],
     canonical: canonicalRecords,
     sourceSheets,
     frameSlots,
@@ -415,10 +528,12 @@ function verifyPreparedManifest(inputDirectory, ffmpegBinary = 'ffmpeg') {
   const manifest = JSON.parse(bytes.toString('utf8'));
   const { planSha256, ...core } = manifest;
   invariant(planSha256 === sha256(canonicalJson(core)), 'Prepared input plan SHA-256 changed.');
+  invariant(manifest.schemaVersion === 2, 'Prepared input schema changed.');
   invariant(manifest.experimentId === HUMANOID_TEMPLATE_EXPERIMENT_ID, 'Prepared input experiment changed.');
-  invariant(manifest.promptSha256 === sha256(HUMANOID_TEMPLATE_PROMPT), 'Prepared prompt changed.');
+  invariant(manifest.promptBase === HUMANOID_TEMPLATE_PROMPT, 'Prepared prompt base changed.');
+  invariant(manifest.promptBaseSha256 === sha256(HUMANOID_TEMPLATE_PROMPT), 'Prepared prompt-base pin changed.');
   invariant(manifest.frameSlots.length === 98 && manifest.uniquePoses.length === 94, 'Prepared input cardinality changed.');
-  invariant(manifest.referenceOrder.join(',') === 'pose_frame,canonical_humanoid', 'Prepared reference order changed.');
+  invariant(manifest.referenceOrder.join(',') === 'pose_flat_chroma,identity_close', 'Prepared reference order changed.');
   invariant(canonicalJson(manifest.model) === canonicalJson(HUMANOID_TEMPLATE_MODEL), 'Prepared model contract changed.');
   invariant(canonicalJson(manifest.policy) === canonicalJson(HUMANOID_TEMPLATE_POLICY), 'Prepared execution policy changed.');
   invariant(
@@ -450,8 +565,33 @@ function verifyPreparedManifest(inputDirectory, ffmpegBinary = 'ffmpeg') {
     const inspected = inspectPng(readFileSync(path), 'prepared PNG');
     invariant(inspected.contentSha256 === record.contentSha256, `Prepared input ${record.path} changed.`);
   }
+  invariant(
+    manifest.canonical.identityClose.width === 768 && manifest.canonical.identityClose.height === 1024,
+    'Prepared identity close-up geometry changed.',
+  );
   const poseById = new Map(manifest.uniquePoses.map((pose) => [pose.poseId, pose]));
   invariant(poseById.size === 94, 'Prepared pose ids are not unique.');
+  for (const pose of manifest.uniquePoses) {
+    invariant(Array.isArray(pose.sourceSlots) && pose.sourceSlots.length > 0, `${pose.poseId} has no source slots.`);
+    const inputPath = resolve(inputDirectory, pose.path);
+    const inspected = inspectOpaqueChromaPose(inputPath, ffmpegBinary);
+    const firstSourceSlot = pose.sourceSlots[0];
+    const firstExtractedPath = resolve(
+      inputDirectory,
+      'extracted',
+      firstSourceSlot.animationName,
+      `frame-${String(firstSourceSlot.frameNumber).padStart(3, '0')}.png`,
+    );
+    invariant(inspected.contentSha256 === pose.contentSha256, `${pose.poseId} flattened content pin changed.`);
+    invariant(inspected.inputPixelSha256 === pose.inputPixelSha256, `${pose.poseId} flattened pixel pin changed.`);
+    invariant(
+      inspectPng(readFileSync(firstExtractedPath), `${pose.poseId} first source`).contentSha256 === pose.sourceContentSha256,
+      `${pose.poseId} first-source content pin changed.`,
+    );
+    invariant(pose.bitDepth === 8 && pose.colorType === 2, `${pose.poseId} flattened PNG mode changed.`);
+    invariant(pose.poseDirective === buildHumanoidTemplatePoseDirective(pose), `${pose.poseId} pose directive changed.`);
+    invariant(pose.promptSha256 === sha256(buildHumanoidTemplatePrompt(pose)), `${pose.poseId} prompt pin changed.`);
+  }
   const derivedPixelGroups = new Map();
   const expectedSlots = [];
   for (const [animationName, expected] of Object.entries(HUMANOID_TEMPLATE_SOURCE_SHEETS)) {
@@ -478,7 +618,10 @@ function verifyPreparedManifest(inputDirectory, ffmpegBinary = 'ffmpeg') {
       const pose = poseById.get(slot.poseId);
       invariant(pose?.pixelSha256 === sourcePixelHash, `${animationName} frame ${frameNumber} pose pixel pin changed.`);
       invariant(slot.poseId === `pose-${String(manifest.uniquePoses.indexOf(pose) + 1).padStart(3, '0')}-${sourcePixelHash.slice(0, 12)}`, `${animationName} frame ${frameNumber} pose id changed.`);
-      invariant(pixelSha256(resolve(inputDirectory, pose.path), ffmpegBinary) === sourcePixelHash, `${slot.poseId} no longer matches the pinned source cell.`);
+      invariant(
+        pixelSha256(resolve(inputDirectory, pose.path), ffmpegBinary) === pose.inputPixelSha256,
+        `${slot.poseId} flattened input pixel pin changed.`,
+      );
       const group = derivedPixelGroups.get(sourcePixelHash) ?? [];
       group.push({ animationName, frameNumber });
       derivedPixelGroups.set(sourcePixelHash, group);
@@ -494,16 +637,17 @@ function verifyPreparedManifest(inputDirectory, ffmpegBinary = 'ffmpeg') {
   return { manifest, manifestSha256: sha256(bytes) };
 }
 
-export function buildHumanoidTemplatePayload({ poseAssetHash, canonicalAssetHash, poseId }) {
+export function buildHumanoidTemplatePayload({ poseAssetHash, identityAssetHash, pose }) {
   invariant(/^[a-f0-9]{32}$/.test(poseAssetHash ?? ''), 'Pose PixCLI asset hash is invalid.');
-  invariant(/^[a-f0-9]{32}$/.test(canonicalAssetHash ?? ''), 'Canonical PixCLI asset hash is invalid.');
-  invariant(poseAssetHash !== canonicalAssetHash, 'Pose and canonical references must be distinct.');
-  invariant(/^pose-[0-9]{3}-[a-f0-9]{12}$/.test(poseId ?? ''), 'Pose id is invalid.');
-  const publishName = `ip-humanoid-template-v2-${poseId.slice(5, 8)}`;
+  invariant(/^[a-f0-9]{32}$/.test(identityAssetHash ?? ''), 'Identity PixCLI asset hash is invalid.');
+  invariant(poseAssetHash !== identityAssetHash, 'Pose and identity references must be distinct.');
+  invariant(/^pose-[0-9]{3}-[a-f0-9]{12}$/.test(pose?.poseId ?? ''), 'Pose id is invalid.');
+  const prompt = buildHumanoidTemplatePrompt(pose);
+  const publishName = `ip-humanoid-template-v3-${pose.poseId.slice(5, 8)}`;
   return {
-    prompt: HUMANOID_TEMPLATE_PROMPT,
+    prompt,
     model: HUMANOID_TEMPLATE_MODEL.id,
-    image: [poseAssetHash, canonicalAssetHash],
+    image: [poseAssetHash, identityAssetHash],
     params: { ...HUMANOID_TEMPLATE_MODEL.params },
     enrich_prompt: false,
     search: false,
@@ -513,8 +657,10 @@ export function buildHumanoidTemplatePayload({ poseAssetHash, canonicalAssetHash
   };
 }
 
-function buildPoseExecutionContract({ pose, poseAssetHash, canonicalAssetHash, manifest }) {
-  const payload = buildHumanoidTemplatePayload({ poseAssetHash, canonicalAssetHash, poseId: pose.poseId });
+function buildPoseExecutionContract({ pose, poseAssetHash, identityAssetHash, manifest }) {
+  const payload = buildHumanoidTemplatePayload({ poseAssetHash, identityAssetHash, pose });
+  invariant(manifest.promptBaseSha256 === sha256(HUMANOID_TEMPLATE_PROMPT), 'Manifest prompt base changed.');
+  invariant(pose.promptSha256 === sha256(payload.prompt), `${pose.poseId} prompt contract changed.`);
   return {
     payload,
     invariants: {
@@ -524,9 +670,9 @@ function buildPoseExecutionContract({ pose, poseAssetHash, canonicalAssetHash, m
       modelId: HUMANOID_TEMPLATE_MODEL.id,
       providerEndpoint: HUMANOID_TEMPLATE_MODEL.endpoint,
       sourceSha256: pose.contentSha256,
-      promptSha256: manifest.promptSha256,
+      promptSha256: pose.promptSha256,
       poseAssetHash,
-      canonicalAssetHash,
+      identityAssetHash,
       requestSha256: sha256(canonicalJson(payload)),
     },
   };
@@ -542,7 +688,7 @@ export function verifyStoredSlotContract(slot, expected) {
     'sourceSha256',
     'promptSha256',
     'poseAssetHash',
-    'canonicalAssetHash',
+    'identityAssetHash',
     'requestSha256',
   ];
   const mismatches = keys.filter((key) => slot?.[key] !== expected[key]);
@@ -633,7 +779,7 @@ async function uploadTemporaryReference(options) {
 
 function initialExecutionState(manifest, manifestSha256, catalog, execution) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     experimentId: HUMANOID_TEMPLATE_EXPERIMENT_ID,
     planSha256: manifest.planSha256,
     manifestSha256,
@@ -903,7 +1049,7 @@ export async function executeHumanoidTemplateBatch(options = {}) {
     let state = existsSync(statePath)
       ? JSON.parse(readFileSync(statePath, 'utf8'))
       : initialExecutionState(manifest, manifestSha256, preflight, execution);
-    invariant(state.schemaVersion === 1 && state.experimentId === HUMANOID_TEMPLATE_EXPERIMENT_ID, 'Execution state belongs to another experiment.');
+    invariant(state.schemaVersion === 2 && state.experimentId === HUMANOID_TEMPLATE_EXPERIMENT_ID, 'Execution state belongs to another experiment.');
     invariant(state.planSha256 === manifest.planSha256 && state.manifestSha256 === manifestSha256, 'Execution state does not match the immutable input plan.');
     invariant(canonicalJson(state.model) === canonicalJson(HUMANOID_TEMPLATE_MODEL), 'Execution model contract changed.');
     invariant(state.generatorCommitSha === generatorCommitSha, 'Execution checkpoint belongs to another generator commit.');
@@ -932,7 +1078,7 @@ export async function executeHumanoidTemplateBatch(options = {}) {
       const { payload, invariants } = buildPoseExecutionContract({
         pose,
         poseAssetHash: stored.poseAssetHash,
-        canonicalAssetHash: stored.canonicalAssetHash,
+        identityAssetHash: stored.identityAssetHash,
         manifest,
       });
       verifyStoredSlotContract(stored, invariants);
@@ -962,19 +1108,19 @@ export async function executeHumanoidTemplateBatch(options = {}) {
     invariant(!manuallyBlocked, `${manuallyBlocked?.poseId ?? 'Pose'} requires manual reconciliation; automatic paid continuation is forbidden.`);
 
     const needsNewSubmissions = selected.some((pose) => resumeActionForSlot(state.slots[pose.poseId] ?? null) === 'submit');
-    const canonical = manifest.canonical.canonicalNormalized;
-    let canonicalUpload = state.references.canonical ?? null;
-    if (needsNewSubmissions && !uploadCanBeReused(canonicalUpload, canonical.contentSha256)) {
-      if (canonicalUpload && ['uploading', 'upload_outcome_unknown'].includes(canonicalUpload.status)) {
-        throw new Error('Canonical upload requires manual reconciliation.');
+    const identity = manifest.canonical.identityClose;
+    let identityUpload = state.references.identity ?? null;
+    if (needsNewSubmissions && !uploadCanBeReused(identityUpload, identity.contentSha256)) {
+      if (identityUpload && ['uploading', 'upload_outcome_unknown'].includes(identityUpload.status)) {
+        throw new Error('Identity upload requires manual reconciliation.');
       }
-      canonicalUpload = await uploadTemporaryReference({
+      identityUpload = await uploadTemporaryReference({
         apiBase,
         apiKey,
-        path: resolve(inputDirectory, canonical.path),
-        recordKey: 'canonical',
-        expectedSha256: canonical.contentSha256,
-        save: (record) => saveReference('canonical', record),
+        path: resolve(inputDirectory, identity.path),
+        recordKey: 'identity',
+        expectedSha256: identity.contentSha256,
+        save: (record) => saveReference('identity', record),
         fetchImpl: options.fetchImpl,
       });
     }
@@ -1012,7 +1158,7 @@ export async function executeHumanoidTemplateBatch(options = {}) {
         ({ payload, invariants } = buildPoseExecutionContract({
           pose,
           poseAssetHash: poseUpload.pixcliAssetHash,
-          canonicalAssetHash: canonicalUpload.pixcliAssetHash,
+          identityAssetHash: identityUpload.pixcliAssetHash,
           manifest,
         }));
         const submitted = await submitBakeoffSlot({
@@ -1031,7 +1177,7 @@ export async function executeHumanoidTemplateBatch(options = {}) {
         ({ payload, invariants } = buildPoseExecutionContract({
           pose,
           poseAssetHash: previous.poseAssetHash,
-          canonicalAssetHash: previous.canonicalAssetHash,
+          identityAssetHash: previous.identityAssetHash,
           manifest,
         }));
         verifyStoredSlotContract(previous, invariants);
@@ -1126,7 +1272,7 @@ export function parseHumanoidTemplateCliArgs(rawArgs) {
   const prepare = rawArgs.includes('--prepare');
   const execute = rawArgs.includes('--execute');
   invariant(prepare !== execute, 'Choose exactly one of --prepare or --execute.');
-  const workDirectory = resolve(parseArg(rawArgs, '--work-dir', join(root, '.humanoid-template-work')));
+  const workDirectory = resolve(parseArg(rawArgs, '--work-dir', join(root, '.humanoid-template-v3-work')));
   const mode = parseArg(rawArgs, '--mode');
   if (execute) invariant(mode === 'canary' || mode === 'full', '--mode=canary or --mode=full is required.');
   return {
