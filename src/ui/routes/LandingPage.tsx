@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Button } from '../components/Button.tsx';
 
 interface LandingPageProps {
@@ -15,8 +16,15 @@ const LAUNCH_VIDEO = '/assets/insert-player-launch-bb1325da.mp4';
 // the launch capture. The full film with audio stays in the proof section.
 const FIGHT_LOOP_VIDEO = '/assets/landing-fight-loop-e40898d3.mp4';
 const FIGHT_LOOP_POSTER = '/assets/landing-fight-poster-90b5173e.jpg';
-const PANEL_PHOTO = '/assets/landing-panel-photo-a6cda804.webp';
-const PANEL_FIGHTER = '/assets/landing-panel-fighter-c2d0a569.webp';
+/** Signed-out example pairs (photo -> fighter), all licensed or synthetic.
+ * Add new entries here as approved pairs land in /assets. */
+const TRANSFORMATION_EXAMPLES = [
+  {
+    photo: '/assets/landing-panel-photo-a6cda804.webp',
+    fighter: '/assets/landing-panel-fighter-c2d0a569.webp',
+  },
+];
+const EXAMPLE_ROTATION_MS = 7000;
 
 export function LandingPage({
   onCreateFighter,
@@ -26,6 +34,16 @@ export function LandingPage({
   userImageUrl = null,
 }: LandingPageProps) {
   const personalized = Boolean(userImageUrl);
+  const [exampleIndex, setExampleIndex] = useState(0);
+  useEffect(() => {
+    if (personalized || TRANSFORMATION_EXAMPLES.length < 2) return;
+    const timer = window.setInterval(
+      () => setExampleIndex((index) => (index + 1) % TRANSFORMATION_EXAMPLES.length),
+      EXAMPLE_ROTATION_MS,
+    );
+    return () => window.clearInterval(timer);
+  }, [personalized]);
+  const example = TRANSFORMATION_EXAMPLES[exampleIndex] ?? TRANSFORMATION_EXAMPLES[0];
   return (
     <div className="landing-page">
       <section className="landing-hero" aria-labelledby="landing-title">
@@ -46,7 +64,7 @@ export function LandingPage({
             <span className="landing-panel__chip" aria-hidden="true">Your photo</span>
             <img
               className={personalized ? 'landing-panel__avatar' : undefined}
-              src={userImageUrl ?? PANEL_PHOTO}
+              src={userImageUrl ?? example.photo}
               alt=""
               fetchPriority="high"
             />
@@ -67,7 +85,7 @@ export function LandingPage({
           >
             <span className="landing-panel__chip" aria-hidden="true">Your fighter</span>
             <img
-              src={PANEL_FIGHTER}
+              src={example.fighter}
               alt=""
             />
             {personalized ? (
