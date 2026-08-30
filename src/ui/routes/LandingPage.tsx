@@ -38,17 +38,25 @@ export function LandingPage({
   onOpenCommunity,
   userImageUrl = null,
 }: LandingPageProps) {
-  const personalized = Boolean(userImageUrl);
+  // Both stock stories always rotate; a signed-in visitor's own photo joins
+  // the loop as the third stop, with the fighter panel as the locked tease.
+  const entries = [
+    ...TRANSFORMATION_EXAMPLES.map((example) => ({ ...example, isYou: false })),
+    ...(userImageUrl
+      ? [{ photo: userImageUrl, fighter: TRANSFORMATION_EXAMPLES[0].fighter, isYou: true }]
+      : []),
+  ];
   const [exampleIndex, setExampleIndex] = useState(0);
   useEffect(() => {
-    if (personalized || TRANSFORMATION_EXAMPLES.length < 2) return;
+    if (entries.length < 2) return;
     const timer = window.setInterval(
-      () => setExampleIndex((index) => (index + 1) % TRANSFORMATION_EXAMPLES.length),
+      () => setExampleIndex((index) => (index + 1) % entries.length),
       EXAMPLE_ROTATION_MS,
     );
     return () => window.clearInterval(timer);
-  }, [personalized]);
-  const example = TRANSFORMATION_EXAMPLES[exampleIndex] ?? TRANSFORMATION_EXAMPLES[0];
+  }, [entries.length]);
+  const example = entries[exampleIndex % entries.length] ?? entries[0];
+  const isYou = example.isYou;
   return (
     <div className="landing-page">
       <section className="landing-hero" aria-labelledby="landing-title">
@@ -68,39 +76,39 @@ export function LandingPage({
           >
             <span className="landing-panel__chip" aria-hidden="true">Your photo</span>
             <img
-              key={userImageUrl ?? example.photo}
-              className={personalized ? 'landing-panel__avatar' : 'landing-panel__media'}
-              src={userImageUrl ?? example.photo}
+              key={example.photo}
+              className={isYou ? 'landing-panel__avatar landing-panel__media' : 'landing-panel__media'}
+              src={example.photo}
               alt=""
               fetchPriority="high"
             />
             <span className="landing-panel__cta">
-              {personalized ? <>That&apos;s you &#9654;</> : <>Create yours &#9654;</>}
+              {isYou ? <>That&apos;s you &#9654;</> : <>Create yours &#9654;</>}
             </span>
           </button>
           <span className="landing-triptych__arrow" aria-hidden="true">&#9654;</span>
           <button
             type="button"
-            className={personalized
+            className={isYou
               ? 'landing-panel landing-panel--fighter is-mystery'
               : 'landing-panel landing-panel--fighter'}
-            onClick={personalized ? onCreateFighter : onOpenCommunity}
-            aria-label={personalized
+            onClick={isYou ? onCreateFighter : onOpenCommunity}
+            aria-label={isYou
               ? 'Build your fighter from your photo'
               : 'Browse fighters the community has created'}
           >
             <span className="landing-panel__chip" aria-hidden="true">Your fighter</span>
             <img
-              key={example.fighter}
+              key={example.fighter + (isYou ? '-you' : '')}
               className="landing-panel__media"
               src={example.fighter}
               alt=""
             />
-            {personalized ? (
+            {isYou ? (
               <span className="landing-panel__mystery" aria-hidden="true">?</span>
             ) : null}
             <span className="landing-panel__cta">
-              {personalized ? <>Build it &#9654;</> : <>See fighters &#9654;</>}
+              {isYou ? <>Build it &#9654;</> : <>See fighters &#9654;</>}
             </span>
           </button>
           <span className="landing-triptych__arrow" aria-hidden="true">&#9654;</span>
