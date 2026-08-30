@@ -3462,6 +3462,7 @@ function assertVideoSpriteProductionToolchainGate() {
   }
 
   const productionDeploy = readFileSync(join(root, '.github/workflows/deploy-production.yml'), 'utf8');
+  const frontendDeploy = readFileSync(join(root, '.github/workflows/deploy-frontend-production.yml'), 'utf8');
   if (!/^\s{4}needs: validate$/m.test(productionDeploy)) {
     throw new Error('Production deploy must remain blocked on the reusable validation job.');
   }
@@ -3475,6 +3476,15 @@ function assertVideoSpriteProductionToolchainGate() {
       !pagesStep.includes('VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"') ||
       !pagesStep.includes('run: npm run deploy:frontend')) {
     throw new Error('Only the Pages deploy step may inherit the exact media-toolchain proof from validation.');
+  }
+  for (const snippet of [
+    'CHANGED=worker-version-tag-missing',
+    'ACKNOWLEDGE_WORKER_DRIFT',
+    'Frontend/Worker drift explicitly acknowledged:',
+  ]) {
+    if (!frontendDeploy.includes(snippet)) {
+      throw new Error(`Frontend-only deploy must fail closed or explicitly acknowledge Worker drift: ${snippet}`);
+    }
   }
 }
 

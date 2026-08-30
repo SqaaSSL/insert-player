@@ -100,15 +100,16 @@ jobs:
         run: |
           LIVE_SHA=$(curl -sf "$ASF_WORKER_HEALTH_URL" | grep -o '"tag":"prod-[a-f0-9]*' | sed 's/.*prod-//')
           if [ -z "$LIVE_SHA" ]; then
-            printf '%s\n' 'Could not resolve the live Worker git SHA from /health.' >&2
-            exit 1
-          fi
-          printf 'Live Worker SHA: %s\n' "$LIVE_SHA"
-          if ! git cat-file -e "$LIVE_SHA^{commit}" 2>/dev/null; then
-            printf '%s\n' 'Live Worker SHA is not in this history; treating as drift.' >&2
-            CHANGED=worker-history-diverged
+            printf '%s\n' 'Live Worker has no resolvable git tag; treating as drift.' >&2
+            CHANGED=worker-version-tag-missing
           else
-            CHANGED=$(git diff --name-only "$LIVE_SHA"..HEAD -- worker/ wrangler.toml | head -40)
+            printf 'Live Worker SHA: %s\n' "$LIVE_SHA"
+            if ! git cat-file -e "$LIVE_SHA^{commit}" 2>/dev/null; then
+              printf '%s\n' 'Live Worker SHA is not in this history; treating as drift.' >&2
+              CHANGED=worker-history-diverged
+            else
+              CHANGED=$(git diff --name-only "$LIVE_SHA"..HEAD -- worker/ wrangler.toml | head -40)
+            fi
           fi
           if [ -n "$CHANGED" ] && [ "$ACKNOWLEDGE_WORKER_DRIFT" != "1" ]; then
             printf '%s\n' 'Worker sources changed since the live Worker version:' >&2
@@ -116,6 +117,10 @@ jobs:
             printf '%s\n' 'A frontend built from this commit may call Worker APIs that are not deployed.' >&2
             printf '%s\n' 'Re-run with acknowledge_worker_drift=true after confirming the frontend does not depend on them.' >&2
             exit 1
+          fi
+          if [ -n "$CHANGED" ]; then
+            printf '%s\n' 'Frontend/Worker drift explicitly acknowledged:'
+            printf '%s\n' "$CHANGED"
           fi
 
       - name: Build, deploy, and smoke Pages
