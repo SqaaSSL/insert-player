@@ -115,6 +115,7 @@ export interface CloudImportResult {
 export interface CloudImportOptions {
   includeArchivedVersions?: boolean;
   includeRawAssets?: boolean;
+  includeSourceAssets?: boolean;
   allowIncomplete?: boolean;
 }
 
@@ -1056,6 +1057,7 @@ export async function downloadCloudFighterToLocal(
   const requestContext = context ?? captureApiRequestContext();
   const ownerScope = getActiveSpriteCacheScope();
   const includeRawAssets = options.includeRawAssets !== false;
+  const includeSourceAssets = options.includeSourceAssets !== false;
   if (!fighter.photoHash) {
     throw new Error(`Cloud fighter ${fighter.name} is missing a private sync hash.`);
   }
@@ -1092,25 +1094,45 @@ export async function downloadCloudFighterToLocal(
     crouchViewBlob,
     crouchViewRawBlob,
   ] = await Promise.all([
-    loadSource('original', fighter.sources.original, existingMeta?.originalPhotoBlob, `${fighter.name} original source`),
-    loadSource('side', fighter.sources.side, existingMeta?.sideViewBlob, `${fighter.name} side source`),
+    loadSource(
+      'original',
+      includeSourceAssets ? fighter.sources.original : null,
+      existingMeta?.originalPhotoBlob,
+      `${fighter.name} original source`,
+    ),
+    loadSource(
+      'side',
+      includeSourceAssets ? fighter.sources.side : null,
+      existingMeta?.sideViewBlob,
+      `${fighter.name} side source`,
+    ),
     loadSource(
       'side_raw',
-      includeRawAssets ? fighter.sources.sideRaw : null,
+      includeSourceAssets && includeRawAssets ? fighter.sources.sideRaw : null,
       existingMeta?.sideViewRawBlob,
       `${fighter.name} raw side source`,
     ),
-    loadSource('upright', fighter.sources.upright, existingMeta?.uprightViewBlob, `${fighter.name} upright source`),
+    loadSource(
+      'upright',
+      includeSourceAssets ? fighter.sources.upright : null,
+      existingMeta?.uprightViewBlob,
+      `${fighter.name} upright source`,
+    ),
     loadSource(
       'upright_raw',
-      includeRawAssets ? fighter.sources.uprightRaw : null,
+      includeSourceAssets && includeRawAssets ? fighter.sources.uprightRaw : null,
       existingMeta?.uprightViewRawBlob,
       `${fighter.name} raw upright source`,
     ),
-    loadSource('crouch', fighter.sources.crouch, existingMeta?.crouchViewBlob, `${fighter.name} crouch source`),
+    loadSource(
+      'crouch',
+      includeSourceAssets ? fighter.sources.crouch : null,
+      existingMeta?.crouchViewBlob,
+      `${fighter.name} crouch source`,
+    ),
     loadSource(
       'crouch_raw',
-      includeRawAssets ? fighter.sources.crouchRaw : null,
+      includeSourceAssets && includeRawAssets ? fighter.sources.crouchRaw : null,
       existingMeta?.crouchViewRawBlob,
       `${fighter.name} raw crouch source`,
     ),
@@ -1124,13 +1146,13 @@ export async function downloadCloudFighterToLocal(
   ) || remoteUpdatedAt || now;
   let spritesImported = 0;
   let optionalAssetsSkipped = [
-    fighter.sources.original && !originalPhotoBlob,
-    fighter.sources.side && !sideViewBlob,
-    includeRawAssets && fighter.sources.sideRaw && !sideViewRawBlob,
-    fighter.sources.upright && !uprightViewBlob,
-    includeRawAssets && fighter.sources.uprightRaw && !uprightViewRawBlob,
-    fighter.sources.crouch && !crouchViewBlob,
-    includeRawAssets && fighter.sources.crouchRaw && !crouchViewRawBlob,
+    includeSourceAssets && fighter.sources.original && !originalPhotoBlob,
+    includeSourceAssets && fighter.sources.side && !sideViewBlob,
+    includeSourceAssets && includeRawAssets && fighter.sources.sideRaw && !sideViewRawBlob,
+    includeSourceAssets && fighter.sources.upright && !uprightViewBlob,
+    includeSourceAssets && includeRawAssets && fighter.sources.uprightRaw && !uprightViewRawBlob,
+    includeSourceAssets && fighter.sources.crouch && !crouchViewBlob,
+    includeSourceAssets && includeRawAssets && fighter.sources.crouchRaw && !crouchViewRawBlob,
   ].filter(Boolean).length + staleSourceKinds.size;
   let spritesSkipped = 0;
   let spriteRawAssetsSkipped = 0;
@@ -1273,7 +1295,10 @@ export async function downloadCloudFighterToLocal(
 export async function downloadArcadeFighterToLocal(
   fighter: CloudFighter,
   context?: ApiRequestContext,
-  options: { includeHighResolutionAssets?: boolean } = {},
+  options: {
+    includeHighResolutionAssets?: boolean;
+    includeSourceAssets?: boolean;
+  } = {},
 ): Promise<CloudImportResult> {
   if (!fighter.arcade || !fighter.public) {
     throw new Error(`${fighter.name} is not an active Arcade fighter.`);
@@ -1295,6 +1320,7 @@ export async function downloadArcadeFighterToLocal(
   }, context, {
     includeArchivedVersions: false,
     includeRawAssets: includeHighResolutionAssets,
+    includeSourceAssets: options.includeSourceAssets,
   });
 }
 

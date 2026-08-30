@@ -455,6 +455,75 @@ describe('official Arcade HQ sprite hydration', () => {
     expect(requestedUrls.filter((url) => url.includes('/hq/'))).toHaveLength(11);
     expect(fighter.sprites.every((sprite) => sprite.rawUrl === null)).toBe(true);
   });
+
+  it('can hydrate only playable sheets for a latency-sensitive first match', async () => {
+    const animationNames = [
+      'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
+      'jump', 'crouch', 'hit', 'ko', 'victory',
+    ];
+    const runtimeBlob = new Blob(['runtime'], { type: 'image/png' });
+    const contentHash = await hashPhoto(runtimeBlob);
+    const fighter = {
+      id: 'fighter-trial',
+      name: 'Trial Fighter',
+      qualityTier: 'champion' as const,
+      public: true,
+      sources: {
+        side: 'https://api.insertplayer.test/sources/side.png',
+        upright: 'https://api.insertplayer.test/sources/upright.png',
+        crouch: 'https://api.insertplayer.test/sources/crouch.png',
+      },
+      sprites: animationNames.map((animationName, index): CloudSprite => ({
+        id: `trial-${animationName}`,
+        animationName,
+        qualityTier: 'champion',
+        url: `https://api.insertplayer.test/runtime/${animationName}.png`,
+        rawUrl: null,
+        hqUrl: `https://api.insertplayer.test/hq/${animationName}.png`,
+        frameWidth: 192,
+        frameHeight: 256,
+        frameCount: 8,
+        hqFrameWidth: 768,
+        hqFrameHeight: 1024,
+        hqFrameCount: 8,
+        animationFormat: 'video-dense-v1',
+        processingVersion: 5,
+        contentHash,
+        createdAt: new Date(100 + index).toISOString(),
+      })),
+      arcade: {
+        slug: 'trial-fighter',
+        rank: 1,
+        challengerLine: 'First fight.',
+        defaultPersonality: 'balanced' as const,
+        reference: {
+          kind: 'licensed' as const,
+          sourceUrl: null,
+          license: 'Licensed',
+          credit: 'Studio',
+        },
+      },
+    };
+    vi.mocked(apiFetch).mockImplementation(async () => new Response(runtimeBlob, { status: 200 }));
+
+    await expect(downloadArcadeFighterToLocal(fighter, SYNC_CONTEXT, {
+      includeHighResolutionAssets: false,
+      includeSourceAssets: false,
+    })).resolves.toMatchObject({
+      spritesImported: 11,
+      optionalAssetsSkipped: 0,
+      spritesSkipped: 0,
+    });
+
+    const requestedUrls = vi.mocked(apiFetch).mock.calls.map(([input]) => String(input));
+    expect(requestedUrls).toHaveLength(11);
+    expect(requestedUrls.every((url) => url.includes('/runtime/'))).toBe(true);
+    expect(requestedUrls.some((url) => url.includes('/sources/'))).toBe(false);
+    expect(requestedUrls.some((url) => url.includes('/hq/'))).toBe(false);
+    const cached = await getAllSpritesForHash(arcadeFighterPhotoHash(fighter));
+    expect(cached).toHaveLength(11);
+    expect(cached.every((sprite) => !sprite.rawPngBlob)).toBe(true);
+  });
 });
 
 describe('selectPlayableCloudSprites', () => {

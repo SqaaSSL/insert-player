@@ -315,7 +315,10 @@ export function App({
       ) => {
         if (!fighter) return null;
         try {
-          await cloud.downloadArcadeFighterToLocal(fighter, context);
+          await cloud.downloadArcadeFighterToLocal(fighter, context, {
+            includeHighResolutionAssets: false,
+            includeSourceAssets: false,
+          });
           return fighter;
         } catch (error) {
           debugWarn(`[Landing] Trial ${slot} download failed; using built-in fighter:`,
