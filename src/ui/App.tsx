@@ -355,6 +355,7 @@ export function App({
         onCreateFighter={() => navigate('/fighters/new', 'tier=rookie')}
         onOpenArcade={() => navigate('/arcade')}
         onOpenWatchMode={() => navigate('/roster/watch')}
+        onOpenCommunity={() => navigate('/community')}
       />
     ),
     [navigate],

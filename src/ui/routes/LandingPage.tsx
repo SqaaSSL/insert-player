@@ -4,6 +4,7 @@ interface LandingPageProps {
   onCreateFighter: () => void;
   onOpenArcade: () => void;
   onOpenWatchMode: () => void;
+  onOpenCommunity: () => void;
 }
 
 const TRANSFORMATION_IMAGE = '/assets/landing-transformation.webp';
@@ -19,29 +20,47 @@ export function LandingPage({
   onCreateFighter,
   onOpenArcade,
   onOpenWatchMode,
+  onOpenCommunity,
 }: LandingPageProps) {
   return (
     <div className="landing-page">
       <section className="landing-hero" aria-labelledby="landing-title">
         <div className="landing-triptych">
-          <figure className="landing-panel landing-panel--photo">
+          <button
+            type="button"
+            className="landing-panel landing-panel--photo"
+            onClick={onCreateFighter}
+            aria-label="Create your fighter from a photo"
+          >
             <span className="landing-panel__chip" aria-hidden="true">Your photo</span>
             <img
               src={PANEL_PHOTO}
-              alt="A real person's portrait"
+              alt=""
               fetchPriority="high"
             />
-          </figure>
+            <span className="landing-panel__cta">Create yours &#9654;</span>
+          </button>
           <span className="landing-triptych__arrow" aria-hidden="true">&#9654;</span>
-          <figure className="landing-panel landing-panel--fighter">
+          <button
+            type="button"
+            className="landing-panel landing-panel--fighter"
+            onClick={onOpenCommunity}
+            aria-label="Browse fighters the community has created"
+          >
             <span className="landing-panel__chip" aria-hidden="true">Your fighter</span>
             <img
               src={PANEL_FIGHTER}
-              alt="The same person as a recognizable arcade fighter"
+              alt=""
             />
-          </figure>
+            <span className="landing-panel__cta">See fighters &#9654;</span>
+          </button>
           <span className="landing-triptych__arrow" aria-hidden="true">&#9654;</span>
-          <figure className="landing-panel landing-panel--fight">
+          <button
+            type="button"
+            className="landing-panel landing-panel--fight"
+            onClick={onOpenArcade}
+            aria-label="Play the arcade now"
+          >
             <span className="landing-panel__chip" aria-hidden="true">Your fight</span>
             <video
               autoPlay
@@ -54,7 +73,8 @@ export function LandingPage({
             >
               <source src={FIGHT_LOOP_VIDEO} type="video/mp4" />
             </video>
-          </figure>
+            <span className="landing-panel__cta">Play now &#9654;</span>
+          </button>
         </div>
         <div className="landing-hero__copy">
           <h1 id="landing-title">Insert Player</h1>
