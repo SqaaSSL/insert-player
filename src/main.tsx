@@ -126,6 +126,7 @@ function ClerkSessionBridge() {
       <App
         authStatus={authStatus}
         authSessionKey={authSessionKey}
+        userImageUrl={authReady && isSignedIn ? user?.imageUrl ?? null : null}
         authSlot={authDock}
         cacheStatus={cacheState.status}
         cacheMessage={cacheState.message}

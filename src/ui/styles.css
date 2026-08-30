@@ -695,6 +695,23 @@
     @apply bg-asf-red-dark text-asf-gold-bright;
   }
 
+  /* Signed-in: their Clerk avatar fills the photo screen. */
+  .landing-panel__avatar {
+    @apply object-cover object-center;
+  }
+
+  /* Their fighter does not exist yet: show the silhouette tease. */
+  .landing-panel.is-mystery img {
+    @apply brightness-[0.18] saturate-50;
+  }
+
+  .landing-panel__mystery {
+    @apply absolute inset-0 z-10 flex items-center justify-center font-arcade
+           text-[64px] text-asf-gold
+           [text-shadow:0_0_24px_rgba(255,206,58,0.55),0_4px_0_rgba(0,0,0,0.9)]
+           [animation:coin-blink_1.6s_steps(2)_infinite] motion-reduce:animate-none;
+  }
+
   .landing-panel img,
   .landing-panel video {
     @apply block h-full w-full object-cover object-top;

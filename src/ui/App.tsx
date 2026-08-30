@@ -68,6 +68,7 @@ interface NavigationOptions {
 }
 
 interface AppProps extends Partial<AuthRouteState> {
+  userImageUrl?: string | null;
   authSlot?: ReactNode;
   cacheStatus?: CacheStatus;
   cacheMessage?: string | null;
@@ -167,6 +168,7 @@ function useHashRoute(): [AppRoute, Navigate] {
 export function App({
   authStatus = 'local',
   authSessionKey = 'local',
+  userImageUrl = null,
   authSlot = null,
   cacheStatus = 'ready',
   cacheMessage = null,
@@ -356,9 +358,10 @@ export function App({
         onOpenArcade={() => navigate('/arcade')}
         onOpenWatchMode={() => navigate('/roster/watch')}
         onOpenCommunity={() => navigate('/community')}
+        userImageUrl={userImageUrl}
       />
     ),
-    [navigate],
+    [navigate, userImageUrl],
   );
 
   const content = useMemo(() => {

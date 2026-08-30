@@ -5,6 +5,8 @@ interface LandingPageProps {
   onOpenArcade: () => void;
   onOpenWatchMode: () => void;
   onOpenCommunity: () => void;
+  /** Signed-in visitors see their own photo in the first panel. */
+  userImageUrl?: string | null;
 }
 
 const TRANSFORMATION_IMAGE = '/assets/landing-transformation.webp';
@@ -21,7 +23,9 @@ export function LandingPage({
   onOpenArcade,
   onOpenWatchMode,
   onOpenCommunity,
+  userImageUrl = null,
 }: LandingPageProps) {
+  const personalized = Boolean(userImageUrl);
   return (
     <div className="landing-page">
       <section className="landing-hero" aria-labelledby="landing-title">
@@ -41,25 +45,37 @@ export function LandingPage({
           >
             <span className="landing-panel__chip" aria-hidden="true">Your photo</span>
             <img
-              src={PANEL_PHOTO}
+              className={personalized ? 'landing-panel__avatar' : undefined}
+              src={userImageUrl ?? PANEL_PHOTO}
               alt=""
               fetchPriority="high"
             />
-            <span className="landing-panel__cta">Create yours &#9654;</span>
+            <span className="landing-panel__cta">
+              {personalized ? <>That&apos;s you &#9654;</> : <>Create yours &#9654;</>}
+            </span>
           </button>
           <span className="landing-triptych__arrow" aria-hidden="true">&#9654;</span>
           <button
             type="button"
-            className="landing-panel landing-panel--fighter"
-            onClick={onOpenCommunity}
-            aria-label="Browse fighters the community has created"
+            className={personalized
+              ? 'landing-panel landing-panel--fighter is-mystery'
+              : 'landing-panel landing-panel--fighter'}
+            onClick={personalized ? onCreateFighter : onOpenCommunity}
+            aria-label={personalized
+              ? 'Build your fighter from your photo'
+              : 'Browse fighters the community has created'}
           >
             <span className="landing-panel__chip" aria-hidden="true">Your fighter</span>
             <img
               src={PANEL_FIGHTER}
               alt=""
             />
-            <span className="landing-panel__cta">See fighters &#9654;</span>
+            {personalized ? (
+              <span className="landing-panel__mystery" aria-hidden="true">?</span>
+            ) : null}
+            <span className="landing-panel__cta">
+              {personalized ? <>Build it &#9654;</> : <>See fighters &#9654;</>}
+            </span>
           </button>
           <span className="landing-triptych__arrow" aria-hidden="true">&#9654;</span>
           <button
