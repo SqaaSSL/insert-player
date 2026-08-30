@@ -821,14 +821,14 @@
   }
 
   .landing-section-head h2,
-  .landing-identity__copy h2,
+  .landing-loadout__copy h2,
   .landing-cta h2 {
     @apply text-[32px] leading-[1.35] tracking-[0] text-asf-gold-bright
            max-[640px]:text-[22px] max-[640px]:leading-[1.45];
   }
 
   .landing-section-head p,
-  .landing-identity__copy > p,
+  .landing-loadout__copy > p,
   .landing-cta p {
     @apply m-0 font-sans text-[16px] normal-case leading-[1.7] text-asf-cream;
   }
@@ -836,10 +836,6 @@
   .landing-film {
     @apply overflow-hidden rounded-[4px] border-2 border-asf-gold-deep bg-asf-bg-deep
            shadow-[0_18px_48px_rgba(0,0,0,0.52)];
-  }
-
-  .landing-proof__media {
-    @apply grid grid-cols-2 gap-6 max-[900px]:grid-cols-1;
   }
 
   .landing-film__video {
@@ -852,37 +848,51 @@
            text-asf-gold;
   }
 
-  .landing-identity {
-    @apply grid min-h-[620px] border-y-2 border-asf-gold-deep bg-asf-bg-1
-           grid-cols-[minmax(0,1.18fr)_minmax(360px,0.82fr)]
-           max-[960px]:min-h-0 max-[960px]:grid-cols-1;
+  .landing-loadout {
+    @apply grid border-y-2 border-asf-gold-deep bg-asf-bg-1
+           grid-cols-[minmax(300px,0.72fr)_minmax(0,1.28fr)]
+           max-[960px]:grid-cols-1;
   }
 
-  .landing-identity > img {
-    @apply h-full min-h-[620px] w-full object-cover object-center
-           max-[960px]:aspect-video max-[960px]:min-h-0;
+  .landing-loadout__copy {
+    @apply flex flex-col justify-center gap-5 border-r-2 border-asf-gold-deep px-[5vw] py-16
+           max-[960px]:border-r-0 max-[960px]:border-b-2
+           max-[640px]:gap-4 max-[640px]:px-5 max-[640px]:py-12;
   }
 
-  .landing-identity__copy {
-    @apply flex flex-col justify-center gap-5 border-l-2 border-asf-gold-deep px-[5vw] py-16
-           max-[960px]:border-l-0 max-[960px]:border-t-2 max-[640px]:px-5 max-[640px]:py-12;
+  .landing-loadout__signal {
+    @apply flex items-center gap-2 font-arcade text-[11px] uppercase tracking-[0.06em]
+           text-asf-gold;
   }
 
-  .landing-identity__facts {
-    @apply m-0 border-t border-asf-line;
+  .landing-loadout__signal i {
+    @apply block size-2 rounded-full bg-asf-ok
+           shadow-[0_0_14px_rgba(48,224,122,0.72)];
   }
 
-  .landing-identity__facts > div {
-    @apply grid gap-4 border-b border-asf-line py-4 grid-cols-[130px_minmax(0,1fr)]
-           max-[640px]:grid-cols-1 max-[640px]:gap-2;
+  .landing-loadout__status {
+    @apply m-0;
   }
 
-  .landing-identity__facts dt {
+  .landing-loadout__status > div {
+    @apply grid min-h-[118px] items-center gap-6 border-b border-asf-line px-[5vw] py-5
+           grid-cols-[170px_minmax(0,1fr)] last:border-b-0
+           max-[640px]:min-h-0 max-[640px]:gap-3 max-[640px]:px-5 max-[640px]:py-5
+           max-[640px]:grid-cols-1;
+  }
+
+  .landing-loadout__status dt {
     @apply font-arcade text-[11px] uppercase tracking-[0] text-asf-gold-bright;
   }
 
-  .landing-identity__facts dd {
-    @apply m-0 font-sans text-[14px] normal-case leading-[1.55] text-asf-muted;
+  .landing-loadout__status dd {
+    @apply m-0 flex items-center justify-between gap-5 font-sans text-[14px]
+           normal-case leading-[1.55] text-asf-muted
+           max-[640px]:items-start max-[640px]:gap-3;
+  }
+
+  .landing-loadout__status strong {
+    @apply shrink-0 font-arcade text-[10px] uppercase tracking-[0] text-asf-ok;
   }
 
   .landing-cta {

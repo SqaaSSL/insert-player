@@ -12,8 +12,6 @@ interface LandingPageProps {
 
 const TRANSFORMATION_IMAGE = '/assets/landing-transformation.webp';
 const LAUNCH_VIDEO = '/assets/insert-player-launch-3dfeedd6.mp4';
-const GAMEPLAY_REEL_VIDEO = '/assets/insert-player-gameplay-5a19b606.mp4';
-const GAMEPLAY_REEL_GIF = '/assets/insert-player-gameplay-0e5dc078.gif';
 // GIF-style silent gameplay loop (~200 KB): real production footage, cut from
 // the launch capture. The full film with audio stays in the proof section.
 const FIGHT_LOOP_VIDEO = '/assets/landing-fight-loop-e40898d3.mp4';
@@ -218,75 +216,52 @@ export function LandingPage({
             a generated stage, the real HUD, and a real exchange.
           </p>
         </header>
-        <div className="landing-proof__media">
-          <div className="landing-film">
-            <video
-              className="landing-film__video"
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="none"
-              aria-label="Eight real Insert Player matches featuring two personal fighters and four global opponents"
-            >
-              <source src={GAMEPLAY_REEL_VIDEO} type="video/mp4" />
-              <img
-                src={GAMEPLAY_REEL_GIF}
-                alt="Eight real Insert Player matches featuring two personal fighters and four global opponents"
-                loading="lazy"
-              />
-            </video>
-            <div className="landing-film__meta">
-              <span>8-match reel</span>
-              <span>Real gameplay</span>
-            </div>
-          </div>
-          <div className="landing-film">
-            <video
-              className="landing-film__video"
-              controls
-              playsInline
-              preload="metadata"
-              poster={TRANSFORMATION_IMAGE}
-            >
-              <source src={LAUNCH_VIDEO} type="video/mp4" />
-            </video>
-            <div className="landing-film__meta">
-              <span>Launch film</span>
-              <span>Sound on</span>
-            </div>
+        <div className="landing-film landing-film--feature">
+          <video
+            className="landing-film__video"
+            controls
+            playsInline
+            preload="metadata"
+            poster={TRANSFORMATION_IMAGE}
+          >
+            <source src={LAUNCH_VIDEO} type="video/mp4" />
+          </video>
+          <div className="landing-film__meta">
+            <span>Launch film</span>
+            <span>Sound on</span>
           </div>
         </div>
       </section>
 
-      <section className="landing-identity" aria-labelledby="landing-identity-title">
-        <img
-          src={TRANSFORMATION_IMAGE}
-          alt="The same woman shown as a source photo and as a game-ready fighter"
-          loading="lazy"
-        />
-        <div className="landing-identity__copy">
-          <h2 id="landing-identity-title">Keep the person. Build the player.</h2>
+      <section className="landing-loadout" aria-labelledby="landing-loadout-title">
+        <div className="landing-loadout__copy">
+          <span className="landing-loadout__signal">
+            <i aria-hidden="true" /> Fighter build
+          </span>
+          <h2 id="landing-loadout-title">Built for the whole match.</h2>
           <p>
-            Insert Player preserves the source photo as the identity anchor, then builds
-            the views and animations needed by the game. The result belongs in a match,
-            not in a profile-picture folder.
+            One photo becomes the source views, move set, and cloud roster the game needs.
+            Keep every generated version, play on another device, and challenge a friend.
           </p>
-          <dl className="landing-identity__facts">
-            <div>
-              <dt>Recognizable</dt>
-              <dd>Face, hair, clothes, and character stay connected to the source.</dd>
-            </div>
-            <div>
-              <dt>Playable</dt>
-              <dd>A complete move set loads directly into Insert Player: Fight.</dd>
-            </div>
-            <div>
-              <dt>Portable</dt>
-              <dd>Your cloud roster follows your account to another device.</dd>
-            </div>
-          </dl>
         </div>
+        <dl className="landing-loadout__status">
+          <div>
+            <dt>Source views</dt>
+            <dd><span>Side, upright, crouch</span><strong>3 / 3 ready</strong></dd>
+          </div>
+          <div>
+            <dt>Move set</dt>
+            <dd><span>Movement, attacks, hit, victory</span><strong>11 / 11 ready</strong></dd>
+          </div>
+          <div>
+            <dt>Cloud roster</dt>
+            <dd><span>Every generated version preserved</span><strong>Synced</strong></dd>
+          </div>
+          <div>
+            <dt>Friend match</dt>
+            <dd><span>Send a challenge to their fighter</span><strong>Open</strong></dd>
+          </div>
+        </dl>
       </section>
 
       <section className="landing-cta" aria-labelledby="landing-cta-title">
