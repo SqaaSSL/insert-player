@@ -1,7 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { BillingProfile } from '../../services/Billing.ts';
+import type { AuthStatus } from '../authState.ts';
 import { Button } from '../components/Button.tsx';
+import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
 
 interface LandingPageProps {
+  authStatus: AuthStatus;
+  billingProfile: BillingProfile | null;
+  billingProfileChecked: boolean;
+  onPlayTrial: () => Promise<void>;
   onCreateFighter: () => void;
   onOpenArcade: () => void;
   onOpenWatchMode: () => void;
@@ -52,12 +59,24 @@ export const LANDING_STORIES: LandingStory[] = [
 const EXAMPLE_ROTATION_MS = 7000;
 
 export function LandingPage({
+  authStatus,
+  billingProfile,
+  billingProfileChecked,
+  onPlayTrial,
   onCreateFighter,
   onOpenArcade,
   onOpenWatchMode,
   onOpenCommunity,
   userImageUrl = null,
 }: LandingPageProps) {
+  const [trialLoading, setTrialLoading] = useState(false);
+  const [trialError, setTrialError] = useState<string | null>(null);
+  const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [prefersReducedMotion] = useState(() => (
+    typeof window !== 'undefined'
+      && Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+  ));
+
   // Both stock stories always rotate; a signed-in visitor's own photo joins
   // the loop as the third stop, with the fighter panel as the locked tease.
   const entries = [
@@ -77,23 +96,51 @@ export function LandingPage({
   const [exampleIndex, setExampleIndex] = useState(0);
   useEffect(() => {
     if (entries.length < 2) return;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (prefersReducedMotion) return;
     const timer = window.setInterval(
       () => setExampleIndex((index) => (index + 1) % entries.length),
       EXAMPLE_ROTATION_MS,
     );
     return () => window.clearInterval(timer);
-  }, [entries.length]);
+  }, [entries.length, prefersReducedMotion]);
   const example = entries[exampleIndex % entries.length] ?? entries[0];
   const isYou = example.isYou;
+  const rookieStatus = includedRookieStatus(authStatus, billingProfile);
+  const rookieOffer = authStatus === 'signed-in' && billingProfileChecked && !billingProfile
+    ? 'Rookie · pass verified at creation'
+    : rookieStatus === 'included' && authStatus === 'signed-in'
+    ? 'Free Rookie pass · 1 available'
+    : rookieStatus === 'included'
+      ? 'Free Rookie · human check at creation'
+    : rookieStatus === 'credits'
+      ? `Rookie · 2 credits · ${billingProfile?.creditsBalance ?? 0} available`
+      : 'Checking your Rookie pass…';
+
+  useEffect(() => {
+    if (!prefersReducedMotion) return;
+    previewVideoRef.current?.pause();
+  }, [prefersReducedMotion]);
+
+  const playTrial = async () => {
+    if (trialLoading) return;
+    setTrialLoading(true);
+    setTrialError(null);
+    try {
+      await onPlayTrial();
+    } catch (error) {
+      setTrialError(error instanceof Error ? error.message : 'The demo could not start. Try again.');
+      setTrialLoading(false);
+    }
+  };
+
   return (
     <div className="landing-page">
       <section className="landing-hero" aria-labelledby="landing-title">
         <div className="landing-hero__intro">
           <h1 id="landing-title">Insert Player</h1>
           <p>
-            Turn one photo into a fighter you can actually play. Build your roster,
-            enter the arcade, and keep every version across devices.
+            Play a real round first. Then turn one photo into your own fighter and
+            take it straight into the Arcade.
           </p>
         </div>
         <div className="landing-triptych">
@@ -153,11 +200,12 @@ export function LandingPage({
             {example.fightVideo ? (
               <video
                 key={example.fightVideo}
-                autoPlay
+                ref={previewVideoRef}
+                autoPlay={!prefersReducedMotion}
                 muted
                 loop
                 playsInline
-                preload="auto"
+                preload={prefersReducedMotion ? 'metadata' : 'auto'}
                 poster={example.fightPoster}
                 aria-label={`Silent looping clip of ${example.name} in real Insert Player gameplay`}
               >
@@ -176,17 +224,28 @@ export function LandingPage({
         </div>
         <div className="landing-hero__copy">
           <div className="landing-hero__actions">
-            <Button variant="primary" size="lg" onClick={onCreateFighter}>
-              Create fighter
+            <Button variant="primary" size="lg" disabled={trialLoading} onClick={() => void playTrial()}>
+              {trialLoading ? 'Loading fight…' : 'Play a free round'}
             </Button>
-            <Button variant="ghost" size="lg" onClick={onOpenArcade}>
-              Enter arcade
+            <Button variant="ghost" size="lg" onClick={onCreateFighter}>
+              Create your fighter
             </Button>
           </div>
           <p className="landing-hero__note">
-            Your first Rookie fighter is included.
-            <span className="landing-coin-blink" aria-hidden="true"> &middot; Insert coin</span>
+            <span>Playable demo · no account, upload, or credits</span>
+            <span aria-hidden="true"> &middot; </span>
+            <span>{rookieOffer}</span>
           </p>
+          {trialError ? (
+            <p className="landing-hero__error" role="alert">{trialError}</p>
+          ) : null}
+          <button
+            type="button"
+            className="landing-hero__arcade-link"
+            onClick={onOpenArcade}
+          >
+            Already have a fighter? Enter Arcade
+          </button>
         </div>
       </section>
 
@@ -267,11 +326,14 @@ export function LandingPage({
       <section className="landing-cta" aria-labelledby="landing-cta-title">
         <div>
           <h2 id="landing-cta-title">Your slot is open.</h2>
-          <p>Create your Rookie or watch the global roster fight first.</p>
+          <p>Try the controls, create your Rookie, then climb the global roster.</p>
         </div>
         <div className="landing-cta__actions">
-          <Button variant="primary" size="lg" onClick={onCreateFighter}>
-            Insert player
+          <Button variant="primary" size="lg" disabled={trialLoading} onClick={() => void playTrial()}>
+            {trialLoading ? 'Loading fight…' : 'Play free round'}
+          </Button>
+          <Button variant="ghost" size="lg" onClick={onCreateFighter}>
+            Insert yourself
           </Button>
           <Button variant="ghost" size="lg" onClick={onOpenWatchMode}>
             Watch a fight

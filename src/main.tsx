@@ -13,6 +13,11 @@ import {
 } from './services/SpriteCache.ts';
 import { debugWarn } from './services/DebugLog.ts';
 import { installCrashReporting } from './services/CrashReporting.ts';
+import {
+  clearPostSignUpTrialIntent,
+  isNewAccountForOnboarding,
+  rememberPostSignUpTrialIntent,
+} from './ui/shared/onboardingFlow.ts';
 import '@fontsource/press-start-2p/latin-400.css';
 import '@fontsource/space-grotesk/latin-400.css';
 import '@fontsource/space-grotesk/latin-500.css';
@@ -22,7 +27,6 @@ import './ui/styles.css';
 installCrashReporting();
 
 const CACHE_PREPARE_TIMEOUT_MS = 3_000;
-
 interface CachePreparationState {
   scope: string | null;
   status: 'pending' | 'ready' | 'degraded';
@@ -43,6 +47,11 @@ function ClerkSessionBridge() {
   const authStatus: AuthStatus = !authReady ? 'loading' : isSignedIn ? 'signed-in' : 'signed-out';
   const authSessionKey = !authReady ? 'loading' : isSignedIn ? user?.id ?? 'signed-in' : 'signed-out';
   const cacheOwnerId = authReady && isSignedIn ? user?.id ?? null : null;
+  const isNewAccount = Boolean(
+    authReady
+    && isSignedIn
+    && isNewAccountForOnboarding(user?.createdAt),
+  );
   const cacheScope = spriteCacheScopeForOwner(cacheOwnerId);
   const [cacheAttempt, setCacheAttempt] = useState(0);
   const [cacheState, setCacheState] = useState<CachePreparationState>({
@@ -118,6 +127,8 @@ function ClerkSessionBridge() {
       isLoaded={isLoaded}
       isSignedIn={Boolean(isSignedIn)}
       displayName={user?.firstName ?? user?.username ?? 'Player'}
+      onBeginSignIn={clearPostSignUpTrialIntent}
+      onBeginSignUp={rememberPostSignUpTrialIntent}
     />
   );
 
@@ -126,6 +137,7 @@ function ClerkSessionBridge() {
       <App
         authStatus={authStatus}
         authSessionKey={authSessionKey}
+        isNewAccount={isNewAccount}
         userImageUrl={authReady && isSignedIn ? user?.imageUrl ?? null : null}
         authSlot={authDock}
         cacheStatus={cacheState.status}

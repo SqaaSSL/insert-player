@@ -69,8 +69,10 @@ import {
 interface CreateFighterPageProps {
   authStatus: AuthStatus;
   authSessionKey: string;
+  completionLabel?: string;
   onBack: () => void;
   onComplete: (photoHash: string) => void;
+  onGetCredits?: (tier: QualityTier) => void;
   onNavigateLegal?: (route: '/legal' | '/privacy' | '/terms' | '/refunds') => void;
 }
 
@@ -156,7 +158,15 @@ function describeDurableJob(job: GenerationJob): string {
   return 'Forging safely in the cloud...';
 }
 
-export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComplete, onNavigateLegal }: CreateFighterPageProps) {
+export function CreateFighterPage({
+  authStatus,
+  authSessionKey,
+  completionLabel = 'Open In Gallery',
+  onBack,
+  onComplete,
+  onGetCredits,
+  onNavigateLegal,
+}: CreateFighterPageProps) {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState(DEFAULT_NAME);
   const [tier, setTier] = useState<QualityTier>(() => initialQualityTier(authStatus));
@@ -179,6 +189,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
+  const [billingProfileChecked, setBillingProfileChecked] = useState(authStatus !== 'signed-in');
   const [resumableJob, setResumableJob] = useState<GenerationJob | null>(null);
   const [videoReviewJob, setVideoReviewJob] = useState<GenerationJob | null>(null);
   const [videoReviewDecisionRequiresConsent, setVideoReviewDecisionRequiresConsent] = useState(false);
@@ -215,13 +226,24 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   useEffect(() => {
     if (authStatus !== 'signed-in') {
       setBillingProfile(null);
+      setBillingProfileChecked(true);
       return;
     }
 
     let cancelled = false;
+    setBillingProfile(null);
+    setBillingProfileChecked(false);
     const apiContext = captureApiRequestContext();
     void getBillingProfile(apiContext).then((profile) => {
-      if (!cancelled) setBillingProfile(profile);
+      if (!cancelled) {
+        setBillingProfile(profile);
+        setBillingProfileChecked(true);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setBillingProfile(null);
+        setBillingProfileChecked(true);
+      }
     });
     return () => { cancelled = true; };
   }, [authSessionKey, authStatus]);
@@ -949,9 +971,28 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     ? sprites.find((item) => item.animationName === selectedAnimName)
     : null;
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
-  const startLabel = tier === 'rookie' && rookieStatus === 'included'
+  const selectedTier = QUALITY_TIERS.find((item) => item.id === tier);
+  const selectedUsesIncludedRookie = tier === 'rookie' && rookieStatus === 'included';
+  const creditCheckPending = authStatus === 'signed-in'
+    && !selectedUsesIncludedRookie
+    && !billingProfileChecked;
+  const creditsNeeded = selectedTier && billingProfile
+    ? Math.max(0, selectedTier.creditCost - billingProfile.creditsBalance)
+    : 0;
+  const insufficientCredits = authStatus === 'signed-in'
+    && Boolean(selectedTier)
+    && Boolean(billingProfile)
+    && !selectedUsesIncludedRookie
+    && creditsNeeded > 0;
+  const startLabel = insufficientCredits
+    ? `Get ${creditsNeeded} More Credits`
+    : creditCheckPending
+      ? 'Checking Credits...'
+    : tier === 'rookie' && rookieStatus === 'included'
     ? 'Create Free Rookie'
-    : `Create ${QUALITY_TIERS.find((item) => item.id === tier)?.label ?? 'Fighter'}`;
+    : tier === 'rookie' && rookieStatus === 'checking'
+      ? 'Create Rookie · Pass Checked At Start'
+    : `Create ${selectedTier?.label ?? 'Fighter'} · ${selectedTier?.priceLabel ?? ''}`.trim();
 
   const saveGif = async () => {
     if (!cachedSelectedSprite || !selectedAnimName) return;
@@ -1027,39 +1068,50 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             videoAvailable={videoFlowAvailability.available}
             videoUnavailableReason={videoFlowAvailability.reason}
           />
-          <div className="tier-picker" role="radiogroup" aria-label="Quality tier">
+          <fieldset className="tier-picker" aria-describedby="tier-picker-note">
+            <legend className="tier-picker__legend">
+              <span>Choose fighter quality</span>
+              {authStatus === 'signed-in' && billingProfile ? (
+                <small>{billingProfile.creditsBalance} credits available</small>
+              ) : null}
+            </legend>
             {QUALITY_TIERS.map((item) => {
               const locked = lockPaidTiers && item.id !== 'rookie';
               const priceLabel = item.id !== 'rookie'
                 ? item.priceLabel
                 : rookieStatus === 'included'
-                  ? 'Included'
+                  ? authStatus === 'signed-in' ? 'Included' : 'Free'
                   : rookieStatus === 'credits'
                     ? item.priceLabel
                     : 'Checking account';
               const pitch = item.id === 'rookie' && rookieStatus === 'included'
-                ? authStatus === 'signed-out'
+                ? authStatus !== 'signed-in'
                   ? 'Your first playable fighter is free after a quick human check.'
                   : 'Your first playable fighter is included with your account.'
                 : item.pitch;
               return (
-                <button
+                <label
                   key={item.id}
-                  type="button"
                   className={`tier-picker__option${tier === item.id ? ' is-active' : ''}`}
-                  role="radio"
-                  aria-checked={tier === item.id}
-                  disabled={locked}
-                  onClick={() => setTier(item.id)}
                 >
-                  <span>{item.label}</span>
+                  <span className="tier-picker__choice">
+                    <input
+                      type="radio"
+                      name="fighter-quality-tier"
+                      value={item.id}
+                      checked={tier === item.id}
+                      disabled={locked}
+                      onChange={() => setTier(item.id)}
+                    />
+                    <span>{item.label}</span>
+                  </span>
                   <small>{locked ? `${item.priceLabel} · Sign in` : `${priceLabel} · ${item.estimatedTime}`}</small>
                   <em>{locked ? 'Sign in to unlock paid quality.' : pitch}</em>
-                </button>
+                </label>
               );
             })}
-          </div>
-          <p className="tier-picker__note">
+          </fieldset>
+          <p className="tier-picker__note" id="tier-picker-note">
             Source views are always generated at premium quality. Animation fidelity and detail scale with the tier.
           </p>
           {requiresTurnstile ? (
@@ -1073,6 +1125,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             checked={legalAccepted}
             disabled={running}
             onChange={setLegalAccepted}
+            storageMode={authStatus === 'signed-in' ? 'account' : 'device'}
             onNavigate={onNavigateLegal}
           />
           {recoveryError ? (
@@ -1094,12 +1147,30 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
           {error ? <p className="create-intro__error" role="alert">{error}</p> : null}
           <button
             className="home-menu__action is-primary"
-            disabled={!file || !name.trim() || running || !turnstileReady || !legalAccepted || !recoveryReady}
-            onClick={() => void start()}
+            disabled={running || creditCheckPending || (insufficientCredits
+              ? !onGetCredits
+              : !file || !name.trim() || !turnstileReady || !legalAccepted || !recoveryReady)}
+            onClick={() => {
+              if (insufficientCredits) {
+                onGetCredits?.(tier);
+                return;
+              }
+              void start();
+            }}
           >
-            <span>{recoveryError ? 'Cloud Check Required' : !recoveryReady ? 'Checking Cloud...' : running ? 'Authorizing...' : startLabel}</span>
+            <span>{insufficientCredits || creditCheckPending
+              ? startLabel
+              : recoveryError
+                ? 'Cloud Check Required'
+                : !recoveryReady
+                  ? 'Checking Cloud...'
+                  : running
+                    ? 'Authorizing...'
+                    : startLabel}</span>
             <small>
-              {file
+              {insufficientCredits
+                ? `${selectedTier?.label ?? 'This tier'} needs ${selectedTier?.creditCost ?? 0} credits · you have ${billingProfile?.creditsBalance ?? 0}`
+                : file
                 ? `${file.name} · ${creationFlow === 'video' ? 'Video flow' : 'Original flow'}`
                 : 'Pick a photo to continue'}
             </small>
@@ -1129,7 +1200,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             disabled={running && authStatus !== 'signed-in'}
             onClick={done && photoHash ? () => onComplete(photoHash) : onBack}
           >
-            {done ? 'Open In Gallery' : running && authStatus !== 'signed-in' ? 'Running...' : 'Back'}
+            {done ? completionLabel : running && authStatus !== 'signed-in' ? 'Running...' : 'Back'}
           </Button>
         </div>
       </header>

@@ -20,6 +20,8 @@ class MemoryStorage implements Storage {
 }
 
 const match: MatchSceneData = {
+  experience: 'trial',
+  roundsToWin: 1,
   vsAI: true,
   cpuVsCpu: false,
   p1PhotoHash: 'player-one',
@@ -40,6 +42,15 @@ describe('stored match', () => {
     expect(storage.getItem(storedMatchStorageKey('user-a'))).not.toBeNull();
   });
 
+  it('keeps pre-trial match payloads valid with normal defaults', () => {
+    const storage = new MemoryStorage();
+    const standardMatch: MatchSceneData = { ...match };
+    delete standardMatch.experience;
+    delete standardMatch.roundsToWin;
+    expect(writeStoredMatch(standardMatch, 'user-a', storage, 1_000)).toBe(true);
+    expect(readStoredMatch('user-a', storage, 1_001)).toEqual(standardMatch);
+  });
+
   it('rejects expired, legacy, and malformed payloads', () => {
     const storage = new MemoryStorage();
     storage.setItem('ai-street-fighter:last-match', JSON.stringify(match));
@@ -56,6 +67,10 @@ describe('stored match', () => {
     expect(writeStoredMatch({ ...match, p1Name: '' }, 'user-a', storage)).toBe(false);
     expect(writeStoredMatch({ ...match, vsAI: undefined }, 'user-a', storage)).toBe(false);
     expect(writeStoredMatch({ ...match, stageId: 'dojo' }, 'user-a', storage)).toBe(false);
+    expect(writeStoredMatch({ ...match, experience: 'demo' as never }, 'user-a', storage)).toBe(false);
+    expect(writeStoredMatch({ ...match, roundsToWin: 0 }, 'user-a', storage)).toBe(false);
+    expect(writeStoredMatch({ ...match, roundsToWin: 1.5 }, 'user-a', storage)).toBe(false);
+    expect(writeStoredMatch({ ...match, roundsToWin: 6 }, 'user-a', storage)).toBe(false);
 
     const invalid = JSON.stringify({
       version: 1,

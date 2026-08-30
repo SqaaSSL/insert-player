@@ -1,4 +1,9 @@
-import { getFighterPersonality, type FighterPersonalityId } from '../match/MatchConfig.ts';
+import {
+  getFighterPersonality,
+  isValidMatchRoundsToWin,
+  resolveMatchRoundsToWin,
+  type FighterPersonalityId,
+} from '../match/MatchConfig.ts';
 import { INPUT_BITS, INPUT_MASK, packInput, unpackInput, type FighterInput } from './FighterInput.ts';
 import { MatchSimulation, type MatchSimConfig, type MatchSimEvent } from './MatchSimulation.ts';
 
@@ -17,6 +22,8 @@ export interface MatchRecordingConfig {
   cpuVsCpu: boolean;
   p1Name: string;
   p2Name: string;
+  /** Optional for backward compatibility with recordings made before configurable rounds. */
+  roundsToWin?: number;
   p1PersonalityId: FighterPersonalityId;
   p2PersonalityId: FighterPersonalityId;
   p2Difficulty: number;
@@ -61,6 +68,9 @@ export function toRecordingConfig(config: MatchSimConfig): MatchRecordingConfig 
     cpuVsCpu: config.cpuVsCpu,
     p1Name: config.p1Name,
     p2Name: config.p2Name,
+    ...(config.roundsToWin === undefined
+      ? {}
+      : { roundsToWin: resolveMatchRoundsToWin(config.roundsToWin) }),
     p1PersonalityId: (config.p1Personality ?? getFighterPersonality()).id,
     p2PersonalityId: (config.p2Personality ?? getFighterPersonality()).id,
     p2Difficulty: config.p2Difficulty ?? 1,
@@ -74,6 +84,7 @@ export function toSimConfig(config: MatchRecordingConfig): MatchSimConfig {
     cpuVsCpu: config.cpuVsCpu,
     p1Name: config.p1Name,
     p2Name: config.p2Name,
+    roundsToWin: config.roundsToWin,
     p1Personality: getFighterPersonality(config.p1PersonalityId),
     p2Personality: getFighterPersonality(config.p2PersonalityId),
     p2Difficulty: config.p2Difficulty,
@@ -154,6 +165,7 @@ export function isValidMatchRecording(value: unknown): value is MatchRecording {
   if (!config || typeof config !== 'object') return false;
   if (typeof config.seed !== 'number' || typeof config.vsAI !== 'boolean' || typeof config.cpuVsCpu !== 'boolean') return false;
   if (typeof config.p1Name !== 'string' || typeof config.p2Name !== 'string') return false;
+  if (config.roundsToWin !== undefined && !isValidMatchRoundsToWin(config.roundsToWin)) return false;
   if (typeof config.p1PersonalityId !== 'string' || typeof config.p2PersonalityId !== 'string') return false;
   if (typeof config.p2Difficulty !== 'number') return false;
   return true;

@@ -1,5 +1,7 @@
 import {
   FIGHTER_PERSONALITIES,
+  isValidMatchExperience,
+  isValidMatchRoundsToWin,
   isValidMatchSeed,
   type FighterPersonalityId,
   type MatchSceneData,
@@ -40,6 +42,8 @@ export function storedMatchStorageKey(authSessionKey: string): string {
 export function isValidStoredMatchData(value: unknown): value is MatchSceneData {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const data = value as Record<string, unknown>;
+  if (data.experience !== undefined && !isValidMatchExperience(data.experience)) return false;
+  if (data.roundsToWin !== undefined && !isValidMatchRoundsToWin(data.roundsToWin)) return false;
   if (typeof data.vsAI !== 'boolean' || typeof data.cpuVsCpu !== 'boolean') return false;
   if (!optionalText(data.p1PhotoHash, 160) || !optionalText(data.p2PhotoHash, 160)) return false;
   if (!optionalText(data.p1CloudFighterId, 160) || !optionalText(data.p2CloudFighterId, 160)) return false;

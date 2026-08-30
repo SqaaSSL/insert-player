@@ -13,7 +13,7 @@ import {
 } from './MatchSimulation.ts';
 import { EMPTY_INPUT, inputsEqual, packInput, unpackInput, type FighterInput } from './FighterInput.ts';
 import { SeededRng } from '../utils/SeededRng.ts';
-import { FighterState, MAX_HEALTH } from '../constants.ts';
+import { FighterState, MAX_HEALTH, ROUNDS_TO_WIN } from '../constants.ts';
 import { getFighterPersonality } from '../match/MatchConfig.ts';
 
 const HUMAN_VS_HUMAN: MatchSimConfig = {
@@ -285,6 +285,27 @@ describe('MatchSimulation snapshot/restore', () => {
 });
 
 describe('MatchSimulation round flow (tick-driven)', () => {
+  it('preserves the normal round target and lets a one-round trial end immediately', () => {
+    const standard = new MatchSimulation(HUMAN_VS_HUMAN);
+    standard.start();
+    stepThrough(standard, CINEMATIC_INTRO_TICKS);
+    standard.p2.health = 0;
+    const standardEvents = standard.step(EMPTY_INPUT, EMPTY_INPUT);
+    expect(standard.roundsToWin).toBe(ROUNDS_TO_WIN);
+    expect(standardEvents).not.toContainEqual({ type: 'matchEnd', winner: 0 });
+    expect(standard.phase).toBe(RoundPhase.ROUND_END);
+
+    const trial = new MatchSimulation({ ...HUMAN_VS_HUMAN, roundsToWin: 1 });
+    trial.start();
+    stepThrough(trial, CINEMATIC_INTRO_TICKS);
+    trial.p2.health = 0;
+    const trialEvents = trial.step(EMPTY_INPUT, EMPTY_INPUT);
+    expect(trial.roundsToWin).toBe(1);
+    expect(trial.p1Wins).toBe(1);
+    expect(trialEvents).toContainEqual({ type: 'matchEnd', winner: 0 });
+    expect(trial.phase).toBe(RoundPhase.MATCH_END);
+  });
+
   it('runs the cinematic intro on ticks, then a shorter card for later rounds', () => {
     const sim = new MatchSimulation(HUMAN_VS_HUMAN);
     const startEvents = sim.start();
