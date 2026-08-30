@@ -115,7 +115,7 @@ describe('humanoid Grok pose-template contract', () => {
     mkdirSync(resolve('.humanoid-template-work'), { recursive: true });
     const directory = mkdtempSync(resolve('.humanoid-template-work/audit-test-'));
     try {
-    const active = { pixcliJobId: 'job-1' };
+    const active = { pixcliJobId: 'job-1', submittedAt: '2026-08-30T21:18:56.000Z' };
     const job = { status: 'completed', cost: 100_000 };
     const payload = buildHumanoidTemplatePayload({
       poseAssetHash: 'a'.repeat(32),
@@ -123,10 +123,11 @@ describe('humanoid Grok pose-template contract', () => {
       poseId: 'pose-017-ed99c6001f85',
     });
     const apiBase = 'https://pixcli.example';
+    const signedAssetUrl = (hash, suffix) => `${apiBase}/api/v1/assets/${hash}?expires=1788211135&signature=${suffix.repeat(43)}`;
     const canvaInput = {
       ...payload,
-      image_url: `${apiBase}/api/v1/assets/${'a'.repeat(32)}`,
-      image_urls: payload.image.map((hash) => `${apiBase}/api/v1/assets/${hash}`),
+      image_url: signedAssetUrl('a'.repeat(32), 'A'),
+      image_urls: [signedAssetUrl('a'.repeat(32), 'A'), signedAssetUrl('b'.repeat(32), 'B')],
       enriched_prompt: payload.prompt,
     };
     const invariants = { requestSha256: 'placeholder' };
@@ -192,6 +193,21 @@ describe('humanoid Grok pose-template contract', () => {
       },
     };
     expect(validateCompletedArchive({ archived, active, job, invariants, payload, apiBase })).toEqual([]);
+    expect(validateCompletedArchive({
+      archived: {
+        ...archived,
+        canvaInput: {
+          ...canvaInput,
+          image_url: `${apiBase}/api/v1/assets/${'a'.repeat(32)}`,
+          image_urls: payload.image.map((hash) => `${apiBase}/api/v1/assets/${hash}`),
+        },
+      },
+      active,
+      job,
+      invariants,
+      payload,
+      apiBase,
+    })).toEqual(expect.arrayContaining(['normalized prompt or reference URLs mismatch']));
     expect(validateCompletedArchive({
       archived: {
         ...archived,

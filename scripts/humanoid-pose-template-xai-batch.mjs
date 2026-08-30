@@ -666,6 +666,40 @@ function readArchivedJson(artifact, label) {
   return JSON.parse(bytes.toString('utf8'));
 }
 
+function isExpectedSignedTemporaryAssetUrl(value, apiBase, expectedHash, submittedAt) {
+  if (typeof value !== 'string') return false;
+  let url;
+  let expectedOrigin;
+  try {
+    url = new URL(value);
+    expectedOrigin = new URL(apiBase).origin;
+  } catch {
+    return false;
+  }
+  const expiresValues = url.searchParams.getAll('expires');
+  const signatureValues = url.searchParams.getAll('signature');
+  const queryKeys = [...url.searchParams.keys()].sort();
+  const expires = expiresValues[0] ?? '';
+  const signature = signatureValues[0] ?? '';
+  const submittedMs = Date.parse(submittedAt ?? '');
+  const expiresSeconds = Number(expires);
+  return url.protocol === 'https:'
+    && url.origin === expectedOrigin
+    && url.username === ''
+    && url.password === ''
+    && url.pathname === `/api/v1/assets/${expectedHash}`
+    && url.hash === ''
+    && canonicalJson(queryKeys) === canonicalJson(['expires', 'signature'])
+    && expiresValues.length === 1
+    && signatureValues.length === 1
+    && /^[1-9][0-9]{9}$/.test(expires)
+    && /^[A-Za-z0-9_-]{43}$/.test(signature)
+    && Number.isFinite(submittedMs)
+    && Number.isSafeInteger(expiresSeconds)
+    && expiresSeconds * 1000 > submittedMs
+    && expiresSeconds * 1000 <= submittedMs + (25 * 60 * 60 * 1000);
+}
+
 export function validateCompletedArchive({ archived, active, job, invariants, payload, apiBase }) {
   const errors = [];
   if (job.status !== 'completed') errors.push(`provider status ${String(job.status)}`);
@@ -684,13 +718,23 @@ export function validateCompletedArchive({ archived, active, job, invariants, pa
     const submittedProjection = { ...normalizedInput };
     for (const key of serverDerivedKeys) delete submittedProjection[key];
     if (sha256(canonicalJson(submittedProjection)) !== invariants.requestSha256) errors.push('sealed input hash mismatch');
-    imageUrls = payload.image.map((hash) => `${apiBase}/api/v1/assets/${hash}`);
+    const normalizedImageUrls = normalizedInput.image_urls;
+    const signedReferencesMatch = Array.isArray(normalizedImageUrls)
+      && normalizedImageUrls.length === payload.image.length
+      && normalizedImageUrls.every((url, index) => isExpectedSignedTemporaryAssetUrl(
+        url,
+        apiBase,
+        payload.image[index],
+        active.submittedAt,
+      ));
     if (
       normalizedInput.enriched_prompt !== payload.prompt
-      || normalizedInput.image_url !== imageUrls[0]
-      || canonicalJson(normalizedInput.image_urls) !== canonicalJson(imageUrls)
+      || !signedReferencesMatch
+      || normalizedInput.image_url !== normalizedImageUrls?.[0]
     ) {
       errors.push('normalized prompt or reference URLs mismatch');
+    } else {
+      imageUrls = [...normalizedImageUrls];
     }
     if (archived.pixcliInputSha256 !== sha256(canonicalJson(normalizedInput))) errors.push('normalized input archive hash mismatch');
   }
