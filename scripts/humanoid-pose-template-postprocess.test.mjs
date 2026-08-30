@@ -281,9 +281,9 @@ describe('humanoid V4 postprocess sealed input contract', () => {
       humanReviewRequired: true,
       automatedSemanticApproval: false,
     });
-    expect(HUMANOID_POSTPROCESS_KNOWN_VISUAL_FINDINGS).toHaveLength(27);
+    expect(HUMANOID_POSTPROCESS_KNOWN_VISUAL_FINDINGS).toHaveLength(31);
     expect(HUMANOID_POSTPROCESS_KNOWN_VISUAL_FINDINGS.filter((finding) => finding.category === 'outfit')).toHaveLength(8);
-    expect(HUMANOID_POSTPROCESS_KNOWN_VISUAL_FINDINGS.filter((finding) => finding.category === 'pose')).toHaveLength(19);
+    expect(HUMANOID_POSTPROCESS_KNOWN_VISUAL_FINDINGS.filter((finding) => finding.category === 'pose')).toHaveLength(23);
     const parsed = parseHumanoidPostprocessCliArgs([
       '--work-dir=/private/tmp/sealed-humanoid',
       '--output-dir=/private/tmp/sealed-humanoid-postprocessed',
