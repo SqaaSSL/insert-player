@@ -9,6 +9,7 @@ import {
   HUMANOID_TEMPLATE_CANARY_CONFIRMATION,
   HUMANOID_TEMPLATE_CANARY_FRAMES,
   HUMANOID_TEMPLATE_CANARY_POSE_IDS,
+  HUMANOID_TEMPLATE_EXPERIMENT_ID,
   HUMANOID_TEMPLATE_FULL_CONFIRMATION,
   HUMANOID_TEMPLATE_MODEL,
   HUMANOID_TEMPLATE_POLICY,
@@ -81,7 +82,7 @@ describe('humanoid Grok pose-template contract', () => {
       search: false,
       output_format: 'url',
       publish: false,
-      publish_name: 'ip-humanoid-template-v1-017',
+      publish_name: 'ip-humanoid-template-v2-017',
     });
     expect(HUMANOID_TEMPLATE_MODEL.expectedTwoReferenceCostMicrocredits).toBe(100_000);
     expect(HUMANOID_TEMPLATE_MODEL.catalogMaximumCostMicrocredits).toBe(110_000);
@@ -246,7 +247,9 @@ describe('humanoid Grok pose-template contract', () => {
     expect(parsed.inputDirectory).toBe(resolve('/tmp/humanoid-input'));
     expect(parsed.outputDirectory).toBe(resolve('/tmp/humanoid-output'));
     expect(parsed.statePath).toBe(resolve('/tmp/humanoid-state.json'));
-    expect(HUMANOID_TEMPLATE_FULL_CONFIRMATION).toBe('GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V1');
+    expect(HUMANOID_TEMPLATE_EXPERIMENT_ID).toBe('humanoid-neutral-medium-xai-template-v2');
+    expect(HUMANOID_TEMPLATE_CANARY_CONFIRMATION).toBe('GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V2');
+    expect(HUMANOID_TEMPLATE_FULL_CONFIRMATION).toBe('GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V2');
   });
 
   it('keeps the original QA flow and uses an encrypted, commit-bound, single-use workflow', () => {
@@ -258,6 +261,8 @@ describe('humanoid Grok pose-template contract', () => {
     expect(workflow).toContain('gh api --paginate');
     expect(workflow).toContain('This exact paid authorization was already consumed');
     expect(workflow).toContain('scripts/encrypted-humanoid-bundle.mjs');
+    expect(workflow).toContain('humanoid-neutral-medium-xai-template-v2-encrypted');
+    expect(workflow).not.toContain('humanoid-neutral-medium-xai-template-v1-encrypted');
     expect(readFileSync(resolve('scripts/encrypted-humanoid-bundle.mjs'), 'utf8')).toContain("createCipheriv('aes-256-gcm'");
     expect(workflow).not.toContain('path: .humanoid-template-work/');
     expect(workflow).toContain('full_interrupted_manual_review_required');

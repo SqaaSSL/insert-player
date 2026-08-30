@@ -28,9 +28,9 @@ const REQUEST_TIMEOUT_MS = 60_000;
 export const HUMANOID_TEMPLATE_SUBMISSION_TIMEOUT_MS = 180_000;
 const TEMPORARY_UPLOAD_TTL_MS = 23 * 60 * 60 * 1000;
 
-export const HUMANOID_TEMPLATE_EXPERIMENT_ID = 'humanoid-neutral-medium-xai-template-v1';
-export const HUMANOID_TEMPLATE_CANARY_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V1';
-export const HUMANOID_TEMPLATE_FULL_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V1';
+export const HUMANOID_TEMPLATE_EXPERIMENT_ID = 'humanoid-neutral-medium-xai-template-v2';
+export const HUMANOID_TEMPLATE_CANARY_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V2';
+export const HUMANOID_TEMPLATE_FULL_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V2';
 export const HUMANOID_TEMPLATE_SOURCE_ENDPOINT = 'https://api.insertplayer.ai/api/arcade';
 export const HUMANOID_TEMPLATE_MODEL = Object.freeze({
   id: 'grok-imagine-image-2-edit',
@@ -499,7 +499,7 @@ export function buildHumanoidTemplatePayload({ poseAssetHash, canonicalAssetHash
   invariant(/^[a-f0-9]{32}$/.test(canonicalAssetHash ?? ''), 'Canonical PixCLI asset hash is invalid.');
   invariant(poseAssetHash !== canonicalAssetHash, 'Pose and canonical references must be distinct.');
   invariant(/^pose-[0-9]{3}-[a-f0-9]{12}$/.test(poseId ?? ''), 'Pose id is invalid.');
-  const publishName = `ip-humanoid-template-v1-${poseId.slice(5, 8)}`;
+  const publishName = `ip-humanoid-template-v2-${poseId.slice(5, 8)}`;
   return {
     prompt: HUMANOID_TEMPLATE_PROMPT,
     model: HUMANOID_TEMPLATE_MODEL.id,
