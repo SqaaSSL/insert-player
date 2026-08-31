@@ -5,13 +5,16 @@ import { StatusMessage } from '../components/StatusMessage.tsx';
 import {
   allocateVersusMatch,
   createVersusRoom,
+  createVersusInvitation,
   declareVersusFighter,
   fetchVersusIceServers,
   fetchVersusOpponentFighter,
   joinVersusRoom,
+  joinVersusInvitation,
   versusFighterPhotoHash,
   VersusRoomError,
   type VersusIceServers,
+  type VersusInvitationInfo,
   type VersusRoomSeatInfo,
 } from '../../services/VersusRooms.ts';
 import { PeerTransport, type PeerTransportState } from '../../game/net/PeerTransport.ts';
@@ -36,6 +39,15 @@ import { assertCompletePlayableSpriteSet } from '../../services/PlayableFighterA
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { buildRosterFighterSections, type RosterFighterEntry } from './RosterPage.tsx';
+import {
+  clearPendingVersusInvite,
+  normalizeVersusRoomCode,
+  readPendingVersusInvite,
+  sanitizeVersusRoomCodeInput,
+  storePendingVersusInvite,
+  versusInviterNameFromSearch,
+  versusInviteTokenFromSearch,
+} from '../shared/versusInvite.ts';
 
 interface OnlineVersusPageProps {
   authStatus: AuthStatus;
@@ -54,6 +66,17 @@ interface LobbyPeerState {
   fighterName: string;
   ready: boolean;
 }
+
+type CopyFeedback = {
+  target: 'code' | 'invite';
+  status: 'copied' | 'failed';
+};
+
+type InvitationPhase =
+  | { kind: 'idle' }
+  | { kind: 'creating' }
+  | { kind: 'ready'; invitation: VersusInvitationInfo }
+  | { kind: 'error'; message: string };
 
 /** Control-channel messages exchanged in the lobby (reliable, JSON). */
 type LobbyMessage =
@@ -128,11 +151,74 @@ function isShareableEntry(entry: RosterFighterEntry): boolean {
   return Boolean(entry.cloudFighterId) && entry.animationCount > 0;
 }
 
+interface FighterPickerProps {
+  roster: RosterFighterEntry[];
+  status: 'loading' | 'ready' | 'error';
+  selectedKey: string | null;
+  disabled: boolean;
+  onSelect: (key: string) => void;
+}
+
+function FighterPicker({ roster, status, selectedKey, disabled, onSelect }: FighterPickerProps) {
+  return (
+    <>
+      {status === 'loading' ? <StatusMessage severity="progress">Loading your roster…</StatusMessage> : null}
+      {status === 'error' ? <StatusMessage severity="error">Could not load your roster.</StatusMessage> : null}
+      {status === 'ready' && roster.length === 0 ? (
+        <StatusMessage severity="warn">
+          No shareable fighters yet. Online play needs a fighter synced to your account or an official Arcade fighter.
+        </StatusMessage>
+      ) : null}
+      <ul className="online-versus__roster" role="listbox" aria-label="Choose your fighter">
+        {roster.map((entry) => (
+          <li key={entry.key}>
+            <button
+              type="button"
+              role="option"
+              aria-selected={entry.key === selectedKey}
+              className={`online-versus__fighter${entry.key === selectedKey ? ' is-selected' : ''}`}
+              disabled={disabled}
+              onClick={() => onSelect(entry.key)}
+            >
+              {entry.previewUrl ? (
+                <img className="online-versus__fighter-image" src={entry.previewUrl} alt="" />
+              ) : (
+                <span className="online-versus__fighter-image online-versus__fighter-image--empty" aria-hidden="true" />
+              )}
+              <span className="online-versus__fighter-meta">
+                <strong>{entry.name}</strong>
+                <small>{entry.kind === 'arcade' ? 'Arcade' : 'Yours'} · {entry.qualityTier}</small>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVersusPageProps) {
+  const invitationFromUrl = typeof window === 'undefined'
+    ? null
+    : versusInviteTokenFromSearch(window.location.search);
+  const inviterNameFromUrl = typeof window === 'undefined'
+    ? null
+    : versusInviterNameFromSearch(window.location.search);
+  const [incomingInvitation] = useState(() => {
+    const pending = readPendingVersusInvite();
+    const token = invitationFromUrl ?? pending?.token ?? null;
+    return {
+      token,
+      inviterName: inviterNameFromUrl ?? (pending?.token === token ? pending.inviterName ?? null : null),
+    };
+  });
+  const invitedToken = incomingInvitation.token;
+  const inviterName = incomingInvitation.inviterName;
   const [room, setRoom] = useState<RoomPhase>({ kind: 'idle' });
   const [codeInput, setCodeInput] = useState('');
   const [transportState, setTransportState] = useState<PeerTransportState | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<CopyFeedback | null>(null);
+  const [invitationPhase, setInvitationPhase] = useState<InvitationPhase>({ kind: 'idle' });
   const [roster, setRoster] = useState<RosterFighterEntry[]>([]);
   const [rosterStatus, setRosterStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -142,10 +228,69 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
   const transportRef = useRef<PeerTransport | null>(null);
   const handedOffRef = useRef(false);
   const launchingRef = useRef(false);
+  const inviteJoinAttemptedRef = useRef(false);
+  const invitationRequestKeyRef = useRef<string | null>(null);
   const localLobbyRef = useRef<LobbyPeerState>({ fighterId: null, fighterName: 'Fighter', ready: false });
 
   const signedIn = authStatus === 'signed-in';
   const selected = useMemo(() => roster.find((entry) => entry.key === selectedKey) ?? null, [roster, selectedKey]);
+  const joinCode = useMemo(() => normalizeVersusRoomCode(codeInput), [codeInput]);
+
+  useEffect(() => {
+    if (invitationFromUrl) storePendingVersusInvite(invitationFromUrl, inviterNameFromUrl);
+  }, [invitationFromUrl, inviterNameFromUrl]);
+
+  const prepareInvitation = useCallback(async (
+    roomCode: string,
+    fighterId: string,
+  ): Promise<VersusInvitationInfo | null> => {
+    const requestKey = `${roomCode}:${fighterId}`;
+    invitationRequestKeyRef.current = requestKey;
+    setInvitationPhase({ kind: 'creating' });
+    setCopyFeedback((current) => current?.target === 'invite' ? null : current);
+    try {
+      const invitation = await createVersusInvitation(roomCode, fighterId);
+      if (invitationRequestKeyRef.current === requestKey) {
+        setInvitationPhase({ kind: 'ready', invitation });
+      }
+      return invitation;
+    } catch (err) {
+      if (invitationRequestKeyRef.current === requestKey) {
+        setInvitationPhase({
+          kind: 'error',
+          message: err instanceof Error ? err.message : 'Could not create invitation link',
+        });
+      }
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    setInvitationPhase((current) => {
+      if (current.kind === 'idle' || current.kind === 'creating') return current;
+      if (current.kind === 'ready' && current.invitation.fighter.id === selected?.cloudFighterId) return current;
+      invitationRequestKeyRef.current = null;
+      return { kind: 'idle' };
+    });
+    setCopyFeedback((current) => current?.target === 'invite' ? null : current);
+  }, [selected?.cloudFighterId]);
+
+  const hostRoomCode = room.kind === 'seated' && room.seat.seat === 'host'
+    ? room.seat.roomCode
+    : null;
+
+  // Keep the challenge link aligned with the host's fighter if they change
+  // their selection while waiting for a rival.
+  useEffect(() => {
+    const fighterId = selected?.cloudFighterId;
+    if (!hostRoomCode || !fighterId) return;
+    const requestKey = `${hostRoomCode}:${fighterId}`;
+    if (invitationRequestKeyRef.current === requestKey) return;
+    const timeout = window.setTimeout(() => {
+      void prepareInvitation(hostRoomCode, fighterId);
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [hostRoomCode, prepareInvitation, selected?.cloudFighterId]);
 
   // ------------------------------------------------------------- roster
 
@@ -368,20 +513,54 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
     }
   }, [openTransport]);
 
-  const onCreate = () => {
-    void runRoomAction('Creating room…', () => createVersusRoom());
+  const onCreateChallenge = () => {
+    const fighterId = selected?.cloudFighterId;
+    if (!fighterId) return;
+    clearPendingVersusInvite();
+    setCopyFeedback(null);
+    setRoom({ kind: 'busy', label: `Creating ${selected.name}'s challenge…` });
+    void (async () => {
+      try {
+        const context = captureApiRequestContext();
+        const [seat, ice] = await Promise.all([
+          createVersusRoom(context),
+          fetchVersusIceServers(context),
+        ]);
+        setRoom({ kind: 'seated', seat, ice });
+        openTransport(seat, ice);
+        void prepareInvitation(seat.roomCode, fighterId);
+      } catch (err) {
+        const message = err instanceof VersusRoomError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Could not create challenge';
+        setInvitationPhase({ kind: 'idle' });
+        setRoom({ kind: 'error', message });
+      }
+    })();
   };
 
   const onJoin = () => {
-    const code = codeInput.trim().toUpperCase();
-    if (!code) return;
-    void runRoomAction('Joining room…', () => joinVersusRoom(code));
+    if (!joinCode) return;
+    setCodeInput(joinCode);
+    clearPendingVersusInvite();
+    void runRoomAction('Joining room…', () => joinVersusRoom(joinCode));
   };
+
+  useEffect(() => {
+    if (!signedIn || !invitedToken || room.kind !== 'idle' || inviteJoinAttemptedRef.current) return;
+    inviteJoinAttemptedRef.current = true;
+    clearPendingVersusInvite();
+    void runRoomAction('Joining invited room…', () => joinVersusInvitation(invitedToken));
+  }, [invitedToken, room.kind, runRoomAction, signedIn]);
 
   const onLeave = () => {
     teardown();
+    invitationRequestKeyRef.current = null;
     setRoom({ kind: 'idle' });
-    setCopied(false);
+    setCopyFeedback(null);
+    setInvitationPhase({ kind: 'idle' });
     setLaunchStatus(null);
   };
 
@@ -404,18 +583,46 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
     }
   };
 
+  const copyRoomValue = async (target: CopyFeedback['target'], value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyFeedback({ target, status: 'copied' });
+    } catch {
+      setCopyFeedback({ target, status: 'failed' });
+    }
+  };
+
   const onCopyCode = async () => {
     if (room.kind !== 'seated') return;
-    try {
-      await navigator.clipboard.writeText(room.seat.roomCode);
-      setCopied(true);
-    } catch {
-      setCopied(false);
+    await copyRoomValue('code', room.seat.roomCode);
+  };
+
+  const onCopyInvite = async () => {
+    if (room.kind !== 'seated' || room.seat.seat !== 'host' || !selected?.cloudFighterId) return;
+    if (invitationPhase.kind === 'ready') {
+      const expiresAt = Date.parse(invitationPhase.invitation.expiresAt);
+      if (Number.isFinite(expiresAt) && expiresAt > Date.now()) {
+        await copyRoomValue('invite', invitationPhase.invitation.url);
+        return;
+      }
+    }
+    const invitation = await prepareInvitation(room.seat.roomCode, selected.cloudFighterId);
+    if (invitation) {
+      await copyRoomValue('invite', invitation.url);
     }
   };
 
   const quality = transportState ? rttQuality(transportState.rttMs) : 'unknown';
   const connected = transportState?.phase === 'connected';
+  const copyFeedbackText = copyFeedback?.status === 'copied'
+    ? copyFeedback.target === 'invite'
+      ? 'Invite link copied. Send it to your rival.'
+      : 'Room code copied.'
+    : copyFeedback?.target === 'invite'
+      ? 'Copy failed. Select the invitation link and copy it manually.'
+      : copyFeedback
+        ? 'Copy failed. Select the room code and copy it manually.'
+        : '';
 
   return (
     <div className="roster-app online-versus">
@@ -423,8 +630,8 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
         <div>
           <h1>Online Versus</h1>
           <p className="roster-hero__copy">
-            Fight a friend from their own home. One of you creates a room and shares the code; the other joins.
-            Pick a fighter, hit Ready, and the match starts on both machines at once — only your inputs travel.
+            Choose your fighter first, then create a private challenge and send the link. The invitation features you and
+            your selected fighter; your rival returns here automatically after signing up. Room codes remain as a backup.
           </p>
         </div>
         <div className="roster-hero__actions">
@@ -432,8 +639,18 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
         </div>
       </header>
 
+      {invitedToken && inviterName ? (
+        <StatusMessage>
+          <strong>{inviterName}</strong> has challenged you to a private Online Versus match.
+        </StatusMessage>
+      ) : null}
+
       {!signedIn ? (
-        <StatusMessage severity="warn">Sign in to create or join an online room.</StatusMessage>
+        <StatusMessage severity="warn">
+          {invitedToken
+            ? `Sign in or create an account to accept${inviterName ? ` ${inviterName}'s` : ' the'} challenge. The invitation is saved and will resume automatically afterwards.`
+            : 'Sign in to create or join an online room.'}
+        </StatusMessage>
       ) : null}
 
       {room.kind === 'error' ? <StatusMessage severity="error">{room.message}</StatusMessage> : null}
@@ -441,17 +658,64 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
       {launchStatus ? <StatusMessage severity="progress">{launchStatus}</StatusMessage> : null}
 
       {room.kind !== 'seated' ? (
-        <div className="online-versus__lobby">
-          <section className="gallery-panel online-versus__panel">
-            <h3>Host a room</h3>
-            <p className="roster-hero__copy">You will be Player 1. Share the six-letter code with your rival.</p>
-            <Button variant="primary" size="lg" disabled={!signedIn || room.kind === 'busy'} onClick={onCreate}>
-              Create room
-            </Button>
+        <div className="online-versus__setup">
+          <section className="gallery-panel online-versus__panel online-versus__builder">
+            <div className="online-versus__section-head">
+              <div>
+                <p className="online-versus__eyebrow">Create a private challenge</p>
+                <h2>1. Choose your fighter</h2>
+                <p className="roster-hero__copy">
+                  This fighter will lead the invitation preview and wait for your rival in the room.
+                </p>
+              </div>
+              <span className="online-versus__player-badge">Player 1</span>
+            </div>
+
+            <FighterPicker
+              roster={roster}
+              status={rosterStatus}
+              selectedKey={selectedKey}
+              disabled={!signedIn || room.kind === 'busy'}
+              onSelect={setSelectedKey}
+            />
+
+            <div className="online-versus__challenge-action">
+              <div className="online-versus__selection">
+                {selected?.previewUrl ? (
+                  <img className="online-versus__selection-image" src={selected.previewUrl} alt="" />
+                ) : (
+                  <span className="online-versus__selection-image online-versus__fighter-image--empty" aria-hidden="true" />
+                )}
+                <div className="online-versus__selection-copy">
+                  <span>Selected fighter</span>
+                  <strong>{selected?.name ?? 'Choose a fighter'}</strong>
+                  <p>
+                    {selected
+                      ? `${selected.name} will appear on the social card and in your challenge link.`
+                      : 'Select one fighter to build your invitation.'}
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="primary"
+                size="lg"
+                disabled={!signedIn || room.kind === 'busy' || !selected?.cloudFighterId}
+                onClick={onCreateChallenge}
+              >
+                {room.kind === 'busy' ? 'Creating challenge…' : '2. Create challenge'}
+              </Button>
+            </div>
           </section>
-          <section className="gallery-panel online-versus__panel">
-            <h3>Join a room</h3>
-            <p className="roster-hero__copy">Enter the code your rival shared. You will be Player 2.</p>
+
+          <aside className="gallery-panel online-versus__panel online-versus__join-panel">
+            <p className="online-versus__eyebrow">Joining a friend?</p>
+            <h2>Open their invite link</h2>
+            <p className="roster-hero__copy">
+              {invitedToken
+                ? `${inviterName ?? 'Your rival'}'s invitation is saved. Sign in and it will reopen automatically.`
+                : 'The link seats you as Player 2. If you need an account first, the challenge is saved while you sign up.'}
+            </p>
+            <div className="online-versus__join-divider"><span>Room code backup</span></div>
             <label className="online-versus__field">
               <span>Room code</span>
               <input
@@ -460,34 +724,106 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
                 inputMode="text"
                 autoCapitalize="characters"
                 autoComplete="off"
-                maxLength={8}
+                maxLength={6}
                 placeholder="ABC234"
                 value={codeInput}
-                onChange={(event) => setCodeInput(event.target.value.toUpperCase())}
+                onChange={(event) => setCodeInput(sanitizeVersusRoomCodeInput(event.target.value))}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') onJoin();
                 }}
               />
             </label>
-            <Button variant="primary" size="lg" disabled={!signedIn || room.kind === 'busy' || codeInput.trim().length < 6} onClick={onJoin}>
-              Join room
+            <Button variant="secondary" size="lg" disabled={!signedIn || room.kind === 'busy' || !joinCode} onClick={onJoin}>
+              Join with code
             </Button>
-          </section>
+          </aside>
         </div>
       ) : (
         <div className="online-versus__lobby">
           <section className="gallery-panel online-versus__panel online-versus__room">
             <div className="online-versus__room-header">
               <div>
-                <h3>{room.seat.seat === 'host' ? 'You are hosting' : 'You joined'} · Player {room.seat.seat === 'host' ? '1' : '2'}</h3>
-                <p className="roster-hero__copy">Room code</p>
+                <p className="online-versus__eyebrow">
+                  {room.seat.seat === 'host' ? 'Challenge created · Player 1' : 'Challenge joined · Player 2'}
+                </p>
+                <h2>{room.seat.seat === 'host' ? 'Send the challenge' : 'Choose your fighter'}</h2>
+                <p className="roster-hero__copy">
+                  {room.seat.seat === 'host'
+                    ? 'Your room is open. Share the invitation link, then keep this page open while your rival joins.'
+                    : 'You are in. Pick the fighter you want to bring, then get ready.'}
+                </p>
               </div>
               <Button variant="ghost" onClick={onLeave}>Leave room</Button>
             </div>
-            <div className="online-versus__code-row">
-              <code className="online-versus__code" aria-label="Room code">{room.seat.roomCode}</code>
-              <Button onClick={() => void onCopyCode()}>{copied ? 'Copied' : 'Copy'}</Button>
-            </div>
+
+            {room.seat.seat === 'host' ? (
+              <div className="online-versus__share-stage">
+                <div className="online-versus__share-head">
+                  <div>
+                    <p id="online-versus-invite-label" className="online-versus__eyebrow">Your invitation</p>
+                    <h3>{selected ? `${selected.name} awaits a challenger` : 'Preparing your fighter'}</h3>
+                  </div>
+                  <span className={`online-versus__share-state is-${invitationPhase.kind}`}>
+                    {invitationPhase.kind === 'ready' ? 'Ready to send' : invitationPhase.kind === 'error' ? 'Needs retry' : 'Building link'}
+                  </span>
+                </div>
+                {invitationPhase.kind === 'ready' ? (
+                  <div className="online-versus__invite-row">
+                    <input
+                      id="online-versus-invite-link"
+                      className="online-versus__invite-input"
+                      type="url"
+                      readOnly
+                      value={invitationPhase.invitation.url}
+                      onFocus={(event) => event.currentTarget.select()}
+                      aria-labelledby="online-versus-invite-label"
+                      aria-describedby="online-versus-invite-help"
+                    />
+                    <Button variant="primary" size="lg" onClick={() => void onCopyInvite()}>
+                      {copyFeedback?.target === 'invite' && copyFeedback.status === 'copied' ? 'Link copied' : 'Copy invite link'}
+                    </Button>
+                  </div>
+                ) : invitationPhase.kind === 'error' ? (
+                  <Button variant="primary" size="lg" disabled={!selected?.cloudFighterId} onClick={() => void onCopyInvite()}>
+                    Retry invite link
+                  </Button>
+                ) : (
+                  <div className="online-versus__invite-progress" role="status" aria-live="polite">
+                    Building the fighter card and invitation link…
+                  </div>
+                )}
+                <p id="online-versus-invite-help" className="online-versus__invite-help">
+                  {invitationPhase.kind === 'error'
+                    ? invitationPhase.message
+                    : selected && invitationPhase.kind === 'ready'
+                      ? `It says ${invitationPhase.invitation.inviter.displayName} invited them and features ${selected.name}. If they create an account, this challenge resumes automatically.`
+                      : selected
+                        ? `The social preview will identify you and feature ${selected.name}.`
+                        : 'Preparing your character-aware invitation.'}
+                </p>
+              </div>
+            ) : null}
+
+            <p
+              className={`online-versus__copy-feedback${copyFeedback?.status === 'failed' ? ' is-error' : ''}`}
+              role="status"
+              aria-live="polite"
+            >
+              {copyFeedbackText}
+            </p>
+
+            <details className="online-versus__code-fallback">
+              <summary>Use room code instead</summary>
+              <p className="online-versus__invite-help">
+                If the link cannot be opened, your rival can enter this six-character code manually.
+              </p>
+              <div className="online-versus__code-row">
+                <code className="online-versus__code" aria-label="Room code">{room.seat.roomCode}</code>
+                <Button onClick={() => void onCopyCode()}>
+                  {copyFeedback?.target === 'code' && copyFeedback.status === 'copied' ? 'Code copied' : 'Copy code'}
+                </Button>
+              </div>
+            </details>
 
             <dl className="online-versus__stats">
               <div>
@@ -523,37 +859,13 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
 
           <section className="gallery-panel online-versus__panel">
             <h3>Your fighter</h3>
-            {rosterStatus === 'loading' ? <StatusMessage severity="progress">Loading your roster…</StatusMessage> : null}
-            {rosterStatus === 'error' ? <StatusMessage severity="error">Could not load your roster.</StatusMessage> : null}
-            {rosterStatus === 'ready' && roster.length === 0 ? (
-              <StatusMessage severity="warn">
-                No shareable fighters yet. Online play needs a fighter synced to your account or an official Arcade fighter.
-              </StatusMessage>
-            ) : null}
-            <ul className="online-versus__roster" role="listbox" aria-label="Your fighter">
-              {roster.map((entry) => (
-                <li key={entry.key}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={entry.key === selectedKey}
-                    className={`online-versus__fighter${entry.key === selectedKey ? ' is-selected' : ''}`}
-                    disabled={ready}
-                    onClick={() => setSelectedKey(entry.key)}
-                  >
-                    {entry.previewUrl ? (
-                      <img className="online-versus__fighter-image" src={entry.previewUrl} alt="" />
-                    ) : (
-                      <span className="online-versus__fighter-image online-versus__fighter-image--empty" aria-hidden="true" />
-                    )}
-                    <span className="online-versus__fighter-meta">
-                      <strong>{entry.name}</strong>
-                      <small>{entry.kind === 'arcade' ? 'Arcade' : 'Yours'} · {entry.qualityTier}</small>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <FighterPicker
+              roster={roster}
+              status={rosterStatus}
+              selectedKey={selectedKey}
+              disabled={ready || invitationPhase.kind === 'creating'}
+              onSelect={setSelectedKey}
+            />
             <div className="online-versus__actions">
               <Button
                 variant="primary"

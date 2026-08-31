@@ -18,6 +18,7 @@
     "check:launch": "node scripts/check-launch.mjs",
     "brand:apply": "node scripts/apply-public-brand.mjs",
     "brand:rasterize": "node scripts/rasterize-public-assets.mjs",
+    "versus:og:preview": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/render-versus-invite-og-preview.mjs",
     "arcade:sources": "node scripts/fetch-arcade-sources.mjs",
     "arcade:pose-master": "node scripts/fetch-arcade-pose-master.mjs",
     "arcade:motion-master": "node scripts/fetch-arcade-motion-master.mjs",

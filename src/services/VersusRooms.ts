@@ -16,6 +16,19 @@ export interface VersusIceServers {
   turn: 'configured' | 'not_configured' | 'unavailable';
 }
 
+export interface VersusInvitationInfo {
+  url: string;
+  expiresAt: string;
+  inviter: {
+    displayName: string;
+  };
+  fighter: {
+    id: string;
+    name: string;
+    qualityTier: 'rookie' | 'contender' | 'champion';
+  };
+}
+
 export class VersusRoomError extends Error {
   readonly status: number;
 
@@ -68,6 +81,42 @@ export async function joinVersusRoom(
     context,
   );
   if (!response.ok) throw await readError(response, 'Could not join room');
+  const body = await response.json() as Omit<VersusRoomSeatInfo, 'socketUrl'>;
+  return {
+    ...body,
+    socketUrl: socketUrlFor(body.roomCode, body.ticket, context),
+  };
+}
+
+export async function createVersusInvitation(
+  roomCode: string,
+  fighterId: string,
+  context: ApiRequestContext = captureApiRequestContext(),
+): Promise<VersusInvitationInfo> {
+  const response = await apiFetch(
+    `/api/versus/rooms/${encodeURIComponent(roomCode)}/invitations`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fighterId }),
+    },
+    context,
+  );
+  if (!response.ok) throw await readError(response, 'Could not create invitation link');
+  const body = await response.json() as { invitation: VersusInvitationInfo };
+  return body.invitation;
+}
+
+export async function joinVersusInvitation(
+  token: string,
+  context: ApiRequestContext = captureApiRequestContext(),
+): Promise<VersusRoomSeatInfo> {
+  const response = await apiFetch(
+    `/api/versus/invitations/${encodeURIComponent(token)}/join`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    context,
+  );
+  if (!response.ok) throw await readError(response, 'Could not join invitation');
   const body = await response.json() as Omit<VersusRoomSeatInfo, 'socketUrl'>;
   return {
     ...body,

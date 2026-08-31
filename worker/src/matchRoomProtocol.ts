@@ -240,20 +240,30 @@ export function parseClientMessage(raw: unknown): ParsedClientMessage {
 
 export type JoinResult =
   | { ok: true; seat: RoomSeat; record: RoomRecord }
-  | { ok: false; reason: 'not_found' | 'full' };
+  | { ok: false; reason: 'not_found' | 'full' | 'seat_conflict' };
 
 /**
  * Seat assignment rules: the creator is host; the first other user is guest;
- * either may re-join their own seat (reconnect); a third user is refused.
+ * either may re-join their own seat (reconnect); a third user is refused. An
+ * expected seat lets public join flows refuse a host account instead of
+ * silently reconnecting it as Player 1 in a second browser.
  */
-export function assignSeat(record: RoomRecord | null, userId: string, now: number): JoinResult {
+export function assignSeat(
+  record: RoomRecord | null,
+  userId: string,
+  now: number,
+  expectedSeat?: RoomSeat,
+): JoinResult {
   if (!record) return { ok: false, reason: 'not_found' };
   if (record.hostUserId === userId) {
+    if (expectedSeat && expectedSeat !== 'host') return { ok: false, reason: 'seat_conflict' };
     return { ok: true, seat: 'host', record: { ...record, lastActivityAt: now } };
   }
   if (record.guestUserId === userId) {
+    if (expectedSeat && expectedSeat !== 'guest') return { ok: false, reason: 'seat_conflict' };
     return { ok: true, seat: 'guest', record: { ...record, lastActivityAt: now } };
   }
+  if (expectedSeat === 'host') return { ok: false, reason: 'seat_conflict' };
   if (record.guestUserId) return { ok: false, reason: 'full' };
   return {
     ok: true,

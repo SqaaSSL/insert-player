@@ -26,6 +26,12 @@ function cleanHttpsOrigin(value, label) {
   return parsed.origin;
 }
 
+function webSocketOriginForHttpsOrigin(origin) {
+  const parsed = new URL(origin);
+  parsed.protocol = 'wss:';
+  return parsed.origin;
+}
+
 function headerFile(csp) {
   return `/*
   X-Content-Type-Options: nosniff
@@ -68,6 +74,7 @@ export function frontendHeadersForTarget({
   }
 
   const api = cleanHttpsOrigin(apiOrigin, 'apiOrigin');
+  const apiWebSocket = webSocketOriginForHttpsOrigin(api);
   const clerk = cleanHttpsOrigin(clerkFrontendApiOrigin, 'clerkFrontendApiOrigin');
   return headerFile([
     "default-src 'self'",
@@ -80,7 +87,7 @@ export function frontendHeadersForTarget({
     `img-src 'self' data: blob: https://img.clerk.com ${api}`,
     `media-src 'self' data: blob: ${api}`,
     "font-src 'self' data:",
-    `connect-src 'self' ${api} ${clerk} https://clerk-telemetry.com https://*.clerk-telemetry.com https://img.clerk.com https://*.protect.clerk.com https://challenges.cloudflare.com`,
+    `connect-src 'self' ${api} ${apiWebSocket} ${clerk} https://clerk-telemetry.com https://*.clerk-telemetry.com https://img.clerk.com https://*.protect.clerk.com https://challenges.cloudflare.com`,
     "frame-src 'self' https://challenges.cloudflare.com https://*.protect.clerk.com",
     "worker-src 'self' blob:",
     "manifest-src 'self'",

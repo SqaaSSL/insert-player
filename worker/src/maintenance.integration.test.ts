@@ -157,6 +157,11 @@ const SCHEMA = `
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(fighter_id, blob_key)
   );
+  CREATE TABLE versus_invitations (
+    token_hash TEXT PRIMARY KEY,
+    template_version TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+  );
 `;
 
 async function bindings(): Promise<{ mf: Miniflare; db: D1Database; bucket: R2Bucket; env: Env }> {

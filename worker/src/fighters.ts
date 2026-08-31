@@ -2274,6 +2274,68 @@ export async function loadVersusRoomFighterManifest(
   };
 }
 
+export interface VersusInviteFighterSnapshot {
+  fighterId: string;
+  fighterName: string;
+  qualityTier: QualityTier;
+  sourceKind: 'side' | 'upright' | 'crouch' | 'idle';
+  sourceBlobKey: string;
+}
+
+/**
+ * Freeze the clean visual used by a versus invitation. The caller performs
+ * authorization first; this helper only guarantees that the fighter remains
+ * playable and selects a stable R2 object for the public composite image.
+ */
+export async function loadVersusInviteFighterSnapshot(
+  env: Env,
+  fighterId: string,
+): Promise<VersusInviteFighterSnapshot | null> {
+  const fighter = await env.DB.prepare(`
+    SELECT f.*
+    FROM fighters f
+    WHERE f.id = ? AND ${playableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId).first<Fighter>();
+  if (!fighter) return null;
+
+  const source = (
+    [
+      ['side', fighter.side_view_blob_key],
+      ['upright', fighter.upright_view_blob_key],
+      ['crouch', fighter.crouch_view_blob_key],
+    ] as const
+  ).find((entry): entry is readonly ['side' | 'upright' | 'crouch', string] => Boolean(entry[1]));
+
+  if (source) {
+    return {
+      fighterId: fighter.id,
+      fighterName: normalizeFighterName(fighter.name, 'Fighter'),
+      qualityTier: fighter.quality_tier,
+      sourceKind: source[0],
+      sourceBlobKey: source[1],
+    };
+  }
+
+  const idle = await env.DB.prepare(`
+    SELECT s.blob_key
+    FROM sprites s
+    WHERE s.fighter_id = ? AND s.animation_name = 'idle'
+    ORDER BY CASE s.quality_tier
+      WHEN 'champion' THEN 3 WHEN 'contender' THEN 2 ELSE 1 END DESC,
+      s.created_at DESC
+    LIMIT 1
+  `).bind(fighter.id).first<{ blob_key: string }>();
+  if (!idle?.blob_key) return null;
+  return {
+    fighterId: fighter.id,
+    fighterName: normalizeFighterName(fighter.name, 'Fighter'),
+    qualityTier: fighter.quality_tier,
+    sourceKind: 'idle',
+    sourceBlobKey: idle.blob_key,
+  };
+}
+
 /** Clean playable sprite bytes for a fighter declared in a room (seat already verified). */
 export async function getVersusRoomFighterSpriteAsset(
   env: Env,

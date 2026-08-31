@@ -52,9 +52,13 @@ export class MatchRoom extends DurableObject<Env> {
     }
 
     if (url.pathname === '/join' && request.method === 'POST') {
-      const body = await request.json<{ userId?: string }>().catch(() => ({} as { userId?: string }));
+      const body = await request.json<{ userId?: string; expectedSeat?: RoomSeat }>()
+        .catch(() => ({} as { userId?: string; expectedSeat?: RoomSeat }));
       if (!body.userId) return json({ error: 'userId required' }, 400);
-      const result = assignSeat(await this.readRecord(now), body.userId, now);
+      const expectedSeat = body.expectedSeat === 'host' || body.expectedSeat === 'guest'
+        ? body.expectedSeat
+        : undefined;
+      const result = assignSeat(await this.readRecord(now), body.userId, now, expectedSeat);
       if (!result.ok) {
         return json({ error: result.reason }, result.reason === 'not_found' ? 404 : 409);
       }

@@ -120,6 +120,11 @@ describe('seating', () => {
     expect(assignSeat(withGuest, 'third', 30)).toEqual({ ok: false, reason: 'full' });
   });
 
+  it('does not silently reconnect the host when a public join expects Player 2', () => {
+    expect(assignSeat(record, 'host', 10, 'guest')).toEqual({ ok: false, reason: 'seat_conflict' });
+    expect(assignSeat(record, 'guest', 10, 'guest')).toMatchObject({ ok: true, seat: 'guest' });
+  });
+
   it('expires idle rooms', () => {
     expect(isRoomExpired(record, ROOM_IDLE_TTL_MS)).toBe(false);
     expect(isRoomExpired(record, ROOM_IDLE_TTL_MS + 1)).toBe(true);
