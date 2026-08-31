@@ -107,7 +107,7 @@ function getModeMeta(mode: RosterMode) {
   if (mode === 'rush') {
     return {
       title: 'Co-op Rush',
-      description: 'Pick two fighters, choose any Fight stage, and clear the floor together.',
+      description: 'Pick two fighters, choose any Fight stage, and push right through every checkpoint together.',
       vsAI: false,
       cpuVsCpu: false,
       p1Label: 'Player 1',

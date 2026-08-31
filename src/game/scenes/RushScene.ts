@@ -14,7 +14,7 @@ import {
   type BrawlActor,
   type BrawlSimEvent,
 } from '../brawl/BrawlSimulation.ts';
-import { RUSH_ARENA_MAP } from '../brawl/BrawlMap.ts';
+import { RUSH_ROUTE_MAP } from '../brawl/BrawlMap.ts';
 
 const MAX_TICKS_PER_FRAME = 5;
 const DEFAULT_STAGE_ID: StageThemeId = 'insert-player-arena';
@@ -84,11 +84,11 @@ export class RushScene extends Phaser.Scene {
     await this.createStageBackdrop(lifecycle);
     if (!this.isCurrent(lifecycle)) return;
 
-    this.drawArenaGeometry();
+    this.drawRouteGeometry();
     this.sim = new BrawlSimulation([
       this.matchData.p1Name ?? 'Player 1',
       this.matchData.p2Name ?? 'Player 2',
-    ], RUSH_ARENA_MAP);
+    ], RUSH_ROUTE_MAP);
     this.inputManager = new InputManager(this);
     this.createHud();
     this.createResultPanel();
@@ -96,11 +96,13 @@ export class RushScene extends Phaser.Scene {
     this.syncPresentations();
     this.updateHud();
 
-    this.cameras.main.setBounds(0, 0, RUSH_ARENA_MAP.worldWidth, RUSH_ARENA_MAP.worldHeight);
+    this.cameras.main
+      .setBounds(0, 0, RUSH_ROUTE_MAP.worldWidth, RUSH_ROUTE_MAP.worldHeight)
+      .setScroll(0, 0);
     window.__ASF_RUSH_STATE__ = () => this.sim.snapshot();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this);
     this.ready = true;
-    debugInfo('[RushScene] Co-op arena ready', {
+    debugInfo('[RushScene] Co-op route ready', {
       stageId: this.stageId,
       customStage: Boolean(this.customStageKey),
       p1: this.matchData.p1Name ?? 'Player 1',
@@ -124,6 +126,7 @@ export class RushScene extends Phaser.Scene {
     }
     this.syncPresentations();
     this.updateHud();
+    this.updateCamera(delta);
   }
 
   private async loadPlayerSprites(lifecycle: number): Promise<void> {
@@ -159,31 +162,61 @@ export class RushScene extends Phaser.Scene {
     const textureKey = this.stageTextureKey
       ?? (this.textures.exists('rush_stage_backdrop') ? 'rush_stage_backdrop' : null);
     if (textureKey) {
-      this.add.image(GAME_WIDTH / 2, GAME_HEIGHT / 2, textureKey)
-        .setDisplaySize(GAME_WIDTH, GAME_HEIGHT)
-        .setDepth(-20);
+      const segmentCount = Math.ceil(RUSH_ROUTE_MAP.worldWidth / GAME_WIDTH);
+      for (let segment = 0; segment < segmentCount; segment += 1) {
+        this.add.image(segment * GAME_WIDTH + GAME_WIDTH / 2, GAME_HEIGHT / 2, textureKey)
+          .setDisplaySize(GAME_WIDTH + 2, GAME_HEIGHT)
+          .setFlipX(segment % 2 === 1)
+          .setDepth(-20);
+      }
     } else {
       const fallback = this.add.graphics().setDepth(-20);
       fallback.fillGradientStyle(0x16132f, 0x16132f, 0x050507, 0x050507, 1);
-      fallback.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
+      fallback.fillRect(0, 0, RUSH_ROUTE_MAP.worldWidth, GAME_HEIGHT);
     }
 
-    this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x020207, 0.08)
+    this.add.rectangle(
+      RUSH_ROUTE_MAP.worldWidth / 2,
+      GAME_HEIGHT / 2,
+      RUSH_ROUTE_MAP.worldWidth,
+      GAME_HEIGHT,
+      0x020207,
+      0.08,
+    )
       .setDepth(-19);
+
+    const joins = this.add.graphics().setDepth(-18);
+    for (let x = GAME_WIDTH; x < RUSH_ROUTE_MAP.worldWidth; x += GAME_WIDTH) {
+      joins.fillStyle(0x050507, 0.42);
+      joins.fillRect(x - 15, 92, 30, 250);
+      joins.lineStyle(3, 0xffce3a, 0.18);
+      joins.lineBetween(x - 13, 102, x + 13, 130);
+      joins.lineBetween(x + 13, 130, x - 13, 158);
+      joins.lineBetween(x - 13, 158, x + 13, 186);
+      joins.lineBetween(x + 13, 186, x - 13, 214);
+      joins.lineBetween(x - 13, 214, x + 13, 242);
+      joins.lineBetween(x + 13, 242, x - 13, 270);
+      joins.lineBetween(x - 13, 270, x + 13, 298);
+      joins.lineBetween(x + 13, 298, x - 13, 326);
+    }
   }
 
-  private drawArenaGeometry(): void {
-    const { walkArea } = RUSH_ARENA_MAP;
+  private drawRouteGeometry(): void {
+    const { walkArea } = RUSH_ROUTE_MAP;
     const lines = this.add.graphics().setDepth(-5);
     lines.fillStyle(0x050507, 0.12);
-    lines.fillRect(0, walkArea.back - 8, GAME_WIDTH, walkArea.front - walkArea.back + 28);
+    lines.fillRect(
+      0,
+      walkArea.back - 8,
+      RUSH_ROUTE_MAP.worldWidth,
+      walkArea.front - walkArea.back + 28,
+    );
     lines.lineStyle(1, 0xffce3a, 0.12);
     for (let lane = walkArea.back; lane <= walkArea.front; lane += 44) {
       lines.lineBetween(walkArea.left, lane, walkArea.right, lane);
     }
-    for (let x = walkArea.left; x <= walkArea.right; x += 110) {
-      const topX = GAME_WIDTH / 2 + (x - GAME_WIDTH / 2) * 0.58;
-      lines.lineBetween(topX, walkArea.back, x, walkArea.front + 12);
+    for (let x = walkArea.left; x <= walkArea.right; x += 120) {
+      lines.lineBetween(x - 46, walkArea.back, x, walkArea.front + 12);
     }
     lines.lineStyle(2, 0xffce3a, 0.2);
     lines.strokeRoundedRect(
@@ -193,6 +226,30 @@ export class RushScene extends Phaser.Scene {
       walkArea.front - walkArea.back + 28,
       8,
     );
+
+    for (const [index, encounter] of RUSH_ROUTE_MAP.encounters.entries()) {
+      lines.fillStyle(0xffce3a, 0.08);
+      lines.fillRect(encounter.triggerX - 6, walkArea.back - 8, 12, walkArea.front - walkArea.back + 28);
+      lines.lineStyle(2, 0xffce3a, 0.32);
+      lines.lineBetween(encounter.triggerX, walkArea.back - 8, encounter.triggerX, walkArea.front + 20);
+      this.add.text(encounter.triggerX, walkArea.back - 18, `0${index + 1}`, {
+        fontFamily: '"Press Start 2P", monospace',
+        fontSize: '10px',
+        color: '#ffce3a',
+        stroke: '#050507',
+        strokeThickness: 3,
+      }).setOrigin(0.5, 1).setAlpha(0.7).setDepth(-4);
+    }
+
+    lines.fillStyle(0xffce3a, 0.18);
+    lines.fillRect(RUSH_ROUTE_MAP.exitX - 8, walkArea.back - 8, 16, walkArea.front - walkArea.back + 28);
+    this.add.text(RUSH_ROUTE_MAP.exitX, walkArea.back - 18, 'EXIT →', {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: '10px',
+      color: '#ffce3a',
+      stroke: '#050507',
+      strokeThickness: 3,
+    }).setOrigin(0.5, 1).setDepth(-4);
   }
 
   private createHud(): void {
@@ -223,9 +280,9 @@ export class RushScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(3002).setScrollFactor(0).setAlpha(0);
 
     this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 20,
-      'P1  WASD · U/J · G GUARD    ·    P2  ARROWS · NUM4/NUM1 · NUM0 GUARD    ·    GUARD NEAR PARTNER TO REVIVE', {
+      'MOVE RIGHT · STAY TOGETHER    P1  WASD · U/J · G    P2  ARROWS · NUM4/NUM1 · NUM0    GUARD NEAR PARTNER = REVIVE', {
         fontFamily: '"Space Grotesk", system-ui, sans-serif',
-        fontSize: '12px',
+        fontSize: '11px',
         color: '#fff4d6',
         stroke: '#050507',
         strokeThickness: 3,
@@ -394,8 +451,88 @@ export class RushScene extends Phaser.Scene {
     this.hudP1.setText(`P1  ${p1.name.toUpperCase()}`);
     this.hudP2.setText(`${p2.name.toUpperCase()}  P2`);
     const livingEnemies = this.sim.enemies.filter((enemy) => enemy.health > 0).length;
-    this.hudObjective.setText(
-      `WAVE ${Math.max(1, this.sim.waveIndex + 1)}/${RUSH_ARENA_MAP.waves.length}\n${livingEnemies} HOSTILE${livingEnemies === 1 ? '' : 'S'}`,
+    const encounterCount = RUSH_ROUTE_MAP.encounters.length;
+    if (this.sim.activeEncounterIndex >= 0) {
+      this.hudObjective.setText(
+        `CHECKPOINT ${this.sim.activeEncounterIndex + 1}/${encounterCount}\n${livingEnemies} HOSTILE${livingEnemies === 1 ? '' : 'S'}`,
+      );
+    } else {
+      const finalCheckpointCleared = this.sim.encounterIndex >= encounterCount - 1;
+      const startX = Math.min(...RUSH_ROUTE_MAP.playerSpawns.map((spawn) => spawn.x));
+      const routeRatio = Phaser.Math.Clamp(
+        (this.sim.progressX - startX) / (RUSH_ROUTE_MAP.exitX - startX),
+        0,
+        1,
+      );
+      this.hudObjective.setText(
+        `${finalCheckpointCleared ? 'EXIT →' : 'ADVANCE →'}\nROUTE ${Math.round(routeRatio * 100)}%`,
+      );
+    }
+    this.drawRouteProgress();
+  }
+
+  private drawRouteProgress(): void {
+    const startX = Math.min(...RUSH_ROUTE_MAP.playerSpawns.map((spawn) => spawn.x));
+    const railX = GAME_WIDTH / 2 - 145;
+    const railY = 82;
+    const railWidth = 290;
+    const ratioFor = (worldX: number) => Phaser.Math.Clamp(
+      (worldX - startX) / (RUSH_ROUTE_MAP.exitX - startX),
+      0,
+      1,
+    );
+    const progressRatio = ratioFor(this.sim.progressX);
+
+    this.hudGraphics.fillStyle(0x050507, 0.9);
+    this.hudGraphics.fillRoundedRect(railX - 4, railY - 4, railWidth + 8, 12, 3);
+    this.hudGraphics.fillStyle(0x4a3e35, 1);
+    this.hudGraphics.fillRect(railX, railY, railWidth, 4);
+    this.hudGraphics.fillStyle(0xffce3a, 1);
+    this.hudGraphics.fillRect(railX, railY, railWidth * progressRatio, 4);
+
+    for (const [index, encounter] of RUSH_ROUTE_MAP.encounters.entries()) {
+      const x = railX + railWidth * ratioFor(encounter.triggerX);
+      const reached = index <= this.sim.encounterIndex;
+      this.hudGraphics.fillStyle(reached ? 0xffce3a : 0x050507, 1);
+      this.hudGraphics.fillCircle(x, railY + 2, 5);
+      this.hudGraphics.lineStyle(2, 0xffce3a, reached ? 1 : 0.62);
+      this.hudGraphics.strokeCircle(x, railY + 2, 5);
+    }
+
+    this.hudGraphics.fillStyle(this.sim.progressX >= RUSH_ROUTE_MAP.exitX ? 0xffce3a : 0x050507, 1);
+    this.hudGraphics.fillTriangle(
+      railX + railWidth - 2,
+      railY - 5,
+      railX + railWidth + 7,
+      railY + 2,
+      railX + railWidth - 2,
+      railY + 9,
+    );
+  }
+
+  private updateCamera(delta: number): void {
+    const activeEncounter = RUSH_ROUTE_MAP.encounters[this.sim.activeEncounterIndex];
+    const livingCombatants = [...this.sim.players, ...this.sim.enemies]
+      .filter((actor) => actor.health > 0);
+    const combatFocusX = livingCombatants.length > 0
+      ? (
+          Math.min(...livingCombatants.map((actor) => actor.x))
+          + Math.max(...livingCombatants.map((actor) => actor.x))
+        ) / 2
+      : this.sim.progressX;
+    const desiredScrollX = activeEncounter
+      ? combatFocusX - GAME_WIDTH / 2
+      : this.sim.progressX - GAME_WIDTH * 0.3;
+    const targetScrollX = Phaser.Math.Clamp(
+      desiredScrollX,
+      0,
+      RUSH_ROUTE_MAP.worldWidth - GAME_WIDTH,
+    );
+    const blend = 1 - Math.pow(0.001, Math.min(delta, 100) / 1000);
+    this.cameras.main.scrollX = Phaser.Math.Linear(
+      this.cameras.main.scrollX,
+      targetScrollX,
+      blend,
     );
   }
 
@@ -412,8 +549,12 @@ export class RushScene extends Phaser.Scene {
 
   private handleEvents(events: BrawlSimEvent[]): void {
     for (const event of events) {
-      if (event.type === 'waveStart') {
-        this.showBanner(`WAVE ${event.waveIndex + 1}\n${event.label}`);
+      if (event.type === 'runStart') {
+        this.showBanner('MOVE RIGHT\nSTAY TOGETHER');
+      } else if (event.type === 'encounterStart') {
+        this.showBanner(`ROADBLOCK ${event.encounterIndex + 1}\n${event.label}`);
+      } else if (event.type === 'encounterCleared') {
+        this.showBanner('PATH CLEAR\nMOVE →');
       } else if (event.type === 'hit') {
         const target = [...this.sim.players, ...this.sim.enemies].find((actor) => actor.id === event.targetId);
         if (target) this.createHitEffect(target.x, target.lane - 92, event.damage);
@@ -421,7 +562,7 @@ export class RushScene extends Phaser.Scene {
         const actor = this.sim.players.find((player) => player.id === event.actorId);
         if (actor) this.createFloatingText(actor.x, actor.lane - 180, 'BACK IN!', '#30e07a');
       } else if (event.type === 'missionComplete') {
-        this.showResult('FLOOR CLEARED');
+        this.showResult('ROUTE CLEARED');
       } else if (event.type === 'missionFailed') {
         this.showResult('TEAM DOWN');
       }

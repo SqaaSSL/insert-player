@@ -8,8 +8,11 @@ export interface BrawlEnemySpawn {
   facingRight?: boolean;
 }
 
-export interface BrawlWaveDefinition {
+export interface BrawlEncounterDefinition {
   label: string;
+  triggerX: number;
+  lockLeft: number;
+  lockRight: number;
   enemies: BrawlEnemySpawn[];
 }
 
@@ -18,6 +21,9 @@ export interface BrawlMapDefinition {
   label: string;
   worldWidth: number;
   worldHeight: number;
+  exitX: number;
+  maxPlayerSeparation: number;
+  maxBacktrack: number;
   walkArea: {
     left: number;
     right: number;
@@ -28,57 +34,68 @@ export interface BrawlMapDefinition {
     { x: number; lane: number },
     { x: number; lane: number },
   ];
-  waves: BrawlWaveDefinition[];
+  encounters: BrawlEncounterDefinition[];
 }
 
 /**
- * Gameplay geometry is deliberately independent from the stage artwork.
- * Any Fight stage can skin this arena today; a future scrolling map can
- * increase `worldWidth` and add authored visual segments without changing
- * combat or network state.
+ * A four-screen route whose combat geometry is independent from its artwork.
+ * Fight and custom stages can skin the route as repeating visual segments;
+ * bespoke Rush stages can later use the same authored checkpoints directly.
  */
-const rushArenaMap: BrawlMapDefinition = {
-  id: 'rush-arena-v1',
+const rushRouteMap: BrawlMapDefinition = {
+  id: 'rush-route-v1',
   label: 'CO-OP RUSH',
-  worldWidth: 1024,
+  worldWidth: 3840,
   worldHeight: 576,
+  exitX: 3690,
+  maxPlayerSeparation: 430,
+  maxBacktrack: 220,
   walkArea: {
     left: 72,
-    right: 952,
+    right: 3760,
     back: 342,
     front: 516,
   },
   playerSpawns: [
-    { x: 272, lane: 412 },
-    { x: 382, lane: 468 },
+    { x: 260, lane: 412 },
+    { x: 370, lane: 468 },
   ],
-  waves: [
+  encounters: [
     {
       label: 'FIRST CONTACT',
+      triggerX: 920,
+      lockLeft: 760,
+      lockRight: 1470,
       enemies: [
-        { id: 'wave-1-a', archetype: 'grunt', x: 744, lane: 366 },
-        { id: 'wave-1-b', archetype: 'grunt', x: 830, lane: 424 },
-        { id: 'wave-1-c', archetype: 'grunt', x: 710, lane: 492 },
-        { id: 'wave-1-d', archetype: 'grunt', x: 902, lane: 470 },
+        { id: 'checkpoint-1-a', archetype: 'grunt', x: 1110, lane: 366 },
+        { id: 'checkpoint-1-b', archetype: 'grunt', x: 1210, lane: 424 },
+        { id: 'checkpoint-1-c', archetype: 'grunt', x: 1300, lane: 492 },
+        { id: 'checkpoint-1-d', archetype: 'grunt', x: 1400, lane: 454 },
       ],
     },
     {
-      label: 'HOLD THE FLOOR',
+      label: 'UNDERPASS',
+      triggerX: 1980,
+      lockLeft: 1800,
+      lockRight: 2530,
       enemies: [
-        { id: 'wave-2-a', archetype: 'bruiser', x: 850, lane: 374 },
-        { id: 'wave-2-b', archetype: 'grunt', x: 922, lane: 430 },
-        { id: 'wave-2-c', archetype: 'bruiser', x: 790, lane: 500 },
+        { id: 'checkpoint-2-a', archetype: 'bruiser', x: 2170, lane: 374 },
+        { id: 'checkpoint-2-b', archetype: 'grunt', x: 2300, lane: 430 },
+        { id: 'checkpoint-2-c', archetype: 'bruiser', x: 2400, lane: 500 },
       ],
     },
     {
-      label: 'LAST ONE STANDING',
+      label: 'FINAL BLOCKADE',
+      triggerX: 3020,
+      lockLeft: 2840,
+      lockRight: 3520,
       enemies: [
-        { id: 'wave-3-a', archetype: 'captain', x: 862, lane: 430 },
-        { id: 'wave-3-b', archetype: 'grunt', x: 756, lane: 370 },
-        { id: 'wave-3-c', archetype: 'grunt', x: 750, lane: 496 },
+        { id: 'checkpoint-3-a', archetype: 'captain', x: 3290, lane: 430 },
+        { id: 'checkpoint-3-b', archetype: 'grunt', x: 3150, lane: 370 },
+        { id: 'checkpoint-3-c', archetype: 'grunt', x: 3160, lane: 496 },
       ],
     },
   ],
 };
 
-export const RUSH_ARENA_MAP: Readonly<BrawlMapDefinition> = Object.freeze(rushArenaMap);
+export const RUSH_ROUTE_MAP: Readonly<BrawlMapDefinition> = Object.freeze(rushRouteMap);

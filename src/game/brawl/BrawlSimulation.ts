@@ -1,7 +1,7 @@
 import type { FighterInput } from '../sim/FighterInput.ts';
 import { StateHasher } from '../sim/StateHasher.ts';
 import {
-  RUSH_ARENA_MAP,
+  RUSH_ROUTE_MAP,
   type BrawlEnemyArchetype,
   type BrawlEnemySpawn,
   type BrawlMapDefinition,
@@ -13,7 +13,7 @@ const PLAYER_LANE_SPEED = 165 / BRAWL_TICK_RATE;
 const REVIVE_RANGE_X = 92;
 const REVIVE_RANGE_LANE = 58;
 const REVIVE_TICKS = 75;
-const BETWEEN_WAVE_TICKS = 72;
+const ENCOUNTER_CLEAR_TICKS = 48;
 
 export type BrawlOutcome = 'playing' | 'won' | 'lost';
 export type BrawlActorState = 'idle' | 'walk' | 'attack' | 'hit' | 'down' | 'victory';
@@ -40,15 +40,20 @@ export interface BrawlActor {
 
 export interface BrawlSimulationSnapshot {
   tick: number;
-  waveIndex: number;
-  betweenWaveTicks: number;
+  started: boolean;
+  encounterIndex: number;
+  activeEncounterIndex: number;
+  encounterClearTicks: number;
+  progressX: number;
   outcome: BrawlOutcome;
   players: BrawlActor[];
   enemies: BrawlActor[];
 }
 
 export type BrawlSimEvent =
-  | { type: 'waveStart'; waveIndex: number; label: string }
+  | { type: 'runStart' }
+  | { type: 'encounterStart'; encounterIndex: number; label: string }
+  | { type: 'encounterCleared'; encounterIndex: number }
   | { type: 'attack'; actorId: string; attackKind: BrawlAttackKind }
   | { type: 'hit'; attackerId: string; targetId: string; damage: number }
   | { type: 'actorDown'; actorId: string }
@@ -135,8 +140,8 @@ function archetypeCode(archetype: BrawlEnemyArchetype | null): number {
 }
 
 /**
- * Pure, deterministic arena-brawler simulation. It deliberately mirrors the
- * Fight runtime contract: no Phaser, DOM, wall clock, timers, or randomness.
+ * Pure, deterministic side-scrolling brawler simulation. It deliberately
+ * mirrors the Fight runtime contract: no Phaser, DOM, wall clock, timers, or randomness.
  * That keeps the mode ready for the existing rollback transport once its
  * session wrapper is generalized from MatchSimulation.
  */
@@ -145,13 +150,16 @@ export class BrawlSimulation {
   readonly players: BrawlActor[];
   enemies: BrawlActor[] = [];
   tick = 0;
-  waveIndex = -1;
-  betweenWaveTicks = 0;
+  started = false;
+  encounterIndex = -1;
+  activeEncounterIndex = -1;
+  encounterClearTicks = 0;
+  progressX: number;
   outcome: BrawlOutcome = 'playing';
 
   constructor(
     playerNames: readonly [string, string],
-    map: Readonly<BrawlMapDefinition> = RUSH_ARENA_MAP,
+    map: Readonly<BrawlMapDefinition> = RUSH_ROUTE_MAP,
   ) {
     this.map = map;
     this.players = map.playerSpawns.map((spawn, slot) => ({
@@ -172,11 +180,13 @@ export class BrawlSimulation {
       cooldown: 0,
       reviveTicks: 0,
     }));
+    this.progressX = Math.min(...this.players.map((player) => player.x));
   }
 
   start(): BrawlSimEvent[] {
-    if (this.waveIndex >= 0) return [];
-    return this.spawnNextWave();
+    if (this.started) return [];
+    this.started = true;
+    return [{ type: 'runStart' }];
   }
 
   step(p1Input: FighterInput, p2Input: FighterInput): BrawlSimEvent[] {
@@ -186,7 +196,13 @@ export class BrawlSimulation {
 
     this.updatePlayer(this.players[0], p1Input, events);
     this.updatePlayer(this.players[1], p2Input, events);
+    this.applyPlayerTether();
+    this.progressX = Math.max(this.progressX, this.teamProgressX());
     this.updateRevives([p1Input, p2Input], events);
+
+    if (this.activeEncounterIndex < 0) {
+      events.push(...this.tryStartEncounter());
+    }
 
     for (const enemy of this.enemies) {
       this.updateEnemy(enemy, events);
@@ -198,15 +214,24 @@ export class BrawlSimulation {
       return events;
     }
 
-    if (this.enemies.some((enemy) => enemy.health > 0)) {
-      this.betweenWaveTicks = 0;
-      return events;
+    if (this.activeEncounterIndex >= 0) {
+      if (this.enemies.some((enemy) => enemy.health > 0)) {
+        this.encounterClearTicks = 0;
+        return events;
+      }
+      this.encounterClearTicks += 1;
+      if (this.encounterClearTicks < ENCOUNTER_CLEAR_TICKS) return events;
+      const clearedEncounterIndex = this.activeEncounterIndex;
+      this.activeEncounterIndex = -1;
+      this.encounterClearTicks = 0;
+      events.push({ type: 'encounterCleared', encounterIndex: clearedEncounterIndex });
     }
 
-    this.betweenWaveTicks += 1;
-    if (this.betweenWaveTicks < BETWEEN_WAVE_TICKS) return events;
-
-    if (this.waveIndex >= this.map.waves.length - 1) {
+    if (
+      this.encounterIndex >= this.map.encounters.length - 1
+      && this.activeEncounterIndex < 0
+      && this.progressX >= this.map.exitX
+    ) {
       this.outcome = 'won';
       for (const player of this.players) {
         if (player.health > 0) this.setActorState(player, 'victory');
@@ -214,16 +239,17 @@ export class BrawlSimulation {
       events.push({ type: 'missionComplete' });
       return events;
     }
-
-    events.push(...this.spawnNextWave());
     return events;
   }
 
   snapshot(): BrawlSimulationSnapshot {
     return {
       tick: this.tick,
-      waveIndex: this.waveIndex,
-      betweenWaveTicks: this.betweenWaveTicks,
+      started: this.started,
+      encounterIndex: this.encounterIndex,
+      activeEncounterIndex: this.activeEncounterIndex,
+      encounterClearTicks: this.encounterClearTicks,
+      progressX: this.progressX,
       outcome: this.outcome,
       players: this.players.map(cloneActor),
       enemies: this.enemies.map(cloneActor),
@@ -232,8 +258,11 @@ export class BrawlSimulation {
 
   restore(snapshot: BrawlSimulationSnapshot): void {
     this.tick = snapshot.tick;
-    this.waveIndex = snapshot.waveIndex;
-    this.betweenWaveTicks = snapshot.betweenWaveTicks;
+    this.started = snapshot.started;
+    this.encounterIndex = snapshot.encounterIndex;
+    this.activeEncounterIndex = snapshot.activeEncounterIndex;
+    this.encounterClearTicks = snapshot.encounterClearTicks;
+    this.progressX = snapshot.progressX;
     this.outcome = snapshot.outcome;
     this.players.splice(0, this.players.length, ...snapshot.players.map(cloneActor));
     this.enemies = snapshot.enemies.map(cloneActor);
@@ -242,8 +271,11 @@ export class BrawlSimulation {
   checksum(): number {
     const hasher = new StateHasher();
     hasher.num(this.tick);
-    hasher.num(this.waveIndex);
-    hasher.num(this.betweenWaveTicks);
+    hasher.num(this.started ? 1 : 0);
+    hasher.num(this.encounterIndex);
+    hasher.num(this.activeEncounterIndex);
+    hasher.num(this.encounterClearTicks);
+    hasher.num(this.progressX);
     hasher.num(outcomeCode(this.outcome));
     for (const actor of [...this.players, ...this.enemies]) {
       hasher.num(actor.kind === 'player' ? 1 : 2);
@@ -264,13 +296,15 @@ export class BrawlSimulation {
     return hasher.digest();
   }
 
-  private spawnNextWave(): BrawlSimEvent[] {
-    this.waveIndex += 1;
-    this.betweenWaveTicks = 0;
-    const wave = this.map.waves[this.waveIndex];
-    if (!wave) return [];
-    this.enemies.push(...wave.enemies.map((spawn) => this.createEnemy(spawn)));
-    return [{ type: 'waveStart', waveIndex: this.waveIndex, label: wave.label }];
+  private tryStartEncounter(): BrawlSimEvent[] {
+    const nextEncounterIndex = this.encounterIndex + 1;
+    const encounter = this.map.encounters[nextEncounterIndex];
+    if (!encounter || this.progressX < encounter.triggerX) return [];
+    this.encounterIndex = nextEncounterIndex;
+    this.activeEncounterIndex = nextEncounterIndex;
+    this.encounterClearTicks = 0;
+    this.enemies.push(...encounter.enemies.map((spawn) => this.createEnemy(spawn)));
+    return [{ type: 'encounterStart', encounterIndex: nextEncounterIndex, label: encounter.label }];
   }
 
   private createEnemy(spawn: BrawlEnemySpawn): BrawlActor {
@@ -337,7 +371,7 @@ export class BrawlSimulation {
     const diagonal = horizontal !== 0 && vertical !== 0 ? Math.SQRT1_2 : 1;
     actor.x += horizontal * PLAYER_SPEED * diagonal;
     actor.lane += vertical * PLAYER_LANE_SPEED * diagonal;
-    actor.x = this.clampX(actor.x);
+    actor.x = this.clampPlayerX(actor.x);
     actor.lane = this.clampLane(actor.lane);
     if (horizontal !== 0) actor.facingRight = horizontal > 0;
     this.setActorState(actor, 'walk', false);
@@ -388,7 +422,7 @@ export class BrawlSimulation {
 
     const xDirection = direction(dx, Math.max(22, stats.range * 0.72));
     const laneDirection = direction(laneDelta, Math.max(10, stats.laneRange * 0.45));
-    actor.x = this.clampX(actor.x + xDirection * stats.speed);
+    actor.x = this.clampEnemyX(actor.x + xDirection * stats.speed);
     actor.lane = this.clampLane(actor.lane + laneDirection * stats.laneSpeed);
     this.setActorState(actor, xDirection === 0 && laneDirection === 0 ? 'idle' : 'walk', false);
   }
@@ -434,7 +468,9 @@ export class BrawlSimulation {
     if (target.health <= 0) return;
     target.health = Math.max(0, target.health - damage);
     const pushDirection = attacker.x <= target.x ? 1 : -1;
-    target.x = this.clampX(target.x + pushDirection * push);
+    target.x = target.kind === 'player'
+      ? this.clampPlayerX(target.x + pushDirection * push)
+      : this.clampEnemyX(target.x + pushDirection * push);
     events.push({ type: 'hit', attackerId: attacker.id, targetId: target.id, damage });
     if (target.health <= 0) {
       this.setActorState(target, 'down');
@@ -468,6 +504,19 @@ export class BrawlSimulation {
       this.setActorState(down, 'idle');
       events.push({ type: 'revived', actorId: down.id, byActorId: helper.id });
     }
+  }
+
+  private applyPlayerTether(): void {
+    const [p1, p2] = this.players;
+    const separation = Math.abs(p1.x - p2.x);
+    if (separation <= this.map.maxPlayerSeparation) return;
+    const leader = p1.x > p2.x ? p1 : p2;
+    const trailer = leader === p1 ? p2 : p1;
+    leader.x = this.clampPlayerX(trailer.x + this.map.maxPlayerSeparation);
+  }
+
+  private teamProgressX(): number {
+    return Math.min(this.players[0].x, this.players[1].x);
   }
 
   private nearestLivingPlayer(actor: BrawlActor): BrawlActor | null {
@@ -507,7 +556,18 @@ export class BrawlSimulation {
     if (state !== 'attack') actor.attackKind = null;
   }
 
-  private clampX(x: number): number {
+  private clampPlayerX(x: number): number {
+    let left = Math.max(this.map.walkArea.left, this.progressX - this.map.maxBacktrack);
+    let right = this.map.walkArea.right;
+    const encounter = this.map.encounters[this.activeEncounterIndex];
+    if (encounter) {
+      left = Math.max(left, encounter.lockLeft);
+      right = Math.min(right, encounter.lockRight);
+    }
+    return Math.min(right, Math.max(left, x));
+  }
+
+  private clampEnemyX(x: number): number {
     return Math.min(this.map.walkArea.right, Math.max(this.map.walkArea.left, x));
   }
 
