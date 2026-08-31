@@ -11,6 +11,77 @@ import {
 import { getActionAnimationFrame } from '../sprites/AnimationFrameMapping.ts';
 import type { Fighter } from './Fighter.ts';
 
+interface VisibleFrameBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const VISIBLE_ALPHA_THRESHOLD = 32;
+const visibleFrameBoundsCache = new WeakMap<Phaser.Textures.Frame, VisibleFrameBounds | null>();
+let frameMeasurementCanvas: HTMLCanvasElement | null = null;
+
+function measureVisibleFrameBounds(frame: Phaser.Textures.Frame): VisibleFrameBounds | null {
+  if (visibleFrameBoundsCache.has(frame)) {
+    return visibleFrameBoundsCache.get(frame) ?? null;
+  }
+
+  let bounds: VisibleFrameBounds | null = null;
+  if (typeof document !== 'undefined') {
+    try {
+      const width = Math.max(1, Math.round(frame.cutWidth));
+      const height = Math.max(1, Math.round(frame.cutHeight));
+      frameMeasurementCanvas ??= document.createElement('canvas');
+      if (frameMeasurementCanvas.width !== width) frameMeasurementCanvas.width = width;
+      if (frameMeasurementCanvas.height !== height) frameMeasurementCanvas.height = height;
+      const context = frameMeasurementCanvas.getContext('2d', { willReadFrequently: true });
+      if (context) {
+        context.clearRect(0, 0, width, height);
+        context.drawImage(
+          frame.source.image as CanvasImageSource,
+          frame.cutX,
+          frame.cutY,
+          width,
+          height,
+          0,
+          0,
+          width,
+          height,
+        );
+        const pixels = context.getImageData(0, 0, width, height).data;
+        let minX = width;
+        let minY = height;
+        let maxX = -1;
+        let maxY = -1;
+        for (let y = 0; y < height; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            if (pixels[(y * width + x) * 4 + 3] < VISIBLE_ALPHA_THRESHOLD) continue;
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+          }
+        }
+        if (maxX >= minX && maxY >= minY) {
+          bounds = {
+            x: minX,
+            y: minY,
+            width: maxX - minX + 1,
+            height: maxY - minY + 1,
+          };
+        }
+      }
+    } catch {
+      frameMeasurementCanvas = null;
+      // Cross-origin or non-canvas texture sources fall back to frame geometry.
+    }
+  }
+
+  visibleFrameBoundsCache.set(frame, bounds);
+  return bounds;
+}
+
 /**
  * Phaser presentation of a `Fighter`. Reads simulation state, never writes
  * it: the sim must stay identical on every machine, while stage scale,
@@ -88,6 +159,27 @@ export class FighterView {
 
   getRenderYOffset(): number {
     return this.renderYOffset;
+  }
+
+  /** Top-center of the opaque pixels in the current rendered frame. */
+  getVisibleTopCenter(): { x: number; y: number } {
+    const frame = this.sprite.frame;
+    const visibleBounds = measureVisibleFrameBounds(frame);
+    if (!visibleBounds) {
+      const frameTop = this.sprite.getTopCenter();
+      return { x: frameTop.x, y: frameTop.y };
+    }
+
+    const frameWidth = frame.cutWidth;
+    const frameHeight = frame.cutHeight;
+    const sourceCenterX = visibleBounds.x + visibleBounds.width / 2;
+    const renderedCenterX = this.sprite.flipX
+      ? frameWidth - sourceCenterX
+      : sourceCenterX;
+    return {
+      x: this.sprite.x + (renderedCenterX - this.sprite.originX * frameWidth) * this.sprite.scaleX,
+      y: this.sprite.y + (visibleBounds.y - this.sprite.originY * frameHeight) * this.sprite.scaleY,
+    };
   }
 
   syncSprite(opponentX: number): void {

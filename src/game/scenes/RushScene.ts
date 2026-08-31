@@ -18,6 +18,8 @@ import { RUSH_ARENA_MAP } from '../brawl/BrawlMap.ts';
 
 const MAX_TICKS_PER_FRAME = 5;
 const DEFAULT_STAGE_ID: StageThemeId = 'insert-player-arena';
+const PLAYER_TAG_POINTER_REACH = 22;
+const PLAYER_TAG_CLEARANCE = 6;
 
 interface ActorPresentation {
   fighter: Fighter;
@@ -331,7 +333,11 @@ export class RushScene extends Phaser.Scene {
     else presentation.view.sprite.clearTint();
 
     if (presentation.tag) {
-      presentation.tag.setPosition(actor.x, actor.lane - 196);
+      const spriteTop = presentation.view.getVisibleTopCenter();
+      presentation.tag.setPosition(
+        Math.round(spriteTop.x),
+        Math.round(spriteTop.y - PLAYER_TAG_POINTER_REACH - PLAYER_TAG_CLEARANCE),
+      );
       presentation.tag.setAlpha(actor.health <= 0 ? 0.58 : 1);
     }
 
