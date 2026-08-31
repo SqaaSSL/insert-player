@@ -4,8 +4,14 @@ import { readMatchFighterId } from './matchReporting';
 import {
   getVersusRoomFighterSourceAsset,
   getVersusRoomFighterSpriteAsset,
+  loadVersusInviteFighterSnapshot,
   loadVersusRoomFighterManifest,
 } from './fighters';
+import {
+  createVersusInvitationRecord,
+  readActiveVersusInvitation,
+  versusInvitationShareUrl,
+} from './versusInvites';
 import {
   ROOM_TICKET_TTL_SECONDS,
   generateRoomCode,
@@ -61,7 +67,7 @@ export async function createVersusRoom(env: Env, auth: AuthContext): Promise<Res
   return json({ error: 'Could not allocate a room code' }, 503);
 }
 
-/** POST /api/versus/rooms/:code/join — take (or re-take) a seat. */
+/** POST /api/versus/rooms/:code/join — take (or re-take) the guest seat. */
 export async function joinVersusRoom(
   request: Request,
   env: Env,
@@ -76,10 +82,15 @@ export async function joinVersusRoom(
   const response = await roomStub(env, code).fetch('https://room/join', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId: auth.userId }),
+    body: JSON.stringify({ userId: auth.userId, expectedSeat: 'guest' satisfies RoomSeat }),
   });
   if (response.status === 404) return json({ error: 'Room not found' }, 404);
-  if (response.status === 409) return json({ error: 'Room is full' }, 409);
+  if (response.status === 409) {
+    const conflict: { error?: string } = await response.json<{ error?: string }>().catch(() => ({}));
+    return conflict.error === 'seat_conflict'
+      ? json({ error: 'This account is already Player 1. Join with a different account.' }, 409)
+      : json({ error: 'Room is full' }, 409);
+  }
   if (!response.ok) return json({ error: 'Could not join room' }, 502);
   const { seat, peerConnected } = await response.json<{ seat: RoomSeat; peerConnected: boolean }>();
   return json({
@@ -188,6 +199,69 @@ function seatOf(record: RoomRecord, userId: string): RoomSeat | null {
 
 function declaredFighterId(record: RoomRecord, seat: RoomSeat): string | null {
   return (seat === 'host' ? record.hostFighterId : record.guestFighterId) ?? null;
+}
+
+/** POST /api/versus/rooms/:code/invitations — host creates a character-aware share link. */
+export async function createVersusInvitation(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  rawCode: string,
+): Promise<Response> {
+  if (!env.MATCH_ROOM) return json({ error: 'Online versus is not available' }, 503);
+  const code = normalizeRoomCode(rawCode);
+  if (!code) return json({ error: 'Invalid room code' }, 400);
+  const view = await readRoomRecord(env, code);
+  if (!view) return json({ error: 'Room not found' }, 404);
+  if (view.record.hostUserId !== auth.userId) {
+    return json({ error: 'Only the host can create an invitation link' }, 403);
+  }
+
+  const body = await readJsonBody<{ fighterId?: unknown }>(request, MAX_JOIN_BODY_BYTES);
+  const fighterId = await readMatchFighterId(env, auth.userId, body.fighterId);
+  if (!fighterId) return json({ error: 'Fighter is not owned or an active Arcade fighter' }, 403);
+  const snapshot = await loadVersusInviteFighterSnapshot(env, fighterId);
+  if (!snapshot) return json({ error: 'Fighter is not playable' }, 409);
+  if (!await env.SPRITES.head(snapshot.sourceBlobKey)) {
+    return json({ error: 'Fighter preview is unavailable' }, 409);
+  }
+
+  const invitation = await createVersusInvitationRecord(env, {
+    roomCode: code,
+    hostUserId: auth.userId,
+    hostDisplayName: auth.user.display_name,
+    fighterId: snapshot.fighterId,
+    fighterName: snapshot.fighterName,
+    fighterQualityTier: snapshot.qualityTier,
+    fighterSourceKind: snapshot.sourceKind,
+    fighterSourceBlobKey: snapshot.sourceBlobKey,
+  });
+  return json({
+    invitation: {
+      url: versusInvitationShareUrl(request, invitation.token, invitation.record.host_display_name),
+      expiresAt: invitation.record.expires_at,
+      inviter: {
+        displayName: invitation.record.host_display_name,
+      },
+      fighter: {
+        id: invitation.record.fighter_id,
+        name: invitation.record.fighter_name,
+        qualityTier: invitation.record.fighter_quality_tier,
+      },
+    },
+  }, 201);
+}
+
+/** POST /api/versus/invitations/:token/join — resolve an opaque invite and take a seat. */
+export async function joinVersusInvitation(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  rawToken: string,
+): Promise<Response> {
+  const invitation = await readActiveVersusInvitation(env, rawToken);
+  if (!invitation) return json({ error: 'Invitation is invalid or has expired' }, 410);
+  return joinVersusRoom(request, env, auth, invitation.record.room_code);
 }
 
 /** POST /api/versus/rooms/:code/fighter { fighterId } — declare the fighter you will bring. */

@@ -36,6 +36,7 @@ import {
   readPreferredArcadePlayerPhotoHash,
   rememberCreationPurchaseIntent,
 } from './shared/onboardingFlow.ts';
+import { readPendingVersusInvite } from './shared/versusInvite.ts';
 
 const GalleryPage = lazy(() => import('./routes/GalleryPage.tsx').then((module) => ({
   default: module.GalleryPage,
@@ -257,6 +258,15 @@ export function App({
     });
     navigate('/menu', '', { replace: true });
   }, [authSessionKey, navigate, pendingMatch, route]);
+
+  useEffect(() => {
+    if (authStatus !== 'signed-in' || route === '/versus/online' || route === '/fight') return;
+    const pendingInvite = readPendingVersusInvite();
+    if (!pendingInvite) return;
+    const inviteSearch = new URLSearchParams({ invite: pendingInvite.token });
+    if (pendingInvite.inviterName) inviteSearch.set('from', pendingInvite.inviterName);
+    navigate('/versus/online', inviteSearch.toString(), { replace: true });
+  }, [authStatus, navigate, route]);
 
   useEffect(() => {
     const previousRoute = previousRouteRef.current;

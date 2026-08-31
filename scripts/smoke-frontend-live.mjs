@@ -240,6 +240,7 @@ async function main() {
   const cspHeader = home.res.headers.get('Content-Security-Policy') ?? '';
   assert(cspHeader, 'Frontend shell missing Content Security Policy');
   const csp = parseContentSecurityPolicy(cspHeader);
+  const expectedApiWebSocketOrigin = expectedApiOrigin.replace(/^https:/, 'wss:');
   for (const [directive, source] of [
     ['default-src', "'self'"],
     ['base-uri', "'self'"],
@@ -256,6 +257,7 @@ async function main() {
     ['img-src', expectedApiOrigin],
     ['media-src', expectedApiOrigin],
     ['connect-src', expectedApiOrigin],
+    ['connect-src', expectedApiWebSocketOrigin],
     ['connect-src', expectedClerkOrigin],
     ['connect-src', 'https://*.protect.clerk.com'],
     ['frame-src', 'https://challenges.cloudflare.com'],
@@ -345,6 +347,7 @@ async function main() {
     '/community',
     '/community?fighter=smoke-link',
     '/roster/cpu',
+    '/versus/online?invite=AbCdEfGhIjKlMnOpQrStUvWxYz_23456',
     '/legal',
     '/privacy',
     '/terms',

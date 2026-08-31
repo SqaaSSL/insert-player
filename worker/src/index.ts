@@ -85,14 +85,17 @@ import {
   allocateVersusMatch,
   connectVersusRoom,
   createVersusRoom,
+  createVersusInvitation,
   declareVersusFighter,
   getVersusOpponentFighter,
   getVersusRoomAsset,
   joinVersusRoom,
+  joinVersusInvitation,
   onlineVersusStatus,
   resolveVersusMatchParticipants,
   versusIceServers,
 } from './matchRoomRoutes';
+import { versusInvitationOgImage, versusInvitationSharePage } from './versusInvites';
 import {
   getImportedGlobalVideoRecurationAsset,
   getImportedGlobalVideoRecurationPromoteTransition,
@@ -299,7 +302,7 @@ function healthResponse(env: Env): Response {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
@@ -311,6 +314,17 @@ export default {
     try {
       if (path === '/api/clerk/webhook' && method === 'POST') {
         return addCors(await handleClerkWebhook(request, env), request, env);
+      }
+
+      const publicVersusInviteMatch = path.match(
+        /^\/v\/(?:[^/]+\/)?([A-Za-z0-9_-]{32})(\/og\.png)?$/,
+      );
+      if (publicVersusInviteMatch && method === 'GET') {
+        const token = decodePathParam(publicVersusInviteMatch[1]);
+        if (isResponse(token)) return token;
+        return publicVersusInviteMatch[2]
+          ? versusInvitationOgImage(env, token, context)
+          : versusInvitationSharePage(request, env, token);
       }
 
       const generationAuth = path.startsWith('/proxy/')
@@ -988,6 +1002,38 @@ export default {
       if (path === '/api/versus/ice-servers' && method === 'GET') {
         return addCors(
           await authenticatedLimited(request, env, 'versus:ice', () => versusIceServers(env)),
+          request,
+          env,
+        );
+      }
+
+      const versusInvitationJoinMatch = path.match(/^\/api\/versus\/invitations\/([^/]+)\/join$/);
+      if (versusInvitationJoinMatch && method === 'POST') {
+        const token = decodePathParam(versusInvitationJoinMatch[1]);
+        if (isResponse(token)) return addCors(token, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'versus:room',
+            (auth) => joinVersusInvitation(request, env, auth, token),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const versusInvitationCreateMatch = path.match(/^\/api\/versus\/rooms\/([^/]+)\/invitations$/);
+      if (versusInvitationCreateMatch && method === 'POST') {
+        const roomCode = decodePathParam(versusInvitationCreateMatch[1]);
+        if (isResponse(roomCode)) return addCors(roomCode, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'versus:invite',
+            (auth) => createVersusInvitation(request, env, auth, roomCode),
+          ),
           request,
           env,
         );

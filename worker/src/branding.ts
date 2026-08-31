@@ -20,3 +20,11 @@ export function publicSocialCardUrl(env: Env): string {
   const origin = stripTrailingSlashes(env.CORS_ORIGIN.split(',')[0]?.trim() ?? '');
   return `${origin}${path.startsWith('/') ? path : `/${path}`}`;
 }
+
+export function publicFrontendOrigin(env: Env): string {
+  const configured = (env.CORS_ORIGIN ?? '')
+    .split(',')
+    .map((origin) => stripTrailingSlashes(origin.trim()))
+    .find((origin) => /^https?:\/\//i.test(origin));
+  return configured || 'https://insertplayer.ai';
+}

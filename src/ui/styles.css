@@ -1537,12 +1537,82 @@
 
   /* ---- Online versus (rooms) ---- */
 
+  .online-versus__setup {
+    @apply grid items-start gap-5 grid-cols-[minmax(0,1.7fr)_minmax(300px,0.72fr)] max-[1050px]:grid-cols-1;
+  }
+
   .online-versus__lobby {
-    @apply grid gap-5 grid-cols-2 max-[900px]:grid-cols-1;
+    @apply grid items-start gap-5 grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] max-[980px]:grid-cols-1;
   }
 
   .online-versus__panel {
     @apply gap-4;
+  }
+
+  .online-versus__builder {
+    @apply min-w-0;
+  }
+
+  .online-versus__join-panel {
+    @apply min-w-0 [background:linear-gradient(180deg,rgba(18,13,40,0.98),rgba(7,5,19,0.98))];
+  }
+
+  .online-versus__section-head,
+  .online-versus__share-head {
+    @apply flex items-start justify-between gap-4 max-[640px]:flex-col;
+  }
+
+  .online-versus__section-head h2,
+  .online-versus__join-panel h2,
+  .online-versus__room-header h2 {
+    @apply mt-1.5 text-[17px] leading-[1.45] tracking-[0.12em] text-asf-gold;
+  }
+
+  .online-versus__eyebrow {
+    @apply m-0 font-sans text-[11px] font-semibold uppercase tracking-[0.14em] text-asf-cream/60;
+  }
+
+  .online-versus__player-badge {
+    @apply shrink-0 rounded-[4px] border border-asf-red bg-asf-red-dark/70 px-2.5 py-2 font-arcade text-[9px]
+           uppercase tracking-[0.1em] text-asf-gold-bright;
+  }
+
+  .online-versus__challenge-action {
+    @apply grid items-center gap-4 border-t border-asf-line-faint pt-4 grid-cols-[minmax(0,1fr)_auto]
+           max-[720px]:grid-cols-1;
+  }
+
+  .online-versus__challenge-action > .asf-btn {
+    @apply max-[720px]:w-full;
+  }
+
+  .online-versus__selection {
+    @apply flex min-w-0 items-center gap-3;
+  }
+
+  .online-versus__selection-image {
+    @apply block h-[72px] w-[72px] shrink-0 rounded-[4px] border-2 border-asf-gold-deep bg-black/50 object-cover object-top;
+  }
+
+  .online-versus__selection-copy {
+    @apply flex min-w-0 flex-col font-sans normal-case;
+  }
+
+  .online-versus__selection-copy > span {
+    @apply text-[10px] font-semibold uppercase tracking-[0.12em] text-asf-cream/55;
+  }
+
+  .online-versus__selection-copy strong {
+    @apply mt-1 truncate text-[16px] text-asf-cream;
+  }
+
+  .online-versus__selection-copy p {
+    @apply m-0 mt-1 text-[12px] leading-[1.5] text-asf-cream/70;
+  }
+
+  .online-versus__join-divider {
+    @apply relative my-1 flex items-center gap-3 font-sans text-[10px] font-semibold uppercase tracking-[0.12em] text-asf-cream/50
+           before:h-px before:flex-1 before:bg-asf-line-faint after:h-px after:flex-1 after:bg-asf-line-faint;
   }
 
   .online-versus__field {
@@ -1556,7 +1626,34 @@
   }
 
   .online-versus__room-header {
-    @apply flex items-start justify-between gap-4;
+    @apply flex items-start justify-between gap-4 max-[640px]:flex-col;
+  }
+
+  .online-versus__room-header > .asf-btn {
+    @apply max-[640px]:w-full;
+  }
+
+  .online-versus__share-stage {
+    @apply flex flex-col gap-3 rounded-[4px] border-2 border-asf-gold bg-black/35 p-4
+           [background:linear-gradient(135deg,rgba(93,12,18,0.38),rgba(7,6,22,0.8)_58%,rgba(16,31,68,0.32))]
+           shadow-[inset_0_0_0_1px_rgba(255,240,128,0.18)];
+  }
+
+  .online-versus__share-head h3 {
+    @apply mt-1.5 text-[13px] leading-[1.5] text-asf-gold-bright;
+  }
+
+  .online-versus__share-state {
+    @apply shrink-0 rounded-[3px] border border-asf-gold-deep bg-black/45 px-2 py-1.5 font-sans text-[10px]
+           font-semibold uppercase tracking-[0.1em] text-asf-gold;
+  }
+
+  .online-versus__share-state.is-ready {
+    @apply border-green-700 text-green-300;
+  }
+
+  .online-versus__share-state.is-error {
+    @apply border-red-700 text-red-300;
   }
 
   .online-versus__code-row {
@@ -1564,8 +1661,54 @@
   }
 
   .online-versus__code {
-    @apply rounded-[4px] border-2 border-asf-gold bg-black/50 px-5 py-3 font-mono text-[32px]
-           tracking-[0.4em] text-asf-gold;
+    @apply rounded-[4px] border-2 border-asf-gold bg-black/50 px-4 py-3 font-mono text-[26px]
+           tracking-[0.32em] text-asf-gold;
+  }
+
+  .online-versus__invite-row {
+    @apply grid grid-cols-[minmax(0,1fr)_auto] gap-3 max-[640px]:grid-cols-1;
+  }
+
+  .online-versus__invite-input {
+    @apply min-h-11 min-w-0 truncate rounded-[4px] border-2 border-asf-gold-deep bg-black/40 px-3 py-2
+           font-sans text-[13px] normal-case text-asf-cream outline-none focus:border-asf-gold;
+  }
+
+  .online-versus__invite-row .asf-btn {
+    @apply max-[640px]:w-full;
+  }
+
+  .online-versus__invite-help {
+    @apply m-0 font-sans text-[12px] normal-case text-asf-cream/70;
+  }
+
+  .online-versus__invite-progress {
+    @apply min-h-[56px] rounded-[4px] border border-asf-line-faint bg-black/35 px-4 py-4 font-sans text-[13px]
+           normal-case text-asf-gold;
+  }
+
+  .online-versus__copy-feedback {
+    @apply m-0 min-h-5 font-sans text-[12px] normal-case text-asf-ok;
+  }
+
+  .online-versus__copy-feedback.is-error {
+    @apply text-red-300;
+  }
+
+  .online-versus__code-fallback {
+    @apply border-t border-asf-line-faint pt-4;
+  }
+
+  .online-versus__code-fallback summary {
+    @apply cursor-pointer font-sans text-[12px] font-semibold normal-case text-asf-cream/70 hover:text-asf-gold;
+  }
+
+  .online-versus__code-fallback[open] summary {
+    @apply mb-3 text-asf-gold;
+  }
+
+  .online-versus__code-fallback .online-versus__code-row {
+    @apply mt-3;
   }
 
   .online-versus__stats {
@@ -1601,7 +1744,7 @@
   }
 
   .online-versus__roster {
-    @apply m-0 grid max-h-[360px] list-none gap-2 overflow-auto p-0 pr-1 grid-cols-[repeat(auto-fill,minmax(180px,1fr))];
+    @apply m-0 grid max-h-[390px] list-none gap-2 overflow-auto p-0 pr-1 grid-cols-[repeat(auto-fill,minmax(180px,1fr))];
   }
 
   .online-versus__fighter {

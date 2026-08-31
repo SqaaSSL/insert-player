@@ -3,6 +3,7 @@ import { drainFighterAssetDeletions } from './assetDeletion';
 import { settleGenerationPurchase } from './billing';
 import { reconcileNotDispatchedProviderReservation } from './providerSessions';
 import type { Env } from './types';
+import { cleanupExpiredVersusInvitations } from './versusInvites';
 
 interface StaleGenerationJobRow {
   id: string;
@@ -219,6 +220,7 @@ async function reconcileProvenNotDispatchedProviderCosts(env: Env): Promise<void
 
 export async function cleanupOperationalData(env: Env): Promise<void> {
   await drainFighterAssetDeletions(env, { maxBatches: 5 });
+  await cleanupExpiredVersusInvitations(env);
   // Reconcile durable accounting markers before retention can delete the job
   // event that proves the provider request never left our infrastructure.
   await settlePendingNotDispatchedRefunds(env);

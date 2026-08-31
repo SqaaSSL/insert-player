@@ -9,6 +9,7 @@ describe('frontend deployment CSP', () => {
       clerkFrontendApiOrigin: 'https://clerk.insertplayer.ai',
     });
     expect(headers).toContain('https://api.insertplayer.ai');
+    expect(headers).toContain('wss://api.insertplayer.ai');
     expect(headers).toContain('https://clerk.insertplayer.ai');
     expect(headers).not.toContain('insert-player-api-sandbox');
     expect(headers).not.toContain('clerk.accounts.dev');
@@ -21,6 +22,7 @@ describe('frontend deployment CSP', () => {
       clerkFrontendApiOrigin: 'https://right-cricket-1317.clerk.accounts.dev',
     });
     expect(headers).toContain('https://insert-player-api-sandbox.shellbot.workers.dev');
+    expect(headers).toContain('wss://insert-player-api-sandbox.shellbot.workers.dev');
     expect(headers).toContain('https://right-cricket-1317.clerk.accounts.dev');
     expect(headers).not.toContain('https://api.insertplayer.ai');
     expect(headers).not.toContain('https://clerk.insertplayer.ai');
