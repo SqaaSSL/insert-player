@@ -1,5 +1,14 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -19,8 +28,12 @@ import {
 import {
   HUMANOID_POSTPROCESS_KNOWN_VISUAL_FINDINGS,
   HUMANOID_POSTPROCESS_POLICY,
+  HUMANOID_V4_TRUSTED_SEAL,
+  hardlinkOrCopyExclusive,
   parseHumanoidPostprocessCliArgs,
+  readRegularFileSnapshot,
   verifyHumanoidPostprocessInputs,
+  writeBytesAtomicExclusive,
 } from './humanoid-pose-template-postprocess.mjs';
 
 const temporaryDirectories = [];
@@ -49,7 +62,7 @@ function fakePng(label, width, height, colorType = 2) {
 }
 
 function buildSealedFixture() {
-  const workDirectory = mkdtempSync(join(tmpdir(), 'insert-player-humanoid-postprocess-'));
+  const workDirectory = mkdtempSync(join(realpathSync.native(tmpdir()), 'insert-player-humanoid-postprocess-'));
   temporaryDirectories.push(workDirectory);
   const inputDirectory = join(workDirectory, 'inputs');
   const experimentId = 'humanoid-neutral-medium-xai-template-v4';
@@ -238,19 +251,22 @@ describe('humanoid V4 deterministic postprocess core', () => {
 });
 
 describe('humanoid V4 postprocess sealed input contract', () => {
-  it('accepts exactly 94 raw poses, 98 slots, and four byte-sharing aliases', () => {
-    const fixture = buildSealedFixture();
-    const verified = verifyHumanoidPostprocessInputs({
-      workDirectory: fixture.workDirectory,
-      expectedPlanSha256: fixture.manifest.planSha256,
-      knownVisualFindings: [],
+  it('requires the exact trusted V4 state and manifest byte seals', () => {
+    expect(HUMANOID_V4_TRUSTED_SEAL).toEqual({
+      executionStateSha256: '0cd3ec47df48421b38077deb30b803a97daeb5cc8ddae786525727d29af3b5c4',
+      inputManifestSha256: 'd85fb7c4b8642fd1671fc6300a084d948c53a96172630ca4177c71e9aa8814b3',
+      planSha256: '6eae3d89e52a89e9e6b1c17f194ab1c93605aedb23521e2bb0dcc4a02878ff89',
+      encryptedArtifactSha256: '6b38494913314b07fe0e3808f13512c0db3a0babd831daf0cf98a00163d2fab4',
+      githubActionsRunId: '33340491399',
     });
-    expect(verified.verified).toHaveLength(94);
-    expect(verified.manifest.frameSlots).toHaveLength(98);
-    expect(verified.aliasPoseIds).toHaveLength(4);
+    const fixture = buildSealedFixture();
+    expect(() => verifyHumanoidPostprocessInputs({
+      workDirectory: fixture.workDirectory,
+      knownVisualFindings: [],
+    })).toThrow(/execution state SHA-256 is not the exact trusted V4 state/);
   });
 
-  it('rejects one changed raw byte before any postprocess output is created', () => {
+  it('rejects a structurally plausible state rewrite before trusting its raw hashes', () => {
     const fixture = buildSealedFixture();
     const pose = fixture.manifest.uniquePoses[0];
     const rawPath = join(
@@ -261,12 +277,71 @@ describe('humanoid V4 postprocess sealed input contract', () => {
     );
     const changed = fakePng('changed-after-state-seal', 1776, 2368);
     writeFileSync(rawPath, changed);
+    const statePath = join(fixture.workDirectory, 'state.json');
+    const rewrittenState = JSON.parse(readFileSync(statePath, 'utf8'));
+    rewrittenState.slots[pose.poseId].artifacts.image.contentSha256 = sha256(changed);
+    rewrittenState.slots[pose.poseId].artifacts.image.sizeBytes = changed.byteLength;
+    writeFileSync(statePath, `${JSON.stringify(rewrittenState, null, 2)}\n`);
     expect(() => verifyHumanoidPostprocessInputs({
       workDirectory: fixture.workDirectory,
-      expectedPlanSha256: fixture.manifest.planSha256,
       knownVisualFindings: [],
     }))
-      .toThrow(/raw bytes differ from execution state/);
+      .toThrow(/execution state SHA-256 is not the exact trusted V4 state/);
+  });
+
+  it('retains immutable bytes after a verified path is replaced', () => {
+    const directory = mkdtempSync(join(realpathSync.native(tmpdir()), 'insert-player-humanoid-snapshot-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'raw.png');
+    const original = fakePng('immutable-original', 1776, 2368);
+    const replacement = fakePng('path-replacement', 1776, 2368);
+    writeFileSync(path, original);
+    const snapshot = readRegularFileSnapshot(path, 'immutable raw', { containmentRoot: directory });
+    unlinkSync(path);
+    writeFileSync(path, replacement);
+    expect(snapshot.contentSha256).toBe(sha256(original));
+    expect(snapshot.bytes.equals(original)).toBe(true);
+    expect(snapshot.bytes.equals(readFileSync(path))).toBe(false);
+  });
+
+  it('rejects symlinked input paths and symlinked or pre-existing output entries', () => {
+    const directory = mkdtempSync(join(realpathSync.native(tmpdir()), 'insert-player-humanoid-symlink-'));
+    temporaryDirectories.push(directory);
+    const inputRoot = join(directory, 'input');
+    const outputRoot = join(directory, 'output');
+    mkdirSync(inputRoot);
+    mkdirSync(outputRoot);
+    const realInput = join(inputRoot, 'real.png');
+    const linkedInput = join(inputRoot, 'linked.png');
+    writeFileSync(realInput, fakePng('real-input', 1776, 2368));
+    symlinkSync(realInput, linkedInput);
+    expect(() => readRegularFileSnapshot(linkedInput, 'linked input', { containmentRoot: inputRoot })).toThrow(/symbolic link/);
+
+    const outside = join(directory, 'outside.txt');
+    const destination = join(outputRoot, 'alias.bin');
+    writeFileSync(outside, 'must-not-change');
+    symlinkSync(outside, destination);
+    expect(() => writeBytesAtomicExclusive(destination, Buffer.from('new bytes'), outputRoot)).toThrow(/symbolic link/);
+    expect(readFileSync(outside, 'utf8')).toBe('must-not-change');
+  });
+
+  it('creates byte-identical aliases without overwriting an existing destination', () => {
+    const directory = mkdtempSync(join(realpathSync.native(tmpdir()), 'insert-player-humanoid-alias-'));
+    temporaryDirectories.push(directory);
+    const outputRoot = join(directory, 'output');
+    mkdirSync(outputRoot);
+    const master = join(outputRoot, 'master.bin');
+    const firstAlias = join(outputRoot, 'frames', 'alias-a.bin');
+    const secondAlias = join(outputRoot, 'frames', 'alias-b.bin');
+    const bytes = Buffer.from('sealed-alias-bytes');
+    writeBytesAtomicExclusive(master, bytes, outputRoot);
+    const expectedHash = sha256(bytes);
+    hardlinkOrCopyExclusive(master, firstAlias, outputRoot, expectedHash);
+    hardlinkOrCopyExclusive(master, secondAlias, outputRoot, expectedHash);
+    expect(readFileSync(firstAlias).equals(bytes)).toBe(true);
+    expect(readFileSync(secondAlias).equals(bytes)).toBe(true);
+    expect(sha256(readFileSync(firstAlias))).toBe(sha256(readFileSync(secondAlias)));
+    expect(() => hardlinkOrCopyExclusive(master, firstAlias, outputRoot, expectedHash)).toThrow(/Refusing to replace output existing entry/);
   });
 
   it('has no provider, publish, import, activation, or retry path', () => {
