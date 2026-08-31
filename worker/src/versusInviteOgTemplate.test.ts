@@ -32,8 +32,8 @@ describe('versus invitation OG template', () => {
     expect(document.css).toContain("font-family: 'Press Start 2P'");
     expect(document.css).toContain('.center-cut');
     expect(document.css).toContain('.challenge-core');
-    expect(document.css).toContain('.challenger-intro { position: absolute; z-index: 20; left: 330px;');
-    expect(document.css).toContain('width: 540px;');
+    expect(document.css).toContain('.challenger-intro { position: absolute; z-index: 20; left: 440px;');
+    expect(document.css).toContain('width: 320px;');
     expect(document.html).not.toContain('inviter-plate');
   });
 
@@ -44,7 +44,7 @@ describe('versus invitation OG template', () => {
       qualityTier: 'rookie',
     });
     expect(document.html).not.toContain('<script>');
-    expect(document.html).toContain('&lt;SCRIPT&gt;ALERT(1)&lt;/SCRIPT&gt;');
+    expect(document.html).toContain('<span>&lt;SCRIPT&gt;ALERT</span><span>(1)&lt;/SCRIPT&gt;</span>');
     expect(document.html).not.toContain('<img src=x onerror');
     expect(document.html).toContain('&lt;IMG SRC=X ONERROR=ALERT(1)&gt;');
   });
@@ -56,7 +56,20 @@ describe('versus invitation OG template', () => {
       qualityTier: 'contender',
     });
     expect(document.html).toContain('challenger-name--xs');
+    expect(document.html).toContain('<span>THE INCREDIBLY LONG INVITER</span><span>DISPLAY NAME FOR TES</span>');
     expect(document.html).toContain('fighter-name--sm');
     expect(document.html).toContain('THE INCREDIBLY LONG CHALLENGER');
+  });
+
+  it('balances a real long challenger name inside the central safe lane', () => {
+    const document = buildVersusInviteOgDocument({
+      inviterName: 'Francisco Novella Fletcher',
+      fighterName: 'Player One',
+      qualityTier: 'champion',
+    });
+    expect(document.html).toContain('<span>FRANCISCO</span><span>NOVELLA FLETCHER</span>');
+    expect(document.html).toContain('challenger-name--lg');
+    expect(document.css).toContain('left: 440px;');
+    expect(document.css).toContain('width: 320px;');
   });
 });

@@ -1,6 +1,6 @@
 import type { QualityTier } from './types';
 
-export const VERSUS_INVITE_TEMPLATE_VERSION = 'loading-challenge-v6';
+export const VERSUS_INVITE_TEMPLATE_VERSION = 'loading-challenge-v7';
 export const VERSUS_INVITE_OG_WIDTH = 1200;
 export const VERSUS_INVITE_OG_HEIGHT = 630;
 export const VERSUS_INVITE_FIGHTER_ASSET_URL = 'asset://insert-player/versus-fighter';
@@ -31,10 +31,34 @@ function displayText(value: string, fallback: string, maxCharacters: number): st
 
 function challengerNameClass(length: number): string {
   if (length <= 10) return 'challenger-name--xl';
-  if (length <= 18) return 'challenger-name--lg';
-  if (length <= 28) return 'challenger-name--md';
-  if (length <= 38) return 'challenger-name--sm';
+  if (length <= 16) return 'challenger-name--lg';
+  if (length <= 21) return 'challenger-name--md';
+  if (length <= 25) return 'challenger-name--sm';
   return 'challenger-name--xs';
+}
+
+function balanceChallengerName(characters: string[]): string[] {
+  const name = characters.join('');
+  if (characters.length <= 16) return [name];
+
+  const words = name.split(' ').filter(Boolean);
+  if (words.length <= 1) {
+    const splitAt = Math.ceil(characters.length / 2);
+    return [characters.slice(0, splitAt).join(''), characters.slice(splitAt).join('')];
+  }
+
+  let best = 1;
+  let smallestDifference = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < words.length; index++) {
+    const firstLength = words.slice(0, index).join(' ').length;
+    const secondLength = words.slice(index).join(' ').length;
+    const difference = Math.abs(firstLength - secondLength);
+    if (difference < smallestDifference) {
+      best = index;
+      smallestDifference = difference;
+    }
+  }
+  return [words.slice(0, best).join(' '), words.slice(best).join(' ')];
 }
 
 function fighterNameClass(length: number): string {
@@ -47,7 +71,11 @@ function fighterNameClass(length: number): string {
 export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: string; css: string } {
   const inviterCharacters = displayText(copy.inviterName, 'Player', 48);
   const fighterCharacters = displayText(copy.fighterName, 'Fighter', 32);
-  const inviterName = escapeHtml(inviterCharacters.join('').toUpperCase());
+  const inviterLines = balanceChallengerName(inviterCharacters);
+  const inviterLineLength = Math.max(...inviterLines.map((line) => Array.from(line).length));
+  const inviterName = inviterLines
+    .map((line) => `<span>${escapeHtml(line.toUpperCase())}</span>`)
+    .join('');
   const fighterName = escapeHtml(fighterCharacters.join('').toUpperCase());
   const qualityTier = escapeHtml(copy.qualityTier.toUpperCase());
 
@@ -98,7 +126,7 @@ export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: s
 
       <header class="challenger-intro">
         <div class="challenger-kicker">YOUR CHALLENGER</div>
-        <div class="challenger-name ${challengerNameClass(inviterCharacters.length)}">${inviterName}</div>
+        <div class="challenger-name ${challengerNameClass(inviterLineLength)}">${inviterName}</div>
         <div class="challenger-mode">PRIVATE ONLINE CHALLENGE</div>
       </header>
 
@@ -186,15 +214,16 @@ export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: s
 
       .center-shadow { position: absolute; z-index: 12; left: 568px; top: -55px; width: 62px; height: 735px; background: rgba(3,3,9,0.72); transform: rotate(5deg); box-shadow: 0 0 28px rgba(0,0,0,0.82); }
       .center-cut { position: absolute; z-index: 14; left: 598px; top: -55px; width: 5px; height: 735px; background: #fff8df; transform: rotate(5deg); box-shadow: 0 0 12px rgba(255,248,223,0.48); }
-      .challenger-intro { position: absolute; z-index: 20; left: 330px; top: 18px; width: 540px; min-height: 62px; padding: 8px 18px 10px; text-align: center; background: linear-gradient(90deg, transparent, rgba(4,5,15,0.9) 20%, rgba(4,5,15,0.9) 80%, transparent); }
+      .challenger-intro { position: absolute; z-index: 20; left: 440px; top: 18px; width: 320px; min-height: 88px; padding: 9px 14px 11px; text-align: center; background: radial-gradient(ellipse at center, rgba(4,5,15,0.96) 0%, rgba(4,5,15,0.9) 62%, transparent 100%); }
       .challenger-kicker { color: #f13b47; font-family: 'Press Start 2P'; font-size: 7px; letter-spacing: 2px; }
-      .challenger-name { margin-top: 7px; color: #fff8df; font-family: 'Press Start 2P'; line-height: 1.22; letter-spacing: -1px; text-shadow: 3px 3px 0 #4d0b12; white-space: nowrap; }
-      .challenger-name--xl { font-size: 24px; }
-      .challenger-name--lg { font-size: 19px; }
-      .challenger-name--md { font-size: 17px; }
-      .challenger-name--sm { font-size: 12px; }
+      .challenger-name { margin-top: 7px; color: #fff8df; font-family: 'Press Start 2P'; line-height: 1.24; letter-spacing: -1px; text-shadow: 3px 3px 0 #4d0b12; }
+      .challenger-name span { display: block; white-space: nowrap; }
+      .challenger-name--xl { font-size: 20px; }
+      .challenger-name--lg { font-size: 16px; }
+      .challenger-name--md { font-size: 13px; }
+      .challenger-name--sm { font-size: 11px; }
       .challenger-name--xs { font-size: 9px; }
-      .challenger-mode { margin-top: 7px; color: #ffc52f; font-family: 'Press Start 2P'; font-size: 7px; letter-spacing: 1px; }
+      .challenger-mode { margin-top: 6px; color: #ffc52f; font-family: 'Press Start 2P'; font-size: 7px; letter-spacing: 1px; }
       .versus-lockup { position: absolute; z-index: 22; left: 502px; top: 218px; width: 202px; display: flex; flex-direction: column; align-items: center; text-align: center; }
       .brand-mark { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 3px solid #fff8df; border-radius: 999px; background: #d92331; color: #fff8df; font-size: 14px; font-weight: 700; box-shadow: 3px 3px 0 rgba(0,0,0,0.7); }
       .brand-name { margin-top: 12px; padding: 8px 10px 7px; background: rgba(4,4,11,0.86); color: #fff8df; font-family: 'Press Start 2P'; font-size: 10px; letter-spacing: 1px; white-space: nowrap; }
