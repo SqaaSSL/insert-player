@@ -1,8 +1,6 @@
-import { createHash } from 'node:crypto';
-
-// This fingerprint pins the complete dedicated Insert Player scope. Changing
-// any provider, model, endpoint, or control requires an explicit code review.
-const APPROVED_SCOPE_SHA256 = '13af5011ab696325373be1e289081ada253900e3f42ac8d1ae4ed0df59f77ac5';
+// Meterkey is an internal platform shared with other products. Its key may gain
+// explicit models without changing Insert Player's runtime permissions: the
+// Worker still authorizes every provider operation and model separately.
 const REQUIRED_PROVIDERS = ['fal', 'google-ai-studio'];
 const REQUIRED_MODELS = [
   'bytedance/seedream/v5/pro/edit',
@@ -43,24 +41,13 @@ function sortedStrings(value, label) {
   return [...value].sort();
 }
 
-function canonicalScope(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Meterkey scope is missing.');
+function requireExactStrings(value, required, label) {
+  const actual = sortedStrings(value, label);
+  const expected = [...required].sort();
+  if (actual.length !== expected.length || actual.some((item, index) => item !== expected[index])) {
+    throw new Error(`${label} does not match the approved Insert Player contract.`);
   }
-  const entries = Object.entries(value)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, item]) => {
-      if (Array.isArray(item)) return [key, sortedStrings(item, `Meterkey scope ${key}`).sort()];
-      if (typeof item === 'boolean' || Number.isSafeInteger(item) || typeof item === 'string') {
-        return [key, item];
-      }
-      throw new Error(`Meterkey scope ${key} has an unsupported value.`);
-    });
-  return JSON.stringify(Object.fromEntries(entries));
-}
-
-export function meterkeyScopeSha256(value) {
-  return createHash('sha256').update(canonicalScope(value), 'utf8').digest('hex');
+  return actual;
 }
 
 export function meterkeyAuthExpectations(env = process.env) {
@@ -91,24 +78,20 @@ export function validateMeterkeyAuthContext(value, expected) {
   if (!value.scope || typeof value.scope !== 'object' || Array.isArray(value.scope)) {
     throw new Error('Meterkey scope is missing.');
   }
-  for (const provider of REQUIRED_PROVIDERS) {
-    if (!sortedStrings(value.scope.providers, 'Meterkey providers').includes(provider)) {
-      throw new Error(`Meterkey scope is missing required provider ${provider}.`);
-    }
+  requireExactStrings(value.scope.providers, REQUIRED_PROVIDERS, 'Meterkey providers');
+  const scopedModels = sortedStrings(value.scope.models, 'Meterkey models');
+  if (new Set(scopedModels).size !== scopedModels.length) {
+    throw new Error('Meterkey models contain duplicates.');
+  }
+  if (scopedModels.some((model) => !model.trim() || model.includes('*'))) {
+    throw new Error('Meterkey models must be explicit model ids.');
   }
   for (const model of REQUIRED_MODELS) {
-    if (!sortedStrings(value.scope.models, 'Meterkey models').includes(model)) {
+    if (!scopedModels.includes(model)) {
       throw new Error(`Meterkey scope is missing required model ${model}.`);
     }
   }
-  for (const endpoint of REQUIRED_ENDPOINTS) {
-    if (!sortedStrings(value.scope.endpoints, 'Meterkey endpoints').includes(endpoint)) {
-      throw new Error(`Meterkey scope is missing required endpoint ${endpoint}.`);
-    }
-  }
-  if (meterkeyScopeSha256(value.scope) !== APPROVED_SCOPE_SHA256) {
-    throw new Error('Meterkey scope does not match the approved Insert Player contract.');
-  }
+  requireExactStrings(value.scope.endpoints, REQUIRED_ENDPOINTS, 'Meterkey endpoints');
   if (value.scope.block_streaming !== true) {
     throw new Error('Meterkey streaming policy is not fail-closed.');
   }

@@ -50,8 +50,19 @@ function validContext() {
 }
 
 describe('Meterkey Insert Player auth contract', () => {
-  it('accepts the exact dedicated production key, scope, wallet, and limits', () => {
+  it('accepts the dedicated production key, required scope, wallet, and limits', () => {
     expect(() => validateMeterkeyAuthContext(validContext(), expected)).not.toThrow();
+  });
+
+  it('accepts additive explicit models and controls owned by the Meterkey platform', () => {
+    const context = validContext();
+    context.scope.models.push(
+      'fal-ai/kling-image/o3/image-to-image',
+      'fal-ai/bytedance/seedream/v5/lite/edit',
+      'alibaba/qwen-image-3/edit',
+    );
+    (context.scope as Record<string, unknown>).daily_cap_uc = 10_000_000;
+    expect(() => validateMeterkeyAuthContext(context, expected)).not.toThrow();
   });
 
   it('loads every required expectation from explicit deployment variables', () => {
@@ -82,11 +93,9 @@ describe('Meterkey Insert Player auth contract', () => {
 
   it.each([
     ['provider', (context: ReturnType<typeof validContext>) => { context.scope.providers.push('openrouter'); }],
-    ['model', (context: ReturnType<typeof validContext>) => { context.scope.models.push('unapproved-model'); }],
+    ['wildcard model', (context: ReturnType<typeof validContext>) => { context.scope.models.push('*'); }],
+    ['duplicate model', (context: ReturnType<typeof validContext>) => { context.scope.models.push(context.scope.models[0]); }],
     ['endpoint', (context: ReturnType<typeof validContext>) => { context.scope.endpoints.push('*'); }],
-    ['scope control', (context: ReturnType<typeof validContext>) => {
-      (context.scope as Record<string, unknown>).daily_cap_uc = 10_000_000;
-    }],
   ])('rejects an additional %s outside the approved contract', (_label, mutate) => {
     const context = validContext();
     mutate(context);
