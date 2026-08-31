@@ -1,6 +1,6 @@
 import type { QualityTier } from './types';
 
-export const VERSUS_INVITE_TEMPLATE_VERSION = 'loading-challenge-v5';
+export const VERSUS_INVITE_TEMPLATE_VERSION = 'loading-challenge-v6';
 export const VERSUS_INVITE_OG_WIDTH = 1200;
 export const VERSUS_INVITE_OG_HEIGHT = 630;
 export const VERSUS_INVITE_FIGHTER_ASSET_URL = 'asset://insert-player/versus-fighter';
@@ -186,7 +186,7 @@ export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: s
 
       .center-shadow { position: absolute; z-index: 12; left: 568px; top: -55px; width: 62px; height: 735px; background: rgba(3,3,9,0.72); transform: rotate(5deg); box-shadow: 0 0 28px rgba(0,0,0,0.82); }
       .center-cut { position: absolute; z-index: 14; left: 598px; top: -55px; width: 5px; height: 735px; background: #fff8df; transform: rotate(5deg); box-shadow: 0 0 12px rgba(255,248,223,0.48); }
-      .challenger-intro { position: absolute; z-index: 20; left: 675px; top: 24px; width: 485px; min-height: 62px; padding: 8px 18px 10px; text-align: center; background: linear-gradient(90deg, transparent, rgba(4,5,15,0.72) 16%, rgba(4,5,15,0.72) 84%, transparent); }
+      .challenger-intro { position: absolute; z-index: 20; left: 330px; top: 18px; width: 540px; min-height: 62px; padding: 8px 18px 10px; text-align: center; background: linear-gradient(90deg, transparent, rgba(4,5,15,0.9) 20%, rgba(4,5,15,0.9) 80%, transparent); }
       .challenger-kicker { color: #f13b47; font-family: 'Press Start 2P'; font-size: 7px; letter-spacing: 2px; }
       .challenger-name { margin-top: 7px; color: #fff8df; font-family: 'Press Start 2P'; line-height: 1.22; letter-spacing: -1px; text-shadow: 3px 3px 0 #4d0b12; white-space: nowrap; }
       .challenger-name--xl { font-size: 24px; }
