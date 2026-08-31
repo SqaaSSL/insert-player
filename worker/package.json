@@ -45,11 +45,11 @@
     "db:execute:0035": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0035_video_generation_policies.sql"
   },
   "devDependencies": {
-    "wrangler": "^4.125.0"
+    "wrangler": "^4.127.0"
   },
   "dependencies": {
-    "@clerk/backend": "^3.16.6",
+    "@clerk/backend": "^3.16.12",
     "@cloudflare/containers": "^0.3.7",
-    "jose": "^6.2.3"
+    "jose": "^6.2.10"
   }
 }
