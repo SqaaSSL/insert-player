@@ -9,14 +9,14 @@ export interface ApiRequestContext {
   readonly providerSessionId: string | null;
   readonly detached?: boolean;
   readonly apiBaseUrl?: string;
-  readonly authorizationScheme?: 'Bearer' | 'Generation';
+  readonly authorizationScheme?: 'Bearer' | 'Generation' | 'Room';
   readonly providerRequestScope?: string;
 }
 
 export interface DetachedApiRequestContextOptions {
   apiBaseUrl: string;
   authorizationToken: string;
-  authorizationScheme?: 'Bearer' | 'Generation';
+  authorizationScheme?: 'Bearer' | 'Generation' | 'Room';
   providerSessionId?: string | null;
   providerRequestScope?: string;
 }

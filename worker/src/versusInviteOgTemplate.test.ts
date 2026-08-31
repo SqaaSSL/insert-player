@@ -32,6 +32,8 @@ describe('versus invitation OG template', () => {
     expect(document.css).toContain("font-family: 'Press Start 2P'");
     expect(document.css).toContain('.center-cut');
     expect(document.css).toContain('.challenge-core');
+    expect(document.css).toContain('.challenger-intro { position: absolute; z-index: 20; left: 675px;');
+    expect(document.html).not.toContain('inviter-plate');
   });
 
   it('escapes inviter and fighter names before placing them in HTML', () => {
@@ -46,13 +48,13 @@ describe('versus invitation OG template', () => {
     expect(document.html).toContain('&lt;IMG SRC=X ONERROR=ALERT(1)&gt;');
   });
 
-  it('scales long names down to stay inside the fight-intro plate', () => {
+  it('scales long names down to stay inside the challenger intro', () => {
     const document = buildVersusInviteOgDocument({
       inviterName: 'The Incredibly Long Inviter Display Name For Testing',
       fighterName: 'The Incredibly Long Challenger Name',
       qualityTier: 'contender',
     });
-    expect(document.html).toContain('inviter-name--xs');
+    expect(document.html).toContain('challenger-name--xs');
     expect(document.html).toContain('fighter-name--sm');
     expect(document.html).toContain('THE INCREDIBLY LONG CHALLENGER');
   });

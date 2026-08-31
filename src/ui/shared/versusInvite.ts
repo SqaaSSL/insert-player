@@ -2,6 +2,7 @@ const VERSUS_ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const VERSUS_ROOM_CODE_PATTERN = new RegExp(`^[${VERSUS_ROOM_CODE_ALPHABET}]{6}$`);
 const VERSUS_INVITE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32}$/;
 const PENDING_VERSUS_INVITE_STORAGE_KEY = 'insert-player.pending-versus-invite.v3';
+const VERSUS_GUEST_ID_STORAGE_KEY_PREFIX = 'insert-player.versus-guest.v1.';
 const LEGACY_PENDING_VERSUS_INVITE_STORAGE_KEYS = [
   'insert-player.pending-versus-invite.v2',
   'insert-player.pending-versus-invite.v1',
@@ -18,6 +19,11 @@ interface InviteStorage {
 export interface PendingVersusInvite {
   token: string;
   inviterName?: string;
+  expiresAt: number;
+}
+
+interface StoredVersusGuest {
+  guestId: string;
   expiresAt: number;
 }
 
@@ -76,6 +82,63 @@ export function normalizeVersusInviterName(value: string): string | null {
 export function versusInviterNameFromSearch(search: string): string | null {
   const inviterName = new URLSearchParams(search).get('from');
   return inviterName ? normalizeVersusInviterName(inviterName) : null;
+}
+
+export function versusInvitedFighterNameFromSearch(search: string): string | null {
+  const fighterName = new URLSearchParams(search).get('fighter');
+  return fighterName ? normalizeVersusInviterName(fighterName) : null;
+}
+
+function randomVersusGuestId(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+export function getOrCreateVersusGuestId(
+  token: string,
+  storage?: InviteStorage | null,
+  now = Date.now(),
+  createId: () => string = randomVersusGuestId,
+): string | null {
+  const normalizedToken = normalizeVersusInviteToken(token);
+  if (!normalizedToken) return null;
+  const target = resolveStorage(storage);
+  const storageKey = `${VERSUS_GUEST_ID_STORAGE_KEY_PREFIX}${normalizedToken}`;
+  if (target) {
+    try {
+      const raw = target.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<StoredVersusGuest>;
+        if (
+          typeof parsed.guestId === 'string'
+          && /^[A-Za-z0-9_-]{20,64}$/.test(parsed.guestId)
+          && typeof parsed.expiresAt === 'number'
+          && parsed.expiresAt > now
+        ) {
+          return parsed.guestId;
+        }
+      }
+    } catch {
+      // A fresh ephemeral id still lets locked-down browsers join this session.
+    }
+  }
+
+  const guestId = createId();
+  if (!/^[A-Za-z0-9_-]{20,64}$/.test(guestId)) return null;
+  if (target) {
+    try {
+      target.setItem(storageKey, JSON.stringify({
+        guestId,
+        expiresAt: now + PENDING_VERSUS_INVITE_TTL_MS,
+      } satisfies StoredVersusGuest));
+    } catch {
+      // The id remains usable for the current page even when storage is unavailable.
+    }
+  }
+  return guestId;
 }
 
 export function storePendingVersusInvite(

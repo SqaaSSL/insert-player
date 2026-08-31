@@ -1537,6 +1537,67 @@
 
   /* ---- Online versus (rooms) ---- */
 
+  .online-versus__invite-hero {
+    @apply rounded-[4px] border-b border-asf-line-faint pb-5;
+  }
+
+  .online-versus__invite-hero h1 {
+    @apply mt-1.5 tracking-[0.08em];
+  }
+
+  .online-versus__guest-benefits {
+    @apply mt-3 flex flex-wrap gap-2 font-sans text-[11px] font-semibold normal-case text-asf-cream;
+  }
+
+  .online-versus__guest-benefits span {
+    @apply rounded-[3px] border border-asf-line-strong bg-black/30 px-2.5 py-1.5;
+  }
+
+  .online-versus__guest-benefits span:first-child {
+    @apply border-asf-blue/70 text-asf-blue;
+  }
+
+  .online-versus__arrival {
+    @apply grid min-h-[360px] items-center gap-8 overflow-hidden px-10 py-8
+           grid-cols-[220px_minmax(0,1fr)]
+           [background:radial-gradient(circle_at_16%_50%,rgba(36,104,190,0.34),transparent_30%),linear-gradient(135deg,rgba(10,18,50,0.98),rgba(7,5,20,0.98)_65%)]
+           max-[700px]:min-h-0 max-[700px]:grid-cols-1 max-[700px]:gap-5 max-[700px]:px-5 max-[700px]:py-6;
+  }
+
+  .online-versus__arrival-seat {
+    @apply mx-auto flex size-[190px] flex-col items-center justify-center rounded-full border-[3px] border-asf-blue
+           bg-[radial-gradient(circle,rgba(20,66,132,0.96),rgba(4,7,24,0.98)_72%)] text-center
+           shadow-[0_0_36px_rgba(79,179,255,0.2),inset_0_0_30px_rgba(79,179,255,0.12)]
+           max-[700px]:size-[142px];
+  }
+
+  .online-versus__arrival-seat span,
+  .online-versus__arrival-seat small {
+    @apply font-sans text-[10px] font-semibold uppercase tracking-[0.16em] text-asf-cream/65;
+  }
+
+  .online-versus__arrival-seat strong {
+    @apply my-3 font-arcade text-[52px] leading-none text-asf-blue [text-shadow:4px_4px_0_#073f75]
+           max-[700px]:text-[40px];
+  }
+
+  .online-versus__arrival-seat small {
+    @apply text-asf-gold;
+  }
+
+  .online-versus__arrival-copy {
+    @apply flex min-w-0 flex-col items-start gap-3;
+  }
+
+  .online-versus__arrival-copy h2 {
+    @apply text-balance text-[22px] leading-[1.45] tracking-[0.08em] text-asf-gold;
+  }
+
+  .online-versus__arrival-progress {
+    @apply min-h-11 rounded-[4px] border border-asf-blue/50 bg-black/30 px-4 py-3 font-sans text-[13px]
+           normal-case text-asf-blue;
+  }
+
   .online-versus__setup {
     @apply grid items-start gap-5 grid-cols-[minmax(0,1.7fr)_minmax(300px,0.72fr)] max-[1050px]:grid-cols-1;
   }
@@ -1547,6 +1608,24 @@
 
   .online-versus__panel {
     @apply gap-4;
+  }
+
+  .online-versus__fighter-panel-head {
+    @apply flex flex-wrap items-center justify-between gap-3;
+  }
+
+  .online-versus__fighter-panel-head h3 {
+    @apply m-0;
+  }
+
+  .online-versus__guest-badge {
+    @apply rounded-[3px] border border-asf-blue/70 bg-asf-blue/10 px-2.5 py-1.5 font-sans text-[10px]
+           font-semibold uppercase tracking-[0.1em] text-asf-blue;
+  }
+
+  .online-versus__guest-note {
+    @apply m-0 rounded-[4px] border border-asf-line-faint bg-black/25 px-3 py-2.5 font-sans text-[13px]
+           normal-case leading-[1.55] text-asf-cream/80;
   }
 
   .online-versus__builder {
@@ -1713,6 +1792,18 @@
 
   .online-versus__stats {
     @apply grid gap-3 grid-cols-[repeat(auto-fit,minmax(160px,1fr))] font-sans;
+  }
+
+  .online-versus__connection-details {
+    @apply border-t border-asf-line-faint pt-3;
+  }
+
+  .online-versus__connection-details summary {
+    @apply cursor-pointer font-sans text-[12px] font-semibold normal-case text-asf-cream/65 hover:text-asf-gold;
+  }
+
+  .online-versus__connection-details[open] summary {
+    @apply mb-3 text-asf-gold;
   }
 
   .online-versus__stats dt {

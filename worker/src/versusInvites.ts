@@ -207,6 +207,7 @@ export async function versusInvitationSharePage(
   const redirect = new URL('/versus/online', publicFrontendOrigin(env));
   redirect.searchParams.set('invite', token);
   redirect.searchParams.set('from', record.host_display_name);
+  redirect.searchParams.set('fighter', record.fighter_name);
   const redirectUrl = redirect.toString();
   const appName = publicAppName(env);
   const title = `${record.host_display_name} challenges you · ${appName}`;
