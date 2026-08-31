@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { BrandMark } from './BrandMark.tsx';
 import { PUBLIC_APP_NAME } from '../publicBrand.ts';
 
@@ -17,12 +17,12 @@ const NAV_TARGETS: AppHeaderNavTarget[] = [
 interface AppHeaderProps {
   currentRoute: string;
   onNavigate: (route: '/' | '/menu' | '/arcade' | '/gallery' | '/community') => void;
+  authSlot?: ReactNode;
 }
 
-/** Slim cabinet-style top bar on every non-fight screen. The Clerk auth dock
- * renders outside this header: its backdrop-filter would otherwise become the
- * containing block for the dock's fixed bottom-left positioning. */
-export function AppHeader({ currentRoute, onNavigate }: AppHeaderProps) {
+/** Slim cabinet-style top bar on every non-fight screen. Account controls share
+ * the desktop row and become the final section of the collapsed mobile nav. */
+export function AppHeader({ currentRoute, onNavigate, authSlot }: AppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const headerRef = useRef<HTMLElement>(null);
 
@@ -46,12 +46,8 @@ export function AppHeader({ currentRoute, onNavigate }: AppHeaderProps) {
     setMenuOpen(false);
   }, [currentRoute]);
 
-  const className = currentRoute === '/menu'
-    ? 'app-header app-header--menu'
-    : 'app-header';
-
   return (
-    <header className={menuOpen ? `${className} is-menu-open` : className} ref={headerRef}>
+    <header className={menuOpen ? 'app-header is-menu-open' : 'app-header'} ref={headerRef}>
       <a
         href="/"
         className="app-header__brand"
@@ -90,6 +86,7 @@ export function AppHeader({ currentRoute, onNavigate }: AppHeaderProps) {
             {target.label}
           </a>
         ))}
+        {authSlot ? <div className="app-header__account">{authSlot}</div> : null}
       </nav>
     </header>
   );

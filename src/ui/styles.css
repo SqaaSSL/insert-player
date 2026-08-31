@@ -223,12 +223,18 @@
   }
 
   .app-header__nav {
-    @apply flex flex-wrap items-center gap-1;
+    @apply flex min-w-0 flex-1 flex-wrap items-center gap-1;
     @apply max-[720px]:absolute max-[720px]:inset-x-0 max-[720px]:top-full
            max-[720px]:hidden max-[720px]:flex-col max-[720px]:items-stretch
            max-[720px]:gap-0 max-[720px]:border-b-2 max-[720px]:border-asf-gold-deep
            max-[720px]:bg-[rgba(5,5,12,0.97)] max-[720px]:shadow-[0_16px_28px_rgba(0,0,0,0.5)]
            max-[720px]:[backdrop-filter:blur(8px)];
+  }
+
+  .app-header__account {
+    @apply ml-auto flex shrink-0 items-center pl-3
+           max-[720px]:ml-0 max-[720px]:w-full max-[720px]:border-t-2
+           max-[720px]:border-asf-gold-deep max-[720px]:px-4 max-[720px]:py-3;
   }
 
   .is-menu-open .app-header__nav {
@@ -433,9 +439,8 @@
   }
 
   .auth-dock {
-    @apply fixed bottom-[max(16px,env(safe-area-inset-bottom))] left-[max(16px,env(safe-area-inset-left))] z-50 m-0 flex w-fit max-w-[calc(100%-2rem)] items-center gap-2 rounded-[4px]
-           border-2 border-asf-gold-deep bg-asf-panel px-3 py-2
-           shadow-[0_10px_24px_rgba(0,0,0,0.38)];
+    @apply m-0 flex w-fit max-w-full items-center gap-2 max-[720px]:w-full
+           max-[720px]:justify-between;
   }
 
   .auth-dock__label {
@@ -445,7 +450,9 @@
   .auth-dock__button {
     @apply min-h-11 cursor-pointer rounded-[3px] border-2 border-asf-gold-deep
            bg-asf-bg-1 px-3 py-2 font-arcade text-[11px] tracking-[0.12em] uppercase text-asf-gold
-           hover:border-asf-gold hover:text-asf-gold-bright disabled:cursor-not-allowed
+           hover:border-asf-gold hover:text-asf-gold-bright focus-visible:outline
+           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-gold-bright
+           disabled:cursor-not-allowed
            disabled:opacity-45;
   }
 
@@ -2630,10 +2637,6 @@
      ============================================================ */
 
   @media (max-width: 640px) {
-    .app-header--menu {
-      @apply hidden;
-    }
-
     .home-app {
       @apply gap-6 px-4 pb-8 pt-6;
     }
