@@ -29,12 +29,12 @@ function displayText(value: string, fallback: string, maxCharacters: number): st
   return Array.from(normalized).slice(0, maxCharacters);
 }
 
-function inviterNameClass(length: number): string {
-  if (length <= 10) return 'inviter-name--xl';
-  if (length <= 18) return 'inviter-name--lg';
-  if (length <= 28) return 'inviter-name--md';
-  if (length <= 38) return 'inviter-name--sm';
-  return 'inviter-name--xs';
+function challengerNameClass(length: number): string {
+  if (length <= 10) return 'challenger-name--xl';
+  if (length <= 18) return 'challenger-name--lg';
+  if (length <= 28) return 'challenger-name--md';
+  if (length <= 38) return 'challenger-name--sm';
+  return 'challenger-name--xs';
 }
 
 function fighterNameClass(length: number): string {
@@ -63,10 +63,6 @@ export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: s
       <section class="fighter-stage">
         <img class="fighter-image" src="${VERSUS_INVITE_FIGHTER_ASSET_URL}" />
         <div class="fighter-wash"></div>
-        <div class="inviter-plate">
-          <div class="inviter-kicker">CHALLENGER</div>
-          <div class="inviter-name ${inviterNameClass(inviterCharacters.length)}">${inviterName}</div>
-        </div>
         <div class="fighter-caption">
           <div class="fighter-meta">THEIR FIGHTER · ${qualityTier}</div>
           <div class="fighter-name ${fighterNameClass(fighterCharacters.length)}">${fighterName}</div>
@@ -100,9 +96,10 @@ export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: s
       <div class="center-shadow"></div>
       <div class="center-cut"></div>
 
-      <header class="presentation">
-        <div>INSERT PLAYER PRESENTS</div>
-        <strong>PRIVATE ONLINE CHALLENGE</strong>
+      <header class="challenger-intro">
+        <div class="challenger-kicker">YOUR CHALLENGER</div>
+        <div class="challenger-name ${challengerNameClass(inviterCharacters.length)}">${inviterName}</div>
+        <div class="challenger-mode">PRIVATE ONLINE CHALLENGE</div>
       </header>
 
       <section class="versus-lockup">
@@ -154,17 +151,9 @@ export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: s
       .blue-energy--two { right: -45px; bottom: 139px; width: 430px; opacity: 0.24; }
 
       .fighter-stage { position: absolute; z-index: 3; left: 0; top: 0; width: 632px; height: 630px; overflow: hidden; }
-      .fighter-image { position: absolute; z-index: 4; left: -8px; top: 0; width: 672px; height: 630px; object-fit: cover; object-position: center top; }
+      .fighter-image { position: absolute; z-index: 0; left: -8px; top: 0; width: 672px; height: 630px; object-fit: cover; object-position: center top; }
       .fighter-wash { position: absolute; z-index: 1; inset: 0; background: linear-gradient(90deg, rgba(104,4,13,0.34) 0%, rgba(63,3,12,0.06) 56%, rgba(6,3,10,0.72) 100%); }
-      .inviter-plate { position: absolute; z-index: 3; left: 34px; top: 74px; width: 500px; min-height: 66px; padding: 12px 17px 13px; border-left: 4px solid #f13b47; background: rgba(5,4,11,0.88); box-shadow: 10px 10px 0 rgba(24,0,5,0.32); }
-      .inviter-kicker { margin-bottom: 8px; color: #f13b47; font-family: 'Press Start 2P'; font-size: 7px; letter-spacing: 2px; }
-      .inviter-name { width: 460px; color: #fff8df; font-family: 'Press Start 2P'; line-height: 1.28; letter-spacing: -1px; text-shadow: 3px 3px 0 #4d0b12; }
-      .inviter-name--xl { font-size: 27px; }
-      .inviter-name--lg { font-size: 22px; }
-      .inviter-name--md { font-size: 18px; }
-      .inviter-name--sm { font-size: 13px; }
-      .inviter-name--xs { font-size: 10px; }
-      .fighter-caption { position: absolute; z-index: 6; left: 31px; bottom: 47px; width: 465px; }
+      .fighter-caption { position: absolute; z-index: 4; left: 31px; bottom: 47px; width: 465px; }
       .fighter-meta { margin-bottom: 9px; color: rgba(255,248,223,0.76); font-family: 'Press Start 2P'; font-size: 7px; letter-spacing: 1px; }
       .fighter-name { color: #ff3d49; font-family: 'Press Start 2P'; line-height: 1.22; letter-spacing: -1px; text-shadow: 4px 4px 0 #741019, 0 0 14px rgba(255,52,66,0.28); }
       .fighter-name--xl { font-size: 28px; }
@@ -197,8 +186,15 @@ export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: s
 
       .center-shadow { position: absolute; z-index: 12; left: 568px; top: -55px; width: 62px; height: 735px; background: rgba(3,3,9,0.72); transform: rotate(5deg); box-shadow: 0 0 28px rgba(0,0,0,0.82); }
       .center-cut { position: absolute; z-index: 14; left: 598px; top: -55px; width: 5px; height: 735px; background: #fff8df; transform: rotate(5deg); box-shadow: 0 0 12px rgba(255,248,223,0.48); }
-      .presentation { position: absolute; z-index: 20; left: 468px; top: 29px; width: 270px; text-align: center; color: rgba(255,248,223,0.76); font-family: 'Press Start 2P'; font-size: 7px; line-height: 1.5; letter-spacing: 1px; }
-      .presentation strong { display: block; margin-top: 4px; color: #ffc52f; font-size: 9px; }
+      .challenger-intro { position: absolute; z-index: 20; left: 675px; top: 24px; width: 485px; min-height: 62px; padding: 8px 18px 10px; text-align: center; background: linear-gradient(90deg, transparent, rgba(4,5,15,0.72) 16%, rgba(4,5,15,0.72) 84%, transparent); }
+      .challenger-kicker { color: #f13b47; font-family: 'Press Start 2P'; font-size: 7px; letter-spacing: 2px; }
+      .challenger-name { margin-top: 7px; color: #fff8df; font-family: 'Press Start 2P'; line-height: 1.22; letter-spacing: -1px; text-shadow: 3px 3px 0 #4d0b12; white-space: nowrap; }
+      .challenger-name--xl { font-size: 24px; }
+      .challenger-name--lg { font-size: 19px; }
+      .challenger-name--md { font-size: 17px; }
+      .challenger-name--sm { font-size: 12px; }
+      .challenger-name--xs { font-size: 9px; }
+      .challenger-mode { margin-top: 7px; color: #ffc52f; font-family: 'Press Start 2P'; font-size: 7px; letter-spacing: 1px; }
       .versus-lockup { position: absolute; z-index: 22; left: 502px; top: 218px; width: 202px; display: flex; flex-direction: column; align-items: center; text-align: center; }
       .brand-mark { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 3px solid #fff8df; border-radius: 999px; background: #d92331; color: #fff8df; font-size: 14px; font-weight: 700; box-shadow: 3px 3px 0 rgba(0,0,0,0.7); }
       .brand-name { margin-top: 12px; padding: 8px 10px 7px; background: rgba(4,4,11,0.86); color: #fff8df; font-family: 'Press Start 2P'; font-size: 10px; letter-spacing: 1px; white-space: nowrap; }
