@@ -145,10 +145,7 @@ function ClerkSessionBridge() {
         onRetryCache={() => setCacheAttempt((current) => current + 1)}
       />
     ) : (
-      <>
-        {authDock}
-        <LoadingScreen label={authReady ? 'Loading player data...' : 'Loading player account...'} />
-      </>
+      <LoadingScreen label={authReady ? 'Loading player data...' : 'Loading player account...'} />
     )
   );
 }
