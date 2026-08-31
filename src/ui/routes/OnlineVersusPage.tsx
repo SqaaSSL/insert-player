@@ -39,6 +39,7 @@ import { assertCompletePlayableSpriteSet } from '../../services/PlayableFighterA
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { buildRosterFighterSections, type RosterFighterEntry } from './RosterPage.tsx';
+import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import {
   clearPendingVersusInvite,
   normalizeVersusRoomCode,
@@ -159,6 +160,23 @@ interface FighterPickerProps {
   onSelect: (key: string) => void;
 }
 
+function FighterPreview({
+  entry,
+  className,
+}: {
+  entry: RosterFighterEntry | null;
+  className: string;
+}) {
+  const localUrl = useObjectUrl(entry?.previewBlob ?? null);
+  const previewUrl = localUrl ?? entry?.previewUrl ?? null;
+
+  return previewUrl ? (
+    <img className={className} src={previewUrl} alt="" />
+  ) : (
+    <span className={`${className} online-versus__fighter-image--empty`} aria-hidden="true" />
+  );
+}
+
 function FighterPicker({ roster, status, selectedKey, disabled, onSelect }: FighterPickerProps) {
   return (
     <>
@@ -180,11 +198,7 @@ function FighterPicker({ roster, status, selectedKey, disabled, onSelect }: Figh
               disabled={disabled}
               onClick={() => onSelect(entry.key)}
             >
-              {entry.previewUrl ? (
-                <img className="online-versus__fighter-image" src={entry.previewUrl} alt="" />
-              ) : (
-                <span className="online-versus__fighter-image online-versus__fighter-image--empty" aria-hidden="true" />
-              )}
+              <FighterPreview entry={entry} className="online-versus__fighter-image" />
               <span className="online-versus__fighter-meta">
                 <strong>{entry.name}</strong>
                 <small>{entry.kind === 'arcade' ? 'Arcade' : 'Yours'} · {entry.qualityTier}</small>
@@ -681,11 +695,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
 
             <div className="online-versus__challenge-action">
               <div className="online-versus__selection">
-                {selected?.previewUrl ? (
-                  <img className="online-versus__selection-image" src={selected.previewUrl} alt="" />
-                ) : (
-                  <span className="online-versus__selection-image online-versus__fighter-image--empty" aria-hidden="true" />
-                )}
+                <FighterPreview entry={selected} className="online-versus__selection-image" />
                 <div className="online-versus__selection-copy">
                   <span>Selected fighter</span>
                   <strong>{selected?.name ?? 'Choose a fighter'}</strong>
