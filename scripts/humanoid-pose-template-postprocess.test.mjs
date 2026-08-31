@@ -29,9 +29,14 @@ import {
   HUMANOID_POSTPROCESS_KNOWN_VISUAL_FINDINGS,
   HUMANOID_POSTPROCESS_POLICY,
   HUMANOID_V4_TRUSTED_SEAL,
+  HUMANOID_V5_REPLACEMENT_CONTRACT,
+  HUMANOID_V5_REPLACEMENT_POSE_IDS,
+  HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL,
   hardlinkOrCopyExclusive,
+  loadHumanoidV5ReplacementSeal,
   parseHumanoidPostprocessCliArgs,
   readRegularFileSnapshot,
+  validateHumanoidV5ReplacementSeal,
   verifyHumanoidPostprocessInputs,
   writeBytesAtomicExclusive,
 } from './humanoid-pose-template-postprocess.mjs';
@@ -123,6 +128,31 @@ function buildSealedFixture() {
   };
   writeFileSync(join(workDirectory, 'state.json'), `${JSON.stringify(state, null, 2)}\n`);
   return { workDirectory, manifest, state };
+}
+
+function validV5ReplacementSeal() {
+  return {
+    schemaVersion: 1,
+    experimentId: 'humanoid-neutral-medium-xai-selective-v5',
+    githubActionsRunId: '33345211634',
+    generatorCommitSha: '8af2a462336263157137dab84620da4dcc9a9b12',
+    githubArtifactId: '9741870159',
+    githubArtifactName: 'humanoid-neutral-medium-xai-selective-v5-repair-encrypted',
+    githubArtifactZipSha256: '1'.repeat(64),
+    encryptedArtifactSha256: '2'.repeat(64),
+    inputManifestSha256: '88db095eb86f716a798ba7c873c698ea87f1150da07d1b3909f500f39cc87578',
+    inputPlanSha256: '51f7763cecb4ba9cc761846d5ae7a076660610c018bf4b180aea12eab31a8ac9',
+    executionStateSha256: '3'.repeat(64),
+    repairManifestSha256: '4'.repeat(64),
+    repairPlanSha256: '0e5c8826b4b9f58f4c7ce3e9e485a632e38ad03d29cf6ec64374680606c7898d',
+    sourceCanaryRunId: '33343450009',
+    sourceCanaryGeneratorCommitSha: '0a66f1631958a5a96100eac8d39b9f9cc0cbed5f',
+    sourceCanaryArtifactId: '9741312074',
+    sourceCanaryArtifactZipSha256: '420adad6d1f4a97cbf18d3f00ec5f1676800f35988d97ac1d6b7d3594e840dcd',
+    sourceCanaryCiphertextSha256: 'd48a3f78e0a1491fc36ca4310f723e8b9e0c00b3f4946d6970175bcacdfb293e',
+    sourceCanaryStateSha256: '77f519280e9701d833362c32f9cb008a238557eb02ad921a4f432f74d9a8c867',
+    replacementPoseIds: [...HUMANOID_V5_REPLACEMENT_POSE_IDS],
+  };
 }
 
 afterEach(() => {
@@ -363,6 +393,67 @@ describe('humanoid V4 postprocess sealed input contract', () => {
       '--work-dir=/private/tmp/sealed-humanoid',
       '--output-dir=/private/tmp/sealed-humanoid-postprocessed',
     ]);
-    expect(Object.keys(parsed).sort()).toEqual(['ffmpegBinary', 'outputDirectory', 'workDirectory']);
+    expect(Object.keys(parsed).sort()).toEqual([
+      'ffmpegBinary',
+      'outputDirectory',
+      'replacementSealPath',
+      'replacementSealSha256',
+      'replacementWorkDirectory',
+      'workDirectory',
+    ]);
+    expect(parsed.replacementWorkDirectory).toBeNull();
+  });
+
+  it('freezes the exact 24/70 combined contract and requires one complete out-of-band seal', () => {
+    expect(HUMANOID_V5_REPLACEMENT_POSE_IDS).toHaveLength(24);
+    expect(new Set(HUMANOID_V5_REPLACEMENT_POSE_IDS).size).toBe(24);
+    expect(HUMANOID_V5_REPLACEMENT_CONTRACT).toMatchObject({
+      replacementPoseCount: 24,
+      retainedV4PoseCount: 70,
+      combinedPoseCount: 94,
+      repairPaidCalls: 19,
+      repairCostMicrocredits: 1_900_000,
+      combinedCostMicrocredits: 2_400_000,
+      repairPlanVerification: 'recomputed_from_sealed_linux_manifest',
+    });
+    expect(HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL).toMatchObject({
+      contentSha256: 'd4a2b9a3094bde41eb32b0d2d7d7ac9f3a393169450825ec9bc3281254db5521',
+      githubActionsRunId: '33345211634',
+      githubArtifactId: '9741870159',
+    });
+    expect(loadHumanoidV5ReplacementSeal({
+      sealPath: HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.path,
+      expectedSealSha256: HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.contentSha256,
+    }).seal.repairPlanSha256).toBe('0e5c8826b4b9f58f4c7ce3e9e485a632e38ad03d29cf6ec64374680606c7898d');
+    expect(validateHumanoidV5ReplacementSeal(validV5ReplacementSeal()).replacementPoseIds).toHaveLength(24);
+    expect(() => validateHumanoidV5ReplacementSeal({
+      ...validV5ReplacementSeal(),
+      replacementPoseIds: HUMANOID_V5_REPLACEMENT_POSE_IDS.slice(1),
+    })).toThrow(/replacement pose set changed/);
+    const combined = parseHumanoidPostprocessCliArgs([
+      '--work-dir=/private/tmp/sealed-humanoid',
+      '--replacement-work-dir=/private/tmp/v5',
+    ]);
+    expect(combined.replacementSealSha256).toBe(HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.contentSha256);
+    expect(combined.replacementSealPath).toBe(HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.path);
+    expect(() => parseHumanoidPostprocessCliArgs([
+      '--work-dir=/private/tmp/sealed-humanoid',
+      '--replacement-work-dir=/private/tmp/v5',
+      '--replacement-seal=/private/tmp/custom-seal.json',
+      `--replacement-seal-sha256=${'a'.repeat(64)}`,
+    ])).toThrow(/Custom V5 trust seals are forbidden/);
+  });
+
+  it('rejects a replacement trust-seal byte change before reading any replacement work directory', () => {
+    const directory = mkdtempSync(join(realpathSync.native(tmpdir()), 'insert-player-humanoid-v5-seal-'));
+    temporaryDirectories.push(directory);
+    const sealPath = join(directory, 'trusted-seal.json');
+    const bytes = Buffer.from(`${JSON.stringify(validV5ReplacementSeal(), null, 2)}\n`);
+    writeFileSync(sealPath, bytes);
+    const loaded = loadHumanoidV5ReplacementSeal({ sealPath, expectedSealSha256: sha256(bytes) });
+    expect(loaded.sealSha256).toBe(sha256(bytes));
+    writeFileSync(sealPath, Buffer.concat([bytes, Buffer.from(' ')]));
+    expect(() => loadHumanoidV5ReplacementSeal({ sealPath, expectedSealSha256: sha256(bytes) }))
+      .toThrow(/trust-seal bytes changed/);
   });
 });

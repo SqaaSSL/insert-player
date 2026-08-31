@@ -19,7 +19,10 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   HUMANOID_V4_TRUSTED_SEAL,
+  HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL,
+  loadHumanoidV5ReplacementSeal,
   postprocessHumanoidTemplate,
+  verifyHumanoidCombinedPostprocessInputs,
   verifyHumanoidPostprocessInputs,
 } from './humanoid-pose-template-postprocess.mjs';
 
@@ -28,6 +31,11 @@ const configuredWorkDirectory = process.env.HUMANOID_V4_E2E_WORK_DIR
   : null;
 const fullArtifactAvailable = configuredWorkDirectory !== null && existsSync(configuredWorkDirectory);
 const describeFullArtifact = fullArtifactAvailable ? describe : describe.skip;
+const configuredReplacementWorkDirectory = process.env.HUMANOID_V5_REPLACEMENT_E2E_WORK_DIR
+  ? realpathSync.native(process.env.HUMANOID_V5_REPLACEMENT_E2E_WORK_DIR)
+  : null;
+const replacementArtifactAvailable = configuredReplacementWorkDirectory !== null && existsSync(configuredReplacementWorkDirectory);
+const describeCombinedArtifact = fullArtifactAvailable && replacementArtifactAvailable ? describe : describe.skip;
 const temporaryDirectories = [];
 const postprocessScript = fileURLToPath(new URL('./humanoid-pose-template-postprocess.mjs', import.meta.url));
 
@@ -230,4 +238,31 @@ describeFullArtifact('humanoid V4 full sealed artifact E2E', () => {
       }
     }
   }, 1_800_000);
+});
+
+describeCombinedArtifact('humanoid sealed V4 plus reviewed V5 replacement artifact E2E', () => {
+  it('snapshots exactly 24 V5 replacements plus 70 retained V4 raws with exact lineage', () => {
+    const replacementSealRecord = loadHumanoidV5ReplacementSeal({
+      sealPath: HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.path,
+      expectedSealSha256: HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.contentSha256,
+    });
+    const verified = verifyHumanoidCombinedPostprocessInputs({
+      workDirectory: configuredWorkDirectory,
+      replacementWorkDirectory: configuredReplacementWorkDirectory,
+    });
+    expect(verified.verified).toHaveLength(94);
+    expect(verified.verified.filter((entry) => entry.rawProvenance.source === 'reviewed_v5_replacement')).toHaveLength(24);
+    expect(verified.verified.filter((entry) => entry.rawProvenance.source === 'sealed_v4')).toHaveLength(70);
+    expect(verified.verified.filter((entry) => entry.rawProvenance.generationMode === 'canary')).toHaveLength(5);
+    expect(verified.verified.filter((entry) => entry.rawProvenance.generationMode === 'repair')).toHaveLength(19);
+    expect(verified.knownVisualReviewFindings).toHaveLength(3);
+    expect(verified.supersededVisualReviewFindings).toHaveLength(28);
+    expect(verified.combination.replacement).toMatchObject({
+      executionStateSha256: replacementSealRecord.seal.executionStateSha256,
+      inputManifestSha256: replacementSealRecord.seal.inputManifestSha256,
+      repairManifestSha256: replacementSealRecord.seal.repairManifestSha256,
+      trustSealSha256: HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.contentSha256,
+    });
+    expect(verified.verified.every((entry) => sha256(entry.rawBytes) === entry.raw.contentSha256)).toBe(true);
+  });
 });

@@ -49,6 +49,74 @@ const EXPECTED_FRAME_SLOTS = 98;
 const EXPECTED_ALIASES = 4;
 const QA_THUMBNAIL_WIDTH = 128;
 const QA_THUMBNAIL_HEIGHT = 171;
+const V5_EXPERIMENT_ID = 'humanoid-neutral-medium-xai-selective-v5';
+const V5_INPUT_MANIFEST_SHA256 = '88db095eb86f716a798ba7c873c698ea87f1150da07d1b3909f500f39cc87578';
+const V5_INPUT_PLAN_SHA256 = '51f7763cecb4ba9cc761846d5ae7a076660610c018bf4b180aea12eab31a8ac9';
+const V5_CANARY_STATE_SHA256 = '77f519280e9701d833362c32f9cb008a238557eb02ad921a4f432f74d9a8c867';
+const V5_CANARY_RUN_ID = '33343450009';
+const V5_CANARY_GENERATOR_SHA = '0a66f1631958a5a96100eac8d39b9f9cc0cbed5f';
+const V5_CANARY_ARTIFACT_ID = '9741312074';
+const V5_CANARY_ARTIFACT_ZIP_SHA256 = '420adad6d1f4a97cbf18d3f00ec5f1676800f35988d97ac1d6b7d3594e840dcd';
+const V5_CANARY_CIPHERTEXT_SHA256 = 'd48a3f78e0a1491fc36ca4310f723e8b9e0c00b3f4946d6970175bcacdfb293e';
+const V5_CANARY_POSE_IDS = Object.freeze([
+  'pose-007-8a6769c69246',
+  'pose-022-df0e781f8635',
+  'pose-050-3403e3eacd1f',
+  'pose-071-138071f13b72',
+  'pose-080-592f648f729a',
+]);
+const V5_REPAIR_POSE_IDS = Object.freeze([
+  'pose-009-1c68f61f7b8e',
+  'pose-010-08c72b553ad3',
+  'pose-019-39abc3e8c7c8',
+  'pose-021-f9ad82f8f8e1',
+  'pose-023-b51d09cf8edc',
+  'pose-032-45917e89bfe6',
+  'pose-045-7d8079f55708',
+  'pose-047-85c06b8f3ff4',
+  'pose-048-a238272c2686',
+  'pose-049-2def2dd84191',
+  'pose-052-3230240640e1',
+  'pose-055-5655accf5650',
+  'pose-060-3f470ba7a879',
+  'pose-061-86dfa9041794',
+  'pose-063-9b96aee26b28',
+  'pose-065-c469b54664bc',
+  'pose-070-6b1de52c67b6',
+  'pose-074-e755e505b366',
+  'pose-079-f70b975fff94',
+]);
+
+export const HUMANOID_V5_REPLACEMENT_POSE_IDS = Object.freeze([
+  ...V5_CANARY_POSE_IDS,
+  ...V5_REPAIR_POSE_IDS,
+]);
+
+export const HUMANOID_V5_REPLACEMENT_CONTRACT = Object.freeze({
+  experimentId: V5_EXPERIMENT_ID,
+  inputManifestSha256: V5_INPUT_MANIFEST_SHA256,
+  inputPlanSha256: V5_INPUT_PLAN_SHA256,
+  repairPlanVerification: 'recomputed_from_sealed_linux_manifest',
+  canaryStateSha256: V5_CANARY_STATE_SHA256,
+  canaryRunId: V5_CANARY_RUN_ID,
+  canaryGeneratorCommitSha: V5_CANARY_GENERATOR_SHA,
+  canaryArtifactId: V5_CANARY_ARTIFACT_ID,
+  canaryArtifactZipSha256: V5_CANARY_ARTIFACT_ZIP_SHA256,
+  canaryCiphertextSha256: V5_CANARY_CIPHERTEXT_SHA256,
+  replacementPoseCount: 24,
+  retainedV4PoseCount: 70,
+  combinedPoseCount: 94,
+  repairPaidCalls: 19,
+  repairCostMicrocredits: 1_900_000,
+  combinedCostMicrocredits: 2_400_000,
+});
+export const HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL = Object.freeze({
+  path: join(root, 'scripts', 'humanoid-v5-repair-trusted-seal.json'),
+  contentSha256: 'd4a2b9a3094bde41eb32b0d2d7d7ac9f3a393169450825ec9bc3281254db5521',
+  githubActionsRunId: '33345211634',
+  githubArtifactId: '9741870159',
+  generatorCommitSha: '8af2a462336263157137dab84620da4dcc9a9b12',
+});
 
 export const HUMANOID_POSTPROCESS_ID = 'humanoid-neutral-medium-xai-template-v4-postprocess-v1';
 export const HUMANOID_V4_TRUSTED_SEAL = Object.freeze({
@@ -569,6 +637,346 @@ export function verifyHumanoidPostprocessInputs({
   };
 }
 
+function humanoidManifestTopology(manifest) {
+  return {
+    uniquePoses: manifest.uniquePoses.map((pose) => ({
+      poseId: pose.poseId,
+      path: pose.path,
+      contentSha256: pose.contentSha256,
+      inputPixelSha256: pose.inputPixelSha256,
+      width: pose.width,
+      height: pose.height,
+      sourceSlots: pose.sourceSlots,
+    })),
+    frameSlots: manifest.frameSlots,
+  };
+}
+
+function assertSha256(value, label) {
+  invariant(/^[a-f0-9]{64}$/.test(value ?? ''), `${label} is not a SHA-256 digest.`);
+}
+
+export function validateHumanoidV5ReplacementSeal(seal) {
+  const exactKeys = [
+    'schemaVersion',
+    'experimentId',
+    'githubActionsRunId',
+    'generatorCommitSha',
+    'githubArtifactId',
+    'githubArtifactName',
+    'githubArtifactZipSha256',
+    'encryptedArtifactSha256',
+    'inputManifestSha256',
+    'inputPlanSha256',
+    'executionStateSha256',
+    'repairManifestSha256',
+    'repairPlanSha256',
+    'sourceCanaryRunId',
+    'sourceCanaryGeneratorCommitSha',
+    'sourceCanaryArtifactId',
+    'sourceCanaryArtifactZipSha256',
+    'sourceCanaryCiphertextSha256',
+    'sourceCanaryStateSha256',
+    'replacementPoseIds',
+  ];
+  invariant(
+    seal && typeof seal === 'object' && !Array.isArray(seal)
+      && canonicalJson(Object.keys(seal).sort()) === canonicalJson(exactKeys.sort()),
+    'V5 replacement trust seal shape changed.',
+  );
+  invariant(seal.schemaVersion === 1, 'V5 replacement trust seal schema changed.');
+  invariant(seal.experimentId === V5_EXPERIMENT_ID, 'V5 replacement trust seal experiment changed.');
+  invariant(/^[1-9][0-9]*$/.test(seal.githubActionsRunId ?? ''), 'V5 repair run id is invalid.');
+  invariant(/^[a-f0-9]{40}$/.test(seal.generatorCommitSha ?? ''), 'V5 repair generator SHA is invalid.');
+  invariant(/^[1-9][0-9]*$/.test(seal.githubArtifactId ?? ''), 'V5 repair artifact id is invalid.');
+  invariant(seal.githubActionsRunId === HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.githubActionsRunId, 'V5 repair run changed.');
+  invariant(seal.githubArtifactId === HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.githubArtifactId, 'V5 repair artifact changed.');
+  invariant(seal.generatorCommitSha === HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.generatorCommitSha, 'V5 repair generator changed.');
+  invariant(
+    seal.githubArtifactName === 'humanoid-neutral-medium-xai-selective-v5-repair-encrypted',
+    'V5 repair artifact name changed.',
+  );
+  for (const [value, label] of [
+    [seal.githubArtifactZipSha256, 'V5 repair artifact ZIP SHA-256'],
+    [seal.encryptedArtifactSha256, 'V5 repair ciphertext SHA-256'],
+    [seal.inputManifestSha256, 'V5 input manifest SHA-256'],
+    [seal.inputPlanSha256, 'V5 input plan SHA-256'],
+    [seal.executionStateSha256, 'V5 execution state SHA-256'],
+    [seal.repairManifestSha256, 'V5 repair manifest SHA-256'],
+    [seal.repairPlanSha256, 'V5 repair plan SHA-256'],
+    [seal.sourceCanaryArtifactZipSha256, 'V5 source canary ZIP SHA-256'],
+    [seal.sourceCanaryCiphertextSha256, 'V5 source canary ciphertext SHA-256'],
+    [seal.sourceCanaryStateSha256, 'V5 source canary state SHA-256'],
+  ]) assertSha256(value, label);
+  invariant(seal.inputManifestSha256 === V5_INPUT_MANIFEST_SHA256, 'V5 input manifest trust pin changed.');
+  invariant(seal.inputPlanSha256 === V5_INPUT_PLAN_SHA256, 'V5 input plan trust pin changed.');
+  invariant(seal.sourceCanaryRunId === V5_CANARY_RUN_ID, 'V5 source canary run changed.');
+  invariant(seal.sourceCanaryGeneratorCommitSha === V5_CANARY_GENERATOR_SHA, 'V5 source canary generator changed.');
+  invariant(seal.sourceCanaryArtifactId === V5_CANARY_ARTIFACT_ID, 'V5 source canary artifact changed.');
+  invariant(seal.sourceCanaryArtifactZipSha256 === V5_CANARY_ARTIFACT_ZIP_SHA256, 'V5 source canary ZIP changed.');
+  invariant(seal.sourceCanaryCiphertextSha256 === V5_CANARY_CIPHERTEXT_SHA256, 'V5 source canary ciphertext changed.');
+  invariant(seal.sourceCanaryStateSha256 === V5_CANARY_STATE_SHA256, 'V5 source canary state changed.');
+  invariant(Array.isArray(seal.replacementPoseIds), 'V5 replacement pose set is not an array.');
+  invariant(
+    canonicalJson([...seal.replacementPoseIds].sort()) === canonicalJson([...HUMANOID_V5_REPLACEMENT_POSE_IDS].sort()),
+    'V5 replacement pose set changed.',
+  );
+  invariant(new Set(seal.replacementPoseIds).size === 24, 'V5 replacement pose set is not exactly 24 unique poses.');
+  return seal;
+}
+
+export function loadHumanoidV5ReplacementSeal({ sealPath, expectedSealSha256 }) {
+  assertSha256(expectedSealSha256, 'V5 replacement trust-seal SHA-256');
+  const snapshot = readRegularFileSnapshot(resolve(sealPath), 'V5 replacement trust seal', { maxBytes: 64 * 1024 });
+  invariant(snapshot.contentSha256 === expectedSealSha256, 'V5 replacement trust-seal bytes changed.');
+  const seal = JSON.parse(snapshot.bytes.toString('utf8'));
+  validateHumanoidV5ReplacementSeal(seal);
+  return Object.freeze({
+    seal,
+    sealPath: snapshot.path,
+    sealSha256: snapshot.contentSha256,
+  });
+}
+
+function verifyHumanoidV5ReplacementInputs({
+  baseInput,
+  replacementWorkDirectory,
+  replacementSealRecord,
+}) {
+  const { seal, sealSha256 } = replacementSealRecord;
+  validateHumanoidV5ReplacementSeal(seal);
+  assertSha256(sealSha256, 'V5 replacement trust-seal SHA-256');
+  invariant(
+    sealSha256 === HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.contentSha256
+      && replacementSealRecord.sealPath === resolve(HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.path),
+    'V5 replacement verifier accepts only the committed reviewed trust seal.',
+  );
+  const workDirectory = physicalDirectory(resolve(replacementWorkDirectory), 'sealed V5 replacement work directory');
+  const stateSnapshot = readRegularFileSnapshot(
+    join(workDirectory, 'state.json'),
+    'V5 replacement execution state',
+    { containmentRoot: workDirectory },
+  );
+  const manifestSnapshot = readRegularFileSnapshot(
+    join(workDirectory, 'inputs', 'input-manifest.json'),
+    'V5 replacement input manifest',
+    { containmentRoot: workDirectory },
+  );
+  const repairManifestSnapshot = readRegularFileSnapshot(
+    join(workDirectory, 'inputs', 'repair-input-manifest.json'),
+    'V5 repair input manifest',
+    { containmentRoot: workDirectory },
+  );
+  invariant(stateSnapshot.contentSha256 === seal.executionStateSha256, 'V5 replacement execution state is not the reviewed sealed state.');
+  invariant(manifestSnapshot.contentSha256 === seal.inputManifestSha256, 'V5 replacement input manifest is not the reviewed sealed manifest.');
+  invariant(repairManifestSnapshot.contentSha256 === seal.repairManifestSha256, 'V5 repair manifest is not the reviewed sealed manifest.');
+
+  const state = JSON.parse(stateSnapshot.bytes.toString('utf8'));
+  const manifest = JSON.parse(manifestSnapshot.bytes.toString('utf8'));
+  const repairManifest = JSON.parse(repairManifestSnapshot.bytes.toString('utf8'));
+  const { planSha256, ...manifestCore } = manifest;
+  const { planSha256: repairPlanSha256, ...repairManifestCore } = repairManifest;
+  invariant(manifest.schemaVersion === 2 && manifest.experimentId === V5_EXPERIMENT_ID, 'V5 replacement manifest identity changed.');
+  invariant(manifest.model?.id === EXPECTED_MODEL_ID, 'V5 replacement model changed.');
+  invariant(planSha256 === sha256(canonicalJson(manifestCore)) && planSha256 === V5_INPUT_PLAN_SHA256, 'V5 replacement input plan changed.');
+  invariant(
+    repairPlanSha256 === sha256(canonicalJson(repairManifestCore))
+      && repairPlanSha256 === seal.repairPlanSha256,
+    'V5 repair plan differs from the recomputed sealed Linux plan.',
+  );
+  invariant(
+    canonicalJson(humanoidManifestTopology(manifest)) === canonicalJson(humanoidManifestTopology(baseInput.manifest)),
+    'V5 replacement pose topology differs from the sealed V4 plan.',
+  );
+  invariant(repairManifest.schemaVersion === 1 && repairManifest.experimentId === V5_EXPERIMENT_ID, 'V5 repair manifest identity changed.');
+  invariant(repairManifest.sourceManifestSha256 === V5_INPUT_MANIFEST_SHA256, 'V5 repair source manifest changed.');
+  invariant(repairManifest.sourcePlanSha256 === V5_INPUT_PLAN_SHA256, 'V5 repair source plan changed.');
+  invariant(repairManifest.sourceStateSha256 === V5_CANARY_STATE_SHA256, 'V5 repair source state changed.');
+  invariant(
+    canonicalJson(repairManifest.selection?.map((entry) => entry.poseId)) === canonicalJson(V5_REPAIR_POSE_IDS),
+    'V5 repair selection changed.',
+  );
+  invariant(repairManifest.policy?.paidCalls === 19, 'V5 repair paid-call count changed.');
+  invariant(repairManifest.policy?.maximumTotalCostMicrocredits === 1_900_000, 'V5 repair maximum cost changed.');
+  invariant(
+    repairManifest.policy?.automaticRetries === 0
+      && repairManifest.policy?.fallback === 'none'
+      && repairManifest.policy?.fullBatch === false
+      && repairManifest.policy?.import === false
+      && repairManifest.policy?.activation === false
+      && repairManifest.policy?.humanReviewRequired === true,
+    'V5 repair safety policy changed.',
+  );
+
+  invariant(state.schemaVersion === 2 && state.experimentId === V5_EXPERIMENT_ID, 'V5 replacement state identity changed.');
+  invariant(state.planSha256 === V5_INPUT_PLAN_SHA256 && state.manifestSha256 === V5_INPUT_MANIFEST_SHA256, 'V5 replacement state plan changed.');
+  invariant(state.status === 'repair_complete_human_review_required', 'V5 replacement checkpoint is not complete and awaiting human review.');
+  invariant(state.completedPoseCount === 24 && state.repairCompletedPoseCount === 19, 'V5 replacement completion counts changed.');
+  invariant(state.repairCostMicrocredits === 1_900_000 && state.totalCostMicrocredits === 2_400_000, 'V5 replacement cost accounting changed.');
+  invariant(state.generatorCommitSha === V5_CANARY_GENERATOR_SHA && state.rootRunId === V5_CANARY_RUN_ID, 'V5 replacement root lineage changed.');
+  invariant(state.repair?.generatorCommitSha === seal.generatorCommitSha, 'V5 repair generator lineage changed.');
+  invariant(state.repair?.planSha256 === seal.repairPlanSha256, 'V5 state repair plan changed.');
+  invariant(state.repair?.manifestSha256 === seal.repairManifestSha256, 'V5 state repair manifest pin changed.');
+  invariant(state.repair?.sourceRunId === V5_CANARY_RUN_ID && String(state.repair?.sourceArtifactId) === V5_CANARY_ARTIFACT_ID, 'V5 state source checkpoint changed.');
+  invariant(
+    state.repair?.policy?.automaticRetries === 0
+      && state.repair?.policy?.fallback === 'none'
+      && state.repair?.policy?.fullBatch === false
+      && state.repair?.policy?.import === false
+      && state.repair?.policy?.activation === false
+      && state.repair?.policy?.humanReviewRequired === true,
+    'V5 state repair safety policy changed.',
+  );
+  invariant(Array.isArray(state.executionRuns) && state.executionRuns.length === 2, 'V5 execution lineage must contain exactly canary plus repair.');
+  invariant(
+    state.executionRuns[0]?.runId === V5_CANARY_RUN_ID
+      && state.executionRuns[0]?.mode === 'canary'
+      && state.executionRuns[0]?.generatorCommitSha === V5_CANARY_GENERATOR_SHA,
+    'V5 canary execution tuple changed.',
+  );
+  invariant(
+    state.executionRuns[1]?.runId === seal.githubActionsRunId
+      && state.executionRuns[1]?.mode === 'repair'
+      && state.executionRuns[1]?.generatorCommitSha === seal.generatorCommitSha,
+    'V5 repair execution tuple changed.',
+  );
+  invariant(
+    canonicalJson(Object.keys(state.slots ?? {}).sort()) === canonicalJson([...HUMANOID_V5_REPLACEMENT_POSE_IDS].sort()),
+    'V5 replacement state does not contain exactly the reviewed 24 poses.',
+  );
+  invariant(
+    canonicalJson(Object.keys(state.references ?? {}).sort())
+      === canonicalJson(['identity', ...HUMANOID_V5_REPLACEMENT_POSE_IDS].sort()),
+    'V5 replacement reference set changed.',
+  );
+
+  const poseById = new Map(manifest.uniquePoses.map((pose) => [pose.poseId, pose]));
+  const baseRawByPoseId = new Map(baseInput.verified.map((entry) => [entry.pose.poseId, entry.raw.contentSha256]));
+  const replacements = new Map();
+  for (const poseId of HUMANOID_V5_REPLACEMENT_POSE_IDS) {
+    const pose = poseById.get(poseId);
+    invariant(pose, `${poseId} is missing from the V5 replacement manifest.`);
+    const slot = state.slots[poseId];
+    invariant(slot?.status === 'completed' && slot?.providerStatus === 'completed', `${poseId} V5 replacement is not completed.`);
+    invariant(slot?.modelId === EXPECTED_MODEL_ID, `${poseId} V5 replacement model changed.`);
+    invariant(slot?.costMicrocredits === 100_000, `${poseId} V5 replacement cost changed.`);
+    const artifact = slot.artifacts?.image;
+    invariant(artifact?.mimeType === 'image/png', `${poseId} V5 replacement MIME changed.`);
+    invariant(artifact.width === HUMANOID_POSTPROCESS_CANVAS.outputWidth && artifact.height === HUMANOID_POSTPROCESS_CANVAS.outputHeight, `${poseId} V5 replacement dimensions changed.`);
+    verifyStateArtifactPath(artifact.path, manifest, pose);
+    const rawPath = expectedRawPath(workDirectory, manifest, pose);
+    const rawSnapshot = readRegularFileSnapshot(rawPath, `${poseId} V5 replacement raw`, { containmentRoot: workDirectory, maxBytes: MAX_PNG_BYTES });
+    const raw = inspectPngBytes(rawSnapshot.bytes, `${poseId} V5 replacement raw`);
+    invariant(raw.contentSha256 === artifact.contentSha256 && raw.sizeBytes === artifact.sizeBytes, `${poseId} V5 replacement bytes differ from its sealed state.`);
+    invariant(raw.width === HUMANOID_POSTPROCESS_CANVAS.outputWidth && raw.height === HUMANOID_POSTPROCESS_CANVAS.outputHeight, `${poseId} V5 replacement raw dimensions changed.`);
+    invariant(raw.contentSha256 !== baseRawByPoseId.get(poseId), `${poseId} V5 replacement is byte-identical to the superseded V4 raw.`);
+    replacements.set(poseId, Object.freeze({ slot, rawPath, raw, rawBytes: rawSnapshot.bytes }));
+  }
+  invariant(replacements.size === 24, 'V5 replacement verification did not produce exactly 24 raws.');
+  invariant(
+    [...replacements.values()].reduce((total, entry) => total + entry.slot.costMicrocredits, 0) === 2_400_000,
+    'V5 replacement slot costs do not sum to the sealed combined cost.',
+  );
+  return {
+    workDirectory,
+    state,
+    manifest,
+    repairManifest,
+    stateSha256: stateSnapshot.contentSha256,
+    manifestSha256: manifestSnapshot.contentSha256,
+    repairManifestSha256: repairManifestSnapshot.contentSha256,
+    replacementSeal: seal,
+    replacementSealSha256: sealSha256,
+    replacements,
+  };
+}
+
+export function verifyHumanoidCombinedPostprocessInputs({
+  workDirectory,
+  replacementWorkDirectory,
+  knownVisualFindings = HUMANOID_POSTPROCESS_KNOWN_VISUAL_FINDINGS,
+}) {
+  const replacementSealRecord = loadHumanoidV5ReplacementSeal({
+    sealPath: HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.path,
+    expectedSealSha256: HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.contentSha256,
+  });
+  const baseInput = verifyHumanoidPostprocessInputs({ workDirectory, knownVisualFindings });
+  const replacement = verifyHumanoidV5ReplacementInputs({
+    baseInput,
+    replacementWorkDirectory,
+    replacementSealRecord,
+  });
+  const replacementPoseIds = new Set(HUMANOID_V5_REPLACEMENT_POSE_IDS);
+  const verified = baseInput.verified.map((item) => {
+    const replacementItem = replacement.replacements.get(item.pose.poseId);
+    if (!replacementItem) return {
+      ...item,
+      rawProvenance: Object.freeze({ source: 'sealed_v4', executionStateSha256: baseInput.stateSha256 }),
+    };
+    const canaryReplacement = V5_CANARY_POSE_IDS.includes(item.pose.poseId);
+    return {
+      ...item,
+      slot: replacementItem.slot,
+      rawPath: replacementItem.rawPath,
+      raw: replacementItem.raw,
+      rawBytes: replacementItem.rawBytes,
+      rawProvenance: Object.freeze({
+        source: 'reviewed_v5_replacement',
+        executionStateSha256: replacement.stateSha256,
+        checkpointRunId: replacement.replacementSeal.githubActionsRunId,
+        generationMode: canaryReplacement ? 'canary' : 'repair',
+        generationRunId: canaryReplacement ? V5_CANARY_RUN_ID : replacement.replacementSeal.githubActionsRunId,
+        generationGeneratorCommitSha: canaryReplacement
+          ? V5_CANARY_GENERATOR_SHA
+          : replacement.replacementSeal.generatorCommitSha,
+        supersededV4RawSha256: item.raw.contentSha256,
+      }),
+    };
+  });
+  invariant(verified.filter((item) => item.rawProvenance.source === 'reviewed_v5_replacement').length === 24, 'Combined input did not replace exactly 24 poses.');
+  invariant(verified.filter((item) => item.rawProvenance.source === 'sealed_v4').length === 70, 'Combined input did not retain exactly 70 V4 poses.');
+  invariant(verified.filter((item) => item.rawProvenance.generationMode === 'canary').length === 5, 'Combined input lost the five-pose V5 canary generation lineage.');
+  invariant(verified.filter((item) => item.rawProvenance.generationMode === 'repair').length === 19, 'Combined input lost the nineteen-pose V5 repair generation lineage.');
+  const supersededVisualReviewFindings = baseInput.knownVisualReviewFindings.filter((finding) => replacementPoseIds.has(finding.poseId));
+  const activeVisualReviewFindings = baseInput.knownVisualReviewFindings.filter((finding) => !replacementPoseIds.has(finding.poseId));
+  const replacementRawByPoseId = new Map(verified.map((item) => [item.pose.poseId, item.raw.contentSha256]));
+  const sealedSupersededFindings = supersededVisualReviewFindings.map((finding) => ({
+    ...finding,
+    replacementRawContentSha256: replacementRawByPoseId.get(finding.poseId),
+  }));
+  invariant(activeVisualReviewFindings.length === 3, 'Combined input must retain exactly the three accepted V4 P2 findings for human review.');
+  invariant(sealedSupersededFindings.length === 28, 'Combined input must supersede exactly the 28 V4 findings covered by the reviewed replacement set.');
+  return {
+    ...baseInput,
+    verified,
+    knownVisualReviewFindings: activeVisualReviewFindings,
+    supersededVisualReviewFindings: sealedSupersededFindings,
+    combination: {
+      base: {
+        executionStateSha256: baseInput.stateSha256,
+        inputManifestSha256: baseInput.manifestSha256,
+      },
+      replacement: {
+        executionStateSha256: replacement.stateSha256,
+        inputManifestSha256: replacement.manifestSha256,
+        repairManifestSha256: replacement.repairManifestSha256,
+        trustSealSha256: replacement.replacementSealSha256,
+        trustedArtifactProvenance: {
+          encryptedArtifactSha256: replacement.replacementSeal.encryptedArtifactSha256,
+          githubArtifactZipSha256: replacement.replacementSeal.githubArtifactZipSha256,
+          githubArtifactId: replacement.replacementSeal.githubArtifactId,
+          githubActionsRunId: replacement.replacementSeal.githubActionsRunId,
+          generatorCommitSha: replacement.replacementSeal.generatorCommitSha,
+          verification: 'out_of_band_provenance',
+        },
+      },
+      replacementPoseIds: [...HUMANOID_V5_REPLACEMENT_POSE_IDS],
+      replacementPoseCount: 24,
+      retainedV4PoseCount: 70,
+    },
+  };
+}
+
 export function hardlinkOrCopyExclusive(source, destination, outputRoot, expectedContentSha256) {
   invariant(/^[a-f0-9]{64}$/.test(expectedContentSha256 ?? ''), 'Frame master expected SHA-256 is required.');
   const absoluteSource = resolve(source);
@@ -632,12 +1040,28 @@ export function parseHumanoidPostprocessCliArgs(rawArgs) {
   };
   const workDirectory = resolve(value('--work-dir', join(root, '.humanoid-template-v4-work')));
   const outputDirectory = resolve(value('--output-dir', join(workDirectory, 'postprocessed-v1')));
+  const replacementWorkValue = value('--replacement-work-dir');
+  const replacementSealValue = value('--replacement-seal');
+  const replacementSealShaValue = value('--replacement-seal-sha256');
+  const replacementConfigured = replacementWorkValue !== '';
+  const customSealConfigured = replacementSealValue !== '' || replacementSealShaValue !== '';
+  invariant(
+    !customSealConfigured,
+    'Custom V5 trust seals are forbidden; this postprocessor accepts only the reviewed committed repair artifact.',
+  );
   invariant(outputDirectory !== workDirectory, 'Postprocess output must not replace the sealed work directory.');
   if (value('--output-dir') === '') invariant(outputDirectory.startsWith(`${workDirectory}${sep}`), 'Default postprocess output path is invalid.');
   return {
     workDirectory,
     outputDirectory,
     ffmpegBinary: value('--ffmpeg', 'ffmpeg'),
+    replacementWorkDirectory: replacementConfigured ? resolve(replacementWorkValue) : null,
+    replacementSealPath: replacementConfigured
+      ? HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.path
+      : null,
+    replacementSealSha256: replacementConfigured
+      ? HUMANOID_V5_REPLACEMENT_TRUSTED_SEAL.contentSha256
+      : null,
   };
 }
 
@@ -646,7 +1070,13 @@ export async function postprocessHumanoidTemplate(options) {
   const workDirectory = resolve(options.workDirectory);
   const outputDirectory = resolve(options.outputDirectory ?? join(workDirectory, 'postprocessed-v1'));
   const ffmpegBinary = options.ffmpegBinary ?? 'ffmpeg';
-  const input = verifyHumanoidPostprocessInputs({ workDirectory });
+  const replacementConfigured = Boolean(options.replacementWorkDirectory);
+  const input = replacementConfigured
+    ? verifyHumanoidCombinedPostprocessInputs({
+      workDirectory,
+      replacementWorkDirectory: options.replacementWorkDirectory,
+    })
+    : verifyHumanoidPostprocessInputs({ workDirectory });
   const version = ffmpegVersion(ffmpegBinary);
   createOutputRootExclusive(outputDirectory);
 
@@ -836,9 +1266,14 @@ export async function postprocessHumanoidTemplate(options) {
       QA_THUMBNAIL_HEIGHT,
     ));
     const poseKnownFindings = input.knownVisualReviewFindings.filter((finding) => finding.poseId === pose.poseId);
+    const poseSupersededFindings = (input.supersededVisualReviewFindings ?? []).filter((finding) => finding.poseId === pose.poseId);
     poseRecords.push({
       poseId: pose.poseId,
       sourceSlots: pose.sourceSlots,
+      rawProvenance: item.rawProvenance ?? {
+        source: 'sealed_v4',
+        executionStateSha256: input.stateSha256,
+      },
       source: {
         path: relative(workDirectory, sourcePath),
         contentSha256: pose.contentSha256,
@@ -861,6 +1296,7 @@ export async function postprocessHumanoidTemplate(options) {
         status: 'required',
         automatedApproval: false,
         knownFindings: poseKnownFindings,
+        supersededSourceFindings: poseSupersededFindings,
       },
     });
   }
@@ -890,11 +1326,20 @@ export async function postprocessHumanoidTemplate(options) {
     }
     frameRecords.push({
       ...frameSlot,
+      rawProvenance: input.verified.find((entry) => entry.pose.poseId === frameSlot.poseId)?.rawProvenance ?? {
+        source: 'sealed_v4',
+        executionStateSha256: input.stateSha256,
+      },
       outputs: frameOutputs,
       semanticReview: {
         status: 'required',
         automatedApproval: false,
         knownFindings: input.knownVisualReviewFindings.filter((finding) => (
+          finding.animationName === frameSlot.animationName
+          && finding.frameNumber === frameSlot.frameNumber
+          && finding.poseId === frameSlot.poseId
+        )),
+        supersededSourceFindings: (input.supersededVisualReviewFindings ?? []).filter((finding) => (
           finding.animationName === frameSlot.animationName
           && finding.frameNumber === frameSlot.frameNumber
           && finding.poseId === frameSlot.poseId
@@ -957,6 +1402,7 @@ export async function postprocessHumanoidTemplate(options) {
     postprocessId: HUMANOID_POSTPROCESS_ID,
     status,
     source: {
+      mode: input.combination ? 'sealed_v4_plus_reviewed_v5_replacements' : 'sealed_v4',
       experimentId: input.manifest.experimentId,
       generatorCommitSha: input.state.generatorCommitSha,
       planSha256: input.manifest.planSha256,
@@ -969,6 +1415,7 @@ export async function postprocessHumanoidTemplate(options) {
         githubActionsRunId: HUMANOID_V4_TRUSTED_SEAL.githubActionsRunId,
         verification: 'out_of_band_provenance',
       },
+      combination: input.combination ?? null,
     },
     implementation: {
       scriptSha256: implementationSnapshot.scriptSha256,
@@ -986,6 +1433,9 @@ export async function postprocessHumanoidTemplate(options) {
       hardFailures: topLevelHardFailures.length,
       semanticReviewRequiredFrameSlots: frameRecords.length,
       knownVisualReviewFindings: input.knownVisualReviewFindings.length,
+      supersededVisualReviewFindings: input.supersededVisualReviewFindings?.length ?? 0,
+      v5ReplacementPoses: input.combination?.replacementPoseCount ?? 0,
+      retainedV4Poses: input.combination?.retainedV4PoseCount ?? input.verified.length,
     },
     reviewReasons: topLevelReviewReasons,
     hardFailures: topLevelHardFailures,
@@ -996,6 +1446,7 @@ export async function postprocessHumanoidTemplate(options) {
       automatedApproval: false,
       requiredFrameSlots: frameRecords.length,
       knownFindings: input.knownVisualReviewFindings,
+      supersededSourceFindings: input.supersededVisualReviewFindings ?? [],
     },
     poses: poseRecords,
     frameSlots: frameRecords,
