@@ -7,9 +7,9 @@ destination: website-embed
 aspect: 1920x1080
 language: en
 audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
-length: 13.35s
-angle: "Photo to fighter to real gameplay"
-narration: "One short arcade-announcer line"
+length: 20.05s
+angle: "Drag a photo into the game, become a fighter, then prove it in real gameplay"
+narration: "A concise product explanation ending with the arcade-announcer lockup"
 ---
 
 ## Intent
@@ -23,29 +23,33 @@ not like an AI avatar advertisement or a software walkthrough.
 
 - `../../public/assets/social-card-v7.jpg` - approved transformation concept and visual reference.
 - `assets/transformation-visual.png` - frozen, clean photo-to-fighter source visual.
-- `assets/generated/player-one-photo-start.png` - deterministic 16:9 start frame built from the exact source portrait.
+- `assets/generated/player-one-photo-matched-v1.png` - wardrobe-matched photoreal portrait that preserves Player One's identity, pose, and studio framing while aligning the real clothing with the approved fighter.
 - `assets/generated/player-one-upright-canonical.png` - exact approved production upright cutout for Player One.
 - `assets/generated/player-one-final-frame.png` - deterministic arena composite using that exact cutout.
+- `assets/generated/casual-photo-card-v1.webp` - exact second-person portrait already used on the production landing page.
+- `assets/generated/casual-fighter-card-v1.webp` - exact matching Casual fighter already used on the production landing page.
 - `references/neon-arena-creative-fingerprint-v1.json` - private-reference fingerprint derived from the supplied Suno track; the source MP3 is not distributed.
-- `assets/generated/launch-mix-original-neon-gameplay-v4.wav` - extended hybrid mix preserving the approved `Ready... Insert Player` opening and carrying the user-supplied `Neon Arena` recording to its next low-energy musical exit through the closing lockup.
-- `assets/generated/tts-announcer-v1.wav` - private Gemini TTS announcer line.
+- `assets/generated/launch-bed-original-neon-v10.wav` - the approved 18-second `Neon Arena` mix extended to 20.05 seconds with a quiet branded reverb tail for the longer CTA hold; no music phrase or voiceover was regenerated.
+- `assets/generated/tts-launch-friends-v5-retimed.wav` - the approved Gemini TTS explanation with only its final `Ready? Insert Player.` phrase delayed to the closing lockup; no speech was regenerated.
 - `assets/generated/omni-photo-to-fighter-v2-neon-sync.mp4` - private Omni timing canary, retained for audit but rejected from the final cut because its target was not the immutable global Champion frame.
-- `assets/fight-montage-four-stages-current2-extended.mp4` - the second freshly captured, telemetry-trimmed set of production matches from the current live renderer, extended to 33 frames per rival. Every cut uses Player One's Champion 2x atlas and passed dense frame-sequence review for stable crouch and low-attack scale.
+- `assets/fight-montage-player-one-vs-casual-v12.mp4` - one 2.40-second production loading curtain for Casual versus Player One, followed by their real one-second bout and seven one-second global-roster exchanges featuring Trump, Rosalía, Elon Musk, and Lamine Yamal.
 
 ## Customizations
 
 - Borrow the structural idea from Hilo's product promos: real footage, a few crisp branded action beats, and a strong end card.
-- Preserve the approved opening mix and Gemini TTS announcer unchanged through `4.65s`. Start the user-supplied `Neon Arena` recording from its beginning exactly when gameplay enters, retaining the cabinet fight SFX above it and fading on the next low-energy musical exit at `13.35s`.
+- Preserve the approved explanatory voiceover, delaying only its final `Ready? Insert Player.` lockup so it lands with the closing title. Duck the user-supplied `Neon Arena` bed beneath speech while retaining the cabinet fight SFX; let the approved close bloom into a low reverb tail during the final reading hold.
 - Reject the mix if any measured late-gameplay or closing-fade window falls below `-50 dBFS`; `loudnorm` may change its internal sample rate, so post-normalization trims must be time-based.
-- Keep the private full-length recording outside the repository. Publish only the `8.7s` excerpt embedded in this `13.35s` launch cut.
-- Keep the transformation literal and readable: `YOUR PHOTO`, the official P1 + `INSERT PLAYER` reveal, then `YOUR FIGHT`.
+- Keep the private full-length recordings outside the repository. Publish only the selected proof excerpts embedded in this `20.05s` launch cut.
+- Keep the transformation literal and readable: physically drag Player One's photo into the P1 slot, transform it into the approved fighter, confirm the same operation with Casual, then enter `YOUR FIGHT`.
 
 ## Notes
 
 - Use Insert Player branding only: P1, cabinet black, coin red, coin gold, CRT cream, and glass blue.
 - Never reproduce Hilo's logo, purple palette, typography, wording, action pills, or other proprietary brand elements.
 - Show real gameplay and real generated fighters. Do not fake a fight in motion graphics.
-- Keep the production gameplay proof to four `1.1s` cuts and feature the same Player One shown in the transformation across all four current signature stages.
+- The wardrobe-matched Player One portrait may change clothing only. Identity, face, hair, body proportions, pose, studio lighting, and framing remain the same.
+- The closing card lasts exactly five seconds. Type `INSERT PLAYER` first, then `CREATE YOUR FIGHTER FOR FREE`, reveal `INSERTPLAYER.AI`, and hold the completed card long enough to read.
+- Open the proof block with one `2.40s` production `CASUAL VS PLAYER ONE` loading curtain, pay it off with their real `1s` bout, then continue through seven `1s` global-roster recordings. Do not repeat the loader for the other rivals.
 - Capture desktop gameplay with an explicit 8 GB capability profile and retain the loader logs proving that Player One used 384x512 atlas cells at density 2x.
 - Avoid franchise imitation, cartoon exaggeration, generic AI language, and slow cinematic choreography.
 - Generated media is private and single-candidate: no automatic retries, fallbacks, or publishing.

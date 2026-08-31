@@ -1,0 +1,19 @@
+{
+  "version": 4,
+  "role": "launch explainer voiceover",
+  "model": "gemini-tts",
+  "upstreamModel": "gemini-3.1-flash-tts-preview",
+  "accessPath": "PixCLI through Meterkey",
+  "providerJobId": "de62767ced20869418fc083f216f2775",
+  "voice": "Orus",
+  "language": "en",
+  "meteredCostMicrocredits": 60000,
+  "promptFile": "prompts/tts-launch-friends-v4.txt",
+  "promptSha256": "22f6bd784ec833eee766601f7e2d98ffe9e1577543563942e7c86cd82be2a8a6",
+  "outputFile": "assets/generated/tts-launch-friends-v4.wav",
+  "outputSha256": "8bfd6efccb2351ccbb926435f638bb349838e2826cc5d9491914c8a1aacd03dc",
+  "durationSeconds": 12.04,
+  "retries": 0,
+  "fallbacks": 0,
+  "published": false
+}

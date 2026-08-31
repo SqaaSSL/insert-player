@@ -1,0 +1,90 @@
+{
+  "version": 13,
+  "project": "insert-player-launch",
+  "acceptance": "requested_release_update",
+  "change": "Replace the Trump opening with the real Casual versus Player One loading curtain and bout so the two transformed personal fighters pay off immediately. Preserve the approved transformation, seven subsequent global-roster cuts, narration, Neon Arena mix, and five-second closing card.",
+  "timing": {
+    "totalDurationSeconds": 20.066667,
+    "transformationSeconds": [0, 4.95],
+    "gameplaySeconds": [4.65, 15.316667],
+    "closingLockupSeconds": [15.05, 20.05],
+    "loadingDurationSeconds": 2.4,
+    "fightClipDurationSeconds": 1,
+    "fightClipCount": 8,
+    "framesPerSecond": 30
+  },
+  "gameplayMontage": {
+    "buildScript": "scripts/build-fight-montage-with-loading.mjs",
+    "buildScriptSha256": "7a68969e6d60ea8ad858801844fc20862e411a4546e0055547e9c500fd8cd77e",
+    "manifestFile": "assets/fight-montage-player-one-vs-casual-v12.json",
+    "manifestSha256": "b4f121842be6c7313a8dee3e4d95bf3a4910a5f51281dd5b34c4bcb666598f8e",
+    "outputFile": "assets/fight-montage-player-one-vs-casual-v12.mp4",
+    "outputSha256": "1bf4c32bc48ea5a831d5c0ee3f2c27859ba12c074feb669ea7199b582eb3bbdd",
+    "outputSizeBytes": 22577755,
+    "durationSeconds": 10.666667,
+    "frameCount": 320,
+    "keyframeIntervalSeconds": 1,
+    "opening": {
+      "captureId": "casual-vs-player-one",
+      "fighter": "Casual",
+      "opponent": "Player One",
+      "stage": "LA JAULA 304",
+      "loadingSeconds": [0, 2.4],
+      "fightSeconds": [2.4, 3.4]
+    },
+    "remainingOrder": [
+      "Casual vs Donald Trump — INSERT PLAYER ARENA",
+      "Player One vs Rosalía — TABLAO 3000",
+      "Rosalía vs Casual — TABLAO 3000",
+      "Player One vs Elon Musk — MARS INCORPORATED",
+      "Elon Musk vs Casual — MARS INCORPORATED",
+      "Player One vs Lamine Yamal — LA JAULA 304",
+      "Lamine Yamal vs Casual — LA JAULA 304"
+    ]
+  },
+  "audio": {
+    "musicFile": "assets/generated/launch-bed-original-neon-v10.wav",
+    "musicSha256": "c13d3bda8ef8a5ebb47bd7c7fa5ebc61ddb25569616f455f8d1e05b9000411a2",
+    "voiceFile": "assets/generated/tts-launch-friends-v5-retimed.wav",
+    "voiceSha256": "1bc3564e8f31116269d893b1bee0137e37d0b1b7c4169947534ff63e8523705a",
+    "regenerated": false,
+    "integratedLoudnessLufs": -19.5,
+    "loudnessRangeLu": 6.1,
+    "truePeakDbfs": -5.0
+  },
+  "validation": {
+    "hyperframesVersion": "0.8.21",
+    "hyperframesCheck": {
+      "lintErrors": 0,
+      "runtimeErrors": 0,
+      "layoutIssues": 0,
+      "motionIssues": 0,
+      "contrastChecksPassed": "10/10"
+    },
+    "audioRegressionTests": {
+      "tests": 2,
+      "result": "passed"
+    },
+    "visualReview": "12-frame contact sheet inspected",
+    "providerCalls": 0,
+    "inferenceCostUsd": 0
+  },
+  "release": {
+    "masterFile": "renders/insert-player-launch-player-one-vs-casual-v13.mp4",
+    "masterSha256": "30c2e37c51e27522bea57ae663bd2214ef7436a309d021b092fb2fc6ec706dbd",
+    "masterSizeBytes": 23188942,
+    "publicFile": "../../public/assets/insert-player-launch-252e3853.mp4",
+    "publicPath": "/assets/insert-player-launch-252e3853.mp4",
+    "publicSha256": "252e38537a9fc943a639f321d080b1ad8a91bdc530e5162730c2adae2cc63ee9",
+    "publicSizeBytes": 12359793,
+    "sourceToWebSsim": 0.995355,
+    "encoding": {
+      "video": "H.264 High, CRF 18, yuv420p, faststart",
+      "audio": "AAC LC, 192 kbps",
+      "width": 1920,
+      "height": 1080,
+      "framesPerSecond": 30,
+      "durationSeconds": 20.066667
+    }
+  }
+}
