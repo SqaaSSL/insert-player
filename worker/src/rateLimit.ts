@@ -78,6 +78,10 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
     anonymous: { limit: 1, windowSeconds: 60 * 60 },
     signedIn: { limit: 60, windowSeconds: 60 * 60 },
   },
+  'versus:guest-join': {
+    anonymous: { limit: 12, windowSeconds: 60 * 60 },
+    signedIn: { limit: 60, windowSeconds: 60 * 60 },
+  },
   'versus:invite': {
     anonymous: { limit: 1, windowSeconds: 60 * 60 },
     signedIn: { limit: 120, windowSeconds: 60 * 60 },

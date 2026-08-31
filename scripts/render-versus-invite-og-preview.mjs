@@ -6,6 +6,7 @@ import {
   VERSUS_INVITE_FIGHTER_ASSET_URL,
   VERSUS_INVITE_OG_HEIGHT,
   VERSUS_INVITE_OG_WIDTH,
+  VERSUS_INVITE_TEMPLATE_VERSION,
 } from '../worker/src/versusInviteOgTemplate.ts';
 
 function localPath(relative) {
@@ -17,7 +18,7 @@ function exactArrayBuffer(buffer) {
 }
 
 const fighterPath = process.argv[2] ?? localPath('../public/assets/landing-panel-fighter-c2d0a569.webp');
-const outputPath = process.argv[3] ?? '/tmp/insert-player-versus-loading-challenge-v4.png';
+const outputPath = process.argv[3] ?? `/tmp/insert-player-versus-${VERSUS_INVITE_TEMPLATE_VERSION}.png`;
 const [fighter, pressStart, spaceRegular, spaceBold] = await Promise.all([
   readFile(fighterPath),
   readFile(localPath('../worker/node_modules/@fontsource/press-start-2p/files/press-start-2p-latin-400-normal.woff2')),

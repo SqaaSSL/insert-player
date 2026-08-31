@@ -94,7 +94,9 @@ import {
   onlineVersusStatus,
   resolveVersusMatchParticipants,
   versusIceServers,
+  type VersusRoomParticipant,
 } from './matchRoomRoutes';
+import { normalizeRoomCode, verifyRoomTicket } from './matchRoomProtocol';
 import { versusInvitationOgImage, versusInvitationSharePage } from './versusInvites';
 import {
   getImportedGlobalVideoRecurationAsset,
@@ -238,6 +240,60 @@ async function authenticatedLimited(
     if (limited) return limited;
     return handler(auth);
   });
+}
+
+function roomAuthorizationToken(request: Request): string | null {
+  const match = request.headers.get('Authorization')?.match(/^Room\s+(\S+)$/i);
+  return match?.[1] ?? null;
+}
+
+async function roomTicketParticipant(
+  request: Request,
+  env: Env,
+  rawRoomCode?: string,
+): Promise<(VersusRoomParticipant & { rateLimitKey: string }) | Response | null> {
+  const token = roomAuthorizationToken(request);
+  if (!token) return null;
+  const ticket = await verifyRoomTicket(env, token);
+  if (!ticket) return json({ error: 'Room session is invalid or expired' }, 401);
+  if (rawRoomCode) {
+    const roomCode = normalizeRoomCode(rawRoomCode);
+    if (!roomCode || ticket.roomCode !== roomCode) {
+      return json({ error: 'Room session does not match this room' }, 403);
+    }
+  }
+  return { userId: ticket.userId, rateLimitKey: `room:${ticket.userId}` };
+}
+
+async function versusParticipant(
+  request: Request,
+  env: Env,
+  rawRoomCode: string,
+  handler: (participant: VersusRoomParticipant) => Promise<Response>,
+): Promise<Response> {
+  const roomParticipant = await roomTicketParticipant(request, env, rawRoomCode);
+  if (isResponse(roomParticipant)) return roomParticipant;
+  if (roomParticipant) return handler(roomParticipant);
+  return authenticated(request, env, handler);
+}
+
+async function versusParticipantLimited(
+  request: Request,
+  env: Env,
+  routeKey: string,
+  rawRoomCode: string | undefined,
+  handler: (participant: VersusRoomParticipant) => Promise<Response>,
+): Promise<Response> {
+  const roomParticipant = await roomTicketParticipant(request, env, rawRoomCode);
+  if (isResponse(roomParticipant)) return roomParticipant;
+  if (!roomParticipant) return authenticatedLimited(request, env, routeKey, handler);
+  const limited = await enforceRateLimit(env, routeKey, {
+    userId: roomParticipant.userId,
+    rateLimitKey: roomParticipant.rateLimitKey,
+    user: null,
+    claims: null,
+  });
+  return limited ?? handler(roomParticipant);
 }
 
 function healthResponse(env: Env): Response {
@@ -1001,7 +1057,7 @@ export default {
 
       if (path === '/api/versus/ice-servers' && method === 'GET') {
         return addCors(
-          await authenticatedLimited(request, env, 'versus:ice', () => versusIceServers(env)),
+          await versusParticipantLimited(request, env, 'versus:ice', undefined, () => versusIceServers(env)),
           request,
           env,
         );
@@ -1011,16 +1067,14 @@ export default {
       if (versusInvitationJoinMatch && method === 'POST') {
         const token = decodePathParam(versusInvitationJoinMatch[1]);
         if (isResponse(token)) return addCors(token, request, env);
-        return addCors(
-          await authenticatedLimited(
-            request,
-            env,
-            'versus:room',
-            (auth) => joinVersusInvitation(request, env, auth, token),
-          ),
+        const limited = await enforceRateLimit(env, 'versus:guest-join', publicAuth);
+        if (limited) return addCors(limited, request, env);
+        return addCors(await joinVersusInvitation(
           request,
           env,
-        );
+          publicAuth.userId ? { userId: publicAuth.userId } : null,
+          token,
+        ), request, env);
       }
 
       const versusInvitationCreateMatch = path.match(/^\/api\/versus\/rooms\/([^/]+)\/invitations$/);
@@ -1048,7 +1102,7 @@ export default {
         if (invalid) return addCors(invalid, request, env);
         const [roomCode, fighterId, kind, id, revision] = params as string[];
         return addCors(
-          await authenticated(request, env, (auth) => getVersusRoomAsset(
+          await versusParticipant(request, env, roomCode, (auth) => getVersusRoomAsset(
             env, auth, roomCode, fighterId, kind as 'sprites' | 'sources', id, revision,
           )),
           request,
@@ -1069,21 +1123,38 @@ export default {
         }
         if (versusRoomMatch[2] === 'fighter' && method === 'POST') {
           return addCors(
-            await authenticatedLimited(request, env, 'versus:room', (auth) => declareVersusFighter(request, env, auth, roomCode)),
+            await versusParticipantLimited(
+              request,
+              env,
+              'versus:room',
+              roomCode,
+              (auth) => declareVersusFighter(request, env, auth, roomCode),
+            ),
             request,
             env,
           );
         }
         if (versusRoomMatch[2] === 'opponent-fighter' && method === 'GET') {
           return addCors(
-            await authenticated(request, env, (auth) => getVersusOpponentFighter(request, env, auth, roomCode)),
+            await versusParticipant(
+              request,
+              env,
+              roomCode,
+              (auth) => getVersusOpponentFighter(request, env, auth, roomCode),
+            ),
             request,
             env,
           );
         }
         if (versusRoomMatch[2] === 'match' && method === 'POST') {
           return addCors(
-            await authenticatedLimited(request, env, 'versus:room', (auth) => allocateVersusMatch(env, auth, roomCode)),
+            await versusParticipantLimited(
+              request,
+              env,
+              'versus:room',
+              roomCode,
+              (auth) => allocateVersusMatch(env, auth, roomCode),
+            ),
             request,
             env,
           );

@@ -1,6 +1,6 @@
 import type { QualityTier } from './types';
 
-export const VERSUS_INVITE_TEMPLATE_VERSION = 'loading-challenge-v4';
+export const VERSUS_INVITE_TEMPLATE_VERSION = 'loading-challenge-v5';
 export const VERSUS_INVITE_OG_WIDTH = 1200;
 export const VERSUS_INVITE_OG_HEIGHT = 630;
 export const VERSUS_INVITE_FIGHTER_ASSET_URL = 'asset://insert-player/versus-fighter';
@@ -154,9 +154,9 @@ export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: s
       .blue-energy--two { right: -45px; bottom: 139px; width: 430px; opacity: 0.24; }
 
       .fighter-stage { position: absolute; z-index: 3; left: 0; top: 0; width: 632px; height: 630px; overflow: hidden; }
-      .fighter-image { position: absolute; z-index: 0; left: -8px; top: 0; width: 672px; height: 630px; object-fit: cover; object-position: center top; }
+      .fighter-image { position: absolute; z-index: 4; left: -8px; top: 0; width: 672px; height: 630px; object-fit: cover; object-position: center top; }
       .fighter-wash { position: absolute; z-index: 1; inset: 0; background: linear-gradient(90deg, rgba(104,4,13,0.34) 0%, rgba(63,3,12,0.06) 56%, rgba(6,3,10,0.72) 100%); }
-      .inviter-plate { position: absolute; z-index: 5; left: 34px; top: 74px; width: 500px; min-height: 66px; padding: 12px 17px 13px; border-left: 4px solid #f13b47; background: rgba(5,4,11,0.88); box-shadow: 10px 10px 0 rgba(24,0,5,0.32); }
+      .inviter-plate { position: absolute; z-index: 3; left: 34px; top: 74px; width: 500px; min-height: 66px; padding: 12px 17px 13px; border-left: 4px solid #f13b47; background: rgba(5,4,11,0.88); box-shadow: 10px 10px 0 rgba(24,0,5,0.32); }
       .inviter-kicker { margin-bottom: 8px; color: #f13b47; font-family: 'Press Start 2P'; font-size: 7px; letter-spacing: 2px; }
       .inviter-name { width: 460px; color: #fff8df; font-family: 'Press Start 2P'; line-height: 1.28; letter-spacing: -1px; text-shadow: 3px 3px 0 #4d0b12; }
       .inviter-name--xl { font-size: 27px; }
@@ -164,7 +164,7 @@ export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: s
       .inviter-name--md { font-size: 18px; }
       .inviter-name--sm { font-size: 13px; }
       .inviter-name--xs { font-size: 10px; }
-      .fighter-caption { position: absolute; z-index: 4; left: 31px; bottom: 47px; width: 465px; }
+      .fighter-caption { position: absolute; z-index: 6; left: 31px; bottom: 47px; width: 465px; }
       .fighter-meta { margin-bottom: 9px; color: rgba(255,248,223,0.76); font-family: 'Press Start 2P'; font-size: 7px; letter-spacing: 1px; }
       .fighter-name { color: #ff3d49; font-family: 'Press Start 2P'; line-height: 1.22; letter-spacing: -1px; text-shadow: 4px 4px 0 #741019, 0 0 14px rgba(255,52,66,0.28); }
       .fighter-name--xl { font-size: 28px; }

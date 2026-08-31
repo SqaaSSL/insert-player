@@ -26,6 +26,11 @@ const MAX_JOIN_BODY_BYTES = 1024;
 const ROOM_CODE_ATTEMPTS = 4;
 const DEFAULT_STUN_SERVERS = ['stun:stun.cloudflare.com:3478'];
 const TURN_CREDENTIAL_TTL_SECONDS = 2 * 60 * 60;
+const VERSUS_GUEST_ID_PATTERN = /^[A-Za-z0-9_-]{20,64}$/;
+
+export interface VersusRoomParticipant {
+  userId: string;
+}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -67,28 +72,24 @@ export async function createVersusRoom(env: Env, auth: AuthContext): Promise<Res
   return json({ error: 'Could not allocate a room code' }, 503);
 }
 
-/** POST /api/versus/rooms/:code/join — take (or re-take) the guest seat. */
-export async function joinVersusRoom(
-  request: Request,
+async function joinVersusRoomAsParticipant(
   env: Env,
-  auth: AuthContext,
+  participant: VersusRoomParticipant,
   rawCode: string,
 ): Promise<Response> {
   if (!env.MATCH_ROOM) return json({ error: 'Online versus is not available' }, 503);
   const code = normalizeRoomCode(rawCode);
   if (!code) return json({ error: 'Invalid room code' }, 400);
-  // Body is optional today; read it so oversized bodies are still rejected.
-  await readJsonBody<Record<string, unknown>>(request, MAX_JOIN_BODY_BYTES).catch(() => ({}));
   const response = await roomStub(env, code).fetch('https://room/join', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userId: auth.userId, expectedSeat: 'guest' satisfies RoomSeat }),
+    body: JSON.stringify({ userId: participant.userId, expectedSeat: 'guest' satisfies RoomSeat }),
   });
   if (response.status === 404) return json({ error: 'Room not found' }, 404);
   if (response.status === 409) {
     const conflict: { error?: string } = await response.json<{ error?: string }>().catch(() => ({}));
     return conflict.error === 'seat_conflict'
-      ? json({ error: 'This account is already Player 1. Join with a different account.' }, 409)
+      ? json({ error: 'This player is already Player 1. Open the link on another device.' }, 409)
       : json({ error: 'Room is full' }, 409);
   }
   if (!response.ok) return json({ error: 'Could not join room' }, 502);
@@ -97,9 +98,38 @@ export async function joinVersusRoom(
     roomCode: code,
     seat,
     peerConnected,
-    ticket: await mintRoomTicket(env, { roomCode: code, seat, userId: auth.userId }),
+    ticket: await mintRoomTicket(env, { roomCode: code, seat, userId: participant.userId }),
     ticketExpiresInSeconds: ROOM_TICKET_TTL_SECONDS,
   });
+}
+
+/** POST /api/versus/rooms/:code/join — signed-in room-code fallback. */
+export async function joinVersusRoom(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  rawCode: string,
+): Promise<Response> {
+  // Body is optional today; read it so oversized bodies are still rejected.
+  await readJsonBody<Record<string, unknown>>(request, MAX_JOIN_BODY_BYTES).catch(() => ({}));
+  return joinVersusRoomAsParticipant(env, auth, rawCode);
+}
+
+export function normalizeVersusGuestId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const guestId = value.trim();
+  return VERSUS_GUEST_ID_PATTERN.test(guestId) ? guestId : null;
+}
+
+export async function deriveVersusGuestUserId(token: string, guestId: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`versus-guest:${token}:${guestId}`),
+  );
+  const suffix = Array.from(new Uint8Array(digest).slice(0, 16), (byte) => (
+    byte.toString(16).padStart(2, '0')
+  )).join('');
+  return `guest:${suffix}`;
 }
 
 /**
@@ -256,19 +286,28 @@ export async function createVersusInvitation(
 export async function joinVersusInvitation(
   request: Request,
   env: Env,
-  auth: AuthContext,
+  participant: VersusRoomParticipant | null,
   rawToken: string,
 ): Promise<Response> {
   const invitation = await readActiveVersusInvitation(env, rawToken);
   if (!invitation) return json({ error: 'Invitation is invalid or has expired' }, 410);
-  return joinVersusRoom(request, env, auth, invitation.record.room_code);
+  if (participant) {
+    await readJsonBody<Record<string, unknown>>(request, MAX_JOIN_BODY_BYTES).catch(() => ({}));
+    return joinVersusRoomAsParticipant(env, participant, invitation.record.room_code);
+  }
+  const body = await readJsonBody<{ guestId?: unknown }>(request, MAX_JOIN_BODY_BYTES);
+  const guestId = normalizeVersusGuestId(body.guestId);
+  if (!guestId) return json({ error: 'A valid guest identity is required' }, 400);
+  return joinVersusRoomAsParticipant(env, {
+    userId: await deriveVersusGuestUserId(invitation.token, guestId),
+  }, invitation.record.room_code);
 }
 
 /** POST /api/versus/rooms/:code/fighter { fighterId } — declare the fighter you will bring. */
 export async function declareVersusFighter(
   request: Request,
   env: Env,
-  auth: AuthContext,
+  auth: VersusRoomParticipant,
   rawCode: string,
 ): Promise<Response> {
   if (!env.MATCH_ROOM) return json({ error: 'Online versus is not available' }, 503);
@@ -296,7 +335,7 @@ export async function declareVersusFighter(
 export async function getVersusOpponentFighter(
   request: Request,
   env: Env,
-  auth: AuthContext,
+  auth: VersusRoomParticipant,
   rawCode: string,
 ): Promise<Response> {
   if (!env.MATCH_ROOM) return json({ error: 'Online versus is not available' }, 503);
@@ -320,7 +359,7 @@ export async function getVersusOpponentFighter(
  */
 export async function getVersusRoomAsset(
   env: Env,
-  auth: AuthContext,
+  auth: VersusRoomParticipant,
   rawCode: string,
   fighterId: string,
   kind: 'sprites' | 'sources',
@@ -342,7 +381,11 @@ export async function getVersusRoomAsset(
 }
 
 /** POST /api/versus/rooms/:code/match — host allocates the next match serial. */
-export async function allocateVersusMatch(env: Env, auth: AuthContext, rawCode: string): Promise<Response> {
+export async function allocateVersusMatch(
+  env: Env,
+  auth: VersusRoomParticipant,
+  rawCode: string,
+): Promise<Response> {
   if (!env.MATCH_ROOM) return json({ error: 'Online versus is not available' }, 503);
   const code = normalizeRoomCode(rawCode);
   if (!code) return json({ error: 'Invalid room code' }, 400);

@@ -114,6 +114,7 @@ describe('versus invitation protocol', () => {
     expect(markup).toContain(`https://api.insertplayer.ai/v/francisco-novella/${token}/og.png?v=${VERSUS_INVITE_TEMPLATE_VERSION}`);
     expect(markup).toContain(`https://insertplayer.ai/versus/online?invite=${token}`);
     expect(markup).toContain('from=Francisco+Novella');
+    expect(markup).toContain('fighter=Rosa+%3C3');
     expect(markup).toContain('Francisco Novella challenges you');
     expect(markup).toContain('bringing Rosa &lt;3');
     expect(markup).not.toContain('ABC234');

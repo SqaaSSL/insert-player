@@ -1,4 +1,10 @@
-import { apiFetch, apiUrl, captureApiRequestContext, type ApiRequestContext } from './ApiClient.ts';
+import {
+  apiFetch,
+  apiUrl,
+  captureApiRequestContext,
+  createDetachedApiRequestContext,
+  type ApiRequestContext,
+} from './ApiClient.ts';
 import { roomSocketUrl, type RoomSeat } from '../game/net/RoomProtocol.ts';
 import type { CloudFighter } from './CloudFighters.ts';
 
@@ -58,6 +64,21 @@ function socketUrlFor(roomCode: string, ticket: string, context: ApiRequestConte
   return roomSocketUrl(absoluteBase, roomCode, ticket);
 }
 
+export function versusRoomRequestContext(
+  seat: Pick<VersusRoomSeatInfo, 'ticket'>,
+  context: ApiRequestContext = captureApiRequestContext(),
+): ApiRequestContext {
+  const configuredBase = apiUrl('/', context);
+  const apiBaseUrl = /^https?:\/\//i.test(configuredBase)
+    ? configuredBase
+    : new URL(configuredBase, window.location.href).toString();
+  return createDetachedApiRequestContext({
+    apiBaseUrl,
+    authorizationToken: seat.ticket,
+    authorizationScheme: 'Room',
+  });
+}
+
 export async function createVersusRoom(
   context: ApiRequestContext = captureApiRequestContext(),
 ): Promise<VersusRoomSeatInfo> {
@@ -109,11 +130,16 @@ export async function createVersusInvitation(
 
 export async function joinVersusInvitation(
   token: string,
+  guestId: string | null = null,
   context: ApiRequestContext = captureApiRequestContext(),
 ): Promise<VersusRoomSeatInfo> {
   const response = await apiFetch(
     `/api/versus/invitations/${encodeURIComponent(token)}/join`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(guestId ? { guestId } : {}),
+    },
     context,
   );
   if (!response.ok) throw await readError(response, 'Could not join invitation');
