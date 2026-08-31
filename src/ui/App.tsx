@@ -71,6 +71,7 @@ type AppRoute =
   | '/roster/watch'
   | '/roster/cpu'
   | '/roster/vs'
+  | '/roster/rush'
   | '/versus/online'
   | LegalRoute
   | '/fight';
@@ -108,6 +109,7 @@ export function legalReturnRouteFromState(state: unknown): AppRoute {
     candidate === '/roster/watch' ||
     candidate === '/roster/cpu' ||
     candidate === '/roster/vs' ||
+    candidate === '/roster/rush' ||
     candidate === '/versus/online'
   ) {
     return candidate;
@@ -131,6 +133,7 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   if (cleaned === '/roster/watch') return '/roster/watch';
   if (cleaned === '/roster/cpu') return '/roster/cpu';
   if (cleaned === '/roster/vs') return '/roster/vs';
+  if (cleaned === '/roster/rush') return '/roster/rush';
   if (cleaned === '/versus/online') return '/versus/online';
   if (cleaned === '/legal') return '/legal';
   if (cleaned === '/privacy') return '/privacy';
@@ -150,6 +153,25 @@ export function shouldCommitTrialLaunch(
 }
 
 type Navigate = (route: AppRoute, search?: string, options?: NavigationOptions) => void;
+
+function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null {
+  const stored = readStoredMatch(authSessionKey);
+  if (stored) return stored;
+  // Deterministic local-only fixture for real-canvas QA and marketing captures.
+  // Vite removes this branch from production builds.
+  if (!import.meta.env.DEV || new URLSearchParams(window.location.search).get('rushDemo') !== '1') {
+    return null;
+  }
+  return {
+    gameMode: 'rush',
+    vsAI: false,
+    cpuVsCpu: false,
+    p1Name: 'NOVA',
+    p2Name: 'BYTE',
+    stageId: 'insert-player-arena',
+    seed: 0x52555348,
+  };
+}
 
 function useHashRoute(): [AppRoute, Navigate] {
   const [route, setRoute] = useState<AppRoute>(() =>
@@ -204,7 +226,7 @@ export function App({
   const [pendingMatchState, setPendingMatchState] = useState<{
     authSessionKey: string;
     data: MatchSceneData | null;
-  }>(() => ({ authSessionKey, data: readStoredMatch(authSessionKey) }));
+  }>(() => ({ authSessionKey, data: readPendingMatchForRoute(authSessionKey) }));
   const pendingMatch = pendingMatchState.authSessionKey === authSessionKey
     ? pendingMatchState.data
     : null;
@@ -221,7 +243,7 @@ export function App({
   useEffect(() => {
     setPendingMatchState({
       authSessionKey,
-      data: readStoredMatch(authSessionKey),
+      data: readPendingMatchForRoute(authSessionKey),
     });
   }, [authSessionKey]);
 
@@ -391,7 +413,9 @@ export function App({
   }, [leaveFight, pendingMatch?.experience]);
 
   const launchTarget = useMemo(
-    () => pendingMatch ? { sceneKey: 'FightScene', data: pendingMatch } : null,
+    () => pendingMatch
+      ? { sceneKey: pendingMatch.gameMode === 'rush' ? 'RushScene' : 'FightScene', data: pendingMatch }
+      : null,
     [pendingMatch],
   );
 
@@ -430,7 +454,7 @@ export function App({
 
   const ladderContext = useMemo<LadderContext | null>(() => {
     if (route !== '/fight' || !pendingMatch) return null;
-    if (pendingMatch.experience === 'trial') return null;
+    if (pendingMatch.experience === 'trial' || pendingMatch.gameMode === 'rush') return null;
     const run = readArcadeRun(getActiveSpriteCacheScope());
     if (!run) return null;
     const rung = currentRung(run);
@@ -486,6 +510,7 @@ export function App({
         onCreateFighter={() => navigate('/fighters/new')}
         onNavigateLegal={navigateToLegal}
         onOpenArcade={() => navigate('/arcade')}
+        onOpenCoopRush={() => navigate('/roster/rush')}
         onOpenGallery={() => navigate('/gallery')}
         onOpenCommunity={() => navigate('/community')}
         onOpenWatchMode={() => navigate('/roster/watch')}
@@ -629,8 +654,19 @@ export function App({
         />
       );
     }
-    if (route === '/roster/watch' || route === '/roster/cpu' || route === '/roster/vs') {
-      const mode = route === '/roster/watch' ? 'watch' : route === '/roster/vs' ? 'vs' : 'cpu';
+    if (
+      route === '/roster/watch'
+      || route === '/roster/cpu'
+      || route === '/roster/vs'
+      || route === '/roster/rush'
+    ) {
+      const mode = route === '/roster/watch'
+        ? 'watch'
+        : route === '/roster/vs'
+          ? 'vs'
+          : route === '/roster/rush'
+            ? 'rush'
+            : 'cpu';
       return (
         <RosterPage
           authStatus={authStatus}

@@ -356,7 +356,7 @@ export function generateFighterSpriteSheet(
   scene: Phaser.Scene,
   key: string,
   bodyColor: string,
-  _skinColor: string,
+  skinColor: string,
 ): void {
   const layout = getSpriteLayout();
   registerSpriteLayout(key, layout);
@@ -374,7 +374,7 @@ export function generateFighterSpriteSheet(
   STATE_ORDER.forEach((state, row) => {
     const numFrames = STATE_FRAMES[state];
     for (let f = 0; f < numFrames; f++) {
-      drawSilhouette(ctx, f * FW, row * FH, bodyColor, state, f);
+      drawSilhouette(ctx, f * FW, row * FH, bodyColor, skinColor, state, f);
     }
   });
 
@@ -396,96 +396,157 @@ function drawSilhouette(
   ctx: CanvasRenderingContext2D,
   ox: number,
   oy: number,
-  color: string,
+  bodyColor: string,
+  skinColor: string,
   state: FighterState,
-  _frame: number,
+  frame: number,
 ): void {
   const cx = ox + FW / 2;
-  const baseY = oy + FH;
+  const baseY = oy + FH - 7;
+  const outline = '#07070b';
+  const trousers = '#171522';
+  const jumpOffset = state === FighterState.JUMP ? -28 : 0;
+  const breathing = state === FighterState.IDLE ? (frame % 2 === 0 ? 0 : 2) : 0;
+  const crouched = state === FighterState.CROUCH
+    || state === FighterState.BLOCK
+    || state === FighterState.LOW_PUNCH
+    || state === FighterState.LOW_KICK;
 
-  ctx.fillStyle = color;
-  ctx.strokeStyle = '#111';
-  ctx.lineWidth = 2;
-
-  const headR = 14;
-  let bodyH = 100;
-  let bodyW = 36;
-  let headY = baseY - bodyH - headR * 2 - 8;
-  let bodyTop = headY + headR * 2 + 4;
-  let legSpread = 14;
-
-  if (
-    state === FighterState.CROUCH ||
-    state === FighterState.BLOCK ||
-    state === FighterState.LOW_PUNCH ||
-    state === FighterState.LOW_KICK
-  ) {
-    bodyH = 60;
-    headY = baseY - bodyH - headR * 2 + 10;
-    bodyTop = headY + headR * 2 + 4;
-  } else if (state === FighterState.KNOCKDOWN || state === FighterState.DEFEAT) {
-    bodyH = 30;
-    bodyW = 60;
-    headY = baseY - 40;
-    bodyTop = baseY - 24;
-    legSpread = 24;
-  } else if (state === FighterState.JUMP) {
-    headY -= 30;
-    bodyTop -= 30;
-  }
-
-  ctx.beginPath();
-  ctx.arc(cx, headY, headR, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.roundRect(cx - bodyW / 2, bodyTop, bodyW, bodyH, 6);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.lineWidth = 10;
+  ctx.save();
   ctx.lineCap = 'round';
-  ctx.strokeStyle = color;
+  ctx.lineJoin = 'round';
+
+  if (state === FighterState.KNOCKDOWN || state === FighterState.DEFEAT) {
+    const floorY = baseY - 12;
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 25;
+    ctx.beginPath();
+    ctx.moveTo(cx - 42, floorY - 5);
+    ctx.lineTo(cx + 26, floorY - 20);
+    ctx.lineTo(cx + 66, floorY - 5);
+    ctx.stroke();
+    ctx.strokeStyle = bodyColor;
+    ctx.lineWidth = 17;
+    ctx.stroke();
+    ctx.fillStyle = skinColor;
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(cx - 60, floorY - 3, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+
+  const headY = oy + (crouched ? 99 : 60) + jumpOffset + breathing;
+  const shoulderY = headY + 34;
+  const hipY = shoulderY + (crouched ? 54 : 78);
+  const stride = state === FighterState.WALK_FORWARD || state === FighterState.WALK_BACKWARD
+    ? (frame % 3 - 1) * 10
+    : 0;
+
+  const drawLimb = (points: Array<[number, number]>, color: string, width: number): void => {
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = width + 7;
+    ctx.beginPath();
+    ctx.moveTo(points[0][0], points[0][1]);
+    for (const [x, y] of points.slice(1)) ctx.lineTo(x, y);
+    ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.stroke();
+  };
+
+  const leftLeg: Array<[number, number]> = crouched
+    ? [[cx - 13, hipY], [cx - 40, hipY + 24], [cx - 50, baseY + jumpOffset]]
+    : [[cx - 13, hipY], [cx - 22 + stride, hipY + 36], [cx - 29 + stride, baseY + jumpOffset]];
+  let rightLeg: Array<[number, number]> = crouched
+    ? [[cx + 13, hipY], [cx + 40, hipY + 22], [cx + 52, baseY + jumpOffset]]
+    : [[cx + 13, hipY], [cx + 24 - stride, hipY + 36], [cx + 35 - stride, baseY + jumpOffset]];
+  if (state === FighterState.HIGH_KICK) {
+    rightLeg = [[cx + 10, hipY], [cx + 46, hipY - 24], [cx + 82, hipY - 52]];
+  } else if (state === FighterState.LOW_KICK) {
+    rightLeg = [[cx + 10, hipY], [cx + 52, hipY + 9], [cx + 82, hipY + 3]];
+  }
+  drawLimb(leftLeg, trousers, 16);
+  drawLimb(rightLeg, trousers, 16);
+
+  for (const leg of [leftLeg, rightLeg]) {
+    const [footX, footY] = leg[leg.length - 1];
+    ctx.fillStyle = outline;
+    ctx.beginPath();
+    ctx.ellipse(footX + 5, footY, 17, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = bodyColor;
+  ctx.strokeStyle = outline;
+  ctx.lineWidth = 5;
   ctx.beginPath();
-  ctx.moveTo(cx - legSpread, bodyTop + bodyH);
-  ctx.lineTo(cx - legSpread - 4, baseY - 2);
+  ctx.moveTo(cx - 31, shoulderY + 2);
+  ctx.quadraticCurveTo(cx - 24, shoulderY - 8, cx, shoulderY - 8);
+  ctx.quadraticCurveTo(cx + 25, shoulderY - 8, cx + 32, shoulderY + 3);
+  ctx.lineTo(cx + 22, hipY + 4);
+  ctx.lineTo(cx - 22, hipY + 4);
+  ctx.closePath();
+  ctx.fill();
   ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.38)';
+  ctx.lineWidth = 3;
   ctx.beginPath();
-  ctx.moveTo(cx + legSpread, bodyTop + bodyH);
-  ctx.lineTo(cx + legSpread + 4, baseY - 2);
+  ctx.moveTo(cx, shoulderY + 2);
+  ctx.lineTo(cx, hipY - 4);
   ctx.stroke();
 
-  ctx.strokeStyle = '#111';
-  ctx.lineWidth = 2;
+  let leftArm: Array<[number, number]> = [[cx - 27, shoulderY + 8], [cx - 48, shoulderY + 34], [cx - 22, shoulderY + 48]];
+  let rightArm: Array<[number, number]> = [[cx + 27, shoulderY + 8], [cx + 48, shoulderY + 24], [cx + 30, shoulderY + 43]];
+  if (state === FighterState.HIGH_PUNCH || state === FighterState.FIREBALL) {
+    rightArm = [[cx + 26, shoulderY + 8], [cx + 58, shoulderY + 8], [cx + 84, shoulderY + 4]];
+  } else if (state === FighterState.LOW_PUNCH) {
+    rightArm = [[cx + 26, shoulderY + 10], [cx + 57, shoulderY + 34], [cx + 82, shoulderY + 42]];
+  } else if (state === FighterState.UPPERCUT) {
+    rightArm = [[cx + 25, shoulderY + 8], [cx + 37, shoulderY - 24], [cx + 29, shoulderY - 52]];
+  } else if (state === FighterState.BLOCK) {
+    leftArm = [[cx - 26, shoulderY + 8], [cx - 5, shoulderY + 25], [cx + 16, shoulderY + 5]];
+    rightArm = [[cx + 26, shoulderY + 8], [cx + 8, shoulderY + 28], [cx - 16, shoulderY + 9]];
+  } else if (state === FighterState.VICTORY) {
+    leftArm = [[cx - 26, shoulderY + 8], [cx - 44, shoulderY - 18], [cx - 38, shoulderY - 48]];
+    rightArm = [[cx + 26, shoulderY + 8], [cx + 44, shoulderY - 18], [cx + 38, shoulderY - 48]];
+  } else if (state === FighterState.HIT_STUN) {
+    leftArm = [[cx - 25, shoulderY + 10], [cx - 50, shoulderY + 8], [cx - 67, shoulderY + 30]];
+    rightArm = [[cx + 25, shoulderY + 10], [cx + 46, shoulderY + 2], [cx + 64, shoulderY + 24]];
+  }
+  drawLimb(leftArm, bodyColor, 12);
+  drawLimb(rightArm, bodyColor, 12);
 
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 8;
-  const armY = bodyTop + 10;
-
-  if (state === FighterState.BLOCK) {
+  for (const arm of [leftArm, rightArm]) {
+    const [handX, handY] = arm[arm.length - 1];
+    ctx.fillStyle = bodyColor;
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.moveTo(cx - bodyW / 2, armY);
-    ctx.lineTo(cx - 4, armY - 20);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx + bodyW / 2, armY);
-    ctx.lineTo(cx + 4, armY - 20);
-    ctx.stroke();
-  } else {
-    ctx.beginPath();
-    ctx.moveTo(cx - bodyW / 2, armY);
-    ctx.lineTo(cx - bodyW / 2 - 18, armY + 30);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx + bodyW / 2, armY);
-    ctx.lineTo(cx + bodyW / 2 + 18, armY + 6);
+    ctx.arc(handX, handY, 10, 0, Math.PI * 2);
+    ctx.fill();
     ctx.stroke();
   }
 
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 16px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('?', cx, bodyTop + bodyH / 2);
+  ctx.fillStyle = skinColor;
+  ctx.strokeStyle = outline;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(cx, headY, 18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = outline;
+  ctx.beginPath();
+  ctx.arc(cx - 4, headY - 5, 16, Math.PI, Math.PI * 1.92);
+  ctx.lineTo(cx + 15, headY - 4);
+  ctx.quadraticCurveTo(cx + 5, headY - 20, cx - 4, headY - 19);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(cx + 7, headY - 1, 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }

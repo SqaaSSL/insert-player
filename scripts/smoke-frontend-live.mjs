@@ -348,6 +348,7 @@ async function main() {
     '/community?fighter=smoke-link',
     '/roster/cpu',
     '/versus/online?invite=AbCdEfGhIjKlMnOpQrStUvWxYz_23456',
+    '/roster/rush',
     '/legal',
     '/privacy',
     '/terms',

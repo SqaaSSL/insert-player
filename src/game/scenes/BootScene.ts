@@ -10,6 +10,7 @@ export class BootScene extends Phaser.Scene {
   }
 
   preload(): void {
+    const pendingTarget = getPendingLaunchTarget();
     const barW = 400;
     const barH = 20;
     const barX = (GAME_WIDTH - barW) / 2;
@@ -26,13 +27,18 @@ export class BootScene extends Phaser.Scene {
       bar.fillRect(barX, barY, barW * value, barH);
     });
 
-    this.add.text(GAME_WIDTH / 2, barY - 60, 'INSERT PLAYER: FIGHT', {
+    this.add.text(
+      GAME_WIDTH / 2,
+      barY - 60,
+      pendingTarget?.sceneKey === 'RushScene' ? 'INSERT PLAYER: CO-OP RUSH' : 'INSERT PLAYER: FIGHT',
+      {
       fontFamily: '"Press Start 2P", monospace',
       fontSize: '28px',
       color: '#ff4444',
       stroke: '#000000',
       strokeThickness: 4,
-    }).setOrigin(0.5);
+      },
+    ).setOrigin(0.5);
 
     this.add.text(GAME_WIDTH / 2, barY + 40, 'LOADING...', {
       fontFamily: '"Press Start 2P", monospace',

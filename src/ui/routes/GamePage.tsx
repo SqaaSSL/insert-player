@@ -79,7 +79,8 @@ export function GamePage({
   const onlineMatch = Boolean(launchTarget.data.online);
   const [matchActionsVisible, setMatchActionsVisible] = useState(false);
   const [netState, setNetState] = useState<NetStateDetail | null>(null);
-  const online = launchTarget.data.online ?? null;
+  const isRush = launchTarget.sceneKey === 'RushScene';
+  const online = isRush ? null : (launchTarget.data.online ?? null);
   const trial = launchTarget.data.experience === 'trial';
   const trialPlayerName = launchTarget.data.p1Name?.trim() || 'Player One';
   const [winnerSlot, setWinnerSlot] = useState<'p1' | 'p2' | null>(null);
@@ -238,9 +239,9 @@ export function GamePage({
       <div className="game-shell__surface">
         <div id="game-container" className="game-shell__canvas" />
       </div>
-      <FightHud />
-      <FightIntroOverlay />
-      <FightAnnouncement />
+      {isRush ? null : <FightHud />}
+      {isRush ? null : <FightIntroOverlay />}
+      {isRush ? null : <FightAnnouncement />}
       {loadingPhase !== 'hidden' ? (
         <FightLoadingCurtain
           phase={loadingPhase}
@@ -265,15 +266,20 @@ export function GamePage({
       {online && !matchActionsVisible && (
         <MobileFightControls playerIndex={0} playerLabel={online.localSlot === 0 ? 'player 1' : 'player 2'} />
       )}
-      {!online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
+      {!isRush && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
         <MobileFightControls playerIndex={0} playerLabel="player 1" />
       )}
-      {!online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI === false && !matchActionsVisible && (
+      {!isRush && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI === false && !matchActionsVisible && (
         <div className="mobile-versus-unavailable" role="status">
           Touch Versus needs two control sets and is unavailable on this screen. Use a keyboard or controllers,
           or play Arcade Mode on touch.
         </div>
       )}
+      {isRush ? (
+        <div className="mobile-versus-unavailable" role="status">
+          Co-op Rush needs two control sets. Open it on a keyboard or with two controllers.
+        </div>
+      ) : null}
       {matchActionsVisible && ladder && winnerSlot === 'p1' && ladder.isFinal && (
         <div className="match-actions" role="group" aria-label="Arcade champion">
           <span className="match-actions__label">
@@ -439,7 +445,7 @@ export function GamePage({
           </div>
         </div>
       )}
-      <FightControlsHint />
+      {isRush ? null : <FightControlsHint />}
       <button type="button" className="game-shell__gallery-link" onClick={onExit}>
         {trial ? 'Exit Demo' : 'Back'}
       </button>

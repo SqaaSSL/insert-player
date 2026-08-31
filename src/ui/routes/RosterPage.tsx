@@ -104,6 +104,17 @@ function getModeMeta(mode: RosterMode) {
       actionLabel: 'Start Match',
     };
   }
+  if (mode === 'rush') {
+    return {
+      title: 'Co-op Rush',
+      description: 'Pick two fighters, choose any Fight stage, and clear the floor together.',
+      vsAI: false,
+      cpuVsCpu: false,
+      p1Label: 'Player 1',
+      p2Label: 'Player 2',
+      actionLabel: 'Start Rush',
+    };
+  }
   if (mode === 'vs') {
     return {
       title: 'Versus',
@@ -365,7 +376,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const [rosterRetryAvailable, setRosterRetryAvailable] = useState(false);
   const [rosterReloadKey, setRosterReloadKey] = useState(0);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
-  const [rosterFilter, setRosterFilter] = useState<RosterFilter>(mode === 'vs' ? 'all' : 'official');
+  const [rosterFilter, setRosterFilter] = useState<RosterFilter>(
+    mode === 'vs' || mode === 'rush' ? 'all' : 'official',
+  );
   const [p1Key, setP1Key] = useState<string | null>(null);
   const [p2Key, setP2Key] = useState<string | null>(null);
   const [p1PersonalityId, setP1PersonalityId] = useState<FighterPersonalityId>(getDefaultPersonalityId(0));
@@ -632,9 +645,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
   const createLabel = rookieStatus === 'included' ? 'Create Free Rookie' : 'Create Rookie';
   const firstFighterCopy = rookieStatus === 'included'
-    ? 'Your first Rookie is included. Upload one photo, then come back here to face the Arcade roster.'
+    ? `Your first Rookie is included. Upload one photo, then come back here to ${mode === 'rush' ? 'join the team' : 'face the Arcade roster'}.`
     : rookieStatus === 'credits'
-      ? 'Rookie costs 2 credits. Upload one photo, then come back here to face the Arcade roster.'
+      ? `Rookie costs 2 credits. Upload one photo, then come back here to ${mode === 'rush' ? 'join the team' : 'face the Arcade roster'}.`
       : 'Upload one photo. We will check your included Rookie or credit balance before generation starts.';
 
   const stageSummary =
@@ -737,6 +750,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         setStatus(`Updated ${upgraded} cached animations`);
       }
       onStartFight({
+        gameMode: mode === 'rush' ? 'rush' : 'fight',
         vsAI: modeMeta.vsAI,
         cpuVsCpu: modeMeta.cpuVsCpu,
         p1PhotoHash: selectedP1.photoHash,
@@ -795,7 +809,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
           <div className="sf-vs-divider" aria-hidden="true">
             <span className="sf-vs-divider__line" />
-            <span className="sf-vs-divider__text">VS</span>
+            <span className="sf-vs-divider__text">{mode === 'rush' ? '+' : 'VS'}</span>
             <span className="sf-vs-divider__line" />
           </div>
 
@@ -845,9 +859,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                     {preparingFight
                       ? 'Checking cached sprites'
                       : touchVersusBlocked
-                      ? 'Touch Versus needs a keyboard or controllers'
+                      ? `${mode === 'rush' ? 'Co-op Rush' : 'Touch Versus'} needs a keyboard or controllers`
                       : canStartFight
-                      ? `${p1Fighter?.name ?? 'P1'} vs ${p2Fighter?.name ?? 'P2'}`
+                      ? `${p1Fighter?.name ?? 'P1'} ${mode === 'rush' ? '+' : 'vs'} ${p2Fighter?.name ?? 'P2'}`
                       : 'Select both fighters first'}
                   </small>
                 </button>
@@ -856,8 +870,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
             {touchVersusBlocked ? (
               <p className="roster-touch-notice" role="status">
-                Touch Versus needs two control sets, which do not fit safely on this screen. Open Versus on a
-                keyboard or controller device, or choose Arcade Mode on touch.
+                {mode === 'rush' ? 'Co-op Rush' : 'Touch Versus'} needs two control sets, which do not fit safely
+                on this screen. Open it on a keyboard or controller device, or choose Arcade Mode on touch.
               </p>
             ) : null}
 

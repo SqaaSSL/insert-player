@@ -40,6 +40,7 @@ interface HomePageProps extends AuthRouteState {
   onContinuePurchaseIntent?: () => void;
   onCreateFighter: () => void;
   onOpenArcade: () => void;
+  onOpenCoopRush: () => void;
   onNavigateLegal: (route: LegalRoute) => void;
   onOpenGallery: () => void;
   onOpenCommunity: () => void;
@@ -66,6 +67,7 @@ export function HomePage({
   authSessionKey,
   onCreateFighter,
   onOpenArcade,
+  onOpenCoopRush,
   onNavigateLegal,
   onOpenGallery,
   onOpenCommunity,
@@ -297,7 +299,11 @@ export function HomePage({
       </div>
 
       <div className="home-menu">
-        <button type="button" className="home-menu__action is-primary" onClick={onOpenArcade}>
+        <button type="button" className="home-menu__action is-primary" onClick={onOpenCoopRush}>
+          <span>Co-op Rush</span>
+          <small>Two Players · One Team · Clear The Floor</small>
+        </button>
+        <button type="button" className="home-menu__action" onClick={onOpenArcade}>
           <span>Arcade Mode</span>
           <small>{arcadeModeHint}</small>
         </button>
