@@ -60,6 +60,7 @@
     "test:arcade:xai-humanoid-v5-selective": "vitest run scripts/humanoid-pose-template-xai-selective-v5.test.mjs scripts/arcade-side-bakeoff.test.mjs",
     "test:arcade:xai-humanoid-v5-repair": "vitest run scripts/humanoid-pose-template-xai-repair-v5.test.mjs scripts/humanoid-pose-template-xai-selective-v5.test.mjs scripts/arcade-side-bakeoff.test.mjs",
     "test:arcade:humanoid-postprocess": "vitest run scripts/humanoid-pose-template-postprocess.test.mjs",
+    "test:arcade:humanoid-postprocess:e2e": "vitest run scripts/humanoid-pose-template-postprocess.e2e.test.mjs",
     "test:arcade:xai-video": "vitest run scripts/arcade-high-kick-xai-video-canary.test.mjs",
     "test:arcade:xai-video-elon": "vitest run scripts/arcade-high-kick-xai-video-canary.test.mjs scripts/arcade-high-kick-xai-video-elon-canary.test.mjs",
     "test:arcade:xai-canonical-bundle": "vitest run scripts/arcade-xai-canonical-bundle.test.mjs",

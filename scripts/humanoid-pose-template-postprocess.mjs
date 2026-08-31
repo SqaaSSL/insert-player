@@ -2,18 +2,20 @@ import { createHash, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
-  copyFileSync,
+  closeSync,
+  constants as fsConstants,
   existsSync,
+  fstatSync,
   linkSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
-  renameSync,
-  statSync,
+  realpathSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, parse, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   HUMANOID_POSTPROCESS_CANVAS,
@@ -32,12 +34,16 @@ import {
   transformedBbox,
 } from './humanoid-pose-template-postprocess-core.mjs';
 
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const CORE_PATH = fileURLToPath(new URL('./humanoid-pose-template-postprocess-core.mjs', import.meta.url));
+const root = dirname(dirname(SCRIPT_PATH));
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_PNG_BYTES = 80 * 1024 * 1024;
 const EXPECTED_EXPERIMENT_ID = 'humanoid-neutral-medium-xai-template-v4';
 const EXPECTED_MODEL_ID = 'grok-imagine-image-2-edit';
 const EXPECTED_PLAN_SHA256 = '6eae3d89e52a89e9e6b1c17f194ab1c93605aedb23521e2bb0dcc4a02878ff89';
+const EXPECTED_STATE_SHA256 = '0cd3ec47df48421b38077deb30b803a97daeb5cc8ddae786525727d29af3b5c4';
+const EXPECTED_INPUT_MANIFEST_SHA256 = 'd85fb7c4b8642fd1671fc6300a084d948c53a96172630ca4177c71e9aa8814b3';
 const EXPECTED_POSES = 94;
 const EXPECTED_FRAME_SLOTS = 98;
 const EXPECTED_ALIASES = 4;
@@ -45,6 +51,13 @@ const QA_THUMBNAIL_WIDTH = 128;
 const QA_THUMBNAIL_HEIGHT = 171;
 
 export const HUMANOID_POSTPROCESS_ID = 'humanoid-neutral-medium-xai-template-v4-postprocess-v1';
+export const HUMANOID_V4_TRUSTED_SEAL = Object.freeze({
+  executionStateSha256: EXPECTED_STATE_SHA256,
+  inputManifestSha256: EXPECTED_INPUT_MANIFEST_SHA256,
+  planSha256: EXPECTED_PLAN_SHA256,
+  encryptedArtifactSha256: '6b38494913314b07fe0e3808f13512c0db3a0babd831daf0cf98a00163d2fab4',
+  githubActionsRunId: '33340491399',
+});
 export const HUMANOID_POSTPROCESS_POLICY = Object.freeze({
   providerCalls: 0,
   inference: false,
@@ -126,11 +139,6 @@ function inspectPngBytes(bytes, label = 'PNG') {
   };
 }
 
-function regularFile(path, label) {
-  invariant(existsSync(path), `${label} is missing.`);
-  invariant(lstatSync(path).isFile(), `${label} is not a regular file.`);
-}
-
 function safeResolve(parent, child, label) {
   invariant(typeof child === 'string' && child.length > 0 && !child.includes('\0'), `${label} path is invalid.`);
   const resolvedParent = resolve(parent);
@@ -139,49 +147,197 @@ function safeResolve(parent, child, label) {
   return resolved;
 }
 
-function temporaryPngPath(path) {
-  return `${path}.writing-${process.pid}-${randomUUID()}.png`;
+function pathIdentity(stat) {
+  return `${stat.dev}:${stat.ino}:${stat.mode}`;
 }
 
-function temporaryPath(path) {
-  return `${path}.writing-${process.pid}-${randomUUID()}`;
+function inspectNoSymlinkChain(path, label) {
+  const absolutePath = resolve(path);
+  const { root: filesystemRoot } = parse(absolutePath);
+  const segments = absolutePath.slice(filesystemRoot.length).split(sep).filter(Boolean);
+  const records = [];
+  let cursor = filesystemRoot;
+  for (let index = 0; index < segments.length; index += 1) {
+    cursor = join(cursor, segments[index]);
+    let stat;
+    try {
+      stat = lstatSync(cursor);
+    } catch (error) {
+      if (error?.code === 'ENOENT') throw new Error(`${label} is missing: ${cursor}`);
+      throw error;
+    }
+    invariant(!stat.isSymbolicLink(), `${label} contains a symbolic link: ${cursor}`);
+    if (index < segments.length - 1) invariant(stat.isDirectory(), `${label} ancestor is not a directory: ${cursor}`);
+    records.push({ path: cursor, identity: pathIdentity(stat), stat });
+  }
+  return { absolutePath, records };
 }
 
-function writeJsonAtomic(path, value) {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = temporaryPath(path);
-  try {
-    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-    renameSync(temporary, path);
-  } catch (error) {
-    if (existsSync(temporary)) unlinkSync(temporary);
-    throw error;
+function assertStablePathChain(before, after, label) {
+  invariant(before.absolutePath === after.absolutePath && before.records.length === after.records.length, `${label} path changed while it was read.`);
+  for (let index = 0; index < before.records.length; index += 1) {
+    invariant(
+      before.records[index].path === after.records[index].path
+        && before.records[index].identity === after.records[index].identity,
+      `${label} path changed while it was read: ${before.records[index].path}`,
+    );
   }
 }
 
-function writeBytesAtomic(path, bytes) {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = temporaryPath(path);
-  try {
-    writeFileSync(temporary, bytes, { mode: 0o600 });
-    renameSync(temporary, path);
-  } catch (error) {
-    if (existsSync(temporary)) unlinkSync(temporary);
-    throw error;
-  }
+function physicalDirectory(path, label) {
+  const chain = inspectNoSymlinkChain(path, label);
+  const leaf = chain.records.at(-1)?.stat;
+  invariant(leaf?.isDirectory(), `${label} is not a directory.`);
+  const physicalPath = realpathSync.native(chain.absolutePath);
+  invariant(physicalPath === chain.absolutePath, `${label} is not a physical no-symlink path.`);
+  return physicalPath;
 }
 
-function copyFileAtomic(source, destination) {
-  mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+function isWithin(parent, child) {
+  return child === parent || child.startsWith(`${parent}${sep}`);
+}
+
+export function readRegularFileSnapshot(path, label = 'file', options = {}) {
+  const absolutePath = resolve(path);
+  if (options.containmentRoot) {
+    const physicalRoot = physicalDirectory(options.containmentRoot, `${label} containment root`);
+    invariant(absolutePath.startsWith(`${physicalRoot}${sep}`), `${label} escapes its physical containment root.`);
+  }
+  const before = inspectNoSymlinkChain(absolutePath, label);
+  const beforeLeaf = before.records.at(-1)?.stat;
+  invariant(beforeLeaf?.isFile(), `${label} is not a regular file.`);
+  const physicalPath = realpathSync.native(absolutePath);
+  invariant(physicalPath === absolutePath, `${label} is not a physical no-symlink path.`);
+  let fileDescriptor;
+  let bytes;
+  let openedBefore;
+  let openedAfter;
+  try {
+    fileDescriptor = openSync(absolutePath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    openedBefore = fstatSync(fileDescriptor);
+    invariant(openedBefore.isFile(), `${label} opened object is not a regular file.`);
+    invariant(openedBefore.dev === beforeLeaf.dev && openedBefore.ino === beforeLeaf.ino, `${label} changed before it was opened.`);
+    if (options.maxBytes !== undefined) invariant(openedBefore.size <= options.maxBytes, `${label} exceeds its byte limit.`);
+    bytes = readFileSync(fileDescriptor);
+    openedAfter = fstatSync(fileDescriptor);
+    invariant(bytes.byteLength === openedBefore.size, `${label} byte count changed while it was read.`);
+    invariant(
+      openedAfter.dev === openedBefore.dev
+        && openedAfter.ino === openedBefore.ino
+        && openedAfter.size === openedBefore.size
+        && openedAfter.mtimeMs === openedBefore.mtimeMs
+        && openedAfter.ctimeMs === openedBefore.ctimeMs,
+      `${label} was modified while it was read.`,
+    );
+  } finally {
+    if (fileDescriptor !== undefined) closeSync(fileDescriptor);
+  }
+  const after = inspectNoSymlinkChain(absolutePath, label);
+  assertStablePathChain(before, after, label);
+  invariant(realpathSync.native(absolutePath) === physicalPath, `${label} physical path changed while it was read.`);
+  return Object.freeze({
+    path: absolutePath,
+    physicalPath,
+    bytes,
+    sizeBytes: bytes.byteLength,
+    contentSha256: sha256(bytes),
+    device: beforeLeaf.dev,
+    inode: beforeLeaf.ino,
+  });
+}
+
+function snapshotImplementation() {
+  const script = readRegularFileSnapshot(SCRIPT_PATH, 'postprocess implementation script');
+  const core = readRegularFileSnapshot(CORE_PATH, 'postprocess implementation core');
+  return Object.freeze({
+    scriptSha256: script.contentSha256,
+    coreSha256: core.contentSha256,
+  });
+}
+
+function assertImplementationUnchanged(snapshot) {
+  const current = snapshotImplementation();
+  invariant(
+    current.scriptSha256 === snapshot.scriptSha256 && current.coreSha256 === snapshot.coreSha256,
+    'Postprocess implementation changed during execution; refusing to emit a manifest.',
+  );
+}
+
+function ensureSecureOutputDirectory(outputRoot, directory) {
+  const physicalRoot = physicalDirectory(outputRoot, 'postprocess output root');
+  const absoluteDirectory = resolve(directory);
+  invariant(isWithin(physicalRoot, absoluteDirectory), 'Output directory escapes the postprocess output root.');
+  const suffix = relative(physicalRoot, absoluteDirectory);
+  let cursor = physicalRoot;
+  for (const segment of suffix.split(sep).filter(Boolean)) {
+    cursor = join(cursor, segment);
+    try {
+      mkdirSync(cursor, { mode: 0o700 });
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+    const stat = lstatSync(cursor);
+    invariant(!stat.isSymbolicLink() && stat.isDirectory(), `Output directory is not a physical directory: ${cursor}`);
+  }
+  invariant(realpathSync.native(absoluteDirectory) === absoluteDirectory, 'Output directory resolved through a symbolic link.');
+}
+
+function assertAvailableOutputEntry(outputRoot, destination) {
+  const absoluteDestination = resolve(destination);
+  const physicalRoot = physicalDirectory(outputRoot, 'postprocess output root');
+  invariant(absoluteDestination.startsWith(`${physicalRoot}${sep}`), 'Output entry escapes the postprocess output root.');
+  ensureSecureOutputDirectory(physicalRoot, dirname(absoluteDestination));
+  try {
+    const existing = lstatSync(absoluteDestination);
+    const kind = existing.isSymbolicLink() ? 'symbolic link' : 'existing entry';
+    throw new Error(`Refusing to replace output ${kind}: ${absoluteDestination}`);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  return absoluteDestination;
+}
+
+function temporaryPath(destination) {
+  return join(dirname(destination), `.${basename(destination)}.writing-${process.pid}-${randomUUID()}`);
+}
+
+export function writeBytesAtomicExclusive(path, bytes, outputRoot) {
+  invariant(Buffer.isBuffer(bytes) || ArrayBuffer.isView(bytes), 'Atomic output must be bytes.');
+  const destination = assertAvailableOutputEntry(outputRoot, path);
   const temporary = temporaryPath(destination);
   try {
-    copyFileSync(source, temporary);
+    writeFileSync(temporary, bytes, { flag: 'wx', mode: 0o600 });
     chmodSync(temporary, 0o600);
-    renameSync(temporary, destination);
+    linkSync(temporary, destination);
   } catch (error) {
     if (existsSync(temporary)) unlinkSync(temporary);
     throw error;
   }
+  unlinkSync(temporary);
+  const stat = lstatSync(destination);
+  invariant(!stat.isSymbolicLink() && stat.isFile(), `Atomic output is not a regular file: ${destination}`);
+}
+
+function writeJsonAtomic(path, value, outputRoot) {
+  writeBytesAtomicExclusive(path, Buffer.from(`${JSON.stringify(value, null, 2)}\n`), outputRoot);
+}
+
+function writeBytesAtomic(path, bytes, outputRoot) {
+  writeBytesAtomicExclusive(path, bytes, outputRoot);
+}
+
+function createOutputRootExclusive(outputDirectory) {
+  const absoluteOutputDirectory = resolve(outputDirectory);
+  const parent = dirname(absoluteOutputDirectory);
+  physicalDirectory(parent, 'postprocess output parent');
+  try {
+    mkdirSync(absoluteOutputDirectory, { mode: 0o700 });
+  } catch (error) {
+    if (error?.code === 'EEXIST') throw new Error('Postprocess output already exists; raw-preserving runs are immutable.');
+    throw error;
+  }
+  invariant(physicalDirectory(absoluteOutputDirectory, 'postprocess output root') === absoluteOutputDirectory, 'Postprocess output root is not physical.');
+  return absoluteOutputDirectory;
 }
 
 function runCommand(binary, args, options = {}) {
@@ -202,69 +358,52 @@ function ffmpegVersion(ffmpegBinary) {
   return String(runCommand(ffmpegBinary, ['-version'])).split(/\r?\n/, 1)[0].trim();
 }
 
-function decodePixels(path, pixelFormat, width, height, ffmpegBinary) {
+function decodePixels(pngBytes, label, pixelFormat, width, height, ffmpegBinary) {
+  invariant(Buffer.isBuffer(pngBytes), `${label} PNG snapshot is not bytes.`);
   const bytes = runCommand(ffmpegBinary, [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '1',
-    '-i', path, '-map', '0:v:0', '-frames:v', '1',
+    '-i', 'pipe:0', '-map', '0:v:0', '-frames:v', '1',
     '-f', 'rawvideo', '-pix_fmt', pixelFormat, 'pipe:1',
-  ], { binary: true });
+  ], { binary: true, input: pngBytes });
   const channels = pixelFormat === 'rgba' ? 4 : 3;
-  invariant(bytes.byteLength === width * height * channels, `Decoded ${pixelFormat} byte length changed for ${basename(path)}.`);
+  invariant(bytes.byteLength === width * height * channels, `Decoded ${pixelFormat} byte length changed for ${label}.`);
   return bytes;
 }
 
-function encodePng({ pixels, width, height, pixelFormat, outputPath, ffmpegBinary }) {
+function encodePng({ pixels, width, height, pixelFormat, outputPath, outputRoot, ffmpegBinary }) {
   invariant(pixelFormat === 'rgba' || pixelFormat === 'rgb24', 'PNG pixel format is invalid.');
   const channels = pixelFormat === 'rgba' ? 4 : 3;
   invariant(pixels.length === width * height * channels, 'PNG source dimensions do not match.');
-  mkdirSync(dirname(outputPath), { recursive: true, mode: 0o700 });
-  const temporary = temporaryPngPath(outputPath);
-  try {
-    runCommand(ffmpegBinary, [
-      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-threads', '1',
-      '-f', 'rawvideo', '-pix_fmt', pixelFormat, '-s', `${width}x${height}`, '-i', 'pipe:0',
-      '-map_metadata', '-1', '-frames:v', '1', '-pix_fmt', pixelFormat,
-      '-compression_level', '9', '-pred', 'mixed', temporary,
-    ], { input: Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength) });
-    chmodSync(temporary, 0o600);
-    renameSync(temporary, outputPath);
-  } catch (error) {
-    if (existsSync(temporary)) unlinkSync(temporary);
-    throw error;
-  }
-  const inspected = inspectPngBytes(readFileSync(outputPath), `encoded ${pixelFormat} PNG`);
+  const bytes = runCommand(ffmpegBinary, [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '1',
+    '-f', 'rawvideo', '-pix_fmt', pixelFormat, '-s', `${width}x${height}`, '-i', 'pipe:0',
+    '-map_metadata', '-1', '-frames:v', '1', '-pix_fmt', pixelFormat,
+    '-compression_level', '9', '-pred', 'mixed', '-c:v', 'png', '-f', 'image2pipe', 'pipe:1',
+  ], { binary: true, input: Buffer.from(pixels.buffer, pixels.byteOffset, pixels.byteLength) });
+  const inspected = inspectPngBytes(bytes, `encoded ${pixelFormat} PNG`);
   invariant(inspected.width === width && inspected.height === height && inspected.bitDepth === 8, 'Encoded PNG geometry or bit depth changed.');
   invariant(inspected.colorType === (pixelFormat === 'rgba' ? 6 : 2), `Encoded ${pixelFormat} PNG color type changed.`);
+  writeBytesAtomicExclusive(outputPath, bytes, outputRoot);
   return inspected;
 }
 
-export function encodeGif({ frames, width, height, outputPath, ffmpegBinary, frameRate = 8 }) {
+export function encodeGif({ frames, width, height, outputPath, outputRoot, ffmpegBinary, frameRate = 8 }) {
   invariant(Array.isArray(frames) && frames.length > 0, 'GIF frames are required.');
   invariant(frames.every((frame) => frame.length === width * height * 3), 'GIF frame dimensions do not match.');
-  mkdirSync(dirname(outputPath), { recursive: true, mode: 0o700 });
-  const temporary = `${temporaryPath(outputPath)}.gif`;
   const input = Buffer.concat(frames);
-  try {
-    runCommand(ffmpegBinary, [
-      '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-threads', '1', '-filter_complex_threads', '1',
-      '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', `${width}x${height}`, '-framerate', String(frameRate), '-i', 'pipe:0',
-      '-filter_complex', '[0:v]split[palette_source][gif_source];[palette_source]palettegen=max_colors=128:stats_mode=diff[palette];[gif_source][palette]paletteuse=dither=bayer:bayer_scale=3',
-      '-frames:v', String(frames.length), '-loop', '0', '-map_metadata', '-1', temporary,
-    ], { input, maxBuffer: 512 * 1024 * 1024 });
-    chmodSync(temporary, 0o600);
-    renameSync(temporary, outputPath);
-  } catch (error) {
-    if (existsSync(temporary)) unlinkSync(temporary);
-    throw error;
-  }
-  const bytes = readFileSync(outputPath);
+  const bytes = runCommand(ffmpegBinary, [
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-threads', '1', '-filter_complex_threads', '1',
+    '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', `${width}x${height}`, '-framerate', String(frameRate), '-i', 'pipe:0',
+    '-filter_complex', '[0:v]split[palette_source][gif_source];[palette_source]palettegen=max_colors=128:stats_mode=diff[palette];[gif_source][palette]paletteuse=dither=bayer:bayer_scale=3',
+    '-frames:v', String(frames.length), '-loop', '0', '-map_metadata', '-1', '-f', 'gif', 'pipe:1',
+  ], { binary: true, input, maxBuffer: 512 * 1024 * 1024 });
   invariant(bytes.subarray(0, 6).toString('ascii') === 'GIF89a' || bytes.subarray(0, 6).toString('ascii') === 'GIF87a', 'Encoded GIF signature is invalid.');
+  writeBytesAtomicExclusive(outputPath, bytes, outputRoot);
   return { width, height, sizeBytes: bytes.byteLength, contentSha256: sha256(bytes) };
 }
 
 function outputDescriptor(path, outputDirectory, expected = {}) {
-  regularFile(path, 'output');
-  const bytes = readFileSync(path);
+  const { bytes } = readRegularFileSnapshot(path, 'output', { containmentRoot: outputDirectory });
   const inspected = inspectPngBytes(bytes, 'output PNG');
   if (expected.width) invariant(inspected.width === expected.width, 'Output width changed.');
   if (expected.height) invariant(inspected.height === expected.height, 'Output height changed.');
@@ -273,8 +412,7 @@ function outputDescriptor(path, outputDirectory, expected = {}) {
 }
 
 function gifDescriptor(path, outputDirectory, geometry) {
-  regularFile(path, 'QA GIF');
-  const bytes = readFileSync(path);
+  const { bytes } = readRegularFileSnapshot(path, 'QA GIF', { containmentRoot: outputDirectory });
   return {
     path: relative(outputDirectory, path),
     mimeType: 'image/gif',
@@ -319,14 +457,23 @@ function verifyStateArtifactPath(path, manifest, pose) {
 
 export function verifyHumanoidPostprocessInputs({
   workDirectory,
-  expectedPlanSha256 = EXPECTED_PLAN_SHA256,
   knownVisualFindings = HUMANOID_POSTPROCESS_KNOWN_VISUAL_FINDINGS,
 }) {
-  const resolvedWorkDirectory = resolve(workDirectory);
-  regularFile(join(resolvedWorkDirectory, 'state.json'), 'humanoid execution state');
-  regularFile(join(resolvedWorkDirectory, 'inputs', 'input-manifest.json'), 'humanoid input manifest');
-  const stateBytes = readFileSync(join(resolvedWorkDirectory, 'state.json'));
-  const manifestBytes = readFileSync(join(resolvedWorkDirectory, 'inputs', 'input-manifest.json'));
+  const resolvedWorkDirectory = physicalDirectory(resolve(workDirectory), 'sealed humanoid work directory');
+  const stateSnapshot = readRegularFileSnapshot(
+    join(resolvedWorkDirectory, 'state.json'),
+    'humanoid execution state',
+    { containmentRoot: resolvedWorkDirectory },
+  );
+  const manifestSnapshot = readRegularFileSnapshot(
+    join(resolvedWorkDirectory, 'inputs', 'input-manifest.json'),
+    'humanoid input manifest',
+    { containmentRoot: resolvedWorkDirectory },
+  );
+  invariant(stateSnapshot.contentSha256 === EXPECTED_STATE_SHA256, 'Humanoid execution state SHA-256 is not the exact trusted V4 state.');
+  invariant(manifestSnapshot.contentSha256 === EXPECTED_INPUT_MANIFEST_SHA256, 'Humanoid input manifest SHA-256 is not the exact trusted V4 manifest.');
+  const stateBytes = stateSnapshot.bytes;
+  const manifestBytes = manifestSnapshot.bytes;
   const state = JSON.parse(stateBytes.toString('utf8'));
   const manifest = JSON.parse(manifestBytes.toString('utf8'));
   const { planSha256, ...manifestCore } = manifest;
@@ -334,7 +481,7 @@ export function verifyHumanoidPostprocessInputs({
   invariant(manifest.experimentId === EXPECTED_EXPERIMENT_ID, 'Only the sealed V4 humanoid experiment can be postprocessed.');
   invariant(manifest.model?.id === EXPECTED_MODEL_ID, 'Humanoid source model changed.');
   invariant(planSha256 === sha256(canonicalJson(manifestCore)), 'Humanoid input plan SHA-256 changed.');
-  invariant(planSha256 === expectedPlanSha256, 'Humanoid V4 input plan is not the reviewed production plan.');
+  invariant(planSha256 === EXPECTED_PLAN_SHA256, 'Humanoid V4 input plan is not the reviewed production plan.');
   invariant(state.experimentId === manifest.experimentId && state.planSha256 === manifest.planSha256, 'Execution state does not match the input plan.');
   invariant(state.manifestSha256 === sha256(manifestBytes), 'Execution state manifest SHA-256 changed.');
   invariant(state.status === 'full_complete_human_review_required', 'Only a completed 94-pose V4 run can be postprocessed.');
@@ -357,14 +504,21 @@ export function verifyHumanoidPostprocessInputs({
   }
   const aliasPoseIds = [...slotCounts].filter(([, count]) => count > 1).map(([poseId]) => poseId);
   invariant(aliasPoseIds.length === EXPECTED_ALIASES && aliasPoseIds.every((poseId) => slotCounts.get(poseId) === 2), 'Expected exactly four two-slot aliases.');
+  for (const pose of manifest.uniquePoses) {
+    invariant(Array.isArray(pose.sourceSlots) && pose.sourceSlots.length > 0, `${pose.poseId} source slots are invalid.`);
+    const plannedSlots = manifest.frameSlots
+      .filter((slot) => slot.poseId === pose.poseId)
+      .map(({ animationName, frameNumber }) => ({ animationName, frameNumber }));
+    invariant(canonicalJson(pose.sourceSlots) === canonicalJson(plannedSlots), `${pose.poseId} source slots differ from frame slots.`);
+  }
 
-  const inputsDirectory = join(resolvedWorkDirectory, 'inputs');
+  const inputsDirectory = physicalDirectory(join(resolvedWorkDirectory, 'inputs'), 'humanoid inputs directory');
   const verified = [];
   for (const pose of manifest.uniquePoses) {
     invariant(/^pose-[0-9]{3}-[a-f0-9]{12}$/.test(pose.poseId ?? ''), 'Pose id is invalid.');
     const sourcePath = safeResolve(inputsDirectory, pose.path, `${pose.poseId} source`);
-    regularFile(sourcePath, `${pose.poseId} source`);
-    const source = inspectPngBytes(readFileSync(sourcePath), `${pose.poseId} source`);
+    const sourceSnapshot = readRegularFileSnapshot(sourcePath, `${pose.poseId} source`, { containmentRoot: inputsDirectory, maxBytes: MAX_PNG_BYTES });
+    const source = inspectPngBytes(sourceSnapshot.bytes, `${pose.poseId} source`);
     invariant(source.contentSha256 === pose.contentSha256, `${pose.poseId} source SHA-256 changed.`);
     invariant(source.width === HUMANOID_POSTPROCESS_CANVAS.sourceWidth && source.height === HUMANOID_POSTPROCESS_CANVAS.sourceHeight, `${pose.poseId} source dimensions changed.`);
 
@@ -375,11 +529,20 @@ export function verifyHumanoidPostprocessInputs({
     invariant(artifact.width === HUMANOID_POSTPROCESS_CANVAS.outputWidth && artifact.height === HUMANOID_POSTPROCESS_CANVAS.outputHeight, `${pose.poseId} raw state dimensions changed.`);
     verifyStateArtifactPath(artifact.path, manifest, pose);
     const rawPath = expectedRawPath(resolvedWorkDirectory, manifest, pose);
-    regularFile(rawPath, `${pose.poseId} raw`);
-    const raw = inspectPngBytes(readFileSync(rawPath), `${pose.poseId} raw`);
+    const rawSnapshot = readRegularFileSnapshot(rawPath, `${pose.poseId} raw`, { containmentRoot: resolvedWorkDirectory, maxBytes: MAX_PNG_BYTES });
+    const raw = inspectPngBytes(rawSnapshot.bytes, `${pose.poseId} raw`);
     invariant(raw.contentSha256 === artifact.contentSha256 && raw.sizeBytes === artifact.sizeBytes, `${pose.poseId} raw bytes differ from execution state.`);
     invariant(raw.width === HUMANOID_POSTPROCESS_CANVAS.outputWidth && raw.height === HUMANOID_POSTPROCESS_CANVAS.outputHeight, `${pose.poseId} raw dimensions changed.`);
-    verified.push({ pose, slot, sourcePath, source, rawPath, raw });
+    verified.push(Object.freeze({
+      pose,
+      slot,
+      sourcePath,
+      source,
+      sourceBytes: sourceSnapshot.bytes,
+      rawPath,
+      raw,
+      rawBytes: rawSnapshot.bytes,
+    }));
   }
 
   const knownVisualReviewFindings = knownVisualFindings.map((finding) => {
@@ -398,23 +561,32 @@ export function verifyHumanoidPostprocessInputs({
     workDirectory: resolvedWorkDirectory,
     state,
     manifest,
-    stateSha256: sha256(stateBytes),
-    manifestSha256: sha256(manifestBytes),
+    stateSha256: stateSnapshot.contentSha256,
+    manifestSha256: manifestSnapshot.contentSha256,
     aliasPoseIds,
     knownVisualReviewFindings,
     verified,
   };
 }
 
-function hardlinkOrCopy(source, destination) {
-  mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
-  invariant(!existsSync(destination), `Frame output already exists: ${destination}`);
+export function hardlinkOrCopyExclusive(source, destination, outputRoot, expectedContentSha256) {
+  invariant(/^[a-f0-9]{64}$/.test(expectedContentSha256 ?? ''), 'Frame master expected SHA-256 is required.');
+  const absoluteSource = resolve(source);
+  const sourceSnapshot = readRegularFileSnapshot(absoluteSource, 'frame master', { containmentRoot: outputRoot });
+  invariant(sourceSnapshot.contentSha256 === expectedContentSha256, 'Frame master changed before alias creation.');
+  const absoluteDestination = assertAvailableOutputEntry(outputRoot, destination);
   try {
-    linkSync(source, destination);
-  } catch {
-    copyFileSync(source, destination);
-    chmodSync(destination, 0o600);
+    linkSync(absoluteSource, absoluteDestination);
+  } catch (error) {
+    if (!['EXDEV', 'EPERM'].includes(error?.code)) throw error;
+    const snapshot = readRegularFileSnapshot(absoluteSource, 'frame master fallback', { containmentRoot: outputRoot });
+    invariant(snapshot.contentSha256 === expectedContentSha256, 'Frame master changed before alias fallback.');
+    writeBytesAtomicExclusive(absoluteDestination, snapshot.bytes, outputRoot);
   }
+  const destinationStat = lstatSync(absoluteDestination);
+  invariant(!destinationStat.isSymbolicLink() && destinationStat.isFile(), `Frame output is not a regular file: ${absoluteDestination}`);
+  const destinationSnapshot = readRegularFileSnapshot(absoluteDestination, 'frame alias', { containmentRoot: outputRoot });
+  invariant(destinationSnapshot.contentSha256 === expectedContentSha256, 'Frame alias hash differs from its verified master.');
 }
 
 function cleanAnalysisRecord(analysis) {
@@ -470,13 +642,13 @@ export function parseHumanoidPostprocessCliArgs(rawArgs) {
 }
 
 export async function postprocessHumanoidTemplate(options) {
+  const implementationSnapshot = snapshotImplementation();
   const workDirectory = resolve(options.workDirectory);
   const outputDirectory = resolve(options.outputDirectory ?? join(workDirectory, 'postprocessed-v1'));
   const ffmpegBinary = options.ffmpegBinary ?? 'ffmpeg';
-  invariant(!existsSync(outputDirectory), 'Postprocess output already exists; raw-preserving runs are immutable.');
   const input = verifyHumanoidPostprocessInputs({ workDirectory });
   const version = ffmpegVersion(ffmpegBinary);
-  mkdirSync(outputDirectory, { recursive: false, mode: 0o700 });
+  createOutputRootExclusive(outputDirectory);
 
   const poseRecords = [];
   const poseOutputs = new Map();
@@ -486,9 +658,10 @@ export async function postprocessHumanoidTemplate(options) {
   const topLevelHardFailures = [];
 
   for (const item of input.verified) {
-    const { pose, sourcePath, rawPath } = item;
+    const { pose, sourcePath, sourceBytes, rawBytes } = item;
     const sourceRgb = decodePixels(
-      sourcePath,
+      sourceBytes,
+      `${pose.poseId} source snapshot`,
       'rgb24',
       HUMANOID_POSTPROCESS_CANVAS.sourceWidth,
       HUMANOID_POSTPROCESS_CANVAS.sourceHeight,
@@ -508,10 +681,8 @@ export async function postprocessHumanoidTemplate(options) {
     invariant(!sourceAnalysis.touchesEdge, `${pose.poseId} source foreground touches the canvas edge.`);
     const targetBbox = scaleSourceBbox(sourceAnalysis.largestComponentBbox);
 
-    const rawBytes = readFileSync(rawPath);
     const rawDestination = join(outputDirectory, 'poses', 'raw', `${pose.poseId}.png`);
-    copyFileAtomic(rawPath, rawDestination);
-    invariant(readFileSync(rawDestination).equals(rawBytes), `${pose.poseId} raw preservation is not byte-identical.`);
+    writeBytesAtomicExclusive(rawDestination, rawBytes, outputDirectory);
     const rawDescriptor = outputDescriptor(rawDestination, outputDirectory, {
       width: HUMANOID_POSTPROCESS_CANVAS.outputWidth,
       height: HUMANOID_POSTPROCESS_CANVAS.outputHeight,
@@ -519,7 +690,8 @@ export async function postprocessHumanoidTemplate(options) {
     invariant(rawDescriptor.contentSha256 === item.raw.contentSha256, `${pose.poseId} copied raw hash changed.`);
 
     const rawRgb = decodePixels(
-      rawPath,
+      rawBytes,
+      `${pose.poseId} raw snapshot`,
       'rgb24',
       HUMANOID_POSTPROCESS_CANVAS.outputWidth,
       HUMANOID_POSTPROCESS_CANVAS.outputHeight,
@@ -556,6 +728,7 @@ export async function postprocessHumanoidTemplate(options) {
       height: HUMANOID_POSTPROCESS_CANVAS.outputHeight,
       pixelFormat: 'rgba',
       outputPath: unregisteredPath,
+      outputRoot: outputDirectory,
       ffmpegBinary,
     });
     const unregisteredDescriptor = outputDescriptor(unregisteredPath, outputDirectory, {
@@ -606,6 +779,7 @@ export async function postprocessHumanoidTemplate(options) {
       height: HUMANOID_POSTPROCESS_CANVAS.outputHeight,
       pixelFormat: 'rgba',
       outputPath: registeredPath,
+      outputRoot: outputDirectory,
       ffmpegBinary,
     });
     const registeredDescriptor = outputDescriptor(registeredPath, outputDirectory, {
@@ -627,6 +801,7 @@ export async function postprocessHumanoidTemplate(options) {
       height: HUMANOID_POSTPROCESS_CANVAS.outputHeight,
       pixelFormat: 'rgb24',
       outputPath: chromaPath,
+      outputRoot: outputDirectory,
       ffmpegBinary,
     });
     const chromaDescriptor = outputDescriptor(chromaPath, outputDirectory, {
@@ -634,8 +809,10 @@ export async function postprocessHumanoidTemplate(options) {
       height: HUMANOID_POSTPROCESS_CANVAS.outputHeight,
       colorType: 2,
     });
+    const chromaSnapshot = readRegularFileSnapshot(chromaPath, `${pose.poseId} chroma master`, { containmentRoot: outputDirectory });
     const decodedChroma = decodePixels(
-      chromaPath,
+      chromaSnapshot.bytes,
+      `${pose.poseId} chroma master`,
       'rgb24',
       HUMANOID_POSTPROCESS_CANVAS.outputWidth,
       HUMANOID_POSTPROCESS_CANVAS.outputHeight,
@@ -701,7 +878,7 @@ export async function postprocessHumanoidTemplate(options) {
       ['chromaRgb24', 'chroma-rgb24'],
     ]) {
       const destination = join(outputDirectory, 'frames', directoryName, frameSlot.animationName, frameName);
-      hardlinkOrCopy(master.absolute[kind], destination);
+      hardlinkOrCopyExclusive(master.absolute[kind], destination, outputDirectory, master.outputs[kind].contentSha256);
       const descriptor = outputDescriptor(destination, outputDirectory, {
         width: HUMANOID_POSTPROCESS_CANVAS.outputWidth,
         height: HUMANOID_POSTPROCESS_CANVAS.outputHeight,
@@ -746,7 +923,7 @@ export async function postprocessHumanoidTemplate(options) {
     invariant(animationThumbnails.every(Boolean), `${animationName} QA thumbnail is missing.`);
     const contact = buildCheckerboardContactSheet(animationThumbnails, QA_THUMBNAIL_WIDTH, QA_THUMBNAIL_HEIGHT);
     const contactPath = join(outputDirectory, 'qa', 'contact-sheets', `${animationName}.png`);
-    encodePng({ pixels: contact.rgb, width: contact.width, height: contact.height, pixelFormat: 'rgb24', outputPath: contactPath, ffmpegBinary });
+    encodePng({ pixels: contact.rgb, width: contact.width, height: contact.height, pixelFormat: 'rgb24', outputPath: contactPath, outputRoot: outputDirectory, ffmpegBinary });
     const contactDescriptor = outputDescriptor(contactPath, outputDirectory, { width: contact.width, height: contact.height, colorType: 2 });
     addOutputHash(outputHashes, contactDescriptor);
 
@@ -757,6 +934,7 @@ export async function postprocessHumanoidTemplate(options) {
       width: QA_THUMBNAIL_WIDTH,
       height: QA_THUMBNAIL_HEIGHT,
       outputPath: gifPath,
+      outputRoot: outputDirectory,
       ffmpegBinary,
     });
     const animatedDescriptor = gifDescriptor(gifPath, outputDirectory, gifGeometry);
@@ -772,6 +950,7 @@ export async function postprocessHumanoidTemplate(options) {
   invariant(poseRecords.length === EXPECTED_POSES, 'Postprocessor did not emit exactly 94 pose masters.');
   invariant(frameRecords.length === EXPECTED_FRAME_SLOTS, 'Postprocessor did not reconstruct exactly 98 frame positions.');
   invariant(aliases.length === EXPECTED_ALIASES, 'Postprocessor did not verify exactly four aliases.');
+  assertImplementationUnchanged(implementationSnapshot);
   const status = topLevelHardFailures.length === 0 ? 'awaiting_human_review' : 'hard_gate_failed';
   const manifest = {
     schemaVersion: 1,
@@ -785,10 +964,15 @@ export async function postprocessHumanoidTemplate(options) {
       executionStateSha256: input.stateSha256,
       executionStatus: input.state.status,
       rawPoseCount: input.verified.length,
+      trustedArtifactProvenance: {
+        encryptedArtifactSha256: HUMANOID_V4_TRUSTED_SEAL.encryptedArtifactSha256,
+        githubActionsRunId: HUMANOID_V4_TRUSTED_SEAL.githubActionsRunId,
+        verification: 'out_of_band_provenance',
+      },
     },
     implementation: {
-      scriptSha256: sha256(readFileSync(fileURLToPath(import.meta.url))),
-      coreSha256: sha256(readFileSync(new URL('./humanoid-pose-template-postprocess-core.mjs', import.meta.url))),
+      scriptSha256: implementationSnapshot.scriptSha256,
+      coreSha256: implementationSnapshot.coreSha256,
       ffmpegVersion: version,
     },
     policy: HUMANOID_POSTPROCESS_POLICY,
@@ -819,15 +1003,16 @@ export async function postprocessHumanoidTemplate(options) {
     qa,
   };
   const manifestPath = join(outputDirectory, 'postprocess-manifest.json');
-  writeJsonAtomic(manifestPath, manifest);
+  assertImplementationUnchanged(implementationSnapshot);
+  writeJsonAtomic(manifestPath, manifest, outputDirectory);
   const manifestDescriptor = outputDescriptorJson(manifestPath, outputDirectory);
   outputHashes.push({ path: manifestDescriptor.path, contentSha256: manifestDescriptor.contentSha256 });
   const hashLines = [...outputHashes]
     .sort((left, right) => left.path.localeCompare(right.path))
     .map((entry) => `${entry.contentSha256}  ${entry.path}`)
     .join('\n');
-  writeBytesAtomic(join(outputDirectory, 'hashes.sha256'), Buffer.from(`${hashLines}\n`));
-  writeBytesAtomic(join(outputDirectory, 'postprocess-manifest.json.sha256'), Buffer.from(`${manifestDescriptor.contentSha256}  postprocess-manifest.json\n`));
+  writeBytesAtomic(join(outputDirectory, 'hashes.sha256'), Buffer.from(`${hashLines}\n`), outputDirectory);
+  writeBytesAtomic(join(outputDirectory, 'postprocess-manifest.json.sha256'), Buffer.from(`${manifestDescriptor.contentSha256}  postprocess-manifest.json\n`), outputDirectory);
 
   if (topLevelHardFailures.length > 0) {
     throw new Error(`Humanoid postprocess hard gates failed (${topLevelHardFailures.length}); inspect ${manifestPath}.`);
@@ -836,7 +1021,7 @@ export async function postprocessHumanoidTemplate(options) {
 }
 
 function outputDescriptorJson(path, outputDirectory) {
-  const bytes = readFileSync(path);
+  const { bytes } = readRegularFileSnapshot(path, 'postprocess manifest', { containmentRoot: outputDirectory });
   return {
     path: relative(outputDirectory, path),
     mimeType: 'application/json',
