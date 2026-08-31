@@ -5,7 +5,6 @@ import { FighterState, FIXED_TIMESTEP, GAME_HEIGHT, GAME_WIDTH } from '../consta
 import { InputManager } from '../systems/InputManager.ts';
 import { resetVirtualInput } from '../systems/VirtualInput.ts';
 import { loadAiSprites } from '../sprites/AiSpriteLoader.ts';
-import { generateFighterSpriteSheet } from '../sprites/SpriteGenerator.ts';
 import type { MatchSceneData } from '../match/MatchConfig.ts';
 import { getStageTheme, type StageThemeId } from '../match/StageConfig.ts';
 import { getCachedStageBackground } from '../../services/SpriteCache.ts';
@@ -18,7 +17,6 @@ import {
 import { RUSH_ARENA_MAP } from '../brawl/BrawlMap.ts';
 
 const MAX_TICKS_PER_FRAME = 5;
-const ENEMY_SPRITE_KEY = 'rush_enemy';
 const DEFAULT_STAGE_ID: StageThemeId = 'insert-player-arena';
 
 interface ActorPresentation {
@@ -83,10 +81,6 @@ export class RushScene extends Phaser.Scene {
     if (!this.isCurrent(lifecycle)) return;
     await this.createStageBackdrop(lifecycle);
     if (!this.isCurrent(lifecycle)) return;
-
-    if (!this.textures.exists(ENEMY_SPRITE_KEY)) {
-      generateFighterSpriteSheet(this, ENEMY_SPRITE_KEY, '#2c214c', '#d7b58b');
-    }
 
     this.drawArenaGeometry();
     this.sim = new BrawlSimulation([
@@ -275,7 +269,13 @@ export class RushScene extends Phaser.Scene {
   private createActorPresentation(actor: BrawlActor): ActorPresentation {
     const playerIndex = actor.slot ?? this.presentations.size + 2;
     const fighter = new Fighter(playerIndex, actor.name, actor.x, actor.facingRight);
-    const spriteKey = actor.slot === 0 ? 'fighter_p1' : actor.slot === 1 ? 'fighter_p2' : ENEMY_SPRITE_KEY;
+    const spriteKey = actor.slot === 0
+      ? 'fighter_p1'
+      : actor.slot === 1
+        ? 'fighter_p2'
+        : actor.id.charCodeAt(actor.id.length - 1) % 2 === 0
+          ? 'fighter_p1'
+          : 'fighter_p2';
     const view = new FighterView(fighter, spriteKey);
     view.createSprite(this);
     const scale = actor.archetype === 'captain'
@@ -327,6 +327,8 @@ export class RushScene extends Phaser.Scene {
     presentation.view.sprite.setDepth(depth);
     if (actor.archetype === 'captain') presentation.view.sprite.setTint(0xffce3a);
     else if (actor.archetype === 'bruiser') presentation.view.sprite.setTint(0xff8c42);
+    else if (actor.kind === 'enemy') presentation.view.sprite.setTint(0x6f64a8);
+    else presentation.view.sprite.clearTint();
 
     if (presentation.tag) {
       presentation.tag.setPosition(actor.x, actor.lane - 196);
