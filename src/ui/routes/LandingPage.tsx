@@ -18,7 +18,7 @@ interface LandingPageProps {
 }
 
 const TRANSFORMATION_IMAGE = '/assets/landing-transformation.webp';
-const LAUNCH_VIDEO = '/assets/insert-player-launch-252e3853.mp4';
+const LAUNCH_VIDEO = '/assets/insert-player-launch-6dc85884.mp4';
 // GIF-style silent gameplay loop (~200 KB): real production footage, cut from
 // the launch capture. The full film with audio stays in the proof section.
 const FIGHT_LOOP_VIDEO = '/assets/landing-fight-loop-e40898d3.mp4';

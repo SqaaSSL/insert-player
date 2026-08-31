@@ -1,0 +1,117 @@
+{
+  "outputFile": "fight-montage-player-one-vs-casual-v13.mp4",
+  "outputFrameRate": 30,
+  "loadingFrameCount": 72,
+  "defaultFightFrameCount": 30,
+  "transitionHoldFrameCount": 8,
+  "totalFrameCount": 320,
+  "totalDurationSeconds": 10.666666666666666,
+  "clips": [
+    {
+      "id": "loading-player-one-vs-casual",
+      "captureId": "casual-vs-player-one-executive",
+      "fighter": "Casual",
+      "opponent": "Player One",
+      "stage": "EXECUTIVE RUMBLE",
+      "sourceFile": "casual-vs-player-one-executive-loader.mp4",
+      "sourceStartSeconds": 0,
+      "frameCount": 72,
+      "durationSeconds": 2.4
+    },
+    {
+      "id": "casual-player-one",
+      "captureId": "casual-vs-player-one-executive",
+      "fighter": "Casual",
+      "opponent": "Player One",
+      "stage": "EXECUTIVE RUMBLE",
+      "sourceFile": "casual-vs-player-one-executive-fight.mp4",
+      "sourceStartSeconds": 0,
+      "frameCount": 30,
+      "durationSeconds": 1
+    },
+    {
+      "id": "casual-trump",
+      "captureId": "casual-vs-player-one-arena",
+      "fighter": "Casual",
+      "opponent": "Donald Trump",
+      "stage": "INSERT PLAYER ARENA",
+      "sourceFile": "casual-vs-player-one-arena-master.webm",
+      "sourceStartSeconds": 12.971,
+      "damageOffsetSeconds": 13.371,
+      "frameCount": 30,
+      "durationSeconds": 1
+    },
+    {
+      "id": "player-one-rosalia",
+      "captureId": "rosalia-current2",
+      "fighter": "Player One",
+      "opponent": "Rosalía",
+      "stage": "TABLAO 3000",
+      "sourceFile": "rosalia-current2-master.webm",
+      "sourceStartSeconds": 12.146,
+      "damageOffsetSeconds": 12.546,
+      "frameCount": 30,
+      "durationSeconds": 1
+    },
+    {
+      "id": "casual-rosalia",
+      "captureId": "rosalia-vs-casual-tablao",
+      "fighter": "Rosalía",
+      "opponent": "Casual",
+      "stage": "TABLAO 3000",
+      "sourceFile": "rosalia-vs-casual-tablao-master.webm",
+      "sourceStartSeconds": 9.467,
+      "damageOffsetSeconds": 9.867,
+      "frameCount": 30,
+      "durationSeconds": 1
+    },
+    {
+      "id": "player-one-elon",
+      "captureId": "elon-current2",
+      "fighter": "Player One",
+      "opponent": "Elon Musk",
+      "stage": "MARS INCORPORATED",
+      "sourceFile": "elon-current2-master.webm",
+      "sourceStartSeconds": 12.885,
+      "damageOffsetSeconds": 13.285,
+      "frameCount": 30,
+      "durationSeconds": 1
+    },
+    {
+      "id": "casual-elon",
+      "captureId": "elon-vs-casual-mars",
+      "fighter": "Elon Musk",
+      "opponent": "Casual",
+      "stage": "MARS INCORPORATED",
+      "sourceFile": "elon-vs-casual-mars-master.webm",
+      "sourceStartSeconds": 9.882,
+      "damageOffsetSeconds": 10.282,
+      "frameCount": 30,
+      "durationSeconds": 1
+    },
+    {
+      "id": "player-one-lamine",
+      "captureId": "lamine-current2",
+      "fighter": "Player One",
+      "opponent": "Lamine Yamal",
+      "stage": "LA JAULA 304",
+      "sourceFile": "lamine-current2-master.webm",
+      "sourceStartSeconds": 12.527,
+      "damageOffsetSeconds": 12.927,
+      "frameCount": 30,
+      "durationSeconds": 1
+    },
+    {
+      "id": "casual-lamine",
+      "captureId": "lamine-vs-casual-jaula",
+      "fighter": "Lamine Yamal",
+      "opponent": "Casual",
+      "stage": "LA JAULA 304",
+      "sourceFile": "lamine-vs-casual-jaula-master.webm",
+      "sourceStartSeconds": 9.878,
+      "damageOffsetSeconds": 10.278,
+      "frameCount": 30,
+      "durationSeconds": 1
+    }
+  ]
+}

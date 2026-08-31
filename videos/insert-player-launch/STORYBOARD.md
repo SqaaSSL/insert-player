@@ -5,12 +5,12 @@ message: "A real person can become a recognizable, playable arcade fighter"
 arc: Drag-and-drop transformation -> Two-player proof -> Player One versus Casual loading curtain -> Eight-fight gameplay proof -> five-second CTA
 audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
 mode: autonomous
-music: "assets/generated/launch-bed-original-neon-v10.wav - the approved Neon Arena mix plus a short reverb tail beneath the longer closing hold"
+music: "assets/generated/launch-bed-original-neon-v11.wav - the approved intro followed by 15.40 consecutive seconds of the original Neon Arena recording, with no repeated tail"
 ---
 
 ## Video direction
 
-The film moves from recognition to proof to action. Real media always outranks decorative graphics: first a wardrobe-matched Player One portrait is physically dragged into the P1 slot and becomes her exact production fighter; Casual then repeats the proof with a second real person. Their production loading curtain leads directly into their real bout, and seven more production fights show both players against the global roster before a five-second Insert Player lockup closes the piece. Camera movement is restrained and seek-safe; motion comes from the drag gesture, two deterministic photo-to-fighter scans, the recorded game, and the final typewriter assembly. The explanatory voiceover ends with `Ready? Insert Player.` on the closing title. Keep the original `Neon Arena` recording beneath it, preserve cabinet fight effects, and use a low reverb tail to support the reading hold without a hard cut. Keep all essential text outside the bottom 17 percent caption band. Use cabinet black as the visual ground, coin red for action, coin gold for reward, CRT cream for text, and glass blue only as a counterpoint.
+The film moves from recognition to proof to action. Real media always outranks decorative graphics: first a wardrobe-matched Player One portrait is physically dragged into the P1 slot and becomes her exact production fighter; Casual then repeats the proof with a second real person. Their production loading curtain leads directly into their real bout on `EXECUTIVE RUMBLE`, and seven more production fights show both players against the global roster before a five-second Insert Player lockup closes the piece. Camera movement is restrained and seek-safe; motion comes from the drag gesture, two deterministic photo-to-fighter scans, the recorded game, and the final typewriter assembly. The explanatory voiceover ends with `Ready? Insert Player.` on the closing title. Keep the original `Neon Arena` recording moving forward beneath it, preserve cabinet fight effects, and finish with only a short terminal fade rather than a repeated or echoed tail. Keep all essential text outside the bottom 17 percent caption band. Use cabinet black as the visual ground, coin red for action, coin gold for reward, CRT cream for text, and glass blue only as a counterpoint.
 
 ## Frame 1 — Your Photo. Your Fighter.
 
@@ -55,7 +55,7 @@ roles: The portrait is the identity anchor; the electric seam is the transformat
 - beat: excitement -> triumph
 - blueprint: device-surface-showcase
 - blueprint_adaptation: One `2.40s` full-bleed production loading curtain, eight independently recorded `1s` gameplay cuts with no decorative device frame, and a `0.27s` final-frame hold protecting the exit transition.
-- asset_candidates: assets/fight-montage-player-one-vs-casual-v12.mp4 — a readable Casual versus Player One loading curtain, their real match, and seven further matches across the current global roster
+- asset_candidates: assets/fight-montage-player-one-vs-casual-v13.mp4 — a readable Casual versus Player One loading curtain, their real match on Executive Rumble, and seven further matches across the current global roster
 - sfx: .media/audio/sfx/sfx_004.mp3 at 3.65s
 
 narrativeRole: Cash in the promise: this is not an avatar or a still image. Two personal fighters can each enter real matches against a varied global roster.
@@ -65,8 +65,8 @@ roles: The fight captures are primary proof; the `YOUR FIGHT` label is a brief o
 
 ### Video direction
 
-- Scene 1 (0.00-2.40s): Hold the real production `CASUAL VS PLAYER ONE` loading curtain long enough to read both personal fighters and the P1 lockup.
-- Scene 2 (2.40-3.40s): Casual fights Player One in `LA JAULA 304`, paying off the two-player transformation immediately.
+- Scene 1 (0.00-2.40s): Hold the real production `CASUAL VS PLAYER ONE` loading curtain long enough to read both personal fighters, the `EXECUTIVE RUMBLE` setting, and the P1 lockup.
+- Scene 2 (2.40-3.40s): Casual fights Player One in `EXECUTIVE RUMBLE`, paying off the two-player transformation immediately on the same published stage.
 - Scene 3 (3.40-4.40s): Casual fights Donald Trump in `INSERT PLAYER ARENA`.
 - Scene 4 (4.40-5.40s): Player One fights Rosalía in `TABLAO 3000`.
 - Scene 5 (5.40-6.40s): Rosalía fights the second player in `TABLAO 3000`.

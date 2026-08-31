@@ -1,0 +1,103 @@
+{
+  "version": 14,
+  "project": "insert-player-launch",
+  "acceptance": "requested_release_update",
+  "change": "Move the opening Casual versus Player One loader and bout to the published Executive Rumble stage, and replace the synthetic closing echo with consecutive audio from the original private Neon Arena recording.",
+  "timing": {
+    "totalDurationSeconds": 20.066667,
+    "transformationSeconds": [0, 4.95],
+    "gameplaySeconds": [4.65, 15.316667],
+    "closingLockupSeconds": [15.05, 20.05],
+    "loadingDurationSeconds": 2.4,
+    "fightClipDurationSeconds": 1,
+    "fightClipCount": 8,
+    "framesPerSecond": 30
+  },
+  "openingStageReconstruction": {
+    "sourceCapture": "assets/captures/casual-vs-player-one-master.webm",
+    "targetStage": "EXECUTIVE RUMBLE",
+    "targetStageAsset": "../../public/assets/stages/signature/executive-rumble-pipeline-v1.png",
+    "buildScript": "scripts/build-casual-executive-rumble-clips.mjs",
+    "buildScriptSha256": "0aa91c467d1c82a89bf080faeba5a92f7a80d47a31b8c8ddbcaa8b691152f54d",
+    "segmentationScript": "scripts/segment-people.swift",
+    "segmentationScriptSha256": "bd46e07ac0446057ad55b799a0a82723038623c9aabf996410fc6656597e25d5",
+    "method": "Local Apple Vision foreground instance masks preserve both fighters; a separate high-contrast detail mask preserves the real HUD and hit effects. The published stage asset and exact Executive Rumble labels are composited underneath without generative inference.",
+    "providerCalls": 0,
+    "inferenceCostUsd": 0
+  },
+  "gameplayMontage": {
+    "buildScript": "scripts/build-fight-montage-with-loading.mjs",
+    "buildScriptSha256": "4c540356267ccf6ca27d0eb37b189369c0e3cfbd79e018e4bc721028727bba68",
+    "manifestFile": "assets/fight-montage-player-one-vs-casual-v13.json",
+    "manifestSha256": "1c3a3135b6b417b79841d444555f2adedb438bff09fc53fbd23ba964d134055d",
+    "outputFile": "assets/fight-montage-player-one-vs-casual-v13.mp4",
+    "outputSha256": "9f12ae4857947f82043198550dce6af39662442f0017f4ae0c0f07bc51c5c11c",
+    "outputSizeBytes": 23564003,
+    "durationSeconds": 10.666667,
+    "frameCount": 320,
+    "opening": {
+      "fighter": "Casual",
+      "opponent": "Player One",
+      "stage": "EXECUTIVE RUMBLE",
+      "loadingSeconds": [0, 2.4],
+      "fightSeconds": [2.4, 3.4]
+    },
+    "remainingCutCount": 7
+  },
+  "audio": {
+    "buildScript": "scripts/build-launch-bed-original-neon.mjs",
+    "buildScriptSha256": "0c497fba3e64a9b26438d2b69c7514f29aa85f4c5875b2dc91dc0fd8ed69e664",
+    "musicFile": "assets/generated/launch-bed-original-neon-v11.wav",
+    "musicSha256": "5dbea6cd2136330f9dc8995f246f6538869dbf8d26f6b585e38064f596a1111a",
+    "musicSizeBytes": 3849678,
+    "privateSource": {
+      "fileName": "Neon Arena.mp3",
+      "sha256": "0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05",
+      "committed": false,
+      "sourceSeconds": [0, 15.4],
+      "timelineSeconds": [4.65, 20.05]
+    },
+    "repeatedTailSeconds": 0,
+    "terminalFadeSeconds": 0.3,
+    "voiceFile": "assets/generated/tts-launch-friends-v5-retimed.wav",
+    "integratedLoudnessLufs": -19.66,
+    "loudnessRangeLu": 6.0,
+    "truePeakDbfs": -6.55
+  },
+  "validation": {
+    "hyperframesVersion": "0.8.21",
+    "upgradeCheck": "current",
+    "hyperframesCheck": {
+      "lintErrors": 0,
+      "runtimeErrors": 0,
+      "layoutIssues": 0,
+      "motionIssues": 0,
+      "contrastChecksPassed": "10/10"
+    },
+    "audioRegressionTests": {
+      "tests": 2,
+      "result": "passed"
+    },
+    "visualReview": "Eight-frame contact sheet plus full-resolution loader and opening fight frames inspected",
+    "providerCalls": 0,
+    "inferenceCostUsd": 0
+  },
+  "release": {
+    "masterFile": "renders/insert-player-launch-executive-rumble-v14.mp4",
+    "masterSha256": "70b139e56c97bdf061e06aed1ae1db103df1572449b0a37ad3770e93913f1523",
+    "masterSizeBytes": 22055232,
+    "publicFile": "../../public/assets/insert-player-launch-6dc85884.mp4",
+    "publicPath": "/assets/insert-player-launch-6dc85884.mp4",
+    "publicSha256": "6dc858849a4890a871f3133bf412fa09e32a21039a6b4e79c59aefe41ee5a9ed",
+    "publicSizeBytes": 12786520,
+    "sourceToWebSsim": 0.994935,
+    "encoding": {
+      "video": "H.264 High, CRF 18, yuv420p, faststart",
+      "audio": "AAC LC, 192 kbps",
+      "width": 1920,
+      "height": 1080,
+      "framesPerSecond": 30,
+      "durationSeconds": 20.066667
+    }
+  }
+}
