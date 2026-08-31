@@ -32,7 +32,8 @@ describe('versus invitation OG template', () => {
     expect(document.css).toContain("font-family: 'Press Start 2P'");
     expect(document.css).toContain('.center-cut');
     expect(document.css).toContain('.challenge-core');
-    expect(document.css).toContain('.challenger-intro { position: absolute; z-index: 20; left: 675px;');
+    expect(document.css).toContain('.challenger-intro { position: absolute; z-index: 20; left: 330px;');
+    expect(document.css).toContain('width: 540px;');
     expect(document.html).not.toContain('inviter-plate');
   });
 
