@@ -19,6 +19,8 @@ function exactArrayBuffer(buffer) {
 
 const fighterPath = process.argv[2] ?? localPath('../public/assets/landing-panel-fighter-c2d0a569.webp');
 const outputPath = process.argv[3] ?? `/tmp/insert-player-versus-${VERSUS_INVITE_TEMPLATE_VERSION}.png`;
+const inviterName = process.argv[4] ?? 'Francisco Novella Fletcher';
+const fighterName = process.argv[5] ?? 'Player One';
 const [fighter, pressStart, spaceRegular, spaceBold] = await Promise.all([
   readFile(fighterPath),
   readFile(localPath('../worker/node_modules/@fontsource/press-start-2p/files/press-start-2p-latin-400-normal.woff2')),
@@ -26,8 +28,8 @@ const [fighter, pressStart, spaceRegular, spaceBold] = await Promise.all([
   readFile(localPath('../worker/node_modules/@fontsource/space-grotesk/files/space-grotesk-latin-700-normal.woff2')),
 ]);
 const document = buildVersusInviteOgDocument({
-  inviterName: 'Francisco Novella Fletcher',
-  fighterName: 'Rosalía',
+  inviterName,
+  fighterName,
   qualityTier: 'champion',
 });
 const bytes = await render(document.html.replace(/>\s+</g, '><').trim(), {
