@@ -21,15 +21,15 @@ const effectsPath = resolve(
   process.argv[4] ?? join(projectRoot, 'assets/launch-mix.wav'),
 );
 const outputPath = resolve(
-  process.argv[5] ?? join(projectRoot, 'assets/generated/launch-bed-original-neon-v9.wav'),
+  process.argv[5] ?? join(projectRoot, 'assets/generated/launch-bed-original-neon-v11.wav'),
 );
 const expectedMusicSha256 =
   '0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05';
 const musicSha256 = createHash('sha256').update(readFileSync(musicPath)).digest('hex');
 const introDurationSeconds = 4.65;
-const totalDurationSeconds = 18;
+const totalDurationSeconds = 20.05;
 const neonDurationSeconds = totalDurationSeconds - introDurationSeconds;
-const musicFadeDurationSeconds = 0.22;
+const musicFadeDurationSeconds = 0.3;
 const musicFadeStartSeconds = neonDurationSeconds - musicFadeDurationSeconds;
 
 if (musicSha256 !== expectedMusicSha256) {
@@ -158,7 +158,7 @@ try {
     outputPath,
   ]);
 
-  const continuityChecks = [0.5, 5.15, 7.25, 9.25, 11.8, 13.2, 15.2, 16.4, 17.4].map((startSeconds) => ({
+  const continuityChecks = [0.5, 5.15, 7.25, 9.25, 11.8, 13.2, 15.2, 17.4, 18.2, 19, 19.5].map((startSeconds) => ({
     startSeconds,
     durationSeconds: 0.4,
     meanVolumeDb: measureMeanVolumeDb(outputPath, startSeconds, 0.4),
@@ -177,7 +177,9 @@ try {
     integratedLoudnessTargetLufs: -20,
     truePeakTargetDbfs: -4,
     musicSourceSha256: musicSha256,
+    neonSourceSeconds: [0, neonDurationSeconds],
     neonTimelineSeconds: [introDurationSeconds, totalDurationSeconds],
+    repeatedTailSeconds: 0,
     continuityChecks,
   }, null, 2));
 } finally {

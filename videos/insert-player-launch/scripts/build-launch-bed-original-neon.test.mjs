@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 const projectRoot = resolve(import.meta.dirname, '..');
 const bedPath = resolve(
   projectRoot,
-  'assets/generated/launch-bed-original-neon-v10.wav',
+  'assets/generated/launch-bed-original-neon-v11.wav',
 );
 
 function readPcm16Wav(filePath) {

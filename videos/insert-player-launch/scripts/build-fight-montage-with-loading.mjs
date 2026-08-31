@@ -5,23 +5,30 @@ import { basename, resolve } from 'node:path';
 const projectRoot = resolve(import.meta.dirname, '..');
 const capturesDir = resolve(projectRoot, 'assets/captures');
 const outputPath = resolve(
-  process.argv[2] ?? resolve(projectRoot, 'assets/fight-montage-player-one-vs-casual-v12.mp4'),
+  process.argv[2] ?? resolve(projectRoot, 'assets/fight-montage-player-one-vs-casual-v13.mp4'),
 );
 const manifestPath = outputPath.replace(/\.mp4$/i, '.json');
 const outputFrameRate = 30;
 const loadingFrameCount = 72;
 const defaultFightFrameCount = 30;
 const transitionHoldFrameCount = 8;
-const loadingLeadSeconds = 2.25;
 const fightLeadSeconds = 0.4;
-const openingCaptureId = 'casual-vs-player-one';
+const openingCaptureId = 'casual-vs-player-one-executive';
+const openingDerived = JSON.parse(
+  readFileSync(resolve(capturesDir, `${openingCaptureId}.json`), 'utf8'),
+);
 
 const fights = [
   {
     id: 'casual-player-one',
     captureId: openingCaptureId,
-    expectedFighters: ['Casual'],
-    expectedOpponents: ['Player One'],
+    prebuilt: {
+      fighter: 'Casual',
+      opponent: 'Player One',
+      stage: openingDerived.stage,
+      sourceFile: openingDerived.fight.outputFile,
+      sourceStartSeconds: 0,
+    },
   },
   {
     id: 'casual-trump',
@@ -79,25 +86,15 @@ function firstDamageEvent(events) {
   });
 }
 
-const loadingCapture = readCapture(openingCaptureId);
-const loaderExitEvent = loadingCapture.events.find((event) => event.type === 'asf-intro');
-if (!Number.isFinite(loaderExitEvent?.at)) {
-  throw new Error(`${openingCaptureId} capture has no loader exit event`);
-}
-const loadingSourceStartSeconds = Number(
-  Math.max(
-    0,
-    (loaderExitEvent.at - loadingCapture.videoStartedAt) / 1000 - loadingLeadSeconds,
-  ).toFixed(3),
-);
 const loadingClip = {
   id: 'loading-player-one-vs-casual',
   captureId: openingCaptureId,
-  fighter: loadingCapture.fighter,
-  opponent: loadingCapture.opponent,
-  source: resolve(capturesDir, `${openingCaptureId}-master.webm`),
-  sourceFile: `${openingCaptureId}-master.webm`,
-  sourceStartSeconds: loadingSourceStartSeconds,
+  fighter: 'Casual',
+  opponent: 'Player One',
+  stage: openingDerived.stage,
+  source: resolve(capturesDir, openingDerived.loader.outputFile),
+  sourceFile: openingDerived.loader.outputFile,
+  sourceStartSeconds: 0,
   frameCount: loadingFrameCount,
   durationSeconds: loadingFrameCount / outputFrameRate,
 };
@@ -108,7 +105,18 @@ const fightClips = fights.map(({
   frameCount = defaultFightFrameCount,
   expectedFighters,
   expectedOpponents,
+  prebuilt,
 }) => {
+  if (prebuilt) {
+    return {
+      id,
+      captureId,
+      ...prebuilt,
+      source: resolve(capturesDir, prebuilt.sourceFile),
+      frameCount,
+      durationSeconds: frameCount / outputFrameRate,
+    };
+  }
   const capture = readCapture(captureId);
   const damage = firstDamageEvent(capture.events);
   if (!damage) throw new Error(`No damage event found for ${id}`);
