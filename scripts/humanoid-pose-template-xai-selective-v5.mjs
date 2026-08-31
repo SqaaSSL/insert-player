@@ -5,8 +5,10 @@ import {
   copyFileSync,
   existsSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   unlinkSync,
@@ -30,6 +32,7 @@ const TEMPORARY_UPLOAD_TTL_MS = 23 * 60 * 60 * 1000;
 
 export const HUMANOID_TEMPLATE_EXPERIMENT_ID = 'humanoid-neutral-medium-xai-selective-v5';
 export const HUMANOID_TEMPLATE_CANARY_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_SELECTIVE_CANARY_V5';
+export const HUMANOID_TEMPLATE_REPAIR_CONFIRMATION = 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_REPAIR_V5_19';
 export const HUMANOID_TEMPLATE_SOURCE_ENDPOINT = 'https://api.insertplayer.ai/api/arcade';
 export const HUMANOID_TEMPLATE_MODEL = Object.freeze({
   id: 'grok-imagine-image-2-edit',
@@ -101,6 +104,85 @@ export const HUMANOID_TEMPLATE_CANARY_POSE_IDS = Object.freeze([
   'pose-080-592f648f729a',
 ]);
 
+export const HUMANOID_TEMPLATE_CANARY_CHECKPOINT = Object.freeze({
+  sourceRunId: '33343450009',
+  artifactId: '9741312074',
+  artifactName: 'humanoid-neutral-medium-xai-selective-v5-encrypted',
+  artifactZipSha256: '420adad6d1f4a97cbf18d3f00ec5f1676800f35988d97ac1d6b7d3594e840dcd',
+  ciphertextName: 'humanoid-selective-v5-checkpoint.tar.gz.ipenc',
+  ciphertextSha256: 'd48a3f78e0a1491fc36ca4310f723e8b9e0c00b3f4946d6970175bcacdfb293e',
+  generatorCommitSha: '0a66f1631958a5a96100eac8d39b9f9cc0cbed5f',
+  stateSha256: '77f519280e9701d833362c32f9cb008a238557eb02ad921a4f432f74d9a8c867',
+  manifestSha256: '88db095eb86f716a798ba7c873c698ea87f1150da07d1b3909f500f39cc87578',
+  planSha256: '51f7763cecb4ba9cc761846d5ae7a076660610c018bf4b180aea12eab31a8ac9',
+  status: 'canary_complete_human_review_required',
+  completedPoseCount: 5,
+  totalCostMicrocredits: 500_000,
+});
+
+export const HUMANOID_TEMPLATE_REPAIR_FRAMES = Object.freeze([
+  Object.freeze({ animationName: 'high_kick', frameNumber: 4 }),
+  Object.freeze({ animationName: 'high_kick', frameNumber: 5 }),
+  Object.freeze({ animationName: 'high_punch', frameNumber: 2 }),
+  Object.freeze({ animationName: 'high_punch', frameNumber: 4 }),
+  Object.freeze({ animationName: 'high_punch', frameNumber: 6 }),
+  Object.freeze({ animationName: 'idle', frameNumber: 4 }),
+  Object.freeze({ animationName: 'ko', frameNumber: 1 }),
+  Object.freeze({ animationName: 'ko', frameNumber: 3 }),
+  Object.freeze({ animationName: 'ko', frameNumber: 4 }),
+  Object.freeze({ animationName: 'ko', frameNumber: 5 }),
+  Object.freeze({ animationName: 'ko', frameNumber: 8 }),
+  Object.freeze({ animationName: 'ko', frameNumber: 11 }),
+  Object.freeze({ animationName: 'low_kick', frameNumber: 4 }),
+  Object.freeze({ animationName: 'low_kick', frameNumber: 5 }),
+  Object.freeze({ animationName: 'low_kick', frameNumber: 7 }),
+  Object.freeze({ animationName: 'low_kick', frameNumber: 9 }),
+  Object.freeze({ animationName: 'low_punch', frameNumber: 6 }),
+  Object.freeze({ animationName: 'victory', frameNumber: 4 }),
+  Object.freeze({ animationName: 'victory', frameNumber: 9 }),
+]);
+
+export const HUMANOID_TEMPLATE_REPAIR_POSE_IDS = Object.freeze([
+  'pose-009-1c68f61f7b8e',
+  'pose-010-08c72b553ad3',
+  'pose-019-39abc3e8c7c8',
+  'pose-021-f9ad82f8f8e1',
+  'pose-023-b51d09cf8edc',
+  'pose-032-45917e89bfe6',
+  'pose-045-7d8079f55708',
+  'pose-047-85c06b8f3ff4',
+  'pose-048-a238272c2686',
+  'pose-049-2def2dd84191',
+  'pose-052-3230240640e1',
+  'pose-055-5655accf5650',
+  'pose-060-3f470ba7a879',
+  'pose-061-86dfa9041794',
+  'pose-063-9b96aee26b28',
+  'pose-065-c469b54664bc',
+  'pose-070-6b1de52c67b6',
+  'pose-074-e755e505b366',
+  'pose-079-f70b975fff94',
+]);
+
+export const HUMANOID_TEMPLATE_REPAIR_POLICY = Object.freeze({
+  frameIsolation: true,
+  chaining: false,
+  automaticRetries: 0,
+  fallback: 'none',
+  promptEnrichment: false,
+  concurrency: 3,
+  paidCalls: 19,
+  maximumTotalCostMicrocredits: 19 * HUMANOID_TEMPLATE_MODEL.expectedTwoReferenceCostMicrocredits,
+  catalogMaximumTotalCostMicrocredits: 19 * HUMANOID_TEMPLATE_MODEL.catalogMaximumCostMicrocredits,
+  preservedCanaryPaidCalls: 5,
+  combinedReviewedPoseCount: 24,
+  combinedExpectedCostMicrocredits: 24 * HUMANOID_TEMPLATE_MODEL.expectedTwoReferenceCostMicrocredits,
+  fullBatch: false,
+  import: false,
+  activation: false,
+  humanReviewRequired: true,
+});
+
 export const HUMANOID_TEMPLATE_POLICY = Object.freeze({
   frameIsolation: true,
   chaining: false,
@@ -152,6 +234,28 @@ const HUMANOID_TEMPLATE_CANARY_DIRECTIVES = Object.freeze({
   'victory:10': 'POSE CHECK — VICTORY FRAME 10: preserve the upright chest-open pose, head tipped upward, both elbows pulled behind the torso, and both fists held low beside the hips exactly as in IMAGE 1. Do not raise the fists into a defensive guard.',
 });
 
+const HUMANOID_TEMPLATE_REPAIR_DIRECTIVES = Object.freeze({
+  'high_kick:4': 'POSE CHECK — HIGH KICK FRAME 4: preserve the narrow side-on pre-kick stance facing screen-right, compact two-fist guard, bent support knee, and the rear foot lifted behind the body with toes pointing downward exactly as in IMAGE 1. Do not turn this anticipation frame into an extended kick or a neutral standing guard.',
+  'high_kick:5': 'POSE CHECK — HIGH KICK FRAME 5: preserve the deeper pre-kick compression facing screen-right, both knees bent, compact two-fist guard, and the rear foot tucked low behind the support leg exactly as in IMAGE 1. Do not extend a kick, plant both feet, or straighten the knees.',
+  'high_punch:2': 'POSE CHECK — HIGH PUNCH FRAME 2: preserve the wide grounded stance, slight knee bend, rear fist tight beside the upper chest, and lead fist just beginning to travel screen-right at shoulder height exactly as in IMAGE 1. Do not complete the punch or collapse into a symmetric guard.',
+  'high_punch:4': 'POSE CHECK — HIGH PUNCH FRAME 4: preserve the mostly extended straight punch toward screen-right at shoulder height, rear fist tucked at the ribs, shoulder rotation, forward torso lean, and both grounded feet exactly as in IMAGE 1. Do not retract the striking arm into a two-fist guard.',
+  'high_punch:6': 'POSE CHECK — HIGH PUNCH FRAME 6: preserve the full straight-punch follow-through toward screen-right, locked long striking arm, rear fist held low at the ribs, forward lean, and wide grounded stance exactly as in IMAGE 1. Do not shorten or retract the punch.',
+  'idle:4': 'POSE CHECK — IDLE FRAME 4: preserve the upright side-on fighting stance facing screen-right, both fists in the compact high guard, slightly bent knees, staggered grounded feet, and centered balance exactly as in IMAGE 1. Do not lift either foot or invent an attack.',
+  'ko:1': 'POSE CHECK — KO FRAME 1: preserve the upright side-on opening guard facing screen-right, both fists raised, staggered grounded feet, and slight knee bend exactly as in IMAGE 1. This is the standing start of the fall; do not crouch, jump, or begin floor contact early.',
+  'ko:3': 'POSE CHECK — KO FRAME 3: preserve the deep forward compression, low hips, sharply bent knees, both arms reaching forward, and both feet still grounded exactly as in IMAGE 1. This is a crouched loss-of-balance frame; do not return to guard or make the body airborne.',
+  'ko:4': 'POSE CHECK — KO FRAME 4: preserve the body tipping forward toward screen-right, torso near horizontal, head down, both arms reaching toward the floor, rear leg trailing, and the last low foot contact exactly as in IMAGE 1. Do not stand upright or turn it into a defensive guard.',
+  'ko:5': 'POSE CHECK — KO FRAME 5: preserve the fully airborne forward fall toward screen-right, torso pitched nearly horizontal, both arms reaching down, legs trailing behind, and zero foot contact exactly as in IMAGE 1. Do not output a standing, walking, crouching, or guarded body.',
+  'ko:8': 'POSE CHECK — KO FRAME 8: preserve the low horizontal face-down fall toward screen-right, chest and hands close to the floor, legs lifted and trailing behind, and zero grounded foot support exactly as in IMAGE 1. Do not stand the body up or rotate it into a side pose.',
+  'ko:11': 'POSE CHECK — KO FRAME 11: preserve the final prone face-down body stretched horizontally toward screen-right, chest and hips on the floor, elbows bent beside the torso, and legs extended behind exactly as in IMAGE 1. Do not make the body airborne or upright.',
+  'low_kick:4': 'POSE CHECK — LOW KICK FRAME 4: preserve the very deep squat, low hips, compact two-fist guard, bent support leg, and the other knee chambered tightly forward while both feet remain low exactly as in IMAGE 1. Do not extend the kick yet or raise the torso.',
+  'low_kick:5': 'POSE CHECK — LOW KICK FRAME 5: preserve the deep crouch and early low-kick extension toward screen-right, with the kicking lower leg beginning to straighten, support knee fully bent, compact guard, and torso low exactly as in IMAGE 1. Do not turn it into a standing kick or retract the leg.',
+  'low_kick:7': 'POSE CHECK — LOW KICK FRAME 7: preserve the deep crouch and longer low-kick extension toward screen-right, nearly straight kicking leg at shin height, fully bent support leg, compact guard, and low torso exactly as in IMAGE 1. Do not raise the kick or stand upright.',
+  'low_kick:9': 'POSE CHECK — LOW KICK FRAME 9: preserve the maximum straight low-kick extension toward screen-right, foot at low shin height, extremely deep support-leg bend, compact two-fist guard, and rearward low hips exactly as in IMAGE 1. Do not shorten the leg or convert it into a high kick.',
+  'low_punch:6': 'POSE CHECK — LOW PUNCH FRAME 6: preserve the deep squat, low hips, fully extended straight punch toward screen-right, tucked rear fist, forward shoulder rotation, and both grounded feet exactly as in IMAGE 1. Do not output an upright or two-fist neutral guard.',
+  'victory:4': 'POSE CHECK — VICTORY FRAME 4: preserve the upright chest-open stance, chin lifted, both elbows bent, and both fists raised beside the upper chest exactly as in IMAGE 1. Do not turn this celebration into a defensive fighting guard or lower both arms.',
+  'victory:9': 'POSE CHECK — VICTORY FRAME 9: preserve the upright chest-open stance, head tipped upward, elbows pulled slightly behind the torso, and both fists held around lower-chest height exactly as in IMAGE 1. Do not hunch forward or raise the fists into a defensive guard.',
+});
+
 function normalizePoseSourceSlots(pose) {
   invariant(Array.isArray(pose?.sourceSlots) && pose.sourceSlots.length > 0, 'Pose source slots are required.');
   return pose.sourceSlots.map((slot) => {
@@ -173,6 +277,19 @@ export function buildHumanoidTemplatePoseDirective(pose) {
 
 export function buildHumanoidTemplatePrompt(pose) {
   return `${HUMANOID_TEMPLATE_PROMPT}\n\n${buildHumanoidTemplatePoseDirective(pose)}`;
+}
+
+export function buildHumanoidTemplateRepairDirective(pose) {
+  const sourceSlots = normalizePoseSourceSlots(pose);
+  const directives = sourceSlots
+    .map((slot) => HUMANOID_TEMPLATE_REPAIR_DIRECTIVES[`${slot.animationName}:${slot.frameNumber}`])
+    .filter(Boolean);
+  invariant(directives.length === 1, `${pose?.poseId ?? 'Pose'} does not have exactly one reviewed V5 repair directive.`);
+  return directives[0];
+}
+
+export function buildHumanoidTemplateRepairPrompt(pose) {
+  return `${buildHumanoidTemplatePrompt(pose)}\n\n${buildHumanoidTemplateRepairDirective(pose)}`;
 }
 
 function sha256(value) {
@@ -205,6 +322,50 @@ function writeBytesAtomic(path, bytes) {
   const temporary = `${path}.writing-${process.pid}-${randomUUID()}`;
   writeFileSync(temporary, bytes, { mode: 0o600 });
   renameSync(temporary, path);
+}
+
+export function verifyHumanoidTemplateCanaryArtifact(artifactDirectory) {
+  const directory = resolve(artifactDirectory);
+  const expectedNames = [
+    'checkpoint-metadata.json',
+    HUMANOID_TEMPLATE_CANARY_CHECKPOINT.ciphertextName,
+    `${HUMANOID_TEMPLATE_CANARY_CHECKPOINT.ciphertextName}.sha256`,
+  ].sort();
+  const actualNames = readdirSync(directory).sort();
+  invariant(canonicalJson(actualNames) === canonicalJson(expectedNames), 'Canary artifact file set changed.');
+  for (const name of actualNames) {
+    const record = lstatSync(join(directory, name));
+    invariant(record.isFile() && !record.isSymbolicLink(), `Canary artifact ${name} is not a regular file.`);
+  }
+  const ciphertextPath = join(directory, HUMANOID_TEMPLATE_CANARY_CHECKPOINT.ciphertextName);
+  const ciphertext = readFileSync(ciphertextPath);
+  invariant(sha256(ciphertext) === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.ciphertextSha256, 'Canary artifact ciphertext SHA-256 changed.');
+  const checksum = readFileSync(`${ciphertextPath}.sha256`, 'utf8');
+  invariant(
+    checksum === `${HUMANOID_TEMPLATE_CANARY_CHECKPOINT.ciphertextSha256}  ${HUMANOID_TEMPLATE_CANARY_CHECKPOINT.ciphertextName}\n`,
+    'Canary artifact checksum sidecar changed.',
+  );
+  const metadata = JSON.parse(readFileSync(join(directory, 'checkpoint-metadata.json'), 'utf8'));
+  invariant(
+    hasExactKeys(metadata, [
+      'schemaVersion',
+      'experimentId',
+      'runId',
+      'generatorCommitSha',
+      'status',
+      'completedPoseCount',
+      'encryptedSha256',
+    ]),
+    'Canary artifact metadata shape changed.',
+  );
+  invariant(metadata.schemaVersion === 2, 'Canary artifact metadata schema changed.');
+  invariant(metadata.experimentId === HUMANOID_TEMPLATE_EXPERIMENT_ID, 'Canary artifact experiment changed.');
+  invariant(metadata.runId === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.sourceRunId, 'Canary artifact run id changed.');
+  invariant(metadata.generatorCommitSha === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.generatorCommitSha, 'Canary artifact generator changed.');
+  invariant(metadata.status === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.status, 'Canary artifact status changed.');
+  invariant(metadata.completedPoseCount === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.completedPoseCount, 'Canary artifact completion count changed.');
+  invariant(metadata.encryptedSha256 === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.ciphertextSha256, 'Canary artifact metadata ciphertext pin changed.');
+  return { ciphertextPath, metadata };
 }
 
 function inspectPng(bytes, label = 'PNG') {
@@ -886,6 +1047,212 @@ export function verifyPreparedManifest(inputDirectory, ffmpegBinary = 'ffmpeg') 
   return { manifest, manifestSha256: sha256(bytes) };
 }
 
+export function verifyHumanoidTemplateCanaryCheckpointState(options = {}) {
+  const statePath = resolve(options.statePath);
+  const stateBytes = readFileSync(statePath);
+  invariant(sha256(stateBytes) === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.stateSha256, 'Canary checkpoint state SHA-256 changed.');
+  const state = JSON.parse(stateBytes.toString('utf8'));
+  invariant(state.schemaVersion === 2, 'Canary checkpoint state schema changed.');
+  invariant(state.experimentId === HUMANOID_TEMPLATE_EXPERIMENT_ID, 'Canary checkpoint state experiment changed.');
+  invariant(state.planSha256 === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.planSha256, 'Canary checkpoint plan changed.');
+  invariant(state.manifestSha256 === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.manifestSha256, 'Canary checkpoint manifest pin changed.');
+  invariant(state.generatorCommitSha === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.generatorCommitSha, 'Canary checkpoint generator changed.');
+  invariant(state.rootRunId === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.sourceRunId, 'Canary checkpoint root run changed.');
+  invariant(state.status === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.status, 'Canary checkpoint status changed.');
+  invariant(state.completedPoseCount === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.completedPoseCount, 'Canary checkpoint completed-pose count changed.');
+  invariant(state.totalCostMicrocredits === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.totalCostMicrocredits, 'Canary checkpoint total cost changed.');
+  invariant(canonicalJson(state.model) === canonicalJson(HUMANOID_TEMPLATE_MODEL), 'Canary checkpoint model changed.');
+  invariant(canonicalJson(state.policy) === canonicalJson(HUMANOID_TEMPLATE_POLICY), 'Canary checkpoint policy changed.');
+  invariant(
+    canonicalJson(Object.keys(state.slots ?? {}).sort()) === canonicalJson([...HUMANOID_TEMPLATE_CANARY_POSE_IDS].sort()),
+    'Canary checkpoint slot set changed.',
+  );
+  invariant(
+    canonicalJson(Object.keys(state.references ?? {}).sort())
+      === canonicalJson(['identity', ...HUMANOID_TEMPLATE_CANARY_POSE_IDS].sort()),
+    'Canary checkpoint reference set changed.',
+  );
+  invariant(Array.isArray(state.executionRuns) && state.executionRuns.length === 1, 'Canary checkpoint execution lineage changed.');
+  invariant(
+    state.executionRuns[0]?.runId === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.sourceRunId
+      && state.executionRuns[0]?.mode === 'canary'
+      && state.executionRuns[0]?.generatorCommitSha === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.generatorCommitSha,
+    'Canary checkpoint execution tuple changed.',
+  );
+  for (const poseId of HUMANOID_TEMPLATE_CANARY_POSE_IDS) {
+    const slot = state.slots[poseId];
+    invariant(slot?.status === 'completed', `${poseId} is not completed in the canary checkpoint.`);
+    invariant(slot?.providerStatus === 'completed', `${poseId} provider status changed in the canary checkpoint.`);
+    invariant(slot?.costMicrocredits === HUMANOID_TEMPLATE_MODEL.expectedTwoReferenceCostMicrocredits, `${poseId} cost changed in the canary checkpoint.`);
+    invariant(slot?.modelId === HUMANOID_TEMPLATE_MODEL.id, `${poseId} model changed in the canary checkpoint.`);
+  }
+  return { state, stateSha256: sha256(stateBytes) };
+}
+
+function resolveRepairSelection(manifest) {
+  const poseById = new Map(manifest.uniquePoses.map((pose) => [pose.poseId, pose]));
+  const selectedPoseIds = HUMANOID_TEMPLATE_REPAIR_FRAMES.map(({ animationName, frameNumber }) => {
+    const slot = manifest.frameSlots.find((candidate) => (
+      candidate.animationName === animationName && candidate.frameNumber === frameNumber
+    ));
+    invariant(slot, `Repair source ${animationName} frame ${frameNumber} is missing.`);
+    return slot.poseId;
+  });
+  invariant(
+    canonicalJson(selectedPoseIds) === canonicalJson(HUMANOID_TEMPLATE_REPAIR_POSE_IDS),
+    'Repair frame-to-pose mapping changed.',
+  );
+  invariant(new Set(selectedPoseIds).size === 19, 'Repair selection is not 19 distinct poses.');
+  invariant(
+    selectedPoseIds.every((poseId) => !HUMANOID_TEMPLATE_CANARY_POSE_IDS.includes(poseId)),
+    'Repair selection overlaps the five paid canary poses.',
+  );
+  return selectedPoseIds.map((poseId) => {
+    const pose = poseById.get(poseId);
+    invariant(pose, `Repair pose ${poseId} is missing from the immutable source manifest.`);
+    return pose;
+  });
+}
+
+export function prepareHumanoidTemplateRepairInputs(options = {}) {
+  const inputDirectory = resolve(options.inputDirectory);
+  const statePath = resolve(options.statePath);
+  const ffmpegBinary = options.ffmpegBinary ?? 'ffmpeg';
+  const repairManifestPath = resolve(options.repairManifestPath ?? join(inputDirectory, 'repair-input-manifest.json'));
+  invariant(repairManifestPath.startsWith(`${inputDirectory}/`), 'Repair manifest path escapes the input directory.');
+  invariant(!existsSync(repairManifestPath), 'Repair input manifest already exists; use the immutable continuation checkpoint.');
+  const { manifest, manifestSha256 } = verifyPreparedManifest(inputDirectory, ffmpegBinary);
+  invariant(manifestSha256 === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.manifestSha256, 'Repair source manifest is not the reviewed canary manifest.');
+  invariant(manifest.planSha256 === HUMANOID_TEMPLATE_CANARY_CHECKPOINT.planSha256, 'Repair source plan is not the reviewed canary plan.');
+  const checkpoint = verifyHumanoidTemplateCanaryCheckpointState({ statePath });
+  const selection = resolveRepairSelection(manifest).map((pose) => {
+    const focusedPath = join(inputDirectory, 'repair-focused-poses', `${pose.poseId}.png`);
+    invariant(!existsSync(focusedPath), `${pose.poseId} repair focus already exists.`);
+    const focused = preparePoseFocusReference(resolve(inputDirectory, pose.path), focusedPath, ffmpegBinary);
+    const providerReference = {
+      ...focused,
+      path: relative(inputDirectory, focusedPath),
+      sourceContentSha256: pose.contentSha256,
+      transformSha256: sha256(canonicalJson(focused.transform)),
+    };
+    return {
+      poseId: pose.poseId,
+      sourceSlots: normalizePoseSourceSlots(pose),
+      sourcePoseContentSha256: pose.contentSha256,
+      sourcePosePixelSha256: pose.inputPixelSha256,
+      basePoseDirective: buildHumanoidTemplatePoseDirective(pose),
+      repairDirective: buildHumanoidTemplateRepairDirective(pose),
+      promptSha256: sha256(buildHumanoidTemplateRepairPrompt(pose)),
+      providerReference,
+    };
+  });
+  const repairCore = {
+    schemaVersion: 1,
+    experimentId: HUMANOID_TEMPLATE_EXPERIMENT_ID,
+    sourceCheckpoint: { ...HUMANOID_TEMPLATE_CANARY_CHECKPOINT },
+    sourceManifestSha256: manifestSha256,
+    sourcePlanSha256: manifest.planSha256,
+    sourceStateSha256: checkpoint.stateSha256,
+    referenceOrder: ['pose_focus_crop', 'identity_head_neck_shoulders'],
+    identityHead: {
+      path: manifest.canonical.identityHead.path,
+      contentSha256: manifest.canonical.identityHead.contentSha256,
+      pixelSha256: manifest.canonical.identityHead.pixelSha256,
+      rgb24Sha256: manifest.canonical.identityHead.rgb24Sha256,
+      crop: manifest.canonical.identityHead.crop,
+    },
+    selection,
+    policy: { ...HUMANOID_TEMPLATE_REPAIR_POLICY },
+  };
+  const repairManifest = { ...repairCore, planSha256: sha256(canonicalJson(repairCore)) };
+  writeJsonAtomic(repairManifestPath, repairManifest);
+  return { repairManifest, repairManifestPath };
+}
+
+export function verifyHumanoidTemplateRepairManifest(options = {}) {
+  const inputDirectory = resolve(options.inputDirectory);
+  const statePath = resolve(options.statePath);
+  const ffmpegBinary = options.ffmpegBinary ?? 'ffmpeg';
+  const repairManifestPath = resolve(options.repairManifestPath ?? join(inputDirectory, 'repair-input-manifest.json'));
+  invariant(repairManifestPath.startsWith(`${inputDirectory}/`), 'Repair manifest path escapes the input directory.');
+  const { manifest, manifestSha256 } = verifyPreparedManifest(inputDirectory, ffmpegBinary);
+  const checkpoint = verifyHumanoidTemplateCanaryCheckpointState({ statePath });
+  const repairBytes = readFileSync(repairManifestPath);
+  const repairManifest = JSON.parse(repairBytes.toString('utf8'));
+  const { planSha256, ...repairCore } = repairManifest;
+  invariant(planSha256 === sha256(canonicalJson(repairCore)), 'Repair input plan SHA-256 changed.');
+  invariant(repairManifest.schemaVersion === 1, 'Repair input schema changed.');
+  invariant(repairManifest.experimentId === HUMANOID_TEMPLATE_EXPERIMENT_ID, 'Repair experiment changed.');
+  invariant(canonicalJson(repairManifest.sourceCheckpoint) === canonicalJson(HUMANOID_TEMPLATE_CANARY_CHECKPOINT), 'Repair source-checkpoint lineage changed.');
+  invariant(repairManifest.sourceManifestSha256 === manifestSha256, 'Repair source-manifest pin changed.');
+  invariant(repairManifest.sourcePlanSha256 === manifest.planSha256, 'Repair source-plan pin changed.');
+  invariant(repairManifest.sourceStateSha256 === checkpoint.stateSha256, 'Repair source-state pin changed.');
+  invariant(repairManifest.referenceOrder?.join(',') === 'pose_focus_crop,identity_head_neck_shoulders', 'Repair reference order changed.');
+  invariant(canonicalJson(repairManifest.policy) === canonicalJson(HUMANOID_TEMPLATE_REPAIR_POLICY), 'Repair execution policy changed.');
+  invariant(canonicalJson(repairManifest.identityHead) === canonicalJson({
+    path: manifest.canonical.identityHead.path,
+    contentSha256: manifest.canonical.identityHead.contentSha256,
+    pixelSha256: manifest.canonical.identityHead.pixelSha256,
+    rgb24Sha256: manifest.canonical.identityHead.rgb24Sha256,
+    crop: manifest.canonical.identityHead.crop,
+  }), 'Repair identity-head reference changed.');
+  invariant(Array.isArray(repairManifest.selection) && repairManifest.selection.length === 19, 'Repair selection is not exactly 19 poses.');
+  const sourceSelection = resolveRepairSelection(manifest);
+  invariant(
+    canonicalJson(repairManifest.selection.map((record) => record.poseId)) === canonicalJson(HUMANOID_TEMPLATE_REPAIR_POSE_IDS),
+    'Repair pose order changed.',
+  );
+  const poses = sourceSelection.map((pose, index) => {
+    const record = repairManifest.selection[index];
+    invariant(record.poseId === pose.poseId, `${pose.poseId} repair record order changed.`);
+    invariant(canonicalJson(record.sourceSlots) === canonicalJson(normalizePoseSourceSlots(pose)), `${pose.poseId} source slots changed.`);
+    invariant(record.sourcePoseContentSha256 === pose.contentSha256, `${pose.poseId} source content pin changed.`);
+    invariant(record.sourcePosePixelSha256 === pose.inputPixelSha256, `${pose.poseId} source pixel pin changed.`);
+    invariant(record.basePoseDirective === buildHumanoidTemplatePoseDirective(pose), `${pose.poseId} base pose directive changed.`);
+    invariant(record.repairDirective === buildHumanoidTemplateRepairDirective(pose), `${pose.poseId} exact repair directive changed.`);
+    invariant(record.promptSha256 === sha256(buildHumanoidTemplateRepairPrompt(pose)), `${pose.poseId} repair prompt pin changed.`);
+    const sourcePath = resolve(inputDirectory, pose.path);
+    const providerPath = resolve(inputDirectory, record.providerReference?.path ?? '');
+    invariant(providerPath.startsWith(`${inputDirectory}/`), `${pose.poseId} repair reference escapes its directory.`);
+    const providerStat = lstatSync(providerPath);
+    invariant(providerStat.isFile() && !providerStat.isSymbolicLink(), `${pose.poseId} repair reference is not a regular file.`);
+    const source = inspectOpaqueChromaPose(sourcePath, ffmpegBinary);
+    const focused = inspectOpaqueChromaPose(providerPath, ffmpegBinary);
+    const expectedTransform = buildPoseFocusTransform(rgb24Pixels(sourcePath, ffmpegBinary), source.width, source.height);
+    invariant(canonicalJson(record.providerReference.transform) === canonicalJson(expectedTransform), `${pose.poseId} repair transform changed.`);
+    invariant(record.providerReference.transformSha256 === sha256(canonicalJson(expectedTransform)), `${pose.poseId} repair transform pin changed.`);
+    invariant(record.providerReference.sourceContentSha256 === pose.contentSha256, `${pose.poseId} repair reference source changed.`);
+    invariant(focused.contentSha256 === record.providerReference.contentSha256, `${pose.poseId} repair reference bytes changed.`);
+    invariant(focused.inputPixelSha256 === record.providerReference.pixelSha256, `${pose.poseId} repair reference pixels changed.`);
+    invariant(sha256(rgb24Pixels(providerPath, ffmpegBinary)) === record.providerReference.rgb24Sha256, `${pose.poseId} repair reference RGB24 pin changed.`);
+    invariant(
+      record.providerReference.rgb24Sha256 === cropScaleRgb24Sha256(
+        sourcePath,
+        expectedTransform.crop,
+        expectedTransform.focusedCanvas.width,
+        expectedTransform.focusedCanvas.height,
+        ffmpegBinary,
+      ),
+      `${pose.poseId} repair reference no longer derives from the pinned source pose.`,
+    );
+    invariant(focused.width === 768 && focused.height === 1024, `${pose.poseId} repair reference geometry changed.`);
+    return {
+      ...pose,
+      promptSha256: record.promptSha256,
+      providerReference: record.providerReference,
+      repairDirective: record.repairDirective,
+    };
+  });
+  return {
+    manifest,
+    manifestSha256,
+    repairManifest,
+    repairManifestSha256: sha256(repairBytes),
+    state: checkpoint.state,
+    poses,
+  };
+}
+
 export function buildHumanoidTemplatePayload({ poseAssetHash, identityAssetHash, pose }) {
   invariant(/^[a-f0-9]{32}$/.test(poseAssetHash ?? ''), 'Pose PixCLI asset hash is invalid.');
   invariant(/^[a-f0-9]{32}$/.test(identityAssetHash ?? ''), 'Identity PixCLI asset hash is invalid.');
@@ -907,10 +1274,33 @@ export function buildHumanoidTemplatePayload({ poseAssetHash, identityAssetHash,
   };
 }
 
-function buildPoseExecutionContract({ pose, poseAssetHash, identityAssetHash, manifest }) {
+export function buildHumanoidTemplateRepairPayload({ poseAssetHash, identityAssetHash, pose }) {
+  invariant(/^[a-f0-9]{32}$/.test(poseAssetHash ?? ''), 'Pose PixCLI asset hash is invalid.');
+  invariant(/^[a-f0-9]{32}$/.test(identityAssetHash ?? ''), 'Identity PixCLI asset hash is invalid.');
+  invariant(poseAssetHash !== identityAssetHash, 'Pose and identity references must be distinct.');
+  invariant(/^pose-[0-9]{3}-[a-f0-9]{12}$/.test(pose?.poseId ?? ''), 'Pose id is invalid.');
+  invariant(HUMANOID_TEMPLATE_REPAIR_POSE_IDS.includes(pose.poseId), 'V5 repair accepts only one of the 19 sealed continuation poses.');
+  const prompt = buildHumanoidTemplateRepairPrompt(pose);
+  return {
+    prompt,
+    model: HUMANOID_TEMPLATE_MODEL.id,
+    image: [poseAssetHash, identityAssetHash],
+    params: { ...HUMANOID_TEMPLATE_MODEL.params },
+    enrich_prompt: false,
+    search: false,
+    output_format: 'url',
+    publish: false,
+    publish_name: `ip-humanoid-selective-v5-repair-${pose.poseId.slice(5, 8)}`,
+  };
+}
+
+function buildPoseExecutionContract({ pose, poseAssetHash, identityAssetHash, manifest, mode = 'canary' }) {
   invariant(/^[a-f0-9]{64}$/.test(pose?.providerReference?.contentSha256 ?? ''), `${pose?.poseId ?? 'Pose'} provider-reference pin is missing.`);
   invariant(/^[a-f0-9]{64}$/.test(pose?.providerReference?.transformSha256 ?? ''), `${pose?.poseId ?? 'Pose'} pose-transform pin is missing.`);
-  const payload = buildHumanoidTemplatePayload({ poseAssetHash, identityAssetHash, pose });
+  invariant(mode === 'canary' || mode === 'repair', 'Pose execution contract mode is invalid.');
+  const payload = mode === 'repair'
+    ? buildHumanoidTemplateRepairPayload({ poseAssetHash, identityAssetHash, pose })
+    : buildHumanoidTemplatePayload({ poseAssetHash, identityAssetHash, pose });
   invariant(manifest.promptBaseSha256 === sha256(HUMANOID_TEMPLATE_PROMPT), 'Manifest prompt base changed.');
   invariant(pose.promptSha256 === sha256(payload.prompt), `${pose.poseId} prompt contract changed.`);
   return {
@@ -1284,8 +1674,12 @@ async function mapConcurrent(items, concurrency, callback) {
 
 export async function executeHumanoidTemplateBatch(options = {}) {
   const mode = options.mode;
-  invariant(mode === 'canary', 'V5 is a canary-only selective experiment.');
-  invariant(options.confirmation === HUMANOID_TEMPLATE_CANARY_CONFIRMATION, 'Exact V5 selective canary confirmation is required.');
+  invariant(mode === 'canary' || mode === 'repair', 'V5 supports only the sealed canary or its 19-pose repair continuation.');
+  const isRepair = mode === 'repair';
+  invariant(
+    options.confirmation === (isRepair ? HUMANOID_TEMPLATE_REPAIR_CONFIRMATION : HUMANOID_TEMPLATE_CANARY_CONFIRMATION),
+    `Exact V5 selective ${mode} confirmation is required.`,
+  );
   const apiKey = options.apiKey ?? '';
   invariant(apiKey, 'PIXCLI_API_KEY is required.');
   const apiBase = (options.apiBase ?? 'https://pixcli.hilo.cx').replace(/\/$/, '');
@@ -1298,18 +1692,28 @@ export async function executeHumanoidTemplateBatch(options = {}) {
   const statePath = resolve(options.statePath);
   const lock = acquireLock(statePath);
   try {
-    const { manifest, manifestSha256 } = verifyPreparedManifest(inputDirectory, options.ffmpegBinary);
+    const repair = isRepair ? verifyHumanoidTemplateRepairManifest({
+      inputDirectory,
+      statePath,
+      repairManifestPath: options.repairManifestPath,
+      ffmpegBinary: options.ffmpegBinary,
+    }) : null;
+    const { manifest, manifestSha256 } = repair ?? verifyPreparedManifest(inputDirectory, options.ffmpegBinary);
     const preflight = await preflightModel(apiBase, apiKey, options.fetchImpl);
     const execution = { runId, mode, generatorCommitSha, startedAt: nowIso() };
+    invariant(!isRepair || existsSync(statePath), 'V5 repair requires the exact completed canary checkpoint.');
     let state = existsSync(statePath)
       ? JSON.parse(readFileSync(statePath, 'utf8'))
       : initialExecutionState(manifest, manifestSha256, preflight, execution);
     invariant(state.schemaVersion === 2 && state.experimentId === HUMANOID_TEMPLATE_EXPERIMENT_ID, 'Execution state belongs to another experiment.');
     invariant(state.planSha256 === manifest.planSha256 && state.manifestSha256 === manifestSha256, 'Execution state does not match the immutable input plan.');
     invariant(canonicalJson(state.model) === canonicalJson(HUMANOID_TEMPLATE_MODEL), 'Execution model contract changed.');
-    invariant(state.generatorCommitSha === generatorCommitSha, 'Execution checkpoint belongs to another generator commit.');
+    invariant(
+      state.generatorCommitSha === (isRepair ? HUMANOID_TEMPLATE_CANARY_CHECKPOINT.generatorCommitSha : generatorCommitSha),
+      'Execution checkpoint belongs to another generator commit.',
+    );
     invariant(!state.executionRuns.some((entry) => entry.runId === runId && entry.mode === mode && entry.startedAt !== execution.startedAt), 'Execution run was already recorded.');
-    if (!state.executionRuns.some((entry) => entry.runId === runId)) state.executionRuns.push(execution);
+    const shouldRecordExecution = !state.executionRuns.some((entry) => entry.runId === runId);
 
     const saveState = () => {
       state.updatedAt = nowIso();
@@ -1324,17 +1728,19 @@ export async function executeHumanoidTemplateBatch(options = {}) {
       state.completedPoseCount = Object.values(state.slots).filter((slot) => slot.status === 'completed').length;
       saveState();
     };
-    saveState();
-
     const poseById = new Map(manifest.uniquePoses.map((pose) => [pose.poseId, pose]));
+    const repairPoseById = new Map((repair?.poses ?? []).map((pose) => [pose.poseId, pose]));
     for (const [poseId, stored] of Object.entries(state.slots)) {
-      const pose = poseById.get(poseId);
+      const storedMode = repairPoseById.has(poseId) ? 'repair' : 'canary';
+      const pose = repairPoseById.get(poseId) ?? poseById.get(poseId);
       invariant(pose, `Stored slot ${poseId} is outside the immutable pose plan.`);
+      invariant(storedMode === 'repair' || HUMANOID_TEMPLATE_CANARY_POSE_IDS.includes(poseId), `Stored slot ${poseId} is outside the 24 reviewed poses.`);
       const { payload, invariants } = buildPoseExecutionContract({
         pose,
         poseAssetHash: stored.poseAssetHash,
         identityAssetHash: stored.identityAssetHash,
         manifest,
+        mode: storedMode,
       });
       verifyStoredSlotContract(stored, invariants);
       if (stored.status === 'completed') {
@@ -1349,9 +1755,31 @@ export async function executeHumanoidTemplateBatch(options = {}) {
         invariant(restoredAuditErrors.length === 0, `Stored completed slot ${poseId} audit changed: ${restoredAuditErrors.join('; ')}.`);
       }
     }
+    if (shouldRecordExecution) state.executionRuns.push(execution);
+    if (isRepair) {
+      invariant(state.executionRuns.length === 2, 'V5 repair must be the sole continuation of the sealed canary run.');
+      state.repair = {
+        planSha256: repair.repairManifest.planSha256,
+        manifestSha256: repair.repairManifestSha256,
+        generatorCommitSha,
+        sourceRunId: HUMANOID_TEMPLATE_CANARY_CHECKPOINT.sourceRunId,
+        sourceArtifactId: HUMANOID_TEMPLATE_CANARY_CHECKPOINT.artifactId,
+        policy: { ...HUMANOID_TEMPLATE_REPAIR_POLICY },
+      };
+    }
+    saveState();
     const canaryPoseIds = new Set(manifest.canary.map((entry) => entry.poseId));
-    const selected = manifest.uniquePoses.filter((pose) => canaryPoseIds.has(pose.poseId));
-    invariant(selected.length === 5, 'V5 canary must contain exactly five distinct paid outputs.');
+    const selected = isRepair
+      ? repair.poses
+      : manifest.uniquePoses.filter((pose) => canaryPoseIds.has(pose.poseId));
+    invariant(selected.length === (isRepair ? 19 : 5), `V5 ${mode} paid selection cardinality changed.`);
+    if (isRepair) {
+      invariant(
+        canonicalJson(Object.keys(state.slots).sort()) === canonicalJson([...HUMANOID_TEMPLATE_CANARY_POSE_IDS].sort()),
+        'V5 repair must start from only the five completed canary slots; automatic continuation is forbidden.',
+      );
+      invariant(selected.every((pose) => state.slots[pose.poseId] === undefined), 'V5 repair pose was already attempted.');
+    }
     const manuallyBlocked = selected.find((pose) => ['failed', 'submission_rejected', 'submission_outcome_unknown'].includes(state.slots[pose.poseId]?.status));
     invariant(!manuallyBlocked, `${manuallyBlocked?.poseId ?? 'Pose'} requires manual reconciliation; automatic paid continuation is forbidden.`);
 
@@ -1373,15 +1801,16 @@ export async function executeHumanoidTemplateBatch(options = {}) {
       });
     }
 
-    state.status = 'canary_running';
+    state.status = `${mode}_running`;
     state.lastMode = mode;
     saveState();
 
     const headers = { Authorization: `Bearer ${apiKey}`, 'User-Agent': 'insert-player-humanoid-pose-template/1.0' };
     try {
-      await mapConcurrent(selected, manifest.policy.concurrency, async (pose) => {
+      await mapConcurrent(selected, isRepair ? HUMANOID_TEMPLATE_REPAIR_POLICY.concurrency : manifest.policy.concurrency, async (pose) => {
       const previous = state.slots[pose.poseId] ?? null;
       const action = resumeActionForSlot(previous);
+      if (isRepair) invariant(action === 'submit', `${pose.poseId} repair continuation is not a pristine one-shot submission.`);
       if (action === 'block') throw new Error(`${pose.poseId} has an ambiguous prior submission.`);
       if (action === 'skip') return;
       let payload;
@@ -1408,6 +1837,7 @@ export async function executeHumanoidTemplateBatch(options = {}) {
           poseAssetHash: poseUpload.pixcliAssetHash,
           identityAssetHash: identityUpload.pixcliAssetHash,
           manifest,
+          mode,
         }));
         const submitted = await submitBakeoffSlot({
           apiBase,
@@ -1427,6 +1857,7 @@ export async function executeHumanoidTemplateBatch(options = {}) {
           poseAssetHash: previous.poseAssetHash,
           identityAssetHash: previous.identityAssetHash,
           manifest,
+          mode,
         }));
         verifyStoredSlotContract(previous, invariants);
       }
@@ -1492,11 +1923,26 @@ export async function executeHumanoidTemplateBatch(options = {}) {
       throw error;
     }
 
-    const completed = manifest.uniquePoses.filter((pose) => state.slots[pose.poseId]?.status === 'completed');
-    invariant(completed.length === 5, `V5 canary completed ${completed.length} outputs instead of five.`);
-    const totalCost = completed.reduce((sum, pose) => sum + state.slots[pose.poseId].costMicrocredits, 0);
-    invariant(totalCost === manifest.policy.maximumTotalCostMicrocredits, 'V5 canary total cost changed from $0.50.');
-    state.status = 'canary_complete_human_review_required';
+    const completed = [...HUMANOID_TEMPLATE_CANARY_POSE_IDS, ...(isRepair ? HUMANOID_TEMPLATE_REPAIR_POSE_IDS : [])]
+      .filter((poseId) => state.slots[poseId]?.status === 'completed');
+    const expectedCompleted = isRepair ? 24 : 5;
+    invariant(completed.length === expectedCompleted, `V5 ${mode} completed ${completed.length} outputs instead of ${expectedCompleted}.`);
+    const totalCost = completed.reduce((sum, poseId) => sum + state.slots[poseId].costMicrocredits, 0);
+    if (isRepair) {
+      const repairCost = HUMANOID_TEMPLATE_REPAIR_POSE_IDS.reduce(
+        (sum, poseId) => sum + state.slots[poseId].costMicrocredits,
+        0,
+      );
+      invariant(repairCost === HUMANOID_TEMPLATE_REPAIR_POLICY.maximumTotalCostMicrocredits, 'V5 repair cost changed from $1.90.');
+      invariant(totalCost === HUMANOID_TEMPLATE_REPAIR_POLICY.combinedExpectedCostMicrocredits, 'V5 combined reviewed-set cost changed from $2.40.');
+      invariant(Object.keys(state.slots).length === 24, 'V5 repair created a slot outside the reviewed 24-pose set.');
+      state.status = 'repair_complete_human_review_required';
+      state.repairCostMicrocredits = repairCost;
+      state.repairCompletedPoseCount = 19;
+    } else {
+      invariant(totalCost === manifest.policy.maximumTotalCostMicrocredits, 'V5 canary total cost changed from $0.50.');
+      state.status = 'canary_complete_human_review_required';
+    }
     state.totalCostMicrocredits = totalCost;
     state.completedPoseCount = completed.length;
     saveState();
@@ -1512,14 +1958,22 @@ function parseArg(rawArgs, name, fallback = '') {
 }
 
 export function parseHumanoidTemplateCliArgs(rawArgs) {
+  const verifyCanaryArtifact = rawArgs.includes('--verify-canary-artifact');
   const prepare = rawArgs.includes('--prepare');
+  const prepareRepair = rawArgs.includes('--prepare-repair');
   const execute = rawArgs.includes('--execute');
-  invariant(prepare !== execute, 'Choose exactly one of --prepare or --execute.');
+  invariant(
+    Number(verifyCanaryArtifact) + Number(prepare) + Number(prepareRepair) + Number(execute) === 1,
+    'Choose exactly one of --verify-canary-artifact, --prepare, --prepare-repair, or --execute.',
+  );
   const workDirectory = resolve(parseArg(rawArgs, '--work-dir', join(root, '.humanoid-template-v5-selective-work')));
   const mode = parseArg(rawArgs, '--mode');
-  if (execute) invariant(mode === 'canary', 'V5 requires --mode=canary; full mode does not exist.');
+  if (execute) invariant(mode === 'canary' || mode === 'repair', 'V5 requires --mode=canary or --mode=repair; full mode does not exist.');
+  if (prepareRepair) invariant(!mode || mode === 'repair', 'V5 repair preparation does not accept another mode.');
   return {
+    verifyCanaryArtifact,
     prepare,
+    prepareRepair,
     execute,
     mode,
     confirmation: parseArg(rawArgs, '--confirm'),
@@ -1528,6 +1982,8 @@ export function parseHumanoidTemplateCliArgs(rawArgs) {
     inputDirectory: resolve(parseArg(rawArgs, '--input-dir', join(workDirectory, 'inputs'))),
     outputDirectory: resolve(parseArg(rawArgs, '--output-dir', join(workDirectory, 'outputs'))),
     statePath: resolve(parseArg(rawArgs, '--state', join(workDirectory, 'state.json'))),
+    repairManifestPath: resolve(parseArg(rawArgs, '--repair-manifest', join(workDirectory, 'inputs', 'repair-input-manifest.json'))),
+    artifactDirectory: resolve(parseArg(rawArgs, '--artifact-dir', join(root, '.humanoid-v5-canary-artifact'))),
     apiBase: process.env.PIXCLI_BASE_URL ?? 'https://pixcli.hilo.cx',
     apiKey: process.env.PIXCLI_API_KEY ?? '',
   };
@@ -1535,9 +1991,19 @@ export function parseHumanoidTemplateCliArgs(rawArgs) {
 
 async function main() {
   const options = parseHumanoidTemplateCliArgs(process.argv.slice(2));
+  if (options.verifyCanaryArtifact) {
+    const result = verifyHumanoidTemplateCanaryArtifact(options.artifactDirectory);
+    process.stdout.write(`${JSON.stringify({ status: 'verified', ciphertextPath: result.ciphertextPath, sourceRunId: result.metadata.runId }, null, 2)}\n`);
+    return;
+  }
   if (options.prepare) {
     const result = await prepareHumanoidTemplateInputs({ outputDirectory: options.inputDirectory });
     process.stdout.write(`${JSON.stringify({ status: 'prepared', manifestPath: result.manifestPath, planSha256: result.manifest.planSha256, uniquePoses: result.manifest.uniquePoses.length }, null, 2)}\n`);
+    return;
+  }
+  if (options.prepareRepair) {
+    const result = prepareHumanoidTemplateRepairInputs(options);
+    process.stdout.write(`${JSON.stringify({ status: 'repair_prepared', repairManifestPath: result.repairManifestPath, planSha256: result.repairManifest.planSha256, selectedPoses: result.repairManifest.selection.length }, null, 2)}\n`);
     return;
   }
   const result = await executeHumanoidTemplateBatch(options);

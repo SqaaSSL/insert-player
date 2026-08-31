@@ -46,6 +46,7 @@ worker/.prod.vars
 .humanoid-template-work/
 .humanoid-template-v3-work/
 .humanoid-template-v4-work/
+.humanoid-template-v5-selective-work/
 arcade/pose-master-seeds/humanoid-neutral-medium-canonical-v1.png
 arcade/pose-master-seeds/humanoid-neutral-medium-canonical-v1-normalized.png
 arcade/pose-master-seeds/humanoid-neutral-medium-identity-close-v1.png

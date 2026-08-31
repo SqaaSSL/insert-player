@@ -1,0 +1,357 @@
+name: Generate encrypted humanoid V5 remaining repair set
+
+run-name: humanoid-xai-selective-v5-repair-19-${{ inputs.generator_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Enter the exact V5 19-pose repair confirmation phrase
+        required: true
+        type: string
+      generator_sha:
+        description: Enter the exact reviewed 40-character generator commit SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: humanoid-neutral-medium-xai-selective-v5-repair-19
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Remaining nineteen reviewed poses only
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    environment: production
+    env:
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      REQUESTED_GENERATOR_SHA: ${{ inputs.generator_sha }}
+      PIXCLI_BASE_URL: https://pixcli.hilo.cx
+      HUMANOID_WORK_DIR: .humanoid-template-v5-selective-work
+      HUMANOID_REPAIR_ARTIFACT_NAME: humanoid-neutral-medium-xai-selective-v5-repair-encrypted
+      SOURCE_RUN_ID: '33343450009'
+      SOURCE_ARTIFACT_ID: '9741312074'
+      SOURCE_ARTIFACT_NAME: humanoid-neutral-medium-xai-selective-v5-encrypted
+      SOURCE_ARTIFACT_ZIP_SHA256: 420adad6d1f4a97cbf18d3f00ec5f1676800f35988d97ac1d6b7d3594e840dcd
+      SOURCE_CIPHERTEXT_SHA256: d48a3f78e0a1491fc36ca4310f723e8b9e0c00b3f4946d6970175bcacdfb293e
+      SOURCE_GENERATOR_SHA: 0a66f1631958a5a96100eac8d39b9f9cc0cbed5f
+
+    steps:
+      - name: Validate single-use commit-bound repair authorization
+        id: authorize
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ATTEMPT" == '1' ]] || {
+            printf '::error::Paid workflow reruns are forbidden; inspect the encrypted checkpoint instead.\n'
+            exit 1
+          }
+          expected='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_REPAIR_V5_19'
+          [[ "$REQUESTED_CONFIRMATION" == "$expected" ]] || {
+            printf '::error::Exact V5 19-pose repair confirmation phrase required.\n'
+            exit 1
+          }
+          [[ "$GITHUB_REF" == 'refs/heads/main' ]] || {
+            printf '::error::The reviewed repair workflow may run only from main.\n'
+            exit 1
+          }
+          [[ "$REQUESTED_GENERATOR_SHA" =~ ^[a-f0-9]{40}$ && "$REQUESTED_GENERATOR_SHA" == "$GITHUB_SHA" ]] || {
+            printf '::error::generator_sha must equal the exact reviewed workflow commit.\n'
+            exit 1
+          }
+          title="$(gh run view "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --json displayTitle --jq '.displayTitle')"
+          duplicate="$({
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/humanoid-pose-template-xai-v5-repair.yml/runs?event=workflow_dispatch&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .display_title] | @tsv'
+          } | awk -F '\t' -v current="$GITHUB_RUN_ID" -v title="$title" \
+              '$1 + 0 < current + 0 && $2 == title { found=1 } END { print found + 0 }')"
+          [[ "$duplicate" == '0' ]] || {
+            printf '::error::This exact paid repair authorization was already consumed.\n'
+            exit 1
+          }
+          source_artifact="$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID")"
+          jq -e \
+            --argjson artifactId "$SOURCE_ARTIFACT_ID" \
+            --arg artifactName "$SOURCE_ARTIFACT_NAME" \
+            --argjson sourceRunId "$SOURCE_RUN_ID" \
+            --arg digest "sha256:$SOURCE_ARTIFACT_ZIP_SHA256" \
+            --arg sourceGenerator "$SOURCE_GENERATOR_SHA" \
+            '.id == $artifactId
+              and .name == $artifactName
+              and .expired == false
+              and .digest == $digest
+              and .workflow_run.id == $sourceRunId
+              and .workflow_run.head_branch == "main"
+              and .workflow_run.head_sha == $sourceGenerator' \
+            <<<"$source_artifact" >/dev/null || {
+              printf '::error::Pinned canary artifact lineage or digest changed.\n'
+              exit 1
+            }
+          printf 'GENERATOR_SHA=%s\n' "$REQUESTED_GENERATOR_SHA" >> "$GITHUB_ENV"
+          printf 'generator_sha=%s\n' "$REQUESTED_GENERATOR_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the exact reviewed repair generator commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.authorize.outputs.generator_sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned dependencies and image tooling without provider secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          command -v ffmpeg >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          }
+          command -v unzip >/dev/null
+          ffmpeg -version | head -n 1
+
+      - name: Prove the exact 19-pose selection, budget, prompts, and isolation
+        run: npm run test:arcade:xai-humanoid-v5-repair
+
+      - name: Download and verify the exact encrypted five-pose canary artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_zip="$RUNNER_TEMP/humanoid-v5-source-artifact.zip"
+          artifact_dir="$RUNNER_TEMP/humanoid-v5-source-artifact"
+          mkdir -p "$artifact_dir"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$SOURCE_ARTIFACT_ID/zip" > "$artifact_zip"
+          actual_zip_sha="$(sha256sum "$artifact_zip" | cut -d ' ' -f 1)"
+          [[ "$actual_zip_sha" == "$SOURCE_ARTIFACT_ZIP_SHA256" ]] || {
+            printf '::error::Downloaded canary artifact ZIP SHA-256 mismatch.\n'
+            exit 1
+          }
+          actual_files="$(unzip -Z1 "$artifact_zip" | LC_ALL=C sort)"
+          expected_files="$(printf '%s\n' \
+            'checkpoint-metadata.json' \
+            'humanoid-selective-v5-checkpoint.tar.gz.ipenc' \
+            'humanoid-selective-v5-checkpoint.tar.gz.ipenc.sha256' | LC_ALL=C sort)"
+          [[ "$actual_files" == "$expected_files" ]] || {
+            printf '::error::Canary artifact ZIP file set changed.\n'
+            exit 1
+          }
+          unzip -q "$artifact_zip" -d "$artifact_dir"
+          node scripts/humanoid-pose-template-xai-selective-v5.mjs \
+            --verify-canary-artifact \
+            --artifact-dir="$artifact_dir"
+          printf 'SOURCE_ARTIFACT_DIR=%s\n' "$artifact_dir" >> "$GITHUB_ENV"
+
+      - name: Verify private keys exist after all third-party setup
+        shell: bash
+        env:
+          PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
+          HUMANOID_ARTIFACT_KEY: ${{ secrets.HUMANOID_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "$PIXCLI_API_KEY" && -n "$HUMANOID_ARTIFACT_KEY" ]] || {
+            printf '::error::Required production provider/encryption key is unavailable.\n'
+            exit 1
+          }
+
+      - name: Decrypt and safely restore only the sealed V5 canary checkpoint
+        shell: bash
+        env:
+          HUMANOID_ARTIFACT_KEY: ${{ secrets.HUMANOID_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          ciphertext="$SOURCE_ARTIFACT_DIR/humanoid-selective-v5-checkpoint.tar.gz.ipenc"
+          plaintext="$RUNNER_TEMP/humanoid-selective-v5-checkpoint.tar.gz"
+          [[ "$(sha256sum "$ciphertext" | cut -d ' ' -f 1)" == "$SOURCE_CIPHERTEXT_SHA256" ]] || {
+            printf '::error::Pinned canary ciphertext changed before decryption.\n'
+            exit 1
+          }
+          node scripts/encrypted-humanoid-bundle.mjs \
+            --decrypt \
+            --input="$ciphertext" \
+            --output="$plaintext"
+          tar -tzf "$plaintext" > "$RUNNER_TEMP/humanoid-v5-checkpoint-files.txt"
+          awk '
+            /^\// || /(^|\/)\.\.($|\/)/ { bad=1 }
+            $0 !~ /^\.humanoid-template-v5-selective-work\// { bad=1 }
+            END { exit bad }
+          ' "$RUNNER_TEMP/humanoid-v5-checkpoint-files.txt" || {
+            printf '::error::Decrypted canary archive contains an unsafe or unexpected path.\n'
+            exit 1
+          }
+          tar -tvzf "$plaintext" | awk 'substr($1,1,1) != "-" && substr($1,1,1) != "d" { bad=1 } END { exit bad }' || {
+            printf '::error::Decrypted canary archive contains a link or special file.\n'
+            exit 1
+          }
+          tar --extract --gzip --file="$plaintext" --no-same-owner --no-same-permissions
+          [[ -f "$HUMANOID_WORK_DIR/state.json" && -f "$HUMANOID_WORK_DIR/inputs/input-manifest.json" ]] || {
+            printf '::error::Decrypted canary checkpoint is incomplete.\n'
+            exit 1
+          }
+          rm -f "$plaintext"
+
+      - name: Freeze exactly the nineteen remaining pose-focus references
+        run: >-
+          npm run arcade:repair:xai-humanoid-v5 --
+          --prepare-repair
+          --mode=repair
+          --work-dir="$HUMANOID_WORK_DIR"
+
+      - name: Execute exactly nineteen paid edits with no retry or fallback
+        env:
+          PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
+        run: >-
+          npm run arcade:repair:xai-humanoid-v5 --
+          --execute
+          --mode=repair
+          --confirm="$REQUESTED_CONFIRMATION"
+          --generator-sha="$GENERATOR_SHA"
+          --run-id="$GITHUB_RUN_ID"
+          --work-dir="$HUMANOID_WORK_DIR"
+
+      - name: Publish the non-activating repair summary
+        if: always()
+        shell: bash
+        run: |
+          state="$HUMANOID_WORK_DIR/state.json"
+          repair_manifest="$HUMANOID_WORK_DIR/inputs/repair-input-manifest.json"
+          if [[ -f "$state" && -f "$repair_manifest" ]]; then
+            repair_ids="$(jq -c '[.selection[].poseId]' "$repair_manifest")"
+            repair_completed="$(jq --argjson ids "$repair_ids" '[.slots | to_entries[] | select(.key as $key | $ids | index($key)) | select(.value.status == "completed")] | length' "$state")"
+            repair_paid="$(jq --argjson ids "$repair_ids" '[.slots | to_entries[] | select(.key as $key | $ids | index($key)) | .value.costMicrocredits // empty] | add // 0' "$state")"
+            total_paid="$(jq -r '[.slots[] | .costMicrocredits // empty] | add // 0' "$state")"
+            {
+              printf '## Humanoid neutral medium — V5 remaining repair set\n\n'
+              printf -- '- Status: `%s`\n' "$(jq -r '.status' "$state")"
+              printf -- '- Preserved canary poses: `5 / 5`\n'
+              printf -- '- Completed new repair poses: `%s / 19`\n' "$repair_completed"
+              printf -- '- New repair spend so far: `$%.2f` (maximum expected `$1.90`)\n' "$(awk "BEGIN { print $repair_paid / 1000000 }")"
+              printf -- '- Combined spend so far: `$%.2f`\n' "$(awk "BEGIN { print $total_paid / 1000000 }")"
+              printf -- '- Imported or activated: `false`\n'
+              printf -- '- All 24 raw outputs and registration transforms require human review.\n'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Encrypt the combined 24-pose checkpoint before it leaves the runner
+        if: always()
+        shell: bash
+        env:
+          HUMANOID_ARTIFACT_KEY: ${{ secrets.HUMANOID_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -d "$HUMANOID_WORK_DIR" && -f "$HUMANOID_WORK_DIR/state.json" ]] || exit 0
+          artifact_dir=.humanoid-v5-repair-encrypted-artifact
+          plaintext="$artifact_dir/humanoid-selective-v5-repair-checkpoint.tar.gz"
+          ciphertext="$plaintext.ipenc"
+          mkdir -p "$artifact_dir"
+          tar -czf "$plaintext" "$HUMANOID_WORK_DIR"
+          node scripts/encrypted-humanoid-bundle.mjs \
+            --encrypt \
+            --input="$plaintext" \
+            --output="$ciphertext"
+          encrypted_sha="$(sha256sum "$ciphertext" | cut -d ' ' -f 1)"
+          printf '%s  %s\n' "$encrypted_sha" 'humanoid-selective-v5-repair-checkpoint.tar.gz.ipenc' \
+            > "$ciphertext.sha256"
+          state_sha="$(sha256sum "$HUMANOID_WORK_DIR/state.json" | cut -d ' ' -f 1)"
+          source_manifest_sha="$(sha256sum "$HUMANOID_WORK_DIR/inputs/input-manifest.json" | cut -d ' ' -f 1)"
+          repair_manifest="$HUMANOID_WORK_DIR/inputs/repair-input-manifest.json"
+          repair_manifest_sha=''
+          repair_plan_sha=''
+          if [[ -f "$repair_manifest" ]]; then
+            repair_manifest_sha="$(sha256sum "$repair_manifest" | cut -d ' ' -f 1)"
+            repair_plan_sha="$(jq -r '.planSha256' "$repair_manifest")"
+          fi
+          jq -n \
+            --argjson schemaVersion 3 \
+            --arg experimentId 'humanoid-neutral-medium-xai-selective-v5' \
+            --arg sourceRunId "$SOURCE_RUN_ID" \
+            --arg sourceArtifactId "$SOURCE_ARTIFACT_ID" \
+            --arg sourceArtifactZipSha256 "$SOURCE_ARTIFACT_ZIP_SHA256" \
+            --arg sourceCiphertextSha256 "$SOURCE_CIPHERTEXT_SHA256" \
+            --arg sourceGeneratorCommitSha "$SOURCE_GENERATOR_SHA" \
+            --arg repairRunId "$GITHUB_RUN_ID" \
+            --arg repairGeneratorCommitSha "$GENERATOR_SHA" \
+            --arg status "$(jq -r '.status' "$HUMANOID_WORK_DIR/state.json")" \
+            --argjson completedPoseCount "$(jq -r '.completedPoseCount // 0' "$HUMANOID_WORK_DIR/state.json")" \
+            --argjson repairCompletedPoseCount "$(jq -r '.repairCompletedPoseCount // 0' "$HUMANOID_WORK_DIR/state.json")" \
+            --argjson repairCostMicrocredits "$(jq -r '.repairCostMicrocredits // 0' "$HUMANOID_WORK_DIR/state.json")" \
+            --argjson totalCostMicrocredits "$(jq -r '.totalCostMicrocredits // 0' "$HUMANOID_WORK_DIR/state.json")" \
+            --arg repairPlanSha256 "$repair_plan_sha" \
+            --arg repairManifestSha256 "$repair_manifest_sha" \
+            --arg sourceManifestSha256 "$source_manifest_sha" \
+            --arg stateSha256 "$state_sha" \
+            --arg encryptedSha256 "$encrypted_sha" \
+            '{
+              schemaVersion: $schemaVersion,
+              experimentId: $experimentId,
+              sourceRunId: $sourceRunId,
+              sourceArtifactId: $sourceArtifactId,
+              sourceArtifactZipSha256: $sourceArtifactZipSha256,
+              sourceCiphertextSha256: $sourceCiphertextSha256,
+              sourceGeneratorCommitSha: $sourceGeneratorCommitSha,
+              repairRunId: $repairRunId,
+              repairGeneratorCommitSha: $repairGeneratorCommitSha,
+              status: $status,
+              completedPoseCount: $completedPoseCount,
+              repairCompletedPoseCount: $repairCompletedPoseCount,
+              repairCostMicrocredits: $repairCostMicrocredits,
+              totalCostMicrocredits: $totalCostMicrocredits,
+              repairPlanSha256: $repairPlanSha256,
+              repairManifestSha256: $repairManifestSha256,
+              sourceManifestSha256: $sourceManifestSha256,
+              stateSha256: $stateSha256,
+              encryptedSha256: $encryptedSha256
+            }' > "$artifact_dir/checkpoint-metadata.json"
+          rm -f "$plaintext"
+
+      - name: Remove every plaintext checkpoint before artifact upload
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          ciphertext=.humanoid-v5-repair-encrypted-artifact/humanoid-selective-v5-repair-checkpoint.tar.gz.ipenc
+          checksum="$ciphertext.sha256"
+          metadata=.humanoid-v5-repair-encrypted-artifact/checkpoint-metadata.json
+          if [[ -d "$HUMANOID_WORK_DIR" ]]; then
+            [[ -f "$ciphertext" && -f "$checksum" && -f "$metadata" ]] || {
+              printf '::error::Encrypted recovery checkpoint is incomplete; preserving runner-local plaintext for diagnostics.\n'
+              exit 1
+            }
+            expected="$(cut -d ' ' -f 1 "$checksum")"
+            actual="$(sha256sum "$ciphertext" | cut -d ' ' -f 1)"
+            [[ "$actual" == "$expected" && "$(jq -r '.encryptedSha256' "$metadata")" == "$actual" ]] || {
+              printf '::error::Encrypted recovery checkpoint failed its final integrity check; preserving runner-local plaintext.\n'
+              exit 1
+            }
+          fi
+          if [[ -d "$HUMANOID_WORK_DIR" ]]; then
+            find "$HUMANOID_WORK_DIR" -type f -exec shred -u {} + 2>/dev/null || true
+            rm -rf -- "$HUMANOID_WORK_DIR"
+          fi
+          rm -f -- "$RUNNER_TEMP/humanoid-selective-v5-checkpoint.tar.gz"
+          rm -f -- .humanoid-v5-repair-encrypted-artifact/humanoid-selective-v5-repair-checkpoint.tar.gz
+
+      - name: Preserve only ciphertext, checksum, and non-sensitive lineage
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ env.HUMANOID_REPAIR_ARTIFACT_NAME }}
+          path: |
+            .humanoid-v5-repair-encrypted-artifact/humanoid-selective-v5-repair-checkpoint.tar.gz.ipenc
+            .humanoid-v5-repair-encrypted-artifact/humanoid-selective-v5-repair-checkpoint.tar.gz.ipenc.sha256
+            .humanoid-v5-repair-encrypted-artifact/checkpoint-metadata.json
+          if-no-files-found: warn
+          retention-days: 90
+          include-hidden-files: true
