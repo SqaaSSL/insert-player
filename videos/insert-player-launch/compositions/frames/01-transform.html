@@ -10,26 +10,10 @@
 
     @font-face {
       font-family: "Space Grotesk";
-      font-weight: 400;
-      font-style: normal;
-      font-display: block;
-      src: url("assets/fonts/SpaceGrotesk-400.woff2") format("woff2");
-    }
-
-    @font-face {
-      font-family: "Space Grotesk";
-      font-weight: 500;
+      font-weight: 500 700;
       font-style: normal;
       font-display: block;
       src: url("assets/fonts/SpaceGrotesk-500.woff2") format("woff2");
-    }
-
-    @font-face {
-      font-family: "Space Grotesk";
-      font-weight: 700;
-      font-style: normal;
-      font-display: block;
-      src: url("assets/fonts/SpaceGrotesk-700.woff2") format("woff2");
     }
 
     #root {
@@ -40,6 +24,7 @@
       container-type: size;
       color: #fff4d6;
       font-family: "Space Grotesk", sans-serif;
+      background: #04040d;
     }
 
     #root *,
@@ -48,381 +33,451 @@
       box-sizing: border-box;
     }
 
-    [data-frame-element="01-transform-ground"] {
+    [data-frame-element="transform-ground"] {
       position: absolute;
       inset: 0;
+      overflow: hidden;
       background: #04040d;
     }
 
-    [data-frame-element="01-transform-stage"] {
+    [data-frame-element="transform-arena"] {
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
-      overflow: hidden;
-      isolation: isolate;
-      background: #04040d;
+      object-fit: cover;
+      opacity: 0.3;
+      filter: saturate(0.75) brightness(0.42);
     }
 
-    [data-frame-element^="01-transform-media-"] {
+    [data-frame-element="transform-shade"] {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, rgba(4, 4, 13, 0.9) 0%, rgba(4, 4, 13, 0.44) 48%, rgba(4, 4, 13, 0.88) 100%);
+    }
+
+    [data-frame-element="transform-topbar"] {
+      position: absolute;
+      z-index: 20;
+      top: 5.2cqh;
+      left: 5cqw;
+      right: 5cqw;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    [data-frame-element="transform-brand"] {
+      display: flex;
+      align-items: center;
+      gap: 1.15cqw;
+    }
+
+    [data-frame-element="transform-logo"] {
+      width: 4.1cqw;
+      height: 4.1cqw;
+      object-fit: contain;
+    }
+
+    [data-frame-element="transform-title"] {
+      font-family: "Press Start 2P", monospace;
+      font-size: 1.45cqw;
+      line-height: 1;
+      letter-spacing: 0;
+      text-shadow: 3px 3px 0 #6a0a0a;
+    }
+
+    [data-frame-element="transform-status"] {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 0.7cqw;
+      min-width: 11.8cqw;
+      font-family: "Press Start 2P", monospace;
+      font-size: 0.72cqw;
+      line-height: 1;
+      color: #ffce3a;
+      white-space: nowrap;
+    }
+
+    [data-frame-element="transform-status-copy"] {
+      display: block;
+    }
+
+    [data-frame-element="transform-status-copy"][data-state="ready"] {
+      position: absolute;
+      right: 0;
+      opacity: 0;
+    }
+
+    [data-frame-element="transform-status-light"] {
+      width: 0.66cqw;
+      aspect-ratio: 1;
+      background: #ff2a2a;
+      box-shadow: 0 0 18px rgba(255, 42, 42, 0.72);
+    }
+
+    [data-frame-element="transform-drop-zone"] {
+      position: absolute;
+      z-index: 2;
+      left: 38.8cqw;
+      top: 17.8cqh;
+      width: 22.4cqw;
+      height: 67.6cqh;
+      display: grid;
+      place-items: center;
+      border: 3px dashed rgba(255, 206, 58, 0.58);
+      background: rgba(4, 4, 13, 0.56);
+      box-shadow: inset 0 0 0 8px rgba(255, 42, 42, 0.08);
+    }
+
+    [data-frame-element="transform-drop-zone"]::before,
+    [data-frame-element="transform-drop-zone"]::after {
+      content: "";
+      position: absolute;
+      width: 4.2cqw;
+      height: 4.2cqw;
+      border-color: #ff2a2a;
+      border-style: solid;
+    }
+
+    [data-frame-element="transform-drop-zone"]::before {
+      top: -3px;
+      left: -3px;
+      border-width: 5px 0 0 5px;
+    }
+
+    [data-frame-element="transform-drop-zone"]::after {
+      right: -3px;
+      bottom: -3px;
+      border-width: 0 5px 5px 0;
+    }
+
+    [data-frame-element="transform-drop-copy"] {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2.2cqh;
+      font-family: "Press Start 2P", monospace;
+      font-size: 1.02cqw;
+      line-height: 1.45;
+      color: #ffce3a;
+      text-align: center;
+    }
+
+    [data-frame-element="transform-drop-mark"] {
+      display: grid;
+      width: 5.4cqw;
+      aspect-ratio: 1;
+      place-items: center;
+      border: 5px solid #ff2a2a;
+      border-radius: 50%;
+      color: #fff4d6;
+      font-family: "Press Start 2P", monospace;
+      font-size: 1.25cqw;
+      opacity: 0.72;
+    }
+
+    [data-frame-element="transform-card"] {
+      position: absolute;
+      z-index: 8;
+      left: 6.2cqw;
+      top: 19.4cqh;
+      width: 22.4cqw;
+      height: 64.8cqh;
+      overflow: hidden;
+      transform-origin: 50% 50%;
+      border: 4px solid #ffce3a;
+      background: #080615;
+      box-shadow: 18px 22px 0 rgba(0, 0, 0, 0.32), 0 0 40px rgba(255, 42, 42, 0.12);
+      will-change: transform, opacity;
+    }
+
+    [data-frame-element="transform-card"][data-player="casual"] {
+      left: 73.5cqw;
+      top: 20.6cqh;
+      opacity: 0;
+    }
+
+    [data-frame-element="transform-card-media"] {
+      position: absolute;
+      inset: 0 0 9.2cqh;
+      overflow: hidden;
+      background: #070711;
+    }
+
+    [data-frame-element="transform-card-media"] img {
       position: absolute;
       inset: 0;
       display: block;
       width: 100%;
       height: 100%;
       object-fit: cover;
-      object-position: center center;
       user-select: none;
       pointer-events: none;
     }
 
-    [data-frame-element="01-transform-media-start"] {
-      z-index: 1;
+    [data-frame-element="transform-photo"][data-player="p1"] {
+      object-position: 25% 50%;
     }
 
-    [data-frame-element="01-transform-media-reveal"] {
+    [data-frame-element="transform-fighter"][data-player="p1"] {
+      object-position: 72% 50%;
+    }
+
+    [data-frame-element="transform-photo"][data-player="casual"] {
+      object-position: 50% 45%;
+    }
+
+    [data-frame-element="transform-fighter"][data-player="casual"] {
+      object-position: 50% 50%;
+    }
+
+    [data-frame-element="transform-card-scan"] {
       position: absolute;
-      z-index: 2;
-      inset: 0;
-      overflow: hidden;
-      clip-path: inset(0 0 0 100%);
-      will-change: clip-path;
-    }
-
-    [data-frame-element="01-transform-media-final"] {
-      z-index: 1;
-    }
-
-    [data-frame-element="01-transform-energy"] {
-      position: absolute;
-      z-index: 4;
+      z-index: 6;
       top: 0;
       bottom: 0;
-      left: 0;
-      width: 32px;
-      pointer-events: none;
+      left: -12%;
+      width: 12%;
+      opacity: 0;
+      background: #ffce3a;
+      border-left: 3px solid #fff4d6;
+      border-right: 5px solid #ff2a2a;
+      box-shadow: 0 0 32px rgba(255, 206, 58, 0.9);
       will-change: transform, opacity;
     }
 
-    [data-frame-element="01-transform-energy-band"] {
+    [data-frame-element="transform-card-footer"] {
       position: absolute;
-      inset: 0 auto 0 -14px;
-      width: 32px;
-      background: rgba(255, 42, 42, 0.2);
-      border-left: 1px solid rgba(255, 244, 214, 0.55);
-      border-right: 1px solid rgba(255, 206, 58, 0.72);
-    }
-
-    [data-frame-element="01-transform-energy-core"] {
-      position: absolute;
-      top: 0;
-      bottom: 0;
+      z-index: 9;
       left: 0;
-      width: 3px;
-      background: #ffce3a;
-      transform-origin: 50% 50%;
-    }
-
-    [data-frame-element="01-transform-energy-flare"] {
-      position: absolute;
-      top: 11%;
-      bottom: 9%;
-      left: -5px;
-      width: 13px;
-      border-left: 2px solid #fff4d6;
-      border-right: 2px solid #ff2a2a;
-    }
-
-    [data-frame-element^="01-transform-spark-"] {
-      position: absolute;
-      width: 12px;
-      height: 3px;
-      background: #ffce3a;
-    }
-
-    [data-frame-element="01-transform-spark-a"] {
-      top: 19%;
-      left: -20px;
-    }
-
-    [data-frame-element="01-transform-spark-b"] {
-      top: 43%;
-      left: 12px;
-      width: 17px;
-      background: #ff2a2a;
-    }
-
-    [data-frame-element="01-transform-spark-c"] {
-      top: 68%;
-      left: -13px;
-      width: 8px;
-      background: #fff4d6;
-    }
-
-    [data-frame-element="01-transform-photo-label"] {
-      position: absolute;
-      z-index: 6;
-      top: 68px;
+      right: 0;
+      bottom: 0;
+      height: 9.2cqh;
       display: flex;
       align-items: center;
-      min-height: 58px;
-      padding: 0 22px 0 18px;
+      justify-content: space-between;
+      padding: 0 1.3cqw;
+      border-top: 3px solid #ffce3a;
+      background: #090615;
+    }
+
+    [data-frame-element="transform-card-kicker"] {
       font-family: "Space Grotesk", sans-serif;
-      font-size: 1cqw;
+      font-size: 0.77cqw;
       font-weight: 700;
       line-height: 1;
-      letter-spacing: 0;
+      color: #c9c0a8;
       text-transform: uppercase;
-      white-space: nowrap;
-      will-change: transform, opacity;
     }
 
-    [data-frame-element="01-transform-photo-label"] {
-      left: 5.5cqw;
-      color: #fff4d6;
-      background: #04040d;
-      border-left: 6px solid #ff2a2a;
-    }
-
-    [data-frame-element="01-transform-label-marker"] {
-      width: 10px;
-      height: 10px;
-      margin-right: 14px;
-      flex: 0 0 auto;
-      background: #ff2a2a;
-    }
-
-    [data-frame-element="01-transform-brand-lockup"] {
-      position: absolute;
-      z-index: 6;
-      left: 6.8cqw;
-      top: 31.5cqh;
-      width: 43cqw;
-      display: flex;
-      align-items: center;
-      gap: 2.1cqw;
-      color: #fff4d6;
-      will-change: transform, opacity;
-    }
-
-    [data-frame-element="01-transform-brand-mark"] {
-      width: 9.4cqw;
-      height: 9.4cqw;
-      flex: 0 0 auto;
-      object-fit: contain;
-      filter: drop-shadow(8px 8px 0 rgba(4, 4, 13, 0.72));
-      will-change: transform, opacity;
-    }
-
-    [data-frame-element="01-transform-brand-title"] {
-      display: flex;
-      min-width: 0;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 1.1cqh;
+    [data-frame-element="transform-card-name"] {
+      position: relative;
       font-family: "Press Start 2P", monospace;
-      font-size: 4cqw;
-      font-weight: 400;
-      line-height: 1.03;
-      letter-spacing: 0;
-      text-shadow: 5px 5px 0 #6a0a0a;
-    }
-
-    [data-frame-element="01-transform-brand-line"] {
-      display: block;
+      font-size: 0.82cqw;
+      line-height: 1;
+      color: #fff4d6;
+      text-align: right;
       white-space: nowrap;
-      will-change: transform, opacity;
     }
 
-    [data-frame-element="01-transform-brand-rule"] {
+    [data-frame-element="transform-card-ready"] {
+      position: absolute;
+      right: 1.3cqw;
+      font-family: "Press Start 2P", monospace;
+      font-size: 0.72cqw;
+      line-height: 1;
+      color: #ffce3a;
+      white-space: nowrap;
+      opacity: 0;
+    }
+
+    [data-frame-element="transform-cursor"] {
+      position: absolute;
+      z-index: 24;
+      left: 25.2cqw;
+      top: 61cqh;
+      width: 2.7cqw;
+      height: 3.8cqw;
+      transform-origin: 12% 8%;
+      filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.72));
+      will-change: transform, opacity;
+      opacity: 0;
+    }
+
+    [data-frame-element="transform-cursor"] svg {
       display: block;
       width: 100%;
-      height: 4px;
-      margin-top: 1.1cqh;
-      background: #ff2a2a;
-      transform-origin: 0 50%;
-      will-change: transform;
+      height: 100%;
+    }
+
+    [data-frame-element="transform-drop-flash"] {
+      position: absolute;
+      z-index: 22;
+      left: 38.8cqw;
+      top: 17.8cqh;
+      width: 22.4cqw;
+      height: 67.6cqh;
+      border: 8px solid #fff4d6;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    [data-frame-element="transform-ready-title"] {
+      position: absolute;
+      z-index: 18;
+      top: 11.7cqh;
+      left: 0;
+      width: 100%;
+      font-family: "Press Start 2P", monospace;
+      font-size: 1.52cqw;
+      line-height: 1;
+      color: #ffce3a;
+      text-align: center;
+      text-shadow: 3px 3px 0 #6a0a0a;
+      white-space: nowrap;
+      opacity: 0;
     }
   </style>
 
   <div data-hf-id="hf-1v72" id="root" data-composition-id="01-transform" data-duration="4.95" data-width="1920" data-height="1080">
-    <div data-hf-id="hf-ax0d" id="frame01-ground" class="clip" data-frame-element="01-transform-ground" data-start="0" data-duration="4.95" data-track-index="0"></div>
+    <div data-hf-id="hf-ax0d" id="frame01-ground" class="clip" data-frame-element="transform-ground" data-start="0" data-duration="4.95" data-track-index="0">
+      <img data-hf-id="hf-bg01" data-frame-element="transform-arena" src="assets/generated/player-one-arena-background.png" alt="" draggable="false">
+      <span data-hf-id="hf-sh01" data-frame-element="transform-shade"></span>
+    </div>
 
-    <section data-hf-id="hf-x3b0" id="frame01-stage" data-frame-element="01-transform-stage" aria-label="Portrait transforming into a fighter">
-      <img data-hf-id="hf-dd56" id="frame01-start-frame" class="clip" data-frame-element="01-transform-media-start" src="assets/generated/player-one-photo-start.png" alt="" draggable="false" data-start="0" data-duration="4.95" data-track-index="1">
-      <div data-hf-id="hf-34mo" id="frame01-fighter-reveal" class="clip" data-frame-element="01-transform-media-reveal" data-start="0" data-duration="4.95" data-track-index="2">
-        <img data-hf-id="hf-8wqf" data-frame-element="01-transform-media-final" src="assets/generated/player-one-final-frame.png" alt="" draggable="false">
+    <header data-hf-id="hf-top1" data-frame-element="transform-topbar">
+      <div data-hf-id="hf-br01" data-frame-element="transform-brand">
+        <img data-hf-id="hf-lg01" data-frame-element="transform-logo" src="assets/logo-12e1869b.svg" alt="" draggable="false">
+        <span data-hf-id="hf-ti01" data-frame-element="transform-title">INSERT PLAYER</span>
       </div>
+      <div data-hf-id="hf-st01" data-frame-element="transform-status">
+        <span data-hf-id="hf-sl01" data-frame-element="transform-status-light"></span>
+        <span data-hf-id="hf-sc01" data-frame-element="transform-status-copy" data-state="drop">DROP PHOTO</span>
+        <span data-hf-id="hf-sc02" data-frame-element="transform-status-copy" data-state="ready">PLAYERS READY</span>
+      </div>
+    </header>
 
-      <div data-hf-id="hf-74ce" data-frame-element="01-transform-energy" aria-hidden="true">
-        <span data-hf-id="hf-rg52" data-frame-element="01-transform-energy-band"></span>
-        <span data-hf-id="hf-kts7" data-frame-element="01-transform-energy-core"></span>
-        <span data-hf-id="hf-7jdo" data-frame-element="01-transform-energy-flare"></span>
-        <span data-hf-id="hf-wm0f" data-frame-element="01-transform-spark-a"></span>
-        <span data-hf-id="hf-a4t0" data-frame-element="01-transform-spark-b"></span>
-        <span data-hf-id="hf-zc74" data-frame-element="01-transform-spark-c"></span>
+    <div data-hf-id="hf-dz01" data-frame-element="transform-drop-zone" aria-hidden="true">
+      <div data-hf-id="hf-dc01" data-frame-element="transform-drop-copy" data-layout-allow-occlusion="">
+        <div data-hf-id="hf-dm01" data-frame-element="transform-drop-mark">P1</div>
+        <span data-hf-id="hf-dt01">DROP<br data-hf-id="hf-x5px">YOUR PHOTO</span>
       </div>
+    </div>
 
-      <div data-hf-id="hf-p889" data-frame-element="01-transform-photo-label">
-        <span data-hf-id="hf-x25g" data-frame-element="01-transform-label-marker"></span>
-        <span data-hf-id="hf-kore">Your Photo</span>
+    <article data-hf-id="hf-p1c1" id="frame01-player-one-card" class="clip" data-frame-element="transform-card" data-player="p1" data-start="0" data-duration="4.95" data-track-index="3">
+      <div data-hf-id="hf-p1m1" data-frame-element="transform-card-media">
+        <img data-hf-id="hf-p1p1" data-frame-element="transform-photo" data-player="p1" src="assets/generated/player-one-photo-matched-v1.png" alt="Player One portrait" draggable="false">
+        <img data-hf-id="hf-p1f1" data-frame-element="transform-fighter" data-player="p1" src="assets/generated/player-one-final-frame.png" alt="Player One fighter" draggable="false">
+        <span data-hf-id="hf-p1s1" data-frame-element="transform-card-scan"></span>
       </div>
+      <footer data-hf-id="hf-p1ft" data-frame-element="transform-card-footer">
+        <span data-hf-id="hf-p1k1" data-frame-element="transform-card-kicker">Your photo</span>
+        <span data-hf-id="hf-p1n1" data-frame-element="transform-card-name">PLAYER ONE</span>
+        <span data-hf-id="hf-p1r1" data-frame-element="transform-card-ready">FIGHTER READY</span>
+      </footer>
+    </article>
 
-      <div data-hf-id="hf-x9o6" data-frame-element="01-transform-brand-lockup" aria-label="Insert Player">
-        <img data-hf-id="hf-0a1o" data-frame-element="01-transform-brand-mark" src="assets/logo-12e1869b.svg" alt="" draggable="false">
-        <div data-hf-id="hf-k58b" data-frame-element="01-transform-brand-title">
-          <span data-hf-id="hf-mfbr" data-frame-element="01-transform-brand-line">INSERT</span>
-          <span data-hf-id="hf-cx31" data-frame-element="01-transform-brand-line">PLAYER</span>
-          <span data-hf-id="hf-h4eb" data-frame-element="01-transform-brand-rule" aria-hidden="true"></span>
-        </div>
+    <article data-hf-id="hf-cac1" id="frame01-casual-card" class="clip" data-frame-element="transform-card" data-player="casual" data-start="0" data-duration="4.95" data-track-index="4">
+      <div data-hf-id="hf-cam1" data-frame-element="transform-card-media">
+        <img data-hf-id="hf-cap1" data-frame-element="transform-photo" data-player="casual" src="assets/generated/casual-photo-card-v1.webp" alt="Casual portrait" draggable="false">
+        <img data-hf-id="hf-caf1" data-frame-element="transform-fighter" data-player="casual" src="assets/generated/casual-fighter-card-v1.webp" alt="Casual fighter" draggable="false">
+        <span data-hf-id="hf-cas1" data-frame-element="transform-card-scan"></span>
       </div>
-    </section>
+      <footer data-hf-id="hf-caft" data-frame-element="transform-card-footer">
+        <span data-hf-id="hf-cak1" data-frame-element="transform-card-kicker">Your friend</span>
+        <span data-hf-id="hf-can1" data-frame-element="transform-card-name">CASUAL</span>
+        <span data-hf-id="hf-car1" data-frame-element="transform-card-ready">FIGHTER READY</span>
+      </footer>
+    </article>
+
+    <div data-hf-id="hf-fl01" data-frame-element="transform-drop-flash" aria-hidden="true"></div>
+    <div data-hf-id="hf-rt01" data-frame-element="transform-ready-title">2 PLAYERS READY</div>
+
+    <div data-hf-id="hf-cu01" data-frame-element="transform-cursor" aria-hidden="true">
+      <svg data-hf-id="hf-sv91" viewBox="0 0 66 86" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path data-hf-id="hf-p8pk" d="M5 4L58 49H32L22 80L5 73V4Z" fill="#FFF4D6" stroke="#04040D" stroke-width="5" stroke-linejoin="round" />
+        <path data-hf-id="hf-3nvh" d="M31 49L48 74" stroke="#FF2A2A" stroke-width="7" stroke-linecap="square" />
+      </svg>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
   <script>
     (() => {
-      const root = document.querySelector(
-        '[data-composition-id="01-transform"]'
-      );
-      const select = gsap.utils.selector(root);
-      const photoLabel = select(
-        '[data-frame-element="01-transform-photo-label"]'
-      )[0];
-      const brandLockup = select(
-        '[data-frame-element="01-transform-brand-lockup"]'
-      )[0];
-      const brandMark = select(
-        '[data-frame-element="01-transform-brand-mark"]'
-      )[0];
-      const brandLines = select(
-        '[data-frame-element="01-transform-brand-line"]'
-      );
-      const brandRule = select(
-        '[data-frame-element="01-transform-brand-rule"]'
-      )[0];
-      const fighterReveal = select(
-        '[data-frame-element="01-transform-media-reveal"]'
-      )[0];
-      const energy = select(
-        '[data-frame-element="01-transform-energy"]'
-      )[0];
-      const sparks = select(
-        '[data-frame-element^="01-transform-spark-"]'
-      );
+      const root = document.querySelector('[data-composition-id="01-transform"]');
+      const pick = (selector) => root.querySelector(selector);
+      const p1Card = pick('[data-frame-element="transform-card"][data-player="p1"]');
+      const casualCard = pick('[data-frame-element="transform-card"][data-player="casual"]');
+      const p1Photo = pick('[data-frame-element="transform-photo"][data-player="p1"]');
+      const p1Fighter = pick('[data-frame-element="transform-fighter"][data-player="p1"]');
+      const casualPhoto = pick('[data-frame-element="transform-photo"][data-player="casual"]');
+      const casualFighter = pick('[data-frame-element="transform-fighter"][data-player="casual"]');
+      const scans = root.querySelectorAll('[data-frame-element="transform-card-scan"]');
+      const p1Scan = scans[0];
+      const casualScan = scans[1];
+      const p1Ready = p1Card.querySelector('[data-frame-element="transform-card-ready"]');
+      const p1Name = p1Card.querySelector('[data-frame-element="transform-card-name"]');
+      const casualReady = casualCard.querySelector('[data-frame-element="transform-card-ready"]');
+      const casualName = casualCard.querySelector('[data-frame-element="transform-card-name"]');
+      const cursor = pick('[data-frame-element="transform-cursor"]');
+      const dropZone = pick('[data-frame-element="transform-drop-zone"]');
+      const dropFlash = pick('[data-frame-element="transform-drop-flash"]');
+      const readyTitle = pick('[data-frame-element="transform-ready-title"]');
+      const statusDrop = pick('[data-frame-element="transform-status-copy"][data-state="drop"]');
+      const statusReady = pick('[data-frame-element="transform-status-copy"][data-state="ready"]');
 
       const tl = gsap.timeline({ paused: true });
 
-      tl.set(photoLabel, { opacity: 0 }, 0);
-      tl.set(brandLockup, { opacity: 0 }, 0);
-      tl.set(brandRule, { scaleX: 0 }, 0);
-      tl.set(fighterReveal, { clipPath: "inset(0% 100% 0% 0%)" }, 0);
-      tl.set(energy, { x: -48, opacity: 0 }, 0);
+      tl.set(p1Card, { x: 0, y: 0, scale: 1, opacity: 0, rotation: -1.2 }, 0);
+      tl.set(p1Fighter, { opacity: 0, scale: 1.04 }, 0);
+      tl.set(p1Ready, { y: 12 }, 0);
+      tl.set(p1Name, { opacity: 1 }, 0);
+      tl.set(casualCard, { x: 150, y: 20, scale: 0.86, opacity: 0, rotation: 2 }, 0);
+      tl.set(casualFighter, { opacity: 0, scale: 1.04 }, 0);
+      tl.set(casualReady, { y: 12 }, 0);
+      tl.set([p1Scan, casualScan], { xPercent: 0 }, 0);
+      tl.set(cursor, { scale: 0.88 }, 0);
+      tl.set(readyTitle, { y: -18 }, 0);
+      tl.set(statusReady, { y: 8 }, 0);
 
-      tl.fromTo(
-        photoLabel,
-        { y: -24, scale: 1.04, opacity: 0 },
-        {
-          y: 0,
-          scale: 1,
-          opacity: 1,
-          duration: 0.46,
-          ease: "back.out(1.7)",
-          immediateRender: false
-        },
-        0.18
-      );
+      tl.fromTo(p1Card, { opacity: 0, x: -72, y: 16, rotation: -3 }, { opacity: 1, x: 0, y: 0, rotation: -1.2, duration: 0.38, ease: 'back.out(1.45)' }, 0.16);
+      tl.fromTo(cursor, { opacity: 0, scale: 0.72, x: -18, y: 24 }, { opacity: 1, scale: 0.9, x: 0, y: 0, duration: 0.24, ease: 'power3.out' }, 0.42);
+      tl.to(cursor, { scale: 0.76, duration: 0.1, ease: 'power2.inOut' }, 0.67);
+      tl.to(p1Card, { x: 626, y: -18, rotation: 0, scale: 0.98, duration: 0.72, ease: 'power3.inOut' }, 0.72);
+      tl.to(cursor, { x: 626, y: -18, scale: 0.76, duration: 0.72, ease: 'power3.inOut' }, 0.72);
+      tl.to(cursor, { scale: 0.96, duration: 0.12, ease: 'back.out(1.8)' }, 1.44);
+      tl.fromTo(dropFlash, { opacity: 0, scale: 0.92 }, { opacity: 0.92, scale: 1, duration: 0.12, ease: 'power2.out' }, 1.44);
+      tl.to(dropFlash, { opacity: 0, duration: 0.28, ease: 'power2.out' }, 1.56);
+      tl.set(p1Scan, { opacity: 1, xPercent: 0 }, 1.48);
+      tl.to(p1Scan, { xPercent: 930, duration: 0.58, ease: 'power2.inOut' }, 1.48);
+      tl.to(p1Photo, { opacity: 0, scale: 0.98, duration: 0.36, ease: 'power2.inOut' }, 1.57);
+      tl.to(p1Fighter, { opacity: 1, scale: 1, duration: 0.4, ease: 'power2.out' }, 1.57);
+      tl.to(p1Scan, { opacity: 0, duration: 0.12 }, 2.04);
+      tl.to(p1Name, { opacity: 0, y: -10, duration: 0.16 }, 1.98);
+      tl.to(p1Ready, { opacity: 1, y: 0, duration: 0.22, ease: 'power3.out' }, 2.06);
+      tl.to(cursor, { opacity: 0, x: 690, y: 26, duration: 0.18 }, 2.04);
+      tl.to(dropZone, { opacity: 0, scale: 0.9, duration: 0.32, ease: 'power2.in' }, 2.08);
+      tl.to(p1Card, { x: 272, y: 10, scale: 0.82, rotation: -0.6, duration: 0.5, ease: 'power3.inOut' }, 2.13);
 
-      tl.fromTo(
-        energy,
-        { x: -48, opacity: 0 },
-        {
-          x: 1936,
-          opacity: 1,
-          duration: 2.72,
-          ease: "power2.inOut",
-          immediateRender: false
-        },
-        0.42
-      );
-      tl.to(energy, { opacity: 0, duration: 0.18, ease: "power1.out" }, 3.06);
-      tl.to(
-        fighterReveal,
-        {
-          clipPath: "inset(0% 0% 0% 0%)",
-          duration: 2.72,
-          ease: "power2.inOut"
-        },
-        0.42
-      );
-      tl.fromTo(
-        sparks,
-        { x: -10, opacity: 0.2, scaleX: 0.6 },
-        {
-          x: 10,
-          opacity: 1,
-          scaleX: 1.35,
-          duration: 0.16,
-          stagger: 0.08,
-          repeat: 7,
-          yoyo: true,
-          ease: "power1.inOut"
-        },
-        0.48
-      );
-      tl.to(photoLabel, { opacity: 0, y: -12, duration: 0.24 }, 2.66);
-
-      tl.fromTo(
-        brandLockup,
-        { x: -30, opacity: 0 },
-        {
-          x: 0,
-          opacity: 1,
-          duration: 0.42,
-          ease: "power3.out",
-          immediateRender: false
-        },
-        3.08
-      );
-      tl.fromTo(
-        brandMark,
-        { scale: 0.8, rotation: -5 },
-        {
-          scale: 1,
-          rotation: 0,
-          duration: 0.48,
-          ease: "back.out(1.5)",
-          immediateRender: false
-        },
-        3.08
-      );
-      tl.fromTo(
-        brandLines,
-        { x: -18, opacity: 0 },
-        {
-          x: 0,
-          opacity: 1,
-          duration: 0.34,
-          stagger: 0.08,
-          ease: "power3.out",
-          immediateRender: false
-        },
-        3.16
-      );
-      tl.fromTo(
-        brandRule,
-        { scaleX: 0 },
-        {
-          scaleX: 1,
-          duration: 0.36,
-          ease: "power4.out",
-          immediateRender: false
-        },
-        3.46
-      );
+      tl.fromTo(casualCard, { opacity: 0, x: 160, y: 28, scale: 0.82, rotation: 3 }, { opacity: 1, x: -105, y: 10, scale: 0.82, rotation: 0.6, duration: 0.5, ease: 'back.out(1.25)' }, 2.42);
+      tl.set(casualScan, { opacity: 1, xPercent: 0 }, 3.03);
+      tl.to(casualScan, { xPercent: 930, duration: 0.55, ease: 'power2.inOut' }, 3.03);
+      tl.to(casualPhoto, { opacity: 0, scale: 0.98, duration: 0.34, ease: 'power2.inOut' }, 3.12);
+      tl.to(casualFighter, { opacity: 1, scale: 1, duration: 0.38, ease: 'power2.out' }, 3.12);
+      tl.to(casualScan, { opacity: 0, duration: 0.12 }, 3.48);
+      tl.to(casualName, { opacity: 0, y: -10, duration: 0.16 }, 3.5);
+      tl.to(casualReady, { opacity: 1, y: 0, duration: 0.22, ease: 'power3.out' }, 3.58);
+      tl.to(statusDrop, { opacity: 0, y: -8, duration: 0.14 }, 3.55);
+      tl.to(statusReady, { opacity: 1, y: 0, duration: 0.2 }, 3.72);
+      tl.to(readyTitle, { opacity: 1, y: 0, duration: 0.32, ease: 'back.out(1.5)' }, 3.72);
+      tl.to([p1Card, casualCard], { scale: 0.84, duration: 0.24, ease: 'power2.out' }, 3.82);
+      tl.to([p1Card, casualCard], { scale: 0.82, duration: 0.2, ease: 'power2.inOut' }, 4.06);
+      tl.to({}, { duration: 4.95 }, 0);
 
       window.__timelines = window.__timelines || {};
-      window.__timelines["01-transform"] = tl;
+      window.__timelines['01-transform'] = tl;
     })();
   </script>
 </template>
