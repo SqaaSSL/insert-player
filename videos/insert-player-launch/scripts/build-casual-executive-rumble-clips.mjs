@@ -22,13 +22,13 @@ const stageImage = resolve(
 );
 const segmentationScript = resolve(import.meta.dirname, 'segment-people.swift');
 const loaderOutput = resolve(
-  process.argv[2] ?? resolve(capturesDir, 'casual-vs-player-one-executive-loader-v2.mkv'),
+  process.argv[2] ?? resolve(capturesDir, 'casual-vs-player-one-executive-loader-v3.mkv'),
 );
 const fightOutput = resolve(
-  process.argv[3] ?? resolve(capturesDir, 'casual-vs-player-one-executive-fight-v2.mkv'),
+  process.argv[3] ?? resolve(capturesDir, 'casual-vs-player-one-executive-fight-v3.mkv'),
 );
 const manifestOutput = resolve(
-  process.argv[4] ?? resolve(capturesDir, 'casual-vs-player-one-executive-v2.json'),
+  process.argv[4] ?? resolve(capturesDir, 'casual-vs-player-one-executive-v3.json'),
 );
 
 const frameRate = 30;
@@ -194,6 +194,12 @@ try {
     const suffix = sourceFrameName.match(/(\d{3})\.png$/)?.[1];
     const sourceFrame = join(framesDir, sourceFrameName);
     const foregroundMask = join(framesDir, `foreground-${suffix}.png`);
+    const differenceMask = join(framesDir, `difference-${suffix}.png`);
+    const brightMask = join(framesDir, `bright-${suffix}.png`);
+    const saturationMask = join(framesDir, `saturation-${suffix}.png`);
+    const visibleMask = join(framesDir, `visible-${suffix}.png`);
+    const chromaMask = join(framesDir, `chroma-${suffix}.png`);
+    const effectColorMask = join(framesDir, `effect-color-${suffix}.png`);
     const detailMask = join(framesDir, `detail-${suffix}.png`);
     const combinedMask = join(framesDir, `combined-${suffix}.png`);
     const outputFrame = join(framesDir, `output-${suffix}.png`);
@@ -209,15 +215,66 @@ try {
       'gray',
       '-threshold',
       '3%',
-      '-morphology',
-      'Dilate',
-      'Disk:2',
-      '-blur',
-      '0x0.7',
       '-fill',
       'black',
       '-draw',
       'rectangle 0,928 1919,952',
+      differenceMask,
+    ]);
+    run('magick', [
+      sourceFrame,
+      '-colorspace',
+      'gray',
+      '-threshold',
+      '42%',
+      brightMask,
+    ]);
+    run('magick', [
+      sourceFrame,
+      '-colorspace',
+      'HSL',
+      '-channel',
+      'G',
+      '-separate',
+      '+channel',
+      '-threshold',
+      '32%',
+      saturationMask,
+    ]);
+    run('magick', [
+      sourceFrame,
+      '-colorspace',
+      'gray',
+      '-threshold',
+      '18%',
+      visibleMask,
+    ]);
+    run('magick', [
+      saturationMask,
+      visibleMask,
+      '-compose',
+      'multiply',
+      '-composite',
+      chromaMask,
+    ]);
+    run('magick', [
+      brightMask,
+      chromaMask,
+      '-evaluate-sequence',
+      'max',
+      effectColorMask,
+    ]);
+    run('magick', [
+      differenceMask,
+      effectColorMask,
+      '-compose',
+      'multiply',
+      '-composite',
+      '-morphology',
+      'Dilate',
+      'Disk:1',
+      '-blur',
+      '0x0.45',
       detailMask,
     ]);
     run('magick', [
@@ -295,7 +352,13 @@ try {
       frameCount: fightFrameCount,
       durationSeconds: fightFrameCount / frameRate,
       sha256: sha256(fightOutput),
-      foregroundExtraction: 'Vision foreground instance mask plus high-contrast HUD and effects detail mask',
+      foregroundExtraction: 'Vision foreground instance mask plus luminance/chroma-gated HUD and effects detail mask',
+      detailMaskThresholds: {
+        differencePercent: 3,
+        brightPercent: 42,
+        saturationPercent: 32,
+        visibilityPercent: 18,
+      },
       excludedDetailBands: [{ y: 928, height: 25, reason: 'placeholder stage floor rule' }],
     },
     intermediateEncoding: 'FFV1 lossless yuv444p',

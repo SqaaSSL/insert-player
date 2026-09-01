@@ -55,7 +55,7 @@ roles: The portrait is the identity anchor; the electric seam is the transformat
 - beat: excitement -> triumph
 - blueprint: device-surface-showcase
 - blueprint_adaptation: One `2.40s` full-bleed production loading curtain, eight independently recorded `1s` gameplay cuts with no decorative device frame, and a `0.27s` final-frame hold protecting the exit transition.
-- asset_candidates: assets/fight-montage-player-one-vs-casual-v14.mp4 — a readable Casual versus Player One loading curtain, their cleaned lossless-intermediate match on Executive Rumble, and seven further matches across the current global roster
+- asset_candidates: assets/fight-montage-player-one-vs-casual-v15.mp4 — a readable Casual versus Player One loading curtain, their shadow-cleaned lossless-intermediate match on Executive Rumble with bright HUD and hit effects retained, and seven further matches across the current global roster
 - sfx: .media/audio/sfx/sfx_004.mp3 at 3.65s
 
 narrativeRole: Cash in the promise: this is not an avatar or a still image. Two personal fighters can each enter real matches against a varied global roster.
