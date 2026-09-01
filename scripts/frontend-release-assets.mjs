@@ -34,3 +34,60 @@ export function expectedMediaContentType(assetPath) {
   );
   return extension ? MEDIA_CONTENT_TYPES.get(extension) : null;
 }
+
+export async function waitForLiveMediaAsset({
+  url,
+  expectedType,
+  fetchImpl = fetch,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  maxAttempts = 12,
+  retryDelayMs = 5_000,
+  requestTimeoutMs = 30_000,
+  onRetry = () => {},
+}) {
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+    throw new Error('maxAttempts must be a positive integer.');
+  }
+
+  let lastResult = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
+      const actualType = response.headers.get('content-type')?.split(';')[0].trim() ?? '';
+      const contentLengthHeader = response.headers.get('content-length');
+      const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
+      lastResult = {
+        status: response.status,
+        actualType,
+        contentLength,
+      };
+      if (
+        response.ok
+        && actualType === expectedType
+        && (contentLength === null || (Number.isFinite(contentLength) && contentLength > 0))
+      ) {
+        return { ...lastResult, attempt };
+      }
+    } catch (error) {
+      lastResult = {
+        status: null,
+        actualType: '',
+        contentLength: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+
+    if (attempt < maxAttempts) {
+      onRetry({ ...lastResult, attempt, maxAttempts });
+      await sleep(retryDelayMs);
+    }
+  }
+
+  const detail = lastResult?.error
+    ? `error=${lastResult.error}`
+    : `status=${lastResult?.status ?? 'unavailable'} type=${lastResult?.actualType || 'missing'} bytes=${lastResult?.contentLength ?? 'unspecified'}`;
+  throw new Error(`Live media verification failed for ${url}: ${detail}.`);
+}

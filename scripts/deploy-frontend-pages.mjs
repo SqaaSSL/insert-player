@@ -7,6 +7,7 @@ import {
   chunkFrontendReleaseAssets,
   collectFrontendReleaseAssetPaths,
   expectedMediaContentType,
+  waitForLiveMediaAsset,
 } from './frontend-release-assets.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -171,22 +172,16 @@ async function verifyLiveMediaAssets(assetPaths) {
     .map((path) => ({ path, expectedType: expectedMediaContentType(path) }))
     .filter(({ expectedType }) => expectedType);
   for (const { path, expectedType } of mediaAssets) {
-    const response = await fetch(`${LIVE_FRONTEND_ORIGINS[0]}${path}`, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(30_000),
+    const { actualType, contentLength, attempt } = await waitForLiveMediaAsset({
+      url: `${LIVE_FRONTEND_ORIGINS[0]}${path}`,
+      expectedType,
+      onRetry: ({ status, actualType: retryType, contentLength: retryLength, attempt: retryAttempt, maxAttempts }) => {
+        console.warn(
+          `Live media ${path} is not ready after attempt ${retryAttempt}/${maxAttempts}: status=${status ?? 'unavailable'} type=${retryType || 'missing'} bytes=${retryLength ?? 'unspecified'}; retrying after Pages propagation.`,
+        );
+      },
     });
-    const actualType = response.headers.get('content-type')?.split(';')[0].trim() ?? '';
-    const contentLengthHeader = response.headers.get('content-length');
-    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : null;
-    if (
-      !response.ok ||
-      actualType !== expectedType ||
-      (contentLength !== null && (!Number.isFinite(contentLength) || contentLength <= 0))
-    ) {
-      throw new Error(
-        `Live media verification failed for ${path}: status=${response.status} type=${actualType || 'missing'} bytes=${contentLength ?? 'unspecified'}.`,
-      );
-    }
+    if (attempt > 1) console.log(`Live media ${path} became ready on attempt ${attempt}.`);
     console.log(`Verified live media ${path} (${actualType}, ${contentLength ?? 'unspecified'} bytes).`);
   }
 }

@@ -3,6 +3,7 @@ import {
   chunkFrontendReleaseAssets,
   collectFrontendReleaseAssetPaths,
   expectedMediaContentType,
+  waitForLiveMediaAsset,
 } from './frontend-release-assets.mjs';
 
 describe('frontend release assets', () => {
@@ -47,5 +48,53 @@ describe('frontend release assets', () => {
     expect(expectedMediaContentType('/assets/launch.mp4')).toBe('video/mp4');
     expect(expectedMediaContentType('/assets/fight.webm')).toBe('video/webm');
     expect(expectedMediaContentType('/assets/app.js')).toBeNull();
+  });
+
+  it('waits through the previous Pages fallback before accepting live media', async () => {
+    const responses = [
+      new Response('<!doctype html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      }),
+      new Response(null, {
+        status: 200,
+        headers: { 'content-type': 'video/mp4', 'content-length': '19284007' },
+      }),
+    ];
+    const retries = [];
+
+    await expect(
+      waitForLiveMediaAsset({
+        url: 'https://insertplayer.ai/assets/launch.mp4',
+        expectedType: 'video/mp4',
+        fetchImpl: async () => responses.shift(),
+        sleep: async () => {},
+        maxAttempts: 2,
+        onRetry: (result) => retries.push(result),
+      }),
+    ).resolves.toMatchObject({
+      status: 200,
+      actualType: 'video/mp4',
+      contentLength: 19284007,
+      attempt: 2,
+    });
+    expect(retries).toEqual([
+      expect.objectContaining({ status: 200, actualType: 'text/html', attempt: 1 }),
+    ]);
+  });
+
+  it('fails closed when media never reaches the expected content type', async () => {
+    await expect(
+      waitForLiveMediaAsset({
+        url: 'https://insertplayer.ai/assets/launch.mp4',
+        expectedType: 'video/mp4',
+        fetchImpl: async () => new Response('<!doctype html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        }),
+        sleep: async () => {},
+        maxAttempts: 2,
+      }),
+    ).rejects.toThrow('status=200 type=text/html bytes=unspecified');
   });
 });
