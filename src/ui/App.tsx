@@ -164,7 +164,7 @@ function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null
   }
   return {
     gameMode: 'rush',
-    vsAI: false,
+    vsAI: true,
     cpuVsCpu: false,
     p1Name: 'NOVA',
     p2Name: 'BYTE',

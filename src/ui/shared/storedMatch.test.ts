@@ -56,7 +56,7 @@ describe('stored match', () => {
     const rushMatch: MatchSceneData = {
       ...match,
       gameMode: 'rush',
-      vsAI: false,
+      vsAI: true,
     };
     expect(writeStoredMatch(rushMatch, 'user-a', storage, 1_000)).toBe(true);
     expect(readStoredMatch('user-a', storage, 1_001)).toEqual(rushMatch);

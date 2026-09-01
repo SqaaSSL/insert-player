@@ -301,7 +301,7 @@ export function HomePage({
       <div className="home-menu">
         <button type="button" className="home-menu__action is-primary" onClick={onOpenCoopRush}>
           <span>Co-op Rush</span>
-          <small>Two Players · One Team · Clear The Floor</small>
+          <small>You + CPU · One Team · Push Right</small>
         </button>
         <button type="button" className="home-menu__action" onClick={onOpenArcade}>
           <span>Arcade Mode</span>

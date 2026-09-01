@@ -15,6 +15,7 @@ import {
   type BrawlSimEvent,
 } from '../brawl/BrawlSimulation.ts';
 import { RUSH_ROUTE_MAP } from '../brawl/BrawlMap.ts';
+import { getBrawlCompanionInput } from '../brawl/BrawlCompanionAI.ts';
 
 const MAX_TICKS_PER_FRAME = 5;
 const DEFAULT_STAGE_ID: StageThemeId = 'insert-player-arena';
@@ -38,6 +39,7 @@ export class RushScene extends Phaser.Scene {
   private matchData!: MatchSceneData;
   private sim!: BrawlSimulation;
   private inputManager!: InputManager;
+  private companionCpu = false;
   private ready = false;
   private accumulator = 0;
   private stageId: StageThemeId = DEFAULT_STAGE_ID;
@@ -61,6 +63,7 @@ export class RushScene extends Phaser.Scene {
     this.matchData = data;
     this.stageId = data.stageId ?? DEFAULT_STAGE_ID;
     this.customStageKey = data.customStageKey ?? null;
+    this.companionCpu = data.vsAI === true;
     this.accumulator = 0;
     this.ready = false;
     this.presentations.clear();
@@ -105,6 +108,7 @@ export class RushScene extends Phaser.Scene {
     debugInfo('[RushScene] Co-op route ready', {
       stageId: this.stageId,
       customStage: Boolean(this.customStageKey),
+      companionCpu: this.companionCpu,
       p1: this.matchData.p1Name ?? 'Player 1',
       p2: this.matchData.p2Name ?? 'Player 2',
     });
@@ -116,9 +120,11 @@ export class RushScene extends Phaser.Scene {
     this.accumulator += Math.min(delta, FIXED_TIMESTEP * MAX_TICKS_PER_FRAME);
     let ticks = 0;
     while (this.accumulator >= FIXED_TIMESTEP && ticks < MAX_TICKS_PER_FRAME) {
+      const p1Input = this.inputManager.readPlayer1();
+      const localP2Input = this.inputManager.readPlayer2();
       const events = this.sim.step(
-        this.inputManager.readPlayer1(),
-        this.inputManager.readPlayer2(),
+        p1Input,
+        this.companionCpu ? getBrawlCompanionInput(this.sim) : localP2Input,
       );
       this.handleEvents(events);
       this.accumulator -= FIXED_TIMESTEP;
@@ -279,8 +285,10 @@ export class RushScene extends Phaser.Scene {
       align: 'center',
     }).setOrigin(0.5).setDepth(3002).setScrollFactor(0).setAlpha(0);
 
-    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 20,
-      'MOVE RIGHT · STAY TOGETHER    P1  WASD · U/J · G    P2  ARROWS · NUM4/NUM1 · NUM0    GUARD NEAR PARTNER = REVIVE', {
+    const controlsCopy = this.companionCpu
+      ? 'MOVE RIGHT · CPU PARTNER FOLLOWS    P1  WASD · U/J · G GUARD    GUARD NEAR CPU = REVIVE'
+      : 'MOVE RIGHT · STAY TOGETHER    P1  WASD · U/J · G    P2  ARROWS · NUM4/NUM1 · NUM0    GUARD NEAR PARTNER = REVIVE';
+    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 20, controlsCopy, {
         fontFamily: '"Space Grotesk", system-ui, sans-serif',
         fontSize: '11px',
         color: '#fff4d6',
@@ -361,7 +369,8 @@ export class RushScene extends Phaser.Scene {
     shape.strokeRoundedRect(-27, -14, 54, 28, 4);
     shape.fillStyle(color, 1);
     shape.fillTriangle(-6, 14, 6, 14, 0, 22);
-    const label = this.add.text(0, 0, `P${slot + 1}`, {
+    const tagLabel = this.companionCpu && slot === 1 ? 'CPU' : `P${slot + 1}`;
+    const label = this.add.text(0, 0, tagLabel, {
       fontFamily: '"Press Start 2P", monospace',
       fontSize: '11px',
       color: slot === 0 ? '#4fb3ff' : '#30e07a',
@@ -449,7 +458,7 @@ export class RushScene extends Phaser.Scene {
     this.drawPlayerHealth(28, 56, 288, p1.health / p1.maxHealth, 0x4fb3ff);
     this.drawPlayerHealth(GAME_WIDTH - 316, 56, 288, p2.health / p2.maxHealth, 0x30e07a);
     this.hudP1.setText(`P1  ${p1.name.toUpperCase()}`);
-    this.hudP2.setText(`${p2.name.toUpperCase()}  P2`);
+    this.hudP2.setText(`${p2.name.toUpperCase()}  ${this.companionCpu ? 'CPU' : 'P2'}`);
     const livingEnemies = this.sim.enemies.filter((enemy) => enemy.health > 0).length;
     const encounterCount = RUSH_ROUTE_MAP.encounters.length;
     if (this.sim.activeEncounterIndex >= 0) {

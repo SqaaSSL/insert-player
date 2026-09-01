@@ -275,9 +275,12 @@ export function GamePage({
           or play Arcade Mode on touch.
         </div>
       )}
-      {isRush ? (
+      {isRush && launchTarget.data.vsAI === true && !matchActionsVisible ? (
+        <MobileFightControls playerIndex={0} playerLabel="player 1" />
+      ) : null}
+      {isRush && launchTarget.data.vsAI !== true ? (
         <div className="mobile-versus-unavailable" role="status">
-          Co-op Rush needs two control sets. Open it on a keyboard or with two controllers.
+          Online Co-op Rush is not connected in this local preview.
         </div>
       ) : null}
       {matchActionsVisible && ladder && winnerSlot === 'p1' && ladder.isFinal && (

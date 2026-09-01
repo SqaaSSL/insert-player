@@ -107,11 +107,11 @@ function getModeMeta(mode: RosterMode) {
   if (mode === 'rush') {
     return {
       title: 'Co-op Rush',
-      description: 'Pick two fighters, choose any Fight stage, and push right through every checkpoint together.',
-      vsAI: false,
+      description: 'Pick your fighter and a CPU partner, choose a stage, and push right through every checkpoint.',
+      vsAI: true,
       cpuVsCpu: false,
       p1Label: 'Player 1',
-      p2Label: 'Player 2',
+      p2Label: 'CPU Partner',
       actionLabel: 'Start Rush',
     };
   }
@@ -859,7 +859,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                     {preparingFight
                       ? 'Checking cached sprites'
                       : touchVersusBlocked
-                      ? `${mode === 'rush' ? 'Co-op Rush' : 'Touch Versus'} needs a keyboard or controllers`
+                      ? 'Touch Versus needs a keyboard or controllers'
                       : canStartFight
                       ? `${p1Fighter?.name ?? 'P1'} ${mode === 'rush' ? '+' : 'vs'} ${p2Fighter?.name ?? 'P2'}`
                       : 'Select both fighters first'}
@@ -870,8 +870,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
             {touchVersusBlocked ? (
               <p className="roster-touch-notice" role="status">
-                {mode === 'rush' ? 'Co-op Rush' : 'Touch Versus'} needs two control sets, which do not fit safely
-                on this screen. Open it on a keyboard or controller device, or choose Arcade Mode on touch.
+                Touch Versus needs two control sets, which do not fit safely on this screen. Open it on a keyboard
+                or controller device, or choose Arcade Mode on touch.
               </p>
             ) : null}
 

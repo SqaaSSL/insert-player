@@ -72,7 +72,7 @@ export function rosterLoadPresentation({
 }
 
 export function isCpuRosterSlot(mode: RosterMode, slot: RosterSlot): boolean {
-  return mode === 'watch' || (mode === 'cpu' && slot === 'p2');
+  return mode === 'watch' || ((mode === 'cpu' || mode === 'rush') && slot === 'p2');
 }
 
 export function personalityAfterFighterAssignment({
@@ -91,7 +91,7 @@ export function personalityAfterFighterAssignment({
 }
 
 export function shouldBlockTouchVersus(mode: RosterMode, hasCoarsePointer: boolean): boolean {
-  return (mode === 'vs' || mode === 'rush') && hasCoarsePointer;
+  return mode === 'vs' && hasCoarsePointer;
 }
 
 export interface AsyncEpochGuard {
