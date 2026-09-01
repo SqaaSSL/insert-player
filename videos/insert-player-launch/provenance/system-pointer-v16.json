@@ -1,0 +1,52 @@
+{
+  "version": 16,
+  "project": "insert-player-launch",
+  "acceptance": "visual_polish_fix",
+  "change": "Replace the oversized cream-and-red custom drag pointer with a restrained desktop-system pointer while preserving the approved drag path, transformation, gameplay, audio, and closing card.",
+  "pointer": {
+    "composition": "compositions/frames/01-transform.html",
+    "compositionSha256": "cee7b4a4914eb814a70e7bd716da5d118acbdac659305075ece7e4cdf6b5aa2f",
+    "visual": "White fill, near-black outline, subtle shadow, no decorative red handle",
+    "sizeAt1920x1080": "approximately 32x42 pixels",
+    "motion": "Short 0.9x press, continuous drag with the Player One card, neutral 1x release without elastic overshoot"
+  },
+  "preservedRelease": {
+    "gameplayMontage": "assets/fight-montage-player-one-vs-casual-v14.mp4",
+    "gameplayMontageSha256": "c3be29997b67730e6931edd4476e87540c17b1702d2c840a33419e2a4d490adf",
+    "music": "assets/generated/launch-bed-original-neon-v11.wav",
+    "musicSha256": "5dbea6cd2136330f9dc8995f246f6538869dbf8d26f6b585e38064f596a1111a",
+    "voice": "assets/generated/tts-launch-friends-v5-retimed.wav",
+    "providerCalls": 0,
+    "inferenceCostUsd": 0
+  },
+  "validation": {
+    "hyperframesVersion": "0.8.21",
+    "snapshots": [0.75, 1.1, 1.48],
+    "visualReview": "The pointer remains readable at full resolution without competing with the dragged photo; the press, travel, and release frames were inspected.",
+    "hyperframesCheck": {
+      "lintErrors": 0,
+      "runtimeErrors": 0,
+      "layoutIssues": 0,
+      "motionIssues": 0,
+      "contrastChecksPassed": "10/10"
+    }
+  },
+  "release": {
+    "masterFile": "renders/insert-player-launch-system-pointer-v16.mp4",
+    "masterSha256": "5eb65c09c2e9b9fd648978163484f09804ebc4c80db462b7a9f0842fada46718",
+    "masterSizeBytes": 49480866,
+    "publicFile": "../../public/assets/insert-player-launch-cf80bd22.mp4",
+    "publicPath": "/assets/insert-player-launch-cf80bd22.mp4",
+    "publicSha256": "cf80bd22447697102af21b84dde0365907b0ea801d27c20a6e40889b41456f20",
+    "publicSizeBytes": 19383764,
+    "sourceToWebSsim": 0.995623,
+    "encoding": {
+      "video": "H.264 High, CRF 15, slow, yuv420p, faststart",
+      "audio": "AAC LC, 192 kbps",
+      "width": 1920,
+      "height": 1080,
+      "framesPerSecond": 30,
+      "durationSeconds": 20.066667
+    }
+  }
+}
