@@ -5,7 +5,7 @@ import { basename, resolve } from 'node:path';
 const projectRoot = resolve(import.meta.dirname, '..');
 const capturesDir = resolve(projectRoot, 'assets/captures');
 const outputPath = resolve(
-  process.argv[2] ?? resolve(projectRoot, 'assets/fight-montage-player-one-vs-casual-v13.mp4'),
+  process.argv[2] ?? resolve(projectRoot, 'assets/fight-montage-player-one-vs-casual-v14.mp4'),
 );
 const manifestPath = outputPath.replace(/\.mp4$/i, '.json');
 const outputFrameRate = 30;
@@ -13,7 +13,7 @@ const loadingFrameCount = 72;
 const defaultFightFrameCount = 30;
 const transitionHoldFrameCount = 8;
 const fightLeadSeconds = 0.4;
-const openingCaptureId = 'casual-vs-player-one-executive';
+const openingCaptureId = 'casual-vs-player-one-executive-v2';
 const openingDerived = JSON.parse(
   readFileSync(resolve(capturesDir, `${openingCaptureId}.json`), 'utf8'),
 );
@@ -183,7 +183,7 @@ const result = spawnSync(
     '-preset',
     'slow',
     '-crf',
-    '12',
+    '8',
     '-g',
     String(outputFrameRate),
     '-keyint_min',
