@@ -10,7 +10,7 @@ describe('BrawlCompanionAI', () => {
     let started = false;
     for (let tick = 0; tick < 240; tick += 1) {
       const events = sim.step(
-        { ...EMPTY_INPUT, right: true },
+        { ...EMPTY_INPUT, right: true, uppercut: tick === 94 },
         getBrawlCompanionInput(sim),
       );
       started ||= events.some((event) => event.type === 'encounterStart');
@@ -27,6 +27,8 @@ describe('BrawlCompanionAI', () => {
     sim.step(EMPTY_INPUT, EMPTY_INPUT);
     const cpu = sim.players[1];
     const enemy = sim.enemies[0];
+    enemy.combatReady = true;
+    enemy.state = 'idle';
 
     cpu.x = enemy.x - 180;
     cpu.lane = enemy.lane + 90;

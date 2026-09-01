@@ -12,6 +12,8 @@ import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 import {
   BrawlSimulation,
   type BrawlActor,
+  type BrawlObstacle,
+  type BrawlProjectile,
   type BrawlSimEvent,
 } from '../brawl/BrawlSimulation.ts';
 import { RUSH_ROUTE_MAP } from '../brawl/BrawlMap.ts';
@@ -27,6 +29,10 @@ interface ActorPresentation {
   view: FighterView;
   tag: Phaser.GameObjects.Container | null;
   health: Phaser.GameObjects.Graphics | null;
+}
+
+interface ObstaclePresentation {
+  graphics: Phaser.GameObjects.Graphics;
 }
 
 declare global {
@@ -47,6 +53,8 @@ export class RushScene extends Phaser.Scene {
   private stageTextureKey: string | null = null;
   private lifecycle = 0;
   private presentations = new Map<string, ActorPresentation>();
+  private projectileSprites = new Map<number, Phaser.GameObjects.Sprite>();
+  private obstaclePresentations = new Map<string, ObstaclePresentation>();
   private hudGraphics!: Phaser.GameObjects.Graphics;
   private hudP1!: Phaser.GameObjects.Text;
   private hudP2!: Phaser.GameObjects.Text;
@@ -54,6 +62,8 @@ export class RushScene extends Phaser.Scene {
   private banner!: Phaser.GameObjects.Text;
   private resultPanel!: Phaser.GameObjects.Container;
   private escapeKey?: Phaser.Input.Keyboard.Key;
+  private jumpKey?: Phaser.Input.Keyboard.Key;
+  private jumpQueued = false;
 
   constructor() {
     super({ key: 'RushScene' });
@@ -67,6 +77,9 @@ export class RushScene extends Phaser.Scene {
     this.accumulator = 0;
     this.ready = false;
     this.presentations.clear();
+    this.projectileSprites.clear();
+    this.obstaclePresentations.clear();
+    this.jumpQueued = false;
   }
 
   preload(): void {
@@ -81,6 +94,8 @@ export class RushScene extends Phaser.Scene {
     const lifecycle = ++this.lifecycle;
     this.escapeKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
     this.escapeKey?.on('down', this.exitToMenu, this);
+    this.jumpKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
+    this.jumpKey?.on('down', this.queueJump, this);
 
     await this.loadPlayerSprites(lifecycle);
     if (!this.isCurrent(lifecycle)) return;
@@ -97,6 +112,8 @@ export class RushScene extends Phaser.Scene {
     this.createResultPanel();
     this.handleEvents(this.sim.start());
     this.syncPresentations();
+    this.syncProjectilePresentations();
+    this.syncObstaclePresentations();
     this.updateHud();
 
     this.cameras.main
@@ -123,7 +140,7 @@ export class RushScene extends Phaser.Scene {
       const p1Input = this.inputManager.readPlayer1();
       const localP2Input = this.inputManager.readPlayer2();
       const events = this.sim.step(
-        p1Input,
+        { ...p1Input, jump: this.consumeQueuedJump() || p1Input.uppercut },
         this.companionCpu ? getBrawlCompanionInput(this.sim) : localP2Input,
       );
       this.handleEvents(events);
@@ -131,6 +148,8 @@ export class RushScene extends Phaser.Scene {
       ticks += 1;
     }
     this.syncPresentations();
+    this.syncProjectilePresentations();
+    this.syncObstaclePresentations();
     this.updateHud();
     this.updateCamera(delta);
   }
@@ -247,6 +266,38 @@ export class RushScene extends Phaser.Scene {
       }).setOrigin(0.5, 1).setAlpha(0.7).setDepth(-4);
     }
 
+    const accessPoints = this.add.graphics().setDepth(Math.round(walkArea.back) - 12);
+    for (const encounter of RUSH_ROUTE_MAP.encounters) {
+      for (const spawn of encounter.enemies) {
+        const entrance = spawn.entrance;
+        if (!entrance || entrance.kind === 'right') continue;
+        const sourceX = entrance.sourceX ?? spawn.x;
+        if (entrance.kind === 'door') {
+          accessPoints.fillStyle(0x030307, 0.92);
+          accessPoints.fillRoundedRect(sourceX - 30, walkArea.back - 116, 60, 118, 5);
+          accessPoints.lineStyle(3, 0xffce3a, 0.45);
+          accessPoints.strokeRoundedRect(sourceX - 30, walkArea.back - 116, 60, 118, 5);
+          accessPoints.fillStyle(0xffce3a, 0.7);
+          accessPoints.fillCircle(sourceX + 18, walkArea.back - 54, 3);
+          accessPoints.lineStyle(2, 0xffce3a, 0.18);
+          accessPoints.lineBetween(sourceX - 18, walkArea.back - 88, sourceX + 18, walkArea.back - 88);
+        } else {
+          accessPoints.fillStyle(0x050507, 0.78);
+          accessPoints.fillPoints([
+            new Phaser.Geom.Point(sourceX - 42, walkArea.back + 2),
+            new Phaser.Geom.Point(sourceX + 42, walkArea.back + 2),
+            new Phaser.Geom.Point(sourceX + 27, walkArea.back + 30),
+            new Phaser.Geom.Point(sourceX - 27, walkArea.back + 30),
+          ], true);
+          accessPoints.lineStyle(2, 0xffce3a, 0.35);
+          for (let rung = 0; rung < 4; rung += 1) {
+            const y = walkArea.back + 7 + rung * 6;
+            accessPoints.lineBetween(sourceX - 25 + rung * 2, y, sourceX + 25 - rung * 2, y);
+          }
+        }
+      }
+    }
+
     lines.fillStyle(0xffce3a, 0.18);
     lines.fillRect(RUSH_ROUTE_MAP.exitX - 8, walkArea.back - 8, 16, walkArea.front - walkArea.back + 28);
     this.add.text(RUSH_ROUTE_MAP.exitX, walkArea.back - 18, 'EXIT →', {
@@ -286,8 +337,8 @@ export class RushScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(3002).setScrollFactor(0).setAlpha(0);
 
     const controlsCopy = this.companionCpu
-      ? 'MOVE RIGHT · CPU PARTNER FOLLOWS    P1  WASD · U/J · G GUARD    GUARD NEAR CPU = REVIVE'
-      : 'MOVE RIGHT · STAY TOGETHER    P1  WASD · U/J · G    P2  ARROWS · NUM4/NUM1 · NUM0    GUARD NEAR PARTNER = REVIVE';
+      ? 'P1  WASD MOVE · U/J ATTACK · I FIREBALL · K/SPACE JUMP · G GUARD    CPU PARTNER'
+      : 'P1  WASD · U/J · I FIREBALL · K/SPACE JUMP    P2  ARROWS · NUM4/1 · NUM5 FIREBALL · NUM2 JUMP';
     this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 20, controlsCopy, {
         fontFamily: '"Space Grotesk", system-ui, sans-serif',
         fontSize: '11px',
@@ -330,6 +381,127 @@ export class RushScene extends Phaser.Scene {
         this.presentations.set(actor.id, presentation);
       }
       this.syncActorPresentation(actor, presentation);
+    }
+  }
+
+  private syncProjectilePresentations(): void {
+    const live = new Set<number>();
+    for (const projectile of this.sim.projectiles) {
+      live.add(projectile.id);
+      let sprite = this.projectileSprites.get(projectile.id);
+      if (!sprite) {
+        sprite = this.add.sprite(projectile.x, projectile.lane - projectile.height, 'fireball_projectile')
+          .setOrigin(0.5)
+          .setBlendMode(Phaser.BlendModes.ADD);
+        this.projectileSprites.set(projectile.id, sprite);
+      }
+      this.syncProjectilePresentation(projectile, sprite);
+    }
+    for (const [id, sprite] of this.projectileSprites) {
+      if (live.has(id)) continue;
+      sprite.destroy();
+      this.projectileSprites.delete(id);
+    }
+  }
+
+  private syncProjectilePresentation(
+    projectile: BrawlProjectile,
+    sprite: Phaser.GameObjects.Sprite,
+  ): void {
+    const pulse = 1 + Math.sin(projectile.age * 0.55) * 0.08;
+    sprite
+      .setPosition(projectile.x, projectile.lane - projectile.height)
+      .setFlipX(projectile.vx < 0)
+      .setScale((projectile.isSuper ? 1.65 : 1.08) * pulse)
+      .setDepth(Math.round(projectile.lane) + 8)
+      .setAlpha(0.92);
+    if (projectile.isSuper) sprite.setTint(0x78ddff);
+    else sprite.clearTint();
+  }
+
+  private syncObstaclePresentations(): void {
+    for (const obstacle of this.sim.obstacles) {
+      let presentation = this.obstaclePresentations.get(obstacle.id);
+      if (!presentation) {
+        presentation = { graphics: this.add.graphics() };
+        this.obstaclePresentations.set(obstacle.id, presentation);
+      }
+      this.drawObstacle(obstacle, presentation.graphics);
+    }
+  }
+
+  private drawObstacle(obstacle: BrawlObstacle, graphics: Phaser.GameObjects.Graphics): void {
+    const x = obstacle.x;
+    const y = obstacle.lane;
+    graphics.clear().setDepth(Math.round(y));
+    if (obstacle.type === 'steam-vent') {
+      graphics.fillStyle(0x050507, 0.72);
+      graphics.fillEllipse(x, y + 2, obstacle.width + 18, obstacle.laneDepth + 10);
+      graphics.fillStyle(obstacle.active ? 0x9ee7ff : obstacle.telegraphing ? 0xffce3a : 0x2e3440, obstacle.active ? 0.82 : 0.78);
+      graphics.fillEllipse(x, y, obstacle.width, obstacle.laneDepth);
+      graphics.lineStyle(3, obstacle.active ? 0xe8fbff : 0x111827, 0.9);
+      graphics.strokeEllipse(x, y, obstacle.width, obstacle.laneDepth);
+      graphics.lineStyle(2, 0x050507, 0.7);
+      for (let offset = -0.3; offset <= 0.3; offset += 0.2) {
+        graphics.lineBetween(
+          x - obstacle.width * 0.34,
+          y + obstacle.laneDepth * offset,
+          x + obstacle.width * 0.34,
+          y + obstacle.laneDepth * offset,
+        );
+      }
+      if (obstacle.telegraphing) {
+        graphics.lineStyle(3, 0xffce3a, 0.78);
+        graphics.strokeEllipse(x, y, obstacle.width + 28, obstacle.laneDepth + 20);
+      }
+      if (obstacle.active) {
+        const lift = (this.sim.tick * 2 + obstacle.cycleOffset) % 34;
+        graphics.fillStyle(0xe8fbff, 0.42);
+        graphics.fillCircle(x - 22, y - 30 - lift * 0.45, 16);
+        graphics.fillCircle(x + 8, y - 50 - lift * 0.7, 22);
+        graphics.fillCircle(x + 28, y - 82 - lift * 0.35, 14);
+        graphics.fillStyle(0x9ee7ff, 0.22);
+        graphics.fillRoundedRect(x - obstacle.width * 0.38, y - 98, obstacle.width * 0.76, 104, 22);
+      }
+      return;
+    }
+
+    graphics.fillStyle(0x050507, 0.35);
+    graphics.fillEllipse(x, y + 7, obstacle.width + 26, obstacle.laneDepth * 0.72);
+    if (obstacle.health <= 0) {
+      graphics.fillStyle(0x3b3128, 0.9);
+      graphics.fillRect(x - obstacle.width / 2, y - 8, obstacle.width * 0.42, 11);
+      graphics.fillRect(x + obstacle.width * 0.04, y - 3, obstacle.width * 0.46, 9);
+      graphics.fillStyle(0xffce3a, 0.48);
+      graphics.fillRect(x - 18, y - 11, 32, 6);
+      return;
+    }
+
+    const visualHeight = 52;
+    graphics.fillStyle(0x17131a, 0.96);
+    graphics.fillRoundedRect(x - obstacle.width / 2, y - visualHeight, obstacle.width, visualHeight, 5);
+    graphics.fillStyle(0x443528, 1);
+    graphics.fillPoints([
+      new Phaser.Geom.Point(x - obstacle.width / 2, y - visualHeight),
+      new Phaser.Geom.Point(x - obstacle.width * 0.37, y - visualHeight - 14),
+      new Phaser.Geom.Point(x + obstacle.width * 0.48, y - visualHeight - 14),
+      new Phaser.Geom.Point(x + obstacle.width / 2, y - visualHeight),
+    ], true);
+    graphics.lineStyle(3, 0x09070a, 0.9);
+    graphics.strokeRoundedRect(x - obstacle.width / 2, y - visualHeight, obstacle.width, visualHeight, 5);
+    graphics.lineBetween(x, y - visualHeight, x, y);
+    graphics.lineBetween(x - obstacle.width / 2, y - 26, x + obstacle.width / 2, y - 26);
+    const stripeWidth = Math.max(12, obstacle.width / 6);
+    for (let stripe = -2; stripe <= 2; stripe += 1) {
+      graphics.fillStyle(stripe % 2 === 0 ? 0xffce3a : 0x050507, 0.92);
+      graphics.fillRect(x + stripe * stripeWidth - stripeWidth / 2, y - 19, stripeWidth, 12);
+    }
+    const ratio = obstacle.health / obstacle.maxHealth;
+    if (ratio < 1) {
+      graphics.fillStyle(0x050507, 0.9);
+      graphics.fillRoundedRect(x - obstacle.width / 2, y - visualHeight - 27, obstacle.width, 7, 2);
+      graphics.fillStyle(ratio > 0.35 ? 0xffce3a : 0xff2a2a, 1);
+      graphics.fillRoundedRect(x - obstacle.width / 2 + 2, y - visualHeight - 25, (obstacle.width - 4) * ratio, 3, 1);
     }
   }
 
@@ -390,9 +562,13 @@ export class RushScene extends Phaser.Scene {
     presentation.fighter.state = this.fighterStateFor(actor);
     presentation.fighter.stateFrame = actor.stateTick;
     presentation.view.syncSprite(nearestOpponentX);
+    presentation.view.sprite.setY(presentation.view.sprite.y - actor.height);
     const depth = Math.round(actor.lane) + (actor.kind === 'player' ? 1 : 0);
     presentation.view.shadowSprite?.setDepth(depth - 2);
     presentation.view.sprite.setDepth(depth);
+    const waitingToEnter = actor.kind === 'enemy' && !actor.combatReady && actor.entranceDelayTicks > 0;
+    presentation.view.sprite.setAlpha(waitingToEnter ? 0 : actor.combatReady ? 1 : 0.88);
+    presentation.view.shadowSprite?.setAlpha(waitingToEnter ? 0 : actor.combatReady ? 0.14 : 0.09);
     if (actor.archetype === 'captain') presentation.view.sprite.setTint(0xffce3a);
     else if (actor.archetype === 'bruiser') presentation.view.sprite.setTint(0xff8c42);
     else if (actor.kind === 'enemy') presentation.view.sprite.setTint(0x6f64a8);
@@ -409,7 +585,7 @@ export class RushScene extends Phaser.Scene {
 
     if (presentation.health) {
       presentation.health.clear();
-      if (actor.health > 0) {
+      if (actor.health > 0 && actor.combatReady) {
         const width = actor.archetype === 'captain' ? 84 : 58;
         const y = actor.lane - (actor.archetype === 'captain' ? 206 : 168);
         presentation.health.fillStyle(0x050507, 0.9);
@@ -430,7 +606,10 @@ export class RushScene extends Phaser.Scene {
   private fighterStateFor(actor: BrawlActor): FighterState {
     switch (actor.state) {
       case 'walk': return FighterState.WALK_FORWARD;
+      case 'entering': return FighterState.WALK_FORWARD;
+      case 'jump': return FighterState.JUMP;
       case 'attack': return actor.attackKind === 'heavy' ? FighterState.HIGH_KICK : FighterState.HIGH_PUNCH;
+      case 'fireball': return FighterState.FIREBALL;
       case 'hit': return FighterState.HIT_STUN;
       case 'down': return FighterState.KNOCKDOWN;
       case 'victory': return FighterState.VICTORY;
@@ -439,7 +618,7 @@ export class RushScene extends Phaser.Scene {
   }
 
   private nearestLivingEnemyX(x: number): number {
-    const living = this.sim.enemies.filter((enemy) => enemy.health > 0);
+    const living = this.sim.enemies.filter((enemy) => enemy.health > 0 && enemy.combatReady);
     if (living.length === 0) return x + 1;
     living.sort((a, b) => Math.abs(a.x - x) - Math.abs(b.x - x));
     return living[0].x;
@@ -559,7 +738,7 @@ export class RushScene extends Phaser.Scene {
   private handleEvents(events: BrawlSimEvent[]): void {
     for (const event of events) {
       if (event.type === 'runStart') {
-        this.showBanner('MOVE RIGHT\nSTAY TOGETHER');
+        this.showBanner('MOVE RIGHT\nJUMP THE ROUTE');
       } else if (event.type === 'encounterStart') {
         this.showBanner(`ROADBLOCK ${event.encounterIndex + 1}\n${event.label}`);
       } else if (event.type === 'encounterCleared') {
@@ -567,6 +746,18 @@ export class RushScene extends Phaser.Scene {
       } else if (event.type === 'hit') {
         const target = [...this.sim.players, ...this.sim.enemies].find((actor) => actor.id === event.targetId);
         if (target) this.createHitEffect(target.x, target.lane - 92, event.damage);
+      } else if (event.type === 'fireball') {
+        const actor = [...this.sim.players, ...this.sim.enemies].find((candidate) => candidate.id === event.actorId);
+        if (actor) this.createCastEffect(actor.x + (actor.facingRight ? 52 : -52), actor.lane - 72, event.isSuper);
+      } else if (event.type === 'obstacleHit') {
+        const obstacle = this.sim.obstacles.find((candidate) => candidate.id === event.obstacleId);
+        if (obstacle) this.createHitEffect(obstacle.x, obstacle.lane - 34, event.damage);
+      } else if (event.type === 'obstacleDestroyed') {
+        const obstacle = this.sim.obstacles.find((candidate) => candidate.id === event.obstacleId);
+        if (obstacle) this.createFloatingText(obstacle.x, obstacle.lane - 78, 'SMASH!', '#ffce3a');
+      } else if (event.type === 'hazardBurst') {
+        const obstacle = this.sim.obstacles.find((candidate) => candidate.id === event.obstacleId);
+        if (obstacle) this.createVentBurst(obstacle.x, obstacle.lane);
       } else if (event.type === 'revived') {
         const actor = this.sim.players.find((player) => player.id === event.actorId);
         if (actor) this.createFloatingText(actor.x, actor.lane - 180, 'BACK IN!', '#30e07a');
@@ -618,6 +809,36 @@ export class RushScene extends Phaser.Scene {
     this.cameras.main.shake(55, damage >= 40 ? 0.004 : 0.002);
   }
 
+  private createCastEffect(x: number, y: number, isSuper: boolean): void {
+    const ring = this.add.circle(x, y, isSuper ? 30 : 20, isSuper ? 0x78ddff : 0xffce3a, 0.54)
+      .setDepth(3500)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({
+      targets: ring,
+      alpha: 0,
+      scale: 1.7,
+      duration: 180,
+      ease: 'Quart.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+  }
+
+  private createVentBurst(x: number, y: number): void {
+    const burst = this.add.ellipse(x, y - 36, 84, 104, 0x9ee7ff, 0.28)
+      .setDepth(Math.round(y) + 4)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({
+      targets: burst,
+      y: y - 82,
+      alpha: 0,
+      scaleX: 1.35,
+      scaleY: 1.5,
+      duration: 360,
+      ease: 'Quart.easeOut',
+      onComplete: () => burst.destroy(),
+    });
+  }
+
   private createFloatingText(x: number, y: number, text: string, color: string): void {
     const label = this.add.text(x, y, text, {
       fontFamily: '"Press Start 2P", monospace',
@@ -662,10 +883,22 @@ export class RushScene extends Phaser.Scene {
     else window.location.href = '/menu';
   }
 
+  private queueJump(): void {
+    this.jumpQueued = true;
+  }
+
+  private consumeQueuedJump(): boolean {
+    const queued = this.jumpQueued;
+    this.jumpQueued = false;
+    return queued;
+  }
+
   private shutdown(): void {
     this.ready = false;
     this.lifecycle += 1;
     this.escapeKey?.off('down', this.exitToMenu, this);
+    this.jumpKey?.off('down', this.queueJump, this);
+    this.jumpQueued = false;
     this.inputManager?.reset();
     resetVirtualInput();
     delete window.__ASF_RUSH_STATE__;
@@ -675,6 +908,10 @@ export class RushScene extends Phaser.Scene {
       presentation.health?.destroy();
     }
     this.presentations.clear();
+    for (const sprite of this.projectileSprites.values()) sprite.destroy();
+    this.projectileSprites.clear();
+    for (const presentation of this.obstaclePresentations.values()) presentation.graphics.destroy();
+    this.obstaclePresentations.clear();
     if (this.stageTextureKey && this.textures.exists(this.stageTextureKey)) {
       this.textures.remove(this.stageTextureKey);
     }

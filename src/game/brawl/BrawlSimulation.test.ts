@@ -71,6 +71,132 @@ describe('BrawlSimulation', () => {
     expect(sim.map.worldWidth).toBe(1024);
   });
 
+  it('jumps over a solid route obstacle instead of treating depth as jump', () => {
+    const obstacleMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'jump-test',
+      worldWidth: 1000,
+      exitX: 900,
+      walkArea: { ...RUSH_ROUTE_MAP.walkArea, right: 940 },
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 300, lane: 500 }],
+      obstacles: [{
+        id: 'test-barricade',
+        type: 'barricade',
+        x: 430,
+        lane: 420,
+        width: 70,
+        laneDepth: 60,
+        health: 100,
+        jumpClearance: 55,
+      }],
+      encounters: [],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], obstacleMap);
+    sim.start();
+    for (let tick = 0; tick < 60; tick += 1) {
+      sim.step({ ...EMPTY_INPUT, right: true }, EMPTY_INPUT);
+    }
+    expect(sim.players[0].x).toBeLessThan(380);
+
+    const jumpEvents = sim.step({ ...EMPTY_INPUT, uppercut: true, right: true }, EMPTY_INPUT);
+    expect(jumpEvents).toContainEqual({ type: 'jump', actorId: 'player-1' });
+    for (let tick = 0; tick < 42; tick += 1) {
+      sim.step({ ...EMPTY_INPUT, right: true }, EMPTY_INPUT);
+    }
+    expect(sim.players[0].x).toBeGreaterThan(490);
+    expect(sim.players[0].height).toBeGreaterThanOrEqual(0);
+  });
+
+  it('spawns a real travelling fireball that hits at range', () => {
+    const projectileMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'projectile-test',
+      obstacles: [],
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 260, lane: 500 }],
+      encounters: [{
+        label: 'RANGE TEST',
+        triggerX: 250,
+        lockLeft: 200,
+        lockRight: 760,
+        enemies: [{ id: 'ranged-target', archetype: 'grunt', x: 540, lane: 420 }],
+      }],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], projectileMap);
+    sim.start();
+    sim.step(EMPTY_INPUT, EMPTY_INPUT);
+    const startingHealth = sim.enemies[0].health;
+    sim.step({ ...EMPTY_INPUT, fireball: true }, EMPTY_INPUT);
+    let sawProjectile = false;
+    for (let tick = 0; tick < 55; tick += 1) {
+      const events = sim.step(EMPTY_INPUT, EMPTY_INPUT);
+      sawProjectile ||= events.some((event) => event.type === 'fireball');
+    }
+    expect(sawProjectile).toBe(true);
+    expect(sim.enemies[0].health).toBeLessThan(startingHealth);
+  });
+
+  it('lets projectiles damage breakable barricades on the route', () => {
+    const obstacleMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'projectile-obstacle-test',
+      obstacles: [{
+        id: 'projectile-barricade',
+        type: 'barricade',
+        x: 430,
+        lane: 420,
+        width: 70,
+        laneDepth: 60,
+        health: 100,
+      }],
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 260, lane: 500 }],
+      encounters: [],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], obstacleMap);
+    sim.start();
+    sim.step({ ...EMPTY_INPUT, fireball: true }, EMPTY_INPUT);
+    let hitObstacle = false;
+    for (let tick = 0; tick < 20; tick += 1) {
+      const events = sim.step(EMPTY_INPUT, EMPTY_INPUT);
+      hitObstacle ||= events.some((event) => event.type === 'obstacleHit');
+    }
+    expect(hitObstacle).toBe(true);
+    expect(sim.obstacles[0].health).toBe(56);
+  });
+
+  it('stages enemies from authored entrances before enabling combat', () => {
+    const entranceMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'entrance-test',
+      obstacles: [],
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 260, lane: 500 }],
+      encounters: [{
+        label: 'DOOR TEST',
+        triggerX: 250,
+        lockLeft: 200,
+        lockRight: 760,
+        enemies: [{
+          id: 'door-target',
+          archetype: 'grunt',
+          x: 430,
+          lane: 420,
+          entrance: { kind: 'door', sourceX: 360, sourceLane: 300, delayTicks: 4 },
+        }],
+      }],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], entranceMap);
+    sim.start();
+    sim.step(EMPTY_INPUT, EMPTY_INPUT);
+    const enemy = sim.enemies[0];
+    expect(enemy).toMatchObject({ x: 360, lane: 300, combatReady: false, state: 'entering' });
+    const startingHealth = enemy.health;
+    for (let tick = 0; tick < 12; tick += 1) {
+      sim.step({ ...EMPTY_INPUT, punch: tick === 0 }, EMPTY_INPUT);
+    }
+    expect(enemy.health).toBe(startingHealth);
+    for (let tick = 0; tick < 80 && !enemy.combatReady; tick += 1) sim.step(EMPTY_INPUT, EMPTY_INPUT);
+    expect(enemy).toMatchObject({ x: 430, lane: 420, combatReady: true });
+  });
+
   it('makes both players advance before a checkpoint can begin', () => {
     const sim = new BrawlSimulation(['P1', 'P2']);
     expect(sim.start()).toEqual([{ type: 'runStart' }]);
@@ -87,7 +213,7 @@ describe('BrawlSimulation', () => {
     let checkpointStarted = false;
     for (let tick = 0; tick < 220; tick += 1) {
       const events = sim.step(
-        { ...EMPTY_INPUT, right: true },
+        { ...EMPTY_INPUT, right: true, uppercut: tick === 0 },
         { ...EMPTY_INPUT, right: true },
       );
       checkpointStarted ||= events.some((event) => event.type === 'encounterStart');
@@ -106,6 +232,7 @@ describe('BrawlSimulation', () => {
       exitX: 720,
       walkArea: { ...RUSH_ROUTE_MAP.walkArea, right: 820 },
       playerSpawns: [{ x: 240, lane: 420 }, { x: 280, lane: 470 }],
+      obstacles: [],
       encounters: [{
         label: 'ROADBLOCK',
         triggerX: 340,
