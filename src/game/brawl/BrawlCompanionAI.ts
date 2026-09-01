@@ -7,6 +7,7 @@ const COMBAT_RANGE_X = 82;
 const COMBAT_RANGE_LANE = 38;
 const TRAVEL_LEAD_X = 170;
 const TRAVEL_LANE_OFFSET = 42;
+const PROJECTILE_DODGE_TICKS = 30;
 
 function movementToward(
   self: BrawlActor,
@@ -42,12 +43,21 @@ function nearestEnemy(self: BrawlActor, enemies: readonly BrawlActor[]): BrawlAc
 function shouldJumpObstacle(self: BrawlActor, sim: BrawlSimulation, direction: -1 | 1): boolean {
   if (self.height > 0) return false;
   return sim.obstacles.some((obstacle) => {
-    if (obstacle.type === 'barricade' && obstacle.health <= 0) return false;
+    if (obstacle.type !== 'steam-vent' && obstacle.health <= 0) return false;
     if (obstacle.type === 'steam-vent' && !obstacle.active && !obstacle.telegraphing) return false;
     const forwardDistance = (obstacle.x - self.x) * direction;
     return forwardDistance > 18
       && forwardDistance < obstacle.width / 2 + 104
       && Math.abs(obstacle.lane - self.lane) < obstacle.laneDepth / 2 + 24;
+  });
+}
+
+function hasIncomingProjectile(self: BrawlActor, sim: BrawlSimulation): boolean {
+  if (self.height > 0) return false;
+  return sim.projectiles.some((projectile) => {
+    if (projectile.ownerKind !== 'enemy' || Math.abs(projectile.lane - self.lane) > 42) return false;
+    const ticksToImpact = (self.x - projectile.x) / projectile.vx;
+    return ticksToImpact > 2 && ticksToImpact <= PROJECTILE_DODGE_TICKS;
   });
 }
 
@@ -63,6 +73,15 @@ export function getBrawlCompanionInput(
   const self = sim.players[slot];
   const partner = sim.players[slot === 0 ? 1 : 0];
   if (self.health <= 0 || sim.outcome !== 'playing') return { ...EMPTY_BRAWL_INPUT };
+
+  if (hasIncomingProjectile(self, sim)) {
+    return {
+      ...EMPTY_BRAWL_INPUT,
+      jump: true,
+      up: slot === 0,
+      down: slot === 1,
+    };
+  }
 
   if (partner.health <= 0) {
     const closeEnough = Math.abs(partner.x - self.x) <= REVIVE_APPROACH_X

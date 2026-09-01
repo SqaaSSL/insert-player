@@ -73,6 +73,26 @@ export class BootScene extends Phaser.Scene {
   private generatePlaceholderAssets(): void {
     generateFighterSpriteSheet(this, 'fighter_p1', '#3388cc', '#ffcc88');
     generateFighterSpriteSheet(this, 'fighter_p2', '#cc3838', '#ffcc88');
+    generateFighterSpriteSheet(this, 'rush_enemy_grunt', '#3b365f', '#9ba3b8', {
+      accentColor: '#7b6cff',
+      armor: 'light',
+      headgear: 'mask',
+    });
+    generateFighterSpriteSheet(this, 'rush_enemy_bruiser', '#662b31', '#b8a28f', {
+      accentColor: '#ff6b3d',
+      armor: 'heavy',
+      headgear: 'mask',
+    });
+    generateFighterSpriteSheet(this, 'rush_enemy_shooter', '#173d54', '#a7b7c5', {
+      accentColor: '#4fdcff',
+      armor: 'light',
+      headgear: 'visor',
+    });
+    generateFighterSpriteSheet(this, 'rush_enemy_captain', '#3b2d18', '#c7bba4', {
+      accentColor: '#ffce3a',
+      armor: 'heavy',
+      headgear: 'commander',
+    });
 
     const sparkGfx = this.add.graphics();
     sparkGfx.fillStyle(0xffffff);

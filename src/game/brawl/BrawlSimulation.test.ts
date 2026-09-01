@@ -163,6 +163,108 @@ describe('BrawlSimulation', () => {
     expect(sim.obstacles[0].health).toBe(56);
   });
 
+  it('lets dedicated ranged enemies fire projectiles at the team', () => {
+    const rangedMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'enemy-projectile-test',
+      obstacles: [],
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 260, lane: 500 }],
+      encounters: [{
+        label: 'BLASTER TEST',
+        threat: 1,
+        triggerX: 250,
+        lockLeft: 200,
+        lockRight: 760,
+        enemies: [{ id: 'test-blaster', archetype: 'shooter', x: 560, lane: 420, level: 1 }],
+      }],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], rangedMap);
+    sim.start();
+    let fired = false;
+    for (let tick = 0; tick < 180; tick += 1) {
+      const events = sim.step(EMPTY_INPUT, EMPTY_INPUT);
+      fired ||= events.some((event) => event.type === 'fireball' && event.actorId === 'test-blaster');
+      if (sim.players[0].health < sim.players[0].maxHealth) break;
+    }
+    expect(fired).toBe(true);
+    expect(sim.players[0].health).toBeLessThan(sim.players[0].maxHealth);
+  });
+
+  it('turns explosive route props into tactical chain hits', () => {
+    const explosiveMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'explosive-obstacle-test',
+      obstacles: [{
+        id: 'test-fuel-cell',
+        type: 'explosive-barrel',
+        x: 430,
+        lane: 420,
+        width: 54,
+        laneDepth: 44,
+        health: 40,
+        explosionRadius: 160,
+        explosionDamage: 36,
+      }],
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 260, lane: 500 }],
+      encounters: [{
+        label: 'CHAIN TEST',
+        threat: 1,
+        triggerX: 250,
+        lockLeft: 200,
+        lockRight: 760,
+        enemies: [{ id: 'blast-target', archetype: 'bruiser', x: 520, lane: 420, level: 1 }],
+      }],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], explosiveMap);
+    sim.start();
+    sim.step({ ...EMPTY_INPUT, fireball: true }, EMPTY_INPUT);
+    let exploded = false;
+    for (let tick = 0; tick < 40; tick += 1) {
+      const events = sim.step(EMPTY_INPUT, EMPTY_INPUT);
+      exploded ||= events.some((event) => event.type === 'obstacleExploded');
+    }
+    expect(exploded).toBe(true);
+    expect(sim.obstacles[0].health).toBe(0);
+    expect(sim.enemies[0].health).toBeLessThan(sim.enemies[0].maxHealth);
+  });
+
+  it('scales authored enemy levels and supports drop entrances', () => {
+    const difficultyMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'difficulty-entry-test',
+      obstacles: [],
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 260, lane: 500 }],
+      encounters: [{
+        label: 'THREAT TEST',
+        threat: 1,
+        triggerX: 250,
+        lockLeft: 200,
+        lockRight: 760,
+        enemies: [
+          { id: 'level-one', archetype: 'grunt', x: 480, lane: 420, level: 1 },
+          {
+            id: 'level-three-drop',
+            archetype: 'grunt',
+            x: 560,
+            lane: 470,
+            level: 3,
+            entrance: { kind: 'drop', sourceHeight: 210, delayTicks: 2 },
+          },
+        ],
+      }],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], difficultyMap);
+    sim.start();
+    sim.step(EMPTY_INPUT, EMPTY_INPUT);
+    const [levelOne, levelThree] = sim.enemies;
+    expect(levelThree.maxHealth).toBeGreaterThan(levelOne.maxHealth);
+    expect(levelThree).toMatchObject({ height: 210, combatReady: false, entranceKind: 'drop' });
+    for (let tick = 0; tick < 60 && !levelThree.combatReady; tick += 1) {
+      sim.step(EMPTY_INPUT, EMPTY_INPUT);
+    }
+    expect(levelThree).toMatchObject({ height: 0, combatReady: true });
+  });
+
   it('stages enemies from authored entrances before enabling combat', () => {
     const entranceMap: BrawlMapDefinition = {
       ...RUSH_ROUTE_MAP,

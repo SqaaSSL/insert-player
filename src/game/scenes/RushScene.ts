@@ -16,8 +16,13 @@ import {
   type BrawlProjectile,
   type BrawlSimEvent,
 } from '../brawl/BrawlSimulation.ts';
-import { RUSH_ROUTE_MAP } from '../brawl/BrawlMap.ts';
+import { RUSH_ROUTE_MAP, type BrawlMapDefinition, type BrawlObstacleSkin } from '../brawl/BrawlMap.ts';
 import { getBrawlCompanionInput } from '../brawl/BrawlCompanionAI.ts';
+import {
+  buildRushRouteMap,
+  getRushStageProfile,
+  type RushStageProfile,
+} from '../brawl/RushStageProfile.ts';
 
 const MAX_TICKS_PER_FRAME = 5;
 const DEFAULT_STAGE_ID: StageThemeId = 'insert-player-arena';
@@ -35,6 +40,22 @@ interface ObstaclePresentation {
   graphics: Phaser.GameObjects.Graphics;
 }
 
+interface ObstaclePalette {
+  body: number;
+  top: number;
+  accent: number;
+  dark: number;
+}
+
+const OBSTACLE_PALETTES: Record<BrawlObstacleSkin, ObstaclePalette> = {
+  arena: { body: 0x27212f, top: 0x51425f, accent: 0xffce3a, dark: 0x09070a },
+  executive: { body: 0x26384c, top: 0x56789b, accent: 0xe7f2ff, dark: 0x08111d },
+  mars: { body: 0x5b2c24, top: 0x9c4d32, accent: 0xffa24d, dark: 0x160806 },
+  tablao: { body: 0x521729, top: 0x8a2f43, accent: 0xffce3a, dark: 0x15050a },
+  jaula: { body: 0x244635, top: 0x477a59, accent: 0xffe066, dark: 0x06110b },
+  custom: { body: 0x293348, top: 0x52647d, accent: 0xffce3a, dark: 0x07090f },
+};
+
 declare global {
   interface Window {
     __ASF_RUSH_STATE__?: () => ReturnType<BrawlSimulation['snapshot']>;
@@ -51,10 +72,13 @@ export class RushScene extends Phaser.Scene {
   private stageId: StageThemeId = DEFAULT_STAGE_ID;
   private customStageKey: string | null = null;
   private stageTextureKey: string | null = null;
+  private routeMap: Readonly<BrawlMapDefinition> = RUSH_ROUTE_MAP;
+  private stageProfile!: RushStageProfile;
   private lifecycle = 0;
   private presentations = new Map<string, ActorPresentation>();
   private projectileSprites = new Map<number, Phaser.GameObjects.Sprite>();
   private obstaclePresentations = new Map<string, ObstaclePresentation>();
+  private entranceCueGraphics!: Phaser.GameObjects.Graphics;
   private hudGraphics!: Phaser.GameObjects.Graphics;
   private hudP1!: Phaser.GameObjects.Text;
   private hudP2!: Phaser.GameObjects.Text;
@@ -73,6 +97,9 @@ export class RushScene extends Phaser.Scene {
     this.matchData = data;
     this.stageId = data.stageId ?? DEFAULT_STAGE_ID;
     this.customStageKey = data.customStageKey ?? null;
+    this.stageTextureKey = null;
+    this.stageProfile = getRushStageProfile(this.stageId, Boolean(this.customStageKey));
+    this.routeMap = buildRushRouteMap(this.stageProfile);
     this.companionCpu = data.vsAI === true;
     this.accumulator = 0;
     this.ready = false;
@@ -85,8 +112,11 @@ export class RushScene extends Phaser.Scene {
   preload(): void {
     if (this.customStageKey) return;
     const stage = getStageTheme(this.stageId);
-    if (stage.assetPath && !this.textures.exists('rush_stage_backdrop')) {
-      this.load.image('rush_stage_backdrop', stage.assetPath);
+    if (stage.assetPath) {
+      this.stageTextureKey = `rush_stage_${stage.id}`;
+      if (!this.textures.exists(this.stageTextureKey)) {
+        this.load.image(this.stageTextureKey, stage.assetPath);
+      }
     }
   }
 
@@ -106,7 +136,7 @@ export class RushScene extends Phaser.Scene {
     this.sim = new BrawlSimulation([
       this.matchData.p1Name ?? 'Player 1',
       this.matchData.p2Name ?? 'Player 2',
-    ], RUSH_ROUTE_MAP);
+    ], this.routeMap);
     this.inputManager = new InputManager(this);
     this.createHud();
     this.createResultPanel();
@@ -117,13 +147,14 @@ export class RushScene extends Phaser.Scene {
     this.updateHud();
 
     this.cameras.main
-      .setBounds(0, 0, RUSH_ROUTE_MAP.worldWidth, RUSH_ROUTE_MAP.worldHeight)
+      .setBounds(0, 0, this.routeMap.worldWidth, this.routeMap.worldHeight)
       .setScroll(0, 0);
     window.__ASF_RUSH_STATE__ = () => this.sim.snapshot();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this);
     this.ready = true;
     debugInfo('[RushScene] Co-op route ready', {
       stageId: this.stageId,
+      rushProfile: this.stageProfile.id,
       customStage: Boolean(this.customStageKey),
       companionCpu: this.companionCpu,
       p1: this.matchData.p1Name ?? 'Player 1',
@@ -184,37 +215,63 @@ export class RushScene extends Phaser.Scene {
       }
     }
 
-    const textureKey = this.stageTextureKey
-      ?? (this.textures.exists('rush_stage_backdrop') ? 'rush_stage_backdrop' : null);
+    const textureKey = this.stageTextureKey && this.textures.exists(this.stageTextureKey)
+      ? this.stageTextureKey
+      : null;
+    const segmentCount = Math.ceil(this.routeMap.worldWidth / GAME_WIDTH);
     if (textureKey) {
-      const segmentCount = Math.ceil(RUSH_ROUTE_MAP.worldWidth / GAME_WIDTH);
       for (let segment = 0; segment < segmentCount; segment += 1) {
-        this.add.image(segment * GAME_WIDTH + GAME_WIDTH / 2, GAME_HEIGHT / 2, textureKey)
-          .setDisplaySize(GAME_WIDTH + 2, GAME_HEIGHT)
-          .setFlipX(segment % 2 === 1)
+        const zoom = 1 + (segment % 3) * 0.025;
+        this.add.image(
+          segment * GAME_WIDTH + GAME_WIDTH / 2,
+          GAME_HEIGHT / 2 + (segment % 2 === 0 ? 0 : 5),
+          textureKey,
+        )
+          .setDisplaySize((GAME_WIDTH + 28) * zoom, GAME_HEIGHT * zoom)
           .setDepth(-20);
+        this.add.rectangle(
+          segment * GAME_WIDTH + GAME_WIDTH / 2,
+          GAME_HEIGHT / 2,
+          GAME_WIDTH + 2,
+          GAME_HEIGHT,
+          this.stageProfile.backdropVeil,
+          this.stageProfile.backdropVeilAlpha + (segment % 2) * 0.025,
+        ).setDepth(-19);
       }
     } else {
       const fallback = this.add.graphics().setDepth(-20);
       fallback.fillGradientStyle(0x16132f, 0x16132f, 0x050507, 0x050507, 1);
-      fallback.fillRect(0, 0, RUSH_ROUTE_MAP.worldWidth, GAME_HEIGHT);
+      fallback.fillRect(0, 0, this.routeMap.worldWidth, GAME_HEIGHT);
     }
 
     this.add.rectangle(
-      RUSH_ROUTE_MAP.worldWidth / 2,
+      this.routeMap.worldWidth / 2,
       GAME_HEIGHT / 2,
-      RUSH_ROUTE_MAP.worldWidth,
+      this.routeMap.worldWidth,
       GAME_HEIGHT,
-      0x020207,
-      0.08,
+      this.stageProfile.shadow,
+      0.055,
     )
-      .setDepth(-19);
+      .setDepth(-18.8);
 
-    const joins = this.add.graphics().setDepth(-18);
-    for (let x = GAME_WIDTH; x < RUSH_ROUTE_MAP.worldWidth; x += GAME_WIDTH) {
+    const accentCss = `#${this.stageProfile.accent.toString(16).padStart(6, '0')}`;
+    for (let segment = 0; segment < segmentCount; segment += 1) {
+      const label = this.stageProfile.segmentLabels[segment]
+        ?? `ZONE ${segment + 1}`;
+      this.add.text(segment * GAME_WIDTH + 52, 114, `${segment + 1}  ${label}`, {
+        fontFamily: '"Press Start 2P", monospace',
+        fontSize: '9px',
+        color: accentCss,
+        stroke: '#050507',
+        strokeThickness: 4,
+      }).setAlpha(0.58).setDepth(-17);
+    }
+
+    const joins = this.add.graphics().setDepth(-17);
+    for (let x = GAME_WIDTH; x < this.routeMap.worldWidth; x += GAME_WIDTH) {
       joins.fillStyle(0x050507, 0.42);
       joins.fillRect(x - 15, 92, 30, 250);
-      joins.lineStyle(3, 0xffce3a, 0.18);
+      joins.lineStyle(3, this.stageProfile.accent, 0.26);
       joins.lineBetween(x - 13, 102, x + 13, 130);
       joins.lineBetween(x + 13, 130, x - 13, 158);
       joins.lineBetween(x - 13, 158, x + 13, 186);
@@ -227,23 +284,23 @@ export class RushScene extends Phaser.Scene {
   }
 
   private drawRouteGeometry(): void {
-    const { walkArea } = RUSH_ROUTE_MAP;
+    const { walkArea } = this.routeMap;
     const lines = this.add.graphics().setDepth(-5);
     lines.fillStyle(0x050507, 0.12);
     lines.fillRect(
       0,
       walkArea.back - 8,
-      RUSH_ROUTE_MAP.worldWidth,
+      this.routeMap.worldWidth,
       walkArea.front - walkArea.back + 28,
     );
-    lines.lineStyle(1, 0xffce3a, 0.12);
+    lines.lineStyle(1, this.stageProfile.accent, 0.16);
     for (let lane = walkArea.back; lane <= walkArea.front; lane += 44) {
       lines.lineBetween(walkArea.left, lane, walkArea.right, lane);
     }
     for (let x = walkArea.left; x <= walkArea.right; x += 120) {
       lines.lineBetween(x - 46, walkArea.back, x, walkArea.front + 12);
     }
-    lines.lineStyle(2, 0xffce3a, 0.2);
+    lines.lineStyle(2, this.stageProfile.accent, 0.28);
     lines.strokeRoundedRect(
       walkArea.left,
       walkArea.back - 8,
@@ -252,36 +309,36 @@ export class RushScene extends Phaser.Scene {
       8,
     );
 
-    for (const [index, encounter] of RUSH_ROUTE_MAP.encounters.entries()) {
-      lines.fillStyle(0xffce3a, 0.08);
+    for (const [index, encounter] of this.routeMap.encounters.entries()) {
+      lines.fillStyle(this.stageProfile.accent, 0.1);
       lines.fillRect(encounter.triggerX - 6, walkArea.back - 8, 12, walkArea.front - walkArea.back + 28);
-      lines.lineStyle(2, 0xffce3a, 0.32);
+      lines.lineStyle(2, this.stageProfile.accent, 0.42);
       lines.lineBetween(encounter.triggerX, walkArea.back - 8, encounter.triggerX, walkArea.front + 20);
       this.add.text(encounter.triggerX, walkArea.back - 18, `0${index + 1}`, {
         fontFamily: '"Press Start 2P", monospace',
         fontSize: '10px',
-        color: '#ffce3a',
+        color: `#${this.stageProfile.accent.toString(16).padStart(6, '0')}`,
         stroke: '#050507',
         strokeThickness: 3,
       }).setOrigin(0.5, 1).setAlpha(0.7).setDepth(-4);
     }
 
     const accessPoints = this.add.graphics().setDepth(Math.round(walkArea.back) - 12);
-    for (const encounter of RUSH_ROUTE_MAP.encounters) {
+    for (const encounter of this.routeMap.encounters) {
       for (const spawn of encounter.enemies) {
         const entrance = spawn.entrance;
-        if (!entrance || entrance.kind === 'right') continue;
+        if (!entrance) continue;
         const sourceX = entrance.sourceX ?? spawn.x;
         if (entrance.kind === 'door') {
           accessPoints.fillStyle(0x030307, 0.92);
           accessPoints.fillRoundedRect(sourceX - 30, walkArea.back - 116, 60, 118, 5);
-          accessPoints.lineStyle(3, 0xffce3a, 0.45);
+          accessPoints.lineStyle(3, this.stageProfile.accent, 0.55);
           accessPoints.strokeRoundedRect(sourceX - 30, walkArea.back - 116, 60, 118, 5);
-          accessPoints.fillStyle(0xffce3a, 0.7);
+          accessPoints.fillStyle(this.stageProfile.accent, 0.8);
           accessPoints.fillCircle(sourceX + 18, walkArea.back - 54, 3);
-          accessPoints.lineStyle(2, 0xffce3a, 0.18);
+          accessPoints.lineStyle(2, this.stageProfile.accent, 0.24);
           accessPoints.lineBetween(sourceX - 18, walkArea.back - 88, sourceX + 18, walkArea.back - 88);
-        } else {
+        } else if (entrance.kind === 'background') {
           accessPoints.fillStyle(0x050507, 0.78);
           accessPoints.fillPoints([
             new Phaser.Geom.Point(sourceX - 42, walkArea.back + 2),
@@ -289,21 +346,42 @@ export class RushScene extends Phaser.Scene {
             new Phaser.Geom.Point(sourceX + 27, walkArea.back + 30),
             new Phaser.Geom.Point(sourceX - 27, walkArea.back + 30),
           ], true);
-          accessPoints.lineStyle(2, 0xffce3a, 0.35);
+          accessPoints.lineStyle(2, this.stageProfile.accent, 0.45);
           for (let rung = 0; rung < 4; rung += 1) {
             const y = walkArea.back + 7 + rung * 6;
             accessPoints.lineBetween(sourceX - 25 + rung * 2, y, sourceX + 25 - rung * 2, y);
           }
+        } else if (entrance.kind === 'drop') {
+          accessPoints.lineStyle(4, 0x050507, 0.72);
+          accessPoints.lineBetween(sourceX - 48, walkArea.back - 178, sourceX + 48, walkArea.back - 178);
+          accessPoints.lineStyle(3, this.stageProfile.accent, 0.5);
+          accessPoints.lineBetween(sourceX - 34, walkArea.back - 171, sourceX + 34, walkArea.back - 171);
+          accessPoints.lineStyle(2, this.stageProfile.accent, 0.24);
+          accessPoints.lineBetween(sourceX, walkArea.back - 168, sourceX, spawn.lane - 12);
+          accessPoints.fillStyle(this.stageProfile.accent, 0.16);
+          accessPoints.fillEllipse(spawn.x, spawn.lane + 2, 78, 34);
+          accessPoints.lineStyle(2, this.stageProfile.accent, 0.52);
+          accessPoints.strokeEllipse(spawn.x, spawn.lane + 2, 78, 34);
+        } else {
+          const gateLane = entrance.sourceLane ?? spawn.lane;
+          accessPoints.fillStyle(0x050507, 0.82);
+          accessPoints.fillRoundedRect(sourceX - 12, gateLane - 82, 24, 90, 4);
+          accessPoints.lineStyle(3, this.stageProfile.accent, 0.5);
+          accessPoints.strokeRoundedRect(sourceX - 12, gateLane - 82, 24, 90, 4);
+          accessPoints.fillStyle(this.stageProfile.accent, 0.78);
+          accessPoints.fillTriangle(sourceX - 30, gateLane - 48, sourceX - 16, gateLane - 58, sourceX - 16, gateLane - 38);
         }
       }
     }
 
-    lines.fillStyle(0xffce3a, 0.18);
-    lines.fillRect(RUSH_ROUTE_MAP.exitX - 8, walkArea.back - 8, 16, walkArea.front - walkArea.back + 28);
-    this.add.text(RUSH_ROUTE_MAP.exitX, walkArea.back - 18, 'EXIT →', {
+    this.entranceCueGraphics = this.add.graphics().setDepth(Math.round(walkArea.back) - 2);
+
+    lines.fillStyle(this.stageProfile.accent, 0.22);
+    lines.fillRect(this.routeMap.exitX - 8, walkArea.back - 8, 16, walkArea.front - walkArea.back + 28);
+    this.add.text(this.routeMap.exitX, walkArea.back - 18, 'EXIT →', {
       fontFamily: '"Press Start 2P", monospace',
       fontSize: '10px',
-      color: '#ffce3a',
+      color: `#${this.stageProfile.accent.toString(16).padStart(6, '0')}`,
       stroke: '#050507',
       strokeThickness: 3,
     }).setOrigin(0.5, 1).setDepth(-4);
@@ -382,6 +460,28 @@ export class RushScene extends Phaser.Scene {
       }
       this.syncActorPresentation(actor, presentation);
     }
+    this.syncEnemyEntranceCues();
+  }
+
+  private syncEnemyEntranceCues(): void {
+    this.entranceCueGraphics.clear();
+    for (const enemy of this.sim.enemies) {
+      if (enemy.combatReady || enemy.health <= 0) continue;
+      const pulse = 0.48 + Math.sin((this.sim.tick + enemy.id.length * 7) * 0.18) * 0.18;
+      const targetX = enemy.entryTargetX;
+      const targetLane = enemy.entryTargetLane;
+      this.entranceCueGraphics.fillStyle(this.stageProfile.accent, pulse * 0.22);
+      this.entranceCueGraphics.fillEllipse(targetX, targetLane + 3, 92, 38);
+      this.entranceCueGraphics.lineStyle(3, this.stageProfile.accent, pulse);
+      this.entranceCueGraphics.strokeEllipse(targetX, targetLane + 3, 92, 38);
+      if (enemy.entranceDelayTicks > 0) {
+        this.entranceCueGraphics.lineStyle(2, 0xff2a2a, pulse);
+        this.entranceCueGraphics.strokeCircle(targetX, targetLane - 7, 14 + (this.sim.tick % 20) * 0.6);
+      } else if (enemy.entranceKind !== 'drop') {
+        this.entranceCueGraphics.lineStyle(2, this.stageProfile.accent, 0.34);
+        this.entranceCueGraphics.lineBetween(enemy.x, enemy.lane, targetX, targetLane);
+      }
+    }
   }
 
   private syncProjectilePresentations(): void {
@@ -415,8 +515,13 @@ export class RushScene extends Phaser.Scene {
       .setScale((projectile.isSuper ? 1.65 : 1.08) * pulse)
       .setDepth(Math.round(projectile.lane) + 8)
       .setAlpha(0.92);
-    if (projectile.isSuper) sprite.setTint(0x78ddff);
-    else sprite.clearTint();
+    if (projectile.ownerKind === 'enemy') {
+      sprite.setTint(projectile.isSuper ? 0xff6b3d : 0xd56bff);
+    } else if (projectile.isSuper) {
+      sprite.setTint(0x78ddff);
+    } else {
+      sprite.clearTint();
+    }
   }
 
   private syncObstaclePresentations(): void {
@@ -433,6 +538,7 @@ export class RushScene extends Phaser.Scene {
   private drawObstacle(obstacle: BrawlObstacle, graphics: Phaser.GameObjects.Graphics): void {
     const x = obstacle.x;
     const y = obstacle.lane;
+    const palette = OBSTACLE_PALETTES[obstacle.skin];
     graphics.clear().setDepth(Math.round(y));
     if (obstacle.type === 'steam-vent') {
       graphics.fillStyle(0x050507, 0.72);
@@ -451,7 +557,7 @@ export class RushScene extends Phaser.Scene {
         );
       }
       if (obstacle.telegraphing) {
-        graphics.lineStyle(3, 0xffce3a, 0.78);
+        graphics.lineStyle(3, palette.accent, 0.84);
         graphics.strokeEllipse(x, y, obstacle.width + 28, obstacle.laneDepth + 20);
       }
       if (obstacle.active) {
@@ -466,41 +572,87 @@ export class RushScene extends Phaser.Scene {
       return;
     }
 
+    if (obstacle.type === 'explosive-barrel') {
+      graphics.fillStyle(0x050507, 0.4);
+      graphics.fillEllipse(x, y + 6, obstacle.width + 20, obstacle.laneDepth * 0.72);
+      if (obstacle.health <= 0) {
+        graphics.fillStyle(palette.dark, 0.92);
+        graphics.fillEllipse(x, y - 2, obstacle.width + 8, 18);
+        graphics.lineStyle(5, palette.body, 0.7);
+        graphics.strokeEllipse(x - 12, y - 8, obstacle.width * 0.48, 16);
+        graphics.strokeEllipse(x + 14, y - 3, obstacle.width * 0.44, 14);
+        graphics.fillStyle(0xff6b3d, 0.32);
+        graphics.fillCircle(x + 4, y - 9, 6);
+        return;
+      }
+
+      const visualHeight = 62;
+      graphics.fillGradientStyle(palette.top, palette.body, palette.dark, palette.body, 1);
+      graphics.fillRoundedRect(x - obstacle.width / 2, y - visualHeight, obstacle.width, visualHeight, 9);
+      graphics.fillStyle(palette.top, 1);
+      graphics.fillEllipse(x, y - visualHeight, obstacle.width, 17);
+      graphics.lineStyle(4, palette.dark, 0.95);
+      graphics.strokeRoundedRect(x - obstacle.width / 2, y - visualHeight, obstacle.width, visualHeight, 9);
+      graphics.strokeEllipse(x, y - visualHeight, obstacle.width, 17);
+      graphics.fillStyle(palette.accent, 0.95);
+      graphics.fillRect(x - obstacle.width / 2 + 3, y - 46, obstacle.width - 6, 8);
+      graphics.fillRect(x - obstacle.width / 2 + 3, y - 20, obstacle.width - 6, 8);
+      graphics.fillStyle(palette.dark, 0.92);
+      graphics.fillPoints([
+        new Phaser.Geom.Point(x, y - 45),
+        new Phaser.Geom.Point(x + 13, y - 34),
+        new Phaser.Geom.Point(x, y - 23),
+        new Phaser.Geom.Point(x - 13, y - 34),
+      ], true);
+      graphics.lineStyle(3, palette.accent, 1);
+      graphics.lineBetween(x - 2, y - 41, x + 3, y - 34);
+      graphics.lineBetween(x + 3, y - 34, x - 3, y - 28);
+      const ratio = obstacle.health / obstacle.maxHealth;
+      if (ratio < 0.55) {
+        const sparkY = y - visualHeight - 12 - (this.sim.tick % 12);
+        graphics.fillStyle(0xffce3a, 0.78);
+        graphics.fillCircle(x + 10, sparkY, 3);
+        graphics.lineStyle(2, 0xff6b3d, 0.7);
+        graphics.lineBetween(x + 10, sparkY, x + 18, sparkY - 7);
+      }
+      return;
+    }
+
     graphics.fillStyle(0x050507, 0.35);
     graphics.fillEllipse(x, y + 7, obstacle.width + 26, obstacle.laneDepth * 0.72);
     if (obstacle.health <= 0) {
-      graphics.fillStyle(0x3b3128, 0.9);
+      graphics.fillStyle(palette.body, 0.9);
       graphics.fillRect(x - obstacle.width / 2, y - 8, obstacle.width * 0.42, 11);
       graphics.fillRect(x + obstacle.width * 0.04, y - 3, obstacle.width * 0.46, 9);
-      graphics.fillStyle(0xffce3a, 0.48);
+      graphics.fillStyle(palette.accent, 0.48);
       graphics.fillRect(x - 18, y - 11, 32, 6);
       return;
     }
 
     const visualHeight = 52;
-    graphics.fillStyle(0x17131a, 0.96);
+    graphics.fillGradientStyle(palette.top, palette.body, palette.dark, palette.body, 1);
     graphics.fillRoundedRect(x - obstacle.width / 2, y - visualHeight, obstacle.width, visualHeight, 5);
-    graphics.fillStyle(0x443528, 1);
+    graphics.fillStyle(palette.top, 1);
     graphics.fillPoints([
       new Phaser.Geom.Point(x - obstacle.width / 2, y - visualHeight),
       new Phaser.Geom.Point(x - obstacle.width * 0.37, y - visualHeight - 14),
       new Phaser.Geom.Point(x + obstacle.width * 0.48, y - visualHeight - 14),
       new Phaser.Geom.Point(x + obstacle.width / 2, y - visualHeight),
     ], true);
-    graphics.lineStyle(3, 0x09070a, 0.9);
+    graphics.lineStyle(3, palette.dark, 0.92);
     graphics.strokeRoundedRect(x - obstacle.width / 2, y - visualHeight, obstacle.width, visualHeight, 5);
     graphics.lineBetween(x, y - visualHeight, x, y);
     graphics.lineBetween(x - obstacle.width / 2, y - 26, x + obstacle.width / 2, y - 26);
     const stripeWidth = Math.max(12, obstacle.width / 6);
     for (let stripe = -2; stripe <= 2; stripe += 1) {
-      graphics.fillStyle(stripe % 2 === 0 ? 0xffce3a : 0x050507, 0.92);
+      graphics.fillStyle(stripe % 2 === 0 ? palette.accent : palette.dark, 0.92);
       graphics.fillRect(x + stripe * stripeWidth - stripeWidth / 2, y - 19, stripeWidth, 12);
     }
     const ratio = obstacle.health / obstacle.maxHealth;
     if (ratio < 1) {
       graphics.fillStyle(0x050507, 0.9);
       graphics.fillRoundedRect(x - obstacle.width / 2, y - visualHeight - 27, obstacle.width, 7, 2);
-      graphics.fillStyle(ratio > 0.35 ? 0xffce3a : 0xff2a2a, 1);
+      graphics.fillStyle(ratio > 0.35 ? palette.accent : 0xff2a2a, 1);
       graphics.fillRoundedRect(x - obstacle.width / 2 + 2, y - visualHeight - 25, (obstacle.width - 4) * ratio, 3, 1);
     }
   }
@@ -512,17 +664,17 @@ export class RushScene extends Phaser.Scene {
       ? 'fighter_p1'
       : actor.slot === 1
         ? 'fighter_p2'
-        : actor.id.charCodeAt(actor.id.length - 1) % 2 === 0
-          ? 'fighter_p1'
-          : 'fighter_p2';
+        : `rush_enemy_${actor.archetype ?? 'grunt'}`;
     const view = new FighterView(fighter, spriteKey);
     view.createSprite(this);
     const scale = actor.archetype === 'captain'
-      ? 0.96
+      ? 1.02
       : actor.archetype === 'bruiser'
-        ? 0.82
+        ? 0.9
+        : actor.archetype === 'shooter'
+          ? 0.76
         : actor.kind === 'enemy'
-          ? 0.72
+          ? 0.78
           : 0.86;
     view.setRenderPresentation(scale);
 
@@ -569,10 +721,7 @@ export class RushScene extends Phaser.Scene {
     const waitingToEnter = actor.kind === 'enemy' && !actor.combatReady && actor.entranceDelayTicks > 0;
     presentation.view.sprite.setAlpha(waitingToEnter ? 0 : actor.combatReady ? 1 : 0.88);
     presentation.view.shadowSprite?.setAlpha(waitingToEnter ? 0 : actor.combatReady ? 0.14 : 0.09);
-    if (actor.archetype === 'captain') presentation.view.sprite.setTint(0xffce3a);
-    else if (actor.archetype === 'bruiser') presentation.view.sprite.setTint(0xff8c42);
-    else if (actor.kind === 'enemy') presentation.view.sprite.setTint(0x6f64a8);
-    else presentation.view.sprite.clearTint();
+    presentation.view.sprite.clearTint();
 
     if (presentation.tag) {
       const spriteTop = presentation.view.getVisibleTopCenter();
@@ -586,11 +735,19 @@ export class RushScene extends Phaser.Scene {
     if (presentation.health) {
       presentation.health.clear();
       if (actor.health > 0 && actor.combatReady) {
-        const width = actor.archetype === 'captain' ? 84 : 58;
-        const y = actor.lane - (actor.archetype === 'captain' ? 206 : 168);
+        const width = actor.archetype === 'captain' ? 84 : actor.archetype === 'bruiser' ? 68 : 58;
+        const visibleTop = presentation.view.getVisibleTopCenter();
+        const y = visibleTop.y - 15;
         presentation.health.fillStyle(0x050507, 0.9);
         presentation.health.fillRoundedRect(actor.x - width / 2 - 2, y - 2, width + 4, 8, 2);
-        presentation.health.fillStyle(actor.archetype === 'captain' ? 0xffce3a : 0xff2a2a, 1);
+        presentation.health.fillStyle(
+          actor.archetype === 'captain'
+            ? 0xffce3a
+            : actor.archetype === 'shooter'
+              ? 0x4fdcff
+              : 0xff2a2a,
+          1,
+        );
         presentation.health.fillRoundedRect(
           actor.x - width / 2,
           y,
@@ -639,33 +796,40 @@ export class RushScene extends Phaser.Scene {
     this.hudP1.setText(`P1  ${p1.name.toUpperCase()}`);
     this.hudP2.setText(`${p2.name.toUpperCase()}  ${this.companionCpu ? 'CPU' : 'P2'}`);
     const livingEnemies = this.sim.enemies.filter((enemy) => enemy.health > 0).length;
-    const encounterCount = RUSH_ROUTE_MAP.encounters.length;
+    const encounterCount = this.routeMap.encounters.length;
     if (this.sim.activeEncounterIndex >= 0) {
+      const encounter = this.routeMap.encounters[this.sim.activeEncounterIndex];
+      const threat = encounter?.threat ?? Math.min(3, this.sim.activeEncounterIndex + 1);
       this.hudObjective.setText(
-        `CHECKPOINT ${this.sim.activeEncounterIndex + 1}/${encounterCount}\n${livingEnemies} HOSTILE${livingEnemies === 1 ? '' : 'S'}`,
+        `CHECKPOINT ${this.sim.activeEncounterIndex + 1}/${encounterCount} · THREAT ${'I'.repeat(threat)}\n${livingEnemies} HOSTILE${livingEnemies === 1 ? '' : 'S'}`,
       );
     } else {
       const finalCheckpointCleared = this.sim.encounterIndex >= encounterCount - 1;
-      const startX = Math.min(...RUSH_ROUTE_MAP.playerSpawns.map((spawn) => spawn.x));
+      const startX = Math.min(...this.routeMap.playerSpawns.map((spawn) => spawn.x));
       const routeRatio = Phaser.Math.Clamp(
-        (this.sim.progressX - startX) / (RUSH_ROUTE_MAP.exitX - startX),
+        (this.sim.progressX - startX) / (this.routeMap.exitX - startX),
         0,
         1,
       );
+      const segmentIndex = Phaser.Math.Clamp(
+        Math.floor(this.sim.progressX / GAME_WIDTH),
+        0,
+        this.stageProfile.segmentLabels.length - 1,
+      );
       this.hudObjective.setText(
-        `${finalCheckpointCleared ? 'EXIT →' : 'ADVANCE →'}\nROUTE ${Math.round(routeRatio * 100)}%`,
+        `${finalCheckpointCleared ? 'EXIT →' : 'ADVANCE →'}\n${this.stageProfile.segmentLabels[segmentIndex]} · ${Math.round(routeRatio * 100)}%`,
       );
     }
     this.drawRouteProgress();
   }
 
   private drawRouteProgress(): void {
-    const startX = Math.min(...RUSH_ROUTE_MAP.playerSpawns.map((spawn) => spawn.x));
+    const startX = Math.min(...this.routeMap.playerSpawns.map((spawn) => spawn.x));
     const railX = GAME_WIDTH / 2 - 145;
     const railY = 82;
     const railWidth = 290;
     const ratioFor = (worldX: number) => Phaser.Math.Clamp(
-      (worldX - startX) / (RUSH_ROUTE_MAP.exitX - startX),
+      (worldX - startX) / (this.routeMap.exitX - startX),
       0,
       1,
     );
@@ -675,19 +839,19 @@ export class RushScene extends Phaser.Scene {
     this.hudGraphics.fillRoundedRect(railX - 4, railY - 4, railWidth + 8, 12, 3);
     this.hudGraphics.fillStyle(0x4a3e35, 1);
     this.hudGraphics.fillRect(railX, railY, railWidth, 4);
-    this.hudGraphics.fillStyle(0xffce3a, 1);
+    this.hudGraphics.fillStyle(this.stageProfile.accent, 1);
     this.hudGraphics.fillRect(railX, railY, railWidth * progressRatio, 4);
 
-    for (const [index, encounter] of RUSH_ROUTE_MAP.encounters.entries()) {
+    for (const [index, encounter] of this.routeMap.encounters.entries()) {
       const x = railX + railWidth * ratioFor(encounter.triggerX);
       const reached = index <= this.sim.encounterIndex;
-      this.hudGraphics.fillStyle(reached ? 0xffce3a : 0x050507, 1);
+      this.hudGraphics.fillStyle(reached ? this.stageProfile.accent : 0x050507, 1);
       this.hudGraphics.fillCircle(x, railY + 2, 5);
-      this.hudGraphics.lineStyle(2, 0xffce3a, reached ? 1 : 0.62);
+      this.hudGraphics.lineStyle(2, this.stageProfile.accent, reached ? 1 : 0.62);
       this.hudGraphics.strokeCircle(x, railY + 2, 5);
     }
 
-    this.hudGraphics.fillStyle(this.sim.progressX >= RUSH_ROUTE_MAP.exitX ? 0xffce3a : 0x050507, 1);
+    this.hudGraphics.fillStyle(this.sim.progressX >= this.routeMap.exitX ? this.stageProfile.accent : 0x050507, 1);
     this.hudGraphics.fillTriangle(
       railX + railWidth - 2,
       railY - 5,
@@ -699,7 +863,7 @@ export class RushScene extends Phaser.Scene {
   }
 
   private updateCamera(delta: number): void {
-    const activeEncounter = RUSH_ROUTE_MAP.encounters[this.sim.activeEncounterIndex];
+    const activeEncounter = this.routeMap.encounters[this.sim.activeEncounterIndex];
     const livingCombatants = [...this.sim.players, ...this.sim.enemies]
       .filter((actor) => actor.health > 0);
     const combatFocusX = livingCombatants.length > 0
@@ -714,7 +878,7 @@ export class RushScene extends Phaser.Scene {
     const targetScrollX = Phaser.Math.Clamp(
       desiredScrollX,
       0,
-      RUSH_ROUTE_MAP.worldWidth - GAME_WIDTH,
+      this.routeMap.worldWidth - GAME_WIDTH,
     );
     const blend = 1 - Math.pow(0.001, Math.min(delta, 100) / 1000);
     this.cameras.main.scrollX = Phaser.Math.Linear(
@@ -743,18 +907,33 @@ export class RushScene extends Phaser.Scene {
         this.showBanner(`ROADBLOCK ${event.encounterIndex + 1}\n${event.label}`);
       } else if (event.type === 'encounterCleared') {
         this.showBanner('PATH CLEAR\nMOVE →');
+      } else if (event.type === 'checkpointRecovery') {
+        const actor = this.sim.players.find((player) => player.id === event.actorId);
+        if (actor) this.createFloatingText(actor.x, actor.lane - 190, `+${event.amount} HP`, '#30e07a');
       } else if (event.type === 'hit') {
         const target = [...this.sim.players, ...this.sim.enemies].find((actor) => actor.id === event.targetId);
         if (target) this.createHitEffect(target.x, target.lane - 92, event.damage);
       } else if (event.type === 'fireball') {
         const actor = [...this.sim.players, ...this.sim.enemies].find((candidate) => candidate.id === event.actorId);
-        if (actor) this.createCastEffect(actor.x + (actor.facingRight ? 52 : -52), actor.lane - 72, event.isSuper);
+        if (actor) {
+          this.createCastEffect(
+            actor.x + (actor.facingRight ? 52 : -52),
+            actor.lane - 72,
+            event.isSuper,
+            actor.kind === 'enemy',
+          );
+        }
       } else if (event.type === 'obstacleHit') {
         const obstacle = this.sim.obstacles.find((candidate) => candidate.id === event.obstacleId);
         if (obstacle) this.createHitEffect(obstacle.x, obstacle.lane - 34, event.damage);
       } else if (event.type === 'obstacleDestroyed') {
         const obstacle = this.sim.obstacles.find((candidate) => candidate.id === event.obstacleId);
-        if (obstacle) this.createFloatingText(obstacle.x, obstacle.lane - 78, 'SMASH!', '#ffce3a');
+        if (obstacle && obstacle.type !== 'explosive-barrel') {
+          this.createFloatingText(obstacle.x, obstacle.lane - 78, 'SMASH!', '#ffce3a');
+        }
+      } else if (event.type === 'obstacleExploded') {
+        const obstacle = this.sim.obstacles.find((candidate) => candidate.id === event.obstacleId);
+        if (obstacle) this.createExplosionEffect(obstacle.x, obstacle.lane - 28);
       } else if (event.type === 'hazardBurst') {
         const obstacle = this.sim.obstacles.find((candidate) => candidate.id === event.obstacleId);
         if (obstacle) this.createVentBurst(obstacle.x, obstacle.lane);
@@ -809,8 +988,9 @@ export class RushScene extends Phaser.Scene {
     this.cameras.main.shake(55, damage >= 40 ? 0.004 : 0.002);
   }
 
-  private createCastEffect(x: number, y: number, isSuper: boolean): void {
-    const ring = this.add.circle(x, y, isSuper ? 30 : 20, isSuper ? 0x78ddff : 0xffce3a, 0.54)
+  private createCastEffect(x: number, y: number, isSuper: boolean, hostile = false): void {
+    const color = hostile ? (isSuper ? 0xff6b3d : 0xd56bff) : (isSuper ? 0x78ddff : 0xffce3a);
+    const ring = this.add.circle(x, y, isSuper ? 30 : 20, color, 0.54)
       .setDepth(3500)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({
@@ -837,6 +1017,33 @@ export class RushScene extends Phaser.Scene {
       ease: 'Quart.easeOut',
       onComplete: () => burst.destroy(),
     });
+  }
+
+  private createExplosionEffect(x: number, y: number): void {
+    const flash = this.add.circle(x, y, 34, 0xfff4d6, 0.94)
+      .setDepth(3550)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    const blast = this.add.circle(x, y, 56, 0xff6b3d, 0.72)
+      .setDepth(3549)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      scale: 2.6,
+      duration: 190,
+      ease: 'Quart.easeOut',
+      onComplete: () => flash.destroy(),
+    });
+    this.tweens.add({
+      targets: blast,
+      alpha: 0,
+      scale: 3.2,
+      duration: 340,
+      ease: 'Quart.easeOut',
+      onComplete: () => blast.destroy(),
+    });
+    this.createFloatingText(x, y - 74, 'CHAIN HIT!', '#ffce3a');
+    this.cameras.main.shake(130, 0.009);
   }
 
   private createFloatingText(x: number, y: number, text: string, color: string): void {
@@ -912,6 +1119,7 @@ export class RushScene extends Phaser.Scene {
     this.projectileSprites.clear();
     for (const presentation of this.obstaclePresentations.values()) presentation.graphics.destroy();
     this.obstaclePresentations.clear();
+    this.entranceCueGraphics?.destroy();
     if (this.stageTextureKey && this.textures.exists(this.stageTextureKey)) {
       this.textures.remove(this.stageTextureKey);
     }

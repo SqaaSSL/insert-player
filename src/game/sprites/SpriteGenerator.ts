@@ -352,11 +352,18 @@ export function getHighKickRuntimeProfile(sourceFrameCount?: number): HighKickRu
  * Generates a simple colored silhouette placeholder spritesheet.
  * Used as fallback when AI-generated sprites are not available.
  */
+export interface ProceduralFighterStyle {
+  accentColor?: string;
+  armor?: 'none' | 'light' | 'heavy';
+  headgear?: 'none' | 'mask' | 'visor' | 'commander';
+}
+
 export function generateFighterSpriteSheet(
   scene: Phaser.Scene,
   key: string,
   bodyColor: string,
   skinColor: string,
+  style: ProceduralFighterStyle = {},
 ): void {
   const layout = getSpriteLayout();
   registerSpriteLayout(key, layout);
@@ -374,7 +381,7 @@ export function generateFighterSpriteSheet(
   STATE_ORDER.forEach((state, row) => {
     const numFrames = STATE_FRAMES[state];
     for (let f = 0; f < numFrames; f++) {
-      drawSilhouette(ctx, f * FW, row * FH, bodyColor, skinColor, state, f);
+      drawSilhouette(ctx, f * FW, row * FH, bodyColor, skinColor, state, f, style);
     }
   });
 
@@ -400,11 +407,13 @@ function drawSilhouette(
   skinColor: string,
   state: FighterState,
   frame: number,
+  style: ProceduralFighterStyle,
 ): void {
   const cx = ox + FW / 2;
   const baseY = oy + FH - 7;
   const outline = '#07070b';
   const trousers = '#171522';
+  const accent = style.accentColor ?? '#ffce3a';
   const jumpOffset = state === FighterState.JUMP ? -28 : 0;
   const breathing = state === FighterState.IDLE ? (frame % 2 === 0 ? 0 : 2) : 0;
   const crouched = state === FighterState.CROUCH
@@ -498,6 +507,31 @@ function drawSilhouette(
   ctx.moveTo(cx, shoulderY + 2);
   ctx.lineTo(cx, hipY - 4);
   ctx.stroke();
+  if (style.armor && style.armor !== 'none') {
+    ctx.fillStyle = accent;
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(cx - (style.armor === 'heavy' ? 28 : 22), shoulderY + 8);
+    ctx.lineTo(cx + (style.armor === 'heavy' ? 28 : 22), shoulderY + 8);
+    ctx.lineTo(cx + 18, hipY - 14);
+    ctx.lineTo(cx - 18, hipY - 14);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = outline;
+    ctx.fillRect(cx - 3, shoulderY + 13, 6, Math.max(10, hipY - shoulderY - 32));
+    if (style.armor === 'heavy') {
+      ctx.fillStyle = accent;
+      ctx.strokeStyle = outline;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.ellipse(cx - 31, shoulderY + 8, 16, 10, -0.25, 0, Math.PI * 2);
+      ctx.ellipse(cx + 31, shoulderY + 8, 16, 10, 0.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
 
   let leftArm: Array<[number, number]> = [[cx - 27, shoulderY + 8], [cx - 48, shoulderY + 34], [cx - 22, shoulderY + 48]];
   let rightArm: Array<[number, number]> = [[cx + 27, shoulderY + 8], [cx + 48, shoulderY + 24], [cx + 30, shoulderY + 43]];
@@ -548,5 +582,37 @@ function drawSilhouette(
   ctx.beginPath();
   ctx.arc(cx + 7, headY - 1, 2, 0, Math.PI * 2);
   ctx.fill();
+  if (style.headgear && style.headgear !== 'none') {
+    ctx.strokeStyle = outline;
+    ctx.lineWidth = 4;
+    if (style.headgear === 'mask') {
+      ctx.fillStyle = '#171522';
+      ctx.beginPath();
+      ctx.roundRect(cx - 18, headY - 4, 36, 20, 6);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = accent;
+      ctx.fillRect(cx - 12, headY + 2, 24, 3);
+    } else {
+      ctx.fillStyle = style.headgear === 'commander' ? accent : '#111827';
+      ctx.beginPath();
+      ctx.roundRect(cx - 21, headY - 13, 42, 20, 7);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = style.headgear === 'commander' ? '#fff4d6' : accent;
+      ctx.fillRect(cx - 14, headY - 7, 28, 5);
+      if (style.headgear === 'commander') {
+        ctx.fillStyle = accent;
+        ctx.beginPath();
+        ctx.moveTo(cx - 18, headY - 18);
+        ctx.lineTo(cx + 20, headY - 18);
+        ctx.lineTo(cx + 13, headY - 28);
+        ctx.lineTo(cx - 11, headY - 25);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+  }
   ctx.restore();
 }
