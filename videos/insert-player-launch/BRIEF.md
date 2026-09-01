@@ -32,7 +32,7 @@ not like an AI avatar advertisement or a software walkthrough.
 - `assets/generated/launch-bed-original-neon-v11.wav` - a direct 20.05-second mix: the approved announcer intro followed by the first 15.40 consecutive seconds of the original private `Neon Arena.mp3`; no repeated tail, echo loop, or regenerated music.
 - `assets/generated/tts-launch-friends-v5-retimed.wav` - the approved Gemini TTS explanation with only its final `Ready? Insert Player.` phrase delayed to the closing lockup; no speech was regenerated.
 - `assets/generated/omni-photo-to-fighter-v2-neon-sync.mp4` - private Omni timing canary, retained for audit but rejected from the final cut because its target was not the immutable global Champion frame.
-- `assets/fight-montage-player-one-vs-casual-v14.mp4` - one 2.40-second production loading curtain for Casual versus Player One, followed by their clean one-second bout on `EXECUTIVE RUMBLE` and seven one-second global-roster exchanges featuring Trump, Rosalía, Elon Musk, and Lamine Yamal. The opening composite excludes the captured placeholder floor rule and uses lossless 4:4:4 intermediates.
+- `assets/fight-montage-player-one-vs-casual-v15.mp4` - one 2.40-second production loading curtain for Casual versus Player One, followed by their clean one-second bout on `EXECUTIVE RUMBLE` and seven one-second global-roster exchanges featuring Trump, Rosalía, Elon Musk, and Lamine Yamal. The opening composite excludes the captured placeholder floor rule and old renderer shadows, preserves bright HUD and hit effects, and uses lossless 4:4:4 intermediates.
 
 ## Customizations
 

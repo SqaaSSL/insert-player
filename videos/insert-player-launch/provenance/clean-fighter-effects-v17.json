@@ -1,0 +1,107 @@
+{
+  "version": 17,
+  "project": "insert-player-launch",
+  "acceptance": "quality_regression_fix",
+  "change": "Remove the large legacy renderer shadows from the first gameplay cut while preserving both fighters, the HUD, hit particles, damage numbers, the approved cursor, audio, timing, and remaining seven gameplay cuts.",
+  "diagnosis": {
+    "artifact": "The source Casual versus Player One capture already contained large diffuse renderer shadows behind and below both fighters.",
+    "leak": "Apple Vision produced clean person masks. The shadows returned because a broad stage-difference detail mask also classified the dark legacy shadows as foreground detail.",
+    "sourceCeiling": "The surviving 1920x1080 VP8 capture at approximately 1 Mbps remains the highest-quality recoverable source. This release removes the avoidable compositing artifact without synthetic upscaling or paid inference."
+  },
+  "timing": {
+    "totalDurationSeconds": 20.066667,
+    "transformationSeconds": [0, 4.95],
+    "gameplaySeconds": [4.65, 15.316667],
+    "closingLockupSeconds": [15.05, 20.05],
+    "loadingDurationSeconds": 2.4,
+    "fightClipDurationSeconds": 1,
+    "fightClipCount": 8,
+    "framesPerSecond": 30
+  },
+  "openingStageReconstruction": {
+    "sourceCapture": "assets/captures/casual-vs-player-one-master.webm",
+    "sourceCaptureSha256": "a164952dbfa59561d363876be29f778b4b9208e5ec6dca7f9404c92c2d9de384",
+    "targetStage": "EXECUTIVE RUMBLE",
+    "targetStageAsset": "../../public/assets/stages/signature/executive-rumble-pipeline-v1.png",
+    "targetStageSha256": "a93c60e3af03bd8625ed6b1d067321b7dd89e2e9795943400bdcaa3b52c1a310",
+    "buildScript": "scripts/build-casual-executive-rumble-clips.mjs",
+    "buildScriptSha256": "eeb14710e3b65998dd67d6ca07437d4dff8e82a1b51e4292d9be7f115038177f",
+    "method": "Local Apple Vision foreground instance masks preserve both fighters. A second detail mask retains only stage differences that also pass a bright-or-visible-chroma gate, preserving HUD and hit effects while rejecting dark legacy renderer shadows. The person mask is unioned after the floor exclusion so fighter bodies and feet remain intact.",
+    "detailMaskThresholds": {
+      "differencePercent": 3,
+      "brightPercent": 42,
+      "saturationPercent": 32,
+      "visibilityPercent": 18
+    },
+    "excludedDetailBands": [
+      {
+        "y": 928,
+        "height": 25,
+        "reason": "placeholder stage floor rule"
+      }
+    ],
+    "intermediateEncoding": "FFV1 lossless, yuv444p, intra-only",
+    "manifestFile": "assets/captures/casual-vs-player-one-executive-v3.json",
+    "manifestSha256": "191d82b158bfb64e855f657c57ba25fd8243cfa708aaa67bbe27339a9b1fc347",
+    "loaderFile": "assets/captures/casual-vs-player-one-executive-loader-v3.mkv",
+    "loaderSha256": "158946ab0ab4707761cd2263d343523c82066543bd793b849e473c1ce38abd32",
+    "loaderSizeBytes": 19932944,
+    "fightFile": "assets/captures/casual-vs-player-one-executive-fight-v3.mkv",
+    "fightSha256": "86400aeff6ac6c340af2682707af94cafaffd9fef5e12e503fe41760bc92f811",
+    "fightSizeBytes": 26333267,
+    "providerCalls": 0,
+    "inferenceCostUsd": 0
+  },
+  "gameplayMontage": {
+    "buildScript": "scripts/build-fight-montage-with-loading.mjs",
+    "buildScriptSha256": "8381037bc3e565e205f90d3ea7b3e2299d546234e6bb2232785f2e48f01adb6e",
+    "manifestFile": "assets/fight-montage-player-one-vs-casual-v15.json",
+    "manifestSha256": "0090efb806c8c6176debc946be1ec7d89cc0abc3e941d8b0ba2358b66dfe59c6",
+    "outputFile": "assets/fight-montage-player-one-vs-casual-v15.mp4",
+    "outputSha256": "8e7b1c6b84312e741eb651c15da93ed319b59cbcf36300618ba7f90d9674974e",
+    "outputSizeBytes": 39555225,
+    "durationSeconds": 10.666667,
+    "frameCount": 320,
+    "videoEncoding": "H.264 High, CRF 8, yuv420p",
+    "remainingCutCount": 7
+  },
+  "preserved": {
+    "pointerComposition": "compositions/frames/01-transform.html",
+    "pointerCompositionSha256": "cee7b4a4914eb814a70e7bd716da5d118acbdac659305075ece7e4cdf6b5aa2f",
+    "music": "assets/generated/launch-bed-original-neon-v11.wav",
+    "musicSha256": "5dbea6cd2136330f9dc8995f246f6538869dbf8d26f6b585e38064f596a1111a",
+    "voice": "assets/generated/tts-launch-friends-v5-retimed.wav",
+    "voiceSha256": "1bc3564e8f31116269d893b1bee0137e37d0b1b7c4169947534ff63e8523705a"
+  },
+  "validation": {
+    "hyperframesVersion": "0.8.21",
+    "hyperframesCheck": {
+      "lintErrors": 0,
+      "runtimeErrors": 0,
+      "layoutIssues": 0,
+      "motionIssues": 0,
+      "contrastChecksPassed": "10/10"
+    },
+    "visualReview": "A six-frame contact sheet from the final compressed web asset confirms that the large dark shadows are absent while both fighters, jumping and kicking poses, white hit particles, and damage numbers 60 and 55 remain visible.",
+    "providerCalls": 0,
+    "inferenceCostUsd": 0
+  },
+  "release": {
+    "masterFile": "renders/insert-player-launch-clean-effects-v17.mp4",
+    "masterSha256": "254c6cde74f9c649c95fc735f05a957b3419915a284719211106e78cf94601ad",
+    "masterSizeBytes": 49301983,
+    "publicFile": "../../public/assets/insert-player-launch-51bd8b2e.mp4",
+    "publicPath": "/assets/insert-player-launch-51bd8b2e.mp4",
+    "publicSha256": "51bd8b2ed42b6205f36cdb83bbc47a2ec0f0044bfe2d3a6a2972115777ebe94f",
+    "publicSizeBytes": 19284007,
+    "sourceToWebSsim": 0.995642,
+    "encoding": {
+      "video": "H.264 High, CRF 15, slow, yuv420p, faststart",
+      "audio": "AAC LC, 192 kbps",
+      "width": 1920,
+      "height": 1080,
+      "framesPerSecond": 30,
+      "durationSeconds": 20.066667
+    }
+  }
+}
