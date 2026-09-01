@@ -736,7 +736,11 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
       let upgraded = 0;
       for (const fighter of selected) {
         if (fighter.kind === 'arcade' && fighter.cloud) {
-          await downloadArcadeFighterToLocal(fighter.cloud, captureApiRequestContext());
+          await downloadArcadeFighterToLocal(
+            fighter.cloud,
+            captureApiRequestContext(),
+            mode === 'rush' ? { includeHighResolutionAssets: false } : {},
+          );
         } else {
           upgraded += await ensurePlayableSpritesUpToDate(fighter.photoHash);
         }
