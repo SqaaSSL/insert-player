@@ -298,10 +298,10 @@
       z-index: 24;
       left: 25.2cqw;
       top: 61cqh;
-      width: 2.7cqw;
-      height: 3.8cqw;
-      transform-origin: 12% 8%;
-      filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.72));
+      width: 1.65cqw;
+      height: 2.2cqw;
+      transform-origin: 10% 8%;
+      filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.58));
       will-change: transform, opacity;
       opacity: 0;
     }
@@ -396,9 +396,8 @@
     <div data-hf-id="hf-rt01" data-frame-element="transform-ready-title">2 PLAYERS READY</div>
 
     <div data-hf-id="hf-cu01" data-frame-element="transform-cursor" aria-hidden="true">
-      <svg data-hf-id="hf-sv91" viewBox="0 0 66 86" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path data-hf-id="hf-p8pk" d="M5 4L58 49H32L22 80L5 73V4Z" fill="#FFF4D6" stroke="#04040D" stroke-width="5" stroke-linejoin="round" />
-        <path data-hf-id="hf-3nvh" d="M31 49L48 74" stroke="#FF2A2A" stroke-width="7" stroke-linecap="square" />
+      <svg data-hf-id="hf-sv91" viewBox="0 0 32 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path data-hf-id="hf-p8pk" d="M3 2.5L3.35 34L10.55 26.9L16.35 39.7L22.55 36.85L16.9 24.45H27.6L3 2.5Z" fill="#FFFFFF" stroke="#05050C" stroke-width="2.4" stroke-linejoin="round" />
       </svg>
     </div>
   </div>
@@ -438,16 +437,16 @@
       tl.set(casualFighter, { opacity: 0, scale: 1.04 }, 0);
       tl.set(casualReady, { y: 12 }, 0);
       tl.set([p1Scan, casualScan], { xPercent: 0 }, 0);
-      tl.set(cursor, { scale: 0.88 }, 0);
+      tl.set(cursor, { scale: 1 }, 0);
       tl.set(readyTitle, { y: -18 }, 0);
       tl.set(statusReady, { y: 8 }, 0);
 
       tl.fromTo(p1Card, { opacity: 0, x: -72, y: 16, rotation: -3 }, { opacity: 1, x: 0, y: 0, rotation: -1.2, duration: 0.38, ease: 'back.out(1.45)' }, 0.16);
-      tl.fromTo(cursor, { opacity: 0, scale: 0.72, x: -18, y: 24 }, { opacity: 1, scale: 0.9, x: 0, y: 0, duration: 0.24, ease: 'power3.out' }, 0.42);
-      tl.to(cursor, { scale: 0.76, duration: 0.1, ease: 'power2.inOut' }, 0.67);
+      tl.fromTo(cursor, { opacity: 0, x: -10, y: 12 }, { opacity: 0.96, x: 0, y: 0, duration: 0.18, ease: 'power2.out' }, 0.42);
+      tl.to(cursor, { scale: 0.9, duration: 0.08, ease: 'power2.inOut' }, 0.67);
       tl.to(p1Card, { x: 626, y: -18, rotation: 0, scale: 0.98, duration: 0.72, ease: 'power3.inOut' }, 0.72);
-      tl.to(cursor, { x: 626, y: -18, scale: 0.76, duration: 0.72, ease: 'power3.inOut' }, 0.72);
-      tl.to(cursor, { scale: 0.96, duration: 0.12, ease: 'back.out(1.8)' }, 1.44);
+      tl.to(cursor, { x: 626, y: -18, scale: 0.9, duration: 0.72, ease: 'power3.inOut' }, 0.72);
+      tl.to(cursor, { scale: 1, duration: 0.1, ease: 'power2.out' }, 1.44);
       tl.fromTo(dropFlash, { opacity: 0, scale: 0.92 }, { opacity: 0.92, scale: 1, duration: 0.12, ease: 'power2.out' }, 1.44);
       tl.to(dropFlash, { opacity: 0, duration: 0.28, ease: 'power2.out' }, 1.56);
       tl.set(p1Scan, { opacity: 1, xPercent: 0 }, 1.48);
