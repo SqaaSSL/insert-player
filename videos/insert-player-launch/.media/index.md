@@ -1,4 +1,4 @@
-# .media · 15 assets
+# .media · 16 assets
 
 id         type   dur    dims      path                              description
 video_001  video  13.8s  1280×720  assets/fight-capture.mp4          fight capture
@@ -8,6 +8,7 @@ image_003  image  —      520×656   assets/generated/casual-photo-card-v1.webp
 image_004  image  —      520×610   assets/generated/casual-fighter-card-v1.webp  Casual production fighter
 video_002  video  10.7s  1920×1080 assets/fight-montage-player-one-vs-casual-v12.mp4  Casual versus Player One loader and bout plus seven global-roster cuts
 video_003  video  10.7s  1920×1080 assets/fight-montage-player-one-vs-casual-v13.mp4  Casual versus Player One on Executive Rumble plus seven global-roster cuts
+video_004  video  10.7s  1920×1080 assets/fight-montage-player-one-vs-casual-v14.mp4  Clean Casual versus Player One composite on Executive Rumble plus seven global-roster cuts
 sfx_001    sfx    —      —         .media/audio/sfx/sfx_001.mp3      brand-transition-v1.mp3
 sfx_002    sfx    —      —         .media/audio/sfx/sfx_002.mp3      success-tick-v2.mp3
 sfx_003    sfx    —      —         .media/audio/sfx/sfx_003.mp3      brand-resolve-v1.mp3

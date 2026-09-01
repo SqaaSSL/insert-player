@@ -55,7 +55,7 @@ roles: The portrait is the identity anchor; the electric seam is the transformat
 - beat: excitement -> triumph
 - blueprint: device-surface-showcase
 - blueprint_adaptation: One `2.40s` full-bleed production loading curtain, eight independently recorded `1s` gameplay cuts with no decorative device frame, and a `0.27s` final-frame hold protecting the exit transition.
-- asset_candidates: assets/fight-montage-player-one-vs-casual-v13.mp4 — a readable Casual versus Player One loading curtain, their real match on Executive Rumble, and seven further matches across the current global roster
+- asset_candidates: assets/fight-montage-player-one-vs-casual-v14.mp4 — a readable Casual versus Player One loading curtain, their cleaned lossless-intermediate match on Executive Rumble, and seven further matches across the current global roster
 - sfx: .media/audio/sfx/sfx_004.mp3 at 3.65s
 
 narrativeRole: Cash in the promise: this is not an avatar or a still image. Two personal fighters can each enter real matches against a varied global roster.
@@ -66,7 +66,7 @@ roles: The fight captures are primary proof; the `YOUR FIGHT` label is a brief o
 ### Video direction
 
 - Scene 1 (0.00-2.40s): Hold the real production `CASUAL VS PLAYER ONE` loading curtain long enough to read both personal fighters, the `EXECUTIVE RUMBLE` setting, and the P1 lockup.
-- Scene 2 (2.40-3.40s): Casual fights Player One in `EXECUTIVE RUMBLE`, paying off the two-player transformation immediately on the same published stage.
+- Scene 2 (2.40-3.40s): Casual fights Player One in `EXECUTIVE RUMBLE`, paying off the two-player transformation immediately on the same published stage. Preserve the fighters and HUD, but exclude the horizontal floor rule from the failed placeholder stage capture.
 - Scene 3 (3.40-4.40s): Casual fights Donald Trump in `INSERT PLAYER ARENA`.
 - Scene 4 (4.40-5.40s): Player One fights Rosalía in `TABLAO 3000`.
 - Scene 5 (5.40-6.40s): Rosalía fights the second player in `TABLAO 3000`.

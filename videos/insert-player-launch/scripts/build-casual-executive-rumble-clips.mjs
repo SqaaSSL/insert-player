@@ -22,13 +22,13 @@ const stageImage = resolve(
 );
 const segmentationScript = resolve(import.meta.dirname, 'segment-people.swift');
 const loaderOutput = resolve(
-  process.argv[2] ?? resolve(capturesDir, 'casual-vs-player-one-executive-loader.mp4'),
+  process.argv[2] ?? resolve(capturesDir, 'casual-vs-player-one-executive-loader-v2.mkv'),
 );
 const fightOutput = resolve(
-  process.argv[3] ?? resolve(capturesDir, 'casual-vs-player-one-executive-fight.mp4'),
+  process.argv[3] ?? resolve(capturesDir, 'casual-vs-player-one-executive-fight-v2.mkv'),
 );
 const manifestOutput = resolve(
-  process.argv[4] ?? resolve(capturesDir, 'casual-vs-player-one-executive.json'),
+  process.argv[4] ?? resolve(capturesDir, 'casual-vs-player-one-executive-v2.json'),
 );
 
 const frameRate = 30;
@@ -152,21 +152,17 @@ try {
     '-frames:v',
     String(loaderFrameCount),
     '-c:v',
-    'libx264',
-    '-preset',
-    'slow',
-    '-crf',
-    '12',
+    'ffv1',
+    '-level',
+    '3',
+    '-coder',
+    '1',
+    '-context',
+    '1',
     '-g',
-    String(frameRate),
-    '-keyint_min',
-    String(frameRate),
-    '-sc_threshold',
-    '0',
+    '1',
     '-pix_fmt',
-    'yuv420p',
-    '-movflags',
-    '+faststart',
+    'yuv444p',
     loaderOutput,
   ]);
 
@@ -218,6 +214,10 @@ try {
       'Disk:2',
       '-blur',
       '0x0.7',
+      '-fill',
+      'black',
+      '-draw',
+      'rectangle 0,928 1919,952',
       detailMask,
     ]);
     run('magick', [
@@ -263,21 +263,17 @@ try {
     String(fightFrameCount),
     '-an',
     '-c:v',
-    'libx264',
-    '-preset',
-    'slow',
-    '-crf',
-    '12',
+    'ffv1',
+    '-level',
+    '3',
+    '-coder',
+    '1',
+    '-context',
+    '1',
     '-g',
-    String(frameRate),
-    '-keyint_min',
-    String(frameRate),
-    '-sc_threshold',
-    '0',
+    '1',
     '-pix_fmt',
-    'yuv420p',
-    '-movflags',
-    '+faststart',
+    'yuv444p',
     fightOutput,
   ]);
 
@@ -300,7 +296,9 @@ try {
       durationSeconds: fightFrameCount / frameRate,
       sha256: sha256(fightOutput),
       foregroundExtraction: 'Vision foreground instance mask plus high-contrast HUD and effects detail mask',
+      excludedDetailBands: [{ y: 928, height: 25, reason: 'placeholder stage floor rule' }],
     },
+    intermediateEncoding: 'FFV1 lossless yuv444p',
   };
   writeFileSync(manifestOutput, `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(JSON.stringify({ loaderOutput, fightOutput, manifestOutput, ...manifest }, null, 2));

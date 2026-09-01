@@ -32,7 +32,7 @@ not like an AI avatar advertisement or a software walkthrough.
 - `assets/generated/launch-bed-original-neon-v11.wav` - a direct 20.05-second mix: the approved announcer intro followed by the first 15.40 consecutive seconds of the original private `Neon Arena.mp3`; no repeated tail, echo loop, or regenerated music.
 - `assets/generated/tts-launch-friends-v5-retimed.wav` - the approved Gemini TTS explanation with only its final `Ready? Insert Player.` phrase delayed to the closing lockup; no speech was regenerated.
 - `assets/generated/omni-photo-to-fighter-v2-neon-sync.mp4` - private Omni timing canary, retained for audit but rejected from the final cut because its target was not the immutable global Champion frame.
-- `assets/fight-montage-player-one-vs-casual-v13.mp4` - one 2.40-second production loading curtain for Casual versus Player One, followed by their real one-second bout on `EXECUTIVE RUMBLE` and seven one-second global-roster exchanges featuring Trump, Rosalía, Elon Musk, and Lamine Yamal.
+- `assets/fight-montage-player-one-vs-casual-v14.mp4` - one 2.40-second production loading curtain for Casual versus Player One, followed by their clean one-second bout on `EXECUTIVE RUMBLE` and seven one-second global-roster exchanges featuring Trump, Rosalía, Elon Musk, and Lamine Yamal. The opening composite excludes the captured placeholder floor rule and uses lossless 4:4:4 intermediates.
 
 ## Customizations
 
@@ -49,7 +49,7 @@ not like an AI avatar advertisement or a software walkthrough.
 - Show real gameplay and real generated fighters. Do not fake a fight in motion graphics.
 - The wardrobe-matched Player One portrait may change clothing only. Identity, face, hair, body proportions, pose, studio lighting, and framing remain the same.
 - The closing card lasts exactly five seconds. Type `INSERT PLAYER` first, then `CREATE YOUR FIGHTER FOR FREE`, reveal `INSERTPLAYER.AI`, and hold the completed card long enough to read.
-- Open the proof block with one `2.40s` production `CASUAL VS PLAYER ONE` loading curtain labeled `EXECUTIVE RUMBLE`, pay it off with their real `1s` bout composited over that exact published stage, then continue through seven `1s` global-roster recordings. Do not repeat the loader for the other rivals.
+- Open the proof block with one `2.40s` production `CASUAL VS PLAYER ONE` loading curtain labeled `EXECUTIVE RUMBLE`, pay it off with their real `1s` bout composited over that exact published stage, then continue through seven `1s` global-roster recordings. The placeholder floor rule must not survive the composite. Do not repeat the loader for the other rivals.
 - Capture desktop gameplay with an explicit 8 GB capability profile and retain the loader logs proving that Player One used 384x512 atlas cells at density 2x.
 - Avoid franchise imitation, cartoon exaggeration, generic AI language, and slow cinematic choreography.
 - Generated media is private and single-candidate: no automatic retries, fallbacks, or publishing.

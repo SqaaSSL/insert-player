@@ -1,0 +1,105 @@
+{
+  "version": 15,
+  "project": "insert-player-launch",
+  "acceptance": "quality_regression_fix",
+  "change": "Remove the placeholder-stage floor rule that leaked through the Casual versus Player One reconstruction, preserve both fighters and gameplay effects, and reduce avoidable generational loss before the public web encode.",
+  "diagnosis": {
+    "artifact": "A 25-pixel horizontal floor rule from the failed placeholder-stage capture was classified as high-contrast gameplay detail and composited over Executive Rumble.",
+    "qualityRegression": "The original Casual capture is a 1920x1080 VP8 source at approximately 1 Mbps. The previous path encoded the reconstructed clip to H.264 before the montage, then encoded the montage, HyperFrames master, and public asset again.",
+    "sourceCeiling": "No cloud fighter record or original Casual sprite sheets were found. The surviving local VP8 capture remains the highest-quality recoverable source, so this release removes avoidable loss without inventing detail."
+  },
+  "timing": {
+    "totalDurationSeconds": 20.066667,
+    "transformationSeconds": [0, 4.95],
+    "gameplaySeconds": [4.65, 15.316667],
+    "closingLockupSeconds": [15.05, 20.05],
+    "loadingDurationSeconds": 2.4,
+    "fightClipDurationSeconds": 1,
+    "fightClipCount": 8,
+    "framesPerSecond": 30
+  },
+  "openingStageReconstruction": {
+    "sourceCapture": "assets/captures/casual-vs-player-one-master.webm",
+    "targetStage": "EXECUTIVE RUMBLE",
+    "targetStageAsset": "../../public/assets/stages/signature/executive-rumble-pipeline-v1.png",
+    "buildScript": "scripts/build-casual-executive-rumble-clips.mjs",
+    "buildScriptSha256": "a60ab76180cec471923c1c03e7029d9106bacd5892e411b002ab8f73a4b444ef",
+    "method": "Local Apple Vision foreground instance masks preserve both fighters. A high-contrast detail mask preserves the real HUD and hit effects, except for the known placeholder-stage floor rule at y=928..952. The person mask is unioned after the exclusion so feet crossing that band remain intact.",
+    "excludedDetailBands": [
+      {
+        "y": 928,
+        "height": 25,
+        "reason": "placeholder stage floor rule"
+      }
+    ],
+    "intermediateEncoding": "FFV1 lossless, yuv444p, intra-only",
+    "loaderFile": "assets/captures/casual-vs-player-one-executive-loader-v2.mkv",
+    "loaderSha256": "d5048f220b37ac2449a401764fd3d4ade3c90cb534cb7861ac04aba5cf1df914",
+    "loaderSizeBytes": 19932944,
+    "fightFile": "assets/captures/casual-vs-player-one-executive-fight-v2.mkv",
+    "fightSha256": "700f71a1fcca2b5d554ac35638d017fe4b9228ce4fe76b934b2ecfbc7ddcd3bf",
+    "fightSizeBytes": 25216001,
+    "providerCalls": 0,
+    "inferenceCostUsd": 0
+  },
+  "gameplayMontage": {
+    "buildScript": "scripts/build-fight-montage-with-loading.mjs",
+    "buildScriptSha256": "bf202d3cc74f326d5401e56951fc6ad1314b0e963aa2e7bf5fc47aded7a16ed9",
+    "manifestFile": "assets/fight-montage-player-one-vs-casual-v14.json",
+    "manifestSha256": "8a47b1334744dee096548cdaf6c99e4266c5b36157c8367b8f6708b0a22480c2",
+    "outputFile": "assets/fight-montage-player-one-vs-casual-v14.mp4",
+    "outputSha256": "c3be29997b67730e6931edd4476e87540c17b1702d2c840a33419e2a4d490adf",
+    "outputSizeBytes": 39643933,
+    "durationSeconds": 10.666667,
+    "frameCount": 320,
+    "videoEncoding": "H.264 High, CRF 8, yuv420p",
+    "opening": {
+      "fighter": "Casual",
+      "opponent": "Player One",
+      "stage": "EXECUTIVE RUMBLE",
+      "loadingSeconds": [0, 2.4],
+      "fightSeconds": [2.4, 3.4]
+    },
+    "remainingCutCount": 7
+  },
+  "audio": {
+    "musicFile": "assets/generated/launch-bed-original-neon-v11.wav",
+    "musicSha256": "5dbea6cd2136330f9dc8995f246f6538869dbf8d26f6b585e38064f596a1111a",
+    "voiceFile": "assets/generated/tts-launch-friends-v5-retimed.wav",
+    "regenerated": false,
+    "repeatedTailSeconds": 0,
+    "providerCalls": 0,
+    "inferenceCostUsd": 0
+  },
+  "validation": {
+    "hyperframesVersion": "0.8.21",
+    "hyperframesCheck": {
+      "lintErrors": 0,
+      "runtimeErrors": 0,
+      "layoutIssues": 0,
+      "motionIssues": 0,
+      "contrastChecksPassed": "10/10"
+    },
+    "visualReview": "Full-resolution master and web frames inspected; the duplicate horizontal floor rule is absent and both fighters remain intact.",
+    "providerCalls": 0,
+    "inferenceCostUsd": 0
+  },
+  "release": {
+    "masterFile": "renders/insert-player-launch-clean-composite-v15.mp4",
+    "masterSha256": "80cbf2af2fa59f13d8e851b8b3e34757972744dfb147175ccbdd6ca05fbfccf4",
+    "masterSizeBytes": 49489053,
+    "publicFile": "../../public/assets/insert-player-launch-5be346e1.mp4",
+    "publicPath": "/assets/insert-player-launch-5be346e1.mp4",
+    "publicSha256": "5be346e12ab12f78846c90ecc2a107be4d5ea86ea4cd5da4e78b4dbf7649f388",
+    "publicSizeBytes": 19374695,
+    "sourceToWebSsim": 0.995623,
+    "encoding": {
+      "video": "H.264 High, CRF 15, slow, yuv420p, faststart",
+      "audio": "AAC LC, 192 kbps",
+      "width": 1920,
+      "height": 1080,
+      "framesPerSecond": 30,
+      "durationSeconds": 20.066667
+    }
+  }
+}
