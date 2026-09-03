@@ -228,6 +228,139 @@ describe('BrawlSimulation', () => {
     expect(sim.enemies[0].health).toBeLessThan(sim.enemies[0].maxHealth);
   });
 
+  it('restores co-op health when a player breaks a recovery barricade', () => {
+    const recoveryMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'recovery-obstacle-test',
+      obstacles: [{
+        id: 'food-crate',
+        type: 'barricade',
+        x: 380,
+        lane: 420,
+        width: 70,
+        laneDepth: 54,
+        health: 25,
+        healthReward: 24,
+      }],
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 260, lane: 500 }],
+      encounters: [],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], recoveryMap);
+    sim.start();
+    sim.players[0].health = 50;
+    sim.players[1].health = 60;
+    sim.step({ ...EMPTY_INPUT, punch: true }, EMPTY_INPUT);
+    let recovery = null;
+    for (let tick = 0; tick < 10; tick += 1) {
+      const events = sim.step(EMPTY_INPUT, EMPTY_INPUT);
+      recovery ??= events.find((event) => event.type === 'obstacleRecovery') ?? null;
+    }
+    expect(sim.obstacles[0].health).toBe(0);
+    expect(sim.players[0].health).toBe(74);
+    expect(sim.players[1].health).toBe(84);
+    expect(recovery).toEqual({
+      type: 'obstacleRecovery',
+      actorId: 'player-1',
+      obstacleId: 'food-crate',
+      amount: 24,
+    });
+  });
+
+  it('matches steam damage to the visible root footprint instead of the actor radius', () => {
+    const hazardMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'exact-hazard-footprint-test',
+      obstacles: [{
+        id: 'exact-vent',
+        type: 'steam-vent',
+        x: 430,
+        lane: 420,
+        width: 100,
+        laneDepth: 60,
+        hazardWidth: 60,
+        hazardLaneDepth: 24,
+        cycleOffset: 71,
+      }],
+      // P1 is inside the ellipse's bounding box but outside the ellipse itself.
+      playerSpawns: [{ x: 451, lane: 430 }, { x: 430, lane: 420 }],
+      encounters: [],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], hazardMap);
+    sim.start();
+    const events = sim.step(EMPTY_INPUT, EMPTY_INPUT);
+    expect(events).toContainEqual({ type: 'hazardBurst', obstacleId: 'exact-vent' });
+    expect(sim.players[0].health).toBe(100);
+    expect(sim.players[1].health).toBe(88);
+
+    // Entering while the steam is visibly active must still be dangerous;
+    // damage is pulsed instead of being limited to the first active frame.
+    sim.players[0].x = 430;
+    sim.players[0].lane = 420;
+    for (let tick = 0; tick < 11; tick += 1) sim.step(EMPTY_INPUT, EMPTY_INPUT);
+    const secondPulseEvents = sim.step(EMPTY_INPUT, EMPTY_INPUT);
+    expect(secondPulseEvents).toContainEqual({ type: 'hazardBurst', obstacleId: 'exact-vent' });
+    expect(sim.players[0].health).toBe(88);
+  });
+
+  it('makes an authored threat squad overwhelm a passive team', () => {
+    const threatMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'aggressive-squad-test',
+      obstacles: [],
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 330, lane: 470 }],
+      encounters: [{
+        label: 'THREAT SQUAD',
+        threat: 3,
+        triggerX: 250,
+        lockLeft: 220,
+        lockRight: 820,
+        enemies: [
+          { id: 'squad-a', archetype: 'grunt', x: 390, lane: 420, level: 3 },
+          { id: 'squad-b', archetype: 'bruiser', x: 420, lane: 470, level: 3 },
+          { id: 'squad-c', archetype: 'shooter', x: 650, lane: 420, level: 3 },
+          { id: 'squad-d', archetype: 'captain', x: 570, lane: 470, level: 3 },
+        ],
+      }],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], threatMap);
+    sim.start();
+    for (let tick = 0; tick < 720 && sim.outcome === 'playing'; tick += 1) {
+      sim.step(EMPTY_INPUT, EMPTY_INPUT);
+    }
+    expect(sim.outcome).toBe('lost');
+    expect(sim.players.every((player) => player.health === 0)).toBe(true);
+  });
+
+  it('keeps the harder attacks fair by letting a planted guard absorb most damage', () => {
+    const guardMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'guard-counterplay-test',
+      obstacles: [],
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 260, lane: 500 }],
+      encounters: [{
+        label: 'GUARD TEST',
+        triggerX: 250,
+        lockLeft: 220,
+        lockRight: 760,
+        enemies: [{ id: 'guard-target-b', archetype: 'grunt', x: 352, lane: 420, level: 1 }],
+      }],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], guardMap);
+    sim.start();
+    let guardedDamage = 0;
+    for (let tick = 0; tick < 90 && guardedDamage === 0; tick += 1) {
+      const events = sim.step({ ...EMPTY_INPUT, guard: true }, EMPTY_INPUT);
+      guardedDamage = events.find((event) => event.type === 'guarded')?.damage ?? 0;
+    }
+    expect(guardedDamage).toBe(4);
+    expect(sim.players[0].health).toBe(96);
+    expect(sim.players[0].state).not.toBe('hit');
+  });
+
+  it('ramps the shipped route from four hostiles to a six-enemy blockade', () => {
+    expect(RUSH_ROUTE_MAP.encounters.map((encounter) => encounter.enemies.length)).toEqual([4, 5, 6]);
+  });
+
   it('scales authored enemy levels and supports drop entrances', () => {
     const difficultyMap: BrawlMapDefinition = {
       ...RUSH_ROUTE_MAP,

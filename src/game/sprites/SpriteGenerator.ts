@@ -358,6 +358,153 @@ export interface ProceduralFighterStyle {
   headgear?: 'none' | 'mask' | 'visor' | 'commander';
 }
 
+interface TemplateZeroFrameTransform {
+  offsetX: number;
+  offsetY: number;
+  scaleX: number;
+  scaleY: number;
+  rotation: number;
+  down: boolean;
+}
+
+function templateZeroFrameTransform(
+  state: FighterState,
+  frame: number,
+  frameCount: number,
+): TemplateZeroFrameTransform {
+  const phase = frameCount <= 1 ? 0 : frame / (frameCount - 1);
+  const pulse = Math.sin(Math.PI * phase);
+  const cycle = Math.sin(phase * Math.PI * 2);
+  const transform: TemplateZeroFrameTransform = {
+    offsetX: 0,
+    offsetY: 0,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: 0,
+    down: false,
+  };
+
+  if (state === FighterState.IDLE) {
+    transform.offsetY = Math.round(Math.abs(cycle) * 2);
+    transform.scaleY = 1 - Math.abs(cycle) * 0.006;
+  } else if (state === FighterState.WALK_FORWARD || state === FighterState.WALK_BACKWARD) {
+    transform.offsetX = cycle * 3;
+    transform.offsetY = -Math.abs(cycle) * 3;
+    transform.rotation = cycle * 0.012;
+  } else if (state === FighterState.JUMP) {
+    transform.offsetY = -5 - pulse * 5;
+    transform.scaleX = 1 + pulse * 0.045;
+    transform.scaleY = 1 - pulse * 0.07;
+  } else if (
+    state === FighterState.HIGH_PUNCH
+    || state === FighterState.HIGH_KICK
+    || state === FighterState.UPPERCUT
+  ) {
+    transform.offsetX = pulse * 13;
+    transform.offsetY = state === FighterState.UPPERCUT ? -pulse * 7 : 0;
+    transform.scaleX = 1 + pulse * 0.075;
+    transform.scaleY = 1 - pulse * 0.025;
+    transform.rotation = -pulse * 0.032;
+  } else if (state === FighterState.LOW_PUNCH || state === FighterState.LOW_KICK) {
+    transform.offsetX = pulse * 10;
+    transform.scaleX = 1.04 + pulse * 0.055;
+    transform.scaleY = 0.78 - pulse * 0.025;
+  } else if (state === FighterState.CROUCH) {
+    transform.scaleX = 1.05;
+    transform.scaleY = 0.76;
+  } else if (state === FighterState.BLOCK) {
+    transform.offsetX = -pulse * 3;
+    transform.scaleX = 1.035;
+    transform.scaleY = 0.94;
+  } else if (state === FighterState.FIREBALL) {
+    transform.offsetX = pulse * 10;
+    transform.scaleX = 1 + pulse * 0.06;
+    transform.rotation = -pulse * 0.04;
+  } else if (state === FighterState.HIT_STUN) {
+    transform.offsetX = -7 - frame * 3;
+    transform.rotation = -0.075 - frame * 0.025;
+    transform.scaleY = 0.97;
+  } else if (state === FighterState.KNOCKDOWN || state === FighterState.DEFEAT) {
+    transform.down = true;
+  } else if (state === FighterState.VICTORY) {
+    transform.offsetY = -Math.abs(cycle) * 4;
+    transform.scaleX = 1 + Math.abs(cycle) * 0.025;
+  }
+  return transform;
+}
+
+/**
+ * Turns a reviewed Template Zero neutral render into a complete runtime sheet.
+ * Rush enemies get deterministic arcade motion immediately while their richer
+ * per-pose Template Zero batches can be produced independently later.
+ */
+export function generateTemplateZeroFighterSpriteSheet(
+  scene: Phaser.Scene,
+  key: string,
+  sourceKey: string,
+): boolean {
+  if (!scene.textures.exists(sourceKey)) return false;
+  const source = scene.textures.get(sourceKey).getSourceImage() as HTMLImageElement;
+  const sourceWidth = source.naturalWidth || source.width;
+  const sourceHeight = source.naturalHeight || source.height;
+  if (!sourceWidth || !sourceHeight) return false;
+
+  const layout = getSpriteLayout();
+  registerSpriteLayout(key, layout);
+  const canvas = document.createElement('canvas');
+  canvas.width = layout.totalColumns * FW;
+  canvas.height = STATE_ORDER.length * FH;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  STATE_ORDER.forEach((state, row) => {
+    const frameCount = STATE_FRAMES[state];
+    for (let frame = 0; frame < frameCount; frame += 1) {
+      const transform = templateZeroFrameTransform(state, frame, frameCount);
+      const ox = frame * FW;
+      const oy = row * FH;
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      if (transform.down) {
+        const downHeight = 116;
+        const scale = downHeight / sourceHeight;
+        ctx.translate(ox + FW / 2, oy + FH - 27);
+        ctx.rotate(-Math.PI / 2);
+        ctx.drawImage(
+          source,
+          -sourceWidth * scale / 2,
+          -sourceHeight * scale / 2,
+          sourceWidth * scale,
+          sourceHeight * scale,
+        );
+      } else {
+        const baseScale = Math.min((FH - 12) / sourceHeight, (FW - 16) / sourceWidth);
+        ctx.translate(
+          ox + FW / 2 + transform.offsetX,
+          oy + FH - 6 + transform.offsetY,
+        );
+        ctx.rotate(transform.rotation);
+        ctx.scale(baseScale * transform.scaleX, baseScale * transform.scaleY);
+        ctx.drawImage(source, -sourceWidth / 2, -sourceHeight, sourceWidth, sourceHeight);
+      }
+      ctx.restore();
+    }
+  });
+
+  if (scene.textures.exists(key)) scene.textures.remove(key);
+  const canvasTextureKey = `${key}_template_zero_canvas`;
+  if (scene.textures.exists(canvasTextureKey)) scene.textures.remove(canvasTextureKey);
+  const texture = scene.textures.addCanvas(canvasTextureKey, canvas);
+  if (!texture) return false;
+  scene.textures.addSpriteSheet(key, texture.getSourceImage() as HTMLImageElement, {
+    frameWidth: FW,
+    frameHeight: FH,
+  });
+  scene.textures.remove(canvasTextureKey);
+  return true;
+}
+
 export function generateFighterSpriteSheet(
   scene: Phaser.Scene,
   key: string,

@@ -34,8 +34,13 @@ export interface BrawlObstacleDefinition {
   laneDepth: number;
   /** Breakable obstacles only. */
   health?: number;
+  /** Immediate co-op recovery granted when a player lands the breaking hit. */
+  healthReward?: number;
   /** Ground clearance needed to pass over it. */
   jumpClearance?: number;
+  /** Exact ground footprint that hurts actors; independent from the prop art. */
+  hazardWidth?: number;
+  hazardLaneDepth?: number;
   /** Hazard animation offset so multiple vents do not pulse in sync. */
   cycleOffset?: number;
   /** Stage-specific material treatment without changing collision rules. */
@@ -108,6 +113,7 @@ const rushRouteMap: BrawlMapDefinition = {
       width: 86,
       laneDepth: 58,
       health: 95,
+      healthReward: 24,
       jumpClearance: 58,
     },
     {
@@ -130,6 +136,8 @@ const rushRouteMap: BrawlMapDefinition = {
       width: 92,
       laneDepth: 54,
       jumpClearance: 48,
+      hazardWidth: 130,
+      hazardLaneDepth: 42,
       cycleOffset: 18,
     },
     {
@@ -140,6 +148,7 @@ const rushRouteMap: BrawlMapDefinition = {
       width: 104,
       laneDepth: 62,
       health: 140,
+      healthReward: 32,
       jumpClearance: 64,
     },
     {
@@ -150,6 +159,8 @@ const rushRouteMap: BrawlMapDefinition = {
       width: 78,
       laneDepth: 48,
       jumpClearance: 48,
+      hazardWidth: 112,
+      hazardLaneDepth: 38,
       cycleOffset: 92,
     },
     {
@@ -185,6 +196,10 @@ const rushRouteMap: BrawlMapDefinition = {
           id: 'checkpoint-1-c', archetype: 'shooter', x: 1390, lane: 492, level: 1,
           entrance: { kind: 'background', sourceLane: 304, delayTicks: 34 },
         },
+        {
+          id: 'checkpoint-1-d', archetype: 'bruiser', x: 1320, lane: 382, level: 1,
+          entrance: { kind: 'drop', sourceHeight: 220, delayTicks: 56 },
+        },
       ],
     },
     {
@@ -210,6 +225,10 @@ const rushRouteMap: BrawlMapDefinition = {
           id: 'checkpoint-2-d', archetype: 'grunt', x: 2350, lane: 400, level: 2,
           entrance: { kind: 'drop', sourceHeight: 230, delayTicks: 48 },
         },
+        {
+          id: 'checkpoint-2-e', archetype: 'shooter', x: 2050, lane: 488, level: 2,
+          entrance: { kind: 'right', sourceX: 2600, delayTicks: 68 },
+        },
       ],
     },
     {
@@ -234,6 +253,14 @@ const rushRouteMap: BrawlMapDefinition = {
         {
           id: 'checkpoint-3-d', archetype: 'bruiser', x: 3430, lane: 486, level: 3,
           entrance: { kind: 'drop', sourceHeight: 260, delayTicks: 54 },
+        },
+        {
+          id: 'checkpoint-3-e', archetype: 'shooter', x: 3440, lane: 362, level: 3,
+          entrance: { kind: 'door', sourceX: 3470, sourceLane: 304, delayTicks: 70 },
+        },
+        {
+          id: 'checkpoint-3-f', archetype: 'grunt', x: 3260, lane: 458, level: 3,
+          entrance: { kind: 'right', sourceX: 3590, delayTicks: 84 },
         },
       ],
     },

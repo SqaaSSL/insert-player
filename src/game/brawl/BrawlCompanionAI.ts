@@ -40,6 +40,17 @@ function nearestEnemy(self: BrawlActor, enemies: readonly BrawlActor[]): BrawlAc
   return nearest;
 }
 
+function nearestRecoveryObstacle(self: BrawlActor, sim: BrawlSimulation) {
+  return sim.obstacles
+    .filter((obstacle) => obstacle.health > 0 && obstacle.healthReward > 0)
+    .filter((obstacle) => obstacle.x >= self.x - 100)
+    .map((obstacle) => ({
+      obstacle,
+      score: Math.abs(obstacle.x - self.x) + Math.abs(obstacle.lane - self.lane) * 1.5,
+    }))
+    .sort((a, b) => a.score - b.score)[0]?.obstacle ?? null;
+}
+
 function shouldJumpObstacle(self: BrawlActor, sim: BrawlSimulation, direction: -1 | 1): boolean {
   if (self.height > 0) return false;
   return sim.obstacles.some((obstacle) => {
@@ -59,6 +70,38 @@ function hasIncomingProjectile(self: BrawlActor, sim: BrawlSimulation): boolean 
     const ticksToImpact = (self.x - projectile.x) / projectile.vx;
     return ticksToImpact > 2 && ticksToImpact <= PROJECTILE_DODGE_TICKS;
   });
+}
+
+function hasIncomingMelee(self: BrawlActor, sim: BrawlSimulation): boolean {
+  return sim.enemies.some((enemy) => enemy.health > 0
+    && enemy.combatReady
+    && enemy.state === 'attack'
+    && !enemy.attackResolved
+    && Math.abs(enemy.x - self.x) <= 118
+    && Math.abs(enemy.lane - self.lane) <= 72);
+}
+
+function hasUnsafeExplosiveLine(self: BrawlActor, target: BrawlActor, sim: BrawlSimulation): boolean {
+  const direction = target.x >= self.x ? 1 : -1;
+  return sim.obstacles.some((obstacle) => {
+    if (obstacle.type !== 'explosive-barrel' || obstacle.health <= 0) return false;
+    const distance = (obstacle.x - self.x) * direction;
+    if (distance <= 0 || distance >= Math.abs(target.x - self.x)) return false;
+    if (Math.abs(obstacle.lane - self.lane) > obstacle.laneDepth / 2 + 12) return false;
+    return sim.players.some((player) => player.health > 0
+      && Math.hypot(player.x - obstacle.x, (player.lane - obstacle.lane) * 1.35)
+        <= obstacle.explosionRadius + 36);
+  });
+}
+
+function hasUnsafeExplosiveNearby(self: BrawlActor, sim: BrawlSimulation): boolean {
+  return sim.obstacles.some((obstacle) => obstacle.type === 'explosive-barrel'
+    && obstacle.health > 0
+    && Math.abs(obstacle.x - self.x) <= obstacle.width / 2 + 126
+    && Math.abs(obstacle.lane - self.lane) <= obstacle.laneDepth / 2 + 58
+    && sim.players.some((player) => player.health > 0
+      && Math.hypot(player.x - obstacle.x, (player.lane - obstacle.lane) * 1.35)
+        <= obstacle.explosionRadius + 36));
 }
 
 /**
@@ -83,6 +126,10 @@ export function getBrawlCompanionInput(
     };
   }
 
+  if (hasIncomingMelee(self, sim)) {
+    return { ...EMPTY_BRAWL_INPUT, guard: true };
+  }
+
   if (partner.health <= 0) {
     const closeEnough = Math.abs(partner.x - self.x) <= REVIVE_APPROACH_X
       && Math.abs(partner.lane - self.lane) <= REVIVE_APPROACH_LANE;
@@ -105,14 +152,43 @@ export function getBrawlCompanionInput(
     }
     const inRange = Math.abs(dx) <= COMBAT_RANGE_X && Math.abs(laneDelta) <= COMBAT_RANGE_LANE;
     if (inRange) {
-      if (sim.tick % 40 === 0) return { ...EMPTY_BRAWL_INPUT, kick: true };
-      if (sim.tick % 18 === 0) return { ...EMPTY_BRAWL_INPUT, punch: true };
+      if (self.state === 'idle' || self.state === 'walk') {
+        const safeToCleave = !hasUnsafeExplosiveNearby(self, sim);
+        if (safeToCleave && sim.tick % 40 === 0) return { ...EMPTY_BRAWL_INPUT, kick: true };
+        const attackPhase = (sim.tick + slot * 13) % 58;
+        if (safeToCleave && attackPhase < 22) return { ...EMPTY_BRAWL_INPUT, kick: true };
+        return { ...EMPTY_BRAWL_INPUT, punch: true };
+      }
       return { ...EMPTY_BRAWL_INPUT };
     }
-    if (Math.abs(dx) >= 145 && Math.abs(laneDelta) <= 34 && sim.tick % 96 === 0) {
+    if (
+      Math.abs(dx) >= 135
+      && Math.abs(laneDelta) <= 34
+      && self.cooldown <= 0
+      && !hasUnsafeExplosiveLine(self, target, sim)
+    ) {
       return { ...EMPTY_BRAWL_INPUT, fireball: true };
     }
     return movementToward(self, target.x, target.lane, COMBAT_RANGE_X - 8, COMBAT_RANGE_LANE - 6);
+  }
+
+  const recovery = self.health <= 72 || partner.health <= 72
+    ? nearestRecoveryObstacle(self, sim)
+    : null;
+  if (recovery) {
+    const closeEnough = Math.abs(recovery.x - self.x) <= recovery.width / 2 + COMBAT_RANGE_X
+      && Math.abs(recovery.lane - self.lane) <= recovery.laneDepth / 2 + COMBAT_RANGE_LANE;
+    if (closeEnough) {
+      if (self.state === 'idle' || self.state === 'walk') return { ...EMPTY_BRAWL_INPUT, kick: true };
+      return { ...EMPTY_BRAWL_INPUT };
+    }
+    return movementToward(
+      self,
+      recovery.x,
+      recovery.lane,
+      recovery.width / 2 + COMBAT_RANGE_X - 10,
+      recovery.laneDepth / 2 + COMBAT_RANGE_LANE - 8,
+    );
   }
 
   if (shouldJumpObstacle(self, sim, 1)) {
