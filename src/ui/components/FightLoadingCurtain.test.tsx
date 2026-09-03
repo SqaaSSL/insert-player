@@ -54,14 +54,26 @@ describe('FightLoadingCurtain', () => {
         p1PhotoHash={null}
         p2PhotoHash={null}
         stageLabel="Side Street"
+        stageDescription="Golden-hour workshops open into a four-screen industrial night run."
+        stageImageUrl="/assets/rush/side-street/side-street-fight-v1.webp"
         onExit={vi.fn()}
       />,
     );
 
     expect(markup).toContain('is-rush');
     expect(markup).toContain('CO-OP RUSH');
-    expect(markup).toContain('LOADING SIDE STREET');
-    expect(markup).toContain('CPU');
-    expect(markup).toContain('>+</i>');
+    expect(markup).toContain('TEAM READY');
+    expect(markup).toContain('MOVE AS ONE');
+    expect(markup).toContain('ROUTE 01');
+    expect(markup).toContain('SIDE STREET');
+    expect(markup).toContain('Golden-hour workshops');
+    expect(markup).toContain('MOVE RIGHT');
+    expect(markup).toContain('PLAYER + CPU');
+    expect(markup).toContain('CLEAR 4 SECTORS');
+    expect(markup).toContain('OPENING ROUTE');
+    expect(markup).toContain('/assets/rush/side-street/side-street-fight-v1.webp');
+    expect(markup).not.toContain('fight-loader__panel--p1');
+    expect(markup).not.toContain('fight-loader__panel--p2');
+    expect(markup).not.toContain('fight-loader__vs');
   });
 });

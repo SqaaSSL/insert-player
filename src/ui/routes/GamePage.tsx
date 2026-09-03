@@ -234,6 +234,12 @@ export function GamePage({
     window.dispatchEvent(new CustomEvent(MATCH_ACTION_EVENT, { detail: { action } }));
   };
 
+  const loadingStageTheme = getStageTheme(
+    launchTarget.data.stageId
+      ?? pickStageThemeIdFromSeed(buildMatchSeed(launchTarget.data)),
+  );
+  const loadingStageLabel = launchTarget.data.customStageLabel ?? loadingStageTheme.label;
+
   return (
     <div className="game-shell">
       <div className="game-shell__surface">
@@ -250,13 +256,11 @@ export function GamePage({
           p2Name={launchTarget.data.p2Name ?? 'Player Two'}
           p1PhotoHash={launchTarget.data.p1PhotoHash ?? null}
           p2PhotoHash={launchTarget.data.p2PhotoHash ?? null}
-          stageLabel={
-            launchTarget.data.customStageLabel ??
-            getStageTheme(
-              launchTarget.data.stageId ??
-              pickStageThemeIdFromSeed(buildMatchSeed(launchTarget.data)),
-            ).label
-          }
+          stageLabel={loadingStageLabel}
+          stageDescription={loadingStageTheme.blurb}
+          stageImageUrl={isRush
+            ? (loadingStageTheme.assetPath ?? loadingStageTheme.rushAssetPath ?? null)
+            : null}
           onExit={onExit}
         />
       ) : null}
