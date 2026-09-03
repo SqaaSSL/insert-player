@@ -109,7 +109,13 @@ describe('fighter sprite presentation', () => {
     expect(shadow.originX).toBeCloseTo(sprite.originX);
     expect(shadow.originY).toBe(sprite.originY);
     expect(shadow.scale).toBeCloseTo(sprite.scale * 1.015);
+    expect(shadow.y - sprite.y).toBe(11);
     expect(view.getRenderY()).toBe(GROUND_Y + 18);
+
+    view.syncSprite(100, 64);
+
+    expect(sprite.y).toBeCloseTo(GROUND_Y + 18 - 6 * 1.2 - 64);
+    expect(shadow.y).toBeCloseTo(sprite.y + 11);
 
     fighter.facingRight = true;
     fighter.forceState(FighterState.LOW_PUNCH);

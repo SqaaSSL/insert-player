@@ -966,8 +966,7 @@ export class RushScene extends Phaser.Scene {
     presentation.fighter.facingRight = actor.facingRight;
     presentation.fighter.state = this.fighterStateFor(actor);
     presentation.fighter.stateFrame = actor.stateTick;
-    presentation.view.syncSprite(nearestOpponentX);
-    presentation.view.sprite.setY(presentation.view.sprite.y - actor.height);
+    presentation.view.syncSprite(nearestOpponentX, actor.height);
     const depth = Math.round(actor.lane) + (actor.kind === 'player' ? 1 : 0);
     presentation.view.shadowSprite?.setDepth(depth - 2);
     presentation.view.sprite.setDepth(depth);
