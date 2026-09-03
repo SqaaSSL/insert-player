@@ -77,4 +77,32 @@ describe('FightLoadingCurtain', () => {
     expect(markup).not.toContain('fight-loader__panel--p2');
     expect(markup).not.toContain('fight-loader__vs');
   });
+
+  it('loads Aura as a shared routine instead of a Fight versus card', () => {
+    const markup = renderToStaticMarkup(
+      <FightLoadingCurtain
+        phase="loading"
+        mode="aura"
+        p1Name="Fran"
+        p2Name="Byte"
+        p1PhotoHash={null}
+        p2PhotoHash={null}
+        stageLabel="Insert Player Arena"
+        stageDescription="The main event room."
+        stageImageUrl="/assets/stages/signature/insert-player-arena-pipeline-v1.png"
+        difficultyLabel="Viral"
+        onExit={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('is-aura');
+    expect(markup).toContain('AURA BATTLE');
+    expect(markup).toContain('SAME ROUTINE');
+    expect(markup).toContain('WHO OWNS THE ROOM?');
+    expect(markup).toContain('ALTERNATING TURNS');
+    expect(markup).toContain('HIT ON BEAT');
+    expect(markup).toContain('VIRAL');
+    expect(markup).toContain('CALIBRATING VIBES');
+    expect(markup).not.toContain('fight-loader__vs');
+  });
 });

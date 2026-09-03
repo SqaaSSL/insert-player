@@ -9,6 +9,7 @@ import {
   ONLINE_REMATCH_STATE_EVENT,
   RUSH_COMPANION_ORDER_EVENT,
   RUSH_RUN_COMPLETE_EVENT,
+  AURA_BATTLE_COMPLETE_EVENT,
   RUNTIME_READY_EVENT,
   buildMatchSeed,
   type MatchAction,
@@ -17,6 +18,7 @@ import {
   type NetStateDetail,
   type OnlineRematchStateDetail,
   type RushRunCompleteDetail,
+  type AuraBattleCompleteDetail,
 } from '../../game/match/MatchConfig.ts';
 import { MobileFightControls } from '../components/MobileFightControls.tsx';
 import { FightControlsHint } from '../components/FightControlsHint.tsx';
@@ -34,6 +36,9 @@ import { RushRunResults } from '../components/RushRunResults.tsx';
 import { RushCompanionOrders } from '../components/RushCompanionOrders.tsx';
 import { getRushDifficulty, type RushCompanionOrder } from '../../game/brawl/RushConfig.ts';
 import { FightResultShare } from '../components/FightResultShare.tsx';
+import { AuraControls } from '../components/AuraControls.tsx';
+import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
+import { getAuraDifficulty } from '../../game/aura/AuraConfig.ts';
 
 export interface LadderContext {
   rungIndex: number;
@@ -91,6 +96,7 @@ export function GamePage({
   const [netState, setNetState] = useState<NetStateDetail | null>(null);
   const [onlineRematch, setOnlineRematch] = useState<OnlineRematchStateDetail>({ state: 'idle' });
   const isRush = launchTarget.sceneKey === 'RushScene';
+  const isAura = launchTarget.sceneKey === 'AuraScene';
   const online = isRush ? null : (launchTarget.data.online ?? null);
   const trial = launchTarget.data.experience === 'trial';
   const trialPlayerName = launchTarget.data.p1Name?.trim() || 'Player One';
@@ -99,6 +105,7 @@ export function GamePage({
   const [ladderBusy, setLadderBusy] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState<FightLoadingPhase | 'hidden'>('loading');
   const [rushSummary, setRushSummary] = useState<RushRunCompleteDetail | null>(null);
+  const [auraSummary, setAuraSummary] = useState<AuraBattleCompleteDetail | null>(null);
   const [rushCompanionOrder, setRushCompanionOrder] = useState<RushCompanionOrder>(
     launchTarget.data.rushCompanionOrder ?? 'follow',
   );
@@ -123,6 +130,7 @@ export function GamePage({
     setOnlineRematch({ state: 'idle' });
     setLoadingPhase('loading');
     setRushSummary(null);
+    setAuraSummary(null);
     setRushCompanionOrder(launchTarget.data.rushCompanionOrder ?? 'follow');
   }, [launchTarget]);
 
@@ -152,6 +160,17 @@ export function GamePage({
     window.addEventListener(RUSH_RUN_COMPLETE_EVENT, onRushComplete);
     return () => window.removeEventListener(RUSH_RUN_COMPLETE_EVENT, onRushComplete);
   }, [isRush]);
+
+  useEffect(() => {
+    if (!isAura) return;
+    const onAuraComplete = (event: WindowEventMap[typeof AURA_BATTLE_COMPLETE_EVENT]) => {
+      onComplete();
+      setAuraSummary(event.detail);
+      setWinnerSlot(event.detail.winnerSlot === 'draw' ? null : event.detail.winnerSlot);
+    };
+    window.addEventListener(AURA_BATTLE_COMPLETE_EVENT, onAuraComplete);
+    return () => window.removeEventListener(AURA_BATTLE_COMPLETE_EVENT, onAuraComplete);
+  }, [isAura, onComplete]);
 
   useEffect(() => {
     if (!import.meta.env.DEV || !isRush) return;
@@ -196,6 +215,7 @@ export function GamePage({
       if (event.detail.state === 'starting') {
         setWinnerSlot(null);
         setMatchSummary(null);
+        setAuraSummary(null);
       }
     };
     window.addEventListener(ONLINE_REMATCH_STATE_EVENT, onRematchState);
@@ -334,25 +354,27 @@ export function GamePage({
       <div className="game-shell__surface">
         <div id="game-container" className="game-shell__canvas" />
       </div>
-      {isRush ? null : <FightHud />}
-      {isRush ? null : <FightIntroOverlay />}
-      {isRush ? null : <FightAnnouncement />}
+      {isRush || isAura ? null : <FightHud />}
+      {isRush || isAura ? null : <FightIntroOverlay />}
+      {isRush || isAura ? null : <FightAnnouncement />}
       {loadingPhase !== 'hidden' ? (
         <FightLoadingCurtain
           phase={loadingPhase}
-          mode={isRush ? 'rush' : 'fight'}
+          mode={isRush ? 'rush' : isAura ? 'aura' : 'fight'}
           p1Name={launchTarget.data.p1Name ?? 'Player One'}
           p2Name={launchTarget.data.p2Name ?? 'Player Two'}
           p1PhotoHash={launchTarget.data.p1PhotoHash ?? null}
           p2PhotoHash={launchTarget.data.p2PhotoHash ?? null}
           stageLabel={loadingStageLabel}
           stageDescription={loadingStageTheme.blurb}
-          stageImageUrl={isRush
+          stageImageUrl={isRush || isAura
             ? (loadingStageTheme.assetPath ?? loadingStageTheme.rushAssetPath ?? null)
             : null}
           difficultyLabel={isRush
             ? getRushDifficulty(launchTarget.data.rushDifficulty).label
-            : undefined}
+            : isAura
+              ? getAuraDifficulty(launchTarget.data.auraDifficulty).label
+              : undefined}
           onExit={onExit}
         />
       ) : null}
@@ -360,13 +382,13 @@ export function GamePage({
         <div className="trial-match-badge" role="status">Playable demo · free round</div>
       ) : null}
       {online && netState ? <NetStatusBadge state={netState} /> : null}
-      {online && loadingPhase === 'hidden' && !matchActionsVisible && (
+      {online && !isAura && loadingPhase === 'hidden' && !matchActionsVisible && (
         <MobileFightControls playerIndex={0} playerLabel={online.localSlot === 0 ? 'player 1' : 'player 2'} />
       )}
-      {!isRush && loadingPhase === 'hidden' && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
+      {!isRush && !isAura && loadingPhase === 'hidden' && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
         <MobileFightControls playerIndex={0} playerLabel="player 1" />
       )}
-      {!isRush && loadingPhase === 'hidden' && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI === false && !matchActionsVisible && (
+      {!isRush && !isAura && loadingPhase === 'hidden' && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI === false && !matchActionsVisible && (
         <div className="mobile-versus-unavailable" role="status">
           Touch Versus needs two control sets and is unavailable on this screen. Use a keyboard or controllers,
           or play Arcade Mode on touch.
@@ -382,6 +404,9 @@ export function GamePage({
         <div className="mobile-versus-unavailable" role="status">
           Online Co-op Rush is not connected in this local preview.
         </div>
+      ) : null}
+      {isAura && loadingPhase === 'hidden' && !launchTarget.data.cpuVsCpu && !matchActionsVisible && !auraSummary ? (
+        <AuraControls playerIndex={online?.localSlot ?? 0} />
       ) : null}
       {matchActionsVisible && ladder && winnerSlot === 'p1' && ladder.isFinal && (
         <div className="match-actions" role="group" aria-label="Arcade champion">
@@ -454,7 +479,7 @@ export function GamePage({
           </button>
         </div>
       )}
-      {matchActionsVisible && online && (
+      {matchActionsVisible && online && !isAura && (
         <div className="match-actions" role="group" aria-label="Online match complete">
           <span className="match-actions__label">
             {netState?.abandoned
@@ -530,7 +555,7 @@ export function GamePage({
           </button>
         </div>
       )}
-      {matchActionsVisible && !trial && !online && (!ladder || winnerSlot === null) && (
+      {matchActionsVisible && !isAura && !trial && !online && (!ladder || winnerSlot === null) && (
         <div className="match-actions" role="group" aria-label="Match complete actions">
           <span className="match-actions__label">Match Complete</span>
           <button
@@ -565,7 +590,27 @@ export function GamePage({
           onExit={onExit}
         />
       ) : null}
-      {loadingPhase === 'hidden' && !onlineMatch && !matchActionsVisible && !rushSummary && !paused && (
+      {auraSummary && matchActionsVisible ? (
+        <AuraBattleResults
+          summary={auraSummary}
+          localSlot={online?.localSlot}
+          onlineRematch={online ? onlineRematch : undefined}
+          disableRematch={Boolean(netState?.abandoned || netState?.desynced)}
+          onRetry={() => {
+            setAuraSummary(null);
+            chooseMatchAction('run_it_back');
+          }}
+          onRemix={online ? undefined : () => {
+            setAuraSummary(null);
+            chooseMatchAction('remix');
+          }}
+          onExit={() => {
+            if (online) chooseMatchAction('menu');
+            else onExit();
+          }}
+        />
+      ) : null}
+      {loadingPhase === 'hidden' && !onlineMatch && !matchActionsVisible && !rushSummary && !auraSummary && !paused && (
         <button
           type="button"
           className="fight-pause-button"
@@ -596,8 +641,8 @@ export function GamePage({
           </div>
         </div>
       )}
-      {isRush ? null : <FightControlsHint />}
-      {loadingPhase === 'hidden' && !rushSummary ? (
+      {isRush || isAura ? null : <FightControlsHint />}
+      {loadingPhase === 'hidden' && !rushSummary && !auraSummary ? (
         <button type="button" className="game-shell__gallery-link" onClick={onExit}>
           {trial ? 'Exit Demo' : 'Back'}
         </button>

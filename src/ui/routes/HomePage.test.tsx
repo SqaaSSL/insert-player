@@ -7,6 +7,10 @@ const callbacks = {
   onCreateStage: vi.fn(),
   onOpenArcade: vi.fn(),
   onOpenCoopRush: vi.fn(),
+  onOpenAuraCpu: vi.fn(),
+  onOpenAuraPlayer: vi.fn(),
+  onOpenAuraOnline: vi.fn(),
+  onOpenAuraWatch: vi.fn(),
   onNavigateLegal: vi.fn(),
   onOpenGallery: vi.fn(),
   onOpenCommunity: vi.fn(),
@@ -18,7 +22,7 @@ const callbacks = {
 };
 
 describe('HomePage game modes', () => {
-  it('presents Fight and Rush as sibling games backed by one roster', () => {
+  it('presents Fight, Rush, and Aura as sibling games backed by one roster', () => {
     const markup = renderToStaticMarkup(
       <HomePage authStatus="local" authSessionKey="local" {...callbacks} />,
     );
@@ -30,11 +34,13 @@ describe('HomePage game modes', () => {
     expect(markup).toContain('Play Fight');
     expect(markup).toContain('Play Rush Beta');
     expect(markup).toContain('Stage Scout');
+    expect(markup).toContain('Play Aura');
     expect(markup).toContain('home-mode__launch--fight');
     expect(markup).toContain('home-mode__launch--rush');
-    expect(markup.match(/home-mode__footer/g)).toHaveLength(2);
+    expect(markup).toContain('home-mode__launch--aura');
+    expect(markup.match(/home-mode__footer/g)).toHaveLength(3);
     expect(markup).toContain('Player + CPU');
-    expect(markup).toContain('Your fighters work in Fight and Rush');
+    expect(markup).toContain('Your fighters work in Fight, Rush, and Aura');
     expect(markup).not.toContain('Co-op Rush');
   });
 });

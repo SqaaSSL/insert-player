@@ -17,6 +17,11 @@ describe('roster match helpers', () => {
     expect(isCpuRosterSlot('vs', 'p2')).toBe(false);
     expect(isCpuRosterSlot('rush', 'p1')).toBe(false);
     expect(isCpuRosterSlot('rush', 'p2')).toBe(true);
+    expect(isCpuRosterSlot('aura', 'p1')).toBe(false);
+    expect(isCpuRosterSlot('aura', 'p2')).toBe(true);
+    expect(isCpuRosterSlot('aura-vs', 'p2')).toBe(false);
+    expect(isCpuRosterSlot('aura-watch', 'p1')).toBe(true);
+    expect(isCpuRosterSlot('aura-watch', 'p2')).toBe(true);
   });
 
   it('keeps an explicit CPU personality when the fighter changes', () => {
@@ -40,6 +45,8 @@ describe('roster match helpers', () => {
     expect(shouldBlockTouchVersus('rush', true)).toBe(false);
     expect(shouldBlockTouchVersus('rush', false)).toBe(false);
     expect(shouldBlockTouchVersus('cpu', true)).toBe(false);
+    expect(shouldBlockTouchVersus('aura-vs', true)).toBe(true);
+    expect(shouldBlockTouchVersus('aura', true)).toBe(false);
   });
 
   it('invalidates an async launch after cancel or unmount', () => {

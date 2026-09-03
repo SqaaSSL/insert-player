@@ -1,6 +1,9 @@
 import type { StageThemeId } from './StageConfig.ts';
 import type { RushRunRank } from '../brawl/RushRunScore.ts';
 import type { RushCompanionOrder, RushDifficultyId } from '../brawl/RushConfig.ts';
+import type { AuraDifficultyId } from '../aura/AuraConfig.ts';
+import type { AuraLane } from '../aura/AuraChart.ts';
+import type { AuraPlayerScore } from '../aura/AuraBattle.ts';
 import { ROUNDS_TO_WIN } from '../constants.ts';
 
 export type MatchExperience = 'standard' | 'trial';
@@ -54,7 +57,7 @@ export interface MatchSceneData {
   /** Number of round wins needed. Omitted preserves the normal best-of-three match. */
   roundsToWin?: number;
   /** Both modes share the cabinet, roster, fighters, and visual identity. */
-  gameMode?: 'fight' | 'rush';
+  gameMode?: 'fight' | 'rush' | 'aura';
   vsAI?: boolean;
   cpuVsCpu?: boolean;
   p1PhotoHash?: string;
@@ -75,6 +78,8 @@ export interface MatchSceneData {
   rushDifficulty?: RushDifficultyId;
   /** Live tactical posture for the local CPU partner. */
   rushCompanionOrder?: RushCompanionOrder;
+  /** Rhythm density, timing windows, and CPU precision for Aura Battle. */
+  auraDifficulty?: AuraDifficultyId;
   /**
    * Explicit simulation seed (uint32). When present it wins over the derived
    * match-identity hash, so two machines can agree on one seed for netplay
@@ -123,6 +128,8 @@ export const NET_STATE_EVENT = 'asf-net-state';
 export const RUNTIME_READY_EVENT = 'asf-runtime-ready';
 export const RUSH_RUN_COMPLETE_EVENT = 'asf-rush-run-complete';
 export const RUSH_COMPANION_ORDER_EVENT = 'asf-rush-companion-order';
+export const AURA_INPUT_EVENT = 'asf-aura-input';
+export const AURA_BATTLE_COMPLETE_EVENT = 'asf-aura-battle-complete';
 export const ONLINE_REMATCH_STATE_EVENT = 'asf-online-rematch-state';
 
 export type MatchAction = 'run_it_back' | 'remix' | 'menu';
@@ -153,7 +160,7 @@ export interface MatchActionsVisibilityDetail {
 }
 
 export interface RuntimeReadyDetail {
-  sceneKey: 'FightScene' | 'RushScene';
+  sceneKey: 'FightScene' | 'RushScene' | 'AuraScene';
   matchSeed?: number;
 }
 
@@ -176,6 +183,26 @@ export interface RushRunCompleteDetail {
 
 export interface RushCompanionOrderDetail {
   order: RushCompanionOrder;
+}
+
+export interface AuraInputDetail {
+  lane: AuraLane;
+  playerIndex: 0 | 1;
+}
+
+export interface AuraBattleCompleteDetail {
+  winnerSlot: 'p1' | 'p2' | 'draw';
+  p1Name: string;
+  p2Name: string;
+  p1Score: AuraPlayerScore;
+  p2Score: AuraPlayerScore;
+  p1Rank: 'S' | 'A' | 'B' | 'C' | 'NPC';
+  p2Rank: 'S' | 'A' | 'B' | 'C' | 'NPC';
+  durationSeconds: number;
+  difficulty: AuraDifficultyId;
+  stageId: StageThemeId;
+  stageLabel: string;
+  online?: OnlineMatchInfo;
 }
 
 export interface OnlineRematchStateDetail {
@@ -256,6 +283,8 @@ declare global {
     [RUNTIME_READY_EVENT]: CustomEvent<RuntimeReadyDetail>;
     [RUSH_RUN_COMPLETE_EVENT]: CustomEvent<RushRunCompleteDetail>;
     [RUSH_COMPANION_ORDER_EVENT]: CustomEvent<RushCompanionOrderDetail>;
+    [AURA_INPUT_EVENT]: CustomEvent<AuraInputDetail>;
+    [AURA_BATTLE_COMPLETE_EVENT]: CustomEvent<AuraBattleCompleteDetail>;
     [ONLINE_REMATCH_STATE_EVENT]: CustomEvent<OnlineRematchStateDetail>;
     [PAUSE_EVENT]: CustomEvent<PauseDetail>;
   }
@@ -355,6 +384,12 @@ export function buildMatchSeed(data: MatchSceneData): number {
     String(remix),
     data.p2Difficulty === undefined ? 'difficulty:default' : `difficulty:${data.p2Difficulty}`,
   ];
+  if (data.gameMode === 'aura') {
+    parts.push('game-mode:aura');
+    parts.push(data.auraDifficulty === undefined
+      ? 'aura-difficulty:default'
+      : `aura-difficulty:${data.auraDifficulty}`);
+  }
   if (data.experience !== undefined) parts.push(`experience:${data.experience}`);
   if (data.roundsToWin !== undefined) parts.push(`rounds-to-win:${data.roundsToWin}`);
 

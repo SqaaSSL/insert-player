@@ -7,7 +7,7 @@ export type FightLoadingPhase = 'loading' | 'opening' | 'error';
 
 interface FightLoadingCurtainProps {
   phase: FightLoadingPhase;
-  mode?: 'fight' | 'rush';
+  mode?: 'fight' | 'rush' | 'aura';
   p1Name: string;
   p2Name: string;
   p1PhotoHash: string | null;
@@ -17,6 +17,88 @@ interface FightLoadingCurtainProps {
   stageImageUrl?: string | null;
   difficultyLabel?: string;
   onExit: () => void;
+}
+
+function AuraLoadingLayout({
+  failed,
+  p1Name,
+  p2Name,
+  p1PhotoHash,
+  p2PhotoHash,
+  portraitRefreshKey,
+  stageLabel,
+  stageDescription,
+  stageImageUrl,
+  difficultyLabel,
+  onExit,
+}: RushLoadingLayoutProps) {
+  return (
+    <>
+      <div className="aura-loader__stage-art" aria-hidden="true">
+        {stageImageUrl ? <img src={stageImageUrl} alt="" decoding="async" fetchPriority="high" /> : null}
+      </div>
+      <div className="aura-loader__wash" aria-hidden="true" />
+      <div className="fight-loader__scanlines" aria-hidden="true" />
+
+      <div className="aura-loader__layout">
+        <section className="aura-loader__cast" aria-label={`${p1Name} and ${p2Name}`}>
+          <div className="aura-loader__brand-lockup">
+            <BrandMark size={46} className="aura-loader__mark" />
+            <div><strong>INSERT PLAYER</strong><span>AURA BATTLE</span></div>
+          </div>
+          <div className="aura-loader__claim">
+            <span>SAME ROUTINE</span>
+            <strong>WHO OWNS THE ROOM?</strong>
+          </div>
+          <div className="aura-loader__fighters">
+            <FighterSide
+              side="p1"
+              name={p1Name}
+              photoHash={p1PhotoHash}
+              portraitRefreshKey={portraitRefreshKey}
+              playerLabel="PERFORMER 1"
+            />
+            <span className="aura-loader__handoff" aria-hidden="true">↔</span>
+            <FighterSide
+              side="p2"
+              name={p2Name}
+              photoHash={p2PhotoHash}
+              portraitRefreshKey={portraitRefreshKey}
+              playerLabel="PERFORMER 2"
+            />
+          </div>
+        </section>
+
+        <aside className="aura-loader__briefing">
+          <span className="aura-loader__stage-label">LIVE FROM</span>
+          <h2>{stageLabel.toUpperCase()}</h2>
+          <p>{stageDescription ?? 'Take the camera, hit the four lanes, and protect your aura.'}</p>
+          <div className="aura-loader__lanes" aria-label="Four rhythm lanes">
+            <span>●<small>A</small></span>
+            <span>◆<small>S</small></span>
+            <span>■<small>D</small></span>
+            <span>▲<small>F</small></span>
+          </div>
+          <dl className="aura-loader__rules">
+            <div><dt>FORMAT</dt><dd>ALTERNATING TURNS</dd></div>
+            <div><dt>RULE</dt><dd>HIT ON BEAT</dd></div>
+            <div><dt>LEVEL</dt><dd>{difficultyLabel?.toUpperCase() ?? 'VIRAL'}</dd></div>
+          </dl>
+          {failed ? (
+            <div className="aura-loader__loading">
+              <span className="fight-loader__status fight-loader__status--error">AURA NOT FOUND</span>
+              <button type="button" className="fight-loader__exit asf-btn asf-btn--primary" onClick={onExit}>Back To Arcade</button>
+            </div>
+          ) : (
+            <div className="aura-loader__loading">
+              <span className="fight-loader__status">CALIBRATING VIBES</span>
+              <LoadingMeter />
+            </div>
+          )}
+        </aside>
+      </div>
+    </>
+  );
 }
 
 function fighterLabel(name: string, fallback: string): string {
@@ -199,6 +281,7 @@ export function FightLoadingCurtain({
 }: FightLoadingCurtainProps) {
   const failed = phase === 'error';
   const isRush = mode === 'rush';
+  const isAura = mode === 'aura';
   const [portraitRefreshKey, setPortraitRefreshKey] = useState(0);
 
   useEffect(() => {
@@ -216,6 +299,31 @@ export function FightLoadingCurtain({
         aria-label={failed ? 'The game could not load' : 'Loading Rush'}
       >
         <RushLoadingLayout
+          failed={failed}
+          p1Name={p1Name}
+          p2Name={p2Name}
+          p1PhotoHash={p1PhotoHash}
+          p2PhotoHash={p2PhotoHash}
+          portraitRefreshKey={portraitRefreshKey}
+          stageLabel={stageLabel}
+          stageDescription={stageDescription}
+          stageImageUrl={stageImageUrl}
+          difficultyLabel={difficultyLabel}
+          onExit={onExit}
+        />
+      </section>
+    );
+  }
+
+  if (isAura) {
+    return (
+      <section
+        className={`fight-loader is-${phase} is-aura`}
+        role={failed ? 'alert' : 'status'}
+        aria-live="polite"
+        aria-label={failed ? 'The game could not load' : 'Loading Aura Battle'}
+      >
+        <AuraLoadingLayout
           failed={failed}
           p1Name={p1Name}
           p2Name={p2Name}

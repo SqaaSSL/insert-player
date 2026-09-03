@@ -94,6 +94,10 @@ describe('signature stage configuration', () => {
     expect(getDefaultStageThemeIdForMode('rush')).toBe('side-street');
     expect(getStageThemesForMode('fight').map((stage) => stage.id)).toContain('side-street');
     expect(getStageThemesForMode('fight').map((stage) => stage.id)).toContain('la-jaula-304');
+    expect(getStageThemesForMode('aura').map((stage) => stage.id)).toEqual(
+      getStageThemesForMode('fight').map((stage) => stage.id),
+    );
+    expect(getDefaultStageThemeIdForMode('aura')).toBe('insert-player-arena');
   });
 
   it('keeps fight-plane calibration attached to the stage asset', () => {

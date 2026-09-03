@@ -59,6 +59,8 @@ interface OnlineVersusPageProps {
   onStartFight: (data: MatchSceneData) => void;
 }
 
+type OnlineDuelMode = 'fight' | 'aura';
+
 type RoomPhase =
   | { kind: 'idle' }
   | { kind: 'busy'; label: string }
@@ -69,6 +71,7 @@ interface LobbyPeerState {
   fighterId: string | null;
   fighterName: string;
   ready: boolean;
+  gameMode: OnlineDuelMode;
 }
 
 type CopyFeedback = {
@@ -84,9 +87,10 @@ type InvitationPhase =
 
 /** Control-channel messages exchanged in the lobby (reliable, JSON). */
 type LobbyMessage =
-  | { t: 'lobby'; fighterId: string | null; fighterName: string; ready: boolean }
+  | { t: 'lobby'; fighterId: string | null; fighterName: string; ready: boolean; gameMode: OnlineDuelMode }
   | {
       t: 'start';
+      gameMode: OnlineDuelMode;
       seed: number;
       matchSerial: number;
       inputDelay: number;
@@ -101,10 +105,12 @@ function isLobbyMessage(value: unknown): value is LobbyMessage {
   const message = value as Record<string, unknown>;
   if (message.t === 'lobby') {
     return (message.fighterId === null || typeof message.fighterId === 'string')
-      && typeof message.fighterName === 'string' && typeof message.ready === 'boolean';
+      && typeof message.fighterName === 'string' && typeof message.ready === 'boolean'
+      && (message.gameMode === 'fight' || message.gameMode === 'aura');
   }
   if (message.t === 'start') {
-    return typeof message.seed === 'number' && typeof message.matchSerial === 'number'
+    return (message.gameMode === 'fight' || message.gameMode === 'aura')
+      && typeof message.seed === 'number' && typeof message.matchSerial === 'number'
       && typeof message.inputDelay === 'number'
       && (message.hostFighterId === null || typeof message.hostFighterId === 'string')
       && (message.guestFighterId === null || typeof message.guestFighterId === 'string')
@@ -268,6 +274,10 @@ function ConnectionStats({
 }
 
 export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVersusPageProps) {
+  const requestedMode: OnlineDuelMode = typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('mode') === 'aura'
+    ? 'aura'
+    : 'fight';
   const invitationFromUrl = typeof window === 'undefined'
     ? null
     : versusInviteTokenFromSearch(window.location.search);
@@ -301,6 +311,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
   const [rosterStatus, setRosterStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [duelMode, setDuelMode] = useState<OnlineDuelMode>(requestedMode);
   const [peer, setPeer] = useState<LobbyPeerState | null>(null);
   const [launchStatus, setLaunchStatus] = useState<string | null>(null);
   const transportRef = useRef<PeerTransport | null>(null);
@@ -308,7 +319,12 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
   const launchingRef = useRef(false);
   const inviteJoinAttemptedRef = useRef(false);
   const invitationRequestKeyRef = useRef<string | null>(null);
-  const localLobbyRef = useRef<LobbyPeerState>({ fighterId: null, fighterName: 'Fighter', ready: false });
+  const localLobbyRef = useRef<LobbyPeerState>({
+    fighterId: null,
+    fighterName: 'Fighter',
+    ready: false,
+    gameMode: requestedMode,
+  });
 
   const signedIn = authStatus === 'signed-in';
   const guestInvite = Boolean(
@@ -495,6 +511,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
           : undefined,
       });
       onStartFight({
+        gameMode: start.gameMode,
         vsAI: false,
         cpuVsCpu: false,
         p1PhotoHash: hostHash,
@@ -539,7 +556,16 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
     transport.onControl((payload) => {
       if (!isLobbyMessage(payload)) return;
       if (payload.t === 'lobby') {
-        setPeer({ fighterId: payload.fighterId, fighterName: payload.fighterName, ready: payload.ready });
+        setPeer({
+          fighterId: payload.fighterId,
+          fighterName: payload.fighterName,
+          ready: payload.ready,
+          gameMode: payload.gameMode,
+        });
+        if (seat.seat === 'guest') {
+          setDuelMode(payload.gameMode);
+          localLobbyRef.current = { ...localLobbyRef.current, gameMode: payload.gameMode };
+        }
         return;
       }
       if (seat.seat === 'guest') void launchMatch(payload, seat);
@@ -565,6 +591,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
         const matchSerial = await allocateVersusMatch(seat.roomCode, versusRoomRequestContext(seat));
         const start: Extract<LobbyMessage, { t: 'start' }> = {
           t: 'start',
+          gameMode: duelMode,
           seed: randomSeed(),
           matchSerial,
           inputDelay: DEFAULT_INPUT_DELAY,
@@ -580,7 +607,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
         setRoom({ kind: 'error', message: err instanceof Error ? err.message : 'Could not start the match' });
       }
     })();
-  }, [room, ready, peer, transportState, launchMatch]);
+  }, [room, ready, peer, transportState, launchMatch, duelMode]);
 
   // ------------------------------------------------------------ actions
 
@@ -672,7 +699,12 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
         );
         setLaunchStatus(null);
       }
-      localLobbyRef.current = { fighterId, fighterName: selected?.name ?? 'Fighter', ready: next };
+      localLobbyRef.current = {
+        fighterId,
+        fighterName: selected?.name ?? 'Fighter',
+        ready: next,
+        gameMode: duelMode,
+      };
       setReady(next);
       sendLobbyState();
     } catch (err) {
@@ -700,13 +732,17 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
     if (invitationPhase.kind === 'ready') {
       const expiresAt = Date.parse(invitationPhase.invitation.expiresAt);
       if (Number.isFinite(expiresAt) && expiresAt > Date.now()) {
-        await copyRoomValue('invite', invitationPhase.invitation.url);
+        const url = new URL(invitationPhase.invitation.url);
+        url.searchParams.set('mode', duelMode);
+        await copyRoomValue('invite', url.toString());
         return;
       }
     }
     const invitation = await prepareInvitation(room.seat.roomCode, selected.cloudFighterId);
     if (invitation) {
-      await copyRoomValue('invite', invitation.url);
+      const url = new URL(invitation.url);
+      url.searchParams.set('mode', duelMode);
+      await copyRoomValue('invite', url.toString());
     }
   };
 
@@ -727,11 +763,17 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
       <header className={`roster-hero${invitedToken ? ' online-versus__invite-hero' : ''}`}>
         <div>
           {invitedToken ? <p className="online-versus__eyebrow">Private Online Versus</p> : null}
-          <h1>{invitedToken ? 'Challenge incoming' : 'Online Versus'}</h1>
+          <h1>
+            {invitedToken
+              ? 'Challenge incoming'
+              : duelMode === 'aura' ? 'Online Aura Battle' : 'Online Versus'}
+          </h1>
           <p className="roster-hero__copy">
             {invitedToken
               ? `${inviteOpponent}${invitedFighterName ? ` is bringing ${invitedFighterName}` : ' is waiting for you'}. Pick a fighter and enter the match.`
-              : 'Choose your fighter, create a private challenge, then send the link. Room codes remain as a backup.'}
+              : duelMode === 'aura'
+                ? 'Choose a performer, create a private challenge, and settle who owns the room on the same four-lane routine.'
+                : 'Choose your fighter, create a private challenge, then send the link. Room codes remain as a backup.'}
           </p>
           {guestInvite ? (
             <div className="online-versus__guest-benefits" aria-label="Guest mode benefits">
@@ -745,6 +787,44 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
           <Button variant="ghost" onClick={onBack}>Back</Button>
         </div>
       </header>
+
+      <section className="online-versus__mode-picker" aria-label="Online game mode">
+        <div>
+          <span>GAME</span>
+          <strong>{duelMode === 'aura' ? 'AURA BATTLE' : 'FIGHT'}</strong>
+          <small>
+            {duelMode === 'aura'
+              ? 'Same rhythm pattern. Alternating camera. Highest aura wins.'
+              : 'Classic round-based combat.'}
+          </small>
+        </div>
+        <div role="group" aria-label="Choose online game">
+          <button
+            type="button"
+            className={duelMode === 'fight' ? 'is-active' : ''}
+            disabled={ready || Boolean(launchStatus) || (room.kind === 'seated' && room.seat.seat === 'guest')}
+            onClick={() => {
+              setDuelMode('fight');
+              localLobbyRef.current = { ...localLobbyRef.current, gameMode: 'fight' };
+              window.setTimeout(sendLobbyState, 0);
+            }}
+          >
+            FIGHT
+          </button>
+          <button
+            type="button"
+            className={duelMode === 'aura' ? 'is-active' : ''}
+            disabled={ready || Boolean(launchStatus) || (room.kind === 'seated' && room.seat.seat === 'guest')}
+            onClick={() => {
+              setDuelMode('aura');
+              localLobbyRef.current = { ...localLobbyRef.current, gameMode: 'aura' };
+              window.setTimeout(sendLobbyState, 0);
+            }}
+          >
+            AURA
+          </button>
+        </div>
+      </section>
 
       {!signedIn && !invitedToken ? (
         <StatusMessage severity="warn">
@@ -907,7 +987,11 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
                       className="online-versus__invite-input"
                       type="url"
                       readOnly
-                      value={invitationPhase.invitation.url}
+                      value={(() => {
+                        const url = new URL(invitationPhase.invitation.url);
+                        url.searchParams.set('mode', duelMode);
+                        return url.toString();
+                      })()}
                       onFocus={(event) => event.currentTarget.select()}
                       aria-labelledby="online-versus-invite-label"
                       aria-describedby="online-versus-invite-help"
@@ -989,7 +1073,11 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
                 disabled={!connected || !selected || Boolean(launchStatus)}
                 onClick={() => void onToggleReady()}
               >
-                {ready ? 'Not ready' : guestInvite ? 'Ready to fight' : 'Ready'}
+                {ready
+                  ? 'Not ready'
+                  : guestInvite
+                    ? duelMode === 'aura' ? 'Ready to perform' : 'Ready to fight'
+                    : 'Ready'}
               </Button>
             </div>
             <p className="roster-hero__copy online-versus__hint">

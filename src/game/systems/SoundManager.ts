@@ -23,6 +23,20 @@ export class SoundManager {
     this.tryPlayBattleMusic();
   }
 
+  pauseBattleMusic(): void {
+    this.battleMusic?.pause();
+  }
+
+  resumeBattleMusic(): void {
+    this.tryPlayBattleMusic();
+  }
+
+  /** Current media position for beat-synchronised modes; null while blocked. */
+  getBattleMusicTimeMs(): number | null {
+    if (!this.battleMusic || this.battleMusic.paused) return null;
+    return this.battleMusic.currentTime * 1_000;
+  }
+
   stopBattleMusic(): void {
     this.removeMusicUnlockListeners?.();
     this.removeMusicUnlockListeners = null;
@@ -232,6 +246,28 @@ export class SoundManager {
     this.osc('sawtooth', 200, 800, 120, 0.35);
     this.noiseBurst(150, 1200, 2, 0.5, 2, 130);
     this.osc('sine', 300, 100, 80, 0.3, 80);
+  }
+
+  playAuraGrade(grade: 'perfect' | 'great' | 'good' | 'miss' | 'mash'): void {
+    switch (grade) {
+      case 'perfect':
+        this.osc('square', 740, 1_180, 105, 0.16);
+        this.osc('sine', 1_110, 1_620, 125, 0.12, 38);
+        break;
+      case 'great':
+        this.osc('triangle', 620, 920, 90, 0.13);
+        break;
+      case 'good':
+        this.osc('sine', 430, 570, 80, 0.1);
+        break;
+      case 'miss':
+        this.osc('sawtooth', 155, 72, 150, 0.16);
+        this.noiseBurst(95, 260, 1.2, 0.12, 2, 88, 'lowpass');
+        break;
+      case 'mash':
+        this.osc('square', 105, 62, 80, 0.11);
+        break;
+    }
   }
 
   playAnnounce(type: 'round' | 'fight' | 'ko' | 'wins'): void {

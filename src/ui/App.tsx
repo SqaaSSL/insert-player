@@ -76,6 +76,9 @@ type AppRoute =
   | '/roster/cpu'
   | '/roster/vs'
   | '/roster/rush'
+  | '/roster/aura'
+  | '/roster/aura-vs'
+  | '/roster/aura-watch'
   | '/versus/online'
   | LegalRoute
   | '/fight';
@@ -115,6 +118,9 @@ export function legalReturnRouteFromState(state: unknown): AppRoute {
     candidate === '/roster/cpu' ||
     candidate === '/roster/vs' ||
     candidate === '/roster/rush' ||
+    candidate === '/roster/aura' ||
+    candidate === '/roster/aura-vs' ||
+    candidate === '/roster/aura-watch' ||
     candidate === '/versus/online'
   ) {
     return candidate;
@@ -140,6 +146,9 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   if (cleaned === '/roster/cpu') return '/roster/cpu';
   if (cleaned === '/roster/vs') return '/roster/vs';
   if (cleaned === '/roster/rush') return '/roster/rush';
+  if (cleaned === '/roster/aura') return '/roster/aura';
+  if (cleaned === '/roster/aura-vs') return '/roster/aura-vs';
+  if (cleaned === '/roster/aura-watch') return '/roster/aura-watch';
   if (cleaned === '/versus/online') return '/versus/online';
   if (cleaned === '/legal') return '/legal';
   if (cleaned === '/privacy') return '/privacy';
@@ -172,6 +181,27 @@ function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null
   // Deterministic local-only fixture for real-canvas QA and marketing captures.
   // Vite removes this branch from production builds.
   const params = new URLSearchParams(window.location.search);
+  if (import.meta.env.DEV && params.get('auraDemo') === '1') {
+    const requestedStage = params.get('auraStage');
+    const stageId = requestedStage === 'side-street' || requestedStage === 'la-jaula-304'
+      ? requestedStage
+      : 'insert-player-arena';
+    const auraDifficulty = params.get('auraDifficulty') === 'lowkey'
+      ? 'lowkey'
+      : params.get('auraDifficulty') === 'untouchable'
+        ? 'untouchable'
+        : 'viral';
+    return {
+      gameMode: 'aura',
+      vsAI: true,
+      cpuVsCpu: false,
+      p1Name: 'NOVA',
+      p2Name: 'BYTE',
+      stageId,
+      auraDifficulty,
+      seed: 0x41555241,
+    };
+  }
   if (import.meta.env.DEV && params.get('rushDemo') === '1') {
     const stageId = params.get('rushStage') === 'la-jaula-304'
       ? 'la-jaula-304'
@@ -456,7 +486,14 @@ export function App({
 
   const launchTarget = useMemo(
     () => pendingMatch
-      ? { sceneKey: pendingMatch.gameMode === 'rush' ? 'RushScene' : 'FightScene', data: pendingMatch }
+      ? {
+          sceneKey: pendingMatch.gameMode === 'rush'
+            ? 'RushScene'
+            : pendingMatch.gameMode === 'aura'
+              ? 'AuraScene'
+              : 'FightScene',
+          data: pendingMatch,
+        }
       : null,
     [pendingMatch],
   );
@@ -496,7 +533,11 @@ export function App({
 
   const ladderContext = useMemo<LadderContext | null>(() => {
     if (route !== '/fight' || !pendingMatch) return null;
-    if (pendingMatch.experience === 'trial' || pendingMatch.gameMode === 'rush') return null;
+    if (
+      pendingMatch.experience === 'trial'
+      || pendingMatch.gameMode === 'rush'
+      || pendingMatch.gameMode === 'aura'
+    ) return null;
     const run = readArcadeRun(getActiveSpriteCacheScope());
     if (!run) return null;
     const rung = currentRung(run);
@@ -554,6 +595,10 @@ export function App({
         onNavigateLegal={navigateToLegal}
         onOpenArcade={() => navigate('/arcade')}
         onOpenCoopRush={() => navigate('/roster/rush')}
+        onOpenAuraCpu={() => navigate('/roster/aura')}
+        onOpenAuraPlayer={() => navigate('/roster/aura-vs')}
+        onOpenAuraOnline={() => navigate('/versus/online', 'mode=aura')}
+        onOpenAuraWatch={() => navigate('/roster/aura-watch')}
         onOpenGallery={() => navigate('/gallery')}
         onOpenCommunity={() => navigate('/community')}
         onOpenWatchMode={() => navigate('/roster/watch')}
@@ -711,6 +756,9 @@ export function App({
       || route === '/roster/cpu'
       || route === '/roster/vs'
       || route === '/roster/rush'
+      || route === '/roster/aura'
+      || route === '/roster/aura-vs'
+      || route === '/roster/aura-watch'
     ) {
       const mode = route === '/roster/watch'
         ? 'watch'
@@ -718,7 +766,13 @@ export function App({
           ? 'vs'
           : route === '/roster/rush'
             ? 'rush'
-            : 'cpu';
+            : route === '/roster/aura'
+              ? 'aura'
+              : route === '/roster/aura-vs'
+                ? 'aura-vs'
+                : route === '/roster/aura-watch'
+                  ? 'aura-watch'
+                  : 'cpu';
       return (
         <RosterPage
           authStatus={authStatus}
