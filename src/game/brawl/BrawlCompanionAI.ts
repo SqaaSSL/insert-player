@@ -1,5 +1,6 @@
 import { EMPTY_BRAWL_INPUT, type BrawlInput } from './BrawlInput.ts';
 import type { BrawlActor, BrawlSimulation } from './BrawlSimulation.ts';
+import type { RushCompanionOrder } from './RushConfig.ts';
 
 const REVIVE_APPROACH_X = 76;
 const REVIVE_APPROACH_LANE = 44;
@@ -38,6 +39,10 @@ function nearestEnemy(self: BrawlActor, enemies: readonly BrawlActor[]): BrawlAc
     nearestScore = score;
   }
   return nearest;
+}
+
+function nearestEnemyToPartner(partner: BrawlActor, enemies: readonly BrawlActor[]): BrawlActor | null {
+  return nearestEnemy(partner, enemies);
 }
 
 function nearestRecoveryObstacle(self: BrawlActor, sim: BrawlSimulation) {
@@ -112,6 +117,7 @@ function hasUnsafeExplosiveNearby(self: BrawlActor, sim: BrawlSimulation): boole
 export function getBrawlCompanionInput(
   sim: BrawlSimulation,
   slot: 0 | 1 = 1,
+  order: RushCompanionOrder = 'follow',
 ): BrawlInput {
   const self = sim.players[slot];
   const partner = sim.players[slot === 0 ? 1 : 0];
@@ -137,7 +143,9 @@ export function getBrawlCompanionInput(
     return movementToward(self, partner.x, partner.lane, REVIVE_APPROACH_X, REVIVE_APPROACH_LANE);
   }
 
-  const target = nearestEnemy(self, sim.enemies);
+  const target = order === 'cover'
+    ? nearestEnemyToPartner(partner, sim.enemies)
+    : nearestEnemy(self, sim.enemies);
   if (target) {
     const dx = target.x - self.x;
     const laneDelta = target.lane - self.lane;
@@ -162,17 +170,27 @@ export function getBrawlCompanionInput(
       return { ...EMPTY_BRAWL_INPUT };
     }
     if (
-      Math.abs(dx) >= 135
+      Math.abs(dx) >= (order === 'attack' ? 104 : 135)
       && Math.abs(laneDelta) <= 34
       && self.cooldown <= 0
       && !hasUnsafeExplosiveLine(self, target, sim)
     ) {
       return { ...EMPTY_BRAWL_INPUT, fireball: true };
     }
-    return movementToward(self, target.x, target.lane, COMBAT_RANGE_X - 8, COMBAT_RANGE_LANE - 6);
+    if (order === 'cover' && Math.abs(target.x - partner.x) > 260) {
+      return movementToward(self, partner.x + 28, partner.lane + TRAVEL_LANE_OFFSET, 72, 38);
+    }
+    return movementToward(
+      self,
+      target.x,
+      target.lane,
+      order === 'attack' ? COMBAT_RANGE_X - 22 : COMBAT_RANGE_X - 8,
+      order === 'attack' ? COMBAT_RANGE_LANE - 14 : COMBAT_RANGE_LANE - 6,
+    );
   }
 
-  const recovery = self.health <= 72 || partner.health <= 72
+  const recoveryThreshold = order === 'cover' ? 86 : order === 'attack' ? 38 : 72;
+  const recovery = self.health <= recoveryThreshold || partner.health <= recoveryThreshold
     ? nearestRecoveryObstacle(self, sim)
     : null;
   if (recovery) {
@@ -194,11 +212,12 @@ export function getBrawlCompanionInput(
   if (shouldJumpObstacle(self, sim, 1)) {
     return { ...EMPTY_BRAWL_INPUT, right: true, jump: true };
   }
+  const orderLead = order === 'attack' ? 250 : order === 'cover' ? 36 : TRAVEL_LEAD_X;
   const desiredLane = partner.lane + (slot === 1 ? TRAVEL_LANE_OFFSET : -TRAVEL_LANE_OFFSET);
   const laneDelta = desiredLane - self.lane;
   return {
     ...EMPTY_BRAWL_INPUT,
-    right: self.x <= partner.x + TRAVEL_LEAD_X,
+    right: self.x <= partner.x + orderLead,
     up: laneDelta < -30,
     down: laneDelta > 30,
   };

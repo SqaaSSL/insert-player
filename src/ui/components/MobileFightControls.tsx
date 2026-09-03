@@ -74,9 +74,11 @@ function ControlButton({
 }
 
 export function MobileFightControls({
+  mode = 'fight',
   playerIndex = 0,
   playerLabel = 'player 1',
 }: {
+  mode?: 'fight' | 'rush';
   playerIndex?: 0 | 1;
   playerLabel?: string;
 }) {
@@ -109,6 +111,14 @@ export function MobileFightControls({
         <ControlButton action="punch" className="is-punch" label="P" playerIndex={playerIndex} playerLabel={playerLabel} title="Punch" />
         <ControlButton action="kick" className="is-kick" label="K" playerIndex={playerIndex} playerLabel={playerLabel} title="Kick" />
         <ControlButton action="fireball" className="is-fireball" label="F" playerIndex={playerIndex} playerLabel={playerLabel} title="Fireball" />
+        <ControlButton
+          action="uppercut"
+          className={mode === 'rush' ? 'is-jump' : 'is-uppercut'}
+          label={mode === 'rush' ? 'J' : 'U'}
+          playerIndex={playerIndex}
+          playerLabel={playerLabel}
+          title={mode === 'rush' ? 'Jump' : 'Uppercut'}
+        />
         {superReady ? (
           <ControlButton action="super" className="is-super" label="S!" playerIndex={playerIndex} playerLabel={playerLabel} title="Super fireball" />
         ) : null}

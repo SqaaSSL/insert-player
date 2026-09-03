@@ -60,6 +60,16 @@ import {
   type RosterSourceState,
   type RosterMode,
 } from '../shared/rosterMatch.ts';
+import {
+  RUSH_DIFFICULTIES,
+  getRushDifficulty,
+  type RushDifficultyId,
+} from '../../game/brawl/RushConfig.ts';
+import {
+  FIGHT_DIFFICULTIES,
+  getFightDifficulty,
+  type FightDifficultyId,
+} from '../../game/match/FightDifficulty.ts';
 
 type RosterFilter = 'official' | 'yours' | 'all';
 
@@ -401,6 +411,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const [p1PersonalityId, setP1PersonalityId] = useState<FighterPersonalityId>(getDefaultPersonalityId(0));
   const [p2PersonalityId, setP2PersonalityId] = useState<FighterPersonalityId>(getDefaultPersonalityId(1));
   const [stageChoice, setStageChoice] = useState<StageChoice>({ kind: 'auto' });
+  const [rushDifficulty, setRushDifficulty] = useState<RushDifficultyId>('arcade');
+  const [fightDifficulty, setFightDifficulty] = useState<FightDifficultyId>('champion');
   const [preparingFight, setPreparingFight] = useState(false);
   const [hasCoarsePointer, setHasCoarsePointer] = useState(
     () => window.matchMedia?.('(pointer: coarse)').matches ?? false,
@@ -789,6 +801,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         p2Name: selectedP2.name,
         p1PersonalityId: isCpuRosterSlot(mode, 'p1') ? selectedP1Personality : undefined,
         p2PersonalityId: isCpuRosterSlot(mode, 'p2') ? selectedP2Personality : undefined,
+        rushDifficulty: mode === 'rush' ? rushDifficulty : undefined,
+        rushCompanionOrder: mode === 'rush' ? 'follow' : undefined,
+        p2Difficulty: mode === 'cpu' ? getFightDifficulty(fightDifficulty).strength : undefined,
         stageId: selectedStageId,
         customStageKey: mode !== 'rush' && selectedStageChoice.kind === 'photo'
           ? selectedStageChoice.stageKey
@@ -964,6 +979,62 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
         <div className="roster-column">
           <div className="gallery-panel">
+            {mode === 'rush' ? (
+              <section className="roster-difficulty" aria-labelledby="rush-difficulty-title">
+                <div className="roster-difficulty__heading">
+                  <div>
+                    <span>RUN RULES</span>
+                    <h2 id="rush-difficulty-title">Difficulty</h2>
+                  </div>
+                  <strong>{getRushDifficulty(rushDifficulty).label}</strong>
+                </div>
+                <div className="roster-difficulty__options" role="group" aria-label="Rush difficulty">
+                  {RUSH_DIFFICULTIES.map((difficulty) => (
+                    <button
+                      key={difficulty.id}
+                      type="button"
+                      className={`gallery-chip${rushDifficulty === difficulty.id ? ' is-active' : ''}`}
+                      aria-pressed={rushDifficulty === difficulty.id}
+                      onClick={() => {
+                        cancelFightPreparation();
+                        setRushDifficulty(difficulty.id);
+                      }}
+                    >
+                      <span>{difficulty.label}</span>
+                      <small>{difficulty.blurb}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            {mode === 'cpu' ? (
+              <section className="roster-difficulty" aria-labelledby="fight-difficulty-title">
+                <div className="roster-difficulty__heading">
+                  <div>
+                    <span>CPU RULES</span>
+                    <h2 id="fight-difficulty-title">Difficulty</h2>
+                  </div>
+                  <strong>{getFightDifficulty(fightDifficulty).label}</strong>
+                </div>
+                <div className="roster-difficulty__options" role="group" aria-label="Fight CPU difficulty">
+                  {FIGHT_DIFFICULTIES.map((difficulty) => (
+                    <button
+                      key={difficulty.id}
+                      type="button"
+                      className={`gallery-chip${fightDifficulty === difficulty.id ? ' is-active' : ''}`}
+                      aria-pressed={fightDifficulty === difficulty.id}
+                      onClick={() => {
+                        cancelFightPreparation();
+                        setFightDifficulty(difficulty.id);
+                      }}
+                    >
+                      <span>{difficulty.label}</span>
+                      <small>{difficulty.blurb}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
             <h2>Stage</h2>
             <div className="roster-stage-preview">
               {stagePreviewUrl ? (

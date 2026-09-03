@@ -43,7 +43,7 @@ describe('Roster Lab stage catalog', () => {
       '/assets/stages/signature/executive-rumble-pipeline-v1.png',
       '/assets/stages/signature/mars-incorporated-pipeline-v1.png',
       '/assets/stages/signature/tablao-3000-pipeline-v1.png',
-      '/assets/stages/signature/la-jaula-304-pipeline-v1.png',
+      '/assets/rush/la-jaula-304/la-jaula-304-fight-v2.webp',
       '/assets/rush/side-street/side-street-fight-v1.webp',
     ]);
   });

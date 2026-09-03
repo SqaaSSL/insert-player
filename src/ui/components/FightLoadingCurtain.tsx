@@ -15,6 +15,7 @@ interface FightLoadingCurtainProps {
   stageLabel: string;
   stageDescription?: string;
   stageImageUrl?: string | null;
+  difficultyLabel?: string;
   onExit: () => void;
 }
 
@@ -73,6 +74,7 @@ interface RushLoadingLayoutProps {
   stageLabel: string;
   stageDescription?: string;
   stageImageUrl?: string | null;
+  difficultyLabel?: string;
   onExit: () => void;
 }
 
@@ -86,6 +88,7 @@ function RushLoadingLayout({
   stageLabel,
   stageDescription,
   stageImageUrl,
+  difficultyLabel,
   onExit,
 }: RushLoadingLayoutProps) {
   return (
@@ -138,7 +141,9 @@ function RushLoadingLayout({
         </div>
 
         <aside className="rush-loader__briefing">
-          <span className="rush-loader__route-label">ROUTE 01</span>
+          <span className="rush-loader__route-label">
+            RUSH ROUTE{difficultyLabel ? ` · ${difficultyLabel.toUpperCase()}` : ''}
+          </span>
           <h2>{stageLabel.toUpperCase()}</h2>
           <p>
             {stageDescription
@@ -189,6 +194,7 @@ export function FightLoadingCurtain({
   stageLabel,
   stageDescription,
   stageImageUrl,
+  difficultyLabel,
   onExit,
 }: FightLoadingCurtainProps) {
   const failed = phase === 'error';
@@ -219,6 +225,7 @@ export function FightLoadingCurtain({
           stageLabel={stageLabel}
           stageDescription={stageDescription}
           stageImageUrl={stageImageUrl}
+          difficultyLabel={difficultyLabel}
           onExit={onExit}
         />
       </section>

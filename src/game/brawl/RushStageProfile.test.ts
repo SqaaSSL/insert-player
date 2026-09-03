@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { RUSH_ROUTE_MAP } from './BrawlMap.ts';
+import { LA_JAULA_ROUTE_MAP, RUSH_ROUTE_MAP } from './BrawlMap.ts';
 import { buildRushRouteMap, getRushStageProfile } from './RushStageProfile.ts';
 
 describe('RushStageProfile', () => {
@@ -39,5 +39,17 @@ describe('RushStageProfile', () => {
       'LAST GATE',
     ]);
     expect(map.obstacles?.every((obstacle) => obstacle.skin === 'side-street')).toBe(true);
+  });
+
+  it('gives La Jaula its own harder route geometry and encounter cast', () => {
+    const profile = getRushStageProfile('la-jaula-304');
+    const map = buildRushRouteMap(profile);
+
+    expect(map.id).toContain(LA_JAULA_ROUTE_MAP.id);
+    expect(profile.segmentLabels[0]).toBe('SUNSET BLOCK');
+    expect(map.obstacles).toHaveLength(7);
+    expect(map.encounters.map((encounter) => encounter.enemies.length)).toEqual([5, 6, 7]);
+    expect(map.encounters.slice(0, 2).every((encounter) => encounter.mode === 'rolling')).toBe(true);
+    expect(map.obstacles?.every((obstacle) => obstacle.skin === 'jaula')).toBe(true);
   });
 });

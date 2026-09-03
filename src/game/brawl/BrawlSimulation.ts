@@ -11,6 +11,11 @@ import {
   type BrawlObstacleSkin,
   type BrawlObstacleType,
 } from './BrawlMap.ts';
+import {
+  getRushDifficulty,
+  type RushDifficulty,
+  type RushDifficultyId,
+} from './RushConfig.ts';
 
 export const BRAWL_TICK_RATE = 60;
 const PLAYER_SPEED = 220 / BRAWL_TICK_RATE;
@@ -22,7 +27,6 @@ const REVIVE_RANGE_X = 92;
 const REVIVE_RANGE_LANE = 58;
 const REVIVE_TICKS = 75;
 const ENCOUNTER_CLEAR_TICKS = 48;
-const CHECKPOINT_RECOVERY = 18;
 const ENTRANCE_SPEED_X = 4.6;
 const ENTRANCE_SPEED_LANE = 3.2;
 const PROJECTILE_SPEED = 510 / BRAWL_TICK_RATE;
@@ -293,6 +297,8 @@ function obstacleSkinCode(skin: BrawlObstacleSkin): number {
  */
 export class BrawlSimulation {
   readonly map: Readonly<BrawlMapDefinition>;
+  readonly difficultyId: RushDifficultyId;
+  private readonly difficulty: RushDifficulty;
   readonly players: BrawlActor[];
   enemies: BrawlActor[] = [];
   projectiles: BrawlProjectile[] = [];
@@ -306,8 +312,14 @@ export class BrawlSimulation {
   outcome: BrawlOutcome = 'playing';
   private nextProjectileId = 1;
 
-  constructor(playerNames: readonly [string, string], map: Readonly<BrawlMapDefinition> = RUSH_ROUTE_MAP) {
+  constructor(
+    playerNames: readonly [string, string],
+    map: Readonly<BrawlMapDefinition> = RUSH_ROUTE_MAP,
+    options: { difficulty?: RushDifficultyId } = {},
+  ) {
     this.map = map;
+    this.difficultyId = getRushDifficulty(options.difficulty).id;
+    this.difficulty = getRushDifficulty(this.difficultyId);
     this.players = map.playerSpawns.map((spawn, slot) => ({
       id: `player-${slot + 1}`,
       kind: 'player' as const,
@@ -380,7 +392,7 @@ export class BrawlSimulation {
       for (const player of this.players) {
         if (player.health <= 0 || player.health >= player.maxHealth) continue;
         const previousHealth = player.health;
-        player.health = Math.min(player.maxHealth, player.health + CHECKPOINT_RECOVERY);
+        player.health = Math.min(player.maxHealth, player.health + this.difficulty.checkpointRecovery);
         events.push({
           type: 'checkpointRecovery',
           actorId: player.id,
@@ -492,7 +504,7 @@ export class BrawlSimulation {
   private createEnemy(spawn: BrawlEnemySpawn, encounter: BrawlEncounterDefinition): BrawlActor {
     const stats = ENEMY_STATS[spawn.archetype];
     const level = spawn.level ?? encounter.threat ?? 1;
-    const maxHealth = enemyHealthAtLevel(stats.health, level);
+    const maxHealth = Math.round(enemyHealthAtLevel(stats.health, level) * this.difficulty.enemyHealth);
     const entrance = spawn.entrance;
     let x = spawn.x;
     let lane = spawn.lane;
@@ -639,7 +651,7 @@ export class BrawlSimulation {
         this.resolveEnemyAttack(actor, events);
       }
       if (actor.stateTick >= duration) {
-        actor.cooldown = enemyCooldownAtLevel(ENEMY_STATS[actor.archetype!].cooldown, actor.level);
+        actor.cooldown = this.enemyCooldown(actor, ENEMY_STATS[actor.archetype!].cooldown);
         this.setActorState(actor, 'idle');
       }
       return;
@@ -653,13 +665,13 @@ export class BrawlSimulation {
       }
       if (actor.stateTick >= (isSuper ? 28 : 24)) {
         const stats = ENEMY_STATS[actor.archetype!];
-        actor.cooldown = enemyCooldownAtLevel(stats.projectileCooldown ?? stats.cooldown, actor.level);
+        actor.cooldown = this.enemyCooldown(actor, stats.projectileCooldown ?? stats.cooldown);
         this.setActorState(actor, 'idle');
       }
       return;
     }
 
-    const target = this.nearestLivingPlayer(actor);
+    const target = this.selectEnemyTarget(actor);
     if (!target) return;
     const stats = ENEMY_STATS[actor.archetype!];
     if (this.evadeIncomingProjectile(actor, stats)) return;
@@ -700,8 +712,8 @@ export class BrawlSimulation {
     if (xDirection !== 0 && laneDirection === 0) laneDirection = this.obstacleAvoidanceDirection(actor, xDirection);
     this.moveActor(
       actor,
-      xDirection * enemySpeedAtLevel(stats.speed, actor.level),
-      laneDirection * enemySpeedAtLevel(stats.laneSpeed, actor.level),
+      xDirection * this.enemySpeed(actor, stats.speed),
+      laneDirection * this.enemySpeed(actor, stats.laneSpeed),
       false,
     );
     this.setActorState(actor, xDirection === 0 && laneDirection === 0 ? 'idle' : 'walk', false);
@@ -755,7 +767,7 @@ export class BrawlSimulation {
       .sort((a, b) => distanceSquared(actor, a) - distanceSquared(actor, b));
     const maxTargets = actor.archetype === 'bruiser' || actor.archetype === 'captain' ? 2 : 1;
     for (const [index, target] of targets.slice(0, maxTargets).entries()) {
-      const baseDamage = enemyDamageAtLevel(stats.damage, actor.level);
+      const baseDamage = this.enemyDamage(actor, stats.damage);
       this.damageActor(actor.id, actor.x, target, index === 0 ? baseDamage : Math.ceil(baseDamage * 0.72), 26, events);
     }
   }
@@ -768,7 +780,7 @@ export class BrawlSimulation {
       ? enemyStats.projectileDamage * (isSuper ? 1.45 : 1)
       : (isSuper ? 78 : 44);
     const damage = actor.kind === 'enemy'
-      ? enemyDamageAtLevel(baseDamage, actor.level)
+      ? this.enemyDamage(actor, baseDamage)
       : baseDamage;
     const speedScale = enemyStats?.projectileSpeedScale ?? 1;
     const projectile: BrawlProjectile = {
@@ -778,7 +790,9 @@ export class BrawlSimulation {
       x: actor.x + (actor.facingRight ? 62 : -62),
       lane: actor.lane,
       height: isSuper ? 82 : 72,
-      vx: (actor.facingRight ? 1 : -1) * PROJECTILE_SPEED * speedScale * (isSuper ? 1.18 : 1),
+      vx: (actor.facingRight ? 1 : -1) * PROJECTILE_SPEED * speedScale
+        * (actor.kind === 'enemy' ? this.difficulty.projectileSpeed : 1)
+        * (isSuper ? 1.18 : 1),
       damage,
       age: 0,
       ttl: PROJECTILE_TTL,
@@ -1003,7 +1017,7 @@ export class BrawlSimulation {
     this.moveActor(
       actor,
       0,
-      laneDirection * enemySpeedAtLevel(stats.laneSpeed, actor.level) * 1.35,
+      laneDirection * this.enemySpeed(actor, stats.laneSpeed) * 1.35,
       false,
     );
     this.setActorState(actor, 'walk', false);
@@ -1035,10 +1049,23 @@ export class BrawlSimulation {
 
   private teamProgressX(): number { return Math.min(this.players[0].x, this.players[1].x); }
 
-  private nearestLivingPlayer(actor: BrawlActor): BrawlActor | null {
+  private selectEnemyTarget(actor: BrawlActor): BrawlActor | null {
     const living = this.players.filter((player) => player.health > 0);
     if (living.length === 0) return null;
     if (living.length === 1) return living[0];
+    if (actor.archetype === 'bruiser') {
+      return [...living].sort((a, b) => b.x - a.x || a.slot! - b.slot!)[0];
+    }
+    if (actor.archetype === 'shooter') {
+      return [...living].sort((a, b) => {
+        const scoreA = a.health * 3 + Math.abs(a.lane - actor.lane) * 1.8 + Math.abs(a.x - actor.x) * 0.12;
+        const scoreB = b.health * 3 + Math.abs(b.lane - actor.lane) * 1.8 + Math.abs(b.x - actor.x) * 0.12;
+        return scoreA - scoreB || a.slot! - b.slot!;
+      })[0];
+    }
+    if (actor.archetype === 'captain' && actor.health <= actor.maxHealth / 2) {
+      return [...living].sort((a, b) => a.health - b.health || b.x - a.x || a.slot! - b.slot!)[0];
+    }
     const preferredSlot = (actor.id.charCodeAt(actor.id.length - 1) % 2) as 0 | 1;
     return living
       .map((player) => ({
@@ -1054,6 +1081,25 @@ export class BrawlSimulation {
     const finalCode = actor.id.charCodeAt(actor.id.length - 1);
     const side = finalCode % 2 === 0 ? 1 : -1;
     return { x: side * (30 + (finalCode % 3) * 10), lane: ((finalCode % 3) - 1) * 32 };
+  }
+
+  private isEnraged(actor: BrawlActor): boolean {
+    return actor.archetype === 'captain' && actor.health <= actor.maxHealth / 2;
+  }
+
+  private enemySpeed(actor: BrawlActor, base: number): number {
+    const enrage = this.isEnraged(actor) ? 1.16 : 1;
+    return enemySpeedAtLevel(base, actor.level) * this.difficulty.enemySpeed * enrage;
+  }
+
+  private enemyDamage(actor: BrawlActor, base: number): number {
+    const enrage = this.isEnraged(actor) ? 1.12 : 1;
+    return Math.round(enemyDamageAtLevel(base, actor.level) * this.difficulty.enemyDamage * enrage);
+  }
+
+  private enemyCooldown(actor: BrawlActor, base: number): number {
+    const enrage = this.isEnraged(actor) ? 0.76 : 1;
+    return Math.max(18, Math.round(enemyCooldownAtLevel(base, actor.level) * this.difficulty.enemyCooldown * enrage));
   }
 
   private faceNearestEnemy(actor: BrawlActor): void {
@@ -1075,14 +1121,23 @@ export class BrawlSimulation {
     let left = Math.max(this.map.walkArea.left, this.progressX - this.map.maxBacktrack);
     let right = this.map.walkArea.right;
     const encounter = this.map.encounters[this.activeEncounterIndex];
-    if (encounter) { left = Math.max(left, encounter.lockLeft); right = Math.min(right, encounter.lockRight); }
+    if (encounter?.mode === 'rolling') {
+      right = Math.min(right, encounter.advanceLimit ?? encounter.lockRight);
+    } else if (encounter) {
+      left = Math.max(left, encounter.lockLeft);
+      right = Math.min(right, encounter.lockRight);
+    }
     return Math.min(right, Math.max(left, x));
   }
 
   private clampEnemyX(x: number): number {
     const encounter = this.map.encounters[this.activeEncounterIndex];
-    const left = encounter?.lockLeft ?? this.map.walkArea.left;
-    const right = encounter?.lockRight ?? this.map.walkArea.right;
+    const left = encounter?.mode === 'rolling'
+      ? Math.max(this.map.walkArea.left, this.progressX - this.map.maxBacktrack - 220)
+      : encounter?.lockLeft ?? this.map.walkArea.left;
+    const right = encounter?.mode === 'rolling'
+      ? Math.min(this.map.walkArea.right, (encounter.advanceLimit ?? encounter.lockRight) + 120)
+      : encounter?.lockRight ?? this.map.walkArea.right;
     return Math.min(right, Math.max(left, x));
   }
   private clampLane(lane: number): number { return Math.min(this.map.walkArea.front, Math.max(this.map.walkArea.back, lane)); }

@@ -55,6 +55,15 @@ describe('BrawlCompanionAI', () => {
     expect(getBrawlCompanionInput(sim)).toMatchObject({ guard: true });
   });
 
+  it('changes travel posture when the player orders the CPU to press', () => {
+    const sim = new BrawlSimulation(['P1', 'CPU']);
+    const [partner, cpu] = sim.players;
+    partner.x = 300;
+    cpu.x = 490;
+    expect(getBrawlCompanionInput(sim, 1, 'follow').right).toBe(false);
+    expect(getBrawlCompanionInput(sim, 1, 'attack').right).toBe(true);
+  });
+
   it('does not auto-clear the hard route without player skill', () => {
     const sim = new BrawlSimulation(['CPU 1', 'CPU 2']);
     sim.start();

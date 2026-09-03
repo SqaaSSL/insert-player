@@ -352,13 +352,58 @@ describe('BrawlSimulation', () => {
       const events = sim.step({ ...EMPTY_INPUT, guard: true }, EMPTY_INPUT);
       guardedDamage = events.find((event) => event.type === 'guarded')?.damage ?? 0;
     }
-    expect(guardedDamage).toBe(4);
-    expect(sim.players[0].health).toBe(96);
+    expect(guardedDamage).toBe(5);
+    expect(sim.players[0].health).toBe(95);
     expect(sim.players[0].state).not.toBe('hit');
   });
 
   it('ramps the shipped route from four hostiles to a six-enemy blockade', () => {
     expect(RUSH_ROUTE_MAP.encounters.map((encounter) => encounter.enemies.length)).toEqual([4, 5, 6]);
+  });
+
+  it('lets rolling squads arrive while the team keeps pushing toward a soft gate', () => {
+    const rollingMap: BrawlMapDefinition = {
+      ...RUSH_ROUTE_MAP,
+      id: 'rolling-wave-test',
+      obstacles: [],
+      playerSpawns: [{ x: 300, lane: 420 }, { x: 320, lane: 480 }],
+      encounters: [{
+        label: 'MOVING WAVE',
+        mode: 'rolling',
+        triggerX: 290,
+        lockLeft: 260,
+        lockRight: 420,
+        advanceLimit: 680,
+        enemies: [{ id: 'rolling-target', archetype: 'shooter', x: 650, lane: 350 }],
+      }],
+    };
+    const sim = new BrawlSimulation(['P1', 'P2'], rollingMap);
+    sim.start();
+    sim.step(EMPTY_INPUT, EMPTY_INPUT);
+    sim.players[0].x = 418;
+    sim.players[1].x = 418;
+    for (let tick = 0; tick < 18; tick += 1) {
+      sim.step({ ...EMPTY_INPUT, right: true }, { ...EMPTY_INPUT, right: true });
+    }
+    expect(sim.players[0].x).toBeGreaterThan(rollingMap.encounters[0].lockRight);
+    sim.players[0].x = 679;
+    sim.players[1].x = 679;
+    sim.step({ ...EMPTY_INPUT, right: true }, { ...EMPTY_INPUT, right: true });
+    expect(sim.players.every((player) => player.x <= 680)).toBe(true);
+  });
+
+  it('makes Mayhem tougher than Rookie without changing fighter assets or inputs', () => {
+    const rookie = new BrawlSimulation(['P1', 'P2'], RUSH_ROUTE_MAP, { difficulty: 'rookie' });
+    const mayhem = new BrawlSimulation(['P1', 'P2'], RUSH_ROUTE_MAP, { difficulty: 'mayhem' });
+    rookie.start();
+    mayhem.start();
+    rookie.progressX = RUSH_ROUTE_MAP.encounters[0].triggerX;
+    mayhem.progressX = RUSH_ROUTE_MAP.encounters[0].triggerX;
+    rookie.step(EMPTY_INPUT, EMPTY_INPUT);
+    mayhem.step(EMPTY_INPUT, EMPTY_INPUT);
+    expect(mayhem.enemies[0].maxHealth).toBeGreaterThan(rookie.enemies[0].maxHealth);
+    expect(mayhem.difficultyId).toBe('mayhem');
+    expect(rookie.difficultyId).toBe('rookie');
   });
 
   it('scales authored enemy levels and supports drop entrances', () => {
