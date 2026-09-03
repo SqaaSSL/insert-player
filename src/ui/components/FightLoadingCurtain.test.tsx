@@ -43,4 +43,25 @@ describe('FightLoadingCurtain', () => {
     expect(markup).toContain('CABINET OFFLINE');
     expect(markup).toContain('Back To Arcade');
   });
+
+  it('identifies the CPU partner and route while Rush is loading', () => {
+    const markup = renderToStaticMarkup(
+      <FightLoadingCurtain
+        phase="loading"
+        mode="rush"
+        p1Name="Fran"
+        p2Name="Byte"
+        p1PhotoHash={null}
+        p2PhotoHash={null}
+        stageLabel="Side Street"
+        onExit={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('is-rush');
+    expect(markup).toContain('CO-OP RUSH');
+    expect(markup).toContain('LOADING SIDE STREET');
+    expect(markup).toContain('CPU');
+    expect(markup).toContain('>+</i>');
+  });
 });

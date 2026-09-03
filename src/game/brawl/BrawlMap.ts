@@ -1,7 +1,7 @@
 export type BrawlEnemyArchetype = 'grunt' | 'bruiser' | 'shooter' | 'captain';
 export type BrawlEnemyEntranceKind = 'right' | 'door' | 'background' | 'drop';
 export type BrawlObstacleType = 'barricade' | 'steam-vent' | 'explosive-barrel';
-export type BrawlObstacleSkin = 'arena' | 'executive' | 'mars' | 'tablao' | 'jaula' | 'custom';
+export type BrawlObstacleSkin = 'arena' | 'executive' | 'mars' | 'tablao' | 'jaula' | 'side-street' | 'custom';
 
 export interface BrawlEnemyEntrance {
   kind: BrawlEnemyEntranceKind;

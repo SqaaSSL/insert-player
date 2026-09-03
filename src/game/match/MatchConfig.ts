@@ -144,7 +144,8 @@ export interface MatchActionsVisibilityDetail {
 }
 
 export interface RuntimeReadyDetail {
-  matchSeed: number;
+  sceneKey: 'FightScene' | 'RushScene';
+  matchSeed?: number;
 }
 
 /** Netcode telemetry for the React overlay during an online match. */

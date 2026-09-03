@@ -269,7 +269,8 @@ function obstacleSkinCode(skin: BrawlObstacleSkin): number {
     case 'mars': return 3;
     case 'tablao': return 4;
     case 'jaula': return 5;
-    case 'custom': return 6;
+    case 'side-street': return 6;
+    case 'custom': return 7;
   }
 }
 

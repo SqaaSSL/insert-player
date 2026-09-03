@@ -168,7 +168,7 @@ function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null
     cpuVsCpu: false,
     p1Name: 'NOVA',
     p2Name: 'BYTE',
-    stageId: 'insert-player-arena',
+    stageId: 'side-street',
     seed: 0x52555348,
   };
 }

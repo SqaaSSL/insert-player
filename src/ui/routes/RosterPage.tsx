@@ -16,11 +16,13 @@ import {
   type MatchSceneData,
 } from '../../game/match/MatchConfig.ts';
 import {
-  STAGE_THEMES,
+  getDefaultStageThemeIdForMode,
   getStageChoiceBlurb,
   getStageChoiceLabel,
   getStageTheme,
+  getStageThemesForMode,
   resolveRosterStageThemeId,
+  stageSupportsMode,
   type StageThemeId,
 } from '../../game/match/StageConfig.ts';
 import {
@@ -414,6 +416,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   useEffect(() => {
     preparationGuardRef.current.cancel();
     setPreparingFight(false);
+    setStageChoice({ kind: 'auto' });
     p1PersonalityExplicitRef.current = false;
     p2PersonalityExplicitRef.current = false;
   }, [authSessionKey, mode]);
@@ -631,14 +634,20 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     [photoStages, stageChoice],
   );
   const photoStageUrl = useObjectUrl(selectedPhotoStage?.pngBlob ?? null);
-  const effectiveStageId = resolveRosterStageThemeId({
+  const resolvedStageId = resolveRosterStageThemeId({
     manualStageId: stageChoice.kind === 'built-in' ? stageChoice.stageId : null,
     hasCustomPhotoStage: stageChoice.kind === 'photo',
     p1ArcadeSlug: p1Fighter?.arcadeSlug,
     p2ArcadeSlug: p2Fighter?.arcadeSlug,
   });
+  const effectiveStageId = mode === 'rush'
+    ? resolvedStageId && stageSupportsMode(resolvedStageId, 'rush')
+      ? resolvedStageId
+      : getDefaultStageThemeIdForMode('rush')
+    : resolvedStageId;
   const effectiveStageTheme = effectiveStageId ? getStageTheme(effectiveStageId) : null;
   const stagePreviewUrl = photoStageUrl ?? effectiveStageTheme?.assetPath ?? null;
+  const selectableStageThemes = getStageThemesForMode(mode === 'rush' ? 'rush' : 'fight');
 
   const touchVersusBlocked = shouldBlockTouchVersus(mode, hasCoarsePointer);
   const canStartFight = Boolean(p1Fighter && p2Fighter) && !touchVersusBlocked;
@@ -766,8 +775,10 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         p1PersonalityId: isCpuRosterSlot(mode, 'p1') ? selectedP1Personality : undefined,
         p2PersonalityId: isCpuRosterSlot(mode, 'p2') ? selectedP2Personality : undefined,
         stageId: selectedStageId,
-        customStageKey: selectedStageChoice.kind === 'photo' ? selectedStageChoice.stageKey : undefined,
-        customStageLabel: selectedStageChoice.kind === 'photo'
+        customStageKey: mode !== 'rush' && selectedStageChoice.kind === 'photo'
+          ? selectedStageChoice.stageKey
+          : undefined,
+        customStageLabel: mode !== 'rush' && selectedStageChoice.kind === 'photo'
           ? (selectedStage?.label ?? selectedStageChoice.label)
           : undefined,
       });
@@ -956,9 +967,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                 onClick={() => chooseStage({ kind: 'auto' })}
               >
                 <span>AUTO</span>
-                <small>Let the fight choose</small>
+                <small>{mode === 'rush' ? 'Begin on Side Street' : 'Let the fight choose'}</small>
               </button>
-              {STAGE_THEMES.map((stage) => (
+              {selectableStageThemes.map((stage) => (
                 <button
                   key={stage.id}
                   className={`gallery-chip${stageChoice.kind === 'built-in' && stageChoice.stageId === stage.id ? ' is-active' : ''}`}
@@ -968,7 +979,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                   <small>{stage.blurb}</small>
                 </button>
               ))}
-              {photoStages.map((stage) => (
+              {mode === 'rush' ? null : photoStages.map((stage) => (
                 <button
                   key={stage.stageKey}
                   className={`gallery-chip${stageChoice.kind === 'photo' && stageChoice.stageKey === stage.stageKey ? ' is-active' : ''}`}

@@ -3424,6 +3424,10 @@
            sm:text-[28px];
   }
 
+  .fight-loader__mode {
+    @apply font-sans text-[12px] font-semibold tracking-[0.18em] text-asf-blue;
+  }
+
   .fight-loader__vs {
     @apply flex items-center font-arcade text-[clamp(34px,6vw,72px)] leading-none text-asf-cream
            [animation:fight-loader-vs-slam_480ms_520ms_cubic-bezier(0.16,1,0.3,1)_both]
@@ -3441,6 +3445,10 @@
 
   .fight-loader__vs i:last-child {
     @apply text-asf-blue;
+  }
+
+  .fight-loader.is-rush .fight-loader__vs i {
+    @apply text-asf-gold;
   }
 
   .fight-loader__status {

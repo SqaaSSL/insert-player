@@ -26,5 +26,18 @@ describe('RushStageProfile', () => {
     expect(map.label).toBe('CUSTOM STAGE RUN');
     expect(map.obstacles?.every((obstacle) => obstacle.skin === 'custom')).toBe(true);
   });
-});
 
+  it('authors Side Street as the shared Level 1 route instead of a repeated Fight plate', () => {
+    const profile = getRushStageProfile('side-street');
+    const map = buildRushRouteMap(profile);
+
+    expect(profile.id).toBe('side-street-level-1');
+    expect(profile.segmentLabels).toEqual([
+      'SUNSET WORKSHOP',
+      'SERVICE LANE',
+      'UNDERPASS',
+      'LAST GATE',
+    ]);
+    expect(map.obstacles?.every((obstacle) => obstacle.skin === 'side-street')).toBe(true);
+  });
+});

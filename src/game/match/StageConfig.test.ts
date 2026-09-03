@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   SIGNATURE_STAGE_THEMES,
   STAGE_THEMES,
+  getDefaultStageThemeIdForMode,
   getSignatureStageThemeIdForArcadeSlug,
+  getStageThemesForMode,
   pickStageThemeIdFromSeed,
   resolveAutoSignatureStageThemeId,
   resolveRosterStageThemeId,
@@ -10,7 +12,7 @@ import {
 
 describe('signature stage configuration', () => {
   it('publishes the brand arena and maps every launch Arcade slug to its signature PNG', () => {
-    expect(SIGNATURE_STAGE_THEMES).toMatchObject([
+    expect(SIGNATURE_STAGE_THEMES.slice(0, 5)).toMatchObject([
       {
         id: 'insert-player-arena',
         assetPath: '/assets/stages/signature/insert-player-arena-pipeline-v1.png',
@@ -70,7 +72,7 @@ describe('signature stage configuration', () => {
     })).toBeUndefined();
   });
 
-  it('lists and randomly chooses only the five published stage assets', () => {
+  it('lists and randomly chooses only the published stage assets', () => {
     const publishedIds = new Set(SIGNATURE_STAGE_THEMES.map((stage) => stage.id));
     const pickedIds = new Set(
       Array.from({ length: 200 }, (_, seed) => pickStageThemeIdFromSeed(seed * 7919)),
@@ -78,10 +80,16 @@ describe('signature stage configuration', () => {
 
     expect(STAGE_THEMES).toEqual(SIGNATURE_STAGE_THEMES);
     expect(STAGE_THEMES.every((stage) => Boolean(stage.assetPath))).toBe(true);
-    expect(publishedIds.size).toBe(5);
+    expect(publishedIds.size).toBe(6);
     expect(pickedIds).toEqual(publishedIds);
     for (const id of pickedIds) {
       expect(publishedIds.has(id)).toBe(true);
     }
+  });
+
+  it('keeps legacy arenas Fight-only and exposes Side Street as the authored hybrid', () => {
+    expect(getStageThemesForMode('rush').map((stage) => stage.id)).toEqual(['side-street']);
+    expect(getDefaultStageThemeIdForMode('rush')).toBe('side-street');
+    expect(getStageThemesForMode('fight').map((stage) => stage.id)).toContain('side-street');
   });
 });

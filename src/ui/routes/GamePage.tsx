@@ -245,6 +245,7 @@ export function GamePage({
       {loadingPhase !== 'hidden' ? (
         <FightLoadingCurtain
           phase={loadingPhase}
+          mode={isRush ? 'rush' : 'fight'}
           p1Name={launchTarget.data.p1Name ?? 'Player One'}
           p2Name={launchTarget.data.p2Name ?? 'Player Two'}
           p1PhotoHash={launchTarget.data.p1PhotoHash ?? null}

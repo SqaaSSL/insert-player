@@ -73,6 +73,17 @@ const PROFILES: Partial<Record<StageThemeId, RushStageProfile>> = {
     backdropVeil: 0x07130d,
     backdropVeilAlpha: 0.07,
   },
+  'side-street': {
+    id: 'side-street-level-1',
+    routeLabel: 'SIDE STREET RUN',
+    segmentLabels: ['SUNSET WORKSHOP', 'SERVICE LANE', 'UNDERPASS', 'LAST GATE'],
+    encounterLabels: ['STREET CONTACT', 'UNDERPASS LOCK', 'GATE CAPTAIN'],
+    obstacleSkin: 'side-street',
+    accent: 0xffcf33,
+    shadow: 0x111827,
+    backdropVeil: 0x080a12,
+    backdropVeilAlpha: 0.025,
+  },
 };
 
 const CUSTOM_PROFILE: RushStageProfile = {
@@ -119,4 +130,3 @@ export function buildRushRouteMap(profile: RushStageProfile): Readonly<BrawlMapD
     })),
   };
 }
-
