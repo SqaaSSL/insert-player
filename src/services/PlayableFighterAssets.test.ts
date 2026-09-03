@@ -4,6 +4,7 @@ import {
   assertCompletePlayableSpriteSet,
   invalidPlayableAnimationNames,
   isCompletePlayableSpriteSet,
+  isTemplateOnlyFighterIdentity,
   missingPlayableAnimationNames,
 } from './PlayableFighterAssets.ts';
 import { getAnimationList } from './CharacterPipeline.ts';
@@ -19,6 +20,14 @@ function completeAssets() {
 }
 
 describe('playable fighter asset invariant', () => {
+  it('reserves Template Zero for generation infrastructure', () => {
+    expect(isTemplateOnlyFighterIdentity({ name: 'Template Zero' })).toBe(true);
+    expect(isTemplateOnlyFighterIdentity({ name: 'Donald Trump — Template Zero' })).toBe(true);
+    expect(isTemplateOnlyFighterIdentity({ arcadeSlug: 'template-zero-v2' })).toBe(true);
+    expect(isTemplateOnlyFighterIdentity({ photoHash: 'arcade:template_zero:internal-id' })).toBe(true);
+    expect(isTemplateOnlyFighterIdentity({ name: 'Vanta' })).toBe(false);
+  });
+
   it('stays aligned with the generation pipeline contract', () => {
     expect(getAnimationList().map((animation) => animation.name))
       .toEqual([...PLAYABLE_ANIMATION_NAMES]);

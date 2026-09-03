@@ -31,6 +31,7 @@ import { prefersHighDensitySpriteTextures } from '../game/sprites/SpriteRenderQu
 import {
   PLAYABLE_ANIMATION_NAMES,
   isCompletePlayableSpriteSet,
+  isTemplateOnlyFighterIdentity,
   missingPlayableAnimationNames,
 } from './PlayableFighterAssets.ts';
 
@@ -746,7 +747,12 @@ export async function listArcadeFighters(): Promise<CloudFighter[]> {
   const res = await apiFetch('/api/arcade');
   if (!res.ok) throw new Error(`Arcade fighters failed (${res.status})`);
   const json = await res.json() as { fighters?: CloudFighter[] };
-  return (json.fighters ?? []).filter((fighter) => Boolean(fighter.arcade));
+  return (json.fighters ?? []).filter((fighter) => (
+    Boolean(fighter.arcade) && !isTemplateOnlyFighterIdentity({
+      name: fighter.name,
+      arcadeSlug: fighter.arcade?.slug,
+    })
+  ));
 }
 
 export function arcadeFighterPhotoHash(fighter: CloudFighter): string {

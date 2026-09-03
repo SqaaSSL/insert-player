@@ -38,7 +38,10 @@ import { ensurePlayableSpritesUpToDate } from '../../services/CharacterPipeline.
 import { getBillingProfile, type BillingProfile } from '../../services/Billing.ts';
 import type { AuthStatus } from '../authState.ts';
 import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
-import { assertCompletePlayableSpriteSet } from '../../services/PlayableFighterAssets.ts';
+import {
+  assertCompletePlayableSpriteSet,
+  isTemplateOnlyFighterIdentity,
+} from '../../services/PlayableFighterAssets.ts';
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { cloudPreviewUrl, isArcadeCachedMeta, tierLabel } from '../shared/fighterPreview.ts';
 import { Button } from '../components/Button.tsx';
@@ -201,16 +204,28 @@ export function buildRosterFighterSections(
   arcadeFighters: CloudFighter[],
   includeCachedFallback = false,
 ): RosterFighterSections {
-  const official = arcadeFighters.map(arcadeRosterEntry);
-  const representedIds = new Set(arcadeFighters.map((fighter) => fighter.id));
+  const selectableArcadeFighters = arcadeFighters.filter((fighter) => (
+    !isTemplateOnlyFighterIdentity({
+      name: fighter.name,
+      arcadeSlug: fighter.arcade?.slug,
+    })
+  ));
+  const selectableMetas = metas.filter((meta) => (
+    !isTemplateOnlyFighterIdentity({
+      characterName: meta.characterName,
+      photoHash: meta.photoHash,
+    })
+  ));
+  const official = selectableArcadeFighters.map(arcadeRosterEntry);
+  const representedIds = new Set(selectableArcadeFighters.map((fighter) => fighter.id));
   const representedSlugs = new Set(
-    arcadeFighters
+    selectableArcadeFighters
       .map((fighter) => fighter.arcade?.slug)
       .filter((slug): slug is string => Boolean(slug)),
   );
   const representedCacheKeys = new Set<string>();
   const cachedFallbacks = includeCachedFallback
-    ? metas
+    ? selectableMetas
       .filter(isArcadeCachedMeta)
       .sort((left, right) => {
         const leftSlug = cachedArcadeSlug(left.photoHash);
@@ -237,7 +252,7 @@ export function buildRosterFighterSections(
     official.push(cachedArcadeRosterEntry(meta));
   }
 
-  const owned = ownedRosterMetas(metas, arcadeFighters).map(localRosterEntry);
+  const owned = ownedRosterMetas(selectableMetas, selectableArcadeFighters).map(localRosterEntry);
   return {
     official,
     owned,

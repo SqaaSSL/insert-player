@@ -248,6 +248,23 @@ describe('GalleryFighterList', () => {
     expect(sections.owned).toEqual([]);
   });
 
+  it('does not surface Template Zero as a remote, cached, or owned fighter', () => {
+    const templateGlobal = arcadeFighter('template-id', 'template-zero', 'Template Zero');
+    const cachedTemplate = cachedMeta('arcade:template-zero:template-id', 'Template Zero');
+    const workingTemplate = cachedMeta('working-template-zero', 'Template Zero working copy');
+    const ownedMeta = cachedMeta('owned-photo-hash', 'Local Hero');
+
+    const sections = buildGalleryFighterSections(
+      [cachedTemplate, workingTemplate, ownedMeta],
+      [...globals, templateGlobal],
+      true,
+    );
+
+    expect(sections.globals).toHaveLength(globals.length);
+    expect(sections.globals.some(({ fighter }) => fighter?.name === 'Template Zero')).toBe(false);
+    expect(sections.owned).toEqual([ownedMeta]);
+  });
+
   it('marks the fighter being downloaded as loading and disables selection', () => {
     const markup = renderToStaticMarkup(
       <GalleryFighterList
