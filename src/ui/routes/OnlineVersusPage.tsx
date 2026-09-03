@@ -490,6 +490,9 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
         localSlot,
         inputDelay: start.inputDelay,
         fighterIds: [start.hostFighterId, start.guestFighterId],
+        allocateNextMatchSerial: seat.seat === 'host'
+          ? () => allocateVersusMatch(seat.roomCode, versusRoomRequestContext(seat))
+          : undefined,
       });
       onStartFight({
         vsAI: false,

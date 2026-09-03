@@ -1326,7 +1326,8 @@
 
   .match-actions__button {
     @apply min-h-11 cursor-pointer rounded-[3px] border-2 border-asf-gold-deep
-           bg-asf-panel-alt px-4 py-2 font-arcade text-[11px] text-asf-text;
+           bg-asf-panel-alt px-4 py-2 font-arcade text-[11px] text-asf-text
+           disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .match-actions__button--primary {
@@ -1349,6 +1350,174 @@
 
   .match-actions__copy {
     @apply w-full text-center font-sans text-[13px] normal-case leading-[1.5] text-asf-cream;
+  }
+
+  .match-actions__copy.is-error {
+    @apply text-asf-red;
+  }
+
+  .rush-results {
+    @apply pointer-events-auto absolute inset-0 z-50 flex items-center justify-center overflow-hidden
+           p-[clamp(12px,3vw,36px)] text-asf-cream;
+  }
+
+  .rush-results__veil {
+    @apply absolute inset-0 bg-[rgba(4,4,13,0.82)] [backdrop-filter:blur(5px)];
+  }
+
+  .rush-results__panel {
+    @apply relative grid w-[min(920px,100%)] grid-cols-[190px_minmax(0,1fr)] overflow-hidden
+           rounded-[6px] border-2 border-asf-gold-deep bg-[rgba(8,6,18,0.97)]
+           shadow-[0_22px_70px_rgba(0,0,0,0.72)];
+  }
+
+  .rush-results__rank {
+    @apply flex min-h-[430px] flex-col items-center justify-center gap-3 border-r border-asf-line
+           [background:radial-gradient(circle_at_50%_36%,rgba(255,206,58,0.18),transparent_42%),linear-gradient(180deg,#2a070b,#090612)];
+  }
+
+  .rush-results__rank span {
+    @apply font-sans text-[11px] font-bold tracking-[0.16em] text-asf-gold;
+  }
+
+  .rush-results__rank strong {
+    @apply font-arcade text-[92px] leading-none text-asf-gold-bright
+           [filter:drop-shadow(0_8px_0_rgba(106,8,8,0.9))];
+  }
+
+  .rush-results.is-lost .rush-results__rank strong {
+    @apply text-asf-red;
+  }
+
+  .rush-results__body {
+    @apply flex min-w-0 flex-col justify-center px-[clamp(22px,4vw,48px)] py-[clamp(22px,4vh,40px)];
+  }
+
+  .rush-results__eyebrow {
+    @apply flex flex-wrap items-center gap-x-3 gap-y-1;
+  }
+
+  .rush-results__route,
+  .rush-results__difficulty {
+    @apply font-sans text-[11px] font-bold tracking-[0.14em] text-asf-gold;
+  }
+
+  .rush-results__difficulty {
+    @apply border-l border-asf-line pl-3 text-asf-muted;
+  }
+
+  .rush-results__body h2 {
+    @apply mt-2 text-balance font-arcade text-[clamp(22px,3vw,36px)] leading-[1.25] text-asf-cream
+           [text-shadow:0_4px_0_rgba(106,8,8,0.88)];
+  }
+
+  .rush-orders {
+    @apply pointer-events-auto absolute left-7 top-[94px] z-30 flex items-center gap-2 rounded-[4px]
+           border border-[rgba(255,206,58,0.36)] bg-[rgba(5,5,12,0.78)] px-2 py-1.5
+           shadow-[0_5px_0_rgba(0,0,0,0.46)] [backdrop-filter:blur(3px)];
+  }
+
+  .rush-orders__label {
+    @apply font-sans text-[8px] font-bold tracking-[0.12em] text-asf-muted;
+  }
+
+  .rush-orders__buttons {
+    @apply flex gap-1;
+  }
+
+  .rush-orders__buttons button {
+    @apply min-h-7 rounded-[2px] border border-asf-line bg-[rgba(16,12,31,0.92)] px-2
+           font-arcade text-[7px] tracking-[0.04em] text-asf-cream transition-colors
+           hover:border-asf-gold hover:text-asf-gold-bright;
+  }
+
+  .rush-orders__buttons button > span {
+    @apply mr-1 font-sans text-[7px] text-asf-muted;
+  }
+
+  .rush-orders__buttons button.is-active {
+    @apply border-[#30e07a] bg-[rgba(19,82,49,0.88)] text-white;
+  }
+
+  .rush-results__body > p {
+    @apply mt-3 max-w-[54ch] font-sans text-[14px] normal-case leading-[1.55] text-asf-muted;
+  }
+
+  .rush-results__scoreboard {
+    @apply mt-5 grid grid-cols-3 overflow-hidden rounded-[4px] border border-asf-line
+           bg-[rgba(5,5,12,0.72)];
+  }
+
+  .rush-results__scoreboard > div {
+    @apply flex min-h-[64px] flex-col justify-center gap-1 border-b border-r border-asf-line px-3
+           [border-right-width:1px] [border-bottom-width:1px]
+           [&:nth-child(3n)]:border-r-0 [&:nth-last-child(-n+3)]:border-b-0;
+  }
+
+  .rush-results__scoreboard dt {
+    @apply font-sans text-[9px] font-bold tracking-[0.1em] text-asf-muted;
+  }
+
+  .rush-results__scoreboard dd {
+    @apply m-0 font-arcade text-[13px] leading-relaxed text-asf-cream;
+  }
+
+  .rush-results__scoreboard .rush-results__score dd {
+    @apply text-asf-gold-bright;
+  }
+
+  .rush-results__actions {
+    @apply mt-5 flex flex-wrap gap-2;
+  }
+
+  .rush-results__actions .asf-btn {
+    @apply min-h-11 flex-1 px-4 text-[10px];
+  }
+
+  .rush-results__share-error {
+    @apply mt-3 font-sans text-[12px] normal-case text-asf-red;
+  }
+
+  @media (max-width: 720px), (max-height: 500px) {
+    .rush-results__panel {
+      @apply grid-cols-[118px_minmax(0,1fr)];
+    }
+
+    .rush-results__rank {
+      @apply min-h-0;
+    }
+
+    .rush-results__rank strong {
+      @apply text-[58px];
+    }
+
+    .rush-results__body {
+      @apply py-4;
+    }
+
+    .rush-results__body h2 {
+      @apply text-[20px];
+    }
+
+    .rush-results__body > p {
+      @apply mt-2 text-[12px];
+    }
+
+    .rush-results__scoreboard {
+      @apply mt-3;
+    }
+
+    .rush-results__scoreboard > div {
+      @apply min-h-[48px];
+    }
+
+    .rush-results__scoreboard dd {
+      @apply text-[10px];
+    }
+
+    .rush-results__actions {
+      @apply mt-3;
+    }
   }
 
   .mobile-fight-controls {
@@ -1457,6 +1626,11 @@
     @apply bottom-[94px] right-1 h-[56px] w-[56px];
   }
 
+  .mobile-fight-control.is-uppercut,
+  .mobile-fight-control.is-jump {
+    @apply bottom-[88px] right-[150px] h-[56px] w-[56px];
+  }
+
   .mobile-fight-control.is-punch,
   .mobile-fight-control.is-kick {
     @apply border-asf-gold bg-[rgba(106,10,10,0.86)];
@@ -1464,6 +1638,12 @@
 
   .mobile-fight-control.is-fireball {
     @apply border-asf-violet bg-[rgba(48,24,96,0.86)];
+  }
+
+  .mobile-fight-control.is-uppercut,
+  .mobile-fight-control.is-jump {
+    @apply border-[#30e07a] bg-[rgba(8,72,48,0.9)] text-[#baffd4]
+           [text-shadow:0_2px_0_rgba(0,0,0,0.8)];
   }
 
   .mobile-fight-control.is-guard {
@@ -2105,6 +2285,60 @@
   .roster-stage-summary span,
   .roster-fighter-card__meta span {
     @apply font-sans text-[12px] normal-case leading-[1.55] text-asf-muted;
+  }
+
+  .roster-difficulty {
+    @apply mb-5 flex flex-col gap-3 border-b border-asf-line pb-5;
+  }
+
+  .roster-difficulty__heading {
+    @apply flex items-end justify-between gap-4;
+  }
+
+  .roster-difficulty__heading > div {
+    @apply flex flex-col gap-1;
+  }
+
+  .roster-difficulty__heading span {
+    @apply font-sans text-[9px] font-bold tracking-[0.14em] text-asf-red;
+  }
+
+  .roster-difficulty__heading h2 {
+    @apply m-0;
+  }
+
+  .roster-difficulty__heading > strong {
+    @apply font-arcade text-[10px] tracking-[0.08em] text-asf-gold-bright;
+  }
+
+  .roster-difficulty__options {
+    @apply grid grid-cols-3 gap-2 max-[720px]:grid-cols-1;
+  }
+
+  .roster-difficulty__options .gallery-chip {
+    @apply min-w-0 p-2;
+  }
+
+  .roster-difficulty__options .gallery-chip span {
+    @apply break-words text-[8px] tracking-[0.04em];
+  }
+
+  .roster-difficulty__options .gallery-chip small {
+    @apply text-[10px] leading-[1.45];
+  }
+
+  @media (max-width: 720px), (max-height: 500px) {
+    .rush-orders {
+      @apply left-2 top-[82px] gap-1 px-1.5;
+    }
+
+    .rush-orders__label {
+      @apply hidden;
+    }
+
+    .rush-orders__buttons button {
+      @apply min-h-6 px-1.5 text-[6px];
+    }
   }
 
   .roster-fighter-grid {
@@ -4309,6 +4543,11 @@
            uppercase text-asf-gold transition-colors hover:border-asf-gold-bright
            hover:text-asf-gold-bright focus-visible:outline-2 focus-visible:outline-offset-2
            focus-visible:outline-asf-blue;
+  }
+
+  .fight-keys__kicker {
+    @apply rounded-[3px] border border-asf-gold-deep bg-[rgba(43,11,11,0.9)] px-3 py-1.5
+           font-arcade text-[8px] tracking-[0.08em] text-asf-gold-bright;
   }
 
   .fight-keys__board {

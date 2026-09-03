@@ -52,6 +52,7 @@ import {
   MATCH_ACTIONS_VISIBILITY_EVENT,
   MATCH_COMPLETE_EVENT,
   NET_STATE_EVENT,
+  ONLINE_REMATCH_STATE_EVENT,
   RUNTIME_READY_EVENT,
   type AnnounceDetail,
   type NetStateDetail,
@@ -65,12 +66,14 @@ import {
   type MatchSceneData,
 } from "../match/MatchConfig.ts";
 import {
+  getFightStageCalibration,
   getStageTheme,
   pickStageThemeIdFromSeed,
   type StageThemeId,
 } from "../match/StageConfig.ts";
 import { debugInfo, debugWarn } from "../../services/DebugLog.ts";
 import { resetVirtualInput } from "../systems/VirtualInput.ts";
+import { getFightDifficultyForStrength } from "../match/FightDifficulty.ts";
 
 /**
  * Upper bound on simulation ticks run in one render frame. A backgrounded tab
@@ -109,6 +112,11 @@ export class FightScene extends Phaser.Scene {
   private netStateFrame = 0;
   private opponentLeft = false;
   private opponentLeftAt = 0;
+  private localRematchReady = false;
+  private remoteRematchReady = false;
+  private onlineRematchStarting = false;
+  /** Keep the live transport across Phaser's shutdown during an agreed rematch. */
+  private preserveOnlineSessionOnRestart = false;
   private p1View!: FighterView;
   private p2View!: FighterView;
   private projectileViews!: ProjectileViewPool;
@@ -225,6 +233,9 @@ export class FightScene extends Phaser.Scene {
     this.online = data.online ?? null;
     this.opponentLeft = false;
     this.lastNetState = null;
+    this.localRematchReady = false;
+    this.remoteRematchReady = false;
+    this.onlineRematchStarting = false;
     this.matchSeed = buildMatchSeed({
       ...data,
       vsAI: this.isVsAI,
@@ -271,21 +282,15 @@ export class FightScene extends Phaser.Scene {
     window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
     window.addEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
 
-    if (this.customStageKey) {
-      this.stageFloorY = GROUND_Y + 18;
-      this.fighterRenderScale = 1.2;
-      this.fighterRenderYOffset = this.stageFloorY - GROUND_Y;
-    } else {
-      this.stageFloorY = GROUND_Y;
-      this.fighterRenderScale = 1.03;
-      this.fighterRenderYOffset = 0;
-    }
-
     const p1Personality = getFighterPersonality(this.p1PersonalityId);
     const p2Personality = getFighterPersonality(this.p2PersonalityId);
     const stageTheme = getStageTheme(
       this.stageId ?? pickStageThemeIdFromSeed(this.matchSeed),
     );
+    const calibration = getFightStageCalibration(stageTheme.id, Boolean(this.customStageKey));
+    this.stageFloorY = calibration.floorY;
+    this.fighterRenderScale = calibration.fighterScale;
+    this.fighterRenderYOffset = calibration.fighterYOffset;
     this.resolvedStageId = stageTheme.id;
     const stageLabel = this.customStageKey
       ? (this.customStageLabel ?? "PHOTO STAGE").toUpperCase()
@@ -296,7 +301,9 @@ export class FightScene extends Phaser.Scene {
     this.stageDisplayLabel = stageLabel;
     this.matchLabel = matchLabel;
     this.p1DisplayTag = this.cpuVsCpu ? p1Personality.label : "";
-    this.p2DisplayTag = this.isVsAI ? p2Personality.label : "";
+    this.p2DisplayTag = this.isVsAI
+      ? `${p2Personality.label} · ${getFightDifficultyForStrength(this.p2Difficulty).label}`
+      : "";
 
     this.inputMgr = new InputManager(this);
     this.sound_mgr = new SoundManager();
@@ -1208,7 +1215,10 @@ export class FightScene extends Phaser.Scene {
 
   private attachOnlineSession(online: OnlineMatchInfo): boolean {
     const session = getActiveOnlineSession();
-    if (!session || session.roomCode !== online.roomCode) return false;
+    if (!session || session.roomCode !== online.roomCode) {
+      this.preserveOnlineSessionOnRestart = false;
+      return false;
+    }
     this.onlineSession = session;
     const transport = session.transport;
     this.rollback = new RollbackSession({
@@ -1229,11 +1239,31 @@ export class FightScene extends Phaser.Scene {
           this.rollback?.receiveChecksumReport({ tick: payload.tick, checksum: payload.checksum });
         } else if (payload.t === "quit") {
           this.onOpponentLeft();
+        } else if (
+          payload.t === "rematch_ready"
+          && payload.previousMatchSerial === this.online?.matchSerial
+        ) {
+          this.remoteRematchReady = true;
+          if (!this.localRematchReady) {
+            this.emitOnlineRematchState("rival_ready", "Your rival is ready. Lock in to run it back.");
+          }
+          void this.maybeStartOnlineRematch();
+        } else if (
+          payload.t === "rematch_start"
+          && payload.previousMatchSerial === this.online?.matchSerial
+          && payload.matchSerial > payload.previousMatchSerial
+          && session.seat === "guest"
+          && this.localRematchReady
+          && this.remoteRematchReady
+        ) {
+          this.restartOnlineMatch(payload.matchSerial, payload.seed);
         }
       }),
       transport.onState((state) => this.onTransportState(state)),
     );
     this.installNetDebugHook();
+    this.preserveOnlineSessionOnRestart = false;
+    this.emitOnlineRematchState("idle");
     return true;
   }
 
@@ -1293,6 +1323,128 @@ export class FightScene extends Phaser.Scene {
     if (this.sim.phase !== RoundPhase.MATCH_OVER && !this.waitingForMatchInput) {
       this.showMatchOverUI();
     }
+  }
+
+  private emitOnlineRematchState(
+    state: WindowEventMap[typeof ONLINE_REMATCH_STATE_EVENT]["detail"]["state"],
+    message?: string,
+  ): void {
+    window.dispatchEvent(
+      new CustomEvent(ONLINE_REMATCH_STATE_EVENT, { detail: { state, message } }),
+    );
+  }
+
+  private requestOnlineRematch(): void {
+    if (
+      !this.online
+      || !this.onlineSession
+      || this.opponentLeft
+      || this.rollback?.isDesynced
+      || this.localRematchReady
+      || this.onlineRematchStarting
+    ) {
+      return;
+    }
+    this.localRematchReady = true;
+    this.emitOnlineRematchState(
+      "waiting",
+      this.remoteRematchReady ? "Both players ready. Starting…" : "Waiting for your rival…",
+    );
+    const sent = this.onlineSession.transport.sendControl({
+      t: "rematch_ready",
+      previousMatchSerial: this.online.matchSerial,
+    });
+    if (!sent) {
+      this.localRematchReady = false;
+      this.emitOnlineRematchState("error", "Could not reach your rival. Try again.");
+      return;
+    }
+    void this.maybeStartOnlineRematch();
+  }
+
+  private async maybeStartOnlineRematch(): Promise<void> {
+    const session = this.onlineSession;
+    const previousMatchSerial = this.online?.matchSerial;
+    if (
+      !session
+      || previousMatchSerial === undefined
+      || session.seat !== "host"
+      || !this.localRematchReady
+      || !this.remoteRematchReady
+      || this.onlineRematchStarting
+    ) {
+      return;
+    }
+    const allocateNextMatchSerial = session.allocateNextMatchSerial;
+    if (!allocateNextMatchSerial) {
+      this.localRematchReady = false;
+      this.emitOnlineRematchState("error", "Could not reserve the rematch. Try again.");
+      return;
+    }
+
+    this.onlineRematchStarting = true;
+    this.emitOnlineRematchState("starting", "Both players ready. Starting…");
+    try {
+      const matchSerial = await allocateNextMatchSerial();
+      if (
+        this.onlineSession !== session
+        || this.online?.matchSerial !== previousMatchSerial
+        || !Number.isSafeInteger(matchSerial)
+        || matchSerial <= previousMatchSerial
+      ) {
+        throw new Error("The rematch reservation is no longer valid.");
+      }
+      const seedWords = new Uint32Array(1);
+      crypto.getRandomValues(seedWords);
+      const seed = seedWords[0] >>> 0;
+      const sent = session.transport.sendControl({
+        t: "rematch_start",
+        previousMatchSerial,
+        matchSerial,
+        seed,
+      });
+      if (!sent) throw new Error("The rival connection closed before the rematch started.");
+      this.restartOnlineMatch(matchSerial, seed);
+    } catch (error) {
+      this.onlineRematchStarting = false;
+      this.localRematchReady = false;
+      debugWarn(
+        "[FightScene] Online rematch could not start:",
+        error instanceof Error ? error.message : error,
+      );
+      this.emitOnlineRematchState("error", "Could not start the rematch. Try again.");
+    }
+  }
+
+  private restartOnlineMatch(matchSerial: number, seed: number): void {
+    if (!this.online || !this.onlineSession || this.matchActionCommitted) return;
+    this.onlineRematchStarting = true;
+    this.matchActionCommitted = true;
+    this.preserveOnlineSessionOnRestart = true;
+    this.emitOnlineRematchState("starting", "Both players ready. Starting…");
+    this.cleanupMatchOverUI();
+    this.cameras.main.flash(180, 255, 255, 255);
+    this.time.delayedCall(180, () => {
+      this.scene.restart({
+        ...this.restartFormat,
+        vsAI: false,
+        cpuVsCpu: false,
+        p1PhotoHash: this.p1PhotoHash ?? undefined,
+        p2PhotoHash: this.p2PhotoHash ?? undefined,
+        p1CloudFighterId: this.p1CloudFighterId,
+        p2CloudFighterId: this.p2CloudFighterId,
+        p1Name: this.p1Name,
+        p2Name: this.p2Name,
+        p1PersonalityId: this.p1PersonalityId,
+        p2PersonalityId: this.p2PersonalityId,
+        stageId: this.stageId ?? undefined,
+        customStageKey: this.customStageKey ?? undefined,
+        customStageLabel: this.customStageLabel ?? undefined,
+        remix: this.remix,
+        seed,
+        online: { ...this.online!, matchSerial },
+      } satisfies MatchSceneData);
+    });
   }
 
   private emitNetState(force = false): void {
@@ -2079,16 +2231,19 @@ export class FightScene extends Phaser.Scene {
       const enterKey = this.input.keyboard!.addKey(
         Phaser.Input.Keyboard.KeyCodes.ENTER,
       );
-      const remixKey = this.input.keyboard!.addKey(
-        Phaser.Input.Keyboard.KeyCodes.R,
-      );
-      this.matchActionKeys.push(enterKey, remixKey);
+      this.matchActionKeys.push(enterKey);
       enterKey.once("down", () => {
         this.performMatchAction("run_it_back");
       });
-      remixKey.once("down", () => {
-        this.performMatchAction("remix");
-      });
+      if (!this.online) {
+        const remixKey = this.input.keyboard!.addKey(
+          Phaser.Input.Keyboard.KeyCodes.R,
+        );
+        this.matchActionKeys.push(remixKey);
+        remixKey.once("down", () => {
+          this.performMatchAction("remix");
+        });
+      }
     }
 
     escKey.once("down", () => {
@@ -2102,12 +2257,14 @@ export class FightScene extends Phaser.Scene {
 
   private performMatchAction(action: MatchAction): void {
     if (!this.waitingForMatchInput || this.matchActionCommitted) return;
+    if (this.online && action === "run_it_back") {
+      this.requestOnlineRematch();
+      return;
+    }
     this.matchActionCommitted = true;
     this.cleanupMatchOverUI();
 
     if (this.online) {
-      // Re-running an online match needs a fresh room handshake; every
-      // action returns to the lobby.
       this.onlineSession?.transport.sendControl({ t: "quit" });
     } else if (action === "run_it_back") {
       this.restartMatch(this.remix);
@@ -2197,7 +2354,9 @@ export class FightScene extends Phaser.Scene {
     this.removeRecordingHook();
     if (this.online) {
       this.detachOnlineSession();
-      endActiveOnlineSession();
+      if (!this.preserveOnlineSessionOnRestart) {
+        endActiveOnlineSession();
+      }
     }
     this.cleanupMatchOverUI();
     resetVirtualInput();

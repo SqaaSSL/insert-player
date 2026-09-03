@@ -40,6 +40,24 @@ const ATTACK_ROWS: KeyDef[][] = [
   ],
 ];
 
+const CONTROLS_SEEN_KEY = 'asf:fight-controls-seen:v1';
+
+function controlsSeen(): boolean {
+  try {
+    return window.localStorage.getItem(CONTROLS_SEEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function markControlsSeen(): void {
+  try {
+    window.localStorage.setItem(CONTROLS_SEEN_KEY, '1');
+  } catch {
+    // Private browsing can deny storage; the hint still works for this match.
+  }
+}
+
 function Key({ def }: { def: KeyDef }) {
   return (
     <span className={`fight-keys__key${def.caption ? ' is-active' : ''}`}>
@@ -87,8 +105,14 @@ export function FightControlsHint() {
     const onIntro = (event: WindowEventMap[typeof INTRO_STATE_EVENT]) => {
       if (event.detail.visible && event.detail.roundNumber === 1) {
         setHasShown(true);
+        if (controlsSeen()) {
+          setVisible(false);
+          setLeaving(false);
+          return;
+        }
         setVisible(true);
         setLeaving(false);
+        markControlsSeen();
         clearHintTimers();
         hideTimerRef.current = window.setTimeout(() => {
           setLeaving(true);
@@ -142,6 +166,7 @@ export function FightControlsHint() {
           Move with A and D, crouch with S, jump with W, and guard with G. Punch with U,
           kick with J, fireball with I, uppercut with K, and use super with O.
         </p>
+        <span className="fight-keys__kicker" aria-hidden="true">QUICK START · UNIVERSAL MOVESET</span>
         <div className="fight-keys__board" aria-hidden="true">
           <Cluster rows={MOVE_ROWS} label="Movement keys" />
           <Cluster rows={ATTACK_ROWS} label="Attack keys" />

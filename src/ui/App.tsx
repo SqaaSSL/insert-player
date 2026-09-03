@@ -154,23 +154,59 @@ export function shouldCommitTrialLaunch(
 
 type Navigate = (route: AppRoute, search?: string, options?: NavigationOptions) => void;
 
+export function fightExitRoute(
+  match?: Pick<MatchSceneData, 'experience' | 'online'> | null,
+): '/' | '/menu' | '/versus/online' {
+  if (match?.experience === 'trial') return '/';
+  if (match?.online) return '/versus/online';
+  return '/menu';
+}
+
 function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null {
-  const stored = readStoredMatch(authSessionKey);
-  if (stored) return stored;
   // Deterministic local-only fixture for real-canvas QA and marketing captures.
   // Vite removes this branch from production builds.
-  if (!import.meta.env.DEV || new URLSearchParams(window.location.search).get('rushDemo') !== '1') {
-    return null;
+  const params = new URLSearchParams(window.location.search);
+  if (import.meta.env.DEV && params.get('rushDemo') === '1') {
+    const stageId = params.get('rushStage') === 'la-jaula-304'
+      ? 'la-jaula-304'
+      : 'side-street';
+    const rushDifficulty = params.get('rushDifficulty') === 'rookie'
+      ? 'rookie'
+      : params.get('rushDifficulty') === 'mayhem'
+        ? 'mayhem'
+        : 'arcade';
+    return {
+      gameMode: 'rush',
+      vsAI: true,
+      cpuVsCpu: false,
+      p1Name: 'NOVA',
+      p2Name: 'BYTE',
+      stageId,
+      rushDifficulty,
+      seed: 0x52555348,
+    };
   }
-  return {
-    gameMode: 'rush',
-    vsAI: true,
-    cpuVsCpu: false,
-    p1Name: 'NOVA',
-    p2Name: 'BYTE',
-    stageId: 'side-street',
-    seed: 0x52555348,
-  };
+  if (import.meta.env.DEV && params.get('fightDemo') === '1') {
+    const stageId = params.get('fightStage') === 'side-street'
+      ? 'side-street'
+      : 'la-jaula-304';
+    const p2Difficulty = params.get('fightDifficulty') === 'rookie'
+      ? 0.45
+      : params.get('fightDifficulty') === 'champion'
+        ? 1
+        : 0.76;
+    return {
+      gameMode: 'fight',
+      vsAI: true,
+      cpuVsCpu: false,
+      p1Name: 'NOVA',
+      p2Name: 'BYTE',
+      stageId,
+      p2Difficulty,
+      seed: 0x46494748,
+    };
+  }
+  return readStoredMatch(authSessionKey);
 }
 
 function useHashRoute(): [AppRoute, Navigate] {
@@ -409,8 +445,8 @@ export function App({
   }, [authSessionKey, navigate]);
 
   const exitFight = useCallback(() => {
-    leaveFight(pendingMatch?.experience === 'trial' ? '/' : '/menu');
-  }, [leaveFight, pendingMatch?.experience]);
+    leaveFight(fightExitRoute(pendingMatch));
+  }, [leaveFight, pendingMatch]);
 
   const launchTarget = useMemo(
     () => pendingMatch

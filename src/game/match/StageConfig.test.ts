@@ -3,6 +3,7 @@ import {
   SIGNATURE_STAGE_THEMES,
   STAGE_THEMES,
   getDefaultStageThemeIdForMode,
+  getFightStageCalibration,
   getSignatureStageThemeIdForArcadeSlug,
   getStageThemesForMode,
   pickStageThemeIdFromSeed,
@@ -34,7 +35,8 @@ describe('signature stage configuration', () => {
       },
       {
         id: 'la-jaula-304',
-        assetPath: '/assets/stages/signature/la-jaula-304-pipeline-v1.png',
+        assetPath: '/assets/rush/la-jaula-304/la-jaula-304-fight-v2.webp',
+        rushAssetPath: '/assets/rush/la-jaula-304/la-jaula-304-route-v1.webp',
         signatureForArcadeSlug: 'lamine-yamal',
       },
     ]);
@@ -87,9 +89,28 @@ describe('signature stage configuration', () => {
     }
   });
 
-  it('keeps legacy arenas Fight-only and exposes Side Street as the authored hybrid', () => {
-    expect(getStageThemesForMode('rush').map((stage) => stage.id)).toEqual(['side-street']);
+  it('keeps legacy arenas Fight-only and exposes two authored hybrid worlds', () => {
+    expect(getStageThemesForMode('rush').map((stage) => stage.id)).toEqual(['la-jaula-304', 'side-street']);
     expect(getDefaultStageThemeIdForMode('rush')).toBe('side-street');
     expect(getStageThemesForMode('fight').map((stage) => stage.id)).toContain('side-street');
+    expect(getStageThemesForMode('fight').map((stage) => stage.id)).toContain('la-jaula-304');
+  });
+
+  it('keeps fight-plane calibration attached to the stage asset', () => {
+    expect(getFightStageCalibration('la-jaula-304')).toEqual({
+      floorY: 480,
+      fighterScale: 1.03,
+      fighterYOffset: 0,
+    });
+    expect(getFightStageCalibration('side-street')).toEqual({
+      floorY: 480,
+      fighterScale: 1.03,
+      fighterYOffset: 0,
+    });
+    expect(getFightStageCalibration('side-street', true)).toEqual({
+      floorY: 498,
+      fighterScale: 1.2,
+      fighterYOffset: 18,
+    });
   });
 });

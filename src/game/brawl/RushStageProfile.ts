@@ -1,6 +1,7 @@
 import type { StageThemeId } from '../match/StageConfig.ts';
 import {
   RUSH_ROUTE_MAP,
+  LA_JAULA_ROUTE_MAP,
   type BrawlMapDefinition,
   type BrawlObstacleSkin,
 } from './BrawlMap.ts';
@@ -65,7 +66,7 @@ const PROFILES: Partial<Record<StageThemeId, RushStageProfile>> = {
   'la-jaula-304': {
     id: 'jaula-neighborhood-run',
     routeLabel: 'JAULA NEIGHBORHOOD RUN',
-    segmentLabels: ['SIDE STREET', 'CAGE GATE', 'TOUCHLINE', 'ROOFTOPS'],
+    segmentLabels: ['SUNSET BLOCK', 'CAGE GATE', 'TOUCHLINE', 'ROOFTOPS'],
     encounterLabels: ['STREET CREW', 'TOUCHLINE PRESS', 'CAGE CAPTAIN'],
     obstacleSkin: 'jaula',
     accent: 0xffe066,
@@ -112,15 +113,18 @@ export function getRushStageProfile(
  * collision, entrances, or encounter pacing embedded in it.
  */
 export function buildRushRouteMap(profile: RushStageProfile): Readonly<BrawlMapDefinition> {
+  const baseMap = profile.id === 'jaula-neighborhood-run'
+    ? LA_JAULA_ROUTE_MAP
+    : RUSH_ROUTE_MAP;
   return {
-    ...RUSH_ROUTE_MAP,
-    id: `${RUSH_ROUTE_MAP.id}:${profile.id}`,
+    ...baseMap,
+    id: `${baseMap.id}:${profile.id}`,
     label: profile.routeLabel,
-    obstacles: (RUSH_ROUTE_MAP.obstacles ?? []).map((obstacle) => ({
+    obstacles: (baseMap.obstacles ?? []).map((obstacle) => ({
       ...obstacle,
       skin: profile.obstacleSkin,
     })),
-    encounters: RUSH_ROUTE_MAP.encounters.map((encounter, index) => ({
+    encounters: baseMap.encounters.map((encounter, index) => ({
       ...encounter,
       label: profile.encounterLabels[index] ?? encounter.label,
       enemies: encounter.enemies.map((enemy) => ({

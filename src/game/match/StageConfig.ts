@@ -1,3 +1,5 @@
+import { GROUND_Y } from '../constants.ts';
+
 // Kept only so an already-running legacy scene can still render safely. These
 // procedural placeholders are not part of the selectable or random stage catalog.
 export type LegacyProceduralStageThemeId =
@@ -27,6 +29,10 @@ export interface StageTheme {
   modes?: readonly StageMode[];
   /** A full authored horizontal route, never a repeated Fight backdrop. */
   rushAssetPath?: string;
+  /** Fight-plane calibration for this exact authored plate. */
+  fightFloorY?: number;
+  fighterRenderScale?: number;
+  fighterRenderYOffset?: number;
   signatureForArcadeSlug?: string;
 }
 
@@ -61,8 +67,13 @@ export const SIGNATURE_STAGE_THEMES: StageTheme[] = [
   {
     id: 'la-jaula-304',
     label: 'LA JAULA 304',
-    blurb: 'A caged neighborhood pitch glowing at Mediterranean golden hour.',
-    assetPath: '/assets/stages/signature/la-jaula-304-pipeline-v1.png',
+    blurb: 'From Mediterranean golden hour to a floodlit neighborhood lockdown.',
+    assetPath: '/assets/rush/la-jaula-304/la-jaula-304-fight-v2.webp',
+    rushAssetPath: '/assets/rush/la-jaula-304/la-jaula-304-route-v1.webp',
+    modes: ['fight', 'rush'],
+    fightFloorY: 480,
+    fighterRenderScale: 1.03,
+    fighterRenderYOffset: 0,
     signatureForArcadeSlug: 'lamine-yamal',
   },
   {
@@ -72,6 +83,9 @@ export const SIGNATURE_STAGE_THEMES: StageTheme[] = [
     assetPath: '/assets/rush/side-street/side-street-fight-v1.webp',
     rushAssetPath: '/assets/rush/side-street/side-street-route-v1.webp',
     modes: ['fight', 'rush'],
+    fightFloorY: 480,
+    fighterRenderScale: 1.03,
+    fighterRenderYOffset: 0,
   },
 ];
 
@@ -88,6 +102,28 @@ export function getStageTheme(id?: StageThemeId | null): StageTheme {
   return STAGE_THEMES.find((stage) => stage.id === id) ?? STAGE_THEMES[0];
 }
 
+export interface FightStageCalibration {
+  floorY: number;
+  fighterScale: number;
+  fighterYOffset: number;
+}
+
+export function getFightStageCalibration(
+  stageId?: StageThemeId | null,
+  customStage = false,
+): FightStageCalibration {
+  if (customStage) {
+    return { floorY: GROUND_Y + 18, fighterScale: 1.2, fighterYOffset: 18 };
+  }
+  const stage = getStageTheme(stageId);
+  const floorY = stage.fightFloorY ?? GROUND_Y;
+  return {
+    floorY,
+    fighterScale: stage.fighterRenderScale ?? 1.03,
+    fighterYOffset: stage.fighterRenderYOffset ?? floorY - GROUND_Y,
+  };
+}
+
 export function stageSupportsMode(stageId: StageThemeId, mode: StageMode): boolean {
   const stage = getStageTheme(stageId);
   return (stage.modes ?? ['fight']).includes(mode);
@@ -98,6 +134,7 @@ export function getStageThemesForMode(mode: StageMode): StageTheme[] {
 }
 
 export function getDefaultStageThemeIdForMode(mode: StageMode): StageThemeId {
+  if (mode === 'rush' && stageSupportsMode('side-street', 'rush')) return 'side-street';
   return getStageThemesForMode(mode)[0]?.id ?? STAGE_THEMES[0].id;
 }
 

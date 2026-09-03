@@ -1,4 +1,6 @@
 import type { StageThemeId } from './StageConfig.ts';
+import type { RushRunRank } from '../brawl/RushRunScore.ts';
+import type { RushCompanionOrder, RushDifficultyId } from '../brawl/RushConfig.ts';
 import { ROUNDS_TO_WIN } from '../constants.ts';
 
 export type MatchExperience = 'standard' | 'trial';
@@ -69,6 +71,10 @@ export interface MatchSceneData {
   remix?: number;
   /** Arcade-ladder AI strength for the P2 CPU, 0..1. Omitted = full strength. */
   p2Difficulty?: number;
+  /** Shared Rush ruleset tuning. It never changes fighter-generation assets. */
+  rushDifficulty?: RushDifficultyId;
+  /** Live tactical posture for the local CPU partner. */
+  rushCompanionOrder?: RushCompanionOrder;
   /**
    * Explicit simulation seed (uint32). When present it wins over the derived
    * match-identity hash, so two machines can agree on one seed for netplay
@@ -115,6 +121,9 @@ export const INTRO_STATE_EVENT = 'asf-intro';
 export const PAUSE_EVENT = 'asf-pause';
 export const NET_STATE_EVENT = 'asf-net-state';
 export const RUNTIME_READY_EVENT = 'asf-runtime-ready';
+export const RUSH_RUN_COMPLETE_EVENT = 'asf-rush-run-complete';
+export const RUSH_COMPANION_ORDER_EVENT = 'asf-rush-companion-order';
+export const ONLINE_REMATCH_STATE_EVENT = 'asf-online-rematch-state';
 
 export type MatchAction = 'run_it_back' | 'remix' | 'menu';
 
@@ -139,13 +148,39 @@ export interface MatchActionDetail {
 
 export interface MatchActionsVisibilityDetail {
   visible: boolean;
-  /** Online matches cannot be re-run or remixed unilaterally. */
+  /** Online actions require the live mutual-ready handshake. */
   online?: boolean;
 }
 
 export interface RuntimeReadyDetail {
   sceneKey: 'FightScene' | 'RushScene';
   matchSeed?: number;
+}
+
+export interface RushRunCompleteDetail {
+  outcome: 'won' | 'lost';
+  stageId: StageThemeId;
+  stageLabel: string;
+  durationSeconds: number;
+  score: number;
+  rank: RushRunRank;
+  enemiesDefeated: number;
+  obstaclesDestroyed: number;
+  checkpointsCleared: number;
+  revives: number;
+  damageTaken: number;
+  teamHealthRemaining: number;
+  teamMaxHealth: number;
+  difficulty: RushDifficultyId;
+}
+
+export interface RushCompanionOrderDetail {
+  order: RushCompanionOrder;
+}
+
+export interface OnlineRematchStateDetail {
+  state: 'idle' | 'rival_ready' | 'waiting' | 'starting' | 'error';
+  message?: string;
 }
 
 /** Netcode telemetry for the React overlay during an online match. */
@@ -219,6 +254,9 @@ declare global {
     [INTRO_STATE_EVENT]: CustomEvent<IntroStateDetail>;
     [NET_STATE_EVENT]: CustomEvent<NetStateDetail>;
     [RUNTIME_READY_EVENT]: CustomEvent<RuntimeReadyDetail>;
+    [RUSH_RUN_COMPLETE_EVENT]: CustomEvent<RushRunCompleteDetail>;
+    [RUSH_COMPANION_ORDER_EVENT]: CustomEvent<RushCompanionOrderDetail>;
+    [ONLINE_REMATCH_STATE_EVENT]: CustomEvent<OnlineRematchStateDetail>;
     [PAUSE_EVENT]: CustomEvent<PauseDetail>;
   }
 }

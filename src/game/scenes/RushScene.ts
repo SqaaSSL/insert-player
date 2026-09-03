@@ -6,7 +6,16 @@ import { InputManager } from '../systems/InputManager.ts';
 import { SoundManager } from '../systems/SoundManager.ts';
 import { resetVirtualInput } from '../systems/VirtualInput.ts';
 import { loadAiSprites } from '../sprites/AiSpriteLoader.ts';
-import { RUNTIME_READY_EVENT, type MatchSceneData } from '../match/MatchConfig.ts';
+import {
+  MATCH_ACTION_EVENT,
+  PAUSE_EVENT,
+  RUNTIME_READY_EVENT,
+  RUSH_COMPANION_ORDER_EVENT,
+  RUSH_RUN_COMPLETE_EVENT,
+  type MatchAction,
+  type MatchSceneData,
+  type RushRunCompleteDetail,
+} from '../match/MatchConfig.ts';
 import {
   getDefaultStageThemeIdForMode,
   getStageTheme,
@@ -29,6 +38,13 @@ import {
   getRushStageProfile,
   type RushStageProfile,
 } from '../brawl/RushStageProfile.ts';
+import { scoreRushRun } from '../brawl/RushRunScore.ts';
+import {
+  RUSH_COMPANION_ORDERS,
+  getRushDifficulty,
+  type RushCompanionOrder,
+  type RushDifficultyId,
+} from '../brawl/RushConfig.ts';
 
 const MAX_TICKS_PER_FRAME = 5;
 const DEFAULT_STAGE_ID: StageThemeId = getDefaultStageThemeIdForMode('rush');
@@ -68,6 +84,24 @@ interface ObstaclePalette {
   dark: number;
 }
 
+interface RushRunStats {
+  enemiesDefeated: number;
+  obstaclesDestroyed: number;
+  checkpointsCleared: number;
+  revives: number;
+  damageTaken: number;
+}
+
+function emptyRunStats(): RushRunStats {
+  return {
+    enemiesDefeated: 0,
+    obstaclesDestroyed: 0,
+    checkpointsCleared: 0,
+    revives: 0,
+    damageTaken: 0,
+  };
+}
+
 const OBSTACLE_PALETTES: Record<BrawlObstacleSkin, ObstaclePalette> = {
   arena: { body: 0x27212f, top: 0x51425f, accent: 0xffce3a, dark: 0x09070a },
   executive: { body: 0x26384c, top: 0x56789b, accent: 0xe7f2ff, dark: 0x08111d },
@@ -90,6 +124,8 @@ export class RushScene extends Phaser.Scene {
   private inputManager!: InputManager;
   private soundManager: SoundManager | null = null;
   private companionCpu = false;
+  private companionOrder: RushCompanionOrder = 'follow';
+  private rushDifficulty: RushDifficultyId = 'arcade';
   private ready = false;
   private accumulator = 0;
   private stageId: StageThemeId = DEFAULT_STAGE_ID;
@@ -109,10 +145,34 @@ export class RushScene extends Phaser.Scene {
   private hudP2!: Phaser.GameObjects.Text;
   private hudObjective!: Phaser.GameObjects.Text;
   private banner!: Phaser.GameObjects.Text;
-  private resultPanel!: Phaser.GameObjects.Container;
   private escapeKey?: Phaser.Input.Keyboard.Key;
   private jumpKey?: Phaser.Input.Keyboard.Key;
   private jumpQueued = false;
+  private paused = false;
+  private waitingForRunAction = false;
+  private runActionCommitted = false;
+  private runSummaryReported = false;
+  private runStats: RushRunStats = emptyRunStats();
+
+  private readonly onPauseEvent = (event: WindowEventMap[typeof PAUSE_EVENT]): void => {
+    this.paused = event.detail.paused;
+    if (this.paused) {
+      this.accumulator = 0;
+      this.inputManager?.reset();
+    }
+  };
+
+  private readonly onMatchAction = (event: WindowEventMap[typeof MATCH_ACTION_EVENT]): void => {
+    this.performRunAction(event.detail.action);
+  };
+
+  private readonly onCompanionOrder = (event: WindowEventMap[typeof RUSH_COMPANION_ORDER_EVENT]): void => {
+    this.companionOrder = event.detail.order;
+    this.matchData.rushCompanionOrder = event.detail.order;
+    const label = RUSH_COMPANION_ORDERS.find((order) => order.id === event.detail.order)?.label
+      ?? event.detail.order.toUpperCase();
+    this.showBanner(`CPU: ${label}`, 0xb8ffcd);
+  };
 
   constructor() {
     super({ key: 'RushScene' });
@@ -131,6 +191,8 @@ export class RushScene extends Phaser.Scene {
     this.stageProfile = getRushStageProfile(this.stageId, Boolean(this.customStageKey));
     this.routeMap = buildRushRouteMap(this.stageProfile);
     this.companionCpu = data.vsAI === true;
+    this.companionOrder = data.rushCompanionOrder ?? 'follow';
+    this.rushDifficulty = getRushDifficulty(data.rushDifficulty).id;
     this.accumulator = 0;
     this.ready = false;
     this.presentations.clear();
@@ -139,6 +201,11 @@ export class RushScene extends Phaser.Scene {
     this.stageEntrySprites = [];
     this.stageEntryKeys.clear();
     this.jumpQueued = false;
+    this.paused = false;
+    this.waitingForRunAction = false;
+    this.runActionCommitted = false;
+    this.runSummaryReported = false;
+    this.runStats = emptyRunStats();
   }
 
   preload(): void {
@@ -149,7 +216,7 @@ export class RushScene extends Phaser.Scene {
         this.load.image(this.stageTextureKey, stage.rushAssetPath);
       }
     }
-    if (stage.id === 'side-street') {
+    if (stage.id === 'side-street' || stage.id === 'la-jaula-304') {
       for (const [textureKey, assetPath] of Object.values(SIDE_STREET_ASSETS)) {
         if (!this.textures.exists(textureKey)) this.load.image(textureKey, assetPath);
       }
@@ -158,6 +225,12 @@ export class RushScene extends Phaser.Scene {
 
   async create(): Promise<void> {
     const lifecycle = ++this.lifecycle;
+    window.removeEventListener(PAUSE_EVENT, this.onPauseEvent);
+    window.addEventListener(PAUSE_EVENT, this.onPauseEvent);
+    window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
+    window.addEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
+    window.removeEventListener(RUSH_COMPANION_ORDER_EVENT, this.onCompanionOrder);
+    window.addEventListener(RUSH_COMPANION_ORDER_EVENT, this.onCompanionOrder);
     this.escapeKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.ESC);
     this.escapeKey?.on('down', this.exitToMenu, this);
     this.jumpKey = this.input.keyboard?.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
@@ -173,10 +246,9 @@ export class RushScene extends Phaser.Scene {
     this.sim = new BrawlSimulation([
       this.matchData.p1Name ?? 'Player 1',
       this.matchData.p2Name ?? 'Player 2',
-    ], this.routeMap);
+    ], this.routeMap, { difficulty: this.rushDifficulty });
     this.inputManager = new InputManager(this);
     this.createHud();
-    this.createResultPanel();
     this.handleEvents(this.sim.start());
     this.syncPresentations();
     this.syncProjectilePresentations();
@@ -204,7 +276,7 @@ export class RushScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    if (!this.ready) return;
+    if (!this.ready || this.paused || this.waitingForRunAction) return;
     this.inputManager.poll();
     this.accumulator += Math.min(delta, FIXED_TIMESTEP * MAX_TICKS_PER_FRAME);
     let ticks = 0;
@@ -213,7 +285,7 @@ export class RushScene extends Phaser.Scene {
       const localP2Input = this.inputManager.readPlayer2();
       const events = this.sim.step(
         { ...p1Input, jump: this.consumeQueuedJump() || p1Input.uppercut },
-        this.companionCpu ? getBrawlCompanionInput(this.sim) : localP2Input,
+        this.companionCpu ? getBrawlCompanionInput(this.sim, 1, this.companionOrder) : localP2Input,
       );
       this.handleEvents(events);
       this.accumulator -= FIXED_TIMESTEP;
@@ -337,7 +409,7 @@ export class RushScene extends Phaser.Scene {
 
   private drawRouteGeometry(): void {
     const { walkArea } = this.routeMap;
-    const hasAuthoredRoute = this.stageId === 'side-street';
+    const hasAuthoredRoute = Boolean(getStageTheme(this.stageId).rushAssetPath);
     const lines = this.add.graphics().setDepth(-5);
     if (!hasAuthoredRoute) {
       lines.fillStyle(0x050507, 0.12);
@@ -449,6 +521,9 @@ export class RushScene extends Phaser.Scene {
     kind: 'right' | 'door' | 'background' | 'drop',
     sourceX: number,
   ): boolean {
+    // La Jaula's four route plates already contain gates, tunnels and cage
+    // openings. A second procedural door on top reads like a collision prop.
+    if (this.stageId === 'la-jaula-304') return true;
     if (this.stageId !== 'side-street') return false;
     // Edge arrivals already read against the authored gates and should not get
     // a permanent debug-looking post. Their live landing cue is drawn below.
@@ -522,27 +597,6 @@ export class RushScene extends Phaser.Scene {
       .setOrigin(0.5, 1)
       .setDepth(3001)
       .setScrollFactor(0);
-  }
-
-  private createResultPanel(): void {
-    const panel = this.add.rectangle(0, 0, 560, 150, 0x050507, 0.94)
-      .setStrokeStyle(3, 0xffce3a, 1);
-    const title = this.add.text(0, -28, '', {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: '24px',
-      color: '#fff4d6',
-      align: 'center',
-    }).setOrigin(0.5);
-    const copy = this.add.text(0, 28, 'ESC  BACK TO CABINET', {
-      fontFamily: '"Space Grotesk", system-ui, sans-serif',
-      fontSize: '15px',
-      color: '#c9c0a8',
-    }).setOrigin(0.5);
-    this.resultPanel = this.add.container(GAME_WIDTH / 2, GAME_HEIGHT / 2 - 16, [panel, title, copy])
-      .setDepth(4000)
-      .setScrollFactor(0)
-      .setVisible(false)
-      .setData('title', title);
   }
 
   private syncPresentations(): void {
@@ -765,7 +819,7 @@ export class RushScene extends Phaser.Scene {
     obstacle: BrawlObstacle,
     presentation: ObstaclePresentation,
   ): boolean {
-    if (obstacle.skin !== 'side-street') return false;
+    if (obstacle.skin !== 'side-street' && obstacle.skin !== 'jaula') return false;
 
     const ratio = obstacle.maxHealth > 0 ? obstacle.health / obstacle.maxHealth : 1;
     let asset: readonly [string, string];
@@ -1001,7 +1055,7 @@ export class RushScene extends Phaser.Scene {
       const encounter = this.routeMap.encounters[this.sim.activeEncounterIndex];
       const threat = encounter?.threat ?? Math.min(3, this.sim.activeEncounterIndex + 1);
       this.hudObjective.setText(
-        `CHECKPOINT ${this.sim.activeEncounterIndex + 1}/${encounterCount} · THREAT ${'I'.repeat(threat)}\n${livingEnemies} HOSTILE${livingEnemies === 1 ? '' : 'S'}`,
+        `${encounter?.mode === 'rolling' ? 'MOVING WAVE' : 'ROADBLOCK'} ${this.sim.activeEncounterIndex + 1}/${encounterCount} · ${getRushDifficulty(this.rushDifficulty).label}\n${livingEnemies} HOSTILE${livingEnemies === 1 ? '' : 'S'}`,
       );
     } else {
       const finalCheckpointCleared = this.sim.encounterIndex >= encounterCount - 1;
@@ -1106,8 +1160,10 @@ export class RushScene extends Phaser.Scene {
         this.showBanner('MOVE RIGHT\nJUMP THE ROUTE');
       } else if (event.type === 'encounterStart') {
         this.soundManager?.playAnnounce('round');
-        this.showBanner(`ROADBLOCK ${event.encounterIndex + 1}\n${event.label}`);
+        const encounter = this.routeMap.encounters[event.encounterIndex];
+        this.showBanner(`${encounter?.mode === 'rolling' ? 'KEEP MOVING' : 'ROADBLOCK'} ${event.encounterIndex + 1}\n${event.label}`);
       } else if (event.type === 'encounterCleared') {
+        this.runStats.checkpointsCleared += 1;
         this.showBanner('PATH CLEAR\nMOVE →');
       } else if (event.type === 'attack') {
         if (event.attackKind === 'heavy') this.soundManager?.playUppercut();
@@ -1117,12 +1173,16 @@ export class RushScene extends Phaser.Scene {
         if (actor) this.createFloatingText(actor.x, actor.lane - 190, `+${event.amount} HP`, '#30e07a');
       } else if (event.type === 'obstacleRecovery') {
         const actor = this.sim.players.find((player) => player.id === event.actorId);
-        if (actor) this.createFloatingText(actor.x, actor.lane - 178, `FOOD +${event.amount} HP`, '#30e07a');
+        if (actor) this.createFloatingText(actor.x, actor.lane - 178, `TEAM +${event.amount} HP`, '#30e07a');
       } else if (event.type === 'hit') {
+        if (this.sim.players.some((player) => player.id === event.targetId)) {
+          this.runStats.damageTaken += event.damage;
+        }
         this.soundManager?.playHit(event.damage >= 40);
         const target = [...this.sim.players, ...this.sim.enemies].find((actor) => actor.id === event.targetId);
         if (target) this.createHitEffect(target.x, target.lane - 92, event.damage);
       } else if (event.type === 'guarded') {
+        this.runStats.damageTaken += event.damage;
         this.soundManager?.playWhoosh();
         const target = this.sim.players.find((actor) => actor.id === event.targetId);
         if (target) this.createFloatingText(target.x, target.lane - 150, 'BLOCK', '#8ac5ff');
@@ -1142,6 +1202,7 @@ export class RushScene extends Phaser.Scene {
         const obstacle = this.sim.obstacles.find((candidate) => candidate.id === event.obstacleId);
         if (obstacle) this.createHitEffect(obstacle.x, obstacle.lane - 34, event.damage);
       } else if (event.type === 'obstacleDestroyed') {
+        this.runStats.obstaclesDestroyed += 1;
         const obstacle = this.sim.obstacles.find((candidate) => candidate.id === event.obstacleId);
         if (obstacle && obstacle.type !== 'explosive-barrel') {
           this.createFloatingText(obstacle.x, obstacle.lane - 78, 'SMASH!', '#ffce3a');
@@ -1157,26 +1218,34 @@ export class RushScene extends Phaser.Scene {
       } else if (event.type === 'actorDown') {
         const actor = [...this.sim.players, ...this.sim.enemies]
           .find((candidate) => candidate.id === event.actorId);
+        if (actor?.kind === 'enemy') this.runStats.enemiesDefeated += 1;
         if (actor?.kind === 'player' || actor?.archetype === 'captain') {
           this.soundManager?.playKO();
         }
       } else if (event.type === 'revived') {
+        this.runStats.revives += 1;
         const actor = this.sim.players.find((player) => player.id === event.actorId);
         if (actor) this.createFloatingText(actor.x, actor.lane - 180, 'BACK IN!', '#30e07a');
       } else if (event.type === 'missionComplete') {
         this.soundManager?.stopBattleMusic();
         this.soundManager?.playAnnounce('wins');
-        this.showResult('ROUTE CLEARED');
+        this.showBanner('ROUTE CLEARED');
+        this.finishRun('won');
       } else if (event.type === 'missionFailed') {
         this.soundManager?.stopBattleMusic();
         this.soundManager?.playAnnounce('ko');
-        this.showResult('TEAM DOWN');
+        this.showBanner('TEAM DOWN');
+        this.finishRun('lost');
       }
     }
   }
 
-  private showBanner(text: string): void {
-    this.banner.setText(text).setAlpha(1).setScale(0.92);
+  private showBanner(text: string, color = 0xfff4d6): void {
+    this.banner
+      .setText(text)
+      .setColor(`#${color.toString(16).padStart(6, '0')}`)
+      .setAlpha(1)
+      .setScale(0.92);
     this.tweens.killTweensOf(this.banner);
     this.tweens.add({
       targets: this.banner,
@@ -1188,17 +1257,68 @@ export class RushScene extends Phaser.Scene {
     });
   }
 
-  private showResult(text: string): void {
-    const title = this.resultPanel.getData('title') as Phaser.GameObjects.Text;
-    title.setText(text);
-    this.resultPanel.setVisible(true).setAlpha(0).setScale(0.96);
-    this.tweens.add({
-      targets: this.resultPanel,
-      alpha: 1,
-      scale: 1,
-      duration: 220,
-      ease: 'Quart.easeOut',
+  private finishRun(outcome: 'won' | 'lost'): void {
+    if (this.runSummaryReported) return;
+    this.runSummaryReported = true;
+    this.waitingForRunAction = true;
+    this.inputManager.reset();
+
+    const teamHealthRemaining = this.sim.players.reduce(
+      (total, player) => total + Math.max(0, player.health),
+      0,
+    );
+    const teamMaxHealth = this.sim.players.reduce(
+      (total, player) => total + player.maxHealth,
+      0,
+    );
+    const durationSeconds = Math.max(0, Math.round(this.sim.tick / 60));
+    const result = scoreRushRun({
+      completed: outcome === 'won',
+      durationSeconds,
+      enemiesDefeated: this.runStats.enemiesDefeated,
+      obstaclesDestroyed: this.runStats.obstaclesDestroyed,
+      checkpointsCleared: this.runStats.checkpointsCleared,
+      revives: this.runStats.revives,
+      teamHealthRemaining,
+      teamMaxHealth,
     });
+    const detail: RushRunCompleteDetail = {
+      outcome,
+      stageId: this.stageId,
+      stageLabel: getStageTheme(this.stageId).label,
+      durationSeconds,
+      score: result.score,
+      rank: result.rank,
+      enemiesDefeated: this.runStats.enemiesDefeated,
+      obstaclesDestroyed: this.runStats.obstaclesDestroyed,
+      checkpointsCleared: this.runStats.checkpointsCleared,
+      revives: this.runStats.revives,
+      damageTaken: this.runStats.damageTaken,
+      teamHealthRemaining,
+      teamMaxHealth,
+      difficulty: this.rushDifficulty,
+    };
+    window.dispatchEvent(new CustomEvent(RUSH_RUN_COMPLETE_EVENT, { detail }));
+  }
+
+  private performRunAction(action: MatchAction): void {
+    if (!this.waitingForRunAction || this.runActionCommitted) return;
+    this.runActionCommitted = true;
+
+    if (action === 'run_it_back' || action === 'remix') {
+      this.cameras.main.flash(180, 255, 255, 255);
+      this.time.delayedCall(180, () => {
+        this.scene.restart({
+          ...this.matchData,
+          remix: action === 'remix'
+            ? (this.matchData.remix ?? 0) + 1
+            : this.matchData.remix,
+        });
+      });
+      return;
+    }
+
+    this.exitToMenu();
   }
 
   private createHitEffect(x: number, y: number, damage: number): void {
@@ -1330,9 +1450,14 @@ export class RushScene extends Phaser.Scene {
   private shutdown(): void {
     this.ready = false;
     this.lifecycle += 1;
+    window.removeEventListener(PAUSE_EVENT, this.onPauseEvent);
+    window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
+    window.removeEventListener(RUSH_COMPANION_ORDER_EVENT, this.onCompanionOrder);
     this.escapeKey?.off('down', this.exitToMenu, this);
     this.jumpKey?.off('down', this.queueJump, this);
     this.jumpQueued = false;
+    this.paused = false;
+    this.waitingForRunAction = false;
     this.inputManager?.reset();
     resetVirtualInput();
     delete window.__ASF_RUSH_STATE__;

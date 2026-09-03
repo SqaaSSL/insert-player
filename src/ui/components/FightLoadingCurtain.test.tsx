@@ -56,6 +56,7 @@ describe('FightLoadingCurtain', () => {
         stageLabel="Side Street"
         stageDescription="Golden-hour workshops open into a four-screen industrial night run."
         stageImageUrl="/assets/rush/side-street/side-street-fight-v1.webp"
+        difficultyLabel="Arcade"
         onExit={vi.fn()}
       />,
     );
@@ -64,7 +65,7 @@ describe('FightLoadingCurtain', () => {
     expect(markup).toContain('CO-OP RUSH');
     expect(markup).toContain('TEAM READY');
     expect(markup).toContain('MOVE AS ONE');
-    expect(markup).toContain('ROUTE 01');
+    expect(markup).toContain('RUSH ROUTE · ARCADE');
     expect(markup).toContain('SIDE STREET');
     expect(markup).toContain('Golden-hour workshops');
     expect(markup).toContain('MOVE RIGHT');
