@@ -67,6 +67,7 @@ export interface BrawlActor {
   facingRight: boolean;
   attackKind: BrawlAttackKind | null;
   attackResolved: boolean;
+  guarding: boolean;
   cooldown: number;
   reviveTicks: number;
   combatReady: boolean;
@@ -99,7 +100,10 @@ export interface BrawlObstacle {
   laneDepth: number;
   health: number;
   maxHealth: number;
+  healthReward: number;
   jumpClearance: number;
+  hazardWidth: number;
+  hazardLaneDepth: number;
   cycleOffset: number;
   skin: BrawlObstacleSkin;
   explosionRadius: number;
@@ -133,8 +137,10 @@ export type BrawlSimEvent =
   | { type: 'land'; actorId: string }
   | { type: 'fireball'; actorId: string; projectileId: number; isSuper: boolean }
   | { type: 'hit'; attackerId: string; targetId: string; damage: number }
+  | { type: 'guarded'; attackerId: string; targetId: string; damage: number }
   | { type: 'obstacleHit'; attackerId: string; obstacleId: string; damage: number }
   | { type: 'obstacleDestroyed'; obstacleId: string }
+  | { type: 'obstacleRecovery'; actorId: string; obstacleId: string; amount: number }
   | { type: 'obstacleExploded'; obstacleId: string }
   | { type: 'hazardBurst'; obstacleId: string }
   | { type: 'actorDown'; actorId: string }
@@ -158,52 +164,59 @@ interface EnemyStats {
 }
 
 const ENEMY_STATS: Record<BrawlEnemyArchetype, EnemyStats> = {
-  grunt: { health: 70, speed: 96 / BRAWL_TICK_RATE, laneSpeed: 80 / BRAWL_TICK_RATE, damage: 9, range: 58, laneRange: 38, cooldown: 66 },
-  bruiser: { health: 125, speed: 74 / BRAWL_TICK_RATE, laneSpeed: 66 / BRAWL_TICK_RATE, damage: 15, range: 68, laneRange: 44, cooldown: 82 },
+  grunt: { health: 96, speed: 118 / BRAWL_TICK_RATE, laneSpeed: 102 / BRAWL_TICK_RATE, damage: 12, range: 64, laneRange: 46, cooldown: 42 },
+  bruiser: { health: 168, speed: 92 / BRAWL_TICK_RATE, laneSpeed: 82 / BRAWL_TICK_RATE, damage: 20, range: 76, laneRange: 52, cooldown: 50 },
   shooter: {
-    health: 82,
-    speed: 84 / BRAWL_TICK_RATE,
-    laneSpeed: 76 / BRAWL_TICK_RATE,
-    damage: 7,
-    range: 52,
-    laneRange: 36,
-    cooldown: 72,
-    projectileDamage: 14,
-    projectileCooldown: 104,
-    projectileMinRange: 150,
-    projectileMaxRange: 520,
-    projectileSpeedScale: 0.8,
+    health: 110,
+    speed: 105 / BRAWL_TICK_RATE,
+    laneSpeed: 100 / BRAWL_TICK_RATE,
+    damage: 10,
+    range: 56,
+    laneRange: 44,
+    cooldown: 46,
+    projectileDamage: 18,
+    projectileCooldown: 70,
+    projectileMinRange: 125,
+    projectileMaxRange: 560,
+    projectileSpeedScale: 0.92,
   },
   captain: {
-    health: 240,
-    speed: 86 / BRAWL_TICK_RATE,
-    laneSpeed: 72 / BRAWL_TICK_RATE,
-    damage: 18,
-    range: 82,
-    laneRange: 48,
-    cooldown: 72,
-    projectileDamage: 20,
-    projectileCooldown: 126,
-    projectileMinRange: 190,
-    projectileMaxRange: 470,
-    projectileSpeedScale: 0.92,
+    health: 340,
+    speed: 104 / BRAWL_TICK_RATE,
+    laneSpeed: 90 / BRAWL_TICK_RATE,
+    damage: 25,
+    range: 90,
+    laneRange: 56,
+    cooldown: 42,
+    projectileDamage: 26,
+    projectileCooldown: 76,
+    projectileMinRange: 150,
+    projectileMaxRange: 520,
+    projectileSpeedScale: 1.05,
   },
 };
 
 function enemyHealthAtLevel(base: number, level: number): number {
-  return Math.round(base * (1 + Math.max(0, level - 1) * 0.16));
+  return Math.round(base * (1 + Math.max(0, level - 1) * 0.22));
 }
 
 function enemyDamageAtLevel(base: number, level: number): number {
-  return Math.round(base * (1 + Math.max(0, level - 1) * 0.14));
+  return Math.round(base * (1 + Math.max(0, level - 1) * 0.18));
 }
 
 function enemyCooldownAtLevel(base: number, level: number): number {
-  return Math.max(34, Math.round(base * (1 - Math.max(0, level - 1) * 0.08)));
+  return Math.max(24, Math.round(base * (1 - Math.max(0, level - 1) * 0.12)));
 }
 
 function enemySpeedAtLevel(base: number, level: number): number {
-  return base * (1 + Math.max(0, level - 1) * 0.06);
+  return base * (1 + Math.max(0, level - 1) * 0.08);
+}
+
+function enemyAttackTiming(archetype: BrawlEnemyArchetype): { activeTick: number; duration: number } {
+  if (archetype === 'bruiser') return { activeTick: 11, duration: 27 };
+  if (archetype === 'captain') return { activeTick: 8, duration: 23 };
+  if (archetype === 'shooter') return { activeTick: 9, duration: 22 };
+  return { activeTick: 8, duration: 21 };
 }
 
 function cloneActor(actor: BrawlActor): BrawlActor { return { ...actor }; }
@@ -313,6 +326,7 @@ export class BrawlSimulation {
       facingRight: true,
       attackKind: null,
       attackResolved: false,
+      guarding: false,
       cooldown: 0,
       reviveTicks: 0,
       combatReady: true,
@@ -425,7 +439,8 @@ export class BrawlSimulation {
       hasher.num(actor.height); hasher.num(actor.verticalVelocity); hasher.num(actor.health); hasher.num(actor.maxHealth);
       hasher.num(stateCode(actor.state)); hasher.num(actor.stateTick); hasher.num(actor.facingRight ? 1 : 0);
       hasher.num(actor.attackKind === 'light' ? 1 : actor.attackKind === 'heavy' ? 2 : 0);
-      hasher.num(actor.attackResolved ? 1 : 0); hasher.num(actor.cooldown); hasher.num(actor.reviveTicks);
+      hasher.num(actor.attackResolved ? 1 : 0); hasher.num(actor.guarding ? 1 : 0);
+      hasher.num(actor.cooldown); hasher.num(actor.reviveTicks);
       hasher.num(actor.combatReady ? 1 : 0); hasher.num(entranceCode(actor.entranceKind));
       hasher.num(actor.entranceDelayTicks); hasher.num(actor.entryTargetX); hasher.num(actor.entryTargetLane);
     }
@@ -438,7 +453,8 @@ export class BrawlSimulation {
     for (const obstacle of this.obstacles) {
       hasher.num(obstacleCode(obstacle.type)); hasher.num(obstacle.x); hasher.num(obstacle.lane);
       hasher.num(obstacle.width); hasher.num(obstacle.laneDepth); hasher.num(obstacle.health);
-      hasher.num(obstacle.maxHealth); hasher.num(obstacle.jumpClearance); hasher.num(obstacle.cycleOffset);
+      hasher.num(obstacle.maxHealth); hasher.num(obstacle.healthReward); hasher.num(obstacle.jumpClearance);
+      hasher.num(obstacle.hazardWidth); hasher.num(obstacle.hazardLaneDepth); hasher.num(obstacle.cycleOffset);
       hasher.num(obstacleSkinCode(obstacle.skin)); hasher.num(obstacle.explosionRadius); hasher.num(obstacle.explosionDamage);
       hasher.num(obstacle.telegraphing ? 1 : 0); hasher.num(obstacle.active ? 1 : 0);
     }
@@ -450,7 +466,11 @@ export class BrawlSimulation {
     return {
       id: definition.id, type: definition.type, x: definition.x, lane: definition.lane,
       width: definition.width, laneDepth: definition.laneDepth, health: maxHealth, maxHealth,
-      jumpClearance: definition.jumpClearance ?? 56, cycleOffset: definition.cycleOffset ?? 0,
+      healthReward: definition.healthReward ?? (definition.type === 'barricade' ? 20 : 0),
+      jumpClearance: definition.jumpClearance ?? 56,
+      hazardWidth: definition.hazardWidth ?? definition.width,
+      hazardLaneDepth: definition.hazardLaneDepth ?? definition.laneDepth,
+      cycleOffset: definition.cycleOffset ?? 0,
       skin: definition.skin ?? 'arena',
       explosionRadius: definition.explosionRadius ?? 0,
       explosionDamage: definition.explosionDamage ?? 0,
@@ -495,21 +515,23 @@ export class BrawlSimulation {
       id: spawn.id, kind: 'enemy', slot: null, archetype: spawn.archetype,
       level,
       name: spawn.archetype === 'captain'
-        ? 'Warden'
+        ? 'Vanta'
         : spawn.archetype === 'bruiser'
-          ? 'Enforcer'
+          ? 'Boiler'
           : spawn.archetype === 'shooter'
-            ? 'Blaster'
-            : 'Raider',
+            ? 'Arc'
+            : 'Rivet',
       x, lane, height, verticalVelocity: 0, health: maxHealth, maxHealth,
       state: entrance ? 'entering' : 'idle', stateTick: 0,
-      facingRight: spawn.facingRight ?? x < spawn.x, attackKind: null, attackResolved: false,
-      cooldown: 30, reviveTicks: 0, combatReady: !entrance, entranceKind: entrance?.kind ?? null,
+      facingRight: spawn.facingRight ?? x < spawn.x, attackKind: null, attackResolved: false, guarding: false,
+      cooldown: Math.max(5, 16 - level * 3 + (spawn.id.charCodeAt(spawn.id.length - 1) % 5)),
+      reviveTicks: 0, combatReady: !entrance, entranceKind: entrance?.kind ?? null,
       entranceDelayTicks: entrance?.delayTicks ?? 0, entryTargetX: spawn.x, entryTargetLane: spawn.lane,
     };
   }
 
   private updatePlayer(actor: BrawlActor, input: BrawlInput, events: BrawlSimEvent[]): void {
+    actor.guarding = false;
     if (actor.cooldown > 0) actor.cooldown -= 1;
     if (actor.health <= 0 || actor.state === 'victory') { actor.stateTick += 1; return; }
 
@@ -525,6 +547,18 @@ export class BrawlSimulation {
     if (actor.state === 'hit') {
       actor.stateTick += 1;
       if (actor.stateTick >= 13) this.setActorState(actor, 'idle');
+      return;
+    }
+    if (input.jump) {
+      actor.verticalVelocity = JUMP_VELOCITY;
+      this.setActorState(actor, 'jump');
+      events.push({ type: 'jump', actorId: actor.id });
+      return;
+    }
+    if (input.guard) {
+      actor.guarding = true;
+      this.setActorState(actor, 'idle', false);
+      this.faceNearestEnemy(actor);
       return;
     }
     if (actor.state === 'attack') {
@@ -547,12 +581,6 @@ export class BrawlSimulation {
         this.spawnProjectile(actor, isSuper, events);
       }
       if (actor.stateTick >= (isSuper ? 34 : 29)) this.setActorState(actor, 'idle');
-      return;
-    }
-    if (input.jump) {
-      actor.verticalVelocity = JUMP_VELOCITY;
-      this.setActorState(actor, 'jump');
-      events.push({ type: 'jump', actorId: actor.id });
       return;
     }
     if ((input.fireball || input.super) && actor.cooldown <= 0) {
@@ -605,8 +633,7 @@ export class BrawlSimulation {
     }
     if (actor.state === 'attack') {
       actor.stateTick += 1;
-      const activeTick = actor.archetype === 'captain' ? 12 : 14;
-      const duration = actor.archetype === 'captain' ? 31 : 34;
+      const { activeTick, duration } = enemyAttackTiming(actor.archetype!);
       if (!actor.attackResolved && actor.stateTick >= activeTick) {
         actor.attackResolved = true;
         this.resolveEnemyAttack(actor, events);
@@ -620,11 +647,11 @@ export class BrawlSimulation {
     if (actor.state === 'fireball') {
       actor.stateTick += 1;
       const isSuper = actor.attackKind === 'heavy';
-      if (!actor.attackResolved && actor.stateTick >= 11) {
+      if (!actor.attackResolved && actor.stateTick >= (actor.archetype === 'captain' ? 7 : 8)) {
         actor.attackResolved = true;
         this.spawnProjectile(actor, isSuper, events);
       }
-      if (actor.stateTick >= (isSuper ? 38 : 32)) {
+      if (actor.stateTick >= (isSuper ? 28 : 24)) {
         const stats = ENEMY_STATS[actor.archetype!];
         actor.cooldown = enemyCooldownAtLevel(stats.projectileCooldown ?? stats.cooldown, actor.level);
         this.setActorState(actor, 'idle');
@@ -635,6 +662,7 @@ export class BrawlSimulation {
     const target = this.nearestLivingPlayer(actor);
     if (!target) return;
     const stats = ENEMY_STATS[actor.archetype!];
+    if (this.evadeIncomingProjectile(actor, stats)) return;
     const formation = this.enemyFormation(actor);
     const dxToTarget = target.x - actor.x;
     const laneDeltaToTarget = target.lane - actor.lane;
@@ -644,7 +672,7 @@ export class BrawlSimulation {
     const canShoot = stats.projectileDamage !== undefined
       && distanceToTarget >= (stats.projectileMinRange ?? 0)
       && distanceToTarget <= (stats.projectileMaxRange ?? Number.POSITIVE_INFINITY)
-      && Math.abs(laneDeltaToTarget) <= PROJECTILE_LANE_RANGE - 4;
+      && Math.abs(laneDeltaToTarget) <= PROJECTILE_LANE_RANGE - 2;
     if (canShoot && actor.cooldown <= 0 && target.height < 54) {
       this.setActorState(actor, 'fireball');
       actor.attackKind = actor.archetype === 'captain' && actor.level >= 3 ? 'heavy' : 'light';
@@ -688,7 +716,7 @@ export class BrawlSimulation {
     actor.height = approach(actor.height, 0, actor.entranceKind === 'drop' ? 7.2 : 12);
     if (actor.x !== actor.entryTargetX || actor.lane !== actor.entryTargetLane || actor.height > 0) return;
     actor.combatReady = true;
-    actor.cooldown = 22;
+    actor.cooldown = Math.max(4, 12 - actor.level * 2 + (actor.id.charCodeAt(actor.id.length - 1) % 4));
     this.setActorState(actor, 'idle');
   }
 
@@ -714,12 +742,22 @@ export class BrawlSimulation {
   }
 
   private resolveEnemyAttack(actor: BrawlActor, events: BrawlSimEvent[]): void {
-    const target = this.nearestLivingPlayer(actor);
-    if (!target || !actor.archetype || target.height >= 48) return;
+    if (!actor.archetype) return;
     const stats = ENEMY_STATS[actor.archetype];
-    const forwardDistance = (target.x - actor.x) * (actor.facingRight ? 1 : -1);
-    if (forwardDistance < -22 || forwardDistance > stats.range + 18 || Math.abs(target.lane - actor.lane) > stats.laneRange + 8) return;
-    this.damageActor(actor.id, actor.x, target, enemyDamageAtLevel(stats.damage, actor.level), 24, events);
+    const targets = this.players
+      .filter((target) => target.health > 0 && target.height < 48)
+      .filter((target) => {
+        const forwardDistance = (target.x - actor.x) * (actor.facingRight ? 1 : -1);
+        return forwardDistance >= -24
+          && forwardDistance <= stats.range + 24
+          && Math.abs(target.lane - actor.lane) <= stats.laneRange + 10;
+      })
+      .sort((a, b) => distanceSquared(actor, a) - distanceSquared(actor, b));
+    const maxTargets = actor.archetype === 'bruiser' || actor.archetype === 'captain' ? 2 : 1;
+    for (const [index, target] of targets.slice(0, maxTargets).entries()) {
+      const baseDamage = enemyDamageAtLevel(stats.damage, actor.level);
+      this.damageActor(actor.id, actor.x, target, index === 0 ? baseDamage : Math.ceil(baseDamage * 0.72), 26, events);
+    }
   }
 
   private spawnProjectile(actor: BrawlActor, isSuper: boolean, events: BrawlSimEvent[]): void {
@@ -798,10 +836,13 @@ export class BrawlSimulation {
 
   private damageActor(attackerId: string, attackerX: number, target: BrawlActor, damage: number, push: number, events: BrawlSimEvent[]): void {
     if (target.health <= 0) return;
-    target.health = Math.max(0, target.health - damage);
+    const guarded = target.kind === 'player' && target.guarding && target.height <= 0;
+    const appliedDamage = guarded ? Math.max(1, Math.ceil(damage * 0.32)) : damage;
+    target.health = Math.max(0, target.health - appliedDamage);
     const pushDirection = attackerX <= target.x ? 1 : -1;
-    target.x = target.kind === 'player' ? this.clampPlayerX(target.x + pushDirection * push) : this.clampEnemyX(target.x + pushDirection * push);
-    events.push({ type: 'hit', attackerId, targetId: target.id, damage });
+    const appliedPush = guarded ? Math.ceil(push * 0.34) : push;
+    target.x = target.kind === 'player' ? this.clampPlayerX(target.x + pushDirection * appliedPush) : this.clampEnemyX(target.x + pushDirection * appliedPush);
+    events.push({ type: guarded ? 'guarded' : 'hit', attackerId, targetId: target.id, damage: appliedDamage });
     if (target.health <= 0) {
       target.height = 0;
       target.verticalVelocity = 0;
@@ -809,6 +850,7 @@ export class BrawlSimulation {
       events.push({ type: 'actorDown', actorId: target.id });
       return;
     }
+    if (guarded) return;
     this.setActorState(target, 'hit');
   }
 
@@ -819,6 +861,23 @@ export class BrawlSimulation {
     if (obstacle.health > 0) return;
     events.push({ type: 'obstacleDestroyed', obstacleId: obstacle.id });
     if (obstacle.type === 'explosive-barrel') this.explodeObstacle(obstacle, events);
+    this.recoverTeamFromObstacle(attackerId, obstacle, events);
+  }
+
+  private recoverTeamFromObstacle(attackerId: string, obstacle: BrawlObstacle, events: BrawlSimEvent[]): void {
+    if (obstacle.healthReward <= 0) return;
+    if (!this.players.some((player) => player.id === attackerId)) return;
+    for (const actor of this.players) {
+      if (actor.health <= 0 || actor.health >= actor.maxHealth) continue;
+      const previousHealth = actor.health;
+      actor.health = Math.min(actor.maxHealth, actor.health + obstacle.healthReward);
+      events.push({
+        type: 'obstacleRecovery',
+        actorId: actor.id,
+        obstacleId: obstacle.id,
+        amount: actor.health - previousHealth,
+      });
+    }
   }
 
   private explodeObstacle(obstacle: BrawlObstacle, events: BrawlSimEvent[]): void {
@@ -849,10 +908,11 @@ export class BrawlSimulation {
       const phase = (this.tick + obstacle.cycleOffset) % VENT_CYCLE_TICKS;
       obstacle.telegraphing = phase >= VENT_TELEGRAPH_START && phase < VENT_ACTIVE_START;
       obstacle.active = phase >= VENT_ACTIVE_START && phase < VENT_ACTIVE_END;
-      if (phase !== VENT_ACTIVE_START) continue;
+      const activePulse = obstacle.active && (phase - VENT_ACTIVE_START) % 12 === 0;
+      if (!activePulse) continue;
       events.push({ type: 'hazardBurst', obstacleId: obstacle.id });
       for (const actor of [...this.players, ...this.enemies]) {
-        if (actor.health <= 0 || !actor.combatReady || actor.height >= obstacle.jumpClearance || !this.overlapsObstacle(actor, obstacle, 8)) continue;
+        if (actor.health <= 0 || !actor.combatReady || actor.height >= obstacle.jumpClearance || !this.overlapsHazard(actor, obstacle)) continue;
         this.damageActor(obstacle.id, obstacle.x, actor, 12, 18, events);
       }
     }
@@ -931,9 +991,34 @@ export class BrawlSimulation {
     return preferFront ? -1 : 1;
   }
 
-  private overlapsObstacle(actor: BrawlActor, obstacle: BrawlObstacle, margin = 0): boolean {
-    return Math.abs(actor.x - obstacle.x) <= obstacle.width / 2 + ACTOR_RADIUS_X + margin
-      && Math.abs(actor.lane - obstacle.lane) <= obstacle.laneDepth / 2 + ACTOR_RADIUS_LANE + margin;
+  private evadeIncomingProjectile(actor: BrawlActor, stats: EnemyStats): boolean {
+    if (actor.level < 2 || (actor.archetype !== 'shooter' && actor.archetype !== 'captain')) return false;
+    const projectile = this.projectiles.find((candidate) => {
+      if (candidate.ownerKind !== 'player' || Math.abs(candidate.lane - actor.lane) > PROJECTILE_LANE_RANGE + 10) return false;
+      const ticksToImpact = (actor.x - candidate.x) / candidate.vx;
+      return ticksToImpact > 2 && ticksToImpact < 19;
+    });
+    if (!projectile) return false;
+    const laneDirection = actor.lane <= projectile.lane ? -1 : 1;
+    this.moveActor(
+      actor,
+      0,
+      laneDirection * enemySpeedAtLevel(stats.laneSpeed, actor.level) * 1.35,
+      false,
+    );
+    this.setActorState(actor, 'walk', false);
+    return true;
+  }
+
+  private overlapsHazard(actor: BrawlActor, obstacle: BrawlObstacle): boolean {
+    // Actor coordinates are their planted foot/root. Matching that point to
+    // the rendered warning ellipse keeps the dangerous area pixel-readable.
+    const radiusX = obstacle.hazardWidth / 2;
+    const radiusLane = obstacle.hazardLaneDepth / 2;
+    if (radiusX <= 0 || radiusLane <= 0) return false;
+    const normalizedX = (actor.x - obstacle.x) / radiusX;
+    const normalizedLane = (actor.lane - obstacle.lane) / radiusLane;
+    return normalizedX * normalizedX + normalizedLane * normalizedLane <= 1;
   }
 
   private isBlockingObstacle(obstacle: BrawlObstacle): boolean {
@@ -955,12 +1040,20 @@ export class BrawlSimulation {
     if (living.length === 0) return null;
     if (living.length === 1) return living[0];
     const preferredSlot = (actor.id.charCodeAt(actor.id.length - 1) % 2) as 0 | 1;
-    return this.players[preferredSlot].health > 0 ? this.players[preferredSlot] : this.players[preferredSlot === 0 ? 1 : 0];
+    return living
+      .map((player) => ({
+        player,
+        score: Math.abs(player.x - actor.x)
+          + Math.abs(player.lane - actor.lane) * 1.45
+          - (player.slot === preferredSlot ? 54 : 0),
+      }))
+      .sort((a, b) => a.score - b.score)[0].player;
   }
 
   private enemyFormation(actor: BrawlActor): { x: number; lane: number } {
     const finalCode = actor.id.charCodeAt(actor.id.length - 1);
-    return { x: 34 + (finalCode % 2) * 18, lane: ((finalCode % 3) - 1) * 30 };
+    const side = finalCode % 2 === 0 ? 1 : -1;
+    return { x: side * (30 + (finalCode % 3) * 10), lane: ((finalCode % 3) - 1) * 32 };
   }
 
   private faceNearestEnemy(actor: BrawlActor): void {

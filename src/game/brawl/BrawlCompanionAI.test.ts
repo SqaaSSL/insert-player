@@ -55,7 +55,7 @@ describe('BrawlCompanionAI', () => {
     expect(getBrawlCompanionInput(sim)).toMatchObject({ guard: true });
   });
 
-  it('can deterministically complete the authored route', () => {
+  it('does not auto-clear the hard route without player skill', () => {
     const sim = new BrawlSimulation(['CPU 1', 'CPU 2']);
     sim.start();
     for (let tick = 0; tick < 6_000 && sim.outcome === 'playing'; tick += 1) {
@@ -64,7 +64,8 @@ describe('BrawlCompanionAI', () => {
         getBrawlCompanionInput(sim, 1),
       );
     }
-    expect(sim.outcome).toBe('won');
-    expect(sim.progressX).toBeGreaterThanOrEqual(sim.map.exitX);
+    expect(sim.outcome).toBe('lost');
+    expect(sim.activeEncounterIndex).toBe(sim.map.encounters.length - 1);
+    expect(sim.progressX).toBeLessThan(sim.map.exitX);
   });
 });

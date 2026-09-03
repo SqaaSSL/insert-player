@@ -639,6 +639,8 @@ export class RushScene extends Phaser.Scene {
     const palette = OBSTACLE_PALETTES[obstacle.skin];
     graphics.clear().setDepth(Math.round(y));
     if (obstacle.type === 'steam-vent') {
+      const hazardWidth = obstacle.hazardWidth;
+      const hazardDepth = obstacle.hazardLaneDepth;
       graphics.fillStyle(0x050507, 0.72);
       graphics.fillEllipse(x, y + 2, obstacle.width + 18, obstacle.laneDepth + 10);
       graphics.fillStyle(obstacle.active ? 0x9ee7ff : obstacle.telegraphing ? 0xffce3a : 0x2e3440, obstacle.active ? 0.82 : 0.78);
@@ -656,9 +658,13 @@ export class RushScene extends Phaser.Scene {
       }
       if (obstacle.telegraphing) {
         graphics.lineStyle(3, palette.accent, 0.84);
-        graphics.strokeEllipse(x, y, obstacle.width + 28, obstacle.laneDepth + 20);
+        graphics.strokeEllipse(x, y, hazardWidth, hazardDepth);
       }
       if (obstacle.active) {
+        graphics.fillStyle(0xffce3a, 0.14);
+        graphics.fillEllipse(x, y, hazardWidth, hazardDepth);
+        graphics.lineStyle(3, 0xffce3a, 0.92);
+        graphics.strokeEllipse(x, y, hazardWidth, hazardDepth);
         const lift = (this.sim.tick * 2 + obstacle.cycleOffset) % 34;
         graphics.fillStyle(0xe8fbff, 0.42);
         graphics.fillCircle(x - 22, y - 30 - lift * 0.45, 16);
@@ -813,24 +819,28 @@ export class RushScene extends Phaser.Scene {
     );
 
     if (obstacle.type === 'steam-vent') {
+      const hazardWidth = obstacle.hazardWidth;
+      const hazardDepth = obstacle.hazardLaneDepth;
       if (obstacle.telegraphing) {
         const pulse = 0.6 + Math.sin(this.sim.tick * 0.34) * 0.2;
         graphics.lineStyle(3, this.stageProfile.accent, pulse);
         graphics.strokeEllipse(
           obstacle.x,
-          obstacle.lane + 2,
-          obstacle.width + 32,
-          obstacle.laneDepth + 22,
+          obstacle.lane,
+          hazardWidth,
+          hazardDepth,
         );
       }
       if (obstacle.active) {
-        graphics.fillStyle(0x42d9f5, 0.16);
+        graphics.fillStyle(0xffcf33, 0.18);
         graphics.fillEllipse(
           obstacle.x,
-          obstacle.lane - 5,
-          obstacle.width + 38,
-          obstacle.laneDepth + 30,
+          obstacle.lane,
+          hazardWidth,
+          hazardDepth,
         );
+        graphics.lineStyle(3, 0xffcf33, 0.96);
+        graphics.strokeEllipse(obstacle.x, obstacle.lane, hazardWidth, hazardDepth);
       }
       return true;
     }
@@ -950,6 +960,7 @@ export class RushScene extends Phaser.Scene {
   }
 
   private fighterStateFor(actor: BrawlActor): FighterState {
+    if (actor.guarding) return FighterState.BLOCK;
     switch (actor.state) {
       case 'walk': return FighterState.WALK_FORWARD;
       case 'entering': return FighterState.WALK_FORWARD;
@@ -1104,10 +1115,17 @@ export class RushScene extends Phaser.Scene {
       } else if (event.type === 'checkpointRecovery') {
         const actor = this.sim.players.find((player) => player.id === event.actorId);
         if (actor) this.createFloatingText(actor.x, actor.lane - 190, `+${event.amount} HP`, '#30e07a');
+      } else if (event.type === 'obstacleRecovery') {
+        const actor = this.sim.players.find((player) => player.id === event.actorId);
+        if (actor) this.createFloatingText(actor.x, actor.lane - 178, `FOOD +${event.amount} HP`, '#30e07a');
       } else if (event.type === 'hit') {
         this.soundManager?.playHit(event.damage >= 40);
         const target = [...this.sim.players, ...this.sim.enemies].find((actor) => actor.id === event.targetId);
         if (target) this.createHitEffect(target.x, target.lane - 92, event.damage);
+      } else if (event.type === 'guarded') {
+        this.soundManager?.playWhoosh();
+        const target = this.sim.players.find((actor) => actor.id === event.targetId);
+        if (target) this.createFloatingText(target.x, target.lane - 150, 'BLOCK', '#8ac5ff');
       } else if (event.type === 'fireball') {
         this.soundManager?.playFireball();
         const actor = [...this.sim.players, ...this.sim.enemies].find((candidate) => candidate.id === event.actorId);

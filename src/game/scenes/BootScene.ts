@@ -1,8 +1,18 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT } from '../constants.ts';
-import { generateFighterSpriteSheet } from '../sprites/SpriteGenerator.ts';
+import {
+  generateFighterSpriteSheet,
+  generateTemplateZeroFighterSpriteSheet,
+} from '../sprites/SpriteGenerator.ts';
 import { getPendingLaunchTarget } from '../launchState.ts';
 import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
+
+const RUSH_ENEMY_TEMPLATE_ZERO_SOURCES = [
+  ['rush_enemy_grunt', 'rush_enemy_grunt_template_zero', '/assets/rush/enemies/rivet-template-zero.png'],
+  ['rush_enemy_bruiser', 'rush_enemy_bruiser_template_zero', '/assets/rush/enemies/boiler-template-zero.png'],
+  ['rush_enemy_shooter', 'rush_enemy_shooter_template_zero', '/assets/rush/enemies/arc-template-zero.png'],
+  ['rush_enemy_captain', 'rush_enemy_captain_template_zero', '/assets/rush/enemies/vanta-template-zero.png'],
+] as const;
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -46,10 +56,19 @@ export class BootScene extends Phaser.Scene {
       color: '#888888',
     }).setOrigin(0.5);
 
+    for (const [, sourceKey, assetPath] of RUSH_ENEMY_TEMPLATE_ZERO_SOURCES) {
+      if (!this.textures.exists(sourceKey)) this.load.image(sourceKey, assetPath);
+    }
+
     this.generatePlaceholderAssets();
   }
 
   create(): void {
+    for (const [spriteKey, sourceKey] of RUSH_ENEMY_TEMPLATE_ZERO_SOURCES) {
+      if (!generateTemplateZeroFighterSpriteSheet(this, spriteKey, sourceKey)) {
+        debugWarn(`[BootScene] Template Zero enemy source missing: ${sourceKey}`);
+      }
+    }
     const pendingTarget = getPendingLaunchTarget();
     debugInfo('[BootScene] create', {
       pendingSceneKey: pendingTarget?.sceneKey ?? null,
