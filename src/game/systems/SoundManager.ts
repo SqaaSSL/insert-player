@@ -1,5 +1,7 @@
 export const BATTLE_MUSIC_URL = '/assets/audio/neon-arena-battle-v1.mp3';
-export const BATTLE_MUSIC_VOLUME = 0.06;
+// The source averages roughly -17.6 dBFS. 0.20 keeps it behind impacts while
+// remaining audible on phone speakers and remote-browser sessions.
+export const BATTLE_MUSIC_VOLUME = 0.20;
 
 export class SoundManager {
   private ctx: AudioContext | null = null;

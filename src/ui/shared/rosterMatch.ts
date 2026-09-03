@@ -1,6 +1,6 @@
 import type { FighterPersonalityId } from '../../game/match/MatchConfig.ts';
 
-export type RosterMode = 'watch' | 'cpu' | 'vs';
+export type RosterMode = 'watch' | 'cpu' | 'vs' | 'rush';
 export type RosterSlot = 'p1' | 'p2';
 export type RosterSourceState = 'loading' | 'ready' | 'unavailable';
 
@@ -72,7 +72,7 @@ export function rosterLoadPresentation({
 }
 
 export function isCpuRosterSlot(mode: RosterMode, slot: RosterSlot): boolean {
-  return mode === 'watch' || (mode === 'cpu' && slot === 'p2');
+  return mode === 'watch' || ((mode === 'cpu' || mode === 'rush') && slot === 'p2');
 }
 
 export function personalityAfterFighterAssignment({

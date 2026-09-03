@@ -51,6 +51,17 @@ describe('stored match', () => {
     expect(readStoredMatch('user-a', storage, 1_001)).toEqual(standardMatch);
   });
 
+  it('round-trips the cooperative Rush mode without changing the Fight schema', () => {
+    const storage = new MemoryStorage();
+    const rushMatch: MatchSceneData = {
+      ...match,
+      gameMode: 'rush',
+      vsAI: true,
+    };
+    expect(writeStoredMatch(rushMatch, 'user-a', storage, 1_000)).toBe(true);
+    expect(readStoredMatch('user-a', storage, 1_001)).toEqual(rushMatch);
+  });
+
   it('rejects expired, legacy, and malformed payloads', () => {
     const storage = new MemoryStorage();
     storage.setItem('ai-street-fighter:last-match', JSON.stringify(match));
@@ -71,6 +82,7 @@ describe('stored match', () => {
     expect(writeStoredMatch({ ...match, roundsToWin: 0 }, 'user-a', storage)).toBe(false);
     expect(writeStoredMatch({ ...match, roundsToWin: 1.5 }, 'user-a', storage)).toBe(false);
     expect(writeStoredMatch({ ...match, roundsToWin: 6 }, 'user-a', storage)).toBe(false);
+    expect(writeStoredMatch({ ...match, gameMode: 'race' } as unknown as MatchSceneData, 'user-a', storage)).toBe(false);
 
     const invalid = JSON.stringify({
       version: 1,

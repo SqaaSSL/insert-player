@@ -40,6 +40,7 @@ interface HomePageProps extends AuthRouteState {
   onContinuePurchaseIntent?: () => void;
   onCreateFighter: () => void;
   onOpenArcade: () => void;
+  onOpenCoopRush: () => void;
   onNavigateLegal: (route: LegalRoute) => void;
   onOpenGallery: () => void;
   onOpenCommunity: () => void;
@@ -66,6 +67,7 @@ export function HomePage({
   authSessionKey,
   onCreateFighter,
   onOpenArcade,
+  onOpenCoopRush,
   onNavigateLegal,
   onOpenGallery,
   onOpenCommunity,
@@ -296,42 +298,79 @@ export function HomePage({
         </div>
       </div>
 
-      <div className="home-menu">
-        <button type="button" className="home-menu__action is-primary" onClick={onOpenArcade}>
-          <span>Arcade Mode</span>
-          <small>{arcadeModeHint}</small>
-        </button>
-        <button type="button" className="home-menu__action" onClick={onOpenVsCpu}>
-          <span>CPU Match</span>
-          <small>Pick The Matchup. Fight!</small>
-        </button>
-        <button type="button" className="home-menu__action" onClick={onOpenVsPlayer}>
-          <span>Versus</span>
-          <small>Local 1P vs 2P Showdown</small>
-        </button>
-        <button type="button" className="home-menu__action" onClick={onOpenOnlineVersus}>
-          <span>Online Versus</span>
-          <small>Room Code · Play From Home (Beta)</small>
-        </button>
-        <button type="button" className="home-menu__action" onClick={onOpenWatchMode}>
-          <span>Attract Mode</span>
-          <small>Watch The CPUs Fight</small>
-        </button>
-        <button type="button" className="home-menu__action is-secondary" onClick={onOpenGallery}>
-          <span>Roster Lab</span>
-          <small>Browse Your Roster</small>
-        </button>
-        <button type="button" className="home-menu__action" onClick={onOpenCommunity}>
-          <span>Community</span>
-          <small>Clone Public Fighters</small>
-        </button>
-        {billingProfile?.planTier === 'admin' ? (
-          <button type="button" className="home-menu__action" onClick={onOpenModeration}>
-            <span>Moderation</span>
-            <small>Review Community Reports</small>
+      <section className="home-play" aria-labelledby="home-play-title">
+        <div className="home-play__header">
+          <div>
+            <h2 id="home-play-title">Choose Game</h2>
+            <p>Same fighters, same cabinet. Pick how you want to play.</p>
+          </div>
+          <span className="home-play__shared">Shared roster</span>
+        </div>
+
+        <div className="home-modes">
+          <article className="home-mode">
+            <div className="home-mode__heading">
+              <h3>Fight</h3>
+              <span>Core game</span>
+            </div>
+            <p>
+              Face one rival in round-based matches. Play the arcade ladder or choose a direct matchup.
+            </p>
+            <button type="button" className="home-menu__action is-primary home-mode__launch" onClick={onOpenArcade}>
+              <span>Play Fight</span>
+              <small>{arcadeModeHint}</small>
+            </button>
+            <div className="home-mode__variants" aria-label="Fight modes">
+              <button type="button" onClick={onOpenVsCpu}>Fight CPU</button>
+              <button type="button" onClick={onOpenVsPlayer}>Local Versus</button>
+              <button type="button" onClick={onOpenOnlineVersus}>Online Beta</button>
+              <button type="button" onClick={onOpenWatchMode}>Watch Fight</button>
+            </div>
+          </article>
+
+          <article className="home-mode">
+            <div className="home-mode__heading">
+              <h3>Rush</h3>
+              <span>Early access</span>
+            </div>
+            <p>
+              Move right with a CPU partner, clear enemy groups, break obstacles, and finish the route together.
+            </p>
+            <button type="button" className="home-menu__action is-primary home-mode__launch" onClick={onOpenCoopRush}>
+              <span>Play Rush Beta</span>
+              <small>Player + CPU · Side Street · One team</small>
+            </button>
+            <div className="home-mode__facts" aria-label="Rush availability">
+              <span>Shared fighters</span>
+              <span>Player + CPU</span>
+              <span>More stages coming</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section className="home-collection" aria-labelledby="home-collection-title">
+        <div className="home-collection__header">
+          <h2 id="home-collection-title">Roster &amp; Community</h2>
+          <p>Your fighters work in Fight and Rush.</p>
+        </div>
+        <div className="home-menu home-menu--utility">
+          <button type="button" className="home-menu__action is-secondary" onClick={onOpenGallery}>
+            <span>Roster Lab</span>
+            <small>Browse and manage your fighters</small>
           </button>
-        ) : null}
-      </div>
+          <button type="button" className="home-menu__action" onClick={onOpenCommunity}>
+            <span>Community</span>
+            <small>Clone public fighters</small>
+          </button>
+          {billingProfile?.planTier === 'admin' ? (
+            <button type="button" className="home-menu__action" onClick={onOpenModeration}>
+              <span>Moderation</span>
+              <small>Review community reports</small>
+            </button>
+          ) : null}
+        </div>
+      </section>
 
       <section className="home-credits" aria-label="Credits">
         <div className="home-credits__header">

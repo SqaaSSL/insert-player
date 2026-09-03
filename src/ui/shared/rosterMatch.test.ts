@@ -15,6 +15,8 @@ describe('roster match helpers', () => {
     expect(isCpuRosterSlot('cpu', 'p2')).toBe(true);
     expect(isCpuRosterSlot('vs', 'p1')).toBe(false);
     expect(isCpuRosterSlot('vs', 'p2')).toBe(false);
+    expect(isCpuRosterSlot('rush', 'p1')).toBe(false);
+    expect(isCpuRosterSlot('rush', 'p2')).toBe(true);
   });
 
   it('keeps an explicit CPU personality when the fighter changes', () => {
@@ -35,6 +37,8 @@ describe('roster match helpers', () => {
   it('blocks local Versus only for coarse-pointer layouts', () => {
     expect(shouldBlockTouchVersus('vs', true)).toBe(true);
     expect(shouldBlockTouchVersus('vs', false)).toBe(false);
+    expect(shouldBlockTouchVersus('rush', true)).toBe(false);
+    expect(shouldBlockTouchVersus('rush', false)).toBe(false);
     expect(shouldBlockTouchVersus('cpu', true)).toBe(false);
   });
 

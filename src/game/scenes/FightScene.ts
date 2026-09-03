@@ -368,7 +368,7 @@ export class FightScene extends Phaser.Scene {
     this.emitHudState();
     window.dispatchEvent(
       new CustomEvent(RUNTIME_READY_EVENT, {
-        detail: { matchSeed: this.matchSeed },
+        detail: { sceneKey: 'FightScene', matchSeed: this.matchSeed },
       }),
     );
   }

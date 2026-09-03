@@ -51,6 +51,8 @@ export interface MatchSceneData {
   experience?: MatchExperience;
   /** Number of round wins needed. Omitted preserves the normal best-of-three match. */
   roundsToWin?: number;
+  /** Both modes share the cabinet, roster, fighters, and visual identity. */
+  gameMode?: 'fight' | 'rush';
   vsAI?: boolean;
   cpuVsCpu?: boolean;
   p1PhotoHash?: string;
@@ -142,7 +144,8 @@ export interface MatchActionsVisibilityDetail {
 }
 
 export interface RuntimeReadyDetail {
-  matchSeed: number;
+  sceneKey: 'FightScene' | 'RushScene';
+  matchSeed?: number;
 }
 
 /** Netcode telemetry for the React overlay during an online match. */

@@ -12,15 +12,21 @@ export type SignatureStageThemeId =
   | 'executive-rumble'
   | 'mars-incorporated'
   | 'tablao-3000'
-  | 'la-jaula-304';
+  | 'la-jaula-304'
+  | 'side-street';
 
 export type StageThemeId = LegacyProceduralStageThemeId | SignatureStageThemeId;
+export type StageMode = 'fight' | 'rush';
 
 export interface StageTheme {
   id: StageThemeId;
   label: string;
   blurb: string;
   assetPath?: string;
+  /** Existing stages are Fight-only unless they opt into another mode. */
+  modes?: readonly StageMode[];
+  /** A full authored horizontal route, never a repeated Fight backdrop. */
+  rushAssetPath?: string;
   signatureForArcadeSlug?: string;
 }
 
@@ -59,6 +65,14 @@ export const SIGNATURE_STAGE_THEMES: StageTheme[] = [
     assetPath: '/assets/stages/signature/la-jaula-304-pipeline-v1.png',
     signatureForArcadeSlug: 'lamine-yamal',
   },
+  {
+    id: 'side-street',
+    label: 'SIDE STREET',
+    blurb: 'Golden-hour workshops open into a four-screen industrial night run.',
+    assetPath: '/assets/rush/side-street/side-street-fight-v1.webp',
+    rushAssetPath: '/assets/rush/side-street/side-street-route-v1.webp',
+    modes: ['fight', 'rush'],
+  },
 ];
 
 export const STAGE_THEMES: StageTheme[] = [...SIGNATURE_STAGE_THEMES];
@@ -72,6 +86,19 @@ export interface ResolveRosterStageThemeInput {
 
 export function getStageTheme(id?: StageThemeId | null): StageTheme {
   return STAGE_THEMES.find((stage) => stage.id === id) ?? STAGE_THEMES[0];
+}
+
+export function stageSupportsMode(stageId: StageThemeId, mode: StageMode): boolean {
+  const stage = getStageTheme(stageId);
+  return (stage.modes ?? ['fight']).includes(mode);
+}
+
+export function getStageThemesForMode(mode: StageMode): StageTheme[] {
+  return STAGE_THEMES.filter((stage) => (stage.modes ?? ['fight']).includes(mode));
+}
+
+export function getDefaultStageThemeIdForMode(mode: StageMode): StageThemeId {
+  return getStageThemesForMode(mode)[0]?.id ?? STAGE_THEMES[0].id;
 }
 
 export function getSignatureStageThemeIdForArcadeSlug(

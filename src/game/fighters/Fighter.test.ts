@@ -23,8 +23,10 @@ function createMockSprite() {
     originX: 0.5,
     originY: 0.5,
     scale: 1,
+    scaleX: 1,
+    scaleY: 1,
     flipX: false,
-    frame: 0,
+    frame: 0 as unknown,
     setOrigin(x: number, y: number) {
       this.originX = x;
       this.originY = y;
@@ -32,6 +34,8 @@ function createMockSprite() {
     },
     setScale(scale: number) {
       this.scale = scale;
+      this.scaleX = scale;
+      this.scaleY = scale;
       return this;
     },
     setFlipX(flipped: boolean) {
@@ -47,9 +51,12 @@ function createMockSprite() {
       this.y = y;
       return this;
     },
-    setFrame(frame: number) {
+    setFrame(frame: unknown) {
       this.frame = frame;
       return this;
+    },
+    getTopCenter() {
+      return { x: this.x, y: this.y };
     },
     setTint() { return this; },
     setAlpha() { return this; },
@@ -154,6 +161,49 @@ describe('fighter sprite presentation', () => {
     expect(sprite.scale).toBeCloseTo(1.25 * 1.2 / 2);
     expect(sprite.originX).toBeCloseTo(0.37);
     expect(sprite.y).toBeCloseTo(GROUND_Y - 6 * 1.2);
+  });
+
+  it('anchors overhead UI to the visible pixels and mirrors the anchor with the sprite', () => {
+    const fighter = new Fighter(0, 'Visible', 100, true);
+    const view = new FighterView(fighter, 'visible-fighter');
+    const { scene, sprites } = createMockScene();
+    view.createSprite(scene as never);
+
+    const pixels = new Uint8ClampedArray(8 * 8 * 4);
+    for (let y = 2; y <= 6; y += 1) {
+      for (let x = 1; x <= 3; x += 1) pixels[(y * 8 + x) * 4 + 3] = 255;
+    }
+    vi.stubGlobal('document', {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ({
+          clearRect() {},
+          drawImage() {},
+          getImageData: () => ({ data: pixels }),
+        }),
+      }),
+    });
+
+    const [, sprite] = sprites;
+    sprite.x = 100;
+    sprite.y = 200;
+    sprite.originX = 0.5;
+    sprite.originY = 1;
+    sprite.scaleX = 2;
+    sprite.scaleY = 2;
+    sprite.frame = {
+      cutX: 0,
+      cutY: 0,
+      cutWidth: 8,
+      cutHeight: 8,
+      source: { image: {} },
+    };
+
+    expect(view.getVisibleTopCenter()).toEqual({ x: 97, y: 188 });
+    sprite.flipX = true;
+    expect(view.getVisibleTopCenter()).toEqual({ x: 103, y: 188 });
+    vi.unstubAllGlobals();
   });
 });
 
