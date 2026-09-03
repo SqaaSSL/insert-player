@@ -3378,6 +3378,53 @@
     transform: translateX(-50%) rotate(7deg) scaleY(1);
   }
 }
+
+@keyframes rush-loader-team-in {
+  from {
+    opacity: 0;
+    filter: blur(10px);
+    transform: translateX(-8%);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateX(0);
+  }
+}
+
+@keyframes rush-loader-briefing-in {
+  from {
+    opacity: 0;
+    transform: translateX(8%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes rush-loader-stage-in {
+  from {
+    opacity: 0;
+    transform: scale(1.06);
+  }
+  to {
+    opacity: 0.76;
+    transform: scale(1);
+  }
+}
+
+@keyframes rush-loader-advance {
+  0%, 100% {
+    opacity: 0.45;
+    transform: translateX(-4px);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(5px);
+  }
+}
+
 @layer components {
   /* ============================================================
      FIGHT LOADING CURTAIN (React-owned shell before Phaser ready)
@@ -3593,10 +3640,6 @@
     @apply text-asf-blue;
   }
 
-  .fight-loader.is-rush .fight-loader__vs i {
-    @apply text-asf-gold;
-  }
-
   .fight-loader__status {
     @apply mt-2 font-arcade text-[9px] text-asf-gold;
   }
@@ -3633,6 +3676,269 @@
 
   .fight-loader__exit {
     @apply pointer-events-auto mt-1;
+  }
+
+  /* Rush is a route briefing, not a versus card. Both fighters advance from
+     one side while the authored stage and objective occupy the other. */
+  .rush-loader__stage-art {
+    @apply pointer-events-none absolute inset-0 z-0 overflow-hidden bg-asf-bg-deep;
+  }
+
+  .rush-loader__stage-art img {
+    @apply absolute inset-y-0 right-0 h-full w-[62%] object-cover object-center opacity-75
+           [animation:rush-loader-stage-in_700ms_80ms_cubic-bezier(0.16,1,0.3,1)_both]
+           [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_180ms_ease-out]
+           motion-reduce:animate-none motion-reduce:transition-none;
+  }
+
+  .rush-loader__ambient {
+    @apply pointer-events-none absolute inset-0 z-[1]
+           [background:linear-gradient(90deg,#050507_0%,rgba(5,5,7,0.98)_36%,rgba(5,5,7,0.8)_56%,rgba(5,5,7,0.24)_100%),linear-gradient(180deg,rgba(210,39,39,0.16),transparent_48%,rgba(4,4,13,0.72)_100%)];
+  }
+
+  .rush-loader__layout {
+    @apply absolute inset-0 z-20 grid min-h-0 text-asf-cream
+           grid-cols-[minmax(0,1.16fr)_72px_minmax(320px,0.84fr)];
+  }
+
+  .rush-loader__team {
+    @apply relative flex min-h-0 min-w-0 flex-col overflow-hidden
+           py-[clamp(20px,4vh,42px)] pl-[clamp(28px,5vw,72px)] pr-3
+           [background:linear-gradient(112deg,rgba(58,5,9,0.82)_0%,rgba(10,6,18,0.92)_58%,rgba(5,5,7,0.18)_100%)]
+           [animation:rush-loader-team-in_620ms_80ms_cubic-bezier(0.16,1,0.3,1)_both]
+           [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_180ms_ease-out]
+           motion-reduce:animate-none motion-reduce:transition-none;
+  }
+
+  .rush-loader__brand-lockup {
+    @apply relative z-20 flex items-center gap-3;
+  }
+
+  .rush-loader__mark {
+    @apply h-[46px] w-[46px] shrink-0;
+  }
+
+  .rush-loader__brand-lockup > div {
+    @apply flex min-w-0 flex-col gap-1;
+  }
+
+  .rush-loader__brand-lockup strong {
+    @apply font-arcade text-[13px] leading-tight text-asf-cream
+           [text-shadow:0_3px_0_rgba(0,0,0,0.9)];
+  }
+
+  .rush-loader__brand-lockup span {
+    @apply font-sans text-[10px] font-bold tracking-[0.18em] text-asf-gold;
+  }
+
+  .rush-loader__team-heading {
+    @apply relative z-20 mt-[clamp(14px,4vh,34px)] flex flex-col gap-1.5;
+  }
+
+  .rush-loader__team-heading span {
+    @apply font-arcade text-[8px] text-asf-gold;
+  }
+
+  .rush-loader__team-heading strong {
+    @apply font-arcade text-[clamp(18px,2.25vw,30px)] leading-tight text-asf-cream
+           [text-shadow:0_4px_0_rgba(0,0,0,0.86)];
+  }
+
+  .rush-loader__fighters {
+    @apply pointer-events-none relative z-10 mt-auto flex h-[69%] min-h-0 w-full items-end;
+  }
+
+  .rush-loader__fighters .fight-loader__fighter {
+    @apply relative h-full min-w-0 flex-1 overflow-visible
+           [animation:rush-loader-team-in_680ms_160ms_cubic-bezier(0.16,1,0.3,1)_both]
+           motion-reduce:animate-none;
+  }
+
+  .rush-loader__fighters .fight-loader__fighter--p2 {
+    @apply [animation-delay:230ms];
+  }
+
+  .rush-loader__fighters .fight-loader__figure {
+    @apply inset-x-0 bottom-[-10%] top-[1%];
+  }
+
+  .rush-loader__fighters .fight-loader__fighter--p2 .fight-loader__figure-img {
+    @apply scale-x-100;
+  }
+
+  .rush-loader__fighters .fight-loader__figure-fallback {
+    @apply mb-[10%] text-[clamp(76px,17vw,250px)] opacity-10;
+  }
+
+  .rush-loader__fighters .fight-loader__player-label {
+    @apply bottom-[19%];
+  }
+
+  .rush-loader__fighters .fight-loader__fighter-name {
+    @apply bottom-[8%] max-w-[86%] text-[clamp(12px,1.65vw,22px)];
+  }
+
+  .rush-loader__fighters .fight-loader__fighter--p2 .fight-loader__player-label,
+  .rush-loader__fighters .fight-loader__fighter--p2 .fight-loader__fighter-name {
+    @apply left-[16%] right-auto text-left;
+  }
+
+  .rush-loader__plus {
+    @apply absolute bottom-[15%] left-1/2 z-20 flex h-10 w-10 -translate-x-1/2 items-center
+           justify-center rounded-[4px] border-2 border-asf-gold bg-[rgba(5,5,7,0.92)]
+           font-arcade text-[22px] text-asf-gold-bright
+           shadow-[0_6px_18px_rgba(0,0,0,0.65)];
+  }
+
+  .rush-loader__advance {
+    @apply relative z-30 flex flex-col items-center justify-center gap-3 text-asf-gold;
+  }
+
+  .rush-loader__advance span {
+    @apply font-arcade text-[7px] tracking-[0.08em] [writing-mode:vertical-rl];
+  }
+
+  .rush-loader__advance b {
+    @apply font-arcade text-[54px] font-normal leading-none
+           [animation:rush-loader-advance_900ms_ease-in-out_infinite]
+           motion-reduce:animate-none;
+  }
+
+  .rush-loader__briefing {
+    @apply relative flex min-h-0 min-w-0 flex-col justify-center gap-4 overflow-hidden
+           px-[clamp(24px,4vw,60px)] py-[clamp(22px,6vh,64px)]
+           [background:linear-gradient(90deg,rgba(5,5,7,0.88),rgba(5,5,7,0.5))]
+           [animation:rush-loader-briefing-in_620ms_160ms_cubic-bezier(0.16,1,0.3,1)_both]
+           [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_180ms_ease-out]
+           motion-reduce:animate-none motion-reduce:transition-none;
+  }
+
+  .rush-loader__route-label {
+    @apply w-fit rounded-[3px] border border-asf-gold-deep bg-[rgba(5,5,7,0.76)]
+           px-2.5 py-2 font-arcade text-[8px] text-asf-gold;
+  }
+
+  .rush-loader__briefing h2 {
+    @apply max-w-[14ch] break-words font-arcade text-[clamp(24px,3.4vw,46px)] leading-[1.2]
+           text-asf-gold-bright [text-shadow:0_4px_0_rgba(106,8,8,0.86)];
+  }
+
+  .rush-loader__briefing > p {
+    @apply m-0 max-w-[40ch] font-sans text-[14px] normal-case leading-[1.55] text-asf-cream;
+  }
+
+  .rush-loader__mission {
+    @apply m-0 grid max-w-[430px] overflow-hidden rounded-[4px] border border-asf-line
+           bg-[rgba(5,5,7,0.68)];
+  }
+
+  .rush-loader__mission > div {
+    @apply flex min-h-10 items-center justify-between gap-4 border-b border-asf-line px-3 py-2
+           last:border-b-0;
+  }
+
+  .rush-loader__mission dt {
+    @apply font-sans text-[10px] font-bold tracking-[0.1em] text-asf-muted;
+  }
+
+  .rush-loader__mission dd {
+    @apply m-0 text-right font-arcade text-[8px] leading-relaxed text-asf-cream;
+  }
+
+  .rush-loader__loading {
+    @apply flex min-h-11 flex-wrap items-center gap-x-4 gap-y-2;
+  }
+
+  .rush-loader__loading .fight-loader__status {
+    @apply m-0;
+  }
+
+  .fight-loader.is-opening .rush-loader__team {
+    @apply -translate-x-full opacity-0;
+  }
+
+  .fight-loader.is-rush.is-opening .rush-loader__fighters .fight-loader__fighter {
+    @apply translate-x-0 opacity-100;
+  }
+
+  .fight-loader.is-opening .rush-loader__briefing {
+    @apply translate-x-full opacity-0;
+  }
+
+  .fight-loader.is-opening .rush-loader__advance {
+    @apply opacity-0 [transition:opacity_160ms_ease-out];
+  }
+
+  .fight-loader.is-opening .rush-loader__stage-art img {
+    @apply scale-105 opacity-0;
+  }
+
+  @media (max-width: 820px) {
+    .rush-loader__layout {
+      @apply grid-cols-[minmax(0,1.08fr)_48px_minmax(260px,0.92fr)];
+    }
+
+    .rush-loader__team {
+      @apply pl-6;
+    }
+
+    .rush-loader__briefing {
+      @apply px-5;
+    }
+
+    .rush-loader__advance span {
+      @apply hidden;
+    }
+  }
+
+  @media (max-height: 520px) {
+    .rush-loader__team {
+      @apply py-4 pl-6;
+    }
+
+    .rush-loader__mark {
+      @apply h-9 w-9;
+    }
+
+    .rush-loader__brand-lockup strong {
+      @apply text-[11px];
+    }
+
+    .rush-loader__team-heading {
+      @apply mt-3;
+    }
+
+    .rush-loader__team-heading strong {
+      @apply text-[18px];
+    }
+
+    .rush-loader__fighters {
+      @apply h-[72%];
+    }
+
+    .rush-loader__briefing {
+      @apply gap-2.5 py-4;
+    }
+
+    .rush-loader__route-label {
+      @apply px-2 py-1.5 text-[7px];
+    }
+
+    .rush-loader__briefing h2 {
+      @apply text-[22px];
+    }
+
+    .rush-loader__briefing > p {
+      @apply text-[12px] leading-[1.45];
+    }
+
+    .rush-loader__mission > div {
+      @apply min-h-8 py-1.5;
+    }
+
+    .rush-loader__loading {
+      @apply min-h-8;
+    }
   }
 
   /* ============================================================
