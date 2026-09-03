@@ -22,6 +22,7 @@ import {
   getCloudFighter,
   isCompleteCloudFighterRoster,
   isSourceOnlyCloudFighter,
+  listArcadeFighters,
   listCloudFighters,
   renameCloudFighter,
   reportCommunityFighter,
@@ -305,6 +306,48 @@ describe('official Arcade cache identity', () => {
         },
       },
     })).toBe('arcade:headline-fighter:fighter-official');
+  });
+});
+
+describe('official Arcade template visibility', () => {
+  beforeEach(() => {
+    vi.mocked(apiFetch).mockReset();
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.insertplayer.test');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('rejects Template Zero even if an API response accidentally marks it global', async () => {
+    const fighter = (id: string, name: string, slug: string) => ({
+      id,
+      name,
+      qualityTier: 'champion' as const,
+      public: true,
+      sources: {},
+      sprites: [],
+      arcade: {
+        slug,
+        rank: 1,
+        challengerLine: 'Ready',
+        defaultPersonality: 'balanced' as const,
+        reference: {
+          kind: 'generated' as const,
+          sourceUrl: null,
+          license: 'Internal',
+          credit: 'Insert Player',
+        },
+      },
+    });
+    vi.mocked(apiFetch).mockResolvedValueOnce(Response.json({
+      fighters: [
+        fighter('template-id', 'Template Zero', 'template-zero'),
+        fighter('vanta-id', 'Vanta', 'vanta'),
+      ],
+    }));
+
+    await expect(listArcadeFighters()).resolves.toMatchObject([{ id: 'vanta-id' }]);
   });
 });
 

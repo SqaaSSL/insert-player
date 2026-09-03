@@ -104,4 +104,31 @@ describe('RosterPage fighter sections', () => {
     expect(sections.owned).toEqual([]);
     expect(sections.all).toEqual([]);
   });
+
+  it('never exposes Template Zero as a selectable fighter, including offline caches', () => {
+    const templateGlobal = fighter('template-id', 'template-zero', 'Template Zero');
+    const derivedTemplateGlobal = fighter(
+      'trump-template-id',
+      'donald-trump-template-zero',
+      'Donald Trump — Template Zero',
+    );
+    const cachedTemplate = meta(
+      'arcade:template-zero:template-id',
+      'template-id',
+      'Template Zero',
+    );
+    const localTemplate = meta('template-zero-working-copy', null, 'Template Zero working copy');
+    const vanta = fighter('vanta-id', 'vanta', 'Vanta');
+    const personal = meta('personal-photo', 'personal-id', 'Local Hero');
+
+    const sections = buildRosterFighterSections(
+      [cachedTemplate, localTemplate, personal],
+      [templateGlobal, derivedTemplateGlobal, vanta],
+      true,
+    );
+
+    expect(sections.official.map((entry) => entry.name)).toEqual(['Vanta']);
+    expect(sections.owned.map((entry) => entry.name)).toEqual(['Local Hero']);
+    expect(sections.all.some((entry) => /template zero/i.test(entry.name))).toBe(false);
+  });
 });

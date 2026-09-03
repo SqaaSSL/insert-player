@@ -3,6 +3,7 @@ import {
   arcadeFighterPhotoHash,
   isCompleteCloudFighterRoster,
 } from '../../services/CloudFighters.ts';
+import { isTemplateOnlyFighterIdentity } from '../../services/PlayableFighterAssets.ts';
 import type { CachedMeta } from '../../services/SpriteCache.ts';
 import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
 import { isArcadeCachedMeta } from '../shared/fighterPreview.ts';
@@ -38,15 +39,27 @@ export function buildGalleryFighterSections(
   arcadeFighters: CloudFighter[],
   includeCachedFallback = false,
 ): GalleryFighterSections {
+  const selectableArcadeFighters = arcadeFighters.filter((fighter) => (
+    !isTemplateOnlyFighterIdentity({
+      name: fighter.name,
+      arcadeSlug: fighter.arcade?.slug,
+    })
+  ));
+  const selectableMetas = metas.filter((meta) => (
+    !isTemplateOnlyFighterIdentity({
+      characterName: meta.characterName,
+      photoHash: meta.photoHash,
+    })
+  ));
   const seenGlobalHashes = new Set<string>();
   const matchedCachedHashes = new Set<string>();
   const globals: GalleryGlobalFighter[] = [];
 
-  for (const fighter of arcadeFighters) {
+  for (const fighter of selectableArcadeFighters) {
     const photoHash = arcadeFighterPhotoHash(fighter);
     if (seenGlobalHashes.has(photoHash)) continue;
     seenGlobalHashes.add(photoHash);
-    const cachedMeta = findCachedArcadeMeta(metas, fighter);
+    const cachedMeta = findCachedArcadeMeta(selectableMetas, fighter);
     if (cachedMeta) matchedCachedHashes.add(cachedMeta.photoHash);
     globals.push({
       fighter,
@@ -56,13 +69,13 @@ export function buildGalleryFighterSections(
   }
 
   if (includeCachedFallback) {
-    const representedIds = new Set(arcadeFighters.map((fighter) => fighter.id));
+    const representedIds = new Set(selectableArcadeFighters.map((fighter) => fighter.id));
     const representedSlugs = new Set(
-      arcadeFighters
+      selectableArcadeFighters
         .map((fighter) => fighter.arcade?.slug)
         .filter((slug): slug is string => Boolean(slug)),
     );
-    const cachedFallbacks = metas
+    const cachedFallbacks = selectableMetas
       .filter(isArcadeCachedMeta)
       .sort((left, right) => {
         const leftSlug = cachedArcadeSlug(left.photoHash);
@@ -88,7 +101,7 @@ export function buildGalleryFighterSections(
 
   return {
     globals,
-    owned: ownedRosterMetas(metas, arcadeFighters),
+    owned: ownedRosterMetas(selectableMetas, selectableArcadeFighters),
   };
 }
 

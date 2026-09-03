@@ -1,8 +1,9 @@
 import type { CloudFighter } from '../../services/CloudFighters.ts';
+import { isTemplateOnlyFighterIdentity } from '../../services/PlayableFighterAssets.ts';
 import type { CachedMeta } from '../../services/SpriteCache.ts';
 import { isArcadeCachedMeta } from './fighterPreview.ts';
 
-type RosterIdentityMeta = Pick<CachedMeta, 'photoHash' | 'cloudFighterId' | 'cloudManagement'>;
+type RosterIdentityMeta = Pick<CachedMeta, 'photoHash' | 'cloudFighterId' | 'cloudManagement' | 'characterName'>;
 type RosterIdentityFighter = Pick<CloudFighter, 'id'>;
 
 /**
@@ -68,7 +69,12 @@ export function ownedRosterMetas(
   arcadeFighters: RosterIdentityFighter[],
 ): CachedMeta[] {
   const arcadeFighterIds = arcadeRosterFighterIds(metas, arcadeFighters);
-  return metas.filter((meta) => !isGlobalRosterMeta(meta, arcadeFighterIds));
+  return metas.filter((meta) => (
+    !isTemplateOnlyFighterIdentity({
+      characterName: meta.characterName,
+      photoHash: meta.photoHash,
+    }) && !isGlobalRosterMeta(meta, arcadeFighterIds)
+  ));
 }
 
 /**
@@ -81,7 +87,10 @@ export function visibleGalleryMetas(
 ): CachedMeta[] {
   const arcadeFighterIds = arcadeRosterFighterIds(metas, arcadeFighters);
   return metas.filter((meta) => (
-    isArcadeCachedMeta(meta) || !isGlobalRosterMeta(meta, arcadeFighterIds)
+    !isTemplateOnlyFighterIdentity({
+      characterName: meta.characterName,
+      photoHash: meta.photoHash,
+    }) && (isArcadeCachedMeta(meta) || !isGlobalRosterMeta(meta, arcadeFighterIds))
   ));
 }
 

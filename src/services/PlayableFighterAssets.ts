@@ -14,6 +14,29 @@ export const PLAYABLE_ANIMATION_NAMES = [
 
 export type PlayableAnimationName = typeof PLAYABLE_ANIMATION_NAMES[number];
 
+export interface FighterPlayabilityIdentity {
+  name?: string | null;
+  characterName?: string | null;
+  arcadeSlug?: string | null;
+  photoHash?: string | null;
+}
+
+const TEMPLATE_ZERO_IDENTITY = /(?:^|[^a-z0-9])template[\s_-]*zero(?:$|[^a-z0-9])/i;
+
+/**
+ * Template Zero is pose infrastructure, never a user-facing fighter. Keep the
+ * guard at the shared playability boundary so stale offline caches cannot turn
+ * an internal generation reference into a selectable character.
+ */
+export function isTemplateOnlyFighterIdentity(identity: FighterPlayabilityIdentity): boolean {
+  return [
+    identity.name,
+    identity.characterName,
+    identity.arcadeSlug,
+    identity.photoHash,
+  ].some((value) => typeof value === 'string' && TEMPLATE_ZERO_IDENTITY.test(value));
+}
+
 interface PlayableSpriteAsset {
   animationName: string;
   frameWidth: number;

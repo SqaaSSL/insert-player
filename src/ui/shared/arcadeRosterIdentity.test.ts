@@ -79,6 +79,20 @@ describe('Arcade roster identity', () => {
     expect(visibleGalleryMetas(marked.metas, [])).toEqual([]);
   });
 
+  it('keeps internal Template Zero records out of owned and gallery lists', () => {
+    const namedTemplate = {
+      ...meta('internal-working-copy'),
+      characterName: 'Donald Trump — Template Zero',
+    };
+    const hashedTemplate = {
+      ...meta('arcade:template-zero:internal-id', 'internal-id'),
+      characterName: 'Pose reference',
+    };
+
+    expect(ownedRosterMetas([namedTemplate, hashedTemplate], [])).toEqual([]);
+    expect(visibleGalleryMetas([namedTemplate, hashedTemplate], [])).toEqual([]);
+  });
+
   it('preserves the selected fighter by identity when background sync reorders the list', () => {
     const before = [meta('personal-photo'), meta('arcade:elon-musk:elon-id', 'elon-id')];
     const after = [meta('new-cloud-photo'), ...before];
