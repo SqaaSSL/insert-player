@@ -1049,7 +1049,45 @@
   }
 
   .home-mode__launch {
-    @apply mt-auto w-full;
+    @apply isolate mt-auto min-h-[148px] w-full overflow-hidden motion-reduce:transition-none;
+  }
+
+  .home-mode__launch::before,
+  .home-mode__launch::after {
+    @apply pointer-events-none absolute inset-0 content-[''];
+  }
+
+  .home-mode__launch::before {
+    @apply z-0 bg-cover bg-center opacity-85
+           transition-[transform,opacity] duration-200 ease-out
+           [transform:scale(1.015)] motion-reduce:transform-none motion-reduce:transition-none;
+  }
+
+  .home-mode__launch::after {
+    @apply z-[1]
+           [background:linear-gradient(90deg,rgba(72,4,8,0.98)_0%,rgba(72,4,8,0.9)_38%,rgba(48,4,10,0.52)_64%,rgba(16,5,18,0.12)_100%),linear-gradient(180deg,rgba(255,206,58,0.05),rgba(4,4,13,0.3))];
+  }
+
+  .home-mode__launch--fight::before {
+    @apply [background-image:url('/assets/play-mode-fight-preview-v1.webp')];
+  }
+
+  .home-mode__launch--rush::before {
+    @apply [background-image:url('/assets/play-mode-rush-preview-v1.webp')]
+           [background-position:center_48%];
+  }
+
+  .home-mode__launch > span,
+  .home-mode__launch > small {
+    @apply relative z-[2] max-w-[34ch];
+  }
+
+  .home-mode__launch:hover::before {
+    @apply opacity-100 [transform:scale(1.04)] motion-reduce:transform-none;
+  }
+
+  .home-mode__footer {
+    @apply min-h-24;
   }
 
   .home-mode__variants {
@@ -1063,7 +1101,7 @@
   }
 
   .home-mode__facts {
-    @apply flex min-h-11 flex-wrap content-center gap-2;
+    @apply flex flex-wrap content-start gap-2;
   }
 
   .home-mode__facts span {
@@ -2982,6 +3020,10 @@
 
     .home-mode {
       @apply min-h-0 p-4;
+    }
+
+    .home-mode__footer {
+      @apply min-h-0;
     }
 
     .home-mode__heading h3 {

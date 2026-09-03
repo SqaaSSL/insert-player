@@ -316,11 +316,15 @@ export function HomePage({
             <p>
               Face one rival in round-based matches. Play the arcade ladder or choose a direct matchup.
             </p>
-            <button type="button" className="home-menu__action is-primary home-mode__launch" onClick={onOpenArcade}>
+            <button
+              type="button"
+              className="home-menu__action is-primary home-mode__launch home-mode__launch--fight"
+              onClick={onOpenArcade}
+            >
               <span>Play Fight</span>
               <small>{arcadeModeHint}</small>
             </button>
-            <div className="home-mode__variants" aria-label="Fight modes">
+            <div className="home-mode__footer home-mode__variants" aria-label="Fight modes">
               <button type="button" onClick={onOpenVsCpu}>Fight CPU</button>
               <button type="button" onClick={onOpenVsPlayer}>Local Versus</button>
               <button type="button" onClick={onOpenOnlineVersus}>Online Beta</button>
@@ -336,11 +340,15 @@ export function HomePage({
             <p>
               Move right with a CPU partner, clear enemy groups, break obstacles, and finish the route together.
             </p>
-            <button type="button" className="home-menu__action is-primary home-mode__launch" onClick={onOpenCoopRush}>
+            <button
+              type="button"
+              className="home-menu__action is-primary home-mode__launch home-mode__launch--rush"
+              onClick={onOpenCoopRush}
+            >
               <span>Play Rush Beta</span>
               <small>Player + CPU · Side Street · One team</small>
             </button>
-            <div className="home-mode__facts" aria-label="Rush availability">
+            <div className="home-mode__footer home-mode__facts" aria-label="Rush availability">
               <span>Shared fighters</span>
               <span>Player + CPU</span>
               <span>More stages coming</span>
