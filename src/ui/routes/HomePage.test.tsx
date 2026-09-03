@@ -28,6 +28,9 @@ describe('HomePage game modes', () => {
     expect(markup).toContain('Early access');
     expect(markup).toContain('Play Fight');
     expect(markup).toContain('Play Rush Beta');
+    expect(markup).toContain('home-mode__launch--fight');
+    expect(markup).toContain('home-mode__launch--rush');
+    expect(markup.match(/home-mode__footer/g)).toHaveLength(2);
     expect(markup).toContain('Player + CPU');
     expect(markup).toContain('Your fighters work in Fight and Rush');
     expect(markup).not.toContain('Co-op Rush');
