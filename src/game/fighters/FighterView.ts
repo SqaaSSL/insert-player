@@ -182,22 +182,23 @@ export class FighterView {
     };
   }
 
-  syncSprite(opponentX: number): void {
+  syncSprite(opponentX: number, verticalLift = 0): void {
     if (!this.sprite) return;
     const fighter = this.fighter;
     const spriteDepth = fighter.x < opponentX ? 10 : 11;
     const presentation = this.getComposedSpritePresentation();
+    const liftedY = presentation.y - Math.max(0, verticalLift);
     if (this.shadowSprite) {
       this.shadowSprite.setPosition(
         fighter.x + this.shadowOffsetX,
-        presentation.y + this.shadowOffsetY,
+        liftedY + this.shadowOffsetY,
       );
       this.shadowSprite.setOrigin(presentation.originX, presentation.originY);
       this.shadowSprite.setFlipX(!fighter.facingRight);
       this.shadowSprite.setScale(presentation.scale * 1.015);
       this.shadowSprite.setDepth(spriteDepth - 0.5);
     }
-    this.sprite.setPosition(fighter.x, presentation.y);
+    this.sprite.setPosition(fighter.x, liftedY);
     this.sprite.setOrigin(presentation.originX, presentation.originY);
     this.sprite.setFlipX(!fighter.facingRight);
     this.sprite.setScale(presentation.scale);
