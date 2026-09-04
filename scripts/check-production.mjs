@@ -3830,6 +3830,7 @@ function assertGithubActionsAreWired() {
     xaiHighKick: '.github/workflows/arcade-high-kick-xai-canary-production.yml',
     xaiQaMotion: '.github/workflows/arcade-qa-motion-xai-canary-production.yml',
     codeql: '.github/workflows/codeql.yml',
+    dependencySecurity: '.github/workflows/dependency-security.yml',
     dependabot: '.github/dependabot.yml',
     codeowners: '.github/CODEOWNERS',
     runbook: '.github/DEPLOYMENT.md',
@@ -3851,13 +3852,16 @@ function assertGithubActionsAreWired() {
       'npm run build:sandbox',
       'npm --prefix worker run deploy -- --dry-run',
       'npm --prefix worker run deploy:sandbox -- --dry-run',
-      'npm run audit:dependencies',
+      'vulnerability-alerts: read',
+      'dependabot/alerts',
+      'security_advisory.severity',
     ],
     ci: [
       'pull_request:',
       '- develop',
       '- main',
       'uses: ./.github/workflows/validate.yml',
+      'vulnerability-alerts: read',
     ],
     development: [
       'group: deploy-development',
@@ -3870,6 +3874,7 @@ function assertGithubActionsAreWired() {
       'secrets.ANONYMIZATION_SECRET',
       'secrets.GENERATION_JOB_SIGNING_SECRET',
       'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+      'vulnerability-alerts: read',
     ],
     production: [
       'group: production-worker-mutations',
@@ -3899,6 +3904,7 @@ function assertGithubActionsAreWired() {
       'secrets.CLERK_WEBHOOK_SIGNING_SECRET',
       'secrets.GENERATION_JOB_SIGNING_SECRET',
       'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+      'vulnerability-alerts: read',
     ],
     frontendProduction: [
       'workflow_dispatch:',
@@ -3989,9 +3995,18 @@ function assertGithubActionsAreWired() {
       'github/codeql-action/analyze@v4',
       'security-events: write',
     ],
+    dependencySecurity: [
+      'pull_request:',
+      'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294',
+      'fail-on-severity: high',
+      'fail-on-scopes: runtime, development, unknown',
+      'license-check: false',
+      'show-openssf-scorecard: false',
+    ],
     dependabot: [
       'package-ecosystem: npm',
       'directory: /worker',
+      'directory: /processor',
       'package-ecosystem: github-actions',
     ],
     codeowners: [

@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  vulnerability-alerts: read
 
 concurrency:
   group: deploy-development

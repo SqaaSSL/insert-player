@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  vulnerability-alerts: read
 
 jobs:
   validate:
@@ -63,5 +64,22 @@ jobs:
       - name: Validate sandbox Worker bundle
         run: npm --prefix worker run deploy:sandbox -- --dry-run
 
-      - name: Audit dependency lockfiles
-        run: npm run audit:dependencies
+      - name: Reject unresolved high or critical dependency alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          blocking="$(
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/dependabot/alerts" \
+              -f state=open \
+              -f per_page=100 \
+              --paginate \
+              --jq '.[]
+                | (.security_advisory.severity // .security_vulnerability.severity // "") as $severity
+                | select($severity == "high" or $severity == "critical")
+                | "#\(.number) [\($severity)] \(.dependency.manifest_path): \(.dependency.package.name) \(.html_url)"'
+          )"
+          if [[ -n "$blocking" ]]; then
+            printf 'Open high or critical Dependabot alerts block this release:\n%s\n' "$blocking" >&2
+            exit 1
+          fi
+          printf 'No open high or critical Dependabot alerts.\n'

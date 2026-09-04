@@ -10,7 +10,6 @@
     "dev": "vite",
     "check:frontend": "node scripts/check-no-inline-styles.mjs",
     "check:production": "node scripts/check-production.mjs",
-    "audit:dependencies": "node scripts/audit-dependencies.mjs",
     "check:tiers": "node scripts/check-tier-parity.mjs",
     "check:live-readiness": "node scripts/check-live-readiness.mjs",
     "check:meterkey-auth": "node scripts/check-meterkey-auth.mjs",
