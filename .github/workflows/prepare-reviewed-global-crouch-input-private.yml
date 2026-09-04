@@ -122,7 +122,7 @@ jobs:
           }
 
       - name: Check out the reviewed source-only code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
