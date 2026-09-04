@@ -28,7 +28,7 @@ in-progress deployment.
 ## Workflows
 
 - `ci.yml`: required pull-request and branch validation.
-- `validate.yml`: reusable production gate, full builds, Worker dry-runs, and dependency audits.
+- `validate.yml`: reusable production gate, full builds, Worker dry-runs, and concurrent lockfile dependency audits. Registry/network failures get one bounded retry; reported high or critical vulnerabilities never do.
 - `deploy-development.yml`: `develop` to the isolated sandbox.
 - `deploy-production.yml`: checked `main` release to `insertplayer.ai`.
 - `deploy-frontend-production.yml`: manual Pages-only release of the selected

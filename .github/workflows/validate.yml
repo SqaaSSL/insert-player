@@ -63,11 +63,5 @@ jobs:
       - name: Validate sandbox Worker bundle
         run: npm --prefix worker run deploy:sandbox -- --dry-run
 
-      - name: Audit frontend dependencies
-        run: npm audit --audit-level=high
-
-      - name: Audit Worker dependencies
-        run: npm --prefix worker audit --audit-level=high
-
-      - name: Audit processor dependencies
-        run: npm --prefix processor audit --audit-level=high
+      - name: Audit dependency lockfiles
+        run: npm run audit:dependencies

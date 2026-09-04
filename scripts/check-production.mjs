@@ -3851,7 +3851,7 @@ function assertGithubActionsAreWired() {
       'npm run build:sandbox',
       'npm --prefix worker run deploy -- --dry-run',
       'npm --prefix worker run deploy:sandbox -- --dry-run',
-      'npm audit --audit-level=high',
+      'npm run audit:dependencies',
     ],
     ci: [
       'pull_request:',
