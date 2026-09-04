@@ -3834,6 +3834,9 @@ function assertGithubActionsAreWired() {
     dependabot: '.github/dependabot.yml',
     codeowners: '.github/CODEOWNERS',
     runbook: '.github/DEPLOYMENT.md',
+    processorDeployCheck: 'scripts/check-image-processor-contract.mjs',
+    processorDeployRoute: 'worker/src/deploymentPreflight.ts',
+    workerIndex: 'worker/src/index.ts',
   };
   const missingFiles = Object.values(files).filter((path) => !existsSync(join(root, path)));
   if (missingFiles.length > 0) {
@@ -3895,8 +3898,7 @@ function assertGithubActionsAreWired() {
       'node scripts/check-generation-idle.mjs',
       'node scripts/apply-live-config.mjs --skip-production-check --deploy-worker',
       'ASF_EXPECTED_WORKER_VERSION_TAG:',
-      'ASF_ARCADE_PREFLIGHT_KEY:',
-      '--preflight-only',
+      'npm run check:image-processor-contract',
       'node scripts/worker-version-rollout.mjs rollback',
       'npm run smoke:live',
       'npm run deploy:frontend',
@@ -4018,6 +4020,22 @@ function assertGithubActionsAreWired() {
       '## Required Branch Rules',
       '`development`',
       '`production`',
+      'does not depend on an operator retaining an active Clerk browser session',
+    ],
+    processorDeployCheck: [
+      "const PRODUCTION_WORKER_URL = 'https://api.insertplayer.ai'",
+      "const PREFLIGHT_PATH = '/api/internal/deploy/image-processor-contract'",
+      'assertApprovedArcadeGenerationContract',
+      'X-Insert-Player-Clerk-Backend-Auth',
+    ],
+    processorDeployRoute: [
+      'hasValidClerkBackendAuthBridge',
+      'readImageProcessorGenerationContract',
+      "'Cache-Control': 'private, no-store'",
+    ],
+    workerIndex: [
+      "path === '/api/internal/deploy/image-processor-contract' && method === 'GET'",
+      'readDeploymentImageProcessorContract(request, env)',
     ],
   };
   const missingSnippets = [];
@@ -4028,6 +4046,12 @@ function assertGithubActionsAreWired() {
   }
   if (missingSnippets.length > 0) {
     throw new Error(`GitHub delivery wiring is incomplete:\n- ${missingSnippets.join('\n- ')}`);
+  }
+  if (
+    text.production.includes('ASF_ARCADE_PREFLIGHT_KEY:')
+    || text.production.includes('ASF_ARCADE_ADMIN_CLERK_USER_ID:')
+  ) {
+    throw new Error('Production deploy processor readiness must not depend on an active human Clerk session.');
   }
 
   const backendBridgeEnv = 'CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}';

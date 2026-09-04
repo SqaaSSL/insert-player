@@ -235,26 +235,9 @@ jobs:
 
       - name: Wait for the compatible image processor Container
         env:
-          ASF_ARCADE_PREFLIGHT_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
-          ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
           ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
-        run: |
-          ready=0
-          for attempt in $(seq 1 30); do
-            if node scripts/seed-arcade-roster.mjs \
-              --target=production \
-              --preflight-only \
-              --slug=donald-trump; then
-              ready=1
-              break
-            fi
-            sleep 20
-          done
-          if [ "$ready" -ne 1 ]; then
-            printf '%s\n' 'Compatible image processor did not become ready.' >&2
-            exit 1
-          fi
+        run: npm run check:image-processor-contract
 
       - name: Build, deploy, and smoke Pages
         env:

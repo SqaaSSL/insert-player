@@ -182,11 +182,7 @@ function publicAuth(auth: AuthContext): PublicAuthContext {
   };
 }
 
-export async function readAdminArcadeGenerationContract(
-  env: Env,
-  auth: AuthContext,
-): Promise<Response> {
-  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+export async function readImageProcessorGenerationContract(env: Env): Promise<Response> {
   if (!env.IMAGE_PROCESSOR) {
     return json({
       error: 'Image processor binding is unavailable',
@@ -271,6 +267,14 @@ export async function readAdminArcadeGenerationContract(
       reason: 'processor_contract_verification_failed',
     }, 503);
   }
+}
+
+export async function readAdminArcadeGenerationContract(
+  env: Env,
+  auth: AuthContext,
+): Promise<Response> {
+  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  return readImageProcessorGenerationContract(env);
 }
 
 function generationJobRequest(
