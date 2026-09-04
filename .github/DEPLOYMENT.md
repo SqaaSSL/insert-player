@@ -114,6 +114,12 @@ Use the same variable and secret names in both environments. Values must remain 
 | `ASF_FRONTEND_URL` | Not used | `https://insertplayer.ai` |
 | `ASF_FRONTEND_ORIGIN` | Not used | `https://insertplayer.ai` |
 | `ASF_PAGES_PROJECT_NAME` | Not used | `insert-player` |
+| `ASF_METERKEY_EXPECTED_KEY_ID` | Not used | Dedicated production Meterkey key id |
+| `ASF_METERKEY_EXPECTED_KEY_FINGERPRINT` | Not used | scrypt fingerprint of the dedicated production Meterkey key |
+| `ASF_METERKEY_EXPECTED_USER_ID` | Not used | Dedicated production Meterkey user id |
+| `ASF_METERKEY_EXPECTED_WALLET_ID` | Not used | Dedicated production Meterkey wallet id |
+| `ASF_METERKEY_MIN_AVAILABLE_UC` | Not used | Minimum approved production balance |
+| `ASF_METERKEY_EXPECTED_PER_REQUEST_CAP_UC` | Not used | Approved per-request production cap |
 
 ### Secrets
 

@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   meterkeyAuthExpectations,
+  validateMeterkeyAnalyticsIdentity,
+  validateMeterkeyApiKeyFingerprint,
   validateMeterkeyAuthContext,
 } from './meterkey-auth-context.mjs';
 
 const expected = {
   keyId: 'mk_key_insert_player',
+  keyFingerprint: 'aacc2d98191bb65e5815626b5ac73dcc413a20bc2b2f255a3899d5e8341242c8',
   userId: 'mk_usr_insert_player',
   walletId: 'mk_wal_insert_player',
   minimumAvailableUc: 100_000_000,
@@ -68,12 +71,37 @@ describe('Meterkey Insert Player auth contract', () => {
   it('loads every required expectation from explicit deployment variables', () => {
     expect(meterkeyAuthExpectations({
       ASF_METERKEY_EXPECTED_KEY_ID: expected.keyId,
+      ASF_METERKEY_EXPECTED_KEY_FINGERPRINT: expected.keyFingerprint,
       ASF_METERKEY_EXPECTED_USER_ID: expected.userId,
       ASF_METERKEY_EXPECTED_WALLET_ID: expected.walletId,
       ASF_METERKEY_MIN_AVAILABLE_UC: String(expected.minimumAvailableUc),
       ASF_METERKEY_EXPECTED_PER_REQUEST_CAP_UC: String(expected.perRequestCapUc),
     })).toEqual(expected);
     expect(() => meterkeyAuthExpectations({})).toThrow('ASF_METERKEY_EXPECTED_KEY_ID');
+  });
+
+  it('accepts only the exact approved credential fingerprint', () => {
+    expect(() => validateMeterkeyApiKeyFingerprint('mk-prod-insert-player-test-key', expected)).not.toThrow();
+    expect(() => validateMeterkeyApiKeyFingerprint('mk-prod-another-key', expected)).toThrow();
+  });
+
+  it('accepts the authenticated analytics identity returned by the current Meterkey API', () => {
+    const analytics = {
+      filters: { key_id: expected.keyId, user_id: expected.userId },
+      requests: 0,
+      errors: 0,
+      credits_charged_uc: 0,
+    };
+    expect(() => validateMeterkeyAnalyticsIdentity(analytics, expected)).not.toThrow();
+
+    expect(() => validateMeterkeyAnalyticsIdentity({
+      ...analytics,
+      filters: { ...analytics.filters, user_id: 'mk_usr_other' },
+    }, expected)).toThrow();
+    expect(() => validateMeterkeyAnalyticsIdentity({
+      ...analytics,
+      requests: -1,
+    }, expected)).toThrow();
   });
 
   it.each([

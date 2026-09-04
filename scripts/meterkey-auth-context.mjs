@@ -1,3 +1,5 @@
+import { scryptSync } from 'node:crypto';
+
 // Meterkey is an internal platform shared with other products. Its key may gain
 // explicit models without changing Insert Player's runtime permissions: the
 // Worker still authorizes every provider operation and model separately.
@@ -19,6 +21,7 @@ const REQUIRED_ENDPOINTS = [
   '/google-ai-studio/v1beta/models/*',
   '/v1/chat/completions',
 ];
+const API_KEY_FINGERPRINT_DOMAIN = 'insert-player:meterkey-api-key-fingerprint:v1';
 
 function requiredString(value, label) {
   const normalized = String(value ?? '').trim();
@@ -30,6 +33,14 @@ function requiredInteger(value, label) {
   const normalized = Number(value);
   if (!Number.isSafeInteger(normalized) || normalized <= 0) {
     throw new Error(`${label} must be a positive safe integer.`);
+  }
+  return normalized;
+}
+
+function requiredFingerprint(value, label) {
+  const normalized = requiredString(value, label).toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(normalized)) {
+    throw new Error(`${label} must be a lowercase scrypt fingerprint.`);
   }
   return normalized;
 }
@@ -53,6 +64,10 @@ function requireExactStrings(value, required, label) {
 export function meterkeyAuthExpectations(env = process.env) {
   return {
     keyId: requiredString(env.ASF_METERKEY_EXPECTED_KEY_ID, 'ASF_METERKEY_EXPECTED_KEY_ID'),
+    keyFingerprint: requiredFingerprint(
+      env.ASF_METERKEY_EXPECTED_KEY_FINGERPRINT,
+      'ASF_METERKEY_EXPECTED_KEY_FINGERPRINT',
+    ),
     userId: requiredString(env.ASF_METERKEY_EXPECTED_USER_ID, 'ASF_METERKEY_EXPECTED_USER_ID'),
     walletId: requiredString(env.ASF_METERKEY_EXPECTED_WALLET_ID, 'ASF_METERKEY_EXPECTED_WALLET_ID'),
     minimumAvailableUc: requiredInteger(
@@ -64,6 +79,37 @@ export function meterkeyAuthExpectations(env = process.env) {
       'ASF_METERKEY_EXPECTED_PER_REQUEST_CAP_UC',
     ),
   };
+}
+
+export function validateMeterkeyApiKeyFingerprint(key, expected) {
+  const digest = scryptSync(
+    requiredString(key, 'METERKEY_API_KEY'),
+    API_KEY_FINGERPRINT_DOMAIN,
+    32,
+  ).toString('hex');
+  if (digest !== expected.keyFingerprint) {
+    throw new Error('Meterkey API key is not the approved Insert Player credential.');
+  }
+}
+
+export function validateMeterkeyAnalyticsIdentity(value, expected) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Meterkey analytics identity must be a JSON object.');
+  }
+  if (!value.filters || typeof value.filters !== 'object' || Array.isArray(value.filters)) {
+    throw new Error('Meterkey analytics filters are missing.');
+  }
+  if (value.filters.key_id !== expected.keyId) {
+    throw new Error('Meterkey analytics key id is not the dedicated Insert Player key.');
+  }
+  if (value.filters.user_id !== expected.userId) {
+    throw new Error('Meterkey analytics user id is not the dedicated Insert Player user.');
+  }
+  for (const field of ['requests', 'errors', 'credits_charged_uc']) {
+    if (!Number.isSafeInteger(value[field]) || value[field] < 0) {
+      throw new Error(`Meterkey analytics ${field} is invalid.`);
+    }
+  }
 }
 
 export function validateMeterkeyAuthContext(value, expected) {
