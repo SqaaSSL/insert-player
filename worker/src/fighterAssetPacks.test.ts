@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   AURA_ANIMATION_NAMES,
+  AURA_OPTIONAL_ANIMATION_NAMES,
   FIGHT_ANIMATION_NAMES,
   GENERATED_ANIMATION_NAMES,
   hasCompleteFighterAssetPack,
@@ -23,12 +24,17 @@ describe('worker fighter asset packs', () => {
   it('allows both pack contracts through generated-asset persistence', () => {
     expect(GENERATED_ANIMATION_NAMES.has('victory')).toBe(true);
     expect(GENERATED_ANIMATION_NAMES.has('aura_floor_worm')).toBe(true);
+    expect(GENERATED_ANIMATION_NAMES.has('aura_shrug')).toBe(true);
     expect(GENERATED_ANIMATION_NAMES.has('aura_not_real')).toBe(false);
   });
 
   it('recognizes complete Fight and Aura packs independently', () => {
     expect(hasCompleteFighterAssetPack(sprites(FIGHT_ANIMATION_NAMES))).toBe(true);
     expect(hasCompleteFighterAssetPack(sprites(AURA_ANIMATION_NAMES))).toBe(true);
+    expect(hasCompleteFighterAssetPack(sprites([
+      ...AURA_ANIMATION_NAMES,
+      ...AURA_OPTIONAL_ANIMATION_NAMES,
+    ]))).toBe(true);
   });
 
   it('reports partial packs without making them playable', () => {

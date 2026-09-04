@@ -1,4 +1,8 @@
-import { AURA_ANIMATION_NAMES, type AuraAnimationName } from '../../services/FighterAssetPacks.ts';
+import {
+  AURA_ANIMATION_NAMES,
+  type AuraAnimationName,
+  type AuraPackAnimationName,
+} from '../../services/FighterAssetPacks.ts';
 import { SeededRng } from '../utils/SeededRng.ts';
 
 export interface AuraPerformanceDefinition {
@@ -45,10 +49,16 @@ export const AURA_PERFORMANCE_DEFINITIONS: Readonly<Record<AuraAnimationName, Au
     durationMs: 1_250,
     loop: true,
   },
+  aura_shrug: {
+    name: 'aura_shrug',
+    label: 'WHAT WAS THAT?',
+    durationMs: 980,
+    loop: true,
+  },
 };
 
 export const AURA_ROUTINE_ANIMATION_NAMES = AURA_ANIMATION_NAMES.filter(
-  (name): name is Exclude<AuraAnimationName, 'aura_unbothered'> => name !== 'aura_unbothered',
+  (name): name is Exclude<AuraPackAnimationName, 'aura_unbothered'> => name !== 'aura_unbothered',
 );
 
 export type AuraRoutineAnimationName = typeof AURA_ROUTINE_ANIMATION_NAMES[number];

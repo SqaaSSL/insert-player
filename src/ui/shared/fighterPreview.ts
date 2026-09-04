@@ -47,6 +47,7 @@ export const ANIM_LABELS: Record<string, string> = {
   aura_glide: 'GLIDE',
   aura_floor_worm: 'FLOOR WORM',
   aura_one_leg: 'ONE-LEG HOP',
+  aura_shrug: 'SHRUG',
 };
 
 export function animLabel(name: string): string {

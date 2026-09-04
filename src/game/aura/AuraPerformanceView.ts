@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
 import type { FighterView } from '../fighters/FighterView.ts';
 import type { AuraAnimationName } from '../../services/FighterAssetPacks.ts';
-import { AURA_PERFORMANCE_DEFINITIONS } from './AuraPerformance.ts';
+import {
+  AURA_PERFORMANCE_DEFINITIONS,
+  AURA_ROUTINE_ANIMATION_NAMES,
+} from './AuraPerformance.ts';
 import type { LoadedAuraAnimationPack } from './AuraSpriteLoader.ts';
 
 /**
@@ -40,8 +43,8 @@ export class AuraPerformanceView {
   }
 
   firstRoutineAnimation(): AuraAnimationName | null {
-    for (const name of this.pack.animations.keys()) {
-      if (name !== 'aura_unbothered') return name;
+    for (const name of AURA_ROUTINE_ANIMATION_NAMES) {
+      if (this.pack.animations.has(name)) return name;
     }
     return this.pack.animations.has('aura_unbothered') ? 'aura_unbothered' : null;
   }

@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "status": "optional-reaction-canary",
+  "packId": "aura-v1-2026",
+  "animationName": "aura_shrug",
+  "requiredForPack": false,
+  "runtimeRole": "inactive opponent reaction after a bad streak",
+  "generation": {
+    "tool": "OpenAI image generation",
+    "mode": "owner-directed reclassification of identity-preserving pose variants",
+    "model": "workspace-default-image-model",
+    "providerCostUsd": null,
+    "generatedAt": "2026-09-04",
+    "promptSummary": "Template Zero full-body pose edits on uniform chroma green, with open upward-facing palms and stable identity, clothing, scale, feet, and camera. The wide arm spread rejected for Six-Seven was retained because it reads clearly as a comic shrug reaction."
+  },
+  "source": {
+    "role": "Wide-arm Six-Seven candidates reclassified by the owner as a shrug",
+    "sha256": "08cafb31dfaec6612e8fbd4d20ff25a23ccadf5b41e0eb1822615fd7396e4056"
+  },
+  "raw": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_shrug/raw-storyboard.png",
+    "width": 1536,
+    "height": 1024,
+    "sha256": "464ce3e0740d819ca6faaedcff9e848e9273e604893e9d625bb3d86109acae47"
+  },
+  "keyframes": {
+    "bothLevel": {
+      "path": "artifacts/aura-animation-canary/template-zero/aura_shrug/keyframes/both-level.png",
+      "sha256": "bc5f01bfd179b809fb05eccfb0ed0c5b8fa98076fd64d4bf0dc0fba6761df0ae"
+    },
+    "leftHandHigh": {
+      "path": "artifacts/aura-animation-canary/template-zero/aura_shrug/keyframes/left-hand-high.png",
+      "sha256": "f9e086d723705c4dac7c937803e879bbb0ec4f37ecfa45f088e6fbd2abd59c6a"
+    },
+    "rightHandHigh": {
+      "path": "artifacts/aura-animation-canary/template-zero/aura_shrug/keyframes/right-hand-high.png",
+      "sha256": "52a6b844924189af67be1b0ec28683e8fc862369a7839084c1d5601fbb485968"
+    },
+    "sequence": [
+      "bothLevel",
+      "leftHandHigh",
+      "bothLevel",
+      "rightHandHigh",
+      "bothLevel",
+      "leftHandHigh",
+      "bothLevel",
+      "rightHandHigh"
+    ]
+  },
+  "runtime": {
+    "path": "public/assets/aura/template-zero/aura_shrug.png",
+    "frameWidth": 192,
+    "frameHeight": 256,
+    "frameCount": 8,
+    "gridColumns": 4,
+    "gridRows": 2,
+    "sha256": "21ab40320680793133c42a0084cd5546ce1783cb4413626e80915f8547167c62"
+  },
+  "reaction": {
+    "mistakesBeforeTrigger": 2,
+    "cooldownMs": 2200,
+    "durationMs": 1050,
+    "reactingCharacter": "inactive opponent"
+  },
+  "gameplayReview": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_shrug/gameplay-review.jpg",
+    "animatedPreviewPath": "artifacts/aura-animation-canary/template-zero/aura_shrug/gesture-preview.gif",
+    "sha256": "f2e7d63bc6f03aaf9662e5bce05d6ed2d414d4fb021498a0efa97bec60775eb3",
+    "animatedPreviewSha256": "36bbc8dbd3318cd4d9f1da0882eafc4001f994a6bcecc82be6d6c77e0219ff71",
+    "consoleErrors": 0
+  },
+  "review": {
+    "automaticRootRegistration": "pass",
+    "agentSemanticReview": "pass-as-opponent-reaction",
+    "ownerSemanticReview": "approved-as-funny-reaction",
+    "knownFinding": "Optional reactions are never part of Aura pack completeness or routine selection.",
+    "batchAuthorized": false
+  }
+}

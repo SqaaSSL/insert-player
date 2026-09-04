@@ -5,21 +5,58 @@
   "animationName": "aura_six_seven",
   "generation": {
     "tool": "OpenAI image generation",
-    "mode": "edit",
+    "mode": "multi-pass identity-preserving edit with reviewed-frame interleave",
     "model": "workspace-default-image-model",
     "providerCostUsd": null,
     "generatedAt": "2026-09-04",
-    "prompt": "Create a production animation CANARY sprite-sheet storyboard derived from the attached canonical humanoid reference. Preserve the same generic bald adult humanoid identity, medium proportions, seamless neutral-gray bodysuit, side-facing orientation to screen-right, and simple non-branded appearance. The motion is an original, readable ‘6-7’ palm seesaw meme gesture, NOT a fighting move: relaxed confident stance; both elbows bent; open palms alternately seesaw up and down while shoulders add a small effortless bounce; finish returns cleanly to the opening pose so it loops. Output exactly eight chronological full-body frames arranged as a precise 4-column by 2-row grid, read left-to-right across row 1 then row 2. Every cell must use identical camera, character scale, body proportions, and floor baseline. Keep both complete hands, every finger, both feet, and the entire silhouette inside every cell with generous padding. Feet stay planted on one shared baseline with no lateral drift; do not crop, duplicate, merge, or add limbs. Uniform pure chroma green (#00FF00) background in every cell, no shadows, no scenery, no glow, no particles. No text, numbers, labels, borders, guides, UI, logos, watermark, or caption. Crisp clean game-production reference art, consistent lighting, no motion blur. Overall canvas should be 3:2 so each of the 4x2 cells is 3:4."
+    "prompt": "Create identity-stable full-body keyframes for the compact 6-7 gesture. Keep both elbows tucked and both upward-facing palms directly in front of the chest, inside shoulder width. The same two anatomical arms must trade heights: left hand high/right hand low, then right hand high/left hand low. Preserve Template Zero identity, gray bodysuit, three-quarter right-facing orientation, planted feet, realistic rendering, and uniform chroma green. Reject shrugging, lateral arm spread, fixed hand ownership, fists, crossing arms, extra limbs, cropping, text, scenery, shadows, and watermarks. Interleave the corrected extremes with the accepted motion frames from the previous iteration."
   },
   "source": {
     "role": "Template Zero canonical pose reference",
-    "sha256": "08cafb31dfaec6612e8fbd4d20ff25a23ccadf5b41e0eb1822615fd7396e4056"
+    "sha256": "08cafb31dfaec6612e8fbd4d20ff25a23ccadf5b41e0eb1822615fd7396e4056",
+    "previousIterationStoryboardSha256": "2c6245513ab25079af17ca011035576f44e81586bca81d93978bd59e12e349fc"
   },
   "raw": {
     "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/raw-storyboard.png",
     "width": 1536,
     "height": 1024,
-    "sha256": "2c6245513ab25079af17ca011035576f44e81586bca81d93978bd59e12e349fc"
+    "sha256": "be838a93ae70d03f82028c19b9727a47a8048ebaf8d492cd1fd4540ae48ec62d"
+  },
+  "keyframes": {
+    "previous01": {
+      "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/keyframes/previous-01.png",
+      "sha256": "19d779ec1f1dfba213a3db9feb348059d424734e580966bcfe3ed151ad11ee81"
+    },
+    "leftHandHigh": {
+      "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/keyframes/left-hand-high.png",
+      "sha256": "146f874f2671e7b298993d8cbd194b0d6295378279b0f8c5649796441223b258"
+    },
+    "previous03": {
+      "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/keyframes/previous-03.png",
+      "sha256": "8bb3d87f5804447d8c14eb59d469f54fc752e8d92d51eda429d0933217f34365"
+    },
+    "rightHandHigh": {
+      "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/keyframes/right-hand-high.png",
+      "sha256": "31eb8063f180e7fd04a75d76eb14582f1e559094d9dcf7163a02b3bf32862075"
+    },
+    "previous05": {
+      "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/keyframes/previous-05.png",
+      "sha256": "f30bf4f93d15c2ed25b173e68de00e5a10335a0ff94af25b1377e88bb5e8a237"
+    },
+    "previous07": {
+      "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/keyframes/previous-07.png",
+      "sha256": "449783b674c3c2664c8b9bf02b4e7df16d4a5a72de6ce6aa00d3f88145c529f6"
+    },
+    "sequence": [
+      "previous01",
+      "leftHandHigh",
+      "previous03",
+      "rightHandHigh",
+      "previous05",
+      "leftHandHigh",
+      "previous07",
+      "rightHandHigh"
+    ]
   },
   "runtime": {
     "path": "public/assets/aura/template-zero/aura_six_seven.png",
@@ -28,18 +65,20 @@
     "frameCount": 8,
     "gridColumns": 4,
     "gridRows": 2,
-    "sha256": "70626d5e3194074f9d615dc3426e031707c85bed576e982f460de441d4cf3dff"
+    "sha256": "75560fd3c3a404b73fc3949693f022a68c58665ac34ac10f36487289924ab8c0"
   },
   "gameplayReview": {
     "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/gameplay-review.jpg",
-    "sha256": "48cd61866bee779efe6e5f0ba715e324bf215898e2176362743971dc6a4149e6",
+    "animatedPreviewPath": "artifacts/aura-animation-canary/template-zero/aura_six_seven/gesture-preview.gif",
+    "sha256": "b5ec49ac86f49357088c92238a64f5b1636d45cd3d47730c3f0f7ac65304bbe3",
+    "animatedPreviewSha256": "63b9bbe539d831c8bf99bf29e58c96cd0773d3fa1fc7c99cce87f0e2acf75daa",
     "consoleErrors": 0
   },
   "review": {
     "automaticRootRegistration": "pass",
-    "agentSemanticReview": "pass-with-cleanup",
-    "ownerSemanticReview": "pending",
-    "knownFinding": "Minor chroma-edge color needs a final production cleanup pass before this becomes a reusable pose master.",
+    "agentSemanticReview": "pass-after-corrected-pose-interleave",
+    "ownerSemanticReview": "corrected-poses-approved; requested-interleave-applied",
+    "knownFinding": "The reviewed prior motion frames now alternate with both corrected anatomical hand-height extremes. Final owner timing review remains before any paid batch.",
     "batchAuthorized": false
   }
 }

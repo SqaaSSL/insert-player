@@ -20,7 +20,22 @@ export const AURA_ANIMATION_NAMES = [
   'aura_one_leg',
 ] as const;
 
-export type AuraAnimationName = typeof AURA_ANIMATION_NAMES[number];
+/**
+ * Reactions enrich a performance when present, but never increase the paid
+ * pack's completeness requirement. This keeps seasonal flavour additive.
+ */
+export const AURA_OPTIONAL_ANIMATION_NAMES = [
+  'aura_shrug',
+] as const;
+
+export const AURA_LOADABLE_ANIMATION_NAMES = [
+  ...AURA_ANIMATION_NAMES,
+  ...AURA_OPTIONAL_ANIMATION_NAMES,
+] as const;
+
+export type AuraPackAnimationName = typeof AURA_ANIMATION_NAMES[number];
+export type AuraOptionalAnimationName = typeof AURA_OPTIONAL_ANIMATION_NAMES[number];
+export type AuraAnimationName = typeof AURA_LOADABLE_ANIMATION_NAMES[number];
 export type FighterAssetPackId = typeof FIGHT_ASSET_PACK_ID | typeof AURA_ASSET_PACK_ID;
 export type FighterGameMode = 'fight' | 'rush' | 'aura';
 export type FighterModeReadinessKind = 'custom' | 'legacy' | 'unavailable';
@@ -216,7 +231,7 @@ export function assertFighterReadyForMode(
 }
 
 export function isAuraAnimationName(value: string): value is AuraAnimationName {
-  return (AURA_ANIMATION_NAMES as readonly string[]).includes(value);
+  return (AURA_LOADABLE_ANIMATION_NAMES as readonly string[]).includes(value);
 }
 
 export function isFightAnimationName(value: string): value is PlayableAnimationName {

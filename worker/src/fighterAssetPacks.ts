@@ -26,9 +26,14 @@ export const AURA_ANIMATION_NAMES = [
   'aura_one_leg',
 ] as const;
 
+export const AURA_OPTIONAL_ANIMATION_NAMES = [
+  'aura_shrug',
+] as const;
+
 export const GENERATED_ANIMATION_NAMES = new Set<string>([
   ...FIGHT_ANIMATION_NAMES,
   ...AURA_ANIMATION_NAMES,
+  ...AURA_OPTIONAL_ANIMATION_NAMES,
 ]);
 
 export type FighterAssetPackId = typeof FIGHT_ASSET_PACK_ID | typeof AURA_ASSET_PACK_ID;

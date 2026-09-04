@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import {
   AURA_ANIMATION_NAMES,
+  AURA_LOADABLE_ANIMATION_NAMES,
   type AuraAnimationName,
 } from '../../services/FighterAssetPacks.ts';
 import { getAllSpritesForHash } from '../../services/SpriteCache.ts';
@@ -46,26 +47,52 @@ function templateZeroCanaryEnabled(): boolean {
     && new URLSearchParams(window.location.search).get('auraCanary') === 'template-zero';
 }
 
-async function loadTemplateZeroCanary(
-  scene: Phaser.Scene,
-  spriteKey: string,
-): Promise<LoadedAuraAnimation> {
-  const response = await fetch('/assets/aura/template-zero/aura_six_seven.png', { cache: 'no-store' });
-  if (!response.ok) throw new Error(`Template Zero Aura canary failed (${response.status})`);
-  const image = await blobToImage(await response.blob());
-  const key = textureKey(spriteKey, 'aura_six_seven');
-  if (scene.textures.exists(key)) scene.textures.remove(key);
-  scene.textures.addSpriteSheet(key, image, {
-    frameWidth: 192,
-    frameHeight: 256,
-    endFrame: 7,
-  });
-  return {
+interface TemplateZeroCanaryDefinition {
+  name: AuraAnimationName;
+  path: string;
+  frameWidth: number;
+  frameHeight: number;
+  frameCount: number;
+}
+
+const TEMPLATE_ZERO_CANARIES: readonly TemplateZeroCanaryDefinition[] = [
+  {
     name: 'aura_six_seven',
-    textureKey: key,
+    path: '/assets/aura/template-zero/aura_six_seven.png',
     frameWidth: 192,
     frameHeight: 256,
     frameCount: 8,
+  },
+  {
+    name: 'aura_shrug',
+    path: '/assets/aura/template-zero/aura_shrug.png',
+    frameWidth: 192,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+];
+
+async function loadTemplateZeroCanary(
+  scene: Phaser.Scene,
+  spriteKey: string,
+  definition: TemplateZeroCanaryDefinition,
+): Promise<LoadedAuraAnimation> {
+  const response = await fetch(definition.path, { cache: 'no-store' });
+  if (!response.ok) throw new Error(`Template Zero Aura canary failed (${response.status})`);
+  const image = await blobToImage(await response.blob());
+  const key = textureKey(spriteKey, definition.name);
+  if (scene.textures.exists(key)) scene.textures.remove(key);
+  scene.textures.addSpriteSheet(key, image, {
+    frameWidth: definition.frameWidth,
+    frameHeight: definition.frameHeight,
+    endFrame: definition.frameCount - 1,
+  });
+  return {
+    name: definition.name,
+    textureKey: key,
+    frameWidth: definition.frameWidth,
+    frameHeight: definition.frameHeight,
+    frameCount: definition.frameCount,
   };
 }
 
@@ -86,7 +113,7 @@ export async function loadAuraAnimationPack(
   const animations = new Map<AuraAnimationName, LoadedAuraAnimation>();
   const textureKeys: string[] = [];
 
-  for (const name of AURA_ANIMATION_NAMES) {
+  for (const name of AURA_LOADABLE_ANIMATION_NAMES) {
     const sprite = byName.get(name);
     if (!sprite || sprite.frameWidth <= 0 || sprite.frameHeight <= 0 || sprite.frameCount <= 0) continue;
     try {
@@ -115,24 +142,27 @@ export async function loadAuraAnimationPack(
     }
   }
 
-  if (templateZeroCanaryEnabled() && !animations.has('aura_six_seven')) {
-    try {
-      const canary = await loadTemplateZeroCanary(scene, spriteKey);
-      if (!isCurrent()) return null;
-      animations.set(canary.name, canary);
-      textureKeys.push(canary.textureKey);
-      debugInfo(`[AuraSpriteLoader] Template Zero canary enabled for "${spriteKey}"`);
-    } catch (error) {
-      debugWarn(
-        '[AuraSpriteLoader] Template Zero canary could not be loaded:',
-        error instanceof Error ? error.message : error,
-      );
+  if (templateZeroCanaryEnabled()) {
+    for (const definition of TEMPLATE_ZERO_CANARIES) {
+      if (animations.has(definition.name)) continue;
+      try {
+        const canary = await loadTemplateZeroCanary(scene, spriteKey, definition);
+        if (!isCurrent()) return null;
+        animations.set(canary.name, canary);
+        textureKeys.push(canary.textureKey);
+        debugInfo(`[AuraSpriteLoader] Template Zero ${canary.name} canary enabled for "${spriteKey}"`);
+      } catch (error) {
+        debugWarn(
+          `[AuraSpriteLoader] Template Zero ${definition.name} canary could not be loaded:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
   }
 
   if (animations.size === 0) return null;
   debugInfo(
-    `[AuraSpriteLoader] Loaded ${animations.size}/${AURA_ANIMATION_NAMES.length} performances for "${spriteKey}"`,
+    `[AuraSpriteLoader] Loaded ${animations.size}/${AURA_LOADABLE_ANIMATION_NAMES.length} performances and reactions for "${spriteKey}"`,
   );
   return {
     animations,

@@ -28,6 +28,10 @@ The Aura pack is versioned and seasonal because meme language ages much faster t
 
 One rhythm note does **not** trigger one full animation. Each turn deterministically selects two or three performance phrases. Accurate notes sustain or intensify the current phrase; a miss interrupts it with the existing hit/stumble fallback. The same phrase schedule is derived from match seed, round and slot, so online presentation stays reproducible without touching the scoring simulation.
 
+### Optional reactions
+
+`aura_shrug` is a reusable reaction, not a seventh paid performance. After two consecutive misses or mash inputs, the inactive opponent may shrug for 1.05 seconds. A 2.2-second cooldown keeps the joke readable without turning it into a repeated trigger. Fighters without the reaction remain fully valid `aura-v1-2026` fighters, and the reaction can never be selected as a scored routine phrase.
+
 ## Sprite contract
 
 - Transparent PNG sheet with bottom-centred root and stable scale across frames.
@@ -41,7 +45,7 @@ One rhythm note does **not** trigger one full animation. Each turn deterministic
 Generate only `aura_six_seven` first, as an eight-frame storyboard/sheet from the canonical neutral humanoid. Do not start the remaining five until it passes all gates:
 
 1. Identity, clothing and body proportions stay stable across all frames.
-2. Both hands read clearly at gameplay scale and the gesture is recognisable without UI copy.
+2. Both hands read clearly at gameplay scale, each anatomical hand visibly trades the upper position, and the gesture is recognisable without UI copy.
 3. Feet remain planted on one root line; no lateral drift or accidental camera movement.
 4. No cropped fingers, duplicated limbs, fighting guard, text, glow or background survives cleanup.
 5. The processed sheet loads through the real Aura loader and can be interrupted cleanly on a miss.
@@ -49,7 +53,7 @@ Generate only `aura_six_seven` first, as an eight-frame storyboard/sheet from th
 
 After the canary passes, generate in this order: `aura_unbothered`, `aura_mog_check`, `aura_glide`, `aura_one_leg`, then `aura_floor_worm`. The floor animation goes last because its framing is the highest-risk case.
 
-The development canary is intentionally opt-in and can never enter a roster. Run Aura with `?auraCanary=template-zero` to load the processed `aura_six_seven` sheet through the real runtime. The reproducible processor command is `npm --prefix processor run aura:canary:process -- --input <raw.png> --output <runtime.png> --qa-output <qa.json>`.
+The development canary is intentionally opt-in and can never enter a roster. Run Aura with `?auraCanary=template-zero` to load the processed `aura_six_seven` performance and optional `aura_shrug` reaction through the real runtime. The reproducible processor command is `npm --prefix processor run aura:canary:process -- --input <raw.png> --output <runtime.png> --qa-output <qa.json>`.
 
 ## Commercial rollout
 

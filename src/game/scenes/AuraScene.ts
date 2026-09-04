@@ -86,6 +86,9 @@ const CROWD_METER_SEGMENTS = 8;
 const INACTIVE_PERFORMER_STAGE_OFFSET = 260;
 const ONLINE_START_DELAY_MS = 1_600;
 const ONLINE_FINISH_GRACE_MS = 2_500;
+const SHRUG_REACTION_MISTAKES = 2;
+const SHRUG_REACTION_COOLDOWN_MS = 2_200;
+const SHRUG_REACTION_DURATION_MS = 1_050;
 
 type ResolvedAuraGrade = Exclude<AuraGrade, 'wrong_turn'>;
 
@@ -232,6 +235,9 @@ export class AuraScene extends Phaser.Scene {
   private keyBindings: Array<{ key: Phaser.Input.Keyboard.Key; handler: () => void }> = [];
   private soundManager!: SoundManager;
   private crowdHeat: [number, number] = [0, 0];
+  private mistakeStreak: [number, number] = [0, 0];
+  private lastShrugReactionAt: [number, number] = [-Infinity, -Infinity];
+  private shrugReactionEpoch: [number, number] = [0, 0];
   private activePerformerSlot: AuraSlot | null = null;
   private clockStartedAt: number | null = null;
   private scheduledClockStart: number | null = null;
@@ -290,6 +296,9 @@ export class AuraScene extends Phaser.Scene {
     this.auraAnimationPacks = [null, null];
     this.auraPerformanceViews = [null, null];
     this.crowdHeat = [0, 0];
+    this.mistakeStreak = [0, 0];
+    this.lastShrugReactionAt = [-Infinity, -Infinity];
+    this.shrugReactionEpoch = [0, 0];
     this.activePerformerSlot = null;
     this.currentTurnIndex = -2;
     this.clockStartedAt = null;
@@ -1128,6 +1137,7 @@ export class AuraScene extends Phaser.Scene {
       return;
     }
     const turn = this.chart.turns[turnIndex];
+    this.mistakeStreak[turn.slot] = 0;
     this.drawLanes(turn.slot);
     this.comboText
       .setOrigin(turn.slot === 0 ? 0 : 1, 0)
@@ -1143,8 +1153,12 @@ export class AuraScene extends Phaser.Scene {
     this.activePerformerSlot = slot;
     const activeX = this.fighters[slot].x;
     const inactive = (1 - slot) as AuraSlot;
-    if (this.auraPerformanceViews[slot]?.has('aura_unbothered')) {
-      this.auraPerformanceViews[slot]?.play('aura_unbothered');
+    this.shrugReactionEpoch[slot] += 1;
+    const activePerformanceView = this.auraPerformanceViews[slot];
+    if (activePerformanceView?.has('aura_unbothered')) {
+      activePerformanceView.play('aura_unbothered');
+    } else {
+      activePerformanceView?.interrupt(this.views[slot]);
     }
     this.activeGlow.setPosition(activeX, GROUND_Y + this.fighterRenderYOffset + 5);
     this.views[slot].sprite.setAlpha(1);
@@ -1179,11 +1193,13 @@ export class AuraScene extends Phaser.Scene {
     this.highwayMetaText?.setVisible(false);
     this.updateCrowdUi(null);
     for (const [slot, view] of this.views.entries()) {
+      this.shrugReactionEpoch[slot as AuraSlot] += 1;
       view.sprite.setAlpha(0.9);
       view.shadowSprite?.setAlpha(0.16);
       view.setRenderPresentation(this.fighterRenderScale, this.fighterRenderYOffset);
       const performanceView = this.auraPerformanceViews[slot as AuraSlot];
       if (performanceView?.has('aura_unbothered')) performanceView.play('aura_unbothered');
+      else performanceView?.interrupt(view);
     }
     this.drawStageLighting(null, 0);
     const roomHeat = Math.max(this.crowdHeat[0], this.crowdHeat[1]);
@@ -1386,6 +1402,7 @@ export class AuraScene extends Phaser.Scene {
       }
     }
     this.animateFighterForJudgement(judgement);
+    this.updateOpponentReaction(judgement);
     this.showFeedback(judgement);
     this.updateScoreUi();
     if (judgement.grade !== 'wrong_turn') this.reactCrowd(judgement);
@@ -1426,6 +1443,46 @@ export class AuraScene extends Phaser.Scene {
     this.crowdHeat[slot] = Math.min(1, Math.max(comboHeat, this.crowdHeat[slot] + gain));
     this.refreshCrowdPresentation(slot);
     this.syncCrowdMix(slot);
+  }
+
+  private updateOpponentReaction(judgement: AuraJudgement): void {
+    if (judgement.grade === 'wrong_turn') return;
+    const failingSlot = judgement.slot;
+    if (judgement.grade !== 'miss' && judgement.grade !== 'mash') {
+      this.mistakeStreak[failingSlot] = 0;
+      return;
+    }
+
+    this.mistakeStreak[failingSlot] += 1;
+    if (
+      this.activePerformerSlot !== failingSlot
+      || this.mistakeStreak[failingSlot] < SHRUG_REACTION_MISTAKES
+    ) return;
+
+    const now = this.time.now;
+    if (now - this.lastShrugReactionAt[failingSlot] < SHRUG_REACTION_COOLDOWN_MS) return;
+    const reactingSlot = (1 - failingSlot) as AuraSlot;
+    const reactionView = this.auraPerformanceViews[reactingSlot];
+    if (!reactionView?.play('aura_shrug')) return;
+
+    this.mistakeStreak[failingSlot] = 0;
+    this.lastShrugReactionAt[failingSlot] = now;
+    this.views[reactingSlot].sprite.setAlpha(0.82);
+    const reactionEpoch = ++this.shrugReactionEpoch[reactingSlot];
+    this.time.delayedCall(SHRUG_REACTION_DURATION_MS, () => {
+      if (
+        !this.lifecycleActive
+        || this.shrugReactionEpoch[reactingSlot] !== reactionEpoch
+        || this.activePerformerSlot === reactingSlot
+      ) return;
+      const currentReactionView = this.auraPerformanceViews[reactingSlot];
+      if (currentReactionView?.has('aura_unbothered')) {
+        currentReactionView.play('aura_unbothered');
+      } else {
+        currentReactionView?.interrupt(this.views[reactingSlot]);
+      }
+      this.views[reactingSlot].sprite.setAlpha(0.52);
+    });
   }
 
   private refreshCrowdPresentation(slot: AuraSlot): void {

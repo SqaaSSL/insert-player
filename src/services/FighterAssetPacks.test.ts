@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   AURA_ANIMATION_NAMES,
   AURA_ASSET_PACK_ID,
+  AURA_OPTIONAL_ANIMATION_NAMES,
   FIGHT_ASSET_PACK_ID,
   assertFighterReadyForMode,
   fighterAssetPackReadiness,
   fighterModeCompatibilityLabel,
   inferFighterAssetPacks,
+  isAuraAnimationName,
   isAnimationNameSetReadyForMode,
   resolveFighterModeReadiness,
   type AssetPackSprite,
@@ -70,6 +72,18 @@ describe('fighter capability packs', () => {
     expect(resolveFighterModeReadiness(auraAssets, 'rush').kind).toBe('unavailable');
     expect(isAnimationNameSetReadyForMode(AURA_ANIMATION_NAMES, 'aura')).toBe(true);
     expect(isAnimationNameSetReadyForMode(AURA_ANIMATION_NAMES, 'fight')).toBe(false);
+  });
+
+  it('loads optional reactions without adding them to the paid Aura requirement', () => {
+    const requiredAssets = assetsFor(AURA_ANIMATION_NAMES);
+    const withShrug = [
+      ...requiredAssets,
+      ...assetsFor(AURA_OPTIONAL_ANIMATION_NAMES),
+    ];
+
+    expect(fighterAssetPackReadiness(requiredAssets, AURA_ASSET_PACK_ID).complete).toBe(true);
+    expect(fighterAssetPackReadiness(withShrug, AURA_ASSET_PACK_ID).complete).toBe(true);
+    expect(isAuraAnimationName('aura_shrug')).toBe(true);
   });
 
   it('rejects incomplete or unusable Aura packs', () => {
