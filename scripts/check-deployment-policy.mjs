@@ -115,6 +115,24 @@ export function deploymentPolicyIssues({ root = defaultRoot } = {}) {
     }
   }
 
+  const developmentSource = workflows.get('deploy-development.yml');
+  if (developmentSource) {
+    const developmentJobs = workflowJobs(developmentSource);
+    const validationJob = developmentJobs.find((job) => job.id === 'validate');
+    const deployJob = developmentJobs.find((job) => job.id === 'deploy');
+    const sandboxDeployCommand = 'node scripts/apply-sandbox-config.mjs --require-complete --skip-production-check --deploy-worker';
+
+    if (!validationJob?.source.includes('uses: ./.github/workflows/validate.yml')) {
+      issues.push('deploy-development.yml validate job must use the reusable production gate.');
+    }
+    if (!deployJob || !/^    needs: validate$/m.test(deployJob.source)) {
+      issues.push('deploy-development.yml deploy job must depend on validate.');
+    }
+    if (!deployJob?.source.includes(sandboxDeployCommand)) {
+      issues.push(`deploy-development.yml deploy job must run ${sandboxDeployCommand}.`);
+    }
+  }
+
   const runbook = readFileSync(join(root, '.github', 'DEPLOYMENT.md'), 'utf8');
   for (const required of [
     '- Deployment branch: `main` only.',

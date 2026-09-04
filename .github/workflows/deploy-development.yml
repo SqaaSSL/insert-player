@@ -102,7 +102,7 @@ jobs:
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
           GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
-        run: npm run config:sandbox
+        run: node scripts/apply-sandbox-config.mjs --require-complete --skip-production-check --deploy-worker
 
       - name: Build, deploy, and smoke Pages
         env:
