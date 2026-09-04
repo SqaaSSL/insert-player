@@ -5,6 +5,7 @@ import {
   AURA_LOCAL_P1_LANE_KEYS,
   AURA_LOCAL_P2_LANE_KEYS,
   AURA_NOTE_TRAVEL_MS,
+  AURA_ROUNDS,
 } from './AuraConfig.ts';
 import { auraNoteTravelProgress, createAuraChart } from './AuraChart.ts';
 import { AuraBattle, auraRank, createAuraCpuPlan } from './AuraBattle.ts';
@@ -14,11 +15,21 @@ describe('Aura chart', () => {
     const first = createAuraChart(42, 'viral');
     const second = createAuraChart(42, 'viral');
     expect(second).toEqual(first);
-    expect(first.turns).toHaveLength(4);
-    for (let round = 0; round < 2; round += 1) {
+    expect(first.turns).toHaveLength(AURA_ROUNDS * 2);
+    for (let round = 0; round < AURA_ROUNDS; round += 1) {
       const lead = first.turns[round * 2].notes.map(({ beat, lane }) => ({ beat, lane }));
       const response = first.turns[round * 2 + 1].notes.map(({ beat, lane }) => ({ beat, lane }));
       expect(response).toEqual(lead);
+    }
+  });
+
+  it('escalates density across three rounds without changing turn length', () => {
+    const chart = createAuraChart(42, 'viral');
+    const leadTurns = chart.turns.filter((turn) => turn.slot === 0);
+    expect(leadTurns).toHaveLength(3);
+    expect(leadTurns.map((turn) => turn.notes.length)).toEqual([22, 24, 26]);
+    for (const turn of leadTurns) {
+      expect(turn.endMs - turn.startMs).toBeCloseTo(20 * AURA_BEAT_MS);
     }
   });
 

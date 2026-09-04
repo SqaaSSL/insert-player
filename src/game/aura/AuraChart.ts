@@ -7,6 +7,7 @@ import {
   AURA_MUSIC_BEAT_OFFSET_MS,
   AURA_NOTE_TRAVEL_MS,
   AURA_PHRASE_BEATS,
+  AURA_ROUNDS,
   AURA_TURN_BEATS,
   AURA_TURN_COUNT_IN_BEATS,
   getAuraDifficulty,
@@ -82,7 +83,7 @@ function createRoundPattern(rng: SeededRng, offbeatNotes: number): PatternNote[]
 }
 
 /**
- * Build two call-and-response rounds. P1 and P2 receive exactly the same
+ * Build three call-and-response rounds. P1 and P2 receive exactly the same
  * phrase inside each round, so procedural generation can be surprising
  * without ever deciding the winner.
  */
@@ -96,7 +97,7 @@ export function createAuraChart(
   const firstTurnMs = AURA_MUSIC_BEAT_OFFSET_MS + AURA_INITIAL_COUNT_IN_BEATS * AURA_BEAT_MS;
   const turns: AuraTurn[] = [];
 
-  for (let round = 0; round < 2; round += 1) {
+  for (let round = 0; round < AURA_ROUNDS; round += 1) {
     const pattern = createRoundPattern(rng, difficulty.offbeatNotes + round * 2);
     for (let response = 0; response < 2; response += 1) {
       const index = round * 2 + response;

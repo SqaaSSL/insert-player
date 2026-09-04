@@ -12,3 +12,7 @@ The following files are public-domain audience recordings downloaded from
 The source page labels each of these recordings `PD` (public domain). Their
 content is unchanged; they are decoded to 16-bit PCM WAV so every target
 browser gets the same predictable playback format.
+
+Aura plays these files as a continuous four-layer audience bed: two
+desynchronised applause layers, one hype layer, and one negative layer. Gameplay
+changes their gains smoothly without restarting a clip for each judgement.

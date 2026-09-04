@@ -24,6 +24,8 @@ export const AURA_NOTE_TRAVEL_MS = AURA_NOTE_TRAVEL_BEATS * AURA_BEAT_MS;
 export const AURA_TURN_BEATS = 20;
 export const AURA_TURN_COUNT_IN_BEATS = AURA_NOTE_TRAVEL_BEATS;
 export const AURA_PHRASE_BEATS = 16;
+/** Three shared phrases create a beginning, escalation, and final-round climax. */
+export const AURA_ROUNDS = 3;
 export const AURA_INITIAL_COUNT_IN_BEATS = 8;
 export const AURA_FINISH_BEATS = 4;
 

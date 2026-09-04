@@ -1,6 +1,6 @@
 # Aura Battle: match shape and special meter
 
-Status: recommended next gameplay pass. The visual stage and four-key timing game come first.
+Status: three-round match shape and continuous crowd mix shipped. MAIN CHARACTER is the next gameplay pass.
 
 ## Product promise
 
@@ -53,9 +53,8 @@ CALL OUT makes disruption funny, reversible, and skill-based. It can lengthen an
 
 ## Delivery order
 
-1. Finish the stage/highway/camera presentation and responsive layouts.
-2. Expand the chart from two to three rounds and tune the third-round density.
+1. Continue polishing the stage/highway/camera presentation and responsive layouts.
+2. ✅ Expand the chart from two to three rounds and tune the third-round density.
 3. Turn CROWD into the persistent meter and ship MAIN CHARACTER in CPU/local modes.
 4. Synchronize meter activation online and add replay/share data.
 5. Prototype CALL OUT behind a CHAOS toggle; keep it out of default matchmaking until playtests prove it is fun.
-

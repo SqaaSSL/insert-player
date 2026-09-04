@@ -50,6 +50,7 @@ import {
   AURA_LOCAL_P1_LANE_KEYS,
   AURA_LOCAL_P2_LANE_KEYS,
   AURA_NOTE_TRAVEL_MS,
+  AURA_ROUNDS,
   getAuraDifficulty,
   type AuraLaneKeys,
   type AuraDifficultyId,
@@ -364,6 +365,7 @@ export class AuraScene extends Phaser.Scene {
 
   update(_time: number, delta: number): void {
     if (!this.lifecycleActive || this.paused) return;
+    this.soundManager.updateAuraCrowd(delta);
     this.advanceFighterPresentation(Math.min(delta, 50) / 1_000);
     if (this.matchFinished || this.clockStartedAt === null) return;
 
@@ -877,6 +879,11 @@ export class AuraScene extends Phaser.Scene {
     this.laneGraphics.fillPoints(panel, true);
     this.laneGraphics.lineStyle(14, 0x765dff, 0.045);
     this.laneGraphics.strokePoints(panel, true);
+    const roundProgress = this.currentRoundProgress();
+    if (roundProgress > 0) {
+      this.laneGraphics.lineStyle(10, 0xffce3a, 0.025 + roundProgress * 0.065);
+      this.laneGraphics.strokePoints(panel, true);
+    }
     this.laneGraphics.lineStyle(1, 0xfff4d6, 0.28);
     this.laneGraphics.strokePoints(panel, true);
 
@@ -897,7 +904,7 @@ export class AuraScene extends Phaser.Scene {
     this.laneGraphics.lineBetween(seamX + 18, frameTop + 40, seamX + 18, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2);
 
     const crownY = frameTop + 20;
-    this.laneGraphics.fillStyle(0xffce3a, 0.12);
+    this.laneGraphics.fillStyle(0xffce3a, 0.12 + roundProgress * 0.1);
     this.laneGraphics.fillCircle(seamX, crownY, 17);
     this.laneGraphics.fillStyle(0xffce3a, 0.94);
     this.laneGraphics.fillPoints([
@@ -1038,7 +1045,7 @@ export class AuraScene extends Phaser.Scene {
 
   private updateTurn(nowMs: number): void {
     const turn = auraTurnAt(this.chart, nowMs);
-    const turnIndex = turn?.index ?? (nowMs < this.chart.firstTurnMs ? -1 : 4);
+    const turnIndex = turn?.index ?? (nowMs < this.chart.firstTurnMs ? -1 : this.chart.turns.length);
     if (turnIndex !== this.currentTurnIndex) this.updateTurnPresentation(turnIndex);
 
     if (!turn) {
@@ -1057,7 +1064,9 @@ export class AuraScene extends Phaser.Scene {
     const performerLabel = this.cpuVsCpu
       ? `CPU ${turn.slot + 1}`
       : turn.slot === 0 ? 'P1' : this.isCpuSlot(1) ? 'CPU' : 'P2';
-    this.turnText.setText(`${performerLabel} PERFORMANCE · ROUND ${turn.round + 1}`);
+    this.turnText.setText(turn.round === AURA_ROUNDS - 1
+      ? `${performerLabel} PERFORMANCE · FINAL ROUND`
+      : `${performerLabel} PERFORMANCE · ROUND ${turn.round + 1}`);
     this.phaseText.setText(countIn > 0
       ? `AURA IN ${Math.max(1, Math.ceil(countIn / this.chart.beatMs))}`
       : this.cpuVsCpu
@@ -1074,7 +1083,7 @@ export class AuraScene extends Phaser.Scene {
   private updateTurnPresentation(turnIndex: number): void {
     this.currentTurnIndex = turnIndex;
     this.clearNotes();
-    if (turnIndex < 0 || turnIndex > 3) {
+    if (turnIndex < 0 || turnIndex >= this.chart.turns.length) {
       this.laneGraphics.clear();
       this.targetGraphics.clear();
       this.laneKeyTexts.forEach((text) => text.setVisible(false));
@@ -1107,7 +1116,8 @@ export class AuraScene extends Phaser.Scene {
     this.views[inactive].shadowSprite?.setAlpha(0.09);
     this.views[slot].setRenderPresentation(this.fighterRenderScale * 1.28, this.fighterRenderYOffset);
     this.views[inactive].setRenderPresentation(this.fighterRenderScale * 0.7, this.fighterRenderYOffset);
-    this.drawStageLighting(slot, this.crowdHeat[slot]);
+    this.drawStageLighting(slot, this.stageEnergyForSlot(slot));
+    this.syncCrowdMix(slot);
     const camera = this.cameras.main;
     const targetScrollX = slot === 0 ? 46 : -46;
     if (this.reduceMotion) {
@@ -1137,6 +1147,8 @@ export class AuraScene extends Phaser.Scene {
       view.setRenderPresentation(this.fighterRenderScale, this.fighterRenderYOffset);
     }
     this.drawStageLighting(null, 0);
+    const roomHeat = Math.max(this.crowdHeat[0], this.crowdHeat[1]);
+    this.soundManager?.setAuraCrowdMix(roomHeat, this.finalizing ? 1 : 0);
     this.activeGlow?.setPosition(GAME_WIDTH / 2, GROUND_Y + this.fighterRenderYOffset + 5).setAlpha(0.5);
     const camera = this.cameras.main;
     if (this.reduceMotion) camera.setZoom(1).setScroll(0, 0);
@@ -1337,10 +1349,7 @@ export class AuraScene extends Phaser.Scene {
     this.animateFighterForJudgement(judgement);
     this.showFeedback(judgement);
     this.updateScoreUi();
-    if (judgement.grade !== 'wrong_turn') {
-      this.soundManager.playAuraGrade(judgement.grade);
-      this.reactCrowd(judgement);
-    }
+    if (judgement.grade !== 'wrong_turn') this.reactCrowd(judgement);
 
     if (
       broadcast
@@ -1366,8 +1375,8 @@ export class AuraScene extends Phaser.Scene {
       const heatBeforeFailure = this.crowdHeat[slot];
       this.crowdHeat[slot] = Math.max(0, heatBeforeFailure - (judgement.grade === 'miss' ? 0.55 : 0.28));
       this.refreshCrowdPresentation(slot);
-      this.soundManager.playAuraCrowd(
-        'boo',
+      this.syncCrowdMix(
+        slot,
         judgement.grade === 'miss' ? 0.58 + heatBeforeFailure * 0.42 : 0.42 + heatBeforeFailure * 0.24,
       );
       return;
@@ -1376,22 +1385,27 @@ export class AuraScene extends Phaser.Scene {
     const gain = judgement.grade === 'perfect' ? 0.16 : judgement.grade === 'great' ? 0.11 : 0.07;
     const comboHeat = Math.min(1, judgement.combo / 14);
     this.crowdHeat[slot] = Math.min(1, Math.max(comboHeat, this.crowdHeat[slot] + gain));
-    const heat = this.crowdHeat[slot];
     this.refreshCrowdPresentation(slot);
-
-    if (judgement.combo === 4) {
-      this.soundManager.playAuraCrowd('applause', 0.42 + heat * 0.25);
-    } else if (judgement.combo === 8) {
-      this.soundManager.playAuraCrowd('applause', 0.62 + heat * 0.28);
-    } else if (judgement.combo === 12 || (judgement.combo > 12 && judgement.combo % 6 === 0)) {
-      this.soundManager.playAuraCrowd('cheer', 0.72 + heat * 0.28);
-    }
+    this.syncCrowdMix(slot);
   }
 
   private refreshCrowdPresentation(slot: AuraSlot): void {
     if (this.activePerformerSlot !== slot) return;
     this.updateCrowdUi(slot);
-    this.drawStageLighting(slot, this.crowdHeat[slot]);
+    this.drawStageLighting(slot, this.stageEnergyForSlot(slot));
+  }
+
+  private currentRoundProgress(): number {
+    const round = this.chart.turns[this.currentTurnIndex]?.round ?? 0;
+    return Phaser.Math.Clamp(round / Math.max(1, AURA_ROUNDS - 1), 0, 1);
+  }
+
+  private stageEnergyForSlot(slot: AuraSlot): number {
+    return Phaser.Math.Clamp(this.crowdHeat[slot] + this.currentRoundProgress() * 0.16, 0, 1);
+  }
+
+  private syncCrowdMix(slot: AuraSlot, negativePunch = 0): void {
+    this.soundManager.setAuraCrowdMix(this.crowdHeat[slot], this.currentRoundProgress(), negativePunch);
   }
 
   private animateFighterForJudgement(judgement: AuraJudgement): void {
@@ -1586,6 +1600,7 @@ export class AuraScene extends Phaser.Scene {
       this.scheduledClockStart = null;
       this.pausedDuration = 0;
       this.soundManager.startBattleMusic();
+      this.soundManager.startAuraCrowd();
       debugInfo('[AuraScene] Beat clock started', { seed: this.matchSeed, difficulty: this.difficultyId });
     });
   }
@@ -1666,7 +1681,7 @@ export class AuraScene extends Phaser.Scene {
     this.turnText.setText(winner === 'draw' ? 'MUTUAL MAIN CHARACTERS' : `${winner === 'p1' ? this.p1Name : this.p2Name} OWNS THE ROOM`);
     this.phaseText.setText(winner === 'draw' ? 'IMPOSSIBLE AURA EQUILIBRIUM' : '+∞ AURA · RECEIPTS ATTACHED');
     this.soundManager.playAnnounce('wins');
-    this.soundManager.playAuraCrowd('cheer', 1, true);
+    this.soundManager.peakAuraCrowd();
     window.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: summary }));
     this.time.delayedCall(this.reduceMotion ? 80 : 620, () => this.setMatchActionsVisible(true));
   }
