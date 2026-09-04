@@ -92,6 +92,7 @@ jobs:
           RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
           FREEPIK_API_KEY: ${{ secrets.FREEPIK_API_KEY }}
           LUDO_API_KEY: ${{ secrets.LUDO_API_KEY }}
+          # Optional in sandbox: only the PixCLI video transport is disabled when absent.
           PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
