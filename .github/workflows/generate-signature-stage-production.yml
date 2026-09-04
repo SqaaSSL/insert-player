@@ -82,7 +82,7 @@ jobs:
 
       - name: Publish immutable review artifact
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: insert-player-arena-pipeline-v1-${{ github.run_id }}
           path: stage-publication-output/

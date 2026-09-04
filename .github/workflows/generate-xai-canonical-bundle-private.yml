@@ -387,7 +387,7 @@ jobs:
           fi
 
       - name: Publish the exact private bundle for independent human review
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-xai-canonical-bundle-${{ inputs.slug }}
           path: ${{ runner.temp }}/xai-canonical-work/bundle/
@@ -397,7 +397,7 @@ jobs:
 
       - name: Preserve the resumable private paid-call checkpoint
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-xai-canonical-bundle-checkpoint-${{ inputs.slug }}
           path: |
@@ -539,7 +539,7 @@ jobs:
             ' -- "$REVIEWED_DESCRIPTOR_SHA256"
 
       - name: Publish the replacement private bundle for independent human review
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-xai-canonical-bundle-${{ inputs.slug }}
           path: ${{ runner.temp }}/xai-canonical-reclean-output/bundle/
