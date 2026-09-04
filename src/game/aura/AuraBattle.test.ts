@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { AURA_BEAT_MS, AURA_NOTE_TRAVEL_MS } from './AuraConfig.ts';
+import {
+  AURA_BEAT_MS,
+  AURA_DEFAULT_LANE_KEYS,
+  AURA_LOCAL_P1_LANE_KEYS,
+  AURA_LOCAL_P2_LANE_KEYS,
+  AURA_NOTE_TRAVEL_MS,
+} from './AuraConfig.ts';
 import { auraNoteTravelProgress, createAuraChart } from './AuraChart.ts';
 import { AuraBattle, auraRank, createAuraCpuPlan } from './AuraBattle.ts';
 
@@ -48,11 +54,17 @@ describe('Aura chart', () => {
     expect(auraNoteTravelProgress(targetMs, targetMs - AURA_BEAT_MS * 2)).toBeCloseTo(0.5);
     expect(auraNoteTravelProgress(targetMs, targetMs - AURA_BEAT_MS)).toBeCloseTo(0.75);
     expect(auraNoteTravelProgress(targetMs, targetMs)).toBeCloseTo(1);
+    expect(auraNoteTravelProgress(targetMs, targetMs + AURA_BEAT_MS)).toBeCloseTo(1.25);
 
     const chart = createAuraChart(42, 'viral');
     for (const turn of chart.turns) {
       expect(turn.firstNoteMs - turn.startMs).toBeCloseTo(AURA_NOTE_TRAVEL_MS);
     }
+  });
+
+  it('uses a two-hand default while keeping local-versus controls conflict-free', () => {
+    expect(AURA_DEFAULT_LANE_KEYS).toEqual(['D', 'F', 'J', 'K']);
+    expect(new Set([...AURA_LOCAL_P1_LANE_KEYS, ...AURA_LOCAL_P2_LANE_KEYS]).size).toBe(8);
   });
 });
 

@@ -103,6 +103,10 @@ describe('FightLoadingCurtain', () => {
     expect(markup).toContain('HIT ON BEAT');
     expect(markup).toContain('VIRAL');
     expect(markup).toContain('CALIBRATING VIBES');
+    expect(markup).toContain('<small>D</small>');
+    expect(markup).toContain('<small>F</small>');
+    expect(markup).toContain('<small>J</small>');
+    expect(markup).toContain('<small>K</small>');
     expect(markup).not.toContain('fight-loader__vs');
   });
 });

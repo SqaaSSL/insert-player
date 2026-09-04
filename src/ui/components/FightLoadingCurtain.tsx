@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react';
 import { RUNTIME_READY_EVENT } from '../../game/match/MatchConfig.ts';
 import { BrandMark } from './BrandMark.tsx';
 import { useFighterPortrait } from '../shared/useFighterPortrait.ts';
+import {
+  AURA_DEFAULT_LANE_KEYS,
+  type AuraLaneKeys,
+} from '../../game/aura/AuraConfig.ts';
 
 export type FightLoadingPhase = 'loading' | 'opening' | 'error';
 
@@ -16,6 +20,7 @@ interface FightLoadingCurtainProps {
   stageDescription?: string;
   stageImageUrl?: string | null;
   difficultyLabel?: string;
+  auraLaneKeys?: AuraLaneKeys;
   onExit: () => void;
 }
 
@@ -30,8 +35,9 @@ function AuraLoadingLayout({
   stageDescription,
   stageImageUrl,
   difficultyLabel,
+  auraLaneKeys = AURA_DEFAULT_LANE_KEYS,
   onExit,
-}: RushLoadingLayoutProps) {
+}: RushLoadingLayoutProps & { auraLaneKeys?: AuraLaneKeys }) {
   return (
     <>
       <div className="aura-loader__stage-art" aria-hidden="true">
@@ -74,10 +80,10 @@ function AuraLoadingLayout({
           <h2>{stageLabel.toUpperCase()}</h2>
           <p>{stageDescription ?? 'Take the camera, hit the four lanes, and protect your aura.'}</p>
           <div className="aura-loader__lanes" aria-label="Four rhythm lanes">
-            <span>●<small>A</small></span>
-            <span>◆<small>S</small></span>
-            <span>■<small>D</small></span>
-            <span>▲<small>F</small></span>
+            <span>●<small>{auraLaneKeys[0]}</small></span>
+            <span>◆<small>{auraLaneKeys[1]}</small></span>
+            <span>■<small>{auraLaneKeys[2]}</small></span>
+            <span>▲<small>{auraLaneKeys[3]}</small></span>
           </div>
           <dl className="aura-loader__rules">
             <div><dt>FORMAT</dt><dd>ALTERNATING TURNS</dd></div>
@@ -277,6 +283,7 @@ export function FightLoadingCurtain({
   stageDescription,
   stageImageUrl,
   difficultyLabel,
+  auraLaneKeys,
   onExit,
 }: FightLoadingCurtainProps) {
   const failed = phase === 'error';
@@ -334,6 +341,7 @@ export function FightLoadingCurtain({
           stageDescription={stageDescription}
           stageImageUrl={stageImageUrl}
           difficultyLabel={difficultyLabel}
+          auraLaneKeys={auraLaneKeys}
           onExit={onExit}
         />
       </section>

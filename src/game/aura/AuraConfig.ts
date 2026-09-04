@@ -27,6 +27,14 @@ export const AURA_PHRASE_BEATS = 16;
 export const AURA_INITIAL_COUNT_IN_BEATS = 8;
 export const AURA_FINISH_BEATS = 4;
 
+export type AuraLaneKeys = readonly [string, string, string, string];
+
+/** Standard 4K split: two fingers per hand with a comfortable home-row gap. */
+export const AURA_DEFAULT_LANE_KEYS: AuraLaneKeys = ['D', 'F', 'J', 'K'];
+/** Conflict-free banks used only when two people share one keyboard. */
+export const AURA_LOCAL_P1_LANE_KEYS: AuraLaneKeys = ['A', 'S', 'D', 'F'];
+export const AURA_LOCAL_P2_LANE_KEYS: AuraLaneKeys = ['J', 'K', 'L', ';'];
+
 export const AURA_DIFFICULTIES: readonly AuraDifficulty[] = [
   {
     id: 'lowkey',

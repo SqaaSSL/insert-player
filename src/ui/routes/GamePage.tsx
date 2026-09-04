@@ -38,7 +38,11 @@ import { getRushDifficulty, type RushCompanionOrder } from '../../game/brawl/Rus
 import { FightResultShare } from '../components/FightResultShare.tsx';
 import { AuraControls } from '../components/AuraControls.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
-import { getAuraDifficulty } from '../../game/aura/AuraConfig.ts';
+import {
+  AURA_DEFAULT_LANE_KEYS,
+  AURA_LOCAL_P1_LANE_KEYS,
+  getAuraDifficulty,
+} from '../../game/aura/AuraConfig.ts';
 
 export interface LadderContext {
   rungIndex: number;
@@ -375,6 +379,9 @@ export function GamePage({
             : isAura
               ? getAuraDifficulty(launchTarget.data.auraDifficulty).label
               : undefined}
+          auraLaneKeys={launchTarget.data.online || launchTarget.data.vsAI !== false
+            ? AURA_DEFAULT_LANE_KEYS
+            : AURA_LOCAL_P1_LANE_KEYS}
           onExit={onExit}
         />
       ) : null}

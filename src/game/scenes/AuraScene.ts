@@ -46,8 +46,12 @@ import {
   type AuraSlot,
 } from '../aura/AuraChart.ts';
 import {
+  AURA_DEFAULT_LANE_KEYS,
+  AURA_LOCAL_P1_LANE_KEYS,
+  AURA_LOCAL_P2_LANE_KEYS,
   AURA_NOTE_TRAVEL_MS,
   getAuraDifficulty,
+  type AuraLaneKeys,
   type AuraDifficultyId,
 } from '../aura/AuraConfig.ts';
 import {
@@ -58,8 +62,6 @@ import {
 import type { PeerTransportState } from '../net/PeerTransport.ts';
 
 const LANE_COLORS = [0x4fdcff, 0x8b4dff, 0xffce3a, 0xef4343] as const;
-const LANE_KEYS = ['A', 'S', 'D', 'F'] as const;
-const LOCAL_P2_KEYS = ['J', 'K', 'L', ';'] as const;
 const ONLINE_START_DELAY_MS = 1_600;
 const ONLINE_FINISH_GRACE_MS = 2_500;
 
@@ -570,9 +572,10 @@ export class AuraScene extends Phaser.Scene {
   private createInput(): void {
     const keyboard = this.input.keyboard;
     if (!keyboard) return;
-    this.keysP1 = LANE_KEYS.map((key) => keyboard.addKey(key, true));
-    this.keysP2 = LOCAL_P2_KEYS.map((key) => keyboard.addKey(key, true));
-    keyboard.addCapture([...LANE_KEYS, ...LOCAL_P2_KEYS]);
+    const primaryKeys = this.primaryLaneKeys();
+    this.keysP1 = primaryKeys.map((key) => keyboard.addKey(key, true));
+    this.keysP2 = AURA_LOCAL_P2_LANE_KEYS.map((key) => keyboard.addKey(key, true));
+    keyboard.addCapture([...new Set([...primaryKeys, ...AURA_LOCAL_P2_LANE_KEYS])]);
     this.keyBindings = [];
     if (this.cpuVsCpu) return;
     if (this.online) {
@@ -593,14 +596,24 @@ export class AuraScene extends Phaser.Scene {
 
   private laneLayout(slot: AuraSlot, lane: AuraLane): LaneLayout {
     const center = slot === 0 ? 406 : 618;
-    const startSpread = 42;
-    const targetSpread = 88;
+    const startOffsets = [-63, -21, 21, 63] as const;
+    // The wider middle seam mirrors the physical gap between the player's hands.
+    const targetOffsets = [-150, -66, 66, 150] as const;
     return {
-      startX: center + (lane - 1.5) * startSpread,
-      targetX: center + (lane - 1.5) * targetSpread,
+      startX: center + startOffsets[lane],
+      targetX: center + targetOffsets[lane],
       startY: 298,
       targetY: 497,
     };
+  }
+
+  private primaryLaneKeys(): AuraLaneKeys {
+    return this.online || this.isVsAI ? AURA_DEFAULT_LANE_KEYS : AURA_LOCAL_P1_LANE_KEYS;
+  }
+
+  private laneKeysForSlot(slot: AuraSlot): AuraLaneKeys {
+    if (!this.online && !this.isVsAI && slot === 1) return AURA_LOCAL_P2_LANE_KEYS;
+    return this.primaryLaneKeys();
   }
 
   private drawLanes(slot: AuraSlot): void {
@@ -629,7 +642,7 @@ export class AuraScene extends Phaser.Scene {
       this.targetGraphics.fillCircle(layout.targetX, 518, 2);
     }
     this.drawBeatGrid(slot);
-    const keys = this.online || slot === 0 ? LANE_KEYS : LOCAL_P2_KEYS;
+    const keys = this.laneKeysForSlot(slot);
     this.laneKeyTexts.forEach((text, lane) => {
       const layout = this.laneLayout(slot, lane as AuraLane);
       text.setText(keys[lane]).setPosition(layout.targetX, 542).setVisible(true);

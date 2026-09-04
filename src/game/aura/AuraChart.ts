@@ -143,5 +143,7 @@ export function auraTurnAt(chart: AuraChart, nowMs: number): AuraTurn | null {
 
 /** Linear time-to-target projection shared by every lane. */
 export function auraNoteTravelProgress(noteAtMs: number, nowMs: number): number {
-  return Math.max(0, Math.min(1, 1 - (noteAtMs - nowMs) / AURA_NOTE_TRAVEL_MS));
+  // Intentionally do not clamp at 1: a missed note must cross the receptor at
+  // the same speed instead of appearing to brake there during its late window.
+  return 1 - (noteAtMs - nowMs) / AURA_NOTE_TRAVEL_MS;
 }
