@@ -10,6 +10,7 @@ import {
   stableGitShaFromVersion,
   stableVersionIdFromDeployment,
 } from './worker-version-rollout-lib.mjs';
+import { assertProductionDeployAllowed } from './production-deploy-guard.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -60,6 +61,10 @@ function emitOutput(key, value) {
 
 async function main() {
   const action = process.argv[2];
+  if (['rollback', 'stage', 'promote'].includes(action)) {
+    const context = assertProductionDeployAllowed({ root });
+    console.log(`Worker rollout mutation authorized: ${context.channel} ${context.gitSha}.`);
+  }
   if (action === 'current') {
     const stableVersionId = stableVersionIdFromDeployment(deploymentStatus());
     const details = versionDetails(stableVersionId);

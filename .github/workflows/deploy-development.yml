@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  vulnerability-alerts: read
 
 concurrency:
   group: deploy-development
@@ -33,6 +34,7 @@ jobs:
       VITE_PUBLIC_APP_NAME: Insert Player
       VITE_PUBLIC_APP_SHORT_NAME: P1
       VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+      VITE_GOOGLE_MAPS_BROWSER_KEY: ${{ vars.VITE_GOOGLE_MAPS_BROWSER_KEY }}
       VITE_GEMINI_IMAGE_MODEL_REPOSE: ${{ vars.VITE_GEMINI_IMAGE_MODEL_REPOSE }}
       VITE_GEMINI_IMAGE_MODEL_UPRIGHT: ${{ vars.VITE_GEMINI_IMAGE_MODEL_UPRIGHT }}
       VITE_GEMINI_IMAGE_MODEL_CROUCH: ${{ vars.VITE_GEMINI_IMAGE_MODEL_CROUCH }}
@@ -68,13 +70,13 @@ jobs:
             processor/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Install Worker dependencies
-        run: npm --prefix worker ci
+        run: npm --prefix worker ci --no-audit --no-fund
 
       - name: Install processor dependencies
-        run: npm --prefix processor ci
+        run: npm --prefix processor ci --no-audit --no-fund
 
       - name: Configure, migrate, deploy, and smoke Worker
         env:
@@ -93,6 +95,7 @@ jobs:
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
         run: npm run config:sandbox
 
       - name: Build, deploy, and smoke Pages

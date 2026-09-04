@@ -6,6 +6,7 @@ import {
   type CheckoutLegalAttestation,
   type GenerationLegalAttestation,
 } from '../ui/legal.ts';
+import { STAGE_FORGE_CREDIT_COST } from '../shared/StageForgePricing.ts';
 
 export interface GenerationAuthorization {
   authorized: boolean;
@@ -78,6 +79,14 @@ export interface ProviderSessionAuthorization {
   error?: string;
 }
 
+export interface StageForgeAuthorization extends ProviderSessionAuthorization {
+  authorized: boolean;
+  purchaseId?: string;
+  creditsCharged: number;
+  creditsBalance?: number;
+  mode?: 'credits' | 'local';
+}
+
 type BillingErrorBody = {
   error?: unknown;
   message?: unknown;
@@ -102,7 +111,8 @@ async function readBillingJson<T extends object>(res: Response): Promise<T & Bil
 function formatBillingError(body: BillingErrorBody, fallback: string): string {
   if (body.error === 'Not enough credits' && typeof body.requiredCredits === 'number') {
     const balance = typeof body.creditsBalance === 'number' ? ` You have ${body.creditsBalance}.` : '';
-    return `Not enough credits. ${body.requiredCredits} credits required.${balance}`;
+    const unit = body.requiredCredits === 1 ? 'credit' : 'credits';
+    return `Not enough credits. ${body.requiredCredits} ${unit} required.${balance}`;
   }
   if (typeof body.error === 'string' && body.error.trim()) return body.error.trim();
   if (typeof body.message === 'string' && body.message.trim()) return body.message.trim();
@@ -320,6 +330,59 @@ export async function finishGenerationPurchase(
   if (!res.ok) {
     const json = await readBillingJson<Record<string, never>>(res);
     throw new Error(formatBillingError(json, `Generation purchase update failed (${res.status})`));
+  }
+}
+
+export async function authorizeStageForge(
+  context?: ApiRequestContext,
+): Promise<StageForgeAuthorization> {
+  if (isLocalDevWithoutApi()) {
+    return {
+      authorized: true,
+      creditsCharged: 0,
+      mode: 'local',
+    };
+  }
+
+  const legal = storedGenerationLegalAttestation();
+  if (!legal) {
+    return {
+      authorized: false,
+      creditsCharged: 0,
+      error: 'Accept the current AI generation terms before forging a stage.',
+    };
+  }
+
+  try {
+    const res = await apiFetch('/api/billing/stage-forge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ legal }),
+    }, context);
+    const json = await readBillingJson<Omit<StageForgeAuthorization, 'authorized'>>(res);
+    if (res.ok) {
+      return {
+        ...json,
+        authorized: true,
+        creditsCharged: typeof json.creditsCharged === 'number'
+          ? json.creditsCharged
+          : STAGE_FORGE_CREDIT_COST,
+      };
+    }
+    return {
+      ...json,
+      authorized: false,
+      creditsCharged: 0,
+      error: formatBillingError(json, `Stage Forge authorization failed (${res.status})`),
+    };
+  } catch (err: any) {
+    return {
+      authorized: false,
+      creditsCharged: 0,
+      error: err?.message
+        ? `Stage Forge authorization failed: ${err.message}`
+        : 'Stage Forge authorization failed',
+    };
   }
 }
 

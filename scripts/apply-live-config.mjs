@@ -17,6 +17,7 @@ import {
   decodeClerkPublishableKey,
 } from './clerk-publishable-key.mjs';
 import { versionIdFromWranglerOutput } from './worker-version-rollout-lib.mjs';
+import { assertProductionDeployAllowed } from './production-deploy-guard.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -51,11 +52,13 @@ const secretKeys = [
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
   'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+  'GOOGLE_MAPS_SERVER_KEY',
 ];
 
 const requiredKeys = [
   'VITE_CLERK_PUBLISHABLE_KEY',
   'VITE_TURNSTILE_SITE_KEY',
+  'VITE_GOOGLE_MAPS_BROWSER_KEY',
   'STRIPE_ACCOUNT_ID',
   'STRIPE_PRICE_STARTER',
   'STRIPE_PRICE_VERSUS',
@@ -69,6 +72,7 @@ const requiredKeys = [
   'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
   'METERKEY_API_KEY',
   'PIXCLI_API_KEY',
+  'GOOGLE_MAPS_SERVER_KEY',
 ];
 
 const sampleFragments = [
@@ -235,6 +239,7 @@ function writeFrontendEnv(values) {
   text = upsertEnvValue(text, 'VITE_PUBLIC_APP_NAME', readValue(values, 'VITE_PUBLIC_APP_NAME') || readValue(values, 'ASF_PUBLIC_APP_NAME'));
   text = upsertEnvValue(text, 'VITE_PUBLIC_APP_SHORT_NAME', readValue(values, 'VITE_PUBLIC_APP_SHORT_NAME') || readValue(values, 'ASF_PUBLIC_APP_SHORT_NAME'));
   text = upsertEnvValue(text, 'VITE_TURNSTILE_SITE_KEY', readValue(values, 'VITE_TURNSTILE_SITE_KEY'));
+  text = upsertEnvValue(text, 'VITE_GOOGLE_MAPS_BROWSER_KEY', readValue(values, 'VITE_GOOGLE_MAPS_BROWSER_KEY'));
   text = upsertEnvValue(text, 'VITE_INTRO_VIDEO_PROVIDER', readValue(values, 'VITE_INTRO_VIDEO_PROVIDER') || 'fal-ltx-v2-3-fast');
   text = upsertEnvValue(text, 'VITE_BG_REMOVAL_PROVIDER', readValue(values, 'VITE_BG_REMOVAL_PROVIDER') || 'fal');
   text = upsertEnvValue(text, 'VITE_GEMINI_IMAGE_MODEL_REPOSE', readValue(values, 'VITE_GEMINI_IMAGE_MODEL_REPOSE') || defaultSourceModel);
@@ -423,6 +428,8 @@ async function validateRequired(values) {
   const publicShortName = readValue(values, 'PUBLIC_APP_SHORT_NAME') || readValue(values, 'ASF_PUBLIC_APP_SHORT_NAME') || readValue(values, 'VITE_PUBLIC_APP_SHORT_NAME');
   const turnstileSiteKey = readValue(values, 'VITE_TURNSTILE_SITE_KEY');
   const clerkPublishableKey = readValue(values, 'VITE_CLERK_PUBLISHABLE_KEY');
+  const googleMapsBrowserKey = readValue(values, 'VITE_GOOGLE_MAPS_BROWSER_KEY');
+  const googleMapsServerKey = readValue(values, 'GOOGLE_MAPS_SERVER_KEY');
   const turnstileSecret = readValue(values, 'TURNSTILE_SECRET_KEY');
   const anonymizationSecret = readValue(values, 'ANONYMIZATION_SECRET');
   const generationJobSigningSecret = readValue(values, 'GENERATION_JOB_SIGNING_SECRET');
@@ -471,6 +478,20 @@ async function validateRequired(values) {
     clerkPublishableKey,
     (value) => /^pk_live_/i.test(value),
     'must be a live Clerk publishable key starting with pk_live_.',
+  );
+  assertLiveShape(
+    errors,
+    'VITE_GOOGLE_MAPS_BROWSER_KEY',
+    googleMapsBrowserKey,
+    (value) => /^AIza[A-Za-z0-9_-]{30,}$/.test(value),
+    'must be a valid browser-restricted Google Maps key.',
+  );
+  assertLiveShape(
+    errors,
+    'GOOGLE_MAPS_SERVER_KEY',
+    googleMapsServerKey,
+    (value) => /^AIza[A-Za-z0-9_-]{30,}$/.test(value),
+    'must be a valid Worker-only Google Maps key.',
   );
   if (clerkPublishableKey) {
     for (const issue of clerkPublishableKeyIssues(clerkPublishableKey, {
@@ -672,6 +693,19 @@ async function main() {
   if (args.has('--upload-worker-version') && args.has('--dry-run-worker-version')) {
     throw new Error('Choose either --upload-worker-version or --dry-run-worker-version, not both.');
   }
+  const bulkWorkerOperation = [
+    '--deploy-worker',
+    '--dry-run-worker-deploy',
+    '--upload-worker-version',
+    '--dry-run-worker-version',
+  ].some((flag) => args.has(flag));
+  const mutatesProduction = args.has('--deploy-worker')
+    || args.has('--upload-worker-version')
+    || (!args.has('--skip-secrets') && !bulkWorkerOperation);
+  if (mutatesProduction) {
+    const context = assertProductionDeployAllowed({ root });
+    console.log(`Live configuration mutation authorized: ${context.channel} ${context.gitSha}.`);
+  }
   const values = readEnvValues();
   const frontendOrigin = readValue(values, 'ASF_FRONTEND_ORIGIN') || defaultFrontendOrigin;
   const corsOrigins = readValue(values, 'CORS_ORIGIN') || defaultCorsOrigins;
@@ -701,12 +735,6 @@ async function main() {
   writeFrontendEnv(values);
   console.log('Updated .env.production frontend values.');
 
-  const bulkWorkerOperation = [
-    '--deploy-worker',
-    '--dry-run-worker-deploy',
-    '--upload-worker-version',
-    '--dry-run-worker-version',
-  ].some((flag) => args.has(flag));
   if (!args.has('--skip-secrets') && !bulkWorkerOperation) {
     for (const key of secretKeys) {
       const value = readValue(values, key);

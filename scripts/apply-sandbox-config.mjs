@@ -39,9 +39,11 @@ const sandboxSecretKeys = [
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
   'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+  'GOOGLE_MAPS_SERVER_KEY',
 ];
 const requiredCompleteKeys = [
   'VITE_CLERK_PUBLISHABLE_KEY',
+  'VITE_GOOGLE_MAPS_BROWSER_KEY',
   'CLERK_ISSUER',
   'CLERK_WEBHOOK_SIGNING_SECRET',
   'STRIPE_ACCOUNT_ID',
@@ -53,6 +55,7 @@ const requiredCompleteKeys = [
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
   'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+  'GOOGLE_MAPS_SERVER_KEY',
 ];
 const expectedPrices = [
   { key: 'STRIPE_PRICE_STARTER', packId: 'starter', credits: '11', amountCents: 1499 },
@@ -254,6 +257,8 @@ async function validate(values) {
   const apiUrl = value(values, 'VITE_API_BASE_URL', sandboxWorkerUrl).replace(/\/+$/, '');
   const frontendUrl = value(values, 'ASF_SANDBOX_FRONTEND_URL', sandboxFrontendUrl).replace(/\/+$/, '');
   const clerkKey = value(values, 'VITE_CLERK_PUBLISHABLE_KEY');
+  const googleMapsBrowserKey = value(values, 'VITE_GOOGLE_MAPS_BROWSER_KEY');
+  const googleMapsServerKey = value(values, 'GOOGLE_MAPS_SERVER_KEY');
   const clerkIssuer = value(values, 'CLERK_ISSUER');
   const clerkWebhookSecret = value(values, 'CLERK_WEBHOOK_SIGNING_SECRET');
   const stripeSecret = value(values, 'STRIPE_SECRET_KEY');
@@ -276,6 +281,8 @@ async function validate(values) {
   if (apiUrl !== sandboxWorkerUrl) errors.push(`VITE_API_BASE_URL must be ${sandboxWorkerUrl}.`);
   if (frontendUrl !== sandboxFrontendUrl) errors.push(`ASF_SANDBOX_FRONTEND_URL must be ${sandboxFrontendUrl}.`);
   if (clerkKey && !/^pk_test_[A-Za-z0-9_]+$/i.test(clerkKey)) errors.push('Sandbox Clerk publishable key must start with pk_test_.');
+  if (googleMapsBrowserKey && !/^AIza[A-Za-z0-9_-]{30,}$/.test(googleMapsBrowserKey)) errors.push('Sandbox Google Maps browser key is invalid.');
+  if (googleMapsServerKey && !/^AIza[A-Za-z0-9_-]{30,}$/.test(googleMapsServerKey)) errors.push('Sandbox Google Maps server key is invalid.');
   if (clerkIssuer && !/^https:\/\//i.test(clerkIssuer)) errors.push('CLERK_ISSUER must be HTTPS.');
   if (clerkWebhookSecret && !/^whsec_[A-Za-z0-9+/=_-]+$/i.test(clerkWebhookSecret)) errors.push('CLERK_WEBHOOK_SIGNING_SECRET must be a whsec_ secret.');
   if (stripeSecret && !/^sk_test_[A-Za-z0-9_]+$/i.test(stripeSecret)) errors.push('Sandbox Stripe secret key must start with sk_test_.');

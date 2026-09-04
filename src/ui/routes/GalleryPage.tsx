@@ -143,6 +143,7 @@ interface GalleryPageProps {
   authSessionKey: string;
   onBack: () => void;
   onCreateFighter: () => void;
+  onCreateStage: () => void;
   onNavigateLegal?: (route: '/legal' | '/privacy' | '/terms' | '/refunds') => void;
 }
 
@@ -167,8 +168,17 @@ function retryTargetForJob(job: GenerationJob): RetryTarget | null {
   return null;
 }
 
-export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighter, onNavigateLegal }: GalleryPageProps) {
-  const [activeTab, setActiveTab] = useState<'characters' | 'stages'>('characters');
+export function GalleryPage({
+  authStatus,
+  authSessionKey,
+  onBack,
+  onCreateFighter,
+  onCreateStage,
+  onNavigateLegal,
+}: GalleryPageProps) {
+  const [activeTab, setActiveTab] = useState<'characters' | 'stages'>(() => (
+    new URLSearchParams(window.location.search).get('tab') === 'stages' ? 'stages' : 'characters'
+  ));
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [arcadeFighters, setArcadeFighters] = useState<CloudFighter[]>([]);
   const [arcadeState, setArcadeState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
@@ -1730,9 +1740,13 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           </button>
         </div>
 
-        <button type="button" className="home-menu__action is-primary" onClick={onCreateFighter}>
-          <span>New Fighter</span>
-          <small>Upload A Photo</small>
+        <button
+          type="button"
+          className="home-menu__action is-primary"
+          onClick={activeTab === 'characters' ? onCreateFighter : onCreateStage}
+        >
+          <span>{activeTab === 'characters' ? 'New Fighter' : 'New Stage'}</span>
+          <small>{activeTab === 'characters' ? 'Upload A Photo' : 'Scout Google Street View'}</small>
         </button>
 
         {activeTab === 'characters' ? (
@@ -2017,6 +2031,10 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           <section className="gallery-empty">
             <h2>No Stages Available</h2>
             <p>Arcade and personal stages will appear here.</p>
+            <button type="button" className="home-menu__action is-primary" onClick={onCreateStage}>
+              <span>Scout A Stage</span>
+              <small>Search Google Street View</small>
+            </button>
           </section>
         ) : (
           <>
@@ -2064,6 +2082,27 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                   ) : (
                     <p><strong>Created</strong> {formatDate(currentStage!.createdAt)}</p>
                   )}
+                  {currentStage?.source?.provider === 'google-street-view' ? (
+                    <>
+                      <p><strong>Source</strong> GOOGLE STREET VIEW</p>
+                      <p>
+                        <strong>Location</strong>{' '}
+                        {currentStage.source.locationLabel ||
+                          `${currentStage.source.latitude.toFixed(5)}, ${currentStage.source.longitude.toFixed(5)}`}
+                      </p>
+                      <p>
+                        <strong>View</strong>{' '}
+                        {Math.round(currentStage.source.heading)}° heading ·{' '}
+                        {Math.round(currentStage.source.fov)}° FOV
+                      </p>
+                      {currentStage.source.imageDate ? (
+                        <p><strong>Imagery</strong> {currentStage.source.imageDate}</p>
+                      ) : null}
+                      {currentStage.source.copyright ? (
+                        <p><strong>Attribution</strong> {currentStage.source.copyright}</p>
+                      ) : null}
+                    </>
+                  ) : null}
                 </div>
                 <div className="gallery-actions">
                   <button type="button" disabled={!stagePreviewUrl} onClick={() => void saveCurrentStagePng()}>

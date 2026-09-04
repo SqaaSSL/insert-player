@@ -1,5 +1,25 @@
 # Production Readiness
 
+## Release Source of Truth
+
+Routine production mutation is CI-only. Merge a reviewed commit to `main` and
+let `.github/workflows/deploy-production.yml` apply D1 migrations, deploy the
+Worker, deploy Pages, and run the live gates. The frontend-only workflow may be
+dispatched only from `main` and must explicitly resolve Worker drift.
+
+The production guard requires a clean checkout with `HEAD == GITHUB_SHA` on
+`refs/heads/main`. Production Pages includes `/release.json`, and both live
+smokes require its Git SHA and hashed entry asset to match the release being
+published. Local production commands are deliberately blocked; read-only
+diagnostics and all sandbox commands remain available.
+
+Break glass is reserved for a confirmed GitHub Actions outage. It requires a
+clean checkout exactly equal to remotely verified `origin/main`,
+`ASF_PRODUCTION_BREAK_GLASS=1`, the full matching
+`ASF_EXPECTED_PRODUCTION_SHA`, and a meaningful
+`ASF_PRODUCTION_BREAK_GLASS_REASON`. Use a temporary least-privilege credential,
+record the incident, and revoke it afterward.
+
 This is the launch checklist for making Insert Player playable across devices with Clerk auth, tiered pricing, Worker-side API keys, rate limiting, R2/D1 persistence, and community sharing. `AI Street Fighter` remains the internal repository name only.
 
 `AI Street Fighter` is the internal project name only. The selected external brand is `Insert Player`, first game `Insert Player: Fight`, short name `P1`, target domain `https://insertplayer.ai`. The owner-directed launch record was completed on 2026-08-19; see `BRANDING.md` and ignored `.brand-clearance.json`.
@@ -86,7 +106,9 @@ npx wrangler r2 bucket create insert-player-assets --jurisdiction eu
 
 2. Paste the generated D1 id into `worker/wrangler.toml`. Add an R2 lifecycle rule for the `temp/` prefix, deleting objects after 1 day; the Worker also refuses expired temp assets. Rate-limit counters use the same D1 database atomically.
 
-3. Configure Worker vars/secrets:
+3. Configure these names in the protected GitHub `production` environment. The
+following direct Wrangler commands are emergency break-glass references only,
+not the routine release path:
 
 ```bash
 npx wrangler secret put GEMINI_API_KEY
@@ -98,14 +120,18 @@ npx wrangler secret put STRIPE_SECRET_KEY
 npx wrangler secret put STRIPE_WEBHOOK_SECRET
 npx wrangler secret put GENERATION_JOB_SIGNING_SECRET
 npx wrangler secret put CLERK_BACKEND_AUTH_BRIDGE_SECRET
+npx wrangler secret put GOOGLE_MAPS_SERVER_KEY
 ```
 
-The preferred handoff path is to create a gitignored `.env.production.local` with the live dashboard values and run the idempotent helper:
+The workflow reads the corresponding GitHub environment variables and secrets.
+An ignored `.env.production.local` may mirror them for read-only validation, but
+must not become a routine deployment source:
 
 ```bash
 CLERK_ISSUER=https://clerk.insertplayer.ai
 VITE_CLERK_PUBLISHABLE_KEY=pk_live_...
 VITE_TURNSTILE_SITE_KEY=0x4AAAAAA...
+VITE_GOOGLE_MAPS_BROWSER_KEY=AIza...
 # Optional JWKS override. CLERK_ISSUER is still required for issuer validation.
 # CLERK_JWKS_URL=https://clerk.insertplayer.ai/.well-known/jwks.json
 CORS_ORIGIN=https://insertplayer.ai,https://www.insertplayer.ai
@@ -116,14 +142,14 @@ STRIPE_SECRET_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 TURNSTILE_SECRET_KEY=0x4AAAAAA...
 TURNSTILE_HOSTNAMES=insertplayer.ai,www.insertplayer.ai
+GOOGLE_MAPS_SERVER_KEY=AIza...
 ```
 
-```bash
-npm run config:live
-```
-
-That command patches non-secret Worker vars in `worker/wrangler.toml`, updates `.env.production`, uploads Worker secrets without printing values, and redeploys the Worker.
-The default `config:live` path refuses placeholder values, local origins, test Clerk publishable keys, and test Stripe secret keys, then runs `npm run check:production` before it mutates Worker config or uploads secrets.
+The protected production workflow invokes `config:live` to validate and
+materialize the exact release configuration. Calling it locally is blocked
+before any production mutation unless the documented break-glass contract is
+fully satisfied. It refuses placeholder values, local origins, test Clerk keys,
+and test Stripe keys before it changes Worker configuration or secrets.
 
 4. Set non-secret vars in `worker/wrangler.toml`:
 
@@ -218,6 +244,7 @@ Copy `.env.production.example` to `.env.production`, then set production fronten
 ```bash
 VITE_API_BASE_URL=https://api.insertplayer.ai
 VITE_CLERK_PUBLISHABLE_KEY=pk_live_...
+VITE_GOOGLE_MAPS_BROWSER_KEY=AIza...
 VITE_GEMINI_IMAGE_MODEL_REPOSE=gemini-3-pro-image
 VITE_GEMINI_IMAGE_MODEL_UPRIGHT=gemini-3-pro-image
 VITE_GEMINI_IMAGE_MODEL_CROUCH=gemini-3-pro-image
@@ -226,6 +253,15 @@ VITE_INTRO_VIDEO_PROVIDER=fal-ltx-v2-3-fast
 ```
 
 Do not set animation model Pro overrides globally; tier code controls animation model selection. Source-view model vars stay Pro.
+
+### Google Maps / Street View Stage Scout
+
+Use a dedicated Google Cloud project with billing enabled and enable Maps JavaScript API, Geocoding API, and Street View Static API. Use two separate credentials:
+
+- `VITE_GOOGLE_MAPS_BROWSER_KEY` is public by design. Restrict it to the exact production and `www` HTTP referrers, and restrict its API access to Maps JavaScript API and Geocoding API.
+- `GOOGLE_MAPS_SERVER_KEY` is a Worker secret. Restrict its API access to Street View Static API only; never expose it through a `VITE_` variable, Pages configuration, logs, or a client response.
+
+Set daily request and spend quotas before launch. The browser displays Street View coverage, but the Worker captures the selected panorama, heading, pitch, and field of view using a fixed image size. The Worker validates the request, rate-limits capture, rejects invalid or oversized responses, and marks images `private, no-store`. Live and sandbox CSPs contain the Google Maps JavaScript allowlist; prelaunch remains self-only.
 
 `npm run check:live-readiness` reads `.env.production.local`, `.env.production`, `.env.local`, `.env`, and process env for these frontend vars. Do not commit real secrets. Like the post-deploy Pages smoke, live readiness waits briefly for the root frontend shell (`ASF_FRONTEND_READY_TIMEOUT_MS`, default 90000) before checking direct routes, which keeps the final gate resilient to Cloudflare Pages propagation. The live config/readiness helpers and package deploy scripts route Wrangler through `scripts/wrangler-workspace-log.mjs`, setting `WRANGLER_LOG_PATH` to the ignored local `.wrangler-logs/` directory so Wrangler diagnostics stay inside the workspace during automated checks.
 
@@ -335,6 +371,7 @@ Local/sandbox prelaunch evidence: on 2026-08-17 a real Rookie generated all four
 23. Finish a match while signed in and confirm `/api/stats` shows the match in recent history.
 24. Confirm source views are generated with Pro model settings regardless of selected tier.
 25. Regression-check Refined animations in Gallery: the validated Champion sample must retain intact faces and remain free of visible green edge spill on neutral backgrounds.
+26. Open `/stages/new`, search Benidorm and one non-Spanish location, verify blue coverage appears, enter a panorama, change heading/pitch/zoom, capture it, create both a forged and direct-photo stage, and confirm each appears in Gallery and is selectable in Roster. Repeat one location with no nearby coverage and verify the recovery message. Confirm the browser bundle contains only the referrer-restricted browser key and that the Worker response never exposes `GOOGLE_MAPS_SERVER_KEY`.
 
 After those checks pass, copy `launch-validation.example.json` to `.launch-validation.json` and replace every placeholder with concrete evidence from the actual run. The launch gate verifies the file is recent, matches the Worker/Pages URLs being launched, matches the same public brand as `.brand-clearance.json`, names the same two different Clerk users as `ASF_CLERK_JWT` and `ASF_CLERK_JWT_CLONE`, records generated Rookie/Contender/Champion cloud fighter ids, and includes evidence for each manual checklist item.
 

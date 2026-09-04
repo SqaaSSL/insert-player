@@ -1,35 +1,72 @@
 # GitHub Actions Deployment
 
-GitHub Actions is the canonical team deployment path. Local deployment commands remain available for diagnostics, but routine releases should come from protected branches so every deployment is traceable to a reviewed commit.
+GitHub Actions is the only routine production deployment path. Repository-managed
+Worker, D1, secret, and Pages mutations are blocked in local checkouts. Every
+release must come from a clean checkout of the exact `main` commit authorized
+by GitHub Actions, so the checked-in release commands cannot overwrite
+Cloudflare with an uncommitted or stale local build. Production credentials must
+remain absent from routine local environments so direct vendor CLI calls are not
+an alternate deployment path.
 
 ## Branch Flow
 
 | Source | Target | Result |
 |---|---|---|
-| `feature/*` or `fix/*` | Pull request to `develop` | CI and CodeQL; no secrets or deployment |
+| `feature/*` or `fix/*` | Pull request to `main` | Required CI and CodeQL; production deploys only after merge |
+| Integration branch | Pull request to `develop` | Required CI and CodeQL; no secrets or deployment before merge |
 | `develop` | GitHub `development` environment | Automatic isolated sandbox Worker, D1 migrations, Pages, and smoke tests |
-| `develop` | Pull request to `main` | CI and CodeQL again |
+| `develop` | Pull request to `main` | Optional sandbox-soaked promotion; CI and CodeQL run again |
 | `main` | GitHub `production` environment | After required checks, deploys production Worker, D1, Pages, and live-readiness checks |
 
-`development` may cancel an older in-progress deployment when a newer commit arrives. `production` never cancels an in-progress deployment.
+Start a branch from the branch it will target. Use `develop` when a change needs
+an intentional sandbox soak, and sync current `main` into it before deploying if
+the branches have drifted. Never merge a branch based on stale application code
+just to publish one feature. `development` may cancel an older in-progress
+deployment when a newer commit arrives. `production` never cancels an
+in-progress deployment.
 
 ## Workflows
 
 - `ci.yml`: required pull-request and branch validation.
-- `validate.yml`: reusable production gate, full builds, Worker dry-runs, and dependency audits.
+- `validate.yml`: reusable production gate, full builds, Worker dry-runs, and a fail-closed check for unresolved high or critical Dependabot alerts.
+- `dependency-security.yml`: GitHub Dependency Review blocks pull requests that introduce high or critical vulnerabilities in runtime, development, or unknown scopes.
 - `deploy-development.yml`: `develop` to the isolated sandbox.
 - `deploy-production.yml`: checked `main` release to `insertplayer.ai`.
+- `deploy-frontend-production.yml`: manual Pages-only release of the selected
+  `main` commit, with an explicit Worker-drift check.
 - `configure-production-smoke-users.yml`: explicit-confirmation deep merge of launch-smoke markers onto two preselected verified OAuth users; the primary must match the separately pinned Arcade admin id, the action restores that private admin marker, and it refuses an admin clone.
 - `smoke-development.yml`: manual authenticated sandbox smoke with two disposable Clerk users and full deletion/tombstone validation.
 - `smoke-production.yml`: manual authenticated production smoke with two dedicated OAuth QA users and fresh revocable sessions.
 - `codeql.yml`: JavaScript/TypeScript code scanning on pull requests, protected branches, and weekly schedule.
 - `dependabot.yml`: weekly frontend, Worker, and GitHub Actions updates.
 
-## Current Deployment Credential Status
+## Canonical Release Invariant
 
-Protected production `main` and sandbox `develop` are byte-for-byte aligned, live, and smoke-verified with D1 migration `0024`; both Workers report healthy `0.18.0` runtimes.
+Both production workflows run `scripts/production-deploy-guard.mjs` immediately
+after checkout. The guard requires a clean tree, `refs/heads/main`, and
+`HEAD == GITHUB_SHA`, then attests that SHA for the remainder of the job. The
+only tracked file the workflow may materialize after attestation is
+`worker/wrangler.toml`; any source change still blocks every production Wrangler
+mutation.
 
-The `CLOUDFLARE_API_TOKEN` stored in both GitHub environments is the same durable account-owned token scoped to the Insert Player Cloudflare account and zone. Production Action `32767504225` and development Action `32767773857` passed their complete remote migrations, Worker/Container/Workflow deploys, API smokes, Pages deploys, and readiness checks. Cloudflare audit logs identify their actor as an account API token, not a temporary Wrangler OAuth session. Authenticated sandbox Action `32768251105` also passes with the Development Clerk backend key and private bridge secret. Rotate this token deliberately through both environments together; never replace it with a Global API Key or temporary Wrangler OAuth token.
+Pages writes `/release.json` into each production build. The propagation and
+canonical smokes require its `gitSha` and entry bundle to match the commit being
+deployed. This is the authoritative answer to “what code is live”; a successful
+upload of some other bundle does not count as a successful release.
+
+## Deployment Credential Policy
+
+Store durable, account-owned credentials only in the matching GitHub
+environment. A past successful run is evidence for that commit, not a guarantee
+that the two branches, runtimes, migrations, or credentials are still aligned.
+Use the current workflow run, Worker `/health`, and frontend `/release.json` when
+auditing what is live.
+
+Rotate `CLOUDFLARE_API_TOKEN` deliberately through both environments when they
+share the same account-owned credential; never replace it with a Global API Key
+or a temporary Wrangler OAuth session. Maps requires two separate restricted
+credentials per environment: the public browser key in the environment variable
+and the server-only Street View Static key in the environment secret.
 
 ## GitHub Environments
 
@@ -53,6 +90,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | `VITE_API_BASE_URL` | Sandbox Worker URL | `https://api.insertplayer.ai` |
 | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk Development key | Clerk Production key |
 | `VITE_TURNSTILE_SITE_KEY` | Sandbox/test widget | Production widget |
+| `VITE_GOOGLE_MAPS_BROWSER_KEY` | Sandbox browser key restricted to its referrers | Production browser key restricted to apex + `www` |
 | `VITE_GEMINI_IMAGE_MODEL_REPOSE` | `gemini-3-pro-image` | `gemini-3-pro-image` |
 | `VITE_GEMINI_IMAGE_MODEL_UPRIGHT` | `gemini-3-pro-image` | `gemini-3-pro-image` |
 | `VITE_GEMINI_IMAGE_MODEL_CROUCH` | `gemini-3-pro-image` | `gemini-3-pro-image` |
@@ -84,6 +122,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | `CLOUDFLARE_API_TOKEN` | Least-privilege Wrangler token scoped to the Insert Player account and zone |
 | `METERKEY_API_KEY` | Production Gemini transport through the dedicated Insert Player Meterkey wallet and Google BYOK |
 | `GEMINI_API_KEY` | Direct Google rollback credential; production does not read it while `GEMINI_TRANSPORT=meterkey` |
+| `GOOGLE_MAPS_SERVER_KEY` | Worker-only key restricted to Street View Static API; never expose it as a `VITE_` variable |
 | `FAL_API_KEY` | Background removal and video generation |
 | `RUNWAY_API_KEY` | Configured provider fallback |
 | `FREEPIK_API_KEY` | Configured provider fallback |
@@ -119,17 +158,35 @@ Production is intentionally different because its Clerk instance accepts only so
 For both `develop` and `main`:
 
 - Require a pull request.
-- Require the `CI / Production gate` status check.
+- Require `validate / Production gate`, `JavaScript and TypeScript`, and `CodeQL`.
 - Require the branch to be current before merge.
 - Dismiss stale approvals when new commits arrive.
+- Apply the rules to administrators, resolve review conversations, and prohibit
+  force pushes and branch deletion.
 
-For `main`, also require CodeQL. Restrict direct pushes and force pushes; a separate human approval is optional rather than a release dependency.
+A separate human approval is optional rather than a release dependency for this
+owner-operated project; the pull request and automated gates are not optional.
 
 `CODEOWNERS` assigns the SqaaSSL team to every path so reviewers are discoverable, while the project owner may merge a production promotion after the required automated checks pass.
 
 ## Recovery
 
 If Worker deployment fails after a migration, fix forward; D1 migrations are transactional and recorded. If a newly deployed Worker is unhealthy, use Wrangler deployment history to roll back the Worker version, then investigate without deleting D1 or R2 data. Pages retains prior deployments that can be promoted from Cloudflare.
+
+Prefer rerunning the production workflow for the desired `main` commit. If
+GitHub Actions itself is unavailable and production must be restored, the local
+break-glass path requires all of the following at once:
+
+```bash
+export ASF_PRODUCTION_BREAK_GLASS=1
+export ASF_EXPECTED_PRODUCTION_SHA="$(git rev-parse HEAD)"
+export ASF_PRODUCTION_BREAK_GLASS_REASON="Restore production during confirmed GitHub Actions outage"
+```
+
+The checkout must be clean, `HEAD` must exactly equal the remotely verified
+`origin/main`, and the reason must be explicit. Use a temporary least-privilege
+Cloudflare token, record the incident and SHA, then revoke the token. Never keep
+production Cloudflare credentials in routine local development environments.
 
 Never delete fighter assets or historical versions as part of rollback or cleanup.
 

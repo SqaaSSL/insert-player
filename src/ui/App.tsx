@@ -47,6 +47,9 @@ const RosterPage = lazy(() => import('./routes/RosterPage.tsx').then((module) =>
 const CreateFighterPage = lazy(() => import('./routes/CreateFighterPage.tsx').then((module) => ({
   default: module.CreateFighterPage,
 })));
+const StageScoutPage = lazy(() => import('./routes/StageScoutPage.tsx').then((module) => ({
+  default: module.StageScoutPage,
+})));
 const OnlineVersusPage = lazy(() => import('./routes/OnlineVersusPage.tsx').then((module) => ({
   default: module.OnlineVersusPage,
 })));
@@ -68,6 +71,7 @@ type AppRoute =
   | '/community'
   | '/moderation'
   | '/fighters/new'
+  | '/stages/new'
   | '/roster/watch'
   | '/roster/cpu'
   | '/roster/vs'
@@ -106,6 +110,7 @@ export function legalReturnRouteFromState(state: unknown): AppRoute {
     candidate === '/community' ||
     candidate === '/moderation' ||
     candidate === '/fighters/new' ||
+    candidate === '/stages/new' ||
     candidate === '/roster/watch' ||
     candidate === '/roster/cpu' ||
     candidate === '/roster/vs' ||
@@ -130,6 +135,7 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   if (cleaned === '/community') return '/community';
   if (cleaned === '/moderation') return '/moderation';
   if (cleaned === '/fighters/new') return '/fighters/new';
+  if (cleaned === '/stages/new') return '/stages/new';
   if (cleaned === '/roster/watch') return '/roster/watch';
   if (cleaned === '/roster/cpu') return '/roster/cpu';
   if (cleaned === '/roster/vs') return '/roster/vs';
@@ -544,6 +550,7 @@ export function App({
           }));
         } : undefined}
         onCreateFighter={() => navigate('/fighters/new')}
+        onCreateStage={() => navigate('/stages/new')}
         onNavigateLegal={navigateToLegal}
         onOpenArcade={() => navigate('/arcade')}
         onOpenCoopRush={() => navigate('/roster/rush')}
@@ -626,6 +633,7 @@ export function App({
           authSessionKey={authSessionKey}
           onBack={() => navigate('/menu')}
           onCreateFighter={() => navigate('/fighters/new')}
+          onCreateStage={() => navigate('/stages/new')}
           onNavigateLegal={navigateToLegal}
         />
       );
@@ -678,6 +686,14 @@ export function App({
             navigate('/menu');
           }}
           onNavigateLegal={navigateToLegal}
+        />
+      );
+    }
+    if (route === '/stages/new') {
+      return (
+        <StageScoutPage
+          onBack={() => navigate('/gallery', 'tab=stages')}
+          onComplete={() => navigate('/gallery', 'tab=stages')}
         />
       );
     }

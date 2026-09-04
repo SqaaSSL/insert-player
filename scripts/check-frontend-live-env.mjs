@@ -31,6 +31,7 @@ const providerSecretKeys = [
   'VITE_STRIPE_SECRET_KEY',
   'VITE_STRIPE_WEBHOOK_SECRET',
   'VITE_TURNSTILE_SECRET_KEY',
+  'VITE_GOOGLE_MAPS_SERVER_KEY',
 ];
 
 function parseEnvText(text, values) {
@@ -171,6 +172,13 @@ assertLiveValue(
   'VITE_TURNSTILE_SITE_KEY',
   (value) => /^0x[A-Za-z0-9_-]{20,}$/.test(value),
   'VITE_TURNSTILE_SITE_KEY must be the production Insert Player widget site key.',
+);
+
+assertLiveValue(
+  errors,
+  'VITE_GOOGLE_MAPS_BROWSER_KEY',
+  (value) => /^AIza[A-Za-z0-9_-]{30,}$/.test(value),
+  'VITE_GOOGLE_MAPS_BROWSER_KEY must be a browser-restricted Google Maps key.',
 );
 
 assertBrandClearanceMatches(errors);

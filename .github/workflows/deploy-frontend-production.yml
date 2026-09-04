@@ -38,6 +38,7 @@ jobs:
       VITE_PUBLIC_APP_NAME: Insert Player
       VITE_PUBLIC_APP_SHORT_NAME: P1
       VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+      VITE_GOOGLE_MAPS_BROWSER_KEY: ${{ vars.VITE_GOOGLE_MAPS_BROWSER_KEY }}
       VITE_GEMINI_IMAGE_MODEL_REPOSE: ${{ vars.VITE_GEMINI_IMAGE_MODEL_REPOSE }}
       VITE_GEMINI_IMAGE_MODEL_UPRIGHT: ${{ vars.VITE_GEMINI_IMAGE_MODEL_UPRIGHT }}
       VITE_GEMINI_IMAGE_MODEL_CROUCH: ${{ vars.VITE_GEMINI_IMAGE_MODEL_CROUCH }}
@@ -61,6 +62,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Attest canonical production source
+        run: |
+          node scripts/production-deploy-guard.mjs
+          printf 'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s\n' "$GITHUB_SHA" >> "$GITHUB_ENV"
+
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
@@ -72,13 +78,13 @@ jobs:
             processor/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Install Worker dependencies
-        run: npm --prefix worker ci
+        run: npm --prefix worker ci --no-audit --no-fund
 
       - name: Install processor dependencies
-        run: npm --prefix processor ci
+        run: npm --prefix processor ci --no-audit --no-fund
 
       - name: Materialize brand clearance
         env:

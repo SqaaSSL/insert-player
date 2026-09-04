@@ -30,6 +30,14 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
     anonymous: { limit: 1, windowSeconds: 24 * 60 * 60 },
     signedIn: { limit: 240, windowSeconds: 24 * 60 * 60 },
   },
+  'maps:capture': {
+    anonymous: { limit: 4, windowSeconds: 24 * 60 * 60 },
+    signedIn: { limit: 60, windowSeconds: 24 * 60 * 60 },
+  },
+  'billing:stage-forge': {
+    anonymous: { limit: 1, windowSeconds: 24 * 60 * 60 },
+    signedIn: { limit: 60, windowSeconds: 24 * 60 * 60 },
+  },
   'billing:checkout': {
     anonymous: { limit: 4, windowSeconds: 60 * 60 },
     signedIn: { limit: 20, windowSeconds: 60 * 60 },

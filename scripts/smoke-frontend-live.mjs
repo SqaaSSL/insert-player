@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeClerkPublishableKey } from './clerk-publishable-key.mjs';
+import { FULL_GIT_SHA } from './production-deploy-guard-lib.mjs';
+import { frontendReleaseManifestIssue } from './release-provenance.mjs';
 import {
   frontendAssetProbeUrl,
   frontendShellReadinessError,
@@ -71,6 +73,7 @@ const expectedSocialCardMime = /\.jpe?g(?:$|[?#])/i.test(expectedSocialCardPath)
     ? 'image/webp'
     : 'image/png';
 const expectedAssetPath = envValue(env, 'ASF_EXPECTED_FRONTEND_ASSET_PATH');
+const expectedGitSha = envValue(env, 'ASF_EXPECTED_FRONTEND_GIT_SHA').toLowerCase();
 const assetProbeNonce = envValue(env, 'ASF_FRONTEND_ASSET_PROBE_NONCE');
 const FETCH_TIMEOUT_MS = parsePositiveTimeoutMs(
   envValue(env, 'ASF_FRONTEND_SMOKE_TIMEOUT_MS'),
@@ -217,6 +220,12 @@ async function main() {
   if (expectedAssetPath && !/^\/assets\/[A-Za-z0-9._-]+\.js$/.test(expectedAssetPath)) {
     throw new Error('ASF_EXPECTED_FRONTEND_ASSET_PATH must be a root-relative JavaScript asset path.');
   }
+  if (expectedGitSha && !FULL_GIT_SHA.test(expectedGitSha)) {
+    throw new Error('ASF_EXPECTED_FRONTEND_GIT_SHA must be a full Git commit SHA.');
+  }
+  if (expectedGitSha && !expectedAssetPath) {
+    throw new Error('ASF_EXPECTED_FRONTEND_GIT_SHA requires ASF_EXPECTED_FRONTEND_ASSET_PATH.');
+  }
 
   assert(expectedClerkOrigin, 'Frontend smoke requires a valid Clerk publishable key');
   const home = await waitForFrontendText('frontend home', '/', {
@@ -251,8 +260,14 @@ async function main() {
     ['script-src', 'https://challenges.cloudflare.com'],
     ['script-src', expectedClerkOrigin],
     ['script-src', 'https://*.protect.clerk.com'],
+    ['script-src', "'unsafe-eval'"],
+    ['script-src', 'https://*.googleapis.com'],
+    ['script-src', 'https://*.gstatic.com'],
     ['style-src', "'unsafe-inline'"],
+    ['style-src', 'https://fonts.googleapis.com'],
     ['img-src', 'blob:'],
+    ['img-src', 'https://*.googleapis.com'],
+    ['img-src', 'https://*.gstatic.com'],
     ['img-src', 'https://img.clerk.com'],
     ['img-src', expectedApiOrigin],
     ['media-src', expectedApiOrigin],
@@ -260,8 +275,12 @@ async function main() {
     ['connect-src', expectedApiWebSocketOrigin],
     ['connect-src', expectedClerkOrigin],
     ['connect-src', 'https://*.protect.clerk.com'],
+    ['connect-src', 'https://*.googleapis.com'],
+    ['connect-src', 'https://*.gstatic.com'],
     ['frame-src', 'https://challenges.cloudflare.com'],
     ['frame-src', 'https://*.protect.clerk.com'],
+    ['frame-src', 'https://*.google.com'],
+    ['font-src', 'https://fonts.gstatic.com'],
     ['worker-src', 'blob:'],
     ['manifest-src', "'self'"],
   ]) assertCspSource(csp, directive, source);
@@ -278,7 +297,7 @@ async function main() {
     }
   }
   assert(csp.has('upgrade-insecure-requests'), 'Frontend CSP must upgrade insecure requests');
-  assert(!csp.get('script-src')?.includes("'unsafe-eval'"), 'Frontend CSP must not allow unsafe eval');
+  assert(csp.get('script-src')?.includes("'unsafe-eval'"), 'Frontend CSP must include the Google Maps JavaScript compatibility policy');
   assert(!csp.get('script-src')?.includes("'unsafe-inline'"), 'Frontend CSP must not allow inline scripts');
   assert(home.res.headers.get('Permissions-Policy') === 'camera=(), microphone=(), geolocation=()', 'Frontend shell missing permissions policy');
   assert(
@@ -312,6 +331,33 @@ async function main() {
   }
   assert(home.text.includes('name="twitter:card" content="summary_large_image"'), 'Home HTML missing large Twitter/X card metadata');
   log('frontend root serves the app shell');
+
+  if (expectedGitSha) {
+    const release = await waitForFrontendText('frontend release provenance', '/release.json', {
+      targetForAttempt: assetProbeNonce
+        ? (attempt) => frontendAssetProbeUrl(frontendUrl, '/release.json', assetProbeNonce, attempt)
+        : undefined,
+      readinessError: ({ text }) => {
+        try {
+          return frontendReleaseManifestIssue(JSON.parse(text), {
+            expectedGitSha,
+            expectedEntryAssetPath: expectedAssetPath,
+          });
+        } catch {
+          return 'release.json is not valid JSON';
+        }
+      },
+    });
+    const releaseManifest = JSON.parse(release.text);
+    assert(
+      !frontendReleaseManifestIssue(releaseManifest, {
+        expectedGitSha,
+        expectedEntryAssetPath: expectedAssetPath,
+      }),
+      'Frontend release provenance changed after readiness verification',
+    );
+    log(`frontend release provenance matches commit ${expectedGitSha}`);
+  }
 
   const manifest = await fetchText('web app manifest', '/site.webmanifest');
   const manifestJson = JSON.parse(manifest.text);

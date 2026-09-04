@@ -142,7 +142,8 @@ function assertBillingUsesRequestOrigin() {
     'fighterId?: string | null',
     'function formatBillingError',
     "'Not enough credits'",
-    'Not enough credits. ${body.requiredCredits} credits required.',
+    "body.requiredCredits === 1 ? 'credit' : 'credits'",
+    'Not enough credits. ${body.requiredCredits} ${unit} required.',
     "typeof body.creditsBalance === 'number'",
     'return body.error.trim()',
     'formatBillingError(json, `Checkout failed (${res.status})`)',
@@ -615,6 +616,7 @@ function assertNoClientProviderSecrets() {
     'VITE_LUDO_API_KEY',
     'VITE_STRIPE_SECRET_KEY',
     'VITE_STRIPE_WEBHOOK_SECRET',
+    'VITE_GOOGLE_MAPS_SERVER_KEY',
   ];
   const offenders = [];
   for (const file of [
@@ -707,6 +709,8 @@ function assertLiveConfigHelperIsWired() {
     "'VITE_CLERK_PUBLISHABLE_KEY'",
     "'VITE_PUBLIC_APP_NAME'",
     "'VITE_PUBLIC_APP_SHORT_NAME'",
+    "'VITE_GOOGLE_MAPS_BROWSER_KEY'",
+    "'GOOGLE_MAPS_SERVER_KEY'",
     'ASF_FRONTEND_ORIGIN',
     'ASF_BRAND_CLEARANCE_FILE',
     'CLERK_ISSUER',
@@ -805,7 +809,8 @@ function assertLiveConfigHelperIsWired() {
     'records unsupported types as ignored audit entries',
     '"check:frontend-live": "node scripts/check-frontend-live-env.mjs"',
     '"deploy:frontend": "node scripts/deploy-frontend-pages.mjs"',
-    '"deploy:worker": "npm run check:production && cd worker && npm run deploy"',
+    '"release:guard": "node scripts/production-deploy-guard.mjs"',
+    '"deploy:worker": "npm run release:guard && npm run check:production && cd worker && npm run deploy"',
     'ASF_PAGES_PROJECT_NAME=insert-player',
     'Frontend Pages deploy target:',
     '"db:migrate": "node ../scripts/wrangler-workspace-log.mjs d1 migrations apply insert-player-db --remote"',
@@ -962,6 +967,7 @@ function assertSandboxIsolationIsWired() {
     'CLERK_WEBHOOK_SIGNING_SECRET',
     'ANONYMIZATION_SECRET',
     'GENERATION_JOB_SIGNING_SECRET',
+    'GOOGLE_MAPS_SERVER_KEY',
   ];
   const inlineSecrets = secretKeys.filter((key) => new RegExp(`^\\s*${key}\\s*=`, 'm').test(sandboxConfig));
   if (inlineSecrets.length > 0) {
@@ -3097,6 +3103,7 @@ function assertHeavyRoutesStayLazy() {
     'GalleryPage',
     'RosterPage',
     'CreateFighterPage',
+    'StageScoutPage',
     'CommunityPage',
     'ModerationPage',
   ];
@@ -3632,17 +3639,198 @@ function assertOfficialArcadeIsWired() {
   }
 }
 
+function assertStageScoutIsWired() {
+  const requiredByFile = {
+    'src/ui/App.tsx': [
+      "import('./routes/StageScoutPage.tsx')",
+      "'/stages/new'",
+      "navigate('/gallery', 'tab=stages')",
+    ],
+    'src/ui/routes/StageScoutPage.tsx': [
+      'StreetViewCoverageLayer',
+      'captureGoogleStreetView',
+      'Forge Stage',
+      'Use Photo',
+      'Stage Ready',
+      'STAGE_FORGE_CREDIT_COST',
+    ],
+    'src/services/GoogleMapsPlatform.ts': [
+      'VITE_GOOGLE_MAPS_BROWSER_KEY',
+      "'/api/maps/street-view/capture'",
+      'auth_referrer_policy=origin',
+    ],
+    'src/services/StageBackgroundService.ts': [
+      'authorizeStageForge(apiContext)',
+      'finishGenerationPurchase',
+      'STAGE_GAMEPLAY_CLEARANCE_PROMPT_MARKER',
+      'createDirectPhotoStage',
+    ],
+    'src/services/StageBackgroundPrompt.ts': [
+      'STAGE_GAMEPLAY_CLEARANCE_PROMPT_MARKER',
+      'lower 38%',
+      'Edit only the minimum set of objects',
+    ],
+    'src/shared/StageForgePricing.ts': [
+      'STAGE_FORGE_CREDIT_COST = 1',
+    ],
+    'worker/src/index.ts': [
+      "path === '/api/maps/street-view/capture'",
+      "path === '/api/billing/stage-forge'",
+      "mapsCapture: env.GOOGLE_MAPS_SERVER_KEY ? 'configured' : 'not_configured'",
+    ],
+    'worker/src/googleMaps.ts': [
+      'GOOGLE_MAPS_SERVER_KEY',
+      "upstreamUrl.searchParams.set('pano'",
+      "locationUrl.searchParams.set('location'",
+      "'Cache-Control': 'private, no-store'",
+      'MAX_CAPTURE_BYTES',
+    ],
+    'worker/src/billing.ts': [
+      'authorizeStageForgePurchase',
+      "'stage_forge'",
+      "purpose: 'stage_background'",
+      'STAGE_FORGE_CREDIT_COST',
+    ],
+    'worker/src/rateLimit.ts': [
+      "'maps:capture'",
+      "'billing:stage-forge'",
+    ],
+    'scripts/frontend-security-headers.mjs': [
+      'https://*.googleapis.com',
+      'https://*.gstatic.com',
+      'https://*.google.com',
+    ],
+    'scripts/check-live-readiness.mjs': [
+      "'GOOGLE_MAPS_SERVER_KEY'",
+      "'VITE_GOOGLE_MAPS_BROWSER_KEY'",
+      "['mapsCapture', 'configured']",
+    ],
+    '.github/workflows/deploy-production.yml': [
+      'VITE_GOOGLE_MAPS_BROWSER_KEY: ${{ vars.VITE_GOOGLE_MAPS_BROWSER_KEY }}',
+      'GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}',
+    ],
+    '.github/workflows/deploy-development.yml': [
+      'VITE_GOOGLE_MAPS_BROWSER_KEY: ${{ vars.VITE_GOOGLE_MAPS_BROWSER_KEY }}',
+      'GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}',
+    ],
+  };
+  const missing = [];
+  for (const [path, snippets] of Object.entries(requiredByFile)) {
+    if (!existsSync(join(root, path))) {
+      missing.push(`${path}: file missing`);
+      continue;
+    }
+    const source = readFileSync(join(root, path), 'utf8');
+    for (const snippet of snippets) {
+      if (!source.includes(snippet)) missing.push(`${path}: ${snippet}`);
+    }
+  }
+
+  const productionWrangler = readFileSync(join(root, 'worker/wrangler.toml'), 'utf8');
+  if (/^\s*GOOGLE_MAPS_SERVER_KEY\s*=/m.test(productionWrangler)) {
+    missing.push('worker/wrangler.toml: GOOGLE_MAPS_SERVER_KEY must remain a secret');
+  }
+  for (const file of walk(join(root, 'src'))) {
+    const source = readFileSync(file, 'utf8');
+    if (source.includes('VITE_GOOGLE_MAPS_SERVER_KEY')) {
+      missing.push(`${relative(root, file)}: server key exposed to Vite`);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(`Stage Scout production wiring is incomplete:\n- ${missing.join('\n- ')}`);
+  }
+}
+
+function assertCanonicalProductionReleaseIsWired() {
+  const requiredByFile = {
+    'scripts/production-deploy-guard-lib.mjs': [
+      'Routine production deploys are CI-only',
+      "githubRef !== 'refs/heads/main'",
+      "const ATTESTED_CI_GENERATED_PATHS = new Set(['worker/wrangler.toml'])",
+      'export function isProductionWranglerMutation',
+      'export function statusOutsideAttestedCiGeneration',
+    ],
+    'scripts/production-deploy-guard.mjs': [
+      "['ls-remote', '--exit-code', 'origin', 'refs/heads/main']",
+      'ASF_CANONICAL_RELEASE_ATTESTED_SHA',
+      'ASF_PRODUCTION_BREAK_GLASS_REASON',
+    ],
+    'scripts/wrangler-workspace-log.mjs': [
+      'isProductionWranglerMutation(wranglerArgs)',
+      'assertProductionDeployAllowed({ root })',
+    ],
+    'scripts/apply-live-config.mjs': [
+      'const mutatesProduction =',
+      'assertProductionDeployAllowed({ root })',
+    ],
+    'scripts/worker-version-rollout.mjs': [
+      "['rollback', 'stage', 'promote'].includes(action)",
+      'assertProductionDeployAllowed({ root })',
+    ],
+    'scripts/deploy-prelaunch-pages.mjs': [
+      'assertProductionDeployAllowed({ root })',
+    ],
+    'scripts/deploy-frontend-pages.mjs': [
+      'writeFrontendReleaseManifest',
+      'ASF_EXPECTED_FRONTEND_GIT_SHA',
+      'assertProductionDeployAllowed({ root })',
+    ],
+    'scripts/smoke-frontend-live.mjs': [
+      'ASF_EXPECTED_FRONTEND_GIT_SHA',
+      "'/release.json'",
+      'frontendReleaseManifestIssue',
+    ],
+    'scripts/release-provenance.mjs': [
+      "environment: 'production'",
+      "join(distDir, 'release.json')",
+      'entryAssetPath',
+    ],
+    '.github/workflows/deploy-production.yml': [
+      'Attest canonical production source',
+      'node scripts/production-deploy-guard.mjs',
+      'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s',
+    ],
+    '.github/workflows/deploy-frontend-production.yml': [
+      'Attest canonical production source',
+      'node scripts/production-deploy-guard.mjs',
+      'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s',
+    ],
+    '.github/DEPLOYMENT.md': [
+      'GitHub Actions is the only routine production deployment path',
+      '`/release.json`',
+      'ASF_PRODUCTION_BREAK_GLASS=1',
+      'remotely verified',
+    ],
+  };
+  const missing = [];
+  for (const [path, snippets] of Object.entries(requiredByFile)) {
+    if (!existsSync(join(root, path))) {
+      missing.push(`${path}: file missing`);
+      continue;
+    }
+    const source = readFileSync(join(root, path), 'utf8');
+    for (const snippet of snippets) {
+      if (!source.includes(snippet)) missing.push(`${path}: ${snippet}`);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(`Canonical production release guard is incomplete:\n- ${missing.join('\n- ')}`);
+  }
+}
+
 function assertGithubActionsAreWired() {
   const files = {
     validation: '.github/workflows/validate.yml',
     ci: '.github/workflows/ci.yml',
     development: '.github/workflows/deploy-development.yml',
     production: '.github/workflows/deploy-production.yml',
+    frontendProduction: '.github/workflows/deploy-frontend-production.yml',
     xaiCanary: '.github/workflows/arcade-side-xai-canary-production.yml',
     xaiGlobal: '.github/workflows/arcade-side-xai-global-production.yml',
     xaiHighKick: '.github/workflows/arcade-high-kick-xai-canary-production.yml',
     xaiQaMotion: '.github/workflows/arcade-qa-motion-xai-canary-production.yml',
     codeql: '.github/workflows/codeql.yml',
+    dependencySecurity: '.github/workflows/dependency-security.yml',
     dependabot: '.github/dependabot.yml',
     codeowners: '.github/CODEOWNERS',
     runbook: '.github/DEPLOYMENT.md',
@@ -3664,13 +3852,16 @@ function assertGithubActionsAreWired() {
       'npm run build:sandbox',
       'npm --prefix worker run deploy -- --dry-run',
       'npm --prefix worker run deploy:sandbox -- --dry-run',
-      'npm audit --audit-level=high',
+      'vulnerability-alerts: read',
+      'dependabot/alerts',
+      'security_advisory.severity',
     ],
     ci: [
       'pull_request:',
       '- develop',
       '- main',
       'uses: ./.github/workflows/validate.yml',
+      'vulnerability-alerts: read',
     ],
     development: [
       'group: deploy-development',
@@ -3683,6 +3874,7 @@ function assertGithubActionsAreWired() {
       'secrets.ANONYMIZATION_SECRET',
       'secrets.GENERATION_JOB_SIGNING_SECRET',
       'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+      'vulnerability-alerts: read',
     ],
     production: [
       'group: production-worker-mutations',
@@ -3712,6 +3904,17 @@ function assertGithubActionsAreWired() {
       'secrets.CLERK_WEBHOOK_SIGNING_SECRET',
       'secrets.GENERATION_JOB_SIGNING_SECRET',
       'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+      'vulnerability-alerts: read',
+    ],
+    frontendProduction: [
+      'workflow_dispatch:',
+      'group: production-worker-mutations',
+      'name: production',
+      'Attest canonical production source',
+      'node scripts/production-deploy-guard.mjs',
+      'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s',
+      'Guard frontend/Worker contract drift',
+      'npm run deploy:frontend',
     ],
     xaiCanary: [
       'workflow_dispatch:',
@@ -3792,9 +3995,18 @@ function assertGithubActionsAreWired() {
       'github/codeql-action/analyze@v4',
       'security-events: write',
     ],
+    dependencySecurity: [
+      'pull_request:',
+      'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294',
+      'fail-on-severity: high',
+      'fail-on-scopes: runtime, development, unknown',
+      'license-check: false',
+      'show-openssf-scorecard: false',
+    ],
     dependabot: [
       'package-ecosystem: npm',
       'directory: /worker',
+      'directory: /processor',
       'package-ecosystem: github-actions',
     ],
     codeowners: [
@@ -4091,6 +4303,8 @@ assertOfficialArcadeIsWired();
 assertDurableGenerationIsWired();
 assertXaiArcadeSidePromptIsProviderScoped();
 assertArcadeExperimentArchiveIsImmutable();
+assertStageScoutIsWired();
+assertCanonicalProductionReleaseIsWired();
 assertGithubActionsAreWired();
 run('prelaunch bundle isolation', node, ['scripts/build-prelaunch.mjs', '--skip-checks']);
 

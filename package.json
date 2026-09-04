@@ -77,7 +77,8 @@
     "config:live": "node scripts/apply-live-config.mjs --require-complete --deploy-worker",
     "config:sandbox": "node scripts/apply-sandbox-config.mjs --require-complete --deploy-worker",
     "config:launch-smoke:production": "node scripts/configure-launch-smoke-users.mjs",
-    "deploy:worker": "npm run check:production && cd worker && npm run deploy",
+    "release:guard": "node scripts/production-deploy-guard.mjs",
+    "deploy:worker": "npm run release:guard && npm run check:production && cd worker && npm run deploy",
     "deploy:worker:sandbox": "npm run check:production && npm --prefix worker run deploy:sandbox",
     "db:migrate:sandbox": "npm --prefix worker run db:migrate:sandbox",
     "deploy:frontend": "node scripts/deploy-frontend-pages.mjs",
@@ -100,6 +101,7 @@
   },
   "devDependencies": {
     "@clerk/backend": "^3.16.10",
+    "@types/google.maps": "^3.58.1",
     "@tailwindcss/vite": "^4.2.2",
     "fake-indexeddb": "^6.2.5",
     "playwright": "^1.62.1",

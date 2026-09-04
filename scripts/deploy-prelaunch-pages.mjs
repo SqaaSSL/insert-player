@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { assertProductionDeployAllowed } from './production-deploy-guard.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -23,6 +24,7 @@ try {
   if (!process.argv.includes('--confirm-production')) {
     throw new Error('Prelaunch Pages deploy requires --confirm-production.');
   }
+  assertProductionDeployAllowed({ root });
   run('production checks', npm, ['run', 'check:production']);
   run('prelaunch build', npm, ['run', 'build:prelaunch']);
   run(

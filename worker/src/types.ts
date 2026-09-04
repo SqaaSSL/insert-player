@@ -15,6 +15,7 @@ export interface Env extends OptionalCloudflareBindings {
   CORS_ORIGIN: Cloudflare.Env['CORS_ORIGIN'];
   CLERK_JWKS_URL?: string;
   CLERK_BACKEND_AUTH_BRIDGE_SECRET?: string;
+  GOOGLE_MAPS_SERVER_KEY?: string;
   /** Optional Cloudflare Realtime TURN credentials for online versus. */
   REALTIME_TURN_KEY_ID?: string;
   REALTIME_TURN_API_TOKEN?: string;

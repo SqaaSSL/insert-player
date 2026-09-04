@@ -91,6 +91,20 @@ interface CachedIntro {
 
 type CachedStageKind = 'generated' | 'photo' | 'photo-direct';
 
+interface CachedStageSource {
+  provider: 'google-street-view';
+  panoId: string;
+  latitude: number;
+  longitude: number;
+  heading: number;
+  pitch: number;
+  fov: number;
+  locationLabel?: string;
+  imageDate?: string | null;
+  copyright?: string | null;
+  capturedAt: number;
+}
+
 interface CachedStageBackground {
   ownerScope?: string;
   stageKey: string;
@@ -99,6 +113,7 @@ interface CachedStageBackground {
   createdAt: number;
   kind?: CachedStageKind;
   label?: string;
+  source?: CachedStageSource;
 }
 
 const CACHE_VERSION = 1;
@@ -1004,5 +1019,6 @@ export type {
   CachedMeta,
   CachedStageBackground,
   CachedStageKind,
+  CachedStageSource,
   CachedFailedAnimationArtifact,
 };

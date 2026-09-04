@@ -2,6 +2,7 @@ import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 import {
   authorizeGenerationPurchase,
+  authorizeStageForgePurchase,
   completeGenerationPurchase,
   getCreditCheckoutStatus,
   handleStripeWebhook,
@@ -203,6 +204,16 @@ const SCHEMA = `
 
 const webhookSecret = 'whsec_insert_player_integration';
 const stripeAccountId = 'acct_insertplayer';
+
+const generationLegal = {
+  legalVersion: CURRENT_LEGAL_VERSION,
+  ageConfirmed: true,
+  termsAccepted: true,
+  photoRightsConfirmed: true,
+  aiProcessingConfirmed: true,
+  immediatePerformanceConfirmed: true,
+  withdrawalLossAcknowledged: true,
+};
 
 function metadata(sessionToken: string, userId: string) {
   return {
@@ -406,6 +417,110 @@ describe('Exact checkout verification against D1', () => {
         'https://api.insertplayer.ai/api/billing/checkout-status?session_id=checkout-owner-paid',
       ), env, auth);
       expect(malformed.status).toBe(400);
+    } finally {
+      await mf.dispose();
+    }
+  });
+});
+
+describe('Stage Forge credit reservations against D1', () => {
+  it('reserves one credit with a metered stage provider session and releases it before dispatch', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-stage-forge';
+    const auth = {
+      userId,
+      rateLimitKey: `user:${userId}`,
+      claims: {},
+      user: { id: userId, credits_balance: 3 },
+    } as unknown as PublicAuthContext;
+    try {
+      await db.prepare(`
+        INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+        VALUES (?, ?, 'Stage Forger', 3)
+      `).bind(userId, userId).run();
+
+      const response = await authorizeStageForgePurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/stage-forge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ legal: generationLegal }),
+        },
+      ), env, auth);
+      expect(response.status).toBe(200);
+      const receipt = await response.json() as {
+        purchaseId: string;
+        providerSessionId: string;
+      };
+      expect(receipt).toMatchObject({
+        authorized: true,
+        mode: 'credits',
+        creditsCharged: 1,
+        creditsBalance: 2,
+        providerCallLimit: 1,
+      });
+      expect(await db.prepare(`
+        SELECT credit_cost, status, reason, fighter_id
+        FROM generation_charges WHERE id = ?
+      `).bind(receipt.purchaseId).first()).toEqual({
+        credit_cost: 1,
+        status: 'reserved',
+        reason: 'stage_forge',
+        fighter_id: null,
+      });
+      expect(await db.prepare(`
+        SELECT purpose, charge_id, provider_call_limit
+        FROM provider_sessions WHERE id = ?
+      `).bind(receipt.providerSessionId).first()).toEqual({
+        purpose: 'stage_background',
+        charge_id: receipt.purchaseId,
+        provider_call_limit: 1,
+      });
+
+      await settleGenerationPurchase(env, userId, receipt.purchaseId, false, null);
+      expect(await db.prepare(
+        'SELECT credits_balance FROM users WHERE id = ?',
+      ).bind(userId).first()).toEqual({ credits_balance: 3 });
+      expect(await db.prepare(
+        'SELECT status FROM generation_charges WHERE id = ?',
+      ).bind(receipt.purchaseId).first()).toEqual({ status: 'refunded' });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('rejects a zero-balance forge without creating billing or provider rows', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-stage-forge-empty';
+    const auth = {
+      userId,
+      rateLimitKey: `user:${userId}`,
+      claims: {},
+      user: { id: userId, credits_balance: 0 },
+    } as unknown as PublicAuthContext;
+    try {
+      await db.prepare(`
+        INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+        VALUES (?, ?, 'Empty Forger', 0)
+      `).bind(userId, userId).run();
+
+      const response = await authorizeStageForgePurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/stage-forge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ legal: generationLegal }),
+        },
+      ), env, auth);
+      expect(response.status).toBe(402);
+      expect(await response.json()).toEqual({
+        authorized: false,
+        error: 'Not enough credits',
+        requiredCredits: 1,
+        creditsBalance: 0,
+      });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first())
+        .toEqual({ count: 0 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first())
+        .toEqual({ count: 0 });
     } finally {
       await mf.dispose();
     }

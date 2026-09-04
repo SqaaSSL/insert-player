@@ -4,7 +4,12 @@ import { getStageTheme, type StageThemeId } from '../game/match/StageConfig.ts';
 import { geminiStageBackground } from './GeminiApi.ts';
 import { blobToBase64, resizeImageForApi } from './FreepikApi.ts';
 import { captureApiRequestContext, runWithProviderSession } from './ApiClient.ts';
-import { authorizeProviderSession } from './Billing.ts';
+import { STAGE_GAMEPLAY_CLEARANCE_PROMPT_MARKER } from './StageBackgroundPrompt.ts';
+import {
+  authorizeProviderSession,
+  authorizeStageForge,
+  finishGenerationPurchase,
+} from './Billing.ts';
 import {
   hashPhoto,
   getActiveSpriteCacheScope,
@@ -12,6 +17,7 @@ import {
   getCachedStageBackground,
   setCachedStageBackground,
   type CachedStageBackground,
+  type CachedStageSource,
 } from './SpriteCache.ts';
 
 const STAGE_BACKGROUND_VERSION = 'stage-v1';
@@ -37,6 +43,13 @@ export interface StageBackgroundRequest {
   fighterTwoPhotoHash?: string | null;
 }
 
+export interface PhotoStageCreationResult {
+  stage: CachedStageBackground;
+  creditsCharged: number;
+  creditsBalance?: number;
+  billingMode: 'credits' | 'cache' | 'local';
+}
+
 export function buildPhotoStageKey(photoHash: string): string {
   return `${PHOTO_STAGE_PREFIX}:${photoHash}`;
 }
@@ -45,53 +58,91 @@ export function buildDirectPhotoStageKey(photoHash: string): string {
   return `${DIRECT_STAGE_PREFIX}:${photoHash}`;
 }
 
-export async function createPhotoStage(file: Blob, label?: string): Promise<CachedStageBackground> {
+export async function createPhotoStage(
+  file: Blob,
+  label?: string,
+  source?: CachedStageSource,
+): Promise<PhotoStageCreationResult> {
   const apiContext = captureApiRequestContext();
   const ownerScope = getActiveSpriteCacheScope();
   const photoHash = await hashPhoto(file);
   const stageKey = buildPhotoStageKey(photoHash);
+  const safeLabel = sanitizeStageLabel(label);
   const cached = await getCachedStageBackground(stageKey, ownerScope);
-  if (cached) return cached;
+  if (cached?.prompt.includes(STAGE_GAMEPLAY_CLEARANCE_PROMPT_MARKER)) {
+    return {
+      stage: await updateCachedPhotoStage(cached, safeLabel, source),
+      creditsCharged: 0,
+      billingMode: 'cache',
+    };
+  }
 
   const base64 = await blobToBase64(file);
   const resized = await resizeImageForApi(base64);
-  const safeLabel = sanitizeStageLabel(label);
-  const providerSession = await authorizeProviderSession('stage_background', apiContext);
-  if (providerSession.error) throw new Error(providerSession.error);
-  const result = await runWithProviderSession(providerSession.providerSessionId, (providerContext) =>
-    geminiStageBackground({
-      stageLabel: safeLabel,
-      stageBlurb: 'Transform the supplied location photo into a stylized side-on 2D fighting game arena.',
-      sourceImage: { data: resized, mime: 'image/jpeg' },
-      sourceMode: 'transform-scene',
-    }, providerContext),
-  apiContext);
-  const pngBlob = await normalizeStageImage(result.imageBase64, {
-    bottomShadeAlpha: 0.04,
-    verticalBias: 0.92,
-  });
-  const created: CachedStageBackground = {
-    ownerScope,
-    stageKey,
-    prompt: result.prompt,
-    pngBlob,
-    createdAt: Date.now(),
-    kind: 'photo',
-    label: safeLabel,
-  };
+  const authorization = await authorizeStageForge(apiContext);
+  if (!authorization.authorized) {
+    throw new Error(authorization.error ?? 'Stage Forge was not authorized.');
+  }
 
-  await setCachedStageBackground(created);
-  return created;
+  let purchaseSettled = false;
+  try {
+    const result = await runWithProviderSession(authorization.providerSessionId, (providerContext) =>
+      geminiStageBackground({
+        stageLabel: safeLabel,
+        stageBlurb: 'Transform the supplied location photo into a stylized side-on 2D fighting game arena.',
+        sourceImage: { data: resized, mime: 'image/jpeg' },
+        sourceMode: 'transform-scene',
+      }, providerContext),
+    apiContext);
+    const pngBlob = await normalizeStageImage(result.imageBase64, {
+      bottomShadeAlpha: 0.04,
+      verticalBias: 0.92,
+    });
+    const created: CachedStageBackground = {
+      ownerScope,
+      stageKey,
+      prompt: result.prompt,
+      pngBlob,
+      createdAt: Date.now(),
+      kind: 'photo',
+      label: safeLabel,
+      source,
+    };
+
+    await setCachedStageBackground(created);
+    await finishGenerationPurchase(authorization.purchaseId, true, null, apiContext);
+    purchaseSettled = true;
+    return {
+      stage: created,
+      creditsCharged: authorization.creditsCharged,
+      creditsBalance: authorization.creditsBalance,
+      billingMode: authorization.mode === 'local' ? 'local' : 'credits',
+    };
+  } catch (error) {
+    if (!purchaseSettled) {
+      try {
+        await finishGenerationPurchase(authorization.purchaseId, false, null, apiContext);
+      } catch {
+        // The original generation error is more useful to the player. Provider-side
+        // accounting remains authoritative if the paid call already started.
+      }
+    }
+    throw error;
+  }
 }
 
-export async function createDirectPhotoStage(file: Blob, label?: string): Promise<CachedStageBackground> {
+export async function createDirectPhotoStage(
+  file: Blob,
+  label?: string,
+  source?: CachedStageSource,
+): Promise<CachedStageBackground> {
   const ownerScope = getActiveSpriteCacheScope();
   const photoHash = await hashPhoto(file);
   const stageKey = buildDirectPhotoStageKey(photoHash);
-  const cached = await getCachedStageBackground(stageKey, ownerScope);
-  if (cached) return cached;
-
   const safeLabel = sanitizeStageLabel(label);
+  const cached = await getCachedStageBackground(stageKey, ownerScope);
+  if (cached) return updateCachedPhotoStage(cached, safeLabel, source);
+
   const pngBlob = await normalizeStageBlob(file, {
     bottomShadeAlpha: 0.02,
     verticalBias: 0.82,
@@ -104,10 +155,26 @@ export async function createDirectPhotoStage(file: Blob, label?: string): Promis
     createdAt: Date.now(),
     kind: 'photo-direct',
     label: safeLabel,
+    source,
   };
 
   await setCachedStageBackground(created);
   return created;
+}
+
+async function updateCachedPhotoStage(
+  cached: CachedStageBackground,
+  label: string,
+  source?: CachedStageSource,
+): Promise<CachedStageBackground> {
+  if (cached.label === label && (!source || cached.source === source)) return cached;
+  const updated = {
+    ...cached,
+    label,
+    source: source ?? cached.source,
+  };
+  await setCachedStageBackground(updated);
+  return updated;
 }
 
 export function buildStageBackgroundKey(

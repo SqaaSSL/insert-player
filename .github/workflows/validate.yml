@@ -5,12 +5,16 @@ on:
 
 permissions:
   contents: read
+  vulnerability-alerts: read
 
 jobs:
   validate:
     name: Production gate
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Dependency restores occasionally spend several minutes per workspace on
+    # GitHub-hosted runners. Keep the gate fail-closed, but leave enough room
+    # for the real Docker/FFmpeg and production checks after a slow npm mirror.
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -29,13 +33,13 @@ jobs:
             processor/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Install Worker dependencies
-        run: npm --prefix worker ci
+        run: npm --prefix worker ci --no-audit --no-fund
 
       - name: Install processor dependencies
-        run: npm --prefix processor ci
+        run: npm --prefix processor ci --no-audit --no-fund
 
       - name: Test video compiler with production FFmpeg toolchain
         run: docker build --file Dockerfile.processor --target video-sprite-test .
@@ -60,11 +64,22 @@ jobs:
       - name: Validate sandbox Worker bundle
         run: npm --prefix worker run deploy:sandbox -- --dry-run
 
-      - name: Audit frontend dependencies
-        run: npm audit --audit-level=high
-
-      - name: Audit Worker dependencies
-        run: npm --prefix worker audit --audit-level=high
-
-      - name: Audit processor dependencies
-        run: npm --prefix processor audit --audit-level=high
+      - name: Reject unresolved high or critical dependency alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          blocking="$(
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/dependabot/alerts" \
+              -f state=open \
+              -f per_page=100 \
+              --paginate \
+              --jq '.[]
+                | (.security_advisory.severity // .security_vulnerability.severity // "") as $severity
+                | select($severity == "high" or $severity == "critical")
+                | "#\(.number) [\($severity)] \(.dependency.manifest_path): \(.dependency.package.name) \(.html_url)"'
+          )"
+          if [[ -n "$blocking" ]]; then
+            printf 'Open high or critical Dependabot alerts block this release:\n%s\n' "$blocking" >&2
+            exit 1
+          fi
+          printf 'No open high or critical Dependabot alerts.\n'
