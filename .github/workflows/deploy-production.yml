@@ -80,7 +80,7 @@ jobs:
           printf 'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s\n' "$GITHUB_SHA" >> "$GITHUB_ENV"
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
