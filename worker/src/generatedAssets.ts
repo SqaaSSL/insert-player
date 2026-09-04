@@ -4,6 +4,7 @@ import {
   normalizeSpriteAnimationFormat,
   type SpriteAnimationFormat,
 } from './spriteAnimationFormat';
+import { GENERATED_ANIMATION_NAMES } from './fighterAssetPacks';
 
 export type GeneratedSourceKind =
   | 'side'
@@ -22,19 +23,6 @@ const SOURCE_COLUMNS: Record<GeneratedSourceKind, keyof Fighter> = {
   crouch_raw: 'crouch_view_raw_blob_key',
 };
 
-const PLAYABLE_ANIMATIONS = new Set([
-  'idle',
-  'walk',
-  'high_punch',
-  'low_punch',
-  'high_kick',
-  'low_kick',
-  'jump',
-  'crouch',
-  'hit',
-  'ko',
-  'victory',
-]);
 const MAX_SOURCE_BYTES = 12 * 1024 * 1024;
 const MAX_SPRITE_BYTES = 32 * 1024 * 1024;
 const MAX_FRAME_DIMENSION = 4096;
@@ -268,7 +256,7 @@ export async function persistGeneratedSprite(
     setCurrent?: boolean;
   },
 ): Promise<PersistedGeneratedSprite> {
-  if (!PLAYABLE_ANIMATIONS.has(params.animationName)) {
+  if (!GENERATED_ANIMATION_NAMES.has(params.animationName)) {
     throw new Error(`Unsupported generated animation: ${params.animationName}`);
   }
   const numericMetadata = [

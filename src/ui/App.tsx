@@ -196,6 +196,7 @@ function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null
   // Vite removes this branch from production builds.
   const params = new URLSearchParams(window.location.search);
   if (import.meta.env.DEV && params.get('auraDemo') === '1') {
+    const auraAutoplay = params.get('auraAutoplay') === '1';
     const requestedStage = params.get('auraStage');
     const stageId = requestedStage === 'side-street' || requestedStage === 'la-jaula-304'
       ? requestedStage
@@ -208,7 +209,7 @@ function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null
     return {
       gameMode: 'aura',
       vsAI: true,
-      cpuVsCpu: false,
+      cpuVsCpu: auraAutoplay,
       p1Name: 'NOVA',
       p2Name: 'BYTE',
       stageId,

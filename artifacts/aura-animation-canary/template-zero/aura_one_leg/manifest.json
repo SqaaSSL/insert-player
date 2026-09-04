@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "status": "batch-canary-review",
+  "packId": "aura-v1-2026",
+  "animationName": "aura_one_leg",
+  "generation": {
+    "tool": "OpenAI image generation",
+    "mode": "built-in identity-preserving storyboard edit",
+    "model": "workspace-default-image-model",
+    "providerCostUsd": null,
+    "generatedAt": "2026-09-05",
+    "sourceOutputSha256": "adaa601ed32b0ae4fb9871030c6a67fe02f3a80699164a98b2a8008e036c63d9",
+    "prompt": "Create exactly eight successive full-body keyframes for an original funny AURA ONE LEG animation from the canonical Template Zero reference. Keep the same bald adult, face, gray seamless bodysuit, proportions, realistic rendering and three-quarter right-facing orientation. Transition from neutral into a rhythmic one-leg hop: bend one knee backward, hold that ankle with the same-side hand, extend the free arm for balance, compress, hop while keeping the ankle held, land, release and return. The ankle grip and single planted leg must read instantly without copying a named commercial-game emote. Lay out four columns by two rows on uniform #00FF00 with invisible cells, fixed camera, stable scale and a consistent floor line apart from the hop peak. Preserve coherent anatomy and identity; avoid a kick, split, fighting, text, borders, scenery, shadows, props, extra people or limbs, cropping, glow, watermark and background variation."
+  },
+  "source": {
+    "role": "Template Zero canonical pose reference",
+    "sha256": "08cafb31dfaec6612e8fbd4d20ff25a23ccadf5b41e0eb1822615fd7396e4056"
+  },
+  "raw": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_one_leg/raw-storyboard.png",
+    "width": 1536,
+    "height": 1024,
+    "sha256": "adaa601ed32b0ae4fb9871030c6a67fe02f3a80699164a98b2a8008e036c63d9"
+  },
+  "runtime": {
+    "path": "public/assets/aura/template-zero/aura_one_leg.png",
+    "frameWidth": 256,
+    "frameHeight": 256,
+    "frameCount": 8,
+    "gridColumns": 4,
+    "gridRows": 2,
+    "sha256": "84b1ecb61ccc2ab1b7e3e43baa5e68c78c05b8959b73bff3047d048a4c93364a",
+    "wideFrameReason": "The balancing arm and held ankle require extra horizontal room without changing character scale."
+  },
+  "gameplayReview": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_one_leg/gameplay-review.jpg",
+    "animatedPreviewPath": "artifacts/aura-animation-canary/template-zero/aura_one_leg/gesture-preview.gif",
+    "sha256": "5f42362f3435573c7396e1277abbd3a1e03f507fbf0968e4d9afe7a0b801ea42",
+    "animatedPreviewSha256": "3f76abdf3edcbe14d5cf45d468c8fe58eee524c68522ad2467cc02888bb353c4",
+    "consoleErrors": 0
+  },
+  "review": {
+    "automaticRootRegistration": "pass",
+    "agentSemanticReview": "pass-in-game",
+    "ownerSemanticReview": "pending",
+    "knownFinding": "The hand-to-ankle contact, compression and airborne frame remain inside the wide runtime cell with a stable planted-foot root.",
+    "batchAuthorized": true
+  }
+}

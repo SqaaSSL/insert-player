@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "status": "batch-canary-review",
+  "packId": "aura-v1-2026",
+  "animationName": "aura_glide",
+  "generation": {
+    "tool": "OpenAI image generation",
+    "mode": "built-in identity-preserving storyboard edit",
+    "model": "workspace-default-image-model",
+    "providerCostUsd": null,
+    "generatedAt": "2026-09-05",
+    "sourceOutputSha256": "0cb7f67b8ae56c55760330ae7f99d2c9882eadf6a0142a0877498c3d523688a2",
+    "prompt": "Create exactly eight successive full-body keyframes for an original AURA GLIDE animation from the canonical Template Zero reference. Keep the same bald adult, face, gray seamless bodysuit, proportions, realistic rendering and three-quarter right-facing orientation. The torso remains tall and nearly motionless, with relaxed arms or hands lightly behind the back, while the feet perform a smooth heel-to-toe crossing slide that loops from neutral through opposite heel lift and settle. It must feel uncannily low-effort rather than like running or a named choreography. Lay out four columns by two rows on uniform #00FF00 with invisible cells, fixed camera, stable scale and floor line, complete anatomy and generous padding. Preserve identity and lighting; avoid fighting guard, running, jumping, arm swings, text, borders, scenery, shadows, props, extra people or limbs, cropping, glow, watermark and background variation."
+  },
+  "source": {
+    "role": "Template Zero canonical pose reference",
+    "sha256": "08cafb31dfaec6612e8fbd4d20ff25a23ccadf5b41e0eb1822615fd7396e4056"
+  },
+  "raw": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_glide/raw-storyboard.png",
+    "width": 1536,
+    "height": 1024,
+    "sha256": "0cb7f67b8ae56c55760330ae7f99d2c9882eadf6a0142a0877498c3d523688a2"
+  },
+  "runtime": {
+    "path": "public/assets/aura/template-zero/aura_glide.png",
+    "frameWidth": 192,
+    "frameHeight": 256,
+    "frameCount": 8,
+    "gridColumns": 4,
+    "gridRows": 2,
+    "sha256": "6c1d1cd0de72c1e439487e3f9110011c2609cf453a27ea1fcf2a0748a9c9ca5f"
+  },
+  "gameplayReview": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_glide/gameplay-review.jpg",
+    "animatedPreviewPath": "artifacts/aura-animation-canary/template-zero/aura_glide/gesture-preview.gif",
+    "sha256": "434200bc33897090bde90b0a01077e7d49c888ef2c95f685b5e7fc41f87433f9",
+    "animatedPreviewSha256": "62fa23a4472e9ae24218b66acf4ac2b9f2b7574172f4a9ae376b2d016426a297",
+    "consoleErrors": 0
+  },
+  "review": {
+    "automaticRootRegistration": "pass",
+    "agentSemanticReview": "pass-in-game",
+    "ownerSemanticReview": "pending",
+    "knownFinding": "The calm upper body and crossing heel-to-toe cycle read cleanly; owner review should decide whether the cadence needs a more impossible slide later.",
+    "batchAuthorized": true
+  }
+}

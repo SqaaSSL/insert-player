@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "status": "batch-canary-review",
+  "packId": "aura-v1-2026",
+  "animationName": "aura_unbothered",
+  "generation": {
+    "tool": "OpenAI image generation",
+    "mode": "built-in identity-preserving storyboard edit",
+    "model": "workspace-default-image-model",
+    "providerCostUsd": null,
+    "generatedAt": "2026-09-05",
+    "sourceOutputSha256": "9dcaf120a009dd96c02d636c77fed95697df447059fba0f4dae54f289b891a2d",
+    "prompt": "Create exactly eight successive full-body keyframes for AURA UNBOTHERED from the canonical Template Zero reference. Keep the same bald adult, face, gray seamless bodysuit, proportions, realistic rendering and three-quarter right-facing orientation. The character stays calm, upright and deliberately effortless: relaxed arms, subtle weight shift, tiny shoulder settle, controlled head turn, quiet breath and a clean return to neutral. Lay out exactly four columns by two rows on one uniform #00FF00 background with invisible cells, fixed camera, stable scale and baseline, complete anatomy and generous padding. Preserve identity, clothing and lighting; avoid fighting guard, fists, text, borders, scenery, shadows, props, extra people or limbs, cropping, glow, watermark and background variation."
+  },
+  "source": {
+    "role": "Template Zero canonical pose reference",
+    "sha256": "08cafb31dfaec6612e8fbd4d20ff25a23ccadf5b41e0eb1822615fd7396e4056"
+  },
+  "raw": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_unbothered/raw-storyboard.png",
+    "width": 1536,
+    "height": 1024,
+    "sha256": "9dcaf120a009dd96c02d636c77fed95697df447059fba0f4dae54f289b891a2d"
+  },
+  "runtime": {
+    "path": "public/assets/aura/template-zero/aura_unbothered.png",
+    "frameWidth": 192,
+    "frameHeight": 256,
+    "frameCount": 8,
+    "gridColumns": 4,
+    "gridRows": 2,
+    "sha256": "f84fec2f440ef7ab0a9fbe9c1cc6795be4ce35d8473bb2a3d95f459634630b63"
+  },
+  "gameplayReview": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_unbothered/gameplay-review.jpg",
+    "animatedPreviewPath": "artifacts/aura-animation-canary/template-zero/aura_unbothered/gesture-preview.gif",
+    "sha256": "f18ba1d5e10d84955de77653ce15d8bccc1265596137b7ce283b456170300679",
+    "animatedPreviewSha256": "b45bb92457491608d8aa32889f53f33a9c26382191c987084439882b78299cd3",
+    "consoleErrors": 0
+  },
+  "review": {
+    "automaticRootRegistration": "pass",
+    "agentSemanticReview": "pass-in-game",
+    "ownerSemanticReview": "pending",
+    "knownFinding": "The deliberately low-amplitude motion reads as breathing room between louder phrases.",
+    "batchAuthorized": true
+  }
+}

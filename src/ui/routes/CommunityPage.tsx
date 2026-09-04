@@ -21,6 +21,7 @@ import {
 import { Button } from '../components/Button.tsx';
 import { Modal } from '../components/Modal.tsx';
 import { StatusMessage } from '../components/StatusMessage.tsx';
+import { fighterModeCompatibilityLabel } from '../../services/FighterAssetPacks.ts';
 
 interface CommunityPageProps {
   authStatus: AuthStatus;
@@ -65,6 +66,10 @@ function loadStatusMessage(state: CommunityLoadState, fighterCount: number): str
   if (state.phase === 'not-found') return 'Shared fighter not found';
   if (state.phase === 'empty') return 'No public fighters yet';
   return fighterCount === 1 ? '1 public fighter ready' : `${fighterCount} public fighters ready`;
+}
+
+function modeCompatibility(fighter: CommunityFighterView): string {
+  return fighterModeCompatibilityLabel(fighter.sprites.map((sprite) => sprite.animationName));
 }
 
 export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPageProps) {
@@ -357,7 +362,7 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
           <div>
             <h2>Featured: {featured.name}</h2>
             <p className="community-feature__meta">
-              AI-generated · {tierLabel(featured.qualityTier)} · {featured.sprites.length} anims · by {featured.owner?.name ?? 'Player'}
+              AI-generated · {tierLabel(featured.qualityTier)} · {modeCompatibility(featured)} · {featured.sprites.length} anims · by {featured.owner?.name ?? 'Player'}
             </p>
             {featured.isOwned ? <span className="asf-badge community-owned-badge">In your roster</span> : null}
           </div>
@@ -393,7 +398,7 @@ export function CommunityPage({ authStatus, onBack, onOpenGallery }: CommunityPa
                 </div>
                 <div className="roster-fighter-card__meta">
                   <strong>{fighter.name}</strong>
-                  <span>AI-generated · {tierLabel(fighter.qualityTier)} · {fighter.sprites.length} anims</span>
+                  <span>AI-generated · {tierLabel(fighter.qualityTier)} · {modeCompatibility(fighter)} · {fighter.sprites.length} anims</span>
                   <span>By {fighter.owner?.name ?? 'Player'}</span>
                   {fighter.isOwned ? <span className="asf-badge community-owned-badge">In your roster</span> : null}
                 </div>

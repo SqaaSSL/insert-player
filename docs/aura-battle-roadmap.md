@@ -6,7 +6,7 @@ Status: three-round match shape and continuous crowd mix shipped. MAIN CHARACTER
 
 Aura is a performance battle, not a reskinned fight. The camera presents one character at a time, the four-key highway occupies the opposite side, and the crowd turns accuracy into spectacle. Fight, Rush, and Aura share fighters and stages, but each owns its route and game rules.
 
-No part of this system requires custom attacks or additional generated fighter assets. It reuses the current Fight animation set, camera direction, lighting, UI, and crowd audio.
+The shipped beta remains playable without extra generation: every complete Fight fighter falls back to its current animations. The optional [`aura-v1-2026`](./aura-animation-packs-v1.md) pack adds purpose-built meme performances without changing scoring, rollback, or Fight/Rush compatibility.
 
 ## Standard match: three rounds
 

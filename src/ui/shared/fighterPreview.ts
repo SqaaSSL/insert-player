@@ -41,6 +41,13 @@ export const ANIM_LABELS: Record<string, string> = {
   hit: 'HIT',
   ko: 'K.O.',
   victory: 'WIN',
+  aura_unbothered: 'UNBOTHERED',
+  aura_six_seven: '6-7',
+  aura_mog_check: 'MOG CHECK',
+  aura_glide: 'GLIDE',
+  aura_floor_worm: 'FLOOR WORM',
+  aura_one_leg: 'ONE-LEG HOP',
+  aura_shrug: 'SHRUG',
 };
 
 export function animLabel(name: string): string {
