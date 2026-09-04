@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { assertDevelopmentDeployAllowed } from './development-deploy-guard.mjs';
 import {
   STRIPE_LIVE_ORIGIN,
   STRIPE_SANDBOX_ORIGIN,
@@ -312,6 +313,16 @@ async function validate(values) {
 }
 
 async function main() {
+  const releaseContext = assertDevelopmentDeployAllowed({ root });
+  process.env.ASF_CANONICAL_DEVELOPMENT_ATTESTED_SHA = releaseContext.gitSha;
+  console.log(`Sandbox configuration mutation authorized: ${releaseContext.channel} ${releaseContext.gitSha}.`);
+  const originalWranglerConfig = readFileSync(wranglerTomlPath, 'utf8');
+  process.once('exit', () => {
+    if (readFileSync(wranglerTomlPath, 'utf8') !== originalWranglerConfig) {
+      writeFileSync(wranglerTomlPath, originalWranglerConfig);
+    }
+  });
+
   const values = readEnvValues();
   await validate(values);
 

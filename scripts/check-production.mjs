@@ -887,7 +887,7 @@ function assertSandboxIsolationIsWired() {
     'new URL(url).origin !== new URL(environment.webhookUrl).origin',
     '"stripe:bootstrap:sandbox": "node scripts/bootstrap-stripe-catalog.mjs --target=sandbox"',
     '"config:sandbox": "node scripts/apply-sandbox-config.mjs --require-complete --deploy-worker"',
-    '"deploy:worker:sandbox": "npm run check:production && npm --prefix worker run deploy:sandbox"',
+    '"deploy:worker:sandbox": "npm run sandbox:guard && npm run check:production && npm --prefix worker run deploy:sandbox"',
     '"db:migrate:sandbox": "npm --prefix worker run db:migrate:sandbox"',
     '"smoke:sandbox": "node scripts/smoke-sandbox.mjs"',
     '"check:frontend-sandbox": "node scripts/check-frontend-sandbox-env.mjs"',
@@ -918,6 +918,8 @@ function assertSandboxIsolationIsWired() {
     'Refusing to configure the sandbox with a forbidden shared Stripe account.',
     'metadata.insert_player_environment !== \'sandbox\'',
     "run('sandbox Worker smoke', npm, ['run', 'smoke:sandbox'], root)",
+    'assertDevelopmentDeployAllowed({ root })',
+    'ASF_CANONICAL_DEVELOPMENT_ATTESTED_SHA',
     'Production Worker, D1, R2, env, and webhooks were not touched.',
   ];
   const combined = [
@@ -4267,6 +4269,7 @@ function assertArcadeExperimentArchiveIsImmutable() {
 }
 
 assertNodeVersion();
+run('deployment branch policy', node, ['scripts/check-deployment-policy.mjs']);
 assertGeminiImageModelsAreGa();
 assertVideoSpriteProductionToolchainGate();
 run('frontend style guard', npm, ['run', 'check:frontend']);

@@ -220,11 +220,14 @@ The browser never receives provider or Stripe secret keys. Provider calls requir
 The canonical repository is [SqaaSSL/insert-player](https://github.com/SqaaSSL/insert-player).
 
 - Branch from the current target branch and use a focused `feature/*` or `fix/*` pull request; a routine production change targets `main`.
+- Before trusting the current directory, run `git fetch --prune origin` and compare `HEAD` with the relevant `origin/*` ref; a same-named worktree branch may be stale. Production state comes from `/release.json` and Worker `/health`.
+- Feature branches may be pushed for pull requests, but they cannot deploy. Only `develop` can publish the isolated sandbox and only `main` can publish production.
 - Use `develop` only when an intentional isolated sandbox deployment is needed, and sync current `main` into it before the test deployment if it has drifted.
 - Promote sandbox-soaked `develop` work or merge a current feature branch to `main` through a protected pull request; production deploys automatically only after the required checks pass.
 - Do not commit `.env*`, `.dev.vars`, Wrangler state/logs, launch evidence containing identities, or downloaded/generated user assets.
 - Keep unrelated local changes intact when working in a dirty tree.
 - Run `npm run check:production` before review.
+- Run `npm run check:deployment-policy` whenever a workflow or deployment wrapper changes.
 - Never bypass the protected production environment with a local deploy during routine releases.
 
 ## Getting Help

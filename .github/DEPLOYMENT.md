@@ -8,6 +8,12 @@ Cloudflare with an uncommitted or stale local build. Production credentials must
 remain absent from routine local environments so direct vendor CLI calls are not
 an alternate deployment path.
 
+Feature branches may be pushed to GitHub for pull requests; they are never
+deployment sources. GitHub environment policies enforce `production = main`
+and `development = develop`. The checked-in policy test rejects privileged jobs
+that are not bound to one of those environments, while the local guards reject
+stale, dirty, or wrongly named deployment checkouts.
+
 ## Branch Flow
 
 | Source | Target | Result |
@@ -48,6 +54,17 @@ after checkout. The guard requires a clean tree, `refs/heads/main`, and
 only tracked file the workflow may materialize after attestation is
 `worker/wrangler.toml`; any source change still blocks every production Wrangler
 mutation.
+
+The development workflow likewise runs `scripts/development-deploy-guard.mjs`.
+It requires a clean `refs/heads/develop` checkout with `HEAD == GITHUB_SHA`.
+Repository-managed sandbox Wrangler, D1, secret, and Pages writes also invoke
+that guard locally and require a clean `develop` at the exact remotely verified
+`origin/develop` SHA. Dry runs and local-only D1 operations remain available on
+feature branches because they cannot publish anything.
+
+Run `npm run check:deployment-policy` after editing a workflow. It verifies the
+two canonical push branches and fails if a job can read repository deployment
+credentials or invoke a remote deployment without its GitHub environment.
 
 Pages writes `/release.json` into each production build. The propagation and
 canonical smokes require its `gitSha` and entry bundle to match the commit being
@@ -195,6 +212,17 @@ Cloudflare token, record the incident and SHA, then revoke the token. Never keep
 production Cloudflare credentials in routine local development environments.
 
 Never delete fighter assets or historical versions as part of rollback or cleanup.
+
+## Worktree hygiene
+
+Worktrees isolate files; they do not overwrite one another. They do share Git
+refs and can therefore create a dangerous illusion when a stale local `main` is
+mistaken for `origin/main`. Before repository or release diagnosis, fetch and
+inspect the remote ref explicitly. Do not repair a dirty checkout in place:
+create a clean worktree from the current remote target, preserve the dirty one,
+and reconcile its changes through a focused pull request. `git worktree prune`
+may remove registrations whose administrative directory no longer exists, but
+must never be used as a substitute for reviewing valid dirty worktrees.
 
 ## Durable Object lifecycle changes
 
