@@ -5,6 +5,7 @@ import {
   AURA_FINISH_BEATS,
   AURA_INITIAL_COUNT_IN_BEATS,
   AURA_MUSIC_BEAT_OFFSET_MS,
+  AURA_NOTE_TRAVEL_MS,
   AURA_PHRASE_BEATS,
   AURA_TURN_BEATS,
   AURA_TURN_COUNT_IN_BEATS,
@@ -138,4 +139,9 @@ export function createAuraChart(
 
 export function auraTurnAt(chart: AuraChart, nowMs: number): AuraTurn | null {
   return chart.turns.find((turn) => nowMs >= turn.startMs && nowMs < turn.endMs) ?? null;
+}
+
+/** Linear time-to-target projection shared by every lane. */
+export function auraNoteTravelProgress(noteAtMs: number, nowMs: number): number {
+  return Math.max(0, Math.min(1, 1 - (noteAtMs - nowMs) / AURA_NOTE_TRAVEL_MS));
 }

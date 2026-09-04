@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createAuraChart } from './AuraChart.ts';
+import { AURA_BEAT_MS, AURA_NOTE_TRAVEL_MS } from './AuraConfig.ts';
+import { auraNoteTravelProgress, createAuraChart } from './AuraChart.ts';
 import { AuraBattle, auraRank, createAuraCpuPlan } from './AuraBattle.ts';
 
 describe('Aura chart', () => {
@@ -36,6 +37,21 @@ describe('Aura chart', () => {
           }
         }
       }
+    }
+  });
+
+  it('moves every note at one constant four-beat scroll rate', () => {
+    const targetMs = 10_000;
+    expect(AURA_NOTE_TRAVEL_MS).toBeCloseTo(AURA_BEAT_MS * 4);
+    expect(auraNoteTravelProgress(targetMs, targetMs - AURA_BEAT_MS * 4)).toBeCloseTo(0);
+    expect(auraNoteTravelProgress(targetMs, targetMs - AURA_BEAT_MS * 3)).toBeCloseTo(0.25);
+    expect(auraNoteTravelProgress(targetMs, targetMs - AURA_BEAT_MS * 2)).toBeCloseTo(0.5);
+    expect(auraNoteTravelProgress(targetMs, targetMs - AURA_BEAT_MS)).toBeCloseTo(0.75);
+    expect(auraNoteTravelProgress(targetMs, targetMs)).toBeCloseTo(1);
+
+    const chart = createAuraChart(42, 'viral');
+    for (const turn of chart.turns) {
+      expect(turn.firstNoteMs - turn.startMs).toBeCloseTo(AURA_NOTE_TRAVEL_MS);
     }
   });
 });

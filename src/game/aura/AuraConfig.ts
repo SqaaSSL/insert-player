@@ -18,8 +18,11 @@ export interface AuraDifficulty {
 export const AURA_BPM = 154.267723880597;
 export const AURA_BEAT_MS = 60_000 / AURA_BPM;
 export const AURA_MUSIC_BEAT_OFFSET_MS = 174;
+/** Notes remain visible for exactly four beats on every lane and difficulty. */
+export const AURA_NOTE_TRAVEL_BEATS = 4;
+export const AURA_NOTE_TRAVEL_MS = AURA_NOTE_TRAVEL_BEATS * AURA_BEAT_MS;
 export const AURA_TURN_BEATS = 20;
-export const AURA_TURN_COUNT_IN_BEATS = 2;
+export const AURA_TURN_COUNT_IN_BEATS = AURA_NOTE_TRAVEL_BEATS;
 export const AURA_PHRASE_BEATS = 16;
 export const AURA_INITIAL_COUNT_IN_BEATS = 8;
 export const AURA_FINISH_BEATS = 4;

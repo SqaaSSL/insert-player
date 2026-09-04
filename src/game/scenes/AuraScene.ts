@@ -38,8 +38,18 @@ import {
   type AuraJudgement,
   type AuraPlayerScore,
 } from '../aura/AuraBattle.ts';
-import { auraTurnAt, createAuraChart, type AuraLane, type AuraSlot } from '../aura/AuraChart.ts';
-import { getAuraDifficulty, type AuraDifficultyId } from '../aura/AuraConfig.ts';
+import {
+  auraNoteTravelProgress,
+  auraTurnAt,
+  createAuraChart,
+  type AuraLane,
+  type AuraSlot,
+} from '../aura/AuraChart.ts';
+import {
+  AURA_NOTE_TRAVEL_MS,
+  getAuraDifficulty,
+  type AuraDifficultyId,
+} from '../aura/AuraConfig.ts';
 import {
   endActiveOnlineSession,
   getActiveOnlineSession,
@@ -50,7 +60,6 @@ import type { PeerTransportState } from '../net/PeerTransport.ts';
 const LANE_COLORS = [0x4fdcff, 0x8b4dff, 0xffce3a, 0xef4343] as const;
 const LANE_KEYS = ['A', 'S', 'D', 'F'] as const;
 const LOCAL_P2_KEYS = ['J', 'K', 'L', ';'] as const;
-const NOTE_TRAVEL_MS = 1_180;
 const ONLINE_START_DELAY_MS = 1_600;
 const ONLINE_FINISH_GRACE_MS = 2_500;
 
@@ -619,11 +628,29 @@ export class AuraScene extends Phaser.Scene {
       this.targetGraphics.fillStyle(color, 1);
       this.targetGraphics.fillCircle(layout.targetX, 518, 2);
     }
+    this.drawBeatGrid(slot);
     const keys = this.online || slot === 0 ? LANE_KEYS : LOCAL_P2_KEYS;
     this.laneKeyTexts.forEach((text, lane) => {
       const layout = this.laneLayout(slot, lane as AuraLane);
       text.setText(keys[lane]).setPosition(layout.targetX, 542).setVisible(true);
     });
+  }
+
+  private drawBeatGrid(slot: AuraSlot): void {
+    const left = this.laneLayout(slot, 0);
+    const right = this.laneLayout(slot, 3);
+    for (const progress of [0.25, 0.5, 0.75]) {
+      const y = Phaser.Math.Linear(left.startY, left.targetY, progress);
+      const halfWidth = Phaser.Math.Linear(19, 36, progress);
+      const leftX = Phaser.Math.Linear(left.startX, left.targetX, progress) - halfWidth;
+      const rightX = Phaser.Math.Linear(right.startX, right.targetX, progress) + halfWidth;
+      this.laneGraphics.lineStyle(
+        progress === 0.5 ? 2 : 1,
+        0xfff4d6,
+        progress === 0.5 ? 0.32 : 0.2,
+      );
+      this.laneGraphics.lineBetween(leftX, y, rightX, y);
+    }
   }
 
   private drawMarker(
@@ -686,17 +713,16 @@ export class AuraScene extends Phaser.Scene {
     for (const note of turn.notes) {
       if (this.battle.isJudged(note.id)) continue;
       const until = note.atMs - nowMs;
-      if (until > NOTE_TRAVEL_MS || until < -getAuraDifficulty(this.difficultyId).goodWindowMs) continue;
+      if (until > AURA_NOTE_TRAVEL_MS || until < -getAuraDifficulty(this.difficultyId).goodWindowMs) continue;
       activeIds.add(note.id);
       const object = this.noteObjects.get(note.id) ?? this.createNote(note.id, note.lane);
       const layout = this.laneLayout(turn.slot, note.lane);
-      const progress = Phaser.Math.Clamp(1 - until / NOTE_TRAVEL_MS, 0, 1.12);
-      const eased = Phaser.Math.Easing.Quadratic.Out(Math.min(1, progress));
+      const progress = auraNoteTravelProgress(note.atMs, nowMs);
       object.setPosition(
-        Phaser.Math.Linear(layout.startX, layout.targetX, eased),
-        Phaser.Math.Linear(layout.startY, layout.targetY, eased),
+        Phaser.Math.Linear(layout.startX, layout.targetX, progress),
+        Phaser.Math.Linear(layout.startY, layout.targetY, progress),
       );
-      object.setScale(Phaser.Math.Linear(0.72, 1, eased));
+      object.setScale(Phaser.Math.Linear(0.72, 1, progress));
       object.setAlpha(until < 0 ? Math.max(0.22, 1 + until / 240) : 1);
     }
     for (const [id, object] of this.noteObjects) {
