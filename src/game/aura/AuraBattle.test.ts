@@ -19,6 +19,25 @@ describe('Aura chart', () => {
     const lanes = (seed: number) => createAuraChart(seed).notes.map((note) => note.lane);
     expect(lanes(1)).not.toEqual(lanes(2));
   });
+
+  it('never puts consecutive notes on the same rail', () => {
+    for (const difficulty of ['lowkey', 'viral', 'untouchable'] as const) {
+      for (let seed = 1; seed <= 64; seed += 1) {
+        const chart = createAuraChart(seed, difficulty);
+        for (const turn of chart.turns) {
+          for (let index = 1; index < turn.notes.length; index += 1) {
+            expect(turn.notes[index].lane).not.toBe(turn.notes[index - 1].lane);
+          }
+          for (const lane of [0, 1, 2, 3] as const) {
+            const laneNotes = turn.notes.filter((note) => note.lane === lane);
+            for (let index = 1; index < laneNotes.length; index += 1) {
+              expect(laneNotes[index].beat - laneNotes[index - 1].beat).toBeGreaterThanOrEqual(1);
+            }
+          }
+        }
+      }
+    }
+  });
 });
 
 describe('AuraBattle', () => {

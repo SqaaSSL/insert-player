@@ -52,30 +52,32 @@ interface PatternNote {
 
 function nextLane(rng: SeededRng, previous: AuraLane | null): AuraLane {
   let lane = rng.nextInt(0, 3) as AuraLane;
-  if (previous !== null && lane === previous && rng.next() < 0.72) {
-    lane = ((lane + 1 + rng.nextInt(0, 2)) % 4) as AuraLane;
+  if (previous !== null && lane === previous) {
+    lane = ((previous + 1 + rng.nextInt(0, 2)) % 4) as AuraLane;
   }
   return lane;
 }
 
 function createRoundPattern(rng: SeededRng, offbeatNotes: number): PatternNote[] {
-  const notes: PatternNote[] = [];
-  let previous: AuraLane | null = null;
-  for (let beat = 0; beat < AURA_PHRASE_BEATS; beat += 1) {
-    previous = nextLane(rng, previous);
-    notes.push({ beat, lane: previous });
-  }
-
   const candidates = Array.from({ length: AURA_PHRASE_BEATS - 1 }, (_, index) => index + 0.5);
   for (let i = candidates.length - 1; i > 0; i -= 1) {
     const swap = rng.nextInt(0, i);
     [candidates[i], candidates[swap]] = [candidates[swap], candidates[i]];
   }
-  for (const beat of candidates.slice(0, offbeatNotes).sort((a, b) => a - b)) {
-    previous = nextLane(rng, previous);
-    notes.push({ beat, lane: previous });
-  }
-  return notes.sort((a, b) => a.beat - b.beat || a.lane - b.lane);
+  const beats = [
+    ...Array.from({ length: AURA_PHRASE_BEATS }, (_, beat) => beat),
+    ...candidates.slice(0, offbeatNotes),
+  ].sort((a, b) => a - b);
+
+  // Assign lanes only after every beat is known. This guarantees that an
+  // inserted half-beat cannot accidentally create an unreadable same-rail
+  // double with either of its neighbours.
+  let previous: AuraLane | null = null;
+  return beats.map((beat) => {
+    const lane = nextLane(rng, previous);
+    previous = lane;
+    return { beat, lane };
+  });
 }
 
 /**

@@ -166,6 +166,7 @@ export class AuraScene extends Phaser.Scene {
   private customStageTextureKey: string | null = null;
   private laneGraphics!: Phaser.GameObjects.Graphics;
   private targetGraphics!: Phaser.GameObjects.Graphics;
+  private inputFlashGraphics: Phaser.GameObjects.Graphics[] = [];
   private activeGlow!: Phaser.GameObjects.Graphics;
   private burstRing!: Phaser.GameObjects.Graphics;
   private noteObjects = new Map<string, Phaser.GameObjects.Container>();
@@ -185,6 +186,7 @@ export class AuraScene extends Phaser.Scene {
 
   private keysP1: Phaser.Input.Keyboard.Key[] = [];
   private keysP2: Phaser.Input.Keyboard.Key[] = [];
+  private keyBindings: Array<{ key: Phaser.Input.Keyboard.Key; handler: () => void }> = [];
   private soundManager!: SoundManager;
   private clockStartedAt: number | null = null;
   private scheduledClockStart: number | null = null;
@@ -335,7 +337,6 @@ export class AuraScene extends Phaser.Scene {
     if (nowMs < 0) return;
     this.updateTurn(nowMs);
     if (!this.finalizing) {
-      this.readKeyboard(nowMs);
       this.playCpuPlans(nowMs);
       this.collectHumanMisses(nowMs);
       this.updateNotes(nowMs);
@@ -544,7 +545,8 @@ export class AuraScene extends Phaser.Scene {
 
     this.laneGraphics = this.add.graphics();
     this.targetGraphics = this.add.graphics();
-    this.uiLayer.add([this.laneGraphics, this.targetGraphics]);
+    this.inputFlashGraphics = Array.from({ length: 4 }, () => this.add.graphics().setAlpha(0));
+    this.uiLayer.add([this.laneGraphics, this.targetGraphics, ...this.inputFlashGraphics]);
     for (const text of this.laneKeyTexts) this.uiLayer.bringToTop(text);
     this.uiLayer.add(ScreenEffects.createCRTOverlay(this));
   }
@@ -562,6 +564,22 @@ export class AuraScene extends Phaser.Scene {
     this.keysP1 = LANE_KEYS.map((key) => keyboard.addKey(key, true));
     this.keysP2 = LOCAL_P2_KEYS.map((key) => keyboard.addKey(key, true));
     keyboard.addCapture([...LANE_KEYS, ...LOCAL_P2_KEYS]);
+    this.keyBindings = [];
+    if (this.cpuVsCpu) return;
+    if (this.online) {
+      this.bindKeySet(this.keysP1, this.online.localSlot);
+      return;
+    }
+    if (!this.isCpuSlot(0)) this.bindKeySet(this.keysP1, 0);
+    if (!this.isCpuSlot(1)) this.bindKeySet(this.keysP2, 1);
+  }
+
+  private bindKeySet(keys: Phaser.Input.Keyboard.Key[], slot: AuraSlot): void {
+    keys.forEach((key, lane) => {
+      const handler = () => this.handleInput(slot, lane as AuraLane);
+      key.on('down', handler);
+      this.keyBindings.push({ key, handler });
+    });
   }
 
   private laneLayout(slot: AuraSlot, lane: AuraLane): LaneLayout {
@@ -789,26 +807,53 @@ export class AuraScene extends Phaser.Scene {
     }
   }
 
-  private readKeyboard(nowMs: number): void {
-    if (this.cpuVsCpu) return;
-    if (this.online) {
-      const slot = this.online.localSlot;
-      this.readKeySet(this.keysP1, slot, nowMs);
+  private flashLaneInput(slot: AuraSlot, lane: AuraLane): void {
+    const flash = this.inputFlashGraphics[lane];
+    const keyText = this.laneKeyTexts[lane];
+    if (!flash || !keyText) return;
+
+    const layout = this.laneLayout(slot, lane);
+    const color = LANE_COLORS[lane];
+    this.tweens.killTweensOf(flash);
+    this.tweens.killTweensOf(keyText);
+    flash.clear();
+    flash.fillStyle(color, 0.36);
+    flash.fillCircle(layout.targetX, layout.targetY, 33);
+    this.drawMarker(flash, layout.targetX, layout.targetY, lane, color, 25, true);
+    flash.fillStyle(color, 0.9);
+    flash.fillRoundedRect(layout.targetX - 23, 524, 46, 36, 4);
+    flash.lineStyle(3, 0xffffff, 1);
+    flash.strokeRoundedRect(layout.targetX - 23, 524, 46, 36, 4);
+    flash.setAlpha(1);
+    keyText.setColor('#050507').setScale(1.2);
+
+    if (this.reduceMotion) {
+      this.time.delayedCall(120, () => {
+        flash.setAlpha(0);
+        keyText.setColor('#fff4d6').setScale(1);
+      });
       return;
     }
-    if (!this.isCpuSlot(0)) this.readKeySet(this.keysP1, 0, nowMs);
-    if (!this.isCpuSlot(1)) this.readKeySet(this.keysP2, 1, nowMs);
-  }
-
-  private readKeySet(keys: Phaser.Input.Keyboard.Key[], slot: AuraSlot, nowMs: number): void {
-    keys.forEach((key, lane) => {
-      if (Phaser.Input.Keyboard.JustDown(key)) this.handleInput(slot, lane as AuraLane, nowMs);
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      duration: 190,
+      ease: 'Quart.easeOut',
+    });
+    this.tweens.add({
+      targets: keyText,
+      scaleX: 1,
+      scaleY: 1,
+      duration: 170,
+      ease: 'Quart.easeOut',
+      onComplete: () => keyText.setColor('#fff4d6'),
     });
   }
 
   private handleInput(slot: AuraSlot, lane: AuraLane, nowMs = this.clockMs()): void {
     if (this.matchFinished || this.finalizing || this.isCpuSlot(slot)) return;
     if (this.online && this.online.localSlot !== slot) return;
+    if (auraTurnAt(this.chart, nowMs)?.slot === slot) this.flashLaneInput(slot, lane);
     const judgement = this.battle.judgeInput(slot, lane, nowMs);
     if (judgement.grade === 'wrong_turn') {
       if (nowMs - this.lastWrongTurnFeedbackAt > 650) {
@@ -1364,6 +1409,8 @@ export class AuraScene extends Phaser.Scene {
     window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
     window.removeEventListener(PAUSE_EVENT, this.onPause);
     window.removeEventListener(AURA_INPUT_EVENT, this.onAuraInput);
+    for (const { key, handler } of this.keyBindings) key.off('down', handler);
+    this.keyBindings = [];
     this.clearNotes();
     this.soundManager?.destroy();
     for (const unsubscribe of this.onlineUnsubscribe) unsubscribe();
