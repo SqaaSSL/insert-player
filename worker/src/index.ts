@@ -7,6 +7,7 @@ import {
 } from './auth';
 import {
   authorizeGenerationPurchase,
+  authorizeStageForgePurchase,
   completeGenerationPurchase,
   createCreditCheckoutSession,
   creditPacksResponse,
@@ -14,6 +15,7 @@ import {
   handleStripeWebhook,
   releaseExpiredGenerationCharges,
 } from './billing';
+import { captureStreetViewImage } from './googleMaps';
 import {
   createFighter,
   cloneCommunityFighter,
@@ -349,6 +351,7 @@ function healthResponse(env: Env): Response {
       : 'not_configured',
     rateLimit: 'd1',
     onlineVersus: onlineVersusStatus(env),
+    mapsCapture: env.GOOGLE_MAPS_SERVER_KEY ? 'configured' : 'not_configured',
     privacy: anonymousIdentifiersProtected ? 'pseudonymized' : 'not_configured',
     providers: allProvidersConfigured ? 'configured' : 'partial',
     videoCreationTransport: env.PIXCLI_API_KEY && pixcliBaseUrl(env.PIXCLI_BASE_URL)
@@ -403,6 +406,12 @@ export default {
         return addCors(healthResponse(env), request, env);
       }
 
+      if (path === '/api/maps/street-view/capture' && method === 'POST') {
+        const limited = await enforceRateLimit(env, 'maps:capture', publicAuth);
+        if (limited) return addCors(limited, request, env);
+        return addCors(await captureStreetViewImage(request, env), request, env);
+      }
+
       if (path.startsWith('/temp-assets/') && method === 'GET') {
         return addCors(await getTempAsset(request, env), request, env);
       }
@@ -427,6 +436,19 @@ export default {
 
       if (path === '/api/billing/generation/complete' && method === 'POST') {
         return addCors(await authenticated(request, env, (auth) => completeGenerationPurchase(request, env, auth)), request, env);
+      }
+
+      if (path === '/api/billing/stage-forge' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'billing:stage-forge',
+            (auth) => authorizeStageForgePurchase(request, env, authAsPublicContext(auth)),
+          ),
+          request,
+          env,
+        );
       }
 
       if (path === '/api/provider-sessions' && method === 'POST') {

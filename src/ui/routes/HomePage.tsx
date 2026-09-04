@@ -39,6 +39,7 @@ interface HomePageProps extends AuthRouteState {
   creationPurchaseIntent?: CreationPurchaseIntent | null;
   onContinuePurchaseIntent?: () => void;
   onCreateFighter: () => void;
+  onCreateStage: () => void;
   onOpenArcade: () => void;
   onOpenCoopRush: () => void;
   onNavigateLegal: (route: LegalRoute) => void;
@@ -66,6 +67,7 @@ export function HomePage({
   authStatus,
   authSessionKey,
   onCreateFighter,
+  onCreateStage,
   onOpenArcade,
   onOpenCoopRush,
   onNavigateLegal,
@@ -366,6 +368,10 @@ export function HomePage({
           <button type="button" className="home-menu__action is-secondary" onClick={onOpenGallery}>
             <span>Roster Lab</span>
             <small>Browse and manage your fighters</small>
+          </button>
+          <button type="button" className="home-menu__action is-stage-scout" onClick={onCreateStage}>
+            <span>Stage Scout</span>
+            <small>Turn a real place into an arena</small>
           </button>
           <button type="button" className="home-menu__action" onClick={onOpenCommunity}>
             <span>Community</span>

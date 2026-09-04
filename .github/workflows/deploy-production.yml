@@ -40,6 +40,7 @@ jobs:
       VITE_PUBLIC_APP_NAME: Insert Player
       VITE_PUBLIC_APP_SHORT_NAME: P1
       VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+      VITE_GOOGLE_MAPS_BROWSER_KEY: ${{ vars.VITE_GOOGLE_MAPS_BROWSER_KEY }}
       VITE_GEMINI_IMAGE_MODEL_REPOSE: ${{ vars.VITE_GEMINI_IMAGE_MODEL_REPOSE }}
       VITE_GEMINI_IMAGE_MODEL_UPRIGHT: ${{ vars.VITE_GEMINI_IMAGE_MODEL_UPRIGHT }}
       VITE_GEMINI_IMAGE_MODEL_CROUCH: ${{ vars.VITE_GEMINI_IMAGE_MODEL_CROUCH }}
@@ -71,6 +72,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Attest canonical production source
+        run: |
+          node scripts/production-deploy-guard.mjs
+          printf 'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s\n' "$GITHUB_SHA" >> "$GITHUB_ENV"
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -117,6 +123,7 @@ jobs:
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
         run: node scripts/apply-live-config.mjs --require-complete --skip-production-check --skip-secrets
 
       - name: Preflight Meterkey credentials
@@ -165,6 +172,7 @@ jobs:
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
         run: node scripts/apply-live-config.mjs --skip-production-check --dry-run-worker-deploy
 
       - name: Require an idle generation pipeline before migrations
@@ -205,6 +213,7 @@ jobs:
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
         run: node scripts/apply-live-config.mjs --skip-production-check --deploy-worker
 
       - name: Capture deployed Worker version

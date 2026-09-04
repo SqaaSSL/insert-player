@@ -9,6 +9,8 @@ import {
   expectedMediaContentType,
   waitForLiveMediaAsset,
 } from './frontend-release-assets.mjs';
+import { assertProductionDeployAllowed } from './production-deploy-guard.mjs';
+import { writeFrontendReleaseManifest } from './release-provenance.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -208,6 +210,13 @@ async function main() {
     return;
   }
 
+  const releaseContext = isSandbox
+    ? null
+    : assertProductionDeployAllowed({ root });
+  if (releaseContext) {
+    console.log(`Frontend production release authorized: ${releaseContext.channel} ${releaseContext.gitSha}.`);
+  }
+
   mkdirSync(wranglerLogPath, { recursive: true });
   run('production checks', npm, ['run', 'check:production']);
   run(
@@ -222,6 +231,13 @@ async function main() {
     ['scripts/configure-frontend-dist.mjs', `--target=${isSandbox ? 'sandbox' : 'live'}`],
   );
   const expectedAssetPath = builtFrontendAssetPath();
+  if (releaseContext) {
+    writeFrontendReleaseManifest({
+      distDir: join(root, 'dist'),
+      context: releaseContext,
+      entryAssetPath: expectedAssetPath,
+    });
+  }
   const releaseAssetPaths = builtFrontendReleaseAssetPaths(expectedAssetPath);
   console.log(`Frontend release asset: ${expectedAssetPath}`);
   console.log(`Frontend referenced release assets: ${releaseAssetPaths.length}`);
@@ -249,6 +265,7 @@ async function main() {
     SMOKE_TIMEOUT_MS,
     {
       ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath,
+      ...(releaseContext ? { ASF_EXPECTED_FRONTEND_GIT_SHA: releaseContext.gitSha } : {}),
       ASF_FRONTEND_ASSET_PROBE_NONCE: `deploy-${Date.now()}`,
     },
   );
@@ -262,6 +279,7 @@ async function main() {
     SMOKE_TIMEOUT_MS,
     {
       ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath,
+      ...(releaseContext ? { ASF_EXPECTED_FRONTEND_GIT_SHA: releaseContext.gitSha } : {}),
       ASF_FRONTEND_READY_TIMEOUT_MS: String(CANONICAL_SMOKE_READY_TIMEOUT_MS),
     },
   );

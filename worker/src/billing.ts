@@ -32,6 +32,7 @@ import {
   generationCreationFlowAvailable,
   parseRequestedGenerationCreationFlow,
 } from './generationCreationFlow';
+import { STAGE_FORGE_CREDIT_COST } from '../../src/shared/StageForgePricing';
 
 const FREE_ROOKIE_GENERATION_LIMIT = 1;
 const GENERATION_RESERVATION_TTL_HOURS = 12;
@@ -1252,6 +1253,112 @@ export async function authorizeGenerationPurchase(
     reservationExpiresAt: expiresAt,
     creationFlow,
   });
+}
+
+export async function authorizeStageForgePurchase(
+  request: Request,
+  env: Env,
+  auth: PublicAuthContext,
+): Promise<Response> {
+  if (!auth.user) {
+    return json({
+      authorized: false,
+      error: 'Sign in to forge a stage',
+      requiredCredits: STAGE_FORGE_CREDIT_COST,
+    }, 401);
+  }
+
+  const body = await readJsonBody<{ legal?: unknown }>(request, MAX_BILLING_JSON_BODY_BYTES);
+  const legal = parseGenerationLegalAttestation(body.legal);
+  if (!legal) {
+    return json({
+      authorized: false,
+      error: 'Current generation consent is required',
+    }, 428);
+  }
+
+  await releaseExpiredGenerationCharges(env, auth.user.id);
+  const user = await env.DB.prepare(`
+    SELECT id, credits_balance
+    FROM users
+    WHERE id = ?
+  `).bind(auth.user.id).first<{ id: string; credits_balance: number }>();
+  if (!user) return json({ authorized: false, error: 'Account not found' }, 401);
+
+  const purchaseId = generateId();
+  const ledgerId = generateId();
+  const expiresAt = reservationExpiresAt();
+  const [spendResult] = await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE users
+      SET credits_balance = credits_balance - ?,
+          updated_at = datetime('now')
+      WHERE id = ? AND credits_balance >= ?
+      RETURNING credits_balance
+    `).bind(STAGE_FORGE_CREDIT_COST, user.id, STAGE_FORGE_CREDIT_COST),
+    env.DB.prepare(`
+      INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+      SELECT ?, id, ?, 'stage_forge', NULL
+      FROM users
+      WHERE id = ? AND changes() = 1
+    `).bind(ledgerId, -STAGE_FORGE_CREDIT_COST, user.id),
+    env.DB.prepare(`
+      INSERT INTO generation_charges (
+        id, user_id, tier, credit_cost, free_quota_delta, status,
+        reason, fighter_id, ledger_id, expires_at, creation_flow
+      )
+      SELECT ?, user_id, 'rookie', ?, 0, 'reserved',
+             'stage_forge', NULL, id, ?, 'original'
+      FROM credit_ledger
+      WHERE id = ? AND user_id = ?
+    `).bind(
+      purchaseId,
+      STAGE_FORGE_CREDIT_COST,
+      expiresAt,
+      ledgerId,
+      user.id,
+    ),
+  ]);
+  const spend = spendResult.results?.[0] as { credits_balance: number } | undefined;
+
+  if (!spend) {
+    const latest = await env.DB.prepare(
+      'SELECT credits_balance FROM users WHERE id = ?',
+    ).bind(user.id).first<{ credits_balance: number }>();
+    return json({
+      authorized: false,
+      error: 'Not enough credits',
+      requiredCredits: STAGE_FORGE_CREDIT_COST,
+      creditsBalance: latest?.credits_balance ?? user.credits_balance,
+    }, 402);
+  }
+
+  try {
+    const session = await createProviderSession(env, auth, {
+      tier: 'rookie',
+      purpose: 'stage_background',
+      chargeId: purchaseId,
+      legal,
+    });
+    return json({
+      authorized: true,
+      mode: 'credits',
+      purchaseId,
+      creditsCharged: STAGE_FORGE_CREDIT_COST,
+      creditsBalance: spend.credits_balance,
+      providerSessionId: session.id,
+      providerSessionExpiresAt: session.expiresAt,
+      providerCallLimit: session.providerCallLimit,
+      providerCostLimitCents: session.providerCostLimitCents,
+      reservationExpiresAt: expiresAt,
+    });
+  } catch (error) {
+    const charge = await getGenerationCharge(env, user.id, purchaseId);
+    if (charge) {
+      await releaseReservedGenerationCharge(env, charge, 'stage_forge_session_failed');
+    }
+    throw error;
+  }
 }
 
 export async function completeGenerationPurchase(

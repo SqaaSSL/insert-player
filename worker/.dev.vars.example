@@ -17,6 +17,7 @@ METERKEY_BASE_URL=https://meter.hilo.cx
 PIXCLI_BASE_URL=https://pixcli.hilo.cx
 
 GEMINI_API_KEY=replace_me
+GOOGLE_MAPS_SERVER_KEY=AIza_replace_with_server_key
 # To test the production transport locally, set GEMINI_TRANSPORT=meterkey and
 # provide the dedicated key without removing the direct rollback credential.
 # METERKEY_API_KEY=replace_me

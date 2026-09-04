@@ -40,6 +40,8 @@ CLERK_AUTHORIZED_PARTIES = "https://insertplayer.ai,https://www.insertplayer.ai"
 # GEMINI_API_KEY remains installed only for an explicit rollback version; the
 # meterkey transport never reads it or falls back to it.
 # wrangler secret put GEMINI_API_KEY
+# Server-only key restricted to the Street View Static API.
+# wrangler secret put GOOGLE_MAPS_SERVER_KEY
 # wrangler secret put FAL_API_KEY
 # wrangler secret put RUNWAY_API_KEY
 # wrangler secret put FREEPIK_API_KEY
@@ -69,6 +71,7 @@ STRIPE_PRICE_ARCADE = "price_1U7DsKCPjQq08iG98e4ZosBp"
 required = [
   "METERKEY_API_KEY",
   "GEMINI_API_KEY",
+  "GOOGLE_MAPS_SERVER_KEY",
   "FAL_API_KEY",
   "RUNWAY_API_KEY",
   "FREEPIK_API_KEY",

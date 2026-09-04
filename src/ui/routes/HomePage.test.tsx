@@ -4,6 +4,7 @@ import { HomePage } from './HomePage.tsx';
 
 const callbacks = {
   onCreateFighter: vi.fn(),
+  onCreateStage: vi.fn(),
   onOpenArcade: vi.fn(),
   onOpenCoopRush: vi.fn(),
   onNavigateLegal: vi.fn(),
@@ -28,6 +29,7 @@ describe('HomePage game modes', () => {
     expect(markup).toContain('Early access');
     expect(markup).toContain('Play Fight');
     expect(markup).toContain('Play Rush Beta');
+    expect(markup).toContain('Stage Scout');
     expect(markup).toContain('home-mode__launch--fight');
     expect(markup).toContain('home-mode__launch--rush');
     expect(markup.match(/home-mode__footer/g)).toHaveLength(2);

@@ -40,6 +40,7 @@ const requiredSecrets = [
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
   'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+  'GOOGLE_MAPS_SERVER_KEY',
 ];
 
 const sampleFragments = [
@@ -379,6 +380,7 @@ function assertFrontendEnv() {
   const apiBase = resolveEnv('VITE_API_BASE_URL', envFiles);
   const clerkKey = resolveEnv('VITE_CLERK_PUBLISHABLE_KEY', envFiles);
   const turnstileSiteKey = resolveEnv('VITE_TURNSTILE_SITE_KEY', envFiles);
+  const googleMapsBrowserKey = resolveEnv('VITE_GOOGLE_MAPS_BROWSER_KEY', envFiles);
   const sourceModels = [
     resolveEnv('VITE_GEMINI_IMAGE_MODEL_REPOSE', envFiles),
     resolveEnv('VITE_GEMINI_IMAGE_MODEL_UPRIGHT', envFiles),
@@ -412,6 +414,9 @@ function assertFrontendEnv() {
   }
   if (!turnstileSiteKey || hasSampleValue(turnstileSiteKey) || !/^0x[A-Za-z0-9_-]{20,}$/.test(turnstileSiteKey)) {
     fail('Production frontend needs VITE_TURNSTILE_SITE_KEY set to the live Insert Player widget.');
+  }
+  if (!googleMapsBrowserKey || hasSampleValue(googleMapsBrowserKey) || !/^AIza[A-Za-z0-9_-]{30,}$/.test(googleMapsBrowserKey)) {
+    fail('Production frontend needs a browser-restricted VITE_GOOGLE_MAPS_BROWSER_KEY.');
   }
   for (const [index, model] of sourceModels.entries()) {
     if (!model || !/pro/i.test(model)) {
@@ -835,6 +840,7 @@ async function assertLiveHealth() {
     ['providers', 'configured'],
     ['videoCreationTransport', 'configured'],
     ['durableGeneration', 'configured'],
+    ['mapsCapture', 'configured'],
     ['privacy', 'pseudonymized'],
   ];
   for (const [key, value] of expected) {

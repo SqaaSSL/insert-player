@@ -133,7 +133,11 @@ npm run smoke:frontend-sandbox
 
 ## Production Deployment
 
-Production configuration belongs in ignored `.env.production.local`. The authoritative sequence and manual evidence requirements live in [`PRODUCTION_READINESS.md`](./PRODUCTION_READINESS.md).
+Production configuration and Cloudflare credentials belong in the GitHub
+`production` environment. An ignored `.env.production.local` may be used for
+read-only readiness checks, but it is not a routine deployment source. The
+authoritative sequence and manual evidence requirements live in
+[`PRODUCTION_READINESS.md`](./PRODUCTION_READINESS.md).
 
 Merges to `main` trigger the branch-restricted `production` GitHub environment after required CI and CodeQL checks pass. Production secrets remain environment-scoped, but this owner-operated project does not require a separate manual deployment approval. See [`.github/DEPLOYMENT.md`](./.github/DEPLOYMENT.md) for branch rules, environment variables, secrets, and recovery.
 
@@ -145,16 +149,20 @@ High-level release order:
 4. Deploy the full Pages application to `insertplayer.ai`.
 5. Run the authenticated launch gate with two Clerk users and completed manual evidence.
 
-Commands with remote production side effects:
+The routine release interface is GitHub Actions:
 
-```bash
-npm run stripe:bootstrap -- --allow-live --create-webhook
-npm run config:live
-npm run deploy:frontend
-npm run check:launch
-```
+- Merge a reviewed, current pull request to `main` for the full Worker, D1, and
+  Pages pipeline.
+- Run **Deploy frontend only** against `main` only when its Worker-drift gate is
+  satisfied.
+- Verify `https://insertplayer.ai/release.json` reports the expected commit and
+  entry bundle; the deployment smoke enforces both automatically.
 
-Do not run these as routine development commands. `config:live` and `deploy:frontend` fail closed when live Clerk, Stripe, brand, origin, or security configuration is incomplete.
+`config:live`, production D1 commands, Worker deploys, Pages deploys, and Worker
+rollout mutations fail locally before contacting Cloudflare. The exceptional
+break-glass procedure is documented in [`.github/DEPLOYMENT.md`](./.github/DEPLOYMENT.md)
+and requires a clean checkout of the exact remote `main` SHA plus an explicit
+incident reason.
 
 Read-only production diagnostics:
 
@@ -211,9 +219,9 @@ The browser never receives provider or Stripe secret keys. Provider calls requir
 
 The canonical repository is [SqaaSSL/insert-player](https://github.com/SqaaSSL/insert-player).
 
-- Branch from `develop`; use focused `feature/*` or `fix/*` branches and pull requests.
-- Merge reviewed work into `develop` for automatic sandbox deployment.
-- Promote `develop` to `main` through a pull request; production deploys automatically after the required checks pass.
+- Branch from the current target branch and use a focused `feature/*` or `fix/*` pull request; a routine production change targets `main`.
+- Use `develop` only when an intentional isolated sandbox deployment is needed, and sync current `main` into it before the test deployment if it has drifted.
+- Promote sandbox-soaked `develop` work or merge a current feature branch to `main` through a protected pull request; production deploys automatically only after the required checks pass.
 - Do not commit `.env*`, `.dev.vars`, Wrangler state/logs, launch evidence containing identities, or downloaded/generated user assets.
 - Keep unrelated local changes intact when working in a dirty tree.
 - Run `npm run check:production` before review.
