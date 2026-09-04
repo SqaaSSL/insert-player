@@ -57,9 +57,44 @@ interface TemplateZeroCanaryDefinition {
 
 const TEMPLATE_ZERO_CANARIES: readonly TemplateZeroCanaryDefinition[] = [
   {
+    name: 'aura_unbothered',
+    path: '/assets/aura/template-zero/aura_unbothered.png',
+    frameWidth: 192,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
     name: 'aura_six_seven',
     path: '/assets/aura/template-zero/aura_six_seven.png',
     frameWidth: 192,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
+    name: 'aura_mog_check',
+    path: '/assets/aura/template-zero/aura_mog_check.png',
+    frameWidth: 192,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
+    name: 'aura_glide',
+    path: '/assets/aura/template-zero/aura_glide.png',
+    frameWidth: 192,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
+    name: 'aura_floor_worm',
+    path: '/assets/aura/template-zero/aura_floor_worm.png',
+    frameWidth: 384,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
+    name: 'aura_one_leg',
+    path: '/assets/aura/template-zero/aura_one_leg.png',
+    frameWidth: 256,
     frameHeight: 256,
     frameCount: 8,
   },

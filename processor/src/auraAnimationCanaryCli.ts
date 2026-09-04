@@ -7,9 +7,9 @@ import { createCanvas, loadImage, type SKRSContext2D } from '@napi-rs/canvas';
 
 const GRID_COLUMNS = 4;
 const GRID_ROWS = 2;
-const TARGET_FRAME_WIDTH = 192;
+const SOURCE_FRAME_WIDTH = 192;
+const DEFAULT_TARGET_FRAME_WIDTH = SOURCE_FRAME_WIDTH;
 const TARGET_FRAME_HEIGHT = 256;
-const TARGET_ROOT_X = 96;
 const TARGET_BASELINE_Y = 238;
 const ALPHA_THRESHOLD = 32;
 const ROOT_BAND_HEIGHT = 12;
@@ -31,17 +31,30 @@ function argument(name: string): string {
   return resolve(value);
 }
 
-function measureFrames(context: SKRSContext2D, width: number): FrameMeasurement[] {
+function optionalPositiveIntegerArgument(name: string, fallback: number): number {
+  const index = process.argv.indexOf(`--${name}`);
+  if (index < 0) return fallback;
+  const raw = process.argv[index + 1] ?? '';
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) throw new Error(`Invalid --${name}: ${raw}`);
+  return value;
+}
+
+function measureFrames(
+  context: SKRSContext2D,
+  width: number,
+  frameWidth: number,
+): FrameMeasurement[] {
   const pixels = context.getImageData(0, 0, width, TARGET_FRAME_HEIGHT * GRID_ROWS).data;
   return Array.from({ length: GRID_COLUMNS * GRID_ROWS }, (_, frameIndex) => {
-    const originX = (frameIndex % GRID_COLUMNS) * TARGET_FRAME_WIDTH;
+    const originX = (frameIndex % GRID_COLUMNS) * frameWidth;
     const originY = Math.floor(frameIndex / GRID_COLUMNS) * TARGET_FRAME_HEIGHT;
-    let minX = TARGET_FRAME_WIDTH;
+    let minX = frameWidth;
     let minY = TARGET_FRAME_HEIGHT;
     let maxX = -1;
     let maxY = -1;
     for (let y = 0; y < TARGET_FRAME_HEIGHT; y += 1) {
-      for (let x = 0; x < TARGET_FRAME_WIDTH; x += 1) {
+      for (let x = 0; x < frameWidth; x += 1) {
         const alpha = pixels[((originY + y) * width + originX + x) * 4 + 3];
         if (alpha < ALPHA_THRESHOLD) continue;
         minX = Math.min(minX, x);
@@ -55,7 +68,7 @@ function measureFrames(context: SKRSContext2D, width: number): FrameMeasurement[
     let rootXTotal = 0;
     let rootPixels = 0;
     for (let y = Math.max(0, maxY - ROOT_BAND_HEIGHT); y <= maxY; y += 1) {
-      for (let x = 0; x < TARGET_FRAME_WIDTH; x += 1) {
+      for (let x = 0; x < frameWidth; x += 1) {
         const alpha = pixels[((originY + y) * width + originX + x) * 4 + 3];
         if (alpha < ALPHA_THRESHOLD) continue;
         rootXTotal += x;
@@ -106,60 +119,67 @@ async function main(): Promise<void> {
   const input = argument('input');
   const output = argument('output');
   const qaOutput = argument('qa-output');
+  const targetFrameWidth = optionalPositiveIntegerArgument('frame-width', DEFAULT_TARGET_FRAME_WIDTH);
+  if (targetFrameWidth < SOURCE_FRAME_WIDTH) {
+    throw new Error(`--frame-width must be at least ${SOURCE_FRAME_WIDTH}`);
+  }
+  const targetRootX = Math.floor(targetFrameWidth / 2);
   const temporaryDirectory = await mkdtemp(`${tmpdir()}/insert-player-aura-canary-`);
   const keyedPath = resolve(temporaryDirectory, 'keyed.png');
   try {
     const ffmpeg = spawnSync('ffmpeg', [
       '-hide_banner', '-loglevel', 'error', '-y',
       '-i', input,
-      '-vf', `chromakey=0x00FF00:0.20:0.08,format=rgba,scale=${TARGET_FRAME_WIDTH * GRID_COLUMNS}:${TARGET_FRAME_HEIGHT * GRID_ROWS}:flags=lanczos`,
+      '-vf', `chromakey=0x00FF00:0.20:0.08,format=rgba,scale=${SOURCE_FRAME_WIDTH * GRID_COLUMNS}:${TARGET_FRAME_HEIGHT * GRID_ROWS}:flags=lanczos`,
       '-frames:v', '1', keyedPath,
     ], { encoding: 'utf8' });
     if (ffmpeg.status !== 0) throw new Error(ffmpeg.stderr || 'ffmpeg chroma cleanup failed');
 
     const keyed = await loadImage(await readFile(keyedPath));
-    const expectedWidth = TARGET_FRAME_WIDTH * GRID_COLUMNS;
+    const sourceWidth = SOURCE_FRAME_WIDTH * GRID_COLUMNS;
     const expectedHeight = TARGET_FRAME_HEIGHT * GRID_ROWS;
-    if (keyed.width !== expectedWidth || keyed.height !== expectedHeight) {
+    if (keyed.width !== sourceWidth || keyed.height !== expectedHeight) {
       throw new Error(`Unexpected keyed sheet dimensions ${keyed.width}x${keyed.height}`);
     }
-    const sourceCanvas = createCanvas(expectedWidth, expectedHeight);
+    const sourceCanvas = createCanvas(sourceWidth, expectedHeight);
     const sourceContext = sourceCanvas.getContext('2d');
     sourceContext.drawImage(keyed, 0, 0);
-    decontaminateGreenScreen(sourceContext, expectedWidth, expectedHeight);
-    const before = measureFrames(sourceContext, expectedWidth);
+    decontaminateGreenScreen(sourceContext, sourceWidth, expectedHeight);
+    const before = measureFrames(sourceContext, sourceWidth, SOURCE_FRAME_WIDTH);
 
+    const expectedWidth = targetFrameWidth * GRID_COLUMNS;
     const outputCanvas = createCanvas(expectedWidth, expectedHeight);
     const outputContext = outputCanvas.getContext('2d');
     outputContext.clearRect(0, 0, expectedWidth, expectedHeight);
     const offsets = before.map((measurement, frameIndex) => {
-      const dx = Math.round(TARGET_ROOT_X - measurement.rootX);
+      const dx = Math.round(targetRootX - measurement.rootX);
       const dy = TARGET_BASELINE_Y - measurement.maxY;
       if (
-        measurement.minX + dx < 0 || measurement.maxX + dx >= TARGET_FRAME_WIDTH ||
+        measurement.minX + dx < 0 || measurement.maxX + dx >= targetFrameWidth ||
         measurement.minY + dy < 0 || measurement.maxY + dy >= TARGET_FRAME_HEIGHT
       ) {
         throw new Error(`Frame ${measurement.frame} would crop during root registration`);
       }
-      const sourceX = (frameIndex % GRID_COLUMNS) * TARGET_FRAME_WIDTH;
+      const sourceX = (frameIndex % GRID_COLUMNS) * SOURCE_FRAME_WIDTH;
       const sourceY = Math.floor(frameIndex / GRID_COLUMNS) * TARGET_FRAME_HEIGHT;
+      const destinationX = (frameIndex % GRID_COLUMNS) * targetFrameWidth;
       outputContext.drawImage(
         sourceCanvas,
         sourceX,
         sourceY,
-        TARGET_FRAME_WIDTH,
+        SOURCE_FRAME_WIDTH,
         TARGET_FRAME_HEIGHT,
-        sourceX + dx,
+        destinationX + dx,
         sourceY + dy,
-        TARGET_FRAME_WIDTH,
+        SOURCE_FRAME_WIDTH,
         TARGET_FRAME_HEIGHT,
       );
       return { frame: measurement.frame, dx, dy };
     });
 
-    const after = measureFrames(outputContext, expectedWidth);
+    const after = measureFrames(outputContext, expectedWidth, targetFrameWidth);
     if (after.some((measurement) => (
-      measurement.maxY !== TARGET_BASELINE_Y || Math.abs(measurement.rootX - TARGET_ROOT_X) > 1
+      measurement.maxY !== TARGET_BASELINE_Y || Math.abs(measurement.rootX - targetRootX) > 1
     ))) {
       throw new Error('Registered Aura canary failed root-line invariants');
     }
@@ -172,8 +192,8 @@ async function main(): Promise<void> {
       input: relative(PROJECT_ROOT, input),
       output: relative(PROJECT_ROOT, output),
       grid: { columns: GRID_COLUMNS, rows: GRID_ROWS },
-      frame: { width: TARGET_FRAME_WIDTH, height: TARGET_FRAME_HEIGHT, count: GRID_COLUMNS * GRID_ROWS },
-      registrationTarget: { rootX: TARGET_ROOT_X, baselineY: TARGET_BASELINE_Y },
+      frame: { width: targetFrameWidth, height: TARGET_FRAME_HEIGHT, count: GRID_COLUMNS * GRID_ROWS },
+      registrationTarget: { rootX: targetRootX, baselineY: TARGET_BASELINE_Y },
       before,
       offsets,
       after,

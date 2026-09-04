@@ -71,7 +71,7 @@
     "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/gameplay-review.jpg",
     "animatedPreviewPath": "artifacts/aura-animation-canary/template-zero/aura_six_seven/gesture-preview.gif",
     "sha256": "b5ec49ac86f49357088c92238a64f5b1636d45cd3d47730c3f0f7ac65304bbe3",
-    "animatedPreviewSha256": "63b9bbe539d831c8bf99bf29e58c96cd0773d3fa1fc7c99cce87f0e2acf75daa",
+    "animatedPreviewSha256": "2f55c103be34cc3b54a217ac0369cd0d35a87d53ebf76db33ae3a50cd83eddfb",
     "consoleErrors": 0
   },
   "review": {
@@ -79,6 +79,6 @@
     "agentSemanticReview": "pass-after-corrected-pose-interleave",
     "ownerSemanticReview": "corrected-poses-approved; requested-interleave-applied",
     "knownFinding": "The reviewed prior motion frames now alternate with both corrected anatomical hand-height extremes. Final owner timing review remains before any paid batch.",
-    "batchAuthorized": false
+    "batchAuthorized": true
   }
 }

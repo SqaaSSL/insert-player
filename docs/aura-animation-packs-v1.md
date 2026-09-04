@@ -1,6 +1,6 @@
 # Aura animation packs v1
 
-Status: runtime and capability contract implemented. The first generated asset passes mechanical and in-game agent review; owner review and measured provider cost remain the gates before any paid batch is launched.
+Status: runtime and capability contract implemented. The complete seven-asset Template Zero development set (six core performances plus optional shrug) passes mechanical and in-game agent review. Owner semantic review and measured production-provider cost remain the gates before generating real roster packs.
 
 ## Product contract
 
@@ -40,9 +40,9 @@ One rhythm note does **not** trigger one full animation. Each turn deterministic
 - Full-body frames must preserve hands, feet and floor contact. `aura_floor_worm` must fit without shrinking every upright performance.
 - The runtime may add camera punch-ins, aura trails, head emphasis and crowd lighting. Those effects are not baked into every fighter sprite.
 
-## Template Zero canary
+## Template Zero development batch
 
-Generate only `aura_six_seven` first, as an eight-frame storyboard/sheet from the canonical neutral humanoid. Do not start the remaining five until it passes all gates:
+`aura_six_seven` was generated first as the eight-frame canary and passed these gates before the remaining five were authorized:
 
 1. Identity, clothing and body proportions stay stable across all frames.
 2. Both hands read clearly at gameplay scale, each anatomical hand visibly trades the upper position, and the gesture is recognisable without UI copy.
@@ -51,9 +51,11 @@ Generate only `aura_six_seven` first, as an eight-frame storyboard/sheet from th
 5. The processed sheet loads through the real Aura loader and can be interrupted cleanly on a miss.
 6. Actual provider cost, frame-repair rate and manual-review time are recorded before pack pricing is set.
 
-After the canary passes, generate in this order: `aura_unbothered`, `aura_mog_check`, `aura_glide`, `aura_one_leg`, then `aura_floor_worm`. The floor animation goes last because its framing is the highest-risk case.
+The authorized development batch now includes `aura_unbothered`, `aura_mog_check`, `aura_glide`, `aura_one_leg` and `aura_floor_worm`. Every asset has its raw storyboard, processed runtime sheet, non-accumulating GIF preview, gameplay capture, QA measurements and provenance manifest under `artifacts/aura-animation-canary/template-zero/`.
 
-The development canary is intentionally opt-in and can never enter a roster. Run Aura with `?auraCanary=template-zero` to load the processed `aura_six_seven` performance and optional `aura_shrug` reaction through the real runtime. The reproducible processor command is `npm --prefix processor run aura:canary:process -- --input <raw.png> --output <runtime.png> --qa-output <qa.json>`.
+Frame metadata is deliberately per animation. Upright performances use 192×256 cells, `aura_one_leg` uses 256×256 for the balancing arm and held ankle, and `aura_floor_worm` uses 384×256 so horizontal anatomy is neither cropped nor globally shrunk. Phaser consumes that explicit metadata; it never guesses the grid from the filename.
+
+The development canary is intentionally opt-in and can never enter a roster. Run Aura with `?auraCanary=template-zero` to load all six processed performances and `aura_shrug` through the real runtime. Add `&auraAutoplay=1` to watch CPU versus CPU, or `&auraCanaryMove=aura_mog_check` (using any routine animation name) to pin one performance for review. Both helpers are removed from production builds. The reproducible processor command is `npm --prefix processor run aura:canary:process -- --input <raw.png> --output <runtime.png> --qa-output <qa.json> [--frame-width 256]`.
 
 ## Commercial rollout
 

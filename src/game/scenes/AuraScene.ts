@@ -56,8 +56,10 @@ import {
   type AuraDifficultyId,
 } from '../aura/AuraConfig.ts';
 import {
+  AURA_ROUTINE_ANIMATION_NAMES,
   auraPerformanceAtBeat,
   createAuraPerformanceRoutine,
+  type AuraRoutineAnimationName,
 } from '../aura/AuraPerformance.ts';
 import { AuraPerformanceView } from '../aura/AuraPerformanceView.ts';
 import {
@@ -173,6 +175,7 @@ export class AuraScene extends Phaser.Scene {
   private remix = 0;
   private isVsAI = true;
   private cpuVsCpu = false;
+  private canaryPerformanceOverride: AuraRoutineAnimationName | null = null;
   private p1Name = 'Player 1';
   private p2Name = 'CPU';
   private p1PhotoHash: string | null = null;
@@ -278,6 +281,12 @@ export class AuraScene extends Phaser.Scene {
     this.remix = data.remix ?? 0;
     this.isVsAI = data.vsAI !== false || data.cpuVsCpu === true;
     this.cpuVsCpu = data.cpuVsCpu === true;
+    const requestedCanaryPerformance = import.meta.env.DEV
+      ? new URLSearchParams(window.location.search).get('auraCanaryMove')
+      : null;
+    this.canaryPerformanceOverride = AURA_ROUTINE_ANIMATION_NAMES.find(
+      (name) => name === requestedCanaryPerformance,
+    ) ?? null;
     this.p1Name = data.p1Name ?? (this.cpuVsCpu ? 'CPU 1' : 'Player 1');
     this.p2Name = data.p2Name ?? (this.isVsAI ? 'CPU' : 'Player 2');
     this.p1PhotoHash = data.p1PhotoHash ?? null;
@@ -1521,7 +1530,8 @@ export class AuraScene extends Phaser.Scene {
       ? this.chart.notes.find((entry) => entry.id === judgement.noteId) ?? null
       : null;
     const routine = note ? createAuraPerformanceRoutine(this.matchSeed, this.chart.turns[note.turnIndex].round) : null;
-    const requestedPerformance = note && routine ? auraPerformanceAtBeat(routine, note.beat) : null;
+    const requestedPerformance = this.canaryPerformanceOverride
+      ?? (note && routine ? auraPerformanceAtBeat(routine, note.beat) : null);
     let customPerformancePlayed = requestedPerformance
       ? performanceView?.play(requestedPerformance) ?? false
       : false;
