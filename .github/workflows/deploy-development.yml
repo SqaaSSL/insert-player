@@ -69,13 +69,13 @@ jobs:
             processor/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Install Worker dependencies
-        run: npm --prefix worker ci
+        run: npm --prefix worker ci --no-audit --no-fund
 
       - name: Install processor dependencies
-        run: npm --prefix processor ci
+        run: npm --prefix processor ci --no-audit --no-fund
 
       - name: Configure, migrate, deploy, and smoke Worker
         env:

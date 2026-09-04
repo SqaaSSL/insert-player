@@ -13,7 +13,7 @@ jobs:
     # Dependency restores occasionally spend several minutes per workspace on
     # GitHub-hosted runners. Keep the gate fail-closed, but leave enough room
     # for the real Docker/FFmpeg and production checks after a slow npm mirror.
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -32,13 +32,13 @@ jobs:
             processor/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Install Worker dependencies
-        run: npm --prefix worker ci
+        run: npm --prefix worker ci --no-audit --no-fund
 
       - name: Install processor dependencies
-        run: npm --prefix processor ci
+        run: npm --prefix processor ci --no-audit --no-fund
 
       - name: Test video compiler with production FFmpeg toolchain
         run: docker build --file Dockerfile.processor --target video-sprite-test .
