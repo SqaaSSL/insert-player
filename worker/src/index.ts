@@ -60,6 +60,7 @@ import {
   startAdminArcadeGeneration,
   startAdminArcadeSourceGeneration,
 } from './arcadeGeneration';
+import { readDeploymentImageProcessorContract } from './deploymentPreflight';
 import {
   createGenerationJob,
   getGenerationJob,
@@ -642,6 +643,10 @@ export default {
           request,
           env,
         );
+      }
+
+      if (path === '/api/internal/deploy/image-processor-contract' && method === 'GET') {
+        return readDeploymentImageProcessorContract(request, env);
       }
 
       const arcadeAdminMatch = path.match(/^\/api\/admin\/arcade\/([^/]+)$/);
