@@ -62,6 +62,11 @@ import {
 import type { PeerTransportState } from '../net/PeerTransport.ts';
 
 const LANE_COLORS = [0x4fdcff, 0x8b4dff, 0xffce3a, 0xef4343] as const;
+const LANE_HALF_WIDTH = 36;
+const LANE_START_Y = 298;
+const LANE_TARGET_Y = 497;
+const KEY_CAP_Y = 524;
+const KEY_LABEL_Y = 542;
 const ONLINE_START_DELAY_MS = 1_600;
 const ONLINE_FINISH_GRACE_MS = 2_500;
 
@@ -178,6 +183,7 @@ export class AuraScene extends Phaser.Scene {
   private laneGraphics!: Phaser.GameObjects.Graphics;
   private targetGraphics!: Phaser.GameObjects.Graphics;
   private inputFlashGraphics: Phaser.GameObjects.Graphics[] = [];
+  private inputPulseGraphics: Phaser.GameObjects.Graphics[] = [];
   private activeGlow!: Phaser.GameObjects.Graphics;
   private burstRing!: Phaser.GameObjects.Graphics;
   private noteObjects = new Map<string, Phaser.GameObjects.Container>();
@@ -556,8 +562,18 @@ export class AuraScene extends Phaser.Scene {
 
     this.laneGraphics = this.add.graphics();
     this.targetGraphics = this.add.graphics();
-    this.inputFlashGraphics = Array.from({ length: 4 }, () => this.add.graphics().setAlpha(0));
-    this.uiLayer.add([this.laneGraphics, this.targetGraphics, ...this.inputFlashGraphics]);
+    this.inputFlashGraphics = Array.from({ length: 4 }, () => (
+      this.add.graphics().setAlpha(0).setBlendMode(Phaser.BlendModes.ADD)
+    ));
+    this.inputPulseGraphics = Array.from({ length: 4 }, () => (
+      this.add.graphics().setAlpha(0).setBlendMode(Phaser.BlendModes.ADD)
+    ));
+    this.uiLayer.add([
+      this.laneGraphics,
+      this.targetGraphics,
+      ...this.inputFlashGraphics,
+      ...this.inputPulseGraphics,
+    ]);
     for (const text of this.laneKeyTexts) this.uiLayer.bringToTop(text);
     this.uiLayer.add(ScreenEffects.createCRTOverlay(this));
   }
@@ -596,14 +612,15 @@ export class AuraScene extends Phaser.Scene {
 
   private laneLayout(slot: AuraSlot, lane: AuraLane): LaneLayout {
     const center = slot === 0 ? 406 : 618;
-    const startOffsets = [-63, -21, 21, 63] as const;
+    // Straight 4K rails keep screen-space velocity and note size fully honest.
     // The wider middle seam mirrors the physical gap between the player's hands.
-    const targetOffsets = [-150, -66, 66, 150] as const;
+    const offsets = [-150, -66, 66, 150] as const;
+    const x = center + offsets[lane];
     return {
-      startX: center + startOffsets[lane],
-      targetX: center + targetOffsets[lane],
-      startY: 298,
-      targetY: 497,
+      startX: x,
+      targetX: x,
+      startY: LANE_START_Y,
+      targetY: LANE_TARGET_Y,
     };
   }
 
@@ -619,25 +636,39 @@ export class AuraScene extends Phaser.Scene {
   private drawLanes(slot: AuraSlot): void {
     this.laneGraphics.clear();
     this.targetGraphics.clear();
+    for (const graphics of [...this.inputFlashGraphics, ...this.inputPulseGraphics]) {
+      this.tweens.killTweensOf(graphics);
+      graphics.clear().setAlpha(0).setScale(1);
+    }
     for (let lane = 0; lane < 4; lane += 1) {
       const typedLane = lane as AuraLane;
       const layout = this.laneLayout(slot, typedLane);
       const color = LANE_COLORS[lane];
       this.laneGraphics.fillStyle(0x050507, 0.62);
       this.laneGraphics.fillPoints([
-        new Phaser.Geom.Point(layout.startX - 19, layout.startY),
-        new Phaser.Geom.Point(layout.startX + 19, layout.startY),
-        new Phaser.Geom.Point(layout.targetX + 36, layout.targetY),
-        new Phaser.Geom.Point(layout.targetX - 36, layout.targetY),
+        new Phaser.Geom.Point(layout.startX - LANE_HALF_WIDTH, layout.startY),
+        new Phaser.Geom.Point(layout.startX + LANE_HALF_WIDTH, layout.startY),
+        new Phaser.Geom.Point(layout.targetX + LANE_HALF_WIDTH, layout.targetY),
+        new Phaser.Geom.Point(layout.targetX - LANE_HALF_WIDTH, layout.targetY),
       ], true);
       this.laneGraphics.lineStyle(2, color, 0.68);
-      this.laneGraphics.lineBetween(layout.startX - 18, layout.startY, layout.targetX - 34, layout.targetY);
-      this.laneGraphics.lineBetween(layout.startX + 18, layout.startY, layout.targetX + 34, layout.targetY);
+      this.laneGraphics.lineBetween(
+        layout.startX - LANE_HALF_WIDTH,
+        layout.startY,
+        layout.targetX - LANE_HALF_WIDTH,
+        layout.targetY,
+      );
+      this.laneGraphics.lineBetween(
+        layout.startX + LANE_HALF_WIDTH,
+        layout.startY,
+        layout.targetX + LANE_HALF_WIDTH,
+        layout.targetY,
+      );
       this.drawMarker(this.targetGraphics, layout.targetX, layout.targetY, typedLane, color, 22, false);
       this.targetGraphics.fillStyle(0x050507, 0.94);
-      this.targetGraphics.fillRoundedRect(layout.targetX - 23, 524, 46, 36, 4);
+      this.targetGraphics.fillRoundedRect(layout.targetX - 23, KEY_CAP_Y, 46, 36, 4);
       this.targetGraphics.lineStyle(1, color, 0.86);
-      this.targetGraphics.strokeRoundedRect(layout.targetX - 23, 524, 46, 36, 4);
+      this.targetGraphics.strokeRoundedRect(layout.targetX - 23, KEY_CAP_Y, 46, 36, 4);
       this.targetGraphics.fillStyle(color, 1);
       this.targetGraphics.fillCircle(layout.targetX, 518, 2);
     }
@@ -645,24 +676,34 @@ export class AuraScene extends Phaser.Scene {
     const keys = this.laneKeysForSlot(slot);
     this.laneKeyTexts.forEach((text, lane) => {
       const layout = this.laneLayout(slot, lane as AuraLane);
-      text.setText(keys[lane]).setPosition(layout.targetX, 542).setVisible(true);
+      text.setText(keys[lane]).setPosition(layout.targetX, KEY_LABEL_Y).setVisible(true);
     });
   }
 
   private drawBeatGrid(slot: AuraSlot): void {
     const left = this.laneLayout(slot, 0);
+    const leftInner = this.laneLayout(slot, 1);
+    const rightInner = this.laneLayout(slot, 2);
     const right = this.laneLayout(slot, 3);
     for (const progress of [0.25, 0.5, 0.75]) {
       const y = Phaser.Math.Linear(left.startY, left.targetY, progress);
-      const halfWidth = Phaser.Math.Linear(19, 36, progress);
-      const leftX = Phaser.Math.Linear(left.startX, left.targetX, progress) - halfWidth;
-      const rightX = Phaser.Math.Linear(right.startX, right.targetX, progress) + halfWidth;
       this.laneGraphics.lineStyle(
         progress === 0.5 ? 2 : 1,
         0xfff4d6,
         progress === 0.5 ? 0.32 : 0.2,
       );
-      this.laneGraphics.lineBetween(leftX, y, rightX, y);
+      this.laneGraphics.lineBetween(
+        left.startX - LANE_HALF_WIDTH,
+        y,
+        leftInner.startX + LANE_HALF_WIDTH,
+        y,
+      );
+      this.laneGraphics.lineBetween(
+        rightInner.startX - LANE_HALF_WIDTH,
+        y,
+        right.startX + LANE_HALF_WIDTH,
+        y,
+      );
     }
   }
 
@@ -735,7 +776,7 @@ export class AuraScene extends Phaser.Scene {
         Phaser.Math.Linear(layout.startX, layout.targetX, progress),
         Phaser.Math.Linear(layout.startY, layout.targetY, progress),
       );
-      object.setScale(Phaser.Math.Linear(0.72, 1, progress));
+      object.setScale(1);
       object.setAlpha(until < 0 ? Math.max(0.22, 1 + until / 240) : 1);
     }
     for (const [id, object] of this.noteObjects) {
@@ -848,42 +889,81 @@ export class AuraScene extends Phaser.Scene {
 
   private flashLaneInput(slot: AuraSlot, lane: AuraLane): void {
     const flash = this.inputFlashGraphics[lane];
+    const pulse = this.inputPulseGraphics[lane];
     const keyText = this.laneKeyTexts[lane];
-    if (!flash || !keyText) return;
+    if (!flash || !pulse || !keyText) return;
 
     const layout = this.laneLayout(slot, lane);
     const color = LANE_COLORS[lane];
     this.tweens.killTweensOf(flash);
+    this.tweens.killTweensOf(pulse);
     this.tweens.killTweensOf(keyText);
     flash.clear();
-    flash.fillStyle(color, 0.36);
-    flash.fillCircle(layout.targetX, layout.targetY, 33);
-    this.drawMarker(flash, layout.targetX, layout.targetY, lane, color, 25, true);
-    flash.fillStyle(color, 0.9);
-    flash.fillRoundedRect(layout.targetX - 23, 524, 46, 36, 4);
+    flash.fillStyle(color, 0.14);
+    flash.fillRect(
+      layout.targetX - LANE_HALF_WIDTH,
+      layout.startY,
+      LANE_HALF_WIDTH * 2,
+      layout.targetY - layout.startY,
+    );
+    flash.fillStyle(color, 0.2);
+    flash.fillRect(
+      layout.targetX - LANE_HALF_WIDTH,
+      layout.targetY - 82,
+      LANE_HALF_WIDTH * 2,
+      82,
+    );
+    flash.lineStyle(6, 0xffffff, 0.92);
+    flash.lineBetween(
+      layout.targetX - LANE_HALF_WIDTH,
+      layout.targetY,
+      layout.targetX + LANE_HALF_WIDTH,
+      layout.targetY,
+    );
+    flash.fillStyle(color, 1);
+    flash.fillRoundedRect(layout.targetX - 25, KEY_CAP_Y - 2, 50, 40, 5);
     flash.lineStyle(3, 0xffffff, 1);
-    flash.strokeRoundedRect(layout.targetX - 23, 524, 46, 36, 4);
+    flash.strokeRoundedRect(layout.targetX - 25, KEY_CAP_Y - 2, 50, 40, 5);
     flash.setAlpha(1);
-    keyText.setColor('#050507').setScale(1.2);
+
+    pulse.clear();
+    pulse.fillStyle(color, 0.44);
+    pulse.fillCircle(0, 0, 34);
+    pulse.lineStyle(5, 0xffffff, 0.96);
+    pulse.strokeCircle(0, 0, 31);
+    this.drawMarker(pulse, 0, 0, lane, color, 25, true);
+    pulse.setPosition(layout.targetX, layout.targetY).setScale(0.72).setAlpha(1);
+
+    keyText.setColor('#050507').setPosition(layout.targetX, KEY_LABEL_Y + 4).setScale(1.24);
 
     if (this.reduceMotion) {
       this.time.delayedCall(120, () => {
         flash.setAlpha(0);
-        keyText.setColor('#fff4d6').setScale(1);
+        pulse.setAlpha(0);
+        keyText.setColor('#fff4d6').setPosition(layout.targetX, KEY_LABEL_Y).setScale(1);
       });
       return;
     }
     this.tweens.add({
       targets: flash,
       alpha: 0,
-      duration: 190,
+      duration: 230,
+      ease: 'Quart.easeOut',
+    });
+    this.tweens.add({
+      targets: pulse,
+      scaleX: 1.55,
+      scaleY: 1.55,
+      alpha: 0,
+      duration: 230,
       ease: 'Quart.easeOut',
     });
     this.tweens.add({
       targets: keyText,
+      y: KEY_LABEL_Y,
       scaleX: 1,
       scaleY: 1,
-      duration: 170,
+      duration: 190,
       ease: 'Quart.easeOut',
       onComplete: () => keyText.setColor('#fff4d6'),
     });
@@ -929,10 +1009,14 @@ export class AuraScene extends Phaser.Scene {
     const noteObject = judgement.noteId ? this.noteObjects.get(judgement.noteId) : null;
     if (noteObject) {
       this.noteObjects.delete(judgement.noteId!);
-      if (judgement.grade === 'perfect' && !this.reduceMotion) {
+      if (
+        (judgement.grade === 'perfect' || judgement.grade === 'great' || judgement.grade === 'good')
+        && !this.reduceMotion
+      ) {
+        const hitScale = judgement.grade === 'perfect' ? 1.7 : judgement.grade === 'great' ? 1.45 : 1.25;
         this.tweens.add({
           targets: noteObject,
-          scale: 1.65,
+          scale: hitScale,
           alpha: 0,
           duration: 180,
           ease: 'Quart.easeOut',
