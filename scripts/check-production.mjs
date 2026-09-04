@@ -906,6 +906,8 @@ function assertSandboxIsolationIsWired() {
     'forbiddenAllowOrigin !== productionOrigin',
     "['.env.sandbox', '.env.sandbox.local']",
     "VITE_CLERK_PUBLISHABLE_KEY must be the isolated Clerk development pk_test_ key.",
+    'const optionalProviderSecretKeys',
+    'const missingProviders = requiredProviderSecretKeys.filter',
     'const files = isSandbox',
     "['.env.sandbox.local', '.env.sandbox']",
     "isSandbox ? 'check:frontend-sandbox' : 'check:frontend-live'",
