@@ -38,6 +38,8 @@ STRIPE_PRICE_STARTER = "price_1U6H1vCQ9OPSWOkj1ljokcL6"
 STRIPE_PRICE_VERSUS = "price_1U6H1wCQ9OPSWOkjuTEqzam3"
 STRIPE_PRICE_ARCADE = "price_1U6H1xCQ9OPSWOkjLU7ClORv"
 
+# PIXCLI_API_KEY is intentionally optional in sandbox. When present, the
+# sandbox config helper uploads it; when absent, only video creation is disabled.
 [secrets]
 required = [
   "GEMINI_API_KEY",
@@ -46,7 +48,6 @@ required = [
   "RUNWAY_API_KEY",
   "FREEPIK_API_KEY",
   "LUDO_API_KEY",
-  "PIXCLI_API_KEY",
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
   "CLERK_WEBHOOK_SIGNING_SECRET",

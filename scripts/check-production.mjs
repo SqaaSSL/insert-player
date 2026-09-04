@@ -959,6 +959,21 @@ function assertSandboxIsolationIsWired() {
   ) {
     throw new Error('Sandbox Wrangler config references a production origin or database.');
   }
+
+  const requiredSecrets = (config, label) => {
+    const block = config.match(/^\[secrets\]\s*\nrequired\s*=\s*\[([\s\S]*?)^\]/m)?.[1];
+    if (!block) throw new Error(`${label} Wrangler config must declare required Worker secrets.`);
+    return new Set([...block.matchAll(/"([A-Z0-9_]+)"/g)].map((match) => match[1]));
+  };
+  const productionRequiredSecrets = requiredSecrets(productionConfig, 'Production');
+  const sandboxRequiredSecrets = requiredSecrets(sandboxConfig, 'Sandbox');
+  if (!productionRequiredSecrets.has('PIXCLI_API_KEY')) {
+    throw new Error('Production Wrangler config must keep PIXCLI_API_KEY required.');
+  }
+  if (sandboxRequiredSecrets.has('PIXCLI_API_KEY')) {
+    throw new Error('Sandbox Wrangler config must keep optional PIXCLI_API_KEY out of required secrets.');
+  }
+
   const secretKeys = [
     'GEMINI_API_KEY',
     'FAL_API_KEY',
