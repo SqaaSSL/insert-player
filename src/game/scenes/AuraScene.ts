@@ -63,11 +63,14 @@ import type { PeerTransportState } from '../net/PeerTransport.ts';
 
 const LANE_COLORS = [0x4fdcff, 0x8b4dff, 0xffce3a, 0xef4343] as const;
 const LANE_HALF_WIDTH = 36;
-const LANE_START_Y = 298;
+const LANE_START_Y = 244;
 const LANE_TARGET_Y = 497;
 const RECEPTOR_WIDTH = 64;
 const RECEPTOR_HEIGHT = 58;
 const KEY_LABEL_Y = 544;
+const HIGHWAY_FRAME_PAD_X = 14;
+const HIGHWAY_FRAME_PAD_TOP = 18;
+const HIGHWAY_FRAME_PAD_BOTTOM = 38;
 const ONLINE_START_DELAY_MS = 1_600;
 const ONLINE_FINISH_GRACE_MS = 2_500;
 
@@ -206,6 +209,7 @@ export class AuraScene extends Phaser.Scene {
   private keysP2: Phaser.Input.Keyboard.Key[] = [];
   private keyBindings: Array<{ key: Phaser.Input.Keyboard.Key; handler: () => void }> = [];
   private soundManager!: SoundManager;
+  private crowdHeat: [number, number] = [0, 0];
   private clockStartedAt: number | null = null;
   private scheduledClockStart: number | null = null;
   private paused = false;
@@ -259,6 +263,7 @@ export class AuraScene extends Phaser.Scene {
     this.cpuPlans = [[], []];
     this.cpuPlanIndices = [0, 0];
     this.noteObjects.clear();
+    this.crowdHeat = [0, 0];
     this.currentTurnIndex = -2;
     this.clockStartedAt = null;
     this.scheduledClockStart = null;
@@ -310,6 +315,7 @@ export class AuraScene extends Phaser.Scene {
     this.battle = new AuraBattle(this.chart, this.difficultyId);
 
     this.soundManager = new SoundManager();
+    this.soundManager.prepareAuraCrowd();
     await this.loadFighters(epoch);
     if (!this.isCurrentLifecycle(epoch)) return;
 
@@ -612,7 +618,8 @@ export class AuraScene extends Phaser.Scene {
   }
 
   private laneLayout(slot: AuraSlot, lane: AuraLane): LaneLayout {
-    const center = slot === 0 ? 406 : 618;
+    // The highway always occupies the side opposite the active performer.
+    const center = slot === 0 ? 720 : 304;
     // Straight 4K rails keep screen-space velocity and note size fully honest.
     // The wider middle seam mirrors the physical gap between the player's hands.
     const offsets = [-150, -66, 66, 150] as const;
@@ -641,18 +648,26 @@ export class AuraScene extends Phaser.Scene {
       this.tweens.killTweensOf(graphics);
       graphics.clear().setAlpha(0).setScale(1);
     }
+    this.drawHighwayFrame(slot);
     for (let lane = 0; lane < 4; lane += 1) {
       const typedLane = lane as AuraLane;
       const layout = this.laneLayout(slot, typedLane);
       const color = LANE_COLORS[lane];
-      this.laneGraphics.fillStyle(0x050507, 0.62);
-      this.laneGraphics.fillPoints([
-        new Phaser.Geom.Point(layout.startX - LANE_HALF_WIDTH, layout.startY),
-        new Phaser.Geom.Point(layout.startX + LANE_HALF_WIDTH, layout.startY),
-        new Phaser.Geom.Point(layout.targetX + LANE_HALF_WIDTH, layout.targetY),
-        new Phaser.Geom.Point(layout.targetX - LANE_HALF_WIDTH, layout.targetY),
-      ], true);
-      this.laneGraphics.lineStyle(2, color, 0.68);
+      this.laneGraphics.fillStyle(0x09091f, 0.86);
+      this.laneGraphics.fillRect(
+        layout.startX - LANE_HALF_WIDTH + 2,
+        layout.startY,
+        LANE_HALF_WIDTH * 2 - 4,
+        layout.targetY - layout.startY,
+      );
+      this.laneGraphics.fillStyle(color, 0.055);
+      this.laneGraphics.fillRect(
+        layout.startX - LANE_HALF_WIDTH + 3,
+        layout.startY,
+        LANE_HALF_WIDTH * 2 - 6,
+        layout.targetY - layout.startY,
+      );
+      this.laneGraphics.lineStyle(8, color, 0.075);
       this.laneGraphics.lineBetween(
         layout.startX - LANE_HALF_WIDTH,
         layout.startY,
@@ -665,6 +680,21 @@ export class AuraScene extends Phaser.Scene {
         layout.targetX + LANE_HALF_WIDTH,
         layout.targetY,
       );
+      this.laneGraphics.lineStyle(2, color, 0.72);
+      this.laneGraphics.lineBetween(
+        layout.startX - LANE_HALF_WIDTH,
+        layout.startY,
+        layout.targetX - LANE_HALF_WIDTH,
+        layout.targetY,
+      );
+      this.laneGraphics.lineBetween(
+        layout.startX + LANE_HALF_WIDTH,
+        layout.startY,
+        layout.targetX + LANE_HALF_WIDTH,
+        layout.targetY,
+      );
+      this.laneGraphics.fillStyle(color, 0.82);
+      this.laneGraphics.fillRoundedRect(layout.startX - 18, layout.startY - 3, 36, 6, 3);
       this.targetGraphics.fillStyle(0x050507, 0.94);
       this.targetGraphics.fillRoundedRect(
         layout.targetX - RECEPTOR_WIDTH / 2,
@@ -689,6 +719,50 @@ export class AuraScene extends Phaser.Scene {
       const layout = this.laneLayout(slot, lane as AuraLane);
       text.setText(keys[lane]).setPosition(layout.targetX, KEY_LABEL_Y).setVisible(true);
     });
+  }
+
+  private drawHighwayFrame(slot: AuraSlot): void {
+    const left = this.laneLayout(slot, 0);
+    const right = this.laneLayout(slot, 3);
+    const frameLeft = left.startX - LANE_HALF_WIDTH - HIGHWAY_FRAME_PAD_X;
+    const frameRight = right.startX + LANE_HALF_WIDTH + HIGHWAY_FRAME_PAD_X;
+    const frameTop = LANE_START_Y - HIGHWAY_FRAME_PAD_TOP;
+    const frameBottom = LANE_TARGET_Y + HIGHWAY_FRAME_PAD_BOTTOM;
+    const corner = 12;
+    const panel = [
+      new Phaser.Geom.Point(frameLeft + corner, frameTop),
+      new Phaser.Geom.Point(frameRight - corner, frameTop),
+      new Phaser.Geom.Point(frameRight, frameTop + corner),
+      new Phaser.Geom.Point(frameRight, frameBottom - corner),
+      new Phaser.Geom.Point(frameRight - corner, frameBottom),
+      new Phaser.Geom.Point(frameLeft + corner, frameBottom),
+      new Phaser.Geom.Point(frameLeft, frameBottom - corner),
+      new Phaser.Geom.Point(frameLeft, frameTop + corner),
+    ];
+    const shadow = panel.map((point) => new Phaser.Geom.Point(point.x + 8, point.y + 10));
+
+    this.laneGraphics.fillStyle(0x000000, 0.44);
+    this.laneGraphics.fillPoints(shadow, true);
+    this.laneGraphics.fillGradientStyle(0x11113b, 0x1b0c39, 0x050516, 0x08051a, 0.94);
+    this.laneGraphics.fillPoints(panel, true);
+    this.laneGraphics.lineStyle(9, 0x4fdcff, 0.055);
+    this.laneGraphics.strokePoints(panel, true);
+    this.laneGraphics.lineStyle(2, 0xa976ff, 0.72);
+    this.laneGraphics.strokePoints(panel, true);
+
+    const seamX = (this.laneLayout(slot, 1).startX + this.laneLayout(slot, 2).startX) / 2;
+    this.laneGraphics.fillStyle(0x02020b, 0.76);
+    this.laneGraphics.fillRect(seamX - 18, frameTop + 8, 36, frameBottom - frameTop - 16);
+    this.laneGraphics.lineStyle(1, 0xffce3a, 0.28);
+    this.laneGraphics.lineBetween(seamX - 18, frameTop + 8, seamX - 18, frameBottom - 8);
+    this.laneGraphics.lineBetween(seamX + 18, frameTop + 8, seamX + 18, frameBottom - 8);
+
+    this.laneGraphics.fillStyle(0x4fdcff, 0.82);
+    this.laneGraphics.fillRoundedRect(frameLeft + 18, frameTop - 2, 76, 4, 2);
+    this.laneGraphics.fillStyle(0xff3dc6, 0.72);
+    this.laneGraphics.fillRoundedRect(frameRight - 94, frameTop - 2, 76, 4, 2);
+    this.laneGraphics.fillStyle(0xffce3a, 0.75);
+    this.laneGraphics.fillRoundedRect(seamX - 24, frameBottom - 3, 48, 5, 2);
   }
 
   private drawBeatGrid(slot: AuraSlot): void {
@@ -849,6 +923,9 @@ export class AuraScene extends Phaser.Scene {
     }
     const turn = this.chart.turns[turnIndex];
     this.drawLanes(turn.slot);
+    this.comboText
+      .setOrigin(turn.slot === 0 ? 0 : 1, 0)
+      .setX(turn.slot === 0 ? 26 : 998);
     const locallyPlayable = !this.isCpuSlot(turn.slot)
       && (!this.online || turn.slot === this.online.localSlot);
     this.laneKeyTexts.forEach((text) => text.setVisible(locallyPlayable));
@@ -861,22 +938,22 @@ export class AuraScene extends Phaser.Scene {
     this.activeGlow.setPosition(activeX, GROUND_Y + this.fighterRenderYOffset + 5);
     this.views[slot].sprite.setAlpha(1);
     this.views[slot].shadowSprite?.setAlpha(0.2);
-    this.views[inactive].sprite.setAlpha(0.62);
-    this.views[inactive].shadowSprite?.setAlpha(0.09);
-    this.views[slot].setRenderPresentation(this.fighterRenderScale * 1.08, this.fighterRenderYOffset);
-    this.views[inactive].setRenderPresentation(this.fighterRenderScale * 0.94, this.fighterRenderYOffset);
+    this.views[inactive].sprite.setAlpha(0.28);
+    this.views[inactive].shadowSprite?.setAlpha(0.05);
+    this.views[slot].setRenderPresentation(this.fighterRenderScale * 1.28, this.fighterRenderYOffset);
+    this.views[inactive].setRenderPresentation(this.fighterRenderScale * 0.82, this.fighterRenderYOffset);
     const camera = this.cameras.main;
-    const targetScrollX = slot === 0 ? -22 : 22;
+    const targetScrollX = slot === 0 ? 46 : -46;
     if (this.reduceMotion) {
-      camera.setZoom(1.045).setScroll(targetScrollX, 2);
+      camera.setZoom(1.12).setScroll(targetScrollX, 4);
     } else {
       this.tweens.killTweensOf(camera);
       this.tweens.add({
         targets: camera,
-        zoom: 1.045,
+        zoom: 1.12,
         scrollX: targetScrollX,
-        scrollY: 2,
-        duration: 420,
+        scrollY: 4,
+        duration: 520,
         ease: 'Quart.easeOut',
       });
     }
@@ -1050,6 +1127,7 @@ export class AuraScene extends Phaser.Scene {
     this.updateScoreUi();
     if (judgement.grade !== 'wrong_turn') {
       this.soundManager.playAuraGrade(judgement.grade);
+      this.reactCrowd(judgement);
     }
 
     if (
@@ -1067,6 +1145,32 @@ export class AuraScene extends Phaser.Scene {
         grade: judgement.grade,
         offsetMs: judgement.offsetMs,
       } satisfies AuraOnlineControl);
+    }
+  }
+
+  private reactCrowd(judgement: AuraJudgement): void {
+    const slot = judgement.slot;
+    if (judgement.grade === 'miss' || judgement.grade === 'mash') {
+      const heatBeforeFailure = this.crowdHeat[slot];
+      this.crowdHeat[slot] = Math.max(0, heatBeforeFailure - (judgement.grade === 'miss' ? 0.55 : 0.28));
+      this.soundManager.playAuraCrowd(
+        'boo',
+        judgement.grade === 'miss' ? 0.58 + heatBeforeFailure * 0.42 : 0.42 + heatBeforeFailure * 0.24,
+      );
+      return;
+    }
+
+    const gain = judgement.grade === 'perfect' ? 0.16 : judgement.grade === 'great' ? 0.11 : 0.07;
+    const comboHeat = Math.min(1, judgement.combo / 14);
+    this.crowdHeat[slot] = Math.min(1, Math.max(comboHeat, this.crowdHeat[slot] + gain));
+    const heat = this.crowdHeat[slot];
+
+    if (judgement.combo === 4) {
+      this.soundManager.playAuraCrowd('applause', 0.42 + heat * 0.25);
+    } else if (judgement.combo === 8) {
+      this.soundManager.playAuraCrowd('applause', 0.62 + heat * 0.28);
+    } else if (judgement.combo === 12 || (judgement.combo > 12 && judgement.combo % 6 === 0)) {
+      this.soundManager.playAuraCrowd('cheer', 0.72 + heat * 0.28);
     }
   }
 
@@ -1140,7 +1244,7 @@ export class AuraScene extends Phaser.Scene {
         : judgement.grade === 'good'
           ? '#ffce3a'
           : '#ef4343';
-    const x = judgement.slot === 0 ? 126 : 898;
+    const x = judgement.slot === 0 ? 536 : 488;
     const align = judgement.slot === 0 ? 'left' : 'right';
     const container = this.add.container(x, 130).setDepth(700);
     const title = this.add.text(0, 0, primary, {
@@ -1302,6 +1406,7 @@ export class AuraScene extends Phaser.Scene {
     this.turnText.setText(winner === 'draw' ? 'MUTUAL MAIN CHARACTERS' : `${winner === 'p1' ? this.p1Name : this.p2Name} OWNS THE ROOM`);
     this.phaseText.setText(winner === 'draw' ? 'IMPOSSIBLE AURA EQUILIBRIUM' : '+∞ AURA · RECEIPTS ATTACHED');
     this.soundManager.playAnnounce('wins');
+    this.soundManager.playAuraCrowd('cheer', 1, true);
     window.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: summary }));
     this.time.delayedCall(this.reduceMotion ? 80 : 620, () => this.setMatchActionsVisible(true));
   }

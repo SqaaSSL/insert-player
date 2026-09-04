@@ -3,11 +3,35 @@ export const BATTLE_MUSIC_URL = '/assets/audio/neon-arena-battle-v1.mp3';
 // remaining audible on phone speakers and remote-browser sessions.
 export const BATTLE_MUSIC_VOLUME = 0.20;
 
+export type AuraCrowdReaction = 'applause' | 'cheer' | 'boo';
+
+export const AURA_CROWD_URLS: Record<AuraCrowdReaction, string> = {
+  applause: '/assets/audio/aura-crowd-applause-v1.wav',
+  cheer: '/assets/audio/aura-crowd-cheer-v1.wav',
+  boo: '/assets/audio/aura-crowd-boo-v1.wav',
+};
+
+const AURA_CROWD_VOLUME: Record<AuraCrowdReaction, number> = {
+  applause: 0.3,
+  cheer: 0.36,
+  boo: 0.31,
+};
+
+const AURA_CROWD_COOLDOWN_MS: Record<AuraCrowdReaction, number> = {
+  applause: 1_150,
+  cheer: 1_500,
+  boo: 900,
+};
+
+const AURA_CROWD_REACTIONS = Object.keys(AURA_CROWD_URLS) as AuraCrowdReaction[];
+
 export class SoundManager {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
   private battleMusic: HTMLAudioElement | null = null;
+  private auraCrowd: Partial<Record<AuraCrowdReaction, HTMLAudioElement>> = {};
+  private auraCrowdLastPlayedAt: Partial<Record<AuraCrowdReaction, number>> = {};
   private removeMusicUnlockListeners: (() => void) | null = null;
 
   startBattleMusic(): void {
@@ -25,6 +49,7 @@ export class SoundManager {
 
   pauseBattleMusic(): void {
     this.battleMusic?.pause();
+    for (const reaction of AURA_CROWD_REACTIONS) this.auraCrowd[reaction]?.pause();
   }
 
   resumeBattleMusic(): void {
@@ -40,9 +65,51 @@ export class SoundManager {
   stopBattleMusic(): void {
     this.removeMusicUnlockListeners?.();
     this.removeMusicUnlockListeners = null;
-    if (!this.battleMusic) return;
-    this.battleMusic.pause();
-    this.battleMusic.currentTime = 0;
+    if (this.battleMusic) {
+      this.battleMusic.pause();
+      this.battleMusic.currentTime = 0;
+    }
+    for (const reaction of AURA_CROWD_REACTIONS) {
+      const crowd = this.auraCrowd[reaction];
+      if (!crowd) continue;
+      crowd.pause();
+      crowd.currentTime = 0;
+    }
+  }
+
+  prepareAuraCrowd(): void {
+    if (typeof Audio === 'undefined') return;
+    for (const reaction of AURA_CROWD_REACTIONS) {
+      if (this.auraCrowd[reaction]) continue;
+      const crowd = new Audio(AURA_CROWD_URLS[reaction]);
+      crowd.preload = 'auto';
+      crowd.volume = AURA_CROWD_VOLUME[reaction];
+      this.auraCrowd[reaction] = crowd;
+    }
+  }
+
+  playAuraCrowd(reaction: AuraCrowdReaction, intensity = 1, force = false): void {
+    this.prepareAuraCrowd();
+    const crowd = this.auraCrowd[reaction];
+    if (!crowd) return;
+
+    const now = typeof performance === 'undefined' ? Date.now() : performance.now();
+    const lastPlayedAt = this.auraCrowdLastPlayedAt[reaction];
+    if (!force && lastPlayedAt !== undefined && now - lastPlayedAt < AURA_CROWD_COOLDOWN_MS[reaction]) {
+      return;
+    }
+    this.auraCrowdLastPlayedAt[reaction] = now;
+
+    const level = Math.max(0.35, Math.min(1, intensity));
+    crowd.pause();
+    crowd.currentTime = 0;
+    crowd.volume = AURA_CROWD_VOLUME[reaction] * level;
+    const playback = crowd.play();
+    if (playback && typeof playback.catch === 'function') {
+      void playback.catch(() => {
+        // A missed crowd reaction is preferable to blocking the rhythm loop.
+      });
+    }
   }
 
   private tryPlayBattleMusic(): void {
@@ -305,6 +372,14 @@ export class SoundManager {
       this.battleMusic.load();
       this.battleMusic = null;
     }
+    for (const reaction of AURA_CROWD_REACTIONS) {
+      const crowd = this.auraCrowd[reaction];
+      if (!crowd) continue;
+      crowd.removeAttribute('src');
+      crowd.load();
+    }
+    this.auraCrowd = {};
+    this.auraCrowdLastPlayedAt = {};
     this.masterGain?.disconnect();
     this.masterGain = null;
     this.noiseBuffer = null;

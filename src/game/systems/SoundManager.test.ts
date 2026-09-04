@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  AURA_CROWD_URLS,
   BATTLE_MUSIC_URL,
   BATTLE_MUSIC_VOLUME,
   SoundManager,
@@ -23,7 +24,7 @@ class FakeAudio {
   }
 }
 
-describe('SoundManager battle music', () => {
+describe('SoundManager media', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     FakeAudio.instances = [];
@@ -57,5 +58,41 @@ describe('SoundManager battle music', () => {
     expect(track.currentTime).toBe(0);
     expect(track.removeAttribute).toHaveBeenCalledWith('src');
     expect(track.load).toHaveBeenCalledOnce();
+  });
+
+  it('preloads Aura crowd reactions and scales their intensity', () => {
+    vi.stubGlobal('Audio', FakeAudio);
+    const sound = new SoundManager();
+
+    sound.prepareAuraCrowd();
+
+    expect(FakeAudio.instances.map((track) => track.src)).toEqual([
+      AURA_CROWD_URLS.applause,
+      AURA_CROWD_URLS.cheer,
+      AURA_CROWD_URLS.boo,
+    ]);
+    expect(FakeAudio.instances.every((track) => track.preload === 'auto')).toBe(true);
+
+    const cheer = FakeAudio.instances[1];
+    sound.playAuraCrowd('cheer', 0.5);
+    expect(cheer.pause).toHaveBeenCalledOnce();
+    expect(cheer.currentTime).toBe(0);
+    expect(cheer.volume).toBeCloseTo(0.18);
+    expect(cheer.play).toHaveBeenCalledOnce();
+  });
+
+  it('releases Aura crowd clips during teardown', () => {
+    vi.stubGlobal('Audio', FakeAudio);
+    const sound = new SoundManager();
+    sound.prepareAuraCrowd();
+
+    sound.destroy();
+
+    for (const crowd of FakeAudio.instances) {
+      expect(crowd.pause).toHaveBeenCalledOnce();
+      expect(crowd.currentTime).toBe(0);
+      expect(crowd.removeAttribute).toHaveBeenCalledWith('src');
+      expect(crowd.load).toHaveBeenCalledOnce();
+    }
   });
 });
