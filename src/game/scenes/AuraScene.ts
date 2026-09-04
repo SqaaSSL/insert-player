@@ -72,6 +72,7 @@ const HIGHWAY_FRAME_PAD_X = 14;
 const HIGHWAY_FRAME_PAD_TOP = 44;
 const HIGHWAY_FRAME_PAD_BOTTOM = 64;
 const CROWD_METER_SEGMENTS = 8;
+const INACTIVE_PERFORMER_STAGE_OFFSET = 260;
 const ONLINE_START_DELAY_MS = 1_600;
 const ONLINE_FINISH_GRACE_MS = 2_500;
 
@@ -1102,10 +1103,10 @@ export class AuraScene extends Phaser.Scene {
     this.activeGlow.setPosition(activeX, GROUND_Y + this.fighterRenderYOffset + 5);
     this.views[slot].sprite.setAlpha(1);
     this.views[slot].shadowSprite?.setAlpha(0.2);
-    this.views[inactive].sprite.setAlpha(0.28);
-    this.views[inactive].shadowSprite?.setAlpha(0.05);
+    this.views[inactive].sprite.setAlpha(0.52);
+    this.views[inactive].shadowSprite?.setAlpha(0.09);
     this.views[slot].setRenderPresentation(this.fighterRenderScale * 1.28, this.fighterRenderYOffset);
-    this.views[inactive].setRenderPresentation(this.fighterRenderScale * 0.82, this.fighterRenderYOffset);
+    this.views[inactive].setRenderPresentation(this.fighterRenderScale * 0.7, this.fighterRenderYOffset);
     this.drawStageLighting(slot, this.crowdHeat[slot]);
     const camera = this.cameras.main;
     const targetScrollX = slot === 0 ? 46 : -46;
@@ -1552,6 +1553,14 @@ export class AuraScene extends Phaser.Scene {
     this.fighters[1].update(dt, EMPTY_INPUT, this.fighters[0].x);
     this.views[0].syncSprite(this.fighters[1].x);
     this.views[1].syncSprite(this.fighters[0].x);
+    if (this.activePerformerSlot !== null) {
+      const inactive = (1 - this.activePerformerSlot) as AuraSlot;
+      const offset = this.activePerformerSlot === 0
+        ? INACTIVE_PERFORMER_STAGE_OFFSET
+        : -INACTIVE_PERFORMER_STAGE_OFFSET;
+      this.views[inactive].sprite.setX(this.views[inactive].sprite.x + offset);
+      this.views[inactive].shadowSprite?.setX(this.views[inactive].shadowSprite.x + offset);
+    }
     for (const slot of [0, 1] as const) {
       const top = this.views[slot].getVisibleTopCenter();
       this.playerTags[slot]?.setPosition(top.x, Math.max(130, top.y - 25));
