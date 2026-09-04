@@ -37,10 +37,16 @@ export class BootScene extends Phaser.Scene {
       bar.fillRect(barX, barY, barW * value, barH);
     });
 
+    const loadingTitle = pendingTarget?.sceneKey === 'RushScene'
+      ? 'INSERT PLAYER: CO-OP RUSH'
+      : pendingTarget?.sceneKey === 'AuraScene'
+        ? 'INSERT PLAYER: AURA BATTLE'
+        : 'INSERT PLAYER: FIGHT';
+
     this.add.text(
       GAME_WIDTH / 2,
       barY - 60,
-      pendingTarget?.sceneKey === 'RushScene' ? 'INSERT PLAYER: CO-OP RUSH' : 'INSERT PLAYER: FIGHT',
+      loadingTitle,
       {
       fontFamily: '"Press Start 2P", monospace',
       fontSize: '28px',

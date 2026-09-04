@@ -7,6 +7,7 @@ import {
   type MatchSceneData,
 } from '../../game/match/MatchConfig.ts';
 import { STAGE_THEMES, type StageThemeId } from '../../game/match/StageConfig.ts';
+import { AURA_DIFFICULTIES, type AuraDifficultyId } from '../../game/aura/AuraConfig.ts';
 
 const STORAGE_PREFIX = 'ai-street-fighter:last-match:v1:';
 const LEGACY_STORAGE_KEY = 'ai-street-fighter:last-match';
@@ -24,6 +25,7 @@ const personalityIds = new Set<FighterPersonalityId>(
   FIGHTER_PERSONALITIES.map((personality) => personality.id),
 );
 const stageIds = new Set<StageThemeId>(STAGE_THEMES.map((stage) => stage.id));
+const auraDifficultyIds = new Set<AuraDifficultyId>(AURA_DIFFICULTIES.map((difficulty) => difficulty.id));
 
 function validSessionKey(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 256;
@@ -44,7 +46,12 @@ export function isValidStoredMatchData(value: unknown): value is MatchSceneData 
   const data = value as Record<string, unknown>;
   if (data.experience !== undefined && !isValidMatchExperience(data.experience)) return false;
   if (data.roundsToWin !== undefined && !isValidMatchRoundsToWin(data.roundsToWin)) return false;
-  if (data.gameMode !== undefined && data.gameMode !== 'fight' && data.gameMode !== 'rush') return false;
+  if (
+    data.gameMode !== undefined
+    && data.gameMode !== 'fight'
+    && data.gameMode !== 'rush'
+    && data.gameMode !== 'aura'
+  ) return false;
   if (typeof data.vsAI !== 'boolean' || typeof data.cpuVsCpu !== 'boolean') return false;
   if (!optionalText(data.p1PhotoHash, 160) || !optionalText(data.p2PhotoHash, 160)) return false;
   if (!optionalText(data.p1CloudFighterId, 160) || !optionalText(data.p2CloudFighterId, 160)) return false;
@@ -58,6 +65,10 @@ export function isValidStoredMatchData(value: unknown): value is MatchSceneData 
     return false;
   }
   if (data.stageId !== undefined && !stageIds.has(data.stageId as StageThemeId)) return false;
+  if (
+    data.auraDifficulty !== undefined
+    && !auraDifficultyIds.has(data.auraDifficulty as AuraDifficultyId)
+  ) return false;
   if (!optionalText(data.customStageKey, 256) || !optionalText(data.customStageLabel, 120)) return false;
   if (data.remix !== undefined && (
     typeof data.remix !== 'number'

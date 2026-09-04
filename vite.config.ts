@@ -354,6 +354,15 @@ function prelaunchEntryPlugin(mode: string): Plugin {
 export default defineConfig(({ mode }) => ({
   envDir: mode === 'prelaunch' ? false : undefined,
   plugins: [prelaunchEntryPlugin(mode), tailwindcss(), apiProxyPlugin()],
+  server: {
+    proxy: {
+      '/dev-api': {
+        target: 'https://api.insertplayer.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/dev-api/, ''),
+      },
+    },
+  },
   test: {
     exclude: [
       ...configDefaults.exclude,

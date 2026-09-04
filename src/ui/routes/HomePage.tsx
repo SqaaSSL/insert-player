@@ -42,6 +42,10 @@ interface HomePageProps extends AuthRouteState {
   onCreateStage: () => void;
   onOpenArcade: () => void;
   onOpenCoopRush: () => void;
+  onOpenAuraCpu: () => void;
+  onOpenAuraPlayer: () => void;
+  onOpenAuraOnline: () => void;
+  onOpenAuraWatch: () => void;
   onNavigateLegal: (route: LegalRoute) => void;
   onOpenGallery: () => void;
   onOpenCommunity: () => void;
@@ -70,6 +74,10 @@ export function HomePage({
   onCreateStage,
   onOpenArcade,
   onOpenCoopRush,
+  onOpenAuraCpu,
+  onOpenAuraPlayer,
+  onOpenAuraOnline,
+  onOpenAuraWatch,
   onNavigateLegal,
   onOpenGallery,
   onOpenCommunity,
@@ -356,13 +364,37 @@ export function HomePage({
               <span>More stages coming</span>
             </div>
           </article>
+
+          <article className="home-mode home-mode--aura">
+            <div className="home-mode__heading">
+              <h3>Aura</h3>
+              <span>New mode</span>
+            </div>
+            <p>
+              Take turns on camera, hit the four lanes, and turn perfect timing into terminal main-character energy.
+            </p>
+            <button
+              type="button"
+              className="home-menu__action is-primary home-mode__launch home-mode__launch--aura"
+              onClick={onOpenAuraCpu}
+            >
+              <span>Play Aura</span>
+              <small>Player vs CPU · Same routine · No excuses</small>
+            </button>
+            <div className="home-mode__footer home-mode__variants" aria-label="Aura modes">
+              <button type="button" onClick={onOpenAuraCpu}>Aura CPU</button>
+              <button type="button" onClick={onOpenAuraPlayer}>Local Aura</button>
+              <button type="button" onClick={onOpenAuraOnline}>Online Beta</button>
+              <button type="button" onClick={onOpenAuraWatch}>Watch Aura</button>
+            </div>
+          </article>
         </div>
       </section>
 
       <section className="home-collection" aria-labelledby="home-collection-title">
         <div className="home-collection__header">
           <h2 id="home-collection-title">Roster &amp; Community</h2>
-          <p>Your fighters work in Fight and Rush.</p>
+          <p>Your fighters work in Fight, Rush, and Aura.</p>
         </div>
         <div className="home-menu home-menu--utility">
           <button type="button" className="home-menu__action is-secondary" onClick={onOpenGallery}>

@@ -70,6 +70,11 @@ import {
   getFightDifficulty,
   type FightDifficultyId,
 } from '../../game/match/FightDifficulty.ts';
+import {
+  AURA_DIFFICULTIES,
+  getAuraDifficulty,
+  type AuraDifficultyId,
+} from '../../game/aura/AuraConfig.ts';
 
 type RosterFilter = 'official' | 'yours' | 'all';
 
@@ -108,6 +113,39 @@ export interface RosterFighterEntry {
 }
 
 function getModeMeta(mode: RosterMode) {
+  if (mode === 'aura-watch') {
+    return {
+      title: 'Aura Theatre',
+      description: 'Two CPUs perform the same routine. Watch the aura economy collapse in real time.',
+      vsAI: true,
+      cpuVsCpu: true,
+      p1Label: 'CPU 1',
+      p2Label: 'CPU 2',
+      actionLabel: 'Watch Aura',
+    };
+  }
+  if (mode === 'aura-vs') {
+    return {
+      title: 'Local Aura Battle',
+      description: 'Same routine, same beat, two keyboards. Steal the room one turn at a time.',
+      vsAI: false,
+      cpuVsCpu: false,
+      p1Label: 'Player 1',
+      p2Label: 'Player 2',
+      actionLabel: 'Farm Aura',
+    };
+  }
+  if (mode === 'aura') {
+    return {
+      title: 'Aura Battle',
+      description: 'A rhythm showdown against the CPU. Match the four lanes when the camera is yours.',
+      vsAI: true,
+      cpuVsCpu: false,
+      p1Label: 'Player 1',
+      p2Label: 'CPU Rival',
+      actionLabel: 'Farm Aura',
+    };
+  }
   if (mode === 'watch') {
     return {
       title: 'Attract Mode',
@@ -394,6 +432,7 @@ function FighterSlotPanel({
 
 export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateFighter, onStartFight }: RosterPageProps) {
   const modeMeta = getModeMeta(mode);
+  const isAuraMode = mode === 'aura' || mode === 'aura-vs' || mode === 'aura-watch';
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [arcadeFighters, setArcadeFighters] = useState<CloudFighter[]>([]);
   const [arcadeUnavailable, setArcadeUnavailable] = useState(false);
@@ -404,7 +443,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const [rosterReloadKey, setRosterReloadKey] = useState(0);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
   const [rosterFilter, setRosterFilter] = useState<RosterFilter>(
-    mode === 'vs' || mode === 'rush' ? 'all' : 'official',
+    mode === 'vs' || mode === 'rush' || isAuraMode ? 'all' : 'official',
   );
   const [p1Key, setP1Key] = useState<string | null>(null);
   const [p2Key, setP2Key] = useState<string | null>(null);
@@ -413,6 +452,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const [stageChoice, setStageChoice] = useState<StageChoice>({ kind: 'auto' });
   const [rushDifficulty, setRushDifficulty] = useState<RushDifficultyId>('arcade');
   const [fightDifficulty, setFightDifficulty] = useState<FightDifficultyId>('champion');
+  const [auraDifficulty, setAuraDifficulty] = useState<AuraDifficultyId>('viral');
   const [preparingFight, setPreparingFight] = useState(false);
   const [hasCoarsePointer, setHasCoarsePointer] = useState(
     () => window.matchMedia?.('(pointer: coarse)').matches ?? false,
@@ -674,16 +714,18 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     : resolvedStageId;
   const effectiveStageTheme = effectiveStageId ? getStageTheme(effectiveStageId) : null;
   const stagePreviewUrl = photoStageUrl ?? effectiveStageTheme?.assetPath ?? null;
-  const selectableStageThemes = getStageThemesForMode(mode === 'rush' ? 'rush' : 'fight');
+  const selectableStageThemes = getStageThemesForMode(
+    mode === 'rush' ? 'rush' : isAuraMode ? 'aura' : 'fight',
+  );
 
   const touchVersusBlocked = shouldBlockTouchVersus(mode, hasCoarsePointer);
   const canStartFight = Boolean(p1Fighter && p2Fighter) && !touchVersusBlocked;
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
   const createLabel = rookieStatus === 'included' ? 'Create Free Rookie' : 'Create Rookie';
   const firstFighterCopy = rookieStatus === 'included'
-    ? `Your first Rookie is included. Upload one photo, then come back here to ${mode === 'rush' ? 'join the team' : 'face the Arcade roster'}.`
+    ? `Your first Rookie is included. Upload one photo, then come back here to ${mode === 'rush' ? 'join the team' : isAuraMode ? 'farm aura' : 'face the Arcade roster'}.`
     : rookieStatus === 'credits'
-      ? `Rookie costs 2 credits. Upload one photo, then come back here to ${mode === 'rush' ? 'join the team' : 'face the Arcade roster'}.`
+      ? `Rookie costs 2 credits. Upload one photo, then come back here to ${mode === 'rush' ? 'join the team' : isAuraMode ? 'farm aura' : 'face the Arcade roster'}.`
       : 'Upload one photo. We will check your included Rookie or credit balance before generation starts.';
 
   const stageSummary =
@@ -790,7 +832,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         setStatus(`Updated ${upgraded} cached animations`);
       }
       onStartFight({
-        gameMode: mode === 'rush' ? 'rush' : 'fight',
+        gameMode: mode === 'rush' ? 'rush' : isAuraMode ? 'aura' : 'fight',
         vsAI: modeMeta.vsAI,
         cpuVsCpu: modeMeta.cpuVsCpu,
         p1PhotoHash: selectedP1.photoHash,
@@ -803,6 +845,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         p2PersonalityId: isCpuRosterSlot(mode, 'p2') ? selectedP2Personality : undefined,
         rushDifficulty: mode === 'rush' ? rushDifficulty : undefined,
         rushCompanionOrder: mode === 'rush' ? 'follow' : undefined,
+        auraDifficulty: isAuraMode ? auraDifficulty : undefined,
         p2Difficulty: mode === 'cpu' ? getFightDifficulty(fightDifficulty).strength : undefined,
         stageId: selectedStageId,
         customStageKey: mode !== 'rush' && selectedStageChoice.kind === 'photo'
@@ -848,13 +891,13 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
             fighter={p1Fighter}
             previewUrl={p1PreviewUrl}
             personalityId={p1PersonalityId}
-            showPersonality={isCpuRosterSlot(mode, 'p1')}
+            showPersonality={!isAuraMode && isCpuRosterSlot(mode, 'p1')}
             onPersonalityChange={(personalityId) => changePersonality('p1', personalityId)}
           />
 
           <div className="sf-vs-divider" aria-hidden="true">
             <span className="sf-vs-divider__line" />
-            <span className="sf-vs-divider__text">{mode === 'rush' ? '+' : 'VS'}</span>
+            <span className="sf-vs-divider__text">{mode === 'rush' ? '+' : isAuraMode ? '♪' : 'VS'}</span>
             <span className="sf-vs-divider__line" />
           </div>
 
@@ -863,7 +906,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
             fighter={p2Fighter}
             previewUrl={p2PreviewUrl}
             personalityId={p2PersonalityId}
-            showPersonality={isCpuRosterSlot(mode, 'p2')}
+            showPersonality={!isAuraMode && isCpuRosterSlot(mode, 'p2')}
             onPersonalityChange={(personalityId) => changePersonality('p2', personalityId)}
           />
         </div>
@@ -906,7 +949,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                       : touchVersusBlocked
                       ? 'Touch Versus needs a keyboard or controllers'
                       : canStartFight
-                      ? `${p1Fighter?.name ?? 'P1'} ${mode === 'rush' ? '+' : 'vs'} ${p2Fighter?.name ?? 'P2'}`
+                      ? `${p1Fighter?.name ?? 'P1'} ${mode === 'rush' ? '+' : isAuraMode ? '↔' : 'vs'} ${p2Fighter?.name ?? 'P2'}`
                       : 'Select both fighters first'}
                   </small>
                 </button>
@@ -1007,6 +1050,34 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                 </div>
               </section>
             ) : null}
+            {isAuraMode ? (
+              <section className="roster-difficulty" aria-labelledby="aura-difficulty-title">
+                <div className="roster-difficulty__heading">
+                  <div>
+                    <span>AURA RULES</span>
+                    <h2 id="aura-difficulty-title">Difficulty</h2>
+                  </div>
+                  <strong>{getAuraDifficulty(auraDifficulty).label}</strong>
+                </div>
+                <div className="roster-difficulty__options" role="group" aria-label="Aura difficulty">
+                  {AURA_DIFFICULTIES.map((difficulty) => (
+                    <button
+                      key={difficulty.id}
+                      type="button"
+                      className={`gallery-chip${auraDifficulty === difficulty.id ? ' is-active' : ''}`}
+                      aria-pressed={auraDifficulty === difficulty.id}
+                      onClick={() => {
+                        cancelFightPreparation();
+                        setAuraDifficulty(difficulty.id);
+                      }}
+                    >
+                      <span>{difficulty.label}</span>
+                      <small>{difficulty.blurb}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
             {mode === 'cpu' ? (
               <section className="roster-difficulty" aria-labelledby="fight-difficulty-title">
                 <div className="roster-difficulty__heading">
@@ -1053,7 +1124,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                 onClick={() => chooseStage({ kind: 'auto' })}
               >
                 <span>AUTO</span>
-                <small>{mode === 'rush' ? 'Begin on Side Street' : 'Let the fight choose'}</small>
+                <small>{mode === 'rush' ? 'Begin on Side Street' : isAuraMode ? 'Let the routine choose' : 'Let the fight choose'}</small>
               </button>
               {selectableStageThemes.map((stage) => (
                 <button

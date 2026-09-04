@@ -18,7 +18,7 @@ export type SignatureStageThemeId =
   | 'side-street';
 
 export type StageThemeId = LegacyProceduralStageThemeId | SignatureStageThemeId;
-export type StageMode = 'fight' | 'rush';
+export type StageMode = 'fight' | 'rush' | 'aura';
 
 export interface StageTheme {
   id: StageThemeId;
@@ -126,11 +126,12 @@ export function getFightStageCalibration(
 
 export function stageSupportsMode(stageId: StageThemeId, mode: StageMode): boolean {
   const stage = getStageTheme(stageId);
-  return (stage.modes ?? ['fight']).includes(mode);
+  const modes = stage.modes ?? ['fight'];
+  return mode === 'aura' ? modes.includes('fight') : modes.includes(mode);
 }
 
 export function getStageThemesForMode(mode: StageMode): StageTheme[] {
-  return STAGE_THEMES.filter((stage) => (stage.modes ?? ['fight']).includes(mode));
+  return STAGE_THEMES.filter((stage) => stageSupportsMode(stage.id, mode));
 }
 
 export function getDefaultStageThemeIdForMode(mode: StageMode): StageThemeId {

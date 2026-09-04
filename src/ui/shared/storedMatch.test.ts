@@ -62,6 +62,17 @@ describe('stored match', () => {
     expect(readStoredMatch('user-a', storage, 1_001)).toEqual(rushMatch);
   });
 
+  it('round-trips Aura Battle and its rhythm difficulty', () => {
+    const storage = new MemoryStorage();
+    const auraMatch: MatchSceneData = {
+      ...match,
+      gameMode: 'aura',
+      auraDifficulty: 'untouchable',
+    };
+    expect(writeStoredMatch(auraMatch, 'user-a', storage, 1_000)).toBe(true);
+    expect(readStoredMatch('user-a', storage, 1_001)).toEqual(auraMatch);
+  });
+
   it('rejects expired, legacy, and malformed payloads', () => {
     const storage = new MemoryStorage();
     storage.setItem('ai-street-fighter:last-match', JSON.stringify(match));
@@ -83,6 +94,7 @@ describe('stored match', () => {
     expect(writeStoredMatch({ ...match, roundsToWin: 1.5 }, 'user-a', storage)).toBe(false);
     expect(writeStoredMatch({ ...match, roundsToWin: 6 }, 'user-a', storage)).toBe(false);
     expect(writeStoredMatch({ ...match, gameMode: 'race' } as unknown as MatchSceneData, 'user-a', storage)).toBe(false);
+    expect(writeStoredMatch({ ...match, gameMode: 'aura', auraDifficulty: 'sleepy' } as unknown as MatchSceneData, 'user-a', storage)).toBe(false);
 
     const invalid = JSON.stringify({
       version: 1,

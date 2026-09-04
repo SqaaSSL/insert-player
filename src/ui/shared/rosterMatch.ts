@@ -1,6 +1,13 @@
 import type { FighterPersonalityId } from '../../game/match/MatchConfig.ts';
 
-export type RosterMode = 'watch' | 'cpu' | 'vs' | 'rush';
+export type RosterMode =
+  | 'watch'
+  | 'cpu'
+  | 'vs'
+  | 'rush'
+  | 'aura'
+  | 'aura-vs'
+  | 'aura-watch';
 export type RosterSlot = 'p1' | 'p2';
 export type RosterSourceState = 'loading' | 'ready' | 'unavailable';
 
@@ -72,7 +79,9 @@ export function rosterLoadPresentation({
 }
 
 export function isCpuRosterSlot(mode: RosterMode, slot: RosterSlot): boolean {
-  return mode === 'watch' || ((mode === 'cpu' || mode === 'rush') && slot === 'p2');
+  return mode === 'watch'
+    || mode === 'aura-watch'
+    || ((mode === 'cpu' || mode === 'rush' || mode === 'aura') && slot === 'p2');
 }
 
 export function personalityAfterFighterAssignment({
@@ -91,7 +100,7 @@ export function personalityAfterFighterAssignment({
 }
 
 export function shouldBlockTouchVersus(mode: RosterMode, hasCoarsePointer: boolean): boolean {
-  return mode === 'vs' && hasCoarsePointer;
+  return (mode === 'vs' || mode === 'aura-vs') && hasCoarsePointer;
 }
 
 export interface AsyncEpochGuard {

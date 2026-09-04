@@ -1022,7 +1022,7 @@
   }
 
   .home-modes {
-    @apply grid grid-cols-2 gap-5 max-[860px]:grid-cols-1;
+    @apply grid grid-cols-3 gap-5 max-[1180px]:grid-cols-1;
   }
 
   .home-mode {
@@ -1075,6 +1075,19 @@
   .home-mode__launch--rush::before {
     @apply [background-image:url('/assets/play-mode-rush-preview-v1.webp')]
            [background-position:center_48%];
+  }
+
+  .home-mode__launch--aura::before {
+    @apply [background-image:url('/assets/stages/signature/insert-player-arena-pipeline-v1.png')]
+           [background-position:center_68%];
+  }
+
+  .home-mode__launch--aura::after {
+    @apply [background:linear-gradient(90deg,rgba(11,8,45,0.98)_0%,rgba(39,11,68,0.9)_38%,rgba(88,20,92,0.55)_66%,rgba(9,9,30,0.14)_100%),linear-gradient(180deg,rgba(69,230,255,0.12),rgba(255,61,198,0.16))];
+  }
+
+  .home-mode--aura {
+    @apply border-[#43dced] shadow-[inset_0_0_0_1px_rgba(255,61,198,0.2),_0_10px_28px_rgba(0,0,0,0.48)];
   }
 
   .home-mode__launch > span,
@@ -1907,6 +1920,41 @@
 
   .online-versus__setup {
     @apply grid items-start gap-5 grid-cols-[minmax(0,1.7fr)_minmax(300px,0.72fr)] max-[1050px]:grid-cols-1;
+  }
+
+  .online-versus__mode-picker {
+    @apply flex items-center justify-between gap-5 rounded-[6px] border-2 border-asf-line
+           bg-asf-panel px-5 py-4 max-[640px]:flex-col max-[640px]:items-stretch;
+  }
+
+  .online-versus__mode-picker > div:first-child {
+    @apply flex min-w-0 flex-col gap-1;
+  }
+
+  .online-versus__mode-picker > div:first-child span,
+  .online-versus__mode-picker > div:first-child small {
+    @apply font-sans text-[10px] font-bold uppercase tracking-[0.14em] text-asf-muted;
+  }
+
+  .online-versus__mode-picker > div:first-child strong {
+    @apply font-arcade text-[15px] text-asf-gold-bright;
+  }
+
+  .online-versus__mode-picker > div:last-child {
+    @apply grid min-w-[240px] grid-cols-2 overflow-hidden rounded-[4px] border-2 border-asf-line;
+  }
+
+  .online-versus__mode-picker button {
+    @apply min-h-11 cursor-pointer border-0 bg-asf-bg-1 px-4 font-arcade text-[10px] text-asf-muted
+           transition-colors hover:text-asf-gold disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .online-versus__mode-picker button + button {
+    @apply border-l-2 border-asf-line;
+  }
+
+  .online-versus__mode-picker button.is-active {
+    @apply bg-asf-red-dark text-asf-gold-bright shadow-[inset_0_0_18px_rgba(79,220,237,0.16)];
   }
 
   .online-versus__lobby {
@@ -4173,6 +4221,218 @@
     .rush-loader__loading {
       @apply min-h-8;
     }
+  }
+
+  /* Aura keeps the readable four-lane game from the first concept. The loader
+     only borrows the second concept's theatrical camera language. */
+  .aura-loader__stage-art {
+    @apply pointer-events-none absolute inset-0 z-0 overflow-hidden bg-[#050511];
+  }
+
+  .aura-loader__stage-art img {
+    @apply h-full w-full scale-105 object-cover object-center opacity-55 saturate-75
+           [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_180ms_ease-out];
+  }
+
+  .aura-loader__wash {
+    @apply pointer-events-none absolute inset-0 z-[1]
+           [background:radial-gradient(circle_at_28%_66%,rgba(79,220,237,0.24),transparent_28%),radial-gradient(circle_at_52%_58%,rgba(255,61,198,0.2),transparent_30%),linear-gradient(90deg,rgba(5,5,17,0.98)_0%,rgba(11,7,32,0.92)_58%,rgba(5,5,17,0.7)_100%)];
+  }
+
+  .aura-loader__layout {
+    @apply absolute inset-0 z-20 grid min-h-0 text-asf-cream
+           grid-cols-[minmax(0,1.28fr)_minmax(320px,0.72fr)];
+  }
+
+  .aura-loader__cast {
+    @apply relative flex min-h-0 min-w-0 flex-col overflow-hidden border-r border-[#4fdced]/40
+           px-[clamp(24px,4.5vw,68px)] py-[clamp(18px,4vh,42px)]
+           [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_180ms_ease-out];
+  }
+
+  .aura-loader__brand-lockup {
+    @apply relative z-20 flex items-center gap-3;
+  }
+
+  .aura-loader__mark {
+    @apply h-[46px] w-[46px] shrink-0;
+  }
+
+  .aura-loader__brand-lockup > div,
+  .aura-loader__claim {
+    @apply flex flex-col gap-1;
+  }
+
+  .aura-loader__brand-lockup strong {
+    @apply font-arcade text-[13px] text-asf-cream;
+  }
+
+  .aura-loader__brand-lockup span,
+  .aura-loader__claim span,
+  .aura-loader__stage-label {
+    @apply font-sans text-[9px] font-bold uppercase tracking-[0.18em] text-[#4fdced];
+  }
+
+  .aura-loader__claim {
+    @apply relative z-20 mt-[clamp(12px,3vh,26px)];
+  }
+
+  .aura-loader__claim strong {
+    @apply font-arcade text-[clamp(17px,2.1vw,29px)] leading-[1.3] text-asf-gold-bright
+           [text-shadow:0_4px_0_rgba(66,10,74,0.9)];
+  }
+
+  .aura-loader__fighters {
+    @apply pointer-events-none relative z-10 mt-auto flex h-[72%] min-h-0 items-end;
+  }
+
+  .aura-loader__fighters .fight-loader__fighter {
+    @apply relative h-full min-w-0 flex-1 overflow-visible;
+  }
+
+  .aura-loader__fighters .fight-loader__figure {
+    @apply inset-x-0 bottom-[-11%] top-0;
+  }
+
+  .aura-loader__fighters .fight-loader__figure-fallback {
+    @apply text-[clamp(76px,18vw,250px)] opacity-10;
+  }
+
+  .aura-loader__fighters .fight-loader__player-label {
+    @apply bottom-[19%];
+  }
+
+  .aura-loader__fighters .fight-loader__fighter-name {
+    @apply bottom-[8%] max-w-[88%] text-[clamp(12px,1.55vw,22px)];
+  }
+
+  .aura-loader__handoff {
+    @apply absolute bottom-[14%] left-1/2 z-30 flex size-11 -translate-x-1/2 items-center justify-center
+           rounded-full border-2 border-[#4fdced] bg-[#090719] font-arcade text-[20px] text-[#ff3dc6]
+           shadow-[0_0_28px_rgba(79,220,237,0.3)];
+  }
+
+  .aura-loader__briefing {
+    @apply flex min-h-0 min-w-0 flex-col justify-center gap-4 overflow-hidden bg-[rgba(8,6,25,0.78)]
+           px-[clamp(22px,4vw,54px)] py-[clamp(20px,5vh,56px)]
+           [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_180ms_ease-out];
+  }
+
+  .aura-loader__briefing h2 {
+    @apply max-w-[14ch] break-words font-arcade text-[clamp(22px,3.2vw,42px)] leading-[1.2]
+           text-[#4fdced] [text-shadow:0_4px_0_rgba(44,8,66,0.9)];
+  }
+
+  .aura-loader__briefing > p {
+    @apply m-0 max-w-[40ch] font-sans text-[14px] normal-case leading-[1.55] text-asf-cream;
+  }
+
+  .aura-loader__lanes {
+    @apply grid max-w-[360px] grid-cols-4 gap-2;
+  }
+
+  .aura-loader__lanes > span {
+    @apply flex aspect-square flex-col items-center justify-center gap-1 rounded-[5px] border-2 border-[#4fdced]/60
+           bg-[#0a0a22]/90 font-sans text-[24px] text-[#4fdced];
+  }
+
+  .aura-loader__lanes > span:nth-child(2) { @apply border-[#9c66ff]/70 text-[#9c66ff]; }
+  .aura-loader__lanes > span:nth-child(3) { @apply border-asf-gold/70 text-asf-gold; }
+  .aura-loader__lanes > span:nth-child(4) { @apply border-[#ef4343]/70 text-[#ef4343]; }
+  .aura-loader__lanes small { @apply font-arcade text-[7px] text-asf-cream; }
+
+  .aura-loader__rules {
+    @apply m-0 grid max-w-[420px] overflow-hidden rounded-[4px] border border-asf-line bg-[#07061a]/85;
+  }
+
+  .aura-loader__rules > div {
+    @apply flex min-h-9 items-center justify-between gap-3 border-b border-asf-line px-3 py-2 last:border-0;
+  }
+
+  .aura-loader__rules dt { @apply font-sans text-[9px] font-bold tracking-[0.12em] text-asf-muted; }
+  .aura-loader__rules dd { @apply m-0 text-right font-arcade text-[8px] text-asf-cream; }
+  .aura-loader__loading { @apply flex min-h-11 flex-wrap items-center gap-4; }
+  .aura-loader__loading .fight-loader__status { @apply m-0; }
+
+  .fight-loader.is-aura.is-opening .aura-loader__cast { @apply -translate-x-full opacity-0; }
+  .fight-loader.is-aura.is-opening .aura-loader__briefing { @apply translate-x-full opacity-0; }
+  .fight-loader.is-aura.is-opening .aura-loader__fighters .fight-loader__fighter { @apply translate-x-0 opacity-100; }
+  .fight-loader.is-aura.is-opening .aura-loader__stage-art img { @apply scale-110 opacity-0; }
+
+  .aura-touch-controls {
+    @apply pointer-events-auto absolute inset-x-[max(14px,env(safe-area-inset-left))] bottom-[max(14px,env(safe-area-inset-bottom))]
+           z-30 hidden grid-cols-4 gap-2 [@media(pointer:coarse)]:grid;
+  }
+
+  .aura-touch-controls__lane {
+    @apply flex min-h-14 touch-manipulation items-center justify-center rounded-[6px] border-2 bg-[#080817]/90
+           text-[27px] shadow-[0_5px_0_rgba(0,0,0,0.62)] backdrop-blur-sm active:translate-y-[3px] active:shadow-none;
+  }
+
+  .aura-touch-controls__lane.is-lane-0 { @apply border-[#4fdced] text-[#4fdced]; }
+  .aura-touch-controls__lane.is-lane-1 { @apply border-[#9c66ff] text-[#9c66ff]; }
+  .aura-touch-controls__lane.is-lane-2 { @apply border-asf-gold text-asf-gold; }
+  .aura-touch-controls__lane.is-lane-3 { @apply border-[#ef4343] text-[#ef4343]; }
+
+  .aura-results {
+    @apply absolute inset-0 z-40 flex items-center justify-center overflow-y-auto p-5;
+  }
+
+  .aura-results__veil {
+    @apply absolute inset-0 bg-[#03030a]/90 backdrop-blur-md;
+  }
+
+  .aura-results__panel {
+    @apply relative z-10 flex w-full max-w-[980px] flex-col items-center gap-4 overflow-hidden rounded-[8px]
+           border-2 border-[#4fdced] bg-[#090718]/95 px-7 py-6 text-center
+           shadow-[0_0_60px_rgba(79,220,237,0.2),inset_0_0_48px_rgba(255,61,198,0.08)];
+  }
+
+  .aura-results__eyebrow,
+  .aura-results__meta,
+  .aura-results__status {
+    @apply m-0 font-sans text-[10px] font-bold uppercase tracking-[0.16em] text-[#4fdced];
+  }
+
+  .aura-results h2 {
+    @apply max-w-[26ch] text-balance font-arcade text-[clamp(19px,3.2vw,38px)] leading-[1.3] text-asf-gold-bright
+           [text-shadow:0_4px_0_#6d0b58];
+  }
+
+  .aura-results__meta { @apply text-asf-muted; }
+
+  .aura-results__duel {
+    @apply grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-3;
+  }
+
+  .aura-results__duel article {
+    @apply flex min-w-0 flex-col gap-2 rounded-[6px] border border-asf-line bg-[#050513]/90 p-4 text-left;
+  }
+
+  .aura-results__duel article:last-child { @apply text-right; }
+  .aura-results__duel article.is-winner { @apply border-asf-gold shadow-[inset_0_0_28px_rgba(255,206,58,0.1)]; }
+  .aura-results__duel span { @apply font-sans text-[9px] font-bold uppercase tracking-[0.14em] text-asf-muted; }
+  .aura-results__duel strong { @apply truncate font-arcade text-[13px] text-asf-cream; }
+  .aura-results__duel b { @apply font-arcade text-[clamp(16px,2.4vw,28px)] leading-[1.25] text-[#4fdced]; }
+  .aura-results__duel article:last-child b { @apply text-[#ff3dc6]; }
+  .aura-results__duel small { @apply font-sans text-[11px] normal-case leading-[1.5] text-asf-muted; }
+  .aura-results__duel > em { @apply self-center font-arcade text-[12px] not-italic text-asf-gold; }
+  .aura-results__actions { @apply flex flex-wrap justify-center gap-2; }
+  .aura-results__actions .asf-btn { @apply min-h-11; }
+  .aura-results__status.is-error { @apply text-[#ef4343]; }
+
+  @media (max-width: 760px), (max-height: 560px) {
+    .aura-loader__layout { @apply grid-cols-[minmax(0,1.15fr)_minmax(250px,0.85fr)]; }
+    .aura-loader__cast { @apply px-5 py-4; }
+    .aura-loader__brand-lockup .aura-loader__mark { @apply size-9; }
+    .aura-loader__claim strong { @apply text-[16px]; }
+    .aura-loader__briefing { @apply gap-2 px-5 py-4; }
+    .aura-loader__briefing h2 { @apply text-[20px]; }
+    .aura-loader__briefing > p { @apply text-[11px]; }
+    .aura-loader__lanes > span { @apply text-[18px]; }
+    .aura-results { @apply p-2; }
+    .aura-results__panel { @apply gap-2 px-4 py-3; }
+    .aura-results__duel article { @apply gap-1 p-3; }
   }
 
   /* ============================================================

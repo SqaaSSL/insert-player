@@ -76,9 +76,14 @@ type AppRoute =
   | '/roster/cpu'
   | '/roster/vs'
   | '/roster/rush'
+  | '/roster/aura'
+  | '/roster/aura-vs'
+  | '/roster/aura-watch'
   | '/versus/online'
   | LegalRoute
-  | '/fight';
+  | GameRoute;
+
+export type GameRoute = '/fight' | '/rush' | '/aura';
 
 interface NavigationOptions {
   replace?: boolean;
@@ -99,6 +104,16 @@ function isLegalRoute(route: AppRoute): route is LegalRoute {
   return route === '/legal' || route === '/privacy' || route === '/terms' || route === '/refunds';
 }
 
+function isGameRoute(route: AppRoute): route is GameRoute {
+  return route === '/fight' || route === '/rush' || route === '/aura';
+}
+
+export function gameRouteForMatch(match: Pick<MatchSceneData, 'gameMode'>): GameRoute {
+  if (match.gameMode === 'rush') return '/rush';
+  if (match.gameMode === 'aura') return '/aura';
+  return '/fight';
+}
+
 export function legalReturnRouteFromState(state: unknown): AppRoute {
   if (!state || typeof state !== 'object') return '/menu';
   const candidate = (state as { legalReturnTo?: unknown }).legalReturnTo;
@@ -115,6 +130,9 @@ export function legalReturnRouteFromState(state: unknown): AppRoute {
     candidate === '/roster/cpu' ||
     candidate === '/roster/vs' ||
     candidate === '/roster/rush' ||
+    candidate === '/roster/aura' ||
+    candidate === '/roster/aura-vs' ||
+    candidate === '/roster/aura-watch' ||
     candidate === '/versus/online'
   ) {
     return candidate;
@@ -140,12 +158,17 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   if (cleaned === '/roster/cpu') return '/roster/cpu';
   if (cleaned === '/roster/vs') return '/roster/vs';
   if (cleaned === '/roster/rush') return '/roster/rush';
+  if (cleaned === '/roster/aura') return '/roster/aura';
+  if (cleaned === '/roster/aura-vs') return '/roster/aura-vs';
+  if (cleaned === '/roster/aura-watch') return '/roster/aura-watch';
   if (cleaned === '/versus/online') return '/versus/online';
   if (cleaned === '/legal') return '/legal';
   if (cleaned === '/privacy') return '/privacy';
   if (cleaned === '/terms') return '/terms';
   if (cleaned === '/refunds') return '/refunds';
   if (cleaned === '/fight') return '/fight';
+  if (cleaned === '/rush') return '/rush';
+  if (cleaned === '/aura') return '/aura';
   return '/menu';
 }
 
@@ -172,6 +195,27 @@ function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null
   // Deterministic local-only fixture for real-canvas QA and marketing captures.
   // Vite removes this branch from production builds.
   const params = new URLSearchParams(window.location.search);
+  if (import.meta.env.DEV && params.get('auraDemo') === '1') {
+    const requestedStage = params.get('auraStage');
+    const stageId = requestedStage === 'side-street' || requestedStage === 'la-jaula-304'
+      ? requestedStage
+      : 'insert-player-arena';
+    const auraDifficulty = params.get('auraDifficulty') === 'lowkey'
+      ? 'lowkey'
+      : params.get('auraDifficulty') === 'untouchable'
+        ? 'untouchable'
+        : 'viral';
+    return {
+      gameMode: 'aura',
+      vsAI: true,
+      cpuVsCpu: false,
+      p1Name: 'NOVA',
+      p2Name: 'BYTE',
+      stageId,
+      auraDifficulty,
+      seed: 0x41555241,
+    };
+  }
   if (import.meta.env.DEV && params.get('rushDemo') === '1') {
     const stageId = params.get('rushStage') === 'la-jaula-304'
       ? 'la-jaula-304'
@@ -315,8 +359,15 @@ export function App({
   }, [route]);
 
   useEffect(() => {
-    if (route !== '/fight' || pendingMatch) return;
-    debugWarn('[AppRouter] /fight requested without a valid match. Redirecting to the arcade.', {
+    if (!isGameRoute(route)) return;
+    if (pendingMatch) {
+      const expectedRoute = gameRouteForMatch(pendingMatch);
+      if (route !== expectedRoute) {
+        navigate(expectedRoute, window.location.search, { replace: true });
+      }
+      return;
+    }
+    debugWarn('[AppRouter] Game route requested without a valid match. Redirecting to Play.', {
       pathname: window.location.pathname,
       authSessionKey,
     });
@@ -324,7 +375,7 @@ export function App({
   }, [authSessionKey, navigate, pendingMatch, route]);
 
   useEffect(() => {
-    if (authStatus !== 'signed-in' || route === '/versus/online' || route === '/fight') return;
+    if (authStatus !== 'signed-in' || route === '/versus/online' || isGameRoute(route)) return;
     const pendingInvite = readPendingVersusInvite();
     if (!pendingInvite) return;
     const inviteSearch = new URLSearchParams({ invite: pendingInvite.token });
@@ -335,7 +386,7 @@ export function App({
   useEffect(() => {
     const previousRoute = previousRouteRef.current;
     previousRouteRef.current = route;
-    if (previousRoute !== '/fight' || route === '/fight') return;
+    if (!isGameRoute(previousRoute) || isGameRoute(route)) return;
     writeStoredMatch(null, authSessionKey);
     setPendingMatchState({ authSessionKey, data: null });
   }, [authSessionKey, route]);
@@ -359,11 +410,12 @@ export function App({
         debugWarn('[AppRouter] Match could not be persisted for reload recovery');
       }
       setPendingMatchState({ authSessionKey, data });
-      debugInfo('[AppRouter] Starting fight from roster', {
+      debugInfo('[AppRouter] Starting game from roster', {
+        gameMode: data.gameMode ?? 'fight',
         p1: data.p1Name ?? null,
         p2: data.p2Name ?? null,
       });
-      navigate('/fight');
+      navigate(gameRouteForMatch(data));
     },
     [authSessionKey, navigate],
   );
@@ -456,7 +508,14 @@ export function App({
 
   const launchTarget = useMemo(
     () => pendingMatch
-      ? { sceneKey: pendingMatch.gameMode === 'rush' ? 'RushScene' : 'FightScene', data: pendingMatch }
+      ? {
+          sceneKey: pendingMatch.gameMode === 'rush'
+            ? 'RushScene'
+            : pendingMatch.gameMode === 'aura'
+              ? 'AuraScene'
+              : 'FightScene',
+          data: pendingMatch,
+        }
       : null,
     [pendingMatch],
   );
@@ -464,7 +523,7 @@ export function App({
   const navigateToLegal = useCallback((nextRoute: LegalRoute) => {
     const returnTo = isLegalRoute(route)
       ? legalReturnRouteFromState(window.history.state)
-      : route === '/fight' ? '/menu' : route;
+      : isGameRoute(route) ? '/menu' : route;
     navigate(nextRoute, '', { state: { legalReturnTo: returnTo } });
   }, [navigate, route]);
 
@@ -496,7 +555,11 @@ export function App({
 
   const ladderContext = useMemo<LadderContext | null>(() => {
     if (route !== '/fight' || !pendingMatch) return null;
-    if (pendingMatch.experience === 'trial' || pendingMatch.gameMode === 'rush') return null;
+    if (
+      pendingMatch.experience === 'trial'
+      || pendingMatch.gameMode === 'rush'
+      || pendingMatch.gameMode === 'aura'
+    ) return null;
     const run = readArcadeRun(getActiveSpriteCacheScope());
     if (!run) return null;
     const rung = currentRung(run);
@@ -554,6 +617,10 @@ export function App({
         onNavigateLegal={navigateToLegal}
         onOpenArcade={() => navigate('/arcade')}
         onOpenCoopRush={() => navigate('/roster/rush')}
+        onOpenAuraCpu={() => navigate('/roster/aura')}
+        onOpenAuraPlayer={() => navigate('/roster/aura-vs')}
+        onOpenAuraOnline={() => navigate('/versus/online', 'mode=aura')}
+        onOpenAuraWatch={() => navigate('/roster/aura-watch')}
         onOpenGallery={() => navigate('/gallery')}
         onOpenCommunity={() => navigate('/community')}
         onOpenWatchMode={() => navigate('/roster/watch')}
@@ -711,6 +778,9 @@ export function App({
       || route === '/roster/cpu'
       || route === '/roster/vs'
       || route === '/roster/rush'
+      || route === '/roster/aura'
+      || route === '/roster/aura-vs'
+      || route === '/roster/aura-watch'
     ) {
       const mode = route === '/roster/watch'
         ? 'watch'
@@ -718,7 +788,13 @@ export function App({
           ? 'vs'
           : route === '/roster/rush'
             ? 'rush'
-            : 'cpu';
+            : route === '/roster/aura'
+              ? 'aura'
+              : route === '/roster/aura-vs'
+                ? 'aura-vs'
+                : route === '/roster/aura-watch'
+                  ? 'aura-watch'
+                  : 'cpu';
       return (
         <RosterPage
           authStatus={authStatus}
@@ -773,7 +849,7 @@ export function App({
     </Suspense>
   );
 
-  if (route === '/fight' && !configurationError) return routedContent;
+  if (isGameRoute(route) && !configurationError) return routedContent;
 
   return (
     <div className="app-route-shell">
