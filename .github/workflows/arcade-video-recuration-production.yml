@@ -95,7 +95,7 @@ jobs:
 
     steps:
       - name: Check out the exact reviewed commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Validate the exact operation-specific request
         shell: bash
