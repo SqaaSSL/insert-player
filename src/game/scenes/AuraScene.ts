@@ -62,19 +62,16 @@ import {
 import type { PeerTransportState } from '../net/PeerTransport.ts';
 
 const LANE_COLORS = [0x4fdcff, 0x8b4dff, 0xffce3a, 0xef4343] as const;
-const LANE_START_HALF_WIDTH = 21;
-const LANE_TARGET_HALF_WIDTH = 46;
-const LANE_START_Y = 286;
-const LANE_TARGET_Y = 499;
-const RECEPTOR_HALF_WIDTH = 46;
-const RECEPTOR_HALF_HEIGHT = 25;
+const LANE_HALF_WIDTH = 36;
+const LANE_START_Y = 244;
+const LANE_TARGET_Y = 497;
+const RECEPTOR_WIDTH = 64;
+const RECEPTOR_HEIGHT = 58;
 const KEY_LABEL_Y = 542;
-const HIGHWAY_FRAME_PAD_FAR = 11;
-const HIGHWAY_FRAME_PAD_NEAR = 14;
-const HIGHWAY_FRAME_TOP_OFFSET = 8;
-const HIGHWAY_FRAME_BOTTOM_OFFSET = 35;
+const HIGHWAY_FRAME_PAD_X = 14;
+const HIGHWAY_FRAME_PAD_TOP = 44;
+const HIGHWAY_FRAME_PAD_BOTTOM = 64;
 const CROWD_METER_SEGMENTS = 8;
-const INACTIVE_PERFORMER_STAGE_OFFSET = 210;
 const ONLINE_START_DELAY_MS = 1_600;
 const ONLINE_FINISH_GRACE_MS = 2_500;
 
@@ -664,7 +661,7 @@ export class AuraScene extends Phaser.Scene {
       strokeThickness: 3,
     }).setOrigin(1, 0).setVisible(false);
     this.laneKeyTexts = Array.from({ length: 4 }, () => this.add.text(0, 542, '', {
-      fontFamily: '"Space Grotesk", sans-serif', fontSize: '12px', fontStyle: 'bold', color: '#fff4d6', align: 'center',
+      fontFamily: '"Press Start 2P", monospace', fontSize: '9px', color: '#fff4d6', align: 'center',
       stroke: '#050507', strokeThickness: 4,
     }).setOrigin(0.5).setVisible(false));
     this.uiLayer.add([
@@ -736,52 +733,17 @@ export class AuraScene extends Phaser.Scene {
 
   private laneLayout(slot: AuraSlot, lane: AuraLane): LaneLayout {
     // The highway always occupies the side opposite the active performer.
-    const center = slot === 0 ? 690 : 334;
-    // The highway opens toward the player like the stage-floor reference. Both
-    // coordinates still interpolate linearly, so perspective never changes the
-    // note clock or creates the old ease-in feeling near the receptor.
-    const startOffsets = [-69, -23, 23, 69] as const;
-    const targetOffsets = [-147, -49, 49, 147] as const;
+    const center = slot === 0 ? 720 : 304;
+    // Straight 4K rails keep screen-space velocity and note size fully honest.
+    // The wider middle seam mirrors the physical gap between the player's hands.
+    const offsets = [-150, -66, 66, 150] as const;
+    const x = center + offsets[lane];
     return {
-      startX: center + startOffsets[lane],
-      targetX: center + targetOffsets[lane],
+      startX: x,
+      targetX: x,
       startY: LANE_START_Y,
       targetY: LANE_TARGET_Y,
     };
-  }
-
-  private lanePoints(layout: LaneLayout, expansion = 0): Phaser.Geom.Point[] {
-    return [
-      new Phaser.Geom.Point(layout.startX - LANE_START_HALF_WIDTH - expansion * 0.35, layout.startY),
-      new Phaser.Geom.Point(layout.startX + LANE_START_HALF_WIDTH + expansion * 0.35, layout.startY),
-      new Phaser.Geom.Point(layout.targetX + LANE_TARGET_HALF_WIDTH + expansion, layout.targetY),
-      new Phaser.Geom.Point(layout.targetX - LANE_TARGET_HALF_WIDTH - expansion, layout.targetY),
-    ];
-  }
-
-  private laneSegmentPoints(layout: LaneLayout, from: number, to: number): Phaser.Geom.Point[] {
-    const pointAt = (progress: number, side: -1 | 1) => new Phaser.Geom.Point(
-      Phaser.Math.Linear(layout.startX, layout.targetX, progress)
-        + side * Phaser.Math.Linear(LANE_START_HALF_WIDTH, LANE_TARGET_HALF_WIDTH, progress),
-      Phaser.Math.Linear(layout.startY, layout.targetY, progress),
-    );
-    return [pointAt(from, -1), pointAt(from, 1), pointAt(to, 1), pointAt(to, -1)];
-  }
-
-  private receptorPoints(x: number, y: number, expansion = 0): Phaser.Geom.Point[] {
-    const halfWidth = RECEPTOR_HALF_WIDTH + expansion;
-    const halfHeight = RECEPTOR_HALF_HEIGHT + expansion * 0.45;
-    const chamfer = 8 + expansion * 0.16;
-    return [
-      new Phaser.Geom.Point(x - halfWidth + chamfer, y - halfHeight),
-      new Phaser.Geom.Point(x + halfWidth - chamfer, y - halfHeight),
-      new Phaser.Geom.Point(x + halfWidth, y - halfHeight + chamfer),
-      new Phaser.Geom.Point(x + halfWidth, y + halfHeight - chamfer),
-      new Phaser.Geom.Point(x + halfWidth - chamfer, y + halfHeight),
-      new Phaser.Geom.Point(x - halfWidth + chamfer, y + halfHeight),
-      new Phaser.Geom.Point(x - halfWidth, y + halfHeight - chamfer),
-      new Phaser.Geom.Point(x - halfWidth, y - halfHeight + chamfer),
-    ];
   }
 
   private primaryLaneKeys(): AuraLaneKeys {
@@ -805,56 +767,73 @@ export class AuraScene extends Phaser.Scene {
       const typedLane = lane as AuraLane;
       const layout = this.laneLayout(slot, typedLane);
       const color = LANE_COLORS[lane];
-      const lanePoints = this.lanePoints(layout);
-      this.laneGraphics.fillGradientStyle(0x111127, 0x111127, 0x04040c, 0x04040c, 0.5);
-      this.laneGraphics.fillPoints(lanePoints, true);
-      this.laneGraphics.fillStyle(color, 0.055);
-      this.laneGraphics.fillPoints(lanePoints, true);
-      this.laneGraphics.lineStyle(9, color, 0.065);
-      this.laneGraphics.lineBetween(
-        layout.startX - LANE_START_HALF_WIDTH,
+      this.laneGraphics.fillGradientStyle(0x121233, 0x121233, 0x070716, 0x070716, 0.92);
+      this.laneGraphics.fillRect(
+        layout.startX - LANE_HALF_WIDTH + 2,
         layout.startY,
-        layout.targetX - LANE_TARGET_HALF_WIDTH,
+        LANE_HALF_WIDTH * 2 - 4,
+        layout.targetY - layout.startY,
+      );
+      this.laneGraphics.fillStyle(color, 0.055);
+      this.laneGraphics.fillRect(
+        layout.startX - LANE_HALF_WIDTH + 3,
+        layout.startY,
+        LANE_HALF_WIDTH * 2 - 6,
+        layout.targetY - layout.startY,
+      );
+      this.laneGraphics.lineStyle(8, color, 0.075);
+      this.laneGraphics.lineBetween(
+        layout.startX - LANE_HALF_WIDTH,
+        layout.startY,
+        layout.targetX - LANE_HALF_WIDTH,
         layout.targetY,
       );
       this.laneGraphics.lineBetween(
-        layout.startX + LANE_START_HALF_WIDTH,
+        layout.startX + LANE_HALF_WIDTH,
         layout.startY,
-        layout.targetX + LANE_TARGET_HALF_WIDTH,
+        layout.targetX + LANE_HALF_WIDTH,
         layout.targetY,
       );
       this.laneGraphics.lineStyle(2, color, 0.72);
       this.laneGraphics.lineBetween(
-        layout.startX - LANE_START_HALF_WIDTH,
+        layout.startX - LANE_HALF_WIDTH,
         layout.startY,
-        layout.targetX - LANE_TARGET_HALF_WIDTH,
+        layout.targetX - LANE_HALF_WIDTH,
         layout.targetY,
       );
       this.laneGraphics.lineBetween(
-        layout.startX + LANE_START_HALF_WIDTH,
+        layout.startX + LANE_HALF_WIDTH,
         layout.startY,
-        layout.targetX + LANE_TARGET_HALF_WIDTH,
+        layout.targetX + LANE_HALF_WIDTH,
         layout.targetY,
       );
-      this.laneGraphics.lineStyle(1, color, 0.22);
-      this.laneGraphics.lineBetween(layout.startX, layout.startY, layout.targetX, layout.targetY);
       this.laneGraphics.fillStyle(color, 0.82);
-      this.laneGraphics.fillRoundedRect(layout.startX - 10, layout.startY - 2, 20, 4, 2);
-
-      this.targetGraphics.fillStyle(color, 0.08);
-      this.targetGraphics.fillPoints(this.receptorPoints(layout.targetX, layout.targetY, 9), true);
-      this.targetGraphics.fillGradientStyle(0x12122b, 0x12122b, 0x05050d, 0x05050d, 0.94);
-      this.targetGraphics.fillPoints(this.receptorPoints(layout.targetX, layout.targetY), true);
-      this.targetGraphics.lineStyle(3, color, 0.94);
-      this.targetGraphics.strokePoints(this.receptorPoints(layout.targetX, layout.targetY), true);
-      this.targetGraphics.lineStyle(1, 0xffffff, 0.3);
-      this.targetGraphics.lineBetween(
-        layout.targetX - RECEPTOR_HALF_WIDTH + 13,
-        layout.targetY - RECEPTOR_HALF_HEIGHT + 6,
-        layout.targetX + RECEPTOR_HALF_WIDTH - 13,
-        layout.targetY - RECEPTOR_HALF_HEIGHT + 6,
+      this.laneGraphics.fillRoundedRect(layout.startX - 18, layout.startY - 3, 36, 6, 3);
+      this.targetGraphics.lineStyle(11, color, 0.09);
+      this.targetGraphics.strokeRoundedRect(
+        layout.targetX - RECEPTOR_WIDTH / 2,
+        layout.targetY - RECEPTOR_HEIGHT / 2,
+        RECEPTOR_WIDTH,
+        RECEPTOR_HEIGHT,
+        8,
       );
-      this.drawMarker(this.targetGraphics, layout.targetX, layout.targetY, typedLane, color, 19, false);
+      this.targetGraphics.fillGradientStyle(0x11112b, 0x11112b, 0x05050c, 0x05050c, 0.98);
+      this.targetGraphics.fillRoundedRect(
+        layout.targetX - RECEPTOR_WIDTH / 2,
+        layout.targetY - RECEPTOR_HEIGHT / 2,
+        RECEPTOR_WIDTH,
+        RECEPTOR_HEIGHT,
+        8,
+      );
+      this.targetGraphics.lineStyle(3, color, 0.9);
+      this.targetGraphics.strokeRoundedRect(
+        layout.targetX - RECEPTOR_WIDTH / 2,
+        layout.targetY - RECEPTOR_HEIGHT / 2,
+        RECEPTOR_WIDTH,
+        RECEPTOR_HEIGHT,
+        8,
+      );
+      this.drawMarker(this.targetGraphics, layout.targetX, layout.targetY, typedLane, color, 18, false);
     }
     this.drawBeatGrid(slot);
     const keys = this.laneKeysForSlot(slot);
@@ -862,89 +841,112 @@ export class AuraScene extends Phaser.Scene {
       const layout = this.laneLayout(slot, lane as AuraLane);
       text.setText(keys[lane]).setPosition(layout.targetX, KEY_LABEL_Y).setVisible(true);
     });
-    // The top HUD already explains whose performance is live. Keeping the
-    // horizon free makes the lane feel embedded in the stage, not like a card.
-    this.highwayTitleText.setVisible(false);
-    this.highwayMetaText.setVisible(false);
+    const left = this.laneLayout(slot, 0);
+    const right = this.laneLayout(slot, 3);
+    const frameLeft = left.startX - LANE_HALF_WIDTH - HIGHWAY_FRAME_PAD_X;
+    const frameRight = right.startX + LANE_HALF_WIDTH + HIGHWAY_FRAME_PAD_X;
+    const locallyPlayable = !this.isCpuSlot(slot) && (!this.online || slot === this.online.localSlot);
+    this.highwayTitleText
+      .setText(locallyPlayable ? 'LIVE INPUT' : this.isCpuSlot(slot) ? 'RIVAL FEED' : 'RIVAL INPUT')
+      .setPosition(frameLeft + 18, LANE_START_Y - HIGHWAY_FRAME_PAD_TOP + 14)
+      .setVisible(true);
+    this.highwayMetaText
+      .setText(locallyPlayable ? '4K // DF · JK' : '4K // ON CAMERA')
+      .setPosition(frameRight - 18, LANE_START_Y - HIGHWAY_FRAME_PAD_TOP + 12)
+      .setVisible(true);
   }
 
   private drawHighwayFrame(slot: AuraSlot): void {
     const left = this.laneLayout(slot, 0);
     const right = this.laneLayout(slot, 3);
-    const frameTop = LANE_START_Y - HIGHWAY_FRAME_TOP_OFFSET;
-    const frameBottom = LANE_TARGET_Y + HIGHWAY_FRAME_BOTTOM_OFFSET;
-    const farLeft = left.startX - LANE_START_HALF_WIDTH - HIGHWAY_FRAME_PAD_FAR;
-    const farRight = right.startX + LANE_START_HALF_WIDTH + HIGHWAY_FRAME_PAD_FAR;
-    const nearLeft = left.targetX - LANE_TARGET_HALF_WIDTH - HIGHWAY_FRAME_PAD_NEAR - 14;
-    const nearRight = right.targetX + LANE_TARGET_HALF_WIDTH + HIGHWAY_FRAME_PAD_NEAR + 14;
+    const frameLeft = left.startX - LANE_HALF_WIDTH - HIGHWAY_FRAME_PAD_X;
+    const frameRight = right.startX + LANE_HALF_WIDTH + HIGHWAY_FRAME_PAD_X;
+    const frameTop = LANE_START_Y - HIGHWAY_FRAME_PAD_TOP;
+    const frameBottom = LANE_TARGET_Y + HIGHWAY_FRAME_PAD_BOTTOM;
+    const corner = 14;
     const panel = [
-      new Phaser.Geom.Point(farLeft, frameTop),
-      new Phaser.Geom.Point(farRight, frameTop),
-      new Phaser.Geom.Point(nearRight, frameBottom),
-      new Phaser.Geom.Point(nearLeft, frameBottom),
+      new Phaser.Geom.Point(frameLeft + corner, frameTop),
+      new Phaser.Geom.Point(frameRight - corner, frameTop),
+      new Phaser.Geom.Point(frameRight, frameTop + corner),
+      new Phaser.Geom.Point(frameRight, frameBottom - corner),
+      new Phaser.Geom.Point(frameRight - corner, frameBottom),
+      new Phaser.Geom.Point(frameLeft + corner, frameBottom),
+      new Phaser.Geom.Point(frameLeft, frameBottom - corner),
+      new Phaser.Geom.Point(frameLeft, frameTop + corner),
     ];
-    const shadow = panel.map((point) => new Phaser.Geom.Point(point.x + 5, point.y + 9));
+    const shadow = panel.map((point) => new Phaser.Geom.Point(point.x + 8, point.y + 10));
 
-    this.laneGraphics.fillStyle(0x000000, 0.48);
+    this.laneGraphics.fillStyle(0x000000, 0.58);
     this.laneGraphics.fillPoints(shadow, true);
-    this.laneGraphics.fillGradientStyle(0x10102c, 0x1e0b2d, 0x03030a, 0x08030d, 0.42);
+    this.laneGraphics.fillGradientStyle(0x16143f, 0x260c3b, 0x070719, 0x10061d, 0.97);
     this.laneGraphics.fillPoints(panel, true);
-    this.laneGraphics.lineStyle(12, 0x7d64ff, 0.045);
-    this.laneGraphics.strokePoints(panel, true);
-    this.laneGraphics.lineStyle(2, 0x4fdcff, 0.72);
-    this.laneGraphics.lineBetween(farLeft, frameTop, nearLeft, frameBottom);
-    this.laneGraphics.lineStyle(2, 0xff3dc6, 0.68);
-    this.laneGraphics.lineBetween(farRight, frameTop, nearRight, frameBottom);
-    const horizonCenter = (farLeft + farRight) / 2;
-    this.laneGraphics.lineStyle(2, 0xffce3a, 0.72);
-    this.laneGraphics.lineBetween(nearLeft + 12, frameBottom, nearRight - 12, frameBottom);
-    this.laneGraphics.lineStyle(2, 0xfff4d6, 0.28);
-    this.laneGraphics.lineBetween(farLeft + 7, frameTop, farRight - 7, frameTop);
+    this.laneGraphics.fillStyle(0x05050f, 0.74);
+    this.laneGraphics.fillRect(frameLeft + 3, frameTop + 36, frameRight - frameLeft - 6, 3);
+    this.laneGraphics.fillRect(frameLeft + 3, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2 + 4, frameRight - frameLeft - 6, 2);
 
-    this.laneGraphics.fillStyle(0xffce3a, 0.13);
-    this.laneGraphics.fillCircle(horizonCenter, LANE_START_Y, 16);
-    this.laneGraphics.fillStyle(0xffce3a, 0.94);
-    this.laneGraphics.fillPoints([
-      new Phaser.Geom.Point(horizonCenter - 11, LANE_START_Y + 3),
-      new Phaser.Geom.Point(horizonCenter - 9, LANE_START_Y - 7),
-      new Phaser.Geom.Point(horizonCenter - 3, LANE_START_Y - 1),
-      new Phaser.Geom.Point(horizonCenter, LANE_START_Y - 12),
-      new Phaser.Geom.Point(horizonCenter + 4, LANE_START_Y - 1),
-      new Phaser.Geom.Point(horizonCenter + 10, LANE_START_Y - 8),
-      new Phaser.Geom.Point(horizonCenter + 11, LANE_START_Y + 3),
-    ], true);
-    this.laneGraphics.fillRect(horizonCenter - 11, LANE_START_Y + 3, 22, 4);
+    this.laneGraphics.lineStyle(12, 0x765dff, 0.07);
+    this.laneGraphics.strokePoints(panel, true);
+    this.laneGraphics.lineStyle(1, 0xb19cff, 0.64);
+    this.laneGraphics.strokePoints(panel, true);
+
+    const seamX = (this.laneLayout(slot, 1).startX + this.laneLayout(slot, 2).startX) / 2;
+    this.laneGraphics.lineStyle(3, 0x4fdcff, 0.88);
+    this.laneGraphics.lineBetween(frameLeft + corner, frameTop, seamX - 14, frameTop);
+    this.laneGraphics.lineBetween(frameLeft, frameTop + corner, frameLeft, frameBottom - corner);
+    this.laneGraphics.lineStyle(3, 0xff3dc6, 0.78);
+    this.laneGraphics.lineBetween(seamX + 14, frameTop, frameRight - corner, frameTop);
+    this.laneGraphics.lineBetween(frameRight, frameTop + corner, frameRight, frameBottom - corner);
+    this.laneGraphics.lineStyle(2, 0xffce3a, 0.72);
+    this.laneGraphics.lineBetween(frameLeft + corner, frameBottom, frameRight - corner, frameBottom);
+
+    this.laneGraphics.fillStyle(0x02020b, 0.76);
+    this.laneGraphics.fillRect(seamX - 18, frameTop + 40, 36, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2 - frameTop - 40);
+    this.laneGraphics.lineStyle(1, 0xffce3a, 0.28);
+    this.laneGraphics.lineBetween(seamX - 18, frameTop + 40, seamX - 18, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2);
+    this.laneGraphics.lineBetween(seamX + 18, frameTop + 40, seamX + 18, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2);
+
+    this.laneGraphics.fillStyle(0x4fdcff, 0.82);
+    this.laneGraphics.fillRoundedRect(frameLeft + 18, frameTop - 2, 92, 4, 2);
+    this.laneGraphics.fillStyle(0xff3dc6, 0.72);
+    this.laneGraphics.fillRoundedRect(frameRight - 110, frameTop - 2, 92, 4, 2);
+    this.laneGraphics.fillStyle(0xffce3a, 0.75);
+    this.laneGraphics.fillRoundedRect(seamX - 24, frameBottom - 3, 48, 5, 2);
+
+    for (const [x, color] of [
+      [frameLeft + 11, 0x4fdcff],
+      [frameRight - 11, 0xff3dc6],
+    ] as const) {
+      this.laneGraphics.fillStyle(0x05050f, 1);
+      this.laneGraphics.fillCircle(x, frameTop + 15, 4);
+      this.laneGraphics.lineStyle(1, color, 0.9);
+      this.laneGraphics.strokeCircle(x, frameTop + 15, 4);
+    }
   }
 
   private drawBeatGrid(slot: AuraSlot): void {
     const left = this.laneLayout(slot, 0);
+    const leftInner = this.laneLayout(slot, 1);
+    const rightInner = this.laneLayout(slot, 2);
     const right = this.laneLayout(slot, 3);
-    for (const progress of [0.2, 0.4, 0.6, 0.8]) {
+    for (const progress of [0.25, 0.5, 0.75]) {
       const y = Phaser.Math.Linear(left.startY, left.targetY, progress);
-      const leftEdge = Phaser.Math.Linear(
-        left.startX - LANE_START_HALF_WIDTH,
-        left.targetX - LANE_TARGET_HALF_WIDTH,
-        progress,
-      );
-      const rightEdge = Phaser.Math.Linear(
-        right.startX + LANE_START_HALF_WIDTH,
-        right.targetX + LANE_TARGET_HALF_WIDTH,
-        progress,
-      );
       this.laneGraphics.lineStyle(
-        progress === 0.6 ? 2 : 1,
+        progress === 0.5 ? 2 : 1,
         0xfff4d6,
-        progress === 0.6 ? 0.26 : 0.14,
+        progress === 0.5 ? 0.32 : 0.2,
       );
-      this.laneGraphics.lineBetween(leftEdge, y, rightEdge, y);
-      for (const lane of [0, 1, 2, 3] as const) {
-        const layout = this.laneLayout(slot, lane);
-        const x = Phaser.Math.Linear(layout.startX, layout.targetX, progress);
-        const tick = Phaser.Math.Linear(3, 7, progress);
-        this.laneGraphics.lineStyle(2, LANE_COLORS[lane], 0.34);
-        this.laneGraphics.lineBetween(x - tick, y - 2, x, y + 2);
-        this.laneGraphics.lineBetween(x, y + 2, x + tick, y - 2);
-      }
+      this.laneGraphics.lineBetween(
+        left.startX - LANE_HALF_WIDTH,
+        y,
+        leftInner.startX + LANE_HALF_WIDTH,
+        y,
+      );
+      this.laneGraphics.lineBetween(
+        rightInner.startX - LANE_HALF_WIDTH,
+        y,
+        right.startX + LANE_HALF_WIDTH,
+        y,
+      );
     }
   }
 
@@ -988,16 +990,19 @@ export class AuraScene extends Phaser.Scene {
   private createNote(noteId: string, lane: AuraLane): Phaser.GameObjects.Container {
     const container = this.add.container(0, 0).setDepth(520);
     const glow = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
-    glow.fillStyle(LANE_COLORS[lane], 0.15);
-    glow.fillCircle(0, 0, 29);
+    glow.fillStyle(LANE_COLORS[lane], 0.12);
+    glow.fillRoundedRect(-31, -27, 62, 54, 10);
+    glow.fillStyle(LANE_COLORS[lane], 0.1);
+    glow.fillCircle(0, 0, 31);
     const plate = this.add.graphics();
-    const platePoints = this.receptorPoints(0, 0, -18);
-    plate.fillStyle(0x05050d, 0.42);
-    plate.fillPoints(platePoints, true);
-    plate.lineStyle(2, LANE_COLORS[lane], 0.58);
-    plate.strokePoints(platePoints, true);
+    plate.fillGradientStyle(0x171735, 0x171735, 0x070712, 0x070712, 0.96);
+    plate.fillRoundedRect(-24, -21, 48, 42, 7);
+    plate.lineStyle(3, LANE_COLORS[lane], 0.82);
+    plate.strokeRoundedRect(-24, -21, 48, 42, 7);
+    plate.lineStyle(2, 0xffffff, 0.28);
+    plate.lineBetween(-15, -15, 15, -15);
     const marker = this.add.graphics();
-    this.drawMarker(marker, 0, 1, lane, LANE_COLORS[lane], 17, true);
+    this.drawMarker(marker, 0, 1, lane, LANE_COLORS[lane], 16, true);
     container.add([glow, plate, marker]);
     this.uiLayer.add(container);
     this.noteObjects.set(noteId, container);
@@ -1023,11 +1028,8 @@ export class AuraScene extends Phaser.Scene {
         Phaser.Math.Linear(layout.startX, layout.targetX, progress),
         Phaser.Math.Linear(layout.startY, layout.targetY, progress),
       );
-      // Size follows the floor perspective while position and timing remain
-      // linear. Clamp after the receptor so late notes never lurch forward.
-      const perspective = Phaser.Math.Clamp(progress, 0, 1);
-      object.setScale(Phaser.Math.Linear(0.48, 1, perspective));
-      object.setAlpha(until < 0 ? Math.max(0.22, 1 + until / 240) : Phaser.Math.Linear(0.72, 1, perspective));
+      object.setScale(1);
+      object.setAlpha(until < 0 ? Math.max(0.22, 1 + until / 240) : 1);
     }
     for (const [id, object] of this.noteObjects) {
       if (activeIds.has(id)) continue;
@@ -1106,12 +1108,12 @@ export class AuraScene extends Phaser.Scene {
     const activeX = this.fighters[slot].x;
     const inactive = (1 - slot) as AuraSlot;
     this.activeGlow.setPosition(activeX, GROUND_Y + this.fighterRenderYOffset + 5);
-    this.views[slot].setRenderPresentation(this.fighterRenderScale * 1.28, this.fighterRenderYOffset);
-    this.views[inactive].setRenderPresentation(this.fighterRenderScale * 0.7, this.fighterRenderYOffset);
     this.views[slot].sprite.setAlpha(1);
     this.views[slot].shadowSprite?.setAlpha(0.2);
-    this.views[inactive].sprite.setAlpha(0.52);
-    this.views[inactive].shadowSprite?.setAlpha(0.09);
+    this.views[inactive].sprite.setAlpha(0.28);
+    this.views[inactive].shadowSprite?.setAlpha(0.05);
+    this.views[slot].setRenderPresentation(this.fighterRenderScale * 1.28, this.fighterRenderYOffset);
+    this.views[inactive].setRenderPresentation(this.fighterRenderScale * 0.82, this.fighterRenderYOffset);
     this.drawStageLighting(slot, this.crowdHeat[slot]);
     const camera = this.cameras.main;
     const targetScrollX = slot === 0 ? 46 : -46;
@@ -1137,9 +1139,9 @@ export class AuraScene extends Phaser.Scene {
     this.highwayMetaText?.setVisible(false);
     this.updateCrowdUi(null);
     for (const view of this.views) {
-      view.setRenderPresentation(this.fighterRenderScale, this.fighterRenderYOffset);
       view.sprite.setAlpha(0.9);
       view.shadowSprite?.setAlpha(0.16);
+      view.setRenderPresentation(this.fighterRenderScale, this.fighterRenderYOffset);
     }
     this.drawStageLighting(null, 0);
     this.activeGlow?.setPosition(GAME_WIDTH / 2, GROUND_Y + this.fighterRenderYOffset + 5).setAlpha(0.5);
@@ -1204,20 +1206,48 @@ export class AuraScene extends Phaser.Scene {
     this.tweens.killTweensOf(pulse);
     this.tweens.killTweensOf(keyText);
     flash.clear();
-    flash.fillStyle(color, 0.12);
-    flash.fillPoints(this.lanePoints(layout), true);
-    flash.fillStyle(color, 0.23);
-    flash.fillPoints(this.laneSegmentPoints(layout, 0.66, 1), true);
-    flash.fillStyle(color, 0.96);
-    flash.fillPoints(this.receptorPoints(layout.targetX, layout.targetY), true);
+    flash.fillStyle(color, 0.14);
+    flash.fillRect(
+      layout.targetX - LANE_HALF_WIDTH,
+      layout.startY,
+      LANE_HALF_WIDTH * 2,
+      layout.targetY - layout.startY,
+    );
+    flash.fillStyle(color, 0.2);
+    flash.fillRect(
+      layout.targetX - LANE_HALF_WIDTH,
+      layout.targetY - 82,
+      LANE_HALF_WIDTH * 2,
+      82,
+    );
+    flash.fillStyle(color, 0.98);
+    flash.fillRoundedRect(
+      layout.targetX - RECEPTOR_WIDTH / 2,
+      layout.targetY - RECEPTOR_HEIGHT / 2,
+      RECEPTOR_WIDTH,
+      RECEPTOR_HEIGHT,
+      8,
+    );
     flash.lineStyle(4, 0xffffff, 1);
-    flash.strokePoints(this.receptorPoints(layout.targetX, layout.targetY), true);
+    flash.strokeRoundedRect(
+      layout.targetX - RECEPTOR_WIDTH / 2,
+      layout.targetY - RECEPTOR_HEIGHT / 2,
+      RECEPTOR_WIDTH,
+      RECEPTOR_HEIGHT,
+      8,
+    );
     this.drawMarker(flash, layout.targetX, layout.targetY, lane, 0xffffff, 20, true);
     flash.setAlpha(1);
 
     pulse.clear();
     pulse.lineStyle(6, color, 0.9);
-    pulse.strokePoints(this.receptorPoints(0, 0), true);
+    pulse.strokeRoundedRect(
+      -RECEPTOR_WIDTH / 2,
+      -RECEPTOR_HEIGHT / 2,
+      RECEPTOR_WIDTH,
+      RECEPTOR_HEIGHT,
+      8,
+    );
     pulse.setPosition(layout.targetX, layout.targetY).setScale(0.9).setAlpha(1);
 
     keyText.setColor('#ffffff').setPosition(layout.targetX, KEY_LABEL_Y).setScale(1.18);
@@ -1530,14 +1560,6 @@ export class AuraScene extends Phaser.Scene {
     this.fighters[1].update(dt, EMPTY_INPUT, this.fighters[0].x);
     this.views[0].syncSprite(this.fighters[1].x);
     this.views[1].syncSprite(this.fighters[0].x);
-    if (this.activePerformerSlot !== null) {
-      const inactive = (1 - this.activePerformerSlot) as AuraSlot;
-      const offset = this.activePerformerSlot === 0
-        ? INACTIVE_PERFORMER_STAGE_OFFSET
-        : -INACTIVE_PERFORMER_STAGE_OFFSET;
-      this.views[inactive].sprite.setX(this.views[inactive].sprite.x + offset);
-      this.views[inactive].shadowSprite?.setX(this.views[inactive].shadowSprite.x + offset);
-    }
     for (const slot of [0, 1] as const) {
       const top = this.views[slot].getVisibleTopCenter();
       this.playerTags[slot]?.setPosition(top.x, Math.max(130, top.y - 25));
