@@ -67,10 +67,11 @@ const LANE_START_Y = 244;
 const LANE_TARGET_Y = 497;
 const RECEPTOR_WIDTH = 64;
 const RECEPTOR_HEIGHT = 58;
-const KEY_LABEL_Y = 544;
+const KEY_LABEL_Y = 542;
 const HIGHWAY_FRAME_PAD_X = 14;
-const HIGHWAY_FRAME_PAD_TOP = 18;
-const HIGHWAY_FRAME_PAD_BOTTOM = 38;
+const HIGHWAY_FRAME_PAD_TOP = 44;
+const HIGHWAY_FRAME_PAD_BOTTOM = 64;
+const CROWD_METER_SEGMENTS = 8;
 const ONLINE_START_DELAY_MS = 1_600;
 const ONLINE_FINISH_GRACE_MS = 2_500;
 
@@ -183,9 +184,13 @@ export class AuraScene extends Phaser.Scene {
   private uiLayer!: Phaser.GameObjects.Container;
   private uiCamera!: Phaser.Cameras.Scene2D.Camera;
   private stageBackdrop!: Phaser.GameObjects.Image;
+  private stageTint!: Phaser.GameObjects.Graphics;
+  private stageLights!: Phaser.GameObjects.Graphics;
   private customStageTextureKey: string | null = null;
   private laneGraphics!: Phaser.GameObjects.Graphics;
   private targetGraphics!: Phaser.GameObjects.Graphics;
+  private highwayTitleText!: Phaser.GameObjects.Text;
+  private highwayMetaText!: Phaser.GameObjects.Text;
   private inputFlashGraphics: Phaser.GameObjects.Graphics[] = [];
   private inputPulseGraphics: Phaser.GameObjects.Graphics[] = [];
   private activeGlow!: Phaser.GameObjects.Graphics;
@@ -198,6 +203,8 @@ export class AuraScene extends Phaser.Scene {
   private turnText!: Phaser.GameObjects.Text;
   private phaseText!: Phaser.GameObjects.Text;
   private comboText!: Phaser.GameObjects.Text;
+  private crowdLabelText!: Phaser.GameObjects.Text;
+  private crowdMeterGraphics!: Phaser.GameObjects.Graphics;
   private laneKeyTexts: Phaser.GameObjects.Text[] = [];
   private p1Balance!: Phaser.GameObjects.Rectangle;
   private p2Balance!: Phaser.GameObjects.Rectangle;
@@ -210,6 +217,7 @@ export class AuraScene extends Phaser.Scene {
   private keyBindings: Array<{ key: Phaser.Input.Keyboard.Key; handler: () => void }> = [];
   private soundManager!: SoundManager;
   private crowdHeat: [number, number] = [0, 0];
+  private activePerformerSlot: AuraSlot | null = null;
   private clockStartedAt: number | null = null;
   private scheduledClockStart: number | null = null;
   private paused = false;
@@ -264,6 +272,7 @@ export class AuraScene extends Phaser.Scene {
     this.cpuPlanIndices = [0, 0];
     this.noteObjects.clear();
     this.crowdHeat = [0, 0];
+    this.activePerformerSlot = null;
     this.currentTurnIndex = -2;
     this.clockStartedAt = null;
     this.scheduledClockStart = null;
@@ -415,12 +424,77 @@ export class AuraScene extends Phaser.Scene {
     grade.fillRect(0, 390, GAME_WIDTH, 186);
     this.worldLayer.add(grade);
 
+    this.stageTint = this.add.graphics().setDepth(-17);
+    this.stageLights = this.add.graphics().setDepth(-16).setBlendMode(Phaser.BlendModes.ADD);
+    this.worldLayer.add([this.stageTint, this.stageLights]);
+    this.drawStageLighting(null, 0);
+
     const floor = this.add.graphics().setDepth(-8);
     floor.lineStyle(2, 0xffce3a, 0.42);
     floor.strokeEllipse(GAME_WIDTH / 2, GROUND_Y + this.fighterRenderYOffset + 5, 470, 94);
     floor.lineStyle(1, 0x4fdcff, 0.18);
     floor.strokeEllipse(GAME_WIDTH / 2, GROUND_Y + this.fighterRenderYOffset + 5, 392, 72);
     this.worldLayer.add(floor);
+  }
+
+  private drawStageLighting(slot: AuraSlot | null, heat: number): void {
+    if (!this.stageTint || !this.stageLights) return;
+    this.stageTint.clear();
+    this.stageLights.clear();
+
+    const leftTop = slot === 1 ? 0x24082f : 0x062a3d;
+    const rightTop = slot === 0 ? 0x28072e : 0x081c3f;
+    const leftBottom = slot === 1 ? 0x16061f : 0x06445a;
+    const rightBottom = slot === 0 ? 0x3a0a3f : 0x0a3450;
+    this.stageTint.fillGradientStyle(
+      leftTop,
+      rightTop,
+      leftBottom,
+      rightBottom,
+      0.28,
+      0.28,
+      0.38,
+      0.38,
+    );
+    this.stageTint.fillRect(0, 92, GAME_WIDTH, GAME_HEIGHT - 92);
+    this.stageTint.fillStyle(0x03030c, 0.18);
+    this.stageTint.fillRect(0, 92, GAME_WIDTH, 54);
+
+    if (slot === null) {
+      this.drawRadialStageGlow(326, 360, 0x4fdcff, 0.12);
+      this.drawRadialStageGlow(698, 360, 0xff3dc6, 0.1);
+      return;
+    }
+
+    const performerX = this.fighters?.[slot]?.x ?? (slot === 0 ? 326 : 698);
+    const color = slot === 0 ? 0x4fdcff : 0xff3dc6;
+    const strength = 0.14 + heat * 0.12;
+    this.stageLights.fillStyle(color, 0.035 + heat * 0.025);
+    this.stageLights.fillTriangle(
+      performerX - 38,
+      90,
+      performerX + 38,
+      90,
+      performerX + (slot === 0 ? 190 : -190),
+      GROUND_Y + 40,
+    );
+    this.stageLights.fillTriangle(
+      performerX - 18,
+      90,
+      performerX + 18,
+      90,
+      performerX + (slot === 0 ? -170 : 170),
+      GROUND_Y + 25,
+    );
+    this.drawRadialStageGlow(performerX, 360, color, strength);
+  }
+
+  private drawRadialStageGlow(x: number, y: number, color: number, strength: number): void {
+    for (let ring = 0; ring < 6; ring += 1) {
+      const scale = 1 - ring * 0.13;
+      this.stageLights.fillStyle(color, strength * (0.12 + ring * 0.035));
+      this.stageLights.fillEllipse(x, y, 430 * scale, 390 * scale);
+    }
   }
 
   private async loadCustomStage(epoch: number): Promise<void> {
@@ -515,16 +589,26 @@ export class AuraScene extends Phaser.Scene {
   private createUi(): void {
     this.uiLayer = this.add.container(0, 0).setDepth(500);
     const panel = this.add.graphics();
-    panel.fillStyle(0x050507, 0.9);
+    panel.fillGradientStyle(0x050513, 0x12061c, 0x070719, 0x0d0718, 0.97);
     panel.fillRect(0, 0, GAME_WIDTH, 92);
-    panel.lineStyle(2, 0xffce3a, 0.7);
-    panel.lineBetween(0, 91, GAME_WIDTH, 91);
+    panel.fillStyle(0x4fdcff, 0.055);
+    panel.fillRect(0, 0, GAME_WIDTH / 2, 92);
+    panel.fillStyle(0xff3dc6, 0.045);
+    panel.fillRect(GAME_WIDTH / 2, 0, GAME_WIDTH / 2, 92);
+    panel.fillStyle(0x05050f, 0.94);
+    panel.fillRoundedRect(326, 31, 372, 54, 8);
+    panel.lineStyle(1, 0x6e5cba, 0.6);
+    panel.strokeRoundedRect(326, 31, 372, 54, 8);
+    panel.lineStyle(2, 0x4fdcff, 0.7);
+    panel.lineBetween(0, 91, GAME_WIDTH / 2, 91);
+    panel.lineStyle(2, 0xff3dc6, 0.62);
+    panel.lineBetween(GAME_WIDTH / 2, 91, GAME_WIDTH, 91);
     this.uiLayer.add(panel);
 
-    const balanceTrack = this.add.rectangle(512, 19, 620, 12, 0x171724)
-      .setStrokeStyle(2, 0x6d5921, 0.9);
+    const balanceTrack = this.add.rectangle(512, 18, 620, 12, 0x09091c)
+      .setStrokeStyle(2, 0x51458a, 0.9);
     this.p1Balance = this.add.rectangle(202, 19, 310, 8, 0x4fdcff).setOrigin(0, 0.5);
-    this.p2Balance = this.add.rectangle(822, 19, 310, 8, 0x8b4dff).setOrigin(1, 0.5);
+    this.p2Balance = this.add.rectangle(822, 19, 310, 8, 0xff3dc6).setOrigin(1, 0.5);
     this.balanceCrown = this.add.text(512, 18, '♛', {
       fontFamily: 'Georgia, serif', fontSize: '28px', color: '#ffce3a',
     }).setOrigin(0.5);
@@ -534,7 +618,7 @@ export class AuraScene extends Phaser.Scene {
       fontFamily: '"Press Start 2P", monospace', fontSize: '11px', color: '#4fdcff',
     });
     this.p2NameText = this.add.text(998, 36, this.p2Name.toUpperCase(), {
-      fontFamily: '"Press Start 2P", monospace', fontSize: '11px', color: '#a976ff', align: 'right',
+      fontFamily: '"Press Start 2P", monospace', fontSize: '11px', color: '#ff65d0', align: 'right',
     }).setOrigin(1, 0);
     this.p1ScoreText = this.add.text(26, 59, '0 AURA', {
       fontFamily: '"Press Start 2P", monospace', fontSize: '17px', color: '#fff4d6',
@@ -549,9 +633,33 @@ export class AuraScene extends Phaser.Scene {
       fontFamily: '"Space Grotesk", sans-serif', fontSize: '13px', fontStyle: 'bold', color: '#fff4d6',
     }).setOrigin(0.5);
     this.comboText = this.add.text(26, 510, 'x0 FLOW', {
-      fontFamily: '"Press Start 2P", monospace', fontSize: '15px', color: '#ffce3a',
-      stroke: '#050507', strokeThickness: 5,
+      fontFamily: '"Press Start 2P", monospace', fontSize: '18px', color: '#ffce3a',
+      stroke: '#050507', strokeThickness: 6,
     });
+    this.crowdLabelText = this.add.text(26, 536, 'CROWD · WATCHING', {
+      fontFamily: '"Space Grotesk", sans-serif',
+      fontSize: '10px',
+      fontStyle: 'bold',
+      color: '#fff4d6',
+      stroke: '#050507',
+      strokeThickness: 4,
+    }).setVisible(false);
+    this.crowdMeterGraphics = this.add.graphics().setVisible(false);
+    this.highwayTitleText = this.add.text(0, 0, 'YOUR INPUT', {
+      fontFamily: '"Press Start 2P", monospace',
+      fontSize: '9px',
+      color: '#fff4d6',
+      stroke: '#050507',
+      strokeThickness: 4,
+    }).setVisible(false);
+    this.highwayMetaText = this.add.text(0, 0, '4K // LIVE', {
+      fontFamily: '"Space Grotesk", sans-serif',
+      fontSize: '9px',
+      fontStyle: 'bold',
+      color: '#4fdcff',
+      stroke: '#050507',
+      strokeThickness: 3,
+    }).setOrigin(1, 0).setVisible(false);
     this.laneKeyTexts = Array.from({ length: 4 }, () => this.add.text(0, 542, '', {
       fontFamily: '"Press Start 2P", monospace', fontSize: '9px', color: '#fff4d6', align: 'center',
       stroke: '#050507', strokeThickness: 4,
@@ -564,6 +672,7 @@ export class AuraScene extends Phaser.Scene {
       this.turnText,
       this.phaseText,
       this.comboText,
+      this.crowdLabelText,
       ...this.laneKeyTexts,
     ]);
 
@@ -580,6 +689,11 @@ export class AuraScene extends Phaser.Scene {
       this.targetGraphics,
       ...this.inputFlashGraphics,
       ...this.inputPulseGraphics,
+    ]);
+    this.uiLayer.add([
+      this.crowdMeterGraphics,
+      this.highwayTitleText,
+      this.highwayMetaText,
     ]);
     for (const text of this.laneKeyTexts) this.uiLayer.bringToTop(text);
     this.uiLayer.add(ScreenEffects.createCRTOverlay(this));
@@ -653,7 +767,7 @@ export class AuraScene extends Phaser.Scene {
       const typedLane = lane as AuraLane;
       const layout = this.laneLayout(slot, typedLane);
       const color = LANE_COLORS[lane];
-      this.laneGraphics.fillStyle(0x09091f, 0.86);
+      this.laneGraphics.fillGradientStyle(0x121233, 0x121233, 0x070716, 0x070716, 0.92);
       this.laneGraphics.fillRect(
         layout.startX - LANE_HALF_WIDTH + 2,
         layout.startY,
@@ -695,7 +809,15 @@ export class AuraScene extends Phaser.Scene {
       );
       this.laneGraphics.fillStyle(color, 0.82);
       this.laneGraphics.fillRoundedRect(layout.startX - 18, layout.startY - 3, 36, 6, 3);
-      this.targetGraphics.fillStyle(0x050507, 0.94);
+      this.targetGraphics.lineStyle(11, color, 0.09);
+      this.targetGraphics.strokeRoundedRect(
+        layout.targetX - RECEPTOR_WIDTH / 2,
+        layout.targetY - RECEPTOR_HEIGHT / 2,
+        RECEPTOR_WIDTH,
+        RECEPTOR_HEIGHT,
+        8,
+      );
+      this.targetGraphics.fillGradientStyle(0x11112b, 0x11112b, 0x05050c, 0x05050c, 0.98);
       this.targetGraphics.fillRoundedRect(
         layout.targetX - RECEPTOR_WIDTH / 2,
         layout.targetY - RECEPTOR_HEIGHT / 2,
@@ -719,6 +841,19 @@ export class AuraScene extends Phaser.Scene {
       const layout = this.laneLayout(slot, lane as AuraLane);
       text.setText(keys[lane]).setPosition(layout.targetX, KEY_LABEL_Y).setVisible(true);
     });
+    const left = this.laneLayout(slot, 0);
+    const right = this.laneLayout(slot, 3);
+    const frameLeft = left.startX - LANE_HALF_WIDTH - HIGHWAY_FRAME_PAD_X;
+    const frameRight = right.startX + LANE_HALF_WIDTH + HIGHWAY_FRAME_PAD_X;
+    const locallyPlayable = !this.isCpuSlot(slot) && (!this.online || slot === this.online.localSlot);
+    this.highwayTitleText
+      .setText(locallyPlayable ? 'LIVE INPUT' : this.isCpuSlot(slot) ? 'RIVAL FEED' : 'RIVAL INPUT')
+      .setPosition(frameLeft + 18, LANE_START_Y - HIGHWAY_FRAME_PAD_TOP + 14)
+      .setVisible(true);
+    this.highwayMetaText
+      .setText(locallyPlayable ? '4K // DF · JK' : '4K // ON CAMERA')
+      .setPosition(frameRight - 18, LANE_START_Y - HIGHWAY_FRAME_PAD_TOP + 12)
+      .setVisible(true);
   }
 
   private drawHighwayFrame(slot: AuraSlot): void {
@@ -728,7 +863,7 @@ export class AuraScene extends Phaser.Scene {
     const frameRight = right.startX + LANE_HALF_WIDTH + HIGHWAY_FRAME_PAD_X;
     const frameTop = LANE_START_Y - HIGHWAY_FRAME_PAD_TOP;
     const frameBottom = LANE_TARGET_Y + HIGHWAY_FRAME_PAD_BOTTOM;
-    const corner = 12;
+    const corner = 14;
     const panel = [
       new Phaser.Geom.Point(frameLeft + corner, frameTop),
       new Phaser.Geom.Point(frameRight - corner, frameTop),
@@ -741,28 +876,51 @@ export class AuraScene extends Phaser.Scene {
     ];
     const shadow = panel.map((point) => new Phaser.Geom.Point(point.x + 8, point.y + 10));
 
-    this.laneGraphics.fillStyle(0x000000, 0.44);
+    this.laneGraphics.fillStyle(0x000000, 0.58);
     this.laneGraphics.fillPoints(shadow, true);
-    this.laneGraphics.fillGradientStyle(0x11113b, 0x1b0c39, 0x050516, 0x08051a, 0.94);
+    this.laneGraphics.fillGradientStyle(0x16143f, 0x260c3b, 0x070719, 0x10061d, 0.97);
     this.laneGraphics.fillPoints(panel, true);
-    this.laneGraphics.lineStyle(9, 0x4fdcff, 0.055);
+    this.laneGraphics.fillStyle(0x05050f, 0.74);
+    this.laneGraphics.fillRect(frameLeft + 3, frameTop + 36, frameRight - frameLeft - 6, 3);
+    this.laneGraphics.fillRect(frameLeft + 3, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2 + 4, frameRight - frameLeft - 6, 2);
+
+    this.laneGraphics.lineStyle(12, 0x765dff, 0.07);
     this.laneGraphics.strokePoints(panel, true);
-    this.laneGraphics.lineStyle(2, 0xa976ff, 0.72);
+    this.laneGraphics.lineStyle(1, 0xb19cff, 0.64);
     this.laneGraphics.strokePoints(panel, true);
 
     const seamX = (this.laneLayout(slot, 1).startX + this.laneLayout(slot, 2).startX) / 2;
+    this.laneGraphics.lineStyle(3, 0x4fdcff, 0.88);
+    this.laneGraphics.lineBetween(frameLeft + corner, frameTop, seamX - 14, frameTop);
+    this.laneGraphics.lineBetween(frameLeft, frameTop + corner, frameLeft, frameBottom - corner);
+    this.laneGraphics.lineStyle(3, 0xff3dc6, 0.78);
+    this.laneGraphics.lineBetween(seamX + 14, frameTop, frameRight - corner, frameTop);
+    this.laneGraphics.lineBetween(frameRight, frameTop + corner, frameRight, frameBottom - corner);
+    this.laneGraphics.lineStyle(2, 0xffce3a, 0.72);
+    this.laneGraphics.lineBetween(frameLeft + corner, frameBottom, frameRight - corner, frameBottom);
+
     this.laneGraphics.fillStyle(0x02020b, 0.76);
-    this.laneGraphics.fillRect(seamX - 18, frameTop + 8, 36, frameBottom - frameTop - 16);
+    this.laneGraphics.fillRect(seamX - 18, frameTop + 40, 36, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2 - frameTop - 40);
     this.laneGraphics.lineStyle(1, 0xffce3a, 0.28);
-    this.laneGraphics.lineBetween(seamX - 18, frameTop + 8, seamX - 18, frameBottom - 8);
-    this.laneGraphics.lineBetween(seamX + 18, frameTop + 8, seamX + 18, frameBottom - 8);
+    this.laneGraphics.lineBetween(seamX - 18, frameTop + 40, seamX - 18, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2);
+    this.laneGraphics.lineBetween(seamX + 18, frameTop + 40, seamX + 18, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2);
 
     this.laneGraphics.fillStyle(0x4fdcff, 0.82);
-    this.laneGraphics.fillRoundedRect(frameLeft + 18, frameTop - 2, 76, 4, 2);
+    this.laneGraphics.fillRoundedRect(frameLeft + 18, frameTop - 2, 92, 4, 2);
     this.laneGraphics.fillStyle(0xff3dc6, 0.72);
-    this.laneGraphics.fillRoundedRect(frameRight - 94, frameTop - 2, 76, 4, 2);
+    this.laneGraphics.fillRoundedRect(frameRight - 110, frameTop - 2, 92, 4, 2);
     this.laneGraphics.fillStyle(0xffce3a, 0.75);
     this.laneGraphics.fillRoundedRect(seamX - 24, frameBottom - 3, 48, 5, 2);
+
+    for (const [x, color] of [
+      [frameLeft + 11, 0x4fdcff],
+      [frameRight - 11, 0xff3dc6],
+    ] as const) {
+      this.laneGraphics.fillStyle(0x05050f, 1);
+      this.laneGraphics.fillCircle(x, frameTop + 15, 4);
+      this.laneGraphics.lineStyle(1, color, 0.9);
+      this.laneGraphics.strokeCircle(x, frameTop + 15, 4);
+    }
   }
 
   private drawBeatGrid(slot: AuraSlot): void {
@@ -832,11 +990,20 @@ export class AuraScene extends Phaser.Scene {
   private createNote(noteId: string, lane: AuraLane): Phaser.GameObjects.Container {
     const container = this.add.container(0, 0).setDepth(520);
     const glow = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
-    glow.fillStyle(LANE_COLORS[lane], 0.18);
-    glow.fillCircle(0, 0, 25);
+    glow.fillStyle(LANE_COLORS[lane], 0.12);
+    glow.fillRoundedRect(-31, -27, 62, 54, 10);
+    glow.fillStyle(LANE_COLORS[lane], 0.1);
+    glow.fillCircle(0, 0, 31);
+    const plate = this.add.graphics();
+    plate.fillGradientStyle(0x171735, 0x171735, 0x070712, 0x070712, 0.96);
+    plate.fillRoundedRect(-24, -21, 48, 42, 7);
+    plate.lineStyle(3, LANE_COLORS[lane], 0.82);
+    plate.strokeRoundedRect(-24, -21, 48, 42, 7);
+    plate.lineStyle(2, 0xffffff, 0.28);
+    plate.lineBetween(-15, -15, 15, -15);
     const marker = this.add.graphics();
-    this.drawMarker(marker, 0, 0, lane, LANE_COLORS[lane], 20, true);
-    container.add([glow, marker]);
+    this.drawMarker(marker, 0, 1, lane, LANE_COLORS[lane], 16, true);
+    container.add([glow, plate, marker]);
     this.uiLayer.add(container);
     this.noteObjects.set(noteId, container);
     return container;
@@ -918,6 +1085,9 @@ export class AuraScene extends Phaser.Scene {
       this.laneGraphics.clear();
       this.targetGraphics.clear();
       this.laneKeyTexts.forEach((text) => text.setVisible(false));
+      this.highwayTitleText.setVisible(false);
+      this.highwayMetaText.setVisible(false);
+      this.updateCrowdUi(null);
       this.focusBoth();
       return;
     }
@@ -926,6 +1096,7 @@ export class AuraScene extends Phaser.Scene {
     this.comboText
       .setOrigin(turn.slot === 0 ? 0 : 1, 0)
       .setX(turn.slot === 0 ? 26 : 998);
+    this.updateCrowdUi(turn.slot);
     const locallyPlayable = !this.isCpuSlot(turn.slot)
       && (!this.online || turn.slot === this.online.localSlot);
     this.laneKeyTexts.forEach((text) => text.setVisible(locallyPlayable));
@@ -933,6 +1104,7 @@ export class AuraScene extends Phaser.Scene {
   }
 
   private focusPerformer(slot: AuraSlot): void {
+    this.activePerformerSlot = slot;
     const activeX = this.fighters[slot].x;
     const inactive = (1 - slot) as AuraSlot;
     this.activeGlow.setPosition(activeX, GROUND_Y + this.fighterRenderYOffset + 5);
@@ -942,6 +1114,7 @@ export class AuraScene extends Phaser.Scene {
     this.views[inactive].shadowSprite?.setAlpha(0.05);
     this.views[slot].setRenderPresentation(this.fighterRenderScale * 1.28, this.fighterRenderYOffset);
     this.views[inactive].setRenderPresentation(this.fighterRenderScale * 0.82, this.fighterRenderYOffset);
+    this.drawStageLighting(slot, this.crowdHeat[slot]);
     const camera = this.cameras.main;
     const targetScrollX = slot === 0 ? 46 : -46;
     if (this.reduceMotion) {
@@ -961,17 +1134,63 @@ export class AuraScene extends Phaser.Scene {
 
   private focusBoth(): void {
     if (!this.views) return;
+    this.activePerformerSlot = null;
+    this.highwayTitleText?.setVisible(false);
+    this.highwayMetaText?.setVisible(false);
+    this.updateCrowdUi(null);
     for (const view of this.views) {
       view.sprite.setAlpha(0.9);
       view.shadowSprite?.setAlpha(0.16);
       view.setRenderPresentation(this.fighterRenderScale, this.fighterRenderYOffset);
     }
+    this.drawStageLighting(null, 0);
     this.activeGlow?.setPosition(GAME_WIDTH / 2, GROUND_Y + this.fighterRenderYOffset + 5).setAlpha(0.5);
     const camera = this.cameras.main;
     if (this.reduceMotion) camera.setZoom(1).setScroll(0, 0);
     else {
       this.tweens.killTweensOf(camera);
       this.tweens.add({ targets: camera, zoom: 1, scrollX: 0, scrollY: 0, duration: 420, ease: 'Quart.easeOut' });
+    }
+  }
+
+  private updateCrowdUi(slot: AuraSlot | null): void {
+    if (slot === null) {
+      this.crowdLabelText?.setVisible(false);
+      this.crowdMeterGraphics?.clear().setVisible(false);
+      return;
+    }
+
+    const heat = this.crowdHeat[slot];
+    const status = heat >= 0.92
+      ? 'UNHINGED'
+      : heat >= 0.68
+        ? 'FERAL'
+        : heat >= 0.4
+          ? 'LOUD'
+          : heat >= 0.18
+            ? 'WARMING UP'
+            : 'WATCHING';
+    const rightAligned = slot === 1;
+    const anchorX = rightAligned ? 998 : 26;
+    this.crowdLabelText
+      .setText(`CROWD · ${status}`)
+      .setOrigin(rightAligned ? 1 : 0, 0)
+      .setPosition(anchorX, 535)
+      .setVisible(true);
+
+    const segmentWidth = 22;
+    const gap = 5;
+    const trackWidth = CROWD_METER_SEGMENTS * segmentWidth + (CROWD_METER_SEGMENTS - 1) * gap;
+    const trackLeft = rightAligned ? anchorX - trackWidth : anchorX;
+    const filled = Math.ceil(heat * CROWD_METER_SEGMENTS);
+    this.crowdMeterGraphics.clear().setVisible(true);
+    this.crowdMeterGraphics.fillStyle(0x05050f, 0.82);
+    this.crowdMeterGraphics.fillRoundedRect(trackLeft - 4, 551 - 4, trackWidth + 8, 14, 4);
+    for (let index = 0; index < CROWD_METER_SEGMENTS; index += 1) {
+      const x = trackLeft + index * (segmentWidth + gap);
+      const color = index < 4 ? 0x4fdcff : index < 6 ? 0xa976ff : index === 6 ? 0xff3dc6 : 0xffce3a;
+      this.crowdMeterGraphics.fillStyle(index < filled ? color : 0x29263e, index < filled ? 0.95 : 0.72);
+      this.crowdMeterGraphics.fillRoundedRect(x, 551, segmentWidth, 6, 2);
     }
   }
 
@@ -1153,6 +1372,7 @@ export class AuraScene extends Phaser.Scene {
     if (judgement.grade === 'miss' || judgement.grade === 'mash') {
       const heatBeforeFailure = this.crowdHeat[slot];
       this.crowdHeat[slot] = Math.max(0, heatBeforeFailure - (judgement.grade === 'miss' ? 0.55 : 0.28));
+      this.refreshCrowdPresentation(slot);
       this.soundManager.playAuraCrowd(
         'boo',
         judgement.grade === 'miss' ? 0.58 + heatBeforeFailure * 0.42 : 0.42 + heatBeforeFailure * 0.24,
@@ -1164,6 +1384,7 @@ export class AuraScene extends Phaser.Scene {
     const comboHeat = Math.min(1, judgement.combo / 14);
     this.crowdHeat[slot] = Math.min(1, Math.max(comboHeat, this.crowdHeat[slot] + gain));
     const heat = this.crowdHeat[slot];
+    this.refreshCrowdPresentation(slot);
 
     if (judgement.combo === 4) {
       this.soundManager.playAuraCrowd('applause', 0.42 + heat * 0.25);
@@ -1172,6 +1393,12 @@ export class AuraScene extends Phaser.Scene {
     } else if (judgement.combo === 12 || (judgement.combo > 12 && judgement.combo % 6 === 0)) {
       this.soundManager.playAuraCrowd('cheer', 0.72 + heat * 0.28);
     }
+  }
+
+  private refreshCrowdPresentation(slot: AuraSlot): void {
+    if (this.activePerformerSlot !== slot) return;
+    this.updateCrowdUi(slot);
+    this.drawStageLighting(slot, this.crowdHeat[slot]);
   }
 
   private animateFighterForJudgement(judgement: AuraJudgement): void {
@@ -1190,7 +1417,39 @@ export class AuraScene extends Phaser.Scene {
     ] as const;
     const state = states[judgement.lane];
     fighter.forceState(state);
+    if (judgement.grade === 'perfect' || judgement.grade === 'great') {
+      this.spawnPerformanceSparks(judgement);
+    }
     if (judgement.grade === 'perfect') this.playAuraBurst(judgement.slot, judgement.lane);
+  }
+
+  private spawnPerformanceSparks(judgement: AuraJudgement): void {
+    if (this.reduceMotion) return;
+    const top = this.views[judgement.slot].getVisibleTopCenter();
+    const count = judgement.grade === 'perfect' ? (judgement.combo >= 8 ? 12 : 8) : 5;
+    const color = LANE_COLORS[judgement.lane];
+    for (let index = 0; index < count; index += 1) {
+      const direction = index % 2 === 0 ? -1 : 1;
+      const spark = this.add.rectangle(
+        top.x + direction * (8 + (index % 3) * 7),
+        top.y + 94 + (index % 4) * 9,
+        3 + (index % 2) * 2,
+        9 + (index % 3) * 3,
+        color,
+        0.9,
+      ).setDepth(18).setBlendMode(Phaser.BlendModes.ADD).setAngle(index * 29);
+      this.worldLayer.add(spark);
+      this.tweens.add({
+        targets: spark,
+        x: spark.x + direction * (38 + index * 7),
+        y: spark.y - 42 - (index % 4) * 17,
+        angle: spark.angle + direction * 100,
+        alpha: 0,
+        duration: 340 + index * 22,
+        ease: 'Quart.easeOut',
+        onComplete: () => spark.destroy(),
+      });
+    }
   }
 
   private playAuraBurst(slot: AuraSlot, lane: AuraLane): void {
@@ -1303,7 +1562,7 @@ export class AuraScene extends Phaser.Scene {
     this.views[1].syncSprite(this.fighters[0].x);
     for (const slot of [0, 1] as const) {
       const top = this.views[slot].getVisibleTopCenter();
-      this.playerTags[slot]?.setPosition(top.x, Math.max(114, top.y - 25));
+      this.playerTags[slot]?.setPosition(top.x, Math.max(130, top.y - 25));
     }
   }
 
