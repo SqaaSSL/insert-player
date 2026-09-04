@@ -7,9 +7,11 @@ import {
   finalizeProviderRequest,
   requireProviderResultSession,
   requireProviderSession,
+  requireUnmeteredProviderSession,
 } from './providerSessions';
 import {
   createBoundedRequestStream,
+  InvalidJsonBodyError,
   readJsonBody,
   RequestBodyTooLargeError,
 } from './requestBody';
@@ -19,6 +21,10 @@ import {
   PROVIDER_RESPONSE_BODY_LIMITS,
   type ProviderName,
 } from './providerLimits';
+import {
+  geminiTransportStatus,
+  meterkeyBaseUrl,
+} from './geminiTransport';
 
 export { ResponseBodyTooLargeError } from './streamLimits';
 
@@ -32,6 +38,8 @@ const MAX_PROXIED_MEDIA_BYTES = 64 * 1024 * 1024;
 const MAX_RESULT_REDIRECTS = 3;
 const PROVIDER_FETCH_TIMEOUT_MS = 60_000;
 const RESULT_FETCH_TIMEOUT_MS = 45_000;
+const MAX_PIXCLI_VIDEO_SUBMISSION_BYTES = 32 * 1024;
+const PIXCLI_VIDEO_MODEL = 'grok-imagine-i2v-pinned';
 interface ImageFormat {
   ext: 'gif' | 'jpg' | 'png' | 'webp';
   contentType: string;
@@ -80,6 +88,13 @@ const PROVIDER_ROUTE_ALLOWLIST: Record<ProxyProvider, ProviderRouteRule[]> = {
     { method: 'POST', pattern: /^\/fal-ai\/ltx-2\.3\/image-to-video\/fast$/ },
     { method: 'GET', pattern: /^\/fal-ai\/ltx-2\.3\/image-to-video\/fast\/requests\/[^/]+(?:\/status)?$/ },
   ],
+  pixcli: [
+    { method: 'POST', pattern: /^\/api\/v1\/uploads$/ },
+    { method: 'POST', pattern: /^\/api\/v1\/video\/advanced$/ },
+    { method: 'GET', pattern: /^\/api\/v1\/jobs\/[a-f0-9]{32}$/ },
+    { method: 'GET', pattern: /^\/api\/v1\/jobs\/[a-f0-9]{32}\/canva$/ },
+    { method: 'GET', pattern: /^\/api\/v1\/assets\/[a-f0-9]{32}$/ },
+  ],
 };
 
 function missingKey(name: string): Response {
@@ -110,8 +125,104 @@ function requiresProviderSession(provider: ProxyProvider, _method: string): bool
     provider === 'ludo' ||
     provider === 'freepik' ||
     provider === 'runway' ||
-    provider === 'fal'
+    provider === 'fal' ||
+    provider === 'pixcli'
   );
+}
+
+export function pixcliBaseUrl(value: string | undefined): URL | null {
+  const raw = value?.trim() || 'https://pixcli.hilo.cx';
+  try {
+    const parsed = new URL(raw);
+    if (
+      parsed.protocol !== 'https:' ||
+      parsed.username ||
+      parsed.password ||
+      parsed.search ||
+      parsed.hash
+    ) return null;
+    parsed.pathname = '/';
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function pixcliUpstreamHeaders(
+  apiKey: string,
+  path: string,
+  dispatchKey: string | null,
+): Record<string, string> | null {
+  const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` };
+  if (path !== '/proxy/pixcli/api/v1/video/advanced') return headers;
+  if (!dispatchKey || !/^ip:[a-f0-9]{32}$/.test(dispatchKey)) return null;
+  headers['Idempotency-Key'] = dispatchKey;
+  headers['X-Request-Id'] = dispatchKey;
+  return headers;
+}
+
+function exactKeys(value: Record<string, unknown>, expected: string[]): boolean {
+  const actual = Object.keys(value).sort();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+async function validatePixcliTransportRequest(request: Request, path: string): Promise<Response | null> {
+  if (path === '/proxy/pixcli/api/v1/uploads') {
+    if (!/^multipart\/form-data;\s*boundary=/i.test(request.headers.get('Content-Type') ?? '')) {
+      return Response.json({ error: 'PixCLI uploads require multipart form data' }, { status: 415 });
+    }
+    return null;
+  }
+  if (path !== '/proxy/pixcli/api/v1/video/advanced') return null;
+
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonBody<Record<string, unknown>>(
+      request.clone(),
+      MAX_PIXCLI_VIDEO_SUBMISSION_BYTES,
+    );
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return Response.json({ error: 'PixCLI video request is too large' }, { status: 413 });
+    }
+    if (error instanceof InvalidJsonBodyError) {
+      return Response.json({ error: 'PixCLI video request must be valid JSON' }, { status: 400 });
+    }
+    throw error;
+  }
+
+  const params = body.params;
+  const validParams = Boolean(
+    params &&
+    typeof params === 'object' &&
+    !Array.isArray(params) &&
+    exactKeys(params as Record<string, unknown>, ['duration', 'resolution']) &&
+    (params as Record<string, unknown>).duration === 2 &&
+    (params as Record<string, unknown>).resolution === '720p',
+  );
+  const valid = exactKeys(body, [
+    'enrich_prompt',
+    'image',
+    'model',
+    'output_format',
+    'params',
+    'prompt',
+    'publish',
+    'publish_name',
+    'resolution',
+  ]) &&
+    body.model === PIXCLI_VIDEO_MODEL &&
+    typeof body.image === 'string' && /^[a-f0-9]{32}$/.test(body.image) &&
+    typeof body.prompt === 'string' && body.prompt.trim().length >= 32 && body.prompt.length <= 8_000 &&
+    body.resolution === '720p' &&
+    validParams &&
+    body.enrich_prompt === false &&
+    body.output_format === 'url' &&
+    body.publish === false &&
+    typeof body.publish_name === 'string' && /^[A-Za-z0-9._-]{1,60}$/.test(body.publish_name);
+  return valid
+    ? null
+    : Response.json({ error: 'PixCLI video request does not match the pinned generation contract' }, { status: 400 });
 }
 
 function appendSearch(target: URL, source: URL): URL {
@@ -121,12 +232,75 @@ function appendSearch(target: URL, source: URL): URL {
   return target;
 }
 
+function appendSearchWithoutGoogleKey(target: URL, source: URL): URL {
+  for (const [key, value] of source.searchParams.entries()) {
+    if (key.toLowerCase() !== 'key') target.searchParams.append(key, value);
+  }
+  return target;
+}
+
+function meterkeyGeminiHeaders(apiKey: string, upstreamAttemptKey?: string | null): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${apiKey}`,
+    // Do not persist licensed photos, prompts, or generated images in AI
+    // Gateway logs. Meterkey forwards this customer-controlled AIG header.
+    'cf-aig-collect-log-payload': 'false',
+    // One Insert Player provider attempt must remain one upstream attempt.
+    'cf-aig-max-attempts': '1',
+    // Meterkey keeps only a small completed-attempt marker for idempotency;
+    // generated image bytes must not enter its 24-hour replay cache.
+    'x-meterkey-no-store': 'true',
+  };
+  if (upstreamAttemptKey && /^[a-zA-Z0-9:_-]{1,200}$/.test(upstreamAttemptKey)) {
+    headers['Idempotency-Key'] = upstreamAttemptKey;
+    headers['X-Request-Id'] = upstreamAttemptKey;
+  }
+  return headers;
+}
+
+export interface GeminiProxyTarget {
+  transport: 'google-direct' | 'meterkey';
+  targetUrl: string;
+  headers: Record<string, string>;
+}
+
+export function buildGeminiProxyTarget(
+  request: Request,
+  env: Env,
+  apiPath: string,
+  sourceUrl: URL,
+  upstreamAttemptKey?: string | null,
+): GeminiProxyTarget | null {
+  const status = geminiTransportStatus(env);
+  if (!status.configured || !status.transport) return null;
+  if (status.transport === 'meterkey') {
+    const baseUrl = meterkeyBaseUrl(env.METERKEY_BASE_URL);
+    if (!baseUrl || !env.METERKEY_API_KEY) return null;
+    const attemptKey = upstreamAttemptKey ?? `ip:ephemeral:${crypto.randomUUID()}`;
+    const target = appendSearchWithoutGoogleKey(
+      new URL(`/google-ai-studio${apiPath}`, baseUrl),
+      sourceUrl,
+    );
+    return {
+      transport: status.transport,
+      targetUrl: target.toString(),
+      headers: meterkeyGeminiHeaders(env.METERKEY_API_KEY, attemptKey),
+    };
+  }
+  if (!env.GEMINI_API_KEY) return null;
+  const target = appendSearch(new URL(`https://generativelanguage.googleapis.com${apiPath}`), sourceUrl);
+  target.searchParams.set('key', env.GEMINI_API_KEY);
+  return { transport: status.transport, targetUrl: target.toString(), headers: {} };
+}
+
 export async function proxyRequest(
   request: Request,
   targetUrl: string,
   extraHeaders: Record<string, string>,
   maxRequestBytes: number,
   maxResponseBytes = 32 * 1024 * 1024,
+  upstreamOutcomePolicy: 'standard' | 'meterkey' = 'standard',
+  redirect: 'follow' | 'error' | 'manual' = 'follow',
 ): Promise<Response> {
   const headers = new Headers(extraHeaders);
   const contentType = request.headers.get('Content-Type');
@@ -150,6 +324,7 @@ export async function proxyRequest(
       headers,
       body: request.method === 'GET' || request.method === 'HEAD' ? undefined : boundedRequest.body,
       signal,
+      redirect,
     });
   } catch (error) {
     if (boundedRequest.didExceedLimit() || error instanceof RequestBodyTooLargeError) {
@@ -169,7 +344,19 @@ export async function proxyRequest(
   if (upstreamContentType) responseHeaders.set('Content-Type', upstreamContentType);
   const retryAfter = upstream.headers.get('Retry-After');
   if (retryAfter) responseHeaders.set('Retry-After', retryAfter);
-  responseHeaders.set('X-Insert-Player-Upstream-Outcome', 'received');
+  const meterkeyOutcome = upstream.headers.get('X-Meterkey-Upstream-Outcome')?.trim().toLowerCase();
+  responseHeaders.set(
+    'X-Insert-Player-Upstream-Outcome',
+    meterkeyOutcome === 'unknown'
+      ? 'unknown'
+      : meterkeyOutcome === 'not-dispatched'
+        ? 'not-dispatched'
+        : meterkeyOutcome === 'received'
+          ? 'received'
+          : upstreamOutcomePolicy === 'meterkey'
+            ? 'unknown'
+            : 'received',
+  );
   const boundedBody = upstream.body
     ? createBoundedByteStream(upstream.body, maxResponseBytes)
     : null;
@@ -380,8 +567,17 @@ async function handleTempUpload(request: Request, env: Env, auth: PublicAuthCont
   }
 
   const jobId = generationJobIdFromAuth(auth);
-  const id = jobId
-    ? (await hashString(`${jobId}:${await hashString(bytes.buffer as ArrayBuffer)}`)).slice(0, 32)
+  const artifactRunId = jobId
+    ? (await env.DB.prepare(`
+        SELECT artifact_run_id
+        FROM generation_jobs
+        WHERE id = ? AND user_id = ?
+        LIMIT 1
+      `).bind(jobId, auth.userId ?? '').first<{ artifact_run_id: string | null }>())?.artifact_run_id
+    : null;
+  const durableNamespace = artifactRunId || jobId;
+  const id = durableNamespace
+    ? (await hashString(`${durableNamespace}:${await hashString(bytes.buffer as ArrayBuffer)}`)).slice(0, 32)
     : generateId();
   const expiresAt = new Date(Date.now() + TEMP_ASSET_TTL_SECONDS * 1000).toISOString();
   await env.SPRITES.put(`temp/${id}.${format.ext}`, bytes, {
@@ -583,7 +779,10 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
   if (path.startsWith('/proxy/gemini')) {
     const allowlistError = enforceProviderRouteAllowlist('gemini', path, request.method);
     if (allowlistError) return allowlistError;
-    if (!env.GEMINI_API_KEY) return missingKey('GEMINI_API_KEY');
+    const transport = geminiTransportStatus(env);
+    if (!transport.configured || !transport.transport) {
+      return Response.json({ error: transport.error ?? 'Gemini transport is not configured' }, { status: 503 });
+    }
     const limited = await enforceRateLimit(env, 'proxy:gemini', auth);
     if (limited) return limited;
     const providerState = createProviderRequestState();
@@ -592,16 +791,27 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       if (sessionError) return sessionError;
     }
     const apiPath = path.replace(/^\/proxy\/gemini/, '');
-    const target = appendSearch(new URL(`https://generativelanguage.googleapis.com${apiPath}`), url);
-    target.searchParams.set('key', env.GEMINI_API_KEY);
+    const upstream = buildGeminiProxyTarget(
+      request,
+      env,
+      apiPath,
+      url,
+      providerState.upstreamAttemptKey,
+    );
+    if (!upstream) {
+      return Response.json({ error: 'Gemini transport is not configured' }, { status: 503 });
+    }
     const response = await proxyRequest(
       request,
-      target.toString(),
-      {},
+      upstream.targetUrl,
+      upstream.headers,
       PROVIDER_REQUEST_BODY_LIMITS.gemini,
       PROVIDER_RESPONSE_BODY_LIMITS.gemini,
+      upstream.transport === 'meterkey' ? 'meterkey' : 'standard',
     );
-    return finalizeProviderRequest(env, response, providerState);
+    const finalized = await finalizeProviderRequest(env, response, providerState);
+    finalized.headers.set('X-Insert-Player-Gemini-Transport', upstream.transport);
+    return finalized;
   }
 
   if (path.startsWith('/proxy/runway')) {
@@ -650,6 +860,74 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       PROVIDER_REQUEST_BODY_LIMITS.fal,
       PROVIDER_RESPONSE_BODY_LIMITS.fal,
     );
+    return finalizeProviderRequest(env, response, providerState);
+  }
+
+  if (path.startsWith('/proxy/pixcli')) {
+    const allowlistError = enforceProviderRouteAllowlist('pixcli', path, request.method);
+    if (allowlistError) return allowlistError;
+    if (url.search) {
+      return Response.json({ error: 'PixCLI proxy query parameters are not allowed' }, { status: 400 });
+    }
+    if (!env.PIXCLI_API_KEY) return missingKey('PIXCLI_API_KEY');
+    const baseUrl = pixcliBaseUrl(env.PIXCLI_BASE_URL);
+    if (!baseUrl) return Response.json({ error: 'PIXCLI_BASE_URL is invalid' }, { status: 503 });
+    const contractError = await validatePixcliTransportRequest(request, path);
+    if (contractError) return contractError;
+    const limited = await enforceRateLimit(env, 'proxy:default', auth);
+    if (limited) return limited;
+    const providerState = createProviderRequestState();
+    const route = { provider: 'pixcli' as const, path };
+    const sessionError = path === '/proxy/pixcli/api/v1/uploads'
+      ? await requireUnmeteredProviderSession(request, env, auth, route, providerState)
+      : await requireProviderSession(request, env, auth, route, providerState);
+    if (sessionError) return sessionError;
+    const upstreamAttemptKey = providerState.upstreamAttemptKey;
+    const upstreamHeaders = pixcliUpstreamHeaders(env.PIXCLI_API_KEY, path, upstreamAttemptKey);
+    if (!upstreamHeaders) {
+      return finalizeProviderRequest(env, Response.json(
+        {
+          error: 'PixCLI video dispatch identity is unavailable',
+          code: 'pixcli_dispatch_identity_missing',
+        },
+        {
+          status: 503,
+          headers: { 'X-Insert-Player-Upstream-Outcome': 'not-dispatched' },
+        },
+      ), providerState);
+    }
+    const apiPath = path.replace(/^\/proxy\/pixcli/, '');
+    const target = appendSearch(new URL(apiPath, baseUrl), url);
+    const isAssetDownload = /^\/proxy\/pixcli\/api\/v1\/assets\/[a-f0-9]{32}$/.test(path);
+    const response = await proxyRequest(
+      request,
+      target.toString(),
+      upstreamHeaders,
+      PROVIDER_REQUEST_BODY_LIMITS.pixcli,
+      PROVIDER_RESPONSE_BODY_LIMITS.pixcli,
+      'standard',
+      'manual',
+    );
+    if (response.status >= 300 && response.status < 400) {
+      await response.body?.cancel();
+      return finalizeProviderRequest(env, Response.json(
+        { error: 'PixCLI redirects are not allowed' },
+        {
+          status: 502,
+          headers: { 'X-Insert-Player-Upstream-Outcome': 'received' },
+        },
+      ), providerState);
+    }
+    if (isAssetDownload) {
+      const contentType = response.headers.get('Content-Type')
+        ?.split(';', 1)[0]
+        ?.trim()
+        .toLowerCase();
+      if (response.ok && contentType !== 'video/mp4' && contentType !== 'application/json') {
+        await response.body?.cancel();
+        return Response.json({ error: 'PixCLI asset MIME type is not allowlisted' }, { status: 415 });
+      }
+    }
     return finalizeProviderRequest(env, response, providerState);
   }
 

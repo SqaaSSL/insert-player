@@ -1,0 +1,144 @@
+import { describe, expect, it } from 'vitest';
+import {
+  meterkeyAuthExpectations,
+  validateMeterkeyAnalyticsIdentity,
+  validateMeterkeyApiKeyFingerprint,
+  validateMeterkeyAuthContext,
+} from './meterkey-auth-context.mjs';
+
+const expected = {
+  keyId: 'mk_key_insert_player',
+  keyFingerprint: 'aacc2d98191bb65e5815626b5ac73dcc413a20bc2b2f255a3899d5e8341242c8',
+  userId: 'mk_usr_insert_player',
+  walletId: 'mk_wal_insert_player',
+  minimumAvailableUc: 100_000_000,
+  perRequestCapUc: 5_000_000,
+};
+
+const approvedScope = {
+  providers: ['fal', 'google-ai-studio'],
+  models: [
+    'bytedance/seedream/v5/pro/edit',
+    'fal-ai/lyria3/pro',
+    'gemini-3.1-flash-lite',
+    'gemini-3.1-flash-tts-preview',
+    'gemini-3.5-flash',
+    'gemini-3.1-flash-image',
+    'gemini-3-pro-image',
+    'xai/grok-imagine-image/v2.0/edit',
+    'xai/grok-imagine-video/v1.5/image-to-video',
+  ],
+  endpoints: ['/fal/*', '/fal', '/v1/chat/completions', '/google-ai-studio/v1beta/models/*'],
+  block_streaming: true,
+  block_websocket: true,
+  per_request_cap_uc: 5_000_000,
+};
+
+function validContext() {
+  return {
+    object: 'auth_context',
+    key_id: expected.keyId,
+    user_id: expected.userId,
+    wallet_id: expected.walletId,
+    environment: 'prod',
+    plan_id: 'free',
+    status: 'active',
+    scope: structuredClone(approvedScope),
+    balances: {
+      available_uc: 1_000_000_000,
+      reserved_uc: 0,
+    },
+    available_uc: 1_000_000_000,
+  };
+}
+
+describe('Meterkey Insert Player auth contract', () => {
+  it('accepts the dedicated production key, required scope, wallet, and limits', () => {
+    expect(() => validateMeterkeyAuthContext(validContext(), expected)).not.toThrow();
+  });
+
+  it('accepts additive explicit models and controls owned by the Meterkey platform', () => {
+    const context = validContext();
+    context.scope.models.push(
+      'fal-ai/kling-image/o3/image-to-image',
+      'fal-ai/bytedance/seedream/v5/lite/edit',
+      'alibaba/qwen-image-3/edit',
+    );
+    (context.scope as Record<string, unknown>).daily_cap_uc = 10_000_000;
+    expect(() => validateMeterkeyAuthContext(context, expected)).not.toThrow();
+  });
+
+  it('loads every required expectation from explicit deployment variables', () => {
+    expect(meterkeyAuthExpectations({
+      ASF_METERKEY_EXPECTED_KEY_ID: expected.keyId,
+      ASF_METERKEY_EXPECTED_KEY_FINGERPRINT: expected.keyFingerprint,
+      ASF_METERKEY_EXPECTED_USER_ID: expected.userId,
+      ASF_METERKEY_EXPECTED_WALLET_ID: expected.walletId,
+      ASF_METERKEY_MIN_AVAILABLE_UC: String(expected.minimumAvailableUc),
+      ASF_METERKEY_EXPECTED_PER_REQUEST_CAP_UC: String(expected.perRequestCapUc),
+    })).toEqual(expected);
+    expect(() => meterkeyAuthExpectations({})).toThrow('ASF_METERKEY_EXPECTED_KEY_ID');
+  });
+
+  it('accepts only the exact approved credential fingerprint', () => {
+    expect(() => validateMeterkeyApiKeyFingerprint('mk-prod-insert-player-test-key', expected)).not.toThrow();
+    expect(() => validateMeterkeyApiKeyFingerprint('mk-prod-another-key', expected)).toThrow();
+  });
+
+  it('accepts the authenticated analytics identity returned by the current Meterkey API', () => {
+    const analytics = {
+      filters: { key_id: expected.keyId, user_id: expected.userId },
+      requests: 0,
+      errors: 0,
+      credits_charged_uc: 0,
+    };
+    expect(() => validateMeterkeyAnalyticsIdentity(analytics, expected)).not.toThrow();
+
+    expect(() => validateMeterkeyAnalyticsIdentity({
+      ...analytics,
+      filters: { ...analytics.filters, user_id: 'mk_usr_other' },
+    }, expected)).toThrow();
+    expect(() => validateMeterkeyAnalyticsIdentity({
+      ...analytics,
+      requests: -1,
+    }, expected)).toThrow();
+  });
+
+  it.each([
+    ['key id', (context: ReturnType<typeof validContext>) => { context.key_id = 'mk_key_other'; }],
+    ['user id', (context: ReturnType<typeof validContext>) => { context.user_id = 'mk_usr_other'; }],
+    ['wallet id', (context: ReturnType<typeof validContext>) => { context.wallet_id = 'mk_wal_other'; }],
+    ['environment', (context: ReturnType<typeof validContext>) => { context.environment = 'test'; }],
+    ['status', (context: ReturnType<typeof validContext>) => { context.status = 'inactive'; }],
+    ['per-request cap', (context: ReturnType<typeof validContext>) => { context.scope.per_request_cap_uc = 4_999_999; }],
+    ['wallet reservation', (context: ReturnType<typeof validContext>) => { context.balances.reserved_uc = 1; }],
+    ['wallet floor', (context: ReturnType<typeof validContext>) => { context.available_uc = expected.minimumAvailableUc - 1; }],
+  ])('rejects a mismatched %s', (_label, mutate) => {
+    const context = validContext();
+    mutate(context);
+    expect(() => validateMeterkeyAuthContext(context, expected)).toThrow();
+  });
+
+  it.each([
+    ['provider', (context: ReturnType<typeof validContext>) => { context.scope.providers.push('openrouter'); }],
+    ['wildcard model', (context: ReturnType<typeof validContext>) => { context.scope.models.push('*'); }],
+    ['duplicate model', (context: ReturnType<typeof validContext>) => { context.scope.models.push(context.scope.models[0]); }],
+    ['endpoint', (context: ReturnType<typeof validContext>) => { context.scope.endpoints.push('*'); }],
+  ])('rejects an additional %s outside the approved contract', (_label, mutate) => {
+    const context = validContext();
+    mutate(context);
+    expect(() => validateMeterkeyAuthContext(context, expected)).toThrow();
+  });
+
+  it('rejects a FAL-only key and a key missing any approved model', () => {
+    const falOnly = validContext();
+    falOnly.scope.providers = ['fal'];
+    expect(() => validateMeterkeyAuthContext(falOnly, expected)).toThrow();
+
+    for (const model of approvedScope.models) {
+      const missingModel = validContext();
+      missingModel.scope.models = missingModel.scope.models.filter((candidate) => candidate !== model);
+      expect(() => validateMeterkeyAuthContext(missingModel, expected)).toThrow();
+    }
+  });
+});

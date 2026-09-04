@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  vulnerability-alerts: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}

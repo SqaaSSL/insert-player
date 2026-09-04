@@ -1,4 +1,5 @@
 import {
+  clerkAuthOptionsForRequest,
   generateId,
   hasValidClerkBackendAuthBridge,
   optionalAuth,
@@ -6,12 +7,15 @@ import {
 } from './auth';
 import {
   authorizeGenerationPurchase,
+  authorizeStageForgePurchase,
   completeGenerationPurchase,
   createCreditCheckoutSession,
   creditPacksResponse,
+  getCreditCheckoutStatus,
   handleStripeWebhook,
   releaseExpiredGenerationCharges,
 } from './billing';
+import { captureStreetViewImage } from './googleMaps';
 import {
   createFighter,
   cloneCommunityFighter,
@@ -19,11 +23,13 @@ import {
   getAsset,
   getCommunityFighter,
   getFighter,
+  getPublicArcadeSpriteHighDensityAsset,
   getPublicFighterSourceAsset,
   getPublicFighterSpriteAsset,
   listAdminArcadeFighters,
   listArcadeFighters,
   listCommunityFighters,
+  listOwnedCommunityFighterIds,
   listFighters,
   listStages,
   patchFighter,
@@ -37,8 +43,9 @@ import {
   upsertAdminArcadeFighter,
 } from './fighters';
 import { ensureSystemUser, getLeaderboard, getPlayerStats, reportMatchResult } from './leaderboard';
-import { getTempAsset, handleProxy } from './proxy';
+import { getTempAsset, handleProxy, pixcliBaseUrl } from './proxy';
 import { enforceRateLimit } from './rateLimit';
+import { submitClientError } from './clientErrors';
 import { createFeatureProviderSession } from './providerSessions';
 import type { AuthContext, Env, PublicAuthContext, User } from './types';
 import { turnstileConfigurationStatus } from './turnstile';
@@ -53,6 +60,7 @@ import {
   startAdminArcadeGeneration,
   startAdminArcadeSourceGeneration,
 } from './arcadeGeneration';
+import { readDeploymentImageProcessorContract } from './deploymentPreflight';
 import {
   createGenerationJob,
   getGenerationJob,
@@ -64,13 +72,49 @@ import {
   readJsonBody,
   RequestBodyTooLargeError,
 } from './requestBody';
+import { geminiTransportStatus } from './geminiTransport';
+import {
+  adjustVideoSpriteReview,
+  approveVideoSpriteReview,
+  getVideoSpriteReview,
+  getVideoSpriteReviewAsset,
+  promoteApprovedVideoSpriteRecuration,
+  rejectVideoSpriteReview,
+  stageApprovedVideoSpriteRecuration,
+} from './videoSpriteReview';
+import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
+import { isAttractModeMatchReport, readMatchFighterId } from './matchReporting';
+import {
+  allocateVersusMatch,
+  connectVersusRoom,
+  createVersusRoom,
+  createVersusInvitation,
+  declareVersusFighter,
+  getVersusOpponentFighter,
+  getVersusRoomAsset,
+  joinVersusRoom,
+  joinVersusInvitation,
+  onlineVersusStatus,
+  resolveVersusMatchParticipants,
+  versusIceServers,
+  type VersusRoomParticipant,
+} from './matchRoomRoutes';
+import { normalizeRoomCode, verifyRoomTicket } from './matchRoomProtocol';
+import { versusInvitationOgImage, versusInvitationSharePage } from './versusInvites';
+import {
+  getImportedGlobalVideoRecurationAsset,
+  getImportedGlobalVideoRecurationPromoteTransition,
+  promoteImportedGlobalVideoRecuration,
+  rollbackImportedGlobalVideoRecuration,
+  stageImportedGlobalVideoRecuration,
+} from './importedGlobalVideoRecuration';
 
 export { FighterGenerationWorkflow } from './generationWorkflow';
 export { ImageProcessorContainer } from './imageProcessorContainer';
+export { MatchRoom } from './matchRoom';
 
 const MAX_MATCH_ROUNDS = 5;
 const MAX_MATCH_DURATION_SECONDS = 20 * 60;
-const MAX_MATCH_ID_LENGTH = 128;
 const MAX_MATCH_REPORT_BODY_BYTES = 16 * 1024;
 const ARCADE_ADMIN_SEED_HEADER = 'X-Insert-Player-Admin-Seed';
 
@@ -97,6 +141,8 @@ function corsHeaders(request: Request, env: Env): HeadersInit {
   if (origin !== '*') {
     headers['Access-Control-Allow-Credentials'] = 'true';
   }
+  headers['Access-Control-Allow-Headers'] =
+    `${headers['Access-Control-Allow-Headers']}, X-Insert-Player-Expected-Worker-Sha`;
   return headers;
 }
 
@@ -133,10 +179,9 @@ async function authenticated(
   handler: (auth: AuthContext) => Promise<Response>,
 ): Promise<Response> {
   const isArcadeAdminSeed = request.headers.get(ARCADE_ADMIN_SEED_HEADER) === 'clerk-backend';
-  const isClerkBackendBridge = await hasValidClerkBackendAuthBridge(request, env);
-  const auth = await requireAuth(request, env, {
-    allowMissingAuthorizedParty: isArcadeAdminSeed || isClerkBackendBridge,
-  });
+  const auth = await requireAuth(request, env, await clerkAuthOptionsForRequest(request, env, {
+    allowMissingAuthorizedParty: isArcadeAdminSeed,
+  }));
   if (isResponse(auth)) return auth;
   if (isArcadeAdminSeed && auth.user.plan_tier !== 'admin') {
     return json({ error: 'Admin access required' }, 403);
@@ -169,7 +214,7 @@ async function sensitiveOptionalAuth(
     if (isResponse(auth)) return auth;
     return authAsPublicContext(auth);
   }
-  const bridgedAuth = await requireAuth(request, env, { allowMissingAuthorizedParty: true });
+  const bridgedAuth = await requireAuth(request, env, await clerkAuthOptionsForRequest(request, env));
   if (isResponse(bridgedAuth)) return bridgedAuth;
   return authAsPublicContext(bridgedAuth);
 }
@@ -183,18 +228,8 @@ function readBoundedInteger(value: unknown, min: number, max: number): number {
 function readOptionalId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > MAX_MATCH_ID_LENGTH) return undefined;
+  if (!trimmed || trimmed.length > 128) return undefined;
   return /^[a-z0-9:_-]+$/i.test(trimmed) ? trimmed : undefined;
-}
-
-async function readOwnedFighterId(env: Env, userId: string, value: unknown): Promise<string | undefined | Response> {
-  const fighterId = readOptionalId(value);
-  if (!fighterId) return undefined;
-  const fighter = await env.DB.prepare(
-    'SELECT id FROM fighters WHERE id = ? AND owner_user_id = ?'
-  ).bind(fighterId, userId).first<{ id: string }>();
-  if (!fighter) return json({ error: 'Match fighter does not belong to this user' }, 403);
-  return fighter.id;
 }
 
 async function authenticatedLimited(
@@ -210,9 +245,64 @@ async function authenticatedLimited(
   });
 }
 
+function roomAuthorizationToken(request: Request): string | null {
+  const match = request.headers.get('Authorization')?.match(/^Room\s+(\S+)$/i);
+  return match?.[1] ?? null;
+}
+
+async function roomTicketParticipant(
+  request: Request,
+  env: Env,
+  rawRoomCode?: string,
+): Promise<(VersusRoomParticipant & { rateLimitKey: string }) | Response | null> {
+  const token = roomAuthorizationToken(request);
+  if (!token) return null;
+  const ticket = await verifyRoomTicket(env, token);
+  if (!ticket) return json({ error: 'Room session is invalid or expired' }, 401);
+  if (rawRoomCode) {
+    const roomCode = normalizeRoomCode(rawRoomCode);
+    if (!roomCode || ticket.roomCode !== roomCode) {
+      return json({ error: 'Room session does not match this room' }, 403);
+    }
+  }
+  return { userId: ticket.userId, rateLimitKey: `room:${ticket.userId}` };
+}
+
+async function versusParticipant(
+  request: Request,
+  env: Env,
+  rawRoomCode: string,
+  handler: (participant: VersusRoomParticipant) => Promise<Response>,
+): Promise<Response> {
+  const roomParticipant = await roomTicketParticipant(request, env, rawRoomCode);
+  if (isResponse(roomParticipant)) return roomParticipant;
+  if (roomParticipant) return handler(roomParticipant);
+  return authenticated(request, env, handler);
+}
+
+async function versusParticipantLimited(
+  request: Request,
+  env: Env,
+  routeKey: string,
+  rawRoomCode: string | undefined,
+  handler: (participant: VersusRoomParticipant) => Promise<Response>,
+): Promise<Response> {
+  const roomParticipant = await roomTicketParticipant(request, env, rawRoomCode);
+  if (isResponse(roomParticipant)) return roomParticipant;
+  if (!roomParticipant) return authenticatedLimited(request, env, routeKey, handler);
+  const limited = await enforceRateLimit(env, routeKey, {
+    userId: roomParticipant.userId,
+    rateLimitKey: roomParticipant.rateLimitKey,
+    user: null,
+    claims: null,
+  });
+  return limited ?? handler(roomParticipant);
+}
+
 function healthResponse(env: Env): Response {
+  const geminiTransport = geminiTransportStatus(env);
   const providerSecrets = {
-    gemini: Boolean(env.GEMINI_API_KEY),
+    gemini: geminiTransport.configured,
     fal: Boolean(env.FAL_API_KEY),
     runway: Boolean(env.RUNWAY_API_KEY),
     freepik: Boolean(env.FREEPIK_API_KEY),
@@ -231,7 +321,14 @@ function healthResponse(env: Env): Response {
 
   return json({
     status: 'ok',
-    version: '0.18.0',
+    version: '0.19.0',
+    workerVersionId: env.WORKER_VERSION_METADATA?.id ?? null,
+    workerVersion: env.WORKER_VERSION_METADATA
+      ? {
+          id: env.WORKER_VERSION_METADATA.id,
+          tag: env.WORKER_VERSION_METADATA.tag || null,
+        }
+      : null,
     legalVersion: CURRENT_LEGAL_VERSION,
     environment: env.ENVIRONMENT ?? 'unknown',
     cors: env.CORS_ORIGIN ? 'configured' : 'wildcard',
@@ -241,6 +338,7 @@ function healthResponse(env: Env): Response {
     turnstile: turnstileConfigurationStatus(env),
     anonymousRookie: env.ANONYMOUS_ROOKIE_ENABLED === 'false' ? 'disabled' : 'enabled',
     providerAccounting: 'durable',
+    geminiTransport: geminiTransport.transport ?? 'invalid',
     providerSessionLimits: 'configured',
     providerGlobalCaps: 'disabled',
     storage: {
@@ -253,13 +351,18 @@ function healthResponse(env: Env): Response {
       ? 'configured'
       : 'not_configured',
     rateLimit: 'd1',
+    onlineVersus: onlineVersusStatus(env),
+    mapsCapture: env.GOOGLE_MAPS_SERVER_KEY ? 'configured' : 'not_configured',
     privacy: anonymousIdentifiersProtected ? 'pseudonymized' : 'not_configured',
     providers: allProvidersConfigured ? 'configured' : 'partial',
+    videoCreationTransport: env.PIXCLI_API_KEY && pixcliBaseUrl(env.PIXCLI_BASE_URL)
+      ? 'configured'
+      : 'not_configured',
   });
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
@@ -273,15 +376,28 @@ export default {
         return addCors(await handleClerkWebhook(request, env), request, env);
       }
 
+      const publicVersusInviteMatch = path.match(
+        /^\/v\/(?:[^/]+\/)?([A-Za-z0-9_-]{32})(\/og\.png)?$/,
+      );
+      if (publicVersusInviteMatch && method === 'GET') {
+        const token = decodePathParam(publicVersusInviteMatch[1]);
+        if (isResponse(token)) return token;
+        return publicVersusInviteMatch[2]
+          ? versusInvitationOgImage(env, token, context)
+          : versusInvitationSharePage(request, env, token);
+      }
+
       const generationAuth = path.startsWith('/proxy/')
         ? await optionalGenerationJobAuth(request, env)
         : null;
       if (generationAuth instanceof Response) {
         return addCors(generationAuth, request, env);
       }
-      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(request, env, {
-        allowMissingAuthorizedParty: await hasValidClerkBackendAuthBridge(request, env),
-      });
+      const publicAuth: PublicAuthContext = generationAuth ?? await optionalAuth(
+        request,
+        env,
+        await clerkAuthOptionsForRequest(request, env),
+      );
       const proxied = path.startsWith('/proxy/')
         ? await handleProxy(request, env, publicAuth)
         : null;
@@ -289,6 +405,12 @@ export default {
 
       if (path === '/health') {
         return addCors(healthResponse(env), request, env);
+      }
+
+      if (path === '/api/maps/street-view/capture' && method === 'POST') {
+        const limited = await enforceRateLimit(env, 'maps:capture', publicAuth);
+        if (limited) return addCors(limited, request, env);
+        return addCors(await captureStreetViewImage(request, env), request, env);
       }
 
       if (path.startsWith('/temp-assets/') && method === 'GET') {
@@ -317,6 +439,19 @@ export default {
         return addCors(await authenticated(request, env, (auth) => completeGenerationPurchase(request, env, auth)), request, env);
       }
 
+      if (path === '/api/billing/stage-forge' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'billing:stage-forge',
+            (auth) => authorizeStageForgePurchase(request, env, authAsPublicContext(auth)),
+          ),
+          request,
+          env,
+        );
+      }
+
       if (path === '/api/provider-sessions' && method === 'POST') {
         return addCors(
           await authenticatedLimited(
@@ -343,12 +478,28 @@ export default {
         );
       }
 
+      if (path === '/api/billing/checkout-status' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => getCreditCheckoutStatus(request, env, auth)),
+          request,
+          env,
+        );
+      }
+
       if (path === '/api/billing/stripe-webhook' && method === 'POST') {
         return addCors(await handleStripeWebhook(request, env), request, env);
       }
 
       if (path === '/api/community' && method === 'GET') {
         return addCors(await listCommunityFighters(request, env), request, env);
+      }
+
+      if (path === '/api/community/ownership' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => listOwnedCommunityFighterIds(env, auth)),
+          request,
+          env,
+        );
       }
 
       if (path === '/api/arcade' && method === 'GET') {
@@ -401,6 +552,23 @@ export default {
         if (isResponse(revision)) return addCors(revision, request, env);
         return addCors(
           await getPublicFighterSpriteAsset(env, fighterId, spriteId, revision),
+          request,
+          env,
+        );
+      }
+
+      const publicArcadeHighDensitySpriteAssetMatch = path.match(
+        /^\/public-assets\/arcade\/([^/]+)\/sprites\/([^/]+)\/hq\/([^/]+)$/,
+      );
+      if (publicArcadeHighDensitySpriteAssetMatch && method === 'GET') {
+        const fighterId = decodePathParam(publicArcadeHighDensitySpriteAssetMatch[1]);
+        const spriteId = decodePathParam(publicArcadeHighDensitySpriteAssetMatch[2]);
+        const revision = decodePathParam(publicArcadeHighDensitySpriteAssetMatch[3]);
+        if (isResponse(fighterId)) return addCors(fighterId, request, env);
+        if (isResponse(spriteId)) return addCors(spriteId, request, env);
+        if (isResponse(revision)) return addCors(revision, request, env);
+        return addCors(
+          await getPublicArcadeSpriteHighDensityAsset(env, fighterId, spriteId, revision),
           request,
           env,
         );
@@ -477,6 +645,10 @@ export default {
         );
       }
 
+      if (path === '/api/internal/deploy/image-processor-contract' && method === 'GET') {
+        return readDeploymentImageProcessorContract(request, env);
+      }
+
       const arcadeAdminMatch = path.match(/^\/api\/admin\/arcade\/([^/]+)$/);
       if (arcadeAdminMatch && method === 'PATCH') {
         const arcadeFighterId = decodePathParam(arcadeAdminMatch[1]);
@@ -488,6 +660,86 @@ export default {
             'admin:arcade',
             (auth) => upsertAdminArcadeFighter(request, env, auth, arcadeFighterId),
           ),
+          request,
+          env,
+        );
+      }
+
+      const reviewedArcadeActivationMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/activate-reviewed-video$/,
+      );
+      if (reviewedArcadeActivationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(reviewedArcadeActivationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => activateReviewedVideoArcadeFighter(
+              request, env, auth, arcadeFighterId,
+            ),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const importedVideoRecurationMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/imported-video-recuration\/(stage|promote|rollback)$/,
+      );
+      if (importedVideoRecurationMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(importedVideoRecurationMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        const operation = importedVideoRecurationMatch[2];
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade-imported-video-recuration',
+            (auth) => operation === 'stage'
+              ? stageImportedGlobalVideoRecuration(request, env, auth, arcadeFighterId)
+              : operation === 'promote'
+                ? promoteImportedGlobalVideoRecuration(request, env, auth, arcadeFighterId)
+                : rollbackImportedGlobalVideoRecuration(request, env, auth, arcadeFighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const importedVideoRecurationPromoteTransitionMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/imported-video-recuration\/([^/]+)\/promote-transition$/,
+      );
+      if (importedVideoRecurationPromoteTransitionMatch && method === 'GET') {
+        const arcadeFighterId = decodePathParam(importedVideoRecurationPromoteTransitionMatch[1]);
+        const proposalId = decodePathParam(importedVideoRecurationPromoteTransitionMatch[2]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        if (isResponse(proposalId)) return addCors(proposalId, request, env);
+        return addCors(
+          await authenticated(request, env, (auth) =>
+            getImportedGlobalVideoRecurationPromoteTransition(
+              request, env, auth, arcadeFighterId, proposalId,
+            )),
+          request,
+          env,
+        );
+      }
+
+      const importedVideoRecurationAssetMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/imported-video-recuration\/([^/]+)\/assets\/([^/]+)$/,
+      );
+      if (importedVideoRecurationAssetMatch && method === 'GET') {
+        const arcadeFighterId = decodePathParam(importedVideoRecurationAssetMatch[1]);
+        const proposalId = decodePathParam(importedVideoRecurationAssetMatch[2]);
+        const kind = decodePathParam(importedVideoRecurationAssetMatch[3]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        if (isResponse(proposalId)) return addCors(proposalId, request, env);
+        if (isResponse(kind)) return addCors(kind, request, env);
+        return addCors(
+          await authenticated(request, env, (auth) => getImportedGlobalVideoRecurationAsset(
+            request, env, auth, arcadeFighterId, proposalId, kind,
+          )),
           request,
           env,
         );
@@ -607,7 +859,7 @@ export default {
 
       if (path === '/api/generation-jobs' && method === 'GET') {
         return addCors(
-          await authenticated(request, env, (auth) => listGenerationJobs(env, auth)),
+          await authenticated(request, env, (auth) => listGenerationJobs(request, env, auth)),
           request,
           env,
         );
@@ -632,6 +884,70 @@ export default {
         if (isResponse(jobId)) return addCors(jobId, request, env);
         return addCors(
           await authenticated(request, env, (auth) => getGenerationJob(env, auth, jobId)),
+          request,
+          env,
+        );
+      }
+
+      const videoReviewMatch = path.match(/^\/api\/generation-jobs\/([^/]+)\/video-review$/);
+      if (videoReviewMatch) {
+        const jobId = decodePathParam(videoReviewMatch[1]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        if (method === 'GET') {
+          return addCors(await authenticated(
+            request,
+            env,
+            (auth) => getVideoSpriteReview(request, env, auth, jobId),
+          ), request, env);
+        }
+      }
+
+      const videoReviewDecisionMatch = path.match(
+        /^\/api\/generation-jobs\/([^/]+)\/video-review\/(approve|reject|adjust)$/,
+      );
+      if (videoReviewDecisionMatch && method === 'POST') {
+        const jobId = decodePathParam(videoReviewDecisionMatch[1]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        const decision = videoReviewDecisionMatch[2];
+        return addCors(await authenticatedLimited(
+          request,
+          env,
+          'generation:video-review',
+          (auth) => decision === 'approve'
+            ? approveVideoSpriteReview(request, env, auth, jobId)
+            : decision === 'reject'
+              ? rejectVideoSpriteReview(request, env, auth, jobId)
+              : adjustVideoSpriteReview(request, env, auth, jobId),
+        ), request, env);
+      }
+
+      const videoReviewRecurationMatch = path.match(
+        /^\/api\/generation-jobs\/([^/]+)\/video-review\/recuration\/(stage|promote)$/,
+      );
+      if (videoReviewRecurationMatch && method === 'POST') {
+        const jobId = decodePathParam(videoReviewRecurationMatch[1]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        const operation = videoReviewRecurationMatch[2];
+        return addCors(await authenticatedLimited(
+          request,
+          env,
+          'generation:video-review-recuration',
+          (auth) => operation === 'stage'
+            ? stageApprovedVideoSpriteRecuration(request, env, auth, jobId)
+            : promoteApprovedVideoSpriteRecuration(request, env, auth, jobId),
+        ), request, env);
+      }
+
+      const videoReviewAssetMatch = path.match(
+        /^\/api\/generation-jobs\/([^/]+)\/video-review\/assets\/([^/]+)$/,
+      );
+      if (videoReviewAssetMatch && method === 'GET') {
+        const jobId = decodePathParam(videoReviewAssetMatch[1]);
+        const kind = decodePathParam(videoReviewAssetMatch[2]);
+        if (isResponse(jobId)) return addCors(jobId, request, env);
+        if (isResponse(kind)) return addCors(kind, request, env);
+        return addCors(
+          await authenticated(request, env, (auth) => getVideoSpriteReviewAsset(request, env, auth, jobId, kind)),
           request,
           env,
         );
@@ -758,9 +1074,158 @@ export default {
         }), request, env);
       }
 
+      if (path === '/api/versus/rooms' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(request, env, 'versus:room', (auth) => createVersusRoom(env, auth)),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/versus/ice-servers' && method === 'GET') {
+        return addCors(
+          await versusParticipantLimited(request, env, 'versus:ice', undefined, () => versusIceServers(env)),
+          request,
+          env,
+        );
+      }
+
+      const versusInvitationJoinMatch = path.match(/^\/api\/versus\/invitations\/([^/]+)\/join$/);
+      if (versusInvitationJoinMatch && method === 'POST') {
+        const token = decodePathParam(versusInvitationJoinMatch[1]);
+        if (isResponse(token)) return addCors(token, request, env);
+        const limited = await enforceRateLimit(env, 'versus:guest-join', publicAuth);
+        if (limited) return addCors(limited, request, env);
+        return addCors(await joinVersusInvitation(
+          request,
+          env,
+          publicAuth.userId ? { userId: publicAuth.userId } : null,
+          token,
+        ), request, env);
+      }
+
+      const versusInvitationCreateMatch = path.match(/^\/api\/versus\/rooms\/([^/]+)\/invitations$/);
+      if (versusInvitationCreateMatch && method === 'POST') {
+        const roomCode = decodePathParam(versusInvitationCreateMatch[1]);
+        if (isResponse(roomCode)) return addCors(roomCode, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'versus:invite',
+            (auth) => createVersusInvitation(request, env, auth, roomCode),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const versusRoomAssetMatch = path.match(
+        /^\/api\/versus\/rooms\/([^/]+)\/fighters\/([^/]+)\/(sprites|sources)\/([^/]+)\/([^/]+)$/,
+      );
+      if (versusRoomAssetMatch && method === 'GET') {
+        const params = versusRoomAssetMatch.slice(1).map(decodePathParam);
+        const invalid = params.find(isResponse);
+        if (invalid) return addCors(invalid, request, env);
+        const [roomCode, fighterId, kind, id, revision] = params as string[];
+        return addCors(
+          await versusParticipant(request, env, roomCode, (auth) => getVersusRoomAsset(
+            env, auth, roomCode, fighterId, kind as 'sprites' | 'sources', id, revision,
+          )),
+          request,
+          env,
+        );
+      }
+
+      const versusRoomMatch = path.match(/^\/api\/versus\/rooms\/([^/]+)\/(join|ws|fighter|opponent-fighter|match)$/);
+      if (versusRoomMatch) {
+        const roomCode = decodePathParam(versusRoomMatch[1]);
+        if (isResponse(roomCode)) return addCors(roomCode, request, env);
+        if (versusRoomMatch[2] === 'join' && method === 'POST') {
+          return addCors(
+            await authenticatedLimited(request, env, 'versus:room', (auth) => joinVersusRoom(request, env, auth, roomCode)),
+            request,
+            env,
+          );
+        }
+        if (versusRoomMatch[2] === 'fighter' && method === 'POST') {
+          return addCors(
+            await versusParticipantLimited(
+              request,
+              env,
+              'versus:room',
+              roomCode,
+              (auth) => declareVersusFighter(request, env, auth, roomCode),
+            ),
+            request,
+            env,
+          );
+        }
+        if (versusRoomMatch[2] === 'opponent-fighter' && method === 'GET') {
+          return addCors(
+            await versusParticipant(
+              request,
+              env,
+              roomCode,
+              (auth) => getVersusOpponentFighter(request, env, auth, roomCode),
+            ),
+            request,
+            env,
+          );
+        }
+        if (versusRoomMatch[2] === 'match' && method === 'POST') {
+          return addCors(
+            await versusParticipantLimited(
+              request,
+              env,
+              'versus:room',
+              roomCode,
+              (auth) => allocateVersusMatch(env, auth, roomCode),
+            ),
+            request,
+            env,
+          );
+        }
+        if (versusRoomMatch[2] === 'ws' && method === 'GET') {
+          // WebSocket upgrade: the room ticket is the credential; the 101
+          // response must be returned untouched (no CORS header rewrite).
+          const upgraded = await connectVersusRoom(request, env, roomCode);
+          return upgraded.status === 101 ? upgraded : addCors(upgraded, request, env);
+        }
+      }
+
+      if (path === '/api/client-errors' && method === 'POST') {
+        const limited = await enforceRateLimit(env, 'client:error', publicAuth);
+        if (limited) return addCors(limited, request, env);
+        return addCors(await submitClientError(request, env, publicAuth), request, env);
+      }
+
       if (path === '/api/matches' && method === 'POST') {
         return addCors(await authenticatedLimited(request, env, 'matches:report', async (auth) => {
           const body = await readJsonBody<Record<string, unknown>>(request, MAX_MATCH_REPORT_BODY_BYTES);
+          if (isAttractModeMatchReport(body)) {
+            return json({ success: true, recorded: false });
+          }
+          if (body.opponentKind === 'online') {
+            const participants = await resolveVersusMatchParticipants(env, auth, body.roomCode, body.matchSerial);
+            if (!participants) return json({ error: 'Online match not found for this account' }, 403);
+            const existing = await env.DB.prepare('SELECT id FROM matches WHERE id = ? LIMIT 1')
+              .bind(participants.matchId).first<{ id: string }>();
+            if (existing) return json({ success: true, recorded: false, matchId: participants.matchId });
+            const winnerSlot = body.winnerSlot === 'p2' ? 'p2' : 'p1';
+            return reportMatchResult(env, {
+              matchId: participants.matchId,
+              player1Id: participants.hostUserId,
+              player2Id: participants.guestUserId,
+              winnerId: winnerSlot === 'p1' ? participants.hostUserId : participants.guestUserId,
+              roundsP1: readBoundedInteger(body.roundsP1, 0, MAX_MATCH_ROUNDS),
+              roundsP2: readBoundedInteger(body.roundsP2, 0, MAX_MATCH_ROUNDS),
+              duration: readBoundedInteger(body.duration, 0, MAX_MATCH_DURATION_SECONDS),
+              p1FighterId: participants.hostFighterId ?? undefined,
+              p2FighterId: participants.guestFighterId ?? undefined,
+              isRanked: false,
+            });
+          }
           const opponentKind = body.opponentKind === 'local' ? 'local' : 'cpu';
           const systemOpponentId = opponentKind === 'local' ? 'system:local-player' : 'system:cpu';
           const systemOpponentName = opponentKind === 'local' ? 'Local Player 2' : 'CPU Opponent';
@@ -768,10 +1233,14 @@ export default {
           await ensureSystemUser(env, systemOpponentId, systemOpponentName);
           const winnerSlot = body.winnerSlot === 'p2' ? 'p2' : 'p1';
           const winnerId = winnerSlot === 'p2' ? player2Id : auth.userId;
-          const p1FighterId = await readOwnedFighterId(env, auth.userId, body.p1FighterId);
-          if (isResponse(p1FighterId)) return p1FighterId;
-          const p2FighterId = await readOwnedFighterId(env, auth.userId, body.p2FighterId);
-          if (isResponse(p2FighterId)) return p2FighterId;
+          const p1FighterId = await readMatchFighterId(env, auth.userId, body.p1FighterId);
+          if (body.p1FighterId && !p1FighterId) {
+            return json({ error: 'Match fighter is not owned or an active Arcade fighter' }, 403);
+          }
+          const p2FighterId = await readMatchFighterId(env, auth.userId, body.p2FighterId);
+          if (body.p2FighterId && !p2FighterId) {
+            return json({ error: 'Match fighter is not owned or an active Arcade fighter' }, 403);
+          }
           return reportMatchResult(env, {
             matchId: generateId(),
             player1Id: auth.userId,

@@ -9,7 +9,13 @@ describe('frontend deployment CSP', () => {
       clerkFrontendApiOrigin: 'https://clerk.insertplayer.ai',
     });
     expect(headers).toContain('https://api.insertplayer.ai');
+    expect(headers).toContain('wss://api.insertplayer.ai');
     expect(headers).toContain('https://clerk.insertplayer.ai');
+    expect(headers).toContain("script-src 'self' 'unsafe-eval' blob:");
+    expect(headers).toContain('https://*.googleapis.com');
+    expect(headers).toContain('https://*.gstatic.com');
+    expect(headers).toContain('https://*.google.com');
+    expect(headers).toContain('https://fonts.gstatic.com');
     expect(headers).not.toContain('insert-player-api-sandbox');
     expect(headers).not.toContain('clerk.accounts.dev');
   });
@@ -21,7 +27,10 @@ describe('frontend deployment CSP', () => {
       clerkFrontendApiOrigin: 'https://right-cricket-1317.clerk.accounts.dev',
     });
     expect(headers).toContain('https://insert-player-api-sandbox.shellbot.workers.dev');
+    expect(headers).toContain('wss://insert-player-api-sandbox.shellbot.workers.dev');
     expect(headers).toContain('https://right-cricket-1317.clerk.accounts.dev');
+    expect(headers).toContain('https://*.googleapis.com');
+    expect(headers).toContain('https://*.gstatic.com');
     expect(headers).not.toContain('https://api.insertplayer.ai');
     expect(headers).not.toContain('https://clerk.insertplayer.ai');
     expect(headers).not.toContain('https://*.clerk.accounts.dev');
@@ -33,6 +42,7 @@ describe('frontend deployment CSP', () => {
     expect(headers).toContain("connect-src 'self'");
     expect(headers).toContain("frame-src 'none'");
     expect(headers).not.toContain('https://');
+    expect(headers).not.toContain("'unsafe-eval'");
   });
 
   it('rejects malformed origins', () => {

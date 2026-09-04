@@ -1,4 +1,4 @@
-import { Fighter } from '../fighters/Fighter.ts';
+import type { Fighter } from '../fighters/Fighter.ts';
 import { FighterState, type AttackData } from '../constants.ts';
 
 export interface HitEvent {
@@ -6,6 +6,7 @@ export interface HitEvent {
   defender: number;
   damage: number;
   blocked: boolean;
+  counter: boolean;
 }
 
 interface PendingHit {
@@ -13,6 +14,7 @@ interface PendingHit {
   defender: Fighter;
   attackData: AttackData;
   blocked: boolean;
+  counter: boolean;
 }
 
 export class CombatSystem {
@@ -40,26 +42,46 @@ export class CombatSystem {
     const attackData = attacker.getAttackData();
     if (!attackData) return null;
 
+    if (defender.isInvulnerable()) return null;
+
     const hurtbox = defender.getHurtbox();
     if (!this.aabbOverlap(hitbox, hurtbox)) return null;
+
+    const blocked = this.isBlocking(defender, attacker);
+    // Counter-hit: tagging someone during their own attack startup.
+    const defenderAttack = defender.getAttackData();
+    const counter = !blocked &&
+      defenderAttack !== null &&
+      defender.isInAttack() &&
+      defender.stateFrame < defenderAttack.startup;
 
     return {
       attacker,
       defender,
       attackData,
-      blocked: this.isBlocking(defender, attacker),
+      blocked,
+      counter,
     };
   }
 
   private applyHit(hit: PendingHit, events: HitEvent[]): void {
     hit.attacker.attackHit = true;
-    hit.defender.takeDamage(hit.attackData, hit.blocked);
+    // Counter-hits reward the read: +25% damage, +4 frames of hitstun.
+    const attackData = hit.counter
+      ? {
+          ...hit.attackData,
+          damage: Math.floor(hit.attackData.damage * 1.25),
+          hitStunFrames: hit.attackData.hitStunFrames + 4,
+        }
+      : hit.attackData;
+    hit.defender.takeDamage(attackData, hit.blocked);
 
     events.push({
       attacker: hit.attacker.playerIndex,
       defender: hit.defender.playerIndex,
-      damage: hit.blocked ? Math.floor(hit.attackData.damage * 0.1) : hit.attackData.damage,
+      damage: hit.blocked ? Math.floor(attackData.damage * 0.1) : attackData.damage,
       blocked: hit.blocked,
+      counter: hit.counter,
     });
   }
 
@@ -80,21 +102,35 @@ export class CombatSystem {
 
     if (!inBlockState) return false;
 
-    const attackState = attacker.state;
-    const isLowAttack =
-      attackState === FighterState.LOW_PUNCH ||
-      attackState === FighterState.LOW_KICK;
-    const isHighAttack =
-      attackState === FighterState.HIGH_PUNCH ||
-      attackState === FighterState.HIGH_KICK ||
-      attackState === FighterState.UPPERCUT;
+    const attackData = attacker.getAttackData();
+    if (!attackData) return false;
 
+    // Tekken guard triangle: mids CRUSH crouch guard, lows beat standing
+    // guard, highs whiff over crouchers (geometry already handles that).
     if (defender.crouchBlocking) {
-      // Crouch-blocking stops lows but not overheads/highs
-      return isLowAttack;
+      return attackData.hitLevel === 'low';
     }
-    // Standing block stops highs but not lows
-    return isHighAttack;
+    return attackData.hitLevel === 'high' || attackData.hitLevel === 'mid';
+  }
+
+  /**
+   * Projectiles are mids: blockable from standing or crouch guard, but a
+   * plain crouch (no guard stance) no longer blocks them — one rule for
+   * every attack in the game.
+   */
+  isBlockingProjectile(defender: Fighter): boolean {
+    if (
+      defender.state === FighterState.HIT_STUN ||
+      defender.state === FighterState.KNOCKDOWN ||
+      defender.isInAttack()
+    ) {
+      return false;
+    }
+    if (!defender.isGrounded()) return false;
+    return (
+      defender.state === FighterState.WALK_BACKWARD ||
+      defender.state === FighterState.BLOCK
+    );
   }
 
   private pushApart(p1: Fighter, p2: Fighter): void {

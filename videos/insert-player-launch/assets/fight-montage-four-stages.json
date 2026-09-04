@@ -1,0 +1,45 @@
+{
+  "outputFile": "fight-montage-four-stages.mp4",
+  "contentDurationSeconds": 4,
+  "transitionHoldSeconds": 0.25,
+  "totalDurationSeconds": 4.25,
+  "leadInSeconds": 0.45,
+  "clips": [
+    {
+      "id": "trump",
+      "opponent": "Donald Trump",
+      "stage": "EXECUTIVE RUMBLE",
+      "sourceFile": "trump-master.webm",
+      "sourceStartSeconds": 39.691,
+      "damageOffsetSeconds": 40.141,
+      "clipDurationSeconds": 1
+    },
+    {
+      "id": "lamine",
+      "opponent": "Lamine Yamal",
+      "stage": "LA JAULA 304",
+      "sourceFile": "lamine-master.webm",
+      "sourceStartSeconds": 58.491,
+      "damageOffsetSeconds": 58.941,
+      "clipDurationSeconds": 1
+    },
+    {
+      "id": "rosalia",
+      "opponent": "Rosalía V2",
+      "stage": "DOJO AT DUSK",
+      "sourceFile": "rosalia-master.webm",
+      "sourceStartSeconds": 42.766,
+      "damageOffsetSeconds": 43.216,
+      "clipDurationSeconds": 1
+    },
+    {
+      "id": "elon",
+      "opponent": "Elon Musk",
+      "stage": "MARS INCORPORATED",
+      "sourceFile": "elon-master.webm",
+      "sourceStartSeconds": 61.466,
+      "damageOffsetSeconds": 61.916,
+      "clipDurationSeconds": 1
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "source": {
+    "fileName": "Neon Arena.mp3",
+    "handling": "Private creative reference only; never copied into the repository or published.",
+    "sha256": "0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05",
+    "durationSeconds": 295.014
+  },
+  "analysis": {
+    "model": "gemini-3.5-flash",
+    "audioInputTokens": 7376,
+    "localTempoCandidatesBpm": [77.1, 154.0],
+    "modelEstimatedBpm": 145,
+    "meter": "4/4",
+    "energy": "Fast, driving, consistently high, with a short build into a denser action section.",
+    "genrePalette": [
+      "high-fidelity arcade electronic",
+      "16-bit FM texture",
+      "synthwave",
+      "electro"
+    ],
+    "instrumentFamilies": [
+      "FM synthesizers",
+      "short square-wave accents",
+      "rapid arpeggiated synth texture",
+      "tight electronic drums",
+      "rhythmic synth bass"
+    ],
+    "mixCharacter": "Bright, compressed and punchy, with a strong low-end pulse and clean midrange separation."
+  },
+  "transferPolicy": {
+    "allowed": [
+      "tempo range",
+      "meter",
+      "energy curve",
+      "instrument families",
+      "broad genre and era",
+      "rhythmic density",
+      "mix character"
+    ],
+    "prohibited": [
+      "melody",
+      "chord progression",
+      "lyrics",
+      "vocal identity",
+      "artist identity",
+      "unique motif",
+      "exact sound effects"
+    ]
+  },
+  "twelveSecondPlan": [
+    {
+      "start": 0,
+      "end": 4.65,
+      "role": "photo-to-fighter transformation",
+      "music": "Immediate pulse and rising FM texture; increase density without a scene cut."
+    },
+    {
+      "start": 4.65,
+      "end": 7.9,
+      "role": "production gameplay",
+      "music": "Full drums and bass on the cut; preserve the real fight impact sounds."
+    },
+    {
+      "start": 7.9,
+      "end": 12,
+      "role": "brand lockup",
+      "music": "Hard punctuation on entry, then a compact resolving tail with space for the logo."
+    }
+  ]
+}

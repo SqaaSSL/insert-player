@@ -3,6 +3,7 @@ import {
   getAllCachedMetas,
   getAllCachedStageBackgrounds,
   getAllSpritesForHash,
+  getActiveSpriteCacheScope,
   getCachedMeta,
   getCachedIntro,
   setCachedMeta,
@@ -10,7 +11,6 @@ import {
   deleteCharacter,
   renameCachedStageBackground,
   renameCharacter,
-  CACHE_VERSION,
   type CachedIntro,
   type CachedMeta,
   type CachedSprite,
@@ -28,28 +28,69 @@ import {
 import { clearDebugLog, debugWarn } from '../../services/DebugLog.ts';
 import { exportAnimationGif } from '../../services/GifExportService.ts';
 import { AnimationGrid } from '../components/AnimationGrid.tsx';
+import { Button } from '../components/Button.tsx';
+import { TierBadge } from '../components/TierBadge.tsx';
+import { Modal, ConfirmDialog } from '../components/Modal.tsx';
+import { GalleryFighterList } from '../components/GalleryFighterList.tsx';
+import { GalleryStageList } from '../components/GalleryStageList.tsx';
 import { SourceViewsPanel } from '../components/SourceViewsPanel.tsx';
 import { SpritePreviewSurface } from '../components/SpritePreviewSurface.tsx';
 import { DebugFeed } from '../components/DebugFeed.tsx';
 import {
   animLabel,
+  defaultSourceForMeta,
   getSourceBlob,
+  tierLabel,
   type PreviewSelection,
   type PreviewSpriteLike,
   type SourceKey,
 } from '../shared/fighterPreview.ts';
+import {
+  ensureGalleryArcadeFighterReady,
+  findCachedArcadeMeta,
+} from '../shared/galleryArcadeRoster.ts';
+import {
+  arcadeRosterFighterIds,
+  galleryFighterIndexForSelection,
+  isGlobalRosterMeta,
+  markArcadeManagedMetas,
+} from '../shared/arcadeRosterIdentity.ts';
+import { visibleGalleryMetasForJobs } from '../shared/galleryVisibility.ts';
+import {
+  buildGalleryStageEntries,
+  clampGalleryStageIndex,
+} from '../shared/galleryStages.ts';
+import {
+  loadGalleryCacheSnapshot,
+  withGalleryTimeout,
+} from '../shared/galleryLoad.ts';
+import {
+  activeGalleryRecoveryJobs,
+  recoverableFighterGenerationIds,
+  resumableGalleryRecoveryJobs,
+} from '../shared/galleryRecovery.ts';
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
 import { shareCommunityFighter } from '../shared/communityShare.ts';
 import {
+  CloudFirstRenameCacheError,
+  renameFighterCloudFirst,
+} from '../shared/cloudFirstRename.ts';
+import { deleteFighterCacheAfterCloudConfirmation } from '../shared/cloudFirstDelete.ts';
+import {
+  arcadeFighterPhotoHash,
   deleteCloudFighter,
+  downloadArcadeFighterToLocal,
+  downloadArcadeSpriteHighDensityToLocal,
   downloadCloudFighterToLocal,
   formatCloudRosterSyncStatus,
   getCloudFighter,
+  listArcadeFighters,
   renameCloudFighter,
   setCloudFighterPublic,
   syncCloudFightersToLocal,
   syncFighterToCloud,
+  type CloudFighter,
 } from '../../services/CloudFighters.ts';
 import {
   QUALITY_TIERS,
@@ -66,6 +107,7 @@ import {
 } from '../../services/ApiClient.ts';
 import { checkoutStatusMessage, consumeCheckoutStatus } from '../shared/checkoutStatus.ts';
 import { GenerationConsent } from '../components/LegalConsent.tsx';
+import { VideoGenerationReviewGate } from '../components/VideoGenerationReviewGate.tsx';
 import { currentGenerationLegalAttestation } from '../legal.ts';
 import {
   listGenerationJobs,
@@ -74,6 +116,11 @@ import {
   type GenerationJob,
 } from '../../services/GenerationJobs.ts';
 import type { AuthStatus } from '../authState.ts';
+import {
+  assertCreationFlowAcknowledged,
+  creationFlowForResume,
+  isVideoReviewOrRestartJob,
+} from '../shared/creationFlow.ts';
 
 function formatDate(value: number): string {
   return new Date(value).toLocaleDateString('en-US', {
@@ -91,18 +138,21 @@ function tierIndex(tier: QualityTier): number {
   return QUALITY_TIERS.findIndex((item) => item.id === tier);
 }
 
-function tierLabel(tier: QualityTier | undefined): string {
-  return QUALITY_TIERS.find((item) => item.id === tier)?.label ?? 'Contender';
-}
-
 interface GalleryPageProps {
   authStatus: AuthStatus;
   authSessionKey: string;
   onBack: () => void;
   onCreateFighter: () => void;
+  onCreateStage: () => void;
+  onNavigateLegal?: (route: '/legal' | '/privacy' | '/terms' | '/refunds') => void;
 }
 
 type RetryTarget = { kind: 'source'; key: SourceKey } | { kind: 'animation'; name: string };
+
+interface PendingFighterSync {
+  fighterId: string;
+  jobId: string;
+}
 
 function retryTargetForJob(job: GenerationJob): RetryTarget | null {
   if (job.operation === 'fighter_retry_animation' && job.targetKind === 'animation' && job.targetName) {
@@ -118,9 +168,22 @@ function retryTargetForJob(job: GenerationJob): RetryTarget | null {
   return null;
 }
 
-export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighter }: GalleryPageProps) {
-  const [activeTab, setActiveTab] = useState<'characters' | 'stages'>('characters');
+export function GalleryPage({
+  authStatus,
+  authSessionKey,
+  onBack,
+  onCreateFighter,
+  onCreateStage,
+  onNavigateLegal,
+}: GalleryPageProps) {
+  const [activeTab, setActiveTab] = useState<'characters' | 'stages'>(() => (
+    new URLSearchParams(window.location.search).get('tab') === 'stages' ? 'stages' : 'characters'
+  ));
   const [metas, setMetas] = useState<CachedMeta[]>([]);
+  const [arcadeFighters, setArcadeFighters] = useState<CloudFighter[]>([]);
+  const [arcadeState, setArcadeState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [cloudSyncPending, setCloudSyncPending] = useState(true);
+  const [loadingArcadeId, setLoadingArcadeId] = useState<string | null>(null);
   const [stages, setStages] = useState<CachedStageBackground[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
@@ -133,137 +196,364 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [pendingUpgradeTier, setPendingUpgradeTier] = useState<QualityTier | null>(null);
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
-  const upgradeConfirmRef = useRef<HTMLButtonElement>(null);
-  const publishConfirmRef = useRef<HTMLButtonElement>(null);
+  const [confirmRequest, setConfirmRequest] = useState<{
+    title: string;
+    body: string;
+    confirmLabel: string;
+    variant?: 'primary' | 'danger';
+    onConfirm: () => void;
+  } | null>(null);
+  const [renameRequest, setRenameRequest] = useState<{ kind: 'fighter' | 'stage'; current: string } | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [shareLinkUrl, setShareLinkUrl] = useState<string | null>(null);
+  const [shareLinkError, setShareLinkError] = useState<string | null>(null);
   const generationJobAbortRef = useRef<AbortController | null>(null);
-  const [recoveryJob, setRecoveryJob] = useState<GenerationJob | null>(null);
+  const recoveryJobAbortRefs = useRef(new Map<string, AbortController>());
+  const assetLoadRequestRef = useRef(0);
+  const selectedPhotoHashRef = useRef<string | null>(null);
+  const hqPreviewRequestsRef = useRef(new Set<string>());
+  const checkedArcadeFighterIdsRef = useRef(new Set<string>());
+  const [recoveryJobs, setRecoveryJobs] = useState<GenerationJob[]>([]);
+  const [recoveryRetryingTargets, setRecoveryRetryingTargets] = useState<Record<string, RetryTarget>>({});
   const [resumableJobs, setResumableJobs] = useState<GenerationJob[]>([]);
+  const [videoReviewJobs, setVideoReviewJobs] = useState<GenerationJob[]>([]);
+  const [pendingFighterSyncs, setPendingFighterSyncs] = useState<PendingFighterSync[]>([]);
 
   const meta = metas[currentIndex] ?? null;
+  const globalFighterIds = useMemo(
+    () => arcadeRosterFighterIds(metas, arcadeFighters),
+    [arcadeFighters, metas],
+  );
+  const isArcadeFighter = isGlobalRosterMeta(meta, globalFighterIds);
+  const ownerActionsReady = !isArcadeFighter && !cloudSyncPending;
+  const currentRecoveryJobBusy = Boolean(
+    meta?.cloudFighterId && recoveryJobs.some((job) => job.fighterId === meta.cloudFighterId),
+  );
+  const currentFighterBusy = busy || currentRecoveryJobBusy;
+  const galleryGenerationJobs = useMemo(() => [
+    ...recoveryJobs,
+    ...videoReviewJobs,
+    ...resumableJobs,
+  ], [recoveryJobs, resumableJobs, videoReviewJobs]);
   const pendingUpgrade = QUALITY_TIERS.find((tier) => tier.id === pendingUpgradeTier) ?? null;
 
-  useEffect(() => {
-    if (!pendingUpgradeTier) return;
-    upgradeConfirmRef.current?.focus();
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPendingUpgradeTier(null);
-    };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [pendingUpgradeTier]);
-
-  useEffect(() => {
-    if (!publishConfirmOpen) return;
-    publishConfirmRef.current?.focus();
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setPublishConfirmOpen(false);
-    };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [publishConfirmOpen]);
+  const reconcileCurrentFighterIndex = (fighters: CachedMeta[]) => {
+    setCurrentIndex((current) => {
+      const selectedPhotoHash = selectedPhotoHashRef.current;
+      const nextIndex = galleryFighterIndexForSelection(fighters, selectedPhotoHash, current);
+      if (!selectedPhotoHash) {
+        selectedPhotoHashRef.current = fighters[nextIndex]?.photoHash ?? null;
+      }
+      return nextIndex;
+    });
+  };
 
   useEffect(() => () => {
     generationJobAbortRef.current?.abort();
     generationJobAbortRef.current = null;
+    for (const controller of recoveryJobAbortRefs.current.values()) controller.abort();
+    recoveryJobAbortRefs.current.clear();
   }, []);
 
   useEffect(() => {
     const apiContext = captureApiRequestContext();
+    const ownerScope = getActiveSpriteCacheScope();
     let cancelled = false;
-    setRecoveryJob(null);
+    for (const controller of recoveryJobAbortRefs.current.values()) controller.abort();
+    recoveryJobAbortRefs.current.clear();
+    setRecoveryJobs([]);
+    setRecoveryRetryingTargets({});
     setResumableJobs([]);
+    setVideoReviewJobs([]);
+    setPendingFighterSyncs([]);
+    setPendingUpgradeTier(null);
+    setPublishConfirmOpen(false);
+    setConfirmRequest(null);
+    setRenameRequest(null);
+    setShareLinkUrl(null);
+    setShareLinkError(null);
+    selectedPhotoHashRef.current = null;
+    checkedArcadeFighterIdsRef.current.clear();
+    setMetas([]);
+    setStages([]);
+    setSprites([]);
+    setIntro(null);
+    setArcadeFighters([]);
+    setArcadeState('loading');
+    setCloudSyncPending(true);
+
+    const arcadeRequest = listArcadeFighters()
+      .then((fighters) => ({ fighters, failed: false }))
+      .catch((err: any) => {
+        debugWarn('[Gallery] Global roster unavailable:', err?.message ?? err);
+        return { fighters: [] as CloudFighter[], failed: true };
+      });
+    void arcadeRequest.then(({ fighters, failed }) => {
+      if (cancelled) return;
+      setArcadeFighters(fighters);
+      setArcadeState(failed ? 'unavailable' : 'ready');
+    });
+
+    const generationJobsRequest: Promise<PromiseSettledResult<GenerationJob[]>> = (
+      authStatus === 'signed-in' ? listGenerationJobs(apiContext) : Promise.resolve([])
+    ).then(
+      (value) => ({ status: 'fulfilled' as const, value }),
+      (reason) => ({ status: 'rejected' as const, reason }),
+    );
+
     const load = async () => {
-      const checkoutStatus = consumeCheckoutStatus();
+      const checkoutStatus = consumeCheckoutStatus(authSessionKey);
       const checkoutMessage = checkoutStatus ? checkoutStatusMessage(checkoutStatus) : null;
       let cloudImported = 0;
       let cloudUpdated = 0;
       let cloudDrafts = 0;
       let cloudFailed = 0;
-      let activeCloudJob: Awaited<ReturnType<typeof listGenerationJobs>>[number] | null = null;
+      let activeCloudJobs: GenerationJob[] = [];
       let resumableCloudJobs: GenerationJob[] = [];
-      let [all, allStages] = await Promise.all([
-        getAllCachedMetas(),
-        getAllCachedStageBackgrounds(),
+      let reviewCloudJobs: GenerationJob[] = [];
+      let generationJobs: GenerationJob[] = [];
+      let cloudSyncUnavailable = false;
+      let generationJobsUnavailable = false;
+      let cacheRefreshUnavailable = false;
+      const [initialCache, arcadeResult] = await Promise.all([
+        loadGalleryCacheSnapshot(
+          () => getAllCachedMetas(ownerScope),
+          () => getAllCachedStageBackgrounds(ownerScope),
+        ),
+        arcadeRequest,
       ]);
-      try {
-        const [cloudSync, generationJobs] = await Promise.all([
-          syncCloudFightersToLocal(all, apiContext),
-          authStatus === 'signed-in' ? listGenerationJobs(apiContext) : Promise.resolve([]),
-        ]);
-        activeCloudJob = generationJobs.find((job) => job.status === 'queued' || job.status === 'running') ?? null;
-        resumableCloudJobs = generationJobs.filter((job) => (
-          (job.status === 'failed' || job.status === 'cancelled') &&
-          job.resumable &&
-          job.operation !== 'fighter_generation'
-        ));
-        setRecoveryJob(activeCloudJob);
-        setResumableJobs(resumableCloudJobs);
+      if (cancelled) return;
+      if (initialCache.metasError) {
+        debugWarn('[Gallery] Local fighter cache unavailable:', initialCache.metasError);
+      }
+      if (initialCache.stagesError) {
+        debugWarn('[Gallery] Local stage cache unavailable:', initialCache.stagesError);
+      }
+
+      const globalRoster = arcadeResult.fighters;
+      const arcadeRosterAuthoritative = !arcadeResult.failed;
+      const initiallyMarked = markArcadeManagedMetas(initialCache.metas, globalRoster);
+      let all = initiallyMarked.metas;
+      let allStages = initialCache.stages;
+      const initialVisibleMetas = visibleGalleryMetasForJobs(
+        all,
+        globalRoster,
+        [],
+        arcadeRosterAuthoritative,
+      ).sort((a, b) => b.createdAt - a.createdAt);
+      const initialVisibleStages = allStages
+        .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
+        .sort((a, b) => b.createdAt - a.createdAt);
+      setMetas(initialVisibleMetas);
+      setStages(initialVisibleStages);
+      reconcileCurrentFighterIndex(initialVisibleMetas);
+      setCurrentStageIndex((current) => clampGalleryStageIndex(current, initialVisibleStages.length));
+
+      if (initiallyMarked.changed.length > 0) {
+        try {
+          await withGalleryTimeout(
+            Promise.all(initiallyMarked.changed.map((item) => setCachedMeta(item, ownerScope))),
+            'Global roster identity update',
+          );
+        } catch (err: any) {
+          debugWarn('[Gallery] Global roster identity could not be persisted:', err?.message ?? err);
+        }
+      }
+
+      const cloudSyncResult: PromiseSettledResult<Awaited<ReturnType<typeof syncCloudFightersToLocal>>> =
+        initialCache.metasAvailable
+          ? await syncCloudFightersToLocal(all, apiContext).then(
+              (value) => ({ status: 'fulfilled' as const, value }),
+              (reason) => ({ status: 'rejected' as const, reason }),
+            )
+          : {
+              status: 'rejected',
+              reason: new Error('Local fighter storage is unavailable'),
+            };
+      const generationJobsResult = await generationJobsRequest;
+      if (cancelled) return;
+
+      if (cloudSyncResult.status === 'fulfilled') {
+        const cloudSync = cloudSyncResult.value;
         cloudFailed = cloudSync.failed;
         cloudDrafts = cloudSync.drafts;
-        if (cloudSync.imported > 0 || cloudSync.updated > 0) {
-          cloudImported = cloudSync.imported;
-          cloudUpdated = cloudSync.updated;
-          [all, allStages] = await Promise.all([
-            getAllCachedMetas(),
-            getAllCachedStageBackgrounds(),
-          ]);
+        cloudImported = cloudSync.imported;
+        cloudUpdated = cloudSync.updated;
+      } else {
+        cloudSyncUnavailable = true;
+        debugWarn(
+          '[Gallery] Cloud fighter sync skipped:',
+          cloudSyncResult.reason instanceof Error ? cloudSyncResult.reason.message : cloudSyncResult.reason,
+        );
+      }
+      if (generationJobsResult.status === 'fulfilled') {
+        generationJobs = generationJobsResult.value;
+        activeCloudJobs = activeGalleryRecoveryJobs(generationJobs);
+        reviewCloudJobs = generationJobs.filter(isVideoReviewOrRestartJob);
+        resumableCloudJobs = resumableGalleryRecoveryJobs(generationJobs);
+      } else {
+        generationJobsUnavailable = true;
+        debugWarn(
+          '[Gallery] Durable generation status unavailable:',
+          generationJobsResult.reason instanceof Error
+            ? generationJobsResult.reason.message
+            : generationJobsResult.reason,
+        );
+      }
+      if (generationJobsResult.status === 'fulfilled' && initialCache.metasAvailable) {
+        const recoverableFighterIds = recoverableFighterGenerationIds([
+          ...activeCloudJobs,
+          ...reviewCloudJobs,
+          ...resumableCloudJobs,
+        ]);
+        const recoveryDownloads = await Promise.allSettled(recoverableFighterIds.map(async (fighterId) => {
+          const fighter = await getCloudFighter(fighterId, apiContext);
+          if (!fighter?.photoHash) return;
+          await downloadCloudFighterToLocal(fighter, apiContext, {
+            includeArchivedVersions: false,
+            includeRawAssets: false,
+            allowIncomplete: true,
+          });
+        }));
+        for (const result of recoveryDownloads) {
+          if (result.status === 'rejected') {
+            debugWarn(
+              '[Gallery] Recoverable fighter assets unavailable:',
+              result.reason instanceof Error ? result.reason.message : result.reason,
+            );
+          }
         }
-      } catch (err: any) {
-        if (cancelled) return;
-        debugWarn('[Gallery] Cloud import skipped:', err?.message ?? err);
       }
       if (cancelled) return;
-      const filtered = all
-        .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
+
+      if (initialCache.metasAvailable) {
+        const refreshedCache = await loadGalleryCacheSnapshot(
+          () => getAllCachedMetas(ownerScope),
+          () => initialCache.stagesAvailable
+            ? getAllCachedStageBackgrounds(ownerScope)
+            : Promise.resolve(allStages),
+        );
+        if (cancelled) return;
+        if (refreshedCache.metasAvailable) all = refreshedCache.metas;
+        else if (initialCache.metasAvailable) cacheRefreshUnavailable = true;
+        if (refreshedCache.stagesAvailable) allStages = refreshedCache.stages;
+        else if (initialCache.stagesAvailable) cacheRefreshUnavailable = true;
+      }
+
+      const finallyMarked = markArcadeManagedMetas(all, globalRoster);
+      all = finallyMarked.metas;
+      if (finallyMarked.changed.length > 0) {
+        try {
+          await withGalleryTimeout(
+            Promise.all(finallyMarked.changed.map((item) => setCachedMeta(item, ownerScope))),
+            'Global roster identity update',
+          );
+        } catch (err: any) {
+          debugWarn('[Gallery] Global roster identity could not be persisted:', err?.message ?? err);
+        }
+      }
+      if (cancelled) return;
+      setRecoveryJobs(activeCloudJobs);
+      setResumableJobs(resumableCloudJobs);
+      setVideoReviewJobs(reviewCloudJobs);
+      const filtered = visibleGalleryMetasForJobs(
+        all,
+        globalRoster,
+        generationJobs,
+        arcadeRosterAuthoritative,
+      )
         .sort((a, b) => b.createdAt - a.createdAt);
       const filteredStages = allStages
         .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
         .sort((a, b) => b.createdAt - a.createdAt);
       setMetas(filtered);
       setStages(filteredStages);
-      setCurrentIndex((current) => Math.min(current, Math.max(0, filtered.length - 1)));
-      setCurrentStageIndex((current) => Math.min(current, Math.max(0, filteredStages.length - 1)));
+      reconcileCurrentFighterIndex(filtered);
+      setCurrentStageIndex((current) => clampGalleryStageIndex(current, filteredStages.length));
       const cloudSyncStatus = formatCloudRosterSyncStatus({
         imported: cloudImported,
         updated: cloudUpdated,
         drafts: cloudDrafts,
         failed: cloudFailed,
       });
+      const cloudLoadWarning = generationJobsUnavailable && cloudSyncUnavailable
+        ? 'Saved fighters loaded; cloud sync and generation status are temporarily unavailable'
+        : generationJobsUnavailable
+          ? 'Fighters loaded; cloud generation status is temporarily unavailable'
+          : cloudSyncUnavailable
+            ? 'Saved fighters loaded; cloud sync is temporarily unavailable'
+            : null;
+      const localLoadWarning = !initialCache.metasAvailable && !initialCache.stagesAvailable
+        ? 'Local fighter and stage storage are temporarily unavailable'
+        : !initialCache.metasAvailable
+          ? 'Local fighter storage is temporarily unavailable'
+          : !initialCache.stagesAvailable
+            ? 'Fighters loaded; local stage storage is temporarily unavailable'
+            : cacheRefreshUnavailable
+              ? 'Fighters loaded; local storage refresh is temporarily unavailable'
+              : null;
+      const activeCloudStatus = activeCloudJobs.length > 1
+        ? `${activeCloudJobs.length} cloud forges continue safely`
+        : activeCloudJobs.length === 1
+          ? `${tierLabel(activeCloudJobs[0].tier)} forge continues safely in the cloud (${activeCloudJobs[0].progressCurrent}/${activeCloudJobs[0].progressTotal})`
+          : null;
       setStatus(
         checkoutMessage ??
-        (activeCloudJob
-          ? `${tierLabel(activeCloudJob.tier)} forge continues safely in the cloud (${activeCloudJob.progressCurrent}/${activeCloudJob.progressTotal})`
+        (activeCloudStatus
+          ? activeCloudStatus
+          : reviewCloudJobs.some((job) => job.reviewStatus === 'awaiting_review')
+            ? 'A video action is paused safely for your review'
           : resumableCloudJobs.length > 0
             ? 'Paid generation work is preserved and ready to resume'
-          : cloudSyncStatus ??
-          (filtered.length > 0 || filteredStages.length > 0
+          : localLoadWarning ?? cloudLoadWarning ?? cloudSyncStatus ??
+          (arcadeResult.failed
+            ? 'Your archive is ready; the global roster could not be loaded'
+            : filtered.length > 0 || filteredStages.length > 0 || globalRoster.length > 0
             ? 'Ready'
             : 'No fighters or stages yet')),
       );
     };
-    void load();
+    void load().catch((err: any) => {
+      if (cancelled) return;
+      debugWarn('[Gallery] Roster load failed:', err?.message ?? err);
+      setStatus(err?.message ? `Roster load failed: ${err.message}` : 'Roster load failed');
+    }).finally(() => {
+      if (!cancelled) setCloudSyncPending(false);
+    });
     return () => { cancelled = true; };
   }, [authSessionKey, authStatus]);
 
   useEffect(() => {
+    const requestId = ++assetLoadRequestRef.current;
     if (!meta) {
       setSprites([]);
       setIntro(null);
       return;
     }
+    setSprites([]);
+    setIntro(null);
     const load = async () => {
       const [nextSprites, nextIntro] = await Promise.all([
         getAllSpritesForHash(meta.photoHash),
         getCachedIntro(meta.photoHash),
       ]);
+      if (assetLoadRequestRef.current !== requestId) return;
       setSprites(nextSprites);
       setIntro(nextIntro);
     };
     void load();
+    return () => {
+      if (assetLoadRequestRef.current === requestId) assetLoadRequestRef.current += 1;
+    };
   }, [meta?.photoHash]);
 
   useEffect(() => {
     setLegalAccepted(false);
+  }, [meta?.photoHash]);
+
+  useEffect(() => {
+    if (!meta) return;
+    setSelection({ kind: 'source', source: defaultSourceForMeta(meta) });
   }, [meta?.photoHash]);
 
   const previewSprite = useMemo<PreviewSpriteLike | null>(() => {
@@ -273,9 +563,14 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       return {
         blob: cached.pngBlob,
         rawBlob: cached.rawPngBlob,
+        animationName: cached.animationName,
+        animationFormat: cached.animationFormat,
         frameWidth: cached.frameWidth,
         frameHeight: cached.frameHeight,
         frameCount: cached.frameCount,
+        rawFrameWidth: cached.rawFrameWidth,
+        rawFrameHeight: cached.rawFrameHeight,
+        rawFrameCount: cached.rawFrameCount,
       };
     }
     const failed = meta.failedAnimationArtifacts?.[selection.animationName];
@@ -291,18 +586,52 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     };
   }, [meta, selection, sprites]);
 
+  useEffect(() => {
+    if (!meta || !isArcadeFighter || selection.kind !== 'animation') return;
+    const cached = sprites.find((item) => item.animationName === selection.animationName);
+    if (!cached || cached.rawPngBlob) return;
+    const fighter = arcadeFighters.find((item) => item.id === meta.cloudFighterId);
+    const remote = fighter?.sprites.find((item) => item.animationName === selection.animationName);
+    if (!fighter || !remote?.hqUrl) return;
+
+    const requestKey = `${fighter.id}:${selection.animationName}`;
+    if (hqPreviewRequestsRef.current.has(requestKey)) return;
+    hqPreviewRequestsRef.current.add(requestKey);
+    const ownerScope = getActiveSpriteCacheScope();
+    const photoHash = meta.photoHash;
+    const apiContext = captureApiRequestContext();
+    void downloadArcadeSpriteHighDensityToLocal(fighter, selection.animationName, apiContext)
+      .then(async (updated) => {
+        if (!updated || getActiveSpriteCacheScope() !== ownerScope) return;
+        if (selectedPhotoHashRef.current !== photoHash) return;
+        setSprites(await getAllSpritesForHash(photoHash, ownerScope));
+      })
+      .catch((error: any) => {
+        debugWarn('[Gallery] HQ Arcade preview skipped:', error?.message ?? error);
+      })
+      .finally(() => {
+        hqPreviewRequestsRef.current.delete(requestKey);
+      });
+  }, [arcadeFighters, isArcadeFighter, meta, selection, sprites]);
+
   const previewSourceBlob = useMemo(() => {
     if (!meta || selection.kind !== 'source') return null;
+    if (isArcadeFighter && selection.source === 'original') return null;
     return getSourceBlob(meta, selection.source);
-  }, [meta, selection]);
+  }, [isArcadeFighter, meta, selection]);
 
   const previewBlob = selection.kind === 'source'
     ? previewSourceBlob
     : previewSprite?.blob ?? null;
   const previewUrl = useObjectUrl(selection.kind === 'source' ? previewSourceBlob : null);
   const introUrl = useObjectUrl(getPrimaryIntroBlob(intro));
-  const currentStage = stages[currentStageIndex] ?? null;
-  const stagePreviewUrl = useObjectUrl(currentStage?.pngBlob ?? null);
+  const stageEntries = useMemo(() => buildGalleryStageEntries(stages), [stages]);
+  const currentStageEntry = stageEntries[currentStageIndex] ?? null;
+  const currentStage = currentStageEntry?.scope === 'owned' ? currentStageEntry.stage : null;
+  const currentGlobalStage = currentStageEntry?.scope === 'global' ? currentStageEntry.theme : null;
+  const ownedStagePreviewUrl = useObjectUrl(currentStage?.pngBlob ?? null);
+  const stagePreviewUrl = currentGlobalStage?.assetPath ?? ownedStagePreviewUrl;
+  const currentStageLabel = currentGlobalStage?.label ?? currentStage?.label ?? 'PHOTO STAGE';
 
   const safeName = (meta?.characterName || 'fighter').replace(/[^a-z0-9]/gi, '_');
   const selectedAnimName = selection.kind === 'animation' ? selection.animationName : null;
@@ -312,46 +641,170 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   const resumableJob = meta?.cloudFighterId
     ? resumableJobs.find((job) => job.fighterId === meta.cloudFighterId) ?? null
     : null;
-  const characterEmptyMessage = status && status !== 'No fighters or stages yet'
-    ? status
-    : 'Upload a photo to forge your first challenger.';
+  const videoReviewJob = meta?.cloudFighterId
+    ? videoReviewJobs.find((job) => job.fighterId === meta.cloudFighterId) ?? null
+    : null;
+  const pendingFighterSync = meta?.cloudFighterId
+    ? pendingFighterSyncs.find((item) => item.fighterId === meta.cloudFighterId) ?? null
+    : null;
+  const hasGlobalRoster = arcadeFighters.length > 0;
+  const characterEmptyMessage = hasGlobalRoster
+    ? 'Choose a global fighter to load it, or forge your own challenger.'
+    : status && status !== 'No fighters or stages yet'
+      ? status
+      : 'Upload a photo to forge your first challenger.';
+  const stageStatus = status === 'No fighters or stages yet' ? 'Global stages ready' : status;
 
-  const refreshCurrent = async (preferredPhotoHash = meta?.photoHash ?? null) => {
+  useEffect(() => {
+  }, [meta?.photoHash, selectedAnimName]);
+
+  const refreshCurrent = async (
+    preferredPhotoHash = meta?.photoHash ?? null,
+    ownerScope = getActiveSpriteCacheScope(),
+  ) => {
     const currentPhotoHash = preferredPhotoHash;
+    if (currentPhotoHash) selectedPhotoHashRef.current = currentPhotoHash;
+    assetLoadRequestRef.current += 1;
     const [all, allStages, nextSprites, nextIntro] = await Promise.all([
-      getAllCachedMetas(),
-      getAllCachedStageBackgrounds(),
-      currentPhotoHash ? getAllSpritesForHash(currentPhotoHash) : Promise.resolve([]),
-      currentPhotoHash ? getCachedIntro(currentPhotoHash) : Promise.resolve(null),
+      getAllCachedMetas(ownerScope),
+      getAllCachedStageBackgrounds(ownerScope),
+      currentPhotoHash ? getAllSpritesForHash(currentPhotoHash, ownerScope) : Promise.resolve([]),
+      currentPhotoHash ? getCachedIntro(currentPhotoHash, ownerScope) : Promise.resolve(null),
     ]);
-    const filtered = all
-      .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
+    if (getActiveSpriteCacheScope() !== ownerScope) {
+      throw new Error('Fighter cache session changed while loading');
+    }
+    assetLoadRequestRef.current += 1;
+    const filtered = visibleGalleryMetasForJobs(
+      all,
+      arcadeFighters,
+      galleryGenerationJobs,
+      arcadeState === 'ready',
+    )
       .sort((a, b) => b.createdAt - a.createdAt);
     const filteredStages = allStages
       .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
       .sort((a, b) => b.createdAt - a.createdAt);
     setMetas(filtered);
     setStages(filteredStages);
-    const nextIndex = currentPhotoHash ? filtered.findIndex((item) => item.photoHash === currentPhotoHash) : -1;
-    if (nextIndex >= 0) setCurrentIndex(nextIndex);
-    setCurrentStageIndex((current) => Math.min(current, Math.max(0, filteredStages.length - 1)));
+    reconcileCurrentFighterIndex(filtered);
+    setCurrentStageIndex((current) => clampGalleryStageIndex(current, filteredStages.length));
     setSprites(nextSprites);
     setIntro(nextIntro);
+  };
+
+  const selectCachedFighter = (selectedMeta: CachedMeta) => {
+    const index = metas.findIndex((item) => item.photoHash === selectedMeta.photoHash);
+    if (index < 0) return;
+    selectedPhotoHashRef.current = selectedMeta.photoHash;
+    assetLoadRequestRef.current += 1;
+    setSprites([]);
+    setIntro(null);
+    setCurrentIndex(index);
+    setSelection({ kind: 'source', source: defaultSourceForMeta(selectedMeta) });
+  };
+
+  const selectArcadeFighter = async (fighter: CloudFighter) => {
+    const ownerScope = getActiveSpriteCacheScope();
+    const cached = findCachedArcadeMeta(metas, fighter);
+    if (busy) return;
+    checkedArcadeFighterIdsRef.current.add(fighter.id);
+    selectedPhotoHashRef.current = arcadeFighterPhotoHash(fighter);
+    if (cached) selectCachedFighter(cached);
+
+    setBusy(true);
+    setLoadingArcadeId(fighter.id);
+    setStatus(cached
+      ? `Checking ${fighter.name} for global roster updates...`
+      : `Loading ${fighter.name} from the global roster...`);
+    try {
+      const apiContext = captureApiRequestContext();
+      const prepared = await ensureGalleryArcadeFighterReady(fighter, {
+        download: (candidate) => downloadArcadeFighterToLocal(candidate, apiContext, {
+          includeHighResolutionAssets: false,
+        }),
+        getMeta: (hash) => getCachedMeta(hash, ownerScope),
+      });
+      await refreshCurrent(prepared.photoHash, ownerScope);
+      setSelection({ kind: 'source', source: 'side' });
+      setStatus(`${fighter.name} is ready from the global roster`);
+    } catch (err: any) {
+      if (getActiveSpriteCacheScope() === ownerScope) {
+        try {
+          await refreshCurrent(arcadeFighterPhotoHash(fighter), ownerScope);
+        } catch (refreshError: any) {
+          debugWarn('[Gallery] Partial global cache refresh skipped:', refreshError?.message ?? refreshError);
+        }
+        const detail = err?.message ? ` ${err.message}` : '';
+        setStatus(`Could not load every preview for ${fighter.name}.${detail} Select the fighter to retry.`);
+      }
+    } finally {
+      setLoadingArcadeId(null);
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!meta || arcadeState !== 'ready' || busy || loadingArcadeId) return;
+    const fighter = arcadeFighters.find((candidate) => (
+      findCachedArcadeMeta([meta], candidate)?.photoHash === meta.photoHash
+    ));
+    if (!fighter || checkedArcadeFighterIdsRef.current.has(fighter.id)) return;
+    checkedArcadeFighterIdsRef.current.add(fighter.id);
+    void selectArcadeFighter(fighter);
+  }, [arcadeFighters, arcadeState, busy, loadingArcadeId, meta?.photoHash]);
+
+  const rememberPendingFighterSync = (pending: PendingFighterSync) => {
+    setPendingFighterSyncs((current) => [
+      pending,
+      ...current.filter((item) => item.fighterId !== pending.fighterId),
+    ]);
+  };
+
+  const clearPendingFighterSync = (fighterId: string) => {
+    setPendingFighterSyncs((current) => current.filter((item) => item.fighterId !== fighterId));
+  };
+
+  const syncCompletedCloudFighter = async (
+    pending: PendingFighterSync,
+    apiContext: ApiRequestContext,
+    options: {
+      preferredPhotoHash?: string | null;
+      preserveCurrentSelection?: boolean;
+    } = {},
+  ): Promise<CloudFighter> => {
+    rememberPendingFighterSync(pending);
+    const cloud = await getCloudFighter(pending.fighterId, apiContext);
+    if (!cloud?.photoHash) {
+      throw new Error('Completed cloud fighter could not be loaded. No new generation was started.');
+    }
+    await downloadCloudFighterToLocal(cloud, apiContext);
+    const refreshPhotoHash = options.preserveCurrentSelection
+      ? selectedPhotoHashRef.current ?? cloud.photoHash
+      : options.preferredPhotoHash ?? cloud.photoHash;
+    await refreshCurrent(refreshPhotoHash);
+    clearPendingFighterSync(pending.fighterId);
+    return cloud;
   };
 
   const monitorCloudGenerationJob = async (
     initial: GenerationJob,
     apiContext: ApiRequestContext,
     signal: AbortSignal,
+    options: {
+      onTargetChange?: (target: RetryTarget | null) => void;
+      selectCompletedFighter?: boolean;
+    } = {},
   ): Promise<GenerationJob> => {
+    const setTarget = options.onTargetChange ?? setRetryingTarget;
     const target = retryTargetForJob(initial);
-    setRetryingTarget(target);
+    setTarget(target);
     const completed = await waitForGenerationJob(initial.id, {
       context: apiContext,
       signal,
       onUpdate: (next) => {
         const nextTarget = retryTargetForJob(next);
-        setRetryingTarget(nextTarget);
+        setTarget(nextTarget);
         const label = nextTarget?.kind === 'animation'
           ? animLabel(nextTarget.name)
           : nextTarget?.kind === 'source'
@@ -364,6 +817,17 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       },
     });
     if (completed.status !== 'succeeded') {
+      if (completed.creationFlow === 'video' && completed.fullRunRestartRequired) {
+        setVideoReviewJobs((current) => [
+          completed,
+          ...current.filter((job) => job.fighterId !== completed.fighterId),
+        ]);
+        setResumableJobs((current) => (
+          current.filter((job) => job.artifactRunId !== completed.artifactRunId)
+        ));
+        setStatus('The Video run ended safely. Start a new complete run when you are ready.');
+        return completed;
+      }
       if (completed.resumable) {
         setResumableJobs((current) => [
           completed,
@@ -372,52 +836,85 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       }
       throw new Error(completed.errorMessage ?? 'Generation stopped; review the job details or contact support.');
     }
+    if (completed.creationFlow === 'video' && completed.reviewStatus === 'awaiting_review') {
+      setVideoReviewJobs((current) => [
+        completed,
+        ...current.filter((job) => job.fighterId !== completed.fighterId),
+      ]);
+      setResumableJobs((current) => (
+        current.filter((job) => job.artifactRunId !== completed.artifactRunId)
+      ));
+      setStatus(`${animLabel(completed.targetName ?? 'video')} is paused safely for review`);
+      return completed;
+    }
     setResumableJobs((current) => (
       current.filter((job) => job.artifactRunId !== completed.artifactRunId)
     ));
-    const cloud = await getCloudFighter(completed.fighterId, apiContext);
-    if (!cloud?.photoHash) throw new Error('Completed cloud fighter could not be loaded');
-    await downloadCloudFighterToLocal(cloud, apiContext);
-    await refreshCurrent(cloud.photoHash);
+    await syncCompletedCloudFighter({
+      fighterId: completed.fighterId,
+      jobId: completed.id,
+    }, apiContext, {
+      preserveCurrentSelection: options.selectCompletedFighter === false,
+    });
     return completed;
   };
 
   useEffect(() => {
-    if (!recoveryJob) return;
-    let disposed = false;
-    const apiContext = captureApiRequestContext();
-    const controller = new AbortController();
-    generationJobAbortRef.current?.abort();
-    generationJobAbortRef.current = controller;
-    setBusy(true);
-
-    void monitorCloudGenerationJob(recoveryJob, apiContext, controller.signal)
-      .then((completed) => {
-        if (!disposed) {
-          setStatus(completed.targetName ? 'Done and synced' : `${tierLabel(completed.tier)} cloud forge synced`);
-        }
-      })
-      .catch((err: any) => {
-        if (!disposed && !(err instanceof DOMException && err.name === 'AbortError')) {
-          setStatus(err?.message ? `Cloud generation failed: ${err.message}` : 'Cloud generation failed');
-        }
-      })
-      .finally(() => {
-        if (!disposed) {
-          setBusy(false);
-          setRetryingTarget(null);
-          setRecoveryJob(null);
-        }
-      });
-
-    return () => {
-      disposed = true;
+    const activeIds = new Set(recoveryJobs.map((job) => job.id));
+    for (const [jobId, controller] of recoveryJobAbortRefs.current) {
+      if (activeIds.has(jobId)) continue;
       controller.abort();
-      if (generationJobAbortRef.current === controller) generationJobAbortRef.current = null;
-    };
-  }, [recoveryJob?.id]);
+      recoveryJobAbortRefs.current.delete(jobId);
+    }
+
+    for (const recoveryJob of recoveryJobs) {
+      if (recoveryJobAbortRefs.current.has(recoveryJob.id)) continue;
+      const apiContext = captureApiRequestContext();
+      const controller = new AbortController();
+      recoveryJobAbortRefs.current.set(recoveryJob.id, controller);
+      const setRecoveryTarget = (target: RetryTarget | null) => {
+        if (recoveryJobAbortRefs.current.get(recoveryJob.id) !== controller) return;
+        setRecoveryRetryingTargets((current) => {
+          const next = { ...current };
+          if (target) next[recoveryJob.fighterId] = target;
+          else delete next[recoveryJob.fighterId];
+          return next;
+        });
+      };
+
+      void monitorCloudGenerationJob(recoveryJob, apiContext, controller.signal, {
+        onTargetChange: setRecoveryTarget,
+        selectCompletedFighter: false,
+      })
+        .then((completed) => {
+          if (recoveryJobAbortRefs.current.get(recoveryJob.id) !== controller) return;
+          setStatus(
+            completed.creationFlow === 'video' && completed.fullRunRestartRequired
+              ? 'The Video run ended safely. Start a new complete run when you are ready.'
+              : completed.creationFlow === 'video' && completed.reviewStatus === 'awaiting_review'
+              ? 'A video action is paused safely for your review'
+              : completed.targetName ? 'Done and synced' : `${tierLabel(completed.tier)} cloud forge synced`,
+          );
+        })
+        .catch((err: any) => {
+          if (
+            recoveryJobAbortRefs.current.get(recoveryJob.id) === controller &&
+            !(err instanceof DOMException && err.name === 'AbortError')
+          ) {
+            setStatus(err?.message ? `Cloud generation failed: ${err.message}` : 'Cloud generation failed');
+          }
+        })
+        .finally(() => {
+          if (recoveryJobAbortRefs.current.get(recoveryJob.id) !== controller) return;
+          setRecoveryTarget(null);
+          recoveryJobAbortRefs.current.delete(recoveryJob.id);
+          setRecoveryJobs((current) => current.filter((job) => job.id !== recoveryJob.id));
+        });
+    }
+  }, [recoveryJobs]);
 
   const resumeCloudGeneration = async (failedJob: GenerationJob) => {
+    if (cloudSyncPending) return;
     if (!legalAccepted) {
       setStatus('Accept the generation terms to resume preserved work');
       return;
@@ -426,7 +923,10 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setBusy(true);
     setStatus(`Restoring ${failedJob.preservedArtifactCount} completed stages without charging credits...`);
     const apiContext = captureApiRequestContext();
+    let purchaseId: string | undefined;
+    let backendOwnsPurchase = false;
     try {
+      const creationFlow = creationFlowForResume(failedJob.creationFlow);
       const authorization = await authorizeGeneration(
         failedJob.tier,
         failedJob.operation,
@@ -435,6 +935,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         currentGenerationLegalAttestation(),
         apiContext,
         failedJob.id,
+        creationFlow,
       );
       if (
         !authorization.authorized ||
@@ -444,19 +945,30 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       ) {
         throw new Error(authorization.error ?? 'Preserved generation could not be resumed');
       }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged(creationFlow, authorization.creationFlow);
       const job = await startGenerationJob({
         fighterId: failedJob.fighterId,
         purchaseId: authorization.purchaseId,
         providerSessionId: authorization.providerSessionId,
+        creationFlow,
         targetKind: failedJob.targetKind ?? undefined,
         targetName: failedJob.targetName ?? undefined,
       }, apiContext);
+      backendOwnsPurchase = true;
       const controller = new AbortController();
       generationJobAbortRef.current?.abort();
       generationJobAbortRef.current = controller;
       const completed = await monitorCloudGenerationJob(job, apiContext, controller.signal);
       setStatus(completed.targetName ? 'Done and synced' : `${tierLabel(completed.tier)} upgrade synced`);
     } catch (err: any) {
+      if (purchaseId && !backendOwnsPurchase) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, failedJob.fighterId, apiContext);
+        } catch (releaseErr: any) {
+          debugWarn('[Billing] Failed to release resume authorization:', releaseErr?.message ?? releaseErr);
+        }
+      }
       setStatus(err?.message ? `Resume failed: ${err.message}` : 'Resume failed');
     } finally {
       setBusy(false);
@@ -464,25 +976,210 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     }
   };
 
-  const runRetry = async (
+  const continueApprovedVideoJob = async (approvedJob: GenerationJob) => {
+    if (cloudSyncPending) return;
+    if (!legalAccepted) {
+      setStatus('Accept the generation terms to continue the video flow');
+      return;
+    }
+    setBusy(true);
+    setStatus('Preparing the next video action without charging more credits...');
+    const apiContext = captureApiRequestContext();
+    let purchaseId: string | undefined;
+    let backendOwnsPurchase = false;
+    try {
+      const authorization = await authorizeGeneration(
+        approvedJob.tier,
+        approvedJob.operation,
+        approvedJob.fighterId,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+        approvedJob.id,
+        'video',
+      );
+      if (
+        !authorization.authorized || authorization.mode !== 'continuation' ||
+        !authorization.purchaseId || !authorization.providerSessionId
+      ) {
+        throw new Error(authorization.error ?? 'The next video action could not be authorized');
+      }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('video', authorization.creationFlow);
+      const nextJob = await startGenerationJob({
+        fighterId: approvedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        creationFlow: 'video',
+      }, apiContext);
+      backendOwnsPurchase = true;
+      setVideoReviewJobs((current) => current.filter((job) => job.id !== approvedJob.id));
+      const controller = new AbortController();
+      generationJobAbortRef.current?.abort();
+      generationJobAbortRef.current = controller;
+      await monitorCloudGenerationJob(nextJob, apiContext, controller.signal);
+    } catch (cause) {
+      if (purchaseId && !backendOwnsPurchase) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, approvedJob.fighterId, apiContext);
+        } catch (settlementError: any) {
+          debugWarn(
+            '[Billing] Video continuation could not be released:',
+            settlementError?.message ?? settlementError,
+          );
+        }
+      }
+      setStatus(cause instanceof Error ? `Video continuation failed: ${cause.message}` : 'Video continuation failed');
+    } finally {
+      setBusy(false);
+      setRetryingTarget(null);
+    }
+  };
+
+  const restartRejectedVideoRun = (rejectedJob: GenerationJob) => {
+    if (cloudSyncPending) return;
+    if (!legalAccepted) {
+      setStatus('Accept the generation terms to start a new complete Video run');
+      return;
+    }
+    const creditCost = QUALITY_TIERS.find((item) => item.id === rejectedJob.tier)?.creditCost ?? 18;
+    setConfirmRequest({
+      title: 'New Complete Video Run',
+      body: `Start a new complete Video run for ${creditCost} credits? The rejected run stays archived and will not be reused.`,
+      confirmLabel: `Start Run · ${creditCost} credits`,
+      variant: 'primary',
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void executeRestartRejectedVideoRun(rejectedJob);
+      },
+    });
+  };
+
+  const executeRestartRejectedVideoRun = async (rejectedJob: GenerationJob) => {
+    setBusy(true);
+    setStatus('Preparing a new complete Video run...');
+    const apiContext = captureApiRequestContext();
+    let purchaseId: string | undefined;
+    let backendOwnsPurchase = false;
+    try {
+      const authorization = await authorizeGeneration(
+        rejectedJob.tier,
+        'fighter_generation',
+        rejectedJob.fighterId,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+        null,
+        'video',
+      );
+      if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
+        throw new Error(authorization.error ?? 'A new complete Video run could not be authorized');
+      }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('video', authorization.creationFlow);
+      const nextJob = await startGenerationJob({
+        fighterId: rejectedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        creationFlow: 'video',
+      }, apiContext);
+      backendOwnsPurchase = true;
+      setVideoReviewJobs((current) => current.filter((job) => job.id !== rejectedJob.id));
+      const controller = new AbortController();
+      generationJobAbortRef.current?.abort();
+      generationJobAbortRef.current = controller;
+      await monitorCloudGenerationJob(nextJob, apiContext, controller.signal);
+    } catch (cause) {
+      if (purchaseId && !backendOwnsPurchase) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, rejectedJob.fighterId, apiContext);
+        } catch (settlementError: any) {
+          debugWarn(
+            '[Billing] New Video run reservation could not be released:',
+            settlementError?.message ?? settlementError,
+          );
+        }
+      }
+      setStatus(cause instanceof Error ? `New Video run failed: ${cause.message}` : 'New Video run failed');
+    } finally {
+      setBusy(false);
+      setRetryingTarget(null);
+    }
+  };
+
+  const finishApprovedVideoFighter = async (approvedJob: GenerationJob) => {
+    if (cloudSyncPending) return;
+    setBusy(true);
+    setStatus('All video actions approved. Syncing your private fighter...');
+    const apiContext = captureApiRequestContext();
+    try {
+      await syncCompletedCloudFighter({
+        fighterId: approvedJob.fighterId,
+        jobId: approvedJob.id,
+      }, apiContext);
+      setVideoReviewJobs((current) => current.filter((job) => job.fighterId !== approvedJob.fighterId));
+      setStatus('All video actions approved, private, and synced');
+    } catch (cause) {
+      setStatus(cause instanceof Error ? `Approved fighter sync failed: ${cause.message}` : 'Approved fighter sync failed');
+      throw cause;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const retryPendingFighterSync = async (pending: PendingFighterSync) => {
+    if (busy) return;
+    setBusy(true);
+    setStatus('Generation is complete. Downloading this fighter to the device...');
+    try {
+      await syncCompletedCloudFighter(
+        pending,
+        captureApiRequestContext(),
+        { preferredPhotoHash: meta?.photoHash ?? null },
+      );
+      setVideoReviewJobs((current) => current.filter((job) => job.fighterId !== pending.fighterId));
+      setStatus('Fighter synced to this device');
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : 'Fighter download failed';
+      setStatus(`Fighter sync failed: ${detail}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runRetry = (
     action: (context: ApiRequestContext) => Promise<void>,
     nextStatus: string,
     target: RetryTarget,
     operation: GenerationBillingOperation,
     creditCost: number,
   ) => {
-    if (!meta) return;
+    if (!meta || !ownerActionsReady) return;
     if (!legalAccepted) {
       setStatus('Accept the generation terms to continue');
       return;
     }
     const retryLabel = target.kind === 'animation' ? animLabel(target.name) : `${target.key} source`;
     const creditLabel = creditCost === 1 ? 'credit' : 'credits';
-    if (!window.confirm(
-      `Regenerate ${retryLabel} for ${creditCost} ${creditLabel}? Existing versions will be kept.`,
-    )) {
-      return;
-    }
+    setConfirmRequest({
+      title: `Regenerate ${retryLabel}`,
+      body: `Regenerate ${retryLabel} for ${creditCost} ${creditLabel}? Existing versions will be kept.`,
+      confirmLabel: `Regenerate · ${creditCost} ${creditLabel}`,
+      variant: 'primary',
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void executeRetry(action, nextStatus, target, operation);
+      },
+    });
+  };
+
+  const executeRetry = async (
+    action: (context: ApiRequestContext) => Promise<void>,
+    nextStatus: string,
+    target: RetryTarget,
+    operation: GenerationBillingOperation,
+  ) => {
+    if (!meta || !ownerActionsReady) return;
     clearDebugLog();
     setBusy(true);
     setRetryingTarget(target);
@@ -508,11 +1205,14 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         null,
         currentGenerationLegalAttestation(),
         apiContext,
+        null,
+        'original',
       );
       if (!authorization.authorized) {
         throw new Error(authorization.error ?? 'Generation not authorized');
       }
       purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('original', authorization.creationFlow);
       if (
         authStatus === 'signed-in' &&
         fighterId &&
@@ -523,6 +1223,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           fighterId,
           purchaseId: authorization.purchaseId,
           providerSessionId: authorization.providerSessionId,
+          creationFlow: 'original',
           targetKind: target.kind,
           targetName: target.kind === 'animation' ? target.name : target.key,
         }, apiContext);
@@ -530,8 +1231,12 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
         const controller = new AbortController();
         generationJobAbortRef.current?.abort();
         generationJobAbortRef.current = controller;
-        await monitorCloudGenerationJob(job, apiContext, controller.signal);
-        setStatus('Done and synced');
+        const completed = await monitorCloudGenerationJob(job, apiContext, controller.signal);
+        setStatus(
+          completed.creationFlow === 'video' && completed.reviewStatus === 'awaiting_review'
+            ? 'A video action is paused safely for your review'
+            : 'Done and synced',
+        );
         return;
       }
       await runWithProviderSession(authorization.providerSessionId, action, apiContext);
@@ -568,65 +1273,85 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     }
   };
 
-  const retryingAnim = retryingTarget?.kind === 'animation' ? retryingTarget.name : null;
-  const retryingSource = retryingTarget?.kind === 'source' ? retryingTarget.key : null;
+  const currentRecoveryRetryingTarget = meta?.cloudFighterId
+    ? recoveryRetryingTargets[meta.cloudFighterId] ?? null
+    : null;
+  const visibleRetryingTarget = currentRecoveryJobBusy ? currentRecoveryRetryingTarget : retryingTarget;
+  const retryingAnim = visibleRetryingTarget?.kind === 'animation' ? visibleRetryingTarget.name : null;
+  const retryingSource = visibleRetryingTarget?.kind === 'source' ? visibleRetryingTarget.key : null;
+  const currentFighterActionBusy = currentFighterBusy || Boolean(pendingFighterSync);
 
   const hasOutdatedSprites = sprites.some((sprite) => (sprite.processingVersion ?? 0) < SPRITE_PROCESSING_VERSION);
 
-  const renameFighter = async () => {
-    if (!meta) return;
-    const nextName = window.prompt('Fighter name', meta.characterName);
-    if (!nextName || !nextName.trim() || nextName.trim() === meta.characterName) return;
+  const renameFighter = () => {
+    if (!meta || !ownerActionsReady) return;
+    setRenameDraft(meta.characterName);
+    setRenameRequest({ kind: 'fighter', current: meta.characterName });
+  };
+
+  const executeRenameFighter = async (nextName: string) => {
+    if (!meta || !ownerActionsReady) return;
+    if (!nextName.trim() || nextName.trim() === meta.characterName) return;
     const trimmedName = nextName.trim();
     setBusy(true);
     setStatus('Renaming...');
     const apiContext = captureApiRequestContext();
     try {
-      await renameCharacter(meta.photoHash, trimmedName);
-      let cloudRenamed = false;
-      if (meta.cloudFighterId) {
-        const updated = await renameCloudFighter(meta.cloudFighterId, trimmedName, apiContext);
-        cloudRenamed = Boolean(updated);
-      }
+      await renameFighterCloudFirst(meta, trimmedName, {
+        renameCloud: (fighterId, name) => renameCloudFighter(fighterId, name, apiContext),
+        renameCache: (photoHash, name) => renameCharacter(photoHash, name),
+      });
       await refreshCurrent();
-      setStatus(meta.cloudFighterId && !cloudRenamed ? 'Fighter renamed locally; cloud update skipped' : 'Fighter renamed');
+      setStatus('Fighter renamed');
     } catch (err: any) {
-      setStatus(err?.message ? `Rename failed: ${err.message}` : 'Rename failed');
+      setStatus(err instanceof CloudFirstRenameCacheError
+        ? 'Fighter renamed in cloud. The preview cache will refresh when Gallery reloads.'
+        : err?.message ? `Rename failed: ${err.message}` : 'Rename failed');
     } finally {
       setBusy(false);
     }
   };
 
-  const deleteFighter = async () => {
-    if (!meta) return;
-    if (!window.confirm(`Delete "${meta.characterName}"? This wipes sprites, intro video, and metadata. Cannot be undone.`)) {
-      return;
-    }
+  const deleteFighter = () => {
+    if (!meta || !ownerActionsReady) return;
+    setConfirmRequest({
+      title: `Delete ${meta.characterName}`,
+      body: `Delete "${meta.characterName}"? This wipes sprites, intro video, and metadata. Cannot be undone.`,
+      confirmLabel: 'Delete Fighter',
+      variant: 'danger',
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void executeDeleteFighter();
+      },
+    });
+  };
+
+  const executeDeleteFighter = async () => {
+    if (!meta || !ownerActionsReady) return;
     const removedHash = meta.photoHash;
     setBusy(true);
     setStatus(`Deleting ${meta.characterName}...`);
     const apiContext = captureApiRequestContext();
     try {
-      let cloudDeleteStatus: 'synced' | 'signed_out' | 'failed' | null = null;
+      let confirmedCloudDelete: Awaited<ReturnType<typeof deleteCloudFighter>> | null = null;
       if (meta.cloudFighterId) {
         const cloudDelete = await deleteCloudFighter(meta.cloudFighterId, apiContext);
-        cloudDeleteStatus = cloudDelete.status;
-        if (cloudDelete.status === 'failed') {
-          throw new Error(cloudDelete.message ?? 'Cloud delete failed');
-        }
+        confirmedCloudDelete = cloudDelete;
       }
-      await deleteCharacter(removedHash);
+      await deleteFighterCacheAfterCloudConfirmation(
+        removedHash,
+        confirmedCloudDelete,
+        deleteCharacter,
+      );
       const nextMetas = metas.filter((item) => item.photoHash !== removedHash);
       setMetas(nextMetas);
-      setCurrentIndex((current) => Math.min(current, Math.max(0, nextMetas.length - 1)));
+      const nextIndex = Math.min(currentIndex, Math.max(0, nextMetas.length - 1));
+      selectedPhotoHashRef.current = nextMetas[nextIndex]?.photoHash ?? null;
+      setCurrentIndex(nextIndex);
       setSprites([]);
       setIntro(null);
       setSelection({ kind: 'source', source: 'original' });
-      setStatus(
-        cloudDeleteStatus === 'signed_out'
-          ? 'Fighter deleted locally; sign in to delete cloud copy'
-          : nextMetas.length > 0 ? 'Fighter deleted' : 'No fighters left',
-      );
+      setStatus(nextMetas.length > 0 ? 'Fighter deleted' : 'No fighters left');
     } catch (err: any) {
       setStatus(err?.message ? `Delete failed: ${err.message}` : 'Delete failed');
     } finally {
@@ -634,11 +1359,22 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     }
   };
 
-  const rebuildHd = async () => {
-    if (!meta) return;
-    if (!window.confirm(`Rebuild all sprites for "${meta.characterName}" at HD resolution for free? Animations without a cached raw blob will be skipped.`)) {
-      return;
-    }
+  const rebuildHd = () => {
+    if (!meta || !ownerActionsReady) return;
+    setConfirmRequest({
+      title: 'Rebuild HD',
+      body: `Rebuild all sprites for "${meta.characterName}" at HD resolution for free? Animations without a cached raw blob will be skipped.`,
+      confirmLabel: 'Rebuild HD · Free',
+      variant: 'primary',
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void executeRebuildHd();
+      },
+    });
+  };
+
+  const executeRebuildHd = async () => {
+    if (!meta || !ownerActionsReady) return;
     clearDebugLog();
     setBusy(true);
     setStatus('Rebuilding at HD...');
@@ -685,7 +1421,9 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     setStatus('Saving all sprites...');
     try {
       const sources: Array<[string, Blob | null | undefined]> = [
-        ['original', meta.originalPhotoBlob],
+        ...(!isArcadeFighter
+          ? [['original', meta.originalPhotoBlob] as [string, Blob | null | undefined]]
+          : []),
         ['side', meta.sideViewBlob],
         ['upright', meta.uprightViewBlob],
         ['crouch', meta.crouchViewBlob],
@@ -705,7 +1443,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const syncCloud = async () => {
-    if (!meta) return;
+    if (!meta || !ownerActionsReady) return;
     setBusy(true);
     setStatus('Syncing cloud roster...');
     const apiContext = captureApiRequestContext();
@@ -727,7 +1465,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const togglePublic = async () => {
-    if (!meta) return;
+    if (!meta || !ownerActionsReady) return;
     setBusy(true);
     const nextPublic = !meta.cloudPublic;
     setStatus(nextPublic ? 'Publishing fighter...' : 'Making fighter private...');
@@ -764,6 +1502,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
   };
 
   const sharePublishedFighter = async () => {
+    if (!ownerActionsReady) return;
     if (!meta?.cloudFighterId) {
       setStatus('Sync cloud before sharing this fighter');
       return;
@@ -776,13 +1515,14 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     } else if (share.mode === 'cancelled') {
       setStatus('Community share cancelled');
     } else {
-      window.prompt('Share fighter link', share.url);
+      setShareLinkError(null);
+      setShareLinkUrl(share.url);
       setStatus('Community share link ready');
     }
   };
 
   const upgradeToTier = async (toTier: QualityTier) => {
-    if (!meta || !legalAccepted) return;
+    if (!meta || !ownerActionsReady || !legalAccepted) return;
     const tier = QUALITY_TIERS.find((item) => item.id === toTier);
     if (!tier) return;
     clearDebugLog();
@@ -900,10 +1640,15 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     }
   };
 
-  const renameStage = async () => {
+  const renameStage = () => {
     if (!currentStage) return;
-    const nextName = window.prompt('Stage name', currentStage.label ?? 'PHOTO STAGE');
-    if (!nextName || !nextName.trim()) return;
+    setRenameDraft(currentStage.label ?? 'PHOTO STAGE');
+    setRenameRequest({ kind: 'stage', current: currentStage.label ?? 'PHOTO STAGE' });
+  };
+
+  const executeRenameStage = async (nextName: string) => {
+    if (!currentStage) return;
+    if (!nextName.trim()) return;
     setBusy(true);
     setStatus('Renaming stage...');
     try {
@@ -917,9 +1662,42 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     }
   };
 
-  const deleteStage = async () => {
+  const deleteStage = () => {
     if (!currentStage) return;
-    if (!window.confirm(`Delete stage "${currentStage.label ?? 'PHOTO STAGE'}"?`)) return;
+    setConfirmRequest({
+      title: 'Delete Stage',
+      body: `Delete stage "${currentStage.label ?? 'PHOTO STAGE'}"?`,
+      confirmLabel: 'Delete Stage',
+      variant: 'danger',
+      onConfirm: () => {
+        setConfirmRequest(null);
+        void executeDeleteStage();
+      },
+    });
+  };
+
+  const saveCurrentStagePng = async () => {
+    if (currentStage) {
+      const filename = `${(currentStage.label ?? 'photo_stage')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/gi, '_')
+        .replace(/^_+|_+$/g, '') || 'photo_stage'}.png`;
+      downloadBlob(currentStage.pngBlob, filename);
+      return;
+    }
+    if (!currentGlobalStage) return;
+
+    try {
+      const response = await fetch(currentGlobalStage.assetPath);
+      if (!response.ok) throw new Error(`Stage asset returned ${response.status}`);
+      downloadBlob(await response.blob(), `${currentGlobalStage.id}.png`);
+    } catch (err: any) {
+      setStatus(err?.message ? `Download failed: ${err.message}` : 'Download failed');
+    }
+  };
+
+  const executeDeleteStage = async () => {
+    if (!currentStage) return;
     setBusy(true);
     setStatus('Deleting stage...');
     try {
@@ -939,77 +1717,68 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
     <div className="gallery-app">
       <aside className="gallery-sidebar">
         <div className="gallery-sidebar__header">
-          <div>
-            <p className="gallery-eyebrow">Archive</p>
-            <h1>Training Room</h1>
-          </div>
-          <button className="gallery-back" onClick={onBack}>
-            Back
-          </button>
+          <h1>Training Room</h1>
+          <Button onClick={onBack}>Back</Button>
         </div>
 
         <div className="gallery-tab-row">
           <button
+            type="button"
             className={`gallery-tab${activeTab === 'characters' ? ' is-active' : ''}`}
+            aria-pressed={activeTab === 'characters'}
             onClick={() => setActiveTab('characters')}
           >
             Characters
           </button>
           <button
+            type="button"
             className={`gallery-tab${activeTab === 'stages' ? ' is-active' : ''}`}
+            aria-pressed={activeTab === 'stages'}
             onClick={() => setActiveTab('stages')}
           >
             Stages
           </button>
         </div>
 
-        <button className="home-menu__action is-primary" onClick={onCreateFighter}>
-          <span>New Fighter</span>
-          <small>Upload A Photo</small>
+        <button
+          type="button"
+          className="home-menu__action is-primary"
+          onClick={activeTab === 'characters' ? onCreateFighter : onCreateStage}
+        >
+          <span>{activeTab === 'characters' ? 'New Fighter' : 'New Stage'}</span>
+          <small>{activeTab === 'characters' ? 'Upload A Photo' : 'Scout Google Street View'}</small>
         </button>
 
         {activeTab === 'characters' ? (
-          <div className="gallery-sidebar__list">
-            {metas.map((item, index) => (
-              <button
-                key={item.photoHash}
-                className={`gallery-fighter-card${index === currentIndex ? ' is-active' : ''}`}
-                onClick={() => {
-                  setCurrentIndex(index);
-                  setSelection({ kind: 'source', source: 'original' });
-                }}
-              >
-                <span className="gallery-fighter-card__name">{item.characterName}</span>
-                <span className="gallery-fighter-card__meta">
-                  {tierLabel(item.qualityTier)} · {formatDate(item.createdAt)} · {item.animationsReady.length} anims
-                </span>
-              </button>
-            ))}
-          </div>
+          <GalleryFighterList
+            metas={metas}
+            arcadeFighters={arcadeFighters}
+            selectedPhotoHash={meta?.photoHash ?? null}
+            loadingArcadeId={loadingArcadeId}
+            disabled={busy || arcadeState === 'loading'}
+            arcadeState={arcadeState}
+            onSelectMeta={selectCachedFighter}
+            onSelectArcade={(fighter) => void selectArcadeFighter(fighter)}
+          />
         ) : (
-          <div className="gallery-sidebar__list">
-            {stages.map((stage, index) => (
-              <button
-                key={stage.stageKey}
-                className={`gallery-fighter-card${index === currentStageIndex ? ' is-active' : ''}`}
-                onClick={() => setCurrentStageIndex(index)}
-              >
-                <span className="gallery-fighter-card__name">{(stage.label ?? 'PHOTO STAGE').toUpperCase()}</span>
-                <span className="gallery-fighter-card__meta">
-                  {formatDate(stage.createdAt)} · {stage.kind === 'photo-direct' ? 'direct photo' : 'forged'}
-                </span>
-              </button>
-            ))}
-          </div>
+          <GalleryStageList
+            entries={stageEntries}
+            selectedIndex={currentStageIndex}
+            disabled={busy}
+            onSelect={setCurrentStageIndex}
+          />
         )}
       </aside>
 
       <main className="gallery-main">
         {activeTab === 'characters' ? !meta ? (
           <section className="gallery-empty">
-            <h2>No Fighters Yet</h2>
+            <h2>{hasGlobalRoster ? 'Choose a Fighter' : 'No Fighters Yet'}</h2>
             <p>{characterEmptyMessage}</p>
-            <button className="home-menu__action is-primary" onClick={onCreateFighter}>
+            {hasGlobalRoster && status !== 'Ready' ? (
+              <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
+            ) : null}
+            <button type="button" className="home-menu__action is-primary" onClick={onCreateFighter}>
               <span>Forge Fighter</span>
               <small>Start The Pipeline</small>
             </button>
@@ -1018,75 +1787,110 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
           <>
             <header className="gallery-hero">
               <div>
-                <p className="gallery-eyebrow">
-                  Fighter {currentIndex + 1} / {metas.length}
-                </p>
-                <h2>{meta.characterName}</h2>
+                <h2>
+                  {meta.characterName}
+                  <TierBadge tier={currentTier} className="gallery-hero__badge" />
+                </h2>
                 <p className="gallery-hero__meta">
-                  Status: {meta.status} · Tier {tierLabel(currentTier)} · Created {formatDate(meta.createdAt)} · Hash {meta.photoHash.slice(0, 10)}...
+                  {isArcadeFighter
+                    ? `Global roster · ${meta.animationsReady.length} animations ready`
+                    : `Your fighter · Status ${meta.status} · Created ${formatDate(meta.createdAt)}`}
                 </p>
               </div>
               <div className="roster-hero__actions">
                 <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
-                {resumableJob ? (
-                  <button
-                    className="gallery-back"
-                    disabled={busy || !legalAccepted}
-                    onClick={() => void resumeCloudGeneration(resumableJob)}
-                  >
-                    Resume Preserved Work · Free
-                  </button>
-                ) : null}
-                {upgradeOptions.map((tier) => (
-                  <button
-                    key={tier.id}
-                    className="gallery-back"
-                    disabled={busy || !legalAccepted}
-                    onClick={() => setPendingUpgradeTier(tier.id)}
-                  >
-                    {tier.label} {tier.priceLabel}
-                  </button>
-                ))}
-                {hasOutdatedSprites ? (
-                  <button className="gallery-back" disabled={busy} onClick={() => void rebuildHd()}>
-                    Rebuild HD · Free
-                  </button>
-                ) : null}
-                <button className="gallery-back" disabled={busy} onClick={() => void saveAll()}>
-                  Save All
-                </button>
-                <button className="gallery-back" disabled={busy} onClick={() => void syncCloud()}>
-                  Sync Cloud
-                </button>
-                <button
-                  className="gallery-back"
-                  disabled={busy}
-                  onClick={() => {
-                    if (meta.cloudPublic) void togglePublic();
-                    else setPublishConfirmOpen(true);
-                  }}
-                >
-                  {meta.cloudPublic ? 'Unpublish' : 'Publish'}
-                </button>
-                {meta.cloudPublic && meta.cloudFighterId ? (
-                  <button className="gallery-back" disabled={busy} onClick={() => void sharePublishedFighter()}>
-                    Share Link
-                  </button>
-                ) : null}
-                <button className="gallery-back" disabled={busy} onClick={() => void renameFighter()}>
-                  Rename
-                </button>
-                <button className="gallery-back" disabled={busy} onClick={() => void deleteFighter()}>
-                  Delete
-                </button>
+                <div className="asf-toolbar">
+                  {ownerActionsReady && pendingFighterSync ? (
+                    <Button
+                      disabled={currentFighterBusy}
+                      onClick={() => void retryPendingFighterSync(pendingFighterSync)}
+                    >
+                      {currentFighterBusy ? 'Syncing Fighter...' : 'Retry Fighter Sync'}
+                    </Button>
+                  ) : null}
+                  {ownerActionsReady && resumableJob ? (
+                    <Button
+                      disabled={currentFighterActionBusy || !legalAccepted}
+                      onClick={() => void resumeCloudGeneration(resumableJob)}
+                    >
+                      Resume Preserved Work · Free
+                    </Button>
+                  ) : null}
+                  {ownerActionsReady ? upgradeOptions.map((tier, index) => (
+                    <Button
+                      key={tier.id}
+                      variant={index === 0 ? 'primary' : 'secondary'}
+                      disabled={currentFighterActionBusy || !legalAccepted}
+                      onClick={() => setPendingUpgradeTier(tier.id)}
+                    >
+                      Upgrade to {tier.label} · {tier.priceLabel}
+                    </Button>
+                  )) : null}
+                  {ownerActionsReady && hasOutdatedSprites ? (
+                    <Button disabled={currentFighterActionBusy} onClick={() => rebuildHd()}>
+                      Rebuild HD · Free
+                    </Button>
+                  ) : null}
+                  {ownerActionsReady ? (
+                    <>
+                      <Button disabled={currentFighterActionBusy} onClick={() => void syncCloud()}>
+                        Sync Cloud
+                      </Button>
+                      <Button
+                        disabled={currentFighterActionBusy}
+                        onClick={() => {
+                          if (meta.cloudPublic) void togglePublic();
+                          else setPublishConfirmOpen(true);
+                        }}
+                      >
+                        {meta.cloudPublic ? 'Unpublish' : 'Publish'}
+                      </Button>
+                      {meta.cloudPublic && meta.cloudFighterId ? (
+                        <Button variant="ghost" disabled={currentFighterBusy} onClick={() => void sharePublishedFighter()}>
+                          Share Link
+                        </Button>
+                      ) : null}
+                    </>
+                  ) : null}
+                  <Button variant="ghost" disabled={currentFighterBusy} onClick={() => void saveAll()}>
+                    Save All
+                  </Button>
+                  {ownerActionsReady ? (
+                    <>
+                      <Button variant="ghost" disabled={currentFighterActionBusy} onClick={() => renameFighter()}>
+                        Rename
+                      </Button>
+                      <Button variant="danger" disabled={currentFighterActionBusy} onClick={() => deleteFighter()}>
+                        Delete
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
               </div>
             </header>
 
-            <GenerationConsent
-              checked={legalAccepted}
-              disabled={busy}
-              onChange={setLegalAccepted}
-            />
+            {!isArcadeFighter ? (
+              <GenerationConsent
+                checked={legalAccepted}
+                disabled={currentFighterBusy}
+                onChange={setLegalAccepted}
+                onNavigate={onNavigateLegal}
+              />
+            ) : null}
+
+            {ownerActionsReady && videoReviewJob ? (
+              <VideoGenerationReviewGate
+                jobId={videoReviewJob.id}
+                disabled={currentFighterBusy}
+                fullRunRestartRequired={videoReviewJob.fullRunRestartRequired}
+                onContinue={() => continueApprovedVideoJob(videoReviewJob)}
+                onFinalApproval={() => finishApprovedVideoFighter(videoReviewJob)}
+                onRestart={() => restartRejectedVideoRun(videoReviewJob)}
+                onRejected={() => {
+                  setStatus('Video rejected. It remains private and no additional provider call was made.');
+                }}
+              />
+            ) : null}
 
             <section className="gallery-layout">
               <div className="gallery-column--side">
@@ -1097,7 +1901,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                     onSelectSource={(source) => setSelection({ kind: 'source', source })}
                     regeneratingSource={retryingSource}
                     retryCreditCost={SOURCE_RETRY_CREDIT_COST}
-                    onRetry={{
+                    onRetry={!ownerActionsReady ? undefined : {
                       side: () => runRetry(
                         (context) => retrySideView(meta.photoHash, () => {}, context),
                         'Retrying side view...',
@@ -1120,7 +1924,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                         SOURCE_RETRY_CREDIT_COST,
                       ),
                     }}
-                    busy={busy || !legalAccepted}
+                    busy={currentFighterActionBusy || !legalAccepted}
                   />
 
                   {introUrl ? (
@@ -1136,21 +1940,22 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                   <AnimationGrid
                     sprites={sprites}
                     failedArtifacts={meta.failedAnimationArtifacts ?? null}
-                    generating={retryingAnim ? new Set([retryingAnim]) : undefined}
+                    generating={currentFighterBusy && retryingAnim ? new Set([retryingAnim]) : undefined}
                     selectedName={selectedAnimName}
                     onSelect={(animationName) => setSelection({ kind: 'animation', animationName })}
                   />
-                  <DebugFeed />
+                  {!isArcadeFighter ? <DebugFeed /> : null}
                 </div>
               </div>
 
               <div className="gallery-panel gallery-panel--preview">
                 <div className="gallery-preview__header">
                   <div>
-                    <p className="gallery-eyebrow">Preview</p>
                     <h3>
                       {selection.kind === 'source'
-                        ? selection.source.toUpperCase()
+                        ? selection.source === 'original' && isArcadeFighter
+                          ? 'PRIVATE REFERENCE'
+                          : selection.source.toUpperCase()
                         : animLabel(selection.animationName)}
                     </h3>
                   </div>
@@ -1161,7 +1966,7 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                     sourceImageUrl={selection.kind === 'source' ? previewUrl : null}
                     sprite={selection.kind === 'animation' ? previewSprite : null}
                     loading={
-                      busy &&
+                      currentFighterBusy &&
                       ((selection.kind === 'animation' && retryingAnim !== null && selection.animationName === retryingAnim) ||
                         (selection.kind === 'source' && retryingSource !== null && selection.source === retryingSource))
                     }
@@ -1172,31 +1977,36 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                           ? `Rebuilding ${retryingSource.toUpperCase()} view`
                           : 'Loading'
                     }
-                    emptyLabel={selection.kind === 'source' ? 'Missing source' : 'No preview for this animation yet'}
+                    emptyLabel={selection.kind === 'source'
+                      ? selection.source === 'original' && isArcadeFighter
+                        ? 'Original reference is private'
+                        : 'Missing source'
+                      : 'No preview for this animation yet'}
                   />
                 </div>
 
                 <div className="gallery-actions">
                   {previewBlob ? (
-                    <button onClick={() => downloadBlob(previewBlob, `${safeName}_${selection.kind === 'source' ? selection.source : selection.animationName}.png`)}>
+                    <button type="button" onClick={() => downloadBlob(previewBlob, `${safeName}_${selection.kind === 'source' ? selection.source : selection.animationName}.png`)}>
                       Save PNG
                     </button>
                   ) : null}
                   {selectedAnimName && sprites.some((item) => item.animationName === selectedAnimName) ? (
-                    <button disabled={busy} onClick={() => void saveGif()}>
+                    <button type="button" disabled={currentFighterBusy} onClick={() => void saveGif()}>
                       Save GIF
                     </button>
                   ) : null}
-                  {previewSprite?.rawBlob ? (
-                    <button onClick={() => downloadBlob(previewSprite.rawBlob!, `${safeName}_${selectedAnimName}_RAW.png`)}>
+                  {previewSprite?.rawBlob && !isArcadeFighter ? (
+                    <button type="button" onClick={() => downloadBlob(previewSprite.rawBlob!, `${safeName}_${selectedAnimName}_RAW.png`)}>
                       Save RAW
                     </button>
                   ) : null}
-                  {selectedAnimName ? (
+                  {selectedAnimName && ownerActionsReady ? (
                     <button
-                      disabled={busy}
+                      type="button"
+                      disabled={currentFighterActionBusy}
                       onClick={() =>
-                        void runRetry(
+                        runRetry(
                           (context) => retryAnimation(meta.photoHash, selectedAnimName, () => {}, {
                             tier: currentTier,
                             apiContext: context,
@@ -1208,7 +2018,8 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                         )
                       }
                     >
-                      Retry Animation · {currentAnimationRetryCost}{' '}
+                      Retry Animation ·{' '}
+                      {currentAnimationRetryCost}{' '}
                       {currentAnimationRetryCost === 1 ? 'credit' : 'credits'}
                     </button>
                   ) : null}
@@ -1216,24 +2027,28 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
               </div>
             </section>
           </>
-        ) : !currentStage ? (
+        ) : !currentStageEntry ? (
           <section className="gallery-empty">
-            <h2>No Custom Stages</h2>
-            <p>Stages forged from your own photos will appear here.</p>
+            <h2>No Stages Available</h2>
+            <p>Arcade and personal stages will appear here.</p>
+            <button type="button" className="home-menu__action is-primary" onClick={onCreateStage}>
+              <span>Scout A Stage</span>
+              <small>Search Google Street View</small>
+            </button>
           </section>
         ) : (
           <>
             <header className="gallery-hero">
               <div>
-                <p className="gallery-eyebrow">
-                  Stage {currentStageIndex + 1} / {stages.length}
-                </p>
-                <h2>{(currentStage.label ?? 'PHOTO STAGE').toUpperCase()}</h2>
+                <h2>{currentStageLabel.toUpperCase()}</h2>
                 <p className="gallery-hero__meta">
-                  Created {formatDate(currentStage.createdAt)} · Kind {currentStage.kind ?? 'photo'} · Key {currentStage.stageKey.slice(0, 14)}...
+                  Stage {currentStageIndex + 1} of {stageEntries.length} ·{' '}
+                  {currentGlobalStage
+                    ? 'Official global Arcade arena'
+                    : `Created ${formatDate(currentStage!.createdAt)} · Kind ${currentStage!.kind ?? 'photo'}`}
                 </p>
               </div>
-              <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
+              <div className="gallery-hero__status" role="status" aria-live="polite">{stageStatus}</div>
             </header>
 
             <section className="gallery-stage-layout">
@@ -1241,7 +2056,11 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
                 <h3>Preview</h3>
                 <div className="gallery-stage-preview">
                   {stagePreviewUrl ? (
-                    <img src={stagePreviewUrl} alt="" className="gallery-stage-preview__image" />
+                    <img
+                      src={stagePreviewUrl}
+                      alt={`${currentStageLabel} stage`}
+                      className="gallery-stage-preview__image"
+                    />
                   ) : (
                     <div className="gallery-preview__empty">Missing stage image</div>
                   )}
@@ -1251,20 +2070,54 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
               <div className="gallery-panel">
                 <h3>Details</h3>
                 <div className="gallery-stage-meta">
-                  <p><strong>Label</strong> {(currentStage.label ?? 'PHOTO STAGE').toUpperCase()}</p>
-                  <p><strong>Kind</strong> {currentStage.kind === 'photo-direct' ? 'DIRECT PHOTO' : 'FORGED PHOTO STAGE'}</p>
-                  <p><strong>Created</strong> {formatDate(currentStage.createdAt)}</p>
+                  <p><strong>Label</strong> {currentStageLabel.toUpperCase()}</p>
+                  <p>
+                    <strong>Kind</strong>{' '}
+                    {currentGlobalStage
+                      ? 'OFFICIAL ARCADE STAGE'
+                      : currentStage!.kind === 'photo-direct' ? 'DIRECT PHOTO' : 'FORGED PHOTO STAGE'}
+                  </p>
+                  {currentGlobalStage ? (
+                    <p><strong>Arena</strong> {currentGlobalStage.blurb}</p>
+                  ) : (
+                    <p><strong>Created</strong> {formatDate(currentStage!.createdAt)}</p>
+                  )}
+                  {currentStage?.source?.provider === 'google-street-view' ? (
+                    <>
+                      <p><strong>Source</strong> GOOGLE STREET VIEW</p>
+                      <p>
+                        <strong>Location</strong>{' '}
+                        {currentStage.source.locationLabel ||
+                          `${currentStage.source.latitude.toFixed(5)}, ${currentStage.source.longitude.toFixed(5)}`}
+                      </p>
+                      <p>
+                        <strong>View</strong>{' '}
+                        {Math.round(currentStage.source.heading)}° heading ·{' '}
+                        {Math.round(currentStage.source.fov)}° FOV
+                      </p>
+                      {currentStage.source.imageDate ? (
+                        <p><strong>Imagery</strong> {currentStage.source.imageDate}</p>
+                      ) : null}
+                      {currentStage.source.copyright ? (
+                        <p><strong>Attribution</strong> {currentStage.source.copyright}</p>
+                      ) : null}
+                    </>
+                  ) : null}
                 </div>
                 <div className="gallery-actions">
-                  <button disabled={!currentStage.pngBlob} onClick={() => downloadBlob(currentStage.pngBlob, `${((currentStage.label ?? 'photo_stage').toLowerCase().replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '')) || 'photo_stage'}.png`)}>
+                  <button type="button" disabled={!stagePreviewUrl} onClick={() => void saveCurrentStagePng()}>
                     Save PNG
                   </button>
-                  <button disabled={busy} onClick={() => void renameStage()}>
-                    Rename
-                  </button>
-                  <button disabled={busy} onClick={() => void deleteStage()}>
-                    Delete
-                  </button>
+                  {currentStage ? (
+                    <>
+                      <button type="button" disabled={busy} onClick={() => renameStage()}>
+                        Rename
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => deleteStage()}>
+                        Delete
+                      </button>
+                    </>
+                  ) : null}
                 </div>
               </div>
             </section>
@@ -1273,93 +2126,130 @@ export function GalleryPage({ authStatus, authSessionKey, onBack, onCreateFighte
       </main>
 
       {pendingUpgrade ? (
-        <div className="upgrade-confirm-backdrop">
-          <section
-            className="upgrade-confirm-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="upgrade-confirm-title"
-            aria-describedby="upgrade-confirm-description"
-          >
-            <div className="upgrade-confirm-dialog__header">
-              <div>
-                <p className="gallery-eyebrow">Quality Upgrade</p>
-                <h2 id="upgrade-confirm-title">Upgrade to {pendingUpgrade.label}</h2>
-              </div>
-              <strong>{pendingUpgrade.priceLabel}</strong>
-            </div>
-            <p id="upgrade-confirm-description" className="upgrade-confirm-dialog__copy">
-              All 11 animations will be regenerated from the canonical Pro source views.
-              Every existing local and cloud version remains preserved.
-            </p>
-            <div className="upgrade-confirm-dialog__actions">
-              <button
-                className="gallery-chip"
-                type="button"
-                onClick={() => setPendingUpgradeTier(null)}
-              >
-                <span>Cancel</span>
-              </button>
-              <button
-                ref={upgradeConfirmRef}
-                className="gallery-chip is-active"
-                type="button"
-                onClick={() => {
-                  const tier = pendingUpgrade.id;
-                  setPendingUpgradeTier(null);
-                  void upgradeToTier(tier);
-                }}
-              >
-                <span>Regenerate for {pendingUpgrade.priceLabel}</span>
-              </button>
-            </div>
-          </section>
-        </div>
+        <ConfirmDialog
+          title={`Upgrade to ${pendingUpgrade.label}`}
+          confirmLabel={`Regenerate for ${pendingUpgrade.priceLabel}`}
+          confirmVariant="primary"
+          onCancel={() => setPendingUpgradeTier(null)}
+          onConfirm={() => {
+            const tier = pendingUpgrade.id;
+            setPendingUpgradeTier(null);
+            void upgradeToTier(tier);
+          }}
+        >
+          Regenerate all 11 animations at {pendingUpgrade.label} quality. This costs{' '}
+          {pendingUpgrade.priceLabel} and takes about {pendingUpgrade.estimatedTime}. Existing
+          animations are kept in cache and remain accessible.
+        </ConfirmDialog>
       ) : null}
 
       {publishConfirmOpen && meta ? (
-        <div className="publish-confirm-backdrop">
-          <section
-            className="publish-confirm-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="publish-confirm-title"
-            aria-describedby="publish-confirm-description"
+        <ConfirmDialog
+          title={`Publish ${meta.characterName}?`}
+          confirmLabel="Publish Fighter"
+          cancelLabel="Keep Private"
+          confirmVariant="primary"
+          onCancel={() => setPublishConfirmOpen(false)}
+          onConfirm={() => {
+            setPublishConfirmOpen(false);
+            void togglePublic();
+          }}
+        >
+          This makes the fighter name, tier, clean generated source views, and playable
+          animations public under the neutral author label Player. Your account name, email,
+          Clerk profile photo, original photo, RAW intermediates, private hashes, and
+          generation history stay private. You can unpublish at any time.
+        </ConfirmDialog>
+      ) : null}
+
+      {confirmRequest ? (
+        <ConfirmDialog
+          title={confirmRequest.title}
+          confirmLabel={confirmRequest.confirmLabel}
+          confirmVariant={confirmRequest.variant ?? 'primary'}
+          onCancel={() => setConfirmRequest(null)}
+          onConfirm={confirmRequest.onConfirm}
+        >
+          {confirmRequest.body}
+        </ConfirmDialog>
+      ) : null}
+
+      {renameRequest ? (
+        <Modal
+          title={renameRequest.kind === 'fighter' ? 'Rename Fighter' : 'Rename Stage'}
+          onClose={() => setRenameRequest(null)}
+        >
+          <form
+            className="asf-modal__form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              const request = renameRequest;
+              setRenameRequest(null);
+              if (request.kind === 'fighter') void executeRenameFighter(renameDraft);
+              else void executeRenameStage(renameDraft);
+            }}
           >
-            <div className="publish-confirm-dialog__header">
-              <div>
-                <p className="gallery-eyebrow">Community Sharing</p>
-                <h2 id="publish-confirm-title">Publish {meta.characterName}?</h2>
-              </div>
+            <label className="create-form__field">
+              <span>{renameRequest.kind === 'fighter' ? 'Fighter Name' : 'Stage Name'}</span>
+              <input
+                type="text"
+                value={renameDraft}
+                maxLength={48}
+                onChange={(event) => setRenameDraft(event.target.value)}
+              />
+            </label>
+            <div className="asf-modal__actions">
+              <Button onClick={() => setRenameRequest(null)}>Cancel</Button>
+              <Button variant="primary" type="submit" disabled={!renameDraft.trim()}>
+                Save Name
+              </Button>
             </div>
-            <p id="publish-confirm-description" className="publish-confirm-dialog__copy">
-              This makes the fighter name, tier, clean generated source views, and playable
-              animations public under the neutral author label Player. Your account name, email,
-              Clerk profile photo, original photo, RAW intermediates, private hashes, and
-              generation history stay private. You can unpublish at any time.
-            </p>
-            <div className="publish-confirm-dialog__actions">
-              <button
-                className="gallery-chip"
-                type="button"
-                onClick={() => setPublishConfirmOpen(false)}
-              >
-                <span>Keep Private</span>
-              </button>
-              <button
-                ref={publishConfirmRef}
-                className="gallery-chip is-active"
-                type="button"
-                onClick={() => {
-                  setPublishConfirmOpen(false);
-                  void togglePublic();
-                }}
-              >
-                <span>Publish Fighter</span>
-              </button>
-            </div>
-          </section>
-        </div>
+          </form>
+        </Modal>
+      ) : null}
+
+      {shareLinkUrl ? (
+        <Modal
+          title="Share Fighter Link"
+          onClose={() => {
+            setShareLinkError(null);
+            setShareLinkUrl(null);
+          }}
+        >
+          <p className="asf-modal__copy">Copy this link to share the published fighter.</p>
+          <input
+            className="asf-modal__link"
+            type="text"
+            readOnly
+            value={shareLinkUrl}
+            onFocus={(event) => event.target.select()}
+          />
+          {shareLinkError ? <p className="create-intro__error" role="alert">{shareLinkError}</p> : null}
+          <div className="asf-modal__actions">
+            <Button onClick={() => {
+              setShareLinkError(null);
+              setShareLinkUrl(null);
+            }}>Close</Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                if (!navigator.clipboard?.writeText) {
+                  setShareLinkError('Automatic copy is unavailable. Select the link above and copy it manually.');
+                  return;
+                }
+                void navigator.clipboard.writeText(shareLinkUrl).then(() => {
+                  setShareLinkError(null);
+                  setShareLinkUrl(null);
+                  setStatus('Community share link copied');
+                }).catch(() => {
+                  setShareLinkError('The link could not be copied. Select it above and copy it manually.');
+                });
+              }}
+            >
+              Copy Link
+            </Button>
+          </div>
+        </Modal>
       ) : null}
     </div>
   );

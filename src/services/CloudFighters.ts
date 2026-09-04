@@ -10,16 +10,30 @@ import {
   getAllSpriteVersionsForHash,
   getCachedMeta,
   hashPhoto,
+  selectPlayableCachedSprites,
+  setCachedArchivedSprite,
+  setCloudPlayableSpriteRefs,
   setCachedMeta,
-  setCachedSprite,
   type CachedIntro,
   type CachedMeta,
+  type CachedPlayableSpriteRef,
   type CachedSprite,
 } from './SpriteCache';
 import type { QualityTier as CloudQualityTier } from './QualityTiers';
 import { debugWarn } from './DebugLog.ts';
 import { imageBlobFile } from './ImageFile.ts';
 import { finishGenerationPurchase } from './Billing.ts';
+import {
+  normalizeSpriteAnimationFormat,
+  type SpriteAnimationFormat,
+} from '../SpriteAnimationFormat.ts';
+import { prefersHighDensitySpriteTextures } from '../game/sprites/SpriteRenderQuality.ts';
+import {
+  PLAYABLE_ANIMATION_NAMES,
+  isCompletePlayableSpriteSet,
+  isTemplateOnlyFighterIdentity,
+  missingPlayableAnimationNames,
+} from './PlayableFighterAssets.ts';
 
 export interface CloudSprite {
   id?: string;
@@ -27,9 +41,17 @@ export interface CloudSprite {
   qualityTier: CloudQualityTier;
   url: string | null;
   rawUrl: string | null;
+  hqUrl?: string | null;
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  rawFrameWidth?: number | null;
+  rawFrameHeight?: number | null;
+  rawFrameCount?: number | null;
+  hqFrameWidth?: number | null;
+  hqFrameHeight?: number | null;
+  hqFrameCount?: number | null;
+  animationFormat?: SpriteAnimationFormat;
   processingVersion: number;
   createdAt?: string;
   contentHash?: string | null;
@@ -69,6 +91,19 @@ export interface CloudSyncResult {
   status: 'synced' | 'signed_out' | 'failed';
   fighterId?: string;
   message?: string;
+  retryable?: boolean;
+}
+
+export class CloudFighterRequestError extends Error {
+  readonly status: number;
+  readonly retryable: boolean;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'CloudFighterRequestError';
+    this.status = status;
+    this.retryable = status === 503;
+  }
 }
 
 export interface CloudImportResult {
@@ -81,6 +116,7 @@ export interface CloudImportResult {
 export interface CloudImportOptions {
   includeArchivedVersions?: boolean;
   includeRawAssets?: boolean;
+  includeSourceAssets?: boolean;
   allowIncomplete?: boolean;
 }
 
@@ -112,6 +148,11 @@ export interface CommunityReportResult {
   duplicate?: boolean;
 }
 
+export interface CommunityCloneResult {
+  fighter: CloudFighter;
+  cloned: boolean;
+}
+
 const TIER_RANK: Record<CloudQualityTier, number> = {
   rookie: 1,
   contender: 2,
@@ -119,7 +160,6 @@ const TIER_RANK: Record<CloudQualityTier, number> = {
 };
 
 const CLOUD_SPRITE_IMPORT_CONCURRENCY = 4;
-
 export interface FingerprintedSprite {
   sprite: CachedSprite;
   contentHash: string;
@@ -146,9 +186,14 @@ function spriteContentKey(
   qualityTier: CloudQualityTier,
   contentHash: string | null | undefined,
   rawContentHash: string | null | undefined,
+  animationFormat: SpriteAnimationFormat | null | undefined,
+  frameWidth: number,
+  frameHeight: number,
+  frameCount: number,
+  processingVersion: number | null | undefined,
 ): string | null {
   if (!contentHash) return null;
-  return `${spritePairKey(animationName, qualityTier)}:${contentHash}:${rawContentHash ?? ''}`;
+  return `${spritePairKey(animationName, qualityTier)}:${normalizeSpriteAnimationFormat(animationFormat)}:${frameWidth}x${frameHeight}:${frameCount}:${processingVersion ?? 0}:${contentHash}:${rawContentHash ?? ''}`;
 }
 
 export function buildSpriteUploadPlan(
@@ -158,13 +203,8 @@ export function buildSpriteUploadPlan(
   remoteCurrent: CloudSprite[],
 ): SpriteUploadAction[] {
   const currentByPair = new Map<string, FingerprintedSprite>();
-  for (const candidate of localVersions) {
-    const key = spritePairKey(candidate.sprite.animationName, candidate.sprite.qualityTier);
-    const existing = currentByPair.get(key);
-    if (!existing || candidate.sprite.createdAt > existing.sprite.createdAt) {
-      currentByPair.set(key, candidate);
-    }
-  }
+  // The caller's playable selection is authoritative. Local history can contain a
+  // newer pending/rejected candidate (or a higher tier) and must never promote it.
   for (const candidate of currentFallback) {
     const key = spritePairKey(candidate.sprite.animationName, candidate.sprite.qualityTier);
     const existing = currentByPair.get(key);
@@ -180,13 +220,28 @@ export function buildSpriteUploadPlan(
         sprite.qualityTier,
         sprite.contentHash,
         sprite.rawContentHash,
+        sprite.animationFormat,
+        sprite.frameWidth,
+        sprite.frameHeight,
+        sprite.frameCount,
+        sprite.processingVersion,
       ))
       .filter((key): key is string => Boolean(key)),
   );
   const remoteCurrentByPair = new Map(
     remoteCurrent.map((sprite) => [
       spritePairKey(sprite.animationName, sprite.qualityTier),
-      spriteContentKey(sprite.animationName, sprite.qualityTier, sprite.contentHash, sprite.rawContentHash),
+      spriteContentKey(
+        sprite.animationName,
+        sprite.qualityTier,
+        sprite.contentHash,
+        sprite.rawContentHash,
+        sprite.animationFormat,
+        sprite.frameWidth,
+        sprite.frameHeight,
+        sprite.frameCount,
+        sprite.processingVersion,
+      ),
     ]),
   );
   const currentContentKeys = new Set(
@@ -195,6 +250,11 @@ export function buildSpriteUploadPlan(
       candidate.sprite.qualityTier,
       candidate.contentHash,
       candidate.rawContentHash,
+      candidate.sprite.animationFormat,
+      candidate.sprite.frameWidth,
+      candidate.sprite.frameHeight,
+      candidate.sprite.frameCount,
+      candidate.sprite.processingVersion,
     )),
   );
   const localByContent = new Map<string, FingerprintedSprite>();
@@ -204,6 +264,11 @@ export function buildSpriteUploadPlan(
       candidate.sprite.qualityTier,
       candidate.contentHash,
       candidate.rawContentHash,
+      candidate.sprite.animationFormat,
+      candidate.sprite.frameWidth,
+      candidate.sprite.frameHeight,
+      candidate.sprite.frameCount,
+      candidate.sprite.processingVersion,
     );
     if (key && !localByContent.has(key)) localByContent.set(key, candidate);
   }
@@ -220,6 +285,11 @@ export function buildSpriteUploadPlan(
       candidate.sprite.qualityTier,
       candidate.contentHash,
       candidate.rawContentHash,
+      candidate.sprite.animationFormat,
+      candidate.sprite.frameWidth,
+      candidate.sprite.frameHeight,
+      candidate.sprite.frameCount,
+      candidate.sprite.processingVersion,
     )!;
     if (remoteCurrentByPair.get(pair) === key) continue;
     actions.push(remoteVersionKeys.has(key)
@@ -246,6 +316,11 @@ export function buildSpriteDownloadPlan(
       candidate.sprite.qualityTier,
       candidate.contentHash,
       candidate.rawContentHash,
+      candidate.sprite.animationFormat,
+      candidate.sprite.frameWidth,
+      candidate.sprite.frameHeight,
+      candidate.sprite.frameCount,
+      candidate.sprite.processingVersion,
     );
     if (key && !localByContent.has(key)) localByContent.set(key, candidate);
   }
@@ -257,8 +332,35 @@ export function buildSpriteDownloadPlan(
       remote.qualityTier,
       remote.contentHash,
       remote.rawContentHash,
+      remote.animationFormat,
+      remote.frameWidth,
+      remote.frameHeight,
+      remote.frameCount,
+      remote.processingVersion,
     );
-    const candidate = (remote.id ? localByVersionId.get(remote.id) : undefined)
+    const versionCandidate = remote.id ? localByVersionId.get(remote.id) : undefined;
+    const versionCandidateKey = versionCandidate
+      ? spriteContentKey(
+          versionCandidate.sprite.animationName,
+          versionCandidate.sprite.qualityTier,
+          versionCandidate.contentHash,
+          versionCandidate.rawContentHash,
+          versionCandidate.sprite.animationFormat,
+          versionCandidate.sprite.frameWidth,
+          versionCandidate.sprite.frameHeight,
+          versionCandidate.sprite.frameCount,
+          versionCandidate.sprite.processingVersion,
+        )
+      : null;
+    // Older public Arcade payloads did not expose content hashes. In that
+    // shape both keys are null, which is not proof that the locally cached
+    // bytes still match a promoted version whose id is intentionally stable.
+    // Fail toward one fresh processed download until the hashed payload is
+    // observed rather than pinning stale gameplay art indefinitely.
+    const matchingVersionCandidate = versionCandidate && remoteKey && versionCandidateKey === remoteKey
+      ? versionCandidate
+      : undefined;
+    const candidate = matchingVersionCandidate
       ?? (remoteKey ? localByContent.get(remoteKey) : undefined)
       ?? null;
     const existing = candidate?.sprite ?? null;
@@ -297,8 +399,81 @@ export function selectPlayableCloudSprites(sprites: CloudSprite[]): CloudSprite[
   return Array.from(bestByAnimation.values());
 }
 
+function normalizedCloudContentHash(value: unknown): string | null {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value.trim())
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+export function cloudPlayableSpriteRefs(
+  sprites: CloudSprite[],
+): Record<string, CachedPlayableSpriteRef> {
+  return Object.fromEntries(selectPlayableCloudSprites(sprites).map((sprite) => [
+    sprite.animationName,
+    {
+      versionId: typeof sprite.id === 'string' && sprite.id ? sprite.id : null,
+      contentHash: normalizedCloudContentHash(sprite.contentHash),
+      animationName: sprite.animationName,
+      qualityTier: sprite.qualityTier,
+      frameWidth: sprite.frameWidth,
+      frameHeight: sprite.frameHeight,
+      frameCount: sprite.frameCount,
+      animationFormat: normalizeSpriteAnimationFormat(sprite.animationFormat),
+      processingVersion: sprite.processingVersion ?? 0,
+    },
+  ]));
+}
+
+function fingerprintedPlayableSpriteRefs(
+  sprites: FingerprintedSprite[],
+): Record<string, CachedPlayableSpriteRef> {
+  return Object.fromEntries(sprites.map(({ sprite, contentHash }) => [
+    sprite.animationName,
+    {
+      versionId: sprite.versionId ?? null,
+      contentHash: normalizedCloudContentHash(contentHash),
+      animationName: sprite.animationName,
+      qualityTier: sprite.qualityTier,
+      frameWidth: sprite.frameWidth,
+      frameHeight: sprite.frameHeight,
+      frameCount: sprite.frameCount,
+      animationFormat: normalizeSpriteAnimationFormat(sprite.animationFormat),
+      processingVersion: sprite.processingVersion ?? 0,
+    },
+  ]));
+}
+
+function cloudPlayableRefsMatch(
+  fighter: CloudFighter,
+  refs: Record<string, CachedPlayableSpriteRef> | undefined,
+): boolean {
+  if (!refs) return false;
+  const expected = cloudPlayableSpriteRefs(fighter.sprites);
+  const expectedEntries = Object.entries(expected);
+  if (expectedEntries.length !== Object.keys(refs).length) return false;
+  return expectedEntries.every(([animationName, remote]) => {
+    const local = refs[animationName];
+    // Detail payloads include immutable hashes. Lightweight list payloads omit
+    // them, so compare playback metadata here and let the fighter updatedAt check
+    // below detect a promotion without downloading every unchanged fighter.
+    return Boolean(local) &&
+      (!remote.contentHash || local.contentHash === remote.contentHash) &&
+      local.animationName === remote.animationName &&
+      local.qualityTier === remote.qualityTier &&
+      local.frameWidth === remote.frameWidth &&
+      local.frameHeight === remote.frameHeight &&
+      local.frameCount === remote.frameCount &&
+      normalizeSpriteAnimationFormat(local.animationFormat) === remote.animationFormat &&
+      local.processingVersion === remote.processingVersion;
+  });
+}
+
 export function isSourceOnlyCloudFighter(fighter: CloudFighter): boolean {
   return fighter.sprites.length === 0 && (fighter.spriteVersions?.length ?? 0) === 0;
+}
+
+export function isCompleteCloudFighterRoster(fighter: CloudFighter): boolean {
+  return isCompletePlayableSpriteSet(fighter.sprites);
 }
 
 export function formatCloudRosterSyncStatus(
@@ -316,16 +491,16 @@ export function formatCloudRosterSyncStatus(
   return null;
 }
 
-function cloudSpritesForImport(
+export function cloudSpritesForImport(
   fighter: CloudFighter,
   options: CloudImportOptions,
 ): CloudSprite[] {
-  const spriteVersions = fighter.spriteVersions?.length ? fighter.spriteVersions : fighter.sprites;
-  if (options.includeArchivedVersions !== false) return spriteVersions;
-  const currentSprites = fighter.sprites.length > 0
-    ? fighter.sprites
-    : spriteVersions;
-  return selectPlayableCloudSprites(currentSprites);
+  if (options.includeArchivedVersions === true) {
+    throw new Error('Archived sprite versions cannot be imported into the playable cache');
+  }
+  // Archived/private versions are not playable pointers. Falling back to them here can
+  // expose an unapproved review candidate or make a partial roster look complete.
+  return selectPlayableCloudSprites(fighter.sprites);
 }
 
 function isLocalDevWithoutApi(): boolean {
@@ -363,13 +538,20 @@ async function apiErrorMessage(res: Response, fallback: string): Promise<string>
   return body.trim().slice(0, 180) || fallback;
 }
 
+async function cloudFighterRequestError(
+  res: Response,
+  operation: string,
+): Promise<CloudFighterRequestError> {
+  const detail = await apiErrorMessage(res, 'Cloud service temporarily unavailable');
+  return new CloudFighterRequestError(`${operation} failed (${res.status}): ${detail}`, res.status);
+}
+
 export function shouldRefreshLocalFighter(fighter: CloudFighter, existing: CachedMeta | null): boolean {
   if (!existing) return true;
   if (existing.cloudFighterId !== fighter.id) return true;
+  if (!cloudPlayableRefsMatch(fighter, existing.cloudPlayableSpriteRefs)) return true;
   if (TIER_RANK[fighter.qualityTier] > TIER_RANK[getMetaTier(existing)]) return true;
-  const remoteVersionCount = fighter.spriteVersions?.length
-    ? fighter.spriteVersions.length
-    : fighter.sprites.length;
+  const remoteVersionCount = fighter.sprites.length;
   if (remoteVersionCount > (existing.cloudSpriteVersionCount ?? 0)) return true;
   const remoteAnimationCount = new Set(fighter.sprites.map((sprite) => sprite.animationName)).size;
   const localAnimationCount = new Set(existing.animationsReady ?? []).size;
@@ -419,6 +601,7 @@ async function uploadSprite(
   form.append('frameWidth', String(sprite.frameWidth));
   form.append('frameHeight', String(sprite.frameHeight));
   form.append('frameCount', String(sprite.frameCount));
+  form.append('animationFormat', normalizeSpriteAnimationFormat(sprite.animationFormat));
   form.append('processingVersion', String(sprite.processingVersion ?? 0));
   form.append('setCurrent', String(setCurrent));
   form.append('file', await imageBlobFile(sprite.pngBlob, sprite.animationName));
@@ -439,20 +622,14 @@ async function uploadSprite(
 async function fingerprintSprites(sprites: CachedSprite[]): Promise<FingerprintedSprite[]> {
   const fingerprints: FingerprintedSprite[] = [];
   for (const sprite of sprites) {
-    const cachedContentHash = typeof sprite.contentHash === 'string' && /^[a-f0-9]{64}$/i.test(sprite.contentHash)
-      ? sprite.contentHash.toLowerCase()
-      : null;
-    const cachedRawContentHash = typeof sprite.rawContentHash === 'string' && /^[a-f0-9]{64}$/i.test(sprite.rawContentHash)
-      ? sprite.rawContentHash.toLowerCase()
-      : null;
-    const contentHash = cachedContentHash ?? await hashPhoto(sprite.pngBlob);
+    const contentHash = await hashPhoto(sprite.pngBlob);
     const rawContentHash = sprite.rawPngBlob
-      ? cachedRawContentHash ?? await hashPhoto(sprite.rawPngBlob)
+      ? await hashPhoto(sprite.rawPngBlob)
       : null;
     if (sprite.contentHash !== contentHash || sprite.rawContentHash !== rawContentHash) {
       sprite.contentHash = contentHash;
       sprite.rawContentHash = rawContentHash;
-      await setCachedSprite(sprite, { preserveVersionId: true });
+      await setCachedArchivedSprite(sprite, { preserveVersionId: true });
     }
     fingerprints.push({ sprite, contentHash, rawContentHash });
   }
@@ -472,6 +649,11 @@ async function promoteSprite(
       qualityTier: candidate.sprite.qualityTier,
       contentHash: candidate.contentHash,
       rawContentHash: candidate.rawContentHash,
+      animationFormat: normalizeSpriteAnimationFormat(candidate.sprite.animationFormat),
+      frameWidth: candidate.sprite.frameWidth,
+      frameHeight: candidate.sprite.frameHeight,
+      frameCount: candidate.sprite.frameCount,
+      processingVersion: candidate.sprite.processingVersion ?? 0,
     }),
   }, context);
   if (!res.ok) {
@@ -484,7 +666,8 @@ async function promoteSprite(
 export async function listCloudFighters(context?: ApiRequestContext): Promise<CloudFighter[]> {
   if (isLocalDevWithoutApi()) return [];
   const res = await apiFetch('/api/fighters', {}, context);
-  if (res.status === 401 || res.status === 503) return [];
+  if (res.status === 401) return [];
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Cloud fighters');
   if (!res.ok) throw new Error(`Cloud fighters failed (${res.status})`);
   const json = await res.json() as { fighters?: CloudFighter[] };
   return json.fighters ?? [];
@@ -493,7 +676,8 @@ export async function listCloudFighters(context?: ApiRequestContext): Promise<Cl
 export async function getCloudFighter(fighterId: string, context?: ApiRequestContext): Promise<CloudFighter | null> {
   if (isLocalDevWithoutApi()) return null;
   const res = await apiFetch(`/api/fighters/${encodeURIComponent(fighterId)}`, {}, context);
-  if (res.status === 401 || res.status === 503 || res.status === 404) return null;
+  if (res.status === 401 || res.status === 404) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Cloud fighter');
   if (!res.ok) throw new Error(`Cloud fighter failed (${res.status})`);
   const json = await res.json() as { fighter?: CloudFighter };
   return json.fighter ?? null;
@@ -537,12 +721,25 @@ export async function prepareCloudFighterGeneration(
   return { fighter: detailed, photoHash: params.photoHash };
 }
 
-export async function listCommunityFighters(): Promise<CloudFighter[]> {
+export async function listCommunityFighters(context?: ApiRequestContext): Promise<CloudFighter[]> {
   if (isLocalDevWithoutApi()) return [];
-  const res = await apiFetch('/api/community');
+  const res = await apiFetch('/api/community', {}, context);
   if (!res.ok) throw new Error(`Community fighters failed (${res.status})`);
   const json = await res.json() as { fighters?: CloudFighter[] };
   return json.fighters ?? [];
+}
+
+export async function listOwnedCommunityFighterIds(
+  context?: ApiRequestContext,
+): Promise<string[]> {
+  if (isLocalDevWithoutApi()) return [];
+  const res = await apiFetch('/api/community/ownership', {}, context);
+  if (!res.ok) throw new Error(`Community ownership check failed (${res.status})`);
+  const json = await res.json() as { fighterIds?: unknown };
+  if (!Array.isArray(json.fighterIds)) {
+    throw new Error('Community ownership check returned an invalid response');
+  }
+  return json.fighterIds.filter((id): id is string => typeof id === 'string' && Boolean(id));
 }
 
 export async function listArcadeFighters(): Promise<CloudFighter[]> {
@@ -550,16 +747,24 @@ export async function listArcadeFighters(): Promise<CloudFighter[]> {
   const res = await apiFetch('/api/arcade');
   if (!res.ok) throw new Error(`Arcade fighters failed (${res.status})`);
   const json = await res.json() as { fighters?: CloudFighter[] };
-  return (json.fighters ?? []).filter((fighter) => Boolean(fighter.arcade));
+  return (json.fighters ?? []).filter((fighter) => (
+    Boolean(fighter.arcade) && !isTemplateOnlyFighterIdentity({
+      name: fighter.name,
+      arcadeSlug: fighter.arcade?.slug,
+    })
+  ));
 }
 
 export function arcadeFighterPhotoHash(fighter: CloudFighter): string {
   return `arcade:${fighter.arcade?.slug ?? fighter.id}:${fighter.id}`;
 }
 
-export async function getCommunityFighter(fighterId: string): Promise<CloudFighter | null> {
+export async function getCommunityFighter(
+  fighterId: string,
+  context?: ApiRequestContext,
+): Promise<CloudFighter | null> {
   if (isLocalDevWithoutApi()) return null;
-  const res = await apiFetch(`/api/community/${encodeURIComponent(fighterId)}`);
+  const res = await apiFetch(`/api/community/${encodeURIComponent(fighterId)}`, {}, context);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Community fighter failed (${res.status})`);
   const json = await res.json() as { fighter?: CloudFighter };
@@ -576,7 +781,8 @@ export async function setCloudFighterPublic(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ public: isPublic }),
   }, context);
-  if (res.status === 401 || res.status === 503) return null;
+  if (res.status === 401) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Share update');
   if (!res.ok) {
     throw new Error(`Share update failed (${res.status}): ${await apiErrorMessage(res, 'Publish update failed')}`);
   }
@@ -594,8 +800,9 @@ export async function renameCloudFighter(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
   }, context);
-  if (res.status === 401 || res.status === 503) return null;
+  if (res.status === 401) return null;
   if (res.status === 404) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Cloud rename');
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Cloud rename failed (${res.status}): ${body.slice(0, 180)}`);
@@ -609,8 +816,15 @@ export async function deleteCloudFighter(
   context?: ApiRequestContext,
 ): Promise<CloudSyncResult> {
   const res = await apiFetch(`/api/fighters/${fighterId}`, { method: 'DELETE' }, context);
-  if (res.status === 401 || res.status === 503) {
+  if (res.status === 401) {
     return { status: 'signed_out', message: 'Sign in to delete this fighter from cloud sync.' };
+  }
+  if (res.status === 503) {
+    return {
+      status: 'failed',
+      retryable: true,
+      message: await apiErrorMessage(res, 'Cloud delete is temporarily unavailable. Try again.'),
+    };
   }
   if (res.status === 404) {
     return { status: 'synced', fighterId, message: 'Cloud fighter was already deleted.' };
@@ -625,12 +839,21 @@ export async function deleteCloudFighter(
 export async function cloneCommunityFighter(
   sourceFighterId: string,
   context?: ApiRequestContext,
-): Promise<CloudFighter | null> {
-  const res = await apiFetch(`/api/community/${sourceFighterId}/clone`, { method: 'POST' }, context);
-  if (res.status === 401 || res.status === 503) return null;
+): Promise<CommunityCloneResult | null> {
+  const res = await apiFetch(
+    `/api/community/${encodeURIComponent(sourceFighterId)}/clone`,
+    { method: 'POST' },
+    context,
+  );
+  if (res.status === 401) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Clone');
   if (!res.ok) throw new Error(`Clone failed (${res.status})`);
-  const json = await res.json() as { fighter?: CloudFighter };
-  return json.fighter ?? null;
+  const json = await res.json() as { fighter?: CloudFighter; cloned?: boolean };
+  if (!json.fighter) throw new Error('Clone response did not include a fighter');
+  return {
+    fighter: json.fighter,
+    cloned: typeof json.cloned === 'boolean' ? json.cloned : res.status === 201,
+  };
 }
 
 export async function reportCommunityFighter(
@@ -644,7 +867,8 @@ export async function reportCommunityFighter(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ reason, details: details.trim() || null }),
   }, context);
-  if (res.status === 401 || res.status === 503) return { status: 'signed_out' };
+  if (res.status === 401) return { status: 'signed_out' };
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Report');
   if (!res.ok) {
     throw new Error(await apiErrorMessage(res, `Report failed (${res.status})`));
   }
@@ -673,14 +897,27 @@ export async function syncFighterToCloud(
     photoHash: meta.photoHash,
     qualityTier: tier,
   };
+  // Fingerprint the caller's authoritative playable set before creating any
+  // cloud association. The first cloudFighterId write must never exist without
+  // exact refs, otherwise a later upload failure would hide a valid local fighter.
+  const initialPlayableRefs = fingerprintedPlayableSpriteRefs(
+    await fingerprintSprites(sprites),
+  );
   const createRes = await apiFetch('/api/fighters', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(createBody),
   }, requestContext);
 
-  if (createRes.status === 401 || createRes.status === 503) {
+  if (createRes.status === 401) {
     return { status: 'signed_out', message: 'Sign in to sync this fighter across devices.' };
+  }
+  if (createRes.status === 503) {
+    return {
+      status: 'failed',
+      retryable: true,
+      message: await apiErrorMessage(createRes, 'Cloud sync is temporarily unavailable. Try again.'),
+    };
   }
   if (!createRes.ok) {
     const body = await createRes.text();
@@ -692,6 +929,7 @@ export async function syncFighterToCloud(
   if (!fighterId) return { status: 'failed', message: 'Cloud API returned no fighter id.' };
   meta.cloudFighterId = fighterId;
   meta.cloudPublic = created.fighter?.public ?? meta.cloudPublic ?? false;
+  meta.cloudPlayableSpriteRefs = initialPlayableRefs;
   await setCachedMeta(meta);
 
   const remoteSourceHashes = { ...(created.fighter?.sourceHashes ?? {}) };
@@ -759,6 +997,11 @@ export async function syncFighterToCloud(
 
   meta.updatedAt = Date.now();
   await setCachedMeta(meta);
+  await setCloudPlayableSpriteRefs(
+    meta.photoHash,
+    fingerprintedPlayableSpriteRefs(currentFingerprints),
+    meta.ownerScope,
+  );
 
   if (meta.pendingGenerationPurchaseId) {
     try {
@@ -820,6 +1063,7 @@ export async function downloadCloudFighterToLocal(
   const requestContext = context ?? captureApiRequestContext();
   const ownerScope = getActiveSpriteCacheScope();
   const includeRawAssets = options.includeRawAssets !== false;
+  const includeSourceAssets = options.includeSourceAssets !== false;
   if (!fighter.photoHash) {
     throw new Error(`Cloud fighter ${fighter.name} is missing a private sync hash.`);
   }
@@ -856,25 +1100,45 @@ export async function downloadCloudFighterToLocal(
     crouchViewBlob,
     crouchViewRawBlob,
   ] = await Promise.all([
-    loadSource('original', fighter.sources.original, existingMeta?.originalPhotoBlob, `${fighter.name} original source`),
-    loadSource('side', fighter.sources.side, existingMeta?.sideViewBlob, `${fighter.name} side source`),
+    loadSource(
+      'original',
+      includeSourceAssets ? fighter.sources.original : null,
+      existingMeta?.originalPhotoBlob,
+      `${fighter.name} original source`,
+    ),
+    loadSource(
+      'side',
+      includeSourceAssets ? fighter.sources.side : null,
+      existingMeta?.sideViewBlob,
+      `${fighter.name} side source`,
+    ),
     loadSource(
       'side_raw',
-      includeRawAssets ? fighter.sources.sideRaw : null,
+      includeSourceAssets && includeRawAssets ? fighter.sources.sideRaw : null,
       existingMeta?.sideViewRawBlob,
       `${fighter.name} raw side source`,
     ),
-    loadSource('upright', fighter.sources.upright, existingMeta?.uprightViewBlob, `${fighter.name} upright source`),
+    loadSource(
+      'upright',
+      includeSourceAssets ? fighter.sources.upright : null,
+      existingMeta?.uprightViewBlob,
+      `${fighter.name} upright source`,
+    ),
     loadSource(
       'upright_raw',
-      includeRawAssets ? fighter.sources.uprightRaw : null,
+      includeSourceAssets && includeRawAssets ? fighter.sources.uprightRaw : null,
       existingMeta?.uprightViewRawBlob,
       `${fighter.name} raw upright source`,
     ),
-    loadSource('crouch', fighter.sources.crouch, existingMeta?.crouchViewBlob, `${fighter.name} crouch source`),
+    loadSource(
+      'crouch',
+      includeSourceAssets ? fighter.sources.crouch : null,
+      existingMeta?.crouchViewBlob,
+      `${fighter.name} crouch source`,
+    ),
     loadSource(
       'crouch_raw',
-      includeRawAssets ? fighter.sources.crouchRaw : null,
+      includeSourceAssets && includeRawAssets ? fighter.sources.crouchRaw : null,
       existingMeta?.crouchViewRawBlob,
       `${fighter.name} raw crouch source`,
     ),
@@ -882,22 +1146,19 @@ export async function downloadCloudFighterToLocal(
 
   const now = Date.now();
   const remoteUpdatedAt = cloudTimestampMs(fighter);
-  const remoteSpriteVersionCount = fighter.spriteVersions?.length
-    ? fighter.spriteVersions.length
-    : fighter.sprites.length;
+  const remoteSpriteVersionCount = fighter.sprites.length;
   const createdAt = Date.parse(
     String((fighter as CloudFighter & { createdAt?: string }).createdAt ?? ''),
   ) || remoteUpdatedAt || now;
-  const availableAnimations = new Set(localSpriteVersions.map((sprite) => sprite.animationName));
   let spritesImported = 0;
   let optionalAssetsSkipped = [
-    fighter.sources.original && !originalPhotoBlob,
-    fighter.sources.side && !sideViewBlob,
-    includeRawAssets && fighter.sources.sideRaw && !sideViewRawBlob,
-    fighter.sources.upright && !uprightViewBlob,
-    includeRawAssets && fighter.sources.uprightRaw && !uprightViewRawBlob,
-    fighter.sources.crouch && !crouchViewBlob,
-    includeRawAssets && fighter.sources.crouchRaw && !crouchViewRawBlob,
+    includeSourceAssets && fighter.sources.original && !originalPhotoBlob,
+    includeSourceAssets && fighter.sources.side && !sideViewBlob,
+    includeSourceAssets && includeRawAssets && fighter.sources.sideRaw && !sideViewRawBlob,
+    includeSourceAssets && fighter.sources.upright && !uprightViewBlob,
+    includeSourceAssets && includeRawAssets && fighter.sources.uprightRaw && !uprightViewRawBlob,
+    includeSourceAssets && fighter.sources.crouch && !crouchViewBlob,
+    includeSourceAssets && includeRawAssets && fighter.sources.crouchRaw && !crouchViewRawBlob,
   ].filter(Boolean).length + staleSourceKinds.size;
   let spritesSkipped = 0;
   let spriteRawAssetsSkipped = 0;
@@ -927,7 +1188,7 @@ export async function downloadCloudFighterToLocal(
           spriteRawAssetsSkipped += 1;
         }
         if (!action.downloadProcessed && action.downloadRaw && !downloadedRawBlob) return;
-        await setCachedSprite({
+        await setCachedArchivedSprite({
           ownerScope,
           versionId: action.existing?.versionId ?? sprite.id,
           photoHash,
@@ -937,13 +1198,16 @@ export async function downloadCloudFighterToLocal(
           frameWidth: sprite.frameWidth,
           frameHeight: sprite.frameHeight,
           frameCount: sprite.frameCount,
+          rawFrameWidth: sprite.rawFrameWidth ?? action.existing?.rawFrameWidth,
+          rawFrameHeight: sprite.rawFrameHeight ?? action.existing?.rawFrameHeight,
+          rawFrameCount: sprite.rawFrameCount ?? action.existing?.rawFrameCount,
+          animationFormat: normalizeSpriteAnimationFormat(sprite.animationFormat),
           processingVersion: sprite.processingVersion,
           contentHash: sprite.contentHash ?? action.existing?.contentHash ?? null,
           rawContentHash: sprite.rawContentHash ?? action.existing?.rawContentHash ?? null,
           createdAt: Date.parse(String(sprite.createdAt ?? '')) || now,
           qualityTier: sprite.qualityTier,
         } as CachedSprite & { qualityTier: CloudQualityTier }, { preserveVersionId: Boolean(sprite.id) });
-        availableAnimations.add(sprite.animationName);
         spritesImported += 1;
       } catch (err: any) {
         if (err instanceof ApiSessionChangedError) throw err;
@@ -953,9 +1217,26 @@ export async function downloadCloudFighterToLocal(
     }));
   }
 
-  if (availableAnimations.size === 0 && !options.allowIncomplete) {
-    throw new Error(`Cloud fighter ${fighter.name} has no playable sprite assets to import.`);
+  const remoteRosterComplete = isCompleteCloudFighterRoster(fighter);
+  if (!remoteRosterComplete && !options.allowIncomplete) {
+    const missing = missingPlayableAnimationNames(fighter.sprites);
+    throw new Error(
+      missing.length > 0
+        ? `Cloud fighter ${fighter.name} is incomplete; missing current animations: ${missing.join(', ')}.`
+        : `Cloud fighter ${fighter.name} has invalid current animation assets.`,
+    );
   }
+
+  const playableRefs = cloudPlayableSpriteRefs(spriteVersions);
+  const refreshedVersions = await getAllSpriteVersionsForHash(photoHash, ownerScope);
+  await fingerprintSprites(refreshedVersions);
+  const exactPlayableSprites = selectPlayableCachedSprites(refreshedVersions, playableRefs);
+  const availableCurrentAnimations = new Set(exactPlayableSprites.map((sprite) => sprite.animationName));
+  const allRemoteCurrentSpritesAvailable = isCompletePlayableSpriteSet(exactPlayableSprites) &&
+    Object.values(playableRefs).length === PLAYABLE_ANIMATION_NAMES.length &&
+    Object.values(playableRefs).every((ref) =>
+      Boolean(ref.contentHash) && availableCurrentAnimations.has(ref.animationName),
+    );
 
   const meta = {
     ...(existingMeta ?? {}),
@@ -973,10 +1254,8 @@ export async function downloadCloudFighterToLocal(
     crouchViewCleanBlob: existingMeta?.crouchViewCleanBlob ?? crouchViewBlob,
     noBgBlob: existingMeta?.noBgBlob ?? null,
     characterName: fighter.name,
-    status: options.allowIncomplete && existingMeta?.status !== 'ready'
-      ? 'sprites_generating'
-      : 'ready',
-    animationsReady: Array.from(availableAnimations),
+    status: remoteRosterComplete && allRemoteCurrentSpritesAvailable ? 'ready' : 'sprites_generating',
+    animationsReady: Array.from(availableCurrentAnimations),
     createdAt,
     updatedAt: staleSourceKinds.size > 0 || spritesSkipped > 0
       ? existingMeta?.updatedAt ?? remoteUpdatedAt ?? now
@@ -992,13 +1271,24 @@ export async function downloadCloudFighterToLocal(
         existingMeta?.cloudSourceHashes?.[kind] ?? null,
       ])),
     },
-    cloudSpriteVersionCount: options.includeArchivedVersions !== false &&
-      spritesSkipped === 0 && spriteRawAssetsSkipped === 0
+    cloudSpriteVersionCount: spritesSkipped === 0 && spriteRawAssetsSkipped === 0
       ? remoteSpriteVersionCount
       : existingMeta?.cloudSpriteVersionCount ?? 0,
+    cloudPlayableSpriteRefs: playableRefs,
   } satisfies CachedMeta & { qualityTier: CloudQualityTier };
 
   await setCachedMeta(meta);
+  await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope);
+
+  if (!options.allowIncomplete && !allRemoteCurrentSpritesAvailable) {
+    const missing = missingPlayableAnimationNames(exactPlayableSprites);
+    const detail = missing.length > 0
+      ? ` Missing: ${missing.join(', ')}.`
+      : '';
+    throw new Error(
+      `${fighter.name} did not finish downloading all 11 playable animations.${detail} Retry the sprite download.`,
+    );
+  }
 
   return {
     fighterId: fighter.id,
@@ -1011,50 +1301,93 @@ export async function downloadCloudFighterToLocal(
 export async function downloadArcadeFighterToLocal(
   fighter: CloudFighter,
   context?: ApiRequestContext,
+  options: {
+    includeHighResolutionAssets?: boolean;
+    includeSourceAssets?: boolean;
+  } = {},
 ): Promise<CloudImportResult> {
   if (!fighter.arcade || !fighter.public) {
     throw new Error(`${fighter.name} is not an active Arcade fighter.`);
   }
+  const includeHighResolutionAssets = options.includeHighResolutionAssets ??
+    prefersHighDensitySpriteTextures();
   return downloadCloudFighterToLocal({
     ...fighter,
     photoHash: arcadeFighterPhotoHash(fighter),
+    sprites: fighter.sprites.map((sprite) => ({
+      ...sprite,
+      // The cache already stores preserved high-density gameplay frames in its
+      // internal RAW slot. The public API still exposes only the Arcade HQ route.
+      rawUrl: sprite.hqUrl ?? null,
+      rawFrameWidth: sprite.hqFrameWidth ?? null,
+      rawFrameHeight: sprite.hqFrameHeight ?? null,
+      rawFrameCount: sprite.hqFrameCount ?? null,
+    })),
   }, context, {
     includeArchivedVersions: false,
-    includeRawAssets: false,
+    includeRawAssets: includeHighResolutionAssets,
+    includeSourceAssets: options.includeSourceAssets,
   });
 }
 
-const archivedCloudImportJobs = new Map<string, Promise<void>>();
-let archivedCloudImportQueue = Promise.resolve();
-
-function queueArchivedCloudFighterImport(
+export async function downloadArcadeSpriteHighDensityToLocal(
   fighter: CloudFighter,
-  context: ApiRequestContext,
-): void {
-  const allVersions = fighter.spriteVersions?.length ? fighter.spriteVersions : fighter.sprites;
-  const hasDeferredRawAssets = allVersions.some((sprite) => Boolean(sprite.rawUrl)) ||
-    Boolean(fighter.sources.sideRaw || fighter.sources.uprightRaw || fighter.sources.crouchRaw);
+  animationName: string,
+  context?: ApiRequestContext,
+): Promise<boolean> {
+  if (!fighter.arcade || !fighter.public) {
+    throw new Error(`${fighter.name} is not an active Arcade fighter.`);
+  }
+  const remote = selectPlayableCloudSprites(fighter.sprites)
+    .find((sprite) => sprite.animationName === animationName);
   if (
-    allVersions.length <= selectPlayableCloudSprites(fighter.sprites).length &&
-    !hasDeferredRawAssets
-  ) return;
-  if (archivedCloudImportJobs.has(fighter.id)) return;
+    !remote?.hqUrl ||
+    !remote.hqFrameWidth ||
+    !remote.hqFrameHeight ||
+    !remote.hqFrameCount
+  ) {
+    return false;
+  }
 
-  let job: Promise<void>;
-  job = archivedCloudImportQueue
-    .then(async () => {
-      await downloadCloudFighterToLocal(fighter, context, { includeArchivedVersions: true });
-    })
-    .catch((err: any) => {
-      debugWarn(`[Cloud] Archived versions will resume later for ${fighter.name}:`, err?.message ?? err);
-    })
-    .finally(() => {
-      if (archivedCloudImportJobs.get(fighter.id) === job) {
-        archivedCloudImportJobs.delete(fighter.id);
-      }
-    });
-  archivedCloudImportJobs.set(fighter.id, job);
-  archivedCloudImportQueue = job;
+  const ownerScope = getActiveSpriteCacheScope();
+  const photoHash = arcadeFighterPhotoHash(fighter);
+  const versions = await getAllSpriteVersionsForHash(photoHash, ownerScope);
+  const existing = versions.find((sprite) => (
+    Boolean(remote.id) && sprite.versionId === remote.id
+  )) ?? versions.find((sprite) => (
+    sprite.animationName === remote.animationName &&
+    sprite.qualityTier === remote.qualityTier &&
+    Boolean(remote.contentHash) &&
+    sprite.contentHash === remote.contentHash
+  ));
+  if (!existing) {
+    throw new Error(`${fighter.name} ${animationName} must be downloaded before its HQ preview.`);
+  }
+  if (
+    existing.rawPngBlob &&
+    existing.rawFrameWidth === remote.hqFrameWidth &&
+    existing.rawFrameHeight === remote.hqFrameHeight &&
+    existing.rawFrameCount === remote.hqFrameCount
+  ) {
+    return false;
+  }
+
+  const requestContext = context ?? captureApiRequestContext();
+  const rawPngBlob = await fetchRequiredBlob(
+    remote.hqUrl,
+    `${fighter.name} ${animationName} HQ sprite`,
+    requestContext,
+  );
+  if (!rawPngBlob) return false;
+  await setCachedArchivedSprite({
+    ...existing,
+    ownerScope,
+    rawPngBlob,
+    rawFrameWidth: remote.hqFrameWidth,
+    rawFrameHeight: remote.hqFrameHeight,
+    rawFrameCount: remote.hqFrameCount,
+  }, { preserveVersionId: true, ownerScope });
+  return true;
 }
 
 export async function importMissingCloudFighters(
@@ -1097,8 +1430,6 @@ export async function syncCloudFightersToLocal(
     drafts: 0,
     failed: 0,
   };
-  const archiveCandidates: CloudFighter[] = [];
-
   for (const fighter of fighters) {
     const existing = localByCloudId.get(fighter.id) ?? (fighter.photoHash ? localByPhotoHash.get(fighter.photoHash) : undefined) ?? null;
     if (!shouldRefreshLocalFighter(fighter, existing)) {
@@ -1109,7 +1440,7 @@ export async function syncCloudFightersToLocal(
     try {
       const detailed = await getCloudFighter(fighter.id, requestContext);
       const manifest = detailed ?? fighter;
-      if (isSourceOnlyCloudFighter(manifest)) {
+      if (!isCompleteCloudFighterRoster(manifest)) {
         summary.drafts += 1;
         continue;
       }
@@ -1117,7 +1448,6 @@ export async function syncCloudFightersToLocal(
         includeArchivedVersions: false,
         includeRawAssets: false,
       });
-      archiveCandidates.push(manifest);
       if (existing) {
         summary.updated += 1;
       } else {
@@ -1128,10 +1458,6 @@ export async function syncCloudFightersToLocal(
       summary.failed += 1;
       debugWarn(`[Cloud] Fighter sync skipped for ${fighter.name}:`, err?.message ?? err);
     }
-  }
-
-  for (const fighter of archiveCandidates) {
-    queueArchivedCloudFighterImport(fighter, requestContext);
   }
 
   return summary;

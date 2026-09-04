@@ -13,20 +13,21 @@ import {
   type PipelineStatus,
   type StatusCallback,
 } from '../../services/CharacterPipeline.ts';
-import { AnimationGrid } from '../components/AnimationGrid.tsx';
-import { SourceViewsPanel } from '../components/SourceViewsPanel.tsx';
-import { SpritePreviewSurface } from '../components/SpritePreviewSurface.tsx';
-import { DebugFeed } from '../components/DebugFeed.tsx';
+import { FighterPreviewColumn, useFighterPreview } from '../components/FighterPreviewColumn.tsx';
+import { Button } from '../components/Button.tsx';
 import { PipelineProgress } from '../components/PipelineProgress.tsx';
 import { TurnstileChallenge } from '../components/TurnstileChallenge.tsx';
 import { GenerationConsent } from '../components/LegalConsent.tsx';
+import { VideoGenerationReviewGate } from '../components/VideoGenerationReviewGate.tsx';
+import {
+  CreationFlowPicker,
+  type CreationFlow,
+} from '../components/CreationFlowPicker.tsx';
 import {
   animLabel,
   getSourceBlob,
   type PreviewSelection,
-  type PreviewSpriteLike,
 } from '../shared/fighterPreview.ts';
-import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
 import { exportAnimationGif } from '../../services/GifExportService.ts';
 import {
@@ -56,15 +57,31 @@ import {
   type GenerationJob,
 } from '../../services/GenerationJobs.ts';
 import { includedRookieStatus, initialCreationTier } from '../shared/rookieEntitlement.ts';
+import {
+  assertCreationFlowAcknowledged,
+  creationFlowForResume,
+  durableRecoveryFailureNeedsRetry,
+  isVideoReviewOrRestartJob,
+  videoReviewJobNeedsConsent,
+  videoCreationFlowAvailability,
+} from '../shared/creationFlow.ts';
 
 interface CreateFighterPageProps {
   authStatus: AuthStatus;
   authSessionKey: string;
+  completionLabel?: string;
   onBack: () => void;
   onComplete: (photoHash: string) => void;
+  onGetCredits?: (tier: QualityTier) => void;
+  onNavigateLegal?: (route: '/legal' | '/privacy' | '/terms' | '/refunds') => void;
 }
 
 const DEFAULT_NAME = 'New Fighter';
+
+interface PendingFighterSync {
+  fighterId: string;
+  completion: 'generation' | 'video-final';
+}
 
 function initialQualityTier(authStatus: AuthStatus): QualityTier {
   const requestedTier = new URLSearchParams(window.location.search).get('tier');
@@ -122,6 +139,11 @@ function stageToPercent(status: PipelineStatus): number | null {
 
 function describeDurableJob(job: GenerationJob): string {
   if (job.status === 'queued') return 'Queued safely in the cloud...';
+  if (job.creationFlow === 'video' && job.status === 'succeeded') {
+    if (job.reviewStatus === 'awaiting_review') return 'Video ready. Paused safely for your review.';
+    if (job.reviewStatus === 'approved' && job.resumable) return 'Action approved. Continue when ready.';
+    if (job.reviewStatus === 'rejected') return 'Video rejected. No additional action was generated.';
+  }
   if (job.status === 'succeeded') return 'Generation complete. Syncing this device...';
   if (job.status === 'failed' || job.status === 'cancelled') {
     return job.errorMessage ?? 'Generation stopped; review the job details or contact support.';
@@ -136,10 +158,19 @@ function describeDurableJob(job: GenerationJob): string {
   return 'Forging safely in the cloud...';
 }
 
-export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComplete }: CreateFighterPageProps) {
+export function CreateFighterPage({
+  authStatus,
+  authSessionKey,
+  completionLabel = 'Open In Gallery',
+  onBack,
+  onComplete,
+  onGetCredits,
+  onNavigateLegal,
+}: CreateFighterPageProps) {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState(DEFAULT_NAME);
   const [tier, setTier] = useState<QualityTier>(() => initialQualityTier(authStatus));
+  const [creationFlow, setCreationFlow] = useState<CreationFlow>('original');
 
   const [started, setStarted] = useState(false);
   const [running, setRunning] = useState(false);
@@ -158,13 +189,27 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
+  const [billingProfileChecked, setBillingProfileChecked] = useState(authStatus !== 'signed-in');
   const [resumableJob, setResumableJob] = useState<GenerationJob | null>(null);
+  const [videoReviewJob, setVideoReviewJob] = useState<GenerationJob | null>(null);
+  const [videoReviewDecisionRequiresConsent, setVideoReviewDecisionRequiresConsent] = useState(false);
+  const [pendingFighterSync, setPendingFighterSync] = useState<PendingFighterSync | null>(null);
   const [recoveryReady, setRecoveryReady] = useState(authStatus !== 'signed-in');
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
+  const [cloudRecoveryRetryRequired, setCloudRecoveryRetryRequired] = useState(false);
+  const [recoveryRetrySignal, setRecoveryRetrySignal] = useState(0);
   const pollingAbortRef = useRef<AbortController | null>(null);
   const lockPaidTiers = paidTiersLocked(authStatus);
   const requiresTurnstile = authStatus === 'signed-out' && tier === 'rookie';
   const turnstileSiteKey = String(import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '').trim();
   const turnstileReady = !requiresTurnstile || Boolean(turnstileToken);
+  const videoFlowAvailability = videoCreationFlowAvailability(authStatus, tier);
+  const videoReviewActionNeedsConsent = videoReviewJobNeedsConsent(videoReviewJob) ||
+    videoReviewDecisionRequiresConsent;
+
+  useEffect(() => {
+    setVideoReviewDecisionRequiresConsent(false);
+  }, [videoReviewJob?.id]);
 
   useEffect(() => {
     if (lockPaidTiers && tier !== 'rookie') {
@@ -173,15 +218,32 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   }, [lockPaidTiers, tier]);
 
   useEffect(() => {
+    if (!videoFlowAvailability.available && creationFlow === 'video') {
+      setCreationFlow('original');
+    }
+  }, [creationFlow, videoFlowAvailability.available]);
+
+  useEffect(() => {
     if (authStatus !== 'signed-in') {
       setBillingProfile(null);
+      setBillingProfileChecked(true);
       return;
     }
 
     let cancelled = false;
+    setBillingProfile(null);
+    setBillingProfileChecked(false);
     const apiContext = captureApiRequestContext();
     void getBillingProfile(apiContext).then((profile) => {
-      if (!cancelled) setBillingProfile(profile);
+      if (!cancelled) {
+        setBillingProfile(profile);
+        setBillingProfileChecked(true);
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setBillingProfile(null);
+        setBillingProfileChecked(true);
+      }
     });
     return () => { cancelled = true; };
   }, [authSessionKey, authStatus]);
@@ -194,53 +256,98 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   useEffect(() => {
     if (authStatus !== 'signed-in') {
       setResumableJob(null);
+      setVideoReviewJob(null);
+      setPendingFighterSync(null);
+      setRecoveryError(null);
+      setCloudRecoveryRetryRequired(false);
       setRecoveryReady(true);
       return;
     }
 
     let disposed = false;
+    let recoveryLookupCompleted = false;
+    let recoverableJobFound = false;
+    const retryingKnownRecovery = cloudRecoveryRetryRequired;
     const apiContext = captureApiRequestContext();
     const controller = new AbortController();
     pollingAbortRef.current?.abort();
     pollingAbortRef.current = controller;
     setRecoveryReady(false);
+    setRecoveryError(null);
 
     void (async () => {
       try {
         const jobs = await listGenerationJobs(apiContext);
         if (disposed) return;
+        recoveryLookupCompleted = true;
         const active = jobs.find((job) => (
           job.operation === 'fighter_generation' &&
           (job.status === 'queued' || job.status === 'running')
         ));
+        const videoReview = jobs.find(isVideoReviewOrRestartJob);
         const resumable = jobs.find((job) => (
           job.operation === 'fighter_generation' && job.resumable
         ));
-        const recovering = active ?? resumable;
+        const recovering = active ?? videoReview ?? resumable;
         if (!recovering) {
           setResumableJob(null);
+          setVideoReviewJob(null);
+          setCloudRecoveryRetryRequired(false);
+          setError(null);
+          if (!file) {
+            setStarted(false);
+            setDone(false);
+            setStageText('Ready to forge.');
+          }
           setRecoveryReady(true);
           return;
         }
-        const fighter = await getCloudFighter(recovering.fighterId, apiContext);
-        if (disposed) return;
-        if (fighter) {
-          setName(fighter.name);
-          setPhotoHash(fighter.photoHash ?? null);
-          if (fighter.photoHash) {
-            await downloadCloudFighterToLocal(fighter, apiContext, {
-              includeArchivedVersions: false,
-              includeRawAssets: false,
-              allowIncomplete: true,
-            });
-            await refreshFromCache(fighter.photoHash);
-          }
-        }
+        recoverableJobFound = true;
         setTier(recovering.tier);
+        setCreationFlow(creationFlowForResume(recovering.creationFlow));
         setStarted(true);
         setDone(false);
         applyDurableJob(recovering);
+        if (!active && videoReview) {
+          setVideoReviewJob(videoReview);
+          setResumableJob(null);
+        } else if (!active && resumable) {
+          setVideoReviewJob(null);
+          setResumableJob(resumable);
+        }
+        const fighter = await getCloudFighter(recovering.fighterId, apiContext);
+        if (disposed) return;
+        if (!fighter?.photoHash) {
+          throw new Error('The fighter for this preserved cloud generation could not be loaded.');
+        }
+        setName(fighter.name);
+        setPhotoHash(fighter.photoHash);
+        await downloadCloudFighterToLocal(fighter, apiContext, {
+          includeArchivedVersions: false,
+          includeRawAssets: false,
+          allowIncomplete: true,
+        });
+        await refreshFromCache(fighter.photoHash);
+        setCloudRecoveryRetryRequired(false);
+        if (!active && videoReview) {
+          setVideoReviewJob(videoReview);
+          setResumableJob(null);
+          setError(null);
+          setRunning(false);
+          setStageText(
+            videoReview.fullRunRestartRequired
+              ? 'The previous run ended safely. Start a new complete Video run when you are ready.'
+              : videoReview.reviewStatus === 'awaiting_review'
+              ? 'Generation paused safely for your review.'
+              : videoReview.reviewStatus === 'rejected'
+                ? 'The rejected run is archived. Start a new complete Video run when you are ready.'
+                : 'Approved. Continue when you are ready for the next action.',
+          );
+          setRecoveryReady(true);
+          return;
+        }
         if (!active && resumable) {
+          setVideoReviewJob(null);
           setResumableJob(recovering);
           setError(
             `${recovering.errorMessage ?? 'Generation paused.'} ` +
@@ -251,6 +358,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
           return;
         }
         setResumableJob(null);
+        setVideoReviewJob(null);
         setRunning(true);
         setError(null);
         const completed = await monitorDurableJob(recovering, apiContext, controller.signal);
@@ -259,12 +367,24 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
         await finishDurableJob(completed, apiContext);
       } catch (err: any) {
         if (disposed || (err instanceof DOMException && err.name === 'AbortError')) return;
-        setError(err?.message ? String(err.message) : 'Could not reconnect to cloud generation');
-        setStageText('Cloud generation status is temporarily unavailable.');
+        const message = err?.message ? String(err.message) : 'Could not reconnect to cloud generation';
+        if (
+          retryingKnownRecovery ||
+          durableRecoveryFailureNeedsRetry(recoveryLookupCompleted, recoverableJobFound)
+        ) {
+          setCloudRecoveryRetryRequired(true);
+          setError(message);
+          setStageText('Cloud generation could not be restored on this device.');
+        } else {
+          setRecoveryError(message);
+          setStageText('Cloud generation status is temporarily unavailable.');
+        }
       } finally {
         if (!disposed) {
           setRunning(false);
-          setRecoveryReady(true);
+          setRecoveryReady(
+            recoveryLookupCompleted || retryingKnownRecovery || recoverableJobFound,
+          );
         }
       }
     })();
@@ -274,7 +394,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       controller.abort();
       if (pollingAbortRef.current === controller) pollingAbortRef.current = null;
     };
-  }, [authSessionKey, authStatus]);
+  }, [authSessionKey, authStatus, recoveryRetrySignal]);
 
   async function refreshFromCache(hash: string): Promise<{ meta: CachedMeta | null; sprites: CachedSprite[] }> {
     const [allMetas, nextSprites] = await Promise.all([
@@ -357,21 +477,220 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     job: GenerationJob,
     apiContext: ReturnType<typeof captureApiRequestContext>,
   ): Promise<void> {
+    if (job.creationFlow === 'video' && job.fullRunRestartRequired) {
+      setVideoReviewJob(job);
+      setResumableJob(null);
+      setError(null);
+      setStageText('The Video run ended safely. Start a new complete run when you are ready.');
+      setGenerating(new Set());
+      return;
+    }
+    if (job.creationFlow === 'video' && job.status !== 'succeeded' && job.resumable) {
+      setVideoReviewJob(null);
+      setResumableJob(job);
+      setError(
+        `${job.errorMessage ?? 'Generation paused.'} ` +
+        `${job.preservedArtifactCount} completed stages are preserved; resume continues without charging again.`,
+      );
+      setStageText('Video generation paused safely. Resume the preserved provider work when ready.');
+      setGenerating(new Set());
+      return;
+    }
     if (job.status !== 'succeeded') {
       throw new Error(job.errorMessage ?? 'Generation stopped; review the job details or contact support.');
     }
-    setStageText('Generation complete. Downloading your private fighter...');
-    const fighter = await getCloudFighter(job.fighterId, apiContext);
-    if (!fighter?.photoHash) throw new Error('Completed fighter could not be loaded from the cloud');
+    if (job.creationFlow === 'video' && job.reviewStatus === 'awaiting_review') {
+      setVideoReviewJob(job);
+      setResumableJob(null);
+      setStageText('Generation paused safely. Review the private video and proposed frames.');
+      setGenerating(new Set());
+      return;
+    }
+    await syncCompletedFighter({ fighterId: job.fighterId, completion: 'generation' }, apiContext);
+  }
+
+  async function finishApprovedVideoFighter(fighterId: string): Promise<void> {
+    if (cloudRecoveryRetryRequired || !recoveryReady) return;
+    const apiContext = captureApiRequestContext();
+    try {
+      await syncCompletedFighter({ fighterId, completion: 'video-final' }, apiContext);
+      setVideoReviewJob(null);
+    } catch (cause) {
+      setStageText('Approval is saved in the cloud. This device still needs the fighter files.');
+      throw cause;
+    }
+  }
+
+  async function syncCompletedFighter(
+    pending: PendingFighterSync,
+    apiContext: ReturnType<typeof captureApiRequestContext>,
+  ): Promise<void> {
+    setPendingFighterSync(pending);
+    setStageText(
+      pending.completion === 'video-final'
+        ? 'All actions approved. Downloading your private fighter...'
+        : 'Generation complete. Downloading your private fighter...',
+    );
+    const fighter = await getCloudFighter(pending.fighterId, apiContext);
+    if (!fighter?.photoHash) {
+      throw new Error('Completed fighter could not be loaded from the cloud. No new generation was started.');
+    }
     await downloadCloudFighterToLocal(fighter, apiContext);
     setName(fighter.name);
     setTier(fighter.qualityTier);
     setPhotoHash(fighter.photoHash);
     await refreshFromCache(fighter.photoHash);
+    setPendingFighterSync(null);
     setPercent(1);
     setDone(true);
     setGenerating(new Set());
-    setStageText('All sprites generated, private, and synced!');
+    setStageText(
+      pending.completion === 'video-final'
+        ? 'All video actions approved, private, and synced!'
+        : 'All sprites generated, private, and synced!',
+    );
+  }
+
+  async function retryPendingFighterSync(): Promise<void> {
+    if (!pendingFighterSync || running) return;
+    const pending = pendingFighterSync;
+    setRunning(true);
+    setError(null);
+    try {
+      await syncCompletedFighter(pending, captureApiRequestContext());
+      if (pending.completion === 'video-final') setVideoReviewJob(null);
+    } catch (cause) {
+      const detail = cause instanceof Error ? cause.message : 'Fighter download failed';
+      setError(`Fighter sync failed: ${detail}`);
+      setStageText('Generation is complete in the cloud. This device still needs the fighter files.');
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function continueApprovedVideoJob(approvedJob: GenerationJob): Promise<void> {
+    if (running || cloudRecoveryRetryRequired || !recoveryReady) return;
+    if (!legalAccepted) {
+      setError('Accept the generation terms before continuing preserved Video work.');
+      return;
+    }
+    setRunning(true);
+    setError(null);
+    setStageText('Preparing the next video action without charging more credits...');
+    const apiContext = captureApiRequestContext();
+    let purchaseId: string | undefined;
+    let backendOwnsPurchase = false;
+    try {
+      const authorization = await authorizeGeneration(
+        approvedJob.tier,
+        approvedJob.operation,
+        approvedJob.fighterId,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+        approvedJob.id,
+        'video',
+      );
+      if (
+        !authorization.authorized || authorization.mode !== 'continuation' ||
+        !authorization.purchaseId || !authorization.providerSessionId
+      ) {
+        throw new Error(authorization.error ?? 'The next video action could not be authorized');
+      }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('video', authorization.creationFlow);
+      const nextJob = await startGenerationJob({
+        fighterId: approvedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        creationFlow: 'video',
+      }, apiContext);
+      backendOwnsPurchase = true;
+      setVideoReviewJob(null);
+      const controller = new AbortController();
+      pollingAbortRef.current?.abort();
+      pollingAbortRef.current = controller;
+      const completed = await monitorDurableJob(nextJob, apiContext, controller.signal);
+      await finishDurableJob(completed, apiContext);
+    } catch (cause) {
+      if (purchaseId && !backendOwnsPurchase) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, approvedJob.fighterId, apiContext);
+        } catch (settlementError: any) {
+          debugWarn(
+            '[Billing] Video continuation could not be released:',
+            settlementError?.message ?? settlementError,
+          );
+        }
+      }
+      setError(cause instanceof Error ? cause.message : 'The next video action could not start');
+      setVideoReviewJob(approvedJob);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function restartRejectedVideoRun(rejectedJob: GenerationJob): Promise<void> {
+    if (running || cloudRecoveryRetryRequired || !recoveryReady) return;
+    if (!legalAccepted) {
+      setError('Accept the generation terms before starting a new complete Video run.');
+      return;
+    }
+    const creditCost = QUALITY_TIERS.find((item) => item.id === rejectedJob.tier)?.creditCost ?? 18;
+    if (!window.confirm(
+      `Start a new complete Video run for ${creditCost} credits? The rejected run stays archived and will not be reused.`,
+    )) return;
+    setRunning(true);
+    setError(null);
+    setStageText('Preparing a new complete Video run...');
+    const apiContext = captureApiRequestContext();
+    let purchaseId: string | undefined;
+    let backendOwnsPurchase = false;
+    try {
+      const authorization = await authorizeGeneration(
+        rejectedJob.tier,
+        'fighter_generation',
+        rejectedJob.fighterId,
+        null,
+        currentGenerationLegalAttestation(),
+        apiContext,
+        null,
+        'video',
+      );
+      if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
+        throw new Error(authorization.error ?? 'A new complete Video run could not be authorized');
+      }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('video', authorization.creationFlow);
+      const nextJob = await startGenerationJob({
+        fighterId: rejectedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        creationFlow: 'video',
+      }, apiContext);
+      backendOwnsPurchase = true;
+      setVideoReviewJob(null);
+      const controller = new AbortController();
+      pollingAbortRef.current?.abort();
+      pollingAbortRef.current = controller;
+      const completed = await monitorDurableJob(nextJob, apiContext, controller.signal);
+      await finishDurableJob(completed, apiContext);
+    } catch (cause) {
+      if (purchaseId && !backendOwnsPurchase) {
+        try {
+          await finishGenerationPurchase(purchaseId, false, rejectedJob.fighterId, apiContext);
+        } catch (settlementError: any) {
+          debugWarn(
+            '[Billing] New Video run reservation could not be released:',
+            settlementError?.message ?? settlementError,
+          );
+        }
+      }
+      setError(cause instanceof Error ? cause.message : 'A new complete Video run could not start');
+      setVideoReviewJob(rejectedJob);
+    } finally {
+      setRunning(false);
+    }
   }
 
   async function startDurable(apiContext: ReturnType<typeof captureApiRequestContext>): Promise<void> {
@@ -399,6 +718,8 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       null,
       currentGenerationLegalAttestation(),
       apiContext,
+      null,
+      creationFlow,
     );
     if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
       throw new Error(authorization.error ?? 'Generation not authorized');
@@ -406,10 +727,12 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     setStageText('Handing the forge to the cloud...');
     let job: GenerationJob;
     try {
+      assertCreationFlowAcknowledged(creationFlow, authorization.creationFlow);
       job = await startGenerationJob({
         fighterId: prepared.fighter.id,
         purchaseId: authorization.purchaseId,
         providerSessionId: authorization.providerSessionId,
+        creationFlow,
       }, apiContext);
     } catch (error) {
       try {
@@ -439,6 +762,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     failedJob: GenerationJob,
     apiContext: ReturnType<typeof captureApiRequestContext>,
   ): Promise<void> {
+    const failedCreationFlow = creationFlowForResume(failedJob.creationFlow);
     setStarted(true);
     setStageText(`Restoring ${failedJob.preservedArtifactCount} completed stages...`);
     const authorization = await authorizeGeneration(
@@ -449,6 +773,7 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       currentGenerationLegalAttestation(),
       apiContext,
       failedJob.id,
+      failedCreationFlow,
     );
     if (
       !authorization.authorized ||
@@ -458,11 +783,31 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     ) {
       throw new Error(authorization.error ?? 'Preserved generation could not be resumed');
     }
-    const job = await startGenerationJob({
-      fighterId: failedJob.fighterId,
-      purchaseId: authorization.purchaseId,
-      providerSessionId: authorization.providerSessionId,
-    }, apiContext);
+    let job: GenerationJob;
+    try {
+      assertCreationFlowAcknowledged(failedCreationFlow, authorization.creationFlow);
+      job = await startGenerationJob({
+        fighterId: failedJob.fighterId,
+        purchaseId: authorization.purchaseId,
+        providerSessionId: authorization.providerSessionId,
+        creationFlow: failedCreationFlow,
+      }, apiContext);
+    } catch (error) {
+      try {
+        await finishGenerationPurchase(
+          authorization.purchaseId,
+          false,
+          failedJob.fighterId,
+          apiContext,
+        );
+      } catch (settlementError: any) {
+        debugWarn(
+          '[Billing] Preserved job authorization could not be released:',
+          settlementError?.message ?? settlementError,
+        );
+      }
+      throw error;
+    }
     setResumableJob(null);
     const controller = new AbortController();
     pollingAbortRef.current?.abort();
@@ -473,9 +818,26 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   }
 
   async function start() {
+    if (pendingFighterSync) {
+      await retryPendingFighterSync();
+      return;
+    }
+    if (cloudRecoveryRetryRequired) {
+      setError(null);
+      setRecoveryError(null);
+      setRecoveryReady(false);
+      setRecoveryRetrySignal((current) => current + 1);
+      return;
+    }
     if ((!file && !resumableJob) || running || !turnstileReady || !legalAccepted || !recoveryReady) return;
+    if (creationFlow === 'video' && !videoFlowAvailability.available) {
+      setError(videoFlowAvailability.reason ?? 'Video creation is unavailable.');
+      return;
+    }
     setRunning(true);
     setDone(false);
+    setPendingFighterSync(null);
+    setVideoReviewJob(null);
     setError(null);
     setPercent(0);
     setStageText('Starting pipeline...');
@@ -498,6 +860,8 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
           requiresTurnstile ? turnstileToken : null,
           currentGenerationLegalAttestation(),
           apiContext,
+          null,
+          creationFlow,
         );
       } finally {
         if (requiresTurnstile) {
@@ -508,9 +872,10 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       if (!authorization.authorized) {
         throw new Error(authorization.error ?? 'Generation not authorized');
       }
+      purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged(creationFlow, authorization.creationFlow);
       if (!file) throw new Error('Choose a source photo before starting generation');
       setStarted(true);
-      purchaseId = authorization.purchaseId;
       const hash = await runWithProviderSession(
         authorization.providerSessionId,
         (providerContext) => processCharacter(file, handleStatus, name.trim() || DEFAULT_NAME, {
@@ -565,6 +930,17 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
   }
 
   function retry() {
+    if (pendingFighterSync) {
+      void retryPendingFighterSync();
+      return;
+    }
+    if (cloudRecoveryRetryRequired) {
+      setError(null);
+      setRecoveryError(null);
+      setRecoveryReady(false);
+      setRecoveryRetrySignal((current) => current + 1);
+      return;
+    }
     if (!file && !resumableJob) return;
     setError(null);
     void start();
@@ -581,49 +957,42 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
     setSprites([]);
     setGenerating(new Set());
     setResumableJob(null);
+    setPendingFighterSync(null);
     setSelection({ kind: 'source', source: 'original' });
     setLegalAccepted(false);
+    setCreationFlow('original');
   }
 
   const selectedAnimName = selection.kind === 'animation' ? selection.animationName : null;
 
-  const previewSprite = useMemo<PreviewSpriteLike | null>(() => {
-    if (!meta || selection.kind !== 'animation') return null;
-    const cached = sprites.find((item) => item.animationName === selection.animationName);
-    if (cached) {
-      return {
-        blob: cached.pngBlob,
-        rawBlob: cached.rawPngBlob,
-        frameWidth: cached.frameWidth,
-        frameHeight: cached.frameHeight,
-        frameCount: cached.frameCount,
-      };
-    }
-    const failed = meta.failedAnimationArtifacts?.[selection.animationName];
-    if (!failed) return null;
-    return {
-      blob: failed.pngBlob,
-      rawBlob: failed.rawPngBlob,
-      frameWidth: failed.frameWidth,
-      frameHeight: failed.frameHeight,
-      frameCount: failed.frameCount,
-      failed: true,
-      reason: failed.reason,
-    };
-  }, [meta, selection, sprites]);
-
-  const previewSourceBlob = selection.kind === 'source' ? getSourceBlob(meta, selection.source) : null;
-  const previewSourceUrl = useObjectUrl(previewSourceBlob);
-
-  const previewBlob = selection.kind === 'source' ? previewSourceBlob : previewSprite?.blob ?? null;
+  const { previewSprite, previewSourceBlob } = useFighterPreview(meta, sprites, selection);
   const safeName = (name.trim() || DEFAULT_NAME).replace(/[^a-z0-9]/gi, '_');
   const cachedSelectedSprite = selectedAnimName
     ? sprites.find((item) => item.animationName === selectedAnimName)
     : null;
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
-  const startLabel = tier === 'rookie' && rookieStatus === 'included'
+  const selectedTier = QUALITY_TIERS.find((item) => item.id === tier);
+  const selectedUsesIncludedRookie = tier === 'rookie' && rookieStatus === 'included';
+  const creditCheckPending = authStatus === 'signed-in'
+    && !selectedUsesIncludedRookie
+    && !billingProfileChecked;
+  const creditsNeeded = selectedTier && billingProfile
+    ? Math.max(0, selectedTier.creditCost - billingProfile.creditsBalance)
+    : 0;
+  const insufficientCredits = authStatus === 'signed-in'
+    && Boolean(selectedTier)
+    && Boolean(billingProfile)
+    && !selectedUsesIncludedRookie
+    && creditsNeeded > 0;
+  const startLabel = insufficientCredits
+    ? `Get ${creditsNeeded} More Credits`
+    : creditCheckPending
+      ? 'Checking Credits...'
+    : tier === 'rookie' && rookieStatus === 'included'
     ? 'Create Free Rookie'
-    : `Create ${QUALITY_TIERS.find((item) => item.id === tier)?.label ?? 'Fighter'}`;
+    : tier === 'rookie' && rookieStatus === 'checking'
+      ? 'Create Rookie · Pass Checked At Start'
+    : `Create ${selectedTier?.label ?? 'Fighter'} · ${selectedTier?.priceLabel ?? ''}`.trim();
 
   const saveGif = async () => {
     if (!cachedSelectedSprite || !selectedAnimName) return;
@@ -658,16 +1027,13 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
       <section className="create-app">
         <header className="roster-hero">
           <div>
-            <p className="gallery-eyebrow">New Fighter</p>
             <h1>Make Yourself Playable</h1>
             <p className="roster-hero__copy">
               Upload one photo. We build a fighter you can take straight into Arcade Mode.
             </p>
           </div>
           <div className="roster-hero__actions">
-            <button className="gallery-back" onClick={onBack}>
-              Back
-            </button>
+            <Button onClick={onBack}>Back</Button>
           </div>
         </header>
 
@@ -690,41 +1056,64 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
               onChange={(event) => {
                 setFile(event.target.files?.[0] ?? null);
                 setResumableJob(null);
+                setVideoReviewJob(null);
               }}
             />
           </label>
-          <div className="tier-picker" role="radiogroup" aria-label="Quality tier">
+          <CreationFlowPicker
+            name="fighter-creation-flow"
+            value={creationFlow}
+            onChange={setCreationFlow}
+            disabled={running}
+            videoAvailable={videoFlowAvailability.available}
+            videoUnavailableReason={videoFlowAvailability.reason}
+          />
+          <fieldset className="tier-picker" aria-describedby="tier-picker-note">
+            <legend className="tier-picker__legend">
+              <span>Choose fighter quality</span>
+              {authStatus === 'signed-in' && billingProfile ? (
+                <small>{billingProfile.creditsBalance} credits available</small>
+              ) : null}
+            </legend>
             {QUALITY_TIERS.map((item) => {
               const locked = lockPaidTiers && item.id !== 'rookie';
               const priceLabel = item.id !== 'rookie'
                 ? item.priceLabel
                 : rookieStatus === 'included'
-                  ? 'Included'
+                  ? authStatus === 'signed-in' ? 'Included' : 'Free'
                   : rookieStatus === 'credits'
                     ? item.priceLabel
                     : 'Checking account';
               const pitch = item.id === 'rookie' && rookieStatus === 'included'
-                ? authStatus === 'signed-out'
+                ? authStatus !== 'signed-in'
                   ? 'Your first playable fighter is free after a quick human check.'
                   : 'Your first playable fighter is included with your account.'
                 : item.pitch;
               return (
-                <button
+                <label
                   key={item.id}
-                  type="button"
                   className={`tier-picker__option${tier === item.id ? ' is-active' : ''}`}
-                  role="radio"
-                  aria-checked={tier === item.id}
-                  disabled={locked}
-                  onClick={() => setTier(item.id)}
                 >
-                  <span>{item.label}</span>
+                  <span className="tier-picker__choice">
+                    <input
+                      type="radio"
+                      name="fighter-quality-tier"
+                      value={item.id}
+                      checked={tier === item.id}
+                      disabled={locked}
+                      onChange={() => setTier(item.id)}
+                    />
+                    <span>{item.label}</span>
+                  </span>
                   <small>{locked ? `${item.priceLabel} · Sign in` : `${priceLabel} · ${item.estimatedTime}`}</small>
                   <em>{locked ? 'Sign in to unlock paid quality.' : pitch}</em>
-                </button>
+                </label>
               );
             })}
-          </div>
+          </fieldset>
+          <p className="tier-picker__note" id="tier-picker-note">
+            Source views are always generated at premium quality. Animation fidelity and detail scale with the tier.
+          </p>
           {requiresTurnstile ? (
             <TurnstileChallenge
               siteKey={turnstileSiteKey}
@@ -736,15 +1125,55 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             checked={legalAccepted}
             disabled={running}
             onChange={setLegalAccepted}
+            storageMode={authStatus === 'signed-in' ? 'account' : 'device'}
+            onNavigate={onNavigateLegal}
           />
+          {recoveryError ? (
+            <div className="create-recovery-error" role="alert">
+              <strong>Cloud check required</strong>
+              <p>{recoveryError}</p>
+              <button
+                type="button"
+                disabled={running}
+                onClick={() => {
+                  setRecoveryError(null);
+                  setRecoveryRetrySignal((current) => current + 1);
+                }}
+              >
+                Retry Cloud Check
+              </button>
+            </div>
+          ) : null}
           {error ? <p className="create-intro__error" role="alert">{error}</p> : null}
           <button
             className="home-menu__action is-primary"
-            disabled={!file || !name.trim() || running || !turnstileReady || !legalAccepted || !recoveryReady}
-            onClick={() => void start()}
+            disabled={running || creditCheckPending || (insufficientCredits
+              ? !onGetCredits
+              : !file || !name.trim() || !turnstileReady || !legalAccepted || !recoveryReady)}
+            onClick={() => {
+              if (insufficientCredits) {
+                onGetCredits?.(tier);
+                return;
+              }
+              void start();
+            }}
           >
-            <span>{!recoveryReady ? 'Checking Cloud...' : running ? 'Authorizing...' : startLabel}</span>
-            <small>{file ? file.name : 'Pick a photo to continue'}</small>
+            <span>{insufficientCredits || creditCheckPending
+              ? startLabel
+              : recoveryError
+                ? 'Cloud Check Required'
+                : !recoveryReady
+                  ? 'Checking Cloud...'
+                  : running
+                    ? 'Authorizing...'
+                    : startLabel}</span>
+            <small>
+              {insufficientCredits
+                ? `${selectedTier?.label ?? 'This tier'} needs ${selectedTier?.creditCost ?? 0} credits · you have ${billingProfile?.creditsBalance ?? 0}`
+                : file
+                ? `${file.name} · ${creationFlow === 'video' ? 'Video flow' : 'Original flow'}`
+                : 'Pick a photo to continue'}
+            </small>
           </button>
         </div>
       </section>
@@ -764,25 +1193,53 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
             {Math.round(percent * 100)}%
           </div>
           {done && meta ? (
-            <button className="gallery-back" onClick={() => void saveAll()}>
-              Save All
-            </button>
+            <Button variant="ghost" onClick={() => void saveAll()}>Save All</Button>
           ) : null}
-          <button
-            className="gallery-back"
+          <Button
+            variant={done ? 'primary' : 'secondary'}
             disabled={running && authStatus !== 'signed-in'}
             onClick={done && photoHash ? () => onComplete(photoHash) : onBack}
           >
-            {done ? 'Open In Gallery' : running && authStatus !== 'signed-in' ? 'Running...' : 'Back'}
-          </button>
+            {done ? completionLabel : running && authStatus !== 'signed-in' ? 'Running...' : 'Back'}
+          </Button>
         </div>
       </header>
 
       <PipelineProgress percent={percent} />
 
+      {videoReviewJob ? (
+        <>
+          {videoReviewActionNeedsConsent ? (
+            <GenerationConsent
+              checked={legalAccepted}
+              disabled={running}
+              onChange={setLegalAccepted}
+              onNavigate={onNavigateLegal}
+            />
+          ) : null}
+          <VideoGenerationReviewGate
+            jobId={videoReviewJob.id}
+            disabled={
+              running ||
+              cloudRecoveryRetryRequired ||
+              !recoveryReady
+            }
+            generationConsentAccepted={legalAccepted}
+            onGenerationConsentRequiredChange={setVideoReviewDecisionRequiresConsent}
+            fullRunRestartRequired={videoReviewJob.fullRunRestartRequired}
+            onContinue={() => continueApprovedVideoJob(videoReviewJob)}
+            onFinalApproval={() => finishApprovedVideoFighter(videoReviewJob.fighterId)}
+            onRestart={() => restartRejectedVideoRun(videoReviewJob)}
+            onRejected={() => {
+              setStageText('Video rejected. It remains private and no additional provider call was made.');
+            }}
+          />
+        </>
+      ) : null}
+
       {error ? (
-        <div className="create-error" role="alert">
-          <strong>{error}</strong>
+        <div className="create-error">
+          <strong role="alert">{error}</strong>
           {requiresTurnstile ? (
             <TurnstileChallenge
               siteKey={turnstileSiteKey}
@@ -790,10 +1247,31 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
               onTokenChange={setTurnstileToken}
             />
           ) : null}
+          {resumableJob ? (
+            <GenerationConsent
+              checked={legalAccepted}
+              disabled={running}
+              onChange={setLegalAccepted}
+              onNavigate={onNavigateLegal}
+            />
+          ) : null}
           <div className="gallery-actions">
-            {file || resumableJob ? (
-              <button onClick={retry} disabled={running || !turnstileReady}>
-                {resumableJob ? 'Resume Preserved Work' : 'Retry Pipeline'}
+            {pendingFighterSync ? (
+              <button onClick={retry} disabled={running}>
+                {running ? 'Syncing Fighter...' : 'Retry Fighter Sync'}
+              </button>
+            ) : cloudRecoveryRetryRequired ? (
+              <button onClick={retry} disabled={running || !recoveryReady}>
+                {running || !recoveryReady ? 'Checking Cloud...' : 'Retry Cloud Recovery'}
+              </button>
+            ) : file || resumableJob ? (
+              <button
+                onClick={retry}
+                disabled={running || !turnstileReady || (Boolean(resumableJob) && !legalAccepted)}
+              >
+                {resumableJob
+                  ? legalAccepted ? 'Resume Preserved Work' : 'Accept Terms To Resume'
+                  : 'Retry Pipeline'}
               </button>
             ) : (
               <button onClick={choosePhotoAgain} disabled={running}>
@@ -804,89 +1282,27 @@ export function CreateFighterPage({ authStatus, authSessionKey, onBack, onComple
         </div>
       ) : null}
 
-      <section className="gallery-layout">
-        <div className="gallery-column--side">
-          <div className="gallery-panel gallery-panel--sources">
-            <SourceViewsPanel
-              meta={meta}
-              selectedSource={selection.kind === 'source' ? selection.source : null}
-              onSelectSource={(source) => setSelection({ kind: 'source', source })}
-            />
-          </div>
-
-          <div className="gallery-panel gallery-panel--anims">
-            <h3>Animations</h3>
-            <AnimationGrid
-              sprites={sprites}
-              failedArtifacts={meta?.failedAnimationArtifacts ?? null}
-              generating={generating}
-              selectedName={selectedAnimName}
-              onSelect={(animationName) => setSelection({ kind: 'animation', animationName })}
-            />
-            <DebugFeed />
-          </div>
-        </div>
-
-        <div className="gallery-panel gallery-panel--preview">
-          <div className="gallery-preview__header">
-            <div>
-              <p className="gallery-eyebrow">Preview</p>
-              <h3>
-                {selection.kind === 'source'
-                  ? selection.source.toUpperCase()
-                  : animLabel(selection.animationName)}
-              </h3>
-            </div>
-          </div>
-          <div className="gallery-preview__surface">
-            <SpritePreviewSurface
-              sourceImageUrl={selection.kind === 'source' ? previewSourceUrl : null}
-              sprite={selection.kind === 'animation' ? previewSprite : null}
-              loading={
-                running &&
-                (selection.kind === 'source'
-                  ? !previewSourceBlob
-                  : !previewSprite || generating.has(selection.animationName))
-              }
-              loadingLabel={
-                selection.kind === 'animation'
-                  ? `Generating ${animLabel(selection.animationName)}`
-                  : 'Generating'
-              }
-              emptyLabel={selection.kind === 'source' ? 'Missing source' : 'Waiting for pipeline'}
-            />
-          </div>
-
-          {previewBlob || cachedSelectedSprite || previewSprite?.rawBlob ? (
-            <div className="gallery-actions">
-              {previewBlob ? (
-                <button
-                  onClick={() =>
-                    downloadBlob(
-                      previewBlob,
-                      `${safeName}_${selection.kind === 'source' ? selection.source : selection.animationName}.png`,
-                    )
-                  }
-                >
-                  Save PNG
-                </button>
-              ) : null}
-              {cachedSelectedSprite ? (
-                <button onClick={() => void saveGif()}>Save GIF</button>
-              ) : null}
-              {previewSprite?.rawBlob ? (
-                <button
-                  onClick={() =>
-                    downloadBlob(previewSprite.rawBlob!, `${safeName}_${selectedAnimName}_RAW.png`)
-                  }
-                >
-                  Save RAW
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </section>
+      <FighterPreviewColumn
+        meta={meta}
+        sprites={sprites}
+        selection={selection}
+        onSelectionChange={setSelection}
+        generating={generating}
+        loading={
+          running &&
+          (selection.kind === 'source'
+            ? !previewSourceBlob
+            : !previewSprite || generating.has(selection.animationName))
+        }
+        loadingLabel={
+          selection.kind === 'animation'
+            ? `Generating ${animLabel(selection.animationName)}`
+            : 'Generating'
+        }
+        emptyLabel={selection.kind === 'source' ? 'Missing source' : 'Waiting for pipeline'}
+        safeName={safeName}
+        onSaveGif={() => void saveGif()}
+      />
     </section>
   );
 }

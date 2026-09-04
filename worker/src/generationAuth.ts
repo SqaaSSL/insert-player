@@ -1,4 +1,9 @@
 import type { Env, PublicAuthContext, User } from './types';
+import {
+  generationCreationFlowOrDefault,
+  isGenerationCreationFlow,
+  type GenerationCreationFlow,
+} from '../../src/services/GenerationCreationFlow';
 
 const TOKEN_VERSION = 1;
 const TOKEN_TTL_SECONDS = 2 * 60 * 60;
@@ -8,6 +13,7 @@ interface GenerationTokenPayload {
   jobId: string;
   userId: string;
   providerSessionId: string;
+  creationFlow: GenerationCreationFlow;
   exp: number;
 }
 
@@ -47,12 +53,16 @@ async function hmacKey(env: Env): Promise<CryptoKey> {
 
 export async function mintGenerationJobToken(
   env: Env,
-  params: Pick<GenerationTokenPayload, 'jobId' | 'userId' | 'providerSessionId'>,
+  params: Pick<GenerationTokenPayload, 'jobId' | 'userId' | 'providerSessionId'>
+    & Partial<Pick<GenerationTokenPayload, 'creationFlow'>>,
   nowSeconds = Math.floor(Date.now() / 1_000),
 ): Promise<string> {
   const payload: GenerationTokenPayload = {
     v: TOKEN_VERSION,
     ...params,
+    creationFlow: generationCreationFlowOrDefault(
+      (params as Partial<GenerationTokenPayload>).creationFlow,
+    ),
     exp: nowSeconds + TOKEN_TTL_SECONDS,
   };
   const encoded = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
@@ -76,16 +86,20 @@ function parsePayload(encoded: string): GenerationTokenPayload | null {
   if (!bytes) return null;
   try {
     const payload = JSON.parse(new TextDecoder().decode(bytes)) as Partial<GenerationTokenPayload>;
+    const creationFlow = payload.creationFlow === undefined
+      ? 'original'
+      : payload.creationFlow;
     if (
       payload.v !== TOKEN_VERSION ||
       typeof payload.jobId !== 'string' || !/^[a-f0-9]{32}$/.test(payload.jobId) ||
       typeof payload.userId !== 'string' || !payload.userId ||
       typeof payload.providerSessionId !== 'string' || !/^[a-f0-9]{32}$/.test(payload.providerSessionId) ||
       typeof payload.exp !== 'number' || !Number.isInteger(payload.exp)
+      || !isGenerationCreationFlow(creationFlow)
     ) {
       return null;
     }
-    return payload as GenerationTokenPayload;
+    return { ...payload, creationFlow } as GenerationTokenPayload;
   } catch {
     return null;
   }
@@ -99,6 +113,13 @@ function generationToken(request: Request): string | null {
 export function generationJobIdFromAuth(auth: PublicAuthContext): string | null {
   const value = auth.claims?.generation_job_id;
   return typeof value === 'string' && /^[a-f0-9]{32}$/.test(value) ? value : null;
+}
+
+export function generationCreationFlowFromAuth(
+  auth: PublicAuthContext,
+): GenerationCreationFlow | null {
+  const value = auth.claims?.generation_creation_flow;
+  return isGenerationCreationFlow(value) ? value : null;
 }
 
 export async function optionalGenerationJobAuth(
@@ -118,7 +139,7 @@ export async function optionalGenerationJobAuth(
   }
 
   const job = await env.DB.prepare(`
-    SELECT id, user_id, provider_session_id, status
+    SELECT id, user_id, provider_session_id, status, creation_flow
     FROM generation_jobs
     WHERE id = ? AND user_id = ? AND provider_session_id = ?
   `).bind(payload.jobId, payload.userId, payload.providerSessionId).first<{
@@ -126,8 +147,13 @@ export async function optionalGenerationJobAuth(
     user_id: string;
     provider_session_id: string;
     status: string;
+    creation_flow: GenerationCreationFlow;
   }>();
-  if (!job || !['queued', 'running'].includes(job.status)) {
+  if (
+    !job
+    || !['queued', 'running'].includes(job.status)
+    || job.creation_flow !== payload.creationFlow
+  ) {
     return Response.json({ error: 'Generation job is not active' }, { status: 401 });
   }
   const user = await env.DB.prepare('SELECT * FROM users WHERE id = ?')
@@ -142,6 +168,7 @@ export async function optionalGenerationJobAuth(
     claims: {
       generation_job_id: job.id,
       generation_provider_session_id: job.provider_session_id,
+      generation_creation_flow: job.creation_flow,
     },
   };
 }

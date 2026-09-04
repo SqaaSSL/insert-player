@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -8,6 +16,8 @@ import {
   clerkPublishableKeyIssues,
   decodeClerkPublishableKey,
 } from './clerk-publishable-key.mjs';
+import { versionIdFromWranglerOutput } from './worker-version-rollout-lib.mjs';
+import { assertProductionDeployAllowed } from './production-deploy-guard.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -28,11 +38,13 @@ const defaultSourceModel = 'gemini-3-pro-image';
 const defaultTurnstileHostnames = 'insertplayer.ai,www.insertplayer.ai';
 
 const secretKeys = [
+  'METERKEY_API_KEY',
   'GEMINI_API_KEY',
   'FAL_API_KEY',
   'RUNWAY_API_KEY',
   'FREEPIK_API_KEY',
   'LUDO_API_KEY',
+  'PIXCLI_API_KEY',
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'CLERK_WEBHOOK_SIGNING_SECRET',
@@ -40,11 +52,13 @@ const secretKeys = [
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
   'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+  'GOOGLE_MAPS_SERVER_KEY',
 ];
 
 const requiredKeys = [
   'VITE_CLERK_PUBLISHABLE_KEY',
   'VITE_TURNSTILE_SITE_KEY',
+  'VITE_GOOGLE_MAPS_BROWSER_KEY',
   'STRIPE_ACCOUNT_ID',
   'STRIPE_PRICE_STARTER',
   'STRIPE_PRICE_VERSUS',
@@ -56,6 +70,9 @@ const requiredKeys = [
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
   'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+  'METERKEY_API_KEY',
+  'PIXCLI_API_KEY',
+  'GOOGLE_MAPS_SERVER_KEY',
 ];
 
 const sampleFragments = [
@@ -222,6 +239,7 @@ function writeFrontendEnv(values) {
   text = upsertEnvValue(text, 'VITE_PUBLIC_APP_NAME', readValue(values, 'VITE_PUBLIC_APP_NAME') || readValue(values, 'ASF_PUBLIC_APP_NAME'));
   text = upsertEnvValue(text, 'VITE_PUBLIC_APP_SHORT_NAME', readValue(values, 'VITE_PUBLIC_APP_SHORT_NAME') || readValue(values, 'ASF_PUBLIC_APP_SHORT_NAME'));
   text = upsertEnvValue(text, 'VITE_TURNSTILE_SITE_KEY', readValue(values, 'VITE_TURNSTILE_SITE_KEY'));
+  text = upsertEnvValue(text, 'VITE_GOOGLE_MAPS_BROWSER_KEY', readValue(values, 'VITE_GOOGLE_MAPS_BROWSER_KEY'));
   text = upsertEnvValue(text, 'VITE_INTRO_VIDEO_PROVIDER', readValue(values, 'VITE_INTRO_VIDEO_PROVIDER') || 'fal-ltx-v2-3-fast');
   text = upsertEnvValue(text, 'VITE_BG_REMOVAL_PROVIDER', readValue(values, 'VITE_BG_REMOVAL_PROVIDER') || 'fal');
   text = upsertEnvValue(text, 'VITE_GEMINI_IMAGE_MODEL_REPOSE', readValue(values, 'VITE_GEMINI_IMAGE_MODEL_REPOSE') || defaultSourceModel);
@@ -252,15 +270,110 @@ function putSecret(key, value) {
   }
 }
 
-function runWranglerDeploy() {
-  const result = spawnSync(npx, ['wrangler', 'deploy', '--keep-vars'], {
-    cwd: workerDir,
-    encoding: 'utf8',
-    stdio: 'inherit',
-    env: wranglerEnv(),
-    timeout: DEPLOY_TIMEOUT_MS,
-  });
-  if (result.status !== 0) throw new Error('Worker deploy failed');
+function workerVersionTag() {
+  const rawTag = process.env.ASF_WORKER_VERSION_TAG
+    || (process.env.GITHUB_SHA
+      ? `prod-${process.env.GITHUB_SHA}-${process.env.GITHUB_RUN_ATTEMPT || '1'}`
+      : `local-${Date.now()}`);
+  return rawTag.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64);
+}
+
+function runWranglerDeploy(secretValues, { dryRun = false } = {}) {
+  const secrets = Object.fromEntries(
+    secretKeys
+      .map((key) => [key, readValue(secretValues, key)])
+      .filter(([, value]) => Boolean(value)),
+  );
+  const tempDirectory = mkdtempSync(join(tmpdir(), 'insert-player-worker-secrets-'));
+  const secretsPath = join(tempDirectory, 'secrets.json');
+  try {
+    writeFileSync(secretsPath, JSON.stringify(secrets), { mode: 0o600 });
+    const result = spawnSync(npx, [
+      '--no-install',
+      'wrangler',
+      'deploy',
+      '--keep-vars',
+      '--strict',
+      '--containers-rollout',
+      'immediate',
+      '--tag',
+      workerVersionTag(),
+      '--message',
+      'Insert Player Meterkey transport with compatible image processor',
+      '--secrets-file',
+      secretsPath,
+      ...(dryRun ? ['--dry-run'] : []),
+    ], {
+      cwd: workerDir,
+      encoding: 'utf8',
+      stdio: 'inherit',
+      env: wranglerEnv(),
+      timeout: DEPLOY_TIMEOUT_MS,
+    });
+    if (result.status !== 0) throw new Error(`Worker deploy${dryRun ? ' dry run' : ''} failed`);
+  } finally {
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
+}
+
+function runWranglerVersionUpload(secretValues, { dryRun = false } = {}) {
+  const secrets = Object.fromEntries(
+    secretKeys
+      .map((key) => [key, readValue(secretValues, key)])
+      .filter(([, value]) => Boolean(value)),
+  );
+  const tempDirectory = mkdtempSync(join(tmpdir(), 'insert-player-worker-version-'));
+  const secretsPath = join(tempDirectory, 'secrets.json');
+  const outputPath = join(tempDirectory, 'wrangler-output.ndjson');
+  const tag = workerVersionTag();
+  try {
+    writeFileSync(secretsPath, JSON.stringify(secrets), { mode: 0o600 });
+    const command = [
+      '--no-install',
+      'wrangler',
+      'versions',
+      'upload',
+      '--keep-vars',
+      '--strict',
+      '--tag',
+      tag,
+      '--message',
+      'Insert Player Meterkey transport candidate',
+      '--secrets-file',
+      secretsPath,
+      ...(dryRun ? ['--dry-run'] : []),
+    ];
+    const result = spawnSync(npx, command, {
+      cwd: workerDir,
+      encoding: 'utf8',
+      stdio: 'inherit',
+      env: {
+        ...wranglerEnv(),
+        WRANGLER_OUTPUT_FILE_PATH: outputPath,
+      },
+      timeout: DEPLOY_TIMEOUT_MS,
+    });
+    if (result.status !== 0) throw new Error(`Worker version ${dryRun ? 'dry run' : 'upload'} failed`);
+    if (dryRun) return;
+    const versionId = versionIdFromWranglerOutput(
+      readFileSync(outputPath, 'utf8'),
+      'ai-street-fighter-api',
+    );
+    console.log(`candidate_version_id=${versionId}`);
+    console.log(`candidate_version_tag=${tag}`);
+    if (process.env.GITHUB_OUTPUT) {
+      writeFileSync(process.env.GITHUB_OUTPUT, [
+        `candidate_version_id=${versionId}`,
+        `candidate_version_tag=${tag}`,
+        '',
+      ].join('\n'), {
+        encoding: 'utf8',
+        flag: 'a',
+      });
+    }
+  } finally {
+    rmSync(tempDirectory, { recursive: true, force: true });
+  }
 }
 
 function runProductionCheck() {
@@ -315,6 +428,8 @@ async function validateRequired(values) {
   const publicShortName = readValue(values, 'PUBLIC_APP_SHORT_NAME') || readValue(values, 'ASF_PUBLIC_APP_SHORT_NAME') || readValue(values, 'VITE_PUBLIC_APP_SHORT_NAME');
   const turnstileSiteKey = readValue(values, 'VITE_TURNSTILE_SITE_KEY');
   const clerkPublishableKey = readValue(values, 'VITE_CLERK_PUBLISHABLE_KEY');
+  const googleMapsBrowserKey = readValue(values, 'VITE_GOOGLE_MAPS_BROWSER_KEY');
+  const googleMapsServerKey = readValue(values, 'GOOGLE_MAPS_SERVER_KEY');
   const turnstileSecret = readValue(values, 'TURNSTILE_SECRET_KEY');
   const anonymizationSecret = readValue(values, 'ANONYMIZATION_SECRET');
   const generationJobSigningSecret = readValue(values, 'GENERATION_JOB_SIGNING_SECRET');
@@ -363,6 +478,20 @@ async function validateRequired(values) {
     clerkPublishableKey,
     (value) => /^pk_live_/i.test(value),
     'must be a live Clerk publishable key starting with pk_live_.',
+  );
+  assertLiveShape(
+    errors,
+    'VITE_GOOGLE_MAPS_BROWSER_KEY',
+    googleMapsBrowserKey,
+    (value) => /^AIza[A-Za-z0-9_-]{30,}$/.test(value),
+    'must be a valid browser-restricted Google Maps key.',
+  );
+  assertLiveShape(
+    errors,
+    'GOOGLE_MAPS_SERVER_KEY',
+    googleMapsServerKey,
+    (value) => /^AIza[A-Za-z0-9_-]{30,}$/.test(value),
+    'must be a valid Worker-only Google Maps key.',
   );
   if (clerkPublishableKey) {
     for (const issue of clerkPublishableKeyIssues(clerkPublishableKey, {
@@ -558,6 +687,25 @@ async function validateRequired(values) {
 }
 
 async function main() {
+  if (args.has('--deploy-worker') && args.has('--dry-run-worker-deploy')) {
+    throw new Error('Choose either --deploy-worker or --dry-run-worker-deploy, not both.');
+  }
+  if (args.has('--upload-worker-version') && args.has('--dry-run-worker-version')) {
+    throw new Error('Choose either --upload-worker-version or --dry-run-worker-version, not both.');
+  }
+  const bulkWorkerOperation = [
+    '--deploy-worker',
+    '--dry-run-worker-deploy',
+    '--upload-worker-version',
+    '--dry-run-worker-version',
+  ].some((flag) => args.has(flag));
+  const mutatesProduction = args.has('--deploy-worker')
+    || args.has('--upload-worker-version')
+    || (!args.has('--skip-secrets') && !bulkWorkerOperation);
+  if (mutatesProduction) {
+    const context = assertProductionDeployAllowed({ root });
+    console.log(`Live configuration mutation authorized: ${context.channel} ${context.gitSha}.`);
+  }
   const values = readEnvValues();
   const frontendOrigin = readValue(values, 'ASF_FRONTEND_ORIGIN') || defaultFrontendOrigin;
   const corsOrigins = readValue(values, 'CORS_ORIGIN') || defaultCorsOrigins;
@@ -587,7 +735,7 @@ async function main() {
   writeFrontendEnv(values);
   console.log('Updated .env.production frontend values.');
 
-  if (!args.has('--skip-secrets')) {
+  if (!args.has('--skip-secrets') && !bulkWorkerOperation) {
     for (const key of secretKeys) {
       const value = readValue(values, key);
       if (!value) {
@@ -600,7 +748,16 @@ async function main() {
   }
 
   if (args.has('--deploy-worker')) {
-    runWranglerDeploy();
+    runWranglerDeploy(args.has('--skip-secrets') ? new Map() : values);
+  }
+  if (args.has('--dry-run-worker-deploy')) {
+    runWranglerDeploy(args.has('--skip-secrets') ? new Map() : values, { dryRun: true });
+  }
+  if (args.has('--upload-worker-version')) {
+    runWranglerVersionUpload(args.has('--skip-secrets') ? new Map() : values);
+  }
+  if (args.has('--dry-run-worker-version')) {
+    runWranglerVersionUpload(args.has('--skip-secrets') ? new Map() : values, { dryRun: true });
   }
 }
 

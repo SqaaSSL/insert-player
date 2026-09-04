@@ -18,6 +18,7 @@ const providerSecretKeys = [
   'VITE_STRIPE_SECRET_KEY',
   'VITE_STRIPE_WEBHOOK_SECRET',
   'VITE_TURNSTILE_SECRET_KEY',
+  'VITE_GOOGLE_MAPS_SERVER_KEY',
 ];
 
 function parseEnvText(text, values) {
@@ -75,6 +76,9 @@ if (value('VITE_PUBLIC_APP_NAME') !== 'Insert Player' || value('VITE_PUBLIC_APP_
 }
 if (value('VITE_TURNSTILE_SITE_KEY') !== expectedTurnstileSiteKey) {
   errors.push('VITE_TURNSTILE_SITE_KEY must use Cloudflare\'s always-pass sandbox widget.');
+}
+if (!/^AIza[A-Za-z0-9_-]{30,}$/.test(value('VITE_GOOGLE_MAPS_BROWSER_KEY')) || /replace_me/i.test(value('VITE_GOOGLE_MAPS_BROWSER_KEY'))) {
+  errors.push('VITE_GOOGLE_MAPS_BROWSER_KEY must be the sandbox browser-restricted Google Maps key.');
 }
 if ((value('ASF_SANDBOX_FRONTEND_URL') || expectedFrontendUrl).replace(/\/+$/, '') !== expectedFrontendUrl) {
   errors.push(`ASF_SANDBOX_FRONTEND_URL must be ${expectedFrontendUrl}.`);

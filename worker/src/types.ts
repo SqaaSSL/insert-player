@@ -1,3 +1,7 @@
+import type { SpriteAnimationFormat } from './spriteAnimationFormat';
+import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+import type { VideoGenerationPolicy } from '../../src/services/VideoGenerationPolicy';
+
 export type QualityTier = 'rookie' | 'contender' | 'champion';
 
 type OptionalCloudflareBindings = Partial<
@@ -11,9 +15,14 @@ export interface Env extends OptionalCloudflareBindings {
   CORS_ORIGIN: Cloudflare.Env['CORS_ORIGIN'];
   CLERK_JWKS_URL?: string;
   CLERK_BACKEND_AUTH_BRIDGE_SECRET?: string;
+  GOOGLE_MAPS_SERVER_KEY?: string;
+  /** Optional Cloudflare Realtime TURN credentials for online versus. */
+  REALTIME_TURN_KEY_ID?: string;
+  REALTIME_TURN_API_TOKEN?: string;
 }
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type GenerationJobReviewStatus = 'none' | 'awaiting_review' | 'approved' | 'rejected';
 export type GenerationJobOperation =
   | 'fighter_generation'
   | 'fighter_upgrade'
@@ -28,12 +37,14 @@ export interface GenerationJob {
   charge_id: string;
   provider_session_id: string;
   tier: QualityTier;
+  creation_flow: GenerationCreationFlow;
   operation: GenerationJobOperation;
   target_kind: 'animation' | 'source' | null;
   target_name: string | null;
   artifact_run_id: string | null;
   resumed_from_job_id: string | null;
   status: GenerationJobStatus;
+  review_status?: GenerationJobReviewStatus;
   stage: string;
   failure_stage: string | null;
   progress_current: number;
@@ -58,6 +69,8 @@ export interface GenerationArtifactRun {
   user_id: string;
   fighter_id: string;
   tier: QualityTier;
+  creation_flow: GenerationCreationFlow;
+  video_generation_policy: VideoGenerationPolicy | null;
   operation: GenerationJobOperation;
   target_kind: 'animation' | 'source' | null;
   target_name: string | null;
@@ -90,6 +103,7 @@ export interface GenerationArtifactCheckpoint {
   frame_w: number | null;
   frame_h: number | null;
   frame_count: number | null;
+  animation_format: SpriteAnimationFormat;
   processing_version: number | null;
   metadata_json: string | null;
   completed_by_job_id: string;
@@ -178,6 +192,7 @@ export interface SpriteAsset {
   frame_w: number;
   frame_h: number;
   frame_count: number;
+  animation_format: SpriteAnimationFormat;
   processing_version: number;
   created_at: string;
 }

@@ -59,6 +59,7 @@ describe('virtual fight input', () => {
       kick: false,
       fireball: false,
       uppercut: false,
+      super: false,
     });
   });
 });

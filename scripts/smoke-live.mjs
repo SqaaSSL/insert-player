@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fetchWithTransientNetworkRetry } from './live-smoke-fetch.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -50,8 +51,27 @@ const requireCloneSmoke =
   envValue(env, 'ASF_SMOKE_REQUIRE_CLONE') === '1' || process.argv.includes('--require-clone');
 const preserveSmokeUserState = envValue(env, 'ASF_SMOKE_PRESERVE_USER_STATE') === '1';
 const FETCH_TIMEOUT_MS = Number(envValue(env, 'ASF_LIVE_SMOKE_TIMEOUT_MS') || 45_000);
+const SAFE_FETCH_MAX_ATTEMPTS = Number(envValue(env, 'ASF_LIVE_SMOKE_SAFE_FETCH_ATTEMPTS') || 3);
+const SAFE_FETCH_RETRY_DELAY_MS = Number(envValue(env, 'ASF_LIVE_SMOKE_SAFE_FETCH_RETRY_DELAY_MS') || 250);
 const WORKER_READY_TIMEOUT_MS = Number(envValue(env, 'ASF_WORKER_READY_TIMEOUT_MS') || 90_000);
 const WORKER_RETRY_DELAY_MS = Number(envValue(env, 'ASF_WORKER_RETRY_DELAY_MS') || 2_500);
+const workerVersionOverride = envValue(env, 'ASF_WORKER_VERSION_OVERRIDE');
+const workerVersionOverrideName = envValue(env, 'ASF_WORKER_VERSION_OVERRIDE_NAME') || 'ai-street-fighter-api';
+const workerVersionOverrideTag = envValue(env, 'ASF_WORKER_VERSION_OVERRIDE_TAG');
+const expectedWorkerVersionId = workerVersionOverride || envValue(env, 'ASF_EXPECTED_WORKER_VERSION_ID');
+const expectedWorkerVersionTag = workerVersionOverrideTag || envValue(env, 'ASF_EXPECTED_WORKER_VERSION_TAG');
+if (workerVersionOverride && !/^[0-9a-f-]{36}$/i.test(workerVersionOverride)) {
+  throw new Error('ASF_WORKER_VERSION_OVERRIDE must be a Worker version UUID.');
+}
+if (!/^[a-z0-9_-]{1,63}$/i.test(workerVersionOverrideName)) {
+  throw new Error('ASF_WORKER_VERSION_OVERRIDE_NAME is invalid.');
+}
+if (expectedWorkerVersionId && !/^[0-9a-f-]{36}$/i.test(expectedWorkerVersionId)) {
+  throw new Error('Expected Worker version must be a UUID.');
+}
+if (expectedWorkerVersionId && !expectedWorkerVersionTag) {
+  throw new Error('Expected Worker version tag is required with a version id.');
+}
 
 const tinyPngBase64 =
   envValue(env, 'ASF_TEST_IMAGE_BASE64') ||
@@ -68,6 +88,12 @@ const requiredPlayableAnimations = [
   'hit',
   'ko',
   'victory',
+];
+const requiredProductionArcadeSlugs = [
+  'donald-trump',
+  'lamine-yamal',
+  'rosalia-v2',
+  'elon-musk',
 ];
 const generationLegal = {
   legalVersion: '2026-08-23.1',
@@ -165,6 +191,12 @@ function assertOpaqueCommunityAssets(fighter, label) {
     (fighter?.sprites ?? []).every((sprite) => sprite?.rawUrl === null),
     `${label} exposed a RAW sprite URL`,
   );
+  const highDensityUrls = (fighter?.sprites ?? [])
+    .map((sprite) => sprite?.hqUrl)
+    .filter(Boolean);
+  if (!fighter?.arcade) {
+    assert(highDensityUrls.length === 0, `${label} exposed an Arcade-only HQ sprite URL`);
+  }
   for (const assetUrl of urls) {
     const parsed = new URL(assetUrl);
     assert(
@@ -173,6 +205,16 @@ function assertOpaqueCommunityAssets(fighter, label) {
     );
     assert(!parsed.pathname.includes('/users/'), `${label} exposed an owner-scoped R2 path`);
     assert(!/user_[A-Za-z0-9]+/.test(parsed.pathname), `${label} exposed a Clerk user id in an asset URL`);
+  }
+  for (const assetUrl of highDensityUrls) {
+    const parsed = new URL(assetUrl);
+    assert(
+      parsed.pathname.startsWith(`/public-assets/arcade/${encodeURIComponent(fighter.id)}/sprites/`) &&
+        parsed.pathname.includes('/hq/'),
+      `${label} did not use the dedicated opaque Arcade HQ route`,
+    );
+    assert(!parsed.pathname.includes('/users/'), `${label} HQ asset exposed an owner-scoped R2 path`);
+    assert(!/user_[A-Za-z0-9]+/.test(parsed.pathname), `${label} HQ asset exposed a Clerk user id`);
   }
 }
 
@@ -233,11 +275,20 @@ async function request(pathOrUrl, init = {}) {
     headers.set('Origin', frontendOrigin);
   }
   const target = url(pathOrUrl);
+  if (workerVersionOverride && new URL(target).origin === new URL(baseUrl).origin) {
+    headers.set(
+      'Cloudflare-Workers-Version-Overrides',
+      `${workerVersionOverrideName}="${workerVersionOverride}"`,
+    );
+  }
   try {
-    return await fetch(target, {
-      ...init,
-      headers,
-      signal: init.signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    return await fetchWithTransientNetworkRetry({
+      fetchImpl: fetch,
+      target,
+      init: { ...init, headers },
+      timeoutMs: FETCH_TIMEOUT_MS,
+      maxAttempts: SAFE_FETCH_MAX_ATTEMPTS,
+      baseDelayMs: SAFE_FETCH_RETRY_DELAY_MS,
     });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -292,10 +343,17 @@ async function waitForCurrentWorkerHealth() {
   while (Date.now() - started <= WORKER_READY_TIMEOUT_MS) {
     try {
       const health = await expectJson('health', '/health');
-      if (health.legalVersion === generationLegal.legalVersion) return health;
-      lastError = new Error(
-        `/health still reports legal version ${String(health.legalVersion ?? 'missing')}`,
+      const legalReady = health.legalVersion === generationLegal.legalVersion;
+      const versionReady = !expectedWorkerVersionId || (
+        health.workerVersion?.id === expectedWorkerVersionId
+        && health.workerVersion?.tag === expectedWorkerVersionTag
       );
+      if (legalReady && versionReady) return health;
+      lastError = new Error([
+        `/health reports legal=${String(health.legalVersion ?? 'missing')}`,
+        `worker=${String(health.workerVersion?.id ?? 'missing')}`,
+        `tag=${String(health.workerVersion?.tag ?? 'missing')}`,
+      ].join(', '));
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
     }
@@ -317,7 +375,17 @@ function imageBlob() {
 async function runPublicSmoke() {
   const health = await waitForCurrentWorkerHealth();
   assert(health.status === 'ok', 'Health response did not report ok');
-  assert(health.version === '0.18.0', `/health did not report Worker 0.18.0 (got ${String(health.version ?? 'missing')})`);
+  assert(health.version === '0.19.0', `/health did not report Worker 0.19.0 (got ${String(health.version ?? 'missing')})`);
+  if (expectedWorkerVersionId) {
+    assert(
+      health.workerVersion?.id === expectedWorkerVersionId,
+      `/health did not execute the requested Worker candidate (got ${String(health.workerVersion?.id ?? 'missing')})`,
+    );
+    assert(
+      health.workerVersion?.tag === expectedWorkerVersionTag,
+      `/health did not report the requested Worker candidate tag (got ${String(health.workerVersion?.tag ?? 'missing')})`,
+    );
+  }
   assert(health.legalVersion === generationLegal.legalVersion, '/health did not report the current legal version');
   if (isSandboxSmoke) {
     assert(health.environment === 'sandbox', '/health did not report sandbox environment');
@@ -327,6 +395,10 @@ async function runPublicSmoke() {
   assert(health.storage?.d1 === 'bound', '/health did not report D1 binding');
   assert(health.storage?.r2 === 'bound', '/health did not report R2 binding');
   assert(health.providers === 'configured', '/health did not report configured provider secrets');
+  assert(
+    health.geminiTransport === (isSandboxSmoke ? 'google-direct' : 'meterkey'),
+    `/health did not report the expected ${smokeTarget} Gemini transport`,
+  );
   assert(health.providerAccounting === 'durable', '/health did not report durable provider cost accounting');
   assert(health.providerSessionLimits === 'configured', '/health did not report per-session provider limits');
   assert(health.providerGlobalCaps === 'disabled', '/health still reports a global provider spend cap');
@@ -430,12 +502,27 @@ async function runPublicSmoke() {
 
   const arcadeFeed = await expectStatus('official Arcade cache headers', '/api/arcade', 200);
   assert(
-    (arcadeFeed.headers.get('Cache-Control') ?? '').includes('s-maxage=300'),
-    'Official Arcade feed is missing short shared-cache headers',
+    (arcadeFeed.headers.get('Cache-Control') ?? '').includes('no-store'),
+    'Official Arcade feed must stay uncached so reviewed recurations propagate immediately',
   );
   const arcadeBody = await readJson(arcadeFeed);
   assert(Array.isArray(arcadeBody.fighters), 'Official Arcade feed did not return a fighters array');
+  if (!isSandboxSmoke) {
+    const activeSlugs = new Set(
+      arcadeBody.fighters.map((fighter) => fighter?.arcade?.slug).filter(Boolean),
+    );
+    for (const slug of requiredProductionArcadeSlugs) {
+      assert(activeSlugs.has(slug), `Official Arcade is missing required production fighter ${slug}`);
+    }
+    assert(!activeSlugs.has('rosalia'), 'Official Arcade still exposes the superseded Rosalía fighter');
+    const promotedRosalia = arcadeBody.fighters.find(
+      (fighter) => fighter?.arcade?.slug === 'rosalia-v2',
+    );
+    assert(promotedRosalia?.name === 'Rosalía', 'Promoted Rosalía has the wrong public display name');
+    assert(promotedRosalia?.arcade?.rank === 5, 'Promoted Rosalía did not inherit the legacy roster rank');
+  }
   let previousRank = 0;
+  let firstArcadeHighDensityUrl = null;
   for (const fighter of arcadeBody.fighters) {
     assert(fighter.qualityTier === 'champion', 'Official Arcade exposed a non-Champion fighter');
     assert(!Object.hasOwn(fighter, 'ownerUserId'), 'Official Arcade exposed ownerUserId');
@@ -445,6 +532,28 @@ async function runPublicSmoke() {
     assert(typeof fighter.arcade?.slug === 'string' && fighter.arcade.slug, 'Official Arcade fighter is missing its slug');
     assert(Number(fighter.arcade?.rank) > previousRank, 'Official Arcade fighters are not in stable rank order');
     assert(typeof fighter.arcade?.challengerLine === 'string', 'Official Arcade fighter is missing its challenger line');
+    const animationNames = new Set(
+      (fighter.sprites ?? []).map((sprite) => sprite?.animationName).filter(Boolean),
+    );
+    for (const animationName of requiredPlayableAnimations) {
+      const sprite = (fighter.sprites ?? []).find(
+        (candidate) => candidate?.animationName === animationName,
+      );
+      assert(
+        animationNames.has(animationName),
+        `Official Arcade fighter ${fighter.arcade.slug} is missing playable animation ${animationName}`,
+      );
+      assert(
+        /^[a-f0-9]{64}$/i.test(sprite?.contentHash ?? ''),
+        `Official Arcade fighter ${fighter.arcade.slug} has no immutable hash for ${animationName}`,
+      );
+      assert(
+        Number.isSafeInteger(sprite?.frameWidth) && sprite.frameWidth > 0 &&
+          Number.isSafeInteger(sprite?.frameHeight) && sprite.frameHeight > 0 &&
+          Number.isSafeInteger(sprite?.frameCount) && sprite.frameCount > 0,
+        `Official Arcade fighter ${fighter.arcade.slug} has invalid playback metadata for ${animationName}`,
+      );
+    }
     assert(
       fighter.arcade?.reference?.kind === 'licensed'
         && /^https:\/\//.test(fighter.arcade.reference.sourceUrl ?? '')
@@ -454,7 +563,25 @@ async function runPublicSmoke() {
         && fighter.arcade.reference.credit,
       'Official Arcade fighter is missing public photo attribution',
     );
+    firstArcadeHighDensityUrl ??= (fighter.sprites ?? [])
+      .map((sprite) => sprite?.hqUrl)
+      .find(Boolean) ?? null;
     previousRank = Number(fighter.arcade.rank);
+  }
+  if (firstArcadeHighDensityUrl) {
+    const highDensityAsset = await expectStatus(
+      'official Arcade HQ sprite asset',
+      firstArcadeHighDensityUrl,
+      200,
+    );
+    assert(
+      (highDensityAsset.headers.get('Content-Type') ?? '').startsWith('image/'),
+      'Official Arcade HQ sprite did not return an image',
+    );
+    assert(
+      (highDensityAsset.headers.get('Cache-Control') ?? '').includes('s-maxage=300'),
+      'Official Arcade HQ sprite is missing revocable shared-cache headers',
+    );
   }
   log(`/api/arcade safely exposes ${arcadeBody.fighters.length} official Champion fighter${arcadeBody.fighters.length === 1 ? '' : 's'}`);
 
@@ -1036,10 +1163,10 @@ async function runAuthenticatedSmoke() {
     const foreignMatch = await readJson(foreignMatchRes);
     assert(foreignMatchRes.status === 403, `foreign fighter match report expected 403, got ${foreignMatchRes.status}`);
     assert(
-      /does not belong/i.test(String(foreignMatch.error ?? '')),
+      /not owned or an active Arcade fighter/i.test(String(foreignMatch.error ?? '')),
       'Foreign fighter match report did not reject by ownership',
     );
-    log('match reporting rejects foreign fighter ids');
+    log('match reporting rejects foreign community fighter ids');
   } else {
     if (requireCloneSmoke) {
       throw new Error('ASF_CLERK_JWT_CLONE is required for launch clone/privacy smoke. Pass a token from a second Clerk user.');
@@ -1051,6 +1178,44 @@ async function runAuthenticatedSmoke() {
     headers: authHeaders(),
   });
   assert(Array.isArray(statsBeforeMatch.recentMatches), '/api/stats did not include recentMatches');
+
+  const authenticatedArcadeBody = await expectJson(
+    'authenticated Arcade roster',
+    '/api/arcade',
+  );
+  assert(
+    Array.isArray(authenticatedArcadeBody.fighters),
+    'Authenticated Arcade roster did not include fighters',
+  );
+  const activeArcadeFighterId = authenticatedArcadeBody.fighters[0]?.id ?? null;
+  if (activeArcadeFighterId) {
+    const attractReport = await expectJson('Attract Mode match report', '/api/matches', 200, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        winnerSlot: 'p1',
+        roundsP1: 2,
+        roundsP2: 1,
+        duration: 42,
+        p1FighterId: activeArcadeFighterId,
+        p2FighterId: activeArcadeFighterId,
+        opponentKind: 'cpu',
+        cpuVsCpu: true,
+        isRanked: false,
+      }),
+    });
+    assert(attractReport.recorded === false, 'Attract Mode match report was persisted');
+    const statsAfterAttract = await expectJson('player stats after Attract Mode', '/api/stats', 200, {
+      headers: authHeaders(),
+    });
+    assert(
+      Number(statsAfterAttract.player?.wins ?? 0) === Number(statsBeforeMatch.player?.wins ?? 0)
+        && Number(statsAfterAttract.player?.losses ?? 0) === Number(statsBeforeMatch.player?.losses ?? 0)
+        && (statsAfterAttract.recentMatches ?? []).length === (statsBeforeMatch.recentMatches ?? []).length,
+      'Attract Mode changed the signed-in player record',
+    );
+    log('Attract Mode does not persist history or change personal W/L');
+  }
   if (preserveSmokeUserState) {
     log('player stats are readable without mutating persistent production QA records');
   } else {
@@ -1064,8 +1229,9 @@ async function runAuthenticatedSmoke() {
         roundsP2: 0,
         duration: 42,
         p1FighterId: smokeFighterId,
-        p2FighterId: smokeFighterId,
+        p2FighterId: activeArcadeFighterId ?? smokeFighterId,
         opponentKind: 'cpu',
+        cpuVsCpu: false,
         isRanked: false,
       }),
     });
@@ -1076,6 +1242,7 @@ async function runAuthenticatedSmoke() {
     assert(Number(stats.player?.wins ?? 0) >= winsBeforeMatch + 1, 'Unranked match win did not update signed-in record');
     log('match reporting persists unranked match history');
     log('match reporting updates signed-in record');
+    if (activeArcadeFighterId) log('match reporting accepts active published Arcade fighter ids');
   }
 
   await expectJson('unpublish fighter', `/api/fighters/${smokeFighterId}`, 200, {

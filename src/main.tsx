@@ -1,8 +1,10 @@
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ClerkProvider, SignInButton, SignUpButton, UserButton, useAuth, useUser } from '@clerk/react';
+import { ClerkProvider, useAuth, useUser } from '@clerk/react';
 import { App } from './ui/App.tsx';
-import type { AuthStatus } from './ui/authState.ts';
+import { AuthDock } from './ui/components/AuthDock.tsx';
+import { LoadingScreen } from './ui/components/LoadingScreen.tsx';
+import { resolveAuthBootstrapMode, type AuthStatus } from './ui/authState.ts';
 import { configureApiAuth } from './services/ApiClient.ts';
 import {
   claimLocalSpriteCacheForCurrentOwner,
@@ -10,8 +12,27 @@ import {
   spriteCacheScopeForOwner,
 } from './services/SpriteCache.ts';
 import { debugWarn } from './services/DebugLog.ts';
+import { installCrashReporting } from './services/CrashReporting.ts';
+import {
+  clearPostSignUpTrialIntent,
+  isNewAccountForOnboarding,
+  rememberPostSignUpTrialIntent,
+} from './ui/shared/onboardingFlow.ts';
 import '@fontsource/press-start-2p/latin-400.css';
+import '@fontsource/space-grotesk/latin-400.css';
+import '@fontsource/space-grotesk/latin-500.css';
+import '@fontsource/space-grotesk/latin-700.css';
 import './ui/styles.css';
+
+installCrashReporting();
+
+const CACHE_PREPARE_TIMEOUT_MS = 3_000;
+interface CachePreparationState {
+  scope: string | null;
+  status: 'pending' | 'ready' | 'degraded';
+  bootstrapped: boolean;
+  message: string | null;
+}
 
 const rootEl = document.getElementById('app');
 
@@ -26,9 +47,19 @@ function ClerkSessionBridge() {
   const authStatus: AuthStatus = !authReady ? 'loading' : isSignedIn ? 'signed-in' : 'signed-out';
   const authSessionKey = !authReady ? 'loading' : isSignedIn ? user?.id ?? 'signed-in' : 'signed-out';
   const cacheOwnerId = authReady && isSignedIn ? user?.id ?? null : null;
+  const isNewAccount = Boolean(
+    authReady
+    && isSignedIn
+    && isNewAccountForOnboarding(user?.createdAt),
+  );
   const cacheScope = spriteCacheScopeForOwner(cacheOwnerId);
-  const [preparedCacheScope, setPreparedCacheScope] = useState<string | null>(null);
-  const [cacheError, setCacheError] = useState<string | null>(null);
+  const [cacheAttempt, setCacheAttempt] = useState(0);
+  const [cacheState, setCacheState] = useState<CachePreparationState>({
+    scope: null,
+    status: 'pending',
+    bootstrapped: false,
+    message: null,
+  });
 
   useEffect(() => {
     configureApiAuth(isLoaded && isSignedIn ? () => getToken() : null);
@@ -37,77 +68,110 @@ function ClerkSessionBridge() {
 
   useEffect(() => {
     let cancelled = false;
-    setPreparedCacheScope(null);
-    setCacheError(null);
     if (!authReady) return () => { cancelled = true; };
+
+    setCacheState((current) => ({
+      scope: cacheScope,
+      status: 'pending',
+      bootstrapped: current.scope === cacheScope && current.bootstrapped,
+      message: current.scope === cacheScope && current.bootstrapped
+        ? 'Trying local roster storage again...'
+        : null,
+    }));
 
     configureSpriteCacheOwner(cacheOwnerId);
     const prepare = cacheOwnerId
       ? claimLocalSpriteCacheForCurrentOwner()
       : Promise.resolve();
+    const timeout = window.setTimeout(() => {
+      if (cancelled) return;
+      setCacheState({
+        scope: cacheScope,
+        status: 'degraded',
+        bootstrapped: true,
+        message: 'Local storage took too long to respond. Cloud and public pages remain available.',
+      });
+    }, CACHE_PREPARE_TIMEOUT_MS);
     void prepare
       .then(() => {
-        if (!cancelled) setPreparedCacheScope(cacheScope);
+        if (cancelled) return;
+        window.clearTimeout(timeout);
+        setCacheState({
+          scope: cacheScope,
+          status: 'ready',
+          bootstrapped: true,
+          message: null,
+        });
       })
       .catch((error) => {
         debugWarn('[Cache] Failed to prepare account-scoped cache:', error);
-        if (!cancelled) setCacheError('Local roster storage is unavailable. Reload to retry.');
+        if (cancelled) return;
+        window.clearTimeout(timeout);
+        setCacheState({
+          scope: cacheScope,
+          status: 'degraded',
+          bootstrapped: true,
+          message: 'Local roster storage could not open. Cloud and public pages remain available.',
+        });
       });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
     };
-  }, [authReady, cacheOwnerId, cacheScope]);
+  }, [authReady, cacheAttempt, cacheOwnerId, cacheScope]);
 
-  const cacheReady = authReady && preparedCacheScope === cacheScope;
+  const cacheBootstrapped = authReady && cacheState.scope === cacheScope && cacheState.bootstrapped;
   const authDock = (
-    <div className="auth-dock">
-      {!isLoaded ? (
-        <span className="auth-dock__label">Loading...</span>
-      ) : isSignedIn ? (
-        <>
-          <span className="auth-dock__label">{user?.firstName ?? user?.username ?? 'Player'}</span>
-          <UserButton />
-        </>
-      ) : (
-        <>
-          <SignInButton mode="modal">
-            <button className="auth-dock__button">Sign In</button>
-          </SignInButton>
-          <SignUpButton mode="modal">
-            <button className="auth-dock__button is-primary">Join</button>
-          </SignUpButton>
-        </>
-      )}
-    </div>
+    <AuthDock
+      isLoaded={isLoaded}
+      isSignedIn={Boolean(isSignedIn)}
+      displayName={user?.firstName ?? user?.username ?? 'Player'}
+      onBeginSignIn={clearPostSignUpTrialIntent}
+      onBeginSignUp={rememberPostSignUpTrialIntent}
+    />
   );
 
   return (
-    cacheReady ? (
-      <App authStatus={authStatus} authSessionKey={authSessionKey} authSlot={authDock} />
+    cacheBootstrapped ? (
+      <App
+        authStatus={authStatus}
+        authSessionKey={authSessionKey}
+        isNewAccount={isNewAccount}
+        userImageUrl={authReady && isSignedIn ? user?.imageUrl ?? null : null}
+        authSlot={authDock}
+        cacheStatus={cacheState.status}
+        cacheMessage={cacheState.message}
+        onRetryCache={() => setCacheAttempt((current) => current + 1)}
+      />
     ) : (
-      <>
-        {authDock}
-        <main className="session-loading" aria-live="polite">
-          <p>{cacheError ?? 'Loading player data...'}</p>
-        </main>
-      </>
+      <LoadingScreen label={authReady ? 'Loading player data...' : 'Loading player account...'} />
     )
   );
 }
 
 function Root() {
   const clerkKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
-  if (typeof clerkKey === 'string' && clerkKey.trim()) {
+  const mode = resolveAuthBootstrapMode(clerkKey, import.meta.env.DEV);
+  if (mode === 'clerk') {
     return (
-      <ClerkProvider publishableKey={clerkKey}>
+      <ClerkProvider publishableKey={String(clerkKey).trim()}>
         <ClerkSessionBridge />
       </ClerkProvider>
     );
   }
 
   configureApiAuth(null);
-  return <App authStatus="local" authSessionKey="local" />;
+  if (mode === 'local-dev') {
+    return <App authStatus="local" authSessionKey="local" />;
+  }
+  return (
+    <App
+      authStatus="signed-out"
+      authSessionKey="auth-misconfigured"
+      configurationError="This production build is missing its Clerk publishable key. Account, roster, billing, and fight actions are disabled until the deployment is fixed."
+    />
+  );
 }
 
 createRoot(rootEl).render(

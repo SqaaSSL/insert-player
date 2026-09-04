@@ -1,0 +1,28 @@
+A single continuous, unbroken transformation shot. No scene cuts. The timing
+follows a fast 145 BPM arcade pulse, but there is no reference audio input and
+the generated audio will not be used in the final mix.
+
+[0.00-0.42s] Begin exactly on the first reference frame. Hold the same adult
+woman in a black T-shirt and black jeans against the neutral gray background.
+Only one natural breath and a restrained cabinet-light pulse are visible.
+
+[0.42-1.24s] A narrow vertical red-and-gold arcade-cabinet light starts crossing
+the frame. Her identity, face, age, hairstyle, skin tone, and body proportions
+remain unchanged.
+
+[1.24-3.31s] On the steady pulse, the light progressively reveals the burgundy
+leather fighter jacket, gloves, black trousers, and boots from the second
+reference while the environment becomes the red-and-blue arena. The movement is
+continuous and physically believable, never stop-motion, jerky, or cartoonish.
+
+[3.31-4.14s] Her hands settle from her pockets into a grounded fighting guard as
+the camera eases back slightly to reveal the complete stance.
+
+[4.14-4.65s] Finish exactly on the second reference frame and hold it. The
+fighter is grounded on both feet and fully readable before the real gameplay
+cut.
+
+Two arms, two hands, two legs. No extra limbs, no duplicate body, no face
+morphing, no identity drift, no caricature, no oversized head, no text, no
+logos, no dialogue, no music. Preserve the exact final clothing, face, and
+silhouette from the second reference.

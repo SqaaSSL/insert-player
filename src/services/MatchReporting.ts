@@ -5,10 +5,14 @@ function isLocalDevWithoutApi(): boolean {
   return !String(import.meta.env.VITE_API_BASE_URL ?? '').trim() && import.meta.env.DEV;
 }
 
-export async function reportMatchCompletion(detail: MatchCompletionDetail): Promise<void> {
-  if (isLocalDevWithoutApi()) return;
+export function shouldReportMatchCompletion(detail: MatchCompletionDetail): boolean {
+  return !detail.cpuVsCpu && detail.experience !== 'trial';
+}
 
-  const opponentKind = detail.cpuVsCpu || detail.vsAI ? 'cpu' : 'local';
+export async function reportMatchCompletion(detail: MatchCompletionDetail): Promise<void> {
+  if (!shouldReportMatchCompletion(detail) || isLocalDevWithoutApi()) return;
+
+  const opponentKind = detail.online ? 'online' : detail.cpuVsCpu || detail.vsAI ? 'cpu' : 'local';
   const res = await apiFetch('/api/matches', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -20,7 +24,11 @@ export async function reportMatchCompletion(detail: MatchCompletionDetail): Prom
       p1FighterId: detail.p1FighterId ?? null,
       p2FighterId: detail.p2FighterId ?? null,
       opponentKind,
+      cpuVsCpu: detail.cpuVsCpu,
       isRanked: false,
+      ...(detail.online
+        ? { roomCode: detail.online.roomCode, matchSerial: detail.online.matchSerial }
+        : {}),
     }),
   });
 

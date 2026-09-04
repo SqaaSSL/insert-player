@@ -1,21 +1,39 @@
+FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS media-runtime
+
+ENV VIDEO_SPRITE_APPROVED_FFMPEG_VERSION=5.1.9-0+deb12u1
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg=7:5.1.9-0+deb12u1 \
+  && ffmpeg -version | head -n 1 | grep -F "ffmpeg version 5.1.9-0+deb12u1 " \
+  && ffprobe -version | head -n 1 | grep -F "ffprobe version 5.1.9-0+deb12u1 " \
+  && rm -rf /var/lib/apt/lists/*
+
 FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS build
 
 WORKDIR /app
 COPY processor/package.json processor/package-lock.json ./processor/
-RUN npm ci --prefix processor
+RUN npm ci --prefix processor --no-audit --no-fund
 
 COPY processor ./processor
 COPY src/services ./src/services
 RUN npm run --prefix processor build
-RUN npm prune --prefix processor --omit=dev
 
-FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+FROM media-runtime AS video-sprite-test
+
+WORKDIR /app
+COPY --from=build /app /app
+RUN VIDEO_SPRITE_TEST_FFMPEG=1 npm --prefix processor run test:video-sprite
+
+FROM build AS production-dependencies
+
+RUN npm prune --prefix processor --omit=dev --no-audit --no-fund
+
+FROM media-runtime AS runtime
 
 ENV NODE_ENV=production
 ENV PORT=8080
 WORKDIR /app
 COPY --from=build /app/processor/dist ./processor/dist
-COPY --from=build /app/processor/node_modules ./processor/node_modules
+COPY --from=production-dependencies /app/processor/node_modules ./processor/node_modules
 EXPOSE 8080
 USER node
 CMD ["node", "processor/dist/server.mjs"]

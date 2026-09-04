@@ -11,6 +11,30 @@ import type {
   GenerationJobOperation,
   QualityTier,
 } from './types';
+import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+import { VIDEO_SPRITE_ACTIONS } from '../../src/services/VideoSpriteCompileContract';
+import {
+  generationCreationFlowAvailable,
+  parseRequestedGenerationCreationFlow,
+} from './generationCreationFlow';
+import {
+  generationSourceManifest,
+  parseSealedReviewedCanonicalSources,
+  reviewedCanonicalHashesFromSealed,
+  ReviewedCanonicalSourceError,
+  type SealedReviewedCanonicalSources,
+} from './reviewedCanonicalSources';
+import {
+  prepareUnsealedVideoRestartAudit,
+  prepareUnsealedVideoRestartRetirement,
+  readEligibleUnsealedVideoPartialRestart,
+} from './videoRunRestart';
+import {
+  SELF_SERVICE_VIDEO_POLICY,
+  STUDIO_CURATED_VIDEO_POLICY,
+  storedVideoGenerationPolicy,
+  type VideoGenerationPolicy,
+} from '../../src/services/VideoGenerationPolicy';
 
 const MAX_JOB_BODY_BYTES = 8 * 1024;
 const JOB_TTL_HOURS = 48;
@@ -32,6 +56,7 @@ const SOURCE_TARGETS = new Set(['side', 'upright', 'crouch']);
 interface GenerationJobAuthorizationRow {
   charge_id: string;
   charge_tier: QualityTier;
+  charge_creation_flow: GenerationCreationFlow;
   charge_reason: string;
   charge_status: 'reserved' | 'committed' | 'refunded';
   charge_fighter_id: string | null;
@@ -40,6 +65,7 @@ interface GenerationJobAuthorizationRow {
   resumed_from_job_id: string | null;
   provider_session_id: string;
   provider_tier: QualityTier;
+  provider_creation_flow: GenerationCreationFlow;
   provider_purpose: string;
   provider_status: string;
   provider_expires_at: string;
@@ -55,10 +81,21 @@ interface GenerationJobAuthorizationRow {
   resume_run_user_id: string | null;
   resume_run_fighter_id: string | null;
   resume_run_tier: QualityTier | null;
+  resume_run_creation_flow: GenerationCreationFlow | null;
+  resume_run_video_generation_policy: VideoGenerationPolicy | null;
   resume_run_operation: GenerationJobOperation | null;
   resume_run_target_kind: 'animation' | 'source' | null;
   resume_run_target_name: string | null;
   resume_run_status: string | null;
+  resume_run_source_manifest_json: string | null;
+  resume_run_approved_action_count: number | null;
+  resume_job_status: string | null;
+  resume_job_review_status: string | null;
+  resume_candidate_status: string | null;
+  resume_candidate_current_revision: number | null;
+  resume_candidate_approved_revision: number | null;
+  resume_candidate_report_sha256: string | null;
+  resume_child_job_id: string | null;
 }
 
 interface GenerationJobEventRow {
@@ -91,6 +128,10 @@ interface GenerationRunSnapshot {
   completedStages: string[];
   pendingStages: string[];
   preservedArtifactCount: number;
+  continuationConsumed: boolean;
+  canonicalSourceMode: 'reviewed-current-v1' | null;
+  canonicalSourceHashes: ReturnType<typeof reviewedCanonicalHashesFromSealed> | null;
+  unsealedVideoRestartRequired: boolean;
 }
 
 function serializeJob(
@@ -102,12 +143,18 @@ function serializeJob(
     id: job.id,
     fighterId: job.fighter_id,
     tier: job.tier,
+    creationFlow: job.creation_flow,
     operation: job.operation,
     targetKind: job.target_kind,
     targetName: job.target_name,
     artifactRunId: job.artifact_run_id,
     resumedFromJobId: job.resumed_from_job_id,
     status: job.status,
+    reviewStatus: job.review_status ?? 'none',
+    fullRunRestartRequired: job.creation_flow === 'video' &&
+      job.operation === 'fighter_generation' && (
+        run?.status === 'failed' || run?.unsealedVideoRestartRequired === true
+      ),
     stage: job.stage,
     failureStage: job.failure_stage ?? run?.failureStage ?? null,
     progressCurrent: job.progress_current,
@@ -118,11 +165,20 @@ function serializeJob(
     finishedAt: job.finished_at,
     createdAt: job.created_at,
     updatedAt: job.updated_at,
-    resumable: (job.status === 'failed' || job.status === 'cancelled') && run?.status === 'partial',
+    resumable: (
+      (job.status === 'failed' || job.status === 'cancelled') ||
+      (job.creation_flow === 'video' && job.status === 'succeeded' && job.review_status === 'approved')
+    ) && run?.status === 'partial' && run.unsealedVideoRestartRequired !== true && (
+      job.creation_flow !== 'video' || !run.continuationConsumed
+    ) && (
+      job.creation_flow !== 'video' || run.pendingStages.length > 0
+    ),
     completedStages: run?.completedStages ?? [],
     pendingStages: run?.pendingStages ?? generationStagesForOperation(job.operation, job.target_name)
       .map((entry) => entry.key),
     preservedArtifactCount: run?.preservedArtifactCount ?? 0,
+    canonicalSourceMode: run?.canonicalSourceMode ?? null,
+    canonicalSourceHashes: run?.canonicalSourceHashes ?? null,
     events: events.map((event) => ({
       stage: event.stage,
       status: event.status,
@@ -140,10 +196,29 @@ async function getRunSnapshot(env: Env, job: GenerationJob): Promise<GenerationR
     LIMIT 1
   `).bind(job.artifact_run_id, job.user_id, job.fighter_id).first<GenerationArtifactRun>();
   if (!run) return undefined;
+  const reviewedCanonicalSources = parseSealedReviewedCanonicalSources(run.source_manifest_json);
+  const unsealedVideoRestartRequired = job.creation_flow === 'video' &&
+    job.operation === 'fighter_generation' &&
+    (job.status === 'failed' || job.status === 'cancelled') &&
+    run.status === 'partial' &&
+    Boolean(await readEligibleUnsealedVideoPartialRestart(
+      env,
+      job.user_id,
+      job.fighter_id,
+      job.id,
+    ));
   return {
     status: run.status,
     failureStage: run.failure_stage,
     ...await artifactProgress(env, run),
+    continuationConsumed: Boolean(await env.DB.prepare(`
+      SELECT 1 AS present FROM generation_jobs WHERE resumed_from_job_id = ? LIMIT 1
+    `).bind(job.id).first()),
+    canonicalSourceMode: reviewedCanonicalSources?.mode ?? null,
+    canonicalSourceHashes: reviewedCanonicalSources
+      ? reviewedCanonicalHashesFromSealed(reviewedCanonicalSources)
+      : null,
+    unsealedVideoRestartRequired,
   };
 }
 
@@ -179,13 +254,15 @@ function matchesJobRequest(
   providerSessionId: string,
   targetKind: 'animation' | 'source' | null,
   targetName: string | null,
+  creationFlow: GenerationCreationFlow,
 ): boolean {
   return job.id === purchaseId
     && job.charge_id === purchaseId
     && job.fighter_id === fighterId
     && job.provider_session_id === providerSessionId
     && job.target_kind === targetKind
-    && job.target_name === targetName;
+    && job.target_name === targetName
+    && job.creation_flow === creationFlow;
 }
 
 async function replayExistingJob(env: Env, userId: string, job: GenerationJob): Promise<Response> {
@@ -308,6 +385,11 @@ export async function createGenerationJob(
   request: Request,
   env: Env,
   auth: AuthContext,
+  options: {
+    reviewedCanonicalSources?: SealedReviewedCanonicalSources;
+    unsealedVideoRestartFromJobId?: string;
+    videoGenerationPolicy?: VideoGenerationPolicy;
+  } = {},
 ): Promise<Response> {
   const body = await readJsonBody<{
     fighterId?: string;
@@ -315,6 +397,7 @@ export async function createGenerationJob(
     providerSessionId?: string;
     targetKind?: string;
     targetName?: string;
+    creationFlow?: unknown;
   }>(request, MAX_JOB_BODY_BYTES);
   const fighterId = body.fighterId?.trim() ?? '';
   const purchaseId = body.purchaseId?.trim() ?? '';
@@ -323,6 +406,8 @@ export async function createGenerationJob(
     ? body.targetKind
     : null;
   const targetName = body.targetName?.trim().toLowerCase() || null;
+  const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
+  const unsealedVideoRestartFromJobId = options.unsealedVideoRestartFromJobId?.trim() ?? '';
   if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
   if (!/^[a-f0-9]{32}$/.test(purchaseId)) return json({ error: 'A valid purchaseId is required' }, 400);
   if (!/^[a-f0-9]{32}$/.test(providerSessionId)) {
@@ -334,6 +419,61 @@ export async function createGenerationJob(
   if (targetName !== null && !/^[a-z_]{2,64}$/.test(targetName)) {
     return json({ error: 'A valid targetName is required' }, 400);
   }
+  if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
+  if (options.videoGenerationPolicy && creationFlow !== 'video') {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'A Video generation policy cannot authorize the Original creation flow',
+      400,
+      { code: 'video_generation_policy_flow_mismatch' },
+    );
+  }
+  if (
+    options.videoGenerationPolicy === STUDIO_CURATED_VIDEO_POLICY
+    && auth.user?.plan_tier !== 'admin'
+  ) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'The Studio Curated Video policy requires an admin API authorization',
+      403,
+      { code: 'studio_curated_video_admin_required' },
+    );
+  }
+  if (
+    unsealedVideoRestartFromJobId && (
+      !/^[a-f0-9]{32}$/.test(unsealedVideoRestartFromJobId) ||
+      creationFlow !== 'video' ||
+      auth.user.plan_tier !== 'admin' ||
+      !options.reviewedCanonicalSources
+    )
+  ) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Unsealed Video restart authorization is invalid; the unused reservation was released',
+      403,
+      { code: 'unsealed_video_restart_authorization_invalid' },
+    );
+  }
+  if (!generationCreationFlowAvailable(creationFlow)) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Video generation is not available on this release; the unused reservation was released',
+      503,
+      { code: 'generation_creation_flow_unavailable' },
+    );
+  }
 
   const existing = await env.DB.prepare(`
     SELECT * FROM generation_jobs
@@ -341,16 +481,44 @@ export async function createGenerationJob(
     LIMIT 1
   `).bind(auth.userId, purchaseId, providerSessionId).first<GenerationJob>();
   if (existing) {
-    if (!matchesJobRequest(existing, fighterId, purchaseId, providerSessionId, targetKind, targetName)) {
+    if (!matchesJobRequest(
+      existing,
+      fighterId,
+      purchaseId,
+      providerSessionId,
+      targetKind,
+      targetName,
+      creationFlow,
+    )) {
       return json({ error: 'Generation authorization is already attached to another job' }, 409);
     }
     return replayExistingJob(env, auth.userId, existing);
+  }
+
+  const pendingReview = await env.DB.prepare(`
+    SELECT candidate.job_id
+    FROM video_sprite_candidates candidate
+    WHERE candidate.fighter_id = ? AND candidate.user_id = ?
+      AND candidate.status = 'awaiting_review'
+    LIMIT 1
+  `).bind(fighterId, auth.userId).first<{ job_id: string }>();
+  if (pendingReview) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Review the pending video action before starting another generation; the unused reservation was released',
+      409,
+      { code: 'video_review_pending', reviewJobId: pendingReview.job_id },
+    );
   }
 
   const authorization = await env.DB.prepare(`
     SELECT
       gc.id AS charge_id,
       gc.tier AS charge_tier,
+      gc.creation_flow AS charge_creation_flow,
       gc.reason AS charge_reason,
       gc.status AS charge_status,
       gc.fighter_id AS charge_fighter_id,
@@ -359,6 +527,7 @@ export async function createGenerationJob(
       gc.resumed_from_job_id,
       ps.id AS provider_session_id,
       ps.tier AS provider_tier,
+      ps.creation_flow AS provider_creation_flow,
       ps.purpose AS provider_purpose,
       ps.status AS provider_status,
       ps.expires_at AS provider_expires_at,
@@ -374,15 +543,34 @@ export async function createGenerationJob(
       resume_run.user_id AS resume_run_user_id,
       resume_run.fighter_id AS resume_run_fighter_id,
       resume_run.tier AS resume_run_tier,
+      resume_run.creation_flow AS resume_run_creation_flow,
+      resume_run.video_generation_policy AS resume_run_video_generation_policy,
       resume_run.operation AS resume_run_operation,
       resume_run.target_kind AS resume_run_target_kind,
       resume_run.target_name AS resume_run_target_name,
-      resume_run.status AS resume_run_status
+      resume_run.status AS resume_run_status,
+      resume_run.source_manifest_json AS resume_run_source_manifest_json,
+      (SELECT COUNT(*) FROM video_sprite_candidates approved
+        WHERE approved.run_id = resume_run.id AND approved.status = 'approved')
+        AS resume_run_approved_action_count,
+      resume_job.status AS resume_job_status,
+      resume_job.review_status AS resume_job_review_status,
+      resume_candidate.status AS resume_candidate_status,
+      resume_candidate.current_revision AS resume_candidate_current_revision,
+      resume_candidate.approved_revision AS resume_candidate_approved_revision,
+      resume_revision.report_sha256 AS resume_candidate_report_sha256,
+      resume_child.id AS resume_child_job_id
     FROM generation_charges gc
     JOIN provider_sessions ps ON ps.id = ? AND ps.charge_id = gc.id AND ps.user_id = gc.user_id
     JOIN fighters f ON f.id = ? AND f.owner_user_id = gc.user_id
     LEFT JOIN arcade_fighters af ON af.fighter_id = f.id
     LEFT JOIN generation_artifact_runs resume_run ON resume_run.id = gc.continuation_run_id
+    LEFT JOIN generation_jobs resume_job ON resume_job.id = gc.resumed_from_job_id
+    LEFT JOIN video_sprite_candidates resume_candidate ON resume_candidate.job_id = resume_job.id
+    LEFT JOIN video_sprite_candidate_revisions resume_revision
+      ON resume_revision.candidate_id = resume_candidate.id
+      AND resume_revision.revision = resume_candidate.current_revision
+    LEFT JOIN generation_jobs resume_child ON resume_child.resumed_from_job_id = resume_job.id
     WHERE gc.id = ? AND gc.user_id = ?
       AND (gc.fighter_id IS NULL OR gc.fighter_id = f.id)
     LIMIT 1
@@ -392,7 +580,9 @@ export async function createGenerationJob(
   if (
     authorization.charge_status !== 'reserved' ||
     authorization.provider_status !== 'active' ||
-    authorization.charge_tier !== authorization.provider_tier
+    authorization.charge_tier !== authorization.provider_tier ||
+    authorization.charge_creation_flow !== creationFlow ||
+    authorization.provider_creation_flow !== creationFlow
   ) {
     if (authorization.charge_status === 'reserved') {
       return rejectReservedJob(
@@ -405,6 +595,17 @@ export async function createGenerationJob(
       );
     }
     return json({ error: 'Generation authorization is no longer active' }, 409);
+  }
+  if (creationFlow === 'video' && authorization.charge_tier !== 'champion') {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'The review-gated video flow is currently available only for Champion fighters',
+      400,
+      { code: 'video_creation_requires_champion' },
+    );
   }
   if (
     Date.parse(authorization.charge_expires_at) <= Date.now() ||
@@ -424,16 +625,173 @@ export async function createGenerationJob(
       403,
     );
   }
+  if (creationFlow === 'video' && operation !== 'fighter_generation') {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'The review-gated video flow currently supports full fighter generation only',
+      400,
+      { code: 'video_creation_operation_unsupported' },
+    );
+  }
+  const reviewedCanonicalSources = options.reviewedCanonicalSources;
+  if (reviewedCanonicalSources) {
+    const keysMatchAuthorization =
+      authorization.side_view_blob_key === reviewedCanonicalSources.sources.side.processed.blobKey &&
+      authorization.side_view_raw_blob_key === reviewedCanonicalSources.sources.side.raw.blobKey &&
+      authorization.upright_view_blob_key === reviewedCanonicalSources.sources.upright.processed.blobKey &&
+      authorization.upright_view_raw_blob_key === reviewedCanonicalSources.sources.upright.raw.blobKey &&
+      authorization.crouch_view_blob_key === reviewedCanonicalSources.sources.crouch.processed.blobKey &&
+      authorization.crouch_view_raw_blob_key === reviewedCanonicalSources.sources.crouch.raw.blobKey;
+    if (
+      auth.user.plan_tier !== 'admin' || creationFlow !== 'video' || operation !== 'fighter_generation' ||
+      reviewedCanonicalSources.fighterId !== fighterId ||
+      reviewedCanonicalSources.ownerUserId !== auth.userId ||
+      (!authorization.continuation_run_id && !keysMatchAuthorization)
+    ) {
+      return rejectReservedJob(
+        env,
+        auth.userId,
+        purchaseId,
+        fighterId,
+        'Reviewed canonical source authorization does not match this job; the unused reservation was released',
+        403,
+        { code: 'reviewed_canonical_source_authorization_mismatch' },
+      );
+    }
+    if (authorization.continuation_run_id) {
+      try {
+        const sealedRunSources = parseSealedReviewedCanonicalSources(
+          authorization.resume_run_source_manifest_json,
+        );
+        if (!sealedRunSources || JSON.stringify(sealedRunSources) !== JSON.stringify(reviewedCanonicalSources)) {
+          throw new ReviewedCanonicalSourceError(
+            'Reviewed canonical source identities cannot change during a continuation',
+          );
+        }
+      } catch (error) {
+        if (!(error instanceof ReviewedCanonicalSourceError)) throw error;
+        return rejectReservedJob(
+          env,
+          auth.userId,
+          purchaseId,
+          fighterId,
+          `${error.message}; the unused reservation was released`,
+          error.status,
+          { code: 'reviewed_canonical_source_continuation_mismatch' },
+        );
+      }
+    }
+  }
+  const eligibleUnsealedVideoRestart = unsealedVideoRestartFromJobId
+    ? await readEligibleUnsealedVideoPartialRestart(
+        env,
+        auth.userId,
+        fighterId,
+        unsealedVideoRestartFromJobId,
+      )
+    : null;
+  if (unsealedVideoRestartFromJobId && !eligibleUnsealedVideoRestart) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Unsealed Video restart state changed; the unused reservation was released',
+      409,
+      { code: 'unsealed_video_restart_state_changed' },
+    );
+  }
+  if (
+    unsealedVideoRestartFromJobId &&
+    (authorization.continuation_run_id || authorization.resumed_from_job_id)
+  ) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Unsealed Video restart requires a fresh authorization; the unused reservation was released',
+      409,
+      { code: 'unsealed_video_restart_authorization_not_fresh' },
+    );
+  }
+  const lockedVideoRun = await env.DB.prepare(`
+    SELECT id, root_job_id
+    FROM generation_artifact_runs
+    WHERE fighter_id = ? AND user_id = ? AND creation_flow = 'video' AND status = 'partial'
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `).bind(fighterId, auth.userId).first<{ id: string; root_job_id: string }>();
+  const restartingLockedUnsealedRun = Boolean(
+    unsealedVideoRestartFromJobId &&
+    eligibleUnsealedVideoRestart?.run_id === lockedVideoRun?.id &&
+    lockedVideoRun?.root_job_id === unsealedVideoRestartFromJobId,
+  );
+  if (
+    lockedVideoRun &&
+    authorization.continuation_run_id !== lockedVideoRun.id &&
+    !restartingLockedUnsealedRun
+  ) {
+    return rejectReservedJob(
+      env,
+      auth.userId,
+      purchaseId,
+      fighterId,
+      'Continue the current review-gated video run before starting another generation',
+      409,
+      { code: 'video_run_in_progress' },
+    );
+  }
   if (authorization.continuation_run_id) {
+    if (creationFlow === 'video' && options.videoGenerationPolicy) {
+      const resumedPolicy = storedVideoGenerationPolicy(
+        authorization.resume_run_video_generation_policy,
+      );
+      if (resumedPolicy !== options.videoGenerationPolicy) {
+        return rejectReservedJob(
+          env,
+          auth.userId,
+          purchaseId,
+          fighterId,
+          'Video generation policy cannot change during a continuation',
+          409,
+          { code: 'video_generation_policy_continuation_mismatch' },
+        );
+      }
+    }
+    const validResumeState = creationFlow === 'video'
+      ? (
+          (authorization.resume_job_status === 'failed' || authorization.resume_job_status === 'cancelled') &&
+          authorization.resume_candidate_status === null
+        ) || (
+          authorization.resume_job_status === 'succeeded' &&
+          authorization.resume_job_review_status === 'approved' &&
+          authorization.resume_candidate_status === 'approved' &&
+          authorization.resume_candidate_current_revision === authorization.resume_candidate_approved_revision &&
+          Boolean(authorization.resume_candidate_report_sha256) &&
+          (authorization.resume_run_approved_action_count ?? 0) < VIDEO_SPRITE_ACTIONS.length
+        )
+      : authorization.resume_job_status === 'failed' || authorization.resume_job_status === 'cancelled';
     const validContinuation =
       authorization.resume_run_user_id === auth.userId &&
       authorization.resume_run_fighter_id === fighterId &&
       authorization.resume_run_tier === authorization.charge_tier &&
+      authorization.resume_run_creation_flow === creationFlow &&
       authorization.resume_run_operation === operation &&
       authorization.resume_run_status === 'partial' &&
       authorization.resume_run_target_kind === targetKind &&
       authorization.resume_run_target_name === targetName &&
-      Boolean(authorization.resumed_from_job_id);
+      Boolean(authorization.resumed_from_job_id) &&
+      validResumeState &&
+      (creationFlow !== 'video' || (
+        operation === 'fighter_generation' &&
+        authorization.resume_run_operation === 'fighter_generation' &&
+        (authorization.resume_run_approved_action_count ?? 0) < VIDEO_SPRITE_ACTIONS.length
+      )) &&
+      (creationFlow !== 'video' || authorization.resume_child_job_id === null);
     if (!validContinuation) {
       return rejectReservedJob(
         env,
@@ -525,6 +883,7 @@ export async function createGenerationJob(
       providerSessionId,
       targetKind,
       targetName,
+      creationFlow,
     )) {
       return replayExistingJob(env, auth.userId, activeFighterJob);
     }
@@ -543,6 +902,11 @@ export async function createGenerationJob(
       : 1;
   const runId = authorization.continuation_run_id ?? jobId;
   const resumedFromJobId = authorization.resumed_from_job_id ?? null;
+  const videoGenerationPolicy = creationFlow === 'video'
+    ? authorization.continuation_run_id
+      ? storedVideoGenerationPolicy(authorization.resume_run_video_generation_policy)
+      : options.videoGenerationPolicy ?? SELF_SERVICE_VIDEO_POLICY
+    : null;
   const initialProgress = authorization.continuation_run_id
     ? (await env.DB.prepare(`
         SELECT COUNT(*) AS count
@@ -550,25 +914,54 @@ export async function createGenerationJob(
         WHERE run_id = ? AND status = 'approved'
       `).bind(runId).first<{ count: number }>())?.count ?? 0
     : 0;
-  const sourceManifest = JSON.stringify({
+  const sourceManifest = JSON.stringify(generationSourceManifest({
     side: authorization.side_view_blob_key,
     sideRaw: authorization.side_view_raw_blob_key,
     upright: authorization.upright_view_blob_key,
     uprightRaw: authorization.upright_view_raw_blob_key,
     crouch: authorization.crouch_view_blob_key,
     crouchRaw: authorization.crouch_view_raw_blob_key,
-  });
+  }, reviewedCanonicalSources));
   const extendedExpiry = new Date(Date.now() + JOB_TTL_HOURS * 60 * 60 * 1_000).toISOString();
+  const restartAuditEventId = unsealedVideoRestartFromJobId ? generateId() : null;
+  const restartGuardBindings = [
+    restartAuditEventId,
+    restartAuditEventId ?? '',
+    unsealedVideoRestartFromJobId,
+  ] as const;
   try {
     await env.DB.batch([
+      ...(restartAuditEventId ? [
+        prepareUnsealedVideoRestartAudit(env, {
+          eventId: restartAuditEventId,
+          userId: auth.userId,
+          fighterId,
+          recoveryFromJobId: unsealedVideoRestartFromJobId,
+          newJobId: jobId,
+        }),
+        prepareUnsealedVideoRestartRetirement(env, {
+          auditEventId: restartAuditEventId,
+          userId: auth.userId,
+          fighterId,
+          recoveryFromJobId: unsealedVideoRestartFromJobId,
+        }),
+      ] : []),
       env.DB.prepare(`
         INSERT INTO generation_artifact_runs (
           id, user_id, fighter_id, tier, operation, target_kind, target_name,
           root_job_id, original_charge_id, original_blob_key,
-          source_manifest_json, generation_prompt
+          source_manifest_json, generation_prompt, creation_flow, video_generation_policy
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? IS NULL
+          AND (
+            ? IS NULL OR EXISTS (
+              SELECT 1 FROM generation_job_events restart_audit
+              WHERE restart_audit.id = ?
+                AND restart_audit.job_id = ?
+                AND restart_audit.stage = 'restart:full'
+            )
+          )
       `).bind(
         runId,
         auth.userId,
@@ -582,7 +975,10 @@ export async function createGenerationJob(
         authorization.original_blob_key,
         sourceManifest,
         authorization.generation_prompt,
+        creationFlow,
+        videoGenerationPolicy,
         authorization.continuation_run_id,
+        ...restartGuardBindings,
       ),
       env.DB.prepare(`
         UPDATE generation_artifact_runs
@@ -594,8 +990,16 @@ export async function createGenerationJob(
         INSERT INTO generation_jobs (
           id, workflow_instance_id, user_id, fighter_id, charge_id,
           provider_session_id, tier, operation, target_kind, target_name,
-          artifact_run_id, resumed_from_job_id, progress_current, progress_total
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          artifact_run_id, resumed_from_job_id, progress_current, progress_total,
+          creation_flow
+        )
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE ? IS NULL OR EXISTS (
+          SELECT 1 FROM generation_job_events restart_audit
+          WHERE restart_audit.id = ?
+            AND restart_audit.job_id = ?
+            AND restart_audit.stage = 'restart:full'
+        )
       `).bind(
         jobId,
         jobId,
@@ -611,28 +1015,55 @@ export async function createGenerationJob(
         resumedFromJobId,
         Math.min(initialProgress, progressTotal),
         progressTotal,
+        creationFlow,
+        ...restartGuardBindings,
       ),
       env.DB.prepare(`
         UPDATE generation_charges
         SET fighter_id = COALESCE(fighter_id, ?), expires_at = ?, updated_at = datetime('now')
         WHERE id = ? AND user_id = ? AND status = 'reserved'
-      `).bind(fighterId, extendedExpiry, purchaseId, auth.userId),
+          AND (
+            ? IS NULL OR EXISTS (
+              SELECT 1 FROM generation_job_events restart_audit
+              WHERE restart_audit.id = ?
+                AND restart_audit.job_id = ?
+                AND restart_audit.stage = 'restart:full'
+            )
+          )
+      `).bind(fighterId, extendedExpiry, purchaseId, auth.userId, ...restartGuardBindings),
       env.DB.prepare(`
         UPDATE provider_sessions
         SET expires_at = ?, updated_at = datetime('now')
         WHERE id = ? AND user_id = ? AND status = 'active'
-      `).bind(extendedExpiry, providerSessionId, auth.userId),
+          AND (
+            ? IS NULL OR EXISTS (
+              SELECT 1 FROM generation_job_events restart_audit
+              WHERE restart_audit.id = ?
+                AND restart_audit.job_id = ?
+                AND restart_audit.stage = 'restart:full'
+            )
+          )
+      `).bind(extendedExpiry, providerSessionId, auth.userId, ...restartGuardBindings),
       env.DB.prepare(`
         INSERT INTO generation_job_events (id, job_id, stage, status, detail)
-        VALUES (?, ?, 'queued', 'queued', ?)
+        SELECT ?, ?, 'queued', 'queued', ?
+        WHERE ? IS NULL OR EXISTS (
+          SELECT 1 FROM generation_job_events restart_audit
+          WHERE restart_audit.id = ?
+            AND restart_audit.job_id = ?
+            AND restart_audit.stage = 'restart:full'
+        )
       `).bind(
         generateId(),
         jobId,
-        resumedFromJobId
+        unsealedVideoRestartFromJobId
+          ? `Fresh reviewed Video root accepted after audited restart of ${unsealedVideoRestartFromJobId}`
+          : resumedFromJobId
           ? `Generation continuation accepted; ${initialProgress} immutable stages preserved`
           : targetName
             ? `${operation} ${targetName} accepted by the backend`
             : 'Generation accepted by the backend',
+        ...restartGuardBindings,
       ),
     ]);
   } catch (error) {
@@ -643,7 +1074,15 @@ export async function createGenerationJob(
       LIMIT 1
     `).bind(fighterId).first<GenerationJob>();
     if (!racedJob) throw error;
-    if (matchesJobRequest(racedJob, fighterId, purchaseId, providerSessionId, targetKind, targetName)) {
+    if (matchesJobRequest(
+      racedJob,
+      fighterId,
+      purchaseId,
+      providerSessionId,
+      targetKind,
+      targetName,
+      creationFlow,
+    )) {
       return replayExistingJob(env, auth.userId, racedJob);
     }
     await settleGenerationPurchase(env, auth.userId, purchaseId, false, fighterId);
@@ -651,6 +1090,26 @@ export async function createGenerationJob(
       error: 'A generation is already running for this fighter; the unused reservation was released',
       job: await serializeOwnedJob(env, racedJob, await getJobEvents(env, racedJob.id)),
     }, 409);
+  }
+
+  if (unsealedVideoRestartFromJobId) {
+    const restartedJob = await env.DB.prepare(`
+      SELECT id FROM generation_jobs
+      WHERE id = ? AND user_id = ? AND fighter_id = ?
+        AND artifact_run_id = ? AND creation_flow = 'video'
+      LIMIT 1
+    `).bind(jobId, auth.userId, fighterId, jobId).first<{ id: string }>();
+    if (!restartedJob) {
+      return rejectReservedJob(
+        env,
+        auth.userId,
+        purchaseId,
+        fighterId,
+        'Unsealed Video restart state changed; the unused reservation was released',
+        409,
+        { code: 'unsealed_video_restart_state_changed' },
+      );
+    }
   }
 
   try {
@@ -701,12 +1160,28 @@ export async function getGenerationJob(
   return json({ job: await serializeOwnedJob(env, job, await getJobEvents(env, job.id)) });
 }
 
-export async function listGenerationJobs(env: Env, auth: AuthContext): Promise<Response> {
-  const { results } = await env.DB.prepare(`
-    SELECT * FROM generation_jobs
-    WHERE user_id = ?
-    ORDER BY created_at DESC
-    LIMIT 20
-  `).bind(auth.userId).all<GenerationJob>();
+export async function listGenerationJobs(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+): Promise<Response> {
+  const fighterId = new URL(request.url).searchParams.get('fighterId');
+  if (fighterId !== null && !/^[a-f0-9]{32}$/.test(fighterId)) {
+    return json({ error: 'A valid fighterId filter is required' }, 400);
+  }
+  const statement = fighterId === null
+    ? env.DB.prepare(`
+        SELECT * FROM generation_jobs
+        WHERE user_id = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 20
+      `).bind(auth.userId)
+    : env.DB.prepare(`
+        SELECT * FROM generation_jobs
+        WHERE user_id = ? AND fighter_id = ?
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT 100
+      `).bind(auth.userId, fighterId);
+  const { results } = await statement.all<GenerationJob>();
   return json({ jobs: await Promise.all((results ?? []).map((job) => serializeOwnedJob(env, job))) });
 }

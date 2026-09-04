@@ -86,6 +86,16 @@ Open `http://127.0.0.1:5173`. The frontend calls the local Worker at `http://127
 
 The Vite development proxy remains available for focused frontend work, but production-shaped auth, billing, provider sessions, D1, and R2 behavior should be tested through the Worker.
 
+### Recover a legacy browser cache
+
+Older paid generations can be inventoried and exported from the exact local origin that created them without mutating IndexedDB:
+
+```bash
+npm run cache:audit -- --port=5173
+```
+
+Open both `http://localhost:5173` and `http://127.0.0.1:5173`, because browser storage is isolated by hostname. Each export is a lossless TAR containing the fighter metadata, source views, every preserved sprite version, and intro media. Archives are written with unique timestamped names to ignored `.local/legacy-cache-rescue/`; verify and move them into account-owned cloud storage before clearing browser data. Use another `--port` for a cache created by a different Vite origin.
+
 ## Required Checks
 
 Run the full gate before requesting review or deploying:
@@ -123,7 +133,11 @@ npm run smoke:frontend-sandbox
 
 ## Production Deployment
 
-Production configuration belongs in ignored `.env.production.local`. The authoritative sequence and manual evidence requirements live in [`PRODUCTION_READINESS.md`](./PRODUCTION_READINESS.md).
+Production configuration and Cloudflare credentials belong in the GitHub
+`production` environment. An ignored `.env.production.local` may be used for
+read-only readiness checks, but it is not a routine deployment source. The
+authoritative sequence and manual evidence requirements live in
+[`PRODUCTION_READINESS.md`](./PRODUCTION_READINESS.md).
 
 Merges to `main` trigger the branch-restricted `production` GitHub environment after required CI and CodeQL checks pass. Production secrets remain environment-scoped, but this owner-operated project does not require a separate manual deployment approval. See [`.github/DEPLOYMENT.md`](./.github/DEPLOYMENT.md) for branch rules, environment variables, secrets, and recovery.
 
@@ -135,16 +149,20 @@ High-level release order:
 4. Deploy the full Pages application to `insertplayer.ai`.
 5. Run the authenticated launch gate with two Clerk users and completed manual evidence.
 
-Commands with remote production side effects:
+The routine release interface is GitHub Actions:
 
-```bash
-npm run stripe:bootstrap -- --allow-live --create-webhook
-npm run config:live
-npm run deploy:frontend
-npm run check:launch
-```
+- Merge a reviewed, current pull request to `main` for the full Worker, D1, and
+  Pages pipeline.
+- Run **Deploy frontend only** against `main` only when its Worker-drift gate is
+  satisfied.
+- Verify `https://insertplayer.ai/release.json` reports the expected commit and
+  entry bundle; the deployment smoke enforces both automatically.
 
-Do not run these as routine development commands. `config:live` and `deploy:frontend` fail closed when live Clerk, Stripe, brand, origin, or security configuration is incomplete.
+`config:live`, production D1 commands, Worker deploys, Pages deploys, and Worker
+rollout mutations fail locally before contacting Cloudflare. The exceptional
+break-glass procedure is documented in [`.github/DEPLOYMENT.md`](./.github/DEPLOYMENT.md)
+and requires a clean checkout of the exact remote `main` SHA plus an explicit
+incident reason.
 
 Read-only production diagnostics:
 
@@ -153,7 +171,7 @@ npm run check:live-readiness
 npm run smoke:live
 ```
 
-Official Arcade roster generation is operator-only through the `Seed Arcade roster (production)` GitHub workflow. It accepts an authenticated, non-billable `preflight` that verifies the deployed Container without restoring or mutating fighter data; generation operations restore the manifest-pinned source from private R2 and verify its exact SHA-256 hash. The Action accepts only explicit `preflight`, `dry-run`, `seed`, `resume`, `restart-draft`, `prepare-canary`, or `canary-side` operations and never activates a fighter automatically. `prepare-canary` repairs and freezes source/prompt state without inference; `canary-side` starts one fresh side-only run capped at two Pro calls / `$0.30`. Billable runs require the exact `GEMINI_ONLY_PRODUCTION` confirmation and fail closed unless the approved-provider guard can prove the production processor is Gemini-only before the first call. Normal application and infrastructure deployments never seed, regenerate, or activate Arcade fighters. Production currently exposes zero official fighters, and no paid roster inference may run without a separate explicit owner approval.
+Official Arcade roster generation is operator-only through the `Seed Arcade roster (production)` GitHub workflow. It accepts an authenticated, non-billable `preflight` that verifies the deployed Container without restoring or mutating fighter data; generation operations restore the manifest-pinned source from private R2 and verify its exact SHA-256 hash. The Action accepts only explicit `preflight`, `dry-run`, `seed`, `resume`, `restart-draft`, `register-draft`, `prepare-canary`, or `canary-side` operations and never activates a fighter automatically. `register-draft` creates a new private fighter only when its licensed-photo identity does not resolve to any existing Arcade fighter; `prepare-canary` repairs and freezes an existing draft's source/prompt state without inference; `canary-side` starts one fresh side-only run capped at two Pro calls / `$0.30`. Billable runs require the exact `GEMINI_ONLY_PRODUCTION` confirmation and fail closed unless the approved-provider guard can prove the production processor is Gemini-only before the first call. Normal application and infrastructure deployments never seed, regenerate, or activate Arcade fighters. No paid roster inference may run without a separate explicit owner approval.
 
 ## Architecture
 
@@ -201,12 +219,15 @@ The browser never receives provider or Stripe secret keys. Provider calls requir
 
 The canonical repository is [SqaaSSL/insert-player](https://github.com/SqaaSSL/insert-player).
 
-- Branch from `develop`; use focused `feature/*` or `fix/*` branches and pull requests.
-- Merge reviewed work into `develop` for automatic sandbox deployment.
-- Promote `develop` to `main` through a pull request; production deploys automatically after the required checks pass.
+- Branch from the current target branch and use a focused `feature/*` or `fix/*` pull request; a routine production change targets `main`.
+- Before trusting the current directory, run `git fetch --prune origin` and compare `HEAD` with the relevant `origin/*` ref; a same-named worktree branch may be stale. Production state comes from `/release.json` and Worker `/health`.
+- Feature branches may be pushed for pull requests, but they cannot deploy. Only `develop` can publish the isolated sandbox and only `main` can publish production.
+- Use `develop` only when an intentional isolated sandbox deployment is needed, and sync current `main` into it before the test deployment if it has drifted.
+- Promote sandbox-soaked `develop` work or merge a current feature branch to `main` through a protected pull request; production deploys automatically only after the required checks pass.
 - Do not commit `.env*`, `.dev.vars`, Wrangler state/logs, launch evidence containing identities, or downloaded/generated user assets.
 - Keep unrelated local changes intact when working in a dirty tree.
 - Run `npm run check:production` before review.
+- Run `npm run check:deployment-policy` whenever a workflow or deployment wrapper changes.
 - Never bypass the protected production environment with a local deploy during routine releases.
 
 ## Getting Help

@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CACHE_VERSION,
   getAllCachedMetas,
   getAllCachedStageBackgrounds,
+  getAllSpritesForHash,
+  getActiveSpriteCacheScope,
+  setCachedMeta,
   type CachedMeta,
   type CachedStageBackground,
 } from '../../services/SpriteCache.ts';
@@ -13,9 +16,13 @@ import {
   type MatchSceneData,
 } from '../../game/match/MatchConfig.ts';
 import {
-  STAGE_THEMES,
+  getDefaultStageThemeIdForMode,
   getStageChoiceBlurb,
   getStageChoiceLabel,
+  getStageTheme,
+  getStageThemesForMode,
+  resolveRosterStageThemeId,
+  stageSupportsMode,
   type StageThemeId,
 } from '../../game/match/StageConfig.ts';
 import {
@@ -31,9 +38,48 @@ import { ensurePlayableSpritesUpToDate } from '../../services/CharacterPipeline.
 import { getBillingProfile, type BillingProfile } from '../../services/Billing.ts';
 import type { AuthStatus } from '../authState.ts';
 import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
+import {
+  assertCompletePlayableSpriteSet,
+  isTemplateOnlyFighterIdentity,
+} from '../../services/PlayableFighterAssets.ts';
+import { useObjectUrl } from '../shared/useObjectUrl.ts';
+import { cloudPreviewUrl, isArcadeCachedMeta, tierLabel } from '../shared/fighterPreview.ts';
+import { Button } from '../components/Button.tsx';
+import { TierBadge } from '../components/TierBadge.tsx';
+import { cachedArcadeSlug } from '../shared/galleryArcadeRoster.ts';
+import {
+  markArcadeManagedMetas,
+  ownedRosterMetas,
+} from '../shared/arcadeRosterIdentity.ts';
+import {
+  createAsyncEpochGuard,
+  isCpuRosterSlot,
+  personalityAfterFighterAssignment,
+  rosterLoadPresentation,
+  shouldBlockTouchVersus,
+  type RosterSourceState,
+  type RosterMode,
+} from '../shared/rosterMatch.ts';
+import {
+  RUSH_DIFFICULTIES,
+  getRushDifficulty,
+  type RushDifficultyId,
+} from '../../game/brawl/RushConfig.ts';
+import {
+  FIGHT_DIFFICULTIES,
+  getFightDifficulty,
+  type FightDifficultyId,
+} from '../../game/match/FightDifficulty.ts';
+import {
+  AURA_DIFFICULTIES,
+  getAuraDifficulty,
+  type AuraDifficultyId,
+} from '../../game/aura/AuraConfig.ts';
 
-type RosterMode = 'watch' | 'cpu' | 'vs';
 type RosterFilter = 'official' | 'yours' | 'all';
+
+const LOCAL_ROSTER_LOAD_TIMEOUT_MS = 4_000;
+const OFFICIAL_ROSTER_LOAD_TIMEOUT_MS = 12_000;
 
 interface RosterPageProps {
   authStatus: AuthStatus;
@@ -49,7 +95,7 @@ type StageChoice =
   | { kind: 'built-in'; stageId: StageThemeId }
   | { kind: 'photo'; stageKey: string; label: string };
 
-interface RosterFighterEntry {
+export interface RosterFighterEntry {
   key: string;
   kind: 'local' | 'arcade';
   name: string;
@@ -61,27 +107,45 @@ interface RosterFighterEntry {
   previewUrl: string | null;
   challengerLine: string | null;
   defaultPersonality: FighterPersonalityId | null;
+  arcadeSlug: string | null;
   meta: CachedMeta | null;
   cloud: CloudFighter | null;
 }
 
-function useObjectUrl(blob: Blob | null | undefined): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!blob) {
-      setUrl(null);
-      return;
-    }
-    const nextUrl = URL.createObjectURL(blob);
-    setUrl(nextUrl);
-    return () => URL.revokeObjectURL(nextUrl);
-  }, [blob]);
-
-  return url;
-}
-
 function getModeMeta(mode: RosterMode) {
+  if (mode === 'aura-watch') {
+    return {
+      title: 'Aura Theatre',
+      description: 'Two CPUs perform the same routine. Watch the aura economy collapse in real time.',
+      vsAI: true,
+      cpuVsCpu: true,
+      p1Label: 'CPU 1',
+      p2Label: 'CPU 2',
+      actionLabel: 'Watch Aura',
+    };
+  }
+  if (mode === 'aura-vs') {
+    return {
+      title: 'Local Aura Battle',
+      description: 'Same routine, same beat, two keyboards. Steal the room one turn at a time.',
+      vsAI: false,
+      cpuVsCpu: false,
+      p1Label: 'Player 1',
+      p2Label: 'Player 2',
+      actionLabel: 'Farm Aura',
+    };
+  }
+  if (mode === 'aura') {
+    return {
+      title: 'Aura Battle',
+      description: 'A rhythm showdown against the CPU. Match the four lanes when the camera is yours.',
+      vsAI: true,
+      cpuVsCpu: false,
+      p1Label: 'Player 1',
+      p2Label: 'CPU Rival',
+      actionLabel: 'Farm Aura',
+    };
+  }
   if (mode === 'watch') {
     return {
       title: 'Attract Mode',
@@ -91,6 +155,17 @@ function getModeMeta(mode: RosterMode) {
       p1Label: 'CPU 1',
       p2Label: 'CPU 2',
       actionLabel: 'Start Match',
+    };
+  }
+  if (mode === 'rush') {
+    return {
+      title: 'Co-op Rush',
+      description: 'Pick your fighter and a CPU partner, choose a stage, and push right through every checkpoint.',
+      vsAI: true,
+      cpuVsCpu: false,
+      p1Label: 'Player 1',
+      p2Label: 'CPU Partner',
+      actionLabel: 'Start Rush',
     };
   }
   if (mode === 'vs') {
@@ -105,7 +180,7 @@ function getModeMeta(mode: RosterMode) {
     };
   }
   return {
-    title: 'Arcade Mode',
+    title: 'CPU Match',
     description: 'Pick your fighter. Choose the CPU challenger. Fight!',
     vsAI: true,
     cpuVsCpu: false,
@@ -118,14 +193,6 @@ function getModeMeta(mode: RosterMode) {
 function getPreviewBlob(meta: CachedMeta | null): Blob | null {
   if (!meta) return null;
   return meta.sideViewBlob ?? meta.uprightViewBlob ?? meta.originalPhotoBlob ?? null;
-}
-
-function getCloudPreviewUrl(fighter: CloudFighter): string | null {
-  return fighter.sources.side ?? fighter.sources.upright ?? fighter.sources.crouch ?? null;
-}
-
-function formatTier(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function localRosterEntry(meta: CachedMeta): RosterFighterEntry {
@@ -141,8 +208,17 @@ function localRosterEntry(meta: CachedMeta): RosterFighterEntry {
     previewUrl: null,
     challengerLine: null,
     defaultPersonality: null,
+    arcadeSlug: cachedArcadeSlug(meta.photoHash),
     meta,
     cloud: null,
+  };
+}
+
+function cachedArcadeRosterEntry(meta: CachedMeta): RosterFighterEntry {
+  return {
+    ...localRosterEntry(meta),
+    key: `arcade-cache:${meta.photoHash}`,
+    kind: 'arcade',
   };
 }
 
@@ -156,11 +232,79 @@ function arcadeRosterEntry(fighter: CloudFighter): RosterFighterEntry {
     qualityTier: fighter.qualityTier,
     animationCount: new Set(fighter.sprites.map((sprite) => sprite.animationName)).size,
     previewBlob: null,
-    previewUrl: getCloudPreviewUrl(fighter),
+    previewUrl: cloudPreviewUrl(fighter),
     challengerLine: fighter.arcade?.challengerLine ?? null,
     defaultPersonality: fighter.arcade?.defaultPersonality ?? null,
+    arcadeSlug: fighter.arcade?.slug ?? null,
     meta: null,
     cloud: fighter,
+  };
+}
+
+export interface RosterFighterSections {
+  official: RosterFighterEntry[];
+  owned: RosterFighterEntry[];
+  all: RosterFighterEntry[];
+}
+
+export function buildRosterFighterSections(
+  metas: CachedMeta[],
+  arcadeFighters: CloudFighter[],
+  includeCachedFallback = false,
+): RosterFighterSections {
+  const selectableArcadeFighters = arcadeFighters.filter((fighter) => (
+    !isTemplateOnlyFighterIdentity({
+      name: fighter.name,
+      arcadeSlug: fighter.arcade?.slug,
+    })
+  ));
+  const selectableMetas = metas.filter((meta) => (
+    !isTemplateOnlyFighterIdentity({
+      characterName: meta.characterName,
+      photoHash: meta.photoHash,
+    })
+  ));
+  const official = selectableArcadeFighters.map(arcadeRosterEntry);
+  const representedIds = new Set(selectableArcadeFighters.map((fighter) => fighter.id));
+  const representedSlugs = new Set(
+    selectableArcadeFighters
+      .map((fighter) => fighter.arcade?.slug)
+      .filter((slug): slug is string => Boolean(slug)),
+  );
+  const representedCacheKeys = new Set<string>();
+  const cachedFallbacks = includeCachedFallback
+    ? selectableMetas
+      .filter(isArcadeCachedMeta)
+      .sort((left, right) => {
+        const leftSlug = cachedArcadeSlug(left.photoHash);
+        const rightSlug = cachedArcadeSlug(right.photoHash);
+        const leftHasCurrentKey = leftSlug !== null && left.photoHash !== `arcade:${leftSlug}`;
+        const rightHasCurrentKey = rightSlug !== null && right.photoHash !== `arcade:${rightSlug}`;
+        return Number(rightHasCurrentKey) - Number(leftHasCurrentKey);
+      })
+    : [];
+
+  for (const meta of cachedFallbacks) {
+    const slug = cachedArcadeSlug(meta.photoHash);
+    if (meta.cloudFighterId && representedIds.has(meta.cloudFighterId)) continue;
+    if (slug && representedSlugs.has(slug)) continue;
+    const identity = meta.cloudFighterId
+      ? `id:${meta.cloudFighterId}`
+      : slug
+        ? `slug:${slug}`
+        : `hash:${meta.photoHash}`;
+    if (representedCacheKeys.has(identity)) continue;
+    representedCacheKeys.add(identity);
+    if (meta.cloudFighterId) representedIds.add(meta.cloudFighterId);
+    if (slug) representedSlugs.add(slug);
+    official.push(cachedArcadeRosterEntry(meta));
+  }
+
+  const owned = ownedRosterMetas(selectableMetas, selectableArcadeFighters).map(localRosterEntry);
+  return {
+    official,
+    owned,
+    all: [...official, ...owned],
   };
 }
 
@@ -202,7 +346,7 @@ function FighterRosterCard({
           <strong>{fighter.name}</strong>
           {fighter.kind === 'arcade' ? <span className="roster-official-badge">Official</span> : null}
         </div>
-        <span>{formatTier(fighter.qualityTier)} · {fighter.animationCount} anims</span>
+        <span><TierBadge tier={fighter.qualityTier} /> · {fighter.animationCount} anims</span>
         {fighter.challengerLine ? <span>{fighter.challengerLine}</span> : null}
         {fighter.cloud?.arcade?.reference.sourceUrl ? (
           <a
@@ -216,11 +360,11 @@ function FighterRosterCard({
         ) : null}
       </div>
       <div className="roster-fighter-card__actions">
-        <button className={`gallery-chip${isP1Selected ? ' is-active' : ''}`} onClick={onAssignP1}>
+        <button type="button" className={`gallery-chip${isP1Selected ? ' is-active' : ''}`} onClick={onAssignP1}>
           <span>{p1Label}</span>
           <small>{isP1Selected ? 'Selected' : 'Assign'}</small>
         </button>
-        <button className={`gallery-chip${isP2Selected ? ' is-active' : ''}`} onClick={onAssignP2}>
+        <button type="button" className={`gallery-chip${isP2Selected ? ' is-active' : ''}`} onClick={onAssignP2}>
           <span>{p2Label}</span>
           <small>{isP2Selected ? 'Selected' : 'Assign'}</small>
         </button>
@@ -229,52 +373,135 @@ function FighterRosterCard({
   );
 }
 
+
+function FighterSlotPanel({
+  label,
+  fighter,
+  previewUrl,
+  personalityId,
+  showPersonality,
+  onPersonalityChange,
+}: {
+  label: string;
+  fighter: RosterFighterEntry | null;
+  previewUrl: string | null;
+  personalityId: FighterPersonalityId;
+  showPersonality: boolean;
+  onPersonalityChange: (id: FighterPersonalityId) => void;
+}) {
+  return (
+    <div className="gallery-panel">
+      <h2>{label}</h2>
+      <div className="roster-slot-card">
+        <div className="roster-slot-card__preview">
+          {previewUrl ? (
+            <img src={previewUrl} alt={fighter ? `${fighter.name} preview` : ''} />
+          ) : (
+            <div className="gallery-preview__empty">No preview</div>
+          )}
+        </div>
+        <div className="roster-slot-card__meta">
+          <strong>{fighter?.name ?? 'Pick fighter'}</strong>
+          <span>
+            {fighter
+              ? `${tierLabel(fighter.qualityTier)} · ${fighter.animationCount} animations ready`
+              : 'Select a fighter below'}
+          </span>
+          {fighter?.kind === 'arcade' ? <span>Official Arcade challenger</span> : null}
+        </div>
+      </div>
+      {showPersonality ? (
+        <div className="roster-personality" role="group" aria-label={`${label} CPU personality`}>
+          {FIGHTER_PERSONALITIES.map((personality) => (
+            <button
+              type="button"
+              key={personality.id}
+              className={`gallery-chip${personalityId === personality.id ? ' is-active' : ''}`}
+              aria-pressed={personalityId === personality.id}
+              onClick={() => onPersonalityChange(personality.id)}
+            >
+              <span>{personality.label}</span>
+              <small>{personality.blurb}</small>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateFighter, onStartFight }: RosterPageProps) {
   const modeMeta = getModeMeta(mode);
+  const isAuraMode = mode === 'aura' || mode === 'aura-vs' || mode === 'aura-watch';
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [arcadeFighters, setArcadeFighters] = useState<CloudFighter[]>([]);
+  const [arcadeUnavailable, setArcadeUnavailable] = useState(false);
   const [photoStages, setPhotoStages] = useState<CachedStageBackground[]>([]);
   const [status, setStatus] = useState('Loading roster...');
   const [rosterLoaded, setRosterLoaded] = useState(false);
+  const [rosterRetryAvailable, setRosterRetryAvailable] = useState(false);
+  const [rosterReloadKey, setRosterReloadKey] = useState(0);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
-  const [rosterFilter, setRosterFilter] = useState<RosterFilter>(mode === 'vs' ? 'all' : 'official');
+  const [rosterFilter, setRosterFilter] = useState<RosterFilter>(
+    mode === 'vs' || mode === 'rush' || isAuraMode ? 'all' : 'official',
+  );
   const [p1Key, setP1Key] = useState<string | null>(null);
   const [p2Key, setP2Key] = useState<string | null>(null);
   const [p1PersonalityId, setP1PersonalityId] = useState<FighterPersonalityId>(getDefaultPersonalityId(0));
   const [p2PersonalityId, setP2PersonalityId] = useState<FighterPersonalityId>(getDefaultPersonalityId(1));
   const [stageChoice, setStageChoice] = useState<StageChoice>({ kind: 'auto' });
+  const [rushDifficulty, setRushDifficulty] = useState<RushDifficultyId>('arcade');
+  const [fightDifficulty, setFightDifficulty] = useState<FightDifficultyId>('champion');
+  const [auraDifficulty, setAuraDifficulty] = useState<AuraDifficultyId>('viral');
   const [preparingFight, setPreparingFight] = useState(false);
+  const [hasCoarsePointer, setHasCoarsePointer] = useState(
+    () => window.matchMedia?.('(pointer: coarse)').matches ?? false,
+  );
+  const p1PersonalityExplicitRef = useRef(false);
+  const p2PersonalityExplicitRef = useRef(false);
+  const preparationGuardRef = useRef(createAsyncEpochGuard());
+
+  useEffect(() => {
+    const guard = preparationGuardRef.current;
+    guard.mount();
+    return () => guard.unmount();
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia?.('(pointer: coarse)');
+    if (!media) return;
+    const sync = () => setHasCoarsePointer(media.matches);
+    sync();
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', sync);
+      return () => media.removeEventListener('change', sync);
+    }
+    media.addListener(sync);
+    return () => media.removeListener(sync);
+  }, []);
+
+  useEffect(() => {
+    preparationGuardRef.current.cancel();
+    setPreparingFight(false);
+    setStageChoice({ kind: 'auto' });
+    p1PersonalityExplicitRef.current = false;
+    p2PersonalityExplicitRef.current = false;
+  }, [authSessionKey, mode]);
 
   useEffect(() => {
     const apiContext = captureApiRequestContext();
+    const ownerScope = getActiveSpriteCacheScope();
     let cancelled = false;
-    const load = async () => {
-      setRosterLoaded(false);
-      let [allMetas, allStages, officialFighters, profile] = await Promise.all([
-        getAllCachedMetas(),
-        getAllCachedStageBackgrounds(),
-        listArcadeFighters().catch((err: any) => {
-          debugWarn('[Roster] Official Arcade roster unavailable:', err?.message ?? err);
-          return [];
-        }),
-        authStatus === 'signed-in' ? getBillingProfile(apiContext) : Promise.resolve(null),
-      ]);
-      let cloudImported = 0;
-      let cloudUpdated = 0;
-      try {
-        const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext);
-        if (cloudSync.imported > 0 || cloudSync.updated > 0) {
-          cloudImported = cloudSync.imported;
-          cloudUpdated = cloudSync.updated;
-          [allMetas, allStages] = await Promise.all([
-            getAllCachedMetas(),
-            getAllCachedStageBackgrounds(),
-          ]);
-        }
-      } catch (err: any) {
-        if (cancelled) return;
-        debugWarn('[Roster] Cloud import skipped:', err?.message ?? err);
-      }
+    let officialState: RosterSourceState = 'loading';
+    let localState: RosterSourceState = 'loading';
+    let officialFighters: CloudFighter[] = [];
+    let allMetas: CachedMeta[] = [];
+    let allStages: CachedStageBackground[] = [];
+    let cloudSyncing = false;
+    let cloudImported = 0;
+    let cloudUpdated = 0;
+
+    const publishRosterSnapshot = () => {
       if (cancelled) return;
       const filteredMetas = allMetas
         .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
@@ -282,62 +509,178 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
       const filteredStages = allStages
         .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
         .sort((a, b) => b.createdAt - a.createdAt);
+      const sections = buildRosterFighterSections(
+        filteredMetas,
+        officialFighters,
+        officialState === 'unavailable',
+      );
+      const presentation = rosterLoadPresentation({
+        officialState,
+        localState,
+        officialCount: sections.official.length,
+        ownedCount: sections.owned.length,
+        cloudSyncing,
+        cloudImported,
+        cloudUpdated,
+      });
+
       setMetas(filteredMetas);
       setArcadeFighters(officialFighters);
+      setArcadeUnavailable(officialState === 'unavailable');
       setPhotoStages(filteredStages);
-      setBillingProfile(profile);
-      setRosterLoaded(true);
-      setStatus(
-        cloudImported > 0 || cloudUpdated > 0
-          ? `Cloud synced: ${cloudImported} imported, ${cloudUpdated} updated`
-          : officialFighters.length > 0
-            ? `${officialFighters.length} official challengers ready`
-            : filteredMetas.length > 0
-              ? 'Roster ready'
-              : 'No fighters yet',
-      );
+      setRosterLoaded(presentation.loaded);
+      setRosterRetryAvailable(presentation.retryAvailable);
+      setStatus(presentation.message);
 
-      const localEntries = filteredMetas.map(localRosterEntry);
-      const officialEntries = officialFighters.map(arcadeRosterEntry);
-      const firstPlayer = localEntries[0] ?? officialEntries[0] ?? null;
-      const firstOpponent = officialEntries.find((entry) => entry.key !== firstPlayer?.key)
-        ?? localEntries.find((entry) => entry.key !== firstPlayer?.key)
+      const firstPlayer = sections.owned[0] ?? sections.official[0] ?? null;
+      const firstOpponent = sections.official.find((entry) => entry.key !== firstPlayer?.key)
+        ?? sections.owned.find((entry) => entry.key !== firstPlayer?.key)
         ?? firstPlayer;
-      const firstOpponentPersonality = firstOpponent?.defaultPersonality;
-      if (firstOpponentPersonality) {
-        setP2PersonalityId((current) => current === 'balanced' ? firstOpponentPersonality : current);
-      }
-      if (filteredMetas.length === 0 && officialEntries.length > 0) {
+      setP1PersonalityId((current) => personalityAfterFighterAssignment({
+        current,
+        fighterDefault: firstPlayer?.defaultPersonality ?? null,
+        isCpu: isCpuRosterSlot(mode, 'p1'),
+        wasExplicitlyChosen: p1PersonalityExplicitRef.current,
+      }));
+      setP2PersonalityId((current) => personalityAfterFighterAssignment({
+        current,
+        fighterDefault: firstOpponent?.defaultPersonality ?? null,
+        isCpu: isCpuRosterSlot(mode, 'p2'),
+        wasExplicitlyChosen: p2PersonalityExplicitRef.current,
+      }));
+      if (sections.owned.length === 0 && sections.official.length > 0) {
         setRosterFilter('official');
-      } else if (officialEntries.length === 0 && filteredMetas.length > 0) {
+      } else if (sections.official.length === 0 && sections.owned.length > 0) {
         setRosterFilter('yours');
       }
-      setP1Key((current) => {
-        const available = [...localEntries, ...officialEntries];
-        return current && available.some((entry) => entry.key === current)
+      setP1Key((current) => (
+        current && sections.all.some((entry) => entry.key === current)
           ? current
-          : firstPlayer?.key ?? null;
-      });
-      setP2Key((current) => {
-        const available = [...localEntries, ...officialEntries];
-        return current && available.some((entry) => entry.key === current)
+          : firstPlayer?.key ?? null
+      ));
+      setP2Key((current) => (
+        current && sections.all.some((entry) => entry.key === current)
           ? current
-          : firstOpponent?.key ?? null;
-      });
+          : firstOpponent?.key ?? null
+      ));
     };
-    void load().catch((err: any) => {
-      if (cancelled) return;
-      debugWarn('[Roster] Roster load failed:', err?.message ?? err);
-      setStatus('Roster is temporarily unavailable');
-      setBillingProfile(null);
-      setRosterLoaded(true);
-    });
-    return () => { cancelled = true; };
-  }, [authSessionKey, authStatus]);
 
-  const localEntries = useMemo(() => metas.map(localRosterEntry), [metas]);
-  const officialEntries = useMemo(() => arcadeFighters.map(arcadeRosterEntry), [arcadeFighters]);
-  const rosterEntries = useMemo(() => [...officialEntries, ...localEntries], [officialEntries, localEntries]);
+    const markAndPublish = () => {
+      const marked = markArcadeManagedMetas(allMetas, officialFighters);
+      allMetas = marked.metas;
+      publishRosterSnapshot();
+      if (marked.changed.length > 0) {
+        void Promise.all(marked.changed.map((item) => setCachedMeta(item, ownerScope))).catch((err: any) => {
+          debugWarn('[Roster] Official roster identity could not be persisted:', err?.message ?? err);
+        });
+      }
+    };
+
+    setMetas([]);
+    setArcadeFighters([]);
+    setArcadeUnavailable(false);
+    setPhotoStages([]);
+    setRosterLoaded(false);
+    setRosterRetryAvailable(false);
+    setBillingProfile(null);
+    setStatus(rosterReloadKey > 0 ? 'Retrying roster…' : 'Loading roster…');
+
+    const officialTimeout = window.setTimeout(() => {
+      if (cancelled || officialState !== 'loading') return;
+      officialState = 'unavailable';
+      debugWarn('[Roster] Official Arcade roster timed out. The request may still recover.');
+      markAndPublish();
+    }, OFFICIAL_ROSTER_LOAD_TIMEOUT_MS);
+    const localTimeout = window.setTimeout(() => {
+      if (cancelled || localState !== 'loading') return;
+      localState = 'unavailable';
+      debugWarn('[Roster] Local roster storage timed out. The request may still recover.');
+      publishRosterSnapshot();
+    }, LOCAL_ROSTER_LOAD_TIMEOUT_MS);
+
+    void listArcadeFighters().then((fighters) => {
+      if (cancelled) return;
+      window.clearTimeout(officialTimeout);
+      officialFighters = fighters;
+      officialState = 'ready';
+      markAndPublish();
+    }).catch((err: any) => {
+      if (cancelled) return;
+      window.clearTimeout(officialTimeout);
+      officialState = 'unavailable';
+      debugWarn('[Roster] Official Arcade roster unavailable:', err?.message ?? err);
+      markAndPublish();
+    });
+
+    const localLoad = Promise.all([
+      getAllCachedMetas(ownerScope),
+      getAllCachedStageBackgrounds(ownerScope),
+    ]);
+    void localLoad.then(async ([loadedMetas, loadedStages]) => {
+      if (cancelled) return;
+      window.clearTimeout(localTimeout);
+      allMetas = loadedMetas;
+      allStages = loadedStages;
+      localState = 'ready';
+      markAndPublish();
+
+      if (authStatus !== 'signed-in') return;
+      cloudSyncing = true;
+      publishRosterSnapshot();
+      try {
+        const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext);
+        if (cancelled) return;
+        cloudImported = cloudSync.imported;
+        cloudUpdated = cloudSync.updated;
+        cloudSyncing = false;
+        publishRosterSnapshot();
+        if (cloudImported > 0 || cloudUpdated > 0) {
+          void Promise.all([
+            getAllCachedMetas(ownerScope),
+            getAllCachedStageBackgrounds(ownerScope),
+          ]).then(([refreshedMetas, refreshedStages]) => {
+            if (cancelled) return;
+            allMetas = refreshedMetas;
+            allStages = refreshedStages;
+            markAndPublish();
+          }).catch((err: any) => {
+            debugWarn('[Roster] Synced roster cache could not be refreshed:', err?.message ?? err);
+          });
+        }
+      } catch (err: any) {
+        if (cancelled) return;
+        cloudSyncing = false;
+        debugWarn('[Roster] Cloud import skipped:', err?.message ?? err);
+        publishRosterSnapshot();
+      }
+    }).catch((err: any) => {
+      if (cancelled) return;
+      window.clearTimeout(localTimeout);
+      localState = 'unavailable';
+      debugWarn('[Roster] Local roster storage unavailable:', err?.message ?? err);
+      publishRosterSnapshot();
+    });
+
+    if (authStatus === 'signed-in') {
+      void getBillingProfile(apiContext).then((profile) => {
+        if (!cancelled) setBillingProfile(profile);
+      });
+    }
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(officialTimeout);
+      window.clearTimeout(localTimeout);
+    };
+  }, [authSessionKey, authStatus, mode, rosterReloadKey]);
+
+  const rosterSections = useMemo(
+    () => buildRosterFighterSections(metas, arcadeFighters, arcadeUnavailable),
+    [arcadeFighters, arcadeUnavailable, metas],
+  );
+  const localEntries = rosterSections.owned;
+  const officialEntries = rosterSections.official;
+  const rosterEntries = rosterSections.all;
   const visibleEntries = useMemo(() => {
     if (rosterFilter === 'official') return officialEntries;
     if (rosterFilter === 'yours') return localEntries;
@@ -358,37 +701,105 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     [photoStages, stageChoice],
   );
   const photoStageUrl = useObjectUrl(selectedPhotoStage?.pngBlob ?? null);
+  const resolvedStageId = resolveRosterStageThemeId({
+    manualStageId: stageChoice.kind === 'built-in' ? stageChoice.stageId : null,
+    hasCustomPhotoStage: stageChoice.kind === 'photo',
+    p1ArcadeSlug: p1Fighter?.arcadeSlug,
+    p2ArcadeSlug: p2Fighter?.arcadeSlug,
+  });
+  const effectiveStageId = mode === 'rush'
+    ? resolvedStageId && stageSupportsMode(resolvedStageId, 'rush')
+      ? resolvedStageId
+      : getDefaultStageThemeIdForMode('rush')
+    : resolvedStageId;
+  const effectiveStageTheme = effectiveStageId ? getStageTheme(effectiveStageId) : null;
+  const stagePreviewUrl = photoStageUrl ?? effectiveStageTheme?.assetPath ?? null;
+  const selectableStageThemes = getStageThemesForMode(
+    mode === 'rush' ? 'rush' : isAuraMode ? 'aura' : 'fight',
+  );
 
-  const canStartFight = Boolean(p1Fighter && p2Fighter);
+  const touchVersusBlocked = shouldBlockTouchVersus(mode, hasCoarsePointer);
+  const canStartFight = Boolean(p1Fighter && p2Fighter) && !touchVersusBlocked;
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
   const createLabel = rookieStatus === 'included' ? 'Create Free Rookie' : 'Create Rookie';
   const firstFighterCopy = rookieStatus === 'included'
-    ? 'Your first Rookie is included. Upload one photo, then come back here to face the Arcade roster.'
+    ? `Your first Rookie is included. Upload one photo, then come back here to ${mode === 'rush' ? 'join the team' : isAuraMode ? 'farm aura' : 'face the Arcade roster'}.`
     : rookieStatus === 'credits'
-      ? 'Rookie costs 2 credits. Upload one photo, then come back here to face the Arcade roster.'
+      ? `Rookie costs 2 credits. Upload one photo, then come back here to ${mode === 'rush' ? 'join the team' : isAuraMode ? 'farm aura' : 'face the Arcade roster'}.`
       : 'Upload one photo. We will check your included Rookie or credit balance before generation starts.';
 
   const stageSummary =
     stageChoice.kind === 'auto'
-      ? { label: 'AUTO', blurb: 'Let the matchup choose the arena.' }
+      ? effectiveStageTheme
+        ? { label: `AUTO · ${effectiveStageTheme.label}`, blurb: effectiveStageTheme.blurb }
+        : { label: 'AUTO', blurb: 'Let the matchup choose the arena.' }
       : stageChoice.kind === 'built-in'
         ? { label: getStageChoiceLabel(stageChoice.stageId), blurb: getStageChoiceBlurb(stageChoice.stageId) }
         : { label: selectedPhotoStage?.label ?? stageChoice.label, blurb: 'Custom photo stage from your local cache.' };
 
+  const cancelFightPreparation = (message = 'Preparation cancelled. Review the matchup and start again.') => {
+    if (!preparingFight) return;
+    preparationGuardRef.current.cancel();
+    setPreparingFight(false);
+    setStatus(message);
+  };
+
   const assignFighter = (slot: 'p1' | 'p2', fighter: RosterFighterEntry) => {
+    cancelFightPreparation();
     if (slot === 'p1') {
       setP1Key(fighter.key);
-      if (fighter.defaultPersonality) setP1PersonalityId(fighter.defaultPersonality);
+      setP1PersonalityId((current) => personalityAfterFighterAssignment({
+        current,
+        fighterDefault: fighter.defaultPersonality,
+        isCpu: isCpuRosterSlot(mode, 'p1'),
+        wasExplicitlyChosen: p1PersonalityExplicitRef.current,
+      }));
       return;
     }
     setP2Key(fighter.key);
-    if (fighter.defaultPersonality) setP2PersonalityId(fighter.defaultPersonality);
+    setP2PersonalityId((current) => personalityAfterFighterAssignment({
+      current,
+      fighterDefault: fighter.defaultPersonality,
+      isCpu: isCpuRosterSlot(mode, 'p2'),
+      wasExplicitlyChosen: p2PersonalityExplicitRef.current,
+    }));
+  };
+
+  const changePersonality = (slot: 'p1' | 'p2', personalityId: FighterPersonalityId) => {
+    cancelFightPreparation();
+    if (slot === 'p1') {
+      p1PersonalityExplicitRef.current = true;
+      setP1PersonalityId(personalityId);
+      return;
+    }
+    p2PersonalityExplicitRef.current = true;
+    setP2PersonalityId(personalityId);
+  };
+
+  const chooseStage = (choice: StageChoice) => {
+    cancelFightPreparation();
+    setStageChoice(choice);
+  };
+
+  const goBack = () => {
+    preparationGuardRef.current.cancel();
+    setPreparingFight(false);
+    onBack();
   };
 
   const launchFight = async () => {
-    if (!p1Fighter || !p2Fighter || preparingFight) return;
+    if (!p1Fighter || !p2Fighter || preparingFight || touchVersusBlocked) return;
+    const ownerScope = getActiveSpriteCacheScope();
+    const preparationEpoch = preparationGuardRef.current.begin();
+    const selectedP1 = p1Fighter;
+    const selectedP2 = p2Fighter;
+    const selectedP1Personality = p1PersonalityId;
+    const selectedP2Personality = p2PersonalityId;
+    const selectedStageId = effectiveStageId;
+    const selectedStageChoice = stageChoice;
+    const selectedStage = selectedPhotoStage;
     setPreparingFight(true);
-    const officialNames = [p1Fighter, p2Fighter]
+    const officialNames = [selectedP1, selectedP2]
       .filter((fighter) => fighter.kind === 'arcade')
       .map((fighter) => fighter.name);
     setStatus(
@@ -398,39 +809,60 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     );
     try {
       const selected = Array.from(new Map(
-        [p1Fighter, p2Fighter].map((fighter) => [fighter.key, fighter]),
+        [selectedP1, selectedP2].map((fighter) => [fighter.key, fighter]),
       ).values());
       let upgraded = 0;
       for (const fighter of selected) {
         if (fighter.kind === 'arcade' && fighter.cloud) {
-          await downloadArcadeFighterToLocal(fighter.cloud, captureApiRequestContext());
+          await downloadArcadeFighterToLocal(
+            fighter.cloud,
+            captureApiRequestContext(),
+            mode === 'rush' ? { includeHighResolutionAssets: false } : {},
+          );
         } else {
           upgraded += await ensurePlayableSpritesUpToDate(fighter.photoHash);
         }
+        if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
+        const playableSprites = await getAllSpritesForHash(fighter.photoHash, ownerScope);
+        if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
+        assertCompletePlayableSpriteSet(playableSprites, fighter.name);
       }
+      if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
       if (upgraded > 0) {
         setStatus(`Updated ${upgraded} cached animations`);
       }
       onStartFight({
+        gameMode: mode === 'rush' ? 'rush' : isAuraMode ? 'aura' : 'fight',
         vsAI: modeMeta.vsAI,
         cpuVsCpu: modeMeta.cpuVsCpu,
-        p1PhotoHash: p1Fighter.photoHash,
-        p2PhotoHash: p2Fighter.photoHash,
-        p1CloudFighterId: p1Fighter.cloudFighterId,
-        p2CloudFighterId: p2Fighter.cloudFighterId,
-        p1Name: p1Fighter.name,
-        p2Name: p2Fighter.name,
-        p1PersonalityId,
-        p2PersonalityId,
-        stageId: stageChoice.kind === 'built-in' ? stageChoice.stageId : undefined,
-        customStageKey: stageChoice.kind === 'photo' ? stageChoice.stageKey : undefined,
-        customStageLabel: stageChoice.kind === 'photo' ? (selectedPhotoStage?.label ?? stageChoice.label) : undefined,
+        p1PhotoHash: selectedP1.photoHash,
+        p2PhotoHash: selectedP2.photoHash,
+        p1CloudFighterId: selectedP1.cloudFighterId,
+        p2CloudFighterId: selectedP2.cloudFighterId,
+        p1Name: selectedP1.name,
+        p2Name: selectedP2.name,
+        p1PersonalityId: isCpuRosterSlot(mode, 'p1') ? selectedP1Personality : undefined,
+        p2PersonalityId: isCpuRosterSlot(mode, 'p2') ? selectedP2Personality : undefined,
+        rushDifficulty: mode === 'rush' ? rushDifficulty : undefined,
+        rushCompanionOrder: mode === 'rush' ? 'follow' : undefined,
+        auraDifficulty: isAuraMode ? auraDifficulty : undefined,
+        p2Difficulty: mode === 'cpu' ? getFightDifficulty(fightDifficulty).strength : undefined,
+        stageId: selectedStageId,
+        customStageKey: mode !== 'rush' && selectedStageChoice.kind === 'photo'
+          ? selectedStageChoice.stageKey
+          : undefined,
+        customStageLabel: mode !== 'rush' && selectedStageChoice.kind === 'photo'
+          ? (selectedStage?.label ?? selectedStageChoice.label)
+          : undefined,
       });
     } catch (err: any) {
+      if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
       debugWarn('[Roster] Sprite preparation failed:', err?.message ?? err);
       setStatus(err?.message ? `Could not prepare fighters: ${err.message}` : 'Could not prepare fighters');
     } finally {
-      setPreparingFight(false);
+      if (preparationGuardRef.current.isCurrent(preparationEpoch)) {
+        setPreparingFight(false);
+      }
     }
   };
 
@@ -438,93 +870,52 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     <div className="roster-app">
       <header className="roster-hero">
         <div>
-          <p className="gallery-eyebrow">Select Your Fighter</p>
           <h1>{modeMeta.title}</h1>
           <p className="roster-hero__copy">{modeMeta.description}</p>
         </div>
         <div className="roster-hero__actions">
           <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
-          <button className="gallery-back" onClick={onBack}>
-            Back
-          </button>
+          {rosterRetryAvailable ? (
+            <Button onClick={() => setRosterReloadKey((value) => value + 1)} disabled={preparingFight}>
+              Retry Roster
+            </Button>
+          ) : null}
+          <Button onClick={goBack}>{preparingFight ? 'Cancel & Back' : 'Back'}</Button>
         </div>
       </header>
 
       <section className="roster-layout">
         <div className="roster-column">
-          <div className="gallery-panel">
-            <h3>{modeMeta.p1Label}</h3>
-            <div className="roster-slot-card">
-              <div className="roster-slot-card__preview">
-                {p1PreviewUrl ? <img src={p1PreviewUrl} alt="" /> : <div className="gallery-preview__empty">No preview</div>}
-              </div>
-              <div className="roster-slot-card__meta">
-                <strong>{p1Fighter?.name ?? 'Pick fighter'}</strong>
-                <span>
-                  {p1Fighter
-                    ? `${formatTier(p1Fighter.qualityTier)} · ${p1Fighter.animationCount} animations ready`
-                    : 'Select a fighter below'}
-                </span>
-                {p1Fighter?.kind === 'arcade' ? <span>Official Arcade challenger</span> : null}
-              </div>
-            </div>
-            <div className="roster-personality">
-              {FIGHTER_PERSONALITIES.map((personality) => (
-                <button
-                  key={personality.id}
-                  className={`gallery-chip${p1PersonalityId === personality.id ? ' is-active' : ''}`}
-                  onClick={() => setP1PersonalityId(personality.id)}
-                >
-                  <span>{personality.label}</span>
-                  <small>{personality.blurb}</small>
-                </button>
-              ))}
-            </div>
-          </div>
+          <FighterSlotPanel
+            label={modeMeta.p1Label}
+            fighter={p1Fighter}
+            previewUrl={p1PreviewUrl}
+            personalityId={p1PersonalityId}
+            showPersonality={!isAuraMode && isCpuRosterSlot(mode, 'p1')}
+            onPersonalityChange={(personalityId) => changePersonality('p1', personalityId)}
+          />
 
           <div className="sf-vs-divider" aria-hidden="true">
             <span className="sf-vs-divider__line" />
-            <span className="sf-vs-divider__text">VS</span>
+            <span className="sf-vs-divider__text">{mode === 'rush' ? '+' : isAuraMode ? '♪' : 'VS'}</span>
             <span className="sf-vs-divider__line" />
           </div>
 
-          <div className="gallery-panel">
-            <h3>{modeMeta.p2Label}</h3>
-            <div className="roster-slot-card">
-              <div className="roster-slot-card__preview">
-                {p2PreviewUrl ? <img src={p2PreviewUrl} alt="" /> : <div className="gallery-preview__empty">No preview</div>}
-              </div>
-              <div className="roster-slot-card__meta">
-                <strong>{p2Fighter?.name ?? 'Pick fighter'}</strong>
-                <span>
-                  {p2Fighter
-                    ? `${formatTier(p2Fighter.qualityTier)} · ${p2Fighter.animationCount} animations ready`
-                    : 'Select a fighter below'}
-                </span>
-                {p2Fighter?.kind === 'arcade' ? <span>Official Arcade challenger</span> : null}
-              </div>
-            </div>
-            <div className="roster-personality">
-              {FIGHTER_PERSONALITIES.map((personality) => (
-                <button
-                  key={personality.id}
-                  className={`gallery-chip${p2PersonalityId === personality.id ? ' is-active' : ''}`}
-                  onClick={() => setP2PersonalityId(personality.id)}
-                >
-                  <span>{personality.label}</span>
-                  <small>{personality.blurb}</small>
-                </button>
-              ))}
-            </div>
-          </div>
+          <FighterSlotPanel
+            label={modeMeta.p2Label}
+            fighter={p2Fighter}
+            previewUrl={p2PreviewUrl}
+            personalityId={p2PersonalityId}
+            showPersonality={!isAuraMode && isCpuRosterSlot(mode, 'p2')}
+            onPersonalityChange={(personalityId) => changePersonality('p2', personalityId)}
+          />
         </div>
 
         <div className="roster-column roster-column--fighters">
           <div className="gallery-panel">
             <div className="roster-panel__header">
               <div>
-                <p className="gallery-eyebrow">Roster</p>
-                <h3>Select Fighters</h3>
+                <h2>Select Fighters</h2>
                 <div className="roster-filter-tabs" role="group" aria-label="Roster source">
                   <button
                     className={`roster-filter-tab${rosterFilter === 'official' ? ' is-active' : ''}`}
@@ -550,18 +941,27 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                 </div>
               </div>
               {rosterLoaded && rosterEntries.length > 0 ? (
-                <button className="home-menu__action is-primary roster-fight-btn" disabled={!canStartFight || preparingFight} onClick={() => void launchFight()}>
+                <button type="button" className="home-menu__action is-primary roster-fight-btn" disabled={!canStartFight || preparingFight} onClick={() => void launchFight()}>
                   <span>{preparingFight ? 'Preparing...' : modeMeta.actionLabel}</span>
                   <small>
                     {preparingFight
                       ? 'Checking cached sprites'
+                      : touchVersusBlocked
+                      ? 'Touch Versus needs a keyboard or controllers'
                       : canStartFight
-                      ? `${p1Fighter?.name ?? 'P1'} vs ${p2Fighter?.name ?? 'P2'}`
+                      ? `${p1Fighter?.name ?? 'P1'} ${mode === 'rush' ? '+' : isAuraMode ? '↔' : 'vs'} ${p2Fighter?.name ?? 'P2'}`
                       : 'Select both fighters first'}
                   </small>
                 </button>
               ) : null}
             </div>
+
+            {touchVersusBlocked ? (
+              <p className="roster-touch-notice" role="status">
+                Touch Versus needs two control sets, which do not fit safely on this screen. Open it on a keyboard
+                or controller device, or choose Arcade Mode on touch.
+              </p>
+            ) : null}
 
             <div className="roster-fighter-grid">
               {!rosterLoaded ? (
@@ -573,7 +973,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                 <section className="gallery-empty roster-empty">
                   <h2>Make Yourself Playable</h2>
                   <p>{firstFighterCopy}</p>
-                  <button className="home-menu__action is-primary" onClick={onCreateFighter}>
+                  <button type="button" className="home-menu__action is-primary" onClick={onCreateFighter}>
                     <span>{createLabel}</span>
                     <small>One photo · about 2 minutes</small>
                   </button>
@@ -585,16 +985,14 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                       <h2>Official Challengers Incoming</h2>
                       <p>The headline roster is being prepared in Champion quality.</p>
                       {localEntries.length > 0 ? (
-                        <button className="gallery-back" onClick={() => setRosterFilter('yours')}>
-                          View Your Fighters
-                        </button>
+                        <Button onClick={() => setRosterFilter('yours')}>View Your Fighters</Button>
                       ) : null}
                     </>
                   ) : (
                     <>
                       <h2>Create Your First Fighter</h2>
                       <p>{firstFighterCopy}</p>
-                      <button className="home-menu__action is-primary" onClick={onCreateFighter}>
+                      <button type="button" className="home-menu__action is-primary" onClick={onCreateFighter}>
                         <span>{createLabel}</span>
                         <small>Start with one photo</small>
                       </button>
@@ -624,9 +1022,97 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
         <div className="roster-column">
           <div className="gallery-panel">
-            <h3>Stage</h3>
+            {mode === 'rush' ? (
+              <section className="roster-difficulty" aria-labelledby="rush-difficulty-title">
+                <div className="roster-difficulty__heading">
+                  <div>
+                    <span>RUN RULES</span>
+                    <h2 id="rush-difficulty-title">Difficulty</h2>
+                  </div>
+                  <strong>{getRushDifficulty(rushDifficulty).label}</strong>
+                </div>
+                <div className="roster-difficulty__options" role="group" aria-label="Rush difficulty">
+                  {RUSH_DIFFICULTIES.map((difficulty) => (
+                    <button
+                      key={difficulty.id}
+                      type="button"
+                      className={`gallery-chip${rushDifficulty === difficulty.id ? ' is-active' : ''}`}
+                      aria-pressed={rushDifficulty === difficulty.id}
+                      onClick={() => {
+                        cancelFightPreparation();
+                        setRushDifficulty(difficulty.id);
+                      }}
+                    >
+                      <span>{difficulty.label}</span>
+                      <small>{difficulty.blurb}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            {isAuraMode ? (
+              <section className="roster-difficulty" aria-labelledby="aura-difficulty-title">
+                <div className="roster-difficulty__heading">
+                  <div>
+                    <span>AURA RULES</span>
+                    <h2 id="aura-difficulty-title">Difficulty</h2>
+                  </div>
+                  <strong>{getAuraDifficulty(auraDifficulty).label}</strong>
+                </div>
+                <div className="roster-difficulty__options" role="group" aria-label="Aura difficulty">
+                  {AURA_DIFFICULTIES.map((difficulty) => (
+                    <button
+                      key={difficulty.id}
+                      type="button"
+                      className={`gallery-chip${auraDifficulty === difficulty.id ? ' is-active' : ''}`}
+                      aria-pressed={auraDifficulty === difficulty.id}
+                      onClick={() => {
+                        cancelFightPreparation();
+                        setAuraDifficulty(difficulty.id);
+                      }}
+                    >
+                      <span>{difficulty.label}</span>
+                      <small>{difficulty.blurb}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            {mode === 'cpu' ? (
+              <section className="roster-difficulty" aria-labelledby="fight-difficulty-title">
+                <div className="roster-difficulty__heading">
+                  <div>
+                    <span>CPU RULES</span>
+                    <h2 id="fight-difficulty-title">Difficulty</h2>
+                  </div>
+                  <strong>{getFightDifficulty(fightDifficulty).label}</strong>
+                </div>
+                <div className="roster-difficulty__options" role="group" aria-label="Fight CPU difficulty">
+                  {FIGHT_DIFFICULTIES.map((difficulty) => (
+                    <button
+                      key={difficulty.id}
+                      type="button"
+                      className={`gallery-chip${fightDifficulty === difficulty.id ? ' is-active' : ''}`}
+                      aria-pressed={fightDifficulty === difficulty.id}
+                      onClick={() => {
+                        cancelFightPreparation();
+                        setFightDifficulty(difficulty.id);
+                      }}
+                    >
+                      <span>{difficulty.label}</span>
+                      <small>{difficulty.blurb}</small>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            <h2>Stage</h2>
             <div className="roster-stage-preview">
-              {photoStageUrl ? <img src={photoStageUrl} alt="" /> : <div className="gallery-preview__empty">{stageSummary.label}</div>}
+              {stagePreviewUrl ? (
+                <img src={stagePreviewUrl} alt={`${stageSummary.label} stage preview`} />
+              ) : (
+                <div className="gallery-preview__empty">{stageSummary.label}</div>
+              )}
             </div>
             <div className="roster-stage-summary">
               <strong>{stageSummary.label}</strong>
@@ -635,26 +1121,26 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
             <div className="roster-stage-list">
               <button
                 className={`gallery-chip${stageChoice.kind === 'auto' ? ' is-active' : ''}`}
-                onClick={() => setStageChoice({ kind: 'auto' })}
+                onClick={() => chooseStage({ kind: 'auto' })}
               >
                 <span>AUTO</span>
-                <small>Let the fight choose</small>
+                <small>{mode === 'rush' ? 'Begin on Side Street' : isAuraMode ? 'Let the routine choose' : 'Let the fight choose'}</small>
               </button>
-              {STAGE_THEMES.map((stage) => (
+              {selectableStageThemes.map((stage) => (
                 <button
                   key={stage.id}
                   className={`gallery-chip${stageChoice.kind === 'built-in' && stageChoice.stageId === stage.id ? ' is-active' : ''}`}
-                  onClick={() => setStageChoice({ kind: 'built-in', stageId: stage.id })}
+                  onClick={() => chooseStage({ kind: 'built-in', stageId: stage.id })}
                 >
                   <span>{stage.label}</span>
                   <small>{stage.blurb}</small>
                 </button>
               ))}
-              {photoStages.map((stage) => (
+              {mode === 'rush' ? null : photoStages.map((stage) => (
                 <button
                   key={stage.stageKey}
                   className={`gallery-chip${stageChoice.kind === 'photo' && stageChoice.stageKey === stage.stageKey ? ' is-active' : ''}`}
-                  onClick={() => setStageChoice({ kind: 'photo', stageKey: stage.stageKey, label: stage.label ?? 'PHOTO STAGE' })}
+                  onClick={() => chooseStage({ kind: 'photo', stageKey: stage.stageKey, label: stage.label ?? 'PHOTO STAGE' })}
                 >
                   <span>{stage.label ?? 'PHOTO STAGE'}</span>
                   <small>Cached custom stage</small>

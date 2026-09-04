@@ -1,5 +1,25 @@
 # Production Readiness
 
+## Release Source of Truth
+
+Routine production mutation is CI-only. Merge a reviewed commit to `main` and
+let `.github/workflows/deploy-production.yml` apply D1 migrations, deploy the
+Worker, deploy Pages, and run the live gates. The frontend-only workflow may be
+dispatched only from `main` and must explicitly resolve Worker drift.
+
+The production guard requires a clean checkout with `HEAD == GITHUB_SHA` on
+`refs/heads/main`. Production Pages includes `/release.json`, and both live
+smokes require its Git SHA and hashed entry asset to match the release being
+published. Local production commands are deliberately blocked; read-only
+diagnostics and all sandbox commands remain available.
+
+Break glass is reserved for a confirmed GitHub Actions outage. It requires a
+clean checkout exactly equal to remotely verified `origin/main`,
+`ASF_PRODUCTION_BREAK_GLASS=1`, the full matching
+`ASF_EXPECTED_PRODUCTION_SHA`, and a meaningful
+`ASF_PRODUCTION_BREAK_GLASS_REASON`. Use a temporary least-privilege credential,
+record the incident, and revoke it afterward.
+
 This is the launch checklist for making Insert Player playable across devices with Clerk auth, tiered pricing, Worker-side API keys, rate limiting, R2/D1 persistence, and community sharing. `AI Street Fighter` remains the internal repository name only.
 
 `AI Street Fighter` is the internal project name only. The selected external brand is `Insert Player`, first game `Insert Player: Fight`, short name `P1`, target domain `https://insertplayer.ai`. The owner-directed launch record was completed on 2026-08-19; see `BRANDING.md` and ignored `.brand-clearance.json`.
@@ -58,7 +78,7 @@ Release status on 2026-08-24: the full Pages app, Clerk Production, dedicated Go
 - A real Champion Victory Retry and a Pro Upright-source Retry ran as QA Workflows, continued after leaving Gallery, reconnected on return, committed exactly one credit each, and preserved all previous clean/RAW/source versions. The Victory job used three Flash calls with a conservative 24¢ cost; the Upright source job used one Pro call with a conservative 15¢ cost.
 - Separate Chrome and in-app-browser storage origins loaded the same signed-in 28-credit wallet, match history, and Champion fighter from D1/R2. A fresh origin exposed the fighter after the 11 best playable sprites arrived in `4.776s`; all 48 cloud sprite versions plus RAW assets then hydrated in the background, and the next Gallery entry reached `Ready` in `3.037s`. This is strong cross-browser persistence evidence, but a physical second-device pass remains required.
 - Cost-integrity recovery is deployed without new inference: failed Champion job `f3b6c650cbb2e1bf796eebb79edff5c7` is a partial run whose side, upright, crouch, idle, walk, high_punch, and high_kick checkpoints all resolve to preserved clean/RAW R2 blobs. Its first pending stage is `sprite:low_punch`; resume reuses those seven checkpoints and the 101 response-backed provider-cache entries instead of regenerating them. The `$8.85` figure attached to the job is a conservative internal estimate, not a provider invoice. Do not resume it or run official roster generation until the owner separately approves paid inference.
-- Still missing before calling the beta production-ready: finish and activate the QA-approved Gemini-only Arcade roster; complete one live Stripe purchase/webhook; verify support-address delivery/reply; run real-phone QA; and complete physical two-device validation. Durable GitHub Cloudflare auth, both branch deployment workflows, the disposable Clerk Development smoke, the real production Turnstile success/replay check, and the authenticated production smoke are complete. Real provider generation, cloud archival, durable reconnect, and the authenticated Stripe purchase/webhook path have passed in isolated QA.
+- Still missing before calling the beta production-ready: finish and activate the QA-approved Arcade roster; verify support-address delivery/reply; run real-phone QA; and complete physical two-device validation. Durable GitHub Cloudflare auth, both branch deployment workflows, the disposable Clerk Development smoke, the real production Turnstile success/replay check, and the authenticated production smoke are complete. Real provider generation, cloud archival, durable reconnect, and the authenticated Stripe purchase/webhook path have passed in isolated QA. Live Stripe is validated through account/catalog/webhook configuration and API-level readiness; a real-money Checkout is not a CI/CD, smoke, or prelaunch requirement.
 - Support delivery is also launch-critical: routing, MX, SPF, and explicit `privacy@insertplayer.ai` / `support@insertplayer.ai` routes are active, and the SMTP edge accepted both recipients with `250`. Send and receive one real external test through each alias and verify reply identity. Do not launch with dead legal/support addresses.
 
 ### Isolated QA environment
@@ -86,7 +106,9 @@ npx wrangler r2 bucket create insert-player-assets --jurisdiction eu
 
 2. Paste the generated D1 id into `worker/wrangler.toml`. Add an R2 lifecycle rule for the `temp/` prefix, deleting objects after 1 day; the Worker also refuses expired temp assets. Rate-limit counters use the same D1 database atomically.
 
-3. Configure Worker vars/secrets:
+3. Configure these names in the protected GitHub `production` environment. The
+following direct Wrangler commands are emergency break-glass references only,
+not the routine release path:
 
 ```bash
 npx wrangler secret put GEMINI_API_KEY
@@ -98,14 +120,18 @@ npx wrangler secret put STRIPE_SECRET_KEY
 npx wrangler secret put STRIPE_WEBHOOK_SECRET
 npx wrangler secret put GENERATION_JOB_SIGNING_SECRET
 npx wrangler secret put CLERK_BACKEND_AUTH_BRIDGE_SECRET
+npx wrangler secret put GOOGLE_MAPS_SERVER_KEY
 ```
 
-The preferred handoff path is to create a gitignored `.env.production.local` with the live dashboard values and run the idempotent helper:
+The workflow reads the corresponding GitHub environment variables and secrets.
+An ignored `.env.production.local` may mirror them for read-only validation, but
+must not become a routine deployment source:
 
 ```bash
 CLERK_ISSUER=https://clerk.insertplayer.ai
 VITE_CLERK_PUBLISHABLE_KEY=pk_live_...
 VITE_TURNSTILE_SITE_KEY=0x4AAAAAA...
+VITE_GOOGLE_MAPS_BROWSER_KEY=AIza...
 # Optional JWKS override. CLERK_ISSUER is still required for issuer validation.
 # CLERK_JWKS_URL=https://clerk.insertplayer.ai/.well-known/jwks.json
 CORS_ORIGIN=https://insertplayer.ai,https://www.insertplayer.ai
@@ -116,14 +142,14 @@ STRIPE_SECRET_KEY=sk_live_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 TURNSTILE_SECRET_KEY=0x4AAAAAA...
 TURNSTILE_HOSTNAMES=insertplayer.ai,www.insertplayer.ai
+GOOGLE_MAPS_SERVER_KEY=AIza...
 ```
 
-```bash
-npm run config:live
-```
-
-That command patches non-secret Worker vars in `worker/wrangler.toml`, updates `.env.production`, uploads Worker secrets without printing values, and redeploys the Worker.
-The default `config:live` path refuses placeholder values, local origins, test Clerk publishable keys, and test Stripe secret keys, then runs `npm run check:production` before it mutates Worker config or uploads secrets.
+The protected production workflow invokes `config:live` to validate and
+materialize the exact release configuration. Calling it locally is blocked
+before any production mutation unless the documented break-glass contract is
+fully satisfied. It refuses placeholder values, local origins, test Clerk keys,
+and test Stripe keys before it changes Worker configuration or secrets.
 
 4. Set non-secret vars in `worker/wrangler.toml`:
 
@@ -170,7 +196,7 @@ ASF_FRONTEND_ORIGIN=https://insertplayer.ai \
 npm run smoke:live
 ```
 
-`npm run smoke:live` is the unauthenticated public Worker smoke. It verifies the deployed public API surface and health, but it is deliberately insufficient for launch because it cannot prove per-user storage, publish/clone boundaries, a real purchase, or two-device behavior.
+`npm run smoke:live` is the unauthenticated public Worker smoke. It verifies the deployed public API surface and health, but it is deliberately insufficient for launch because it cannot prove per-user storage, publish/clone boundaries, authenticated billing authorization, or two-device behavior.
 
 For launch validation, require both a primary signed-in Clerk token and a second-account token so authenticated storage, publish/share, clone privacy, foreign-fighter rejection, and match reporting are all exercised:
 
@@ -218,6 +244,7 @@ Copy `.env.production.example` to `.env.production`, then set production fronten
 ```bash
 VITE_API_BASE_URL=https://api.insertplayer.ai
 VITE_CLERK_PUBLISHABLE_KEY=pk_live_...
+VITE_GOOGLE_MAPS_BROWSER_KEY=AIza...
 VITE_GEMINI_IMAGE_MODEL_REPOSE=gemini-3-pro-image
 VITE_GEMINI_IMAGE_MODEL_UPRIGHT=gemini-3-pro-image
 VITE_GEMINI_IMAGE_MODEL_CROUCH=gemini-3-pro-image
@@ -226,6 +253,15 @@ VITE_INTRO_VIDEO_PROVIDER=fal-ltx-v2-3-fast
 ```
 
 Do not set animation model Pro overrides globally; tier code controls animation model selection. Source-view model vars stay Pro.
+
+### Google Maps / Street View Stage Scout
+
+Use a dedicated Google Cloud project with billing enabled and enable Maps JavaScript API, Geocoding API, and Street View Static API. Use two separate credentials:
+
+- `VITE_GOOGLE_MAPS_BROWSER_KEY` is public by design. Restrict it to the exact production and `www` HTTP referrers, and restrict its API access to Maps JavaScript API and Geocoding API.
+- `GOOGLE_MAPS_SERVER_KEY` is a Worker secret. Restrict its API access to Street View Static API only; never expose it through a `VITE_` variable, Pages configuration, logs, or a client response.
+
+Set daily request and spend quotas before launch. The browser displays Street View coverage, but the Worker captures the selected panorama, heading, pitch, and field of view using a fixed image size. The Worker validates the request, rate-limits capture, rejects invalid or oversized responses, and marks images `private, no-store`. Live and sandbox CSPs contain the Google Maps JavaScript allowlist; prelaunch remains self-only.
 
 `npm run check:live-readiness` reads `.env.production.local`, `.env.production`, `.env.local`, `.env`, and process env for these frontend vars. Do not commit real secrets. Like the post-deploy Pages smoke, live readiness waits briefly for the root frontend shell (`ASF_FRONTEND_READY_TIMEOUT_MS`, default 90000) before checking direct routes, which keeps the final gate resilient to Cloudflare Pages propagation. The live config/readiness helpers and package deploy scripts route Wrangler through `scripts/wrangler-workspace-log.mjs`, setting `WRANGLER_LOG_PATH` to the ignored local `.wrangler-logs/` directory so Wrangler diagnostics stay inside the workspace during automated checks.
 
@@ -273,7 +309,7 @@ This verifies `/menu`, Stripe checkout return URLs on `/menu`, `/gallery`, `/com
 
 - In the Stripe Dashboard, create a dedicated Insert Player account under the same legal entity as ShellBot, then create a dedicated Insert Player sandbox. Keep products, customers, payment data, keys, webhooks, descriptor, and public business branding separate from ShellBot. Stripe account/sandbox creation requires the Dashboard; never copy ShellBot's live secret key into this Worker.
 - Complete the platform account's own API-visible public details in Dashboard: customer-facing Insert Player name, `https://insertplayer.ai`, and a public support URL/email/phone. Stripe Dashboard privacy and Terms URLs are optional for this launch flow. Insert Player collects the versioned terms, refund-policy, immediate-delivery, and withdrawal-loss attestations before redirecting to Stripe, persists minimized legal evidence server-side, and sends the same legal version/flags in Checkout and PaymentIntent metadata.
-- `config:sandbox --require-complete` and live config validate the activation and public profile fields Stripe exposes from `/v1/account`: details submitted, charges and payouts enabled, Insert Player name, website, and a public support contact. Checkout explicitly sends `consent_collection[terms_of_service]=none` to avoid a redundant generic Stripe checkbox. The authenticated sandbox purchase is the authoritative proof for payment, price, automatic tax, customer address collection, legal evidence, webhook fulfillment, and idempotency; repeat it in live mode before launch.
+- `config:sandbox --require-complete` and live config validate the activation and public profile fields Stripe exposes from `/v1/account`: details submitted, charges and payouts enabled, Insert Player name, website, and a public support contact. Checkout explicitly sends `consent_collection[terms_of_service]=none` to avoid a redundant generic Stripe checkbox. The authenticated sandbox purchase is the authoritative proof for payment, price, automatic tax, customer address collection, legal evidence, webhook fulfillment, and idempotency. Live launch evidence is read-only account/catalog/webhook validation; never create a real-money payment from CI/CD, smoke tests, or prelaunch validation.
 - Put the sandbox `STRIPE_ACCOUNT_ID` and `sk_test_...` key in ignored `.env.sandbox.local`; put the live account id and `sk_live_...` key in ignored `.env.production.local`. Stripe isolated Sandboxes have their own `acct_...` id, so never assume the sandbox and Live account ids match. Keep `ASF_FORBIDDEN_STRIPE_ACCOUNT_IDS` set to the ShellBot account id in both files so bootstrap fails closed if the wrong account is supplied. The script never falls back from either target to `.env.local` or `.env`.
 - Bootstrap the fixed launch catalog and webhook. The script verifies the key belongs to the expected account, creates or reconciles Starter (11 credits, €14.99), Versus (20, €24.99), and Arcade (47 credits, €56.99), deactivates stale active prices, never deletes billing history, and stores Price IDs plus a newly returned webhook secret in the ignored env file:
 
@@ -295,8 +331,8 @@ Live:    https://api.insertplayer.ai/api/billing/stripe-webhook
 
 - Keep the Stripe endpoint subscribed to all events (`*`), as configured for the isolated account. The Worker acts on `checkout.session.completed`, `charge.refunded`, `refund.created`, `refund.failed`, `charge.dispute.created`, and `charge.dispute.closed`; unsupported signed event types are acknowledged with `200` and retained only as bounded non-PII audit markers. These handlers do not initiate refunds: they adjust the wallet only after Stripe or a bank has already reversed or disputed funds. A won dispute restores only the held credits, while already-spent reversed value may leave a negative balance. Bootstrap and production checks must preserve/require the wildcard subscription.
 - Store the webhook signing secret as `STRIPE_WEBHOOK_SECRET`; `--create-webhook` writes a newly returned sandbox secret to `.env.sandbox.local` or live secret to `.env.production.local` without printing it. Existing endpoint secrets must already be present because Stripe never returns them again.
-- Run prelaunch test-mode Checkout only against the isolated deployed sandbox Worker, whose `ENVIRONMENT=sandbox` accepts `sk_test_...`. The bootstrap rejects a live key for the sandbox, rejects a test key for live, requires `--allow-live` for live mutation, and pins each target to its own webhook origin. The production Worker intentionally refuses test-mode Stripe events and Checkout.
-- Run test-mode Checkout from the HomePage credit panel and verify:
+- Any future Checkout regression test must run only against the isolated deployed sandbox Worker, whose `ENVIRONMENT=sandbox` accepts `sk_test_...`. The bootstrap rejects a live key for the sandbox, rejects a test key for live, requires `--allow-live` for live mutation, and pins each target to its own webhook origin. The production Worker intentionally refuses test-mode Stripe events and Checkout. The two completed sandbox purchases already close this launch gate; do not repeat them solely for prelaunch evidence.
+- The existing sandbox Checkout evidence verifies:
   - Stripe success/cancel redirects scrub `checkout` and `session_id` from the browser URL, return to the `/menu` wallet, and refresh credits after webhook crediting without a manual reload.
   - `checkout_sessions.status` becomes `paid`.
   - A repeated delivery of the same Checkout Session does not add credits twice.
@@ -308,7 +344,7 @@ Live:    https://api.insertplayer.ai/api/billing/stripe-webhook
 
 Run these with a fresh browser profile and then repeat on a second device:
 
-Local/sandbox prelaunch evidence: on 2026-08-17 a real Rookie generated all four Pro canonical views plus all 11 animations without retries and entered a playable desktop match. Processing v4 detected that the provider returned a `4x4` subject grid for a requested `4x2` sheet, rebuilt the active playable versions from preserved RAW blobs, and retained every prior version. On 2026-08-19 the same authenticated fighter completed Contender and Champion upgrades; measured completed sessions were Rookie 17 calls / `$1.43`, Contender 165 / `$7.88`, and Champion 123 / `$12.64`. Two interrupted Champion attempts restored their reservations under the superseded pre-launch policy; launch code now commits at the first billable provider attempt and never restores that spend automatically. Every tier retained all 11 cloud animations and prior versions. A later Champion WALK Retry completed with 33 calls / `$2.64`; processing v5 preserved the face and reduced severe green-edge contamination from `43.704%` to `0.276%`. All 11 current Champion animations were reconstructed from preserved RAW sheets without provider calls, incrementally synced with exactly 12 total uploads across the Retry and migration, retained every older cloud version, and entered a completed fight. The initial Rookie charge and zero-delta ledger were backfilled to the cloud fighter, and future clients persist that purchase id until idempotent sync linkage succeeds. Mobile-browser emulation at `390x844` kept all eight controls in view and real touch events moved and attacked. A full Attract Mode match also completed two rounds, reached the result state, exposed accessible Run It Back / Remix / Menu controls, and restarted cleanly through Run It Back. This closes the real all-tier provider/billing/storage path but does not replace production-auth/payment or physical-device checks below.
+Local/sandbox prelaunch evidence: on 2026-08-17 a real Rookie generated all four Pro canonical views plus all 11 animations without retries and entered a playable desktop match. Processing v4 detected that the provider returned a `4x4` subject grid for a requested `4x2` sheet, rebuilt the active playable versions from preserved RAW blobs, and retained every prior version. On 2026-08-19 the same authenticated fighter completed Contender and Champion upgrades; measured completed sessions were Rookie 17 calls / `$1.43`, Contender 165 / `$7.88`, and Champion 123 / `$12.64`. Two interrupted Champion attempts restored their reservations under the superseded pre-launch policy; launch code now commits at the first billable provider attempt and never restores that spend automatically. Every tier retained all 11 cloud animations and prior versions. A later Champion WALK Retry completed with 33 calls / `$2.64`; processing v5 preserved the face and reduced severe green-edge contamination from `43.704%` to `0.276%`. All 11 current Champion animations were reconstructed from preserved RAW sheets without provider calls, incrementally synced with exactly 12 total uploads across the Retry and migration, retained every older cloud version, and entered a completed fight. The initial Rookie charge and zero-delta ledger were backfilled to the cloud fighter, and future clients persist that purchase id until idempotent sync linkage succeeds. Mobile-browser emulation at `390x844` kept all eight controls in view and real touch events moved and attacked. A full Attract Mode match also completed two rounds, reached the result state, exposed accessible Run It Back / Remix / Menu controls, and restarted cleanly through Run It Back. This closes the real all-tier provider/billing/storage path but does not replace production authentication or physical-device checks below.
 
 1. Signed-out `/menu` loads.
 2. Confirm the cleared public brand appears in production HTML title, Open Graph/Twitter metadata, manifest, social-card PNG, app icons, and Worker `/share/:id` metadata, with no internal project name visible.
@@ -320,22 +356,22 @@ Local/sandbox prelaunch evidence: on 2026-08-17 a real Rookie generated all four
 8. Sign in with Clerk.
 9. In one browser profile, create or import a fighter as user A, sign out, and sign in as user B. Confirm B cannot see A's local or cloud roster. Switch back to A and confirm A's local versions are still present. Let a generation or retry remain in flight during one switch and confirm it cannot write into the new account.
 10. Create a disposable third Clerk user, sync at least one fighter, then delete the user in Clerk. Confirm the signed webhook purges its R2/D1 data and a pre-deletion token cannot recreate the account.
-11. In the isolated Insert Player Stripe sandbox, accept the app's versioned purchase terms and buy a test credit pack. Confirm Checkout uses automatic tax with the inclusive EUR catalog, one reusable Stripe Customer is linked to the Clerk user, the webhook credits exactly one pack, and duplicate delivery is idempotent. Stripe's duplicate generic Terms checkbox must remain disabled.
-12. In the isolated live Insert Player Stripe account, make one real Starter purchase. Confirm exactly 11 credits are granted once and the Dashboard shows the expected EUR tax treatment.
-13. Generate a Rookie fighter and confirm free quota reservation commits.
-14. Generate a Contender fighter and confirm credits reserve, commit, and the fighter syncs to cloud.
-15. Generate a Champion fighter and confirm credits reserve, commit, and the fighter syncs to cloud.
-16. Force one failure before any provider request and confirm the Workflow releases the untouched reservation server-side. Then force an upstream provider failure and confirm the charge remains committed, the failed cost event remains counted, and no credits return automatically. Retry the identical start request concurrently and confirm only one job and one reservation survive.
-17. Start generation, upgrade, animation Retry, and source Retry as applicable, then navigate away and interrupt connectivity. Confirm the job continues in Cloudflare, reopening Create/Gallery reconnects to D1 progress, one credit reservation reaches the correct terminal state, and every previous version remains available. Then open `/gallery` on a second device; the cloud fighter must import and be selectable in `/roster/cpu`. Optional missing source/RAW history must not block playable sprite import, and partial private fighters must fallback-fill runtime animation states instead of showing invisible moves.
-18. Rename and delete a synced fighter from Gallery and confirm the cloud copy is renamed/deleted for the same Clerk user. Click Sync Cloud or retry upload for the same generated fighter and confirm it does not create duplicate source or sprite versions for identical content.
-19. Publish a fighter, open `/community`, clone it into the same or second account, and verify publishing/share/clone require the full launch animation set and cloned assets load without original uploads, raw source views, or raw sprite sheets. If the target account already has an unfinished same-photo fighter, verify the clone action merges missing playable sprites into that record instead of returning an unplayable shell.
-20. Copy a community share link from Gallery or `/community`, verify the shared `/share/:id` page contains fighter-specific Open Graph metadata, open the redirected `/community?fighter=:id` in a fresh browser, and verify the linked fighter is featured and cloneable even if it is not in the first `/api/community` feed page.
-21. Confirm owner-scoped `/assets/*` rejects every signed-out/non-owner request and returns `private, no-store` for authenticated owner reads. Confirm community payloads and `/share/:id` contain only `/public-assets/fighters/*` media URLs with no `users/`, Clerk/internal owner id, original upload, RAW sheet, or photo hash; public media must use short revalidating cache headers and become `404`/`no-store` after Unpublish.
-22. Confirm Worker rate limits return `429` with `Retry-After` under repeated expensive proxy calls.
-23. Confirm `/proxy/upload-temp` returns a `/temp-assets/*` URL and no provider flow depends on a third-party temp file host.
-24. Finish a match while signed in and confirm `/api/stats` shows the match in recent history.
-25. Confirm source views are generated with Pro model settings regardless of selected tier.
-26. Regression-check Refined animations in Gallery: the validated Champion sample must retain intact faces and remain free of visible green edge spill on neutral backgrounds.
+11. Record the existing isolated Stripe sandbox evidence: versioned purchase terms, automatic tax with the inclusive EUR catalog, one reusable Customer linked to the Clerk user, exactly-once webhook crediting, duplicate-delivery idempotency, and no redundant Stripe Terms checkbox. Do not create another Checkout solely to satisfy launch validation.
+12. Generate a Rookie fighter and confirm free quota reservation commits.
+13. Generate a Contender fighter and confirm credits reserve, commit, and the fighter syncs to cloud.
+14. Generate a Champion fighter and confirm credits reserve, commit, and the fighter syncs to cloud.
+15. Force one failure before any provider request and confirm the Workflow releases the untouched reservation server-side. Then force an upstream provider failure and confirm the charge remains committed, the failed cost event remains counted, and no credits return automatically. Retry the identical start request concurrently and confirm only one job and one reservation survive.
+16. Start generation, upgrade, animation Retry, and source Retry as applicable, then navigate away and interrupt connectivity. Confirm the job continues in Cloudflare, reopening Create/Gallery reconnects to D1 progress, one credit reservation reaches the correct terminal state, and every previous version remains available. Then open `/gallery` on a second device; the cloud fighter must import and be selectable in `/roster/cpu`. Optional missing source/RAW history must not block playable sprite import, and partial private fighters must fallback-fill runtime animation states instead of showing invisible moves.
+17. Rename and delete a synced fighter from Gallery and confirm the cloud copy is renamed/deleted for the same Clerk user. Click Sync Cloud or retry upload for the same generated fighter and confirm it does not create duplicate source or sprite versions for identical content.
+18. Publish a fighter, open `/community`, clone it into the same or second account, and verify publishing/share/clone require the full launch animation set and cloned assets load without original uploads, raw source views, or raw sprite sheets. If the target account already has an unfinished same-photo fighter, verify the clone action merges missing playable sprites into that record instead of returning an unplayable shell.
+19. Copy a community share link from Gallery or `/community`, verify the shared `/share/:id` page contains fighter-specific Open Graph metadata, open the redirected `/community?fighter=:id` in a fresh browser, and verify the linked fighter is featured and cloneable even if it is not in the first `/api/community` feed page.
+20. Confirm owner-scoped `/assets/*` rejects every signed-out/non-owner request and returns `private, no-store` for authenticated owner reads. Confirm community payloads and `/share/:id` contain only `/public-assets/fighters/*` media URLs with no `users/`, Clerk/internal owner id, original upload, RAW sheet, or photo hash; public media must use short revalidating cache headers and become `404`/`no-store` after Unpublish.
+21. Confirm Worker rate limits return `429` with `Retry-After` under repeated expensive proxy calls.
+22. Confirm `/proxy/upload-temp` returns a `/temp-assets/*` URL and no provider flow depends on a third-party temp file host.
+23. Finish a match while signed in and confirm `/api/stats` shows the match in recent history.
+24. Confirm source views are generated with Pro model settings regardless of selected tier.
+25. Regression-check Refined animations in Gallery: the validated Champion sample must retain intact faces and remain free of visible green edge spill on neutral backgrounds.
+26. Open `/stages/new`, search Benidorm and one non-Spanish location, verify blue coverage appears, enter a panorama, change heading/pitch/zoom, capture it, create both a forged and direct-photo stage, and confirm each appears in Gallery and is selectable in Roster. Repeat one location with no nearby coverage and verify the recovery message. Confirm the browser bundle contains only the referrer-restricted browser key and that the Worker response never exposes `GOOGLE_MAPS_SERVER_KEY`.
 
 After those checks pass, copy `launch-validation.example.json` to `.launch-validation.json` and replace every placeholder with concrete evidence from the actual run. The launch gate verifies the file is recent, matches the Worker/Pages URLs being launched, matches the same public brand as `.brand-clearance.json`, names the same two different Clerk users as `ASF_CLERK_JWT` and `ASF_CLERK_JWT_CLONE`, records generated Rookie/Contender/Champion cloud fighter ids, and includes evidence for each manual checklist item.
 
@@ -345,11 +381,11 @@ After those checks pass, copy `launch-validation.example.json` to `.launch-valid
 
 - Send external test messages to `privacy@insertplayer.ai` and `support@insertplayer.ai`; Cloudflare routing, MX and SPF are configured, but inbox receipt still needs evidence.
 - Clerk Development email-code QA, signed-in API loading, webhook delivery, and D1 profile retention passed with two disposable users. The dedicated Insert Player Production instance, live publishable key, issuer, authorized parties, lifecycle webhook secret, and custom-domain certificates are wired; its JWKS responds at `https://clerk.insertplayer.ai/.well-known/jwks.json`. Mailbox, phone, username, password, and Apple sign-in are disabled for the public beta. Google uses a dedicated `insert-player` Google Cloud project, public external consent branding, deployed home/privacy/terms URLs, and a dedicated client for `https://clerk.insertplayer.ai/v1/oauth_callback`. Create two Google launch-test users; Apple is a post-beta provider and must remain disabled until its dedicated credentials and production sign-in have been verified.
-- The isolated live account/catalog/wildcard webhook and full production frontend are configured. Repeat the validated authenticated purchase flow once in live mode.
+- The isolated live account/catalog/wildcard webhook and full production frontend are configured. Keep launch verification read-only in Live; use the isolated Stripe sandbox for Checkout and webhook fulfillment tests.
 - Production Turnstile validation completed on 2026-08-24: one real token authorized exactly one `anonymous_rookie` provider session with `200`; replaying the exact token returned `403 turnstile_failed` and no second `providerSessionId`. No fighter, upload, provider request, or inference was started.
 - Real Rookie, Contender, Champion, pre-launch failed-upgrade settlement, Retry, cloud-history, and durable navigation/reconnect paths have passed in authenticated sandbox. Revalidate the new first-provider commit/no-restoration boundary without regenerating completed tiers solely to repeat provider spend.
 - Real two-device sync requires Clerk browser sign-in and an authenticated smoke token.
 - Real-phone touch/gamepad QA is required in portrait and landscape; desktop emulation alone does not close this gate.
-- Stripe test-mode webhook delivery and signed duplicate replay are verified; repeat the purchase and delivery smoke in live mode.
-- The final `npm run check:launch` gate must pass with two real Clerk users and a completed `.launch-validation.json` after Clerk, Stripe, Worker, Pages, provider tier generation, and two-device validation are complete.
+- Stripe test-mode webhook delivery and signed duplicate replay are verified. Do not repeat them with a real-money payment as part of CI/CD or prelaunch validation.
+- The final `npm run check:launch` gate must pass with two real Clerk users and a completed `.launch-validation.json` after Clerk, read-only Live Stripe configuration, Worker, Pages, provider tier generation, and two-device validation are complete.
 - Gallery, Roster, Create, Community, and Moderation are route-lazy and protected by the production checker; the initial app chunk is `101.87 kB` gzip. Phaser remains lazy behind `/fight`, so the product shell is not blocked by the game runtime.

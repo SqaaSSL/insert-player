@@ -27,6 +27,12 @@ import {
 } from './requestBody';
 import { publicAppName } from './branding';
 import { stripTrailingSlashes } from './url';
+import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+import {
+  generationCreationFlowAvailable,
+  parseRequestedGenerationCreationFlow,
+} from './generationCreationFlow';
+import { STAGE_FORGE_CREDIT_COST } from '../../src/shared/StageForgePricing';
 
 const FREE_ROOKIE_GENERATION_LIMIT = 1;
 const GENERATION_RESERVATION_TTL_HOURS = 12;
@@ -49,6 +55,7 @@ interface GenerationCharge {
   id: string;
   user_id: string;
   tier: QualityTier;
+  creation_flow: GenerationCreationFlow;
   credit_cost: number;
   free_quota_delta: number;
   // `refunded` is the legacy persisted name for a pre-provider release.
@@ -72,6 +79,7 @@ interface ResumableGenerationRow {
   run_user_id: string;
   run_fighter_id: string;
   run_tier: QualityTier;
+  run_creation_flow: GenerationCreationFlow;
   run_operation: GenerationBillingOperation;
 }
 
@@ -82,6 +90,7 @@ interface ReusableContinuationAuthorization {
   provider_call_limit: number;
   provider_cost_limit_cents: number;
   reservation_expires_at: string;
+  creation_flow: GenerationCreationFlow;
 }
 
 export interface GenerationPurchaseSettlement {
@@ -123,6 +132,17 @@ interface CheckoutAdjustmentRow {
   dispute_event_created: number;
 }
 
+interface CheckoutVerificationRow {
+  stripe_session_id: string;
+  pack_id: string;
+  credits: number;
+  status: string;
+  credits_balance: number;
+  updated_at: string;
+}
+
+export type CreditCheckoutVerificationState = 'pending' | 'complete' | 'failed';
+
 type StripeCreditStatus = 'credited' | 'duplicate' | 'reversed' | 'restored' | 'ignored' | null;
 
 const CREDIT_PACKS: Record<string, CreditPack> = {
@@ -159,6 +179,63 @@ function json(data: unknown, status = 200): Response {
 export function creditPacksResponse(): Response {
   return json({
     packs: Object.values(CREDIT_PACKS).map(({ priceBinding: _priceBinding, ...pack }) => pack),
+  });
+}
+
+function validStripeCheckoutSessionId(value: string | null): value is string {
+  return Boolean(
+    value &&
+    value.length <= 255 &&
+    /^cs_[A-Za-z0-9_]+$/.test(value),
+  );
+}
+
+function checkoutVerificationState(status: string): CreditCheckoutVerificationState {
+  if (status === 'paid') return 'complete';
+  if (status === 'open' || status === 'crediting') return 'pending';
+  return 'failed';
+}
+
+export async function getCreditCheckoutStatus(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+): Promise<Response> {
+  const checkoutStatusJson = (data: unknown, status = 200) => {
+    const response = json(data, status);
+    response.headers.set('Cache-Control', 'private, no-store');
+    return response;
+  };
+  const sessionId = new URL(request.url).searchParams.get('session_id')?.trim() ?? null;
+  if (!validStripeCheckoutSessionId(sessionId)) {
+    return checkoutStatusJson({ error: 'A valid Stripe checkout session is required' }, 400);
+  }
+
+  const checkout = await env.DB.prepare(`
+    SELECT checkout_sessions.stripe_session_id,
+           checkout_sessions.pack_id,
+           checkout_sessions.credits,
+           checkout_sessions.status,
+           checkout_sessions.updated_at,
+           users.credits_balance
+    FROM checkout_sessions
+    INNER JOIN users ON users.id = checkout_sessions.user_id
+    WHERE checkout_sessions.stripe_session_id = ?
+      AND checkout_sessions.user_id = ?
+    LIMIT 1
+  `).bind(sessionId, auth.userId).first<CheckoutVerificationRow>();
+  if (!checkout) return checkoutStatusJson({ error: 'Checkout session not found' }, 404);
+
+  return checkoutStatusJson({
+    checkout: {
+      sessionId: checkout.stripe_session_id,
+      state: checkoutVerificationState(checkout.status),
+      processorStatus: checkout.status,
+      packId: checkout.pack_id,
+      credits: checkout.credits,
+      creditsBalance: checkout.credits_balance,
+      updatedAt: checkout.updated_at,
+    },
   });
 }
 
@@ -272,6 +349,7 @@ async function createProviderSessionForCharge(
   operation: GenerationBillingOperation,
   chargeId: string,
   legal: GenerationLegalAttestation,
+  creationFlow: GenerationCreationFlow,
   continuationRunId?: string,
 ) {
   let createdSessionId: string | null = null;
@@ -280,6 +358,7 @@ async function createProviderSessionForCharge(
       tier,
       purpose: providerSessionPurposeForOperation(operation),
       operation,
+      creationFlow,
       chargeId,
       legal,
     });
@@ -312,6 +391,7 @@ async function authorizeGenerationContinuation(
     fighterId: string;
     tier: QualityTier;
     operation: GenerationBillingOperation;
+    creationFlow: GenerationCreationFlow;
     legal: GenerationLegalAttestation;
   },
 ): Promise<Response> {
@@ -329,11 +409,46 @@ async function authorizeGenerationContinuation(
       run.user_id AS run_user_id,
       run.fighter_id AS run_fighter_id,
       run.tier AS run_tier,
+      run.creation_flow AS run_creation_flow,
       run.operation AS run_operation
     FROM generation_jobs gj
     JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+    LEFT JOIN video_sprite_candidates candidate ON candidate.job_id = gj.id
+    LEFT JOIN video_sprite_candidate_revisions revision
+      ON revision.candidate_id = candidate.id
+      AND revision.revision = candidate.current_revision
     WHERE gj.id = ? AND gj.user_id = ?
-      AND gj.status IN ('failed', 'cancelled')
+      AND (
+        (
+          gj.status IN ('failed', 'cancelled')
+          AND (
+            gj.creation_flow <> 'video' OR
+            (SELECT COUNT(*) FROM video_sprite_candidates approved
+              WHERE approved.run_id = run.id AND approved.status = 'approved') < 11
+          )
+        )
+        OR (
+          gj.status = 'succeeded'
+          AND gj.creation_flow = 'video'
+          AND gj.review_status = 'approved'
+          AND candidate.status = 'approved'
+          AND candidate.approved_revision = candidate.current_revision
+          AND revision.report_sha256 IS NOT NULL
+          AND (SELECT COUNT(*) FROM video_sprite_candidates approved
+            WHERE approved.run_id = run.id AND approved.status = 'approved') < 11
+          AND NOT EXISTS (
+            SELECT 1 FROM video_sprite_candidates pending
+            WHERE pending.run_id = run.id AND pending.status = 'awaiting_review'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM generation_jobs child
+            WHERE child.resumed_from_job_id = gj.id
+          )
+        )
+      )
+      AND (gj.creation_flow <> 'video' OR (
+        gj.operation = 'fighter_generation' AND run.operation = 'fighter_generation'
+      ))
       AND run.status = 'partial'
       AND EXISTS (
         SELECT 1
@@ -355,6 +470,7 @@ async function authorizeGenerationContinuation(
     resumable.run_user_id !== auth.user.id ||
     resumable.run_fighter_id !== params.fighterId ||
     resumable.run_tier !== params.tier ||
+    resumable.run_creation_flow !== params.creationFlow ||
     resumable.run_operation !== params.operation
   ) {
     return json({ error: 'Resume request does not match the preserved generation work' }, 409);
@@ -380,17 +496,20 @@ async function authorizeGenerationContinuation(
       ps.expires_at AS provider_session_expires_at,
       ps.provider_call_limit,
       ps.provider_cost_limit_cents,
-      gc.expires_at AS reservation_expires_at
+      gc.expires_at AS reservation_expires_at,
+      gc.creation_flow
     FROM generation_charges gc
     JOIN provider_sessions ps
       ON ps.charge_id = gc.id
       AND ps.user_id = gc.user_id
       AND ps.status = 'active'
+      AND ps.creation_flow = gc.creation_flow
       AND datetime(ps.expires_at) > datetime('now')
     LEFT JOIN generation_jobs continuation_job ON continuation_job.charge_id = gc.id
     WHERE gc.user_id = ?
       AND gc.fighter_id = ?
       AND gc.tier = ?
+      AND gc.creation_flow = ?
       AND gc.status = 'reserved'
       AND gc.credit_cost = 0
       AND gc.free_quota_delta = 0
@@ -404,6 +523,7 @@ async function authorizeGenerationContinuation(
     auth.user.id,
     params.fighterId,
     params.tier,
+    params.creationFlow,
     resumable.artifact_run_id,
     params.resumeJobId,
   ).first<ReusableContinuationAuthorization>();
@@ -420,6 +540,7 @@ async function authorizeGenerationContinuation(
       providerCallLimit: reusable.provider_call_limit,
       providerCostLimitCents: reusable.provider_cost_limit_cents,
       reservationExpiresAt: reusable.reservation_expires_at,
+      creationFlow: reusable.creation_flow,
     });
   }
 
@@ -435,8 +556,8 @@ async function authorizeGenerationContinuation(
       INSERT INTO generation_charges (
         id, user_id, tier, credit_cost, free_quota_delta, status,
         reason, fighter_id, ledger_id, expires_at,
-        continuation_run_id, resumed_from_job_id
-      ) VALUES (?, ?, ?, 0, 0, 'reserved', ?, ?, ?, ?, ?, ?)
+        continuation_run_id, resumed_from_job_id, creation_flow
+      ) VALUES (?, ?, ?, 0, 0, 'reserved', ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       purchaseId,
       auth.user.id,
@@ -447,6 +568,7 @@ async function authorizeGenerationContinuation(
       expiresAt,
       resumable.artifact_run_id,
       params.resumeJobId,
+      params.creationFlow,
     ),
   ]);
 
@@ -457,6 +579,7 @@ async function authorizeGenerationContinuation(
     params.operation,
     purchaseId,
     params.legal,
+    params.creationFlow,
     resumable.artifact_run_id,
   );
   return json({
@@ -471,6 +594,7 @@ async function authorizeGenerationContinuation(
     providerCallLimit: providerSession.providerCallLimit,
     providerCostLimitCents: providerSession.providerCostLimitCents,
     reservationExpiresAt: expiresAt,
+    creationFlow: params.creationFlow,
   });
 }
 
@@ -815,14 +939,19 @@ export async function createCreditCheckoutSession(
   }
 
   try {
-    await env.DB.prepare(`
+    const attached = await env.DB.prepare(`
       UPDATE checkout_sessions
       SET stripe_session_id = ?,
           updated_at = datetime('now')
       WHERE id = ? AND stripe_session_id = ? AND status = 'open'
     `).bind(checkout.id, sessionToken, pendingStripeSessionId).run();
+    if (attached.meta.changes !== 1) {
+      console.warn('Failed to attach Stripe checkout id: the pending session was not claimable');
+      return json({ error: 'Checkout session could not be recorded. No payment page was opened.' }, 503);
+    }
   } catch (err) {
     console.warn('Failed to attach Stripe checkout id to local session:', err instanceof Error ? err.message : err);
+    return json({ error: 'Checkout session could not be recorded. No payment page was opened.' }, 503);
   }
 
   return json({ checkoutUrl: checkout.url, sessionId: checkout.id, pack });
@@ -835,6 +964,7 @@ export async function authorizeGenerationPurchase(
 ): Promise<Response> {
   const body = await readJsonBody<{
     tier?: QualityTier;
+    creationFlow?: unknown;
     fighterId?: string;
     resumeJobId?: string;
     operation?: GenerationBillingOperation;
@@ -844,6 +974,32 @@ export async function authorizeGenerationPurchase(
   }>(request, MAX_BILLING_JSON_BODY_BYTES);
   const tier = normalizeQualityTier(body.tier);
   const operation = normalizeGenerationBillingOperation(body.operation, body.reason);
+  const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
+  if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
+  if (!generationCreationFlowAvailable(creationFlow)) {
+    return json({
+      error: 'Video generation is not available on this release',
+      code: 'generation_creation_flow_unavailable',
+    }, 503);
+  }
+  if (creationFlow === 'video' && !auth.user) {
+    return json({
+      error: 'Video fighter generation requires a signed-in account',
+      code: 'video_creation_requires_sign_in',
+    }, 401);
+  }
+  if (creationFlow === 'video' && tier !== 'champion') {
+    return json({
+      error: 'The review-gated video flow is currently available only for Champion fighters',
+      code: 'video_creation_requires_champion',
+    }, 400);
+  }
+  if (creationFlow === 'video' && operation !== 'fighter_generation') {
+    return json({
+      error: 'The review-gated video flow currently supports full fighter generation only',
+      code: 'video_creation_operation_unsupported',
+    }, 400);
+  }
   const requiredCredits = generationCreditCost(tier, operation);
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) return json({ error: 'Current generation consent is required' }, 428);
@@ -859,6 +1015,7 @@ export async function authorizeGenerationPurchase(
       const providerSession = await createProviderSession(env, auth, {
         tier,
         purpose: 'fighter_generation',
+        creationFlow,
         legal,
       });
       return json({
@@ -868,6 +1025,7 @@ export async function authorizeGenerationPurchase(
         providerSessionId: providerSession.id,
         providerSessionExpiresAt: providerSession.expiresAt,
         providerCallLimit: providerSession.providerCallLimit,
+        creationFlow,
         message: 'Anonymous Rookie generation allowed after human verification.',
       });
     }
@@ -887,6 +1045,53 @@ export async function authorizeGenerationPurchase(
   if (operation !== 'fighter_generation' && !ownedFighterId) {
     return json({ error: 'This operation requires an owned fighter' }, 400);
   }
+  if (ownedFighterId) {
+    const pendingReview = await env.DB.prepare(`
+      SELECT candidate.job_id
+      FROM video_sprite_candidates candidate
+      WHERE candidate.fighter_id = ? AND candidate.user_id = ?
+        AND candidate.status = 'awaiting_review'
+      LIMIT 1
+    `).bind(ownedFighterId, auth.user.id).first<{ job_id: string }>();
+    if (pendingReview) {
+      return json({
+        error: 'Review the pending video action before starting another generation',
+        code: 'video_review_pending',
+        reviewJobId: pendingReview.job_id,
+      }, 409);
+    }
+    const partialVideoRun = await env.DB.prepare(`
+      SELECT run.id,
+        EXISTS (
+          SELECT 1 FROM generation_jobs resumable_job
+          WHERE resumable_job.id = ? AND resumable_job.artifact_run_id = run.id
+            AND (
+              resumable_job.status IN ('failed', 'cancelled')
+              OR EXISTS (
+                SELECT 1 FROM video_sprite_candidates candidate
+                WHERE candidate.job_id = resumable_job.id
+                  AND candidate.status IN ('approved', 'rejected')
+              )
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM generation_jobs child
+              WHERE child.resumed_from_job_id = resumable_job.id
+            )
+        ) AS exact_resume
+      FROM generation_artifact_runs run
+      WHERE run.fighter_id = ? AND run.user_id = ?
+        AND run.creation_flow = 'video' AND run.status = 'partial'
+      ORDER BY run.updated_at DESC
+      LIMIT 1
+    `).bind(resumeJobId || null, ownedFighterId, auth.user.id)
+      .first<{ id: string; exact_resume: number }>();
+    if (partialVideoRun && partialVideoRun.exact_resume !== 1) {
+      return json({
+        error: 'Continue the current review-gated video run before starting another generation',
+        code: 'video_run_in_progress',
+      }, 409);
+    }
+  }
   if (resumeJobId) {
     if (!ownedFighterId) return json({ error: 'A continuation requires an owned fighter' }, 400);
     return authorizeGenerationContinuation(env, auth, {
@@ -894,6 +1099,7 @@ export async function authorizeGenerationPurchase(
       fighterId: ownedFighterId,
       tier,
       operation,
+      creationFlow,
       legal,
     });
   }
@@ -924,9 +1130,9 @@ export async function authorizeGenerationPurchase(
       env.DB.prepare(`
         INSERT INTO generation_charges (
           id, user_id, tier, credit_cost, free_quota_delta, status,
-          reason, fighter_id, ledger_id, expires_at
+          reason, fighter_id, ledger_id, expires_at, creation_flow
         )
-        SELECT ?, user_id, ?, 0, 1, 'reserved', ?, ?, id, ?
+        SELECT ?, user_id, ?, 0, 1, 'reserved', ?, ?, id, ?, ?
         FROM credit_ledger
         WHERE id = ? AND user_id = ?
       `).bind(
@@ -935,6 +1141,7 @@ export async function authorizeGenerationPurchase(
         reason,
         ownedFighterId,
         expiresAt,
+        creationFlow,
         ledgerId,
         user.id,
       ),
@@ -949,6 +1156,7 @@ export async function authorizeGenerationPurchase(
         operation,
         purchaseId,
         legal,
+        creationFlow,
       );
       return json({
         authorized: true,
@@ -959,6 +1167,7 @@ export async function authorizeGenerationPurchase(
         providerSessionExpiresAt: providerSession.expiresAt,
         providerCallLimit: providerSession.providerCallLimit,
         reservationExpiresAt: expiresAt,
+        creationFlow,
         freeRookieGenerationsRemaining: Math.max(0, FREE_ROOKIE_GENERATION_LIMIT - quota.free_rookie_generations_used),
       });
     }
@@ -991,9 +1200,9 @@ export async function authorizeGenerationPurchase(
     env.DB.prepare(`
       INSERT INTO generation_charges (
         id, user_id, tier, credit_cost, free_quota_delta, status,
-        reason, fighter_id, ledger_id, expires_at
+        reason, fighter_id, ledger_id, expires_at, creation_flow
       )
-      SELECT ?, user_id, ?, ?, 0, 'reserved', ?, ?, id, ?
+      SELECT ?, user_id, ?, ?, 0, 'reserved', ?, ?, id, ?, ?
       FROM credit_ledger
       WHERE id = ? AND user_id = ?
     `).bind(
@@ -1003,6 +1212,7 @@ export async function authorizeGenerationPurchase(
       reason,
       ownedFighterId,
       expiresAt,
+      creationFlow,
       ledgerId,
       user.id,
     ),
@@ -1028,6 +1238,7 @@ export async function authorizeGenerationPurchase(
     operation,
     purchaseId,
     legal,
+    creationFlow,
   );
 
   return json({
@@ -1040,7 +1251,114 @@ export async function authorizeGenerationPurchase(
     providerSessionExpiresAt: providerSession.expiresAt,
     providerCallLimit: providerSession.providerCallLimit,
     reservationExpiresAt: expiresAt,
+    creationFlow,
   });
+}
+
+export async function authorizeStageForgePurchase(
+  request: Request,
+  env: Env,
+  auth: PublicAuthContext,
+): Promise<Response> {
+  if (!auth.user) {
+    return json({
+      authorized: false,
+      error: 'Sign in to forge a stage',
+      requiredCredits: STAGE_FORGE_CREDIT_COST,
+    }, 401);
+  }
+
+  const body = await readJsonBody<{ legal?: unknown }>(request, MAX_BILLING_JSON_BODY_BYTES);
+  const legal = parseGenerationLegalAttestation(body.legal);
+  if (!legal) {
+    return json({
+      authorized: false,
+      error: 'Current generation consent is required',
+    }, 428);
+  }
+
+  await releaseExpiredGenerationCharges(env, auth.user.id);
+  const user = await env.DB.prepare(`
+    SELECT id, credits_balance
+    FROM users
+    WHERE id = ?
+  `).bind(auth.user.id).first<{ id: string; credits_balance: number }>();
+  if (!user) return json({ authorized: false, error: 'Account not found' }, 401);
+
+  const purchaseId = generateId();
+  const ledgerId = generateId();
+  const expiresAt = reservationExpiresAt();
+  const [spendResult] = await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE users
+      SET credits_balance = credits_balance - ?,
+          updated_at = datetime('now')
+      WHERE id = ? AND credits_balance >= ?
+      RETURNING credits_balance
+    `).bind(STAGE_FORGE_CREDIT_COST, user.id, STAGE_FORGE_CREDIT_COST),
+    env.DB.prepare(`
+      INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+      SELECT ?, id, ?, 'stage_forge', NULL
+      FROM users
+      WHERE id = ? AND changes() = 1
+    `).bind(ledgerId, -STAGE_FORGE_CREDIT_COST, user.id),
+    env.DB.prepare(`
+      INSERT INTO generation_charges (
+        id, user_id, tier, credit_cost, free_quota_delta, status,
+        reason, fighter_id, ledger_id, expires_at, creation_flow
+      )
+      SELECT ?, user_id, 'rookie', ?, 0, 'reserved',
+             'stage_forge', NULL, id, ?, 'original'
+      FROM credit_ledger
+      WHERE id = ? AND user_id = ?
+    `).bind(
+      purchaseId,
+      STAGE_FORGE_CREDIT_COST,
+      expiresAt,
+      ledgerId,
+      user.id,
+    ),
+  ]);
+  const spend = spendResult.results?.[0] as { credits_balance: number } | undefined;
+
+  if (!spend) {
+    const latest = await env.DB.prepare(
+      'SELECT credits_balance FROM users WHERE id = ?',
+    ).bind(user.id).first<{ credits_balance: number }>();
+    return json({
+      authorized: false,
+      error: 'Not enough credits',
+      requiredCredits: STAGE_FORGE_CREDIT_COST,
+      creditsBalance: latest?.credits_balance ?? user.credits_balance,
+    }, 402);
+  }
+
+  try {
+    const session = await createProviderSession(env, auth, {
+      tier: 'rookie',
+      purpose: 'stage_background',
+      chargeId: purchaseId,
+      legal,
+    });
+    return json({
+      authorized: true,
+      mode: 'credits',
+      purchaseId,
+      creditsCharged: STAGE_FORGE_CREDIT_COST,
+      creditsBalance: spend.credits_balance,
+      providerSessionId: session.id,
+      providerSessionExpiresAt: session.expiresAt,
+      providerCallLimit: session.providerCallLimit,
+      providerCostLimitCents: session.providerCostLimitCents,
+      reservationExpiresAt: expiresAt,
+    });
+  } catch (error) {
+    const charge = await getGenerationCharge(env, user.id, purchaseId);
+    if (charge) {
+      await releaseReservedGenerationCharge(env, charge, 'stage_forge_session_failed');
+    }
+    throw error;
+  }
 }
 
 export async function completeGenerationPurchase(

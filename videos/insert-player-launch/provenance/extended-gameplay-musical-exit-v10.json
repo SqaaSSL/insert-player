@@ -1,0 +1,131 @@
+{
+  "version": 10,
+  "project": "insert-player-launch",
+  "acceptance": "approved_for_release",
+  "parentProvenance": {
+    "file": "provenance/four-stage-current-v9.json",
+    "sha256": "e7726b9f0f01505e4265536ac4bd52109a94e137ee321c0d4f374fe09b4055aa"
+  },
+  "change": "Extend each approved gameplay cut from 30 to 33 frames and carry Neon Arena to the next measured low-energy exit. Preserve every source capture, the approved announcer intro, transformation, fight selection, and closing design.",
+  "timing": {
+    "totalDurationSeconds": 13.35,
+    "transformationSeconds": [0, 4.65],
+    "gameplayContentSeconds": [4.65, 9.05],
+    "gameplayTransitionHoldSeconds": [9.05, 9.316667],
+    "closingLockupSeconds": [9.05, 13.35],
+    "clipDurationSeconds": 1.1,
+    "clipFrameCount": 33,
+    "clipCount": 4,
+    "framesPerSecond": 30
+  },
+  "gameplayMontage": {
+    "reusesParentCaptures": true,
+    "buildScript": "scripts/build-fight-montage.mjs",
+    "buildScriptSha256": "043c3d9196c1bfc094861af490fe86fd975f7b78d07e78eca22357135a13ce23",
+    "buildEnvironment": {
+      "INSERT_PLAYER_CAPTURE_SUFFIX": "-current2",
+      "INSERT_PLAYER_CLIP_DURATION_SECONDS": "1.1"
+    },
+    "manifestFile": "assets/fight-montage-four-stages-current2-extended.json",
+    "manifestSha256": "11c299ad36cbd7bdac2cb4e22cb56841500ea577e8084ecc0cca7188a606c5de",
+    "outputFile": "assets/fight-montage-four-stages-current2-extended.mp4",
+    "outputSha256": "f7bef6a981dc1b08ec07a9d1057263decb26efdde9c1d5e7c23c069527015337",
+    "durationSeconds": 4.666667,
+    "frameCount": 140,
+    "sizeBytes": 12663294,
+    "width": 1920,
+    "height": 1080,
+    "videoCodec": "h264"
+  },
+  "audioMix": {
+    "buildScript": "scripts/build-launch-mix-original-neon.mjs",
+    "buildScriptSha256": "cc28eb20a1ef0b2a2a8db42868d971a6c784b22f0a9b1d01e86d4abd5b9ac5aa",
+    "privateMusicSource": {
+      "fileName": "Neon Arena.mp3",
+      "sha256": "0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05",
+      "committed": false,
+      "fullLengthPublished": false,
+      "sourceSeconds": [0, 8.7],
+      "timelineSeconds": [4.65, 13.35]
+    },
+    "musicalExit": {
+      "method": "Compare 100 ms RMS windows at 25 ms intervals and choose the next low-energy exit after the rejected 7.35 second cut.",
+      "sourceSecond": 8.7,
+      "fadeSeconds": [7.85, 8.7]
+    },
+    "outputFile": "assets/generated/launch-mix-original-neon-gameplay-v4.wav",
+    "outputSha256": "37b479b11baf384edfd3ffb63f79f3c43eea7da9cc4c068afaed44fea2f99cfa",
+    "durationSeconds": 13.35,
+    "sizeBytes": 2563278,
+    "sampleRateHz": 48000,
+    "channels": 2,
+    "gameplayIntegratedLoudnessTargetLufs": -16.3,
+    "truePeakTargetDbfs": -1.5,
+    "approvedIntroPcmByteIdentical": true,
+    "continuityGate": {
+      "audibleFloorDb": -50,
+      "windows": [
+        {
+          "label": "Neon Arena late-gameplay window",
+          "sourceSeconds": [6.5, 7],
+          "meanVolumeDb": -20.7
+        },
+        {
+          "label": "Final mix late-gameplay window",
+          "timelineSeconds": [11.8, 12.3],
+          "meanVolumeDb": -22.3
+        },
+        {
+          "label": "Final mix closing-fade window",
+          "timelineSeconds": [12.75, 13.15],
+          "meanVolumeDb": -27.9
+        }
+      ]
+    }
+  },
+  "validation": {
+    "studioApproval": {
+      "approvedAt": "2026-08-29",
+      "result": "approved"
+    },
+    "hyperframesCheck": {
+      "lintErrors": 0,
+      "runtimeErrors": 0,
+      "layoutIssues": 0,
+      "motionIssues": 0,
+      "contrastChecksPassed": "7/7"
+    },
+    "audioRegression": {
+      "file": "scripts/build-launch-mix-original-neon.test.mjs",
+      "sha256": "604f31c13f8459282ae814b759c8d231e406add5f1a30e144b9e520a794f4d7b",
+      "tests": 2,
+      "result": "passed"
+    },
+    "webAudio": {
+      "integratedLoudnessLufs": -16.4,
+      "loudnessRangeLu": 2.9,
+      "truePeakDbfs": -1.4,
+      "gameplaySilenceIntervals": 0
+    },
+    "providerCalls": 0,
+    "inferenceCostUsd": 0
+  },
+  "release": {
+    "masterFile": "renders/insert-player-launch-extended-gameplay-v10.mp4",
+    "masterSha256": "1602921ceaa49a7df1202cc62be3d5b7de36212282e632b1f8011511e2181d69",
+    "masterSizeBytes": 13643999,
+    "publicFile": "public/assets/insert-player-launch-bb1325da.mp4",
+    "publicPath": "/assets/insert-player-launch-bb1325da.mp4",
+    "publicSha256": "bb1325dacaf460c9bc388ab03bfd5b444401a6b6747cbabb3fc3918550a07554",
+    "publicSizeBytes": 7484229,
+    "sourceToWebSsim": 0.995389,
+    "encoding": {
+      "video": "H.264 High, CRF 18, yuv420p, faststart",
+      "audio": "AAC LC, 192 kbps",
+      "width": 1920,
+      "height": 1080,
+      "framesPerSecond": 30,
+      "durationSeconds": 13.366667
+    }
+  }
+}

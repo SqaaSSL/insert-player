@@ -7,12 +7,20 @@ on:
     paths-ignore:
       - '**/*.md'
   workflow_dispatch:
+    inputs:
+      allow_durable_object_lifecycle:
+        description: >-
+          Ship Durable Object lifecycle changes (new/renamed/deleted classes).
+          The resulting Worker version cannot be rolled back to the previous one.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  vulnerability-alerts: read
 
 concurrency:
-  group: deploy-production
+  group: production-worker-mutations
   cancel-in-progress: false
 
 jobs:
@@ -33,6 +41,7 @@ jobs:
       VITE_PUBLIC_APP_NAME: Insert Player
       VITE_PUBLIC_APP_SHORT_NAME: P1
       VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
+      VITE_GOOGLE_MAPS_BROWSER_KEY: ${{ vars.VITE_GOOGLE_MAPS_BROWSER_KEY }}
       VITE_GEMINI_IMAGE_MODEL_REPOSE: ${{ vars.VITE_GEMINI_IMAGE_MODEL_REPOSE }}
       VITE_GEMINI_IMAGE_MODEL_UPRIGHT: ${{ vars.VITE_GEMINI_IMAGE_MODEL_UPRIGHT }}
       VITE_GEMINI_IMAGE_MODEL_CROUCH: ${{ vars.VITE_GEMINI_IMAGE_MODEL_CROUCH }}
@@ -49,7 +58,7 @@ jobs:
       TURNSTILE_HOSTNAMES: ${{ vars.TURNSTILE_HOSTNAMES }}
       ASF_PUBLIC_APP_NAME: Insert Player
       ASF_PUBLIC_APP_SHORT_NAME: P1
-      ASF_SOCIAL_CARD_PATH: /assets/social-card.png
+      ASF_SOCIAL_CARD_PATH: /assets/social-card-v7.jpg
       ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
       ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
       ASF_FRONTEND_URL: ${{ vars.ASF_FRONTEND_URL }}
@@ -62,7 +71,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Attest canonical production source
+        run: |
+          node scripts/production-deploy-guard.mjs
+          printf 'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s\n' "$GITHUB_SHA" >> "$GITHUB_ENV"
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -75,13 +90,13 @@ jobs:
             processor/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --no-audit --no-fund
 
       - name: Install Worker dependencies
-        run: npm --prefix worker ci
+        run: npm --prefix worker ci --no-audit --no-fund
 
       - name: Install processor dependencies
-        run: npm --prefix processor ci
+        run: npm --prefix processor ci --no-audit --no-fund
 
       - name: Materialize brand clearance
         env:
@@ -100,6 +115,8 @@ jobs:
       - name: Validate and stage live configuration
         env:
           ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
+          METERKEY_API_KEY: ${{ secrets.METERKEY_API_KEY }}
+          PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
@@ -107,7 +124,64 @@ jobs:
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
         run: node scripts/apply-live-config.mjs --require-complete --skip-production-check --skip-secrets
+
+      - name: Preflight Meterkey credentials
+        env:
+          METERKEY_API_KEY: ${{ secrets.METERKEY_API_KEY }}
+          METERKEY_BASE_URL: https://meter.hilo.cx
+          ASF_METERKEY_EXPECTED_KEY_ID: ${{ vars.ASF_METERKEY_EXPECTED_KEY_ID }}
+          ASF_METERKEY_EXPECTED_KEY_FINGERPRINT: ${{ vars.ASF_METERKEY_EXPECTED_KEY_FINGERPRINT }}
+          ASF_METERKEY_EXPECTED_USER_ID: ${{ vars.ASF_METERKEY_EXPECTED_USER_ID }}
+          ASF_METERKEY_EXPECTED_WALLET_ID: ${{ vars.ASF_METERKEY_EXPECTED_WALLET_ID }}
+          ASF_METERKEY_MIN_AVAILABLE_UC: ${{ vars.ASF_METERKEY_MIN_AVAILABLE_UC }}
+          ASF_METERKEY_EXPECTED_PER_REQUEST_CAP_UC: ${{ vars.ASF_METERKEY_EXPECTED_PER_REQUEST_CAP_UC }}
+        run: npm run check:meterkey-auth
+
+      - name: Capture stable Worker version
+        id: stable-worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ASF_BOOTSTRAP_STABLE_VERSION_ID: ${{ vars.ASF_BOOTSTRAP_STABLE_VERSION_ID }}
+          ASF_BOOTSTRAP_STABLE_GIT_SHA: ${{ vars.ASF_BOOTSTRAP_STABLE_GIT_SHA }}
+        run: node scripts/worker-version-rollout.mjs current
+
+      - name: Guard rollback-safe full rollout scope
+        env:
+          ROLLOUT_BASE_SHA: ${{ steps.stable-worker.outputs.stable_git_sha }}
+          ROLLOUT_HEAD_SHA: ${{ github.sha }}
+          ASF_ALLOW_DURABLE_OBJECT_LIFECYCLE: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_durable_object_lifecycle == true && '1' || '0' }}
+        run: node scripts/worker-version-rollout.mjs guard-full
+
+      - name: Dry-run exact Worker and Container bundle
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ASF_WORKER_VERSION_TAG: prod-${{ github.sha }}-${{ github.run_attempt }}
+          METERKEY_API_KEY: ${{ secrets.METERKEY_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          FAL_API_KEY: ${{ secrets.FAL_API_KEY }}
+          RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
+          FREEPIK_API_KEY: ${{ secrets.FREEPIK_API_KEY }}
+          LUDO_API_KEY: ${{ secrets.LUDO_API_KEY }}
+          PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
+          GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
+        run: node scripts/apply-live-config.mjs --skip-production-check --dry-run-worker-deploy
+
+      - name: Require an idle generation pipeline before migrations
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/check-generation-idle.mjs
 
       - name: Apply production D1 migrations
         env:
@@ -115,15 +189,25 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npm --prefix worker run db:migrate
 
-      - name: Upload Worker secrets and deploy
+      - name: Reconfirm an idle generation pipeline before deploy
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/check-generation-idle.mjs
+
+      - name: Deploy Worker and compatible Container
+        id: deploy-worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ASF_WORKER_VERSION_TAG: prod-${{ github.sha }}-${{ github.run_attempt }}
+          METERKEY_API_KEY: ${{ secrets.METERKEY_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FAL_API_KEY: ${{ secrets.FAL_API_KEY }}
           RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
           FREEPIK_API_KEY: ${{ secrets.FREEPIK_API_KEY }}
           LUDO_API_KEY: ${{ secrets.LUDO_API_KEY }}
+          PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
           CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
@@ -131,15 +215,35 @@ jobs:
           ANONYMIZATION_SECRET: ${{ secrets.ANONYMIZATION_SECRET }}
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+          GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
         run: node scripts/apply-live-config.mjs --skip-production-check --deploy-worker
 
+      - name: Capture deployed Worker version
+        id: deployed-worker
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ASF_BOOTSTRAP_STABLE_VERSION_ID: ${{ vars.ASF_BOOTSTRAP_STABLE_VERSION_ID }}
+          ASF_BOOTSTRAP_STABLE_GIT_SHA: ${{ vars.ASF_BOOTSTRAP_STABLE_GIT_SHA }}
+        run: node scripts/worker-version-rollout.mjs current
+
       - name: Smoke production Worker
+        env:
+          ASF_EXPECTED_WORKER_VERSION_ID: ${{ steps.deployed-worker.outputs.stable_version_id }}
+          ASF_EXPECTED_WORKER_VERSION_TAG: prod-${{ github.sha }}-${{ github.run_attempt }}
         run: npm run smoke:live
+
+      - name: Wait for the compatible image processor Container
+        env:
+          ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+        run: npm run check:image-processor-contract
 
       - name: Build, deploy, and smoke Pages
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"
         run: npm run deploy:frontend
 
       - name: Verify live readiness
@@ -147,6 +251,14 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npm run check:live-readiness
+
+      - name: Restore stable Worker after failed rollout
+        if: failure() && steps.deploy-worker.outcome != 'skipped'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          STABLE_WORKER_VERSION_ID: ${{ steps.stable-worker.outputs.stable_version_id }}
+        run: node scripts/worker-version-rollout.mjs rollback
 
       - name: Publish deployment summary
         run: |

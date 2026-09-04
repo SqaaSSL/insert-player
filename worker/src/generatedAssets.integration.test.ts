@@ -60,12 +60,15 @@ const SCHEMA = `
     frame_w INTEGER NOT NULL,
     frame_h INTEGER NOT NULL,
     frame_count INTEGER NOT NULL,
+    animation_format TEXT NOT NULL DEFAULT 'legacy' CHECK (animation_format IN ('legacy', 'video-dense-v1')),
     processing_version INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE UNIQUE INDEX idx_sprite_versions_content
     ON sprite_versions (
-      fighter_id, animation_name, quality_tier, content_hash, COALESCE(raw_content_hash, '')
+      fighter_id, animation_name, quality_tier, animation_format,
+      frame_w, frame_h, frame_count, processing_version,
+      content_hash, COALESCE(raw_content_hash, '')
     ) WHERE content_hash IS NOT NULL;
   CREATE TABLE sprites (
     id TEXT PRIMARY KEY,
@@ -79,6 +82,7 @@ const SCHEMA = `
     frame_w INTEGER NOT NULL,
     frame_h INTEGER NOT NULL,
     frame_count INTEGER NOT NULL,
+    animation_format TEXT NOT NULL DEFAULT 'legacy' CHECK (animation_format IN ('legacy', 'video-dense-v1')),
     processing_version INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(fighter_id, animation_name, quality_tier)
@@ -105,6 +109,7 @@ const SCHEMA = `
     frame_w INTEGER,
     frame_h INTEGER,
     frame_count INTEGER,
+    animation_format TEXT NOT NULL DEFAULT 'legacy' CHECK (animation_format IN ('legacy', 'video-dense-v1')),
     processing_version INTEGER,
     metadata_json TEXT,
     completed_by_job_id TEXT NOT NULL,
@@ -266,6 +271,7 @@ describe('backend-generated asset persistence', () => {
         rawBytes: png(15),
       });
 
+      expect(first.animationFormat).toBe('legacy');
       expect(replay).toMatchObject({ reused: true, versionId: first.versionId });
       expect(regenerated.versionId).not.toBe(first.versionId);
       expect(upgraded.versionId).not.toBe(regenerated.versionId);
@@ -276,11 +282,12 @@ describe('backend-generated asset persistence', () => {
         .bind(FIGHTER_ID).first<{ tier: string }>())?.tier).toBe('rookie');
 
       const current = await db.prepare(`
-        SELECT blob_key, raw_blob_key FROM sprites
+        SELECT blob_key, raw_blob_key, animation_format FROM sprites
         WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'contender'
-      `).bind(FIGHTER_ID).first<{ blob_key: string; raw_blob_key: string }>();
+      `).bind(FIGHTER_ID).first<{ blob_key: string; raw_blob_key: string; animation_format: string }>();
       expect(current?.blob_key).toBe(upgraded.blobKey);
       expect(current?.raw_blob_key).toBe(upgraded.rawBlobKey);
+      expect(current?.animation_format).toBe('legacy');
       const restored = await promoteGeneratedSpriteVersion(env, {
         userId: USER_ID,
         fighterId: FIGHTER_ID,
@@ -308,6 +315,116 @@ describe('backend-generated asset persistence', () => {
     }
   }, 15_000);
 
+  it('keeps identical bytes as separate immutable versions when the playback contract changes', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const base = {
+        userId: USER_ID,
+        fighterId: FIGHTER_ID,
+        tier: 'champion' as const,
+        animationName: 'walk',
+        bytes: png(101),
+        rawBytes: png(102),
+        frameWidth: 256,
+        frameHeight: 256,
+        frameCount: 12,
+        processingVersion: 5,
+      };
+      const legacy = await persistGeneratedSprite(env, {
+        ...base,
+        jobId: 'job-format-legacy',
+      });
+      const correctedMetadata = await persistGeneratedSprite(env, {
+        ...base,
+        jobId: 'job-format-corrected-metadata',
+        frameCount: 11,
+      });
+      const dense = await persistGeneratedSprite(env, {
+        ...base,
+        jobId: 'job-format-dense',
+        animationFormat: 'video-dense-v1',
+      });
+
+      expect(legacy.versionId).not.toBe(dense.versionId);
+      expect(correctedMetadata.versionId).not.toBe(legacy.versionId);
+      expect(legacy.animationFormat).toBe('legacy');
+      expect(dense.animationFormat).toBe('video-dense-v1');
+      const { results } = await db.prepare(`
+        SELECT animation_format FROM sprite_versions
+        WHERE fighter_id = ? AND animation_name = 'walk'
+        ORDER BY animation_format
+      `).bind(FIGHTER_ID).all<{ animation_format: string }>();
+      expect(results).toEqual([
+        { animation_format: 'legacy' },
+        { animation_format: 'legacy' },
+        { animation_format: 'video-dense-v1' },
+      ]);
+      expect((await db.prepare(`
+        SELECT animation_format FROM sprites
+        WHERE fighter_id = ? AND animation_name = 'walk' AND quality_tier = 'champion'
+      `).bind(FIGHTER_ID).first<{ animation_format: string }>())?.animation_format)
+        .toBe('video-dense-v1');
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('archives a private video candidate without changing the current sprite on new or duplicate paths', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const base = {
+        userId: USER_ID,
+        fighterId: FIGHTER_ID,
+        tier: 'champion' as const,
+        animationName: 'high_kick',
+        frameWidth: 192,
+        frameHeight: 256,
+        frameCount: 23,
+        processingVersion: 5,
+        animationFormat: 'video-dense-v1' as const,
+      };
+      const current = await persistGeneratedSprite(env, {
+        ...base,
+        jobId: 'job-current-video-sprite',
+        bytes: png(120),
+        rawBytes: png(121),
+      });
+      const privateCandidate = await persistGeneratedSprite(env, {
+        ...base,
+        jobId: 'job-private-video-sprite',
+        bytes: png(122),
+        rawBytes: png(123),
+        setCurrent: false,
+      });
+      const privateReplay = await persistGeneratedSprite(env, {
+        ...base,
+        jobId: 'job-private-video-sprite-replay',
+        bytes: png(122),
+        rawBytes: png(123),
+        setCurrent: false,
+      });
+
+      expect(privateCandidate.versionId).not.toBe(current.versionId);
+      expect(privateReplay).toMatchObject({ reused: true, versionId: privateCandidate.versionId });
+      expect(await db.prepare(`
+        SELECT blob_key, raw_blob_key, content_hash, raw_content_hash
+        FROM sprites
+        WHERE fighter_id = ? AND animation_name = 'high_kick' AND quality_tier = 'champion'
+      `).bind(FIGHTER_ID).first()).toEqual({
+        blob_key: current.blobKey,
+        raw_blob_key: current.rawBlobKey,
+        content_hash: current.contentHash,
+        raw_content_hash: current.rawContentHash,
+      });
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM sprite_versions
+        WHERE fighter_id = ? AND animation_name = 'high_kick' AND quality_tier = 'champion'
+      `).bind(FIGHTER_ID).first<{ count: number }>())?.count).toBe(2);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
   it('restores the exact 3 source and 4 sprite checkpoints before low_punch without deleting newer versions', async () => {
     const { mf, db, bucket, env } = await bindings();
     const runId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -318,6 +435,7 @@ describe('backend-generated asset persistence', () => {
       fighter_id: FIGHTER_ID,
       charge_id: 'cccccccccccccccccccccccccccccccc',
       provider_session_id: 'dddddddddddddddddddddddddddddddd',
+      creation_flow: 'original',
       tier: 'champion',
       operation: 'fighter_generation',
       target_kind: null,
@@ -386,6 +504,7 @@ describe('backend-generated asset persistence', () => {
           frameHeight: 256,
           frameCount: animationName === 'idle' || animationName === 'walk' ? 8 : 7,
           processingVersion: 5,
+          animationFormat: animationName === 'high_kick' ? 'video-dense-v1' : undefined,
         });
         spriteCheckpoints.push(sprite);
         await recordSpriteCheckpoint(env, job, {
@@ -423,6 +542,11 @@ describe('backend-generated asset persistence', () => {
       for (const animationName of animations) {
         expect(await reuseSpriteCheckpoint(env, job, animationName)).not.toBeNull();
       }
+      expect((await db.prepare(`
+        SELECT animation_format FROM generation_artifact_checkpoints
+        WHERE run_id = ? AND artifact_kind = 'sprite' AND artifact_name = 'high_kick'
+      `).bind(runId).first<{ animation_format: string }>())?.animation_format)
+        .toBe('video-dense-v1');
 
       const progress = await artifactProgress(env, {
         id: runId,

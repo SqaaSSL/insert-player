@@ -1,3 +1,4 @@
+import { Button } from '../components/Button.tsx';
 import {
   LEGAL_EFFECTIVE_DATE,
   LEGAL_OPERATOR,
@@ -5,7 +6,7 @@ import {
   PUBLIC_ORIGIN,
   SUPPORT_EMAIL,
 } from '../legal.ts';
-import type { LegalRoute } from '../components/LegalFooter.tsx';
+import { shouldUseSpaNavigation, type LegalRoute } from '../components/LegalFooter.tsx';
 
 type LegalPageKind = 'legal' | 'privacy' | 'terms' | 'refunds';
 
@@ -136,7 +137,6 @@ function LegalNotice() {
   return (
     <>
       <header className="legal-page__intro">
-        <p className="gallery-eyebrow">Operator Information</p>
         <h1>Legal Notice</h1>
         <p>This notice identifies the company responsible for Insert Player and the commercial service available at insertplayer.ai.</p>
       </header>
@@ -194,7 +194,6 @@ function PrivacyPolicy() {
   return (
     <>
       <header className="legal-page__intro">
-        <p className="gallery-eyebrow">Player Data</p>
         <h1>Privacy Policy</h1>
         <p>This policy explains what happens to your account, photos, generated fighters, payments, and public shares when you use Insert Player.</p>
       </header>
@@ -290,7 +289,6 @@ function TermsOfService() {
   return (
     <>
       <header className="legal-page__intro">
-        <p className="gallery-eyebrow">Cabinet Rules</p>
         <h1>Terms of Service</h1>
         <p>These terms govern Insert Player, including fighter generation, cloud sync, community sharing, gameplay, and credit purchases.</p>
       </header>
@@ -367,7 +365,6 @@ function CancellationAndRemediesPolicy() {
   return (
     <>
       <header className="legal-page__intro">
-        <p className="gallery-eyebrow">Digital Performance</p>
         <h1>Cancellations &amp; Remedies</h1>
         <p>There are no voluntary refunds after external AI processing begins. Mandatory consumer remedies remain available where they apply.</p>
       </header>
@@ -401,30 +398,35 @@ function CancellationAndRemediesPolicy() {
 }
 
 export function LegalPage({ kind, backLabel = 'Back to game', onBack, onNavigate }: LegalPageProps) {
+  const navigate = (event: React.MouseEvent<HTMLAnchorElement>, route: LegalRoute) => {
+    if (!shouldUseSpaNavigation(event)) return;
+    event.preventDefault();
+    onNavigate(route);
+  };
   return (
-    <main className="legal-page">
+    <div className="legal-page">
       <div className="legal-page__toolbar">
-        <button className="gallery-back" onClick={onBack}>{backLabel}</button>
+        <Button onClick={onBack}>{backLabel}</Button>
         <nav aria-label="Legal documents">
           <a
             href="/legal"
             aria-current={kind === 'legal' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); onNavigate('/legal'); }}
+            onClick={(event) => navigate(event, '/legal')}
           >Legal Notice</a>
           <a
             href="/privacy"
             aria-current={kind === 'privacy' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); onNavigate('/privacy'); }}
+            onClick={(event) => navigate(event, '/privacy')}
           >Privacy</a>
           <a
             href="/terms"
             aria-current={kind === 'terms' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); onNavigate('/terms'); }}
+            onClick={(event) => navigate(event, '/terms')}
           >Terms</a>
           <a
             href="/refunds"
             aria-current={kind === 'refunds' ? 'page' : undefined}
-            onClick={(event) => { event.preventDefault(); onNavigate('/refunds'); }}
+            onClick={(event) => navigate(event, '/refunds')}
           >Cancellations</a>
         </nav>
       </div>
@@ -439,6 +441,6 @@ export function LegalPage({ kind, backLabel = 'Back to game', onBack, onNavigate
               : <CancellationAndRemediesPolicy />}
         <p className="legal-page__updated">Effective {LEGAL_EFFECTIVE_DATE} · {PUBLIC_ORIGIN}</p>
       </article>
-    </main>
+    </div>
   );
 }

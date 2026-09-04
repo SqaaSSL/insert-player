@@ -33,6 +33,35 @@ describe('frontend deployment propagation readiness', () => {
     )).toBe('https://insertplayer.ai/assets/index-current.js');
   });
 
+  it('rotates the immutable asset cache key for every propagation retry', () => {
+    const firstProbe = new URL(frontendAssetProbeUrl(
+      'https://insertplayer.ai',
+      '/assets/index-current.js',
+      'deploy-123',
+      0,
+    ));
+    const secondProbe = new URL(frontendAssetProbeUrl(
+      'https://insertplayer.ai',
+      '/assets/index-current.js',
+      'deploy-123',
+      1,
+    ));
+
+    expect(firstProbe.searchParams.get('__insert_player_readiness')).toBe('deploy-123');
+    expect(firstProbe.searchParams.get('__insert_player_readiness_attempt')).toBe('0');
+    expect(secondProbe.searchParams.get('__insert_player_readiness_attempt')).toBe('1');
+    expect(secondProbe.toString()).not.toBe(firstProbe.toString());
+  });
+
+  it('rejects invalid asset probe attempt numbers', () => {
+    expect(() => frontendAssetProbeUrl(
+      'https://insertplayer.ai',
+      '/assets/index-current.js',
+      'deploy-123',
+      -1,
+    )).toThrow('frontend asset probe attempt must be a non-negative integer');
+  });
+
   it('keeps waiting while the custom domain serves the prelaunch CSP', () => {
     expect(frontendShellReadinessError({
       html: appShell,
@@ -62,6 +91,26 @@ describe('frontend deployment propagation readiness', () => {
       cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
       expectedClerkOrigin: clerkOrigin,
       expectedAssetPath: '/assets/index-current.js',
+    })).toBe('');
+  });
+
+  it('keeps waiting for metadata-only releases that reuse the same JavaScript asset', () => {
+    const sharedAsset = '<script type="module" src="/assets/index-current.js"></script>';
+    const expectedSocialCard = 'property="og:image" content="https://insertplayer.ai/assets/social-card-v7.jpg"';
+    expect(frontendShellReadinessError({
+      html: `${appShell}${sharedAsset}<meta property="og:image" content="https://insertplayer.ai/assets/social-card-v4.png" />`,
+      cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
+      expectedClerkOrigin: clerkOrigin,
+      expectedAssetPath: '/assets/index-current.js',
+      expectedHtmlFragments: [expectedSocialCard],
+    })).toBe(`the app shell is missing release marker ${expectedSocialCard}`);
+
+    expect(frontendShellReadinessError({
+      html: `${appShell}${sharedAsset}<meta ${expectedSocialCard} />`,
+      cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
+      expectedClerkOrigin: clerkOrigin,
+      expectedAssetPath: '/assets/index-current.js',
+      expectedHtmlFragments: [expectedSocialCard],
     })).toBe('');
   });
 

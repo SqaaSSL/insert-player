@@ -9,14 +9,14 @@ export interface ApiRequestContext {
   readonly providerSessionId: string | null;
   readonly detached?: boolean;
   readonly apiBaseUrl?: string;
-  readonly authorizationScheme?: 'Bearer' | 'Generation';
+  readonly authorizationScheme?: 'Bearer' | 'Generation' | 'Room';
   readonly providerRequestScope?: string;
 }
 
 export interface DetachedApiRequestContextOptions {
   apiBaseUrl: string;
   authorizationToken: string;
-  authorizationScheme?: 'Bearer' | 'Generation';
+  authorizationScheme?: 'Bearer' | 'Generation' | 'Room';
   providerSessionId?: string | null;
   providerRequestScope?: string;
 }
@@ -99,8 +99,23 @@ function configuredApiBase(context?: ApiRequestContext): string {
 }
 
 export function apiUrl(path: string, context?: ApiRequestContext): string {
-  if (/^https?:\/\//i.test(path)) return path;
   const base = configuredApiBase(context);
+  if (/^https?:\/\//i.test(path)) {
+    // Public manifests contain canonical production asset URLs. During local
+    // development a relative API base deliberately routes those assets through
+    // Vite too, avoiding browser CORS differences between ports and tunnels.
+    if (base.startsWith('/')) {
+      try {
+        const absolute = new URL(path);
+        if (absolute.origin === 'https://api.insertplayer.ai') {
+          return `${base}${absolute.pathname}${absolute.search}`;
+        }
+      } catch {
+        return path;
+      }
+    }
+    return path;
+  }
   if (!base) return path;
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${base}${normalizedPath}`;

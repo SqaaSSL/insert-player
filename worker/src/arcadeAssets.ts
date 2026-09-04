@@ -14,6 +14,10 @@ const PLAYABLE_ANIMATION_NAMES = [
   'victory',
 ] as const;
 
+const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
+const MAX_SPRITE_FRAME_DIMENSION = 4096;
+const MAX_SPRITE_FRAME_COUNT = 64;
+
 interface ArcadeSourcePointers {
   original_blob_key: string | null;
   side_view_blob_key: string | null;
@@ -28,6 +32,11 @@ interface ArcadeSpritePointers {
   animation_name: string;
   blob_key: string;
   raw_blob_key: string | null;
+  content_hash: string | null;
+  raw_content_hash: string | null;
+  frame_w: number;
+  frame_h: number;
+  frame_count: number;
 }
 
 export interface ArcadeAssetIntegrity {
@@ -70,7 +79,15 @@ export async function inspectArcadeAssetIntegrity(
 
   const placeholders = PLAYABLE_ANIMATION_NAMES.map(() => '?').join(',');
   const { results } = await env.DB.prepare(`
-    SELECT animation_name, blob_key, raw_blob_key
+    SELECT
+      animation_name,
+      blob_key,
+      raw_blob_key,
+      content_hash,
+      raw_content_hash,
+      frame_w,
+      frame_h,
+      frame_count
     FROM sprites
     WHERE fighter_id = ?
       AND quality_tier = 'champion'
@@ -95,6 +112,25 @@ export async function inspectArcadeAssetIntegrity(
     else objectPointers.push({ label: `sprite:${animationName}`, key: sprite.blob_key });
     if (!sprite.raw_blob_key) missingAssets.push(`sprite:${animationName}:raw`);
     else objectPointers.push({ label: `sprite:${animationName}:raw`, key: sprite.raw_blob_key });
+    if (!sprite.content_hash || !SHA256_PATTERN.test(sprite.content_hash)) {
+      missingAssets.push(`sprite:${animationName}:content-hash`);
+    }
+    if (!sprite.raw_content_hash || !SHA256_PATTERN.test(sprite.raw_content_hash)) {
+      missingAssets.push(`sprite:${animationName}:raw-content-hash`);
+    }
+    if (
+      !Number.isInteger(sprite.frame_w) ||
+      sprite.frame_w < 1 ||
+      sprite.frame_w > MAX_SPRITE_FRAME_DIMENSION ||
+      !Number.isInteger(sprite.frame_h) ||
+      sprite.frame_h < 1 ||
+      sprite.frame_h > MAX_SPRITE_FRAME_DIMENSION ||
+      !Number.isInteger(sprite.frame_count) ||
+      sprite.frame_count < 1 ||
+      sprite.frame_count > MAX_SPRITE_FRAME_COUNT
+    ) {
+      missingAssets.push(`sprite:${animationName}:frame-metadata`);
+    }
   }
 
   const objectResults = await Promise.all(objectPointers.map(async ({ label, key }) => ({

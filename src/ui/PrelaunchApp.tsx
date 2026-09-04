@@ -38,7 +38,6 @@ export function PrelaunchApp() {
             aria-hidden="true"
           />
           <div className="prelaunch-home__content">
-            <p className="gallery-eyebrow">Player One</p>
             <h1>{PUBLIC_APP_NAME}</h1>
             <p className="prelaunch-home__status" role="status">Production access is opening shortly.</p>
           </div>

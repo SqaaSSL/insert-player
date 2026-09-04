@@ -10,6 +10,10 @@ import {
   decodeClerkPublishableKey,
 } from './clerk-publishable-key.mjs';
 import { wranglerAuthIssue } from './wrangler-auth-status.mjs';
+import {
+  SPRITE_VERSION_CONTENT_INDEX_CONTRACT_SQL,
+  spriteVersionContentIndexContractPassed,
+} from './live-readiness-sprite-schema.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -22,11 +26,13 @@ const DEFAULT_FRONTEND_READY_TIMEOUT_MS = 240_000;
 const DEFAULT_FRONTEND_RETRY_DELAY_MS = 2_500;
 
 const requiredSecrets = [
+  'METERKEY_API_KEY',
   'GEMINI_API_KEY',
   'FAL_API_KEY',
   'RUNWAY_API_KEY',
   'FREEPIK_API_KEY',
   'LUDO_API_KEY',
+  'PIXCLI_API_KEY',
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'CLERK_WEBHOOK_SIGNING_SECRET',
@@ -34,6 +40,7 @@ const requiredSecrets = [
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
   'CLERK_BACKEND_AUTH_BRIDGE_SECRET',
+  'GOOGLE_MAPS_SERVER_KEY',
 ];
 
 const sampleFragments = [
@@ -373,6 +380,7 @@ function assertFrontendEnv() {
   const apiBase = resolveEnv('VITE_API_BASE_URL', envFiles);
   const clerkKey = resolveEnv('VITE_CLERK_PUBLISHABLE_KEY', envFiles);
   const turnstileSiteKey = resolveEnv('VITE_TURNSTILE_SITE_KEY', envFiles);
+  const googleMapsBrowserKey = resolveEnv('VITE_GOOGLE_MAPS_BROWSER_KEY', envFiles);
   const sourceModels = [
     resolveEnv('VITE_GEMINI_IMAGE_MODEL_REPOSE', envFiles),
     resolveEnv('VITE_GEMINI_IMAGE_MODEL_UPRIGHT', envFiles),
@@ -406,6 +414,9 @@ function assertFrontendEnv() {
   }
   if (!turnstileSiteKey || hasSampleValue(turnstileSiteKey) || !/^0x[A-Za-z0-9_-]{20,}$/.test(turnstileSiteKey)) {
     fail('Production frontend needs VITE_TURNSTILE_SITE_KEY set to the live Insert Player widget.');
+  }
+  if (!googleMapsBrowserKey || hasSampleValue(googleMapsBrowserKey) || !/^AIza[A-Za-z0-9_-]{30,}$/.test(googleMapsBrowserKey)) {
+    fail('Production frontend needs a browser-restricted VITE_GOOGLE_MAPS_BROWSER_KEY.');
   }
   for (const [index, model] of sourceModels.entries()) {
     if (!model || !/pro/i.test(model)) {
@@ -533,6 +544,7 @@ function assertRemoteD1Schema() {
     'community_reports',
     'provider_spend_months',
     'provider_spend_reservations',
+    'provider_meterkey_capacity_windows',
     'provider_cost_events',
     'generation_jobs',
     'generation_job_events',
@@ -669,6 +681,36 @@ function assertRemoteD1Schema() {
     fail(`Remote D1 database ${databaseName} is missing migration 0017 provider cost events.\n${costOutput}`);
   }
 
+  const zeroCostEvents = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    `SELECT CASE WHEN instr(sql, 'estimated_cost_cents INTEGER NOT NULL CHECK (estimated_cost_cents >= 0)') > 0
+      THEN 1 ELSE 0 END AS zero_cost_enabled
+     FROM sqlite_master WHERE type = 'table' AND name = 'provider_cost_events';`,
+  ], workerDir);
+  const zeroCostOutput = `${zeroCostEvents.stdout ?? ''}${zeroCostEvents.stderr ?? ''}`.trim();
+  if (zeroCostEvents.status !== 0 || !zeroCostOutput.includes('"zero_cost_enabled": 1')) {
+    fail(`Remote D1 database ${databaseName} is missing migration 0026 zero-cost not-dispatched events.\n${zeroCostOutput}`);
+  }
+
+  const meterkeyCapacity = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    'SELECT provider, model, reason, retry_at_epoch FROM provider_meterkey_capacity_windows LIMIT 0;',
+  ], workerDir);
+  if (meterkeyCapacity.status !== 0) {
+    const capacityOutput = `${meterkeyCapacity.stdout ?? ''}${meterkeyCapacity.stderr ?? ''}`.trim();
+    fail(`Remote D1 database ${databaseName} is missing migration 0025 Meterkey capacity windows.\n${capacityOutput}`);
+  }
+
   const durableGeneration = run(npx, [
     'wrangler',
     'd1',
@@ -713,6 +755,26 @@ function assertRemoteD1Schema() {
   if (arcadeColumns.status !== 0) {
     const arcadeOutput = `${arcadeColumns.stdout ?? ''}${arcadeColumns.stderr ?? ''}`.trim();
     fail(`Remote D1 database ${databaseName} is missing migrations 0020-0021 official Arcade fields.\n${arcadeOutput}`);
+  }
+
+  const spriteAnimationFormat = run(npx, [
+    'wrangler',
+    'd1',
+    'execute',
+    databaseName,
+    '--remote',
+    '--command',
+    `SELECT sprites.animation_format AS current_animation_format,
+      sprite_versions.animation_format AS version_animation_format,
+      generation_artifact_checkpoints.animation_format AS checkpoint_animation_format
+     FROM sprites CROSS JOIN sprite_versions CROSS JOIN generation_artifact_checkpoints LIMIT 0;
+     ${SPRITE_VERSION_CONTENT_INDEX_CONTRACT_SQL}`,
+  ], workerDir);
+  const spriteAnimationFormatOutput = `${spriteAnimationFormat.stdout ?? ''}${spriteAnimationFormat.stderr ?? ''}`.trim();
+  if (
+    !spriteVersionContentIndexContractPassed(spriteAnimationFormat)
+  ) {
+    fail(`Remote D1 database ${databaseName} is missing migration 0028 sprite animation formats.\n${spriteAnimationFormatOutput}`);
   }
 }
 
@@ -774,8 +836,11 @@ async function assertLiveHealth() {
     ['providerAccounting', 'durable'],
     ['providerSessionLimits', 'configured'],
     ['providerGlobalCaps', 'disabled'],
+    ['geminiTransport', 'meterkey'],
     ['providers', 'configured'],
+    ['videoCreationTransport', 'configured'],
     ['durableGeneration', 'configured'],
+    ['mapsCapture', 'configured'],
     ['privacy', 'pseudonymized'],
   ];
   for (const [key, value] of expected) {

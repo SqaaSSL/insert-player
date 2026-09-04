@@ -1,4 +1,5 @@
-import type { FighterInput } from './InputManager.ts';
+import type { FighterInput } from '../sim/FighterInput.ts';
+import { METER_MAX } from './Meter.ts';
 import type { Fighter } from '../fighters/Fighter.ts';
 import type { SeededRng } from '../utils/SeededRng.ts';
 import { FighterState, MAX_HEALTH, STAGE_LEFT, STAGE_RIGHT } from '../constants.ts';
@@ -18,20 +19,57 @@ interface WeightedAction {
   action: PlannedAction;
 }
 
+export interface AIControllerSnapshot {
+  rngState: number;
+  actionCooldown: number;
+  currentAction: Partial<FighterInput>;
+  specialCooldown: number;
+}
+
 export class AIController {
   private rng: SeededRng;
   private personality: FighterPersonality;
+  private difficulty: number;
   private actionCooldown = 0;
   private currentAction: Partial<FighterInput> = {};
   private specialCooldown = 0;
 
-  constructor(rng: SeededRng, personality = getFighterPersonality()) {
+  /**
+   * difficulty (0..1) scales the arcade-ladder challenge. At 1 (default) the
+   * controller behaves exactly as before — no extra RNG draws — so existing
+   * seeded matches stay byte-identical.
+   */
+  constructor(rng: SeededRng, personality = getFighterPersonality(), difficulty = 1) {
     this.rng = rng;
     this.personality = personality;
+    this.difficulty = Math.max(0, Math.min(1, difficulty));
   }
 
   setPersonality(personality: FighterPersonality): void {
     this.personality = personality;
+  }
+
+  snapshot(): AIControllerSnapshot {
+    return {
+      rngState: this.rng.getState(),
+      actionCooldown: this.actionCooldown,
+      currentAction: { ...this.currentAction },
+      specialCooldown: this.specialCooldown,
+    };
+  }
+
+  restore(snap: AIControllerSnapshot): void {
+    this.rng.setState(snap.rngState);
+    this.actionCooldown = snap.actionCooldown;
+    this.currentAction = { ...snap.currentAction };
+    this.specialCooldown = snap.specialCooldown;
+  }
+
+  hashInto(hasher: { num(value: number): void }): void {
+    hasher.num(this.rng.getState());
+    hasher.num(this.actionCooldown);
+    hasher.num(this.specialCooldown);
+    hasher.num(packPartialInput(this.currentAction));
   }
 
   getInput(self: Fighter, opponent: Fighter): FighterInput {
@@ -76,11 +114,12 @@ export class AIController {
     const cornered = (nearLeftWall || nearRightWall) && dist < approachRange;
 
     const comebackFactor = Math.max(0, Math.min(1, (opponent.health - self.health) / MAX_HEALTH));
-    const aggression = this.clamp01(this.personality.aggression + comebackFactor * 0.3);
+    const efficacy = 0.55 + 0.45 * this.difficulty;
+    const aggression = this.clamp01((this.personality.aggression + comebackFactor * 0.3) * efficacy);
     const patience = this.clamp01(this.personality.patience - comebackFactor * 0.12);
     const flair = this.clamp01(this.personality.flair + comebackFactor * 0.2);
     const zoning = this.clamp01(this.personality.zoning);
-    const reversal = this.clamp01(this.personality.reversal + comebackFactor * 0.18);
+    const reversal = this.clamp01((this.personality.reversal + comebackFactor * 0.18) * efficacy);
     const isBrawler = this.personality.id === 'brawler';
     const isCounter = this.personality.id === 'counter';
     const isZoner = this.personality.id === 'zoner';
@@ -274,8 +313,26 @@ export class AIController {
       });
     }
 
-    const choice = this.pickAction(options);
+    let choice = this.pickAction(options);
+    if (this.difficulty < 1 && this.isOffensiveAction(choice)) {
+      // Lower rungs hesitate: sometimes an attack decision decays into a
+      // beat of doing nothing, exactly like a rusty arcade CPU.
+      const mistakeChance = (1 - this.difficulty) * 0.35;
+      if (this.rng.next() < mistakeChance) {
+        choice = { input: {}, minFrames: 10, maxFrames: 18 };
+      }
+    }
     if (choice.forceState !== undefined) {
+      // A full bar upgrades the fireball it was going to throw into a SUPER.
+      if (
+        choice.forceState === FighterState.FIREBALL &&
+        self.meter >= METER_MAX &&
+        self.canFireProjectile &&
+        this.difficulty >= 0.5
+      ) {
+        self.meter = 0;
+        self.pendingSuper = true;
+      }
       self.forceState(choice.forceState);
       this.specialCooldown = choice.specialCooldown ?? this.specialCooldown;
     }
@@ -309,7 +366,16 @@ export class AIController {
     const tempo = this.clamp01(this.personality.tempo);
     const baseMin = minFrames ?? Math.max(4, Math.round(9 - tempo * 4));
     const baseMax = maxFrames ?? Math.max(baseMin, Math.round(18 - tempo * 6));
-    return this.rng.nextInt(baseMin, baseMax);
+    const frames = this.rng.nextInt(baseMin, baseMax);
+    if (this.difficulty >= 1) return frames;
+    // Reaction slowdown: up to +60% decision cooldown at the lowest rung.
+    return Math.round(frames * (1.6 - 0.6 * this.difficulty));
+  }
+
+  private isOffensiveAction(choice: PlannedAction): boolean {
+    if (choice.forceState !== undefined) return true;
+    const input = choice.input;
+    return Boolean(input && (input.punch || input.kick || input.fireball || input.uppercut));
   }
 
   private clamp01(value: number): number {
@@ -327,6 +393,22 @@ export class AIController {
       kick: this.currentAction.kick ?? false,
       fireball: this.currentAction.fireball ?? false,
       uppercut: this.currentAction.uppercut ?? false,
+      super: this.currentAction.super ?? false,
     };
   }
+}
+
+function packPartialInput(input: Partial<FighterInput>): number {
+  return (
+    (input.left ? 1 : 0) |
+    (input.right ? 2 : 0) |
+    (input.up ? 4 : 0) |
+    (input.down ? 8 : 0) |
+    (input.guard ? 16 : 0) |
+    (input.punch ? 32 : 0) |
+    (input.kick ? 64 : 0) |
+    (input.fireball ? 128 : 0) |
+    (input.uppercut ? 256 : 0) |
+    (input.super ? 512 : 0)
+  );
 }

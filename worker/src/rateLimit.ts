@@ -14,6 +14,10 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
     anonymous: { limit: 20, windowSeconds: 24 * 60 * 60 },
     signedIn: { limit: 1200, windowSeconds: 60 * 60 },
   },
+  'client:error': {
+    anonymous: { limit: 6, windowSeconds: 60 * 60 },
+    signedIn: { limit: 20, windowSeconds: 60 * 60 },
+  },
   'proxy:default': {
     anonymous: { limit: 80, windowSeconds: 60 * 60 },
     signedIn: { limit: 600, windowSeconds: 60 * 60 },
@@ -25,6 +29,14 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
   'generation:job': {
     anonymous: { limit: 1, windowSeconds: 24 * 60 * 60 },
     signedIn: { limit: 240, windowSeconds: 24 * 60 * 60 },
+  },
+  'maps:capture': {
+    anonymous: { limit: 4, windowSeconds: 24 * 60 * 60 },
+    signedIn: { limit: 60, windowSeconds: 24 * 60 * 60 },
+  },
+  'billing:stage-forge': {
+    anonymous: { limit: 1, windowSeconds: 24 * 60 * 60 },
+    signedIn: { limit: 60, windowSeconds: 24 * 60 * 60 },
   },
   'billing:checkout': {
     anonymous: { limit: 4, windowSeconds: 60 * 60 },
@@ -69,6 +81,22 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
   'matches:report': {
     anonymous: { limit: 4, windowSeconds: 60 * 60 },
     signedIn: { limit: 240, windowSeconds: 60 * 60 },
+  },
+  'versus:room': {
+    anonymous: { limit: 1, windowSeconds: 60 * 60 },
+    signedIn: { limit: 60, windowSeconds: 60 * 60 },
+  },
+  'versus:guest-join': {
+    anonymous: { limit: 12, windowSeconds: 60 * 60 },
+    signedIn: { limit: 60, windowSeconds: 60 * 60 },
+  },
+  'versus:invite': {
+    anonymous: { limit: 1, windowSeconds: 60 * 60 },
+    signedIn: { limit: 120, windowSeconds: 60 * 60 },
+  },
+  'versus:ice': {
+    anonymous: { limit: 1, windowSeconds: 60 * 60 },
+    signedIn: { limit: 120, windowSeconds: 60 * 60 },
   },
 };
 

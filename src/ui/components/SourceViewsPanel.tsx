@@ -2,6 +2,7 @@ import type { CachedMeta } from '../../services/SpriteCache.ts';
 import {
   SOURCE_VIEWS,
   getSourceBlob,
+  isArcadeCachedMeta,
   type SourceKey,
 } from '../shared/fighterPreview.ts';
 
@@ -33,18 +34,25 @@ export function SourceViewsPanel({
   return (
     <>
       <h3>Source Views</h3>
-      <div className="gallery-source-grid">
+      <div className="gallery-source-grid" role="group" aria-label="Source views">
         {SOURCE_VIEWS.map(([key, label]) => {
           const blob = getSourceBlob(meta, key);
           const isRegen = regeneratingSource === key;
+          const isPrivateReference = key === 'original' && isArcadeCachedMeta(meta);
           return (
             <button
+              type="button"
               key={key}
-              className={`gallery-chip${selectedSource === key ? ' is-active' : ''}`}
+              className={`gallery-chip${selectedSource === key && !isPrivateReference ? ' is-active' : ''}`}
+              aria-pressed={selectedSource === key && !isPrivateReference}
+              disabled={isPrivateReference}
               onClick={() => onSelectSource(key)}
+              title={isPrivateReference ? 'The original reference stays private for Arcade globals.' : undefined}
             >
               <span>{label}</span>
-              <small>{isRegen ? 'Regenerating...' : blob ? 'Ready' : 'Missing'}</small>
+              <small>
+                {isPrivateReference ? 'Private reference' : isRegen ? 'Regenerating...' : blob ? 'Ready' : 'Missing'}
+              </small>
             </button>
           );
         })}
@@ -52,17 +60,17 @@ export function SourceViewsPanel({
       {onRetry ? (
         <div className="gallery-actions">
           {onRetry.side ? (
-            <button disabled={busy} onClick={() => void onRetry.side!()}>
+            <button type="button" disabled={busy} onClick={() => void onRetry.side!()}>
               Retry Side · {retryCreditCost} credit
             </button>
           ) : null}
           {onRetry.upright ? (
-            <button disabled={busy} onClick={() => void onRetry.upright!()}>
+            <button type="button" disabled={busy} onClick={() => void onRetry.upright!()}>
               Retry Upright · {retryCreditCost} credit
             </button>
           ) : null}
           {onRetry.crouch ? (
-            <button disabled={busy} onClick={() => void onRetry.crouch!()}>
+            <button type="button" disabled={busy} onClick={() => void onRetry.crouch!()}>
               Retry Crouch · {retryCreditCost} credit
             </button>
           ) : null}

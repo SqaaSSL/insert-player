@@ -2,7 +2,9 @@ import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 import {
   authorizeGenerationPurchase,
+  authorizeStageForgePurchase,
   completeGenerationPurchase,
+  getCreditCheckoutStatus,
   handleStripeWebhook,
   settleGenerationPurchase,
 } from './billing';
@@ -41,6 +43,7 @@ const SCHEMA = `
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     tier TEXT NOT NULL,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     credit_cost INTEGER NOT NULL DEFAULT 0,
     free_quota_delta INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL,
@@ -60,6 +63,7 @@ const SCHEMA = `
     user_id TEXT NOT NULL,
     rate_limit_key TEXT NOT NULL DEFAULT '',
     tier TEXT NOT NULL DEFAULT 'rookie',
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     purpose TEXT NOT NULL DEFAULT 'fighter_generation',
     charge_id TEXT,
     status TEXT NOT NULL DEFAULT 'active',
@@ -85,8 +89,11 @@ const SCHEMA = `
     charge_id TEXT,
     artifact_run_id TEXT,
     tier TEXT,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     operation TEXT,
-    status TEXT NOT NULL DEFAULT 'queued'
+    status TEXT NOT NULL DEFAULT 'queued',
+    review_status TEXT NOT NULL DEFAULT 'none',
+    resumed_from_job_id TEXT
   );
 
   CREATE TABLE generation_artifact_runs (
@@ -94,9 +101,30 @@ const SCHEMA = `
     user_id TEXT NOT NULL,
     fighter_id TEXT NOT NULL,
     tier TEXT NOT NULL,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     operation TEXT NOT NULL,
     status TEXT NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE video_sprite_candidates (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    job_id TEXT NOT NULL UNIQUE,
+    user_id TEXT NOT NULL,
+    fighter_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    sequence_order INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'awaiting_review',
+    current_revision INTEGER NOT NULL DEFAULT 1,
+    approved_revision INTEGER
+  );
+
+  CREATE TABLE video_sprite_candidate_revisions (
+    candidate_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    report_sha256 TEXT NOT NULL,
+    PRIMARY KEY(candidate_id, revision)
   );
 
   CREATE TABLE provider_cost_events (
@@ -176,6 +204,16 @@ const SCHEMA = `
 
 const webhookSecret = 'whsec_insert_player_integration';
 const stripeAccountId = 'acct_insertplayer';
+
+const generationLegal = {
+  legalVersion: CURRENT_LEGAL_VERSION,
+  ageConfirmed: true,
+  termsAccepted: true,
+  photoRightsConfirmed: true,
+  aiProcessingConfirmed: true,
+  immediatePerformanceConfirmed: true,
+  withdrawalLossAcknowledged: true,
+};
 
 function metadata(sessionToken: string, userId: string) {
   return {
@@ -276,7 +314,458 @@ async function insertPaidCheckout(
   ]);
 }
 
+describe('Exact checkout verification against D1', () => {
+  it('returns only the authenticated owner session with explicit terminal states', async () => {
+    const { mf, db, env } = await createBindings();
+    const ownerId = 'user-checkout-owner';
+    const otherId = 'user-checkout-other';
+    const auth = {
+      userId: ownerId,
+      claims: {},
+      user: { id: ownerId },
+    } as unknown as AuthContext;
+    try {
+      await insertPaidCheckout(
+        db,
+        ownerId,
+        'checkout-owner-paid',
+        'cs_live_owner_paid',
+        'pi_owner_paid',
+        42,
+      );
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES (?, ?, 'Other checkout owner', 999)
+        `).bind(otherId, otherId),
+        db.prepare(`
+          INSERT INTO checkout_sessions (
+            id, stripe_session_id, user_id, pack_id, credits, amount_cents, currency,
+            status, legal_version, terms_accepted, immediate_delivery_confirmed,
+            withdrawal_loss_acknowledged
+          ) VALUES (
+            'checkout-owner-open', 'cs_live_owner_open', ?, 'versus', 23, 2899, 'eur',
+            'open', ?, 1, 1, 1
+          )
+        `).bind(ownerId, CURRENT_LEGAL_VERSION),
+        db.prepare(`
+          INSERT INTO checkout_sessions (
+            id, stripe_session_id, user_id, pack_id, credits, amount_cents, currency,
+            status, legal_version, terms_accepted, immediate_delivery_confirmed,
+            withdrawal_loss_acknowledged
+          ) VALUES (
+            'checkout-owner-failed', 'cs_live_owner_failed', ?, 'arcade', 47, 5699, 'eur',
+            'failed', ?, 1, 1, 1
+          )
+        `).bind(ownerId, CURRENT_LEGAL_VERSION),
+        db.prepare(`
+          INSERT INTO checkout_sessions (
+            id, stripe_session_id, user_id, pack_id, credits, amount_cents, currency,
+            status, legal_version, terms_accepted, immediate_delivery_confirmed,
+            withdrawal_loss_acknowledged
+          ) VALUES (
+            'checkout-other-paid', 'cs_live_other_paid', ?, 'starter', 11, 1499, 'eur',
+            'paid', ?, 1, 1, 1
+          )
+        `).bind(otherId, CURRENT_LEGAL_VERSION),
+      ]);
+
+      const complete = await getCreditCheckoutStatus(new Request(
+        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=cs_live_owner_paid',
+      ), env, auth);
+      expect(complete.status).toBe(200);
+      expect(complete.headers.get('Cache-Control')).toBe('private, no-store');
+      expect(await complete.json()).toEqual({
+        checkout: {
+          sessionId: 'cs_live_owner_paid',
+          state: 'complete',
+          processorStatus: 'paid',
+          packId: 'starter',
+          credits: 11,
+          creditsBalance: 42,
+          updatedAt: expect.any(String),
+        },
+      });
+
+      const pending = await getCreditCheckoutStatus(new Request(
+        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=cs_live_owner_open',
+      ), env, auth);
+      expect(await pending.json()).toMatchObject({
+        checkout: {
+          sessionId: 'cs_live_owner_open',
+          state: 'pending',
+          processorStatus: 'open',
+          creditsBalance: 42,
+        },
+      });
+
+      const failed = await getCreditCheckoutStatus(new Request(
+        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=cs_live_owner_failed',
+      ), env, auth);
+      expect(await failed.json()).toMatchObject({
+        checkout: { sessionId: 'cs_live_owner_failed', state: 'failed', processorStatus: 'failed' },
+      });
+
+      const crossAccount = await getCreditCheckoutStatus(new Request(
+        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=cs_live_other_paid',
+      ), env, auth);
+      expect(crossAccount.status).toBe(404);
+      expect(crossAccount.headers.get('Cache-Control')).toBe('private, no-store');
+      expect(await crossAccount.json()).toEqual({ error: 'Checkout session not found' });
+
+      const malformed = await getCreditCheckoutStatus(new Request(
+        'https://api.insertplayer.ai/api/billing/checkout-status?session_id=checkout-owner-paid',
+      ), env, auth);
+      expect(malformed.status).toBe(400);
+    } finally {
+      await mf.dispose();
+    }
+  });
+});
+
+describe('Stage Forge credit reservations against D1', () => {
+  it('reserves one credit with a metered stage provider session and releases it before dispatch', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-stage-forge';
+    const auth = {
+      userId,
+      rateLimitKey: `user:${userId}`,
+      claims: {},
+      user: { id: userId, credits_balance: 3 },
+    } as unknown as PublicAuthContext;
+    try {
+      await db.prepare(`
+        INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+        VALUES (?, ?, 'Stage Forger', 3)
+      `).bind(userId, userId).run();
+
+      const response = await authorizeStageForgePurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/stage-forge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ legal: generationLegal }),
+        },
+      ), env, auth);
+      expect(response.status).toBe(200);
+      const receipt = await response.json() as {
+        purchaseId: string;
+        providerSessionId: string;
+      };
+      expect(receipt).toMatchObject({
+        authorized: true,
+        mode: 'credits',
+        creditsCharged: 1,
+        creditsBalance: 2,
+        providerCallLimit: 1,
+      });
+      expect(await db.prepare(`
+        SELECT credit_cost, status, reason, fighter_id
+        FROM generation_charges WHERE id = ?
+      `).bind(receipt.purchaseId).first()).toEqual({
+        credit_cost: 1,
+        status: 'reserved',
+        reason: 'stage_forge',
+        fighter_id: null,
+      });
+      expect(await db.prepare(`
+        SELECT purpose, charge_id, provider_call_limit
+        FROM provider_sessions WHERE id = ?
+      `).bind(receipt.providerSessionId).first()).toEqual({
+        purpose: 'stage_background',
+        charge_id: receipt.purchaseId,
+        provider_call_limit: 1,
+      });
+
+      await settleGenerationPurchase(env, userId, receipt.purchaseId, false, null);
+      expect(await db.prepare(
+        'SELECT credits_balance FROM users WHERE id = ?',
+      ).bind(userId).first()).toEqual({ credits_balance: 3 });
+      expect(await db.prepare(
+        'SELECT status FROM generation_charges WHERE id = ?',
+      ).bind(receipt.purchaseId).first()).toEqual({ status: 'refunded' });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('rejects a zero-balance forge without creating billing or provider rows', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-stage-forge-empty';
+    const auth = {
+      userId,
+      rateLimitKey: `user:${userId}`,
+      claims: {},
+      user: { id: userId, credits_balance: 0 },
+    } as unknown as PublicAuthContext;
+    try {
+      await db.prepare(`
+        INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+        VALUES (?, ?, 'Empty Forger', 0)
+      `).bind(userId, userId).run();
+
+      const response = await authorizeStageForgePurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/stage-forge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ legal: generationLegal }),
+        },
+      ), env, auth);
+      expect(response.status).toBe(402);
+      expect(await response.json()).toEqual({
+        authorized: false,
+        error: 'Not enough credits',
+        requiredCredits: 1,
+        creditsBalance: 0,
+      });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first())
+        .toEqual({ count: 0 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first())
+        .toEqual({ count: 0 });
+    } finally {
+      await mf.dispose();
+    }
+  });
+});
+
 describe('Generation purchase fighter linkage against D1', () => {
+  it('rejects video action retries before reservation and permits a fresh full restart', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-video-full-restart';
+    const fighterId = '13131313131313131313131313131313';
+    const rejectedRunId = '24242424242424242424242424242424';
+    const rejectedJobId = '35353535353535353535353535353535';
+    const auth = {
+      userId, rateLimitKey: `user:${userId}`, claims: {}, user: { id: userId },
+    } as unknown as PublicAuthContext;
+    const legal = {
+      legalVersion: CURRENT_LEGAL_VERSION, ageConfirmed: true, termsAccepted: true,
+      photoRightsConfirmed: true, aiProcessingConfirmed: true,
+      immediatePerformanceConfirmed: true, withdrawalLossAcknowledged: true,
+    };
+    try {
+      await db.batch([
+        db.prepare(`INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES (?, ?, 'Video Full Restart', 30)`).bind(userId, userId),
+        db.prepare('INSERT INTO fighters (id, owner_user_id) VALUES (?, ?)').bind(fighterId, userId),
+        db.prepare(`INSERT INTO generation_artifact_runs (
+          id, user_id, fighter_id, tier, creation_flow, operation, status
+        ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', 'failed')`)
+          .bind(rejectedRunId, userId, fighterId),
+        db.prepare(`INSERT INTO generation_jobs (
+          id, user_id, fighter_id, artifact_run_id, tier, creation_flow,
+          operation, status, review_status
+        ) VALUES (?, ?, ?, ?, 'champion', 'video', 'fighter_generation',
+          'succeeded', 'rejected')`).bind(rejectedJobId, userId, fighterId, rejectedRunId),
+        db.prepare(`INSERT INTO video_sprite_candidates (
+          id, run_id, job_id, user_id, fighter_id, action, sequence_order, status
+        ) VALUES ('candidate-full-restart', ?, ?, ?, ?, 'high_kick', 3, 'rejected')`)
+          .bind(rejectedRunId, rejectedJobId, userId, fighterId),
+      ]);
+
+      const retry = await authorizeGenerationPurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/generation', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fighterId, tier: 'champion', creationFlow: 'video',
+            operation: 'fighter_retry_animation', targetKind: 'animation',
+            targetName: 'high_kick', legal,
+          }),
+        },
+      ), env, auth);
+      expect(retry.status).toBe(400);
+      expect(await retry.json()).toMatchObject({ code: 'video_creation_operation_unsupported' });
+      expect((await db.prepare('SELECT COUNT(*) AS count FROM generation_charges')
+        .first<{ count: number }>())?.count).toBe(0);
+      expect((await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions')
+        .first<{ count: number }>())?.count).toBe(0);
+
+      const restart = await authorizeGenerationPurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/generation', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fighterId, tier: 'champion', creationFlow: 'video',
+            operation: 'fighter_generation', legal,
+          }),
+        },
+      ), env, auth);
+      expect(restart.status).toBe(200);
+      expect(await restart.json()).toMatchObject({
+        mode: 'credits', creationFlow: 'video', creditsCharged: 18,
+      });
+      expect((await db.prepare('SELECT COUNT(*) AS count FROM generation_charges')
+        .first<{ count: number }>())?.count).toBe(1);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('resumes a local video failure on the same run but starts a fresh paid run after terminal abandonment', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-video-resume';
+    const fighterId = 'abababababababababababababababab';
+    const localJobId = 'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
+    const terminalJobId = 'efefefefefefefefefefefefefefefef';
+    const auth = {
+      userId,
+      rateLimitKey: `user:${userId}`,
+      claims: {},
+      user: { id: userId },
+    } as unknown as PublicAuthContext;
+    const legal = {
+      legalVersion: CURRENT_LEGAL_VERSION,
+      ageConfirmed: true,
+      termsAccepted: true,
+      photoRightsConfirmed: true,
+      aiProcessingConfirmed: true,
+      immediatePerformanceConfirmed: true,
+      withdrawalLossAcknowledged: true,
+    };
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES (?, ?, 'Video Resume', 30)
+        `).bind(userId, userId),
+        db.prepare('INSERT INTO fighters (id, owner_user_id) VALUES (?, ?)')
+          .bind(fighterId, userId),
+        ...[localJobId, terminalJobId].flatMap((jobId, index) => [
+          db.prepare(`
+            INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+            VALUES (?, ?, -18, 'fighter_generation', ?)
+          `).bind(`ledger-video-${index}`, userId, fighterId),
+          db.prepare(`
+            INSERT INTO generation_charges (
+              id, user_id, tier, creation_flow, credit_cost, status, reason,
+              fighter_id, ledger_id, expires_at
+            ) VALUES (?, ?, 'champion', 'video', 18, 'committed',
+              'fighter_generation', ?, ?, datetime('now', '+1 day'))
+          `).bind(`charge-video-${index}`, userId, fighterId, `ledger-video-${index}`),
+          db.prepare(`
+            INSERT INTO generation_artifact_runs (
+              id, user_id, fighter_id, tier, creation_flow, operation, status
+            ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_generation', ?)
+          `).bind(jobId, userId, fighterId, index === 0 ? 'partial' : 'failed'),
+          db.prepare(`
+            INSERT INTO generation_jobs (
+              id, user_id, fighter_id, charge_id, artifact_run_id, tier,
+              creation_flow, operation, status
+            ) VALUES (?, ?, ?, ?, ?, 'champion', 'video', 'fighter_generation', 'failed')
+          `).bind(jobId, userId, fighterId, `charge-video-${index}`, jobId),
+        ]),
+      ]);
+
+      for (const blocked of [
+        { tier: 'champion', creationFlow: 'original', operation: 'fighter_generation' },
+        { tier: 'champion', creationFlow: 'video', operation: 'fighter_generation' },
+        { tier: 'champion', creationFlow: 'original', operation: 'fighter_upgrade' },
+        {
+          tier: 'champion', creationFlow: 'original', operation: 'fighter_retry_animation',
+          targetKind: 'animation', targetName: 'idle',
+        },
+      ]) {
+        const blockedFresh = await authorizeGenerationPurchase(new Request(
+          'https://api.insertplayer.ai/api/billing/generation', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fighterId, ...blocked, legal }),
+          },
+        ), env, auth);
+        expect(blockedFresh.status).toBe(409);
+        expect(await blockedFresh.json()).toMatchObject({ code: 'video_run_in_progress' });
+      }
+
+      const localResume = await authorizeGenerationPurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/generation', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fighterId, tier: 'champion', creationFlow: 'video',
+            operation: 'fighter_generation', resumeJobId: localJobId, legal,
+          }),
+        },
+      ), env, auth);
+      expect(localResume.status).toBe(200);
+      expect(await localResume.json()).toMatchObject({
+        mode: 'continuation', creditsCharged: 0, artifactRunId: localJobId,
+      });
+
+      await db.prepare(`
+        UPDATE generation_artifact_runs SET status = 'failed' WHERE id = ?
+      `).bind(localJobId).run();
+      const freshRetry = await authorizeGenerationPurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/generation', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fighterId, tier: 'champion', creationFlow: 'video',
+            operation: 'fighter_generation', legal,
+          }),
+        },
+      ), env, auth);
+      expect(freshRetry.status).toBe(200);
+      expect(await freshRetry.json()).toMatchObject({
+        mode: 'credits', creationFlow: 'video',
+      });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('never authorizes a continuation after the exact retry action is already approved', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-video-final-race';
+    const fighterId = '12121212121212121212121212121212';
+    const jobId = '34343434343434343434343434343434';
+    const auth = {
+      userId, rateLimitKey: `user:${userId}`, claims: {}, user: { id: userId },
+    } as unknown as PublicAuthContext;
+    const legal = {
+      legalVersion: CURRENT_LEGAL_VERSION, ageConfirmed: true, termsAccepted: true,
+      photoRightsConfirmed: true, aiProcessingConfirmed: true,
+      immediatePerformanceConfirmed: true, withdrawalLossAcknowledged: true,
+    };
+    try {
+      await db.batch([
+        db.prepare(`INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+          VALUES (?, ?, 'Final Race', 30)`).bind(userId, userId),
+        db.prepare('INSERT INTO fighters (id, owner_user_id) VALUES (?, ?)').bind(fighterId, userId),
+        db.prepare(`INSERT INTO generation_charges (
+          id, user_id, tier, creation_flow, credit_cost, status, reason, fighter_id, expires_at
+        ) VALUES ('charge-final-race', ?, 'champion', 'video', 18, 'committed',
+          'fighter_retry_animation', ?, datetime('now', '+1 day'))`).bind(userId, fighterId),
+        db.prepare(`INSERT INTO generation_artifact_runs (
+          id, user_id, fighter_id, tier, creation_flow, operation, status
+        ) VALUES (?, ?, ?, 'champion', 'video', 'fighter_retry_animation', 'partial')`)
+          .bind(jobId, userId, fighterId),
+        db.prepare(`INSERT INTO generation_jobs (
+          id, user_id, fighter_id, charge_id, artifact_run_id, tier, creation_flow,
+          operation, status, review_status
+        ) VALUES (?, ?, ?, 'charge-final-race', ?, 'champion', 'video',
+          'fighter_retry_animation', 'succeeded', 'approved')`)
+          .bind(jobId, userId, fighterId, jobId),
+        db.prepare(`INSERT INTO video_sprite_candidates (
+          id, run_id, job_id, user_id, fighter_id, action, sequence_order,
+          status, current_revision, approved_revision
+        ) VALUES ('candidate-final-race', ?, ?, ?, ?, 'idle', 0, 'approved', 1, 1)`)
+          .bind(jobId, jobId, userId, fighterId),
+        db.prepare(`INSERT INTO video_sprite_candidate_revisions (
+          candidate_id, revision, report_sha256
+        ) VALUES ('candidate-final-race', 1, ?)`).bind('a'.repeat(64)),
+      ]);
+      const response = await authorizeGenerationPurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/generation', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fighterId, tier: 'champion', creationFlow: 'video',
+            operation: 'fighter_retry_animation', targetKind: 'animation', targetName: 'idle',
+            resumeJobId: jobId, legal,
+          }),
+        },
+      ), env, auth);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: 'video_creation_operation_unsupported' });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
   it('authorizes an idempotent zero-credit continuation for committed partial work', async () => {
     const { mf, db, env } = await createBindings();
     const userId = 'user-resume';
@@ -368,6 +857,7 @@ describe('Generation purchase fighter linkage against D1', () => {
         resumedFromJobId: failedJobId,
         providerCallLimit: 219,
         providerCostLimitCents: 915,
+        creationFlow: 'original',
       });
       const duplicate = await authorizeGenerationPurchase(request(), env, auth);
       expect(duplicate.status).toBe(200);
@@ -380,7 +870,8 @@ describe('Generation purchase fighter linkage against D1', () => {
       expect((await db.prepare('SELECT credits_balance FROM users WHERE id = ?')
         .bind(userId).first<{ credits_balance: number }>())?.credits_balance).toBe(9);
       expect((await db.prepare(`
-        SELECT credit_cost, free_quota_delta, continuation_run_id, resumed_from_job_id
+        SELECT credit_cost, free_quota_delta, continuation_run_id, resumed_from_job_id,
+               creation_flow
         FROM generation_charges
         WHERE continuation_run_id = ?
       `).bind(failedJobId).first())).toEqual({
@@ -388,6 +879,7 @@ describe('Generation purchase fighter linkage against D1', () => {
         free_quota_delta: 0,
         continuation_run_id: failedJobId,
         resumed_from_job_id: failedJobId,
+        creation_flow: 'original',
       });
       expect((await db.prepare(`
         SELECT COUNT(*) AS count FROM generation_charges WHERE continuation_run_id = ?
@@ -400,11 +892,12 @@ describe('Generation purchase fighter linkage against D1', () => {
         SELECT COUNT(*) AS count FROM provider_sessions WHERE charge_id = ?
       `).bind(firstBody.purchaseId).first<{ count: number }>())?.count).toBe(1);
       expect(await db.prepare(`
-        SELECT provider_call_limit, provider_cost_limit_cents
+        SELECT provider_call_limit, provider_cost_limit_cents, creation_flow
         FROM provider_sessions WHERE charge_id = ?
       `).bind(firstBody.purchaseId).first()).toEqual({
         provider_call_limit: 219,
         provider_cost_limit_cents: 915,
+        creation_flow: 'original',
       });
     } finally {
       await mf.dispose();

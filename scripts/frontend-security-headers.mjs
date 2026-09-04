@@ -26,6 +26,12 @@ function cleanHttpsOrigin(value, label) {
   return parsed.origin;
 }
 
+function webSocketOriginForHttpsOrigin(origin) {
+  const parsed = new URL(origin);
+  parsed.protocol = 'wss:';
+  return parsed.origin;
+}
+
 function headerFile(csp) {
   return `/*
   X-Content-Type-Options: nosniff
@@ -68,20 +74,22 @@ export function frontendHeadersForTarget({
   }
 
   const api = cleanHttpsOrigin(apiOrigin, 'apiOrigin');
+  const apiWebSocket = webSocketOriginForHttpsOrigin(api);
   const clerk = cleanHttpsOrigin(clerkFrontendApiOrigin, 'clerkFrontendApiOrigin');
+  const googleMapsSources = 'https://*.googleapis.com https://*.gstatic.com https://*.google.com https://*.ggpht.com https://*.googleusercontent.com';
   return headerFile([
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
-    `script-src 'self' https://challenges.cloudflare.com ${clerk} https://*.protect.clerk.com`,
-    "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: blob: https://img.clerk.com ${api}`,
+    `script-src 'self' 'unsafe-eval' blob: https://challenges.cloudflare.com ${clerk} https://*.protect.clerk.com ${googleMapsSources}`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    `img-src 'self' data: blob: https://img.clerk.com ${api} ${googleMapsSources}`,
     `media-src 'self' data: blob: ${api}`,
-    "font-src 'self' data:",
-    `connect-src 'self' ${api} ${clerk} https://clerk-telemetry.com https://*.clerk-telemetry.com https://img.clerk.com https://*.protect.clerk.com https://challenges.cloudflare.com`,
-    "frame-src 'self' https://challenges.cloudflare.com https://*.protect.clerk.com",
+    "font-src 'self' data: https://fonts.gstatic.com",
+    `connect-src 'self' data: blob: ${api} ${apiWebSocket} ${clerk} https://clerk-telemetry.com https://*.clerk-telemetry.com https://img.clerk.com https://*.protect.clerk.com https://challenges.cloudflare.com ${googleMapsSources}`,
+    "frame-src 'self' https://challenges.cloudflare.com https://*.protect.clerk.com https://*.google.com",
     "worker-src 'self' blob:",
     "manifest-src 'self'",
     'upgrade-insecure-requests',

@@ -1,6 +1,6 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
-import { generateId } from './auth';
+import { generateId, hashString } from './auth';
 import { settleGenerationPurchase } from './billing';
 import {
   persistGeneratedSource,
@@ -26,6 +26,26 @@ import {
 import { maxTier } from './tiers';
 import type { Env, Fighter, GenerationArtifactRun, GenerationJob } from './types';
 import { stripTrailingSlashes } from './url';
+import {
+  isTerminalVideoProviderFailure,
+  nextVideoSpriteAction,
+  runVideoSpriteAction,
+  settleVideoSpriteCandidateAwaitingReview,
+} from './videoSpriteWorkflow';
+import type { VideoSpriteAction } from '../../src/services/VideoSpriteCompileContract';
+import { videoAction } from './videoSpriteGeneration';
+import {
+  importReviewedCanonicalSourceCheckpoint,
+  parseSealedReviewedCanonicalSources,
+  ReviewedCanonicalSourceError,
+  type ReviewedCanonicalSourceName,
+  type SealedReviewedCanonicalSources,
+} from './reviewedCanonicalSources';
+import { officialPoseMasterFor } from './officialPoseMasters';
+import {
+  storedVideoGenerationPolicy,
+  type VideoGenerationPolicy,
+} from '../../src/services/VideoGenerationPolicy';
 
 interface FighterGenerationParams {
   jobId: string;
@@ -104,6 +124,20 @@ const STEP_CONFIG = {
   retries: { limit: 5, delay: '30 seconds' as const, backoff: 'exponential' as const },
   timeout: '3 hours' as const,
 };
+const NON_RETRYABLE_PROVIDER_CODES = new Set([
+  'provider_request_not_dispatched',
+  'provider_request_outcome_unknown',
+  'daily_cap_exceeded',
+  'monthly_cap_exceeded',
+]);
+
+export function nonRetryableProcessorProviderMessage(
+  errorCode: string,
+  detail: string,
+): string | null {
+  if (!NON_RETRYABLE_PROVIDER_CODES.has(errorCode)) return null;
+  return `Image provider request is not safe to retry (${errorCode}): ${detail}`;
+}
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -159,10 +193,143 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
   }
 
   private async loadAssetBase64(key: string | null): Promise<string> {
+    return arrayBufferToBase64(await this.loadAssetBytes(key));
+  }
+
+  private async loadAssetBytes(key: string | null): Promise<ArrayBuffer> {
     if (!key) throw new Error('Required generation asset key is missing');
     const object = await this.env.SPRITES.get(key);
     if (!object) throw new Error('Required generation asset is missing');
-    return arrayBufferToBase64(await object.arrayBuffer());
+    return object.arrayBuffer();
+  }
+
+  private async loadOfficialPoseMaster(
+    job: GenerationJob,
+    animation: AnimationDefinition,
+    generationPrompt: string | undefined,
+  ): Promise<{ id: string; frameBase64s: string[] } | null> {
+    const master = officialPoseMasterFor(animation.name, job.tier, generationPrompt);
+    if (!master) return null;
+    if (master.frames.length !== animation.frames) {
+      throw new NonRetryableError(
+        `Official pose master ${master.id} has ${master.frames.length} frames; expected ${animation.frames}`,
+      );
+    }
+
+    const frameBase64s = await Promise.all(master.frames.map(async (frame) => {
+      const bytes = await this.loadAssetBytes(frame.objectKey);
+      const actualHash = await hashString(bytes);
+      if (actualHash !== frame.sha256) {
+        throw new NonRetryableError(
+          `Official pose master ${master.id} failed immutable hash verification`,
+        );
+      }
+      return arrayBufferToBase64(bytes);
+    }));
+    return { id: master.id, frameBase64s };
+  }
+
+  private async runVideoFlow(
+    job: GenerationJob,
+    artifactRun: GenerationArtifactRun,
+    generationPrompt: string | undefined,
+    videoGenerationPolicy: VideoGenerationPolicy,
+    step: WorkflowStep,
+  ): Promise<void> {
+    let sources: GenerationSources;
+    if (job.operation === 'fighter_generation') {
+      let reviewedSources: SealedReviewedCanonicalSources | null;
+      try {
+        reviewedSources = parseSealedReviewedCanonicalSources(artifactRun.source_manifest_json);
+      } catch (error) {
+        if (error instanceof ReviewedCanonicalSourceError) {
+          throw new NonRetryableError(error.message);
+        }
+        throw error;
+      }
+      if (reviewedSources) {
+        if (reviewedSources.fighterId !== job.fighter_id || reviewedSources.ownerUserId !== job.user_id) {
+          throw new NonRetryableError('Sealed reviewed canonical sources do not match this Video job');
+        }
+        const side = await step.do(
+          'video: import reviewed canonical side source',
+          STEP_CONFIG,
+          () => this.importReviewedSourcePair(job, reviewedSources!, 'side', 1),
+        );
+        const upright = await step.do(
+          'video: import reviewed canonical upright source',
+          STEP_CONFIG,
+          () => this.importReviewedSourcePair(job, reviewedSources!, 'upright', 2),
+        );
+        const crouch = await step.do(
+          'video: import reviewed canonical crouch source',
+          STEP_CONFIG,
+          () => this.importReviewedSourcePair(job, reviewedSources!, 'crouch', 3),
+        );
+        sources = { side, upright, crouch };
+      } else {
+        if (!artifactRun.original_blob_key) throw new Error('Durable original source photo is missing');
+        const side = await step.do('video: resolve canonical side source', STEP_CONFIG, () => this.generateSourcePair(job, {
+          operation: 'repose', cleanKind: 'side', rawKind: 'side_raw',
+          inputKey: artifactRun.original_blob_key!, generationPrompt, progressCurrent: 1,
+        }));
+        const upright = await step.do('video: resolve canonical upright source', STEP_CONFIG, () => this.generateSourcePair(job, {
+          operation: 'upright', cleanKind: 'upright', rawKind: 'upright_raw',
+          inputKey: side.rawKey, generationPrompt, progressCurrent: 2,
+        }));
+        const crouch = await step.do('video: resolve canonical crouch source', STEP_CONFIG, () => this.generateSourcePair(job, {
+          operation: 'crouch', cleanKind: 'crouch', rawKind: 'crouch_raw',
+          inputKey: upright.rawKey, normalizationSourceKey: upright.cleanKey,
+          generationPrompt, progressCurrent: 3,
+        }));
+        sources = { side, upright, crouch, crouchNormalizationReference: crouch.normalizationReference };
+      }
+    } else {
+      throw new NonRetryableError('The review-gated video flow supports full fighter generation only');
+    }
+    const action = await step.do('video: choose one review-gated action', STEP_CONFIG, () => (
+      nextVideoSpriteAction(this.env, job)
+    ));
+    await step.do(`video ${action}: record action stage`, STEP_CONFIG, () => (
+      this.recordStageStarted(job, `sprite:${action}`)
+    ));
+    const canonicalKind = videoAction(action).canonical;
+    const canonicalKey = canonicalKind === 'crouch' ? sources.crouch.rawKey : sources.side.rawKey;
+    const canonicalBytes = await this.loadAssetBytes(canonicalKey);
+    await runVideoSpriteAction(this.env, step, job, action, {
+      blobKey: canonicalKey,
+      bytes: canonicalBytes,
+      sha256: await hashString(canonicalBytes),
+    }, generationPrompt, videoGenerationPolicy);
+  }
+
+  private async importReviewedSourcePair(
+    job: GenerationJob,
+    sealed: SealedReviewedCanonicalSources,
+    sourceName: ReviewedCanonicalSourceName,
+    progressCurrent: number,
+  ): Promise<SourcePair> {
+    const stage = `source:${sourceName}`;
+    await this.recordStageStarted(job, stage);
+    try {
+      const pair = await importReviewedCanonicalSourceCheckpoint(
+        this.env,
+        job,
+        sealed,
+        sourceName,
+        progressCurrent,
+      );
+      await this.recordProgress(
+        job,
+        stage,
+        progressCurrent,
+        `${sourceName} source imported from the sealed reviewed canonical manifest`,
+      );
+      return pair;
+    } catch (error) {
+      if (error instanceof ReviewedCanonicalSourceError) throw new NonRetryableError(error.message);
+      throw error;
+    }
   }
 
   private async callProcessor<T>(
@@ -179,6 +346,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       jobId: job.id,
       userId: job.user_id,
       providerSessionId: job.provider_session_id,
+      creationFlow: job.creation_flow,
     });
     const container = this.env.IMAGE_PROCESSOR.getByName(job.id);
     const response = await container.fetch(new Request(`http://image-processor${path}`, {
@@ -199,6 +367,10 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         errorCode = typeof parsed.code === 'string' ? parsed.code : '';
       } catch {
         // The bounded response text below remains the diagnostic for non-JSON failures.
+      }
+      const nonRetryableProviderMessage = nonRetryableProcessorProviderMessage(errorCode, detail);
+      if (nonRetryableProviderMessage) {
+        throw new NonRetryableError(nonRetryableProviderMessage);
       }
       if (response.status === 422 && errorCode === 'provider_content_blocked') {
         throw new NonRetryableError('The image provider declined this transformation without returning an image');
@@ -425,6 +597,11 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     const normalizationReference = isCrouchFamily && sources.crouchNormalizationReference?.baselineRatio
       ? { baselineRatio: sources.crouchNormalizationReference.baselineRatio }
       : undefined;
+    const officialPoseMaster = await this.loadOfficialPoseMaster(
+      job,
+      animation,
+      generationPrompt,
+    );
     const result = await this.callProcessor<ProcessorSpriteResult>(job, '/v1/generate-sprite', {
       requestScope: `job:${requireArtifactRunId(job)}:sprite:${animation.name}`,
       tier: job.tier,
@@ -433,6 +610,8 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       secondaryBase64: secondaryKey ? await this.loadAssetBase64(secondaryKey) : undefined,
       generationPrompt,
       normalizationReference,
+      officialPoseMasterId: officialPoseMaster?.id,
+      officialPoseGuideBase64s: officialPoseMaster?.frameBase64s,
     });
     const persisted = await persistGeneratedSprite(this.env, {
       jobId: job.id,
@@ -503,6 +682,17 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         STEP_CONFIG,
         () => this.legacyArcadeGenerationPrompt(activeJob),
       );
+
+      if (activeJob.creation_flow === 'video') {
+        await this.runVideoFlow(
+          activeJob,
+          artifactRun,
+          generationPrompt,
+          storedVideoGenerationPolicy(artifactRun.video_generation_policy),
+          step,
+        );
+        return { jobId, status: 'succeeded', reviewStatus: 'awaiting_review' };
+      }
 
       if (activeJob.operation === 'fighter_generation') {
         if (!artifactRun.original_blob_key) throw new Error('Durable original source photo is missing');
@@ -713,6 +903,26 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       const message = boundedErrorMessage(error);
       console.error(JSON.stringify({ event: 'generation_workflow_failed', jobId, error: message }));
       job = await step.do('load failed generation context', STEP_CONFIG, () => this.loadJob(jobId));
+      if (job.creation_flow === 'video') {
+        const pendingCandidate = await step.do('recover persisted video candidate', STEP_CONFIG, () => (
+          this.env.DB.prepare(`
+            SELECT id, action FROM video_sprite_candidates
+            WHERE job_id = ? AND status = 'awaiting_review'
+            LIMIT 1
+          `).bind(jobId).first<{ id: string; action: VideoSpriteAction }>()
+        ));
+        if (pendingCandidate) {
+          await step.do('recover video awaiting-review terminal state', STEP_CONFIG, () => (
+            settleVideoSpriteCandidateAwaitingReview(
+              this.env,
+              job!,
+              pendingCandidate.id,
+              pendingCandidate.action,
+            )
+          ));
+          return { jobId, status: 'succeeded', reviewStatus: 'awaiting_review' };
+        }
+      }
       if (job.status === 'succeeded') return { jobId, status: 'succeeded' };
       if (job) {
         await step.do('settle failed generation', STEP_CONFIG, async () => {
@@ -725,6 +935,8 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           );
           const releasedBeforeProviderStart = settlement?.status === 'refunded';
           const failure = generationFailureDetails(message, releasedBeforeProviderStart);
+          const videoProviderTerminal = job!.creation_flow === 'video' &&
+            isTerminalVideoProviderFailure(message);
           const persistedFailureState = await this.env.DB.prepare(`
             SELECT stage, failure_stage
             FROM generation_jobs
@@ -742,7 +954,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
             `).bind(
               failureStage,
               failureStage,
-              failure.errorCode,
+              videoProviderTerminal ? 'video_provider_terminal' : failure.errorCode,
               failure.errorMessage,
               job!.id,
             ),
@@ -750,6 +962,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
               UPDATE generation_artifact_runs
               SET status = CASE
                     WHEN status = 'succeeded' THEN status
+                    WHEN ? = 1 THEN 'failed'
                     WHEN EXISTS (
                       SELECT 1 FROM generation_artifact_checkpoints checkpoint
                       WHERE checkpoint.run_id = generation_artifact_runs.id
@@ -765,7 +978,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
                   END,
                   failure_stage = ?, updated_at = datetime('now')
               WHERE id = ?
-            `).bind(failureStage, requireArtifactRunId(job!)),
+            `).bind(videoProviderTerminal ? 1 : 0, failureStage, requireArtifactRunId(job!)),
             this.env.DB.prepare(`
               UPDATE provider_cost_events
               SET stage_outcome = CASE

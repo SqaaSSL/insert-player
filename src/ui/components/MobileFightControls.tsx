@@ -1,20 +1,31 @@
-import { useEffect, type KeyboardEvent, type PointerEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent, type PointerEvent } from 'react';
 import {
   resetVirtualInput,
   setVirtualInputAction,
   type VirtualInputAction,
 } from '../../game/systems/VirtualInput.ts';
+import { HUD_STATE_EVENT } from '../../game/match/MatchConfig.ts';
+import { VirtualJoystick } from './VirtualJoystick.tsx';
 
 interface ControlButtonProps {
   action: VirtualInputAction;
   className: string;
   label: string;
+  playerIndex: 0 | 1;
+  playerLabel: string;
   title: string;
 }
 
-function ControlButton({ action, className, label, title }: ControlButtonProps) {
+function ControlButton({
+  action,
+  className,
+  label,
+  playerIndex,
+  playerLabel,
+  title,
+}: ControlButtonProps) {
   const setPressed = (active: boolean) => {
-    setVirtualInputAction(0, action, active);
+    setVirtualInputAction(playerIndex, action, active);
   };
 
   const onPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
@@ -47,7 +58,7 @@ function ControlButton({ action, className, label, title }: ControlButtonProps) 
     <button
       type="button"
       className={`mobile-fight-control ${className}`}
-      aria-label={`${title}, player 1`}
+      aria-label={`${title}, ${playerLabel}`}
       title={title}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={onKeyDown}
@@ -62,9 +73,28 @@ function ControlButton({ action, className, label, title }: ControlButtonProps) 
   );
 }
 
-export function MobileFightControls() {
+export function MobileFightControls({
+  mode = 'fight',
+  playerIndex = 0,
+  playerLabel = 'player 1',
+}: {
+  mode?: 'fight' | 'rush';
+  playerIndex?: 0 | 1;
+  playerLabel?: string;
+}) {
+  const [superReady, setSuperReady] = useState(false);
+
   useEffect(() => {
-    const releaseAll = () => resetVirtualInput(0);
+    const onHudState = (event: WindowEventMap[typeof HUD_STATE_EVENT]) => {
+      const meter = playerIndex === 0 ? event.detail.p1Meter : event.detail.p2Meter;
+      setSuperReady(meter >= event.detail.meterMax);
+    };
+    window.addEventListener(HUD_STATE_EVENT, onHudState);
+    return () => window.removeEventListener(HUD_STATE_EVENT, onHudState);
+  }, [playerIndex]);
+
+  useEffect(() => {
+    const releaseAll = () => resetVirtualInput(playerIndex);
     window.addEventListener('blur', releaseAll);
     window.addEventListener('pagehide', releaseAll);
     return () => {
@@ -72,21 +102,27 @@ export function MobileFightControls() {
       window.removeEventListener('pagehide', releaseAll);
       releaseAll();
     };
-  }, []);
+  }, [playerIndex]);
 
   return (
-    <div className="mobile-fight-controls" aria-label="Player 1 controls">
-      <div className="mobile-fight-controls__dpad" role="group" aria-label="Movement">
-        <ControlButton action="up" className="is-up" label="↑" title="Jump" />
-        <ControlButton action="left" className="is-left" label="←" title="Move left" />
-        <ControlButton action="down" className="is-down" label="↓" title="Crouch" />
-        <ControlButton action="right" className="is-right" label="→" title="Move right" />
-      </div>
+    <div className="mobile-fight-controls" aria-label={`${playerLabel} controls`}>
+      <VirtualJoystick playerIndex={playerIndex} playerLabel={playerLabel} />
       <div className="mobile-fight-controls__actions" role="group" aria-label="Attacks">
-        <ControlButton action="fireball" className="is-fireball" label="F" title="Fireball" />
-        <ControlButton action="uppercut" className="is-uppercut" label="U" title="Uppercut" />
-        <ControlButton action="punch" className="is-punch" label="P" title="Punch" />
-        <ControlButton action="kick" className="is-kick" label="K" title="Kick" />
+        <ControlButton action="punch" className="is-punch" label="P" playerIndex={playerIndex} playerLabel={playerLabel} title="Punch" />
+        <ControlButton action="kick" className="is-kick" label="K" playerIndex={playerIndex} playerLabel={playerLabel} title="Kick" />
+        <ControlButton action="fireball" className="is-fireball" label="F" playerIndex={playerIndex} playerLabel={playerLabel} title="Fireball" />
+        <ControlButton
+          action="uppercut"
+          className={mode === 'rush' ? 'is-jump' : 'is-uppercut'}
+          label={mode === 'rush' ? 'J' : 'U'}
+          playerIndex={playerIndex}
+          playerLabel={playerLabel}
+          title={mode === 'rush' ? 'Jump' : 'Uppercut'}
+        />
+        {superReady ? (
+          <ControlButton action="super" className="is-super" label="S!" playerIndex={playerIndex} playerLabel={playerLabel} title="Super fireball" />
+        ) : null}
+        <ControlButton action="guard" className="is-guard" label="G" playerIndex={playerIndex} playerLabel={playerLabel} title="Guard (hold)" />
       </div>
     </div>
   );

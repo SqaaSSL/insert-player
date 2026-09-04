@@ -17,6 +17,11 @@ import { drainFighterAssetDeletions, listFighterAssetKeys } from './assetDeletio
 import { maxTier, normalizeQualityTier, TIER_DEFINITIONS } from './tiers';
 import { publicAppName, publicSocialCardUrl } from './branding';
 import { readJsonBody, readMultipartFormData } from './requestBody';
+import {
+  isSpriteAnimationFormat,
+  normalizeSpriteAnimationFormat,
+  type SpriteAnimationFormat,
+} from './spriteAnimationFormat';
 
 type SourceKind =
   | 'original'
@@ -63,6 +68,14 @@ const MAX_COMMUNITY_REPORT_DETAILS_CHARS = 500;
 const MAX_SPRITE_FRAME_DIMENSION = 4096;
 const MAX_SPRITE_FRAME_COUNT = 64;
 const MAX_PROCESSING_VERSION = 100;
+const HIGH_DENSITY_SPRITE_FRAME_WIDTH = 768;
+const HIGH_DENSITY_SPRITE_FRAME_HEIGHT = 1024;
+const VIDEO_DENSE_PING_PONG_ANIMATIONS = new Set([
+  'high_punch',
+  'low_punch',
+  'high_kick',
+  'low_kick',
+]);
 const MAX_FIGHTER_NAME_CHARS = 48;
 const MAX_ARCADE_CHALLENGER_LINE_CHARS = 120;
 const MAX_ARCADE_REFERENCE_TEXT_CHARS = 240;
@@ -266,6 +279,17 @@ function publicSpriteAssetUrl(
   return `${url.origin}/public-assets/fighters/${encodeURIComponent(fighterId)}/sprites/${encodeURIComponent(sprite.id)}/${encodeURIComponent(revision)}`;
 }
 
+function publicArcadeSpriteHighDensityAssetUrl(
+  request: Request,
+  fighterId: string,
+  sprite: SpriteAsset,
+): string | null {
+  const revision = publicAssetRevision(sprite.raw_blob_key);
+  if (!revision) return null;
+  const url = new URL(request.url);
+  return `${url.origin}/public-assets/arcade/${encodeURIComponent(fighterId)}/sprites/${encodeURIComponent(sprite.id)}/hq/${encodeURIComponent(revision)}`;
+}
+
 function decodeAssetKey(key: string): string | Response {
   let decodedKey: string;
   try {
@@ -295,12 +319,36 @@ function namespacedAssetOwner(key: string): string | null {
 }
 
 function playableSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): string {
-  const tierCondition = qualityTier ? `AND s.quality_tier = '${qualityTier}'` : '';
+  const tierCondition = qualityTier
+    ? `AND s.quality_tier = '${qualityTier}'`
+    : `AND NOT EXISTS (
+        SELECT 1
+        FROM sprites higher
+        WHERE higher.fighter_id = s.fighter_id
+          AND higher.animation_name = s.animation_name
+          AND CASE higher.quality_tier
+            WHEN 'champion' THEN 3
+            WHEN 'contender' THEN 2
+            ELSE 1
+          END > CASE s.quality_tier
+            WHEN 'champion' THEN 3
+            WHEN 'contender' THEN 2
+            ELSE 1
+          END
+      )`;
   return `(
     SELECT COUNT(DISTINCT s.animation_name)
     FROM sprites s
     WHERE s.fighter_id = ${fighterAlias}.id
       AND s.animation_name IN (${PLAYABLE_ANIMATION_SQL_LIST})
+      AND length(s.content_hash) = 64
+      AND s.content_hash NOT GLOB '*[^0-9A-Fa-f]*'
+      AND typeof(s.frame_w) = 'integer'
+      AND s.frame_w BETWEEN 1 AND ${MAX_SPRITE_FRAME_DIMENSION}
+      AND typeof(s.frame_h) = 'integer'
+      AND s.frame_h BETWEEN 1 AND ${MAX_SPRITE_FRAME_DIMENSION}
+      AND typeof(s.frame_count) = 'integer'
+      AND s.frame_count BETWEEN 1 AND ${MAX_SPRITE_FRAME_COUNT}
       ${tierCondition}
   ) = ${PLAYABLE_ANIMATION_COUNT}`;
 }
@@ -354,6 +402,14 @@ function serializeSprite(
   sprite: SpriteAsset | SpriteVersion,
   includeContentHashes = false,
 ) {
+  const hasKnownHighDensityRaw = Boolean(sprite.raw_blob_key) &&
+    normalizeSpriteAnimationFormat(sprite.animation_format) === 'video-dense-v1';
+  const rawFrameCount = hasKnownHighDensityRaw &&
+    normalizeSpriteAnimationFormat(sprite.animation_format) === 'video-dense-v1' &&
+    VIDEO_DENSE_PING_PONG_ANIMATIONS.has(sprite.animation_name) &&
+    sprite.frame_count % 2 === 1
+    ? (sprite.frame_count + 1) / 2
+    : hasKnownHighDensityRaw ? sprite.frame_count : null;
   const serialized = {
     id: sprite.id,
     animationName: sprite.animation_name,
@@ -363,6 +419,10 @@ function serializeSprite(
     frameWidth: sprite.frame_w,
     frameHeight: sprite.frame_h,
     frameCount: sprite.frame_count,
+    rawFrameWidth: hasKnownHighDensityRaw ? HIGH_DENSITY_SPRITE_FRAME_WIDTH : null,
+    rawFrameHeight: hasKnownHighDensityRaw ? HIGH_DENSITY_SPRITE_FRAME_HEIGHT : null,
+    rawFrameCount,
+    animationFormat: normalizeSpriteAnimationFormat(sprite.animation_format),
     processingVersion: sprite.processing_version,
     createdAt: sprite.created_at,
   };
@@ -453,8 +513,15 @@ function serializeCommunityFighter(
     },
     sprites: sprites.map((sprite) => ({
       ...serializeSprite(request, sprite),
+      // Processed bytes are already public through this URL. Publishing their
+      // digest gives clients an immutable cache identity without exposing the
+      // private archival/raw asset or its digest.
+      contentHash: sprite.content_hash,
       url: publicSpriteAssetUrl(request, fighter.id, sprite),
       rawUrl: null,
+      rawFrameWidth: null,
+      rawFrameHeight: null,
+      rawFrameCount: null,
     })),
     owner: {
       name: 'Player',
@@ -467,8 +534,31 @@ function serializeArcadeFighter(
   fighter: ArcadeFighterRow,
   sprites: SpriteAsset[] = [],
 ) {
+  const serialized = serializeCommunityFighter(request, fighter, sprites);
+  const spriteById = new Map(sprites.map((sprite) => [sprite.id, sprite]));
   return {
-    ...serializeCommunityFighter(request, fighter, sprites),
+    ...serialized,
+    sprites: serialized.sprites.map((sprite) => {
+      const source = spriteById.get(sprite.id);
+      const highDensity = source
+        ? serializeSprite(request, source)
+        : null;
+      const hasPublicHighDensityAsset = Boolean(
+        source && highDensity?.rawFrameWidth && highDensity.rawFrameHeight && highDensity.rawFrameCount,
+      );
+      return {
+        ...sprite,
+        // video-dense RAW rows are compiler-normalized, alpha-cleaned and reviewed.
+        // Publish them only as an Arcade gameplay derivative; rawUrl and raw
+        // metadata remain private on every public fighter payload.
+        hqUrl: source && hasPublicHighDensityAsset
+          ? publicArcadeSpriteHighDensityAssetUrl(request, fighter.id, source)
+          : null,
+        hqFrameWidth: highDensity?.rawFrameWidth ?? null,
+        hqFrameHeight: highDensity?.rawFrameHeight ?? null,
+        hqFrameCount: highDensity?.rawFrameCount ?? null,
+      };
+    }),
     arcade: {
       slug: fighter.arcade_slug,
       rank: fighter.arcade_sort_order,
@@ -534,6 +624,18 @@ async function getOwnedFighter(env: Env, fighterId: string, userId: string): Pro
   return env.DB.prepare(
     'SELECT * FROM fighters WHERE id = ? AND owner_user_id = ?'
   ).bind(fighterId, userId).first<Fighter>();
+}
+
+async function isActiveArcadeFighter(env: Env, fighterId: string): Promise<boolean> {
+  return Boolean(await env.DB.prepare(`
+    SELECT 1 FROM arcade_fighters WHERE fighter_id = ? AND status = 'active' LIMIT 1
+  `).bind(fighterId).first());
+}
+
+function activeArcadeMutationFailure(): Response {
+  return json({
+    error: 'Active Arcade globals can only change through a sealed reviewed transition',
+  }, 409, NO_STORE_HEADERS);
 }
 
 async function getOwnedFighterByPhotoHash(env: Env, userId: string, photoHash: string): Promise<Fighter | null> {
@@ -626,7 +728,13 @@ export function tiersResponse(): Response {
 
 export async function listFighters(request: Request, env: Env, auth: AuthContext): Promise<Response> {
   const { results } = await env.DB.prepare(
-    'SELECT * FROM fighters WHERE owner_user_id = ? ORDER BY updated_at DESC'
+    `SELECT f.*
+     FROM fighters f
+     WHERE f.owner_user_id = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+       )
+     ORDER BY f.updated_at DESC`
   ).bind(auth.userId).all<Fighter>();
   const fighters = results ?? [];
   const fighterIds = fighters.map((fighter) => fighter.id);
@@ -649,6 +757,9 @@ export async function listCommunityFighters(request: Request, env: Env): Promise
     SELECT f.*
     FROM fighters f
     WHERE f.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
       AND ${playableSpriteSetSql('f')}
     ORDER BY f.updated_at DESC
     LIMIT ?
@@ -666,7 +777,29 @@ export async function listCommunityFighters(request: Request, env: Env): Promise
   }, 200, PUBLIC_COMMUNITY_CACHE_HEADERS);
 }
 
+export async function listOwnedCommunityFighterIds(
+  env: Env,
+  auth: AuthContext,
+): Promise<Response> {
+  const { results } = await env.DB.prepare(`
+    SELECT DISTINCT source.id
+    FROM fighters source
+    JOIN fighters owned
+      ON owned.photo_hash = source.photo_hash
+     AND owned.owner_user_id = ?
+    WHERE source.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = source.id
+      )
+      AND ${playableSpriteSetSql('source')}
+    ORDER BY source.id ASC
+  `).bind(auth.userId).all<{ id: string }>();
+  return json({ fighterIds: (results ?? []).map(({ id }) => id) }, 200, NO_STORE_HEADERS);
+}
+
 export async function listArcadeFighters(request: Request, env: Env): Promise<Response> {
+  // Arcade globals can change through reviewed promote/rollback operations. Keep
+  // the roster uncached across colos; each sprite URL remains content-addressed.
   const { results } = await env.DB.prepare(arcadeFighterSelectSql(
     `WHERE af.status = 'active'
       AND f.public_flag = 1
@@ -689,7 +822,7 @@ export async function listArcadeFighters(request: Request, env: Env): Promise<Re
       fighter,
       spritesByFighter.get(fighter.id) ?? [],
     )),
-  }, 200, PUBLIC_COMMUNITY_CACHE_HEADERS);
+  }, 200, NO_STORE_HEADERS);
 }
 
 export async function listAdminArcadeFighters(env: Env, auth: AuthContext): Promise<Response> {
@@ -788,6 +921,24 @@ export async function upsertAdminArcadeFighter(
   if (status !== 'retired' && generationPrompt.length < MIN_ARCADE_GENERATION_PROMPT_CHARS) {
     return json({ error: 'A detailed private Arcade generation prompt is required' }, 400, NO_STORE_HEADERS);
   }
+  if (status === 'active' && existing?.status !== 'active') {
+    const reviewedVideoRun = await env.DB.prepare(`
+      SELECT 1 AS present
+      FROM generation_artifact_runs
+      WHERE fighter_id = ? AND user_id = ? AND creation_flow = 'video'
+        AND CASE
+          WHEN json_valid(source_manifest_json)
+          THEN json_extract(source_manifest_json, '$.reviewedCanonicalSources.mode')
+          ELSE NULL
+        END = 'reviewed-current-v1'
+      LIMIT 1
+    `).bind(fighterId, auth.userId).first<{ present: number }>();
+    if (reviewedVideoRun) {
+      return json({
+        error: 'Reviewed Video fighters must use the dedicated reviewed activation endpoint',
+      }, 409, NO_STORE_HEADERS);
+    }
+  }
   if (status === 'active') {
     const assetIntegrity = fighter.quality_tier === 'champion'
       ? await inspectArcadeAssetIntegrity(env, fighterId)
@@ -864,6 +1015,9 @@ export async function getCommunityFighter(
     FROM fighters f
     WHERE f.id = ?
       AND f.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
       AND ${playableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId).first<Fighter>();
@@ -904,9 +1058,12 @@ export async function reportCommunityFighter(
   if (details instanceof Response) return details;
 
   const fighter = await env.DB.prepare(`
-    SELECT id, owner_user_id, name
-    FROM fighters
-    WHERE id = ? AND public_flag = 1
+    SELECT f.id, f.owner_user_id, f.name
+    FROM fighters f
+    WHERE f.id = ? AND f.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
     LIMIT 1
   `).bind(fighterId).first<Pick<Fighter, 'id' | 'owner_user_id' | 'name'>>();
   if (!fighter) return json({ error: 'Public fighter not found' }, 404, NO_STORE_HEADERS);
@@ -974,6 +1131,9 @@ export async function shareCommunityFighterPage(
     SELECT f.*
     FROM fighters f
     WHERE f.id = ? AND f.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
       AND ${playableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId).first<Fighter>();
@@ -1310,6 +1470,11 @@ function upsertCurrentSpriteFromVersionStatement(
   qualityTier: QualityTier,
   contentHash: string,
   rawContentHash: string | null,
+  animationFormat: SpriteAnimationFormat,
+  frameWidth: number,
+  frameHeight: number,
+  frameCount: number,
+  processingVersion: number,
 ): D1PreparedStatement {
   return env.DB.prepare(`
     INSERT INTO sprites (
@@ -1324,16 +1489,20 @@ function upsertCurrentSpriteFromVersionStatement(
       frame_w,
       frame_h,
       frame_count,
+      animation_format,
       processing_version
     )
     SELECT ?, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
-      content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
+      content_hash, raw_content_hash, frame_w, frame_h, frame_count, animation_format,
+      processing_version
     FROM sprite_versions
     WHERE fighter_id = ?
       AND animation_name = ?
       AND quality_tier = ?
       AND content_hash = ?
       AND COALESCE(raw_content_hash, '') = COALESCE(?, '')
+      AND animation_format = ?
+      AND frame_w = ? AND frame_h = ? AND frame_count = ? AND processing_version = ?
     ORDER BY created_at DESC
     LIMIT 1
     ON CONFLICT(fighter_id, animation_name, quality_tier) DO UPDATE SET
@@ -1344,6 +1513,7 @@ function upsertCurrentSpriteFromVersionStatement(
       frame_w = excluded.frame_w,
       frame_h = excluded.frame_h,
       frame_count = excluded.frame_count,
+      animation_format = excluded.animation_format,
       processing_version = excluded.processing_version,
       created_at = datetime('now')
   `).bind(
@@ -1353,6 +1523,11 @@ function upsertCurrentSpriteFromVersionStatement(
     qualityTier,
     contentHash,
     rawContentHash,
+    animationFormat,
+    frameWidth,
+    frameHeight,
+    frameCount,
+    processingVersion,
   );
 }
 
@@ -1377,8 +1552,8 @@ export async function copyCommunitySpritesToFighter(
     try {
       await env.DB.batch([
         env.DB.prepare(`
-          INSERT INTO sprite_versions (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version)
-          VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)
+          INSERT INTO sprite_versions (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, animation_format, processing_version)
+          VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)
         `).bind(
           versionId,
           targetFighterId,
@@ -1388,11 +1563,12 @@ export async function copyCommunitySpritesToFighter(
           sprite.frame_w,
           sprite.frame_h,
           sprite.frame_count,
+          normalizeSpriteAnimationFormat(sprite.animation_format),
           sprite.processing_version,
         ),
         env.DB.prepare(`
-          INSERT INTO sprites (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version)
-          VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)
+          INSERT INTO sprites (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, animation_format, processing_version)
+          VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?)
           ON CONFLICT(fighter_id, animation_name, quality_tier) DO NOTHING
         `).bind(
           generateId(),
@@ -1403,6 +1579,7 @@ export async function copyCommunitySpritesToFighter(
           sprite.frame_w,
           sprite.frame_h,
           sprite.frame_count,
+          normalizeSpriteAnimationFormat(sprite.animation_format),
           sprite.processing_version,
         ),
       ]);
@@ -1423,6 +1600,9 @@ export async function cloneCommunityFighter(
     SELECT * FROM fighters f
     WHERE f.id = ?
       AND f.public_flag = 1
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
       AND ${playableSpriteSetSql('f')}
     LIMIT 1
   `
@@ -1530,6 +1710,7 @@ export async function uploadFighterSource(
 ): Promise<Response> {
   const fighter = await getOwnedFighter(env, fighterId, auth.userId);
   if (!fighter) return json({ error: 'Fighter not found' }, 404);
+  if (await isActiveArcadeFighter(env, fighterId)) return activeArcadeMutationFailure();
 
   const formData = await readMultipartFormData(request, MAX_SOURCE_MULTIPART_BODY_BYTES);
   const kind = formData.get('kind');
@@ -1627,6 +1808,7 @@ export async function uploadFighterSprite(
   const frameWidth = Number(formData.get('frameWidth') ?? 0);
   const frameHeight = Number(formData.get('frameHeight') ?? 0);
   const frameCount = Number(formData.get('frameCount') ?? 0);
+  const animationFormatValue = formData.get('animationFormat');
   const processingVersion = Number(formData.get('processingVersion') ?? 0);
   const setCurrentValue = formData.get('setCurrent');
   if (
@@ -1636,6 +1818,17 @@ export async function uploadFighterSprite(
     return json({ error: 'setCurrent must be true or false' }, 400);
   }
   const setCurrent = setCurrentValue !== 'false';
+  if (setCurrent && await isActiveArcadeFighter(env, fighterId)) {
+    return activeArcadeMutationFailure();
+  }
+  const animationFormat = animationFormatValue === null || animationFormatValue === ''
+    ? normalizeSpriteAnimationFormat(undefined)
+    : typeof animationFormatValue === 'string' && isSpriteAnimationFormat(animationFormatValue)
+      ? animationFormatValue
+      : null;
+  if (!animationFormat) {
+    return json({ error: 'Invalid animationFormat' }, 400);
+  }
   if (!Number.isFinite(frameWidth) || !Number.isFinite(frameHeight) || !Number.isFinite(frameCount)) {
     return json({ error: 'Invalid frame metadata' }, 400);
   }
@@ -1688,6 +1881,8 @@ export async function uploadFighterSprite(
       AND quality_tier = ?
       AND content_hash = ?
       AND COALESCE(raw_content_hash, '') = COALESCE(?, '')
+      AND animation_format = ?
+      AND frame_w = ? AND frame_h = ? AND frame_count = ? AND processing_version = ?
     ORDER BY created_at DESC
     LIMIT 1
   `).bind(
@@ -1696,6 +1891,11 @@ export async function uploadFighterSprite(
     qualityTier,
     contentHash,
     rawContentHash,
+    animationFormat,
+    roundedFrameWidth,
+    roundedFrameHeight,
+    roundedFrameCount,
+    roundedProcessingVersion,
   ).first<SpriteVersion>();
 
   if (duplicateVersion) {
@@ -1720,6 +1920,11 @@ export async function uploadFighterSprite(
           qualityTier,
           contentHash,
           rawContentHash,
+          animationFormat,
+          roundedFrameWidth,
+          roundedFrameHeight,
+          roundedFrameCount,
+          roundedProcessingVersion,
         ),
         env.DB.prepare(
           'UPDATE fighters SET quality_tier = ?, updated_at = datetime(\'now\') WHERE id = ? AND owner_user_id = ?'
@@ -1757,8 +1962,8 @@ export async function uploadFighterSprite(
   try {
     const statements = [
       env.DB.prepare(`
-        INSERT OR IGNORE INTO sprite_versions (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT OR IGNORE INTO sprite_versions (id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, content_hash, raw_content_hash, frame_w, frame_h, frame_count, animation_format, processing_version)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         versionId,
         fighterId,
@@ -1771,6 +1976,7 @@ export async function uploadFighterSprite(
         roundedFrameWidth,
         roundedFrameHeight,
         roundedFrameCount,
+        animationFormat,
         roundedProcessingVersion,
       ),
     ];
@@ -1782,6 +1988,11 @@ export async function uploadFighterSprite(
         qualityTier,
         contentHash,
         rawContentHash,
+        animationFormat,
+        roundedFrameWidth,
+        roundedFrameHeight,
+        roundedFrameCount,
+        roundedProcessingVersion,
       ));
       statements.push(env.DB.prepare(
         'UPDATE fighters SET quality_tier = ?, updated_at = datetime(\'now\') WHERE id = ? AND owner_user_id = ?'
@@ -1812,12 +2023,18 @@ export async function promoteFighterSpriteVersion(
 ): Promise<Response> {
   const fighter = await getOwnedFighter(env, fighterId, auth.userId);
   if (!fighter) return json({ error: 'Fighter not found' }, 404);
+  if (await isActiveArcadeFighter(env, fighterId)) return activeArcadeMutationFailure();
 
   const body = await readJsonBody<{
     animationName?: string;
     qualityTier?: QualityTier;
     contentHash?: string;
     rawContentHash?: string | null;
+    animationFormat?: SpriteAnimationFormat;
+    frameWidth?: number;
+    frameHeight?: number;
+    frameCount?: number;
+    processingVersion?: number;
   }>(request, MAX_FIGHTER_JSON_BODY_BYTES);
   const animationName = body.animationName?.trim() ?? '';
   if (!/^[a-z0-9_-]{1,64}$/i.test(animationName)) {
@@ -1836,24 +2053,59 @@ export async function promoteFighterSpriteVersion(
   if (rawContentHash !== null && !/^[a-f0-9]{64}$/.test(rawContentHash)) {
     return json({ error: 'Invalid rawContentHash' }, 400);
   }
+  const hasExplicitAnimationFormat = body.animationFormat !== undefined;
+  const animationFormat = hasExplicitAnimationFormat && isSpriteAnimationFormat(body.animationFormat)
+    ? body.animationFormat
+    : null;
+  if (hasExplicitAnimationFormat && !animationFormat) {
+    return json({ error: 'Invalid animationFormat' }, 400);
+  }
 
-  const version = await env.DB.prepare(`
+  const metadataValues = [body.frameWidth, body.frameHeight, body.frameCount, body.processingVersion];
+  const hasInterpretationMetadata = metadataValues.every((value) => value !== undefined);
+  if (
+    metadataValues.some((value) => value !== undefined) && !hasInterpretationMetadata ||
+    hasInterpretationMetadata && (
+      metadataValues.some((value) => !Number.isInteger(value)) ||
+      body.frameWidth! < 1 || body.frameWidth! > MAX_SPRITE_FRAME_DIMENSION ||
+      body.frameHeight! < 1 || body.frameHeight! > MAX_SPRITE_FRAME_DIMENSION ||
+      body.frameCount! < 1 || body.frameCount! > MAX_SPRITE_FRAME_COUNT ||
+      body.processingVersion! < 0 || body.processingVersion! > MAX_PROCESSING_VERSION
+    )
+  ) {
+    return json({ error: 'Invalid frame metadata' }, 400);
+  }
+
+  const { results: matchingVersions } = await env.DB.prepare(`
     SELECT * FROM sprite_versions
     WHERE fighter_id = ?
       AND animation_name = ?
       AND quality_tier = ?
       AND content_hash = ?
       AND COALESCE(raw_content_hash, '') = COALESCE(?, '')
+      ${hasExplicitAnimationFormat ? 'AND animation_format = ?' : ''}
+      ${hasInterpretationMetadata
+        ? 'AND frame_w = ? AND frame_h = ? AND frame_count = ? AND processing_version = ?'
+        : ''}
     ORDER BY created_at DESC
-    LIMIT 1
+    LIMIT 2
   `).bind(
     fighterId,
     animationName,
     body.qualityTier,
     contentHash,
     rawContentHash,
-  ).first<SpriteVersion>();
+    ...(hasExplicitAnimationFormat ? [animationFormat] : []),
+    ...(hasInterpretationMetadata ? metadataValues : []),
+  ).all<SpriteVersion>();
+  if (matchingVersions.length > 1) {
+    return json({
+      error: 'Sprite version selection is ambiguous; include animationFormat and frame metadata',
+    }, 409);
+  }
+  const version = matchingVersions[0];
   if (!version) return json({ error: 'Sprite version not found' }, 404);
+  const selectedAnimationFormat = normalizeSpriteAnimationFormat(version.animation_format);
 
   const [processedObject, rawObject] = await Promise.all([
     env.SPRITES.head(version.blob_key),
@@ -1871,6 +2123,11 @@ export async function promoteFighterSpriteVersion(
       body.qualityTier,
       contentHash,
       rawContentHash,
+      selectedAnimationFormat,
+      version.frame_w,
+      version.frame_h,
+      version.frame_count,
+      version.processing_version,
     ),
     env.DB.prepare(
       'UPDATE fighters SET quality_tier = ?, updated_at = datetime(\'now\') WHERE id = ? AND owner_user_id = ?'
@@ -1963,6 +2220,174 @@ export async function getPublicFighterSourceAsset(
   return publicAssetResponse(env, fighter.blob_key);
 }
 
+/**
+ * Online versus: the opponent's fighter for one room. Same privacy shape as
+ * the community manifest (clean sources + playable sprites only, neutral
+ * owner label, no photo hash, RAW, or ids) but the asset URLs are room
+ * routes that require an authenticated seat — a private fighter is shared
+ * with exactly the person you chose to fight, for as long as the room lives.
+ */
+export async function loadVersusRoomFighterManifest(
+  request: Request,
+  env: Env,
+  roomCode: string,
+  fighterId: string,
+): Promise<Record<string, unknown> | null> {
+  const fighter = await env.DB.prepare(`
+    SELECT f.*
+    FROM fighters f
+    WHERE f.id = ? AND ${playableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId).first<Fighter>();
+  if (!fighter) return null;
+  const sprites = await getSpritesForFighters(env, [fighterId]);
+  const origin = new URL(request.url).origin;
+  const roomBase = `${origin}/api/versus/rooms/${encodeURIComponent(roomCode)}/fighters/${encodeURIComponent(fighter.id)}`;
+  const sourceUrl = (kind: PublicSourceKind, key: string | null): string | null => {
+    const revision = publicAssetRevision(key);
+    return revision ? `${roomBase}/sources/${kind}/${encodeURIComponent(revision)}` : null;
+  };
+  const community = serializeCommunityFighter(request, fighter, sprites);
+  return {
+    ...community,
+    sources: {
+      original: null,
+      side: sourceUrl('side', fighter.side_view_blob_key),
+      sideRaw: null,
+      upright: sourceUrl('upright', fighter.upright_view_blob_key),
+      uprightRaw: null,
+      crouch: sourceUrl('crouch', fighter.crouch_view_blob_key),
+      crouchRaw: null,
+    },
+    sprites: sprites.map((sprite) => {
+      const revision = publicAssetRevision(sprite.blob_key);
+      return {
+        ...serializeSprite(request, sprite),
+        contentHash: sprite.content_hash,
+        url: revision ? `${roomBase}/sprites/${encodeURIComponent(sprite.id)}/${encodeURIComponent(revision)}` : null,
+        rawUrl: null,
+        rawFrameWidth: null,
+        rawFrameHeight: null,
+        rawFrameCount: null,
+      };
+    }),
+  };
+}
+
+export interface VersusInviteFighterSnapshot {
+  fighterId: string;
+  fighterName: string;
+  qualityTier: QualityTier;
+  sourceKind: 'side' | 'upright' | 'crouch' | 'idle';
+  sourceBlobKey: string;
+}
+
+/**
+ * Freeze the clean visual used by a versus invitation. The caller performs
+ * authorization first; this helper only guarantees that the fighter remains
+ * playable and selects a stable R2 object for the public composite image.
+ */
+export async function loadVersusInviteFighterSnapshot(
+  env: Env,
+  fighterId: string,
+): Promise<VersusInviteFighterSnapshot | null> {
+  const fighter = await env.DB.prepare(`
+    SELECT f.*
+    FROM fighters f
+    WHERE f.id = ? AND ${playableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId).first<Fighter>();
+  if (!fighter) return null;
+
+  const source = (
+    [
+      ['side', fighter.side_view_blob_key],
+      ['upright', fighter.upright_view_blob_key],
+      ['crouch', fighter.crouch_view_blob_key],
+    ] as const
+  ).find((entry): entry is readonly ['side' | 'upright' | 'crouch', string] => Boolean(entry[1]));
+
+  if (source) {
+    return {
+      fighterId: fighter.id,
+      fighterName: normalizeFighterName(fighter.name, 'Fighter'),
+      qualityTier: fighter.quality_tier,
+      sourceKind: source[0],
+      sourceBlobKey: source[1],
+    };
+  }
+
+  const idle = await env.DB.prepare(`
+    SELECT s.blob_key
+    FROM sprites s
+    WHERE s.fighter_id = ? AND s.animation_name = 'idle'
+    ORDER BY CASE s.quality_tier
+      WHEN 'champion' THEN 3 WHEN 'contender' THEN 2 ELSE 1 END DESC,
+      s.created_at DESC
+    LIMIT 1
+  `).bind(fighter.id).first<{ blob_key: string }>();
+  if (!idle?.blob_key) return null;
+  return {
+    fighterId: fighter.id,
+    fighterName: normalizeFighterName(fighter.name, 'Fighter'),
+    qualityTier: fighter.quality_tier,
+    sourceKind: 'idle',
+    sourceBlobKey: idle.blob_key,
+  };
+}
+
+/** Clean playable sprite bytes for a fighter declared in a room (seat already verified). */
+export async function getVersusRoomFighterSpriteAsset(
+  env: Env,
+  fighterId: string,
+  spriteId: string,
+  revision: string,
+): Promise<Response> {
+  const sprite = await env.DB.prepare(`
+    SELECT s.blob_key
+    FROM sprites s
+    JOIN fighters f ON f.id = s.fighter_id
+    WHERE f.id = ? AND s.id = ?
+      AND ${playableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId, spriteId).first<{ blob_key: string }>();
+  if (!sprite?.blob_key || publicAssetRevision(sprite.blob_key) !== revision) {
+    return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  }
+  return privateAssetResponse(env, sprite.blob_key);
+}
+
+/** Clean (non-RAW) source view for a fighter declared in a room (seat already verified). */
+export async function getVersusRoomFighterSourceAsset(
+  env: Env,
+  fighterId: string,
+  kind: PublicSourceKind,
+  revision: string,
+): Promise<Response> {
+  const column = PUBLIC_SOURCE_COLUMNS[kind];
+  if (!column) return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  const fighter = await env.DB.prepare(`
+    SELECT f.${column} AS blob_key
+    FROM fighters f
+    WHERE f.id = ? AND ${playableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId).first<{ blob_key: string | null }>();
+  if (!fighter?.blob_key || publicAssetRevision(fighter.blob_key) !== revision) {
+    return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  }
+  return privateAssetResponse(env, fighter.blob_key);
+}
+
+async function privateAssetResponse(env: Env, blobKey: string): Promise<Response> {
+  const object = await env.SPRITES.get(blobKey);
+  if (!object) return json({ error: 'Asset missing' }, 404, NO_STORE_HEADERS);
+  const headers = new Headers();
+  headers.set('Content-Type', object.httpMetadata?.contentType ?? 'application/octet-stream');
+  headers.set('Cache-Control', 'private, no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  return new Response(object.body, { headers });
+}
+
 export async function getPublicFighterSpriteAsset(
   env: Env,
   fighterId: string,
@@ -1981,4 +2406,27 @@ export async function getPublicFighterSpriteAsset(
     return json({ error: 'Public asset not found' }, 404, NO_STORE_HEADERS);
   }
   return publicAssetResponse(env, sprite.blob_key);
+}
+
+export async function getPublicArcadeSpriteHighDensityAsset(
+  env: Env,
+  fighterId: string,
+  spriteId: string,
+  revision: string,
+): Promise<Response> {
+  const sprite = await env.DB.prepare(`
+    SELECT s.raw_blob_key
+    FROM sprites s
+    JOIN fighters f ON f.id = s.fighter_id
+    JOIN arcade_fighters af ON af.fighter_id = f.id
+    WHERE f.id = ? AND f.public_flag = 1 AND f.quality_tier = 'champion'
+      AND af.status = 'active' AND s.id = ? AND s.quality_tier = 'champion'
+      AND s.animation_format = 'video-dense-v1'
+      AND ${playableSpriteSetSql('f', 'champion')}
+    LIMIT 1
+  `).bind(fighterId, spriteId).first<{ raw_blob_key: string | null }>();
+  if (!sprite?.raw_blob_key || publicAssetRevision(sprite.raw_blob_key) !== revision) {
+    return json({ error: 'Public asset not found' }, 404, NO_STORE_HEADERS);
+  }
+  return publicAssetResponse(env, sprite.raw_blob_key);
 }

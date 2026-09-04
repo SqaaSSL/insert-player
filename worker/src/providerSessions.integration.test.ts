@@ -1,12 +1,14 @@
 import { Miniflare } from 'miniflare';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createProviderRequestState,
   finalizeProviderRequest,
   PROVIDER_SESSION_HEADER,
   requireProviderSession,
+  requireUnmeteredProviderSession,
 } from './providerSessions';
 import { createBoundedByteStream } from './streamLimits';
+import { buildGeminiProxyTarget, pixcliUpstreamHeaders, proxyRequest } from './proxy';
 import type { Env, PublicAuthContext } from './types';
 
 const USER_ID = 'user-provider-cache';
@@ -20,6 +22,14 @@ const PROVIDER_KEY_HEADER = 'X-Insert-Player-Provider-Request-Key';
 const ROUTE = {
   provider: 'gemini' as const,
   path: '/proxy/gemini/v1beta/models/gemini-3.1-flash-image:generateContent',
+};
+const PIXCLI_UPLOAD_ROUTE = {
+  provider: 'pixcli' as const,
+  path: '/proxy/pixcli/api/v1/uploads',
+};
+const PIXCLI_SUBMIT_ROUTE = {
+  provider: 'pixcli' as const,
+  path: '/proxy/pixcli/api/v1/video/advanced',
 };
 
 const SCHEMA = `
@@ -38,6 +48,7 @@ const SCHEMA = `
     rate_limit_key TEXT NOT NULL,
     tier TEXT NOT NULL,
     purpose TEXT NOT NULL,
+    creation_flow TEXT NOT NULL DEFAULT 'original',
     charge_id TEXT,
     status TEXT NOT NULL,
     provider_calls_used INTEGER NOT NULL DEFAULT 0,
@@ -77,6 +88,12 @@ const SCHEMA = `
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(artifact_run_id, provider, method, request_path, request_hash)
   );
+  CREATE UNIQUE INDEX idx_provider_request_cache_pixcli_dispatch
+    ON provider_request_cache(artifact_run_id, request_path, request_key)
+    WHERE provider = 'pixcli'
+      AND method = 'POST'
+      AND request_path = '/proxy/pixcli/api/v1/video/advanced'
+      AND request_key IS NOT NULL;
   CREATE TABLE provider_spend_months (
     period TEXT PRIMARY KEY,
     estimated_cost_cents INTEGER NOT NULL DEFAULT 0,
@@ -93,7 +110,7 @@ const SCHEMA = `
     billing_operation TEXT,
     provider TEXT NOT NULL,
     model_path TEXT NOT NULL,
-    estimated_cost_cents INTEGER NOT NULL,
+    estimated_cost_cents INTEGER NOT NULL CHECK (estimated_cost_cents >= 0),
     outcome TEXT NOT NULL DEFAULT 'reserved',
     http_status INTEGER,
     job_id TEXT,
@@ -195,6 +212,25 @@ function providerRequest(
   });
 }
 
+function pixcliRequest(
+  route: typeof PIXCLI_UPLOAD_ROUTE | typeof PIXCLI_SUBMIT_ROUTE,
+  body: string,
+  options: { boundary?: string; requestKey?: string } = {},
+): Request {
+  const boundary = options.boundary ?? 'insert-player-fixed-boundary';
+  return new Request(`https://api.insertplayer.ai${route.path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': route === PIXCLI_UPLOAD_ROUTE
+        ? `multipart/form-data; boundary=${boundary}`
+        : 'application/json',
+      [PROVIDER_SESSION_HEADER]: SESSION_ID,
+      [PROVIDER_KEY_HEADER]: options.requestKey ?? `run:${JOB_ID}:sprite:high_kick`,
+    },
+    body,
+  });
+}
+
 async function usage(
   db: D1Database,
   sessionId = SESSION_ID,
@@ -213,7 +249,443 @@ async function chargeStatus(db: D1Database): Promise<string | null> {
     .bind(CHARGE_ID).first<{ status: string }>())?.status ?? null;
 }
 
+async function enableVideoCreationFlow(db: D1Database): Promise<void> {
+  await db.prepare(`
+    UPDATE provider_sessions SET creation_flow = 'video' WHERE id = ?
+  `).bind(SESSION_ID).run();
+}
+
+function interceptBatches(
+  env: Env,
+  intercept: (attempt: number, run: () => Promise<D1Result[]>) => Promise<D1Result[]>,
+): () => number {
+  const database = env.DB;
+  const batch = database.batch.bind(database);
+  let attempts = 0;
+  env.DB = new Proxy(database, {
+    get(target, property) {
+      if (property === 'batch') {
+        return (statements: D1PreparedStatement[]) => {
+          attempts += 1;
+          return intercept(attempts, () => batch(statements));
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return () => attempts;
+}
+
 describe('durable provider request cache against D1 and R2', () => {
+  it('keeps PixCLI unreachable from original-flow generation tokens', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const response = await requireProviderSession(
+        pixcliRequest(PIXCLI_SUBMIT_ROUTE, '{"model":"grok-imagine-i2v-pinned"}'),
+        env,
+        auth,
+        PIXCLI_SUBMIT_ROUTE,
+        createProviderRequestState(),
+      );
+
+      expect(response?.status).toBe(403);
+      const forgedMismatch = await requireProviderSession(
+        pixcliRequest(PIXCLI_SUBMIT_ROUTE, '{"model":"grok-imagine-i2v-pinned"}'),
+        env,
+        { ...auth, claims: { ...auth.claims, generation_creation_flow: 'video' } },
+        PIXCLI_SUBMIT_ROUTE,
+        createProviderRequestState(),
+      );
+      expect(forgedMismatch?.status).toBe(403);
+      expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 0 });
+      expect(await chargeStatus(db)).toBe('reserved');
+      expect((await db.prepare('SELECT COUNT(*) AS count FROM provider_request_cache')
+        .first<{ count: number }>())?.count).toBe(0);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('caches a PixCLI upload without consuming spend or committing the charge', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      await enableVideoCreationFlow(db);
+      const videoAuth: PublicAuthContext = {
+        ...auth,
+        claims: { ...auth.claims, generation_creation_flow: 'video' },
+      };
+      const body = [
+        '--insert-player-fixed-boundary',
+        'Content-Disposition: form-data; name="file"; filename="canonical.png"',
+        'Content-Type: image/png',
+        '',
+        'deterministic-png-bytes',
+        '--insert-player-fixed-boundary--',
+      ].join('\r\n');
+      const state = createProviderRequestState();
+      expect(await requireUnmeteredProviderSession(
+        pixcliRequest(PIXCLI_UPLOAD_ROUTE, body),
+        env,
+        videoAuth,
+        PIXCLI_UPLOAD_ROUTE,
+        state,
+      )).toBeNull();
+      expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 0 });
+      expect(await chargeStatus(db)).toBe('reserved');
+
+      const delivered = await finalizeProviderRequest(
+        env,
+        Response.json({ hash: 'a'.repeat(32) }, { status: 201 }),
+        state,
+      );
+      expect(delivered.status).toBe(201);
+      expect(delivered.headers.get('X-Insert-Player-Provider-Cache')).toBe('stored');
+
+      const replay = await requireUnmeteredProviderSession(
+        pixcliRequest(PIXCLI_UPLOAD_ROUTE, body),
+        env,
+        videoAuth,
+        PIXCLI_UPLOAD_ROUTE,
+        createProviderRequestState(),
+      );
+      expect(replay?.status).toBe(201);
+      expect(replay?.headers.get('X-Insert-Player-Provider-Cache')).toBe('hit');
+      expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 0 });
+      expect(await db.prepare(`
+        SELECT provider, request_path, status FROM provider_request_cache
+      `).first()).toEqual({
+        provider: 'pixcli',
+        request_path: PIXCLI_UPLOAD_ROUTE.path,
+        status: 'succeeded',
+      });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('never permits a PixCLI model submission through unmetered accounting', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const response = await requireUnmeteredProviderSession(
+        pixcliRequest(PIXCLI_SUBMIT_ROUTE, '{"model":"grok-imagine-i2v-pinned"}'),
+        env,
+        { ...auth, claims: { ...auth.claims, generation_creation_flow: 'video' } },
+        PIXCLI_SUBMIT_ROUTE,
+        createProviderRequestState(),
+      );
+
+      expect(response?.status).toBe(403);
+      expect(await response?.json()).toMatchObject({
+        error: 'Provider route cannot bypass paid-call accounting',
+      });
+      expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 0 });
+      expect(await chargeStatus(db)).toBe('reserved');
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('reserves exactly 33 cents for one PixCLI video submission', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      await enableVideoCreationFlow(db);
+      const state = createProviderRequestState();
+      expect(await requireProviderSession(
+        pixcliRequest(PIXCLI_SUBMIT_ROUTE, JSON.stringify({
+          model: 'grok-imagine-i2v-pinned',
+          image: 'a'.repeat(32),
+        })),
+        env,
+        { ...auth, claims: { ...auth.claims, generation_creation_flow: 'video' } },
+        PIXCLI_SUBMIT_ROUTE,
+        state,
+      )).toBeNull();
+
+      expect(await usage(db)).toEqual({ calls: 1, cost: 33, events: 1 });
+      expect(await chargeStatus(db)).toBe('committed');
+      expect(await db.prepare(`
+        SELECT provider, estimated_cost_cents, call_kind, stage
+        FROM provider_cost_events
+      `).first()).toEqual({
+        provider: 'pixcli',
+        estimated_cost_cents: 33,
+        call_kind: 'video_generation',
+        stage: 'sprite:high_kick',
+      });
+      await finalizeProviderRequest(
+        env,
+        Response.json({ job_id: 'b'.repeat(32) }, { status: 202 }),
+        state,
+      );
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('requires one canonical run and action identity for a PixCLI paid submit', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      await enableVideoCreationFlow(db);
+      for (const requestKey of [
+        `job:${JOB_ID}:sprite:high_kick`,
+        `run:${JOB_ID}:sprite:not_an_action`,
+      ]) {
+        const response = await requireProviderSession(
+          pixcliRequest(
+            PIXCLI_SUBMIT_ROUTE,
+            JSON.stringify({ model: 'grok-imagine-i2v-pinned', image: 'a'.repeat(32) }),
+            { requestKey },
+          ),
+          env,
+          { ...auth, claims: { ...auth.claims, generation_creation_flow: 'video' } },
+          PIXCLI_SUBMIT_ROUTE,
+          createProviderRequestState(),
+        );
+
+        expect(response?.status).toBe(400);
+        expect(await response?.json()).toMatchObject({ code: 'pixcli_dispatch_identity_invalid' });
+      }
+      expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 0 });
+      expect(await chargeStatus(db)).toBe('reserved');
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('caches a received PixCLI rejection and never takes it over for a different submit body', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      await enableVideoCreationFlow(db);
+      const videoAuth: PublicAuthContext = {
+        ...auth,
+        claims: { ...auth.claims, generation_creation_flow: 'video' },
+      };
+      const state = createProviderRequestState();
+      expect(await requireProviderSession(
+        pixcliRequest(PIXCLI_SUBMIT_ROUTE, JSON.stringify({
+          model: 'grok-imagine-i2v-pinned',
+          image: 'a'.repeat(32),
+        })),
+        env,
+        videoAuth,
+        PIXCLI_SUBMIT_ROUTE,
+        state,
+      )).toBeNull();
+
+      const received = await finalizeProviderRequest(
+        env,
+        Response.json(
+          { error: 'upstream rejected the pinned request' },
+          {
+            status: 429,
+            headers: { 'X-Insert-Player-Upstream-Outcome': 'received' },
+          },
+        ),
+        state,
+      );
+      expect(received.status).toBe(429);
+      expect(received.headers.get('X-Insert-Player-Provider-Cache')).toBe('stored');
+
+      const replay = await requireProviderSession(
+        pixcliRequest(PIXCLI_SUBMIT_ROUTE, JSON.stringify({
+          model: 'grok-imagine-i2v-pinned',
+          image: 'b'.repeat(32),
+        })),
+        env,
+        videoAuth,
+        PIXCLI_SUBMIT_ROUTE,
+        createProviderRequestState(),
+      );
+      expect(replay?.status).toBe(429);
+      expect(replay?.headers.get('X-Insert-Player-Provider-Cache')).toBe('hit');
+      expect(await replay?.json()).toEqual({ error: 'upstream rejected the pinned request' });
+      expect(await usage(db)).toEqual({ calls: 1, cost: 33, events: 1 });
+      expect(await db.prepare(`
+        SELECT status, response_status FROM provider_request_cache
+        WHERE request_path = ?
+      `).bind(PIXCLI_SUBMIT_ROUTE.path).first()).toEqual({
+        status: 'succeeded',
+        response_status: 429,
+      });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('never retries a PixCLI advanced submit after an unknown upstream outcome', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      await enableVideoCreationFlow(db);
+      const videoAuth: PublicAuthContext = {
+        ...auth,
+        claims: { ...auth.claims, generation_creation_flow: 'video' },
+      };
+      const state = createProviderRequestState();
+      expect(await requireProviderSession(
+        pixcliRequest(PIXCLI_SUBMIT_ROUTE, JSON.stringify({
+          model: 'grok-imagine-i2v-pinned',
+          image: 'a'.repeat(32),
+        })),
+        env,
+        videoAuth,
+        PIXCLI_SUBMIT_ROUTE,
+        state,
+      )).toBeNull();
+      expect((await finalizeProviderRequest(
+        env,
+        Response.json(
+          { error: 'provider request timed out' },
+          {
+            status: 504,
+            headers: { 'X-Insert-Player-Upstream-Outcome': 'unknown' },
+          },
+        ),
+        state,
+      )).status).toBe(504);
+
+      const replay = await requireProviderSession(
+        pixcliRequest(PIXCLI_SUBMIT_ROUTE, JSON.stringify({
+          model: 'grok-imagine-i2v-pinned',
+          image: 'b'.repeat(32),
+        })),
+        env,
+        videoAuth,
+        PIXCLI_SUBMIT_ROUTE,
+        createProviderRequestState(),
+      );
+      expect(replay?.status).toBe(409);
+      expect(await replay?.json()).toMatchObject({ code: 'provider_request_outcome_unknown' });
+      expect(await usage(db)).toEqual({ calls: 1, cost: 33, events: 1 });
+      expect(await db.prepare(`
+        SELECT status, response_status FROM provider_request_cache
+        WHERE request_path = ?
+      `).bind(PIXCLI_SUBMIT_ROUTE.path).first()).toEqual({
+        status: 'uncertain',
+        response_status: 504,
+      });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('issues exactly one PixCLI advanced POST after changed multipart upload bytes and a response crash', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      await enableVideoCreationFlow(db);
+      const videoAuth: PublicAuthContext = {
+        ...auth,
+        claims: { ...auth.claims, generation_creation_flow: 'video' },
+      };
+      const requestKey = `run:${JOB_ID}:sprite:high_kick`;
+      for (const [boundary, assetHash] of [
+        ['boundary-after-first-start', 'a'.repeat(32)],
+        ['boundary-after-process-restart', 'b'.repeat(32)],
+      ] as const) {
+        const uploadState = createProviderRequestState();
+        const uploadBody = [
+          `--${boundary}`,
+          'Content-Disposition: form-data; name="file"; filename="canonical.png"',
+          'Content-Type: image/png',
+          '',
+          'same-canonical-png-bytes',
+          `--${boundary}--`,
+        ].join('\r\n');
+        expect(await requireUnmeteredProviderSession(
+          pixcliRequest(PIXCLI_UPLOAD_ROUTE, uploadBody, { boundary, requestKey }),
+          env,
+          videoAuth,
+          PIXCLI_UPLOAD_ROUTE,
+          uploadState,
+        )).toBeNull();
+        expect((await finalizeProviderRequest(
+          env,
+          Response.json({ hash: assetHash }, { status: 201 }),
+          uploadState,
+        )).status).toBe(201);
+      }
+
+      const firstSubmit = pixcliRequest(PIXCLI_SUBMIT_ROUTE, JSON.stringify({
+        model: 'grok-imagine-i2v-pinned',
+        image: 'a'.repeat(32),
+      }), { requestKey });
+      const firstState = createProviderRequestState();
+      expect(await requireProviderSession(
+        firstSubmit,
+        env,
+        videoAuth,
+        PIXCLI_SUBMIT_ROUTE,
+        firstState,
+      )).toBeNull();
+      expect(firstState.upstreamAttemptKey).toMatch(/^ip:[a-f0-9]{32}$/);
+      const upstreamHeaders = pixcliUpstreamHeaders(
+        'pixcli-worker-secret',
+        PIXCLI_SUBMIT_ROUTE.path,
+        firstState.upstreamAttemptKey,
+      );
+      expect(upstreamHeaders).not.toBeNull();
+      if (!upstreamHeaders) throw new Error('PixCLI upstream headers were not created');
+      const fetchMock = vi.fn().mockResolvedValue(Response.json(
+        { job_id: 'c'.repeat(32), status: 'pending' },
+        { status: 202 },
+      ));
+      vi.stubGlobal('fetch', fetchMock);
+
+      // The upstream response is received, then the Worker dies before the
+      // response/cache finalization step. The durable pending claim must make
+      // every caller retry fail closed instead of sending another paid POST.
+      expect((await proxyRequest(
+        firstSubmit,
+        'https://pixcli.example/api/v1/video/advanced',
+        upstreamHeaders,
+        32 * 1024,
+      )).status).toBe(202);
+
+      const retry = await requireProviderSession(
+        pixcliRequest(PIXCLI_SUBMIT_ROUTE, JSON.stringify({
+          model: 'grok-imagine-i2v-pinned',
+          image: 'b'.repeat(32),
+        }), { requestKey }),
+        env,
+        videoAuth,
+        PIXCLI_SUBMIT_ROUTE,
+        createProviderRequestState(),
+      );
+      expect(retry?.status).toBe(425);
+
+      await db.prepare(`
+        UPDATE provider_request_cache
+        SET updated_at = datetime('now', '-16 minutes')
+        WHERE request_path = ?
+      `).bind(PIXCLI_SUBMIT_ROUTE.path).run();
+      const staleRetry = await requireProviderSession(
+        pixcliRequest(PIXCLI_SUBMIT_ROUTE, JSON.stringify({
+          model: 'grok-imagine-i2v-pinned',
+          image: 'b'.repeat(32),
+        }), { requestKey }),
+        env,
+        videoAuth,
+        PIXCLI_SUBMIT_ROUTE,
+        createProviderRequestState(),
+      );
+      expect(staleRetry?.status).toBe(409);
+      expect(await staleRetry?.json()).toMatchObject({ code: 'provider_request_outcome_unknown' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
+      const sentHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+      expect(sentHeaders.get('Idempotency-Key')).toBe(firstState.upstreamAttemptKey);
+      expect(sentHeaders.get('X-Request-Id')).toBe(firstState.upstreamAttemptKey);
+      expect(await usage(db)).toEqual({ calls: 1, cost: 33, events: 1 });
+      expect((await db.prepare(`
+        SELECT COUNT(*) AS count FROM provider_request_cache
+        WHERE request_path = ?
+      `).bind(PIXCLI_SUBMIT_ROUTE.path).first<{ count: number }>())?.count).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+      await mf.dispose();
+    }
+  }, 15_000);
+
   it('rejects a declared oversized durable request before reserving provider spend', async () => {
     const { mf, db, env } = await bindings();
     try {
@@ -313,6 +785,76 @@ describe('durable provider request cache against D1 and R2', () => {
     }
   }, 15_000);
 
+  it('preserves one Meterkey idempotency key per original-flow owner attempt', async () => {
+    const { mf, env } = await bindings();
+    try {
+      const scope = `job:${JOB_ID}:sprite:high_kick`;
+      const frameOne = createProviderRequestState();
+      const frameTwo = createProviderRequestState();
+
+      expect(await requireProviderSession(
+        providerRequest(scope, 'high kick frame 1'),
+        env,
+        auth,
+        ROUTE,
+        frameOne,
+      )).toBeNull();
+      expect(await requireProviderSession(
+        providerRequest(scope, 'high kick frame 2'),
+        env,
+        auth,
+        ROUTE,
+        frameTwo,
+      )).toBeNull();
+
+      expect(frameOne.upstreamAttemptKey).toMatch(/^ip:[a-f0-9]{32}:[a-f0-9]{32}$/);
+      expect(frameTwo.upstreamAttemptKey).toMatch(/^ip:[a-f0-9]{32}:[a-f0-9]{32}$/);
+      expect(frameTwo.upstreamAttemptKey).not.toBe(frameOne.upstreamAttemptKey);
+
+      const firstAttemptKey = frameOne.upstreamAttemptKey;
+      await finalizeProviderRequest(
+        env,
+        Response.json({ error: 'known failure' }, { status: 429 }),
+        frameOne,
+      );
+
+      const retry = createProviderRequestState();
+      expect(await requireProviderSession(
+        providerRequest(scope, 'high kick frame 1'),
+        env,
+        auth,
+        ROUTE,
+        retry,
+      )).toBeNull();
+      expect(retry.upstreamAttemptKey).toMatch(/^ip:[a-f0-9]{32}:[a-f0-9]{32}$/);
+      expect(retry.upstreamAttemptKey).not.toBe(firstAttemptKey);
+      const retryRequest = providerRequest(scope, 'high kick frame 1');
+      const retryTarget = buildGeminiProxyTarget(
+        retryRequest,
+        {
+          ENVIRONMENT: 'production',
+          GEMINI_TRANSPORT: 'meterkey',
+          METERKEY_BASE_URL: 'https://meter.hilo.cx',
+          METERKEY_API_KEY: 'mk-original-flow-test',
+        } as Env,
+        '/v1beta/models/gemini-3.1-flash-image:generateContent',
+        new URL(retryRequest.url),
+        retry.upstreamAttemptKey,
+      );
+      expect(retryTarget?.headers).toMatchObject({
+        'Idempotency-Key': retry.upstreamAttemptKey,
+        'X-Request-Id': retry.upstreamAttemptKey,
+        'cf-aig-max-attempts': '1',
+        'x-meterkey-no-store': 'true',
+      });
+
+      await finalizeProviderRequest(env, Response.json({ result: 'frame 2' }), frameTwo);
+      await finalizeProviderRequest(env, Response.json({ result: 'frame 1 retry' }), retry);
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
   it('replays a completed provider response without another call reservation', async () => {
     const { mf, db, bucket, env } = await bindings();
     try {
@@ -343,6 +885,7 @@ describe('durable provider request cache against D1 and R2', () => {
       expect(replay?.status).toBe(200);
       expect(replay?.headers.get('X-Insert-Player-Provider-Cache')).toBe('hit');
       expect(await replay?.json()).toEqual({ candidates: [{ result: 'generated' }] });
+      expect(replayState.upstreamAttemptKey).toBeNull();
       expect(await usage(db)).toEqual({ calls: 1, cost: 8, events: 1 });
 
       const cacheRow = await db.prepare(`
@@ -573,11 +1116,18 @@ describe('durable provider request cache against D1 and R2', () => {
         ROUTE,
         state,
       )).toBeNull();
-      const ambiguous = Response.json(
-        { error: 'Provider request timed out' },
-        { status: 504, headers: { 'X-Insert-Player-Upstream-Outcome': 'unknown' } },
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(
+        { error: { code: 'service_unavailable', message: 'upstream provider request failed' } },
+        { status: 503, headers: { 'X-Meterkey-Upstream-Outcome': 'unknown' } },
+      )));
+      const ambiguous = await proxyRequest(
+        firstRequest,
+        'https://meter.hilo.cx/google-ai-studio/v1beta/models/gemini-3.1-flash-image:generateContent',
+        { Authorization: 'Bearer mk-test' },
+        1024 * 1024,
       );
-      expect((await finalizeProviderRequest(env, ambiguous, state)).status).toBe(504);
+      expect(ambiguous.headers.get('X-Insert-Player-Upstream-Outcome')).toBe('unknown');
+      expect((await finalizeProviderRequest(env, ambiguous, state)).status).toBe(503);
 
       const replay = await requireProviderSession(
         providerRequest(requestKey, 'ambiguous dispatch'),
@@ -599,6 +1149,212 @@ describe('durable provider request cache against D1 and R2', () => {
         call_kind: 'quality_review',
         stage: 'sprite:low_punch',
         request_key: requestKey,
+      });
+    } finally {
+		vi.unstubAllGlobals();
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('releases local provider spend when Meterkey proves the request was not dispatched', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const state = createProviderRequestState();
+      const requestKey = `job:${JOB_ID}:sprite:low_punch:meterkey-cap`;
+      expect(await requireProviderSession(
+        providerRequest(requestKey, 'not dispatched by Meterkey'),
+        env,
+        auth,
+        ROUTE,
+        state,
+      )).toBeNull();
+
+      const rejected = Response.json(
+        { error: { code: 'daily_cap_exceeded', message: 'rejected before provider dispatch' } },
+        {
+          status: 429,
+          headers: { 'X-Insert-Player-Upstream-Outcome': 'not-dispatched' },
+        },
+      );
+      expect((await finalizeProviderRequest(env, rejected, state)).status).toBe(429);
+
+      expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 1 });
+      expect(await db.prepare(`
+        SELECT outcome, upstream_outcome, http_status, estimated_cost_cents
+        FROM provider_cost_events
+      `).first()).toEqual({
+        outcome: 'failed',
+        upstream_outcome: 'not_dispatched',
+        http_status: 429,
+        estimated_cost_cents: 0,
+      });
+      expect(await db.prepare(`
+        SELECT estimated_cost_cents, provider_calls FROM provider_spend_months
+      `).first()).toEqual({ estimated_cost_cents: 0, provider_calls: 0 });
+      expect(await chargeStatus(db)).toBe('reserved');
+      expect((await db.prepare('SELECT status FROM provider_request_cache')
+        .first<{ status: string }>())?.status).toBe('failed');
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('keeps a charge committed when an earlier provider call incurred cost', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const succeeded = createProviderRequestState();
+      expect(await requireProviderSession(
+        providerRequest(`job:${JOB_ID}:sprite:low_punch:first`, 'dispatched successfully'),
+        env,
+        auth,
+        ROUTE,
+        succeeded,
+      )).toBeNull();
+      await finalizeProviderRequest(env, Response.json({ result: 'generated' }), succeeded);
+
+      const notDispatched = createProviderRequestState();
+      expect(await requireProviderSession(
+        providerRequest(`job:${JOB_ID}:sprite:low_punch:second`, 'not dispatched'),
+        env,
+        auth,
+        ROUTE,
+        notDispatched,
+      )).toBeNull();
+      await finalizeProviderRequest(env, Response.json(
+        { error: { code: 'daily_cap_exceeded' } },
+        {
+          status: 429,
+          headers: { 'X-Insert-Player-Upstream-Outcome': 'not-dispatched' },
+        },
+      ), notDispatched);
+
+      expect(await usage(db)).toEqual({ calls: 1, cost: 8, events: 2 });
+      expect(await db.prepare(`
+        SELECT estimated_cost_cents, provider_calls FROM provider_spend_months
+      `).first()).toEqual({ estimated_cost_cents: 8, provider_calls: 1 });
+      expect(await chargeStatus(db)).toBe('committed');
+      expect(await db.prepare(`
+        SELECT estimated_cost_cents, outcome, upstream_outcome
+        FROM provider_cost_events
+        ORDER BY created_at ASC, id ASC
+      `).all()).toMatchObject({
+        results: expect.arrayContaining([
+          expect.objectContaining({
+            estimated_cost_cents: 8,
+            outcome: 'succeeded',
+            upstream_outcome: 'http_succeeded',
+          }),
+          expect.objectContaining({
+            estimated_cost_cents: 0,
+            outcome: 'failed',
+            upstream_outcome: 'not_dispatched',
+          }),
+        ]),
+      });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('retries an ambiguous accounting batch without applying the rollback twice', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const state = createProviderRequestState();
+      expect(await requireProviderSession(
+        providerRequest(`job:${JOB_ID}:sprite:low_punch:retry-accounting`, 'not dispatched'),
+        env,
+        auth,
+        ROUTE,
+        state,
+      )).toBeNull();
+      const attempts = interceptBatches(env, async (attempt, run) => {
+        const result = await run();
+        if (attempt === 1) throw new Error('simulated response loss after D1 commit');
+        return result;
+      });
+
+      const delivered = await finalizeProviderRequest(env, Response.json(
+        { error: { code: 'daily_cap_exceeded' } },
+        {
+          status: 429,
+          headers: { 'X-Insert-Player-Upstream-Outcome': 'not-dispatched' },
+        },
+      ), state);
+
+      expect(delivered.status).toBe(429);
+      expect(attempts()).toBe(2);
+      expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 1 });
+      expect(await chargeStatus(db)).toBe('reserved');
+      expect(await db.prepare(`
+        SELECT estimated_cost_cents, outcome, upstream_outcome
+        FROM provider_cost_events
+      `).first()).toEqual({
+        estimated_cost_cents: 0,
+        outcome: 'failed',
+        upstream_outcome: 'not_dispatched',
+      });
+    } finally {
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('fails closed when not-dispatched accounting cannot be reconciled', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const state = createProviderRequestState();
+      expect(await requireProviderSession(
+        providerRequest(`job:${JOB_ID}:sprite:low_punch:failed-accounting`, 'not dispatched'),
+        env,
+        auth,
+        ROUTE,
+        state,
+      )).toBeNull();
+      const attempts = interceptBatches(env, async () => {
+        throw new Error('simulated persistent D1 failure');
+      });
+
+      const delivered = await finalizeProviderRequest(env, Response.json(
+        { error: { code: 'daily_cap_exceeded' } },
+        {
+          status: 429,
+          headers: { 'X-Insert-Player-Upstream-Outcome': 'not-dispatched' },
+        },
+      ), state);
+
+      expect(delivered.status).toBe(503);
+      expect(delivered.headers.get('Retry-After')).toBe('5');
+      expect(delivered.headers.get('X-Insert-Player-Upstream-Outcome')).toBe('not-dispatched');
+      const failureBody = await delivered.json() as {
+        error: string;
+        code: string;
+        providerCostEventId: string;
+      };
+      expect(failureBody).toMatchObject({
+        code: 'provider_not_dispatched_reconciliation_failed',
+      });
+      expect(failureBody.error).toBe(
+        `(provider_request_not_dispatched:${failureBody.providerCostEventId}) `
+        + 'Provider dispatch was blocked, but its local accounting could not be reconciled safely',
+      );
+      expect(attempts()).toBe(2);
+      expect(await usage(db)).toEqual({ calls: 1, cost: 8, events: 1 });
+      expect(await chargeStatus(db)).toBe('committed');
+      expect(await db.prepare(`
+        SELECT estimated_cost_cents, outcome, upstream_outcome, finalized_at
+        FROM provider_cost_events
+      `).first()).toEqual({
+        estimated_cost_cents: 8,
+        outcome: 'reserved',
+        upstream_outcome: 'not_dispatched',
+        finalized_at: null,
+      });
+      expect(await db.prepare(`
+        SELECT status, response_status, error_message
+        FROM provider_request_cache
+      `).first()).toEqual({
+        status: 'pending',
+        response_status: null,
+        error_message: null,
       });
     } finally {
       await mf.dispose();

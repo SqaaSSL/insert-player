@@ -1,4 +1,33 @@
 import type { CachedMeta } from '../../services/SpriteCache.ts';
+import type { CloudFighter } from '../../services/CloudFighters.ts';
+import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
+import type { SpriteAnimationFormat } from '../../SpriteAnimationFormat.ts';
+
+/**
+ * Single source of truth for user-facing tier names. Accepts both typed
+ * QualityTier ids and raw strings from cloud payloads; unknown values are
+ * title-cased rather than hidden.
+ */
+export function tierLabel(tier: string | null | undefined, fallback = 'Contender'): string {
+  if (!tier) return fallback;
+  const known = QUALITY_TIERS.find((item) => item.id === tier)?.label;
+  return known ?? tier.charAt(0).toUpperCase() + tier.slice(1);
+}
+
+/**
+ * Preview image for a cloud fighter. Published fighters never expose the
+ * original photo, so the clean generated views lead and `original` is only a
+ * private-owner fallback.
+ */
+export function cloudPreviewUrl(fighter: CloudFighter): string | null {
+  return (
+    fighter.sources.side ??
+    fighter.sources.upright ??
+    fighter.sources.crouch ??
+    fighter.sources.original ??
+    null
+  );
+}
 
 export const ANIM_LABELS: Record<string, string> = {
   idle: 'IDLE',
@@ -31,12 +60,25 @@ export type PreviewSelection =
   | { kind: 'source'; source: SourceKey }
   | { kind: 'animation'; animationName: string };
 
+export function isArcadeCachedMeta(meta: Pick<CachedMeta, 'photoHash'> | null): boolean {
+  return meta?.photoHash.startsWith('arcade:') ?? false;
+}
+
+export function defaultSourceForMeta(meta: Pick<CachedMeta, 'photoHash'> | null): SourceKey {
+  return isArcadeCachedMeta(meta) ? 'side' : 'original';
+}
+
 export interface PreviewSpriteLike {
   blob: Blob;
   rawBlob?: Blob;
+  animationName?: string;
+  animationFormat?: SpriteAnimationFormat;
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  rawFrameWidth?: number;
+  rawFrameHeight?: number;
+  rawFrameCount?: number;
   failed?: boolean;
   reason?: string;
 }

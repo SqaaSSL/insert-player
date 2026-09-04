@@ -6,8 +6,11 @@ import {
   closeSpriteCacheDatabase,
   configureSpriteCacheOwner,
   getAllCachedMetas,
+  getAllSpritesForHash,
   getAllSpriteVersionsForHash,
   getCachedMeta,
+  selectPlayableCachedSprites,
+  setCachedArchivedSprite,
   setCachedMeta,
   setCachedSprite,
   type CachedMeta,
@@ -104,6 +107,128 @@ beforeEach(async () => {
 });
 
 describe('account-scoped sprite cache', () => {
+  it('requires the processed hash and playback contract rather than a stable cloud row id', () => {
+    const ref = {
+      versionId: 'stable-row-id',
+      contentHash: 'a'.repeat(64),
+      animationName: 'idle',
+      qualityTier: 'champion' as const,
+      frameWidth: 64,
+      frameHeight: 64,
+      frameCount: 4,
+      animationFormat: 'legacy' as const,
+      processingVersion: 3,
+    };
+    const wrongHash = {
+      ...sprite('stable-row-id'),
+      qualityTier: 'champion' as const,
+      contentHash: 'b'.repeat(64),
+    };
+    const wrongContract = {
+      ...sprite('different-local-id'),
+      qualityTier: 'champion' as const,
+      contentHash: 'a'.repeat(64),
+      frameCount: 8,
+    };
+    const exactBytesAndContract = {
+      ...sprite('different-local-id'),
+      qualityTier: 'champion' as const,
+      contentHash: 'a'.repeat(64),
+    };
+
+    expect(selectPlayableCachedSprites([wrongHash, wrongContract], { idle: ref })).toEqual([]);
+    expect(selectPlayableCachedSprites([wrongHash, exactBytesAndContract], { idle: ref }))
+      .toEqual([exactBytesAndContract]);
+  });
+
+  it('plays the exact remote-current sprite while keeping a newer archived candidate', async () => {
+    const remoteCurrent = {
+      ...sprite('stable-current'),
+      qualityTier: 'champion' as const,
+      contentHash: 'a'.repeat(64),
+      createdAt: 100,
+    };
+    const pendingCandidate = {
+      ...sprite('pending-review-candidate'),
+      qualityTier: 'champion' as const,
+      contentHash: 'b'.repeat(64),
+      createdAt: 200,
+    };
+    await setCachedArchivedSprite(remoteCurrent, { preserveVersionId: true });
+    await setCachedArchivedSprite(pendingCandidate, { preserveVersionId: true });
+    await setCachedMeta(meta('Cloud Fighter', {
+      cloudFighterId: 'cloud-fighter',
+      cloudPlayableSpriteRefs: {
+        idle: {
+          versionId: 'stable-current',
+          contentHash: 'a'.repeat(64),
+          animationName: 'idle',
+          qualityTier: 'champion',
+          frameWidth: 64,
+          frameHeight: 64,
+          frameCount: 4,
+          animationFormat: 'legacy',
+          processingVersion: 3,
+        },
+      },
+    }));
+
+    expect(await getAllSpriteVersionsForHash(PHOTO_HASH)).toHaveLength(2);
+    expect((await getAllSpritesForHash(PHOTO_HASH)).map((item) => item.versionId))
+      .toEqual(['stable-current']);
+  });
+
+  it('fails closed for a cloud fighter without an exact current binding', async () => {
+    await setCachedArchivedSprite({
+      ...sprite('unapproved-only'),
+      contentHash: 'b'.repeat(64),
+    }, { preserveVersionId: true });
+    await setCachedMeta(meta('Migrated Cloud Fighter', { cloudFighterId: 'cloud-fighter' }));
+
+    expect(await getAllSpritesForHash(PHOTO_HASH)).toEqual([]);
+  });
+
+  it('keeps historical best-version selection for an Original local fighter', async () => {
+    await setCachedMeta(meta('Original Fighter'));
+    await setCachedSprite({ ...sprite('older'), createdAt: 100 }, { preserveVersionId: true });
+    await setCachedSprite({ ...sprite('newer'), createdAt: 200 }, { preserveVersionId: true });
+
+    expect((await getAllSpritesForHash(PHOTO_HASH)).map((item) => item.versionId)).toEqual(['newer']);
+  });
+
+  it('makes an intentional local retry current without letting a stale meta write undo it', async () => {
+    await setCachedArchivedSprite({
+      ...sprite('remote-current'),
+      contentHash: 'a'.repeat(64),
+    }, { preserveVersionId: true });
+    await setCachedMeta(meta('Cloud Fighter', {
+      cloudFighterId: 'cloud-fighter',
+      cloudPlayableSpriteRefs: {
+        idle: {
+          versionId: 'remote-current',
+          contentHash: 'a'.repeat(64),
+          animationName: 'idle',
+          qualityTier: 'rookie',
+          frameWidth: 64,
+          frameHeight: 64,
+          frameCount: 4,
+          animationFormat: 'legacy',
+          processingVersion: 3,
+        },
+      },
+    }));
+    const staleMeta = await getCachedMeta(PHOTO_HASH);
+    expect(staleMeta).not.toBeNull();
+
+    await setCachedSprite(sprite('intentional-local-retry'), { preserveVersionId: true });
+    await setCachedMeta({ ...staleMeta!, characterName: 'Cloud Fighter Renamed' });
+
+    expect((await getAllSpritesForHash(PHOTO_HASH)).map((item) => item.versionId))
+      .toEqual(['intentional-local-retry']);
+    expect((await getCachedMeta(PHOTO_HASH))?.cloudPlayableSpriteRefs?.idle.contentHash)
+      .not.toBe('a'.repeat(64));
+  });
+
   it('claims every local sprite version and hides account data from other users', async () => {
     await setCachedMeta(meta('Guest Fighter'));
     await setCachedSprite(sprite('guest-v1'), { preserveVersionId: true });
@@ -134,7 +259,9 @@ describe('account-scoped sprite cache', () => {
     await createLegacyV4Cache();
 
     expect((await getCachedMeta(PHOTO_HASH))?.characterName).toBe('Legacy Fighter');
-    expect(await getAllSpriteVersionsForHash(PHOTO_HASH)).toHaveLength(1);
+    const migratedVersions = await getAllSpriteVersionsForHash(PHOTO_HASH);
+    expect(migratedVersions).toHaveLength(1);
+    expect(migratedVersions[0]?.animationFormat).toBe('legacy');
 
     configureSpriteCacheOwner('user_a');
     await claimLocalSpriteCacheForCurrentOwner();
@@ -143,6 +270,22 @@ describe('account-scoped sprite cache', () => {
 
     configureSpriteCacheOwner(null);
     expect(await getAllCachedMetas()).toEqual([]);
+  });
+
+  it('persists an explicit dense-video animation format independently of processing version', async () => {
+    await setCachedSprite({
+      ...sprite('dense-v1', 'walk'),
+      animationFormat: 'video-dense-v1',
+      processingVersion: 5,
+    }, { preserveVersionId: true });
+
+    const versions = await getAllSpriteVersionsForHash(PHOTO_HASH);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]).toMatchObject({
+      animationName: 'walk',
+      animationFormat: 'video-dense-v1',
+      processingVersion: 5,
+    });
   });
 
   it('merges a local collision without dropping either sprite version', async () => {

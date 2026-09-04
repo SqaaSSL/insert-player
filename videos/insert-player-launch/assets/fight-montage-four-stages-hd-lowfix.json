@@ -1,0 +1,53 @@
+{
+  "outputFile": "fight-montage-four-stages-hd-lowfix.mp4",
+  "contentDurationSeconds": 4,
+  "captureSuffix": "-hd",
+  "captureIdOverrides": {
+    "elon": "elon-hd-lowfix"
+  },
+  "transitionHoldSeconds": 0.25,
+  "totalDurationSeconds": 4.25,
+  "leadInSeconds": 0.45,
+  "clips": [
+    {
+      "id": "trump",
+      "captureId": "trump-hd",
+      "opponent": "Donald Trump",
+      "stage": "EXECUTIVE RUMBLE",
+      "sourceFile": "trump-hd-master.webm",
+      "sourceStartSeconds": 35.654,
+      "damageOffsetSeconds": 36.104,
+      "clipDurationSeconds": 1
+    },
+    {
+      "id": "lamine",
+      "captureId": "lamine-hd",
+      "opponent": "Lamine Yamal",
+      "stage": "LA JAULA 304",
+      "sourceFile": "lamine-hd-master.webm",
+      "sourceStartSeconds": 43.214,
+      "damageOffsetSeconds": 43.664,
+      "clipDurationSeconds": 1
+    },
+    {
+      "id": "rosalia",
+      "captureId": "rosalia-hd",
+      "opponent": "Rosalía V2",
+      "stage": "DOJO AT DUSK",
+      "sourceFile": "rosalia-hd-master.webm",
+      "sourceStartSeconds": 31.015,
+      "damageOffsetSeconds": 31.465,
+      "clipDurationSeconds": 1
+    },
+    {
+      "id": "elon",
+      "captureId": "elon-hd-lowfix",
+      "opponent": "Elon Musk",
+      "stage": "MARS INCORPORATED",
+      "sourceFile": "elon-hd-lowfix-master.webm",
+      "sourceStartSeconds": 14.196,
+      "damageOffsetSeconds": 14.646,
+      "clipDurationSeconds": 1
+    }
+  ]
+}

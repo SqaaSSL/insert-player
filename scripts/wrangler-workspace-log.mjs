@@ -2,14 +2,29 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { assertDevelopmentDeployAllowed } from './development-deploy-guard.mjs';
+import { assertProductionDeployAllowed } from './production-deploy-guard.mjs';
+import {
+  isDevelopmentWranglerMutation,
+  isProductionWranglerMutation,
+} from './production-deploy-guard-lib.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const wranglerLogPath = join(root, '.wrangler-logs');
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+const wranglerArgs = process.argv.slice(2);
+
+if (isProductionWranglerMutation(wranglerArgs)) {
+  const context = assertProductionDeployAllowed({ root });
+  console.log(`Production Wrangler mutation authorized: ${context.channel} ${context.gitSha}.`);
+} else if (isDevelopmentWranglerMutation(wranglerArgs)) {
+  const context = assertDevelopmentDeployAllowed({ root });
+  console.log(`Sandbox Wrangler mutation authorized: ${context.channel} ${context.gitSha}.`);
+}
 
 mkdirSync(wranglerLogPath, { recursive: true });
 
-const result = spawnSync(npx, ['wrangler', ...process.argv.slice(2)], {
+const result = spawnSync(npx, ['wrangler', ...wranglerArgs], {
   cwd: process.cwd(),
   stdio: 'inherit',
   env: {

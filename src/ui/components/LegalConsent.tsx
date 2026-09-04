@@ -1,22 +1,46 @@
 import { rememberCurrentGenerationConsent } from '../legal.ts';
+import type { LegalRoute } from './LegalFooter.tsx';
 
 interface ConsentProps {
   checked: boolean;
   disabled?: boolean;
   onChange: (checked: boolean) => void;
+  storageMode?: 'account' | 'device';
+  /** Retained for caller compatibility. Policy links open separately to preserve form state. */
+  onNavigate?: (route: LegalRoute) => void;
 }
 
 function LegalLinks() {
+  const links: ReadonlyArray<readonly [LegalRoute, string]> = [
+    ['/terms', 'Terms'],
+    ['/privacy', 'Privacy'],
+    ['/refunds', 'Cancellations'],
+  ];
   return (
     <span className="legal-consent__links">
-      <a href="/terms">Terms</a>
-      <a href="/privacy">Privacy</a>
-      <a href="/refunds">Cancellations</a>
+      {links.map(([route, label]) => (
+        <a
+          key={route}
+          href={route}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {label}
+        </a>
+      ))}
     </span>
   );
 }
 
-export function GenerationConsent({ checked, disabled, onChange }: ConsentProps) {
+export function GenerationConsent({
+  checked,
+  disabled,
+  onChange,
+  storageMode = 'account',
+}: ConsentProps) {
+  const storagePromise = storageMode === 'account'
+    ? 'privately store this fighter in my Insert Player account.'
+    : 'privately store this fighter on this device.';
   return (
     <div className="legal-consent">
       <label>
@@ -34,7 +58,7 @@ export function GenerationConsent({ checked, disabled, onChange }: ConsentProps)
           <strong>Process this photo only for my private fighter.</strong>{' '}
           I am 18+ and confirm I own the photo or have the pictured adult's permission. I authorize
           Insert Player and the processors named in Privacy to process it solely to create and
-          privately store this fighter in my Insert Player account. Neither my photo nor generated
+          {' '}{storagePromise} Neither my photo nor generated
           fighter will be visible to other players unless I later choose Publish. Publishing is a
           separate action and makes only the clean generated assets of that fighter public, never my
           original photo, Clerk account identity, RAW files, or private generation history. This is

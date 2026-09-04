@@ -2,6 +2,13 @@ import { createServer } from 'node:http';
 import { installCanvasRuntime } from './canvasRuntime';
 import { processorErrorResponse } from './providerErrorResponse';
 import { sourceGenerationStrategy } from './sourceGenerationPolicy';
+import { compileVideoSprite } from './videoSpriteCompiler.ts';
+import {
+  VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
+  VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+  VIDEO_SPRITE_COMPILER_VERSION,
+  VIDEO_SPRITE_PROCESSING_VERSION,
+} from './videoSpriteContract.ts';
 import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
 
 installCanvasRuntime();
@@ -47,6 +54,8 @@ interface GenerateSpriteRequest extends ProviderContextRequest {
   };
   primaryBase64: string;
   secondaryBase64?: string;
+  officialPoseMasterId?: string;
+  officialPoseGuideBase64s?: string[];
   generationPrompt?: string;
   normalizationReference?: {
     targetDrawHeight?: number;
@@ -155,7 +164,11 @@ async function generateSprite(body: GenerateSpriteRequest) {
       body.secondaryBase64,
       undefined,
       body.normalizationReference,
-      { enableBgRemoval: true },
+      {
+        enableBgRemoval: true,
+        officialPoseMasterId: body.officialPoseMasterId,
+        officialPoseGuideBase64s: body.officialPoseGuideBase64s,
+      },
       context,
       model,
       body.generationPrompt,
@@ -207,6 +220,12 @@ const server = createServer(async (request, response) => {
         status: 'ok',
         runtime: 'canvas-skia',
         imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+        videoSpriteCompiler: {
+          schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+          compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
+          processingVersion: VIDEO_SPRITE_PROCESSING_VERSION,
+          automaticSelectionPolicies: VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
+        },
       });
       return;
     }
@@ -267,6 +286,12 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && request.url === '/v1/compile-video-sprite') {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, await compileVideoSprite(body));
+      return;
+    }
+
     if (request.method === 'POST' && request.url === '/v1/generate-sprite') {
       const body = await readJsonBody(request) as GenerateSpriteRequest;
       if (
@@ -275,7 +300,14 @@ const server = createServer(async (request, response) => {
         !body.primaryBase64 ||
         !body.animation?.name ||
         !body.animation.motion ||
-        !Number.isInteger(body.animation.frames)
+        !Number.isInteger(body.animation.frames) ||
+        ((body.officialPoseGuideBase64s !== undefined || body.officialPoseMasterId !== undefined) && (
+          !Array.isArray(body.officialPoseGuideBase64s) ||
+          body.officialPoseGuideBase64s.length !== body.animation.frames ||
+          body.officialPoseGuideBase64s.some((value) => typeof value !== 'string' || value.length < 32) ||
+          typeof body.officialPoseMasterId !== 'string' ||
+          !/^[a-zA-Z0-9:_-]{1,160}$/.test(body.officialPoseMasterId)
+        ))
       ) {
         sendJson(response, 400, { error: 'Invalid generate-sprite request' });
         return;

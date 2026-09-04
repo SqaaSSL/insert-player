@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "insert-player-arena",
+  "label": "INSERT PLAYER ARENA",
+  "blurb": "Red corner, blue corner, main-event lights, and a rain-slick tournament floor.",
+  "legalVersion": "2026-08-23.1",
+  "sourceMode": "transform-scene",
+  "model": "gemini-3.1-flash-image",
+  "seed": {
+    "path": "arcade/stage-publication-seeds/insert-player-arena-seed-v1.png",
+    "mime": "image/png",
+    "sha256": "d3ac993af36e26c5ed3e4576472a531e142c5a939057b11780a4156d32e6fa5c"
+  },
+  "output": {
+    "baseName": "insert-player-arena-pipeline-v1",
+    "format": "png",
+    "width": 1024,
+    "height": 576,
+    "normalization": {
+      "bottomShadeAlpha": 0.04,
+      "verticalBias": 0.92
+    },
+    "cleanup": {
+      "method": "interpolate-empty-panels-v1",
+      "regions": [
+        { "x": 184, "y": 177, "width": 184, "height": 50 },
+        { "x": 668, "y": 177, "width": 170, "height": 50 }
+      ]
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import type { Env, GenerationJobOperation, QualityTier } from './types';
+import { configuredGeminiTransport } from './geminiTransport';
 
 export const GEMINI_PRO_IMAGE_MODEL = 'gemini-3-pro-image';
 export const GEMINI_FLASH_IMAGE_MODEL = 'gemini-3.1-flash-image';
@@ -30,6 +31,14 @@ interface ProviderCapacityRow {
   model: string;
   reason: string;
   retry_at_epoch: number;
+}
+
+function capacityTable(env: Env): 'provider_capacity_windows' | 'provider_meterkey_capacity_windows' {
+  const transport = configuredGeminiTransport(env);
+  if (!transport) throw new Error('Gemini transport is not configured');
+  return transport === 'meterkey'
+    ? 'provider_meterkey_capacity_windows'
+    : 'provider_capacity_windows';
 }
 
 export function isApprovedGeminiModel(model: unknown): model is ApprovedGeminiModel {
@@ -99,13 +108,14 @@ export async function recordProviderDailyQuota(
   nowMs = Date.now(),
 ): Promise<ProviderCapacityWindow> {
   const retryAtEpoch = Math.floor(nowMs / 1_000) + boundedRetryAfterSeconds(signal.retryAfterSeconds);
+  const table = capacityTable(env);
   const row = await env.DB.prepare(`
-    INSERT INTO provider_capacity_windows (
+    INSERT INTO ${table} (
       provider, model, reason, retry_at_epoch
     ) VALUES ('gemini', ?, 'daily_quota_exhausted', ?)
     ON CONFLICT(provider, model) DO UPDATE SET
       reason = excluded.reason,
-      retry_at_epoch = MAX(provider_capacity_windows.retry_at_epoch, excluded.retry_at_epoch),
+      retry_at_epoch = MAX(${table}.retry_at_epoch, excluded.retry_at_epoch),
       updated_at = datetime('now')
     RETURNING provider, model, reason, retry_at_epoch
   `).bind(signal.model, retryAtEpoch).first<ProviderCapacityRow>();
@@ -121,10 +131,11 @@ export async function activeGenerationCapacity(
   nowMs = Date.now(),
 ): Promise<ProviderCapacityWindow | null> {
   const nowEpoch = Math.floor(nowMs / 1_000);
+  const table = capacityTable(env);
   for (const model of requiredGeminiModelsForGeneration(operation, tier)) {
     const row = await env.DB.prepare(`
       SELECT provider, model, reason, retry_at_epoch
-      FROM provider_capacity_windows
+      FROM ${table}
       WHERE provider = 'gemini' AND model = ? AND retry_at_epoch > ?
       LIMIT 1
     `).bind(model, nowEpoch).first<ProviderCapacityRow>();

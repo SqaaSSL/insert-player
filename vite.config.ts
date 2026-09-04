@@ -11,6 +11,7 @@ function apiProxyPlugin(): Plugin {
   let geminiKey = '';
   let runwayKey = '';
   let falKey = '';
+  let googleMapsServerKey = '';
 
   function sanitizeProxyUrlForLog(rawUrl: string): string {
     try {
@@ -133,6 +134,97 @@ function apiProxyPlugin(): Plugin {
     }
   }
 
+  async function handleStreetViewCapture(req: IncomingMessage, res: ServerResponse) {
+    const sendJson = (status: number, error: string) => {
+      res.setHeader('Content-Type', 'application/json');
+      res.writeHead(status);
+      res.end(JSON.stringify({ error }));
+    };
+    if (req.method !== 'POST') {
+      sendJson(405, 'Method not allowed');
+      return;
+    }
+    if (!googleMapsServerKey) {
+      sendJson(503, 'Street View capture is not configured.');
+      return;
+    }
+
+    let body: Record<string, unknown>;
+    try {
+      const raw = await collectBody(req);
+      if (raw.length > 8 * 1024) {
+        sendJson(413, 'Request body is too large');
+        return;
+      }
+      body = JSON.parse(raw.toString()) as Record<string, unknown>;
+    } catch {
+      sendJson(400, 'Invalid Street View capture request.');
+      return;
+    }
+
+    const panoId = typeof body.panoId === 'string' ? body.panoId.trim() : '';
+    const numberInRange = (value: unknown, min: number, max: number) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) && parsed >= min && parsed <= max;
+    };
+    if (
+      !/^[A-Za-z0-9_-]{1,256}$/.test(panoId) ||
+      !numberInRange(body.latitude, -90, 90) ||
+      !numberInRange(body.longitude, -180, 180) ||
+      !numberInRange(body.heading, 0, 360) ||
+      !numberInRange(body.pitch, -90, 90) ||
+      !numberInRange(body.fov, 10, 120)
+    ) {
+      sendJson(400, 'Invalid Street View capture parameters.');
+      return;
+    }
+
+    const upstreamUrl = new URL('https://maps.googleapis.com/maps/api/streetview');
+    upstreamUrl.searchParams.set('size', '640x360');
+    upstreamUrl.searchParams.set('scale', '2');
+    upstreamUrl.searchParams.set('pano', panoId);
+    upstreamUrl.searchParams.set('heading', String(Number(body.heading)));
+    upstreamUrl.searchParams.set('pitch', String(Number(body.pitch)));
+    upstreamUrl.searchParams.set('fov', String(Number(body.fov)));
+    upstreamUrl.searchParams.set('return_error_code', 'true');
+    upstreamUrl.searchParams.set('key', googleMapsServerKey);
+
+    try {
+      let upstream = await fetch(upstreamUrl, { redirect: 'follow' });
+      if (upstream.status === 404) {
+        const locationUrl = new URL(upstreamUrl);
+        locationUrl.searchParams.delete('pano');
+        locationUrl.searchParams.set('location', `${Number(body.latitude)},${Number(body.longitude)}`);
+        locationUrl.searchParams.set('radius', '25');
+        upstream = await fetch(locationUrl, { redirect: 'follow' });
+      }
+      if (!upstream.ok) {
+        sendJson(
+          upstream.status === 404 ? 404 : upstream.status === 429 ? 429 : 502,
+          upstream.status === 404
+            ? 'This panorama is no longer available. Choose another blue Street View line.'
+            : upstream.status === 429
+              ? 'Street View capture quota has been reached. Try again later.'
+              : 'Google could not capture this Street View image.',
+        );
+        return;
+      }
+      const contentType = upstream.headers.get('Content-Type')?.split(';')[0]?.trim().toLowerCase() ?? '';
+      const bytes = Buffer.from(await upstream.arrayBuffer());
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(contentType) || bytes.length === 0 || bytes.length > 5 * 1024 * 1024) {
+        sendJson(502, 'Google returned an invalid Street View capture.');
+        return;
+      }
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      res.writeHead(200);
+      res.end(bytes);
+    } catch {
+      sendJson(502, 'Street View is temporarily unavailable.');
+    }
+  }
+
   return {
     name: 'api-proxy',
     configureServer(server) {
@@ -142,6 +234,7 @@ function apiProxyPlugin(): Plugin {
       geminiKey = env.GEMINI_API_KEY || '';
       runwayKey = env.RUNWAY_API_KEY || '';
       falKey = env.FAL_API_KEY || '';
+      googleMapsServerKey = env.GOOGLE_MAPS_SERVER_KEY || '';
 
       const configured = (key: string) => key ? 'configured' : 'missing';
       console.log(`[proxy] LUDO_API_KEY: ${configured(ludoKey)}`);
@@ -152,6 +245,12 @@ function apiProxyPlugin(): Plugin {
 
       server.middlewares.use((req, res, next) => {
         const url = req.url ?? '';
+        const pathname = new URL(url, 'http://localhost').pathname;
+
+        if (pathname === '/api/maps/street-view/capture') {
+          void handleStreetViewCapture(req, res);
+          return;
+        }
 
         if (url.startsWith('/proxy/upload-temp')) {
           handleTempUpload(req, res);
@@ -255,10 +354,23 @@ function prelaunchEntryPlugin(mode: string): Plugin {
 export default defineConfig(({ mode }) => ({
   envDir: mode === 'prelaunch' ? false : undefined,
   plugins: [prelaunchEntryPlugin(mode), tailwindcss(), apiProxyPlugin()],
+  server: {
+    proxy: {
+      '/dev-api': {
+        target: 'https://api.insertplayer.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/dev-api/, ''),
+      },
+    },
+  },
   test: {
     exclude: [
       ...configDefaults.exclude,
+      '.local/**',
       'processor/src/benchmark/**/*.test.ts',
+      'processor/src/videoSpriteCompiler.test.ts',
+      'processor/src/videoSpriteCompilerCore.test.ts',
+      'processor/src/videoSpriteFfmpeg.integration.test.ts',
     ],
   },
 }));

@@ -65,6 +65,36 @@ describe('Gemini request policy', () => {
     });
   });
 
+  it.each(['daily_cap_exceeded', 'monthly_cap_exceeded'])(
+    'does not retry a Meterkey %s cap rejection',
+    (code) => {
+      const error = geminiErrorFromResponse(
+        'gemini-3-pro-image',
+        new Response(null, { status: 429, headers: { 'Retry-After': '3600' } }),
+        JSON.stringify({ error: { code, message: 'request rejected before provider dispatch' } }),
+        0,
+      );
+
+      expect(error).toMatchObject({ code, retryable: false, retryAfterMs: 3_600_000 });
+    },
+  );
+
+  it.each([
+    ['unknown', 'provider_request_outcome_unknown'],
+    ['not-dispatched', 'provider_request_not_dispatched'],
+  ])('does not retry a Meterkey %s upstream outcome', (outcome, code) => {
+    const error = geminiErrorFromResponse(
+      'gemini-3-pro-image',
+      new Response(null, {
+        status: 503,
+        headers: { 'X-Insert-Player-Upstream-Outcome': outcome },
+      }),
+      JSON.stringify({ error: { code: 'service_unavailable', message: 'gateway failure' } }),
+    );
+
+    expect(error).toMatchObject({ code, retryable: false });
+  });
+
   it('allows only the two production Gemini image models', () => {
     expect(isApprovedGeminiImageModel('gemini-3-pro-image')).toBe(true);
     expect(isApprovedGeminiImageModel('gemini-3.1-flash-image')).toBe(true);

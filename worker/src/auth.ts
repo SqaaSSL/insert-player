@@ -9,6 +9,11 @@ const MAX_PUBLIC_NAME_CHARS = 48;
 const MAX_EMAIL_CHARS = 254;
 export const CLERK_BACKEND_AUTH_BRIDGE_HEADER = 'X-Insert-Player-Clerk-Backend-Auth';
 
+export interface ClerkAuthOptions {
+  allowMissingAuthorizedParty?: boolean;
+  skipAuthorizedPartyValidation?: boolean;
+}
+
 export function generateId(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
@@ -140,6 +145,17 @@ export async function hasValidClerkBackendAuthBridge(request: Request, env: Env)
   return constantTimeSecretMatch(provided, expected);
 }
 
+export async function clerkAuthOptionsForRequest(
+  request: Request,
+  env: Env,
+  options: Pick<ClerkAuthOptions, 'allowMissingAuthorizedParty'> = {},
+): Promise<ClerkAuthOptions> {
+  return {
+    ...options,
+    skipAuthorizedPartyValidation: await hasValidClerkBackendAuthBridge(request, env),
+  };
+}
+
 function configuredAuthorizedParties(env: Env): string[] {
   return (env.CLERK_AUTHORIZED_PARTIES || env.CORS_ORIGIN || '')
     .split(',')
@@ -150,8 +166,9 @@ function configuredAuthorizedParties(env: Env): string[] {
 export function assertAuthorizedParty(
   claims: Record<string, unknown>,
   env: Env,
-  options: { allowMissingAuthorizedParty?: boolean } = {},
+  options: ClerkAuthOptions = {},
 ): void {
+  if (options.skipAuthorizedPartyValidation) return;
   const allowed = configuredAuthorizedParties(env);
   if (allowed.length === 0) return;
 
@@ -176,7 +193,7 @@ function resolveDisplayName(claims: Record<string, unknown>): string | null {
 export async function verifyClerkRequest(
   request: Request,
   env: Env,
-  options: { allowMissingAuthorizedParty?: boolean } = {},
+  options: ClerkAuthOptions = {},
 ): Promise<AuthContext | null> {
   const token = getBearerToken(request);
   if (!token) return null;
@@ -196,7 +213,7 @@ export async function verifyClerkRequest(
 export async function optionalAuth(
   request: Request,
   env: Env,
-  options: { allowMissingAuthorizedParty?: boolean } = {},
+  options: ClerkAuthOptions = {},
 ): Promise<PublicAuthContext> {
   try {
     const auth = await verifyClerkRequest(request, env, options);
@@ -223,7 +240,7 @@ export async function optionalAuth(
 export async function requireAuth(
   request: Request,
   env: Env,
-  options: { allowMissingAuthorizedParty?: boolean } = {},
+  options: ClerkAuthOptions = {},
 ): Promise<AuthContext | Response> {
   try {
     const auth = await verifyClerkRequest(request, env, options);

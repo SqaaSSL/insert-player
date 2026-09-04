@@ -10,6 +10,7 @@ describe('official Arcade image-provider contract', () => {
   it('pins every image-generation step to the approved Gemini models', () => {
     expect(OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT).toEqual({
       schemaVersion: 1,
+      processorRuntimeRevision: 'meterkey-transport-v1',
       allowedGenerationProviders: ['gemini'],
       sourceModels: {
         side: GEMINI_PRO_IMAGE_MODEL,

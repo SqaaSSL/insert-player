@@ -15,9 +15,36 @@ import {
   isOfficialArcadeImageProviderContract,
   OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
 } from '../../src/services/ImageProviderContract';
+import { geminiEstimatedCostCents } from './geminiTransport';
+import { parseRequestedGenerationCreationFlow } from './generationCreationFlow';
+import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+import {
+  assertReviewedCanonicalRequestMatchesSealed,
+  parseReviewedCanonicalSourceRequest,
+  parseSealedReviewedCanonicalSources,
+  ReviewedCanonicalSourceError,
+  validateReviewedCanonicalSourcesCurrent,
+  type SealedReviewedCanonicalSources,
+} from './reviewedCanonicalSources';
+import { requireReviewedProductionWorkerPin } from './reviewedDeploymentPin';
+import { readEligibleUnsealedVideoPartialRestart } from './videoRunRestart';
+import {
+  VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
+  VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
+  VIDEO_SPRITE_COMPILER_VERSION,
+  VIDEO_SPRITE_PROCESSING_VERSION,
+} from '../../src/services/VideoSpriteCompileContract';
+import {
+  STUDIO_CURATED_VIDEO_POLICY,
+  storedVideoGenerationPolicy,
+} from '../../src/services/VideoGenerationPolicy';
 
 const MAX_ADMIN_GENERATION_BODY_BYTES = 8 * 1024;
 const AUTHORIZATION_TTL_HOURS = 12;
+const VIDEO_SPRITE_PREFLIGHT_CONTAINER_NAME =
+  `official-arcade-${OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.processorRuntimeRevision}`
+  + `-video-v${VIDEO_SPRITE_PROCESSING_VERSION}`
+  + `-compiler-${VIDEO_SPRITE_COMPILER_VERSION.replaceAll('.', '-')}`;
 const PLAYABLE_ANIMATION_NAMES = [
   'idle',
   'walk',
@@ -32,6 +59,28 @@ const PLAYABLE_ANIMATION_NAMES = [
   'victory',
 ] as const;
 const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'] as const;
+const SIDE_PROBE_PROVIDER_CALL_LIMIT = 1;
+const SIDE_CANARY_PROVIDER_CALL_LIMIT = 2;
+
+function sideProviderLimits(env: Env, calls: number): { calls: number; costCents: number } {
+  const sourceModel = OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.sourceModels.side;
+  const costPerCallCents = geminiEstimatedCostCents(env, sourceModel);
+  if (costPerCallCents === null) {
+    throw new Error(`No approved provider cost is configured for ${sourceModel}`);
+  }
+  return {
+    calls,
+    costCents: calls * costPerCallCents,
+  };
+}
+
+function sideProbeProviderLimits(env: Env): { calls: number; costCents: number } {
+  return sideProviderLimits(env, SIDE_PROBE_PROVIDER_CALL_LIMIT);
+}
+
+function sideCanaryProviderLimits(env: Env): { calls: number; costCents: number } {
+  return sideProviderLimits(env, SIDE_CANARY_PROVIDER_CALL_LIMIT);
+}
 
 interface ArcadeGenerationFighterRow {
   id: string;
@@ -43,10 +92,13 @@ interface ArcadeGenerationFighterRow {
 interface ActiveArcadeJobRow {
   id: string;
   fighter_id: string;
+  creation_flow: GenerationCreationFlow;
   status: 'queued' | 'running';
   stage: string;
   progress_current: number;
   progress_total: number;
+  artifact_run_id: string | null;
+  video_generation_policy: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -59,6 +111,17 @@ interface ReusableArcadeAuthorizationRow {
 interface ResumableArcadeRunRow {
   job_id: string;
   run_id: string;
+  source_manifest_json: string | null;
+}
+
+interface ReviewedVideoRecoverySeal {
+  job_id: string;
+  artifact_run_id: string | null;
+  job_status: string;
+  review_status: string;
+  run_status: string | null;
+  failure_stage: string | null;
+  video_generation_policy: string | null;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -72,6 +135,44 @@ function authorizationExpiresAt(): string {
   return new Date(Date.now() + AUTHORIZATION_TTL_HOURS * 60 * 60 * 1000).toISOString();
 }
 
+async function readLatestReviewedVideoRecoverySeal(
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+): Promise<ReviewedVideoRecoverySeal | null> {
+  const seal = await env.DB.prepare(`
+    SELECT gj.id AS job_id, gj.artifact_run_id,
+      gj.status AS job_status, gj.review_status,
+      run.status AS run_status, run.failure_stage, run.video_generation_policy
+    FROM generation_jobs gj
+    LEFT JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+    WHERE gj.fighter_id = ? AND gj.user_id = ?
+      AND gj.creation_flow = 'video' AND gj.operation = 'fighter_generation'
+    ORDER BY gj.created_at DESC, gj.rowid DESC
+    LIMIT 1
+  `).bind(fighterId, auth.userId).first<ReviewedVideoRecoverySeal>();
+  return seal && storedVideoGenerationPolicy(seal.video_generation_policy) === STUDIO_CURATED_VIDEO_POLICY
+    ? seal
+    : null;
+}
+
+function reviewedRecoveryConflict(actualJobId: string | null): Response {
+  return json({
+    error: 'Reviewed Video recovery source changed; reload before retrying',
+    code: 'reviewed_video_recovery_source_changed',
+    ...(actualJobId ? { latestJobId: actualJobId } : {}),
+  }, 409);
+}
+
+function exactReviewedRestartSource(seal: ReviewedVideoRecoverySeal): boolean {
+  return seal.run_status === 'failed' && (
+    seal.job_status === 'failed' || seal.job_status === 'cancelled' || (
+      seal.job_status === 'succeeded' &&
+      (seal.review_status === 'rejected' || seal.review_status === 'approved')
+    )
+  );
+}
+
 function publicAuth(auth: AuthContext): PublicAuthContext {
   return {
     userId: auth.userId,
@@ -81,11 +182,7 @@ function publicAuth(auth: AuthContext): PublicAuthContext {
   };
 }
 
-export async function readAdminArcadeGenerationContract(
-  env: Env,
-  auth: AuthContext,
-): Promise<Response> {
-  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+export async function readImageProcessorGenerationContract(env: Env): Promise<Response> {
   if (!env.IMAGE_PROCESSOR) {
     return json({
       error: 'Image processor binding is unavailable',
@@ -94,7 +191,9 @@ export async function readAdminArcadeGenerationContract(
   }
 
   try {
-    const processor = env.IMAGE_PROCESSOR.getByName('official-arcade-provider-contract-v1');
+    // Version the singleton name so a deploy probes a fresh Container instead of
+    // keeping an incompatible sleeping-policy predecessor alive with health polls.
+    const processor = env.IMAGE_PROCESSOR.getByName(VIDEO_SPRITE_PREFLIGHT_CONTAINER_NAME);
     const response = await processor.fetch(new Request('http://image-processor/health'));
     if (!response.ok) {
       return json({
@@ -107,6 +206,12 @@ export async function readAdminArcadeGenerationContract(
       status?: unknown;
       runtime?: unknown;
       imageProviderContract?: unknown;
+      videoSpriteCompiler?: {
+        schemaVersion?: unknown;
+        compilerVersion?: unknown;
+        processingVersion?: unknown;
+        automaticSelectionPolicies?: unknown;
+      };
     }>();
     if (payload.status !== 'ok') {
       return json({
@@ -132,10 +237,29 @@ export async function readAdminArcadeGenerationContract(
         reason: 'processor_contract_unapproved',
       }, 503);
     }
+    if (
+      payload.videoSpriteCompiler?.schemaVersion !== VIDEO_SPRITE_COMPILE_SCHEMA_VERSION ||
+      payload.videoSpriteCompiler.compilerVersion !== VIDEO_SPRITE_COMPILER_VERSION ||
+      payload.videoSpriteCompiler.processingVersion !== VIDEO_SPRITE_PROCESSING_VERSION ||
+      JSON.stringify(payload.videoSpriteCompiler.automaticSelectionPolicies) !==
+        JSON.stringify(VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES)
+    ) {
+      return json({
+        error: 'Image processor Video sprite compiler is incompatible',
+        reason: 'processor_video_compiler_incompatible',
+      }, 503);
+    }
     return json({
       ready: true,
       runtime: payload.runtime,
       contract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      videoSpriteCompiler: {
+        schemaVersion: payload.videoSpriteCompiler.schemaVersion,
+        compilerVersion: payload.videoSpriteCompiler.compilerVersion,
+        processingVersion: payload.videoSpriteCompiler.processingVersion,
+        automaticSelectionPolicies: payload.videoSpriteCompiler.automaticSelectionPolicies,
+      },
+      adminVideoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY,
     });
   } catch {
     return json({
@@ -145,12 +269,21 @@ export async function readAdminArcadeGenerationContract(
   }
 }
 
+export async function readAdminArcadeGenerationContract(
+  env: Env,
+  auth: AuthContext,
+): Promise<Response> {
+  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  return readImageProcessorGenerationContract(env);
+}
+
 function generationJobRequest(
   request: Request,
   fighterId: string,
   purchaseId: string,
   providerSessionId: string,
   target?: { kind: 'animation' | 'source'; name: string },
+  creationFlow: GenerationCreationFlow = 'original',
 ): Request {
   return new Request(request.url, {
     method: 'POST',
@@ -159,6 +292,7 @@ function generationJobRequest(
       fighterId,
       purchaseId,
       providerSessionId,
+      creationFlow,
       ...(target ? { targetKind: target.kind, targetName: target.name } : {}),
     }),
   });
@@ -175,11 +309,13 @@ async function createAdminGenerationAuthorization(
     legal: NonNullable<ReturnType<typeof parseGenerationLegalAttestation>>;
     continuation?: { runId: string; fromJobId: string };
     providerLimits?: { calls: number; costCents: number };
+    creationFlow?: GenerationCreationFlow;
   },
 ): Promise<{ purchaseId: string; providerSessionId: string }> {
   const purchaseId = generateId();
   const ledgerId = generateId();
   const expiresAt = authorizationExpiresAt();
+  const creationFlow = params.creationFlow ?? 'original';
   await env.DB.batch([
     env.DB.prepare(`
       INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
@@ -189,8 +325,8 @@ async function createAdminGenerationAuthorization(
       INSERT INTO generation_charges (
         id, user_id, tier, credit_cost, free_quota_delta, status,
         reason, fighter_id, ledger_id, expires_at,
-        continuation_run_id, resumed_from_job_id
-      ) VALUES (?, ?, 'champion', 0, 0, 'reserved', ?, ?, ?, ?, ?, ?)
+        continuation_run_id, resumed_from_job_id, creation_flow
+      ) VALUES (?, ?, 'champion', 0, 0, 'reserved', ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       purchaseId,
       auth.userId,
@@ -200,6 +336,7 @@ async function createAdminGenerationAuthorization(
       expiresAt,
       params.continuation?.runId ?? null,
       params.continuation?.fromJobId ?? null,
+      creationFlow,
     ),
   ]);
 
@@ -209,6 +346,7 @@ async function createAdminGenerationAuthorization(
       tier: 'champion',
       purpose: params.purpose,
       operation: params.operation,
+      creationFlow,
       chargeId: purchaseId,
       providerCallLimitCap: params.providerLimits?.calls,
       providerCostLimitCentsCap: params.providerLimits?.costCents,
@@ -259,6 +397,8 @@ async function findResumableArcadeRun(
       AND gj.status IN ('failed', 'cancelled')
       AND run.status = 'partial'
       AND run.tier = 'champion'
+      AND gj.creation_flow = 'original'
+      AND run.creation_flow = 'original'
       AND run.operation = ?
       AND run.target_kind = ?
       AND run.target_name = ?
@@ -267,6 +407,8 @@ async function findResumableArcadeRun(
         FROM generation_jobs paid_job
         JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
         WHERE paid_job.artifact_run_id = run.id
+          AND paid_job.creation_flow = 'original'
+          AND paid_charge.creation_flow = 'original'
           AND paid_charge.status = 'committed'
       )
     ORDER BY gj.created_at DESC
@@ -289,7 +431,14 @@ export async function startAdminArcadeGeneration(
   if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
   if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
 
-  const body = await readJsonBody<{ legal?: unknown; restart?: unknown }>(
+  const body = await readJsonBody<{
+    legal?: unknown;
+    restart?: unknown;
+    creationFlow?: unknown;
+    canonicalSourceMode?: unknown;
+    canonicalSourceHashes?: unknown;
+    recoveryFromJobId?: unknown;
+  }>(
     request,
     MAX_ADMIN_GENERATION_BODY_BYTES,
   );
@@ -297,6 +446,40 @@ export async function startAdminArcadeGeneration(
     return json({ error: 'restart must be a boolean' }, 400);
   }
   const restart = body.restart === true;
+  const recoveryFromJobId = typeof body.recoveryFromJobId === 'string'
+    ? body.recoveryFromJobId.trim()
+    : '';
+  if (
+    body.recoveryFromJobId !== undefined
+    && (typeof body.recoveryFromJobId !== 'string' || !/^[a-f0-9]{32}$/.test(recoveryFromJobId))
+  ) {
+    return json({ error: 'recoveryFromJobId must be an exact Video job id' }, 400);
+  }
+  const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
+  if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
+  let reviewedCanonicalRequest;
+  try {
+    reviewedCanonicalRequest = parseReviewedCanonicalSourceRequest(
+      body.canonicalSourceMode,
+      body.canonicalSourceHashes,
+    );
+  } catch (error) {
+    if (error instanceof ReviewedCanonicalSourceError) return json({ error: error.message }, error.status);
+    throw error;
+  }
+  if (reviewedCanonicalRequest && creationFlow !== 'video') {
+    return json({ error: 'Reviewed canonical sources are supported only by the Video creation flow' }, 400);
+  }
+  if (recoveryFromJobId && (!reviewedCanonicalRequest || creationFlow !== 'video')) {
+    return json({ error: 'recoveryFromJobId is supported only by reviewed Video generation' }, 400);
+  }
+  if (reviewedCanonicalRequest && restart && !recoveryFromJobId) {
+    return json({ error: 'Reviewed Video restart requires the exact recoveryFromJobId' }, 400);
+  }
+  if (reviewedCanonicalRequest) {
+    const deploymentPinFailure = requireReviewedProductionWorkerPin(request, env);
+    if (deploymentPinFailure) return deploymentPinFailure;
+  }
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
     return json({
@@ -320,8 +503,84 @@ export async function startAdminArcadeGeneration(
     return json({ error: 'Upload the private reference image before generation' }, 409);
   }
 
+  const initialVideoSeal = reviewedCanonicalRequest
+    ? await readLatestReviewedVideoRecoverySeal(env, auth, fighterId)
+    : null;
+  const initialRecoverySeal = recoveryFromJobId ? initialVideoSeal : null;
+  let unsealedVideoRestartFromJobId: string | null = null;
+  if (
+    recoveryFromJobId && restart && initialRecoverySeal &&
+    initialRecoverySeal.job_id === recoveryFromJobId &&
+    !exactReviewedRestartSource(initialRecoverySeal)
+  ) {
+    const eligibleUnsealedRestart = await readEligibleUnsealedVideoPartialRestart(
+      env,
+      auth.userId,
+      fighterId,
+      recoveryFromJobId,
+    );
+    if (eligibleUnsealedRestart) unsealedVideoRestartFromJobId = recoveryFromJobId;
+  }
+  if (
+    recoveryFromJobId && (
+      !initialRecoverySeal
+      || initialRecoverySeal.job_id !== recoveryFromJobId
+      || (
+        restart &&
+        !exactReviewedRestartSource(initialRecoverySeal) &&
+        unsealedVideoRestartFromJobId !== recoveryFromJobId
+      )
+    )
+  ) {
+    return reviewedRecoveryConflict(initialRecoverySeal?.job_id ?? null);
+  }
+
+  const active = await env.DB.prepare(`
+    SELECT job.id, job.fighter_id, job.creation_flow, job.status, job.stage,
+      job.progress_current, job.progress_total, job.artifact_run_id,
+      run.video_generation_policy, job.created_at, job.updated_at
+    FROM generation_jobs job
+    LEFT JOIN generation_artifact_runs run ON run.id = job.artifact_run_id
+    WHERE job.fighter_id = ? AND job.status IN ('queued', 'running')
+    ORDER BY job.created_at DESC
+    LIMIT 1
+  `).bind(fighterId).first<ActiveArcadeJobRow>();
+
+  const videoRunInProgress = creationFlow === 'video'
+    ? await env.DB.prepare(`
+        SELECT id, video_generation_policy
+        FROM generation_artifact_runs
+        WHERE fighter_id = ? AND user_id = ?
+          AND creation_flow = 'video' AND operation = 'fighter_generation'
+          AND status IN ('active', 'partial')
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `).bind(fighterId, auth.userId).first<{
+        id: string;
+        video_generation_policy: string | null;
+      }>()
+    : null;
+
+  if (
+    creationFlow === 'video' && (
+      (active?.creation_flow === 'video' &&
+        storedVideoGenerationPolicy(active.video_generation_policy) !== STUDIO_CURATED_VIDEO_POLICY) ||
+      (videoRunInProgress &&
+        storedVideoGenerationPolicy(videoRunInProgress.video_generation_policy) !== STUDIO_CURATED_VIDEO_POLICY)
+    )
+  ) {
+    return json({
+      error: 'The current Video run belongs to the self-service policy and cannot cross into Studio Curated',
+      code: 'video_generation_policy_conflict',
+    }, 409);
+  }
+
   const assetIntegrity = await inspectArcadeAssetIntegrity(env, fighterId);
-  if (assetIntegrity.ready && !restart) {
+  if (
+    assetIntegrity.ready && !restart && !recoveryFromJobId &&
+    (!reviewedCanonicalRequest || initialVideoSeal !== null) &&
+    !(creationFlow === 'video' && (active || videoRunInProgress))
+  ) {
     return json({
       ready: true,
       fighterId,
@@ -330,19 +589,42 @@ export async function startAdminArcadeGeneration(
     });
   }
 
-  const active = await env.DB.prepare(`
-    SELECT id, fighter_id, status, stage, progress_current, progress_total, created_at, updated_at
-    FROM generation_jobs
-    WHERE fighter_id = ? AND status IN ('queued', 'running')
-    ORDER BY created_at DESC
-    LIMIT 1
-  `).bind(fighterId).first<ActiveArcadeJobRow>();
   if (active) {
+    if (recoveryFromJobId) return reviewedRecoveryConflict(active.id);
+    if (active.creation_flow !== creationFlow) {
+      return json({
+        error: 'Another creation flow is already active for this fighter',
+        jobId: active.id,
+      }, 409);
+    }
+    if (reviewedCanonicalRequest) {
+      const activeRun = active.artifact_run_id
+        ? await env.DB.prepare(`
+            SELECT source_manifest_json
+            FROM generation_artifact_runs
+            WHERE id = ? AND fighter_id = ? AND user_id = ?
+            LIMIT 1
+          `).bind(active.artifact_run_id, fighterId, auth.userId)
+          .first<{ source_manifest_json: string | null }>()
+        : null;
+      try {
+        assertReviewedCanonicalRequestMatchesSealed(
+          reviewedCanonicalRequest,
+          parseSealedReviewedCanonicalSources(activeRun?.source_manifest_json ?? null),
+          fighterId,
+          auth.userId,
+        );
+      } catch (error) {
+        if (error instanceof ReviewedCanonicalSourceError) return json({ error: error.message }, error.status);
+        throw error;
+      }
+    }
     return json({
       job: {
         id: active.id,
         fighterId: active.fighter_id,
         tier: 'champion',
+        creationFlow: active.creation_flow,
         operation: 'fighter_generation',
         status: active.status,
         stage: active.stage,
@@ -355,37 +637,161 @@ export async function startAdminArcadeGeneration(
     });
   }
 
-  const partial = restart ? null : await env.DB.prepare(`
-    SELECT gj.id AS job_id, gj.artifact_run_id AS run_id
-    FROM generation_jobs gj
-    JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
-    WHERE gj.fighter_id = ? AND gj.user_id = ?
-      AND gj.status IN ('failed', 'cancelled')
-      AND run.status = 'partial'
-      AND run.tier = 'champion'
-      AND run.operation = 'fighter_generation'
-      AND EXISTS (
-        SELECT 1
-        FROM generation_jobs paid_job
-        JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
-        WHERE paid_job.artifact_run_id = run.id
-          AND paid_charge.status = 'committed'
-      )
-    ORDER BY gj.created_at DESC
-    LIMIT 1
-  `).bind(fighterId, auth.userId).first<{ job_id: string; run_id: string }>();
+  let partial: ResumableArcadeRunRow | null = null;
+  if (!restart && creationFlow === 'video') {
+    partial = await env.DB.prepare(`
+      SELECT gj.id AS job_id, gj.artifact_run_id AS run_id, run.source_manifest_json
+      FROM generation_jobs gj
+      JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+      LEFT JOIN video_sprite_candidates candidate
+        ON candidate.job_id = gj.id
+        AND candidate.run_id = run.id
+        AND candidate.fighter_id = gj.fighter_id
+        AND candidate.user_id = gj.user_id
+      LEFT JOIN video_sprite_candidate_revisions revision
+        ON revision.candidate_id = candidate.id
+        AND revision.revision = candidate.current_revision
+      WHERE gj.fighter_id = ? AND gj.user_id = ?
+        AND run.status = 'partial' AND run.tier = 'champion'
+        AND gj.creation_flow = 'video' AND run.creation_flow = 'video'
+        AND (run.video_generation_policy = ? OR run.video_generation_policy IS NULL)
+        AND gj.operation = 'fighter_generation' AND run.operation = 'fighter_generation'
+        AND NOT EXISTS (
+          SELECT 1 FROM generation_jobs child WHERE child.resumed_from_job_id = gj.id
+        )
+        AND (
+          SELECT COUNT(*) FROM video_sprite_candidates approved
+          WHERE approved.run_id = run.id AND approved.status = 'approved'
+        ) < ?
+        AND (
+          (gj.status IN ('failed', 'cancelled') AND candidate.id IS NULL)
+          OR (
+            gj.status = 'succeeded' AND gj.review_status = 'approved'
+            AND candidate.status = 'approved'
+            AND candidate.current_revision = candidate.approved_revision
+            AND revision.report_sha256 IS NOT NULL
+          )
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM generation_jobs paid_job
+          JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
+          WHERE paid_job.artifact_run_id = run.id
+            AND paid_job.creation_flow = 'video'
+            AND paid_charge.creation_flow = 'video'
+            AND paid_charge.status = 'committed'
+        )
+      ORDER BY gj.created_at DESC
+      LIMIT 1
+    `).bind(
+      fighterId,
+      auth.userId,
+      STUDIO_CURATED_VIDEO_POLICY,
+      PLAYABLE_ANIMATION_NAMES.length,
+    )
+      .first<ResumableArcadeRunRow>();
+  } else if (!restart) {
+    partial = await env.DB.prepare(`
+      SELECT gj.id AS job_id, gj.artifact_run_id AS run_id, run.source_manifest_json
+      FROM generation_jobs gj
+      JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
+      WHERE gj.fighter_id = ? AND gj.user_id = ?
+        AND gj.status IN ('failed', 'cancelled')
+        AND run.status = 'partial'
+        AND run.tier = 'champion'
+        AND gj.creation_flow = 'original'
+        AND run.creation_flow = 'original'
+        AND run.operation = 'fighter_generation'
+        AND EXISTS (
+          SELECT 1
+          FROM generation_jobs paid_job
+          JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
+          WHERE paid_job.artifact_run_id = run.id
+            AND paid_job.creation_flow = 'original'
+            AND paid_charge.creation_flow = 'original'
+            AND paid_charge.status = 'committed'
+        )
+      ORDER BY gj.created_at DESC
+      LIMIT 1
+    `).bind(fighterId, auth.userId).first<ResumableArcadeRunRow>();
+  }
+  let reviewedCanonicalSources: SealedReviewedCanonicalSources | undefined;
+  try {
+    if (partial) {
+      const sealed = parseSealedReviewedCanonicalSources(partial.source_manifest_json);
+      if (reviewedCanonicalRequest) {
+        assertReviewedCanonicalRequestMatchesSealed(
+          reviewedCanonicalRequest,
+          sealed,
+          fighterId,
+          auth.userId,
+        );
+      }
+      reviewedCanonicalSources = sealed ?? undefined;
+    } else if (reviewedCanonicalRequest) {
+      reviewedCanonicalSources = await validateReviewedCanonicalSourcesCurrent(
+        env,
+        fighterId,
+        auth.userId,
+        reviewedCanonicalRequest,
+      );
+    }
+  } catch (error) {
+    if (error instanceof ReviewedCanonicalSourceError) return json({ error: error.message }, error.status);
+    throw error;
+  }
+  if (reviewedCanonicalRequest && partial && !recoveryFromJobId) {
+    return json({
+      error: 'Reviewed Video continuation requires the exact recoveryFromJobId',
+      code: 'reviewed_video_recovery_source_required',
+    }, 409);
+  }
+  if (recoveryFromJobId) {
+    const finalRecoverySeal = await readLatestReviewedVideoRecoverySeal(env, auth, fighterId);
+    const finalUnsealedRestart = unsealedVideoRestartFromJobId
+      ? await readEligibleUnsealedVideoPartialRestart(
+          env,
+          auth.userId,
+          fighterId,
+          unsealedVideoRestartFromJobId,
+        )
+      : null;
+    if (
+      !initialRecoverySeal
+      || !finalRecoverySeal
+      || JSON.stringify(finalRecoverySeal) !== JSON.stringify(initialRecoverySeal)
+      || finalRecoverySeal.job_id !== recoveryFromJobId
+      || (restart
+        ? unsealedVideoRestartFromJobId
+          ? !finalUnsealedRestart
+          : !exactReviewedRestartSource(finalRecoverySeal)
+        : !partial || partial.job_id !== recoveryFromJobId)
+    ) {
+      return reviewedRecoveryConflict(finalRecoverySeal?.job_id ?? null);
+    }
+  }
   if (partial) {
     const reusableContinuation = await env.DB.prepare(`
       SELECT gc.id AS purchase_id, ps.id AS provider_session_id
       FROM generation_charges gc
+      JOIN credit_ledger cl
+        ON cl.id = gc.ledger_id
+        AND cl.user_id = gc.user_id
+        AND cl.reason = 'arcade_seed_generation'
+        AND cl.delta = 0
       JOIN provider_sessions ps
         ON ps.charge_id = gc.id
         AND ps.user_id = gc.user_id
+        AND ps.tier = 'champion'
+        AND ps.purpose = 'fighter_generation'
         AND ps.status = 'active'
         AND datetime(ps.expires_at) > datetime('now')
       LEFT JOIN generation_jobs continuation_job ON continuation_job.charge_id = gc.id
       WHERE gc.user_id = ? AND gc.fighter_id = ?
-        AND gc.status = 'reserved' AND gc.credit_cost = 0
+        AND gc.tier = 'champion'
+        AND gc.status = 'reserved' AND gc.credit_cost = 0 AND gc.free_quota_delta = 0
+        AND gc.reason = 'arcade_seed_generation'
+        AND gc.creation_flow = ? AND ps.creation_flow = ?
         AND gc.continuation_run_id = ? AND gc.resumed_from_job_id = ?
         AND datetime(gc.expires_at) > datetime('now')
         AND continuation_job.id IS NULL
@@ -394,6 +800,8 @@ export async function startAdminArcadeGeneration(
     `).bind(
       auth.userId,
       fighterId,
+      creationFlow,
+      creationFlow,
       partial.run_id,
       partial.job_id,
     ).first<ReusableArcadeAuthorizationRow>();
@@ -406,6 +814,7 @@ export async function startAdminArcadeGeneration(
           chargeReason: 'arcade_seed_generation',
           purpose: 'fighter_generation',
           operation: 'fighter_generation',
+          creationFlow,
           legal,
           continuation: { runId: partial.run_id, fromJobId: partial.job_id },
         });
@@ -414,7 +823,14 @@ export async function startAdminArcadeGeneration(
       fighterId,
       continuation.purchaseId,
       continuation.providerSessionId,
-    ), env, auth);
+      undefined,
+      creationFlow,
+    ), env, auth, {
+      reviewedCanonicalSources,
+      ...(creationFlow === 'video'
+        ? { videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY }
+        : {}),
+    });
   }
 
   const reusable = restart ? null : await env.DB.prepare(`
@@ -437,24 +853,36 @@ export async function startAdminArcadeGeneration(
       AND gc.free_quota_delta = 0
       AND gc.status = 'reserved'
       AND gc.reason = 'arcade_seed_generation'
+      AND gc.creation_flow = ?
+      AND ps.creation_flow = ?
       AND datetime(gc.expires_at) > datetime('now')
       AND gj.id IS NULL
     ORDER BY gc.created_at DESC
     LIMIT 1
-  `).bind(auth.userId, fighterId).first<ReusableArcadeAuthorizationRow>();
+  `).bind(auth.userId, fighterId, creationFlow, creationFlow)
+    .first<ReusableArcadeAuthorizationRow>();
   if (reusable) {
     return createGenerationJob(generationJobRequest(
       request,
       fighterId,
       reusable.purchase_id,
       reusable.provider_session_id,
-    ), env, auth);
+      undefined,
+      creationFlow,
+    ), env, auth, {
+      reviewedCanonicalSources,
+      unsealedVideoRestartFromJobId: unsealedVideoRestartFromJobId ?? undefined,
+      ...(creationFlow === 'video'
+        ? { videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY }
+        : {}),
+    });
   }
 
   const authorization = await createAdminGenerationAuthorization(env, auth, fighterId, {
     chargeReason: 'arcade_seed_generation',
     purpose: 'fighter_generation',
     operation: 'fighter_generation',
+    creationFlow,
     legal,
   });
 
@@ -463,7 +891,15 @@ export async function startAdminArcadeGeneration(
     fighterId,
     authorization.purchaseId,
     authorization.providerSessionId,
-  ), env, auth);
+    undefined,
+    creationFlow,
+  ), env, auth, {
+    reviewedCanonicalSources,
+    unsealedVideoRestartFromJobId: unsealedVideoRestartFromJobId ?? undefined,
+    ...(creationFlow === 'video'
+      ? { videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY }
+      : {}),
+  });
 }
 
 export async function startAdminArcadeAnimationGeneration(
@@ -556,7 +992,12 @@ export async function startAdminArcadeSourceGeneration(
     return json({ error: 'A valid canonical source is required' }, 400);
   }
 
-  const body = await readJsonBody<{ legal?: unknown; restart?: unknown; canary?: unknown }>(
+  const body = await readJsonBody<{
+    legal?: unknown;
+    restart?: unknown;
+    canary?: unknown;
+    probe?: unknown;
+  }>(
     request,
     MAX_ADMIN_GENERATION_BODY_BYTES,
   );
@@ -568,8 +1009,15 @@ export async function startAdminArcadeSourceGeneration(
     return json({ error: 'canary must be a boolean' }, 400);
   }
   const canary = body.canary === true;
-  if (canary && (!restart || sourceName !== 'side')) {
-    return json({ error: 'A canary must be a fresh canonical side generation' }, 400);
+  if (body.probe !== undefined && typeof body.probe !== 'boolean') {
+    return json({ error: 'probe must be a boolean' }, 400);
+  }
+  const probe = body.probe === true;
+  if (canary && probe) {
+    return json({ error: 'Choose either canary or probe mode' }, 400);
+  }
+  if ((canary || probe) && (!restart || sourceName !== 'side')) {
+    return json({ error: 'A canary or probe must be a fresh canonical side generation' }, 400);
   }
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
@@ -616,7 +1064,11 @@ export async function startAdminArcadeSourceGeneration(
     operation: 'fighter_retry_source',
     legal,
     continuation: partial ? { runId: partial.run_id, fromJobId: partial.job_id } : undefined,
-    providerLimits: canary ? { calls: 2, costCents: 30 } : undefined,
+    providerLimits: probe
+      ? sideProbeProviderLimits(env)
+      : canary
+        ? sideCanaryProviderLimits(env)
+        : undefined,
   });
 
   return createGenerationJob(generationJobRequest(

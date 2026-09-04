@@ -34,7 +34,16 @@
     "db:execute:0018": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0018_durable_generation_jobs.sql",
     "db:execute:0019": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0019_durable_retry_jobs.sql",
     "db:execute:0020": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0020_official_arcade.sql",
-    "db:execute:0021": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0021_arcade_generation_prompts.sql"
+    "db:execute:0021": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0021_arcade_generation_prompts.sql",
+    "db:execute:0028": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0028_sprite_animation_format.sql",
+    "db:execute:0029": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0029_generation_creation_flow.sql",
+    "db:execute:0030": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0030_pixcli_transport.sql",
+    "db:execute:0031": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0031_video_sprite_review.sql",
+    "db:execute:0032": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0032_video_sprite_safe_registration.sql",
+    "db:execute:0033": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0033_imported_global_video_recuration.sql",
+    "db:execute:0034": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0034_promote_rosalia_v2.sql",
+    "db:execute:0035": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0035_video_generation_policies.sql",
+    "db:execute:0036": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0036_versus_invitations.sql"
   },
   "devDependencies": {
     "wrangler": "^4.125.0"
@@ -42,6 +51,9 @@
   "dependencies": {
     "@clerk/backend": "^3.16.6",
     "@cloudflare/containers": "^0.3.7",
-    "jose": "^6.2.3"
+    "@fontsource/press-start-2p": "5.3.0",
+    "@fontsource/space-grotesk": "5.3.0",
+    "jose": "^6.2.3",
+    "takumi-js": "2.2.3"
   }
 }

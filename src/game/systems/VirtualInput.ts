@@ -7,7 +7,8 @@ export type VirtualInputAction =
   | 'punch'
   | 'kick'
   | 'fireball'
-  | 'uppercut';
+  | 'uppercut'
+  | 'super';
 
 export interface VirtualInputSnapshot {
   left: boolean;
@@ -19,10 +20,11 @@ export interface VirtualInputSnapshot {
   kick: boolean;
   fireball: boolean;
   uppercut: boolean;
+  super: boolean;
 }
 
 const PLAYER_COUNT = 2;
-const pulseActions = new Set<VirtualInputAction>(['punch', 'kick', 'fireball', 'uppercut']);
+const pulseActions = new Set<VirtualInputAction>(['punch', 'kick', 'fireball', 'uppercut', 'super']);
 const heldByPlayer = Array.from({ length: PLAYER_COUNT }, () => new Set<VirtualInputAction>());
 const pressedByPlayer = Array.from({ length: PLAYER_COUNT }, () => new Set<VirtualInputAction>());
 
@@ -57,6 +59,7 @@ export function consumeVirtualInput(playerIndex: number): VirtualInputSnapshot {
     kick: pressed.has('kick'),
     fireball: pressed.has('fireball'),
     uppercut: pressed.has('uppercut'),
+    super: pressed.has('super'),
   };
   pressed.clear();
   return snapshot;

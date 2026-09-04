@@ -1,0 +1,162 @@
+name: Activate Trump video roster in production
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_r2_key:
+        description: Private R2 key under the fixed Trump import prefix
+        required: true
+        default: temp/arcade-imports/trump-video-roster-v1/donald-trump-video-dense-v1-2026-08-26.tar.gz
+        type: string
+      bundle_sha256:
+        description: Exact SHA-256 of the compressed bundle
+        required: true
+        type: string
+      confirmation:
+        description: Enter ACTIVATE_TRUMP_VIDEO_ROSTER_PRODUCTION
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  activate:
+    name: Sealed draft import and activation
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      BUNDLE_R2_KEY: ${{ inputs.bundle_r2_key }}
+      BUNDLE_SHA256: ${{ inputs.bundle_sha256 }}
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      ASF_CLOUDFLARE_ZONE_ID: ${{ vars.ASF_CLOUDFLARE_ZONE_ID }}
+      ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+      ASF_WORKER_URL: https://api.insertplayer.ai
+      ASF_EXPECTED_DEPLOYED_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Check out the exact workflow commit
+        uses: actions/checkout@v6
+
+      - name: Validate the guarded request
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_CONFIRMATION" == "ACTIVATE_TRUMP_VIDEO_ROSTER_PRODUCTION" ]] || {
+            printf '%s\n' '::error::The exact production confirmation phrase is required.'
+            exit 1
+          }
+          [[ "$BUNDLE_R2_KEY" =~ ^temp/arcade-imports/trump-video-roster-v1/[a-z0-9][a-z0-9._-]{0,127}\.tar\.gz$ ]] || {
+            printf '%s\n' '::error::bundle_r2_key must be a simple tar.gz name under the fixed Trump import prefix.'
+            exit 1
+          }
+          [[ "$BUNDLE_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+            printf '%s\n' '::error::bundle_sha256 must be a lowercase 64-character SHA-256.'
+            exit 1
+          }
+          [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]] || {
+            printf '%s\n' '::error::Production Cloudflare R2 credentials are unavailable.'
+            exit 1
+          }
+          [[ "$ASF_CLOUDFLARE_ZONE_ID" =~ ^[a-f0-9]{32}$ ]] || {
+            printf '%s\n' '::error::ASF_CLOUDFLARE_ZONE_ID is unavailable or invalid.'
+            exit 1
+          }
+          [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" ]] || {
+            printf '%s\n' '::error::Production Arcade admin Clerk credentials are unavailable.'
+            exit 1
+          }
+          [[ ${#CLERK_BACKEND_AUTH_BRIDGE_SECRET} -ge 32 ]] || {
+            printf '%s\n' '::error::Production backend auth bridge secret is unavailable.'
+            exit 1
+          }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install pinned Wrangler
+        run: npm --prefix worker ci
+
+      - name: Download the pinned private EU R2 object
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/trump-video-roster.tar.gz"
+          npm exec --prefix worker -- wrangler r2 object get \
+            "insert-player-assets/$BUNDLE_R2_KEY" \
+            --remote \
+            --jurisdiction eu \
+            --file "$archive"
+          printf '%s  %s\n' "$BUNDLE_SHA256" "$archive" | sha256sum --check --strict
+
+      - name: Validate and extract the archive safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/trump-video-roster.tar.gz"
+          extract_root="$RUNNER_TEMP/trump-video-roster-extracted"
+          bundle_root='donald-trump-video-dense-v1-2026-08-26'
+          mkdir -p "$extract_root"
+          while IFS= read -r member; do
+            [[ -n "$member" ]] || {
+              printf '%s\n' '::error::Bundle archive contains an empty member name.'
+              exit 1
+            }
+            [[ "$member" != /* && "$member" != *\\* ]] || {
+              printf '%s\n' '::error::Bundle archive contains an unsafe absolute or backslash path.'
+              exit 1
+            }
+            [[ "$member" == "$bundle_root" || "$member" == "$bundle_root/"* ]] || {
+              printf '%s\n' '::error::Bundle archive contains a member outside its sealed root.'
+              exit 1
+            }
+            [[ "/$member/" != *"/../"* && "/$member/" != *"/./"* ]] || {
+              printf '%s\n' '::error::Bundle archive contains path traversal.'
+              exit 1
+            }
+          done < <(tar -tzf "$archive")
+          tar -tvzf "$archive" | awk 'substr($1, 1, 1) != "-" && substr($1, 1, 1) != "d" { exit 1 }' || {
+            printf '%s\n' '::error::Bundle archive contains a link or special file.'
+            exit 1
+          }
+          tar -xzf "$archive" --directory "$extract_root" --no-same-owner --no-same-permissions
+          node scripts/import-trump-video-roster.mjs \
+            --bundle="$extract_root/$bundle_root" \
+            > "$RUNNER_TEMP/trump-video-roster-plan.json"
+
+      - name: Import, verify, activate, purge, and smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/trump-video-roster-extracted/donald-trump-video-dense-v1-2026-08-26"
+          receipt="$RUNNER_TEMP/trump-video-roster-activation-receipt.json"
+          node scripts/import-trump-video-roster.mjs \
+            --bundle="$bundle" \
+            --execute \
+            --confirm=ACTIVATE_TRUMP_VIDEO_ROSTER_PRODUCTION \
+            --expected-deployed-sha="$GITHUB_SHA" \
+            --receipt="$receipt"
+
+      - name: Upload the non-secret activation receipt
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: trump-video-roster-activation-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/trump-video-roster-plan.json
+            ${{ runner.temp }}/trump-video-roster-activation-receipt.json
+          if-no-files-found: warn
+          retention-days: 30

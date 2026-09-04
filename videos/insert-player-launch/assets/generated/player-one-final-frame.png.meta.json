@@ -1,0 +1,28 @@
+{
+  "status": "approved-composite",
+  "purpose": "Insert Player launch transformation end frame",
+  "startFrame": {
+    "asset": "player-one-photo-start.png",
+    "sha256": "261fcc116f209968e8d037c59bbab7a4a3bcada93eaedcc1a903315ee8359ffe",
+    "handling": "deterministic 16:9 layout built from the exact licensed source portrait"
+  },
+  "fighter": {
+    "name": "Player One",
+    "asset": "player-one-upright-canonical.png",
+    "sha256": "66dcd30f40a5040bd51a64b0c3ee8e4a01c36351505083090c78c1b8cd4aa5af",
+    "handling": "byte-identical copy of the approved production upright cutout; no generative redraw"
+  },
+  "background": {
+    "asset": "player-one-arena-background.png",
+    "sha256": "d9b218b0baf07c6bb3a31f223c9335a97be9b56ef164abac6c8eae06a8327ee8",
+    "generator": "Codex built-in image generation",
+    "useCase": "precise-object-edit",
+    "prompt": "Remove the woman/fighter and transformation seam from the supplied red-and-blue arena frame, rebuild the occluded arena and reflective floor, extend the background edge to edge, and leave the center empty for deterministic compositing. Preserve the realistic 2.5D fighting-game arena, camera angle, lighting, floor perspective, and red/blue rigging. No people, silhouettes, text, logos, UI, watermark, cartoon treatment, or retouch artifacts."
+  },
+  "composite": {
+    "output": "player-one-final-frame.png",
+    "sha256": "a067b23a33929bd2dbd86ded41a9e04c4c6ba954363ed7cf2e63bdb6409a28ee",
+    "size": "1920x1080",
+    "method": "deterministic ImageMagick alpha composite"
+  }
+}

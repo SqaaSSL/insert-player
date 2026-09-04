@@ -1,8 +1,17 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { purgeExactCloudflareFiles } from './cloudflare-cache.mjs';
+import { assertDevelopmentDeployAllowed } from './development-deploy-guard.mjs';
+import {
+  chunkFrontendReleaseAssets,
+  collectFrontendReleaseAssetPaths,
+  expectedMediaContentType,
+  waitForLiveMediaAsset,
+} from './frontend-release-assets.mjs';
+import { assertProductionDeployAllowed } from './production-deploy-guard.mjs';
+import { writeFrontendReleaseManifest } from './release-provenance.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const workerDir = join(root, 'worker');
@@ -124,7 +133,20 @@ function builtFrontendAssetPath() {
   return paths[0];
 }
 
-async function purgeLiveAssetCache(values, assetPath) {
+function builtFrontendReleaseAssetPaths(entryAssetPath) {
+  const distDir = join(root, 'dist');
+  const assetsDir = join(distDir, 'assets');
+  const sourcePaths = [join(distDir, 'index.html')];
+  for (const name of readdirSync(assetsDir)) {
+    if (/\.(?:css|js)$/.test(name)) sourcePaths.push(join(assetsDir, name));
+  }
+  return collectFrontendReleaseAssetPaths({
+    entryAssetPath,
+    sourceTexts: sourcePaths.map((path) => readFileSync(path, 'utf8')),
+  });
+}
+
+async function purgeLiveAssetCache(values, assetPaths) {
   if (isSandbox) return;
   const token = envValue(values, 'CLOUDFLARE_API_TOKEN');
   const zoneId = envValue(values, 'ASF_CLOUDFLARE_ZONE_ID', 'CLOUDFLARE_ZONE_ID');
@@ -136,17 +158,35 @@ async function purgeLiveAssetCache(values, assetPath) {
     throw new Error('ASF_CLOUDFLARE_ZONE_ID must be a 32-character Cloudflare zone id.');
   }
 
-  const result = await purgeExactCloudflareFiles({
-    token,
-    zoneId,
-    files: LIVE_FRONTEND_ORIGINS.map((origin) => `${origin}${assetPath}`),
-  });
-
-  if (!result.purged) {
-    console.warn(`${result.warning}; continuing to the authoritative canonical smoke.`);
-    return;
+  const chunks = chunkFrontendReleaseAssets(assetPaths, LIVE_FRONTEND_ORIGINS);
+  for (const files of chunks) {
+    const result = await purgeExactCloudflareFiles({ token, zoneId, files });
+    if (!result.purged) {
+      console.warn(`${result.warning}; continuing to the authoritative canonical smoke.`);
+      return;
+    }
   }
-  console.log(`Purged live cache entries for ${assetPath}.`);
+  console.log(`Purged live cache entries for ${assetPaths.length} release assets.`);
+}
+
+async function verifyLiveMediaAssets(assetPaths) {
+  if (isSandbox) return;
+  const mediaAssets = assetPaths
+    .map((path) => ({ path, expectedType: expectedMediaContentType(path) }))
+    .filter(({ expectedType }) => expectedType);
+  for (const { path, expectedType } of mediaAssets) {
+    const { actualType, contentLength, attempt } = await waitForLiveMediaAsset({
+      url: `${LIVE_FRONTEND_ORIGINS[0]}${path}`,
+      expectedType,
+      onRetry: ({ status, actualType: retryType, contentLength: retryLength, attempt: retryAttempt, maxAttempts }) => {
+        console.warn(
+          `Live media ${path} is not ready after attempt ${retryAttempt}/${maxAttempts}: status=${status ?? 'unavailable'} type=${retryType || 'missing'} bytes=${retryLength ?? 'unspecified'}; retrying after Pages propagation.`,
+        );
+      },
+    });
+    if (attempt > 1) console.log(`Live media ${path} became ready on attempt ${attempt}.`);
+    console.log(`Verified live media ${path} (${actualType}, ${contentLength ?? 'unspecified'} bytes).`);
+  }
 }
 
 async function main() {
@@ -164,12 +204,23 @@ async function main() {
   if (!/^[A-Za-z0-9._/-]+$/.test(branch)) {
     throw new Error('ASF_PAGES_BRANCH contains unsupported characters.');
   }
+  const expectedBranch = isSandbox ? 'develop' : 'main';
+  if (branch !== expectedBranch) {
+    throw new Error(`Frontend ${deployTarget} deploy branch must be ${expectedBranch}.`);
+  }
 
   console.log(`Frontend Pages deploy target: ${projectName} (${branch}, ${deployTarget})`);
   if (args.has('--check-only')) {
     console.log('Frontend Pages deploy config checks passed.');
     return;
   }
+
+  const releaseContext = isSandbox
+    ? assertDevelopmentDeployAllowed({ root })
+    : assertProductionDeployAllowed({ root });
+  console.log(
+    `Frontend ${isSandbox ? 'sandbox' : 'production'} release authorized: ${releaseContext.channel} ${releaseContext.gitSha}.`,
+  );
 
   mkdirSync(wranglerLogPath, { recursive: true });
   run('production checks', npm, ['run', 'check:production']);
@@ -185,7 +236,16 @@ async function main() {
     ['scripts/configure-frontend-dist.mjs', `--target=${isSandbox ? 'sandbox' : 'live'}`],
   );
   const expectedAssetPath = builtFrontendAssetPath();
+  if (!isSandbox) {
+    writeFrontendReleaseManifest({
+      distDir: join(root, 'dist'),
+      context: releaseContext,
+      entryAssetPath: expectedAssetPath,
+    });
+  }
+  const releaseAssetPaths = builtFrontendReleaseAssetPaths(expectedAssetPath);
   console.log(`Frontend release asset: ${expectedAssetPath}`);
+  console.log(`Frontend referenced release assets: ${releaseAssetPaths.length}`);
   run(
     'Cloudflare Pages deploy',
     node,
@@ -210,10 +270,12 @@ async function main() {
     SMOKE_TIMEOUT_MS,
     {
       ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath,
+      ...(!isSandbox ? { ASF_EXPECTED_FRONTEND_GIT_SHA: releaseContext.gitSha } : {}),
       ASF_FRONTEND_ASSET_PROBE_NONCE: `deploy-${Date.now()}`,
     },
   );
-  await purgeLiveAssetCache(values, expectedAssetPath);
+  await purgeLiveAssetCache(values, releaseAssetPaths);
+  await verifyLiveMediaAssets(releaseAssetPaths);
   run(
     isSandbox ? 'frontend sandbox canonical smoke' : 'frontend live canonical smoke',
     npm,
@@ -222,6 +284,7 @@ async function main() {
     SMOKE_TIMEOUT_MS,
     {
       ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath,
+      ...(!isSandbox ? { ASF_EXPECTED_FRONTEND_GIT_SHA: releaseContext.gitSha } : {}),
       ASF_FRONTEND_READY_TIMEOUT_MS: String(CANONICAL_SMOKE_READY_TIMEOUT_MS),
     },
   );

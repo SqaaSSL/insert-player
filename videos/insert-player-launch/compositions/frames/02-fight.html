@@ -1,0 +1,126 @@
+<template>
+  <style>
+    @font-face {
+      font-family: "Press Start 2P";
+      font-weight: 400;
+      font-style: normal;
+      font-display: block;
+      src: url("assets/fonts/PressStart2P-400.woff2") format("woff2");
+    }
+
+    @font-face {
+      font-family: "Space Grotesk";
+      font-weight: 700;
+      font-style: normal;
+      font-display: block;
+      src: url("assets/fonts/SpaceGrotesk-700.woff2") format("woff2");
+    }
+
+    #root {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      container-type: size;
+      color: #fff4d6;
+      font-family: "Space Grotesk", sans-serif;
+    }
+
+    [class~="02-fight-ground"] {
+      position: absolute;
+      inset: 0;
+      background: transparent;
+    }
+
+    [class~="02-fight-video"] {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    [class~="02-fight-overlay"] {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    [class~="02-fight-label"] {
+      position: absolute;
+      top: 12.6cqh;
+      left: 5.5cqw;
+      display: flex;
+      align-items: center;
+      gap: 1cqw;
+      padding: 1.15cqh 1.1cqw 1.05cqh;
+      border-left: 6px solid #ff2a2a;
+      background: rgba(4, 4, 13, 0.92);
+      color: #fff4d6;
+      font-family: "Press Start 2P", monospace;
+      font-size: 2.8cqw;
+      font-weight: 400;
+      line-height: 1.2;
+      letter-spacing: 0;
+      white-space: nowrap;
+      transform-origin: left top;
+    }
+
+    [class~="02-fight-rule"] {
+      display: block;
+      flex: 0 0 auto;
+      width: 36px;
+      height: 2px;
+      background: #ff2a2a;
+      transform-origin: left center;
+    }
+  </style>
+
+  <div data-hf-id="hf-hy4k" id="root" data-composition-id="02-fight" data-duration="4.666667" data-width="1920" data-height="1080">
+    <div data-hf-id="hf-1edn" id="frame02-ground" class="clip 02-fight-ground" data-start="0" data-duration="4.666667" data-track-index="0" aria-hidden="true"></div>
+
+    <!-- approved frame video hoisted by assemble-index -->
+
+    <div data-hf-id="hf-o3m4" id="frame02-overlay" class="clip 02-fight-overlay" data-start="0" data-duration="4.666667" data-track-index="2">
+      <div data-hf-id="hf-y68q" class="02-fight-label">
+        <span data-hf-id="hf-bdvc" class="02-fight-rule" aria-hidden="true"></span>
+        <span data-hf-id="hf-5qng">YOUR FIGHT</span>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js"></script>
+  <script>
+    (() => {
+      const root = document.querySelector('[data-composition-id="02-fight"]');
+      const label = root.querySelector('[class~="02-fight-label"]');
+      const rule = root.querySelector('[class~="02-fight-rule"]');
+      const timeline = gsap.timeline({ paused: true });
+
+      timeline
+        .addLabel("orientation", 0)
+        .fromTo(
+          label,
+          { autoAlpha: 0, y: -28, scale: 0.9 },
+          { autoAlpha: 1, y: 0, scale: 1, duration: 0.25, ease: "power3.out" },
+          0.03
+        )
+        .fromTo(
+          rule,
+          { scaleX: 0 },
+          { scaleX: 1, duration: 0.2, ease: "power2.out" },
+          0.08
+        )
+        .to(
+          label,
+          { scale: 0.42, autoAlpha: 0.82, duration: 0.24, ease: "power2.inOut" },
+          0.31
+        )
+        .addLabel("fight", 0.55)
+        .addLabel("impact", 2.65);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["02-fight"] = timeline;
+    })();
+  </script>
+</template>

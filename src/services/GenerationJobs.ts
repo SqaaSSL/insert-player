@@ -4,8 +4,10 @@ import {
   type ApiRequestContext,
 } from './ApiClient';
 import type { GenerationBillingOperation, QualityTier } from './QualityTiers';
+import type { GenerationCreationFlow } from './GenerationCreationFlow';
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+export type GenerationJobReviewStatus = 'none' | 'awaiting_review' | 'approved' | 'rejected';
 
 export interface GenerationJobEvent {
   stage: string;
@@ -18,12 +20,15 @@ export interface GenerationJob {
   id: string;
   fighterId: string;
   tier: QualityTier;
+  creationFlow: GenerationCreationFlow;
   operation: GenerationBillingOperation;
   targetKind: 'animation' | 'source' | null;
   targetName: string | null;
   artifactRunId: string | null;
   resumedFromJobId: string | null;
   status: GenerationJobStatus;
+  reviewStatus: GenerationJobReviewStatus;
+  fullRunRestartRequired: boolean;
   stage: string;
   failureStage: string | null;
   progressCurrent: number;
@@ -112,6 +117,7 @@ export async function startGenerationJob(
     fighterId: string;
     purchaseId: string;
     providerSessionId: string;
+    creationFlow?: GenerationCreationFlow;
     targetKind?: 'animation' | 'source';
     targetName?: string;
   },

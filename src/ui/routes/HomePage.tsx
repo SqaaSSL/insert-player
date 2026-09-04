@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import {
-  getBillingProfile,
-  listCreditPacks,
+  loadBillingProfile,
+  loadCreditPacks,
   startCreditCheckout,
+  verifyCreditCheckoutSession,
   type BillingProfile,
   type CreditPack,
 } from '../../services/Billing.ts';
@@ -16,27 +17,46 @@ import {
 import type { AuthRouteState } from '../authState.ts';
 import {
   clearPendingCheckout,
+  clearPendingCheckoutForSession,
+  checkoutReturnFromUrl,
   checkoutStatusMessage,
-  consumePendingCheckout,
-  consumeCheckoutStatus,
+  checkoutVerificationMessage,
+  consumeCheckoutReturn,
+  readPendingCheckout,
   rememberPendingCheckout,
 } from '../shared/checkoutStatus.ts';
 import { PUBLIC_APP_NAME } from '../publicBrand.ts';
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import { CheckoutConsent } from '../components/LegalConsent.tsx';
+import { Button } from '../components/Button.tsx';
+import type { LegalRoute } from '../components/LegalFooter.tsx';
 import { currentCheckoutLegalAttestation } from '../legal.ts';
 import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
+import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
+import type { CreationPurchaseIntent } from '../shared/onboardingFlow.ts';
 
 interface HomePageProps extends AuthRouteState {
+  creationPurchaseIntent?: CreationPurchaseIntent | null;
+  onContinuePurchaseIntent?: () => void;
+  onCreateFighter: () => void;
+  onCreateStage: () => void;
+  onOpenArcade: () => void;
+  onOpenCoopRush: () => void;
+  onOpenAuraCpu: () => void;
+  onOpenAuraPlayer: () => void;
+  onOpenAuraOnline: () => void;
+  onOpenAuraWatch: () => void;
+  onNavigateLegal: (route: LegalRoute) => void;
   onOpenGallery: () => void;
   onOpenCommunity: () => void;
   onOpenWatchMode: () => void;
   onOpenVsCpu: () => void;
   onOpenVsPlayer: () => void;
+  onOpenOnlineVersus: () => void;
   onOpenModeration: () => void;
 }
 
-const CHECKOUT_PROFILE_REFRESH_DELAYS_MS = [1_500, 3_500, 7_000, 12_000];
+const CHECKOUT_SESSION_REFRESH_DELAYS_MS = [0, 1_500, 3_500, 7_000, 12_000];
 
 function recordLabel(wins: number, losses: number): string {
   return `${wins}W ${losses}L`;
@@ -50,12 +70,24 @@ function recentResultLabel(match: RecentMatch, playerId: string): string {
 export function HomePage({
   authStatus,
   authSessionKey,
+  onCreateFighter,
+  onCreateStage,
+  onOpenArcade,
+  onOpenCoopRush,
+  onOpenAuraCpu,
+  onOpenAuraPlayer,
+  onOpenAuraOnline,
+  onOpenAuraWatch,
+  onNavigateLegal,
   onOpenGallery,
   onOpenCommunity,
   onOpenWatchMode,
   onOpenVsCpu,
   onOpenVsPlayer,
+  onOpenOnlineVersus,
   onOpenModeration,
+  creationPurchaseIntent = null,
+  onContinuePurchaseIntent,
 }: HomePageProps) {
   const [creditPacks, setCreditPacks] = useState<CreditPack[]>([]);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
@@ -69,62 +101,118 @@ export function HomePage({
   useEffect(() => {
     const apiContext = captureApiRequestContext();
     let cancelled = false;
-    let refreshTimers: number[] = [];
-    const loadBilling = async () => {
+    let refreshTimer: number | null = null;
+    let latestProfile: BillingProfile | null = null;
+    let verifiedBalance: number | null = null;
+    const loadBilling = () => {
       if (authStatus === 'loading') {
         setBillingStatus('Loading credits...');
         return;
       }
-      const checkoutStatus = consumeCheckoutStatus();
-      const pendingCheckout = checkoutStatus === 'success' ? consumePendingCheckout() : null;
-      const checkoutMessage = checkoutStatus ? checkoutStatusMessage(checkoutStatus) : null;
-      const [packs, profile] = await Promise.all([
-        listCreditPacks(apiContext),
-        getBillingProfile(apiContext),
-      ]);
-      if (cancelled) return;
-      setCreditPacks(packs);
-      setBillingProfile(profile);
-      const expectedBalance = pendingCheckout && pendingCheckout.balanceBefore !== null
-        ? pendingCheckout.balanceBefore + pendingCheckout.credits
-        : null;
-      if (checkoutStatus === 'success' && authStatus === 'signed-in') {
-        if (profile && expectedBalance !== null && profile.creditsBalance >= expectedBalance) {
-          setBillingStatus(`${profile.creditsBalance} credits ready`);
-          return;
+      const checkoutReturn = authStatus === 'signed-in'
+        ? consumeCheckoutReturn(authSessionKey)
+        : checkoutReturnFromUrl(window.location.href);
+      const pendingCheckout = readPendingCheckout(authSessionKey);
+      const checkoutMessage = checkoutReturn ? checkoutStatusMessage(checkoutReturn.status) : null;
+      const returnedSuccess = checkoutReturn?.status === 'success';
+      const checkoutSessionId = returnedSuccess
+        ? checkoutReturn.sessionId
+        : checkoutReturn
+          ? null
+          : pendingCheckout?.sessionId ?? null;
+      const exactVerificationActive = Boolean(checkoutSessionId && authStatus === 'signed-in');
+
+      void Promise.all([
+        loadCreditPacks(apiContext),
+        loadBillingProfile(apiContext),
+      ]).then(([packsResult, profileResult]) => {
+        if (cancelled) return;
+        latestProfile = profileResult.profile;
+        setCreditPacks(packsResult.packs);
+        setBillingProfile(profileResult.profile && verifiedBalance !== null
+          ? { ...profileResult.profile, creditsBalance: verifiedBalance }
+          : profileResult.profile);
+        if (exactVerificationActive || returnedSuccess) return;
+        if (checkoutMessage) {
+          setBillingStatus(checkoutMessage);
+        } else if (packsResult.status === 'local') {
+          setBillingStatus('Credit packs are disabled in local development');
+        } else if (packsResult.status === 'unavailable') {
+          setBillingStatus('Credit packs unavailable. Try again later.');
+        } else if (profileResult.status === 'unavailable' && authStatus === 'signed-in') {
+          setBillingStatus('Credit balance unavailable. Try again later.');
+        } else if (profileResult.profile) {
+          setBillingStatus(`${profileResult.profile.creditsBalance} credits ready`);
+        } else if (profileResult.status === 'signed-out' && authStatus === 'signed-in') {
+          setBillingStatus('Sign in again to load your credit balance');
+        } else if (packsResult.packs.length === 0) {
+          setBillingStatus('No credit packs are available');
+        } else {
+          setBillingStatus('Sign in for cloud credits');
         }
-        setBillingStatus('Checkout complete. Confirming credits...');
-        refreshTimers = CHECKOUT_PROFILE_REFRESH_DELAYS_MS.map((delay, index) => window.setTimeout(async () => {
-          const refreshed = await getBillingProfile(apiContext);
-          if (cancelled) return;
-          if (refreshed) setBillingProfile(refreshed);
-          const credited = refreshed && expectedBalance !== null && refreshed.creditsBalance >= expectedBalance;
-          if (credited) {
-            setBillingStatus(`${refreshed.creditsBalance} credits ready`);
-            refreshTimers.forEach((timer) => window.clearTimeout(timer));
-            refreshTimers = [];
-            return;
-          }
-          if (index === CHECKOUT_PROFILE_REFRESH_DELAYS_MS.length - 1) {
-            setBillingStatus(refreshed ? 'Credits ready' : checkoutStatusMessage('success'));
-          }
-        }, delay));
+      });
+
+      if (returnedSuccess && !checkoutSessionId) {
+        setBillingStatus('Checkout returned without a valid Stripe session. No credit success was assumed.');
         return;
       }
-      if (packs.length === 0) {
-        setBillingStatus(checkoutMessage ?? 'Credits offline in local mode');
-      } else if (profile) {
-        setBillingStatus(checkoutMessage ?? 'Credits ready');
-      } else if (authStatus === 'signed-in') {
-        setBillingStatus(checkoutMessage ?? 'Cloud profile unavailable');
-      } else {
-        setBillingStatus(checkoutMessage ?? 'Sign in for cloud credits');
+      if (exactVerificationActive && checkoutSessionId) {
+        setBillingStatus('Confirming the exact Stripe session...');
+        const pollCheckout = async (index: number) => {
+          const verification = await verifyCreditCheckoutSession(checkoutSessionId, apiContext);
+          if (cancelled) return;
+          const checkout = verification.checkout;
+          if (checkout) {
+            verifiedBalance = checkout.creditsBalance;
+            setBillingProfile((current) => (
+              current ? { ...current, creditsBalance: checkout.creditsBalance } : current
+            ));
+            if (checkout.state === 'complete') {
+              clearPendingCheckoutForSession(authSessionKey, checkoutSessionId);
+              setBillingStatus(checkoutVerificationMessage(checkout));
+              return;
+            }
+            if (checkout.state === 'failed') {
+              clearPendingCheckoutForSession(authSessionKey, checkoutSessionId);
+              setBillingStatus(checkoutVerificationMessage(checkout));
+              return;
+            }
+          }
+
+          const hasNextAttempt = index < CHECKOUT_SESSION_REFRESH_DELAYS_MS.length - 1;
+          const shouldRetry = checkout?.state === 'pending' || (!checkout && verification.retryable === true);
+          if (hasNextAttempt && shouldRetry) {
+            const currentDelay = CHECKOUT_SESSION_REFRESH_DELAYS_MS[index];
+            const nextDelay = CHECKOUT_SESSION_REFRESH_DELAYS_MS[index + 1];
+            refreshTimer = window.setTimeout(
+              () => { void pollCheckout(index + 1); },
+              Math.max(0, nextDelay - currentDelay),
+            );
+            return;
+          }
+
+          if (checkout?.state === 'pending') {
+            setBillingStatus(`${checkoutVerificationMessage(checkout)} Refresh to retry this exact session.`);
+          } else {
+            const balance = latestProfile ? ` Current balance: ${latestProfile.creditsBalance}.` : '';
+            setBillingStatus(
+              `This Stripe session could not be verified; no credit success was assumed.${balance}` +
+              (verification.error ? ` ${verification.error}` : ''),
+            );
+          }
+        };
+        void pollCheckout(0);
+        return;
+      }
+      if (returnedSuccess) {
+        setBillingStatus('Sign in to the purchasing account to verify this Stripe session.');
+        return;
       }
     };
-    void loadBilling();
+    loadBilling();
     return () => {
       cancelled = true;
-      refreshTimers.forEach((timer) => window.clearTimeout(timer));
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
   }, [authStatus, authSessionKey]);
 
@@ -159,89 +247,207 @@ export function HomePage({
       setBillingStatus('Sign in to buy credits');
       return;
     }
-    setCheckoutPackId(pack.id);
-    setBillingStatus(`Opening ${pack.label}...`);
     if (!checkoutConsentAccepted) {
       setBillingStatus('Accept the purchase terms to continue');
       return;
     }
+    setCheckoutPackId(pack.id);
+    setBillingStatus(`Opening ${pack.label}...`);
     const checkout = await startCreditCheckout(
       pack.id,
       currentCheckoutLegalAttestation(),
       captureApiRequestContext(),
     );
-    if (checkout.checkoutUrl) {
+    if (checkout.checkoutUrl && checkout.sessionId) {
       rememberPendingCheckout({
+        sessionId: checkout.sessionId,
         packId: pack.id,
         credits: pack.credits,
-        balanceBefore: billingProfile?.creditsBalance ?? null,
-      });
+      }, authSessionKey);
       window.location.assign(checkout.checkoutUrl);
       return;
     }
-    clearPendingCheckout();
+    clearPendingCheckout(authSessionKey);
     setBillingStatus(checkout.error ?? 'Checkout unavailable');
     setCheckoutPackId(null);
   };
 
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
-  const arcadeModeHint = rookieStatus === 'included'
-    ? 'Your Rookie is included. Pick an official challenger.'
+  const heroNote = rookieStatus === 'included'
+    ? 'Your first fighter is free in Rookie quality. Upgrade anytime to bring out the detail.'
     : rookieStatus === 'credits'
-      ? 'Take your fighter into the CPU ladder.'
-      : 'Create a fighter or pick an official challenger.';
+      ? 'Forge new challengers with credits. Every generated version stays yours.'
+      : 'Upload a photo, get a playable fighter. Your first Rookie is free.';
+  const arcadeModeHint = rookieStatus === 'included'
+    ? 'Your Rookie is included. Climb the machine roster.'
+    : rookieStatus === 'credits'
+      ? 'Climb the ladder: 13 challengers, 3 continues.'
+      : 'Create a fighter and climb the machine roster.';
+  const purchaseTier = QUALITY_TIERS.find((item) => item.id === creationPurchaseIntent?.tier) ?? null;
+  const purchaseCreditsNeeded = purchaseTier && billingProfile
+    ? Math.max(0, purchaseTier.creditCost - billingProfile.creditsBalance)
+    : purchaseTier?.creditCost ?? 0;
+  const purchaseIntentReady = Boolean(
+    purchaseTier
+    && billingProfile
+    && billingProfile.creditsBalance >= purchaseTier.creditCost,
+  );
 
   return (
     <div className="home-app">
       <div className="home-hero">
-        <p className="gallery-eyebrow">Insert Coin</p>
         <h1>{PUBLIC_APP_NAME}</h1>
         <p className="home-hero__copy">
           Insert yourself into the game. Upload a photo, build a playable fighter, and sync your roster across devices.
         </p>
+        <div className="home-hero__cta">
+          <Button variant="primary" size="lg" onClick={onCreateFighter}>
+            Create Fighter
+          </Button>
+          <p className="home-hero__note">{heroNote}</p>
+        </div>
       </div>
 
-      <div className="home-menu">
-        <button className="home-menu__action is-primary" onClick={onOpenVsCpu}>
-          <span>Arcade Mode</span>
-          <small>{arcadeModeHint}</small>
-        </button>
-        <button className="home-menu__action" onClick={onOpenVsPlayer}>
-          <span>Versus</span>
-          <small>Local 1P vs 2P Showdown</small>
-        </button>
-        <button className="home-menu__action" onClick={onOpenWatchMode}>
-          <span>Attract Mode</span>
-          <small>Watch The CPUs Fight</small>
-        </button>
-        <button className="home-menu__action is-secondary" onClick={onOpenGallery}>
-          <span>Roster Lab</span>
-          <small>Browse Your Roster</small>
-        </button>
-        <button className="home-menu__action" onClick={onOpenCommunity}>
-          <span>Community</span>
-          <small>Clone Public Fighters</small>
-        </button>
-        {billingProfile?.planTier === 'admin' ? (
-          <button className="home-menu__action" onClick={onOpenModeration}>
-            <span>Moderation</span>
-            <small>Review Community Reports</small>
+      <section className="home-play" aria-labelledby="home-play-title">
+        <div className="home-play__header">
+          <div>
+            <h2 id="home-play-title">Choose Game</h2>
+            <p>Same fighters, same cabinet. Pick how you want to play.</p>
+          </div>
+          <span className="home-play__shared">Shared roster</span>
+        </div>
+
+        <div className="home-modes">
+          <article className="home-mode">
+            <div className="home-mode__heading">
+              <h3>Fight</h3>
+              <span>Core game</span>
+            </div>
+            <p>
+              Face one rival in round-based matches. Play the arcade ladder or choose a direct matchup.
+            </p>
+            <button
+              type="button"
+              className="home-menu__action is-primary home-mode__launch home-mode__launch--fight"
+              onClick={onOpenArcade}
+            >
+              <span>Play Fight</span>
+              <small>{arcadeModeHint}</small>
+            </button>
+            <div className="home-mode__footer home-mode__variants" aria-label="Fight modes">
+              <button type="button" onClick={onOpenVsCpu}>Fight CPU</button>
+              <button type="button" onClick={onOpenVsPlayer}>Local Versus</button>
+              <button type="button" onClick={onOpenOnlineVersus}>Online Beta</button>
+              <button type="button" onClick={onOpenWatchMode}>Watch Fight</button>
+            </div>
+          </article>
+
+          <article className="home-mode">
+            <div className="home-mode__heading">
+              <h3>Rush</h3>
+              <span>Early access</span>
+            </div>
+            <p>
+              Move right with a CPU partner, clear enemy groups, break obstacles, and finish the route together.
+            </p>
+            <button
+              type="button"
+              className="home-menu__action is-primary home-mode__launch home-mode__launch--rush"
+              onClick={onOpenCoopRush}
+            >
+              <span>Play Rush Beta</span>
+              <small>Player + CPU · Side Street · One team</small>
+            </button>
+            <div className="home-mode__footer home-mode__facts" aria-label="Rush availability">
+              <span>Shared fighters</span>
+              <span>Player + CPU</span>
+              <span>More stages coming</span>
+            </div>
+          </article>
+
+          <article className="home-mode home-mode--aura">
+            <div className="home-mode__heading">
+              <h3>Aura</h3>
+              <span>New mode</span>
+            </div>
+            <p>
+              Take turns on camera, hit the four lanes, and turn perfect timing into terminal main-character energy.
+            </p>
+            <button
+              type="button"
+              className="home-menu__action is-primary home-mode__launch home-mode__launch--aura"
+              onClick={onOpenAuraCpu}
+            >
+              <span>Play Aura</span>
+              <small>Player vs CPU · Same routine · No excuses</small>
+            </button>
+            <div className="home-mode__footer home-mode__variants" aria-label="Aura modes">
+              <button type="button" onClick={onOpenAuraCpu}>Aura CPU</button>
+              <button type="button" onClick={onOpenAuraPlayer}>Local Aura</button>
+              <button type="button" onClick={onOpenAuraOnline}>Online Beta</button>
+              <button type="button" onClick={onOpenAuraWatch}>Watch Aura</button>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section className="home-collection" aria-labelledby="home-collection-title">
+        <div className="home-collection__header">
+          <h2 id="home-collection-title">Roster &amp; Community</h2>
+          <p>Your fighters work in Fight, Rush, and Aura.</p>
+        </div>
+        <div className="home-menu home-menu--utility">
+          <button type="button" className="home-menu__action is-secondary" onClick={onOpenGallery}>
+            <span>Roster Lab</span>
+            <small>Browse and manage your fighters</small>
           </button>
-        ) : null}
-      </div>
+          <button type="button" className="home-menu__action is-stage-scout" onClick={onCreateStage}>
+            <span>Stage Scout</span>
+            <small>Turn a real place into an arena</small>
+          </button>
+          <button type="button" className="home-menu__action" onClick={onOpenCommunity}>
+            <span>Community</span>
+            <small>Clone public fighters</small>
+          </button>
+          {billingProfile?.planTier === 'admin' ? (
+            <button type="button" className="home-menu__action" onClick={onOpenModeration}>
+              <span>Moderation</span>
+              <small>Review community reports</small>
+            </button>
+          ) : null}
+        </div>
+      </section>
 
       <section className="home-credits" aria-label="Credits">
         <div className="home-credits__header">
-          <div>
-            <p className="gallery-eyebrow">Credits</p>
-            <h2>
-              {billingProfile
-                ? `${billingProfile.creditsBalance} Ready`
-                : 'Cloud Wallet'}
-            </h2>
-          </div>
+          <h2>
+            Credits
+            {billingProfile ? <em className="home-credits__balance">{billingProfile.creditsBalance}</em> : null}
+          </h2>
           <span role="status" aria-live="polite">{billingStatus}</span>
         </div>
+
+        {creationPurchaseIntent && purchaseTier ? (
+          <div className="home-credits__creation-intent" role="status">
+            <div>
+              <strong>{purchaseTier.label} selected</strong>
+              <span>
+                {purchaseIntentReady
+                  ? 'Your balance is ready. Continue with the fighter you chose.'
+                  : `${purchaseTier.creditCost} credits required · ${purchaseCreditsNeeded} more needed`}
+              </span>
+            </div>
+            <button
+              type="button"
+              disabled={!purchaseIntentReady || !onContinuePurchaseIntent}
+              onClick={onContinuePurchaseIntent}
+            >
+              {purchaseIntentReady
+                ? `Continue ${purchaseTier.label} Creation`
+                : 'Choose A Credit Pack Below'}
+            </button>
+          </div>
+        ) : null}
 
         {creditPacks.length > 0 ? (
           <>
@@ -249,10 +455,12 @@ export function HomePage({
               checked={checkoutConsentAccepted}
               disabled={checkoutPackId !== null}
               onChange={setCheckoutConsentAccepted}
+              onNavigate={onNavigateLegal}
             />
             <div className="home-credits__grid">
               {creditPacks.map((pack) => (
                 <button
+                  type="button"
                   key={pack.id}
                   className="home-credit-pack"
                   disabled={checkoutPackId !== null || !checkoutConsentAccepted}
@@ -274,10 +482,7 @@ export function HomePage({
       <section className="home-dashboard" aria-label="Arena records">
         <div className="home-board">
           <div className="home-board__header">
-            <div>
-              <p className="gallery-eyebrow">Arena</p>
-              <h2>Your Record</h2>
-            </div>
+            <h2>Your Record</h2>
             <span role="status" aria-live="polite">{arenaStatus}</span>
           </div>
 
@@ -318,10 +523,7 @@ export function HomePage({
 
         <div className="home-board">
           <div className="home-board__header">
-            <div>
-              <p className="gallery-eyebrow">Rankings</p>
-              <h2>Fight Board</h2>
-            </div>
+            <h2>Fight Board</h2>
           </div>
 
           <div className="home-board__rows">

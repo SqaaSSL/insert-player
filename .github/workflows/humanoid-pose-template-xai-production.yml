@@ -1,0 +1,292 @@
+name: Generate encrypted humanoid XAI pose template
+
+run-name: humanoid-xai-v5-${{ inputs.confirmation == 'GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V4' && 'canary' || 'full' }}-resume-${{ inputs.resume_run_id || 'none' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Enter the exact humanoid CANARY or FULL confirmation phrase
+        required: true
+        type: string
+      resume_run_id:
+        description: FULL only; exact prior encrypted checkpoint run
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: humanoid-neutral-medium-xai-template-v4
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    name: Five-frame canary or resumable 94-pose encrypted batch
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    environment: production
+    env:
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+      PIXCLI_BASE_URL: https://pixcli.hilo.cx
+      HUMANOID_WORK_DIR: .humanoid-template-v4-work
+      HUMANOID_ARTIFACT_NAME: humanoid-neutral-medium-xai-template-v4-encrypted
+
+    steps:
+      - name: Validate one-use authorization and resolve the pinned generator
+        id: authorize
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ATTEMPT" == '1' ]] || {
+            printf '::error::Paid workflow reruns are forbidden; resume from the resulting encrypted checkpoint instead.\n'
+            exit 1
+          }
+          canary='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_CANARY_V4'
+          full='GENERATE_HUMANOID_POSE_TEMPLATE_XAI_FULL_V4'
+          if [[ "$REQUESTED_CONFIRMATION" == "$canary" ]]; then
+            [[ -z "$RESUME_RUN_ID" ]] || {
+              printf '::error::CANARY cannot resume another paid run.\n'
+              exit 1
+            }
+            mode=canary
+            generator_sha="$GITHUB_SHA"
+          elif [[ "$REQUESTED_CONFIRMATION" == "$full" ]]; then
+            [[ "$RESUME_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+              printf '::error::FULL requires one exact prior checkpoint run id.\n'
+              exit 1
+            }
+            mode=full
+          else
+            printf '::error::Exact CANARY or FULL confirmation phrase required.\n'
+            exit 1
+          fi
+
+          title="$(gh run view "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --json displayTitle --jq '.displayTitle')"
+          duplicate="$({
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/humanoid-pose-template-xai-production.yml/runs?event=workflow_dispatch&per_page=100" \
+              --jq '.workflow_runs[] | [.id, .display_title] | @tsv'
+          } | awk -F '\t' -v current="$GITHUB_RUN_ID" -v title="$title" \
+              '$1 + 0 < current + 0 && $2 == title { found=1 } END { print found + 0 }')"
+          [[ "$duplicate" == '0' ]] || {
+            printf '::error::This exact paid authorization was already consumed. Resume the newer encrypted checkpoint instead.\n'
+            exit 1
+          }
+
+          if [[ "$mode" == 'full' ]]; then
+            prior="$(gh run view "$RESUME_RUN_ID" --repo "$GITHUB_REPOSITORY" --json databaseId,status,workflowName)"
+            [[ "$(jq -r '.databaseId' <<<"$prior")" == "$RESUME_RUN_ID" \
+              && "$(jq -r '.status' <<<"$prior")" == 'completed' \
+              && "$(jq -r '.workflowName' <<<"$prior")" == 'Generate encrypted humanoid XAI pose template' ]] || {
+              printf '::error::resume_run_id is not one completed encrypted humanoid checkpoint.\n'
+              exit 1
+            }
+            checkpoint_dir="$RUNNER_TEMP/humanoid-checkpoint-download"
+            mkdir -p "$checkpoint_dir"
+            gh run download "$RESUME_RUN_ID" \
+              --repo "$GITHUB_REPOSITORY" \
+              --name "$HUMANOID_ARTIFACT_NAME" \
+              --dir "$checkpoint_dir"
+            metadata="$checkpoint_dir/checkpoint-metadata.json"
+            [[ "$(jq -r '.schemaVersion' "$metadata")" == '2' \
+              && "$(jq -r '.experimentId' "$metadata")" == 'humanoid-neutral-medium-xai-template-v4' \
+              && "$(jq -r '.runId' "$metadata")" == "$RESUME_RUN_ID" ]] || {
+              printf '::error::Public checkpoint metadata does not match the selected run.\n'
+              exit 1
+            }
+            generator_sha="$(jq -r '.generatorCommitSha' "$metadata")"
+            [[ "$generator_sha" =~ ^[a-f0-9]{40}$ ]] || {
+              printf '::error::Checkpoint generator commit is invalid.\n'
+              exit 1
+            }
+            printf 'CHECKPOINT_DOWNLOAD_DIR=%s\n' "$checkpoint_dir" >> "$GITHUB_ENV"
+          fi
+          printf 'HUMANOID_MODE=%s\n' "$mode" >> "$GITHUB_ENV"
+          printf 'GENERATOR_SHA=%s\n' "$generator_sha" >> "$GITHUB_ENV"
+          printf 'generator_sha=%s\n' "$generator_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the exact reviewed generator commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.authorize.outputs.generator_sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install pinned dependencies and image tooling without provider secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          command -v ffmpeg >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          }
+          ffmpeg -version | head -n 1
+
+      - name: Verify private keys exist after all third-party setup
+        shell: bash
+        env:
+          PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
+          HUMANOID_ARTIFACT_KEY: ${{ secrets.HUMANOID_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "$PIXCLI_API_KEY" && -n "$HUMANOID_ARTIFACT_KEY" ]] || {
+            printf '::error::Required production provider/encryption key is unavailable.\n'
+            exit 1
+          }
+
+      - name: Prove source pins, prompt, payload, encryption, timeout, audit, and resume contracts
+        run: npm run test:arcade:xai-humanoid-template
+
+      - name: Decrypt the private canonical seed only inside the canary runner
+        if: env.HUMANOID_MODE == 'canary'
+        shell: bash
+        env:
+          HUMANOID_ARTIFACT_KEY: ${{ secrets.HUMANOID_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          seed_dir=arcade/pose-master-seeds
+          encrypted="$seed_dir/humanoid-neutral-medium-v1-seeds.tar.gz.ipenc"
+          expected="$(cut -d ' ' -f 1 "$encrypted.sha256")"
+          actual="$(sha256sum "$encrypted" | cut -d ' ' -f 1)"
+          [[ "$actual" == "$expected" ]] || {
+            printf '::error::Encrypted canonical seed SHA-256 mismatch.\n'
+            exit 1
+          }
+          node scripts/encrypted-humanoid-bundle.mjs \
+            --decrypt \
+            --input="$encrypted" \
+            --output=/tmp/humanoid-neutral-medium-v1-seeds.tar.gz
+          tar -tzf /tmp/humanoid-neutral-medium-v1-seeds.tar.gz \
+            | awk '$0 !~ /^arcade\/pose-master-seeds\/humanoid-neutral-medium-(canonical-v1|canonical-v1-normalized|identity-close-v1)\.png$/ { bad=1 } END { exit bad }'
+          tar -xzf /tmp/humanoid-neutral-medium-v1-seeds.tar.gz
+
+      - name: Restore and verify the encrypted resumable checkpoint
+        if: env.HUMANOID_MODE == 'full'
+        shell: bash
+        env:
+          HUMANOID_ARTIFACT_KEY: ${{ secrets.HUMANOID_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          encrypted="$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-v4-checkpoint.tar.gz.ipenc"
+          metadata="$CHECKPOINT_DOWNLOAD_DIR/checkpoint-metadata.json"
+          expected="$(jq -r '.encryptedSha256' "$metadata")"
+          actual="$(sha256sum "$encrypted" | cut -d ' ' -f 1)"
+          declared="$(cut -d ' ' -f 1 "$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-v4-checkpoint.tar.gz.ipenc.sha256")"
+          [[ "$actual" == "$expected" && "$actual" == "$declared" ]] || {
+            printf '::error::Encrypted checkpoint SHA-256 mismatch.\n'
+            exit 1
+          }
+          node scripts/encrypted-humanoid-bundle.mjs \
+            --decrypt \
+            --input="$encrypted" \
+            --output="$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-v4-checkpoint.tar.gz"
+          tar -tzf "$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-v4-checkpoint.tar.gz" \
+            | awk '$0 !~ /^\.humanoid-template-v4-work\// || $0 ~ /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'
+          tar -xzf "$CHECKPOINT_DOWNLOAD_DIR/humanoid-template-v4-checkpoint.tar.gz"
+          state="$HUMANOID_WORK_DIR/state.json"
+          [[ "$(jq -r '.schemaVersion' "$state")" == '2' \
+            && "$(jq -r '.experimentId' "$state")" == 'humanoid-neutral-medium-xai-template-v4' \
+            && "$(jq -r '.generatorCommitSha' "$state")" == "$GENERATOR_SHA" \
+            && "$(jq -r '.completedPoseCount' "$state")" -ge 5 \
+            && "$(jq -r '.completedPoseCount' "$state")" -lt 94 ]] || {
+            printf '::error::Restored checkpoint is not a resumable reviewed canary/full ledger.\n'
+            exit 1
+          }
+          case "$(jq -r '.status' "$state")" in
+            canary_complete_human_review_required|full_running|full_interrupted_manual_review_required) ;;
+            *)
+              printf '::error::Restored checkpoint status is not resumable.\n'
+              exit 1
+              ;;
+          esac
+
+      - name: Freeze all 98 current HQ slots into 94 exact distinct pose inputs
+        if: env.HUMANOID_MODE == 'canary'
+        run: >-
+          npm run arcade:template:xai-humanoid --
+          --prepare
+          --work-dir="$HUMANOID_WORK_DIR"
+
+      - name: Execute the exact paid mode with no inference retry or fallback
+        env:
+          PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
+        run: >-
+          npm run arcade:template:xai-humanoid --
+          --execute
+          --mode="$HUMANOID_MODE"
+          --confirm="$REQUESTED_CONFIRMATION"
+          --generator-sha="$GENERATOR_SHA"
+          --run-id="$GITHUB_RUN_ID"
+          --work-dir="$HUMANOID_WORK_DIR"
+
+      - name: Publish the non-activating human-review summary
+        if: always()
+        shell: bash
+        run: |
+          state="$HUMANOID_WORK_DIR/state.json"
+          manifest="$HUMANOID_WORK_DIR/inputs/input-manifest.json"
+          if [[ -f "$state" && -f "$manifest" ]]; then
+            paid="$(jq -r '[.slots[] | .costMicrocredits // empty] | add // 0' "$state")"
+            {
+              printf '## Humanoid neutral medium — XAI pose template v4\n\n'
+              printf -- '- Mode: `%s`\n' "$HUMANOID_MODE"
+              printf -- '- Status: `%s`\n' "$(jq -r '.status' "$state")"
+              printf -- '- Completed distinct poses: `%s / 94`\n' "$(jq -r '.completedPoseCount // 0' "$state")"
+              printf -- '- Plan SHA-256: `%s`\n' "$(jq -r '.planSha256' "$state")"
+              printf -- '- Paid total so far: `$%.2f`\n' "$(awk "BEGIN { print $paid / 1000000 }")"
+              printf -- '- Imported or activated: `false`\n'
+              printf -- '- Checkpoint artifact: authenticated encryption; human review required.\n'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Encrypt the complete checkpoint before it leaves the runner
+        if: always()
+        shell: bash
+        env:
+          HUMANOID_ARTIFACT_KEY: ${{ secrets.HUMANOID_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -d "$HUMANOID_WORK_DIR" && -f "$HUMANOID_WORK_DIR/state.json" ]] || exit 0
+          mkdir -p .humanoid-v4-encrypted-artifact
+          tar -czf .humanoid-v4-encrypted-artifact/humanoid-template-v4-checkpoint.tar.gz "$HUMANOID_WORK_DIR"
+          node scripts/encrypted-humanoid-bundle.mjs \
+            --encrypt \
+            --input=.humanoid-v4-encrypted-artifact/humanoid-template-v4-checkpoint.tar.gz \
+            --output=.humanoid-v4-encrypted-artifact/humanoid-template-v4-checkpoint.tar.gz.ipenc
+          encrypted_sha="$(sha256sum .humanoid-v4-encrypted-artifact/humanoid-template-v4-checkpoint.tar.gz.ipenc | cut -d ' ' -f 1)"
+          printf '%s  %s\n' "$encrypted_sha" 'humanoid-template-v4-checkpoint.tar.gz.ipenc' \
+            > .humanoid-v4-encrypted-artifact/humanoid-template-v4-checkpoint.tar.gz.ipenc.sha256
+          jq -n \
+            --argjson schemaVersion 2 \
+            --arg experimentId 'humanoid-neutral-medium-xai-template-v4' \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg generatorCommitSha "$(jq -r '.generatorCommitSha' "$HUMANOID_WORK_DIR/state.json")" \
+            --arg status "$(jq -r '.status' "$HUMANOID_WORK_DIR/state.json")" \
+            --argjson completedPoseCount "$(jq -r '.completedPoseCount // 0' "$HUMANOID_WORK_DIR/state.json")" \
+            --arg encryptedSha256 "$encrypted_sha" \
+            '{schemaVersion: $schemaVersion, experimentId: $experimentId, runId: $runId, generatorCommitSha: $generatorCommitSha, status: $status, completedPoseCount: $completedPoseCount, encryptedSha256: $encryptedSha256}' \
+            > .humanoid-v4-encrypted-artifact/checkpoint-metadata.json
+
+      - name: Preserve only ciphertext, checksum, and non-sensitive lineage
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: humanoid-neutral-medium-xai-template-v4-encrypted
+          path: |
+            .humanoid-v4-encrypted-artifact/humanoid-template-v4-checkpoint.tar.gz.ipenc
+            .humanoid-v4-encrypted-artifact/humanoid-template-v4-checkpoint.tar.gz.ipenc.sha256
+            .humanoid-v4-encrypted-artifact/checkpoint-metadata.json
+          if-no-files-found: warn
+          retention-days: 90
+          include-hidden-files: true

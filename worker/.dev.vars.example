@@ -12,11 +12,20 @@ CLERK_BACKEND_AUTH_BRIDGE_SECRET=replace_me_with_at_least_32_random_bytes
 TURNSTILE_REQUIRED=false
 TURNSTILE_ACTION=anonymous_rookie
 
+GEMINI_TRANSPORT=google-direct
+METERKEY_BASE_URL=https://meter.hilo.cx
+PIXCLI_BASE_URL=https://pixcli.hilo.cx
+
 GEMINI_API_KEY=replace_me
+GOOGLE_MAPS_SERVER_KEY=AIza_replace_with_server_key
+# To test the production transport locally, set GEMINI_TRANSPORT=meterkey and
+# provide the dedicated key without removing the direct rollback credential.
+# METERKEY_API_KEY=replace_me
 FAL_API_KEY=replace_me
 RUNWAY_API_KEY=replace_me
 FREEPIK_API_KEY=replace_me
 LUDO_API_KEY=replace_me
+PIXCLI_API_KEY=replace_me
 STRIPE_ACCOUNT_ID=acct_replace_me
 STRIPE_PRICE_STARTER=price_replace_me
 STRIPE_PRICE_VERSUS=price_replace_me

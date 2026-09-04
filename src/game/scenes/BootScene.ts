@@ -1,8 +1,18 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT } from '../constants.ts';
-import { generateFighterSpriteSheet } from '../sprites/SpriteGenerator.ts';
+import {
+  generateFighterSpriteSheet,
+  generateTemplateZeroFighterSpriteSheet,
+} from '../sprites/SpriteGenerator.ts';
 import { getPendingLaunchTarget } from '../launchState.ts';
 import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
+
+const RUSH_ENEMY_TEMPLATE_ZERO_SOURCES = [
+  ['rush_enemy_grunt', 'rush_enemy_grunt_template_zero', '/assets/rush/enemies/rivet-template-zero.png'],
+  ['rush_enemy_bruiser', 'rush_enemy_bruiser_template_zero', '/assets/rush/enemies/boiler-template-zero.png'],
+  ['rush_enemy_shooter', 'rush_enemy_shooter_template_zero', '/assets/rush/enemies/arc-template-zero.png'],
+  ['rush_enemy_captain', 'rush_enemy_captain_template_zero', '/assets/rush/enemies/vanta-template-zero.png'],
+] as const;
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -10,6 +20,7 @@ export class BootScene extends Phaser.Scene {
   }
 
   preload(): void {
+    const pendingTarget = getPendingLaunchTarget();
     const barW = 400;
     const barH = 20;
     const barX = (GAME_WIDTH - barW) / 2;
@@ -26,13 +37,24 @@ export class BootScene extends Phaser.Scene {
       bar.fillRect(barX, barY, barW * value, barH);
     });
 
-    this.add.text(GAME_WIDTH / 2, barY - 60, 'INSERT PLAYER: FIGHT', {
+    const loadingTitle = pendingTarget?.sceneKey === 'RushScene'
+      ? 'INSERT PLAYER: CO-OP RUSH'
+      : pendingTarget?.sceneKey === 'AuraScene'
+        ? 'INSERT PLAYER: AURA BATTLE'
+        : 'INSERT PLAYER: FIGHT';
+
+    this.add.text(
+      GAME_WIDTH / 2,
+      barY - 60,
+      loadingTitle,
+      {
       fontFamily: '"Press Start 2P", monospace',
       fontSize: '28px',
       color: '#ff4444',
       stroke: '#000000',
       strokeThickness: 4,
-    }).setOrigin(0.5);
+      },
+    ).setOrigin(0.5);
 
     this.add.text(GAME_WIDTH / 2, barY + 40, 'LOADING...', {
       fontFamily: '"Press Start 2P", monospace',
@@ -40,10 +62,19 @@ export class BootScene extends Phaser.Scene {
       color: '#888888',
     }).setOrigin(0.5);
 
+    for (const [, sourceKey, assetPath] of RUSH_ENEMY_TEMPLATE_ZERO_SOURCES) {
+      if (!this.textures.exists(sourceKey)) this.load.image(sourceKey, assetPath);
+    }
+
     this.generatePlaceholderAssets();
   }
 
   create(): void {
+    for (const [spriteKey, sourceKey] of RUSH_ENEMY_TEMPLATE_ZERO_SOURCES) {
+      if (!generateTemplateZeroFighterSpriteSheet(this, spriteKey, sourceKey)) {
+        debugWarn(`[BootScene] Template Zero enemy source missing: ${sourceKey}`);
+      }
+    }
     const pendingTarget = getPendingLaunchTarget();
     debugInfo('[BootScene] create', {
       pendingSceneKey: pendingTarget?.sceneKey ?? null,
@@ -67,6 +98,26 @@ export class BootScene extends Phaser.Scene {
   private generatePlaceholderAssets(): void {
     generateFighterSpriteSheet(this, 'fighter_p1', '#3388cc', '#ffcc88');
     generateFighterSpriteSheet(this, 'fighter_p2', '#cc3838', '#ffcc88');
+    generateFighterSpriteSheet(this, 'rush_enemy_grunt', '#3b365f', '#9ba3b8', {
+      accentColor: '#7b6cff',
+      armor: 'light',
+      headgear: 'mask',
+    });
+    generateFighterSpriteSheet(this, 'rush_enemy_bruiser', '#662b31', '#b8a28f', {
+      accentColor: '#ff6b3d',
+      armor: 'heavy',
+      headgear: 'mask',
+    });
+    generateFighterSpriteSheet(this, 'rush_enemy_shooter', '#173d54', '#a7b7c5', {
+      accentColor: '#4fdcff',
+      armor: 'light',
+      headgear: 'visor',
+    });
+    generateFighterSpriteSheet(this, 'rush_enemy_captain', '#3b2d18', '#c7bba4', {
+      accentColor: '#ffce3a',
+      armor: 'heavy',
+      headgear: 'commander',
+    });
 
     const sparkGfx = this.add.graphics();
     sparkGfx.fillStyle(0xffffff);

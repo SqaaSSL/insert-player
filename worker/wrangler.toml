@@ -3,6 +3,14 @@ main = "src/index.ts"
 compatibility_date = "2026-08-22"
 compatibility_flags = ["nodejs_compat"]
 
+[[rules]]
+type = "Data"
+globs = ["**/*.woff2"]
+fallthrough = true
+
+[version_metadata]
+binding = "WORKER_VERSION_METADATA"
+
 [vars]
 ENVIRONMENT = "production"
 # Comma-separated frontend origins allowed to call the Worker.
@@ -17,17 +25,28 @@ ANONYMOUS_ROOKIE_ENABLED = "true"
 # Durable generation requests remain credit-backed, session-bounded, rate
 # limited, and recorded in the provider cost ledger.
 GENERATION_API_BASE_URL = "https://api.insertplayer.ai"
+# Keep the Gemini API contract while routing production requests through the
+# dedicated Insert Player Meterkey wallet and Google AI Studio BYOK.
+GEMINI_TRANSPORT = "meterkey"
+METERKEY_BASE_URL = "https://meter.hilo.cx"
+PIXCLI_BASE_URL = "https://pixcli.hilo.cx"
 # Set this to your Clerk issuer, for example:
 # Production Clerk uses the dedicated Insert Player Frontend API domain.
 CLERK_ISSUER = "https://clerk.insertplayer.ai"
 # Keep token azp validation explicit and aligned with CORS.
 CLERK_AUTHORIZED_PARTIES = "https://insertplayer.ai,https://www.insertplayer.ai"
 # API keys are Worker secrets, not Vite-exposed env vars:
+# wrangler secret put METERKEY_API_KEY
+# GEMINI_API_KEY remains installed only for an explicit rollback version; the
+# meterkey transport never reads it or falls back to it.
 # wrangler secret put GEMINI_API_KEY
+# Server-only key restricted to the Street View Static API.
+# wrangler secret put GOOGLE_MAPS_SERVER_KEY
 # wrangler secret put FAL_API_KEY
 # wrangler secret put RUNWAY_API_KEY
 # wrangler secret put FREEPIK_API_KEY
 # wrangler secret put LUDO_API_KEY
+# wrangler secret put PIXCLI_API_KEY
 # wrangler secret put STRIPE_SECRET_KEY
 # wrangler secret put STRIPE_WEBHOOK_SECRET
 # Pin Checkout and webhooks to the dedicated Insert Player Stripe account.
@@ -43,14 +62,21 @@ STRIPE_PRICE_ARCADE = "price_1U7DsKCPjQq08iG98e4ZosBp"
 # wrangler secret put GENERATION_JOB_SIGNING_SECRET
 # Private bridge for Clerk Agent Task launch smoke; never expose it through CORS.
 # wrangler secret put CLERK_BACKEND_AUTH_BRIDGE_SECRET
+# Optional Cloudflare Realtime TURN credentials for online versus. Without them
+# /api/versus/ice-servers returns STUN only and rooms fall back to relay.
+# wrangler secret put REALTIME_TURN_KEY_ID
+# wrangler secret put REALTIME_TURN_API_TOKEN
 
 [secrets]
 required = [
+  "METERKEY_API_KEY",
   "GEMINI_API_KEY",
+  "GOOGLE_MAPS_SERVER_KEY",
   "FAL_API_KEY",
   "RUNWAY_API_KEY",
   "FREEPIK_API_KEY",
   "LUDO_API_KEY",
+  "PIXCLI_API_KEY",
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
   "CLERK_WEBHOOK_SIGNING_SECRET",
@@ -73,7 +99,9 @@ name = "insert-player-image-processor"
 class_name = "ImageProcessorContainer"
 image = "../Dockerfile.processor"
 image_build_context = ".."
-max_instances = 20
+# Reviewed video batches retain named processors across a rollout; leave headroom
+# for the next review-gated action while older instances finish going idle.
+max_instances = 32
 instance_type = "basic"
 
 [containers.constraints]
@@ -86,6 +114,16 @@ class_name = "ImageProcessorContainer"
 [[migrations]]
 tag = "image-processor-v1"
 new_sqlite_classes = ["ImageProcessorContainer"]
+
+# Online versus rooms: one hibernating Durable Object per room code relays
+# WebRTC signalling (and input frames as a fallback) between two seated players.
+[[durable_objects.bindings]]
+name = "MATCH_ROOM"
+class_name = "MatchRoom"
+
+[[migrations]]
+tag = "match-room-v1"
+new_sqlite_classes = ["MatchRoom"]
 
 [[d1_databases]]
 binding = "DB"

@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { decodeClerkPublishableKey } from './clerk-publishable-key.mjs';
+import { FULL_GIT_SHA } from './production-deploy-guard-lib.mjs';
+import { frontendReleaseManifestIssue } from './release-provenance.mjs';
 import {
   frontendAssetProbeUrl,
   frontendShellReadinessError,
@@ -64,8 +66,14 @@ const expectedApiOrigin = isSandbox
   ? 'https://insert-player-api-sandbox.shellbot.workers.dev'
   : 'https://api.insertplayer.ai';
 const expectedAppName = envValue(env, 'ASF_PUBLIC_APP_NAME') || envValue(env, 'VITE_PUBLIC_APP_NAME') || 'Insert Player';
-const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card.png';
+const expectedSocialCardPath = envValue(env, 'ASF_SOCIAL_CARD_PATH') || '/assets/social-card-v7.jpg';
+const expectedSocialCardMime = /\.jpe?g(?:$|[?#])/i.test(expectedSocialCardPath)
+  ? 'image/jpeg'
+  : /\.webp(?:$|[?#])/i.test(expectedSocialCardPath)
+    ? 'image/webp'
+    : 'image/png';
 const expectedAssetPath = envValue(env, 'ASF_EXPECTED_FRONTEND_ASSET_PATH');
+const expectedGitSha = envValue(env, 'ASF_EXPECTED_FRONTEND_GIT_SHA').toLowerCase();
 const assetProbeNonce = envValue(env, 'ASF_FRONTEND_ASSET_PROBE_NONCE');
 const FETCH_TIMEOUT_MS = parsePositiveTimeoutMs(
   envValue(env, 'ASF_FRONTEND_SMOKE_TIMEOUT_MS'),
@@ -138,13 +146,18 @@ function isTransientFrontendStatus(status) {
   return [404, 409, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524].includes(status);
 }
 
-async function waitForFrontendText(label, pathOrUrl, { readinessError } = {}) {
-  const target = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : url(pathOrUrl);
+async function waitForFrontendText(label, pathOrUrl, { readinessError, targetForAttempt } = {}) {
+  const canonicalTarget = /^https?:\/\//i.test(pathOrUrl) ? pathOrUrl : url(pathOrUrl);
   const started = Date.now();
   let lastError = null;
+  let lastTarget = canonicalTarget;
+  let attempt = 0;
 
   while (Date.now() - started <= FRONTEND_READY_TIMEOUT_MS) {
     try {
+      const attemptTarget = targetForAttempt?.(attempt) ?? canonicalTarget;
+      const target = /^https?:\/\//i.test(attemptTarget) ? attemptTarget : url(attemptTarget);
+      lastTarget = target;
       const res = await fetchWithTimeout(label, target);
       if (res.ok) {
         const candidate = {
@@ -162,6 +175,7 @@ async function waitForFrontendText(label, pathOrUrl, { readinessError } = {}) {
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
     }
+    attempt += 1;
     const elapsed = Date.now() - started;
     const remaining = FRONTEND_READY_TIMEOUT_MS - elapsed;
     if (remaining <= 0) break;
@@ -170,7 +184,7 @@ async function waitForFrontendText(label, pathOrUrl, { readinessError } = {}) {
 
   const waitedSeconds = Math.round((Date.now() - started) / 1000);
   const detail = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`${label} did not become ready after ${waitedSeconds}s at ${target}: ${detail}`);
+  throw new Error(`${label} did not become ready after ${waitedSeconds}s at ${canonicalTarget} (last probe ${lastTarget}): ${detail}`);
 }
 
 function extractAssetPaths(html) {
@@ -206,6 +220,12 @@ async function main() {
   if (expectedAssetPath && !/^\/assets\/[A-Za-z0-9._-]+\.js$/.test(expectedAssetPath)) {
     throw new Error('ASF_EXPECTED_FRONTEND_ASSET_PATH must be a root-relative JavaScript asset path.');
   }
+  if (expectedGitSha && !FULL_GIT_SHA.test(expectedGitSha)) {
+    throw new Error('ASF_EXPECTED_FRONTEND_GIT_SHA must be a full Git commit SHA.');
+  }
+  if (expectedGitSha && !expectedAssetPath) {
+    throw new Error('ASF_EXPECTED_FRONTEND_GIT_SHA requires ASF_EXPECTED_FRONTEND_ASSET_PATH.');
+  }
 
   assert(expectedClerkOrigin, 'Frontend smoke requires a valid Clerk publishable key');
   const home = await waitForFrontendText('frontend home', '/', {
@@ -214,6 +234,13 @@ async function main() {
       cspHeader: res.headers.get('Content-Security-Policy') ?? '',
       expectedClerkOrigin,
       expectedAssetPath,
+      expectedHtmlFragments: isSandbox
+        ? []
+        : [
+            `property="og:image" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`,
+            `property="og:image:secure_url" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`,
+            `property="og:image:type" content="${expectedSocialCardMime}"`,
+          ],
     }),
   });
   assert(home.res.headers.get('X-Content-Type-Options') === 'nosniff', 'Frontend shell missing nosniff header');
@@ -222,6 +249,7 @@ async function main() {
   const cspHeader = home.res.headers.get('Content-Security-Policy') ?? '';
   assert(cspHeader, 'Frontend shell missing Content Security Policy');
   const csp = parseContentSecurityPolicy(cspHeader);
+  const expectedApiWebSocketOrigin = expectedApiOrigin.replace(/^https:/, 'wss:');
   for (const [directive, source] of [
     ['default-src', "'self'"],
     ['base-uri', "'self'"],
@@ -232,16 +260,27 @@ async function main() {
     ['script-src', 'https://challenges.cloudflare.com'],
     ['script-src', expectedClerkOrigin],
     ['script-src', 'https://*.protect.clerk.com'],
+    ['script-src', "'unsafe-eval'"],
+    ['script-src', 'https://*.googleapis.com'],
+    ['script-src', 'https://*.gstatic.com'],
     ['style-src', "'unsafe-inline'"],
+    ['style-src', 'https://fonts.googleapis.com'],
     ['img-src', 'blob:'],
+    ['img-src', 'https://*.googleapis.com'],
+    ['img-src', 'https://*.gstatic.com'],
     ['img-src', 'https://img.clerk.com'],
     ['img-src', expectedApiOrigin],
     ['media-src', expectedApiOrigin],
     ['connect-src', expectedApiOrigin],
+    ['connect-src', expectedApiWebSocketOrigin],
     ['connect-src', expectedClerkOrigin],
     ['connect-src', 'https://*.protect.clerk.com'],
+    ['connect-src', 'https://*.googleapis.com'],
+    ['connect-src', 'https://*.gstatic.com'],
     ['frame-src', 'https://challenges.cloudflare.com'],
     ['frame-src', 'https://*.protect.clerk.com'],
+    ['frame-src', 'https://*.google.com'],
+    ['font-src', 'https://fonts.gstatic.com'],
     ['worker-src', 'blob:'],
     ['manifest-src', "'self'"],
   ]) assertCspSource(csp, directive, source);
@@ -258,7 +297,7 @@ async function main() {
     }
   }
   assert(csp.has('upgrade-insecure-requests'), 'Frontend CSP must upgrade insecure requests');
-  assert(!csp.get('script-src')?.includes("'unsafe-eval'"), 'Frontend CSP must not allow unsafe eval');
+  assert(csp.get('script-src')?.includes("'unsafe-eval'"), 'Frontend CSP must include the Google Maps JavaScript compatibility policy');
   assert(!csp.get('script-src')?.includes("'unsafe-inline'"), 'Frontend CSP must not allow inline scripts');
   assert(home.res.headers.get('Permissions-Policy') === 'camera=(), microphone=(), geolocation=()', 'Frontend shell missing permissions policy');
   assert(
@@ -276,13 +315,49 @@ async function main() {
   if (isSandbox) {
     assert(home.text.includes('property="og:image"'), 'Home HTML missing social preview image metadata');
   } else {
+    const expectedSocialCardUrl = absoluteFrontendUrl(expectedSocialCardPath);
     assert(
-      home.text.includes(`property="og:image" content="${absoluteFrontendUrl(expectedSocialCardPath)}"`),
+      home.text.includes(`property="og:image" content="${expectedSocialCardUrl}"`),
       'Home HTML missing social preview image',
+    );
+    assert(
+      home.text.includes(`property="og:image:secure_url" content="${expectedSocialCardUrl}"`),
+      'Home HTML missing secure social preview image metadata',
+    );
+    assert(
+      home.text.includes(`property="og:image:type" content="${expectedSocialCardMime}"`),
+      'Home HTML missing social preview image MIME metadata',
     );
   }
   assert(home.text.includes('name="twitter:card" content="summary_large_image"'), 'Home HTML missing large Twitter/X card metadata');
   log('frontend root serves the app shell');
+
+  if (expectedGitSha) {
+    const release = await waitForFrontendText('frontend release provenance', '/release.json', {
+      targetForAttempt: assetProbeNonce
+        ? (attempt) => frontendAssetProbeUrl(frontendUrl, '/release.json', assetProbeNonce, attempt)
+        : undefined,
+      readinessError: ({ text }) => {
+        try {
+          return frontendReleaseManifestIssue(JSON.parse(text), {
+            expectedGitSha,
+            expectedEntryAssetPath: expectedAssetPath,
+          });
+        } catch {
+          return 'release.json is not valid JSON';
+        }
+      },
+    });
+    const releaseManifest = JSON.parse(release.text);
+    assert(
+      !frontendReleaseManifestIssue(releaseManifest, {
+        expectedGitSha,
+        expectedEntryAssetPath: expectedAssetPath,
+      }),
+      'Frontend release provenance changed after readiness verification',
+    );
+    log(`frontend release provenance matches commit ${expectedGitSha}`);
+  }
 
   const manifest = await fetchText('web app manifest', '/site.webmanifest');
   const manifestJson = JSON.parse(manifest.text);
@@ -293,7 +368,12 @@ async function main() {
   assert((manifestJson.icons ?? []).some((icon) => icon.src === '/assets/app-icon-512.png'), 'Manifest missing 512px app icon');
   const socialCard = await fetchWithTimeout('social card image', url(expectedSocialCardPath));
   assert(socialCard.ok, 'Social card image is not reachable');
-  assert((socialCard.headers.get('Content-Type') ?? '').includes('image/'), 'Social card is not served as an image');
+  assert(
+    (socialCard.headers.get('Content-Type') ?? '').includes(expectedSocialCardMime),
+    `Social card is not served as ${expectedSocialCardMime}`,
+  );
+  const socialCardBytes = (await socialCard.arrayBuffer()).byteLength;
+  assert(socialCardBytes <= 300_000, `Social card is too large for reliable unfurls (${socialCardBytes} bytes)`);
   log('frontend exposes launch metadata, manifest, and social card assets');
 
   const robots = await fetchText('robots policy', '/robots.txt');
@@ -313,6 +393,8 @@ async function main() {
     '/community',
     '/community?fighter=smoke-link',
     '/roster/cpu',
+    '/versus/online?invite=AbCdEfGhIjKlMnOpQrStUvWxYz_23456',
+    '/roster/rush',
     '/legal',
     '/privacy',
     '/terms',
@@ -329,8 +411,13 @@ async function main() {
   }
   const jsTexts = [];
   for (const assetPath of assetPaths.filter((path) => path.endsWith('.js'))) {
-    const assetProbeUrl = frontendAssetProbeUrl(frontendUrl, assetPath, assetProbeNonce);
-    const asset = await waitForFrontendText(`frontend asset ${assetPath}`, assetProbeUrl, {
+    const asset = await waitForFrontendText(`frontend asset ${assetPath}`, assetPath, {
+      // Pages can cache the SPA fallback for a not-yet-propagated hashed asset
+      // with the asset's immutable headers, so every propagation retry needs a
+      // fresh cache key. The later canonical smoke has no nonce and stays exact.
+      targetForAttempt: assetProbeNonce
+        ? (attempt) => frontendAssetProbeUrl(frontendUrl, assetPath, assetProbeNonce, attempt)
+        : undefined,
       readinessError: ({ res }) => {
         const contentType = res.headers.get('Content-Type') ?? '';
         if (!/javascript/i.test(contentType)) return `expected JavaScript, got ${contentType || 'no content type'}`;
