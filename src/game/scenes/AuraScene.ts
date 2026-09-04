@@ -661,7 +661,7 @@ export class AuraScene extends Phaser.Scene {
       strokeThickness: 3,
     }).setOrigin(1, 0).setVisible(false);
     this.laneKeyTexts = Array.from({ length: 4 }, () => this.add.text(0, 542, '', {
-      fontFamily: '"Press Start 2P", monospace', fontSize: '9px', color: '#fff4d6', align: 'center',
+      fontFamily: '"Space Grotesk", sans-serif', fontSize: '11px', fontStyle: 'bold', color: '#fff4d6', align: 'center',
       stroke: '#050507', strokeThickness: 4,
     }).setOrigin(0.5).setVisible(false));
     this.uiLayer.add([
@@ -767,21 +767,21 @@ export class AuraScene extends Phaser.Scene {
       const typedLane = lane as AuraLane;
       const layout = this.laneLayout(slot, typedLane);
       const color = LANE_COLORS[lane];
-      this.laneGraphics.fillGradientStyle(0x121233, 0x121233, 0x070716, 0x070716, 0.92);
+      this.laneGraphics.fillGradientStyle(0x11112b, 0x11112b, 0x05050d, 0x05050d, 0.6);
       this.laneGraphics.fillRect(
         layout.startX - LANE_HALF_WIDTH + 2,
         layout.startY,
         LANE_HALF_WIDTH * 2 - 4,
         layout.targetY - layout.startY,
       );
-      this.laneGraphics.fillStyle(color, 0.055);
+      this.laneGraphics.fillStyle(color, 0.035);
       this.laneGraphics.fillRect(
         layout.startX - LANE_HALF_WIDTH + 3,
         layout.startY,
         LANE_HALF_WIDTH * 2 - 6,
         layout.targetY - layout.startY,
       );
-      this.laneGraphics.lineStyle(8, color, 0.075);
+      this.laneGraphics.lineStyle(12, color, 0.065);
       this.laneGraphics.lineBetween(
         layout.startX - LANE_HALF_WIDTH,
         layout.startY,
@@ -794,7 +794,7 @@ export class AuraScene extends Phaser.Scene {
         layout.targetX + LANE_HALF_WIDTH,
         layout.targetY,
       );
-      this.laneGraphics.lineStyle(2, color, 0.72);
+      this.laneGraphics.lineStyle(2, color, 0.88);
       this.laneGraphics.lineBetween(
         layout.startX - LANE_HALF_WIDTH,
         layout.startY,
@@ -807,9 +807,11 @@ export class AuraScene extends Phaser.Scene {
         layout.targetX + LANE_HALF_WIDTH,
         layout.targetY,
       );
+      this.laneGraphics.lineStyle(1, color, 0.18);
+      this.laneGraphics.lineBetween(layout.startX, layout.startY, layout.targetX, layout.targetY);
       this.laneGraphics.fillStyle(color, 0.82);
-      this.laneGraphics.fillRoundedRect(layout.startX - 18, layout.startY - 3, 36, 6, 3);
-      this.targetGraphics.lineStyle(11, color, 0.09);
+      this.laneGraphics.fillRoundedRect(layout.startX - 14, layout.startY - 3, 28, 5, 2);
+      this.targetGraphics.lineStyle(16, color, 0.075);
       this.targetGraphics.strokeRoundedRect(
         layout.targetX - RECEPTOR_WIDTH / 2,
         layout.targetY - RECEPTOR_HEIGHT / 2,
@@ -817,7 +819,7 @@ export class AuraScene extends Phaser.Scene {
         RECEPTOR_HEIGHT,
         8,
       );
-      this.targetGraphics.fillGradientStyle(0x11112b, 0x11112b, 0x05050c, 0x05050c, 0.98);
+      this.targetGraphics.fillGradientStyle(0x11112b, 0x11112b, 0x05050c, 0x05050c, 0.78);
       this.targetGraphics.fillRoundedRect(
         layout.targetX - RECEPTOR_WIDTH / 2,
         layout.targetY - RECEPTOR_HEIGHT / 2,
@@ -825,7 +827,7 @@ export class AuraScene extends Phaser.Scene {
         RECEPTOR_HEIGHT,
         8,
       );
-      this.targetGraphics.lineStyle(3, color, 0.9);
+      this.targetGraphics.lineStyle(3, color, 1);
       this.targetGraphics.strokeRoundedRect(
         layout.targetX - RECEPTOR_WIDTH / 2,
         layout.targetY - RECEPTOR_HEIGHT / 2,
@@ -833,7 +835,7 @@ export class AuraScene extends Phaser.Scene {
         RECEPTOR_HEIGHT,
         8,
       );
-      this.drawMarker(this.targetGraphics, layout.targetX, layout.targetY, typedLane, color, 18, false);
+      this.drawMarker(this.targetGraphics, layout.targetX, layout.targetY, typedLane, color, 19, false);
     }
     this.drawBeatGrid(slot);
     const keys = this.laneKeysForSlot(slot);
@@ -841,19 +843,11 @@ export class AuraScene extends Phaser.Scene {
       const layout = this.laneLayout(slot, lane as AuraLane);
       text.setText(keys[lane]).setPosition(layout.targetX, KEY_LABEL_Y).setVisible(true);
     });
-    const left = this.laneLayout(slot, 0);
-    const right = this.laneLayout(slot, 3);
-    const frameLeft = left.startX - LANE_HALF_WIDTH - HIGHWAY_FRAME_PAD_X;
-    const frameRight = right.startX + LANE_HALF_WIDTH + HIGHWAY_FRAME_PAD_X;
-    const locallyPlayable = !this.isCpuSlot(slot) && (!this.online || slot === this.online.localSlot);
-    this.highwayTitleText
-      .setText(locallyPlayable ? 'LIVE INPUT' : this.isCpuSlot(slot) ? 'RIVAL FEED' : 'RIVAL INPUT')
-      .setPosition(frameLeft + 18, LANE_START_Y - HIGHWAY_FRAME_PAD_TOP + 14)
-      .setVisible(true);
-    this.highwayMetaText
-      .setText(locallyPlayable ? '4K // DF · JK' : '4K // ON CAMERA')
-      .setPosition(frameRight - 18, LANE_START_Y - HIGHWAY_FRAME_PAD_TOP + 12)
-      .setVisible(true);
+    // The match header and the four key labels already explain the interaction.
+    // Leaving the highway header clean keeps the visual treatment close to the
+    // reference without copying its redundant button legend.
+    this.highwayTitleText.setVisible(false);
+    this.highwayMetaText.setVisible(false);
   }
 
   private drawHighwayFrame(slot: AuraSlot): void {
@@ -876,51 +870,45 @@ export class AuraScene extends Phaser.Scene {
     ];
     const shadow = panel.map((point) => new Phaser.Geom.Point(point.x + 8, point.y + 10));
 
-    this.laneGraphics.fillStyle(0x000000, 0.58);
+    this.laneGraphics.fillStyle(0x000000, 0.42);
     this.laneGraphics.fillPoints(shadow, true);
-    this.laneGraphics.fillGradientStyle(0x16143f, 0x260c3b, 0x070719, 0x10061d, 0.97);
+    this.laneGraphics.fillGradientStyle(0x10102a, 0x1b0a2a, 0x04040c, 0x08040f, 0.5);
     this.laneGraphics.fillPoints(panel, true);
-    this.laneGraphics.fillStyle(0x05050f, 0.74);
-    this.laneGraphics.fillRect(frameLeft + 3, frameTop + 36, frameRight - frameLeft - 6, 3);
-    this.laneGraphics.fillRect(frameLeft + 3, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2 + 4, frameRight - frameLeft - 6, 2);
-
-    this.laneGraphics.lineStyle(12, 0x765dff, 0.07);
+    this.laneGraphics.lineStyle(14, 0x765dff, 0.045);
     this.laneGraphics.strokePoints(panel, true);
-    this.laneGraphics.lineStyle(1, 0xb19cff, 0.64);
+    this.laneGraphics.lineStyle(1, 0xfff4d6, 0.28);
     this.laneGraphics.strokePoints(panel, true);
 
     const seamX = (this.laneLayout(slot, 1).startX + this.laneLayout(slot, 2).startX) / 2;
-    this.laneGraphics.lineStyle(3, 0x4fdcff, 0.88);
-    this.laneGraphics.lineBetween(frameLeft + corner, frameTop, seamX - 14, frameTop);
+    this.laneGraphics.lineStyle(3, 0x4fdcff, 0.92);
+    this.laneGraphics.lineBetween(frameLeft + corner, frameTop, seamX - 24, frameTop);
     this.laneGraphics.lineBetween(frameLeft, frameTop + corner, frameLeft, frameBottom - corner);
-    this.laneGraphics.lineStyle(3, 0xff3dc6, 0.78);
-    this.laneGraphics.lineBetween(seamX + 14, frameTop, frameRight - corner, frameTop);
+    this.laneGraphics.lineStyle(3, 0xff3dc6, 0.86);
+    this.laneGraphics.lineBetween(seamX + 24, frameTop, frameRight - corner, frameTop);
     this.laneGraphics.lineBetween(frameRight, frameTop + corner, frameRight, frameBottom - corner);
     this.laneGraphics.lineStyle(2, 0xffce3a, 0.72);
     this.laneGraphics.lineBetween(frameLeft + corner, frameBottom, frameRight - corner, frameBottom);
 
-    this.laneGraphics.fillStyle(0x02020b, 0.76);
+    this.laneGraphics.fillStyle(0x02020b, 0.42);
     this.laneGraphics.fillRect(seamX - 18, frameTop + 40, 36, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2 - frameTop - 40);
-    this.laneGraphics.lineStyle(1, 0xffce3a, 0.28);
+    this.laneGraphics.lineStyle(1, 0xffce3a, 0.18);
     this.laneGraphics.lineBetween(seamX - 18, frameTop + 40, seamX - 18, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2);
     this.laneGraphics.lineBetween(seamX + 18, frameTop + 40, seamX + 18, LANE_TARGET_Y + RECEPTOR_HEIGHT / 2);
 
-    this.laneGraphics.fillStyle(0x4fdcff, 0.82);
-    this.laneGraphics.fillRoundedRect(frameLeft + 18, frameTop - 2, 92, 4, 2);
-    this.laneGraphics.fillStyle(0xff3dc6, 0.72);
-    this.laneGraphics.fillRoundedRect(frameRight - 110, frameTop - 2, 92, 4, 2);
-    this.laneGraphics.fillStyle(0xffce3a, 0.75);
-    this.laneGraphics.fillRoundedRect(seamX - 24, frameBottom - 3, 48, 5, 2);
-
-    for (const [x, color] of [
-      [frameLeft + 11, 0x4fdcff],
-      [frameRight - 11, 0xff3dc6],
-    ] as const) {
-      this.laneGraphics.fillStyle(0x05050f, 1);
-      this.laneGraphics.fillCircle(x, frameTop + 15, 4);
-      this.laneGraphics.lineStyle(1, color, 0.9);
-      this.laneGraphics.strokeCircle(x, frameTop + 15, 4);
-    }
+    const crownY = frameTop + 20;
+    this.laneGraphics.fillStyle(0xffce3a, 0.12);
+    this.laneGraphics.fillCircle(seamX, crownY, 17);
+    this.laneGraphics.fillStyle(0xffce3a, 0.94);
+    this.laneGraphics.fillPoints([
+      new Phaser.Geom.Point(seamX - 12, crownY + 5),
+      new Phaser.Geom.Point(seamX - 10, crownY - 7),
+      new Phaser.Geom.Point(seamX - 3, crownY - 1),
+      new Phaser.Geom.Point(seamX, crownY - 12),
+      new Phaser.Geom.Point(seamX + 4, crownY - 1),
+      new Phaser.Geom.Point(seamX + 11, crownY - 8),
+      new Phaser.Geom.Point(seamX + 12, crownY + 5),
+    ], true);
+    this.laneGraphics.fillRect(seamX - 12, crownY + 5, 24, 4);
   }
 
   private drawBeatGrid(slot: AuraSlot): void {
@@ -933,7 +921,7 @@ export class AuraScene extends Phaser.Scene {
       this.laneGraphics.lineStyle(
         progress === 0.5 ? 2 : 1,
         0xfff4d6,
-        progress === 0.5 ? 0.32 : 0.2,
+        progress === 0.5 ? 0.22 : 0.12,
       );
       this.laneGraphics.lineBetween(
         left.startX - LANE_HALF_WIDTH,
@@ -947,6 +935,12 @@ export class AuraScene extends Phaser.Scene {
         right.startX + LANE_HALF_WIDTH,
         y,
       );
+      for (const lane of [0, 1, 2, 3] as const) {
+        const x = this.laneLayout(slot, lane).startX;
+        this.laneGraphics.lineStyle(2, LANE_COLORS[lane], 0.3);
+        this.laneGraphics.lineBetween(x - 5, y - 2, x, y + 2);
+        this.laneGraphics.lineBetween(x, y + 2, x + 5, y - 2);
+      }
     }
   }
 
@@ -962,25 +956,30 @@ export class AuraScene extends Phaser.Scene {
     graphics.lineStyle(filled ? 4 : 3, color, 1);
     graphics.fillStyle(filled ? color : 0x050507, filled ? 0.78 : 0.88);
     if (lane === 0) {
-      if (filled) graphics.fillCircle(x, y, size * 0.58);
-      graphics.strokeCircle(x, y, size * 0.58);
-    } else if (lane === 1) {
       const points = [
         new Phaser.Geom.Point(x, y - size * 0.64),
-        new Phaser.Geom.Point(x + size * 0.64, y),
+        new Phaser.Geom.Point(x + size * 0.72, y),
         new Phaser.Geom.Point(x, y + size * 0.64),
-        new Phaser.Geom.Point(x - size * 0.64, y),
+        new Phaser.Geom.Point(x - size * 0.72, y),
       ];
       if (filled) graphics.fillPoints(points, true);
       graphics.strokePoints(points, true);
+    } else if (lane === 1) {
+      if (filled) graphics.fillCircle(x, y, size * 0.6);
+      graphics.strokeCircle(x, y, size * 0.6);
     } else if (lane === 2) {
-      if (filled) graphics.fillRoundedRect(x - size * 0.56, y - size * 0.56, size * 1.12, size * 1.12, 3);
-      graphics.strokeRoundedRect(x - size * 0.56, y - size * 0.56, size * 1.12, size * 1.12, 3);
+      const points = Array.from({ length: 10 }, (_, index) => {
+        const radius = index % 2 === 0 ? size * 0.72 : size * 0.32;
+        const angle = -Math.PI / 2 + index * Math.PI / 5;
+        return new Phaser.Geom.Point(x + Math.cos(angle) * radius, y + Math.sin(angle) * radius);
+      });
+      if (filled) graphics.fillPoints(points, true);
+      graphics.strokePoints(points, true);
     } else {
       const points = [
-        new Phaser.Geom.Point(x, y - size * 0.68),
-        new Phaser.Geom.Point(x + size * 0.7, y + size * 0.55),
-        new Phaser.Geom.Point(x - size * 0.7, y + size * 0.55),
+        new Phaser.Geom.Point(x - size * 0.72, y - size * 0.52),
+        new Phaser.Geom.Point(x + size * 0.72, y - size * 0.52),
+        new Phaser.Geom.Point(x, y + size * 0.7),
       ];
       if (filled) graphics.fillPoints(points, true);
       graphics.strokePoints(points, true);
@@ -990,20 +989,13 @@ export class AuraScene extends Phaser.Scene {
   private createNote(noteId: string, lane: AuraLane): Phaser.GameObjects.Container {
     const container = this.add.container(0, 0).setDepth(520);
     const glow = this.add.graphics().setBlendMode(Phaser.BlendModes.ADD);
-    glow.fillStyle(LANE_COLORS[lane], 0.12);
-    glow.fillRoundedRect(-31, -27, 62, 54, 10);
-    glow.fillStyle(LANE_COLORS[lane], 0.1);
-    glow.fillCircle(0, 0, 31);
-    const plate = this.add.graphics();
-    plate.fillGradientStyle(0x171735, 0x171735, 0x070712, 0x070712, 0.96);
-    plate.fillRoundedRect(-24, -21, 48, 42, 7);
-    plate.lineStyle(3, LANE_COLORS[lane], 0.82);
-    plate.strokeRoundedRect(-24, -21, 48, 42, 7);
-    plate.lineStyle(2, 0xffffff, 0.28);
-    plate.lineBetween(-15, -15, 15, -15);
+    glow.fillStyle(LANE_COLORS[lane], 0.08);
+    glow.fillCircle(0, 0, 25);
+    glow.lineStyle(7, LANE_COLORS[lane], 0.08);
+    this.drawMarker(glow, 0, 1, lane, LANE_COLORS[lane], 19, false);
     const marker = this.add.graphics();
-    this.drawMarker(marker, 0, 1, lane, LANE_COLORS[lane], 16, true);
-    container.add([glow, plate, marker]);
+    this.drawMarker(marker, 0, 1, lane, LANE_COLORS[lane], 17, true);
+    container.add([glow, marker]);
     this.uiLayer.add(container);
     this.noteObjects.set(noteId, container);
     return container;
@@ -1206,14 +1198,14 @@ export class AuraScene extends Phaser.Scene {
     this.tweens.killTweensOf(pulse);
     this.tweens.killTweensOf(keyText);
     flash.clear();
-    flash.fillStyle(color, 0.14);
+    flash.fillStyle(color, 0.08);
     flash.fillRect(
       layout.targetX - LANE_HALF_WIDTH,
       layout.startY,
       LANE_HALF_WIDTH * 2,
       layout.targetY - layout.startY,
     );
-    flash.fillStyle(color, 0.2);
+    flash.fillStyle(color, 0.18);
     flash.fillRect(
       layout.targetX - LANE_HALF_WIDTH,
       layout.targetY - 82,
