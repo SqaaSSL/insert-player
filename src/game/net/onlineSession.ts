@@ -4,7 +4,7 @@ import type { RoomSeat } from './RoomProtocol.ts';
 /**
  * The live online session handed from the React lobby to the Phaser fight
  * scene — same pattern as `launchState.ts`: a module-level singleton, set
- * right before navigating to `/fight`, cleared when the match ends.
+ * right before navigating to the selected gameplay route, cleared when the match ends.
  */
 export interface OnlineMatchSession {
   transport: PeerTransport;

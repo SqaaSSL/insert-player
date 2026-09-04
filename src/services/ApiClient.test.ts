@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiSessionChangedError,
   apiFetch,
+  apiUrl,
   captureApiRequestContext,
   configureApiAuth,
   createDetachedApiRequestContext,
@@ -17,6 +18,16 @@ describe('ApiClient request contexts', () => {
     configureApiAuth(null);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('routes canonical public assets through a relative local API proxy', () => {
+    vi.stubEnv('VITE_API_BASE_URL', '/dev-api');
+
+    expect(apiUrl('https://api.insertplayer.ai/public-assets/fighters/example/idle.png'))
+      .toBe('/dev-api/public-assets/fighters/example/idle.png');
+    expect(apiUrl('https://cdn.example.test/fighter.png'))
+      .toBe('https://cdn.example.test/fighter.png');
   });
 
   it('keeps concurrent provider sessions attached to their own requests', async () => {

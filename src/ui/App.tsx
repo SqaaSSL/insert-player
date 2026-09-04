@@ -81,7 +81,9 @@ type AppRoute =
   | '/roster/aura-watch'
   | '/versus/online'
   | LegalRoute
-  | '/fight';
+  | GameRoute;
+
+export type GameRoute = '/fight' | '/rush' | '/aura';
 
 interface NavigationOptions {
   replace?: boolean;
@@ -100,6 +102,16 @@ interface AppProps extends Partial<AuthRouteState> {
 
 function isLegalRoute(route: AppRoute): route is LegalRoute {
   return route === '/legal' || route === '/privacy' || route === '/terms' || route === '/refunds';
+}
+
+function isGameRoute(route: AppRoute): route is GameRoute {
+  return route === '/fight' || route === '/rush' || route === '/aura';
+}
+
+export function gameRouteForMatch(match: Pick<MatchSceneData, 'gameMode'>): GameRoute {
+  if (match.gameMode === 'rush') return '/rush';
+  if (match.gameMode === 'aura') return '/aura';
+  return '/fight';
 }
 
 export function legalReturnRouteFromState(state: unknown): AppRoute {
@@ -155,6 +167,8 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   if (cleaned === '/terms') return '/terms';
   if (cleaned === '/refunds') return '/refunds';
   if (cleaned === '/fight') return '/fight';
+  if (cleaned === '/rush') return '/rush';
+  if (cleaned === '/aura') return '/aura';
   return '/menu';
 }
 
@@ -345,8 +359,15 @@ export function App({
   }, [route]);
 
   useEffect(() => {
-    if (route !== '/fight' || pendingMatch) return;
-    debugWarn('[AppRouter] /fight requested without a valid match. Redirecting to the arcade.', {
+    if (!isGameRoute(route)) return;
+    if (pendingMatch) {
+      const expectedRoute = gameRouteForMatch(pendingMatch);
+      if (route !== expectedRoute) {
+        navigate(expectedRoute, window.location.search, { replace: true });
+      }
+      return;
+    }
+    debugWarn('[AppRouter] Game route requested without a valid match. Redirecting to Play.', {
       pathname: window.location.pathname,
       authSessionKey,
     });
@@ -354,7 +375,7 @@ export function App({
   }, [authSessionKey, navigate, pendingMatch, route]);
 
   useEffect(() => {
-    if (authStatus !== 'signed-in' || route === '/versus/online' || route === '/fight') return;
+    if (authStatus !== 'signed-in' || route === '/versus/online' || isGameRoute(route)) return;
     const pendingInvite = readPendingVersusInvite();
     if (!pendingInvite) return;
     const inviteSearch = new URLSearchParams({ invite: pendingInvite.token });
@@ -365,7 +386,7 @@ export function App({
   useEffect(() => {
     const previousRoute = previousRouteRef.current;
     previousRouteRef.current = route;
-    if (previousRoute !== '/fight' || route === '/fight') return;
+    if (!isGameRoute(previousRoute) || isGameRoute(route)) return;
     writeStoredMatch(null, authSessionKey);
     setPendingMatchState({ authSessionKey, data: null });
   }, [authSessionKey, route]);
@@ -389,11 +410,12 @@ export function App({
         debugWarn('[AppRouter] Match could not be persisted for reload recovery');
       }
       setPendingMatchState({ authSessionKey, data });
-      debugInfo('[AppRouter] Starting fight from roster', {
+      debugInfo('[AppRouter] Starting game from roster', {
+        gameMode: data.gameMode ?? 'fight',
         p1: data.p1Name ?? null,
         p2: data.p2Name ?? null,
       });
-      navigate('/fight');
+      navigate(gameRouteForMatch(data));
     },
     [authSessionKey, navigate],
   );
@@ -501,7 +523,7 @@ export function App({
   const navigateToLegal = useCallback((nextRoute: LegalRoute) => {
     const returnTo = isLegalRoute(route)
       ? legalReturnRouteFromState(window.history.state)
-      : route === '/fight' ? '/menu' : route;
+      : isGameRoute(route) ? '/menu' : route;
     navigate(nextRoute, '', { state: { legalReturnTo: returnTo } });
   }, [navigate, route]);
 
@@ -827,7 +849,7 @@ export function App({
     </Suspense>
   );
 
-  if (route === '/fight' && !configurationError) return routedContent;
+  if (isGameRoute(route) && !configurationError) return routedContent;
 
   return (
     <div className="app-route-shell">
