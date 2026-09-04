@@ -22,11 +22,14 @@ describe('ApiClient request contexts', () => {
   });
 
   it('routes canonical public assets through a relative local API proxy', () => {
-    vi.stubEnv('VITE_API_BASE_URL', '/dev-api');
+    const localProxyContext = {
+      ...captureApiRequestContext(),
+      apiBaseUrl: '/dev-api',
+    };
 
-    expect(apiUrl('https://api.insertplayer.ai/public-assets/fighters/example/idle.png'))
+    expect(apiUrl('https://api.insertplayer.ai/public-assets/fighters/example/idle.png', localProxyContext))
       .toBe('/dev-api/public-assets/fighters/example/idle.png');
-    expect(apiUrl('https://cdn.example.test/fighter.png'))
+    expect(apiUrl('https://cdn.example.test/fighter.png', localProxyContext))
       .toBe('https://cdn.example.test/fighter.png');
   });
 
