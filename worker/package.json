@@ -46,14 +46,14 @@
     "db:execute:0036": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0036_versus_invitations.sql"
   },
   "devDependencies": {
-    "wrangler": "^4.125.0"
+    "wrangler": "^4.127.1"
   },
   "dependencies": {
-    "@clerk/backend": "^3.16.6",
+    "@clerk/backend": "^3.16.13",
     "@cloudflare/containers": "^0.3.7",
     "@fontsource/press-start-2p": "5.3.0",
     "@fontsource/space-grotesk": "5.3.0",
-    "jose": "^6.2.3",
-    "takumi-js": "2.2.3"
+    "jose": "^6.2.10",
+    "takumi-js": "2.13.3"
   }
 }
