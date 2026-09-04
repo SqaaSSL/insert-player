@@ -1,6 +1,7 @@
 import {
   meterkeyAuthExpectations,
-  validateMeterkeyAuthContext,
+  validateMeterkeyAnalyticsIdentity,
+  validateMeterkeyApiKeyFingerprint,
 } from './meterkey-auth-context.mjs';
 
 const APPROVED_ORIGIN = 'https://meter.hilo.cx';
@@ -31,10 +32,23 @@ if (
   process.exit(1);
 }
 
+let expectations;
+try {
+  expectations = meterkeyAuthExpectations();
+  validateMeterkeyApiKeyFingerprint(key, expectations);
+} catch {
+  console.error('Meterkey auth preflight failed: the credential fingerprint does not match the approved key.');
+  process.exit(1);
+}
+
+const analyticsUrl = new URL('/v1/analytics/summary', baseUrl);
+analyticsUrl.searchParams.set('key_id', expectations.keyId);
+analyticsUrl.searchParams.set('window', '7d');
+
 const signal = AbortSignal.timeout(15_000);
 let response;
 try {
-  response = await fetch(new URL('/v1/auth/context', baseUrl), {
+  response = await fetch(analyticsUrl, {
     method: 'GET',
     headers: { Authorization: `Bearer ${key}` },
     signal,
@@ -51,13 +65,13 @@ if (response.status !== 200) {
   process.exit(1);
 }
 
-let context;
+let analytics;
 try {
-  context = await response.json();
-  validateMeterkeyAuthContext(context, meterkeyAuthExpectations());
+  analytics = await response.json();
+  validateMeterkeyAnalyticsIdentity(analytics, expectations);
 } catch {
-  console.error('Meterkey auth preflight failed: key scope, wallet, or limits do not match the approved contract.');
+  console.error('Meterkey auth preflight failed: authenticated key or owner does not match the approved contract.');
   process.exit(1);
 }
 
-console.log('Meterkey auth preflight passed (dedicated scope and wallet verified; no inference performed).');
+console.log('Meterkey auth preflight passed (exact credential and authenticated owner verified; no inference performed).');
