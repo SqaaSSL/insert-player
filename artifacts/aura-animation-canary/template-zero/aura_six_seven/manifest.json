@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "status": "canary-review",
+  "packId": "aura-v1-2026",
+  "animationName": "aura_six_seven",
+  "generation": {
+    "tool": "OpenAI image generation",
+    "mode": "edit",
+    "model": "workspace-default-image-model",
+    "providerCostUsd": null,
+    "generatedAt": "2026-09-04",
+    "prompt": "Create a production animation CANARY sprite-sheet storyboard derived from the attached canonical humanoid reference. Preserve the same generic bald adult humanoid identity, medium proportions, seamless neutral-gray bodysuit, side-facing orientation to screen-right, and simple non-branded appearance. The motion is an original, readable ‘6-7’ palm seesaw meme gesture, NOT a fighting move: relaxed confident stance; both elbows bent; open palms alternately seesaw up and down while shoulders add a small effortless bounce; finish returns cleanly to the opening pose so it loops. Output exactly eight chronological full-body frames arranged as a precise 4-column by 2-row grid, read left-to-right across row 1 then row 2. Every cell must use identical camera, character scale, body proportions, and floor baseline. Keep both complete hands, every finger, both feet, and the entire silhouette inside every cell with generous padding. Feet stay planted on one shared baseline with no lateral drift; do not crop, duplicate, merge, or add limbs. Uniform pure chroma green (#00FF00) background in every cell, no shadows, no scenery, no glow, no particles. No text, numbers, labels, borders, guides, UI, logos, watermark, or caption. Crisp clean game-production reference art, consistent lighting, no motion blur. Overall canvas should be 3:2 so each of the 4x2 cells is 3:4."
+  },
+  "source": {
+    "role": "Template Zero canonical pose reference",
+    "sha256": "08cafb31dfaec6612e8fbd4d20ff25a23ccadf5b41e0eb1822615fd7396e4056"
+  },
+  "raw": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/raw-storyboard.png",
+    "width": 1536,
+    "height": 1024,
+    "sha256": "2c6245513ab25079af17ca011035576f44e81586bca81d93978bd59e12e349fc"
+  },
+  "runtime": {
+    "path": "public/assets/aura/template-zero/aura_six_seven.png",
+    "frameWidth": 192,
+    "frameHeight": 256,
+    "frameCount": 8,
+    "gridColumns": 4,
+    "gridRows": 2,
+    "sha256": "70626d5e3194074f9d615dc3426e031707c85bed576e982f460de441d4cf3dff"
+  },
+  "gameplayReview": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/gameplay-review.jpg",
+    "sha256": "48cd61866bee779efe6e5f0ba715e324bf215898e2176362743971dc6a4149e6",
+    "consoleErrors": 0
+  },
+  "review": {
+    "automaticRootRegistration": "pass",
+    "agentSemanticReview": "pass-with-cleanup",
+    "ownerSemanticReview": "pending",
+    "knownFinding": "Minor chroma-edge color needs a final production cleanup pass before this becomes a reusable pose master.",
+    "batchAuthorized": false
+  }
+}

@@ -36,7 +36,10 @@ import {
   getAllCachedMetas,
   getAllSpritesForHash,
 } from '../../services/SpriteCache.ts';
-import { assertCompletePlayableSpriteSet } from '../../services/PlayableFighterAssets.ts';
+import {
+  assertFighterReadyForMode,
+  isAnimationNameSetReadyForMode,
+} from '../../services/FighterAssetPacks.ts';
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { buildRosterFighterSections, type RosterFighterEntry } from './RosterPage.tsx';
@@ -157,8 +160,12 @@ function randomSeed(): number {
 }
 
 /** A fighter the opponent can fetch: synced to the cloud, or an official Arcade fighter. */
-function isShareableEntry(entry: RosterFighterEntry): boolean {
-  return Boolean(entry.cloudFighterId) && entry.animationCount > 0;
+function isShareableEntry(entry: RosterFighterEntry, mode?: OnlineDuelMode): boolean {
+  if (!entry.cloudFighterId) return false;
+  return mode
+    ? isAnimationNameSetReadyForMode(entry.animationNames, mode)
+    : isAnimationNameSetReadyForMode(entry.animationNames, 'fight')
+      || isAnimationNameSetReadyForMode(entry.animationNames, 'aura');
 }
 
 interface FighterPickerProps {
@@ -330,12 +337,25 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
   const guestInvite = Boolean(
     invitedToken && (authStatus === 'signed-out' || authStatus === 'local'),
   );
-  const selected = useMemo(() => roster.find((entry) => entry.key === selectedKey) ?? null, [roster, selectedKey]);
+  const modeRoster = useMemo(
+    () => roster.filter((entry) => isShareableEntry(entry, duelMode)),
+    [duelMode, roster],
+  );
+  const selected = useMemo(
+    () => modeRoster.find((entry) => entry.key === selectedKey) ?? null,
+    [modeRoster, selectedKey],
+  );
   const joinCode = useMemo(() => normalizeVersusRoomCode(codeInput), [codeInput]);
 
   useEffect(() => {
     if (invitationFromUrl) storePendingVersusInvite(invitationFromUrl, inviterNameFromUrl);
   }, [invitationFromUrl, inviterNameFromUrl]);
+
+  useEffect(() => {
+    if (selectedKey && modeRoster.some((entry) => entry.key === selectedKey)) return;
+    setSelectedKey(modeRoster[0]?.key ?? null);
+    setReady(false);
+  }, [modeRoster, selectedKey]);
 
   const prepareInvitation = useCallback(async (
     roomCode: string,
@@ -417,7 +437,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
         const availableSections = guestInvite
           ? sections.official
           : [...sections.owned, ...sections.official];
-        const entries = availableSections.filter(isShareableEntry);
+        const entries = availableSections.filter((entry) => isShareableEntry(entry));
         setRoster(entries);
         setRosterStatus('ready');
         setSelectedKey((current) => current ?? entries[0]?.key ?? null);
@@ -477,7 +497,11 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
         } else {
           await ensurePlayableSpritesUpToDate(own.photoHash);
         }
-        assertCompletePlayableSpriteSet(await getAllSpritesForHash(own.photoHash, scope), own.name);
+        assertFighterReadyForMode(
+          await getAllSpritesForHash(own.photoHash, scope),
+          own.name,
+          start.gameMode,
+        );
         ownHash = own.photoHash;
       }
       // Opponent fighter: fetch through the room and cache it locally.
@@ -490,8 +514,16 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
           throw new Error('Your rival has not shared a playable fighter yet.');
         }
         const scoped: CloudFighter = { ...manifest, photoHash: versusFighterPhotoHash(manifest.id) };
-        await downloadCloudFighterToLocal(scoped, context, { includeArchivedVersions: false, includeRawAssets: false });
-        assertCompletePlayableSpriteSet(await getAllSpritesForHash(scoped.photoHash!, scope), manifest.name);
+        await downloadCloudFighterToLocal(scoped, context, {
+          includeArchivedVersions: false,
+          includeRawAssets: false,
+          allowIncomplete: start.gameMode === 'aura',
+        });
+        assertFighterReadyForMode(
+          await getAllSpritesForHash(scoped.photoHash!, scope),
+          manifest.name,
+          start.gameMode,
+        );
         opponentHash = scoped.photoHash;
       }
       const hostHash = localSlot === 0 ? ownHash : opponentHash;
@@ -886,7 +918,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
             </div>
 
             <FighterPicker
-              roster={roster}
+              roster={modeRoster}
               status={rosterStatus}
               selectedKey={selectedKey}
               disabled={!signedIn || room.kind === 'busy'}
@@ -1059,7 +1091,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
               </p>
             ) : null}
             <FighterPicker
-              roster={roster}
+              roster={modeRoster}
               status={rosterStatus}
               selectedKey={selectedKey}
               disabled={ready || invitationPhase.kind === 'creating'}
