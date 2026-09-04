@@ -65,8 +65,9 @@ const LANE_COLORS = [0x4fdcff, 0x8b4dff, 0xffce3a, 0xef4343] as const;
 const LANE_HALF_WIDTH = 36;
 const LANE_START_Y = 298;
 const LANE_TARGET_Y = 497;
-const KEY_CAP_Y = 524;
-const KEY_LABEL_Y = 542;
+const RECEPTOR_WIDTH = 64;
+const RECEPTOR_HEIGHT = 58;
+const KEY_LABEL_Y = 544;
 const ONLINE_START_DELAY_MS = 1_600;
 const ONLINE_FINISH_GRACE_MS = 2_500;
 
@@ -664,13 +665,23 @@ export class AuraScene extends Phaser.Scene {
         layout.targetX + LANE_HALF_WIDTH,
         layout.targetY,
       );
-      this.drawMarker(this.targetGraphics, layout.targetX, layout.targetY, typedLane, color, 22, false);
       this.targetGraphics.fillStyle(0x050507, 0.94);
-      this.targetGraphics.fillRoundedRect(layout.targetX - 23, KEY_CAP_Y, 46, 36, 4);
-      this.targetGraphics.lineStyle(1, color, 0.86);
-      this.targetGraphics.strokeRoundedRect(layout.targetX - 23, KEY_CAP_Y, 46, 36, 4);
-      this.targetGraphics.fillStyle(color, 1);
-      this.targetGraphics.fillCircle(layout.targetX, 518, 2);
+      this.targetGraphics.fillRoundedRect(
+        layout.targetX - RECEPTOR_WIDTH / 2,
+        layout.targetY - RECEPTOR_HEIGHT / 2,
+        RECEPTOR_WIDTH,
+        RECEPTOR_HEIGHT,
+        8,
+      );
+      this.targetGraphics.lineStyle(3, color, 0.9);
+      this.targetGraphics.strokeRoundedRect(
+        layout.targetX - RECEPTOR_WIDTH / 2,
+        layout.targetY - RECEPTOR_HEIGHT / 2,
+        RECEPTOR_WIDTH,
+        RECEPTOR_HEIGHT,
+        8,
+      );
+      this.drawMarker(this.targetGraphics, layout.targetX, layout.targetY, typedLane, color, 18, false);
     }
     this.drawBeatGrid(slot);
     const keys = this.laneKeysForSlot(slot);
@@ -913,28 +924,37 @@ export class AuraScene extends Phaser.Scene {
       LANE_HALF_WIDTH * 2,
       82,
     );
-    flash.lineStyle(6, 0xffffff, 0.92);
-    flash.lineBetween(
-      layout.targetX - LANE_HALF_WIDTH,
-      layout.targetY,
-      layout.targetX + LANE_HALF_WIDTH,
-      layout.targetY,
+    flash.fillStyle(color, 0.98);
+    flash.fillRoundedRect(
+      layout.targetX - RECEPTOR_WIDTH / 2,
+      layout.targetY - RECEPTOR_HEIGHT / 2,
+      RECEPTOR_WIDTH,
+      RECEPTOR_HEIGHT,
+      8,
     );
-    flash.fillStyle(color, 1);
-    flash.fillRoundedRect(layout.targetX - 25, KEY_CAP_Y - 2, 50, 40, 5);
-    flash.lineStyle(3, 0xffffff, 1);
-    flash.strokeRoundedRect(layout.targetX - 25, KEY_CAP_Y - 2, 50, 40, 5);
+    flash.lineStyle(4, 0xffffff, 1);
+    flash.strokeRoundedRect(
+      layout.targetX - RECEPTOR_WIDTH / 2,
+      layout.targetY - RECEPTOR_HEIGHT / 2,
+      RECEPTOR_WIDTH,
+      RECEPTOR_HEIGHT,
+      8,
+    );
+    this.drawMarker(flash, layout.targetX, layout.targetY, lane, 0xffffff, 20, true);
     flash.setAlpha(1);
 
     pulse.clear();
-    pulse.fillStyle(color, 0.44);
-    pulse.fillCircle(0, 0, 34);
-    pulse.lineStyle(5, 0xffffff, 0.96);
-    pulse.strokeCircle(0, 0, 31);
-    this.drawMarker(pulse, 0, 0, lane, color, 25, true);
-    pulse.setPosition(layout.targetX, layout.targetY).setScale(0.72).setAlpha(1);
+    pulse.lineStyle(6, color, 0.9);
+    pulse.strokeRoundedRect(
+      -RECEPTOR_WIDTH / 2,
+      -RECEPTOR_HEIGHT / 2,
+      RECEPTOR_WIDTH,
+      RECEPTOR_HEIGHT,
+      8,
+    );
+    pulse.setPosition(layout.targetX, layout.targetY).setScale(0.9).setAlpha(1);
 
-    keyText.setColor('#050507').setPosition(layout.targetX, KEY_LABEL_Y + 4).setScale(1.24);
+    keyText.setColor('#ffffff').setPosition(layout.targetX, KEY_LABEL_Y).setScale(1.18);
 
     if (this.reduceMotion) {
       this.time.delayedCall(120, () => {
@@ -952,15 +972,14 @@ export class AuraScene extends Phaser.Scene {
     });
     this.tweens.add({
       targets: pulse,
-      scaleX: 1.55,
-      scaleY: 1.55,
+      scaleX: 1.32,
+      scaleY: 1.32,
       alpha: 0,
       duration: 230,
       ease: 'Quart.easeOut',
     });
     this.tweens.add({
       targets: keyText,
-      y: KEY_LABEL_Y,
       scaleX: 1,
       scaleY: 1,
       duration: 190,
