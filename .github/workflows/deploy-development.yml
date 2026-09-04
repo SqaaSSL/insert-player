@@ -59,6 +59,11 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Attest canonical development source
+        run: |
+          node scripts/development-deploy-guard.mjs
+          printf 'ASF_CANONICAL_DEVELOPMENT_ATTESTED_SHA=%s\n' "$GITHUB_SHA" >> "$GITHUB_ENV"
+
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { purgeExactCloudflareFiles } from './cloudflare-cache.mjs';
+import { assertDevelopmentDeployAllowed } from './development-deploy-guard.mjs';
 import {
   chunkFrontendReleaseAssets,
   collectFrontendReleaseAssetPaths,
@@ -203,6 +204,10 @@ async function main() {
   if (!/^[A-Za-z0-9._/-]+$/.test(branch)) {
     throw new Error('ASF_PAGES_BRANCH contains unsupported characters.');
   }
+  const expectedBranch = isSandbox ? 'develop' : 'main';
+  if (branch !== expectedBranch) {
+    throw new Error(`Frontend ${deployTarget} deploy branch must be ${expectedBranch}.`);
+  }
 
   console.log(`Frontend Pages deploy target: ${projectName} (${branch}, ${deployTarget})`);
   if (args.has('--check-only')) {
@@ -211,11 +216,11 @@ async function main() {
   }
 
   const releaseContext = isSandbox
-    ? null
+    ? assertDevelopmentDeployAllowed({ root })
     : assertProductionDeployAllowed({ root });
-  if (releaseContext) {
-    console.log(`Frontend production release authorized: ${releaseContext.channel} ${releaseContext.gitSha}.`);
-  }
+  console.log(
+    `Frontend ${isSandbox ? 'sandbox' : 'production'} release authorized: ${releaseContext.channel} ${releaseContext.gitSha}.`,
+  );
 
   mkdirSync(wranglerLogPath, { recursive: true });
   run('production checks', npm, ['run', 'check:production']);
@@ -231,7 +236,7 @@ async function main() {
     ['scripts/configure-frontend-dist.mjs', `--target=${isSandbox ? 'sandbox' : 'live'}`],
   );
   const expectedAssetPath = builtFrontendAssetPath();
-  if (releaseContext) {
+  if (!isSandbox) {
     writeFrontendReleaseManifest({
       distDir: join(root, 'dist'),
       context: releaseContext,
@@ -265,7 +270,7 @@ async function main() {
     SMOKE_TIMEOUT_MS,
     {
       ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath,
-      ...(releaseContext ? { ASF_EXPECTED_FRONTEND_GIT_SHA: releaseContext.gitSha } : {}),
+      ...(!isSandbox ? { ASF_EXPECTED_FRONTEND_GIT_SHA: releaseContext.gitSha } : {}),
       ASF_FRONTEND_ASSET_PROBE_NONCE: `deploy-${Date.now()}`,
     },
   );
@@ -279,7 +284,7 @@ async function main() {
     SMOKE_TIMEOUT_MS,
     {
       ASF_EXPECTED_FRONTEND_ASSET_PATH: expectedAssetPath,
-      ...(releaseContext ? { ASF_EXPECTED_FRONTEND_GIT_SHA: releaseContext.gitSha } : {}),
+      ...(!isSandbox ? { ASF_EXPECTED_FRONTEND_GIT_SHA: releaseContext.gitSha } : {}),
       ASF_FRONTEND_READY_TIMEOUT_MS: String(CANONICAL_SMOKE_READY_TIMEOUT_MS),
     },
   );

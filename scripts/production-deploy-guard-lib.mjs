@@ -1,6 +1,7 @@
 const FULL_GIT_SHA = /^[a-f0-9]{40}$/;
 const ALLOWED_GITHUB_EVENTS = new Set(['push', 'workflow_dispatch']);
 const ATTESTED_CI_GENERATED_PATHS = new Set(['worker/wrangler.toml']);
+const ATTESTED_DEVELOPMENT_GENERATED_PATHS = new Set(['worker/wrangler.sandbox.toml']);
 
 function clean(value) {
   return String(value ?? '').trim();
@@ -54,11 +55,9 @@ function isSandboxWranglerTarget(args) {
     || args.some((arg) => /insert-player-(?:api-)?sandbox(?:-|$)/.test(arg));
 }
 
-export function isProductionWranglerMutation(rawArgs) {
+function isRemoteWranglerMutation(rawArgs) {
   const args = rawArgs.map((arg) => String(arg));
-  if (args.includes('--dry-run') || args.includes('--local') || isSandboxWranglerTarget(args)) {
-    return false;
-  }
+  if (args.includes('--dry-run') || args.includes('--local')) return false;
 
   const [command, subcommand, action] = wranglerCommandPath(args);
   if (['deploy', 'rollback', 'delete'].includes(command)) return true;
@@ -90,20 +89,33 @@ export function isProductionWranglerMutation(rawArgs) {
   if (command === 'd1' && ['create', 'delete', 'execute'].includes(subcommand)) return true;
   if (command === 'd1' && subcommand === 'migrations' && action === 'apply') return true;
   if (command === 'd1' && subcommand === 'time-travel' && action === 'restore') return true;
+  if (command === 'r2' && subcommand === 'object' && ['put', 'delete'].includes(action)) return true;
+  if (command === 'r2' && subcommand === 'bucket' && ['create', 'delete'].includes(action)) return true;
   return false;
 }
 
-export function statusOutsideAttestedCiGeneration({
+export function isProductionWranglerMutation(rawArgs) {
+  const args = rawArgs.map((arg) => String(arg));
+  return isRemoteWranglerMutation(args) && !isSandboxWranglerTarget(args);
+}
+
+export function isDevelopmentWranglerMutation(rawArgs) {
+  const args = rawArgs.map((arg) => String(arg));
+  return isRemoteWranglerMutation(args) && isSandboxWranglerTarget(args);
+}
+
+function statusOutsideAttestedGeneration({
   statusPorcelain,
-  githubActions,
   attestedSha,
   headSha,
+  allowedPaths,
+  attestationEnabled,
 }) {
   const status = String(statusPorcelain ?? '').trimEnd();
   const normalizedHead = clean(headSha).toLowerCase();
   if (
     !status.trim()
-    || clean(githubActions) !== 'true'
+    || !attestationEnabled
     || !FULL_GIT_SHA.test(normalizedHead)
     || clean(attestedSha).toLowerCase() !== normalizedHead
   ) {
@@ -115,9 +127,38 @@ export function statusOutsideAttestedCiGeneration({
     .filter(Boolean)
     .filter((line) => {
       const path = line.slice(3).replace(/^"|"$/g, '');
-      return !ATTESTED_CI_GENERATED_PATHS.has(path);
+      return !allowedPaths.has(path);
     })
     .join('\n');
+}
+
+export function statusOutsideAttestedCiGeneration({
+  statusPorcelain,
+  githubActions,
+  attestedSha,
+  headSha,
+}) {
+  return statusOutsideAttestedGeneration({
+    statusPorcelain,
+    attestedSha,
+    headSha,
+    allowedPaths: ATTESTED_CI_GENERATED_PATHS,
+    attestationEnabled: clean(githubActions) === 'true',
+  });
+}
+
+export function statusOutsideAttestedDevelopmentGeneration({
+  statusPorcelain,
+  attestedSha,
+  headSha,
+}) {
+  return statusOutsideAttestedGeneration({
+    statusPorcelain,
+    attestedSha,
+    headSha,
+    allowedPaths: ATTESTED_DEVELOPMENT_GENERATED_PATHS,
+    attestationEnabled: Boolean(clean(attestedSha)),
+  });
 }
 
 export function evaluateProductionDeployGuard(input) {
@@ -213,6 +254,90 @@ export function assertAllowedProductionContext(result) {
     'Normal path: merge a reviewed commit to main and use GitHub Actions.',
     'Emergency path: use a clean origin/main checkout and set ASF_PRODUCTION_BREAK_GLASS=1,',
     'ASF_EXPECTED_PRODUCTION_SHA=<full HEAD sha>, and ASF_PRODUCTION_BREAK_GLASS_REASON=<reason>.',
+  ].join('\n'));
+}
+
+export function evaluateDevelopmentDeployGuard(input) {
+  const headSha = clean(input.headSha).toLowerCase();
+  const statusPorcelain = clean(input.statusPorcelain);
+  const githubActions = clean(input.githubActions) === 'true';
+  const issues = [];
+
+  if (!FULL_GIT_SHA.test(headSha)) {
+    issues.push(issue('invalid_head', 'HEAD is not a full Git commit SHA.'));
+  }
+  if (statusPorcelain) {
+    issues.push(issue(
+      'dirty_tree',
+      'The Git worktree has modified, staged, or untracked files. Sandbox artifacts must come from a clean commit.',
+    ));
+  }
+
+  if (githubActions) {
+    const githubSha = clean(input.githubSha).toLowerCase();
+    const githubRef = clean(input.githubRef);
+    const githubEventName = clean(input.githubEventName);
+    if (!FULL_GIT_SHA.test(githubSha)) {
+      issues.push(issue('invalid_github_sha', 'GITHUB_SHA is missing or invalid.'));
+    } else if (headSha !== githubSha) {
+      issues.push(issue('github_sha_mismatch', 'HEAD does not match the commit GitHub Actions authorized.'));
+    }
+    if (githubRef !== 'refs/heads/develop') {
+      issues.push(issue('wrong_github_ref', 'Sandbox deploys are allowed only from refs/heads/develop.'));
+    }
+    if (!ALLOWED_GITHUB_EVENTS.has(githubEventName)) {
+      issues.push(issue('wrong_github_event', 'Sandbox deploys require a develop push or an explicit workflow dispatch.'));
+    }
+    return {
+      allowed: issues.length === 0,
+      issues,
+      context: {
+        channel: 'github-actions',
+        gitSha: headSha,
+        runId: clean(input.githubRunId) || null,
+        runAttempt: clean(input.githubRunAttempt) || null,
+      },
+    };
+  }
+
+  const currentBranch = clean(input.currentBranch);
+  const remoteDevelopSha = clean(input.remoteDevelopSha).toLowerCase();
+  if (currentBranch !== 'develop') {
+    issues.push(issue(
+      'wrong_local_branch',
+      'Local sandbox mutations are allowed only from the develop branch.',
+    ));
+  }
+  if (!FULL_GIT_SHA.test(remoteDevelopSha)) {
+    issues.push(issue('invalid_remote_develop', 'The current origin/develop SHA could not be verified remotely.'));
+  } else if (headSha !== remoteDevelopSha) {
+    issues.push(issue(
+      'remote_develop_mismatch',
+      'HEAD is not the exact commit currently published at origin/develop.',
+    ));
+  }
+
+  return {
+    allowed: issues.length === 0,
+    issues,
+    context: {
+      channel: 'local-develop',
+      gitSha: headSha,
+      runId: null,
+      runAttempt: null,
+    },
+  };
+}
+
+export function assertAllowedDevelopmentContext(result) {
+  if (result.allowed) return result.context;
+  const details = result.issues.map(({ message }) => `- ${message}`).join('\n');
+  throw new Error([
+    'Sandbox mutation blocked by the canonical development guard.',
+    details,
+    '',
+    'Normal path: merge a reviewed commit to develop and let GitHub Actions publish.',
+    'Local operator path: use a clean develop checkout at the exact remotely verified origin/develop SHA.',
   ].join('\n'));
 }
 

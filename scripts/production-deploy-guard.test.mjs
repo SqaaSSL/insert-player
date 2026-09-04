@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertAllowedProductionContext,
   evaluateProductionDeployGuard,
+  isDevelopmentWranglerMutation,
   isProductionWranglerMutation,
   statusOutsideAttestedCiGeneration,
 } from './production-deploy-guard-lib.mjs';
@@ -127,6 +128,9 @@ describe('production deploy guard', () => {
     expect(isProductionWranglerMutation([
       'deploy', '--config', 'wrangler.sandbox.toml', '--keep-vars',
     ])).toBe(false);
+    expect(isDevelopmentWranglerMutation([
+      'deploy', '--config', 'wrangler.sandbox.toml', '--keep-vars',
+    ])).toBe(true);
     expect(isProductionWranglerMutation([
       'pages', 'deploy', '../dist', '--project-name', 'insert-player',
     ])).toBe(true);
@@ -138,6 +142,12 @@ describe('production deploy guard', () => {
     ])).toBe(true);
     expect(isProductionWranglerMutation([
       'd1', 'execute', 'insert-player-db', '--local',
+    ])).toBe(false);
+    expect(isProductionWranglerMutation([
+      'r2', 'object', 'put', 'insert-player-assets/file.png', '--file', 'file.png',
+    ])).toBe(true);
+    expect(isProductionWranglerMutation([
+      'r2', 'object', 'get', 'insert-player-assets/file.png', '--file', 'file.png',
     ])).toBe(false);
     expect(isProductionWranglerMutation(['delete', 'insert-player-api'])).toBe(true);
     expect(isProductionWranglerMutation([
