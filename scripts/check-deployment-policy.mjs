@@ -121,6 +121,7 @@ export function deploymentPolicyIssues({ root = defaultRoot } = {}) {
     const validationJob = developmentJobs.find((job) => job.id === 'validate');
     const deployJob = developmentJobs.find((job) => job.id === 'deploy');
     const sandboxDeployCommand = 'node scripts/apply-sandbox-config.mjs --require-complete --skip-production-check --deploy-worker';
+    const sandboxPagesDeployCommand = 'node scripts/deploy-frontend-pages.mjs --target=sandbox --skip-production-check';
 
     if (!validationJob?.source.includes('uses: ./.github/workflows/validate.yml')) {
       issues.push('deploy-development.yml validate job must use the reusable production gate.');
@@ -130,6 +131,9 @@ export function deploymentPolicyIssues({ root = defaultRoot } = {}) {
     }
     if (!deployJob?.source.includes(sandboxDeployCommand)) {
       issues.push(`deploy-development.yml deploy job must run ${sandboxDeployCommand}.`);
+    }
+    if (!deployJob?.source.includes(sandboxPagesDeployCommand)) {
+      issues.push(`deploy-development.yml deploy job must run ${sandboxPagesDeployCommand}.`);
     }
   }
 

@@ -3793,6 +3793,7 @@ function assertCanonicalProductionReleaseIsWired() {
       'writeFrontendReleaseManifest',
       'ASF_EXPECTED_FRONTEND_GIT_SHA',
       'assertProductionDeployAllowed({ root })',
+      "if (!args.has('--skip-production-check'))",
     ],
     'scripts/smoke-frontend-live.mjs': [
       'ASF_EXPECTED_FRONTEND_GIT_SHA',
@@ -3893,7 +3894,7 @@ function assertGithubActionsAreWired() {
       'uses: ./.github/workflows/validate.yml',
       'needs: validate',
       'node scripts/apply-sandbox-config.mjs --require-complete --skip-production-check --deploy-worker',
-      'npm run deploy:frontend:sandbox',
+      'node scripts/deploy-frontend-pages.mjs --target=sandbox --skip-production-check',
       'secrets.CLOUDFLARE_API_TOKEN',
       'secrets.ANONYMIZATION_SECRET',
       'secrets.GENERATION_JOB_SIGNING_SECRET',
