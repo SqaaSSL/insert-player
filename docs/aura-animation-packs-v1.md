@@ -1,6 +1,6 @@
 # Aura animation packs v1
 
-Status: runtime and capability contract implemented. The complete seven-asset Template Zero development set (six core performances plus optional shrug) passes mechanical and in-game agent review. Owner semantic review and measured production-provider cost remain the gates before generating real roster packs.
+Status: runtime and capability contract implemented. The complete seven-asset Template Zero development set (six core performances plus optional shrug) passes choreography, mechanical and in-game agent review. These storyboards are reusable pose scaffolds, not Champion render masters. Per-character HQ refinement, owner semantic review and measured production-provider cost remain the gates before generating real roster packs.
 
 ## Product contract
 
@@ -40,6 +40,18 @@ One rhythm note does **not** trigger one full animation. Each turn deterministic
 - Full-body frames must preserve hands, feet and floor contact. `aura_floor_worm` must fit without shrinking every upright performance.
 - The runtime may add camera punch-ins, aura trails, head emphasis and crowd lighting. Those effects are not baked into every fighter sprite.
 
+### Champion production path
+
+Template Zero is a pose and timing atlas. Its 384×512 storyboard cells are deliberately sufficient to communicate silhouette, hand ownership and body mechanics; enlarging those pixels would not create Champion detail. A paid character pack follows the existing `sheet_refined` quality model instead:
+
+1. Extract and review each Template Zero cell as a pose anchor.
+2. Combine that pose anchor with the target fighter's canonical identity and outfit references.
+3. Refine or regenerate every unique target-character frame independently at archival resolution.
+4. Remove the background, register the root and preserve the HQ frame as immutable source evidence.
+5. Derive the lightweight Phaser sheet from those exact approved HQ frames.
+
+The minimum archival target is four times the runtime dimensions on each axis: 768×1024 for upright 192×256 cells, 1024×1024 for `aura_one_leg`, and 1536×1024 for the wide `aura_floor_worm`. A conventional pixel upscale of a storyboard or runtime frame cannot satisfy the Champion gate. The six core performances contain at most 46 unique render poses after explicit repeats are deduplicated; the optional shrug raises that upper bound to 49.
+
 ## Template Zero development batch
 
 `aura_six_seven` was generated first as the eight-frame canary and passed these gates before the remaining five were authorized:
@@ -51,7 +63,7 @@ One rhythm note does **not** trigger one full animation. Each turn deterministic
 5. The processed sheet loads through the real Aura loader and can be interrupted cleanly on a miss.
 6. Actual provider cost, frame-repair rate and manual-review time are recorded before pack pricing is set.
 
-The authorized development batch now includes `aura_unbothered`, `aura_mog_check`, `aura_glide`, `aura_one_leg` and `aura_floor_worm`. Every asset has its raw storyboard, processed runtime sheet, non-accumulating GIF preview, gameplay capture, QA measurements and provenance manifest under `artifacts/aura-animation-canary/template-zero/`.
+The authorized development batch now includes `aura_unbothered`, `aura_mog_check`, `aura_glide`, `aura_one_leg` and `aura_floor_worm`. Every asset has its raw choreography storyboard, processed development-runtime sheet, non-accumulating GIF preview, gameplay capture, QA measurements and provenance manifest under `artifacts/aura-animation-canary/template-zero/`. None of those gray Template Zero sheets is a selectable fighter or a Champion publication asset.
 
 Frame metadata is deliberately per animation. Upright performances use 192×256 cells, `aura_one_leg` uses 256×256 for the balancing arm and held ankle, and `aura_floor_worm` uses 384×256 so horizontal anatomy is neither cropped nor globally shrunk. Phaser consumes that explicit metadata; it never guesses the grid from the filename.
 

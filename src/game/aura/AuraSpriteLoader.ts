@@ -41,13 +41,15 @@ function textureKey(spriteKey: string, animationName: AuraAnimationName): string
   return `${spriteKey}_${animationName}`;
 }
 
-function templateZeroCanaryEnabled(): boolean {
-  return import.meta.env.DEV
-    && typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('auraCanary') === 'template-zero';
+type AuraCanaryId = 'template-zero' | 'donald-trump';
+
+function requestedAuraCanary(): AuraCanaryId | null {
+  if (!import.meta.env.DEV || typeof window === 'undefined') return null;
+  const requested = new URLSearchParams(window.location.search).get('auraCanary');
+  return requested === 'template-zero' || requested === 'donald-trump' ? requested : null;
 }
 
-interface TemplateZeroCanaryDefinition {
+interface LocalAuraCanaryDefinition {
   name: AuraAnimationName;
   path: string;
   frameWidth: number;
@@ -55,7 +57,7 @@ interface TemplateZeroCanaryDefinition {
   frameCount: number;
 }
 
-const TEMPLATE_ZERO_CANARIES: readonly TemplateZeroCanaryDefinition[] = [
+const TEMPLATE_ZERO_CANARIES: readonly LocalAuraCanaryDefinition[] = [
   {
     name: 'aura_unbothered',
     path: '/assets/aura/template-zero/aura_unbothered.png',
@@ -107,13 +109,35 @@ const TEMPLATE_ZERO_CANARIES: readonly TemplateZeroCanaryDefinition[] = [
   },
 ];
 
-async function loadTemplateZeroCanary(
+const DONALD_TRUMP_CANARIES: readonly LocalAuraCanaryDefinition[] = [
+  {
+    name: 'aura_six_seven',
+    path: '/assets/aura/donald-trump/aura_six_seven.png',
+    frameWidth: 192,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+];
+
+function localCanariesFor(
+  canaryId: AuraCanaryId | null,
+  spriteKey: string,
+): readonly LocalAuraCanaryDefinition[] {
+  if (canaryId === 'template-zero') return TEMPLATE_ZERO_CANARIES;
+  // A real-character canary replaces P1 only so identity QA can happen next
+  // to an untouched opponent instead of accidentally cloning the subject.
+  if (canaryId === 'donald-trump' && spriteKey === 'fighter_p1') return DONALD_TRUMP_CANARIES;
+  return [];
+}
+
+async function loadLocalAuraCanary(
   scene: Phaser.Scene,
   spriteKey: string,
-  definition: TemplateZeroCanaryDefinition,
+  definition: LocalAuraCanaryDefinition,
+  canaryId: AuraCanaryId,
 ): Promise<LoadedAuraAnimation> {
   const response = await fetch(definition.path, { cache: 'no-store' });
-  if (!response.ok) throw new Error(`Template Zero Aura canary failed (${response.status})`);
+  if (!response.ok) throw new Error(`${canaryId} Aura canary failed (${response.status})`);
   const image = await blobToImage(await response.blob());
   const key = textureKey(spriteKey, definition.name);
   if (scene.textures.exists(key)) scene.textures.remove(key);
@@ -177,18 +201,20 @@ export async function loadAuraAnimationPack(
     }
   }
 
-  if (templateZeroCanaryEnabled()) {
-    for (const definition of TEMPLATE_ZERO_CANARIES) {
-      if (animations.has(definition.name)) continue;
+  const canaryId = requestedAuraCanary();
+  if (canaryId) {
+    for (const definition of localCanariesFor(canaryId, spriteKey)) {
+      const replacesCachedAnimation = animations.has(definition.name);
+      if (replacesCachedAnimation && canaryId === 'template-zero') continue;
       try {
-        const canary = await loadTemplateZeroCanary(scene, spriteKey, definition);
+        const canary = await loadLocalAuraCanary(scene, spriteKey, definition, canaryId);
         if (!isCurrent()) return null;
         animations.set(canary.name, canary);
-        textureKeys.push(canary.textureKey);
-        debugInfo(`[AuraSpriteLoader] Template Zero ${canary.name} canary enabled for "${spriteKey}"`);
+        if (!replacesCachedAnimation) textureKeys.push(canary.textureKey);
+        debugInfo(`[AuraSpriteLoader] ${canaryId} ${canary.name} canary enabled for "${spriteKey}"`);
       } catch (error) {
         debugWarn(
-          `[AuraSpriteLoader] Template Zero ${definition.name} canary could not be loaded:`,
+          `[AuraSpriteLoader] ${canaryId} ${definition.name} canary could not be loaded:`,
           error instanceof Error ? error.message : error,
         );
       }
