@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "experimentId": "donald-trump-aura_shrug-champion-v1",
+  "animationName": "aura_shrug",
+  "endpoint": "xai/grok-imagine-image/v2.0/edit",
+  "modelId": "grok-imagine-image-2-edit",
+  "provider": "fal",
+  "costPerCompletedFrameMicrocredits": 110000,
+  "createdAt": "2026-09-05T22:57:48.840Z",
+  "sequence": [
+    "bothLevel",
+    "leftHandHigh",
+    "bothLevel",
+    "rightHandHigh",
+    "bothLevel",
+    "leftHandHigh",
+    "bothLevel",
+    "rightHandHigh"
+  ],
+  "uploads": {
+    "pose:leftHandHigh": {
+      "path": ".artifacts/aura-trump-champion-poses/aura_shrug/leftHandHigh.png",
+      "contentSha256": "c1fe0861006b5bc3240172069d246e402f3d12d626ae475052885902745e4a5e",
+      "url": "https://v3b.fal.media/files/b/0aa94322/p1BbqQtmq5XX_th97d-Jk_leftHandHigh.png",
+      "uploadedAt": "2026-09-05T22:57:50.803Z"
+    },
+    "anchor:canonical": {
+      "path": "reference-repo:.local/template-zero-provider-sweep/trump-full-template-v1/inputs/anchors/trump-canonical.png",
+      "contentSha256": "10a1f057097edec2c770f033d50d06b5cf8e2bd08d0320df9640366e24a00d54",
+      "url": "https://v3b.fal.media/files/b/0aa9430b/djPNJxamdpDKHgEkJIEvw_trump-canonical.png",
+      "uploadedAt": "2026-09-05T22:57:52.290Z"
+    },
+    "anchor:original": {
+      "path": "reference-repo:.local/template-zero-provider-sweep/trump-full-template-v1/inputs/anchors/trump-original.png",
+      "contentSha256": "af76d813828ebd4d56b1b18b44de3f850f3c7968022aafab2ece6514d15829fc",
+      "url": "https://v3b.fal.media/files/b/0aa9430b/ouKK_yrJWZhSvjhETQh8f_trump-original.png",
+      "uploadedAt": "2026-09-05T22:57:54.182Z"
+    }
+  },
+  "frames": {
+    "leftHandHigh": {
+      "status": "completed",
+      "sourcePath": "artifacts/aura-animation-canary/template-zero/aura_shrug/keyframes/left-hand-high.png",
+      "sourceCrop": null,
+      "sourceComponentIndex": null,
+      "poseExtraction": null,
+      "normalizedPosePath": ".artifacts/aura-trump-champion-poses/aura_shrug/leftHandHigh.png",
+      "sourceSha256": "f9e086d723705c4dac7c937803e879bbb0ec4f37ecfa45f088e6fbd2abd59c6a",
+      "normalizedPoseSha256": "c1fe0861006b5bc3240172069d246e402f3d12d626ae475052885902745e4a5e",
+      "geometry": {
+        "algorithm": "green-dominant-background-rgb8-bbox-v2",
+        "canvas": {
+          "width": 1536,
+          "height": 2048
+        },
+        "foregroundPixels": 545408,
+        "bboxNormalized": {
+          "left": 0.19921875,
+          "right": 0.794921875,
+          "top": 0.037109375,
+          "bottom": 0.9365234375
+        },
+        "bboxCenterNormalized": {
+          "x": 0.4970703125,
+          "y": 0.48681640625
+        },
+        "rootSupportNormalized": {
+          "x": 0.4970703125,
+          "y": 0.9365234375
+        }
+      },
+      "prompt": "Use case: identity-preserve\nAsset type: one individually authored Champion-quality Phaser character-animation keyframe\nPRIMARY TASK: perform an IN-PLACE LOCKED EDIT of IMAGE 1. IMAGE 1 is the immutable pose, silhouette, camera and registration master. Re-render that same locked body and transfer only identity, face, hair, outfit, materials and polished game-art finish from IMAGE 2. Use IMAGE 3 only to safeguard facial geometry and hairline. Do not generate a new pose or composition. If references conflict, IMAGE 1 wins.\n\nMOVEMENT: AURA SHRUG REACTION, source pose 2 of 8. Preserve the exact compact open-palm shrug pose and asymmetric hand heights. Keep both elbows comfortably bent near the torso; do not turn it into the Six-Seven seesaw, a fighting guard or arms spread wide.\nNUMERIC FRAME LOCK: foreground bounds x=19.92%..79.49%, y=3.71%..93.65%; center=(49.71%, 48.68%); support/root=(49.71%, 93.65%). Match IMAGE 1's bounds, center, support point, camera and empty-green margins. Do not auto-frame.\nPOSE LOCK: preserve IMAGE 1's joint locations, body axis, silhouette extremes, hand orientation, expression, root/support point and every visible contact. The pose may be awkward, horizontal or exaggerated: do not naturalize, dramatize, rebalance, widen, lengthen, shrink, zoom, crop, recenter or smart-reframe it.\n\nSUBJECT TRANSFER: Donald Trump from IMAGE 2, with the same recognizable face, swept blond hair, navy suit, white shirt, RED tie, black dress shoes, body proportions and polished realistic fighting-game rendering. IMAGE 2 wins for identity, outfit and rendering. IMAGE 3 protects likeness and hairline only. Do not copy the pose from IMAGE 2 or IMAGE 3.\n\nANATOMY: exactly one connected adult body, one head and torso, two complete arms/hands and two complete legs/feet. Preserve coherent shoulder-elbow-wrist and hip-knee-ankle chains. No duplicated, merged, detached or invented anatomy.\n\nOUTPUT: one 3:4 image only. Pure flat uniform #00FF00 background. No floor, shadow, gradient, text, prop, scenery, extra figure, blur, motion trail, glow or effect.",
+      "promptSha256": "3e0290a207ac4334602cc34ba69303652f7c0c455671fecc7738cb3eff3c73cd",
+      "requestSha256": "280d3867ab48757a4939f17a8eca26d7bd746c3c5165ab967253fe63aaaec945",
+      "modelId": "grok-imagine-image-2-edit",
+      "providerEndpoint": "xai/grok-imagine-image/v2.0/edit",
+      "expectedCostMicrocredits": 110000,
+      "submittedAt": "2026-09-05T22:57:54.188Z",
+      "requestId": "01a073ca-ef66-7f50-bf0a-26a171af7406",
+      "statusUrl": "https://queue.fal.run/xai/grok-imagine-image/requests/01a073ca-ef66-7f50-bf0a-26a171af7406/status",
+      "responseUrl": "https://queue.fal.run/xai/grok-imagine-image/requests/01a073ca-ef66-7f50-bf0a-26a171af7406",
+      "updatedAt": "2026-09-05T22:58:21.265Z",
+      "providerStatus": "COMPLETED",
+      "completedAt": "2026-09-05T22:58:28.482Z",
+      "outputPath": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/raw/leftHandHigh.png",
+      "outputSha256": "e4ca16c8f6b8f399ca9782458f89e94dd16e16b9e4853a63bf7b97355c242bb0",
+      "outputSizeBytes": 2972044,
+      "outputDimensions": {
+        "width": 1776,
+        "height": 2368,
+        "bitDepth": 8,
+        "colorTypeCode": 2
+      },
+      "providerResponseSha256": "683564001de9bf742e1b76fb747d6ba275171f2eea050b49359e45595ead15f5",
+      "providerImageUrl": "https://v3b.fal.media/files/b/0aa9430b/8U_8gc4hgs1Fiz0Sz9p8o_DSGeAx5S.png"
+    }
+  },
+  "rejectedAttempts": [],
+  "updatedAt": "2026-09-05T22:58:28.483Z"
+}
