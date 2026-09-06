@@ -56,6 +56,18 @@ import {
   type AuraDifficultyId,
 } from '../aura/AuraConfig.ts';
 import {
+  AURA_ROUTINE_ANIMATION_NAMES,
+  auraPerformanceAtBeat,
+  createAuraPerformanceRoutine,
+  type AuraRoutineAnimationName,
+} from '../aura/AuraPerformance.ts';
+import { AuraPerformanceView } from '../aura/AuraPerformanceView.ts';
+import {
+  destroyLoadedAuraAnimationPack,
+  loadAuraAnimationPack,
+  type LoadedAuraAnimationPack,
+} from '../aura/AuraSpriteLoader.ts';
+import {
   endActiveOnlineSession,
   getActiveOnlineSession,
   type OnlineMatchSession,
@@ -76,6 +88,9 @@ const CROWD_METER_SEGMENTS = 8;
 const INACTIVE_PERFORMER_STAGE_OFFSET = 260;
 const ONLINE_START_DELAY_MS = 1_600;
 const ONLINE_FINISH_GRACE_MS = 2_500;
+const SHRUG_REACTION_MISTAKES = 2;
+const SHRUG_REACTION_COOLDOWN_MS = 2_200;
+const SHRUG_REACTION_DURATION_MS = 1_050;
 
 type ResolvedAuraGrade = Exclude<AuraGrade, 'wrong_turn'>;
 
@@ -160,6 +175,7 @@ export class AuraScene extends Phaser.Scene {
   private remix = 0;
   private isVsAI = true;
   private cpuVsCpu = false;
+  private canaryPerformanceOverride: AuraRoutineAnimationName | null = null;
   private p1Name = 'Player 1';
   private p2Name = 'CPU';
   private p1PhotoHash: string | null = null;
@@ -179,6 +195,9 @@ export class AuraScene extends Phaser.Scene {
   private cpuPlanIndices: [number, number] = [0, 0];
   private fighters!: [Fighter, Fighter];
   private views!: [FighterView, FighterView];
+  private fightSpritePacksLoaded: [boolean, boolean] = [false, false];
+  private auraAnimationPacks: [LoadedAuraAnimationPack | null, LoadedAuraAnimationPack | null] = [null, null];
+  private auraPerformanceViews: [AuraPerformanceView | null, AuraPerformanceView | null] = [null, null];
   private fighterRenderScale = 1;
   private fighterRenderYOffset = 0;
 
@@ -219,6 +238,9 @@ export class AuraScene extends Phaser.Scene {
   private keyBindings: Array<{ key: Phaser.Input.Keyboard.Key; handler: () => void }> = [];
   private soundManager!: SoundManager;
   private crowdHeat: [number, number] = [0, 0];
+  private mistakeStreak: [number, number] = [0, 0];
+  private lastShrugReactionAt: [number, number] = [-Infinity, -Infinity];
+  private shrugReactionEpoch: [number, number] = [0, 0];
   private activePerformerSlot: AuraSlot | null = null;
   private clockStartedAt: number | null = null;
   private scheduledClockStart: number | null = null;
@@ -259,6 +281,12 @@ export class AuraScene extends Phaser.Scene {
     this.remix = data.remix ?? 0;
     this.isVsAI = data.vsAI !== false || data.cpuVsCpu === true;
     this.cpuVsCpu = data.cpuVsCpu === true;
+    const requestedCanaryPerformance = import.meta.env.DEV
+      ? new URLSearchParams(window.location.search).get('auraCanaryMove')
+      : null;
+    this.canaryPerformanceOverride = AURA_ROUTINE_ANIMATION_NAMES.find(
+      (name) => name === requestedCanaryPerformance,
+    ) ?? null;
     this.p1Name = data.p1Name ?? (this.cpuVsCpu ? 'CPU 1' : 'Player 1');
     this.p2Name = data.p2Name ?? (this.isVsAI ? 'CPU' : 'Player 2');
     this.p1PhotoHash = data.p1PhotoHash ?? null;
@@ -273,7 +301,13 @@ export class AuraScene extends Phaser.Scene {
     this.cpuPlans = [[], []];
     this.cpuPlanIndices = [0, 0];
     this.noteObjects.clear();
+    this.fightSpritePacksLoaded = [false, false];
+    this.auraAnimationPacks = [null, null];
+    this.auraPerformanceViews = [null, null];
     this.crowdHeat = [0, 0];
+    this.mistakeStreak = [0, 0];
+    this.lastShrugReactionAt = [-Infinity, -Infinity];
+    this.shrugReactionEpoch = [0, 0];
     this.activePerformerSlot = null;
     this.currentTurnIndex = -2;
     this.clockStartedAt = null;
@@ -386,10 +420,20 @@ export class AuraScene extends Phaser.Scene {
 
   private async loadFighters(epoch: number): Promise<void> {
     const isCurrent = () => this.isCurrentLifecycle(epoch);
-    const loads: Promise<unknown>[] = [];
-    if (this.p1PhotoHash) loads.push(loadAiSprites(this, 'fighter_p1', this.p1PhotoHash, isCurrent));
-    if (this.p2PhotoHash) loads.push(loadAiSprites(this, 'fighter_p2', this.p2PhotoHash, isCurrent));
-    await Promise.all(loads);
+    const loadSlot = async (slot: AuraSlot, spriteKey: string, photoHash: string | null) => {
+      const [fightPackLoaded, auraPack] = await Promise.all([
+        photoHash ? loadAiSprites(this, spriteKey, photoHash, isCurrent) : Promise.resolve(false),
+        loadAuraAnimationPack(this, spriteKey, photoHash, isCurrent),
+      ]);
+      if (isCurrent()) {
+        this.fightSpritePacksLoaded[slot] = fightPackLoaded;
+        this.auraAnimationPacks[slot] = auraPack;
+      }
+    };
+    await Promise.all([
+      loadSlot(0, 'fighter_p1', this.p1PhotoHash),
+      loadSlot(1, 'fighter_p2', this.p2PhotoHash),
+    ]);
   }
 
   private createStage(textureKey: string): void {
@@ -545,6 +589,14 @@ export class AuraScene extends Phaser.Scene {
       view.setRenderPresentation(this.fighterRenderScale, this.fighterRenderYOffset);
       this.worldLayer.add([view.shadowSprite!, view.sprite]);
     }
+    this.auraPerformanceViews = [0, 1].map((slot) => {
+      const pack = this.auraAnimationPacks[slot as AuraSlot];
+      if (!pack) return null;
+      const performanceView = new AuraPerformanceView(this, pack);
+      this.worldLayer.add(performanceView.gameObjects());
+      if (performanceView.has('aura_unbothered')) performanceView.play('aura_unbothered');
+      return performanceView;
+    }) as [AuraPerformanceView | null, AuraPerformanceView | null];
   }
 
   private createWorldEffects(): void {
@@ -1094,6 +1146,7 @@ export class AuraScene extends Phaser.Scene {
       return;
     }
     const turn = this.chart.turns[turnIndex];
+    this.mistakeStreak[turn.slot] = 0;
     this.drawLanes(turn.slot);
     this.comboText
       .setOrigin(turn.slot === 0 ? 0 : 1, 0)
@@ -1109,6 +1162,13 @@ export class AuraScene extends Phaser.Scene {
     this.activePerformerSlot = slot;
     const activeX = this.fighters[slot].x;
     const inactive = (1 - slot) as AuraSlot;
+    this.shrugReactionEpoch[slot] += 1;
+    const activePerformanceView = this.auraPerformanceViews[slot];
+    if (activePerformanceView?.has('aura_unbothered')) {
+      activePerformanceView.play('aura_unbothered');
+    } else {
+      activePerformanceView?.interrupt(this.views[slot]);
+    }
     this.activeGlow.setPosition(activeX, GROUND_Y + this.fighterRenderYOffset + 5);
     this.views[slot].sprite.setAlpha(1);
     this.views[slot].shadowSprite?.setAlpha(0.2);
@@ -1141,10 +1201,14 @@ export class AuraScene extends Phaser.Scene {
     this.highwayTitleText?.setVisible(false);
     this.highwayMetaText?.setVisible(false);
     this.updateCrowdUi(null);
-    for (const view of this.views) {
+    for (const [slot, view] of this.views.entries()) {
+      this.shrugReactionEpoch[slot as AuraSlot] += 1;
       view.sprite.setAlpha(0.9);
       view.shadowSprite?.setAlpha(0.16);
       view.setRenderPresentation(this.fighterRenderScale, this.fighterRenderYOffset);
+      const performanceView = this.auraPerformanceViews[slot as AuraSlot];
+      if (performanceView?.has('aura_unbothered')) performanceView.play('aura_unbothered');
+      else performanceView?.interrupt(view);
     }
     this.drawStageLighting(null, 0);
     const roomHeat = Math.max(this.crowdHeat[0], this.crowdHeat[1]);
@@ -1347,6 +1411,7 @@ export class AuraScene extends Phaser.Scene {
       }
     }
     this.animateFighterForJudgement(judgement);
+    this.updateOpponentReaction(judgement);
     this.showFeedback(judgement);
     this.updateScoreUi();
     if (judgement.grade !== 'wrong_turn') this.reactCrowd(judgement);
@@ -1389,6 +1454,46 @@ export class AuraScene extends Phaser.Scene {
     this.syncCrowdMix(slot);
   }
 
+  private updateOpponentReaction(judgement: AuraJudgement): void {
+    if (judgement.grade === 'wrong_turn') return;
+    const failingSlot = judgement.slot;
+    if (judgement.grade !== 'miss' && judgement.grade !== 'mash') {
+      this.mistakeStreak[failingSlot] = 0;
+      return;
+    }
+
+    this.mistakeStreak[failingSlot] += 1;
+    if (
+      this.activePerformerSlot !== failingSlot
+      || this.mistakeStreak[failingSlot] < SHRUG_REACTION_MISTAKES
+    ) return;
+
+    const now = this.time.now;
+    if (now - this.lastShrugReactionAt[failingSlot] < SHRUG_REACTION_COOLDOWN_MS) return;
+    const reactingSlot = (1 - failingSlot) as AuraSlot;
+    const reactionView = this.auraPerformanceViews[reactingSlot];
+    if (!reactionView?.play('aura_shrug')) return;
+
+    this.mistakeStreak[failingSlot] = 0;
+    this.lastShrugReactionAt[failingSlot] = now;
+    this.views[reactingSlot].sprite.setAlpha(0.82);
+    const reactionEpoch = ++this.shrugReactionEpoch[reactingSlot];
+    this.time.delayedCall(SHRUG_REACTION_DURATION_MS, () => {
+      if (
+        !this.lifecycleActive
+        || this.shrugReactionEpoch[reactingSlot] !== reactionEpoch
+        || this.activePerformerSlot === reactingSlot
+      ) return;
+      const currentReactionView = this.auraPerformanceViews[reactingSlot];
+      if (currentReactionView?.has('aura_unbothered')) {
+        currentReactionView.play('aura_unbothered');
+      } else {
+        currentReactionView?.interrupt(this.views[reactingSlot]);
+      }
+      this.views[reactingSlot].sprite.setAlpha(0.52);
+    });
+  }
+
   private refreshCrowdPresentation(slot: AuraSlot): void {
     if (this.activePerformerSlot !== slot) return;
     this.updateCrowdUi(slot);
@@ -1410,20 +1515,44 @@ export class AuraScene extends Phaser.Scene {
 
   private animateFighterForJudgement(judgement: AuraJudgement): void {
     const fighter = this.fighters[judgement.slot];
+    const performanceView = this.auraPerformanceViews[judgement.slot];
     if (judgement.grade === 'miss' || judgement.grade === 'mash') {
+      performanceView?.interrupt(
+        this.views[judgement.slot],
+        !this.fightSpritePacksLoaded[judgement.slot],
+      );
       fighter.forceState(FighterState.HIT_STUN);
       fighter.stunFrames = judgement.grade === 'miss' ? 12 : 7;
       return;
     }
     if (judgement.grade === 'wrong_turn') return;
-    const states = [
-      FighterState.HIGH_PUNCH,
-      FighterState.LOW_KICK,
-      FighterState.HIGH_KICK,
-      FighterState.UPPERCUT,
-    ] as const;
-    const state = states[judgement.lane];
-    fighter.forceState(state);
+    const note = judgement.noteId
+      ? this.chart.notes.find((entry) => entry.id === judgement.noteId) ?? null
+      : null;
+    const routine = note ? createAuraPerformanceRoutine(this.matchSeed, this.chart.turns[note.turnIndex].round) : null;
+    const requestedPerformance = this.canaryPerformanceOverride
+      ?? (note && routine ? auraPerformanceAtBeat(routine, note.beat) : null);
+    let customPerformancePlayed = requestedPerformance
+      ? performanceView?.play(requestedPerformance) ?? false
+      : false;
+    // A partial local pack is useful for reviewing a paid canary before the
+    // remaining five animations exist. It is never considered publishable,
+    // but the one available performance can still be exercised in-game.
+    if (!customPerformancePlayed && performanceView && !this.auraAnimationPacks[judgement.slot]?.complete) {
+      const canary = performanceView.firstRoutineAnimation();
+      customPerformancePlayed = canary ? performanceView.play(canary) : false;
+    }
+    if (customPerformancePlayed) {
+      fighter.forceState(FighterState.IDLE);
+    } else {
+      const states = [
+        FighterState.HIGH_PUNCH,
+        FighterState.LOW_KICK,
+        FighterState.HIGH_KICK,
+        FighterState.UPPERCUT,
+      ] as const;
+      fighter.forceState(states[judgement.lane]);
+    }
     if (judgement.grade === 'perfect' || judgement.grade === 'great') {
       this.spawnPerformanceSparks(judgement);
     }
@@ -1432,7 +1561,7 @@ export class AuraScene extends Phaser.Scene {
 
   private spawnPerformanceSparks(judgement: AuraJudgement): void {
     if (this.reduceMotion) return;
-    const top = this.views[judgement.slot].getVisibleTopCenter();
+    const top = this.getPerformerTopCenter(judgement.slot);
     const count = judgement.grade === 'perfect' ? (judgement.combo >= 8 ? 12 : 8) : 5;
     const color = LANE_COLORS[judgement.lane];
     for (let index = 0; index < count; index += 1) {
@@ -1460,8 +1589,7 @@ export class AuraScene extends Phaser.Scene {
   }
 
   private playAuraBurst(slot: AuraSlot, lane: AuraLane): void {
-    const view = this.views[slot];
-    const top = view.getVisibleTopCenter();
+    const top = this.getPerformerTopCenter(slot);
     this.burstRing.clear();
     this.burstRing.lineStyle(7, LANE_COLORS[lane], 0.94);
     this.burstRing.strokeCircle(0, 0, 58);
@@ -1576,9 +1704,15 @@ export class AuraScene extends Phaser.Scene {
       this.views[inactive].shadowSprite?.setX(this.views[inactive].shadowSprite.x + offset);
     }
     for (const slot of [0, 1] as const) {
-      const top = this.views[slot].getVisibleTopCenter();
+      this.auraPerformanceViews[slot]?.update(dt * 1_000, this.views[slot]);
+      const top = this.getPerformerTopCenter(slot);
       this.playerTags[slot]?.setPosition(top.x, Math.max(130, top.y - 25));
     }
+  }
+
+  private getPerformerTopCenter(slot: AuraSlot): { x: number; y: number } {
+    return this.auraPerformanceViews[slot]?.getVisibleTopCenter()
+      ?? this.views[slot].getVisibleTopCenter();
   }
 
   private isCpuSlot(slot: AuraSlot): boolean {
@@ -1934,6 +2068,11 @@ export class AuraScene extends Phaser.Scene {
     for (const { key, handler } of this.keyBindings) key.off('down', handler);
     this.keyBindings = [];
     this.clearNotes();
+    for (const view of this.auraPerformanceViews) view?.destroy();
+    this.auraPerformanceViews = [null, null];
+    for (const pack of this.auraAnimationPacks) destroyLoadedAuraAnimationPack(this, pack);
+    this.fightSpritePacksLoaded = [false, false];
+    this.auraAnimationPacks = [null, null];
     this.soundManager?.destroy();
     for (const unsubscribe of this.onlineUnsubscribe) unsubscribe();
     this.onlineUnsubscribe = [];

@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { CloudFighter } from '../../services/CloudFighters.ts';
 import type { CachedMeta } from '../../services/SpriteCache.ts';
-import { buildRosterFighterSections } from './RosterPage.tsx';
+import { AURA_ANIMATION_NAMES } from '../../services/FighterAssetPacks.ts';
+import { PLAYABLE_ANIMATION_NAMES } from '../../services/PlayableFighterAssets.ts';
+import {
+  buildRosterFighterSections,
+  filterRosterFighterSectionsForMode,
+} from './RosterPage.tsx';
 
 function fighter(id: string, slug: string, name: string): CloudFighter {
   return {
@@ -130,5 +135,20 @@ describe('RosterPage fighter sections', () => {
     expect(sections.official.map((entry) => entry.name)).toEqual(['Vanta']);
     expect(sections.owned.map((entry) => entry.name)).toEqual(['Local Hero']);
     expect(sections.all.some((entry) => /template zero/i.test(entry.name))).toBe(false);
+  });
+
+  it('keeps Aura-only identities out of Fight and Rush while retaining Fight fallback in Aura', () => {
+    const auraOnly = meta('aura-photo', 'aura-id', 'Aura Only');
+    auraOnly.animationsReady = [...AURA_ANIMATION_NAMES];
+    const fightReady = meta('fight-photo', 'fight-id', 'Fight Ready');
+    fightReady.animationsReady = [...PLAYABLE_ANIMATION_NAMES];
+    const sections = buildRosterFighterSections([auraOnly, fightReady], []);
+
+    expect(filterRosterFighterSectionsForMode(sections, 'fight').all.map((entry) => entry.name))
+      .toEqual(['Fight Ready']);
+    expect(filterRosterFighterSectionsForMode(sections, 'rush').all.map((entry) => entry.name))
+      .toEqual(['Fight Ready']);
+    expect(filterRosterFighterSectionsForMode(sections, 'aura').all.map((entry) => entry.name))
+      .toEqual(['Aura Only', 'Fight Ready']);
   });
 });

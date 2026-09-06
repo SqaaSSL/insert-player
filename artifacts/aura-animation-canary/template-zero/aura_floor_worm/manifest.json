@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "status": "batch-canary-review",
+  "packId": "aura-v1-2026",
+  "animationName": "aura_floor_worm",
+  "generation": {
+    "tool": "OpenAI image generation",
+    "mode": "built-in identity-preserving storyboard edit",
+    "model": "workspace-default-image-model",
+    "providerCostUsd": null,
+    "generatedAt": "2026-09-05",
+    "sourceOutputSha256": "901a060a2ee2f44b2a8d94c2c63c089ac7de00f36954bb9921e19a10c1a2af7e",
+    "prompt": "Create exactly eight successive full-body keyframes for an original AURA FLOOR WORM animation from the canonical Template Zero reference. Keep the same bald adult, face, gray seamless bodysuit, proportions and realistic rendering. Build one continuous breakdance-style phrase: upright preparation, deep crouch, controlled hands-first descent, chest low with legs extended, chest rise with hips low, chest lower with hips and bent knees rising to form the worm wave, push back to crouch and clean upright recovery. The wave must read as playful performance rather than collapse or injury. Lay out four columns by two rows on uniform #00FF00 with invisible cells, a fixed three-quarter right-facing camera, consistent body scale and complete anatomy in every cell. Avoid fighting, injury, impossible joints, disconnected or duplicated limbs, text, borders, scenery, shadows, props, extra people, cropping, glow, watermark and background variation."
+  },
+  "source": {
+    "role": "Template Zero canonical pose reference",
+    "sha256": "08cafb31dfaec6612e8fbd4d20ff25a23ccadf5b41e0eb1822615fd7396e4056"
+  },
+  "raw": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_floor_worm/raw-storyboard.png",
+    "width": 1536,
+    "height": 1024,
+    "sha256": "901a060a2ee2f44b2a8d94c2c63c089ac7de00f36954bb9921e19a10c1a2af7e"
+  },
+  "runtime": {
+    "path": "public/assets/aura/template-zero/aura_floor_worm.png",
+    "frameWidth": 384,
+    "frameHeight": 256,
+    "frameCount": 8,
+    "gridColumns": 4,
+    "gridRows": 2,
+    "sha256": "aef53860a2e54aececcb5a36facc1e8daeab970a6331c2cfd8e01727afe48853",
+    "wideFrameReason": "Horizontal floor poses require the full body width while preserving the same vertical character scale as upright performances."
+  },
+  "gameplayReview": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_floor_worm/gameplay-review.jpg",
+    "animatedPreviewPath": "artifacts/aura-animation-canary/template-zero/aura_floor_worm/gesture-preview.gif",
+    "sha256": "72260f0144736eede2909870c2c9ae89890021568e41096be2b09ab7fd54e31e",
+    "animatedPreviewSha256": "2f799212f9acee2ec8769d3215dcfa45dd2bab555974db1418e3bdaaa9728302",
+    "consoleErrors": 0
+  },
+  "review": {
+    "automaticRootRegistration": "pass",
+    "agentSemanticReview": "pass-in-game",
+    "ownerSemanticReview": "pending",
+    "knownFinding": "Descent, low chest, raised chest, reverse wave and recovery are all visible. The wide frame prevents floor anatomy from being cropped or globally shrunk.",
+    "batchAuthorized": true
+  }
+}

@@ -12,6 +12,7 @@ import {
   listCommunityFighters,
   listOwnedCommunityFighterIds,
   listFighters,
+  patchFighter,
   promoteFighterSpriteVersion,
   reportCommunityFighter,
   shareCommunityFighterPage,
@@ -19,6 +20,7 @@ import {
   uploadFighterSprite,
   upsertAdminArcadeFighter,
 } from './fighters';
+import { AURA_ANIMATION_NAMES } from './fighterAssetPacks';
 import type { AuthContext, Env, PublicAuthContext, User } from './types';
 
 const SCHEMA = `
@@ -852,6 +854,75 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       const revokedSource = await getPublicFighterSourceAsset(env, 'fighter-target', 'side', 'side.png');
       expect(revokedSource.status).toBe(404);
       expect(revokedSource.headers.get('Cache-Control')).toBe('no-store');
+    } finally {
+      await mf.dispose();
+    }
+  }, INTEGRATION_TEST_TIMEOUT_MS);
+
+  it('publishes and serves an Aura-only fighter without claiming Fight compatibility', async () => {
+    const { mf, db, bucket, env } = await createBindings();
+    try {
+      await db.batch(AURA_ANIMATION_NAMES.map((animationName, index) => db.prepare(`
+        INSERT INTO sprites (
+          id, fighter_id, animation_name, quality_tier, blob_key,
+          content_hash, frame_w, frame_h, frame_count, processing_version
+        ) VALUES (?, 'fighter-target', ?, 'contender', ?, ?, 192, 256, 8, 1)
+      `).bind(
+        `aura-sprite-${index}`,
+        animationName,
+        `users/user-target/fighters/fighter-target/sprites/${animationName}.png`,
+        sha256Fixture(index + 501),
+      )));
+      await Promise.all(AURA_ANIMATION_NAMES.map((animationName, index) => bucket.put(
+        `users/user-target/fighters/fighter-target/sprites/${animationName}.png`,
+        new Uint8Array([index + 1]),
+        { httpMetadata: { contentType: 'image/png' } },
+      )));
+
+      const publish = await patchFighter(new Request(
+        'https://api.insertplayer.ai/api/fighters/fighter-target',
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ public: true }),
+        },
+      ), env, auth, 'fighter-target');
+      expect(publish.status).toBe(200);
+      expect(await publish.json()).toMatchObject({
+        fighter: {
+          public: true,
+          assetPacks: [{
+            id: 'aura-v1-2026',
+            status: 'ready',
+            animationsReady: [...AURA_ANIMATION_NAMES],
+          }],
+        },
+      });
+
+      const community = await listCommunityFighters(
+        new Request('https://api.insertplayer.ai/api/community'),
+        env,
+      ).then((response) => response.json() as Promise<{ fighters: Array<Record<string, any>> }>);
+      expect(community.fighters).toHaveLength(1);
+      expect(community.fighters[0]?.assetPacks).toEqual([
+        expect.objectContaining({ id: 'aura-v1-2026', status: 'ready' }),
+      ]);
+      expect(community.fighters[0]?.assetPacks).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: 'fight-v1', status: 'ready' })]),
+      );
+
+      const detail = await getCommunityFighter(
+        new Request('https://api.insertplayer.ai/api/community/fighter-target'),
+        env,
+        'fighter-target',
+      );
+      expect(detail.status).toBe(200);
+      expect((await getPublicFighterSpriteAsset(
+        env,
+        'fighter-target',
+        'aura-sprite-1',
+        'aura_six_seven.png',
+      )).status).toBe(200);
     } finally {
       await mf.dispose();
     }

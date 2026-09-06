@@ -39,9 +39,13 @@ import { getBillingProfile, type BillingProfile } from '../../services/Billing.t
 import type { AuthStatus } from '../authState.ts';
 import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
 import {
-  assertCompletePlayableSpriteSet,
   isTemplateOnlyFighterIdentity,
 } from '../../services/PlayableFighterAssets.ts';
+import {
+  assertFighterReadyForMode,
+  isAnimationNameSetReadyForMode,
+  type FighterGameMode,
+} from '../../services/FighterAssetPacks.ts';
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { cloudPreviewUrl, isArcadeCachedMeta, tierLabel } from '../shared/fighterPreview.ts';
 import { Button } from '../components/Button.tsx';
@@ -103,6 +107,7 @@ export interface RosterFighterEntry {
   cloudFighterId: string | null;
   qualityTier: string;
   animationCount: number;
+  animationNames: string[];
   previewBlob: Blob | null;
   previewUrl: string | null;
   challengerLine: string | null;
@@ -204,6 +209,7 @@ function localRosterEntry(meta: CachedMeta): RosterFighterEntry {
     cloudFighterId: meta.cloudFighterId ?? null,
     qualityTier: meta.qualityTier ?? 'contender',
     animationCount: meta.animationsReady.length,
+    animationNames: [...meta.animationsReady],
     previewBlob: getPreviewBlob(meta),
     previewUrl: null,
     challengerLine: null,
@@ -231,6 +237,7 @@ function arcadeRosterEntry(fighter: CloudFighter): RosterFighterEntry {
     cloudFighterId: fighter.id,
     qualityTier: fighter.qualityTier,
     animationCount: new Set(fighter.sprites.map((sprite) => sprite.animationName)).size,
+    animationNames: Array.from(new Set(fighter.sprites.map((sprite) => sprite.animationName))),
     previewBlob: null,
     previewUrl: cloudPreviewUrl(fighter),
     challengerLine: fighter.arcade?.challengerLine ?? null,
@@ -306,6 +313,18 @@ export function buildRosterFighterSections(
     owned,
     all: [...official, ...owned],
   };
+}
+
+export function filterRosterFighterSectionsForMode(
+  sections: RosterFighterSections,
+  gameMode: FighterGameMode,
+): RosterFighterSections {
+  const ready = (entry: RosterFighterEntry) => (
+    isAnimationNameSetReadyForMode(entry.animationNames, gameMode)
+  );
+  const official = sections.official.filter(ready);
+  const owned = sections.owned.filter(ready);
+  return { official, owned, all: [...official, ...owned] };
 }
 
 function useRosterPreviewUrl(entry: RosterFighterEntry | null): string | null {
@@ -433,6 +452,7 @@ function FighterSlotPanel({
 export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateFighter, onStartFight }: RosterPageProps) {
   const modeMeta = getModeMeta(mode);
   const isAuraMode = mode === 'aura' || mode === 'aura-vs' || mode === 'aura-watch';
+  const rosterGameMode: FighterGameMode = mode === 'rush' ? 'rush' : isAuraMode ? 'aura' : 'fight';
   const [metas, setMetas] = useState<CachedMeta[]>([]);
   const [arcadeFighters, setArcadeFighters] = useState<CloudFighter[]>([]);
   const [arcadeUnavailable, setArcadeUnavailable] = useState(false);
@@ -509,10 +529,13 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
       const filteredStages = allStages
         .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
         .sort((a, b) => b.createdAt - a.createdAt);
-      const sections = buildRosterFighterSections(
-        filteredMetas,
-        officialFighters,
-        officialState === 'unavailable',
+      const sections = filterRosterFighterSectionsForMode(
+        buildRosterFighterSections(
+          filteredMetas,
+          officialFighters,
+          officialState === 'unavailable',
+        ),
+        rosterGameMode,
       );
       const presentation = rosterLoadPresentation({
         officialState,
@@ -675,8 +698,11 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   }, [authSessionKey, authStatus, mode, rosterReloadKey]);
 
   const rosterSections = useMemo(
-    () => buildRosterFighterSections(metas, arcadeFighters, arcadeUnavailable),
-    [arcadeFighters, arcadeUnavailable, metas],
+    () => filterRosterFighterSectionsForMode(
+      buildRosterFighterSections(metas, arcadeFighters, arcadeUnavailable),
+      rosterGameMode,
+    ),
+    [arcadeFighters, arcadeUnavailable, metas, rosterGameMode],
   );
   const localEntries = rosterSections.owned;
   const officialEntries = rosterSections.official;
@@ -825,14 +851,14 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
         const playableSprites = await getAllSpritesForHash(fighter.photoHash, ownerScope);
         if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
-        assertCompletePlayableSpriteSet(playableSprites, fighter.name);
+        assertFighterReadyForMode(playableSprites, fighter.name, rosterGameMode);
       }
       if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
       if (upgraded > 0) {
         setStatus(`Updated ${upgraded} cached animations`);
       }
       onStartFight({
-        gameMode: mode === 'rush' ? 'rush' : isAuraMode ? 'aura' : 'fight',
+        gameMode: rosterGameMode,
         vsAI: modeMeta.vsAI,
         cpuVsCpu: modeMeta.cpuVsCpu,
         p1PhotoHash: selectedP1.photoHash,

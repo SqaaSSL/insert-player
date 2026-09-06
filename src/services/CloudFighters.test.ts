@@ -44,6 +44,7 @@ import {
   type CachedMeta,
   type CachedSprite,
 } from './SpriteCache.ts';
+import { AURA_ANIMATION_NAMES } from './FighterAssetPacks.ts';
 
 function candidate(
   versionId: string,
@@ -620,7 +621,7 @@ describe('cloud roster sync status', () => {
     })).toBe(false);
   });
 
-  it('requires all eleven current pointers and never counts archived private versions', () => {
+  it('accepts a complete current capability pack and never counts archived private versions', () => {
     const animationNames = [
       'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
       'jump', 'crouch', 'hit', 'ko', 'victory',
@@ -631,6 +632,13 @@ describe('cloud roster sync status', () => {
     }));
 
     expect(isCompleteCloudFighterRoster({ ...fighter, sprites: completeSprites })).toBe(true);
+    expect(isCompleteCloudFighterRoster({
+      ...fighter,
+      sprites: AURA_ANIMATION_NAMES.map((animationName) => ({
+        ...cloudSprite(`aura-${animationName}`),
+        animationName,
+      })),
+    })).toBe(true);
     expect(isCompleteCloudFighterRoster({
       ...fighter,
       sprites: completeSprites.map((sprite, index) => index === 0 ? { ...sprite, url: null } : sprite),

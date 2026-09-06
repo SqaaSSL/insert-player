@@ -29,11 +29,15 @@ import {
 } from '../SpriteAnimationFormat.ts';
 import { prefersHighDensitySpriteTextures } from '../game/sprites/SpriteRenderQuality.ts';
 import {
-  PLAYABLE_ANIMATION_NAMES,
-  isCompletePlayableSpriteSet,
   isTemplateOnlyFighterIdentity,
-  missingPlayableAnimationNames,
 } from './PlayableFighterAssets.ts';
+import {
+  assetPackAnimationNames,
+  inferFighterAssetPacks,
+  resolveFighterModeReadiness,
+  type AssetPackSprite,
+  type FighterGameMode,
+} from './FighterAssetPacks.ts';
 
 export interface CloudSprite {
   id?: string;
@@ -83,6 +87,12 @@ export interface CloudFighter {
   sourceHashes?: Record<string, string | null>;
   sprites: CloudSprite[];
   spriteVersions?: CloudSprite[];
+  assetPacks?: Array<{
+    id: string;
+    status: 'ready' | 'partial';
+    qualityTier: CloudQualityTier | null;
+    animationsReady: string[];
+  }>;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -473,7 +483,39 @@ export function isSourceOnlyCloudFighter(fighter: CloudFighter): boolean {
 }
 
 export function isCompleteCloudFighterRoster(fighter: CloudFighter): boolean {
-  return isCompletePlayableSpriteSet(fighter.sprites);
+  return inferFighterAssetPacks(fighter.sprites).some((pack) => pack.complete);
+}
+
+export function isCloudFighterReadyForMode(
+  fighter: CloudFighter,
+  mode: FighterGameMode,
+): boolean {
+  return resolveFighterModeReadiness(fighter.sprites, mode).kind !== 'unavailable';
+}
+
+function cachedAssetPackMetadata(assets: ReadonlyArray<AssetPackSprite>): NonNullable<CachedMeta['fighterAssetPacks']> {
+  const available = new Set(assets.map((asset) => asset.animationName));
+  return Object.fromEntries(
+    inferFighterAssetPacks(assets).flatMap((pack) => {
+      const invalid = new Set(pack.invalidAnimations);
+      const animationsReady = assetPackAnimationNames(pack.packId).filter(
+        (name) => available.has(name) && !invalid.has(name),
+      );
+      if (animationsReady.length === 0) return [];
+      return [[pack.packId, {
+        status: pack.complete ? 'ready' as const : 'partial' as const,
+        qualityTier: pack.qualityTier,
+        animationsReady,
+        version: 1,
+      }]];
+    }),
+  );
+}
+
+function missingCloudAssetPackSummary(assets: ReadonlyArray<AssetPackSprite>): string {
+  return inferFighterAssetPacks(assets)
+    .map((pack) => `${pack.packId}: ${pack.missingAnimations.join(', ') || pack.invalidAnimations.join(', ') || 'invalid assets'}`)
+    .join('; ');
 }
 
 export function formatCloudRosterSyncStatus(
@@ -1219,12 +1261,7 @@ export async function downloadCloudFighterToLocal(
 
   const remoteRosterComplete = isCompleteCloudFighterRoster(fighter);
   if (!remoteRosterComplete && !options.allowIncomplete) {
-    const missing = missingPlayableAnimationNames(fighter.sprites);
-    throw new Error(
-      missing.length > 0
-        ? `Cloud fighter ${fighter.name} is incomplete; missing current animations: ${missing.join(', ')}.`
-        : `Cloud fighter ${fighter.name} has invalid current animation assets.`,
-    );
+    throw new Error(`Cloud fighter ${fighter.name} has no complete animation pack (${missingCloudAssetPackSummary(fighter.sprites)}).`);
   }
 
   const playableRefs = cloudPlayableSpriteRefs(spriteVersions);
@@ -1232,8 +1269,8 @@ export async function downloadCloudFighterToLocal(
   await fingerprintSprites(refreshedVersions);
   const exactPlayableSprites = selectPlayableCachedSprites(refreshedVersions, playableRefs);
   const availableCurrentAnimations = new Set(exactPlayableSprites.map((sprite) => sprite.animationName));
-  const allRemoteCurrentSpritesAvailable = isCompletePlayableSpriteSet(exactPlayableSprites) &&
-    Object.values(playableRefs).length === PLAYABLE_ANIMATION_NAMES.length &&
+  const allRemoteCurrentSpritesAvailable = inferFighterAssetPacks(exactPlayableSprites).some((pack) => pack.complete) &&
+    Object.values(playableRefs).length === selectPlayableCloudSprites(fighter.sprites).length &&
     Object.values(playableRefs).every((ref) =>
       Boolean(ref.contentHash) && availableCurrentAnimations.has(ref.animationName),
     );
@@ -1275,18 +1312,15 @@ export async function downloadCloudFighterToLocal(
       ? remoteSpriteVersionCount
       : existingMeta?.cloudSpriteVersionCount ?? 0,
     cloudPlayableSpriteRefs: playableRefs,
+    fighterAssetPacks: cachedAssetPackMetadata(exactPlayableSprites),
   } satisfies CachedMeta & { qualityTier: CloudQualityTier };
 
   await setCachedMeta(meta);
   await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope);
 
   if (!options.allowIncomplete && !allRemoteCurrentSpritesAvailable) {
-    const missing = missingPlayableAnimationNames(exactPlayableSprites);
-    const detail = missing.length > 0
-      ? ` Missing: ${missing.join(', ')}.`
-      : '';
     throw new Error(
-      `${fighter.name} did not finish downloading all 11 playable animations.${detail} Retry the sprite download.`,
+      `${fighter.name} did not finish downloading a complete animation pack (${missingCloudAssetPackSummary(exactPlayableSprites)}). Retry the sprite download.`,
     );
   }
 
