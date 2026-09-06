@@ -1,0 +1,465 @@
+{
+  "schemaVersion": 1,
+  "status": "champion_frames_runtime_ready_human_gameplay_review_required",
+  "createdAt": "2026-09-06T12:46:33.866Z",
+  "subject": "donald-trump",
+  "animationName": "aura_shrug",
+  "process": {
+    "identityReference": "Template Zero pose first; Trump original likeness reference; selected legacy canaries may retain the trusted Champion side anchor",
+    "generatedIndividually": true,
+    "wholeSheetGeneration": false,
+    "rawProviderResolution": "1776x2368",
+    "runtimeRegistration": "uniform scale to the approved Template Zero runtime height, then horizontal-center and root alignment; no anatomy warp",
+    "authoredScale": 4,
+    "chromaCleanupFilterSha256": "254da161348114c67f14866e7b8ba0b82ff0e8dca7a889f5cd90fe3f6f2325d3"
+  },
+  "sequence": [
+    "bothLevel",
+    "leftHandHigh",
+    "bothLevel",
+    "rightHandHigh",
+    "bothLevel",
+    "leftHandHigh",
+    "bothLevel",
+    "rightHandHigh"
+  ],
+  "uniqueGeneratedFrames": 3,
+  "paidCalls": {
+    "selected": 3,
+    "rejected": 0,
+    "selectedCostMicrocredits": 310000,
+    "rejectedCostMicrocredits": 0,
+    "observedAttemptCostMicrocredits": 310000
+  },
+  "templateRuntime": {
+    "path": "public/assets/aura/template-zero/aura_shrug.png",
+    "sha256": "21ab40320680793133c42a0084cd5546ce1783cb4413626e80915f8547167c62",
+    "sizeBytes": 156211,
+    "width": 768,
+    "height": 512,
+    "bitDepth": 8,
+    "colorTypeCode": 6
+  },
+  "frames": [
+    {
+      "frameKey": "bothLevel",
+      "firstSequenceIndex": 0,
+      "generatedRaw": {
+        "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/raw/bothLevel.png",
+        "sha256": "3c373492f3994b8e0d32dcb2cec375e2546ac9171f58c8f91920ca07eb71e992",
+        "sizeBytes": 2796383,
+        "width": 1776,
+        "height": 2368,
+        "bitDepth": 8,
+        "colorTypeCode": 2
+      },
+      "authored4x": {
+        "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/processed/authored-4x/bothLevel.png",
+        "sha256": "ef3e68336652fbb0cbc0e2485cc9fd69fffceac912817da8ab6dc40d83edeb94",
+        "sizeBytes": 338386,
+        "width": 768,
+        "height": 1024,
+        "bitDepth": 8,
+        "colorTypeCode": 6
+      },
+      "runtime1x": {
+        "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/processed/runtime-1x/bothLevel.png",
+        "sha256": "ef387f8271750c42561e1a64684e9b90785ec48ea313b687c4506812b5836f28",
+        "sizeBytes": 37275,
+        "width": 192,
+        "height": 256,
+        "bitDepth": 8,
+        "colorTypeCode": 6
+      },
+      "geometry": {
+        "current": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 716440,
+          "partialAlphaPixels": 9225,
+          "bbox": {
+            "x": 289,
+            "y": 64,
+            "w": 1007,
+            "h": 1886
+          },
+          "center": {
+            "x": 792.5,
+            "y": 1007
+          },
+          "rootY": 1950,
+          "touchesCanvasEdge": false
+        },
+        "target": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 9071,
+          "partialAlphaPixels": 2604,
+          "bbox": {
+            "x": 41,
+            "y": 8,
+            "w": 121,
+            "h": 231
+          },
+          "center": {
+            "x": 101.5,
+            "y": 123.5
+          },
+          "rootY": 239,
+          "touchesCanvasEdge": false
+        },
+        "comparison": {
+          "algorithm": "target-runtime-height-root-center-uniform-v1",
+          "uniformScale": 0.4899257688229056,
+          "scaleLimitedBy": "target_height",
+          "currentBbox": {
+            "x": 289,
+            "y": 64,
+            "w": 1007,
+            "h": 1886
+          },
+          "targetRuntimeBbox": {
+            "x": 41,
+            "y": 8,
+            "w": 121,
+            "h": 231
+          },
+          "placement": {
+            "x": 160,
+            "y": 32,
+            "w": 493,
+            "h": 924,
+            "canvasWidth": 768,
+            "canvasHeight": 1024,
+            "canFitCanvas": true
+          }
+        },
+        "authored": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 172793,
+          "partialAlphaPixels": 11541,
+          "bbox": {
+            "x": 160,
+            "y": 32,
+            "w": 493,
+            "h": 924
+          },
+          "center": {
+            "x": 406.5,
+            "y": 494
+          },
+          "rootY": 956,
+          "touchesCanvasEdge": false
+        },
+        "compiled": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 11139,
+          "partialAlphaPixels": 2746,
+          "bbox": {
+            "x": 40,
+            "y": 8,
+            "w": 124,
+            "h": 231
+          },
+          "center": {
+            "x": 102,
+            "y": 123.5
+          },
+          "rootY": 239,
+          "touchesCanvasEdge": false
+        },
+        "centerError": 0.5,
+        "rootError": 0,
+        "widthRatio": 1.024793388429752
+      },
+      "findings": []
+    },
+    {
+      "frameKey": "leftHandHigh",
+      "firstSequenceIndex": 1,
+      "generatedRaw": {
+        "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/raw/leftHandHigh.png",
+        "sha256": "e4ca16c8f6b8f399ca9782458f89e94dd16e16b9e4853a63bf7b97355c242bb0",
+        "sizeBytes": 2972044,
+        "width": 1776,
+        "height": 2368,
+        "bitDepth": 8,
+        "colorTypeCode": 2
+      },
+      "authored4x": {
+        "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/processed/authored-4x/leftHandHigh.png",
+        "sha256": "e189d835ac94d0eed5a04e7e090f9aae5c9c0fc6cfa895b10e62ec04ad74054b",
+        "sizeBytes": 332382,
+        "width": 768,
+        "height": 1024,
+        "bitDepth": 8,
+        "colorTypeCode": 6
+      },
+      "runtime1x": {
+        "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/processed/runtime-1x/leftHandHigh.png",
+        "sha256": "bdbd94161606491d4f5f4e5d5a9e168ef5288b48493a825eb98fa05a3c17fd97",
+        "sizeBytes": 35765,
+        "width": 192,
+        "height": 256,
+        "bitDepth": 8,
+        "colorTypeCode": 6
+      },
+      "geometry": {
+        "current": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 692511,
+          "partialAlphaPixels": 6682,
+          "bbox": {
+            "x": 291,
+            "y": 65,
+            "w": 986,
+            "h": 1871
+          },
+          "center": {
+            "x": 784,
+            "y": 1000.5
+          },
+          "rootY": 1936,
+          "touchesCanvasEdge": false
+        },
+        "target": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 9142,
+          "partialAlphaPixels": 2623,
+          "bbox": {
+            "x": 44,
+            "y": 8,
+            "w": 115,
+            "h": 231
+          },
+          "center": {
+            "x": 101.5,
+            "y": 123.5
+          },
+          "rootY": 239,
+          "touchesCanvasEdge": false
+        },
+        "comparison": {
+          "algorithm": "target-runtime-height-root-center-uniform-v1",
+          "uniformScale": 0.4938535542490647,
+          "scaleLimitedBy": "target_height",
+          "currentBbox": {
+            "x": 291,
+            "y": 65,
+            "w": 986,
+            "h": 1871
+          },
+          "targetRuntimeBbox": {
+            "x": 44,
+            "y": 8,
+            "w": 115,
+            "h": 231
+          },
+          "placement": {
+            "x": 163,
+            "y": 32,
+            "w": 487,
+            "h": 924,
+            "canvasWidth": 768,
+            "canvasHeight": 1024,
+            "canFitCanvas": true
+          }
+        },
+        "authored": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 170063,
+          "partialAlphaPixels": 11315,
+          "bbox": {
+            "x": 163,
+            "y": 32,
+            "w": 487,
+            "h": 924
+          },
+          "center": {
+            "x": 406.5,
+            "y": 494
+          },
+          "rootY": 956,
+          "touchesCanvasEdge": false
+        },
+        "compiled": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 10959,
+          "partialAlphaPixels": 2757,
+          "bbox": {
+            "x": 40,
+            "y": 7,
+            "w": 123,
+            "h": 232
+          },
+          "center": {
+            "x": 101.5,
+            "y": 123
+          },
+          "rootY": 239,
+          "touchesCanvasEdge": false
+        },
+        "centerError": 0,
+        "rootError": 0,
+        "widthRatio": 1.0695652173913044
+      },
+      "findings": []
+    },
+    {
+      "frameKey": "rightHandHigh",
+      "firstSequenceIndex": 3,
+      "generatedRaw": {
+        "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/raw/rightHandHigh.png",
+        "sha256": "d8c92f7754d815d053aceedc4d2d9e798dcf1ba3ad84c1def5a6bacebd3ba021",
+        "sizeBytes": 2809175,
+        "width": 1776,
+        "height": 2368,
+        "bitDepth": 8,
+        "colorTypeCode": 2
+      },
+      "authored4x": {
+        "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/processed/authored-4x/rightHandHigh.png",
+        "sha256": "7d54881ee6fc3f5da4399eda442064635ed0d84b813c4f33c6d1ea1e7213b11c",
+        "sizeBytes": 347306,
+        "width": 768,
+        "height": 1024,
+        "bitDepth": 8,
+        "colorTypeCode": 6
+      },
+      "runtime1x": {
+        "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/processed/runtime-1x/rightHandHigh.png",
+        "sha256": "1c01ef2315ea382bf382770bd14608773ff281bdc03cb4223a361ad170177a1d",
+        "sizeBytes": 38441,
+        "width": 192,
+        "height": 256,
+        "bitDepth": 8,
+        "colorTypeCode": 6
+      },
+      "geometry": {
+        "current": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 727061,
+          "partialAlphaPixels": 9396,
+          "bbox": {
+            "x": 288,
+            "y": 60,
+            "w": 1006,
+            "h": 1896
+          },
+          "center": {
+            "x": 791,
+            "y": 1008
+          },
+          "rootY": 1956,
+          "touchesCanvasEdge": false
+        },
+        "target": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 9413,
+          "partialAlphaPixels": 2776,
+          "bbox": {
+            "x": 43,
+            "y": 8,
+            "w": 124,
+            "h": 232
+          },
+          "center": {
+            "x": 105,
+            "y": 124
+          },
+          "rootY": 240,
+          "touchesCanvasEdge": false
+        },
+        "comparison": {
+          "algorithm": "target-runtime-height-root-center-uniform-v1",
+          "uniformScale": 0.48945147679324896,
+          "scaleLimitedBy": "target_height",
+          "currentBbox": {
+            "x": 288,
+            "y": 60,
+            "w": 1006,
+            "h": 1896
+          },
+          "targetRuntimeBbox": {
+            "x": 43,
+            "y": 8,
+            "w": 124,
+            "h": 232
+          },
+          "placement": {
+            "x": 174,
+            "y": 32,
+            "w": 492,
+            "h": 928,
+            "canvasWidth": 768,
+            "canvasHeight": 1024,
+            "canFitCanvas": true
+          }
+        },
+        "authored": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 175016,
+          "partialAlphaPixels": 11899,
+          "bbox": {
+            "x": 174,
+            "y": 32,
+            "w": 492,
+            "h": 928
+          },
+          "center": {
+            "x": 420,
+            "y": 496
+          },
+          "rootY": 960,
+          "touchesCanvasEdge": false
+        },
+        "compiled": {
+          "alphaThreshold": 16,
+          "foregroundPixels": 11286,
+          "partialAlphaPixels": 2872,
+          "bbox": {
+            "x": 43,
+            "y": 8,
+            "w": 124,
+            "h": 232
+          },
+          "center": {
+            "x": 105,
+            "y": 124
+          },
+          "rootY": 240,
+          "touchesCanvasEdge": false
+        },
+        "centerError": 0,
+        "rootError": 0,
+        "widthRatio": 1
+      },
+      "findings": []
+    }
+  ],
+  "runtimeAtlas": {
+    "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/processed/aura_shrug-runtime.png",
+    "sha256": "93b4b95d7a983edf81b72445a36b490218a0a4e69d1bf8533939cf25fcc613af",
+    "sizeBytes": 193146,
+    "width": 768,
+    "height": 512,
+    "bitDepth": 8,
+    "colorTypeCode": 6
+  },
+  "preview": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/processed/gesture-preview.gif",
+  "contactSheet": {
+    "path": "artifacts/aura-animation-canary/donald-trump/aura_shrug/champion/processed/runtime-contact-sheet.png",
+    "sha256": "19aae2bd95047e42212c78a8eee3af4114d8b51a1ff24a455d6470c57125c235",
+    "sizeBytes": 418213,
+    "width": 1632,
+    "height": 1072,
+    "bitDepth": 8,
+    "colorTypeCode": 2
+  },
+  "runtimePromotion": {
+    "targetPath": "public/assets/aura/donald-trump/aura_shrug.png",
+    "previousRuntimeArchived": false
+  },
+  "toolchain": {
+    "imageMagick": "Version: ImageMagick 7.1.1-47 Q16-HDRI x86_64 22763 https://imagemagick.org",
+    "ffmpeg": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers"
+  }
+}

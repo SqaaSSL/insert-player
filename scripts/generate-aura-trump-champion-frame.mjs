@@ -27,6 +27,7 @@ const anchorRoot = join(
 const confirmation = 'GENERATE_AURA_TRUMP_CHAMPION_REST';
 const endpoint = 'xai/grok-imagine-image/v2.0/edit';
 const queueEndpoint = `https://queue.fal.run/${endpoint}`;
+const uploadInitiationEndpoint = 'https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3';
 const analysisWidth = 1536;
 const analysisHeight = 2048;
 const referenceModes = Object.freeze({
@@ -62,6 +63,9 @@ const animationContracts = Object.freeze({
 });
 
 const frameContracts = Object.freeze({
+  aura_floor_worm: Object.freeze({
+    frame01: 'MANDATORY SILHOUETTE: start fully upright in a compact fighting-ready guard, with torso vertical, both feet planted apart, both knees only slightly bent and both fists raised near the chest. The subject is not yet falling, reclining, crouching or touching the floor.',
+  }),
   aura_unbothered: Object.freeze({
     frame06: 'MANDATORY SILHOUETTE: both arms hang fully lowered beside the torso with relaxed open hands near the thighs; the head alone turns toward image-left. There are no raised forearms and no fists.',
   }),
@@ -533,23 +537,99 @@ async function parseJson(response, label) {
   return body;
 }
 
-async function uploadPng(path, key, statePath, state, apiKey) {
+function generationTransport() {
+  const meterkeyApiKey = process.env.METERKEY_API_KEY?.trim() ?? '';
+  if (meterkeyApiKey) {
+    const baseUrl = (process.env.METERKEY_BASE_URL?.trim() || 'https://meter.hilo.cx').replace(/\/+$/, '');
+    const falUtilityApiKey = process.env.FAL_UPLOAD_API_KEY?.trim()
+      || process.env.FAL_POLL_API_KEY?.trim()
+      || process.env.FAL_API_KEY?.trim()
+      || '';
+    invariant(/^https:\/\//.test(baseUrl), 'METERKEY_BASE_URL must use HTTPS.');
+    invariant(
+      falUtilityApiKey,
+      'FAL_UPLOAD_API_KEY (or FAL_POLL_API_KEY/FAL_API_KEY) is required with Meterkey so free storage uploads and queue polling are not billed as model inference.',
+    );
+    return {
+      mode: 'meterkey',
+      uploadMode: 'fal-direct',
+      pollMode: 'fal-direct',
+      submitUrl: `${baseUrl}/fal/${endpoint}`,
+      fallbackStatusUrl: (requestId) => `${baseUrl}/fal/${endpoint}/requests/${requestId}/status`,
+      fallbackResponseUrl: (requestId) => `${baseUrl}/fal/${endpoint}/requests/${requestId}`,
+      headers: (targetUrl = '') => ({
+        Authorization: `Bearer ${meterkeyApiKey}`,
+        ...(targetUrl ? { 'x-fal-target-url': targetUrl } : {}),
+      }),
+      uploadHeaders: () => ({ Authorization: `Key ${falUtilityApiKey}` }),
+      pollHeaders: () => ({ Authorization: `Key ${falUtilityApiKey}` }),
+      pollUrl: (value) => {
+        const url = new URL(value);
+        if (url.origin === baseUrl && url.pathname.startsWith('/fal/')) {
+          return `https://queue.fal.run${url.pathname.slice('/fal'.length)}${url.search}`;
+        }
+        return value;
+      },
+      uploadInitiationUrl: uploadInitiationEndpoint,
+      validatedUploads: new Set(),
+    };
+  }
+
+  const falApiKey = process.env.FAL_API_KEY?.trim() ?? '';
+  invariant(falApiKey, 'METERKEY_API_KEY or FAL_API_KEY is required.');
+  return {
+    mode: 'fal-direct',
+    uploadMode: 'fal-direct',
+    pollMode: 'fal-direct',
+    submitUrl: queueEndpoint,
+    fallbackStatusUrl: (requestId) => `${queueEndpoint}/requests/${requestId}/status`,
+    fallbackResponseUrl: (requestId) => `${queueEndpoint}/requests/${requestId}`,
+    headers: () => ({ Authorization: `Key ${falApiKey}` }),
+    uploadHeaders: () => ({ Authorization: `Key ${falApiKey}` }),
+    pollHeaders: () => ({ Authorization: `Key ${falApiKey}` }),
+    pollUrl: (value) => value,
+    uploadInitiationUrl: uploadInitiationEndpoint,
+    validatedUploads: new Set(),
+  };
+}
+
+async function reusableUpload(prior, contentSha256, transport) {
+  if (prior?.contentSha256 !== contentSha256 || typeof prior.url !== 'string') return false;
+  const cacheKey = `${contentSha256}:${prior.url}`;
+  if (transport.validatedUploads.has(cacheKey)) return true;
+  try {
+    const response = await fetch(prior.url, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return false;
+    transport.validatedUploads.add(cacheKey);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function uploadPng(path, key, statePath, state, transport) {
   const bytes = readFileSync(path);
   const contentSha256 = sha256(bytes);
   const prior = state.uploads[key];
-  if (prior?.contentSha256 === contentSha256 && typeof prior.url === 'string') return prior.url;
+  if (await reusableUpload(prior, contentSha256, transport)) return prior.url;
   const initiated = await parseJson(await fetch(
-    'https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3',
+    transport.uploadInitiationUrl,
     {
       method: 'POST',
       headers: {
-        Authorization: `Key ${apiKey}`,
+        ...transport.uploadHeaders(),
         Accept: 'application/json',
         'Content-Type': 'application/json',
         'X-Fal-Object-Lifecycle': JSON.stringify({ expiration_duration_seconds: 86400 }),
         'User-Agent': 'insert-player-aura-champion/1.0',
       },
-      body: JSON.stringify({ content_type: 'image/png', file_name: basename(path) }),
+      body: JSON.stringify({
+        content_type: 'image/png',
+        file_name: `${contentSha256.slice(0, 12)}-${randomUUID()}-${basename(path)}`,
+      }),
       signal: AbortSignal.timeout(60_000),
     },
   ), `Fal upload initiation for ${key}`);
@@ -567,6 +647,7 @@ async function uploadPng(path, key, statePath, state, apiKey) {
     contentSha256,
     url: initiated.file_url,
     uploadedAt: nowIso(),
+    transport: transport.uploadMode,
   };
   writeJsonAtomic(statePath, state);
   return initiated.file_url;
@@ -585,7 +666,80 @@ async function sleep(milliseconds) {
   await new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds));
 }
 
-async function generateFrame(definition, frame, prepared, statePath, state, apiKey, options) {
+async function completeSubmittedFrame(definition, frame, outputPath, statePath, state, transport) {
+  let active = state.frames[frame.frameKey];
+  invariant(active?.requestId, `${definition.animationName}/${frame.frameKey} has no resumable request id.`);
+  invariant(active.statusUrl && active.responseUrl, `${definition.animationName}/${frame.frameKey} has incomplete provider URLs.`);
+  const headers = { ...transport.pollHeaders(), Accept: 'application/json' };
+  const deadline = Date.now() + 20 * 60 * 1000;
+  let providerCompleted = false;
+  while (Date.now() < deadline) {
+    const providerStatus = await parseJson(await fetch(transport.pollUrl(active.statusUrl), {
+      headers,
+      signal: AbortSignal.timeout(60_000),
+    }), 'Fal status');
+    if (providerStatus.status === 'COMPLETED') {
+      providerCompleted = true;
+      break;
+    }
+    if (providerStatus.status === 'FAILED') {
+      state.frames[frame.frameKey] = {
+        ...active,
+        status: 'failed',
+        providerStatus,
+        pollingTransport: transport.pollMode,
+        updatedAt: nowIso(),
+      };
+      writeJsonAtomic(statePath, state);
+      throw new Error(`Fal generation failed for ${definition.animationName}/${frame.frameKey}; no retry was attempted.`);
+    }
+    active = {
+      ...active,
+      status: 'processing',
+      providerStatus: providerStatus.status,
+      pollingTransport: transport.pollMode,
+      updatedAt: nowIso(),
+    };
+    state.frames[frame.frameKey] = active;
+    writeJsonAtomic(statePath, state);
+    await sleep(2_000);
+  }
+  invariant(providerCompleted, `Fal generation timed out for ${definition.animationName}/${frame.frameKey}; request remains resumable.`);
+
+  const providerResponse = await parseJson(await fetch(transport.pollUrl(active.responseUrl), {
+    headers,
+    signal: AbortSignal.timeout(60_000),
+  }), 'Fal result');
+  const imageUrl = outputUrlFrom(providerResponse);
+  invariant(imageUrl, `Fal result omitted image URL (${sha256(canonicalJson(providerResponse))}).`);
+  const imageResponse = await fetch(imageUrl, { signal: AbortSignal.timeout(60_000) });
+  invariant(imageResponse.ok, `Generated image download failed with HTTP ${imageResponse.status}.`);
+  const imageBytes = Buffer.from(await imageResponse.arrayBuffer());
+  const dimensions = pngDimensions(imageBytes, 'generated output');
+  mkdirSync(dirname(outputPath), { recursive: true, mode: 0o700 });
+  const outputTemporary = `${outputPath}.writing-${process.pid}-${randomUUID()}`;
+  writeFileSync(outputTemporary, imageBytes, { mode: 0o600 });
+  chmodSync(outputTemporary, 0o600);
+  renameSync(outputTemporary, outputPath);
+  state.frames[frame.frameKey] = {
+    ...active,
+    status: 'completed',
+    providerStatus: 'COMPLETED',
+    pollingTransport: transport.pollMode,
+    completedAt: nowIso(),
+    outputPath: portablePath(outputPath),
+    outputSha256: sha256(imageBytes),
+    outputSizeBytes: imageBytes.length,
+    outputDimensions: dimensions,
+    providerResponseSha256: sha256(canonicalJson(providerResponse)),
+    providerImageUrl: imageUrl,
+  };
+  state.updatedAt = nowIso();
+  writeJsonAtomic(statePath, state);
+  process.stdout.write(`COMPLETED ${definition.animationName}/${frame.frameKey} ${dimensions.width}x${dimensions.height} ${state.frames[frame.frameKey].outputSha256}\n`);
+}
+
+async function generateFrame(definition, frame, prepared, statePath, state, transport, options) {
   const outputPath = join(subjectRoot, definition.animationName, 'champion/raw', `${frame.frameKey}.png`);
   const preparedSha256 = sha256(prepared.bytes);
   let existing = state.frames[frame.frameKey];
@@ -619,6 +773,13 @@ async function generateFrame(definition, frame, prepared, statePath, state, apiK
     process.stdout.write(`SKIP ${definition.animationName}/${frame.frameKey} already completed\n`);
     return;
   }
+  if (existing?.status === 'submitted' || existing?.status === 'processing') {
+    invariant(existing.normalizedPoseSha256 === preparedSha256, `${definition.animationName}/${frame.frameKey} pose drifted after submission.`);
+    invariant(!existsSync(outputPath), `Refusing to overwrite output while resuming: ${outputPath}`);
+    process.stdout.write(`RESUME ${definition.animationName}/${frame.frameKey} ${existing.requestId} via ${transport.pollMode}\n`);
+    await completeSubmittedFrame(definition, frame, outputPath, statePath, state, transport);
+    return;
+  }
   invariant(
     !existing,
     `${definition.animationName}/${frame.frameKey} requires manual reconciliation from status ${existing?.status ?? 'unknown'}.`,
@@ -634,10 +795,10 @@ async function generateFrame(definition, frame, prepared, statePath, state, apiK
     invariant(sha256(readFileSync(canonicalPath)) === anchorDefinitions.canonical.sha256, 'Canonical Trump anchor drifted.');
   }
 
-  const poseUrl = await uploadPng(prepared.outputPath, `pose:${frame.frameKey}`, statePath, state, apiKey);
-  const originalUrl = await uploadPng(originalPath, 'anchor:original', statePath, state, apiKey);
+  const poseUrl = await uploadPng(prepared.outputPath, `pose:${frame.frameKey}`, statePath, state, transport);
+  const originalUrl = await uploadPng(originalPath, 'anchor:original', statePath, state, transport);
   const canonicalUrl = options.referenceMode === 'full'
-    ? await uploadPng(canonicalPath, 'anchor:canonical', statePath, state, apiKey)
+    ? await uploadPng(canonicalPath, 'anchor:canonical', statePath, state, transport)
     : null;
   const prompt = composePrompt(definition, frame, prepared.geometry, options.referenceMode);
   const imageUrls = options.referenceMode === 'full'
@@ -670,6 +831,7 @@ async function generateFrame(definition, frame, prepared, statePath, state, apiK
     referenceOrder: options.referenceConfig.referenceOrder,
     modelId: 'grok-imagine-image-2-edit',
     providerEndpoint: endpoint,
+    transport: transport.mode,
     expectedCostMicrocredits: options.referenceConfig.expectedCostMicrocredits,
     submittedAt: nowIso(),
   };
@@ -677,10 +839,10 @@ async function generateFrame(definition, frame, prepared, statePath, state, apiK
 
   let submitted;
   try {
-    submitted = await parseJson(await fetch(queueEndpoint, {
+    submitted = await parseJson(await fetch(transport.submitUrl, {
       method: 'POST',
       headers: {
-        Authorization: `Key ${apiKey}`,
+        ...transport.headers(transport.mode === 'meterkey' ? queueEndpoint : ''),
         Accept: 'application/json',
         'Content-Type': 'application/json',
         'X-Fal-Object-Lifecycle-Preference': JSON.stringify({ expiration_duration_seconds: 86400 }),
@@ -704,78 +866,14 @@ async function generateFrame(definition, frame, prepared, statePath, state, apiK
     ...state.frames[frame.frameKey],
     status: 'submitted',
     requestId: submitted.request_id,
-    statusUrl: submitted.status_url || `${queueEndpoint}/requests/${submitted.request_id}/status`,
-    responseUrl: submitted.response_url || `${queueEndpoint}/requests/${submitted.request_id}`,
+    statusUrl: submitted.status_url || transport.fallbackStatusUrl(submitted.request_id),
+    responseUrl: submitted.response_url || transport.fallbackResponseUrl(submitted.request_id),
     updatedAt: nowIso(),
   };
   state.frames[frame.frameKey] = active;
   writeJsonAtomic(statePath, state);
   process.stdout.write(`SUBMITTED ${definition.animationName}/${frame.frameKey} ${active.requestId}\n`);
-
-  const headers = { Authorization: `Key ${apiKey}`, Accept: 'application/json' };
-  const deadline = Date.now() + 20 * 60 * 1000;
-  let providerCompleted = false;
-  while (Date.now() < deadline) {
-    const providerStatus = await parseJson(await fetch(active.statusUrl, {
-      headers,
-      signal: AbortSignal.timeout(60_000),
-    }), 'Fal status');
-    if (providerStatus.status === 'COMPLETED') {
-      providerCompleted = true;
-      break;
-    }
-    if (providerStatus.status === 'FAILED') {
-      state.frames[frame.frameKey] = {
-        ...active,
-        status: 'failed',
-        providerStatus,
-        updatedAt: nowIso(),
-      };
-      writeJsonAtomic(statePath, state);
-      throw new Error(`Fal generation failed for ${definition.animationName}/${frame.frameKey}; no retry was attempted.`);
-    }
-    active = {
-      ...active,
-      status: 'processing',
-      providerStatus: providerStatus.status,
-      updatedAt: nowIso(),
-    };
-    state.frames[frame.frameKey] = active;
-    writeJsonAtomic(statePath, state);
-    await sleep(2_000);
-  }
-  invariant(providerCompleted, `Fal generation timed out for ${definition.animationName}/${frame.frameKey}; request remains resumable.`);
-
-  const providerResponse = await parseJson(await fetch(active.responseUrl, {
-    headers,
-    signal: AbortSignal.timeout(60_000),
-  }), 'Fal result');
-  const imageUrl = outputUrlFrom(providerResponse);
-  invariant(imageUrl, `Fal result omitted image URL (${sha256(canonicalJson(providerResponse))}).`);
-  const imageResponse = await fetch(imageUrl, { signal: AbortSignal.timeout(60_000) });
-  invariant(imageResponse.ok, `Generated image download failed with HTTP ${imageResponse.status}.`);
-  const imageBytes = Buffer.from(await imageResponse.arrayBuffer());
-  const dimensions = pngDimensions(imageBytes, 'generated output');
-  mkdirSync(dirname(outputPath), { recursive: true, mode: 0o700 });
-  const outputTemporary = `${outputPath}.writing-${process.pid}-${randomUUID()}`;
-  writeFileSync(outputTemporary, imageBytes, { mode: 0o600 });
-  chmodSync(outputTemporary, 0o600);
-  renameSync(outputTemporary, outputPath);
-  state.frames[frame.frameKey] = {
-    ...active,
-    status: 'completed',
-    providerStatus: 'COMPLETED',
-    completedAt: nowIso(),
-    outputPath: portablePath(outputPath),
-    outputSha256: sha256(imageBytes),
-    outputSizeBytes: imageBytes.length,
-    outputDimensions: dimensions,
-    providerResponseSha256: sha256(canonicalJson(providerResponse)),
-    providerImageUrl: imageUrl,
-  };
-  state.updatedAt = nowIso();
-  writeJsonAtomic(statePath, state);
-  process.stdout.write(`COMPLETED ${definition.animationName}/${frame.frameKey} ${dimensions.width}x${dimensions.height} ${state.frames[frame.frameKey].outputSha256}\n`);
+  await completeSubmittedFrame(definition, frame, outputPath, statePath, state, transport);
 }
 
 async function main() {
@@ -821,13 +919,12 @@ async function main() {
   }
 
   invariant(parseArg('--confirm') === confirmation, `Refusing paid generation without --confirm=${confirmation}.`);
-  const apiKey = process.env.FAL_API_KEY?.trim() ?? '';
-  invariant(apiKey, 'FAL_API_KEY is required.');
+  const transport = generationTransport();
   const { statePath, state } = readState(definition);
   invariant(JSON.stringify(state.sequence) === JSON.stringify(definition.sequence), `${animationName} sequence drifted.`);
-  process.stdout.write(`PLAN ${animationName} ${frames.length} frame(s), reference mode ${referenceMode}, at most ${frames.length * referenceConfig.expectedCostMicrocredits} microcredits, no automatic retries\n`);
+  process.stdout.write(`PLAN ${animationName} ${frames.length} frame(s), reference mode ${referenceMode}, submit ${transport.mode}, upload ${transport.uploadMode}, poll ${transport.pollMode}, at most ${frames.length * referenceConfig.expectedCostMicrocredits} microcredits, no automatic retries\n`);
   for (const { frame, prepared } of preparedFrames) {
-    await generateFrame(definition, frame, prepared, statePath, state, apiKey, {
+    await generateFrame(definition, frame, prepared, statePath, state, transport, {
       referenceMode,
       referenceConfig,
       reviewedReject,

@@ -111,8 +111,50 @@ const TEMPLATE_ZERO_CANARIES: readonly LocalAuraCanaryDefinition[] = [
 
 const DONALD_TRUMP_CANARIES: readonly LocalAuraCanaryDefinition[] = [
   {
+    name: 'aura_unbothered',
+    path: '/assets/aura/donald-trump/aura_unbothered.png',
+    frameWidth: 192,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
     name: 'aura_six_seven',
     path: '/assets/aura/donald-trump/aura_six_seven.png',
+    frameWidth: 192,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
+    name: 'aura_mog_check',
+    path: '/assets/aura/donald-trump/aura_mog_check.png',
+    frameWidth: 192,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
+    name: 'aura_glide',
+    path: '/assets/aura/donald-trump/aura_glide.png',
+    frameWidth: 192,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
+    name: 'aura_floor_worm',
+    path: '/assets/aura/donald-trump/aura_floor_worm.png',
+    frameWidth: 384,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
+    name: 'aura_one_leg',
+    path: '/assets/aura/donald-trump/aura_one_leg.png',
+    frameWidth: 256,
+    frameHeight: 256,
+    frameCount: 8,
+  },
+  {
+    name: 'aura_shrug',
+    path: '/assets/aura/donald-trump/aura_shrug.png',
     frameWidth: 192,
     frameHeight: 256,
     frameCount: 8,

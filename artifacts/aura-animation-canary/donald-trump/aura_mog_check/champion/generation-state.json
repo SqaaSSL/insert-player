@@ -59,6 +59,27 @@
       "contentSha256": "78234dbd1e8df79f39e9ebc94b3b4b9fd03a267aaaa382ee1bfe2a542a880e48",
       "url": "https://v3b.fal.media/files/b/0aa94341/eaTx6WxuD3lzPZH0UJ0wy_frame04.png",
       "uploadedAt": "2026-09-05T23:07:00.170Z"
+    },
+    "pose:frame05": {
+      "path": ".artifacts/aura-trump-champion-poses/aura_mog_check/frame05.png",
+      "contentSha256": "a1aec9c399cdbc03cebdc2ed8271d3f411365d8043776f9adb52b5c7139606be",
+      "url": "https://v3b.fal.media/files/b/0aa9566a/-b2pRC-MgVt1WUuQeJ-7T_a1aec9c399cd-c0e7ae8d-292a-47aa-93a3-0cb3e16390b0-frame05.png",
+      "uploadedAt": "2026-09-06T12:40:32.549Z",
+      "transport": "meterkey"
+    },
+    "pose:frame07": {
+      "path": ".artifacts/aura-trump-champion-poses/aura_mog_check/frame07.png",
+      "contentSha256": "636b094c3f08d54fa73dfca2207fb547f9dc3b1fb2f48ba7ccc37f56e80e9f85",
+      "url": "https://v3b.fal.media/files/b/0aa95655/rrQ8_GOVbGgQEB1nyvpTd_636b094c3f08-6a3dd9d9-2246-40cf-b790-744d25cfe1b4-frame07.png",
+      "uploadedAt": "2026-09-06T12:41:00.110Z",
+      "transport": "meterkey"
+    },
+    "pose:frame08": {
+      "path": ".artifacts/aura-trump-champion-poses/aura_mog_check/frame08.png",
+      "contentSha256": "f0a9517fa3b9ffc25479e9746e843fb6967ae243cd2357ec2ab8cf83c6a710a6",
+      "url": "https://v3b.fal.media/files/b/0aa95658/z86JMhaSTy5If0P02a-X1_f0a9517fa3b9-8d2e23d9-c89f-4ff1-8ba2-6306a05d1ac6-frame08.png",
+      "uploadedAt": "2026-09-06T12:41:29.581Z",
+      "transport": "meterkey"
     }
   },
   "frames": {
@@ -416,8 +437,230 @@
       },
       "providerResponseSha256": "1d4eb9e814e5d1df07837b18cef12ec63ccab78fa898eb09adf51a136f81d419",
       "providerImageUrl": "https://v3b.fal.media/files/b/0aa94342/W6VoDoUaax_AmC5jM9BH2_Xjx7Alan.png"
+    },
+    "frame05": {
+      "status": "completed",
+      "sourcePath": "artifacts/aura-animation-canary/template-zero/aura_mog_check/raw-storyboard.png",
+      "sourceCrop": null,
+      "sourceComponentIndex": 4,
+      "poseExtraction": {
+        "sourceComponentPixels": 32370,
+        "sourceComponentBbox": {
+          "x": 127,
+          "y": 545,
+          "w": 165,
+          "h": 441
+        },
+        "normalizedUniformScale": 4,
+        "discardedComponentCount": 0,
+        "largestDiscardedComponentPixels": 0
+      },
+      "normalizedPosePath": ".artifacts/aura-trump-champion-poses/aura_mog_check/frame05.png",
+      "sourceSha256": "d3c03640f19bb2a09ea4d778eba08d84921fa4ba559689ee937b8292a6520c8d",
+      "normalizedPoseSha256": "a1aec9c399cdbc03cebdc2ed8271d3f411365d8043776f9adb52b5c7139606be",
+      "geometry": {
+        "algorithm": "green-dominant-background-rgb8-bbox-v2",
+        "canvas": {
+          "width": 1536,
+          "height": 2048
+        },
+        "foregroundPixels": 511220,
+        "bboxNormalized": {
+          "left": 0.28515625,
+          "right": 0.71484375,
+          "top": 0.0888671875,
+          "bottom": 0.9501953125
+        },
+        "bboxCenterNormalized": {
+          "x": 0.5,
+          "y": 0.51953125
+        },
+        "rootSupportNormalized": {
+          "x": 0.5,
+          "y": 0.9501953125
+        }
+      },
+      "prompt": "Use case: identity-preserve\nAsset type: one individually authored Champion-quality Phaser character-animation keyframe\nPRIMARY TASK: perform an IN-PLACE LOCKED EDIT of IMAGE 1. IMAGE 1 is the immutable pose, silhouette, camera and registration master. Replace only the gray mannequin surface with Donald Trump identity and finished clothing. IMAGE 2 is a face and swept-blond-hair likeness reference only; it contains no usable body pose or full outfit. Do not invent a new pose or composition. IMAGE 1 wins every spatial or anatomical conflict.\n\nMOVEMENT: AURA MOG CHECK, source pose 5 of 8. Preserve the exact head angle, jaw-hand relationship, forward torso lean and facial expression. At the meme peak keep the deliberately enlarged perspective head and strongly pursed lips; do not beautify, normalize or reduce the exaggeration.\n\nNUMERIC FRAME LOCK: foreground bounds x=28.52%..71.48%, y=8.89%..95.02%; center=(50.00%, 51.95%); support/root=(50.00%, 95.02%). Match IMAGE 1's bounds, center, support point, camera and empty-green margins. Do not auto-frame.\nPOSE LOCK: preserve IMAGE 1's joint locations, body axis, silhouette extremes, hand orientation, expression, root/support point and every visible contact. The pose may be awkward, horizontal or exaggerated: do not naturalize, dramatize, rebalance, widen, lengthen, shrink, zoom, crop, recenter or smart-reframe it.\n\nSUBJECT TRANSFER: render recognizable Donald Trump using IMAGE 2 for face and swept blond hair only. Dress the already-posed IMAGE 1 body in the exact established costume: tailored dark navy two-button suit, white dress shirt, vivid RED necktie, matching navy trousers and black leather dress shoes. Preserve polished realistic fighting-game rendering. Do not derive any limb position, hand gesture, stance, body scale or camera framing from IMAGE 2.\n\nANATOMY: exactly one connected adult body, one head and torso, two complete arms/hands and two complete legs/feet. Preserve coherent shoulder-elbow-wrist and hip-knee-ankle chains. No duplicated, merged, detached or invented anatomy.\n\nOUTPUT: one 3:4 image only. Pure flat uniform #00FF00 background. No floor, shadow, gradient, text, prop, scenery, extra figure, blur, motion trail, glow or effect.",
+      "promptSha256": "a90a2ef2a7c8dcf0bd6a6c1c203b9cbaf8fc9e9170a14e8a2ba723c0f7f5ffa7",
+      "requestSha256": "efe369f8000b402e71ade0d852d653a276ae24bbd8e459409432ba9d2461e8d9",
+      "referenceMode": "pose-original",
+      "referenceOrder": [
+        "pose",
+        "original"
+      ],
+      "modelId": "grok-imagine-image-2-edit",
+      "providerEndpoint": "xai/grok-imagine-image/v2.0/edit",
+      "transport": "meterkey",
+      "expectedCostMicrocredits": 100000,
+      "submittedAt": "2026-09-06T12:40:33.213Z",
+      "requestId": "01a076bc-1920-7ca3-909c-78a77f6698a6",
+      "statusUrl": "https://meter.hilo.cx/fal/xai/grok-imagine-image/requests/01a076bc-1920-7ca3-909c-78a77f6698a6/status",
+      "responseUrl": "https://meter.hilo.cx/fal/xai/grok-imagine-image/requests/01a076bc-1920-7ca3-909c-78a77f6698a6",
+      "updatedAt": "2026-09-06T12:40:53.520Z",
+      "providerStatus": "COMPLETED",
+      "pollingTransport": "fal-direct",
+      "completedAt": "2026-09-06T12:40:57.850Z",
+      "outputPath": "artifacts/aura-animation-canary/donald-trump/aura_mog_check/champion/raw/frame05.png",
+      "outputSha256": "1da31058057352593878bb20ca8bfd366e2336f6698bb6ad696c055929462d18",
+      "outputSizeBytes": 3043733,
+      "outputDimensions": {
+        "width": 1776,
+        "height": 2368,
+        "bitDepth": 8,
+        "colorTypeCode": 2
+      },
+      "providerResponseSha256": "5fc8731c7cfc8a1dedcb9664659955aa8cb3b515fcbad348d1e971a611fd2077",
+      "providerImageUrl": "https://v3b.fal.media/files/b/0aa95653/LqXLZmYV7aeqccNCfix2r_UTPUOfzY.png"
+    },
+    "frame07": {
+      "status": "completed",
+      "sourcePath": "artifacts/aura-animation-canary/template-zero/aura_mog_check/raw-storyboard.png",
+      "sourceCrop": null,
+      "sourceComponentIndex": 6,
+      "poseExtraction": {
+        "sourceComponentPixels": 42642,
+        "sourceComponentBbox": {
+          "x": 833,
+          "y": 535,
+          "w": 191,
+          "h": 468
+        },
+        "normalizedUniformScale": 3.9384615384615387,
+        "discardedComponentCount": 0,
+        "largestDiscardedComponentPixels": 0
+      },
+      "normalizedPosePath": ".artifacts/aura-trump-champion-poses/aura_mog_check/frame07.png",
+      "sourceSha256": "d3c03640f19bb2a09ea4d778eba08d84921fa4ba559689ee937b8292a6520c8d",
+      "normalizedPoseSha256": "636b094c3f08d54fa73dfca2207fb547f9dc3b1fb2f48ba7ccc37f56e80e9f85",
+      "geometry": {
+        "algorithm": "green-dominant-background-rgb8-bbox-v2",
+        "canvas": {
+          "width": 1536,
+          "height": 2048
+        },
+        "foregroundPixels": 654303,
+        "bboxNormalized": {
+          "left": 0.2552083333333333,
+          "right": 0.7447916666666666,
+          "top": 0.05029296875,
+          "bottom": 0.9501953125
+        },
+        "bboxCenterNormalized": {
+          "x": 0.5,
+          "y": 0.500244140625
+        },
+        "rootSupportNormalized": {
+          "x": 0.5,
+          "y": 0.9501953125
+        }
+      },
+      "prompt": "Use case: identity-preserve\nAsset type: one individually authored Champion-quality Phaser character-animation keyframe\nPRIMARY TASK: perform an IN-PLACE LOCKED EDIT of IMAGE 1. IMAGE 1 is the immutable pose, silhouette, camera and registration master. Replace only the gray mannequin surface with Donald Trump identity and finished clothing. IMAGE 2 is a face and swept-blond-hair likeness reference only; it contains no usable body pose or full outfit. Do not invent a new pose or composition. IMAGE 1 wins every spatial or anatomical conflict.\n\nMOVEMENT: AURA MOG CHECK, source pose 7 of 8. Preserve the exact head angle, jaw-hand relationship, forward torso lean and facial expression. At the meme peak keep the deliberately enlarged perspective head and strongly pursed lips; do not beautify, normalize or reduce the exaggeration.\n\nNUMERIC FRAME LOCK: foreground bounds x=25.52%..74.48%, y=5.03%..95.02%; center=(50.00%, 50.02%); support/root=(50.00%, 95.02%). Match IMAGE 1's bounds, center, support point, camera and empty-green margins. Do not auto-frame.\nPOSE LOCK: preserve IMAGE 1's joint locations, body axis, silhouette extremes, hand orientation, expression, root/support point and every visible contact. The pose may be awkward, horizontal or exaggerated: do not naturalize, dramatize, rebalance, widen, lengthen, shrink, zoom, crop, recenter or smart-reframe it.\n\nSUBJECT TRANSFER: render recognizable Donald Trump using IMAGE 2 for face and swept blond hair only. Dress the already-posed IMAGE 1 body in the exact established costume: tailored dark navy two-button suit, white dress shirt, vivid RED necktie, matching navy trousers and black leather dress shoes. Preserve polished realistic fighting-game rendering. Do not derive any limb position, hand gesture, stance, body scale or camera framing from IMAGE 2.\n\nANATOMY: exactly one connected adult body, one head and torso, two complete arms/hands and two complete legs/feet. Preserve coherent shoulder-elbow-wrist and hip-knee-ankle chains. No duplicated, merged, detached or invented anatomy.\n\nOUTPUT: one 3:4 image only. Pure flat uniform #00FF00 background. No floor, shadow, gradient, text, prop, scenery, extra figure, blur, motion trail, glow or effect.",
+      "promptSha256": "38d6fc16077357fb19e31b61d0f25a6779054a89271825cff4c4473f5b6cb764",
+      "requestSha256": "5dc8f2707a6c586e80a59fd6a5435709221aeff2f7850930da341ec918e96f0a",
+      "referenceMode": "pose-original",
+      "referenceOrder": [
+        "pose",
+        "original"
+      ],
+      "modelId": "grok-imagine-image-2-edit",
+      "providerEndpoint": "xai/grok-imagine-image/v2.0/edit",
+      "transport": "meterkey",
+      "expectedCostMicrocredits": 100000,
+      "submittedAt": "2026-09-06T12:41:00.119Z",
+      "requestId": "01a076bc-81f0-7672-8eda-322c2c9d4837",
+      "statusUrl": "https://meter.hilo.cx/fal/xai/grok-imagine-image/requests/01a076bc-81f0-7672-8eda-322c2c9d4837/status",
+      "responseUrl": "https://meter.hilo.cx/fal/xai/grok-imagine-image/requests/01a076bc-81f0-7672-8eda-322c2c9d4837",
+      "updatedAt": "2026-09-06T12:41:22.519Z",
+      "providerStatus": "COMPLETED",
+      "pollingTransport": "fal-direct",
+      "completedAt": "2026-09-06T12:41:27.777Z",
+      "outputPath": "artifacts/aura-animation-canary/donald-trump/aura_mog_check/champion/raw/frame07.png",
+      "outputSha256": "2f856958387263563b3e5e1e711b26f5582b3b00910b94b5e3c5a0d3f1123545",
+      "outputSizeBytes": 3355857,
+      "outputDimensions": {
+        "width": 1776,
+        "height": 2368,
+        "bitDepth": 8,
+        "colorTypeCode": 2
+      },
+      "providerResponseSha256": "37453828aafc5279b8b7c2293ece7e7489cd488d9a50bfdd543f4d2098d11153",
+      "providerImageUrl": "https://v3b.fal.media/files/b/0aa95656/Qtu6-lvLLlF2LpxBOUmsG_dOuhaDUW.png"
+    },
+    "frame08": {
+      "status": "completed",
+      "sourcePath": "artifacts/aura-animation-canary/template-zero/aura_mog_check/raw-storyboard.png",
+      "sourceCrop": null,
+      "sourceComponentIndex": 7,
+      "poseExtraction": {
+        "sourceComponentPixels": 31324,
+        "sourceComponentBbox": {
+          "x": 1232,
+          "y": 525,
+          "w": 149,
+          "h": 461
+        },
+        "normalizedUniformScale": 3.9982646420824297,
+        "discardedComponentCount": 0,
+        "largestDiscardedComponentPixels": 0
+      },
+      "normalizedPosePath": ".artifacts/aura-trump-champion-poses/aura_mog_check/frame08.png",
+      "sourceSha256": "d3c03640f19bb2a09ea4d778eba08d84921fa4ba559689ee937b8292a6520c8d",
+      "normalizedPoseSha256": "f0a9517fa3b9ffc25479e9746e843fb6967ae243cd2357ec2ab8cf83c6a710a6",
+      "geometry": {
+        "algorithm": "green-dominant-background-rgb8-bbox-v2",
+        "canvas": {
+          "width": 1536,
+          "height": 2048
+        },
+        "foregroundPixels": 493937,
+        "bboxNormalized": {
+          "left": 0.3059895833333333,
+          "right": 0.6940104166666666,
+          "top": 0.05029296875,
+          "bottom": 0.9501953125
+        },
+        "bboxCenterNormalized": {
+          "x": 0.5,
+          "y": 0.500244140625
+        },
+        "rootSupportNormalized": {
+          "x": 0.5,
+          "y": 0.9501953125
+        }
+      },
+      "prompt": "Use case: identity-preserve\nAsset type: one individually authored Champion-quality Phaser character-animation keyframe\nPRIMARY TASK: perform an IN-PLACE LOCKED EDIT of IMAGE 1. IMAGE 1 is the immutable pose, silhouette, camera and registration master. Replace only the gray mannequin surface with Donald Trump identity and finished clothing. IMAGE 2 is a face and swept-blond-hair likeness reference only; it contains no usable body pose or full outfit. Do not invent a new pose or composition. IMAGE 1 wins every spatial or anatomical conflict.\n\nMOVEMENT: AURA MOG CHECK, source pose 8 of 8. Preserve the exact head angle, jaw-hand relationship, forward torso lean and facial expression. At the meme peak keep the deliberately enlarged perspective head and strongly pursed lips; do not beautify, normalize or reduce the exaggeration.\n\nNUMERIC FRAME LOCK: foreground bounds x=30.60%..69.40%, y=5.03%..95.02%; center=(50.00%, 50.02%); support/root=(50.00%, 95.02%). Match IMAGE 1's bounds, center, support point, camera and empty-green margins. Do not auto-frame.\nPOSE LOCK: preserve IMAGE 1's joint locations, body axis, silhouette extremes, hand orientation, expression, root/support point and every visible contact. The pose may be awkward, horizontal or exaggerated: do not naturalize, dramatize, rebalance, widen, lengthen, shrink, zoom, crop, recenter or smart-reframe it.\n\nSUBJECT TRANSFER: render recognizable Donald Trump using IMAGE 2 for face and swept blond hair only. Dress the already-posed IMAGE 1 body in the exact established costume: tailored dark navy two-button suit, white dress shirt, vivid RED necktie, matching navy trousers and black leather dress shoes. Preserve polished realistic fighting-game rendering. Do not derive any limb position, hand gesture, stance, body scale or camera framing from IMAGE 2.\n\nANATOMY: exactly one connected adult body, one head and torso, two complete arms/hands and two complete legs/feet. Preserve coherent shoulder-elbow-wrist and hip-knee-ankle chains. No duplicated, merged, detached or invented anatomy.\n\nOUTPUT: one 3:4 image only. Pure flat uniform #00FF00 background. No floor, shadow, gradient, text, prop, scenery, extra figure, blur, motion trail, glow or effect.",
+      "promptSha256": "67670ea6174fa9ad60b9c42f55402aaee0515703c56566486986dc09a6481c4f",
+      "requestSha256": "863f6559b26be15cf7b3c939b63f1eeffcd7ebe4dc07d1e3db61179f4112284e",
+      "referenceMode": "pose-original",
+      "referenceOrder": [
+        "pose",
+        "original"
+      ],
+      "modelId": "grok-imagine-image-2-edit",
+      "providerEndpoint": "xai/grok-imagine-image/v2.0/edit",
+      "transport": "meterkey",
+      "expectedCostMicrocredits": 100000,
+      "submittedAt": "2026-09-06T12:41:29.591Z",
+      "requestId": "01a076bc-f4ee-75e0-853f-2596dce21182",
+      "statusUrl": "https://meter.hilo.cx/fal/xai/grok-imagine-image/requests/01a076bc-f4ee-75e0-853f-2596dce21182/status",
+      "responseUrl": "https://meter.hilo.cx/fal/xai/grok-imagine-image/requests/01a076bc-f4ee-75e0-853f-2596dce21182",
+      "updatedAt": "2026-09-06T12:41:47.542Z",
+      "providerStatus": "COMPLETED",
+      "pollingTransport": "fal-direct",
+      "completedAt": "2026-09-06T12:41:51.219Z",
+      "outputPath": "artifacts/aura-animation-canary/donald-trump/aura_mog_check/champion/raw/frame08.png",
+      "outputSha256": "778cf19faf89c17c5e67309c3419c640ef413fa17a082a1c7e7c597954481a0e",
+      "outputSizeBytes": 2956096,
+      "outputDimensions": {
+        "width": 1776,
+        "height": 2368,
+        "bitDepth": 8,
+        "colorTypeCode": 2
+      },
+      "providerResponseSha256": "060ba789aec8f6bba850e9a6f51f233d658fa4c33116407ea00fe486f32e7ea5",
+      "providerImageUrl": "https://v3b.fal.media/files/b/0aa95659/MnKTe0VktqqaZxAUh9XOx_jCGP4gFS.png"
     }
   },
   "rejectedAttempts": [],
-  "updatedAt": "2026-09-05T23:07:29.917Z"
+  "updatedAt": "2026-09-06T12:41:51.220Z"
 }
