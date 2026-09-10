@@ -166,6 +166,7 @@ const SCHEMA = `
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(fighter_id, blob_key)
   );
+  CREATE TABLE aura_clips (id TEXT PRIMARY KEY, expires_at TEXT NOT NULL);
   CREATE TABLE versus_invitations (
     token_hash TEXT PRIMARY KEY,
     template_version TEXT NOT NULL,

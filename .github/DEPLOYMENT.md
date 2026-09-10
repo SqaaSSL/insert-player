@@ -71,6 +71,15 @@ canonical smokes require its `gitSha` and entry bundle to match the commit being
 deployed. This is the authoritative answer to “what code is live”; a successful
 upload of some other bundle does not count as a successful release.
 
+The frontend deploy runs Pages with the repository root as its working directory,
+so `/functions/watch/[id].ts` is bundled without inheriting the API Worker's
+bindings. Only battle watch URLs use a Pages Function; it serves the current app
+with public clip metadata and the asset service's security headers. The
+authenticated production launch smoke also publishes a short synthetic Aura
+recording, verifies its watch page, OG, poster, seeking and download, then revokes
+the link. That smoke requires `main` and verifies both live release SHAs before
+publishing its temporary clip.
+
 ## Deployment Credential Policy
 
 Store durable, account-owned credentials only in the matching GitHub

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchWithTransientNetworkRetry } from './live-smoke-fetch.mjs';
+import { assertAuraClipSmokeEnvironment, createAuraClipSmokeChallenge, createAuraClipSmokeMedia, runHostedAuraClipSmoke } from './aura-clip-smoke.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -960,6 +961,12 @@ async function runAuthenticatedSmoke() {
   });
   assert(me.user?.id, '/auth/me did not return a signed-in user');
   log('/auth/me returns the Clerk-backed user profile');
+
+  const clipSmokeSha = assertAuraClipSmokeEnvironment({ target: smokeTarget, githubActions: process.env.GITHUB_ACTIONS,
+    githubRef: process.env.GITHUB_REF, githubSha: process.env.GITHUB_SHA });
+  const challengeToken = await createAuraClipSmokeChallenge();
+  const media = await createAuraClipSmokeMedia();
+  await runHostedAuraClipSmoke({ request, authHeaders, baseUrl, frontendOrigin, challengeToken, media, expectedSha: clipSmokeSha, log });
 
   await expectJson('list fighters', '/api/fighters', 200, {
     headers: authHeaders(),

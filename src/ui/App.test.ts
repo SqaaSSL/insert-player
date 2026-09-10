@@ -5,6 +5,7 @@ describe('App route normalization', () => {
   it('preserves valid direct routes', () => {
     expect(normalizeRoute('/', '')).toBe('/');
     expect(normalizeRoute('/fight', '')).toBe('/fight');
+    expect(normalizeRoute('/watch/AbcDef01234567_-AbcDef0123456789/', '')).toBe('/watch/AbcDef01234567_-AbcDef0123456789');
     expect(normalizeRoute('/rush', '')).toBe('/rush');
     expect(normalizeRoute('/aura/', '')).toBe('/aura');
     expect(normalizeRoute('/roster/vs/', '')).toBe('/roster/vs');
@@ -17,6 +18,8 @@ describe('App route normalization', () => {
 
   it('falls back to the menu for unknown paths', () => {
     expect(normalizeRoute('/not-a-route', '')).toBe('/menu');
+    expect(normalizeRoute('/watch/broken', '')).toBe('/menu');
+    expect(normalizeRoute('/watch/' + 'a'.repeat(32) + '/extra', '')).toBe('/menu');
     expect(normalizeRoute('/', '#/community')).toBe('/community');
   });
 });

@@ -207,6 +207,9 @@ async function deleteClerkUserDatabaseRows(
       DELETE FROM stripe_events
       WHERE user_id = ? OR instr(payload, ?) > 0 OR instr(payload, ?) > 0
     `).bind(internalUserId, internalUserId, clerkUserId),
+    // Revoke immediately; maintenance durably deletes the associated R2 clips.
+    env.DB.prepare(`UPDATE aura_clips SET status = 'revoked', owner_user_id = NULL,
+      expires_at = ? WHERE owner_user_id = ?`).bind(new Date().toISOString(), internalUserId),
     env.DB.prepare('DELETE FROM users WHERE clerk_user_id = ?').bind(clerkUserId),
     env.DB.prepare(`
       INSERT OR IGNORE INTO clerk_webhook_events (id, event_type)

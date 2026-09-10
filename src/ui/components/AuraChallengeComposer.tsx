@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AURA_CHALLENGE_MAX_NAME_LENGTH, cleanAuraChallengeName, createAuraChallenge,
   type AuraChallenge, type AuraChallengeRoutine,
@@ -7,17 +7,20 @@ import { rememberAuraChallenge } from '../shared/auraChallenges.ts';
 import { copyToClipboard } from '../shared/communityShare.ts';
 import { auraChallengeShareData, shareAuraChallenge } from '../shared/auraChallengeShare.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
+import { AuraClipComposer } from './AuraClipComposer.tsx';
 import '../aura-challenges.css';
 
 interface AuraChallengeComposerProps {
   routine: AuraChallengeRoutine;
+  recording?: File | null;
   scores: ReadonlyArray<{ slot: 0 | 1; name: string; score: number }>;
   replyTo?: string;
   onCreated?: (challenge: AuraChallenge) => void;
   onDraftChange?: (challenge: AuraChallenge | null) => void;
 }
 
-export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onDraftChange }: AuraChallengeComposerProps) {
+export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onDraftChange, recording }: AuraChallengeComposerProps) {
+  const [locked, setLocked] = useState(false);
   const [slot, setSlot] = useState(scores[0]?.slot ?? 0);
   const selected = scores.find(score => score.slot === slot) ?? scores[0];
   const [name, setName] = useState(cleanAuraChallengeName(selected?.name ?? 'Player'));
@@ -31,6 +34,10 @@ export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onD
     try { onDraftChange(selected ? createAuraChallenge(routine, name, selected.score, selected.slot) : null); }
     catch { onDraftChange(null); }
   }, [routine, name, selected?.score, selected?.slot, onDraftChange]);
+  const draft = useMemo(() => {
+    try { return selected ? createAuraChallenge(routine, name, selected.score, selected.slot) : null; }
+    catch { return null; }
+  }, [routine, name, selected?.score, selected?.slot]);
   if (!selected) return null;
   const handoff = async (action: 'share' | 'copy') => {
     if (busyRef.current || !cleanAuraChallengeName(name)) return;
@@ -60,30 +67,35 @@ export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onD
     finally { busyRef.current = false; setBusy(null); }
   };
   return (
-    <section className="aura-challenge-composer" aria-label={replyTo ? 'Send your score back' : 'Challenge a friend'}>
+    <section className="aura-challenge-composer" aria-label={recording ? 'Share your battle' : replyTo ? 'Send your score back' : 'Challenge a friend'}>
       <p className="aura-challenge-composer__brand">INSERT PLAYER · AURA CHALLENGE</p>
-      <h3>{replyTo ? 'Send your score back' : 'Challenge a friend'}</h3>
+      <h3>{recording ? 'Your battle. Their next challenge.' : replyTo ? 'Send your score back' : 'Challenge a friend'}</h3>
       <p className="aura-challenge-composer__notice">{selected.score.toLocaleString()} AURA. {replyTo || 'Your friend'} gets this exact song, routine and difficulty.</p>
       <div className="aura-challenge-composer__form">
         {scores.length > 1 ? <label>Whose score?
-          <select value={slot} disabled={busy !== null} onChange={event => {
+          <select value={slot} disabled={busy !== null || locked} onChange={event => {
             const next = Number(event.target.value) as 0 | 1;
             setSlot(next); setName(cleanAuraChallengeName(scores.find(score => score.slot === next)?.name ?? 'Player'));
             setLink(null); setStatus(null); setManualCopy(false);
           }}>{scores.map(score => <option key={score.slot} value={score.slot}>{score.name} · {score.score.toLocaleString()}</option>)}</select>
         </label> : null}
         <label>Name shown in the link
-          <input value={name} disabled={busy !== null} maxLength={AURA_CHALLENGE_MAX_NAME_LENGTH} autoComplete="off"
+          <input value={name} disabled={busy !== null || locked} maxLength={AURA_CHALLENGE_MAX_NAME_LENGTH} autoComplete="off"
             onChange={event => { setName(event.target.value); setLink(null); setStatus(null); setManualCopy(false); }} />
         </label>
-        <button type="button" className="asf-btn asf-btn--primary" disabled={busy !== null || !cleanAuraChallengeName(name)} onClick={() => void handoff('share')}>
+        {!recording ? <><button type="button" className="asf-btn asf-btn--primary" disabled={busy !== null || !cleanAuraChallengeName(name)} onClick={() => void handoff('share')}>
           {busy === 'share' ? 'Preparing link…' : replyTo ? 'Share score back' : 'Share this challenge'}
         </button>
         <button type="button" className="asf-btn" disabled={busy !== null || !cleanAuraChallengeName(name)} onClick={() => void handoff('copy')}>
           {busy === 'copy' ? 'Copying link…' : 'Copy challenge link'}
-        </button>
+        </button></> : null}
       </div>
-      <p className="aura-challenge-composer__notice">Send a playable link with your name and score. Your character, photos and match video are not attached. Friendly scores are not ranked.</p>
+      {recording ? <AuraClipComposer file={recording} challenge={draft} onLockChange={setLocked} onCreated={onCreated} /> : null}
+      {!recording ? <p className="aura-challenge-composer__notice">Send a playable link with your name and score. Your character, photos and match video are not attached. Friendly scores are not ranked.</p> : null}
+      {recording ? <details className="aura-clip-composer__fallback"><summary>Share the score without video</summary>
+        <p className="aura-challenge-composer__notice">A playable challenge with your name and score. No video is published.</p>
+        <button type="button" className="asf-btn" disabled={busy !== null || !draft} onClick={() => void handoff('share')}>Share challenge only</button>
+      </details> : null}
       {status ? <p className="aura-challenge-composer__notice" role="status">{status}</p> : null}
       {link ? <a className="aura-challenge-composer__link" href={link}>Open your challenge</a> : null}
       {link && manualCopy ? <label>Challenge link

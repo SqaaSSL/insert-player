@@ -17,6 +17,7 @@ import {
 } from './billing';
 import { captureStreetViewImage } from './googleMaps';
 import { auraChallengeShareResponse } from './auraChallengeShare';
+import { createAuraClip, deleteAuraClip, getAuraClip, getAuraClipVideo, getAuraClipPoster, uploadAuraClip } from './auraClips';
 import {
   createFighter,
   cloneCommunityFighter,
@@ -135,7 +136,8 @@ function corsHeaders(request: Request, env: Env): HeadersInit {
   const origin = resolveCorsOrigin(request, env);
   const headers: HeadersInit = {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS',
+    'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Range, Content-Length, Content-Disposition',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-ASF-Provider-Session, X-Insert-Player-Provider-Request-Key',
     'Vary': 'Origin',
   };
@@ -392,6 +394,18 @@ export default {
         return auraChallengeShareResponse(request, env, context);
       }
 
+      // Public clip capabilities are independent of Clerk bearer tokens.
+      const auraClipMatch = path.match(/^\/api\/aura\/clips\/([A-Za-z0-9_-]{32})(\/video|\/poster)?$/);
+      if (auraClipMatch) {
+        const id = auraClipMatch[1];
+        if (auraClipMatch[2] === '/poster' && (method === 'GET' || method === 'HEAD')) return addCors(await getAuraClipPoster(request, env, id), request, env);
+        if (auraClipMatch[2] === '/video' && method === 'PUT') return addCors(await uploadAuraClip(request, env, id), request, env);
+        if (auraClipMatch[2] === '/video' && (method === 'GET' || method === 'HEAD')) return addCors(await getAuraClipVideo(request, env, id), request, env);
+        if (!auraClipMatch[2] && method === 'GET') return addCors(await getAuraClip(request, env, id), request, env);
+        if (!auraClipMatch[2] && method === 'DELETE') return addCors(await deleteAuraClip(request, env, id), request, env);
+        return addCors(json({ error: 'Method not allowed' }, 405), request, env);
+      }
+
       const generationAuth = path.startsWith('/proxy/')
         ? await optionalGenerationJobAuth(request, env)
         : null;
@@ -407,6 +421,12 @@ export default {
         ? await handleProxy(request, env, publicAuth)
         : null;
       if (proxied) return addCors(proxied, request, env);
+
+      if (path === '/api/aura/clips' && method === 'POST') {
+        const auth = await sensitiveOptionalAuth(request, env, publicAuth);
+        if (isResponse(auth)) return addCors(auth, request, env);
+        return addCors(await createAuraClip(request, env, auth), request, env);
+      }
 
       if (path === '/health') {
         return addCors(healthResponse(env), request, env);

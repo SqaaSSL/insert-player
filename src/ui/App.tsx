@@ -2,6 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import { HomePage } from './routes/HomePage.tsx';
 import { PlayPage } from './pages/PlayPage.tsx';
 import { GameLandingPage } from './pages/GameLandingPage.tsx';
+import { AuraWatchPage } from './pages/AuraWatchPage.tsx';
+import { isAuraClipId } from '../services/AuraClips.ts';
 import { ChallengePage } from './pages/ChallengePage.tsx';
 import { ChallengesPage } from './pages/ChallengesPage.tsx';
 import type { FighterGameMode } from '../services/FighterAssetPacks.ts';
@@ -77,6 +79,7 @@ type AppRoute =
   | '/credits'
   | '/challenges'
   | '/challenge'
+  | `/watch/${string}`
   | '/games/aura'
   | '/games/fight'
   | '/games/rush'
@@ -131,6 +134,7 @@ export function gameRouteForMatch(match: Pick<MatchSceneData, 'gameMode'>): Game
 export function legalReturnRouteFromState(state: unknown): AppRoute {
   if (!state || typeof state !== 'object') return '/menu';
   const candidate = (state as { legalReturnTo?: unknown }).legalReturnTo;
+  if (typeof candidate === 'string' && candidate.startsWith('/watch/') && isAuraClipId(candidate.slice(7))) return candidate as `/watch/${string}`;
   if (
     candidate === '/' ||
     candidate === '/menu' ||
@@ -171,6 +175,7 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   if (cleaned === '/credits') return '/credits';
   if (cleaned === '/challenges') return '/challenges';
   if (cleaned === '/challenge') return '/challenge';
+  if (cleaned.startsWith('/watch/') && isAuraClipId(cleaned.slice(7))) return cleaned as `/watch/${string}`;
   if (cleaned === '/games/aura') return '/games/aura';
   if (cleaned === '/games/fight') return '/games/fight';
   if (cleaned === '/games/rush') return '/games/rush';
@@ -684,6 +689,10 @@ export function App({
       onExplore={(mode) => navigate(`/games/${mode}`)} onOpenCharacters={() => navigate('/gallery')}
       onOpenChallenges={() => navigate('/challenges')} />;
     if (route === '/credits') return homePage;
+    if (route.startsWith('/watch/')) return <AuraWatchPage clipId={route.slice(7)} preferredPlayerPhotoHash={readPreferredArcadePlayerPhotoHash(routeSearch)}
+      onPlay={startFight} onExplore={() => navigate('/games/aura')} onCreatePlayer={token => navigate('/fighters/new', buildCreationSearch({
+        tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'challenge', challenge: token,
+      }))} />;
     if (route === '/challenge') return <ChallengePage preferredPlayerPhotoHash={readPreferredArcadePlayerPhotoHash(routeSearch)} token={new URLSearchParams(routeSearch).get('challenge')}
       onPlay={startFight} onBack={() => navigate('/challenges')} onCreatePlayer={() => navigate('/fighters/new', buildCreationSearch({
         tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'challenge', challenge: new URLSearchParams(routeSearch).get('challenge') ?? undefined,

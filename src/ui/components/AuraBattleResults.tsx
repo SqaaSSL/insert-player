@@ -2,12 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AuraBattleCompleteDetail, OnlineRematchStateDetail } from '../../game/match/MatchConfig.ts';
 import { auraAccuracy } from '../../game/aura/AuraBattle.ts';
 import type { AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
-import { auraVideoFile, auraVideoShareData, canShareAuraVideo, downloadAuraVideo } from './AuraMatchShare.ts';
+import { auraVideoFile, downloadAuraVideo } from './AuraMatchShare.ts';
 import { compareAuraChallenge, type AuraChallenge } from '../../game/aura/AuraChallenge.ts';
 import { AuraChallengeComposer } from './AuraChallengeComposer.tsx';
 import { rememberAuraChallenge } from '../shared/auraChallenges.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
-import { auraChallengeShareData } from '../shared/auraChallengeShare.ts';
 
 interface AuraBattleResultsProps {
   summary: AuraBattleCompleteDetail;
@@ -45,9 +44,7 @@ export function AuraBattleResults({
   useEffect(() => { panelRef.current?.focus(); }, [summary]);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [shareError, setShareError] = useState(false);
-  const [sharing, setSharing] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [videoChallenge, setVideoChallenge] = useState<AuraChallenge | null>(null);
   const completedChallenge = useRef<AuraBattleCompleteDetail | null>(null);
   const challenge = summary.challenge;
   const challengeScore = challenge?.slot === 1 ? summary.p2Score.score : summary.p1Score.score;
@@ -61,7 +58,6 @@ export function AuraBattleResults({
   const video = capture?.state === 'ready' ? capture.video : null;
   const file = useMemo(() => video ? auraVideoFile(video, summary.p1Name, summary.p2Name) : null,
     [video, summary.p1Name, summary.p2Name]);
-  const nativeFileShare = file ? canShareAuraVideo(file) : false;
   useEffect(() => {
     if (!file) { setVideoUrl(null); return; }
     const url = URL.createObjectURL(file);
@@ -87,25 +83,6 @@ export function AuraBattleResults({
     }
   };
 
-  const share = async () => {
-    if (!file || sharing) return;
-    if (!nativeFileShare) { download(); return; }
-    setSharing(true);
-    setShareError(false);
-    setShareStatus(null);
-    try {
-      // File already exists: preserve the click's transient user activation.
-      const challengeData = videoChallenge ? auraChallengeShareData(videoChallenge, window.location.origin) : null;
-      await navigator.share(auraVideoShareData(file, challengeData));
-      trackProductEvent('share_video', { game: 'aura' });
-      setShareStatus('Video handed to your sharing app.');
-    } catch (error) {
-      if ((error as DOMException)?.name !== 'AbortError') {
-        setShareError(true);
-        setShareStatus('Sharing could not open. Download the video and attach it instead.');
-      }
-    } finally { setSharing(false); }
-  };
 
   return (
     <section className="aura-results" role="dialog" aria-modal="true" aria-label="Aura Battle result">
@@ -168,7 +145,7 @@ export function AuraBattleResults({
             scores={summary.challengeShareSlots.map(slot => ({ slot,
               name: slot === 0 ? summary.p1Name : summary.p2Name,
               score: slot === 0 ? summary.p1Score.score : summary.p2Score.score }))}
-            onCreated={onChallengeCreated} onDraftChange={setVideoChallenge} />
+            onCreated={onChallengeCreated} recording={file} />
         ) : null}
 
         {trial && onCreatePlayer ? <div className="aura-results__rookie">
@@ -178,22 +155,19 @@ export function AuraBattleResults({
         </div> : null}
 
         <details className="aura-results__video-option">
-          <summary>Save or share your match video</summary>
+          <summary>Watch or save your match video</summary>
           <div className="aura-results__share">
           {videoUrl && file ? (
             <>
               <video className="aura-results__video" src={videoUrl} controls playsInline preload="metadata"
                 aria-label={`${summary.p1Name} versus ${summary.p2Name}, recorded Aura match`} />
               <div className="aura-results__actions">
-                <button type="button" className="asf-btn" disabled={sharing} onClick={() => void share()}>
-                  {sharing ? 'Opening Share…' : nativeFileShare ? 'Share video + link' : 'Download Match'}
-                </button>
-                {nativeFileShare ? <button type="button" className="asf-btn" onClick={download}>Download Video</button> : null}
+                <button type="button" className="asf-btn" onClick={download}>Download video</button>
               </div>
               <p className="aura-results__share-note">
                 {file.type === 'video/mp4' ? 'MP4' : 'WebM'} · {(file.size / 1024 / 1024).toFixed(1)} MB
                 {video?.hasAudio ? ' · Game audio included.' : ' · No audio in this recording.'}
-                {' '}Your video stays on this device. Save it before leaving or playing again.
+                {' '}Your original video stays on this device. Create a battle link above to publish a copy, or download it before leaving.
               </p>
             </>
           ) : capture?.state === 'unavailable' || !capture ? (

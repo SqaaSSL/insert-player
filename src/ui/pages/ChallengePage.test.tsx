@@ -82,7 +82,7 @@ describe('Aura challenge entry and result surfaces', () => {
     const markup = renderToStaticMarkup(<AuraBattleResults summary={summary} trial onRetry={vi.fn()} onExit={vi.fn()} onCreatePlayer={vi.fn()} onChallengeCreated={share} />);
     expect(markup).toContain('INSERT PLAYER · AURA CHALLENGE');
     expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('Create my Rookie Aura'));
-    expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('Save or share your match video'));
+    expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('Watch or save your match video'));
     expect(markup).toContain('<details class="aura-results__video-option">');
     expect(markup).not.toContain('<details open');
     expect(share).not.toHaveBeenCalled();
