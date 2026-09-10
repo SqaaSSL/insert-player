@@ -85,11 +85,78 @@ export class SoundManager {
   private lastAuraMoveAt = -Infinity;
   private lastAuraMoveName: AuraAnimationName | null = null;
   private removeAuraMoveStateListener: (() => void) | null = null;
+  private musicPreparationAbort: AbortController | null = null;
 
-  startBattleMusic(url: string = BATTLE_MUSIC_URL): void {
+  /** Fetch/decode enough music for playback while the loading curtain is up. */
+  prepareBattleMusic(url: string, signal: AbortSignal): Promise<boolean> {
+    this.musicPreparationAbort?.abort();
+    const preparation = new AbortController();
+    this.musicPreparationAbort = preparation;
+    this.prepareMusicElement(url);
+    this.mediaPlaybackPaused = true;
+    const music = this.battleMusic;
+    if (!music || signal.aborted || this.destroyed) return Promise.resolve(false);
+    if (music.readyState >= 3 && !music.error) return Promise.resolve(true);
+    return new Promise(resolve => {
+      const finish = (ready: boolean) => {
+        clearTimeout(timeout);
+        music.removeEventListener('canplay', readyToPlay);
+        music.removeEventListener('error', failed);
+        signal.removeEventListener('abort', failed);
+        preparation.signal.removeEventListener('abort', failed);
+        resolve(ready);
+      };
+      const readyToPlay = () => finish(!music.error && music.readyState >= 3);
+      const failed = () => finish(false);
+      const timeout = setTimeout(failed, 20_000);
+      music.addEventListener('canplay', readyToPlay);
+      music.addEventListener('error', failed);
+      signal.addEventListener('abort', failed, { once: true });
+      preparation.signal.addEventListener('abort', failed, { once: true });
+      try { music.load(); } catch { failed(); }
+    });
+  }
+
+  /** Call in the player's start gesture. Prime the exact HTML elements and
+   * recording graph silently, then reset them before the visible countdown. */
+  async unlockPreparedMedia(signal?: AbortSignal): Promise<boolean> {
+    if (this.destroyed || !this.battleMusic) return false;
+    if (typeof AudioContext !== 'undefined') {
+      try { this.ensureContext(); } catch { /* HTML playback can still work. */ }
+    }
+    const music = this.battleMusic;
+    const attempts = [music, ...this.auraCrowd.map(layer => layer.audio)].map(async audio => {
+      const volume = audio.volume;
+      audio.volume = 0;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      let aborted = () => {};
+      try {
+        // Invoke play before any await so the browser sees the user gesture.
+        const playback = audio.play();
+        await Promise.race([playback, new Promise<never>((_resolve, reject) => {
+          aborted = () => reject(new Error('Audio preparation cancelled'));
+          timeout = setTimeout(aborted, 5_000);
+          signal?.addEventListener('abort', aborted, { once: true });
+          if (signal?.aborted) aborted();
+        })]);
+        return true;
+      } catch { return false; }
+      finally {
+        clearTimeout(timeout);
+        signal?.removeEventListener('abort', aborted);
+        audio.pause();
+        if (!this.destroyed) {
+          audio.currentTime = 0;
+          audio.volume = volume;
+        }
+      }
+    });
+    const results = await Promise.all(attempts);
+    return !this.destroyed && this.battleMusic === music && results[0];
+  }
+
+  private prepareMusicElement(url: string): void {
     if (typeof Audio === 'undefined') return;
-    this.mediaPlaybackPaused = false;
-
     if (this.battleMusic && this.battleMusicUrl !== url) {
       this.battleMusic.pause();
       this.releaseMediaSource(this.battleMusic);
@@ -102,6 +169,13 @@ export class SoundManager {
       this.battleMusic.preload = 'auto';
       this.battleMusic.volume = BATTLE_MUSIC_VOLUME;
     }
+  }
+
+  startBattleMusic(url: string = BATTLE_MUSIC_URL): void {
+    if (typeof Audio === 'undefined') return;
+    this.mediaPlaybackPaused = false;
+
+    this.prepareMusicElement(url);
 
     this.connectRecordingMedia();
     this.tryPlayBattleMusic();
@@ -651,6 +725,8 @@ export class SoundManager {
 
   destroy(): void {
     this.destroyed = true;
+    this.musicPreparationAbort?.abort();
+    this.musicPreparationAbort = null;
     this.stopBattleMusic();
     this.removeAuraMoveStateListener?.();
     this.removeAuraMoveStateListener = null;

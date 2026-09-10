@@ -43,6 +43,7 @@ import { shouldGuideAuraBattle, rememberAuraOnboarding } from '../shared/auraOnb
 import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
 import { AURA_CAPTURE_EVENT, type AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
+import { AURA_STARTUP_EVENT, AURA_STARTUP_READY_EVENT, isAuraStartupDetail, type AuraStartupDetail } from '../../game/aura/AuraStartup.ts';
 import {
   AURA_PRESENTATION_EVENT,
   AURA_PRESENTATION_START_EVENT,
@@ -130,6 +131,7 @@ export function GamePage({
   const [auraOnboarding, setAuraOnboarding] = useState<AuraOnboardingDetail | null>(null);
   const guidedThisMount = useRef(false);
   const [auraCapture, setAuraCapture] = useState<AuraCaptureDetail | null>(null);
+  const [auraStartup, setAuraStartup] = useState<AuraStartupDetail | null>(null);
   const [auraTouchSlot, setAuraTouchSlot] = useState<0 | 1>(0);
   const [auraControlledSlot, setAuraControlledSlot] = useState<0 | 1 | undefined>(
     online?.localSlot ?? launchTarget.data.auraChallenge?.slot ?? (launchTarget.data.vsAI === false ? undefined : 0));
@@ -167,6 +169,7 @@ export function GamePage({
     setRushSummary(null);
     setAuraSummary(null);
     setAuraCapture(null);
+    setAuraStartup(null);
     setAuraPendingStart(null);
     setAuraTouchSlot(0);
     setAuraControlledSlot(launchTarget.data.online?.localSlot ?? launchTarget.data.auraChallenge?.slot
@@ -191,7 +194,7 @@ export function GamePage({
     if (!lifecycle || lifecycle.phase !== 'ready'
       || lifecycle.token !== auraPendingStart.token || lifecycle.seed !== auraPendingStart.seed) return;
     // Effects run after React removes the curtain from the committed DOM.
-    // Mark first: duplicate renders/StrictMode must never start the clock twice.
+    // Mark first: duplicate renders/StrictMode must never start the intro twice.
     lifecycle.phase = 'started';
     const onboarding = !guidedThisMount.current && shouldGuideAuraBattle(launchTarget.data);
     if (onboarding) {
@@ -202,6 +205,20 @@ export function GamePage({
       detail: { ...auraPendingStart, ...(onboarding ? { onboarding: true } : {}) },
     }));
   }, [isAura, loadingPhase, auraPendingStart, launchTarget]);
+
+  useEffect(() => {
+    if (!isAura) return;
+    const onStartup = (event: WindowEventMap[typeof AURA_STARTUP_EVENT]) => {
+      const detail = event.detail;
+      const current = auraLifecycleRef.current;
+      if (!isAuraStartupDetail(detail) || !current || current.phase !== 'started'
+        || current.token !== detail.token || current.seed !== detail.seed) return;
+      setAuraStartup(previous => previous?.token === detail.token
+        && previous.phase === detail.phase && previous.count === detail.count ? previous : detail);
+    };
+    window.addEventListener(AURA_STARTUP_EVENT, onStartup);
+    return () => window.removeEventListener(AURA_STARTUP_EVENT, onStartup);
+  }, [isAura]);
 
   useEffect(() => {
     if (!isAura) return;
@@ -397,11 +414,10 @@ export function GamePage({
       if (disposed || readyHandled) return;
       readyHandled = true;
       window.clearTimeout(loadTimeout);
-      const minimumClosedMs = isAura ? 3_000 : 1_100;
-      // Let the upright face-off register even when asset loading consumed the
-      // minimum display time. The match clock still waits for the hidden DOM.
-      const readyHoldMs = isAura ? 1_500 : 0;
-      const openingDelay = Math.max(readyHoldMs, minimumClosedMs - (performance.now() - startedAt));
+      // Aura's playable canvas owns the readable face-off and countdown.
+      // This curtain only covers real loading, with a short anti-flash minimum.
+      const minimumClosedMs = isAura ? 600 : 1_100;
+      const openingDelay = Math.max(0, minimumClosedMs - (performance.now() - startedAt));
       openingTimer = window.setTimeout(() => {
         const current = auraLifecycleRef.current;
         if (disposed || (identity && (!current || current.phase !== 'ready'
@@ -417,7 +433,7 @@ export function GamePage({
             if (identity) setAuraPendingStart(identity);
             setLoadingPhase('hidden');
           },
-          reduceMotion ? 180 : isAura ? 1_000 : 720,
+          reduceMotion ? 180 : isAura ? 300 : 720,
         );
       }, openingDelay);
     };
@@ -444,13 +460,16 @@ export function GamePage({
         setWinnerSlot(null);
         setAuraSummary(null);
         setAuraCapture(null);
+        setAuraStartup(null);
         armTimeout();
       } else if (current && current.token === detail.token && current.seed === detail.seed
-        && current.phase !== 'started' && current.phase !== 'error') {
+        && current.phase !== 'error') {
         if (detail.phase === 'error') {
           clearTimers();
           current.phase = 'error';
           setAuraPendingStart(null);
+          setAuraStartup(null);
+          setAuraOnboarding(null);
           setLoadingPhase('error');
         } else if (current.phase === 'loading') {
           current.phase = 'ready';
@@ -542,6 +561,25 @@ export function GamePage({
       {isAura && loadingPhase === 'hidden' && !auraSummary && auraCapture?.state === 'recording' ? (
         <p className="aura-capture-status" role="status">{paused ? 'Recording paused' : 'Recording match'} · game only</p>
       ) : null}
+      {isAura && loadingPhase === 'hidden' && auraStartup && !auraSummary ? (
+        <p className="sr-only" role="status" aria-live="polite">
+          {auraStartup.phase === 'awaiting-input' ? 'Your duel is ready. Start when you are ready.'
+            : auraStartup.phase === 'preparing' ? 'Preparing the Aura duel.'
+            : auraStartup.phase === 'versus' ? 'Insert Player Aura. Get ready for your duel.'
+              : auraStartup.phase === 'countdown' ? `Get ready. ${auraStartup.count}.`
+                : 'Go! Hit the beat.'}
+        </p>
+      ) : null}
+      {isAura && loadingPhase === 'hidden' && auraStartup?.phase === 'awaiting-input' && !auraSummary ? (
+        <div className="aura-start-ready" role="group" aria-label="Start your Aura duel">
+          <p>Get ready to hit the beat.</p>
+          <button type="button" className="asf-btn asf-btn--primary" onClick={() => {
+            window.dispatchEvent(new CustomEvent(AURA_STARTUP_READY_EVENT, {
+              detail: { token: auraStartup.token, seed: auraStartup.seed },
+            }));
+          }}>I’m ready</button>
+        </div>
+      ) : null}
       {loadingPhase !== 'hidden' ? (
         <FightLoadingCurtain
           phase={loadingPhase}
@@ -593,7 +631,9 @@ export function GamePage({
           Online Co-op Rush is not connected in this local preview.
         </div>
       ) : null}
-      {isAura && loadingPhase === 'hidden' && auraOnboarding && !paused && !matchActionsVisible && !auraSummary ? (
+      {isAura && loadingPhase === 'hidden' && auraOnboarding
+        && (auraOnboarding.phase === 'practice' || auraStartup?.phase === 'playing')
+        && !paused && !matchActionsVisible && !auraSummary ? (
         <AuraOnboardingHint detail={auraOnboarding} onSkip={() => {
           window.dispatchEvent(new CustomEvent(AURA_ONBOARDING_SKIP_EVENT, {
             detail: { token: auraOnboarding.token, seed: auraOnboarding.seed },
@@ -603,7 +643,8 @@ export function GamePage({
       {isAura && loadingPhase === 'hidden' && !matchActionsVisible && !auraSummary ? (
         <div className="aura-game-toolbar" aria-label="Aura match controls">
           {!launchTarget.data.cpuVsCpu ? (
-            <AuraControls playerIndex={online?.localSlot ?? auraControlledSlot ?? auraTouchSlot} disabled={paused} />
+            <AuraControls playerIndex={online?.localSlot ?? auraControlledSlot ?? auraTouchSlot}
+              disabled={paused || (auraOnboarding?.phase !== 'practice' && auraStartup?.phase !== 'playing')} />
           ) : null}
           <button type="button" className="aura-game-toolbar__back" onClick={onExit}>Back</button>
           {!onlineMatch && !paused ? (

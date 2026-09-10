@@ -37,6 +37,7 @@ import { FightLoadingCurtain } from '../components/FightLoadingCurtain.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
 import { AuraOnboardingHint } from '../components/AuraOnboardingHint.tsx';
 import { AURA_ONBOARDING_EVENT } from '../../game/aura/AuraOnboarding.ts';
+import { AURA_STARTUP_EVENT, AURA_STARTUP_READY_EVENT } from '../../game/aura/AuraStartup.ts';
 import { AURA_BATTLE_COMPLETE_EVENT, MATCH_ACTIONS_VISIBILITY_EVENT } from '../../game/match/MatchConfig.ts';
 import { AuraControls } from '../components/AuraControls.tsx';
 import { AURA_PRESENTATION_EVENT, AURA_PRESENTATION_START_EVENT, AURA_PRESENTATION_TURN_EVENT } from '../../game/aura/AuraPresentationEvents.ts';
@@ -77,9 +78,9 @@ const mount = async (sceneKey = 'AuraScene', data = {}) => {
 };
 const finishOpening = () => {
   const aura = props.launchTarget.sceneKey === 'AuraScene';
-  advance(aura ? 3000 : 1100);
+  advance(aura ? 600 : 1100);
   expect(curtain()?.props.phase).toBe('opening');
-  advance(aura ? 1000 : 720);
+  advance(aura ? 300 : 720);
 };
 
 beforeEach(() => {
@@ -126,24 +127,23 @@ describe('GamePage Aura presentation handoff', () => {
       stageLabel: label, stageImageUrl: getStageTheme('executive-rumble').assetPath,
     });
   });
-  it('holds a cached face-off for three seconds and finishes the full opening before starting', async () => {
+  it('finishes the short loading transition before handing over to the canvas intro', async () => {
     await mount(); emit('loading'); emit('ready');
-    advance(2999); expect(curtain().props.phase).toBe('loading'); expect(starts).toEqual([]);
+    advance(599); expect(curtain().props.phase).toBe('loading'); expect(starts).toEqual([]);
     advance(1); expect(curtain().props.phase).toBe('opening');
-    advance(999); expect(curtain().props.phase).toBe('opening'); expect(starts).toEqual([]);
+    advance(299); expect(curtain().props.phase).toBe('opening'); expect(starts).toEqual([]);
     advance(1); expect(curtain()).toBeUndefined(); expect(starts).toEqual([{ token: 1, seed: 17 }]);
   });
-  it('leaves time to see the fighters even when loading has already exceeded three seconds', async () => {
+  it('opens immediately after slow assets become ready instead of adding a fake loading hold', async () => {
     await mount(); emit('loading'); advance(4000); emit('ready');
-    advance(1499); expect(curtain().props.phase).toBe('loading'); expect(starts).toEqual([]);
-    advance(1); expect(curtain().props.phase).toBe('opening');
-    advance(999); expect(starts).toEqual([]);
+    advance(0); expect(curtain().props.phase).toBe('opening'); expect(starts).toEqual([]);
+    advance(299); expect(starts).toEqual([]);
     advance(1); expect(curtain()).toBeUndefined(); expect(starts).toHaveLength(1);
   });
-  it('keeps the readable hold but uses the short opening for reduced motion', async () => {
+  it('respects the reduced-motion opening before the canvas introduction', async () => {
     Object.assign(viewport, { matchMedia: (query: string) => ({ matches: query.includes('prefers-reduced-motion') }) });
     await mount(); emit('loading'); emit('ready');
-    advance(2999); expect(curtain().props.phase).toBe('loading');
+    advance(599); expect(curtain().props.phase).toBe('loading');
     advance(1); expect(curtain().props.phase).toBe('opening');
     advance(179); expect(starts).toEqual([]);
     advance(1); expect(curtain()).toBeUndefined(); expect(starts).toHaveLength(1);
@@ -163,14 +163,14 @@ describe('GamePage Aura presentation handoff', () => {
     emit('loading', 2); expect(curtain().props.phase).toBe('loading');
     emit('ready', 1); emit('ready', 2, 99); advance(2000);
     expect(curtain().props.phase).toBe('loading'); expect(starts).toHaveLength(1);
-    emit('ready', 2); advance(1499); // Late readiness still gets a readable hold.
-    expect(curtain().props.phase).toBe('loading'); expect(starts).toHaveLength(1);
-    advance(1); expect(curtain().props.phase).toBe('opening'); advance(1000);
+    emit('ready', 2); advance(0);
+    expect(curtain().props.phase).toBe('opening'); expect(starts).toHaveLength(1);
+    advance(300);
     expect(starts).toEqual([{ token: 1, seed: 17 }, { token: 2, seed: 17 }]);
     expect(runtime.create).toHaveBeenCalledTimes(1);
   });
   it('an asset failure during opening cancels the pending start', async () => {
-    await mount(); emit('loading'); emit('ready'); advance(3000);
+    await mount(); emit('loading'); emit('ready'); advance(600);
     emit('error'); advance(2000); emit('ready');
     expect(curtain().props.phase).toBe('error'); expect(starts).toEqual([]);
   });
@@ -197,6 +197,41 @@ describe('GamePage Aura presentation handoff', () => {
     find(node => node.props?.['aria-label'] === 'Pause').props.onClick(); flush();
     expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
     expect(find(node => node.props?.['aria-label'] === 'Game paused')).toBeDefined();
+  });
+  it('announces the current countdown and enables lanes only when this lifecycle is playing', async () => {
+    await mount('AuraScene', { vsAI: true }); emit('loading'); emit('ready'); finishOpening();
+    const startup = (phase: string, count: number | null, token = 1) => {
+      viewport.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, {
+        detail: { token, seed: 17, phase, count, remainingMs: count === null ? 0 : count * 1000 },
+      })); flush();
+    };
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
+    startup('countdown', 3);
+    expect(find(node => node.props?.role === 'status' && node.props?.className === 'sr-only')?.props.children).toBe('Get ready. 3.');
+    startup('playing', null, 99);
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
+    startup('playing', null);
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(false);
+    emit('loading', 2);
+    expect(find(node => node.props?.role === 'status' && node.props?.className === 'sr-only')).toBeUndefined();
+    startup('playing', null);
+    emit('ready', 2); finishOpening();
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
+  });
+  it('waits for an explicit ready gesture and sends the current lifecycle identity', async () => {
+    await mount(); emit('loading'); emit('ready'); finishOpening();
+    const ready = vi.fn();
+    viewport.addEventListener(AURA_STARTUP_READY_EVENT, ready);
+    viewport.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, {
+      detail: { token: 1, seed: 17, phase: 'awaiting-input', remainingMs: 0, count: null },
+    })); flush();
+    expect(ready).not.toHaveBeenCalled();
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
+    find(node => node.type === 'button' && node.props.children === 'I’m ready').props.onClick();
+    expect(ready.mock.calls[0][0].detail).toEqual({ token: 1, seed: 17 });
+    emit('error');
+    expect(curtain().props.phase).toBe('error');
+    expect(find(node => node.props?.['aria-label'] === 'Start your Aura duel')).toBeUndefined();
   });
   it('keeps the authenticated local slot for online controls, irrespective of turn', async () => {
     await mount('AuraScene', { online: { localSlot: 1 } }); emit('loading'); emit('ready'); finishOpening();
@@ -246,6 +281,20 @@ describe('GamePage Aura presentation handoff', () => {
       expect(starts.at(-1)).toEqual({ token, seed: 17 });
     }
   });
+  it('waits until playing before showing battle tips or accepting notes after practice', async () => {
+    await mount('AuraScene', { gameMode: 'aura', vsAI: true, experience: 'trial' });
+    emit('loading'); emit('ready'); finishOpening();
+    const tip = { token: 1, seed: 17, phase: 'practice', cue: 'hit', practiceLane: 3, completedLanes: 3, laneKeys: ['D', 'F', 'J', 'K'] };
+    viewport.dispatchEvent(new CustomEvent(AURA_ONBOARDING_EVENT, { detail: tip })); flush();
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(false);
+    viewport.dispatchEvent(new CustomEvent(AURA_ONBOARDING_EVENT, { detail: { ...tip, phase: 'battle', cue: 'timing', practiceLane: null, completedLanes: 4 } }));
+    viewport.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, { detail: { token: 1, seed: 17, phase: 'countdown', remainingMs: 3000, count: 3 } })); flush();
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
+    expect(find(node => node.type === AuraOnboardingHint)).toBeUndefined();
+    viewport.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, { detail: { token: 1, seed: 17, phase: 'playing', remainingMs: 0, count: null } })); flush();
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(false);
+    expect(find(node => node.type === AuraOnboardingHint)?.props.detail.phase).toBe('battle');
+  });
   it('shows only the Aura result after a trial, with its Rookie creation action', async () => {
     await mount('AuraScene', { gameMode: 'aura', vsAI: true, experience: 'trial' });
     emit('loading'); emit('ready'); finishOpening();
@@ -255,7 +304,7 @@ describe('GamePage Aura presentation handoff', () => {
     expect(find(node => node.type === AuraBattleResults)?.props).toMatchObject({ trial: true, onCreatePlayer: props.onCreateFighter });
   });
   it('unmount disposes timers so a pending opening never starts', async () => {
-    await mount(); emit('loading'); emit('ready'); advance(3000);
+    await mount(); emit('loading'); emit('ready'); advance(600);
     for (const slot of hooks.slots) { slot?.cleanup?.(); if (slot) slot.cleanup = undefined; }
     vi.advanceTimersByTime(5000);
     expect(starts).toEqual([]); expect(runtime.destroy).toHaveBeenCalledExactlyOnceWith(true);

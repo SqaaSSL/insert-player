@@ -24,6 +24,9 @@
 .aura-challenge-composer label { display: grid; gap: 10px; font-size: 10px; line-height: 1.7; flex: 1 1 220px; }
 .aura-challenge-composer input, .aura-challenge-composer select { box-sizing: border-box; min-height: 46px; width: 100%; max-width: 100%; border: 1px solid #aaa0b5; background: #10111c; color: #fff4d6; padding: 12px; font: inherit; }
 .aura-challenge-composer input:focus-visible, .aura-challenge-composer select:focus-visible { outline: 3px solid #ffce3a; outline-offset: 3px; }
+.aura-challenge-composer__brand { margin: 0 0 12px; color: #4fdced; font-family: 'Space Grotesk', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: .14em; }
+.aura-results .aura-challenge-composer { box-sizing: border-box; width: 100%; margin-top: 0; padding: 20px; border: 1px solid #ffce3a; border-left: 4px solid #ffce3a; background: #131120; text-align: left; }
+.aura-results .aura-challenge-composer h3 { margin-top: 0; }
 .aura-challenge-composer__notice, .aura-challenge-comparison p { color: #e5decf; font-size: 10px; line-height: 1.9; }
 .aura-challenge-composer__link { display: block; overflow-wrap: anywhere; color: #ffe273; font-size: 10px; line-height: 1.8; margin-top: 16px; }
 .aura-challenge-comparison { padding: 20px 0; border-bottom: 1px solid #615974; margin-bottom: 24px; }

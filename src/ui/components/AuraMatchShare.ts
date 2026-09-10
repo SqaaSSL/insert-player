@@ -1,4 +1,16 @@
 import type { AuraVideoRecording } from '../../game/aura/AuraVideoRecorder.ts';
+import type { AuraChallengeShareData } from '../shared/auraChallengeShare.ts';
+
+/** Called only by the explicit video-share action. The challenge URL carries
+ * the same routine; the file remains local until the user chooses a recipient. */
+export function auraVideoShareData(file: File, challenge?: AuraChallengeShareData | null): ShareData {
+  return {
+    title: 'Insert Player · Aura Battle',
+    text: challenge?.text ?? 'My Aura duel on Insert Player. Watch the moves, then play your own free battle.',
+    url: challenge?.url ?? 'https://insertplayer.ai/games/aura',
+    files: [file],
+  };
+}
 
 function filenamePart(name: string): string {
   return name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')

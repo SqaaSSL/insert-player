@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AuraBattleCompleteDetail, OnlineRematchStateDetail } from '../../game/match/MatchConfig.ts';
 import { auraAccuracy } from '../../game/aura/AuraBattle.ts';
 import type { AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
-import { auraVideoFile, canShareAuraVideo, downloadAuraVideo } from './AuraMatchShare.ts';
+import { auraVideoFile, auraVideoShareData, canShareAuraVideo, downloadAuraVideo } from './AuraMatchShare.ts';
 import { compareAuraChallenge, type AuraChallenge } from '../../game/aura/AuraChallenge.ts';
 import { AuraChallengeComposer } from './AuraChallengeComposer.tsx';
 import { rememberAuraChallenge } from '../shared/auraChallenges.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
+import { auraChallengeShareData } from '../shared/auraChallengeShare.ts';
 
 interface AuraBattleResultsProps {
   summary: AuraBattleCompleteDetail;
@@ -46,6 +47,7 @@ export function AuraBattleResults({
   const [shareError, setShareError] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoChallenge, setVideoChallenge] = useState<AuraChallenge | null>(null);
   const completedChallenge = useRef<AuraBattleCompleteDetail | null>(null);
   const challenge = summary.challenge;
   const challengeScore = challenge?.slot === 1 ? summary.p2Score.score : summary.p1Score.score;
@@ -93,7 +95,8 @@ export function AuraBattleResults({
     setShareStatus(null);
     try {
       // File already exists: preserve the click's transient user activation.
-      await navigator.share({ title: 'Insert Player · Aura Battle', files: [file] });
+      const challengeData = videoChallenge ? auraChallengeShareData(videoChallenge, window.location.origin) : null;
+      await navigator.share(auraVideoShareData(file, challengeData));
       trackProductEvent('share_video', { game: 'aura' });
       setShareStatus('Video handed to your sharing app.');
     } catch (error) {
@@ -109,7 +112,8 @@ export function AuraBattleResults({
       <div className="aura-results__veil" aria-hidden="true" />
       <div className="aura-results__panel" ref={panelRef} tabIndex={-1} onKeyDown={event => {
         if (event.key !== 'Tab') return;
-        const controls = panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), video[controls], [tabindex="0"]');
+        const controls = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), summary, video[controls], [tabindex="0"]') ?? [])
+          .filter(control => !control.closest('details:not([open])') || control.tagName === 'SUMMARY');
         if (!controls?.length) return;
         const first = controls[0];
         const last = controls[controls.length - 1];
@@ -120,6 +124,7 @@ export function AuraBattleResults({
         }
       }}>
         <p className="aura-results__eyebrow">
+          INSERT PLAYER · {' '}
           {localSlot === undefined
             ? 'THE ROOM HAS DECIDED'
             : localWinner === null
@@ -156,12 +161,6 @@ export function AuraBattleResults({
           </article>
         </div>
 
-        {trial && onCreatePlayer ? <div className="aura-results__rookie">
-          <div><h3>Your moves. Your face. Your next battle.</h3>
-            <p>Turn one photo into your Rookie Aura with six moves. Your first Rookie is included with your account.</p></div>
-          <button type="button" className="asf-btn asf-btn--primary" onClick={onCreatePlayer}>Create my Rookie Aura</button>
-        </div> : null}
-
         {summary.challengeRoutine && summary.challengeShareSlots?.length ? (
           <AuraChallengeComposer key={`${summary.challengeRoutine.chartId}:${summary.p1Score.score}:${summary.p2Score.score}`}
             routine={summary.challengeRoutine}
@@ -169,17 +168,25 @@ export function AuraBattleResults({
             scores={summary.challengeShareSlots.map(slot => ({ slot,
               name: slot === 0 ? summary.p1Name : summary.p2Name,
               score: slot === 0 ? summary.p1Score.score : summary.p2Score.score }))}
-            onCreated={onChallengeCreated} />
+            onCreated={onChallengeCreated} onDraftChange={setVideoChallenge} />
         ) : null}
 
-        <div className="aura-results__share">
+        {trial && onCreatePlayer ? <div className="aura-results__rookie">
+          <div><h3>Your moves. Your face. Your next battle.</h3>
+            <p>Turn one photo into your Rookie Aura with six moves. Your first Rookie is included with your account.</p></div>
+          <button type="button" className="asf-btn" onClick={onCreatePlayer}>Create my Rookie Aura</button>
+        </div> : null}
+
+        <details className="aura-results__video-option">
+          <summary>Save or share your match video</summary>
+          <div className="aura-results__share">
           {videoUrl && file ? (
             <>
               <video className="aura-results__video" src={videoUrl} controls playsInline preload="metadata"
                 aria-label={`${summary.p1Name} versus ${summary.p2Name}, recorded Aura match`} />
               <div className="aura-results__actions">
-                <button type="button" className="asf-btn asf-btn--primary" disabled={sharing} onClick={() => void share()}>
-                  {sharing ? 'Opening Share…' : nativeFileShare ? 'Share Match' : 'Download Match'}
+                <button type="button" className="asf-btn" disabled={sharing} onClick={() => void share()}>
+                  {sharing ? 'Opening Share…' : nativeFileShare ? 'Share video + link' : 'Download Match'}
                 </button>
                 {nativeFileShare ? <button type="button" className="asf-btn" onClick={download}>Download Video</button> : null}
               </div>
@@ -197,7 +204,8 @@ export function AuraBattleResults({
             </p>
           ) : <p className="aura-results__status" role="status">Preparing your match video…</p>}
           {shareStatus ? <p className={`aura-results__share-note${shareError ? ' is-error' : ''}`} role="status">{shareStatus}</p> : null}
-        </div>
+          </div>
+        </details>
 
         {onlineRematch.message ? (
           <p className={`aura-results__status${onlineRematch.state === 'error' ? ' is-error' : ''}`} role="status">

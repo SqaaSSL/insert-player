@@ -27,6 +27,7 @@ interface FightLoadingCurtainProps {
 
 function AuraLoadingLayout({
   failed,
+  ready = false,
   p1Name,
   p2Name,
   p1PhotoHash,
@@ -38,7 +39,7 @@ function AuraLoadingLayout({
   difficultyLabel,
   auraLaneKeys = AURA_DEFAULT_LANE_KEYS,
   onExit,
-}: RushLoadingLayoutProps & { auraLaneKeys?: AuraLaneKeys }) {
+}: RushLoadingLayoutProps & { auraLaneKeys?: AuraLaneKeys; ready?: boolean }) {
   return (
     <>
       <div className="aura-loader__stage-art" aria-hidden="true">
@@ -100,8 +101,8 @@ function AuraLoadingLayout({
             </div>
           ) : (
             <div className="aura-loader__loading">
-              <span className="fight-loader__status">LOADING PERFORMERS</span>
-              <LoadingMeter />
+              <span className="fight-loader__status">{ready ? 'READY FOR THE DUEL' : 'PREPARING YOUR DUEL'}</span>
+              {!ready && <LoadingMeter />}
             </div>
           )}
         </aside>
@@ -343,6 +344,7 @@ export function FightLoadingCurtain({
       >
         <AuraLoadingLayout
           failed={failed}
+          ready={phase === 'opening'}
           p1Name={p1Name}
           p2Name={p2Name}
           p1PhotoHash={p1PhotoHash}
