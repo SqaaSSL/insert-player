@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   frontendAssetProbeUrl,
   frontendShellReadinessError,
+  missingAuraWatchReadinessError,
   parsePositiveTimeoutMs,
 } from './frontend-smoke-readiness.mjs';
 
@@ -120,5 +121,23 @@ describe('frontend deployment propagation readiness', () => {
       cspHeader: `script-src 'self' https://challenges.cloudflare.com ${clerkOrigin}`,
       expectedClerkOrigin: clerkOrigin,
     })).toBe('the current response is not the app shell');
+  });
+});
+
+
+describe('missing Aura watch release probe', () => {
+  const valid = { status: 404, html: '<title>Battle unavailable</title><div id="app"></div><script src="/assets/index-current.js"></script>',
+    contentType: 'text/html; charset=utf-8', cacheControl: 'no-store', expectedAssetPath: '/assets/index-current.js' };
+  it('accepts the uncached unavailable-battle shell from the exact app release', () => {
+    expect(missingAuraWatchReadinessError(valid)).toBe('');
+  });
+  it.each([200, 503])('rejects the static fallback or the actual swallowed-fetch regression (%i)', status => {
+    expect(missingAuraWatchReadinessError({ ...valid, status })).toContain(`got ${status}`);
+  });
+  it('rejects stale social previews, cacheable responses and another app release', () => {
+    expect(missingAuraWatchReadinessError({ ...valid, html: valid.html + '<meta property="og:image" content="old.png">' })).toContain('preview');
+    expect(missingAuraWatchReadinessError({ ...valid, cacheControl: 'public, max-age=300' })).toContain('cached');
+    expect(missingAuraWatchReadinessError({ ...valid, expectedAssetPath: '/assets/new.js' })).toContain('different app release');
+    expect(missingAuraWatchReadinessError({ ...valid, contentType: 'application/json', html: '{}' })).toContain('app shell');
   });
 });
