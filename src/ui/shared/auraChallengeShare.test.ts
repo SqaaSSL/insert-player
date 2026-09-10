@@ -7,9 +7,19 @@ import { auraChallengeShareData, auraChallengeShareUrl, shareAuraChallenge } fro
 
 const routine = createAuraChallengeRoutine(34, 'lowkey', DEFAULT_AURA_TRACK.id, 'aura-plaza')!;
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('Aura social challenge payload', () => {
+  it('uses the deployed API origin by default when the environment configures it', () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.insertplayer.ai');
+    const challenge = createAuraChallenge(routine, 'Alex', 1_000, 1);
+    const url = new URL(auraChallengeShareData(challenge, 'https://insertplayer.ai').url);
+    expect(url.origin).toBe('https://api.insertplayer.ai');
+    expect(url.pathname).toMatch(/^\/challenges\/aura\/[A-Za-z0-9_-]+$/);
+    expect(decodeAuraChallenge(url.pathname.split('/').at(-1))).toEqual({ ok: true, challenge });
+    expect(url.search).toBe('');
+  });
+
   it('uses the configured public Worker preview and preserves the playable token exactly', () => {
     const challenge = createAuraChallenge(routine, 'Alex', 1_000, 1);
     const data = auraChallengeShareData(challenge, 'https://insertplayer.ai/private', 'https://api.insertplayer.ai/');
@@ -34,7 +44,7 @@ describe('Aura social challenge payload', () => {
 
   it.each([0, 1] as const)('keeps the exact routine and performer timing for slot %s in a stable public URL', slot => {
     const challenge = createAuraChallenge(routine, 'Alex', 1_000, slot);
-    const data = auraChallengeShareData(challenge, 'https://insertplayer.ai/game?player=private-photo');
+    const data = auraChallengeShareData(challenge, 'https://insertplayer.ai/game?player=private-photo', '');
     const link = new URL(data.url);
     expect(link.pathname).toBe('/challenge');
     expect(Array.from(link.searchParams.keys())).toEqual(['challenge']);
@@ -46,7 +56,7 @@ describe('Aura social challenge payload', () => {
       seed: routine.seed, auraDifficulty: routine.difficulty, auraTrackId: routine.trackId,
       stageId: routine.stageId, auraChallenge: { chartId: routine.chartId, slot },
     });
-    expect(auraChallengeShareData(challenge, 'https://insertplayer.ai/').url).toBe(data.url);
+    expect(auraChallengeShareData(challenge, 'https://insertplayer.ai/', '').url).toBe(data.url);
     expect(JSON.stringify(data)).not.toContain('private-photo');
     expect(Object.keys(data)).toEqual(['title', 'text', 'url']);
   });
