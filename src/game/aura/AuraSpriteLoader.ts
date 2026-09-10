@@ -7,7 +7,7 @@ import {
 import { getAllSpritesForHash, getCachedMeta } from '../../services/SpriteCache.ts';
 import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 import type { AuraDemoPerformer } from './AuraDemoPerformers.ts';
-import { builtinAuraPerformerForCachedMeta } from './AuraBuiltinPerformers.ts';
+import { builtinAuraPerformerForCachedMeta } from '../../services/AuraBuiltinPerformers.ts';
 import {
   auraAtlasContentHash, auraIdleReference, calibrateAuraAtlas, measureAuraAtlas,
   type AuraAnimationCalibration, type AuraAtlasGeometry,

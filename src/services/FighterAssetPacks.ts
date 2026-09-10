@@ -5,7 +5,7 @@ import {
 import {
   builtinAuraPerformerForIdentity,
   type AuraBuiltinPerformerIdentity,
-} from '../game/aura/AuraBuiltinPerformers';
+} from './AuraBuiltinPerformers';
 
 export const FIGHT_ASSET_PACK_ID = 'fight-v1' as const;
 export const AURA_ASSET_PACK_ID = 'aura-v1-2026' as const;
