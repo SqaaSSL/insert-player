@@ -26,7 +26,7 @@ beforeAll(async () => {
   mf = new Miniflare({ workers: [{
     config: { type: 'worker', name: 'aura-watch-runtime', compatibilityDate: '2026-08-22',
       manifest: { mainModule: 'index.js', modules: { 'index.js': { type: 'esm', contents: bundle.outputFiles[0].text } } } },
-    dev: { outboundService: { type: 'fetcher', handler: async request => {
+    dev: { outboundService: { type: 'fetcher', handler: async (request: Request) => {
       calls.push({ url: request.url, authorization: request.headers.get('Authorization'), cookie: request.headers.get('Cookie') });
       return new Response(upstreamStatus === 200 ? JSON.stringify({ id, challengeToken: token, expiresAt: '2099-01-01T00:00:00Z' }) : null,
         { status: upstreamStatus, headers: { 'Content-Type': 'application/json', ...(upstreamStatus === 302 ? { Location: 'https://untrusted.example/' } : {}) } });
