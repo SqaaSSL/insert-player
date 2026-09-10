@@ -68,7 +68,9 @@ export async function auraWatchPageResponse(context) {
   try {
     // Never forward browser credentials, IP headers or user-controlled origins.
     const response = await fetch(`${apiOrigin}/api/aura/clips/${id}`, {
-      headers: { Accept: 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(5000),
+      // workerd rejects redirect: 'error' before making the request. Manual
+      // mode leaves redirects as non-success responses, without following them.
+      headers: { Accept: 'application/json' }, redirect: 'manual', signal: AbortSignal.timeout(5000),
     });
     if (response.status === 404 || response.status === 410) status = 404;
     if (response.ok) {

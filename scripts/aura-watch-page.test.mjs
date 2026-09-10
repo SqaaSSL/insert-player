@@ -46,7 +46,7 @@ describe('Aura battle Pages route', () => {
     const [target, options] = api.mock.calls[0];
     expect(target).toBe(`https://api.insertplayer.ai/api/aura/clips/${id}`);
     expect(options.headers).toEqual({ Accept: 'application/json' });
-    expect(options.redirect).toBe('error');
+    expect(options.redirect).toBe('manual');
     const assetRequest = ctx.env.ASSETS.fetch.mock.calls[0][0];
     expect(assetRequest.url).toBe('https://insertplayer.ai/');
     expect(assetRequest.headers.has('Authorization')).toBe(false);

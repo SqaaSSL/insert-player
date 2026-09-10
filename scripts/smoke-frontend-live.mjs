@@ -7,6 +7,7 @@ import { frontendReleaseManifestIssue } from './release-provenance.mjs';
 import {
   frontendAssetProbeUrl,
   frontendShellReadinessError,
+  missingAuraWatchReadinessError,
   parseContentSecurityPolicy,
   parsePositiveTimeoutMs,
 } from './frontend-smoke-readiness.mjs';
@@ -203,6 +204,33 @@ async function assertSpaRoute(path) {
   assert(text.includes('<div id="app"></div>'), `${path} did not return the app shell`);
 }
 
+async function assertMissingAuraWatchRoutes(currentAssetPath) {
+  const id = '00000000000000000000000000000000';
+  const apiResponse = await fetchWithTimeout('missing Aura clip metadata', `${expectedApiOrigin}/api/aura/clips/${id}`);
+  assert(apiResponse.status === 404, `Missing Aura clip API expected 404, got ${apiResponse.status}`);
+  const metadata = await apiResponse.json();
+  assert(metadata.code === 'clip_unavailable', 'Missing Aura clip did not reach the deployed clip API');
+  const origins = new Set([new URL(frontendUrl).origin]);
+  if (!isSandbox && ['insertplayer.ai', 'www.insertplayer.ai'].includes(new URL(frontendUrl).hostname)) {
+    origins.add('https://insertplayer.ai');
+    origins.add('https://www.insertplayer.ai');
+  }
+  for (const origin of origins) {
+    const target = `${origin}/watch/${id}`;
+    let reason = '';
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await fetchWithTimeout('missing Aura watch page', target);
+      reason = missingAuraWatchReadinessError({ status: res.status, html: await res.text(),
+        contentType: res.headers.get('Content-Type') ?? '', cacheControl: res.headers.get('Cache-Control') ?? '',
+        expectedAssetPath: currentAssetPath });
+      if (!reason) break;
+      if (attempt < 2) await sleep(FRONTEND_RETRY_DELAY_MS);
+    }
+    assert(!reason, `Aura watch delivery failed at ${target}: ${reason}`);
+  }
+  log('Aura watch Pages-to-API routing returns an uncached missing-battle app shell on every public host');
+}
+
 function assertCspSource(directives, directive, source) {
   assert(
     directives.get(directive)?.includes(source),
@@ -358,6 +386,8 @@ async function main() {
     );
     log(`frontend release provenance matches commit ${expectedGitSha}`);
   }
+
+  await assertMissingAuraWatchRoutes(expectedAssetPath || extractAssetPaths(home.text).find(path => path.endsWith('.js')) || '');
 
   const manifest = await fetchText('web app manifest', '/site.webmanifest');
   const manifestJson = JSON.parse(manifest.text);

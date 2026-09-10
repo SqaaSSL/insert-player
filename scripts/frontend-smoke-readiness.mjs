@@ -60,3 +60,22 @@ export function frontendShellReadinessError({
   }
   return '';
 }
+
+/** A deliberately missing, well-formed clip ID still traverses Pages → API.
+ * A static SPA 200 or a swallowed subrequest failure must fail deployment. */
+export function missingAuraWatchReadinessError({ status, html, contentType, cacheControl, expectedAssetPath = '' }) {
+  if (status !== 404) return `missing Aura watch route expected HTTP 404, got ${status}`;
+  if (!contentType.includes('text/html') || !html.includes('<div id="app"></div>')) {
+    return 'missing Aura watch route did not preserve the app shell';
+  }
+  if (!cacheControl.split(',').some(value => value.trim() === 'no-store')) {
+    return 'missing Aura watch route must not be cached';
+  }
+  if (expectedAssetPath && !html.includes(`src="${expectedAssetPath}"`)) {
+    return 'missing Aura watch route references a different app release';
+  }
+  if (/<meta\b[^>]*(?:property|name)\s*=\s*["'](?:og:image(?::[^"']*)?|twitter:image(?::[^"']*)?)["']/i.test(html)) {
+    return 'missing Aura watch route retained a battle or homepage image preview';
+  }
+  return '';
+}
