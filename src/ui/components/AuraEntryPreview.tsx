@@ -154,21 +154,21 @@ export function AuraEntryPreview({ compact = false }: { compact?: boolean }) {
 
   return (
     <div ref={previewRef} className={`product-entry__preview product-entry__preview--aura aura-entry-preview${compact ? ' is-compact' : ''}`} data-running={running}>
+      <div className="aura-entry-preview__screen">
+        <canvas ref={canvasRef} width="1024" height="576" className="aura-entry-preview__canvas" role="img" aria-label="Aura gameplay demo: the active performer dances beside four falling-note lanes. Notes reach D, F, J and K to earn Aura, then the rival takes a turn." />
+        {(!atlases || loadError) && <p className="aura-entry-preview__status" role="status">{loadError ? 'Preview unavailable. You can still play Aura.' : 'Loading the duel…'}</p>}
+      </div>
       <div className="aura-entry-preview__header">
-        <span className="aura-entry-preview__eyebrow">Aura Plaza · gameplay demo</span>
+        <span className="aura-entry-preview__eyebrow">Duel preview</span>
         {!reducedMotion && <div className="aura-entry-preview__controls">
           <button type="button" className="aura-entry-preview__pause" onClick={toggleSound} disabled={!soundReady} aria-pressed={soundEnabled} aria-label={soundEnabled ? 'Mute duel preview' : 'Enable duel preview sound'}>Sound {soundEnabled ? 'on' : 'off'}</button>
           <button type="button" className="aura-entry-preview__pause" onClick={() => setPaused((value) => !value)} aria-label={paused ? 'Play duel preview' : 'Pause duel preview'}><span aria-hidden="true">{paused ? '▶' : 'Ⅱ'}</span> {paused ? 'Play' : 'Pause'}</button>
         </div>}
       </div>
-      <div className="aura-entry-preview__screen">
-        <canvas ref={canvasRef} width="1024" height="576" className="aura-entry-preview__canvas" role="img" aria-label="Aura gameplay demo: the active performer dances beside four falling-note lanes. Notes reach D, F, J and K to earn Aura, then the rival takes a turn." />
-        {(!atlases || loadError) && <p className="aura-entry-preview__status" role="status">{loadError ? 'Preview unavailable. You can still play Aura.' : 'Loading the duel…'}</p>}
-      </div>
       <dl className="sr-only" aria-label="Demo Aura scores">
         {PERFORMERS.map((performer, index) => <div key={performer.subject}><dt>{performer.name}</dt><dd>{duel.scores[index].toLocaleString('en-US')} Aura</dd></div>)}
       </dl>
-      <p className="aura-entry-preview__explanation">Follow the notes. Hit the line. Earn Aura.</p>
+      <p className="aura-entry-preview__explanation">Hit the beat. The higher Aura wins.</p>
       <div className="aura-entry-preview__moves" role="group" aria-label="Choose the opening move">
         {AURA_PREVIEW_MOVES.map((item, index) => <button key={item.id} type="button" className="aura-entry-preview__move" aria-pressed={index === startMove} onClick={() => { setStartMove(index); setElapsedMs(0); }}>{item.label}</button>)}
       </div>

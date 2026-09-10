@@ -13,7 +13,19 @@
   @apply grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] items-center gap-7 overflow-hidden rounded-[6px] border border-asf-line bg-asf-bg-1;
 }
 .product-entry__hero-copy {
-  @apply min-w-0 py-9 pl-8;
+  @apply min-w-0 pt-9 pl-8;
+}
+.product-entry__hero--gameplay-first {
+  @apply grid-rows-[1fr_1fr] gap-y-0;
+}
+.product-entry__hero--gameplay-first .product-entry__hero-copy {
+  @apply self-end;
+}
+.product-entry__hero--gameplay-first .product-entry__hero-art {
+  @apply col-start-2 row-start-1 row-span-2;
+}
+.product-entry__hero-actions {
+  @apply col-start-1 row-start-2 min-w-0 self-start pb-9 pl-8 pt-3;
 }
 .product-entry__genre {
   @apply mb-4 mt-0 text-sm font-medium text-asf-muted;
@@ -21,6 +33,9 @@
 .product-entry__hero-copy h1,
 .product-entry__hero-copy h2 {
   @apply text-[clamp(30px,4.5vw,56px)] leading-[1.2] tracking-normal text-asf-gold [text-wrap:balance];
+}
+.product-entry__title-row {
+  @apply flex flex-wrap items-center justify-between gap-x-3 gap-y-1;
 }
 .product-entry__promise {
   @apply mb-3 mt-5 text-[22px] font-semibold leading-snug [text-wrap:balance];
@@ -43,11 +58,11 @@
 .product-entry__text-link {
   @apply inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-[3px] border-0 bg-transparent px-1 py-2 text-sm font-medium leading-relaxed text-asf-gold underline decoration-asf-line-strong underline-offset-4 transition-colors duration-150 hover:text-asf-gold-bright hover:decoration-asf-gold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-asf-gold;
 }
-.product-entry__hero-copy > .product-entry__text-link {
+.product-entry__hero-actions > .product-entry__text-link {
   @apply mt-2;
 }
 .product-entry__back {
-  @apply mb-4;
+  @apply shrink-0 text-xs;
 }
 .product-entry__hero-art {
   @apply m-0 flex min-w-0 flex-col self-stretch;
@@ -177,11 +192,42 @@
   @apply mb-0 mt-3 max-w-[44ch] break-words text-sm text-asf-warn;
 }
 @media (max-width: 780px) {
+  .product-entry {
+    @apply pt-2;
+  }
+  .product-entry__page-heading {
+    @apply mb-2 min-h-11;
+  }
   .product-entry__hero {
-    @apply grid-cols-1 gap-0;
+    @apply grid-cols-1 grid-rows-none gap-0;
   }
   .product-entry__hero-copy {
-    @apply px-6 pb-5 pt-7;
+    @apply px-5 pb-3 pt-4;
+  }
+  .product-entry__hero-copy h1,
+  .product-entry__hero-copy h2 {
+    @apply text-[30px];
+  }
+  .product-entry__genre {
+    @apply mb-2;
+  }
+  .product-entry__promise {
+    @apply mb-0 mt-2 text-base;
+  }
+  .product-entry__hero--gameplay-first .product-entry__hero-art {
+    @apply col-start-auto row-start-auto row-span-1;
+  }
+  .product-entry__hero-actions {
+    @apply col-start-auto row-start-auto px-5 pb-3 pt-3;
+  }
+  .product-entry__hero-actions .product-entry__play-action .asf-btn {
+    @apply w-full;
+  }
+  .product-entry__play-hint {
+    @apply mt-2 text-center text-xs;
+  }
+  .product-entry__hero-actions > .product-entry__text-link {
+    @apply mt-0 flex;
   }
   .product-entry__description {
     @apply max-w-[56ch];
@@ -218,12 +264,6 @@
   }
   .product-entry__hero-copy {
     @apply px-5;
-  }
-  .product-entry__hero-copy .product-entry__play-action .asf-btn {
-    @apply w-full;
-  }
-  .product-entry__promise {
-    @apply text-xl;
   }
   .product-entry__game-row {
     @apply grid-cols-[105px_minmax(0,1fr)] gap-x-3;
@@ -348,18 +388,6 @@
   }
 }
 
-.product-entry__first-run {
-  @apply my-0 grid list-none grid-cols-3 gap-6 border-b border-asf-line-faint px-1 py-6;
-}
-.product-entry__first-run li {
-  @apply flex min-w-0 flex-col gap-2;
-}
-.product-entry__first-run strong {
-  @apply text-sm font-semibold text-asf-gold;
-}
-.product-entry__first-run span {
-  @apply max-w-[30ch] text-sm leading-relaxed text-asf-muted;
-}
 .product-entry__identity-copy > .asf-btn {
   @apply mb-2 mt-3 min-h-12 text-[10px] leading-relaxed;
 }
@@ -368,15 +396,4 @@
 }
 .product-entry__pricing dd small {
   @apply mt-2 block max-w-[16ch] text-[11px] font-normal leading-relaxed text-asf-muted;
-}
-@media (max-width: 620px) {
-  .product-entry__first-run {
-    @apply grid-cols-1 gap-4;
-  }
-  .product-entry__first-run li {
-    @apply gap-1;
-  }
-  .product-entry__first-run span {
-    @apply max-w-none;
-  }
 }

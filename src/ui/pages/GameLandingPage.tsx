@@ -13,11 +13,11 @@ export const GAME_ENTRY_CONTENT = {
     name: 'Aura',
     genre: 'A rhythm duel starring you',
     promise: 'Farm Aura. Win the crowd.',
-    description: 'Hit the notes. Nail the moves. Take more Aura than your rival. Play a free battle, then turn your photo into the main character.',
-    playLabel: 'Play my first battle',
-    playHint: 'Free to play · no account or photo · learn in the battle',
+    description: 'Hit the beat. Outscore your rival.',
+    playLabel: 'Play Aura',
+    playHint: 'Free · no account · learn as you play',
     personal: 'Next round, make it you.',
-    personalDescription: 'Start with Rookie Aura: one photo, your name, six performance moves. Your first Rookie is included with your account. Then take your character straight into a duel.',
+    personalDescription: 'One photo. Your name. Six Aura moves. Your first Rookie is included with your account.',
     previewCaption: 'Take turns. Hit the beat. The higher Aura wins.',
   },
   fight: {
@@ -99,29 +99,26 @@ export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenChara
   const otherModes = (['aura', 'fight', 'rush'] as const).filter((game) => game !== mode);
   return (
     <div className={`product-entry product-entry--${mode}`}>
-      {onBack && <button className="product-entry__text-link product-entry__back" type="button" onClick={onBack}>← All games</button>}
-
-      <section className="product-entry__hero" aria-labelledby="game-entry-title">
-        <div className="product-entry__hero-copy">
-          <p className="product-entry__genre">{content.genre}</p>
-          <h1 id="game-entry-title">{content.name}</h1>
+      <section className="product-entry__hero product-entry__hero--gameplay-first" aria-labelledby="game-entry-title">
+        <header className="product-entry__hero-copy">
+          {mode !== 'aura' && <p className="product-entry__genre">{content.genre}</p>}
+          <div className="product-entry__title-row">
+            <h1 id="game-entry-title">{content.name}</h1>
+            {onBack && <button className="product-entry__text-link product-entry__back" type="button" onClick={onBack}>← All games</button>}
+          </div>
           <p className="product-entry__promise">{content.promise}</p>
-          <p className="product-entry__description">{content.description}</p>
+        </header>
+        <figure className="product-entry__hero-art">
+          <GameEntryPreview mode={mode} />
+          {mode !== 'aura' && <figcaption>{content.previewCaption}</figcaption>}
+        </figure>
+        <div className="product-entry__hero-actions">
+          {mode !== 'aura' && <p className="product-entry__description">{content.description}</p>}
           <GameEntryPlayButton key={mode} mode={mode} onPlay={onPlay} />
           <p className="product-entry__play-hint">{content.playHint}</p>
           <button className="product-entry__text-link" type="button" onClick={() => onCreate(mode)}>{mode === 'aura' ? 'Create my Rookie Aura' : 'Create my character'}</button>
         </div>
-        <figure className="product-entry__hero-art">
-          <GameEntryPreview mode={mode} />
-          <figcaption>{content.previewCaption}</figcaption>
-        </figure>
       </section>
-
-      {mode === 'aura' && <ol className="product-entry__first-run" aria-label="Your first Aura run">
-        <li><strong>Play a battle</strong><span>Catch four notes to learn. Then the duel is on.</span></li>
-        <li><strong>Make it personal</strong><span>One photo becomes your Rookie Aura.</span></li>
-        <li><strong>Settle it with a friend</strong><span>Send your score. Same track, same notes, their turn.</span></li>
-      </ol>}
 
       {mode !== 'rush' && (onLocalVersus || onOnlineVersus || onWatch) && (
         <nav className="product-entry__variants" aria-label={`${content.name} play options`}>

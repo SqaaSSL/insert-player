@@ -18,16 +18,17 @@ export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges
         {lastGame && <button type="button" className="product-entry__text-link" onClick={() => onPlay(lastGame)}>Continue {GAME_ENTRY_CONTENT[lastGame].name} →</button>}
       </header>
 
-      <section className="product-entry__hero" aria-labelledby="play-aura-title">
-        <div className="product-entry__hero-copy">
-          <p className="product-entry__genre">Your spotlight is ready</p>
+      <section className="product-entry__hero product-entry__hero--gameplay-first" aria-labelledby="play-aura-title">
+        <header className="product-entry__hero-copy">
           <h2 id="play-aura-title">Aura</h2>
           <p className="product-entry__promise">Hit the beat. Win the crowd.</p>
-          <p className="product-entry__description">Take a turn, earn your moment, and send a friend the challenge. Start with a ready-made character.</p>
+        </header>
+        <div className="product-entry__hero-art"><GameEntryPreview mode="aura" /></div>
+        <div className="product-entry__hero-actions">
           <GameEntryPlayButton mode="aura" onPlay={onPlay} label="Play Aura" />
+          <p className="product-entry__play-hint">{GAME_ENTRY_CONTENT.aura.playHint}</p>
           <button className="product-entry__text-link" type="button" onClick={() => onExplore('aura')}>Meet Aura →</button>
         </div>
-        <div className="product-entry__hero-art"><GameEntryPreview mode="aura" /></div>
       </section>
 
       <section className="product-entry__game-list" aria-label="More games">
