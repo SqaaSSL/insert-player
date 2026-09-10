@@ -25,7 +25,7 @@ describe('Aura public watch page', () => {
     expect(html).toContain('Alex brought 1,200 Aura.');
     expect(html).toContain('No account or photo needed');
     expect(html).toContain('INSERT PLAYER');
-    expect(html).toContain(`href="${clip.downloadUrl.replace('&', '&amp;')}"`);
+    expect(html).toContain(`href="${clip.downloadUrl.replaceAll('&', '&amp;')}"`);
     expect(html).not.toContain('Remove my battle');
     expect(html).not.toContain('autoplay');
   });
