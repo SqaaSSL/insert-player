@@ -1,3 +1,5 @@
+import { quoteGenerationPackage, type GenerationPackageOptions } from '../../services/GenerationPackages';
+import { resolveFighterModeReadiness } from '../../services/FighterAssetPacks';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   getAllCachedMetas,
@@ -636,6 +638,14 @@ export function GalleryPage({
   const safeName = (meta?.characterName || 'fighter').replace(/[^a-z0-9]/gi, '_');
   const selectedAnimName = selection.kind === 'animation' ? selection.animationName : null;
   const currentTier: QualityTier = meta?.qualityTier ?? 'contender';
+  const auraReadiness = resolveFighterModeReadiness(sprites, 'aura', meta);
+  const fightReadiness = resolveFighterModeReadiness(sprites, 'fight');
+  const auraOnly = auraReadiness.kind === 'custom' && fightReadiness.kind === 'unavailable';
+  const currentPackage = fightReadiness.kind === 'unavailable' && sprites.some((sprite) => sprite.animationName.startsWith('aura_'))
+    ? 'aura' as const : 'complete' as const;
+  const compatibilityLabel = auraOnly ? 'Aura only' : fightReadiness.kind === 'custom'
+    ? auraReadiness.kind !== 'unavailable' ? 'Fight · Rush · Aura' : 'Fight · Rush'
+    : 'Animations incomplete';
   const currentAnimationRetryCost = animationRetryCreditCost(currentTier);
   const upgradeOptions = QUALITY_TIERS.filter((item) => tierIndex(item.id) > tierIndex(currentTier));
   const resumableJob = meta?.cloudFighterId
@@ -936,6 +946,7 @@ export function GalleryPage({
         apiContext,
         failedJob.id,
         creationFlow,
+        { creationPackage: failedJob.creationPackage, expansion: failedJob.expansion },
       );
       if (
         !authorization.authorized ||
@@ -952,6 +963,8 @@ export function GalleryPage({
         purchaseId: authorization.purchaseId,
         providerSessionId: authorization.providerSessionId,
         creationFlow,
+        creationPackage: failedJob.creationPackage,
+        expansion: failedJob.expansion,
         targetKind: failedJob.targetKind ?? undefined,
         targetName: failedJob.targetName ?? undefined,
       }, apiContext);
@@ -1207,6 +1220,7 @@ export function GalleryPage({
         apiContext,
         null,
         'original',
+        { creationPackage: target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage },
       );
       if (!authorization.authorized) {
         throw new Error(authorization.error ?? 'Generation not authorized');
@@ -1224,6 +1238,7 @@ export function GalleryPage({
           purchaseId: authorization.purchaseId,
           providerSessionId: authorization.providerSessionId,
           creationFlow: 'original',
+          creationPackage: target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage,
           targetKind: target.kind,
           targetName: target.kind === 'animation' ? target.name : target.key,
         }, apiContext);
@@ -1521,13 +1536,13 @@ export function GalleryPage({
     }
   };
 
-  const upgradeToTier = async (toTier: QualityTier) => {
+  const upgradeToTier = async (toTier: QualityTier, packageOptions: GenerationPackageOptions = { creationPackage: currentPackage }) => {
     if (!meta || !ownerActionsReady || !legalAccepted) return;
     const tier = QUALITY_TIERS.find((item) => item.id === toTier);
     if (!tier) return;
     clearDebugLog();
     setBusy(true);
-    setStatus(`Upgrading to ${tier.label}...`);
+    setStatus(packageOptions.expansion ? 'Adding Fight + Rush...' : `Upgrading to ${tier.label}...`);
     let purchaseId: string | undefined;
     let purchaseCommitted = false;
     let backendOwnsPurchase = false;
@@ -1548,6 +1563,9 @@ export function GalleryPage({
         null,
         currentGenerationLegalAttestation(),
         apiContext,
+        undefined,
+        'original',
+        packageOptions,
       );
       if (!authorization.authorized) {
         throw new Error(authorization.error ?? 'Upgrade not authorized');
@@ -1563,6 +1581,8 @@ export function GalleryPage({
           fighterId,
           purchaseId: authorization.purchaseId,
           providerSessionId: authorization.providerSessionId,
+          creationPackage: packageOptions.creationPackage,
+          expansion: packageOptions.expansion,
         }, apiContext);
         backendOwnsPurchase = true;
         setStatus(`${tierLabel(job.tier)} forge running in the cloud (${job.progressCurrent}/${job.progressTotal})...`);
@@ -1594,9 +1614,10 @@ export function GalleryPage({
         if (!cloud) throw new Error('Completed cloud fighter could not be loaded');
         await downloadCloudFighterToLocal(cloud, apiContext);
         await refreshCurrent();
-        setStatus(`${tierLabel(completed.tier)} upgrade synced`);
+        setStatus(packageOptions.expansion ? 'Fight + Rush added. Your Aura performances are preserved.' : `${tierLabel(completed.tier)} upgrade synced`);
         return;
       }
+      if (packageOptions.creationPackage === 'aura' || packageOptions.expansion) throw new Error('Sign in and sync this character before changing its pack');
       await runWithProviderSession(
         authorization.providerSessionId,
         (providerContext) => upgradeFighter(meta.photoHash, toTier, (progress) => {
@@ -1638,6 +1659,34 @@ export function GalleryPage({
       setBusy(false);
       setRetryingTarget(null);
     }
+  };
+
+  const quoteFightExpansion = async () => {
+    if (!meta?.cloudFighterId || !ownerActionsReady || !legalAccepted || !auraOnly) return;
+    setBusy(true);
+    setStatus('Checking the cost to add Fight + Rush...');
+    try {
+      const quote = await authorizeGeneration(currentTier, 'fighter_upgrade', meta.cloudFighterId,
+        null, currentGenerationLegalAttestation(), captureApiRequestContext(), undefined, 'original',
+        { creationPackage: 'complete', expansion: true, quoteOnly: true });
+      if (!quote.authorized || quote.mode !== 'quote' || !Number.isSafeInteger(quote.quotedCredits)) {
+        throw new Error(quote.error ?? 'A current expansion quote is unavailable');
+      }
+      const credits = quote.quotedCredits!;
+      setStatus('Expansion quote ready. Nothing has been charged.');
+      setConfirmRequest({
+        title: 'Add Fight + Rush',
+        body: `Add the missing combat moves to ${meta.characterName} for ${credits} credits. Your photo, identity, and existing Aura performances are reused and preserved. Credits are consumed when AI processing starts.`,
+        confirmLabel: `Add Fight + Rush · ${credits} credits`,
+        variant: 'primary',
+        onConfirm: () => {
+          setConfirmRequest(null);
+          void upgradeToTier(currentTier, { creationPackage: 'complete', expansion: true, expectedCredits: credits });
+        },
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not quote this expansion');
+    } finally { setBusy(false); }
   };
 
   const renameStage = () => {
@@ -1792,6 +1841,7 @@ export function GalleryPage({
                   <TierBadge tier={currentTier} className="gallery-hero__badge" />
                 </h2>
                 <p className="gallery-hero__meta">
+                  {compatibilityLabel} ·
                   {isArcadeFighter
                     ? `Global roster · ${meta.animationsReady.length} animations ready`
                     : `Your fighter · Status ${meta.status} · Created ${formatDate(meta.createdAt)}`}
@@ -1816,6 +1866,11 @@ export function GalleryPage({
                       Resume Preserved Work · Free
                     </Button>
                   ) : null}
+                  {ownerActionsReady && auraOnly && meta.cloudFighterId ? (
+                    <Button variant="primary" disabled={currentFighterActionBusy || !legalAccepted} onClick={() => void quoteFightExpansion()}>
+                      Add Fight + Rush · Check Price
+                    </Button>
+                  ) : null}
                   {ownerActionsReady ? upgradeOptions.map((tier, index) => (
                     <Button
                       key={tier.id}
@@ -1823,7 +1878,7 @@ export function GalleryPage({
                       disabled={currentFighterActionBusy || !legalAccepted}
                       onClick={() => setPendingUpgradeTier(tier.id)}
                     >
-                      Upgrade to {tier.label} · {tier.priceLabel}
+                      Upgrade to {tier.label} · {quoteGenerationPackage(tier.id, currentPackage).priceLabel}
                     </Button>
                   )) : null}
                   {ownerActionsReady && hasOutdatedSprites ? (
@@ -2128,7 +2183,7 @@ export function GalleryPage({
       {pendingUpgrade ? (
         <ConfirmDialog
           title={`Upgrade to ${pendingUpgrade.label}`}
-          confirmLabel={`Regenerate for ${pendingUpgrade.priceLabel}`}
+          confirmLabel={`Regenerate for ${quoteGenerationPackage(pendingUpgrade.id, currentPackage).priceLabel}`}
           confirmVariant="primary"
           onCancel={() => setPendingUpgradeTier(null)}
           onConfirm={() => {
@@ -2137,8 +2192,8 @@ export function GalleryPage({
             void upgradeToTier(tier);
           }}
         >
-          Regenerate all 11 animations at {pendingUpgrade.label} quality. This costs{' '}
-          {pendingUpgrade.priceLabel} and takes about {pendingUpgrade.estimatedTime}. Existing
+          Regenerate this character's {quoteGenerationPackage(pendingUpgrade.id, currentPackage).animationCount} animations at {pendingUpgrade.label} quality. This costs{' '}
+          {quoteGenerationPackage(pendingUpgrade.id, currentPackage).priceLabel} and takes about {pendingUpgrade.estimatedTime}. Existing
           animations are kept in cache and remain accessible.
         </ConfirmDialog>
       ) : null}

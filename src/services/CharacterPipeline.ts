@@ -1,3 +1,4 @@
+import { assertPackageAnimationFrameCount, AURA_GENERATION_ANIMATIONS, type GenerationPackage } from './GenerationPackages';
 import {
   hashPhoto,
   getCachedMeta,
@@ -111,6 +112,8 @@ const ANIMATIONS: AnimDef[] = [
   { name: 'victory',    motion: 'big arcade-style victory celebration with an unmistakably triumphant winning pose: chest lifted, shoulders back, chin up, one or both arms raised or pumping in triumph, then settling into a proud champion hold facing right', frames: 8, duration: 1.8, loop: false, base: 'standing' },
 ];
 
+const PACKAGE_ANIMATIONS: AnimDef[] = [...ANIMATIONS, ...AURA_GENERATION_ANIMATIONS.map((animation) => ({ ...animation, frames: 6, duration: 1.5, loop: true, base: 'standing' as const }))];
+
 const CRITICAL_ANIMATION_NAMES = new Set(['jump', 'hit']);
 const MIRRORED_ANIMATION_NAMES = new Set(['high_punch', 'low_punch', 'high_kick', 'low_kick']);
 const spriteMaintenanceInflight = new Map<string, Promise<number>>();
@@ -130,7 +133,7 @@ function getMinimumReliableFrameCount(name: string): number {
 }
 
 function getAnimationDefinition(name: string): AnimDef {
-  const anim = ANIMATIONS.find((entry) => entry.name === name);
+  const anim = PACKAGE_ANIMATIONS.find((entry) => entry.name === name);
   if (!anim) throw new Error(`Unknown animation: ${name}`);
   return anim;
 }
@@ -246,6 +249,7 @@ async function generateSpriteWithGemini(
       modelOverride,
     );
   }
+  assertPackageAnimationFrameCount(anim.name, result.frameCount);
   const rawBlob = base64ToBlob(result.rawBase64 || result.imageBase64, 'image/png');
   const blob = base64ToBlob(result.imageBase64, 'image/png');
   const { width: sheetW, height: sheetH } = await measureImage(blob);
@@ -421,7 +425,7 @@ export async function ensurePlayableSpritesUpToDate(photoHash: string): Promise<
       if ((sprite.processingVersion ?? 0) >= SPRITE_PROCESSING_VERSION) continue;
       if (!sprite.rawPngBlob) continue;
 
-      const anim = ANIMATIONS.find((entry) => entry.name === sprite.animationName);
+      const anim = PACKAGE_ANIMATIONS.find((entry) => entry.name === sprite.animationName);
       if (!anim) continue;
 
       try {
@@ -468,8 +472,9 @@ export async function processCharacter(
   photoFile: File,
   onStatus: StatusCallback,
   characterName = 'Fighter',
-  options?: { tier?: QualityTier; apiContext?: ApiRequestContext },
+  options?: { tier?: QualityTier; apiContext?: ApiRequestContext; creationPackage?: GenerationPackage },
 ): Promise<string> {
+  const animations = options?.creationPackage === 'aura' ? PACKAGE_ANIMATIONS.filter((animation) => animation.name.startsWith('aura_')) : ANIMATIONS;
   const ownerScope = getActiveSpriteCacheScope();
   const apiContext = options?.apiContext ?? captureApiRequestContext();
   try {
@@ -484,7 +489,7 @@ export async function processCharacter(
       const sprites = await getAllSpriteVersionsForHash(photoHash, ownerScope);
       const requestedTierSprites = sprites.filter((sprite) => sprite.qualityTier === qualityTier);
       const requestedTierAnimations = new Set(requestedTierSprites.map((sprite) => sprite.animationName));
-      if (requestedTierAnimations.size >= ANIMATIONS.length) {
+      if (animations.every((animation) => requestedTierAnimations.has(animation.name))) {
         let dirty = false;
         if (!existingMeta.originalPhotoBlob) { existingMeta.originalPhotoBlob = photoBlob; dirty = true; }
         if (characterName && characterName !== 'Fighter') { existingMeta.characterName = characterName; dirty = true; }
@@ -585,10 +590,10 @@ export async function processCharacter(
     meta.status = 'sprites_generating';
     await setCachedMeta(meta);
 
-    const total = ANIMATIONS.length;
+    const total = animations.length;
 
-    for (let i = 0; i < ANIMATIONS.length; i++) {
-      const anim = ANIMATIONS[i];
+    for (let i = 0; i < animations.length; i++) {
+      const anim = animations[i];
 
       if (meta.animationsReady.includes(anim.name)) {
         const cached = await getCachedSprite(photoHash, anim.name, qualityTier, ownerScope);
@@ -709,7 +714,7 @@ export async function rebuildCharacter(
       continue;
     }
 
-    const anim = ANIMATIONS.find((a) => a.name === sprite.animationName);
+    const anim = PACKAGE_ANIMATIONS.find((a) => a.name === sprite.animationName);
     if (!anim) {
       debugWarn(`[Rebuild] ${sprite.animationName}: unknown animation, skipping`);
       rebuilt++;
@@ -1011,8 +1016,8 @@ export async function loadSpritesForHash(photoHash: string): Promise<Map<string,
   return map;
 }
 
-export function getAnimationList(): AnimDef[] {
-  return ANIMATIONS;
+export function getAnimationList(creationPackage: GenerationPackage = 'complete'): AnimDef[] {
+  return creationPackage === 'aura' ? PACKAGE_ANIMATIONS.filter((animation) => animation.name.startsWith('aura_')) : ANIMATIONS;
 }
 
 function base64ToBlob(base64: string, mime: string): Blob {

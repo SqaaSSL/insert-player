@@ -64,10 +64,16 @@ const SCHEMA = `
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE generation_artifact_runs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     fighter_id TEXT NOT NULL REFERENCES fighters(id) ON DELETE CASCADE
   );
   CREATE TABLE generation_jobs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     fighter_id TEXT NOT NULL REFERENCES fighters(id) ON DELETE CASCADE,
     artifact_run_id TEXT REFERENCES generation_artifact_runs(id) ON DELETE RESTRICT

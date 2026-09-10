@@ -1296,10 +1296,32 @@
      is the swapped viewport; the transform only changes presentation, so DOM
      touch controls keep working and Phaser FIT sees the swapped bounds. */
   @media (pointer: coarse) and (orientation: portrait) {
-    .game-shell {
+    .game-shell:not(.is-aura) {
       @apply fixed left-0 top-0 z-40 h-[100dvw] w-[100dvh]
              [transform:rotate(90deg)_translateY(-100%)] [transform-origin:top_left];
     }
+  }
+
+  /* Aura is upright. One aspect-fitted frame owns both canvas and DOM chrome;
+     changing orientation never rotates controls or recreates the match. */
+  .game-shell.is-aura {
+    @apply grid h-dvh place-items-center bg-black
+           [--aura-available-width:calc(100vw_-_env(safe-area-inset-left)_-_env(safe-area-inset-right))]
+           [--aura-available-height:calc(100dvh_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))]
+           [padding:env(safe-area-inset-top)_env(safe-area-inset-right)_env(safe-area-inset-bottom)_env(safe-area-inset-left)];
+  }
+
+  .game-shell__aura-frame {
+    @apply relative aspect-video overflow-hidden
+           w-[min(var(--aura-available-width),calc(var(--aura-available-height)*16/9))];
+  }
+
+  .game-shell.is-aura.is-portrait .game-shell__aura-frame {
+    @apply aspect-[9/16] w-[min(var(--aura-available-width),calc(var(--aura-available-height)*9/16))];
+  }
+
+  .game-shell.is-aura .game-shell__canvas canvas {
+    @apply !m-0 !block !h-full !w-full object-contain;
   }
 
   .game-shell__surface,
@@ -1535,7 +1557,7 @@
 
   .mobile-fight-controls {
     @apply pointer-events-none absolute inset-x-0 bottom-[max(12px,env(safe-area-inset-bottom))] z-30 hidden
-           items-end justify-end px-3 select-none;
+           items-end justify-end pl-[max(16px,env(safe-area-inset-left))] pr-[max(20px,env(safe-area-inset-right))] select-none;
   }
 
   .mobile-versus-unavailable {
@@ -1558,7 +1580,7 @@
            left-4 flex h-[132px] w-[132px] items-center justify-center rounded-full
            border-2 border-[rgba(255,206,58,0.5)] bg-[rgba(5,5,7,0.55)]
            [backdrop-filter:blur(5px)] shadow-[inset_0_4px_12px_rgba(0,0,0,0.65)]
-           opacity-0 transition-opacity duration-150 motion-reduce:transition-none;
+           opacity-75 transition-opacity duration-150 motion-reduce:transition-none;
   }
 
   .virtual-joystick-zone.is-active .virtual-joystick {
@@ -1603,73 +1625,62 @@
     @apply -translate-x-5 translate-y-5;
   }
 
-  /* Wild Rift-style corner fan: primary punch anchors the corner, the rest
-     arc around it. Every button is a circle. */
+  /* Two stable rows keep the common actions together under the right thumb. */
   .mobile-fight-controls__actions {
-    @apply pointer-events-auto relative h-[150px] w-[224px] touch-none;
+    @apply pointer-events-auto grid h-[138px] w-[220px] touch-none
+           grid-cols-[68px_68px_68px] grid-rows-[60px_68px] gap-x-2 gap-y-2.5;
   }
 
   .mobile-fight-control {
-    @apply flex h-[52px] w-[52px] touch-none items-center justify-center rounded-[6px]
-           border-2 border-[rgba(255,206,58,0.68)] bg-[rgba(5,5,7,0.76)]
-           font-arcade text-[16px] text-asf-gold-bright shadow-[0_5px_0_rgba(0,0,0,0.72)]
-           [backdrop-filter:blur(5px)] [text-shadow:0_2px_0_#6a0a0a]
+    @apply flex h-full w-full touch-none flex-col items-center justify-center gap-1 rounded-full
+           border-2 border-asf-gold-deep bg-[rgba(5,5,7,0.94)]
+           font-sans text-[12px] font-bold leading-none normal-case text-asf-cream
+           shadow-[0_3px_0_rgba(0,0,0,0.72)]
            transition-[transform,background-color,border-color] duration-100
-           active:translate-y-[3px] active:border-asf-gold-bright active:bg-asf-red-dark
-           active:shadow-[0_2px_0_rgba(0,0,0,0.72)];
+           active:translate-y-0.5 active:border-asf-gold-bright active:bg-asf-red-dark
+           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-cream;
   }
 
-  .mobile-fight-controls__actions .mobile-fight-control {
-    @apply absolute rounded-full opacity-90;
+  .mobile-fight-control small {
+    @apply font-sans text-[9px] font-normal normal-case leading-tight;
   }
 
   .mobile-fight-control.is-punch {
-    @apply bottom-1 right-1 h-[70px] w-[70px] text-[20px];
+    @apply col-start-1 row-start-2;
   }
 
   .mobile-fight-control.is-kick {
-    @apply bottom-1 right-[92px] h-[56px] w-[56px];
-  }
-
-  .mobile-fight-control.is-fireball {
-    @apply bottom-[74px] right-[74px] h-[56px] w-[56px];
-  }
-
-  .mobile-fight-control.is-super {
-    @apply bottom-[94px] right-1 h-[56px] w-[56px];
-  }
-
-  .mobile-fight-control.is-uppercut,
-  .mobile-fight-control.is-jump {
-    @apply bottom-[88px] right-[150px] h-[56px] w-[56px];
+    @apply col-start-2 row-start-2;
   }
 
   .mobile-fight-control.is-punch,
   .mobile-fight-control.is-kick {
-    @apply border-asf-gold bg-[rgba(106,10,10,0.86)];
+    @apply border-asf-gold bg-[#6a0a0a] text-[14px];
   }
 
   .mobile-fight-control.is-fireball {
-    @apply border-asf-violet bg-[rgba(48,24,96,0.86)];
+    @apply col-start-1 row-start-1 border-asf-violet bg-[#301860];
   }
 
   .mobile-fight-control.is-uppercut,
   .mobile-fight-control.is-jump {
-    @apply border-[#30e07a] bg-[rgba(8,72,48,0.9)] text-[#baffd4]
-           [text-shadow:0_2px_0_rgba(0,0,0,0.8)];
+    @apply col-start-2 row-start-1 border-[#30e07a] bg-[#084830] text-[#baffd4];
   }
 
   .mobile-fight-control.is-guard {
-    @apply bottom-1 right-[164px] h-[58px] w-[58px] border-asf-blue
-           bg-[rgba(10,30,66,0.88)] text-asf-blue
-           [text-shadow:0_2px_0_rgba(0,0,0,0.8)];
+    @apply col-start-3 row-start-2 border-asf-blue bg-[#0a1e42] text-[#b9dfff];
   }
 
   .mobile-fight-control.is-super {
-    @apply border-asf-gold bg-[rgba(120,74,0,0.9)] text-asf-gold-bright
-           shadow-[0_0_14px_rgba(255,206,58,0.75)]
-           [animation:meter-ready-pulse_900ms_ease-in-out_infinite]
-           motion-reduce:animate-none;
+    @apply col-start-3 row-start-1 border-asf-gold bg-[#784a00] text-asf-gold-bright;
+  }
+
+  .mobile-fight-control:disabled {
+    @apply border-asf-line bg-[#141424] text-[#b5b5c5] shadow-none;
+  }
+
+  .virtual-joystick__label {
+    @apply absolute bottom-2 font-sans text-[11px] font-bold normal-case text-asf-cream;
   }
 
   @media (pointer: coarse) {
@@ -4231,7 +4242,7 @@
 
   .aura-loader__stage-art img {
     @apply h-full w-full scale-105 object-cover object-center opacity-55 saturate-75
-           [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_180ms_ease-out];
+           [transition:transform_950ms_cubic-bezier(0.76,0,0.24,1),opacity_650ms_ease-out];
   }
 
   .aura-loader__wash {
@@ -4247,7 +4258,7 @@
   .aura-loader__cast {
     @apply relative flex min-h-0 min-w-0 flex-col overflow-hidden border-r border-[#4fdced]/40
            px-[clamp(24px,4.5vw,68px)] py-[clamp(18px,4vh,42px)]
-           [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_180ms_ease-out];
+           [transition:transform_950ms_cubic-bezier(0.76,0,0.24,1),opacity_650ms_ease-out];
   }
 
   .aura-loader__brand-lockup {
@@ -4287,11 +4298,19 @@
   }
 
   .aura-loader__fighters .fight-loader__fighter {
-    @apply relative h-full min-w-0 flex-1 overflow-visible;
+    @apply relative h-full min-w-0 flex-1 overflow-visible animate-none opacity-100 [filter:none];
   }
 
   .aura-loader__fighters .fight-loader__figure {
-    @apply inset-x-0 bottom-[-11%] top-0;
+    @apply inset-x-0 bottom-14 top-0;
+  }
+
+  .aura-loader__fighters .is-upright .fight-loader__figure-img {
+    @apply object-contain object-bottom;
+  }
+
+  .aura-loader__fighters .fight-loader__fighter--p2.is-upright .fight-loader__figure-img {
+    @apply -scale-x-100;
   }
 
   .aura-loader__fighters .fight-loader__figure-fallback {
@@ -4299,11 +4318,11 @@
   }
 
   .aura-loader__fighters .fight-loader__player-label {
-    @apply bottom-[19%];
+    @apply bottom-9;
   }
 
   .aura-loader__fighters .fight-loader__fighter-name {
-    @apply bottom-[8%] max-w-[88%] text-[clamp(12px,1.55vw,22px)];
+    @apply bottom-1 max-w-[88%] text-[clamp(12px,1.55vw,22px)];
   }
 
   .aura-loader__handoff {
@@ -4315,11 +4334,11 @@
   .aura-loader__briefing {
     @apply flex min-h-0 min-w-0 flex-col justify-center gap-4 overflow-hidden bg-[rgba(8,6,25,0.78)]
            px-[clamp(22px,4vw,54px)] py-[clamp(20px,5vh,56px)]
-           [transition:transform_650ms_cubic-bezier(0.76,0,0.24,1),opacity_180ms_ease-out];
+           [transition:transform_950ms_cubic-bezier(0.76,0,0.24,1),opacity_650ms_ease-out];
   }
 
   .aura-loader__briefing h2 {
-    @apply max-w-[14ch] break-words font-arcade text-[clamp(22px,3.2vw,42px)] leading-[1.2]
+    @apply max-w-full break-words font-arcade text-[clamp(18px,2.35vw,32px)] leading-[1.2]
            text-[#4fdced] [text-shadow:0_4px_0_rgba(44,8,66,0.9)];
   }
 
@@ -4366,7 +4385,8 @@
 
   .aura-touch-controls__lane {
     @apply flex min-h-14 touch-manipulation items-center justify-center rounded-[6px] border-2 bg-[#080817]/90
-           text-[27px] shadow-[0_5px_0_rgba(0,0,0,0.62)] backdrop-blur-sm active:translate-y-[3px] active:shadow-none;
+           text-[27px] shadow-[0_5px_0_rgba(0,0,0,0.62)] backdrop-blur-sm active:translate-y-[3px] active:shadow-none
+           disabled:pointer-events-none disabled:opacity-40;
   }
 
   .aura-touch-controls__lane.is-lane-0 { @apply border-[#4fdced] text-[#4fdced]; }
@@ -4386,7 +4406,18 @@
     @apply relative z-10 flex w-full max-w-[980px] flex-col items-center gap-4 overflow-hidden rounded-[8px]
            border-2 border-[#4fdced] bg-[#090718]/95 px-7 py-6 text-center
            shadow-[0_0_60px_rgba(79,220,237,0.2),inset_0_0_48px_rgba(255,61,198,0.08)];
+    @apply max-h-full overflow-y-auto;
   }
+
+  .aura-capture-status {
+    @apply pointer-events-none absolute bottom-2 left-3 z-20 m-0 rounded bg-[#03030a]/75 px-2 py-1
+           font-sans text-[10px] text-asf-muted;
+  }
+
+  .aura-results__share { @apply flex w-full flex-col items-center gap-3; }
+  .aura-results__video { @apply max-h-[28vh] w-full max-w-[520px] rounded border border-asf-line bg-black; }
+  .aura-results__share-note { @apply m-0 max-w-[65ch] font-sans text-[12px] leading-relaxed text-asf-muted; }
+  .aura-results__share-note.is-error { @apply text-[#ef4343]; }
 
   .aura-results__eyebrow,
   .aura-results__meta,
@@ -4433,6 +4464,62 @@
     .aura-results { @apply p-2; }
     .aura-results__panel { @apply gap-2 px-4 py-3; }
     .aura-results__duel article { @apply gap-1 p-3; }
+  }
+
+  .game-shell.is-aura.is-portrait .aura-loader__layout {
+    @apply grid-cols-1 grid-rows-[minmax(0,1.2fr)_minmax(0,1fr)];
+  }
+
+  .game-shell.is-aura.is-portrait .aura-loader__cast {
+    @apply border-r-0 border-b border-[#4fdced]/40 px-4 py-3;
+  }
+
+  .game-shell.is-aura.is-portrait .aura-loader__brand-lockup { @apply gap-2; }
+  .game-shell.is-aura.is-portrait .aura-loader__mark { @apply size-8; }
+  .game-shell.is-aura.is-portrait .aura-loader__brand-lockup strong { @apply text-[10px]; }
+  .game-shell.is-aura.is-portrait .aura-loader__claim { @apply mt-3; }
+  .game-shell.is-aura.is-portrait .aura-loader__claim strong { @apply text-[clamp(12px,3.2vw,18px)]; }
+  .game-shell.is-aura.is-portrait .aura-loader__fighters { @apply mt-3 h-auto flex-1; }
+  .game-shell.is-aura.is-portrait .aura-loader__fighters .fight-loader__figure { @apply bottom-10; }
+  .game-shell.is-aura.is-portrait .aura-loader__fighters .fight-loader__player-label { @apply bottom-6 text-[6px]; }
+  .game-shell.is-aura.is-portrait .aura-loader__fighters .fight-loader__fighter-name { @apply text-[10px]; }
+  .game-shell.is-aura.is-portrait .aura-loader__handoff { @apply bottom-1 size-8 text-[14px]; }
+  .game-shell.is-aura.is-portrait .aura-loader__briefing { @apply justify-start gap-2 px-4 py-3; }
+  .game-shell.is-aura.is-portrait .aura-loader__briefing h2 { @apply max-w-none text-[clamp(15px,4vw,23px)]; }
+  .game-shell.is-aura.is-portrait .aura-loader__briefing > p { @apply text-[11px] leading-snug; }
+  .game-shell.is-aura.is-portrait .aura-loader__lanes { @apply w-full max-w-none gap-2; }
+  .game-shell.is-aura.is-portrait .aura-loader__lanes > span { @apply aspect-auto min-h-10 flex-row gap-2 text-[20px]; }
+  .game-shell.is-aura.is-portrait .aura-loader__rules { @apply w-full max-w-none; }
+  .game-shell.is-aura.is-portrait .aura-loader__rules > div { @apply min-h-6 px-2 py-1; }
+  .game-shell.is-aura.is-portrait .aura-loader__loading { @apply mt-auto min-h-8 gap-2; }
+  .game-shell.is-aura.is-portrait .aura-loader__loading .fight-loader__status { @apply text-[8px]; }
+  .aura-game-toolbar {
+    @apply contents;
+  }
+  /* Lane centers mirror AuraLayout: desktop 404/476/548/620 of 1024,
+     portrait 123/233/343/453 of 576. Chrome never takes a lane column. */
+  .aura-game-toolbar .aura-touch-controls {
+    @apply absolute bottom-2 left-[35.9375%] right-auto w-[28.125%] gap-0;
+  }
+  .aura-game-toolbar .aura-touch-controls__lane { @apply mx-0.5 min-h-11; }
+  .aura-game-toolbar__back {
+    @apply absolute bottom-2 left-[3%] z-30 flex min-h-11 min-w-11 items-center justify-center rounded border border-asf-gold/45
+           bg-[#050507]/80 px-2 font-arcade text-[8px] text-asf-cream;
+  }
+  .aura-game-toolbar .fight-pause-button { @apply bottom-2 left-[calc(3%+52px)] right-auto top-auto size-11; }
+  .game-shell.is-aura.is-portrait .aura-touch-controls { @apply left-[11.805556%] grid w-[76.388889%] gap-0; }
+  .game-shell.is-aura.is-portrait .aura-game-toolbar__back { @apply bottom-auto left-2 top-[52%]; }
+  .game-shell.is-aura.is-portrait .aura-game-toolbar .fight-pause-button { @apply bottom-auto left-auto right-2 top-[52%]; }
+  .game-shell.is-aura.is-portrait .aura-touch-controls__lane { @apply min-h-11 text-[24px]; }
+  .game-shell.is-aura .aura-capture-status {
+    @apply bottom-[12%] left-[3%] top-auto whitespace-nowrap text-[8px];
+  }
+  .game-shell.is-aura.is-portrait .aura-capture-status { @apply bottom-[9.5%]; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .fight-loader.is-aura .aura-loader__cast,
+    .fight-loader.is-aura .aura-loader__briefing,
+    .fight-loader.is-aura .aura-loader__stage-art img { @apply duration-150; }
   }
 
   /* ============================================================
@@ -4783,94 +4870,42 @@
     @apply flex items-center gap-3;
   }
 
-  /* ============================================================
-     FIGHT CONTROLS HINT (first-round keyboard display)
-     ============================================================ */
-
+  /* Persistent, mode-aware controls below the action. */
   .fight-keys {
-    @apply pointer-events-none absolute inset-x-0 bottom-[8%] z-20 flex flex-col
-           items-center gap-3 opacity-100 [transition:opacity_700ms_ease-out]
-           motion-reduce:transition-none;
+    @apply pointer-events-none absolute bottom-[max(10px,env(safe-area-inset-bottom))]
+           left-1/2 z-20 flex w-max max-w-[calc(100%-32px)] -translate-x-1/2 flex-col gap-2
+           rounded-[4px] border border-asf-line bg-[rgba(5,5,12,0.94)] px-3 py-2
+           font-sans text-[12px] normal-case text-asf-cream;
   }
 
-  .fight-keys.is-leaving {
-    @apply opacity-0;
+  .fight-keys__player {
+    @apply flex items-center gap-3;
   }
 
-  .fight-keys__toggle {
-    @apply absolute bottom-3 left-1/2 z-30 -translate-x-1/2 rounded-[4px] border-2
-           border-asf-gold-deep bg-[rgba(6,7,20,0.9)] px-3 py-2 font-arcade text-[8px]
-           uppercase text-asf-gold transition-colors hover:border-asf-gold-bright
-           hover:text-asf-gold-bright focus-visible:outline-2 focus-visible:outline-offset-2
-           focus-visible:outline-asf-blue;
+  .fight-keys__player-label {
+    @apply shrink-0 text-[11px] text-asf-gold;
   }
 
-  .fight-keys__kicker {
-    @apply rounded-[3px] border border-asf-gold-deep bg-[rgba(43,11,11,0.9)] px-3 py-1.5
-           font-arcade text-[8px] tracking-[0.08em] text-asf-gold-bright;
+  .fight-keys__bindings {
+    @apply flex flex-wrap items-center justify-center gap-x-4 gap-y-2;
   }
 
-  .fight-keys__board {
-    @apply flex items-end gap-10 rounded-xl border border-asf-line
-           bg-[rgba(6,7,20,0.82)] px-6 py-4 backdrop-blur-sm;
+  .fight-keys__binding {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap;
   }
 
-  .fight-keys__cluster {
-    @apply flex flex-col items-start gap-1.5;
-  }
-
-  .fight-keys__row {
-    @apply flex justify-start gap-2;
-  }
-
-  .fight-keys__row--home {
-    @apply ml-3.5;
-  }
-
-  .fight-keys__key {
-    @apply flex w-12 flex-col items-center gap-1 opacity-35;
-  }
-
-  .fight-keys__key.is-active {
-    @apply opacity-100;
-  }
-
-  .fight-keys__key kbd {
-    @apply flex h-8 w-8 items-center justify-center rounded-md border-2
-           border-asf-line bg-asf-panel font-arcade text-[10px] text-asf-cream
-           shadow-[0_3px_0_rgba(0,0,0,0.6)];
-  }
-
-  .fight-keys__key.is-active kbd {
-    @apply border-asf-gold bg-[#1a1030] text-asf-gold
-           shadow-[0_3px_0_rgba(0,0,0,0.6),0_0_14px_rgba(255,206,58,0.35)];
-  }
-
-  .fight-keys__key small {
-    @apply min-h-3 font-arcade text-[7px] leading-none text-asf-muted;
-  }
-
-  .fight-keys__key.is-active small {
-    @apply text-asf-cream;
-  }
-
-  .fight-keys__recipe {
-    @apply flex items-center gap-1.5 rounded-lg border border-asf-line
-           bg-[rgba(6,7,20,0.82)] px-4 py-2 font-arcade text-[9px]
-           text-asf-cream backdrop-blur-sm;
-  }
-
-  .fight-keys__recipe kbd {
-    @apply mx-0.5 inline-flex h-6 w-6 items-center justify-center rounded
-           border-2 border-asf-red bg-[#2b0b0b] text-[9px] text-asf-cream;
-  }
-
-  .fight-keys__arrow {
-    @apply text-asf-gold;
+  .fight-keys__binding kbd {
+    @apply inline-flex min-h-6 min-w-6 items-center justify-center rounded-[3px]
+           border border-asf-gold-deep bg-[#181321] px-1.5 font-sans text-[12px] font-bold
+           text-asf-gold-bright shadow-[0_2px_0_rgba(0,0,0,0.6)];
   }
 
   .fight-keys--touch {
-    @apply bottom-[30%];
+    @apply left-[164px] right-[252px] w-auto max-w-none translate-x-0 px-2 py-1.5;
+  }
+
+  .fight-keys__tip {
+    @apply m-0 text-center text-[11px] leading-[1.45];
   }
 
 }

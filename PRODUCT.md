@@ -8,13 +8,13 @@ product
 
 Insert Player is for people who instantly understand the thrill of seeing themselves inside an arcade game: nostalgic players, friend groups, streamers, meme-makers, founders, teams, and casual users who want a shareable "wait, that is me" moment without learning a creation tool.
 
-They usually arrive from a social link or a friend challenge, often on mobile, and want proof fast: upload a photo, see a recognizable playable character, fight, share, and later upgrade quality if the result feels worth keeping.
+They usually arrive from a social link or a friend challenge, often on mobile, and want proof fast: play a short Aura challenge with a ready character, recognize the gestures, share a score, and then create their own character. Fight and Rush remain direct entry points for people who want combat or an adventure.
 
 ## Product Purpose
 
-Insert Player turns a real person into a playable retro arcade character. The first game is Insert Player: Fight, a browser fighting game where generated fighters sync across devices, preserve every generated version, and can be shared or cloned through the community loop.
+Insert Player turns a real person into a playable retro arcade character. Aura is the first social entry point: a rhythm battle with recognizable performances and reproducible challenges. Fight delivers rivalry and an arcade ladder. Rush is an action adventure with a CPU ally. All three share one account and character library, while each has a focused landing page.
 
-Success means the user recognizes the person, trusts the generated assets enough to play, understands the quality tiers, and has a natural reason to send the fighter to someone else.
+Success means the user recognizes the person, trusts the generated assets enough to play, understands which games and moves a creation purchase includes, and has a natural reason to send the fighter to someone else.
 
 ## Brand Personality
 
@@ -48,7 +48,7 @@ Useful supporting lines:
    Use the emotional grammar of coin slots, P1/P2, cabinets, rosters, rounds, and attract mode, but never the literal look or sounds of protected franchises.
 
 3. Playable before explanatory.
-   Users should be pushed toward creating, importing, fighting, or cloning. Explanations should appear only where they unblock a decision.
+   Let a new player try a ready character before asking for a photo, an account or payment. Explanations should appear only where they unblock a decision.
 
 4. Quality must be visible.
    Rookie, Contender, and Champion are not abstract plans. The interface should make the quality jump feel tangible while preserving every generated version.
@@ -62,3 +62,17 @@ Useful supporting lines:
 ## Accessibility & Inclusion
 
 Target WCAG 2.2 AA for shipped product surfaces. Preserve keyboard access for core flows, visible focus states, sufficient contrast, and status text that does not depend on color alone. Motion should respect `prefers-reduced-motion`; arcade feedback can remain energetic, but it must not block comprehension or play.
+
+## Product entry and purchases
+
+- `/` and `/games/aura` introduce Aura. `/games/fight` and `/games/rush` give direct entry without requiring users to discover the games in order.
+- `/menu` is Play, followed by My characters and Challenges in navigation; credits are a separate destination. Returning players can resume their last game.
+- A creation keeps the selected game and challenge through credits and returns with the new character selected. Quality and Original/Video are secondary options.
+- Aura requires its six dedicated performance loops; the shrug reaction remains optional. The Fight + Rush package creates the combat pack and does not enable Aura. Both packs can coexist on one character. The official Trump presentation uses its reviewed bundled Aura performances; generic Nova/Byte retain their isolated free trial packs.
+- Prices come from GenerationPackages and the server, not marketing constants. Any missing-pack expansion is quoted against the owner's cloud assets before authorization. It is not advertised as a price-difference upgrade.
+- Challenge links carry a chosen display name, a social score and a compatible routine. They do not carry a private portrait or character identifier, and they are not verified ranked scores.
+- The four-lane Aura game remains the released mechanic in this branch. A phrase-and-pose variant requires a separate playable validation, described in the product implementation document.
+
+## Measurement
+
+Device-only playtest events record game starts/completions, creation starts/completions with elapsed time, challenge creation/open/start/completion and video-share actions. Credits includes an export. No external analytics or visitor identifiers are introduced. This supports supervised playtests, not population-level conversion or retention claims; aggregate collection and a research sample are still required before selecting a winner on evidence.

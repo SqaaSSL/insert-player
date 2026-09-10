@@ -40,6 +40,9 @@ const SCHEMA = `
   );
 
   CREATE TABLE generation_charges (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     tier TEXT NOT NULL,
@@ -83,6 +86,9 @@ const SCHEMA = `
   );
 
   CREATE TABLE generation_jobs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     user_id TEXT,
     fighter_id TEXT,
@@ -92,11 +98,15 @@ const SCHEMA = `
     creation_flow TEXT NOT NULL DEFAULT 'original',
     operation TEXT,
     status TEXT NOT NULL DEFAULT 'queued',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     review_status TEXT NOT NULL DEFAULT 'none',
     resumed_from_job_id TEXT
   );
 
   CREATE TABLE generation_artifact_runs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     fighter_id TEXT NOT NULL,
@@ -1416,3 +1426,91 @@ describe('Stripe refund and dispute reconciliation against D1', () => {
     }
   });
 });
+
+describe('Package quotes and authorization against D1', () => {
+  it('quotes Aura without a reservation and binds its six animations to a bounded paid session', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'aura-package-owner';
+    const auth = { userId, rateLimitKey: `user:${userId}`, claims: {}, user: { id: userId } } as unknown as PublicAuthContext;
+    const legal = { legalVersion: CURRENT_LEGAL_VERSION, ageConfirmed: true, termsAccepted: true, photoRightsConfirmed: true, aiProcessingConfirmed: true, immediatePerformanceConfirmed: true, withdrawalLossAcknowledged: true };
+    const request = (options: Record<string, unknown>) => new Request('https://api.insertplayer.ai/api/billing/generation', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tier: 'contender', operation: 'fighter_generation', creationPackage: 'aura', legal, ...options }),
+    });
+    try {
+      await db.prepare("INSERT INTO users (id, clerk_user_id, display_name, credits_balance, free_rookie_generations_used) VALUES (?, ?, 'Aura owner', 20, 1)").bind(userId, userId).run();
+      const quote = await authorizeGenerationPurchase(request({ quoteOnly: true }), env, auth);
+      expect(await quote.json()).toMatchObject({ mode: 'quote', quotedCredits: 6, creationPackage: 'aura' });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first()).toEqual({ count: 0 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first()).toEqual({ count: 0 });
+      const denied = await authorizeGenerationPurchase(request({ expectedCredits: 1 }), env, auth);
+      expect(denied.status).toBe(409);
+      expect(await db.prepare('SELECT credits_balance FROM users WHERE id = ?').bind(userId).first()).toEqual({ credits_balance: 20 });
+      const response = await authorizeGenerationPurchase(request({ expectedCredits: 6 }), env, auth);
+      expect(response.status).toBe(200);
+      const body = await response.json() as { purchaseId: string; providerCallLimit: number };
+      expect(body.providerCallLimit).toBeLessThan(280);
+      const charge = await db.prepare('SELECT creation_package, credit_cost, animation_plan_json FROM generation_charges WHERE id = ?').bind(body.purchaseId).first<{ creation_package: string; credit_cost: number; animation_plan_json: string }>();
+      expect(charge).toMatchObject({ creation_package: 'aura', credit_cost: 6 });
+      expect(JSON.parse(charge!.animation_plan_json)).toHaveLength(6);
+      expect(JSON.parse(charge!.animation_plan_json).every((name: string) => name.startsWith('aura_'))).toBe(true);
+      const video = await authorizeGenerationPurchase(request({ creationFlow: 'video', tier: 'champion' }), env, auth);
+      expect(video.status).toBe(400);
+    } finally { await mf.dispose(); }
+  }, 15_000);
+});
+
+it('quotes only missing owned expansion work and rejects a changed or unconfirmed price before debit', async () => {
+  const { mf, db, env } = await createBindings();
+  const { quoteGenerationPackage } = await import('../../src/services/GenerationPackages');
+  const userId = 'expansion-owner';
+  const fighterId = 'abababababababababababababababab';
+  const legal = { legalVersion: CURRENT_LEGAL_VERSION, ageConfirmed: true, termsAccepted: true, photoRightsConfirmed: true, aiProcessingConfirmed: true, immediatePerformanceConfirmed: true, withdrawalLossAcknowledged: true };
+  const auth = { userId, rateLimitKey: `user:${userId}`, claims: {}, user: { id: userId } } as unknown as PublicAuthContext;
+  const request = (options: Record<string, unknown>) => new Request('https://api.insertplayer.ai/api/billing/generation', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fighterId, tier: 'champion', operation: 'fighter_upgrade', creationPackage: 'complete', expansion: true, legal, ...options }),
+  });
+  try {
+    await db.prepare("INSERT INTO users (id, clerk_user_id, display_name, credits_balance) VALUES (?, ?, 'Owner', 20)").bind(userId, userId).run();
+    await db.prepare('INSERT INTO fighters (id, owner_user_id) VALUES (?, ?)').bind(fighterId, userId).run();
+    await db.prepare('CREATE TABLE sprites (fighter_id TEXT, animation_name TEXT, quality_tier TEXT, blob_key TEXT, raw_blob_key TEXT, content_hash TEXT, frame_w INTEGER, frame_h INTEGER, frame_count INTEGER)').run();
+    const existing = quoteGenerationPackage('champion', 'complete').animations.filter((name) => name !== 'walk');
+    await db.batch([...existing, 'aura_glide'].map((name) => db.prepare("INSERT INTO sprites VALUES (?, ?, 'champion', ?, ?, ?, 192, 256, 6)").bind(fighterId, name, `${name}.png`, `${name}.raw.png`, 'a'.repeat(64))));
+    env.SPRITES = { async head() { return {}; } } as unknown as R2Bucket;
+    const expected = quoteGenerationPackage('champion', 'complete', { expansion: true, existingAnimations: existing });
+    const quote = await authorizeGenerationPurchase(request({ quoteOnly: true }), env, auth);
+    expect(await quote.json()).toMatchObject({ mode: 'quote', quotedCredits: expected.creditCost, animationCount: 1 });
+    const unconfirmed = await authorizeGenerationPurchase(request({}), env, auth);
+    expect(unconfirmed.status).toBe(409);
+    expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first()).toEqual({ count: 0 });
+    const concurrent = await Promise.all([
+      authorizeGenerationPurchase(request({ expectedCredits: expected.creditCost }), env, auth),
+      authorizeGenerationPurchase(request({ expectedCredits: expected.creditCost }), env, auth),
+    ]);
+    expect(concurrent.every((response) => response.status === 200 || response.status === 409)).toBe(true);
+    const allowed = concurrent.find((response) => response.status === 200)!;
+    expect(allowed).toBeDefined();
+    const authorization = await allowed.json() as { purchaseId: string; providerSessionId: string };
+    const replay = await authorizeGenerationPurchase(request({ expectedCredits: expected.creditCost }), env, auth);
+    expect(await replay.json()).toMatchObject({ purchaseId: authorization.purchaseId, providerSessionId: authorization.providerSessionId });
+    expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first()).toEqual({ count: 1 });
+    expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first()).toEqual({ count: 1 });
+    expect(await db.prepare('SELECT credits_balance FROM users WHERE id = ?').bind(userId).first()).toEqual({ credits_balance: 20 - expected.creditCost });
+    expect(await db.prepare('SELECT creation_package, expansion_only, animation_plan_json, credit_cost FROM generation_charges').first())
+      .toEqual({ creation_package: 'complete', expansion_only: 1, animation_plan_json: '["walk"]', credit_cost: expected.creditCost });
+    expect(await db.prepare('SELECT COUNT(*) AS count FROM sprites').first()).toEqual({ count: 11 });
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM sprites WHERE animation_name = 'aura_glide'").first()).toEqual({ count: 1 });
+    await db.prepare("INSERT INTO users (id, clerk_user_id, display_name, credits_balance) VALUES ('other-owner', 'other-owner', 'Other', 20)").run();
+    const otherAuth = { userId: 'other-owner', rateLimitKey: 'user:other-owner', claims: {}, user: { id: 'other-owner' } } as unknown as PublicAuthContext;
+    expect((await authorizeGenerationPurchase(request({ quoteOnly: true }), env, otherAuth)).status).toBe(403);
+    expect(await db.prepare("SELECT credits_balance FROM users WHERE id = 'other-owner'").first()).toEqual({ credits_balance: 20 });
+    await db.prepare("UPDATE generation_charges SET status = 'committed' WHERE id = ?").bind(authorization.purchaseId).run();
+    await db.prepare("INSERT INTO generation_artifact_runs (id, user_id, fighter_id, tier, operation, status, expansion_only) VALUES ('partial-expansion', ?, ?, 'champion', 'fighter_upgrade', 'partial', 1)").bind(userId, fighterId).run();
+    await db.prepare("INSERT INTO generation_jobs (id, user_id, fighter_id, charge_id, artifact_run_id, status) VALUES (?, ?, ?, ?, 'partial-expansion', 'failed')").bind(authorization.purchaseId, userId, fighterId, authorization.purchaseId).run();
+    const partialReplay = await authorizeGenerationPurchase(request({ expectedCredits: expected.creditCost }), env, auth);
+    expect(partialReplay.status).toBe(409);
+    expect(await partialReplay.json()).toMatchObject({ code: 'package_expansion_in_progress', activeJobId: authorization.purchaseId });
+    expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first()).toEqual({ count: 1 });
+  } finally { await mf.dispose(); }
+}, 15_000);

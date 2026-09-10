@@ -21,8 +21,9 @@ describe('Roster Lab stage catalog', () => {
   it('lists every official global stage even when IndexedDB is empty', () => {
     const entries = buildGalleryStageEntries([]);
 
-    expect(entries).toHaveLength(6);
+    expect(entries).toHaveLength(7);
     expect(entries.map((entry) => entry.scope)).toEqual([
+      'global',
       'global',
       'global',
       'global',
@@ -37,6 +38,7 @@ describe('Roster Lab stage catalog', () => {
       'global:tablao-3000',
       'global:la-jaula-304',
       'global:side-street',
+      'global:aura-plaza-v3',
     ]);
     expect(GLOBAL_GALLERY_STAGES.map((stage) => stage.assetPath)).toEqual([
       '/assets/stages/signature/insert-player-arena-pipeline-v1.png',
@@ -45,14 +47,15 @@ describe('Roster Lab stage catalog', () => {
       '/assets/stages/signature/tablao-3000-pipeline-v1.png',
       '/assets/rush/la-jaula-304/la-jaula-304-fight-v2.webp',
       '/assets/rush/side-street/side-street-fight-v1.webp',
+      '/assets/stages/aura/aura-plaza-v3.webp',
     ]);
   });
 
   it('keeps owned stages after the read-only global catalog', () => {
     const entries = buildGalleryStageEntries([ownedStage('private-1')]);
 
-    expect(entries).toHaveLength(7);
-    expect(entries[6]).toMatchObject({
+    expect(entries).toHaveLength(8);
+    expect(entries[7]).toMatchObject({
       scope: 'owned',
       key: 'owned:private-1',
       stage: { stageKey: 'private-1' },
@@ -60,8 +63,8 @@ describe('Roster Lab stage catalog', () => {
   });
 
   it('clamps selection against globals plus owned stages', () => {
-    expect(clampGalleryStageIndex(99, 0)).toBe(5);
-    expect(clampGalleryStageIndex(99, 2)).toBe(7);
+    expect(clampGalleryStageIndex(99, 0)).toBe(6);
+    expect(clampGalleryStageIndex(99, 2)).toBe(8);
     expect(clampGalleryStageIndex(-1, 2)).toBe(0);
   });
 });

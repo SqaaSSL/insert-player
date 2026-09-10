@@ -28,6 +28,10 @@ describe('auth and navigation hardening', () => {
     expect(shouldCommitTrialLaunch(4, 5, '/', '')).toBe(false);
     expect(shouldCommitTrialLaunch(4, 4, '/arcade', '')).toBe(false);
     expect(shouldCommitTrialLaunch(4, 4, '/', '#/gallery')).toBe(false);
+    expect(shouldCommitTrialLaunch(4, 4, '/games/fight', '', '/games/fight')).toBe(true);
+    expect(shouldCommitTrialLaunch(4, 4, '/games/rush', '', '/games/fight')).toBe(false);
+    expect(shouldCommitTrialLaunch(4, 5, '/games/fight', '', '/games/fight')).toBe(false);
+    expect(shouldCommitTrialLaunch(4, 4, '/menu', '', '/menu')).toBe(true);
   });
 
   it('keeps modified legal-link clicks under native browser control', () => {

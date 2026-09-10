@@ -1,8 +1,16 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { HomePage } from './routes/HomePage.tsx';
-import { LandingPage } from './routes/LandingPage.tsx';
+import { PlayPage } from './pages/PlayPage.tsx';
+import { GameLandingPage } from './pages/GameLandingPage.tsx';
+import { ChallengePage } from './pages/ChallengePage.tsx';
+import { ChallengesPage } from './pages/ChallengesPage.tsx';
+import type { FighterGameMode } from '../services/FighterAssetPacks.ts';
+import { readLastGame, rememberLastGame } from './shared/playerJourney.ts';
+import { trackProductEvent } from '../services/ProductEvents.ts';
 import { GamePage } from './routes/GamePage.tsx';
 import type { MatchSceneData } from '../game/match/MatchConfig.ts';
+import { DEFAULT_AURA_STAGE_ID, getStageThemesForMode } from '../game/match/StageConfig.ts';
+import { encodeAuraChallenge } from '../game/aura/AuraChallenge.ts';
 import { AppHeader } from './components/AppHeader.tsx';
 import { LegalFooter, type LegalRoute } from './components/LegalFooter.tsx';
 import { LoadingScreen } from './components/LoadingScreen.tsx';
@@ -10,7 +18,6 @@ import { LegalPage } from './routes/LegalPage.tsx';
 import { ConfigurationErrorPage } from './routes/ConfigurationErrorPage.tsx';
 import { debugInfo, debugWarn } from '../services/DebugLog.ts';
 import type { AuthRouteState } from './authState.ts';
-import type { BillingProfile } from '../services/Billing.ts';
 import { readStoredMatch, writeStoredMatch } from './shared/storedMatch.ts';
 import { CacheStatusBanner, type CacheStatus } from './components/CacheStatusBanner.tsx';
 import { getActiveSpriteCacheScope } from '../services/SpriteCache.ts';
@@ -28,6 +35,7 @@ import {
 import type { LadderContext } from './routes/GamePage.tsx';
 import {
   buildArcadeSelectionSearch,
+  creationDestination,
   buildCreationSearch,
   clearCreationPurchaseIntent,
   consumePostSignUpTrialIntent,
@@ -66,6 +74,12 @@ const ArcadePage = lazy(() => import('./routes/ArcadePage.tsx').then((module) =>
 type AppRoute =
   | '/'
   | '/menu'
+  | '/credits'
+  | '/challenges'
+  | '/challenge'
+  | '/games/aura'
+  | '/games/fight'
+  | '/games/rush'
   | '/arcade'
   | '/gallery'
   | '/community'
@@ -120,6 +134,12 @@ export function legalReturnRouteFromState(state: unknown): AppRoute {
   if (
     candidate === '/' ||
     candidate === '/menu' ||
+    candidate === '/credits' ||
+    candidate === '/challenges' ||
+    candidate === '/challenge' ||
+    candidate === '/games/aura' ||
+    candidate === '/games/fight' ||
+    candidate === '/games/rush' ||
     candidate === '/arcade' ||
     candidate === '/gallery' ||
     candidate === '/community' ||
@@ -148,6 +168,12 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
       ? cleanedPath
       : (cleanedHash || '/');
   if (cleaned === '/') return '/';
+  if (cleaned === '/credits') return '/credits';
+  if (cleaned === '/challenges') return '/challenges';
+  if (cleaned === '/challenge') return '/challenge';
+  if (cleaned === '/games/aura') return '/games/aura';
+  if (cleaned === '/games/fight') return '/games/fight';
+  if (cleaned === '/games/rush') return '/games/rush';
   if (cleaned === '/arcade') return '/arcade';
   if (cleaned === '/gallery') return '/gallery';
   if (cleaned === '/community') return '/community';
@@ -177,8 +203,9 @@ export function shouldCommitTrialLaunch(
   currentEpoch: number,
   pathname: string,
   hash: string,
+  entryRoute: AppRoute = '/',
 ): boolean {
-  return launchEpoch === currentEpoch && normalizeRoute(pathname, hash) === '/';
+  return launchEpoch === currentEpoch && normalizeRoute(pathname, hash) === entryRoute;
 }
 
 type Navigate = (route: AppRoute, search?: string, options?: NavigationOptions) => void;
@@ -196,10 +223,11 @@ function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null
   // Vite removes this branch from production builds.
   const params = new URLSearchParams(window.location.search);
   if (import.meta.env.DEV && params.get('auraDemo') === '1') {
+    const auraAutoplay = params.get('auraAutoplay') === '1';
+    const auraCanary = params.get('auraCanary');
     const requestedStage = params.get('auraStage');
-    const stageId = requestedStage === 'side-street' || requestedStage === 'la-jaula-304'
-      ? requestedStage
-      : 'insert-player-arena';
+    const stageId = getStageThemesForMode('aura').find((stage) => stage.id === requestedStage)?.id
+      ?? DEFAULT_AURA_STAGE_ID;
     const auraDifficulty = params.get('auraDifficulty') === 'lowkey'
       ? 'lowkey'
       : params.get('auraDifficulty') === 'untouchable'
@@ -208,8 +236,8 @@ function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null
     return {
       gameMode: 'aura',
       vsAI: true,
-      cpuVsCpu: false,
-      p1Name: 'NOVA',
+      cpuVsCpu: auraAutoplay,
+      p1Name: auraCanary === 'donald-trump' ? 'DONALD TRUMP' : 'NOVA',
       p2Name: 'BYTE',
       stageId,
       auraDifficulty,
@@ -259,10 +287,9 @@ function readPendingMatchForRoute(authSessionKey: string): MatchSceneData | null
   return readStoredMatch(authSessionKey);
 }
 
-function useHashRoute(): [AppRoute, Navigate] {
-  const [route, setRoute] = useState<AppRoute>(() =>
-    normalizeRoute(window.location.pathname, window.location.hash),
-  );
+function useHashRoute(): [AppRoute, Navigate, string] {
+  const [location, setLocation] = useState(() => ({ route: normalizeRoute(window.location.pathname, window.location.hash), search: window.location.search }));
+  const setRoute = (route: AppRoute) => setLocation({ route, search: window.location.search });
 
   useEffect(() => {
     const syncRoute = () => setRoute(normalizeRoute(window.location.pathname, window.location.hash));
@@ -294,7 +321,7 @@ function useHashRoute(): [AppRoute, Navigate] {
     setRoute(nextRoute);
   }, []);
 
-  return [route, navigate];
+  return [location.route, navigate, location.search];
 }
 
 export function App({
@@ -308,7 +335,7 @@ export function App({
   onRetryCache,
   configurationError = null,
 }: AppProps) {
-  const [route, navigate] = useHashRoute();
+  const [route, navigate, routeSearch] = useHashRoute();
   const [pendingMatchState, setPendingMatchState] = useState<{
     authSessionKey: string;
     data: MatchSceneData | null;
@@ -318,11 +345,9 @@ export function App({
     : null;
   const previousRouteRef = useRef<AppRoute>(route);
   const trialLaunchEpochRef = useRef(0);
-  const [landingBillingProfile, setLandingBillingProfile] = useState<BillingProfile | null>(null);
-  const [landingBillingChecked, setLandingBillingChecked] = useState(authStatus !== 'signed-in');
   const [postSignUpTrialRequested, setPostSignUpTrialRequested] = useState(false);
   const creationPurchaseIntent = useMemo(
-    () => route === '/menu' ? readCreationPurchaseIntent(authSessionKey) : null,
+    () => route === '/credits' || route === '/menu' ? readCreationPurchaseIntent(authSessionKey) : null,
     [authSessionKey, route],
   );
 
@@ -333,30 +358,11 @@ export function App({
     });
   }, [authSessionKey]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLandingBillingProfile(null);
-    setLandingBillingChecked(authStatus !== 'signed-in');
-    if (route !== '/' || authStatus !== 'signed-in') return () => { cancelled = true; };
-    void Promise.all([
-      import('../services/Billing.ts'),
-      import('../services/ApiClient.ts'),
-    ]).then(async ([{ getBillingProfile }, { captureApiRequestContext }]) => {
-      const profile = await getBillingProfile(captureApiRequestContext());
-      if (!cancelled) {
-        setLandingBillingProfile(profile);
-        setLandingBillingChecked(true);
-      }
-    }).catch((error: unknown) => {
-      debugWarn('[Landing] Rookie pass check failed:', error instanceof Error ? error.message : error);
-      if (!cancelled) setLandingBillingChecked(true);
-    });
-    return () => { cancelled = true; };
-  }, [authSessionKey, authStatus, route]);
 
   useEffect(() => {
     trialLaunchEpochRef.current += 1;
-  }, [route]);
+    return () => { trialLaunchEpochRef.current += 1; };
+  }, [route, authSessionKey]);
 
   useEffect(() => {
     if (!isGameRoute(route)) return;
@@ -409,6 +415,8 @@ export function App({
       if (!writeStoredMatch(data, authSessionKey)) {
         debugWarn('[AppRouter] Match could not be persisted for reload recovery');
       }
+      rememberLastGame(authSessionKey, data.gameMode ?? 'fight');
+      trackProductEvent('game_started', { game: data.gameMode ?? 'fight', source: data.experience === 'trial' ? 'trial' : 'roster' });
       setPendingMatchState({ authSessionKey, data });
       debugInfo('[AppRouter] Starting game from roster', {
         gameMode: data.gameMode ?? 'fight',
@@ -420,60 +428,75 @@ export function App({
     [authSessionKey, navigate],
   );
 
-  const startTrial = useCallback(async () => {
+  const openGame = useCallback((mode: FighterGameMode) => {
+    navigate(mode === 'aura' ? '/roster/aura' : mode === 'rush' ? '/roster/rush' : '/arcade');
+  }, [navigate]);
+  const createForGame = useCallback((mode: FighterGameMode, source: 'landing' | 'roster' = 'landing') => {
+    navigate('/fighters/new', buildCreationSearch({ tier: 'rookie', returnTo: mode, creationPackage: mode === 'aura' ? 'aura' : 'complete', source }));
+  }, [navigate]);
+  const tryGame = useCallback(async (mode: FighterGameMode) => {
     const launchEpoch = ++trialLaunchEpochRef.current;
-    const [cloud, trial, api] = await Promise.all([
+    const entryRoute = normalizeRoute(window.location.pathname, window.location.hash);
+    const ownerScope = getActiveSpriteCacheScope();
+    const seed = Math.floor(Math.random() * 0x7fffffff);
+    if (mode === 'aura') {
+      startFight({ gameMode: mode, experience: 'trial', vsAI: true, cpuVsCpu: false,
+        p1Name: 'NOVA', p2Name: 'BYTE', stageId: DEFAULT_AURA_STAGE_ID, roundsToWin: 1,
+        p2Difficulty: 0.25, auraDifficulty: 'lowkey', seed });
+      return;
+    }
+
+    const [cloud, trial, api, packs] = await Promise.all([
       import('../services/CloudFighters.ts'),
       import('./shared/trialMatch.ts'),
       import('../services/ApiClient.ts'),
+      import('../services/FighterAssetPacks.ts'),
     ]);
-    const context = api.captureApiRequestContext();
-    const cloudPair = (async () => {
-      const officials = await cloud.listArcadeFighters().catch((error: unknown) => {
-        debugWarn('[Landing] Public trial roster unavailable; using built-in fighters:',
-          error instanceof Error ? error.message : error);
-        return [];
-      });
-      const pair = trial.selectTrialFighters(officials);
-      const downloadTrialFighter = async (
-        fighter: typeof pair.player,
-        slot: 'player' | 'opponent',
-      ) => {
-        if (!fighter) return null;
-        try {
-          await cloud.downloadArcadeFighterToLocal(fighter, context, {
-            includeHighResolutionAssets: false,
-            includeSourceAssets: false,
-          });
-          return fighter;
-        } catch (error) {
-          debugWarn(`[Landing] Trial ${slot} download failed; using built-in fighter:`,
-            error instanceof Error ? error.message : error);
-          return null;
-        }
-      };
-      const [player, opponent] = await Promise.all([
-        downloadTrialFighter(pair.player, 'player'),
-        downloadTrialFighter(pair.opponent, 'opponent'),
-      ]);
-      return { player, opponent };
-    })();
-    const loadedPair = await trial.trialAssetsBeforeDeadline(cloudPair);
-    if (!shouldCommitTrialLaunch(
-      launchEpoch,
-      trialLaunchEpochRef.current,
-      window.location.pathname,
-      window.location.hash,
-    )) return;
-    if (!loadedPair) {
-      debugWarn('[Landing] Trial cloud assets exceeded the startup deadline; using built-in fighters');
+    const apiContext = api.captureApiRequestContext();
+    let pair: import('./shared/trialMatch.ts').TrialFighterPair = { player: null, opponent: null };
+    if (String(import.meta.env.VITE_API_BASE_URL ?? '').trim()) {
+      const cloudPair = (async () => {
+        const officials = await cloud.listArcadeFighters();
+        const selected = trial.selectTrialFighters(officials.filter((fighter) => (
+          packs.resolveFighterModeReadiness(fighter.sprites, mode).kind !== 'unavailable'
+        )));
+        const download = async (fighter: typeof selected.player) => {
+          if (!fighter) return null;
+          try {
+            await cloud.downloadArcadeFighterToLocal(fighter, apiContext, {
+              includeHighResolutionAssets: false,
+              includeSourceAssets: false,
+            });
+            return fighter;
+          } catch (error: unknown) {
+            debugWarn('[Play] Trial character unavailable; using the built-in fallback:', error instanceof Error ? error.message : error);
+            return null;
+          }
+        };
+        const [player, opponent] = await Promise.all([download(selected.player), download(selected.opponent)]);
+        return { player, opponent };
+      })();
+      pair = await trial.trialAssetsBeforeDeadline(cloudPair) ?? pair;
     }
-    startFight(trial.buildTrialMatchData(loadedPair ?? { player: null, opponent: null }));
+    if (getActiveSpriteCacheScope() !== ownerScope || !shouldCommitTrialLaunch(
+      launchEpoch, trialLaunchEpochRef.current, window.location.pathname, window.location.hash, entryRoute,
+    )) return;
+    startFight({ ...trial.buildTrialMatchData(pair), gameMode: mode, seed,
+      ...(mode === 'rush' ? { stageId: 'side-street', rushDifficulty: 'rookie' as const, p2Name: pair.opponent?.name ?? 'CPU Ally' } : {}),
+    });
   }, [startFight]);
+
+  useEffect(() => {
+    if (route === '/menu' && new URLSearchParams(routeSearch).has('checkout')) {
+      navigate('/credits', routeSearch, { replace: true });
+    }
+  }, [route, routeSearch, navigate]);
+
 
   useEffect(() => {
     if (authStatus !== 'signed-in') return;
     if (!consumePostSignUpTrialIntent()) return;
+    if (route !== '/') return;
     if (!isNewAccount) {
       debugInfo('[Onboarding] Ignored a stale sign-up trial intent for an existing account');
       return;
@@ -485,16 +508,16 @@ export function App({
   useEffect(() => {
     if (!postSignUpTrialRequested || authStatus !== 'signed-in' || route !== '/') return;
     setPostSignUpTrialRequested(false);
-    void startTrial().catch((error: unknown) => {
-      debugWarn('[Onboarding] Post-sign-up trial failed to start:',
-        error instanceof Error ? error.message : error);
+    void tryGame('aura').catch((error: unknown) => {
+      debugWarn('[Onboarding] Aura trial could not start:', error instanceof Error ? error.message : error);
     });
-  }, [authStatus, postSignUpTrialRequested, route, startTrial]);
+  }, [authStatus, postSignUpTrialRequested, route, tryGame]);
 
   const finishFight = useCallback(() => {
+    trackProductEvent('game_completed', { game: pendingMatch?.gameMode ?? 'fight', source: pendingMatch?.experience === 'trial' ? 'trial' : 'roster' });
     writeStoredMatch(null, authSessionKey);
     debugInfo('[AppRouter] Cleared completed match recovery state');
-  }, [authSessionKey]);
+  }, [authSessionKey, pendingMatch]);
 
   const leaveFight = useCallback((nextRoute: AppRoute, search = '') => {
     writeStoredMatch(null, authSessionKey);
@@ -503,6 +526,8 @@ export function App({
   }, [authSessionKey, navigate]);
 
   const exitFight = useCallback(() => {
+    if (pendingMatch?.auraChallenge) { leaveFight('/challenges'); return; }
+    if (pendingMatch?.experience === 'trial' && pendingMatch.gameMode) { leaveFight(`/games/${pendingMatch.gameMode}`); return; }
     leaveFight(fightExitRoute(pendingMatch));
   }, [leaveFight, pendingMatch]);
 
@@ -524,17 +549,17 @@ export function App({
     const returnTo = isLegalRoute(route)
       ? legalReturnRouteFromState(window.history.state)
       : isGameRoute(route) ? '/menu' : route;
-    navigate(nextRoute, '', { state: { legalReturnTo: returnTo } });
+    navigate(nextRoute, '', { state: { legalReturnTo: returnTo, legalReturnSearch: window.location.search } });
   }, [navigate, route]);
 
   const navigateWithinLegal = useCallback((nextRoute: LegalRoute) => {
     navigate(nextRoute, '', {
-      state: { legalReturnTo: legalReturnRouteFromState(window.history.state) },
+      state: { legalReturnTo: legalReturnRouteFromState(window.history.state), legalReturnSearch: window.history.state?.legalReturnSearch ?? '' },
     });
   }, [navigate]);
 
   const leaveLegal = useCallback(() => {
-    navigate(legalReturnRouteFromState(window.history.state), '', { replace: true });
+    navigate(legalReturnRouteFromState(window.history.state), typeof window.history.state?.legalReturnSearch === 'string' ? window.history.state.legalReturnSearch : '', { replace: true });
   }, [navigate]);
 
   const prepareChallenger = useCallback(async (fighterId: string | null) => {
@@ -601,6 +626,8 @@ export function App({
   const homePage = useMemo(
     () => (
       <HomePage
+        key={authSessionKey}
+        walletOnly
         authStatus={authStatus}
         authSessionKey={authSessionKey}
         creationPurchaseIntent={creationPurchaseIntent}
@@ -608,6 +635,8 @@ export function App({
           clearCreationPurchaseIntent(authSessionKey);
           navigate('/fighters/new', buildCreationSearch({
             tier: creationPurchaseIntent.tier,
+            creationPackage: creationPurchaseIntent.creationPackage,
+            challenge: creationPurchaseIntent.challenge,
             returnTo: creationPurchaseIntent.returnTo,
             source: creationPurchaseIntent.source,
           }));
@@ -633,34 +662,6 @@ export function App({
     [authStatus, authSessionKey, creationPurchaseIntent, navigate, navigateToLegal],
   );
 
-  const landingPage = useMemo(
-    () => (
-      <LandingPage
-        authStatus={authStatus}
-        billingProfile={landingBillingProfile}
-        billingProfileChecked={landingBillingChecked}
-        onPlayTrial={startTrial}
-        onCreateFighter={() => navigate('/fighters/new', buildCreationSearch({
-          tier: 'rookie',
-          returnTo: 'arcade',
-          source: 'landing',
-        }))}
-        onOpenArcade={() => navigate('/arcade')}
-        onOpenWatchMode={() => navigate('/roster/watch')}
-        onOpenCommunity={() => navigate('/community')}
-        userImageUrl={userImageUrl}
-      />
-    ),
-    [
-      authStatus,
-      landingBillingChecked,
-      landingBillingProfile,
-      navigate,
-      startTrial,
-      userImageUrl,
-    ],
-  );
-
   const content = useMemo(() => {
     if (configurationError && route !== '/' && route !== '/community' && !isLegalRoute(route)) {
       return (
@@ -671,12 +672,24 @@ export function App({
         />
       );
     }
-    if (route === '/') {
-      return landingPage;
+    if ((route === '/' && !readLastGame(authSessionKey)) || route.startsWith('/games/')) {
+      const mode: FighterGameMode = route === '/games/fight' ? 'fight' : route === '/games/rush' ? 'rush' : 'aura';
+      return <GameLandingPage mode={mode} onPlay={tryGame} onCreate={createForGame} onExplore={(game) => navigate(`/games/${game}`)}
+        onLocalVersus={mode === 'rush' ? undefined : () => navigate(mode === 'aura' ? '/roster/aura-vs' : '/roster/vs')}
+        onOnlineVersus={mode === 'rush' ? undefined : () => navigate('/versus/online', mode === 'aura' ? 'mode=aura' : '')}
+        onWatch={mode === 'rush' ? undefined : () => navigate(mode === 'aura' ? '/roster/aura-watch' : '/roster/watch')}
+        onOpenCharacters={() => navigate('/gallery')} onOpenCredits={() => navigate('/credits')} onBack={() => navigate('/menu')} />;
     }
-    if (route === '/menu') {
-      return homePage;
-    }
+    if (route === '/menu' || route === '/') return <PlayPage lastGame={readLastGame(authSessionKey)} onPlay={(mode) => readLastGame(authSessionKey) ? openGame(mode) : tryGame(mode)}
+      onExplore={(mode) => navigate(`/games/${mode}`)} onOpenCharacters={() => navigate('/gallery')}
+      onOpenChallenges={() => navigate('/challenges')} />;
+    if (route === '/credits') return homePage;
+    if (route === '/challenge') return <ChallengePage preferredPlayerPhotoHash={readPreferredArcadePlayerPhotoHash(routeSearch)} token={new URLSearchParams(routeSearch).get('challenge')}
+      onPlay={startFight} onBack={() => navigate('/challenges')} onCreatePlayer={() => navigate('/fighters/new', buildCreationSearch({
+        tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'challenge', challenge: new URLSearchParams(routeSearch).get('challenge') ?? undefined,
+      }))} />;
+    if (route === '/challenges') return <ChallengesPage onPlay={startFight}
+      onOpenChallenge={(token) => navigate('/challenge', new URLSearchParams({challenge: token}).toString())} onBack={() => navigate('/menu')} />;
     if (route === '/arcade') {
       return (
         <ArcadePage
@@ -686,6 +699,7 @@ export function App({
           onBack={() => navigate('/menu')}
           onCreateFighter={() => navigate('/fighters/new', buildCreationSearch({
             tier: 'rookie',
+            creationPackage: 'complete',
             returnTo: 'arcade',
             source: 'arcade',
           }))}
@@ -728,29 +742,26 @@ export function App({
     }
     if (route === '/fighters/new') {
       const creationContext = readCreationNavigationContext(window.location.search);
-      const returnToArcade = creationContext.returnTo === 'arcade';
-      const backRoute: AppRoute = creationContext.source === 'landing' || creationContext.source === 'trial'
-        ? '/'
-        : returnToArcade ? '/arcade' : '/gallery';
+      const destination = creationDestination(creationContext.returnTo);
       return (
         <CreateFighterPage
+          key={authSessionKey}
           authStatus={authStatus}
           authSessionKey={authSessionKey}
-          completionLabel={returnToArcade ? 'Enter Arcade' : 'Open In Gallery'}
-          onBack={() => navigate(backRoute)}
-          onComplete={(photoHash) => returnToArcade
-            ? navigate('/arcade', buildArcadeSelectionSearch(photoHash))
-            : navigate('/gallery')}
-          onGetCredits={(tier) => {
-            const stored = rememberCreationPurchaseIntent(authSessionKey, {
-              tier,
-              returnTo: creationContext.returnTo,
-              source: creationContext.source ?? 'menu',
+          completionLabel={creationContext.challenge ? 'Return to challenge' : creationContext.returnTo === 'gallery' ? 'Open my characters' : `Play ${creationContext.returnTo === 'arcade' ? 'Fight' : creationContext.returnTo}`}
+          onBack={() => creationContext.challenge
+            ? navigate('/challenge', new URLSearchParams({ challenge: creationContext.challenge }).toString())
+            : navigate(destination)}
+          onComplete={(photoHash) => creationContext.challenge
+            ? navigate('/challenge', new URLSearchParams({challenge: creationContext.challenge, player: photoHash}).toString())
+            : navigate(destination, destination === '/gallery' ? '' : buildArcadeSelectionSearch(photoHash))}
+          onGetCredits={(tier, creationPackage, draftPersisted) => {
+            rememberCreationPurchaseIntent(authSessionKey, {
+              tier, creationPackage, challenge: creationContext.challenge,
+              ...(draftPersisted === false ? { draftNotPersisted: true } : {}),
+              returnTo: creationContext.returnTo, source: creationContext.source ?? 'menu',
             });
-            if (!stored) {
-              debugWarn('[Create] Could not preserve the selected tier before opening credits');
-            }
-            navigate('/menu');
+            navigate('/credits');
           }}
           onNavigateLegal={navigateToLegal}
         />
@@ -801,7 +812,8 @@ export function App({
           authSessionKey={authSessionKey}
           mode={mode}
           onBack={() => navigate('/menu')}
-          onCreateFighter={() => navigate('/fighters/new', 'tier=rookie')}
+          preferredPlayerPhotoHash={readPreferredArcadePlayerPhotoHash(routeSearch)}
+          onCreateFighter={() => createForGame(mode.startsWith('aura') ? 'aura' : mode === 'rush' ? 'rush' : 'fight', 'roster')}
           onStartFight={startFight}
         />
       );
@@ -816,8 +828,10 @@ export function App({
         onExit={exitFight}
         onCreateFighter={() => leaveFight('/fighters/new', buildCreationSearch({
           tier: 'rookie',
-          returnTo: 'arcade',
-          source: 'trial',
+          returnTo: pendingMatch.gameMode ?? 'fight',
+          creationPackage: pendingMatch.gameMode === 'aura' ? 'aura' : 'complete',
+          source: pendingMatch.auraChallenge ? 'challenge' : pendingMatch.experience === 'trial' ? 'trial' : 'roster',
+          challenge: pendingMatch.auraChallenge ? encodeAuraChallenge(pendingMatch.auraChallenge) : undefined,
         }))}
         onOpenArcade={() => leaveFight('/arcade')}
         ladder={ladderContext}
@@ -838,7 +852,10 @@ export function App({
     authStatus,
     authSessionKey,
     homePage,
-    landingPage,
+    routeSearch,
+    openGame,
+    tryGame,
+    createForGame,
     configurationError,
     ladderContext,
   ]);
@@ -860,6 +877,7 @@ export function App({
         onRetry={onRetryCache}
       />
       <main className="app-main">{routedContent}</main>
+      <nav className="product-entry__collection" aria-label="Community"><a href="/community" onClick={(event) => { if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); navigate('/community'); }}>Explore community characters →</a></nav>
       <LegalFooter onNavigate={navigateToLegal} />
     </div>
   );

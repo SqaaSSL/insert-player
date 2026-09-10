@@ -10,12 +10,12 @@ const UP_THRESHOLD = 40;
 
 const ROTATED_QUERY = '(pointer: coarse) and (orientation: portrait)';
 
-function directionsFor(dx: number, dy: number): Set<Dir> {
+function directionsFor(dx: number, dy: number, mode: 'fight' | 'rush'): Set<Dir> {
   const dirs = new Set<Dir>();
   if (dx <= -X_THRESHOLD) dirs.add('left');
   if (dx >= X_THRESHOLD) dirs.add('right');
   if (dy >= DOWN_THRESHOLD) dirs.add('down');
-  if (dy <= -UP_THRESHOLD) dirs.add('up');
+  if (dy <= -(mode === 'rush' ? DOWN_THRESHOLD : UP_THRESHOLD)) dirs.add('up');
   return dirs;
 }
 
@@ -38,9 +38,11 @@ function knobClassFor(dirs: Set<Dir>): string {
  * deltas are axis-mapped before thresholding.
  */
 export function VirtualJoystick({
+  mode = 'fight',
   playerIndex = 0,
   playerLabel = 'player 1',
 }: {
+  mode?: 'fight' | 'rush';
   playerIndex?: 0 | 1;
   playerLabel?: string;
 }) {
@@ -89,7 +91,7 @@ export function VirtualJoystick({
     const rotated = window.matchMedia?.(ROTATED_QUERY).matches;
     const dx = rotated ? sdy : sdx;
     const dy = rotated ? -sdx : sdy;
-    applyDirections(directionsFor(dx, dy));
+    applyDirections(directionsFor(dx, dy, mode));
   };
 
   const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
@@ -118,7 +120,7 @@ export function VirtualJoystick({
     <div
       className={active ? 'virtual-joystick-zone is-active' : 'virtual-joystick-zone'}
       role="application"
-      aria-label={`Movement zone, ${playerLabel}. Touch anywhere on the left side and drag: sideways to walk, down to crouch, up to jump.`}
+      aria-label={`Movement zone, ${playerLabel}. ${mode === 'rush' ? 'Drag on the left side to move in all directions. Use the Jump button to jump.' : 'Drag sideways to walk, down to crouch, up to jump.'}`}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -128,6 +130,7 @@ export function VirtualJoystick({
     >
       <div className="virtual-joystick" aria-hidden="true">
         <span className={`virtual-joystick__knob${knobClass}`} />
+        <span className="virtual-joystick__label">Drag to move</span>
       </div>
     </div>
   );

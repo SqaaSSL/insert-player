@@ -5,6 +5,7 @@ import { RushScene } from './scenes/RushScene.ts';
 import { AuraScene } from './scenes/AuraScene.ts';
 import { GAME_WIDTH, GAME_HEIGHT } from './constants.ts';
 import { setPendingLaunchTarget, type GameLaunchTarget } from './launchState.ts';
+import { getAuraCanvasSize } from './aura/AuraViewport.ts';
 
 export function createGame(parent: string, launchTarget?: GameLaunchTarget | null): Phaser.Game {
   setPendingLaunchTarget(launchTarget ?? null);
@@ -14,13 +15,18 @@ export function createGame(parent: string, launchTarget?: GameLaunchTarget | nul
   // constraints on the canvas) own the fit and Phaser must not manage scale.
   const coarsePointer =
     typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
+  const isAura = launchTarget?.sceneKey === 'AuraScene';
+  const auraSize = getAuraCanvasSize(
+    typeof window === 'undefined' ? GAME_WIDTH : window.innerWidth,
+    typeof window === 'undefined' ? GAME_HEIGHT : window.innerHeight,
+  );
   const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
-    width: GAME_WIDTH,
-    height: GAME_HEIGHT,
+    width: isAura ? auraSize.width : GAME_WIDTH,
+    height: isAura ? auraSize.height : GAME_HEIGHT,
     parent,
     backgroundColor: '#000000',
-    scale: coarsePointer
+    scale: coarsePointer || isAura
       ? {
           mode: Phaser.Scale.NONE,
           parent,
@@ -43,5 +49,21 @@ export function createGame(parent: string, launchTarget?: GameLaunchTarget | nul
     },
   };
 
-  return new Phaser.Game(config);
+  const game = new Phaser.Game(config);
+  if (isAura && typeof window !== 'undefined') {
+    let previous = auraSize;
+    const resizeAura = () => {
+      const next = getAuraCanvasSize(window.innerWidth, window.innerHeight);
+      if (next.width !== previous.width || next.height !== previous.height) {
+        previous = next;
+        // Keep the same scene, simulation, media recorder and canvas element.
+        game.scale.resize(next.width, next.height);
+      } else {
+        game.scale.refresh();
+      }
+    };
+    window.addEventListener('resize', resizeAura);
+    game.events.once('destroy', () => window.removeEventListener('resize', resizeAura));
+  }
+  return game;
 }

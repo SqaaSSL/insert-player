@@ -1,10 +1,8 @@
 import { SeededRng } from '../utils/SeededRng.ts';
 import {
-  AURA_BEAT_MS,
-  AURA_BPM,
   AURA_FINISH_BEATS,
   AURA_INITIAL_COUNT_IN_BEATS,
-  AURA_MUSIC_BEAT_OFFSET_MS,
+  AURA_NOTE_TRAVEL_BEATS,
   AURA_NOTE_TRAVEL_MS,
   AURA_PHRASE_BEATS,
   AURA_ROUNDS,
@@ -13,6 +11,7 @@ import {
   getAuraDifficulty,
   type AuraDifficultyId,
 } from './AuraConfig.ts';
+import { DEFAULT_AURA_TRACK, auraBeatMs, type AuraTrack } from './AuraTracks.ts';
 
 export type AuraLane = 0 | 1 | 2 | 3;
 export type AuraSlot = 0 | 1;
@@ -39,8 +38,13 @@ export interface AuraTurn {
 export interface AuraChart {
   seed: number;
   difficulty: AuraDifficultyId;
+  trackId: string;
   bpm: number;
   beatMs: number;
+  /** First beat of the track, in ms from the start of the audio file. */
+  beatOffsetMs: number;
+  /** Four beats of this track: the scroll time from lane top to receptor. */
+  noteTravelMs: number;
   firstTurnMs: number;
   durationMs: number;
   turns: AuraTurn[];
@@ -90,11 +94,13 @@ function createRoundPattern(rng: SeededRng, offbeatNotes: number): PatternNote[]
 export function createAuraChart(
   seed: number,
   difficultyId: AuraDifficultyId = 'viral',
+  track: AuraTrack = DEFAULT_AURA_TRACK,
 ): AuraChart {
   const normalizedSeed = (seed >>> 0) || 0x41555241;
   const difficulty = getAuraDifficulty(difficultyId);
   const rng = new SeededRng(normalizedSeed ^ 0x41555241);
-  const firstTurnMs = AURA_MUSIC_BEAT_OFFSET_MS + AURA_INITIAL_COUNT_IN_BEATS * AURA_BEAT_MS;
+  const beatMs = auraBeatMs(track);
+  const firstTurnMs = track.beatOffsetMs + AURA_INITIAL_COUNT_IN_BEATS * beatMs;
   const turns: AuraTurn[] = [];
 
   for (let round = 0; round < AURA_ROUNDS; round += 1) {
@@ -102,15 +108,15 @@ export function createAuraChart(
     for (let response = 0; response < 2; response += 1) {
       const index = round * 2 + response;
       const slot = response as AuraSlot;
-      const startMs = firstTurnMs + index * AURA_TURN_BEATS * AURA_BEAT_MS;
-      const firstNoteMs = startMs + AURA_TURN_COUNT_IN_BEATS * AURA_BEAT_MS;
+      const startMs = firstTurnMs + index * AURA_TURN_BEATS * beatMs;
+      const firstNoteMs = startMs + AURA_TURN_COUNT_IN_BEATS * beatMs;
       const notes = pattern.map((entry, noteIndex): AuraNote => ({
         id: `r${round}-s${slot}-n${noteIndex}`,
         turnIndex: index,
         slot,
         lane: entry.lane,
         beat: entry.beat,
-        atMs: firstNoteMs + entry.beat * AURA_BEAT_MS,
+        atMs: firstNoteMs + entry.beat * beatMs,
       }));
       turns.push({
         index,
@@ -118,19 +124,22 @@ export function createAuraChart(
         slot,
         startMs,
         firstNoteMs,
-        endMs: startMs + AURA_TURN_BEATS * AURA_BEAT_MS,
+        endMs: startMs + AURA_TURN_BEATS * beatMs,
         notes,
       });
     }
   }
 
   const notes = turns.flatMap((turn) => turn.notes);
-  const durationMs = (turns.at(-1)?.endMs ?? firstTurnMs) + AURA_FINISH_BEATS * AURA_BEAT_MS;
+  const durationMs = (turns.at(-1)?.endMs ?? firstTurnMs) + AURA_FINISH_BEATS * beatMs;
   return {
     seed: normalizedSeed,
     difficulty: difficulty.id,
-    bpm: AURA_BPM,
-    beatMs: AURA_BEAT_MS,
+    trackId: track.id,
+    bpm: track.bpm,
+    beatMs,
+    beatOffsetMs: track.beatOffsetMs,
+    noteTravelMs: AURA_NOTE_TRAVEL_BEATS * beatMs,
     firstTurnMs,
     durationMs,
     turns,
@@ -143,8 +152,12 @@ export function auraTurnAt(chart: AuraChart, nowMs: number): AuraTurn | null {
 }
 
 /** Linear time-to-target projection shared by every lane. */
-export function auraNoteTravelProgress(noteAtMs: number, nowMs: number): number {
+export function auraNoteTravelProgress(
+  noteAtMs: number,
+  nowMs: number,
+  travelMs: number = AURA_NOTE_TRAVEL_MS,
+): number {
   // Intentionally do not clamp at 1: a missed note must cross the receptor at
   // the same speed instead of appearing to brake there during its late window.
-  return 1 - (noteAtMs - nowMs) / AURA_NOTE_TRAVEL_MS;
+  return 1 - (noteAtMs - nowMs) / travelMs;
 }

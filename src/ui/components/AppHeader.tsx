@@ -3,20 +3,19 @@ import { BrandMark } from './BrandMark.tsx';
 import { PUBLIC_APP_NAME } from '../publicBrand.ts';
 
 export interface AppHeaderNavTarget {
-  route: '/menu' | '/arcade' | '/gallery' | '/community';
+  route: '/menu' | '/gallery' | '/challenges' | '/credits' | '/community';
   label: string;
 }
 
 const NAV_TARGETS: AppHeaderNavTarget[] = [
   { route: '/menu', label: 'Play' },
-  { route: '/arcade', label: 'Arcade' },
-  { route: '/gallery', label: 'Gallery' },
-  { route: '/community', label: 'Community' },
+  { route: '/gallery', label: 'My characters' },
+  { route: '/challenges', label: 'Challenges' },
 ];
 
 interface AppHeaderProps {
   currentRoute: string;
-  onNavigate: (route: '/' | '/menu' | '/arcade' | '/gallery' | '/community') => void;
+  onNavigate: (route: '/' | '/menu' | '/gallery' | '/challenges' | '/credits' | '/community') => void;
   authSlot?: ReactNode;
 }
 
@@ -53,6 +52,7 @@ export function AppHeader({ currentRoute, onNavigate, authSlot }: AppHeaderProps
         className="app-header__brand"
         aria-current={currentRoute === '/' ? 'page' : undefined}
         onClick={(event) => {
+          if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
           event.preventDefault();
           onNavigate('/');
         }}
@@ -79,13 +79,15 @@ export function AppHeader({ currentRoute, onNavigate, authSlot }: AppHeaderProps
             href={target.route}
             aria-current={currentRoute === target.route ? 'page' : undefined}
             onClick={(event) => {
-              event.preventDefault();
+              if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
               onNavigate(target.route);
             }}
           >
             {target.label}
           </a>
         ))}
+        <a href="/credits" onClick={(event) => { if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return; event.preventDefault(); onNavigate('/credits'); }}>Credits</a>
         {authSlot ? <div className="app-header__account">{authSlot}</div> : null}
       </nav>
     </header>

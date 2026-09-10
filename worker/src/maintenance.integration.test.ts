@@ -25,6 +25,9 @@ const SCHEMA = `
     owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
   );
   CREATE TABLE generation_charges (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     tier TEXT NOT NULL DEFAULT 'champion',
@@ -52,6 +55,9 @@ const SCHEMA = `
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE generation_jobs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     fighter_id TEXT NOT NULL REFERENCES fighters(id) ON DELETE CASCADE,
@@ -74,6 +80,9 @@ const SCHEMA = `
     detail TEXT
   );
   CREATE TABLE generation_artifact_runs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     original_charge_id TEXT,
     status TEXT NOT NULL,

@@ -704,7 +704,7 @@ async function unionCleanup(variantId: KleinVariantId, frameIndex: number): Prom
   dnnContext.drawImage(dnnImage, 0, 0, chromaImage.width, chromaImage.height);
   const chromaData = context.getImageData(0, 0, canvas.width, canvas.height);
   const dnnData = dnnContext.getImageData(0, 0, dnnCanvas.width, dnnCanvas.height);
-  unionForegroundMasks(chromaData.data, dnnData.data);
+  unionForegroundMasks(chromaData.data, dnnData.data, canvas.width, canvas.height);
   decontaminateGreenEdges(chromaData.data, canvas.width, canvas.height);
   context.putImageData(chromaData, 0, 0);
   const path = resolve(frameDir(variantId, frameIndex), 'cleaned-union.png');
@@ -732,7 +732,7 @@ async function repairCleanupFromRaw(
   dnnContext.drawImage(dnnImage, 0, 0, chromaImage.width, chromaImage.height);
   const chromaData = context.getImageData(0, 0, canvas.width, canvas.height);
   const dnnData = dnnContext.getImageData(0, 0, dnnCanvas.width, dnnCanvas.height);
-  unionForegroundMasks(chromaData.data, dnnData.data);
+  unionForegroundMasks(chromaData.data, dnnData.data, canvas.width, canvas.height);
   decontaminateGreenEdges(chromaData.data, canvas.width, canvas.height);
   context.putImageData(chromaData, 0, 0);
   const unionPath = resolve(directory, 'cleaned-union-from-raw.png');

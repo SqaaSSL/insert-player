@@ -9,6 +9,7 @@ import {
 } from './AuraConfig.ts';
 import { auraNoteTravelProgress, createAuraChart } from './AuraChart.ts';
 import { AuraBattle, auraRank, createAuraCpuPlan } from './AuraBattle.ts';
+import { AURA_TRACKS, DEFAULT_AURA_TRACK, getAuraTrack, pickAuraTrackForMatch, pickAuraTrackFromSeed } from './AuraTracks.ts';
 
 describe('Aura chart', () => {
   it('is deterministic and gives both players the same phrase', () => {
@@ -70,6 +71,35 @@ describe('Aura chart', () => {
     const chart = createAuraChart(42, 'viral');
     for (const turn of chart.turns) {
       expect(turn.firstNoteMs - turn.startMs).toBeCloseTo(AURA_NOTE_TRAVEL_MS);
+    }
+  });
+
+  it('locks every timing to the chosen track', () => {
+    const slow = { id: 'test-slow', title: 'Slow', url: '/x.mp3', bpm: 120, beatOffsetMs: 500 };
+    const chart = createAuraChart(42, 'viral', slow);
+    expect(chart.trackId).toBe('test-slow');
+    expect(chart.beatMs).toBeCloseTo(500);
+    expect(chart.beatOffsetMs).toBe(500);
+    expect(chart.noteTravelMs).toBeCloseTo(2_000);
+    expect(chart.firstTurnMs).toBeCloseTo(500 + 8 * 500);
+    for (const turn of chart.turns) {
+      expect(turn.firstNoteMs - turn.startMs).toBeCloseTo(chart.noteTravelMs);
+      expect(turn.endMs - turn.startMs).toBeCloseTo(20 * 500);
+    }
+    // Same phrase, different clock: lanes are identical, times scale with the beat.
+    const reference = createAuraChart(42, 'viral');
+    expect(chart.notes.map((note) => note.lane)).toEqual(reference.notes.map((note) => note.lane));
+    expect(reference.trackId).toBe(DEFAULT_AURA_TRACK.id);
+    expect(auraNoteTravelProgress(10_000, 8_000, chart.noteTravelMs)).toBeCloseTo(0);
+    expect(getAuraTrack('does-not-exist')).toBeNull();
+    expect(pickAuraTrackFromSeed(7)).toBe(pickAuraTrackFromSeed(7));
+    // Stage pairing prefers a track written for the stage and never fails on unknown stages.
+    const paired = pickAuraTrackForMatch(7, DEFAULT_AURA_TRACK.stageId);
+    expect(paired.stageId).toBe(DEFAULT_AURA_TRACK.stageId);
+    expect(AURA_TRACKS).toContain(pickAuraTrackForMatch(7, 'no-such-stage'));
+    // The Fight/Rush battle theme never enters the draw once real tracks exist.
+    if (AURA_TRACKS.length > 0 && getAuraTrack('neon-arena')?.fallback) {
+      expect(AURA_TRACKS.some((track) => track.id === 'neon-arena')).toBe(AURA_TRACKS.every((track) => track.fallback));
     }
   });
 

@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 2,
+  "status": "champion-runtime-canary-review",
+  "packId": "aura-v1-2026",
+  "animationName": "aura_six_seven",
+  "subject": "donald-trump",
+  "qualityTarget": "champion",
+  "artifactStage": "six-independent-hq-masters-registered-and-compiled",
+  "generation": {
+    "provider": "fal",
+    "model": "grok-imagine-image-2-edit",
+    "endpoint": "xai/grok-imagine-image/v2.0/edit",
+    "mode": "one pose-first identity-preserving edit per unique authored frame",
+    "wholeSheetGeneration": false,
+    "referenceOrder": [
+      "IMAGE 1: approved Template Zero pose and registration master",
+      "IMAGE 2: trusted Donald Trump Champion character and rendering master",
+      "IMAGE 3: original Donald Trump identity safeguard"
+    ],
+    "params": {
+      "num_images": 1,
+      "aspect_ratio": "auto",
+      "resolution": "2k",
+      "output_format": "png",
+      "quality": "medium"
+    },
+    "providerOutputSize": {
+      "width": 1776,
+      "height": 2368
+    },
+    "generationState": {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/generation-state.json",
+      "sha256": "9fd4adb93c0b7f7cc126fe85f2542de9e38111e3e6fdaabd33fc60e7abb6326a"
+    },
+    "costDisclosure": {
+      "selectedCalls": 6,
+      "rejectedCalls": 1,
+      "observedCalls": 7,
+      "costPerCallMicrocredits": 110000,
+      "selectedCostMicrocredits": 660000,
+      "observedAttemptCostMicrocredits": 770000,
+      "apiEquivalentEstimateUsd": 0.77,
+      "note": "Estimate from the pinned provider catalog rate; not an invoice. No automatic paid retries were enabled."
+    }
+  },
+  "sources": {
+    "approvedTemplateZeroChoreography": {
+      "path": "artifacts/aura-animation-canary/template-zero/aura_six_seven/manifest.json",
+      "sha256": "b2752cabdd2550170a0fabd0d25554dcdbbf361b5e1b059aa9d4c7cbc20eb325"
+    },
+    "trumpChampionCanonical": {
+      "role": "identity, outfit, proportions and rendering master",
+      "sha256": "10a1f057097edec2c770f033d50d06b5cf8e2bd08d0320df9640366e24a00d54"
+    },
+    "trumpOriginal": {
+      "role": "facial geometry and hairline safeguard only",
+      "sha256": "af76d813828ebd4d56b1b18b44de3f850f3c7968022aafab2ece6514d15829fc"
+    }
+  },
+  "keyframes": {
+    "uniqueGenerated": 6,
+    "sequence": [
+      "previous01",
+      "leftHandHigh",
+      "previous03",
+      "rightHandHigh",
+      "previous05",
+      "leftHandHigh",
+      "previous07",
+      "rightHandHigh"
+    ],
+    "previous01": {
+      "rawPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/raw/previous01.png",
+      "rawSha256": "10484aa559d34c5c59b07104a03cde58793a5c60fda8c43d6c38db7501ed522b",
+      "registeredPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/registered-rgba/previous01.png",
+      "registeredSha256": "19134d86930054ed818c5bf0db2f2616a732d1a425bdf5d71a81cd3ac7043c25"
+    },
+    "leftHandHigh": {
+      "rawPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/raw/leftHandHigh.png",
+      "rawSha256": "c18d6b3f8d4f49f5436b87300a76f5b7c40aa2f94dfdaa566fbc354d83a7fc9a",
+      "registeredPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/registered-rgba/leftHandHigh.png",
+      "registeredSha256": "a56216b923f42177e07e08f794aecf06bb831d3412364345c1c1d2f0ff0d0b01"
+    },
+    "previous03": {
+      "rawPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/raw/previous03.png",
+      "rawSha256": "709fd43a1c616170bde67079f455651ce622edaf05b55b9f2c1f59fd4bff594f",
+      "registeredPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/registered-rgba/previous03.png",
+      "registeredSha256": "25cf70378b464d124a2da540fb65446aef5e1d1b0a21c630027ad21a55fecbbd"
+    },
+    "rightHandHigh": {
+      "rawPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/raw/rightHandHigh.png",
+      "rawSha256": "b716aaf522ed7ff552fe83490b8558b1169a5f48cdca9c0cb41afb1839a4d0ea",
+      "registeredPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/registered-rgba/rightHandHigh.png",
+      "registeredSha256": "2b1786d1ed2fbe6a553ed3c09890e580fcb24cd9303fa86d644dcc0c56ec4bf1"
+    },
+    "previous05": {
+      "rawPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/raw/previous05.png",
+      "rawSha256": "d335f75ce1ab3649ec55cf5fea8d0a3222000f1edb776e945c5aafb53026d545",
+      "registeredPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/registered-rgba/previous05.png",
+      "registeredSha256": "1cbf1c8dd9fb57afdaf6993793b426b647e4c93152fcb3b4aa65603fdec44a13"
+    },
+    "previous07": {
+      "rawPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/raw/previous07.png",
+      "rawSha256": "ccc161b267d586b88d17660b562e9b8060908d4aa1bef50fa26ec6f5025176ed",
+      "registeredPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/registered-rgba/previous07.png",
+      "registeredSha256": "6bb590b38e92ca6b1ea8a68037787d9467b743528dbaec496c1b05d0e74e50d6"
+    }
+  },
+  "compilation": {
+    "registration": "uniform scale plus translation to Template Zero center and root; no anatomy warp",
+    "registeredMasterSize": {
+      "width": 1536,
+      "height": 2048
+    },
+    "archivalAtlas": {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/aura_six_seven-2x.png",
+      "frameWidth": 768,
+      "frameHeight": 1024,
+      "frameCount": 8,
+      "gridColumns": 4,
+      "gridRows": 2,
+      "sha256": "89c05d2695fd81f38226b366270d37d15e524e53e0575fa86ed88b49482c0421"
+    },
+    "runtime": {
+      "path": "public/assets/aura/donald-trump/aura_six_seven.png",
+      "frameWidth": 192,
+      "frameHeight": 256,
+      "frameCount": 8,
+      "gridColumns": 4,
+      "gridRows": 2,
+      "sha256": "8ad7ea66ece2ff19cea54d764aaa8e5855e7e8b302158a1e70fd1c8b2406263c"
+    }
+  },
+  "qa": {
+    "reportPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/report.json",
+    "reportSha256": "871ef7a7c9578249cb78b087728900096e05fc052ae08892bdc14fe5801800a4",
+    "registeredContactSheetPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/registered-contact-sheet.png",
+    "registeredContactSheetSha256": "64fbfc2a74a1618ecce3320b66f99e2e73dcabf12134dee9f18ac86f2e4b1e8e",
+    "animatedPreviewPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/gesture-preview.gif",
+    "animatedPreviewSha256": "d914556e766654a1534711ee1552b752b0bfefc6a9ba452d658446ead8e5fad2",
+    "gameplayReview": {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/processed/gameplay-review.jpg",
+      "sha256": "0c44c9a582128e3f5c61319376d0919e911e62a5c78bc11bc5ad7e37e4e1cf52",
+      "width": 1280,
+      "height": 720,
+      "route": "/aura?auraDemo=1&auraDifficulty=lowkey&auraCanary=donald-trump&auraCanaryMove=aura_six_seven&auraAutoplay=1",
+      "result": "pass-atlas-loaded-and-animated-in-phaser"
+    },
+    "automaticGeometryFindings": 0,
+    "registeredCenterTolerancePixels": 2,
+    "registeredRootTolerancePixels": 2
+  },
+  "rejected": [
+    {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/rejected/rightHandHigh-flat-green-semantic-overreach.png",
+      "sha256": "42234aa4af2d4102e4830933743505ceac5923a681051b3d972bd62cf799d658",
+      "reason": "Raised hand drifted above the head instead of preserving the compact chest-level Six-Seven pose."
+    }
+  ],
+  "replacedDevelopmentCanary": {
+    "manifestPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/replaced/development-manifest-before-champion.json",
+    "manifestSha256": "5714a3c9ea7d1ac852015c6ed3cb22942c2f5664a5edf56cef83c281be89a8a9",
+    "runtimePath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/champion/replaced/development-runtime-before-champion.png",
+    "runtimeSha256": "d64915f9cef682f3fba7eefa3175b15a80d1eac15a8d605bfc16972ad5b8464c"
+  },
+  "review": {
+    "automaticRootRegistration": "pass-six-of-six",
+    "agentSemanticReview": "pass-six-independent-poses-both-opposite-hand-extremes-and-real-phaser-playback",
+    "ownerSemanticReview": "pending-real-gameplay-review",
+    "championQuality": true,
+    "runtimePromoted": true
+  }
+}

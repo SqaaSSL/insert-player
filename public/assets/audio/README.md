@@ -16,3 +16,19 @@ browser gets the same predictable playback format.
 Aura plays these files as a continuous four-layer audience bed: two
 desynchronised applause layers, one hype layer, and one negative layer. Gameplay
 changes their gains smoothly without restarting a clip for each judgement.
+
+## Aura tracks
+
+Aura charts are authored on each track's beat grid, so every track needs a
+tempo and a first-beat offset. Drop new tracks (MP3/M4A/OGG/WAV) into
+`public/assets/audio/aura/` and run:
+
+    npm run aura:tracks
+
+The script measures each new or changed file with `scripts/measure-aura-track.mjs`
+(needs `ffmpeg` on PATH), records the results in `aura/aura-tracks.json`, and
+regenerates `src/game/aura/aura-tracks.generated.ts`. BPM is reliable; the
+first-beat offset is a starting point, so confirm it by ear with the in-game
+early/late meter and pin the final value in `AURA_TRACK_OVERRIDES`
+(`src/game/aura/AuraTracks.ts`). Only use tracks whose licence allows
+commercial use; generated tracks must not imitate existing artists.

@@ -233,3 +233,46 @@ Wire in after sprite tier system is stable.
 - Auto-downgrade or cache eviction. Cache grows; user can manually delete fighters.
 - Mixed-tier playback in FightScene. The match runtime always loads the highest available tier for each fighter.
 - Backwards compat for the `frame_sequence` mode on non-idle anims. Already gracefully falls back to `sheet`. Stays as debug-only.
+
+
+## Character packages (development implementation)
+
+`GenerationPackages.ts` separates game compatibility from visual quality. `complete`
+keeps the existing 11 combat animations, playable in Fight and Rush, with Aura's
+existing combat fallback. `aura` creates the six required seasonal Aura performances
+with six unique frames each; it is available to signed-in users through the approved
+Original Gemini route. Optional reactions are not part of the purchase. Existing
+characters, source photos, identities, versions, credits and purchased assets remain
+intact. This does not claim a production rollout or a measured Aura provider trial.
+
+Aura prices are 2 / 6 / 10 credits for Rookie / Contender / Champion. The first
+account Rookie entitlement also applies to Aura. Complete prices remain 2 / 11 / 18.
+The smaller paid pack uses fewer planned sheet/refinement calls, not lower identity
+quality. Source views remain the same three premium references.
+
+The executable estimate starts from the existing measured complete QA costs
+($1.43 / $7.88 / $12.64), divides by the nominal cost of the current animation
+inventory (11 sheets, 68 unique refined frames, $0.41 canonical source allowance),
+and applies that overhead ratio to 6 sheets and 36 Aura frames. The historical
+76-frame cost table above is retained as historical QA context, not used as the
+current inventory. Estimates are approximately $1.01 / $4.45 / $6.94 per Aura pack;
+they are extrapolations, not new measurements. Prices round upward to whole credits
+and require at least 1.30x coverage using the least-valued existing credit pack,
+21% VAT, 1.5% + EUR0.25 payment processing and 0.5% Stripe Tax. As in the current
+pricing guard, USD cost is conservatively treated at EUR parity. Rookie cannot be
+discounted to one whole credit under this floor. Provider session call and cost caps
+scale downward by the same planned-work ratio; continuations subtract prior run
+usage and do not open a fresh budget.
+
+Pack expansion is distinct from a quality upgrade. The server quotes only missing
+same-or-better-quality target animations after checking ownership, metadata and R2
+objects. A quote never reserves credits. Confirmation must echo the current credit
+amount; changed quotes fail before debit. The immutable plan is stored on the
+purchase, durable job and artifact run. Replayed authorizations reuse the same
+reservation and session; an atomic wallet guard prevents concurrent double debit.
+Paid partial expansions require their existing zero-credit continuation.
+Existing source references are reused,
+existing animations remain archived and playable, and completed expansion stages
+resume from checkpoints without another charge. Expanding Aura to Fight/Rush adds
+combat movements; it is not advertised as an arithmetic difference between the two
+new-character prices because the dedicated Aura performances are separate assets.

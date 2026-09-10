@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { ATTACKS, FighterState } from '../constants.ts';
+import { ATTACKS, FIGHTER_HEIGHT, FighterState } from '../constants.ts';
 import {
   composeSpritePresentation,
   getFacingSpriteOriginX,
@@ -16,6 +16,20 @@ interface VisibleFrameBounds {
   y: number;
   width: number;
   height: number;
+}
+
+/** Stable visible-body reference shared by Fight and other presentation layers.
+ * All values are scene units, already including the stage presentation scale. */
+export interface IdleBodyReference {
+  height: number;
+  rootX: number;
+  rootY: number;
+}
+
+interface IdleBodyMeasurement {
+  height: number;
+  rootY: number;
+  frameHeight: number;
 }
 
 const VISIBLE_ALPHA_THRESHOLD = 32;
@@ -96,6 +110,8 @@ export class FighterView {
   private shadowOffsetX = 8;
   private shadowOffsetY = 8;
   private shadowAlpha = 0.16;
+  private idleBodyTexture: Phaser.Textures.Texture | null = null;
+  private idleBodyMeasurement: IdleBodyMeasurement | null = null;
 
   sprite!: Phaser.GameObjects.Sprite;
   shadowSprite?: Phaser.GameObjects.Sprite;
@@ -159,6 +175,60 @@ export class FighterView {
 
   getRenderYOffset(): number {
     return this.renderYOffset;
+  }
+
+  /** The idle's measured body and foot, never the current action/cell height.
+   * A low attack or a differently sized/dense atlas must not resize Aura.
+   * The first idle root matches the dense loader's compiler pivot; its median
+   * visible height is stable across the idle loop. */
+  getIdleBodyReference(): IdleBodyReference {
+    const texture = this.sprite?.texture;
+    if (texture && texture !== this.idleBodyTexture) {
+      this.idleBodyTexture = texture;
+      const measured: IdleBodyMeasurement[] = [];
+      const row = this.layout.stateRow[FighterState.IDLE] ?? 0;
+      const count = this.layout.frameCounts[FighterState.IDLE] ?? 1;
+      for (let index = 0; index < count; index += 1) {
+        const frame = texture.get(row * this.layout.totalColumns + index);
+        const bounds = measureVisibleFrameBounds(frame);
+        if (!bounds) continue;
+        measured.push({
+          height: bounds.height,
+          // Physical bottom edge. The dense profile retains its inclusive
+          // maxY pivot, so the last pixel's extent must also be composed below.
+          rootY: bounds.y + bounds.height,
+          frameHeight: frame.cutHeight,
+        });
+      }
+      if (measured.length > 0) {
+        const heights = measured.map(frame => frame.height).sort((a, b) => a - b);
+        const middle = Math.floor(heights.length / 2);
+        this.idleBodyMeasurement = {
+          ...measured[0],
+          height: heights.length % 2 ? heights[middle] : (heights[middle - 1] + heights[middle]) / 2,
+        };
+      } else this.idleBodyMeasurement = null;
+    }
+    const profile = getSpritePresentationProfile(this.layout, FighterState.IDLE);
+    const presentation = composeSpritePresentation(
+      profile, this.renderScale, this.fighter.y, this.renderYOffset, this.layout.textureDensity,
+    );
+    const measurement = this.idleBodyMeasurement;
+    if (!measurement) {
+      // Unreadable/cross-origin textures retain a stable idle-profile fallback;
+      // never substitute the mutable current sprite.displayHeight.
+      return {
+        height: FIGHTER_HEIGHT * profile.scale * this.renderScale,
+        rootX: this.fighter.x,
+        rootY: presentation.y,
+      };
+    }
+    return {
+      height: measurement.height * presentation.scale,
+      rootX: this.fighter.x,
+      rootY: presentation.y
+        + (measurement.rootY - profile.originY * measurement.frameHeight) * presentation.scale,
+    };
   }
 
   /** Top-center of the opaque pixels in the current rendered frame. */

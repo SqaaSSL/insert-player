@@ -1,3 +1,5 @@
+import { parseGenerationPackage, quoteGenerationPackage, type GenerationPackage } from '../../src/services/GenerationPackages';
+import { quoteOwnedPackageExpansion, storedGenerationAnimationNames, type StoredGenerationPackage } from './generationPackages';
 import { generateId, hashString } from './auth';
 import type { AuthContext, Env, PublicAuthContext, QualityTier } from './types';
 import {
@@ -71,7 +73,7 @@ interface GenerationCharge {
   updated_at: string;
 }
 
-interface ResumableGenerationRow {
+interface ResumableGenerationRow extends StoredGenerationPackage {
   job_id: string;
   job_status: string;
   artifact_run_id: string;
@@ -354,12 +356,24 @@ async function createProviderSessionForCharge(
 ) {
   let createdSessionId: string | null = null;
   try {
+    const packageCharge = await env.DB.prepare('SELECT creation_package, expansion_only, animation_plan_json FROM generation_charges WHERE id = ? AND user_id = ?')
+      .bind(chargeId, auth.userId).first<StoredGenerationPackage>();
+    const boundedPackage = packageCharge && (packageCharge.creation_package === 'aura' || packageCharge.expansion_only)
+      && (operation === 'fighter_generation' || operation === 'fighter_upgrade');
+    const packageNames = boundedPackage ? storedGenerationAnimationNames(packageCharge) : [];
+    const packageQuote = boundedPackage ? quoteGenerationPackage(tier, packageCharge.creation_package ?? 'complete', {
+      expansion: Boolean(packageCharge.expansion_only),
+      existingAnimations: quoteGenerationPackage(tier, packageCharge.creation_package ?? 'complete').animations.filter((name) => !packageNames.includes(name)),
+    }) : null;
+    const fullCost = quoteGenerationPackage(tier, 'complete').estimatedUsdCost;
+    const ratio = packageQuote ? Math.min(1, packageQuote.estimatedUsdCost / fullCost) : 1;
     const session = await createProviderSession(env, auth, {
       tier,
       purpose: providerSessionPurposeForOperation(operation),
       operation,
       creationFlow,
       chargeId,
+      ...(boundedPackage ? { providerBudgetRatio: ratio } : {}),
       legal,
     });
     createdSessionId = session.id;
@@ -392,6 +406,8 @@ async function authorizeGenerationContinuation(
     tier: QualityTier;
     operation: GenerationBillingOperation;
     creationFlow: GenerationCreationFlow;
+    creationPackage: GenerationPackage;
+    expansion: boolean;
     legal: GenerationLegalAttestation;
   },
 ): Promise<Response> {
@@ -410,6 +426,7 @@ async function authorizeGenerationContinuation(
       run.fighter_id AS run_fighter_id,
       run.tier AS run_tier,
       run.creation_flow AS run_creation_flow,
+      run.creation_package, run.expansion_only, run.animation_plan_json,
       run.operation AS run_operation
     FROM generation_jobs gj
     JOIN generation_artifact_runs run ON run.id = gj.artifact_run_id
@@ -471,7 +488,9 @@ async function authorizeGenerationContinuation(
     resumable.run_fighter_id !== params.fighterId ||
     resumable.run_tier !== params.tier ||
     resumable.run_creation_flow !== params.creationFlow ||
-    resumable.run_operation !== params.operation
+    resumable.run_operation !== params.operation ||
+    (resumable.creation_package ?? 'complete') !== params.creationPackage ||
+    Boolean(resumable.expansion_only) !== params.expansion
   ) {
     return json({ error: 'Resume request does not match the preserved generation work' }, 409);
   }
@@ -541,6 +560,8 @@ async function authorizeGenerationContinuation(
       providerCostLimitCents: reusable.provider_cost_limit_cents,
       reservationExpiresAt: reusable.reservation_expires_at,
       creationFlow: reusable.creation_flow,
+      creationPackage: params.creationPackage,
+      expansion: params.expansion,
     });
   }
 
@@ -556,8 +577,8 @@ async function authorizeGenerationContinuation(
       INSERT INTO generation_charges (
         id, user_id, tier, credit_cost, free_quota_delta, status,
         reason, fighter_id, ledger_id, expires_at,
-        continuation_run_id, resumed_from_job_id, creation_flow
-      ) VALUES (?, ?, ?, 0, 0, 'reserved', ?, ?, ?, ?, ?, ?, ?)
+        continuation_run_id, resumed_from_job_id, creation_flow, creation_package, expansion_only, animation_plan_json
+      ) VALUES (?, ?, ?, 0, 0, 'reserved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       purchaseId,
       auth.user.id,
@@ -569,6 +590,9 @@ async function authorizeGenerationContinuation(
       resumable.artifact_run_id,
       params.resumeJobId,
       params.creationFlow,
+      params.creationPackage,
+      params.expansion ? 1 : 0,
+      resumable.animation_plan_json ?? null,
     ),
   ]);
 
@@ -595,6 +619,8 @@ async function authorizeGenerationContinuation(
     providerCostLimitCents: providerSession.providerCostLimitCents,
     reservationExpiresAt: expiresAt,
     creationFlow: params.creationFlow,
+    creationPackage: params.creationPackage,
+    expansion: params.expansion,
   });
 }
 
@@ -965,6 +991,10 @@ export async function authorizeGenerationPurchase(
   const body = await readJsonBody<{
     tier?: QualityTier;
     creationFlow?: unknown;
+    creationPackage?: unknown;
+    expansion?: unknown;
+    quoteOnly?: unknown;
+    expectedCredits?: unknown;
     fighterId?: string;
     resumeJobId?: string;
     operation?: GenerationBillingOperation;
@@ -972,6 +1002,10 @@ export async function authorizeGenerationPurchase(
     turnstileToken?: string;
     legal?: unknown;
   }>(request, MAX_BILLING_JSON_BODY_BYTES);
+  const creationPackage = parseGenerationPackage(body.creationPackage);
+  if (!creationPackage) return json({ error: 'Unsupported generation package' }, 400);
+  if (body.expansion !== undefined && typeof body.expansion !== 'boolean') return json({ error: 'Invalid expansion request' }, 400);
+  const expansion = body.expansion === true;
   const tier = normalizeQualityTier(body.tier);
   const operation = normalizeGenerationBillingOperation(body.operation, body.reason);
   const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
@@ -1000,12 +1034,18 @@ export async function authorizeGenerationPurchase(
       code: 'video_creation_operation_unsupported',
     }, 400);
   }
-  const requiredCredits = generationCreditCost(tier, operation);
+  if (expansion && operation !== 'fighter_upgrade') return json({ error: 'Expansion requires the fighter_upgrade operation' }, 400);
+  if ((creationPackage === 'aura' || expansion) && creationFlow !== 'original') return json({ error: 'This package uses Original generation' }, 400);
+  let packageQuote = quoteGenerationPackage(tier, creationPackage);
+  let requiredCredits = operation === 'fighter_generation' || operation === 'fighter_upgrade'
+    ? packageQuote.creditCost : generationCreditCost(tier, operation);
+  let animationPlanJson = JSON.stringify(packageQuote.animations);
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) return json({ error: 'Current generation consent is required' }, 428);
   const resumeJobId = body.resumeJobId?.trim() ?? '';
 
   if (!auth.user) {
+    if (expansion || creationPackage === 'aura') return json({ error: 'Sign in to create or expand an Aura character', code: 'package_requires_sign_in' }, 401);
     if (resumeJobId) return json({ error: 'Sign in to resume preserved generation work' }, 401);
     if (tier === 'rookie' && operation === 'fighter_generation') {
       const turnstileError = await enforceAnonymousRookieTurnstile(request, env, body.turnstileToken);
@@ -1026,6 +1066,7 @@ export async function authorizeGenerationPurchase(
         providerSessionExpiresAt: providerSession.expiresAt,
         providerCallLimit: providerSession.providerCallLimit,
         creationFlow,
+        creationPackage, expansion,
         message: 'Anonymous Rookie generation allowed after human verification.',
       });
     }
@@ -1100,8 +1141,77 @@ export async function authorizeGenerationPurchase(
       tier,
       operation,
       creationFlow,
+      creationPackage,
+      expansion,
       legal,
     });
+  }
+
+  if (expansion) {
+    const pendingExpansion = await env.DB.prepare(`
+      SELECT job.id, job.status
+      FROM generation_jobs job
+      JOIN generation_artifact_runs run ON run.id = job.artifact_run_id
+      WHERE job.user_id = ? AND job.fighter_id = ?
+        AND (job.status IN ('queued', 'running') OR (
+          run.expansion_only = 1 AND run.status = 'partial'
+          AND job.status IN ('failed', 'cancelled')
+          AND EXISTS (
+            SELECT 1 FROM generation_jobs paid_job
+            JOIN generation_charges paid_charge ON paid_charge.id = paid_job.charge_id
+            WHERE paid_job.artifact_run_id = run.id AND paid_charge.status = 'committed'
+          )
+        ))
+      ORDER BY job.created_at DESC LIMIT 1
+    `).bind(auth.user.id, ownedFighterId).first<{ id: string; status: string }>();
+    if (pendingExpansion) return json({
+      error: pendingExpansion.status === 'failed' || pendingExpansion.status === 'cancelled'
+        ? 'Resume the preserved expansion before purchasing more work'
+        : 'A generation is already running for this character',
+      code: 'package_expansion_in_progress',
+      activeJobId: pendingExpansion.id,
+    }, 409);
+    packageQuote = await quoteOwnedPackageExpansion(env, auth.user.id, ownedFighterId!, tier, creationPackage);
+    if (packageQuote.animationCount === 0) return json({ error: 'This character already has the requested pack', code: 'package_already_complete' }, 409);
+    requiredCredits = packageQuote.creditCost;
+    animationPlanJson = JSON.stringify(packageQuote.animations);
+  }
+
+  const usesIncludedRookie = operation === 'fighter_generation' && tier === 'rookie' && user.free_rookie_generations_used < FREE_ROOKIE_GENERATION_LIMIT;
+  const quotedCredits = usesIncludedRookie ? 0 : requiredCredits;
+  if (body.quoteOnly === true) return json({ authorized: true, mode: 'quote', quotedCredits, creationPackage, expansion, animationCount: packageQuote.animationCount });
+  if ((expansion && body.expectedCredits === undefined) ||
+      (body.expectedCredits !== undefined && body.expectedCredits !== quotedCredits)) {
+    return json({ error: 'Review the current package quote before continuing', code: 'package_quote_changed', requiredCredits: quotedCredits }, 409);
+  }
+
+  if (expansion) {
+    const reusable = await env.DB.prepare(`
+      SELECT gc.id, gc.tier, gc.credit_cost, gc.creation_package, gc.animation_plan_json,
+        gc.expires_at, ps.id AS session_id, ps.expires_at AS session_expires_at,
+        ps.provider_call_limit
+      FROM generation_charges gc
+      LEFT JOIN provider_sessions ps ON ps.charge_id = gc.id AND ps.user_id = gc.user_id
+        AND ps.status = 'active' AND datetime(ps.expires_at) > datetime('now')
+      WHERE gc.user_id = ? AND gc.fighter_id = ? AND gc.expansion_only = 1
+        AND gc.status = 'reserved'
+      LIMIT 1
+    `).bind(user.id, ownedFighterId).first<{
+      id: string; tier: QualityTier; credit_cost: number; creation_package: GenerationPackage;
+      animation_plan_json: string; expires_at: string; session_id: string | null;
+      session_expires_at: string | null; provider_call_limit: number | null;
+    }>();
+    if (reusable) {
+      if (reusable.session_id && reusable.tier === tier && reusable.credit_cost === requiredCredits
+        && reusable.creation_package === creationPackage && reusable.animation_plan_json === animationPlanJson) {
+        return json({ authorized: true, mode: 'credits', purchaseId: reusable.id,
+          creditsCharged: reusable.credit_cost, creditsBalance: user.credits_balance,
+          providerSessionId: reusable.session_id, providerSessionExpiresAt: reusable.session_expires_at,
+          providerCallLimit: reusable.provider_call_limit, reservationExpiresAt: reusable.expires_at,
+          creationFlow, creationPackage, expansion });
+      }
+      return json({ error: 'An expansion reservation already exists for this character', code: 'package_expansion_reserved' }, 409);
+    }
   }
 
   if (
@@ -1130,9 +1240,9 @@ export async function authorizeGenerationPurchase(
       env.DB.prepare(`
         INSERT INTO generation_charges (
           id, user_id, tier, credit_cost, free_quota_delta, status,
-          reason, fighter_id, ledger_id, expires_at, creation_flow
+          reason, fighter_id, ledger_id, expires_at, creation_flow, creation_package, expansion_only, animation_plan_json
         )
-        SELECT ?, user_id, ?, 0, 1, 'reserved', ?, ?, id, ?, ?
+        SELECT ?, user_id, ?, 0, 1, 'reserved', ?, ?, id, ?, ?, ?, ?, ?
         FROM credit_ledger
         WHERE id = ? AND user_id = ?
       `).bind(
@@ -1142,6 +1252,9 @@ export async function authorizeGenerationPurchase(
         ownedFighterId,
         expiresAt,
         creationFlow,
+        creationPackage,
+        expansion ? 1 : 0,
+        animationPlanJson,
         ledgerId,
         user.id,
       ),
@@ -1168,6 +1281,7 @@ export async function authorizeGenerationPurchase(
         providerCallLimit: providerSession.providerCallLimit,
         reservationExpiresAt: expiresAt,
         creationFlow,
+        creationPackage, expansion,
         freeRookieGenerationsRemaining: Math.max(0, FREE_ROOKIE_GENERATION_LIMIT - quota.free_rookie_generations_used),
       });
     }
@@ -1183,8 +1297,13 @@ export async function authorizeGenerationPurchase(
       SET credits_balance = credits_balance - ?,
           updated_at = datetime('now')
       WHERE id = ? AND credits_balance >= ?
+        AND (? = 0 OR NOT EXISTS (
+          SELECT 1 FROM generation_charges pending
+          WHERE pending.user_id = ? AND pending.fighter_id = ?
+            AND pending.expansion_only = 1 AND pending.status = 'reserved'
+        ))
       RETURNING credits_balance
-    `).bind(requiredCredits, user.id, requiredCredits),
+    `).bind(requiredCredits, user.id, requiredCredits, expansion ? 1 : 0, user.id, ownedFighterId),
     env.DB.prepare(`
       INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
       SELECT ?, id, ?, ?, ?
@@ -1200,9 +1319,9 @@ export async function authorizeGenerationPurchase(
     env.DB.prepare(`
       INSERT INTO generation_charges (
         id, user_id, tier, credit_cost, free_quota_delta, status,
-        reason, fighter_id, ledger_id, expires_at, creation_flow
+        reason, fighter_id, ledger_id, expires_at, creation_flow, creation_package, expansion_only, animation_plan_json
       )
-      SELECT ?, user_id, ?, ?, 0, 'reserved', ?, ?, id, ?, ?
+      SELECT ?, user_id, ?, ?, 0, 'reserved', ?, ?, id, ?, ?, ?, ?, ?
       FROM credit_ledger
       WHERE id = ? AND user_id = ?
     `).bind(
@@ -1213,6 +1332,9 @@ export async function authorizeGenerationPurchase(
       ownedFighterId,
       expiresAt,
       creationFlow,
+      creationPackage,
+      expansion ? 1 : 0,
+      animationPlanJson,
       ledgerId,
       user.id,
     ),
@@ -1220,6 +1342,12 @@ export async function authorizeGenerationPurchase(
   const spend = spendResult.results?.[0] as { credits_balance: number } | undefined;
 
   if (!spend) {
+    if (expansion && await env.DB.prepare(`
+      SELECT id FROM generation_charges WHERE user_id = ? AND fighter_id = ?
+        AND expansion_only = 1 AND status = 'reserved' LIMIT 1
+    `).bind(user.id, ownedFighterId).first()) {
+      return json({ error: 'An expansion reservation already exists for this character; retry to recover it', code: 'package_expansion_reserved' }, 409);
+    }
     const latest = await env.DB.prepare(
       'SELECT credits_balance FROM users WHERE id = ?'
     ).bind(user.id).first<{ credits_balance: number }>();
@@ -1252,6 +1380,7 @@ export async function authorizeGenerationPurchase(
     providerCallLimit: providerSession.providerCallLimit,
     reservationExpiresAt: expiresAt,
     creationFlow,
+    creationPackage, expansion,
   });
 }
 

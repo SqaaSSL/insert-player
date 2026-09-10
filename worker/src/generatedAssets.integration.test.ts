@@ -88,6 +88,9 @@ const SCHEMA = `
     UNIQUE(fighter_id, animation_name, quality_tier)
   );
   CREATE TABLE generation_artifact_runs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     status TEXT NOT NULL DEFAULT 'active',
     failure_stage TEXT,

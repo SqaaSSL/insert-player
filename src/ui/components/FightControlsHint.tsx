@@ -1,182 +1,111 @@
-import { useEffect, useRef, useState } from 'react';
-import { INTRO_STATE_EVENT } from '../../game/match/MatchConfig.ts';
+import { useEffect, useState } from 'react';
+import { KEYBOARD_CONTROLS } from '../../game/systems/KeyboardControls.ts';
 
-interface KeyDef {
-  label: string;
-  caption?: string;
-  wide?: boolean;
+type InputDevice = 'keyboard' | 'gamepad' | 'touch';
+
+function initialDevice(): InputDevice {
+  if (typeof window === 'undefined') return 'keyboard';
+  if (Array.from(navigator.getGamepads?.() ?? []).some(Boolean)) return 'gamepad';
+  return window.matchMedia?.('(pointer: coarse)').matches ? 'touch' : 'keyboard';
 }
 
-const MOVE_ROWS: KeyDef[][] = [
-  [
-    { label: 'Q' },
-    { label: 'W', caption: 'JUMP' },
-    { label: 'E' },
-    { label: 'R' },
-    { label: 'T' },
-  ],
-  [
-    { label: 'A', caption: 'MOVE' },
-    { label: 'S', caption: 'CROUCH' },
-    { label: 'D', caption: 'MOVE' },
-    { label: 'F' },
-    { label: 'G', caption: 'GUARD' },
-  ],
-];
-
-const ATTACK_ROWS: KeyDef[][] = [
-  [
-    { label: 'Y' },
-    { label: 'U', caption: 'PUNCH' },
-    { label: 'I', caption: 'FIREBALL' },
-    { label: 'O', caption: 'SUPER' },
-    { label: 'P' },
-  ],
-  [
-    { label: 'H' },
-    { label: 'J', caption: 'KICK' },
-    { label: 'K', caption: 'UPPERCUT' },
-    { label: 'L' },
-  ],
-];
-
-const CONTROLS_SEEN_KEY = 'asf:fight-controls-seen:v1';
-
-function controlsSeen(): boolean {
-  try {
-    return window.localStorage.getItem(CONTROLS_SEEN_KEY) === '1';
-  } catch {
-    return false;
-  }
+function useInputDevice(): InputDevice {
+  const [device, setDevice] = useState(initialDevice);
+  useEffect(() => {
+    const onKey = () => setDevice('keyboard');
+    const onPointer = (event: PointerEvent) => {
+      if (event.pointerType === 'touch') setDevice('touch');
+    };
+    const onConnect = () => setDevice('gamepad');
+    const onDisconnect = () => setDevice(initialDevice());
+    const gamepadTimer = window.setInterval(() => {
+      if (document.hidden) return;
+      const active = Array.from(navigator.getGamepads?.() ?? []).some((pad) =>
+        pad && (pad.buttons.some((button) => button.pressed) || pad.axes.some((axis) => Math.abs(axis) > 0.35)),
+      );
+      if (active) setDevice('gamepad');
+    }, 200);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('pointerdown', onPointer);
+    window.addEventListener('gamepadconnected', onConnect);
+    window.addEventListener('gamepaddisconnected', onDisconnect);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('pointerdown', onPointer);
+      window.removeEventListener('gamepadconnected', onConnect);
+      window.removeEventListener('gamepaddisconnected', onDisconnect);
+      window.clearInterval(gamepadTimer);
+    };
+  }, []);
+  return device;
 }
 
-function markControlsSeen(): void {
-  try {
-    window.localStorage.setItem(CONTROLS_SEEN_KEY, '1');
-  } catch {
-    // Private browsing can deny storage; the hint still works for this match.
-  }
+function Binding({ keys, action }: { keys: string; action: string }) {
+  return <span className="fight-keys__binding"><kbd>{keys}</kbd><span>{action}</span></span>;
 }
 
-function Key({ def }: { def: KeyDef }) {
+function KeyboardLegend({ mode, playerIndex, playerLabel }: {
+  mode: 'fight' | 'rush';
+  playerIndex: 0 | 1;
+  playerLabel: string;
+}) {
+  const keys = KEYBOARD_CONTROLS[playerIndex];
+  const movement = playerIndex === 0 ? 'W A S D' : '↑ ← ↓ →';
   return (
-    <span className={`fight-keys__key${def.caption ? ' is-active' : ''}`}>
-      <kbd>{def.label}</kbd>
-      {def.caption ? <small>{def.caption}</small> : null}
-    </span>
-  );
-}
-
-function Cluster({ rows, label }: { rows: KeyDef[][]; label: string }) {
-  return (
-    <div className="fight-keys__cluster" role="group" aria-label={label}>
-      {rows.map((row, index) => (
-        <div className={`fight-keys__row${index > 0 ? ' fight-keys__row--home' : ''}`} key={index}>
-          {row.map((def) => (
-            <Key key={def.label} def={def} />
-          ))}
-        </div>
-      ))}
+    <div className="fight-keys__player" role="group" aria-label={`${playerLabel} keyboard controls`}>
+      <strong className="fight-keys__player-label">{playerLabel}{playerIndex === 1 ? ' · Numpad' : ''}</strong>
+      <div className="fight-keys__bindings">
+        {mode === 'rush' ? <Binding keys={movement} action="Move" /> : (
+          <>
+            <Binding keys={`${keys.left.label} ${keys.right.label}`} action="Move" />
+            <Binding keys={keys.up.label} action="Jump" />
+            <Binding keys={keys.down.label} action="Crouch" />
+          </>
+        )}
+        <Binding keys={keys.punch.label} action="Punch" />
+        <Binding keys={keys.kick.label} action="Kick" />
+        <Binding keys={keys.guard.label} action="Guard (hold)" />
+        <Binding keys={keys.fireball.label} action="Fireball" />
+        <Binding keys={mode === 'rush' && playerIndex === 0 ? `Space / ${keys.uppercut.label}` : keys.uppercut.label} action={mode === 'rush' ? 'Jump' : 'Uppercut'} />
+        <Binding keys={keys.super.label} action={mode === 'rush' ? 'Super' : 'Super (full meter)'} />
+      </div>
     </div>
   );
 }
 
-/**
- * First-round onboarding over the fight canvas. Desktop gets a drawn
- * keyboard with the active keys lit; touch devices get one recipe line
- * (their buttons are already labeled).
- */
-export function FightControlsHint() {
-  const [visible, setVisible] = useState(false);
-  const [leaving, setLeaving] = useState(false);
-  const [hasShown, setHasShown] = useState(false);
-  const hideTimerRef = useRef(0);
-  const leaveTimerRef = useRef(0);
-  const [coarse] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches,
-  );
-
-  const clearHintTimers = () => {
-    window.clearTimeout(hideTimerRef.current);
-    window.clearTimeout(leaveTimerRef.current);
-  };
-
-  useEffect(() => {
-    const onIntro = (event: WindowEventMap[typeof INTRO_STATE_EVENT]) => {
-      if (event.detail.visible && event.detail.roundNumber === 1) {
-        setHasShown(true);
-        if (controlsSeen()) {
-          setVisible(false);
-          setLeaving(false);
-          return;
-        }
-        setVisible(true);
-        setLeaving(false);
-        markControlsSeen();
-        clearHintTimers();
-        hideTimerRef.current = window.setTimeout(() => {
-          setLeaving(true);
-          leaveTimerRef.current = window.setTimeout(() => setVisible(false), 700);
-        }, 9000);
-      }
-    };
-    window.addEventListener(INTRO_STATE_EVENT, onIntro);
-    return () => {
-      window.removeEventListener(INTRO_STATE_EVENT, onIntro);
-      clearHintTimers();
-    };
-  }, []);
-
-  if (!hasShown) return null;
-
-  const toggle = (
-    <button
-      type="button"
-      className="fight-keys__toggle"
-      aria-expanded={visible}
-      onClick={() => {
-        clearHintTimers();
-        setLeaving(false);
-        setVisible((current) => !current);
-      }}
-    >
-      {visible ? 'Hide controls' : 'Show controls'}
-    </button>
-  );
-
-  if (!visible) return toggle;
-
-  if (coarse) {
-    return (
-      <>
-        <div className={`fight-keys fight-keys--touch${leaving ? ' is-leaving' : ''}`} role="region" aria-label="Fight controls">
-          <p className="fight-keys__recipe">
-            <kbd>P</kbd> on hit <span className="fight-keys__arrow" aria-hidden="true">&#9654;</span> <kbd>F</kbd> = fireball combo
-          </p>
-        </div>
-        {toggle}
-      </>
-    );
-  }
-
+/** The essentials stay visible for the entire match, including rematches. */
+export function FightControlsHint({
+  mode = 'fight',
+  twoPlayers = false,
+  playerLabel = 'P1',
+}: {
+  mode?: 'fight' | 'rush';
+  twoPlayers?: boolean;
+  playerLabel?: string;
+}) {
+  const device = useInputDevice();
   return (
-    <>
-      <div className={`fight-keys${leaving ? ' is-leaving' : ''}`} role="region" aria-label="Fight controls">
-        <p className="sr-only">
-          Move with A and D, crouch with S, jump with W, and guard with G. Punch with U,
-          kick with J, fireball with I, uppercut with K, and use super with O.
-        </p>
-        <span className="fight-keys__kicker" aria-hidden="true">QUICK START · UNIVERSAL MOVESET</span>
-        <div className="fight-keys__board" aria-hidden="true">
-          <Cluster rows={MOVE_ROWS} label="Movement keys" />
-          <Cluster rows={ATTACK_ROWS} label="Attack keys" />
+    <section className={`fight-keys fight-keys--${device}`} aria-label={`${mode === 'rush' ? 'Rush' : 'Fight'} controls`}>
+      {device === 'touch' ? (
+        <p className="fight-keys__tip">{mode === 'rush'
+          ? 'Hold Guard near a fallen ally to revive.'
+          : 'Drag up to jump. Down + Punch or Kick for a low attack.'}</p>
+      ) : device === 'gamepad' ? (
+        <div className="fight-keys__bindings" role="group" aria-label="Gamepad controls">
+          <Binding keys="Stick / D-pad" action={mode === 'rush' ? 'Move' : 'Move · ↑ Jump · ↓ Crouch'} />
+          <Binding keys="A / ×" action="Punch" />
+          <Binding keys="B / ○" action="Kick" />
+          <Binding keys="LB / L1" action="Guard (hold)" />
+          <Binding keys="X / □" action="Fireball" />
+          <Binding keys="Y / △" action={mode === 'rush' ? 'Jump' : 'Uppercut'} />
+          <Binding keys="RT / R2" action={mode === 'rush' ? 'Super' : 'Super (full meter)'} />
         </div>
-        <p className="fight-keys__recipe" aria-hidden="true">
-          <kbd>U</kbd> on hit <span className="fight-keys__arrow">&#9654;</span> <kbd>I</kbd> = fireball combo
-          &nbsp;·&nbsp; <kbd>G</kbd> block a fireball standing = reflect it
-        </p>
-      </div>
-      {toggle}
-    </>
+      ) : (
+        <>
+          <KeyboardLegend mode={mode} playerIndex={0} playerLabel={playerLabel} />
+          {twoPlayers ? <KeyboardLegend mode={mode} playerIndex={1} playerLabel="P2" /> : null}
+        </>
+      )}
+    </section>
   );
 }

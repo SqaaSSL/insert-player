@@ -1,12 +1,12 @@
 # Aura Battle: match shape and special meter
 
-Status: three-round match shape and continuous crowd mix shipped. MAIN CHARACTER is the next gameplay pass.
+Status: three-round match shape shipped. The current local preview replaces the continuous crowd mix with performance-driven dynamics. MAIN CHARACTER is the next gameplay pass.
 
 ## Product promise
 
 Aura is a performance battle, not a reskinned fight. The camera presents one character at a time, the four-key highway occupies the opposite side, and the crowd turns accuracy into spectacle. Fight, Rush, and Aura share fighters and stages, but each owns its route and game rules.
 
-No part of this system requires custom attacks or additional generated fighter assets. It reuses the current Fight animation set, camera direction, lighting, UI, and crowd audio.
+The beta can be tried without extra generation using the bundled Aura demo performers or the official Trump's reviewed Aura performances. Other characters require the six performances in [`aura-v1-2026`](./aura-animation-packs-v1.md); combat animations do not qualify. The shrug reaction remains optional. Scoring, rollback and Fight/Rush capability requirements are unchanged.
 
 ## Standard match: three rounds
 
@@ -14,12 +14,21 @@ No part of this system requires custom attacks or additional generated fighter a
 - Each player receives the same generated phrase in a round.
 - Density escalates each round while lane speed, timing windows, and key positions remain constant.
 - At the current 154.27 BPM, this takes about 52 seconds instead of the current 36 seconds.
-- The third round is the visual climax: hotter lighting, louder crowd, more stage pulses, and denser patterns. It does not secretly change input physics.
+- The third round is the visual climax, with denser patterns. Audience volume follows performance, not the round number. It does not secretly change input physics.
 - Results appear immediately after the last four-beat finish. Rematch keeps the song and changes the routine seed; Remix changes both the routine and presentation accents.
 
 This is long enough to create a comeback story without turning a shareable web match into a full song commitment. Longer competitive formats should be best-of-three matches, not one endless chart.
 
-## Crowd meter
+## Audience audio: current local preview
+
+- Start quiet. PERFECT / GREAT / GOOD add 0.025 / 0.018 / 0.012 heat, with combo contribution spread over 40 notes. The audible envelope rises over a 5-second time constant and falls over 1.7 seconds.
+- The two offset applause beds together peak at 0.034 gain. Music stays at its normal level; the audience does not repeatedly duck it.
+- A sustained high crowd earns one 2.2-second cheer (0.055 peak), with an 18-second cooldown. The crowd must also cool below 0.45 for two seconds before another performance cheer is possible. Staying hot is not a repeating ovation.
+- Misses reduce earned momentum. A substantial loss can trigger a quiet 1-second boo (0.025 peak), at most once per 10 seconds; a cold start or ordinary mistakes do not generate repeated boos.
+- The final reveal can play one slightly stronger cheer (0.07 peak), without restarting or extending one already playing. Reactions fade out before playback stops; pausing freezes them, resuming cannot replay expired reactions, and rematches reset the envelope.
+- Only the active performer's heat controls the mix. Late online results from the other performer cannot change the audible crowd. All layers remain in the existing game-only recording mix.
+
+## Crowd meter: planned gameplay system
 
 The visible eight-segment CROWD meter becomes the special-energy system.
 

@@ -1,0 +1,349 @@
+@reference "../styles.css";
+
+.product-entry {
+  @apply mx-auto w-full max-w-[1200px] px-5 pb-12 pt-5 text-asf-text;
+}
+.product-entry__page-heading {
+  @apply mb-6 flex flex-wrap items-center justify-between gap-3;
+}
+.product-entry__page-heading h1 {
+  @apply text-lg leading-relaxed;
+}
+.product-entry__hero {
+  @apply grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] items-center gap-7 overflow-hidden rounded-[6px] border border-asf-line bg-asf-bg-1;
+}
+.product-entry__hero-copy {
+  @apply min-w-0 py-9 pl-8;
+}
+.product-entry__genre {
+  @apply mb-4 mt-0 text-sm font-medium text-asf-muted;
+}
+.product-entry__hero-copy h1,
+.product-entry__hero-copy h2 {
+  @apply text-[clamp(30px,4.5vw,56px)] leading-[1.2] tracking-normal text-asf-gold [text-wrap:balance];
+}
+.product-entry__promise {
+  @apply mb-3 mt-5 text-[22px] font-semibold leading-snug [text-wrap:balance];
+}
+.product-entry__description {
+  @apply mb-7 mt-0 max-w-[42ch] text-base leading-relaxed text-asf-muted [text-wrap:pretty];
+}
+.product-entry__play-action {
+  @apply min-w-0;
+}
+.product-entry__play-action .asf-btn {
+  @apply min-h-12 gap-5 px-5 text-[11px] leading-relaxed;
+}
+.product-entry__play-action .asf-btn span {
+  @apply text-base;
+}
+.product-entry__play-hint {
+  @apply mb-1 mt-3 text-sm text-asf-muted;
+}
+.product-entry__text-link {
+  @apply inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-[3px] border-0 bg-transparent px-1 py-2 text-sm font-medium leading-relaxed text-asf-gold underline decoration-asf-line-strong underline-offset-4 transition-colors duration-150 hover:text-asf-gold-bright hover:decoration-asf-gold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-asf-gold;
+}
+.product-entry__hero-copy > .product-entry__text-link {
+  @apply mt-2;
+}
+.product-entry__back {
+  @apply mb-4;
+}
+.product-entry__hero-art {
+  @apply m-0 flex min-w-0 flex-col self-stretch;
+}
+.product-entry__hero-art .product-entry__preview {
+  @apply h-auto w-full flex-1;
+}
+.product-entry__hero-art figcaption {
+  @apply px-5 pb-4 pt-2 text-xs leading-relaxed text-asf-muted;
+}
+.product-entry__preview {
+  @apply relative isolate h-full min-h-[330px] min-w-0 w-full overflow-hidden bg-asf-bg-deep;
+}
+.product-entry__preview > img {
+  @apply absolute inset-0 h-full w-full object-cover;
+}
+.product-entry__preview--fight > img,
+.product-entry__preview--rush > img {
+  @apply object-[47%_center];
+}
+.product-entry__preview--aura {
+  @apply min-h-[390px];
+}
+.product-entry__preview--aura .product-entry__stage {
+  @apply object-center;
+}
+/* The preview uses the same stage/instrument composition as the live match. */
+.aura-entry-preview {
+  @apply flex min-h-[390px] flex-col justify-center bg-asf-bg-deep [container-type:inline-size];
+}
+.aura-entry-preview__header {
+  @apply flex min-h-12 items-center justify-between gap-2 px-3;
+}
+.aura-entry-preview__eyebrow {
+  @apply text-xs font-medium text-asf-muted;
+}
+.aura-entry-preview__controls {
+  @apply flex shrink-0 items-center gap-1;
+}
+.aura-entry-preview__pause {
+  @apply inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[3px] border-0 bg-transparent px-2 text-xs text-asf-text hover:text-asf-gold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-gold;
+}
+.aura-entry-preview__screen {
+  @apply relative aspect-[16/9] w-full shrink-0 overflow-hidden bg-black;
+}
+.aura-entry-preview__canvas {
+  @apply block h-full w-full;
+}
+.aura-entry-preview__status {
+  @apply absolute inset-0 m-0 flex items-center justify-center bg-asf-bg-deep/90 px-5 text-center text-sm text-asf-text;
+}
+.aura-entry-preview__explanation {
+  @apply mb-0 mt-3 px-3 text-center text-xs leading-relaxed text-asf-muted;
+}
+.aura-entry-preview__moves {
+  @apply flex flex-wrap items-center justify-center gap-2 px-3 pb-3 pt-2;
+}
+.aura-entry-preview__move {
+  @apply inline-flex min-h-11 cursor-pointer items-center justify-center rounded-[3px] border border-asf-line-strong bg-asf-bg-deep px-3 text-xs font-semibold text-asf-muted hover:border-asf-gold hover:text-asf-gold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-gold;
+}
+.aura-entry-preview__move[aria-pressed='true'] {
+  @apply border-asf-gold text-asf-gold;
+}
+.product-entry__game-list {
+  @apply mt-7;
+}
+.product-entry__game-row {
+  @apply grid grid-cols-[210px_minmax(0,1fr)_auto] items-center gap-6 border-b border-asf-line-faint py-5;
+}
+.product-entry__game-row .is-compact {
+  @apply aspect-[16/9] h-auto min-h-0 rounded-[4px];
+}
+.product-entry__game-row-copy h2 {
+  @apply text-lg leading-relaxed;
+}
+.product-entry__game-row-copy p {
+  @apply mb-0 mt-2 text-sm text-asf-muted;
+}
+.product-entry__game-row .asf-btn--primary {
+  @apply border-asf-line-strong bg-asf-bg-1 [background-image:none] text-asf-gold hover:border-asf-gold;
+}
+.product-entry__collection,
+.product-entry__other-games {
+  @apply mt-7 flex flex-wrap items-center gap-x-7 gap-y-1;
+}
+.product-entry__collection p,
+.product-entry__other-games > span {
+  @apply my-0 mr-auto text-sm text-asf-muted;
+}
+.product-entry__identity {
+  @apply mt-10 grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-9;
+}
+.product-entry__identity-copy h2 {
+  @apply max-w-[25ch] text-base leading-[1.8] tracking-normal [text-wrap:balance];
+}
+.product-entry__identity-copy > p {
+  @apply mb-2 mt-4 max-w-[45ch] text-base leading-relaxed text-asf-muted [text-wrap:pretty];
+}
+.product-entry__pricing-context {
+  @apply mb-2 mt-0 text-sm font-semibold;
+}
+.product-entry__pricing dl {
+  @apply m-0;
+}
+.product-entry__pricing dl > div {
+  @apply flex items-start justify-between gap-4 border-b border-asf-line-faint py-3;
+}
+.product-entry__pricing dt {
+  @apply text-base font-semibold;
+}
+.product-entry__pricing dt span {
+  @apply mt-1 block text-sm font-normal text-asf-muted;
+}
+.product-entry__pricing dd {
+  @apply m-0 shrink-0 pt-0.5 text-sm font-semibold text-asf-gold;
+}
+.product-entry__pricing-note {
+  @apply mb-1 mt-3 max-w-[55ch] text-xs leading-relaxed text-asf-muted;
+}
+.product-entry__other-games {
+  @apply border-t border-asf-line-faint pt-5;
+}
+.product-entry__variants {
+  @apply mt-3 flex flex-wrap gap-x-6 gap-y-1 px-1;
+}
+.product-entry__error {
+  @apply mb-0 mt-3 max-w-[44ch] break-words text-sm text-asf-warn;
+}
+@media (max-width: 780px) {
+  .product-entry__hero {
+    @apply grid-cols-1 gap-0;
+  }
+  .product-entry__hero-copy {
+    @apply px-6 pb-5 pt-7;
+  }
+  .product-entry__description {
+    @apply max-w-[56ch];
+  }
+  .product-entry__preview {
+    @apply h-auto min-h-0 aspect-[16/9];
+  }
+  .product-entry__preview--aura {
+    @apply min-h-0 aspect-[16/10];
+  }
+  .product-entry__preview--aura.aura-entry-preview {
+    @apply min-h-0 aspect-auto;
+  }
+  .product-entry__hero-art figcaption {
+    @apply pt-3;
+  }
+  .product-entry__game-row {
+    @apply grid-cols-[140px_minmax(0,1fr)] gap-x-4 gap-y-2;
+  }
+  .product-entry__game-row > .product-entry__play-action {
+    @apply col-start-2;
+  }
+  .product-entry__identity {
+    @apply grid-cols-1 gap-6;
+  }
+  .product-entry__collection p,
+  .product-entry__other-games > span {
+    @apply w-full;
+  }
+}
+@media (max-width: 420px) {
+  .product-entry {
+    @apply px-3;
+  }
+  .product-entry__hero-copy {
+    @apply px-5;
+  }
+  .product-entry__hero-copy .product-entry__play-action .asf-btn {
+    @apply w-full;
+  }
+  .product-entry__promise {
+    @apply text-xl;
+  }
+  .product-entry__game-row {
+    @apply grid-cols-[105px_minmax(0,1fr)] gap-x-3;
+  }
+  .product-entry__game-row-copy h2 {
+    @apply text-base;
+  }
+  .aura-entry-preview__moves {
+    @apply gap-1.5;
+  }
+  .aura-entry-preview__move {
+    @apply px-2 text-[11px];
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .product-entry button {
+    @apply transition-none;
+  }
+  .aura-entry-preview__pause {
+    @apply hidden;
+  }
+}
+
+/* Match setup keeps the selected cast visible and moves optional controls
+   into a native disclosure. These rules are scoped to this roster surface. */
+.roster-app--simple .roster-layout {
+  @apply grid-cols-1;
+}
+.roster-app--simple .roster-column--fighters {
+  @apply order-none;
+}
+.roster-app--simple .roster-column--fighters .gallery-panel {
+  @apply min-h-0;
+}
+.roster-app--simple .roster-matchup {
+  @apply grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-4;
+}
+.roster-app--simple .roster-matchup .gallery-panel {
+  @apply min-w-0;
+}
+.roster-app--simple .roster-matchup h2 {
+  @apply text-[11px] leading-relaxed;
+}
+.roster-app--simple .roster-slot-card {
+  @apply mt-3;
+}
+.roster-app--simple .roster-slot-card__preview {
+  @apply h-[120px] min-h-0 w-[95px] min-w-0 shrink-0;
+}
+.roster-app--simple .sf-vs-divider {
+  @apply m-0 self-center;
+}
+.roster-app--simple .sf-vs-divider__line {
+  @apply hidden;
+}
+.roster-app--simple .roster-filter-tab {
+  @apply min-h-11;
+}
+.roster-app--simple .roster-fight-btn {
+  @apply min-h-[72px];
+}
+.roster-app--simple .roster-fighter-grid {
+  @apply grid-cols-[repeat(auto-fill,minmax(210px,1fr))];
+}
+.roster-advanced {
+  @apply rounded-[4px] border border-asf-line bg-asf-bg-1;
+}
+.roster-advanced > summary {
+  @apply min-h-[76px] cursor-pointer px-5 py-4 marker:text-asf-gold;
+}
+.roster-advanced > summary strong {
+  @apply mr-4 text-base text-asf-text;
+}
+.roster-advanced > summary > span {
+  @apply text-sm text-asf-gold;
+}
+.roster-advanced > summary .roster-advanced__hint {
+  @apply mt-1 block text-xs text-asf-muted;
+}
+.roster-advanced > summary:focus-visible {
+  @apply rounded-[4px] outline-2 outline-offset-2 outline-asf-gold;
+}
+.roster-app--simple .roster-advanced__content {
+  @apply rounded-none border-x-0 border-b-0 border-t border-asf-line-faint shadow-none;
+}
+.roster-app--simple .roster-stage-preview {
+  @apply max-h-[240px] overflow-hidden;
+}
+.roster-app--simple .roster-stage-preview img {
+  @apply max-h-[240px] object-cover;
+}
+.roster-cpu-settings {
+  @apply mb-5 border-b border-asf-line-faint pb-5;
+}
+.roster-cpu-settings h2 {
+  @apply mb-4 text-sm leading-relaxed;
+}
+@media (max-width: 620px) {
+  .roster-app--simple .roster-matchup {
+    @apply grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-3;
+  }
+  .roster-app--simple .sf-vs-divider {
+    @apply hidden;
+  }
+  .roster-app--simple .roster-slot-card {
+    @apply flex-col items-start gap-2;
+  }
+  .roster-app--simple .roster-slot-card__preview {
+    @apply h-[105px] w-full;
+  }
+  .roster-app--simple .roster-slot-card__meta strong {
+    @apply break-words text-[10px] leading-relaxed tracking-normal;
+  }
+  .roster-app--simple .roster-fighter-grid {
+    @apply grid-cols-1;
+  }
+  .roster-app--simple .roster-fight-btn {
+    @apply w-full min-w-0;
+  }
+  .roster-advanced > summary > span {
+    @apply mt-1 block;
+  }
+}

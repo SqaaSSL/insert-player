@@ -759,14 +759,16 @@ export async function createProviderSession(
     creationFlow?: GenerationCreationFlow;
     chargeId?: string | null;
     providerCallLimitCap?: number;
+    providerBudgetRatio?: number;
     providerCostLimitCentsCap?: number;
     legal: GenerationLegalAttestation;
   },
 ): Promise<CreatedProviderSession> {
   const id = generateId();
   const sessionExpiresAt = expiresAt();
-  const defaultCallLimit = providerCallLimitFor(params.purpose, params.tier, params.operation);
-  const defaultCostLimitCents = providerCostLimitFor(params.purpose, params.tier, params.operation);
+  const ratio = Math.max(0, Math.min(1, params.providerBudgetRatio ?? 1));
+  const defaultCallLimit = Math.ceil(providerCallLimitFor(params.purpose, params.tier, params.operation) * ratio);
+  const defaultCostLimitCents = Math.ceil(providerCostLimitFor(params.purpose, params.tier, params.operation) * ratio);
   const providerCallLimit = Math.min(
     defaultCallLimit,
     Math.max(1, params.providerCallLimitCap ?? defaultCallLimit),

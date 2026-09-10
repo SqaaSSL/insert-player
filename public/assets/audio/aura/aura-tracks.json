@@ -1,0 +1,28 @@
+{
+  "tracks": [
+    {
+      "id": "neon-arena",
+      "title": "Neon Arena",
+      "url": "/assets/audio/neon-arena-battle-v1.mp3",
+      "bpm": 153.75,
+      "beatOffsetMs": 57,
+      "durationMs": 295014,
+      "stageId": "insert-player-arena",
+      "confidence": 0.89,
+      "fingerprint": "7359117:1788477415476",
+      "measuredAt": "2026-09-05T23:24:00.266Z"
+    },
+    {
+      "id": "neon-arena-155",
+      "title": "Neon Arena 155",
+      "url": "/assets/audio/aura/neon-arena-155.mp3",
+      "bpm": 155,
+      "beatOffsetMs": 366,
+      "durationMs": 120000,
+      "stageId": "insert-player-arena",
+      "confidence": 0.57,
+      "fingerprint": "2479339:1788650638723",
+      "measuredAt": "2026-09-05T23:24:01.677Z"
+    }
+  ]
+}

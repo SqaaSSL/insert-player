@@ -72,6 +72,9 @@ const SCHEMA = `
     UNIQUE(fighter_id, animation_name, quality_tier)
   );
   CREATE TABLE generation_artifact_runs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, fighter_id TEXT NOT NULL,
     tier TEXT NOT NULL, creation_flow TEXT NOT NULL, operation TEXT NOT NULL,
     target_kind TEXT, target_name TEXT, root_job_id TEXT NOT NULL,
@@ -79,6 +82,9 @@ const SCHEMA = `
     completed_at TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE generation_jobs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, fighter_id TEXT NOT NULL,
     charge_id TEXT NOT NULL, provider_session_id TEXT NOT NULL, tier TEXT NOT NULL,
     creation_flow TEXT NOT NULL, operation TEXT NOT NULL, target_kind TEXT, target_name TEXT,
