@@ -3,6 +3,7 @@ import type { Env } from './types';
 import {
   anonymousRookieIsEnabled,
   enforceAnonymousRookieTurnstile,
+  enforceTurnstileAction,
   turnstileConfigurationStatus,
 } from './turnstile';
 
@@ -115,5 +116,15 @@ describe('anonymous Rookie Turnstile enforcement', () => {
     expect(response?.status).toBe(403);
     expect(await response?.json()).toMatchObject({ code: 'anonymous_rookie_disabled' });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('Aura clip Turnstile verification', () => {
+  it('requires the clip action independently of Rookie generation availability', async () => {
+    const verify = vi.fn(async () => Response.json({ success: true, action: 'aura_share', hostname: 'insertplayer.ai' }));
+    vi.stubGlobal('fetch', verify);
+    expect(await enforceTurnstileAction(request(), { ...productionEnv, ANONYMOUS_ROOKIE_ENABLED: 'false' }, 'token', 'aura_share')).toBeNull();
+    verify.mockImplementation(async () => Response.json({ success: true, action: 'anonymous_rookie', hostname: 'insertplayer.ai' }));
+    expect((await enforceTurnstileAction(request(), productionEnv, 'token', 'aura_share'))?.status).toBe(403);
   });
 });

@@ -591,7 +591,8 @@ function assertFrontendDeployIsProductionScoped() {
     '../scripts/wrangler-workspace-log.mjs',
     "'pages'",
     "'deploy'",
-    "'../dist'",
+    "join(root, 'dist')",
+    "'--cwd'",
     "'--project-name'",
     'projectName',
     "'--branch'",
@@ -4331,6 +4332,10 @@ run('processor benchmark tests', npm, ['--prefix', 'processor', 'run', 'benchmar
 run('frontend typecheck', npx, ['tsc', '--noEmit']);
 run('Worker binding type drift check', npm, ['--prefix', 'worker', 'run', 'types:check']);
 run('worker typecheck', npx, ['tsc', '--noEmit'], join(root, 'worker'));
+run('Pages watch route build', node, [
+  '../scripts/wrangler-workspace-log.mjs', 'pages', 'functions', 'build',
+  '../functions', '--outdir=../.artifacts/pages-functions-check', '--compatibility-date=2026-08-22',
+], join(root, 'worker'));
 replayMigrations();
 assertNoLegacyApiRoutes();
 assertBillingUsesRequestOrigin();

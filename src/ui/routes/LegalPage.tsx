@@ -210,6 +210,7 @@ function PrivacyPolicy() {
           <li>Account data from Clerk, including your user ID, email, display name, and profile image.</li>
           <li>Photos you upload, generated source views, sprite sheets, fighter names, quality tier, and version history.</li>
           <li>Match records, public fighter choices, clone activity, credit balance, and generation charge history.</li>
+          <li>Aura match recordings and the public name, score, and challenge routine you choose to publish in a battle link.</li>
           <li>Checkout references and payment status from Stripe. Insert Player does not receive or store your full card number.</li>
           <li>Community reports, bounded report details, report counts, moderation decisions, and moderator notes.</li>
           <li>Security and diagnostic data, including pseudonymized network identifiers, request timing, errors, and abuse counters.</li>
@@ -246,6 +247,7 @@ function PrivacyPolicy() {
         <h2>5. Storage and retention</h2>
         <ul>
           <li>Anonymous provider inputs stored by Insert Player expire from temporary Cloudflare storage after one day.</li>
+          <li>Published Aura battle videos are available for 30 days, unless removed earlier. Unfinished upload reservations expire after 15 minutes. Expired or removed videos are no longer publicly accessible and are deleted from storage by scheduled cleanup.</li>
           <li>Signed-in source photos, generated views, and every generated version remain in your roster until you delete the fighter or account.</li>
           <li>Expired provider sessions are removed after seven days. Stripe and Clerk webhook audit markers are removed after 180 days.</li>
           <li>Minimal records proving generation and checkout consent are retained for up to six years, then deleted.</li>
@@ -255,14 +257,17 @@ function PrivacyPolicy() {
       </section>
 
       <section>
-        <h2>6. Community sharing</h2>
+        <h2>6. Community and battle sharing</h2>
         <p>Fighters are private to their Insert Player account unless the owner separately confirms Publish. Public pages expose the fighter name, clean generated source views and playable assets, quality tier, and the neutral author label Player. The public Fight Board uses rank-only aliases such as Player 1 and never exposes an account name, avatar, or stable account identifier. Account names, emails, Clerk profile photos, original uploads, raw intermediates, private photo hashes, account IDs, and archived private versions are never published. A future public handle will require a separate opt-in.</p>
+        <p>Aura videos stay on your device until you choose Create battle link. That action publishes the recording and your chosen public name, score, and routine. Anyone with the link can watch, download, and share the video. A recording shows the characters and names visible during the match, including any private character you used; publishing a recording does not publish its underlying roster assets or original uploaded photo. Battle links are not listed in the public roster.</p>
+        <p>You can remove a battle link from the browser that published it. Deleting your account also revokes battle links published while signed in. Removal stops future access on Insert Player, but cannot recall copies other people downloaded or shared elsewhere.</p>
         <p>Signed-in players can report a public fighter for review. Reports do not trigger automatic removal based on volume; an authorised moderator records a decision and may unpublish content after review.</p>
         <p>You can unpublish a fighter at any time. Short-lived network caches may take a brief period to expire.</p>
       </section>
 
       <section>
         <h2>7. Cookies and local storage</h2>
+        <p>After you publish an Aura video, this browser stores a removal token for that battle link until it expires. This token lets you remove the link without an account; it is not included in the shared URL. Clearing browser storage removes this browser’s copy of the token.</p>
         <p>At launch, Insert Player uses only storage needed for authentication, security, checkout return state, local roster data, and gameplay. We do not run advertising trackers or send optional analytics to an external service. A bounded playtest log stays on this device and can be exported from Credits; it records game and creation events without names, photos or challenge links. A creation draft can be restored on this device for 24 hours after checkout navigation; expired drafts are discarded when accessed again. Cloudflare Turnstile may use necessary security storage to distinguish people from automated abuse.</p>
       </section>
 

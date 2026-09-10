@@ -13,6 +13,7 @@ concurrency:
 jobs:
   launch-smoke:
     name: Clerk OAuth, storage, clone, and privacy smoke
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production

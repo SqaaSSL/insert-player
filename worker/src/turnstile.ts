@@ -72,6 +72,16 @@ export async function enforceAnonymousRookieTurnstile(
   tokenValue: unknown,
 ): Promise<Response | null> {
   if (!anonymousRookieIsEnabled(env)) return anonymousRookieDisabledError();
+  return enforceTurnstileAction(request, env, tokenValue, (env.TURNSTILE_ACTION ?? DEFAULT_ACTION).trim());
+}
+
+/** Verify a token for one explicit surface; a Rookie token cannot publish a clip. */
+export async function enforceTurnstileAction(
+  request: Request,
+  env: Env,
+  tokenValue: unknown,
+  expectedAction: string,
+): Promise<Response | null> {
   if (!turnstileIsRequired(env)) return null;
   if (turnstileConfigurationStatus(env) !== 'configured') return configurationError();
 
@@ -99,7 +109,6 @@ export async function enforceAnonymousRookieTurnstile(
     return verificationError();
   }
 
-  const expectedAction = (env.TURNSTILE_ACTION ?? DEFAULT_ACTION).trim();
   const hostname = result.hostname?.trim().toLowerCase() ?? '';
   if (
     result.success !== true ||

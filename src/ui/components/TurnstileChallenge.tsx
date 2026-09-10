@@ -29,13 +29,14 @@ declare global {
 
 interface TurnstileChallengeProps {
   siteKey: string;
+  action?: 'anonymous_rookie' | 'aura_share';
   resetSignal: number;
   onTokenChange: (token: string | null) => void;
 }
 
 let turnstileScriptPromise: Promise<void> | null = null;
 
-function loadTurnstileScript(): Promise<void> {
+export function loadTurnstileScript(): Promise<void> {
   if (window.turnstile) return Promise.resolve();
   if (turnstileScriptPromise) return turnstileScriptPromise;
 
@@ -43,10 +44,22 @@ function loadTurnstileScript(): Promise<void> {
     const existing = document.getElementById(TURNSTILE_SCRIPT_ID) as HTMLScriptElement | null;
     const script = existing ?? document.createElement('script');
 
-    const loaded = () => window.turnstile
-      ? resolve()
-      : reject(new Error('Turnstile did not initialize'));
-    const failed = () => reject(new Error('Turnstile script failed to load'));
+    let deadline: ReturnType<typeof setTimeout>;
+    const cleanup = () => {
+      clearTimeout(deadline);
+      script.removeEventListener('load', loaded);
+      script.removeEventListener('error', failed);
+    };
+    const failed = () => {
+      cleanup();
+      script.remove();
+      reject(new Error('Turnstile script failed to load'));
+    };
+    const loaded = () => {
+      if (!window.turnstile) { failed(); return; }
+      cleanup(); resolve();
+    };
+    deadline = setTimeout(failed, 15_000);
 
     script.addEventListener('load', loaded, { once: true });
     script.addEventListener('error', failed, { once: true });
@@ -68,6 +81,7 @@ function loadTurnstileScript(): Promise<void> {
 
 export function TurnstileChallenge({
   siteKey,
+  action = 'anonymous_rookie',
   resetSignal,
   onTokenChange,
 }: TurnstileChallengeProps) {
@@ -76,6 +90,7 @@ export function TurnstileChallenge({
   const onTokenChangeRef = useRef(onTokenChange);
   const [loadFailed, setLoadFailed] = useState(false);
   const [responseToken, setResponseToken] = useState('');
+  const [retry, setRetry] = useState(0);
 
   const publishToken = useCallback((token: string | null) => {
     setResponseToken(token ?? '');
@@ -101,14 +116,14 @@ export function TurnstileChallenge({
         if (cancelled || !mountRef.current || !window.turnstile) return;
         widgetIdRef.current = window.turnstile.render(mountRef.current, {
           sitekey: siteKey,
-          action: 'anonymous_rookie',
+          action,
           theme: 'dark',
           size: 'flexible',
           appearance: 'interaction-only',
           'response-field': false,
           callback: publishToken,
           'expired-callback': () => publishToken(null),
-          'error-callback': () => publishToken(null),
+          'error-callback': () => { publishToken(null); setLoadFailed(true); },
         });
       })
       .catch(() => {
@@ -122,7 +137,7 @@ export function TurnstileChallenge({
       if (widgetId && window.turnstile) window.turnstile.remove(widgetId);
       onTokenChangeRef.current(null);
     };
-  }, [publishToken, siteKey]);
+  }, [publishToken, siteKey, action, retry]);
 
   useEffect(() => {
     const widgetId = widgetIdRef.current;
@@ -141,9 +156,10 @@ export function TurnstileChallenge({
         readOnly
       />
       {loadFailed ? (
-        <p className="turnstile-challenge__error" role="alert">
-          Verification is unavailable. Refresh to retry.
-        </p>
+        <div className="turnstile-challenge__error">
+          <p role="alert">Verification could not load. Retry here to keep your progress.</p>
+          <button className="asf-btn" type="button" onClick={() => setRetry(value => value + 1)}>Retry verification</button>
+        </div>
       ) : null}
     </div>
   );

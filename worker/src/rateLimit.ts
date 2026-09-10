@@ -6,6 +6,10 @@ interface LimitRule {
 }
 
 const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }> = {
+  'aura:clip': {
+    anonymous: { limit: 5, windowSeconds: 24 * 60 * 60 },
+    signedIn: { limit: 20, windowSeconds: 24 * 60 * 60 },
+  },
   'proxy:gemini': {
     anonymous: { limit: 24, windowSeconds: 24 * 60 * 60 },
     signedIn: { limit: 1200, windowSeconds: 60 * 60 },
@@ -101,6 +105,10 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
 };
 
 function getLimit(routeKey: string, auth: PublicAuthContext): LimitRule {
+  // Public video storage has the same bounded allowance on every paid tier.
+  if (routeKey === 'aura:clip') {
+    return auth.userId ? ROUTE_LIMITS[routeKey].signedIn : ROUTE_LIMITS[routeKey].anonymous;
+  }
   const plan = auth.user?.plan_tier;
   if (plan === 'admin' || plan === 'studio') {
     return { limit: 5000, windowSeconds: 60 * 60 };
