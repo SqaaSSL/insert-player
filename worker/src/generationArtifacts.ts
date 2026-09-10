@@ -1,3 +1,4 @@
+import { storedGenerationAnimationNames, type StoredGenerationPackage } from './generationPackages';
 import {
   promoteGeneratedSourceVersion,
   promoteGeneratedSpriteVersion,
@@ -50,15 +51,17 @@ function stage(kind: 'source' | 'sprite', name: string, index: number): Generati
 export function generationStagesForOperation(
   operation: GenerationJobOperation,
   targetName: string | null = null,
+  pack: StoredGenerationPackage = {},
 ): GenerationStageDefinition[] {
+  const animationNames = storedGenerationAnimationNames(pack);
   if (operation === 'fighter_generation') {
     return [
       ...SOURCE_NAMES.map((name, index) => stage('source', name, index + 1)),
-      ...GENERATION_ANIMATION_NAMES.map((name, index) => stage('sprite', name, index + 4)),
+      ...animationNames.map((name, index) => stage('sprite', name, index + 4)),
     ];
   }
   if (operation === 'fighter_upgrade') {
-    return GENERATION_ANIMATION_NAMES.map((name, index) => stage('sprite', name, index + 1));
+    return animationNames.map((name, index) => stage('sprite', name, index + 1));
   }
   if (!targetName) return [];
   return [stage(operation === 'fighter_retry_source' ? 'source' : 'sprite', targetName, 1)];
@@ -68,9 +71,10 @@ export function pendingGenerationStages(
   operation: GenerationJobOperation,
   targetName: string | null,
   completedStageKeys: Iterable<string>,
+  pack: StoredGenerationPackage = {},
 ): GenerationStageDefinition[] {
   const completed = new Set(completedStageKeys);
-  return generationStagesForOperation(operation, targetName).filter((entry) => !completed.has(entry.key));
+  return generationStagesForOperation(operation, targetName, pack).filter((entry) => !completed.has(entry.key));
 }
 
 export function requireArtifactRunId(job: GenerationJob): string {
@@ -88,7 +92,10 @@ export async function loadArtifactRun(env: Env, job: GenerationJob): Promise<Gen
     LIMIT 1
   `).bind(requireArtifactRunId(job), job.user_id, job.fighter_id).first<GenerationArtifactRun>();
   if (!run) throw new GenerationCheckpointIntegrityError('Durable generation run is unavailable');
-  if (run.tier !== job.tier || run.operation !== job.operation) {
+  if (run.tier !== job.tier || run.operation !== job.operation ||
+      (run.creation_package ?? 'complete') !== (job.creation_package ?? 'complete') ||
+      (run.expansion_only ?? 0) !== (job.expansion_only ?? 0) ||
+      (run.animation_plan_json ?? null) !== (job.animation_plan_json ?? null)) {
     throw new GenerationCheckpointIntegrityError('Generation job does not match its durable artifact run');
   }
   return run;
@@ -109,7 +116,7 @@ export async function listArtifactCheckpoints(
 
 export async function artifactProgress(
   env: Env,
-  run: Pick<GenerationArtifactRun, 'id' | 'operation' | 'target_name'>,
+  run: Pick<GenerationArtifactRun, 'id' | 'operation' | 'target_name'> & StoredGenerationPackage,
 ): Promise<{
   completedStages: string[];
   pendingStages: string[];
@@ -121,7 +128,7 @@ export async function artifactProgress(
     .map((checkpoint) => `${checkpoint.artifact_kind}:${checkpoint.artifact_name}`);
   return {
     completedStages,
-    pendingStages: pendingGenerationStages(run.operation, run.target_name, completedStages)
+    pendingStages: pendingGenerationStages(run.operation, run.target_name, completedStages, run)
       .map((entry) => entry.key),
     preservedArtifactCount: completedStages.length,
   };

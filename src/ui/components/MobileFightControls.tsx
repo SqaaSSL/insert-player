@@ -14,6 +14,7 @@ interface ControlButtonProps {
   playerIndex: 0 | 1;
   playerLabel: string;
   title: string;
+  disabled?: boolean;
 }
 
 function ControlButton({
@@ -23,6 +24,7 @@ function ControlButton({
   playerIndex,
   playerLabel,
   title,
+  disabled = false,
 }: ControlButtonProps) {
   const setPressed = (active: boolean) => {
     setVirtualInputAction(playerIndex, action, active);
@@ -60,6 +62,8 @@ function ControlButton({
       className={`mobile-fight-control ${className}`}
       aria-label={`${title}, ${playerLabel}`}
       title={title}
+      disabled={disabled}
+      onBlur={() => setPressed(false)}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={onKeyDown}
       onKeyUp={onKeyUp}
@@ -68,7 +72,8 @@ function ControlButton({
       onPointerUp={onPointerRelease}
       onLostPointerCapture={() => setPressed(false)}
     >
-      {label}
+      <span>{label}</span>
+      {disabled ? <small>Charge meter</small> : action === 'guard' ? <small>Hold</small> : null}
     </button>
   );
 }
@@ -77,21 +82,23 @@ export function MobileFightControls({
   mode = 'fight',
   playerIndex = 0,
   playerLabel = 'player 1',
+  hudPlayerIndex = playerIndex,
 }: {
   mode?: 'fight' | 'rush';
   playerIndex?: 0 | 1;
   playerLabel?: string;
+  hudPlayerIndex?: 0 | 1;
 }) {
   const [superReady, setSuperReady] = useState(false);
 
   useEffect(() => {
     const onHudState = (event: WindowEventMap[typeof HUD_STATE_EVENT]) => {
-      const meter = playerIndex === 0 ? event.detail.p1Meter : event.detail.p2Meter;
+      const meter = hudPlayerIndex === 0 ? event.detail.p1Meter : event.detail.p2Meter;
       setSuperReady(meter >= event.detail.meterMax);
     };
     window.addEventListener(HUD_STATE_EVENT, onHudState);
     return () => window.removeEventListener(HUD_STATE_EVENT, onHudState);
-  }, [playerIndex]);
+  }, [hudPlayerIndex]);
 
   useEffect(() => {
     const releaseAll = () => resetVirtualInput(playerIndex);
@@ -106,23 +113,21 @@ export function MobileFightControls({
 
   return (
     <div className="mobile-fight-controls" aria-label={`${playerLabel} controls`}>
-      <VirtualJoystick playerIndex={playerIndex} playerLabel={playerLabel} />
+      <VirtualJoystick mode={mode} playerIndex={playerIndex} playerLabel={playerLabel} />
       <div className="mobile-fight-controls__actions" role="group" aria-label="Attacks">
-        <ControlButton action="punch" className="is-punch" label="P" playerIndex={playerIndex} playerLabel={playerLabel} title="Punch" />
-        <ControlButton action="kick" className="is-kick" label="K" playerIndex={playerIndex} playerLabel={playerLabel} title="Kick" />
-        <ControlButton action="fireball" className="is-fireball" label="F" playerIndex={playerIndex} playerLabel={playerLabel} title="Fireball" />
+        <ControlButton action="punch" className="is-punch" label="Punch" playerIndex={playerIndex} playerLabel={playerLabel} title="Punch" />
+        <ControlButton action="kick" className="is-kick" label="Kick" playerIndex={playerIndex} playerLabel={playerLabel} title="Kick" />
+        <ControlButton action="fireball" className="is-fireball" label="Fireball" playerIndex={playerIndex} playerLabel={playerLabel} title="Fireball" />
         <ControlButton
           action="uppercut"
           className={mode === 'rush' ? 'is-jump' : 'is-uppercut'}
-          label={mode === 'rush' ? 'J' : 'U'}
+          label={mode === 'rush' ? 'Jump' : 'Uppercut'}
           playerIndex={playerIndex}
           playerLabel={playerLabel}
           title={mode === 'rush' ? 'Jump' : 'Uppercut'}
         />
-        {superReady ? (
-          <ControlButton action="super" className="is-super" label="S!" playerIndex={playerIndex} playerLabel={playerLabel} title="Super fireball" />
-        ) : null}
-        <ControlButton action="guard" className="is-guard" label="G" playerIndex={playerIndex} playerLabel={playerLabel} title="Guard (hold)" />
+        <ControlButton action="super" className="is-super" label="Super" playerIndex={playerIndex} playerLabel={playerLabel} title="Super fireball" disabled={mode === 'fight' && !superReady} />
+        <ControlButton action="guard" className="is-guard" label="Guard" playerIndex={playerIndex} playerLabel={playerLabel} title="Guard (hold)" />
       </div>
     </div>
   );

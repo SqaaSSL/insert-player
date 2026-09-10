@@ -57,20 +57,53 @@ describe('stored match', () => {
       ...match,
       gameMode: 'rush',
       vsAI: true,
+      stageId: 'side-street',
     };
     expect(writeStoredMatch(rushMatch, 'user-a', storage, 1_000)).toBe(true);
     expect(readStoredMatch('user-a', storage, 1_001)).toEqual(rushMatch);
   });
 
-  it('round-trips Aura Battle and its rhythm difficulty', () => {
+  it.each(['aura-plaza-v3', 'aura-plaza-v2', 'aura-plaza', 'executive-rumble', 'insert-player-arena'] as const)(
+    'restores an Aura Battle on %s without replacing its chosen stage', stageId => {
+      const storage = new MemoryStorage();
+      const auraMatch: MatchSceneData = {
+        ...match,
+        gameMode: 'aura',
+        auraDifficulty: 'untouchable',
+        stageId,
+      };
+      expect(writeStoredMatch(auraMatch, 'user-a', storage, 1_000)).toBe(true);
+      expect(readStoredMatch('user-a', storage, 1_001)).toEqual(auraMatch);
+    },
+  );
+
+  it.each(['fight', 'rush', undefined] as const)(
+    'rejects the Aura-only stage for %s matches when writing and restoring', gameMode => {
+      const storage = new MemoryStorage();
+      for (const stageId of ['aura-plaza-v3', 'aura-plaza-v2', 'aura-plaza'] as const) {
+        const wrongMode: MatchSceneData = { ...match, gameMode, stageId };
+        expect(writeStoredMatch(wrongMode, 'user-a', storage, 1_000)).toBe(false);
+        const raw = JSON.stringify({ version: 1, authSessionKey: 'user-a', createdAt: 1_000, data: wrongMode });
+        expect(parseStoredMatch(raw, 'user-a', 1_001)).toBeNull();
+      }
+    },
+  );
+
+  it.each(['fight', 'aura', 'rush'] as const)(
+    'preserves %s custom photo stage payloads without a built-in stage', gameMode => {
+      const storage = new MemoryStorage();
+      const customMatch: MatchSceneData = {
+        ...match, gameMode, stageId: undefined, customStageKey: 'my-plaza', customStageLabel: 'My Plaza',
+      };
+      expect(writeStoredMatch(customMatch, 'user-a', storage, 1_000)).toBe(true);
+      expect(readStoredMatch('user-a', storage, 1_001)).toEqual(customMatch);
+    },
+  );
+
+  it('rejects a Fight backdrop for Rush while keeping authored Rush routes playable', () => {
     const storage = new MemoryStorage();
-    const auraMatch: MatchSceneData = {
-      ...match,
-      gameMode: 'aura',
-      auraDifficulty: 'untouchable',
-    };
-    expect(writeStoredMatch(auraMatch, 'user-a', storage, 1_000)).toBe(true);
-    expect(readStoredMatch('user-a', storage, 1_001)).toEqual(auraMatch);
+    expect(writeStoredMatch({ ...match, gameMode: 'rush' }, 'user-a', storage)).toBe(false);
+    expect(writeStoredMatch({ ...match, gameMode: 'rush', stageId: 'la-jaula-304' }, 'user-a', storage)).toBe(true);
   });
 
   it('rejects expired, legacy, and malformed payloads', () => {

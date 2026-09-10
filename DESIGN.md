@@ -1,5 +1,11 @@
 # Design
 
+## Scope
+
+This document governs the **React shell only**: everything under `src/ui/`, `index.html`, `public/` brand assets, launch metadata, social/OG assets, and marketing copy.
+
+It does **not** govern the Phaser match runtime (`src/game/**`: FightScene, AuraScene, RushScene, HUD, effects, in-canvas text). In-game visuals have their own direction, set per game mode and approved explicitly by the owner. Nothing in this file (palette, typography, motion, copy) is authorization to change in-game rendering, and no in-game direction is authorization to change the shell.
+
 ## Product Context
 
 Insert Player is a browser game and creation tool. The visual system should feel like a premium, modern arcade cabinet: tactile, dark, high-contrast, fast to scan, and centered on playable fighters.
@@ -46,7 +52,7 @@ This works for the arcade identity but must be used carefully:
 
 - Strong for hero labels, buttons, chips, roster labels, and short arcade UI.
 - Weak for long explanatory text, checkout copy, and dense account/billing states.
-- If adding a second typeface, use a readable UI sans for body text and keep `Press Start 2P` as display/label. Do not add more than one companion family.
+- The shell body font is `Press Start 2P`. Do not add a second typeface without an explicit request from the owner that names the shell; a companion sans is not pre-approved by this document.
 - Avoid all-caps paragraphs. Arcade labels can be uppercase; explanations should be mixed case when readability matters.
 
 ## Logo & Mark
@@ -161,7 +167,7 @@ Preferred CTAs:
 ## Implementation Notes
 
 - Existing `asf` token/class prefixes are internal implementation names. Do not show `ASF` publicly.
-- React owns all non-match UI; Phaser owns only the match runtime.
+- React owns all non-match UI; Phaser owns only the match runtime. This document stops at that boundary (see Scope).
 - Follow Tailwind through `src/ui/styles.css`. Do not add inline styles or raw CSS inside Tailwind layers.
 - Static public brand lives in `index.html`, `public/site.webmanifest`, `public/assets/*`, and launch env.
 - Dynamic public brand surfaces must read configured brand env and keep launch gates intact.

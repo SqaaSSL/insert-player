@@ -23,13 +23,19 @@ const sandboxWorkerUrl = 'https://insert-player-api-sandbox.shellbot.workers.dev
 const sandboxFrontendUrl = 'https://insert-player-sandbox.pages.dev';
 const sandboxAuthorizedParties = `${sandboxFrontendUrl},http://localhost:5173,http://127.0.0.1:5174`;
 
-const providerSecretKeys = [
+const requiredProviderSecretKeys = [
   'GEMINI_API_KEY',
   'FAL_API_KEY',
   'RUNWAY_API_KEY',
   'FREEPIK_API_KEY',
   'LUDO_API_KEY',
+];
+const optionalProviderSecretKeys = [
   'PIXCLI_API_KEY',
+];
+const providerSecretKeys = [
+  ...requiredProviderSecretKeys,
+  ...optionalProviderSecretKeys,
 ];
 const sandboxSecretKeys = [
   ...providerSecretKeys,
@@ -250,7 +256,7 @@ async function validate(values) {
   const complete = args.has('--require-complete');
   if (complete) {
     const missing = requiredCompleteKeys.filter((key) => !value(values, key));
-    const missingProviders = providerSecretKeys.filter((key) => !value(values, key));
+    const missingProviders = requiredProviderSecretKeys.filter((key) => !value(values, key));
     if (missing.length > 0) errors.push(`Missing sandbox config: ${missing.join(', ')}`);
     if (missingProviders.length > 0) errors.push(`Missing sandbox provider secrets: ${missingProviders.join(', ')}`);
   }

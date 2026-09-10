@@ -1,12 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AuraBattleCompleteDetail, OnlineRematchStateDetail } from '../../game/match/MatchConfig.ts';
 import { auraAccuracy } from '../../game/aura/AuraBattle.ts';
+import type { AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
+import { auraVideoFile, canShareAuraVideo, downloadAuraVideo } from './AuraMatchShare.ts';
+import { compareAuraChallenge, type AuraChallenge } from '../../game/aura/AuraChallenge.ts';
+import { AuraChallengeComposer } from './AuraChallengeComposer.tsx';
+import { rememberAuraChallenge } from '../shared/auraChallenges.ts';
+import { trackProductEvent } from '../../services/ProductEvents.ts';
 
 interface AuraBattleResultsProps {
   summary: AuraBattleCompleteDetail;
+  capture?: AuraCaptureDetail | null;
   localSlot?: 0 | 1;
   onlineRematch?: OnlineRematchStateDetail;
   disableRematch?: boolean;
+  onChallengeCreated?: (challenge: AuraChallenge) => void;
+  onCreatePlayer?: () => void;
   onRetry: () => void;
   onRemix?: () => void;
   onExit: () => void;
@@ -19,30 +28,76 @@ function resultHeadline(summary: AuraBattleCompleteDetail): string {
 
 export function AuraBattleResults({
   summary,
+  capture = null,
   localSlot,
   onlineRematch = { state: 'idle' },
   disableRematch = false,
+  onChallengeCreated,
+  onCreatePlayer,
   onRetry,
   onRemix,
   onExit,
 }: AuraBattleResultsProps) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
+  const [shareError, setShareError] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const completedChallenge = useRef<AuraBattleCompleteDetail | null>(null);
+  const challenge = summary.challenge;
+  const challengeScore = challenge?.slot === 1 ? summary.p2Score.score : summary.p1Score.score;
+  const comparison = challenge ? compareAuraChallenge(challenge, challengeScore) : null;
+  useEffect(() => {
+    if (!challenge || completedChallenge.current === summary) return;
+    completedChallenge.current = summary;
+    rememberAuraChallenge(challenge, 'played', challengeScore);
+    trackProductEvent('challenge_completed', { game: 'aura', source: 'challenge' });
+  }, [summary, challenge, challengeScore]);
+  const video = capture?.state === 'ready' ? capture.video : null;
+  const file = useMemo(() => video ? auraVideoFile(video, summary.p1Name, summary.p2Name) : null,
+    [video, summary.p1Name, summary.p2Name]);
+  const nativeFileShare = file ? canShareAuraVideo(file) : false;
+  useEffect(() => {
+    if (!file) { setVideoUrl(null); return; }
+    const url = URL.createObjectURL(file);
+    setVideoUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
   const p1Accuracy = Math.round(auraAccuracy(summary.p1Score) * 100);
   const p2Accuracy = Math.round(auraAccuracy(summary.p2Score) * 100);
-  const shareText = `${resultHeadline(summary)} — ${summary.p1Name} ${summary.p1Score.score.toLocaleString()} vs ${summary.p2Score.score.toLocaleString()} ${summary.p2Name}. #AuraBattle #InsertPlayer`;
   const localWinner = summary.winnerSlot === 'draw'
     ? null
     : (summary.winnerSlot === 'p1') === (localSlot === 0);
 
-  const share = async () => {
+  const download = () => {
+    if (!file) return;
+    setShareError(false);
     try {
-      const canShare = typeof navigator.share === 'function';
-      if (canShare) await navigator.share({ title: 'Insert Player · Aura Battle', text: shareText });
-      else await navigator.clipboard.writeText(shareText);
-      setShareStatus(canShare ? 'Shared.' : 'Receipt copied.');
-    } catch (error) {
-      if ((error as DOMException)?.name !== 'AbortError') setShareStatus('Could not copy the receipt.');
+      downloadAuraVideo(file);
+      trackProductEvent('share_video', { game: 'aura' });
+      setShareStatus('Video download started. Attach the file in your chat or social app.');
+    } catch {
+      setShareError(true);
+      setShareStatus('Download could not start. Try the video player’s download option.');
     }
+  };
+
+  const share = async () => {
+    if (!file || sharing) return;
+    if (!nativeFileShare) { download(); return; }
+    setSharing(true);
+    setShareError(false);
+    setShareStatus(null);
+    try {
+      // File already exists: preserve the click's transient user activation.
+      await navigator.share({ title: 'Insert Player · Aura Battle', files: [file] });
+      trackProductEvent('share_video', { game: 'aura' });
+      setShareStatus('Video handed to your sharing app.');
+    } catch (error) {
+      if ((error as DOMException)?.name !== 'AbortError') {
+        setShareError(true);
+        setShareStatus('Sharing could not open. Download the video and attach it instead.');
+      }
+    } finally { setSharing(false); }
   };
 
   return (
@@ -56,8 +111,19 @@ export function AuraBattleResults({
               ? 'A PERFECTLY BALANCED FEED'
               : localWinner ? 'MAIN CHARACTER CONFIRMED' : 'NPC ALLEGATIONS PENDING'}
         </p>
-        <h2>{resultHeadline(summary)}</h2>
+        <h2>{challenge && comparison
+          ? comparison.outcome === 'won' ? `You beat ${challenge.name}'s score`
+            : comparison.outcome === 'tied' ? `You matched ${challenge.name}` : 'One more run?'
+          : resultHeadline(summary)}</h2>
         <p className="aura-results__meta">{summary.stageLabel} · {summary.difficulty.toUpperCase()} · {summary.durationSeconds}s</p>
+
+        {challenge && comparison ? <div className="aura-challenge-comparison">
+          <h3>{challengeScore.toLocaleString()} / {challenge.score.toLocaleString()} target</h3>
+          <p>{comparison.outcome === 'won' ? `${comparison.difference.toLocaleString()} points ahead. Send your score back.`
+            : comparison.outcome === 'tied' ? 'Exactly level. Play the same routine again to take the lead.'
+              : `${Math.abs(comparison.difference).toLocaleString()} more points to match the target. Try the same routine again.`}</p>
+          <p>Friendly challenge from {challenge.name}. The CPU result below is separate.</p>
+        </div> : null}
 
         <div className="aura-results__duel">
           <article className={summary.winnerSlot === 'p1' ? 'is-winner' : ''}>
@@ -75,6 +141,42 @@ export function AuraBattleResults({
           </article>
         </div>
 
+        {summary.challengeRoutine && summary.challengeShareSlots?.length ? (
+          <AuraChallengeComposer key={`${summary.challengeRoutine.chartId}:${summary.p1Score.score}:${summary.p2Score.score}`}
+            routine={summary.challengeRoutine}
+            scores={summary.challengeShareSlots.map(slot => ({ slot,
+              name: slot === 0 ? summary.p1Name : summary.p2Name,
+              score: slot === 0 ? summary.p1Score.score : summary.p2Score.score }))}
+            onCreated={onChallengeCreated} />
+        ) : null}
+
+        <div className="aura-results__share">
+          {videoUrl && file ? (
+            <>
+              <video className="aura-results__video" src={videoUrl} controls playsInline preload="metadata"
+                aria-label={`${summary.p1Name} versus ${summary.p2Name}, recorded Aura match`} />
+              <div className="aura-results__actions">
+                <button type="button" className="asf-btn asf-btn--primary" disabled={sharing} onClick={() => void share()}>
+                  {sharing ? 'Opening Share…' : nativeFileShare ? 'Share Match' : 'Download Match'}
+                </button>
+                {nativeFileShare ? <button type="button" className="asf-btn" onClick={download}>Download Video</button> : null}
+              </div>
+              <p className="aura-results__share-note">
+                {file.type === 'video/mp4' ? 'MP4' : 'WebM'} · {(file.size / 1024 / 1024).toFixed(1)} MB
+                {video?.hasAudio ? ' · Game audio included.' : ' · No audio in this recording.'}
+                {' '}Your video stays on this device. Save it before leaving or playing again.
+              </p>
+            </>
+          ) : capture?.state === 'unavailable' || !capture ? (
+            <p className="aura-results__share-note" role="status">
+              {capture?.state === 'unavailable' && (capture.reason === 'recording-size-limit' || capture.reason === 'recording-duration-limit')
+                ? 'This recording exceeded the browser limit. No partial video was saved.'
+                : 'A match video is not available. Try a new round in a browser that supports game recording.'}
+            </p>
+          ) : <p className="aura-results__status" role="status">Preparing your match video…</p>}
+          {shareStatus ? <p className={`aura-results__share-note${shareError ? ' is-error' : ''}`} role="status">{shareStatus}</p> : null}
+        </div>
+
         {onlineRematch.message ? (
           <p className={`aura-results__status${onlineRematch.state === 'error' ? ' is-error' : ''}`} role="status">
             {onlineRematch.message}
@@ -83,7 +185,7 @@ export function AuraBattleResults({
         <div className="aura-results__actions">
           <button
             type="button"
-            className="asf-btn asf-btn--primary"
+            className="asf-btn"
             disabled={disableRematch || onlineRematch.state === 'waiting' || onlineRematch.state === 'starting'}
             onClick={onRetry}
           >
@@ -93,13 +195,12 @@ export function AuraBattleResults({
                 ? 'Starting…'
                 : onlineRematch.state === 'rival_ready'
                   ? 'Rival Ready · Run It Back'
-                  : 'Run It Back'}
+                  : challenge ? 'Retry this challenge' : 'Run It Back'}
           </button>
           {onRemix ? <button type="button" className="asf-btn" onClick={onRemix}>Remix Routine</button> : null}
-          <button type="button" className="asf-btn" onClick={() => void share()}>Share Receipt</button>
+          {onCreatePlayer ? <button type="button" className="asf-btn" onClick={onCreatePlayer}>Create my Aura character</button> : null}
           <button type="button" className="asf-btn asf-btn--ghost" onClick={onExit}>{localSlot === undefined ? 'Menu' : 'Back To Lobby'}</button>
         </div>
-        {shareStatus ? <p className="aura-results__status" role="status">{shareStatus}</p> : null}
       </div>
     </section>
   );

@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "packId": "aura-v1-2026",
+  "subject": "template-zero",
+  "artifactRole": "reusable-choreography-and-pose-scaffold",
+  "qualityTarget": "champion",
+  "selectableFighter": false,
+  "promotableAsChampionSprite": false,
+  "storyboard": {
+    "cellWidth": 384,
+    "cellHeight": 512,
+    "purpose": "pose, silhouette, timing and semantic review",
+    "upscaleCreatesChampionAsset": false
+  },
+  "championRefinement": {
+    "mode": "per-unique-frame identity-preserving refinement",
+    "identityAnchor": "target fighter canonical render",
+    "poseAnchor": "extracted Template Zero storyboard cell",
+    "archivalFrameTargets": {
+      "upright": {
+        "width": 768,
+        "height": 1024
+      },
+      "aura_one_leg": {
+        "width": 1024,
+        "height": 1024
+      },
+      "aura_floor_worm": {
+        "width": 1536,
+        "height": 1024
+      }
+    },
+    "runtimeScale": 0.25,
+    "naivePixelUpscaleAllowed": false,
+    "promotionGate": "Every published Champion frame must descend from an individually reviewed HQ character render."
+  },
+  "renderBudget": {
+    "coreAnimations": 6,
+    "coreUniquePoseUpperBound": 46,
+    "optionalReactionUniquePoseUpperBound": 3,
+    "totalUniquePoseUpperBound": 49,
+    "note": "Explicitly repeated poses are refined once and reused deterministically."
+  }
+}

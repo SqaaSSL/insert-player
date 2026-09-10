@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildArcadeSelectionSearch,
   buildCreationSearch,
+  creationDestination,
+  creationReturnForPackage,
   consumePostSignUpTrialIntent,
   parseCreationPurchaseIntent,
   isGeneratedPhotoHash,
@@ -20,6 +22,31 @@ afterEach(() => {
 });
 
 describe('onboardingFlow', () => {
+  it('keeps Aura package, game and challenge through checkout and creation', () => {
+    const context = { tier: 'contender', creationPackage: 'aura', returnTo: 'aura', source: 'challenge', challenge: 'e30' } as const;
+    expect(readCreationNavigationContext(buildCreationSearch(context))).toEqual(context);
+    expect(parseCreationPurchaseIntent({ ...context, createdAt: Date.now() })).toMatchObject(context);
+    expect(creationDestination(context.returnTo)).toBe('/roster/aura');
+    expect(creationDestination('rush')).toBe('/roster/rush');
+    expect(creationDestination('fight')).toBe('/roster/cpu');
+  });
+
+  it('does not preserve an unsafe package or unbounded challenge as a purchase', () => {
+    const context = { tier: 'rookie', returnTo: 'aura', source: 'landing', createdAt: Date.now() };
+    expect(parseCreationPurchaseIntent({ ...context, creationPackage: 'admin' })).toBeNull();
+    expect(parseCreationPurchaseIntent({ ...context, challenge: 'A'.repeat(4097) })).toBeNull();
+    expect(readCreationNavigationContext('?package=admin&challenge=https://external.example')).not.toHaveProperty('challenge');
+  });
+
+  it('returns an Aura-only creation to a compatible game while retaining supported choices', () => {
+    expect(creationReturnForPackage('fight', 'aura')).toBe('aura');
+    expect(creationReturnForPackage('rush', 'aura')).toBe('aura');
+    expect(creationReturnForPackage('arcade', 'aura')).toBe('aura');
+    expect(creationReturnForPackage('aura', 'complete')).toBe('aura');
+    expect(creationReturnForPackage('rush', 'complete')).toBe('rush');
+    expect(creationReturnForPackage('gallery', 'aura')).toBe('gallery');
+  });
+
   it('round-trips the whitelisted trial creation context', () => {
     const search = buildCreationSearch({
       tier: 'rookie',

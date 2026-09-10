@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "input": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/raw-storyboard.png",
+  "output": "public/assets/aura/donald-trump/aura_six_seven.png",
+  "grid": {
+    "columns": 4,
+    "rows": 2
+  },
+  "frame": {
+    "width": 192,
+    "height": 256,
+    "count": 8
+  },
+  "registrationTarget": {
+    "rootX": 96,
+    "baselineY": 238
+  },
+  "before": [
+    {
+      "frame": 1,
+      "minX": 32,
+      "minY": 10,
+      "maxX": 141,
+      "maxY": 232,
+      "rootX": 69.34943181818181
+    },
+    {
+      "frame": 2,
+      "minX": 48,
+      "minY": 10,
+      "maxX": 160,
+      "maxY": 232,
+      "rootX": 85.29661016949153
+    },
+    {
+      "frame": 3,
+      "minX": 31,
+      "minY": 11,
+      "maxX": 140,
+      "maxY": 232,
+      "rootX": 68.82584269662921
+    },
+    {
+      "frame": 4,
+      "minX": 46,
+      "minY": 8,
+      "maxX": 142,
+      "maxY": 228,
+      "rootX": 81.59347181008901
+    },
+    {
+      "frame": 5,
+      "minX": 32,
+      "minY": 8,
+      "maxX": 141,
+      "maxY": 230,
+      "rootX": 69.75070028011204
+    },
+    {
+      "frame": 6,
+      "minX": 48,
+      "minY": 8,
+      "maxX": 160,
+      "maxY": 230,
+      "rootX": 85.66852367688023
+    },
+    {
+      "frame": 7,
+      "minX": 31,
+      "minY": 8,
+      "maxX": 140,
+      "maxY": 230,
+      "rootX": 69.58543417366947
+    },
+    {
+      "frame": 8,
+      "minX": 46,
+      "minY": 8,
+      "maxX": 142,
+      "maxY": 228,
+      "rootX": 81.59347181008901
+    }
+  ],
+  "offsets": [
+    {
+      "frame": 1,
+      "dx": 27,
+      "dy": 6
+    },
+    {
+      "frame": 2,
+      "dx": 11,
+      "dy": 6
+    },
+    {
+      "frame": 3,
+      "dx": 27,
+      "dy": 6
+    },
+    {
+      "frame": 4,
+      "dx": 14,
+      "dy": 10
+    },
+    {
+      "frame": 5,
+      "dx": 26,
+      "dy": 8
+    },
+    {
+      "frame": 6,
+      "dx": 10,
+      "dy": 8
+    },
+    {
+      "frame": 7,
+      "dx": 26,
+      "dy": 8
+    },
+    {
+      "frame": 8,
+      "dx": 14,
+      "dy": 10
+    }
+  ],
+  "after": [
+    {
+      "frame": 1,
+      "minX": 59,
+      "minY": 16,
+      "maxX": 168,
+      "maxY": 238,
+      "rootX": 96.34943181818181
+    },
+    {
+      "frame": 2,
+      "minX": 59,
+      "minY": 16,
+      "maxX": 171,
+      "maxY": 238,
+      "rootX": 96.29661016949153
+    },
+    {
+      "frame": 3,
+      "minX": 58,
+      "minY": 17,
+      "maxX": 167,
+      "maxY": 238,
+      "rootX": 95.82584269662921
+    },
+    {
+      "frame": 4,
+      "minX": 60,
+      "minY": 18,
+      "maxX": 156,
+      "maxY": 238,
+      "rootX": 95.59347181008901
+    },
+    {
+      "frame": 5,
+      "minX": 58,
+      "minY": 16,
+      "maxX": 167,
+      "maxY": 238,
+      "rootX": 95.75070028011204
+    },
+    {
+      "frame": 6,
+      "minX": 58,
+      "minY": 16,
+      "maxX": 170,
+      "maxY": 238,
+      "rootX": 95.66852367688023
+    },
+    {
+      "frame": 7,
+      "minX": 57,
+      "minY": 16,
+      "maxX": 166,
+      "maxY": 238,
+      "rootX": 95.58543417366947
+    },
+    {
+      "frame": 8,
+      "minX": 60,
+      "minY": 18,
+      "maxX": 156,
+      "maxY": 238,
+      "rootX": 95.59347181008901
+    }
+  ]
+}

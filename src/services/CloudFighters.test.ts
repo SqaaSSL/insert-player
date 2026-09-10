@@ -21,6 +21,7 @@ import {
   formatCloudRosterSyncStatus,
   getCloudFighter,
   isCompleteCloudFighterRoster,
+  isCloudFighterReadyForMode,
   isSourceOnlyCloudFighter,
   listArcadeFighters,
   listCloudFighters,
@@ -44,6 +45,8 @@ import {
   type CachedMeta,
   type CachedSprite,
 } from './SpriteCache.ts';
+import { AURA_ANIMATION_NAMES } from './FighterAssetPacks.ts';
+import { PLAYABLE_ANIMATION_NAMES } from './PlayableFighterAssets.ts';
 
 function candidate(
   versionId: string,
@@ -620,7 +623,30 @@ describe('cloud roster sync status', () => {
     })).toBe(false);
   });
 
-  it('requires all eleven current pointers and never counts archived private versions', () => {
+  it('requires six usable current Aura performances instead of a complete Fight roster', () => {
+    const fightSprites = PLAYABLE_ANIMATION_NAMES.map((animationName) => ({ ...cloudSprite(animationName), animationName }));
+    const auraSprites = AURA_ANIMATION_NAMES.map((animationName) => ({ ...cloudSprite(animationName), animationName }));
+    expect(isCloudFighterReadyForMode({ ...fighter, sprites: fightSprites }, 'fight')).toBe(true);
+    expect(isCloudFighterReadyForMode({ ...fighter, sprites: fightSprites }, 'aura')).toBe(false);
+    expect(isCloudFighterReadyForMode({ ...fighter, sprites: auraSprites }, 'aura')).toBe(true);
+    expect(isCloudFighterReadyForMode({ ...fighter, sprites: auraSprites.slice(1), spriteVersions: auraSprites }, 'aura')).toBe(false);
+    expect(isCloudFighterReadyForMode({
+      ...fighter, sprites: auraSprites.map((sprite, index) => index === 0 ? { ...sprite, url: null } : sprite),
+    }, 'aura')).toBe(false);
+  });
+
+  it('includes the official reviewed Aura bundle but does not qualify a same-named private fighter', () => {
+    const official = {
+      ...fighter, id: 'official-trump', name: 'Donald Trump', public: true,
+      arcade: { slug: 'donald-trump', rank: 1, challengerLine: '', defaultPersonality: 'balanced' as const,
+        reference: { kind: 'licensed' as const, sourceUrl: null, license: '', credit: '' } },
+    };
+    expect(isCloudFighterReadyForMode(official, 'aura')).toBe(true);
+    expect(isCloudFighterReadyForMode({ ...official, public: false }, 'aura')).toBe(false);
+    expect(isCloudFighterReadyForMode({ ...official, arcade: undefined }, 'aura')).toBe(false);
+  });
+
+  it('accepts a complete current capability pack and never counts archived private versions', () => {
     const animationNames = [
       'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
       'jump', 'crouch', 'hit', 'ko', 'victory',
@@ -631,6 +657,13 @@ describe('cloud roster sync status', () => {
     }));
 
     expect(isCompleteCloudFighterRoster({ ...fighter, sprites: completeSprites })).toBe(true);
+    expect(isCompleteCloudFighterRoster({
+      ...fighter,
+      sprites: AURA_ANIMATION_NAMES.map((animationName) => ({
+        ...cloudSprite(`aura-${animationName}`),
+        animationName,
+      })),
+    })).toBe(true);
     expect(isCompleteCloudFighterRoster({
       ...fighter,
       sprites: completeSprites.map((sprite, index) => index === 0 ? { ...sprite, url: null } : sprite),

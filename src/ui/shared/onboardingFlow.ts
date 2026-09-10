@@ -1,25 +1,33 @@
+import type { GenerationPackage } from '../../services/GenerationPackages.ts';
 import {
   isQualityTier,
   type QualityTier,
 } from '../../services/QualityTiers.ts';
 
-export type CreationReturnTarget = 'gallery' | 'arcade';
-export type CreationEntrySource = 'trial' | 'landing' | 'arcade' | 'menu' | 'gallery' | 'roster';
+export type CreationReturnTarget = 'gallery' | 'arcade' | 'aura' | 'fight' | 'rush';
+export type CreationEntrySource = 'trial' | 'landing' | 'arcade' | 'menu' | 'gallery' | 'roster' | 'challenge';
 
 export interface CreationNavigationContext {
   tier: QualityTier | null;
+  creationPackage?: GenerationPackage;
+  challenge?: string;
   returnTo: CreationReturnTarget;
   source: CreationEntrySource | null;
 }
 
 export interface CreationSearchOptions {
   tier?: QualityTier;
+  creationPackage?: GenerationPackage;
+  challenge?: string;
   returnTo?: CreationReturnTarget;
   source?: CreationEntrySource;
 }
 
 export interface CreationPurchaseIntent {
   tier: QualityTier;
+  creationPackage?: GenerationPackage;
+  challenge?: string;
+  draftNotPersisted?: boolean;
   returnTo: CreationReturnTarget;
   source: CreationEntrySource;
   createdAt: number;
@@ -32,7 +40,29 @@ const CREATION_ENTRY_SOURCES = new Set<CreationEntrySource>([
   'menu',
   'gallery',
   'roster',
+  'challenge',
 ]);
+
+
+const CREATION_RETURN_TARGETS = new Set<CreationReturnTarget>(['gallery', 'arcade', 'aura', 'fight', 'rush']);
+function creationReturnTarget(value: string | null): CreationReturnTarget {
+  return CREATION_RETURN_TARGETS.has(value as CreationReturnTarget) ? value as CreationReturnTarget : 'gallery';
+}
+function validChallenge(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,4096}$/.test(value);
+}
+
+export function creationDestination(target: CreationReturnTarget): '/gallery' | '/arcade' | '/roster/aura' | '/roster/cpu' | '/roster/rush' {
+  if (target === 'aura') return '/roster/aura';
+  if (target === 'fight') return '/roster/cpu';
+  if (target === 'rush') return '/roster/rush';
+  return target === 'arcade' ? '/arcade' : '/gallery';
+}
+
+export function creationReturnForPackage(target: CreationReturnTarget, creationPackage: GenerationPackage): CreationReturnTarget {
+  return creationPackage === 'aura' && (target === 'fight' || target === 'rush' || target === 'arcade')
+    ? 'aura' : target;
+}
 
 const GENERATED_PHOTO_HASH_PATTERN = /^[a-f0-9]{64}$/;
 const CREATION_PURCHASE_INTENT_PREFIX = 'asf:creation-purchase-intent:';
@@ -55,7 +85,10 @@ export function readCreationNavigationContext(search: string): CreationNavigatio
   const requestedSource = params.get('source');
   return {
     tier: isQualityTier(requestedTier) ? requestedTier : null,
-    returnTo: params.get('return') === 'arcade' ? 'arcade' : 'gallery',
+    returnTo: creationReturnTarget(params.get('return')),
+    ...(params.get('package') === 'aura' || params.get('package') === 'complete'
+      ? { creationPackage: params.get('package') as GenerationPackage } : {}),
+    ...(validChallenge(params.get('challenge')) ? { challenge: params.get('challenge')! } : {}),
     source: CREATION_ENTRY_SOURCES.has(requestedSource as CreationEntrySource)
       ? requestedSource as CreationEntrySource
       : null,
@@ -66,7 +99,9 @@ export function readCreationNavigationContext(search: string): CreationNavigatio
 export function buildCreationSearch(options: CreationSearchOptions = {}): string {
   const params = new URLSearchParams();
   if (options.tier) params.set('tier', options.tier);
-  if (options.returnTo === 'arcade') params.set('return', 'arcade');
+  if (options.returnTo && options.returnTo !== 'gallery') params.set('return', options.returnTo);
+  if (options.creationPackage) params.set('package', options.creationPackage);
+  if (validChallenge(options.challenge)) params.set('challenge', options.challenge!);
   if (options.source) params.set('source', options.source);
   return params.toString();
 }
@@ -79,7 +114,10 @@ export function parseCreationPurchaseIntent(
   const intent = value as Partial<CreationPurchaseIntent>;
   if (
     !isQualityTier(intent.tier)
-    || (intent.returnTo !== 'gallery' && intent.returnTo !== 'arcade')
+    || !CREATION_RETURN_TARGETS.has(intent.returnTo as CreationReturnTarget)
+    || (intent.creationPackage !== undefined && intent.creationPackage !== 'aura' && intent.creationPackage !== 'complete')
+    || (intent.challenge !== undefined && !validChallenge(intent.challenge))
+    || (intent.draftNotPersisted !== undefined && typeof intent.draftNotPersisted !== 'boolean')
     || !CREATION_ENTRY_SOURCES.has(intent.source as CreationEntrySource)
     || typeof intent.createdAt !== 'number'
     || !Number.isFinite(intent.createdAt)

@@ -92,6 +92,7 @@ jobs:
           RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
           FREEPIK_API_KEY: ${{ secrets.FREEPIK_API_KEY }}
           LUDO_API_KEY: ${{ secrets.LUDO_API_KEY }}
+          # Optional in sandbox: only the PixCLI video transport is disabled when absent.
           PIXCLI_API_KEY: ${{ secrets.PIXCLI_API_KEY }}
           STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
@@ -101,13 +102,13 @@ jobs:
           GENERATION_JOB_SIGNING_SECRET: ${{ secrets.GENERATION_JOB_SIGNING_SECRET }}
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
           GOOGLE_MAPS_SERVER_KEY: ${{ secrets.GOOGLE_MAPS_SERVER_KEY }}
-        run: npm run config:sandbox
+        run: node scripts/apply-sandbox-config.mjs --require-complete --skip-production-check --deploy-worker
 
       - name: Build, deploy, and smoke Pages
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npm run deploy:frontend:sandbox
+        run: node scripts/deploy-frontend-pages.mjs --target=sandbox --skip-production-check
 
       - name: Publish deployment summary
         run: |

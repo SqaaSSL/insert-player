@@ -4,6 +4,7 @@ import type { RushCompanionOrder, RushDifficultyId } from '../brawl/RushConfig.t
 import type { AuraDifficultyId } from '../aura/AuraConfig.ts';
 import type { AuraLane } from '../aura/AuraChart.ts';
 import type { AuraPlayerScore } from '../aura/AuraBattle.ts';
+import type { AuraChallenge, AuraChallengeRoutine } from '../aura/AuraChallenge.ts';
 import { ROUNDS_TO_WIN } from '../constants.ts';
 
 export type MatchExperience = 'standard' | 'trial';
@@ -80,6 +81,10 @@ export interface MatchSceneData {
   rushCompanionOrder?: RushCompanionOrder;
   /** Rhythm density, timing windows, and CPU precision for Aura Battle. */
   auraDifficulty?: AuraDifficultyId;
+  /** Aura track id from AuraTracks.ts; omitted lets the seed pick one. */
+  auraTrackId?: string;
+  /** Unverified asynchronous social target; never an online/ranked result. */
+  auraChallenge?: AuraChallenge;
   /**
    * Explicit simulation seed (uint32). When present it wins over the derived
    * match-identity hash, so two machines can agree on one seed for netplay
@@ -202,6 +207,12 @@ export interface AuraBattleCompleteDetail {
   difficulty: AuraDifficultyId;
   stageId: StageThemeId;
   stageLabel: string;
+  /** Public routine only, independent of any private performer assets. */
+  challengeRoutine?: AuraChallengeRoutine;
+  /** Human slots permitted to voluntarily create a social score link. */
+  challengeShareSlots?: readonly (0 | 1)[];
+  /** Present only when this exact run attempted the given social target. */
+  challenge?: AuraChallenge;
   online?: OnlineMatchInfo;
 }
 
@@ -389,6 +400,7 @@ export function buildMatchSeed(data: MatchSceneData): number {
     parts.push(data.auraDifficulty === undefined
       ? 'aura-difficulty:default'
       : `aura-difficulty:${data.auraDifficulty}`);
+    parts.push(data.auraTrackId === undefined ? 'aura-track:auto' : `aura-track:${data.auraTrackId}`);
   }
   if (data.experience !== undefined) parts.push(`experience:${data.experience}`);
   if (data.roundsToWin !== undefined) parts.push(`rounds-to-win:${data.roundsToWin}`);

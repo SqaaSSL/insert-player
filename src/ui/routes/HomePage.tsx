@@ -32,10 +32,14 @@ import { Button } from '../components/Button.tsx';
 import type { LegalRoute } from '../components/LegalFooter.tsx';
 import { currentCheckoutLegalAttestation } from '../legal.ts';
 import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
+import { quoteGenerationPackage } from '../../services/GenerationPackages.ts';
+import { readProductEvents } from '../../services/ProductEvents.ts';
+import { downloadBlob } from '../shared/downloadBlob.ts';
 import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
 import type { CreationPurchaseIntent } from '../shared/onboardingFlow.ts';
 
 interface HomePageProps extends AuthRouteState {
+  walletOnly?: boolean;
   creationPurchaseIntent?: CreationPurchaseIntent | null;
   onContinuePurchaseIntent?: () => void;
   onCreateFighter: () => void;
@@ -68,6 +72,7 @@ function recentResultLabel(match: RecentMatch, playerId: string): string {
 }
 
 export function HomePage({
+  walletOnly = false,
   authStatus,
   authSessionKey,
   onCreateFighter,
@@ -217,6 +222,7 @@ export function HomePage({
   }, [authStatus, authSessionKey]);
 
   useEffect(() => {
+    if (walletOnly) return;
     let cancelled = false;
     const loadArenaStats = async () => {
       const [board, stats] = await Promise.all([
@@ -240,7 +246,7 @@ export function HomePage({
     return () => {
       cancelled = true;
     };
-  }, [authStatus, authSessionKey]);
+  }, [authStatus, authSessionKey, walletOnly]);
 
   const buyCredits = async (pack: CreditPack) => {
     if (authStatus !== 'signed-in') {
@@ -284,17 +290,19 @@ export function HomePage({
       ? 'Climb the ladder: 13 challengers, 3 continues.'
       : 'Create a fighter and climb the machine roster.';
   const purchaseTier = QUALITY_TIERS.find((item) => item.id === creationPurchaseIntent?.tier) ?? null;
+  const purchaseQuote = purchaseTier ? quoteGenerationPackage(purchaseTier.id, creationPurchaseIntent?.creationPackage ?? 'complete') : null;
   const purchaseCreditsNeeded = purchaseTier && billingProfile
-    ? Math.max(0, purchaseTier.creditCost - billingProfile.creditsBalance)
-    : purchaseTier?.creditCost ?? 0;
+    ? Math.max(0, purchaseQuote!.creditCost - billingProfile.creditsBalance)
+    : purchaseQuote?.creditCost ?? 0;
   const purchaseIntentReady = Boolean(
     purchaseTier
     && billingProfile
-    && billingProfile.creditsBalance >= purchaseTier.creditCost,
+    && billingProfile.creditsBalance >= purchaseQuote!.creditCost,
   );
 
   return (
     <div className="home-app">
+      {walletOnly ? <header className="roster-hero"><div><h1>Credits</h1><p>Create your character once. Play as often as you like.</p></div></header> : <>
       <div className="home-hero">
         <h1>{PUBLIC_APP_NAME}</h1>
         <p className="home-hero__copy">
@@ -394,7 +402,7 @@ export function HomePage({
       <section className="home-collection" aria-labelledby="home-collection-title">
         <div className="home-collection__header">
           <h2 id="home-collection-title">Roster &amp; Community</h2>
-          <p>Your fighters work in Fight, Rush, and Aura.</p>
+          <p>One roster. Combat moves for Fight and Rush; Aura moves for Aura.</p>
         </div>
         <div className="home-menu home-menu--utility">
           <button type="button" className="home-menu__action is-secondary" onClick={onOpenGallery}>
@@ -418,6 +426,7 @@ export function HomePage({
         </div>
       </section>
 
+      </>}
       <section className="home-credits" aria-label="Credits">
         <div className="home-credits__header">
           <h2>
@@ -430,12 +439,13 @@ export function HomePage({
         {creationPurchaseIntent && purchaseTier ? (
           <div className="home-credits__creation-intent" role="status">
             <div>
-              <strong>{purchaseTier.label} selected</strong>
+              <strong>{creationPurchaseIntent.creationPackage === 'aura' ? 'Aura moves' : 'Fight + Rush'} · {purchaseTier.label}</strong>
               <span>
                 {purchaseIntentReady
                   ? 'Your balance is ready. Continue with the fighter you chose.'
-                  : `${purchaseTier.creditCost} credits required · ${purchaseCreditsNeeded} more needed`}
+                  : `${purchaseQuote!.creditCost} credits required · ${purchaseCreditsNeeded} more needed`}
               </span>
+              {creationPurchaseIntent.draftNotPersisted ? <span>Your browser could not keep the selected photo through checkout. Your game and quality are saved; select the photo again when you return.</span> : null}
             </div>
             <button
               type="button"
@@ -471,7 +481,8 @@ export function HomePage({
                   <small>{new Intl.NumberFormat(undefined, {
                     style: 'currency',
                     currency: pack.currency.toUpperCase(),
-                  }).format(pack.amountCents / 100)}</small>
+                  }).format(pack.amountCents / 100)} today</small>
+                  {purchaseQuote && billingProfile ? <small>{billingProfile.creditsBalance + pack.credits < purchaseQuote.creditCost ? `${purchaseQuote.creditCost - billingProfile.creditsBalance - pack.credits} credits still needed after this pack` : `${billingProfile.creditsBalance + pack.credits - purchaseQuote.creditCost} credits left after creation`}</small> : null}
                 </button>
               ))}
             </div>
@@ -479,7 +490,7 @@ export function HomePage({
         ) : null}
       </section>
 
-      <section className="home-dashboard" aria-label="Arena records">
+      {!walletOnly ? <section className="home-dashboard" aria-label="Arena records">
         <div className="home-board">
           <div className="home-board__header">
             <h2>Your Record</h2>
@@ -542,7 +553,7 @@ export function HomePage({
             ) : null}
           </div>
         </div>
-      </section>
+      </section> : <details className="creation-advanced"><summary>Playtest diagnostics on this device</summary><p>These events stay in this browser. Export them to review completion, sharing and creation time during a playtest. They contain no names, photos or challenge links.</p><Button onClick={() => downloadBlob(new Blob([JSON.stringify(readProductEvents(), null, 2)], { type: 'application/json' }), 'insert-player-playtest.json')}>Export diagnostics</Button></details>}
     </div>
   );
 }

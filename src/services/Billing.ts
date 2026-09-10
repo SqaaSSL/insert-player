@@ -1,3 +1,4 @@
+import type { GenerationPackageOptions } from './GenerationPackages';
 import { apiFetch, type ApiRequestContext } from './ApiClient';
 import type { GenerationBillingOperation, QualityTier } from './QualityTiers';
 import type { GenerationCreationFlow } from './GenerationCreationFlow';
@@ -11,12 +12,16 @@ import { STAGE_FORGE_CREDIT_COST } from '../shared/StageForgePricing.ts';
 export interface GenerationAuthorization {
   authorized: boolean;
   creationFlow?: GenerationCreationFlow;
+  creationPackage?: GenerationPackageOptions['creationPackage'];
+  expansion?: boolean;
+  creditsCharged?: number;
+  quotedCredits?: number;
   purchaseId?: string;
   providerSessionId?: string;
   providerSessionExpiresAt?: string;
   providerCallLimit?: number;
   providerCostLimitCents?: number;
-  mode?: 'anonymous_rookie' | 'free_rookie' | 'credits' | 'continuation';
+  mode?: 'anonymous_rookie' | 'free_rookie' | 'credits' | 'continuation' | 'quote';
   artifactRunId?: string;
   resumedFromJobId?: string;
   message?: string;
@@ -280,6 +285,7 @@ export async function authorizeGeneration(
   context?: ApiRequestContext,
   resumeJobId?: string | null,
   creationFlow: GenerationCreationFlow = 'original',
+  packageOptions: GenerationPackageOptions = {},
 ): Promise<GenerationAuthorization> {
   if (isLocalDevWithoutApi()) {
     return { authorized: true, message: 'Local generation authorization skipped.' };
@@ -297,6 +303,7 @@ export async function authorizeGeneration(
         turnstileToken: turnstileToken ?? null,
         legal: legal ?? null,
         creationFlow,
+        ...packageOptions,
       }),
     }, context);
     const json = await readBillingJson<GenerationAuthorization>(res);

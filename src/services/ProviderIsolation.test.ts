@@ -40,7 +40,7 @@ describe('provider isolation', () => {
       '49aa2840a510538852fbfb68ac310bbcd78c7403d8fab53d3b9ac9c59eb4d37b',
     );
     await expect(sha256Text(animationProfilesSource)).resolves.toBe(
-      '5eaeee87ee656b7567473f9f1daebb70dd58be577a6628938119b9aaeac68bb9',
+      '32205f7f8a2d7343efd42d5036df208ae074e241f87531fc9e8cf12be3151ce6',
     );
   });
 

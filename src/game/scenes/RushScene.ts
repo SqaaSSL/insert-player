@@ -40,6 +40,15 @@ import {
 } from '../brawl/RushStageProfile.ts';
 import { scoreRushRun } from '../brawl/RushRunScore.ts';
 import {
+  CREAM,
+  HEAT,
+  INK,
+  PIXEL_FONT,
+  STEEL,
+  fillChamfered,
+  strokeChamfered,
+} from '../ui/CabinetGraphics.ts';
+import {
   RUSH_COMPANION_ORDERS,
   getRushDifficulty,
   type RushCompanionOrder,
@@ -68,6 +77,8 @@ const SIDE_STREET_ASSETS = {
 interface ActorPresentation {
   fighter: Fighter;
   view: FighterView;
+  /** Scene time until which the sprite shows a white impact fill. */
+  flashUntil: number;
   tag: Phaser.GameObjects.Container | null;
   health: Phaser.GameObjects.Graphics | null;
 }
@@ -502,6 +513,28 @@ export class RushScene extends Phaser.Scene {
       }
     }
 
+    if (hasAuthoredRoute) {
+      // Depth guides: the back and front of the walkable band, and faint
+      // curb ticks that converge toward the back, so the 2.5D lanes read.
+      lines.lineStyle(1, CREAM, 0.07);
+      lines.lineBetween(walkArea.left, walkArea.back - 6, walkArea.right, walkArea.back - 6);
+      lines.lineStyle(1, CREAM, 0.1);
+      lines.lineBetween(walkArea.left, walkArea.front + 10, walkArea.right, walkArea.front + 10);
+      lines.lineStyle(1, CREAM, 0.045);
+      for (let x = walkArea.left; x <= walkArea.right; x += 160) {
+        lines.lineBetween(x - 30, walkArea.back - 6, x, walkArea.front + 10);
+      }
+    }
+    const vignette = this.add.graphics().setDepth(2990).setScrollFactor(0);
+    vignette.fillGradientStyle(INK, INK, INK, INK, 0.5, 0.5, 0, 0);
+    vignette.fillRect(0, 0, GAME_WIDTH, 64);
+    vignette.fillGradientStyle(INK, INK, INK, INK, 0, 0, 0.55, 0.55);
+    vignette.fillRect(0, GAME_HEIGHT - 84, GAME_WIDTH, 84);
+    vignette.fillGradientStyle(INK, INK, INK, INK, 0.35, 0, 0.35, 0);
+    vignette.fillRect(0, 0, 70, GAME_HEIGHT);
+    vignette.fillGradientStyle(INK, INK, INK, INK, 0, 0.35, 0, 0.35);
+    vignette.fillRect(GAME_WIDTH - 70, 0, 70, GAME_HEIGHT);
+
     this.entranceCueGraphics = this.add.graphics().setDepth(Math.round(walkArea.back) - 2);
 
     if (!hasAuthoredRoute) {
@@ -584,19 +617,6 @@ export class RushScene extends Phaser.Scene {
       align: 'center',
     }).setOrigin(0.5).setDepth(3002).setScrollFactor(0).setAlpha(0);
 
-    const controlsCopy = this.companionCpu
-      ? 'P1  WASD MOVE · U/J ATTACK · I FIREBALL · K/SPACE JUMP · G GUARD    CPU PARTNER'
-      : 'P1  WASD · U/J · I FIREBALL · K/SPACE JUMP    P2  ARROWS · NUM4/1 · NUM5 FIREBALL · NUM2 JUMP';
-    this.add.text(GAME_WIDTH / 2, GAME_HEIGHT - 20, controlsCopy, {
-        fontFamily: '"Space Grotesk", system-ui, sans-serif',
-        fontSize: '11px',
-        color: '#fff4d6',
-        stroke: '#050507',
-        strokeThickness: 3,
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(3001)
-      .setScrollFactor(0);
   }
 
   private syncPresentations(): void {
@@ -934,26 +954,23 @@ export class RushScene extends Phaser.Scene {
     let tag: Phaser.GameObjects.Container | null = null;
     if (actor.slot !== null) tag = this.createPlayerTag(actor.slot);
     const health = actor.kind === 'enemy' ? this.add.graphics() : null;
-    return { fighter, view, tag, health };
+    return { fighter, view, tag, health, flashUntil: 0 };
   }
 
   private createPlayerTag(slot: 0 | 1): Phaser.GameObjects.Container {
     const color = slot === 0 ? 0x4fb3ff : 0x30e07a;
-    const shape = this.add.graphics();
-    shape.fillStyle(0x050507, 0.92);
-    shape.fillRoundedRect(-27, -14, 54, 28, 4);
-    shape.lineStyle(2, color, 1);
-    shape.strokeRoundedRect(-27, -14, 54, 28, 4);
-    shape.fillStyle(color, 1);
-    shape.fillTriangle(-6, 14, 6, 14, 0, 22);
     const tagLabel = this.companionCpu && slot === 1 ? 'CPU' : `P${slot + 1}`;
     const label = this.add.text(0, 0, tagLabel, {
-      fontFamily: '"Press Start 2P", monospace',
-      fontSize: '11px',
+      fontFamily: PIXEL_FONT,
+      fontSize: '9px',
       color: slot === 0 ? '#4fb3ff' : '#30e07a',
-      stroke: '#050507',
-      strokeThickness: 3,
     }).setOrigin(0.5);
+    const width = Math.max(44, label.width + 18);
+    const shape = this.add.graphics();
+    fillChamfered(shape, -width / 2, -11, width, 22, 4, INK, 0.9);
+    strokeChamfered(shape, -width / 2, -11, width, 22, 4, 1, color, 1);
+    shape.fillStyle(color, 1);
+    shape.fillRect(-1, 11, 2, 9);
     return this.add.container(0, 0, [shape, label]).setDepth(2900);
   }
 
@@ -973,7 +990,8 @@ export class RushScene extends Phaser.Scene {
     const waitingToEnter = actor.kind === 'enemy' && !actor.combatReady && actor.entranceDelayTicks > 0;
     presentation.view.sprite.setAlpha(waitingToEnter ? 0 : actor.combatReady ? 1 : 0.88);
     presentation.view.shadowSprite?.setAlpha(waitingToEnter ? 0 : actor.combatReady ? 0.14 : 0.09);
-    presentation.view.sprite.clearTint();
+    if (presentation.flashUntil > this.time.now) presentation.view.sprite.setTintFill(CREAM);
+    else presentation.view.sprite.clearTint();
 
     if (presentation.tag) {
       const spriteTop = presentation.view.getVisibleTopCenter();
@@ -990,8 +1008,8 @@ export class RushScene extends Phaser.Scene {
         const width = actor.archetype === 'captain' ? 84 : actor.archetype === 'bruiser' ? 68 : 58;
         const visibleTop = presentation.view.getVisibleTopCenter();
         const y = visibleTop.y - 15;
-        presentation.health.fillStyle(0x050507, 0.9);
-        presentation.health.fillRoundedRect(actor.x - width / 2 - 2, y - 2, width + 4, 8, 2);
+        presentation.health.fillStyle(INK, 0.92);
+        presentation.health.fillRect(actor.x - width / 2 - 2, y - 2, width + 4, 8);
         presentation.health.fillStyle(
           actor.archetype === 'captain'
             ? 0xffce3a
@@ -1000,12 +1018,11 @@ export class RushScene extends Phaser.Scene {
               : 0xff2a2a,
           1,
         );
-        presentation.health.fillRoundedRect(
+        presentation.health.fillRect(
           actor.x - width / 2,
           y,
           width * (actor.health / actor.maxHealth),
           4,
-          1,
         );
         presentation.health.setDepth(depth + 2);
       }
@@ -1088,9 +1105,8 @@ export class RushScene extends Phaser.Scene {
     );
     const progressRatio = ratioFor(this.sim.progressX);
 
-    this.hudGraphics.fillStyle(0x050507, 0.9);
-    this.hudGraphics.fillRoundedRect(railX - 4, railY - 4, railWidth + 8, 12, 3);
-    this.hudGraphics.fillStyle(0x4a3e35, 1);
+    fillChamfered(this.hudGraphics, railX - 4, railY - 4, railWidth + 8, 12, 3, INK, 0.9);
+    this.hudGraphics.fillStyle(STEEL, 0.45);
     this.hudGraphics.fillRect(railX, railY, railWidth, 4);
     this.hudGraphics.fillStyle(this.stageProfile.accent, 1);
     this.hudGraphics.fillRect(railX, railY, railWidth * progressRatio, 4);
@@ -1098,10 +1114,10 @@ export class RushScene extends Phaser.Scene {
     for (const [index, encounter] of this.routeMap.encounters.entries()) {
       const x = railX + railWidth * ratioFor(encounter.triggerX);
       const reached = index <= this.sim.encounterIndex;
-      this.hudGraphics.fillStyle(reached ? this.stageProfile.accent : 0x050507, 1);
-      this.hudGraphics.fillCircle(x, railY + 2, 5);
+      this.hudGraphics.fillStyle(reached ? this.stageProfile.accent : INK, 1);
+      this.hudGraphics.fillRect(x - 5, railY - 3, 10, 10);
       this.hudGraphics.lineStyle(2, this.stageProfile.accent, reached ? 1 : 0.62);
-      this.hudGraphics.strokeCircle(x, railY + 2, 5);
+      this.hudGraphics.strokeRect(x - 5, railY - 3, 10, 10);
     }
 
     this.hudGraphics.fillStyle(this.sim.progressX >= this.routeMap.exitX ? this.stageProfile.accent : 0x050507, 1);
@@ -1142,14 +1158,16 @@ export class RushScene extends Phaser.Scene {
   }
 
   private drawPlayerHealth(x: number, y: number, width: number, ratio: number, accent: number): void {
-    this.hudGraphics.fillStyle(0x050507, 0.9);
-    this.hudGraphics.fillRoundedRect(x - 3, y - 3, width + 6, 18, 3);
-    this.hudGraphics.lineStyle(2, 0xffce3a, 0.72);
-    this.hudGraphics.strokeRoundedRect(x - 3, y - 3, width + 6, 18, 3);
-    this.hudGraphics.fillStyle(0x281626, 1);
+    fillChamfered(this.hudGraphics, x - 3, y - 3, width + 6, 18, 3, INK, 0.9);
+    strokeChamfered(this.hudGraphics, x - 3, y - 3, width + 6, 18, 3, 1, HEAT, 0.8);
+    this.hudGraphics.fillStyle(0x1a1420, 1);
     this.hudGraphics.fillRect(x, y, width, 12);
     this.hudGraphics.fillStyle(accent, 1);
     this.hudGraphics.fillRect(x, y, Math.max(0, width * ratio), 12);
+    this.hudGraphics.fillStyle(INK, 0.35);
+    for (let tick = 1; tick < 10; tick += 1) {
+      this.hudGraphics.fillRect(x + Math.round(width * tick / 10), y, 1, 12);
+    }
   }
 
   private handleEvents(events: BrawlSimEvent[]): void {
@@ -1180,6 +1198,8 @@ export class RushScene extends Phaser.Scene {
         this.soundManager?.playHit(event.damage >= 40);
         const target = [...this.sim.players, ...this.sim.enemies].find((actor) => actor.id === event.targetId);
         if (target) this.createHitEffect(target.x, target.lane - 92, event.damage);
+        const struck = this.presentations.get(event.targetId);
+        if (struck) struck.flashUntil = this.time.now + 34;
       } else if (event.type === 'guarded') {
         this.runStats.damageTaken += event.damage;
         this.soundManager?.playWhoosh();
@@ -1321,17 +1341,38 @@ export class RushScene extends Phaser.Scene {
   }
 
   private createHitEffect(x: number, y: number, damage: number): void {
-    const impact = this.add.circle(x, y, 22, 0xffce3a, 0.86).setDepth(3500);
+    const heavy = damage >= 40;
+    const impact = this.add.graphics().setDepth(3500).setPosition(x, y);
+    impact.lineStyle(3, CREAM, 0.95);
+    impact.strokeCircle(0, 0, heavy ? 16 : 12);
+    impact.fillStyle(heavy ? HEAT : CREAM, 0.95);
+    for (let spoke = 0; spoke < 4; spoke += 1) {
+      const angle = spoke * Math.PI / 4 + Math.PI / 8;
+      const length = heavy ? 30 : 22;
+      const dx = Math.cos(angle);
+      const dy = Math.sin(angle);
+      impact.fillTriangle(
+        dx * 8 - dy * 2, dy * 8 + dx * 2,
+        dx * 8 + dy * 2, dy * 8 - dx * 2,
+        dx * length, dy * length,
+      );
+      impact.fillTriangle(
+        -dx * 8 - dy * 2, -dy * 8 + dx * 2,
+        -dx * 8 + dy * 2, -dy * 8 - dx * 2,
+        -dx * length, -dy * length,
+      );
+    }
+    impact.setScale(0.6);
     this.tweens.add({
       targets: impact,
       alpha: 0,
-      scale: 1.8,
-      duration: 150,
+      scale: 1.35,
+      duration: 130,
       ease: 'Quart.easeOut',
       onComplete: () => impact.destroy(),
     });
     this.createFloatingText(x + 22, y - 10, String(damage), '#fff4d6');
-    this.cameras.main.shake(55, damage >= 40 ? 0.004 : 0.002);
+    this.cameras.main.shake(55, heavy ? 0.004 : 0.002);
   }
 
   private createCastEffect(x: number, y: number, isSuper: boolean, hostile = false): void {

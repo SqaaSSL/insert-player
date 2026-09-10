@@ -99,6 +99,9 @@ const SCHEMA = `
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE generation_charges (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     tier TEXT NOT NULL,
@@ -134,6 +137,9 @@ const SCHEMA = `
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE generation_jobs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     workflow_instance_id TEXT NOT NULL UNIQUE,
     user_id TEXT NOT NULL,
@@ -190,6 +196,9 @@ const SCHEMA = `
     frame_count INTEGER
   );
   CREATE TABLE generation_artifact_runs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     fighter_id TEXT NOT NULL,
@@ -1890,3 +1899,52 @@ describe('durable generation job creation', () => {
     }
   }, 15_000);
 });
+
+describe('durable package capability authorization', () => {
+  it('starts only the Aura pack, persists its exact plan and replays a single job', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    const plan = ['aura_unbothered', 'aura_six_seven', 'aura_mog_check', 'aura_glide', 'aura_floor_worm', 'aura_one_leg'];
+    const packageRequest = (creationPackage = 'aura') => new Request('https://api.insertplayer.ai/api/generation-jobs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fighterId: FIGHTER_ID, purchaseId: PURCHASE_ID, providerSessionId: SESSION_ID, creationPackage }),
+    });
+    try {
+      await db.prepare("UPDATE generation_charges SET creation_package = 'aura', animation_plan_json = ? WHERE id = ?").bind(JSON.stringify(plan), PURCHASE_ID).run();
+      const created = await createGenerationJob(packageRequest(), env, auth);
+      expect(created.status).toBe(202);
+      const { job } = await created.json() as { job: { creationPackage: string; progressTotal: number; pendingStages: string[] } };
+      expect(job.creationPackage).toBe('aura');
+      expect(job.progressTotal).toBe(9);
+      expect(job.pendingStages).toEqual(['source:side', 'source:upright', 'source:crouch', ...plan.map((name) => `sprite:${name}`)]);
+      expect((await createGenerationJob(packageRequest(), env, auth)).status).toBe(200);
+      expect((await createGenerationJob(packageRequest('complete'), env, auth)).status).toBe(409);
+      expect(workflowStarts).toEqual([PURCHASE_ID]);
+      expect(await db.prepare('SELECT creation_package, animation_plan_json FROM generation_artifact_runs WHERE id = ?').bind(PURCHASE_ID).first())
+        .toEqual({ creation_package: 'aura', animation_plan_json: JSON.stringify(plan) });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+});
+
+it('creates a missing-only expansion with preserved canonical sources and rejects replay widening', async () => {
+  const { mf, db, env, workflowStarts } = await bindings();
+  try {
+    for (const key of Object.values(SOURCE_KEYS)) await env.SPRITES.put(key, png());
+    await db.prepare('UPDATE fighters SET side_view_blob_key = ?, side_view_raw_blob_key = ?, upright_view_blob_key = ?, upright_view_raw_blob_key = ?, crouch_view_blob_key = ?, crouch_view_raw_blob_key = ? WHERE id = ?')
+      .bind(SOURCE_KEYS.side, SOURCE_KEYS.sideRaw, SOURCE_KEYS.upright, SOURCE_KEYS.uprightRaw, SOURCE_KEYS.crouch, SOURCE_KEYS.crouchRaw, FIGHTER_ID).run();
+    await db.prepare("UPDATE generation_charges SET reason = 'fighter_upgrade', expansion_only = 1, animation_plan_json = '[\"walk\"]' WHERE id = ?").bind(PURCHASE_ID).run();
+    await db.prepare("UPDATE provider_sessions SET purpose = 'fighter_upgrade' WHERE id = ?").bind(SESSION_ID).run();
+    const expansionRequest = (expansion = true) => new Request('https://api.insertplayer.ai/api/generation-jobs', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fighterId: FIGHTER_ID, purchaseId: PURCHASE_ID, providerSessionId: SESSION_ID, creationPackage: 'complete', expansion }),
+    });
+    const created = await createGenerationJob(expansionRequest(), env, auth);
+    expect(created.status).toBe(202);
+    expect(await created.json()).toMatchObject({ job: { expansion: true, progressTotal: 1, pendingStages: ['sprite:walk'] } });
+    expect((await createGenerationJob(expansionRequest(), env, auth)).status).toBe(200);
+    expect((await createGenerationJob(expansionRequest(false), env, auth)).status).toBe(409);
+    expect(workflowStarts).toEqual([PURCHASE_ID]);
+    expect(await db.prepare('SELECT expansion_only, animation_plan_json FROM generation_artifact_runs WHERE id = ?').bind(PURCHASE_ID).first())
+      .toEqual({ expansion_only: 1, animation_plan_json: '["walk"]' });
+    for (const key of Object.values(SOURCE_KEYS)) expect(await env.SPRITES.head(key)).not.toBeNull();
+  } finally { await mf.dispose(); }
+}, 15_000);

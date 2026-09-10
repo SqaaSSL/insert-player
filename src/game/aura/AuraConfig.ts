@@ -1,3 +1,5 @@
+import { DEFAULT_AURA_TRACK } from './AuraTracks.ts';
+
 export type AuraDifficultyId = 'lowkey' | 'viral' | 'untouchable';
 
 export interface AuraDifficulty {
@@ -14,10 +16,11 @@ export interface AuraDifficulty {
   cpuGoodChance: number;
 }
 
-/** Measured from Neon Arena's onset grid. Keep the chart locked to the track. */
-export const AURA_BPM = 154.267723880597;
+/** Tempo values of the default track. Charts read their own track; these
+ * remain for tests and for callers that never pick a track. */
+export const AURA_BPM = DEFAULT_AURA_TRACK.bpm;
 export const AURA_BEAT_MS = 60_000 / AURA_BPM;
-export const AURA_MUSIC_BEAT_OFFSET_MS = 174;
+export const AURA_MUSIC_BEAT_OFFSET_MS = DEFAULT_AURA_TRACK.beatOffsetMs;
 /** Notes remain visible for exactly four beats on every lane and difficulty. */
 export const AURA_NOTE_TRAVEL_BEATS = 4;
 export const AURA_NOTE_TRAVEL_MS = AURA_NOTE_TRAVEL_BEATS * AURA_BEAT_MS;

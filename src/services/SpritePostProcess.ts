@@ -866,6 +866,9 @@ export function computeRequestedSpriteGrid(
   animationName: string,
   frames: number,
 ): { cols: number; rows: number } {
+  if (animationName.startsWith('aura_') && frames === 6) {
+    return { cols: 3, rows: 2 };
+  }
   if (animationName === 'ko' && frames === 8) {
     return { cols: 2, rows: 4 };
   }

@@ -1,3 +1,5 @@
+import { AURA_GENERATION_ANIMATIONS } from '../../src/services/GenerationPackages';
+import { storedGenerationAnimationNames } from './generationPackages';
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
 import { generateId, hashString } from './auth';
@@ -119,6 +121,7 @@ const ANIMATIONS: AnimationDefinition[] = [
   { name: 'ko', motion: 'eight clear key poses of falling backward into a compact knocked-out pose that stays fully inside each frame, ending diagonally on the ground with bent knees', frames: 8, base: 'standing' },
   { name: 'victory', motion: 'big arcade-style victory celebration with an unmistakably triumphant winning pose: chest lifted, shoulders back, chin up, one or both arms raised or pumping in triumph, then settling into a proud champion hold facing right', frames: 8, base: 'standing' },
 ];
+const PACKAGE_ANIMATIONS: AnimationDefinition[] = [...ANIMATIONS, ...AURA_GENERATION_ANIMATIONS.map((animation) => ({ ...animation, frames: 6, base: 'standing' as const }))];
 const SPRITE_PROCESSING_VERSION = 5;
 const STEP_CONFIG = {
   retries: { limit: 5, delay: '30 seconds' as const, backoff: 'exponential' as const },
@@ -671,6 +674,12 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         return { ...loaded, status: 'running', stage: 'initializing' };
       });
       job = activeJob;
+      const plannedNames = storedGenerationAnimationNames(activeJob);
+      const plannedAnimations = plannedNames.map((name) => {
+        const animation = PACKAGE_ANIMATIONS.find((candidate) => candidate.name === name);
+        if (!animation) throw new Error(`Unsupported authorized animation: ${name}`);
+        return animation;
+      });
       if (activeJob.status === 'succeeded') return { jobId, status: 'succeeded' };
       const artifactRun = await step.do(
         'load durable artifact run',
@@ -734,8 +743,8 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
             () => this.measureCrouchReference(activeJob, sources.upright.cleanKey),
           );
         }
-        for (let index = 0; index < ANIMATIONS.length; index += 1) {
-          const animation = ANIMATIONS[index];
+        for (let index = 0; index < plannedAnimations.length; index += 1) {
+          const animation = plannedAnimations[index];
           await step.do(
             `generate ${animation.name} ${activeJob.tier} sprite`,
             STEP_CONFIG,
@@ -753,8 +762,8 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           STEP_CONFIG,
           () => this.measureCrouchReference(activeJob, sources.upright.cleanKey),
         );
-        for (let index = 0; index < ANIMATIONS.length; index += 1) {
-          const animation = ANIMATIONS[index];
+        for (let index = 0; index < plannedAnimations.length; index += 1) {
+          const animation = plannedAnimations[index];
           await step.do(
             `generate ${animation.name} ${activeJob.tier} sprite`,
             STEP_CONFIG,
@@ -762,7 +771,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           );
         }
       } else if (activeJob.operation === 'fighter_retry_animation') {
-        const animation = ANIMATIONS.find((entry) => entry.name === activeJob.target_name);
+        const animation = PACKAGE_ANIMATIONS.find((entry) => entry.name === activeJob.target_name);
         if (!animation) throw new Error('Retry animation target is unavailable');
         const sources = await step.do(
           'load durable animation retry sources',

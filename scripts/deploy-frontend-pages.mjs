@@ -223,7 +223,9 @@ async function main() {
   );
 
   mkdirSync(wranglerLogPath, { recursive: true });
-  run('production checks', npm, ['run', 'check:production']);
+  if (!args.has('--skip-production-check')) {
+    run('production checks', npm, ['run', 'check:production']);
+  }
   run(
     isSandbox ? 'frontend sandbox env checks' : 'frontend live env checks',
     npm,

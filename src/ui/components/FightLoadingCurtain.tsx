@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { RUNTIME_READY_EVENT } from '../../game/match/MatchConfig.ts';
 import { BrandMark } from './BrandMark.tsx';
-import { useFighterPortrait } from '../shared/useFighterPortrait.ts';
+import { useFighterPortrait, type FighterPortraitPreference } from '../shared/useFighterPortrait.ts';
+import { AURA_PRESENTATION_EVENT } from '../../game/aura/AuraPresentationEvents.ts';
 import {
   AURA_DEFAULT_LANE_KEYS,
   type AuraLaneKeys,
@@ -63,6 +64,7 @@ function AuraLoadingLayout({
               photoHash={p1PhotoHash}
               portraitRefreshKey={portraitRefreshKey}
               playerLabel="PERFORMER 1"
+              portraitPreference="upright"
             />
             <span className="aura-loader__handoff" aria-hidden="true">↔</span>
             <FighterSide
@@ -71,6 +73,7 @@ function AuraLoadingLayout({
               photoHash={p2PhotoHash}
               portraitRefreshKey={portraitRefreshKey}
               playerLabel="PERFORMER 2"
+              portraitPreference="upright"
             />
           </div>
         </section>
@@ -92,12 +95,12 @@ function AuraLoadingLayout({
           </dl>
           {failed ? (
             <div className="aura-loader__loading">
-              <span className="fight-loader__status fight-loader__status--error">AURA NOT FOUND</span>
+              <span className="fight-loader__status fight-loader__status--error">AURA COULD NOT LOAD</span>
               <button type="button" className="fight-loader__exit asf-btn asf-btn--primary" onClick={onExit}>Back To Arcade</button>
             </div>
           ) : (
             <div className="aura-loader__loading">
-              <span className="fight-loader__status">CALIBRATING VIBES</span>
+              <span className="fight-loader__status">LOADING PERFORMERS</span>
               <LoadingMeter />
             </div>
           )}
@@ -118,15 +121,16 @@ interface FighterSideProps {
   photoHash: string | null;
   portraitRefreshKey: number;
   playerLabel: string;
+  portraitPreference?: FighterPortraitPreference;
 }
 
-function FighterSide({ side, name, photoHash, portraitRefreshKey, playerLabel }: FighterSideProps) {
-  const portraitUrl = useFighterPortrait(photoHash, portraitRefreshKey);
+function FighterSide({ side, name, photoHash, portraitRefreshKey, playerLabel, portraitPreference = 'fight' }: FighterSideProps) {
+  const portraitUrl = useFighterPortrait(photoHash, portraitRefreshKey, portraitPreference);
   const fallback = side === 'p1' ? 'Player One' : 'Player Two';
   const label = fighterLabel(name, fallback);
 
   return (
-    <div className={`fight-loader__fighter fight-loader__fighter--${side}`}>
+    <div className={`fight-loader__fighter fight-loader__fighter--${side}${portraitPreference === 'upright' ? ' is-upright' : ''}`}>
       <span className="fight-loader__player-label">{playerLabel}</span>
       <div className="fight-loader__figure" aria-hidden="true">
         {portraitUrl ? (
@@ -293,9 +297,16 @@ export function FightLoadingCurtain({
 
   useEffect(() => {
     const refreshPortraits = () => setPortraitRefreshKey((current) => current + 1);
+    if (isAura) {
+      const onAuraReady = (event: WindowEventMap[typeof AURA_PRESENTATION_EVENT]) => {
+        if (event.detail.phase === 'ready') refreshPortraits();
+      };
+      window.addEventListener(AURA_PRESENTATION_EVENT, onAuraReady);
+      return () => window.removeEventListener(AURA_PRESENTATION_EVENT, onAuraReady);
+    }
     window.addEventListener(RUNTIME_READY_EVENT, refreshPortraits);
     return () => window.removeEventListener(RUNTIME_READY_EVENT, refreshPortraits);
-  }, []);
+  }, [isAura]);
 
   if (isRush) {
     return (

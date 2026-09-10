@@ -40,7 +40,7 @@ describe('HomePage game modes', () => {
     expect(markup).toContain('home-mode__launch--aura');
     expect(markup.match(/home-mode__footer/g)).toHaveLength(3);
     expect(markup).toContain('Player + CPU');
-    expect(markup).toContain('Your fighters work in Fight, Rush, and Aura');
+    expect(markup).toContain('Combat moves for Fight and Rush; Aura moves for Aura');
     expect(markup).not.toContain('Co-op Rush');
   });
 });

@@ -12,6 +12,7 @@
     "prestart": "npm run build",
     "start": "node dist/server.mjs",
     "fixture:clean-sheet": "tsx src/fixture-clean-sheet.ts",
+    "aura:canary:process": "tsx src/auraAnimationCanaryCli.ts",
     "benchmark:providers:test": "tsx --test src/benchmark/rosterProviderBenchmark.test.ts",
     "benchmark:providers:plan": "tsx src/benchmark/rosterProviderBenchmarkCli.ts plan",
     "benchmark:providers:pricing": "tsx src/benchmark/rosterProviderBenchmarkCli.ts pricing",

@@ -1,0 +1,192 @@
+{
+  "schemaVersion": 1,
+  "input": "artifacts/aura-animation-canary/template-zero/aura_floor_worm/raw-storyboard.png",
+  "output": "public/assets/aura/template-zero/aura_floor_worm.png",
+  "grid": {
+    "columns": 4,
+    "rows": 2
+  },
+  "frame": {
+    "width": 384,
+    "height": 256,
+    "count": 8
+  },
+  "registrationTarget": {
+    "rootX": 192,
+    "baselineY": 238
+  },
+  "before": [
+    {
+      "frame": 1,
+      "minX": 64,
+      "minY": 14,
+      "maxX": 144,
+      "maxY": 228,
+      "rootX": 86.78527607361963
+    },
+    {
+      "frame": 2,
+      "minX": 37,
+      "minY": 94,
+      "maxX": 191,
+      "maxY": 222,
+      "rootX": 82.56934306569343
+    },
+    {
+      "frame": 3,
+      "minX": 0,
+      "minY": 107,
+      "maxX": 191,
+      "maxY": 219,
+      "rootX": 104.32740213523131
+    },
+    {
+      "frame": 4,
+      "minX": 0,
+      "minY": 171,
+      "maxX": 170,
+      "maxY": 224,
+      "rootX": 100.83682983682984
+    },
+    {
+      "frame": 5,
+      "minX": 10,
+      "minY": 78,
+      "maxX": 182,
+      "maxY": 209,
+      "rootX": 139.30281690140845
+    },
+    {
+      "frame": 6,
+      "minX": 21,
+      "minY": 129,
+      "maxX": 191,
+      "maxY": 203,
+      "rootX": 124.43243243243244
+    },
+    {
+      "frame": 7,
+      "minX": 0,
+      "minY": 89,
+      "maxX": 159,
+      "maxY": 204,
+      "rootX": 92.77165354330708
+    },
+    {
+      "frame": 8,
+      "minX": 53,
+      "minY": 6,
+      "maxX": 134,
+      "maxY": 222,
+      "rootX": 75.81703470031546
+    }
+  ],
+  "offsets": [
+    {
+      "frame": 1,
+      "dx": 105,
+      "dy": 10
+    },
+    {
+      "frame": 2,
+      "dx": 109,
+      "dy": 16
+    },
+    {
+      "frame": 3,
+      "dx": 88,
+      "dy": 19
+    },
+    {
+      "frame": 4,
+      "dx": 91,
+      "dy": 14
+    },
+    {
+      "frame": 5,
+      "dx": 53,
+      "dy": 29
+    },
+    {
+      "frame": 6,
+      "dx": 68,
+      "dy": 35
+    },
+    {
+      "frame": 7,
+      "dx": 99,
+      "dy": 34
+    },
+    {
+      "frame": 8,
+      "dx": 116,
+      "dy": 16
+    }
+  ],
+  "after": [
+    {
+      "frame": 1,
+      "minX": 169,
+      "minY": 24,
+      "maxX": 249,
+      "maxY": 238,
+      "rootX": 191.78527607361963
+    },
+    {
+      "frame": 2,
+      "minX": 146,
+      "minY": 110,
+      "maxX": 300,
+      "maxY": 238,
+      "rootX": 191.56934306569343
+    },
+    {
+      "frame": 3,
+      "minX": 88,
+      "minY": 126,
+      "maxX": 279,
+      "maxY": 238,
+      "rootX": 192.32740213523132
+    },
+    {
+      "frame": 4,
+      "minX": 91,
+      "minY": 185,
+      "maxX": 261,
+      "maxY": 238,
+      "rootX": 191.83682983682985
+    },
+    {
+      "frame": 5,
+      "minX": 63,
+      "minY": 107,
+      "maxX": 235,
+      "maxY": 238,
+      "rootX": 192.30281690140845
+    },
+    {
+      "frame": 6,
+      "minX": 89,
+      "minY": 164,
+      "maxX": 259,
+      "maxY": 238,
+      "rootX": 192.43243243243242
+    },
+    {
+      "frame": 7,
+      "minX": 99,
+      "minY": 123,
+      "maxX": 258,
+      "maxY": 238,
+      "rootX": 191.77165354330708
+    },
+    {
+      "frame": 8,
+      "minX": 169,
+      "minY": 22,
+      "maxX": 250,
+      "maxY": 238,
+      "rootX": 191.81703470031545
+    }
+  ]
+}

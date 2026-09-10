@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type Phaser from 'phaser';
 import {
   MATCH_ACTION_EVENT,
@@ -31,18 +31,31 @@ import {
 } from '../components/FightLoadingCurtain.tsx';
 import { reportMatchCompletion } from '../../services/MatchReporting.ts';
 import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
-import { getStageTheme, pickStageThemeIdFromSeed } from '../../game/match/StageConfig.ts';
+import { DEFAULT_AURA_STAGE_ID, getStageTheme, pickStageThemeIdFromSeed } from '../../game/match/StageConfig.ts';
 import { RushRunResults } from '../components/RushRunResults.tsx';
 import { RushCompanionOrders } from '../components/RushCompanionOrders.tsx';
 import { getRushDifficulty, type RushCompanionOrder } from '../../game/brawl/RushConfig.ts';
 import { FightResultShare } from '../components/FightResultShare.tsx';
 import { AuraControls } from '../components/AuraControls.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
+import { AURA_CAPTURE_EVENT, type AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
+import {
+  AURA_PRESENTATION_EVENT,
+  AURA_PRESENTATION_START_EVENT,
+  AURA_PRESENTATION_TURN_EVENT,
+  isAuraPresentationDetail,
+  type AuraPresentationStartDetail,
+} from '../../game/aura/AuraPresentationEvents.ts';
+import { getAuraCanvasSize } from '../../game/aura/AuraViewport.ts';
 import {
   AURA_DEFAULT_LANE_KEYS,
   AURA_LOCAL_P1_LANE_KEYS,
   getAuraDifficulty,
 } from '../../game/aura/AuraConfig.ts';
+
+const DevGameplayCapture = import.meta.env.DEV
+  ? lazy(() => import('../components/DevGameplayCapture.tsx'))
+  : null;
 
 export interface LadderContext {
   rungIndex: number;
@@ -110,6 +123,18 @@ export function GamePage({
   const [loadingPhase, setLoadingPhase] = useState<FightLoadingPhase | 'hidden'>('loading');
   const [rushSummary, setRushSummary] = useState<RushRunCompleteDetail | null>(null);
   const [auraSummary, setAuraSummary] = useState<AuraBattleCompleteDetail | null>(null);
+  const [auraCapture, setAuraCapture] = useState<AuraCaptureDetail | null>(null);
+  const [auraTouchSlot, setAuraTouchSlot] = useState<0 | 1>(0);
+  const [auraControlledSlot, setAuraControlledSlot] = useState<0 | 1 | undefined>(
+    online?.localSlot ?? launchTarget.data.auraChallenge?.slot ?? (launchTarget.data.vsAI === false ? undefined : 0));
+  const [auraPendingStart, setAuraPendingStart] = useState<AuraPresentationStartDetail | null>(null);
+  const auraLifecycleRef = useRef<(AuraPresentationStartDetail & {
+    phase: 'loading' | 'ready' | 'error' | 'started';
+  }) | null>(null);
+  const [auraViewport, setAuraViewport] = useState(() => getAuraCanvasSize(
+    typeof window === 'undefined' ? 1024 : window.innerWidth,
+    typeof window === 'undefined' ? 576 : window.innerHeight,
+  ));
   const [rushCompanionOrder, setRushCompanionOrder] = useState<RushCompanionOrder>(
     launchTarget.data.rushCompanionOrder ?? 'follow',
   );
@@ -135,8 +160,48 @@ export function GamePage({
     setLoadingPhase('loading');
     setRushSummary(null);
     setAuraSummary(null);
+    setAuraCapture(null);
+    setAuraPendingStart(null);
+    setAuraTouchSlot(0);
+    setAuraControlledSlot(launchTarget.data.online?.localSlot ?? launchTarget.data.auraChallenge?.slot
+      ?? (launchTarget.data.vsAI === false ? undefined : 0));
     setRushCompanionOrder(launchTarget.data.rushCompanionOrder ?? 'follow');
   }, [launchTarget]);
+
+  useEffect(() => {
+    if (!isAura) return;
+    const resize = () => {
+      const next = getAuraCanvasSize(window.innerWidth, window.innerHeight);
+      setAuraViewport(previous => previous.portrait === next.portrait ? previous : next);
+    };
+    resize();
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, [isAura]);
+
+  useEffect(() => {
+    if (!isAura || loadingPhase !== 'hidden' || !auraPendingStart) return;
+    const lifecycle = auraLifecycleRef.current;
+    if (!lifecycle || lifecycle.phase !== 'ready'
+      || lifecycle.token !== auraPendingStart.token || lifecycle.seed !== auraPendingStart.seed) return;
+    // Effects run after React removes the curtain from the committed DOM.
+    // Mark first: duplicate renders/StrictMode must never start the clock twice.
+    lifecycle.phase = 'started';
+    window.dispatchEvent(new CustomEvent(AURA_PRESENTATION_START_EVENT, { detail: auraPendingStart }));
+  }, [isAura, loadingPhase, auraPendingStart]);
+
+  useEffect(() => {
+    if (!isAura) return;
+    const onTurn = (event: WindowEventMap[typeof AURA_PRESENTATION_TURN_EVENT]) => {
+      const { token, seed, playerIndex } = event.detail;
+      const current = auraLifecycleRef.current;
+      if (!current || current.token !== token || current.seed !== seed
+        || (playerIndex !== 0 && playerIndex !== 1)) return;
+      setAuraTouchSlot(playerIndex);
+    };
+    window.addEventListener(AURA_PRESENTATION_TURN_EVENT, onTurn);
+    return () => window.removeEventListener(AURA_PRESENTATION_TURN_EVENT, onTurn);
+  }, [isAura]);
 
   useEffect(() => {
     if (!isRush || launchTarget.data.vsAI !== true || paused || rushSummary) return;
@@ -159,11 +224,27 @@ export function GamePage({
   useEffect(() => {
     if (!isRush) return;
     const onRushComplete = (event: WindowEventMap[typeof RUSH_RUN_COMPLETE_EVENT]) => {
+      onComplete();
       setRushSummary(event.detail);
     };
     window.addEventListener(RUSH_RUN_COMPLETE_EVENT, onRushComplete);
     return () => window.removeEventListener(RUSH_RUN_COMPLETE_EVENT, onRushComplete);
-  }, [isRush]);
+  }, [isRush, onComplete]);
+
+  useEffect(() => {
+    if (!isAura) return;
+    const onCapture = (event: WindowEventMap[typeof AURA_CAPTURE_EVENT]) => {
+      const detail = event.detail;
+      if (detail.state === 'preparing') {
+        setAuraSummary(null);
+        setAuraCapture(detail);
+      } else {
+        setAuraCapture(current => current?.id === detail.id ? detail : current);
+      }
+    };
+    window.addEventListener(AURA_CAPTURE_EVENT, onCapture);
+    return () => window.removeEventListener(AURA_CAPTURE_EVENT, onCapture);
+  }, [isAura]);
 
   useEffect(() => {
     if (!isAura) return;
@@ -227,6 +308,7 @@ export function GamePage({
   }, [online]);
 
   useEffect(() => {
+    if (isAura) return;
     if (window.matchMedia?.('(pointer: coarse)').matches) {
       const orientation = screen.orientation as ScreenOrientation & {
         lock?: (mode: string) => Promise<void>;
@@ -242,7 +324,7 @@ export function GamePage({
         document.exitFullscreen().catch(() => {});
       }
     };
-  }, []);
+  }, [isAura]);
 
   useEffect(() => {
     const win = window as Window & {
@@ -266,27 +348,88 @@ export function GamePage({
     let openingTimer: number | undefined;
     let hideTimer: number | undefined;
     let loadTimeout: number | undefined;
-    const startedAt = performance.now();
-    const onRuntimeReady = () => {
+    let startedAt = performance.now();
+    auraLifecycleRef.current = null;
+    const clearTimers = () => {
+      window.clearTimeout(openingTimer);
+      window.clearTimeout(hideTimer);
+      window.clearTimeout(loadTimeout);
+    };
+    const armTimeout = () => {
+      window.clearTimeout(loadTimeout);
+      loadTimeout = window.setTimeout(() => {
+        if (disposed || readyHandled) return;
+        if (auraLifecycleRef.current) auraLifecycleRef.current.phase = 'error';
+        setLoadingPhase('error');
+      }, 30_000);
+    };
+    const revealWhenReady = (identity?: AuraPresentationStartDetail) => {
       if (disposed || readyHandled) return;
       readyHandled = true;
       window.clearTimeout(loadTimeout);
-      const minimumClosedMs = 1_100;
-      const openingDelay = Math.max(0, minimumClosedMs - (performance.now() - startedAt));
+      const minimumClosedMs = isAura ? 3_000 : 1_100;
+      // Let the upright face-off register even when asset loading consumed the
+      // minimum display time. The match clock still waits for the hidden DOM.
+      const readyHoldMs = isAura ? 1_500 : 0;
+      const openingDelay = Math.max(readyHoldMs, minimumClosedMs - (performance.now() - startedAt));
       openingTimer = window.setTimeout(() => {
+        const current = auraLifecycleRef.current;
+        if (disposed || (identity && (!current || current.phase !== 'ready'
+          || current.token !== identity.token || current.seed !== identity.seed))) return;
         setLoadingPhase('opening');
         const reduceMotion =
           window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
         hideTimer = window.setTimeout(
-          () => setLoadingPhase('hidden'),
-          reduceMotion ? 180 : 720,
+          () => {
+            const latest = auraLifecycleRef.current;
+            if (disposed || (identity && (!latest || latest.phase !== 'ready'
+              || latest.token !== identity.token || latest.seed !== identity.seed))) return;
+            if (identity) setAuraPendingStart(identity);
+            setLoadingPhase('hidden');
+          },
+          reduceMotion ? 180 : isAura ? 1_000 : 720,
         );
       }, openingDelay);
     };
+    const onRuntimeReady = () => {
+      // Aura waits for its per-restart asset lifecycle, never the legacy event.
+      if (!isAura) revealWhenReady();
+    };
+    const onAuraPresentation = (event: WindowEventMap[typeof AURA_PRESENTATION_EVENT]) => {
+      if (!isAura || disposed || !isAuraPresentationDetail(event.detail)) return;
+      const detail = event.detail;
+      const current = auraLifecycleRef.current;
+      if (detail.phase === 'loading') {
+        if (current && detail.token <= current.token) return;
+        clearTimers();
+        readyHandled = false;
+        startedAt = performance.now();
+        auraLifecycleRef.current = { token: detail.token, seed: detail.seed, phase: 'loading' };
+        setAuraControlledSlot(detail.localControlledSlot);
+        setAuraPendingStart(null);
+        setLoadingPhase('loading');
+        setPaused(false);
+        setMatchActionsVisible(false);
+        setWinnerSlot(null);
+        setAuraSummary(null);
+        setAuraCapture(null);
+        armTimeout();
+      } else if (current && current.token === detail.token && current.seed === detail.seed
+        && current.phase !== 'started' && current.phase !== 'error') {
+        if (detail.phase === 'error') {
+          clearTimers();
+          current.phase = 'error';
+          setAuraPendingStart(null);
+          setLoadingPhase('error');
+        } else if (current.phase === 'loading') {
+          current.phase = 'ready';
+          revealWhenReady({ token: detail.token, seed: detail.seed });
+        }
+      }
+    };
     window.addEventListener(RUNTIME_READY_EVENT, onRuntimeReady);
-    loadTimeout = window.setTimeout(() => {
-      if (!disposed && !readyHandled) setLoadingPhase('error');
-    }, 30_000);
+    window.addEventListener(AURA_PRESENTATION_EVENT, onAuraPresentation);
+    armTimeout();
     void import('../../game/createGame.ts')
       .then(({ createGame }) => {
         if (disposed) return;
@@ -301,9 +444,9 @@ export function GamePage({
     return () => {
       disposed = true;
       window.removeEventListener(RUNTIME_READY_EVENT, onRuntimeReady);
-      window.clearTimeout(openingTimer);
-      window.clearTimeout(hideTimer);
-      window.clearTimeout(loadTimeout);
+      window.removeEventListener(AURA_PRESENTATION_EVENT, onAuraPresentation);
+      clearTimers();
+      auraLifecycleRef.current = null;
       debugInfo('[GamePage] Destroying Phaser runtime', {
         sceneKey: launchTarget.sceneKey,
       });
@@ -349,18 +492,25 @@ export function GamePage({
 
   const loadingStageTheme = getStageTheme(
     launchTarget.data.stageId
-      ?? pickStageThemeIdFromSeed(buildMatchSeed(launchTarget.data)),
+      ?? (isAura ? DEFAULT_AURA_STAGE_ID : pickStageThemeIdFromSeed(buildMatchSeed(launchTarget.data))),
   );
   const loadingStageLabel = launchTarget.data.customStageLabel ?? loadingStageTheme.label;
 
-  return (
-    <div className="game-shell">
+  const content = (
+    <>
       <div className="game-shell__surface">
         <div id="game-container" className="game-shell__canvas" />
       </div>
+      {DevGameplayCapture && isRush && loadingPhase === 'hidden'
+        && new URLSearchParams(window.location.search).get('gameplayCapture') === '1' ? (
+          <Suspense fallback={null}><DevGameplayCapture /></Suspense>
+        ) : null}
       {isRush || isAura ? null : <FightHud />}
       {isRush || isAura ? null : <FightIntroOverlay />}
       {isRush || isAura ? null : <FightAnnouncement />}
+      {isAura && loadingPhase === 'hidden' && !auraSummary && auraCapture?.state === 'recording' ? (
+        <p className="aura-capture-status" role="status">{paused ? 'Recording paused' : 'Recording match'} · game only</p>
+      ) : null}
       {loadingPhase !== 'hidden' ? (
         <FightLoadingCurtain
           phase={loadingPhase}
@@ -390,7 +540,7 @@ export function GamePage({
       ) : null}
       {online && netState ? <NetStatusBadge state={netState} /> : null}
       {online && !isAura && loadingPhase === 'hidden' && !matchActionsVisible && (
-        <MobileFightControls playerIndex={0} playerLabel={online.localSlot === 0 ? 'player 1' : 'player 2'} />
+        <MobileFightControls playerIndex={0} hudPlayerIndex={online.localSlot} playerLabel={online.localSlot === 0 ? 'player 1' : 'player 2'} />
       )}
       {!isRush && !isAura && loadingPhase === 'hidden' && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
         <MobileFightControls playerIndex={0} playerLabel="player 1" />
@@ -412,8 +562,18 @@ export function GamePage({
           Online Co-op Rush is not connected in this local preview.
         </div>
       ) : null}
-      {isAura && loadingPhase === 'hidden' && !launchTarget.data.cpuVsCpu && !matchActionsVisible && !auraSummary ? (
-        <AuraControls playerIndex={online?.localSlot ?? 0} />
+      {isAura && loadingPhase === 'hidden' && !matchActionsVisible && !auraSummary ? (
+        <div className="aura-game-toolbar" aria-label="Aura match controls">
+          {!launchTarget.data.cpuVsCpu ? (
+            <AuraControls playerIndex={online?.localSlot ?? auraControlledSlot ?? auraTouchSlot} disabled={paused} />
+          ) : null}
+          <button type="button" className="aura-game-toolbar__back" onClick={onExit}>Back</button>
+          {!onlineMatch && !paused ? (
+            <button type="button" className="fight-pause-button" aria-label="Pause" onClick={() => setPauseState(true)}>
+              <span aria-hidden="true" /><span aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
       ) : null}
       {matchActionsVisible && ladder && winnerSlot === 'p1' && ladder.isFinal && (
         <div className="match-actions" role="group" aria-label="Arcade champion">
@@ -600,6 +760,8 @@ export function GamePage({
       {auraSummary && matchActionsVisible ? (
         <AuraBattleResults
           summary={auraSummary}
+          onCreatePlayer={onCreateFighter}
+          capture={auraCapture}
           localSlot={online?.localSlot}
           onlineRematch={online ? onlineRematch : undefined}
           disableRematch={Boolean(netState?.abandoned || netState?.desynced)}
@@ -617,7 +779,7 @@ export function GamePage({
           }}
         />
       ) : null}
-      {loadingPhase === 'hidden' && !onlineMatch && !matchActionsVisible && !rushSummary && !auraSummary && !paused && (
+      {!isAura && loadingPhase === 'hidden' && !onlineMatch && !matchActionsVisible && !rushSummary && !auraSummary && !paused && (
         <button
           type="button"
           className="fight-pause-button"
@@ -648,12 +810,24 @@ export function GamePage({
           </div>
         </div>
       )}
-      {isRush || isAura ? null : <FightControlsHint />}
-      {loadingPhase === 'hidden' && !rushSummary && !auraSummary ? (
+      {!isAura && !launchTarget.data.cpuVsCpu && loadingPhase === 'hidden' && !matchActionsVisible && !rushSummary && (
+        <FightControlsHint
+          mode={isRush ? 'rush' : 'fight'}
+          twoPlayers={!online && (isRush ? launchTarget.data.vsAI !== true : launchTarget.data.vsAI === false)}
+          playerLabel={online?.localSlot === 1 ? 'P2' : 'P1'}
+        />
+      )}
+      {!isAura && loadingPhase === 'hidden' && !rushSummary && !auraSummary ? (
         <button type="button" className="game-shell__gallery-link" onClick={onExit}>
           {trial ? 'Exit Demo' : 'Back'}
         </button>
       ) : null}
+    </>
+  );
+
+  return (
+    <div className={`game-shell${isAura ? ` is-aura${auraViewport.portrait ? ' is-portrait' : ''}` : ''}`}>
+      {isAura ? <div className="game-shell__aura-frame">{content}</div> : content}
     </div>
   );
 }

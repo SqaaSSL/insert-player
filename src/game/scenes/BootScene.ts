@@ -21,10 +21,12 @@ export class BootScene extends Phaser.Scene {
 
   preload(): void {
     const pendingTarget = getPendingLaunchTarget();
+    const width = this.scale.width;
+    const height = this.scale.height;
     const barW = 400;
     const barH = 20;
-    const barX = (GAME_WIDTH - barW) / 2;
-    const barY = GAME_HEIGHT / 2;
+    const barX = (width - barW) / 2;
+    const barY = height / 2;
 
     const bg = this.add.graphics();
     bg.fillStyle(0x222222);
@@ -44,35 +46,39 @@ export class BootScene extends Phaser.Scene {
         : 'INSERT PLAYER: FIGHT';
 
     this.add.text(
-      GAME_WIDTH / 2,
+      width / 2,
       barY - 60,
       loadingTitle,
       {
       fontFamily: '"Press Start 2P", monospace',
-      fontSize: '28px',
+      fontSize: width < GAME_WIDTH ? '16px' : '28px',
       color: '#ff4444',
       stroke: '#000000',
       strokeThickness: 4,
       },
     ).setOrigin(0.5);
 
-    this.add.text(GAME_WIDTH / 2, barY + 40, 'LOADING...', {
+    this.add.text(width / 2, barY + 40, 'LOADING...', {
       fontFamily: '"Press Start 2P", monospace',
       fontSize: '12px',
       color: '#888888',
     }).setOrigin(0.5);
 
-    for (const [, sourceKey, assetPath] of RUSH_ENEMY_TEMPLATE_ZERO_SOURCES) {
-      if (!this.textures.exists(sourceKey)) this.load.image(sourceKey, assetPath);
+    if (pendingTarget?.sceneKey === 'RushScene') {
+      for (const [, sourceKey, assetPath] of RUSH_ENEMY_TEMPLATE_ZERO_SOURCES) {
+        if (!this.textures.exists(sourceKey)) this.load.image(sourceKey, assetPath);
+      }
     }
 
     this.generatePlaceholderAssets();
   }
 
   create(): void {
-    for (const [spriteKey, sourceKey] of RUSH_ENEMY_TEMPLATE_ZERO_SOURCES) {
-      if (!generateTemplateZeroFighterSpriteSheet(this, spriteKey, sourceKey)) {
-        debugWarn(`[BootScene] Template Zero enemy source missing: ${sourceKey}`);
+    if (getPendingLaunchTarget()?.sceneKey === 'RushScene') {
+      for (const [spriteKey, sourceKey] of RUSH_ENEMY_TEMPLATE_ZERO_SOURCES) {
+        if (!generateTemplateZeroFighterSpriteSheet(this, spriteKey, sourceKey)) {
+          debugWarn(`[BootScene] Template Zero enemy source missing: ${sourceKey}`);
+        }
       }
     }
     const pendingTarget = getPendingLaunchTarget();

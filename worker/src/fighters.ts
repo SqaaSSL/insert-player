@@ -22,6 +22,13 @@ import {
   normalizeSpriteAnimationFormat,
   type SpriteAnimationFormat,
 } from './spriteAnimationFormat';
+import {
+  AURA_ANIMATION_NAMES,
+  AURA_ASSET_PACK_ID,
+  FIGHT_ANIMATION_NAMES,
+  FIGHT_ASSET_PACK_ID,
+  summarizeFighterAssetPacks,
+} from './fighterAssetPacks';
 
 type SourceKind =
   | 'original'
@@ -43,21 +50,10 @@ const SOURCE_COLUMNS: Record<SourceKind, keyof Fighter> = {
 };
 
 const PUBLIC_CLONE_SOURCE_KINDS: SourceKind[] = ['side', 'upright', 'crouch'];
-const PLAYABLE_ANIMATION_NAMES = [
-  'idle',
-  'walk',
-  'high_punch',
-  'low_punch',
-  'high_kick',
-  'low_kick',
-  'jump',
-  'crouch',
-  'hit',
-  'ko',
-  'victory',
-] as const;
+const PLAYABLE_ANIMATION_NAMES = FIGHT_ANIMATION_NAMES;
 const PLAYABLE_ANIMATION_COUNT = PLAYABLE_ANIMATION_NAMES.length;
 const PLAYABLE_ANIMATION_SQL_LIST = PLAYABLE_ANIMATION_NAMES.map((name) => `'${name}'`).join(', ');
+const AURA_ANIMATION_SQL_LIST = AURA_ANIMATION_NAMES.map((name) => `'${name}'`).join(', ');
 const MAX_SOURCE_UPLOAD_BYTES = 12 * 1024 * 1024;
 const MAX_SPRITE_UPLOAD_BYTES = 32 * 1024 * 1024;
 const MAX_SOURCE_MULTIPART_BODY_BYTES = MAX_SOURCE_UPLOAD_BYTES + 256 * 1024;
@@ -318,7 +314,12 @@ function namespacedAssetOwner(key: string): string | null {
   return segments[0] === 'users' && segments[1] ? segments[1] : null;
 }
 
-function playableSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): string {
+function animationPackSpriteSetSql(
+  fighterAlias: string,
+  animationSqlList: string,
+  animationCount: number,
+  qualityTier?: QualityTier,
+): string {
   const tierCondition = qualityTier
     ? `AND s.quality_tier = '${qualityTier}'`
     : `AND NOT EXISTS (
@@ -340,7 +341,7 @@ function playableSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): 
     SELECT COUNT(DISTINCT s.animation_name)
     FROM sprites s
     WHERE s.fighter_id = ${fighterAlias}.id
-      AND s.animation_name IN (${PLAYABLE_ANIMATION_SQL_LIST})
+      AND s.animation_name IN (${animationSqlList})
       AND length(s.content_hash) = 64
       AND s.content_hash NOT GLOB '*[^0-9A-Fa-f]*'
       AND typeof(s.frame_w) = 'integer'
@@ -350,7 +351,29 @@ function playableSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): 
       AND typeof(s.frame_count) = 'integer'
       AND s.frame_count BETWEEN 1 AND ${MAX_SPRITE_FRAME_COUNT}
       ${tierCondition}
-  ) = ${PLAYABLE_ANIMATION_COUNT}`;
+  ) = ${animationCount}`;
+}
+
+function playableSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): string {
+  return animationPackSpriteSetSql(
+    fighterAlias,
+    PLAYABLE_ANIMATION_SQL_LIST,
+    PLAYABLE_ANIMATION_COUNT,
+    qualityTier,
+  );
+}
+
+function auraSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): string {
+  return animationPackSpriteSetSql(
+    fighterAlias,
+    AURA_ANIMATION_SQL_LIST,
+    AURA_ANIMATION_NAMES.length,
+    qualityTier,
+  );
+}
+
+function anyPlayableSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): string {
+  return `(${playableSpriteSetSql(fighterAlias, qualityTier)} OR ${auraSpriteSetSql(fighterAlias, qualityTier)})`;
 }
 
 function escapeHtml(value: string): string {
@@ -475,6 +498,7 @@ function serializeFighter(
       crouchRaw: assetUrl(request, fighter.crouch_view_raw_blob_key),
     },
     sprites: sprites.map((sprite) => serializeSprite(request, sprite, includePrivateManifest)),
+    assetPacks: summarizeFighterAssetPacks(sprites),
   };
   if (includePrivateManifest) {
     return {
@@ -667,28 +691,14 @@ async function getSourceVersionsForFighter(env: Env, fighterId: string): Promise
   return results ?? [];
 }
 
-async function getMissingPlayableAnimationNames(
+async function getAvailableAnimationNames(
   env: Env,
   fighterId: string,
-  qualityTier?: QualityTier,
-): Promise<string[]> {
-  const tierCondition = qualityTier ? ' AND quality_tier = ?' : '';
-  const statement = env.DB.prepare(
-    `SELECT DISTINCT animation_name FROM sprites WHERE fighter_id = ?${tierCondition}`
-  );
-  const { results } = qualityTier
-    ? await statement.bind(fighterId, qualityTier).all<{ animation_name: string }>()
-    : await statement.bind(fighterId).all<{ animation_name: string }>();
-  const available = new Set((results ?? []).map((sprite) => sprite.animation_name));
-  return PLAYABLE_ANIMATION_NAMES.filter((name) => !available.has(name));
-}
-
-async function fighterHasPlayableSprite(
-  env: Env,
-  fighterId: string,
-  qualityTier?: QualityTier,
-): Promise<boolean> {
-  return (await getMissingPlayableAnimationNames(env, fighterId, qualityTier)).length === 0;
+): Promise<Set<string>> {
+  const { results } = await env.DB.prepare(
+    'SELECT DISTINCT animation_name FROM sprites WHERE fighter_id = ?'
+  ).bind(fighterId).all<{ animation_name: string }>();
+  return new Set((results ?? []).map((sprite) => sprite.animation_name));
 }
 
 async function resolvePublicFlag(
@@ -699,11 +709,26 @@ async function resolvePublicFlag(
 ): Promise<number | Response> {
   if (typeof requestedPublic !== 'boolean') return currentPublicFlag;
   if (!requestedPublic) return 0;
-  const missingAnimations = await getMissingPlayableAnimationNames(env, fighterId);
-  if (missingAnimations.length > 0) {
+  const completePack = await env.DB.prepare(`
+    SELECT 1 AS ready
+    FROM fighters f
+    WHERE f.id = ? AND ${anyPlayableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId).first<{ ready: number }>();
+  if (!completePack) {
+    const available = await getAvailableAnimationNames(env, fighterId);
     return json({
-      error: 'Upload the full playable animation set before publishing',
-      missingAnimations,
+      error: 'Upload a complete Fight or Aura animation pack before publishing',
+      assetPacks: [
+        {
+          id: FIGHT_ASSET_PACK_ID,
+          missingAnimations: FIGHT_ANIMATION_NAMES.filter((name) => !available.has(name)),
+        },
+        {
+          id: AURA_ASSET_PACK_ID,
+          missingAnimations: AURA_ANIMATION_NAMES.filter((name) => !available.has(name)),
+        },
+      ],
     }, 409);
   }
   return 1;
@@ -760,7 +785,7 @@ export async function listCommunityFighters(request: Request, env: Env): Promise
       AND NOT EXISTS (
         SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
       )
-      AND ${playableSpriteSetSql('f')}
+      AND ${anyPlayableSpriteSetSql('f')}
     ORDER BY f.updated_at DESC
     LIMIT ?
   `).bind(limit).all<Fighter>();
@@ -791,7 +816,7 @@ export async function listOwnedCommunityFighterIds(
       AND NOT EXISTS (
         SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = source.id
       )
-      AND ${playableSpriteSetSql('source')}
+      AND ${anyPlayableSpriteSetSql('source')}
     ORDER BY source.id ASC
   `).bind(auth.userId).all<{ id: string }>();
   return json({ fighterIds: (results ?? []).map(({ id }) => id) }, 200, NO_STORE_HEADERS);
@@ -1018,7 +1043,7 @@ export async function getCommunityFighter(
       AND NOT EXISTS (
         SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
       )
-      AND ${playableSpriteSetSql('f')}
+      AND ${anyPlayableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId).first<Fighter>();
   if (!fighter) return json({ error: 'Public fighter not found' }, 404, NO_STORE_HEADERS);
@@ -1134,7 +1159,7 @@ export async function shareCommunityFighterPage(
       AND NOT EXISTS (
         SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
       )
-      AND ${playableSpriteSetSql('f')}
+      AND ${anyPlayableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId).first<Fighter>();
   if (!fighter) {
@@ -1241,7 +1266,7 @@ export async function createFighter(request: Request, env: Env, auth: AuthContex
   }
 
   if (body.public) {
-    return json({ error: 'Upload the full playable animation set before publishing' }, 409);
+    return json({ error: 'Upload a complete Fight or Aura animation pack before publishing' }, 409);
   }
 
   const fighterId = generateId();
@@ -1603,7 +1628,7 @@ export async function cloneCommunityFighter(
       AND NOT EXISTS (
         SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
       )
-      AND ${playableSpriteSetSql('f')}
+      AND ${anyPlayableSpriteSetSql('f')}
     LIMIT 1
   `
   ).bind(sourceFighterId).first<Fighter>();
@@ -2211,7 +2236,7 @@ export async function getPublicFighterSourceAsset(
     SELECT f.${column} AS blob_key
     FROM fighters f
     WHERE f.id = ? AND f.public_flag = 1
-      AND ${playableSpriteSetSql('f')}
+      AND ${anyPlayableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId).first<{ blob_key: string | null }>();
   if (!fighter?.blob_key || publicAssetRevision(fighter.blob_key) !== revision) {
@@ -2236,7 +2261,7 @@ export async function loadVersusRoomFighterManifest(
   const fighter = await env.DB.prepare(`
     SELECT f.*
     FROM fighters f
-    WHERE f.id = ? AND ${playableSpriteSetSql('f')}
+    WHERE f.id = ? AND ${anyPlayableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId).first<Fighter>();
   if (!fighter) return null;
@@ -2294,7 +2319,7 @@ export async function loadVersusInviteFighterSnapshot(
   const fighter = await env.DB.prepare(`
     SELECT f.*
     FROM fighters f
-    WHERE f.id = ? AND ${playableSpriteSetSql('f')}
+    WHERE f.id = ? AND ${anyPlayableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId).first<Fighter>();
   if (!fighter) return null;
@@ -2348,7 +2373,7 @@ export async function getVersusRoomFighterSpriteAsset(
     FROM sprites s
     JOIN fighters f ON f.id = s.fighter_id
     WHERE f.id = ? AND s.id = ?
-      AND ${playableSpriteSetSql('f')}
+      AND ${anyPlayableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId, spriteId).first<{ blob_key: string }>();
   if (!sprite?.blob_key || publicAssetRevision(sprite.blob_key) !== revision) {
@@ -2369,7 +2394,7 @@ export async function getVersusRoomFighterSourceAsset(
   const fighter = await env.DB.prepare(`
     SELECT f.${column} AS blob_key
     FROM fighters f
-    WHERE f.id = ? AND ${playableSpriteSetSql('f')}
+    WHERE f.id = ? AND ${anyPlayableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId).first<{ blob_key: string | null }>();
   if (!fighter?.blob_key || publicAssetRevision(fighter.blob_key) !== revision) {
@@ -2399,7 +2424,7 @@ export async function getPublicFighterSpriteAsset(
     FROM sprites s
     JOIN fighters f ON f.id = s.fighter_id
     WHERE f.id = ? AND f.public_flag = 1 AND s.id = ?
-      AND ${playableSpriteSetSql('f')}
+      AND ${anyPlayableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId, spriteId).first<{ blob_key: string }>();
   if (!sprite?.blob_key || publicAssetRevision(sprite.blob_key) !== revision) {

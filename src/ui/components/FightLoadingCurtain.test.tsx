@@ -102,7 +102,8 @@ describe('FightLoadingCurtain', () => {
     expect(markup).toContain('ALTERNATING TURNS');
     expect(markup).toContain('HIT ON BEAT');
     expect(markup).toContain('VIRAL');
-    expect(markup).toContain('CALIBRATING VIBES');
+    expect(markup).toContain('LOADING PERFORMERS');
+    expect(markup.match(/is-upright/g)).toHaveLength(2);
     expect(markup).toContain('<small>D</small>');
     expect(markup).toContain('<small>F</small>');
     expect(markup).toContain('<small>J</small>');

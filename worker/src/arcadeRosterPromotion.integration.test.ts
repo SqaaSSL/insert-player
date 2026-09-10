@@ -60,7 +60,10 @@ async function database(): Promise<{ mf: Miniflare; db: D1Database }> {
       animation_name TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE generation_jobs (
-      id TEXT PRIMARY KEY,
+      creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
+    id TEXT PRIMARY KEY,
       fighter_id TEXT NOT NULL REFERENCES fighters(id),
       status TEXT NOT NULL
     )`),
@@ -93,8 +96,8 @@ describe('0034 Rosalía V2 promotion migration', () => {
       db.prepare("INSERT INTO arcade_fighters VALUES ('replacement', 'rosalia-v2', 14, 'active', 'replacement-arcade-before')"),
       db.prepare("INSERT INTO sprites VALUES ('legacy-idle', 'legacy', 'idle')"),
       db.prepare("INSERT INTO sprites VALUES ('replacement-idle', 'replacement', 'idle')"),
-      db.prepare("INSERT INTO generation_jobs VALUES ('legacy-job', 'legacy', 'succeeded')"),
-      db.prepare("INSERT INTO generation_jobs VALUES ('replacement-job', 'replacement', 'succeeded')"),
+      db.prepare("INSERT INTO generation_jobs (id, fighter_id, status) VALUES ('legacy-job', 'legacy', 'succeeded')"),
+      db.prepare("INSERT INTO generation_jobs (id, fighter_id, status) VALUES ('replacement-job', 'replacement', 'succeeded')"),
       db.prepare("INSERT INTO provider_cost_events VALUES ('legacy-cost', 'legacy', 123000)"),
       db.prepare("INSERT INTO provider_cost_events VALUES ('replacement-cost', 'replacement', 456000)"),
     ]);

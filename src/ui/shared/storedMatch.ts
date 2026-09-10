@@ -6,8 +6,9 @@ import {
   type FighterPersonalityId,
   type MatchSceneData,
 } from '../../game/match/MatchConfig.ts';
-import { STAGE_THEMES, type StageThemeId } from '../../game/match/StageConfig.ts';
+import { STAGE_THEMES, stageSupportsMode, type StageThemeId } from '../../game/match/StageConfig.ts';
 import { AURA_DIFFICULTIES, type AuraDifficultyId } from '../../game/aura/AuraConfig.ts';
+import { isValidAuraChallengeMatch } from '../../game/aura/AuraChallenge.ts';
 
 const STORAGE_PREFIX = 'ai-street-fighter:last-match:v1:';
 const LEGACY_STORAGE_KEY = 'ai-street-fighter:last-match';
@@ -64,7 +65,10 @@ export function isValidStoredMatchData(value: unknown): value is MatchSceneData 
   if (data.p2PersonalityId !== undefined && !personalityIds.has(data.p2PersonalityId as FighterPersonalityId)) {
     return false;
   }
-  if (data.stageId !== undefined && !stageIds.has(data.stageId as StageThemeId)) return false;
+  if (data.stageId !== undefined && (
+    !stageIds.has(data.stageId as StageThemeId)
+    || !stageSupportsMode(data.stageId as StageThemeId, data.gameMode ?? 'fight')
+  )) return false;
   if (
     data.auraDifficulty !== undefined
     && !auraDifficultyIds.has(data.auraDifficulty as AuraDifficultyId)
@@ -77,6 +81,8 @@ export function isValidStoredMatchData(value: unknown): value is MatchSceneData 
     || data.remix > 1_000
   )) return false;
   if (data.seed !== undefined && !isValidMatchSeed(data.seed)) return false;
+  if (!optionalText(data.auraTrackId, 64)) return false;
+  if (data.auraChallenge !== undefined && !isValidAuraChallengeMatch(data as unknown as MatchSceneData)) return false;
   if (data.online !== undefined) {
     const online = data.online as Record<string, unknown> | null;
     if (!online || typeof online !== 'object') return false;
