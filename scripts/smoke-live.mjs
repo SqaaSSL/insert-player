@@ -89,6 +89,14 @@ const requiredPlayableAnimations = [
   'ko',
   'victory',
 ];
+const requiredAuraAnimations = [
+  'aura_unbothered',
+  'aura_six_seven',
+  'aura_mog_check',
+  'aura_glide',
+  'aura_floor_worm',
+  'aura_one_leg',
+];
 const requiredProductionArcadeSlugs = [
   'donald-trump',
   'lamine-yamal',
@@ -1003,11 +1011,19 @@ async function runAuthenticatedSmoke() {
   });
   assert(partialPublishRes.status === 409, `partial fighter publish should be blocked, got ${partialPublishRes.status}`);
   const partialPublish = await readJson(partialPublishRes);
+  assert(Array.isArray(partialPublish.assetPacks), 'Partial publish response did not list animation packs');
+  const missingFight = partialPublish.assetPacks.find((pack) => pack?.id === 'fight-v1')?.missingAnimations;
+  const missingAura = partialPublish.assetPacks.find((pack) => pack?.id === 'aura-v1-2026')?.missingAnimations;
   assert(
-    Array.isArray(partialPublish.missingAnimations) && partialPublish.missingAnimations.includes('walk'),
-    'Partial publish response did not list missing launch animations',
+    Array.isArray(missingFight) && missingFight.includes('walk'),
+    'Partial publish response did not list missing Fight animations',
   );
-  log('community publishing requires the full launch animation set');
+  assert(
+    Array.isArray(missingAura) && missingAura.length === requiredAuraAnimations.length
+      && requiredAuraAnimations.every((name) => missingAura.includes(name)),
+    'Partial publish response did not list the six required Aura animations',
+  );
+  log('community publishing requires a complete Fight or Aura animation pack');
 
   await uploadRemainingPlayableSprites(smokeFighterId);
 
