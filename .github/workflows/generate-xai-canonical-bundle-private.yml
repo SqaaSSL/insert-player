@@ -109,7 +109,7 @@ jobs:
 
     steps:
       - name: Check out the reviewed generator commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Validate the paid private request before any provider access
         shell: bash
@@ -430,7 +430,7 @@ jobs:
 
     steps:
       - name: Check out the reviewed offline re-clean commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Validate the zero-provider recovery request
         shell: bash
