@@ -9,6 +9,7 @@ export type AuraVideoRecorderStatus = 'idle' | 'recording' | 'paused' | 'stoppin
 
 export const AURA_VIDEO_MAX_BYTES = 120 * 1024 * 1024;
 export const AURA_VIDEO_MAX_DURATION_MS = 5 * 60 * 1000;
+export const AURA_VIDEO_START_TIMEOUT_MS = 5_000;
 const FINALIZE_TIMEOUT_MS = 5_000;
 
 function containerType(mimeType: string): string {
@@ -28,6 +29,9 @@ export class AuraVideoRecorder {
   private capturedAudio = false;
   private completion: Promise<AuraVideoRecording | null> | null = null;
   private resolveCompletion: ((result: AuraVideoRecording | null) => void) | null = null;
+  private startup: Promise<boolean> | null = null;
+  private resolveStartup: ((started: boolean) => void) | null = null;
+  private startupTimer: ReturnType<typeof setTimeout> | null = null;
   private durationTimer: ReturnType<typeof setTimeout> | null = null;
   private finalizeTimer: ReturnType<typeof setTimeout> | null = null;
   private currentStatus: AuraVideoRecorderStatus = 'idle';
@@ -36,11 +40,19 @@ export class AuraVideoRecorder {
   get status(): AuraVideoRecorderStatus { return this.currentStatus; }
   get error(): string | null { return this.currentError; }
 
+  /** Native start is asynchronous. Callers render their branded intro before
+   * start(), then await this before advancing it or starting the match clock.
+   * This confirms media gathering, not that assets or a scene are rendered.
+   * Unsupported, cancelled and timed-out starts settle false without hanging.
+   */
+  whenStarted(): Promise<boolean> { return this.startup ?? Promise.resolve(false); }
+
   start(canvas: HTMLCanvasElement, audioTracks: MediaStreamTrack[] = [], hasAudio = false): { ok: boolean; reason?: string } {
     if (this.currentStatus === 'destroyed') return { ok: false, reason: 'recorder-destroyed' };
     if (this.recorder) return { ok: false, reason: 'recording-already-started' };
     this.currentError = null;
     this.completion = null;
+    this.startup = null;
     this.chunks = [];
     this.bytes = 0;
     this.capturedAudio = false;
@@ -73,6 +85,18 @@ export class AuraVideoRecorder {
       const recorder = new MediaRecorder(stream, { mimeType: this.selectedMimeType, videoBitsPerSecond: 5_000_000 });
       this.recorder = recorder;
       this.completion = new Promise(resolve => { this.resolveCompletion = resolve; });
+      this.startup = new Promise(resolve => { this.resolveStartup = resolve; });
+      recorder.onstart = () => {
+        if (this.recorder !== recorder || !this.resolveStartup
+          || !['recording', 'paused'].includes(this.currentStatus)) return;
+        // Give even a still intro a fresh capture request once the encoder is
+        // gathering media. Automatic 30fps capture remains the fallback on
+        // browsers without requestFrame(), or if this optional request fails.
+        for (const track of videoTracks) {
+          try { (track as CanvasCaptureMediaStreamTrack).requestFrame?.(); } catch { /* Keep automatic capture. */ }
+        }
+        this.settleStartup(true);
+      };
       recorder.ondataavailable = event => {
         if (this.recorder !== recorder || this.currentError || !event.data || event.data.size === 0) return;
         if (event.data.size > AURA_VIDEO_MAX_BYTES - this.bytes) {
@@ -94,6 +118,7 @@ export class AuraVideoRecorder {
       // Timeslices limit normal buffering but are not a clock: browsers may
       // delay chunks. A separate wall-clock timer also bounds paused sessions.
       this.durationTimer = setTimeout(() => this.abort('recording-duration-limit'), AURA_VIDEO_MAX_DURATION_MS);
+      this.startupTimer = setTimeout(() => this.abort('recording-start-timeout'), AURA_VIDEO_START_TIMEOUT_MS);
       recorder.start(1_000);
       return this.currentError ? { ok: false, reason: this.currentError } : { ok: true };
     } catch {
@@ -117,6 +142,7 @@ export class AuraVideoRecorder {
     const completion = this.completion ?? Promise.resolve(null);
     if (!this.recorder || this.currentStatus === 'stopping') return completion;
     this.currentStatus = 'stopping';
+    this.settleStartup(false);
     if (this.durationTimer !== null) clearTimeout(this.durationTimer);
     this.durationTimer = null;
     this.finalizeTimer = setTimeout(() => this.abort('recording-finalize-timeout'), FINALIZE_TIMEOUT_MS);
@@ -134,6 +160,7 @@ export class AuraVideoRecorder {
     this.currentError = 'recording-cancelled';
     this.finish(null, true);
     this.completion = null; // Release our reference to any previously returned Blob.
+    this.startup = null;
   }
 
   private startFailure(reason: string): { ok: false; reason: string } {
@@ -164,15 +191,24 @@ export class AuraVideoRecorder {
     } catch { this.abort('recording-blob-failed'); }
   }
 
+  private settleStartup(started: boolean): void {
+    if (this.startupTimer !== null) clearTimeout(this.startupTimer);
+    this.startupTimer = null;
+    const resolve = this.resolveStartup;
+    this.resolveStartup = null;
+    resolve?.(started);
+  }
+
   private finish(result: AuraVideoRecording | null, stopEncoder = false): void {
     const recorder = this.recorder;
     this.recorder = null; // Invalidate queued callbacks before stopping anything.
     if (recorder) {
-      recorder.ondataavailable = null; recorder.onstop = null; recorder.onerror = null;
+      recorder.onstart = null; recorder.ondataavailable = null; recorder.onstop = null; recorder.onerror = null;
       if (stopEncoder && recorder.state !== 'inactive') {
         try { recorder.stop(); } catch { /* Tracks still get released below. */ }
       }
     }
+    this.settleStartup(false);
     for (const timer of [this.durationTimer, this.finalizeTimer]) if (timer !== null) clearTimeout(timer);
     this.durationTimer = null; this.finalizeTimer = null;
     for (const track of this.ownedTracks) {

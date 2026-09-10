@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AuraVideoRecorder, AURA_VIDEO_MAX_BYTES, AURA_VIDEO_MAX_DURATION_MS } from './AuraVideoRecorder.ts';
+import { AuraVideoRecorder, AURA_VIDEO_MAX_BYTES, AURA_VIDEO_MAX_DURATION_MS, AURA_VIDEO_START_TIMEOUT_MS } from './AuraVideoRecorder.ts';
 
 class Track {
   readyState: 'live' | 'ended' = 'live';
@@ -24,11 +24,13 @@ class Recorder {
   static isTypeSupported = vi.fn((type: string) => Recorder.supported.has(type));
   static constructorFails = false;
   static startFails = false;
+  static emitStartImmediately = true;
   state: 'inactive' | 'recording' | 'paused' = 'inactive';
   mimeType: string;
   ondataavailable: ((event: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  onstart: (() => void) | null = null;
   constructor(readonly stream: Stream, readonly options: MediaRecorderOptions) {
     if (Recorder.constructorFails) throw new Error('Encoder construction failed');
     this.mimeType = options.mimeType ?? '';
@@ -37,6 +39,7 @@ class Recorder {
   start = vi.fn(() => {
     if (Recorder.startFails) throw new Error('Encoder start failed');
     this.state = 'recording';
+    if (Recorder.emitStartImmediately) this.onstart?.();
   });
   stop = vi.fn(() => { this.state = 'inactive'; });
   pause = vi.fn(() => { this.state = 'paused'; });
@@ -60,6 +63,7 @@ beforeEach(() => {
   Recorder.instances = [];
   Recorder.supported = new Set(['video/mp4', 'video/webm']);
   Recorder.constructorFails = false; Recorder.startFails = false;
+  Recorder.emitStartImmediately = true;
   Recorder.isTypeSupported.mockClear();
   vi.stubGlobal('MediaRecorder', Recorder);
   vi.stubGlobal('MediaStream', Stream);
@@ -71,6 +75,111 @@ afterEach(() => {
 });
 
 describe('Aura canvas video recorder', () => {
+  it('waits for native media gathering before releasing the rendered intro', async () => {
+    Recorder.emitStartImmediately = false;
+    const h = setup();
+    const requestFrame = vi.fn();
+    Object.assign(h.video, { requestFrame });
+    expect(await h.recorder.whenStarted()).toBe(false);
+    expect(h.start()).toEqual({ ok: true });
+    const native = Recorder.instances[0];
+    const ready = h.recorder.whenStarted();
+    const resolved = vi.fn(); void ready.then(resolved);
+    expect(h.recorder.whenStarted()).toBe(ready);
+    expect(h.recorder.status).toBe('recording'); // Keep the synchronous public status contract.
+    await Promise.resolve();
+    expect(resolved).not.toHaveBeenCalled();
+    expect(requestFrame).not.toHaveBeenCalled();
+    native.onstart?.();
+    expect(await ready).toBe(true);
+    expect(requestFrame).toHaveBeenCalledOnce();
+    native.onstart?.();
+    expect(requestFrame).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(1); // Only the overall recording duration remains.
+    vi.advanceTimersByTime(AURA_VIDEO_START_TIMEOUT_MS);
+    expect(h.recorder.error).toBeNull();
+    native.data('intro and battle'); const pending = h.recorder.stop(); native.end();
+    expect(await (await pending)!.blob.text()).toBe('intro and battle');
+  });
+
+  it.each(['missing', 'throws'] as const)('keeps automatic capture when requestFrame %s', async condition => {
+    const h = setup();
+    if (condition === 'throws') Object.assign(h.video, { requestFrame: () => { throw new Error('Manual capture unavailable'); } });
+    expect(h.start()).toEqual({ ok: true });
+    expect(await h.recorder.whenStarted()).toBe(true);
+    const native = Recorder.instances[0];
+    native.data('automatic frames'); const pending = h.recorder.stop(); native.end();
+    expect(await (await pending)!.blob.text()).toBe('automatic frames');
+  });
+
+  it('bounds a missing native start and releases only owned tracks', async () => {
+    Recorder.emitStartImmediately = false;
+    const h = setup(true); h.start();
+    const native = Recorder.instances[0];
+    const lateStart = native.onstart!;
+    const ready = h.recorder.whenStarted();
+    vi.advanceTimersByTime(AURA_VIDEO_START_TIMEOUT_MS - 1);
+    expect(h.recorder.error).toBeNull();
+    vi.advanceTimersByTime(1);
+    expect(await ready).toBe(false);
+    expect(h.recorder.error).toBe('recording-start-timeout');
+    expect(await h.recorder.stop()).toBeNull();
+    lateStart();
+    expect(h.recorder.status).toBe('error');
+    expect(h.video.stop).toHaveBeenCalledOnce();
+    expect(h.audioSource.clones[0].stop).toHaveBeenCalledOnce();
+    expect(h.audioSource.stop).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['error', 'destroy'] as const)('settles pending startup after %s and ignores delayed native start', async action => {
+    Recorder.emitStartImmediately = false;
+    const h = setup(); h.start(); const native = Recorder.instances[0];
+    const lateStart = native.onstart!;
+    const ready = h.recorder.whenStarted();
+    if (action === 'destroy') h.recorder.destroy(); else native.onerror?.();
+    expect(await ready).toBe(false);
+    lateStart();
+    expect(await h.recorder.whenStarted()).toBe(false);
+    expect(h.recorder.status).toBe(action === 'destroy' ? 'destroyed' : 'error');
+    expect(h.video.stop).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('cancels startup on stop and cannot release a newer capture from an old start callback', async () => {
+    Recorder.emitStartImmediately = false;
+    const h = setup(); h.start(); const first = Recorder.instances[0];
+    const lateStart = first.onstart!;
+    const firstReady = h.recorder.whenStarted();
+    const stopped = h.recorder.stop();
+    expect(await firstReady).toBe(false);
+    first.data('finished'); first.end(); await stopped;
+    h.canvas.captureStream.mockReturnValue(new Stream([new Track('video')]));
+    h.start(); const second = Recorder.instances[1];
+    const secondReady = h.recorder.whenStarted();
+    const resolved = vi.fn(); void secondReady.then(resolved);
+    lateStart(); await Promise.resolve();
+    expect(resolved).not.toHaveBeenCalled();
+    second.onstart?.();
+    expect(await secondReady).toBe(true);
+    h.recorder.destroy();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('preserves a pause requested while native startup is pending', async () => {
+    Recorder.emitStartImmediately = false;
+    const h = setup(); h.start(); const native = Recorder.instances[0];
+    h.recorder.pause();
+    expect(h.recorder.status).toBe('paused');
+    native.onstart?.();
+    expect(await h.recorder.whenStarted()).toBe(true);
+    expect(h.recorder.status).toBe('paused');
+    expect(native.resume).not.toHaveBeenCalled();
+    h.recorder.resume();
+    expect(h.recorder.status).toBe('recording');
+    h.recorder.destroy();
+  });
+
   it('captures only the canvas at 30fps and clones game audio without requesting any device', async () => {
     const h = setup(true);
     expect(h.start()).toEqual({ ok: true });
@@ -161,6 +270,7 @@ describe('Aura canvas video recorder', () => {
     if (missing === 'mime-check') vi.stubGlobal('MediaRecorder', class {});
     if (missing === 'all-formats') Recorder.supported.clear();
     expect(h.start().ok).toBe(false);
+    expect(await h.recorder.whenStarted()).toBe(false);
     expect(h.recorder.status).toBe('error');
     expect(h.recorder.error).toMatch(/unsupported/);
     expect(await h.recorder.stop()).toBeNull();
@@ -176,6 +286,7 @@ describe('Aura canvas video recorder', () => {
     if (failure === 'start') Recorder.startFails = true;
     if (failure === 'clone') h.audioSource.clone.mockImplementation(() => { throw new Error('Clone failed'); });
     expect(h.start()).toEqual({ ok: false, reason: 'recording-start-failed' });
+    expect(await h.recorder.whenStarted()).toBe(false);
     expect(await h.recorder.stop()).toBeNull();
     expect(h.audioSource.stop).not.toHaveBeenCalled();
     expect(h.video.stop).toHaveBeenCalledTimes(failure === 'capture' ? 0 : 1);

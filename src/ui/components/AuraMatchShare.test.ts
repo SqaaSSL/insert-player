@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { auraVideoFile, canShareAuraVideo, downloadAuraVideo } from './AuraMatchShare.ts';
+import { auraVideoFile, auraVideoShareData, canShareAuraVideo, downloadAuraVideo } from './AuraMatchShare.ts';
 import type { AuraVideoRecording } from '../../game/aura/AuraVideoRecorder.ts';
 
 const VIDEO_BYTES = new Uint8Array([0x1a, 0x45, 0xdf, 0xa3, 0x00, 0x01, 0xfe, 0xff]);
@@ -69,6 +69,12 @@ describe('Aura video file', () => {
 });
 
 describe('Aura native file-share support', () => {
+  it('attaches Insert Player identity and the chosen playable challenge without altering or uploading video bytes', () => {
+    const file = auraVideoFile(recording(), 'P1', 'P2');
+    const challenge = { title: '1,000 AURA · Insert Player', text: 'Alex set 1,000 AURA on Insert Player.', url: 'https://api.insertplayer.ai/challenges/aura/example' };
+    expect(auraVideoShareData(file, challenge)).toEqual({ title: 'Insert Player · Aura Battle', text: challenge.text, url: challenge.url, files: [file] });
+    expect(auraVideoShareData(file)).toMatchObject({ title: 'Insert Player · Aura Battle', url: 'https://insertplayer.ai/games/aura', files: [file] });
+  });
   it('checks support for the exact file without opening a share sheet', () => {
     const file = auraVideoFile(recording(), 'P1', 'P2');
     const share = vi.fn();

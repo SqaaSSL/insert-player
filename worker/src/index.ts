@@ -16,6 +16,7 @@ import {
   releaseExpiredGenerationCharges,
 } from './billing';
 import { captureStreetViewImage } from './googleMaps';
+import { auraChallengeShareResponse } from './auraChallengeShare';
 import {
   createFighter,
   cloneCommunityFighter,
@@ -385,6 +386,10 @@ export default {
         return publicVersusInviteMatch[2]
           ? versusInvitationOgImage(env, token, context)
           : versusInvitationSharePage(request, env, token);
+      }
+
+      if (path.startsWith('/challenges/aura/')) {
+        return auraChallengeShareResponse(request, env, context);
       }
 
       const generationAuth = path.startsWith('/proxy/')

@@ -4242,7 +4242,7 @@
 
   .aura-loader__stage-art img {
     @apply h-full w-full scale-105 object-cover object-center opacity-55 saturate-75
-           [transition:transform_950ms_cubic-bezier(0.76,0,0.24,1),opacity_650ms_ease-out];
+           [transition:transform_280ms_ease-out,opacity_280ms_ease-out];
   }
 
   .aura-loader__wash {
@@ -4258,7 +4258,7 @@
   .aura-loader__cast {
     @apply relative flex min-h-0 min-w-0 flex-col overflow-hidden border-r border-[#4fdced]/40
            px-[clamp(24px,4.5vw,68px)] py-[clamp(18px,4vh,42px)]
-           [transition:transform_950ms_cubic-bezier(0.76,0,0.24,1),opacity_650ms_ease-out];
+           [transition:transform_280ms_ease-out,opacity_280ms_ease-out];
   }
 
   .aura-loader__brand-lockup {
@@ -4334,7 +4334,7 @@
   .aura-loader__briefing {
     @apply flex min-h-0 min-w-0 flex-col justify-center gap-4 overflow-hidden bg-[rgba(8,6,25,0.78)]
            px-[clamp(22px,4vw,54px)] py-[clamp(20px,5vh,56px)]
-           [transition:transform_950ms_cubic-bezier(0.76,0,0.24,1),opacity_650ms_ease-out];
+           [transition:transform_280ms_ease-out,opacity_280ms_ease-out];
   }
 
   .aura-loader__briefing h2 {
@@ -4415,6 +4415,10 @@
   }
 
   .aura-results__share { @apply flex w-full flex-col items-center gap-3; }
+  .aura-results__video-option { @apply w-full border-t border-asf-line text-left; }
+  .aura-results__video-option > summary { @apply cursor-pointer py-4 font-sans text-[13px] font-bold text-asf-cream; }
+  .aura-results__video-option > summary:focus-visible { @apply outline-2 outline-offset-2 outline-asf-gold; }
+  .aura-results__video-option[open] > summary { @apply text-asf-gold; }
   .aura-results__video { @apply max-h-[28vh] w-full max-w-[520px] rounded border border-asf-line bg-black; }
   .aura-results__share-note { @apply m-0 max-w-[65ch] font-sans text-[12px] leading-relaxed text-asf-muted; }
   .aura-results__share-note.is-error { @apply text-[#ef4343]; }
@@ -5253,6 +5257,17 @@
 
 .aura-onboarding {
   @apply absolute left-[34%] top-[24%] z-30 flex w-[21%] flex-col gap-2 rounded border border-asf-gold/60 bg-asf-bg-deep/95 p-3 text-left shadow-lg;
+}
+
+.aura-start-ready {
+  @apply absolute left-1/2 top-[55%] z-30 flex w-max max-w-[90%] -translate-x-1/2 -translate-y-1/2
+         flex-col items-center gap-3 rounded-[6px] border border-asf-line-strong bg-asf-bg-deep/95 px-5 py-4;
+}
+.aura-start-ready p {
+  @apply m-0 text-center font-sans text-sm text-asf-cream;
+}
+.aura-start-ready .asf-btn {
+  @apply min-h-12 px-6 text-xs;
 }
 .aura-onboarding strong {
   @apply text-sm font-semibold text-asf-gold;

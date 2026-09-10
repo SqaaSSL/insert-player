@@ -3,11 +3,13 @@ import { FighterState } from '../constants.ts';
 import { Fighter } from '../fighters/Fighter.ts';
 import { EMPTY_INPUT } from '../sim/FighterInput.ts';
 import { AuraMusicClock } from '../aura/AuraMusicClock.ts';
+import { SoundManager } from '../systems/SoundManager.ts';
+import { AuraStartup, AURA_STARTUP_EVENT } from '../aura/AuraStartup.ts';
 import { AuraOnboarding, AURA_ONBOARDING_EVENT, AURA_PRACTICE_TRAVEL_MS } from '../aura/AuraOnboarding.ts';
 import { AURA_CAMERA_FINALE_MS, AURA_CAMERA_HANDOFF_MS } from '../aura/AuraCamera.ts';
 import { AuraBattle } from '../aura/AuraBattle.ts';
 import { AuraRecorder } from '../aura/AuraRecording.ts';
-import type { AuraVideoRecording } from '../aura/AuraVideoRecorder.ts';
+import { AuraVideoRecorder, type AuraVideoRecording } from '../aura/AuraVideoRecorder.ts';
 import { createAuraChart } from '../aura/AuraChart.ts';
 import { DEFAULT_AURA_TRACK } from '../aura/AuraTracks.ts';
 import { AURA_DEFAULT_LANE_KEYS, AURA_LOCAL_P1_LANE_KEYS, AURA_LOCAL_P2_LANE_KEYS } from '../aura/AuraConfig.ts';
@@ -1383,14 +1385,17 @@ describe('AuraScene visible presentation handshake', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
   function handshakeHarness() {
+    if (typeof window === 'undefined') vi.stubGlobal('window', { dispatchEvent: vi.fn() });
     return Object.assign(new AuraScene(), harness().scene, {
       lifecycleActive: true, presentationReady: true, presentationStarted: false,
       presentationToken: 41, matchSeed: 67, localOnlineReady: false, online: null,
-      beginClock: vi.fn(), announceOnlineReady: vi.fn(),
+      beginClock: vi.fn(), announceOnlineReady: vi.fn(), prepareStartup: vi.fn(),
+      soundManager: { unlockPreparedMedia: vi.fn().mockResolvedValue(true) },
     });
   }
 
   function asyncCreateHarness(data: Partial<MatchSceneData> = {}) {
+    vi.spyOn(SoundManager.prototype, 'prepareBattleMusic').mockResolvedValue(true);
     vi.stubGlobal('window', { dispatchEvent: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(),
       location: { search: '' }, matchMedia: () => ({ matches: false }) });
     const scene = new AuraScene() as unknown as Record<string, any>;
@@ -1401,10 +1406,12 @@ describe('AuraScene visible presentation handshake', () => {
     Object.assign(scene, {
       lifecycleActive: true, lifecycleEpoch: 1, beginLifecycle: () => 1,
       scale: { width: 1024, height: 576, on: vi.fn() }, add: { container: vi.fn(() => ({})) },
+      textures: { exists: vi.fn(() => true) },
       setMatchActionsVisible: vi.fn(), emitCapture: vi.fn(), emitPresentation: vi.fn(),
       loadFighters: () => pending, createStage: vi.fn(), loadCustomStage: vi.fn(), createFighters: vi.fn(), createWorldEffects: vi.fn(),
       createUi: vi.fn(), createCameras: vi.fn(), applyLayout: vi.fn(), createInput: vi.fn(),
       updateScoreUi: vi.fn(), updateTurnPresentation: vi.fn(), beginClock: vi.fn(), announceOnlineReady: vi.fn(),
+      warmPresentation: vi.fn().mockResolvedValue(true),
     });
     return { scene, resolveLoad, rejectLoad };
   }
@@ -1455,6 +1462,33 @@ describe('AuraScene visible presentation handshake', () => {
     expect(scene.videoRecorder).toBeNull();
   });
 
+  it('keeps loading until audio, custom stage and rendered warmup are actually available', async () => {
+    const { scene, resolveLoad } = asyncCreateHarness({ customStageKey: 'my-photo' });
+    let audio!: (ready: boolean) => void;
+    let stage!: () => void;
+    let rendered!: (ready: boolean) => void;
+    vi.mocked(SoundManager.prototype.prepareBattleMusic).mockImplementation(() => new Promise(resolve => { audio = resolve; }));
+    scene.loadCustomStage.mockImplementation(() => new Promise<void>(resolve => { stage = resolve; }));
+    scene.warmPresentation.mockImplementation(() => new Promise<boolean>(resolve => { rendered = resolve; }));
+    const creation = scene.create();
+    resolveLoad();
+    await Promise.resolve();
+    expect(scene.createStage).not.toHaveBeenCalled();
+    audio(true);
+    await Promise.resolve(); await Promise.resolve();
+    expect(scene.createStage).toHaveBeenCalledOnce();
+    expect(scene.presentationReady).toBe(false);
+    stage();
+    await Promise.resolve(); await Promise.resolve();
+    expect(scene.warmPresentation).toHaveBeenCalledOnce();
+    expect(scene.emitPresentation).not.toHaveBeenCalledWith('ready');
+    rendered(true);
+    await creation;
+    expect(scene.emitPresentation).toHaveBeenCalledExactlyOnceWith('ready');
+    expect(scene.clockStartedAt).toBeNull();
+    expect(scene.videoRecorder).toBeNull();
+  });
+
   it('keeps the curtain closed when a decoded performer lacks required Aura moves', async () => {
     const { scene } = asyncCreateHarness({ p1PhotoHash: 'player-photo', p2PhotoHash: 'rival-photo' });
     scene.loadFighters = (AuraScene.prototype as unknown as Record<string, any>).loadFighters;
@@ -1499,24 +1533,33 @@ describe('AuraScene visible presentation handshake', () => {
     expect(scene.emitPresentationTurn).not.toHaveBeenCalled();
   });
 
-  it('starts the local clock exactly once after the matching visible acknowledgement', () => {
+  it('waits for a real Ready gesture after the curtain acknowledgement, then starts preparation once', async () => {
     const scene = handshakeHarness();
     scene.onPresentationStart({ detail: { token: 41, seed: 67 } });
     scene.onPresentationStart({ detail: { token: 41, seed: 67 } });
     expect(scene.presentationStarted).toBe(true);
-    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.awaitingStartInput).toBe(true);
+    expect(scene.beginClock).not.toHaveBeenCalled();
+    expect(scene.soundManager.unlockPreparedMedia).not.toHaveBeenCalled();
+    scene.onStartupReady({ detail: { token: 40, seed: 67 } });
+    scene.onStartupReady({ detail: { token: 41, seed: 67 } });
+    scene.onStartupReady({ detail: { token: 41, seed: 67 } });
+    expect(scene.soundManager.unlockPreparedMedia).toHaveBeenCalledOnce();
+    await Promise.resolve();
+    expect(scene.prepareStartup).toHaveBeenCalledOnce();
     expect(scene.announceOnlineReady).not.toHaveBeenCalled();
-    expect(scene.emitPresentationTurn).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.emitPresentationTurn).not.toHaveBeenCalled();
   });
 
-  it.each([0, 1])('advertises online readiness only after the local curtain is gone, for player %i', localSlot => {
+  it.each([0, 1])('does not advertise online readiness before the real Ready gesture and intro, for player %i', localSlot => {
     const scene = Object.assign(handshakeHarness(), { online: { localSlot, matchSerial: 3 } });
     scene.onPresentationStart({ detail: { token: 40, seed: 67 } });
     expect(scene.localOnlineReady).toBe(false);
     scene.onPresentationStart({ detail: { token: 41, seed: 67 } });
     scene.onPresentationStart({ detail: { token: 41, seed: 67 } });
-    expect(scene.localOnlineReady).toBe(true);
-    expect(scene.announceOnlineReady).toHaveBeenCalledOnce();
+    expect(scene.localOnlineReady).toBe(false);
+    expect(scene.awaitingStartInput).toBe(true);
+    expect(scene.announceOnlineReady).not.toHaveBeenCalled();
     expect(scene.beginClock).not.toHaveBeenCalled(); // The network start remains authoritative.
   });
 
@@ -1551,6 +1594,31 @@ describe('AuraScene visible presentation handshake', () => {
     scene.beginClock(1600);
     expect(scene.scheduledClockStart).toBe(2100);
     expect(scene.time.delayedCall).toHaveBeenCalledExactlyOnceWith(1600, expect.any(Function));
+    expect(scene.soundManager.stopBattleMusic).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an online start before local readiness without saving a stale deadline, then accepts a fresh host start', () => {
+    const scene = Object.assign(handshakeHarness(), {
+      presentationStarted: true, scheduledClockStart: null, clockStartedAt: null,
+      online: { localSlot: 1, matchSerial: 3 },
+      onlineSession: { seat: 'guest', transport: { getState: () => ({ rttMs: 100 }) } },
+      soundManager: { stopBattleMusic: vi.fn() },
+    });
+    delete scene.beginClock;
+    vi.spyOn(performance, 'now').mockReturnValue(500);
+    scene.beginClock(3000);
+    scene.onOnlineControl({ t: 'aura_start', matchSerial: 3, delayMs: 3000 });
+    expect(scene.scheduledClockStart).toBeNull();
+    expect(scene.clockStartedAt).toBeNull();
+    expect(scene.time.delayedCall).not.toHaveBeenCalled();
+    expect(scene.soundManager.stopBattleMusic).not.toHaveBeenCalled();
+
+    scene.localOnlineReady = true;
+    expect(scene.scheduledClockStart).toBeNull();
+    scene.onOnlineControl({ t: 'aura_start', matchSerial: 3, delayMs: 3000 });
+    scene.onOnlineControl({ t: 'aura_start', matchSerial: 3, delayMs: 3000 });
+    expect(scene.scheduledClockStart).toBe(3450);
+    expect(scene.time.delayedCall).toHaveBeenCalledExactlyOnceWith(2950, expect.any(Function));
     expect(scene.soundManager.stopBattleMusic).toHaveBeenCalledOnce();
   });
 
@@ -1643,10 +1711,10 @@ describe('AuraScene first-play practice isolation', () => {
       clockStartedAt: null, scheduledClockStart: null, paused: false, finalizing: false,
       onboarding: new AuraOnboarding(), onboardingGraphics: { ...controlGraphics(), destroy: vi.fn() },
       lastOnboardingState: null, turnText: controlText(), highwayTitleText: controlText(), highwayMetaText: controlText(),
-      flashLaneInput: vi.fn(), updateTurnPresentation: vi.fn(), beginClock: vi.fn(),
+      flashLaneInput: vi.fn(), updateTurnPresentation: vi.fn(), beginClock: vi.fn(), prepareStartup: vi.fn(),
       recordJudgement: vi.fn(), applyJudgement: vi.fn(), updateNotes: vi.fn(), playCpuPlans: vi.fn(), collectHumanMisses: vi.fn(),
       advanceCameraPresentation: vi.fn(), advanceFighterPresentation: vi.fn(),
-      soundManager: { updateAuraCrowd: vi.fn(), startBattleMusic: vi.fn(), startAuraCrowd: vi.fn() },
+      soundManager: { updateAuraCrowd: vi.fn(), startBattleMusic: vi.fn(), startAuraCrowd: vi.fn(), unlockPreparedMedia: vi.fn().mockResolvedValue(true) },
       actionRecorder: { record: vi.fn() }, videoRecorder: null,
       battle: new AuraBattle(createAuraChart(67, 'lowkey')),
     }) as unknown as Record<string, any>;
@@ -1668,7 +1736,8 @@ describe('AuraScene first-play practice isolation', () => {
     }
     expect(scene.onboarding.snapshot.phase).toBe('battle');
     expect(scene.flashLaneInput).toHaveBeenCalledTimes(4);
-    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.prepareStartup).toHaveBeenCalledOnce();
+    expect(scene.beginClock).not.toHaveBeenCalled();
     expect(scene.updateTurnPresentation).toHaveBeenCalledExactlyOnceWith(-1);
     expect(scene.battle.chart).toBe(chart);
     expect([scene.battle.scoreFor(0), scene.battle.scoreFor(1)]).toEqual(before);
@@ -1703,7 +1772,8 @@ describe('AuraScene first-play practice isolation', () => {
     scene.onOnboardingSkip(event);
     scene.onOnboardingSkip(event);
     expect(scene.onboarding.snapshot.phase).toBe('skipped');
-    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.prepareStartup).toHaveBeenCalledOnce();
+    expect(scene.beginClock).not.toHaveBeenCalled();
     expect(scene.recordJudgement).not.toHaveBeenCalled();
   });
 
@@ -1722,7 +1792,8 @@ describe('AuraScene first-play practice isolation', () => {
     expect(scene.beginClock).not.toHaveBeenCalled();
     scene.paused = false;
     scene.onOnboardingSkip({ detail: { token: 41, seed: 67 } });
-    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.prepareStartup).toHaveBeenCalledOnce();
+    expect(scene.beginClock).not.toHaveBeenCalled();
   });
 
   it('resets tutorial state on init and ignores the previous scene token after a restart', () => {
@@ -1753,36 +1824,44 @@ describe('AuraScene first-play practice isolation', () => {
     expect(scene.updateTurnPresentation).not.toHaveBeenCalled();
   });
 
-  it.each([{}, { onboarding: false }])('starts normal playback without an explicit guide request: %o', detail => {
+  it.each([{}, { onboarding: false }])('starts normal preparation without an explicit guide request: %o', async detail => {
     const scene = practiceHarness();
     scene.presentationStarted = false;
     scene.onboarding = null;
     scene.startOnboarding = vi.fn();
     scene.onPresentationStart({ detail: { token: 41, seed: 67, ...detail } });
+    scene.onStartupReady({ detail: { token: 41, seed: 67 } });
+    await Promise.resolve();
     expect(scene.startOnboarding).not.toHaveBeenCalled();
-    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.prepareStartup).toHaveBeenCalledOnce();
+    expect(scene.beginClock).not.toHaveBeenCalled();
   });
 
-  it('starts opted-in solo practice instead of the music clock', () => {
+  it('starts opted-in solo practice after the Ready gesture instead of the music clock', async () => {
     const scene = practiceHarness();
     scene.presentationStarted = false;
     scene.onboarding = null;
     scene.startOnboarding = vi.fn();
     scene.onPresentationStart({ detail: { token: 41, seed: 67, onboarding: true } });
+    scene.onStartupReady({ detail: { token: 41, seed: 67 } });
+    await Promise.resolve();
     expect(scene.startOnboarding).toHaveBeenCalledOnce();
     expect(scene.beginClock).not.toHaveBeenCalled();
   });
 
   it.each([{ cpuVsCpu: true }, { vsAI: false }, { auraChallenge: {} }, { online: { localSlot: 0 } }])(
-    'ignores an onboarding request for protected match context %o', data => {
+    'ignores an onboarding request for protected match context %o', async data => {
       const scene = practiceHarness();
       scene.matchData = { gameMode: 'aura', vsAI: true, ...data };
       scene.presentationStarted = false;
       scene.onboarding = null;
       scene.startOnboarding = vi.fn();
       scene.onPresentationStart({ detail: { token: 41, seed: 67, onboarding: true } });
+    scene.onStartupReady({ detail: { token: 41, seed: 67 } });
+    await Promise.resolve();
       expect(scene.startOnboarding).not.toHaveBeenCalled();
-      expect(scene.beginClock).toHaveBeenCalledOnce();
+      expect(scene.prepareStartup).toHaveBeenCalledOnce();
+      expect(scene.beginClock).not.toHaveBeenCalled();
     },
   );
 
@@ -1817,5 +1896,143 @@ describe('AuraScene first-play practice isolation', () => {
     scene.onboarding.advance(AURA_PRACTICE_TRAVEL_MS);
     scene.emitOnboarding();
     expect(window.dispatchEvent).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('AuraScene render, encoder and visible countdown gates', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  function startupHarness() {
+    vi.stubGlobal('window', { dispatchEvent: vi.fn() });
+    return Object.assign(new AuraScene(), harness().scene, {
+      lifecycleActive: true, lifecycleEpoch: 1, presentationReady: true, presentationStarted: true,
+      presentationToken: 41, matchSeed: 67, online: null, cpuVsCpu: false,
+      startup: null, startupView: { render: vi.fn() }, startupAbort: new AbortController(),
+      turnText: controlText(),
+      clockStartedAt: null, scheduledClockStart: null, paused: false, captureId: 'intro',
+      beginClock: vi.fn(), emitCapture: vi.fn(), emitPresentation: vi.fn(),
+      waitForPresentationFrames: vi.fn().mockResolvedValue(true),
+      advanceCameraPresentation: vi.fn(), advanceFighterPresentation: vi.fn(),
+      soundManager: { getRecordingAudioTracks: vi.fn(() => []), unlockPreparedMedia: vi.fn().mockResolvedValue(true),
+        updateAuraCrowd: vi.fn(), pauseBattleMusic: vi.fn(), resumeBattleMusic: vi.fn() },
+      actionRecorder: { record: vi.fn() },
+    }) as unknown as Record<string, any>;
+  }
+
+  it('captures only a rendered intro, waits for the encoder, preserves pause, then allows clock zero after 1.5s + 3s', async () => {
+    const scene = startupHarness();
+    let rendered!: (ready: boolean) => void;
+    let encoded!: (ready: boolean) => void;
+    scene.waitForPresentationFrames.mockImplementation(() => new Promise(resolve => { rendered = resolve; }));
+    const start = vi.spyOn(AuraVideoRecorder.prototype, 'start').mockReturnValue({ ok: true });
+    vi.spyOn(AuraVideoRecorder.prototype, 'whenStarted').mockImplementation(() => new Promise(resolve => { encoded = resolve; }));
+    scene.game = { canvas: {} };
+    const prepared = scene.prepareStartup();
+    expect(start).not.toHaveBeenCalled();
+    expect(scene.startup.snapshot.phase).toBe('preparing');
+    rendered(true);
+    await Promise.resolve();
+    expect(start).toHaveBeenCalledOnce();
+    expect(scene.emitCapture).not.toHaveBeenCalled();
+    scene.update(0, 10_000);
+    expect(scene.beginClock).not.toHaveBeenCalled();
+    encoded(true);
+    await prepared;
+    expect(scene.emitCapture).toHaveBeenCalledWith({ id: 'intro', state: 'recording' });
+    scene.paused = true;
+    scene.update(0, 5_000);
+    expect(scene.startup.snapshot.remainingMs).toBe(1_500);
+    scene.paused = false;
+    for (let frame = 0; frame < 44; frame += 1) scene.update(frame * 100, 100);
+    expect(scene.beginClock).not.toHaveBeenCalled();
+    scene.update(4_500, 100);
+    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.actionRecorder.record).not.toHaveBeenCalled();
+    const states = vi.mocked(window.dispatchEvent).mock.calls.map(([event]) => event as CustomEvent)
+      .filter(event => event.type === AURA_STARTUP_EVENT).map(event => event.detail);
+    expect(states.map(state => [state.phase, state.count])).toEqual([
+      ['preparing', null], ['versus', null], ['countdown', 3], ['countdown', 2], ['countdown', 1], ['playing', null],
+    ]);
+  });
+
+  it.each([false, true])('keeps gameplay available after encoder failure, including unattended=%s autoplay rejection', async cpuVsCpu => {
+    const scene = startupHarness();
+    scene.cpuVsCpu = cpuVsCpu;
+    scene.soundManager.unlockPreparedMedia.mockResolvedValue(false);
+    scene.game = { canvas: {} };
+    vi.spyOn(AuraVideoRecorder.prototype, 'start').mockReturnValue({ ok: false, reason: 'recording-unsupported' });
+    await scene.prepareStartup();
+    expect(scene.emitCapture).toHaveBeenCalledWith({ id: 'intro', state: 'unavailable', reason: 'recording-unsupported' });
+    expect(scene.startup.snapshot.phase).toBe('versus');
+    expect(scene.silentStartup).toBe(cpuVsCpu);
+    for (let frame = 0; frame < 45; frame += 1) scene.updateStartup(100);
+    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+  });
+
+  it('replaces the completed practice status throughout the captured intro and countdown without claiming play has begun', async () => {
+    const scene = startupHarness();
+    scene.onboarding = new AuraOnboarding();
+    for (const lane of [0, 1, 2, 3] as const) {
+      scene.onboarding.advance(AURA_PRACTICE_TRAVEL_MS);
+      scene.onboarding.practiceInput(lane);
+    }
+    scene.turnText.setText('PRACTICE · 4/4 · NO SCORE YET');
+    scene.game = { canvas: {} };
+    vi.spyOn(AuraVideoRecorder.prototype, 'start').mockReturnValue({ ok: false, reason: 'recording-unsupported' });
+    await scene.prepareStartup();
+    expect(scene.turnText.text).toBe('AURA DUEL · GET READY');
+    for (let frame = 0; frame < 44; frame += 1) scene.updateStartup(100);
+    expect(scene.startup.snapshot).toMatchObject({ phase: 'countdown', count: 1 });
+    expect(scene.turnText.text).toBe('AURA DUEL · GET READY');
+    expect(scene.clockStartedAt).toBeNull();
+    expect(scene.beginClock).not.toHaveBeenCalled();
+  });
+
+  it('ignores a render completion from an abandoned lifecycle without opening capture', async () => {
+    const scene = startupHarness();
+    let rendered!: (ready: boolean) => void;
+    scene.waitForPresentationFrames.mockImplementation(() => new Promise(resolve => { rendered = resolve; }));
+    const start = vi.spyOn(AuraVideoRecorder.prototype, 'start');
+    const prepared = scene.prepareStartup();
+    scene.lifecycleActive = false;
+    scene.lifecycleEpoch += 1;
+    rendered(true);
+    await prepared;
+    expect(start).not.toHaveBeenCalled();
+    expect(scene.beginClock).not.toHaveBeenCalled();
+  });
+
+  it('returns to Ready after rejected audio, ignores paused input, and cannot start music by resuming preparation', async () => {
+    const scene = startupHarness();
+    scene.awaitingStartInput = true;
+    scene.soundManager.unlockPreparedMedia.mockResolvedValue(false);
+    scene.paused = true;
+    scene.onStartupReady({ detail: { token: 41, seed: 67 } });
+    expect(scene.soundManager.unlockPreparedMedia).not.toHaveBeenCalled();
+    scene.onPause({ detail: { paused: false } });
+    expect(scene.soundManager.resumeBattleMusic).not.toHaveBeenCalled();
+    scene.onStartupReady({ detail: { token: 41, seed: 67 } });
+    await Promise.resolve();
+    expect(scene.awaitingStartInput).toBe(true);
+    expect(scene.emitPresentation).not.toHaveBeenCalledWith('error');
+    expect(scene.beginClock).not.toHaveBeenCalled();
+  });
+
+  it('announces online readiness after local intro and retains the single network countdown', async () => {
+    const scene = startupHarness();
+    scene.online = { localSlot: 0, matchSerial: 1 };
+    scene.game = { canvas: {} };
+    scene.announceOnlineReady = vi.fn();
+    vi.spyOn(AuraVideoRecorder.prototype, 'start').mockReturnValue({ ok: false, reason: 'recording-unsupported' });
+    await scene.prepareStartup();
+    expect(scene.announceOnlineReady).not.toHaveBeenCalled();
+    for (let frame = 0; frame < 15; frame += 1) scene.updateStartup(100);
+    expect(scene.announceOnlineReady).toHaveBeenCalledOnce();
+    expect(scene.beginClock).not.toHaveBeenCalled();
+    scene.scheduledClockStart = performance.now() + 1_000;
+    scene.updateStartup(100);
+    expect(scene.startup.snapshot.phase).toBe('countdown');
+    expect(scene.startup.snapshot.remainingMs).toBeLessThanOrEqual(1_000);
+    expect(scene.beginClock).not.toHaveBeenCalled();
   });
 });

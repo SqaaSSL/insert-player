@@ -15,8 +15,8 @@ describe('Aura loading curtain presentation', () => {
   });
 
   it.each(['.aura-loader__cast', '.aura-loader__briefing', '.aura-loader__stage-art img'])
-    ('finishes %s within the one-second opening handoff', selector => {
-      expect(block(selector)).toContain('transform_950ms_cubic-bezier(0.76,0,0.24,1),opacity_650ms_ease-out');
+    ('finishes %s within the short opening handoff', selector => {
+      expect(block(selector)).toContain('transform_280ms_ease-out,opacity_280ms_ease-out');
     });
 
   it('retains the short reduced-motion transition', () => {

@@ -3,13 +3,35 @@ import {
   buildAuraChallengeMatch, createAuraChallenge, createAuraChallengeRoutine, decodeAuraChallenge,
 } from '../../game/aura/AuraChallenge.ts';
 import { DEFAULT_AURA_TRACK } from '../../game/aura/AuraTracks.ts';
-import { auraChallengeShareData, shareAuraChallenge } from './auraChallengeShare.ts';
+import { auraChallengeShareData, auraChallengeShareUrl, shareAuraChallenge } from './auraChallengeShare.ts';
 
 const routine = createAuraChallengeRoutine(34, 'lowkey', DEFAULT_AURA_TRACK.id, 'aura-plaza')!;
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('Aura social challenge payload', () => {
+  it('uses the configured public Worker preview and preserves the playable token exactly', () => {
+    const challenge = createAuraChallenge(routine, 'Alex', 1_000, 1);
+    const data = auraChallengeShareData(challenge, 'https://insertplayer.ai/private', 'https://api.insertplayer.ai/');
+    const url = new URL(data.url);
+    expect(url.origin).toBe('https://api.insertplayer.ai');
+    expect(url.pathname).toMatch(/^\/challenges\/aura\/[A-Za-z0-9_-]+$/);
+    expect(decodeAuraChallenge(url.pathname.split('/').at(-1))).toEqual({ ok: true, challenge });
+    expect(url.search).toBe('');
+    expect(data.title).toBe('1,000 AURA · Insert Player');
+  });
+
+  it.each(['', '/dev-api', 'http://localhost:8787', 'javascript:alert(1)', 'https://user:secret@api.insertplayer.ai',
+    'https://api.insertplayer.ai?redirect=https://untrusted.example', 'https://api.insertplayer.ai#x', 'https://api.insertplayer.ai/private'])
+    ('falls back to the local receiver for an unsuitable public API base %s', apiBase => {
+      const challenge = createAuraChallenge(routine, 'Alex', 1_000);
+      const url = new URL(auraChallengeShareUrl(challenge, 'http://localhost:4182/game?photo=private', apiBase));
+      expect(url.origin).toBe('http://localhost:4182');
+      expect(url.pathname).toBe('/challenge');
+      expect([...url.searchParams.keys()]).toEqual(['challenge']);
+      expect(decodeAuraChallenge(url.searchParams.get('challenge'))).toEqual({ ok: true, challenge });
+    });
+
   it.each([0, 1] as const)('keeps the exact routine and performer timing for slot %s in a stable public URL', slot => {
     const challenge = createAuraChallenge(routine, 'Alex', 1_000, slot);
     const data = auraChallengeShareData(challenge, 'https://insertplayer.ai/game?player=private-photo');

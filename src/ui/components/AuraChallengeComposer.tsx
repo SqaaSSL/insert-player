@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   AURA_CHALLENGE_MAX_NAME_LENGTH, cleanAuraChallengeName, createAuraChallenge,
   type AuraChallenge, type AuraChallengeRoutine,
@@ -14,9 +14,10 @@ interface AuraChallengeComposerProps {
   scores: ReadonlyArray<{ slot: 0 | 1; name: string; score: number }>;
   replyTo?: string;
   onCreated?: (challenge: AuraChallenge) => void;
+  onDraftChange?: (challenge: AuraChallenge | null) => void;
 }
 
-export function AuraChallengeComposer({ routine, scores, replyTo, onCreated }: AuraChallengeComposerProps) {
+export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onDraftChange }: AuraChallengeComposerProps) {
   const [slot, setSlot] = useState(scores[0]?.slot ?? 0);
   const selected = scores.find(score => score.slot === slot) ?? scores[0];
   const [name, setName] = useState(cleanAuraChallengeName(selected?.name ?? 'Player'));
@@ -25,6 +26,11 @@ export function AuraChallengeComposer({ routine, scores, replyTo, onCreated }: A
   const [busy, setBusy] = useState<'share' | 'copy' | null>(null);
   const busyRef = useRef(false);
   const [manualCopy, setManualCopy] = useState(false);
+  useEffect(() => {
+    if (!onDraftChange) return;
+    try { onDraftChange(selected ? createAuraChallenge(routine, name, selected.score, selected.slot) : null); }
+    catch { onDraftChange(null); }
+  }, [routine, name, selected?.score, selected?.slot, onDraftChange]);
   if (!selected) return null;
   const handoff = async (action: 'share' | 'copy') => {
     if (busyRef.current || !cleanAuraChallengeName(name)) return;
@@ -55,6 +61,7 @@ export function AuraChallengeComposer({ routine, scores, replyTo, onCreated }: A
   };
   return (
     <section className="aura-challenge-composer" aria-label={replyTo ? 'Send your score back' : 'Challenge a friend'}>
+      <p className="aura-challenge-composer__brand">INSERT PLAYER · AURA CHALLENGE</p>
       <h3>{replyTo ? 'Send your score back' : 'Challenge a friend'}</h3>
       <p className="aura-challenge-composer__notice">{selected.score.toLocaleString()} AURA. {replyTo || 'Your friend'} gets this exact song, routine and difficulty.</p>
       <div className="aura-challenge-composer__form">
@@ -76,7 +83,7 @@ export function AuraChallengeComposer({ routine, scores, replyTo, onCreated }: A
           {busy === 'copy' ? 'Copying link…' : 'Copy challenge link'}
         </button>
       </div>
-      <p className="aura-challenge-composer__notice">This shares your chosen name and score. Your character, photos and match video are not attached. Friendly scores are not ranked.</p>
+      <p className="aura-challenge-composer__notice">Send a playable link with your name and score. Your character, photos and match video are not attached. Friendly scores are not ranked.</p>
       {status ? <p className="aura-challenge-composer__notice" role="status">{status}</p> : null}
       {link ? <a className="aura-challenge-composer__link" href={link}>Open your challenge</a> : null}
       {link && manualCopy ? <label>Challenge link

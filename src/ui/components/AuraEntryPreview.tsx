@@ -53,7 +53,6 @@ export function AuraEntryPreview({ compact = false }: { compact?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const audioRef = useRef<ReturnType<typeof createAuraPreviewAudio> | null>(null);
   const soundConstructorRef = useRef<typeof SoundManager | null>(null);
-  const [startMove, setStartMove] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [paused, setPaused] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(false);
@@ -139,18 +138,18 @@ export function AuraEntryPreview({ compact = false }: { compact?: boolean }) {
   }, [running]);
 
   const displayMs = reducedMotion ? AURA_PREVIEW_STILL_MS : elapsedMs;
-  const duel = auraPreviewDuelAt(displayMs, startMove);
+  const duel = auraPreviewDuelAt(displayMs);
   useEffect(() => {
-    audioRef.current?.update(auraPreviewDuelAt(displayMs, startMove), displayMs, running);
-  }, [displayMs, startMove, running]);
+    audioRef.current?.update(auraPreviewDuelAt(displayMs), displayMs, running);
+  }, [displayMs, running]);
 
   const toggleSound = () => {
     setSoundEnabled(audioRef.current?.setEnabled(!soundEnabled) ?? false);
   };
   useEffect(() => {
     const context = canvasRef.current?.getContext('2d');
-    if (context) drawAuraPreview(context, stage, atlases, auraPreviewDuelAt(displayMs, startMove), displayMs);
-  }, [stage, atlases, displayMs, startMove]);
+    if (context) drawAuraPreview(context, stage, atlases, auraPreviewDuelAt(displayMs), displayMs);
+  }, [stage, atlases, displayMs]);
 
   return (
     <div ref={previewRef} className={`product-entry__preview product-entry__preview--aura aura-entry-preview${compact ? ' is-compact' : ''}`} data-running={running}>
@@ -169,9 +168,6 @@ export function AuraEntryPreview({ compact = false }: { compact?: boolean }) {
         {PERFORMERS.map((performer, index) => <div key={performer.subject}><dt>{performer.name}</dt><dd>{duel.scores[index].toLocaleString('en-US')} Aura</dd></div>)}
       </dl>
       <p className="aura-entry-preview__explanation">Hit the beat. The higher Aura wins.</p>
-      <div className="aura-entry-preview__moves" role="group" aria-label="Choose the opening move">
-        {AURA_PREVIEW_MOVES.map((item, index) => <button key={item.id} type="button" className="aura-entry-preview__move" aria-pressed={index === startMove} onClick={() => { setStartMove(index); setElapsedMs(0); }}>{item.label}</button>)}
-      </div>
     </div>
   );
 }

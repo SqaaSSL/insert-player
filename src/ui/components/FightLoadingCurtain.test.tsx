@@ -102,7 +102,7 @@ describe('FightLoadingCurtain', () => {
     expect(markup).toContain('ALTERNATING TURNS');
     expect(markup).toContain('HIT ON BEAT');
     expect(markup).toContain('VIRAL');
-    expect(markup).toContain('LOADING PERFORMERS');
+    expect(markup).toContain('PREPARING YOUR DUEL');
     expect(markup.match(/is-upright/g)).toHaveLength(2);
     expect(markup).toContain('<small>D</small>');
     expect(markup).toContain('<small>F</small>');

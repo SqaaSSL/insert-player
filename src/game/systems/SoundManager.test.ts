@@ -7,7 +7,7 @@ import {
   SoundManager,
 } from './SoundManager.ts';
 
-class FakeAudio {
+class FakeAudio extends EventTarget {
   static instances: FakeAudio[] = [];
   src: string;
   crossOrigin: string | null = null;
@@ -20,12 +20,14 @@ class FakeAudio {
   seeking = false;
   duration = 120;
   error: { code: number } | null = null;
+  readyState = 0;
   play = vi.fn(() => { this.paused = false; return Promise.resolve(); });
   pause = vi.fn(() => { this.paused = true; });
   removeAttribute = vi.fn();
   load = vi.fn();
 
   constructor(src = '') {
+    super();
     this.src = src;
     FakeAudio.instances.push(this);
   }
@@ -41,6 +43,65 @@ describe('SoundManager media', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     FakeAudio.instances = [];
+    vi.useRealTimers();
+  });
+
+  it('prepares actual canplay readiness without playing and reuses the prepared element at song zero', async () => {
+    vi.stubGlobal('Audio', FakeAudio);
+    const sound = new SoundManager();
+    const ready = sound.prepareBattleMusic('/aura.mp3', new AbortController().signal);
+    const music = FakeAudio.instances[0];
+    expect(music.play).not.toHaveBeenCalled();
+    music.readyState = 3;
+    music.dispatchEvent(new Event('canplay'));
+    await expect(ready).resolves.toBe(true);
+    const unlocking = sound.unlockPreparedMedia();
+    expect(music.play).toHaveBeenCalledOnce(); // Synchronous inside the gesture.
+    expect(music.volume).toBe(0);
+    await expect(unlocking).resolves.toBe(true);
+    expect(music.paused).toBe(true);
+    expect(music.currentTime).toBe(0);
+    expect(music.volume).toBe(BATTLE_MUSIC_VOLUME);
+    sound.startBattleMusic('/aura.mp3');
+    expect(FakeAudio.instances).toHaveLength(1);
+    expect(music.currentTime).toBe(0);
+    sound.destroy();
+  });
+
+  it.each(['abort', 'error', 'timeout', 'destroy'])('settles music preparation when %s prevents readiness', async reason => {
+    vi.useFakeTimers();
+    vi.stubGlobal('Audio', FakeAudio);
+    const sound = new SoundManager();
+    const abort = new AbortController();
+    const ready = sound.prepareBattleMusic('/aura.mp3', abort.signal);
+    const music = FakeAudio.instances[0];
+    if (reason === 'abort') abort.abort();
+    else if (reason === 'error') music.dispatchEvent(new Event('error'));
+    else if (reason === 'destroy') sound.destroy();
+    else await vi.advanceTimersByTimeAsync(20_000);
+    await expect(ready).resolves.toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(music.play).not.toHaveBeenCalled();
+  });
+
+  it.each(['reject', 'timeout', 'abort'])('settles a %s during autoplay unlock and leaves the track silent at zero', async reason => {
+    vi.useFakeTimers();
+    vi.stubGlobal('Audio', FakeAudio);
+    const sound = new SoundManager();
+    const ready = sound.prepareBattleMusic('/aura.mp3', new AbortController().signal);
+    const music = FakeAudio.instances[0];
+    music.readyState = 3; music.dispatchEvent(new Event('canplay'));
+    await ready;
+    music.play.mockImplementation(() => reason === 'reject' ? Promise.reject(new Error('NotAllowedError')) : new Promise(() => {}));
+    const abort = new AbortController();
+    const unlocking = sound.unlockPreparedMedia(abort.signal);
+    if (reason === 'timeout') await vi.advanceTimersByTimeAsync(5_000);
+    else if (reason === 'abort') abort.abort();
+    await expect(unlocking).resolves.toBe(false);
+    expect(music.paused).toBe(true);
+    expect(music.currentTime).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    sound.destroy();
   });
 
   it('starts one quiet looping track and reuses it', () => {
