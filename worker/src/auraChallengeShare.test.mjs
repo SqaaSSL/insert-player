@@ -65,10 +65,10 @@ describe('Aura social HTML and PNG routes', () => {
     expect(renderAuraChallengeOg).not.toHaveBeenCalled();
     expect(html).not.toMatch(/http-equiv=["']refresh/i);
     expect(response.headers.get('Location')).toBeNull();
-    const script = html.match(/<script>([^<]+)<\/script>/)[1];
+    const script = "location.replace(document.getElementById('play-challenge').href);";
+    expect(html).toContain(`<script>${script}</script>`);
     const scriptHash = createHash('sha256').update(script).digest('base64');
     expect(response.headers.get('Content-Security-Policy')).toContain(`script-src 'sha256-${scriptHash}'`);
-    expect(script).toBe("location.replace(document.getElementById('play-challenge').href);");
     expect(html.indexOf('property="og:image"')).toBeLessThan(html.indexOf('<script>'));
   });
   it('never uses malformed frontend config as an open redirect', async () => {
