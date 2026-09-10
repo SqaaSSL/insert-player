@@ -1,7 +1,7 @@
 {
   "name": "Insert Player",
   "short_name": "P1",
-  "description": "Insert yourself into the game. Turn a photo into a playable arcade character.",
+  "description": "Play Aura free, challenge a friend to beat your rhythm score, then turn your photo into a playable arcade character.",
   "id": "/",
   "start_url": "/menu",
   "scope": "/",

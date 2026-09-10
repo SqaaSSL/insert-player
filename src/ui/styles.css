@@ -5237,3 +5237,51 @@
     }
   }
 }
+
+.aura-results__rookie {
+  @apply my-4 flex flex-wrap items-center justify-between gap-4 border-y border-asf-line-strong py-5;
+}
+.aura-results__rookie h3 {
+  @apply m-0 text-sm leading-relaxed text-asf-gold;
+}
+.aura-results__rookie p {
+  @apply mb-0 mt-2 max-w-[55ch] text-sm leading-relaxed text-asf-muted;
+}
+.aura-results__rookie .asf-btn {
+  @apply min-h-12 text-[10px] leading-relaxed;
+}
+
+.aura-onboarding {
+  @apply absolute left-[34%] top-[24%] z-30 flex w-[21%] flex-col gap-2 rounded border border-asf-gold/60 bg-asf-bg-deep/95 p-3 text-left shadow-lg;
+}
+.aura-onboarding strong {
+  @apply text-sm font-semibold text-asf-gold;
+}
+.aura-onboarding p {
+  @apply mb-0 mt-1 text-sm leading-relaxed text-asf-text;
+}
+.aura-onboarding small {
+  @apply mt-2 block text-xs text-asf-muted;
+}
+.aura-onboarding button {
+  @apply min-h-11 cursor-pointer self-start rounded border-0 bg-transparent px-0 py-2 text-xs text-asf-gold underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-gold;
+}
+.game-shell.is-aura.is-portrait .aura-onboarding {
+  @apply left-[14%] top-[37%] w-[72%] gap-0 px-3 py-2;
+}
+.game-shell.is-aura.is-portrait .aura-onboarding strong,
+.game-shell.is-aura.is-portrait .aura-onboarding p {
+  @apply text-xs;
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .aura-onboarding {
+    @apply gap-0 p-2;
+  }
+  .aura-onboarding strong,
+  .aura-onboarding p {
+    @apply text-[11px];
+  }
+  .aura-onboarding small {
+    @apply hidden;
+  }
+}

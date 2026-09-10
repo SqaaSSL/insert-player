@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
 import { frontendHeadersForTarget } from './frontend-security-headers.mjs';
 import { readImageSize } from './image-dimensions.mjs';
+import { SOCIAL_CARD_SOURCES } from './social-card-inputs.mjs';
 import { textReferencesHostname, textReferencesOrigin } from './url-reference.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -3198,8 +3199,8 @@ function assertLaunchMetadataIsWired() {
     'public/assets/app-icon-512.png',
     'public/assets/app-maskable-512.png',
     'public/assets/social-card-v6.png',
-    'public/assets/social-card-v7.jpg',
-    'public/assets/social-card-v7.webp',
+    'public/assets/social-card-v8.jpg',
+    'public/assets/social-card-v8.webp',
     'public/assets/social-card.svg',
     'public/assets/social-card-visual-v3.png',
     'scripts/assets/social-card.html',
@@ -3319,12 +3320,10 @@ function assertLaunchMetadataIsWired() {
 
 function assertLaunchRasterAssetsAreFresh() {
   const assets = [
-    ['scripts/assets/social-card.html', 'public/assets/social-card-v7.jpg', 1200, 630, 300_000],
-    ['scripts/assets/social-card.css', 'public/assets/social-card-v7.jpg', 1200, 630, 300_000],
-    ['public/assets/social-card-visual-v3.png', 'public/assets/social-card-v7.jpg', 1200, 630, 300_000],
-    ['scripts/assets/social-card.html', 'public/assets/social-card-v7.webp', 1200, 630, 150_000],
-    ['scripts/assets/social-card.css', 'public/assets/social-card-v7.webp', 1200, 630, 150_000],
-    ['public/assets/social-card-visual-v3.png', 'public/assets/social-card-v7.webp', 1200, 630, 150_000],
+    ...SOCIAL_CARD_SOURCES.flatMap(source => [
+      [source, 'public/assets/social-card-v8.jpg', 1200, 630, 300_000],
+      [source, 'public/assets/social-card-v8.webp', 1200, 630, 150_000],
+    ]),
     ['public/assets/app-icon.svg', 'public/assets/app-icon-192.png', 192, 192],
     ['public/assets/app-icon.svg', 'public/assets/app-icon-512.png', 512, 512],
     ['public/assets/app-icon.svg', 'public/assets/app-maskable-512.png', 512, 512],

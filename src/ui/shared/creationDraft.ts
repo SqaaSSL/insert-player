@@ -17,7 +17,7 @@ export interface CreationDraft {
 export function restoreCreationChoices(draft: CreationDraft, context: CreationNavigationContext) {
   const creationPackage = context.creationPackage ?? draft.creationPackage;
   return {
-    tier: context.tier ?? draft.tier,
+    tier: context.tier ?? (context.creationPackage === 'aura' ? 'rookie' : draft.tier),
     creationPackage,
     creationFlow: creationPackage === 'aura' ? 'original' as const : draft.creationFlow ?? 'original',
   };

@@ -11,13 +11,13 @@ export type PlayGameHandler = (mode: FighterGameMode) => void | Promise<void>;
 export const GAME_ENTRY_CONTENT = {
   aura: {
     name: 'Aura',
-    genre: 'Rhythm battle',
-    promise: 'Hit the beat. Win the crowd.',
-    description: 'Go head-to-head, hit the beat, and earn Aura. Send a friend your score and challenge them to beat it.',
-    playLabel: 'Play Aura',
-    playHint: 'Try a ready-made character first.',
-    personal: 'Put yourself in the spotlight.',
-    personalDescription: 'One photo becomes your own performer, with six Aura moves. Keep that identity when you add Fight and Rush later.',
+    genre: 'A rhythm duel starring you',
+    promise: 'Farm Aura. Win the crowd.',
+    description: 'Hit the notes. Nail the moves. Take more Aura than your rival. Play a free battle, then turn your photo into the main character.',
+    playLabel: 'Play my first battle',
+    playHint: 'Free to play · no account or photo · learn in the battle',
+    personal: 'Next round, make it you.',
+    personalDescription: 'Start with Rookie Aura: one photo, your name, six performance moves. Your first Rookie is included with your account. Then take your character straight into a duel.',
     previewCaption: 'Take turns. Hit the beat. The higher Aura wins.',
   },
   fight: {
@@ -93,6 +93,7 @@ export interface GameLandingPageProps {
 
 export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenCharacters, onOpenCredits, onBack, onLocalVersus, onOnlineVersus, onWatch }: GameLandingPageProps) {
   const content = GAME_ENTRY_CONTENT[mode];
+  const rookieQuote = quoteGenerationPackage('rookie', 'aura');
   const auraQuote = quoteGenerationPackage('contender', 'aura');
   const completeQuote = quoteGenerationPackage('contender', 'complete');
   const otherModes = (['aura', 'fight', 'rush'] as const).filter((game) => game !== mode);
@@ -108,13 +109,19 @@ export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenChara
           <p className="product-entry__description">{content.description}</p>
           <GameEntryPlayButton key={mode} mode={mode} onPlay={onPlay} />
           <p className="product-entry__play-hint">{content.playHint}</p>
-          <button className="product-entry__text-link" type="button" onClick={() => onCreate(mode)}>Create my character</button>
+          <button className="product-entry__text-link" type="button" onClick={() => onCreate(mode)}>{mode === 'aura' ? 'Create my Rookie Aura' : 'Create my character'}</button>
         </div>
         <figure className="product-entry__hero-art">
           <GameEntryPreview mode={mode} />
           <figcaption>{content.previewCaption}</figcaption>
         </figure>
       </section>
+
+      {mode === 'aura' && <ol className="product-entry__first-run" aria-label="Your first Aura run">
+        <li><strong>Play a battle</strong><span>Catch four notes to learn. Then the duel is on.</span></li>
+        <li><strong>Make it personal</strong><span>One photo becomes your Rookie Aura.</span></li>
+        <li><strong>Settle it with a friend</strong><span>Send your score. Same track, same notes, their turn.</span></li>
+      </ol>}
 
       {mode !== 'rush' && (onLocalVersus || onOnlineVersus || onWatch) && (
         <nav className="product-entry__variants" aria-label={`${content.name} play options`}>
@@ -128,21 +135,26 @@ export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenChara
         <div className="product-entry__identity-copy">
           <h2 id="game-personal-title">{content.personal}</h2>
           <p>{content.personalDescription}</p>
+          {mode === 'aura' && <Button variant="primary" onClick={() => onCreate('aura')}>Create my Rookie Aura</Button>}
           <button className="product-entry__text-link" type="button" onClick={onOpenCharacters}>Open my characters →</button>
         </div>
         <div className="product-entry__pricing">
-          <p className="product-entry__pricing-context">Create at Contender quality</p>
+          <p className="product-entry__pricing-context">{mode === 'aura' ? 'Start Rookie. Upgrade when you want.' : 'Create at Contender quality'}</p>
           <dl>
+            {mode === 'aura' && <div>
+              <dt>Rookie Aura <span>First Rookie included with your account</span></dt>
+              <dd>{rookieQuote.priceLabel}<small>after your first Rookie</small></dd>
+            </div>}
             <div>
-              <dt>Aura <span>Six dedicated performance moves</span></dt>
+              <dt>{mode === 'aura' ? 'Contender Aura' : 'Aura'} <span>Six dedicated performance moves</span></dt>
               <dd>{auraQuote.priceLabel}</dd>
             </div>
             <div>
-              <dt>Fight + Rush <span>Combat moves for both games</span></dt>
+              <dt>Fight + Rush <span>{mode === 'aura' ? 'Contender · ' : ''}Combat moves for both games</span></dt>
               <dd>{completeQuote.priceLabel}</dd>
             </div>
           </dl>
-          <p className="product-entry__pricing-note">Choose quality before creating. Adding a game keeps your existing character and assets.</p>
+          <p className="product-entry__pricing-note">Aura includes its six performance moves. Fight + Rush is a separate pack. You see the exact cost before creating.</p>
           <button className="product-entry__text-link" type="button" onClick={onOpenCredits}>View credit packs →</button>
         </div>
       </section>

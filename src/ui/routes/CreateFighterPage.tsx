@@ -1,9 +1,10 @@
 import { quoteGenerationPackage, type GenerationPackage } from '../../services/GenerationPackages.ts';
+import { assertFighterReadyForMode } from '../../services/FighterAssetPacks.ts';
 import { readCreationNavigationContext, buildCreationSearch, creationReturnForPackage } from '../shared/onboardingFlow.ts';
 import { readCreationDraft, restoreCreationChoices, saveCreationDraft, clearCreationDraft } from '../shared/creationDraft.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
 import './creation-offers.css';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   CACHE_VERSION,
   getAllCachedMetas,
@@ -61,7 +62,7 @@ import {
   waitForGenerationJob,
   type GenerationJob,
 } from '../../services/GenerationJobs.ts';
-import { includedRookieStatus, initialCreationTier } from '../shared/rookieEntitlement.ts';
+import { expectedCreationCredits, includedRookieStatus, initialCreationTier } from '../shared/rookieEntitlement.ts';
 import {
   assertCreationFlowAcknowledged,
   creationFlowForResume,
@@ -74,6 +75,8 @@ import {
 interface CreateFighterPageProps {
   authStatus: AuthStatus;
   authSessionKey: string;
+  authSlot?: ReactNode;
+  onPlayTrial?: () => void;
   completionLabel?: string;
   onBack: () => void;
   onComplete: (photoHash: string) => void;
@@ -86,11 +89,12 @@ const DEFAULT_NAME = 'New Fighter';
 interface PendingFighterSync {
   fighterId: string;
   completion: 'generation' | 'video-final';
+  creationPackage?: GenerationPackage;
 }
 
 function initialQualityTier(authStatus: AuthStatus): QualityTier {
-  const requestedTier = new URLSearchParams(window.location.search).get('tier');
-  return initialCreationTier(requestedTier, paidTiersLocked(authStatus));
+  const context = readCreationNavigationContext(window.location.search);
+  return initialCreationTier(context.tier, paidTiersLocked(authStatus), context.creationPackage);
 }
 
 function describeStage(status: PipelineStatus): string {
@@ -166,6 +170,8 @@ function describeDurableJob(job: GenerationJob): string {
 export function CreateFighterPage({
   authStatus,
   authSessionKey,
+  authSlot,
+  onPlayTrial,
   completionLabel = 'Open In Gallery',
   onBack,
   onComplete,
@@ -176,6 +182,7 @@ export function CreateFighterPage({
   const [name, setName] = useState(DEFAULT_NAME);
   const [tier, setTier] = useState<QualityTier>(() => initialQualityTier(authStatus));
   const [creationPackage, setCreationPackage] = useState<GenerationPackage>(() => readCreationNavigationContext(window.location.search).creationPackage ?? 'complete');
+  const [auraEntry] = useState(() => readCreationNavigationContext(window.location.search).creationPackage === 'aura');
   const [draftMessage, setDraftMessage] = useState<string | null>(null);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const draftRestoreBlockedRef = useRef(false);
@@ -200,6 +207,7 @@ export function CreateFighterPage({
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [billingProfile, setBillingProfile] = useState<BillingProfile | null>(null);
   const [billingProfileChecked, setBillingProfileChecked] = useState(authStatus !== 'signed-in');
+  const [billingRetrySignal, setBillingRetrySignal] = useState(0);
   const [resumableJob, setResumableJob] = useState<GenerationJob | null>(null);
   const [videoReviewJob, setVideoReviewJob] = useState<GenerationJob | null>(null);
   const [videoReviewDecisionRequiresConsent, setVideoReviewDecisionRequiresConsent] = useState(false);
@@ -210,7 +218,7 @@ export function CreateFighterPage({
   const [recoveryRetrySignal, setRecoveryRetrySignal] = useState(0);
   const pollingAbortRef = useRef<AbortController | null>(null);
   const lockPaidTiers = paidTiersLocked(authStatus);
-  const requiresTurnstile = authStatus === 'signed-out' && tier === 'rookie';
+  const requiresTurnstile = authStatus === 'signed-out' && tier === 'rookie' && creationPackage !== 'aura';
   const turnstileSiteKey = String(import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '').trim();
   const turnstileReady = !requiresTurnstile || Boolean(turnstileToken);
   const videoFlowAvailability = creationPackage === 'aura'
@@ -294,7 +302,7 @@ export function CreateFighterPage({
       }
     });
     return () => { cancelled = true; };
-  }, [authSessionKey, authStatus]);
+  }, [authSessionKey, authStatus, billingRetrySignal]);
 
   useEffect(() => () => {
     pollingAbortRef.current?.abort();
@@ -556,7 +564,7 @@ export function CreateFighterPage({
       setGenerating(new Set());
       return;
     }
-    await syncCompletedFighter({ fighterId: job.fighterId, completion: 'generation' }, apiContext);
+    await syncCompletedFighter({ fighterId: job.fighterId, completion: 'generation', creationPackage: job.creationPackage }, apiContext);
   }
 
   async function finishApprovedVideoFighter(fighterId: string): Promise<void> {
@@ -589,7 +597,8 @@ export function CreateFighterPage({
     setName(fighter.name);
     setTier(fighter.qualityTier);
     setPhotoHash(fighter.photoHash);
-    await refreshFromCache(fighter.photoHash);
+    const cached = await refreshFromCache(fighter.photoHash);
+    assertFighterReadyForMode(cached.sprites, fighter.name, pending.creationPackage === 'aura' ? 'aura' : 'fight');
     setPendingFighterSync(null);
     setPercent(1);
     setDone(true);
@@ -746,6 +755,8 @@ export function CreateFighterPage({
 
   async function startDurable(apiContext: ReturnType<typeof captureApiRequestContext>): Promise<void> {
     if (!file) return;
+    const expectedCredits = expectedCreationCredits(tier, creationPackage, authStatus, billingProfile);
+    if (expectedCredits === null) throw new Error('Check your Rookie pass and credits before creating a character.');
     setStarted(true);
     setStageText('Preparing your private cloud fighter...');
     const hash = await hashPhoto(file);
@@ -771,9 +782,14 @@ export function CreateFighterPage({
       apiContext,
       null,
       creationFlow,
-      { creationPackage },
+      { creationPackage, expectedCredits },
     );
     if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
+      if (!authorization.authorized) {
+        setStarted(false);
+        setBillingProfile(null);
+        setBillingRetrySignal((current) => current + 1);
+      }
       throw new Error(authorization.error ?? 'Generation not authorized');
     }
     setStageText('Handing the forge to the cloud...');
@@ -941,6 +957,7 @@ export function CreateFighterPage({
         (providerContext) => processCharacter(file, handleStatus, name.trim() || DEFAULT_NAME, {
           tier,
           apiContext: providerContext,
+          creationPackage,
         }),
         apiContext,
       );
@@ -1032,14 +1049,14 @@ export function CreateFighterPage({
   const cachedSelectedSprite = selectedAnimName
     ? sprites.find((item) => item.animationName === selectedAnimName)
     : null;
-  const rookieStatus = includedRookieStatus(authStatus, billingProfile);
+  const rookieStatus = includedRookieStatus(authStatus, billingProfile, creationPackage);
   const selectedTier = QUALITY_TIERS.find((item) => item.id === tier);
   const selectedQuote = quoteGenerationPackage(tier, creationPackage);
   const auraNeedsAccount = creationPackage === 'aura' && authStatus !== 'signed-in';
   const selectedUsesIncludedRookie = tier === 'rookie' && rookieStatus === 'included';
   const creditCheckPending = authStatus === 'signed-in'
-    && !selectedUsesIncludedRookie
-    && !billingProfileChecked;
+    && expectedCreationCredits(tier, creationPackage, authStatus, billingProfile) === null;
+  const billingCheckFailed = creditCheckPending && billingProfileChecked;
   const creditsNeeded = selectedTier && billingProfile
     ? Math.max(0, selectedQuote.creditCost - billingProfile.creditsBalance)
     : 0;
@@ -1086,14 +1103,31 @@ export function CreateFighterPage({
     }
   };
 
+  if (!started && auraEntry && authStatus !== 'signed-in') {
+    return <section className="create-app">
+      <header className="roster-hero">
+        <div><h1>Create your Aura character</h1><p className="roster-hero__copy">Account → Photo → Aura</p></div>
+        <div className="roster-hero__actions"><Button onClick={onBack}>Back</Button></div>
+      </header>
+      <div className="creation-account">
+        <h2>{authStatus === 'loading' ? 'Checking your account…' : 'Start with your account'}</h2>
+        <p>Sign in or join, then add your photo and name. Your character gets six Aura moves and stays in your account.</p>
+        <p className="creation-price-summary">First Rookie included if your account has not used it. After that, Rookie Aura costs {quoteGenerationPackage('rookie', 'aura').creditCost} credits.</p>
+        {authSlot ?? <p className="tier-picker__note">Character creation needs a live account. You can still play a free battle here.</p>}
+        {onPlayTrial ? <Button variant="secondary" onClick={onPlayTrial}>Play a free battle</Button> : null}
+      </div>
+    </section>;
+  }
+
   if (!started) {
     return (
       <section className="create-app">
         <header className="roster-hero">
           <div>
-            <h1>Make Yourself Playable</h1>
+            <h1>{auraEntry ? 'Create your Aura character' : 'Make Yourself Playable'}</h1>
             <p className="roster-hero__copy">
-              One photo, your character. Choose where you want to play; your next game stays selected.
+              {auraEntry ? 'One photo, six Aura moves. Start with Rookie, then take your character into a duel.'
+                : 'One photo, your character. Choose where you want to play; your next game stays selected.'}
             </p>
           </div>
           <div className="roster-hero__actions">
@@ -1129,7 +1163,7 @@ export function CreateFighterPage({
           </label>
           {draftMessage ? <p role="status">{draftMessage}</p> : null}
           {file ? <p className="tier-picker__note">Photo selected: {file.name}</p> : null}
-          <fieldset className="creation-offers">
+          {!auraEntry ? <fieldset className="creation-offers">
             <legend>Where do you want to play?</legend>
             {(['aura', 'complete'] as const).map((pack) => {
               const quote = quoteGenerationPackage(tier, pack);
@@ -1137,13 +1171,13 @@ export function CreateFighterPage({
                 <input type="radio" name="creation-package" checked={creationPackage === pack} onChange={() => setCreationPackage(pack)} />
                 <span><strong>{pack === 'aura' ? 'Aura moves' : 'Fight + Rush'}</strong>
                   <span>{pack === 'aura' ? 'Six dedicated gestures for Aura challenges.' : 'A complete combat moveset for Fight and Rush. Aura moves are a separate pack.'}</span></span>
-                <b>{selectedUsesIncludedRookie ? 'First Rookie included' : quote.priceLabel}</b>
+                <b>{tier === 'rookie' && includedRookieStatus(authStatus, billingProfile, pack) === 'included' ? 'First Rookie included' : quote.priceLabel}</b>
               </label>;
             })}
-          </fieldset>
-          <p className="tier-picker__note">Aura moves work in Aura. You can add Fight + Rush to the same character later, after reviewing the expansion price.</p>
+          </fieldset> : null}
+          {!auraEntry ? <p className="tier-picker__note">Aura moves work in Aura. You can add Fight + Rush to the same character later, after reviewing the expansion price.</p> : null}
           <details className="creation-advanced">
-            <summary>Quality & creation options · {selectedTier?.label}</summary>
+            <summary>{auraEntry ? 'Quality options' : 'Quality & creation options'} · {selectedTier?.label}</summary>
           <fieldset className="tier-picker" aria-describedby="tier-picker-note">
             <legend className="tier-picker__legend">
               <span>Quality</span>
@@ -1159,7 +1193,7 @@ export function CreateFighterPage({
                   ? authStatus === 'signed-in' ? 'Included' : 'Free'
                   : rookieStatus === 'credits'
                     ? quoteGenerationPackage(item.id, creationPackage).priceLabel
-                    : 'Checking account';
+                    : rookieStatus === 'account-required' ? 'Sign in to check your Rookie pass' : 'Checking account';
               const pitch = item.id === 'rookie' && rookieStatus === 'included'
                 ? authStatus !== 'signed-in'
                   ? 'Your first playable fighter is free after a quick human check.'
@@ -1190,17 +1224,21 @@ export function CreateFighterPage({
           <p className="tier-picker__note" id="tier-picker-note">
             Source views are always generated at premium quality. Animation fidelity and detail scale with the tier.
           </p>
-          <CreationFlowPicker
+          {!auraEntry ? <CreationFlowPicker
             name="fighter-creation-flow"
             value={creationFlow}
             onChange={setCreationFlow}
             disabled={running}
             videoAvailable={videoFlowAvailability.available}
             videoUnavailableReason={videoFlowAvailability.reason}
-          />
+          /> : null}
           </details>
-          <p className="creation-price-summary"><strong>{creationPackage === 'aura' ? 'Aura moves' : 'Fight + Rush'} · {selectedTier?.label}</strong><span>{selectedUsesIncludedRookie ? 'Uses your included first Rookie. No credits charged.' : `${selectedQuote.creditCost} credits to create. Playing uses no generation credits.`}</span></p>
-          {auraNeedsAccount ? <p className="create-recovery-error">Sign in above to save your Aura character and generate its six moves. You can try Aura before creating a character.</p> : null}
+          <p className="creation-price-summary"><strong>{creationPackage === 'aura' ? 'Aura moves' : 'Fight + Rush'} · {selectedTier?.label}</strong><span>{auraNeedsAccount
+            ? `Sign in to check your included first Rookie. After that, Rookie Aura costs ${quoteGenerationPackage('rookie', 'aura').creditCost} credits.`
+            : creditCheckPending ? 'Checking your Rookie pass and credits. No generation has started.'
+              : selectedUsesIncludedRookie ? 'Uses your included first Rookie. No credits charged.' : `${selectedQuote.creditCost} credits to create. Playing uses no generation credits.`}</span></p>
+          {auraNeedsAccount ? <p className="create-recovery-error">An account is required to create and save your Aura character. Sign in above to continue; playing the demo needs no account.</p> : null}
+          {billingCheckFailed ? <div className="create-recovery-error" role="alert"><p>Your Rookie pass and credits could not be checked.</p><button type="button" onClick={() => setBillingRetrySignal((current) => current + 1)}>Retry price check</button></div> : null}
           {requiresTurnstile ? (
             <TurnstileChallenge
               siteKey={turnstileSiteKey}

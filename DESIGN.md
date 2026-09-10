@@ -15,7 +15,7 @@ The product is not a museum-piece retro clone. The arcade layer should make acti
 ## Brand Architecture
 
 - Platform: Insert Player
-- First game: Insert Player: Fight
+- Lead game: Insert Player: Aura
 - Short mark: P1
 - Internal project name: AI Street Fighter, never public
 - Primary tagline: Insert yourself into the game.

@@ -746,6 +746,8 @@ export function App({
       return (
         <CreateFighterPage
           key={authSessionKey}
+          authSlot={authSlot}
+          onPlayTrial={() => void tryGame('aura')}
           authStatus={authStatus}
           authSessionKey={authSessionKey}
           completionLabel={creationContext.challenge ? 'Return to challenge' : creationContext.returnTo === 'gallery' ? 'Open my characters' : `Play ${creationContext.returnTo === 'arcade' ? 'Fight' : creationContext.returnTo}`}
@@ -851,6 +853,7 @@ export function App({
     startFight,
     authStatus,
     authSessionKey,
+    authSlot,
     homePage,
     routeSearch,
     openGame,
