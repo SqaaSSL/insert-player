@@ -1,16 +1,17 @@
 import type { FighterGameMode } from '../../services/FighterAssetPacks.ts';
-import { GAME_ENTRY_CONTENT, GameEntryPlayButton, GameEntryPreview, type PlayGameHandler } from './GameLandingPage.tsx';
+import { GAME_ENTRY_CONTENT, GameEntryPlayButton, GameEntryPreview, AuraRosterButton, type PlayGameHandler } from './GameLandingPage.tsx';
 import './product-entry.css';
 
 export interface PlayPageProps {
   onPlay: PlayGameHandler;
+  onChooseCharacter?: () => void;
   onExplore: (mode: FighterGameMode) => void;
   onOpenCharacters: () => void;
   onOpenChallenges: () => void;
   lastGame?: FighterGameMode | null;
 }
 
-export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges, lastGame = null }: PlayPageProps) {
+export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges, onChooseCharacter, lastGame = null }: PlayPageProps) {
   return (
     <div className="product-entry product-entry--play">
       <header className="product-entry__page-heading">
@@ -27,6 +28,7 @@ export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges
         <div className="product-entry__hero-actions">
           <GameEntryPlayButton mode="aura" onPlay={onPlay} label="Play Aura" />
           <p className="product-entry__play-hint">{GAME_ENTRY_CONTENT.aura.playHint}</p>
+          {onChooseCharacter ? <AuraRosterButton onChoose={onChooseCharacter} /> : null}
           <button className="product-entry__text-link" type="button" onClick={() => onExplore('aura')}>Meet Aura →</button>
         </div>
       </section>

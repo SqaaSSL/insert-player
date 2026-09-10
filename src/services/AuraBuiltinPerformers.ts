@@ -1,4 +1,9 @@
-export type AuraBuiltinPerformerId = 'donald-trump';
+const AURA_BUILTIN_PERFORMER_IDS = ['donald-trump', 'rosalia-v2', 'lamine-yamal'] as const;
+export type AuraBuiltinPerformerId = typeof AURA_BUILTIN_PERFORMER_IDS[number];
+
+export function isAuraBuiltinPerformerId(value: unknown): value is AuraBuiltinPerformerId {
+  return typeof value === 'string' && AURA_BUILTIN_PERFORMER_IDS.some(id => id === value);
+}
 
 /** Identity supplied by the public Arcade manifest, never by a display name. */
 export interface AuraBuiltinCloudIdentity {
@@ -19,19 +24,21 @@ export type AuraBuiltinPerformerIdentity = AuraBuiltinCloudIdentity | AuraBuilti
 export function builtinAuraPerformerForCloud(
   fighter: AuraBuiltinCloudIdentity | null | undefined,
 ): AuraBuiltinPerformerId | null {
+  const slug = fighter?.arcade?.slug;
   return fighter?.public === true
-    && fighter.arcade?.slug === 'donald-trump'
+    && isAuraBuiltinPerformerId(slug)
     && /^[^:\s]+$/.test(fighter.id)
-    ? 'donald-trump'
+    ? slug
     : null;
 }
 
 export function builtinAuraPerformerForCachedMeta(
   meta: AuraBuiltinCachedIdentity | null | undefined,
 ): AuraBuiltinPerformerId | null {
-  const identity = meta?.photoHash.match(/^arcade:donald-trump:([^:\s]+)$/);
-  return identity && meta?.cloudPublic === true && meta.cloudFighterId === identity[1]
-    ? 'donald-trump'
+  const identity = meta?.photoHash.match(/^arcade:([^:\s]+):([^:\s]+)$/);
+  return identity && isAuraBuiltinPerformerId(identity[1])
+    && meta?.cloudPublic === true && meta.cloudFighterId === identity[2]
+    ? identity[1]
     : null;
 }
 

@@ -18,6 +18,7 @@ vi.mock('./AuraPoseCalibration.ts', async (importOriginal) => ({
 }));
 
 import { AURA_POSE_TEMPLATES } from './AuraPoseTemplates.ts';
+import { ADDITIONAL_AURA_BUILTIN_ASSETS } from './AuraBuiltinAssets.ts';
 import { destroyLoadedAuraAnimationPack, loadAuraAnimationPack } from './AuraSpriteLoader.ts';
 
 type CachedSprite = Awaited<ReturnType<typeof import('../../services/SpriteCache.ts').getAllSpritesForHash>>[number];
@@ -91,6 +92,51 @@ afterEach(() => {
 });
 
 describe('Aura sprite loader calibration wiring', () => {
+  for (const subject of ['rosalia-v2', 'lamine-yamal'] as const) {
+    for (const spriteKey of ['fighter_p1', 'fighter_p2']) {
+      it(`loads ${subject}'s six dedicated assets for ${spriteKey}, without a required shrug or borrowed pose corrections`, async () => {
+        publicDemoNetwork = true;
+        vi.stubEnv('DEV', false);
+        const photoHash = `arcade:${subject}:official-fixture`;
+        mocks.meta.mockResolvedValue({ photoHash, cloudFighterId: 'official-fixture', cloudPublic: true });
+        mocks.cache.mockResolvedValue([]);
+        const definitions = ADDITIONAL_AURA_BUILTIN_ASSETS[subject];
+        const entries = definitions.map(definition => {
+          const atlas = geometry(definition.name);
+          atlas.contentHash = definition.contentHash;
+          return cacheEntry(atlas);
+        });
+        network.mockImplementation(async (path: string) => {
+          const index = definitions.findIndex(definition => definition.path === path);
+          if (index < 0) throw new Error('Another identity or optional reaction was requested');
+          return { ok: true, blob: async () => entries[index].pngBlob };
+        });
+        const { scene } = sceneFixture();
+        const pack = await loadAuraAnimationPack(scene, spriteKey, photoHash);
+        expect(network).toHaveBeenCalledTimes(6);
+        expect(pack?.complete).toBe(true);
+        expect(pack?.animations.size).toBe(6);
+        expect(pack?.animations.has('aura_shrug')).toBe(false);
+        for (const animation of pack!.animations.values()) {
+          expect(animation.calibration?.policy).toBe('bundled-reference-v1');
+          expect(animation.calibration?.frames.every(frame => frame.scale === 1 && frame.sourceFrame === undefined)).toBe(true);
+        }
+      });
+    }
+    it(`rejects changed ${subject} bundled bytes without filling the gaps with another character`, async () => {
+      publicDemoNetwork = true;
+      const photoHash = `arcade:${subject}:official-fixture`;
+      mocks.meta.mockResolvedValue({ photoHash, cloudFighterId: 'official-fixture', cloudPublic: true });
+      mocks.cache.mockResolvedValue([]);
+      mocks.hash.mockResolvedValue('unexpected-regeneration');
+      network.mockResolvedValue({ ok: true, blob: async () => new Blob(['changed']) });
+      const { scene, textures } = sceneFixture();
+      expect(await loadAuraAnimationPack(scene, 'fighter_p1', photoHash)).toBeNull();
+      expect(network).toHaveBeenCalledTimes(6);
+      expect(textures.addSpriteSheet).not.toHaveBeenCalled();
+    });
+  }
+
   for (const spriteKey of ['fighter_p1', 'fighter_p2']) {
     it(`loads the existing official Trump Aura assets for ${spriteKey} in production without a canary query`, async () => {
       publicDemoNetwork = true;

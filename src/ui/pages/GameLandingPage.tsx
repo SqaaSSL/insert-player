@@ -78,10 +78,19 @@ export function GameEntryPlayButton({ mode, onPlay, label }: { mode: FighterGame
   );
 }
 
+/** Ready performers remain separate from the free one-tap demo. */
+export function AuraRosterButton({ onChoose }: { onChoose: () => void }) {
+  return <div className="product-entry__play-action mt-4">
+    <Button size="lg" onClick={onChoose}>Choose a character</Button>
+    <p className="product-entry__play-hint">Trump · Rosalía · Lamine</p>
+  </div>;
+}
+
 export interface GameLandingPageProps {
   mode: FighterGameMode;
   onPlay: PlayGameHandler;
   onCreate: (mode: FighterGameMode) => void;
+  onChooseCharacter?: () => void;
   onExplore: (mode: FighterGameMode) => void;
   onOpenCharacters: () => void;
   onOpenCredits: () => void;
@@ -91,7 +100,7 @@ export interface GameLandingPageProps {
   onWatch?: () => void;
 }
 
-export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenCharacters, onOpenCredits, onBack, onLocalVersus, onOnlineVersus, onWatch }: GameLandingPageProps) {
+export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenCharacters, onOpenCredits, onBack, onLocalVersus, onOnlineVersus, onWatch, onChooseCharacter }: GameLandingPageProps) {
   const content = GAME_ENTRY_CONTENT[mode];
   const rookieQuote = quoteGenerationPackage('rookie', 'aura');
   const auraQuote = quoteGenerationPackage('contender', 'aura');
@@ -116,6 +125,7 @@ export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenChara
           {mode !== 'aura' && <p className="product-entry__description">{content.description}</p>}
           <GameEntryPlayButton key={mode} mode={mode} onPlay={onPlay} />
           <p className="product-entry__play-hint">{content.playHint}</p>
+          {mode === 'aura' && onChooseCharacter ? <AuraRosterButton onChoose={onChooseCharacter} /> : null}
           <button className="product-entry__text-link" type="button" onClick={() => onCreate(mode)}>{mode === 'aura' ? 'Create my Rookie Aura' : 'Create my character'}</button>
         </div>
       </section>

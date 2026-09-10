@@ -6,6 +6,22 @@ import {
 } from './AuraBuiltinPerformers.ts';
 
 describe('reviewed official Aura bundle identity', () => {
+  it.each(['rosalia-v2', 'lamine-yamal'])('binds the %s bundle only to its official public cache identity', (slug) => {
+    const fighter = { id: 'official-id', public: true, arcade: { slug } };
+    const meta = { photoHash: `arcade:${slug}:official-id`, cloudFighterId: 'official-id', cloudPublic: true };
+    expect(builtinAuraPerformerForCloud(fighter)).toBe(slug);
+    expect(builtinAuraPerformerForCachedMeta(meta)).toBe(slug);
+    expect(builtinAuraPerformerForCloud({ ...fighter, public: false })).toBeNull();
+    expect(builtinAuraPerformerForCloud({ ...fighter, arcade: undefined })).toBeNull();
+    expect(builtinAuraPerformerForCachedMeta({ ...meta, cloudPublic: false })).toBeNull();
+    expect(builtinAuraPerformerForCachedMeta({ ...meta, cloudFighterId: 'private-copy' })).toBeNull();
+    expect(builtinAuraPerformerForCachedMeta({ ...meta, photoHash: `arcade:${slug}:official-id:copy` })).toBeNull();
+  });
+
+  it('does not give the current Rosalía bundle to the older separate identity', () => {
+    expect(builtinAuraPerformerForCloud({ id: 'old-rosalia', public: true, arcade: { slug: 'rosalia' } })).toBeNull();
+    expect(builtinAuraPerformerForCachedMeta({ photoHash: 'arcade:rosalia:old-rosalia', cloudFighterId: 'old-rosalia', cloudPublic: true })).toBeNull();
+  });
   it('recognizes the current public Arcade identity independently of its display name', () => {
     const fighter = { id: 'public-trump', public: true, arcade: { slug: 'donald-trump' }, name: 'Renamed' };
     expect(builtinAuraPerformerForCloud(fighter)).toBe('donald-trump');

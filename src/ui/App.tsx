@@ -680,6 +680,7 @@ export function App({
     if ((route === '/' && !readLastGame(authSessionKey)) || route.startsWith('/games/')) {
       const mode: FighterGameMode = route === '/games/fight' ? 'fight' : route === '/games/rush' ? 'rush' : 'aura';
       return <GameLandingPage mode={mode} onPlay={tryGame} onCreate={createForGame} onExplore={(game) => navigate(`/games/${game}`)}
+        onChooseCharacter={mode === 'aura' ? () => navigate('/roster/aura') : undefined}
         onLocalVersus={mode === 'rush' ? undefined : () => navigate(mode === 'aura' ? '/roster/aura-vs' : '/roster/vs')}
         onOnlineVersus={mode === 'rush' ? undefined : () => navigate('/versus/online', mode === 'aura' ? 'mode=aura' : '')}
         onWatch={mode === 'rush' ? undefined : () => navigate(mode === 'aura' ? '/roster/aura-watch' : '/roster/watch')}
@@ -687,7 +688,7 @@ export function App({
     }
     if (route === '/menu' || route === '/') return <PlayPage lastGame={readLastGame(authSessionKey)} onPlay={(mode) => readLastGame(authSessionKey) ? openGame(mode) : tryGame(mode)}
       onExplore={(mode) => navigate(`/games/${mode}`)} onOpenCharacters={() => navigate('/gallery')}
-      onOpenChallenges={() => navigate('/challenges')} />;
+      onOpenChallenges={() => navigate('/challenges')} onChooseCharacter={() => navigate('/roster/aura')} />;
     if (route === '/credits') return homePage;
     if (route.startsWith('/watch/')) return <AuraWatchPage clipId={route.slice(7)} preferredPlayerPhotoHash={readPreferredArcadePlayerPhotoHash(routeSearch)}
       onPlay={startFight} onExplore={() => navigate('/games/aura')} onCreatePlayer={token => navigate('/fighters/new', buildCreationSearch({

@@ -1,6 +1,6 @@
 # Aura animation packs v1
 
-Status: runtime and capability contract implemented. The complete seven-asset Template Zero development set (six core performances plus optional shrug) passes choreography, mechanical and in-game agent review. These storyboards are reusable pose scaffolds, not Champion render masters. Per-character HQ refinement, owner semantic review and measured production-provider cost remain the gates before generating real roster packs.
+Status: runtime and capability contract implemented. Official Trump, Rosalía and Lamine presentation bundles provide complete dedicated Aura performances; the generic Nova/Byte trial stays available without an account. Template Zero is a reviewed choreography scaffold, never a real character or a Champion render master. New character packs still require individual identity-preserving renders and visual/runtime review.
 
 ## Product contract
 
@@ -24,19 +24,46 @@ filled or replaced with demo art. These performers do not become roster entries,
 public fighters, or evidence of paid Champion quality; all generation, identity,
 review and publication gates above remain in place.
 
-### Existing official Trump presentation bundle
+### Reviewed official presentation bundles
 
-The seven reviewed Trump runtime atlases already shipped under
-`public/assets/aura/donald-trump/` now supplement the official Arcade Trump's
-missing Aura animations in either player seat. Selection requires the canonical
-`arcade:donald-trump:<fighter-id>` cache key and matching public cached metadata;
-a display name alone never selects these assets. Current cached Aura animations
-take precedence, and every bundled file must match its reviewed SHA-256 before
-it enters the renderer. This presentation supplement does not modify cloud
-manifests, playable cache pointers, pack ownership or paid entitlements. Other
-characters require their own complete dedicated Aura assets; they never inherit
-Trump's identity or Template Zero art. The opt-in development canary remains
-available for explicit asset QA.
+The official Arcade identities `donald-trump`, `rosalia-v2` and `lamine-yamal`
+load their own reviewed runtime atlases under `public/assets/aura/<slug>/` in
+either player seat. Trump includes the optional shrug; Rosalía and Lamine each
+contain all six core performances. No reaction is mandatory.
+
+Selection requires the canonical `arcade:<slug>:<fighter-id>` cache key and
+matching public cached metadata. Display names, private copies and the legacy
+`rosalia` slug never select these assets. Current cached Aura animations take
+precedence, and every bundled file must match its reviewed SHA-256 before it
+enters the renderer. These supplements do not modify cloud manifests, cache
+pointers, pack ownership or paid entitlements. Other characters require their
+own complete dedicated Aura assets; they never inherit another identity or
+Template Zero art. The opt-in development canaries remain available for QA.
+
+Rosalía and Lamine were generated as 46 distinct full-resolution poses each,
+with the approved six-seven repeats expanded into eight-frame sheets. Each
+render combines the official public canonical reference with a normalized pose
+anchor through the existing Insert Player → Meterkey → FAL transport using
+`bytedance/seedream/v5/pro/edit`. Four pose canaries passed before the remaining
+88 were submitted with concurrency four. The conservative reserved cost for
+92 calls is $13.248; no paid repairs or blind retries were used.
+
+Exact hashes, request IDs, source/pose hashes, registration measurements and
+compact visual contact sheets are retained under
+`artifacts/aura-animation-canary/official-roster-v1/`. Original 1536×2048 PNGs
+and the authored 4× atlases remain in the task's ignored local archive. They
+are not shipped to players. Runtime cells match the established upright
+192×256, one-leg 256×256 and floor-worm 384×256 geometry.
+
+`AuraBuiltinAssets.ts` records standing body/root references measured from the
+new exact bytes at alpha 32. It preserves authored motion using one fixed scale
+per action and never borrows Trump's frame remaps or pose-correction curves.
+A documented 2% uniform raster reduction of Lamine's entire mog-check action
+keeps its deliberate large-face peak clear of the top edge; the standing
+reference restores its body size in the renderer without per-frame shrinking.
+
+Aura landing and Play provide a separate **Choose a character** action opening
+`/roster/aura`; one-tap free Nova/Byte quickplay remains the primary action.
 
 Selection filters apply to both seats, local and online play, gallery capability
 labels and recipient-owned challenge choices. Cached readiness is checked again

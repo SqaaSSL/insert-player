@@ -1,0 +1,1146 @@
+{
+  "schemaVersion": 1,
+  "subject": "lamine-yamal",
+  "sourceIdentitySha256": "a7f6f0822a8b3e6e95718897fc45ecd4e5de4d617cd54f9fea3decd15ea82f85",
+  "providerRoute": "Insert Player → Meterkey → FAL",
+  "model": "bytedance/seedream/v5/pro/edit",
+  "sourcePlanFingerprint": "48cb56412e500331f292e9a28039331f05eb12d25b5b3eeb15446b844e6d1823",
+  "remainingPlanFingerprint": "52eb5fea30531f09ae497ee5862a959cefcee206672c4f445f1d52e05794374c",
+  "coreMoves": 6,
+  "optionalShrugIncluded": false,
+  "uniqueGeneratedPoses": 46,
+  "rawArtifactsRetained": "Local .artifacts/aura-roster-expansion/seedream-{v1,rest-v1}/artifacts",
+  "animations": [
+    {
+      "animationName": "aura_unbothered",
+      "runtime": {
+        "path": "public/assets/aura/lamine-yamal/aura_unbothered.png",
+        "sha256": "3e3068db970b31ec92cc49380e5636c35af8a5170069699bb7fd6ab2c02de14d",
+        "frameWidth": 192,
+        "frameHeight": 256,
+        "frameCount": 8
+      },
+      "hq": {
+        "path": ".artifacts/aura-roster-expansion/compiled/lamine-yamal/aura_unbothered/aura_unbothered-hq.png",
+        "sha256": "123a4abeabf036917eb157236b069fbb05179b23d2808a3e9c7bf90ecd88edb5",
+        "frameWidth": 768,
+        "frameHeight": 1024,
+        "frameCount": 8,
+        "retention": "Local immutable archive; not deployed"
+      },
+      "registration": {
+        "alphaThreshold": 32,
+        "referenceFrameIndices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "referenceBodyHeight": 220,
+        "referenceRootY": 240,
+        "bounds": [
+          {
+            "x": 70,
+            "y": 20,
+            "width": 70,
+            "height": 219
+          },
+          {
+            "x": 69,
+            "y": 20,
+            "width": 71,
+            "height": 220
+          },
+          {
+            "x": 70,
+            "y": 20,
+            "width": 70,
+            "height": 220
+          },
+          {
+            "x": 70,
+            "y": 20,
+            "width": 69,
+            "height": 220
+          },
+          {
+            "x": 62,
+            "y": 20,
+            "width": 77,
+            "height": 220
+          },
+          {
+            "x": 62,
+            "y": 22,
+            "width": 75,
+            "height": 218
+          },
+          {
+            "x": 69,
+            "y": 19,
+            "width": 69,
+            "height": 221
+          },
+          {
+            "x": 69,
+            "y": 18,
+            "width": 71,
+            "height": 221
+          }
+        ]
+      },
+      "policy": {
+        "generatedIndividually": true,
+        "wholeSheetGeneration": false,
+        "templatePixelsInFinal": false,
+        "fixedActionScale": true,
+        "scale": 0.4970274146968001,
+        "individualFitClamp": false,
+        "authoredScale": 4
+      },
+      "sequence": [
+        "aura_unbothered/frame01",
+        "aura_unbothered/frame02",
+        "aura_unbothered/frame03",
+        "aura_unbothered/frame04",
+        "aura_unbothered/frame05",
+        "aura_unbothered/frame06",
+        "aura_unbothered/frame07",
+        "aura_unbothered/frame08"
+      ],
+      "frames": [
+        {
+          "frameKey": "frame01",
+          "rawSha256": "6f4bc03af534a0122cb563196dfe7d1977c1262a4939736b66589a89ceab6662",
+          "requestId": "01a08d7a-9d92-7190-a165-58e020687ad5",
+          "run": "seedream-rest-v1",
+          "promptSha256": "885093c45991a69ceae561184fc0a315f1336ae126567a5b1ad3406289c19467",
+          "poseSha256": "fdb5e4559532d02d04eae76142201e93e2776adea95c60a8b92d6c95c057bc31",
+          "runtimeSha256": "48fafaae444364f89b988ef79e8246d9a9b841f19f31489d95fe7990f0136fd5",
+          "hqSha256": "7c7c57b794d4f71c1c6105e9b7221beaeefd54ca2ae37c026f240e626601e292"
+        },
+        {
+          "frameKey": "frame02",
+          "rawSha256": "8d3ed9d94ebf954adfe616dee37dfe3b24ab7fb83b739ae03a4a2753be95564d",
+          "requestId": "01a08d7a-9429-7bc1-b0b4-558cbfd39aee",
+          "run": "seedream-rest-v1",
+          "promptSha256": "930d13056e797f51c4f18fa4406a1ab4e5dfdbef38d28c086524537fa24f3916",
+          "poseSha256": "5a68c5add3300b1549841cb3ce74f4ff6963948c7f0ee65c11ac01f584730415",
+          "runtimeSha256": "ba2af54d446d53c5ad11a90825e5f67fd8dd8ceecfd8bee7b74581239582b27c",
+          "hqSha256": "700a858d1e6f9bef13edb63dae86a303a1345621a133bff5ab178d7d177c6625"
+        },
+        {
+          "frameKey": "frame03",
+          "rawSha256": "f84905c1d3589240187e2e78ab7d4951fb4b966440cb0550c02b413edc8c4ebc",
+          "requestId": "01a08d7a-9f3b-72f2-a2cd-b9127b534b83",
+          "run": "seedream-rest-v1",
+          "promptSha256": "c52d5811b888dc2b4afb4ceba892e43582008e042cc0e87cddb387c068a6bbc1",
+          "poseSha256": "de9ecafa440b40e50c19ba159d0d860c9561af46b7127badbb67f660526ef539",
+          "runtimeSha256": "c6e1d5076fde914956ea4914e59c5712740296bbe186093d935f85d47b099ed9",
+          "hqSha256": "1dabea64548af1cf39893f20b5b3152d8aba5916fdf2b729e6facea9c88df159"
+        },
+        {
+          "frameKey": "frame04",
+          "rawSha256": "bc8a2bbd9ba37337521aa789bbe3198827ffc172692a4ff07f5013b1b5361523",
+          "requestId": "01a08d7a-a3cb-7702-9159-5a626746f479",
+          "run": "seedream-rest-v1",
+          "promptSha256": "298dae2f3dddeb3a51b765c468ce53c120aab30cd4ca5eee8620b767c5a48a48",
+          "poseSha256": "af96906d275326ebfb08c0ab95fb40787c7158615fc3ed3032a7eae4b048e0ec",
+          "runtimeSha256": "273f465cc2379139f90ece2b80449456a6a6f313d1f749a81c9ebba35a7182b5",
+          "hqSha256": "f4bdb59ae42fa1d52700859d6bf72fabb716a664c0d4f2e76de20d1094fb450e"
+        },
+        {
+          "frameKey": "frame05",
+          "rawSha256": "0e061f7dedd38978a2a61e1da86a73f2bb1dda164f6939dea4b29b72fefb7f15",
+          "requestId": "01a08d7b-8639-7201-b06f-2a94dfdf732d",
+          "run": "seedream-rest-v1",
+          "promptSha256": "e00ffc70dc40b8728eec1138a9de2c61ca9254b80e4b5210f648ba9fc902b8d5",
+          "poseSha256": "5a8b3c9e24820f94060d372406d60076f5376d3375354ea7ec8e66f25b3ccf23",
+          "runtimeSha256": "1b907ba1a43fbb34578f42955fa01cb154294a9cb9f3daedcec6211949325c1f",
+          "hqSha256": "674372ad3cb7218c79cbfa952ab6370a88b68f70576d4666248eb17cd71a3e26"
+        },
+        {
+          "frameKey": "frame06",
+          "rawSha256": "c2ef25760b3e4c391dd539d20f444f4a69e6af17cbe4ae08d3b0767645bc44a8",
+          "requestId": "01a08d7b-7abe-7c53-9a23-106c7987aac1",
+          "run": "seedream-rest-v1",
+          "promptSha256": "1f48b25c01c9fea8673b60d7fb16799c817ccadf02132ad0c4d21ca4cb9e1957",
+          "poseSha256": "c770468e1b968c256fd805c6a1c9a7cc45442d014b4a6009c749d48be3683f84",
+          "runtimeSha256": "4699fe4d9a6c5280c77f286fa4df27a5da981dfb22dce69769c07af44bc79740",
+          "hqSha256": "3151cd09d02e07f63b05d319eba1f39d225fc049659137f81fbdb71b127bdc32"
+        },
+        {
+          "frameKey": "frame07",
+          "rawSha256": "911830ce269b39de15c0ff1a823b7b78939cc3771470820157203289a0d10574",
+          "requestId": "01a08d7b-7d68-7b90-9e27-80594c8d03fc",
+          "run": "seedream-rest-v1",
+          "promptSha256": "5e112cee18fa55d30f4c64645974c2b703bb285d0333372aaedc1b553f1d0791",
+          "poseSha256": "19d55e223cb424832171562f6fd911dd60e2113f0bc434f4890eb702038ef076",
+          "runtimeSha256": "d319638c41780f28261a72a1745bb17fd4cc5043c624aa392744e257e02bb489",
+          "hqSha256": "3db1cc6a39d9042251298718ab8953bfabc06836a9cb0ae1dc2e833a20612fbf"
+        },
+        {
+          "frameKey": "frame08",
+          "rawSha256": "283554aef5a2680645ffcb6ce05e23e3e1ae8bbc7e565e39dd9c70430fe7b7dd",
+          "requestId": "01a08d7b-8990-7133-83b7-1892886d8ccb",
+          "run": "seedream-rest-v1",
+          "promptSha256": "2583fb70fbe1c31bd9e62575ddd0f82c22986771a0b20ee2855ac1b921d844a5",
+          "poseSha256": "ecc18df48f9b829f448e826adeb809049b5daf091b937e6c7e317ce8550045ec",
+          "runtimeSha256": "64d797bdba7ad416ad3791db6c06dc6bcf6179374a71b26c4f815609f5f0e865",
+          "hqSha256": "f3bb8bd885932daf20f8f4d76e083c0a9564c969012d3b16786425c5b527736a"
+        }
+      ],
+      "visualReview": {
+        "verdict": "pass",
+        "runtimeSha256": "3e3068db970b31ec92cc49380e5636c35af8a5170069699bb7fd6ab2c02de14d",
+        "reviewer": "Codex visual contact-sheet review",
+        "note": "Consistent face, highlighted short curls, red/green track jacket and white shoes. Arms lowered with subtle breathing/weight variation and intentional head turns."
+      },
+      "contactSheet": {
+        "path": "artifacts/aura-animation-canary/official-roster-v1/lamine-yamal/aura_unbothered-contact.webp",
+        "sha256": "b1b907dd644a467610b4c69f0a946c84df2f3644546948374aff7c70d4b96144"
+      }
+    },
+    {
+      "animationName": "aura_six_seven",
+      "runtime": {
+        "path": "public/assets/aura/lamine-yamal/aura_six_seven.png",
+        "sha256": "e38620ab609d105e9ef75bd1386fbaebcdd040f951e6856ef8432fea388d14d0",
+        "frameWidth": 192,
+        "frameHeight": 256,
+        "frameCount": 8
+      },
+      "hq": {
+        "path": ".artifacts/aura-roster-expansion/compiled/lamine-yamal/aura_six_seven/aura_six_seven-hq.png",
+        "sha256": "e42dfb760265bc96f4b806b43bb85efc9dfbb3df7b630c07e1e86fae98f6f079",
+        "frameWidth": 768,
+        "frameHeight": 1024,
+        "frameCount": 8,
+        "retention": "Local immutable archive; not deployed"
+      },
+      "registration": {
+        "alphaThreshold": 32,
+        "referenceFrameIndices": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "referenceBodyHeight": 230.5,
+        "referenceRootY": 239,
+        "bounds": [
+          {
+            "x": 74,
+            "y": 12,
+            "width": 100,
+            "height": 227
+          },
+          {
+            "x": 75,
+            "y": 8,
+            "width": 93,
+            "height": 231
+          },
+          {
+            "x": 74,
+            "y": 9,
+            "width": 109,
+            "height": 230
+          },
+          {
+            "x": 74,
+            "y": 7,
+            "width": 81,
+            "height": 233
+          },
+          {
+            "x": 77,
+            "y": 10,
+            "width": 108,
+            "height": 229
+          },
+          {
+            "x": 75,
+            "y": 8,
+            "width": 93,
+            "height": 231
+          },
+          {
+            "x": 78,
+            "y": 9,
+            "width": 108,
+            "height": 230
+          },
+          {
+            "x": 74,
+            "y": 7,
+            "width": 81,
+            "height": 233
+          }
+        ]
+      },
+      "policy": {
+        "generatedIndividually": true,
+        "wholeSheetGeneration": false,
+        "templatePixelsInFinal": false,
+        "fixedActionScale": true,
+        "scale": 0.517212508092207,
+        "individualFitClamp": false,
+        "authoredScale": 4
+      },
+      "sequence": [
+        "aura_six_seven/previous01",
+        "aura_six_seven/leftHandHigh",
+        "aura_six_seven/previous03",
+        "aura_six_seven/rightHandHigh",
+        "aura_six_seven/previous05",
+        "aura_six_seven/leftHandHigh",
+        "aura_six_seven/previous07",
+        "aura_six_seven/rightHandHigh"
+      ],
+      "frames": [
+        {
+          "frameKey": "previous01",
+          "rawSha256": "c3236ab0c4e58fd0942427e402cecf1a23e8dde04b126396fd31305d554bfbc5",
+          "requestId": "01a08d7c-50ec-7bc3-a0f6-e5b15f8ab86c",
+          "run": "seedream-rest-v1",
+          "promptSha256": "d758a015e0bf25386f8118631f9a6f200fc63afd14ff604b0b5ae14a1be3871f",
+          "poseSha256": "60bee928b99c83c0757f2db4eaabbd9ae1dbfffb8013db2dd88064c5bb934564",
+          "runtimeSha256": "eb536c5301d0e97adda473c31a4970588b9cdf1d80cbca44604080e68245b9da",
+          "hqSha256": "09c09756db63685b9458bf6ac337c821dd6b390921f38b53cc2c3573cde1ec5c"
+        },
+        {
+          "frameKey": "leftHandHigh",
+          "rawSha256": "858086162e0c9a6dd9fd746e765288c7a79227e1a3a2678b778eb4c25563363e",
+          "requestId": "01a08d7c-60e4-7162-96f2-85665982e628",
+          "run": "seedream-rest-v1",
+          "promptSha256": "05450350eff7caa61e739f4ed6f7bc61962645e5a878fb09908d7cb96f98fcbd",
+          "poseSha256": "fa16bf480ae1d596f6577dddc6da3cb1bfe05e5bfb7fb92afe96e5ae4032f5fd",
+          "runtimeSha256": "d94cf14f314a6526f32021d5be1e62364a2ebd84e364181da27f796737e5fc2f",
+          "hqSha256": "35cdc258ce362d4d26f43817356233a3a7d2d6872e49db0fb8c22d36c8b7a96a"
+        },
+        {
+          "frameKey": "previous03",
+          "rawSha256": "cf191de135aa771c139858c5115bb81a3142b0a6680239abbde0012e02f3bde4",
+          "requestId": "01a08d7c-6424-7742-ab8c-ff9e11faaad5",
+          "run": "seedream-rest-v1",
+          "promptSha256": "97649192ad2257fc68a5e22d03a892a891c4a1983f2e1a16d03060cee6a054b3",
+          "poseSha256": "19aaddd13cff24dbc172c36b9ec17dd35a9223af1ccf8b5c1fcc16c409ffadc7",
+          "runtimeSha256": "f31c6d9b07c928bfa75d12bc971692728273c555d30eab35817664a13020caae",
+          "hqSha256": "6c98aa55d37edd990fe2bad7c407b2e84c1ab2acaeec34f7978c69de7eb75155"
+        },
+        {
+          "frameKey": "rightHandHigh",
+          "rawSha256": "bfb6405c9656666c20aa164992642d7238f4284ef1b2e3f4ed1d9b94c643a965",
+          "requestId": "01a08d6e-9c2c-7cc0-b561-56399977307f",
+          "run": "seedream-v1",
+          "promptSha256": "eef0811a817bcd2a62140b1324a23e009765301d714fc3a4f3687c74d4d24212",
+          "poseSha256": "f6271052d8161189ffaf64579ed24458e9415145fe555ac49779af074f363c02",
+          "runtimeSha256": "78633e52d384bfd514232008c4b396b571b63abf7a5efcaf9472d584c31c1990",
+          "hqSha256": "4fafc39a0cd50b9a75c8c439b3d7e8161a765fb02e93e18515ee54bd80f64e34"
+        },
+        {
+          "frameKey": "previous05",
+          "rawSha256": "9419903151ea0d87288d8bf6e6cb928b7c904235294b2f8b9ac3c326fdd394e0",
+          "requestId": "01a08d7c-8aea-7c83-a1a8-5e15f1a9a981",
+          "run": "seedream-rest-v1",
+          "promptSha256": "30382e395d3d1cc734c51974c132410cae83339c9a5b0e397b8d76dcb41f11eb",
+          "poseSha256": "f94d3f70100acd73fb23ae59387a321e3a16b98abac9f47997e965bbace8dcfd",
+          "runtimeSha256": "258bebaf9c0e6190c097892abf5c3de95abe7de7dee92b6a8c1f783d2487bfe3",
+          "hqSha256": "097213d819dc7624bf67c7cfda675c13a0132061e2c41e02ea3eb09f8fbfd269"
+        },
+        {
+          "frameKey": "previous07",
+          "rawSha256": "54384b3b5d5ab49db77b3c2d015c4bb384d7c6963d00a3b0360d97126c98231e",
+          "requestId": "01a08d7d-34f5-7392-a5fb-47caeb138751",
+          "run": "seedream-rest-v1",
+          "promptSha256": "32e357c3dc0ea9260524f6acb1a46f271c057350c1460deaa58129e4dd3fa596",
+          "poseSha256": "44d0038d032978c004fb0751c1da4066f820a04ca26787477ba43752088dfa8b",
+          "runtimeSha256": "bace508919ed910c0ed5f4ea22f2e9c8bc05defca0ecafce1ed5452b0e3972bc",
+          "hqSha256": "e43dda0201068ed18d7b943d213a3ff46500ba9947587421125de51bd08e65cf"
+        }
+      ],
+      "visualReview": {
+        "verdict": "pass",
+        "runtimeSha256": "e38620ab609d105e9ef75bd1386fbaebcdd040f951e6856ef8432fea388d14d0",
+        "reviewer": "Codex visual contact-sheet review",
+        "note": "Clearly alternating high/low open palms, consistent short curls and track outfit, complete feet and fingers; authored six unique poses in eight cells."
+      },
+      "contactSheet": {
+        "path": "artifacts/aura-animation-canary/official-roster-v1/lamine-yamal/aura_six_seven-contact.webp",
+        "sha256": "cd1f84c2f8a0d184a8375efbe698df2b497c453b8a75355112c3e45af59876bd"
+      }
+    },
+    {
+      "animationName": "aura_mog_check",
+      "runtime": {
+        "path": "public/assets/aura/lamine-yamal/aura_mog_check.png",
+        "sha256": "c39349ddf249fd937eb8cfe805576381a88c5849e6409a5119d99865e8cdd722",
+        "frameWidth": 192,
+        "frameHeight": 256,
+        "frameCount": 8
+      },
+      "hq": {
+        "path": ".artifacts/aura-roster-expansion/compiled/lamine-yamal/aura_mog_check/aura_mog_check-hq.png",
+        "sha256": "2ef86ed4bb4a6b045816fab76145805a3ce7275a4b0cf85fed2d6fe87dbd0e67",
+        "frameWidth": 768,
+        "frameHeight": 1024,
+        "frameCount": 8,
+        "retention": "Local immutable archive; not deployed"
+      },
+      "registration": {
+        "alphaThreshold": 32,
+        "referenceFrameIndices": [
+          0,
+          1,
+          2,
+          3,
+          7
+        ],
+        "referenceBodyHeight": 227,
+        "referenceRootY": 239,
+        "bounds": [
+          {
+            "x": 78,
+            "y": 13,
+            "width": 73,
+            "height": 226
+          },
+          {
+            "x": 76,
+            "y": 12,
+            "width": 75,
+            "height": 227
+          },
+          {
+            "x": 75,
+            "y": 11,
+            "width": 76,
+            "height": 228
+          },
+          {
+            "x": 76,
+            "y": 12,
+            "width": 75,
+            "height": 227
+          },
+          {
+            "x": 74,
+            "y": 21,
+            "width": 83,
+            "height": 218
+          },
+          {
+            "x": 70,
+            "y": 8,
+            "width": 99,
+            "height": 231
+          },
+          {
+            "x": 66,
+            "y": 4,
+            "width": 91,
+            "height": 235
+          },
+          {
+            "x": 76,
+            "y": 10,
+            "width": 76,
+            "height": 229
+          }
+        ]
+      },
+      "policy": {
+        "generatedIndividually": true,
+        "wholeSheetGeneration": false,
+        "templatePixelsInFinal": false,
+        "fixedActionScale": true,
+        "scale": 0.48863333859012775,
+        "medianScale": 0.4986054475409467,
+        "actionScaleFactor": 0.98,
+        "individualFitClamp": false,
+        "authoredScale": 4
+      },
+      "sequence": [
+        "aura_mog_check/frame01",
+        "aura_mog_check/frame02",
+        "aura_mog_check/frame03",
+        "aura_mog_check/frame04",
+        "aura_mog_check/frame05",
+        "aura_mog_check/frame06",
+        "aura_mog_check/frame07",
+        "aura_mog_check/frame08"
+      ],
+      "frames": [
+        {
+          "frameKey": "frame01",
+          "rawSha256": "aa423a5405e5f12e8e5934d99f6dfcaf26a9e18270a8214cc168383125874ed4",
+          "requestId": "01a08d7d-5790-73d1-8579-2593190a7574",
+          "run": "seedream-rest-v1",
+          "promptSha256": "d9e4c4ab160963af51a80cba173e0a9fa1ce966fde8476ef22f05ed1aa1a0d32",
+          "poseSha256": "369773adc5b407be552206f35c7ffac83eaf8801650058b0fa3bde6a46e93072",
+          "runtimeSha256": "004d33122deb54e4fa28908a7e5b49a81bfc81ec613db5b718a92e00f3f26b5e",
+          "hqSha256": "77fa3df5b4f79505d99efe6906ae57a43d5df3e165ba90bfad6558550b13e7f9"
+        },
+        {
+          "frameKey": "frame02",
+          "rawSha256": "908682323c8689f1892c81cea540bd88da35ed628c28677455290fa74117d8a4",
+          "requestId": "01a08d7d-51ff-7d31-a537-23e28a1d0cf0",
+          "run": "seedream-rest-v1",
+          "promptSha256": "83df29b72c96e77072822ae9e2ab50095a6aa20264438f6b8b32463a6f8f47b7",
+          "poseSha256": "309965415a66cdee3265d72f8e21cec49d9a1fb19e6c6d0a9ef843d61d6043f6",
+          "runtimeSha256": "832251ccb16fd055cb1865c222eebf53f392be68fb96c325904dd1444549c55b",
+          "hqSha256": "17a6367cc57d48aa8ba343ba7e6e3f7e5fe9f6fd4c5e333bd838651cfea299e4"
+        },
+        {
+          "frameKey": "frame03",
+          "rawSha256": "5edb15f9d7804f938a9c5b3bde4505ab39f389f217547927b9d9f09bbe90b90a",
+          "requestId": "01a08d7d-838e-76f1-b9b8-addea9e1c033",
+          "run": "seedream-rest-v1",
+          "promptSha256": "96c3e524cf8c1487a9b45f695eb7b269e4b51485235e9edbd0a29e64182e8c78",
+          "poseSha256": "20fd67688ddd0401c982326cff9174c56803c1417efda865f3a391d16f718a84",
+          "runtimeSha256": "54a034e3ece98915cefef9a8cd192c5cca98d7ebd51f425d794f8f6c1debd8f0",
+          "hqSha256": "1db2a7c3cfd5e0aa7fc81d4c657ab172da63ef482825674da31f23b4dbe668ac"
+        },
+        {
+          "frameKey": "frame04",
+          "rawSha256": "40ed5ac70636566380ea59eb4591c2e449a4ff08b0d99084574ff609a25d6bb4",
+          "requestId": "01a08d7d-f870-7212-a97e-02945e40eac7",
+          "run": "seedream-rest-v1",
+          "promptSha256": "a82fa2af5207e5476022425a68e41bfe705e55de1bbee2ea6bb63340fb4fcb4b",
+          "poseSha256": "78234dbd1e8df79f39e9ebc94b3b4b9fd03a267aaaa382ee1bfe2a542a880e48",
+          "runtimeSha256": "2f237df43c5c3fd33d338a744abc46380d63dd0e0b2e6a93b1fdd1a65501a14c",
+          "hqSha256": "a74d15f4fc0e096b7de54675ec8544eb4945ddabb7471116d3e0ec423226f4a3"
+        },
+        {
+          "frameKey": "frame05",
+          "rawSha256": "41edb8051abfc8fda0b66c8ba671af0247f4d56cba3740674f7c751d99d76929",
+          "requestId": "01a08d7e-32e2-75d2-bec1-7d5d1a4e9925",
+          "run": "seedream-rest-v1",
+          "promptSha256": "cd3ec928e6bd6b51d7dd175acd3b828977233344c4c4006275f74a3a763b41bc",
+          "poseSha256": "a1aec9c399cdbc03cebdc2ed8271d3f411365d8043776f9adb52b5c7139606be",
+          "runtimeSha256": "b65fd83f9fa2583bd1a46bc265f545ebdb264f6aa523062ce99ae4b8e24eaff9",
+          "hqSha256": "3926a0dce60fa3e2f1b82fb06c6c242358cb201dab520fed3f749ad9e7d7a0b6"
+        },
+        {
+          "frameKey": "frame06",
+          "rawSha256": "e69f151b4725542fd5bc9c6158e558d85c8d5a43e54b7bae6e7f83eb38fe7b37",
+          "requestId": "01a08d7e-4f00-7b02-a522-a95032578dc4",
+          "run": "seedream-rest-v1",
+          "promptSha256": "22dd389a5f1f25f3ecc66ff6fb8b69a8ac1906743c8e57f925e67bb7891d84b0",
+          "poseSha256": "7d56464932fb913c0efdcb1aab22cfde56f64342af0d1ebd9c097533ebc103fd",
+          "runtimeSha256": "2e89876f0a87712440a98d75861f727b74eca32a430f9bd03ba9ce2580cf065c",
+          "hqSha256": "30ca9c3b44890773f0672c46514fec26aa6353a3c3e0d584668ad0fe792dbc93"
+        },
+        {
+          "frameKey": "frame07",
+          "rawSha256": "dc2f1e8aa14d3272d10ec9a7b27a8f67c5705188d02e7ec8893b041a4614494b",
+          "requestId": "01a08d7e-6f71-7ef0-bb88-b6d6afa31304",
+          "run": "seedream-rest-v1",
+          "promptSha256": "51b837d0137c65a223f69d6b5b9291ffcc7906079de2c03c3f6a45ac1be6b0cf",
+          "poseSha256": "636b094c3f08d54fa73dfca2207fb547f9dc3b1fb2f48ba7ccc37f56e80e9f85",
+          "runtimeSha256": "ee80a75e89943075a16d400d3ba0b4dc7de2cb34f9a01cc08df48311e5a79a73",
+          "hqSha256": "66af9f60422b40068f7ddac982e2175157627ad50487e5c6d265ec86ce9ccd40"
+        },
+        {
+          "frameKey": "frame08",
+          "rawSha256": "1252d47a51c76914a61c4a72f34e3776422b491a50887ad2300c00d455812a3d",
+          "requestId": "01a08d7e-cf22-7173-9c56-045df8449f52",
+          "run": "seedream-rest-v1",
+          "promptSha256": "46caa69554bef9c15384f335d0c43c0290017ce942e569a9b408b53db9d21272",
+          "poseSha256": "f0a9517fa3b9ffc25479e9746e843fb6967ae243cd2357ec2ab8cf83c6a710a6",
+          "runtimeSha256": "cd9faf5f8d38ae6e88bc9bb7d41d5e6c2ec21e48f82eabf27044418814e313e0",
+          "hqSha256": "7b146a888e09a3c740179d07b8ca528ccff8fec493d59d525fed73846da52501"
+        }
+      ],
+      "visualReview": {
+        "verdict": "pass",
+        "runtimeSha256": "c39349ddf249fd937eb8cfe805576381a88c5849e6409a5119d99865e8cdd722",
+        "reviewer": "Codex visual contact-sheet review",
+        "note": "Coherent jaw-check, forward lean and intentional enlarged blown-kiss face peak, then neutral recovery. One reviewed uniform 2% raster reduction of all frames keeps the peak clear of the top edge; no per-frame fit or generated repair."
+      },
+      "contactSheet": {
+        "path": "artifacts/aura-animation-canary/official-roster-v1/lamine-yamal/aura_mog_check-contact.webp",
+        "sha256": "ce185cd7e6c557ae421ee7e6e0bd11ee047a935700bf2756dd10b5d94870bdff"
+      }
+    },
+    {
+      "animationName": "aura_glide",
+      "runtime": {
+        "path": "public/assets/aura/lamine-yamal/aura_glide.png",
+        "sha256": "60a5e212612671cb58d7edc13f8afcac2d9a1ab649cc3eb08debf09fbb20a4e9",
+        "frameWidth": 192,
+        "frameHeight": 256,
+        "frameCount": 8
+      },
+      "hq": {
+        "path": ".artifacts/aura-roster-expansion/compiled/lamine-yamal/aura_glide/aura_glide-hq.png",
+        "sha256": "5ba8423582f3ff573528147e68470263c85a30a31e0c1a3a45887ce0f918c501",
+        "frameWidth": 768,
+        "frameHeight": 1024,
+        "frameCount": 8,
+        "retention": "Local immutable archive; not deployed"
+      },
+      "registration": {
+        "alphaThreshold": 32,
+        "referenceFrameIndices": [
+          0,
+          7
+        ],
+        "referenceBodyHeight": 224,
+        "referenceRootY": 239.5,
+        "bounds": [
+          {
+            "x": 59,
+            "y": 14,
+            "width": 80,
+            "height": 225
+          },
+          {
+            "x": 52,
+            "y": 14,
+            "width": 80,
+            "height": 225
+          },
+          {
+            "x": 46,
+            "y": 11,
+            "width": 73,
+            "height": 228
+          },
+          {
+            "x": 55,
+            "y": 18,
+            "width": 96,
+            "height": 221
+          },
+          {
+            "x": 48,
+            "y": 15,
+            "width": 97,
+            "height": 225
+          },
+          {
+            "x": 40,
+            "y": 18,
+            "width": 92,
+            "height": 221
+          },
+          {
+            "x": 61,
+            "y": 19,
+            "width": 64,
+            "height": 220
+          },
+          {
+            "x": 60,
+            "y": 17,
+            "width": 70,
+            "height": 223
+          }
+        ]
+      },
+      "policy": {
+        "generatedIndividually": true,
+        "wholeSheetGeneration": false,
+        "templatePixelsInFinal": false,
+        "fixedActionScale": true,
+        "scale": 0.49985994397759104,
+        "medianScale": 0.49985994397759104,
+        "actionScaleFactor": 1,
+        "individualFitClamp": false,
+        "authoredScale": 4
+      },
+      "sequence": [
+        "aura_glide/frame01",
+        "aura_glide/frame02",
+        "aura_glide/frame03",
+        "aura_glide/frame04",
+        "aura_glide/frame05",
+        "aura_glide/frame06",
+        "aura_glide/frame07",
+        "aura_glide/frame08"
+      ],
+      "frames": [
+        {
+          "frameKey": "frame01",
+          "rawSha256": "83f6c281bb64c8eea5907a467a280250171f3beced7d5afa305275e9e4d2c74e",
+          "requestId": "01a08d7f-163a-7a90-97dd-e86b82a492ab",
+          "run": "seedream-rest-v1",
+          "promptSha256": "357670efb6c29cb683d787a324e4e8d39720cd18648dfdf08f5c2e7b97c601e2",
+          "poseSha256": "bff2115ddd6611fe561266a281d5bc1a352b96c4a5e47eec242de094a57e4dac",
+          "runtimeSha256": "7dbb532f2c9982010952a81b62099572c3d0c760e9eed65248ba9420c3dc97a4",
+          "hqSha256": "7b3c4a6853b2726d93b01943243265af6e57d37917471d66c39efcecadb1fb74"
+        },
+        {
+          "frameKey": "frame02",
+          "rawSha256": "5a639c922ee679486619229661b80eeeec27044906507fddf27a33269b73aeec",
+          "requestId": "01a08d7f-3f74-7d91-8acc-40e3a943fd57",
+          "run": "seedream-rest-v1",
+          "promptSha256": "e676b103013b39ab5f54a81c73df383187986f245bc4e29d87be6fd348c90f40",
+          "poseSha256": "dd583279fa0f525c1a84853c4f3839fe3a2eda698e74187fa0fcb69bdceb6a91",
+          "runtimeSha256": "dcad248c87154c6c5c41bf64ed0796afec83d7dae819cd0d82c058144343e21c",
+          "hqSha256": "7e6b8c77a760deff4a1a01e102460a083c9af4840e42c1b5b998b3f2cfcd9d5e"
+        },
+        {
+          "frameKey": "frame03",
+          "rawSha256": "4c48aacd0b82bdf79465a87ebc9536b36b21376a6556e8c34a503e43f5cc9742",
+          "requestId": "01a08d7f-514e-7852-9f9d-dcdbdeaeb7f7",
+          "run": "seedream-rest-v1",
+          "promptSha256": "9d4ae870f5dd153077bef54f8bdcfa00841eb160c11df5b6fbbee5b736330dd7",
+          "poseSha256": "88cbfdc94dc85e095429b91eea8ab4fa515cad9efebfe7f7dfdd1d015825aba1",
+          "runtimeSha256": "87d982e1dcb9775edd3dd2e9c2641d99dcd8a421168b284e1dde1c1edac2b225",
+          "hqSha256": "9b6079a8f5e958b49f5b4dba9689b8c76bf56d05ff5d1ba0f769155796c0c998"
+        },
+        {
+          "frameKey": "frame04",
+          "rawSha256": "dcd5cc1817ec99b8abb0216c44c8cee6648104a4151e0e2c0a72e2e4a6942077",
+          "requestId": "01a08d7f-d6ec-7cc2-83b1-951ca92a81b5",
+          "run": "seedream-rest-v1",
+          "promptSha256": "9bd41c4056e33a9622cdc1e19e4fc66ae8edff7f88d265ae7810f6a0a63b9453",
+          "poseSha256": "85e094cbe90b72f21b26402d51a077e904a4db5d62a320ced9c3b46f76392e2f",
+          "runtimeSha256": "bb1eb510a64786b9a91eae1f5fa4d785478db0f4ba7c7fe8cb040cd67ee1e6ef",
+          "hqSha256": "8c9c60c885ec75f26eb8a0402fb40e43eaadc8e6c80bf36548988932e2e6db33"
+        },
+        {
+          "frameKey": "frame05",
+          "rawSha256": "2004adf79726460ab90c59f4005d9136d7efd11d40bc9722c59cfbea35031efc",
+          "requestId": "01a08d7f-fe12-7230-a045-24e4946efabc",
+          "run": "seedream-rest-v1",
+          "promptSha256": "de44719c0f4636366c800d3adb964ddbb19a9386e02170ee38c133a372b847f9",
+          "poseSha256": "3ed2327a15d36a67a37c86f105a5a0e67ed78611f5d591e172e21105fd03c915",
+          "runtimeSha256": "f82da27aabcf2e115205a4307c0655d9af3b59d60eee4eeecc65ce3e2b7eb0ef",
+          "hqSha256": "f6f68b8c48869f4410f5d2ff1c73806477139d943e6029b67dfa742baf802bf4"
+        },
+        {
+          "frameKey": "frame06",
+          "rawSha256": "47521c849c970fdbf7606ab2b44fdc5f1317654aa8bb65724537ee9406ce70c2",
+          "requestId": "01a08d80-48f7-7ff3-a402-32d2f784d15e",
+          "run": "seedream-rest-v1",
+          "promptSha256": "c5dbd990e862b92c3fd2a4e277ddc24af885507c7d90fbb8f88c174269da346b",
+          "poseSha256": "ae557f888bc19329931a1861a793f2c7ba3c09259b0009c7ce031c41d1f0b793",
+          "runtimeSha256": "b694dc5e6bde99b5c3cedeba6bc70720afdd707c3cdaa9343ba71d2a34d6cc2c",
+          "hqSha256": "1f68b446bbc6af27c4f9a0f40d6a840f4e83318a71740b1002a9addbb5e493e0"
+        },
+        {
+          "frameKey": "frame07",
+          "rawSha256": "549118a8241377092532751a123b669346e66eded0737e3df98ea39ecce6389a",
+          "requestId": "01a08d80-47da-71e3-b512-b9de90d98ad0",
+          "run": "seedream-rest-v1",
+          "promptSha256": "6a23a65d1087066e61b75f86687c99fde870840a587d41c7d5b34c6a620a3a47",
+          "poseSha256": "44bd10266d045aecc8030eefb4d44c33646cb9cf1f615d36443bcf2db0846e1c",
+          "runtimeSha256": "a397d93ef81483af5d3407d9abdd441c62c3493645bda1f3319e179b33f79e42",
+          "hqSha256": "74ca75e3fc76c57f337a2b9a10fc3c9b68b838981769668f5e04861c861d0310"
+        },
+        {
+          "frameKey": "frame08",
+          "rawSha256": "8591a87e5a4b3713193c6f0e8fbf2080c169fdfa18679bdad88b47ab7ddff9dd",
+          "requestId": "01a08d80-b9ad-7282-9549-985aa7cecf69",
+          "run": "seedream-rest-v1",
+          "promptSha256": "eb767fc3c0ab2a8fd833893bc08554abe540089fb318f025e052020eb62f2549",
+          "poseSha256": "c27e117205476c1ddba9c1742fe94ae0abef4cfbaaf09cd3f34afbcda1fd9292",
+          "runtimeSha256": "a46662af76b54edb8a8da3b1f183dac6cd3f869c939f3da7f7df98e733dab538",
+          "hqSha256": "7db936ea34060d23d4d23e8b1b958b509f8035a99b8401de0f5ad1173adf9b38"
+        }
+      ],
+      "visualReview": {
+        "verdict": "pass",
+        "runtimeSha256": "60a5e212612671cb58d7edc13f8afcac2d9a1ab649cc3eb08debf09fbb20a4e9",
+        "reviewer": "Codex visual contact-sheet review",
+        "note": "Natural heel/toe crossing glide with hands held behind back, full shoes visible, stable public canonical face/hair and outfit."
+      },
+      "contactSheet": {
+        "path": "artifacts/aura-animation-canary/official-roster-v1/lamine-yamal/aura_glide-contact.webp",
+        "sha256": "dcd9b81625a17d00ce44f7885478b679077e5a3d06e712871877e903912eead4"
+      }
+    },
+    {
+      "animationName": "aura_floor_worm",
+      "runtime": {
+        "path": "public/assets/aura/lamine-yamal/aura_floor_worm.png",
+        "sha256": "be01725e78f1d74bc036732fbaaf2a9da436120da91ec3b342c1966bd16fb666",
+        "frameWidth": 384,
+        "frameHeight": 256,
+        "frameCount": 8
+      },
+      "hq": {
+        "path": ".artifacts/aura-roster-expansion/compiled/lamine-yamal/aura_floor_worm/aura_floor_worm-hq.png",
+        "sha256": "ded557ceb483c73c0c648057ed5eecaa1d6ecb57de3e74f3b7a523890ead8a19",
+        "frameWidth": 1536,
+        "frameHeight": 1024,
+        "frameCount": 8,
+        "retention": "Local immutable archive; not deployed"
+      },
+      "registration": {
+        "alphaThreshold": 32,
+        "referenceFrameIndices": [
+          0,
+          7
+        ],
+        "referenceBodyHeight": 208.5,
+        "referenceRootY": 239,
+        "bounds": [
+          {
+            "x": 173,
+            "y": 31,
+            "width": 73,
+            "height": 208
+          },
+          {
+            "x": 169,
+            "y": 109,
+            "width": 109,
+            "height": 130
+          },
+          {
+            "x": 101,
+            "y": 121,
+            "width": 166,
+            "height": 118
+          },
+          {
+            "x": 90,
+            "y": 188,
+            "width": 174,
+            "height": 51
+          },
+          {
+            "x": 66,
+            "y": 105,
+            "width": 168,
+            "height": 134
+          },
+          {
+            "x": 89,
+            "y": 161,
+            "width": 172,
+            "height": 78
+          },
+          {
+            "x": 123,
+            "y": 123,
+            "width": 112,
+            "height": 116
+          },
+          {
+            "x": 174,
+            "y": 30,
+            "width": 72,
+            "height": 209
+          }
+        ]
+      },
+      "policy": {
+        "generatedIndividually": true,
+        "wholeSheetGeneration": false,
+        "templatePixelsInFinal": false,
+        "fixedActionScale": true,
+        "scale": 0.48840995271523735,
+        "medianScale": 0.48840995271523735,
+        "actionScaleFactor": 1,
+        "individualFitClamp": false,
+        "authoredScale": 4
+      },
+      "sequence": [
+        "aura_floor_worm/frame01",
+        "aura_floor_worm/frame02",
+        "aura_floor_worm/frame03",
+        "aura_floor_worm/frame04",
+        "aura_floor_worm/frame05",
+        "aura_floor_worm/frame06",
+        "aura_floor_worm/frame07",
+        "aura_floor_worm/frame08"
+      ],
+      "frames": [
+        {
+          "frameKey": "frame01",
+          "rawSha256": "293b836526ec538059cdc4d25ebd5fd3ad6fe2435935c533b6d7ad905e75f4c8",
+          "requestId": "01a08d80-d472-77b3-90ea-c4e98d69e3b3",
+          "run": "seedream-rest-v1",
+          "promptSha256": "f9c73640409cb921cb1db1bd170d0f26d945c50572bff254cba9852df552ddff",
+          "poseSha256": "f7a3466cb62aae915aa47bcf6a31745c70c58ac87c37aeefd54605e9cd3e7349",
+          "runtimeSha256": "cd981831061a0c1c3c2512e278106f2676fb001a0000a7746e33fe16d52d27b3",
+          "hqSha256": "e4eb4d6c694e37badba3aa29c4f191de53a1a3c9c611fab1ef247768b65f0acd"
+        },
+        {
+          "frameKey": "frame02",
+          "rawSha256": "563435928ee5a4f92e7ade01a088212ad4be2a35d75ac28f5cb45a2567b61896",
+          "requestId": "01a08d81-2eb2-7e63-94ba-6bed232c718b",
+          "run": "seedream-rest-v1",
+          "promptSha256": "2582f206c7f9fb6ea453324ad5c3ddd4046a2806a5aef1fe5bed5e14c3308b1d",
+          "poseSha256": "5e0548e3d9af6a37e8317133be56ee4e385a7a7b378fede83fa8881fb758dac6",
+          "runtimeSha256": "1fad9bf26c0becbf4e2db81335be9f4ccfb7a1351c2a6c381c9876a1e03bbd0e",
+          "hqSha256": "c6785f3cf9ac5793c216cd5faae331bb5c158a277874e1ce327bf1ec2fdf1bd3"
+        },
+        {
+          "frameKey": "frame03",
+          "rawSha256": "75ab96c61839103603bc931a23c0323d52569b3ee6c38c1a8e1af1d0a1c8b584",
+          "requestId": "01a08d81-2951-7c90-af49-48986b6c8543",
+          "run": "seedream-rest-v1",
+          "promptSha256": "f58b74e858998d81ffbf498fb2c45cf147cdf7d6ee8ed5598dde3e0b5e251f15",
+          "poseSha256": "537769efe3e4c5074366fc88d595e340b88ff859f66a04db777d5c2362fab681",
+          "runtimeSha256": "6a9f4173b4d8842d9fe7ba27dba3ed848bd55f87855ab92fe58d10165b6a6906",
+          "hqSha256": "2ccde1b94f8c424d4e5b86ef4dd92149ea479e753d16fc50a732dd5fee7e041a"
+        },
+        {
+          "frameKey": "frame04",
+          "rawSha256": "c35acebb04629b2d402c37c37756edd6d5a3165e375e12ee18dda23d1ab60fa0",
+          "requestId": "01a08d81-ae6a-7ba0-bf49-c0387c3eaa4a",
+          "run": "seedream-rest-v1",
+          "promptSha256": "afd5563ee37a1b1b6198624dc5bd1264f97a1686100db1c572419915063dd0e1",
+          "poseSha256": "61608f19f9838dcee3340c512e590f6995a33d797fd774e972e229623995aeed",
+          "runtimeSha256": "eba3725571bad9b75d2029e8af76b35b7ca6365ad7faaba91ab32d48b559fc83",
+          "hqSha256": "55044fb89e09111e3708b7f6c48e15532b429dc77a07f099897224be900981b0"
+        },
+        {
+          "frameKey": "frame05",
+          "rawSha256": "75230465aff9ed3c08e3c88690b0bca74dca4cc1aa07db601fcd297e56bd186a",
+          "requestId": "01a08d81-da2c-7ca3-9464-807eaa1a81a0",
+          "run": "seedream-rest-v1",
+          "promptSha256": "9c6231e99f0d67eb830485986c2368623f4cf0f31eb99e8acf54c6845d3ea9d4",
+          "poseSha256": "551f60d2f29ec0ff1ce9e903ff42464a78c23dd6590300ae3482be228946e7ad",
+          "runtimeSha256": "2705373a97869a5c2e16e19ada8507c208c5084dc728f4a494c29aa39c2b108f",
+          "hqSha256": "005b23125b39a4b8f79c32b95f9ee72dcf8d8b1fc744e3b5b88107e374bd3568"
+        },
+        {
+          "frameKey": "frame06",
+          "rawSha256": "f3279eb96a1c51012e3ebab8cc7ef561fa8a75e32e8e51708ef10fa94007f6f1",
+          "requestId": "01a08d82-0fee-7300-a8a8-73b40d9b2ccf",
+          "run": "seedream-rest-v1",
+          "promptSha256": "4d191b0de14f5db9d99e7014e375471aa602ab5234bd0f41f57b81ec2007efa9",
+          "poseSha256": "ff9f949955efe10bee1836134d3445e4b4dbad46db451c1ae965ace35b47f951",
+          "runtimeSha256": "8270e8274ced9f7dfc062185a953a1d32f2de35273cf95b4f1e6c15032a7a88a",
+          "hqSha256": "64e1a2a606308fb6bb08de4fe3f54589bda40177c6260d9b58e4ae559b01b228"
+        },
+        {
+          "frameKey": "frame07",
+          "rawSha256": "2969f767956ff11d761774c16512b974e2e939fdd3644d3e2c4a4f32cb9a4867",
+          "requestId": "01a08d82-165d-7221-9789-08f247c08aa7",
+          "run": "seedream-rest-v1",
+          "promptSha256": "c25bbd88a351ef59696bed21a543a862d8077f455b93c1538911a8bea2ed39ab",
+          "poseSha256": "1ad211e3329d6f24a15feebd65d083282b161c03ac56faaccd96322300bdc67b",
+          "runtimeSha256": "1e365ed5280ce828f7f15d94e9b8d15fb9a77daa393530d56d236f234186a602",
+          "hqSha256": "01a6a18c2987814205720e6bfa0182b1cf0a4451daed7cc612b5ce17493fe019"
+        },
+        {
+          "frameKey": "frame08",
+          "rawSha256": "3b152c9b6fa82559efa8244b8d9040109354cc0760d55f436ee30babc101b945",
+          "requestId": "01a08d82-a6f5-7fb3-8add-39e54e11e775",
+          "run": "seedream-rest-v1",
+          "promptSha256": "92de8f9e44e4fe32a16f1faffb8b6e8e0c22aa6d1d9986c85c3c3a6ebf8abe9d",
+          "poseSha256": "0306afb8ffe82e46161318142c56ff4e8f1104d98278dfb1cededee87dcb51cc",
+          "runtimeSha256": "161effac19e35c599afae99c761a1efa216cd6689a445e26b0eaaf74f94b9f55",
+          "hqSha256": "1dfdb89c8b003836215a76c431c30a415a81c2279ec303c15b5af836bb1c7ed3"
+        }
+      ],
+      "visualReview": {
+        "verdict": "pass",
+        "runtimeSha256": "be01725e78f1d74bc036732fbaaf2a9da436120da91ec3b342c1966bd16fb666",
+        "reviewer": "Codex visual contact-sheet review",
+        "note": "Full upright-to-crouch-to-prone wave and supported chest lift; full legs, hands and white shoes remain visible, then recovers upright."
+      },
+      "contactSheet": {
+        "path": "artifacts/aura-animation-canary/official-roster-v1/lamine-yamal/aura_floor_worm-contact.webp",
+        "sha256": "df7a84ac10f6bd8fef603157d5476a34293c683a4778e19b43240014f88f15a5"
+      }
+    },
+    {
+      "animationName": "aura_one_leg",
+      "runtime": {
+        "path": "public/assets/aura/lamine-yamal/aura_one_leg.png",
+        "sha256": "c7407308ed9d1b2bcf02eea4f1501c338d79f1eb78863b1d7a4bb344c4f0d732",
+        "frameWidth": 256,
+        "frameHeight": 256,
+        "frameCount": 8
+      },
+      "hq": {
+        "path": ".artifacts/aura-roster-expansion/compiled/lamine-yamal/aura_one_leg/aura_one_leg-hq.png",
+        "sha256": "c5f24bdafdede83d5e1b03f3b48f65cd2493ef66be88ffb01d192234bdb30526",
+        "frameWidth": 1024,
+        "frameHeight": 1024,
+        "frameCount": 8,
+        "retention": "Local immutable archive; not deployed"
+      },
+      "registration": {
+        "alphaThreshold": 32,
+        "referenceFrameIndices": [
+          0,
+          7
+        ],
+        "referenceBodyHeight": 226.5,
+        "referenceRootY": 239,
+        "bounds": [
+          {
+            "x": 102,
+            "y": 16,
+            "width": 62,
+            "height": 223
+          },
+          {
+            "x": 68,
+            "y": 23,
+            "width": 169,
+            "height": 216
+          },
+          {
+            "x": 70,
+            "y": 45,
+            "width": 166,
+            "height": 194
+          },
+          {
+            "x": 83,
+            "y": 29,
+            "width": 156,
+            "height": 210
+          },
+          {
+            "x": 69,
+            "y": 31,
+            "width": 162,
+            "height": 208
+          },
+          {
+            "x": 61,
+            "y": 22,
+            "width": 159,
+            "height": 217
+          },
+          {
+            "x": 68,
+            "y": 21,
+            "width": 129,
+            "height": 218
+          },
+          {
+            "x": 101,
+            "y": 9,
+            "width": 64,
+            "height": 230
+          }
+        ]
+      },
+      "policy": {
+        "generatedIndividually": true,
+        "wholeSheetGeneration": false,
+        "templatePixelsInFinal": false,
+        "fixedActionScale": true,
+        "scale": 0.49928676922957493,
+        "medianScale": 0.49928676922957493,
+        "actionScaleFactor": 1,
+        "individualFitClamp": false,
+        "authoredScale": 4
+      },
+      "sequence": [
+        "aura_one_leg/frame01",
+        "aura_one_leg/frame02",
+        "aura_one_leg/frame03",
+        "aura_one_leg/frame04",
+        "aura_one_leg/frame05",
+        "aura_one_leg/frame06",
+        "aura_one_leg/frame07",
+        "aura_one_leg/frame08"
+      ],
+      "frames": [
+        {
+          "frameKey": "frame01",
+          "rawSha256": "ce20fdfd834b4920a34c2789e4771c24a432485e93d8b563b13b3d7eb75d522b",
+          "requestId": "01a08d82-ae4c-73a3-9638-98e1eddc0816",
+          "run": "seedream-rest-v1",
+          "promptSha256": "4c8ca20a3a9c3104b7030d9c1aa7840a568ebc639e4eda9148b2b41a8d93bd5e",
+          "poseSha256": "19e1e7c808dc069d4e43950146307166a826dd23155f9e9e724324d45a79f216",
+          "runtimeSha256": "f3996f88100972501705fb5dec9a24922fb0812f3989ec894799f0513a7df396",
+          "hqSha256": "c376cb20a8fe82f0c3b2ef99737afb58b1abd1ba2176c2fef27c30e6b47f73ba"
+        },
+        {
+          "frameKey": "frame02",
+          "rawSha256": "fcf617424bc62a484a537911bb7baae73f13c4a3d85b8f503f65ae2ae330b5f1",
+          "requestId": "01a08d82-f774-7402-8b6c-7f7a5a77d89e",
+          "run": "seedream-rest-v1",
+          "promptSha256": "843f14f8bb57908d4b9db5f8514fd3fb64c4b5ec4804fe53fb2f72f5c52f31a6",
+          "poseSha256": "c2fbb64e0de24941a52b512ec38cb33fd7ceb672224f6ec8e9cd2d1169f7577f",
+          "runtimeSha256": "84567317621446bca11a4b24a5aea8282078bb28949129565b882fe41be79ee6",
+          "hqSha256": "f32bffbad5590788de07d32ca8b82c08d15d41f011f8c82ae574e3d0ae2f740b"
+        },
+        {
+          "frameKey": "frame03",
+          "rawSha256": "ba63d5fe2fe2cc155b47642bc10c3e837a1c2232d8727bab61b1c8245332534e",
+          "requestId": "01a08d82-f2b8-7fb0-96f2-0be2a498359b",
+          "run": "seedream-rest-v1",
+          "promptSha256": "6cefb1a2fd5f4036128238e44c1ab2769e26879e5a2a53fdfb0bd5b8ab978936",
+          "poseSha256": "19672d52ce5bd7bc8bc20e61df3ef75edf4224054286eed9198f7583d749489b",
+          "runtimeSha256": "8e9ec1f7d1d13f16dea92fd5f64eb68e6e71a8a0388ceff5b912d96e09a0c555",
+          "hqSha256": "9234d661a350f1090e93a98e6a77ac68394bd2722064c5c44c01b57abe5c5258"
+        },
+        {
+          "frameKey": "frame04",
+          "rawSha256": "8938496948be82179cfc826c7618ee8d2b077039fc1e09a3bc896f839fabfc29",
+          "requestId": "01a08d6e-d0a7-7182-badc-db602f88a653",
+          "run": "seedream-v1",
+          "promptSha256": "0cfb6b95a8bce37892d52138ac6da11794877e2bdf4349dede51b2b728be8ab9",
+          "poseSha256": "6b442a1682da3cf2c0c70ae52dab9220752a207bab8f6d8e104c01db045d3425",
+          "runtimeSha256": "f3f7437394165fc25e831d03ae8d611020d58f57835415761795f5cc1195e03c",
+          "hqSha256": "1d82a5846c0e934401590eabefffe20ef4be7a7b2f9d818798d0848dcc250f4f"
+        },
+        {
+          "frameKey": "frame05",
+          "rawSha256": "eaea509d5a8aab874ecb7b2310a37d96948990e4bc3d4f9b09e46df50c0f6313",
+          "requestId": "01a08d83-7c1b-7b11-aec8-1a66d0e89818",
+          "run": "seedream-rest-v1",
+          "promptSha256": "aff713f10718f296bd7ce2c0980031c6925e275aef644124ee6273c7237d77e2",
+          "poseSha256": "cba20f429a98996a05d48d8e786282f3e39255bf77e95d54d8d5ed3610bb4643",
+          "runtimeSha256": "e18e509e300d9a82d6a669b67257fba2420f7c7f5365cfb50e965e769b23f0d5",
+          "hqSha256": "395ffceafceb9a91364eb01a0a180301b1f39df98cbc393f4a2adf64c4a9eb47"
+        },
+        {
+          "frameKey": "frame06",
+          "rawSha256": "159452bdb4157ec9f6e12bf0844587f2d332b17da0083bf5d8a13ec641eee1df",
+          "requestId": "01a08d83-a45b-72f1-b666-c7d9d1237964",
+          "run": "seedream-rest-v1",
+          "promptSha256": "5f3d4dde0535046aa066727b42daff3bb4e5d4e3b05f8b23df3ad80334c395b4",
+          "poseSha256": "9ee0230de99b7c2bfaeb8ad74304db6bc86aea16dbf3437db9b064435a5459da",
+          "runtimeSha256": "18a3602c122850c746859ee27604c9bb2e11107b3af1fd3984d654f5a486be7e",
+          "hqSha256": "c12eadd5f52aec1e24e9e3b489cb963eeaecce57b701848fcdd3ec0b0ce3a487"
+        },
+        {
+          "frameKey": "frame07",
+          "rawSha256": "d0fe6d600f3fc1d54d1f2ed7e76b70123ea7d7f24b666701511ded8f95d98a7d",
+          "requestId": "01a08d83-e598-7013-8ca3-58146c01b00c",
+          "run": "seedream-rest-v1",
+          "promptSha256": "26ecb149639272806b832939780b04c8bb64eaa8165f8a27a7bb5f38d7cf4d19",
+          "poseSha256": "5fde73503396ccfd88b73e499ad09abcfcf3184db54aed3281f9609355698ea0",
+          "runtimeSha256": "25501d9e5759f8c11271e2ddbf60bc9c5d80bcc047b64bf4f6e500c2b40a8b55",
+          "hqSha256": "0b01ed75f5e86038601169be3fb0dde49d735b4f34ea0e6147e2c6ae228a2f6d"
+        },
+        {
+          "frameKey": "frame08",
+          "rawSha256": "2189a35b69540bc21a3d0a6986c717b95815145b9b5d3ac88f61a5adfc533a21",
+          "requestId": "01a08d83-ed29-73a0-aba5-30a25836aad0",
+          "run": "seedream-rest-v1",
+          "promptSha256": "c3fa28d841b51f6cbc503e408373802fc5ba62c3148e34edd6b02525857d5986",
+          "poseSha256": "ed0884abf1f92f6ac3ea450f722c1e33a8b6c55fb78cc817ab70aabdf918ad87",
+          "runtimeSha256": "f280b5a52ffb303d92f7cbf6048b3497ae6d71c519746922366fda0365dd6e33",
+          "hqSha256": "7227ee12389133519d4520d131778e46038682e9659651f55c4752307699ba5d"
+        }
+      ],
+      "visualReview": {
+        "verdict": "pass",
+        "runtimeSha256": "c7407308ed9d1b2bcf02eea4f1501c338d79f1eb78863b1d7a4bb344c4f0d732",
+        "reviewer": "Codex visual contact-sheet review",
+        "note": "Neutral entry/recovery, stable same-side grip on the raised ankle through compression/hop, opposite open hand for balance and clear release. Identity, clothing and full anatomy retained."
+      },
+      "contactSheet": {
+        "path": "artifacts/aura-animation-canary/official-roster-v1/lamine-yamal/aura_one_leg-contact.webp",
+        "sha256": "76cc72c3a87f2daae63937e78e563600d43cb1ddd12172bd89000c64392ce188"
+      }
+    }
+  ]
+}
