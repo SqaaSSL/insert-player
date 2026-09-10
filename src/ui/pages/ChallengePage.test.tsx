@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ChallengePage } from './ChallengePage.tsx';
 import { ChallengesPage } from './ChallengesPage.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
+import { AuraChallengeComposer } from '../components/AuraChallengeComposer.tsx';
 import { createAuraChallenge, createAuraChallengeRoutine, encodeAuraChallenge } from '../../game/aura/AuraChallenge.ts';
 import { DEFAULT_AURA_TRACK } from '../../game/aura/AuraTracks.ts';
 import { AuraBattle } from '../../game/aura/AuraBattle.ts';
@@ -29,7 +30,28 @@ describe('Aura challenge entry and result surfaces', () => {
     expect(markup).toContain('Play this challenge');
     expect(markup).toContain('No account or photo needed');
     expect(markup).toContain('does not count toward ranked results');
+    expect(markup).toContain('your friend’s score is the challenge');
     expect(markup).not.toContain('<main');
+  });
+
+  it('accurately describes a recipient-owned character after creation without changing the target', () => {
+    const markup = renderToStaticMarkup(<ChallengePage token={encodeAuraChallenge(challenge)} preferredPlayerPhotoHash="recipient-private-photo"
+      onPlay={vi.fn()} onBack={vi.fn()} onCreatePlayer={vi.fn()} />);
+    expect(markup).toContain('Play with my character');
+    expect(markup).toContain('Your character is selected');
+    expect(markup).toContain('1,000');
+    expect(markup).not.toContain('Play free with Nova');
+    expect(markup).not.toContain('recipient-private-photo');
+    expect(markup).not.toContain('Create my Aura character');
+  });
+
+  it('offers a direct copy action and names the reply when returning a score', () => {
+    const markup = renderToStaticMarkup(<AuraChallengeComposer routine={routine} scores={[{ slot: 0, name: 'Sam', score: 1_200 }]} replyTo="Alex" />);
+    expect(markup).toContain('Send your score back');
+    expect(markup).toContain('Share score back');
+    expect(markup).toContain('Copy challenge link');
+    expect(markup).toContain('Alex gets this exact song, routine and difficulty');
+    expect(markup).toContain('Your character, photos and match video are not attached');
   });
 
   it('does not offer a play action for malformed or incompatible links', () => {
@@ -44,7 +66,7 @@ describe('Aura challenge entry and result surfaces', () => {
     expect(markup).toContain('200 points ahead');
     expect(markup).toContain('CPU result below is separate');
     expect(markup).toContain('Retry this challenge');
-    expect(markup).toContain('Share this challenge');
+    expect(markup).toContain('Share score back');
     expect(markup).toContain('Name shown in the link');
     expect(markup).toContain('Create my Aura character');
     expect(markup).toContain('A match video is not available');

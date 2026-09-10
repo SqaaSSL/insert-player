@@ -10,6 +10,7 @@ import { trackProductEvent } from '../../services/ProductEvents.ts';
 
 interface AuraBattleResultsProps {
   summary: AuraBattleCompleteDetail;
+  trial?: boolean;
   capture?: AuraCaptureDetail | null;
   localSlot?: 0 | 1;
   onlineRematch?: OnlineRematchStateDetail;
@@ -29,6 +30,7 @@ function resultHeadline(summary: AuraBattleCompleteDetail): string {
 export function AuraBattleResults({
   summary,
   capture = null,
+  trial = false,
   localSlot,
   onlineRematch = { state: 'idle' },
   disableRematch = false,
@@ -38,6 +40,8 @@ export function AuraBattleResults({
   onRemix,
   onExit,
 }: AuraBattleResultsProps) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { panelRef.current?.focus(); }, [summary]);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [shareError, setShareError] = useState(false);
   const [sharing, setSharing] = useState(false);
@@ -103,7 +107,18 @@ export function AuraBattleResults({
   return (
     <section className="aura-results" role="dialog" aria-modal="true" aria-label="Aura Battle result">
       <div className="aura-results__veil" aria-hidden="true" />
-      <div className="aura-results__panel">
+      <div className="aura-results__panel" ref={panelRef} tabIndex={-1} onKeyDown={event => {
+        if (event.key !== 'Tab') return;
+        const controls = panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), video[controls], [tabindex="0"]');
+        if (!controls?.length) return;
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) {
+          event.preventDefault(); last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first.focus();
+        }
+      }}>
         <p className="aura-results__eyebrow">
           {localSlot === undefined
             ? 'THE ROOM HAS DECIDED'
@@ -141,9 +156,16 @@ export function AuraBattleResults({
           </article>
         </div>
 
+        {trial && onCreatePlayer ? <div className="aura-results__rookie">
+          <div><h3>Your moves. Your face. Your next battle.</h3>
+            <p>Turn one photo into your Rookie Aura with six moves. Your first Rookie is included with your account.</p></div>
+          <button type="button" className="asf-btn asf-btn--primary" onClick={onCreatePlayer}>Create my Rookie Aura</button>
+        </div> : null}
+
         {summary.challengeRoutine && summary.challengeShareSlots?.length ? (
           <AuraChallengeComposer key={`${summary.challengeRoutine.chartId}:${summary.p1Score.score}:${summary.p2Score.score}`}
             routine={summary.challengeRoutine}
+            replyTo={summary.challenge?.name}
             scores={summary.challengeShareSlots.map(slot => ({ slot,
               name: slot === 0 ? summary.p1Name : summary.p2Name,
               score: slot === 0 ? summary.p1Score.score : summary.p2Score.score }))}
@@ -198,7 +220,7 @@ export function AuraBattleResults({
                   : challenge ? 'Retry this challenge' : 'Run It Back'}
           </button>
           {onRemix ? <button type="button" className="asf-btn" onClick={onRemix}>Remix Routine</button> : null}
-          {onCreatePlayer ? <button type="button" className="asf-btn" onClick={onCreatePlayer}>Create my Aura character</button> : null}
+          {onCreatePlayer && !trial ? <button type="button" className="asf-btn" onClick={onCreatePlayer}>Create my Aura character</button> : null}
           <button type="button" className="asf-btn asf-btn--ghost" onClick={onExit}>{localSlot === undefined ? 'Menu' : 'Back To Lobby'}</button>
         </div>
       </div>

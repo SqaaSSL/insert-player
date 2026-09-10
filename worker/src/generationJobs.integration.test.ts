@@ -1912,7 +1912,8 @@ describe('durable package capability authorization', () => {
       await db.prepare("UPDATE generation_charges SET creation_package = 'aura', animation_plan_json = ? WHERE id = ?").bind(JSON.stringify(plan), PURCHASE_ID).run();
       const created = await createGenerationJob(packageRequest(), env, auth);
       expect(created.status).toBe(202);
-      const { job } = await created.json() as { job: { creationPackage: string; progressTotal: number; pendingStages: string[] } };
+      const { job } = await created.json() as { job: { tier: string; creationPackage: string; progressTotal: number; pendingStages: string[] } };
+      expect(job.tier).toBe('rookie');
       expect(job.creationPackage).toBe('aura');
       expect(job.progressTotal).toBe(9);
       expect(job.pendingStages).toEqual(['source:side', 'source:upright', 'source:crouch', ...plan.map((name) => `sprite:${name}`)]);

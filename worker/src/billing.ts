@@ -1287,6 +1287,12 @@ export async function authorizeGenerationPurchase(
     }
   }
 
+  // Another request can consume the included Rookie after the account read.
+  // If its atomic reservation lost that race, never turn a confirmed free
+  // creation into a credit purchase without showing the new price first.
+  if (body.expectedCredits !== undefined && body.expectedCredits !== requiredCredits) {
+    return json({ error: 'Review the current package quote before continuing', code: 'package_quote_changed', requiredCredits }, 409);
+  }
   const purchaseId = generateId();
   const ledgerId = generateId();
   const expiresAt = reservationExpiresAt();

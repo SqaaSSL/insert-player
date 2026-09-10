@@ -1,4 +1,5 @@
 import { AuraCrowdDynamics } from './AuraCrowdDynamics.ts';
+import { isVerifiedAuraChallengeMusicUrl } from '../aura/AuraChallengeMedia.ts';
 import { AURA_MOVE_SOUNDS } from './AuraMoveSound.ts';
 import type { AuraAnimationName } from '../../services/FighterAssetPacks.ts';
 
@@ -58,7 +59,7 @@ function createAudio(url: string): HTMLAudioElement {
   const audio = new Audio();
   // Set before src: Web Audio must never reroute a CORS-tainted element,
   // which would replace otherwise audible HTML playback with silence.
-  if (isLocalAudioUrl(url)) audio.crossOrigin = 'anonymous';
+  if (isLocalAudioUrl(url) || isVerifiedAuraChallengeMusicUrl(url)) audio.crossOrigin = 'anonymous';
   audio.src = url;
   return audio;
 }
@@ -143,7 +144,8 @@ export class SoundManager {
 
   private canRecordMedia(): boolean {
     return [this.battleMusic, ...this.auraCrowd.map(layer => layer.audio)]
-      .every(audio => !audio || (!audio.error && audio.crossOrigin === 'anonymous' && isLocalAudioUrl(audio.src)));
+      .every(audio => !audio || (!audio.error && audio.crossOrigin === 'anonymous'
+        && (isLocalAudioUrl(audio.src) || isVerifiedAuraChallengeMusicUrl(audio.src))));
   }
 
   private connectRecordingMedia(): void {

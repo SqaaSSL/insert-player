@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BATTLE_MUSIC_VOLUME, SoundManager } from './SoundManager.ts';
 import type { AuraAnimationName } from '../../services/FighterAssetPacks.ts';
+import { AURA_CHALLENGE_ASSETS } from '../aura/AuraChallengeAssets.ts';
+import { prepareAuraChallengeMusic, createAuraChallengeMusicUrl, revokeAuraChallengeMusicUrl } from '../aura/AuraChallengeMedia.ts';
+import { createAuraChallenge, createAuraChallengeRoutine } from '../aura/AuraChallenge.ts';
+import { DEFAULT_AURA_TRACK } from '../aura/AuraTracks.ts';
 
 class FakeAudio {
   static instances: FakeAudio[] = [];
@@ -96,6 +100,43 @@ describe('SoundManager recording mix', () => {
     FakeAudio.instances = [];
     FakeAudioContext.instances = [];
     FakeAudioContext.initialState = 'running';
+  });
+
+  it('records hash-verified challenge blob music together with the crowd, never an arbitrary blob', async () => {
+    // The separate media tests verify real public bytes. Here only native
+    // hashing/network are replaced so this graph test needs no Node/browser IO.
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(url)));
+    const digest = vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (_algorithm, data) => {
+      const url = new TextDecoder().decode(data as ArrayBuffer);
+      const asset = Object.values(AURA_CHALLENGE_ASSETS).find(asset => asset.url === url);
+      if (!asset) throw new Error('Unexpected challenge fixture');
+      return Uint8Array.from(asset.sha256.match(/../g)!, value => parseInt(value, 16)).buffer;
+    });
+    const challenge = createAuraChallenge(createAuraChallengeRoutine(1234, 'viral', DEFAULT_AURA_TRACK.id, 'insert-player-arena')!, 'Player', 500);
+    const music = await prepareAuraChallengeMusic(challenge, new AbortController().signal);
+    const verifiedUrl = createAuraChallengeMusicUrl(music);
+    const arbitraryUrl = URL.createObjectURL(new Blob(['private audio'], { type: 'audio/mpeg' }));
+    const sound = new SoundManager();
+    try {
+      sound.startBattleMusic(verifiedUrl);
+      sound.startAuraCrowd();
+      const tracks = sound.getRecordingAudioTracks();
+      expect(tracks).toHaveLength(1);
+      const ctx = FakeAudioContext.instances[0];
+      expect(ctx.media).toHaveLength(5);
+      expect(ctx.media[0].audio.src).toBe(verifiedUrl);
+      expect(ctx.media[0].audio.assignments).toEqual(['crossOrigin', 'src']);
+      expect(ctx.media[0].source.connected.has(ctx.recordingDestination)).toBe(true);
+      expect(ctx.media[0].source.connected.has(ctx.destination)).toBe(true);
+      sound.startBattleMusic(arbitraryUrl);
+      expect(sound.getRecordingAudioTracks()).toEqual([]);
+      expect(ctx.media.some(layer => layer.audio.src === arbitraryUrl)).toBe(false);
+    } finally {
+      sound.destroy();
+      revokeAuraChallengeMusicUrl(verifiedUrl);
+      URL.revokeObjectURL(arbitraryUrl);
+      digest.mockRestore();
+    }
   });
 
   it('keeps ordinary HTML playback lazy and configures local CORS before src', () => {

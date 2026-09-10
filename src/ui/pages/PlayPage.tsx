@@ -24,7 +24,7 @@ export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges
           <h2 id="play-aura-title">Aura</h2>
           <p className="product-entry__promise">Hit the beat. Win the crowd.</p>
           <p className="product-entry__description">Take a turn, earn your moment, and send a friend the challenge. Start with a ready-made character.</p>
-          <GameEntryPlayButton mode="aura" onPlay={onPlay} />
+          <GameEntryPlayButton mode="aura" onPlay={onPlay} label="Play Aura" />
           <button className="product-entry__text-link" type="button" onClick={() => onExplore('aura')}>Meet Aura →</button>
         </div>
         <div className="product-entry__hero-art"><GameEntryPreview mode="aura" /></div>

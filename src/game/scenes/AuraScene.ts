@@ -74,9 +74,13 @@ import {
 } from '../aura/AuraPresentationEvents.ts';
 import type { AuraAnimationName } from '../../services/FighterAssetPacks.ts';
 import { AuraMusicClock } from '../aura/AuraMusicClock.ts';
+import {
+  AuraOnboarding, AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT,
+  canGuideAuraFirstBattle, type AuraOnboardingDetail,
+} from '../aura/AuraOnboarding.ts';
 import { createAuraChallengeRoutine, isValidAuraChallengeMatch } from '../aura/AuraChallenge.ts';
 import { auraDemoPerformer } from '../aura/AuraDemoPerformers.ts';
-import { prepareAuraChallengeMusic } from '../aura/AuraChallengeMedia.ts';
+import { prepareAuraChallengeMusic, createAuraChallengeMusicUrl, revokeAuraChallengeMusicUrl } from '../aura/AuraChallengeMedia.ts';
 import { AuraRecorder } from '../aura/AuraRecording.ts';
 import { AuraVideoRecorder } from '../aura/AuraVideoRecorder.ts';
 import { AURA_CAPTURE_EVENT, type AuraCaptureDetail } from '../aura/AuraCapture.ts';
@@ -348,6 +352,9 @@ export class AuraScene extends Phaser.Scene {
   private presentationReady = false;
   private presentationToken = 0;
   private presentationStarted = false;
+  private onboarding: AuraOnboarding | null = null;
+  private onboardingGraphics: Phaser.GameObjects.Graphics | null = null;
+  private lastOnboardingState: string | null = null;
 
   constructor() {
     super({ key: 'AuraScene' });
@@ -357,6 +364,9 @@ export class AuraScene extends Phaser.Scene {
     this.matchData = data;
     this.presentationReady = false;
     this.presentationStarted = false;
+    this.onboarding = null;
+    this.onboardingGraphics = null;
+    this.lastOnboardingState = null;
     this.captureErrorReported = false;
     this.difficultyId = getAuraDifficulty(data.auraDifficulty).id;
     this.remix = data.remix ?? 0;
@@ -443,7 +453,7 @@ export class AuraScene extends Phaser.Scene {
       try {
         const music = await prepareAuraChallengeMusic(this.matchData.auraChallenge, this.challengeMediaAbort.signal);
         if (!this.isCurrentLifecycle(epoch)) return;
-        this.challengeMusicUrl = URL.createObjectURL(music);
+        this.challengeMusicUrl = createAuraChallengeMusicUrl(music);
       } catch (error) {
         if (this.isCurrentLifecycle(epoch)) {
           debugWarn('[AuraScene] Challenge media could not be verified', error);
@@ -456,6 +466,7 @@ export class AuraScene extends Phaser.Scene {
     window.addEventListener(PAUSE_EVENT, this.onPause);
     window.addEventListener(AURA_INPUT_EVENT, this.onAuraInput);
     window.addEventListener(AURA_PRESENTATION_START_EVENT, this.onPresentationStart);
+    window.addEventListener(AURA_ONBOARDING_SKIP_EVENT, this.onOnboardingSkip);
     this.setMatchActionsVisible(false);
 
     this.resolvedStageId = this.stageId ?? DEFAULT_AURA_STAGE_ID;
@@ -543,12 +554,100 @@ export class AuraScene extends Phaser.Scene {
     if (!this.lifecycleActive || !this.presentationReady || this.presentationStarted
       || detail?.token !== this.presentationToken || detail?.seed !== this.matchSeed) return;
     this.presentationStarted = true;
+    if (detail.onboarding === true && canGuideAuraFirstBattle(this.matchData)) {
+      this.startOnboarding();
+      return;
+    }
     if (this.online) {
       // Network readiness includes the curtain, so neither peer starts blind.
       this.localOnlineReady = true;
       this.announceOnlineReady();
     } else this.beginClock(0);
     this.emitPresentationTurn(this.chart.turns[0]?.slot ?? 0);
+  };
+
+  private startOnboarding(): void {
+    this.onboarding = new AuraOnboarding();
+    this.onboardingGraphics = this.add.graphics();
+    this.uiLayer.add(this.onboardingGraphics);
+    this.focusPerformer(0);
+    this.drawLanes(0);
+    this.drawOnboardingPractice();
+    this.emitOnboarding();
+  }
+
+  private emitOnboarding(): void {
+    if (!this.onboarding) return;
+    const detail: AuraOnboardingDetail = {
+      token: this.presentationToken, seed: this.matchSeed,
+      ...this.onboarding.snapshot, laneKeys: this.primaryLaneKeys(),
+    };
+    const state = JSON.stringify(detail);
+    if (state === this.lastOnboardingState) return;
+    this.lastOnboardingState = state;
+    window.dispatchEvent(new CustomEvent(AURA_ONBOARDING_EVENT, { detail }));
+  }
+
+  private drawOnboardingPractice(): void {
+    const guide = this.onboarding;
+    const graphics = this.onboardingGraphics;
+    if (!guide || !graphics) return;
+    const { phase, practiceLane, completedLanes } = guide.snapshot;
+    graphics.clear();
+    if (phase !== 'practice' || practiceLane === null) return;
+    const lane = this.laneLayout(0, practiceLane);
+    const tone = LANE_TONES[practiceLane];
+    const progress = guide.practiceProgress;
+    graphics.fillStyle(tone, 0.12);
+    graphics.fillRect(lane.startX - LANE_HALF_WIDTH, lane.startY,
+      LANE_HALF_WIDTH * 2, lane.targetY - lane.startY);
+    strokeChamfered(graphics, lane.targetX - RECEPTOR_WIDTH / 2 - 3,
+      lane.targetY - RECEPTOR_HEIGHT / 2 - 3, RECEPTOR_WIDTH + 6, RECEPTOR_HEIGHT + 6,
+      5, progress === 1 ? 3 : 1, HEAT, progress === 1 ? 1 : 0.6);
+    drawNoteGlyph(graphics, lane.startX,
+      Phaser.Math.Linear(lane.startY, lane.targetY, progress), tone, true);
+    const key = this.primaryLaneKeys()[practiceLane];
+    this.turnText.setText(`PRACTICE · ${completedLanes + 1}/4 · NO SCORE YET`);
+    this.highwayTitleText.setText(progress === 1 ? `HIT ${key} NOW` : `FOLLOW LANE ${practiceLane + 1}`).setVisible(true);
+    this.highwayMetaText.setText(`PRESS ${key} · OR TAP LANE ${practiceLane + 1}`).setVisible(true);
+  }
+
+  private handlePracticeInput(slot: AuraSlot, lane: AuraLane): void {
+    if (!this.onboarding || slot !== 0 || !Number.isInteger(lane) || lane < 0 || lane > 3) return;
+    const outcome = this.onboarding.practiceInput(lane);
+    if (outcome === 'hit' || outcome === 'start-battle') {
+      this.flashLaneInput(0, lane);
+      // A real, owned Aura move demonstrates what the rhythm controls. This
+      // feedback never touches the battle, crowd score or action recording.
+      const move = (['aura_six_seven', 'aura_mog_check', 'aura_glide', 'aura_one_leg'] as const)[lane];
+      const performance = this.auraPerformanceViews[0];
+      if (performance?.play(move)) {
+        this.fighters[0].forceState(FighterState.IDLE);
+        performance.update(0, this.views[0]);
+        this.comicFeedback?.move(0, move);
+      }
+    }
+    this.drawOnboardingPractice();
+    this.emitOnboarding();
+    if (outcome === 'start-battle') this.startBattleAfterPractice();
+  }
+
+  private startBattleAfterPractice(): void {
+    this.onboardingGraphics?.clear();
+    this.updateTurnPresentation(-1);
+    this.beginClock(0);
+    this.emitPresentationTurn(this.chart.turns[0]?.slot ?? 0);
+  }
+
+  private readonly onOnboardingSkip = (event: WindowEventMap[typeof AURA_ONBOARDING_SKIP_EVENT]): void => {
+    if (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted || this.paused || !this.onboarding
+      || event.detail?.token !== this.presentationToken || event.detail?.seed !== this.matchSeed) return;
+    const phase = this.onboarding.snapshot.phase;
+    if (phase === 'complete' || phase === 'skipped') return;
+    this.onboarding.skip();
+    this.onboardingGraphics?.clear();
+    this.emitOnboarding();
+    if (phase === 'practice') this.startBattleAfterPractice();
   };
 
   private emitPresentationTurn(playerIndex: AuraSlot): void {
@@ -570,6 +669,11 @@ export class AuraScene extends Phaser.Scene {
     this.soundManager.updateAuraCrowd(delta);
     this.advanceCameraPresentation(Math.min(delta, 100));
     this.advanceFighterPresentation(Math.min(delta, 50) / 1_000);
+    if (this.onboarding) {
+      this.onboarding.advance(Math.min(delta, 100));
+      if (this.onboarding.snapshot.phase === 'practice') this.drawOnboardingPractice();
+      this.emitOnboarding();
+    }
     if (this.matchFinished || this.clockStartedAt === null) return;
 
     const nowMs = this.clockMs();
@@ -946,6 +1050,7 @@ export class AuraScene extends Phaser.Scene {
     this.layout = createAuraLayout(this.scale.width, this.scale.height);
     this.comicFeedback?.beginTurn();
     this.applyLayout();
+    if (this.onboarding?.snapshot.phase === 'practice') this.drawOnboardingPractice();
     if (this.clockStartedAt !== null && !this.matchFinished && !this.finalizing) {
       // Reproject at the already sampled/frozen instant, even while paused.
       // Reflow must not judge notes, advance time, or start a new recording.
@@ -1343,6 +1448,10 @@ export class AuraScene extends Phaser.Scene {
       return;
     }
     const turn = this.chart.turns[turnIndex];
+    if (this.onboarding) {
+      this.onboarding.turn(turn.slot);
+      this.emitOnboarding();
+    }
     this.drawLanes(turn.slot);
     this.updateCrowdUi(turn.slot);
     // Inactive turns change the status, never hide the controls to learn next.
@@ -1486,6 +1595,11 @@ export class AuraScene extends Phaser.Scene {
   }
 
   private handleInput(slot: AuraSlot, lane: AuraLane, nowMs = this.clockMs()): void {
+    if (this.onboarding?.snapshot.phase === 'practice') {
+      if (this.lifecycleActive && this.presentationReady && this.presentationStarted && !this.paused
+        && !this.matchFinished && !this.finalizing) this.handlePracticeInput(slot, lane);
+      return;
+    }
     if (nowMs < 0 || this.paused || this.matchFinished || this.finalizing || this.isCpuSlot(slot)) return;
     if (this.online && this.online.localSlot !== slot) return;
     if (auraTurnAt(this.chart, nowMs)?.slot === slot) this.flashLaneInput(slot, lane);
@@ -1532,6 +1646,10 @@ export class AuraScene extends Phaser.Scene {
   }
 
   private applyJudgement(judgement: AuraJudgement, broadcast: boolean, atMs = this.clockMs()): void {
+    if (this.onboarding) {
+      this.onboarding.judgement(judgement, this.activePerformerSlot);
+      this.emitOnboarding();
+    }
     this.recordJudgement(judgement, atMs);
     const noteObject = judgement.noteId ? this.noteObjects.get(judgement.noteId) : null;
     if (noteObject) {
@@ -1843,7 +1961,8 @@ export class AuraScene extends Phaser.Scene {
   }
 
   private beginClock(delayMs: number): void {
-    if (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted) return;
+    if (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted
+      || this.onboarding?.snapshot.phase === 'practice') return;
     if (this.scheduledClockStart !== null || this.clockStartedAt !== null) return;
     this.scheduledClockStart = performance.now() + delayMs;
     this.soundManager.stopBattleMusic();
@@ -1882,6 +2001,8 @@ export class AuraScene extends Phaser.Scene {
   }
 
   private beginFinalization(): void {
+    this.onboarding?.complete();
+    this.emitOnboarding();
     this.finalizing = true;
     this.finalizingStartedAt = performance.now();
     this.clearNotes();
@@ -2255,7 +2376,7 @@ export class AuraScene extends Phaser.Scene {
     this.lifecycleActive = false;
     this.challengeMediaAbort?.abort();
     this.challengeMediaAbort = null;
-    if (this.challengeMusicUrl) URL.revokeObjectURL(this.challengeMusicUrl);
+    if (this.challengeMusicUrl) revokeAuraChallengeMusicUrl(this.challengeMusicUrl);
     this.challengeMusicUrl = null;
     this.presentationReady = false;
     this.presentationStarted = false;
@@ -2265,6 +2386,10 @@ export class AuraScene extends Phaser.Scene {
     window.removeEventListener(PAUSE_EVENT, this.onPause);
     window.removeEventListener(AURA_INPUT_EVENT, this.onAuraInput);
     window.removeEventListener(AURA_PRESENTATION_START_EVENT, this.onPresentationStart);
+    window.removeEventListener(AURA_ONBOARDING_SKIP_EVENT, this.onOnboardingSkip);
+    this.onboardingGraphics?.destroy();
+    this.onboardingGraphics = null;
+    this.onboarding = null;
     for (const { key, handler } of this.keyBindings) key.off('down', handler);
     this.keyBindings = [];
     this.clearNotes();

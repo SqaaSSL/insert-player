@@ -3,6 +3,7 @@ import type { GenerationPackage } from './GenerationPackages.ts';
 import type { QualityTier } from './QualityTiers.ts';
 
 export type ProductEventName = 'game_started' | 'game_completed' | 'creation_started' | 'creation_completed'
+  | 'onboarding_started' | 'onboarding_completed' | 'onboarding_skipped'
   | 'challenge_created' | 'challenge_opened' | 'challenge_started' | 'challenge_completed' | 'share_video';
 export interface ProductEventProperties {
   game?: FighterGameMode;

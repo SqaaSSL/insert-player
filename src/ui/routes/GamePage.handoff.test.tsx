@@ -34,6 +34,10 @@ vi.mock('../../services/MatchReporting.ts', () => ({ reportMatchCompletion: vi.f
 
 import { GamePage } from './GamePage.tsx';
 import { FightLoadingCurtain } from '../components/FightLoadingCurtain.tsx';
+import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
+import { AuraOnboardingHint } from '../components/AuraOnboardingHint.tsx';
+import { AURA_ONBOARDING_EVENT } from '../../game/aura/AuraOnboarding.ts';
+import { AURA_BATTLE_COMPLETE_EVENT, MATCH_ACTIONS_VISIBILITY_EVENT } from '../../game/match/MatchConfig.ts';
 import { AuraControls } from '../components/AuraControls.tsx';
 import { AURA_PRESENTATION_EVENT, AURA_PRESENTATION_START_EVENT, AURA_PRESENTATION_TURN_EVENT } from '../../game/aura/AuraPresentationEvents.ts';
 import { RUNTIME_READY_EVENT } from '../../game/match/MatchConfig.ts';
@@ -45,7 +49,7 @@ let viewport: EventTarget & { innerWidth: number; innerHeight: number };
 let starts: unknown[];
 const find = (predicate: (node: any) => boolean, node: any = committed): any => {
   if (!node) return undefined;
-  if (Array.isArray(node)) return node.map(child => find(predicate, child)).find(Boolean);
+  if (Array.isArray(node)) return node.map(child => find(predicate, child ?? null)).find(Boolean);
   if (typeof node !== 'object') return undefined;
   if (predicate(node)) return node;
   return find(predicate, node.props?.children ?? null);
@@ -87,6 +91,7 @@ beforeEach(() => {
     matchMedia: () => ({ matches: false }),
     setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
     location: { search: '' },
+    localStorage: { getItem: vi.fn().mockReturnValue(null), setItem: vi.fn() },
   });
   vi.stubGlobal('window', viewport);
   vi.stubGlobal('screen', { orientation: { lock: vi.fn(), unlock: vi.fn() } });
@@ -215,6 +220,39 @@ describe('GamePage Aura presentation handoff', () => {
   it.each(['FightScene', 'RushScene'])('preserves the legacy ready handoff for %s', async sceneKey => {
     await mount(sceneKey); viewport.dispatchEvent(new Event(RUNTIME_READY_EVENT)); finishOpening();
     expect(curtain()).toBeUndefined(); expect(starts).toEqual([]);
+  });
+  it('guides the first solo battle, accepts only current tips and remembers explicit completion', async () => {
+    await mount('AuraScene', { gameMode: 'aura', vsAI: true, experience: 'trial' });
+    emit('loading'); emit('ready'); finishOpening();
+    expect(starts).toEqual([{ token: 1, seed: 17, onboarding: true }]);
+    const tip = { token: 1, seed: 17, phase: 'practice', cue: 'hit', practiceLane: 0, completedLanes: 0, laneKeys: ['D', 'F', 'J', 'K'] };
+    viewport.dispatchEvent(new CustomEvent(AURA_ONBOARDING_EVENT, { detail: { ...tip, token: 99 } })); flush();
+    expect(find(node => node.type === AuraOnboardingHint)).toBeUndefined();
+    viewport.dispatchEvent(new CustomEvent(AURA_ONBOARDING_EVENT, { detail: tip })); flush();
+    expect(find(node => node.type === AuraOnboardingHint).props.detail).toEqual(tip);
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(false);
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
+    viewport.dispatchEvent(new CustomEvent(AURA_ONBOARDING_EVENT, { detail: { ...tip, phase: 'skipped', cue: null, practiceLane: null } })); flush();
+    expect(find(node => node.type === AuraOnboardingHint)).toBeUndefined();
+    expect(window.localStorage.setItem).toHaveBeenCalledWith('ip:aura-first-battle:v1', 'done');
+    emit('loading', 2); emit('ready', 2); finishOpening();
+    expect(starts[1]).toEqual({ token: 2, seed: 17 });
+  });
+  it('never adds practice to a challenge, spectator, local duel or online battle', async () => {
+    for (const data of [{ auraChallenge: { slot: 0 } }, { cpuVsCpu: true }, { vsAI: false }, { online: { localSlot: 0 } }]) {
+      await mount('AuraScene', { gameMode: 'aura', ...data });
+      const token = starts.length + 1;
+      emit('loading', token); emit('ready', token); finishOpening();
+      expect(starts.at(-1)).toEqual({ token, seed: 17 });
+    }
+  });
+  it('shows only the Aura result after a trial, with its Rookie creation action', async () => {
+    await mount('AuraScene', { gameMode: 'aura', vsAI: true, experience: 'trial' });
+    emit('loading'); emit('ready'); finishOpening();
+    viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
+    viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
+    expect(find(node => node.props?.['aria-label'] === 'Free round complete')).toBeUndefined();
+    expect(find(node => node.type === AuraBattleResults)?.props).toMatchObject({ trial: true, onCreatePlayer: props.onCreateFighter });
   });
   it('unmount disposes timers so a pending opening never starts', async () => {
     await mount(); emit('loading'); emit('ready'); advance(3000);

@@ -38,6 +38,10 @@ import { getRushDifficulty, type RushCompanionOrder } from '../../game/brawl/Rus
 import { FightResultShare } from '../components/FightResultShare.tsx';
 import { AuraControls } from '../components/AuraControls.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
+import { AuraOnboardingHint } from '../components/AuraOnboardingHint.tsx';
+import { shouldGuideAuraBattle, rememberAuraOnboarding } from '../shared/auraOnboarding.ts';
+import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
+import { trackProductEvent } from '../../services/ProductEvents.ts';
 import { AURA_CAPTURE_EVENT, type AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
 import {
   AURA_PRESENTATION_EVENT,
@@ -123,6 +127,8 @@ export function GamePage({
   const [loadingPhase, setLoadingPhase] = useState<FightLoadingPhase | 'hidden'>('loading');
   const [rushSummary, setRushSummary] = useState<RushRunCompleteDetail | null>(null);
   const [auraSummary, setAuraSummary] = useState<AuraBattleCompleteDetail | null>(null);
+  const [auraOnboarding, setAuraOnboarding] = useState<AuraOnboardingDetail | null>(null);
+  const guidedThisMount = useRef(false);
   const [auraCapture, setAuraCapture] = useState<AuraCaptureDetail | null>(null);
   const [auraTouchSlot, setAuraTouchSlot] = useState<0 | 1>(0);
   const [auraControlledSlot, setAuraControlledSlot] = useState<0 | 1 | undefined>(
@@ -187,8 +193,15 @@ export function GamePage({
     // Effects run after React removes the curtain from the committed DOM.
     // Mark first: duplicate renders/StrictMode must never start the clock twice.
     lifecycle.phase = 'started';
-    window.dispatchEvent(new CustomEvent(AURA_PRESENTATION_START_EVENT, { detail: auraPendingStart }));
-  }, [isAura, loadingPhase, auraPendingStart]);
+    const onboarding = !guidedThisMount.current && shouldGuideAuraBattle(launchTarget.data);
+    if (onboarding) {
+      guidedThisMount.current = true;
+      trackProductEvent('onboarding_started', { game: 'aura' });
+    }
+    window.dispatchEvent(new CustomEvent(AURA_PRESENTATION_START_EVENT, {
+      detail: { ...auraPendingStart, ...(onboarding ? { onboarding: true } : {}) },
+    }));
+  }, [isAura, loadingPhase, auraPendingStart, launchTarget]);
 
   useEffect(() => {
     if (!isAura) return;
@@ -201,6 +214,23 @@ export function GamePage({
     };
     window.addEventListener(AURA_PRESENTATION_TURN_EVENT, onTurn);
     return () => window.removeEventListener(AURA_PRESENTATION_TURN_EVENT, onTurn);
+  }, [isAura]);
+
+  useEffect(() => {
+    if (!isAura) return;
+    const onOnboarding = (event: WindowEventMap[typeof AURA_ONBOARDING_EVENT]) => {
+      const detail = event.detail;
+      const current = auraLifecycleRef.current;
+      if (!isAuraOnboardingDetail(detail) || !current || current.phase !== 'started'
+        || current.token !== detail.token || current.seed !== detail.seed) return;
+      if (detail.phase === 'complete' || detail.phase === 'skipped') {
+        rememberAuraOnboarding();
+        trackProductEvent(detail.phase === 'complete' ? 'onboarding_completed' : 'onboarding_skipped', { game: 'aura' });
+        setAuraOnboarding(null);
+      } else setAuraOnboarding(detail);
+    };
+    window.addEventListener(AURA_ONBOARDING_EVENT, onOnboarding);
+    return () => window.removeEventListener(AURA_ONBOARDING_EVENT, onOnboarding);
   }, [isAura]);
 
   useEffect(() => {
@@ -281,10 +311,10 @@ export function GamePage({
   }, [isRush, launchTarget.data.rushDifficulty, launchTarget.data.stageId]);
 
   useEffect(() => {
-    if (!trial || !matchActionsVisible) return;
+    if (!trial || isAura || !matchActionsVisible) return;
     const frame = window.requestAnimationFrame(() => trialPrimaryActionRef.current?.focus());
     return () => window.cancelAnimationFrame(frame);
-  }, [matchActionsVisible, trial]);
+  }, [matchActionsVisible, trial, isAura]);
 
   useEffect(() => {
     if (!online) return;
@@ -407,6 +437,7 @@ export function GamePage({
         auraLifecycleRef.current = { token: detail.token, seed: detail.seed, phase: 'loading' };
         setAuraControlledSlot(detail.localControlledSlot);
         setAuraPendingStart(null);
+        setAuraOnboarding(null);
         setLoadingPhase('loading');
         setPaused(false);
         setMatchActionsVisible(false);
@@ -535,7 +566,7 @@ export function GamePage({
           onExit={onExit}
         />
       ) : null}
-      {trial && !matchActionsVisible ? (
+      {trial && !isAura && !matchActionsVisible ? (
         <div className="trial-match-badge" role="status">Playable demo · free round</div>
       ) : null}
       {online && netState ? <NetStatusBadge state={netState} /> : null}
@@ -561,6 +592,13 @@ export function GamePage({
         <div className="mobile-versus-unavailable" role="status">
           Online Co-op Rush is not connected in this local preview.
         </div>
+      ) : null}
+      {isAura && loadingPhase === 'hidden' && auraOnboarding && !paused && !matchActionsVisible && !auraSummary ? (
+        <AuraOnboardingHint detail={auraOnboarding} onSkip={() => {
+          window.dispatchEvent(new CustomEvent(AURA_ONBOARDING_SKIP_EVENT, {
+            detail: { token: auraOnboarding.token, seed: auraOnboarding.seed },
+          }));
+        }} />
       ) : null}
       {isAura && loadingPhase === 'hidden' && !matchActionsVisible && !auraSummary ? (
         <div className="aura-game-toolbar" aria-label="Aura match controls">
@@ -697,7 +735,7 @@ export function GamePage({
           ) : null}
         </div>
       )}
-      {matchActionsVisible && trial && (
+      {matchActionsVisible && trial && !isAura && (
         <div className="match-actions match-actions--trial" role="group" aria-label="Free round complete">
           <span className="match-actions__eyebrow">Free round complete</span>
           <span className="match-actions__label">
@@ -760,6 +798,7 @@ export function GamePage({
       {auraSummary && matchActionsVisible ? (
         <AuraBattleResults
           summary={auraSummary}
+          trial={trial}
           onCreatePlayer={onCreateFighter}
           capture={auraCapture}
           localSlot={online?.localSlot}

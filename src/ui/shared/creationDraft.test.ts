@@ -23,6 +23,8 @@ describe('creation draft checkout recovery', () => {
       .toEqual({ tier: 'rookie', creationPackage: 'complete', creationFlow: 'original' });
     expect(restoreCreationChoices(draft, readCreationNavigationContext('?tier=contender&package=aura&return=aura')))
       .toEqual({ tier: 'contender', creationPackage: 'aura', creationFlow: 'original' });
+    expect(restoreCreationChoices({ ...draft, tier: 'champion', creationPackage: 'complete' }, readCreationNavigationContext('?package=aura&return=aura')))
+      .toEqual({ tier: 'rookie', creationPackage: 'aura', creationFlow: 'original' });
   });
 
   it('restores a complete character’s Video choice but keeps dedicated Aura on Original', () => {

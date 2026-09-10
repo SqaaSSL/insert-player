@@ -2,8 +2,10 @@ import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { createServer } from 'vite';
+import { SOCIAL_CARD_SOURCES } from './social-card-inputs.mjs';
 import { readImageSize } from './image-dimensions.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -15,19 +17,16 @@ const assets = [
     label: 'social card',
     renderer: 'browser',
     input: 'scripts/assets/social-card.html',
-    dependencies: [
-      'scripts/assets/social-card.css',
-      'public/assets/social-card-visual-v3.png',
-    ],
+    dependencies: SOCIAL_CARD_SOURCES.slice(1),
     outputs: [
       {
-        path: 'public/assets/social-card-v7.jpg',
+        path: 'public/assets/social-card-v8.jpg',
         format: 'jpeg',
         quality: 88,
         maxBytes: 300_000,
       },
       {
-        path: 'public/assets/social-card-v7.webp',
+        path: 'public/assets/social-card-v8.webp',
         format: 'webp',
         quality: 82,
         maxBytes: 150_000,
@@ -144,16 +143,19 @@ function encodeSocialCard(command, input, output) {
 async function rasterizeWithBrowser(command, asset) {
   const tempDirectory = mkdtempSync(join(tmpdir(), 'insert-player-social-card-'));
   const sourcePng = join(tempDirectory, 'source.png');
+  const server = await createServer({ configFile: false, root, server: { host: '127.0.0.1', port: 0 } });
+  await server.listen();
   const browser = await chromium.launch({ headless: true });
   try {
     const page = await browser.newPage({
       viewport: { width: asset.width, height: asset.height },
       deviceScaleFactor: 1,
     });
-    await page.goto(pathToFileURL(abs(asset.input)).href, { waitUntil: 'load' });
+    await page.goto(`${server.resolvedUrls.local[0]}${asset.input}`, { waitUntil: 'load' });
     await page.evaluate(async () => {
       await document.fonts.ready;
     });
+    await page.waitForFunction(() => document.documentElement.dataset.socialCardReady === 'true');
     await page.screenshot({
       path: sourcePng,
       type: 'png',
@@ -161,19 +163,21 @@ async function rasterizeWithBrowser(command, asset) {
     for (const output of asset.outputs) encodeSocialCard(command, sourcePng, output);
   } finally {
     await browser.close();
+    await server.close();
     rmSync(tempDirectory, { recursive: true, force: true });
   }
 }
 
 async function main() {
+  const selectedAssets = args.has('--social-only') ? assets.filter(asset => asset.label === 'social card') : assets;
   if (checkOnly) {
-    for (const asset of assets) assertAssetFresh(asset);
+    for (const asset of selectedAssets) assertAssetFresh(asset);
     console.log('Public raster assets are fresh relative to their sources.');
     return;
   }
 
   const command = findMagickCommand();
-  for (const asset of assets) {
+  for (const asset of selectedAssets) {
     if (asset.renderer === 'browser') {
       await rasterizeWithBrowser(command, asset);
     } else {
@@ -181,7 +185,7 @@ async function main() {
     }
   }
   console.log(`Rasterized public assets with Playwright and ${command}:`);
-  for (const asset of assets) {
+  for (const asset of selectedAssets) {
     for (const output of asset.outputs ?? [{ path: asset.output }]) console.log(`- ${output.path}`);
   }
 }
