@@ -34,7 +34,7 @@ in-progress deployment.
 ## Workflows
 
 - `ci.yml`: required pull-request and branch validation.
-- `validate.yml`: reusable production gate, full builds, Worker dry-runs, and a fail-closed check for unresolved high or critical Dependabot alerts.
+- `validate.yml`: reusable production gate, full builds, Worker dry-runs, and a fail-closed check of high or critical Dependabot alerts against the checked-out lockfiles.
 - `dependency-security.yml`: GitHub Dependency Review blocks pull requests that introduce high or critical vulnerabilities in runtime, development, or unknown scopes.
 - `deploy-development.yml`: `develop` to the isolated sandbox.
 - `deploy-production.yml`: checked `main` release to `insertplayer.ai`.
@@ -191,6 +191,14 @@ A separate human approval is optional rather than a release dependency for this
 owner-operated project; the pull request and automated gates are not optional.
 
 `CODEOWNERS` assigns the SqaaSSL team to every path so reviewers are discoverable, while the project owner may merge a production promotion after the required automated checks pass.
+
+The dependency gate queries open Dependabot alerts and checks every matching
+package version in the referenced lockfile of the exact checkout. A vulnerable
+version blocks validation. A pull request that updates or removes all affected
+versions can pass while GitHub still lists the default branch's alert as open;
+Dependabot resolves that alert after the fix reaches `main`. Unsupported or
+malformed alert/lockfile data and API failures also block validation. Alerts are
+never dismissed automatically by this gate.
 
 ## Recovery
 
