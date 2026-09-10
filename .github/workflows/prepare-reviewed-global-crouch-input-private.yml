@@ -273,7 +273,7 @@ jobs:
             > "$CROUCH_INPUT_OUTPUT/r2-upload-evidence.json"
 
       - name: Publish only receipts and lineage for the next paid workflow
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-reviewed-global-crouch-input-${{ inputs.slug }}
           path: |
