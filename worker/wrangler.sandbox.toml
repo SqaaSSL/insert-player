@@ -5,7 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [[rules]]
 type = "Data"
-globs = ["**/*.woff2"]
+globs = ["**/*.woff2", "**/*.png"]
 fallthrough = true
 
 [version_metadata]

@@ -52,7 +52,7 @@ describe('Aura social HTML and PNG routes', () => {
     expect(response.headers.get('Content-Type')).toContain('text/html');
     expect(response.headers.get('Content-Security-Policy')).toContain("default-src 'none'");
     expect(html).toContain('Alex &lt;3 &amp; &quot;friends&quot; set 12,500 AURA · Insert Player');
-    expect(html).toContain(`<meta property="og:image" content="${url}/og.png?v=aura-score-v1">`);
+    expect(html).toContain(`<meta property="og:image" content="${url}/og.png?v=aura-versus-v2">`);
     expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
     expect(html).toContain('Friendly challenge, not a ranked score.');
     const play = new URL(html.match(/<a id="play-challenge" href="([^"]+)"/)[1]);
@@ -88,7 +88,7 @@ describe('Aura social HTML and PNG routes', () => {
     expect(response.headers.get('Content-Type')).toBe('image/png');
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array(bytes));
     expect(renderAuraChallengeOg).toHaveBeenCalledExactlyOnceWith(challenge);
-    expect(cache.match.mock.calls[0][0].url).toBe(`${url}/og.png?v=aura-score-v1`);
+    expect(cache.match.mock.calls[0][0].url).toBe(`${url}/og.png?v=aura-versus-v2`);
     expect(cache.put).toHaveBeenCalledOnce();
     expect(context.waitUntil).toHaveBeenCalledOnce();
   });
