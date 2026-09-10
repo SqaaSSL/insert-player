@@ -100,7 +100,8 @@
     "build": "npm run check:frontend && tsc && vite build",
     "build:sandbox": "npm run check:frontend && tsc && vite build --mode sandbox",
     "build:prelaunch": "node scripts/build-prelaunch.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "aura:tracks": "node scripts/measure-aura-tracks.mjs"
   },
   "devDependencies": {
     "@clerk/backend": "^3.16.10",

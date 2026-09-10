@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "status": "batch-canary-review",
+  "packId": "aura-v1-2026",
+  "animationName": "aura_mog_check",
+  "generation": {
+    "tool": "OpenAI image generation",
+    "mode": "built-in identity-preserving storyboard edit",
+    "model": "workspace-default-image-model",
+    "providerCostUsd": null,
+    "generatedAt": "2026-09-05",
+    "sourceOutputSha256": "9d0da78144ddb4f06982b6b3c435afef83c564034ac039d2683588203e3de6ad",
+    "prompt": "Create exactly eight successive full-body keyframes for AURA MOG CHECK from the canonical Template Zero reference. Keep the same bald adult, face, gray seamless bodysuit, proportions and realistic rendering. Make an exaggerated funny looksmaxxing phrase: composed start, raised chin, jaw framing, confident head rotation, then a forward head-and-torso lean with strongly pursed duck lips before a smug neutral return. Frames five through seven must be the meme peak and the head may appear larger through perspective while anatomy stays coherent. Lay out four columns by two rows on uniform #00FF00 with invisible cells, a fixed camera, stable baseline and complete anatomy. Preserve identity, clothing and lighting; keep the jaw hand away from the lips; avoid fighting, text, borders, scenery, shadows, props, extra people or limbs, cropping, glow, watermark and background variation."
+  },
+  "source": {
+    "role": "Template Zero canonical pose reference",
+    "sha256": "08cafb31dfaec6612e8fbd4d20ff25a23ccadf5b41e0eb1822615fd7396e4056"
+  },
+  "raw": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_mog_check/raw-storyboard.png",
+    "width": 1536,
+    "height": 1024,
+    "sha256": "d3c03640f19bb2a09ea4d778eba08d84921fa4ba559689ee937b8292a6520c8d",
+    "normalization": "The generated 1448x1086 storyboard was split into eight cells, aspect-preserving resized and padded back to the canonical 1536x1024 grid."
+  },
+  "runtime": {
+    "path": "public/assets/aura/template-zero/aura_mog_check.png",
+    "frameWidth": 192,
+    "frameHeight": 256,
+    "frameCount": 8,
+    "gridColumns": 4,
+    "gridRows": 2,
+    "sha256": "6b768923b7f64e7e60be4dc7c43bf2bc7c6d5cf7c9bfce4b6d583fbeef933774"
+  },
+  "gameplayReview": {
+    "path": "artifacts/aura-animation-canary/template-zero/aura_mog_check/gameplay-review.jpg",
+    "animatedPreviewPath": "artifacts/aura-animation-canary/template-zero/aura_mog_check/gesture-preview.gif",
+    "sha256": "60bd1bd18df785a7981291f912c7478cd1277f460504ba994342a8841963b3d6",
+    "animatedPreviewSha256": "21cacf856e3e7c8b71ca9d5e00da25ba6f23571f1137e8d40ffb9342b9120762",
+    "consoleErrors": 0
+  },
+  "review": {
+    "automaticRootRegistration": "pass",
+    "agentSemanticReview": "pass-in-game-meme-peak-visible",
+    "ownerSemanticReview": "pending",
+    "knownFinding": "The forward lean makes the face materially larger at gameplay scale and the puckered-lip frame remains readable beside the highway.",
+    "batchAuthorized": true
+  }
+}

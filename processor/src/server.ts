@@ -1,3 +1,4 @@
+import { assertPackageAnimationFrameCount } from '../../src/services/GenerationPackages';
 import { createServer } from 'node:http';
 import { installCanvasRuntime } from './canvasRuntime';
 import { processorErrorResponse } from './providerErrorResponse';
@@ -185,6 +186,7 @@ async function generateSprite(body: GenerateSpriteRequest) {
       model,
       body.generationPrompt,
     );
+  assertPackageAnimationFrameCount(body.animation.name, result.frameCount);
   return {
     ...result,
     frameW: CELL_W,

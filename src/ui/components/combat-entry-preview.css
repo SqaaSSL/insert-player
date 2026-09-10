@@ -1,0 +1,83 @@
+.product-entry__preview.combat-entry-preview {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 40px;
+  background: #050507;
+}
+.combat-entry-preview__viewport {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.combat-entry-preview__viewport video {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+}
+.combat-entry-preview__controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+  border-top: 1px solid #ffffff14;
+  color: #a7a7b3;
+}
+.combat-entry-preview__caption {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 12px;
+}
+.combat-entry-preview__toggle {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: #050507e8;
+  color: #e5e5ec;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 12px;
+  cursor: pointer;
+}
+.combat-entry-preview__toggle:hover {
+  border-color: #d7b660;
+}
+.combat-entry-preview__toggle:focus-visible {
+  outline: 2px solid #d7b660;
+  outline-offset: 2px;
+}
+.product-entry__preview.combat-entry-preview.is-compact {
+  grid-template-rows: minmax(0, 1fr);
+}
+.combat-entry-preview.is-compact .combat-entry-preview__controls {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 0;
+  border: 0;
+}
+.combat-entry-preview.is-compact .combat-entry-preview__caption,
+.combat-entry-preview.is-compact .combat-entry-preview__action {
+  display: none;
+}
+.combat-entry-preview.is-compact .combat-entry-preview__toggle {
+  width: 30px;
+  min-height: 30px;
+  padding: 2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .combat-entry-preview.is-compact .combat-entry-preview__controls {
+    opacity: 0;
+  }
+  .combat-entry-preview.is-compact:hover .combat-entry-preview__controls,
+  .combat-entry-preview.is-compact:focus-within .combat-entry-preview__controls {
+    opacity: 1;
+  }
+}

@@ -1,5 +1,5 @@
 import {
-  SIGNATURE_STAGE_THEMES,
+  STAGE_THEMES,
   type StageTheme,
 } from '../../game/match/StageConfig.ts';
 import type { CachedStageBackground } from '../../services/SpriteCache.ts';
@@ -19,10 +19,10 @@ export type GalleryStageEntry =
     };
 
 function hasAssetPath(stage: StageTheme): stage is GalleryGlobalStageTheme {
-  return typeof stage.assetPath === 'string' && stage.assetPath.length > 0;
+  return !stage.hiddenFromSelection && typeof stage.assetPath === 'string' && stage.assetPath.length > 0;
 }
 
-export const GLOBAL_GALLERY_STAGES = SIGNATURE_STAGE_THEMES.filter(hasAssetPath);
+export const GLOBAL_GALLERY_STAGES = STAGE_THEMES.filter(hasAssetPath);
 
 export function buildGalleryStageEntries(
   ownedStages: CachedStageBackground[],

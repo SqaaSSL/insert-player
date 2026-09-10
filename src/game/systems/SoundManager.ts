@@ -1,9 +1,17 @@
+import { AuraCrowdDynamics } from './AuraCrowdDynamics.ts';
+import { AURA_MOVE_SOUNDS } from './AuraMoveSound.ts';
+import type { AuraAnimationName } from '../../services/FighterAssetPacks.ts';
+
 export const BATTLE_MUSIC_URL = '/assets/audio/neon-arena-battle-v1.mp3';
 // The source averages roughly -17.6 dBFS. 0.20 keeps it behind impacts while
 // remaining audible on phone speakers and remote-browser sessions.
 export const BATTLE_MUSIC_VOLUME = 0.20;
 
 export type AuraCrowdReaction = 'applause' | 'cheer' | 'boo';
+
+export type MusicClockSample =
+  | { status: 'unavailable' | 'waiting' }
+  | { status: 'playing'; positionMs: number; durationMs: number | null; loop: boolean };
 
 export const AURA_CROWD_URLS: Record<AuraCrowdReaction, string> = {
   applause: '/assets/audio/aura-crowd-applause-v1.wav',
@@ -12,24 +20,47 @@ export const AURA_CROWD_URLS: Record<AuraCrowdReaction, string> = {
 };
 
 export const AURA_CROWD_LAYERS = [
-  { id: 'room-a', reaction: 'applause', playbackRate: 0.93, startAt: 0.18 },
-  { id: 'room-b', reaction: 'applause', playbackRate: 1.07, startAt: 1.74 },
-  { id: 'hype', reaction: 'cheer', playbackRate: 0.98, startAt: 0.82 },
-  { id: 'negative', reaction: 'boo', playbackRate: 1.02, startAt: 0.36 },
+  { id: 'room-a', reaction: 'applause', playbackRate: 0.93, startAt: 0.18, loop: true },
+  { id: 'room-b', reaction: 'applause', playbackRate: 1.07, startAt: 1.74, loop: true },
+  { id: 'hype', reaction: 'cheer', playbackRate: 1, startAt: 0, loop: false },
+  { id: 'negative', reaction: 'boo', playbackRate: 1, startAt: 0, loop: false },
 ] as const satisfies readonly {
   id: string;
   reaction: AuraCrowdReaction;
   playbackRate: number;
   startAt: number;
+  loop: boolean;
 }[];
 
 interface AuraCrowdLayer {
   audio: HTMLAudioElement;
   config: (typeof AURA_CROWD_LAYERS)[number];
+  active: boolean;
 }
 
-function clampUnit(value: number): number {
-  return Math.max(0, Math.min(1, value));
+interface AuraMoveVoice {
+  oscillator: OscillatorNode;
+  gain: GainNode;
+}
+
+function isLocalAudioUrl(url: string): boolean {
+  try {
+    const base = typeof window === 'undefined' ? 'https://sound-manager.invalid/' : window.location.href;
+    const resolved = new URL(url, base);
+    return (resolved.protocol === 'https:' || resolved.protocol === 'http:')
+      && resolved.origin === new URL(base).origin;
+  } catch {
+    return false;
+  }
+}
+
+function createAudio(url: string): HTMLAudioElement {
+  const audio = new Audio();
+  // Set before src: Web Audio must never reroute a CORS-tainted element,
+  // which would replace otherwise audible HTML playback with silence.
+  if (isLocalAudioUrl(url)) audio.crossOrigin = 'anonymous';
+  audio.src = url;
+  return audio;
 }
 
 export class SoundManager {
@@ -37,46 +68,173 @@ export class SoundManager {
   private masterGain: GainNode | null = null;
   private noiseBuffer: AudioBuffer | null = null;
   private battleMusic: HTMLAudioElement | null = null;
+  private battleMusicUrl: string | null = null;
   private auraCrowd: AuraCrowdLayer[] = [];
   private auraCrowdRunning = false;
   private auraCrowdStarted = false;
-  private auraCrowdHeat = 0;
-  private auraCrowdHeatTarget = 0;
-  private auraCrowdRoundProgress = 0;
-  private auraCrowdNegative = 0;
-  private auraCrowdPhase = 0;
+  private readonly auraCrowdDynamics = new AuraCrowdDynamics();
+  private mediaPlaybackPaused = false;
   private removeMusicUnlockListeners: (() => void) | null = null;
+  private recordingDestination: MediaStreamAudioDestinationNode | null = null;
+  private mediaSources = new Map<HTMLAudioElement, MediaElementAudioSourceNode>();
+  private removeRecordingStateListener: (() => void) | null = null;
+  private recordingFailed = false;
+  private destroyed = false;
+  private auraMoveVoices = new Set<AuraMoveVoice>();
+  private lastAuraMoveAt = -Infinity;
+  private lastAuraMoveName: AuraAnimationName | null = null;
+  private removeAuraMoveStateListener: (() => void) | null = null;
 
-  startBattleMusic(): void {
+  startBattleMusic(url: string = BATTLE_MUSIC_URL): void {
     if (typeof Audio === 'undefined') return;
+    this.mediaPlaybackPaused = false;
 
+    if (this.battleMusic && this.battleMusicUrl !== url) {
+      this.battleMusic.pause();
+      this.releaseMediaSource(this.battleMusic);
+      this.battleMusic = null;
+    }
     if (!this.battleMusic) {
-      this.battleMusic = new Audio(BATTLE_MUSIC_URL);
+      this.battleMusicUrl = url;
+      this.battleMusic = createAudio(url);
       this.battleMusic.loop = true;
       this.battleMusic.preload = 'auto';
       this.battleMusic.volume = BATTLE_MUSIC_VOLUME;
     }
 
+    this.connectRecordingMedia();
     this.tryPlayBattleMusic();
   }
 
+  /**
+   * A lazy, game-only mix: HTML music/crowd at their existing volumes plus
+   * synthesized SFX after masterGain. Never captures microphone/system audio.
+   * The caller must clone these tracks; SoundManager owns and stops originals.
+   * May be called before music starts. Suspended contexts keep ordinary HTML
+   * playback until resumed; unsupported or external media returns no tracks.
+   */
+  getRecordingAudioTracks(): MediaStreamTrack[] {
+    if (this.destroyed || this.recordingFailed || typeof AudioContext === 'undefined') return [];
+    if (!this.canRecordMedia()) return [];
+    try {
+      const ctx = this.ensureContext();
+      if (ctx.state === 'closed') return [];
+      if (!this.recordingDestination) {
+        const destination = ctx.createMediaStreamDestination();
+        this.recordingDestination = destination;
+        // This is a second, inaudible branch, not another speaker connection.
+        this.masterGain!.connect(destination);
+        const onStateChange = () => {
+          if (ctx.state === 'running') this.connectRecordingMedia();
+          else if (ctx.state !== 'closed') this.armMusicUnlock();
+        };
+        ctx.addEventListener('statechange', onStateChange);
+        this.removeRecordingStateListener = () => ctx.removeEventListener('statechange', onStateChange);
+      }
+      this.connectRecordingMedia();
+      if (ctx.state !== 'running') this.armMusicUnlock();
+      return this.recordingDestination?.stream.getAudioTracks()
+        .filter(track => track.readyState === 'live') ?? [];
+    } catch {
+      this.failRecording();
+      return [];
+    }
+  }
+
+  private canRecordMedia(): boolean {
+    return [this.battleMusic, ...this.auraCrowd.map(layer => layer.audio)]
+      .every(audio => !audio || (!audio.error && audio.crossOrigin === 'anonymous' && isLocalAudioUrl(audio.src)));
+  }
+
+  private connectRecordingMedia(): void {
+    const ctx = this.ctx;
+    const destination = this.recordingDestination;
+    if (!ctx || !destination || this.destroyed || this.recordingFailed) return;
+    if (!this.canRecordMedia()) {
+      this.failRecording();
+      return;
+    }
+    // createMediaElementSource permanently reroutes HTML audio. Do not do it
+    // before autoplay unlock: a suspended graph would silence the speakers.
+    if (ctx.state !== 'running') return;
+    try {
+      for (const audio of [this.battleMusic, ...this.auraCrowd.map(layer => layer.audio)]) {
+        if (!audio || this.mediaSources.has(audio)) continue;
+        const source = ctx.createMediaElementSource(audio);
+        source.connect(ctx.destination);
+        this.mediaSources.set(audio, source);
+        // HTML volume, currentTime, looping and playbackRate remain untouched.
+        source.connect(destination);
+      }
+    } catch {
+      // Keep any successful speaker routes even if the recording branch fails.
+      this.failRecording();
+    }
+  }
+
+  private releaseMediaSource(audio: HTMLAudioElement): void {
+    this.mediaSources.get(audio)?.disconnect();
+    this.mediaSources.delete(audio);
+  }
+
+  private failRecording(): void {
+    this.recordingFailed = true;
+    this.releaseRecordingDestination();
+  }
+
+  private releaseRecordingDestination(): void {
+    this.removeRecordingStateListener?.();
+    this.removeRecordingStateListener = null;
+    const destination = this.recordingDestination;
+    this.recordingDestination = null;
+    if (!destination) return;
+    for (const source of [this.masterGain, ...this.mediaSources.values()]) {
+      try { source?.disconnect(destination); } catch { /* Not every branch connected successfully. */ }
+    }
+    for (const track of destination.stream.getTracks()) track.stop();
+    destination.disconnect();
+  }
+
   pauseBattleMusic(): void {
+    this.mediaPlaybackPaused = true;
+    this.stopAuraMoveVoices();
     this.battleMusic?.pause();
     for (const layer of this.auraCrowd) layer.audio.pause();
   }
 
   resumeBattleMusic(): void {
+    this.mediaPlaybackPaused = false;
+    if (this.ctx) this.resumeContext(this.ctx);
     this.tryPlayBattleMusic();
     if (this.auraCrowdRunning) this.tryPlayAuraCrowd();
   }
 
   /** Current media position for beat-synchronised modes; null while blocked. */
   getBattleMusicTimeMs(): number | null {
-    if (!this.battleMusic || this.battleMusic.paused) return null;
-    return this.battleMusic.currentTime * 1_000;
+    const sample = this.getBattleMusicClockSample();
+    return sample.status === 'playing' ? sample.positionMs : null;
+  }
+
+  /** Waiting/autoplay-blocked media must not be confused with an absent track. */
+  getBattleMusicClockSample(): MusicClockSample {
+    const music = this.battleMusic;
+    if (!music || music.error) return { status: 'unavailable' };
+    const positionMs = music.currentTime * 1_000;
+    if (music.paused || music.seeking || !Number.isFinite(positionMs) || positionMs < 0
+      || (this.mediaSources.has(music) && this.ctx?.state !== 'running')) {
+      return { status: 'waiting' };
+    }
+    return {
+      status: 'playing',
+      positionMs,
+      durationMs: Number.isFinite(music.duration) && music.duration > 0 ? music.duration * 1_000 : null,
+      loop: music.loop,
+    };
   }
 
   stopBattleMusic(): void {
+    this.mediaPlaybackPaused = true;
+    this.stopAuraMoveVoices();
     this.removeMusicUnlockListeners?.();
     this.removeMusicUnlockListeners = null;
     if (this.battleMusic) {
@@ -86,33 +244,32 @@ export class SoundManager {
     }
     this.auraCrowdRunning = false;
     this.auraCrowdStarted = false;
-    this.auraCrowdHeat = 0;
-    this.auraCrowdHeatTarget = 0;
-    this.auraCrowdRoundProgress = 0;
-    this.auraCrowdNegative = 0;
-    this.auraCrowdPhase = 0;
+    this.auraCrowdDynamics.reset();
     for (const layer of this.auraCrowd) {
       layer.audio.pause();
       layer.audio.currentTime = 0;
       layer.audio.volume = 0;
+      layer.active = false;
     }
   }
 
   prepareAuraCrowd(): void {
     if (typeof Audio === 'undefined' || this.auraCrowd.length > 0) return;
     for (const config of AURA_CROWD_LAYERS) {
-      const crowd = new Audio(AURA_CROWD_URLS[config.reaction]);
-      crowd.loop = true;
+      const crowd = createAudio(AURA_CROWD_URLS[config.reaction]);
+      crowd.loop = config.loop;
       crowd.preload = 'auto';
       crowd.volume = 0;
       crowd.playbackRate = config.playbackRate;
-      this.auraCrowd.push({ audio: crowd, config });
+      this.auraCrowd.push({ audio: crowd, config, active: false });
     }
+    this.connectRecordingMedia();
   }
 
   startAuraCrowd(): void {
     this.prepareAuraCrowd();
     if (this.auraCrowd.length === 0) return;
+    this.mediaPlaybackPaused = false;
     this.auraCrowdRunning = true;
     if (!this.auraCrowdStarted) {
       this.auraCrowdStarted = true;
@@ -128,75 +285,64 @@ export class SoundManager {
   }
 
   /**
-   * Shape one continuous audience bed. Repeated calls only move gain targets;
-   * they never restart a sample, so a streak feels like rising room energy
-   * instead of the same reaction clip being triggered on every milestone.
+   * Slowly build a quiet audience bed. Cheers and boos are bounded reactions,
+   * not looping layers; elapsed rounds alone never make the crowd louder.
    */
   setAuraCrowdMix(heat: number, roundProgress = 0, negativePunch = 0): void {
-    this.auraCrowdHeatTarget = clampUnit(heat);
-    this.auraCrowdRoundProgress = clampUnit(roundProgress);
-    this.auraCrowdNegative = Math.max(this.auraCrowdNegative, clampUnit(negativePunch));
+    this.auraCrowdDynamics.setMix(heat, roundProgress, negativePunch);
   }
 
   peakAuraCrowd(): void {
-    this.auraCrowdHeatTarget = 1;
-    this.auraCrowdRoundProgress = 1;
-    this.auraCrowdNegative = 0;
+    this.auraCrowdDynamics.peak();
   }
 
   updateAuraCrowd(deltaMs: number): void {
-    if (this.auraCrowd.length === 0) return;
-    const elapsedMs = Math.max(0, Math.min(100, deltaMs));
-    if (elapsedMs <= 0) return;
-
-    const heatBlend = 1 - Math.exp(-elapsedMs / 720);
-    this.auraCrowdHeat += (this.auraCrowdHeatTarget - this.auraCrowdHeat) * heatBlend;
-    this.auraCrowdNegative = Math.max(0, this.auraCrowdNegative - elapsedMs / 3_400);
-    this.auraCrowdPhase += elapsedMs / 1_000;
-
-    const energy = clampUnit(this.auraCrowdHeat * 0.84 + this.auraCrowdRoundProgress * 0.16);
-    const negative = this.auraCrowdNegative;
-    const targets: Record<(typeof AURA_CROWD_LAYERS)[number]['id'], number> = {
-      'room-a': (0.034 + energy * 0.05) * (1 + Math.sin(this.auraCrowdPhase * 0.71) * 0.07),
-      'room-b': (0.024 + energy * 0.042) * (1 + Math.sin(this.auraCrowdPhase * 0.53 + 2.1) * 0.09),
-      hype: Math.pow(energy, 1.65) * 0.125 * (1 - negative * 0.72),
-      negative: negative * 0.145,
-    };
-
+    if (!this.auraCrowdRunning || this.mediaPlaybackPaused || this.destroyed) return;
+    const frame = this.auraCrowdDynamics.update(deltaMs);
     for (const layer of this.auraCrowd) {
-      const target = clampUnit(targets[layer.config.id]);
-      const timeConstant = target > layer.audio.volume ? 420 : 980;
-      const volumeBlend = 1 - Math.exp(-elapsedMs / timeConstant);
-      layer.audio.volume += (target - layer.audio.volume) * volumeBlend;
-    }
-
-    if (this.battleMusic) {
-      const targetMusicVolume = BATTLE_MUSIC_VOLUME * (1 - negative * 0.12);
-      const musicBlend = 1 - Math.exp(-elapsedMs / 520);
-      this.battleMusic.volume += (targetMusicVolume - this.battleMusic.volume) * musicBlend;
+      const start = layer.config.id === 'hype' ? frame.startCheer
+        : layer.config.id === 'negative' ? frame.startBoo : false;
+      const active = layer.config.loop || (layer.config.id === 'hype' ? frame.cheerActive : frame.booActive);
+      layer.audio.volume = frame.gains[layer.config.id];
+      if (start) {
+        layer.active = true;
+        try { layer.audio.currentTime = layer.config.startAt; } catch { /* Metadata may not be ready. */ }
+        this.tryPlayCrowdLayer(layer);
+      } else if (!active && layer.active) {
+        layer.active = false;
+        layer.audio.pause();
+      }
     }
   }
 
   private tryPlayBattleMusic(): void {
+    if (this.mediaPlaybackPaused || this.destroyed) return;
     const playback = this.battleMusic?.play();
     if (!playback || typeof playback.catch !== 'function') return;
     void playback.catch(() => this.armMusicUnlock());
   }
 
   private tryPlayAuraCrowd(): void {
+    if (this.mediaPlaybackPaused || this.destroyed) return;
     for (const layer of this.auraCrowd) {
-      const playback = layer.audio.play();
-      if (!playback || typeof playback.catch !== 'function') continue;
-      void playback.catch(() => this.armMusicUnlock());
+      if (layer.config.loop || layer.active) this.tryPlayCrowdLayer(layer);
     }
   }
 
+  private tryPlayCrowdLayer(layer: AuraCrowdLayer): void {
+    if (this.mediaPlaybackPaused || this.destroyed || !this.auraCrowdRunning) return;
+    const playback = layer.audio.play();
+    if (!playback || typeof playback.catch !== 'function') return;
+    void playback.catch(() => this.armMusicUnlock());
+  }
+
   private armMusicUnlock(): void {
-    if (this.removeMusicUnlockListeners || typeof window === 'undefined') return;
+    if (this.destroyed || this.mediaPlaybackPaused || this.removeMusicUnlockListeners || typeof window === 'undefined') return;
 
     const unlock = () => {
       this.removeMusicUnlockListeners?.();
       this.removeMusicUnlockListeners = null;
+      if (this.ctx) this.resumeContext(this.ctx);
       this.tryPlayBattleMusic();
       if (this.auraCrowdRunning) this.tryPlayAuraCrowd();
     };
@@ -217,9 +363,21 @@ export class SoundManager {
       this.noiseBuffer = this.createNoiseBuffer();
     }
     if (this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      this.resumeContext(this.ctx);
     }
     return this.ctx;
+  }
+
+  private resumeContext(ctx: AudioContext): void {
+    try {
+      void ctx.resume().then(() => {
+        if (!this.destroyed && this.ctx === ctx) this.connectRecordingMedia();
+      }).catch(() => {
+        if (!this.destroyed) this.armMusicUnlock();
+      });
+    } catch {
+      if (!this.destroyed) this.armMusicUnlock();
+    }
   }
 
   private getMaster(): GainNode {
@@ -305,6 +463,78 @@ export class SoundManager {
 
     oscillator.start(now);
     oscillator.stop(now + duration / 1000);
+  }
+
+  /** Call inside an explicit user gesture when enabling a silent preview.
+   * This unlocks the synth without replaying a move or opening a recording tap. */
+  prepareAuraMoveAudio(): void {
+    if (this.destroyed || typeof AudioContext === 'undefined') return;
+    try {
+      const ctx = this.ensureContext();
+      if (!this.removeAuraMoveStateListener) {
+        const onStateChange = () => {
+          if (ctx.state !== 'running') this.stopAuraMoveVoices();
+        };
+        ctx.addEventListener('statechange', onStateChange);
+        this.removeAuraMoveStateListener = () => ctx.removeEventListener('statechange', onStateChange);
+      }
+    } catch { /* Audio is optional; unavailable devices must not interrupt play. */ }
+  }
+
+  /** One signature per new move bubble, never per frame or scored note. No
+   * blocked sound is queued: an old bubble must stay silent after autoplay unlock. */
+  playAuraMove(name: AuraAnimationName): void {
+    if (this.destroyed || this.mediaPlaybackPaused || typeof AudioContext === 'undefined') return;
+    const tones = AURA_MOVE_SOUNDS[name];
+    if (!tones) return;
+    this.prepareAuraMoveAudio();
+    const ctx = this.ctx;
+    const master = this.masterGain;
+    if (!ctx || !master || ctx.state !== 'running') return;
+    const now = ctx.currentTime;
+    const cooldown = this.lastAuraMoveName === name ? 0.65 : 0.32;
+    if (now - this.lastAuraMoveAt < cooldown) return;
+    this.lastAuraMoveAt = now;
+    this.lastAuraMoveName = name;
+    try {
+      for (const tone of tones) {
+        const oscillator = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const voice = { oscillator, gain };
+        this.auraMoveVoices.add(voice);
+        oscillator.onended = () => this.releaseAuraMoveVoice(voice);
+        const start = now + tone.delayMs / 1_000;
+        const end = start + tone.durationMs / 1_000;
+        oscillator.type = tone.wave;
+        oscillator.frequency.setValueAtTime(tone.fromHz, start);
+        oscillator.frequency.exponentialRampToValueAtTime(tone.toHz, end);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.linearRampToValueAtTime(tone.gain, start + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.0001, end);
+        oscillator.connect(gain);
+        gain.connect(master);
+        oscillator.start(start);
+        oscillator.stop(end + 0.008);
+      }
+    } catch {
+      this.stopAuraMoveVoices();
+    }
+  }
+
+  private releaseAuraMoveVoice(voice: AuraMoveVoice): void {
+    if (!this.auraMoveVoices.delete(voice)) return;
+    voice.oscillator.onended = null;
+    voice.oscillator.disconnect();
+    voice.gain.disconnect();
+  }
+
+  private stopAuraMoveVoices(): void {
+    for (const voice of this.auraMoveVoices) {
+      try { voice.oscillator.stop(this.ctx?.currentTime ?? 0); } catch { /* Already ended. */ }
+      this.releaseAuraMoveVoice(voice);
+    }
+    this.lastAuraMoveAt = -Infinity;
+    this.lastAuraMoveName = null;
   }
 
   playHit(heavy: boolean): void {
@@ -418,7 +648,13 @@ export class SoundManager {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.stopBattleMusic();
+    this.removeAuraMoveStateListener?.();
+    this.removeAuraMoveStateListener = null;
+    this.releaseRecordingDestination();
+    for (const source of this.mediaSources.values()) source.disconnect();
+    this.mediaSources.clear();
     if (this.battleMusic) {
       this.battleMusic.removeAttribute('src');
       this.battleMusic.load();

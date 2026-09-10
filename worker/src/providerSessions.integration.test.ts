@@ -35,6 +35,9 @@ const PIXCLI_SUBMIT_ROUTE = {
 const SCHEMA = `
   CREATE TABLE users (id TEXT PRIMARY KEY);
   CREATE TABLE generation_charges (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     tier TEXT NOT NULL,
@@ -60,6 +63,9 @@ const SCHEMA = `
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE generation_jobs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     provider_session_id TEXT NOT NULL,
@@ -67,6 +73,9 @@ const SCHEMA = `
     status TEXT NOT NULL
   );
   CREATE TABLE generation_artifact_runs (
+    creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
     id TEXT PRIMARY KEY
   );
   CREATE TABLE provider_request_cache (

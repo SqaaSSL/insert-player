@@ -1,3 +1,4 @@
+import type { GenerationPackage } from './GenerationPackages';
 import {
   ApiSessionChangedError,
   apiFetch,
@@ -21,6 +22,8 @@ export interface GenerationJob {
   fighterId: string;
   tier: QualityTier;
   creationFlow: GenerationCreationFlow;
+  creationPackage?: GenerationPackage;
+  expansion?: boolean;
   operation: GenerationBillingOperation;
   targetKind: 'animation' | 'source' | null;
   targetName: string | null;
@@ -118,6 +121,8 @@ export async function startGenerationJob(
     purchaseId: string;
     providerSessionId: string;
     creationFlow?: GenerationCreationFlow;
+    creationPackage?: GenerationPackage;
+    expansion?: boolean;
     targetKind?: 'animation' | 'source';
     targetName?: string;
   },

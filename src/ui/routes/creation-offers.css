@@ -1,0 +1,20 @@
+@reference "../styles.css";
+
+.creation-offers { border: 0; margin: 0; padding: 0; display: grid; gap: 1rem; }
+.creation-offers legend { font-weight: 700; margin-bottom: 1rem; font-size: 1.25rem; }
+.creation-offer { display: flex; align-items: start; gap: 1rem; padding: 1.5rem; border: 1px solid var(--color-asf-line-strong); cursor: pointer; }
+.creation-offer.is-selected { border-color: var(--color-asf-gold); background: var(--color-asf-panel-alt); }
+.creation-offer > span { flex: 1; display: grid; gap: .5rem; }
+.creation-offer input { margin-top: .35rem; width: 1.25rem; height: 1.25rem; accent-color: var(--color-asf-gold); }
+.creation-offer strong { font-size: 1.25rem; }
+.creation-offer b { font-variant-numeric: tabular-nums; }
+.creation-offer span span { color: var(--color-asf-muted); line-height: 1.5; }
+.creation-advanced { padding: 1.25rem 0; border-top: 1px solid var(--color-asf-line-strong); border-bottom: 1px solid var(--color-asf-line-strong); }
+.creation-advanced summary { cursor: pointer; min-height: 2.75rem; font-weight: 600; }
+.creation-advanced[open] summary { margin-bottom: 1rem; }
+.creation-price-summary { display: grid; gap: .5rem; line-height: 1.5; }
+.creation-offer:focus-within, .creation-advanced summary:focus-visible { outline: 2px solid var(--color-asf-gold); outline-offset: 4px; }
+@media (max-width: 600px) {
+  .creation-offer { display: grid; grid-template-columns: 1.25rem 1fr; padding: 1rem; }
+  .creation-offer b { grid-column: 2; }
+}

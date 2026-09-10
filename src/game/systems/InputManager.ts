@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { consumeVirtualInput } from './VirtualInput.ts';
 import { EMPTY_INPUT, mergeInputs, type FighterInput } from '../sim/FighterInput.ts';
+import { KEYBOARD_CONTROLS, type KeyboardControlMap } from './KeyboardControls.ts';
 
 export { EMPTY_INPUT, type FighterInput };
 
@@ -17,6 +18,8 @@ const PRESS_FIREBALL = 4;
 const PRESS_UPPERCUT = 8;
 const PRESS_SUPER = 16;
 
+type PlayerKeys = Record<keyof FighterInput, Phaser.Input.Keyboard.Key[]>;
+
 /**
  * Samples keyboard, gamepad, and touch once per render frame (`poll`) and
  * hands the simulation one `FighterInput` per tick (`readPlayer*`). Button
@@ -26,8 +29,8 @@ const PRESS_SUPER = 16;
  */
 export class InputManager {
   private scene: Phaser.Scene;
-  private keys1!: Record<string, Phaser.Input.Keyboard.Key>;
-  private keys2!: Record<string, Phaser.Input.Keyboard.Key>;
+  private keys1!: PlayerKeys;
+  private keys2!: PlayerKeys;
   private gamepadButtons: [Set<number>, Set<number>] = [new Set(), new Set()];
   private pending: [PendingInput, PendingInput] = [
     { held: { ...EMPTY_INPUT }, presses: 0 },
@@ -42,31 +45,15 @@ export class InputManager {
   private setupKeys(): void {
     const kb = this.scene.input.keyboard!;
 
-    this.keys1 = {
-      left: kb.addKey(Phaser.Input.Keyboard.KeyCodes.A),
-      right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.D),
-      up: kb.addKey(Phaser.Input.Keyboard.KeyCodes.W),
-      down: kb.addKey(Phaser.Input.Keyboard.KeyCodes.S),
-      guard: kb.addKey(Phaser.Input.Keyboard.KeyCodes.G),
-      punch: kb.addKey(Phaser.Input.Keyboard.KeyCodes.U),
-      kick: kb.addKey(Phaser.Input.Keyboard.KeyCodes.J),
-      fireball: kb.addKey(Phaser.Input.Keyboard.KeyCodes.I),
-      uppercut: kb.addKey(Phaser.Input.Keyboard.KeyCodes.K),
-      super: kb.addKey(Phaser.Input.Keyboard.KeyCodes.O),
-    };
+    const bindControls = (controls: KeyboardControlMap): PlayerKeys => Object.fromEntries(
+      Object.entries(controls).map(([action, binding]) => [
+        action,
+        [binding, ...(binding.aliases ?? [])].map(({ keyCode }) => kb.addKey(keyCode)),
+      ]),
+    ) as PlayerKeys;
 
-    this.keys2 = {
-      left: kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
-      right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
-      up: kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP),
-      down: kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
-      guard: kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ZERO),
-      punch: kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_FOUR),
-      kick: kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_ONE),
-      fireball: kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_FIVE),
-      uppercut: kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_TWO),
-      super: kb.addKey(Phaser.Input.Keyboard.KeyCodes.NUMPAD_SIX),
-    };
+    this.keys1 = bindControls(KEYBOARD_CONTROLS[0]);
+    this.keys2 = bindControls(KEYBOARD_CONTROLS[1]);
   }
 
   /** Sample every device once. Call exactly once per render frame. */
@@ -93,7 +80,7 @@ export class InputManager {
     this.gamepadButtons = [new Set(), new Set()];
   }
 
-  private pollPlayer(playerIndex: 0 | 1, keys: Record<string, Phaser.Input.Keyboard.Key>): void {
+  private pollPlayer(playerIndex: 0 | 1, keys: PlayerKeys): void {
     const sampled = mergeInputs(
       this.readKeys(keys),
       this.readGamepad(playerIndex),
@@ -129,18 +116,24 @@ export class InputManager {
     };
   }
 
-  private readKeys(keys: Record<string, Phaser.Input.Keyboard.Key>): FighterInput {
+  private readKeys(keys: PlayerKeys): FighterInput {
+    const held = (action: keyof FighterInput) => keys[action].some((key) => key.isDown);
+    // Consume every alias edge before combining, so simultaneous aliases cannot
+    // leave a stale JustDown pulse behind for the following render frame.
+    const pressed = (action: keyof FighterInput) => keys[action]
+      .map((key) => Phaser.Input.Keyboard.JustDown(key))
+      .some(Boolean);
     return {
-      left: keys.left.isDown,
-      right: keys.right.isDown,
-      up: keys.up.isDown,
-      down: keys.down.isDown,
-      guard: keys.guard.isDown,
-      punch: Phaser.Input.Keyboard.JustDown(keys.punch),
-      kick: Phaser.Input.Keyboard.JustDown(keys.kick),
-      fireball: Phaser.Input.Keyboard.JustDown(keys.fireball),
-      uppercut: Phaser.Input.Keyboard.JustDown(keys.uppercut),
-      super: Phaser.Input.Keyboard.JustDown(keys.super),
+      left: held('left'),
+      right: held('right'),
+      up: held('up'),
+      down: held('down'),
+      guard: held('guard'),
+      punch: pressed('punch'),
+      kick: pressed('kick'),
+      fireball: pressed('fireball'),
+      uppercut: pressed('uppercut'),
+      super: pressed('super'),
     };
   }
 

@@ -1,3 +1,5 @@
+import { parseGenerationPackage, AURA_GENERATION_ANIMATIONS, type GenerationPackage } from '../../src/services/GenerationPackages';
+import { storedGenerationAnimationNames, type StoredGenerationPackage } from './generationPackages';
 import { generateId } from './auth';
 import { artifactProgress, generationStagesForOperation } from './generationArtifacts';
 import { settleGenerationPurchase } from './billing';
@@ -50,10 +52,11 @@ const ANIMATION_TARGETS = new Set([
   'hit',
   'ko',
   'victory',
+  ...AURA_GENERATION_ANIMATIONS.map((animation) => animation.name),
 ]);
 const SOURCE_TARGETS = new Set(['side', 'upright', 'crouch']);
 
-interface GenerationJobAuthorizationRow {
+interface GenerationJobAuthorizationRow extends StoredGenerationPackage {
   charge_id: string;
   charge_tier: QualityTier;
   charge_creation_flow: GenerationCreationFlow;
@@ -144,6 +147,8 @@ function serializeJob(
     fighterId: job.fighter_id,
     tier: job.tier,
     creationFlow: job.creation_flow,
+    creationPackage: job.creation_package ?? 'complete',
+    expansion: Boolean(job.expansion_only),
     operation: job.operation,
     targetKind: job.target_kind,
     targetName: job.target_name,
@@ -174,7 +179,7 @@ function serializeJob(
       job.creation_flow !== 'video' || run.pendingStages.length > 0
     ),
     completedStages: run?.completedStages ?? [],
-    pendingStages: run?.pendingStages ?? generationStagesForOperation(job.operation, job.target_name)
+    pendingStages: run?.pendingStages ?? generationStagesForOperation(job.operation, job.target_name, job)
       .map((entry) => entry.key),
     preservedArtifactCount: run?.preservedArtifactCount ?? 0,
     canonicalSourceMode: run?.canonicalSourceMode ?? null,
@@ -255,6 +260,8 @@ function matchesJobRequest(
   targetKind: 'animation' | 'source' | null,
   targetName: string | null,
   creationFlow: GenerationCreationFlow,
+  creationPackage: GenerationPackage,
+  expansion: boolean,
 ): boolean {
   return job.id === purchaseId
     && job.charge_id === purchaseId
@@ -262,7 +269,9 @@ function matchesJobRequest(
     && job.provider_session_id === providerSessionId
     && job.target_kind === targetKind
     && job.target_name === targetName
-    && job.creation_flow === creationFlow;
+    && job.creation_flow === creationFlow
+    && (job.creation_package ?? 'complete') === creationPackage
+    && Boolean(job.expansion_only) === expansion;
 }
 
 async function replayExistingJob(env: Env, userId: string, job: GenerationJob): Promise<Response> {
@@ -398,6 +407,8 @@ export async function createGenerationJob(
     targetKind?: string;
     targetName?: string;
     creationFlow?: unknown;
+    creationPackage?: unknown;
+    expansion?: unknown;
   }>(request, MAX_JOB_BODY_BYTES);
   const fighterId = body.fighterId?.trim() ?? '';
   const purchaseId = body.purchaseId?.trim() ?? '';
@@ -407,6 +418,10 @@ export async function createGenerationJob(
     : null;
   const targetName = body.targetName?.trim().toLowerCase() || null;
   const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
+  const creationPackage = parseGenerationPackage(body.creationPackage);
+  if (!creationPackage) return json({ error: 'Unsupported generation package' }, 400);
+  if (body.expansion !== undefined && typeof body.expansion !== 'boolean') return json({ error: 'Invalid expansion request' }, 400);
+  const expansion = body.expansion === true;
   const unsealedVideoRestartFromJobId = options.unsealedVideoRestartFromJobId?.trim() ?? '';
   if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
   if (!/^[a-f0-9]{32}$/.test(purchaseId)) return json({ error: 'A valid purchaseId is required' }, 400);
@@ -489,6 +504,8 @@ export async function createGenerationJob(
       targetKind,
       targetName,
       creationFlow,
+      creationPackage,
+      expansion,
     )) {
       return json({ error: 'Generation authorization is already attached to another job' }, 409);
     }
@@ -519,6 +536,7 @@ export async function createGenerationJob(
       gc.id AS charge_id,
       gc.tier AS charge_tier,
       gc.creation_flow AS charge_creation_flow,
+      gc.creation_package, gc.expansion_only, gc.animation_plan_json,
       gc.reason AS charge_reason,
       gc.status AS charge_status,
       gc.fighter_id AS charge_fighter_id,
@@ -582,7 +600,9 @@ export async function createGenerationJob(
     authorization.provider_status !== 'active' ||
     authorization.charge_tier !== authorization.provider_tier ||
     authorization.charge_creation_flow !== creationFlow ||
-    authorization.provider_creation_flow !== creationFlow
+    authorization.provider_creation_flow !== creationFlow ||
+    (authorization.creation_package ?? 'complete') !== creationPackage ||
+    Boolean(authorization.expansion_only) !== expansion
   ) {
     if (authorization.charge_status === 'reserved') {
       return rejectReservedJob(
@@ -595,6 +615,13 @@ export async function createGenerationJob(
       );
     }
     return json({ error: 'Generation authorization is no longer active' }, 409);
+  }
+  if ((creationPackage === 'aura' || expansion) && creationFlow !== 'original') {
+    return rejectReservedJob(env, auth.userId, purchaseId, fighterId, 'This package requires Original generation', 400);
+  }
+  let authorizedAnimations: readonly string[];
+  try { authorizedAnimations = storedGenerationAnimationNames(authorization); } catch {
+    return rejectReservedJob(env, auth.userId, purchaseId, fighterId, 'Invalid authorized package plan', 400);
   }
   if (creationFlow === 'video' && authorization.charge_tier !== 'champion') {
     return rejectReservedJob(
@@ -803,6 +830,10 @@ export async function createGenerationJob(
       );
     }
   }
+  if (expansion && operation !== 'fighter_upgrade') return rejectReservedJob(env, auth.userId, purchaseId, fighterId, 'Expansion requires an upgrade authorization', 400);
+  if (operation === 'fighter_retry_animation' && targetName && !authorizedAnimations.includes(targetName)) {
+    return rejectReservedJob(env, auth.userId, purchaseId, fighterId, 'Animation is outside the authorized package; the unused reservation was released', 400);
+  }
   const targetError = validateTarget(operation, targetKind, targetName);
   if (targetError) {
     return rejectReservedJob(
@@ -884,6 +915,8 @@ export async function createGenerationJob(
       targetKind,
       targetName,
       creationFlow,
+      creationPackage,
+      expansion,
     )) {
       return replayExistingJob(env, auth.userId, activeFighterJob);
     }
@@ -896,9 +929,9 @@ export async function createGenerationJob(
 
   const jobId = purchaseId;
   const progressTotal = operation === 'fighter_generation'
-    ? 14
+    ? authorizedAnimations.length + 3
     : operation === 'fighter_upgrade'
-      ? 11
+      ? authorizedAnimations.length
       : 1;
   const runId = authorization.continuation_run_id ?? jobId;
   const resumedFromJobId = authorization.resumed_from_job_id ?? null;
@@ -950,9 +983,10 @@ export async function createGenerationJob(
         INSERT INTO generation_artifact_runs (
           id, user_id, fighter_id, tier, operation, target_kind, target_name,
           root_job_id, original_charge_id, original_blob_key,
-          source_manifest_json, generation_prompt, creation_flow, video_generation_policy
+          source_manifest_json, generation_prompt, creation_flow, video_generation_policy,
+          creation_package, expansion_only, animation_plan_json
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? IS NULL
           AND (
             ? IS NULL OR EXISTS (
@@ -977,6 +1011,9 @@ export async function createGenerationJob(
         authorization.generation_prompt,
         creationFlow,
         videoGenerationPolicy,
+        creationPackage,
+        expansion ? 1 : 0,
+        authorization.animation_plan_json ?? null,
         authorization.continuation_run_id,
         ...restartGuardBindings,
       ),
@@ -991,9 +1028,9 @@ export async function createGenerationJob(
           id, workflow_instance_id, user_id, fighter_id, charge_id,
           provider_session_id, tier, operation, target_kind, target_name,
           artifact_run_id, resumed_from_job_id, progress_current, progress_total,
-          creation_flow
+          creation_flow, creation_package, expansion_only, animation_plan_json
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         WHERE ? IS NULL OR EXISTS (
           SELECT 1 FROM generation_job_events restart_audit
           WHERE restart_audit.id = ?
@@ -1016,6 +1053,9 @@ export async function createGenerationJob(
         Math.min(initialProgress, progressTotal),
         progressTotal,
         creationFlow,
+        creationPackage,
+        expansion ? 1 : 0,
+        authorization.animation_plan_json ?? null,
         ...restartGuardBindings,
       ),
       env.DB.prepare(`
@@ -1082,6 +1122,8 @@ export async function createGenerationJob(
       targetKind,
       targetName,
       creationFlow,
+      creationPackage,
+      expansion,
     )) {
       return replayExistingJob(env, auth.userId, racedJob);
     }

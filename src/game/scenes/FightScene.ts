@@ -7,6 +7,7 @@ import { InputManager } from "../systems/InputManager.ts";
 import { SoundManager } from "../systems/SoundManager.ts";
 import { HUD } from "../ui/HUD.ts";
 import { ScreenEffects } from "../effects/ScreenEffects.ts";
+import { CREAM, HEAT, INK } from "../ui/CabinetGraphics.ts";
 import {
   MatchSimulation,
   RoundPhase,
@@ -139,6 +140,7 @@ export class FightScene extends Phaser.Scene {
   private restartFormat: MatchRestartFormat = {};
 
   private hitSparks!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private wasAirborne: [boolean, boolean] = [false, false];
   private stageGfx!: Phaser.GameObjects.Graphics;
   private stageBackdrop?: Phaser.GameObjects.Image;
   private stageBackdropTextureKey?: string;
@@ -1175,6 +1177,68 @@ export class FightScene extends Phaser.Scene {
     this.p1View.syncSprite(this.p2.x);
     this.p2View.syncSprite(this.p1.x);
     this.projectileViews.sync(this.sim.projectiles);
+    for (const index of [0, 1] as const) {
+      const fighter = index === 0 ? this.p1 : this.p2;
+      const airborne = !fighter.isGrounded();
+      if (this.wasAirborne[index] && !airborne) {
+        this.spawnLandingDust(fighter.x, this.fighterView(index).getRenderY());
+      }
+      this.wasAirborne[index] = airborne;
+    }
+  }
+
+  /** A few cream puffs kicked out sideways when a fighter lands. */
+  private spawnLandingDust(x: number, y: number): void {
+    for (let index = 0; index < 5; index += 1) {
+      const direction = index % 2 === 0 ? -1 : 1;
+      const puff = this.markWorld(this.add
+        .ellipse(x + direction * (6 + index * 4), y - 4, 14 + index * 2, 8, CREAM, 0.32)
+        .setDepth(9.5));
+      this.tweens.add({
+        targets: puff,
+        x: puff.x + direction * (22 + index * 9),
+        y: puff.y - 6 - index * 2,
+        scaleX: 1.6,
+        scaleY: 0.7,
+        alpha: 0,
+        duration: 260 + index * 30,
+        ease: "Quad.easeOut",
+        onComplete: () => puff.destroy(),
+      });
+    }
+  }
+
+  /** Impact star at the point of contact: hard spokes, no soft disc. */
+  private spawnImpactStar(x: number, y: number, heavy: boolean): void {
+    const impact = this.markWorld(this.add.graphics().setDepth(52).setPosition(x, y));
+    impact.lineStyle(3, CREAM, 0.95);
+    impact.strokeCircle(0, 0, heavy ? 16 : 11);
+    impact.fillStyle(heavy ? HEAT : CREAM, 0.95);
+    for (let spoke = 0; spoke < 4; spoke += 1) {
+      const angle = spoke * Math.PI / 4 + Math.PI / 8;
+      const length = heavy ? 34 : 24;
+      const dx = Math.cos(angle);
+      const dy = Math.sin(angle);
+      impact.fillTriangle(
+        dx * 8 - dy * 2, dy * 8 + dx * 2,
+        dx * 8 + dy * 2, dy * 8 - dx * 2,
+        dx * length, dy * length,
+      );
+      impact.fillTriangle(
+        -dx * 8 - dy * 2, -dy * 8 + dx * 2,
+        -dx * 8 + dy * 2, -dy * 8 - dx * 2,
+        -dx * length, -dy * length,
+      );
+    }
+    impact.setScale(0.6);
+    this.tweens.add({
+      targets: impact,
+      alpha: 0,
+      scale: 1.35,
+      duration: 130,
+      ease: "Quart.easeOut",
+      onComplete: () => impact.destroy(),
+    });
   }
 
   private createParticles(): void {
@@ -2085,6 +2149,25 @@ export class FightScene extends Phaser.Scene {
     const view = this.fighterView(playerIndex);
     this.sound_mgr.playHit(true);
     this.spawnFloatingText(fighter.x, view.getRenderY() - 210, 'SUPER!', '#ffce3a', '16px', 4, 44, 800, 106);
+
+    // Super freeze: the stage drops to black under the fighters for a beat
+    // and the camera punches in, then everything eases back.
+    const shade = this.markWorld(this.add.graphics().setDepth(9.6).setAlpha(0));
+    shade.fillStyle(INK, 0.62);
+    shade.fillRect(-64, -64, GAME_WIDTH + 128, GAME_HEIGHT + 128);
+    this.tweens.add({ targets: shade, alpha: 1, duration: 60, ease: "Quad.easeOut" });
+    this.tweens.add({
+      targets: shade,
+      alpha: 0,
+      delay: 380,
+      duration: 220,
+      ease: "Quad.easeIn",
+      onComplete: () => shade.destroy(),
+    });
+    const camera = this.cameras.main;
+    this.tweens.killTweensOf(camera);
+    this.tweens.add({ targets: camera, zoom: 1.045, duration: 90, ease: "Quart.easeOut" });
+    this.tweens.add({ targets: camera, zoom: 1, delay: 400, duration: 240, ease: "Quad.easeInOut" });
   }
 
   private onProjectileHit(event: Extract<MatchSimEvent, { type: "projectileHit" }>): void {
@@ -2096,6 +2179,13 @@ export class FightScene extends Phaser.Scene {
       defenderView.getRenderY() - 80,
       event.blocked ? 5 : 12,
     );
+    if (!event.blocked) {
+      this.spawnImpactStar(
+        defender.x + (defender.facingRight ? -20 : 20),
+        defenderView.getRenderY() - 80,
+        false,
+      );
+    }
 
     this.spawnFloatingText(
       defender.x + (defender.facingRight ? -10 : 10),
@@ -2138,12 +2228,19 @@ export class FightScene extends Phaser.Scene {
       this.spawnFloatingText(defender.x, defenderView.getRenderY() - 190, 'COUNTER!', '#ffdd33', '14px', 4, 40, 700, 106);
     }
 
-    // Sparks
+    // Sparks + impact star
     this.hitSparks.emitParticleAt(
       defender.x + (defender.facingRight ? -20 : 20),
       defenderView.getRenderY() - 80,
       event.blocked ? 5 : 12,
     );
+    if (!event.blocked) {
+      this.spawnImpactStar(
+        defender.x + (defender.facingRight ? -20 : 20),
+        defenderView.getRenderY() - 80,
+        event.damage > 50,
+      );
+    }
 
     // Combo counter
     if (!event.blocked && event.comboCount >= 2) {

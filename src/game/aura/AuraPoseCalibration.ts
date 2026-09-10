@@ -1,0 +1,141 @@
+import {
+  auditPoseFrameSequence,
+  type PoseFrameBounds,
+  type PoseFrameCalibration,
+  type PoseFrameSequenceAudit,
+} from '../sprites/PoseFrameCalibration.ts';
+import { AURA_POSE_TEMPLATES, type AuraPoseTemplate } from './AuraPoseTemplates.ts';
+
+export interface AuraFrameCalibration extends Omit<PoseFrameCalibration, 'referenceBodyHeight'> {
+  /** Explicit reviewed reuse, never inferred from a character name. */
+  sourceFrame?: number;
+}
+
+export interface AuraAnimationCalibration {
+  referenceBodyHeight: number;
+  frames: readonly AuraFrameCalibration[];
+  policy: 'template-pose-v1' | 'shared-idle-v1';
+  audit?: PoseFrameSequenceAudit;
+}
+
+export interface AuraAtlasGeometry {
+  name: string;
+  contentHash: string;
+  frameWidth: number;
+  frameHeight: number;
+  frameCount: number;
+  bounds: readonly (PoseFrameBounds | null)[];
+}
+
+export interface AuraIdleReference {
+  bodyHeightRatio: number;
+  rootXRatio: number;
+  rootYRatio: number;
+}
+
+const median = (values: number[]) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+};
+
+/** Unknown packs keep their authored motion; never borrow Trump's pose curve. */
+export function auraIdleReference(idle?: AuraAtlasGeometry): AuraIdleReference {
+  const bounds = idle?.bounds.filter((value): value is PoseFrameBounds => value !== null) ?? [];
+  if (!idle || bounds.length === 0) return { bodyHeightRatio: 0.9, rootXRatio: 0.5, rootYRatio: 1 };
+  return {
+    bodyHeightRatio: median(bounds.map(value => value.height)) / idle.frameHeight,
+    rootXRatio: 0.5,
+    rootYRatio: median(bounds.map(value => value.y + value.height)) / idle.frameHeight,
+  };
+}
+
+/** Run once during pack loading, before playback, never during an animation tick. */
+export function calibrateAuraAtlas(
+  atlas: AuraAtlasGeometry,
+  idle: AuraIdleReference,
+): AuraAnimationCalibration {
+  const template: AuraPoseTemplate | undefined = (AURA_POSE_TEMPLATES as Record<string, AuraPoseTemplate>)[atlas.name];
+  const isTrump = template?.trumpSha256 === atlas.contentHash;
+  const isTemplate = template?.templateSha256 === atlas.contentHash;
+  const known = template && (isTrump || isTemplate)
+    && atlas.frameWidth === template.frameWidth && atlas.frameHeight === template.frameHeight
+    && atlas.frameCount === template.frames.length && atlas.bounds.length === atlas.frameCount;
+  if (known) {
+    const sourceIndices = isTrump ? template.trumpSourceFrameIndices : undefined;
+    const targetIndices = isTrump ? template.trumpTargetFrameIndices : undefined;
+    const inputs = template.frames.map((_, index) => {
+      const target = template.frames[targetIndices?.[index] ?? index];
+      return {
+        frameWidth: atlas.frameWidth, frameHeight: atlas.frameHeight,
+        sourceBounds: atlas.bounds[sourceIndices?.[index] ?? index],
+        targetBounds: { x: target.x, y: target.y, width: target.w, height: target.h },
+        targetRoot: template.referenceRoot,
+        referenceBodyHeight: template.referenceBodyHeight,
+      };
+    });
+    // Repeat closure for auditing only; playback count/timing is unchanged.
+    const audit = auditPoseFrameSequence([...inputs, inputs[0]]);
+    if (audit.verdict === 'rejected') {
+      throw new Error(`${atlas.name}: pose calibration rejected frames ${audit.rejectedFrameIndices.join(',')}`);
+    }
+    return {
+      referenceBodyHeight: template.referenceBodyHeight,
+      policy: 'template-pose-v1',
+      frames: audit.frames.slice(0, atlas.frameCount).map((result, index) => {
+        if (!result.ok) throw new Error(`${atlas.name}: invalid pose frame`);
+        return { ...result.calibration, sourceFrame: sourceIndices?.[index] ?? index };
+      }),
+      audit,
+    };
+  }
+  // A common idle baseline is safe for legacy packs. Per-frame pose correction
+  // requires an exact source hash/contract, otherwise a crouch could be enlarged.
+  return {
+    referenceBodyHeight: idle.bodyHeightRatio * atlas.frameHeight,
+    policy: 'shared-idle-v1',
+    frames: Array.from({ length: atlas.frameCount }, () => ({
+      scale: 1, originX: idle.rootXRatio, originY: idle.rootYRatio, offsetX: 0, offsetY: 0,
+    })),
+  };
+}
+
+export function measureAuraAtlas(
+  image: HTMLImageElement,
+  definition: Pick<AuraAtlasGeometry, 'name' | 'frameWidth' | 'frameHeight' | 'frameCount'>,
+  contentHash: string,
+): AuraAtlasGeometry {
+  const { frameWidth, frameHeight, frameCount } = definition;
+  if (![frameWidth, frameHeight, frameCount].every(value => Number.isSafeInteger(value) && value > 0)
+    || image.width % frameWidth !== 0 || image.height % frameHeight !== 0
+    || image.width / frameWidth * (image.height / frameHeight) < frameCount) {
+    throw new Error(`${definition.name}: invalid Aura atlas geometry`);
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = frameWidth; canvas.height = frameHeight;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) throw new Error('Cannot measure Aura alpha bounds');
+  const bounds: (PoseFrameBounds | null)[] = [];
+  const columns = image.width / frameWidth;
+  for (let index = 0; index < frameCount; index += 1) {
+    context.clearRect(0, 0, frameWidth, frameHeight);
+    context.drawImage(image, index % columns * frameWidth, Math.floor(index / columns) * frameHeight,
+      frameWidth, frameHeight, 0, 0, frameWidth, frameHeight);
+    const pixels = context.getImageData(0, 0, frameWidth, frameHeight).data;
+    let minX = frameWidth, minY = frameHeight, maxX = -1, maxY = -1;
+    for (let y = 0; y < frameHeight; y += 1) {
+      for (let x = 0; x < frameWidth; x += 1) {
+        if (pixels[(y * frameWidth + x) * 4 + 3] < 32) continue;
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+      }
+    }
+    bounds.push(maxX < 0 ? null : { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 });
+  }
+  return { ...definition, contentHash, bounds };
+}
+
+export async function auraAtlasContentHash(blob: Blob): Promise<string> {
+  const hash = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer());
+  return Array.from(new Uint8Array(hash), value => value.toString(16).padStart(2, '0')).join('');
+}

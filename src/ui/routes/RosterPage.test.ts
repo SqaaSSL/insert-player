@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { CloudFighter } from '../../services/CloudFighters.ts';
 import type { CachedMeta } from '../../services/SpriteCache.ts';
-import { buildRosterFighterSections } from './RosterPage.tsx';
+import { AURA_ANIMATION_NAMES } from '../../services/FighterAssetPacks.ts';
+import { PLAYABLE_ANIMATION_NAMES } from '../../services/PlayableFighterAssets.ts';
+import {
+  buildRosterFighterSections,
+  filterRosterFighterSectionsForMode,
+} from './RosterPage.tsx';
 
 function fighter(id: string, slug: string, name: string): CloudFighter {
   return {
@@ -130,5 +135,46 @@ describe('RosterPage fighter sections', () => {
     expect(sections.official.map((entry) => entry.name)).toEqual(['Vanta']);
     expect(sections.owned.map((entry) => entry.name)).toEqual(['Local Hero']);
     expect(sections.all.some((entry) => /template zero/i.test(entry.name))).toBe(false);
+  });
+
+  it('keeps each game limited to its complete animation pack, without requiring shrug', () => {
+    const auraOnly = meta('aura-photo', 'aura-id', 'Aura Only');
+    auraOnly.animationsReady = [...AURA_ANIMATION_NAMES];
+    const fightReady = meta('fight-photo', 'fight-id', 'Fight Ready');
+    fightReady.animationsReady = [...PLAYABLE_ANIMATION_NAMES];
+    const sections = buildRosterFighterSections([auraOnly, fightReady], []);
+
+    expect(filterRosterFighterSectionsForMode(sections, 'fight').all.map((entry) => entry.name))
+      .toEqual(['Fight Ready']);
+    expect(filterRosterFighterSectionsForMode(sections, 'rush').all.map((entry) => entry.name))
+      .toEqual(['Fight Ready']);
+    expect(filterRosterFighterSectionsForMode(sections, 'aura').all.map((entry) => entry.name))
+      .toEqual(['Aura Only']);
+    expect(filterRosterFighterSectionsForMode(sections, 'aura').all[0].animationSummary).toBe('6 Aura moves ready');
+  });
+
+  it('keeps the reviewed official Trump and excludes other combat-only official characters', () => {
+    const official = globals.map((item) => ({ ...item,
+      sprites: PLAYABLE_ANIMATION_NAMES.map((animationName) => ({ animationName })) as CloudFighter['sprites'],
+    }));
+    const sections = buildRosterFighterSections([], official);
+    expect(filterRosterFighterSectionsForMode(sections, 'aura').official.map((entry) => entry.cloudFighterId))
+      .toEqual(['trump-id']);
+    expect(filterRosterFighterSectionsForMode(sections, 'fight').official).toHaveLength(4);
+  });
+
+  it('rejects a partial Aura pack even with all combat moves and the optional shrug', () => {
+    const partial = meta('partial-aura', 'partial-id');
+    partial.animationsReady = [...PLAYABLE_ANIMATION_NAMES, ...AURA_ANIMATION_NAMES.slice(0, -1), 'aura_shrug'];
+    expect(filterRosterFighterSectionsForMode(buildRosterFighterSections([partial], []), 'aura').all).toEqual([]);
+  });
+
+  it('retains only the verified public Trump cache when the official roster is offline', () => {
+    const cached = { ...meta('arcade:donald-trump:trump-id', 'trump-id', 'Donald Trump'), cloudPublic: true };
+    const renamed = meta('personal-trump', 'personal-id', 'Donald Trump');
+    renamed.animationsReady = [...PLAYABLE_ANIMATION_NAMES];
+    const sections = filterRosterFighterSectionsForMode(buildRosterFighterSections([cached, renamed], [], true), 'aura');
+    expect(sections.official.map((entry) => entry.photoHash)).toEqual([cached.photoHash]);
+    expect(sections.owned).toEqual([]);
   });
 });

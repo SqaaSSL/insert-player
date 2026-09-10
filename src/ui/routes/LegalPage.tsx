@@ -263,7 +263,7 @@ function PrivacyPolicy() {
 
       <section>
         <h2>7. Cookies and local storage</h2>
-        <p>At launch, Insert Player uses only storage needed for authentication, security, checkout return state, local roster data, and gameplay. We do not run advertising trackers or optional analytics. Cloudflare Turnstile may use necessary security storage to distinguish people from automated abuse.</p>
+        <p>At launch, Insert Player uses only storage needed for authentication, security, checkout return state, local roster data, and gameplay. We do not run advertising trackers or send optional analytics to an external service. A bounded playtest log stays on this device and can be exported from Credits; it records game and creation events without names, photos or challenge links. A creation draft can be restored on this device for 24 hours after checkout navigation; expired drafts are discarded when accessed again. Cloudflare Turnstile may use necessary security storage to distinguish people from automated abuse.</p>
       </section>
 
       <section>

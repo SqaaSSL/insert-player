@@ -827,7 +827,7 @@ async function unionCleanup(plan: StrategyPlan, frameIndex: number): Promise<voi
   dnnContext.drawImage(dnnImage, 0, 0, chromaImage.width, chromaImage.height);
   const chromaData = context.getImageData(0, 0, canvas.width, canvas.height);
   const dnnData = dnnContext.getImageData(0, 0, dnnCanvas.width, dnnCanvas.height);
-  unionForegroundMasks(chromaData.data, dnnData.data);
+  unionForegroundMasks(chromaData.data, dnnData.data, canvas.width, canvas.height);
   decontaminateGreenEdges(chromaData.data, canvas.width, canvas.height);
   context.putImageData(chromaData, 0, 0);
   await writeFile(cleanFramePath(plan, frameIndex), canvas.toBuffer('image/png'), { mode: 0o600 });

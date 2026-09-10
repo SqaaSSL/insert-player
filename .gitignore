@@ -65,3 +65,6 @@ brand-clearance.local.json
 *.njsproj
 *.sln
 *.sw?
+
+# Raw Aura track downloads; scripts/measure-aura-tracks.mjs encodes them into public/assets/audio/aura
+audio-src/

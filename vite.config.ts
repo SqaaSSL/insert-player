@@ -2,6 +2,7 @@ import { type Plugin, loadEnv } from 'vite';
 import { configDefaults, defineConfig } from 'vitest/config';
 import tailwindcss from '@tailwindcss/vite';
 import type { IncomingMessage, ServerResponse } from 'http';
+import { devGameplayCapturePlugin } from './scripts/dev-gameplay-capture.mjs';
 
 function apiProxyPlugin(): Plugin {
   type ProxyProvider = 'ludo' | 'freepik' | 'gemini' | 'runway' | 'fal';
@@ -353,7 +354,7 @@ function prelaunchEntryPlugin(mode: string): Plugin {
 
 export default defineConfig(({ mode }) => ({
   envDir: mode === 'prelaunch' ? false : undefined,
-  plugins: [prelaunchEntryPlugin(mode), tailwindcss(), apiProxyPlugin()],
+  plugins: [prelaunchEntryPlugin(mode), tailwindcss(), apiProxyPlugin(), devGameplayCapturePlugin() as Plugin],
   server: {
     proxy: {
       '/dev-api': {

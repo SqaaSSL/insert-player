@@ -45,7 +45,10 @@ describe('0034 Video generation policy migration', () => {
     try {
       await db.prepare(`
         CREATE TABLE generation_artifact_runs (
-          id TEXT PRIMARY KEY,
+          creation_package TEXT NOT NULL DEFAULT 'complete',
+    expansion_only INTEGER NOT NULL DEFAULT 0,
+    animation_plan_json TEXT,
+    id TEXT PRIMARY KEY,
           fighter_id TEXT NOT NULL,
           creation_flow TEXT NOT NULL,
           status TEXT NOT NULL,

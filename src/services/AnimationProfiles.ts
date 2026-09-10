@@ -168,5 +168,21 @@ const PROFILES: Record<string, AnimationProfile> = {
 };
 
 export function getAnimationProfile(name: string): AnimationProfile {
+  if (name.startsWith('aura_')) {
+    const floor = name === 'aura_floor_worm';
+    return {
+      targetHeightRatio: floor ? 0.32 : 0.80,
+      targetWidthRatio: floor ? 0.94 : 0.82,
+      baselineRatio: 0.95,
+      lockScaleAcrossFrames: true,
+      promptRules: [
+        'This is a playful dance performance, not a fighting attack. Keep the costume, recognizable identity, and camera distance identical to the reference.',
+        'The six unique poses form a closed loop; the final pose returns naturally to the first. No additional people, props, or text.',
+        floor
+          ? 'The performer stays horizontal near the floor throughout the worm cycle, with a complete uncropped body and unchanged anatomy; never enlarge the prone body to standing height.'
+          : 'Keep the full body inside every cell with generous empty margin. Any hopping is small and returns to the same floor line.',
+      ],
+    };
+  }
   return PROFILES[name] ?? DEFAULT_PROFILE;
 }

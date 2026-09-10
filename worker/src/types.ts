@@ -1,3 +1,4 @@
+import type { StoredGenerationPackage } from './generationPackages';
 import type { SpriteAnimationFormat } from './spriteAnimationFormat';
 import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
 import type { VideoGenerationPolicy } from '../../src/services/VideoGenerationPolicy';
@@ -29,7 +30,7 @@ export type GenerationJobOperation =
   | 'fighter_retry_animation'
   | 'fighter_retry_source';
 
-export interface GenerationJob {
+export interface GenerationJob extends StoredGenerationPackage {
   id: string;
   workflow_instance_id: string;
   user_id: string;
@@ -64,7 +65,7 @@ export type GenerationArtifactRunStatus =
   | 'failed'
   | 'superseded';
 
-export interface GenerationArtifactRun {
+export interface GenerationArtifactRun extends StoredGenerationPackage {
   id: string;
   user_id: string;
   fighter_id: string;

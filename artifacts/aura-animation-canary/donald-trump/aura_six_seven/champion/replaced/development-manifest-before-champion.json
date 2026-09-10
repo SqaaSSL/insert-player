@@ -1,0 +1,149 @@
+{
+  "schemaVersion": 1,
+  "status": "choreography-canary-review",
+  "packId": "aura-v1-2026",
+  "animationName": "aura_six_seven",
+  "subject": "donald-trump",
+  "qualityTarget": "champion",
+  "artifactStage": "pose-storyboard-and-development-runtime",
+  "generation": {
+    "tool": "OpenAI image generation",
+    "mode": "whole-sheet identity pass plus reviewed single-frame correction and deterministic interleave",
+    "model": "workspace-default-image-model",
+    "providerCostUsd": null,
+    "generatedAt": "2026-09-05",
+    "costDisclosure": {
+      "calls": 3,
+      "apiEquivalentOutputOnlyEstimateUsd": 0.495,
+      "apiEquivalentTotalEstimateUsd": {
+        "minimum": 0.54,
+        "maximum": 0.66
+      },
+      "note": "The built-in generation tool does not expose project billing. The range is an API-equivalent estimate including reference inputs, not an invoice."
+    },
+    "attempts": [
+      {
+        "attempt": 1,
+        "result": "rejected-for-choreography",
+        "finding": "Identity and clothing were coherent, but the same raised side was repeated.",
+        "width": 1536,
+        "height": 1024,
+        "sha256": "e64d680d58639b0369bee46f0665e41f45dac069e413bcaa0d514068d1fc8b62",
+        "prompt": "Use case: stylized-concept\nAsset type: production game-animation storyboard for a Phaser spritesheet\nPrimary request: create exactly eight successive full-body keyframes of Donald Trump performing the compact meme Six-Seven two-hand palm seesaw gesture.\nInput images: Image 1 is the only choreography, pose sequence, camera, spacing, and timing reference. Image 2 is the canonical in-game character, clothing, proportions, and render-style reference. Image 3 is the licensed facial-identity reference.\nScene/backdrop: one perfectly uniform pure chroma green #00FF00 field in every cell, with no shadows, floor, horizon, gradients, seams, frames, labels, or scenery.\nSubject: unmistakable Donald Trump, consistent across all eight cells; swept blond hair, navy business suit, white shirt, bright blue tie, black dress shoes, realistic stylized fighting-game render. Preserve the identity and outfit from Images 2 and 3.\nComposition/framing: exact 4 columns × 2 rows storyboard, read left-to-right then top-to-bottom. One isolated complete person per cell. Fixed three-quarter right-facing camera, same scale, same stable baseline, planted feet, full body and both hands completely visible, generous clearance around anatomy. Invisible cell boundaries.\nChoreography: both elbows stay comfortably bent and near the torso; both open palms face upward in front of the chest. The two hands alternate as a symmetrical seesaw: frame 1 left high/right low; frame 2 both level; frame 3 right high/left low; frame 4 both level; frames 5–8 repeat that cycle. The right hand must clearly rise above chest level in frames 3 and 7, while the left hand is clearly below it. The left hand must clearly rise above chest level in frames 1 and 5, while the right is clearly below it. Movement is readable, compact, rhythmic, and meme-like.\nStyle/medium: polished semi-realistic 3D fighting-game character render matching Image 2; crisp silhouette and consistent lighting.\nConstraints: exactly eight figures and exactly one figure in each cell; same face, hair, body, suit, tie, camera angle, size, baseline, and lighting throughout; anatomically correct hands; no change of facing direction.\nAvoid: shrugging, arms spread wide, combat guard, fists, crossed arms, pointing, waving, duplicate or missing limbs, extra fingers, cropped shoes or hands, overlapping figures, motion blur, text, numbers, logos, flags, watermarks, props, stage elements, cast shadows, green spill, background variation."
+      },
+      {
+        "attempt": 2,
+        "result": "partially-selected",
+        "finding": "Selected for identity-stable transition frames; opposite hand extremes were still flattened.",
+        "width": 1536,
+        "height": 1024,
+        "sha256": "68c6e72969160911a5a8ad9afd60cdfe2c7d0af15b7513d004ca6850052b81ab",
+        "prompt": "Use case: identity-preserve\nAsset type: corrected production game-animation storyboard for a Phaser spritesheet\nInput images: Image 1 is the edit target and must keep its exact Donald Trump identity, face, swept blond hair, navy suit, white shirt, blue tie, shoes, polished fighting-game render, 4×2 layout, green background, camera, scale, baseline, and lighting. Image 2 is the required SCREEN-RIGHT-HAND-HIGH pose. Image 3 is the required SCREEN-LEFT-HAND-HIGH pose.\nPrimary request: change only the arm and open-palm positions in Image 1 so the eight cells visibly alternate both sides of the Six-Seven seesaw gesture.\nExact screen-space sequence, read left-to-right then top-to-bottom:\n1. SCREEN-RIGHT hand high above chest and SCREEN-LEFT hand low below chest, matching Image 2.\n2. Both open palms level at mid-chest.\n3. SCREEN-LEFT hand high above chest and SCREEN-RIGHT hand low below chest, matching Image 3.\n4. Both open palms level at mid-chest.\n5. SCREEN-RIGHT hand high above chest and SCREEN-LEFT hand low below chest, matching Image 2.\n6. Both open palms level at mid-chest.\n7. SCREEN-LEFT hand high above chest and SCREEN-RIGHT hand low below chest, matching Image 3.\n8. Both open palms level at mid-chest.\nCritical correction: cells 3 and 7 MUST visibly use the opposite raised hand from cells 1 and 5. The SCREEN-LEFT palm in cells 3 and 7 must be near shoulder height, while the SCREEN-RIGHT palm is near the waist. This opposite-side alternation is the purpose of the edit.\nConstraints: change only the arms and hands; preserve everything else from Image 1 exactly; exactly eight figures and one complete isolated person per cell; fixed three-quarter right-facing camera; planted feet; stable baseline; full body; correct anatomy.\nAvoid: repeating the same raised side in every cell, shrugging, arms spread wide, combat guard, fists, crossed arms, pointing, duplicate or missing limbs, extra fingers, crop, overlap, text, numbers, logos, flags, watermarks, props, shadows, floor, seams, frames, green variation."
+      },
+      {
+        "attempt": 3,
+        "result": "selected-opposite-side-keyframe",
+        "finding": "The missing opposite hand-height extreme was generated correctly and interleaved with the previous accepted frames.",
+        "width": 1086,
+        "height": 1448,
+        "sha256": "59f575bffb7d775e1c4c2dd0e03d28aef74a5f4f574592d91e8d817ce3ad5a9d",
+        "prompt": "Use case: identity-preserve\nAsset type: one corrected keyframe for a Phaser fighting-game animation\nInput images: Image 1 is the edit target and identity/style/layout anchor. Image 2 is the exact arm-and-open-palm pose reference.\nPrimary request: change only Donald Trump’s arms and hands in Image 1 to match Image 2: the hand on the LEFT SIDE OF THE IMAGE must be clearly raised near shoulder/upper-chest height, palm up; the hand on the RIGHT SIDE OF THE IMAGE must be clearly lowered near waist height, palm up. This must be the visually opposite seesaw position from Image 1.\nSubject: preserve exactly the same recognizable Donald Trump face, swept blond hair, navy suit, white shirt, blue tie, black shoes, body proportions, three-quarter right-facing camera, expression, and polished fighting-game render from Image 1.\nScene/backdrop: perfectly uniform pure chroma green #00FF00, no floor, no shadow, no gradient.\nComposition/framing: exactly one isolated complete full-body person centered; planted feet; same scale and stable baseline as Image 1; both hands and both shoes fully visible.\nCritical constraint: LEFT SIDE OF IMAGE hand HIGH; RIGHT SIDE OF IMAGE hand LOW. Match Image 2’s arm pose, not Image 1’s arm pose. Change only the arms and hands; preserve everything else.\nAvoid: the right side of the image being the raised hand, both hands at the same height, shrug, wide arms, combat guard, fists, crossed arms, pointing, extra fingers, duplicate or missing limbs, crop, text, numbers, logos, flags, watermark, props, shadow, scenery, background variation."
+      }
+    ]
+  },
+  "sources": [
+    {
+      "role": "canonical in-game Donald Trump render",
+      "sha256": "15ceb68ce7794ffc1018f8420fb7b424692d60780de05cdfbb498578cef6b7d0"
+    },
+    {
+      "role": "licensed Donald Trump identity source",
+      "sha256": "b8cdec38c5a7e8042acd2a095336a2a5b3255bf8771aedf7634860129af4c476"
+    },
+    {
+      "role": "approved Template Zero Six-Seven choreography",
+      "sha256": "be838a93ae70d03f82028c19b9727a47a8048ebaf8d492cd1fd4540ae48ec62d"
+    }
+  ],
+  "raw": {
+    "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/raw-storyboard.png",
+    "width": 1536,
+    "height": 1024,
+    "cellWidth": 384,
+    "cellHeight": 512,
+    "sha256": "b35e717c325880d174611b98ae18a382d1c3a4f1f91582135db348969886ccc9"
+  },
+  "keyframes": {
+    "sequence": [
+      "both-level-01",
+      "screen-right-high-01",
+      "both-level-02",
+      "screen-left-high",
+      "both-level-03",
+      "screen-right-high-02",
+      "both-level-04",
+      "screen-left-high"
+    ],
+    "both-level-01": {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/keyframes/both-level-01.png",
+      "sha256": "7c8216614d236809b6af3de80a17e5c661889a4c3f11fd071fa4778d2f7292a7"
+    },
+    "screen-right-high-01": {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/keyframes/screen-right-high-01.png",
+      "sha256": "ebe06e8c9908bd2a15cf64f5d79cee12b9fe18703a4cf0f2c3089783fee7d957"
+    },
+    "both-level-02": {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/keyframes/both-level-02.png",
+      "sha256": "ede90410e61b4eff07a02acf102ba3d6b0f929895fe9ab13bf422dbc54882c1b"
+    },
+    "screen-left-high": {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/keyframes/screen-left-high.png",
+      "sha256": "55f9bd8b800eb8b57bb0b218f4c87b763d26db542e4be50af453471fa5d0b916"
+    },
+    "both-level-03": {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/keyframes/both-level-03.png",
+      "sha256": "29c038450306b05de2f40548181fccd9acbee48fbe98c7e3a452bf3bac4b8da2"
+    },
+    "screen-right-high-02": {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/keyframes/screen-right-high-02.png",
+      "sha256": "c6484ccc9a93d302fb63dd5c1092a5e624cc05ef53587d66dca14ed9d6d62977"
+    },
+    "both-level-04": {
+      "path": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/keyframes/both-level-04.png",
+      "sha256": "4632a3ffb19845ee5e80c287b241c775ed723debb0406fe2d4ef215574a61ad4"
+    }
+  },
+  "runtime": {
+    "path": "public/assets/aura/donald-trump/aura_six_seven.png",
+    "frameWidth": 192,
+    "frameHeight": 256,
+    "frameCount": 8,
+    "gridColumns": 4,
+    "gridRows": 2,
+    "sha256": "d64915f9cef682f3fba7eefa3175b15a80d1eac15a8d605bfc16972ad5b8464c"
+  },
+  "championPromotion": {
+    "ready": false,
+    "requiredArchivalFrameWidth": 768,
+    "requiredArchivalFrameHeight": 1024,
+    "currentStoryboardCellWidth": 384,
+    "currentStoryboardCellHeight": 512,
+    "requiredProcess": "Refine each of the six unique character poses independently using the approved sequence and canonical identity, then derive runtime frames from those HQ masters.",
+    "naivePixelUpscaleAllowed": false
+  },
+  "gameplayReview": {
+    "animatedPreviewPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/gesture-preview.gif",
+    "animatedPreviewSha256": "393bec56ed3ee94a7f6b0d7584c7c439667fe71b562949c881d15b7a9bda70fd",
+    "screenshotPath": "artifacts/aura-animation-canary/donald-trump/aura_six_seven/gameplay-review.jpg",
+    "screenshotSha256": "5f57a516b6dcb498cf270c7d859f253ec3f7a71a457cf959921f695468a7f19b",
+    "screenshotPurpose": "Side-by-side real gameplay capture showing both opposite hand-height extremes.",
+    "consoleErrors": 0
+  },
+  "review": {
+    "automaticRootRegistration": "pass",
+    "agentSemanticReview": "pass-after-opposite-side-keyframe-interleave",
+    "ownerSemanticReview": "pending-gameplay-review",
+    "finding": "The final sequence alternates accepted transition frames with both opposite Six-Seven hand-height extremes. It remains a choreography canary until per-frame Champion refinement is complete.",
+    "fullCharacterBatchAuthorized": false
+  }
+}

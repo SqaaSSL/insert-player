@@ -1,3 +1,8 @@
+import { quoteGenerationPackage, type GenerationPackage } from '../../services/GenerationPackages.ts';
+import { readCreationNavigationContext, buildCreationSearch, creationReturnForPackage } from '../shared/onboardingFlow.ts';
+import { readCreationDraft, restoreCreationChoices, saveCreationDraft, clearCreationDraft } from '../shared/creationDraft.ts';
+import { trackProductEvent } from '../../services/ProductEvents.ts';
+import './creation-offers.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CACHE_VERSION,
@@ -72,7 +77,7 @@ interface CreateFighterPageProps {
   completionLabel?: string;
   onBack: () => void;
   onComplete: (photoHash: string) => void;
-  onGetCredits?: (tier: QualityTier) => void;
+  onGetCredits?: (tier: QualityTier, creationPackage: GenerationPackage, draftPersisted?: boolean) => void;
   onNavigateLegal?: (route: '/legal' | '/privacy' | '/terms' | '/refunds') => void;
 }
 
@@ -170,6 +175,11 @@ export function CreateFighterPage({
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState(DEFAULT_NAME);
   const [tier, setTier] = useState<QualityTier>(() => initialQualityTier(authStatus));
+  const [creationPackage, setCreationPackage] = useState<GenerationPackage>(() => readCreationNavigationContext(window.location.search).creationPackage ?? 'complete');
+  const [draftMessage, setDraftMessage] = useState<string | null>(null);
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const draftRestoreBlockedRef = useRef(false);
+  const generationStartedAt = useRef<number | null>(null);
   const [creationFlow, setCreationFlow] = useState<CreationFlow>('original');
 
   const [started, setStarted] = useState(false);
@@ -203,9 +213,47 @@ export function CreateFighterPage({
   const requiresTurnstile = authStatus === 'signed-out' && tier === 'rookie';
   const turnstileSiteKey = String(import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '').trim();
   const turnstileReady = !requiresTurnstile || Boolean(turnstileToken);
-  const videoFlowAvailability = videoCreationFlowAvailability(authStatus, tier);
+  const videoFlowAvailability = creationPackage === 'aura'
+    ? { available: false, reason: 'Dedicated Aura moves use the Original flow.' }
+    : videoCreationFlowAvailability(authStatus, tier);
   const videoReviewActionNeedsConsent = videoReviewJobNeedsConsent(videoReviewJob) ||
     videoReviewDecisionRequiresConsent;
+
+  useEffect(() => {
+    let cancelled = false;
+    const context = readCreationNavigationContext(window.location.search);
+    void readCreationDraft(authSessionKey).then((draft) => {
+      if (cancelled) return;
+      setDraftLoaded(true);
+      if (!draft || draftRestoreBlockedRef.current) return;
+      const choices = restoreCreationChoices(draft, context);
+      setFile(new File([draft.file], draft.fileName, { type: draft.file.type }));
+      setName(draft.name);
+      setTier(choices.tier);
+      setCreationPackage(choices.creationPackage);
+      setCreationFlow(choices.creationFlow);
+      setDraftMessage('Your photo and choices are restored on this device.');
+    });
+    return () => { cancelled = true; };
+  }, [authSessionKey]);
+
+  useEffect(() => {
+    if (!draftLoaded || started) return;
+    const context = readCreationNavigationContext(window.location.search);
+    const search = buildCreationSearch({ tier, creationPackage, returnTo: creationReturnForPackage(context.returnTo, creationPackage), source: context.source ?? undefined, challenge: context.challenge });
+    if (window.location.search !== `?${search}`) {
+      window.history.replaceState(window.history.state, '', `/fighters/new?${search}`);
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+    if (file) void saveCreationDraft(authSessionKey, { file, fileName: file.name, name, tier, creationPackage, creationFlow, savedAt: Date.now() });
+  }, [draftLoaded, file, name, tier, creationPackage, creationFlow, started, authSessionKey]);
+
+  useEffect(() => {
+    if (!done) return;
+    void clearCreationDraft(authSessionKey);
+    trackProductEvent('creation_completed', { game: creationPackage === 'aura' ? 'aura' : 'fight', package: creationPackage,
+      tier, durationMs: generationStartedAt.current === null ? undefined : Date.now() - generationStartedAt.current });
+  }, [done]);
 
   useEffect(() => {
     setVideoReviewDecisionRequiresConsent(false);
@@ -303,7 +351,9 @@ export function CreateFighterPage({
           return;
         }
         recoverableJobFound = true;
+        draftRestoreBlockedRef.current = true;
         setTier(recovering.tier);
+        setCreationPackage(recovering.creationPackage ?? 'complete');
         setCreationFlow(creationFlowForResume(recovering.creationFlow));
         setStarted(true);
         setDone(false);
@@ -554,6 +604,7 @@ export function CreateFighterPage({
   async function retryPendingFighterSync(): Promise<void> {
     if (!pendingFighterSync || running) return;
     const pending = pendingFighterSync;
+    draftRestoreBlockedRef.current = true;
     setRunning(true);
     setError(null);
     try {
@@ -720,6 +771,7 @@ export function CreateFighterPage({
       apiContext,
       null,
       creationFlow,
+      { creationPackage },
     );
     if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
       throw new Error(authorization.error ?? 'Generation not authorized');
@@ -733,6 +785,7 @@ export function CreateFighterPage({
         purchaseId: authorization.purchaseId,
         providerSessionId: authorization.providerSessionId,
         creationFlow,
+        creationPackage,
       }, apiContext);
     } catch (error) {
       try {
@@ -774,6 +827,7 @@ export function CreateFighterPage({
       apiContext,
       failedJob.id,
       failedCreationFlow,
+      { creationPackage: failedJob.creationPackage, expansion: failedJob.expansion },
     );
     if (
       !authorization.authorized ||
@@ -791,6 +845,8 @@ export function CreateFighterPage({
         purchaseId: authorization.purchaseId,
         providerSessionId: authorization.providerSessionId,
         creationFlow: failedCreationFlow,
+        creationPackage: failedJob.creationPackage,
+        expansion: failedJob.expansion,
       }, apiContext);
     } catch (error) {
       try {
@@ -834,12 +890,15 @@ export function CreateFighterPage({
       setError(videoFlowAvailability.reason ?? 'Video creation is unavailable.');
       return;
     }
+    draftRestoreBlockedRef.current = true;
     setRunning(true);
     setDone(false);
     setPendingFighterSync(null);
     setVideoReviewJob(null);
     setError(null);
     setPercent(0);
+    generationStartedAt.current = Date.now();
+    trackProductEvent('creation_started', { package: creationPackage, tier });
     setStageText('Starting pipeline...');
     setGenerating(new Set());
     let purchaseId: string | undefined;
@@ -862,6 +921,7 @@ export function CreateFighterPage({
           apiContext,
           null,
           creationFlow,
+          { creationPackage },
         );
       } finally {
         if (requiresTurnstile) {
@@ -947,6 +1007,8 @@ export function CreateFighterPage({
   }
 
   function choosePhotoAgain() {
+    draftRestoreBlockedRef.current = true;
+    void clearCreationDraft(authSessionKey);
     setStarted(false);
     setDone(false);
     setError(null);
@@ -972,12 +1034,14 @@ export function CreateFighterPage({
     : null;
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
   const selectedTier = QUALITY_TIERS.find((item) => item.id === tier);
+  const selectedQuote = quoteGenerationPackage(tier, creationPackage);
+  const auraNeedsAccount = creationPackage === 'aura' && authStatus !== 'signed-in';
   const selectedUsesIncludedRookie = tier === 'rookie' && rookieStatus === 'included';
   const creditCheckPending = authStatus === 'signed-in'
     && !selectedUsesIncludedRookie
     && !billingProfileChecked;
   const creditsNeeded = selectedTier && billingProfile
-    ? Math.max(0, selectedTier.creditCost - billingProfile.creditsBalance)
+    ? Math.max(0, selectedQuote.creditCost - billingProfile.creditsBalance)
     : 0;
   const insufficientCredits = authStatus === 'signed-in'
     && Boolean(selectedTier)
@@ -992,7 +1056,7 @@ export function CreateFighterPage({
     ? 'Create Free Rookie'
     : tier === 'rookie' && rookieStatus === 'checking'
       ? 'Create Rookie · Pass Checked At Start'
-    : `Create ${selectedTier?.label ?? 'Fighter'} · ${selectedTier?.priceLabel ?? ''}`.trim();
+    : `Create ${creationPackage === 'aura' ? 'Aura' : 'complete character'} · ${selectedQuote.priceLabel}`.trim();
 
   const saveGif = async () => {
     if (!cachedSelectedSprite || !selectedAnimName) return;
@@ -1029,7 +1093,7 @@ export function CreateFighterPage({
           <div>
             <h1>Make Yourself Playable</h1>
             <p className="roster-hero__copy">
-              Upload one photo. We build a fighter you can take straight into Arcade Mode.
+              One photo, your character. Choose where you want to play; your next game stays selected.
             </p>
           </div>
           <div className="roster-hero__actions">
@@ -1037,9 +1101,9 @@ export function CreateFighterPage({
           </div>
         </header>
 
-        <div className="create-intro">
+        <div className="create-intro" onChangeCapture={() => { draftRestoreBlockedRef.current = true; }}>
           <label className="create-form__field">
-            <span>Fighter Name</span>
+            <span>Character name</span>
             <input
               type="text"
               value={name}
@@ -1053,24 +1117,36 @@ export function CreateFighterPage({
             <input
               type="file"
               accept="image/*"
+              disabled={auraNeedsAccount}
               onChange={(event) => {
+                setDraftMessage(null);
+                if (!event.target.files?.[0]) void clearCreationDraft(authSessionKey);
                 setFile(event.target.files?.[0] ?? null);
                 setResumableJob(null);
                 setVideoReviewJob(null);
               }}
             />
           </label>
-          <CreationFlowPicker
-            name="fighter-creation-flow"
-            value={creationFlow}
-            onChange={setCreationFlow}
-            disabled={running}
-            videoAvailable={videoFlowAvailability.available}
-            videoUnavailableReason={videoFlowAvailability.reason}
-          />
+          {draftMessage ? <p role="status">{draftMessage}</p> : null}
+          {file ? <p className="tier-picker__note">Photo selected: {file.name}</p> : null}
+          <fieldset className="creation-offers">
+            <legend>Where do you want to play?</legend>
+            {(['aura', 'complete'] as const).map((pack) => {
+              const quote = quoteGenerationPackage(tier, pack);
+              return <label key={pack} className={`creation-offer${creationPackage === pack ? ' is-selected' : ''}`}>
+                <input type="radio" name="creation-package" checked={creationPackage === pack} onChange={() => setCreationPackage(pack)} />
+                <span><strong>{pack === 'aura' ? 'Aura moves' : 'Fight + Rush'}</strong>
+                  <span>{pack === 'aura' ? 'Six dedicated gestures for Aura challenges.' : 'A complete combat moveset for Fight and Rush. Aura moves are a separate pack.'}</span></span>
+                <b>{selectedUsesIncludedRookie ? 'First Rookie included' : quote.priceLabel}</b>
+              </label>;
+            })}
+          </fieldset>
+          <p className="tier-picker__note">Aura moves work in Aura. You can add Fight + Rush to the same character later, after reviewing the expansion price.</p>
+          <details className="creation-advanced">
+            <summary>Quality & creation options · {selectedTier?.label}</summary>
           <fieldset className="tier-picker" aria-describedby="tier-picker-note">
             <legend className="tier-picker__legend">
-              <span>Choose fighter quality</span>
+              <span>Quality</span>
               {authStatus === 'signed-in' && billingProfile ? (
                 <small>{billingProfile.creditsBalance} credits available</small>
               ) : null}
@@ -1078,11 +1154,11 @@ export function CreateFighterPage({
             {QUALITY_TIERS.map((item) => {
               const locked = lockPaidTiers && item.id !== 'rookie';
               const priceLabel = item.id !== 'rookie'
-                ? item.priceLabel
+                ? quoteGenerationPackage(item.id, creationPackage).priceLabel
                 : rookieStatus === 'included'
                   ? authStatus === 'signed-in' ? 'Included' : 'Free'
                   : rookieStatus === 'credits'
-                    ? item.priceLabel
+                    ? quoteGenerationPackage(item.id, creationPackage).priceLabel
                     : 'Checking account';
               const pitch = item.id === 'rookie' && rookieStatus === 'included'
                 ? authStatus !== 'signed-in'
@@ -1105,7 +1181,7 @@ export function CreateFighterPage({
                     />
                     <span>{item.label}</span>
                   </span>
-                  <small>{locked ? `${item.priceLabel} · Sign in` : `${priceLabel} · ${item.estimatedTime}`}</small>
+                  <small>{locked ? `${quoteGenerationPackage(item.id, creationPackage).priceLabel} · Sign in` : `${priceLabel} · ${item.estimatedTime}`}</small>
                   <em>{locked ? 'Sign in to unlock paid quality.' : pitch}</em>
                 </label>
               );
@@ -1114,6 +1190,17 @@ export function CreateFighterPage({
           <p className="tier-picker__note" id="tier-picker-note">
             Source views are always generated at premium quality. Animation fidelity and detail scale with the tier.
           </p>
+          <CreationFlowPicker
+            name="fighter-creation-flow"
+            value={creationFlow}
+            onChange={setCreationFlow}
+            disabled={running}
+            videoAvailable={videoFlowAvailability.available}
+            videoUnavailableReason={videoFlowAvailability.reason}
+          />
+          </details>
+          <p className="creation-price-summary"><strong>{creationPackage === 'aura' ? 'Aura moves' : 'Fight + Rush'} · {selectedTier?.label}</strong><span>{selectedUsesIncludedRookie ? 'Uses your included first Rookie. No credits charged.' : `${selectedQuote.creditCost} credits to create. Playing uses no generation credits.`}</span></p>
+          {auraNeedsAccount ? <p className="create-recovery-error">Sign in above to save your Aura character and generate its six moves. You can try Aura before creating a character.</p> : null}
           {requiresTurnstile ? (
             <TurnstileChallenge
               siteKey={turnstileSiteKey}
@@ -1147,18 +1234,22 @@ export function CreateFighterPage({
           {error ? <p className="create-intro__error" role="alert">{error}</p> : null}
           <button
             className="home-menu__action is-primary"
-            disabled={running || creditCheckPending || (insufficientCredits
+            disabled={running || auraNeedsAccount || creditCheckPending || (insufficientCredits
               ? !onGetCredits
               : !file || !name.trim() || !turnstileReady || !legalAccepted || !recoveryReady)}
-            onClick={() => {
+            onClick={async () => {
               if (insufficientCredits) {
-                onGetCredits?.(tier);
+                let draftPersisted = true;
+                if (file) {
+                  draftPersisted = await saveCreationDraft(authSessionKey, { file, fileName: file.name, name, tier, creationPackage, creationFlow, savedAt: Date.now() });
+                }
+                onGetCredits?.(tier, creationPackage, draftPersisted);
                 return;
               }
               void start();
             }}
           >
-            <span>{insufficientCredits || creditCheckPending
+            <span>{auraNeedsAccount ? 'Sign in to create Aura' : insufficientCredits || creditCheckPending
               ? startLabel
               : recoveryError
                 ? 'Cloud Check Required'
@@ -1169,7 +1260,7 @@ export function CreateFighterPage({
                     : startLabel}</span>
             <small>
               {insufficientCredits
-                ? `${selectedTier?.label ?? 'This tier'} needs ${selectedTier?.creditCost ?? 0} credits · you have ${billingProfile?.creditsBalance ?? 0}`
+                ? `${selectedTier?.label ?? 'This tier'} needs ${selectedQuote.creditCost} credits · you have ${billingProfile?.creditsBalance ?? 0}`
                 : file
                 ? `${file.name} · ${creationFlow === 'video' ? 'Video flow' : 'Original flow'}`
                 : 'Pick a photo to continue'}
