@@ -7,12 +7,13 @@ import {
 import { getAllSpritesForHash, getCachedMeta } from '../../services/SpriteCache.ts';
 import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 import type { AuraDemoPerformer } from './AuraDemoPerformers.ts';
-import { builtinAuraPerformerForCachedMeta } from '../../services/AuraBuiltinPerformers.ts';
+import { builtinAuraPerformerForCachedMeta, isAuraBuiltinPerformerId, type AuraBuiltinPerformerId } from '../../services/AuraBuiltinPerformers.ts';
 import {
   auraAtlasContentHash, auraIdleReference, calibrateAuraAtlas, measureAuraAtlas,
   type AuraAnimationCalibration, type AuraAtlasGeometry,
 } from './AuraPoseCalibration.ts';
 import { AURA_POSE_TEMPLATES } from './AuraPoseTemplates.ts';
+import { ADDITIONAL_AURA_BUILTIN_ASSETS } from './AuraBuiltinAssets.ts';
 
 export interface LoadedAuraAnimation {
   name: AuraAnimationName;
@@ -50,17 +51,17 @@ function textureKey(spriteKey: string, animationName: AuraAnimationName): string
   return `${spriteKey}_${animationName}`;
 }
 
-type AuraCanaryId = 'template-zero' | 'donald-trump';
+type AuraCanaryId = 'template-zero' | AuraBuiltinPerformerId;
 
 /**
- * The already bundled Trump performances belong to the official Arcade
+ * The reviewed bundled performances belong to their matching official Arcade
  * identity, in either seat. Never infer identity from a display name or fill
  * an unrelated/private character with another person's moves. Canonical
  * Arcade cache keys include the public manifest id; require its cached public
  * metadata to agree before selecting this presentation-only supplement.
  */
-async function bundledArcadeSubject(photoHash: string | null): Promise<'donald-trump' | null> {
-  if (!photoHash?.startsWith('arcade:donald-trump:')) return null;
+async function bundledArcadeSubject(photoHash: string | null): Promise<AuraBuiltinPerformerId | null> {
+  if (!photoHash?.startsWith('arcade:')) return null;
   const meta = await getCachedMeta(photoHash);
   return meta?.photoHash === photoHash ? builtinAuraPerformerForCachedMeta(meta) : null;
 }
@@ -68,10 +69,11 @@ async function bundledArcadeSubject(photoHash: string | null): Promise<'donald-t
 function requestedAuraCanary(): AuraCanaryId | null {
   if (!import.meta.env.DEV || typeof window === 'undefined') return null;
   const requested = new URLSearchParams(window.location.search).get('auraCanary');
-  return requested === 'template-zero' || requested === 'donald-trump' ? requested : null;
+  return requested === 'template-zero' || isAuraBuiltinPerformerId(requested) ? requested : null;
 }
 
 interface LocalAuraCanaryDefinition {
+  contentHash?: string;
   name: AuraAnimationName;
   path: string;
   frameWidth: number;
@@ -183,6 +185,10 @@ const DONALD_TRUMP_CANARIES: readonly LocalAuraCanaryDefinition[] = [
   },
 ];
 
+function definitionsForBuiltin(subject: AuraBuiltinPerformerId): readonly LocalAuraCanaryDefinition[] {
+  return subject === 'donald-trump' ? DONALD_TRUMP_CANARIES : ADDITIONAL_AURA_BUILTIN_ASSETS[subject];
+}
+
 function localCanariesFor(
   canaryId: AuraCanaryId | null,
   spriteKey: string,
@@ -190,7 +196,7 @@ function localCanariesFor(
   if (canaryId === 'template-zero') return TEMPLATE_ZERO_CANARIES;
   // A real-character canary replaces P1 only so identity QA can happen next
   // to an untouched opponent instead of accidentally cloning the subject.
-  if (canaryId === 'donald-trump' && spriteKey === 'fighter_p1') return DONALD_TRUMP_CANARIES;
+  if (isAuraBuiltinPerformerId(canaryId) && spriteKey === 'fighter_p1') return definitionsForBuiltin(canaryId);
   return [];
 }
 
@@ -207,7 +213,8 @@ async function loadLocalAuraCanary(
   if (!isCurrent()) return null;
   const contentHash = await auraAtlasContentHash(blob);
   const template = AURA_POSE_TEMPLATES[definition.name];
-  const expectedHash = canaryId === 'donald-trump' ? template.trumpSha256 : template.templateSha256;
+  const expectedHash = definition.contentHash
+    ?? (canaryId === 'donald-trump' ? template.trumpSha256 : template.templateSha256);
   if (contentHash !== expectedHash) throw new Error(`${canaryId} ${definition.name} bundled asset hash mismatch`);
   const image = await blobToImage(blob);
   const geometry = measureAuraAtlas(image, definition, contentHash);
@@ -291,7 +298,7 @@ export async function loadAuraAnimationPack(
   if (!isCurrent()) return null;
   const localSubject = officialSubject ?? canaryId;
   const localDefinitions = officialSubject
-    ? DONALD_TRUMP_CANARIES
+    ? definitionsForBuiltin(officialSubject)
     : localCanariesFor(canaryId, spriteKey);
   if (localSubject) {
     for (const definition of localDefinitions) {

@@ -153,13 +153,13 @@ describe('RosterPage fighter sections', () => {
     expect(filterRosterFighterSectionsForMode(sections, 'aura').all[0].animationSummary).toBe('6 Aura moves ready');
   });
 
-  it('keeps the reviewed official Trump and excludes other combat-only official characters', () => {
+  it('keeps each reviewed official Aura performer and excludes other combat-only official characters', () => {
     const official = globals.map((item) => ({ ...item,
       sprites: PLAYABLE_ANIMATION_NAMES.map((animationName) => ({ animationName })) as CloudFighter['sprites'],
     }));
     const sections = buildRosterFighterSections([], official);
     expect(filterRosterFighterSectionsForMode(sections, 'aura').official.map((entry) => entry.cloudFighterId))
-      .toEqual(['trump-id']);
+      .toEqual(['trump-id', 'rosalia-v2-id', 'lamine-id']);
     expect(filterRosterFighterSectionsForMode(sections, 'fight').official).toHaveLength(4);
   });
 
@@ -169,12 +169,12 @@ describe('RosterPage fighter sections', () => {
     expect(filterRosterFighterSectionsForMode(buildRosterFighterSections([partial], []), 'aura').all).toEqual([]);
   });
 
-  it('retains only the verified public Trump cache when the official roster is offline', () => {
-    const cached = { ...meta('arcade:donald-trump:trump-id', 'trump-id', 'Donald Trump'), cloudPublic: true };
+  it('retains each verified public performer cache when the official roster is offline', () => {
+    const cached = ['donald-trump', 'rosalia-v2', 'lamine-yamal'].map(slug => ({ ...meta(`arcade:${slug}:${slug}-id`, `${slug}-id`, slug), cloudPublic: true }));
     const renamed = meta('personal-trump', 'personal-id', 'Donald Trump');
     renamed.animationsReady = [...PLAYABLE_ANIMATION_NAMES];
-    const sections = filterRosterFighterSectionsForMode(buildRosterFighterSections([cached, renamed], [], true), 'aura');
-    expect(sections.official.map((entry) => entry.photoHash)).toEqual([cached.photoHash]);
+    const sections = filterRosterFighterSectionsForMode(buildRosterFighterSections([...cached, renamed], [], true), 'aura');
+    expect(sections.official.map((entry) => entry.photoHash)).toEqual(cached.map(entry => entry.photoHash));
     expect(sections.owned).toEqual([]);
   });
 });

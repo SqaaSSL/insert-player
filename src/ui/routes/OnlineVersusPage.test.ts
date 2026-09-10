@@ -15,16 +15,18 @@ function official(id: string, slug: string, animations: readonly string[]): Clou
 }
 
 describe('online Aura selection', () => {
-  it('includes actual Aura packs without shrug and the official bundle, excluding Fight-only rivals', () => {
+  it('includes actual Aura packs without shrug and the reviewed official bundles, excluding Fight-only rivals', () => {
     const roster = buildRosterFighterSections([], [
       official('trump', 'donald-trump', PLAYABLE_ANIMATION_NAMES),
       official('lamine', 'lamine-yamal', PLAYABLE_ANIMATION_NAMES),
+      official('rosalia', 'rosalia-v2', PLAYABLE_ANIMATION_NAMES),
+      official('elon', 'elon-musk', PLAYABLE_ANIMATION_NAMES),
       official('performer', 'performer', AURA_ANIMATION_NAMES),
     ]).all;
     expect(roster.filter((entry) => isShareableEntry(entry, 'aura')).map((entry) => entry.cloudFighterId))
-      .toEqual(['trump', 'performer']);
+      .toEqual(['trump', 'lamine', 'rosalia', 'performer']);
     expect(roster.filter((entry) => isShareableEntry(entry, 'fight')).map((entry) => entry.cloudFighterId))
-      .toEqual(['trump', 'lamine']);
+      .toEqual(['trump', 'lamine', 'rosalia', 'elon']);
   });
 
   it('uses only the independently loaded official identity for a room opponent', () => {
