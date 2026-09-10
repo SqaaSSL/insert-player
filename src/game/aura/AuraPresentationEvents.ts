@@ -7,6 +7,8 @@ export interface AuraPresentationStartDetail {
   /** A fresh token for every init/restart, including rematches with one seed. */
   token: number;
   seed: number;
+  /** Optional local first-play guide; never changes the match seed or chart. */
+  onboarding?: boolean;
 }
 
 export interface AuraPresentationDetail extends AuraPresentationStartDetail {

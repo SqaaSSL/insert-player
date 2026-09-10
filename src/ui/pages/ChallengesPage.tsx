@@ -42,7 +42,7 @@ export function ChallengesPage({ onPlay, onOpenChallenge, onBack }: ChallengesPa
               return <li key={entry.token}>
                 <div><strong>{challenge.name} · {challenge.score.toLocaleString()} points</strong>
                   <p>{getAuraTrack(challenge.trackId)?.title} · {challenge.difficulty.toUpperCase()}</p>
-                  <small>{entry.kind === 'created' ? 'You shared this routine' : 'You played this challenge'}
+                  <small>{entry.kind === 'created' ? 'Your challenge link' : entry.bestScore === undefined ? 'You started this challenge' : 'You played this challenge'}
                     {entry.bestScore === undefined ? '' : ` · Your best: ${entry.bestScore.toLocaleString()}`}</small></div>
                 <button className="asf-btn" type="button" onClick={() => onOpenChallenge(entry.token)}>Open challenge</button>
               </li>;

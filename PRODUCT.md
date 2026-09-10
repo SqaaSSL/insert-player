@@ -65,6 +65,8 @@ Target WCAG 2.2 AA for shipped product surfaces. Preserve keyboard access for co
 
 ## Product entry and purchases
 
+- The first solo Aura battle starts with four optional, unscored practice notes on the real lanes; the music, score and recording start with the actual duel. Contextual tips explain real points and alternating turns, and completion or dismissal is remembered on the device.
+- Rookie Aura is the default creation from Aura: sign in, one photo and a name, six performance moves. The first Rookie entitlement is shared with Fight + Rush; later creations show their credit price, and authorization rejects a changed quote.
 - `/` and `/games/aura` introduce Aura. `/games/fight` and `/games/rush` give direct entry without requiring users to discover the games in order.
 - `/menu` is Play, followed by My characters and Challenges in navigation; credits are a separate destination. Returning players can resume their last game.
 - A creation keeps the selected game and challenge through credits and returns with the new character selected. Quality and Original/Video are secondary options.

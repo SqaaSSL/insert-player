@@ -6,7 +6,7 @@ vi.mock('./ApiClient', async (importOriginal) => {
 });
 
 import { apiFetch } from './ApiClient.ts';
-import { loadBillingProfile, loadCreditPacks } from './Billing.ts';
+import { authorizeGeneration, loadBillingProfile, loadCreditPacks } from './Billing.ts';
 
 describe('billing load states', () => {
   beforeEach(() => {
@@ -62,6 +62,16 @@ describe('billing load states', () => {
         freeRookieGenerationsUsed: 1,
         planTier: 'pro',
       },
+    });
+  });
+
+  it('preserves the Aura package and confirmed zero-credit price at authorization', async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(Response.json({ authorized: true, creditsCharged: 0, creationPackage: 'aura' }));
+    await authorizeGeneration('rookie', 'fighter_generation', 'fighter', null, null, undefined, null, 'original', {
+      creationPackage: 'aura', expectedCredits: 0,
+    });
+    expect(JSON.parse(String(vi.mocked(apiFetch).mock.calls[0][1]?.body))).toMatchObject({
+      tier: 'rookie', creationPackage: 'aura', expectedCredits: 0, creationFlow: 'original',
     });
   });
 });

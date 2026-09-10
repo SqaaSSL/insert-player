@@ -2,6 +2,26 @@ import { AURA_CHALLENGE_ASSETS } from './AuraChallengeAssets.ts';
 import { validateAuraChallenge, type AuraChallenge } from './AuraChallenge.ts';
 
 const MAX_ASSET_BYTES = 8_000_000;
+const verifiedMusicBlobs = new WeakSet<Blob>();
+const verifiedMusicUrls = new Set<string>();
+
+/** Only exact blobs returned after public challenge hash verification may
+ * grant recording access. Arbitrary object URLs never enter this registry. */
+export function createAuraChallengeMusicUrl(music: Blob): string {
+  if (!verifiedMusicBlobs.has(music)) throw new Error('Challenge music has not been verified');
+  const url = URL.createObjectURL(music);
+  verifiedMusicUrls.add(url);
+  return url;
+}
+
+export function isVerifiedAuraChallengeMusicUrl(url: string): boolean {
+  return verifiedMusicUrls.has(url);
+}
+
+export function revokeAuraChallengeMusicUrl(url: string): void {
+  verifiedMusicUrls.delete(url);
+  URL.revokeObjectURL(url);
+}
 
 async function verifiedAsset(key: string, signal: AbortSignal): Promise<Blob> {
   const asset = AURA_CHALLENGE_ASSETS[key];
@@ -35,5 +55,6 @@ export async function prepareAuraChallengeMusic(challenge: AuraChallenge, signal
     verifiedAsset(`track:${challenge.trackId}`, signal),
     verifiedAsset(`stage:${challenge.stageId}`, signal),
   ]);
+  verifiedMusicBlobs.add(music);
   return music;
 }

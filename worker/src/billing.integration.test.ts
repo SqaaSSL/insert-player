@@ -1428,6 +1428,79 @@ describe('Stripe refund and dispute reconciliation against D1', () => {
 });
 
 describe('Package quotes and authorization against D1', () => {
+  const rookieLegal = { legalVersion: CURRENT_LEGAL_VERSION, ageConfirmed: true, termsAccepted: true, photoRightsConfirmed: true, aiProcessingConfirmed: true, immediatePerformanceConfirmed: true, withdrawalLossAcknowledged: true };
+  const rookieAuraRequest = (options: Record<string, unknown> = {}) => new Request('https://api.insertplayer.ai/api/billing/generation', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tier: 'rookie', operation: 'fighter_generation', creationPackage: 'aura', legal: rookieLegal, ...options }),
+  });
+
+  it.each([0, 1])('authorizes Rookie Aura with the truthful included/paid price after %s used Rookies', async (used) => {
+    const { mf, db, env } = await createBindings();
+    const userId = `rookie-aura-${used}`;
+    const auth = { userId, rateLimitKey: `user:${userId}`, claims: {}, user: { id: userId } } as unknown as PublicAuthContext;
+    const price = used === 0 ? 0 : 2;
+    try {
+      await db.prepare("INSERT INTO users (id, clerk_user_id, display_name, credits_balance, free_rookie_generations_used) VALUES (?, ?, 'Aura owner', 20, ?)").bind(userId, userId, used).run();
+      const quote = await authorizeGenerationPurchase(rookieAuraRequest({ quoteOnly: true }), env, auth);
+      expect(await quote.json()).toMatchObject({ mode: 'quote', quotedCredits: price, creationPackage: 'aura', animationCount: 6 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first()).toEqual({ count: 0 });
+      const response = await authorizeGenerationPurchase(rookieAuraRequest({ expectedCredits: price }), env, auth);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ mode: used === 0 ? 'free_rookie' : 'credits', creditsCharged: price, creationPackage: 'aura' });
+      const charge = await db.prepare('SELECT tier, credit_cost, creation_package, animation_plan_json FROM generation_charges').first<{ tier: string; credit_cost: number; creation_package: string; animation_plan_json: string }>();
+      expect(charge).toMatchObject({ tier: 'rookie', credit_cost: price, creation_package: 'aura' });
+      expect(JSON.parse(charge!.animation_plan_json)).toEqual(['aura_unbothered', 'aura_six_seven', 'aura_mog_check', 'aura_glide', 'aura_floor_worm', 'aura_one_leg']);
+      expect(await db.prepare('SELECT credits_balance, free_rookie_generations_used FROM users WHERE id = ?').bind(userId).first())
+        .toEqual({ credits_balance: 20 - price, free_rookie_generations_used: 1 });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it('requires sign-in for Rookie Aura without reserving a pass or starting a provider session', async () => {
+    const { mf, db, env } = await createBindings();
+    const auth = { userId: null, rateLimitKey: 'anonymous', claims: {}, user: null } as unknown as PublicAuthContext;
+    try {
+      const response = await authorizeGenerationPurchase(rookieAuraRequest(), env, auth);
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({ code: 'package_requires_sign_in' });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first()).toEqual({ count: 0 });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it('does not charge credits if another tab consumes the included Rookie after the confirmed zero-price check', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'rookie-aura-quota-race';
+    const auth = { userId, rateLimitKey: `user:${userId}`, claims: {}, user: { id: userId } } as unknown as PublicAuthContext;
+    let quotaPrepared = false;
+    let quotaConsumed = false;
+    env.DB = new Proxy(db, {
+      get(target, property) {
+        if (property === 'prepare') return (sql: string) => {
+          if (sql.includes('SET free_rookie_generations_used = free_rookie_generations_used + 1')) quotaPrepared = true;
+          return target.prepare(sql);
+        };
+        if (property === 'batch') return async (statements: D1PreparedStatement[]) => {
+          if (quotaPrepared && !quotaConsumed) {
+            quotaConsumed = true;
+            await db.prepare('UPDATE users SET free_rookie_generations_used = 1 WHERE id = ?').bind(userId).run();
+          }
+          return target.batch(statements);
+        };
+        const value = Reflect.get(target, property);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    try {
+      await db.prepare("INSERT INTO users (id, clerk_user_id, display_name, credits_balance, free_rookie_generations_used) VALUES (?, ?, 'Aura owner', 20, 0)").bind(userId, userId).run();
+      const response = await authorizeGenerationPurchase(rookieAuraRequest({ expectedCredits: 0 }), env, auth);
+      expect(quotaConsumed).toBe(true);
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ code: 'package_quote_changed', requiredCredits: 2 });
+      expect(await db.prepare('SELECT credits_balance FROM users WHERE id = ?').bind(userId).first()).toEqual({ credits_balance: 20 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first()).toEqual({ count: 0 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first()).toEqual({ count: 0 });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
   it('quotes Aura without a reservation and binds its six animations to a bounded paid session', async () => {
     const { mf, db, env } = await createBindings();
     const userId = 'aura-package-owner';

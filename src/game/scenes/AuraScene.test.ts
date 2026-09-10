@@ -3,6 +3,7 @@ import { FighterState } from '../constants.ts';
 import { Fighter } from '../fighters/Fighter.ts';
 import { EMPTY_INPUT } from '../sim/FighterInput.ts';
 import { AuraMusicClock } from '../aura/AuraMusicClock.ts';
+import { AuraOnboarding, AURA_ONBOARDING_EVENT, AURA_PRACTICE_TRAVEL_MS } from '../aura/AuraOnboarding.ts';
 import { AURA_CAMERA_FINALE_MS, AURA_CAMERA_HANDOFF_MS } from '../aura/AuraCamera.ts';
 import { AuraBattle } from '../aura/AuraBattle.ts';
 import { AuraRecorder } from '../aura/AuraRecording.ts';
@@ -1626,5 +1627,195 @@ describe('AuraScene asynchronous challenge ownership', () => {
     const slots = dispatchEvent.mock.calls.map(([event]) => event).filter(event => event.type === AURA_PRESENTATION_EVENT)
       .map(event => event.detail.localControlledSlot);
     expect(slots).toEqual([1, 1, 0]);
+  });
+});
+
+
+describe('AuraScene first-play practice isolation', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  function practiceHarness() {
+    vi.stubGlobal('window', { dispatchEvent: vi.fn() });
+    const scene = Object.assign(new AuraScene(), harness().scene, {
+      lifecycleActive: true, presentationReady: true, presentationStarted: true,
+      presentationToken: 41, matchSeed: 67, isVsAI: true, cpuVsCpu: false, online: null,
+      matchData: { gameMode: 'aura', vsAI: true },
+      clockStartedAt: null, scheduledClockStart: null, paused: false, finalizing: false,
+      onboarding: new AuraOnboarding(), onboardingGraphics: { ...controlGraphics(), destroy: vi.fn() },
+      lastOnboardingState: null, turnText: controlText(), highwayTitleText: controlText(), highwayMetaText: controlText(),
+      flashLaneInput: vi.fn(), updateTurnPresentation: vi.fn(), beginClock: vi.fn(),
+      recordJudgement: vi.fn(), applyJudgement: vi.fn(), updateNotes: vi.fn(), playCpuPlans: vi.fn(), collectHumanMisses: vi.fn(),
+      advanceCameraPresentation: vi.fn(), advanceFighterPresentation: vi.fn(),
+      soundManager: { updateAuraCrowd: vi.fn(), startBattleMusic: vi.fn(), startAuraCrowd: vi.fn() },
+      actionRecorder: { record: vi.fn() }, videoRecorder: null,
+      battle: new AuraBattle(createAuraChart(67, 'lowkey')),
+    }) as unknown as Record<string, any>;
+    return scene;
+  }
+
+  it('routes real lane inputs into unscored practice and starts the unchanged battle only after four correct hits', () => {
+    const scene = practiceHarness();
+    const chart = scene.battle.chart;
+    const before = [scene.battle.scoreFor(0), scene.battle.scoreFor(1)];
+    scene.handleInput(0, 0);
+    expect(scene.onboarding.snapshot.cue).toBe('wait');
+    expect(scene.beginClock).not.toHaveBeenCalled();
+    for (const lane of [0, 1, 2, 3] as const) {
+      scene.onboarding.advance(AURA_PRACTICE_TRAVEL_MS);
+      scene.handleInput(1, lane); // CPU / another controller must not pass the lesson.
+      expect(scene.onboarding.snapshot.completedLanes).toBe(lane);
+      scene.handleInput(0, lane);
+    }
+    expect(scene.onboarding.snapshot.phase).toBe('battle');
+    expect(scene.flashLaneInput).toHaveBeenCalledTimes(4);
+    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.updateTurnPresentation).toHaveBeenCalledExactlyOnceWith(-1);
+    expect(scene.battle.chart).toBe(chart);
+    expect([scene.battle.scoreFor(0), scene.battle.scoreFor(1)]).toEqual(before);
+    expect(scene.recordJudgement).not.toHaveBeenCalled();
+    expect(scene.applyJudgement).not.toHaveBeenCalled();
+    expect(scene.actionRecorder.record).not.toHaveBeenCalled();
+    expect(scene.soundManager.startBattleMusic).not.toHaveBeenCalled(); // The existing beginClock owns audio/capture.
+    expect(scene.videoRecorder).toBeNull();
+  });
+
+  it('blocks direct clock starts, scoring and CPU processing while practice is active', () => {
+    const scene = practiceHarness();
+    delete scene.beginClock;
+    scene.beginClock(0);
+    expect(scene.scheduledClockStart).toBeNull();
+    scene.update(100, 100);
+    expect(scene.onboarding.practiceProgress).toBeCloseTo(100 / AURA_PRACTICE_TRAVEL_MS);
+    expect(scene.playCpuPlans).not.toHaveBeenCalled();
+    expect(scene.collectHumanMisses).not.toHaveBeenCalled();
+    expect(scene.updateNotes).not.toHaveBeenCalled();
+    scene.paused = true;
+    scene.update(200, 100);
+    scene.handleInput(0, 0);
+    expect(scene.onboarding.practiceProgress).toBeCloseTo(100 / AURA_PRACTICE_TRAVEL_MS);
+  });
+
+  it('ignores stale skip tokens, then skips practice exactly once', () => {
+    const scene = practiceHarness();
+    for (const detail of [{ token: 40, seed: 67 }, { token: 41, seed: 68 }, null]) scene.onOnboardingSkip({ detail });
+    expect(scene.beginClock).not.toHaveBeenCalled();
+    const event = { detail: { token: 41, seed: 67 } };
+    scene.onOnboardingSkip(event);
+    scene.onOnboardingSkip(event);
+    expect(scene.onboarding.snapshot.phase).toBe('skipped');
+    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.recordJudgement).not.toHaveBeenCalled();
+  });
+
+  it('keeps the practice checkpoint paused until resume and does not start audio through skip', () => {
+    const scene = practiceHarness();
+    scene.onboarding.advance(AURA_PRACTICE_TRAVEL_MS);
+    scene.handleInput(0, 0);
+    scene.onboarding.advance(400);
+    const before = scene.onboarding.snapshot;
+    scene.paused = true;
+    scene.update(100, 100);
+    scene.handleInput(0, 1);
+    scene.onOnboardingSkip({ detail: { token: 41, seed: 67 } });
+    expect(scene.onboarding.snapshot).toEqual(before);
+    expect(scene.onboarding.practiceProgress).toBeCloseTo(400 / AURA_PRACTICE_TRAVEL_MS);
+    expect(scene.beginClock).not.toHaveBeenCalled();
+    scene.paused = false;
+    scene.onOnboardingSkip({ detail: { token: 41, seed: 67 } });
+    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+  });
+
+  it('resets tutorial state on init and ignores the previous scene token after a restart', () => {
+    const scene = practiceHarness();
+    vi.stubGlobal('window', { dispatchEvent: vi.fn(), location: { search: '' },
+      matchMedia: () => ({ matches: false }) });
+    const oldToken = scene.presentationToken;
+    scene.lastOnboardingState = 'previous practice';
+    scene.init({ gameMode: 'aura', vsAI: true, seed: 67 });
+    expect(scene.onboarding).toBeNull();
+    expect(scene.onboardingGraphics).toBeNull();
+    expect(scene.lastOnboardingState).toBeNull();
+    expect(scene.presentationStarted).toBe(false);
+    scene.onOnboardingSkip({ detail: { token: oldToken, seed: 67 } });
+    expect(scene.beginClock).not.toHaveBeenCalled();
+  });
+
+  it('dismisses remaining battle tips without restarting music, scores or recording', () => {
+    const scene = practiceHarness();
+    for (const lane of [0, 1, 2, 3] as const) {
+      scene.onboarding.advance(AURA_PRACTICE_TRAVEL_MS);
+      scene.onboarding.practiceInput(lane);
+    }
+    scene.clockStartedAt = 100;
+    scene.onOnboardingSkip({ detail: { token: 41, seed: 67 } });
+    expect(scene.onboarding.snapshot.phase).toBe('skipped');
+    expect(scene.beginClock).not.toHaveBeenCalled();
+    expect(scene.updateTurnPresentation).not.toHaveBeenCalled();
+  });
+
+  it.each([{}, { onboarding: false }])('starts normal playback without an explicit guide request: %o', detail => {
+    const scene = practiceHarness();
+    scene.presentationStarted = false;
+    scene.onboarding = null;
+    scene.startOnboarding = vi.fn();
+    scene.onPresentationStart({ detail: { token: 41, seed: 67, ...detail } });
+    expect(scene.startOnboarding).not.toHaveBeenCalled();
+    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+  });
+
+  it('starts opted-in solo practice instead of the music clock', () => {
+    const scene = practiceHarness();
+    scene.presentationStarted = false;
+    scene.onboarding = null;
+    scene.startOnboarding = vi.fn();
+    scene.onPresentationStart({ detail: { token: 41, seed: 67, onboarding: true } });
+    expect(scene.startOnboarding).toHaveBeenCalledOnce();
+    expect(scene.beginClock).not.toHaveBeenCalled();
+  });
+
+  it.each([{ cpuVsCpu: true }, { vsAI: false }, { auraChallenge: {} }, { online: { localSlot: 0 } }])(
+    'ignores an onboarding request for protected match context %o', data => {
+      const scene = practiceHarness();
+      scene.matchData = { gameMode: 'aura', vsAI: true, ...data };
+      scene.presentationStarted = false;
+      scene.onboarding = null;
+      scene.startOnboarding = vi.fn();
+      scene.onPresentationStart({ detail: { token: 41, seed: 67, onboarding: true } });
+      expect(scene.startOnboarding).not.toHaveBeenCalled();
+      expect(scene.beginClock).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([[1024, 576], [576, 1024]])('keeps the held practice note at the real receptor through resize to %ix%i', (width, height) => {
+    const scene = practiceHarness();
+    scene.onboarding.advance(AURA_PRACTICE_TRAVEL_MS);
+    scene.scale = { width, height };
+    scene.applyLayout = vi.fn();
+    const before = scene.onboarding.snapshot;
+    scene.onLayoutResize();
+    expect(scene.onboarding.snapshot).toEqual(before);
+    expect(scene.onboarding.practiceProgress).toBe(1);
+    expect(scene.turnText.text).toBe('PRACTICE · 1/4 · NO SCORE YET');
+    expect(scene.highwayTitleText.text).toBe('HIT D NOW');
+    const highlight = scene.onboardingGraphics.fillRect.mock.calls[0];
+    expect(highlight[0]).toBe(scene.layout.highwayX + scene.layout.laneOffsets[0] - 30);
+    expect(highlight[1] + highlight[3]).toBe(scene.layout.laneTargetY);
+    expect(scene.beginClock).not.toHaveBeenCalled();
+    expect(scene.updateNotes).not.toHaveBeenCalled();
+  });
+
+  it('emits usable hints once per semantic change, with actual controls and lifecycle', () => {
+    const scene = practiceHarness();
+    scene.emitOnboarding();
+    scene.onboarding.advance(10);
+    scene.emitOnboarding();
+    const events = vi.mocked(window.dispatchEvent).mock.calls.map(([event]) => event as CustomEvent);
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe(AURA_ONBOARDING_EVENT);
+    expect(events[0].detail).toMatchObject({ token: 41, seed: 67, phase: 'practice', practiceLane: 0,
+      completedLanes: 0, laneKeys: ['D', 'F', 'J', 'K'] });
+    scene.onboarding.advance(AURA_PRACTICE_TRAVEL_MS);
+    scene.emitOnboarding();
+    expect(window.dispatchEvent).toHaveBeenCalledTimes(2);
   });
 });

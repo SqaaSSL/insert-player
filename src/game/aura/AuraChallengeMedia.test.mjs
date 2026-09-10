@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AURA_CHALLENGE_ASSETS } from './AuraChallengeAssets.ts';
-import { prepareAuraChallengeMusic } from './AuraChallengeMedia.ts';
+import { prepareAuraChallengeMusic, createAuraChallengeMusicUrl, isVerifiedAuraChallengeMusicUrl, revokeAuraChallengeMusicUrl } from './AuraChallengeMedia.ts';
 import { createAuraChallenge, createAuraChallengeRoutine } from './AuraChallenge.ts';
 import { DEFAULT_AURA_TRACK } from './AuraTracks.ts';
 
@@ -26,6 +26,23 @@ describe('pinned public challenge media', () => {
     expect(result.type).toBe('audio/mpeg');
     expect(createHash('sha256').update(new Uint8Array(await result.arrayBuffer())).digest('hex')).toBe(expected.sha256);
     expect(fetcher.mock.calls.map(call => call[0])).toEqual([expected.url, AURA_CHALLENGE_ASSETS[`stage:${stageId}`].url]);
+  });
+
+  it('grants recording only to URLs created from the exact verified song blob and revokes that grant', async () => {
+    vi.stubGlobal('fetch', vi.fn(async url => new Response(bytes(url))));
+    const music = await prepareAuraChallengeMusic(challenge(), new AbortController().signal);
+    const unregistered = URL.createObjectURL(music);
+    const arbitrary = URL.createObjectURL(new Blob(['private audio']));
+    const verified = createAuraChallengeMusicUrl(music);
+    expect(isVerifiedAuraChallengeMusicUrl(verified)).toBe(true);
+    expect(isVerifiedAuraChallengeMusicUrl(unregistered)).toBe(false);
+    expect(isVerifiedAuraChallengeMusicUrl(arbitrary)).toBe(false);
+    expect(isVerifiedAuraChallengeMusicUrl('https://external.example/private.mp3')).toBe(false);
+    expect(() => createAuraChallengeMusicUrl(new Blob([music]))).toThrow('not been verified');
+    revokeAuraChallengeMusicUrl(verified);
+    expect(isVerifiedAuraChallengeMusicUrl(verified)).toBe(false);
+    URL.revokeObjectURL(unregistered);
+    URL.revokeObjectURL(arbitrary);
   });
 
   it('refuses changed song bytes rather than scoring against different music', async () => {

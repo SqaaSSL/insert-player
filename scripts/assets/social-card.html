@@ -1,21 +1,23 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=1200, initial-scale=1" />
-    <meta name="description" content="A real person becomes a playable Insert Player fighter." />
-    <title>Insert Player social card</title>
-    <link rel="stylesheet" href="./social-card.css" />
-  </head>
-  <body>
-    <main class="card" aria-label="A real person transformed into an Insert Player fighter">
-      <section class="lockup">
-        <p class="coin">INSERT COIN</p>
-        <h1 id="social-card-brand" class="brand">INSERT PLAYER</h1>
-        <p class="tagline">INSERT YOURSELF INTO THE GAME.</p>
-      </section>
-      <div class="p1" aria-hidden="true">P1</div>
-      <p class="domain">INSERTPLAYER.AI</p>
-    </main>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1200, initial-scale=1">
+  <meta name="description" content="Farm Aura. Win the crowd. A rhythm duel in Aura Plaza.">
+  <title>Insert Player social card</title>
+  <link rel="stylesheet" href="./social-card.css">
+</head>
+<body>
+  <main class="card" aria-label="Insert Player Aura: Farm Aura. Win the crowd.">
+    <h1 id="social-card-brand" class="brand">INSERT PLAYER</h1>
+    <section class="lockup">
+      <p class="eyebrow">AURA · RHYTHM DUELS</p>
+      <p class="tagline">Farm<br>Aura.<br><span>Win the<br>crowd.</span></p>
+    </section>
+    <div class="gameplay"><canvas id="aura-gameplay" width="1024" height="576" aria-label="Real Aura gameplay: Trump performs 6–7 in Aura Plaza beside four rhythm lanes and the duel score."></canvas></div>
+    <div class="p1" aria-hidden="true">P1</div>
+    <p class="domain">INSERTPLAYER.AI</p>
+  </main>
+  <script type="module" src="./social-card-gameplay.ts"></script>
+</body>
 </html>

@@ -34,7 +34,7 @@ export function ChallengePage({ token, onPlay, onBack, onCreatePlayer, preferred
         <p>{decoded.error === 'incompatible'
           ? 'Ask your friend for a new challenge. This version cannot play the exact routine they shared.'
           : 'Open the complete link from your friend, or set a new score in Aura.'}</p>
-        <button className="asf-btn asf-btn--primary" type="button" onClick={onBack}>Back to games</button>
+        <button className="asf-btn asf-btn--primary" type="button" onClick={onBack}>All challenges</button>
       </div>
     </section>
   );
@@ -49,9 +49,9 @@ export function ChallengePage({ token, onPlay, onBack, onCreatePlayer, preferred
     try {
       const data = await withPreferredAuraChallengePlayer(buildAuraChallengeMatch(challenge),
         usePreferred ? preferredPlayerPhotoHash : null);
+      await onPlay(data);
       rememberAuraChallenge(challenge, 'played');
       trackProductEvent('challenge_started', { game: 'aura', source: 'challenge' });
-      await onPlay(data);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'The stage could not open. Try again.'); setStarting(false); }
   };
   return (
@@ -60,7 +60,7 @@ export function ChallengePage({ token, onPlay, onBack, onCreatePlayer, preferred
       <div className="aura-challenge-page__content">
         <span className="aura-challenge-page__label">AURA CHALLENGE</span>
         <h1>Can you beat {challenge.name}?</h1>
-        <p className="aura-challenge-page__target"><strong>{challenge.score.toLocaleString()}</strong><span>points to beat</span></p>
+        <p className="aura-challenge-page__target"><strong>{challenge.score.toLocaleString()}</strong><span>AURA to beat</span></p>
         <p>Same song. Same routine. Your turn to own the room.</p>
         <dl className="aura-challenge-page__facts">
           <div><dt>Song</dt><dd>{track.title}</dd></div>
@@ -69,12 +69,15 @@ export function ChallengePage({ token, onPlay, onBack, onCreatePlayer, preferred
         </dl>
         <div className="aura-challenge-page__actions">
           <button className="asf-btn asf-btn--primary" type="button" disabled={starting} onClick={() => void play()}>
-            {starting ? 'Opening your stage…' : 'Play this challenge'}
+            {starting ? 'Opening your stage…' : preferredPlayerPhotoHash ? 'Play with my character' : 'Play this challenge'}
           </button>
-          {onCreatePlayer ? <button className="asf-btn" type="button" disabled={starting} onClick={onCreatePlayer}>Create my player first</button> : null}
-          <button className="asf-btn asf-btn--ghost" type="button" onClick={onBack}>Back to games</button>
+          {onCreatePlayer && !preferredPlayerPhotoHash ? <button className="asf-btn" type="button" disabled={starting} onClick={onCreatePlayer}>Create my Aura character</button> : null}
+          <button className="asf-btn asf-btn--ghost" type="button" onClick={onBack}>All challenges</button>
         </div>
-        <p className="aura-challenge-page__note">Play free with Nova, a generic demo performer. No account or photo needed. Four lanes, tap when each note reaches its mark.</p>
+        <p className="aura-challenge-page__note">{preferredPlayerPhotoHash
+          ? 'Your character is selected. The song, notes and difficulty stay exactly the same.'
+          : 'Play free with Nova, a generic demo performer. No account or photo needed.'} Four lanes, tap when each note reaches its mark.</p>
+        <p className="aura-challenge-page__note">Beat the target, then send your score back. The CPU is your stage rival; your friend’s score is the challenge.</p>
         <p className="aura-challenge-page__note">A friendly score shared by a player. It does not count toward ranked results.</p>
         {error ? <div role="alert"><p>{error}</p>{preferredPlayerPhotoHash ? (
           <button className="asf-btn" type="button" disabled={starting} onClick={() => void play(false)}>Use a ready performer</button>
