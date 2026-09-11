@@ -82,7 +82,7 @@ import {
   canGuideAuraFirstBattle, type AuraOnboardingDetail,
 } from '../aura/AuraOnboarding.ts';
 import { createAuraChallengeRoutine, isValidAuraChallengeMatch } from '../aura/AuraChallenge.ts';
-import { auraDemoPerformer } from '../aura/AuraDemoPerformers.ts';
+import { auraDemoPerformer, isAuraTrialPresetMatch } from '../aura/AuraDemoPerformers.ts';
 import { prepareAuraChallengeMusic, createAuraChallengeMusicUrl, revokeAuraChallengeMusicUrl } from '../aura/AuraChallengeMedia.ts';
 import { AuraRecorder } from '../aura/AuraRecording.ts';
 import { AuraVideoRecorder } from '../aura/AuraVideoRecorder.ts';
@@ -514,6 +514,7 @@ export class AuraScene extends Phaser.Scene {
         trackId: this.track.id, difficulty: this.difficultyId, stageId: this.resolvedStageId,
         p1Name: this.p1Name, p2Name: this.p2Name,
         p1CloudFighterId: this.p1CloudFighterId, p2CloudFighterId: this.p2CloudFighterId,
+        ...(isAuraTrialPresetMatch(this.matchData) ? { auraTrialPreset: this.matchData.auraTrialPreset } : {}),
         chart: this.chart,
       });
     } catch (error) { debugWarn('[AuraScene] Action history unavailable', error); }
@@ -627,6 +628,10 @@ export class AuraScene extends Phaser.Scene {
     const identity = `${state.phase}:${state.count}`;
     if (identity === this.lastStartupState) return;
     this.lastStartupState = identity;
+    if (state.phase === 'countdown' && (state.count === 1 || state.count === 2 || state.count === 3)) {
+      this.soundManager.playAuraCountIn(state.count);
+    }
+    else if (state.phase === 'playing') this.soundManager.playAuraCountIn('go');
     window.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, {
       detail: { token: this.presentationToken, seed: this.matchSeed, ...state },
     }));
@@ -635,7 +640,8 @@ export class AuraScene extends Phaser.Scene {
   private async prepareStartup(): Promise<void> {
     if (this.startup || !this.lifecycleActive || !this.presentationStarted) return;
     const epoch = this.lifecycleEpoch;
-    this.startup = new AuraStartup(Boolean(this.online));
+    this.startup = new AuraStartup(Boolean(this.online), this.online ? undefined
+      : { firstNoteMs: this.chart.turns[0].firstNoteMs, beatMs: this.chart.beatMs });
     this.turnText.setText('AURA DUEL · GET READY');
     this.fitHudText();
     this.emitStartup();
@@ -658,6 +664,10 @@ export class AuraScene extends Phaser.Scene {
       : { id: this.captureId, state: 'unavailable', reason: this.videoRecorder.error ?? capture.reason ?? 'recording-start-failed' });
     // Encoder support never decides whether a player can play the real duel.
     this.startup.begin();
+    // The song's existing lead-in and note travel are the recorded introduction.
+    // Keeping that clock at zero preserves every chart/replay timestamp.
+    if (!this.online) this.beginClock(0, true);
+    else if (!this.silentStartup) this.soundManager.startAuraCrowd();
     this.emitStartup();
     this.startupView?.render(this.layout, this.startup.snapshot);
   }
@@ -667,14 +677,15 @@ export class AuraScene extends Phaser.Scene {
     if (!this.startup || alreadyPlaying) return;
     if (this.online && this.scheduledClockStart !== null) {
       this.startup.countdown(Math.max(0, this.scheduledClockStart - performance.now()));
-    } else this.startup.advance(delta);
+    } else if (!this.online && this.clockStartedAt !== null) this.startup.syncMusic(this.clockMs());
+    else this.startup.advance(delta);
     this.applyPerformerLayout();
     this.startupView?.render(this.layout, this.startup.snapshot, this.startup.readyForOnline);
     this.emitStartup();
     if (this.startup.readyForOnline && !this.localOnlineReady) {
       this.localOnlineReady = true;
       this.announceOnlineReady();
-    } else if (!this.online && this.startup.snapshot.phase === 'playing') this.beginClock(0);
+    }
   }
 
   private readonly onPresentationStart = (event: WindowEventMap[typeof AURA_PRESENTATION_START_EVENT]): void => {
@@ -702,6 +713,9 @@ export class AuraScene extends Phaser.Scene {
     if (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted || !this.awaitingStartInput
       || this.paused || event.detail?.token !== this.presentationToken || event.detail?.seed !== this.matchSeed) return;
     this.awaitingStartInput = false;
+    if (typeof event.detail.practice === 'boolean') {
+      this.onboardingRequested = event.detail.practice && canGuideAuraFirstBattle(this.matchData);
+    }
     const epoch = this.lifecycleEpoch;
     window.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, {
       detail: { token: this.presentationToken, seed: this.matchSeed,
@@ -712,6 +726,7 @@ export class AuraScene extends Phaser.Scene {
     void this.startupMediaUnlock.then(unlocked => {
       if (!this.isCurrentLifecycle(epoch)) return;
       if (!unlocked) { this.awaitStartupGesture(); return; }
+      if (this.paused) { this.awaitStartupGesture(); return; }
       if (this.onboardingRequested) this.startOnboarding();
       else void this.prepareStartup();
     });
@@ -720,9 +735,11 @@ export class AuraScene extends Phaser.Scene {
   private startOnboarding(): void {
     this.startupView?.render(this.layout, null);
     this.onboarding = new AuraOnboarding();
+    this.soundManager.startAuraPracticeAudio(this.track.bpm);
     this.onboardingGraphics = this.add.graphics();
     this.uiLayer.add(this.onboardingGraphics);
     this.focusPerformer(0);
+    this.setPracticeHud(true);
     this.drawLanes(0);
     this.drawOnboardingPractice();
     this.emitOnboarding();
@@ -758,10 +775,10 @@ export class AuraScene extends Phaser.Scene {
       5, progress === 1 ? 3 : 1, HEAT, progress === 1 ? 1 : 0.6);
     drawNoteGlyph(graphics, lane.startX,
       Phaser.Math.Linear(lane.startY, lane.targetY, progress), tone, true);
-    const key = this.primaryLaneKeys()[practiceLane];
-    this.turnText.setText(`PRACTICE · ${completedLanes + 1}/4 · NO SCORE YET`);
-    this.highwayTitleText.setText(progress === 1 ? `HIT ${key} NOW` : `FOLLOW LANE ${practiceLane + 1}`).setVisible(true);
-    this.highwayMetaText.setText(`PRESS ${key} · OR TAP LANE ${practiceLane + 1}`).setVisible(true);
+    this.phaseText.setText(`PRACTICE ${completedLanes + 1}/4`);
+    this.turnText.setText('NO SCORE YET');
+    this.highwayTitleText.setVisible(false);
+    this.highwayMetaText.setVisible(false);
   }
 
   private handlePracticeInput(slot: AuraSlot, lane: AuraLane): void {
@@ -780,12 +797,22 @@ export class AuraScene extends Phaser.Scene {
       }
     }
     this.drawOnboardingPractice();
-    this.emitOnboarding();
     if (outcome === 'start-battle') this.startBattleAfterPractice();
+    else this.emitOnboarding();
+  }
+
+  private setPracticeHud(practicing: boolean): void {
+    for (const object of [this.p1ScoreText, this.p2ScoreText, this.p2NameText, this.duelMeterGraphics,
+      this.comboText, this.crowdLabelText, this.crowdMeterGraphics]) object.setVisible(!practicing);
+    this.duelHeadingText.setVisible(!practicing && !this.layout.portrait);
   }
 
   private startBattleAfterPractice(): void {
     this.onboardingGraphics?.clear();
+    this.onboarding?.complete();
+    this.emitOnboarding();
+    this.setPracticeHud(false);
+    this.updateScoreUi();
     this.updateTurnPresentation(-1);
     void this.prepareStartup();
   }
@@ -881,7 +908,9 @@ export class AuraScene extends Phaser.Scene {
 
   private updateCountIn(turn: AuraTurn | null, nowMs: number): void {
     const remaining = turn ? turn.firstNoteMs - nowMs : 0;
-    if (!turn || remaining <= 0) {
+    const musicalIntro = !this.online && this.startup !== null && this.startup.snapshot.phase !== 'playing'
+      && turn?.index === 0;
+    if (!turn || remaining <= 0 || musicalIntro) {
       if (this.lastCountIn !== -1) {
         this.lastCountIn = -1;
         this.tweens.killTweensOf(this.countInText);
@@ -1274,6 +1303,7 @@ export class AuraScene extends Phaser.Scene {
     this.applyPerformerLayout();
     this.updateScoreUi();
     this.updateCrowdUi(this.activePerformerSlot);
+    if (this.onboarding?.snapshot.phase === 'practice') this.setPracticeHud(true);
     if (!this.matchFinished && !this.finalizing) {
       this.drawLanes(this.activePerformerSlot ?? this.chart.turns[0]?.slot ?? 0);
     }
@@ -1303,9 +1333,11 @@ export class AuraScene extends Phaser.Scene {
 
   private cameraComposition() {
     const startup = this.startup?.snapshot;
+    const countdownMs = this.online ? AURA_STARTUP_COUNTDOWN_MS : this.chart.beatMs * 3;
+    const handoffMs = Math.min(AURA_CAMERA_HANDOFF_MS, countdownMs);
     const introFaceoff = this.warmingPresentation ? 1 : startup && startup.phase !== 'playing'
       ? startup.phase === 'countdown'
-        ? Math.max(0, (startup.remainingMs - (AURA_STARTUP_COUNTDOWN_MS - AURA_CAMERA_HANDOFF_MS)) / AURA_CAMERA_HANDOFF_MS)
+        ? Math.max(0, (startup.remainingMs - (countdownMs - handoffMs)) / handoffMs)
         : 1
       : null;
     return auraCameraComposition(this.layout, {
@@ -1581,8 +1613,7 @@ export class AuraScene extends Phaser.Scene {
 
     if (!turn) {
       if (nowMs < this.chart.firstTurnMs) {
-        const beats = Math.max(1, Math.ceil((this.chart.firstTurnMs - nowMs) / this.chart.beatMs));
-        this.turnText.setText(beats > 4 ? 'SAME ROUTINE · MOST AURA WINS' : `GET READY · ${beats}`);
+        this.turnText.setText('SAME ROUTINE · MOST AURA WINS');
       } else if (!this.finalizing) {
         this.turnText.setText('THE ROOM HAS DECIDED');
       }
@@ -1773,6 +1804,8 @@ export class AuraScene extends Phaser.Scene {
         && !this.matchFinished && !this.finalizing) this.handlePracticeInput(slot, lane);
       return;
     }
+    const startupPhase = this.startup?.snapshot.phase;
+    if (startupPhase && startupPhase !== 'playing' && (this.online || startupPhase !== 'countdown')) return;
     if (nowMs < 0 || this.paused || this.matchFinished || this.finalizing || this.isCpuSlot(slot)) return;
     if (this.online && this.online.localSlot !== slot) return;
     if (auraTurnAt(this.chart, nowMs)?.slot === slot) this.flashLaneInput(slot, lane);
@@ -2138,30 +2171,31 @@ export class AuraScene extends Phaser.Scene {
     return this.online?.localSlot ?? this.matchData.auraChallenge?.slot ?? 0;
   }
 
-  private beginClock(delayMs: number): void {
-    if (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted
+  private beginClock(delayMs: number, keepStartupPresentation = false): void {
+    if (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted || this.paused
       || this.onboarding?.snapshot.phase === 'practice') return;
     if (this.online && !this.localOnlineReady) return;
     if (this.scheduledClockStart !== null || this.clockStartedAt !== null) return;
     this.scheduledClockStart = performance.now() + delayMs;
+    this.soundManager.stopBattleMusic();
     if (this.online) {
+      if (!this.silentStartup) this.soundManager.startAuraCrowd();
       this.startup?.countdown(delayMs);
       this.emitStartup();
     }
-    this.soundManager.stopBattleMusic();
     const epoch = this.lifecycleEpoch;
     const start = () => {
       if (!this.isCurrentLifecycle(epoch) || this.clockStartedAt !== null || this.paused) return;
       this.clockStartedAt = performance.now();
       this.scheduledClockStart = null;
       this.pausedDuration = 0;
-      this.startup?.play();
+      if (!keepStartupPresentation) this.startup?.play();
       this.startupView?.render(this.layout, this.startup?.snapshot ?? null);
-      this.emitStartup();
       if (!this.silentStartup) {
         this.soundManager.startBattleMusic(this.challengeMusicUrl ?? this.track.url);
         this.soundManager.startAuraCrowd();
       }
+      this.emitStartup();
       this.emitPresentationTurn(this.chart.turns[0]?.slot ?? 0);
       debugInfo('[AuraScene] Beat clock started', { seed: this.matchSeed, difficulty: this.difficultyId });
     };
@@ -2484,8 +2518,14 @@ export class AuraScene extends Phaser.Scene {
     } else {
       this.pausedDuration += performance.now() - this.pausedAt;
       this.paused = false;
-      if (this.clockStartedAt !== null) this.soundManager?.resumeBattleMusic();
       this.videoRecorder?.resume();
+      if (this.clockStartedAt !== null || this.onboarding?.snapshot.phase === 'practice') {
+        this.soundManager?.resumeBattleMusic();
+      } else if (this.startup?.snapshot.phase === 'versus') {
+        // The encoder can finish while paused. Resume capture before starting
+        // the music clock that owns this intro.
+        this.beginClock(0, true);
+      }
     }
   };
 

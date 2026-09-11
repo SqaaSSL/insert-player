@@ -92,6 +92,39 @@ afterEach(() => {
 });
 
 describe('Aura sprite loader calibration wiring', () => {
+  for (const [subject, spriteKey] of [['donald-trump', 'fighter_p1'], ['lamine-yamal', 'fighter_p2']] as const) {
+    it(`loads the first-play ${subject} cast from its own bundled Aura images without a cache or combat pack`, async () => {
+      publicDemoNetwork = true;
+      vi.stubEnv('DEV', false);
+      const entries = subject === 'donald-trump'
+        ? Object.keys(AURA_POSE_TEMPLATES).map(name => cacheEntry(geometry(name as keyof typeof AURA_POSE_TEMPLATES, true)))
+        : ADDITIONAL_AURA_BUILTIN_ASSETS[subject].map(definition => {
+          const atlas = geometry(definition.name);
+          atlas.contentHash = definition.contentHash;
+          return cacheEntry(atlas);
+        });
+      network.mockImplementation(async (path: string) => {
+        const sprite = entries.find(entry => path === `/assets/aura/${subject}/${entry.animationName}.png`);
+        if (!sprite) throw new Error('First play requested another identity or a remote pack');
+        return { ok: true, blob: async () => sprite.pngBlob };
+      });
+      const { scene } = sceneFixture();
+      const pack = await loadAuraAnimationPack(scene, spriteKey, null, () => true, { id: subject, tint: 0xffffff });
+      expect(mocks.cache).not.toHaveBeenCalled();
+      expect(mocks.meta).not.toHaveBeenCalled();
+      expect(network).toHaveBeenCalledTimes(entries.length);
+      expect(pack?.complete).toBe(true);
+      expect(pack?.animations.size).toBe(entries.length);
+      expect(pack?.demoTint).toBe(0xffffff);
+      for (const name of AURA_ANIMATION_NAMES) expect(pack?.animations.has(name)).toBe(true);
+      if (subject === 'donald-trump') {
+        expect(pack?.animations.get('aura_one_leg')?.calibration?.frames[0].sourceFrame).toBe(7);
+      } else {
+        expect(pack?.animations.get('aura_one_leg')?.calibration?.policy).toBe('bundled-reference-v1');
+      }
+    });
+  }
+
   for (const subject of ['rosalia-v2', 'lamine-yamal'] as const) {
     for (const spriteKey of ['fighter_p1', 'fighter_p2']) {
       it(`loads ${subject}'s six dedicated assets for ${spriteKey}, without a required shrug or borrowed pose corrections`, async () => {

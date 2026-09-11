@@ -39,8 +39,9 @@ import { FightResultShare } from '../components/FightResultShare.tsx';
 import { AuraControls } from '../components/AuraControls.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
 import { AuraOnboardingHint } from '../components/AuraOnboardingHint.tsx';
+import { AuraStartReady } from '../components/AuraStartReady.tsx';
 import { shouldGuideAuraBattle, rememberAuraOnboarding } from '../shared/auraOnboarding.ts';
-import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
+import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, canGuideAuraFirstBattle, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
 import { AURA_CAPTURE_EVENT, type AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
 import { AURA_STARTUP_EVENT, AURA_STARTUP_READY_EVENT, isAuraStartupDetail, type AuraStartupDetail } from '../../game/aura/AuraStartup.ts';
@@ -129,6 +130,7 @@ export function GamePage({
   const [rushSummary, setRushSummary] = useState<RushRunCompleteDetail | null>(null);
   const [auraSummary, setAuraSummary] = useState<AuraBattleCompleteDetail | null>(null);
   const [auraOnboarding, setAuraOnboarding] = useState<AuraOnboardingDetail | null>(null);
+  const [auraPracticeRecommended, setAuraPracticeRecommended] = useState(false);
   const guidedThisMount = useRef(false);
   const [auraCapture, setAuraCapture] = useState<AuraCaptureDetail | null>(null);
   const [auraStartup, setAuraStartup] = useState<AuraStartupDetail | null>(null);
@@ -197,9 +199,9 @@ export function GamePage({
     // Mark first: duplicate renders/StrictMode must never start the intro twice.
     lifecycle.phase = 'started';
     const onboarding = !guidedThisMount.current && shouldGuideAuraBattle(launchTarget.data);
+    setAuraPracticeRecommended(onboarding);
     if (onboarding) {
       guidedThisMount.current = true;
-      trackProductEvent('onboarding_started', { game: 'aura' });
     }
     window.dispatchEvent(new CustomEvent(AURA_PRESENTATION_START_EVENT, {
       detail: { ...auraPendingStart, ...(onboarding ? { onboarding: true } : {}) },
@@ -561,7 +563,7 @@ export function GamePage({
       {isAura && loadingPhase === 'hidden' && !auraSummary && auraCapture?.state === 'recording' ? (
         <p className="aura-capture-status" role="status">{paused ? 'Recording paused' : 'Recording match'} · game only</p>
       ) : null}
-      {isAura && loadingPhase === 'hidden' && auraStartup && !auraSummary ? (
+      {isAura && loadingPhase === 'hidden' && auraStartup && !auraSummary && auraOnboarding?.phase !== 'practice' ? (
         <p className="sr-only" role="status" aria-live="polite">
           {auraStartup.phase === 'awaiting-input' ? 'Your duel is ready. Start when you are ready.'
             : auraStartup.phase === 'preparing' ? 'Preparing the Aura duel.'
@@ -571,14 +573,24 @@ export function GamePage({
         </p>
       ) : null}
       {isAura && loadingPhase === 'hidden' && auraStartup?.phase === 'awaiting-input' && !auraSummary ? (
-        <div className="aura-start-ready" role="group" aria-label="Start your Aura duel">
-          <p>Get ready to hit the beat.</p>
-          <button type="button" className="asf-btn asf-btn--primary" onClick={() => {
+        <AuraStartReady
+          playerName={launchTarget.data.p1Name ?? 'Player One'}
+          rivalName={launchTarget.data.p2Name ?? 'Player Two'}
+          practiceAvailable={canGuideAuraFirstBattle(launchTarget.data)}
+          practiceRecommended={auraPracticeRecommended}
+          busy={paused}
+          onStart={practice => {
+            if (paused) return;
+            if (practice) trackProductEvent('onboarding_started', { game: 'aura' });
+            else if (auraPracticeRecommended) {
+              rememberAuraOnboarding();
+              trackProductEvent('onboarding_skipped', { game: 'aura' });
+            }
             window.dispatchEvent(new CustomEvent(AURA_STARTUP_READY_EVENT, {
-              detail: { token: auraStartup.token, seed: auraStartup.seed },
+              detail: { token: auraStartup.token, seed: auraStartup.seed, practice },
             }));
-          }}>I’m ready</button>
-        </div>
+          }}
+        />
       ) : null}
       {loadingPhase !== 'hidden' ? (
         <FightLoadingCurtain
@@ -644,7 +656,8 @@ export function GamePage({
         <div className="aura-game-toolbar" aria-label="Aura match controls">
           {!launchTarget.data.cpuVsCpu ? (
             <AuraControls playerIndex={online?.localSlot ?? auraControlledSlot ?? auraTouchSlot}
-              disabled={paused || (auraOnboarding?.phase !== 'practice' && auraStartup?.phase !== 'playing')} />
+              disabled={paused || (auraOnboarding?.phase !== 'practice' && auraStartup?.phase !== 'playing'
+                && (Boolean(online) || auraStartup?.phase !== 'countdown'))} />
           ) : null}
           <button type="button" className="aura-game-toolbar__back" onClick={onExit}>Back</button>
           {!onlineMatch && !paused ? (

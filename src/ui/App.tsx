@@ -21,6 +21,7 @@ import { ConfigurationErrorPage } from './routes/ConfigurationErrorPage.tsx';
 import { debugInfo, debugWarn } from '../services/DebugLog.ts';
 import type { AuthRouteState } from './authState.ts';
 import { readStoredMatch, writeStoredMatch } from './shared/storedMatch.ts';
+import { buildAuraTrialMatch } from './shared/auraTrialMatch.ts';
 import { CacheStatusBanner, type CacheStatus } from './components/CacheStatusBanner.tsx';
 import { getActiveSpriteCacheScope } from '../services/SpriteCache.ts';
 import {
@@ -445,9 +446,7 @@ export function App({
     const ownerScope = getActiveSpriteCacheScope();
     const seed = Math.floor(Math.random() * 0x7fffffff);
     if (mode === 'aura') {
-      startFight({ gameMode: mode, experience: 'trial', vsAI: true, cpuVsCpu: false,
-        p1Name: 'NOVA', p2Name: 'BYTE', stageId: DEFAULT_AURA_STAGE_ID, roundsToWin: 1,
-        p2Difficulty: 0.25, auraDifficulty: 'lowkey', seed });
+      startFight(buildAuraTrialMatch(seed));
       return;
     }
 

@@ -75,7 +75,8 @@ describe('original Neon Arena launch mix', () => {
     const intro = readPcm16Wav(approvedIntroPath);
     const introBytes = Math.round(4.65 * mix.sampleRate) * mix.channels * 2;
 
-    expect(mix.pcm.subarray(0, introBytes)).toEqual(intro.pcm.subarray(0, introBytes));
+    // Compare every PCM byte without a deep object walk over this large buffer.
+    expect(mix.pcm.subarray(0, introBytes).equals(intro.pcm.subarray(0, introBytes))).toBe(true);
   });
 
   it('keeps Neon Arena audible throughout gameplay and the closing lockup', () => {

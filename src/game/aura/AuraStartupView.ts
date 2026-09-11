@@ -44,10 +44,12 @@ export class AuraStartupView {
         .setText(state.phase === 'versus' ? 'AURA DUEL · GET READY' : waitingForRival ? 'WAITING FOR YOUR RIVAL' : 'READY TO FARM');
     } else {
       const x = layout.highwayX;
-      const y = layout.laneStartY + 98;
-      fillChamfered(this.plate, x - 54, y - 48, 108, 96, 12, INK, 0.94);
-      this.plate.lineStyle(2, CREAM, 0.9).strokeRect(x - 48, y - 42, 96, 84);
-      this.cue.setPosition(x, y).setFontSize(44).setText(String(state.count ?? 3));
+      // The first note is already travelling during this musical count-in.
+      // Keep its entire approach visible instead of placing a card on the lanes.
+      const y = layout.laneStartY - 55;
+      fillChamfered(this.plate, x - 38, y - 25, 76, 50, 8, INK, 0.94);
+      this.plate.lineStyle(1, CREAM, 0.8).strokeRect(x - 32, y - 20, 64, 40);
+      this.cue.setPosition(x, y).setFontSize(28).setText(String(state.count ?? 3));
     }
   }
 
