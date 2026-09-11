@@ -87,7 +87,7 @@ describe('Aura preview camera and result', () => {
     }
   });
 
-  it('keeps one discreet delta within the active score HUD and the movement icon clear of the instrument', () => {
+  it('keeps one discreet delta within the active score HUD and docks the move inside its instrument rail', () => {
     const first = AURA_PREVIEW_CHART.turns[0].notes[0];
     const early = at(first.atMs + 20).gains.find(gain => gain.noteId === first.id)!;
     const later = at(first.atMs + 200).gains.find(gain => gain.noteId === first.id)!;
@@ -106,6 +106,20 @@ describe('Aura preview camera and result', () => {
     const comic = auraComicAnchor(layout, 0);
     expect(at(first.atMs).icon.y).toBe(comic.moveY);
     expect(at(first.atMs + 1200).icon.y - 38).toBeGreaterThan(layout.hudHeight);
+    expect(at(first.atMs + 1200).icon.y).toBe(comic.moveY);
+    expect(comic.x - 65).toBeGreaterThan(layout.moveRail.left);
+    expect(comic.x + 65).toBeLessThan(layout.moveRail.right);
+    expect(comic.moveY + 110).toBe(layout.laneTargetY);
+  });
+
+  it('keeps the move card visible while successful notes arrive, then clears it for the next performer', () => {
+    const finalHit = AURA_PREVIEW_CHART.turns[0].notes.at(-1)!;
+    const time = finalHit.atMs + 160;
+    expect(time - AURA_PREVIEW_CHART.turns[0].firstNoteMs).toBeGreaterThan(1200);
+    expect(at(time).icon.alpha).toBe(1);
+    expect(at(AURA_PREVIEW_CHART.turns[0].firstNoteMs - 0.01).icon.alpha).toBe(0);
+    expect(at(AURA_PREVIEW_TURN_MS).icon.alpha).toBe(0);
+    expect(at(end).icon.alpha).toBe(0);
   });
 
   it('replaces the previous cue with the latest real delta and fades without moving over the main score', () => {
@@ -148,8 +162,13 @@ describe('Aura preview camera and result', () => {
     const time = AURA_PREVIEW_CHART.turns[0].firstNoteMs + 30;
     const duel = auraPreviewDuelAt(time, 1);
     drawAuraPreview(recorder.context as unknown as CanvasRenderingContext2D, null, atlases(), duel, time);
-    expect(recorder.context.fillText.mock.calls.some(call => call[0] === '6')).toBe(true);
-    expect(recorder.context.fillText.mock.calls.some(call => call[0] === '7')).toBe(true);
+    expect(recorder.context.fillText.mock.calls.some(call => call[0] === '67')).toBe(true);
+    expect(recorder.context.fillText.mock.calls.some(call => call[0] === 'SIX')).toBe(true);
+    expect(recorder.context.fillText.mock.calls.some(call => call[0] === 'SEVEN!')).toBe(true);
+    expect(recorder.context.fillText.mock.calls.some(call => call[0] === 'LAST HITS')).toBe(true);
+    expect(recorder.context.fillText.mock.calls.filter(call => call[2] === 103).map(call => call[0])).toEqual([
+      ['D', 'F', 'J', 'K'][duel.moveInputs[0].lane], '·', '·', '·',
+    ]);
     expect(recorder.context.fillText.mock.calls.some(call => call[0] === '+1,000' && call[1] === 24 && call[2] < auraHudLayout(createAuraLayout()).cueY)).toBe(true);
     expect(recorder.context.fillText.mock.calls.some(call => String(call[0]).startsWith('+') && String(call[0]).includes('AURA'))).toBe(false);
     expect(recorder.saves).toBe(0);

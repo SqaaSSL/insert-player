@@ -69,6 +69,7 @@ const DEMO_EVENTS: readonly DemoEvent[] = (() => {
 const GAIN_PULSE_MS = 420;
 const RECEPTOR_PULSE_MS = 220;
 export const AURA_PREVIEW_GAIN_LIFETIME_MS = AURA_SCORE_CUE.durationMs;
+const MOVE_HISTORY_LIFETIME_MS = 1800;
 
 /** Only the latest actual judgement appears under the active score. A new
  * note replaces it, and a turn change clears the outgoing performer's cue. */
@@ -115,6 +116,8 @@ export interface AuraPreviewDuelState {
   judgement: 'Perfect' | 'Great' | 'Good' | null;
   feedbackLabel: AuraPreviewRecentHit['feedbackLabel'] | null;
   recentHit: AuraPreviewRecentHit | null;
+  /** Actual successful inputs still belonging to the visible move card. */
+  moveInputs: readonly { noteId: string; lane: AuraLane; atMs: number }[];
   notes: readonly AuraPreviewVisibleNote[];
   receptors: readonly { lane: AuraLane; hit: boolean; grade: HitGrade | null }[];
   phase: 'count-in' | 'performing' | 'result';
@@ -154,6 +157,20 @@ export function auraPreviewDuelAt(elapsedMs: number, startMoveIndex = 0): AuraPr
     offsetMs: lastInTurn.offsetMs, scoreDelta: lastInTurn.scoreDelta, combo: lastInTurn.combo,
     feedbackLabel: feedbackFor(lastInTurn),
   } : null;
+  const successfulHits = finished ? [] : turnEvents.filter(event =>
+    event.grade === 'perfect' || event.grade === 'great' || event.grade === 'good');
+  const lastMoveHit = successfulHits.at(-1);
+  let moveInputs: AuraPreviewDuelState['moveInputs'] = [];
+  if (lastMoveHit && nowMs - lastMoveHit.atMs < MOVE_HISTORY_LIFETIME_MS) {
+    // Like the real card, a long silence retires the preceding input trail.
+    // Derive this from input times so a direct seek matches uninterrupted play.
+    let trailStart = 0;
+    successfulHits.forEach((hit, index) => {
+      if (index > 0 && hit.atMs - successfulHits[index - 1].atMs >= MOVE_HISTORY_LIFETIME_MS) trailStart = index;
+    });
+    moveInputs = successfulHits.slice(trailStart).slice(-4)
+      .map(({ noteId, lane, atMs }) => ({ noteId: noteId!, lane, atMs }));
+  }
   const judgedIds = new Set(turnEvents.map((event) => event.noteId));
   const notes = turn?.notes.filter((note) => !judgedIds.has(note.id)).map((note) => ({
     id: note.id, lane: note.lane, atMs: note.atMs,
@@ -175,7 +192,7 @@ export function auraPreviewDuelAt(elapsedMs: number, startMoveIndex = 0): AuraPr
     scoreDelta: recentHit?.scoreDelta ?? 0,
     judgement: recentHit ? recentHit.grade === 'perfect' ? 'Perfect' : recentHit.grade === 'great' ? 'Great' : 'Good' : null,
     feedbackLabel: recentHit?.feedbackLabel ?? null,
-    recentHit, notes, receptors,
+    recentHit, moveInputs, notes, receptors,
     phase: finished ? 'result' : countIn !== null ? 'count-in' : 'performing', countIn,
     round: (turn?.round ?? moveCount - 1) + 1,
     hitIndex: lastInTurn?.hitIndex ?? -1,

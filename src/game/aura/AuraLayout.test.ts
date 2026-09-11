@@ -3,8 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('phaser', () => ({ default: {} }));
 
 import { auraComicAnchor, auraPerformerPlacement, auraPerformerTransform, createAuraLayout } from './AuraLayout.ts';
-import { AURA_COMIC_LAYOUT } from './AuraComicFeedback.ts';
-import type { AuraComicAnchor } from './AuraComicFeedback.ts';
 
 describe('Aura stage layout', () => {
   it.each([[1024, 576], [576, 1024]])('keeps stage, lanes and controls inside the %i×%i canvas', (width, height) => {
@@ -72,30 +70,42 @@ describe('Aura stage layout', () => {
     expect(auraPerformerPlacement(layout, 1, 1)).toBe(layout.active);
   });
 
-  it('uses one desktop comic area in the gap beside the actor, preserving the portrait anchor', () => {
-    const desktop = createAuraLayout();
-    expect(auraComicAnchor(desktop, 0)).toEqual({ x: 468, moveY: 202, streakY: 278, moveRise: 24, streakRise: 12 });
-    expect(auraComicAnchor(desktop, 1)).toEqual(auraComicAnchor(desktop, 0));
-    const portrait = createAuraLayout(576, 1024);
-    expect(auraComicAnchor(portrait, 0)).toEqual(portrait.comic);
-    expect(auraComicAnchor(portrait, 1)).toEqual(portrait.comic);
+  it.each([[1024, 576], [576, 1024]])('docks either performer to the same move rail beside the instrument at %i×%i', (width, height) => {
+    const layout = createAuraLayout(width, height);
+    const { moveRail, instrument } = layout;
+    expect(auraComicAnchor(layout, 0)).toEqual(auraComicAnchor(layout, 1));
+    expect(moveRail.left).toBeGreaterThanOrEqual(24);
+    expect(moveRail.right).toBeLessThan(instrument.left);
+    expect(instrument.left - moveRail.right).toBe(12);
+    expect(moveRail.right - moveRail.left).toBe(160);
+    expect(moveRail.top).toBeGreaterThan(layout.hudHeight);
+    expect(moveRail.bottom).toBeLessThan(height);
+    for (const slot of [0, 1] as const) {
+      const anchor = auraComicAnchor(layout, slot);
+      expect(anchor).toMatchObject({ docked: true, moveRise: 0, streakRise: 0 });
+      // Card title, icon, keycaps and streak stay inside the reserved rail.
+      expect(anchor.x - 70).toBeGreaterThan(moveRail.left);
+      expect(anchor.x + 70).toBeLessThan(moveRail.right);
+      expect(anchor.moveY - 78).toBeGreaterThanOrEqual(moveRail.top);
+      expect(anchor.moveY + 125).toBeLessThan(anchor.streakY - 18);
+      expect(anchor.streakY + 18).toBeLessThan(moveRail.bottom);
+      // Key history lines up with the actual hit receptor, making the link visible.
+      expect(anchor.moveY + 110).toBe(layout.laneTargetY);
+    }
   });
 
-  it('keeps complete desktop comic flights below the HUD, mutually separate, beside faces and outside the instrument', () => {
-    const layout = createAuraLayout();
-    for (const slot of [0, 1] as const) {
-      const anchor: AuraComicAnchor = auraComicAnchor(layout, slot);
-      const moveTop = anchor.moveY - AURA_COMIC_LAYOUT.moveHeight / 2 - (anchor.moveRise ?? AURA_COMIC_LAYOUT.moveRise);
-      const moveBottom = anchor.moveY + AURA_COMIC_LAYOUT.moveHeight / 2;
-      const streakTop = anchor.streakY - AURA_COMIC_LAYOUT.streakHeight / 2 - (anchor.streakRise ?? AURA_COMIC_LAYOUT.streakRise);
-      const streakBottom = anchor.streakY + AURA_COMIC_LAYOUT.streakHeight / 2;
-      const placement = auraPerformerPlacement(layout, slot, slot);
-      expect([moveTop, moveBottom, streakTop, streakBottom]).toEqual([141, 239, 254, 290]);
-      expect(moveTop).toBeGreaterThan(layout.hudHeight);
-      expect(moveBottom).toBeLessThan(streakTop);
-      expect(anchor.x - AURA_COMIC_LAYOUT.moveWidth / 2).toBeGreaterThan(placement.x + 100);
-      expect(anchor.x + AURA_COMIC_LAYOUT.moveWidth / 2).toBeLessThan(layout.highwayX + layout.laneOffsets[0] - 42);
-    }
+  it('moves the portrait feedback below the performer and preserves four usable touch columns', () => {
+    const layout = createAuraLayout(576, 1024);
+    const laneCenters = layout.laneOffsets.map(offset => layout.highwayX + offset);
+    expect(laneCenters).toEqual([238, 326, 414, 502]);
+    expect(layout.moveRail.top).toBeGreaterThan(layout.stage.y + layout.stage.height);
+    expect(layout.instrument.right).toBeLessThan(layout.width);
+    const cellWidth = laneCenters[1] - laneCenters[0];
+    // The controls have 2px margins on each side; even a 320px-wide phone
+    // retains a 44px touch target without intruding into the move rail.
+    expect(cellWidth / layout.width * 320 - 4).toBeGreaterThanOrEqual(44);
+    expect(laneCenters[0] - cellWidth / 2).toBeGreaterThan(layout.moveRail.right);
+    expect(laneCenters.at(-1)! + cellWidth / 2).toBeLessThan(layout.width);
   });
 
   it.each([[1024, 576], [576, 1024]])('shows two separated equal bodies only for a shared finale at %i×%i', (width, height) => {

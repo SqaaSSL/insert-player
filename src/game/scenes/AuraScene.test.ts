@@ -243,7 +243,10 @@ describe('AuraScene integrated presentation', () => {
     expect(scene.fighters[0].forceState).toHaveBeenCalledExactlyOnceWith(FighterState.IDLE);
     expect(performance.update).toHaveBeenCalledWith(0, scene.views[0]);
     expect(performance.interrupt).not.toHaveBeenCalled();
-    expect(scene.comicFeedback.move).toHaveBeenCalledExactlyOnceWith(0, 'aura_six_seven');
+    if (grade === 'miss' || grade === 'mash') expect(scene.comicFeedback.move).not.toHaveBeenCalled();
+    else expect(scene.comicFeedback.move).toHaveBeenCalledExactlyOnceWith(0, 'aura_six_seven', {
+      key: 'D', tone: expect.any(Number), phrase: '0:aura_six_seven',
+    });
     expect(scene.comicFeedback.judgement).toHaveBeenCalledExactlyOnceWith(0, grade === 'miss' || grade === 'mash');
     expect(waiting.play).not.toHaveBeenCalled();
     expectUntouchedWorld(scene);
@@ -255,7 +258,21 @@ describe('AuraScene integrated presentation', () => {
     scene.animateFighterForJudgement({ grade: 'good', slot: 0, lane: 1, noteId: 'n1' });
     expect(performance.play.mock.calls).toEqual([['aura_six_seven'], ['aura_glide']]);
     expect(scene.fighters[0].forceState).toHaveBeenCalledExactlyOnceWith(FighterState.IDLE);
-    expect(scene.comicFeedback.move).toHaveBeenCalledExactlyOnceWith(0, 'aura_glide');
+    expect(scene.comicFeedback.move).toHaveBeenCalledExactlyOnceWith(0, 'aura_glide', {
+      key: 'S', tone: expect.any(Number), phrase: '0:aura_six_seven',
+    });
+  });
+
+  it.each([
+    { isVsAI: true, slot: 0, key: 'J' },
+    { isVsAI: false, slot: 1, key: 'L' },
+    { online: { localSlot: 1 }, slot: 1, key: 'J' },
+    { cpuVsCpu: true, slot: 1, key: '3' },
+  ])('labels successful history with the active input mapping: %j', ({ slot, key, ...mode }) => {
+    const { scene } = harness();
+    Object.assign(scene, mode, { activePerformerSlot: slot });
+    scene.animateFighterForJudgement({ grade: 'perfect', slot, lane: 2, noteId: 'n1' });
+    expect(scene.comicFeedback.move).toHaveBeenCalledWith(slot, 'aura_six_seven', expect.objectContaining({ key }));
   });
 
   it('keeps fallback choreography without inventing a dance label or changing source pixels', () => {
@@ -1096,7 +1113,7 @@ describe('AuraScene responsive whole-rig layout', () => {
 
   it.each([
     { width: 1024, height: 576, x: 942, y: 539, meterY: 550 },
-    { width: 576, height: 1024, x: 348, y: 599, meterY: 610 },
+    { width: 576, height: 1024, x: 430, y: 599, meterY: 610 },
   ])('keeps the active crowd counter in one right-aligned area at $width×$height', ({ width, height, x, y, meterY }) => {
     const { scene } = harness();
     delete scene.updateCrowdUi;
@@ -1104,9 +1121,9 @@ describe('AuraScene responsive whole-rig layout', () => {
       crowdLabelText: controlText(), crowdMeterGraphics: controlGraphics(),
     });
     scene.updateCrowdUi(0);
-    expect(scene.crowdLabelText).toMatchObject({ x, y, text: 'CROWD · WARMING UP', visible: true });
+    expect(scene.crowdLabelText).toMatchObject({ x, y, text: height > width ? 'WARMING UP' : 'CROWD · WARMING UP', visible: true });
     scene.updateCrowdUi(1);
-    expect(scene.crowdLabelText).toMatchObject({ x, y, text: 'CROWD · UNHINGED', visible: true });
+    expect(scene.crowdLabelText).toMatchObject({ x, y, text: height > width ? 'UNHINGED' : 'CROWD · UNHINGED', visible: true });
     expect(scene.crowdLabelText.setOrigin.mock.calls).toEqual([[1, 0], [1, 0]]);
     expect(scene.crowdMeterGraphics.fillRect).toHaveBeenCalledTimes(16);
     for (const [, segmentY, , segmentHeight] of scene.crowdMeterGraphics.fillRect.mock.calls) {
@@ -1120,7 +1137,7 @@ describe('AuraScene responsive whole-rig layout', () => {
 
   it.each([
     { width: 1024, height: 576, x: 942, y: 189, origin: 1, fontSize: 11 },
-    { width: 576, height: 1024, x: 483, y: 599, origin: 1, fontSize: 11 },
+    { width: 576, height: 1024, x: 532, y: 599, origin: 1, fontSize: 11 },
   ])('groups FLOW within the rhythm instrument at $width×$height', ({ width, height, x, y, origin, fontSize }) => {
     const { scene } = harness();
     const camera = () => Object.fromEntries(['setViewport', 'setZoom', 'setScroll']

@@ -1,7 +1,7 @@
 import type Phaser from 'phaser';
 import type { AuraAnimationName } from '../../services/FighterAssetPacks.ts';
 import type { AuraSlot } from './AuraChart.ts';
-import { CREAM, HEAT, INK, PIXEL_FONT } from '../ui/CabinetGraphics.ts';
+import { CREAM, HEAT, INK, PIXEL_FONT } from '../ui/CabinetTheme.ts';
 import { drawAuraComicIcon } from './AuraComicArt.ts';
 
 /** Deliberately short game copy, not a claim that every move is a named meme. */
@@ -24,6 +24,12 @@ export const AURA_COMIC_LAYOUT = {
 };
 
 type Bubble = { object: Phaser.GameObjects.Container; timer: Phaser.Time.TimerEvent };
+export interface AuraMoveInput { key: string; tone: number; phrase: string }
+type InputTrail = { phrase: string; inputs: AuraMoveInput[]; labels: Phaser.GameObjects.Text[] };
+export const AURA_DOCKED_MOVE_NAMES: Record<AuraAnimationName, string> = {
+  aura_unbothered: 'UNBOTHERED', aura_six_seven: 'SIX\nSEVEN!', aura_mog_check: 'MOG\nCHECK',
+  aura_glide: 'GLIDE', aura_floor_worm: 'FLOOR\nWORM', aura_one_leg: 'ONE-LEG\nHOP', aura_shrug: 'WHO, ME?',
+};
 /** Coordinates in the feedback layer, independent of fighter/camera transforms. */
 export interface AuraComicAnchor {
   x: number;
@@ -32,6 +38,8 @@ export interface AuraComicAnchor {
   /** Optional nonnegative flight distances; omitted values retain 24/12px. */
   moveRise?: number;
   streakRise?: number;
+  /** Compact move rail attached to the instrument, with successful input history. */
+  docked?: boolean;
 }
 
 /** Two bounded slots per seat; no particles, queues, or per-note popups. */
@@ -41,6 +49,7 @@ export class AuraComicFeedback {
   private currentMoves: [AuraAnimationName | null, AuraAnimationName | null] = [null, null];
   private failures: [number, number] = [0, 0];
   private visible: [boolean, boolean] = [true, true];
+  private trails: [InputTrail | null, InputTrail | null] = [null, null];
   private anchors: [AuraComicAnchor, AuraComicAnchor] = [
     { x: AURA_COMIC_LAYOUT.x[0], moveY: AURA_COMIC_LAYOUT.moveY, streakY: AURA_COMIC_LAYOUT.streakY },
     { x: AURA_COMIC_LAYOUT.x[1], moveY: AURA_COMIC_LAYOUT.moveY, streakY: AURA_COMIC_LAYOUT.streakY },
@@ -67,9 +76,10 @@ export class AuraComicFeedback {
     const previous = this.anchors[slot];
     if (previous.x === anchor.x && previous.moveY === anchor.moveY && previous.streakY === anchor.streakY
       && (previous.moveRise ?? AURA_COMIC_LAYOUT.moveRise) === moveRise
-      && (previous.streakRise ?? AURA_COMIC_LAYOUT.streakRise) === streakRise) return;
+      && (previous.streakRise ?? AURA_COMIC_LAYOUT.streakRise) === streakRise
+      && !!previous.docked === !!anchor.docked) return;
     this.resetSlot(slot);
-    this.anchors[slot] = { x: anchor.x, moveY: anchor.moveY, streakY: anchor.streakY, moveRise, streakRise };
+    this.anchors[slot] = { x: anchor.x, moveY: anchor.moveY, streakY: anchor.streakY, moveRise, streakRise, docked: anchor.docked };
   }
 
   /** Hide the waiting seat and discard late feedback without accumulating it.
@@ -84,8 +94,13 @@ export class AuraComicFeedback {
     for (const slot of [0, 1] as const) this.resetSlot(slot);
   }
 
-  move(slot: AuraSlot, name: AuraAnimationName): void {
-    if (!this.visible[slot] || this.currentMoves[slot] === name) return;
+  move(slot: AuraSlot, name: AuraAnimationName, input?: AuraMoveInput): void {
+    if (!this.visible[slot]) return;
+    if (this.anchors[slot].docked) {
+      this.dockedMove(slot, name, input);
+      return;
+    }
+    if (this.currentMoves[slot] === name) return;
     this.currentMoves[slot] = name;
     const [title, caption] = AURA_COMIC_COPY[name];
     const anchor = this.anchors[slot];
@@ -104,11 +119,56 @@ export class AuraComicFeedback {
     this.onMove?.(name);
   }
 
+  private dockedMove(slot: AuraSlot, name: AuraAnimationName, input?: AuraMoveInput): void {
+    const changed = this.currentMoves[slot] !== name;
+    const trail = this.trails[slot];
+    if (changed || !this.moves[slot] || (input && trail?.phrase !== input.phrase)) {
+      this.currentMoves[slot] = name;
+      const anchor = this.anchors[slot];
+      const object = this.scene.add.container(anchor.x, anchor.moveY);
+      const icon = this.scene.add.graphics().setPosition(0, -18);
+      drawAuraComicIcon(icon, name);
+      object.add([this.text(0, -72, 'MOVE', 10), icon]);
+      if (name === 'aura_six_seven') object.add(this.text(0, -25, '67', 28, '#ffce3a'));
+      object.add(this.text(0, 34, AURA_DOCKED_MOVE_NAMES[name], 13, '#ffce3a'));
+      object.add(this.text(0, 77, 'LAST HITS', 9));
+      const keys = this.scene.add.graphics();
+      const labels = [-51, -17, 17, 51].map(x => {
+        keys.lineStyle(1, CREAM, 0.35).strokeRoundedRect(x - 14, 95, 28, 30, 3);
+        return this.text(x, 110, '·', 14);
+      });
+      object.add([keys, ...labels]);
+      this.present(this.moves, slot, object, 1_800, 0);
+      this.trails[slot] = { phrase: input?.phrase ?? '', inputs: [], labels };
+      if (changed) this.onMove?.(name);
+    }
+    if (!input) return;
+    const current = this.trails[slot]!;
+    current.inputs = [...current.inputs, input].slice(-4);
+    current.labels.forEach((label, index) => {
+      const hit = current.inputs[index];
+      label.setText(hit?.key ?? '·').setColor(hit ? `#${hit.tone.toString(16).padStart(6, '0')}` : '#fff4d6');
+    });
+    // A sustained phrase keeps one readable card. Each hit updates the history
+    // without another pop-up, sound or entrance tween.
+    const bubble = this.moves[slot]!;
+    bubble.timer.remove(false);
+    this.scene.tweens.killTweensOf(bubble.object);
+    bubble.object.setAlpha(1);
+    bubble.timer = this.scene.time.delayedCall(1_800, () => {
+      if (this.moves[slot] === bubble) this.clear(this.moves, slot);
+    });
+  }
+
   /** First miss is already explained by judgement UI. Call out a run of two,
    * then every fourth additional failure, never every bad keypress. */
   judgement(slot: AuraSlot, failed: boolean): void {
     if (!this.visible[slot]) return;
     if (!failed) { this.failures[slot] = 0; return; }
+    if (this.anchors[slot].docked) {
+      this.clear(this.moves, slot);
+      this.trails[slot] = null;
+    }
     const count = ++this.failures[slot];
     if (count === 2 || (count > 2 && (count - 2) % 4 === 0)) {
       this.streak(slot, 'AURA LEAK', false);
@@ -117,7 +177,7 @@ export class AuraComicFeedback {
 
   milestone(slot: AuraSlot, combo: number): void {
     if (!this.visible[slot]) return;
-    this.streak(slot, `${combo}x  LOCKED IN`, true);
+    this.streak(slot, this.anchors[slot].docked ? `${combo}x\nLOCKED IN` : `${combo}x  LOCKED IN`, true);
   }
 
   private streak(slot: AuraSlot, label: string, positive: boolean): void {
@@ -125,14 +185,14 @@ export class AuraComicFeedback {
     const object = this.scene.add.container(anchor.x, anchor.streakY);
     const g = this.scene.add.graphics();
     // Arrow direction encodes success/failure without relying on red vs white.
-    const arrowX = -87, sign = positive ? -1 : 1;
+    const arrowX = anchor.docked ? -66 : -87, sign = positive ? -1 : 1;
     for (const [width, color] of [[6, INK], [2, positive ? HEAT : CREAM]]) {
       g.lineStyle(width, color, 1);
       g.lineBetween(arrowX, -5 * sign, arrowX, 5 * sign);
       g.lineBetween(arrowX, 5 * sign, arrowX - 4, sign);
       g.lineBetween(arrowX, 5 * sign, arrowX + 4, sign);
     }
-    object.add([g, this.text(8, 0, label, 11, positive ? '#ffce3a' : '#fff4d6')]);
+    object.add([g, this.text(8, 0, label, anchor.docked ? 10 : 11, positive ? '#ffce3a' : '#fff4d6')]);
     this.present(this.streaks, slot, object, 1_300, anchor.streakRise ?? AURA_COMIC_LAYOUT.streakRise);
   }
 
@@ -168,6 +228,7 @@ export class AuraComicFeedback {
     this.clear(this.moves, slot);
     this.clear(this.streaks, slot);
     this.currentMoves[slot] = null;
+    this.trails[slot] = null;
     this.failures[slot] = 0;
   }
 
