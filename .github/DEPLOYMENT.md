@@ -243,6 +243,12 @@ must never be used as a substitute for reviewing valid dirty worktrees.
 
 ## Durable Object lifecycle changes
 
+New `[[workflows]]` bindings use a `class_name` field too, but they do not add a
+Durable Object class migration. The rollout guard recognizes explicitly added
+Workflow tables while continuing to reject DO migration declarations and
+`class_name` changes whose table cannot be established from the diff. This keeps
+the ordinary rollback protection enabled for additive Workflow deployments.
+
 `deploy-production` refuses a push that adds, renames, or deletes a Durable Object
 class (`[[migrations]]` in `worker/wrangler.toml`): Cloudflare cannot roll a Worker
 back across a DO migration, so the automatic rollback path would be gone. To ship

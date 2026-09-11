@@ -85,12 +85,28 @@ export function assertFullDeployCompatible(wranglerDiff = '', options = {}) {
 }
 
 function assertNoDurableObjectLifecycleChange(wranglerDiff) {
-  const lifecycleChange = String(wranglerDiff)
-    .split(/\r?\n/)
-    .filter((line) => /^[+-](?![+-])/.test(line))
-    .some((line) => /(\[\[migrations\]\]|new_sqlite_classes|new_classes|renamed_classes|deleted_classes|class_name\s*=)/.test(line));
-  if (lifecycleChange) {
-    throw new Error('Rollback-safe rollout cannot include Durable Object lifecycle changes.');
+  let addedWorkflow = false;
+  for (const line of String(wranglerDiff).split(/\r?\n/)) {
+    // The CLI uses a zero-context diff. Only a newly added, explicit Workflow
+    // table proves that its class_name is unrelated to Durable Objects. Never
+    // carry this exemption across a hunk, file, deletion, or unknown TOML line.
+    if (/^\+\[\[workflows\]\]\s*(?:#.*)?$/.test(line)) {
+      addedWorkflow = true;
+      continue;
+    }
+    const workflowClass = addedWorkflow
+      && /^\+\s*class_name\s*=\s*(?:"[A-Za-z_][A-Za-z0-9_]*"|'[A-Za-z_][A-Za-z0-9_]*')\s*(?:#.*)?$/.test(line);
+    if (/^[+-](?![+-])/.test(line) && (
+      /(\[\[migrations\]\]|new_sqlite_classes|new_classes|renamed_classes|deleted_classes)/.test(line)
+      || (/class_name\s*=/.test(line) && !workflowClass)
+    )) {
+      throw new Error('Rollback-safe rollout cannot include Durable Object lifecycle changes.');
+    }
+    addedWorkflow = addedWorkflow && (
+      workflowClass
+      || /^\+\s*(?:#.*)?$/.test(line)
+      || /^\+\s*(?:binding|name)\s*=\s*(?:"[A-Za-z0-9_-]+"|'[A-Za-z0-9_-]+')\s*(?:#.*)?$/.test(line)
+    );
   }
 }
 
