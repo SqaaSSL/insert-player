@@ -287,8 +287,8 @@ export async function loadAuraAnimationPack(
     }
   }
 
-  // The reviewed neutral pack is also the free offline demo. This explicit
-  // option works in production and never fills or overwrites an owned pack.
+  // Explicit offline casts use their own reviewed bundles in either seat.
+  // They work in production and never fill or overwrite an owned pack.
   const builtin = !photoHash ? demo : undefined;
   const canaryId = builtin?.id ?? requestedAuraCanary();
   // Remote/current cached Aura assets always lead. An official character may
@@ -297,9 +297,9 @@ export async function loadAuraAnimationPack(
   const officialSubject = !canaryId ? await bundledArcadeSubject(photoHash) : null;
   if (!isCurrent()) return null;
   const localSubject = officialSubject ?? canaryId;
-  const localDefinitions = officialSubject
-    ? definitionsForBuiltin(officialSubject)
-    : localCanariesFor(canaryId, spriteKey);
+  const localDefinitions = builtin
+    ? builtin.id === 'template-zero' ? TEMPLATE_ZERO_CANARIES : definitionsForBuiltin(builtin.id)
+    : officialSubject ? definitionsForBuiltin(officialSubject) : localCanariesFor(canaryId, spriteKey);
   if (localSubject) {
     for (const definition of localDefinitions) {
       const replacesCachedAnimation = animations.has(definition.name);

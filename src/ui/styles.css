@@ -5256,47 +5256,114 @@
 }
 
 .aura-onboarding {
-  @apply absolute left-[34%] top-[24%] z-30 flex w-[21%] flex-col gap-2 rounded border border-asf-gold/60 bg-asf-bg-deep/95 p-3 text-left shadow-lg;
+  @apply absolute left-[56.8359375%] top-[22.9166667%] z-30 flex min-h-11 w-[36.328125%]
+         items-center justify-between gap-2 rounded border border-asf-line-strong bg-asf-bg-deep px-2 text-left;
+}
+.aura-onboarding__copy {
+  @apply flex min-w-0 items-center gap-3;
+}
+.aura-onboarding strong {
+  @apply flex shrink-0 flex-col gap-1 font-arcade text-[8px] uppercase leading-normal text-asf-gold;
+}
+.aura-onboarding strong span {
+  @apply font-sans text-xs font-semibold leading-none;
+}
+.aura-onboarding p {
+  @apply m-0 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-sans text-xs leading-tight text-asf-cream;
+}
+.aura-onboarding__short-message {
+  @apply hidden;
+}
+.aura-onboarding__input {
+  @apply inline-flex shrink-0 items-center gap-1 text-sm;
+}
+.aura-onboarding__input kbd {
+  @apply inline-flex min-h-5 min-w-5 items-center justify-center rounded border border-current px-1 font-sans text-xs font-semibold;
+}
+.aura-onboarding__input.is-lane-0 { @apply text-[#4fdced]; }
+.aura-onboarding__input.is-lane-1 { @apply text-[#9c66ff]; }
+.aura-onboarding__input.is-lane-2 { @apply text-asf-gold; }
+.aura-onboarding__input.is-lane-3 { @apply text-[#ef4343]; }
+.aura-onboarding button {
+  @apply min-h-11 min-w-11 shrink-0 cursor-pointer rounded border-0 bg-transparent px-1 text-xs text-asf-muted
+         underline underline-offset-4 hover:text-asf-cream focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-gold;
+}
+.aura-onboarding.is-battle {
+  @apply border-asf-line-faint;
 }
 
 .aura-start-ready {
-  @apply absolute left-1/2 top-[55%] z-30 flex w-max max-w-[90%] -translate-x-1/2 -translate-y-1/2
-         flex-col items-center gap-3 rounded-[6px] border border-asf-line-strong bg-asf-bg-deep/95 px-5 py-4;
+  @apply absolute left-[56.8359375%] top-[34%] z-30 flex w-[36.328125%] flex-col gap-4
+         rounded-[6px] border-2 border-asf-gold bg-asf-bg-deep p-5 text-left;
 }
-.aura-start-ready p {
-  @apply m-0 text-center font-sans text-sm text-asf-cream;
+.aura-start-ready__identity h2 {
+  @apply m-0 line-clamp-2 break-words font-sans text-xl font-bold leading-tight text-asf-cream;
 }
-.aura-start-ready .asf-btn {
-  @apply min-h-12 px-6 text-xs;
+.aura-start-ready__identity p {
+  @apply mb-0 mt-1 truncate font-sans text-sm leading-tight text-asf-muted;
 }
-.aura-onboarding strong {
-  @apply text-sm font-semibold text-asf-gold;
+.aura-start-ready__instruction {
+  @apply m-0 font-sans text-sm leading-snug text-asf-cream;
 }
-.aura-onboarding p {
-  @apply mb-0 mt-1 text-sm leading-relaxed text-asf-text;
+.aura-start-ready__actions {
+  @apply flex flex-col;
 }
-.aura-onboarding small {
-  @apply mt-2 block text-xs text-asf-muted;
+.aura-start-ready .aura-start-ready__primary {
+  @apply min-h-12 w-full border-asf-gold bg-asf-gold [background-image:none] px-3 text-[11px] leading-relaxed
+         text-asf-bg-deep [text-shadow:none] hover:border-asf-gold-bright hover:bg-asf-gold-bright hover:text-asf-bg-deep
+         focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-asf-cream;
 }
-.aura-onboarding button {
-  @apply min-h-11 cursor-pointer self-start rounded border-0 bg-transparent px-0 py-2 text-xs text-asf-gold underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-gold;
+.aura-start-ready__skip {
+  @apply min-h-11 w-full cursor-pointer rounded border-0 bg-transparent px-3 py-2 font-sans text-sm text-asf-cream
+         underline underline-offset-4 hover:text-asf-gold disabled:cursor-not-allowed disabled:opacity-55
+         focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-gold;
 }
 .game-shell.is-aura.is-portrait .aura-onboarding {
-  @apply left-[14%] top-[37%] w-[72%] gap-0 px-3 py-2;
+  @apply left-16 right-[60px] top-[52%] w-auto;
 }
-.game-shell.is-aura.is-portrait .aura-onboarding strong,
-.game-shell.is-aura.is-portrait .aura-onboarding p {
-  @apply text-xs;
+.game-shell.is-aura.is-portrait .aura-start-ready {
+  @apply left-[5.5555556%] top-[60%] w-[88.8888889%] gap-3 p-4;
+}
+@media (max-width: 359px) and (orientation: portrait) {
+  .game-shell.is-aura.is-portrait .aura-onboarding.is-practice .aura-onboarding__message {
+    @apply sr-only;
+  }
+  .game-shell.is-aura.is-portrait .aura-onboarding__short-message {
+    @apply inline;
+  }
+}
+@media (max-height: 640px) and (orientation: portrait) {
+  .game-shell.is-aura.is-portrait .aura-start-ready {
+    @apply gap-2 p-3;
+  }
+  .aura-start-ready__identity h2 {
+    @apply text-lg;
+  }
+  .aura-start-ready__instruction {
+    @apply text-xs;
+  }
+  .aura-start-ready .aura-start-ready__primary {
+    @apply min-h-11 text-[10px];
+  }
 }
 @media (max-height: 500px) and (orientation: landscape) {
   .aura-onboarding {
-    @apply gap-0 p-2;
+    @apply left-[47%] top-[21.5%] w-[47%];
   }
-  .aura-onboarding strong,
-  .aura-onboarding p {
-    @apply text-[11px];
+  .aura-onboarding__copy {
+    @apply gap-2;
   }
-  .aura-onboarding small {
-    @apply hidden;
+  .aura-start-ready {
+    @apply top-[30%] gap-2 p-3;
+  }
+  .aura-start-ready__identity h2 {
+    @apply text-base;
+  }
+  .aura-start-ready__instruction,
+  .aura-start-ready__identity p {
+    @apply text-xs;
+  }
+  .aura-start-ready .aura-start-ready__primary {
+    @apply min-h-11 text-[10px];
   }
 }

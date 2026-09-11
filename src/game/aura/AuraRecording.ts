@@ -26,6 +26,8 @@ export interface AuraRecordingConfig {
   p2Name: string;
   p1CloudFighterId?: string | null;
   p2CloudFighterId?: string | null;
+  /** Stable public cast for offline quickplay recordings with no cloud ids. */
+  auraTrialPreset?: 'trump-lamine';
   chart: AuraChart;
 }
 
@@ -108,7 +110,7 @@ function sameNote(left: AuraNote, right: AuraNote): boolean {
 
 function validateConfig(value: unknown): asserts value is AuraRecordingConfig {
   const config = object(value, ['engineVersion', 'matchSeed', 'trackId', 'difficulty', 'stageId',
-    'p1Name', 'p2Name', 'p1CloudFighterId', 'p2CloudFighterId', 'chart'], 'config');
+    'p1Name', 'p2Name', 'p1CloudFighterId', 'p2CloudFighterId', 'auraTrialPreset', 'chart'], 'config');
   identifier(config.engineVersion, 'config.engineVersion');
   number(config.matchSeed, 0, 0xffff_ffff, 'config.matchSeed', true);
   identifier(config.trackId, 'config.trackId');
@@ -118,6 +120,10 @@ function validateConfig(value: unknown): asserts value is AuraRecordingConfig {
   text(config.p2Name, 120, 'config.p2Name');
   for (const key of ['p1CloudFighterId', 'p2CloudFighterId']) {
     if (config[key] !== undefined && config[key] !== null) identifier(config[key], `config.${key}`);
+  }
+  if (config.auraTrialPreset !== undefined) {
+    requireValue(config.auraTrialPreset === 'trump-lamine'
+      && !config.p1CloudFighterId && !config.p2CloudFighterId, 'config.auraTrialPreset');
   }
   const chart = object(config.chart, ['seed', 'difficulty', 'trackId', 'bpm', 'beatMs', 'beatOffsetMs',
     'noteTravelMs', 'firstTurnMs', 'durationMs', 'turns', 'notes'], 'config.chart');

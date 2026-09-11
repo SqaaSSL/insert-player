@@ -492,6 +492,55 @@ describe('SoundManager recording mix', () => {
     sound.destroy();
   });
 
+  it('records audible rising count-in cues, bounds repeated ticks and cancels them on pause', () => {
+    const sound = new SoundManager();
+    sound.getRecordingAudioTracks();
+    const ctx = FakeAudioContext.instances[0];
+    for (const count of [3, 2, 1, 'go'] as const) {
+      sound.playAuraCountIn(count);
+      sound.playAuraCountIn(count);
+      ctx.currentTime += 1;
+    }
+    const voices = ctx.createOscillator.mock.results.map(result => result.value);
+    expect(voices).toHaveLength(4);
+    expect(voices.map(voice => voice.frequency.setValueAtTime.mock.calls[0][0])).toEqual([440, 554, 659, 880]);
+    expect(ctx.gains.slice(1).every(gain => gain.connected.has(ctx.gains[0]))).toBe(true);
+    expect(ctx.gains[0].connected.has(ctx.recordingDestination)).toBe(true);
+    sound.pauseBattleMusic();
+    expect(voices.every(voice => voice.connected.size === 0)).toBe(true);
+    sound.playAuraCountIn('go');
+    expect(ctx.createOscillator).toHaveBeenCalledTimes(4);
+    sound.resumeBattleMusic();
+    expect(ctx.createOscillator).toHaveBeenCalledTimes(4);
+    sound.playAuraCountIn(3);
+    expect(ctx.createOscillator).toHaveBeenCalledTimes(5);
+    sound.destroy();
+  });
+
+  it('plays a soft practice pulse and move feedback without the song, freezing beats on pause', () => {
+    const sound = new SoundManager();
+    sound.startAuraPracticeAudio(150);
+    const ctx = FakeAudioContext.instances[0];
+    expect(ctx.createOscillator).toHaveBeenCalledOnce();
+    expect(FakeAudio.instances).toHaveLength(4); // Audience only; no song is created.
+    sound.updateAuraCrowd(399);
+    expect(ctx.createOscillator).toHaveBeenCalledOnce();
+    sound.updateAuraCrowd(1);
+    expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
+    sound.playAuraMove('aura_six_seven');
+    expect(ctx.createOscillator).toHaveBeenCalledTimes(4);
+    sound.pauseBattleMusic(); sound.updateAuraCrowd(30_000);
+    expect(ctx.createOscillator).toHaveBeenCalledTimes(4);
+    sound.resumeBattleMusic(); sound.updateAuraCrowd(400);
+    expect(ctx.createOscillator).toHaveBeenCalledTimes(5);
+    sound.updateAuraCrowd(60_000);
+    expect(ctx.createOscillator).toHaveBeenCalledTimes(6); // No catch-up burst.
+    sound.stopAuraPracticeAudio(); sound.updateAuraCrowd(4_000);
+    expect(ctx.createOscillator).toHaveBeenCalledTimes(6);
+    expect(FakeAudio.instances.every(audio => audio.paused)).toBe(true);
+    sound.destroy();
+  });
+
   it('releases ended cue nodes and never leaves pending voices alive after stop/dispose', () => {
     const sound = new SoundManager();
     sound.playAuraMove('aura_glide');

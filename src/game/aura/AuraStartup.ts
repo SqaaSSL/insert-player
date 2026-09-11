@@ -12,6 +12,11 @@ export interface AuraStartupDetail {
   count: number | null;
 }
 
+export interface AuraMusicalLeadIn {
+  firstNoteMs: number;
+  beatMs: number;
+}
+
 export function isAuraStartupDetail(value: unknown): value is AuraStartupDetail {
   if (!value || typeof value !== 'object') return false;
   const detail = value as Partial<AuraStartupDetail>;
@@ -22,26 +27,35 @@ export function isAuraStartupDetail(value: unknown): value is AuraStartupDetail 
     && (detail.count === null || (Number.isInteger(detail.count) && detail.count! >= 1 && detail.count! <= 3));
 }
 
-/** Offline delays count rendered time, so a blocked frame cannot eat the ready
- * sequence. Online countdown is driven by the already agreed network deadline. */
+/** Musical lead-ins follow the song. The legacy standalone ready sequence
+ * counts rendered time; online countdown keeps its agreed network deadline. */
 export class AuraStartup {
   private phase: AuraStartupDetail['phase'] = 'preparing';
   private remainingMs = 0;
   private presentedVersus = false;
+  private readonly musicalLeadIn: AuraMusicalLeadIn | null;
+  private lastMusicMs = 0;
 
-  constructor(private readonly online = false) {}
+  constructor(private readonly online = false, musicalLeadIn?: AuraMusicalLeadIn) {
+    this.musicalLeadIn = !online && musicalLeadIn
+      && Number.isFinite(musicalLeadIn.firstNoteMs) && Number.isFinite(musicalLeadIn.beatMs)
+      && musicalLeadIn.beatMs > 0 && musicalLeadIn.firstNoteMs >= 3 * musicalLeadIn.beatMs
+      ? { ...musicalLeadIn } : null;
+  }
 
   get readyForOnline(): boolean { return this.online && this.presentedVersus && this.phase === 'preparing'; }
 
   get snapshot(): Pick<AuraStartupDetail, 'phase' | 'remainingMs' | 'count'> {
     return { phase: this.phase, remainingMs: this.remainingMs,
-      count: this.phase === 'countdown' ? Math.max(1, Math.min(3, Math.ceil(this.remainingMs / 1_000))) : null };
+      count: this.phase === 'countdown'
+        ? Math.max(1, Math.min(3, Math.ceil(this.remainingMs / (this.musicalLeadIn?.beatMs ?? 1_000)))) : null };
   }
 
   begin(): void {
     if (this.phase !== 'preparing' || this.presentedVersus) return;
     this.phase = 'versus';
-    this.remainingMs = AURA_VERSUS_MS;
+    this.remainingMs = this.musicalLeadIn
+      ? this.musicalLeadIn.firstNoteMs - 3 * this.musicalLeadIn.beatMs : AURA_VERSUS_MS;
   }
 
   countdown(remainingMs = AURA_STARTUP_COUNTDOWN_MS): void {
@@ -51,7 +65,25 @@ export class AuraStartup {
 
   play(): void { this.phase = 'playing'; this.remainingMs = 0; }
 
+  /** The offline intro shares the song's existing lead-in. No extra silent
+   * countdown, chart offset or second playback is added before the first hit. */
+  syncMusic(elapsedMs: number): void {
+    const leadIn = this.musicalLeadIn;
+    if (!leadIn || this.phase === 'preparing' || this.phase === 'playing'
+      || !Number.isFinite(elapsedMs) || elapsedMs < this.lastMusicMs) return;
+    this.lastMusicMs = elapsedMs;
+    const countdownStartsMs = leadIn.firstNoteMs - 3 * leadIn.beatMs;
+    if (elapsedMs < countdownStartsMs) {
+      this.remainingMs = countdownStartsMs - elapsedMs;
+      return;
+    }
+    this.presentedVersus = true;
+    if (elapsedMs >= leadIn.firstNoteMs) this.play();
+    else this.countdown(leadIn.firstNoteMs - elapsedMs);
+  }
+
   advance(deltaMs: number): void {
+    if (this.musicalLeadIn) return;
     if (!Number.isFinite(deltaMs) || deltaMs <= 0 || this.phase === 'preparing' || this.phase === 'playing') return;
     if (this.online && this.phase === 'countdown') return;
     this.remainingMs = Math.max(0, this.remainingMs - Math.min(deltaMs, 100));
@@ -89,6 +121,6 @@ export function waitForAuraRenderedFrames(events: RenderEvents, signal: AbortSig
 declare global {
   interface WindowEventMap {
     [AURA_STARTUP_EVENT]: CustomEvent<AuraStartupDetail>;
-    [AURA_STARTUP_READY_EVENT]: CustomEvent<{ token: number; seed: number }>;
+    [AURA_STARTUP_READY_EVENT]: CustomEvent<{ token: number; seed: number; practice?: boolean }>;
   }
 }

@@ -1,6 +1,6 @@
 import { AuraCrowdDynamics } from './AuraCrowdDynamics.ts';
 import { isVerifiedAuraChallengeMusicUrl } from '../aura/AuraChallengeMedia.ts';
-import { AURA_MOVE_SOUNDS } from './AuraMoveSound.ts';
+import { AURA_MOVE_SOUNDS, type AuraMoveTone } from './AuraMoveSound.ts';
 import type { AuraAnimationName } from '../../services/FighterAssetPacks.ts';
 
 export const BATTLE_MUSIC_URL = '/assets/audio/neon-arena-battle-v1.mp3';
@@ -84,8 +84,12 @@ export class SoundManager {
   private auraMoveVoices = new Set<AuraMoveVoice>();
   private lastAuraMoveAt = -Infinity;
   private lastAuraMoveName: AuraAnimationName | null = null;
+  private lastAuraCountAt = -Infinity;
   private removeAuraMoveStateListener: (() => void) | null = null;
   private musicPreparationAbort: AbortController | null = null;
+  private mediaUnlockAbort: AbortController | null = null;
+  private auraPracticeBeatMs: number | null = null;
+  private auraPracticeElapsedMs = 0;
 
   /** Fetch/decode enough music for playback while the loading curtain is up. */
   prepareBattleMusic(url: string, signal: AbortSignal): Promise<boolean> {
@@ -120,7 +124,12 @@ export class SoundManager {
   /** Call in the player's start gesture. Prime the exact HTML elements and
    * recording graph silently, then reset them before the visible countdown. */
   async unlockPreparedMedia(signal?: AbortSignal): Promise<boolean> {
-    if (this.destroyed || !this.battleMusic) return false;
+    if (this.destroyed || !this.battleMusic || signal?.aborted) return false;
+    this.mediaUnlockAbort?.abort();
+    const unlock = new AbortController();
+    this.mediaUnlockAbort = unlock;
+    const cancel = () => unlock.abort();
+    signal?.addEventListener('abort', cancel, { once: true });
     if (typeof AudioContext !== 'undefined') {
       try { this.ensureContext(); } catch { /* HTML playback can still work. */ }
     }
@@ -136,14 +145,14 @@ export class SoundManager {
         await Promise.race([playback, new Promise<never>((_resolve, reject) => {
           aborted = () => reject(new Error('Audio preparation cancelled'));
           timeout = setTimeout(aborted, 5_000);
-          signal?.addEventListener('abort', aborted, { once: true });
-          if (signal?.aborted) aborted();
+          unlock.signal.addEventListener('abort', aborted, { once: true });
+          if (unlock.signal.aborted) aborted();
         })]);
         return true;
       } catch { return false; }
       finally {
         clearTimeout(timeout);
-        signal?.removeEventListener('abort', aborted);
+        unlock.signal.removeEventListener('abort', aborted);
         audio.pause();
         if (!this.destroyed) {
           audio.currentTime = 0;
@@ -151,8 +160,16 @@ export class SoundManager {
         }
       }
     });
-    const results = await Promise.all(attempts);
-    return !this.destroyed && this.battleMusic === music && results[0];
+    // Optional audience clips must not hold the player's Ready button for five
+    // seconds. Settle/cancel their silent primes before they can pause an active
+    // prelude later. The selected song alone decides audio readiness.
+    const musicUnlocked = await attempts[0];
+    const cancelled = unlock.signal.aborted;
+    unlock.abort();
+    await Promise.all(attempts);
+    signal?.removeEventListener('abort', cancel);
+    if (this.mediaUnlockAbort === unlock) this.mediaUnlockAbort = null;
+    return !cancelled && !this.destroyed && this.battleMusic === music && musicUnlocked;
   }
 
   private prepareMusicElement(url: string): void {
@@ -173,6 +190,7 @@ export class SoundManager {
 
   startBattleMusic(url: string = BATTLE_MUSIC_URL): void {
     if (typeof Audio === 'undefined') return;
+    this.stopAuraPracticeAudio();
     this.mediaPlaybackPaused = false;
 
     this.prepareMusicElement(url);
@@ -281,7 +299,7 @@ export class SoundManager {
   resumeBattleMusic(): void {
     this.mediaPlaybackPaused = false;
     if (this.ctx) this.resumeContext(this.ctx);
-    this.tryPlayBattleMusic();
+    if (this.auraPracticeBeatMs === null) this.tryPlayBattleMusic();
     if (this.auraCrowdRunning) this.tryPlayAuraCrowd();
   }
 
@@ -310,6 +328,8 @@ export class SoundManager {
 
   stopBattleMusic(): void {
     this.mediaPlaybackPaused = true;
+    this.auraPracticeBeatMs = null;
+    this.auraPracticeElapsedMs = 0;
     this.stopAuraMoveVoices();
     this.removeMusicUnlockListeners?.();
     this.removeMusicUnlockListeners = null;
@@ -360,6 +380,28 @@ export class SoundManager {
     this.tryPlayAuraCrowd();
   }
 
+  /** Explicit Ready has already unlocked audio. A soft pulse and audience make
+   * the unscored warm-up responsive without playing/restarting the duel song. */
+  startAuraPracticeAudio(bpm: number): void {
+    if (this.destroyed || !Number.isFinite(bpm) || bpm <= 0) return;
+    this.auraPracticeBeatMs = 60_000 / Math.max(30, Math.min(300, bpm));
+    this.auraPracticeElapsedMs = 0;
+    this.startAuraCrowd();
+    this.mediaPlaybackPaused = false;
+    this.prepareAuraMoveAudio();
+    this.playAuraPracticeBeat();
+  }
+
+  stopAuraPracticeAudio(): void {
+    if (this.auraPracticeBeatMs !== null) this.stopBattleMusic();
+  }
+
+  private playAuraPracticeBeat(): void {
+    if (!this.ctx || !this.masterGain || this.ctx.state !== 'running' || this.mediaPlaybackPaused) return;
+    this.playAuraTones([{ wave: 'sine', fromHz: 660, toHz: 400,
+      delayMs: 0, durationMs: 55, gain: 0.055 }], this.ctx, this.masterGain);
+  }
+
   /**
    * Slowly build a quiet audience bed. Cheers and boos are bounded reactions,
    * not looping layers; elapsed rounds alone never make the crowd louder.
@@ -374,6 +416,14 @@ export class SoundManager {
 
   updateAuraCrowd(deltaMs: number): void {
     if (!this.auraCrowdRunning || this.mediaPlaybackPaused || this.destroyed) return;
+    if (this.auraPracticeBeatMs !== null && Number.isFinite(deltaMs) && deltaMs > 0) {
+      this.auraPracticeElapsedMs += deltaMs;
+      if (this.auraPracticeElapsedMs >= this.auraPracticeBeatMs) {
+        this.auraPracticeElapsedMs %= this.auraPracticeBeatMs;
+        // One present pulse, never a burst of missed beats after a blocked frame.
+        this.playAuraPracticeBeat();
+      }
+    }
     const frame = this.auraCrowdDynamics.update(deltaMs);
     for (const layer of this.auraCrowd) {
       const start = layer.config.id === 'hype' ? frame.startCheer
@@ -392,7 +442,7 @@ export class SoundManager {
   }
 
   private tryPlayBattleMusic(): void {
-    if (this.mediaPlaybackPaused || this.destroyed) return;
+    if (this.mediaPlaybackPaused || this.destroyed || this.auraPracticeBeatMs !== null) return;
     const playback = this.battleMusic?.play();
     if (!playback || typeof playback.catch !== 'function') return;
     void playback.catch(() => this.armMusicUnlock());
@@ -572,6 +622,26 @@ export class SoundManager {
     if (now - this.lastAuraMoveAt < cooldown) return;
     this.lastAuraMoveAt = now;
     this.lastAuraMoveName = name;
+    this.playAuraTones(tones, ctx, master);
+  }
+
+  /** Short, bounded cues for the visible count-in. The scene supplies the count
+   * only when it changes, so rendering stalls never schedule a burst of ticks. */
+  playAuraCountIn(count: 3 | 2 | 1 | 'go'): void {
+    if (this.destroyed || this.mediaPlaybackPaused || typeof AudioContext === 'undefined') return;
+    if (count !== 'go' && ![3, 2, 1].includes(count)) return;
+    this.prepareAuraMoveAudio();
+    const ctx = this.ctx;
+    const master = this.masterGain;
+    if (!ctx || !master || ctx.state !== 'running' || ctx.currentTime - this.lastAuraCountAt < 0.15) return;
+    this.lastAuraCountAt = ctx.currentTime;
+    const frequency = count === 'go' ? 880 : count === 3 ? 440 : count === 2 ? 554 : 659;
+    this.playAuraTones([{ wave: 'triangle', fromHz: frequency, toHz: frequency,
+      delayMs: 0, durationMs: count === 'go' ? 220 : 100, gain: count === 'go' ? 0.16 : 0.12 }], ctx, master);
+  }
+
+  private playAuraTones(tones: readonly AuraMoveTone[], ctx: AudioContext, master: GainNode): void {
+    const now = ctx.currentTime;
     try {
       for (const tone of tones) {
         const oscillator = ctx.createOscillator();
@@ -611,6 +681,7 @@ export class SoundManager {
     }
     this.lastAuraMoveAt = -Infinity;
     this.lastAuraMoveName = null;
+    this.lastAuraCountAt = -Infinity;
   }
 
   playHit(heavy: boolean): void {
@@ -725,6 +796,8 @@ export class SoundManager {
 
   destroy(): void {
     this.destroyed = true;
+    this.mediaUnlockAbort?.abort();
+    this.mediaUnlockAbort = null;
     this.musicPreparationAbort?.abort();
     this.musicPreparationAbort = null;
     this.stopBattleMusic();

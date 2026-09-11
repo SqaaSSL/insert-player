@@ -9,6 +9,7 @@ import {
 import { STAGE_THEMES, stageSupportsMode, type StageThemeId } from '../../game/match/StageConfig.ts';
 import { AURA_DIFFICULTIES, type AuraDifficultyId } from '../../game/aura/AuraConfig.ts';
 import { isValidAuraChallengeMatch } from '../../game/aura/AuraChallenge.ts';
+import { isAuraTrialPresetMatch } from '../../game/aura/AuraDemoPerformers.ts';
 
 const STORAGE_PREFIX = 'ai-street-fighter:last-match:v1:';
 const LEGACY_STORAGE_KEY = 'ai-street-fighter:last-match';
@@ -82,6 +83,7 @@ export function isValidStoredMatchData(value: unknown): value is MatchSceneData 
   )) return false;
   if (data.seed !== undefined && !isValidMatchSeed(data.seed)) return false;
   if (!optionalText(data.auraTrackId, 64)) return false;
+  if (data.auraTrialPreset !== undefined && !isAuraTrialPresetMatch(data as unknown as MatchSceneData)) return false;
   if (data.auraChallenge !== undefined && !isValidAuraChallengeMatch(data as unknown as MatchSceneData)) return false;
   if (data.online !== undefined) {
     const online = data.online as Record<string, unknown> | null;
