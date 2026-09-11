@@ -101,6 +101,57 @@ describe('Worker version rollout parsing', () => {
       .toThrow('Durable Object lifecycle');
   });
 
+  it('allows explicit new Workflow bindings in production and sandbox without a lifecycle override', () => {
+    const diff = ['worker/wrangler.toml', 'worker/wrangler.sandbox.toml'].map((file) => [
+      `diff --git a/${file} b/${file}`,
+      `--- a/${file}`,
+      `+++ b/${file}`,
+      '@@ -91,0 +92,5 @@ cpu_ms = 300000',
+      '+[[workflows]]',
+      '+binding = "BATTLE_FINISHER"',
+      `+name = "insert-player-battle-finisher${file.includes('sandbox') ? '-sandbox' : ''}"`,
+      '+class_name = "BattleFinisherWorkflow"',
+      '+',
+    ].join('\n')).join('\n');
+    expect(() => assertFullDeployCompatible(diff)).not.toThrow();
+    expect(() => assertVersionUploadCompatible([
+      'worker/wrangler.toml', 'worker/wrangler.sandbox.toml',
+    ], diff)).not.toThrow();
+  });
+
+  it.each([
+    '+[[migrations]]\n+tag = "v2"\n+new_sqlite_classes = ["NewRoom"]',
+    '+new_classes = ["NewRoom"]',
+    '+renamed_classes = [{ from = "OldRoom", to = "NewRoom" }]',
+    '+deleted_classes = ["OldRoom"]',
+    '+[[durable_objects.bindings]]\n+name = "ROOM"\n+class_name = "NewRoom"',
+    '+[durable_objects]\n+bindings = [{ name = "ROOM", class_name = "NewRoom" }]',
+  ])('still blocks DO lifecycle changes alongside a new Workflow: %s', (lifecycleDiff) => {
+    const diff = '+[[workflows]]\n+class_name = "BattleFinisherWorkflow"\n' + lifecycleDiff;
+    expect(() => assertFullDeployCompatible(diff)).toThrow('Durable Object lifecycle');
+    expect(() => assertVersionUploadCompatible(['worker/wrangler.toml'], diff))
+      .toThrow('Durable Object lifecycle');
+  });
+
+  it.each([
+    '@@ -150,0 +156 @@\n+class_name = "NewRoom"',
+    'diff --git a/worker/wrangler.sandbox.toml b/worker/wrangler.sandbox.toml\n+class_name = "NewRoom"',
+    ' [durable_objects]\n+class_name = "NewRoom"',
+    '-class_name = "OldRoom"\n+class_name = "NewRoom"',
+    '+bindings = [\n+  { name = "ROOM", class_name = "NewRoom" },\n+]',
+  ])('does not leak the Workflow exemption into an unproven class change: %s', (unprovenDiff) => {
+    const diff = '+[[workflows]]\n+class_name = "BattleFinisherWorkflow"\n' + unprovenDiff;
+    expect(() => assertFullDeployCompatible(diff)).toThrow('Durable Object lifecycle');
+  });
+
+  it('fails closed for class changes whose table is absent from the zero-context diff', () => {
+    expect(() => assertFullDeployCompatible([
+      '@@ -97 +97 @@ name = "existing-binding"',
+      '-class_name = "OldClass"',
+      '+class_name = "NewClass"',
+    ].join('\n'))).toThrow('Durable Object lifecycle');
+  });
+
   it('reads the exact structured Wrangler version-upload record', () => {
     expect(versionIdFromWranglerOutput([
       JSON.stringify({ type: 'telemetry', version: 1 }),
