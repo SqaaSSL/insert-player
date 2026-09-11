@@ -45,8 +45,6 @@ export function auraPreviewPresentation(duel: AuraPreviewDuelState, elapsedMs: n
     };
   });
   const iconAnchor = auraComicAnchor(LAYOUT, activeSlot);
-  const performanceAge = Math.max(0, duel.turnElapsedMs - AURA_PREVIEW_CHART.noteTravelMs);
-  const iconProgress = Math.min(1, performanceAge / 1800);
   const remainingSeconds = Math.max(0, Math.ceil((AURA_PREVIEW_TURN_MS - duel.turnElapsedMs) / 1000));
   const statusLabel = duel.finished ? `ROUND ${duel.round}/3 · FINAL RESULT`
     : `ROUND ${duel.round}/3 · P${activeSlot + 1} ON CAM · ${remainingSeconds}S`;
@@ -58,7 +56,7 @@ export function auraPreviewPresentation(duel: AuraPreviewDuelState, elapsedMs: n
   return { camera, actors, gains,
     statusLabel, crowdHeat, crowdLabel,
     icon: { animation: move.animation, x: iconAnchor.x,
-      y: iconAnchor.moveY - iconProgress * ('moveRise' in iconAnchor ? iconAnchor.moveRise : 24),
-      alpha: duel.phase === 'performing' ? Math.min(1, (1 - iconProgress) * 3) : 0 },
+      y: iconAnchor.moveY,
+      alpha: duel.moveInputs.length > 0 ? 1 : 0 },
   };
 }

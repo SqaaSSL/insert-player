@@ -22,6 +22,7 @@ export const SOCIAL_CARD_SOURCES = [
   'src/game/aura/AuraConfig.ts',
   'src/game/aura/AuraBattle.ts',
   'src/game/aura/AuraComicArt.ts',
+  'src/game/aura/AuraComicFeedback.ts',
   'src/game/aura/AuraScoreCue.ts',
   'src/game/aura/AuraPerformance.ts',
   'src/game/ui/CabinetTheme.ts',

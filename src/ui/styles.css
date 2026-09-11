@@ -4500,10 +4500,10 @@
   .aura-game-toolbar {
     @apply contents;
   }
-  /* Lane centers mirror AuraLayout: desktop 404/476/548/620 of 1024,
-     portrait 123/233/343/453 of 576. Chrome never takes a lane column. */
+  /* Lane centers mirror AuraLayout: desktop 624/720/816/912 of 1024,
+     portrait 238/326/414/502 of 576. The move rail stays left of the controls. */
   .aura-game-toolbar .aura-touch-controls {
-    @apply absolute bottom-2 left-[35.9375%] right-auto w-[28.125%] gap-0;
+    @apply absolute bottom-2 left-[56.25%] right-auto w-[37.5%] gap-0;
   }
   .aura-game-toolbar .aura-touch-controls__lane { @apply mx-0.5 min-h-11; }
   .aura-game-toolbar__back {
@@ -4511,14 +4511,14 @@
            bg-[#050507]/80 px-2 font-arcade text-[8px] text-asf-cream;
   }
   .aura-game-toolbar .fight-pause-button { @apply bottom-2 left-[calc(3%+52px)] right-auto top-auto size-11; }
-  .game-shell.is-aura.is-portrait .aura-touch-controls { @apply left-[11.805556%] grid w-[76.388889%] gap-0; }
+  .game-shell.is-aura.is-portrait .aura-touch-controls { @apply left-[33.680556%] grid w-[61.111111%] gap-0; }
   .game-shell.is-aura.is-portrait .aura-game-toolbar__back { @apply bottom-auto left-2 top-[52%]; }
   .game-shell.is-aura.is-portrait .aura-game-toolbar .fight-pause-button { @apply bottom-auto left-auto right-2 top-[52%]; }
   .game-shell.is-aura.is-portrait .aura-touch-controls__lane { @apply min-h-11 text-[24px]; }
   .game-shell.is-aura .aura-capture-status {
     @apply bottom-[12%] left-[3%] top-auto whitespace-nowrap text-[8px];
   }
-  .game-shell.is-aura.is-portrait .aura-capture-status { @apply bottom-[9.5%]; }
+  .game-shell.is-aura.is-portrait .aura-capture-status { @apply bottom-auto top-[49.5%]; }
 
   @media (prefers-reduced-motion: reduce) {
     .fight-loader.is-aura .aura-loader__cast,

@@ -776,7 +776,7 @@ export class AuraScene extends Phaser.Scene {
       if (performance?.play(move)) {
         this.fighters[0].forceState(FighterState.IDLE);
         performance.update(0, this.views[0]);
-        this.comicFeedback?.move(0, move);
+        this.comicFeedback?.move(0, move, { key: this.primaryLaneKeys()[lane], tone: LANE_TONES[lane], phrase: `practice:${lane}` });
       }
     }
     this.drawOnboardingPractice();
@@ -1490,6 +1490,14 @@ export class AuraScene extends Phaser.Scene {
 
     // A full thin border identifies the active seat without favouring an edge.
     const accent = SLOT_COLORS[slot];
+    const rail = this.layout.moveRail;
+    fillChamfered(this.laneGraphics, rail.left, rail.top, rail.right - rail.left, rail.bottom - rail.top, CHAMFER + 4, INK, 0.84);
+    strokeChamfered(this.laneGraphics, rail.left, rail.top, rail.right - rail.left, rail.bottom - rail.top, CHAMFER + 4, 1, accent, 0.55);
+    // The move's recent hits sit on the same line as the four receptors.
+    this.laneGraphics.lineStyle(2, CREAM, 0.65);
+    this.laneGraphics.lineBetween(rail.right - 8, this.layout.laneTargetY, frameLeft + 12, this.layout.laneTargetY);
+    this.laneGraphics.lineBetween(rail.right - 8, this.layout.laneTargetY, rail.right - 3, this.layout.laneTargetY - 5);
+    this.laneGraphics.lineBetween(rail.right - 8, this.layout.laneTargetY, rail.right - 3, this.layout.laneTargetY + 5);
     strokeChamfered(this.laneGraphics, frameLeft, frameTop, width, height, CHAMFER + 4, 1, accent, 0.8);
     this.laneGraphics.lineStyle(2, CREAM, 0.85);
     this.laneGraphics.lineBetween(frameLeft + 12, this.layout.laneTargetY, frameRight - 12, this.layout.laneTargetY);
@@ -1681,7 +1689,7 @@ export class AuraScene extends Phaser.Scene {
             : 'WATCHING';
     const anchorX = this.layout.instrument.crowdX;
     this.crowdLabelText
-      .setText(`CROWD · ${status}`)
+      .setText(this.layout.portrait ? status : `CROWD · ${status}`)
       .setOrigin(1, 0)
       .setPosition(anchorX, this.layout.instrument.crowdY)
       .setVisible(true);
@@ -1944,7 +1952,12 @@ export class AuraScene extends Phaser.Scene {
       fighter.forceState(this.choreographyFor(judgement));
     }
     // Context belongs to the move actually rendered, not an unavailable pack.
-    if (played) this.comicFeedback?.move(judgement.slot, played);
+    if (played && (judgement.grade === 'perfect' || judgement.grade === 'great' || judgement.grade === 'good')) {
+      this.comicFeedback?.move(judgement.slot, played, {
+        key: this.cpuVsCpu ? String(judgement.lane + 1) : this.laneKeysForSlot(judgement.slot)[judgement.lane],
+        tone: LANE_TONES[judgement.lane], phrase: `${note?.turnIndex ?? this.currentTurnIndex}:${requested ?? played}`,
+      });
+    }
     this.comicFeedback?.judgement(judgement.slot, judgement.grade === 'miss' || judgement.grade === 'mash');
   }
 

@@ -1,10 +1,11 @@
 import { createAuraLayout } from '../../game/aura/AuraLayout.ts';
 import { drawAuraComicIcon, type AuraComicGraphics } from '../../game/aura/AuraComicArt.ts';
+import { AURA_DOCKED_MOVE_NAMES } from '../../game/aura/AuraComicFeedback.ts';
 import { AURA_SCORE_CUE, formatAuraScoreDelta } from '../../game/aura/AuraScoreCue.ts';
 import { getAuraDifficulty } from '../../game/aura/AuraConfig.ts';
 import { auraHudLayout, auraHudState, drawAuraDuelMeter, type AuraHudGraphics } from '../../game/aura/AuraHud.ts';
 import { CREAM, DANGER, HEAT, HEAT_DEEP, INK, PIXEL_FONT, SLOT_COLOR_CSS, STEEL, STEEL_DIM } from '../../game/ui/CabinetTheme.ts';
-import { AURA_PREVIEW_CHART, AURA_PREVIEW_KEYS, AURA_PREVIEW_MOVES, AURA_PREVIEW_PERFORMERS, type AuraPreviewDuelState } from './auraPreviewDuel.ts';
+import { AURA_PREVIEW_CHART, AURA_PREVIEW_KEYS, AURA_PREVIEW_PERFORMERS, type AuraPreviewDuelState } from './auraPreviewDuel.ts';
 import { auraPreviewFrameGeometry } from './auraPreviewGeometry.ts';
 import { auraPreviewPresentation } from './auraPreviewPresentation.ts';
 
@@ -65,7 +66,6 @@ export function drawAuraPreview(ctx: CanvasRenderingContext2D, stage: HTMLImageE
   const hud = auraHudLayout(layout);
   const hudState = auraHudState(duel.scores);
   const slot = duel.activeSlot ?? duel.winner ?? 0;
-  const move = AURA_PREVIEW_MOVES[duel.moveIndex];
   const presentation = auraPreviewPresentation(duel, elapsedMs);
   ctx.clearRect(0, 0, WIDTH, HEIGHT);
   ctx.fillStyle = css(INK); ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -133,6 +133,14 @@ export function drawAuraPreview(ctx: CanvasRenderingContext2D, stage: HTMLImageE
   }
   const { left, right, top, bottom } = layout.instrument;
   plate(ctx, left, top, right - left, bottom - top, '#050507d6', SLOT_COLOR_CSS[slot], 10);
+  const rail = layout.moveRail;
+  plate(ctx, rail.left, rail.top, rail.right - rail.left, rail.bottom - rail.top,
+    '#050507d6', SLOT_COLOR_CSS[slot], 10);
+  ctx.strokeStyle = '#fff4d6a6'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(rail.right - 8, layout.laneTargetY); ctx.lineTo(left + 12, layout.laneTargetY);
+  ctx.moveTo(rail.right - 3, layout.laneTargetY - 5); ctx.lineTo(rail.right - 8, layout.laneTargetY);
+  ctx.lineTo(rail.right - 3, layout.laneTargetY + 5); ctx.stroke();
   ctx.strokeStyle = '#fff4d6d9'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(left + 12, layout.laneTargetY); ctx.lineTo(right - 12, layout.laneTargetY); ctx.stroke();
   label(ctx, 'AUTO RHYTHM', left + 10, top + 9, 9, css(CREAM));
@@ -196,18 +204,29 @@ export function drawAuraPreview(ctx: CanvasRenderingContext2D, stage: HTMLImageE
     const icon = presentation.icon;
     ctx.save();
     ctx.globalAlpha = icon.alpha;
-    ctx.translate(icon.x, Math.max(layout.hudHeight + 38, icon.y));
+    ctx.translate(icon.x, icon.y);
+    label(ctx, 'MOVE', 0, -77, 10, css(CREAM), 'center');
+    ctx.save();
+    ctx.translate(0, -18);
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     drawAuraComicIcon(canvasAuraGraphics(ctx), icon.animation);
+    ctx.restore();
     if (icon.animation === 'aura_six_seven') {
-      ctx.font = `24px ${PIXEL_FONT}`;
-      ctx.strokeStyle = css(CREAM); ctx.lineWidth = 3;
+      ctx.font = `28px ${PIXEL_FONT}`;
+      ctx.strokeStyle = css(INK); ctx.lineWidth = 3;
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.strokeText('6', -15, -24); ctx.strokeText('7', 15, -12);
-      label(ctx, '6', -15, -24, 24, css(INK), 'center');
-      label(ctx, '7', 15, -12, 24, css(INK), 'center');
+      ctx.strokeText('67', 0, -39);
+      label(ctx, '67', 0, -39, 28, css(HEAT), 'center');
     }
-    label(ctx, move.label.toUpperCase(), 0, 44, 8, css(CREAM), 'center', 180);
+    const lines = AURA_DOCKED_MOVE_NAMES[icon.animation].split('\n');
+    lines.forEach((line, index) => label(ctx, line, 0, 34 - lines.length * 8 + index * 16, 13, css(HEAT), 'center', 144));
+    label(ctx, 'LAST HITS', 0, 72.5, 9, css(CREAM), 'center');
+    [-51, -17, 17, 51].forEach((x, index) => {
+      const hit = duel.moveInputs[index];
+      plate(ctx, x - 14, 95, 28, 30, css(INK), '#fff4d659', 3);
+      label(ctx, hit ? AURA_PREVIEW_KEYS[hit.lane] : '·', x, 103, 14,
+        hit ? css(COLORS[hit.lane]) : css(CREAM), 'center');
+    });
     ctx.restore();
   }
   label(ctx, 'AUTO · D F J K', layout.highwayX, layout.keyLabelY + 47, 10, css(CREAM), 'center');

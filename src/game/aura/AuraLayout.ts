@@ -11,8 +11,10 @@ export interface AuraPerformerPlacement {
  * performer the left stage and the controls the right; portrait stacks them. */
 export function createAuraLayout(width = 1024, height = 576) {
   const portrait = height > width;
-  const highwayX = portrait ? width / 2 : width * 0.75;
-  const laneOffsets = portrait ? [-165, -55, 55, 165] : [-144, -48, 48, 144];
+  // Reserve a move rail on the left; portrait lanes still have 88px centres
+  // (about 60 CSS pixels on a 390px phone), with unchanged note travel time.
+  const highwayX = portrait ? width - 206 : width * 0.75;
+  const laneOffsets = portrait ? [-132, -44, 44, 132] : [-144, -48, 48, 144];
   const laneStartY = portrait ? 620 : 210;
   const keyLabelY = portrait ? 892 : 480;
   const instrumentLeft = highwayX + laneOffsets[0] - 42;
@@ -45,7 +47,8 @@ export function createAuraLayout(width = 1024, height = 576) {
     ] as const,
     performerLabel: { x: portrait ? 240 : width * 0.234375, y: portrait ? 180 : 150 },
     feedback: { x: highwayX, y: portrait ? 531 : 144 },
-    comic: { x: portrait ? 444 : width * 0.45703125, moveY: portrait ? 226 : 202, streakY: portrait ? 320 : 278 },
+    moveRail: { left: instrumentLeft - 172, right: instrumentLeft - 12, top: laneStartY + 22, bottom: keyLabelY + 82 },
+    comic: { x: instrumentLeft - 92, moveY: (portrait ? 850 : 442) - 110, streakY: keyLabelY + 40 },
     balance: { left: 24, right: width - 24, y: portrait ? 114 : 90, height: 24 },
   };
 }
@@ -59,9 +62,7 @@ export function auraPerformerPlacement(layout: AuraLayout, slot: AuraSlot, activ
 }
 
 export function auraComicAnchor(layout: AuraLayout, _slot: AuraSlot) {
-  return layout.portrait ? layout.comic : {
-    ...layout.comic, moveRise: 24, streakRise: 12,
-  };
+  return { ...layout.comic, moveRise: 0, streakRise: 0, docked: true };
 }
 
 /** Transform the complete calibrated rig around its stable idle foot. This

@@ -6,6 +6,15 @@ vi.mock('./AuraComicArt.ts', () => ({ drawAuraComicIcon: vi.fn() }));
 import { AuraComicFeedback, AURA_COMIC_COPY, AURA_COMIC_LAYOUT } from './AuraComicFeedback.ts';
 import { drawAuraComicIcon } from './AuraComicArt.ts';
 import { CREAM, HEAT, INK, PIXEL_FONT } from '../ui/CabinetGraphics.ts';
+import { auraComicAnchor, createAuraLayout } from './AuraLayout.ts';
+
+function textObject(x: number, y: number, value: string, textOptions: Record<string, unknown>) {
+  const object = { x, y, value, textOptions,
+    setOrigin: vi.fn().mockReturnThis(), setText: vi.fn(), setColor: vi.fn() };
+  object.setText.mockImplementation((next: string) => { object.value = next; return object; });
+  object.setColor.mockImplementation((next: string) => { object.textOptions.color = next; return object; });
+  return object;
+}
 
 function container(x: number, y: number) {
   const object = {
@@ -30,7 +39,7 @@ function harness(reduceMotion = false) {
   const onMove = vi.fn();
   const objects: ReturnType<typeof container>[] = [];
   const drawings: ReturnType<typeof graphics>[] = [];
-  const texts: { x: number; y: number; value: string; textOptions: Record<string, unknown> }[] = [];
+  const texts: ReturnType<typeof textObject>[] = [];
   const timers: { duration: number; callback: () => void; remove: ReturnType<typeof vi.fn> }[] = [];
   const layer = container(0, 0);
   const scene = {
@@ -38,7 +47,7 @@ function harness(reduceMotion = false) {
       container: (x: number, y: number) => { const object = container(x, y); objects.push(object); return object; },
       graphics: () => { const drawing = graphics(); drawings.push(drawing); return drawing; },
       text: (x: number, y: number, value: string, textOptions: Record<string, unknown>) => {
-        const text = { x, y, value, textOptions, setOrigin: vi.fn().mockReturnThis() };
+        const text = textObject(x, y, value, textOptions);
         texts.push(text); return text;
       },
     },
@@ -420,5 +429,113 @@ describe('Aura comic feedback', () => {
     }
     for (const timer of h.timers) timer.callback();
     for (const object of h.objects) expect(object.destroy).toHaveBeenCalledOnce();
+  });
+});
+
+describe('Aura move rail feedback', () => {
+  function dockedHarness(reduceMotion = false) {
+    const h = harness(reduceMotion);
+    const layout = createAuraLayout(576, 1024);
+    for (const slot of [0, 1] as const) h.feedback.setAnchor(slot, auraComicAnchor(layout, slot));
+    const trail = () => h.texts.filter(text => text.y === 110).slice(-4);
+    return { ...h, layout, trail };
+  }
+  const hit = (key: string, phrase = 'r0-p0', tone = 0x4fdced) => ({ key, phrase, tone });
+
+  it('updates the last four successful inputs in one card without repeating its icon, entrance or sound', () => {
+    const h = dockedHarness();
+    h.feedback.move(0, 'aura_six_seven', hit('D'));
+    const entranceCount = h.scene.tweens.add.mock.calls.length;
+    for (const key of ['F', 'J', 'K', 'D', 'F']) h.feedback.move(0, 'aura_six_seven', hit(key, 'r0-p0', 0x0000ff));
+    expect(h.objects).toHaveLength(1);
+    expect(h.objects[0]).toMatchObject({ x: h.layout.comic.x, y: h.layout.comic.moveY, alpha: 1 });
+    expect(h.trail().map(text => text.value)).toEqual(['J', 'K', 'D', 'F']);
+    expect(h.trail().map(text => text.textOptions.color)).toEqual(Array(4).fill('#0000ff'));
+    expect(h.texts.filter(text => text.value === 'LAST HITS')).toHaveLength(1);
+    expect(h.onMove.mock.calls).toEqual([['aura_six_seven']]);
+    expect(h.scene.tweens.add).toHaveBeenCalledTimes(entranceCount);
+    expect(h.trail().every(text => text.setText.mock.calls.length === 6)).toBe(true);
+    expect(h.timers.at(-1)?.duration).toBe(1_800);
+    expect(h.timers.slice(0, -1).every(timer => timer.remove.mock.calls.length > 0)).toBe(true);
+  });
+
+  it('expires after the latest input, then rebuilds an empty history without replaying the same move sound', () => {
+    const h = dockedHarness();
+    h.feedback.move(0, 'aura_glide', hit('D'));
+    const firstLifetime = h.timers.at(-1)!;
+    h.feedback.move(0, 'aura_glide', hit('F'));
+    expect(firstLifetime.remove).toHaveBeenCalledWith(false);
+    expect(h.objects[0].destroy).not.toHaveBeenCalled();
+    h.timers.at(-1)!.callback();
+    expect(h.objects[0].destroy).toHaveBeenCalledOnce();
+    h.feedback.move(0, 'aura_glide', hit('J'));
+    expect(h.objects).toHaveLength(2);
+    expect(h.trail().map(text => text.value)).toEqual(['J', '·', '·', '·']);
+    expect(h.onMove.mock.calls).toEqual([['aura_glide']]);
+  });
+
+  it('starts a new phrase history even when a partial pack renders the same fallback move', () => {
+    const h = dockedHarness();
+    h.feedback.move(0, 'aura_glide', hit('D'));
+    h.feedback.move(0, 'aura_glide', hit('F'));
+    const retired = h.timers.at(-1)!;
+    h.feedback.move(0, 'aura_glide', hit('K', 'r0-p1'));
+    expect(h.objects).toHaveLength(2);
+    expect(h.objects[0].destroy).toHaveBeenCalledOnce();
+    expect(h.trail().map(text => text.value)).toEqual(['K', '·', '·', '·']);
+    expect(h.onMove.mock.calls).toEqual([['aura_glide']]);
+    retired.callback();
+    expect(h.objects[1].destroy).not.toHaveBeenCalled();
+    h.feedback.move(0, 'aura_floor_worm', hit('J', 'r0-p2'));
+    expect(h.trail().map(text => text.value)).toEqual(['J', '·', '·', '·']);
+    expect(h.onMove.mock.calls).toEqual([['aura_glide'], ['aura_floor_worm']]);
+  });
+
+  it('clears a failed sequence immediately and starts recovery with only the new successful key', () => {
+    const h = dockedHarness();
+    h.feedback.move(0, 'aura_glide', hit('D'));
+    h.feedback.move(0, 'aura_glide', hit('F'));
+    h.feedback.judgement(0, true);
+    expect(h.objects[0].destroy).toHaveBeenCalledOnce();
+    expect(h.texts.some(text => text.value === 'AURA LEAK')).toBe(false);
+    h.feedback.judgement(0, true);
+    expect(h.texts.filter(text => text.value === 'AURA LEAK')).toHaveLength(1);
+    h.feedback.move(0, 'aura_glide', hit('K'));
+    h.feedback.judgement(0, false);
+    expect(h.trail().map(text => text.value)).toEqual(['K', '·', '·', '·']);
+    expect(h.onMove.mock.calls).toEqual([['aura_glide']]);
+    h.feedback.judgement(0, true);
+    expect(h.texts.filter(text => text.value === 'AURA LEAK')).toHaveLength(1);
+  });
+
+  it.each(['turn', 'hidden', 'resize'] as const)('discards the old history on %s and cannot replay a stale timeout', boundary => {
+    const h = dockedHarness();
+    h.feedback.move(0, 'aura_six_seven', hit('D'));
+    h.feedback.move(0, 'aura_six_seven', hit('F'));
+    const oldTimers = [...h.timers];
+    if (boundary === 'turn') h.feedback.beginTurn();
+    else if (boundary === 'hidden') {
+      h.feedback.setSlotVisible(0, false);
+      h.feedback.move(0, 'aura_six_seven', hit('J'));
+      expect(h.objects).toHaveLength(1);
+      h.feedback.setSlotVisible(0, true);
+    } else h.feedback.setAnchor(0, auraComicAnchor(createAuraLayout(), 0));
+    expect(h.objects[0].destroy).toHaveBeenCalledOnce();
+    h.feedback.move(0, 'aura_six_seven', hit('K'));
+    expect(h.trail().map(text => text.value)).toEqual(['K', '·', '·', '·']);
+    expect(h.onMove.mock.calls).toEqual([['aura_six_seven'], ['aura_six_seven']]);
+    for (const timer of oldTimers) timer.callback();
+    expect(h.objects[1].destroy).not.toHaveBeenCalled();
+  });
+
+  it('keeps the same readable inputs and expiry without motion', () => {
+    const h = dockedHarness(true);
+    h.feedback.move(0, 'aura_one_leg', hit('D'));
+    h.feedback.move(0, 'aura_one_leg', hit('F'));
+    expect(h.trail().map(text => text.value)).toEqual(['D', 'F', '·', '·']);
+    expect(h.scene.tweens.add).not.toHaveBeenCalled();
+    expect(h.objects[0].alpha).toBe(1);
+    h.timers.at(-1)!.callback();
+    expect(h.objects[0].destroy).toHaveBeenCalledOnce();
   });
 });

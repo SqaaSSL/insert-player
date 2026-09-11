@@ -91,6 +91,25 @@ describe('landing-page Aura duel using real gameplay rules', () => {
     expect(auraPreviewDuelAt(chart.turns[1].startMs)).toMatchObject({ activeSlot: 1, gain: 0, hitIndex: -1, combo: 0 });
   });
 
+  it('keeps the last four actual successful keys seekable and clears them at each handoff and result', () => {
+    const inputs = demoInputs();
+    for (const { note, atMs } of inputs) {
+      const expected = inputs.filter(input => input.note.turnIndex === note.turnIndex && input.atMs <= atMs)
+        .slice(-4).map(input => ({ noteId: input.note.id, lane: input.note.lane, atMs: input.atMs }));
+      expect(auraPreviewDuelAt(atMs).moveInputs).toEqual(expected);
+      // Skipping frames and seeking back cannot leak the other seat's keys.
+      auraPreviewDuelAt(duelEndMs);
+      expect(auraPreviewDuelAt(atMs).moveInputs).toEqual(expected);
+    }
+    expect(auraPreviewDuelAt(first.atMs - 0.01).moveInputs).toEqual([]);
+    expect(auraPreviewDuelAt(second.atMs + 149).moveInputs).toEqual([
+      { noteId: first.id, lane: first.lane, atMs: first.atMs },
+    ]);
+    for (const turn of chart.turns) expect(auraPreviewDuelAt(turn.startMs).moveInputs).toEqual([]);
+    expect(auraPreviewDuelAt(duelEndMs).moveInputs).toEqual([]);
+    expect(auraPreviewDuelAt(AURA_PREVIEW_CYCLE_MS).moveInputs).toEqual([]);
+  });
+
   it('uses the real score balance clamp and retains a readable reduced-motion frame', () => {
     expect(auraPreviewDuelAt(0).balance).toBe(0.5);
     expect(auraPreviewDuelAt(first.atMs).balance).toBe(0.92);
