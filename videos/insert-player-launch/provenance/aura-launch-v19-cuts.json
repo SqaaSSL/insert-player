@@ -1,0 +1,96 @@
+{
+  "sourceCommit": "f559090",
+  "cuts": [
+    {
+      "game": "aura",
+      "source": "assets/captures/aura-trump-lamine-v1/master.webm",
+      "start": 9,
+      "duration": 1.4,
+      "montageStart": 0,
+      "file": "00.mp4"
+    },
+    {
+      "game": "rush",
+      "source": "assets/captures/rush-player-one-elon-v5/master.webm",
+      "start": 13,
+      "duration": 0.8,
+      "montageStart": 1.4,
+      "file": "01.mp4"
+    },
+    {
+      "game": "fight",
+      "source": "assets/captures/fight-player-one-trump-v2/screen.mp4",
+      "start": 22,
+      "duration": 0.8,
+      "montageStart": 2.2,
+      "file": "02.mp4"
+    },
+    {
+      "game": "fight-loading",
+      "source": "assets/fight-montage-player-one-vs-casual-v15.mp4",
+      "start": 0,
+      "duration": 2.4,
+      "retained": true,
+      "montageStart": 3,
+      "file": "03.mp4"
+    },
+    {
+      "game": "fight",
+      "source": "assets/fight-montage-player-one-vs-casual-v15.mp4",
+      "start": 2.4,
+      "duration": 1,
+      "retained": true,
+      "montageStart": 5.4,
+      "file": "04.mp4"
+    },
+    {
+      "game": "fight",
+      "source": "assets/captures/fight-player-one-trump-v2/screen.mp4",
+      "start": 21,
+      "duration": 2.6,
+      "montageStart": 6.4,
+      "file": "05.mp4"
+    },
+    {
+      "game": "rush",
+      "source": "assets/captures/rush-player-one-elon-v5/master.webm",
+      "start": 11.7,
+      "duration": 4.5,
+      "montageStart": 9,
+      "file": "06.mp4"
+    },
+    {
+      "game": "aura",
+      "source": "assets/captures/aura-trump-lamine-v1/master.webm",
+      "start": 8.2,
+      "duration": 4.5,
+      "montageStart": 13.5,
+      "file": "07.mp4"
+    },
+    {
+      "game": "aura",
+      "source": "assets/captures/aura-rosalia-trump-v1/master.webm",
+      "start": 9.3,
+      "duration": 4.5,
+      "montageStart": 18,
+      "file": "08.mp4"
+    },
+    {
+      "game": "aura",
+      "source": "assets/captures/aura-trump-lamine-v1/master.webm",
+      "start": 16.5,
+      "duration": 4,
+      "montageStart": 22.5,
+      "file": "09.mp4"
+    }
+  ],
+  "sources": {
+    "assets/captures/aura-trump-lamine-v1/master.webm": "00017093065a08e7d6e90fcecdf3410e9b83dececab77fb1c0e3f1a5982bb0ad",
+    "assets/captures/rush-player-one-elon-v5/master.webm": "342c776af4a189e38e2aa1c35d82c667f42db7ff648c18a43320f9a6036c9750",
+    "assets/captures/fight-player-one-trump-v2/screen.mp4": "b9f2b1243e552ad3062f0387f1f8838346d0c1542f5fe85f747c6669f47d56ab",
+    "assets/fight-montage-player-one-vs-casual-v15.mp4": "8e7b1c6b84312e741eb651c15da93ed319b59cbcf36300618ba7f90d9674974e",
+    "assets/captures/aura-rosalia-trump-v1/master.webm": "ec25d104dcf3f29850237373bcc3804095e6761c6b7dcea7272d5bf947baeafa"
+  },
+  "duration": 26.766666666666666,
+  "note": "Real local gameplay with public assets, no production mutations or inference. The approved loading curtain and one Casual exchange are retained from v15. Native canvas captures are upscaled, not claimed as native 1080p. Fight includes its DOM HUD. Full private masters remain in assets/captures."
+}

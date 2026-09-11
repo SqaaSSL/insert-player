@@ -7,12 +7,36 @@ destination: website-embed
 aspect: 1920x1080
 language: en
 audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
-length: 20.05s
-angle: "Drag a photo into the game, become a fighter, then prove it in real gameplay"
+length: 36.15s
+angle: "Keep the approved photo transformation, then prove three real games with Aura as the main attraction"
 narration: "A concise product explanation ending with the arcade-announcer lockup"
 ---
 
-## Intent
+## Current Revision: Aura v19 (2026-09-11)
+
+The user asked to restore the film to the current landing and record new Aura,
+Rush and Fight gameplay, with substantially more attention on Aura. This section
+supersedes the earlier v15 edit notes retained below for provenance.
+
+- Keep `01-transform.html` and `03-insert-player.html` unchanged.
+- Three-second teaser, a six-second Fight block, 4.5 seconds of Rush, then a
+  thirteen-second Aura block with Trump, Rosalia and Lamine.
+- Retain the approved 2.4-second Casual/Player One loading curtain and their
+  one-second exchange. The remaining gameplay is recorded from `f559090`.
+- Keep the original approved speech. Move its Fight sentence to the Fight block
+  and its closing line to the five-second end card. No speech generation.
+- Play original Neon Arena continuously after the intro, no loops. The new bed
+  and retimed voice are `launch-bed-aura-v19.wav` and `launch-voice-aura-v19.wav`.
+- Label the game blocks honestly. Rush has a CPU ally, not online co-op.
+- Restore the film below the current `GameLandingPage` hero, user-initiated,
+  with captions, native full-screen controls and `preload="none"`.
+- No provider calls, auth operations, production writes or fighter regeneration.
+- Exact edit decisions and source SHA-256 hashes live in
+  `provenance/aura-launch-v19-cuts.json`; full capture masters stay private.
+
+## Previous Approved Cut (v15)
+
+### Intent
 
 Launch Insert Player with the shortest possible proof of the product: begin with
 a real portrait, transform that same person into a premium arcade fighter, then

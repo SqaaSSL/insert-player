@@ -4,6 +4,7 @@ import { quoteGenerationPackage } from '../../services/GenerationPackages.ts';
 import { Button } from '../components/Button.tsx';
 import { AuraEntryPreview } from '../components/AuraEntryPreview.tsx';
 import { CombatEntryPreview } from '../components/CombatEntryPreview.tsx';
+import { LaunchFilm } from '../components/LaunchFilm.tsx';
 import './product-entry.css';
 
 export type PlayGameHandler = (mode: FighterGameMode) => void | Promise<void>;
@@ -137,6 +138,8 @@ export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenChara
           {onWatch && <button className="product-entry__text-link" type="button" onClick={onWatch}>Watch {content.name}</button>}
         </nav>
       )}
+
+      <LaunchFilm />
 
       <section className="product-entry__identity" aria-labelledby="game-personal-title">
         <div className="product-entry__identity-copy">

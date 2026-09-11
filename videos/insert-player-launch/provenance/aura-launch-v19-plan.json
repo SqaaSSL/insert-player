@@ -1,0 +1,22 @@
+{
+  "version": 19,
+  "sourceCommit": "f559090",
+  "duration": 36.15,
+  "intro": { "start": 0, "duration": 4.95, "source": "compositions/frames/01-transform.html", "unchanged": true },
+  "montage": { "start": 4.65, "duration": 26.75 },
+  "sections": [
+    { "name": "Three games teaser", "start": 4.65, "duration": 3 },
+    { "name": "Fight", "start": 7.65, "duration": 6 },
+    { "name": "Rush", "start": 13.65, "duration": 4.5 },
+    { "name": "Aura", "start": 18.15, "duration": 13 },
+    { "name": "Insert Player", "start": 31.15, "duration": 5 }
+  ],
+  "constraints": [
+    "Preserve the approved intro and closing design.",
+    "Use actual current-game recordings; no generated gameplay.",
+    "Retain private capture masters and all previous published assets.",
+    "Remote capture requests are read-only, with no provider calls.",
+    "Use the original Neon Arena source continuously, with no loop.",
+    "Do not promote Rush as online co-op; it currently has a CPU ally."
+  ]
+}

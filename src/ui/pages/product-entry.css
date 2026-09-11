@@ -146,6 +146,21 @@
 .product-entry__identity {
   @apply mt-10 grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] gap-9;
 }
+.product-entry__film {
+  @apply mt-10 w-full border-y border-asf-line-faint py-7;
+}
+.product-entry__film-heading {
+  @apply mb-4 flex flex-wrap items-baseline justify-between gap-x-5 gap-y-2;
+}
+.product-entry__film-heading h2 {
+  @apply m-0 text-sm leading-relaxed tracking-normal text-asf-gold;
+}
+.product-entry__film-heading p {
+  @apply m-0 text-sm text-asf-muted;
+}
+.product-entry__film-video {
+  @apply block aspect-video h-auto w-full bg-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-asf-gold;
+}
 .product-entry__identity-copy h2 {
   @apply max-w-[25ch] text-base leading-[1.8] tracking-normal [text-wrap:balance];
 }
