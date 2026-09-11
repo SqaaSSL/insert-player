@@ -31,7 +31,7 @@ function container(x: number, y: number) {
 }
 
 function graphics() {
-  return Object.fromEntries(['fillStyle', 'fillRoundedRect', 'lineStyle', 'strokeRoundedRect',
+  return Object.fromEntries(['clear', 'fillStyle', 'fillRoundedRect', 'lineStyle', 'strokeRoundedRect',
     'fillTriangle', 'lineBetween', 'setPosition'].map(name => [name, vi.fn().mockReturnThis()]));
 }
 
@@ -286,7 +286,7 @@ describe('Aura comic feedback', () => {
     h.feedback.milestone(0, 10);
     h.feedback.judgement(1, true); h.feedback.judgement(1, true);
     for (const drawing of h.drawings) {
-      for (const method of ['fillStyle', 'fillRoundedRect', 'strokeRoundedRect', 'fillTriangle']) {
+      for (const method of ['clear', 'fillStyle', 'fillRoundedRect', 'strokeRoundedRect', 'fillTriangle']) {
         expect(drawing[method]).not.toHaveBeenCalled();
       }
     }
@@ -441,6 +441,18 @@ describe('Aura move rail feedback', () => {
     return { ...h, layout, trail };
   }
   const hit = (key: string, phrase = 'r0-p0', tone = 0x4fdced) => ({ key, phrase, tone });
+
+  it('keeps a coloured hit sequence without keyboard letters for touch controls', () => {
+    const h = dockedHarness();
+    h.feedback.move(0, 'aura_six_seven', hit('', 'r0-p0', 0x4fdced));
+    h.feedback.move(0, 'aura_six_seven', hit('', 'r0-p0', 0xffce3a));
+    expect(h.trail().map(text => text.value)).toEqual(['', '', '·', '·']);
+    const pads = h.drawings.find(drawing => drawing.clear.mock.calls.length > 0)!;
+    expect(pads.fillStyle).toHaveBeenCalledWith(0x4fdced, 1);
+    expect(pads.fillStyle).toHaveBeenLastCalledWith(0xffce3a, 1);
+    expect(pads.fillRoundedRect).toHaveBeenLastCalledWith(-29, 102, 24, 16, 2);
+    expect(h.onMove).toHaveBeenCalledOnce();
+  });
 
   it('updates the last four successful inputs in one card without repeating its icon, entrance or sound', () => {
     const h = dockedHarness();

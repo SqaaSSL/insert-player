@@ -9,7 +9,7 @@ describe('Aura start choice', () => {
     const markup = renderToStaticMarkup(<AuraStartReady {...props} />);
     expect(markup).toContain('Play as Trump');
     expect(markup).toContain('vs Rosalía');
-    expect(markup).toContain('Four practice hits, then the duel.');
+    expect(markup).toContain('Practise 4 notes, then take turns with your rival.');
     expect(markup).toContain('Practice 4 notes');
     expect(markup).toContain('Start duel');
     expect(markup).not.toContain('I’m ready');

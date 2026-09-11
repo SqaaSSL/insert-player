@@ -10,7 +10,7 @@ describe('Aura touch controls', () => {
     const markup = renderToStaticMarkup(<AuraControls playerIndex={1} disabled />);
     expect(markup).toContain('Aura controls, player 2');
     expect(markup.match(/disabled=""/g)).toHaveLength(4);
-    for (const label of ['Circle', 'Diamond', 'Square', 'Triangle']) expect(markup).toContain(`aria-label="${label}"`);
+    for (const label of ['Cyan lane, left', 'Purple lane, middle left', 'Yellow lane, middle right', 'Coral lane, right']) expect(markup).toContain(`aria-label="${label}"`);
   });
   it('judges pointer contact once, but also supports keyboard activation', () => {
     const dispatchEvent = vi.fn();
@@ -32,6 +32,21 @@ describe('Aura touch controls', () => {
     const button = AuraControls({ disabled: true }).props.children[0];
     button.props.onPointerDown({ preventDefault: vi.fn() });
     button.props.onClick({ detail: 0 });
+    expect(dispatchEvent).not.toHaveBeenCalled();
+  });
+  it('visibly closes the pads for a rival turn and cannot dispatch even through assistive activation', () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal('window', { dispatchEvent });
+    const controls = AuraControls({ rivalTurn: true });
+    const markup = renderToStaticMarkup(controls);
+    expect(markup).toContain('is-rival-turn');
+    expect(markup).toContain('rival’s turn');
+    expect(markup.match(/disabled=""/g)).toHaveLength(4);
+    expect(markup).not.toMatch(/[●◆■▲]/);
+    for (const button of controls.props.children) {
+      button.props.onPointerDown({ preventDefault: vi.fn() });
+      button.props.onClick({ detail: 0 });
+    }
     expect(dispatchEvent).not.toHaveBeenCalled();
   });
 });

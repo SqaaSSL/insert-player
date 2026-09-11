@@ -1,5 +1,10 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type Phaser from 'phaser';
+import { BATTLE_CAPTURE_EVENT, type BattleCaptureDetail } from '../../game/match/BattleCapture.ts';
+import type { SavedBattle } from '../../shared/BattleFinisher.ts';
+import { BattleFinisherPanel } from '../components/BattleFinisherPanel.tsx';
+import { auraVideoFile } from '../components/AuraMatchShare.ts';
+import type { AuthRouteState } from '../authState.ts';
 import {
   MATCH_ACTION_EVENT,
   MATCH_ACTIONS_VISIBILITY_EVENT,
@@ -76,7 +81,9 @@ export interface LadderContext {
   onPrefetchNext: () => void;
 }
 
-interface GamePageProps {
+interface GamePageProps extends Partial<AuthRouteState> {
+  onSignIn?: () => void;
+  onBuyCredits?: () => void;
   launchTarget: { sceneKey: string; data: MatchSceneData };
   onComplete: () => void;
   onExit: () => void;
@@ -112,6 +119,10 @@ export function GamePage({
   onCreateFighter,
   onOpenArcade,
   ladder,
+  authStatus = 'local',
+  authSessionKey = 'local',
+  onSignIn,
+  onBuyCredits,
 }: GamePageProps) {
   const [paused, setPaused] = useState(false);
   const onlineMatch = Boolean(launchTarget.data.online);
@@ -132,6 +143,9 @@ export function GamePage({
   const [auraOnboarding, setAuraOnboarding] = useState<AuraOnboardingDetail | null>(null);
   const [auraPracticeRecommended, setAuraPracticeRecommended] = useState(false);
   const guidedThisMount = useRef(false);
+  const [savedBattle, setSavedBattle] = useState<SavedBattle | null>(null);
+  const [battleCapture, setBattleCapture] = useState<BattleCaptureDetail | null>(null);
+  const battleCaptureId = useRef<string | null>(null);
   const [auraCapture, setAuraCapture] = useState<AuraCaptureDetail | null>(null);
   const [auraStartup, setAuraStartup] = useState<AuraStartupDetail | null>(null);
   const [auraTouchSlot, setAuraTouchSlot] = useState<0 | 1>(0);
@@ -149,6 +163,32 @@ export function GamePage({
     launchTarget.data.rushCompanionOrder ?? 'follow',
   );
   const trialPrimaryActionRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    const receive = (event: WindowEventMap[typeof BATTLE_CAPTURE_EVENT]) => {
+      const detail = event.detail;
+      if (detail.state === 'started') {
+        battleCaptureId.current = detail.clientBattleId;
+        setBattleCapture(null);
+        setSavedBattle(null);
+        setAuraCapture(null);
+      } else if (detail.clientBattleId === battleCaptureId.current && detail.state === 'ready') {
+        setBattleCapture(detail.capture);
+      }
+    };
+    window.addEventListener(BATTLE_CAPTURE_EVENT, receive);
+    return () => { battleCaptureId.current = null; window.removeEventListener(BATTLE_CAPTURE_EVENT, receive); };
+  }, [launchTarget]);
+  const finisherCapture = useMemo(() => {
+    if (!battleCapture || battleCapture.summary.game !== 'aura' || auraCapture?.state !== 'ready') return battleCapture;
+    return { ...battleCapture, recording: auraVideoFile(auraCapture.video, battleCapture.summary.p1Name, battleCapture.summary.p2Name) };
+  }, [battleCapture, auraCapture]);
+  const updateSavedBattle = (battle: SavedBattle) => {
+    if (battleCapture && battleCaptureId.current === battleCapture.clientBattleId) setSavedBattle(battle);
+  };
+  const finisher = <BattleFinisherPanel key={battleCapture?.clientBattleId ?? 'preparing'} capture={finisherCapture}
+    authStatus={authStatus} authSessionKey={authSessionKey} onSignIn={onSignIn} onBuyCredits={onBuyCredits}
+    initialBattle={savedBattle ?? undefined} onBattleChange={updateSavedBattle} />;
+
 
   const setPauseState = (next: boolean) => {
     setPaused(next);
@@ -163,6 +203,8 @@ export function GamePage({
   useEffect(() => {
     // A new launch target means a fresh match: clear the previous outcome.
     setWinnerSlot(null);
+    setBattleCapture(null);
+    setSavedBattle(null);
     setMatchSummary(null);
     setLadderBusy(false);
     setNetState(null);
@@ -656,6 +698,8 @@ export function GamePage({
         <div className="aura-game-toolbar" aria-label="Aura match controls">
           {!launchTarget.data.cpuVsCpu ? (
             <AuraControls playerIndex={online?.localSlot ?? auraControlledSlot ?? auraTouchSlot}
+              rivalTurn={auraOnboarding?.phase !== 'practice' && auraStartup?.phase === 'playing'
+                && auraControlledSlot !== undefined && auraControlledSlot !== auraTouchSlot}
               disabled={paused || (auraOnboarding?.phase !== 'practice' && auraStartup?.phase !== 'playing'
                 && (Boolean(online) || auraStartup?.phase !== 'countdown'))} />
           ) : null}
@@ -680,6 +724,7 @@ export function GamePage({
           >
             Take The Crown
           </button>
+          {finisher}
         </div>
       )}
       {matchActionsVisible && ladder && winnerSlot === 'p1' && !ladder.isFinal && (
@@ -701,6 +746,7 @@ export function GamePage({
           <button type="button" className="match-actions__button" disabled={ladderBusy} onClick={ladder.onExitLadder}>
             Quit Run
           </button>
+          {finisher}
         </div>
       )}
       {matchActionsVisible && ladder && winnerSlot === 'p2' && ladder.continuesLeft > 0 && (
@@ -722,6 +768,7 @@ export function GamePage({
           <button type="button" className="match-actions__button" disabled={ladderBusy} onClick={ladder.onExitLadder}>
             Give Up
           </button>
+          {finisher}
         </div>
       )}
       {matchActionsVisible && ladder && winnerSlot === 'p2' && ladder.continuesLeft <= 0 && (
@@ -736,6 +783,7 @@ export function GamePage({
           >
             Back To The Arcade
           </button>
+          {finisher}
         </div>
       )}
       {matchActionsVisible && online && !isAura && (
@@ -782,11 +830,13 @@ export function GamePage({
           </button>
           {matchSummary ? (
             <FightResultShare
+              battle={savedBattle} onBattleChange={updateSavedBattle}
               summary={matchSummary}
               p1Name={launchTarget.data.p1Name ?? 'Player One'}
               p2Name={launchTarget.data.p2Name ?? 'Player Two'}
             />
           ) : null}
+          {finisher}
         </div>
       )}
       {matchActionsVisible && trial && !isAura && (
@@ -812,6 +862,7 @@ export function GamePage({
           <button type="button" className="match-actions__button" onClick={onOpenArcade}>
             Explore Arcade
           </button>
+          {finisher}
         </div>
       )}
       {matchActionsVisible && !isAura && !trial && !online && (!ladder || winnerSlot === null) && (
@@ -832,16 +883,20 @@ export function GamePage({
           </button>
           {matchSummary ? (
             <FightResultShare
+              battle={savedBattle} onBattleChange={updateSavedBattle}
               summary={matchSummary}
               p1Name={launchTarget.data.p1Name ?? 'Player One'}
               p2Name={launchTarget.data.p2Name ?? 'Player Two'}
             />
           ) : null}
+          {finisher}
         </div>
       )}
       {rushSummary ? (
         <RushRunResults
           summary={rushSummary}
+          finisher={finisher}
+          battle={savedBattle} onBattleChange={updateSavedBattle}
           onRetry={() => {
             setRushSummary(null);
             chooseMatchAction('run_it_back');
@@ -852,6 +907,8 @@ export function GamePage({
       {auraSummary && matchActionsVisible ? (
         <AuraBattleResults
           summary={auraSummary}
+          finisher={finisher}
+          battle={savedBattle} onBattleChange={updateSavedBattle}
           trial={trial}
           onCreatePlayer={onCreateFighter}
           capture={auraCapture}

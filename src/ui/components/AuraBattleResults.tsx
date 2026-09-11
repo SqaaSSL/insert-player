@@ -1,15 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { AuraBattleCompleteDetail, OnlineRematchStateDetail } from '../../game/match/MatchConfig.ts';
 import { auraAccuracy } from '../../game/aura/AuraBattle.ts';
 import type { AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
 import { auraVideoFile, downloadAuraVideo } from './AuraMatchShare.ts';
 import { compareAuraChallenge, type AuraChallenge } from '../../game/aura/AuraChallenge.ts';
+import { BattleResultShare } from './BattleResultShare.tsx';
+import type { SavedBattle } from '../../shared/BattleFinisher.ts';
 import { AuraChallengeComposer } from './AuraChallengeComposer.tsx';
 import { rememberAuraChallenge } from '../shared/auraChallenges.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
 
 interface AuraBattleResultsProps {
   summary: AuraBattleCompleteDetail;
+  finisher?: ReactNode;
+  battle?: SavedBattle | null;
+  onBattleChange?: (battle: SavedBattle) => void;
   trial?: boolean;
   capture?: AuraCaptureDetail | null;
   localSlot?: 0 | 1;
@@ -29,6 +34,9 @@ function resultHeadline(summary: AuraBattleCompleteDetail): string {
 
 export function AuraBattleResults({
   summary,
+  finisher,
+  battle,
+  onBattleChange,
   capture = null,
   trial = false,
   localSlot,
@@ -69,6 +77,15 @@ export function AuraBattleResults({
   const localWinner = summary.winnerSlot === 'draw'
     ? null
     : (summary.winnerSlot === 'p1') === (localSlot === 0);
+
+  const challengeComposer = summary.challengeRoutine && summary.challengeShareSlots?.length ? (
+    <AuraChallengeComposer key={`${summary.challengeRoutine.chartId}:${summary.p1Score.score}:${summary.p2Score.score}`}
+      routine={summary.challengeRoutine} replyTo={summary.challenge?.name}
+      scores={summary.challengeShareSlots.map(slot => ({ slot,
+        name: slot === 0 ? summary.p1Name : summary.p2Name,
+        score: slot === 0 ? summary.p1Score.score : summary.p2Score.score }))}
+      onCreated={onChallengeCreated} recording={battle ? null : file} />
+  ) : null;
 
   const download = () => {
     if (!file) return;
@@ -138,15 +155,11 @@ export function AuraBattleResults({
           </article>
         </div>
 
-        {summary.challengeRoutine && summary.challengeShareSlots?.length ? (
-          <AuraChallengeComposer key={`${summary.challengeRoutine.chartId}:${summary.p1Score.score}:${summary.p2Score.score}`}
-            routine={summary.challengeRoutine}
-            replyTo={summary.challenge?.name}
-            scores={summary.challengeShareSlots.map(slot => ({ slot,
-              name: slot === 0 ? summary.p1Name : summary.p2Name,
-              score: slot === 0 ? summary.p1Score.score : summary.p2Score.score }))}
-            onCreated={onChallengeCreated} recording={file} />
-        ) : null}
+        {battle ? <BattleResultShare battle={battle} onBattleChange={onBattleChange} /> : null}
+        {challengeComposer && battle ? <details className="aura-results__video-option">
+          <summary>Challenge someone to beat your score</summary>
+          {challengeComposer}
+        </details> : challengeComposer}
 
         {trial && onCreatePlayer ? <div className="aura-results__rookie">
           <div><h3>Your moves. Your face. Your next battle.</h3>
@@ -181,6 +194,7 @@ export function AuraBattleResults({
           </div>
         </details>
 
+        {finisher}
         {onlineRematch.message ? (
           <p className={`aura-results__status${onlineRematch.state === 'error' ? ' is-error' : ''}`} role="status">
             {onlineRematch.message}

@@ -25,7 +25,7 @@ export const AURA_COMIC_LAYOUT = {
 
 type Bubble = { object: Phaser.GameObjects.Container; timer: Phaser.Time.TimerEvent };
 export interface AuraMoveInput { key: string; tone: number; phrase: string }
-type InputTrail = { phrase: string; inputs: AuraMoveInput[]; labels: Phaser.GameObjects.Text[] };
+type InputTrail = { phrase: string; inputs: AuraMoveInput[]; labels: Phaser.GameObjects.Text[]; pads: Phaser.GameObjects.Graphics };
 export const AURA_DOCKED_MOVE_NAMES: Record<AuraAnimationName, string> = {
   aura_unbothered: 'UNBOTHERED', aura_six_seven: 'SIX\nSEVEN!', aura_mog_check: 'MOG\nCHECK',
   aura_glide: 'GLIDE', aura_floor_worm: 'FLOOR\nWORM', aura_one_leg: 'ONE-LEG\nHOP', aura_shrug: 'WHO, ME?',
@@ -137,16 +137,22 @@ export class AuraComicFeedback {
         keys.lineStyle(1, CREAM, 0.35).strokeRoundedRect(x - 14, 95, 28, 30, 3);
         return this.text(x, 110, '·', 14);
       });
-      object.add([keys, ...labels]);
+      const pads = this.scene.add.graphics();
+      object.add([keys, pads, ...labels]);
       this.present(this.moves, slot, object, 1_800, 0);
-      this.trails[slot] = { phrase: input?.phrase ?? '', inputs: [], labels };
+      this.trails[slot] = { phrase: input?.phrase ?? '', inputs: [], labels, pads };
       if (changed) this.onMove?.(name);
     }
     if (!input) return;
     const current = this.trails[slot]!;
     current.inputs = [...current.inputs, input].slice(-4);
+    current.pads.clear();
     current.labels.forEach((label, index) => {
       const hit = current.inputs[index];
+      // Touch history repeats the actual coloured pads without keyboard letters.
+      if (hit && hit.key === '') {
+        current.pads.fillStyle(hit.tone, 1).fillRoundedRect(-63 + index * 34, 102, 24, 16, 2);
+      }
       label.setText(hit?.key ?? '·').setColor(hit ? `#${hit.tone.toString(16).padStart(6, '0')}` : '#fff4d6');
     });
     // A sustained phrase keeps one readable card. Each hit updates the history

@@ -90,6 +90,11 @@ required = [
 cpu_ms = 300000
 
 [[workflows]]
+binding = "BATTLE_FINISHER"
+name = "insert-player-battle-finisher"
+class_name = "BattleFinisherWorkflow"
+
+[[workflows]]
 binding = "FIGHTER_GENERATION"
 name = "insert-player-fighter-generation"
 class_name = "FighterGenerationWorkflow"

@@ -622,7 +622,8 @@ export class SoundManager {
     if (now - this.lastAuraMoveAt < cooldown) return;
     this.lastAuraMoveAt = now;
     this.lastAuraMoveName = name;
-    this.playAuraTones(tones, ctx, master);
+    // Move signatures sit above the music bed without changing judgement/count-in volume.
+    this.playAuraTones(tones.map(tone => ({ ...tone, gain: tone.gain * 1.4 })), ctx, master);
   }
 
   /** Short, bounded cues for the visible count-in. The scene supplies the count

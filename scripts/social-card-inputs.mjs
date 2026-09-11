@@ -17,6 +17,7 @@ export const SOCIAL_CARD_SOURCES = [
   'src/game/aura/AuraPoseTemplates.ts',
   'src/game/aura/AuraHud.ts',
   'src/game/aura/AuraLayout.ts',
+  'src/game/aura/AuraLanes.ts',
   'src/game/aura/AuraCamera.ts',
   'src/game/aura/AuraChart.ts',
   'src/game/aura/AuraConfig.ts',

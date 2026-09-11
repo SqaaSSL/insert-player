@@ -1,9 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createAuraLayout } from '../../game/aura/AuraLayout.ts';
+import { AURA_LANES } from '../../game/aura/AuraLanes.ts';
 
 // Node-only stylesheet fixture; keep filesystem types out of the browser TS project.
 describe('Aura control alignment', () => {
+  it('uses the same colours for physical touch pads and falling notes', () => {
+    const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
+    AURA_LANES.forEach((lane, index) => {
+      const selector = `.aura-touch-controls__lane.is-lane-${index} {`;
+      const block = css.slice(css.indexOf(selector)).split('}')[0];
+      expect(block).toContain(`bg-[${lane.css}]`);
+      expect(block).toContain(`border-[${lane.css}]`);
+    });
+  });
   it.each([
     ['.aura-game-toolbar .aura-touch-controls {', 1024, 576],
     ['.game-shell.is-aura.is-portrait .aura-touch-controls {', 576, 1024],

@@ -9,13 +9,13 @@ const detail: AuraOnboardingDetail = {
 };
 
 describe('Aura contextual instruction', () => {
-  it('labels practice clearly and uses the actual next key and touch shape', () => {
+  it('labels practice clearly and uses the actual next key and touch colour', () => {
     const markup = renderToStaticMarkup(<AuraOnboardingHint detail={detail} onSkip={vi.fn()} />);
     expect(markup).toContain('aria-label="Aura practice"');
     expect(markup).toContain('Practice <span>3/4</span>');
     expect(markup).toContain('Wait for the line');
     expect(markup).toContain('<kbd>D</kbd>');
-    expect(markup).toContain('aria-label="tap square">■</span>');
+    expect(markup).toContain('aria-label="tap yellow lane, middle right"');
     expect(markup).not.toContain('Warm-up');
     expect(markup).not.toContain('No points lost');
   });

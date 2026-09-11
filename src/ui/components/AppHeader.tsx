@@ -1,21 +1,23 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { MenuMusic } from './MenuMusic.tsx';
 import { BrandMark } from './BrandMark.tsx';
 import { PUBLIC_APP_NAME } from '../publicBrand.ts';
 
 export interface AppHeaderNavTarget {
-  route: '/menu' | '/gallery' | '/challenges' | '/credits' | '/community';
+  route: '/menu' | '/gallery' | '/battles' | '/challenges' | '/credits' | '/community';
   label: string;
 }
 
 const NAV_TARGETS: AppHeaderNavTarget[] = [
   { route: '/menu', label: 'Play' },
   { route: '/gallery', label: 'My characters' },
+  { route: '/battles', label: 'My battles' },
   { route: '/challenges', label: 'Challenges' },
 ];
 
 interface AppHeaderProps {
   currentRoute: string;
-  onNavigate: (route: '/' | '/menu' | '/gallery' | '/challenges' | '/credits' | '/community') => void;
+  onNavigate: (route: '/' | '/menu' | '/gallery' | '/battles' | '/challenges' | '/credits' | '/community') => void;
   authSlot?: ReactNode;
 }
 
@@ -60,6 +62,7 @@ export function AppHeader({ currentRoute, onNavigate, authSlot }: AppHeaderProps
         <BrandMark size={34} />
         <span>{PUBLIC_APP_NAME}</span>
       </a>
+      <MenuMusic active={!currentRoute.startsWith('/watch/') && !currentRoute.startsWith('/battles')} />
       <button
         type="button"
         className="app-header__burger"

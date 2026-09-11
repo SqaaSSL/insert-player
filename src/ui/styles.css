@@ -4355,10 +4355,11 @@
            bg-[#0a0a22]/90 font-sans text-[24px] text-[#4fdced];
   }
 
-  .aura-loader__lanes > span:nth-child(2) { @apply border-[#9c66ff]/70 text-[#9c66ff]; }
+  .aura-loader__lanes > span:nth-child(2) { @apply border-[#b38aff]/70 text-[#b38aff]; }
   .aura-loader__lanes > span:nth-child(3) { @apply border-asf-gold/70 text-asf-gold; }
-  .aura-loader__lanes > span:nth-child(4) { @apply border-[#ef4343]/70 text-[#ef4343]; }
+  .aura-loader__lanes > span:nth-child(4) { @apply border-[#ff7777]/70 text-[#ff7777]; }
   .aura-loader__lanes small { @apply font-arcade text-[7px] text-asf-cream; }
+  .aura-loader__lanes i { @apply block h-3 w-7 rounded-sm bg-current; }
 
   .aura-loader__rules {
     @apply m-0 grid max-w-[420px] overflow-hidden rounded-[4px] border border-asf-line bg-[#07061a]/85;
@@ -4386,13 +4387,18 @@
   .aura-touch-controls__lane {
     @apply flex min-h-14 touch-manipulation items-center justify-center rounded-[6px] border-2 bg-[#080817]/90
            text-[27px] shadow-[0_5px_0_rgba(0,0,0,0.62)] backdrop-blur-sm active:translate-y-[3px] active:shadow-none
-           disabled:pointer-events-none disabled:opacity-40;
+           disabled:pointer-events-none disabled:opacity-20;
   }
 
-  .aura-touch-controls__lane.is-lane-0 { @apply border-[#4fdced] text-[#4fdced]; }
-  .aura-touch-controls__lane.is-lane-1 { @apply border-[#9c66ff] text-[#9c66ff]; }
-  .aura-touch-controls__lane.is-lane-2 { @apply border-asf-gold text-asf-gold; }
-  .aura-touch-controls__lane.is-lane-3 { @apply border-[#ef4343] text-[#ef4343]; }
+  .aura-touch-controls__bar { @apply h-1 w-1/2 rounded-sm bg-[#050507]/55; }
+  .aura-touch-controls__lane.is-lane-0 { @apply border-[#4fdced] bg-[#4fdced]; }
+  .aura-touch-controls__lane.is-lane-1 { @apply border-[#b38aff] bg-[#b38aff]; }
+  .aura-touch-controls__lane.is-lane-2 { @apply border-[#ffce3a] bg-[#ffce3a]; }
+  .aura-touch-controls__lane.is-lane-3 { @apply border-[#ff7777] bg-[#ff7777]; }
+  .aura-touch-controls.is-rival-turn { @apply saturate-0; }
+  .aura-touch-controls.is-rival-turn::after {
+    @apply pointer-events-none absolute inset-0 flex items-center justify-center font-arcade text-[10px] text-asf-cream content-['Rival’s_turn'];
+  }
 
   .aura-results {
     @apply absolute inset-0 z-40 flex items-center justify-center overflow-y-auto p-5;
@@ -4511,7 +4517,7 @@
            bg-[#050507]/80 px-2 font-arcade text-[8px] text-asf-cream;
   }
   .aura-game-toolbar .fight-pause-button { @apply bottom-2 left-[calc(3%+52px)] right-auto top-auto size-11; }
-  .game-shell.is-aura.is-portrait .aura-touch-controls { @apply left-[33.680556%] grid w-[61.111111%] gap-0; }
+  .game-shell.is-aura.is-portrait .aura-touch-controls { @apply left-[33.680556%] w-[61.111111%] gap-0; }
   .game-shell.is-aura.is-portrait .aura-game-toolbar__back { @apply bottom-auto left-2 top-[52%]; }
   .game-shell.is-aura.is-portrait .aura-game-toolbar .fight-pause-button { @apply bottom-auto left-auto right-2 top-[52%]; }
   .game-shell.is-aura.is-portrait .aura-touch-controls__lane { @apply min-h-11 text-[24px]; }
@@ -5280,10 +5286,15 @@
 .aura-onboarding__input kbd {
   @apply inline-flex min-h-5 min-w-5 items-center justify-center rounded border border-current px-1 font-sans text-xs font-semibold;
 }
+.aura-onboarding__pad { @apply hidden h-3 w-6 rounded-sm bg-current; }
+@media (pointer: coarse) {
+  .aura-onboarding__input kbd, .aura-loader__lanes small { @apply hidden; }
+  .aura-onboarding__pad { @apply inline-block; }
+}
 .aura-onboarding__input.is-lane-0 { @apply text-[#4fdced]; }
-.aura-onboarding__input.is-lane-1 { @apply text-[#9c66ff]; }
+.aura-onboarding__input.is-lane-1 { @apply text-[#b38aff]; }
 .aura-onboarding__input.is-lane-2 { @apply text-asf-gold; }
-.aura-onboarding__input.is-lane-3 { @apply text-[#ef4343]; }
+.aura-onboarding__input.is-lane-3 { @apply text-[#ff7777]; }
 .aura-onboarding button {
   @apply min-h-11 min-w-11 shrink-0 cursor-pointer rounded border-0 bg-transparent px-1 text-xs text-asf-muted
          underline underline-offset-4 hover:text-asf-cream focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-gold;

@@ -15,6 +15,12 @@ vi.mock('react', async importOriginal => ({
       if (!Object.is(value, hooks.slots[index].value)) { hooks.slots[index].value = value; hooks.dirty = true; }
     }];
   },
+  useMemo: (factory: () => unknown, deps: unknown[]) => {
+    const index = hooks.cursor++;
+    const previous = hooks.slots[index];
+    if (previous && deps.length === previous.deps.length && deps.every((value, i) => Object.is(value, previous.deps[i]))) return previous.value;
+    const value = factory(); hooks.slots[index] = { value, deps }; return value;
+  },
   useRef: (initial: any) => {
     const index = hooks.cursor++;
     return hooks.slots[index] ??= { current: initial };
@@ -32,6 +38,7 @@ vi.mock('../../game/createGame.ts', () => ({ createGame: runtime.create }));
 vi.mock('../../services/DebugLog.ts', () => ({ debugInfo: vi.fn(), debugWarn: vi.fn() }));
 vi.mock('../../services/MatchReporting.ts', () => ({ reportMatchCompletion: vi.fn() }));
 
+import { BATTLE_CAPTURE_EVENT } from '../../game/match/BattleCapture.ts';
 import { GamePage } from './GamePage.tsx';
 import { FightLoadingCurtain } from '../components/FightLoadingCurtain.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
@@ -204,6 +211,24 @@ describe('GamePage Aura presentation handoff', () => {
     expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
     expect(find(node => node.props?.['aria-label'] === 'Game paused')).toBeDefined();
   });
+  it('locks solo touch pads during the rival turn and reopens them on the next human turn', async () => {
+    await mount('AuraScene', { vsAI: true }); emit('loading', 1, 17, 0); emit('ready', 1, 17, 0); finishOpening();
+    startup('playing');
+    const turn = (playerIndex: 0 | 1, token = 1) => {
+      viewport.dispatchEvent(new CustomEvent(AURA_PRESENTATION_TURN_EVENT, { detail: { token, seed: 17, playerIndex } })); flush();
+    };
+    turn(1);
+    let controls = find(node => node.type === AuraControls);
+    expect(controls.props.playerIndex).toBe(0);
+    expect(controls.props.rivalTurn).toBe(true);
+    expect(AuraControls(controls.props).props.children.every((button: any) => button.props.disabled)).toBe(true);
+    turn(0, 99);
+    expect(find(node => node.type === AuraControls).props.rivalTurn).toBe(true);
+    turn(0);
+    controls = find(node => node.type === AuraControls);
+    expect(controls.props.rivalTurn).toBe(false);
+    expect(AuraControls(controls.props).props.children.every((button: any) => !button.props.disabled)).toBe(true);
+  });
   it('announces the current musical countdown and rejects signals from another lifecycle', async () => {
     await mount('AuraScene', { vsAI: true }); emit('loading'); emit('ready'); finishOpening();
     expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
@@ -363,6 +388,26 @@ describe('GamePage Aura presentation handoff', () => {
     viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
     expect(find(node => node.props?.['aria-label'] === 'Free round complete')).toBeUndefined();
     expect(find(node => node.type === AuraBattleResults)?.props).toMatchObject({ trial: true, onCreatePlayer: props.onCreateFighter });
+  });
+  it('rejects old final frames and late save/share responses after a rematch', async () => {
+    await mount('AuraScene', { gameMode: 'aura', vsAI: true });
+    const frame = (state: string, clientBattleId: string) => {
+      viewport.dispatchEvent(new CustomEvent(BATTLE_CAPTURE_EVENT, { detail: { state, clientBattleId,
+        capture: { clientBattleId, summary: { game: 'aura' }, stillBase64: 'data:image/jpeg;base64,/9j/AA==' } } })); flush();
+    };
+    frame('started', 'first'); frame('ready', 'first');
+    viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
+    viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
+    const result = () => find(node => node.type === AuraBattleResults).props;
+    const oldSave = result().finisher.props.onBattleChange;
+    oldSave({ id: 'old-saved-battle' }); flush();
+    expect(result().battle?.id).toBe('old-saved-battle');
+    frame('started', 'second'); frame('ready', 'second');
+    oldSave({ id: 'late-old-battle' }); frame('ready', 'first');
+    expect(result().battle).toBeNull();
+    expect(result().finisher.props.capture.clientBattleId).toBe('second');
+    result().finisher.props.onBattleChange({ id: 'second-saved-battle' }); flush();
+    expect(result().battle?.id).toBe('second-saved-battle');
   });
   it('unmount disposes timers so a pending opening never starts', async () => {
     await mount(); emit('loading'); emit('ready'); advance(600);

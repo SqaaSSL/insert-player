@@ -1,0 +1,31 @@
+.menu-music {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 7px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid #b9a575;
+  border-radius: 6px;
+  background: #fff8e7;
+  color: #443827;
+  font: 600 12px/1.2 'Space Grotesk', sans-serif;
+  cursor: pointer;
+}
+.menu-music svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.menu-music.is-playing { color: #171817; background: #ffd967; border-color: #a98220; }
+.menu-music:focus-visible { outline: 3px solid #168b94; outline-offset: 3px; }
+@media (max-width: 760px) {
+  .menu-music { margin-left: auto; }
+  .menu-music span { display: none; }
+  .menu-music { min-width: 44px; }
+}
+.battle-credit-return { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px; padding: 20px; color: #fff2ce; }
+.match-actions:has(.battle-finisher) { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.match-actions > .battle-finisher { flex-basis: 100%; max-width: 620px; }
+.rush-results__panel:has(.battle-finisher) { max-height: calc(100dvh - 32px); overflow-y: auto; }
+@media (max-width: 380px) { .app-header__brand { font-size: 10px; gap: 8px; } .app-header { column-gap: 8px; } }
+.battle-result-share { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 0; }
+.battle-result-share small { font: 12px/1.5 'Space Grotesk', sans-serif; color: #c7bfae; text-align: center; }
+.battle-result-share input { max-width: 100%; min-height: 44px; padding: 8px; color: #fff2ce; background: #111; border: 1px solid #c7a859; }

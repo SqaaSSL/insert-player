@@ -2,6 +2,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type
 import { HomePage } from './routes/HomePage.tsx';
 import { PlayPage } from './pages/PlayPage.tsx';
 import { GameLandingPage } from './pages/GameLandingPage.tsx';
+import { BattlesPage } from './pages/BattlesPage.tsx';
+import { BattleWatchPage } from './pages/BattleWatchPage.tsx';
+import { isBattleId } from '../services/BattleFinishers.ts';
 import { AuraWatchPage } from './pages/AuraWatchPage.tsx';
 import { isAuraClipId } from '../services/AuraClips.ts';
 import { ChallengePage } from './pages/ChallengePage.tsx';
@@ -78,6 +81,8 @@ type AppRoute =
   | '/'
   | '/menu'
   | '/credits'
+  | '/battles'
+  | `/battles/${string}`
   | '/challenges'
   | '/challenge'
   | `/watch/${string}`
@@ -115,6 +120,7 @@ interface AppProps extends Partial<AuthRouteState> {
   cacheStatus?: CacheStatus;
   cacheMessage?: string | null;
   onRetryCache?: () => void;
+  onSignIn?: () => void;
   configurationError?: string | null;
 }
 
@@ -135,6 +141,7 @@ export function gameRouteForMatch(match: Pick<MatchSceneData, 'gameMode'>): Game
 export function legalReturnRouteFromState(state: unknown): AppRoute {
   if (!state || typeof state !== 'object') return '/menu';
   const candidate = (state as { legalReturnTo?: unknown }).legalReturnTo;
+  if (typeof candidate === 'string' && isBattleRoute(candidate)) return candidate as AppRoute;
   if (typeof candidate === 'string' && candidate.startsWith('/watch/') && isAuraClipId(candidate.slice(7))) return candidate as `/watch/${string}`;
   if (
     candidate === '/' ||
@@ -165,6 +172,12 @@ export function legalReturnRouteFromState(state: unknown): AppRoute {
   return '/menu';
 }
 
+function isBattleRoute(path: string): boolean {
+  if (path === '/battles') return true;
+  const match = /^\/battles\/([^/]+)(?:\/finisher)?$/.exec(path);
+  return Boolean(match && isBattleId(match[1]));
+}
+
 export function normalizeRoute(pathname: string, hash: string): AppRoute {
   const cleanedPath = (pathname || '/').replace(/\/+$/, '') || '/';
   const cleanedHash = hash.replace(/^#/, '').replace(/\/+$/, '');
@@ -173,6 +186,7 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
       ? cleanedPath
       : (cleanedHash || '/');
   if (cleaned === '/') return '/';
+  if (isBattleRoute(cleaned)) return cleaned as AppRoute;
   if (cleaned === '/credits') return '/credits';
   if (cleaned === '/challenges') return '/challenges';
   if (cleaned === '/challenge') return '/challenge';
@@ -339,6 +353,7 @@ export function App({
   cacheStatus = 'ready',
   cacheMessage = null,
   onRetryCache,
+  onSignIn,
   configurationError = null,
 }: AppProps) {
   const [route, navigate, routeSearch] = useHashRoute();
@@ -666,6 +681,15 @@ export function App({
     [authStatus, authSessionKey, creationPurchaseIntent, navigate, navigateToLegal],
   );
 
+  const signInForBattle = useCallback(() => {
+    if (!route.startsWith('/battles')) leaveFight('/battles');
+    onSignIn?.();
+  }, [route, leaveFight, onSignIn]);
+  const buyFinisherCredits = useCallback(() => {
+    const returnTo = route.startsWith('/battles/') ? route : '/battles';
+    try { sessionStorage.setItem(`insert-player:finisher-return:${authSessionKey}`, returnTo); } catch { /* history remains available */ }
+    leaveFight('/credits');
+  }, [route, authSessionKey, leaveFight]);
   const content = useMemo(() => {
     if (configurationError && route !== '/' && route !== '/community' && !isLegalRoute(route)) {
       return (
@@ -688,7 +712,17 @@ export function App({
     if (route === '/menu' || route === '/') return <PlayPage lastGame={readLastGame(authSessionKey)} onPlay={(mode) => readLastGame(authSessionKey) ? openGame(mode) : tryGame(mode)}
       onExplore={(mode) => navigate(`/games/${mode}`)} onOpenCharacters={() => navigate('/gallery')}
       onOpenChallenges={() => navigate('/challenges')} onChooseCharacter={() => navigate('/roster/aura')} />;
-    if (route === '/credits') return homePage;
+    if (route === '/credits') {
+      let returnTo: AppRoute | null = null;
+      try { const saved = sessionStorage.getItem(`insert-player:finisher-return:${authSessionKey}`); if (saved && isBattleRoute(saved)) returnTo = saved as AppRoute; } catch { /* optional return context */ }
+      return <>{returnTo ? <div className="battle-credit-return"><p>Your battle is saved. Add credits, then return to make your finisher.</p><button type="button" className="asf-btn" onClick={() => { try { sessionStorage.removeItem(`insert-player:finisher-return:${authSessionKey}`); } catch { /* optional */ } navigate(returnTo!); }}>Return to my battle</button></div> : null}{homePage}</>;
+    }
+    if (route === '/battles') return <BattlesPage authStatus={authStatus} authSessionKey={authSessionKey}
+      onSignIn={onSignIn ? signInForBattle : undefined} onBuyCredits={buyFinisherCredits}
+      onExplore={() => navigate('/menu')} onOpenBattle={id => navigate(`/battles/${id}`)} />;
+    if (route.startsWith('/battles/')) return <BattleWatchPage key={`${authSessionKey}:${route}`} battleId={route.split('/')[2]}
+      finisherOnly={route.endsWith('/finisher')} authStatus={authStatus} authSessionKey={authSessionKey}
+      onSignIn={onSignIn ? signInForBattle : undefined} onBuyCredits={buyFinisherCredits} onExplore={game => navigate(`/games/${game}`)} />;
     if (route.startsWith('/watch/')) return <AuraWatchPage clipId={route.slice(7)} preferredPlayerPhotoHash={readPreferredArcadePlayerPhotoHash(routeSearch)}
       onPlay={startFight} onExplore={() => navigate('/games/aura')} onCreatePlayer={token => navigate('/fighters/new', buildCreationSearch({
         tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'challenge', challenge: token,
@@ -835,6 +869,10 @@ export function App({
     return (
       <GamePage
         launchTarget={launchTarget!}
+        authStatus={authStatus}
+        authSessionKey={authSessionKey}
+        onSignIn={onSignIn ? signInForBattle : undefined}
+        onBuyCredits={buyFinisherCredits}
         onComplete={finishFight}
         onExit={exitFight}
         onCreateFighter={() => leaveFight('/fighters/new', buildCreationSearch({
@@ -870,6 +908,9 @@ export function App({
     createForGame,
     configurationError,
     ladderContext,
+    onSignIn,
+    signInForBattle,
+    buyFinisherCredits,
   ]);
 
   const routedContent = (

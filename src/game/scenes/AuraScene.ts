@@ -88,6 +88,8 @@ import { AuraRecorder } from '../aura/AuraRecording.ts';
 import { AuraVideoRecorder } from '../aura/AuraVideoRecorder.ts';
 import { AURA_CAPTURE_EVENT, type AuraCaptureDetail } from '../aura/AuraCapture.ts';
 import { saveAuraRecording } from '../../services/AuraRecordingStore.ts';
+import { AURA_LANES, auraUsesTouchControls } from '../aura/AuraLanes.ts';
+import { BattleCaptureSession, battleWinnerSide } from '../match/BattleCapture.ts';
 import {
   destroyLoadedAuraAnimationPack,
   loadAuraAnimationPack,
@@ -115,8 +117,7 @@ import {
 } from '../ui/CabinetGraphics.ts';
 
 
-/** Outer lanes read cream, inner lanes read heat: two tones, one glyph. */
-const LANE_TONES = [CREAM, HEAT, HEAT, CREAM] as const;
+const LANE_TONES = AURA_LANES.map(lane => lane.tone);
 const LANE_HALF_WIDTH = 30;
 const RECEPTOR_WIDTH = 56;
 const RECEPTOR_HEIGHT = 26;
@@ -230,6 +231,7 @@ interface LaneLayout {
 }
 
 export class AuraScene extends Phaser.Scene {
+  private battleCapture: BattleCaptureSession | null = null;
   private matchData!: MatchSceneData;
   private difficultyId: AuraDifficultyId = 'viral';
   private matchSeed = 0;
@@ -373,6 +375,8 @@ export class AuraScene extends Phaser.Scene {
   }
 
   init(data: MatchSceneData): void {
+    this.battleCapture?.cancel();
+    this.battleCapture = new BattleCaptureSession();
     this.matchData = data;
     this.presentationReady = false;
     this.presentationStarted = false;
@@ -1434,6 +1438,10 @@ export class AuraScene extends Phaser.Scene {
       this.tweens.killTweensOf(graphics);
       graphics.clear().setAlpha(0).setScale(1);
     }
+    const watching = !this.cpuVsCpu && !this.isLocallyPlayable(slot);
+    this.laneGraphics.setAlpha(watching ? 0.55 : 1);
+    this.targetGraphics.setAlpha(watching ? 0.2 : 1);
+    this.beatGraphics?.setAlpha(watching ? 0.2 : 1);
     this.drawHighwayFrame(slot);
     const difficulty = getAuraDifficulty(this.difficultyId);
     for (let lane = 0; lane < 4; lane += 1) {
@@ -1442,9 +1450,9 @@ export class AuraScene extends Phaser.Scene {
       const tone = LANE_TONES[lane];
       const left = layout.startX - LANE_HALF_WIDTH;
       const height = layout.targetY - layout.startY;
-      this.laneGraphics.fillStyle(INK, 0.5);
+      this.laneGraphics.fillStyle(tone, 0.09);
       this.laneGraphics.fillRect(left, layout.startY, LANE_HALF_WIDTH * 2, height);
-      this.laneGraphics.lineStyle(1, STEEL_DIM, 1);
+      this.laneGraphics.lineStyle(1, tone, 0.3);
       this.laneGraphics.lineBetween(left, layout.startY, left, layout.targetY);
       this.laneGraphics.lineBetween(left + LANE_HALF_WIDTH * 2, layout.startY, left + LANE_HALF_WIDTH * 2, layout.targetY);
       this.laneGraphics.fillStyle(tone, 0.7);
@@ -1467,44 +1475,49 @@ export class AuraScene extends Phaser.Scene {
       strokeChamfered(this.targetGraphics, rx, ry, RECEPTOR_WIDTH, RECEPTOR_HEIGHT, 4, 1, STEEL, 0.75);
       drawNoteGlyph(this.targetGraphics, layout.targetX, layout.targetY, tone, false);
 
-      // Persistent keycaps teach the mapping before the player's next turn.
-      // Watch mode uses lane numbers, with an explicit AUTO status below.
-      fillChamfered(this.targetGraphics, layout.targetX - 22, this.layout.keyLabelY - 17, 44, 34, 4, INK, 1);
-      strokeChamfered(this.targetGraphics, layout.targetX - 22, this.layout.keyLabelY - 17, 44, 34, 4, 1, STEEL, 1);
+      // Colour connects the falling note to its pad. Fine pointers also get a key.
+      fillChamfered(this.targetGraphics, layout.targetX - 22, this.layout.keyLabelY - 17, 44, 34, 4,
+        auraUsesTouchControls() ? tone : INK, 1);
+      strokeChamfered(this.targetGraphics, layout.targetX - 22, this.layout.keyLabelY - 17, 44, 34, 4, 1, tone, 1);
     }
     this.drawBeatGrid(slot);
     this.drawLaneControlHints(slot);
     const frameLeft = this.layout.highwayX + this.layout.laneOffsets[0] - LANE_HALF_WIDTH - HIGHWAY_FRAME_PAD_X;
     const frameTop = this.layout.laneStartY - HIGHWAY_FRAME_PAD_TOP;
     this.highwayTitleText
-      .setText(this.isCpuSlot(slot) ? 'AUTO RHYTHM' : 'HIT THE LINE')
+      .setText(this.cpuVsCpu ? 'AUTO RHYTHM' : this.isLocallyPlayable(slot) ? 'YOUR TURN' : 'RIVAL’S TURN')
       .setColor('#fff4d6')
       .setOrigin(0, 0)
       .setPosition(frameLeft + 10, frameTop + 9)
-      .setFontSize(9)
+      .setFontSize(13)
       .setVisible(true)
       .setScale(1);
+  }
+
+  private isLocallyPlayable(slot: AuraSlot): boolean {
+    return !this.isCpuSlot(slot) && (!this.online || slot === this.online.localSlot);
   }
 
   private drawLaneControlHints(slot: AuraSlot, beforeStart = false): void {
     // Online always advertises this device's controls, including rival turns.
     const keys = this.laneKeysForSlot(this.online ? this.localControlledSlot() : slot);
+    const touch = auraUsesTouchControls();
+    const locallyPlayable = this.isLocallyPlayable(slot);
     this.laneKeyTexts.forEach((text, lane) => {
       const layout = this.laneLayout(slot, lane as AuraLane);
       text.setText(this.cpuVsCpu ? String(lane + 1) : keys[lane])
-        .setPosition(layout.targetX, this.layout.keyLabelY).setColor('#fff4d6').setScale(1).setVisible(true);
+        .setPosition(layout.targetX, this.layout.keyLabelY).setColor('#fff4d6').setScale(1)
+        .setAlpha(locallyPlayable || this.cpuVsCpu ? 1 : 0.2).setVisible(!touch);
     });
-    const locallyPlayable = !this.isCpuSlot(slot)
-      && (!this.online || slot === this.online.localSlot);
     const hint = this.cpuVsCpu
       ? `AUTO · CPU ${slot + 1} TURN`
       : beforeStart
-        ? `GET READY · ${keys.join(' ')}`
+        ? touch ? 'GET READY · TAP THE COLOURS' : `GET READY · ${keys.join(' ')}`
         : !locallyPlayable
-          ? `${this.isCpuSlot(slot) ? 'CPU' : 'RIVAL'} TURN · GET READY`
+          ? 'WATCH · CONTROLS OFF'
           : !this.online && !this.isVsAI
-            ? `P${slot + 1} TURN · ${keys.join(' ')}`
-            : 'YOUR TURN · HIT THE SHAPES';
+            ? `P${slot + 1} TURN · ${touch ? 'TAP ON BEAT' : keys.join(' ')}`
+            : touch ? 'YOUR TURN · TAP ON BEAT' : 'YOUR TURN · HIT ON BEAT';
     this.highwayMetaText.setText(hint).setPosition(this.layout.highwayX, this.layout.keyLabelY + 47)
       .setOrigin(0.5).setVisible(true);
   }
@@ -1592,7 +1605,8 @@ export class AuraScene extends Phaser.Scene {
         Phaser.Math.Linear(layout.startY, layout.targetY, progress),
       );
       object.setScale(1);
-      object.setAlpha(until < 0 ? Math.max(0.22, 1 + until / 240) : 1);
+      const visibility = !this.cpuVsCpu && !this.isLocallyPlayable(turn.slot) ? 0.3 : 1;
+      object.setAlpha((until < 0 ? Math.max(0.22, 1 + until / 240) : 1) * visibility);
     }
     for (const [id, object] of this.noteObjects) {
       if (activeIds.has(id)) continue;
@@ -1613,7 +1627,7 @@ export class AuraScene extends Phaser.Scene {
 
     if (!turn) {
       if (nowMs < this.chart.firstTurnMs) {
-        this.turnText.setText('SAME ROUTINE · MOST AURA WINS');
+        this.turnText.setText('TAKE TURNS · MORE AURA WINS');
       } else if (!this.finalizing) {
         this.turnText.setText('THE ROOM HAS DECIDED');
       }
@@ -1622,7 +1636,9 @@ export class AuraScene extends Phaser.Scene {
 
     const countIn = turn.firstNoteMs - nowMs;
     const remaining = Math.max(0, Math.ceil((turn.endMs - nowMs) / 1_000));
-    this.turnText.setText(`ROUND ${turn.round + 1}/${AURA_ROUNDS} · P${turn.slot + 1} ${countIn > 0 ? 'GET READY' : 'ON CAM'} · ${remaining}S`);
+    const turnLabel = this.cpuVsCpu || (!this.online && !this.isVsAI)
+      ? `P${turn.slot + 1} TURN` : this.isLocallyPlayable(turn.slot) ? 'YOUR TURN' : 'RIVAL’S TURN';
+    this.turnText.setText(`ROUND ${turn.round + 1}/${AURA_ROUNDS} · ${turnLabel} · ${countIn > 0 ? 'GET READY' : `${remaining}S`}`);
     const activeScore = this.battle.scoreFor(turn.slot);
     this.comboText.setText(`x${activeScore.combo} FLOW`);
   }
@@ -1658,7 +1674,7 @@ export class AuraScene extends Phaser.Scene {
     }
     this.drawLanes(turn.slot);
     this.updateCrowdUi(turn.slot);
-    // Inactive turns change the status, never hide the controls to learn next.
+    // Rival turns close the controls while keeping their performance readable.
     this.focusPerformer(turn.slot);
   }
 
@@ -1723,7 +1739,9 @@ export class AuraScene extends Phaser.Scene {
       .setText(this.layout.portrait ? status : `CROWD · ${status}`)
       .setOrigin(1, 0)
       .setPosition(anchorX, this.layout.instrument.crowdY)
-      .setVisible(true);
+      // The compact instrument header belongs to whose turn it is. The crowd
+      // meter still carries room heat without squeezing in another status.
+      .setVisible(!this.layout.portrait || Boolean(this.cpuVsCpu));
 
     const segmentWidth = this.layout.instrument.crowdSegmentWidth;
     const gap = 4;
@@ -1987,7 +2005,7 @@ export class AuraScene extends Phaser.Scene {
     // Context belongs to the move actually rendered, not an unavailable pack.
     if (played && (judgement.grade === 'perfect' || judgement.grade === 'great' || judgement.grade === 'good')) {
       this.comicFeedback?.move(judgement.slot, played, {
-        key: this.cpuVsCpu ? String(judgement.lane + 1) : this.laneKeysForSlot(judgement.slot)[judgement.lane],
+        key: auraUsesTouchControls() ? '' : this.cpuVsCpu ? String(judgement.lane + 1) : this.laneKeysForSlot(judgement.slot)[judgement.lane],
         tone: LANE_TONES[judgement.lane], phrase: `${note?.turnIndex ?? this.currentTurnIndex}:${requested ?? played}`,
       });
     }
@@ -2318,6 +2336,20 @@ export class AuraScene extends Phaser.Scene {
       });
     } catch (error) { debugWarn('[AuraScene] Action history incomplete', error); }
     const epoch = this.lifecycleEpoch;
+    const battleCapture = this.battleCapture;
+    this.time.delayedCall(2_200, () => {
+      if (!this.isCurrentLifecycle(epoch)) return;
+      const winnerSide = winner === 'draw' ? undefined : battleWinnerSide(
+        [this.getPerformerTopCenter(winner === 'p1' ? 0 : 1).x],
+        [this.getPerformerTopCenter(winner === 'p1' ? 1 : 0).x],
+      );
+      battleCapture?.capture(this, {
+        game: 'aura', winner, winnerSide, p1Name: this.p1Name, p2Name: this.p2Name,
+        stageLabel: this.stageLabel, stageId: this.resolvedStageId,
+        durationSeconds: summary.durationSeconds, p1Score: p1Score.score, p2Score: p2Score.score,
+        seed: this.matchSeed,
+      }, { heightRatio: this.layout.portrait ? (this.layout.stage.y + this.layout.stage.height) / this.layout.height : 1 });
+    });
     // Include the winner reveal in the actual canvas recording, then stop game
     // music so it cannot double up with the result screen's video playback.
     if (this.videoRecorder?.status === 'recording') this.emitCapture({ id: this.captureId, state: 'processing' });
@@ -2597,6 +2629,7 @@ export class AuraScene extends Phaser.Scene {
   }
 
   private readonly onLifecycleEnd = (): void => {
+    this.battleCapture?.cancel();
     if (!this.lifecycleActive) return;
     this.lifecycleActive = false;
     this.startupAbort?.abort();
