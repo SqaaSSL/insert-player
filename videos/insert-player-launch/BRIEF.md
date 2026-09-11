@@ -12,7 +12,23 @@ angle: "Keep the approved photo transformation, then prove three real games with
 narration: "A concise product explanation ending with the arcade-announcer lockup"
 ---
 
-## Current Revision: Aura v19 (2026-09-11)
+## Current Revision: Aura Audio v20 (2026-09-11)
+
+The user requested narration matching the new length and three-game story.
+All v19 picture edits, intro, end card and original Neon Arena music remain
+unchanged. Preserve the actual approved intro and closing Orus recordings.
+One new Gemini TTS / Orus take explains Fight, CPU-ally Rush and Aura's rhythm,
+playful moves and rivalry with friends. Split it at natural sentence boundaries
+to match the game blocks, with no speed changes. Aura carries the longest read.
+
+- 36.15-second mix; nine speech cues in `provenance/aura-launch-v20-cues.json`.
+- Raw take, submission journal, hashes, local transcript and loudness measurements
+  are retained. One paid TTS request, no retries or fallback; no image/video calls.
+- `launch-voice-aura-v20.wav` replaces only the voice. Recompute the music carve.
+- New versioned MP4 and captions; keep v19 and every source asset intact.
+- Preview only until the user approves publication.
+
+## Previous Revision: Aura v19 (2026-09-11)
 
 The user asked to restore the film to the current landing and record new Aura,
 Rush and Fight gameplay, with substantially more attention on Aura. This section

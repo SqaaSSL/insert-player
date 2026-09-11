@@ -1,0 +1,77 @@
+{
+  "duration": 36.166667,
+  "bytes": 9428775,
+  "sha256": "ddb7b468b5bd473abf2501895f3b08b4ea3c496b8610b8fc26c41dcdad1a9488",
+  "videoPacketsSha256": "SHA256=9124b9f2f6bfa1f419963a33e0c88d228ab7c745d9fea6b04e7772b29ba67392",
+  "pictureIdenticalToV19": true,
+  "width": 1920,
+  "height": 1080,
+  "audioCodec": "aac",
+  "mixLufs": -18.92,
+  "truePeakDb": -4.28,
+  "windows": [
+    {
+      "at": 5,
+      "rmsDb": -19.75,
+      "peakDb": -3.01
+    },
+    {
+      "at": 9,
+      "rmsDb": -16.65,
+      "peakDb": -2.96
+    },
+    {
+      "at": 14,
+      "rmsDb": -16.58,
+      "peakDb": -2.53
+    },
+    {
+      "at": 19,
+      "rmsDb": -17.64,
+      "peakDb": -5.11
+    },
+    {
+      "at": 23,
+      "rmsDb": -17.64,
+      "peakDb": -2.6
+    },
+    {
+      "at": 26,
+      "rmsDb": -17.06,
+      "peakDb": -3.71
+    },
+    {
+      "at": 29,
+      "rmsDb": -17.13,
+      "peakDb": -2.68
+    },
+    {
+      "at": 32,
+      "rmsDb": -18.37,
+      "peakDb": -3.95
+    },
+    {
+      "at": 34,
+      "rmsDb": -20.55,
+      "peakDb": -6.96
+    },
+    {
+      "at": 35,
+      "rmsDb": -18.49,
+      "peakDb": -7.11
+    }
+  ],
+  "newTtsRequests": 1,
+  "fallbacks": 0,
+  "tests": {
+    "hyperframes": "0 errors, 0 warnings, 2 existing intro layout infos",
+    "assetAndComponent": 5,
+    "resumeMocks": 2,
+    "playwrightWidths": [
+      1440,
+      390,
+      320
+    ]
+  },
+  "published": false
+}

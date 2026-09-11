@@ -14,8 +14,9 @@ Preserve the approved transformation and end-card design. Record actual current
 gameplay from the local build: public characters, no provider calls. Use a short
 mixed teaser, then separate blocks so viewers can distinguish the games. Aura
 gets thirteen uninterrupted seconds and three recognizable performers. Retain
-the approved narration, placing its combat sentence over Fight. Rush is one
-player with a CPU ally; do not describe it as online co-op.
+the approved intro and closing narration. The v20 Orus middle explains all three
+games, with the longest section on Aura. Rush is one player with a CPU ally;
+do not describe it as online co-op.
 
 ## Frame 1 - Your Photo. Your Fighter.
 
@@ -38,7 +39,7 @@ GSAP choreography remain byte-identical to the approved composition.
 - footage: assets/three-games-aura-v19.mp4
 - status: animated
 - scene: Real browser matches, full frame. Brief branded labels, no device frame.
-- voiceover: "Create your own fighters, then challenge each other in the arena."
+- voiceover: "One character. Three games. Challenge your friends in Fight. Your fighters. Your rivalry. Team up with a CPU ally in Rush. Or steal the show in Aura. Hit the beat. Pull off ridiculous moves. Outscore your friends. Give the group chat something to talk about."
 - transition_in: Cut beneath the approved intro exit.
 
 | Absolute Time | Content |
@@ -57,6 +58,7 @@ Fight label: "Challenge a friend." Rush label: "You + your CPU ally."
 Aura label: "Hit the beat. Win the crowd." Labels only persist for 1.8s; the
 remaining footage is unobstructed. The caption track is optional in the player.
 Edit ranges, source hashes and provenance are in `provenance/aura-launch-v19-cuts.json`.
+The nine v20 speech cue timings live in `provenance/aura-launch-v20-cues.json`.
 
 ## Frame 3 - Insert Player
 

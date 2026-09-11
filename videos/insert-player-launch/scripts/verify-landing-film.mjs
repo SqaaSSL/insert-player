@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 const base = process.env.CAPTURE_URL ?? 'http://127.0.0.1:5189';
 assert(['localhost', '127.0.0.1'].includes(new URL(base).hostname));
-const out = resolve(import.meta.dirname, '../assets/captures/landing-qa-v19');
+const out = resolve(import.meta.dirname, '../assets/captures/landing-qa-v20');
 await mkdir(out, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const results = [];
@@ -14,7 +14,7 @@ try {
     const context = await browser.newContext({ viewport });
     const page = await context.newPage();
     const mediaRequests = [];
-    page.on('request', req => { if (req.url().includes('insert-player-launch-aura-v19.mp4')) mediaRequests.push(req.url()); });
+    page.on('request', req => { if (req.url().includes('insert-player-launch-aura-v20.mp4')) mediaRequests.push(req.url()); });
     await page.goto(`${base}/games/aura`, { waitUntil: 'networkidle' });
     const video = page.locator('.product-entry__film-video');
     await video.waitFor();

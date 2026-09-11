@@ -1,0 +1,19 @@
+{
+  "version": 20,
+  "role": "launch explainer voiceover",
+  "model": "gemini-tts",
+  "upstreamModel": "gemini-3.1-flash-tts-preview",
+  "accessPath": "PixCLI through Meterkey",
+  "providerJobId": "9c26920424af877b162dc021d5893f3d",
+  "voice": "Orus",
+  "language": "en",
+  "meteredCostMicrocredits": 60000,
+  "promptFile": "prompts/tts-launch-three-games-v20.txt",
+  "promptSha256": "b5884687a42f1fc34bca20d4fe09a66415dadccc702da4a6c2abec01f52412c6",
+  "outputFile": "assets/generated/tts-launch-three-games-v20.wav",
+  "outputSha256": "13273f782c3e9eef80f216d2274cbe736bd1044f1a3cef515f25e08876294a81",
+  "durationSeconds": 19.68,
+  "retries": 0,
+  "fallbacks": 0,
+  "published": false
+}

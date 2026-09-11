@@ -9,11 +9,14 @@ describe('versioned landing film assets', () => {
     for (const [path] of source.matchAll(/\/assets\/[^'"\s]+/g)) {
       expect(existsSync(new URL(`public${path}`, root)), path).toBe(true);
     }
-    const video = readFileSync(new URL('public/assets/insert-player-launch-aura-v19.mp4', root));
+    const video = readFileSync(new URL('public/assets/insert-player-launch-aura-v20.mp4', root));
     expect(video.subarray(4, 8).toString()).toBe('ftyp');
     expect(video.byteLength).toBeLessThan(12 * 1024 * 1024);
-    const captions = readFileSync(new URL('public/assets/insert-player-launch-aura-v19-en.vtt', root), 'utf8');
+    const captions = readFileSync(new URL('public/assets/insert-player-launch-aura-v20-en.vtt', root), 'utf8');
     expect(captions).toMatch(/^WEBVTT/);
-    expect(captions).toContain('00:30.950');
+    expect(captions).toContain('00:31.500');
+    expect(captions).toContain('CPU ally in Rush');
+    expect(captions).toContain('show in Aura');
+    expect(captions).toContain('Challenge your friends in Fight');
   });
 });

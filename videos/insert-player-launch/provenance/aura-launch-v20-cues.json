@@ -1,0 +1,20 @@
+{
+  "duration": 36.15,
+  "oldVoice": "assets/generated/tts-launch-friends-v4.wav",
+  "newVoice": "assets/generated/tts-launch-three-games-v20.wav",
+  "music": "assets/generated/launch-bed-aura-v19.wav",
+  "newVoiceLoudnessTarget": -16.64,
+  "newVoiceTruePeakCeiling": -1.35,
+  "playbackRate": 1,
+  "cues": [
+    { "source": "old", "range": [0, 5.6], "at": 0, "text": "Upload a photo. Insert Player turns you and your friends into arcade fighters." },
+    { "source": "new", "range": [0.12, 3.05], "at": 5.7, "text": "One character. Three games." },
+    { "source": "new", "range": [3.08, 7.3], "at": 8.9, "text": "Challenge your friends in Fight. Your fighters. Your rivalry." },
+    { "source": "new", "range": [7.4, 10.4], "at": 13.85, "text": "Team up with a CPU ally in Rush." },
+    { "source": "new", "range": [10.4, 12.8], "at": 18.5, "text": "Or steal the show in Aura." },
+    { "source": "new", "range": [12.85, 15.58], "at": 22.05, "text": "Hit the beat. Pull off ridiculous moves." },
+    { "source": "new", "range": [15.6, 17.38], "at": 25.65, "text": "Outscore your friends." },
+    { "source": "new", "range": [17.4, 19.5], "at": 28.5, "text": "Give the group chat something to talk about." },
+    { "source": "old", "range": [9.58, 12.04], "at": 31.5, "text": "Ready? Insert Player." }
+  ]
+}
