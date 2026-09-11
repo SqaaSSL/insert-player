@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { BattleResultShare } from './BattleResultShare.tsx';
+import type { SavedBattle } from '../../shared/BattleFinisher.ts';
+import { useState, type ReactNode } from 'react';
 import type { RushRunCompleteDetail } from '../../game/match/MatchConfig.ts';
 import { copyToClipboard } from '../shared/communityShare.ts';
 import { PUBLIC_APP_NAME } from '../publicBrand.ts';
@@ -6,6 +8,9 @@ import { getRushDifficulty } from '../../game/brawl/RushConfig.ts';
 
 interface RushRunResultsProps {
   summary: RushRunCompleteDetail;
+  finisher?: ReactNode;
+  battle?: SavedBattle | null;
+  onBattleChange?: (battle: SavedBattle) => void;
   onRetry: () => void;
   onExit: () => void;
 }
@@ -24,7 +29,7 @@ function resultShareCopy(summary: RushRunCompleteDetail): string {
   return `My team ${result} in ${formatRushDuration(summary.durationSeconds)} with Rank ${summary.rank} and ${summary.score.toLocaleString('en-US')} points in ${PUBLIC_APP_NAME}: Rush.`;
 }
 
-export function RushRunResults({ summary, onRetry, onExit }: RushRunResultsProps) {
+export function RushRunResults({ summary, finisher, battle, onBattleChange, onRetry, onExit }: RushRunResultsProps) {
   const [shareState, setShareState] = useState<'idle' | 'sharing' | 'shared' | 'error'>('idle');
   const cleared = summary.outcome === 'won';
   const difficulty = getRushDifficulty(summary.difficulty);
@@ -109,7 +114,7 @@ export function RushRunResults({ summary, onRetry, onExit }: RushRunResultsProps
             <button type="button" className="asf-btn asf-btn--primary" autoFocus onClick={onRetry}>
               Run It Back
             </button>
-            <button
+            {battle ? <BattleResultShare battle={battle} onBattleChange={onBattleChange} /> : <button
               type="button"
               className="asf-btn asf-btn--ghost"
               disabled={shareState === 'sharing'}
@@ -120,11 +125,12 @@ export function RushRunResults({ summary, onRetry, onExit }: RushRunResultsProps
                 : shareState === 'shared'
                   ? 'Result Shared'
                   : 'Share Result'}
-            </button>
+            </button>}
             <button type="button" className="asf-btn asf-btn--ghost" onClick={onExit}>
               Back To Arcade
             </button>
           </div>
+          {finisher}
           {shareState === 'error' ? (
             <p className="rush-results__share-error" role="alert">
               Sharing is unavailable in this browser.

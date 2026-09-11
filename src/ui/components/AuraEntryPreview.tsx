@@ -160,7 +160,7 @@ export function AuraEntryPreview({ compact = false }: { compact?: boolean }) {
       <div className="aura-entry-preview__header">
         <span className="aura-entry-preview__eyebrow">Duel preview</span>
         {!reducedMotion && <div className="aura-entry-preview__controls">
-          <button type="button" className="aura-entry-preview__pause" onClick={toggleSound} disabled={!soundReady} aria-pressed={soundEnabled} aria-label={soundEnabled ? 'Mute duel preview' : 'Enable duel preview sound'}>Sound {soundEnabled ? 'on' : 'off'}</button>
+          <button type="button" className="aura-entry-preview__pause" onClick={toggleSound} disabled={!soundReady} aria-pressed={soundEnabled} aria-label={soundEnabled ? 'Mute duel preview' : 'Enable duel preview sound'}>Moves {soundEnabled ? 'on' : 'off'}</button>
           <button type="button" className="aura-entry-preview__pause" onClick={() => setPaused((value) => !value)} aria-label={paused ? 'Play duel preview' : 'Pause duel preview'}><span aria-hidden="true">{paused ? '▶' : 'Ⅱ'}</span> {paused ? 'Play' : 'Pause'}</button>
         </div>}
       </div>

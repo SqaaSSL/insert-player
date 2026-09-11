@@ -1,7 +1,6 @@
 import type { AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
 
-const SHAPES = ['●', '◆', '■', '▲'];
-const NAMES = ['circle', 'diamond', 'square', 'triangle'];
+import { AURA_LANES } from '../../game/aura/AuraLanes.ts';
 
 export function AuraOnboardingHint({ detail, onSkip }: { detail: AuraOnboardingDetail; onSkip: () => void }) {
   if (!detail.cue || detail.phase === 'complete' || detail.phase === 'skipped') return null;
@@ -23,8 +22,8 @@ export function AuraOnboardingHint({ detail, onSkip }: { detail: AuraOnboardingD
         {practice && <span className="aura-onboarding__short-message" aria-hidden="true">{detail.cue === 'hit' ? 'Hit now' : 'Wait'}</span>}
         {practice && <span className={`aura-onboarding__input is-lane-${lane}`}>
           <kbd>{detail.laneKeys[lane]}</kbd>
-          <span aria-hidden="true">/</span>
-          <span role="img" aria-label={`tap ${NAMES[lane]}`}>{SHAPES[lane]}</span>
+          <span className="aura-onboarding__pad" role="img"
+            aria-label={`tap ${AURA_LANES[lane].name.toLowerCase()} lane, ${AURA_LANES[lane].position}`} />
         </span>}
       </p>
     </div>

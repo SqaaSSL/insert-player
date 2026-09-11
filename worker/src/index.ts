@@ -17,6 +17,8 @@ import {
 } from './billing';
 import { captureStreetViewImage } from './googleMaps';
 import { auraChallengeShareResponse } from './auraChallengeShare';
+import { battleShareResponse } from './battleOg';
+import { createBattle, listBattles, getBattle, getBattleMedia, uploadBattleRecording, createBattleFinisher, publishBattle, deleteBattle } from './battleMedia';
 import { createAuraClip, deleteAuraClip, getAuraClip, getAuraClipVideo, getAuraClipPoster, uploadAuraClip } from './auraClips';
 import {
   createFighter,
@@ -111,6 +113,7 @@ import {
   stageImportedGlobalVideoRecuration,
 } from './importedGlobalVideoRecuration';
 
+export { BattleFinisherWorkflow } from './battleFinisherWorkflow';
 export { FighterGenerationWorkflow } from './generationWorkflow';
 export { ImageProcessorContainer } from './imageProcessorContainer';
 export { MatchRoom } from './matchRoom';
@@ -390,6 +393,9 @@ export default {
           : versusInvitationSharePage(request, env, token);
       }
 
+      const publicBattle = path.match(/^\/share\/battles\/([a-f0-9]{32})(?:\/(finisher|og\.png))?$/);
+      if (publicBattle && (method === 'GET' || method === 'HEAD')) return addCors(await battleShareResponse(request, env, publicBattle[1], publicBattle[2]), request, env);
+
       if (path.startsWith('/challenges/aura/')) {
         return auraChallengeShareResponse(request, env, context);
       }
@@ -421,6 +427,24 @@ export default {
         ? await handleProxy(request, env, publicAuth)
         : null;
       if (proxied) return addCors(proxied, request, env);
+
+      if (path === '/api/battles' || path.startsWith('/api/battles/')) {
+        const match = path.match(/^\/api\/battles\/([a-f0-9]{32})(?:\/(still|recording|finisher|publish))?$/);
+        const auth = method === 'GET' || method === 'HEAD' ? publicAuth : await sensitiveOptionalAuth(request, env, publicAuth);
+        if (isResponse(auth)) return addCors(auth, request, env);
+        let response: Response;
+        if (path === '/api/battles' && method === 'POST') response = await createBattle(request, env, auth);
+        else if (path === '/api/battles' && method === 'GET') response = await listBattles(request, env, auth);
+        else if (!match) response = json({ error: 'Not found' }, 404);
+        else if (!match[2] && method === 'GET') response = await getBattle(request, env, auth, match[1]);
+        else if (!match[2] && method === 'DELETE') response = await deleteBattle(request, env, auth, match[1]);
+        else if (['still', 'recording', 'finisher'].includes(match[2]) && (method === 'GET' || method === 'HEAD')) response = await getBattleMedia(request, env, auth, match[1], match[2]);
+        else if (match[2] === 'recording' && method === 'PUT') response = await uploadBattleRecording(request, env, auth, match[1]);
+        else if (match[2] === 'finisher' && method === 'POST') response = await createBattleFinisher(request, env, auth, match[1]);
+        else if (match[2] === 'publish' && method === 'POST') response = await publishBattle(request, env, auth, match[1]);
+        else response = json({ error: 'Method not allowed' }, 405);
+        return addCors(response, request, env);
+      }
 
       if (path === '/api/aura/clips' && method === 'POST') {
         const auth = await sensitiveOptionalAuth(request, env, publicAuth);

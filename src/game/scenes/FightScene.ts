@@ -1,3 +1,5 @@
+import type { BattleSummary } from '../../shared/BattleFinisher.ts';
+import { BattleCaptureSession, battleWinnerSide } from '../match/BattleCapture.ts';
 import Phaser from "phaser";
 import type { Fighter } from "../fighters/Fighter.ts";
 import { FighterView } from "../fighters/FighterView.ts";
@@ -88,6 +90,8 @@ function getSignatureStageTextureKey(stageId: StageThemeId): string {
 }
 
 export class FightScene extends Phaser.Scene {
+  private battleCapture: BattleCaptureSession | null = null;
+  private finalBattleSummary: BattleSummary | null = null;
   /**
    * The whole match state lives in the headless simulation; this scene only
    * samples inputs, steps it on a fixed 60 Hz tick, and renders its state
@@ -210,6 +214,9 @@ export class FightScene extends Phaser.Scene {
   }
 
   init(data: MatchSceneData): void {
+    this.battleCapture?.cancel();
+    this.battleCapture = new BattleCaptureSession();
+    this.finalBattleSummary = null;
     this.restartFormat = matchRestartFormat(data);
     this.experience = data.experience === "trial" ? "trial" : "standard";
     this.roundsToWin = resolveMatchRoundsToWin(
@@ -2311,10 +2318,26 @@ export class FightScene extends Phaser.Scene {
       isRanked: false,
       ...(this.online ? { online: this.online } : {}),
     };
+    this.finalBattleSummary = {
+      game: 'fight', winner: winnerSlot, p1Name: this.p1Name, p2Name: this.p2Name,
+      stageLabel: this.stageDisplayLabel, stageId: this.resolvedStageId,
+      durationSeconds: detail.durationSeconds, p1Score: detail.roundsP1, p2Score: detail.roundsP2,
+      seed: this.matchSeed,
+    };
     window.dispatchEvent(new CustomEvent(MATCH_COMPLETE_EVENT, { detail }));
   }
 
   private showMatchOverUI(): void {
+    // MATCH_OVER follows the simulated KO/victory presentation. Snapshot the
+    // next render now, after both fighters have settled and before a rematch.
+    if (this.finalBattleSummary) {
+      this.syncViews();
+      const winner = this.finalBattleSummary.winner === 'p1' ? this.p1View : this.p2View;
+      const loser = this.finalBattleSummary.winner === 'p1' ? this.p2View : this.p1View;
+      this.battleCapture?.capture(this, { ...this.finalBattleSummary,
+        winnerSide: battleWinnerSide([winner.getVisibleTopCenter().x], [loser.getVisibleTopCenter().x]),
+      });
+    }
     this.sound_mgr.stopBattleMusic();
     this.waitingForMatchInput = true;
     this.setMatchActionsVisible(true);
@@ -2440,6 +2463,7 @@ export class FightScene extends Phaser.Scene {
   }
 
   private readonly onSceneLifecycleEnd = (): void => {
+    this.battleCapture?.cancel();
     if (!this.sceneLifecycleActive) return;
     this.sceneLifecycleActive = false;
     this.sceneLifecycleEpoch += 1;

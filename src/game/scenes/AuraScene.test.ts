@@ -873,13 +873,39 @@ function controlsHarness(options: { isVsAI?: boolean; cpuVsCpu?: boolean; online
 }
 
 describe('AuraScene persistent controls', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('removes keyboard hints for a coarse pointer even in a desktop-sized canvas', () => {
+    vi.stubGlobal('window', { matchMedia: (query: string) => ({ matches: query === '(pointer: coarse)' }) });
+    const scene = controlsHarness();
+    scene.updateTurnPresentation(0);
+    expect(scene.laneKeyTexts.every((text: ReturnType<typeof controlText>) => !text.visible)).toBe(true);
+    expect(scene.highwayMetaText.text).toBe('YOUR TURN · TAP ON BEAT');
+    expect(scene.highwayTitleText.text).toBe('YOUR TURN');
+    scene.updateTurnPresentation(-1);
+    expect(scene.highwayMetaText.text).toBe('GET READY · TAP THE COLOURS');
+  });
+
+  it('unmistakably dims rival targets, then restores them when the player takes over', () => {
+    const scene = controlsHarness();
+    scene.updateTurnPresentation(1);
+    expect(scene.highwayTitleText.text).toBe('RIVAL’S TURN');
+    expect(scene.targetGraphics.setAlpha).toHaveBeenLastCalledWith(0.2);
+    expect(scene.laneGraphics.setAlpha).toHaveBeenLastCalledWith(0.55);
+    expect(scene.highwayMetaText.text).toBe('WATCH · CONTROLS OFF');
+    for (const label of scene.laneKeyTexts) expect(label.setAlpha).toHaveBeenLastCalledWith(0.2);
+    scene.updateTurnPresentation(0);
+    expect(scene.highwayTitleText.text).toBe('YOUR TURN');
+    expect(scene.targetGraphics.setAlpha).toHaveBeenLastCalledWith(1);
+    expect(scene.laneGraphics.setAlpha).toHaveBeenLastCalledWith(1);
+    for (const label of scene.laneKeyTexts) expect(label.setAlpha).toHaveBeenLastCalledWith(1);
+  });
   it.each([
-    { title: 'human turn', options: {}, turn: 0, keys: AURA_DEFAULT_LANE_KEYS, hint: 'YOUR TURN · HIT THE SHAPES' },
-    { title: 'CPU turn', options: {}, turn: 1, keys: AURA_DEFAULT_LANE_KEYS, hint: 'CPU TURN · GET READY' },
+    { title: 'human turn', options: {}, turn: 0, keys: AURA_DEFAULT_LANE_KEYS, hint: 'YOUR TURN · HIT ON BEAT' },
+    { title: 'CPU turn', options: {}, turn: 1, keys: AURA_DEFAULT_LANE_KEYS, hint: 'WATCH · CONTROLS OFF' },
     { title: 'local P1', options: { isVsAI: false }, turn: 0, keys: AURA_LOCAL_P1_LANE_KEYS, hint: 'P1 TURN · A S D F' },
     { title: 'local P2', options: { isVsAI: false }, turn: 1, keys: AURA_LOCAL_P2_LANE_KEYS, hint: 'P2 TURN · J K L ;' },
-    { title: 'online local P2', options: { online: { localSlot: 1 as const } }, turn: 1, keys: AURA_DEFAULT_LANE_KEYS, hint: 'YOUR TURN · HIT THE SHAPES' },
-    { title: 'online rival', options: { online: { localSlot: 1 as const } }, turn: 0, keys: AURA_DEFAULT_LANE_KEYS, hint: 'RIVAL TURN · GET READY' },
+    { title: 'online local P2', options: { online: { localSlot: 1 as const } }, turn: 1, keys: AURA_DEFAULT_LANE_KEYS, hint: 'YOUR TURN · HIT ON BEAT' },
+    { title: 'online rival', options: { online: { localSlot: 1 as const } }, turn: 0, keys: AURA_DEFAULT_LANE_KEYS, hint: 'WATCH · CONTROLS OFF' },
     { title: 'watch CPU 1', options: { cpuVsCpu: true }, turn: 0, keys: ['1', '2', '3', '4'], hint: 'AUTO · CPU 1 TURN' },
     { title: 'watch CPU 2', options: { cpuVsCpu: true }, turn: 1, keys: ['1', '2', '3', '4'], hint: 'AUTO · CPU 2 TURN' },
   ])('keeps aligned, high-contrast lane references for $title', ({ options, turn, keys, hint }) => {
@@ -902,7 +928,7 @@ describe('AuraScene persistent controls', () => {
     scene.updateTurnPresentation(1);
     expect(scene.laneKeyTexts.map((text: ReturnType<typeof controlText>) => text.text)).toEqual(AURA_DEFAULT_LANE_KEYS);
     expect(scene.laneKeyTexts.every((text: ReturnType<typeof controlText>) => text.visible)).toBe(true);
-    expect(scene.highwayMetaText.text).toBe('CPU TURN · GET READY');
+    expect(scene.highwayMetaText.text).toBe('WATCH · CONTROLS OFF');
     scene.updateTurnPresentation(2);
     expect(scene.laneKeyTexts.every((text: ReturnType<typeof controlText>) => !text.visible)).toBe(true);
     expect(scene.highwayMetaText.visible).toBe(false);
@@ -952,7 +978,11 @@ function cameraHarness(width = 1024, height = 576) {
       setDisplaySize(displayWidth: number, displayHeight: number) { Object.assign(this, { displayWidth, displayHeight }); return this; },
     },
   });
-  scene.views.forEach((view: Record<string, unknown>, slot: number) => { view.getIdleBodyReference = () => bodies[slot]; });
+  scene.views.forEach((view: any, slot: number) => {
+    view.getIdleBodyReference = () => bodies[slot];
+    view.getVisibleTopCenter.mockReturnValue({ x: bodies[slot].rootX, y: 220 });
+    scene.auraPerformanceViews[slot]?.getVisibleTopCenter.mockReturnValue({ x: bodies[slot].rootX, y: 220 });
+  });
   scene.playerTags.forEach((tag: Record<string, unknown>) => { tag.setVisible = vi.fn(); });
   Object.assign(scene.comicFeedback, { setAnchor: vi.fn(), setSlotVisible: vi.fn() });
   scene.layoutStage();
@@ -1076,6 +1106,7 @@ describe('AuraScene responsive whole-rig layout', () => {
       cameraFocusSlot: 1, cameraFromSlot: winner === 'p1' && !reducedMotion ? 0 : 1, reduceMotion: reducedMotion,
       cameraTransitionMs: winner === 'p1' && !reducedMotion ? AURA_CAMERA_HANDOFF_MS / 2 : AURA_CAMERA_HANDOFF_MS,
       finishVideoCapture: vi.fn(), setMatchActionsVisible: vi.fn(),
+      battleCapture: { capture: vi.fn() }, lifecycleActive: true,
       time: { delayedCall: vi.fn((delay: number, callback: () => void) => setTimeout(callback, delay)) },
     });
     Object.assign(scene.soundManager, { playAnnounce: vi.fn(), peakAuraCrowd: vi.fn() });
@@ -1109,6 +1140,10 @@ describe('AuraScene responsive whole-rig layout', () => {
     expect(scene.setMatchActionsVisible).toHaveBeenCalledExactlyOnceWith(true);
     expect(scene.time.delayedCall).toHaveBeenCalledWith(2_800, expect.any(Function));
     vi.advanceTimersByTime(2_800);
+    expect(scene.battleCapture.capture).toHaveBeenCalledExactlyOnceWith(scene, expect.objectContaining({
+      game: 'aura', winner, winnerSide: winner === 'draw' ? undefined : winner === 'p1' ? 'left' : 'right', p1Name: 'P1', p2Name: 'P2',
+      p1Score: battle.scoreFor(0).score, p2Score: battle.scoreFor(1).score,
+    }), { heightRatio: 1 });
     expect(scene.finishVideoCapture).toHaveBeenCalledExactlyOnceWith(1);
   });
 
@@ -1122,9 +1157,9 @@ describe('AuraScene responsive whole-rig layout', () => {
       crowdLabelText: controlText(), crowdMeterGraphics: controlGraphics(),
     });
     scene.updateCrowdUi(0);
-    expect(scene.crowdLabelText).toMatchObject({ x, y, text: height > width ? 'WARMING UP' : 'CROWD · WARMING UP', visible: true });
+    expect(scene.crowdLabelText).toMatchObject({ x, y, text: height > width ? 'WARMING UP' : 'CROWD · WARMING UP', visible: width > height });
     scene.updateCrowdUi(1);
-    expect(scene.crowdLabelText).toMatchObject({ x, y, text: height > width ? 'UNHINGED' : 'CROWD · UNHINGED', visible: true });
+    expect(scene.crowdLabelText).toMatchObject({ x, y, text: height > width ? 'UNHINGED' : 'CROWD · UNHINGED', visible: width > height });
     expect(scene.crowdLabelText.setOrigin.mock.calls).toEqual([[1, 0], [1, 0]]);
     expect(scene.crowdMeterGraphics.fillRect).toHaveBeenCalledTimes(16);
     for (const [, segmentY, , segmentHeight] of scene.crowdMeterGraphics.fillRect.mock.calls) {
@@ -1184,11 +1219,11 @@ describe('AuraScene responsive whole-rig layout', () => {
     );
     expect(scene.laneKeyTexts[note.lane]).toMatchObject({ x, y: scene.layout.keyLabelY });
     expect(scene.laneKeyTexts.map((text: ReturnType<typeof controlText>) => text.text)).toEqual(AURA_DEFAULT_LANE_KEYS);
-    expect(scene.highwayMetaText.text).toBe('RIVAL TURN · GET READY');
+    expect(scene.highwayMetaText.text).toBe('WATCH · CONTROLS OFF');
     // A later local turn uses the same device bindings, not the actor's screen side.
     scene.drawLaneControlHints(1);
     expect(scene.laneKeyTexts.map((text: ReturnType<typeof controlText>) => text.text)).toEqual(AURA_DEFAULT_LANE_KEYS);
-    expect(scene.highwayMetaText.text).toBe('YOUR TURN · HIT THE SHAPES');
+    expect(scene.highwayMetaText.text).toBe('YOUR TURN · HIT ON BEAT');
   });
 
   it.each([[1024, 576], [576, 1024]])('places both rigs around their own physical idle feet without ticking at %i×%i', (width, height) => {

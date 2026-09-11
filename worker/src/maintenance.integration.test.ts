@@ -1,9 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 import { cleanupOperationalData } from './maintenance';
 import type { Env } from './types';
 
-const SCHEMA = `
+const SCHEMA = readFileSync('worker/migrations/0039_battle_finishers.sql', 'utf8').replace(/--[^\n]*/g, '') + `
   PRAGMA foreign_keys = ON;
   CREATE TABLE users (
     id TEXT PRIMARY KEY,

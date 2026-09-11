@@ -16,6 +16,15 @@ describe('App route normalization', () => {
     expect(normalizeRoute('/roster/aura-watch/', '')).toBe('/roster/aura-watch');
   });
 
+  it('keeps saved battle and standalone finisher links intact', () => {
+    const id = '1f9b3c8d-a6c2-4ea4-8f6d-e7a2d9c8b0f1';
+    expect(normalizeRoute('/battles', '')).toBe('/battles');
+    expect(normalizeRoute(`/battles/${id}/`, '')).toBe(`/battles/${id}`);
+    expect(normalizeRoute(`/battles/${id}/finisher`, '')).toBe(`/battles/${id}/finisher`);
+    expect(normalizeRoute(`/battles/${id}/unexpected`, '')).toBe('/menu');
+    expect(normalizeRoute('/battles/broken', '')).toBe('/menu');
+  });
+
   it('falls back to the menu for unknown paths', () => {
     expect(normalizeRoute('/not-a-route', '')).toBe('/menu');
     expect(normalizeRoute('/watch/broken', '')).toBe('/menu');

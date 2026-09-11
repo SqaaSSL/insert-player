@@ -399,7 +399,7 @@ describe('SoundManager recording mix', () => {
   it.each([
     'aura_glide', 'aura_six_seven', 'aura_mog_check', 'aura_floor_worm',
     'aura_one_leg', 'aura_shrug', 'aura_unbothered',
-  ] satisfies AuraAnimationName[])('routes %s through the quiet master and the existing recording tap with a click-free envelope', name => {
+  ] satisfies AuraAnimationName[])('routes %s through the bounded master and the existing recording tap with a click-free envelope', name => {
     const sound = new SoundManager();
     sound.getRecordingAudioTracks();
     const ctx = FakeAudioContext.instances[0];
@@ -426,7 +426,8 @@ describe('SoundManager recording mix', () => {
       expect(oscillator.frequency.setValueAtTime.mock.calls[0][0]).toBeGreaterThan(100);
       totalPeak += peak;
     }
-    expect(totalPeak * master.gain.value).toBeLessThanOrEqual(0.064);
+    expect(totalPeak * master.gain.value).toBeGreaterThanOrEqual(0.039);
+    expect(totalPeak * master.gain.value).toBeLessThanOrEqual(0.09);
     sound.destroy();
   });
 

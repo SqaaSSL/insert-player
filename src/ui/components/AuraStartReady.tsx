@@ -19,7 +19,7 @@ export function AuraStartReady({ playerName, rivalName, practiceAvailable, pract
       <p>vs {rivalName}</p>
     </div>
     <p className="aura-start-ready__instruction">
-      {practiceFirst ? 'Four practice hits, then the duel.' : 'Hit the beat. More Aura wins.'}
+      {practiceFirst ? 'Practise 4 notes, then take turns with your rival.' : 'Take turns hitting the beat. More Aura wins.'}
     </p>
     <div className="aura-start-ready__actions">
       <button type="button" className="asf-btn aura-start-ready__primary" disabled={busy} onClick={() => start(practiceFirst)}>
