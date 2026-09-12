@@ -1,0 +1,24 @@
+{
+  "duration": 40.15,
+  "primaryGame": "aura",
+  "secondaryGames": ["fight", "rush"],
+  "source": "assets/three-games-aura-v21.mp4",
+  "sourceSha256": "2b87aace49a67d83d59a8efc5d95912e3a774000fe835a210aeaca5f93731a20",
+  "clips": [
+    { "id": "aura-main-video", "role": "primary", "at": 4.65, "sourceStart": 12, "duration": 18.5 },
+    { "id": "optional-games-video", "role": "secondary", "at": 23.15, "sourceStart": 3, "duration": 9 },
+    { "id": "aura-return-video", "role": "primary-reprise", "at": 32.15, "sourceStart": 21.25, "duration": 3.25 }
+  ],
+  "chapters": [
+    { "game": "aura", "at": 4.65, "duration": 18.5 },
+    { "game": "fight-loading", "at": 23.15, "duration": 2.4 },
+    { "game": "fight", "at": 25.55, "duration": 3.1 },
+    { "game": "rush", "at": 28.65, "duration": 3.5 },
+    { "game": "aura", "at": 32.15, "duration": 3 }
+  ],
+  "auraSeconds": 21.5,
+  "secondaryGameplaySeconds": 6.6,
+  "closingAt": 35.15,
+  "closingCta": "START FARMING AURA FOR FREE",
+  "notes": "Native media trims: no new generation, capture, resampling or compression. No equal-games teaser. Last 0.25s runs below closing reveal and does not count toward Aura screen time. All prior sources preserved."
+}

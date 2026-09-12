@@ -2,17 +2,40 @@
 workflow: product-launch-video
 flow: automation
 storyboard: no
-message: "A real person can become a recognizable, playable arcade fighter"
+message: "Farm Aura as yourself, build flow and challenge friends; Fight and Rush are optional extras"
 destination: website-embed
 aspect: 1920x1080
 language: en
 audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
 length: 40.15s
-angle: "Keep the approved photo transformation, then prove three real games with Aura as the main attraction"
+angle: "Aura farming is the core product, not one of three equal games"
 narration: "A concise product explanation ending with the arcade-announcer lockup"
 ---
 
-## Current Revision: Aura Farming v21 (2026-09-12)
+## Current Revision: Aura First v22 (2026-09-12)
+
+The user clarified the PRODUCT HIERARCHY, not just screen-time allocation:
+Aura farming is the main reason to visit Insert Player. Fight and Rush are
+optional side activities for people already interested in farming Aura. Never
+sell this film as three equivalent games or lead with a mixed three-game reel.
+
+- Open the voice with "Your photo. Your character. Start farming Aura."
+- Preserve the approved visual photo transformation, then cut directly to
+  18.5 uninterrupted seconds of Aura. No Fight/Rush teaser before that block.
+- Introduce the other activities only at 23.15s with "Want a change?" and
+  smaller "ALSO: FIGHT / ALSO: RUSH" labels. Keep the approved loading curtain
+  here, with its matching bout and the smooth v21 Trump capture.
+- Return to Aura at 32.15s and close on "START FARMING AURA FOR FREE".
+- Keep the 40.15-second length and five-second end card. Aura takes 21.5s,
+  about three quarters of the gameplay excluding the loading curtain.
+- One new Orus/Gemini TTS take, no retry/fallback; reuse the actual approved
+  "Ready? Insert Player." ending and the exact v21 Neon Arena music source.
+- Reorder through native HyperFrames media-start/start/duration attributes;
+  no new gameplay generation, capture, resampling or lossy intermediate.
+- Preview v22 first. The landing's exported v21 file remains unchanged until
+  approval to render/publish. Every old asset and take is retained.
+
+## Previous Revision: Aura Farming v21 (2026-09-12)
 
 The user flagged stuttering Fight footage and asked for more Aura, explicitly
 framed as **Aura farming**. Never mock the moves or call them ridiculous: the

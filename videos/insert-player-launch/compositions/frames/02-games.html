@@ -7,22 +7,27 @@
     .game-label { position: absolute; bottom: 64px; left: 64px; display: flex; align-items: center; gap: 28px; padding: 24px 30px; background: #04040d; border: 2px solid #ffce3a; color: #fff4d6; }
     .game-label strong { font: 40px/1.2 "Press Start 2P", monospace; letter-spacing: 0; color: #ffce3a; }
     .game-label span { font: 700 30px/1.3 "Space Grotesk", sans-serif; letter-spacing: 0; }
+    .game-label--extra strong { font-size: 26px; }
+    .game-label--extra span { font-size: 26px; }
   </style>
   <div data-hf-id="hf-qcz5" id="games-root" data-composition-id="02-games" data-duration="30.75" data-width="1920" data-height="1080">
-    <div id="fight-label-slot" data-hf-id="hf-4ii5" class="clip game-label-slot" data-start="5.4" data-duration="1.8" data-track-index="1">
-      <div data-hf-id="hf-lofk" id="fight-label" class="game-label"><strong data-hf-id="hf-481g">FIGHT</strong><span data-hf-id="hf-45yf">Challenge a friend.</span></div>
+    <div id="fight-label-slot" data-hf-id="hf-4ii5" class="clip game-label-slot" data-start="18.7" data-duration="3.8" data-track-index="2">
+      <div data-hf-id="hf-lofk" id="fight-label" class="game-label game-label--extra"><strong data-hf-id="hf-481g">ALSO: FIGHT</strong><span data-hf-id="hf-45yf">Same character. New challenge.</span></div>
     </div>
-    <div id="rush-label-slot" data-hf-id="hf-ajrv" class="clip game-label-slot" data-start="8.5" data-duration="1.8" data-track-index="1">
-      <div data-hf-id="hf-n3tq" id="rush-label" class="game-label"><strong data-hf-id="hf-27i4">RUSH</strong><span data-hf-id="hf-qfrq">You + your CPU ally.</span></div>
+    <div id="rush-label-slot" data-hf-id="hf-ajrv" class="clip game-label-slot" data-start="24" data-duration="2.6" data-track-index="2">
+      <div data-hf-id="hf-n3tq" id="rush-label" class="game-label game-label--extra"><strong data-hf-id="hf-27i4">ALSO: RUSH</strong><span data-hf-id="hf-qfrq">You + your CPU ally.</span></div>
     </div>
-    <div id="aura-label-slot" data-hf-id="hf-bxfb" class="clip game-label-slot" data-start="12" data-duration="2.8" data-track-index="1">
-      <div data-hf-id="hf-at65" id="aura-label" class="game-label"><strong data-hf-id="hf-xdgh">AURA</strong><span data-hf-id="hf-0qin">Farm Aura. Build your flow.</span></div>
+    <div id="aura-label-slot" data-hf-id="hf-bxfb" class="clip game-label-slot" data-start="0.2" data-duration="3.8" data-track-index="1">
+      <div data-hf-id="hf-at65" id="aura-label" class="game-label"><strong data-hf-id="hf-xdgh">AURA FARMING</strong><span data-hf-id="hf-0qin">Your character. Your flow.</span></div>
+    </div>
+    <div data-hf-id="hf-dlox" id="aura-return-label-slot" class="clip game-label-slot" data-start="27.5" data-duration="2.8" data-track-index="1">
+      <div data-hf-id="hf-f342" id="aura-return-label" class="game-label"><strong data-hf-id="hf-ift2">KEEP FARMING AURA</strong></div>
     </div>
   </div>
   <script>
     (() => {
       const tl = gsap.timeline({ paused: true });
-      for (const [selector, at, hold] of [['#fight-label', 5.4, 1.6], ['#rush-label', 8.5, 1.6], ['#aura-label', 12, 2.6]]) {
+      for (const [selector, at, hold] of [['#aura-label', 0.2, 3.6], ['#fight-label', 18.7, 3.6], ['#rush-label', 24, 2.4], ['#aura-return-label', 27.5, 2.6]]) {
         tl.fromTo(selector, { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.2, ease: 'power3.out' }, at);
         tl.to(selector, { opacity: 0, y: 12, duration: 0.2, ease: 'power2.in' }, at + hold);
       }

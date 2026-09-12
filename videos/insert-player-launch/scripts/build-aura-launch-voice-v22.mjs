@@ -1,0 +1,33 @@
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { execFileSync, spawnSync } from 'node:child_process';
+import assert from 'node:assert/strict';
+
+const root = resolve(import.meta.dirname, '..');
+const plan = JSON.parse(readFileSync(resolve(root, 'provenance/aura-launch-v22-cues.json')));
+const raw = resolve(root, 'assets/generated/tts-launch-aura-first-v22.wav');
+const matched = resolve(root, plan.sources.new);
+const output = resolve(root, 'assets/generated/launch-voice-aura-v22.wav');
+const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex');
+assert.equal(hash(raw), '30e8476e7026567fd53274ed42f6162d687360b56c248ec0db998d4630d4e937');
+for (const path of [matched, output]) assert(!existsSync(path), 'Preserve all existing versions.');
+const target = 'loudnorm=I=-16.64:TP=-1.35:LRA=11';
+const measurement = spawnSync('ffmpeg', ['-hide_banner', '-i', raw, '-af', `${target}:print_format=json`, '-f', 'null', '-'], { encoding: 'utf8' });
+assert.equal(measurement.status, 0);
+const levels = JSON.parse(measurement.stderr.match(/\{\s*"input_i"[\s\S]*?\}/)[0]);
+const normalization = `${target}:measured_I=${levels.input_i}:measured_TP=${levels.input_tp}:measured_LRA=${levels.input_lra}:measured_thresh=${levels.input_thresh}:offset=${levels.target_offset}:linear=true`;
+const ffmpeg = args => execFileSync('ffmpeg', ['-v', 'error', '-n', ...args], { stdio: 'inherit' });
+ffmpeg(['-i', raw, '-af', normalization, '-ar', '48000', '-ac', '1', matched]);
+const names = Object.keys(plan.sources);
+const filters = plan.cues.map((cue, i) => {
+  const duration = cue.range[1] - cue.range[0];
+  assert(duration > 0 && cue.at + duration <= (plan.cues[i + 1]?.at ?? plan.duration));
+  return `[${names.indexOf(cue.source)}:a]atrim=start=${cue.range[0]}:end=${cue.range[1]},asetpts=PTS-STARTPTS,adelay=${Math.round(cue.at * 1000)}:all=1[c${i}]`;
+});
+filters.push(`${plan.cues.map((_, i) => `[c${i}]`).join('')}amix=inputs=${plan.cues.length}:normalize=0,apad=whole_dur=${plan.duration},atrim=end=${plan.duration}[out]`);
+ffmpeg([...names.flatMap(name => ['-i', resolve(root, plan.sources[name])]), '-filter_complex', filters.join(';'), '-map', '[out]', '-ar', '48000', '-ac', '2', output]);
+writeFileSync(resolve(root, 'provenance/aura-launch-v22-audio.json'), JSON.stringify({ duration: plan.duration, rawSha256: hash(raw), voiceSha256: hash(output), measurement: levels, normalization, music: 'assets/generated/launch-bed-aura-v21.wav', musicUnchanged: true, newTakes: 1, retries: 0, fallbacks: 0, playbackRate: 1, note: 'Source trims land inside measured silence, not approximate ASR word boundaries.' }, null, 2) + '\n', { flag: 'wx' });
+const stamp = time => { const ms = Math.round(time * 1000); return `00:${String(Math.floor(ms / 1000)).padStart(2, '0')}.${String(ms % 1000).padStart(3, '0')}`; };
+writeFileSync(resolve(root, 'provenance/aura-launch-v22-en.vtt'), 'WEBVTT\n\n' + plan.captions.map(c => `${stamp(c.start)} --> ${stamp(c.end)}\n${c.text}`).join('\n\n') + '\n', { flag: 'wx' });
+console.log(`Built ${plan.duration}s Aura-first voice. Original music unchanged.`);
