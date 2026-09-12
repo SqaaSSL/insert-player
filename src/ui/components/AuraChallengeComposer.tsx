@@ -12,6 +12,7 @@ import '../aura-challenges.css';
 
 interface AuraChallengeComposerProps {
   routine: AuraChallengeRoutine;
+  compact?: boolean;
   recording?: File | null;
   scores: ReadonlyArray<{ slot: 0 | 1; name: string; score: number }>;
   replyTo?: string;
@@ -19,7 +20,7 @@ interface AuraChallengeComposerProps {
   onDraftChange?: (challenge: AuraChallenge | null) => void;
 }
 
-export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onDraftChange, recording }: AuraChallengeComposerProps) {
+export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onDraftChange, recording, compact = false }: AuraChallengeComposerProps) {
   const [locked, setLocked] = useState(false);
   const [slot, setSlot] = useState(scores[0]?.slot ?? 0);
   const selected = scores.find(score => score.slot === slot) ?? scores[0];
@@ -67,11 +68,13 @@ export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onD
     finally { busyRef.current = false; setBusy(null); }
   };
   return (
-    <section className="aura-challenge-composer" aria-label={recording ? 'Share your battle' : replyTo ? 'Send your score back' : 'Challenge a friend'}>
-      <p className="aura-challenge-composer__brand">INSERT PLAYER · AURA CHALLENGE</p>
+    <section className={`aura-challenge-composer${compact ? ' is-compact' : ''}`} aria-label={recording ? 'Share your battle' : replyTo ? 'Send your score back' : 'Challenge a friend'}>
+      {!compact ? <><p className="aura-challenge-composer__brand">INSERT PLAYER · AURA CHALLENGE</p>
       <h3>{recording ? 'Your battle. Their next challenge.' : replyTo ? 'Send your score back' : 'Challenge a friend'}</h3>
-      <p className="aura-challenge-composer__notice">{selected.score.toLocaleString()} AURA. {replyTo || 'Your friend'} gets this exact song, routine and difficulty.</p>
+      <p className="aura-challenge-composer__notice">{selected.score.toLocaleString()} AURA. {replyTo || 'Your friend'} gets this exact song, routine and difficulty.</p></> : null}
       <div className="aura-challenge-composer__form">
+        <details className="aura-challenge-composer__identity" open={compact ? undefined : true}>
+          <summary>{compact ? 'Edit name or score' : 'Your challenge'}</summary>
         {scores.length > 1 ? <label>Whose score?
           <select value={slot} disabled={busy !== null || locked} onChange={event => {
             const next = Number(event.target.value) as 0 | 1;
@@ -83,6 +86,7 @@ export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onD
           <input value={name} disabled={busy !== null || locked} maxLength={AURA_CHALLENGE_MAX_NAME_LENGTH} autoComplete="off"
             onChange={event => { setName(event.target.value); setLink(null); setStatus(null); setManualCopy(false); }} />
         </label>
+        </details>
         {!recording ? <><button type="button" className="asf-btn asf-btn--primary" disabled={busy !== null || !cleanAuraChallengeName(name)} onClick={() => void handoff('share')}>
           {busy === 'share' ? 'Preparing link…' : replyTo ? 'Share score back' : 'Share this challenge'}
         </button>
@@ -90,8 +94,8 @@ export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onD
           {busy === 'copy' ? 'Copying link…' : 'Copy challenge link'}
         </button></> : null}
       </div>
-      {recording ? <AuraClipComposer file={recording} challenge={draft} onLockChange={setLocked} onCreated={onCreated} /> : null}
-      {!recording ? <p className="aura-challenge-composer__notice">Send a playable link with your name and score. Your character, photos and match video are not attached. Friendly scores are not ranked.</p> : null}
+      {recording ? <AuraClipComposer compact={compact} file={recording} challenge={draft} onLockChange={setLocked} onCreated={onCreated} /> : null}
+      {!recording && !compact ? <p className="aura-challenge-composer__notice">Send a playable link with your name and score. Your character, photos and match video are not attached. Friendly scores are not ranked.</p> : null}
       {recording ? <details className="aura-clip-composer__fallback"><summary>Share the score without video</summary>
         <p className="aura-challenge-composer__notice">A playable challenge with your name and score. No video is published.</p>
         <button type="button" className="asf-btn" disabled={busy !== null || !draft} onClick={() => void handoff('share')}>Share challenge only</button>

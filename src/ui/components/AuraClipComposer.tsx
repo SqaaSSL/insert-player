@@ -12,12 +12,13 @@ import '../aura-clips.css';
 
 interface AuraClipComposerProps {
   file: File;
+  compact?: boolean;
   challenge: AuraChallenge | null;
   onLockChange: (locked: boolean) => void;
   onCreated?: (challenge: AuraChallenge) => void;
 }
 
-export function AuraClipComposer({ file, challenge, onLockChange, onCreated }: AuraClipComposerProps) {
+export function AuraClipComposer({ file, challenge, onLockChange, onCreated, compact = false }: AuraClipComposerProps) {
   const [clip, setClip] = useState<AuraClip | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
@@ -144,9 +145,9 @@ export function AuraClipComposer({ file, challenge, onLockChange, onCreated }: A
           {busy ? progress === null ? 'Preparing your link…' : progress === 100 ? 'Finishing upload…' : `Uploading ${progress}%…`
             : status && error ? 'Retry publishing' : 'Create battle link'}
         </button>}
-        <button type="button" className="asf-btn asf-btn--ghost" onClick={() => {
+        {!compact ? <button type="button" className="asf-btn asf-btn--ghost" onClick={() => {
           try { downloadAuraVideo(file); } catch { setError(true); setStatus('Download could not start. Try the video player’s download option.'); }
-        }}>Download video</button>
+        }}>Download video</button> : null}
       </div>}
       {progress !== null ? <progress className="aura-clip-composer__progress" value={progress} max={100} aria-label="Battle video upload" /> : null}
       {busy && !clip ? <p className="aura-challenge-composer__notice" role="status">Keep this page open until your link is ready.</p> : null}

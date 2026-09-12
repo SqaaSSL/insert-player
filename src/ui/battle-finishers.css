@@ -1,12 +1,13 @@
 .battle-finisher { width: 100%; box-sizing: border-box; padding: 22px; border: 1px solid #635633; background: #100f12; color: #fff4d6; text-align: left; }
-.battle-finisher__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
-.battle-finisher--compact { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
-.battle-finisher--compact .battle-finisher__notice { margin-bottom: 0; }
-.battle-finisher--compact .asf-btn { min-height: 48px; white-space: normal; line-height: 1.75; font-size: 10px; }
+.battle-finisher__heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.battle-finisher--compact { display: grid; gap: 8px; padding: 0; border: 0; background: transparent; text-align: center; }
+.battle-finisher--compact .battle-finisher__offer { width: 100%; min-height: 56px; padding: 14px 18px; white-space: normal; line-height: 1.65; font-size: clamp(11px, 2vw, 14px); }
+.battle-finisher--compact .battle-finisher__offer-note { margin: 0; font: 12px/1.5 'Space Grotesk', sans-serif; color: #d5c9b5; }
+.battle-finisher__frame { margin: 10px 0; color: #d5c9b5; font: 12px/1.6 'Space Grotesk', sans-serif; }
+.battle-finisher__frame summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; text-decoration: underline; text-underline-offset: 4px; }
 .battle-finisher__source { display: block; max-width: 100%; max-height: 240px; margin: 18px auto; object-fit: contain; }
 .battle-finisher__eyebrow { margin: 0 0 12px; font-size: 9px; line-height: 1.8; color: #ffce3a; letter-spacing: .06em; }
 .battle-finisher h3 { margin: 0; font-size: 13px; line-height: 1.8; text-wrap: balance; }
-.battle-finisher__price { flex-shrink: 0; padding: 7px 9px; border: 1px solid #77622d; font-size: 8px; line-height: 1.6; color: #ffdf73; }
 .battle-finisher .battle-finisher__notice { font-size: 11px; line-height: 1.9; font-family: 'Space Grotesk', sans-serif; color: #ddd4c8; margin: 13px 0; }
 .battle-finisher .is-error { color: #ffb5a8; }
 .battle-finisher__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; }
@@ -55,7 +56,6 @@
 .battle-watch__chapters .is-active { color: #ffdf73; border-color: #ffce3a; }
 .battle-watch__owner { max-width: 850px; margin: 36px auto 0; }
 .battle-watch__delete .asf-btn { margin: 8px 12px 0 0; }
-.battle-finisher a:focus-visible, .battle-finisher button:focus-visible, .battle-finisher input:focus-visible, .battle-history button:focus-visible, .battle-watch a:focus-visible, .battle-watch button:focus-visible { outline: 3px solid #ffce3a; outline-offset: 4px; }
-@media (max-width: 700px) { .battle-finisher { padding: 17px; } .battle-finisher__heading { flex-direction: column; gap: 8px; } .battle-finisher__price { align-self: flex-start; } .battle-finisher__actions { align-items: stretch; flex-direction: column; } .battle-history__header { align-items: flex-start; flex-direction: column; } .battle-watch { padding-top: 12px; } .battle-watch__layout { grid-template-columns: 1fr; gap: 22px; } .battle-watch__screen .battle-media { max-height: 60svh; } }
+.battle-finisher a:focus-visible, .battle-finisher button:focus-visible, .battle-finisher input:focus-visible, .battle-finisher summary:focus-visible, .battle-history button:focus-visible, .battle-watch a:focus-visible, .battle-watch button:focus-visible { outline: 3px solid #ffce3a; outline-offset: 4px; }
+@media (max-width: 700px) { .battle-finisher { padding: 17px; } .battle-finisher--compact { padding: 0; } .battle-finisher__actions { align-items: stretch; flex-direction: column; } .battle-history__header { align-items: flex-start; flex-direction: column; } .battle-watch { padding-top: 12px; } .battle-watch__layout { grid-template-columns: 1fr; gap: 22px; } .battle-watch__screen .battle-media { max-height: 60svh; } }
 @media (prefers-reduced-motion: reduce) { .battle-finisher__pulse { animation: none; } }
-@media (max-width: 700px) { .battle-finisher--compact { align-items: stretch; flex-direction: column; } }

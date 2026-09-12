@@ -63,8 +63,7 @@ describe('Aura challenge entry and result surfaces', () => {
   it('celebrates beating the friend target even when the CPU won and offers retry, reply and character creation', () => {
     const markup = renderToStaticMarkup(<AuraBattleResults summary={summary} onRetry={vi.fn()} onExit={vi.fn()} onCreatePlayer={vi.fn()} />);
     expect(markup).toContain('You beat Alex');
-    expect(markup).toContain('200 points ahead');
-    expect(markup).toContain('CPU result below is separate');
+    expect(markup).toContain('1,200 / 1,000 target');
     expect(markup).toContain('Retry this challenge');
     expect(markup).toContain('Share score back');
     expect(markup).toContain('Name shown in the link');
@@ -77,12 +76,15 @@ describe('Aura challenge entry and result surfaces', () => {
     expect(markup).not.toContain('Share this challenge');
     expect(markup).toContain('Run It Back');
   });
-  it('makes the branded playable challenge primary and keeps video behind an explicit disclosure', () => {
+  it('keeps sharing and match details behind explicit disclosures without publishing on render', () => {
     const share = vi.fn();
     const markup = renderToStaticMarkup(<AuraBattleResults summary={summary} trial onRetry={vi.fn()} onExit={vi.fn()} onCreatePlayer={vi.fn()} onChallengeCreated={share} />);
-    expect(markup).toContain('INSERT PLAYER · AURA CHALLENGE');
+    expect(markup).toContain('aura-challenge-composer is-compact');
+    expect(markup).toContain('<details class="aura-challenge-composer__identity"><summary>Edit name or score</summary>');
     expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('Create my Rookie Aura'));
     expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('Watch or save your match video'));
+    expect(markup).toContain('<details class="aura-results__share-option"><summary>Share battle</summary>');
+    expect(markup).toContain('<details class="aura-results__details">');
     expect(markup).toContain('<details class="aura-results__video-option">');
     expect(markup).not.toContain('<details open');
     expect(share).not.toHaveBeenCalled();
@@ -91,7 +93,6 @@ describe('Aura challenge entry and result surfaces', () => {
     const markup = renderToStaticMarkup(<AuraBattleResults summary={{ ...summary, p1Score: { ...score, score: 900 },
       p2Score: { ...score, score: 1_300 }, challenge: { ...challenge, slot: 1 }, challengeShareSlots: [1] }} onRetry={vi.fn()} onExit={vi.fn()} />);
     expect(markup).toContain('You beat Alex');
-    expect(markup).toContain('300 points ahead');
     expect(markup).toContain('1,300 / 1,000 target');
   });
 

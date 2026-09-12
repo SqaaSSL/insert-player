@@ -6,27 +6,27 @@ The entry screens show the mechanics and HUD of each game, including in compact 
 
 The landing, `/games/aura` and Play use real Aura gameplay recordings. The previous Canvas demo had drifted from the shipped game: it forced a desktop layout on phones, used Nova instead of Lamine and selected moves independently of the match routine.
 
-`GameplayEntryPreview` now uses the same media playback controller as Fight and Rush. `gameplayPreviewMedia` selects exactly one capture with `getAuraCanvasSize`, the same portrait rule as the game. Portrait footage includes the real HTML touch controls, their disabled rival state, the game HUD and the move rail. Landscape footage includes the actual DFJK instrument. The captures show Trump and Lamine taking turns with the current animations, camera, note judgement and scores. Automated inputs go through the normal controls; no synthetic scores, notes, sprites or feedback are added to the footage.
+`GameplayEntryPreview` now uses the same media playback controller as Fight and Rush. `gameplayPreviewMedia` selects exactly one capture with `getAuraCanvasSize`, the same portrait rule as the game. Portrait footage includes the real HTML touch controls, their disabled rival state, the game HUD, full-width instrument and upper-right stage move card. Landscape footage includes the actual DFJK instrument. The captures show Trump and Lamine taking turns with the current animations, camera, note judgement and scores. Automated inputs go through the normal controls; no synthetic scores, notes, sprites or feedback are added to the footage.
 
 | Shape | Video | Poster | Format |
 | --- | --- | --- | --- |
-| Portrait | `public/assets/play-mode-aura-portrait-v1.mp4` | `public/assets/play-mode-aura-portrait-poster-v1.webp` | 432×768, 23.03s, 1,164,557 bytes |
-| Landscape | `public/assets/play-mode-aura-landscape-v1.mp4` | `public/assets/play-mode-aura-landscape-poster-v1.webp` | 1024×576, 23.13s, 1,870,996 bytes |
+| Portrait | `public/assets/play-mode-aura-portrait-v2.mp4` | `public/assets/play-mode-aura-portrait-poster-v2.webp` | 432×768, 23.07s, 1,147,872 bytes |
+| Landscape | `public/assets/play-mode-aura-landscape-v2.mp4` | `public/assets/play-mode-aura-landscape-poster-v2.webp` | 1024×576, 23.13s, 1,908,279 bytes |
 
-Both were captured from gameplay source `d2c56b25c7ceff3c1ed989b5cdcd115629956662`, encoded as H.264/yuv420p at 30fps with fast-start metadata. Their posters are frames at 1s from their respective clips.
+Both were captured from gameplay source `86891a0545cd0d255726c18de7338ae11e00275f`, encoded as H.264/yuv420p at 30fps with fast-start metadata. Their posters are frames at 1s from their respective clips.
 
 The whole frame remains visible. On a phone, the portrait frame is capped at 56% of the viewport height so the Play action follows directly below it. Both clips are silent; the menu keeps ownership of menu music. There is one preview playback control.
 
 Only the selected visible media loads. Playback pauses offscreen and on hidden tabs. A deliberate pause survives rotation/source changes; reduced motion seeks an actual gameplay frame, with explicit playback still available. The poster comes from that same capture. The controller invalidates old play promises when changing media.
 
-To refresh the clips after gameplay changes, commit the game source and start Vite, then run:
+To refresh the clips after gameplay changes, commit the game source and start a fresh Vite process, then run:
 
 ```bash
 AURA_PREVIEW_BASE=http://127.0.0.1:5173 CAPTURE_VARIANT=portrait node scripts/capture-aura-gameplay-preview.mjs
 AURA_PREVIEW_BASE=http://127.0.0.1:5173 CAPTURE_VARIANT=landscape node scripts/capture-aura-gameplay-preview.mjs
 ```
 
-The harness requires Playwright Chromium, FFmpeg/ffprobe and cwebp. It captures only local free quickplay, blocks remote mutations/provider requests, validates real score progression and both turns, and writes provenance plus encoding metadata under `.artifacts/aura-gameplay-*`. Review both clips before committing them. `--encode-only` reuses validated raw frames when changing compression.
+The harness requires Playwright Chromium, FFmpeg/ffprobe and cwebp. It captures only local free quickplay, blocks remote mutations/provider requests, validates real score progression and both turns, and writes provenance plus encoding metadata under `.artifacts/aura-gameplay-*`. Restart Vite after any gameplay edits: its hot-reload module URLs must match the observer. Review both clips before committing them. `--encode-only` reuses validated raw frames when changing compression.
 
 The legacy `auraPreviewCanvas` and its chart/presentation helpers remain inputs to the static social-card renderer only. They no longer render any landing or Play preview.
 

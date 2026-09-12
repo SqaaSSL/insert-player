@@ -33,8 +33,8 @@ function encode(capture) {
   assert(capture.passed && capture.frames.length > 300, 'A validated real capture is required');
   const size = mobile ? { width: 432, height: 768 } : { width: 1024, height: 576 };
   const assetVariant = mobile ? 'portrait' : 'landscape';
-  const video = `public/assets/play-mode-aura-${assetVariant}-v1.mp4`;
-  const poster = `public/assets/play-mode-aura-${assetVariant}-poster-v1.webp`;
+  const video = `public/assets/play-mode-aura-${assetVariant}-v2.mp4`;
+  const poster = `public/assets/play-mode-aura-${assetVariant}-poster-v2.webp`;
   const encodedVideo = join(output, 'encoded.mp4');
   const encodedPoster = join(output, 'encoded.webp');
   const crop = capture.crop;
@@ -113,6 +113,7 @@ try {
   await page.getByRole('button', { name: 'Start duel', exact: true }).waitFor({ timeout: 90000 });
   report.readyText = await page.locator('.aura-start-ready').innerText();
   console.log(`${variant}: duel assets ready`);
+  assert(await page.evaluate(() => Boolean(window.__capture.scene)), 'Restart Vite after committing gameplay changes, then capture again; the observer must match the live scene module');
   assert.match(report.readyText, /DONALD TRUMP/);
   assert.match(report.readyText, /LAMINE YAMAL/);
   await page.evaluate(({ mobile }) => {

@@ -22,9 +22,11 @@ beforeEach(() => {
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('final battle still session', () => {
-  it('waits for a rendered frame and associates one bounded JPEG with the same battle identity', () => {
+  it('waits for a rendered frame and associates one bounded JPEG with the same battle identity', async () => {
     const session = new BattleCaptureSession();
-    session.capture(scene(), summary);
+    const completion = session.capture(scene(), summary);
+    const settled = vi.fn(); void completion.then(settled);
+    await Promise.resolve(); expect(settled).not.toHaveBeenCalled();
     expect(events).toEqual([{ state: 'started', clientBattleId: session.clientBattleId }]);
     expect(snapshot).toHaveBeenCalledWith(expect.any(Function), 'image/jpeg', 0.92);
     render();
@@ -33,7 +35,8 @@ describe('final battle still session', () => {
     expect(canvas.toDataURL).toHaveBeenCalledWith('image/jpeg', 0.88);
     expect(events.at(-1)).toEqual({ state: 'ready', clientBattleId: session.clientBattleId,
       capture: { clientBattleId: session.clientBattleId, summary, stillBase64: 'data:image/jpeg;base64,c3RpbGw=' } });
-    session.capture(scene(), summary); render(); vi.advanceTimersByTime(10_000);
+    await expect(completion).resolves.toBe('ready');
+    expect(session.capture(scene(), summary)).toBe(completion); render(); vi.advanceTimersByTime(10_000);
     expect(snapshot).toHaveBeenCalledOnce(); expect(events).toHaveLength(2);
   });
   it('preserves portrait framing without enlarging small canvases', () => {
@@ -47,19 +50,29 @@ describe('final battle still session', () => {
     expect(canvas).toMatchObject({ width: 576, height: 524 });
     expect(drawImage).toHaveBeenCalledWith(expect.any(Object), 0, 0, 576, 524, 0, 0, 576, 524);
   });
-  it('cannot attach a late frame or timer from a cancelled match to its replacement', () => {
-    const first = new BattleCaptureSession(); first.capture(scene(), summary); first.cancel();
+  it('cannot attach a late frame or timer from a cancelled match to its replacement', async () => {
+    const first = new BattleCaptureSession(); const completion = first.capture(scene(), summary); first.cancel();
+    await expect(completion).resolves.toBe('cancelled');
     const second = new BattleCaptureSession();
     expect(second.clientBattleId).not.toBe(first.clientBattleId);
     render(); vi.advanceTimersByTime(10_000); first.capture(scene(), summary);
     expect(events.map(event => event.state)).toEqual(['started', 'started']);
     expect(drawImage).not.toHaveBeenCalled(); expect(snapshot).toHaveBeenCalledOnce();
   });
-  it('reports unavailable once on a missing render and ignores a late success', () => {
-    const session = new BattleCaptureSession(); session.capture(scene(), summary);
+  it('reports unavailable once on a missing render and ignores a late success', async () => {
+    const session = new BattleCaptureSession(); const completion = session.capture(scene(), summary);
     vi.advanceTimersByTime(8_000); render();
+    await expect(completion).resolves.toBe('unavailable');
     expect(events.map(event => event.state)).toEqual(['started', 'unavailable']);
     expect(drawImage).not.toHaveBeenCalled();
+  });
+  it('settles cancellation before capture and never replaces a completed outcome', async () => {
+    const cancelled = new BattleCaptureSession(); cancelled.cancel();
+    await expect(cancelled.capture(scene(), summary)).resolves.toBe('cancelled');
+    expect(snapshot).not.toHaveBeenCalled();
+    const ready = new BattleCaptureSession(); const completion = ready.capture(scene(), summary); render(); ready.cancel();
+    await expect(completion).resolves.toBe('ready');
+    expect(events.map(event => event.state)).toEqual(['started', 'started', 'ready']);
   });
   it.each([{ r: 0, g: 0, b: 0 }, { src: '', width: 0, height: 0 }])('rejects invalid snapshot results', image => {
     const session = new BattleCaptureSession(); session.capture(scene(), summary); render(image);

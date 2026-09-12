@@ -21,7 +21,7 @@ const find = (predicate: (node: any) => boolean, node: any = tree): any => { if 
 const button = (label: string) => find(node => node.type === 'button' && node.props.children === label);
 const flush = () => { let renders = 0; do { if (++renders > 30) throw Error('Hook loop'); hooks.dirty = false; hooks.cursor = 0; tree = BattleFinisherPanel(props); for (const effect of hooks.effects.splice(0)) effect(); } while (hooks.dirty); };
 const settle = async () => { for (let i = 0; i < 20; i++) { await Promise.resolve(); flush(); } };
-const expand = () => { button('Make a finisher · 1 credit').props.onClick(); flush(); };
+const expand = () => { button('Fatality · 1 credit').props.onClick(); flush(); };
 const consent = () => { find(node => node.type === 'input' && node.props.type === 'checkbox').props.onChange({ target: { checked: true } }); flush(); };
 beforeEach(() => {
   hooks.slots = []; hooks.cursor = 0; hooks.effects = []; hooks.dirty = false; vi.clearAllMocks();
@@ -33,37 +33,67 @@ afterEach(() => { for (const slot of hooks.slots) slot?.cleanup?.(); vi.useRealT
 
 describe('optional finisher flow', () => {
   it('starts with a compact offer and never saves remotely, spends or publishes on render', async () => {
-    flush(); await settle(); expect(button('Make a finisher · 1 credit')).toBeTruthy();
+    flush(); await settle(); expect(button('Fatality · 1 credit')).toBeTruthy();
+    expect(button('Fatality · 1 credit').props.className).toContain('asf-btn--primary');
+    expect(button('Fatality · 1 credit').props['aria-expanded']).toBe(false);
     expect(find(node => node.type === 'input')).toBeUndefined(); expect(saveBattleCapture).not.toHaveBeenCalled(); expect(generateBattleFinisher).not.toHaveBeenCalled(); expect(publishSavedBattle).not.toHaveBeenCalled();
-    expand(); expect(button('Generate finisher · 1 credit').props.disabled).toBe(true);
+    expand(); expect(button('Generate fatality · 1 credit').props.disabled).toBe(true);
+    expect(find(node => node.type === 'details')?.props.open).not.toBe(true);
+  });
+  it.each([
+    ['queued', 'Fatality queued'],
+    ['generating', 'Creating fatality…'],
+    ['ready', 'Watch fatality'],
+    ['failed', 'Retry fatality · 1 credit'],
+  ] as const)('makes the %s status clear without creating another job', async (status, label) => {
+    const saved: SavedBattle = { ...battle, finisher: { id: 'existing-job', status, creditRefunded: status === 'failed' } };
+    props = { ...props, capture: null, battleId: id, initialBattle: saved };
+    vi.mocked(getSavedBattle).mockResolvedValue(saved);
+    flush(); await settle();
+    expect(button(label)).toBeTruthy();
+    expect(button('Fatality · 1 credit')).toBeUndefined();
+    expect(find(node => node.props?.role === 'status')).toBeTruthy();
+    expect(generateBattleFinisher).not.toHaveBeenCalled();
+    expect(publishSavedBattle).not.toHaveBeenCalled();
   });
   it('requires consent and one explicit click; double clicks cannot create two paid jobs', async () => {
     let resolve!: (value: SavedBattle) => void; vi.mocked(generateBattleFinisher).mockImplementation(() => new Promise(done => { resolve = done; }));
-    flush(); expand(); consent(); const generate = button('Generate finisher · 1 credit'); generate.props.onClick(); generate.props.onClick(); await settle();
+    flush(); expand(); consent(); const generate = button('Generate fatality · 1 credit'); generate.props.onClick(); generate.props.onClick(); await settle();
     expect(saveBattleCapture).toHaveBeenCalledTimes(1); expect(generateBattleFinisher).toHaveBeenCalledTimes(1); expect(publishSavedBattle).not.toHaveBeenCalled();
     expect(vi.mocked(generateBattleFinisher).mock.calls[0][2]).toMatchObject({ ageConfirmed: true, photoRightsConfirmed: true, immediatePerformanceConfirmed: true });
     vi.mocked(getSavedBattle).mockResolvedValue(queued); resolve(queued); await settle(); expect(window.dispatchEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'insert-player-billing-changed' }));
   });
+  it('can collapse and reopen an in-flight generation without starting another one', async () => {
+    let resolve!: (value: SavedBattle) => void;
+    vi.mocked(generateBattleFinisher).mockImplementation(() => new Promise(done => { resolve = done; }));
+    flush(); expand(); consent(); button('Generate fatality · 1 credit').props.onClick(); await settle();
+    button('Close').props.onClick(); flush(); expect(button('Preparing fatality…')).toBeTruthy();
+    button('Preparing fatality…').props.onClick(); flush();
+    expect(button('Preparing fatality…').props.disabled).toBe(true);
+    expect(generateBattleFinisher).toHaveBeenCalledTimes(1);
+    vi.mocked(getSavedBattle).mockResolvedValue(queued); resolve(queued); await settle();
+    expect(generateBattleFinisher).toHaveBeenCalledTimes(1);
+  });
   it('keeps the same request id after a lost generation response instead of making a new purchase intent', async () => {
     vi.mocked(generateBattleFinisher).mockRejectedValueOnce(Error('Connection lost'));
-    flush(); expand(); consent(); button('Generate finisher · 1 credit').props.onClick(); await settle();
-    button('Generate finisher · 1 credit').props.onClick(); await settle();
+    flush(); expand(); consent(); button('Generate fatality · 1 credit').props.onClick(); await settle();
+    button('Generate fatality · 1 credit').props.onClick(); await settle();
     expect(vi.mocked(generateBattleFinisher).mock.calls[1][1]).toBe(vi.mocked(generateBattleFinisher).mock.calls[0][1]);
   });
   it('persists the draft before handing off to sign-in and never charges automatically afterward', async () => {
     props.authStatus = 'signed-out'; props.authSessionKey = 'signed-out'; flush(); expand();
-    button('Sign in to make a finisher').props.onClick(); await settle(); expect(props.onSignIn).toHaveBeenCalledTimes(1); expect(saveBattleDraft).toHaveBeenCalled();
+    button('Sign in for your fatality').props.onClick(); await settle(); expect(props.onSignIn).toHaveBeenCalledTimes(1); expect(saveBattleDraft).toHaveBeenCalled();
     props = { ...props, authStatus: 'signed-in', authSessionKey: 'new-owner' }; flush(); await settle();
-    expect(generateBattleFinisher).not.toHaveBeenCalled(); expect(button('Generate finisher · 1 credit').props.disabled).toBe(true);
+    expect(generateBattleFinisher).not.toHaveBeenCalled(); expect(button('Generate fatality · 1 credit').props.disabled).toBe(true);
   });
   it('keeps a saved battle and offers credits on402 without trying a second generation', async () => {
     vi.mocked(generateBattleFinisher).mockRejectedValue(new BattleFinisherError('Need1credit', 402));
-    flush(); expand(); consent(); button('Generate finisher · 1 credit').props.onClick(); await settle();
+    flush(); expand(); consent(); button('Generate fatality · 1 credit').props.onClick(); await settle();
     expect(button('Get credits')).toBeTruthy(); button('Get credits').props.onClick(); await settle(); expect(props.onBuyCredits).toHaveBeenCalledTimes(1); expect(generateBattleFinisher).toHaveBeenCalledTimes(1);
   });
   it('recovers a pending job after reload through GET polling without sending a paid POST', async () => {
     props = { ...props, capture: null, battleId: id, initialBattle: queued }; vi.mocked(getSavedBattle).mockResolvedValue(queued);
-    flush(); await settle(); expect(button('Check finisher')).toBeTruthy(); expect(getSavedBattle).toHaveBeenCalled(); expect(generateBattleFinisher).not.toHaveBeenCalled();
+    flush(); await settle(); expect(button('Fatality queued')).toBeTruthy(); expect(getSavedBattle).toHaveBeenCalled(); expect(generateBattleFinisher).not.toHaveBeenCalled();
   });
   it('publishes only after the explicit share action, and shares a branded page URL', async () => {
     props = { ...props, capture: null, battleId: id, initialBattle: battle }; flush(); await settle(); expand();
