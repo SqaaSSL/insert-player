@@ -26,8 +26,9 @@ export function bindCombatPreviewPlayback(
   container: Element,
   media: CombatPreviewMedia,
   onStatus: (status: CombatPreviewStatus) => void,
-): { toggle: () => void; destroy: () => void } {
+): { toggle: () => void; setMedia: (next: CombatPreviewMedia) => void; destroy: () => void } {
   const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  let currentMedia = media;
   let inView = false;
   let loaded = false;
   let disposed = false;
@@ -41,9 +42,9 @@ export function bindCombatPreviewPlayback(
 
   const isReduced = () => motion.matches && !explicitMotion;
   const showActionFrame = () => {
-    if (!isReduced() || reducedFrameShown || video.readyState < 1) return;
-    const maximum = Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.1) : media.actionTime;
-    video.currentTime = Math.min(media.actionTime, maximum);
+    if (disposed || !loaded || !isReduced() || reducedFrameShown || video.readyState < 1) return;
+    const maximum = Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.1) : currentMedia.actionTime;
+    video.currentTime = Math.min(currentMedia.actionTime, maximum);
     reducedFrameShown = true;
   };
   const update = () => {
@@ -51,8 +52,8 @@ export function bindCombatPreviewPlayback(
     const visible = inView && !document.hidden;
     if (visible && !loaded) {
       loaded = true;
-      video.poster = media.poster;
-      video.src = media.src;
+      video.poster = currentMedia.poster;
+      video.src = currentMedia.src;
       video.preload = 'auto';
       video.load();
     }
@@ -77,7 +78,7 @@ export function bindCombatPreviewPlayback(
     });
   };
   const onMotion = () => { explicitMotion = false; reducedFrameShown = false; update(); };
-  const onError = () => { failed = true; update(); };
+  const onError = () => { if (!disposed && loaded) { failed = true; update(); } };
   const observer = typeof IntersectionObserver === 'undefined' ? null : new IntersectionObserver(([entry]) => {
     inView = entry.isIntersecting;
     update();
@@ -94,6 +95,29 @@ export function bindCombatPreviewPlayback(
   else { inView = true; update(); }
 
   return {
+    setMedia: (next) => {
+      if (disposed || (next.src === currentMedia.src && next.poster === currentMedia.poster
+        && next.actionTime === currentMedia.actionTime)) return;
+      // Retire the previous play/load before choosing the responsive capture.
+      // User intent belongs to the preview, not to one orientation's resource.
+      desiredPlayback = false;
+      playbackEpoch += 1;
+      video.pause();
+      if (loaded) {
+        video.removeAttribute('src');
+        video.removeAttribute('poster');
+        video.preload = 'none';
+        // Visible swaps load their replacement in update(). Offscreen swaps
+        // still abort the old download, without requesting the next source.
+        if (!inView || document.hidden) video.load();
+      }
+      currentMedia = next;
+      loaded = false;
+      failed = false;
+      playRequired = false;
+      reducedFrameShown = false;
+      update();
+    },
     toggle: () => {
       if (disposed) return;
       if (!loaded) {
