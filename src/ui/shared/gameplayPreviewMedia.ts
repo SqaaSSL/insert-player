@@ -12,14 +12,14 @@ export interface GameplayPreviewMedia extends CombatPreviewMedia {
 const auraDescription = 'Real Aura gameplay: Trump and Lamine take turns, hit four coloured note lanes, earn Aura and perform moves beside their input history.';
 const AURA_GAMEPLAY_MEDIA = {
   landscape: {
-    src: '/assets/play-mode-aura-landscape-v1.mp4',
-    poster: '/assets/play-mode-aura-landscape-poster-v1.webp',
+    src: '/assets/play-mode-aura-landscape-v2.mp4',
+    poster: '/assets/play-mode-aura-landscape-poster-v2.webp',
     actionTime: 1,
     width: 1024, height: 576, name: 'Aura', description: auraDescription,
   },
   portrait: {
-    src: '/assets/play-mode-aura-portrait-v1.mp4',
-    poster: '/assets/play-mode-aura-portrait-poster-v1.webp',
+    src: '/assets/play-mode-aura-portrait-v2.mp4',
+    poster: '/assets/play-mode-aura-portrait-poster-v2.webp',
     actionTime: 1,
     width: 432, height: 768, name: 'Aura', description: auraDescription,
   },

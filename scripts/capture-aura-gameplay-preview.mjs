@@ -113,6 +113,7 @@ try {
   await page.getByRole('button', { name: 'Start duel', exact: true }).waitFor({ timeout: 90000 });
   report.readyText = await page.locator('.aura-start-ready').innerText();
   console.log(`${variant}: duel assets ready`);
+  assert(await page.evaluate(() => Boolean(window.__capture.scene)), 'Restart Vite after committing gameplay changes, then capture again; the observer must match the live scene module');
   assert.match(report.readyText, /DONALD TRUMP/);
   assert.match(report.readyText, /LAMINE YAMAL/);
   await page.evaluate(({ mobile }) => {
