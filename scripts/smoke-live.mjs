@@ -504,10 +504,12 @@ async function runPublicSmoke() {
 
   const tiers = await expectJson('tiers', '/api/tiers');
   const tierIds = new Set((tiers.tiers ?? []).map((tier) => tier.id));
-  for (const id of ['rookie', 'contender', 'champion']) {
+  for (const id of ['rookie', 'contender']) {
     assert(tierIds.has(id), `/api/tiers missing ${id}`);
   }
-  log('/api/tiers exposes Rookie, Contender, Champion');
+  assert(tierIds.size === 2 && !tierIds.has('champion'), '/api/tiers must offer exactly two quality levels');
+  assert(tiers.tiers.find((tier) => tier.id === 'contender')?.label === 'Champion', 'Refined quality must be named Champion');
+  log('/api/tiers exposes Rookie and Champion');
 
   const arcadeFeed = await expectStatus('official Arcade cache headers', '/api/arcade', 200);
   assert(

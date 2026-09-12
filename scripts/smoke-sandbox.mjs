@@ -60,7 +60,7 @@ async function main() {
   const tiers = await fetchJson('sandbox tiers', '/api/tiers');
   assert(tiers.response.ok, `Sandbox tiers returned HTTP ${tiers.response.status}.`);
   const tierCosts = Object.fromEntries((tiers.body.tiers ?? []).map((tier) => [tier.id, tier.creditCost]));
-  assert(tierCosts.rookie === 2 && tierCosts.contender === 11 && tierCosts.champion === 18, 'Sandbox tier costs drifted from 2/11/18 credits.');
+  assert(tierCosts.rookie === 2 && tierCosts.contender === 11 && Object.keys(tierCosts).length === 2, 'Sandbox must expose only Rookie and current Champion at their preserved prices.');
 
   const signedOut = await fetchJson('sandbox signed-out fighters', '/api/fighters');
   assert(signedOut.response.status === 401, `Signed-out fighters expected 401, got ${signedOut.response.status}.`);

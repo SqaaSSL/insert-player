@@ -6,6 +6,8 @@ import {
   generationCreditCost,
   normalizeGenerationBillingOperation,
   normalizeQualityTier,
+  isOfferedQualityTier,
+  RETIRED_TIER_ERROR,
   type GenerationBillingOperation,
 } from './tiers';
 import {
@@ -1044,6 +1046,13 @@ export async function authorizeGenerationPurchase(
   if (!legal) return json({ error: 'Current generation consent is required' }, 428);
   const resumeJobId = body.resumeJobId?.trim() ?? '';
 
+  // Honor paid legacy work and per-asset maintenance, but do not sell the retired
+  // full-generation tier through an old client (including quotes and expansions).
+  if (!isOfferedQualityTier(tier) && !resumeJobId &&
+      (operation === 'fighter_generation' || operation === 'fighter_upgrade')) {
+    return json(RETIRED_TIER_ERROR, 409);
+  }
+
   if (!auth.user) {
     if (expansion || creationPackage === 'aura') return json({ error: 'Sign in to create or expand an Aura character', code: 'package_requires_sign_in' }, 401);
     if (resumeJobId) return json({ error: 'Sign in to resume preserved generation work' }, 401);
@@ -1145,6 +1154,14 @@ export async function authorizeGenerationPurchase(
       expansion,
       legal,
     });
+  }
+
+  if (operation === 'fighter_upgrade' && !expansion) {
+    const missingWork = await quoteOwnedPackageExpansion(env, auth.user.id, ownedFighterId!, tier, creationPackage);
+    if (missingWork.animationCount === 0) return json({
+      error: 'This character already has this pack at the requested quality or higher. You can retry individual animations.',
+      code: 'package_already_complete',
+    }, 409);
   }
 
   if (expansion) {

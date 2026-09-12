@@ -1,0 +1,30 @@
+@reference "../styles.css";
+
+.quality-comparison { margin-top: 1rem; border-top: 1px solid var(--color-asf-line); }
+.quality-comparison > summary { padding: 1rem 0; min-height: 44px; cursor: pointer; color: var(--color-asf-gold); font-weight: 600; }
+.quality-comparison > summary span { margin-left: .75rem; font-size: .85rem; font-weight: 400; color: var(--color-asf-muted); }
+.quality-comparison__content { padding-bottom: .75rem; }
+.quality-comparison__intro { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
+.quality-comparison__intro h3 { margin: 0 0 .4rem; font-size: 1.5rem; font-weight: 600; }
+.quality-comparison__intro p { max-width: 32rem; margin: 0; color: var(--color-asf-muted); }
+.quality-comparison__switch { display: flex; flex-shrink: 0; border: 1px solid var(--color-asf-line-strong); }
+.quality-comparison__switch button { min-height: 44px; padding: .65rem .9rem; cursor: pointer; }
+.quality-comparison__switch button[aria-pressed="true"] { background: var(--color-asf-gold); color: var(--color-asf-bg-deep); }
+.quality-comparison__pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.quality-comparison__pair figure { margin: 0; min-width: 0; overflow: hidden; border: 1px solid var(--color-asf-line); background: #15151c; }
+.quality-comparison__pair figcaption { display: grid; gap: .15rem; padding: .9rem 1rem; border-bottom: 1px solid var(--color-asf-line); }
+.quality-comparison__pair figcaption strong { font-size: 1.1rem; }
+.quality-comparison__pair figcaption span { font-size: .8rem; color: var(--color-asf-muted); }
+.quality-comparison__pair figure:last-child figcaption strong { color: var(--color-asf-gold); }
+.quality-comparison__pair svg { display: block; width: 100%; aspect-ratio: 3 / 4; max-height: 28rem; }
+.quality-comparison__pair.is-detail svg { aspect-ratio: 1; }
+.quality-comparison__caption { max-width: 50rem; margin: .8rem 0 0; font-size: .8rem; line-height: 1.6; color: var(--color-asf-muted); }
+.quality-comparison summary:focus-visible, .quality-comparison button:focus-visible { outline: 2px solid var(--color-asf-gold); outline-offset: 4px; }
+@media (max-width: 680px) {
+  .quality-comparison__intro { align-items: start; flex-direction: column; }
+  .quality-comparison > summary span { display: block; margin: .25rem 0 0 1rem; }
+  .quality-comparison__pair { gap: .5rem; }
+  .quality-comparison__pair figcaption { min-height: 5.75rem; padding: .75rem; }
+  .quality-comparison__pair figcaption strong { font-size: 1rem; }
+  .quality-comparison__pair figcaption span { font-size: .75rem; }
+}

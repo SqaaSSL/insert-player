@@ -146,18 +146,18 @@ export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenChara
           <button className="product-entry__text-link" type="button" onClick={onOpenCharacters}>Open my characters →</button>
         </div>
         <div className="product-entry__pricing">
-          <p className="product-entry__pricing-context">{mode === 'aura' ? 'Start Rookie. Upgrade when you want.' : 'Create at Contender quality'}</p>
+          <p className="product-entry__pricing-context">{mode === 'aura' ? 'Start Rookie. Upgrade when you want.' : 'Create at Champion quality'}</p>
           <dl>
             {mode === 'aura' && <div>
               <dt>Rookie Aura <span>First Rookie included with your account</span></dt>
               <dd>{rookieQuote.priceLabel}<small>after your first Rookie</small></dd>
             </div>}
             <div>
-              <dt>{mode === 'aura' ? 'Contender Aura' : 'Aura'} <span>Six dedicated performance moves</span></dt>
+              <dt>{mode === 'aura' ? 'Champion Aura' : 'Aura'} <span>Six dedicated performance moves</span></dt>
               <dd>{auraQuote.priceLabel}</dd>
             </div>
             <div>
-              <dt>Fight + Rush <span>{mode === 'aura' ? 'Contender · ' : ''}Combat moves for both games</span></dt>
+              <dt>Fight + Rush <span>{mode === 'aura' ? 'Champion · ' : ''}Combat moves for both games</span></dt>
               <dd>{completeQuote.priceLabel}</dd>
             </div>
           </dl>

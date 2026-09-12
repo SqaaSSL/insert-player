@@ -7,7 +7,7 @@ import {
   isVideoReviewOrRestartJob,
   videoReviewJobNeedsConsent,
   videoReviewDecisionNeedsConsent,
-  videoCreationFlowAvailability,
+  isRecoverableVideoReviewJob,
 } from './creationFlow';
 
 function job(overrides: Record<string, unknown> = {}) {
@@ -43,16 +43,11 @@ describe('creation flow UI safeguards', () => {
     expect(() => assertCreationFlowAcknowledged('video', 'video')).not.toThrow();
   });
 
-  it('offers Video only to signed-in Champion generations', () => {
-    expect(videoCreationFlowAvailability('signed-in', 'champion')).toEqual({ available: true });
-    expect(videoCreationFlowAvailability('signed-in', 'contender')).toEqual({
-      available: false,
-      reason: 'Choose Champion quality to use Video.',
-    });
-    expect(videoCreationFlowAvailability('signed-out', 'champion')).toEqual({
-      available: false,
-      reason: 'Sign in to use the cloud Video flow.',
-    });
+  it('recovers paid reviews while leaving terminal archived runs out of new character creation', () => {
+    expect(isRecoverableVideoReviewJob(job())).toBe(true);
+    expect(isRecoverableVideoReviewJob(job({ reviewStatus: 'approved', resumable: true }))).toBe(true);
+    expect(isRecoverableVideoReviewJob(job({ reviewStatus: 'rejected' }))).toBe(false);
+    expect(isRecoverableVideoReviewJob(job({ fullRunRestartRequired: true }))).toBe(false);
   });
 
   it('keeps review, terminal restart, and transient resume states discoverable', () => {
@@ -67,17 +62,17 @@ describe('creation flow UI safeguards', () => {
     expect(isVideoResumableJob(job({ status: 'failed', resumable: false }))).toBe(false);
   });
 
-  it('requires fresh consent only before a continued or restarted Video generation', () => {
+  it('requires fresh consent only before a paid Video continuation', () => {
     expect(videoReviewJobNeedsConsent(job())).toBe(false);
     expect(videoReviewJobNeedsConsent(job({ reviewStatus: 'approved', resumable: true }))).toBe(true);
-    expect(videoReviewJobNeedsConsent(job({ reviewStatus: 'rejected' }))).toBe(true);
-    expect(videoReviewJobNeedsConsent(job({ fullRunRestartRequired: true }))).toBe(true);
+    expect(videoReviewJobNeedsConsent(job({ reviewStatus: 'rejected' }))).toBe(false);
+    expect(videoReviewJobNeedsConsent(job({ fullRunRestartRequired: true }))).toBe(false);
     expect(videoReviewJobNeedsConsent(null)).toBe(false);
     expect(videoReviewDecisionNeedsConsent({ status: 'awaiting_review', continuationAvailable: true })).toBe(false);
     expect(videoReviewDecisionNeedsConsent({ status: 'approved', continuationAvailable: true })).toBe(true);
     expect(videoReviewDecisionNeedsConsent({ status: 'approved', continuationAvailable: false })).toBe(false);
-    expect(videoReviewDecisionNeedsConsent({ status: 'rejected', continuationAvailable: false })).toBe(true);
-    expect(videoReviewDecisionNeedsConsent(null, true)).toBe(true);
+    expect(videoReviewDecisionNeedsConsent({ status: 'rejected', continuationAvailable: false })).toBe(false);
+    expect(videoReviewDecisionNeedsConsent(null, true)).toBe(false);
   });
 
   it('keeps a discovered durable job on a recovery-only retry path', () => {
