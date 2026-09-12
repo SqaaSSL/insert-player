@@ -100,7 +100,10 @@ export function AuraBattleResults({
 
   return (
     <section className="aura-results" role="dialog" aria-label="Aura Battle result">
-      <div className="aura-results__panel" ref={panelRef} tabIndex={-1} onKeyDown={event => {
+      <div className="aura-results__panel" ref={panelRef} tabIndex={-1} onKeyUp={event => event.stopPropagation()} onKeyDown={event => {
+        // The live finale keeps Phaser mounted. Let inputs and buttons use their
+        // native keys without the game's global DFJK captures cancelling them.
+        event.stopPropagation();
         if (event.key !== 'Tab') return;
         const controls = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), summary, video[controls], [tabindex="0"]') ?? [])
           .filter(control => control.getClientRects().length > 0);
