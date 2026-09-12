@@ -1,4 +1,4 @@
-export const LAUNCH_FILM = '/assets/insert-player-launch-aura-v20.mp4';
+export const LAUNCH_FILM = '/assets/insert-player-launch-aura-v21.mp4';
 
 /** Opt-in playback keeps the three-game film off the landing's initial download. */
 export function LaunchFilm() {
@@ -19,7 +19,7 @@ export function LaunchFilm() {
         poster="/assets/insert-player-launch-aura-v19-poster.webp"
       >
         <source src={LAUNCH_FILM} type="video/mp4" />
-        <track kind="captions" src="/assets/insert-player-launch-aura-v20-en.vtt" srcLang="en" label="English" />
+        <track kind="captions" src="/assets/insert-player-launch-aura-v21-en.vtt" srcLang="en" label="English" />
         <a href={LAUNCH_FILM}>Watch the Insert Player film</a>
       </video>
     </section>

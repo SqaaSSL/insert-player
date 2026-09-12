@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 const base = process.env.CAPTURE_URL ?? 'http://127.0.0.1:5189';
 assert(['localhost', '127.0.0.1'].includes(new URL(base).hostname));
-const out = resolve(import.meta.dirname, '../assets/captures/landing-qa-v20');
+const out = resolve(import.meta.dirname, '../assets/captures/landing-qa-v21');
 await mkdir(out, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const results = [];
@@ -14,7 +14,7 @@ try {
     const context = await browser.newContext({ viewport });
     const page = await context.newPage();
     const mediaRequests = [];
-    page.on('request', req => { if (req.url().includes('insert-player-launch-aura-v20.mp4')) mediaRequests.push(req.url()); });
+    page.on('request', req => { if (req.url().includes('insert-player-launch-aura-v21.mp4')) mediaRequests.push(req.url()); });
     await page.goto(`${base}/games/aura`, { waitUntil: 'networkidle' });
     const video = page.locator('.product-entry__film-video');
     await video.waitFor();
@@ -47,7 +47,7 @@ try {
       return { duration: el.duration, width: el.videoWidth, height: el.videoHeight, error: el.error?.message,
         uniqueChannels: new Set(data).size, tracks: el.textTracks.length };
     });
-    assert(playback.duration > 36 && playback.duration < 36.3);
+    assert(playback.duration > 40 && playback.duration < 40.3);
     assert.equal(playback.width, 1920);
     assert.equal(playback.height, 1080);
     assert.equal(playback.error, undefined);

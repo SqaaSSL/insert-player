@@ -1,0 +1,30 @@
+{
+  "duration": 40.15,
+  "auraBlock": [16.65, 35.15],
+  "playbackRate": 1,
+  "sources": {
+    "old": "assets/generated/tts-launch-friends-v4.wav",
+    "middle": "assets/generated/tts-launch-three-games-v20-matched.wav",
+    "aura": "assets/generated/tts-launch-aura-farming-v21-matched.wav"
+  },
+  "cues": [
+    { "source": "old", "range": [0, 5.6], "at": 0 },
+    { "source": "middle", "range": [0.12, 3.05], "at": 5.7 },
+    { "source": "middle", "range": [3.08, 7.3], "at": 8.9 },
+    { "source": "middle", "range": [7.4, 10.4], "at": 13.35 },
+    { "source": "aura", "range": [0, 15.24], "at": 17.05 },
+    { "source": "old", "range": [9.58, 12.04], "at": 35.5 }
+  ],
+  "captions": [
+    { "start": 0.3, "end": 5.39, "text": "Upload a photo. Insert Player turns you and your\nfriends into arcade fighters." },
+    { "start": 5.77, "end": 8.54, "text": "One character. Three games." },
+    { "start": 8.97, "end": 13.02, "text": "Challenge your friends in Fight. Your fighters.\nYour rivalry." },
+    { "start": 13.44, "end": 16.25, "text": "Team up with a CPU ally in Rush." },
+    { "start": 17.33, "end": 19.25, "text": "This is Aura farming." },
+    { "start": 19.25, "end": 22.55, "text": "Hit the beat. Build your flow." },
+    { "start": 23.13, "end": 24.55, "text": "Stack up Aura." },
+    { "start": 24.83, "end": 29.05, "text": "Challenge your friends. Take the lead.\nOwn the spotlight." },
+    { "start": 29.33, "end": 32.05, "text": "Give the group chat something to talk about." },
+    { "start": 35.5, "end": 37.72, "text": "Ready? Insert Player." }
+  ]
+}

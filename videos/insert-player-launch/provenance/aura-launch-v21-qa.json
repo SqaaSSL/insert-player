@@ -1,0 +1,81 @@
+{
+  "duration": 40.17,
+  "bytes": 9980852,
+  "sha256": "9cd673e406c07b5c4d85260b60fd360629022e7cd954cf5e7d95eb215e6ec451",
+  "width": 1920,
+  "height": 1080,
+  "fps": "30/1",
+  "audioCodec": "aac",
+  "mixLufs": -18.98,
+  "truePeakDb": -4.24,
+  "windows": [
+    {
+      "at": 5,
+      "rmsDb": -22.7,
+      "peakDb": -5.5
+    },
+    {
+      "at": 9,
+      "rmsDb": -19.6,
+      "peakDb": -5.5
+    },
+    {
+      "at": 14,
+      "rmsDb": -20.3,
+      "peakDb": -5.6
+    },
+    {
+      "at": 18,
+      "rmsDb": -17.9,
+      "peakDb": -5.1
+    },
+    {
+      "at": 22,
+      "rmsDb": -22.5,
+      "peakDb": -6.3
+    },
+    {
+      "at": 26,
+      "rmsDb": -22.3,
+      "peakDb": -6.3
+    },
+    {
+      "at": 30,
+      "rmsDb": -21,
+      "peakDb": -5.7
+    },
+    {
+      "at": 34,
+      "rmsDb": -21.1,
+      "peakDb": -7.7
+    },
+    {
+      "at": 36,
+      "rmsDb": -21.7,
+      "peakDb": -8
+    },
+    {
+      "at": 38,
+      "rmsDb": -27,
+      "peakDb": -11.3
+    },
+    {
+      "at": 39,
+      "rmsDb": -23.1,
+      "peakDb": -9.7
+    }
+  ],
+  "fight": {
+    "range": [
+      11.05,
+      13.15
+    ],
+    "frames": 63,
+    "distinctDecodedFrames": 63
+  },
+  "transcript": "Upload a photo. Insert Player turns you and your friends into arcade fighters. One character, three games. Challenge your friends and fight. Your fighters, your rivalry. Team up with a CPU ally in Rush. This is Aura Farming. Hit the beat. Build your flow. Stack up Aura. Challenge your friends. Take the lead. Only the spotlight. Give the group chat something to talk about. Ready? Insert Player.",
+  "newTtsRequests": 1,
+  "retries": 0,
+  "fallbacks": 0,
+  "published": false
+}

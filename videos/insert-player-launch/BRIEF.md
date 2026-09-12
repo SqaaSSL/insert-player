@@ -7,12 +7,31 @@ destination: website-embed
 aspect: 1920x1080
 language: en
 audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
-length: 36.15s
+length: 40.15s
 angle: "Keep the approved photo transformation, then prove three real games with Aura as the main attraction"
 narration: "A concise product explanation ending with the arcade-announcer lockup"
 ---
 
-## Current Revision: Aura Audio v20 (2026-09-11)
+## Current Revision: Aura Farming v21 (2026-09-12)
+
+The user flagged stuttering Fight footage and asked for more Aura, explicitly
+framed as **Aura farming**. Never mock the moves or call them ridiculous: the
+players are building skill, flow and Aura. This is a persistent copy preference.
+
+- The old Trump screen recording supplied only 25 captures over the selected
+  2.6 seconds. Replace both excerpts with a fresh, clock-stepped recording of
+  the real local game, one full screenshot per 1/30 second, including its HUD.
+- Keep the approved Casual/Player One loading and their one-second exchange.
+- Reduce the new Trump block by 0.5s and Rush by 1s. Expand continuous Aura from
+  13s to 18.5s, plus its 1.4s teaser: 19.9s of the 40.15s film.
+- Replace only Aura's narration with one new Orus take about Aura farming,
+  rhythm, flow, points and competing with friends. Keep every old take.
+- Intro/end card remain unchanged; closing starts at 35.15s and holds for 5s.
+- Neon Arena continues from the original MP3 for the longer cut; no loop.
+- HyperFrames 0.8.34 -> 0.8.35, verified after the version bump.
+- Local preview only. No production changes, image/video inference or payments.
+
+## Previous Revision: Aura Audio v20 (2026-09-11)
 
 The user requested narration matching the new length and three-game story.
 All v19 picture edits, intro, end card and original Neon Arena music remain

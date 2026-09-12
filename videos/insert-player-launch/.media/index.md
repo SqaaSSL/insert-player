@@ -1,4 +1,4 @@
-# .media · 18 assets
+# .media · 19 assets
 
 id         type   dur    dims      path                              description
 video_001  video  13.8s  1280×720  assets/fight-capture.mp4          fight capture
@@ -19,3 +19,4 @@ bgm_002    bgm    20.1s  —         assets/generated/launch-bed-original-neon-v
 bgm_003    bgm    20.1s  —         assets/generated/launch-bed-original-neon-v11.wav  continuous original Neon Arena source with no repeated tail
 voice_001  voice  17s    —         assets/generated/tts-launch-friends-v5-retimed.wav  approved friends-focused launch narration
 voice_002  voice  19.68s —         assets/generated/tts-launch-three-games-v20.wav  Orus: Fight, CPU-ally Rush and Aura; new v20 middle narration
+voice_003  voice  15.24s —         assets/generated/tts-launch-aura-farming-v21.wav  Orus: Aura farming, flow and friend competition; respectful v21 narration

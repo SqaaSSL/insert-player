@@ -1,0 +1,19 @@
+{
+  "version": 21,
+  "role": "launch explainer voiceover",
+  "model": "gemini-tts",
+  "upstreamModel": "gemini-3.1-flash-tts-preview",
+  "accessPath": "PixCLI through Meterkey",
+  "providerJobId": "232562298667e1487b69dcd31b3bb246",
+  "voice": "Orus",
+  "language": "en",
+  "meteredCostMicrocredits": 60000,
+  "promptFile": "prompts/tts-launch-aura-farming-v21.txt",
+  "promptSha256": "837c6e356dc552b660224b80698ede3aafcd328e8ab7e1dff71d887d9f9b0e8b",
+  "outputFile": "assets/generated/tts-launch-aura-farming-v21.wav",
+  "outputSha256": "7a2e9517c5451e2088f842a33e3034c8b5dbed8652ee4986e7fa346ba2de538e",
+  "durationSeconds": 15.24,
+  "retries": 0,
+  "fallbacks": 0,
+  "published": false
+}
