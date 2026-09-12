@@ -81,3 +81,34 @@
     opacity: 1;
   }
 }
+
+/* Aura keeps the game's actual composition in either orientation. The mobile
+   frame fits above the play action without cutting off the score or controls. */
+.product-entry__preview.combat-entry-preview.aura-gameplay-preview {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+.aura-gameplay-preview .combat-entry-preview__viewport {
+  flex: none;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+.aura-gameplay-preview.is-portrait .combat-entry-preview__viewport {
+  width: min(100%, 31.5svh, 315px);
+  aspect-ratio: 9 / 16;
+  align-self: center;
+}
+.aura-gameplay-preview .combat-entry-preview__controls {
+  min-height: 44px;
+  width: 100%;
+}
+.aura-gameplay-preview .combat-entry-preview__toggle {
+  min-height: 44px;
+}
+.aura-gameplay-preview.is-compact .combat-entry-preview__controls {
+  min-height: 0;
+  width: auto;
+}

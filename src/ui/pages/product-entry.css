@@ -89,34 +89,6 @@
 .product-entry__preview--aura .product-entry__stage {
   @apply object-center;
 }
-/* The preview uses the same stage/instrument composition as the live match. */
-.aura-entry-preview {
-  @apply flex min-h-[390px] flex-col justify-center bg-asf-bg-deep [container-type:inline-size];
-}
-.aura-entry-preview__header {
-  @apply flex min-h-12 items-center justify-between gap-2 px-3;
-}
-.aura-entry-preview__eyebrow {
-  @apply text-xs font-medium text-asf-muted;
-}
-.aura-entry-preview__controls {
-  @apply flex shrink-0 items-center gap-1;
-}
-.aura-entry-preview__pause {
-  @apply inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[3px] border-0 bg-transparent px-2 text-xs text-asf-text hover:text-asf-gold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-gold;
-}
-.aura-entry-preview__screen {
-  @apply relative aspect-[16/9] w-full shrink-0 overflow-hidden bg-black;
-}
-.aura-entry-preview__canvas {
-  @apply block h-full w-full;
-}
-.aura-entry-preview__status {
-  @apply absolute inset-0 m-0 flex items-center justify-center bg-asf-bg-deep/90 px-5 text-center text-sm text-asf-text;
-}
-.aura-entry-preview__explanation {
-  @apply mb-0 mt-1 px-3 pb-3 text-center text-xs leading-relaxed text-asf-muted;
-}
 .product-entry__game-list {
   @apply mt-7;
 }
@@ -229,9 +201,6 @@
   .product-entry__preview--aura {
     @apply min-h-0 aspect-[16/10];
   }
-  .product-entry__preview--aura.aura-entry-preview {
-    @apply min-h-0 aspect-auto;
-  }
   .product-entry__hero-art figcaption {
     @apply pt-3;
   }
@@ -266,9 +235,6 @@
 @media (prefers-reduced-motion: reduce) {
   .product-entry button {
     @apply transition-none;
-  }
-  .aura-entry-preview__pause {
-    @apply hidden;
   }
 }
 

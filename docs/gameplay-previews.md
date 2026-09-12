@@ -4,21 +4,31 @@ The entry screens show the mechanics and HUD of each game, including in compact 
 
 ## Aura
 
-`auraPreviewDuel.ts` selects short phrases from the real `AuraChart`, feeds deterministic input offsets through `AuraBattle`, and exposes notes, receptors, grades, combo and scores. Both performers receive the same phrase. The demo is an abbreviated autoplay duel, not a recording of an entire match.
+The landing, `/games/aura` and Play use real Aura gameplay recordings. The previous Canvas demo had drifted from the shipped game: it forced a desktop layout on phones, used Nova instead of Lamine and selected moves independently of the match routine.
 
-`auraPreviewCanvas.ts` renders the real note projection and cabinet theme using the same `AuraLayout`, `AuraHud` and `AuraCamera` as the game. Both views put the active performer on the left and the four rhythm lanes on the right. A 720 ms pan between two stage marks briefly shows both performers; the rhythm instrument remains fixed. The existing calibrated sprites and Aura Plaza v3 background are reused.
+`GameplayEntryPreview` now uses the same media playback controller as Fight and Rush. `gameplayPreviewMedia` selects exactly one capture with `getAuraCanvasSize`, the same portrait rule as the game. Portrait footage includes the real HTML touch controls, their disabled rival state, the game HUD and the move rail. Landscape footage includes the actual DFJK instrument. The captures show Trump and Lamine taking turns with the current animations, camera, note judgement and scores. Automated inputs go through the normal controls; no synthetic scores, notes, sprites or feedback are added to the footage.
 
-The shared HUD groups named totals, explicit lead in points, a 24px duel rail and larger crown. One status line gives round, active seat and remaining turn seconds. The instrument groups FLOW, keys and crowd response; the performer has one name and its move bubble. The same hierarchy remains visible in compact previews.
+| Shape | Video | Poster | Format |
+| --- | --- | --- | --- |
+| Portrait | `public/assets/play-mode-aura-portrait-v1.mp4` | `public/assets/play-mode-aura-portrait-poster-v1.webp` | 432×768, 23.03s, 1,164,557 bytes |
+| Landscape | `public/assets/play-mode-aura-landscape-v1.mp4` | `public/assets/play-mode-aura-landscape-poster-v1.webp` | 1024×576, 23.13s, 1,870,996 bytes |
 
-The final camera move gathers both performers in the center over 800 ms. A performer with an Aura pack celebrates with the one-leg dance (or another available routine); the loser plays the shrug once and holds its ending. Fighters without Aura assets retain their own combat victory/defeat animations. The live game shows this tableau for three seconds before results, and the recording includes it. Reduced motion skips camera travel while retaining both characters and readable results.
+Both were captured from gameplay source `d2c56b25c7ceff3c1ed989b5cdcd115629956662`, encoded as H.264/yuv420p at 30fps with fast-start metadata. Their posters are frames at 1s from their respective clips.
 
-The latest real score delta appears as one small signed number below the active HUD score, without repeating “AURA”. A new hit replaces the previous cue. Precision feedback stays above the notes, while the original comic move icons keep the stage clear. Delayed rival judgements still update scores without replacing the active feedback.
+The whole frame remains visible. On a phone, the portrait frame is capped at 56% of the viewport height so the Play action follows directly below it. Both clips are silent; the menu keeps ownership of menu music. There is one preview playback control.
 
-Move bubbles have seven short synthesized sound signatures, shared with the game. The preview starts silent and offers a Sound toggle; enabling sound, resuming or scrolling back never replays an old bubble. Audio stops when paused, offscreen or unmounted. The live game includes these effects in its existing recording mix.
+Only the selected visible media loads. Playback pauses offscreen and on hidden tabs. A deliberate pause survives rotation/source changes; reduced motion seeks an actual gameplay frame, with explicit playback still available. The poster comes from that same capture. The controller invalidates old play promises when changing media.
 
-The normal official Trump selection now supplements missing Aura moves from his seven bundled, hash-verified atlases in either slot. Current cached Aura assets take priority. This supplement requires the canonical Arcade identity and matching public cache metadata; it never substitutes Trump for another character. Other official fighters continue to use their own available assets until they have a dedicated Aura pack.
+To refresh the clips after gameplay changes, commit the game source and start Vite, then run:
 
-The preview pauses offscreen, on a hidden tab, or when the user pauses it. Reduced motion shows an informative frame with an actual hit and approaching notes. Score changes are not announced on every animation frame.
+```bash
+AURA_PREVIEW_BASE=http://127.0.0.1:5173 CAPTURE_VARIANT=portrait node scripts/capture-aura-gameplay-preview.mjs
+AURA_PREVIEW_BASE=http://127.0.0.1:5173 CAPTURE_VARIANT=landscape node scripts/capture-aura-gameplay-preview.mjs
+```
+
+The harness requires Playwright Chromium, FFmpeg/ffprobe and cwebp. It captures only local free quickplay, blocks remote mutations/provider requests, validates real score progression and both turns, and writes provenance plus encoding metadata under `.artifacts/aura-gameplay-*`. Review both clips before committing them. `--encode-only` reuses validated raw frames when changing compression.
+
+The legacy `auraPreviewCanvas` and its chart/presentation helpers remain inputs to the static social-card renderer only. They no longer render any landing or Play preview.
 
 ## Fight and Rush
 
