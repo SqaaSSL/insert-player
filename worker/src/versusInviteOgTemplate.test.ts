@@ -37,6 +37,18 @@ describe('versus invitation OG template', () => {
     expect(document.html).not.toContain('inviter-plate');
   });
 
+  it.each([
+    ['rookie', 'ROOKIE'],
+    ['contender', 'CHAMPION'],
+    ['champion', 'CHAMPION'],
+  ] as const)('labels saved %s characters as %s without changing their identity', (qualityTier, label) => {
+    const copy = { inviterName: 'Player', fighterName: 'My Character', qualityTier };
+    const document = buildVersusInviteOgDocument(copy);
+    expect(document.html).toContain(`THEIR FIGHTER · ${label}`);
+    expect(document.html).not.toContain('CONTENDER');
+    expect(copy.qualityTier).toBe(qualityTier);
+  });
+
   it('escapes inviter and fighter names before placing them in HTML', () => {
     const document = buildVersusInviteOgDocument({
       inviterName: '<script>alert(1)</script>',
