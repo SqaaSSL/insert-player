@@ -1,5 +1,5 @@
 import type { GenerationPackage } from '../../services/GenerationPackages.ts';
-import { isQualityTier, type QualityTier } from '../../services/QualityTiers.ts';
+import { isQualityTier, offeredQualityTier, type QualityTier } from '../../services/QualityTiers.ts';
 import type { CreationFlow } from './creationFlow.ts';
 import type { CreationNavigationContext } from './onboardingFlow.ts';
 
@@ -17,9 +17,10 @@ export interface CreationDraft {
 export function restoreCreationChoices(draft: CreationDraft, context: CreationNavigationContext) {
   const creationPackage = context.creationPackage ?? draft.creationPackage;
   return {
-    tier: context.tier ?? (context.creationPackage === 'aura' ? 'rookie' : draft.tier),
+    tier: offeredQualityTier(context.tier ?? (context.creationPackage === 'aura' ? 'rookie' : draft.tier)),
     creationPackage,
-    creationFlow: creationPackage === 'aura' ? 'original' as const : draft.creationFlow ?? 'original',
+    // Drafts are unsent requests. Existing paid jobs resume from their job record instead.
+    creationFlow: 'original' as const,
   };
 }
 const MAX_AGE = 24 * 60 * 60 * 1000;

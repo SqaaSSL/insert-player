@@ -19,7 +19,7 @@ const expected = {
     enableDnnBgRemoval: false,
   },
   contender: {
-    label: 'Contender',
+    label: 'Champion',
     creditCost: 11,
     animationRetryCreditCost: 2,
     priceLabel: '11 credits',
@@ -246,16 +246,16 @@ for (const [pack, definition] of Object.entries(expectedPacks)) {
   }
 }
 
-assertEqual(expectedPacks.starter.credits, expected.contender.creditCost, 'Starter buys one Contender');
+assertEqual(expectedPacks.starter.credits, expected.contender.creditCost, 'Starter buys one current Champion');
 assertEqual(
   expectedPacks.versus.credits,
   expected.champion.creditCost + expected.rookie.creditCost,
-  'Versus buys one Champion plus one Rookie',
+  'Preserved pack arithmetic against the historical premium price',
 );
 assertEqual(
   expectedPacks.arcade.credits,
   2 * expected.champion.creditCost + expected.contender.creditCost,
-  'Arcade buys two Champions plus one Contender',
+  'Preserved pack arithmetic against historical tier prices',
 );
 
 const conservativeNetEurPerCredit = Math.min(...netEurPerCredit);
@@ -383,7 +383,7 @@ for (const required of [
   "if (renderModel.toLowerCase().includes('pro'))",
 ]) {
   if (!gemini.includes(required)) {
-    fail(`Champion generation must keep a Flash scaffold and Pro final-frame renderer: ${required}`);
+    fail(`Legacy premium jobs must retain their Flash scaffold and Pro final-frame renderer: ${required}`);
   }
 }
 

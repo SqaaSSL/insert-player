@@ -1,6 +1,7 @@
 import type { GenerationPackage } from '../../services/GenerationPackages.ts';
 import {
   isQualityTier,
+  offeredQualityTier,
   type QualityTier,
 } from '../../services/QualityTiers.ts';
 
@@ -84,7 +85,7 @@ export function readCreationNavigationContext(search: string): CreationNavigatio
   const requestedTier = params.get('tier');
   const requestedSource = params.get('source');
   return {
-    tier: isQualityTier(requestedTier) ? requestedTier : null,
+    tier: isQualityTier(requestedTier) ? offeredQualityTier(requestedTier) : null,
     returnTo: creationReturnTarget(params.get('return')),
     ...(params.get('package') === 'aura' || params.get('package') === 'complete'
       ? { creationPackage: params.get('package') as GenerationPackage } : {}),
@@ -98,7 +99,7 @@ export function readCreationNavigationContext(search: string): CreationNavigatio
 /** Returns a query string without `?`, matching App.navigate's search argument. */
 export function buildCreationSearch(options: CreationSearchOptions = {}): string {
   const params = new URLSearchParams();
-  if (options.tier) params.set('tier', options.tier);
+  if (options.tier) params.set('tier', offeredQualityTier(options.tier));
   if (options.returnTo && options.returnTo !== 'gallery') params.set('return', options.returnTo);
   if (options.creationPackage) params.set('package', options.creationPackage);
   if (validChallenge(options.challenge)) params.set('challenge', options.challenge!);
@@ -124,7 +125,7 @@ export function parseCreationPurchaseIntent(
     || intent.createdAt > now + 60_000
     || now - intent.createdAt > CREATION_PURCHASE_INTENT_MAX_AGE_MS
   ) return null;
-  return intent as CreationPurchaseIntent;
+  return { ...intent, tier: offeredQualityTier(intent.tier) } as CreationPurchaseIntent;
 }
 
 function creationPurchaseIntentKey(authSessionKey: string): string {

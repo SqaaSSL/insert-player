@@ -2243,7 +2243,10 @@ function assertTierPricingAndPipelineParity() {
     // aria-modal + aria-label from the title) with the QUALITY_TIERS copy.
     'Upgrade to ${pendingUpgrade.label}',
     'animations are kept in cache and remain accessible.',
-    'tier: currentTier,',
+    'animationRetryQuote(selectedAnimName, sprites, currentTier)',
+    'tier: selectedAnimationRetry.tier,',
+    'void executeRetry(action, nextStatus, target, operation, retryTier, creditCost)',
+    "creationPackage: target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage, expectedCredits",
     'syncFighterToCloud(updatedMeta, updatedSprites, intro, apiContext)',
     "setStatus('Done and synced')",
     "animationName === 'ko' && frames === 8",

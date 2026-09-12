@@ -538,7 +538,43 @@ describe('Stage Forge credit reservations against D1', () => {
 });
 
 describe('Generation purchase fighter linkage against D1', () => {
-  it('rejects video action retries before reservation and permits a fresh full restart', async () => {
+  it('preserves legacy Champion maintenance and refuses a forged continuation without charging', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'legacy-quality-owner';
+    const fighterId = '91919191919191919191919191919191';
+    const auth = { userId, rateLimitKey: `user:${userId}`, claims: {}, user: { id: userId } } as unknown as PublicAuthContext;
+    const legal = {
+      legalVersion: CURRENT_LEGAL_VERSION, ageConfirmed: true, termsAccepted: true,
+      photoRightsConfirmed: true, aiProcessingConfirmed: true,
+      immediatePerformanceConfirmed: true, withdrawalLossAcknowledged: true,
+    };
+    const request = (options: Record<string, unknown>) => new Request('https://api.insertplayer.ai/api/billing/generation', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fighterId, tier: 'champion', legal, ...options }),
+    });
+    try {
+      await db.batch([
+        db.prepare("INSERT INTO users (id, clerk_user_id, display_name, credits_balance) VALUES (?, ?, 'Legacy Owner', 30)").bind(userId, userId),
+        db.prepare('INSERT INTO fighters (id, owner_user_id) VALUES (?, ?)').bind(fighterId, userId),
+      ]);
+      for (const [operation, creditsCharged] of [['fighter_retry_animation', 4], ['fighter_retry_source', 1]] as const) {
+        const response = await authorizeGenerationPurchase(request({ operation }), env, auth);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ mode: 'credits', creditsCharged });
+      }
+      const denied = await authorizeGenerationPurchase(request({
+        operation: 'fighter_generation', resumeJobId: '92929292929292929292929292929292',
+      }), env, auth);
+      expect(denied.status).toBe(409);
+      expect(await denied.json()).toMatchObject({ code: 'generation_not_resumable' });
+      expect(await db.prepare('SELECT credits_balance FROM users WHERE id = ?').bind(userId).first())
+        .toEqual({ credits_balance: 25 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first()).toEqual({ count: 2 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first()).toEqual({ count: 2 });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it('rejects video action retries and a new purchase of the retired video tier', async () => {
     const { mf, db, env } = await createBindings();
     const userId = 'user-video-full-restart';
     const fighterId = '13131313131313131313131313131313';
@@ -598,18 +634,18 @@ describe('Generation purchase fighter linkage against D1', () => {
           }),
         },
       ), env, auth);
-      expect(restart.status).toBe(200);
-      expect(await restart.json()).toMatchObject({
-        mode: 'credits', creationFlow: 'video', creditsCharged: 18,
-      });
+      expect(restart.status).toBe(409);
+      expect(await restart.json()).toMatchObject({ code: 'generation_tier_retired' });
       expect((await db.prepare('SELECT COUNT(*) AS count FROM generation_charges')
-        .first<{ count: number }>())?.count).toBe(1);
+        .first<{ count: number }>())?.count).toBe(0);
+      expect(await db.prepare('SELECT credits_balance FROM users WHERE id = ?').bind(userId).first())
+        .toEqual({ credits_balance: 30 });
     } finally {
       await mf.dispose();
     }
   }, 15_000);
 
-  it('resumes a local video failure on the same run but starts a fresh paid run after terminal abandonment', async () => {
+  it('resumes paid legacy video work but refuses a fresh retired-tier purchase after abandonment', async () => {
     const { mf, db, env } = await createBindings();
     const userId = 'user-video-resume';
     const fighterId = 'abababababababababababababababab';
@@ -680,7 +716,9 @@ describe('Generation purchase fighter linkage against D1', () => {
           },
         ), env, auth);
         expect(blockedFresh.status).toBe(409);
-        expect(await blockedFresh.json()).toMatchObject({ code: 'video_run_in_progress' });
+        expect(await blockedFresh.json()).toMatchObject({
+          code: blocked.operation === 'fighter_retry_animation' ? 'video_run_in_progress' : 'generation_tier_retired',
+        });
       }
 
       const localResume = await authorizeGenerationPurchase(new Request(
@@ -709,10 +747,10 @@ describe('Generation purchase fighter linkage against D1', () => {
           }),
         },
       ), env, auth);
-      expect(freshRetry.status).toBe(200);
-      expect(await freshRetry.json()).toMatchObject({
-        mode: 'credits', creationFlow: 'video',
-      });
+      expect(freshRetry.status).toBe(409);
+      expect(await freshRetry.json()).toMatchObject({ code: 'generation_tier_retired' });
+      expect(await db.prepare('SELECT credits_balance FROM users WHERE id = ?').bind(userId).first())
+        .toEqual({ credits_balance: 30 });
     } finally {
       await mf.dispose();
     }
@@ -1533,6 +1571,44 @@ describe('Package quotes and authorization against D1', () => {
   }, 15_000);
 });
 
+it('does not charge a redundant quality upgrade or confuse a different or incomplete pack with an owned upgrade', async () => {
+  const { mf, db, env } = await createBindings();
+  const { quoteGenerationPackage } = await import('../../src/services/GenerationPackages');
+  const userId = 'existing-quality-owner';
+  const fighterId = '93939393939393939393939393939393';
+  const legal = { legalVersion: CURRENT_LEGAL_VERSION, ageConfirmed: true, termsAccepted: true, photoRightsConfirmed: true, aiProcessingConfirmed: true, immediatePerformanceConfirmed: true, withdrawalLossAcknowledged: true };
+  const auth = { userId, rateLimitKey: `user:${userId}`, claims: {}, user: { id: userId } } as unknown as PublicAuthContext;
+  const request = (options: Record<string, unknown> = {}) => new Request('https://api.insertplayer.ai/api/billing/generation', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fighterId, tier: 'contender', operation: 'fighter_upgrade', creationPackage: 'aura', legal, ...options }),
+  });
+  try {
+    await db.batch([
+      db.prepare("INSERT INTO users (id, clerk_user_id, display_name, credits_balance) VALUES (?, ?, 'Existing Champion', 30)").bind(userId, userId),
+      db.prepare('INSERT INTO fighters (id, owner_user_id) VALUES (?, ?)').bind(fighterId, userId),
+    ]);
+    await db.prepare('CREATE TABLE sprites (fighter_id TEXT, animation_name TEXT, quality_tier TEXT, blob_key TEXT, raw_blob_key TEXT, content_hash TEXT, frame_w INTEGER, frame_h INTEGER, frame_count INTEGER)').run();
+    await db.batch(quoteGenerationPackage('champion', 'aura').animations.map((name) =>
+      db.prepare("INSERT INTO sprites VALUES (?, ?, 'champion', ?, ?, ?, 192, 256, 6)").bind(fighterId, name, `${name}.png`, `${name}.raw.png`, 'a'.repeat(64))));
+    env.SPRITES = { async head() { return {}; } } as unknown as R2Bucket;
+    for (const tier of ['rookie', 'contender']) {
+      const denied = await authorizeGenerationPurchase(request({ tier }), env, auth);
+      expect(denied.status).toBe(409);
+      expect(await denied.json()).toMatchObject({ code: 'package_already_complete' });
+    }
+    const otherPack = await authorizeGenerationPurchase(request({ creationPackage: 'complete', quoteOnly: true }), env, auth);
+    expect(otherPack.status).toBe(200);
+    expect(await otherPack.json()).toMatchObject({ mode: 'quote', quotedCredits: 11 });
+    await db.prepare("DELETE FROM sprites WHERE animation_name = 'aura_glide'").run();
+    const incompletePack = await authorizeGenerationPurchase(request({ quoteOnly: true }), env, auth);
+    expect(incompletePack.status).toBe(200);
+    expect(await incompletePack.json()).toMatchObject({ mode: 'quote', quotedCredits: 6 });
+    expect(await db.prepare('SELECT credits_balance FROM users WHERE id = ?').bind(userId).first()).toEqual({ credits_balance: 30 });
+    expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first()).toEqual({ count: 0 });
+    expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first()).toEqual({ count: 0 });
+  } finally { await mf.dispose(); }
+}, 15_000);
+
 it('quotes only missing owned expansion work and rejects a changed or unconfirmed price before debit', async () => {
   const { mf, db, env } = await createBindings();
   const { quoteGenerationPackage } = await import('../../src/services/GenerationPackages');
@@ -1542,7 +1618,7 @@ it('quotes only missing owned expansion work and rejects a changed or unconfirme
   const auth = { userId, rateLimitKey: `user:${userId}`, claims: {}, user: { id: userId } } as unknown as PublicAuthContext;
   const request = (options: Record<string, unknown>) => new Request('https://api.insertplayer.ai/api/billing/generation', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ fighterId, tier: 'champion', operation: 'fighter_upgrade', creationPackage: 'complete', expansion: true, legal, ...options }),
+    body: JSON.stringify({ fighterId, tier: 'contender', operation: 'fighter_upgrade', creationPackage: 'complete', expansion: true, legal, ...options }),
   });
   try {
     await db.prepare("INSERT INTO users (id, clerk_user_id, display_name, credits_balance) VALUES (?, ?, 'Owner', 20)").bind(userId, userId).run();
@@ -1551,7 +1627,7 @@ it('quotes only missing owned expansion work and rejects a changed or unconfirme
     const existing = quoteGenerationPackage('champion', 'complete').animations.filter((name) => name !== 'walk');
     await db.batch([...existing, 'aura_glide'].map((name) => db.prepare("INSERT INTO sprites VALUES (?, ?, 'champion', ?, ?, ?, 192, 256, 6)").bind(fighterId, name, `${name}.png`, `${name}.raw.png`, 'a'.repeat(64))));
     env.SPRITES = { async head() { return {}; } } as unknown as R2Bucket;
-    const expected = quoteGenerationPackage('champion', 'complete', { expansion: true, existingAnimations: existing });
+    const expected = quoteGenerationPackage('contender', 'complete', { expansion: true, existingAnimations: existing });
     const quote = await authorizeGenerationPurchase(request({ quoteOnly: true }), env, auth);
     expect(await quote.json()).toMatchObject({ mode: 'quote', quotedCredits: expected.creditCost, animationCount: 1 });
     const unconfirmed = await authorizeGenerationPurchase(request({}), env, auth);
@@ -1579,7 +1655,7 @@ it('quotes only missing owned expansion work and rejects a changed or unconfirme
     expect((await authorizeGenerationPurchase(request({ quoteOnly: true }), env, otherAuth)).status).toBe(403);
     expect(await db.prepare("SELECT credits_balance FROM users WHERE id = 'other-owner'").first()).toEqual({ credits_balance: 20 });
     await db.prepare("UPDATE generation_charges SET status = 'committed' WHERE id = ?").bind(authorization.purchaseId).run();
-    await db.prepare("INSERT INTO generation_artifact_runs (id, user_id, fighter_id, tier, operation, status, expansion_only) VALUES ('partial-expansion', ?, ?, 'champion', 'fighter_upgrade', 'partial', 1)").bind(userId, fighterId).run();
+    await db.prepare("INSERT INTO generation_artifact_runs (id, user_id, fighter_id, tier, operation, status, expansion_only) VALUES ('partial-expansion', ?, ?, 'contender', 'fighter_upgrade', 'partial', 1)").bind(userId, fighterId).run();
     await db.prepare("INSERT INTO generation_jobs (id, user_id, fighter_id, charge_id, artifact_run_id, status) VALUES (?, ?, ?, ?, 'partial-expansion', 'failed')").bind(authorization.purchaseId, userId, fighterId, authorization.purchaseId).run();
     const partialReplay = await authorizeGenerationPurchase(request({ expectedCredits: expected.creditCost }), env, auth);
     expect(partialReplay.status).toBe(409);

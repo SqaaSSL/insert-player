@@ -1,5 +1,5 @@
 import type { BillingProfile } from '../../services/Billing.ts';
-import { isQualityTier, type QualityTier } from '../../services/QualityTiers.ts';
+import { isQualityTier, offeredQualityTier, type QualityTier } from '../../services/QualityTiers.ts';
 import type { AuthStatus } from '../authState.ts';
 import { quoteGenerationPackage, type GenerationPackage } from '../../services/GenerationPackages.ts';
 
@@ -21,7 +21,7 @@ export function initialCreationTier(requestedTier: unknown, paidTiersAreLocked: 
     isQualityTier(requestedTier) &&
     (!paidTiersAreLocked || requestedTier === 'rookie')
   ) {
-    return requestedTier;
+    return offeredQualityTier(requestedTier);
   }
   return paidTiersAreLocked || creationPackage === 'aura' ? 'rookie' : 'contender';
 }

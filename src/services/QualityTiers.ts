@@ -15,7 +15,8 @@ export interface QualityTierInfo {
   pitch: string;
 }
 
-export const QUALITY_TIERS: QualityTierInfo[] = [
+/** Historical IDs remain stable so purchased assets, jobs and retry quotes retain their provenance. */
+export const LEGACY_QUALITY_TIERS: QualityTierInfo[] = [
   {
     id: 'rookie',
     label: 'Rookie',
@@ -23,16 +24,16 @@ export const QUALITY_TIERS: QualityTierInfo[] = [
     creditCost: 2,
     animationRetryCreditCost: 1,
     estimatedTime: '~2 min',
-    pitch: 'A quick playable fighter, ready for your first match.',
+    pitch: 'Basic-resolution animation. A quick way to make yourself playable.',
   },
   {
     id: 'contender',
-    label: 'Contender',
+    label: 'Champion',
     priceLabel: '11 credits',
     creditCost: 11,
     animationRetryCreditCost: 2,
     estimatedTime: '~8 min',
-    pitch: 'Refined movement with cleaner edges and more consistent frames.',
+    pitch: 'Frames refined individually for sharper detail and cleaner edges.',
   },
   {
     id: 'champion',
@@ -41,14 +42,30 @@ export const QUALITY_TIERS: QualityTierInfo[] = [
     creditCost: 18,
     animationRetryCreditCost: 4,
     estimatedTime: '~12 min',
-    pitch: 'Maximum detail and consistency across every move.',
+    pitch: 'An earlier premium version. Your generated assets remain available.',
   },
 ];
+
+/** Two offers: the former Contender is now the single Champion offer. */
+export const QUALITY_TIERS = LEGACY_QUALITY_TIERS.filter((tier) => tier.id !== 'champion');
+
+export function qualityTierInfo(tier: QualityTier): QualityTierInfo {
+  return LEGACY_QUALITY_TIERS.find((definition) => definition.id === tier)!;
+}
+
+export function qualityTierRank(tier: QualityTier): number {
+  return tier === 'rookie' ? 0 : 1;
+}
+
+/** Normalize a new purchase choice, never a persisted asset or running job. */
+export function offeredQualityTier(tier: QualityTier): 'rookie' | 'contender' {
+  return tier === 'rookie' ? 'rookie' : 'contender';
+}
 
 export const SOURCE_RETRY_CREDIT_COST = 1;
 
 export function animationRetryCreditCost(tier: QualityTier): number {
-  return QUALITY_TIERS.find((definition) => definition.id === tier)?.animationRetryCreditCost ?? 1;
+  return qualityTierInfo(tier).animationRetryCreditCost;
 }
 
 export function isQualityTier(value: unknown): value is QualityTier {

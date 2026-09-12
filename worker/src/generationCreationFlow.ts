@@ -15,7 +15,8 @@ export function parseRequestedGenerationCreationFlow(
 
 /**
  * Availability is still narrowed by the billing/job authorization gates:
- * video currently requires a signed-in Champion request.
+ * video uses the legacy Champion job contract for preserved continuations and
+ * internal reviewed roster generation; it is no longer a new public purchase.
  */
 export function generationCreationFlowAvailable(flow: GenerationCreationFlow): boolean {
   return flow === 'original' || flow === 'video';

@@ -51,7 +51,7 @@ Useful supporting lines:
    Let a new player try a ready character before asking for a photo, an account or payment. Explanations should appear only where they unblock a decision.
 
 4. Quality must be visible.
-   Rookie, Contender, and Champion are not abstract plans. The interface should make the quality jump feel tangible while preserving every generated version.
+   Rookie and Champion are two visible qualities. Show the difference using real versions of the same character, while preserving every generated version. Champion replaces the former Contender offer; provider brands are implementation details, not customer plans.
 
 5. Virality is a product loop, not a banner.
    Community fighters, share cards, clone links, and records should create the "you have to try this" moment without feeling spammy.

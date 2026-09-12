@@ -14,7 +14,7 @@ import type {
 import { generateId, hashString } from './auth';
 import { inspectArcadeAssetIntegrity } from './arcadeAssets';
 import { drainFighterAssetDeletions, listFighterAssetKeys } from './assetDeletion';
-import { maxTier, normalizeQualityTier, TIER_DEFINITIONS } from './tiers';
+import { isOfferedQualityTier, maxTier, normalizeQualityTier, OFFERED_TIER_ORDER, RETIRED_TIER_ERROR, TIER_DEFINITIONS } from './tiers';
 import { publicAppName, publicSocialCardUrl } from './branding';
 import { readJsonBody, readMultipartFormData } from './requestBody';
 import {
@@ -742,7 +742,7 @@ function readCommunityLimit(value: string | null): number {
 
 export function tiersResponse(): Response {
   return json({
-    tiers: Object.values(TIER_DEFINITIONS).map(({ id, label, creditCost, animationRetryCreditCost }) => ({
+    tiers: OFFERED_TIER_ORDER.map((tier) => TIER_DEFINITIONS[tier]).map(({ id, label, creditCost, animationRetryCreditCost }) => ({
       id,
       label,
       creditCost,
@@ -2171,7 +2171,11 @@ export async function requestFighterUpgrade(
   const fighter = await getOwnedFighter(env, fighterId, auth.userId);
   if (!fighter) return json({ error: 'Fighter not found' }, 404);
   const body = await readJsonBody<{ toTier?: QualityTier }>(request, MAX_FIGHTER_JSON_BODY_BYTES);
-  const toTier = normalizeQualityTier(body.toTier, 'champion');
+  const toTier = normalizeQualityTier(body.toTier, 'contender');
+  if (!isOfferedQualityTier(toTier)) return json(RETIRED_TIER_ERROR, 409);
+  if (maxTier(fighter.quality_tier, toTier) === fighter.quality_tier) {
+    return json({ error: 'This fighter already has the requested quality or higher.', code: 'fighter_quality_already_owned' }, 409);
+  }
   return json({
     fighter: serializeFighter(request, fighter),
     upgrade: {

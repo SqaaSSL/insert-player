@@ -7,7 +7,7 @@ interface TierBadgeProps {
 
 const TIER_CLASS: Record<string, string> = {
   rookie: 'asf-badge--tier-rookie',
-  contender: 'asf-badge--tier-contender',
+  contender: 'asf-badge--tier-champion',
   champion: 'asf-badge--tier-champion',
 };
 

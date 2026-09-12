@@ -31,6 +31,14 @@ describe('onboardingFlow', () => {
     expect(creationDestination('fight')).toBe('/roster/cpu');
   });
 
+  it('normalizes retired offer links and unsent checkout choices to the current Champion', () => {
+    expect(readCreationNavigationContext('?tier=champion&package=aura&return=aura')).toMatchObject({
+      tier: 'contender', creationPackage: 'aura', returnTo: 'aura',
+    });
+    expect(buildCreationSearch({ tier: 'champion', creationPackage: 'aura' }))
+      .toBe('tier=contender&package=aura');
+  });
+
   it('does not preserve an unsafe package or unbounded challenge as a purchase', () => {
     const context = { tier: 'rookie', returnTo: 'aura', source: 'landing', createdAt: Date.now() };
     expect(parseCreationPurchaseIntent({ ...context, creationPackage: 'admin' })).toBeNull();
@@ -100,7 +108,7 @@ describe('onboardingFlow', () => {
       returnTo: 'arcade',
       source: 'landing',
       createdAt: now - 1_000,
-    }, now)).toMatchObject({ tier: 'champion', returnTo: 'arcade', source: 'landing' });
+    }, now)).toMatchObject({ tier: 'contender', returnTo: 'arcade', source: 'landing' });
     expect(parseCreationPurchaseIntent({
       tier: 'god',
       returnTo: 'https://evil.example',
