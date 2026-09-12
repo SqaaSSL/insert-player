@@ -7,9 +7,14 @@
 .quality-comparison__intro { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
 .quality-comparison__intro h3 { margin: 0 0 .4rem; font-size: 1.5rem; font-weight: 600; }
 .quality-comparison__intro p { max-width: 32rem; margin: 0; color: var(--color-asf-muted); }
+.quality-comparison__controls { display: flex; flex-shrink: 0; flex-direction: column; align-items: flex-end; gap: .4rem; }
 .quality-comparison__switch { display: flex; flex-shrink: 0; border: 1px solid var(--color-asf-line-strong); }
 .quality-comparison__switch button { min-height: 44px; padding: .65rem .9rem; cursor: pointer; }
 .quality-comparison__switch button[aria-pressed="true"] { background: var(--color-asf-gold); color: var(--color-asf-bg-deep); }
+.quality-comparison__playback { display: inline-flex; align-items: center; gap: .55rem; min-height: 44px; padding: .5rem .25rem; color: var(--color-asf-gold); cursor: pointer; }
+.quality-comparison__playback:hover { color: var(--color-asf-text); }
+.quality-comparison__playback:disabled { color: var(--color-asf-muted); cursor: default; }
+.quality-comparison__playback span { width: 1rem; text-align: center; }
 .quality-comparison__pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .quality-comparison__pair figure { margin: 0; min-width: 0; overflow: hidden; border: 1px solid var(--color-asf-line); background: #15151c; }
 .quality-comparison__pair figcaption { display: grid; gap: .15rem; padding: .9rem 1rem; border-bottom: 1px solid var(--color-asf-line); }
@@ -22,6 +27,7 @@
 .quality-comparison summary:focus-visible, .quality-comparison button:focus-visible { outline: 2px solid var(--color-asf-gold); outline-offset: 4px; }
 @media (max-width: 680px) {
   .quality-comparison__intro { align-items: start; flex-direction: column; }
+  .quality-comparison__controls { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .25rem .75rem; }
   .quality-comparison > summary span { display: block; margin: .25rem 0 0 1rem; }
   .quality-comparison__pair { gap: .5rem; }
   .quality-comparison__pair figcaption { min-height: 5.75rem; padding: .75rem; }
