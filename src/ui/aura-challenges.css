@@ -38,3 +38,11 @@
   .aura-challenge-composer__form { align-items: stretch; flex-direction: column; }
   .aura-challenge-composer label { flex-basis: auto; }
 }
+
+.aura-challenge-composer__identity { display: contents; }
+.aura-challenge-composer__identity > summary { display: none; }
+.aura-results .aura-challenge-composer.is-compact { padding: 0; border: 0; background: transparent; }
+.aura-challenge-composer.is-compact .aura-challenge-composer__identity { display: block; width: 100%; }
+.aura-challenge-composer.is-compact .aura-challenge-composer__identity > summary { display: list-item; min-height: 44px; padding: 12px 0; cursor: pointer; font-size: 12px; color: var(--color-asf-muted, #aaa); }
+.aura-challenge-composer.is-compact .aura-challenge-composer__identity[open] { padding-bottom: 12px; }
+.aura-challenge-composer.is-compact .aura-challenge-composer__identity label { display: flex; flex-direction: column; gap: 6px; }

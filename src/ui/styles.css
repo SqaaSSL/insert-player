@@ -4400,20 +4400,37 @@
     @apply pointer-events-none absolute inset-0 flex items-center justify-center font-arcade text-[10px] text-asf-cream content-['Rival’s_turn'];
   }
 
+  /* Results occupy the retired instrument; the live victory tableau stays visible. */
   .aura-results {
-    @apply absolute inset-0 z-40 flex items-center justify-center overflow-y-auto p-5;
-  }
-
-  .aura-results__veil {
-    @apply absolute inset-0 bg-[#03030a]/90 backdrop-blur-md;
+    @apply absolute bottom-0 right-0 top-[22.23%] z-40 w-[48%] overflow-y-auto bg-[#090910]/95;
   }
 
   .aura-results__panel {
-    @apply relative z-10 flex w-full max-w-[980px] flex-col items-center gap-4 overflow-hidden rounded-[8px]
-           border-2 border-[#4fdced] bg-[#090718]/95 px-7 py-6 text-center
-           shadow-[0_0_60px_rgba(79,220,237,0.2),inset_0_0_48px_rgba(255,61,198,0.08)];
-    @apply max-h-full overflow-y-auto;
+    @apply relative flex w-full flex-col items-stretch gap-3 px-5 py-4 text-center outline-none;
   }
+
+  .game-shell.is-aura.is-portrait .aura-results {
+    @apply left-0 top-[52%] w-full;
+  }
+
+  .aura-results__share-option { @apply w-full text-left; }
+  .aura-results__share-option > summary {
+    @apply flex min-h-11 cursor-pointer list-none items-center justify-center rounded border border-asf-cream/50
+           px-4 py-3 font-sans text-sm font-bold text-asf-cream;
+  }
+  .aura-results__share-option > summary::-webkit-details-marker { display: none; }
+  .aura-results__share-option > summary:hover { @apply border-asf-cream bg-asf-cream/10; }
+  .aura-results__share-option[open] > summary { @apply border-asf-gold text-asf-gold; }
+  .aura-results__share-content { @apply flex flex-col gap-3 pt-3; }
+  .aura-results__share-option > summary:focus-visible,
+  .aura-results__details > summary:focus-visible { @apply outline-2 outline-offset-2 outline-asf-gold; }
+  .aura-results__details { @apply w-full border-t border-asf-line text-left; }
+  .aura-results__details > summary { @apply min-h-11 cursor-pointer py-3 font-sans text-xs text-asf-muted; }
+  .aura-results__details[open] { @apply flex flex-col gap-3; }
+  .aura-results__challenge-result { @apply m-0 font-sans text-xs leading-relaxed text-asf-gold; }
+  .aura-results__finisher-status { @apply flex flex-col items-center gap-2; }
+  .aura-results__finisher-status .asf-btn { @apply w-full; }
+  .aura-results__finisher-status p { @apply m-0 font-sans text-xs text-asf-muted; }
 
   .aura-capture-status {
     @apply pointer-events-none absolute bottom-2 left-3 z-20 m-0 rounded bg-[#03030a]/75 px-2 py-1
@@ -4435,7 +4452,7 @@
     @apply m-0 font-sans text-[10px] font-bold uppercase tracking-[0.16em] text-[#4fdced];
   }
 
-  .aura-results h2 {
+  .aura-results h2:not(.sr-only) {
     @apply max-w-[26ch] text-balance font-arcade text-[clamp(19px,3.2vw,38px)] leading-[1.3] text-asf-gold-bright
            [text-shadow:0_4px_0_#6d0b58];
   }
@@ -4443,7 +4460,7 @@
   .aura-results__meta { @apply text-asf-muted; }
 
   .aura-results__duel {
-    @apply grid w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-stretch gap-3;
+    @apply grid w-full grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-stretch gap-3;
   }
 
   .aura-results__duel article {
@@ -4471,8 +4488,7 @@
     .aura-loader__briefing h2 { @apply text-[20px]; }
     .aura-loader__briefing > p { @apply text-[11px]; }
     .aura-loader__lanes > span { @apply text-[18px]; }
-    .aura-results { @apply p-2; }
-    .aura-results__panel { @apply gap-2 px-4 py-3; }
+    .aura-results__panel { @apply gap-2 px-3 py-3; }
     .aura-results__duel article { @apply gap-1 p-3; }
   }
 
@@ -4507,7 +4523,7 @@
     @apply contents;
   }
   /* Lane centers mirror AuraLayout: desktop 624/720/816/912 of 1024,
-     portrait 238/326/414/502 of 576. The move rail stays left of the controls. */
+     portrait 90/222/354/486 of 576. Portrait moves sit in the stage above. */
   .aura-game-toolbar .aura-touch-controls {
     @apply absolute bottom-2 left-[56.25%] right-auto w-[37.5%] gap-0;
   }
@@ -4517,14 +4533,15 @@
            bg-[#050507]/80 px-2 font-arcade text-[8px] text-asf-cream;
   }
   .aura-game-toolbar .fight-pause-button { @apply bottom-2 left-[calc(3%+52px)] right-auto top-auto size-11; }
-  .game-shell.is-aura.is-portrait .aura-touch-controls { @apply left-[33.680556%] w-[61.111111%] gap-0; }
-  .game-shell.is-aura.is-portrait .aura-game-toolbar__back { @apply bottom-auto left-2 top-[52%]; }
-  .game-shell.is-aura.is-portrait .aura-game-toolbar .fight-pause-button { @apply bottom-auto left-auto right-2 top-[52%]; }
+  .game-shell.is-aura.is-portrait .aura-touch-controls { @apply left-[4.166667%] w-[91.666667%] gap-0; }
+  .game-shell.is-aura.is-portrait .aura-game-toolbar__back { @apply bottom-auto left-2 top-1/2; }
+  .game-shell.is-aura.is-portrait .aura-game-toolbar .fight-pause-button { @apply bottom-auto left-auto right-2 top-1/2; }
   .game-shell.is-aura.is-portrait .aura-touch-controls__lane { @apply min-h-11 text-[24px]; }
   .game-shell.is-aura .aura-capture-status {
     @apply bottom-[12%] left-[3%] top-auto whitespace-nowrap text-[8px];
   }
-  .game-shell.is-aura.is-portrait .aura-capture-status { @apply bottom-auto top-[49.5%]; }
+  /* Recording remains announced without competing with notes on a phone. */
+  .game-shell.is-aura.is-portrait .aura-capture-status { @apply sr-only; }
 
   @media (prefers-reduced-motion: reduce) {
     .fight-loader.is-aura .aura-loader__cast,

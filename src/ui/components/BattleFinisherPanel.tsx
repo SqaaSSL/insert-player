@@ -136,19 +136,28 @@ export function BattleFinisherPanel({ capture, battleId, initialBattle, authStat
       : result === 'cancelled' ? 'Your link is ready whenever you want to share it.' : 'Select and copy your Insert Player link below.');
   });
   if ((!capture && !id) || !captureAllowed) return null;
-  if (!expanded) return <section className="battle-finisher battle-finisher--compact" aria-label="Battle finisher"><div><p className="battle-finisher__eyebrow">ONE LAST MOVE</p><p className="battle-finisher__notice">{pending ? 'Your finisher is on its way.' : finisher?.status === 'ready' ? 'Your finale is saved with this battle.' : 'Turn the final frame into an AI finale.'}</p></div><button className="asf-btn" type="button" onClick={() => setExpanded(true)}>{pending ? 'Check finisher' : finisher?.status === 'ready' ? 'View finisher' : 'Make a finisher · 1 credit'}</button></section>;
+  const compactLabel = busy ? 'Preparing fatality…' : finisher?.status === 'queued' ? 'Fatality queued'
+    : finisher?.status === 'generating' ? 'Creating fatality…' : finisher?.status === 'ready' ? 'Watch fatality'
+      : finisher?.status === 'failed' ? `Retry fatality · ${BATTLE_FINISHER_CREDIT_COST} credit` : `Fatality · ${BATTLE_FINISHER_CREDIT_COST} credit`;
+  const compactNote = pending ? 'Keep playing. Your finale will be in My battles.' : finisher?.status === 'ready' ? 'Ready to watch and share.'
+    : finisher?.status === 'failed' ? finisher.creditRefunded ? 'Generation failed. Your credit was returned.' : 'Generation failed. Open for details.'
+      : '5-second AI finale · saved with this battle';
+  if (!expanded) return <section className="battle-finisher battle-finisher--compact" aria-label="Battle finisher">
+    <button className="asf-btn asf-btn--primary battle-finisher__offer" type="button" aria-expanded={false} onClick={() => setExpanded(true)}>{compactLabel}</button>
+    <p className="battle-finisher__offer-note" role={finisher ? 'status' : undefined}>{compactNote}</p>
+  </section>;
   return <section className="battle-finisher" aria-label="Battle finisher">
-    <div className="battle-finisher__heading"><div><p className="battle-finisher__eyebrow">ONE LAST MOVE</p><h3>{finisher?.status === 'ready' ? 'Your finisher is ready.' : 'Give this battle a final scene.'}</h3></div>
-      <span className="battle-finisher__price">{BATTLE_FINISHER_CREDIT_COST} CREDIT</span><button className="battle-text-button" type="button" onClick={() => setExpanded(false)}>Close</button></div>
-    <p className="battle-finisher__notice">A five-second AI finale from your real final frame, with sound. Saved with this battle.</p>
-    {!finisher && capture ? <img className="battle-finisher__source" src={`data:image/jpeg;base64,${capture.stillBase64.replace(/^data:image\/jpeg;base64,/, '')}`} alt="The final frame used to create your finisher" /> : null}
+    <div className="battle-finisher__heading"><h3>{finisher?.status === 'ready' ? 'Your fatality is ready.' : 'Fatality'}</h3>
+      <button className="battle-text-button" type="button" aria-label="Close fatality details" onClick={() => setExpanded(false)}>Close</button></div>
+    <p className="battle-finisher__notice">A five-second AI finale with sound, starring your winner and rival.</p>
+    {!finisher && capture ? <details className="battle-finisher__frame"><summary>View the final frame</summary><img className="battle-finisher__source" src={`data:image/jpeg;base64,${capture.stillBase64.replace(/^data:image\/jpeg;base64,/, '')}`} alt="The final frame used to create your fatality" /></details> : null}
     {finisher?.status === 'ready' && battle ? <><div className="battle-finisher__preview"><BattleMedia battle={battle} kind="finisher" sessionKey={authSessionKey} /></div><BattleDownload battle={battle} kind="finisher" /></> : null}
-    {pending ? <div className="battle-finisher__pending" role="status"><span className="battle-finisher__pulse" aria-hidden="true" /><strong>{finisher.status === 'queued' ? 'Your finale is queued.' : 'Creating your finale…'}</strong><p>You can leave this page. Find it in My battles when it is ready.</p></div> : null}
+    {pending ? <div className="battle-finisher__pending" role="status"><span className="battle-finisher__pulse" aria-hidden="true" /><strong>{finisher.status === 'queued' ? 'Your fatality is queued.' : 'Creating your fatality…'}</strong><p>Keep playing. Find it in My battles when it is ready.</p></div> : null}
     {finisher?.status === 'failed' ? <p className="battle-finisher__notice is-error" role="status">{finisher.error || 'This finale could not be made.'} {finisher.creditRefunded ? 'Your credit was returned.' : 'Check your credit balance before trying again.'}</p> : null}
-    {!signedIn ? <div className="battle-finisher__actions"><button className="asf-btn asf-btn--primary" type="button" disabled={authStatus === 'loading' || !onSignIn} onClick={() => void signIn()}>{authStatus === 'loading' ? 'Checking your account…' : 'Sign in to make a finisher'}</button><p className="battle-finisher__notice">Your final frame stays on this device. Signing in does not spend a credit.</p></div> : null}
+    {!signedIn ? <div className="battle-finisher__actions"><button className="asf-btn asf-btn--primary" type="button" disabled={authStatus === 'loading' || !onSignIn} onClick={() => void signIn()}>{authStatus === 'loading' ? 'Checking your account…' : 'Sign in for your fatality'}</button><p className="battle-finisher__notice">Your frame stays saved here. Sign-in is free; generation costs 1 credit.</p></div> : null}
     {signedIn && (!finisher || finisher.status === 'failed') ? <>
       <label className="battle-finisher__consent"><input type="checkbox" checked={consent} disabled={busy} onChange={event => setConsent(event.target.checked)} /><span>I am 18+ and have the rights to process the pictured characters. I agree to the <a href="/terms" target="_blank" rel="noreferrer">Terms</a> and <a href="/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>, request immediate AI generation and acknowledge the <a href="/refunds" target="_blank" rel="noreferrer">digital-content cancellation terms</a>. Keep it private until I choose Share.</span></label>
-      <div className="battle-finisher__actions"><button className="asf-btn asf-btn--primary" type="button" disabled={busy || !consent} onClick={() => void generate()}>{busy ? 'Preparing your finale…' : `${finisher ? 'Try a new finisher' : 'Generate finisher'} · 1 credit`}</button>
+      <div className="battle-finisher__actions"><button className="asf-btn asf-btn--primary" type="button" disabled={busy || !consent} onClick={() => void generate()}>{busy ? 'Preparing fatality…' : `${finisher ? 'Try a new fatality' : 'Generate fatality'} · ${BATTLE_FINISHER_CREDIT_COST} credit`}</button>
         {!battle ? <button className="asf-btn" type="button" disabled={busy} onClick={() => void withAction(async () => { await save(); setMessage('Battle saved privately in My battles.'); })}>Save battle free</button> : null}
       </div>
     </> : null}

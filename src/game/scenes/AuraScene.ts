@@ -118,7 +118,6 @@ import {
 
 
 const LANE_TONES = AURA_LANES.map(lane => lane.tone);
-const LANE_HALF_WIDTH = 30;
 const RECEPTOR_WIDTH = 56;
 const RECEPTOR_HEIGHT = 26;
 const NOTE_WIDTH = 44;
@@ -303,6 +302,8 @@ export class AuraScene extends Phaser.Scene {
   private phaseText!: Phaser.GameObjects.Text;
   private duelHeadingText!: Phaser.GameObjects.Text;
   private performerNameText!: Phaser.GameObjects.Text;
+  private finaleLabels: [Phaser.GameObjects.Text, Phaser.GameObjects.Text] | null = null;
+  private finaleWinner: AuraBattleCompleteDetail['winnerSlot'] | null = null;
   private comboText!: Phaser.GameObjects.Text;
   private crowdLabelText!: Phaser.GameObjects.Text;
   private crowdMeterGraphics!: Phaser.GameObjects.Graphics;
@@ -427,6 +428,8 @@ export class AuraScene extends Phaser.Scene {
     this.cameraFromSlot = 0;
     this.cameraTransitionMs = AURA_CAMERA_HANDOFF_MS;
     this.finaleElapsedMs = null;
+    this.finaleLabels = null;
+    this.finaleWinner = null;
     this.stageFrame = null;
     this.currentTurnIndex = -2;
     this.clockStartedAt = null;
@@ -772,8 +775,8 @@ export class AuraScene extends Phaser.Scene {
     const tone = LANE_TONES[practiceLane];
     const progress = guide.practiceProgress;
     graphics.fillStyle(tone, 0.12);
-    graphics.fillRect(lane.startX - LANE_HALF_WIDTH, lane.startY,
-      LANE_HALF_WIDTH * 2, lane.targetY - lane.startY);
+    graphics.fillRect(lane.startX - this.layout.laneHalfWidth, lane.startY,
+      this.layout.laneHalfWidth * 2, lane.targetY - lane.startY);
     strokeChamfered(graphics, lane.targetX - RECEPTOR_WIDTH / 2 - 3,
       lane.targetY - RECEPTOR_HEIGHT / 2 - 3, RECEPTOR_WIDTH + 6, RECEPTOR_HEIGHT + 6,
       5, progress === 1 ? 3 : 1, HEAT, progress === 1 ? 1 : 0.6);
@@ -1147,6 +1150,10 @@ export class AuraScene extends Phaser.Scene {
       fontFamily: PIXEL_FONT, fontSize: '12px', color: '#fff4d6', align: 'center',
       stroke: '#050507', strokeThickness: 4,
     }).setOrigin(0.5);
+    this.finaleLabels = [0, 1].map(() => this.add.text(0, 0, '', {
+      fontFamily: PIXEL_FONT, fontSize: '16px', color: '#ffce3a', align: 'center',
+      backgroundColor: '#050507', padding: { x: 9, y: 8 },
+    }).setOrigin(0.5, 1).setVisible(false)) as [Phaser.GameObjects.Text, Phaser.GameObjects.Text];
     this.comboText = this.add.text(0, 0, 'x0 FLOW', {
       fontFamily: PIXEL_FONT, fontSize: '18px', color: '#ffce3a',
       stroke: '#050507', strokeThickness: 6,
@@ -1185,6 +1192,7 @@ export class AuraScene extends Phaser.Scene {
       this.phaseText,
       this.duelHeadingText,
       this.performerNameText,
+      ...this.finaleLabels,
       this.comboText,
       this.crowdLabelText,
       ...this.laneKeyTexts,
@@ -1333,6 +1341,22 @@ export class AuraScene extends Phaser.Scene {
     this.applyBackdropComposition();
     this.drawStageLighting(this.activePerformerSlot, 0);
     this.advanceFighterPresentation(0);
+    this.updateFinaleLabels(composition);
+  }
+
+  private updateFinaleLabels(composition = this.cameraComposition()): void {
+    if (!this.finaleLabels) return;
+    for (const slot of [0, 1] as const) {
+      const won = this.finaleWinner === (slot === 0 ? 'p1' : 'p2');
+      const placement = composition.performers[slot];
+      const label = this.finaleLabels[slot];
+      label.setVisible(this.matchFinished && this.finaleWinner !== null && !composition.transitioning);
+      if (!this.matchFinished || this.finaleWinner === null) continue;
+      label.setText(this.finaleWinner === 'draw' ? 'DRAW' : won ? 'VICTORY' : 'DEFEAT')
+        .setColor(this.finaleWinner === 'draw' || won ? '#ffce3a' : '#ff7777')
+        .setFontSize(this.layout.portrait ? 16 : 14)
+        .setPosition(placement.x, Math.max(this.layout.stage.y + 32, placement.footY - placement.height - 24));
+    }
   }
 
   private cameraComposition() {
@@ -1348,7 +1372,7 @@ export class AuraScene extends Phaser.Scene {
       activeSlot: this.cameraFocusSlot ?? this.activePerformerSlot ?? 0,
       fromSlot: this.cameraFromSlot ?? this.cameraFocusSlot ?? this.activePerformerSlot ?? 0,
       transitionProgress: (this.cameraTransitionMs ?? AURA_CAMERA_HANDOFF_MS) / AURA_CAMERA_HANDOFF_MS,
-      ...(this.finaleElapsedMs != null ? { finaleProgress: this.finaleElapsedMs / AURA_CAMERA_FINALE_MS } : {}),
+      ...(this.finaleElapsedMs != null ? { finaleProgress: this.finaleElapsedMs / AURA_CAMERA_FINALE_MS, resultTableau: true } : {}),
       ...(introFaceoff !== null ? { finaleProgress: introFaceoff } : {}),
       reducedMotion: this.reduceMotion,
     });
@@ -1448,13 +1472,13 @@ export class AuraScene extends Phaser.Scene {
       const typedLane = lane as AuraLane;
       const layout = this.laneLayout(slot, typedLane);
       const tone = LANE_TONES[lane];
-      const left = layout.startX - LANE_HALF_WIDTH;
+      const left = layout.startX - this.layout.laneHalfWidth;
       const height = layout.targetY - layout.startY;
       this.laneGraphics.fillStyle(tone, 0.09);
-      this.laneGraphics.fillRect(left, layout.startY, LANE_HALF_WIDTH * 2, height);
+      this.laneGraphics.fillRect(left, layout.startY, this.layout.laneHalfWidth * 2, height);
       this.laneGraphics.lineStyle(1, tone, 0.3);
       this.laneGraphics.lineBetween(left, layout.startY, left, layout.targetY);
-      this.laneGraphics.lineBetween(left + LANE_HALF_WIDTH * 2, layout.startY, left + LANE_HALF_WIDTH * 2, layout.targetY);
+      this.laneGraphics.lineBetween(left + this.layout.laneHalfWidth * 2, layout.startY, left + this.layout.laneHalfWidth * 2, layout.targetY);
       this.laneGraphics.fillStyle(tone, 0.7);
       this.laneGraphics.fillRect(layout.startX - 12, layout.startY - 2, 24, 2);
 
@@ -1464,9 +1488,9 @@ export class AuraScene extends Phaser.Scene {
       const goodHalf = difficulty.goodWindowMs * pxPerMs;
       const perfectHalf = difficulty.perfectWindowMs * pxPerMs;
       this.laneGraphics.fillStyle(tone, 0.06);
-      this.laneGraphics.fillRect(left + 1, layout.targetY - goodHalf, LANE_HALF_WIDTH * 2 - 2, goodHalf * 2);
+      this.laneGraphics.fillRect(left + 1, layout.targetY - goodHalf, this.layout.laneHalfWidth * 2 - 2, goodHalf * 2);
       this.laneGraphics.fillStyle(tone, 0.12);
-      this.laneGraphics.fillRect(left + 1, layout.targetY - perfectHalf, LANE_HALF_WIDTH * 2 - 2, perfectHalf * 2);
+      this.laneGraphics.fillRect(left + 1, layout.targetY - perfectHalf, this.layout.laneHalfWidth * 2 - 2, perfectHalf * 2);
 
       // Receptor: a metal slot with the glyph outline inside it.
       const rx = layout.targetX - RECEPTOR_WIDTH / 2;
@@ -1482,7 +1506,7 @@ export class AuraScene extends Phaser.Scene {
     }
     this.drawBeatGrid(slot);
     this.drawLaneControlHints(slot);
-    const frameLeft = this.layout.highwayX + this.layout.laneOffsets[0] - LANE_HALF_WIDTH - HIGHWAY_FRAME_PAD_X;
+    const frameLeft = this.layout.highwayX + this.layout.laneOffsets[0] - this.layout.laneHalfWidth - HIGHWAY_FRAME_PAD_X;
     const frameTop = this.layout.laneStartY - HIGHWAY_FRAME_PAD_TOP;
     this.highwayTitleText
       .setText(this.cpuVsCpu ? 'AUTO RHYTHM' : this.isLocallyPlayable(slot) ? 'YOUR TURN' : 'RIVAL’S TURN')
@@ -1523,8 +1547,8 @@ export class AuraScene extends Phaser.Scene {
   }
 
   private drawHighwayFrame(slot: AuraSlot): void {
-    const frameLeft = this.layout.highwayX + this.layout.laneOffsets[0] - LANE_HALF_WIDTH - HIGHWAY_FRAME_PAD_X;
-    const frameRight = this.layout.highwayX + this.layout.laneOffsets[3] + LANE_HALF_WIDTH + HIGHWAY_FRAME_PAD_X;
+    const frameLeft = this.layout.highwayX + this.layout.laneOffsets[0] - this.layout.laneHalfWidth - HIGHWAY_FRAME_PAD_X;
+    const frameRight = this.layout.highwayX + this.layout.laneOffsets[3] + this.layout.laneHalfWidth + HIGHWAY_FRAME_PAD_X;
     const frameTop = this.layout.laneStartY - HIGHWAY_FRAME_PAD_TOP;
     const frameBottom = this.layout.instrument.bottom;
     const width = frameRight - frameLeft;
@@ -1535,14 +1559,18 @@ export class AuraScene extends Phaser.Scene {
 
     // A full thin border identifies the active seat without favouring an edge.
     const accent = SLOT_COLORS[slot];
-    const rail = this.layout.moveRail;
-    fillChamfered(this.laneGraphics, rail.left, rail.top, rail.right - rail.left, rail.bottom - rail.top, CHAMFER + 4, INK, 0.84);
-    strokeChamfered(this.laneGraphics, rail.left, rail.top, rail.right - rail.left, rail.bottom - rail.top, CHAMFER + 4, 1, accent, 0.55);
-    // The move's recent hits sit on the same line as the four receptors.
-    this.laneGraphics.lineStyle(2, CREAM, 0.65);
-    this.laneGraphics.lineBetween(rail.right - 8, this.layout.laneTargetY, frameLeft + 12, this.layout.laneTargetY);
-    this.laneGraphics.lineBetween(rail.right - 8, this.layout.laneTargetY, rail.right - 3, this.layout.laneTargetY - 5);
-    this.laneGraphics.lineBetween(rail.right - 8, this.layout.laneTargetY, rail.right - 3, this.layout.laneTargetY + 5);
+    // Portrait cards carry their own surface in the stage. Keep this rail and
+    // receptor connector only beside the desktop instrument, never across a body.
+    if (!this.layout.portrait) {
+      const rail = this.layout.moveRail;
+      fillChamfered(this.laneGraphics, rail.left, rail.top, rail.right - rail.left, rail.bottom - rail.top, CHAMFER + 4, INK, 0.84);
+      strokeChamfered(this.laneGraphics, rail.left, rail.top, rail.right - rail.left, rail.bottom - rail.top, CHAMFER + 4, 1, accent, 0.55);
+      // The move's recent hits sit on the same line as the four receptors.
+      this.laneGraphics.lineStyle(2, CREAM, 0.65);
+      this.laneGraphics.lineBetween(rail.right - 8, this.layout.laneTargetY, frameLeft + 12, this.layout.laneTargetY);
+      this.laneGraphics.lineBetween(rail.right - 8, this.layout.laneTargetY, rail.right - 3, this.layout.laneTargetY - 5);
+      this.laneGraphics.lineBetween(rail.right - 8, this.layout.laneTargetY, rail.right - 3, this.layout.laneTargetY + 5);
+    }
     strokeChamfered(this.laneGraphics, frameLeft, frameTop, width, height, CHAMFER + 4, 1, accent, 0.8);
     this.laneGraphics.lineStyle(2, CREAM, 0.85);
     this.laneGraphics.lineBetween(frameLeft + 12, this.layout.laneTargetY, frameRight - 12, this.layout.laneTargetY);
@@ -1569,7 +1597,7 @@ export class AuraScene extends Phaser.Scene {
     for (const progress of [0.25, 0.5, 0.75]) {
       const y = Phaser.Math.Linear(left.startY, left.targetY, progress);
       this.laneGraphics.lineStyle(1, STEEL, progress === 0.5 ? 0.28 : 0.14);
-      this.laneGraphics.lineBetween(left.startX - LANE_HALF_WIDTH, y, right.startX + LANE_HALF_WIDTH, y);
+      this.laneGraphics.lineBetween(left.startX - this.layout.laneHalfWidth, y, right.startX + this.layout.laneHalfWidth, y);
     }
   }
 
@@ -1773,9 +1801,9 @@ export class AuraScene extends Phaser.Scene {
     this.tweens.killTweensOf(keyText);
     flash.clear();
     flash.fillStyle(tone, 0.07);
-    flash.fillRect(layout.targetX - LANE_HALF_WIDTH, layout.startY, LANE_HALF_WIDTH * 2, layout.targetY - layout.startY);
+    flash.fillRect(layout.targetX - this.layout.laneHalfWidth, layout.startY, this.layout.laneHalfWidth * 2, layout.targetY - layout.startY);
     flash.fillStyle(tone, 0.16);
-    flash.fillRect(layout.targetX - LANE_HALF_WIDTH, layout.targetY - 70, LANE_HALF_WIDTH * 2, 70);
+    flash.fillRect(layout.targetX - this.layout.laneHalfWidth, layout.targetY - 70, this.layout.laneHalfWidth * 2, 70);
     const rx = layout.targetX - RECEPTOR_WIDTH / 2;
     const ry = layout.targetY - RECEPTOR_HEIGHT / 2;
     fillChamfered(flash, rx, ry, RECEPTOR_WIDTH, RECEPTOR_HEIGHT, 4, tone, 0.95);
@@ -2281,6 +2309,7 @@ export class AuraScene extends Phaser.Scene {
     const winner: AuraBattleCompleteDetail['winnerSlot'] = p1Score.score === p2Score.score
       ? 'draw'
       : p1Score.score > p2Score.score ? 'p1' : 'p2';
+    this.finaleWinner = winner;
     this.activePerformerSlot = winner === 'draw' ? null : winner === 'p2' ? 1 : 0;
     this.finaleElapsedMs = this.reduceMotion ? AURA_CAMERA_FINALE_MS : 0;
     this.comicFeedback?.beginTurn();
@@ -2337,24 +2366,37 @@ export class AuraScene extends Phaser.Scene {
     } catch (error) { debugWarn('[AuraScene] Action history incomplete', error); }
     const epoch = this.lifecycleEpoch;
     const battleCapture = this.battleCapture;
+    let captureSettled = false;
+    let presentationSettled = false;
+    const showResults = () => {
+      if (captureSettled && presentationSettled && this.isCurrentLifecycle(epoch)) this.setMatchActionsVisible(true);
+    };
     this.time.delayedCall(2_200, () => {
       if (!this.isCurrentLifecycle(epoch)) return;
       const winnerSide = winner === 'draw' ? undefined : battleWinnerSide(
         [this.getPerformerTopCenter(winner === 'p1' ? 0 : 1).x],
         [this.getPerformerTopCenter(winner === 'p1' ? 1 : 0).x],
       );
-      battleCapture?.capture(this, {
+      const capture = battleCapture?.capture(this, {
         game: 'aura', winner, winnerSide, p1Name: this.p1Name, p2Name: this.p2Name,
         stageLabel: this.stageLabel, stageId: this.resolvedStageId,
         durationSeconds: summary.durationSeconds, p1Score: p1Score.score, p2Score: p2Score.score,
         seed: this.matchSeed,
       }, { heightRatio: this.layout.portrait ? (this.layout.stage.y + this.layout.stage.height) / this.layout.height : 1 });
+      void Promise.resolve(capture).then(outcome => {
+        if (outcome === 'cancelled' || !this.isCurrentLifecycle(epoch)) return;
+        captureSettled = true;
+        showResults();
+      });
     });
     // Include the winner reveal in the actual canvas recording, then stop game
     // music so it cannot double up with the result screen's video playback.
     if (this.videoRecorder?.status === 'recording') this.emitCapture({ id: this.captureId, state: 'processing' });
     this.time.delayedCall(2_800, () => { void this.finishVideoCapture(epoch); });
-    this.time.delayedCall(this.reduceMotion ? 1_800 : 3_000, () => this.setMatchActionsVisible(true));
+    this.time.delayedCall(this.reduceMotion ? 1_800 : 3_000, () => {
+      presentationSettled = true;
+      showResults();
+    });
   }
 
   private emitCapture(detail: AuraCaptureDetail): void {

@@ -38,6 +38,7 @@ vi.mock('../../game/createGame.ts', () => ({ createGame: runtime.create }));
 vi.mock('../../services/DebugLog.ts', () => ({ debugInfo: vi.fn(), debugWarn: vi.fn() }));
 vi.mock('../../services/MatchReporting.ts', () => ({ reportMatchCompletion: vi.fn() }));
 
+import { AURA_CAPTURE_EVENT } from '../../game/aura/AuraCapture.ts';
 import { BATTLE_CAPTURE_EVENT } from '../../game/match/BattleCapture.ts';
 import { GamePage } from './GamePage.tsx';
 import { FightLoadingCurtain } from '../components/FightLoadingCurtain.tsx';
@@ -408,6 +409,40 @@ describe('GamePage Aura presentation handoff', () => {
     expect(result().finisher.props.capture.clientBattleId).toBe('second');
     result().finisher.props.onBattleChange({ id: 'second-saved-battle' }); flush();
     expect(result().battle?.id).toBe('second-saved-battle');
+  });
+  it('keeps a visible Fatality offer while the frame prepares, explains capture failure, and ignores an old failure', async () => {
+    await mount('AuraScene', { gameMode: 'aura', vsAI: true });
+    const frame = (state: string, clientBattleId: string) => {
+      viewport.dispatchEvent(new CustomEvent(BATTLE_CAPTURE_EVENT, { detail: { state, clientBattleId } })); flush();
+    };
+    frame('started', 'first');
+    viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
+    viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
+    const offer = () => find(node => node.type === AuraBattleResults).props.finisher;
+    expect(find(node => node.type === 'button', offer()).props).toMatchObject({ disabled: true, children: 'Fatality · 1 credit' });
+    expect(find(node => node.type === 'p', offer()).props.children).toBe('Preparing your final frame…');
+    frame('unavailable', 'first');
+    expect(find(node => node.type === 'p', offer()).props.children).toContain('unavailable for this round');
+    frame('started', 'second'); frame('unavailable', 'first');
+    expect(find(node => node.type === 'p', offer()).props.children).toBe('Preparing your final frame…');
+  });
+  it('waits for the recording before enabling Fatality and then attaches the finished video', async () => {
+    await mount('AuraScene', { gameMode: 'aura', vsAI: true });
+    const clientBattleId = 'battle';
+    viewport.dispatchEvent(new CustomEvent(BATTLE_CAPTURE_EVENT, { detail: { state: 'started', clientBattleId } })); flush();
+    viewport.dispatchEvent(new CustomEvent(AURA_CAPTURE_EVENT, { detail: { id: 'video', state: 'preparing' } })); flush();
+    viewport.dispatchEvent(new CustomEvent(AURA_CAPTURE_EVENT, { detail: { id: 'video', state: 'processing' } })); flush();
+    viewport.dispatchEvent(new CustomEvent(BATTLE_CAPTURE_EVENT, { detail: { state: 'ready', clientBattleId,
+      capture: { clientBattleId, summary: { game: 'aura', p1Name: 'Trump', p2Name: 'Lamine' }, stillBase64: 'data:image/jpeg;base64,/9j/AA==' } } }));
+    viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
+    viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
+    const offer = () => find(node => node.type === AuraBattleResults).props.finisher;
+    expect(find(node => node.type === 'button', offer()).props.disabled).toBe(true);
+    expect(find(node => node.type === 'p', offer()).props.children).toBe('Preparing your match video…');
+    viewport.dispatchEvent(new CustomEvent(AURA_CAPTURE_EVENT, { detail: { id: 'video', state: 'ready',
+      video: { blob: new Blob(['recording'], { type: 'video/mp4' }), mimeType: 'video/mp4', hasAudio: true } } })); flush();
+    expect(offer().props.capture.recording).toBeInstanceOf(File);
+    expect(offer().props.capture.recording.name).toBe('Insert-Player-Trump-vs-Lamine.mp4');
   });
   it('unmount disposes timers so a pending opening never starts', async () => {
     await mount(); emit('loading'); emit('ready'); advance(600);

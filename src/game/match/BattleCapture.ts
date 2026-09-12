@@ -19,6 +19,7 @@ export function battleWinnerSide(winners: readonly number[], losers: readonly nu
 export type BattleCaptureEventDetail =
   | { state: 'started' | 'unavailable'; clientBattleId: string }
   | { state: 'ready'; clientBattleId: string; capture: BattleCaptureDetail };
+export type BattleCaptureOutcome = 'ready' | 'unavailable' | 'cancelled';
 
 /** One session per scene init. Cancel on shutdown/restart so an old renderer
  * callback can never attach its final frame to a new battle. */
@@ -27,11 +28,13 @@ export class BattleCaptureSession {
   private cancelled = false;
   private requested = false;
   private timeout: ReturnType<typeof setTimeout> | undefined;
+  private resolveCompletion: ((outcome: BattleCaptureOutcome) => void) | null = null;
+  private readonly completion = new Promise<BattleCaptureOutcome>(resolve => { this.resolveCompletion = resolve; });
 
   constructor() { this.emit({ state: 'started', clientBattleId: this.clientBattleId }); }
 
-  capture(scene: Phaser.Scene, summary: BattleSummary, frame?: { heightRatio: number }): void {
-    if (this.cancelled || this.requested) return;
+  capture(scene: Phaser.Scene, summary: BattleSummary, frame?: { heightRatio: number }): Promise<BattleCaptureOutcome> {
+    if (this.cancelled || this.requested) return this.completion;
     this.requested = true;
     let settled = false;
     const fail = () => {
@@ -39,6 +42,7 @@ export class BattleCaptureSession {
       settled = true;
       clearTimeout(this.timeout);
       this.emit({ state: 'unavailable', clientBattleId: this.clientBattleId });
+      this.settle('unavailable');
     };
     this.timeout = setTimeout(fail, 8_000);
     try {
@@ -64,12 +68,19 @@ export class BattleCaptureSession {
           clearTimeout(this.timeout);
           this.emit({ state: 'ready', clientBattleId: this.clientBattleId,
             capture: { clientBattleId: this.clientBattleId, summary, stillBase64 } });
+          this.settle('ready');
         } catch { fail(); }
       }, 'image/jpeg', 0.92);
     } catch { fail(); }
+    return this.completion;
   }
 
-  cancel(): void { this.cancelled = true; clearTimeout(this.timeout); }
+  cancel(): void { this.cancelled = true; clearTimeout(this.timeout); this.settle('cancelled'); }
+  private settle(outcome: BattleCaptureOutcome): void {
+    const resolve = this.resolveCompletion;
+    this.resolveCompletion = null;
+    resolve?.(outcome);
+  }
   private emit(detail: BattleCaptureEventDetail): void {
     if (!this.cancelled && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent(BATTLE_CAPTURE_EVENT, { detail }));

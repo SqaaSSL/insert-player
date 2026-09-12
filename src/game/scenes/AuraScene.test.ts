@@ -10,6 +10,7 @@ import { AURA_CAMERA_FINALE_MS, AURA_CAMERA_HANDOFF_MS } from '../aura/AuraCamer
 import { AuraBattle } from '../aura/AuraBattle.ts';
 import { AuraRecorder } from '../aura/AuraRecording.ts';
 import { AuraVideoRecorder, type AuraVideoRecording } from '../aura/AuraVideoRecorder.ts';
+import { BattleCaptureSession, BATTLE_CAPTURE_EVENT } from '../match/BattleCapture.ts';
 import { createAuraChart } from '../aura/AuraChart.ts';
 import { DEFAULT_AURA_TRACK } from '../aura/AuraTracks.ts';
 import { AURA_DEFAULT_LANE_KEYS, AURA_LOCAL_P1_LANE_KEYS, AURA_LOCAL_P2_LANE_KEYS } from '../aura/AuraConfig.ts';
@@ -1090,7 +1091,7 @@ describe('AuraScene responsive whole-rig layout', () => {
     { winner: 'p2', scoringSlot: 1, reducedMotion: false },
     { winner: 'draw', scoringSlot: null, reducedMotion: false },
     { winner: 'p1', scoringSlot: 0, reducedMotion: true },
-  ])('reunites both bodies for $winner with winner/defeat poses and a readable finale, reduced=$reducedMotion', ({ winner, scoringSlot, reducedMotion }) => {
+  ])('reunites both bodies for $winner with winner/defeat poses and a readable finale, reduced=$reducedMotion', async ({ winner, scoringSlot, reducedMotion }) => {
     vi.useFakeTimers();
     const dispatchEvent = vi.fn();
     vi.stubGlobal('window', { dispatchEvent });
@@ -1106,7 +1107,8 @@ describe('AuraScene responsive whole-rig layout', () => {
       cameraFocusSlot: 1, cameraFromSlot: winner === 'p1' && !reducedMotion ? 0 : 1, reduceMotion: reducedMotion,
       cameraTransitionMs: winner === 'p1' && !reducedMotion ? AURA_CAMERA_HANDOFF_MS / 2 : AURA_CAMERA_HANDOFF_MS,
       finishVideoCapture: vi.fn(), setMatchActionsVisible: vi.fn(),
-      battleCapture: { capture: vi.fn() }, lifecycleActive: true,
+      battleCapture: { capture: vi.fn().mockResolvedValue('ready') }, lifecycleActive: true,
+      finaleLabels: [controlText(), controlText()],
       time: { delayedCall: vi.fn((delay: number, callback: () => void) => setTimeout(callback, delay)) },
     });
     Object.assign(scene.soundManager, { playAnnounce: vi.fn(), peakAuraCrowd: vi.fn() });
@@ -1120,6 +1122,9 @@ describe('AuraScene responsive whole-rig layout', () => {
     scene.advanceCameraPresentation(AURA_CAMERA_FINALE_MS);
     expect(scene.cameraTransitionMs).toBe(handoffTime);
     expect(scene.performerContainers.map((rig: ReturnType<typeof performerContainer>) => rig.visible)).toEqual([true, true]);
+    expect(scene.finaleLabels.map((label: ReturnType<typeof controlText>) => label.text))
+      .toEqual(winner === 'draw' ? ['DRAW', 'DRAW'] : winner === 'p1' ? ['VICTORY', 'DEFEAT'] : ['DEFEAT', 'VICTORY']);
+    expect(scene.finaleLabels.every((label: ReturnType<typeof controlText>) => label.visible)).toBe(true);
     expect(dispatchEvent.mock.calls[0][0].detail.winnerSlot).toBe(winner);
     scene.advanceFighterPresentation(1 / 60);
     for (const slot of [0, 1] as const) {
@@ -1133,13 +1138,13 @@ describe('AuraScene responsive whole-rig layout', () => {
       expect(scene.auraPerformanceViews[slot].update).toHaveBeenLastCalledWith(1_000 / 60, scene.views[slot]);
     }
     expect(scene.cameraFocusSlot).toBe(1); // Winning P1 must not cut away from the last camera mark.
-    const resultsDelay = reducedMotion ? 1_800 : 3_000;
-    vi.advanceTimersByTime(resultsDelay - 1);
+    const resultsDelay = reducedMotion ? 2_200 : 3_000;
+    await vi.advanceTimersByTimeAsync(resultsDelay - 1);
     expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(scene.setMatchActionsVisible).toHaveBeenCalledExactlyOnceWith(true);
     expect(scene.time.delayedCall).toHaveBeenCalledWith(2_800, expect.any(Function));
-    vi.advanceTimersByTime(2_800);
+    await vi.advanceTimersByTimeAsync(2_800);
     expect(scene.battleCapture.capture).toHaveBeenCalledExactlyOnceWith(scene, expect.objectContaining({
       game: 'aura', winner, winnerSide: winner === 'draw' ? undefined : winner === 'p1' ? 'left' : 'right', p1Name: 'P1', p2Name: 'P2',
       p1Score: battle.scoreFor(0).score, p2Score: battle.scoreFor(1).score,
@@ -1147,9 +1152,42 @@ describe('AuraScene responsive whole-rig layout', () => {
     expect(scene.finishVideoCapture).toHaveBeenCalledExactlyOnceWith(1);
   });
 
+  it.each(['ready', 'timeout', 'restart'] as const)('opens results only after the real still session settles, handling %s', async outcome => {
+    vi.useFakeTimers();
+    const target = new EventTarget(); vi.stubGlobal('window', target);
+    const order: string[] = [];
+    target.addEventListener(BATTLE_CAPTURE_EVENT, event => order.push((event as CustomEvent).detail.state));
+    vi.stubGlobal('document', { createElement: () => ({ width: 0, height: 0,
+      getContext: () => ({ drawImage: vi.fn() }), toDataURL: () => 'data:image/jpeg;base64,c3RpbGw=' }) });
+    const { scene } = cameraHarness(576, 1024);
+    const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
+    const snapshot = vi.fn();
+    Object.assign(scene, {
+      chart, battle: new AuraBattle(chart), track: DEFAULT_AURA_TRACK, difficultyId: 'viral', resolvedStageId: DEFAULT_AURA_STAGE_ID,
+      stageLabel: 'AURA PLAZA', customStageKey: null, lifecycleEpoch: 1, lifecycleActive: true, captureId: 'capture-order',
+      turnText: controlText(), phaseText: controlText(), comboText: controlText(), online: null,
+      isVsAI: true, cpuVsCpu: false, reduceMotion: true, videoRecorder: null,
+      battleCapture: new BattleCaptureSession(), game: { renderer: { snapshot } },
+      finishVideoCapture: vi.fn(), setMatchActionsVisible: vi.fn(() => order.push('results')),
+      time: { delayedCall: vi.fn((delay: number, callback: () => void) => setTimeout(callback, delay)) },
+    });
+    Object.assign(scene.soundManager, { playAnnounce: vi.fn(), peakAuraCrowd: vi.fn() });
+    scene.completeMatch();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(snapshot).toHaveBeenCalledOnce();
+    expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+    expect(order).toEqual(['started']);
+    if (outcome === 'restart') { scene.lifecycleEpoch = 2; scene.battleCapture.cancel(); }
+    if (outcome === 'timeout') await vi.advanceTimersByTimeAsync(7_200);
+    else snapshot.mock.calls[0][0]({ src: 'data:image/jpeg;base64,c291cmNl', width: 576, height: 1024 });
+    await Promise.resolve();
+    expect(order).toEqual(outcome === 'restart' ? ['started'] : ['started', outcome === 'ready' ? 'ready' : 'unavailable', 'results']);
+    expect(scene.setMatchActionsVisible).toHaveBeenCalledTimes(outcome === 'restart' ? 0 : 1);
+  });
+
   it.each([
     { width: 1024, height: 576, x: 942, y: 539, meterY: 550 },
-    { width: 576, height: 1024, x: 430, y: 599, meterY: 610 },
+    { width: 576, height: 1024, x: 348, y: 599, meterY: 610 },
   ])('keeps the active crowd counter in one right-aligned area at $width×$height', ({ width, height, x, y, meterY }) => {
     const { scene } = harness();
     delete scene.updateCrowdUi;
@@ -1173,7 +1211,7 @@ describe('AuraScene responsive whole-rig layout', () => {
 
   it.each([
     { width: 1024, height: 576, x: 942, y: 189, origin: 1, fontSize: 11 },
-    { width: 576, height: 1024, x: 532, y: 599, origin: 1, fontSize: 11 },
+    { width: 576, height: 1024, x: 544, y: 599, origin: 1, fontSize: 11 },
   ])('groups FLOW within the rhythm instrument at $width×$height', ({ width, height, x, y, origin, fontSize }) => {
     const { scene } = harness();
     const camera = () => Object.fromEntries(['setViewport', 'setZoom', 'setScroll']
@@ -1198,6 +1236,24 @@ describe('AuraScene responsive whole-rig layout', () => {
     expect(scene.comboText.y + fontSize).toBeLessThan(scene.layout.laneStartY);
   });
 
+  it('keeps portrait instrument drawing below the stage while retaining the desktop move rail', () => {
+    const scene = controlsHarness();
+    delete scene.drawHighwayFrame;
+    scene.currentRoundProgress = () => 0;
+    scene.layout = createAuraLayout(576, 1024);
+    scene.drawHighwayFrame(0);
+    for (const [points] of scene.laneGraphics.fillPoints.mock.calls) {
+      expect(points.every((point: { y: number }) => point.y >= scene.layout.instrument.top)).toBe(true);
+    }
+    const { moveRail, laneTargetY, instrument } = scene.layout;
+    expect(scene.laneGraphics.lineBetween).not.toHaveBeenCalledWith(moveRail.right - 8, laneTargetY, instrument.left + 12, laneTargetY);
+    scene.layout = createAuraLayout();
+    scene.drawHighwayFrame(0);
+    expect(scene.laneGraphics.lineBetween).toHaveBeenCalledWith(
+      scene.layout.moveRail.right - 8, scene.layout.laneTargetY, scene.layout.instrument.left + 12, scene.layout.laneTargetY,
+    );
+  });
+
   it.each([[1024, 576], [576, 1024]])('aligns approaching notes, receptors, keycaps and press feedback at %i×%i', (width, height) => {
     const scene = controlsHarness({ online: { localSlot: 1 } });
     const chart = createAuraChart(67, 'viral');
@@ -1215,7 +1271,7 @@ describe('AuraScene responsive whole-rig layout', () => {
     scene.flashLaneInput(0, note.lane);
     expect(scene.inputPulseGraphics[note.lane].setPosition).toHaveBeenCalledExactlyOnceWith(x, scene.layout.laneTargetY);
     expect(scene.inputFlashGraphics[note.lane].fillRect).toHaveBeenCalledWith(
-      x - 30, scene.layout.laneStartY, 60, scene.layout.laneTargetY - scene.layout.laneStartY,
+      x - scene.layout.laneHalfWidth, scene.layout.laneStartY, scene.layout.laneHalfWidth * 2, scene.layout.laneTargetY - scene.layout.laneStartY,
     );
     expect(scene.laneKeyTexts[note.lane]).toMatchObject({ x, y: scene.layout.keyLabelY });
     expect(scene.laneKeyTexts.map((text: ReturnType<typeof controlText>) => text.text)).toEqual(AURA_DEFAULT_LANE_KEYS);
@@ -1948,7 +2004,7 @@ describe('AuraScene first-play practice isolation', () => {
     expect(scene.highwayTitleText.visible).toBe(false);
     expect(scene.highwayMetaText.visible).toBe(false);
     const highlight = scene.onboardingGraphics.fillRect.mock.calls[0];
-    expect(highlight[0]).toBe(scene.layout.highwayX + scene.layout.laneOffsets[0] - 30);
+    expect(highlight[0]).toBe(scene.layout.highwayX + scene.layout.laneOffsets[0] - scene.layout.laneHalfWidth);
     expect(highlight[1] + highlight[3]).toBe(scene.layout.laneTargetY);
     expect(scene.beginClock).not.toHaveBeenCalled();
     expect(scene.updateNotes).not.toHaveBeenCalled();

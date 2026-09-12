@@ -146,6 +146,7 @@ export function GamePage({
   const [savedBattle, setSavedBattle] = useState<SavedBattle | null>(null);
   const [battleCapture, setBattleCapture] = useState<BattleCaptureDetail | null>(null);
   const battleCaptureId = useRef<string | null>(null);
+  const [battleCaptureUnavailable, setBattleCaptureUnavailable] = useState(false);
   const [auraCapture, setAuraCapture] = useState<AuraCaptureDetail | null>(null);
   const [auraStartup, setAuraStartup] = useState<AuraStartupDetail | null>(null);
   const [auraTouchSlot, setAuraTouchSlot] = useState<0 | 1>(0);
@@ -168,11 +169,15 @@ export function GamePage({
       const detail = event.detail;
       if (detail.state === 'started') {
         battleCaptureId.current = detail.clientBattleId;
+        setBattleCaptureUnavailable(false);
         setBattleCapture(null);
         setSavedBattle(null);
         setAuraCapture(null);
-      } else if (detail.clientBattleId === battleCaptureId.current && detail.state === 'ready') {
-        setBattleCapture(detail.capture);
+      } else if (detail.clientBattleId === battleCaptureId.current) {
+        if (detail.state === 'ready') {
+          setBattleCapture(detail.capture);
+          setBattleCaptureUnavailable(false);
+        } else if (detail.state === 'unavailable') setBattleCaptureUnavailable(true);
       }
     };
     window.addEventListener(BATTLE_CAPTURE_EVENT, receive);
@@ -204,6 +209,7 @@ export function GamePage({
     // A new launch target means a fresh match: clear the previous outcome.
     setWinnerSlot(null);
     setBattleCapture(null);
+    setBattleCaptureUnavailable(false);
     setSavedBattle(null);
     setMatchSummary(null);
     setLadderBusy(false);
@@ -907,7 +913,10 @@ export function GamePage({
       {auraSummary && matchActionsVisible ? (
         <AuraBattleResults
           summary={auraSummary}
-          finisher={finisher}
+          finisher={battleCapture && auraCapture?.state !== 'processing' ? finisher : <div className="aura-results__finisher-status" role="status">
+            <button type="button" className="asf-btn" disabled>Fatality · 1 credit</button>
+            <p>{battleCaptureUnavailable ? 'The final frame could not be saved. Fatality is unavailable for this round.' : battleCapture ? 'Preparing your match video…' : 'Preparing your final frame…'}</p>
+          </div>}
           battle={savedBattle} onBattleChange={updateSavedBattle}
           trial={trial}
           onCreatePlayer={onCreateFighter}

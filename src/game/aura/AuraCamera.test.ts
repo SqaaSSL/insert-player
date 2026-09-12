@@ -90,6 +90,34 @@ describe('Aura continuous camera composition', () => {
     expect(finale.transitioning).toBe(false);
   });
 
+  it.each([[1024, 576], [576, 1024]])('keeps the actual finale beside the result dock without moving the floor at %i×%i', (width, height) => {
+    const layout = createAuraLayout(width, height);
+    const end = auraCameraComposition(layout, { activeSlot: 1, finaleProgress: 1, resultTableau: true });
+    const [left, right] = end.performers;
+    expect(left.visible && right.visible).toBe(true);
+    expect(left.alpha).toBe(1); expect(right.alpha).toBe(1);
+    expect(left.footY).toBe(layout.active.footY);
+    expect(right.footY).toBe(layout.active.footY);
+    expect(left.height).toBe(layout.portrait ? 260 : 270);
+    expect(right.height).toBe(left.height);
+    expect(right.x - left.x).toBeGreaterThan(180);
+    expect(right.x - left.x).toBeLessThan(220);
+    if (layout.portrait) {
+      expect((left.x + right.x) / 2).toBe(width / 2);
+      expect(left.footY).toBeLessThan(height * 0.52);
+    } else {
+      expect(left.x).toBeGreaterThan(160);
+      expect(right.x).toBeLessThan(400);
+      expect(right.x + right.height * 0.5).toBeLessThan(width * 0.52);
+    }
+    const handoff = { activeSlot: 1 as const, fromSlot: 0 as const, transitionProgress: 0.4 };
+    expect(auraCameraComposition(layout, { ...handoff, finaleProgress: 0, resultTableau: true }).performers)
+      .toEqual(auraCameraComposition(layout, handoff).performers);
+    // Startup still uses its original faceoff, not the result dock layout.
+    const intro = auraCameraComposition(layout, { activeSlot: 1, finaleProgress: 1 });
+    expect((intro.performers[0].x + intro.performers[1].x) / 2).toBe(width / 2);
+  });
+
   it.each([[1024, 576], [576, 1024]])('provides enough background overscan for every pan and finale at %i×%i', (width, height) => {
     const layout = createAuraLayout(width, height);
     for (const fromSlot of [0, 1] as const) for (let frame = 0; frame <= 100; frame++) {
