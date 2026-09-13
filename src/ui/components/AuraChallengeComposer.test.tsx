@@ -33,7 +33,7 @@ vi.mock('../../services/ProductEvents.ts', () => ({ trackProductEvent: vi.fn() }
 
 import { AuraChallengeComposer } from './AuraChallengeComposer.tsx';
 import { AuraClipComposer } from './AuraClipComposer.tsx';
-import { createAuraChallengeRoutine } from '../../game/aura/AuraChallenge.ts';
+import { createAuraChallengeRoutine, decodeAuraChallenge } from '../../game/aura/AuraChallenge.ts';
 import { DEFAULT_AURA_TRACK } from '../../game/aura/AuraTracks.ts';
 import { shareAuraChallenge } from '../shared/auraChallengeShare.ts';
 import { copyToClipboard } from '../shared/communityShare.ts';
@@ -64,6 +64,7 @@ const settle = async () => { for (let i = 0; i < 15; i += 1) { await Promise.res
 beforeEach(() => {
   hooks.slots = []; hooks.cursor = 0; hooks.effects = []; hooks.dirty = false;
   vi.clearAllMocks();
+  vi.stubEnv('VITE_API_BASE_URL', 'https://api.insertplayer.ai');
   vi.stubGlobal('window', { location: { origin: 'https://insertplayer.ai' } });
   props = {
     routine: createAuraChallengeRoutine(34, 'lowkey', DEFAULT_AURA_TRACK.id, 'insert-player-arena')!,
@@ -74,7 +75,7 @@ beforeEach(() => {
   vi.mocked(shareAuraChallenge).mockResolvedValue('shared');
   vi.mocked(copyToClipboard).mockResolvedValue(true);
 });
-afterEach(() => { for (const slot of hooks.slots) slot?.cleanup?.(); vi.unstubAllGlobals(); });
+afterEach(() => { for (const slot of hooks.slots) slot?.cleanup?.(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe('compact result challenge options', () => {
   it('keeps publishing first and hides editing and score-only sharing behind one plain control', () => {
@@ -119,7 +120,14 @@ describe('compact result challenge options', () => {
     expect(props.onCreated).toHaveBeenCalledOnce();
     button('Done editing').props.onClick(); flush();
     const manual = find(node => node.type === 'input' && node.props.readOnly);
-    expect(manual.props.value).toContain('https://insertplayer.ai/challenge?challenge=');
+    const sharedUrl = vi.mocked(shareAuraChallenge).mock.calls[0][0].url;
+    expect(manual.props.value).toBe(sharedUrl);
+    const publicUrl = new URL(sharedUrl);
+    expect(publicUrl.origin).toBe('https://api.insertplayer.ai');
+    expect(publicUrl.pathname).toMatch(/^\/challenges\/aura\//);
+    expect(decodeAuraChallenge(publicUrl.pathname.split('/').at(-1))).toMatchObject({
+      ok: true, challenge: { name: 'Alex', score: 1200, slot: 0 },
+    });
     expect(nodes(editor())).not.toContain(manual);
     expect(publisher().props.file).toBe(props.recording);
   });
