@@ -4413,20 +4413,17 @@
     @apply left-0 top-[52%] w-full;
   }
 
-  .aura-results__share-option { @apply w-full text-left; }
-  .aura-results__share-option > summary {
-    @apply flex min-h-11 cursor-pointer list-none items-center justify-center rounded border border-asf-cream/50
-           px-4 py-3 font-sans text-sm font-bold text-asf-cream;
+  .aura-results__share-main { @apply w-full text-left; }
+  .aura-results__share-main .battle-result-share { @apply flex flex-col gap-2; }
+  .aura-results__share-main .battle-result-share > .asf-btn { @apply min-h-12 w-full; }
+  .aura-results__share-main .battle-result-share > small { @apply font-sans text-xs leading-normal text-asf-muted; }
+  .aura-results__options-toggle {
+    @apply min-h-11 cursor-pointer self-center border-0 bg-transparent px-3 py-2 font-sans text-xs text-asf-muted
+           underline underline-offset-4 hover:text-asf-cream focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-gold;
   }
-  .aura-results__share-option > summary::-webkit-details-marker { display: none; }
-  .aura-results__share-option > summary:hover { @apply border-asf-cream bg-asf-cream/10; }
-  .aura-results__share-option[open] > summary { @apply border-asf-gold text-asf-gold; }
-  .aura-results__share-content { @apply flex flex-col gap-3 pt-3; }
-  .aura-results__share-option > summary:focus-visible,
-  .aura-results__details > summary:focus-visible { @apply outline-2 outline-offset-2 outline-asf-gold; }
-  .aura-results__details { @apply w-full border-t border-asf-line text-left; }
-  .aura-results__details > summary { @apply min-h-11 cursor-pointer py-3 font-sans text-xs text-asf-muted; }
-  .aura-results__details[open] { @apply flex flex-col gap-3; }
+  .aura-results__options { @apply flex w-full flex-col gap-3 border-t border-asf-line pt-4 text-left; }
+  .aura-results__options[hidden] { display: none; }
+  .aura-results__options h3 { @apply m-0 font-sans text-sm font-semibold leading-normal text-asf-cream; }
   .aura-results__challenge-result { @apply m-0 font-sans text-xs leading-relaxed text-asf-gold; }
   .aura-results__finisher-status { @apply flex flex-col items-center gap-2; }
   .aura-results__finisher-status .asf-btn { @apply w-full; }
@@ -4438,10 +4435,6 @@
   }
 
   .aura-results__share { @apply flex w-full flex-col items-center gap-3; }
-  .aura-results__video-option { @apply w-full border-t border-asf-line text-left; }
-  .aura-results__video-option > summary { @apply cursor-pointer py-4 font-sans text-[13px] font-bold text-asf-cream; }
-  .aura-results__video-option > summary:focus-visible { @apply outline-2 outline-offset-2 outline-asf-gold; }
-  .aura-results__video-option[open] > summary { @apply text-asf-gold; }
   .aura-results__video { @apply max-h-[28vh] w-full max-w-[520px] rounded border border-asf-line bg-black; }
   .aura-results__share-note { @apply m-0 max-w-[65ch] font-sans text-[12px] leading-relaxed text-asf-muted; }
   .aura-results__share-note.is-error { @apply text-[#ef4343]; }

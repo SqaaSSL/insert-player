@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   AURA_CHALLENGE_MAX_NAME_LENGTH, cleanAuraChallengeName, createAuraChallenge,
   type AuraChallenge, type AuraChallengeRoutine,
@@ -21,6 +21,8 @@ interface AuraChallengeComposerProps {
 }
 
 export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onDraftChange, recording, compact = false }: AuraChallengeComposerProps) {
+  const editorId = useId();
+  const [editing, setEditing] = useState(!cleanAuraChallengeName(scores[0]?.name ?? 'Player'));
   const [locked, setLocked] = useState(false);
   const [slot, setSlot] = useState(scores[0]?.slot ?? 0);
   const selected = scores.find(score => score.slot === slot) ?? scores[0];
@@ -67,38 +69,51 @@ export function AuraChallengeComposer({ routine, scores, replyTo, onCreated, onD
     } catch { setStatus('This result cannot create a challenge. Play a new routine and try again.'); }
     finally { busyRef.current = false; setBusy(null); }
   };
+  const identityFields = <>
+    {scores.length > 1 ? <label>Whose score?
+      <select value={slot} disabled={busy !== null || locked} onChange={event => {
+        const next = Number(event.target.value) as 0 | 1;
+        setSlot(next); setName(cleanAuraChallengeName(scores.find(score => score.slot === next)?.name ?? 'Player'));
+        setLink(null); setStatus(null); setManualCopy(false);
+      }}>{scores.map(score => <option key={score.slot} value={score.slot}>{score.name} · {score.score.toLocaleString()}</option>)}</select>
+    </label> : null}
+    <label>Name shown in the link
+      <input value={name} disabled={busy !== null || locked} maxLength={AURA_CHALLENGE_MAX_NAME_LENGTH} autoComplete="off"
+        onChange={event => { setName(event.target.value); setLink(null); setStatus(null); setManualCopy(false); }} />
+    </label>
+  </>;
+  const shareScore = <button type="button" className="asf-btn asf-btn--primary" disabled={busy !== null || !cleanAuraChallengeName(name)} onClick={() => void handoff('share')}>
+    {busy === 'share' ? 'Preparing link…' : replyTo ? 'Share score back' : 'Share this challenge'}
+  </button>;
+  const copyScore = <button type="button" className="asf-btn" disabled={busy !== null || !cleanAuraChallengeName(name)} onClick={() => void handoff('copy')}>
+    {busy === 'copy' ? 'Copying link…' : 'Copy challenge link'}
+  </button>;
+  const scoreOnly = <>
+    <p className="aura-challenge-composer__notice">Share your score and routine without publishing a video.</p>
+    <button type="button" className="asf-btn" disabled={busy !== null || !draft} onClick={() => void handoff('share')}>Share challenge only</button>
+  </>;
+  const editorOpen = editing;
   return (
     <section className={`aura-challenge-composer${compact ? ' is-compact' : ''}`} aria-label={recording ? 'Share your battle' : replyTo ? 'Send your score back' : 'Challenge a friend'}>
       {!compact ? <><p className="aura-challenge-composer__brand">INSERT PLAYER · AURA CHALLENGE</p>
       <h3>{recording ? 'Your battle. Their next challenge.' : replyTo ? 'Send your score back' : 'Challenge a friend'}</h3>
       <p className="aura-challenge-composer__notice">{selected.score.toLocaleString()} AURA. {replyTo || 'Your friend'} gets this exact song, routine and difficulty.</p></> : null}
-      <div className="aura-challenge-composer__form">
-        <details className="aura-challenge-composer__identity" open={compact ? undefined : true}>
-          <summary>{compact ? 'Edit name or score' : 'Your challenge'}</summary>
-        {scores.length > 1 ? <label>Whose score?
-          <select value={slot} disabled={busy !== null || locked} onChange={event => {
-            const next = Number(event.target.value) as 0 | 1;
-            setSlot(next); setName(cleanAuraChallengeName(scores.find(score => score.slot === next)?.name ?? 'Player'));
-            setLink(null); setStatus(null); setManualCopy(false);
-          }}>{scores.map(score => <option key={score.slot} value={score.slot}>{score.name} · {score.score.toLocaleString()}</option>)}</select>
-        </label> : null}
-        <label>Name shown in the link
-          <input value={name} disabled={busy !== null || locked} maxLength={AURA_CHALLENGE_MAX_NAME_LENGTH} autoComplete="off"
-            onChange={event => { setName(event.target.value); setLink(null); setStatus(null); setManualCopy(false); }} />
-        </label>
-        </details>
-        {!recording ? <><button type="button" className="asf-btn asf-btn--primary" disabled={busy !== null || !cleanAuraChallengeName(name)} onClick={() => void handoff('share')}>
-          {busy === 'share' ? 'Preparing link…' : replyTo ? 'Share score back' : 'Share this challenge'}
-        </button>
-        <button type="button" className="asf-btn" disabled={busy !== null || !cleanAuraChallengeName(name)} onClick={() => void handoff('copy')}>
-          {busy === 'copy' ? 'Copying link…' : 'Copy challenge link'}
-        </button></> : null}
-      </div>
+      {!compact ? <div className="aura-challenge-composer__form">
+        <div className="aura-challenge-composer__identity">{identityFields}</div>
+        {!recording ? <>{shareScore}{copyScore}</> : null}
+      </div> : !recording ? <div className="aura-challenge-composer__form">{shareScore}</div> : null}
       {recording ? <AuraClipComposer compact={compact} file={recording} challenge={draft} onLockChange={setLocked} onCreated={onCreated} /> : null}
+      {compact ? <>
+        <button type="button" className="aura-challenge-composer__edit" aria-expanded={Boolean(editorOpen)} aria-controls={editorId}
+          onClick={() => setEditing(!editorOpen)}>{editorOpen ? 'Done editing' : 'Edit challenge'}</button>
+        <div id={editorId} className="aura-challenge-composer__editor" hidden={!editorOpen}>
+          {identityFields}
+          {recording ? <div className="aura-challenge-composer__score-only">{scoreOnly}</div> : copyScore}
+        </div>
+      </> : null}
       {!recording && !compact ? <p className="aura-challenge-composer__notice">Send a playable link with your name and score. Your character, photos and match video are not attached. Friendly scores are not ranked.</p> : null}
-      {recording ? <details className="aura-clip-composer__fallback"><summary>Share the score without video</summary>
-        <p className="aura-challenge-composer__notice">A playable challenge with your name and score. No video is published.</p>
-        <button type="button" className="asf-btn" disabled={busy !== null || !draft} onClick={() => void handoff('share')}>Share challenge only</button>
+      {recording && !compact ? <details className="aura-clip-composer__fallback"><summary>Share the score without video</summary>
+        {scoreOnly}
       </details> : null}
       {status ? <p className="aura-challenge-composer__notice" role="status">{status}</p> : null}
       {link ? <a className="aura-challenge-composer__link" href={link}>Open your challenge</a> : null}
