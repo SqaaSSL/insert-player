@@ -118,7 +118,7 @@ function harness(withPack = true) {
     fighters, views, auraPerformanceViews: withPack ? [performance, waiting] : [null, null],
     authoredFinaleAvailable: [false, false],
     activePerformerSlot: 0, matchFinished: false,
-    cameraFocusSlot: 0, cameraFromSlot: 0, cameraTransitionMs: AURA_CAMERA_HANDOFF_MS, finaleElapsedMs: null, stageFrame: null,
+    cameraFocusSlot: 0, cameraFromSlot: 0, cameraTransitionMs: AURA_CAMERA_HANDOFF_MS, finaleElapsedMs: null, resultDockElapsedMs: null, stageFrame: null,
     canaryPerformanceOverride: 'aura_six_seven',
     noteById: new Map([['n1', { id: 'n1', beat: 0.5, turnIndex: 0 }]]),
     chart: { turns: [{ round: 0, slot: 0, startMs: 0, endMs: 10_000 }], beatMs: 500, beatOffsetMs: 0 },
@@ -1154,7 +1154,11 @@ describe('AuraScene responsive whole-rig layout', () => {
       cameraFocusSlot: 1, cameraFromSlot: winner === 'p1' && !reducedMotion ? 0 : 1, reduceMotion: reducedMotion,
       cameraTransitionMs: winner === 'p1' && !reducedMotion ? AURA_CAMERA_HANDOFF_MS / 2 : AURA_CAMERA_HANDOFF_MS,
       finishVideoCapture: vi.fn(), setMatchActionsVisible: vi.fn(),
-      battleCapture: { capture: vi.fn().mockResolvedValue('ready') }, lifecycleActive: true,
+      battleCapture: { capture: vi.fn(() => {
+        const [left, right] = scene.cameraComposition().performers;
+        expect((left.x + right.x) / 2).toBe(scene.layout.width / 2);
+        return Promise.resolve('ready');
+      }) }, lifecycleActive: true,
       finaleLabels: [controlText(), controlText()],
       authoredFinaleAvailable: authored,
       time: { delayedCall: vi.fn((delay: number, callback: () => void) => setTimeout(callback, delay)) },
@@ -1206,10 +1210,19 @@ describe('AuraScene responsive whole-rig layout', () => {
       expect(scene.auraPerformanceViews[slot].update).toHaveBeenLastCalledWith(1_000 / 60, scene.views[slot]);
     }
     expect(scene.cameraFocusSlot).toBe(1); // Winning P1 must not cut away from the last camera mark.
-    const resultsDelay = reducedMotion ? 2_200 : 3_000;
+    const resultsDelay = reducedMotion ? 2_800 : 3_000;
     await vi.advanceTimersByTimeAsync(resultsDelay - 1);
     expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
+    if (!reducedMotion) {
+      expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+      const center = scene.cameraComposition().camera.anchorX;
+      expect(center).toBe(scene.layout.width / 2);
+      scene.advanceCameraPresentation(AURA_CAMERA_HANDOFF_MS / 2);
+      expect(scene.cameraComposition().camera.anchorX).toBeLessThan(center);
+      expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+      scene.advanceCameraPresentation(AURA_CAMERA_HANDOFF_MS / 2);
+    }
     expect(scene.setMatchActionsVisible).toHaveBeenCalledExactlyOnceWith(true);
     expect(scene.time.delayedCall).toHaveBeenCalledWith(2_800, expect.any(Function));
     await vi.advanceTimersByTimeAsync(2_800);

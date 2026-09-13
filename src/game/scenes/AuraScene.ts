@@ -274,6 +274,7 @@ export class AuraScene extends Phaser.Scene {
   private cameraFromSlot: AuraSlot = 0;
   private cameraTransitionMs = AURA_CAMERA_HANDOFF_MS;
   private finaleElapsedMs: number | null = null;
+  private resultDockElapsedMs: number | null = null;
   private stageFrame: { width: number; height: number; x: number; y: number } | null = null;
   private performerContainers!: [Phaser.GameObjects.Container, Phaser.GameObjects.Container];
   private hudPanel!: Phaser.GameObjects.Graphics;
@@ -430,6 +431,7 @@ export class AuraScene extends Phaser.Scene {
     this.cameraFromSlot = 0;
     this.cameraTransitionMs = AURA_CAMERA_HANDOFF_MS;
     this.finaleElapsedMs = null;
+    this.resultDockElapsedMs = null;
     this.finaleLabels = null;
     this.finaleWinner = null;
     this.stageFrame = null;
@@ -1379,6 +1381,7 @@ export class AuraScene extends Phaser.Scene {
       fromSlot: this.cameraFromSlot ?? this.cameraFocusSlot ?? this.activePerformerSlot ?? 0,
       transitionProgress: (this.cameraTransitionMs ?? AURA_CAMERA_HANDOFF_MS) / AURA_CAMERA_HANDOFF_MS,
       ...(this.finaleElapsedMs != null ? { finaleProgress: this.finaleElapsedMs / AURA_CAMERA_FINALE_MS, resultTableau: true } : {}),
+      ...(this.resultDockElapsedMs != null ? { resultDockProgress: this.resultDockElapsedMs / AURA_CAMERA_HANDOFF_MS } : {}),
       ...(introFaceoff !== null ? { finaleProgress: introFaceoff } : {}),
       reducedMotion: this.reduceMotion,
     });
@@ -1400,7 +1403,11 @@ export class AuraScene extends Phaser.Scene {
     const next = this.reduceMotion ? duration : Math.min(duration, before + Math.max(0, deltaMs));
     if (finalizing) this.finaleElapsedMs = next;
     else this.cameraTransitionMs = next;
-    if (next !== before) this.applyPerformerLayout();
+    const dockBefore = this.resultDockElapsedMs;
+    const docking = dockBefore != null && dockBefore < AURA_CAMERA_HANDOFF_MS;
+    if (docking) this.resultDockElapsedMs = Math.min(AURA_CAMERA_HANDOFF_MS, dockBefore + Math.max(0, deltaMs));
+    if (next !== before || docking) this.applyPerformerLayout();
+    if (docking && this.resultDockElapsedMs === AURA_CAMERA_HANDOFF_MS) this.setMatchActionsVisible(true);
   }
 
   private fitHudText(): void {
@@ -2376,8 +2383,15 @@ export class AuraScene extends Phaser.Scene {
     const battleCapture = this.battleCapture;
     let captureSettled = false;
     let presentationSettled = false;
+    let recordingStopped = false;
     const showResults = () => {
-      if (captureSettled && presentationSettled && this.isCurrentLifecycle(epoch)) this.setMatchActionsVisible(true);
+      if (!captureSettled || !presentationSettled || !recordingStopped
+        || !this.isCurrentLifecycle(epoch) || this.resultDockElapsedMs != null) return;
+      // The still and recorded celebration use the whole stage. Make room for
+      // the desktop panel afterwards, then reveal it without covering a body.
+      this.resultDockElapsedMs = this.reduceMotion || this.layout.portrait ? AURA_CAMERA_HANDOFF_MS : 0;
+      this.applyPerformerLayout();
+      if (this.resultDockElapsedMs === AURA_CAMERA_HANDOFF_MS) this.setMatchActionsVisible(true);
     };
     this.time.delayedCall(2_200, () => {
       if (!this.isCurrentLifecycle(epoch)) return;
@@ -2400,7 +2414,13 @@ export class AuraScene extends Phaser.Scene {
     // Include the winner reveal in the actual canvas recording, then stop game
     // music so it cannot double up with the result screen's video playback.
     if (this.videoRecorder?.status === 'recording') this.emitCapture({ id: this.captureId, state: 'processing' });
-    this.time.delayedCall(2_800, () => { void this.finishVideoCapture(epoch); });
+    this.time.delayedCall(2_800, () => {
+      if (!this.isCurrentLifecycle(epoch)) return;
+      // stop() synchronously ends frame collection before awaiting encoding.
+      void this.finishVideoCapture(epoch);
+      recordingStopped = true;
+      showResults();
+    });
     this.time.delayedCall(this.reduceMotion ? 1_800 : 3_000, () => {
       presentationSettled = true;
       showResults();

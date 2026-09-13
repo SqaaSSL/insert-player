@@ -90,9 +90,11 @@ describe('Aura continuous camera composition', () => {
     expect(finale.transitioning).toBe(false);
   });
 
-  it.each([[1024, 576], [576, 1024]])('keeps the actual finale beside the result dock without moving the floor at %i×%i', (width, height) => {
+  it.each([[1024, 576], [576, 1024]])('centres the captured finale before making room for results at %i×%i', (width, height) => {
     const layout = createAuraLayout(width, height);
-    const end = auraCameraComposition(layout, { activeSlot: 1, finaleProgress: 1, resultTableau: true });
+    const captured = auraCameraComposition(layout, { activeSlot: 1, finaleProgress: 1, resultTableau: true });
+    expect((captured.performers[0].x + captured.performers[1].x) / 2).toBe(width / 2);
+    const end = auraCameraComposition(layout, { activeSlot: 1, finaleProgress: 1, resultTableau: true, resultDockProgress: 1 });
     const [left, right] = end.performers;
     expect(left.visible && right.visible).toBe(true);
     expect(left.alpha).toBe(1); expect(right.alpha).toBe(1);
@@ -102,6 +104,14 @@ describe('Aura continuous camera composition', () => {
     expect(right.height).toBe(left.height);
     expect(right.x - left.x).toBeGreaterThan(180);
     expect(right.x - left.x).toBeLessThan(220);
+    for (let frame = 0; frame <= 60; frame++) {
+      const dock = auraCameraComposition(layout, { activeSlot: 1, finaleProgress: 1, resultTableau: true, resultDockProgress: frame / 60 });
+      expect(dock.performers[0].footY).toBe(left.footY);
+      expect(dock.performers[1].height).toBe(right.height);
+      expect(dock.performers[1].x - dock.performers[0].x).toBeCloseTo(right.x - left.x);
+      expect(dock.camera.anchorX).toBeGreaterThanOrEqual(end.camera.anchorX);
+      expect(dock.camera.anchorX).toBeLessThanOrEqual(captured.camera.anchorX);
+    }
     if (layout.portrait) {
       expect((left.x + right.x) / 2).toBe(width / 2);
       expect(left.footY).toBeLessThan(height * 0.52);
