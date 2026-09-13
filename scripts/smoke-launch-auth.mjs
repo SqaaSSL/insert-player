@@ -328,6 +328,7 @@ export async function createAgentTaskBackedToken({
 }) {
   let task = null;
   let consumed = false;
+  let observedSessionId;
   try {
     task = await clerk.agentTasks.create({
       onBehalfOf: { userId: user.id },
@@ -344,7 +345,10 @@ export async function createAgentTaskBackedToken({
       frontendOrigin,
       role,
       artifactDir,
-      onSessionCreated,
+      onSessionCreated: onSessionCreated ? identity => {
+        onSessionCreated(identity);
+        observedSessionId = identity.sessionId;
+      } : undefined,
     });
     consumed = true;
     const { sessionId } = validateLaunchSmokeToken(shortToken, {
@@ -353,6 +357,9 @@ export async function createAgentTaskBackedToken({
       clerkIssuer,
       allowMissingAuthorizedParty: true,
     });
+    if (onSessionCreated && sessionId !== observedSessionId) {
+      throw new Error('Agent Task token does not match the observed owned session.');
+    }
     const refreshed = await clerk.sessions.getToken(sessionId, undefined, TOKEN_TTL_SECONDS);
     validateLaunchSmokeToken(refreshed.jwt, {
       userId: user.id,

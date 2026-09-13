@@ -105,6 +105,17 @@ describe('Casual import owned Agent Task session', () => {
     expect(f.reports[0]).toMatchObject({ sessionEstablished: false, sessionRevoked: false, cleanupUnknown: true });
   });
 
+  it('rejects a different token SID before bootstrap refresh and revokes only the observed owned session', async () => {
+    const f = fixture();
+    f.page.evaluate.mockImplementation(async fn => fn.name === 'browserClerkSessionIdentity'
+      ? { sessionId: SID, userId: USER } : f.jwt(60, { sid: 'sess_other' }));
+    await expect(f.run()).rejects.toThrow(/does not match the observed owned session/);
+    expect(f.clerk.sessions.getToken).not.toHaveBeenCalled();
+    expect(f.clerk.sessions.revokeSession).toHaveBeenCalledExactlyOnceWith(SID);
+    expect(f.clerk.agentTasks.revoke).toHaveBeenCalledExactlyOnceWith(TASK);
+    expect(f.reports[0]).toMatchObject({ sessionRevoked: true, cleanupUnknown: false });
+  });
+
   it('discovers and revokes the owned session even when navigation fails before token minting', async () => {
     const f = fixture(); f.page.goto.mockRejectedValue(new Error('Navigation failed'));
     await expect(f.run()).rejects.toThrow(/agent-task-bootstrap.*Navigation failed/);
