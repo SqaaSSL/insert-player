@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchWithTransientNetworkRetry } from './live-smoke-fetch.mjs';
+import { assertOfficialArcadeContract } from './arcade-smoke-contract.mjs';
 import { assertAuraClipSmokeEnvironment, createAuraClipSmokeChallenge, createAuraClipSmokeMedia, runHostedAuraClipSmoke } from './aura-clip-smoke.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -535,7 +536,7 @@ async function runPublicSmoke() {
   let previousRank = 0;
   let firstArcadeHighDensityUrl = null;
   for (const fighter of arcadeBody.fighters) {
-    assert(fighter.qualityTier === 'champion', 'Official Arcade exposed a non-Champion fighter');
+    assertOfficialArcadeContract(fighter);
     assert(!Object.hasOwn(fighter, 'ownerUserId'), 'Official Arcade exposed ownerUserId');
     assert(!Object.hasOwn(fighter, 'photoHash'), 'Official Arcade exposed photoHash');
     assertCommunityOwner(fighter.owner, 'Official Arcade');
@@ -565,15 +566,6 @@ async function runPublicSmoke() {
         `Official Arcade fighter ${fighter.arcade.slug} has invalid playback metadata for ${animationName}`,
       );
     }
-    assert(
-      fighter.arcade?.reference?.kind === 'licensed'
-        && /^https:\/\//.test(fighter.arcade.reference.sourceUrl ?? '')
-        && typeof fighter.arcade.reference.license === 'string'
-        && fighter.arcade.reference.license
-        && typeof fighter.arcade.reference.credit === 'string'
-        && fighter.arcade.reference.credit,
-      'Official Arcade fighter is missing public photo attribution',
-    );
     firstArcadeHighDensityUrl ??= (fighter.sprites ?? [])
       .map((sprite) => sprite?.hqUrl)
       .find(Boolean) ?? null;
