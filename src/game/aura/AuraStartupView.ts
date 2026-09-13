@@ -27,7 +27,7 @@ export class AuraStartupView {
   render(layout: AuraLayout, state: Pick<AuraStartupDetail, 'phase' | 'count'> | null, waitingForRival = false): void {
     this.plate.clear();
     this.watermark.setPosition(12, layout.height - 8);
-    const visible = state !== null && state.phase !== 'playing';
+    const visible = state !== null && state.phase !== 'playing' && state.phase !== 'awaiting-input';
     const versus = visible && state.phase !== 'countdown';
     this.brand.setVisible(versus);
     this.match.setVisible(versus);

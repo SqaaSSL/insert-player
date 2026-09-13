@@ -255,6 +255,7 @@ describe('GamePage Aura presentation handoff', () => {
     viewport.addEventListener(AURA_INPUT_EVENT, input);
     const pressCircle = () => {
       const controls = find(node => node.type === AuraControls);
+      if (!controls) return;
       AuraControls(controls.props).props.children[0].props.onPointerDown({ preventDefault: vi.fn() });
     };
     startup('awaiting-input'); pressCircle();
@@ -273,10 +274,12 @@ describe('GamePage Aura presentation handoff', () => {
     viewport.addEventListener(AURA_STARTUP_READY_EVENT, ready);
     startup('awaiting-input');
     expect(ready).not.toHaveBeenCalled();
-    expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
+    expect(find(node => node.type === AuraControls)).toBeUndefined();
     expect(find(node => node.type === AuraOnboardingHint)).toBeUndefined();
     const choice = find(node => node.type === AuraStartReady);
     expect(choice.props).toMatchObject({ playerName: 'Trump', rivalName: 'Rosalía', practiceAvailable: true, practiceRecommended: true });
+    expect(find(node => node.props?.['aria-label'] === 'Aura match controls')).toBeUndefined();
+    expect(find(node => node.props?.role === 'status' && node.props?.className === 'sr-only')).toBeUndefined();
     choice.props.onStart(true);
     expect(ready.mock.calls[0][0].detail).toEqual({ token: 1, seed: 17, practice: true });
     expect(window.localStorage.setItem).not.toHaveBeenCalled();
@@ -308,13 +311,22 @@ describe('GamePage Aura presentation handoff', () => {
   });
   it('cannot start from a paused ready screen', async () => {
     await mount('AuraScene', { gameMode: 'aura', vsAI: true }); emit('loading'); emit('ready'); finishOpening();
+    find(node => node.props?.['aria-label'] === 'Pause').props.onClick(); flush();
     startup('awaiting-input');
     const ready = vi.fn();
     viewport.addEventListener(AURA_STARTUP_READY_EVENT, ready);
-    find(node => node.props?.['aria-label'] === 'Pause').props.onClick(); flush();
-    const choice = find(node => node.type === AuraStartReady);
-    expect(choice.props.busy).toBe(true);
-    choice.props.onStart(true); choice.props.onStart(false);
+    expect(find(node => node.type === AuraStartReady)).toBeUndefined();
+    expect(find(node => node.props?.['aria-label'] === 'Game paused')).toBeDefined();
+    expect(ready).not.toHaveBeenCalled();
+    expect(window.localStorage.setItem).not.toHaveBeenCalled();
+  });
+  it('lets the ready dialog leave through the normal Back action without starting the match', async () => {
+    await mount('AuraScene', { gameMode: 'aura', vsAI: true }); emit('loading'); emit('ready'); finishOpening();
+    startup('awaiting-input');
+    const ready = vi.fn();
+    viewport.addEventListener(AURA_STARTUP_READY_EVENT, ready);
+    find(node => node.type === AuraStartReady).props.onExit();
+    expect(props.onExit).toHaveBeenCalledOnce();
     expect(ready).not.toHaveBeenCalled();
     expect(window.localStorage.setItem).not.toHaveBeenCalled();
   });

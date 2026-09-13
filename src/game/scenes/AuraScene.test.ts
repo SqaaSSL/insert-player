@@ -91,6 +91,17 @@ describe('AuraScene stage defaults and authored floor', () => {
     expect(backdrop.displayWidth).toBeGreaterThanOrEqual(layout.stage.width);
     expect(backdrop.x).toBe(layout.stage.width / 2);
 
+    scene.startup = null;
+    scene.cameraComposition = () => ({ backdropOffsetX: 0, backdropScale: 1.14 });
+    const base = { ...scene.stageFrame };
+    scene.applyBackdropComposition();
+    expect(backdrop.y - backdrop.displayHeight / 2).toBeLessThanOrEqual(1e-8);
+    expect(backdrop.y + 0.32 * backdrop.displayHeight).toBeCloseTo(layout.active.footY, 10);
+    scene.startup = new AuraStartup();
+    scene.applyBackdropComposition();
+    expect(backdrop.displayWidth).toBeCloseTo(base.width * 1.14, 10);
+    expect(backdrop.displayHeight).toBeCloseTo(base.height * 1.14, 10);
+
     scene.customStageTextureKey = 'photo-stage';
     scene.layoutStage();
     expect(backdrop.y + backdrop.displayHeight / 2).toBeCloseTo(layout.active.footY + 60, 10);
@@ -1306,15 +1317,32 @@ describe('AuraScene responsive whole-rig layout', () => {
     Object.assign(scene, {
       layout: createAuraLayout(width, height), layoutStage: vi.fn(), cameras: { main: camera() }, uiCamera: camera(),
       hudPanel: controlGraphics(), crtOverlay: controlGraphics(), beatGraphics: controlGraphics(),
+      crowdLabelText: controlText(), crowdMeterGraphics: controlGraphics(),
       duelMeterGraphics: controlGraphics(), duelHeadingText: controlText(), performerNameText: controlText(),
       p1NameText: controlText(), p2NameText: controlText(), p1ScoreText: controlText(), p2ScoreText: controlText(),
       turnText: controlText(), phaseText: controlText(), countInText: controlText(), comboText: controlText(),
       drawLanes: vi.fn(), feedbackObject: null,
+      startup: null,
     });
     scene.applyLayout();
     expect(scene.comboText).toMatchObject({ x, y });
     expect(scene.comboText.setOrigin).toHaveBeenCalledExactlyOnceWith(origin, 0);
     expect(scene.comboText.setFontSize).toHaveBeenCalledExactlyOnceWith(fontSize);
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(false);
+    expect(scene.p1ScoreText.visible).toBe(false);
+    scene.startup = new AuraStartup();
+    scene.applyLayout();
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(true);
+    expect(scene.p1ScoreText.visible).toBe(true);
+    scene.matchFinished = true;
+    scene.applyLayout();
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(true);
+    expect(scene.comboText.visible).toBe(false);
+    scene.matchFinished = false;
+    scene.onboarding = new AuraOnboarding();
+    scene.applyLayout();
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(false);
+    expect(scene.p1ScoreText.visible).toBe(false);
     const instrument = scene.layout.instrument;
     const flowWidth = 'x999 FLOW'.length * fontSize;
     expect(scene.comboText.x - flowWidth).toBeGreaterThan(instrument.left);
@@ -1480,10 +1508,12 @@ describe('AuraScene responsive whole-rig layout', () => {
     const scene = Object.assign(new AuraScene(), harness().scene, state, {
       lifecycleActive: true, presentationReady: true, scale: { width: 576, height: 1024 },
       applyLayout: vi.fn(), updateNotes: vi.fn(),
+      startup: null, startupView: { render: vi.fn() },
     });
     scene.onLayoutResize();
     expect(scene.applyLayout).toHaveBeenCalledOnce();
     expect(scene.updateNotes).not.toHaveBeenCalled();
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, null, undefined);
   });
 
   it.each([0, 1, 2, 3])('keeps lane %i aligned when its reduced-motion flash ends after a rotation', lane => {
@@ -1585,6 +1615,7 @@ describe('AuraScene visible presentation handshake', () => {
     return Object.assign(new AuraScene(), harness().scene, {
       lifecycleActive: true, presentationReady: true, presentationStarted: false,
       presentationToken: 41, matchSeed: 67, localOnlineReady: false, online: null,
+      startupView: { render: vi.fn() },
       beginClock: vi.fn(), announceOnlineReady: vi.fn(), prepareStartup: vi.fn(),
       soundManager: { unlockPreparedMedia: vi.fn().mockResolvedValue(true) },
     });
@@ -1735,6 +1766,7 @@ describe('AuraScene visible presentation handshake', () => {
     scene.onPresentationStart({ detail: { token: 41, seed: 67 } });
     expect(scene.presentationStarted).toBe(true);
     expect(scene.awaitingStartInput).toBe(true);
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, null);
     expect(scene.beginClock).not.toHaveBeenCalled();
     expect(scene.soundManager.unlockPreparedMedia).not.toHaveBeenCalled();
     scene.onStartupReady({ detail: { token: 40, seed: 67 } });
@@ -1907,6 +1939,7 @@ describe('AuraScene first-play practice isolation', () => {
       clockStartedAt: null, scheduledClockStart: null, paused: false, finalizing: false,
       onboarding: new AuraOnboarding(), onboardingGraphics: { ...controlGraphics(), destroy: vi.fn() },
       lastOnboardingState: null, phaseText: controlText(), turnText: controlText(), highwayTitleText: controlText(), highwayMetaText: controlText(),
+      hudPanel: controlGraphics(), p1NameText: controlText(),
       p1ScoreText: controlText(), p2ScoreText: controlText(), p2NameText: controlText(), duelMeterGraphics: controlGraphics(),
       comboText: controlText(), crowdLabelText: controlText(), crowdMeterGraphics: controlGraphics(), duelHeadingText: controlText(),
       flashLaneInput: vi.fn(), updateTurnPresentation: vi.fn(), beginClock: vi.fn(), prepareStartup: vi.fn(),
@@ -2082,9 +2115,11 @@ describe('AuraScene first-play practice isolation', () => {
     scene.onboarding.advance(AURA_PRACTICE_TRAVEL_MS);
     scene.scale = { width, height };
     scene.applyLayout = vi.fn();
+    scene.startupView = { render: vi.fn() };
     const before = scene.onboarding.snapshot;
     scene.onLayoutResize();
     expect(scene.onboarding.snapshot).toEqual(before);
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, null, undefined);
     expect(scene.onboarding.practiceProgress).toBe(1);
     expect(scene.phaseText.text).toBe('PRACTICE 1/4');
     expect(scene.turnText.text).toBe('NO SCORE YET');
@@ -2122,6 +2157,7 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
       lifecycleActive: true, lifecycleEpoch: 1, presentationReady: true, presentationStarted: true,
       presentationToken: 41, matchSeed: 67, online: null, cpuVsCpu: false,
       startup: null, startupView: { render: vi.fn() }, startupAbort: new AbortController(),
+      setBattleHudVisible: vi.fn(),
       turnText: controlText(), countInText: controlText(), lastCountIn: -1,
       chart: createAuraChart(67, 'lowkey'), track: DEFAULT_AURA_TRACK,
       clockStartedAt: null, scheduledClockStart: null, paused: false, captureId: 'intro',
@@ -2155,6 +2191,8 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
     const prepared = scene.prepareStartup();
     expect(start).not.toHaveBeenCalled();
     expect(scene.startup.snapshot.phase).toBe('preparing');
+    expect(scene.setBattleHudVisible).toHaveBeenLastCalledWith(true);
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, scene.startup.snapshot);
     rendered(true);
     await Promise.resolve();
     expect(start).toHaveBeenCalledOnce();
