@@ -653,6 +653,7 @@ export class AuraScene extends Phaser.Scene {
     const epoch = this.lifecycleEpoch;
     this.startup = new AuraStartup(Boolean(this.online), this.online ? undefined
       : { firstNoteMs: this.chart.turns[0].firstNoteMs, beatMs: this.chart.beatMs });
+    this.setBattleHudVisible(true);
     this.turnText.setText('AURA DUEL · GET READY');
     this.fitHudText();
     this.emitStartup();
@@ -714,6 +715,7 @@ export class AuraScene extends Phaser.Scene {
 
   private awaitStartupGesture(): void {
     this.awaitingStartInput = true;
+    this.startupView?.render(this.layout, null);
     window.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, {
       detail: { token: this.presentationToken, seed: this.matchSeed,
         phase: 'awaiting-input', remainingMs: 0, count: null },
@@ -750,7 +752,7 @@ export class AuraScene extends Phaser.Scene {
     this.onboardingGraphics = this.add.graphics();
     this.uiLayer.add(this.onboardingGraphics);
     this.focusPerformer(0);
-    this.setPracticeHud(true);
+    this.setBattleHudVisible(false);
     this.drawLanes(0);
     this.drawOnboardingPractice();
     this.emitOnboarding();
@@ -812,17 +814,24 @@ export class AuraScene extends Phaser.Scene {
     else this.emitOnboarding();
   }
 
-  private setPracticeHud(practicing: boolean): void {
-    for (const object of [this.p1ScoreText, this.p2ScoreText, this.p2NameText, this.duelMeterGraphics,
-      this.comboText, this.crowdLabelText, this.crowdMeterGraphics]) object.setVisible(!practicing);
-    this.duelHeadingText.setVisible(!practicing && !this.layout.portrait);
+  private setBattleHudVisible(visible: boolean): void {
+    // Before a scored duel, the ready dialog / practice hint owns instructions.
+    // Hide the backing plate too, so this space belongs to the arena again.
+    for (const object of [this.hudPanel, this.p1NameText, this.p2NameText, this.p1ScoreText, this.p2ScoreText,
+      this.turnText, this.phaseText, this.duelMeterGraphics]) object.setVisible(visible);
+    this.comboText.setVisible(visible && !this.matchFinished);
+    if (!visible) {
+      this.crowdLabelText.setVisible(false);
+      this.crowdMeterGraphics.setVisible(false);
+    }
+    this.duelHeadingText.setVisible(visible && !this.layout.portrait);
   }
 
   private startBattleAfterPractice(): void {
     this.onboardingGraphics?.clear();
     this.onboarding?.complete();
     this.emitOnboarding();
-    this.setPracticeHud(false);
+    this.setBattleHudVisible(true);
     this.updateScoreUi();
     this.updateTurnPresentation(-1);
     void this.prepareStartup();
@@ -1241,7 +1250,7 @@ export class AuraScene extends Phaser.Scene {
     this.crtOverlay = this.add.graphics();
     this.uiLayer.add(this.crtOverlay);
     this.startupView = new AuraStartupView(this, this.uiLayer, [this.p1Name, this.p2Name]);
-    this.startupView.render(this.layout, { phase: 'preparing', count: null });
+    this.startupView.render(this.layout, null);
   }
 
   private createCameras(): void {
@@ -1256,7 +1265,7 @@ export class AuraScene extends Phaser.Scene {
     this.comicFeedback?.beginTurn();
     this.applyLayout();
     this.startupView?.render(this.layout, this.onboarding?.snapshot.phase === 'practice' ? null
-      : this.startup?.snapshot ?? { phase: 'preparing', count: null }, this.startup?.readyForOnline);
+      : this.startup?.snapshot ?? null, this.startup?.readyForOnline);
     if (this.onboarding?.snapshot.phase === 'practice') this.drawOnboardingPractice();
     if (this.clockStartedAt !== null && !this.matchFinished && !this.finalizing) {
       // Reproject at the already sampled/frozen instant, even while paused.
@@ -1323,7 +1332,7 @@ export class AuraScene extends Phaser.Scene {
     this.applyPerformerLayout();
     this.updateScoreUi();
     this.updateCrowdUi(this.activePerformerSlot);
-    if (this.onboarding?.snapshot.phase === 'practice') this.setPracticeHud(true);
+    this.setBattleHudVisible(this.startup !== null && this.onboarding?.snapshot.phase !== 'practice');
     if (!this.matchFinished && !this.finalizing) {
       this.drawLanes(this.activePerformerSlot ?? this.chart.turns[0]?.slot ?? 0);
     }
