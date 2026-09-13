@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { selectiveRepairOptions, assertSelectiveDispatch, assertHistoricalCrouchPose } from './casual-selective-repair-cli.mjs';
+import { selectiveRepairOptions, assertSelectiveDispatch, assertHistoricalCrouchPose, selectiveAnimationMotion } from './casual-selective-repair-cli.mjs';
 const hash = 'a'.repeat(64);
 const plan = { request: { path: '/v1beta/models/gemini-3.1-flash-image:generateContent', sha256: hash } };
 describe('exact Casual selective repair boundary', () => {
+  it('selects motion by exact name without interpreting regex syntax', () => {
+    const source = "{ name: 'walk', motion: 'guarded walk', frames: 16, base: 'standing' }\n{ name: 'low_kick', motion: 'ground sweep', frames: 7, base: 'crouched' }";
+    expect(selectiveAnimationMotion(source, 'low_kick')).toBe('ground sweep');
+    for (const name of ['.*', 'walk|low_kick', '(a+)+$', 'missing']) {
+      expect(() => selectiveAnimationMotion(source, name)).toThrow(/Unknown animation/);
+    }
+  });
   it('defaults to an offline plan and refuses broader targets or duplicate options', () => {
     expect(selectiveRepairOptions([])).toMatchObject({ execute: false, target: 'all', step: 'render' });
     expect(() => selectiveRepairOptions(['--target=walk:10'])).toThrow(/Outside/);

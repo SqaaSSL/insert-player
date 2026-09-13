@@ -37,6 +37,12 @@ export function assertSelectiveDispatch({ provider, path, bodySha256, step, plan
   else assert.ok(provider === 'fal' && path === '/fal-ai/birefnet', 'Only normal BiRefNet cleanup is permitted');
   assert.ok(exists || owned < 1, 'One provider attempt per target/step; recovery needs explicit review');
 }
+export function selectiveAnimationMotion(workflowSource, animationName) {
+  const entries = workflowSource.matchAll(/\{ name: '([a-z_]+)', motion: '([^']+)', frames: \d+, base: '(?:standing|crouched)' \}/g);
+  const entry = Array.from(entries).find(match => match[1] === animationName);
+  assert.ok(entry, 'Unknown animation in the generation workflow');
+  return entry[2];
+}
 export function assertHistoricalCrouchPose({ targetKey, activeRookie, originalRookie, proof, approvedReuse }) {
   assert.equal(targetKey, 'crouch:1'); assert.equal(activeRookie.derivativeId, 'casual-postprocess-repair-v1');
   assert.equal(proof.operation, 'reprocess-original-raw'); assert.equal(proof.providerCalls, 0);
@@ -113,7 +119,7 @@ export async function runSelectiveRepair(args = process.argv.slice(2)) {
         const originalImages = request.contents[0].parts.filter(part => part.inlineData).map(part => sha256(Buffer.from(part.inlineData.data, 'base64')));
         assert.equal(originalImages.length, 2); assert.ok(originalImages.includes(frame.pose.sha256)); assert.ok(originalImages.includes(source.sha256));
       } else assert.ok(animationName === 'ko' && [7, 8].includes(uniqueFrame), 'Only KO7/8 have no prior render');
-      const motion = readFileSync(join(ROOT, 'worker/src/generationWorkflow.ts'), 'utf8').match(new RegExp(`\\{ name: '${animationName}', motion: '([^']+)', frames: \\d+, base: '(?:standing|crouched)' \\}`))?.[1]; assert.ok(motion);
+      const motion = selectiveAnimationMotion(readFileSync(join(ROOT, 'worker/src/generationWorkflow.ts'), 'utf8'), animationName);
       const context = createDetachedApiRequestContext({ apiBaseUrl: LOCAL_ORIGIN, authorizationToken: 'local-artifact-only', providerRequestScope: `${ID}:${targetKey}` });
       let captured;
       globalThis.fetch = async (input, init) => {

@@ -200,6 +200,30 @@ describe('sealed Casual roster import', () => {
     expect(client.listAdminArcade).not.toHaveBeenCalled();
   });
 
+  it.each([
+    `prod-${'2'.repeat(40)}-1`,
+    `sandbox-${SHA}-1`,
+    `prod-${SHA}-0`,
+    `prod-${SHA}-01`,
+    `prod-${SHA}-1-extra`,
+    `prod-${SHA}-1\n`,
+    undefined,
+  ])('refuses a healthy Worker with a different or malformed deployment tag: %s', async tag => {
+    const client = new FakeClient(null), originalHealth = client.health;
+    client.health = async () => ({ ...await originalHealth(), workerVersion: { tag } });
+    client.listAdminArcade = vi.fn();
+    await expect(execute(null, client)).rejects.toThrow('exact production commit');
+    expect(client.listAdminArcade).not.toHaveBeenCalled();
+    expect(client.log).toEqual([]);
+  });
+
+  it('rejects regex syntax in the requested SHA before any network access', async () => {
+    const client = { health: vi.fn() };
+    await expect(executeCasualImport({ bundle: null, client, ownerId: OWNER, expectedSha: '.*' }))
+      .rejects.toThrow('full production commit SHA');
+    expect(client.health).not.toHaveBeenCalled();
+  });
+
   it('skips an unrelated unavailable admin identity but fails if Casual itself is unavailable', async () => {
     const bundle = fixture().bundle(), client = new FakeClient(bundle), getFighter = client.getFighter;
     client.listAdminArcade = async () => [{ fighterId: 'b'.repeat(32), slug: 'unrelated', status: 'draft' }];

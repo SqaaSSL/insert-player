@@ -240,8 +240,12 @@ async function verifyPublic(id, bundle, client) {
 export async function executeCasualImport({ bundle, client, ownerId, expectedSha, onCheckpoint = () => {} }) {
   invariant(/^[a-f0-9]{40}$/.test(expectedSha), 'A full production commit SHA is required.');
   const health = await client.health();
+  const liveVersionTag = health?.workerVersion?.tag;
+  const liveVersion = typeof liveVersionTag === 'string'
+    ? /^prod-([a-f0-9]{40})-[1-9][0-9]*$/.exec(liveVersionTag) : null;
   invariant(health?.status === 'ok' && health.environment === 'production' && health.storage?.d1 === 'bound'
-    && health.storage?.r2 === 'bound' && new RegExp(`^prod-${expectedSha}-[1-9][0-9]*$`).test(health.workerVersion?.tag), 'Live Worker does not match the exact production commit.');
+    && health.storage?.r2 === 'bound' && liveVersion?.[0] === liveVersionTag && liveVersion?.[1] === expectedSha,
+    'Live Worker does not match the exact production commit.');
   const receipt = { schemaVersion: 1, manifestSha256: bundle.manifestSha256, gitSha: expectedSha,
     identity: CASUAL_IDENTITY, status: 'checking', steps: [] };
   const checkpoint = step => { receipt.steps.push(step); onCheckpoint(structuredClone(receipt)); };
