@@ -3,6 +3,9 @@
 .aura-clip-composer__actions .aura-challenge-composer__link { margin: 0; }
 .aura-clip-composer__progress { width: 100%; height: 12px; margin: 12px 0; accent-color: #ffce3a; }
 .aura-clip-composer .asf-btn { min-height: 48px; white-space: normal; line-height: 1.65; }
+.aura-clip-composer.is-compact .aura-clip-composer__actions { margin: 0; align-items: stretch; }
+.aura-clip-composer.is-compact .aura-clip-composer__actions > .asf-btn--primary { width: 100%; }
+.aura-clip-composer.is-compact .aura-clip-composer__actions > .aura-challenge-composer__link { display: flex; align-items: center; min-height: 44px; }
 .aura-clip-composer__verification { font-size: 10px; line-height: 1.8; }
 .aura-clip-composer__verification .turnstile-challenge { margin: 12px 0; }
 .aura-clip-composer__fallback { margin-top: 20px; font-size: 10px; line-height: 1.8; color: #e5decf; }
