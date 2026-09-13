@@ -41,6 +41,7 @@ jobs:
       REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
       ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
       ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+      ASF_LAUNCH_SMOKE_PRIMARY_USER_ID: ${{ secrets.ASF_LAUNCH_SMOKE_PRIMARY_USER_ID }}
       CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       ASF_CLOUDFLARE_ZONE_ID: ${{ vars.ASF_CLOUDFLARE_ZONE_ID }}
@@ -72,6 +73,7 @@ jobs:
             exit 1
           }
           [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" \
+            && "$ASF_ARCADE_ADMIN_CLERK_USER_ID" == "$ASF_LAUNCH_SMOKE_PRIMARY_USER_ID" \
             && ${#CLERK_BACKEND_AUTH_BRIDGE_SECRET} -ge 32 ]] || {
             printf '%s\n' '::error::Production Clerk admin credentials are unavailable.'
             exit 1
@@ -122,14 +124,19 @@ jobs:
             --manifest="$manifest" --manifest-sha256="$manifest_sha" \
             > "$RUNNER_TEMP/casual-roster-plan.json"
 
-      - name: Import, verify and activate the exact reviewed Casual versions
+      - name: Install the existing Clerk Agent Task browser runtime
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Import, verify and activate with an owned temporary admin session
         shell: bash
         run: |
           set -euo pipefail
           node scripts/production-deploy-guard.mjs
           manifest="$RUNNER_TEMP/casual-roster-extracted/casual-roster-v1/manifest.json"
           manifest_sha="$(node --input-type=module -e 'import fs from "node:fs"; console.log(JSON.parse(fs.readFileSync("arcade/casual-generated-v1.json")).bundle.manifestSha256)')"
-          node scripts/import-casual-roster.mjs \
+          node scripts/import-casual-with-session.mjs \
             --manifest="$manifest" --manifest-sha256="$manifest_sha" \
             --execute --confirm=IMPORT_CASUAL_ROSTER_PRODUCTION_V1 \
             --expected-deployed-sha="$GITHUB_SHA" \
