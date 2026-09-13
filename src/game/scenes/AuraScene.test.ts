@@ -91,6 +91,17 @@ describe('AuraScene stage defaults and authored floor', () => {
     expect(backdrop.displayWidth).toBeGreaterThanOrEqual(layout.stage.width);
     expect(backdrop.x).toBe(layout.stage.width / 2);
 
+    scene.startup = null;
+    scene.cameraComposition = () => ({ backdropOffsetX: 0, backdropScale: 1.14 });
+    const base = { ...scene.stageFrame };
+    scene.applyBackdropComposition();
+    expect(backdrop.y - backdrop.displayHeight / 2).toBeLessThanOrEqual(1e-8);
+    expect(backdrop.y + 0.32 * backdrop.displayHeight).toBeCloseTo(layout.active.footY, 10);
+    scene.startup = new AuraStartup();
+    scene.applyBackdropComposition();
+    expect(backdrop.displayWidth).toBeCloseTo(base.width * 1.14, 10);
+    expect(backdrop.displayHeight).toBeCloseTo(base.height * 1.14, 10);
+
     scene.customStageTextureKey = 'photo-stage';
     scene.layoutStage();
     expect(backdrop.y + backdrop.displayHeight / 2).toBeCloseTo(layout.active.footY + 60, 10);

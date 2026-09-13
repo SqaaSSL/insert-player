@@ -1400,9 +1400,14 @@ export class AuraScene extends Phaser.Scene {
     if (!this.stageFrame || !this.stageBackdrop) return;
     const { backdropOffsetX, backdropScale } = this.cameraComposition();
     const base = this.stageFrame;
-    this.stageBackdrop.setDisplaySize(base.width * backdropScale, base.height * backdropScale)
+    // With no scoreboard yet, cover its old space as well. Keep the floor
+    // anchored beneath the performer and the scored duel's framing unchanged.
+    const scale = this.startup === null
+      ? Math.max(backdropScale, this.layout.active.footY / Math.max(1, this.layout.active.footY - base.y + base.height / 2))
+      : backdropScale;
+    this.stageBackdrop.setDisplaySize(base.width * scale, base.height * scale)
       .setPosition(base.x + backdropOffsetX,
-        this.layout.active.footY + (base.y - this.layout.active.footY) * backdropScale);
+        this.layout.active.footY + (base.y - this.layout.active.footY) * scale);
   }
 
   private advanceCameraPresentation(deltaMs: number): void {
