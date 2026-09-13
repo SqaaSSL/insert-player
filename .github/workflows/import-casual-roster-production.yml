@@ -1,0 +1,147 @@
+name: Import reviewed Casual roster in production
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_asset:
+        description: Exact tar.gz asset name from the committed Casual descriptor
+        required: true
+        type: string
+      bundle_sha256:
+        description: Exact compressed SHA-256 from the committed Casual descriptor
+        required: true
+        type: string
+      confirmation:
+        description: Enter IMPORT_CASUAL_ROSTER_PRODUCTION_V1
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+
+jobs:
+  import-casual:
+    name: Import both reviewed Casual quality versions
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    permissions:
+      # Draft releases require push access even when only downloading an asset.
+      # Keep this permission on the protected main/production job, not the workflow.
+      # https://docs.github.com/en/rest/releases/releases#list-releases
+      contents: write
+    env:
+      BUNDLE_ASSET: ${{ inputs.bundle_asset }}
+      BUNDLE_SHA256: ${{ inputs.bundle_sha256 }}
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ASF_CLOUDFLARE_ZONE_ID: ${{ vars.ASF_CLOUDFLARE_ZONE_ID }}
+      ASF_WORKER_URL: https://api.insertplayer.ai
+      ASF_EXPECTED_DEPLOYED_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Check out the exact workflow commit
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Validate the production request and committed review
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_CONFIRMATION" == 'IMPORT_CASUAL_ROSTER_PRODUCTION_V1' ]] || {
+            printf '%s\n' '::error::The exact Casual import confirmation is required.'
+            exit 1
+          }
+          [[ "$BUNDLE_ASSET" =~ ^[a-z0-9][a-z0-9._-]{0,110}\.tar\.gz$ \
+            && "$BUNDLE_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+            printf '%s\n' '::error::A simple archive asset name and exact lowercase SHA-256 are required.'
+            exit 1
+          }
+          [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" \
+            && ${#CLERK_BACKEND_AUTH_BRIDGE_SECRET} -ge 32 ]] || {
+            printf '%s\n' '::error::Production Clerk admin credentials are unavailable.'
+            exit 1
+          }
+          [[ -n "$CLOUDFLARE_API_TOKEN" && "$ASF_CLOUDFLARE_ZONE_ID" =~ ^[a-f0-9]{32}$ ]] || {
+            printf '%s\n' '::error::The exact roster cache purge requires production Cloudflare credentials.'
+            exit 1
+          }
+          node scripts/production-deploy-guard.mjs
+          node scripts/check-deployment-policy.mjs
+          node scripts/package-casual-roster.mjs \
+            --verify-descriptor=arcade/casual-generated-v1.json \
+            --asset="$BUNDLE_ASSET" --archive-sha256="$BUNDLE_SHA256"
+
+      - name: Download the exact asset from the fixed private draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_json="$RUNNER_TEMP/casual-release.json"
+          gh release view casual-generation-v1 --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isDraft,assets > "$release_json"
+          jq -e --arg asset "$BUNDLE_ASSET" '
+            .tagName == "casual-generation-v1" and .isDraft == true and
+            ([.assets[] | select(.name == $asset and .size > 0 and .size <= 1073741824)] | length == 1)
+          ' "$release_json" > /dev/null
+          gh release download casual-generation-v1 --repo "$GITHUB_REPOSITORY" \
+            --pattern "$BUNDLE_ASSET" --output "$RUNNER_TEMP/casual-roster.tar.gz"
+
+      - name: Verify the reviewed hashes and extract the sealed archive safely
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/package-casual-roster.mjs \
+            --extract="$RUNNER_TEMP/casual-roster.tar.gz" \
+            --descriptor=arcade/casual-generated-v1.json \
+            --asset="$BUNDLE_ASSET" --archive-sha256="$BUNDLE_SHA256" \
+            --out="$RUNNER_TEMP/casual-roster-extracted"
+
+      - name: Validate every source and both complete animation sets without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="$RUNNER_TEMP/casual-roster-extracted/casual-roster-v1/manifest.json"
+          manifest_sha="$(node --input-type=module -e 'import fs from "node:fs"; console.log(JSON.parse(fs.readFileSync("arcade/casual-generated-v1.json")).bundle.manifestSha256)')"
+          node scripts/import-casual-roster.mjs \
+            --manifest="$manifest" --manifest-sha256="$manifest_sha" \
+            > "$RUNNER_TEMP/casual-roster-plan.json"
+
+      - name: Import, verify and activate the exact reviewed Casual versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/production-deploy-guard.mjs
+          manifest="$RUNNER_TEMP/casual-roster-extracted/casual-roster-v1/manifest.json"
+          manifest_sha="$(node --input-type=module -e 'import fs from "node:fs"; console.log(JSON.parse(fs.readFileSync("arcade/casual-generated-v1.json")).bundle.manifestSha256)')"
+          node scripts/import-casual-roster.mjs \
+            --manifest="$manifest" --manifest-sha256="$manifest_sha" \
+            --execute --confirm=IMPORT_CASUAL_ROSTER_PRODUCTION_V1 \
+            --expected-deployed-sha="$GITHUB_SHA" \
+            --receipt="$RUNNER_TEMP/casual-roster-import-receipt.json"
+
+      - name: Upload the nonsecret plan and import receipt
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: casual-roster-import-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/casual-roster-plan.json
+            ${{ runner.temp }}/casual-roster-import-receipt.json
+          if-no-files-found: warn
+          retention-days: 30

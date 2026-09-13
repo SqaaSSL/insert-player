@@ -29,6 +29,44 @@ function syntheticSheet(
 }
 
 describe('critical sprite frame validation', () => {
+  it('keeps complete low-resolution idle poses beside a thin grid divider', async () => {
+    const sheet = syntheticSheet(4, 2, (context, _index, width) => {
+      context.fillStyle = '#777777';
+      context.fillRect(44, 16, 38, 130);
+      context.fillRect(70, 132, width - 72, 14); // One real green column remains between boot and divider.
+      context.fillStyle = '#101010'; context.fillRect(width - 1, 0, 1, 160);
+    });
+    const result = await cleanSpriteSheet(sheet, 8, 4, 2, 'idle');
+    expect(result.frameCount).toBe(8);
+  });
+
+  it('still rejects an actually clipped idle fist after edge erosion clears its outermost pixel', async () => {
+    const sheet = syntheticSheet(4, 2, (context, index, width) => {
+      context.fillStyle = '#777777'; context.fillRect(44, 16, 38, 130);
+      context.fillRect(70, 132, width - 72, 14);
+      if (index < 6) {
+        context.fillStyle = '#101010'; context.fillRect(width - 1, 0, 1, 160);
+      } else {
+        context.fillStyle = '#b46d48'; context.fillRect(74, 38, width - 74, 20);
+      }
+    });
+    const result = await cleanSpriteSheet(sheet, 8, 4, 2, 'idle');
+    expect(result.frameCount).toBe(6);
+  });
+
+  it('rejects a clipped idle fist even when a dark divider covers its outermost pixels', async () => {
+    const sheet = syntheticSheet(4, 2, (context, index, width, height) => {
+      context.fillStyle = '#777777'; context.fillRect(44, 16, 38, 130);
+      context.fillRect(70, 132, width - 72, 14);
+      if (index >= 6) {
+        context.fillStyle = '#b46d48'; context.fillRect(74, 38, width - 74, 20);
+      }
+      context.fillStyle = '#101010'; context.fillRect(width - 1, 0, 1, height);
+    });
+    const result = await cleanSpriteSheet(sheet, 8, 4, 2, 'idle');
+    expect(result.frameCount).toBe(6);
+  });
+
   it('requests landscape cells for the eight KO key poses', () => {
     expect(computeRequestedSpriteGrid('ko', 8)).toEqual({ cols: 2, rows: 4 });
     expect(computeRequestedSpriteGrid('victory', 8)).toEqual({ cols: 4, rows: 2 });

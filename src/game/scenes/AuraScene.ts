@@ -264,6 +264,7 @@ export class AuraScene extends Phaser.Scene {
   private views!: [FighterView, FighterView];
   private auraAnimationPacks: [LoadedAuraAnimationPack | null, LoadedAuraAnimationPack | null] = [null, null];
   private auraPerformanceViews: [AuraPerformanceView | null, AuraPerformanceView | null] = [null, null];
+  private authoredFinaleAvailable: [boolean, boolean] = [false, false];
   private comicFeedback: AuraComicFeedback | null = null;
   private scoreFeedback: AuraScoreFeedback | null = null;
   private fighterRenderScale = 1;
@@ -420,6 +421,7 @@ export class AuraScene extends Phaser.Scene {
     this.noteObjects.clear();
     this.auraAnimationPacks = [null, null];
     this.auraPerformanceViews = [null, null];
+    this.authoredFinaleAvailable = [false, false];
     this.crowdHeat = [0, 0];
     this.comicFeedback = null;
     this.scoreFeedback = null;
@@ -944,12 +946,16 @@ export class AuraScene extends Phaser.Scene {
   private async loadFighters(epoch: number): Promise<void> {
     const isCurrent = () => this.isCurrentLifecycle(epoch);
     const loadSlot = async (slot: AuraSlot, spriteKey: string, photoHash: string | null) => {
-      const [, auraPack] = await Promise.all([
-        photoHash ? loadAiSprites(this, spriteKey, photoHash, isCurrent) : Promise.resolve(false),
+      let hasAuthoredFinale = false;
+      const [combatLoaded, auraPack] = await Promise.all([
+        photoHash ? loadAiSprites(this, spriteKey, photoHash, isCurrent, animations => {
+          hasAuthoredFinale = animations.has('victory') && animations.has('ko');
+        }) : Promise.resolve(false),
         loadAuraAnimationPack(this, spriteKey, photoHash, isCurrent, auraDemoPerformer(this.matchData, slot)),
       ]);
       if (isCurrent()) {
         this.auraAnimationPacks[slot] = auraPack;
+        this.authoredFinaleAvailable[slot] = combatLoaded && hasAuthoredFinale;
       }
     };
     await Promise.all([
@@ -2328,7 +2334,9 @@ export class AuraScene extends Phaser.Scene {
     for (const slot of [0, 1] as const) {
       const performance = this.auraPerformanceViews[slot];
       const won = winner === 'draw' || winner === (slot === 0 ? 'p1' : 'p2');
-      if (performance && !performance.playFinale(won)) performance.interrupt(this.views[slot]);
+      if (performance && (this.authoredFinaleAvailable[slot] || !performance.playFinale(won))) {
+        performance.interrupt(this.views[slot]);
+      }
     }
     this.applyPerformerLayout();
     const summary: AuraBattleCompleteDetail = {
@@ -2706,6 +2714,7 @@ export class AuraScene extends Phaser.Scene {
     this.scoreFeedback = null;
     for (const view of this.auraPerformanceViews) view?.destroy();
     this.auraPerformanceViews = [null, null];
+    this.authoredFinaleAvailable = [false, false];
     for (const pack of this.auraAnimationPacks) destroyLoadedAuraAnimationPack(this, pack);
     this.auraAnimationPacks = [null, null];
     this.videoRecorder?.destroy();

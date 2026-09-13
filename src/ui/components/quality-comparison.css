@@ -5,6 +5,9 @@
 .quality-comparison > summary span { margin-left: .75rem; font-size: .85rem; font-weight: 400; color: var(--color-asf-muted); }
 .quality-comparison__content { padding-bottom: .75rem; }
 .quality-comparison__intro { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
+.quality-comparison__heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: .75rem; }
+.quality-comparison__heading select { min-height: 44px; padding: .5rem .75rem; border: 1px solid var(--color-asf-line-strong); background: var(--color-asf-bg-deep); color: var(--color-asf-text); cursor: pointer; }
+.quality-comparison__heading select:focus-visible { outline: 2px solid var(--color-asf-gold); outline-offset: 4px; }
 .quality-comparison__intro h3 { margin: 0 0 .4rem; font-size: 1.5rem; font-weight: 600; }
 .quality-comparison__intro p { max-width: 32rem; margin: 0; color: var(--color-asf-muted); }
 .quality-comparison__controls { display: flex; flex-shrink: 0; flex-direction: column; align-items: flex-end; gap: .4rem; }

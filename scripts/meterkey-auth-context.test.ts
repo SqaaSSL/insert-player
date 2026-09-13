@@ -19,6 +19,7 @@ const approvedScope = {
   providers: ['fal', 'google-ai-studio'],
   models: [
     'bytedance/seedream/v5/pro/edit',
+    'fal-ai/birefnet',
     'fal-ai/lyria3/pro',
     'gemini-3.1-flash-lite',
     'gemini-3.1-flash-tts-preview',
@@ -65,6 +66,17 @@ describe('Meterkey Insert Player auth contract', () => {
       'alibaba/qwen-image-3/edit',
     );
     (context.scope as Record<string, unknown>).daily_cap_uc = 10_000_000;
+    expect(() => validateMeterkeyAuthContext(context, expected)).not.toThrow();
+  });
+
+  it('requires BiRefNet cleanup while retaining other explicit model permissions', () => {
+    const context = validContext();
+    context.scope.models = context.scope.models.filter((model) => model !== 'fal-ai/birefnet');
+    context.scope.models.push('fal-ai/nano-banana-pro/edit');
+    expect(() => validateMeterkeyAuthContext(context, expected))
+      .toThrow('Meterkey scope is missing required model fal-ai/birefnet.');
+
+    context.scope.models.push('fal-ai/birefnet');
     expect(() => validateMeterkeyAuthContext(context, expected)).not.toThrow();
   });
 
