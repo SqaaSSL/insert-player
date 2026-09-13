@@ -2416,10 +2416,14 @@ export class AuraScene extends Phaser.Scene {
     if (this.videoRecorder?.status === 'recording') this.emitCapture({ id: this.captureId, state: 'processing' });
     this.time.delayedCall(2_800, () => {
       if (!this.isCurrentLifecycle(epoch)) return;
-      // stop() synchronously ends frame collection before awaiting encoding.
-      void this.finishVideoCapture(epoch);
-      recordingStopped = true;
-      showResults();
+      // MediaRecorder queues its final frame collection; wait for completion
+      // before moving either body, including when reduced motion snaps the rig.
+      void Promise.resolve(this.finishVideoCapture(epoch)).catch(error => {
+        debugWarn('[AuraScene] Could not finish the result recording', error);
+      }).then(() => {
+        recordingStopped = true;
+        showResults();
+      });
     });
     this.time.delayedCall(this.reduceMotion ? 1_800 : 3_000, () => {
       presentationSettled = true;

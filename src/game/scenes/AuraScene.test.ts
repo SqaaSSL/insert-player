@@ -1140,6 +1140,8 @@ describe('AuraScene responsive whole-rig layout', () => {
     { winner: 'draw', scoringSlot: null, reducedMotion: false, authored: [true, true] },
   ])('reunites both bodies for $winner with readable finale, reduced=$reducedMotion, authored=$authored', async ({ winner, scoringSlot, reducedMotion, authored }) => {
     vi.useFakeTimers();
+    let finishRecording!: () => void;
+    const recordingCompletion = new Promise<void>(resolve => { finishRecording = resolve; });
     const dispatchEvent = vi.fn();
     vi.stubGlobal('window', { dispatchEvent });
     const { scene, bodies } = cameraHarness();
@@ -1153,7 +1155,7 @@ describe('AuraScene responsive whole-rig layout', () => {
       online: null, isVsAI: true, cpuVsCpu: false, videoRecorder: null,
       cameraFocusSlot: 1, cameraFromSlot: winner === 'p1' && !reducedMotion ? 0 : 1, reduceMotion: reducedMotion,
       cameraTransitionMs: winner === 'p1' && !reducedMotion ? AURA_CAMERA_HANDOFF_MS / 2 : AURA_CAMERA_HANDOFF_MS,
-      finishVideoCapture: vi.fn(), setMatchActionsVisible: vi.fn(),
+      finishVideoCapture: vi.fn(() => recordingCompletion), setMatchActionsVisible: vi.fn(),
       battleCapture: { capture: vi.fn(() => {
         const [left, right] = scene.cameraComposition().performers;
         expect((left.x + right.x) / 2).toBe(scene.layout.width / 2);
@@ -1214,6 +1216,10 @@ describe('AuraScene responsive whole-rig layout', () => {
     await vi.advanceTimersByTimeAsync(resultsDelay - 1);
     expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
+    expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+    expect(scene.cameraComposition().camera.anchorX).toBe(scene.layout.width / 2);
+    finishRecording();
+    await vi.advanceTimersByTimeAsync(0);
     if (!reducedMotion) {
       expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
       const center = scene.cameraComposition().camera.anchorX;
