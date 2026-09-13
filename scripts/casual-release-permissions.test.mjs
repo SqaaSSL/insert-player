@@ -26,4 +26,19 @@ describe('Casual draft release download permissions', () => {
     expect(importJob).toContain('.isDraft == true');
     expect(importJob).not.toMatch(/\bgh release (?:create|edit|upload|delete)\b|\bgit push\b/);
   });
+
+  it('uses the owned-session wrapper only after offline validation and installs its locked browser dependencies', () => {
+    const offline = importJob.indexOf('node scripts/import-casual-roster.mjs');
+    const dependencies = importJob.indexOf('npm ci');
+    const execute = importJob.indexOf('node scripts/import-casual-with-session.mjs');
+    expect(offline).toBeGreaterThan(0);
+    expect(dependencies).toBeGreaterThan(offline);
+    expect(execute).toBeGreaterThan(dependencies);
+    expect(importJob).toContain('npx playwright install --with-deps chromium');
+    expect(importJob).toContain('ASF_LAUNCH_SMOKE_PRIMARY_USER_ID: ${{ secrets.ASF_LAUNCH_SMOKE_PRIMARY_USER_ID }}');
+    expect(importJob).toContain('"$ASF_ARCADE_ADMIN_CLERK_USER_ID" == "$ASF_LAUNCH_SMOKE_PRIMARY_USER_ID"');
+    expect(importJob.slice(execute)).toContain('--execute --confirm=IMPORT_CASUAL_ROSTER_PRODUCTION_V1');
+    expect(importJob).not.toMatch(/ASF_(?:ARCADE_ADMIN|CLERK)_JWT|storageState|sign_in_tokens/);
+    expect(importJob.slice(importJob.indexOf('uses: actions/upload-artifact'))).not.toMatch(/token|session|browser|task-url/);
+  });
 });
