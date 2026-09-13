@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "exampleId": "casual-quality-20260913",
+  "characterName": "Casual",
+  "identity": {
+    "kind": "original-synthetic-adult",
+    "asset": "casual-original.webp",
+    "sha256": "e29f551726c5e80941bcf63618401bbf00429d56df52f6cbb20d8da57435c210",
+    "bytes": 39660,
+    "syntheticOriginCommit": "a8e0f09fa146331dba4a0c5ba21a5b6db8cb0171"
+  },
+  "approvedMarketingReference": {
+    "asset": "/assets/landing-panel-fighter2-e9c8ad75.webp",
+    "sha256": "dea77fefdd241df860e823caf8c2cfc0ac3f466f2d0d50a1b2cb23cfd475e7dd",
+    "role": "Published full-body outfit reference on a stage; a marketing composite, not a source sprite."
+  },
+  "animation": {
+    "name": "idle",
+    "frameWidth": 768,
+    "frameHeight": 1024,
+    "frameCount": 8,
+    "uniqueFrameCount": 7,
+    "gridColumns": 4,
+    "gridRows": 2
+  },
+  "presentation": {
+    "assetProcessing": "Exact byte copies of the approved paired idle derivatives. No additional resizing, sharpening, degradation or image generation for the comparison.",
+    "scope": "Same synthetic character and same source photo through ordinary Rookie and Champion generation. This example is a Fight idle, not an Aura move.",
+    "resolutionNote": "768x1024 is the normalized runtime cell canvas, not the native amount of generated detail. Original and curated raw sheet dimensions are reported independently.",
+    "historicalAssets": "All original generated sheets and the original manifest are preserved. Nova and its historical comparison remain unchanged."
+  },
+  "playbackDerivative": {
+    "id": "casual-idle-closed-loop-v1",
+    "provenanceSha256": "b476f321aaa6f2ed189df2950db1da274b93c76d113af0295e7e707de8a4d3c7",
+    "originalManifestSha256": "00e27b75c3765c199ef97b78db27637fc7b2ddbb3da9175439f19c1ead9b6a47",
+    "productFingerprint": "28cb47011ce71ccf9622d5ae3541b47ac592060b724a87a233591c47cea90f74",
+    "frameOrderOneBased": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      2
+    ],
+    "uniqueFrameCount": 7,
+    "playbackFrameCount": 8,
+    "closingHold": {
+      "playbackFrame": 8,
+      "repeatsSourceFrame": 2,
+      "matchesPlaybackFrame": 1
+    },
+    "reason": "The first source frame lacked sufficient background margin. Both qualities use the same seven remaining poses plus the same closing hold.",
+    "operation": "Integer crop and copy at native cell size, without retouching, enhancement, or rescaling.",
+    "paidCalls": 0
+  },
+  "variants": [
+    {
+      "label": "Rookie",
+      "storedTier": "rookie",
+      "asset": "casual-rookie-idle.png",
+      "sha256": "138019cec93d8e5fcf9a291c5b2dd5d0a6b3281c6383dcc2e11d05eea905da7d",
+      "bytes": 1706016,
+      "processingVersion": 5,
+      "sheetWidth": 3072,
+      "sheetHeight": 2048,
+      "generationContract": "Single generated sprite sheet normalized by the ordinary product pipeline.",
+      "imageModel": "gemini-3.1-flash-image",
+      "modelNote": "Both qualities use the same image model; Champion performs separate per-frame refinement rather than changing the marketing tier to a provider name.",
+      "originalProcessedSheet": {
+        "sha256": "b2d898f5b34fe6f0b84bf5f4cfc8263c1165cc2a3270d5420dd48ae948917bbc",
+        "bytes": 1704115
+      },
+      "originalRawSheet": {
+        "sha256": "e9a95ecd6b7bad1cef4d6500483e9dac3213f705be372ecce23c3089e53fcdda",
+        "bytes": 1468443,
+        "width": 912,
+        "height": 1151
+      },
+      "curatedRawSheet": {
+        "sha256": "24913e9e55855177197d88706ffcd559d6047e469c0c512c7b5df36f8b972c09",
+        "bytes": 1476264,
+        "width": 912,
+        "height": 1152
+      }
+    },
+    {
+      "label": "Champion",
+      "storedTier": "contender",
+      "asset": "casual-contender-idle.png",
+      "sha256": "bfa8424a6a37ca3b149c27d9ea813a58b20fcee1f08c8540666c81274b376492",
+      "bytes": 2112857,
+      "processingVersion": 5,
+      "sheetWidth": 3072,
+      "sheetHeight": 2048,
+      "generationContract": "Generated pose sheet followed by individual-frame refinement and background cleanup through the ordinary product pipeline.",
+      "imageModel": "gemini-3.1-flash-image",
+      "modelNote": "Both qualities use the same image model; Champion performs separate per-frame refinement rather than changing the marketing tier to a provider name.",
+      "originalProcessedSheet": {
+        "sha256": "1716f56d3e283aa2efc98499e939111e0edc77082093f9a4abc0dfd74cf0692b",
+        "bytes": 2072530
+      },
+      "originalRawSheet": {
+        "sha256": "d0decc67e35d5ebbe328d64e34148897f32ac75c86ca2cdf883f8a22e8b720d7",
+        "bytes": 7700893,
+        "width": 3648,
+        "height": 2390
+      },
+      "curatedRawSheet": {
+        "sha256": "a9da7a7bd0501104931c839d4ae5eba9337f68bbd96af82883d272ff1bc77e57",
+        "bytes": 7827791,
+        "width": 3648,
+        "height": 2390
+      }
+    }
+  ]
+}

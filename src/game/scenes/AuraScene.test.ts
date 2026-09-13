@@ -21,6 +21,7 @@ import { AURA_PLAZA_ASSET_PATH, DEFAULT_AURA_STAGE_ID, getStageTheme } from '../
 import type { MatchSceneData } from '../match/MatchConfig.ts';
 import { AURA_ANIMATION_NAMES } from '../../services/FighterAssetPacks.ts';
 import type { LoadedAuraAnimationPack } from '../aura/AuraSpriteLoader.ts';
+import { AuraPerformanceView } from '../aura/AuraPerformanceView.ts';
 
 const assetLoaders = vi.hoisted(() => ({ aura: vi.fn(), combat: vi.fn() }));
 vi.mock('../sprites/AiSpriteLoader.ts', () => ({ loadAiSprites: assetLoaders.combat }));
@@ -107,14 +108,15 @@ function harness(withPack = true) {
   const fighters = [new Fighter(0, 'P1', 250, true), new Fighter(1, 'P2', 774, false)];
   fighters.forEach(fighter => { vi.spyOn(fighter, 'forceState'); vi.spyOn(fighter, 'update'); });
   const views = fighters.map(() => ({
-    sprite: { setTintFill: vi.fn(), setTint: vi.fn(), clearTint: vi.fn(), setAlpha: vi.fn() },
-    shadowSprite: { setAlpha: vi.fn() }, syncSprite: vi.fn(), setRenderPresentation: vi.fn(),
+    sprite: { setTintFill: vi.fn(), setTint: vi.fn(), clearTint: vi.fn(), setAlpha: vi.fn(), setVisible: vi.fn() },
+    shadowSprite: { setAlpha: vi.fn(), setVisible: vi.fn() }, syncSprite: vi.fn(), setRenderPresentation: vi.fn(),
     getVisibleTopCenter: vi.fn(() => ({ x: 250, y: 220 })),
   }));
   const scene = Object.assign(Object.create(AuraScene.prototype), {
     layout: createAuraLayout(), applyPerformerLayout: vi.fn(), fitHudText: vi.fn(), emitPresentationTurn: vi.fn(),
     matchData: {}, p1Name: 'P1', p2Name: 'P2', performerNameText: controlText(),
     fighters, views, auraPerformanceViews: withPack ? [performance, waiting] : [null, null],
+    authoredFinaleAvailable: [false, false],
     activePerformerSlot: 0, matchFinished: false,
     cameraFocusSlot: 0, cameraFromSlot: 0, cameraTransitionMs: AURA_CAMERA_HANDOFF_MS, finaleElapsedMs: null, stageFrame: null,
     canaryPerformanceOverride: 'aura_six_seven',
@@ -207,6 +209,7 @@ describe('AuraScene loaded performer eligibility', () => {
     assetLoaders.combat.mockResolvedValue(false);
     await expect(scene.loadFighters(1)).resolves.toBeUndefined();
     expect(scene.auraAnimationPacks).toEqual(packs);
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
     expect(packs.every(pack => !pack.animations.has('aura_shrug'))).toBe(true);
   });
 
@@ -219,6 +222,43 @@ describe('AuraScene loaded performer eligibility', () => {
     expect(assetLoaders.aura).toHaveBeenNthCalledWith(2, scene, 'fighter_p2', null, expect.any(Function),
       { id: 'template-zero', tint: 0x8cdeff });
     expect(assetLoaders.combat).not.toHaveBeenCalled();
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
+  });
+
+  it.each([
+    { animations: ['idle', 'victory', 'ko'], loaded: true, expected: true },
+    { animations: ['idle', 'victory'], loaded: true, expected: false },
+    { animations: ['idle', 'ko'], loaded: true, expected: false },
+    { animations: ['idle'], loaded: true, expected: false },
+    { animations: ['victory', 'ko'], loaded: false, expected: false },
+  ])('uses genuine finale poses only after both native sources loaded: $animations, loaded=$loaded', async ({ animations, loaded, expected }) => {
+    const scene = loadingScene();
+    assetLoaders.aura.mockResolvedValue(loadedAuraPack());
+    assetLoaders.combat.mockImplementation((_scene, key, _hash, _isCurrent, onLoaded) => {
+      onLoaded(new Set(key === 'fighter_p1' ? animations : ['idle']));
+      return Promise.resolve(key === 'fighter_p1' ? loaded : true);
+    });
+    await scene.loadFighters(1);
+    expect(scene.authoredFinaleAvailable).toEqual([expected, false]);
+  });
+
+  it('resets finale metadata on reinitialization and ignores old successful loads', async () => {
+    const scene = loadingScene();
+    scene.authoredFinaleAvailable = [true, true];
+    let finish!: (pack: LoadedAuraAnimationPack) => void;
+    assetLoaders.aura.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    assetLoaders.combat.mockImplementation((_scene, _key, _hash, _isCurrent, onLoaded) => {
+      onLoaded(new Set(['victory', 'ko']));
+      return Promise.resolve(true);
+    });
+    const loading = scene.loadFighters(1);
+    scene.init({ gameMode: 'aura', p1Name: 'NOVA', p2Name: 'BYTE' });
+    scene.lifecycleEpoch = 2;
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
+    finish(loadedAuraPack());
+    await loading;
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
+    expect(scene.auraAnimationPacks).toEqual([null, null]);
   });
 
   it('does not report missing performers or store late packs after a scene has ended', async () => {
@@ -231,6 +271,7 @@ describe('AuraScene loaded performer eligibility', () => {
     resolveLoad(null);
     await expect(loading).resolves.toBeUndefined();
     expect(scene.auraAnimationPacks).toEqual([null, null]);
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
   });
 });
 
@@ -781,12 +822,14 @@ describe('AuraScene actual action recording integration', () => {
       comicFeedback: { destroy: vi.fn() }, auraPerformanceViews: [null, null], auraAnimationPacks: [null, null],
       soundManager: { destroy: vi.fn(), pauseBattleMusic: vi.fn() },
       keyBindings: [], onlineUnsubscribe: [unsubscribe], online: null, customStageTextureKey: null,
+      authoredFinaleAvailable: [true, true],
     });
     const completion = scene.finishVideoCapture(1);
     scene.onLifecycleEnd();
     expect(oldVideo.destroy).toHaveBeenCalledOnce();
     expect(scene.videoRecorder).toBeNull();
     expect(scene.actionRecorder).toBeNull();
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(scene.lifecycleEpoch).toBe(2);
     expect(scene.presentationReady).toBe(false);
@@ -1087,11 +1130,15 @@ describe('AuraScene responsive whole-rig layout', () => {
   });
 
   it.each([
-    { winner: 'p1', scoringSlot: 0, reducedMotion: false },
-    { winner: 'p2', scoringSlot: 1, reducedMotion: false },
-    { winner: 'draw', scoringSlot: null, reducedMotion: false },
-    { winner: 'p1', scoringSlot: 0, reducedMotion: true },
-  ])('reunites both bodies for $winner with winner/defeat poses and a readable finale, reduced=$reducedMotion', async ({ winner, scoringSlot, reducedMotion }) => {
+    { winner: 'p1', scoringSlot: 0, reducedMotion: false, authored: [false, false] },
+    { winner: 'p2', scoringSlot: 1, reducedMotion: false, authored: [false, false] },
+    { winner: 'draw', scoringSlot: null, reducedMotion: false, authored: [false, false] },
+    { winner: 'p1', scoringSlot: 0, reducedMotion: true, authored: [false, false] },
+    { winner: 'p1', scoringSlot: 0, reducedMotion: false, authored: [true, true] },
+    { winner: 'p2', scoringSlot: 1, reducedMotion: false, authored: [true, false] },
+    { winner: 'p1', scoringSlot: 0, reducedMotion: true, authored: [true, false] },
+    { winner: 'draw', scoringSlot: null, reducedMotion: false, authored: [true, true] },
+  ])('reunites both bodies for $winner with readable finale, reduced=$reducedMotion, authored=$authored', async ({ winner, scoringSlot, reducedMotion, authored }) => {
     vi.useFakeTimers();
     const dispatchEvent = vi.fn();
     vi.stubGlobal('window', { dispatchEvent });
@@ -1109,8 +1156,19 @@ describe('AuraScene responsive whole-rig layout', () => {
       finishVideoCapture: vi.fn(), setMatchActionsVisible: vi.fn(),
       battleCapture: { capture: vi.fn().mockResolvedValue('ready') }, lifecycleActive: true,
       finaleLabels: [controlText(), controlText()],
+      authoredFinaleAvailable: authored,
       time: { delayedCall: vi.fn((delay: number, callback: () => void) => setTimeout(callback, delay)) },
     });
+    for (const slot of [0, 1] as const) {
+      if (!authored[slot]) continue;
+      // Exercise the real visibility transition and the next frame, not just
+      // the method call: an old performance must stop covering the native pose.
+      Object.assign(scene.auraPerformanceViews[slot], {
+        activeName: 'aura_one_leg', sprite: controlText(), shadow: controlText(),
+        interrupt: vi.fn(AuraPerformanceView.prototype.interrupt),
+        update: vi.fn(AuraPerformanceView.prototype.update),
+      });
+    }
     Object.assign(scene.soundManager, { playAnnounce: vi.fn(), peakAuraCrowd: vi.fn() });
     const before = scene.cameraComposition();
     const handoffTime = scene.cameraTransitionMs;
@@ -1134,7 +1192,17 @@ describe('AuraScene responsive whole-rig layout', () => {
       expect(bodies[slot].rootY * rig.scaleY + rig.y).toBeCloseTo(placement.footY, 10);
       const won = winner === 'draw' || scoringSlot === slot;
       expect(scene.fighters[slot].state).toBe(won ? FighterState.VICTORY : FighterState.DEFEAT);
-      expect(scene.auraPerformanceViews[slot].playFinale).toHaveBeenCalledExactlyOnceWith(won);
+      if (authored[slot]) {
+        expect(scene.auraPerformanceViews[slot].playFinale).not.toHaveBeenCalled();
+        expect(scene.auraPerformanceViews[slot].interrupt).toHaveBeenCalledExactlyOnceWith(scene.views[slot]);
+        expect(scene.auraPerformanceViews[slot].activeName).toBeNull();
+        expect(scene.auraPerformanceViews[slot].sprite.visible).toBe(false);
+        expect(scene.views[slot].sprite.setVisible).toHaveBeenLastCalledWith(true);
+        expect(scene.views[slot].shadowSprite.setVisible).toHaveBeenLastCalledWith(true);
+      } else {
+        expect(scene.auraPerformanceViews[slot].playFinale).toHaveBeenCalledExactlyOnceWith(won);
+        expect(scene.auraPerformanceViews[slot].interrupt).not.toHaveBeenCalled();
+      }
       expect(scene.auraPerformanceViews[slot].update).toHaveBeenLastCalledWith(1_000 / 60, scene.views[slot]);
     }
     expect(scene.cameraFocusSlot).toBe(1); // Winning P1 must not cut away from the last camera mark.

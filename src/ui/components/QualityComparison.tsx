@@ -2,13 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import './quality-comparison.css';
 
 const EXAMPLES = [
-  { id: 'rookie', label: 'Rookie', description: 'Basic definition', file: 'nova-rookie-idle.png' },
-  { id: 'contender', label: 'Champion', description: 'Individually refined frames', file: 'nova-contender-idle.png' },
+  { id: 'rookie', label: 'Rookie', description: 'Basic definition' },
+  { id: 'contender', label: 'Champion', description: 'Individually refined frames' },
 ] as const;
 
-/** The original eight-frame idle, with one playback clock for both preserved sheets. */
+const CHARACTERS = [
+  { id: 'casual', name: 'Casual', caption: 'Casual, the guy in grey from our launch video. His real Rookie and Champion animations, generated from the same photo.' },
+  { id: 'nova', name: 'Nova', caption: 'Two preserved generations of Nova, our synthetic demo character.' },
+] as const;
+
+/** Both quality versions share one eight-frame idle playback clock. */
 export function QualityComparison() {
   const [open, setOpen] = useState(false);
+  const [characterId, setCharacterId] = useState('casual');
+  const character = CHARACTERS.find((item) => item.id === characterId) ?? CHARACTERS[0];
   const [detail, setDetail] = useState(false);
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState<string[]>([]);
@@ -59,7 +66,14 @@ export function QualityComparison() {
       {open ? <div className="quality-comparison__content">
         <div className="quality-comparison__intro">
           <div>
-            <h3>A closer look</h3>
+            <div className="quality-comparison__heading">
+              <h3>A closer look</h3>
+              <select aria-label="Example character" value={character.id} onChange={(event) => {
+                setCharacterId(event.target.value); setLoaded([]); setFailed(false); setFrame(0);
+              }}>
+                {CHARACTERS.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </div>
             <p>Champion refines each frame separately for more detail in your face, hair and clothes.</p>
           </div>
           <div className="quality-comparison__controls">
@@ -80,15 +94,15 @@ export function QualityComparison() {
         </div>
         {failed ? <p role="status">The comparison images couldn’t load. Close and reopen this comparison to try again.</p>
           : <div ref={pairRef} className={`quality-comparison__pair${detail ? ' is-detail' : ''}`}>
-            {EXAMPLES.map((example) => <figure key={example.id}>
+            {EXAMPLES.map((example) => <figure key={`${character.id}-${example.id}`}>
               <figcaption><strong>{example.label}</strong><span>{example.description}</span></figcaption>
               <svg
                 viewBox={detail ? '240 80 280 280' : '0 0 768 1024'}
                 role="img"
-                aria-label={`Nova in ${example.label} quality, ${detail ? 'face detail' : 'full character'}`}
+                aria-label={`${character.name} in ${example.label} quality, ${detail ? 'face detail' : 'full character'}`}
               >
                 <image
-                  href={`/assets/quality/${example.file}`}
+                  href={`/assets/quality/${character.id}-${example.id}-idle.png`}
                   width="3072" height="2048"
                   x={-(frame % 4) * 768} y={-Math.floor(frame / 4) * 1024}
                   onLoad={() => setLoaded((value) => value.includes(example.id) ? value : [...value, example.id])}
@@ -97,7 +111,7 @@ export function QualityComparison() {
               </svg>
             </figure>)}
           </div>}
-        <p className="quality-comparison__caption">Two real generations of Nova, our synthetic demo character. Same idle animation, scale and playback speed. Saved Fight example; Aura uses the same quality steps. Results vary with your photo.</p>
+        <p className="quality-comparison__caption">{character.caption} Same idle animation, scale and playback speed. Aura uses the same quality steps. Results vary with your photo.</p>
       </div> : null}
     </details>
   );

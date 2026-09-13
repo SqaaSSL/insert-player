@@ -83,6 +83,7 @@ export async function loadAiSprites(
   spriteKey: string,
   photoHash: string,
   isCurrent: () => boolean = () => true,
+  onLoaded?: (authoredAnimations: ReadonlySet<string>) => void,
 ): Promise<boolean> {
   const cached = await getAllSpritesForHash(photoHash);
   if (!isCurrent()) return false;
@@ -103,14 +104,14 @@ export async function loadAiSprites(
     },
   );
   try {
-    return await loadAiSpritesAtDensity(scene, spriteKey, cached, textureDensity, isCurrent);
+    return await loadAiSpritesAtDensity(scene, spriteKey, cached, textureDensity, isCurrent, onLoaded);
   } catch (error) {
     if (textureDensity !== 2) throw error;
     debugWarn(
       `[AiSpriteLoader] 2x atlas failed for "${spriteKey}"; retrying the preserved 1x assets:`,
       error instanceof Error ? error.message : error,
     );
-    return loadAiSpritesAtDensity(scene, spriteKey, cached, 1, isCurrent);
+    return loadAiSpritesAtDensity(scene, spriteKey, cached, 1, isCurrent, onLoaded);
   }
 }
 
@@ -120,6 +121,7 @@ async function loadAiSpritesAtDensity(
   cached: CachedSprite[],
   textureDensity: SpriteTextureDensity,
   isCurrent: () => boolean,
+  onLoaded?: (authoredAnimations: ReadonlySet<string>) => void,
 ): Promise<boolean> {
   const spritesByAnim = new Map<string, CachedSprite>();
   for (const sprite of cached) {
@@ -412,6 +414,10 @@ async function loadAiSpritesAtDensity(
     frameHeight: atlasFrameHeight,
   });
   registerSpriteLayout(spriteKey, layout);
+
+  // Report actual decoded sources only after this atlas is usable. Missing
+  // states may be fallback-filled, so a successful load alone is not enough.
+  onLoaded?.(new Set(loadedAnims.keys()));
 
   return true;
 }

@@ -173,6 +173,27 @@ function resolveGeminiImageModel(options?: {
   return DEFAULT_GEMINI_IMAGE_MODEL;
 }
 
+// Common image ratios supported by both approved Gemini image models.
+// https://ai.google.dev/api/generate-content#ImageConfig
+const GEMINI_SPRITE_ASPECT_RATIOS = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'] as const;
+type GeminiSpriteAspectRatio = typeof GEMINI_SPRITE_ASPECT_RATIOS[number];
+interface GeminiImageConfig { aspectRatio: GeminiSpriteAspectRatio }
+
+export function geminiSpriteScaffoldAspectRatio(gridCols: number, gridRows: number): GeminiSpriteAspectRatio {
+  if (!Number.isSafeInteger(gridCols) || gridCols < 1 || !Number.isSafeInteger(gridRows) || gridRows < 1) {
+    throw new Error('Sprite scaffold grid must contain positive integer dimensions');
+  }
+  return closestGeminiAspectRatio(gridCols * CELL_W / (gridRows * CELL_H));
+}
+
+function closestGeminiAspectRatio(target: number): GeminiSpriteAspectRatio {
+  const distance = (ratio: GeminiSpriteAspectRatio) => {
+    const [width, height] = ratio.split(':').map(Number);
+    return Math.abs(Math.log((width / height) / target));
+  };
+  return GEMINI_SPRITE_ASPECT_RATIOS.reduce((best, ratio) => distance(ratio) < distance(best) ? ratio : best);
+}
+
 async function callGemini(
   prompt: string,
   imageBase64?: string,
@@ -181,6 +202,7 @@ async function callGemini(
   modelOverride?: string,
   context?: ApiRequestContext,
   responseModalities: GeminiResponseModality[] = ['TEXT', 'IMAGE'],
+  imageConfig?: GeminiImageConfig,
 ): Promise<{ text: string; imageBase64: string | null; imageMime: string | null; finishReason: string | null }> {
   const model = modelOverride || DEFAULT_GEMINI_IMAGE_MODEL;
   if (!isApprovedGeminiImageModel(model)) {
@@ -220,7 +242,7 @@ async function callGemini(
         },
         body: JSON.stringify({
           contents: [{ parts: reqParts }],
-          generationConfig: { responseModalities },
+          generationConfig: { responseModalities, ...(imageConfig ? { imageConfig } : {}) },
         }),
       }, context);
     } catch (error) {
@@ -1094,6 +1116,7 @@ export async function geminiSpriteSheet(
   const requestedGrid = computeRequestedSpriteGrid(animName, genFrames);
   const gridCols = requestedGrid.cols;
   const gridRows = requestedGrid.rows;
+  const imageConfig = { aspectRatio: geminiSpriteScaffoldAspectRatio(gridCols, gridRows) };
 
   const motionDesc = shouldMirror
     ? motion.replace(/then (?:returning|retracting|back) to stance/i, '').replace(/,\s*$/, '').trim()
@@ -1201,6 +1224,8 @@ export async function geminiSpriteSheet(
         extras,
         model,
         context,
+        ['TEXT', 'IMAGE'],
+        imageConfig,
       );
       rawBase64 = result.imageBase64;
       if (!rawBase64) {
@@ -1221,6 +1246,8 @@ export async function geminiSpriteSheet(
           extras,
           model,
           context,
+          ['TEXT', 'IMAGE'],
+          imageConfig,
         );
         rawBase64 = result.imageBase64;
         if (!rawBase64) {
@@ -1349,35 +1376,52 @@ async function composeRefinedFramesToSheet(
   return canvas.toDataURL('image/png').split(',')[1];
 }
 
-function buildSheetRefinePrompt(animName: string, motion: string): string {
-  const motionSummary = motion.replace(/\s+/g, ' ').trim().slice(0, 160);
+function buildSheetRefinePrompt(): string {
   return [
-    `Render a single high-fidelity full-resolution image of the pose shown in IMAGE 2, preserving the identity and visual style from IMAGE 1.`,
+    `Restore fine detail in IMAGE 1 while keeping its composition and body pose unchanged.`,
+    `This is a faithful detail-enhancement edit of the provided still image.`,
     ``,
-    `CONTEXT:`,
-    `- This is one frame of a classic 2D fighting-game "${animName}" animation (${motionSummary}).`,
-    `- IMAGE 2 is a lower-resolution reference showing the EXACT pose to replicate at this frame.`,
-    `- IMAGE 1 is the canonical identity, outfit, and visual style anchor.`,
+    `REFERENCE ROLES:`,
+    `- IMAGE 1 is the image to edit. It controls the EXACT pose, silhouette, limb geometry, and framing.`,
+    `- Recover fine facial, hair, fabric, and footwear detail from the person already visible in IMAGE 1.`,
+    `- This is a single still image. Do not advance, anticipate, or finish a movement. Keep every body part at the same relative image coordinates.`,
     ``,
-    `POSE RULE (CRITICAL):`,
-    `- Replicate the EXACT pose, silhouette, and framing from IMAGE 2. Same limb positions, same stance, same facing direction, same center of mass, same feet placement.`,
-    `- Do NOT reinterpret, smooth, "correct", or alter the pose in any way — render it as-is, just at higher resolution.`,
-    `- Do NOT add motion blur, speed lines, trails, or "in-between" interpolation. This is a single static frame.`,
+    `POSE LOCK (CRITICAL):`,
+    `- Keep IMAGE 1's joint positions, bent and straight limbs, hand positions, feet placement, facing direction, and center of mass fixed.`,
+    `- Preserve which feet are lifted and which feet touch the ground, including the exact knee bend and leg extension.`,
+    `- Preserve the existing gesture, including lowered hands, leaning torsos, airborne limbs, and lying positions.`,
+    `- Show exactly ONE person: one head, one torso, two arms, two hands, two legs, and two feet.`,
+    `- No duplicate bodies, headless bodies, extra limbs, ghosts, motion trails, motion blur, speed lines, or interpolation.`,
     ``,
-    `STYLE LOCK (CRITICAL):`,
-    `- Preserve the EXACT same visual style, art style, textures, colors, and level of detail from IMAGE 1 — do NOT change the aesthetic.`,
-    `- The output must look like the same physical person from IMAGE 1. Do NOT redraw as a cartoon, anime, cel-shaded, illustrative, comic, watercolour, painted, stylized, or otherwise re-interpreted version.`,
-    `- Match the exact rendering technique, shading style, linework density, and photographic/painterly feel of IMAGE 1 — if IMAGE 1 is photorealistic, stay photorealistic; if it is painted, stay in the exact same painted style.`,
-    `- Preserve the same face, hair, skin tone, outfit, and proportions faithfully. No clothing changes, no new props, no accessory drift.`,
+    `IDENTITY AND WARDROBE LOCK:`,
+    `- Preserve the same visible person, facial structure, hairstyle, skin tone, build, outfit, and visual style.`,
+    `- Preserve the exact garment and footwear hues, saturation, and materials. Do not recolor clothing or introduce any other wardrobe change.`,
+    `- Keep the same rendering technique; no cartoon, anime, cel shading, illustration, or aesthetic redesign.`,
     ``,
-    `FRAMING RULES:`,
-    `- Show the COMPLETE character from head to feet. No cropping.`,
-    `- The character should occupy roughly the same proportion of the frame as in IMAGE 2. Centered horizontally, feet near the bottom.`,
-    ``,
-    `OUTPUT RULES:`,
-    `- Return exactly one image with pure bright green (#00FF00) background — flat, uniform, vivid green, no gradients, shadows, or ground.`,
-    `- No text, no UI, no grids, no multiple frames. Just the single pose at high fidelity.`,
+    `FRAMING AND OUTPUT:`,
+    `- Match IMAGE 1's camera distance, full-body framing, relative character size, and empty margin. Keep the complete character, including every hand and foot, inside the image.`,
+    `- Keep the character at the same position and size within the canvas, including the empty space above a lying body. Do not recenter or zoom in.`,
+    `- Return exactly one image with a flat, uniform bright green (#00FF00) background. No shadows, floor, gradients, text, UI, grid, or multiple frames.`,
   ].join('\n');
+}
+
+/** Refine one normal product sprite pose with the same implementation used by the full sheet. */
+export async function geminiRefineSpriteFrame(
+  characterBase64: string,
+  poseBase64: string,
+  animName: string,
+  _motion: string,
+  frameIndex: number,
+  total: number,
+  context?: ApiRequestContext,
+  modelOverride?: string,
+): Promise<string> {
+  if (!Number.isInteger(frameIndex) || !Number.isInteger(total) || frameIndex < 0 || frameIndex >= total) {
+    throw new Error('Sprite frame index must identify one frame in the sequence');
+  }
+  const model = resolveGeminiImageModel({ operation: 'sprite', animationName: animName, modelOverride });
+  return refineSheetCell(characterBase64, poseBase64, animName, buildSheetRefinePrompt(),
+    model, frameIndex, total, context);
 }
 
 export function geminiOfficialRefinePrompt(
@@ -1609,8 +1653,16 @@ async function singleRefineAttempt(
   officialQualityCorrection?: string,
 ): Promise<string | null> {
   const official = officialDescription?.trim();
-  const primaryBase64 = characterBase64;
-  const extras = [{ data: cellBase64, mime: 'image/png' }];
+  const primaryBase64 = official ? characterBase64 : cellBase64;
+  // The normal pose already carries the generated character's identity. A second
+  // full-body reference can override its limbs/stance during detail restoration.
+  const extras = official ? [{ data: cellBase64, mime: 'image/png' }] : [];
+  // Preserve the pose canvas, including empty space around a horizontal body.
+  // Automatic landscape framing otherwise changes a lying pose's measured scale.
+  const poseDimensions = official ? undefined : await getImageDimensions(cellBase64);
+  const imageConfig = poseDimensions
+    ? { aspectRatio: closestGeminiAspectRatio(poseDimensions.width / poseDimensions.height) }
+    : undefined;
   const requestPrompt = official
     ? geminiOfficialRefinePrompt(
       official,
@@ -1622,7 +1674,8 @@ async function singleRefineAttempt(
     )
     : prompt;
   try {
-    const result = await callGemini(requestPrompt, primaryBase64, 'image/png', extras, model, context);
+    const result = await callGemini(requestPrompt, primaryBase64, 'image/png', extras, model, context,
+      ['TEXT', 'IMAGE'], imageConfig);
     if (!result.imageBase64) {
       debugWarn(
         `[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total} ${attemptLabel}: no image returned` +
@@ -1647,6 +1700,8 @@ async function singleRefineAttempt(
           extras,
           model,
           context,
+          ['TEXT', 'IMAGE'],
+          imageConfig,
         );
         return retryResult.imageBase64 ?? null;
       } catch (retryErr: any) {
@@ -1926,8 +1981,9 @@ async function refineSheetCell(
       `Gemini official final render for ${animName} frame ${frameIndex + 1}/${total} failed both validated attempts`,
     );
   }
-  debugWarn(`[GeminiApi] Sheet-refine ${animName} ${frameIndex + 1}/${total}: falling back to base sheet cell after 2 attempts`);
-  return cellBase64;
+  throw new GeminiOfficialSpriteQualityError(
+    `Gemini refined frame for ${animName} frame ${frameIndex + 1}/${total} failed both validated attempts; refusing a base-cell fallback`,
+  );
 }
 
 export function geminiOfficialFramingRecoveryPrompt(
@@ -2315,7 +2371,7 @@ export async function geminiSheetRefined(
   // so one fighter cannot burst through Google's rolling spend-rate window.
   const refinePrompt = officialDescription?.trim()
     ? motion
-    : buildSheetRefinePrompt(animName, motion);
+    : buildSheetRefinePrompt();
   const refineStart = Date.now();
   const refinedCells: string[] = [];
   if (renderModel.toLowerCase().includes('pro')) {
@@ -2492,6 +2548,43 @@ export async function geminiSheetRefined(
     }
   }
 
+  // Step 5: per-frame cleanup. Runs BiRefNet AND chroma-key flood-fill on each
+  //         cell and unions the alpha masks. BiRefNet sometimes erroneously eats
+  //         face pixels (low-contrast highlights it confuses with bg); chroma
+  //         flood-fill from edges can never punch interior holes — together they
+  //         cover each other's blind spots.
+  const cleanedUniqueCells = options?.enableBgRemoval === false
+    ? refinedCells
+    : await cleanCellsWithUnionMasks(refinedCells, animName, context);
+  const result = await composeGeminiRefinedSprite({
+    rawUniqueCells: refinedCells, cleanedUniqueCells, animName, frames,
+    maxScale, normalizationReference, official: Boolean(official),
+  });
+  debugInfo(`[GeminiApi] Sheet-refine ${animName}: total ${((Date.now() - start) / 1000).toFixed(1)}s`);
+  return result;
+}
+
+export interface GeminiRefinedCompositionInput {
+  rawUniqueCells: string[];
+  cleanedUniqueCells: string[];
+  animName: string;
+  frames: number;
+  maxScale?: number;
+  normalizationReference?: NormalizationReference;
+  official?: boolean;
+}
+
+/** Pure finalization shared by ordinary generation and reviewed selective frame repair.
+ * Inputs are ordered unique native cells. Background removal has already completed;
+ * this function never generates images or calls a provider. */
+export async function composeGeminiRefinedSprite({
+  rawUniqueCells: refinedCells, cleanedUniqueCells, animName, frames,
+  maxScale, normalizationReference, official = false,
+}: GeminiRefinedCompositionInput): Promise<GeminiSpriteResult> {
+  if (refinedCells.length === 0 || refinedCells.length !== cleanedUniqueCells.length) {
+    throw new Error('Raw and cleaned refined cells must be nonempty, ordered pairs');
+  }
+  const shouldMirror = MIRROR_ANIMS.has(animName);
   const outputFrameCount = shouldMirror ? frames : refinedCells.length;
   const outputGridCols = computeGridCols(outputFrameCount);
   const outputGridRows = Math.ceil(outputFrameCount / outputGridCols);
@@ -2508,14 +2601,6 @@ export async function geminiSheetRefined(
   );
   const rawDims = await getImageDimensions(rawSheetBase64);
 
-  // Step 5: per-frame cleanup. Runs BiRefNet AND chroma-key flood-fill on each
-  //         cell and unions the alpha masks. BiRefNet sometimes erroneously eats
-  //         face pixels (low-contrast highlights it confuses with bg); chroma
-  //         flood-fill from edges can never punch interior holes — together they
-  //         cover each other's blind spots.
-  const cleanedUniqueCells = options?.enableBgRemoval === false
-    ? refinedCells
-    : await cleanCellsWithUnionMasks(refinedCells, animName, context);
   // Step 6-7: normalize paid attack keyframes before expanding the mirrored
   // playback sequence. The critical-frame filters intentionally cap attacks at
   // four generated keyframes; running them after 4 -> 7 expansion would trim a
@@ -2539,7 +2624,7 @@ export async function geminiSheetRefined(
       maxScale,
       normalizationReference,
     );
-    if (official && normalizedUnique.frameCount < cleanedUniqueCells.length) {
+    if (normalizedUnique.frameCount < cleanedUniqueCells.length) {
       throw new GeminiOfficialSpriteQualityError(
         `Gemini refined sprite sheet for ${animName} only produced ${normalizedUnique.frameCount} reliable keyframes ` +
         `(need ${cleanedUniqueCells.length})`,
@@ -2571,9 +2656,10 @@ export async function geminiSheetRefined(
     );
   }
 
+
   debugInfo(
-    `[GeminiApi] Sheet-refine ${animName}: total ${((Date.now() - start) / 1000).toFixed(1)}s ` +
-    `(raw ${rawDims.width}x${rawDims.height}, cleaned ${cleaned.frameW * cleaned.gridCols}x${cleaned.frameH * cleaned.gridRows})`,
+    `[GeminiApi] Refined composition ${animName}: raw ${rawDims.width}x${rawDims.height}, ` +
+    `cleaned ${cleaned.frameW * cleaned.gridCols}x${cleaned.frameH * cleaned.gridRows}`,
   );
 
   const result: GeminiSpriteResult = {
@@ -2632,7 +2718,7 @@ async function unionMasksPreserveForeground(
 // Cleans every refined cell using DNN segmentation and the chroma-key
 // flood-fill, unioned. Requests run in bounded batches; fal failures try the
 // Freepik DNN before a frame is allowed to fall back to chroma alone.
-async function cleanCellsWithUnionMasks(
+export async function cleanCellsWithUnionMasks(
   cellBase64s: string[],
   animName: string,
   context?: ApiRequestContext,

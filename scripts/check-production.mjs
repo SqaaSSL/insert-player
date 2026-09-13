@@ -3653,7 +3653,15 @@ function assertOfficialArcadeIsWired() {
     'allowMissingAuthorizedParty: isArcadeAdminSeed',
     "auth.user.plan_tier !== 'admin'",
     "type RosterFilter = 'official' | 'yours' | 'all'",
-    "playableSpriteSetSql('f', 'champion')",
+    // Current Champion is stored as contender; legacy Champion stays valid.
+    // Each branch must require its own complete pack, never combine tiers.
+    "(${fighterAlias}.quality_tier = 'contender' AND ${playableSpriteSetSql(fighterAlias, 'contender')})",
+    "OR (${fighterAlias}.quality_tier = 'champion' AND ${playableSpriteSetSql(fighterAlias, 'champion')})",
+    "AND ${officialPlayableSpriteSetSql('f')}",
+    '.filter((sprite) => sprite.quality_tier === fighterTiers.get(sprite.fighter_id))',
+    'inspectArcadeAssetIntegrity(env, fighterId, fighter.quality_tier)',
+    'AND s.quality_tier = f.quality_tier',
+    '.bind(fighterId, qualityTier, ...PLAYABLE_ANIMATION_NAMES)',
     'length(s.content_hash) = 64',
     "s.content_hash NOT GLOB '*[^0-9A-Fa-f]*'",
     "typeof(s.frame_w) = 'integer'",

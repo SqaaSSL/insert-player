@@ -48,6 +48,7 @@ export interface ArcadeAssetIntegrity {
 export async function inspectArcadeAssetIntegrity(
   env: Env,
   fighterId: string,
+  qualityTier: 'contender' | 'champion' = 'champion',
 ): Promise<ArcadeAssetIntegrity> {
   const fighter = await env.DB.prepare(`
     SELECT
@@ -90,9 +91,9 @@ export async function inspectArcadeAssetIntegrity(
       frame_count
     FROM sprites
     WHERE fighter_id = ?
-      AND quality_tier = 'champion'
+      AND quality_tier = ?
       AND animation_name IN (${placeholders})
-  `).bind(fighterId, ...PLAYABLE_ANIMATION_NAMES).all<ArcadeSpritePointers>();
+  `).bind(fighterId, qualityTier, ...PLAYABLE_ANIMATION_NAMES).all<ArcadeSpritePointers>();
   const sprites = new Map((results ?? []).map((sprite) => [sprite.animation_name, sprite]));
 
   const missingAssets: string[] = [];
