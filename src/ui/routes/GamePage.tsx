@@ -7,6 +7,7 @@ import { auraVideoFile } from '../components/AuraMatchShare.ts';
 import type { AuthRouteState } from '../authState.ts';
 import {
   MATCH_ACTION_EVENT,
+  MATCH_START_EVENT,
   MATCH_ACTIONS_VISIBILITY_EVENT,
   MATCH_COMPLETE_EVENT,
   PAUSE_EVENT,
@@ -18,6 +19,7 @@ import {
   RUNTIME_READY_EVENT,
   buildMatchSeed,
   type MatchAction,
+  type MatchStartDetail,
   type MatchCompletionDetail,
   type MatchSceneData,
   type NetStateDetail,
@@ -25,8 +27,8 @@ import {
   type RushRunCompleteDetail,
   type AuraBattleCompleteDetail,
 } from '../../game/match/MatchConfig.ts';
-import { MobileFightControls } from '../components/MobileFightControls.tsx';
 import { FightControlsHint } from '../components/FightControlsHint.tsx';
+import { CombatStartReady } from '../components/CombatStartReady.tsx';
 import { FightHud } from '../components/FightHud.tsx';
 import { FightIntroOverlay } from '../components/FightIntroOverlay.tsx';
 import { FightAnnouncement } from '../components/FightAnnouncement.tsx';
@@ -138,6 +140,8 @@ export function GamePage({
   const [matchSummary, setMatchSummary] = useState<MatchCompletionDetail | null>(null);
   const [ladderBusy, setLadderBusy] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState<FightLoadingPhase | 'hidden'>('loading');
+  const [combatPendingStart, setCombatPendingStart] = useState<MatchStartDetail | null>(null);
+  const combatStartRef = useRef<MatchStartDetail | null>(null);
   const [rushSummary, setRushSummary] = useState<RushRunCompleteDetail | null>(null);
   const [auraSummary, setAuraSummary] = useState<AuraBattleCompleteDetail | null>(null);
   const [auraOnboarding, setAuraOnboarding] = useState<AuraOnboardingDetail | null>(null);
@@ -217,6 +221,8 @@ export function GamePage({
     setNetState(null);
     setOnlineRematch({ state: 'idle' });
     setLoadingPhase('loading');
+    setCombatPendingStart(null);
+    combatStartRef.current = null;
     setRushSummary(null);
     setAuraSummary(null);
     setAuraCapture(null);
@@ -407,17 +413,7 @@ export function GamePage({
 
   useEffect(() => {
     if (isAura) return;
-    if (window.matchMedia?.('(pointer: coarse)').matches) {
-      const orientation = screen.orientation as ScreenOrientation & {
-        lock?: (mode: string) => Promise<void>;
-      };
-      orientation?.lock?.('landscape').catch(() => {
-        // iOS and non-fullscreen contexts reject; the rotate overlay covers it.
-      });
-    }
     return () => {
-      const orientation = screen.orientation as ScreenOrientation & { unlock?: () => void };
-      try { orientation?.unlock?.(); } catch { /* best effort */ }
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(() => {});
       }
@@ -488,9 +484,22 @@ export function GamePage({
         );
       }, openingDelay);
     };
-    const onRuntimeReady = () => {
+    const onRuntimeReady = (event: WindowEventMap[typeof RUNTIME_READY_EVENT]) => {
       // Aura waits for its per-restart asset lifecycle, never the legacy event.
-      if (!isAura) revealWhenReady();
+      if (isAura || disposed) return;
+      const detail = event.detail;
+      if (!onlineMatch && !launchTarget.data.cpuVsCpu && detail?.sceneKey === launchTarget.sceneKey
+        && Number.isSafeInteger(detail.startToken) && detail.startToken! > 0) {
+        const identity: MatchStartDetail = { sceneKey: detail.sceneKey as MatchStartDetail['sceneKey'], startToken: detail.startToken! };
+        if (!combatStartRef.current || identity.startToken > combatStartRef.current.startToken) {
+          combatStartRef.current = identity;
+          setCombatPendingStart(identity);
+          setPaused(false);
+          setRushSummary(null);
+          setMatchActionsVisible(false);
+        }
+      }
+      revealWhenReady();
     };
     const onAuraPresentation = (event: WindowEventMap[typeof AURA_PRESENTATION_EVENT]) => {
       if (!isAura || disposed || !isAuraPresentationDetail(event.detail)) return;
@@ -548,6 +557,7 @@ export function GamePage({
       window.removeEventListener(AURA_PRESENTATION_EVENT, onAuraPresentation);
       clearTimers();
       auraLifecycleRef.current = null;
+      combatStartRef.current = null;
       debugInfo('[GamePage] Destroying Phaser runtime', {
         sceneKey: launchTarget.sceneKey,
       });
@@ -555,6 +565,16 @@ export function GamePage({
       game = null;
     };
   }, [launchTarget]);
+
+  const startCombat = () => {
+    if (!combatPendingStart || loadingPhase !== 'hidden' || onlineMatch
+      || combatStartRef.current !== combatPendingStart) return;
+    const identity = combatPendingStart;
+    // Keep the latest token, but consume its start action before dispatching.
+    combatStartRef.current = { ...identity };
+    setCombatPendingStart(null);
+    window.dispatchEvent(new CustomEvent(MATCH_START_EVENT, { detail: identity }));
+  };
 
   useEffect(() => {
     const onMatchComplete = (event: WindowEventMap[typeof MATCH_COMPLETE_EVENT]) => {
@@ -609,6 +629,9 @@ export function GamePage({
       {isRush || isAura ? null : <FightHud />}
       {isRush || isAura ? null : <FightIntroOverlay />}
       {isRush || isAura ? null : <FightAnnouncement />}
+      {!isAura && loadingPhase === 'hidden' && combatPendingStart ? (
+        <CombatStartReady mode={isRush ? 'rush' : 'fight'} playerName={launchTarget.data.p1Name ?? 'Player One'} photoHash={launchTarget.data.p1PhotoHash} onStart={startCombat} />
+      ) : null}
       {isAura && loadingPhase === 'hidden' && !auraSummary && auraCapture?.state === 'recording' ? (
         <p className="aura-capture-status" role="status">{paused ? 'Recording paused' : 'Recording match'} · game only</p>
       ) : null}
@@ -670,21 +693,12 @@ export function GamePage({
         <div className="trial-match-badge" role="status">Playable demo · free round</div>
       ) : null}
       {online && netState ? <NetStatusBadge state={netState} /> : null}
-      {online && !isAura && loadingPhase === 'hidden' && !matchActionsVisible && (
-        <MobileFightControls playerIndex={0} hudPlayerIndex={online.localSlot} playerLabel={online.localSlot === 0 ? 'player 1' : 'player 2'} />
-      )}
-      {!isRush && !isAura && loadingPhase === 'hidden' && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
-        <MobileFightControls playerIndex={0} playerLabel="player 1" />
-      )}
       {!isRush && !isAura && loadingPhase === 'hidden' && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI === false && !matchActionsVisible && (
         <div className="mobile-versus-unavailable" role="status">
           Touch Versus needs two control sets and is unavailable on this screen. Use a keyboard or controllers,
           or play Arcade Mode on touch.
         </div>
       )}
-      {isRush && loadingPhase === 'hidden' && launchTarget.data.vsAI === true && !matchActionsVisible && !rushSummary ? (
-        <MobileFightControls mode="rush" playerIndex={0} playerLabel="player 1" />
-      ) : null}
       {isRush && loadingPhase === 'hidden' && launchTarget.data.vsAI === true && !matchActionsVisible && !rushSummary && !paused ? (
         <RushCompanionOrders value={rushCompanionOrder} onChange={chooseRushCompanionOrder} />
       ) : null}
@@ -940,7 +954,7 @@ export function GamePage({
           }}
         />
       ) : null}
-      {!isAura && loadingPhase === 'hidden' && !onlineMatch && !matchActionsVisible && !rushSummary && !auraSummary && !paused && (
+      {!isAura && loadingPhase === 'hidden' && !combatPendingStart && !onlineMatch && !matchActionsVisible && !rushSummary && !auraSummary && !paused && (
         <button
           type="button"
           className="fight-pause-button"
@@ -971,13 +985,6 @@ export function GamePage({
           </div>
         </div>
       )}
-      {!isAura && !launchTarget.data.cpuVsCpu && loadingPhase === 'hidden' && !matchActionsVisible && !rushSummary && (
-        <FightControlsHint
-          mode={isRush ? 'rush' : 'fight'}
-          twoPlayers={!online && (isRush ? launchTarget.data.vsAI !== true : launchTarget.data.vsAI === false)}
-          playerLabel={online?.localSlot === 1 ? 'P2' : 'P1'}
-        />
-      )}
       {!isAura && loadingPhase === 'hidden' && !rushSummary && !auraSummary ? (
         <button type="button" className="game-shell__gallery-link" onClick={onExit}>
           {trial ? 'Exit Demo' : 'Back'}
@@ -987,8 +994,22 @@ export function GamePage({
   );
 
   return (
-    <div className={`game-shell${isAura ? ` is-aura${auraViewport.portrait ? ' is-portrait' : ''}` : ''}`}>
-      {isAura ? <div className="game-shell__aura-frame">{content}</div> : content}
+    <div className={`game-shell${isAura ? ` is-aura${auraViewport.portrait ? ' is-portrait' : ''}` : ' is-combat'}`}>
+      {isAura ? <div className="game-shell__aura-frame">{content}</div> : (
+        <>
+          <div className="game-shell__combat-frame">{content}</div>
+          {!launchTarget.data.cpuVsCpu && (
+            <FightControlsHint
+              mode={isRush ? 'rush' : 'fight'}
+              twoPlayers={!online && (isRush ? launchTarget.data.vsAI !== true : launchTarget.data.vsAI === false)}
+              playerLabel={online?.localSlot === 1 ? 'P2' : 'P1'}
+              hudPlayerIndex={online?.localSlot ?? 0}
+              disabled={loadingPhase !== 'hidden' || paused || matchActionsVisible || Boolean(rushSummary)}
+              inputResetKey={combatPendingStart?.startToken ?? 0}
+            />
+          )}
+        </>
+      )}
     </div>
   );
 }

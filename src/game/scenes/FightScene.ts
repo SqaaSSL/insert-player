@@ -16,6 +16,7 @@ import {
   type MatchSimEvent,
 } from "../sim/MatchSimulation.ts";
 import { MatchRecorder, type MatchRecording } from "../sim/MatchReplay.ts";
+import { MatchStartGate } from '../match/MatchStartGate.ts';
 import { RollbackSession } from "../net/RollbackSession.ts";
 import {
   endActiveOnlineSession,
@@ -57,6 +58,7 @@ import {
   NET_STATE_EVENT,
   ONLINE_REMATCH_STATE_EVENT,
   RUNTIME_READY_EVENT,
+  MATCH_START_EVENT,
   type AnnounceDetail,
   type NetStateDetail,
   type OnlineMatchInfo,
@@ -132,6 +134,12 @@ export class FightScene extends Phaser.Scene {
   private accumulator = 0;
   /** Offline pause: freezes the fixed-timestep loop. Never set online. */
   private paused = false;
+  private readonly startGate = new MatchStartGate();
+  private readonly onMatchStart = (event: WindowEventMap[typeof MATCH_START_EVENT]): void => {
+    if (!this.ready || this.online || event.detail?.sceneKey !== 'FightScene'
+      || !this.startGate.accept(event.detail.startToken)) return;
+    this.beginMatch();
+  };
   private onPauseEvent = (event: WindowEventMap[typeof PAUSE_EVENT]): void => {
     if (this.rollback) return;
     this.paused = event.detail.paused;
@@ -214,6 +222,8 @@ export class FightScene extends Phaser.Scene {
   }
 
   init(data: MatchSceneData): void {
+    this.startGate.reset(data);
+    this.paused = false;
     this.battleCapture?.cancel();
     this.battleCapture = new BattleCaptureSession();
     this.finalBattleSummary = null;
@@ -290,6 +300,8 @@ export class FightScene extends Phaser.Scene {
     const lifecycleEpoch = this.beginSceneLifecycle();
     window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
     window.addEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
+    window.removeEventListener(MATCH_START_EVENT, this.onMatchStart);
+    window.addEventListener(MATCH_START_EVENT, this.onMatchStart);
 
     const p1Personality = getFighterPersonality(this.p1PersonalityId);
     const p2Personality = getFighterPersonality(this.p2PersonalityId);
@@ -321,7 +333,7 @@ export class FightScene extends Phaser.Scene {
       Phaser.Input.Keyboard.KeyCodes.ENTER,
       Phaser.Input.Keyboard.KeyCodes.SPACE,
     ];
-    const captureIntroKeys = shouldCaptureMatchIntroKeys(this.experience);
+    const captureIntroKeys = !this.startGate.waiting && shouldCaptureMatchIntroKeys(this.experience);
     this.introEnterKey = keyboard?.addKey(introKeys[0], captureIntroKeys);
     this.introSpaceKey = keyboard?.addKey(introKeys[1], captureIntroKeys);
     if (captureIntroKeys) keyboard?.addCapture(introKeys);
@@ -378,15 +390,35 @@ export class FightScene extends Phaser.Scene {
       window.removeEventListener(PAUSE_EVENT, this.onPauseEvent);
     });
     this.ready = true;
-    this.sound_mgr.startBattleMusic();
-    this.handleSimEvents(this.sim.start());
+    if (!this.startGate.waiting) this.beginMatch();
     this.syncViews();
     this.emitHudState();
     window.dispatchEvent(
       new CustomEvent(RUNTIME_READY_EVENT, {
-        detail: { sceneKey: 'FightScene', matchSeed: this.matchSeed },
+        detail: { sceneKey: 'FightScene', matchSeed: this.matchSeed, startToken: this.startGate.token },
       }),
     );
+  }
+
+  private beginMatch(): void {
+    this.accumulator = 0;
+    this.matchStartedAt = Date.now();
+    resetVirtualInput();
+    this.inputMgr.reset();
+    // Drain panel presses before the first tick, including held gamepad buttons.
+    this.inputMgr.poll();
+    this.inputMgr.readPlayer1();
+    this.inputMgr.readPlayer2();
+    this.introEnterKey?.reset();
+    this.introSpaceKey?.reset();
+    if (shouldCaptureMatchIntroKeys(this.experience)) {
+      this.input.keyboard?.addCapture([
+        Phaser.Input.Keyboard.KeyCodes.ENTER,
+        Phaser.Input.Keyboard.KeyCodes.SPACE,
+      ]);
+    }
+    this.sound_mgr.startBattleMusic();
+    this.handleSimEvents(this.sim.start());
   }
 
   private async loadAiSpritesIfNeeded(lifecycleEpoch: number): Promise<void> {
@@ -1867,7 +1899,7 @@ export class FightScene extends Phaser.Scene {
 
   update(time: number, delta: number): void {
     if (!this.ready) return;
-    if (this.paused) return;
+    if (this.paused || this.startGate.waiting) return;
 
     this.inputMgr.poll();
 
@@ -2472,6 +2504,7 @@ export class FightScene extends Phaser.Scene {
     this.events.off(Phaser.Scenes.Events.SHUTDOWN, this.onSceneLifecycleEnd);
     this.events.off(Phaser.Scenes.Events.DESTROY, this.onSceneLifecycleEnd);
     window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
+    window.removeEventListener(MATCH_START_EVENT, this.onMatchStart);
     this.removeRecordingHook();
     if (this.online) {
       this.detachOnlineSession();

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import './components/arcade-keyboard.css';
 
 /* ============================================================
    TOKENS
@@ -1291,16 +1292,16 @@
     @apply relative h-screen w-full overflow-hidden;
   }
 
-  /* Phones in portrait: rotate the entire arena (canvas + DOM chrome) 90deg
-     instead of asking the user to defeat their OS rotation lock. Layout size
-     is the swapped viewport; the transform only changes presentation, so DOM
-     touch controls keep working and Phaser FIT sees the swapped bounds. */
-  @media (pointer: coarse) and (orientation: portrait) {
-    .game-shell:not(.is-aura) {
-      @apply fixed left-0 top-0 z-40 h-[100dvw] w-[100dvh]
-             [transform:rotate(90deg)_translateY(-100%)] [transform-origin:top_left];
-    }
+  .game-shell.is-combat {
+    @apply grid h-dvh grid-rows-[minmax(0,1fr)_auto] bg-[#050507];
   }
+
+  .game-shell__combat-frame {
+    @apply relative min-h-0 overflow-hidden [transform:translateZ(0)];
+  }
+
+  /* Combat stays upright in either orientation. The touch cabinet owns its
+     own footer row, so movement never requires touching the arena. */
 
   /* Aura is upright. One aspect-fitted frame owns both canvas and DOM chrome;
      changing orientation never rotates controls or recreates the match. */
@@ -1333,11 +1334,7 @@
     @apply relative overflow-hidden;
   }
 
-  /* Touch devices: Phaser scale management is off (see createGame), so the
-     stylesheet does the FIT — the canvas element fills the shell and
-     object-contain letterboxes the 1024x576 drawing inside it, in any
-     orientation, including the rotated portrait shell where script
-     measurement would see swapped bounds. */
+  /* Touch devices use CSS fitting for the canvas in either orientation. */
   @media (pointer: coarse) {
     .game-shell__canvas canvas {
       @apply !block !h-full !w-full object-contain;
@@ -4890,42 +4887,279 @@
     @apply flex items-center gap-3;
   }
 
-  /* Persistent, mode-aware controls below the action. */
+  .combat-start {
+    @apply absolute bottom-[6%] left-1/2 z-40 flex w-max max-w-[calc(100%-32px)] -translate-x-1/2
+           items-center gap-6 rounded-[4px] border border-asf-gold-deep bg-[#090811]
+           px-5 py-4 font-sans text-asf-cream shadow-[0_4px_0_rgba(0,0,0,0.5)];
+  }
+
+  .combat-start__copy { @apply flex flex-col gap-1.5; }
+  .combat-start__actions { @apply flex shrink-0 flex-col items-center gap-2; }
+  .combat-start h2 { @apply m-0 font-sans text-[20px] font-bold normal-case; }
+  .combat-start p { @apply m-0 max-w-[36ch] text-[13px] leading-normal; }
+  .combat-start .combat-start__player { @apply text-[12px] font-bold text-asf-gold; }
+  .combat-start small { @apply text-[11px] text-[#c7c4d0]; }
+  .combat-start .asf-btn { @apply min-h-11; }
+  .combat-move-preview { @apply m-0 flex w-28 shrink-0 flex-col items-center gap-1; }
+  .combat-move-preview .gallery-preview__sprite { @apply h-32 min-h-0 w-full p-0; }
+  .combat-move-preview .gallery-preview__canvas { @apply h-full max-h-full w-auto max-w-full object-contain; }
+  .combat-move-preview figcaption { @apply flex flex-col gap-0.5 text-center font-sans text-[11px] leading-tight; }
+  .combat-move-preview figcaption span { @apply text-[10px] text-[#c7c4d0]; }
+
+  @media (pointer: coarse) {
+    .combat-start { @apply bottom-auto top-[22%] gap-4 px-4 py-3; }
+    .combat-start h2 { @apply text-[18px]; }
+    .combat-start small { @apply hidden; }
+    .combat-move-preview { @apply w-20; }
+    .combat-move-preview .gallery-preview__sprite { @apply h-24; }
+  }
+
+  @media (max-width: 560px) {
+    .combat-start { @apply bottom-4 top-auto grid w-[calc(100%-24px)] max-w-[420px] grid-cols-1 gap-3 p-3; }
+    .combat-start:has(.combat-move-preview) { @apply grid-cols-[80px_minmax(0,1fr)]; }
+    .combat-start__copy { @apply min-w-0; }
+    .combat-start h2 { @apply text-[16px]; }
+    .combat-start p { @apply text-[12px]; }
+    .combat-start__actions { @apply col-span-full w-full; }
+    .combat-start__actions .asf-btn { @apply w-full; }
+    .combat-start small { @apply hidden; }
+    .combat-start .combat-move-preview { @apply w-20; }
+    .combat-start .combat-move-preview .gallery-preview__sprite { @apply h-24; }
+  }
+
+  @media (max-height: 500px) and (min-width: 480px) {
+    .combat-start { @apply bottom-2 top-auto flex max-w-[calc(100%-24px)] gap-3 p-3; }
+    .combat-start h2 { @apply text-[16px]; }
+    .combat-start p { @apply max-w-[30ch] text-[12px]; }
+    .combat-start .combat-move-preview { @apply w-16; }
+    .combat-start .combat-move-preview .gallery-preview__sprite { @apply h-16; }
+    .combat-start__actions { @apply w-auto; }
+  }
+
+  @media (max-width: 767px) {
+    .game-shell.is-combat .fight-hud { @apply gap-2 px-[max(8px,env(safe-area-inset-left))] pt-[max(8px,env(safe-area-inset-top))]; }
+    .game-shell.is-combat .fight-hud__side { @apply gap-1.5; }
+    .game-shell.is-combat .fight-hud__portrait { @apply size-9 border-2; }
+    .game-shell.is-combat .fight-hud__portrait-fallback { @apply text-[14px]; }
+    .game-shell.is-combat .fight-hud__name { @apply min-w-0 text-[8px] leading-tight; }
+    .game-shell.is-combat .fight-hud__tag { @apply hidden; }
+    .game-shell.is-combat .fight-hud__column { @apply gap-1; }
+    .game-shell.is-combat .fight-hud__bar-frame { @apply h-3.5 border; }
+    .game-shell.is-combat .fight-hud__pip { @apply size-2 border; }
+    .game-shell.is-combat .fight-hud__pips { @apply gap-1; }
+    .game-shell.is-combat .fight-hud__meter { @apply mt-0; }
+    .game-shell.is-combat .fight-hud__meter-bar { @apply h-1.5; }
+    .game-shell.is-combat .fight-hud__center { @apply w-14 gap-1; }
+    .game-shell.is-combat .fight-hud__timer { @apply text-[20px]; }
+    .game-shell.is-combat .fight-hud__match-label { @apply max-w-14 text-[6px]; }
+    .game-shell.is-combat .game-shell__gallery-link { @apply top-16 right-2 block px-3 text-[9px]; }
+    .game-shell.is-combat .fight-pause-button { @apply top-16; }
+  }
+
+  /* A small physical cabinet deck, entirely outside the playable arena. */
   .fight-keys {
-    @apply pointer-events-none absolute bottom-[max(10px,env(safe-area-inset-bottom))]
-           left-1/2 z-20 flex w-max max-w-[calc(100%-32px)] -translate-x-1/2 flex-col gap-2
-           rounded-[4px] border border-asf-line bg-[rgba(5,5,12,0.94)] px-3 py-2
+    @apply pointer-events-none relative z-20 flex w-full flex-col items-center gap-2 border-t border-asf-line
+           bg-[#07060a] px-3 pt-2 pb-[max(8px,env(safe-area-inset-bottom))]
            font-sans text-[12px] normal-case text-asf-cream;
   }
 
+  .fight-keys__players { @apply flex max-w-full items-center justify-center gap-3; }
+
   .fight-keys__player {
-    @apply flex items-center gap-3;
+    @apply relative flex items-center gap-5 rounded-t-[10px] rounded-b-[5px] border border-[#605442]
+           px-7 pt-3 pb-4
+           [background:linear-gradient(165deg,#302c36_0%,#1a1721_42%,#0f0d14_100%)]
+           shadow-[inset_0_1px_0_#ffffff20,inset_0_-5px_0_#07060a,0_3px_0_#020203];
   }
+
+  .fight-keys__fasteners { @apply pointer-events-none absolute inset-0; }
+  .fight-keys__fasteners i {
+    @apply absolute size-[5px] rounded-full border border-[#777079]
+           [background:linear-gradient(135deg,#46414a_40%,#100e15_42%,#100e15_56%,#46414a_58%)];
+  }
+  .fight-keys__fasteners i:nth-child(1) { @apply left-2 top-2; }
+  .fight-keys__fasteners i:nth-child(2) { @apply right-2 top-2; }
+  .fight-keys__fasteners i:nth-child(3) { @apply bottom-2 left-2; }
+  .fight-keys__fasteners i:nth-child(4) { @apply bottom-2 right-2; }
 
   .fight-keys__player-label {
-    @apply shrink-0 text-[11px] text-asf-gold;
+    @apply flex shrink-0 flex-col items-center gap-2 font-arcade text-[12px] text-asf-gold;
+  }
+  .fight-keys__player-label > span { @apply font-sans text-[9px] font-normal text-[#c7c4d0]; }
+  .fight-keys__movement-label { @apply text-[10px] text-[#c7c4d0]; }
+  .fight-keys__deck { @apply flex items-center gap-6; }
+  .fight-keys__movement { @apply flex flex-col items-center; }
+
+  .fight-keys__stick {
+    @apply isolate grid grid-cols-[28px_56px_28px] grid-rows-[22px_50px_22px] items-center justify-items-center;
+  }
+  .fight-keys__direction { @apply z-10 flex flex-col items-center justify-center gap-0.5 leading-none text-[#c7c4d0]; }
+  .fight-keys__direction kbd {
+    @apply font-sans text-[12px] font-bold text-[#e5dfd4]
+           [text-shadow:0_1px_1px_#000];
+  }
+  .fight-keys__direction small { @apply text-[8px] leading-none; }
+  .fight-keys__direction--up { @apply col-start-2 row-start-1; }
+  .fight-keys__direction--left { @apply col-start-1 row-start-2; }
+  .fight-keys__direction--down { @apply col-start-2 row-start-3; }
+  .fight-keys__direction--right { @apply col-start-3 row-start-2; }
+
+  .fight-keys__stick-base {
+    @apply col-start-2 row-start-2 h-6 w-14 self-end rounded-[50%] border border-[#5d5764]
+           [background:radial-gradient(ellipse_at_center,#09080c_24%,#37313e_29%,#17131e_63%,#08070c_80%)]
+           shadow-[0_3px_2px_#000,inset_0_1px_0_#ffffff20];
+  }
+  .fight-keys__stick-knob {
+    @apply relative col-start-2 row-start-2 h-[52px] w-14 -translate-y-1
+           transition-transform duration-75 motion-reduce:transition-none;
+  }
+  .fight-keys__stick-shaft {
+    @apply absolute bottom-2 left-[25px] h-6 w-[7px] rounded-b-[2px]
+           [background:linear-gradient(90deg,#55515a,#dfdce1_42%,#a5a0aa_65%,#42404b)] shadow-[2px_1px_2px_#000];
+  }
+  .fight-keys__stick-ball {
+    @apply absolute left-[10px] top-0 size-9 rounded-full border border-[#661b1d]
+           [background:radial-gradient(circle_at_31%_25%,#ffb4a3_0%,#eb6758_9%,#b62f30_31%,#7a1820_67%,#360d17_100%)]
+           shadow-[inset_-3px_-4px_5px_#28080a66,0_3px_3px_#0009];
+  }
+  .fight-keys__stick-knob[data-x="-1"] { @apply -translate-x-1.5; }
+  .fight-keys__stick-knob[data-x="1"] { @apply translate-x-1.5; }
+  .fight-keys__stick-knob[data-y="-1"] { @apply -translate-y-2; }
+  .fight-keys__stick-knob[data-y="1"] { @apply translate-y-0; }
+  .fight-keys__direction[data-active="true"] kbd { @apply text-asf-gold-bright [text-shadow:0_0_8px_#ffce3a80]; }
+
+  .fight-keys__actions { @apply flex items-stretch gap-4; }
+  .fight-keys__primary { @apply flex flex-col gap-2; }
+  .fight-keys__row { @apply grid grid-cols-2 gap-x-5; }
+  .fight-keys__button { @apply flex min-w-14 flex-col items-center gap-1; }
+  .fight-keys__cap {
+    @apply relative flex size-9 shrink-0 items-center justify-center rounded-full border-2 border-[#110e16]
+           [background:radial-gradient(circle_at_36%_20%,#6c6375,#302835_72%)]
+           font-sans text-[12px] font-bold text-[#fff7ee]
+           shadow-[0_0_0_2px_#08060c,0_0_0_3px_#635965,0_4px_0_3px_#08060b,inset_0_2px_1px_#ffffff55,inset_0_-3px_2px_#0005]
+           transition-[transform,filter,box-shadow] duration-75 motion-reduce:transition-none;
+  }
+  .fight-keys__cap kbd { @apply whitespace-nowrap font-sans [text-shadow:0_1px_2px_#0009]; }
+  .fight-keys__button--fireball .fight-keys__cap { @apply [background:radial-gradient(circle_at_35%_18%,#62b5dc,#236386_57%,#14374f_100%)]; }
+  .fight-keys__button--uppercut .fight-keys__cap { @apply [background:radial-gradient(circle_at_35%_18%,#64ba80,#296642_57%,#163b2b_100%)]; }
+  .fight-keys__button--punch .fight-keys__cap { @apply [background:radial-gradient(circle_at_35%_18%,#e9806c,#ad3732_57%,#60202c_100%)]; }
+  .fight-keys__button--kick .fight-keys__cap { @apply [background:radial-gradient(circle_at_35%_18%,#ffdf7f,#d0a43c_57%,#765419_100%)] text-[#201709]; }
+  .fight-keys__button--kick .fight-keys__cap kbd { @apply [text-shadow:0_1px_0_#ffffff40]; }
+  .fight-keys__action { @apply whitespace-nowrap text-[11px] leading-tight text-[#eee6da]; }
+  .fight-keys__utility { @apply flex flex-col justify-around gap-3 border-l border-[#5a4d46] pl-4; }
+  .fight-keys__utility .fight-keys__cap { @apply size-6 text-[10px] shadow-[0_0_0_2px_#07050b,0_0_0_3px_#514953,0_3px_0_2px_#08060b,inset_0_1px_1px_#ffffff40]; }
+  .fight-keys__utility .fight-keys__action { @apply text-[10px] text-[#cbc3ce]; }
+  .fight-keys__player--gamepad .fight-keys__cap { @apply w-12 text-[10px]; }
+  .fight-keys__player--gamepad .fight-keys__utility .fight-keys__cap { @apply w-12 text-[9px]; }
+  .fight-keys__button[data-active="true"] .fight-keys__cap {
+    @apply translate-y-[3px] brightness-150 shadow-[0_0_0_2px_#0a070c,0_0_0_3px_#d8c48b,0_0_12px_#ffe49a66,inset_0_2px_3px_#0008];
   }
 
-  .fight-keys__bindings {
-    @apply flex flex-wrap items-center justify-center gap-x-4 gap-y-2;
+  .fight-keys--touch { @apply px-3 py-1.5; }
+  .fight-keys__tip { @apply m-0 text-center text-[10px] leading-[1.4] text-[#c7c4d0]; }
+
+  @media (max-width: 1050px) {
+    .fight-keys--two-players .fight-keys__player { @apply gap-2 px-4; }
+    .fight-keys--two-players .fight-keys__deck { @apply gap-2; }
+    .fight-keys--two-players .fight-keys__player-label > span { @apply hidden; }
+    .fight-keys--two-players .fight-keys__row { @apply gap-x-2; }
+    .fight-keys--two-players .fight-keys__button { @apply min-w-12; }
+    .fight-keys--two-players .fight-keys__utility { @apply pl-3; }
+    .fight-keys--two-players .fight-keys__actions { @apply gap-3; }
   }
 
-  .fight-keys__binding {
-    @apply inline-flex items-center gap-1.5 whitespace-nowrap;
+  @media (max-height: 540px) and (pointer: fine) {
+    .fight-keys { @apply gap-1 py-1; }
+    .fight-keys__player { @apply pt-2 pb-3; }
+    .fight-keys__primary { @apply gap-1.5; }
+    .fight-keys__cap { @apply size-7 text-[11px]; }
+    .fight-keys__stick { @apply grid-rows-[20px_42px_20px]; }
+    .fight-keys__stick-knob { @apply scale-[0.85]; }
+    .fight-keys__tip { @apply text-[9px]; }
   }
 
-  .fight-keys__binding kbd {
-    @apply inline-flex min-h-6 min-w-6 items-center justify-center rounded-[3px]
-           border border-asf-gold-deep bg-[#181321] px-1.5 font-sans text-[12px] font-bold
-           text-asf-gold-bright shadow-[0_2px_0_rgba(0,0,0,0.6)];
+  @media (min-width: 561px) and (max-width: 800px) {
+    .fight-keys--two-players .fight-keys__player { @apply px-3; }
+    .fight-keys--two-players .fight-keys__player-label { @apply absolute left-3 top-3 text-[9px]; }
+    .fight-keys--two-players .fight-keys__stick { @apply grid-cols-[20px_44px_20px]; }
+    .fight-keys--two-players .fight-keys__button { @apply min-w-10; }
+    .fight-keys--two-players .fight-keys__action { @apply text-[9px]; }
+    .fight-keys--two-players .fight-keys__actions { @apply gap-2; }
+    .fight-keys--two-players .fight-keys__utility { @apply pl-2; }
+    .fight-keys--two-players .fight-keys__player--gamepad .fight-keys__cap { @apply w-10 text-[9px]; }
   }
 
-  .fight-keys--touch {
-    @apply left-[164px] right-[252px] w-auto max-w-none translate-x-0 px-2 py-1.5;
+  @media (max-width: 560px) {
+    .fight-keys { @apply px-1.5; }
+    .fight-keys__players { @apply flex-wrap; }
+    .fight-keys__player { @apply gap-2 px-3; }
+    .fight-keys__player-label { @apply absolute left-3 top-3 text-[9px]; }
+    .fight-keys__player-label > span { @apply hidden; }
+    .fight-keys__deck { @apply gap-2; }
+    .fight-keys__actions { @apply gap-3; }
+    .fight-keys__row { @apply gap-x-2; }
+    .fight-keys__utility { @apply pl-3; }
+    .fight-keys__button { @apply min-w-12; }
+    .fight-keys__action { @apply text-[10px]; }
+    .fight-keys__cap { @apply size-8; }
   }
 
-  .fight-keys__tip {
-    @apply m-0 text-center text-[11px] leading-[1.45];
+  /* A finger-sized cabinet replaces the old controls over the arena. */
+  .fight-keys--touch { @apply gap-1.5 px-2 pt-2 pb-[max(8px,env(safe-area-inset-bottom))]; }
+  .fight-keys__player--touch {
+    @apply w-full max-w-[620px] gap-0 px-3 pt-2 pb-3;
+  }
+  .fight-keys__player--touch .fight-keys__player-label { @apply absolute left-3 top-3 text-[9px]; }
+  .fight-keys__player--touch .fight-keys__deck { @apply w-full justify-between gap-2; }
+  .fight-keys__player--touch .fight-keys__stick {
+    @apply grid-cols-[44px_48px_44px] grid-rows-[44px_48px_44px];
+  }
+  .fight-keys__player--touch button,
+  .fight-keys__touch-stick {
+    @apply pointer-events-auto touch-none select-none cursor-pointer
+           focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-asf-cream;
+  }
+  .fight-keys__player--touch button { @apply m-0 border-0 bg-transparent p-0; }
+  .fight-keys__player--touch .fight-keys__direction {
+    @apply size-11 gap-0 rounded-full text-[21px] font-bold text-[#d9d4de];
+  }
+  .fight-keys__player--touch .fight-keys__direction small { @apply text-[9px] font-normal; }
+  .fight-keys__player--touch .fight-keys__direction[data-active="true"] {
+    @apply bg-[#4c3826] text-asf-gold-bright [text-shadow:0_0_8px_#ffce3a80];
+  }
+  .fight-keys__touch-stick {
+    @apply relative col-start-2 row-start-2 flex size-12 items-center justify-center rounded-full;
+  }
+  .fight-keys__touch-stick .fight-keys__stick-base { @apply absolute bottom-0 left-1/2 -translate-x-1/2; }
+  .fight-keys__touch-stick .fight-keys__stick-knob { @apply pointer-events-none shrink-0 scale-100; }
+  .fight-keys__player--touch .fight-keys__actions { @apply gap-2; }
+  .fight-keys__player--touch .fight-keys__primary { @apply justify-center gap-3; }
+  .fight-keys__player--touch .fight-keys__row { @apply gap-x-2; }
+  .fight-keys__player--touch .fight-keys__button { @apply min-h-11 min-w-12 justify-center gap-1 rounded-full; }
+  .fight-keys__player--touch .fight-keys__cap { @apply size-12 text-[10px]; }
+  .fight-keys__player--touch .fight-keys__utility { @apply gap-2 pl-2; }
+  .fight-keys__player--touch .fight-keys__utility .fight-keys__button { @apply min-w-11; }
+  .fight-keys__player--touch .fight-keys__utility .fight-keys__cap { @apply size-11 text-[10px]; }
+  .fight-keys__player--touch button:disabled { @apply cursor-default; }
+  .fight-keys__player--touch button:disabled .fight-keys__cap { @apply saturate-0 brightness-75; }
+  .fight-keys__player--touch .fight-keys__direction:disabled { @apply opacity-50; }
+  .fight-keys__player--touch .fight-keys__movement-label { @apply text-[10px]; }
+
+  @media (max-width: 359px) {
+    .fight-keys__player--touch { @apply px-1.5; }
+    .fight-keys__player--touch .fight-keys__deck { @apply gap-1; }
+    .fight-keys__player--touch .fight-keys__stick { @apply grid-cols-[44px_44px_44px]; }
+    .fight-keys__player--touch .fight-keys__row { @apply gap-x-1; }
+    .fight-keys__player--touch .fight-keys__actions { @apply gap-1; }
+    .fight-keys__player--touch .fight-keys__utility { @apply pl-1; }
+  }
+
+  @media (max-height: 540px) {
+    .fight-keys--touch { @apply gap-1 py-1; }
+    .fight-keys__player--touch { @apply py-1; }
+    .fight-keys__player--touch .fight-keys__stick { @apply grid-rows-[44px_44px_44px]; }
+    .fight-keys__player--touch .fight-keys__movement-label { @apply hidden; }
+    .fight-keys--touch .fight-keys__tip { @apply text-[9px]; }
   }
 
 }
