@@ -65,6 +65,18 @@ export function consumeVirtualInput(playerIndex: number): VirtualInputSnapshot {
   return snapshot;
 }
 
+/** Read-only held state for a sprite preview; never consumes a gameplay edge. */
+export function peekVirtualHeldInput(playerIndex: number): VirtualInputSnapshot {
+  const held = heldByPlayer[playerIndex];
+  return {
+    left: Boolean(held?.has('left')), right: Boolean(held?.has('right')),
+    up: Boolean(held?.has('up')), down: Boolean(held?.has('down')),
+    guard: Boolean(held?.has('guard')), punch: Boolean(held?.has('punch')),
+    kick: Boolean(held?.has('kick')), fireball: Boolean(held?.has('fireball')),
+    uppercut: Boolean(held?.has('uppercut')), super: Boolean(held?.has('super')),
+  };
+}
+
 export function resetVirtualInput(playerIndex?: number): void {
   if (typeof playerIndex === 'number') {
     heldByPlayer[playerIndex]?.clear();

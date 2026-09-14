@@ -1,0 +1,84 @@
+@layer components {
+  .arcade-keyboard {
+    @apply pointer-events-none relative w-[680px] max-w-full shrink-0 rounded-t-[10px] rounded-b-[5px]
+           border border-[#605442] px-4 pt-2 pb-3
+           [background:linear-gradient(165deg,#302c36_0%,#1a1721_42%,#0f0d14_100%)]
+           shadow-[inset_0_1px_0_#ffffff20,inset_0_-5px_0_#07060a,0_3px_0_#020203];
+  }
+  .arcade-keyboard__header { @apply mb-2 flex h-3 items-center gap-3 px-1 text-[8px] leading-none tracking-[0.08em] text-[#c7bdab]; }
+  .arcade-keyboard__header strong { @apply font-arcade text-[8px] text-asf-gold; }
+  .arcade-keyboard__header > span:last-child { @apply ml-auto uppercase text-[#968b81]; }
+  .arcade-keyboard__rows { @apply flex flex-col gap-1; }
+  .arcade-keyboard__row { @apply flex gap-1; }
+  .arcade-keyboard__key {
+    @apply relative flex h-10 min-w-0 flex-1 items-center justify-center rounded-[4px] border border-[#3e3742]
+           [background:linear-gradient(165deg,#2f2934,#1c1722_80%)]
+           shadow-[0_2px_0_#060409,inset_0_1px_0_#ffffff0a]
+           text-[9px] leading-none text-[#7f7586];
+  }
+  .arcade-keyboard__key > kbd { @apply font-sans; }
+  .arcade-keyboard__key--tab { @apply grow-[1.4] text-[8px]; }
+  .arcade-keyboard__key--caps, .arcade-keyboard__key--enter { @apply grow-[1.7] text-[8px]; }
+  .arcade-keyboard__key--shift { @apply grow-[2.2] text-[8px]; }
+  .arcade-keyboard__key--space { @apply grow-[8] gap-2; }
+  .arcade-keyboard__key--modifier { @apply grow-[1.2] text-[7px]; }
+  .arcade-keyboard__row--2 .arcade-keyboard__key { @apply h-[17px] text-[8px]; }
+  .arcade-keyboard__row--3 .arcade-keyboard__key { @apply h-3.5 text-[7px]; }
+  .arcade-keyboard__key--movement {
+    @apply flex-col justify-end gap-1 border-[#8e7450] pb-1 text-asf-cream
+           [background:linear-gradient(165deg,#514538,#29232b_85%)];
+  }
+  .arcade-keyboard__key--movement > kbd { @apply text-[12px] font-bold; }
+  .arcade-keyboard__key--movement small { @apply text-[7px] text-[#c7bba5]; }
+  .arcade-keyboard__key--movement[data-action="up"] { @apply flex-row items-end justify-between gap-0 px-1.5 pb-1; }
+  .arcade-keyboard__key--movement[data-action="up"] small { @apply pb-px; }
+  .arcade-keyboard__key--arcade { @apply border-[#706053] [background:linear-gradient(160deg,#40363e,#241e28)]; }
+  .arcade-keyboard__key--alias { @apply gap-1 text-[#b4a895]; }
+  .arcade-keyboard__key--alias small { @apply text-[7px]; }
+  .arcade-keyboard__key[data-active="true"] {
+    @apply border-[#edcf7e] shadow-[0_0_7px_#ffd97944,inset_0_0_7px_#ffd97922] text-asf-gold-bright;
+  }
+  .arcade-keyboard .arcade-keyboard__button { @apply absolute -top-0.5 inset-x-0 min-w-0 gap-[3px]; }
+  .arcade-keyboard .arcade-keyboard__button .fight-keys__cap { @apply size-7 text-[12px]; }
+  .arcade-keyboard__action { @apply text-[8px] leading-none text-[#eee6da]; }
+  .arcade-keyboard .fight-keys__button--super .fight-keys__cap,
+  .arcade-keyboard .fight-keys__button--guard .fight-keys__cap { @apply size-6 text-[10px]; }
+  .arcade-keyboard .fight-keys__button--super,
+  .arcade-keyboard .fight-keys__button--guard { @apply top-0.5 gap-[5px]; }
+
+  .arcade-keyboard__joystick { @apply pointer-events-none absolute -top-[26px] left-1/2 z-10 h-[50px] w-[42px] -translate-x-1/2; }
+  .arcade-keyboard__stick-base {
+    @apply absolute bottom-0 h-[17px] w-[42px] rounded-[50%] border border-[#5d5764]
+           [background:radial-gradient(ellipse_at_center,#09080c_24%,#37313e_29%,#17131e_63%,#08070c_80%)]
+           shadow-[0_2px_2px_#000,inset_0_1px_0_#ffffff20];
+  }
+  .arcade-keyboard__stick-knob { @apply absolute inset-0 transition-transform duration-75 motion-reduce:transition-none; }
+  .arcade-keyboard__stick-shaft {
+    @apply absolute bottom-1.5 left-[18px] h-[25px] w-[6px] rounded-b-[2px]
+           [background:linear-gradient(90deg,#55515a,#dfdce1_42%,#a5a0aa_65%,#42404b)] shadow-[2px_1px_2px_#000];
+  }
+  .arcade-keyboard__stick-ball {
+    @apply absolute left-[6px] top-0 size-[30px] rounded-full border border-[#661b1d]
+           [background:radial-gradient(circle_at_31%_25%,#ffb4a3_0%,#eb6758_9%,#b62f30_31%,#7a1820_67%,#360d17_100%)]
+           shadow-[inset_-3px_-4px_5px_#28080a66,0_3px_3px_#0009];
+  }
+  .arcade-keyboard__stick-knob[data-x="-1"] { @apply -translate-x-1; }
+  .arcade-keyboard__stick-knob[data-x="1"] { @apply translate-x-1; }
+  .arcade-keyboard__stick-knob[data-y="-1"] { @apply -translate-y-1; }
+  .arcade-keyboard__stick-knob[data-y="1"] { @apply translate-y-1; }
+
+  .arcade-keyboard--numpad { @apply w-[350px]; }
+  .arcade-keyboard__secondary { @apply flex items-end gap-5; }
+  .arcade-keyboard__arrows { @apply w-[125px] pb-1; }
+  .arcade-keyboard__arrow-up { @apply mx-auto mb-1 w-[39px]; }
+  .arcade-keyboard__number-rows { @apply flex flex-1 flex-col gap-1; }
+  .arcade-keyboard__number-row--0 .arcade-keyboard__key,
+  .arcade-keyboard__number-row--1 .arcade-keyboard__key { @apply h-3.5 text-[7px]; }
+  .arcade-keyboard__number-row--4 .arcade-keyboard__key { @apply h-10; }
+
+  @media (max-height: 540px) {
+    .arcade-keyboard { @apply pt-1.5 pb-2; }
+    .arcade-keyboard__header { @apply mb-1; }
+    .arcade-keyboard__row--2 .arcade-keyboard__key { @apply h-3.5; }
+  }
+}
