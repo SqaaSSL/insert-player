@@ -74,7 +74,7 @@ describe('VideoGenerationReviewPanel', () => {
     expect(markup).not.toContain('Reject Video');
   });
 
-  it('offers an explicit full restart after a terminal rejection', () => {
+  it('offers current character creation after a terminal rejection without selling another retired run', () => {
     const markup = renderToStaticMarkup(
       <VideoGenerationReviewPanel
         review={{
@@ -89,12 +89,14 @@ describe('VideoGenerationReviewPanel', () => {
         }}
         onApprove={vi.fn()}
         onReject={vi.fn()}
-        onRestart={vi.fn()}
+        onCreateNew={vi.fn()}
       />,
     );
 
-    expect(markup).toContain('Restart Required');
-    expect(markup).toContain('Start A New Complete Video Run');
+    expect(markup).toContain('Archived');
+    expect(markup).toContain('Create A New Character');
+    expect(markup).toContain('Your saved versions are safe');
+    expect(markup).not.toContain('Start A New Complete Video Run');
     expect(markup).not.toContain('Continue To Next Action');
   });
 
@@ -114,12 +116,14 @@ describe('VideoGenerationReviewPanel', () => {
         }}
         onApprove={vi.fn()}
         onReject={vi.fn()}
-        onRestart={vi.fn()}
+        onCreateNew={vi.fn()}
       />,
     );
 
-    expect(markup).toContain('Restart Required');
-    expect(markup).toContain('Start A New Complete Video Run');
+    expect(markup).toContain('Archived');
+    expect(markup).toContain('Create A New Character');
+    expect(markup).toContain('Your saved versions are safe');
+    expect(markup).not.toContain('Start A New Complete Video Run');
     expect(markup).not.toContain('Continue To Next Action');
   });
 

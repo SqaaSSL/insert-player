@@ -95,10 +95,12 @@ import {
   syncFighterToCloud,
   type CloudFighter,
 } from '../../services/CloudFighters.ts';
+import { animationRetryQuote } from '../shared/generationRetry.ts';
 import {
   QUALITY_TIERS,
+  offeredQualityTier,
+  qualityTierRank,
   SOURCE_RETRY_CREDIT_COST,
-  animationRetryCreditCost,
   type GenerationBillingOperation,
   type QualityTier,
 } from '../../services/QualityTiers.ts';
@@ -136,10 +138,6 @@ function formatDate(value: number): string {
 
 function getPrimaryIntroBlob(intro: CachedIntro | null): Blob | null {
   return intro?.variants[0]?.videoBlob ?? null;
-}
-
-function tierIndex(tier: QualityTier): number {
-  return QUALITY_TIERS.findIndex((item) => item.id === tier);
 }
 
 interface GalleryPageProps {
@@ -654,8 +652,9 @@ export function GalleryPage({
   const compatibilityLabel = auraOnly ? 'Aura only' : fightReadiness.kind === 'custom'
     ? auraReadiness.kind !== 'unavailable' ? 'Fight · Rush · Aura' : 'Fight · Rush'
     : 'Animations incomplete';
-  const currentAnimationRetryCost = animationRetryCreditCost(currentTier);
-  const upgradeOptions = QUALITY_TIERS.filter((item) => tierIndex(item.id) > tierIndex(currentTier));
+  const selectedAnimationRetry = animationRetryQuote(selectedAnimName, sprites, currentTier);
+  const currentAnimationRetryCost = selectedAnimationRetry.credits;
+  const upgradeOptions = QUALITY_TIERS.filter((item) => qualityTierRank(item.id) > qualityTierRank(currentTier));
   const resumableJob = meta?.cloudFighterId
     ? resumableJobs.find((job) => job.fighterId === meta.cloudFighterId) ?? null
     : null;
@@ -843,7 +842,7 @@ export function GalleryPage({
         setResumableJobs((current) => (
           current.filter((job) => job.artifactRunId !== completed.artifactRunId)
         ));
-        setStatus('The Video run ended safely. Start a new complete run when you are ready.');
+        setStatus('This older creation option has ended. Your saved versions remain in the gallery.');
         return completed;
       }
       if (completed.resumable) {
@@ -908,7 +907,7 @@ export function GalleryPage({
           if (recoveryJobAbortRefs.current.get(recoveryJob.id) !== controller) return;
           setStatus(
             completed.creationFlow === 'video' && completed.fullRunRestartRequired
-              ? 'The Video run ended safely. Start a new complete run when you are ready.'
+              ? 'This older creation option has ended. Your saved versions remain in the gallery.'
               : completed.creationFlow === 'video' && completed.reviewStatus === 'awaiting_review'
               ? 'A video action is paused safely for your review'
               : completed.targetName ? 'Done and synced' : `${tierLabel(completed.tier)} cloud forge synced`,
@@ -1057,77 +1056,6 @@ export function GalleryPage({
     }
   };
 
-  const restartRejectedVideoRun = (rejectedJob: GenerationJob) => {
-    if (cloudSyncPending) return;
-    if (!legalAccepted) {
-      setStatus('Accept the generation terms to start a new complete Video run');
-      return;
-    }
-    const creditCost = QUALITY_TIERS.find((item) => item.id === rejectedJob.tier)?.creditCost ?? 18;
-    setConfirmRequest({
-      title: 'New Complete Video Run',
-      body: `Start a new complete Video run for ${creditCost} credits? The rejected run stays archived and will not be reused.`,
-      confirmLabel: `Start Run · ${creditCost} credits`,
-      variant: 'primary',
-      onConfirm: () => {
-        setConfirmRequest(null);
-        void executeRestartRejectedVideoRun(rejectedJob);
-      },
-    });
-  };
-
-  const executeRestartRejectedVideoRun = async (rejectedJob: GenerationJob) => {
-    setBusy(true);
-    setStatus('Preparing a new complete Video run...');
-    const apiContext = captureApiRequestContext();
-    let purchaseId: string | undefined;
-    let backendOwnsPurchase = false;
-    try {
-      const authorization = await authorizeGeneration(
-        rejectedJob.tier,
-        'fighter_generation',
-        rejectedJob.fighterId,
-        null,
-        currentGenerationLegalAttestation(),
-        apiContext,
-        null,
-        'video',
-      );
-      if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
-        throw new Error(authorization.error ?? 'A new complete Video run could not be authorized');
-      }
-      purchaseId = authorization.purchaseId;
-      assertCreationFlowAcknowledged('video', authorization.creationFlow);
-      const nextJob = await startGenerationJob({
-        fighterId: rejectedJob.fighterId,
-        purchaseId: authorization.purchaseId,
-        providerSessionId: authorization.providerSessionId,
-        creationFlow: 'video',
-      }, apiContext);
-      backendOwnsPurchase = true;
-      setVideoReviewJobs((current) => current.filter((job) => job.id !== rejectedJob.id));
-      const controller = new AbortController();
-      generationJobAbortRef.current?.abort();
-      generationJobAbortRef.current = controller;
-      await monitorCloudGenerationJob(nextJob, apiContext, controller.signal);
-    } catch (cause) {
-      if (purchaseId && !backendOwnsPurchase) {
-        try {
-          await finishGenerationPurchase(purchaseId, false, rejectedJob.fighterId, apiContext);
-        } catch (settlementError: any) {
-          debugWarn(
-            '[Billing] New Video run reservation could not be released:',
-            settlementError?.message ?? settlementError,
-          );
-        }
-      }
-      setStatus(cause instanceof Error ? `New Video run failed: ${cause.message}` : 'New Video run failed');
-    } finally {
-      setBusy(false);
-      setRetryingTarget(null);
-    }
-  };
-
   const finishApprovedVideoFighter = async (approvedJob: GenerationJob) => {
     if (cloudSyncPending) return;
     setBusy(true);
@@ -1174,6 +1102,7 @@ export function GalleryPage({
     target: RetryTarget,
     operation: GenerationBillingOperation,
     creditCost: number,
+    retryTier: QualityTier = currentTier,
   ) => {
     if (!meta || !ownerActionsReady) return;
     if (!legalAccepted) {
@@ -1189,7 +1118,7 @@ export function GalleryPage({
       variant: 'primary',
       onConfirm: () => {
         setConfirmRequest(null);
-        void executeRetry(action, nextStatus, target, operation);
+        void executeRetry(action, nextStatus, target, operation, retryTier, creditCost);
       },
     });
   };
@@ -1199,6 +1128,8 @@ export function GalleryPage({
     nextStatus: string,
     target: RetryTarget,
     operation: GenerationBillingOperation,
+    retryTier: QualityTier,
+    expectedCredits: number,
   ) => {
     if (!meta || !ownerActionsReady) return;
     clearDebugLog();
@@ -1220,7 +1151,7 @@ export function GalleryPage({
         fighterId = sync.fighterId;
       }
       const authorization = await authorizeGeneration(
-        currentTier,
+        retryTier,
         operation,
         fighterId,
         null,
@@ -1228,7 +1159,7 @@ export function GalleryPage({
         apiContext,
         null,
         'original',
-        { creationPackage: target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage },
+        { creationPackage: target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage, expectedCredits },
       );
       if (!authorization.authorized) {
         throw new Error(authorization.error ?? 'Generation not authorized');
@@ -1597,7 +1528,7 @@ export function GalleryPage({
   const upgradeToTier = async (toTier: QualityTier, packageOptions: GenerationPackageOptions = { creationPackage: currentPackage }) => {
     if (!meta || !ownerActionsReady || !legalAccepted) return;
     const tier = QUALITY_TIERS.find((item) => item.id === toTier);
-    if (!tier) return;
+    if (!tier || (!packageOptions.expansion && qualityTierRank(toTier) <= qualityTierRank(currentTier))) return;
     clearDebugLog();
     setBusy(true);
     setStatus(packageOptions.expansion ? 'Adding Fight + Rush...' : `Upgrading to ${tier.label}...`);
@@ -1724,7 +1655,8 @@ export function GalleryPage({
     setBusy(true);
     setStatus('Checking the cost to add Fight + Rush...');
     try {
-      const quote = await authorizeGeneration(currentTier, 'fighter_upgrade', meta.cloudFighterId,
+      const expansionTier = offeredQualityTier(currentTier);
+      const quote = await authorizeGeneration(expansionTier, 'fighter_upgrade', meta.cloudFighterId,
         null, currentGenerationLegalAttestation(), captureApiRequestContext(), undefined, 'original',
         { creationPackage: 'complete', expansion: true, quoteOnly: true });
       if (!quote.authorized || quote.mode !== 'quote' || !Number.isSafeInteger(quote.quotedCredits)) {
@@ -1739,7 +1671,7 @@ export function GalleryPage({
         variant: 'primary',
         onConfirm: () => {
           setConfirmRequest(null);
-          void upgradeToTier(currentTier, { creationPackage: 'complete', expansion: true, expectedCredits: credits });
+          void upgradeToTier(expansionTier, { creationPackage: 'complete', expansion: true, expectedCredits: credits });
         },
       });
     } catch (error) {
@@ -1998,7 +1930,8 @@ export function GalleryPage({
                 fullRunRestartRequired={videoReviewJob.fullRunRestartRequired}
                 onContinue={() => continueApprovedVideoJob(videoReviewJob)}
                 onFinalApproval={() => finishApprovedVideoFighter(videoReviewJob)}
-                onRestart={() => restartRejectedVideoRun(videoReviewJob)}
+                onCreateNew={onCreateFighter}
+                generationConsentAccepted={legalAccepted}
                 onRejected={() => {
                   setStatus('Video rejected. It remains private and no additional provider call was made.');
                 }}
@@ -2121,13 +2054,14 @@ export function GalleryPage({
                       onClick={() =>
                         runRetry(
                           (context) => retryAnimation(meta.photoHash, selectedAnimName, () => {}, {
-                            tier: currentTier,
+                            tier: selectedAnimationRetry.tier,
                             apiContext: context,
                           }),
-                          `Retrying ${selectedAnimName} (${tierLabel(currentTier)})...`,
+                          `Retrying ${selectedAnimName} (${tierLabel(selectedAnimationRetry.tier)})...`,
                           { kind: 'animation', name: selectedAnimName },
                           'fighter_retry_animation',
                           currentAnimationRetryCost,
+                          selectedAnimationRetry.tier,
                         )
                       }
                     >

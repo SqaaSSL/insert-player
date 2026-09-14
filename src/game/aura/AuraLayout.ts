@@ -11,19 +11,22 @@ export interface AuraPerformerPlacement {
  * performer the left stage and the controls the right; portrait stacks them. */
 export function createAuraLayout(width = 1024, height = 576) {
   const portrait = height > width;
-  // Reserve a move rail on the left; portrait lanes still have 88px centres
-  // (about 60 CSS pixels on a 390px phone), with unchanged note travel time.
-  const highwayX = portrait ? width - 206 : width * 0.75;
-  const laneOffsets = portrait ? [-132, -44, 44, 132] : [-144, -48, 48, 144];
+  // Portrait gives all four lanes the usable width. The move card lives in
+  // the stage, leaving the instrument and touch pads on the same four centres.
+  const highwayX = portrait ? width / 2 : width * 0.75;
+  const laneCellWidth = portrait ? (width - 48) / 4 : 96;
+  const laneOffsets = [-1.5, -0.5, 0.5, 1.5].map(cell => cell * laneCellWidth);
+  const laneHalfWidth = portrait ? laneCellWidth / 2 - 8 : 30;
   const laneStartY = portrait ? 620 : 210;
   const keyLabelY = portrait ? 892 : 480;
-  const instrumentLeft = highwayX + laneOffsets[0] - 42;
-  const instrumentRight = highwayX + laneOffsets[3] + 42;
+  const instrumentLeft = highwayX + laneOffsets[0] - laneHalfWidth - 12;
+  const instrumentRight = highwayX + laneOffsets[3] + laneHalfWidth + 12;
   return {
     width, height, portrait,
     hudHeight: portrait ? 160 : 128,
     highwayX,
     laneOffsets,
+    laneHalfWidth,
     laneStartY,
     laneTargetY: portrait ? 850 : 442,
     keyLabelY,
@@ -38,17 +41,21 @@ export function createAuraLayout(width = 1024, height = 576) {
       crowdSegmentWidth: portrait ? 12 : 22,
     },
     stage: { x: 0, y: portrait ? 160 : 128, width, height: portrait ? 364 : height - 128 },
-    active: { x: portrait ? 240 : width * 0.234375, footY: portrait ? 494 : 536, height: portrait ? 300 : 352, visible: true },
+    active: { x: portrait ? 216 : width * 0.234375, footY: portrait ? 494 : 536, height: portrait ? 300 : 352, visible: true },
     inactive: { x: 76, footY: portrait ? 494 : 536, height: 110, visible: false },
-    // Only a tied finale shows both bodies, after the notes/controls have gone.
+    // Shared framing gives each performer an equal seat in the stage.
     finaleSeats: [
       { x: width * 0.3125, footY: portrait ? 494 : 536, height: portrait ? 230 : 352, visible: true },
       { x: width * 0.6875, footY: portrait ? 494 : 536, height: portrait ? 230 : 352, visible: true },
     ] as const,
-    performerLabel: { x: portrait ? 240 : width * 0.234375, y: portrait ? 180 : 150 },
+    performerLabel: { x: portrait ? 216 : width * 0.234375, y: portrait ? 180 : 150 },
     feedback: { x: highwayX, y: portrait ? 531 : 144 },
-    moveRail: { left: instrumentLeft - 172, right: instrumentLeft - 12, top: laneStartY + 22, bottom: keyLabelY + 82 },
-    comic: { x: instrumentLeft - 92, moveY: (portrait ? 850 : 442) - 110, streakY: keyLabelY + 40 },
+    moveRail: portrait
+      ? { left: width - 160, right: width - 16, top: 198, bottom: 434 }
+      : { left: instrumentLeft - 172, right: instrumentLeft - 12, top: laneStartY + 22, bottom: keyLabelY + 82 },
+    comic: portrait
+      ? { x: width - 88, moveY: 270, streakY: 409, scale: 0.85, stageCard: true }
+      : { x: instrumentLeft - 92, moveY: 332, streakY: keyLabelY + 40, scale: 1, stageCard: false },
     balance: { left: 24, right: width - 24, y: portrait ? 114 : 90, height: 24 },
   };
 }

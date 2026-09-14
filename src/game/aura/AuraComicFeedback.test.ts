@@ -18,20 +18,21 @@ function textObject(x: number, y: number, value: string, textOptions: Record<str
 
 function container(x: number, y: number) {
   const object = {
-    x, y, alpha: 1, children: [] as unknown[],
-    add: vi.fn(), setY: vi.fn(), setAlpha: vi.fn(), destroy: vi.fn(),
+    x, y, alpha: 1, scale: 1, children: [] as unknown[],
+    add: vi.fn(), setY: vi.fn(), setAlpha: vi.fn(), setScale: vi.fn(), destroy: vi.fn(),
   };
   object.add.mockImplementation((children: unknown) => {
     object.children.push(...(Array.isArray(children) ? children : [children]));
     return object;
   });
+  object.setScale.mockImplementation((value: number) => { object.scale = value; return object; });
   object.setY.mockImplementation((value: number) => { object.y = value; return object; });
   object.setAlpha.mockImplementation((value: number) => { object.alpha = value; return object; });
   return object;
 }
 
 function graphics() {
-  return Object.fromEntries(['fillStyle', 'fillRoundedRect', 'lineStyle', 'strokeRoundedRect',
+  return Object.fromEntries(['clear', 'fillStyle', 'fillRoundedRect', 'lineStyle', 'strokeRoundedRect',
     'fillTriangle', 'lineBetween', 'setPosition'].map(name => [name, vi.fn().mockReturnThis()]));
 }
 
@@ -66,6 +67,46 @@ function harness(reduceMotion = false) {
 }
 
 describe('Aura comic feedback', () => {
+  it('gives stage cards their own scaled contrast surface and retires it at a turn change', () => {
+    const h = harness();
+    const anchor = auraComicAnchor(createAuraLayout(576, 1024), 0);
+    h.feedback.setAnchor(0, anchor);
+    h.feedback.move(0, 'aura_glide', { key: '', tone: 0x4fdced, phrase: 'intro' });
+    h.feedback.milestone(0, 10);
+    expect(h.objects.map(object => object.scale)).toEqual([0.85, 0.85]);
+    expect(h.drawings[0].fillRoundedRect).toHaveBeenCalledWith(-80, -84, 160, 218, 8);
+    expect(h.drawings.at(-1)!.fillRoundedRect).toHaveBeenCalledWith(-80, -25, 160, 50, 8);
+    h.feedback.beginTurn();
+    expect(h.objects.every(object => object.destroy.mock.calls.length === 1)).toBe(true);
+    expect(h.layer.children).toHaveLength(2); // No separate persistent stage panel.
+  });
+
+  it('replaces a resized stage card atomically and leaves desktop cards at native scale', () => {
+    const h = harness();
+    const anchor = auraComicAnchor(createAuraLayout(576, 1024), 0);
+    h.feedback.setAnchor(0, anchor);
+    h.feedback.move(0, 'aura_glide');
+    h.feedback.setAnchor(0, { ...anchor });
+    expect(h.objects[0].destroy).not.toHaveBeenCalled();
+    h.feedback.setAnchor(0, { ...anchor, scale: 1 });
+    expect(h.objects[0].destroy).toHaveBeenCalledOnce();
+    h.feedback.move(0, 'aura_glide');
+    h.feedback.setAnchor(0, { ...anchor, scale: 1, stageCard: false });
+    expect(h.objects[1].destroy).toHaveBeenCalledOnce();
+    h.feedback.setAnchor(0, auraComicAnchor(createAuraLayout(), 0));
+    h.drawings.length = 0;
+    h.feedback.move(0, 'aura_glide');
+    expect(h.objects.at(-1)!.scale).toBe(1);
+    expect(h.drawings.every(drawing => drawing.fillRoundedRect.mock.calls.length === 0)).toBe(true);
+  });
+
+  it.each([0, -1, Infinity, NaN])('rejects invalid scale %s without destroying existing feedback', scale => {
+    const h = harness();
+    h.feedback.move(0, 'aura_glide');
+    expect(() => h.feedback.setAnchor(0, { x: 100, moveY: 200, streakY: 400, scale })).toThrow(/scale/);
+    expect(h.objects[0].destroy).not.toHaveBeenCalled();
+  });
+
   it('sounds only a newly shown move, never repeated notes, hidden feedback, expiry or a streak', () => {
     const h = harness();
     h.feedback.move(0, 'aura_glide');
@@ -286,7 +327,7 @@ describe('Aura comic feedback', () => {
     h.feedback.milestone(0, 10);
     h.feedback.judgement(1, true); h.feedback.judgement(1, true);
     for (const drawing of h.drawings) {
-      for (const method of ['fillStyle', 'fillRoundedRect', 'strokeRoundedRect', 'fillTriangle']) {
+      for (const method of ['clear', 'fillStyle', 'fillRoundedRect', 'strokeRoundedRect', 'fillTriangle']) {
         expect(drawing[method]).not.toHaveBeenCalled();
       }
     }
@@ -441,6 +482,18 @@ describe('Aura move rail feedback', () => {
     return { ...h, layout, trail };
   }
   const hit = (key: string, phrase = 'r0-p0', tone = 0x4fdced) => ({ key, phrase, tone });
+
+  it('keeps a coloured hit sequence without keyboard letters for touch controls', () => {
+    const h = dockedHarness();
+    h.feedback.move(0, 'aura_six_seven', hit('', 'r0-p0', 0x4fdced));
+    h.feedback.move(0, 'aura_six_seven', hit('', 'r0-p0', 0xffce3a));
+    expect(h.trail().map(text => text.value)).toEqual(['', '', '·', '·']);
+    const pads = h.drawings.find(drawing => drawing.clear.mock.calls.length > 0)!;
+    expect(pads.fillStyle).toHaveBeenCalledWith(0x4fdced, 1);
+    expect(pads.fillStyle).toHaveBeenLastCalledWith(0xffce3a, 1);
+    expect(pads.fillRoundedRect).toHaveBeenLastCalledWith(-29, 102, 24, 16, 2);
+    expect(h.onMove).toHaveBeenCalledOnce();
+  });
 
   it('updates the last four successful inputs in one card without repeating its icon, entrance or sound', () => {
     const h = dockedHarness();

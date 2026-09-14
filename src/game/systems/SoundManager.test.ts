@@ -104,6 +104,46 @@ describe('SoundManager media', () => {
     sound.destroy();
   });
 
+  it('does not delay the ready song for a stalled optional crowd clip or pause later playback', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('Audio', FakeAudio);
+    const sound = new SoundManager();
+    const ready = sound.prepareBattleMusic('/aura.mp3', new AbortController().signal);
+    const music = FakeAudio.instances[0];
+    music.readyState = 3; music.dispatchEvent(new Event('canplay'));
+    await ready;
+    sound.prepareAuraCrowd();
+    const crowd = FakeAudio.instances[1];
+    let finishCrowd!: () => void;
+    crowd.play.mockImplementationOnce(() => new Promise(resolve => { finishCrowd = resolve; }));
+
+    await expect(sound.unlockPreparedMedia()).resolves.toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(FakeAudio.instances.every(audio => audio.paused && audio.currentTime === 0)).toBe(true);
+    sound.startBattleMusic('/aura.mp3'); sound.startAuraCrowd();
+    finishCrowd();
+    await Promise.resolve(); await Promise.resolve();
+    expect(music.paused).toBe(false);
+    expect(crowd.paused).toBe(false);
+    sound.destroy();
+  });
+
+  it('cancels an in-flight Ready gesture immediately when the scene is destroyed', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('Audio', FakeAudio);
+    const sound = new SoundManager();
+    const ready = sound.prepareBattleMusic('/aura.mp3', new AbortController().signal);
+    const music = FakeAudio.instances[0];
+    music.readyState = 3; music.dispatchEvent(new Event('canplay'));
+    await ready;
+    music.play.mockImplementation(() => new Promise(() => {}));
+    const unlocking = sound.unlockPreparedMedia();
+    sound.destroy();
+    await expect(unlocking).resolves.toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(music.paused).toBe(true);
+  });
+
   it('starts one quiet looping track and reuses it', () => {
     vi.stubGlobal('Audio', FakeAudio);
     const sound = new SoundManager();
@@ -118,6 +158,29 @@ describe('SoundManager media', () => {
     expect(track.preload).toBe('auto');
     expect(track.volume).toBe(BATTLE_MUSIC_VOLUME);
     expect(track.play).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the selected song at zero through practice, pause and resume, then plays it once for the duel', async () => {
+    vi.stubGlobal('Audio', FakeAudio);
+    const sound = new SoundManager();
+    const ready = sound.prepareBattleMusic('/aura.mp3', new AbortController().signal);
+    const music = FakeAudio.instances[0];
+    music.readyState = 3; music.dispatchEvent(new Event('canplay'));
+    await ready; await sound.unlockPreparedMedia();
+    music.play.mockClear();
+    sound.startAuraPracticeAudio(150);
+    expect(music.play).not.toHaveBeenCalled();
+    expect(music.currentTime).toBe(0);
+    expect(FakeAudio.instances[1].paused).toBe(false);
+    sound.pauseBattleMusic();
+    expect(FakeAudio.instances.every(audio => audio.paused)).toBe(true);
+    sound.resumeBattleMusic();
+    expect(FakeAudio.instances[1].paused).toBe(false);
+    expect(music.play).not.toHaveBeenCalled();
+    sound.startBattleMusic('/aura.mp3');
+    expect(music.play).toHaveBeenCalledOnce();
+    expect(music.currentTime).toBe(0);
+    sound.destroy();
   });
 
   it('stops and releases the track during teardown', () => {

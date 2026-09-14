@@ -22,6 +22,18 @@ const callbacks = {
 };
 
 describe('HomePage game modes', () => {
+  it('shows the current Champion quote for a previously saved retired offer', () => {
+    const markup = renderToStaticMarkup(
+      <HomePage authStatus="signed-in" authSessionKey="account" walletOnly creationPurchaseIntent={{
+        tier: 'champion', creationPackage: 'aura', returnTo: 'aura', source: 'landing', createdAt: Date.now(),
+      }} {...callbacks} />,
+    );
+    expect(markup).toContain('Aura moves · Champion');
+    expect(markup).toContain('6 credits required');
+    expect(markup).not.toContain('10 credits required');
+    expect(markup).not.toContain('Contender');
+  });
+
   it('presents Fight, Rush, and Aura as sibling games backed by one roster', () => {
     const markup = renderToStaticMarkup(
       <HomePage authStatus="local" authSessionKey="local" {...callbacks} />,

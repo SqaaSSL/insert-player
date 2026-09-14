@@ -408,14 +408,14 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
     }
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
-  it('activates, lists, and retires a private-by-default official Arcade fighter', async () => {
+  it.each(['champion', 'contender'] as const)('activates, lists, and retires a private-by-default official Arcade fighter stored as %s', async (qualityTier) => {
     const { mf, db, bucket, env } = await createBindings();
     const fighterId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     try {
       await db.prepare(`
         INSERT INTO fighters (id, owner_user_id, name, photo_hash, quality_tier)
-        VALUES (?, ?, ?, ?, 'champion')
-      `).bind(fighterId, auth.userId, 'Headline Fighter', 'headline-photo').run();
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(fighterId, auth.userId, 'Headline Fighter', 'headline-photo', qualityTier).run();
 
       expect((await upsertAdminArcadeFighter(
         arcadeRequest('draft'), env, auth, fighterId,
@@ -452,6 +452,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       const animationNames = [
         'idle', 'walk', 'high_punch', 'low_punch', 'high_kick', 'low_kick',
         'jump', 'crouch', 'hit', 'ko', 'victory',
+        ...AURA_ANIMATION_NAMES,
       ];
       const denseFrameCounts: Record<string, number> = {
         idle: 8,
@@ -501,7 +502,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
             id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
             content_hash, raw_content_hash,
             frame_w, frame_h, frame_count, animation_format, processing_version
-          ) VALUES (?, ?, ?, 'champion', ?, ?, ?, ?, 192, 256, ?, 'video-dense-v1', 5)
+          ) VALUES (?, ?, ?, '${qualityTier}', ?, ?, ?, ?, 192, 256, ?, 'video-dense-v1', 5)
         `).bind(
           `arcade-sprite-${index}`,
           fighterId,
@@ -510,7 +511,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
           `users/user-target/fighters/${fighterId}/sprites/${animationName}-raw.png`,
           sha256Fixture(index + 1),
           sha256Fixture(index + 101),
-          denseFrameCounts[animationName],
+          denseFrameCounts[animationName] ?? 8,
         )),
       ]);
 
@@ -536,9 +537,40 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         ]),
       ]);
 
+      // A complete collection across quality tiers is not a complete official pack.
+      const otherRefinedTier = qualityTier === 'contender' ? 'champion' : 'contender';
+      await db.prepare(`
+        UPDATE sprites SET quality_tier = ?
+        WHERE fighter_id = ? AND animation_name = 'idle'
+      `).bind(otherRefinedTier, fighterId).run();
+      const mixedTierActivation = await upsertAdminArcadeFighter(
+        arcadeRequest('active'), env, adminAuth, fighterId,
+      );
+      expect(mixedTierActivation.status).toBe(409);
+      expect(await mixedTierActivation.json()).toMatchObject({ missingAssets: ['sprite:idle'] });
+      expect(await db.prepare('SELECT public_flag FROM fighters WHERE id = ?')
+        .bind(fighterId).first()).toEqual({ public_flag: 0 });
+
+      // Even a stale active flag must not expose an incomplete same-tier pack or HQ.
+      await db.batch([
+        db.prepare("UPDATE arcade_fighters SET status = 'active' WHERE fighter_id = ?").bind(fighterId),
+        db.prepare('UPDATE fighters SET public_flag = 1 WHERE id = ?').bind(fighterId),
+      ]);
+      expect(await listArcadeFighters(new Request('https://api.insertplayer.ai/api/arcade'), env)
+        .then(response => response.json())).toEqual({ fighters: [] });
+      expect((await getPublicArcadeSpriteHighDensityAsset(
+        env, fighterId, 'arcade-sprite-0', 'idle-raw.png',
+      )).status).toBe(404);
+      await db.batch([
+        db.prepare("UPDATE arcade_fighters SET status = 'draft' WHERE fighter_id = ?").bind(fighterId),
+        db.prepare('UPDATE fighters SET public_flag = 0 WHERE id = ?').bind(fighterId),
+        db.prepare("UPDATE sprites SET quality_tier = ? WHERE fighter_id = ? AND animation_name = 'idle'")
+          .bind(qualityTier, fighterId),
+      ]);
+
       await db.prepare(`
         UPDATE sprites SET content_hash = 'not-a-sha256'
-        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = '${qualityTier}'
       `).bind(fighterId).run();
       const invalidHashResponse = await upsertAdminArcadeFighter(
         arcadeRequest('active'), env, adminAuth, fighterId,
@@ -550,7 +582,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
 
       await db.prepare(`
         UPDATE sprites SET content_hash = ?, raw_content_hash = 'not-a-sha256'
-        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = '${qualityTier}'
       `).bind(sha256Fixture(1), fighterId).run();
       const invalidRawHashResponse = await upsertAdminArcadeFighter(
         arcadeRequest('active'), env, adminAuth, fighterId,
@@ -562,7 +594,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
 
       await db.prepare(`
         UPDATE sprites SET raw_content_hash = ?, frame_count = 0
-        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = '${qualityTier}'
       `).bind(sha256Fixture(101), fighterId).run();
       const invalidMetadataResponse = await upsertAdminArcadeFighter(
         arcadeRequest('active'), env, adminAuth, fighterId,
@@ -573,7 +605,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       });
       await db.prepare(`
         UPDATE sprites SET frame_count = 8
-        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = '${qualityTier}'
       `).bind(fighterId).run();
 
       expect((await upsertAdminArcadeFighter(
@@ -582,7 +614,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
 
       await db.prepare(`
         UPDATE sprites SET content_hash = 'not-a-sha256'
-        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = '${qualityTier}'
       `).bind(fighterId).run();
       const invalidHashArcadeBody = await listArcadeFighters(
         new Request('https://api.insertplayer.ai/api/arcade'), env,
@@ -591,7 +623,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
 
       await db.prepare(`
         UPDATE sprites SET content_hash = ?, frame_w = 0
-        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = '${qualityTier}'
       `).bind(sha256Fixture(1), fighterId).run();
       const invalidMetadataArcadeBody = await listArcadeFighters(
         new Request('https://api.insertplayer.ai/api/arcade'), env,
@@ -599,7 +631,7 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       expect(invalidMetadataArcadeBody.fighters).toHaveLength(0);
       await db.prepare(`
         UPDATE sprites SET frame_w = 768
-        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = 'champion'
+        WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = '${qualityTier}'
       `).bind(fighterId).run();
 
       const activeResponse = await listArcadeFighters(
@@ -609,7 +641,11 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
       const activeBody = await activeResponse.json() as { fighters: Array<Record<string, any>> };
       expect(activeBody.fighters).toHaveLength(1);
       expect(activeBody.fighters[0]?.name).toBe('Headline Fighter');
-      expect(activeBody.fighters[0]?.qualityTier).toBe('champion');
+      expect(activeBody.fighters[0]?.qualityTier).toBe(qualityTier);
+      expect(activeBody.fighters[0]?.assetPacks).toEqual([
+        expect.objectContaining({ id: 'fight-v1', status: 'ready', qualityTier }),
+        expect.objectContaining({ id: 'aura-v1-2026', status: 'ready', qualityTier }),
+      ]);
       expect(activeBody.fighters[0]?.arcade).toEqual({
         slug: 'headline-fighter',
         rank: 1,
@@ -663,6 +699,40 @@ describe('fighter uploads against real D1 and R2 bindings', () => {
         'arcade-sprite-0',
         'wrong.png',
       )).status).toBe(404);
+
+      // Retain genuine Rookie assets without advertising or serving them as Champion HQ.
+      await db.prepare(`
+        INSERT INTO sprites (
+          id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+          content_hash, raw_content_hash, frame_w, frame_h, frame_count,
+          animation_format, processing_version
+        ) SELECT 'preserved-rookie-idle', fighter_id, animation_name, 'rookie', blob_key, raw_blob_key,
+          content_hash, raw_content_hash, frame_w, frame_h, frame_count,
+          animation_format, processing_version
+        FROM sprites WHERE fighter_id = ? AND animation_name = 'idle' AND quality_tier = ?
+      `).bind(fighterId, qualityTier).run();
+      const withRookie = await listArcadeFighters(
+        new Request('https://api.insertplayer.ai/api/arcade'), env,
+      ).then(response => response.json()) as { fighters: Array<{ sprites: Array<{ qualityTier: string }> }> };
+      expect(withRookie.fighters[0].sprites).toHaveLength(animationNames.length);
+      expect(withRookie.fighters[0].sprites.every(sprite => sprite.qualityTier === qualityTier)).toBe(true);
+      expect(await db.prepare('SELECT quality_tier FROM sprites WHERE id = ?')
+        .bind('preserved-rookie-idle').first()).toEqual({ quality_tier: 'rookie' });
+      expect((await getPublicArcadeSpriteHighDensityAsset(
+        env, fighterId, 'preserved-rookie-idle', 'idle-raw.png',
+      )).status).toBe(404);
+
+      // Legacy image raws have no known HQ geometry and must stay private.
+      await db.prepare("UPDATE sprites SET animation_format = 'legacy' WHERE id = 'arcade-sprite-0'").run();
+      const withLegacyRaw = await listArcadeFighters(
+        new Request('https://api.insertplayer.ai/api/arcade'), env,
+      ).then(response => response.json()) as { fighters: Array<{ sprites: Array<Record<string, unknown>> }> };
+      expect(withLegacyRaw.fighters[0].sprites.find(sprite => sprite.animationName === 'idle'))
+        .toMatchObject({ hqUrl: null, hqFrameWidth: null, hqFrameHeight: null, hqFrameCount: null, rawUrl: null });
+      expect((await getPublicArcadeSpriteHighDensityAsset(
+        env, fighterId, 'arcade-sprite-0', 'idle-raw.png',
+      )).status).toBe(404);
+      await db.prepare("UPDATE sprites SET animation_format = 'video-dense-v1' WHERE id = 'arcade-sprite-0'").run();
       const communityBody = await listCommunityFighters(
         new Request('https://api.insertplayer.ai/api/community'), env,
       ).then((response) => response.json() as Promise<{ fighters: unknown[] }>);

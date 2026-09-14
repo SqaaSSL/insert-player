@@ -43,6 +43,16 @@ function finalized(): AuraRecording {
 }
 
 describe('AuraRecorder immutable local event journal', () => {
+  it('retains the actual bundled trial cast without inventing cloud identities', () => {
+    const setup: AuraRecordingConfig = { ...config(), p1Name: 'DONALD TRUMP', p2Name: 'LAMINE YAMAL',
+      p1CloudFighterId: null, p2CloudFighterId: null, auraTrialPreset: 'trump-lamine' };
+    const recording = new AuraRecorder(setup).toRecording();
+    expect(parseAuraRecording(JSON.stringify(recording))?.config).toEqual(setup);
+    expect(() => new AuraRecorder({ ...setup, p1CloudFighterId: 'owned-player' })).toThrow();
+    expect(parseAuraRecording(JSON.stringify({ ...recording,
+      config: { ...setup, auraTrialPreset: 'unknown-cast' } }))).toBeNull();
+  });
+
   it('retains all six grades with exact music times and same-time ordering, without deduplication', () => {
     const setup = config();
     const recorder = new AuraRecorder(setup);

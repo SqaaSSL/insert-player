@@ -25,7 +25,7 @@ export const AURA_COMIC_LAYOUT = {
 
 type Bubble = { object: Phaser.GameObjects.Container; timer: Phaser.Time.TimerEvent };
 export interface AuraMoveInput { key: string; tone: number; phrase: string }
-type InputTrail = { phrase: string; inputs: AuraMoveInput[]; labels: Phaser.GameObjects.Text[] };
+type InputTrail = { phrase: string; inputs: AuraMoveInput[]; labels: Phaser.GameObjects.Text[]; pads: Phaser.GameObjects.Graphics };
 export const AURA_DOCKED_MOVE_NAMES: Record<AuraAnimationName, string> = {
   aura_unbothered: 'UNBOTHERED', aura_six_seven: 'SIX\nSEVEN!', aura_mog_check: 'MOG\nCHECK',
   aura_glide: 'GLIDE', aura_floor_worm: 'FLOOR\nWORM', aura_one_leg: 'ONE-LEG\nHOP', aura_shrug: 'WHO, ME?',
@@ -38,8 +38,11 @@ export interface AuraComicAnchor {
   /** Optional nonnegative flight distances; omitted values retain 24/12px. */
   moveRise?: number;
   streakRise?: number;
-  /** Compact move rail attached to the instrument, with successful input history. */
+  /** Compact move rail with successful input history. */
   docked?: boolean;
+  /** Portrait cards live over the stage and carry their own contrast surface. */
+  stageCard?: boolean;
+  scale?: number;
 }
 
 /** Two bounded slots per seat; no particles, queues, or per-note popups. */
@@ -73,13 +76,16 @@ export class AuraComicFeedback {
     if (![moveRise, streakRise].every(value => Number.isFinite(value) && value >= 0)) {
       throw new RangeError('Aura comic flight distances must be finite and nonnegative');
     }
+    const scale = anchor.scale ?? 1;
+    if (!Number.isFinite(scale) || scale <= 0) throw new RangeError('Aura comic scale must be finite and positive');
     const previous = this.anchors[slot];
     if (previous.x === anchor.x && previous.moveY === anchor.moveY && previous.streakY === anchor.streakY
       && (previous.moveRise ?? AURA_COMIC_LAYOUT.moveRise) === moveRise
       && (previous.streakRise ?? AURA_COMIC_LAYOUT.streakRise) === streakRise
-      && !!previous.docked === !!anchor.docked) return;
+      && !!previous.docked === !!anchor.docked
+      && !!previous.stageCard === !!anchor.stageCard && (previous.scale ?? 1) === scale) return;
     this.resetSlot(slot);
-    this.anchors[slot] = { x: anchor.x, moveY: anchor.moveY, streakY: anchor.streakY, moveRise, streakRise, docked: anchor.docked };
+    this.anchors[slot] = { x: anchor.x, moveY: anchor.moveY, streakY: anchor.streakY, moveRise, streakRise, docked: anchor.docked, stageCard: anchor.stageCard, scale };
   }
 
   /** Hide the waiting seat and discard late feedback without accumulating it.
@@ -126,6 +132,12 @@ export class AuraComicFeedback {
       this.currentMoves[slot] = name;
       const anchor = this.anchors[slot];
       const object = this.scene.add.container(anchor.x, anchor.moveY);
+      if (anchor.stageCard) {
+        const surface = this.scene.add.graphics();
+        surface.fillStyle(INK, 0.88).fillRoundedRect(-80, -84, 160, 218, 8);
+        surface.lineStyle(1, CREAM, 0.35).strokeRoundedRect(-80, -84, 160, 218, 8);
+        object.add(surface);
+      }
       const icon = this.scene.add.graphics().setPosition(0, -18);
       drawAuraComicIcon(icon, name);
       object.add([this.text(0, -72, 'MOVE', 10), icon]);
@@ -137,16 +149,22 @@ export class AuraComicFeedback {
         keys.lineStyle(1, CREAM, 0.35).strokeRoundedRect(x - 14, 95, 28, 30, 3);
         return this.text(x, 110, '·', 14);
       });
-      object.add([keys, ...labels]);
+      const pads = this.scene.add.graphics();
+      object.add([keys, pads, ...labels]);
       this.present(this.moves, slot, object, 1_800, 0);
-      this.trails[slot] = { phrase: input?.phrase ?? '', inputs: [], labels };
+      this.trails[slot] = { phrase: input?.phrase ?? '', inputs: [], labels, pads };
       if (changed) this.onMove?.(name);
     }
     if (!input) return;
     const current = this.trails[slot]!;
     current.inputs = [...current.inputs, input].slice(-4);
+    current.pads.clear();
     current.labels.forEach((label, index) => {
       const hit = current.inputs[index];
+      // Touch history repeats the actual coloured pads without keyboard letters.
+      if (hit && hit.key === '') {
+        current.pads.fillStyle(hit.tone, 1).fillRoundedRect(-63 + index * 34, 102, 24, 16, 2);
+      }
       label.setText(hit?.key ?? '·').setColor(hit ? `#${hit.tone.toString(16).padStart(6, '0')}` : '#fff4d6');
     });
     // A sustained phrase keeps one readable card. Each hit updates the history
@@ -184,6 +202,10 @@ export class AuraComicFeedback {
     const anchor = this.anchors[slot];
     const object = this.scene.add.container(anchor.x, anchor.streakY);
     const g = this.scene.add.graphics();
+    if (anchor.stageCard) {
+      g.fillStyle(INK, 0.88).fillRoundedRect(-80, -25, 160, 50, 8);
+      g.lineStyle(1, positive ? HEAT : CREAM, 0.35).strokeRoundedRect(-80, -25, 160, 50, 8);
+    }
     // Arrow direction encodes success/failure without relying on red vs white.
     const arrowX = anchor.docked ? -66 : -87, sign = positive ? -1 : 1;
     for (const [width, color] of [[6, INK], [2, positive ? HEAT : CREAM]]) {
@@ -205,6 +227,7 @@ export class AuraComicFeedback {
 
   private present(slots: [Bubble | null, Bubble | null], slot: AuraSlot, object: Phaser.GameObjects.Container, duration: number, rise: number): void {
     this.clear(slots, slot);
+    object.setScale(this.anchors[slot].scale ?? 1);
     this.layer.add(object);
     const release = () => { if (slots[slot]?.object === object) this.clear(slots, slot); };
     slots[slot] = { object, timer: this.scene.time.delayedCall(duration, release) };

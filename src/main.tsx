@@ -1,6 +1,6 @@
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ClerkProvider, useAuth, useUser } from '@clerk/react';
+import { ClerkProvider, useAuth, useUser, useClerk } from '@clerk/react';
 import { App } from './ui/App.tsx';
 import { AuthDock } from './ui/components/AuthDock.tsx';
 import { LoadingScreen } from './ui/components/LoadingScreen.tsx';
@@ -41,6 +41,7 @@ if (!rootEl) {
 }
 
 function ClerkSessionBridge() {
+  const { openSignIn } = useClerk();
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const { user } = useUser();
   const authReady = isLoaded && (!isSignedIn || Boolean(user?.id));
@@ -140,6 +141,7 @@ function ClerkSessionBridge() {
         isNewAccount={isNewAccount}
         userImageUrl={authReady && isSignedIn ? user?.imageUrl ?? null : null}
         authSlot={authDock}
+        onSignIn={() => { clearPostSignUpTrialIntent(); void openSignIn(); }}
         cacheStatus={cacheState.status}
         cacheMessage={cacheState.message}
         onRetryCache={() => setCacheAttempt((current) => current + 1)}

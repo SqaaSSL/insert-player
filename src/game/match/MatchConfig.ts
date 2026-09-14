@@ -83,6 +83,8 @@ export interface MatchSceneData {
   auraDifficulty?: AuraDifficultyId;
   /** Aura track id from AuraTracks.ts; omitted lets the seed pick one. */
   auraTrackId?: string;
+  /** Explicit offline quickplay cast; never an owned or online identity. */
+  auraTrialPreset?: 'trump-lamine';
   /** Unverified asynchronous social target; never an online/ranked result. */
   auraChallenge?: AuraChallenge;
   /**

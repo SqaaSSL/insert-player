@@ -38,7 +38,7 @@ describe('includedRookieStatus', () => {
 });
 
 describe('initialCreationTier', () => {
-  it('keeps Contender as the normal signed-in recommendation', () => {
+  it('keeps Champion as the normal signed-in recommendation', () => {
     expect(initialCreationTier(null, false)).toBe('contender');
   });
 
@@ -49,7 +49,7 @@ describe('initialCreationTier', () => {
 
   it('defaults an Aura entry to Rookie while preserving explicit quality choices', () => {
     expect(initialCreationTier(null, false, 'aura')).toBe('rookie');
-    expect(initialCreationTier('champion', false, 'aura')).toBe('champion');
+    expect(initialCreationTier('champion', false, 'aura')).toBe('contender');
   });
 
   it('does not unlock paid tiers through the URL while signed out', () => {

@@ -46,6 +46,7 @@ import { captureApiRequestContext } from '../../services/ApiClient.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { buildRosterFighterSections, isRosterFighterReadyForMode, type RosterFighterEntry } from './RosterPage.tsx';
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
+import { tierLabel } from '../shared/fighterPreview.ts';
 import {
   clearPendingVersusInvite,
   getOrCreateVersusGuestId,
@@ -237,7 +238,7 @@ function FighterPicker({ roster, status, selectedKey, disabled, guestMode = fals
               <FighterPreview entry={entry} className="online-versus__fighter-image" />
               <span className="online-versus__fighter-meta">
                 <strong>{entry.name}</strong>
-                <small>{entry.kind === 'arcade' ? 'Arcade' : 'Yours'} · {entry.qualityTier}</small>
+                <small>{entry.kind === 'arcade' ? 'Arcade' : 'Yours'} · {tierLabel(entry.qualityTier)}</small>
               </span>
             </button>
           </li>

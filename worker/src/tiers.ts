@@ -19,7 +19,21 @@ export type GenerationBillingOperation =
 
 export const SOURCE_RETRY_CREDIT_COST = 1;
 
+// Persisted ranks remain stable so older assets and paid jobs keep their identity.
 export const TIER_ORDER: QualityTier[] = ['rookie', 'contender', 'champion'];
+
+// `contender` is the existing refined workflow, now sold as Champion.
+export const OFFERED_TIER_ORDER = ['rookie', 'contender'] as const;
+export type OfferedQualityTier = typeof OFFERED_TIER_ORDER[number];
+
+export function isOfferedQualityTier(value: unknown): value is OfferedQualityTier {
+  return value === 'rookie' || value === 'contender';
+}
+
+export const RETIRED_TIER_ERROR = {
+  error: 'This quality option is no longer sold. Refresh and choose Rookie or Champion. Existing generations can still be resumed.',
+  code: 'generation_tier_retired',
+} as const;
 
 export const TIER_DEFINITIONS: Record<QualityTier, TierDefinition> = {
   rookie: {
@@ -34,7 +48,7 @@ export const TIER_DEFINITIONS: Record<QualityTier, TierDefinition> = {
   },
   contender: {
     id: 'contender',
-    label: 'Contender',
+    label: 'Champion',
     creditCost: 11,
     animationRetryCreditCost: 2,
     estimatedUsdCost: 7.88,

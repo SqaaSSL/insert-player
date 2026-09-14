@@ -21,6 +21,28 @@ describe('Aura character creation entry', () => {
     expect(markup).not.toContain('fighter-creation-flow');
   });
 
+  it('offers exactly Rookie and Champion and replaces an old Champion link with the current quote', () => {
+    const markup = renderAuraEntry('?package=aura&tier=champion', 'signed-in');
+    expect(markup.match(/name="fighter-quality-tier"/g)).toHaveLength(2);
+    expect(markup).toMatch(/name="fighter-quality-tier"[^>]*checked=""[^>]*value="contender"/);
+    expect(markup).toContain('Champion');
+    expect(markup).toContain('6 credits');
+    expect(markup).not.toContain('10 credits');
+    expect(markup).not.toContain('Contender');
+    expect(markup).not.toContain('value="champion"');
+    expect(markup).not.toContain('Gemini');
+    expect(markup).not.toContain('Flash');
+  });
+
+  it('keeps new combat creation on its available flow without a retired third offer', () => {
+    const markup = renderAuraEntry('?package=complete&tier=champion', 'signed-in');
+    expect(markup.match(/name="fighter-quality-tier"/g)).toHaveLength(2);
+    expect(markup).toMatch(/name="fighter-quality-tier"[^>]*checked=""[^>]*value="contender"/);
+    expect(markup).not.toContain('fighter-creation-flow');
+    expect(markup).toContain('11 credits');
+    expect(markup).not.toContain('18 credits');
+  });
+
   it('requires sign-in without promising an anonymous free Aura generation', () => {
     const markup = renderAuraEntry();
     expect(markup).toContain('Sign in / Join');

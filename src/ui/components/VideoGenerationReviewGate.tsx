@@ -22,7 +22,7 @@ interface VideoGenerationReviewGateProps {
   onContinue: (review: VideoSpriteReview) => void | Promise<void>;
   onFinalApproval: (review: VideoSpriteReview) => void | Promise<void>;
   onRejected?: (review: VideoSpriteReview) => void | Promise<void>;
-  onRestart?: (review: VideoSpriteReview | null) => void | Promise<void>;
+  onCreateNew?: () => void;
 }
 
 function actionLabel(action: string): string {
@@ -42,7 +42,7 @@ export function VideoGenerationReviewGate({
   onContinue,
   onFinalApproval,
   onRejected,
-  onRestart,
+  onCreateNew,
 }: VideoGenerationReviewGateProps) {
   const [review, setReview] = useState<VideoSpriteReview | null>(null);
   const [videoBlob, setVideoBlob] = useState<Blob | null>(null);
@@ -183,30 +183,22 @@ export function VideoGenerationReviewGate({
   };
 
   if (!review || !view) {
-    if (!review && fullRunRestartRequired && error && onRestart) {
+    if (!review && fullRunRestartRequired) {
       return (
         <section className="video-review" aria-live="polite">
           <header className="video-review__header">
             <div>
               <p className="gallery-eyebrow">Video Run Ended</p>
-              <h3>Restart Required</h3>
+              <h3>Saved in your gallery</h3>
             </div>
-            <span className="video-review__status is-rejected">Restart Required</span>
+            <span className="video-review__status is-rejected">Archived</span>
           </header>
           <p className="video-review__intro">
-            The provider run ended before a reviewable candidate was created. It will never be resubmitted with the same request key. Start a new complete paid Video run when you are ready.
+            This older creation option is no longer available. Your saved versions are safe. Create a new Rookie or Champion.
           </p>
-          <div className="video-review__actions">
-            <button
-              type="button"
-              disabled={disabled || !generationConsentAccepted}
-              onClick={() => { void onRestart?.(null); }}
-            >
-              {disabled ? 'Preparing New Run...' : generationConsentAccepted
-                ? 'Start A New Complete Video Run'
-                : 'Accept Terms To Start A New Run'}
-            </button>
-          </div>
+          {onCreateNew ? <div className="video-review__actions">
+            <button type="button" disabled={disabled} onClick={onCreateNew}>Create A New Character</button>
+          </div> : null}
         </section>
       );
     }
@@ -249,7 +241,7 @@ export function VideoGenerationReviewGate({
       onReject={() => { void reject(); }}
       onContinue={() => { void onContinue(review); }}
       onFinalSync={() => { void syncFinalFighter(); }}
-      onRestart={() => { void onRestart?.(review); }}
+      onCreateNew={onCreateNew}
     />
   );
 }

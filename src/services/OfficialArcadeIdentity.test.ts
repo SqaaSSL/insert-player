@@ -17,9 +17,10 @@ describe('official Arcade identity pipeline', () => {
     expect(geminiApiSource).toContain('Official licensed reference declined; skipping a duplicate paid retry.');
   });
 
-  it('keeps canonical identity artwork attached during scaffold and frame refinement', () => {
+  it('keeps canonical identity artwork attached during official scaffold and frame refinement', () => {
     expect(geminiApiSource).toContain('const primaryBase64 = characterBase64;');
-    expect(geminiApiSource).toContain("const extras = [{ data: cellBase64, mime: 'image/png' }];");
+    expect(geminiApiSource).toContain('const primaryBase64 = official ? characterBase64 : cellBase64;');
+    expect(geminiApiSource).toContain("const extras = official ? [{ data: cellBase64, mime: 'image/png' }] : [];");
     expect(geminiApiSource).toContain('IMAGE 1 is the canonical identity');
     expect(geminiApiSource).not.toContain('createIdentityFreePoseGuide');
     expect(geminiApiSource).not.toContain('written description only');

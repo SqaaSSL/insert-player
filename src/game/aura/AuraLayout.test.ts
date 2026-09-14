@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('phaser', () => ({ default: {} }));
 
+import { getAuraCanvasSize } from './AuraViewport.ts';
 import { auraComicAnchor, auraPerformerPlacement, auraPerformerTransform, createAuraLayout } from './AuraLayout.ts';
 
 describe('Aura stage layout', () => {
@@ -24,8 +25,8 @@ describe('Aura stage layout', () => {
     const laneXs = layout.laneOffsets.map(offset => layout.highwayX + offset);
     expect(laneXs).toHaveLength(4);
     expect(new Set(laneXs).size).toBe(4);
-    expect(laneXs[0] - 30).toBeGreaterThanOrEqual(0);
-    expect(laneXs[3] + 30).toBeLessThanOrEqual(width);
+    expect(laneXs[0] - layout.laneHalfWidth).toBeGreaterThanOrEqual(0);
+    expect(laneXs[3] + layout.laneHalfWidth).toBeLessThanOrEqual(width);
     for (let lane = 1; lane < laneXs.length; lane++) expect(laneXs[lane] - laneXs[lane - 1]).toBeGreaterThan(60);
   });
 
@@ -34,7 +35,7 @@ describe('Aura stage layout', () => {
     expect(layout.stage.y + layout.stage.height).toBeLessThan(layout.laneStartY);
     expect(layout.feedback.y).toBeGreaterThan(layout.stage.y + layout.stage.height);
     expect(layout.feedback.y).toBeLessThan(layout.laneStartY);
-    expect(layout.active).toEqual({ x: 240, footY: 494, height: 300, visible: true });
+    expect(layout.active).toEqual({ x: 216, footY: 494, height: 300, visible: true });
     expect(layout.inactive.visible).toBe(false);
   });
 
@@ -70,7 +71,8 @@ describe('Aura stage layout', () => {
     expect(auraPerformerPlacement(layout, 1, 1)).toBe(layout.active);
   });
 
-  it.each([[1024, 576], [576, 1024]])('docks either performer to the same move rail beside the instrument at %i×%i', (width, height) => {
+  it('keeps the desktop input history beside the instrument at the receptor height', () => {
+    const width = 1024, height = 576;
     const layout = createAuraLayout(width, height);
     const { moveRail, instrument } = layout;
     expect(auraComicAnchor(layout, 0)).toEqual(auraComicAnchor(layout, 1));
@@ -94,19 +96,50 @@ describe('Aura stage layout', () => {
     }
   });
 
-  it('moves the portrait feedback below the performer and preserves four usable touch columns', () => {
+  it('keeps compact portrait move and streak cards in the upper-right stage, away from labels and instrument', () => {
     const layout = createAuraLayout(576, 1024);
-    const laneCenters = layout.laneOffsets.map(offset => layout.highwayX + offset);
-    expect(laneCenters).toEqual([238, 326, 414, 502]);
-    expect(layout.moveRail.top).toBeGreaterThan(layout.stage.y + layout.stage.height);
-    expect(layout.instrument.right).toBeLessThan(layout.width);
-    const cellWidth = laneCenters[1] - laneCenters[0];
-    // The controls have 2px margins on each side; even a 320px-wide phone
-    // retains a 44px touch target without intruding into the move rail.
-    expect(cellWidth / layout.width * 320 - 4).toBeGreaterThanOrEqual(44);
-    expect(laneCenters[0] - cellWidth / 2).toBeGreaterThan(layout.moveRail.right);
-    expect(laneCenters.at(-1)! + cellWidth / 2).toBeLessThan(layout.width);
+    const rail = layout.moveRail;
+    const anchor = auraComicAnchor(layout, 0);
+    expect(anchor).toEqual(auraComicAnchor(layout, 1));
+    expect(anchor).toMatchObject({ docked: true, stageCard: true, moveRise: 0, streakRise: 0 });
+    expect(rail.top).toBeGreaterThan(layout.stage.y);
+    expect(rail.bottom).toBeLessThan(layout.stage.y + layout.stage.height);
+    expect(rail.bottom).toBeLessThan(layout.instrument.top);
+    // The performer label's maximum width is 256px. The pocket also leaves
+    // 200px to the right of the active mark for broad authored moves.
+    expect(rail.left).toBeGreaterThan(layout.performerLabel.x + 128);
+    expect(rail.left - layout.active.x).toBeGreaterThanOrEqual(200);
+    expect(anchor.x - 80 * anchor.scale).toBeGreaterThanOrEqual(rail.left);
+    expect(anchor.x + 80 * anchor.scale).toBeLessThanOrEqual(rail.right);
+    expect(anchor.moveY - 84 * anchor.scale).toBeGreaterThanOrEqual(rail.top);
+    expect(anchor.moveY + 134 * anchor.scale).toBeLessThan(anchor.streakY - 25 * anchor.scale);
+    expect(anchor.streakY + 25 * anchor.scale).toBeLessThan(rail.bottom);
   });
+
+  it.each([[320, 568], [390, 844], [432, 768], [767, 1024]])(
+    'fills the usable width with four lanes aligned to touch pads at %i×%i', (viewportWidth, viewportHeight) => {
+      const canvas = getAuraCanvasSize(viewportWidth, viewportHeight);
+      const layout = createAuraLayout(canvas.width, canvas.height);
+      expect(layout.portrait).toBe(true);
+      const centers = layout.laneOffsets.map(offset => layout.highwayX + offset);
+      expect(centers).toEqual([90, 222, 354, 486]);
+      const cellWidth = centers[1] - centers[0];
+      // Four evenly sized touch cells use the whole interior (24px per side).
+      expect(centers[0] - cellWidth / 2).toBe(24);
+      expect(centers[3] + cellWidth / 2).toBe(layout.width - 24);
+      expect(layout.laneHalfWidth * 2).toBe(cellWidth - 16);
+      expect(layout.instrument.left).toBe(20);
+      expect(layout.instrument.right).toBe(layout.width - 20);
+      const cssScale = Math.min(viewportWidth / canvas.width, viewportHeight / canvas.height);
+      expect(cellWidth * cssScale - 4).toBeGreaterThanOrEqual(44);
+      // Mirrored in styles.css: left 4.166667%, width 91.666667%, gap zero.
+      const renderedWidth = canvas.width * cssScale;
+      centers.forEach((center, lane) => {
+        const buttonCenter = renderedWidth * (0.04166667 + 0.91666667 * (lane + 0.5) / 4);
+        expect(Math.abs(buttonCenter - center * cssScale)).toBeLessThan(0.01);
+      });
+    },
+  );
 
   it.each([[1024, 576], [576, 1024]])('shows two separated equal bodies only for a shared finale at %i×%i', (width, height) => {
     const layout = createAuraLayout(width, height);

@@ -27,9 +27,12 @@ describe('creation draft checkout recovery', () => {
       .toEqual({ tier: 'rookie', creationPackage: 'aura', creationFlow: 'original' });
   });
 
-  it('restores a complete character’s Video choice but keeps dedicated Aura on Original', () => {
+  it('restores an unsent retired offer as the current Champion without starting a legacy Video run', () => {
     const draft = { file: new Blob(['photo']), fileName: 'player.png', name: 'Player', tier: 'champion', creationPackage: 'complete', creationFlow: 'video', savedAt: Date.now() } as const;
-    expect(restoreCreationChoices(draft, readCreationNavigationContext('?tier=champion&package=complete')).creationFlow).toBe('video');
+    expect(restoreCreationChoices(draft, readCreationNavigationContext('?tier=champion&package=complete')))
+      .toEqual({ tier: 'contender', creationPackage: 'complete', creationFlow: 'original' });
+    expect(draft.tier).toBe('champion');
+    expect(draft.creationFlow).toBe('video');
     expect(restoreCreationChoices(draft, readCreationNavigationContext('?package=aura')).creationFlow).toBe('original');
   });
 

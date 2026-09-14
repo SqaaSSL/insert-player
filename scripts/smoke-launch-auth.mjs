@@ -180,6 +180,11 @@ export async function forceFreshBrowserClerkToken() {
   return token;
 }
 
+export function browserClerkSessionIdentity() {
+  const session = globalThis.Clerk?.session;
+  return session ? { sessionId: session.id, userId: session.user?.id } : null;
+}
+
 function normalizedOauthProvider(provider) {
   return String(provider ?? '').toLowerCase().replace(/^oauth_/, '');
 }
@@ -229,9 +234,16 @@ async function captureFrontendSessionToken({
   frontendOrigin,
   role,
   artifactDir,
+  onSessionCreated,
 }) {
   const context = await browser.newContext();
   const page = await context.newPage();
+  let observedSession = false;
+  const observeSession = async () => {
+    if (!onSessionCreated || observedSession) return;
+    const identity = await page.evaluate(browserClerkSessionIdentity);
+    if (identity) { onSessionCreated(identity); observedSession = true; }
+  };
 
   try {
     const response = await page.goto(agentTaskUrl, {
@@ -249,6 +261,7 @@ async function captureFrontendSessionToken({
       undefined,
       { timeout: BROWSER_TIMEOUT_MS },
     );
+    await observeSession();
     return await page.evaluate(forceFreshBrowserClerkToken);
   } catch (error) {
     if (artifactDir) {
@@ -257,6 +270,9 @@ async function captureFrontendSessionToken({
     }
     throw error;
   } finally {
+    // A navigation/token failure may happen after Clerk created the session.
+    // Let the owner record that exact isolated-context identity for cleanup.
+    await observeSession().catch(() => {});
     await context.close();
   }
 }
@@ -296,7 +312,7 @@ async function loadProductionQaUsers(clerk, primaryUserId, cloneUserId) {
   return { primaryUser, cloneUser };
 }
 
-async function createAgentTaskBackedToken({
+export async function createAgentTaskBackedToken({
   clerk,
   browser,
   user,
@@ -304,24 +320,35 @@ async function createAgentTaskBackedToken({
   frontendOrigin,
   clerkIssuer,
   artifactDir,
+  agentName = 'insert-player-launch-smoke',
+  taskDescription = `Insert Player launch smoke (${role})`,
+  onTaskCreated,
+  onSessionCreated,
+  manageTaskCleanup = true,
 }) {
   let task = null;
   let consumed = false;
+  let observedSessionId;
   try {
     task = await clerk.agentTasks.create({
       onBehalfOf: { userId: user.id },
       permissions: '*',
-      agentName: 'insert-player-launch-smoke',
-      taskDescription: `Insert Player launch smoke (${role})`,
+      agentName,
+      taskDescription,
       redirectUrl: `${frontendOrigin}/menu`,
       sessionMaxDurationInSeconds: 15 * 60,
     });
+    onTaskCreated?.(task);
     const shortToken = await captureFrontendSessionToken({
       browser,
       agentTaskUrl: task.url,
       frontendOrigin,
       role,
       artifactDir,
+      onSessionCreated: onSessionCreated ? identity => {
+        onSessionCreated(identity);
+        observedSessionId = identity.sessionId;
+      } : undefined,
     });
     consumed = true;
     const { sessionId } = validateLaunchSmokeToken(shortToken, {
@@ -330,6 +357,9 @@ async function createAgentTaskBackedToken({
       clerkIssuer,
       allowMissingAuthorizedParty: true,
     });
+    if (onSessionCreated && sessionId !== observedSessionId) {
+      throw new Error('Agent Task token does not match the observed owned session.');
+    }
     const refreshed = await clerk.sessions.getToken(sessionId, undefined, TOKEN_TTL_SECONDS);
     validateLaunchSmokeToken(refreshed.jwt, {
       userId: user.id,
@@ -342,7 +372,7 @@ async function createAgentTaskBackedToken({
   } catch (error) {
     throw new Error(`Could not establish the ${role} Agent Task session: ${formatSmokeError(error)}`);
   } finally {
-    if (task && !consumed) {
+    if (task && !consumed && manageTaskCleanup) {
       await clerk.agentTasks.revoke(task.agentTaskId).catch((revokeError) => {
         console.error(`Could not revoke the unused ${role} Agent Task: ${formatSmokeError(revokeError)}`);
       });

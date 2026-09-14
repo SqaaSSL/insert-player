@@ -38,9 +38,9 @@ let props: Parameters<typeof AuraClipComposer>[0];
 let tree: ReactNode;
 const find = (predicate: (node: any) => boolean, node: any = tree): any => {
   if (!node) return undefined;
-  if (Array.isArray(node)) return node.map(child => find(predicate, child)).find(Boolean);
+  if (Array.isArray(node)) return node.map(child => find(predicate, child ?? null)).find(Boolean);
   if (typeof node !== 'object') return undefined;
-  return predicate(node) ? node : find(predicate, node.props?.children);
+  return predicate(node) ? node : find(predicate, node.props?.children ?? null);
 };
 const button = (text: string) => find(node => node.type === 'button' && node.props.children === text);
 const flush = () => {
@@ -69,6 +69,17 @@ afterEach(() => {
 });
 
 describe('explicit hosted battle publishing', () => {
+  it('leads compact results with one publishing action and keeps the public 30-day notice', () => {
+    props.compact = true; flush();
+    const root = tree as any;
+    expect(root.props.className).toBe('aura-clip-composer is-compact');
+    expect(find(node => node.type === 'details' || node.type === 'summary')).toBeUndefined();
+    expect(button('Create battle link')).toBeTruthy();
+    expect(button('Download video')).toBeUndefined();
+    expect(root.props.children[1].props.className).toBe('aura-clip-composer__actions');
+    expect(root.props.children[2].props.children).toBe('Public link · watch and download for 30 days.');
+    expect(prepareAuraClip).not.toHaveBeenCalled();
+  });
   it('never uploads on mount, ignores double clicks, and waits for a new click to open native URL share', async () => {
     let finish!: (value: AuraClip) => void;
     vi.mocked(uploadAuraClip).mockImplementation((_file, _intent, progress) => { progress(40); return new Promise(resolve => { finish = resolve; }); });
@@ -93,6 +104,17 @@ describe('explicit hosted battle publishing', () => {
     expect(verification.props.action).toBe('aura_share'); expect(prepareAuraClip).not.toHaveBeenCalled();
     verification.props.onTokenChange('verified'); await settle();
     expect(prepareAuraClip).toHaveBeenCalledWith(props.file, expect.any(String), 'verified');
+  });
+  it('keeps verification cancellable in compact results without reserving or uploading', async () => {
+    props.compact = true; vi.stubEnv('VITE_TURNSTILE_SITE_KEY', 'site-key'); flush();
+    button('Create battle link').props.onClick(); await settle();
+    expect(find(node => node.type === TurnstileChallenge)).toBeTruthy();
+    button('Cancel publishing').props.onClick(); flush();
+    expect(find(node => node.type === TurnstileChallenge)).toBeUndefined();
+    expect(button('Create battle link')).toBeTruthy();
+    expect(props.onLockChange).toHaveBeenLastCalledWith(false);
+    expect(prepareAuraClip).not.toHaveBeenCalled();
+    expect(uploadAuraClip).not.toHaveBeenCalled();
   });
   it('recovers the existing ready clip after losing the upload response, without reserving or uploading again', async () => {
     vi.mocked(uploadAuraClip).mockRejectedValueOnce(new Error('Network lost')); flush();

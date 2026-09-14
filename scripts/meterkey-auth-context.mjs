@@ -6,6 +6,7 @@ import { scryptSync } from 'node:crypto';
 const REQUIRED_PROVIDERS = ['fal', 'google-ai-studio'];
 const REQUIRED_MODELS = [
   'bytedance/seedream/v5/pro/edit',
+  'fal-ai/birefnet',
   'fal-ai/lyria3/pro',
   'gemini-3-pro-image',
   'gemini-3.1-flash-image',

@@ -33,8 +33,19 @@ describe('provider isolation', () => {
   it('keeps the approved Gemini implementation byte-for-byte untouched', async () => {
     // These hashes are deliberate safety fuses. Updating one requires an
     // explicit Gemini-specific review; provider work must never update them.
+    // Reviewed 2026-09-13: sprite scaffolds request the supported aspect ratio
+    // nearest their grid; normal refinement edits the pose first and fails closed
+    // on missing refined keyframes or base-cell fallback. Models, official prompts,
+    // source requests and provider policy stay fixed. SpriteAspectRatio,
+    // PosePrimaryRefinement and RefinedKeyframes tests cover these reviewed changes.
+    // The same reviewed-frame composition tail is now shared with selective repair;
+    // this extraction changes no model, request or normalization behavior.
+    // Normal single-frame restoration then removes animation semantics from its
+    // prompt and requests the pose canvas aspect ratio; official requests remain fixed.
+    // Reviewed pose-only restoration now supplies exactly that pose image, avoiding
+    // a competing canonical stance; model, safety retry and official path stay fixed.
     await expect(sha256Text(geminiApiSource)).resolves.toBe(
-      'f78c0c3db871abe91227e619dfdeb78b79f7a85a523aa88388d6fce9da4c4654',
+      '0ee856e3453ad70fde34cb4b17dc5772e7f02e3ffac8bc074ee489b41d1c7795',
     );
     await expect(sha256Text(geminiRequestPolicySource)).resolves.toBe(
       '49aa2840a510538852fbfb68ac310bbcd78c7403d8fab53d3b9ac9c59eb4d37b',

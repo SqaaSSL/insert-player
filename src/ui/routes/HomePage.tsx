@@ -35,7 +35,7 @@ import { includedRookieStatus } from '../shared/rookieEntitlement.ts';
 import { quoteGenerationPackage } from '../../services/GenerationPackages.ts';
 import { readProductEvents } from '../../services/ProductEvents.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
-import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
+import { QUALITY_TIERS, offeredQualityTier } from '../../services/QualityTiers.ts';
 import type { CreationPurchaseIntent } from '../shared/onboardingFlow.ts';
 
 interface HomePageProps extends AuthRouteState {
@@ -289,7 +289,9 @@ export function HomePage({
     : rookieStatus === 'credits'
       ? 'Climb the ladder: 13 challengers, 3 continues.'
       : 'Create a fighter and climb the machine roster.';
-  const purchaseTier = QUALITY_TIERS.find((item) => item.id === creationPurchaseIntent?.tier) ?? null;
+  const purchaseTier = creationPurchaseIntent
+    ? QUALITY_TIERS.find((item) => item.id === offeredQualityTier(creationPurchaseIntent.tier)) ?? null
+    : null;
   const purchaseQuote = purchaseTier ? quoteGenerationPackage(purchaseTier.id, creationPurchaseIntent?.creationPackage ?? 'complete') : null;
   const purchaseCreditsNeeded = purchaseTier && billingProfile
     ? Math.max(0, purchaseQuote!.creditCost - billingProfile.creditsBalance)

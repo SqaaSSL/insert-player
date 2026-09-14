@@ -12,6 +12,10 @@ export interface AuraCameraInput {
   transitionProgress?: number;
   /** Present only for the finale. Zero starts from the exact current framing. */
   finaleProgress?: number;
+  /** Use the compact victory/defeat framing. Intro faceoffs keep their size. */
+  resultTableau?: boolean;
+  /** Move the finished tableau beside the controls only after capture stops. */
+  resultDockProgress?: number;
   reducedMotion?: boolean;
 }
 
@@ -80,8 +84,13 @@ export function auraCameraComposition(layout: AuraLayout, input: AuraCameraInput
   if (finale) {
     const finaleEase = ease(finaleProgress);
     focusX = mix(focusX, distance / 2, finaleEase);
-    anchorX = mix(anchorX, layout.width / 2, finaleEase);
-    zoom = mix(zoom, layout.portrait ? 230 / layout.active.height : 0.96, finaleEase);
+    const result = input.resultTableau === true;
+    const dock = result && !layout.portrait ? ease(reducedMotion && input.resultDockProgress !== undefined
+      ? 1 : input.resultDockProgress ?? 0) : 0;
+    const finalAnchor = mix(layout.width / 2, layout.width * 0.28, dock);
+    const finalHeight = result ? layout.portrait ? 260 : 270 : layout.portrait ? 230 : layout.active.height * 0.96;
+    anchorX = mix(anchorX, finalAnchor, finaleEase);
+    zoom = mix(zoom, finalHeight / layout.active.height, finaleEase);
     alphas = [mix(alphas[0], 1, finaleEase), mix(alphas[1], 1, finaleEase)];
   }
 

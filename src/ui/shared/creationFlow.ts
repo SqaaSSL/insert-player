@@ -2,29 +2,9 @@ import {
   generationCreationFlowOrDefault,
   type GenerationCreationFlow,
 } from '../../services/GenerationCreationFlow.ts';
-import type { QualityTier } from '../../services/QualityTiers.ts';
 import type { GenerationJob } from '../../services/GenerationJobs.ts';
-import type { AuthStatus } from '../authState.ts';
 
 export type CreationFlow = GenerationCreationFlow;
-
-export interface VideoCreationFlowAvailability {
-  available: boolean;
-  reason?: string;
-}
-
-export function videoCreationFlowAvailability(
-  authStatus: AuthStatus,
-  tier: QualityTier,
-): VideoCreationFlowAvailability {
-  if (authStatus !== 'signed-in') {
-    return { available: false, reason: 'Sign in to use the cloud Video flow.' };
-  }
-  if (tier !== 'champion') {
-    return { available: false, reason: 'Choose Champion quality to use Video.' };
-  }
-  return { available: true };
-}
 
 export function creationFlowForResume(value: unknown): CreationFlow {
   return generationCreationFlowOrDefault(value);
@@ -59,6 +39,11 @@ export function isVideoReviewOrRestartJob(job: VideoRosterJobState): boolean {
   );
 }
 
+/** Archived terminal runs stay in the gallery without trapping new character creation. */
+export function isRecoverableVideoReviewJob(job: VideoRosterJobState): boolean {
+  return isVideoReviewOrRestartJob(job) && !job.fullRunRestartRequired && job.reviewStatus !== 'rejected';
+}
+
 export function isVideoResumableJob(job: VideoRosterJobState): boolean {
   return job.creationFlow === 'video' && job.operation === 'fighter_generation' &&
     (job.status === 'failed' || job.status === 'cancelled') && job.resumable;
@@ -67,21 +52,14 @@ export function isVideoResumableJob(job: VideoRosterJobState): boolean {
 export function videoReviewJobNeedsConsent(
   job: Pick<GenerationJob, 'fullRunRestartRequired' | 'reviewStatus' | 'resumable'> | null,
 ): boolean {
-  return Boolean(job && (
-    job.fullRunRestartRequired ||
-    job.reviewStatus === 'rejected' ||
-    (job.reviewStatus === 'approved' && job.resumable)
-  ));
+  return Boolean(job && !job.fullRunRestartRequired && job.reviewStatus === 'approved' && job.resumable);
 }
 
 export function videoReviewDecisionNeedsConsent(
   review: { status: string; continuationAvailable: boolean } | null,
   fullRunRestartRequired = false,
 ): boolean {
-  return fullRunRestartRequired || Boolean(review && (
-    review.status === 'rejected' ||
-    (review.status === 'approved' && review.continuationAvailable)
-  ));
+  return !fullRunRestartRequired && Boolean(review && review.status === 'approved' && review.continuationAvailable);
 }
 
 export function durableRecoveryFailureNeedsRetry(
