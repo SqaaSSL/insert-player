@@ -7,12 +7,28 @@ destination: website-embed
 aspect: 1920x1080
 language: en
 audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
-length: 40.15s
+length: 36.9s
 angle: "Aura farming is the core product, not one of three equal games"
 narration: "A concise product explanation ending with the arcade-announcer lockup"
 ---
 
-## Current Revision: Aura First v22 (2026-09-12)
+## Current Revision: Alternating Aura v24 (2026-09-14)
+
+The user approved v23 with two changes: alternate Trump and Rosalia more often,
+and remove the Aura reprise after Fight/Rush. All other creative choices stay.
+
+- Ten native HyperFrames cuts, 1.6-2 seconds each, strictly alternate performers.
+  Five distinct actions each, no reused source frames, waiting or full-turn blocks.
+- Keep 18.5 seconds of Aura first. Fight/Rush and their loading stay unchanged.
+- Rush leads directly into the existing five-second end card, starting at 31.9s.
+  The film now lasts 36.9s, including the original 0.25s closing reveal.
+- Remove only "Then get back to farming Aura" and move the approved closing
+  voice earlier. No new TTS, changed speaking speed, music loop or inference.
+- Original Neon Arena stays continuous. Recalculate the same 0.25-strength
+  voice carve against the edited voice; terminal fade only at 36.6-36.9s.
+- Preview v24 before final export/publication. Preserve v23 and all older assets.
+
+## Previous Revision: Aura First v22 (2026-09-12)
 
 The user clarified the PRODUCT HIERARCHY, not just screen-time allocation:
 Aura farming is the main reason to visit Insert Player. Fight and Rush are

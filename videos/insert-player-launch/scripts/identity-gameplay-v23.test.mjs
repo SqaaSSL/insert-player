@@ -7,7 +7,8 @@ import { createHash } from 'node:crypto';
 
 const root = resolve(import.meta.dirname, '..');
 const manifest = JSON.parse(readFileSync(resolve(root, 'provenance/identity-gameplay-v23-review.json')));
-const html = readFileSync(resolve(root, 'index.html'), 'utf8');
+// v23 is preserved history; v24 intentionally changes its edit and voice timing.
+const html = execFileSync('git', ['show', '718de2c:videos/insert-player-launch/index.html'], { encoding: 'utf8', cwd: root });
 const approved = execFileSync('git', ['show', '1cc0ba6:videos/insert-player-launch/index.html'], { encoding: 'utf8', cwd: root });
 const hash = path => createHash('sha256').update(readFileSync(resolve(root, path))).digest('hex');
 
