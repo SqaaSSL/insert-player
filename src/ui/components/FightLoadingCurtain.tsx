@@ -3,6 +3,7 @@ import { RUNTIME_READY_EVENT } from '../../game/match/MatchConfig.ts';
 import { BrandMark } from './BrandMark.tsx';
 import { useFighterPortrait, type FighterPortraitPreference } from '../shared/useFighterPortrait.ts';
 import { AURA_PRESENTATION_EVENT } from '../../game/aura/AuraPresentationEvents.ts';
+import { AURA_LANES } from '../../game/aura/AuraLanes.ts';
 import {
   AURA_DEFAULT_LANE_KEYS,
   type AuraLaneKeys,
@@ -84,10 +85,9 @@ function AuraLoadingLayout({
           <h2>{stageLabel.toUpperCase()}</h2>
           <p>{stageDescription ?? 'Take the camera, hit the four lanes, and protect your aura.'}</p>
           <div className="aura-loader__lanes" aria-label="Four rhythm lanes">
-            <span>●<small>{auraLaneKeys[0]}</small></span>
-            <span>◆<small>{auraLaneKeys[1]}</small></span>
-            <span>■<small>{auraLaneKeys[2]}</small></span>
-            <span>▲<small>{auraLaneKeys[3]}</small></span>
+            {AURA_LANES.map((lane, index) => <span key={lane.name} aria-label={`${lane.name} lane, ${lane.position}`}>
+              <i aria-hidden="true" /><small>{auraLaneKeys[index]}</small>
+            </span>)}
           </div>
           <dl className="aura-loader__rules">
             <div><dt>FORMAT</dt><dd>ALTERNATING TURNS</dd></div>

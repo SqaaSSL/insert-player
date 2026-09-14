@@ -5,7 +5,7 @@ import {
 } from '../../services/CloudFighters.ts';
 import { isTemplateOnlyFighterIdentity } from '../../services/PlayableFighterAssets.ts';
 import type { CachedMeta } from '../../services/SpriteCache.ts';
-import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
+import { tierLabel } from '../shared/fighterPreview.ts';
 import { isArcadeCachedMeta } from '../shared/fighterPreview.ts';
 import { cachedArcadeSlug, findCachedArcadeMeta } from '../shared/galleryArcadeRoster.ts';
 import { ownedRosterMetas } from '../shared/arcadeRosterIdentity.ts';
@@ -111,10 +111,6 @@ export function distinctArcadeAnimationCount(fighter: CloudFighter): number {
       .map((sprite) => sprite.animationName.trim())
       .filter(Boolean),
   ).size;
-}
-
-function tierLabel(tier: CloudFighter['qualityTier'] | CachedMeta['qualityTier']): string {
-  return QUALITY_TIERS.find((definition) => definition.id === tier)?.label ?? 'Contender';
 }
 
 function animationLabel(count: number): string {

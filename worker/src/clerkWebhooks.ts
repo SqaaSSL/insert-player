@@ -210,6 +210,10 @@ async function deleteClerkUserDatabaseRows(
     // Revoke immediately; maintenance durably deletes the associated R2 clips.
     env.DB.prepare(`UPDATE aura_clips SET status = 'revoked', owner_user_id = NULL,
       expires_at = ? WHERE owner_user_id = ?`).bind(new Date().toISOString(), internalUserId),
+    env.DB.prepare(`UPDATE battle_media SET status = 'revoked', published = 0, owner_user_id = NULL,
+      summary_json = '{}', updated_at = ? WHERE owner_user_id = ?`).bind(new Date().toISOString(), internalUserId),
+    env.DB.prepare(`UPDATE battle_finisher_jobs SET status = CASE WHEN status = 'ready' THEN 'ready' ELSE 'failed' END,
+      owner_user_id = NULL, error_code = 'account_removed', updated_at = ? WHERE owner_user_id = ?`).bind(new Date().toISOString(), internalUserId),
     env.DB.prepare('DELETE FROM users WHERE clerk_user_id = ?').bind(clerkUserId),
     env.DB.prepare(`
       INSERT OR IGNORE INTO clerk_webhook_events (id, event_type)

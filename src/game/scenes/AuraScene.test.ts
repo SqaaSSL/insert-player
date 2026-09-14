@@ -10,6 +10,7 @@ import { AURA_CAMERA_FINALE_MS, AURA_CAMERA_HANDOFF_MS } from '../aura/AuraCamer
 import { AuraBattle } from '../aura/AuraBattle.ts';
 import { AuraRecorder } from '../aura/AuraRecording.ts';
 import { AuraVideoRecorder, type AuraVideoRecording } from '../aura/AuraVideoRecorder.ts';
+import { BattleCaptureSession, BATTLE_CAPTURE_EVENT } from '../match/BattleCapture.ts';
 import { createAuraChart } from '../aura/AuraChart.ts';
 import { DEFAULT_AURA_TRACK } from '../aura/AuraTracks.ts';
 import { AURA_DEFAULT_LANE_KEYS, AURA_LOCAL_P1_LANE_KEYS, AURA_LOCAL_P2_LANE_KEYS } from '../aura/AuraConfig.ts';
@@ -20,6 +21,7 @@ import { AURA_PLAZA_ASSET_PATH, DEFAULT_AURA_STAGE_ID, getStageTheme } from '../
 import type { MatchSceneData } from '../match/MatchConfig.ts';
 import { AURA_ANIMATION_NAMES } from '../../services/FighterAssetPacks.ts';
 import type { LoadedAuraAnimationPack } from '../aura/AuraSpriteLoader.ts';
+import { AuraPerformanceView } from '../aura/AuraPerformanceView.ts';
 
 const assetLoaders = vi.hoisted(() => ({ aura: vi.fn(), combat: vi.fn() }));
 vi.mock('../sprites/AiSpriteLoader.ts', () => ({ loadAiSprites: assetLoaders.combat }));
@@ -89,6 +91,17 @@ describe('AuraScene stage defaults and authored floor', () => {
     expect(backdrop.displayWidth).toBeGreaterThanOrEqual(layout.stage.width);
     expect(backdrop.x).toBe(layout.stage.width / 2);
 
+    scene.startup = null;
+    scene.cameraComposition = () => ({ backdropOffsetX: 0, backdropScale: 1.14 });
+    const base = { ...scene.stageFrame };
+    scene.applyBackdropComposition();
+    expect(backdrop.y - backdrop.displayHeight / 2).toBeLessThanOrEqual(1e-8);
+    expect(backdrop.y + 0.32 * backdrop.displayHeight).toBeCloseTo(layout.active.footY, 10);
+    scene.startup = new AuraStartup();
+    scene.applyBackdropComposition();
+    expect(backdrop.displayWidth).toBeCloseTo(base.width * 1.14, 10);
+    expect(backdrop.displayHeight).toBeCloseTo(base.height * 1.14, 10);
+
     scene.customStageTextureKey = 'photo-stage';
     scene.layoutStage();
     expect(backdrop.y + backdrop.displayHeight / 2).toBeCloseTo(layout.active.footY + 60, 10);
@@ -106,16 +119,17 @@ function harness(withPack = true) {
   const fighters = [new Fighter(0, 'P1', 250, true), new Fighter(1, 'P2', 774, false)];
   fighters.forEach(fighter => { vi.spyOn(fighter, 'forceState'); vi.spyOn(fighter, 'update'); });
   const views = fighters.map(() => ({
-    sprite: { setTintFill: vi.fn(), setTint: vi.fn(), clearTint: vi.fn(), setAlpha: vi.fn() },
-    shadowSprite: { setAlpha: vi.fn() }, syncSprite: vi.fn(), setRenderPresentation: vi.fn(),
+    sprite: { setTintFill: vi.fn(), setTint: vi.fn(), clearTint: vi.fn(), setAlpha: vi.fn(), setVisible: vi.fn() },
+    shadowSprite: { setAlpha: vi.fn(), setVisible: vi.fn() }, syncSprite: vi.fn(), setRenderPresentation: vi.fn(),
     getVisibleTopCenter: vi.fn(() => ({ x: 250, y: 220 })),
   }));
   const scene = Object.assign(Object.create(AuraScene.prototype), {
     layout: createAuraLayout(), applyPerformerLayout: vi.fn(), fitHudText: vi.fn(), emitPresentationTurn: vi.fn(),
     matchData: {}, p1Name: 'P1', p2Name: 'P2', performerNameText: controlText(),
     fighters, views, auraPerformanceViews: withPack ? [performance, waiting] : [null, null],
+    authoredFinaleAvailable: [false, false],
     activePerformerSlot: 0, matchFinished: false,
-    cameraFocusSlot: 0, cameraFromSlot: 0, cameraTransitionMs: AURA_CAMERA_HANDOFF_MS, finaleElapsedMs: null, stageFrame: null,
+    cameraFocusSlot: 0, cameraFromSlot: 0, cameraTransitionMs: AURA_CAMERA_HANDOFF_MS, finaleElapsedMs: null, resultDockElapsedMs: null, stageFrame: null,
     canaryPerformanceOverride: 'aura_six_seven',
     noteById: new Map([['n1', { id: 'n1', beat: 0.5, turnIndex: 0 }]]),
     chart: { turns: [{ round: 0, slot: 0, startMs: 0, endMs: 10_000 }], beatMs: 500, beatOffsetMs: 0 },
@@ -206,6 +220,7 @@ describe('AuraScene loaded performer eligibility', () => {
     assetLoaders.combat.mockResolvedValue(false);
     await expect(scene.loadFighters(1)).resolves.toBeUndefined();
     expect(scene.auraAnimationPacks).toEqual(packs);
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
     expect(packs.every(pack => !pack.animations.has('aura_shrug'))).toBe(true);
   });
 
@@ -218,6 +233,43 @@ describe('AuraScene loaded performer eligibility', () => {
     expect(assetLoaders.aura).toHaveBeenNthCalledWith(2, scene, 'fighter_p2', null, expect.any(Function),
       { id: 'template-zero', tint: 0x8cdeff });
     expect(assetLoaders.combat).not.toHaveBeenCalled();
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
+  });
+
+  it.each([
+    { animations: ['idle', 'victory', 'ko'], loaded: true, expected: true },
+    { animations: ['idle', 'victory'], loaded: true, expected: false },
+    { animations: ['idle', 'ko'], loaded: true, expected: false },
+    { animations: ['idle'], loaded: true, expected: false },
+    { animations: ['victory', 'ko'], loaded: false, expected: false },
+  ])('uses genuine finale poses only after both native sources loaded: $animations, loaded=$loaded', async ({ animations, loaded, expected }) => {
+    const scene = loadingScene();
+    assetLoaders.aura.mockResolvedValue(loadedAuraPack());
+    assetLoaders.combat.mockImplementation((_scene, key, _hash, _isCurrent, onLoaded) => {
+      onLoaded(new Set(key === 'fighter_p1' ? animations : ['idle']));
+      return Promise.resolve(key === 'fighter_p1' ? loaded : true);
+    });
+    await scene.loadFighters(1);
+    expect(scene.authoredFinaleAvailable).toEqual([expected, false]);
+  });
+
+  it('resets finale metadata on reinitialization and ignores old successful loads', async () => {
+    const scene = loadingScene();
+    scene.authoredFinaleAvailable = [true, true];
+    let finish!: (pack: LoadedAuraAnimationPack) => void;
+    assetLoaders.aura.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    assetLoaders.combat.mockImplementation((_scene, _key, _hash, _isCurrent, onLoaded) => {
+      onLoaded(new Set(['victory', 'ko']));
+      return Promise.resolve(true);
+    });
+    const loading = scene.loadFighters(1);
+    scene.init({ gameMode: 'aura', p1Name: 'NOVA', p2Name: 'BYTE' });
+    scene.lifecycleEpoch = 2;
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
+    finish(loadedAuraPack());
+    await loading;
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
+    expect(scene.auraAnimationPacks).toEqual([null, null]);
   });
 
   it('does not report missing performers or store late packs after a scene has ended', async () => {
@@ -230,6 +282,7 @@ describe('AuraScene loaded performer eligibility', () => {
     resolveLoad(null);
     await expect(loading).resolves.toBeUndefined();
     expect(scene.auraAnimationPacks).toEqual([null, null]);
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
   });
 });
 
@@ -780,12 +833,14 @@ describe('AuraScene actual action recording integration', () => {
       comicFeedback: { destroy: vi.fn() }, auraPerformanceViews: [null, null], auraAnimationPacks: [null, null],
       soundManager: { destroy: vi.fn(), pauseBattleMusic: vi.fn() },
       keyBindings: [], onlineUnsubscribe: [unsubscribe], online: null, customStageTextureKey: null,
+      authoredFinaleAvailable: [true, true],
     });
     const completion = scene.finishVideoCapture(1);
     scene.onLifecycleEnd();
     expect(oldVideo.destroy).toHaveBeenCalledOnce();
     expect(scene.videoRecorder).toBeNull();
     expect(scene.actionRecorder).toBeNull();
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(scene.lifecycleEpoch).toBe(2);
     expect(scene.presentationReady).toBe(false);
@@ -815,6 +870,7 @@ function controlText() {
     setFontSize: vi.fn().mockReturnThis(),
     setOrigin: vi.fn().mockReturnThis(),
     setScale(value: number) { this.scale = value; return this; },
+    setAlpha: vi.fn().mockReturnThis(),
   };
 }
 
@@ -872,13 +928,39 @@ function controlsHarness(options: { isVsAI?: boolean; cpuVsCpu?: boolean; online
 }
 
 describe('AuraScene persistent controls', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it('removes keyboard hints for a coarse pointer even in a desktop-sized canvas', () => {
+    vi.stubGlobal('window', { matchMedia: (query: string) => ({ matches: query === '(pointer: coarse)' }) });
+    const scene = controlsHarness();
+    scene.updateTurnPresentation(0);
+    expect(scene.laneKeyTexts.every((text: ReturnType<typeof controlText>) => !text.visible)).toBe(true);
+    expect(scene.highwayMetaText.text).toBe('YOUR TURN · TAP ON BEAT');
+    expect(scene.highwayTitleText.text).toBe('YOUR TURN');
+    scene.updateTurnPresentation(-1);
+    expect(scene.highwayMetaText.text).toBe('GET READY · TAP THE COLOURS');
+  });
+
+  it('unmistakably dims rival targets, then restores them when the player takes over', () => {
+    const scene = controlsHarness();
+    scene.updateTurnPresentation(1);
+    expect(scene.highwayTitleText.text).toBe('RIVAL’S TURN');
+    expect(scene.targetGraphics.setAlpha).toHaveBeenLastCalledWith(0.2);
+    expect(scene.laneGraphics.setAlpha).toHaveBeenLastCalledWith(0.55);
+    expect(scene.highwayMetaText.text).toBe('WATCH · CONTROLS OFF');
+    for (const label of scene.laneKeyTexts) expect(label.setAlpha).toHaveBeenLastCalledWith(0.2);
+    scene.updateTurnPresentation(0);
+    expect(scene.highwayTitleText.text).toBe('YOUR TURN');
+    expect(scene.targetGraphics.setAlpha).toHaveBeenLastCalledWith(1);
+    expect(scene.laneGraphics.setAlpha).toHaveBeenLastCalledWith(1);
+    for (const label of scene.laneKeyTexts) expect(label.setAlpha).toHaveBeenLastCalledWith(1);
+  });
   it.each([
-    { title: 'human turn', options: {}, turn: 0, keys: AURA_DEFAULT_LANE_KEYS, hint: 'YOUR TURN · HIT THE SHAPES' },
-    { title: 'CPU turn', options: {}, turn: 1, keys: AURA_DEFAULT_LANE_KEYS, hint: 'CPU TURN · GET READY' },
+    { title: 'human turn', options: {}, turn: 0, keys: AURA_DEFAULT_LANE_KEYS, hint: 'YOUR TURN · HIT ON BEAT' },
+    { title: 'CPU turn', options: {}, turn: 1, keys: AURA_DEFAULT_LANE_KEYS, hint: 'WATCH · CONTROLS OFF' },
     { title: 'local P1', options: { isVsAI: false }, turn: 0, keys: AURA_LOCAL_P1_LANE_KEYS, hint: 'P1 TURN · A S D F' },
     { title: 'local P2', options: { isVsAI: false }, turn: 1, keys: AURA_LOCAL_P2_LANE_KEYS, hint: 'P2 TURN · J K L ;' },
-    { title: 'online local P2', options: { online: { localSlot: 1 as const } }, turn: 1, keys: AURA_DEFAULT_LANE_KEYS, hint: 'YOUR TURN · HIT THE SHAPES' },
-    { title: 'online rival', options: { online: { localSlot: 1 as const } }, turn: 0, keys: AURA_DEFAULT_LANE_KEYS, hint: 'RIVAL TURN · GET READY' },
+    { title: 'online local P2', options: { online: { localSlot: 1 as const } }, turn: 1, keys: AURA_DEFAULT_LANE_KEYS, hint: 'YOUR TURN · HIT ON BEAT' },
+    { title: 'online rival', options: { online: { localSlot: 1 as const } }, turn: 0, keys: AURA_DEFAULT_LANE_KEYS, hint: 'WATCH · CONTROLS OFF' },
     { title: 'watch CPU 1', options: { cpuVsCpu: true }, turn: 0, keys: ['1', '2', '3', '4'], hint: 'AUTO · CPU 1 TURN' },
     { title: 'watch CPU 2', options: { cpuVsCpu: true }, turn: 1, keys: ['1', '2', '3', '4'], hint: 'AUTO · CPU 2 TURN' },
   ])('keeps aligned, high-contrast lane references for $title', ({ options, turn, keys, hint }) => {
@@ -901,7 +983,7 @@ describe('AuraScene persistent controls', () => {
     scene.updateTurnPresentation(1);
     expect(scene.laneKeyTexts.map((text: ReturnType<typeof controlText>) => text.text)).toEqual(AURA_DEFAULT_LANE_KEYS);
     expect(scene.laneKeyTexts.every((text: ReturnType<typeof controlText>) => text.visible)).toBe(true);
-    expect(scene.highwayMetaText.text).toBe('CPU TURN · GET READY');
+    expect(scene.highwayMetaText.text).toBe('WATCH · CONTROLS OFF');
     scene.updateTurnPresentation(2);
     expect(scene.laneKeyTexts.every((text: ReturnType<typeof controlText>) => !text.visible)).toBe(true);
     expect(scene.highwayMetaText.visible).toBe(false);
@@ -951,7 +1033,11 @@ function cameraHarness(width = 1024, height = 576) {
       setDisplaySize(displayWidth: number, displayHeight: number) { Object.assign(this, { displayWidth, displayHeight }); return this; },
     },
   });
-  scene.views.forEach((view: Record<string, unknown>, slot: number) => { view.getIdleBodyReference = () => bodies[slot]; });
+  scene.views.forEach((view: any, slot: number) => {
+    view.getIdleBodyReference = () => bodies[slot];
+    view.getVisibleTopCenter.mockReturnValue({ x: bodies[slot].rootX, y: 220 });
+    scene.auraPerformanceViews[slot]?.getVisibleTopCenter.mockReturnValue({ x: bodies[slot].rootX, y: 220 });
+  });
   scene.playerTags.forEach((tag: Record<string, unknown>) => { tag.setVisible = vi.fn(); });
   Object.assign(scene.comicFeedback, { setAnchor: vi.fn(), setSlotVisible: vi.fn() });
   scene.layoutStage();
@@ -1055,12 +1141,18 @@ describe('AuraScene responsive whole-rig layout', () => {
   });
 
   it.each([
-    { winner: 'p1', scoringSlot: 0, reducedMotion: false },
-    { winner: 'p2', scoringSlot: 1, reducedMotion: false },
-    { winner: 'draw', scoringSlot: null, reducedMotion: false },
-    { winner: 'p1', scoringSlot: 0, reducedMotion: true },
-  ])('reunites both bodies for $winner with winner/defeat poses and a readable finale, reduced=$reducedMotion', ({ winner, scoringSlot, reducedMotion }) => {
+    { winner: 'p1', scoringSlot: 0, reducedMotion: false, authored: [false, false] },
+    { winner: 'p2', scoringSlot: 1, reducedMotion: false, authored: [false, false] },
+    { winner: 'draw', scoringSlot: null, reducedMotion: false, authored: [false, false] },
+    { winner: 'p1', scoringSlot: 0, reducedMotion: true, authored: [false, false] },
+    { winner: 'p1', scoringSlot: 0, reducedMotion: false, authored: [true, true] },
+    { winner: 'p2', scoringSlot: 1, reducedMotion: false, authored: [true, false] },
+    { winner: 'p1', scoringSlot: 0, reducedMotion: true, authored: [true, false] },
+    { winner: 'draw', scoringSlot: null, reducedMotion: false, authored: [true, true] },
+  ])('reunites both bodies for $winner with readable finale, reduced=$reducedMotion, authored=$authored', async ({ winner, scoringSlot, reducedMotion, authored }) => {
     vi.useFakeTimers();
+    let finishRecording!: () => void;
+    const recordingCompletion = new Promise<void>(resolve => { finishRecording = resolve; });
     const dispatchEvent = vi.fn();
     vi.stubGlobal('window', { dispatchEvent });
     const { scene, bodies } = cameraHarness();
@@ -1074,9 +1166,26 @@ describe('AuraScene responsive whole-rig layout', () => {
       online: null, isVsAI: true, cpuVsCpu: false, videoRecorder: null,
       cameraFocusSlot: 1, cameraFromSlot: winner === 'p1' && !reducedMotion ? 0 : 1, reduceMotion: reducedMotion,
       cameraTransitionMs: winner === 'p1' && !reducedMotion ? AURA_CAMERA_HANDOFF_MS / 2 : AURA_CAMERA_HANDOFF_MS,
-      finishVideoCapture: vi.fn(), setMatchActionsVisible: vi.fn(),
+      finishVideoCapture: vi.fn(() => recordingCompletion), setMatchActionsVisible: vi.fn(),
+      battleCapture: { capture: vi.fn(() => {
+        const [left, right] = scene.cameraComposition().performers;
+        expect((left.x + right.x) / 2).toBe(scene.layout.width / 2);
+        return Promise.resolve('ready');
+      }) }, lifecycleActive: true,
+      finaleLabels: [controlText(), controlText()],
+      authoredFinaleAvailable: authored,
       time: { delayedCall: vi.fn((delay: number, callback: () => void) => setTimeout(callback, delay)) },
     });
+    for (const slot of [0, 1] as const) {
+      if (!authored[slot]) continue;
+      // Exercise the real visibility transition and the next frame, not just
+      // the method call: an old performance must stop covering the native pose.
+      Object.assign(scene.auraPerformanceViews[slot], {
+        activeName: 'aura_one_leg', sprite: controlText(), shadow: controlText(),
+        interrupt: vi.fn(AuraPerformanceView.prototype.interrupt),
+        update: vi.fn(AuraPerformanceView.prototype.update),
+      });
+    }
     Object.assign(scene.soundManager, { playAnnounce: vi.fn(), peakAuraCrowd: vi.fn() });
     const before = scene.cameraComposition();
     const handoffTime = scene.cameraTransitionMs;
@@ -1088,6 +1197,9 @@ describe('AuraScene responsive whole-rig layout', () => {
     scene.advanceCameraPresentation(AURA_CAMERA_FINALE_MS);
     expect(scene.cameraTransitionMs).toBe(handoffTime);
     expect(scene.performerContainers.map((rig: ReturnType<typeof performerContainer>) => rig.visible)).toEqual([true, true]);
+    expect(scene.finaleLabels.map((label: ReturnType<typeof controlText>) => label.text))
+      .toEqual(winner === 'draw' ? ['DRAW', 'DRAW'] : winner === 'p1' ? ['VICTORY', 'DEFEAT'] : ['DEFEAT', 'VICTORY']);
+    expect(scene.finaleLabels.every((label: ReturnType<typeof controlText>) => label.visible)).toBe(true);
     expect(dispatchEvent.mock.calls[0][0].detail.winnerSlot).toBe(winner);
     scene.advanceFighterPresentation(1 / 60);
     for (const slot of [0, 1] as const) {
@@ -1097,23 +1209,83 @@ describe('AuraScene responsive whole-rig layout', () => {
       expect(bodies[slot].rootY * rig.scaleY + rig.y).toBeCloseTo(placement.footY, 10);
       const won = winner === 'draw' || scoringSlot === slot;
       expect(scene.fighters[slot].state).toBe(won ? FighterState.VICTORY : FighterState.DEFEAT);
-      expect(scene.auraPerformanceViews[slot].playFinale).toHaveBeenCalledExactlyOnceWith(won);
+      if (authored[slot]) {
+        expect(scene.auraPerformanceViews[slot].playFinale).not.toHaveBeenCalled();
+        expect(scene.auraPerformanceViews[slot].interrupt).toHaveBeenCalledExactlyOnceWith(scene.views[slot]);
+        expect(scene.auraPerformanceViews[slot].activeName).toBeNull();
+        expect(scene.auraPerformanceViews[slot].sprite.visible).toBe(false);
+        expect(scene.views[slot].sprite.setVisible).toHaveBeenLastCalledWith(true);
+        expect(scene.views[slot].shadowSprite.setVisible).toHaveBeenLastCalledWith(true);
+      } else {
+        expect(scene.auraPerformanceViews[slot].playFinale).toHaveBeenCalledExactlyOnceWith(won);
+        expect(scene.auraPerformanceViews[slot].interrupt).not.toHaveBeenCalled();
+      }
       expect(scene.auraPerformanceViews[slot].update).toHaveBeenLastCalledWith(1_000 / 60, scene.views[slot]);
     }
     expect(scene.cameraFocusSlot).toBe(1); // Winning P1 must not cut away from the last camera mark.
-    const resultsDelay = reducedMotion ? 1_800 : 3_000;
-    vi.advanceTimersByTime(resultsDelay - 1);
+    const resultsDelay = reducedMotion ? 2_800 : 3_000;
+    await vi.advanceTimersByTimeAsync(resultsDelay - 1);
     expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+    expect(scene.cameraComposition().camera.anchorX).toBe(scene.layout.width / 2);
+    finishRecording();
+    await vi.advanceTimersByTimeAsync(0);
+    if (!reducedMotion) {
+      expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+      const center = scene.cameraComposition().camera.anchorX;
+      expect(center).toBe(scene.layout.width / 2);
+      scene.advanceCameraPresentation(AURA_CAMERA_HANDOFF_MS / 2);
+      expect(scene.cameraComposition().camera.anchorX).toBeLessThan(center);
+      expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+      scene.advanceCameraPresentation(AURA_CAMERA_HANDOFF_MS / 2);
+    }
     expect(scene.setMatchActionsVisible).toHaveBeenCalledExactlyOnceWith(true);
     expect(scene.time.delayedCall).toHaveBeenCalledWith(2_800, expect.any(Function));
-    vi.advanceTimersByTime(2_800);
+    await vi.advanceTimersByTimeAsync(2_800);
+    expect(scene.battleCapture.capture).toHaveBeenCalledExactlyOnceWith(scene, expect.objectContaining({
+      game: 'aura', winner, winnerSide: winner === 'draw' ? undefined : winner === 'p1' ? 'left' : 'right', p1Name: 'P1', p2Name: 'P2',
+      p1Score: battle.scoreFor(0).score, p2Score: battle.scoreFor(1).score,
+    }), { heightRatio: 1 });
     expect(scene.finishVideoCapture).toHaveBeenCalledExactlyOnceWith(1);
+  });
+
+  it.each(['ready', 'timeout', 'restart'] as const)('opens results only after the real still session settles, handling %s', async outcome => {
+    vi.useFakeTimers();
+    const target = new EventTarget(); vi.stubGlobal('window', target);
+    const order: string[] = [];
+    target.addEventListener(BATTLE_CAPTURE_EVENT, event => order.push((event as CustomEvent).detail.state));
+    vi.stubGlobal('document', { createElement: () => ({ width: 0, height: 0,
+      getContext: () => ({ drawImage: vi.fn() }), toDataURL: () => 'data:image/jpeg;base64,c3RpbGw=' }) });
+    const { scene } = cameraHarness(576, 1024);
+    const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
+    const snapshot = vi.fn();
+    Object.assign(scene, {
+      chart, battle: new AuraBattle(chart), track: DEFAULT_AURA_TRACK, difficultyId: 'viral', resolvedStageId: DEFAULT_AURA_STAGE_ID,
+      stageLabel: 'AURA PLAZA', customStageKey: null, lifecycleEpoch: 1, lifecycleActive: true, captureId: 'capture-order',
+      turnText: controlText(), phaseText: controlText(), comboText: controlText(), online: null,
+      isVsAI: true, cpuVsCpu: false, reduceMotion: true, videoRecorder: null,
+      battleCapture: new BattleCaptureSession(), game: { renderer: { snapshot } },
+      finishVideoCapture: vi.fn(), setMatchActionsVisible: vi.fn(() => order.push('results')),
+      time: { delayedCall: vi.fn((delay: number, callback: () => void) => setTimeout(callback, delay)) },
+    });
+    Object.assign(scene.soundManager, { playAnnounce: vi.fn(), peakAuraCrowd: vi.fn() });
+    scene.completeMatch();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(snapshot).toHaveBeenCalledOnce();
+    expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+    expect(order).toEqual(['started']);
+    if (outcome === 'restart') { scene.lifecycleEpoch = 2; scene.battleCapture.cancel(); }
+    if (outcome === 'timeout') await vi.advanceTimersByTimeAsync(7_200);
+    else snapshot.mock.calls[0][0]({ src: 'data:image/jpeg;base64,c291cmNl', width: 576, height: 1024 });
+    await Promise.resolve();
+    expect(order).toEqual(outcome === 'restart' ? ['started'] : ['started', outcome === 'ready' ? 'ready' : 'unavailable', 'results']);
+    expect(scene.setMatchActionsVisible).toHaveBeenCalledTimes(outcome === 'restart' ? 0 : 1);
   });
 
   it.each([
     { width: 1024, height: 576, x: 942, y: 539, meterY: 550 },
-    { width: 576, height: 1024, x: 430, y: 599, meterY: 610 },
+    { width: 576, height: 1024, x: 348, y: 599, meterY: 610 },
   ])('keeps the active crowd counter in one right-aligned area at $width×$height', ({ width, height, x, y, meterY }) => {
     const { scene } = harness();
     delete scene.updateCrowdUi;
@@ -1121,9 +1293,9 @@ describe('AuraScene responsive whole-rig layout', () => {
       crowdLabelText: controlText(), crowdMeterGraphics: controlGraphics(),
     });
     scene.updateCrowdUi(0);
-    expect(scene.crowdLabelText).toMatchObject({ x, y, text: height > width ? 'WARMING UP' : 'CROWD · WARMING UP', visible: true });
+    expect(scene.crowdLabelText).toMatchObject({ x, y, text: height > width ? 'WARMING UP' : 'CROWD · WARMING UP', visible: width > height });
     scene.updateCrowdUi(1);
-    expect(scene.crowdLabelText).toMatchObject({ x, y, text: height > width ? 'UNHINGED' : 'CROWD · UNHINGED', visible: true });
+    expect(scene.crowdLabelText).toMatchObject({ x, y, text: height > width ? 'UNHINGED' : 'CROWD · UNHINGED', visible: width > height });
     expect(scene.crowdLabelText.setOrigin.mock.calls).toEqual([[1, 0], [1, 0]]);
     expect(scene.crowdMeterGraphics.fillRect).toHaveBeenCalledTimes(16);
     for (const [, segmentY, , segmentHeight] of scene.crowdMeterGraphics.fillRect.mock.calls) {
@@ -1137,7 +1309,7 @@ describe('AuraScene responsive whole-rig layout', () => {
 
   it.each([
     { width: 1024, height: 576, x: 942, y: 189, origin: 1, fontSize: 11 },
-    { width: 576, height: 1024, x: 532, y: 599, origin: 1, fontSize: 11 },
+    { width: 576, height: 1024, x: 544, y: 599, origin: 1, fontSize: 11 },
   ])('groups FLOW within the rhythm instrument at $width×$height', ({ width, height, x, y, origin, fontSize }) => {
     const { scene } = harness();
     const camera = () => Object.fromEntries(['setViewport', 'setZoom', 'setScroll']
@@ -1145,21 +1317,56 @@ describe('AuraScene responsive whole-rig layout', () => {
     Object.assign(scene, {
       layout: createAuraLayout(width, height), layoutStage: vi.fn(), cameras: { main: camera() }, uiCamera: camera(),
       hudPanel: controlGraphics(), crtOverlay: controlGraphics(), beatGraphics: controlGraphics(),
+      crowdLabelText: controlText(), crowdMeterGraphics: controlGraphics(),
       duelMeterGraphics: controlGraphics(), duelHeadingText: controlText(), performerNameText: controlText(),
       p1NameText: controlText(), p2NameText: controlText(), p1ScoreText: controlText(), p2ScoreText: controlText(),
       turnText: controlText(), phaseText: controlText(), countInText: controlText(), comboText: controlText(),
       drawLanes: vi.fn(), feedbackObject: null,
+      startup: null,
     });
     scene.applyLayout();
     expect(scene.comboText).toMatchObject({ x, y });
     expect(scene.comboText.setOrigin).toHaveBeenCalledExactlyOnceWith(origin, 0);
     expect(scene.comboText.setFontSize).toHaveBeenCalledExactlyOnceWith(fontSize);
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(false);
+    expect(scene.p1ScoreText.visible).toBe(false);
+    scene.startup = new AuraStartup();
+    scene.applyLayout();
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(true);
+    expect(scene.p1ScoreText.visible).toBe(true);
+    scene.matchFinished = true;
+    scene.applyLayout();
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(true);
+    expect(scene.comboText.visible).toBe(false);
+    scene.matchFinished = false;
+    scene.onboarding = new AuraOnboarding();
+    scene.applyLayout();
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(false);
+    expect(scene.p1ScoreText.visible).toBe(false);
     const instrument = scene.layout.instrument;
     const flowWidth = 'x999 FLOW'.length * fontSize;
     expect(scene.comboText.x - flowWidth).toBeGreaterThan(instrument.left);
     expect(scene.comboText.x).toBeLessThan(instrument.right);
     expect(scene.comboText.y).toBeGreaterThan(instrument.top);
     expect(scene.comboText.y + fontSize).toBeLessThan(scene.layout.laneStartY);
+  });
+
+  it('keeps portrait instrument drawing below the stage while retaining the desktop move rail', () => {
+    const scene = controlsHarness();
+    delete scene.drawHighwayFrame;
+    scene.currentRoundProgress = () => 0;
+    scene.layout = createAuraLayout(576, 1024);
+    scene.drawHighwayFrame(0);
+    for (const [points] of scene.laneGraphics.fillPoints.mock.calls) {
+      expect(points.every((point: { y: number }) => point.y >= scene.layout.instrument.top)).toBe(true);
+    }
+    const { moveRail, laneTargetY, instrument } = scene.layout;
+    expect(scene.laneGraphics.lineBetween).not.toHaveBeenCalledWith(moveRail.right - 8, laneTargetY, instrument.left + 12, laneTargetY);
+    scene.layout = createAuraLayout();
+    scene.drawHighwayFrame(0);
+    expect(scene.laneGraphics.lineBetween).toHaveBeenCalledWith(
+      scene.layout.moveRail.right - 8, scene.layout.laneTargetY, scene.layout.instrument.left + 12, scene.layout.laneTargetY,
+    );
   });
 
   it.each([[1024, 576], [576, 1024]])('aligns approaching notes, receptors, keycaps and press feedback at %i×%i', (width, height) => {
@@ -1179,15 +1386,15 @@ describe('AuraScene responsive whole-rig layout', () => {
     scene.flashLaneInput(0, note.lane);
     expect(scene.inputPulseGraphics[note.lane].setPosition).toHaveBeenCalledExactlyOnceWith(x, scene.layout.laneTargetY);
     expect(scene.inputFlashGraphics[note.lane].fillRect).toHaveBeenCalledWith(
-      x - 30, scene.layout.laneStartY, 60, scene.layout.laneTargetY - scene.layout.laneStartY,
+      x - scene.layout.laneHalfWidth, scene.layout.laneStartY, scene.layout.laneHalfWidth * 2, scene.layout.laneTargetY - scene.layout.laneStartY,
     );
     expect(scene.laneKeyTexts[note.lane]).toMatchObject({ x, y: scene.layout.keyLabelY });
     expect(scene.laneKeyTexts.map((text: ReturnType<typeof controlText>) => text.text)).toEqual(AURA_DEFAULT_LANE_KEYS);
-    expect(scene.highwayMetaText.text).toBe('RIVAL TURN · GET READY');
+    expect(scene.highwayMetaText.text).toBe('WATCH · CONTROLS OFF');
     // A later local turn uses the same device bindings, not the actor's screen side.
     scene.drawLaneControlHints(1);
     expect(scene.laneKeyTexts.map((text: ReturnType<typeof controlText>) => text.text)).toEqual(AURA_DEFAULT_LANE_KEYS);
-    expect(scene.highwayMetaText.text).toBe('YOUR TURN · HIT THE SHAPES');
+    expect(scene.highwayMetaText.text).toBe('YOUR TURN · HIT ON BEAT');
   });
 
   it.each([[1024, 576], [576, 1024]])('places both rigs around their own physical idle feet without ticking at %i×%i', (width, height) => {
@@ -1301,10 +1508,12 @@ describe('AuraScene responsive whole-rig layout', () => {
     const scene = Object.assign(new AuraScene(), harness().scene, state, {
       lifecycleActive: true, presentationReady: true, scale: { width: 576, height: 1024 },
       applyLayout: vi.fn(), updateNotes: vi.fn(),
+      startup: null, startupView: { render: vi.fn() },
     });
     scene.onLayoutResize();
     expect(scene.applyLayout).toHaveBeenCalledOnce();
     expect(scene.updateNotes).not.toHaveBeenCalled();
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, null, undefined);
   });
 
   it.each([0, 1, 2, 3])('keeps lane %i aligned when its reduced-motion flash ends after a rotation', lane => {
@@ -1406,6 +1615,7 @@ describe('AuraScene visible presentation handshake', () => {
     return Object.assign(new AuraScene(), harness().scene, {
       lifecycleActive: true, presentationReady: true, presentationStarted: false,
       presentationToken: 41, matchSeed: 67, localOnlineReady: false, online: null,
+      startupView: { render: vi.fn() },
       beginClock: vi.fn(), announceOnlineReady: vi.fn(), prepareStartup: vi.fn(),
       soundManager: { unlockPreparedMedia: vi.fn().mockResolvedValue(true) },
     });
@@ -1556,6 +1766,7 @@ describe('AuraScene visible presentation handshake', () => {
     scene.onPresentationStart({ detail: { token: 41, seed: 67 } });
     expect(scene.presentationStarted).toBe(true);
     expect(scene.awaitingStartInput).toBe(true);
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, null);
     expect(scene.beginClock).not.toHaveBeenCalled();
     expect(scene.soundManager.unlockPreparedMedia).not.toHaveBeenCalled();
     scene.onStartupReady({ detail: { token: 40, seed: 67 } });
@@ -1619,7 +1830,7 @@ describe('AuraScene visible presentation handshake', () => {
       presentationStarted: true, scheduledClockStart: null, clockStartedAt: null,
       online: { localSlot: 1, matchSerial: 3 },
       onlineSession: { seat: 'guest', transport: { getState: () => ({ rttMs: 100 }) } },
-      soundManager: { stopBattleMusic: vi.fn() },
+      soundManager: { stopBattleMusic: vi.fn(), startAuraCrowd: vi.fn() },
     });
     delete scene.beginClock;
     vi.spyOn(performance, 'now').mockReturnValue(500);
@@ -1727,11 +1938,15 @@ describe('AuraScene first-play practice isolation', () => {
       matchData: { gameMode: 'aura', vsAI: true },
       clockStartedAt: null, scheduledClockStart: null, paused: false, finalizing: false,
       onboarding: new AuraOnboarding(), onboardingGraphics: { ...controlGraphics(), destroy: vi.fn() },
-      lastOnboardingState: null, turnText: controlText(), highwayTitleText: controlText(), highwayMetaText: controlText(),
+      lastOnboardingState: null, phaseText: controlText(), turnText: controlText(), highwayTitleText: controlText(), highwayMetaText: controlText(),
+      hudPanel: controlGraphics(), p1NameText: controlText(),
+      p1ScoreText: controlText(), p2ScoreText: controlText(), p2NameText: controlText(), duelMeterGraphics: controlGraphics(),
+      comboText: controlText(), crowdLabelText: controlText(), crowdMeterGraphics: controlGraphics(), duelHeadingText: controlText(),
       flashLaneInput: vi.fn(), updateTurnPresentation: vi.fn(), beginClock: vi.fn(), prepareStartup: vi.fn(),
       recordJudgement: vi.fn(), applyJudgement: vi.fn(), updateNotes: vi.fn(), playCpuPlans: vi.fn(), collectHumanMisses: vi.fn(),
       advanceCameraPresentation: vi.fn(), advanceFighterPresentation: vi.fn(),
-      soundManager: { updateAuraCrowd: vi.fn(), startBattleMusic: vi.fn(), startAuraCrowd: vi.fn(), unlockPreparedMedia: vi.fn().mockResolvedValue(true) },
+      soundManager: { updateAuraCrowd: vi.fn(), startBattleMusic: vi.fn(), startAuraCrowd: vi.fn(), unlockPreparedMedia: vi.fn().mockResolvedValue(true),
+        pauseBattleMusic: vi.fn(), resumeBattleMusic: vi.fn() },
       actionRecorder: { record: vi.fn() }, videoRecorder: null,
       battle: new AuraBattle(createAuraChart(67, 'lowkey')),
     }) as unknown as Record<string, any>;
@@ -1751,7 +1966,7 @@ describe('AuraScene first-play practice isolation', () => {
       expect(scene.onboarding.snapshot.completedLanes).toBe(lane);
       scene.handleInput(0, lane);
     }
-    expect(scene.onboarding.snapshot.phase).toBe('battle');
+    expect(scene.onboarding.snapshot.phase).toBe('complete');
     expect(scene.flashLaneInput).toHaveBeenCalledTimes(4);
     expect(scene.prepareStartup).toHaveBeenCalledOnce();
     expect(scene.beginClock).not.toHaveBeenCalled();
@@ -1866,6 +2081,19 @@ describe('AuraScene first-play practice isolation', () => {
     expect(scene.beginClock).not.toHaveBeenCalled();
   });
 
+  it.each([[false, true], [true, false]])('honors the explicit Ready choice practice=%s over the earlier onboarding=%s request', async (practice, onboarding) => {
+    const scene = practiceHarness();
+    scene.presentationStarted = false;
+    scene.onboarding = null;
+    scene.startOnboarding = vi.fn();
+    scene.onPresentationStart({ detail: { token: 41, seed: 67, onboarding } });
+    scene.onStartupReady({ detail: { token: 41, seed: 67, practice } });
+    await Promise.resolve();
+    expect(scene.startOnboarding).toHaveBeenCalledTimes(practice ? 1 : 0);
+    expect(scene.prepareStartup).toHaveBeenCalledTimes(practice ? 0 : 1);
+    expect(scene.beginClock).not.toHaveBeenCalled();
+  });
+
   it.each([{ cpuVsCpu: true }, { vsAI: false }, { auraChallenge: {} }, { online: { localSlot: 0 } }])(
     'ignores an onboarding request for protected match context %o', async data => {
       const scene = practiceHarness();
@@ -1874,8 +2102,8 @@ describe('AuraScene first-play practice isolation', () => {
       scene.onboarding = null;
       scene.startOnboarding = vi.fn();
       scene.onPresentationStart({ detail: { token: 41, seed: 67, onboarding: true } });
-    scene.onStartupReady({ detail: { token: 41, seed: 67 } });
-    await Promise.resolve();
+      scene.onStartupReady({ detail: { token: 41, seed: 67, practice: true } });
+      await Promise.resolve();
       expect(scene.startOnboarding).not.toHaveBeenCalled();
       expect(scene.prepareStartup).toHaveBeenCalledOnce();
       expect(scene.beginClock).not.toHaveBeenCalled();
@@ -1887,14 +2115,18 @@ describe('AuraScene first-play practice isolation', () => {
     scene.onboarding.advance(AURA_PRACTICE_TRAVEL_MS);
     scene.scale = { width, height };
     scene.applyLayout = vi.fn();
+    scene.startupView = { render: vi.fn() };
     const before = scene.onboarding.snapshot;
     scene.onLayoutResize();
     expect(scene.onboarding.snapshot).toEqual(before);
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, null, undefined);
     expect(scene.onboarding.practiceProgress).toBe(1);
-    expect(scene.turnText.text).toBe('PRACTICE · 1/4 · NO SCORE YET');
-    expect(scene.highwayTitleText.text).toBe('HIT D NOW');
+    expect(scene.phaseText.text).toBe('PRACTICE 1/4');
+    expect(scene.turnText.text).toBe('NO SCORE YET');
+    expect(scene.highwayTitleText.visible).toBe(false);
+    expect(scene.highwayMetaText.visible).toBe(false);
     const highlight = scene.onboardingGraphics.fillRect.mock.calls[0];
-    expect(highlight[0]).toBe(scene.layout.highwayX + scene.layout.laneOffsets[0] - 30);
+    expect(highlight[0]).toBe(scene.layout.highwayX + scene.layout.laneOffsets[0] - scene.layout.laneHalfWidth);
     expect(highlight[1] + highlight[3]).toBe(scene.layout.laneTargetY);
     expect(scene.beginClock).not.toHaveBeenCalled();
     expect(scene.updateNotes).not.toHaveBeenCalled();
@@ -1921,22 +2153,91 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
 
   function startupHarness() {
     vi.stubGlobal('window', { dispatchEvent: vi.fn() });
-    return Object.assign(new AuraScene(), harness().scene, {
+    const scene = Object.assign(new AuraScene(), harness().scene, {
       lifecycleActive: true, lifecycleEpoch: 1, presentationReady: true, presentationStarted: true,
       presentationToken: 41, matchSeed: 67, online: null, cpuVsCpu: false,
       startup: null, startupView: { render: vi.fn() }, startupAbort: new AbortController(),
-      turnText: controlText(),
+      setBattleHudVisible: vi.fn(),
+      turnText: controlText(), countInText: controlText(), lastCountIn: -1,
+      chart: createAuraChart(67, 'lowkey'), track: DEFAULT_AURA_TRACK,
       clockStartedAt: null, scheduledClockStart: null, paused: false, captureId: 'intro',
-      beginClock: vi.fn(), emitCapture: vi.fn(), emitPresentation: vi.fn(),
+      emitCapture: vi.fn(), emitPresentation: vi.fn(),
       waitForPresentationFrames: vi.fn().mockResolvedValue(true),
       advanceCameraPresentation: vi.fn(), advanceFighterPresentation: vi.fn(),
+      updateTurn: vi.fn(), playCpuPlans: vi.fn(), collectHumanMisses: vi.fn(), updateNotes: vi.fn(), updateBeatPresentation: vi.fn(),
       soundManager: { getRecordingAudioTracks: vi.fn(() => []), unlockPreparedMedia: vi.fn().mockResolvedValue(true),
-        updateAuraCrowd: vi.fn(), pauseBattleMusic: vi.fn(), resumeBattleMusic: vi.fn() },
+        updateAuraCrowd: vi.fn(), pauseBattleMusic: vi.fn(), resumeBattleMusic: vi.fn(),
+        startBattleMusic: vi.fn(), stopBattleMusic: vi.fn(), startAuraCrowd: vi.fn(), playAuraCountIn: vi.fn(),
+        getBattleMusicClockSample: vi.fn(() => ({ status: 'playing', positionMs: 0, durationMs: null, loop: false })) },
       actionRecorder: { record: vi.fn() },
     }) as unknown as Record<string, any>;
+    vi.spyOn(scene, 'beginClock');
+    return scene;
   }
 
-  it('captures only a rendered intro, waits for the encoder, preserves pause, then allows clock zero after 1.5s + 3s', async () => {
+  function advanceSong(scene: Record<string, any>, positionMs: number) {
+    scene.soundManager.getBattleMusicClockSample.mockReturnValue({ status: 'playing', positionMs, durationMs: null, loop: false });
+    scene.updateStartup(16);
+  }
+
+  it.each([[1024, 576], [576, 1024]])('clears the opening two-shot and completes its camera before the full first-note approach at %ix%i', (width, height) => {
+    const scene = startupHarness();
+    scene.layout = createAuraLayout(width, height);
+    scene.instrumentLayer = controlText();
+    scene.syncInstrumentPresentation();
+    expect(scene.instrumentLayer.visible).toBe(false);
+    const opening = scene.cameraComposition();
+    expect(opening.performers.every((p: any) => p.visible && p.alpha === 1)).toBe(true);
+    expect((opening.performers[0].x + opening.performers[1].x) / 2).toBe(scene.layout.width / 2);
+    scene.startup = new AuraStartup(false, { firstNoteMs: scene.chart.turns[0].firstNoteMs, beatMs: scene.chart.beatMs });
+    scene.syncInstrumentPresentation();
+    expect(scene.instrumentLayer.visible).toBe(false);
+    scene.startup.begin();
+    scene.clockStartedAt = performance.now();
+    const firstSpawn = scene.chart.turns[0].firstNoteMs - scene.chart.noteTravelMs;
+    advanceSong(scene, firstSpawn - AURA_CAMERA_HANDOFF_MS);
+    expect(scene.introProgress()).toBe(1);
+    advanceSong(scene, firstSpawn - AURA_CAMERA_HANDOFF_MS / 2);
+    expect(scene.cameraComposition().transitioning).toBe(true);
+    expect(scene.instrumentLayer.visible).toBe(false);
+    advanceSong(scene, firstSpawn);
+    expect(scene.instrumentLayer.visible).toBe(true);
+    expect(scene.cameraComposition().transitioning).toBe(false);
+    expect(scene.cameraComposition().performers.map((p: any) => p.visible)).toEqual([true, false]);
+    expect(scene.clockMs()).toBe(firstSpawn);
+    expect(scene.chart.notes[0].atMs - scene.clockMs()).toBe(scene.chart.noteTravelMs);
+    const startupEvents = vi.mocked(window.dispatchEvent).mock.calls.map(([event]) => event as CustomEvent)
+      .filter(event => event.type === AURA_STARTUP_EVENT).map(event => event.detail);
+    expect(startupEvents.map(state => [state.phase, state.instrumentVisible])).toEqual([['versus', false], ['versus', true]]);
+    expect(scene.soundManager.playAuraCountIn).not.toHaveBeenCalled();
+    // A stalled audio sample freezes both the intro position and its reveal.
+    scene.soundManager.getBattleMusicClockSample.mockReturnValue({ status: 'waiting' });
+    scene.updateStartup(60_000);
+    expect(scene.clockMs()).toBe(firstSpawn);
+  });
+
+  it('keeps the online intro clear until its synchronized song start, while practice gets controls immediately', () => {
+    const scene = startupHarness();
+    scene.instrumentLayer = controlText();
+    scene.online = { localSlot: 0 };
+    scene.startup = new AuraStartup(true);
+    for (const remaining of [3_000, 2_280, 1_000, 0]) {
+      scene.startup.countdown(remaining);
+      scene.syncInstrumentPresentation();
+      expect(scene.instrumentLayer.visible).toBe(false);
+      if (remaining <= 2_280) expect(scene.introProgress()).toBe(0);
+    }
+    scene.startup.play();
+    scene.syncInstrumentPresentation();
+    expect(scene.instrumentLayer.visible).toBe(true);
+    scene.startup = null;
+    scene.onboarding = new AuraOnboarding();
+    scene.syncInstrumentPresentation();
+    expect(scene.instrumentLayer.visible).toBe(true);
+    expect(scene.introProgress()).toBeNull();
+  });
+
+  it('captures a rendered intro before starting the song once, then follows one audible count-in through the first actual hit', async () => {
     const scene = startupHarness();
     let rendered!: (ready: boolean) => void;
     let encoded!: (ready: boolean) => void;
@@ -1947,6 +2248,8 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
     const prepared = scene.prepareStartup();
     expect(start).not.toHaveBeenCalled();
     expect(scene.startup.snapshot.phase).toBe('preparing');
+    expect(scene.setBattleHudVisible).toHaveBeenLastCalledWith(true);
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, scene.startup.snapshot);
     rendered(true);
     await Promise.resolve();
     expect(start).toHaveBeenCalledOnce();
@@ -1956,14 +2259,26 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
     encoded(true);
     await prepared;
     expect(scene.emitCapture).toHaveBeenCalledWith({ id: 'intro', state: 'recording' });
-    scene.paused = true;
-    scene.update(0, 5_000);
-    expect(scene.startup.snapshot.remainingMs).toBe(1_500);
-    scene.paused = false;
-    for (let frame = 0; frame < 44; frame += 1) scene.update(frame * 100, 100);
-    expect(scene.beginClock).not.toHaveBeenCalled();
-    scene.update(4_500, 100);
-    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0, true);
+    expect(scene.soundManager.startBattleMusic).toHaveBeenCalledExactlyOnceWith(DEFAULT_AURA_TRACK.url);
+    expect(scene.clockMs()).toBe(0);
+    expect(scene.emitCapture.mock.invocationCallOrder[0]).toBeLessThan(scene.soundManager.startBattleMusic.mock.invocationCallOrder[0]);
+    const turn = scene.chart.turns[0];
+    const frozen = scene.startup.snapshot;
+    scene.soundManager.getBattleMusicClockSample.mockReturnValue({ status: 'waiting' });
+    scene.update(0, 60_000);
+    expect(scene.startup.snapshot).toEqual(frozen); // Renderer/wall time cannot skip blocked audio.
+    for (const count of [3, 2, 1]) {
+      advanceSong(scene, turn.firstNoteMs - scene.chart.beatMs * count + 0.01);
+      scene.updateCountIn(turn, scene.clockMs());
+      expect(scene.startup.snapshot).toMatchObject({ phase: 'countdown', count });
+      expect(scene.countInText.visible).toBe(false); // No second 4–3–2–1 over the lanes.
+    }
+    advanceSong(scene, turn.firstNoteMs);
+    expect(scene.startup.snapshot.phase).toBe('playing');
+    expect(scene.clockMs()).toBe(turn.firstNoteMs);
+    expect(scene.soundManager.playAuraCountIn.mock.calls).toEqual([[3], [2], [1], ['go']]);
+    expect(scene.soundManager.startBattleMusic).toHaveBeenCalledOnce();
     expect(scene.actionRecorder.record).not.toHaveBeenCalled();
     const states = vi.mocked(window.dispatchEvent).mock.calls.map(([event]) => event as CustomEvent)
       .filter(event => event.type === AURA_STARTUP_EVENT).map(event => event.detail);
@@ -1974,6 +2289,8 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
 
   it.each([false, true])('keeps gameplay available after encoder failure, including unattended=%s autoplay rejection', async cpuVsCpu => {
     const scene = startupHarness();
+    let wallMs = 1_000;
+    vi.spyOn(performance, 'now').mockImplementation(() => wallMs);
     scene.cpuVsCpu = cpuVsCpu;
     scene.soundManager.unlockPreparedMedia.mockResolvedValue(false);
     scene.game = { canvas: {} };
@@ -1982,8 +2299,88 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
     expect(scene.emitCapture).toHaveBeenCalledWith({ id: 'intro', state: 'unavailable', reason: 'recording-unsupported' });
     expect(scene.startup.snapshot.phase).toBe('versus');
     expect(scene.silentStartup).toBe(cpuVsCpu);
-    for (let frame = 0; frame < 45; frame += 1) scene.updateStartup(100);
-    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0);
+    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0, true);
+    if (cpuVsCpu) {
+      wallMs += scene.chart.turns[0].firstNoteMs;
+      scene.updateStartup(16);
+      expect(scene.soundManager.startBattleMusic).not.toHaveBeenCalled();
+    } else advanceSong(scene, scene.chart.turns[0].firstNoteMs);
+    expect(scene.startup.snapshot.phase).toBe('playing');
+  });
+
+  it('defers song zero when encoding finishes during pause, then resumes capture before starting music', async () => {
+    const scene = startupHarness();
+    let encoded!: (ready: boolean) => void;
+    vi.spyOn(AuraVideoRecorder.prototype, 'start').mockReturnValue({ ok: true });
+    vi.spyOn(AuraVideoRecorder.prototype, 'whenStarted').mockImplementation(() => new Promise(resolve => { encoded = resolve; }));
+    const paused = vi.spyOn(AuraVideoRecorder.prototype, 'pause');
+    const resumed = vi.spyOn(AuraVideoRecorder.prototype, 'resume');
+    scene.game = { canvas: {} };
+    const prepared = scene.prepareStartup();
+    await Promise.resolve();
+    scene.onPause({ detail: { paused: true } });
+    expect(paused).toHaveBeenCalledOnce();
+    encoded(true);
+    await prepared;
+    expect(scene.startup.snapshot.phase).toBe('versus');
+    expect(scene.clockStartedAt).toBeNull();
+    expect(scene.scheduledClockStart).toBeNull();
+    expect(scene.soundManager.startBattleMusic).not.toHaveBeenCalled();
+    scene.update(0, 30_000);
+    expect(scene.clockStartedAt).toBeNull();
+    scene.onPause({ detail: { paused: false } });
+    expect(resumed).toHaveBeenCalledOnce();
+    expect(resumed.mock.invocationCallOrder[0]).toBeLessThan(scene.soundManager.startBattleMusic.mock.invocationCallOrder[0]);
+    expect(scene.clockMs()).toBe(0);
+    expect(scene.soundManager.startBattleMusic).toHaveBeenCalledOnce();
+    scene.onPause({ detail: { paused: false } });
+    expect(scene.soundManager.startBattleMusic).toHaveBeenCalledOnce();
+  });
+
+  it('preserves the musical countdown position through pause without restarting the selected song', async () => {
+    const scene = startupHarness();
+    scene.game = { canvas: {} };
+    vi.spyOn(AuraVideoRecorder.prototype, 'start').mockReturnValue({ ok: false, reason: 'recording-unsupported' });
+    await scene.prepareStartup();
+    const position = scene.chart.turns[0].firstNoteMs - scene.chart.beatMs * 2 + 0.01;
+    advanceSong(scene, position);
+    const frozen = scene.startup.snapshot;
+    scene.onPause({ detail: { paused: true } });
+    scene.update(0, 30_000);
+    expect(scene.startup.snapshot).toEqual(frozen);
+    expect(scene.clockMs()).toBe(position);
+    scene.onPause({ detail: { paused: false } });
+    expect(scene.soundManager.resumeBattleMusic).toHaveBeenCalledOnce();
+    expect(scene.soundManager.startBattleMusic).toHaveBeenCalledOnce();
+    advanceSong(scene, position);
+    expect(scene.startup.snapshot).toEqual(frozen);
+    expect(scene.soundManager.playAuraCountIn.mock.calls).toEqual([[2]]);
+  });
+
+  it.each([false, true])('ignores intro input and permits the first early note only during offline musical count-in (online=%s)', online => {
+    const scene = startupHarness();
+    scene.online = online ? { localSlot: 0, matchSerial: 1 } : null;
+    scene.isVsAI = true;
+    scene.battle = new AuraBattle(scene.chart);
+    scene.flashLaneInput = vi.fn();
+    scene.recordJudgement = vi.fn();
+    scene.applyJudgement = vi.fn();
+    const judge = vi.spyOn(scene.battle, 'judgeInput');
+    const note = scene.chart.turns[0].notes[0];
+    scene.startup = new AuraStartup(online, online ? undefined
+      : { firstNoteMs: note.atMs, beatMs: scene.chart.beatMs });
+    scene.startup.begin();
+    scene.handleInput(0, note.lane, note.atMs - 20);
+    expect(judge).not.toHaveBeenCalled();
+    if (online) scene.startup.countdown(500);
+    else scene.startup.syncMusic(note.atMs - 20);
+    scene.handleInput(0, note.lane, note.atMs - 20);
+    expect(judge).toHaveBeenCalledTimes(online ? 0 : 1);
+    if (!online) {
+      expect(scene.applyJudgement).toHaveBeenCalledWith(expect.objectContaining({ grade: 'perfect', noteId: note.id }), true, note.atMs - 20);
+      expect(scene.battle.isJudged(note.id)).toBe(true);
+    }
+    expect(scene.recordJudgement).not.toHaveBeenCalled();
   });
 
   it('replaces the completed practice status throughout the captured intro and countdown without claiming play has begun', async () => {
@@ -1998,11 +2395,12 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
     vi.spyOn(AuraVideoRecorder.prototype, 'start').mockReturnValue({ ok: false, reason: 'recording-unsupported' });
     await scene.prepareStartup();
     expect(scene.turnText.text).toBe('AURA DUEL · GET READY');
-    for (let frame = 0; frame < 44; frame += 1) scene.updateStartup(100);
+    advanceSong(scene, scene.chart.turns[0].firstNoteMs - scene.chart.beatMs + 0.01);
     expect(scene.startup.snapshot).toMatchObject({ phase: 'countdown', count: 1 });
     expect(scene.turnText.text).toBe('AURA DUEL · GET READY');
-    expect(scene.clockStartedAt).toBeNull();
-    expect(scene.beginClock).not.toHaveBeenCalled();
+    expect(scene.clockStartedAt).not.toBeNull();
+    expect(scene.beginClock).toHaveBeenCalledExactlyOnceWith(0, true);
+    expect(scene.actionRecorder.record).not.toHaveBeenCalled();
   });
 
   it('ignores a render completion from an abandoned lifecycle without opening capture', async () => {
@@ -2051,5 +2449,24 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
     expect(scene.startup.snapshot.phase).toBe('countdown');
     expect(scene.startup.snapshot.remainingMs).toBeLessThanOrEqual(1_000);
     expect(scene.beginClock).not.toHaveBeenCalled();
+  });
+
+  it('enables online count-in audio after stopping preparation and emits GO only after the song starts', () => {
+    const scene = startupHarness();
+    scene.online = { localSlot: 0, matchSerial: 1 };
+    scene.localOnlineReady = true;
+    scene.startup = new AuraStartup(true);
+    scene.startup.begin();
+    scene.beginClock(3_000);
+    const sounds = scene.soundManager;
+    expect(sounds.stopBattleMusic.mock.invocationCallOrder[0]).toBeLessThan(sounds.startAuraCrowd.mock.invocationCallOrder[0]);
+    expect(sounds.startAuraCrowd.mock.invocationCallOrder[0]).toBeLessThan(sounds.playAuraCountIn.mock.invocationCallOrder[0]);
+    expect(sounds.playAuraCountIn.mock.calls).toEqual([[3]]);
+    expect(sounds.startBattleMusic).not.toHaveBeenCalled();
+    scene.time.delayedCall.mock.calls[0][1]();
+    expect(sounds.startBattleMusic).toHaveBeenCalledOnce();
+    expect(sounds.playAuraCountIn.mock.calls).toEqual([[3], ['go']]);
+    expect(sounds.startBattleMusic.mock.invocationCallOrder[0]).toBeLessThan(sounds.playAuraCountIn.mock.invocationCallOrder[1]);
+    expect(scene.startup.snapshot.phase).toBe('playing');
   });
 });

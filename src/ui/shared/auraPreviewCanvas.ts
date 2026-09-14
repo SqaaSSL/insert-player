@@ -1,4 +1,5 @@
 import { createAuraLayout } from '../../game/aura/AuraLayout.ts';
+import { AURA_LANES, auraUsesTouchControls } from '../../game/aura/AuraLanes.ts';
 import { drawAuraComicIcon, type AuraComicGraphics } from '../../game/aura/AuraComicArt.ts';
 import { AURA_DOCKED_MOVE_NAMES } from '../../game/aura/AuraComicFeedback.ts';
 import { AURA_SCORE_CUE, formatAuraScoreDelta } from '../../game/aura/AuraScoreCue.ts';
@@ -14,7 +15,7 @@ export type AuraPreviewAtlases = ReadonlyMap<string, AuraPreviewAtlas>;
 export const AURA_PREVIEW_FRAME = { canvasWidth: 480, canvasHeight: 512, bodyHeight: 360, rootX: 240, rootY: 474 };
 const WIDTH = 1024;
 const HEIGHT = 576;
-const COLORS = [CREAM, HEAT, HEAT, CREAM];
+const COLORS = AURA_LANES.map(lane => lane.tone);
 const css = (color: number) => `#${color.toString(16).padStart(6, '0')}`;
 
 function plate(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number,
@@ -62,6 +63,7 @@ function canvasAuraGraphics(ctx: CanvasRenderingContext2D): AuraComicGraphics & 
  * calibrated sprite geometry, chart projection and scoring come from game modules. */
 export function drawAuraPreview(ctx: CanvasRenderingContext2D, stage: HTMLImageElement | null,
   atlases: AuraPreviewAtlases | null, duel: AuraPreviewDuelState, elapsedMs: number) {
+  const touch = auraUsesTouchControls();
   const layout = createAuraLayout(WIDTH, HEIGHT);
   const hud = auraHudLayout(layout);
   const hudState = auraHudState(duel.scores);
@@ -148,16 +150,16 @@ export function drawAuraPreview(ctx: CanvasRenderingContext2D, stage: HTMLImageE
   for (let lane = 0; lane < 4; lane++) {
     const x = layout.highwayX + layout.laneOffsets[lane];
     const tone = css(COLORS[lane]);
-    ctx.fillStyle = '#05050780'; ctx.fillRect(x - 30, layout.laneStartY, 60, layout.laneTargetY - layout.laneStartY);
-    ctx.strokeStyle = css(STEEL_DIM); ctx.lineWidth = 1;
+    ctx.fillStyle = `${tone}17`; ctx.fillRect(x - 30, layout.laneStartY, 60, layout.laneTargetY - layout.laneStartY);
+    ctx.strokeStyle = `${tone}4d`; ctx.lineWidth = 1;
     ctx.strokeRect(x - 30, layout.laneStartY, 60, layout.laneTargetY - layout.laneStartY);
     ctx.fillStyle = `${tone}15`; ctx.fillRect(x - 29, layout.laneTargetY - 22, 58, 44);
     const hit = duel.receptors[lane]?.hit;
     if (hit) { ctx.fillStyle = `${tone}50`; ctx.fillRect(x - 30, layout.laneTargetY - 74, 60, 76); }
     plate(ctx, x - 28, layout.laneTargetY - 13, 56, 26, '#0b0c14', hit ? '#ffffff' : css(STEEL), 4);
     glyph(ctx, x, layout.laneTargetY, hit ? '#ffffff' : tone, hit);
-    plate(ctx, x - 22, layout.keyLabelY - 17, 44, 34, hit ? tone : css(INK), css(STEEL), 4);
-    label(ctx, AURA_PREVIEW_KEYS[lane], x, layout.keyLabelY - 9, 19, hit ? css(INK) : css(CREAM), 'center');
+    plate(ctx, x - 22, layout.keyLabelY - 17, 44, 34, touch || hit ? tone : css(INK), tone, 4);
+    if (!touch) label(ctx, AURA_PREVIEW_KEYS[lane], x, layout.keyLabelY - 9, 19, hit ? css(INK) : css(CREAM), 'center');
   }
   for (const progress of [0.25, 0.5, 0.75]) {
     const y = layout.laneStartY + (layout.laneTargetY - layout.laneStartY) * progress;
@@ -224,12 +226,13 @@ export function drawAuraPreview(ctx: CanvasRenderingContext2D, stage: HTMLImageE
     [-51, -17, 17, 51].forEach((x, index) => {
       const hit = duel.moveInputs[index];
       plate(ctx, x - 14, 95, 28, 30, css(INK), '#fff4d659', 3);
-      label(ctx, hit ? AURA_PREVIEW_KEYS[hit.lane] : '·', x, 103, 14,
+      if (touch && hit) plate(ctx, x - 12, 102, 24, 16, css(COLORS[hit.lane]), undefined, 2);
+      else label(ctx, hit ? AURA_PREVIEW_KEYS[hit.lane] : '·', x, 103, 14,
         hit ? css(COLORS[hit.lane]) : css(CREAM), 'center');
     });
     ctx.restore();
   }
-  label(ctx, 'AUTO · D F J K', layout.highwayX, layout.keyLabelY + 47, 10, css(CREAM), 'center');
+  label(ctx, touch ? 'AUTO · FOUR COLOURS' : 'AUTO · D F J K', layout.highwayX, layout.keyLabelY + 47, 10, css(CREAM), 'center');
   label(ctx, `CROWD · ${presentation.crowdLabel}`, layout.instrument.crowdX, layout.instrument.crowdY, 8, css(CREAM), 'right');
   const segmentColors = [STEEL, STEEL, STEEL, CREAM, CREAM, HEAT, HEAT_DEEP, DANGER];
   const trackLeft = layout.instrument.crowdX - 204;

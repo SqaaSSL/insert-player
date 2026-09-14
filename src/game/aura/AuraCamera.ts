@@ -10,8 +10,14 @@ export interface AuraCameraInput {
   fromSlot?: AuraSlot | null;
   /** Linear elapsed time / AURA_CAMERA_HANDOFF_MS; the helper applies easing. */
   transitionProgress?: number;
+  /** Opening two-shot at one; pan/zoom to the active player as it reaches zero. */
+  introProgress?: number;
   /** Present only for the finale. Zero starts from the exact current framing. */
   finaleProgress?: number;
+  /** Use the compact victory/defeat framing. */
+  resultTableau?: boolean;
+  /** Move the finished tableau beside the controls only after capture stops. */
+  resultDockProgress?: number;
   reducedMotion?: boolean;
 }
 
@@ -59,8 +65,8 @@ export function auraCameraComposition(layout: AuraLayout, input: AuraCameraInput
   const turning = previous !== subject;
   const turnProgress = reducedMotion || !turning ? 1 : progress(input.transitionProgress ?? 1);
   const turnEase = ease(turnProgress);
-  const distance = Math.min(layout.width * (layout.portrait ? 0.42 : 0.24), layout.active.height * 0.75);
-  const marks = [0, distance] as const;
+  let distance = Math.min(layout.width * (layout.portrait ? 0.42 : 0.24), layout.active.height * 0.75);
+  let marks: readonly [number, number] = [0, distance];
 
   let focusX = mix(marks[previous], marks[subject], turnEase);
   let anchorX = layout.active.x;
@@ -76,12 +82,35 @@ export function auraCameraComposition(layout: AuraLayout, input: AuraCameraInput
   }
 
   const finale = input.finaleProgress !== undefined;
+  const intro = !finale && input.introProgress !== undefined;
+  const requestedIntroProgress = progress(input.introProgress ?? 0);
+  // Hold the opening pose, then cut to the player when its handoff starts.
+  // Reusing the finale's reduced-motion endpoint would keep both actors shown.
+  const introProgress = reducedMotion && requestedIntroProgress < 1 ? 0 : requestedIntroProgress;
+  if (intro && introProgress > 0) {
+    const introEase = ease(introProgress);
+    const introHeight = layout.portrait ? 230 : layout.active.height * 0.96;
+    const introZoom = introHeight / layout.active.height;
+    const introSpacing = layout.width * (layout.portrait ? 0.44 : 0.34);
+    const widerDistance = mix(distance, introSpacing / introZoom, introEase);
+    focusX = mix(focusX / distance, 0.5, introEase) * widerDistance;
+    distance = widerDistance;
+    marks = [0, distance];
+    anchorX = mix(anchorX, layout.width / 2, introEase);
+    zoom = mix(zoom, introZoom, introEase);
+    alphas = [mix(alphas[0], 1, introEase), mix(alphas[1], 1, introEase)];
+  }
   const finaleProgress = reducedMotion ? 1 : progress(input.finaleProgress ?? 0);
   if (finale) {
     const finaleEase = ease(finaleProgress);
     focusX = mix(focusX, distance / 2, finaleEase);
-    anchorX = mix(anchorX, layout.width / 2, finaleEase);
-    zoom = mix(zoom, layout.portrait ? 230 / layout.active.height : 0.96, finaleEase);
+    const result = input.resultTableau === true;
+    const dock = result && !layout.portrait ? ease(reducedMotion && input.resultDockProgress !== undefined
+      ? 1 : input.resultDockProgress ?? 0) : 0;
+    const finalAnchor = mix(layout.width / 2, layout.width * 0.28, dock);
+    const finalHeight = result ? layout.portrait ? 260 : 270 : layout.portrait ? 230 : layout.active.height * 0.96;
+    anchorX = mix(anchorX, finalAnchor, finaleEase);
+    zoom = mix(zoom, finalHeight / layout.active.height, finaleEase);
     alphas = [mix(alphas[0], 1, finaleEase), mix(alphas[1], 1, finaleEase)];
   }
 
@@ -98,7 +127,8 @@ export function auraCameraComposition(layout: AuraLayout, input: AuraCameraInput
     camera: { focusX, anchorX, zoom },
     backdropOffsetX: (distance / 2 - focusX) * 0.18,
     backdropScale: 1.14 + (zoom - 1) * 0.24,
-    transitioning: !reducedMotion && (finale ? finaleProgress < 1 : turning && turnProgress < 1),
+    transitioning: !reducedMotion && (finale ? finaleProgress < 1
+      : intro && introProgress > 0 ? introProgress < 1 : turning && turnProgress < 1),
     finale,
   };
 }

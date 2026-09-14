@@ -1,7 +1,7 @@
 import { VERSUS_INVITE_OG_CSS } from './arcadeChallengeOgStyles.mjs';
 import type { QualityTier } from './types';
 
-export const VERSUS_INVITE_TEMPLATE_VERSION = 'loading-challenge-v7';
+export const VERSUS_INVITE_TEMPLATE_VERSION = 'loading-challenge-v8';
 export const VERSUS_INVITE_OG_WIDTH = 1200;
 export const VERSUS_INVITE_OG_HEIGHT = 630;
 export const VERSUS_INVITE_FIGHTER_ASSET_URL = 'asset://insert-player/versus-fighter';
@@ -78,7 +78,7 @@ export function buildVersusInviteOgDocument(copy: VersusInviteOgCopy): { html: s
     .map((line) => `<span>${escapeHtml(line.toUpperCase())}</span>`)
     .join('');
   const fighterName = escapeHtml(fighterCharacters.join('').toUpperCase());
-  const qualityTier = escapeHtml(copy.qualityTier.toUpperCase());
+  const qualityTier = copy.qualityTier === 'rookie' ? 'ROOKIE' : 'CHAMPION';
 
   return {
     html: `<div class="canvas">

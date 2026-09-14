@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "exampleId": "nova-quality-20260818",
+  "characterName": "Nova",
+  "identity": {
+    "kind": "original-synthetic-adult",
+    "sha256": "2d8fbd6e1b7feb4bced503c927b00807ce60104577d3ec9d8d862fe307862b44",
+    "asset": "nova-original.png",
+    "bytes": 1905707
+  },
+  "sourceArchive": {
+    "kind": "preserved-indexeddb-export",
+    "file": "localhost--nova-qa--2d8fbd6e1b7feb4b.tar",
+    "exportedAt": "2026-08-25T20:24:10.711Z"
+  },
+  "animation": {
+    "name": "idle",
+    "frameWidth": 768,
+    "frameHeight": 1024,
+    "frameCount": 8,
+    "gridColumns": 4,
+    "gridRows": 2
+  },
+  "presentation": {
+    "assetProcessing": "Exact copies of archived processed sprite PNGs. No new resizing, sharpening, degradation, image generation, or frame replacement.",
+    "scope": "Historical same-character generation example from 2026-08-18; not an Aura animation or a guarantee of a specific model.",
+    "resolutionNote": "768x1024 describes the stored cell canvas, not the amount of native generated detail. The Rookie raw sheet was smaller and its cells were normalized by the original pipeline."
+  },
+  "variants": [
+    {
+      "label": "Rookie",
+      "storedTier": "rookie",
+      "asset": "nova-rookie-idle.png",
+      "sha256": "8c3b3d633a6f2d54a36974475f1c7b981dd8cded161489ff9d27a0f5cda83b29",
+      "bytes": 2074109,
+      "archiveRecordKey": "469d7bcb6ff4dd7233d3ece5f9ce415f",
+      "archiveBlobPath": "blobs/sprites/016/pngblob.png",
+      "generatedAt": "2026-08-18T21:57:01+00:00",
+      "processingVersion": 4,
+      "sheetWidth": 3072,
+      "sheetHeight": 2048,
+      "rawSheet": {
+        "sha256": "2076c5173cb1d5a6cab6c21ff1e39c505f4d656d661a81d6fc67a787be549271",
+        "width": 1456,
+        "height": 720
+      },
+      "generationContract": "Single generated sheet, normalized into runtime cells.",
+      "modelEvidence": "The archive stores the quality tier but no per-request model receipt. This process description follows the historical tier contract; no provider/model attestation is claimed."
+    },
+    {
+      "label": "Champion",
+      "storedTier": "contender",
+      "asset": "nova-contender-idle.png",
+      "sha256": "82ba4c69dd9fa8d6f7822cdc34c44dd8cc57e7f49ee3599f301919e17140df89",
+      "bytes": 2610579,
+      "archiveRecordKey": "1f6916ffa40ce1d115e122bafb97a114",
+      "archiveBlobPath": "blobs/sprites/008/pngblob.png",
+      "generatedAt": "2026-08-18T22:19:21+00:00",
+      "processingVersion": 4,
+      "sheetWidth": 3072,
+      "sheetHeight": 2048,
+      "rawSheet": {
+        "sha256": "c81b019d3d96c8126f51e4ee8c3afd667f39b0271dc3bc447bfed46a5636e599",
+        "width": 3584,
+        "height": 2528
+      },
+      "generationContract": "Generated sheet followed by individual-frame refinement and background cleanup.",
+      "modelEvidence": "The archive stores the quality tier but no per-request model receipt. This process description follows the historical tier contract; no provider/model attestation is claimed."
+    }
+  ]
+}

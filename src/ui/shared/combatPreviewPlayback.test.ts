@@ -12,10 +12,14 @@ class PreviewVideo extends EventTarget {
   duration = 8;
   readyState = 0;
   paused = true;
-  load = vi.fn();
+  loadedSources: string[] = [];
+  load = vi.fn(() => { this.loadedSources.push(this.src); this.readyState = 0; this.currentTime = 0; });
   play = vi.fn(async () => { this.paused = false; });
   pause = vi.fn(() => { this.paused = true; });
-  removeAttribute = vi.fn((name: string) => { if (name === 'src') this.src = ''; });
+  removeAttribute = vi.fn((name: string) => {
+    if (name === 'src') this.src = '';
+    if (name === 'poster') this.poster = '';
+  });
 }
 
 let page: EventTarget & { hidden: boolean };
@@ -23,6 +27,7 @@ let motion: EventTarget & { matches: boolean };
 let visibility: (entries: { isIntersecting: boolean }[]) => void;
 let disconnect: ReturnType<typeof vi.fn>;
 const media = { src: '/actual-match.mp4', poster: '/actual-match.webp', actionTime: 2 };
+const portraitMedia = { src: '/actual-match-portrait.mp4', poster: '/actual-match-portrait.webp', actionTime: 5 };
 const settle = async () => { await Promise.resolve(); await Promise.resolve(); };
 
 beforeEach(() => {
@@ -146,5 +151,146 @@ describe('real gameplay preview lifecycle', () => {
     expect(video.src).toBe('');
     expect(video.paused).toBe(true);
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('changes the visible capture and ignores equivalent media without restarting playback', async () => {
+    const { video, states, controller } = mount();
+    visibility([{ isIntersecting: true }]);
+    await settle();
+    controller.setMedia(portraitMedia);
+    await settle();
+    expect(video).toMatchObject({ src: portraitMedia.src, poster: portraitMedia.poster, paused: false });
+    expect(video.loadedSources).toEqual([media.src, portraitMedia.src]);
+    expect(states.at(-1)).toBe('playing');
+    controller.setMedia({ ...portraitMedia });
+    expect(video.play).toHaveBeenCalledTimes(2);
+    expect(video.load).toHaveBeenCalledTimes(2);
+    controller.destroy();
+  });
+
+  it('preserves manual pause across a visible source change and visibility changes', async () => {
+    const { video, states, controller } = mount();
+    visibility([{ isIntersecting: true }]);
+    await settle();
+    controller.toggle();
+    controller.setMedia(portraitMedia);
+    visibility([{ isIntersecting: false }]);
+    visibility([{ isIntersecting: true }]);
+    await settle();
+    expect(video).toMatchObject({ src: portraitMedia.src, paused: true });
+    expect(states.at(-1)).toBe('paused');
+    expect(video.play).toHaveBeenCalledTimes(1);
+    controller.toggle();
+    await settle();
+    expect(states.at(-1)).toBe('playing');
+    controller.destroy();
+  });
+
+  it('chooses the latest source before first visibility without loading discarded videos or posters', async () => {
+    const { video, states, controller } = mount();
+    controller.setMedia(portraitMedia);
+    controller.setMedia(media);
+    controller.setMedia(portraitMedia);
+    expect(video).toMatchObject({ src: '', poster: '' });
+    expect(video.load).not.toHaveBeenCalled();
+    expect(video.play).not.toHaveBeenCalled();
+    expect(states.at(-1)).toBe('offscreen');
+    visibility([{ isIntersecting: true }]);
+    await settle();
+    expect(video.loadedSources).toEqual([portraitMedia.src]);
+    expect(video.poster).toBe(portraitMedia.poster);
+    controller.destroy();
+  });
+
+  it.each(['offscreen', 'hidden-tab'])('releases a loaded source during an %s swap and waits for visibility', async (reason) => {
+    const { video, states, controller } = mount();
+    visibility([{ isIntersecting: true }]);
+    await settle();
+    if (reason === 'offscreen') visibility([{ isIntersecting: false }]);
+    else { page.hidden = true; page.dispatchEvent(new Event('visibilitychange')); }
+    controller.setMedia(portraitMedia);
+    expect(video).toMatchObject({ src: '', poster: '', paused: true, preload: 'none' });
+    expect(video.loadedSources).toEqual([media.src, '']);
+    expect(states.at(-1)).toBe('offscreen');
+    // A late event from the retired load cannot poison the pending capture.
+    video.dispatchEvent(new Event('error'));
+    if (reason === 'offscreen') visibility([{ isIntersecting: true }]);
+    else { page.hidden = false; page.dispatchEvent(new Event('visibilitychange')); }
+    await settle();
+    expect(video.loadedSources).toEqual([media.src, '', portraitMedia.src]);
+    expect(states.at(-1)).toBe('playing');
+    controller.destroy();
+  });
+
+  it('retains explicit playback permission under reduced motion when the source changes', async () => {
+    motion.matches = true;
+    const { video, states, controller } = mount();
+    visibility([{ isIntersecting: true }]);
+    controller.toggle();
+    await settle();
+    controller.setMedia(portraitMedia);
+    await settle();
+    expect(video).toMatchObject({ src: portraitMedia.src, paused: false });
+    expect(states.at(-1)).toBe('playing');
+    controller.destroy();
+  });
+
+  it('shows the new reduced-motion action frame and clears a previous media failure on swap', async () => {
+    motion.matches = true;
+    const { video, states, controller } = mount();
+    visibility([{ isIntersecting: true }]);
+    video.readyState = 1;
+    video.dispatchEvent(new Event('loadedmetadata'));
+    expect(video.currentTime).toBe(media.actionTime);
+    video.dispatchEvent(new Event('error'));
+    expect(states.at(-1)).toBe('error');
+    controller.setMedia(portraitMedia);
+    expect(video.currentTime).toBe(0);
+    video.readyState = 1;
+    video.dispatchEvent(new Event('loadedmetadata'));
+    expect(video.currentTime).toBe(portraitMedia.actionTime);
+    expect(states.at(-1)).toBe('reduced-motion');
+    expect(video.play).not.toHaveBeenCalled();
+    controller.destroy();
+  });
+
+  it.each(['resolve', 'reject'])('ignores a stale %s from the old source while its replacement is pending', async (outcome) => {
+    const { video, states, controller } = mount();
+    let resolveOld!: () => void;
+    let rejectOld!: (error: Error) => void;
+    let resolveNew!: () => void;
+    video.play.mockImplementationOnce(() => new Promise<void>((resolve, reject) => { resolveOld = resolve; rejectOld = reject; }));
+    video.play.mockImplementationOnce(() => new Promise<void>(resolve => { resolveNew = resolve; }));
+    visibility([{ isIntersecting: true }]);
+    controller.setMedia(portraitMedia);
+    const pauses = video.pause.mock.calls.length;
+    if (outcome === 'resolve') resolveOld();
+    else rejectOld(new Error('Old source cancelled'));
+    await settle();
+    expect(states.at(-1)).toBe('loading');
+    expect(video.pause).toHaveBeenCalledTimes(pauses);
+    resolveNew();
+    await settle();
+    expect(states.at(-1)).toBe('playing');
+    controller.destroy();
+  });
+
+  it('cannot resume a paused replacement from an old play promise or set media after destruction', async () => {
+    const { video, states, controller } = mount();
+    let complete!: () => void;
+    video.play.mockImplementationOnce(() => new Promise<void>(resolve => { complete = resolve; }));
+    visibility([{ isIntersecting: true }]);
+    controller.toggle();
+    controller.setMedia(portraitMedia);
+    complete();
+    await settle();
+    expect(states.at(-1)).toBe('paused');
+    expect(video.paused).toBe(true);
+    expect(video.play).toHaveBeenCalledTimes(1);
+    controller.destroy();
+    const loads = video.load.mock.calls.length;
+    controller.setMedia(media);
+    expect(video.src).toBe('');
+    expect(video.load).toHaveBeenCalledTimes(loads);
   });
 });

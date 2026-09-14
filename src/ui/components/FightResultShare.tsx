@@ -1,3 +1,5 @@
+import { BattleResultShare } from './BattleResultShare.tsx';
+import type { SavedBattle } from '../../shared/BattleFinisher.ts';
 import { useState } from 'react';
 import type { MatchCompletionDetail } from '../../game/match/MatchConfig.ts';
 import { copyToClipboard } from '../shared/communityShare.ts';
@@ -5,6 +7,8 @@ import { PUBLIC_APP_NAME } from '../publicBrand.ts';
 
 interface FightResultShareProps {
   summary: MatchCompletionDetail;
+  battle?: SavedBattle | null;
+  onBattleChange?: (battle: SavedBattle) => void;
   p1Name: string;
   p2Name: string;
 }
@@ -31,7 +35,7 @@ export function fightResultShareCopy(
   return `${winner} beat ${loser} ${score} in ${PUBLIC_APP_NAME}: Fight.`;
 }
 
-export function FightResultShare({ summary, p1Name, p2Name }: FightResultShareProps) {
+export function FightResultShare({ summary, p1Name, p2Name, battle, onBattleChange }: FightResultShareProps) {
   const [state, setState] = useState<'idle' | 'sharing' | 'shared' | 'error'>('idle');
 
   const share = async () => {
@@ -55,6 +59,7 @@ export function FightResultShare({ summary, p1Name, p2Name }: FightResultSharePr
     setState(copied ? 'shared' : 'error');
   };
 
+  if (battle) return <BattleResultShare battle={battle} onBattleChange={onBattleChange} />;
   return (
     <button
       type="button"

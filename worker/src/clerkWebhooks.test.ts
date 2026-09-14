@@ -310,6 +310,7 @@ describe('Clerk user lifecycle webhook', () => {
     for (let index = 0; index < 1205; index += 1) {
       bucket.keys.add(`users/user_delete/fighters/f${index}/sprite.png`);
     }
+    bucket.keys.add('users/user_delete/battles/battle123/finishers/video.mp4');
     bucket.keys.add('users/user_other/fighters/keep/sprite.png');
 
     const event = {
@@ -320,12 +321,14 @@ describe('Clerk user lifecycle webhook', () => {
     } as UserWebhookEvent;
     const result = await processClerkUserWebhook(event, 'msg_delete', fakeEnv(database, bucket));
 
-    expect(result).toEqual({ outcome: 'deleted', assetsDeleted: 1205 });
+    expect(result).toEqual({ outcome: 'deleted', assetsDeleted: 1206 });
     expect(Array.from(bucket.keys)).toEqual(['users/user_other/fighters/keep/sprite.png']);
     expect(database.users.has('user_delete')).toBe(false);
     expect(database.tombstones.size).toBe(1);
     expect(database.webhookEvents.get('msg_delete')).toBe('user.deleted');
     expect(database.executedQueries.some((query) => query.startsWith('DELETE FROM matches'))).toBe(true);
+    expect(database.executedQueries.some((query) => query.startsWith('UPDATE battle_media') && query.includes("status = 'revoked'"))).toBe(true);
+    expect(database.executedQueries.some((query) => query.startsWith('UPDATE battle_finisher_jobs') && query.includes('owner_user_id = NULL'))).toBe(true);
   });
 
   it('deletes the account-scoped Stripe Customer before removing local account rows', async () => {

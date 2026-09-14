@@ -163,7 +163,7 @@ Use the same variable and secret names in both environments. Values must remain 
 | `STRIPE_SECRET_KEY` | Test in development, live in production |
 | `STRIPE_WEBHOOK_SECRET` | Matching environment billing endpoint |
 | `CLERK_WEBHOOK_SIGNING_SECRET` | Matching environment user-lifecycle endpoint |
-| `ASF_LAUNCH_SMOKE_CLERK_KEY` | Clerk Backend API key for the matching environment; used only by authenticated launch smoke |
+| `ASF_LAUNCH_SMOKE_CLERK_KEY` | Clerk Backend API key for the matching environment; used by authenticated launch smoke and the reviewed Casual import session |
 | `CLERK_BACKEND_AUTH_BRIDGE_SECRET` | Distinct random secret shared only by the matching Worker and backend workflows; authenticates Agent Task tokens and the read-only deploy processor probe; at least 32 characters |
 | `ASF_LAUNCH_SMOKE_PRIMARY_USER_ID` | Production only; Clerk user id for the dedicated primary OAuth QA account |
 | `ASF_LAUNCH_SMOKE_CLONE_USER_ID` | Production only; Clerk user id for the dedicated clone OAuth QA account |
@@ -243,6 +243,12 @@ must never be used as a substitute for reviewing valid dirty worktrees.
 
 ## Durable Object lifecycle changes
 
+New `[[workflows]]` bindings use a `class_name` field too, but they do not add a
+Durable Object class migration. The rollout guard recognizes explicitly added
+Workflow tables while continuing to reject DO migration declarations and
+`class_name` changes whose table cannot be established from the diff. This keeps
+the ordinary rollback protection enabled for additive Workflow deployments.
+
 `deploy-production` refuses a push that adds, renames, or deletes a Durable Object
 class (`[[migrations]]` in `worker/wrangler.toml`): Cloudflare cannot roll a Worker
 back across a DO migration, so the automatic rollback path would be gone. To ship
@@ -250,3 +256,17 @@ one deliberately, run the workflow by hand with **Actions → Deploy production 
 Run workflow → `allow_durable_object_lifecycle` = true**. That single rollout is
 one-way; every later push is rollback-safe again because the stable base moves
 past the migration. Deploy the same change to the sandbox (`develop`) first.
+
+## Casual presentation character
+
+Casual is the synthetic character recovered from the original launch-video photo. His reviewed bundle must contain the original WebP, six canonical pose sources, and all 17 Fight/Rush/Aura animations in both Rookie (`rookie`) and current Champion (`contender`) quality. The ordinary image pipeline does not advertise Video HQ. Nova's comparison assets and every previous character version remain intact.
+
+Generate and review media locally with `scripts/run-casual-generation.mjs`, first `--phase=canary`, then `--phase=full --canary-reviewed`. The credential wrapper uses only the dedicated Insert Player Meterkey identity from the OS keychain for Gemini, FAL submission and queue polling. It does not read a local FAL key or fall back to a personal provider account. Persistent request reservations, exact request-body replay, phase caps and immutable raw artifacts prevent an interrupted run from silently submitting the same paid request again. `--recover-only` retrieves already accepted FAL jobs through Meterkey with GET requests only. Keep the private provider ledger outside the deployment bundle.
+
+Once both canary idle outputs are complete, `scripts/curate-casual-idle.mjs` prepares a read-only plan for an authored closed loop. Applying it with `--apply --confirm=casual-idle-closed-loop-v1` retains source poses 2 through 8 and repeats pose 2 as the closing hold in both qualities. This is seven unique poses over eight playback frames. The original processed/raw sheets and manifest remain immutable; the derivative proof records the exact geometry and frame mapping. This idle-specific choice does not relax the unique-frame requirement for other animations.
+
+After visual review, use `scripts/package-casual-roster.mjs` to create a deterministic archive and candidate descriptor. Commit the reviewed descriptor at `arcade/casual-generated-v1.json` through a protected PR, and attach the exact archive to the private draft release `casual-generation-v1`. Do not overwrite a reviewed archive with different bytes. Publish the Casual comparison only after both approved idle images exist at their referenced public paths.
+
+Run **Import reviewed Casual roster in production** only after that exact clean `main` commit is deployed. The workflow verifies the committed manifest/archive hashes, downloads only the fixed draft release asset, and uses the regular authenticated source/version APIs. It preserves both qualities, promotes the complete Champion pack, activates Casual, purges only the canonical Arcade roster URL and verifies public assets for all three games. Failures preserve uploaded versions and leave Casual in draft; a repeated successful import refreshes the roster cache and verifies the existing character. This workflow never invokes generation providers or deletes character assets.
+
+The executing import uses `scripts/import-casual-with-session.mjs` after the offline plan. Before creating authentication state, it runs the same clean-main, exact-SHA, API-origin and sealed-descriptor checks. It requires the independently configured admin and primary QA user ids to match, then verifies the existing admin/QA markers and verified OAuth identity. It reuses the launch-smoke Agent Task helper in an isolated browser, refreshes tokens only for that task's observed session, and limits the session to 15 minutes. Normal operations, including public downloads, stop with three minutes reserved for rollback to draft and cache purge. It never borrows an operator's existing session or changes account roles. The wrapper attempts to revoke both its exact session and task on success or failure; a consumed, single-use task can return Clerk's documented `agent_task_cannot_be_revoked` only after the owned session has been confirmed revoked. If bootstrap fails before a session id is observable, task revocation is attempted but cleanup is reported unconfirmed, with no automatic retry and the 15-minute session lifetime as the upper bound. A lost task-create response also remains unconfirmed; no task id or session is guessed. Diagnostics contain phases and redacted errors, never tokens, task URLs or browser state; only the ordinary nonsecret import plan and receipt are uploaded.

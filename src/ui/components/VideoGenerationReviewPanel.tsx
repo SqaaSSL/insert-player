@@ -22,7 +22,7 @@ interface VideoGenerationReviewPanelProps {
   onReject: () => void;
   onContinue?: () => void;
   onFinalSync?: () => void;
-  onRestart?: () => void;
+  onCreateNew?: () => void;
 }
 
 export function parseVideoReviewIndices(
@@ -59,7 +59,7 @@ export function VideoGenerationReviewPanel({
   onReject,
   onContinue,
   onFinalSync,
-  onRestart,
+  onCreateNew,
 }: VideoGenerationReviewPanelProps) {
   const id = useId();
   const [draftIndices, setDraftIndices] = useState(review.proposedIndices.join(', '));
@@ -101,20 +101,20 @@ export function VideoGenerationReviewPanel({
           <h3 id={`${id}-title`}>{review.animationLabel}</h3>
         </div>
         <span className={`video-review__status is-${restartRequired ? 'rejected' : status}`}>
-          {restartRequired ? 'Restart Required' : awaitingReview ? 'Paused Safely' : status === 'approved' ? 'Approved' : 'Rejected'}
+          {restartRequired ? 'Archived' : awaitingReview ? 'Paused Safely' : status === 'approved' ? 'Approved' : 'Rejected'}
         </span>
       </header>
 
       <p className="video-review__intro">
         {restartRequired
-          ? 'This exact review remains archived, but the complete run failed its final integrity check. Starting again creates a new complete paid Video run.'
+          ? 'This run did not pass its final check and remains archived. This older creation option is no longer available. Your saved versions are safe. Create a new Rookie or Champion.'
           : awaitingReview
           ? 'The compiler has proposed a frame sequence. Nothing is promoted until you approve it.'
           : status === 'approved'
             ? review.continuationAvailable
               ? 'This exact private revision is approved and promoted. Continue when you are ready for the next action.'
               : 'This exact private revision is approved in the cloud. Sync the completed fighter to this device.'
-            : 'This video remains archived privately and will not be promoted or continued.'}
+            : 'This video remains archived privately. This older creation option is no longer available. Your saved versions are safe. Create a new Rookie or Champion.'}
       </p>
 
       {review.videoUrl ? (
@@ -231,9 +231,9 @@ export function VideoGenerationReviewPanel({
                 {busy ? 'Syncing Fighter...' : error ? 'Retry Fighter Sync' : 'Sync Approved Fighter'}
               </button>
             ) : null}
-            {restartRequired && onRestart ? (
-              <button type="button" disabled={busy} onClick={onRestart}>
-                {busy ? 'Preparing New Run...' : 'Start A New Complete Video Run'}
+            {(restartRequired || status === 'rejected') && onCreateNew ? (
+              <button type="button" disabled={busy} onClick={onCreateNew}>
+                Create A New Character
               </button>
             ) : null}
             {review.reportUrl ? (

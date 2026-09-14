@@ -26,10 +26,6 @@ import { TurnstileChallenge } from '../components/TurnstileChallenge.tsx';
 import { GenerationConsent } from '../components/LegalConsent.tsx';
 import { VideoGenerationReviewGate } from '../components/VideoGenerationReviewGate.tsx';
 import {
-  CreationFlowPicker,
-  type CreationFlow,
-} from '../components/CreationFlowPicker.tsx';
-import {
   animLabel,
   getSourceBlob,
   type PreviewSelection,
@@ -44,8 +40,10 @@ import {
 } from '../../services/CloudFighters.ts';
 import {
   QUALITY_TIERS,
+  qualityTierInfo,
   type QualityTier,
 } from '../../services/QualityTiers.ts';
+import { QualityComparison } from '../components/QualityComparison.tsx';
 import {
   authorizeGeneration,
   finishGenerationPurchase,
@@ -68,8 +66,9 @@ import {
   creationFlowForResume,
   durableRecoveryFailureNeedsRetry,
   isVideoReviewOrRestartJob,
+  isRecoverableVideoReviewJob,
   videoReviewJobNeedsConsent,
-  videoCreationFlowAvailability,
+  type CreationFlow,
 } from '../shared/creationFlow.ts';
 
 interface CreateFighterPageProps {
@@ -221,9 +220,6 @@ export function CreateFighterPage({
   const requiresTurnstile = authStatus === 'signed-out' && tier === 'rookie' && creationPackage !== 'aura';
   const turnstileSiteKey = String(import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '').trim();
   const turnstileReady = !requiresTurnstile || Boolean(turnstileToken);
-  const videoFlowAvailability = creationPackage === 'aura'
-    ? { available: false, reason: 'Dedicated Aura moves use the Original flow.' }
-    : videoCreationFlowAvailability(authStatus, tier);
   const videoReviewActionNeedsConsent = videoReviewJobNeedsConsent(videoReviewJob) ||
     videoReviewDecisionRequiresConsent;
 
@@ -272,12 +268,6 @@ export function CreateFighterPage({
       setTier('rookie');
     }
   }, [lockPaidTiers, tier]);
-
-  useEffect(() => {
-    if (!videoFlowAvailability.available && creationFlow === 'video') {
-      setCreationFlow('original');
-    }
-  }, [creationFlow, videoFlowAvailability.available]);
 
   useEffect(() => {
     if (authStatus !== 'signed-in') {
@@ -340,9 +330,9 @@ export function CreateFighterPage({
           job.operation === 'fighter_generation' &&
           (job.status === 'queued' || job.status === 'running')
         ));
-        const videoReview = jobs.find(isVideoReviewOrRestartJob);
+        const videoReview = jobs.find(isRecoverableVideoReviewJob);
         const resumable = jobs.find((job) => (
-          job.operation === 'fighter_generation' && job.resumable
+          job.operation === 'fighter_generation' && job.resumable && !job.fullRunRestartRequired
         ));
         const recovering = active ?? videoReview ?? resumable;
         if (!recovering) {
@@ -394,11 +384,11 @@ export function CreateFighterPage({
           setRunning(false);
           setStageText(
             videoReview.fullRunRestartRequired
-              ? 'The previous run ended safely. Start a new complete Video run when you are ready.'
+              ? 'This older creation option has ended. Your saved versions remain in the gallery.'
               : videoReview.reviewStatus === 'awaiting_review'
               ? 'Generation paused safely for your review.'
               : videoReview.reviewStatus === 'rejected'
-                ? 'The rejected run is archived. Start a new complete Video run when you are ready.'
+                ? 'The rejected run is archived. Your saved versions remain in the gallery.'
                 : 'Approved. Continue when you are ready for the next action.',
           );
           setRecoveryReady(true);
@@ -539,7 +529,7 @@ export function CreateFighterPage({
       setVideoReviewJob(job);
       setResumableJob(null);
       setError(null);
-      setStageText('The Video run ended safely. Start a new complete run when you are ready.');
+      setStageText('This older creation option has ended. Your saved versions remain in the gallery.');
       setGenerating(new Set());
       return;
     }
@@ -685,69 +675,6 @@ export function CreateFighterPage({
       }
       setError(cause instanceof Error ? cause.message : 'The next video action could not start');
       setVideoReviewJob(approvedJob);
-    } finally {
-      setRunning(false);
-    }
-  }
-
-  async function restartRejectedVideoRun(rejectedJob: GenerationJob): Promise<void> {
-    if (running || cloudRecoveryRetryRequired || !recoveryReady) return;
-    if (!legalAccepted) {
-      setError('Accept the generation terms before starting a new complete Video run.');
-      return;
-    }
-    const creditCost = QUALITY_TIERS.find((item) => item.id === rejectedJob.tier)?.creditCost ?? 18;
-    if (!window.confirm(
-      `Start a new complete Video run for ${creditCost} credits? The rejected run stays archived and will not be reused.`,
-    )) return;
-    setRunning(true);
-    setError(null);
-    setStageText('Preparing a new complete Video run...');
-    const apiContext = captureApiRequestContext();
-    let purchaseId: string | undefined;
-    let backendOwnsPurchase = false;
-    try {
-      const authorization = await authorizeGeneration(
-        rejectedJob.tier,
-        'fighter_generation',
-        rejectedJob.fighterId,
-        null,
-        currentGenerationLegalAttestation(),
-        apiContext,
-        null,
-        'video',
-      );
-      if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
-        throw new Error(authorization.error ?? 'A new complete Video run could not be authorized');
-      }
-      purchaseId = authorization.purchaseId;
-      assertCreationFlowAcknowledged('video', authorization.creationFlow);
-      const nextJob = await startGenerationJob({
-        fighterId: rejectedJob.fighterId,
-        purchaseId: authorization.purchaseId,
-        providerSessionId: authorization.providerSessionId,
-        creationFlow: 'video',
-      }, apiContext);
-      backendOwnsPurchase = true;
-      setVideoReviewJob(null);
-      const controller = new AbortController();
-      pollingAbortRef.current?.abort();
-      pollingAbortRef.current = controller;
-      const completed = await monitorDurableJob(nextJob, apiContext, controller.signal);
-      await finishDurableJob(completed, apiContext);
-    } catch (cause) {
-      if (purchaseId && !backendOwnsPurchase) {
-        try {
-          await finishGenerationPurchase(purchaseId, false, rejectedJob.fighterId, apiContext);
-        } catch (settlementError: any) {
-          debugWarn(
-            '[Billing] New Video run reservation could not be released:',
-            settlementError?.message ?? settlementError,
-          );
-        }
-      }
-      setError(cause instanceof Error ? cause.message : 'A new complete Video run could not start');
-      setVideoReviewJob(rejectedJob);
     } finally {
       setRunning(false);
     }
@@ -902,8 +829,8 @@ export function CreateFighterPage({
       return;
     }
     if ((!file && !resumableJob) || running || !turnstileReady || !legalAccepted || !recoveryReady) return;
-    if (creationFlow === 'video' && !videoFlowAvailability.available) {
-      setError(videoFlowAvailability.reason ?? 'Video creation is unavailable.');
+    if (!resumableJob && creationFlow === 'video') {
+      setError('This earlier creation option is no longer offered. Reload to review the current options.');
       return;
     }
     draftRestoreBlockedRef.current = true;
@@ -1050,7 +977,7 @@ export function CreateFighterPage({
     ? sprites.find((item) => item.animationName === selectedAnimName)
     : null;
   const rookieStatus = includedRookieStatus(authStatus, billingProfile, creationPackage);
-  const selectedTier = QUALITY_TIERS.find((item) => item.id === tier);
+  const selectedTier = qualityTierInfo(tier);
   const selectedQuote = quoteGenerationPackage(tier, creationPackage);
   const auraNeedsAccount = creationPackage === 'aura' && authStatus !== 'signed-in';
   const selectedUsesIncludedRookie = tier === 'rookie' && rookieStatus === 'included';
@@ -1177,7 +1104,7 @@ export function CreateFighterPage({
           </fieldset> : null}
           {!auraEntry ? <p className="tier-picker__note">Aura moves work in Aura. You can add Fight + Rush to the same character later, after reviewing the expansion price.</p> : null}
           <details className="creation-advanced">
-            <summary>{auraEntry ? 'Quality options' : 'Quality & creation options'} · {selectedTier?.label}</summary>
+            <summary>Quality options · {selectedTier?.label}</summary>
           <fieldset className="tier-picker" aria-describedby="tier-picker-note">
             <legend className="tier-picker__legend">
               <span>Quality</span>
@@ -1196,8 +1123,8 @@ export function CreateFighterPage({
                     : rookieStatus === 'account-required' ? 'Sign in to check your Rookie pass' : 'Checking account';
               const pitch = item.id === 'rookie' && rookieStatus === 'included'
                 ? authStatus !== 'signed-in'
-                  ? 'Your first playable fighter is free after a quick human check.'
-                  : 'Your first playable fighter is included with your account.'
+                  ? `${item.pitch} Your first Rookie is free after a quick human check.`
+                  : `${item.pitch} Your first Rookie is included with your account.`
                 : item.pitch;
               return (
                 <label
@@ -1222,16 +1149,9 @@ export function CreateFighterPage({
             })}
           </fieldset>
           <p className="tier-picker__note" id="tier-picker-note">
-            Source views are always generated at premium quality. Animation fidelity and detail scale with the tier.
+            Both qualities make a playable character. Champion refines the animation frames individually for more detail, using more AI processing.
           </p>
-          {!auraEntry ? <CreationFlowPicker
-            name="fighter-creation-flow"
-            value={creationFlow}
-            onChange={setCreationFlow}
-            disabled={running}
-            videoAvailable={videoFlowAvailability.available}
-            videoUnavailableReason={videoFlowAvailability.reason}
-          /> : null}
+          <QualityComparison />
           </details>
           <p className="creation-price-summary"><strong>{creationPackage === 'aura' ? 'Aura moves' : 'Fight + Rush'} · {selectedTier?.label}</strong><span>{auraNeedsAccount
             ? `Sign in to check your included first Rookie. After that, Rookie Aura costs ${quoteGenerationPackage('rookie', 'aura').creditCost} credits.`
@@ -1358,7 +1278,10 @@ export function CreateFighterPage({
             fullRunRestartRequired={videoReviewJob.fullRunRestartRequired}
             onContinue={() => continueApprovedVideoJob(videoReviewJob)}
             onFinalApproval={() => finishApprovedVideoFighter(videoReviewJob.fighterId)}
-            onRestart={() => restartRejectedVideoRun(videoReviewJob)}
+            onCreateNew={() => window.location.assign(`/fighters/new?${buildCreationSearch({
+              tier: 'rookie', creationPackage,
+              returnTo: creationPackage === 'aura' ? 'aura' : 'gallery',
+            })}`)}
             onRejected={() => {
               setStageText('Video rejected. It remains private and no additional provider call was made.');
             }}

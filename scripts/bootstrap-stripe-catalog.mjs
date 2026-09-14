@@ -29,7 +29,7 @@ const packs = [
   {
     id: 'starter',
     label: 'Starter Pack',
-    description: '11 Insert Player credits. Enough for one Contender fighter.',
+    description: '11 Insert Player credits for character creation, animation retries and Fatalities.',
     credits: 11,
     amountCents: 1499,
     envKey: 'STRIPE_PRICE_STARTER',
@@ -37,7 +37,7 @@ const packs = [
   {
     id: 'versus',
     label: 'Versus Pack',
-    description: '20 Insert Player credits. Enough for one Champion fighter plus one Rookie.',
+    description: '20 Insert Player credits for character creation, animation retries and Fatalities.',
     credits: 20,
     amountCents: 2499,
     envKey: 'STRIPE_PRICE_VERSUS',
@@ -45,7 +45,7 @@ const packs = [
   {
     id: 'arcade',
     label: 'Arcade Pack',
-    description: '47 Insert Player credits. Enough for two Champion fighters plus one Contender.',
+    description: '47 Insert Player credits for character creation, animation retries and Fatalities.',
     credits: 47,
     amountCents: 5699,
     envKey: 'STRIPE_PRICE_ARCADE',

@@ -38,3 +38,15 @@
   .aura-challenge-composer__form { align-items: stretch; flex-direction: column; }
   .aura-challenge-composer label { flex-basis: auto; }
 }
+
+.aura-challenge-composer__identity { display: contents; }
+.aura-results .aura-challenge-composer.is-compact { padding: 0; border: 0; background: transparent; }
+.aura-challenge-composer__edit { min-height: 44px; border: 0; padding: 8px 0; background: none; color: #c9c0a8; font-family: var(--font-sans, sans-serif); font-size: 13px; text-decoration: underline; text-underline-offset: 4px; cursor: pointer; }
+.aura-challenge-composer__edit:hover { color: #fff4d6; }
+.aura-challenge-composer__edit:focus-visible { outline: 3px solid #ffce3a; outline-offset: 3px; }
+.aura-challenge-composer__editor { display: grid; gap: 12px; border-top: 1px solid #615974; padding-top: 12px; }
+.aura-challenge-composer__editor[hidden] { display: none; }
+.aura-challenge-composer.is-compact .aura-challenge-composer__editor label { display: flex; flex-direction: column; gap: 6px; font-family: var(--font-sans, sans-serif); font-size: 13px; }
+.aura-challenge-composer.is-compact .aura-challenge-composer__notice { margin: 8px 0 0; font-family: var(--font-sans, sans-serif); font-size: 13px; line-height: 1.5; }
+.aura-challenge-composer__score-only { display: grid; gap: 12px; }
+.aura-challenge-composer.is-compact .aura-challenge-composer__form > .asf-btn { width: 100%; }

@@ -1,7 +1,13 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type Phaser from 'phaser';
+import { BATTLE_CAPTURE_EVENT, type BattleCaptureDetail } from '../../game/match/BattleCapture.ts';
+import type { SavedBattle } from '../../shared/BattleFinisher.ts';
+import { BattleFinisherPanel } from '../components/BattleFinisherPanel.tsx';
+import { auraVideoFile } from '../components/AuraMatchShare.ts';
+import type { AuthRouteState } from '../authState.ts';
 import {
   MATCH_ACTION_EVENT,
+  MATCH_START_EVENT,
   MATCH_ACTIONS_VISIBILITY_EVENT,
   MATCH_COMPLETE_EVENT,
   PAUSE_EVENT,
@@ -13,6 +19,7 @@ import {
   RUNTIME_READY_EVENT,
   buildMatchSeed,
   type MatchAction,
+  type MatchStartDetail,
   type MatchCompletionDetail,
   type MatchSceneData,
   type NetStateDetail,
@@ -20,8 +27,8 @@ import {
   type RushRunCompleteDetail,
   type AuraBattleCompleteDetail,
 } from '../../game/match/MatchConfig.ts';
-import { MobileFightControls } from '../components/MobileFightControls.tsx';
 import { FightControlsHint } from '../components/FightControlsHint.tsx';
+import { CombatStartReady } from '../components/CombatStartReady.tsx';
 import { FightHud } from '../components/FightHud.tsx';
 import { FightIntroOverlay } from '../components/FightIntroOverlay.tsx';
 import { FightAnnouncement } from '../components/FightAnnouncement.tsx';
@@ -39,8 +46,9 @@ import { FightResultShare } from '../components/FightResultShare.tsx';
 import { AuraControls } from '../components/AuraControls.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
 import { AuraOnboardingHint } from '../components/AuraOnboardingHint.tsx';
+import { AuraStartReady } from '../components/AuraStartReady.tsx';
 import { shouldGuideAuraBattle, rememberAuraOnboarding } from '../shared/auraOnboarding.ts';
-import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
+import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, canGuideAuraFirstBattle, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
 import { AURA_CAPTURE_EVENT, type AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
 import { AURA_STARTUP_EVENT, AURA_STARTUP_READY_EVENT, isAuraStartupDetail, type AuraStartupDetail } from '../../game/aura/AuraStartup.ts';
@@ -75,7 +83,9 @@ export interface LadderContext {
   onPrefetchNext: () => void;
 }
 
-interface GamePageProps {
+interface GamePageProps extends Partial<AuthRouteState> {
+  onSignIn?: () => void;
+  onBuyCredits?: () => void;
   launchTarget: { sceneKey: string; data: MatchSceneData };
   onComplete: () => void;
   onExit: () => void;
@@ -111,6 +121,10 @@ export function GamePage({
   onCreateFighter,
   onOpenArcade,
   ladder,
+  authStatus = 'local',
+  authSessionKey = 'local',
+  onSignIn,
+  onBuyCredits,
 }: GamePageProps) {
   const [paused, setPaused] = useState(false);
   const onlineMatch = Boolean(launchTarget.data.online);
@@ -126,12 +140,20 @@ export function GamePage({
   const [matchSummary, setMatchSummary] = useState<MatchCompletionDetail | null>(null);
   const [ladderBusy, setLadderBusy] = useState(false);
   const [loadingPhase, setLoadingPhase] = useState<FightLoadingPhase | 'hidden'>('loading');
+  const [combatPendingStart, setCombatPendingStart] = useState<MatchStartDetail | null>(null);
+  const combatStartRef = useRef<MatchStartDetail | null>(null);
   const [rushSummary, setRushSummary] = useState<RushRunCompleteDetail | null>(null);
   const [auraSummary, setAuraSummary] = useState<AuraBattleCompleteDetail | null>(null);
   const [auraOnboarding, setAuraOnboarding] = useState<AuraOnboardingDetail | null>(null);
+  const [auraPracticeRecommended, setAuraPracticeRecommended] = useState(false);
   const guidedThisMount = useRef(false);
+  const [savedBattle, setSavedBattle] = useState<SavedBattle | null>(null);
+  const [battleCapture, setBattleCapture] = useState<BattleCaptureDetail | null>(null);
+  const battleCaptureId = useRef<string | null>(null);
+  const [battleCaptureUnavailable, setBattleCaptureUnavailable] = useState(false);
   const [auraCapture, setAuraCapture] = useState<AuraCaptureDetail | null>(null);
   const [auraStartup, setAuraStartup] = useState<AuraStartupDetail | null>(null);
+  const auraAwaitingInput = isAura && loadingPhase === 'hidden' && auraStartup?.phase === 'awaiting-input' && !auraSummary;
   const [auraTouchSlot, setAuraTouchSlot] = useState<0 | 1>(0);
   const [auraControlledSlot, setAuraControlledSlot] = useState<0 | 1 | undefined>(
     online?.localSlot ?? launchTarget.data.auraChallenge?.slot ?? (launchTarget.data.vsAI === false ? undefined : 0));
@@ -147,6 +169,36 @@ export function GamePage({
     launchTarget.data.rushCompanionOrder ?? 'follow',
   );
   const trialPrimaryActionRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    const receive = (event: WindowEventMap[typeof BATTLE_CAPTURE_EVENT]) => {
+      const detail = event.detail;
+      if (detail.state === 'started') {
+        battleCaptureId.current = detail.clientBattleId;
+        setBattleCaptureUnavailable(false);
+        setBattleCapture(null);
+        setSavedBattle(null);
+        setAuraCapture(null);
+      } else if (detail.clientBattleId === battleCaptureId.current) {
+        if (detail.state === 'ready') {
+          setBattleCapture(detail.capture);
+          setBattleCaptureUnavailable(false);
+        } else if (detail.state === 'unavailable') setBattleCaptureUnavailable(true);
+      }
+    };
+    window.addEventListener(BATTLE_CAPTURE_EVENT, receive);
+    return () => { battleCaptureId.current = null; window.removeEventListener(BATTLE_CAPTURE_EVENT, receive); };
+  }, [launchTarget]);
+  const finisherCapture = useMemo(() => {
+    if (!battleCapture || battleCapture.summary.game !== 'aura' || auraCapture?.state !== 'ready') return battleCapture;
+    return { ...battleCapture, recording: auraVideoFile(auraCapture.video, battleCapture.summary.p1Name, battleCapture.summary.p2Name) };
+  }, [battleCapture, auraCapture]);
+  const updateSavedBattle = (battle: SavedBattle) => {
+    if (battleCapture && battleCaptureId.current === battleCapture.clientBattleId) setSavedBattle(battle);
+  };
+  const finisher = <BattleFinisherPanel key={battleCapture?.clientBattleId ?? 'preparing'} capture={finisherCapture}
+    authStatus={authStatus} authSessionKey={authSessionKey} onSignIn={onSignIn} onBuyCredits={onBuyCredits}
+    initialBattle={savedBattle ?? undefined} onBattleChange={updateSavedBattle} />;
+
 
   const setPauseState = (next: boolean) => {
     setPaused(next);
@@ -161,11 +213,16 @@ export function GamePage({
   useEffect(() => {
     // A new launch target means a fresh match: clear the previous outcome.
     setWinnerSlot(null);
+    setBattleCapture(null);
+    setBattleCaptureUnavailable(false);
+    setSavedBattle(null);
     setMatchSummary(null);
     setLadderBusy(false);
     setNetState(null);
     setOnlineRematch({ state: 'idle' });
     setLoadingPhase('loading');
+    setCombatPendingStart(null);
+    combatStartRef.current = null;
     setRushSummary(null);
     setAuraSummary(null);
     setAuraCapture(null);
@@ -197,9 +254,9 @@ export function GamePage({
     // Mark first: duplicate renders/StrictMode must never start the intro twice.
     lifecycle.phase = 'started';
     const onboarding = !guidedThisMount.current && shouldGuideAuraBattle(launchTarget.data);
+    setAuraPracticeRecommended(onboarding);
     if (onboarding) {
       guidedThisMount.current = true;
-      trackProductEvent('onboarding_started', { game: 'aura' });
     }
     window.dispatchEvent(new CustomEvent(AURA_PRESENTATION_START_EVENT, {
       detail: { ...auraPendingStart, ...(onboarding ? { onboarding: true } : {}) },
@@ -214,7 +271,8 @@ export function GamePage({
       if (!isAuraStartupDetail(detail) || !current || current.phase !== 'started'
         || current.token !== detail.token || current.seed !== detail.seed) return;
       setAuraStartup(previous => previous?.token === detail.token
-        && previous.phase === detail.phase && previous.count === detail.count ? previous : detail);
+        && previous.phase === detail.phase && previous.count === detail.count
+        && previous.instrumentVisible === detail.instrumentVisible ? previous : detail);
     };
     window.addEventListener(AURA_STARTUP_EVENT, onStartup);
     return () => window.removeEventListener(AURA_STARTUP_EVENT, onStartup);
@@ -356,17 +414,7 @@ export function GamePage({
 
   useEffect(() => {
     if (isAura) return;
-    if (window.matchMedia?.('(pointer: coarse)').matches) {
-      const orientation = screen.orientation as ScreenOrientation & {
-        lock?: (mode: string) => Promise<void>;
-      };
-      orientation?.lock?.('landscape').catch(() => {
-        // iOS and non-fullscreen contexts reject; the rotate overlay covers it.
-      });
-    }
     return () => {
-      const orientation = screen.orientation as ScreenOrientation & { unlock?: () => void };
-      try { orientation?.unlock?.(); } catch { /* best effort */ }
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(() => {});
       }
@@ -437,9 +485,22 @@ export function GamePage({
         );
       }, openingDelay);
     };
-    const onRuntimeReady = () => {
+    const onRuntimeReady = (event: WindowEventMap[typeof RUNTIME_READY_EVENT]) => {
       // Aura waits for its per-restart asset lifecycle, never the legacy event.
-      if (!isAura) revealWhenReady();
+      if (isAura || disposed) return;
+      const detail = event.detail;
+      if (!onlineMatch && !launchTarget.data.cpuVsCpu && detail?.sceneKey === launchTarget.sceneKey
+        && Number.isSafeInteger(detail.startToken) && detail.startToken! > 0) {
+        const identity: MatchStartDetail = { sceneKey: detail.sceneKey as MatchStartDetail['sceneKey'], startToken: detail.startToken! };
+        if (!combatStartRef.current || identity.startToken > combatStartRef.current.startToken) {
+          combatStartRef.current = identity;
+          setCombatPendingStart(identity);
+          setPaused(false);
+          setRushSummary(null);
+          setMatchActionsVisible(false);
+        }
+      }
+      revealWhenReady();
     };
     const onAuraPresentation = (event: WindowEventMap[typeof AURA_PRESENTATION_EVENT]) => {
       if (!isAura || disposed || !isAuraPresentationDetail(event.detail)) return;
@@ -497,6 +558,7 @@ export function GamePage({
       window.removeEventListener(AURA_PRESENTATION_EVENT, onAuraPresentation);
       clearTimers();
       auraLifecycleRef.current = null;
+      combatStartRef.current = null;
       debugInfo('[GamePage] Destroying Phaser runtime', {
         sceneKey: launchTarget.sceneKey,
       });
@@ -504,6 +566,16 @@ export function GamePage({
       game = null;
     };
   }, [launchTarget]);
+
+  const startCombat = () => {
+    if (!combatPendingStart || loadingPhase !== 'hidden' || onlineMatch
+      || combatStartRef.current !== combatPendingStart) return;
+    const identity = combatPendingStart;
+    // Keep the latest token, but consume its start action before dispatching.
+    combatStartRef.current = { ...identity };
+    setCombatPendingStart(null);
+    window.dispatchEvent(new CustomEvent(MATCH_START_EVENT, { detail: identity }));
+  };
 
   useEffect(() => {
     const onMatchComplete = (event: WindowEventMap[typeof MATCH_COMPLETE_EVENT]) => {
@@ -558,10 +630,13 @@ export function GamePage({
       {isRush || isAura ? null : <FightHud />}
       {isRush || isAura ? null : <FightIntroOverlay />}
       {isRush || isAura ? null : <FightAnnouncement />}
+      {!isAura && loadingPhase === 'hidden' && combatPendingStart ? (
+        <CombatStartReady mode={isRush ? 'rush' : 'fight'} playerName={launchTarget.data.p1Name ?? 'Player One'} photoHash={launchTarget.data.p1PhotoHash} onStart={startCombat} />
+      ) : null}
       {isAura && loadingPhase === 'hidden' && !auraSummary && auraCapture?.state === 'recording' ? (
         <p className="aura-capture-status" role="status">{paused ? 'Recording paused' : 'Recording match'} · game only</p>
       ) : null}
-      {isAura && loadingPhase === 'hidden' && auraStartup && !auraSummary ? (
+      {isAura && loadingPhase === 'hidden' && auraStartup && !auraSummary && !auraAwaitingInput && auraOnboarding?.phase !== 'practice' ? (
         <p className="sr-only" role="status" aria-live="polite">
           {auraStartup.phase === 'awaiting-input' ? 'Your duel is ready. Start when you are ready.'
             : auraStartup.phase === 'preparing' ? 'Preparing the Aura duel.'
@@ -570,15 +645,26 @@ export function GamePage({
                 : 'Go! Hit the beat.'}
         </p>
       ) : null}
-      {isAura && loadingPhase === 'hidden' && auraStartup?.phase === 'awaiting-input' && !auraSummary ? (
-        <div className="aura-start-ready" role="group" aria-label="Start your Aura duel">
-          <p>Get ready to hit the beat.</p>
-          <button type="button" className="asf-btn asf-btn--primary" onClick={() => {
+      {auraAwaitingInput && !paused ? (
+        <AuraStartReady
+          playerName={launchTarget.data.p1Name ?? 'Player One'}
+          rivalName={launchTarget.data.p2Name ?? 'Player Two'}
+          practiceAvailable={canGuideAuraFirstBattle(launchTarget.data)}
+          practiceRecommended={auraPracticeRecommended}
+          busy={paused}
+          onExit={onExit}
+          onStart={practice => {
+            if (paused) return;
+            if (practice) trackProductEvent('onboarding_started', { game: 'aura' });
+            else if (auraPracticeRecommended) {
+              rememberAuraOnboarding();
+              trackProductEvent('onboarding_skipped', { game: 'aura' });
+            }
             window.dispatchEvent(new CustomEvent(AURA_STARTUP_READY_EVENT, {
-              detail: { token: auraStartup.token, seed: auraStartup.seed },
+              detail: { token: auraStartup!.token, seed: auraStartup!.seed, practice },
             }));
-          }}>I’m ready</button>
-        </div>
+          }}
+        />
       ) : null}
       {loadingPhase !== 'hidden' ? (
         <FightLoadingCurtain
@@ -608,21 +694,12 @@ export function GamePage({
         <div className="trial-match-badge" role="status">Playable demo · free round</div>
       ) : null}
       {online && netState ? <NetStatusBadge state={netState} /> : null}
-      {online && !isAura && loadingPhase === 'hidden' && !matchActionsVisible && (
-        <MobileFightControls playerIndex={0} hudPlayerIndex={online.localSlot} playerLabel={online.localSlot === 0 ? 'player 1' : 'player 2'} />
-      )}
-      {!isRush && !isAura && loadingPhase === 'hidden' && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI !== false && !matchActionsVisible && (
-        <MobileFightControls playerIndex={0} playerLabel="player 1" />
-      )}
       {!isRush && !isAura && loadingPhase === 'hidden' && !online && !launchTarget.data.cpuVsCpu && launchTarget.data.vsAI === false && !matchActionsVisible && (
         <div className="mobile-versus-unavailable" role="status">
           Touch Versus needs two control sets and is unavailable on this screen. Use a keyboard or controllers,
           or play Arcade Mode on touch.
         </div>
       )}
-      {isRush && loadingPhase === 'hidden' && launchTarget.data.vsAI === true && !matchActionsVisible && !rushSummary ? (
-        <MobileFightControls mode="rush" playerIndex={0} playerLabel="player 1" />
-      ) : null}
       {isRush && loadingPhase === 'hidden' && launchTarget.data.vsAI === true && !matchActionsVisible && !rushSummary && !paused ? (
         <RushCompanionOrders value={rushCompanionOrder} onChange={chooseRushCompanionOrder} />
       ) : null}
@@ -640,11 +717,15 @@ export function GamePage({
           }));
         }} />
       ) : null}
-      {isAura && loadingPhase === 'hidden' && !matchActionsVisible && !auraSummary ? (
+      {isAura && loadingPhase === 'hidden' && !matchActionsVisible && !auraSummary && !auraAwaitingInput ? (
         <div className="aura-game-toolbar" aria-label="Aura match controls">
-          {!launchTarget.data.cpuVsCpu ? (
+          {!launchTarget.data.cpuVsCpu
+            && (auraOnboarding?.phase === 'practice' || auraStartup?.instrumentVisible === true) ? (
             <AuraControls playerIndex={online?.localSlot ?? auraControlledSlot ?? auraTouchSlot}
-              disabled={paused || (auraOnboarding?.phase !== 'practice' && auraStartup?.phase !== 'playing')} />
+              rivalTurn={auraOnboarding?.phase !== 'practice' && auraStartup?.phase === 'playing'
+                && auraControlledSlot !== undefined && auraControlledSlot !== auraTouchSlot}
+              disabled={paused || (auraOnboarding?.phase !== 'practice' && auraStartup?.phase !== 'playing'
+                && (Boolean(online) || auraStartup?.phase !== 'countdown'))} />
           ) : null}
           <button type="button" className="aura-game-toolbar__back" onClick={onExit}>Back</button>
           {!onlineMatch && !paused ? (
@@ -667,6 +748,7 @@ export function GamePage({
           >
             Take The Crown
           </button>
+          {finisher}
         </div>
       )}
       {matchActionsVisible && ladder && winnerSlot === 'p1' && !ladder.isFinal && (
@@ -688,6 +770,7 @@ export function GamePage({
           <button type="button" className="match-actions__button" disabled={ladderBusy} onClick={ladder.onExitLadder}>
             Quit Run
           </button>
+          {finisher}
         </div>
       )}
       {matchActionsVisible && ladder && winnerSlot === 'p2' && ladder.continuesLeft > 0 && (
@@ -709,6 +792,7 @@ export function GamePage({
           <button type="button" className="match-actions__button" disabled={ladderBusy} onClick={ladder.onExitLadder}>
             Give Up
           </button>
+          {finisher}
         </div>
       )}
       {matchActionsVisible && ladder && winnerSlot === 'p2' && ladder.continuesLeft <= 0 && (
@@ -723,6 +807,7 @@ export function GamePage({
           >
             Back To The Arcade
           </button>
+          {finisher}
         </div>
       )}
       {matchActionsVisible && online && !isAura && (
@@ -769,11 +854,13 @@ export function GamePage({
           </button>
           {matchSummary ? (
             <FightResultShare
+              battle={savedBattle} onBattleChange={updateSavedBattle}
               summary={matchSummary}
               p1Name={launchTarget.data.p1Name ?? 'Player One'}
               p2Name={launchTarget.data.p2Name ?? 'Player Two'}
             />
           ) : null}
+          {finisher}
         </div>
       )}
       {matchActionsVisible && trial && !isAura && (
@@ -799,6 +886,7 @@ export function GamePage({
           <button type="button" className="match-actions__button" onClick={onOpenArcade}>
             Explore Arcade
           </button>
+          {finisher}
         </div>
       )}
       {matchActionsVisible && !isAura && !trial && !online && (!ladder || winnerSlot === null) && (
@@ -819,16 +907,20 @@ export function GamePage({
           </button>
           {matchSummary ? (
             <FightResultShare
+              battle={savedBattle} onBattleChange={updateSavedBattle}
               summary={matchSummary}
               p1Name={launchTarget.data.p1Name ?? 'Player One'}
               p2Name={launchTarget.data.p2Name ?? 'Player Two'}
             />
           ) : null}
+          {finisher}
         </div>
       )}
       {rushSummary ? (
         <RushRunResults
           summary={rushSummary}
+          finisher={finisher}
+          battle={savedBattle} onBattleChange={updateSavedBattle}
           onRetry={() => {
             setRushSummary(null);
             chooseMatchAction('run_it_back');
@@ -839,6 +931,11 @@ export function GamePage({
       {auraSummary && matchActionsVisible ? (
         <AuraBattleResults
           summary={auraSummary}
+          finisher={battleCapture && auraCapture?.state !== 'processing' ? finisher : <div className="aura-results__finisher-status" role="status">
+            <button type="button" className="asf-btn" disabled>Fatality · 1 credit</button>
+            <p>{battleCaptureUnavailable ? 'The final frame could not be saved. Fatality is unavailable for this round.' : battleCapture ? 'Preparing your match video…' : 'Preparing your final frame…'}</p>
+          </div>}
+          battle={savedBattle} onBattleChange={updateSavedBattle}
           trial={trial}
           onCreatePlayer={onCreateFighter}
           capture={auraCapture}
@@ -859,7 +956,7 @@ export function GamePage({
           }}
         />
       ) : null}
-      {!isAura && loadingPhase === 'hidden' && !onlineMatch && !matchActionsVisible && !rushSummary && !auraSummary && !paused && (
+      {!isAura && loadingPhase === 'hidden' && !combatPendingStart && !onlineMatch && !matchActionsVisible && !rushSummary && !auraSummary && !paused && (
         <button
           type="button"
           className="fight-pause-button"
@@ -890,13 +987,6 @@ export function GamePage({
           </div>
         </div>
       )}
-      {!isAura && !launchTarget.data.cpuVsCpu && loadingPhase === 'hidden' && !matchActionsVisible && !rushSummary && (
-        <FightControlsHint
-          mode={isRush ? 'rush' : 'fight'}
-          twoPlayers={!online && (isRush ? launchTarget.data.vsAI !== true : launchTarget.data.vsAI === false)}
-          playerLabel={online?.localSlot === 1 ? 'P2' : 'P1'}
-        />
-      )}
       {!isAura && loadingPhase === 'hidden' && !rushSummary && !auraSummary ? (
         <button type="button" className="game-shell__gallery-link" onClick={onExit}>
           {trial ? 'Exit Demo' : 'Back'}
@@ -906,8 +996,22 @@ export function GamePage({
   );
 
   return (
-    <div className={`game-shell${isAura ? ` is-aura${auraViewport.portrait ? ' is-portrait' : ''}` : ''}`}>
-      {isAura ? <div className="game-shell__aura-frame">{content}</div> : content}
+    <div className={`game-shell${isAura ? ` is-aura${auraViewport.portrait ? ' is-portrait' : ''}` : ' is-combat'}`}>
+      {isAura ? <div className="game-shell__aura-frame">{content}</div> : (
+        <>
+          <div className="game-shell__combat-frame">{content}</div>
+          {!launchTarget.data.cpuVsCpu && (
+            <FightControlsHint
+              mode={isRush ? 'rush' : 'fight'}
+              twoPlayers={!online && (isRush ? launchTarget.data.vsAI !== true : launchTarget.data.vsAI === false)}
+              playerLabel={online?.localSlot === 1 ? 'P2' : 'P1'}
+              hudPlayerIndex={online?.localSlot ?? 0}
+              disabled={loadingPhase !== 'hidden' || paused || matchActionsVisible || Boolean(rushSummary)}
+              inputResetKey={combatPendingStart?.startToken ?? 0}
+            />
+          )}
+        </>
+      )}
     </div>
   );
 }

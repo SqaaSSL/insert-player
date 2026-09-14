@@ -1,6 +1,6 @@
 import type { CachedMeta } from '../../services/SpriteCache.ts';
 import type { CloudFighter } from '../../services/CloudFighters.ts';
-import { QUALITY_TIERS } from '../../services/QualityTiers.ts';
+import { isQualityTier, qualityTierInfo } from '../../services/QualityTiers.ts';
 import type { SpriteAnimationFormat } from '../../SpriteAnimationFormat.ts';
 
 /**
@@ -8,9 +8,9 @@ import type { SpriteAnimationFormat } from '../../SpriteAnimationFormat.ts';
  * QualityTier ids and raw strings from cloud payloads; unknown values are
  * title-cased rather than hidden.
  */
-export function tierLabel(tier: string | null | undefined, fallback = 'Contender'): string {
+export function tierLabel(tier: string | null | undefined, fallback = 'Champion'): string {
   if (!tier) return fallback;
-  const known = QUALITY_TIERS.find((item) => item.id === tier)?.label;
+  const known = isQualityTier(tier) ? qualityTierInfo(tier)?.label : undefined;
   return known ?? tier.charAt(0).toUpperCase() + tier.slice(1);
 }
 

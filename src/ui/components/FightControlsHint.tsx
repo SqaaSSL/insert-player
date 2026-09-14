@@ -1,111 +1,139 @@
-import { useEffect, useState } from 'react';
 import { KEYBOARD_CONTROLS } from '../../game/systems/KeyboardControls.ts';
+import { type ControlAction, type ControlMode, type PlayerControlState } from '../shared/fightControlState.ts';
+import { useFightControlState } from '../shared/useFightControlState.ts';
+import { useArcadeTouchLayout } from '../shared/useArcadeTouchLayout.ts';
+import { TouchArcadePanel } from './TouchArcadePanel.tsx';
+import { ArcadeKeyboard } from './ArcadeKeyboard.tsx';
 
-type InputDevice = 'keyboard' | 'gamepad' | 'touch';
+const GAMEPAD_KEYS: Record<ControlAction, string> = {
+  left: '←', right: '→', up: '↑', down: '↓',
+  punch: 'A / ×', kick: 'B / ○', guard: 'LB / L1',
+  fireball: 'X / □', uppercut: 'Y / △', super: 'RT / R2',
+};
 
-function initialDevice(): InputDevice {
-  if (typeof window === 'undefined') return 'keyboard';
-  if (Array.from(navigator.getGamepads?.() ?? []).some(Boolean)) return 'gamepad';
-  return window.matchMedia?.('(pointer: coarse)').matches ? 'touch' : 'keyboard';
+function labelFor(action: ControlAction, mode: ControlMode): string {
+  return ({
+    left: 'Left', right: 'Right', up: mode === 'rush' ? 'Up' : 'Jump', down: mode === 'rush' ? 'Down' : 'Crouch',
+    punch: 'Punch', kick: 'Kick', guard: 'Guard', fireball: 'Fireball',
+    uppercut: mode === 'rush' ? 'Jump' : 'Uppercut', super: 'Super',
+  })[action];
 }
 
-function useInputDevice(): InputDevice {
-  const [device, setDevice] = useState(initialDevice);
-  useEffect(() => {
-    const onKey = () => setDevice('keyboard');
-    const onPointer = (event: PointerEvent) => {
-      if (event.pointerType === 'touch') setDevice('touch');
-    };
-    const onConnect = () => setDevice('gamepad');
-    const onDisconnect = () => setDevice(initialDevice());
-    const gamepadTimer = window.setInterval(() => {
-      if (document.hidden) return;
-      const active = Array.from(navigator.getGamepads?.() ?? []).some((pad) =>
-        pad && (pad.buttons.some((button) => button.pressed) || pad.axes.some((axis) => Math.abs(axis) > 0.35)),
-      );
-      if (active) setDevice('gamepad');
-    }, 200);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('pointerdown', onPointer);
-    window.addEventListener('gamepadconnected', onConnect);
-    window.addEventListener('gamepaddisconnected', onDisconnect);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('pointerdown', onPointer);
-      window.removeEventListener('gamepadconnected', onConnect);
-      window.removeEventListener('gamepaddisconnected', onDisconnect);
-      window.clearInterval(gamepadTimer);
-    };
-  }, []);
-  return device;
-}
-
-function Binding({ keys, action }: { keys: string; action: string }) {
-  return <span className="fight-keys__binding"><kbd>{keys}</kbd><span>{action}</span></span>;
-}
-
-function KeyboardLegend({ mode, playerIndex, playerLabel }: {
-  mode: 'fight' | 'rush';
+function PlayerPanel({ mode, playerIndex, playerLabel, state }: {
+  mode: ControlMode;
   playerIndex: 0 | 1;
   playerLabel: string;
+  state: PlayerControlState;
 }) {
-  const keys = KEYBOARD_CONTROLS[playerIndex];
-  const movement = playerIndex === 0 ? 'W A S D' : '↑ ← ↓ →';
+  const keyboard = KEYBOARD_CONTROLS[playerIndex];
+  const gamepad = state.device === 'gamepad';
+  const keyFor = (action: ControlAction) => gamepad ? GAMEPAD_KEYS[action] : keyboard[action].label.replace('Num ', 'N');
+  const keysFor = (action: ControlAction) => {
+    if (gamepad) return action === 'guard' ? 'LB / L1, RB / R1, or LT / L2' : GAMEPAD_KEYS[action];
+    const aliases = keyboard[action].aliases?.map((alias) => alias.label) ?? [];
+    if (mode === 'rush' && playerIndex === 0 && action === 'uppercut') aliases.push('Space');
+    return [keyboard[action].label, ...aliases].join(' or ');
+  };
+  const accessibleLabel = (action: ControlAction) => `${labelFor(action, mode)}: ${keysFor(action)}${state.held[action] ? ', pressed' : ''}`;
+  const actionButton = (action: ControlAction) => (
+    <span
+      key={action}
+      className={`fight-keys__button fight-keys__button--${action}`}
+      data-action={action}
+      data-active={state.held[action]}
+      role="img"
+      aria-label={accessibleLabel(action)}
+      title={`${labelFor(action, mode)} · ${keysFor(action)}${action === 'super' && mode === 'fight' ? ' · Full meter' : ''}`}
+    >
+      <span className="fight-keys__cap"><kbd>{keyFor(action)}</kbd></span>
+      <span className="fight-keys__action">{labelFor(action, mode)}</span>
+    </span>
+  );
   return (
-    <div className="fight-keys__player" role="group" aria-label={`${playerLabel} keyboard controls`}>
-      <strong className="fight-keys__player-label">{playerLabel}{playerIndex === 1 ? ' · Numpad' : ''}</strong>
-      <div className="fight-keys__bindings">
-        {mode === 'rush' ? <Binding keys={movement} action="Move" /> : (
-          <>
-            <Binding keys={`${keys.left.label} ${keys.right.label}`} action="Move" />
-            <Binding keys={keys.up.label} action="Jump" />
-            <Binding keys={keys.down.label} action="Crouch" />
-          </>
-        )}
-        <Binding keys={keys.punch.label} action="Punch" />
-        <Binding keys={keys.kick.label} action="Kick" />
-        <Binding keys={keys.guard.label} action="Guard (hold)" />
-        <Binding keys={keys.fireball.label} action="Fireball" />
-        <Binding keys={mode === 'rush' && playerIndex === 0 ? `Space / ${keys.uppercut.label}` : keys.uppercut.label} action={mode === 'rush' ? 'Jump' : 'Uppercut'} />
-        <Binding keys={keys.super.label} action={mode === 'rush' ? 'Super' : 'Super (full meter)'} />
+    <div className={`fight-keys__player fight-keys__player--${state.device}`} role="group" aria-label={`${playerLabel} ${state.device} controls`}>
+      <span className="fight-keys__fasteners" aria-hidden="true"><i /><i /><i /><i /></span>
+      <strong className="fight-keys__player-label">{playerLabel}<span>{gamepad ? 'Controller' : playerIndex === 1 ? 'Numpad' : 'Keyboard'}</span></strong>
+      <div className="fight-keys__deck">
+        <div className="fight-keys__movement">
+          <div className="fight-keys__stick" role="group" aria-label={mode === 'rush' ? 'Move in all directions' : 'Move, jump and crouch'}>
+            {(['up', 'left', 'down', 'right'] as const).map((action) => (
+              <span
+                key={action}
+                className={`fight-keys__direction fight-keys__direction--${action}`}
+                data-action={action}
+                data-active={state.held[action]}
+                role="img"
+                aria-label={accessibleLabel(action)}
+                title={accessibleLabel(action)}
+              >
+                <kbd>{keyFor(action)}</kbd>
+                {mode === 'fight' && (action === 'up' || action === 'down')
+                  ? <small>{labelFor(action, mode)}</small> : null}
+              </span>
+            ))}
+            <span className="fight-keys__stick-base" aria-hidden="true" />
+            <span
+              className="fight-keys__stick-knob"
+              data-x={Number(state.held.right) - Number(state.held.left)}
+              data-y={Number(state.held.down) - Number(state.held.up)}
+              aria-hidden="true"
+            >
+              <span className="fight-keys__stick-shaft" />
+              <span className="fight-keys__stick-ball" />
+            </span>
+          </div>
+          <span className="fight-keys__movement-label">{gamepad ? 'Stick / D-pad' : 'Move'}</span>
+        </div>
+        <div className="fight-keys__actions">
+          <div className="fight-keys__primary" role="group" aria-label="Four action buttons">
+            <div className="fight-keys__row fight-keys__row--specials">{(['fireball', 'uppercut'] as const).map(actionButton)}</div>
+            <div className="fight-keys__row fight-keys__row--main">{(['punch', 'kick'] as const).map(actionButton)}</div>
+          </div>
+          <div className="fight-keys__utility" role="group" aria-label="Super and guard">
+            {(['super', 'guard'] as const).map(actionButton)}
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-/** The essentials stay visible for the entire match, including rematches. */
+/** A persistent cabinet legend on desktop becomes the controls on touch screens. */
 export function FightControlsHint({
   mode = 'fight',
   twoPlayers = false,
   playerLabel = 'P1',
+  disabled = false,
+  hudPlayerIndex = 0,
+  inputResetKey = 0,
 }: {
   mode?: 'fight' | 'rush';
   twoPlayers?: boolean;
   playerLabel?: string;
+  disabled?: boolean;
+  hudPlayerIndex?: 0 | 1;
+  inputResetKey?: number;
 }) {
-  const device = useInputDevice();
+  const state = useFightControlState(mode, twoPlayers);
+  const compact = useArcadeTouchLayout();
+  const touch = compact || state.device === 'touch';
+  const keyboard = !touch && !twoPlayers && state.players[0].device === 'keyboard';
   return (
-    <section className={`fight-keys fight-keys--${device}`} aria-label={`${mode === 'rush' ? 'Rush' : 'Fight'} controls`}>
-      {device === 'touch' ? (
-        <p className="fight-keys__tip">{mode === 'rush'
-          ? 'Hold Guard near a fallen ally to revive.'
-          : 'Drag up to jump. Down + Punch or Kick for a low attack.'}</p>
-      ) : device === 'gamepad' ? (
-        <div className="fight-keys__bindings" role="group" aria-label="Gamepad controls">
-          <Binding keys="Stick / D-pad" action={mode === 'rush' ? 'Move' : 'Move · ↑ Jump · ↓ Crouch'} />
-          <Binding keys="A / ×" action="Punch" />
-          <Binding keys="B / ○" action="Kick" />
-          <Binding keys="LB / L1" action="Guard (hold)" />
-          <Binding keys="X / □" action="Fireball" />
-          <Binding keys="Y / △" action={mode === 'rush' ? 'Jump' : 'Uppercut'} />
-          <Binding keys="RT / R2" action={mode === 'rush' ? 'Super' : 'Super (full meter)'} />
-        </div>
+    <section className={`fight-keys fight-keys--${touch ? 'touch' : state.device}${twoPlayers ? ' fight-keys--two-players' : ''}`} aria-label={`${mode === 'rush' ? 'Rush' : 'Fight'} controls`}>
+      {touch && !twoPlayers ? (
+        <TouchArcadePanel mode={mode} playerLabel={playerLabel} state={state.players[0]}
+          disabled={disabled} hudPlayerIndex={hudPlayerIndex} inputResetKey={inputResetKey} />
+      ) : keyboard ? (
+        <ArcadeKeyboard mode={mode} playerIndex={0} playerLabel={playerLabel} state={state.players[0]} />
       ) : (
-        <>
-          <KeyboardLegend mode={mode} playerIndex={0} playerLabel={playerLabel} />
-          {twoPlayers ? <KeyboardLegend mode={mode} playerIndex={1} playerLabel="P2" /> : null}
-        </>
+        <div className="fight-keys__players">
+          <PlayerPanel mode={mode} playerIndex={0} playerLabel={playerLabel} state={state.players[0]} />
+          {twoPlayers ? <PlayerPanel mode={mode} playerIndex={1} playerLabel="P2" state={state.players[1]} /> : null}
+        </div>
       )}
+      <p className="fight-keys__tip">{mode === 'rush'
+        ? 'Hold Guard near a fallen ally to revive.'
+        : 'Hold Guard · ↓ + Punch or Kick = low attack.'}</p>
     </section>
   );
 }

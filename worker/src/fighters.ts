@@ -14,7 +14,7 @@ import type {
 import { generateId, hashString } from './auth';
 import { inspectArcadeAssetIntegrity } from './arcadeAssets';
 import { drainFighterAssetDeletions, listFighterAssetKeys } from './assetDeletion';
-import { maxTier, normalizeQualityTier, TIER_DEFINITIONS } from './tiers';
+import { isOfferedQualityTier, maxTier, normalizeQualityTier, OFFERED_TIER_ORDER, RETIRED_TIER_ERROR, TIER_DEFINITIONS } from './tiers';
 import { publicAppName, publicSocialCardUrl } from './branding';
 import { readJsonBody, readMultipartFormData } from './requestBody';
 import {
@@ -361,6 +361,14 @@ function playableSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): 
     PLAYABLE_ANIMATION_COUNT,
     qualityTier,
   );
+}
+
+/** Champion is stored as contender for new characters; historical tiers stay intact. */
+function officialPlayableSpriteSetSql(fighterAlias: string): string {
+  return `(
+    (${fighterAlias}.quality_tier = 'contender' AND ${playableSpriteSetSql(fighterAlias, 'contender')})
+    OR (${fighterAlias}.quality_tier = 'champion' AND ${playableSpriteSetSql(fighterAlias, 'champion')})
+  )`;
 }
 
 function auraSpriteSetSql(fighterAlias: string, qualityTier?: QualityTier): string {
@@ -742,7 +750,7 @@ function readCommunityLimit(value: string | null): number {
 
 export function tiersResponse(): Response {
   return json({
-    tiers: Object.values(TIER_DEFINITIONS).map(({ id, label, creditCost, animationRetryCreditCost }) => ({
+    tiers: OFFERED_TIER_ORDER.map((tier) => TIER_DEFINITIONS[tier]).map(({ id, label, creditCost, animationRetryCreditCost }) => ({
       id,
       label,
       creditCost,
@@ -828,13 +836,13 @@ export async function listArcadeFighters(request: Request, env: Env): Promise<Re
   const { results } = await env.DB.prepare(arcadeFighterSelectSql(
     `WHERE af.status = 'active'
       AND f.public_flag = 1
-      AND f.quality_tier = 'champion'
-      AND ${playableSpriteSetSql('f', 'champion')}`,
+      AND ${officialPlayableSpriteSetSql('f')}`,
     'ORDER BY af.sort_order ASC, af.updated_at DESC',
   )).all<ArcadeFighterRow>();
   const fighters = results ?? [];
+  const fighterTiers = new Map(fighters.map((fighter) => [fighter.id, fighter.quality_tier]));
   const sprites = (await getSpritesForFighters(env, fighters.map((fighter) => fighter.id)))
-    .filter((sprite) => sprite.quality_tier === 'champion');
+    .filter((sprite) => sprite.quality_tier === fighterTiers.get(sprite.fighter_id));
   const spritesByFighter = new Map<string, SpriteAsset[]>();
   for (const sprite of sprites) {
     const existing = spritesByFighter.get(sprite.fighter_id) ?? [];
@@ -965,8 +973,8 @@ export async function upsertAdminArcadeFighter(
     }
   }
   if (status === 'active') {
-    const assetIntegrity = fighter.quality_tier === 'champion'
-      ? await inspectArcadeAssetIntegrity(env, fighterId)
+    const assetIntegrity = fighter.quality_tier === 'contender' || fighter.quality_tier === 'champion'
+      ? await inspectArcadeAssetIntegrity(env, fighterId, fighter.quality_tier)
       : { ready: false, missingAssets: ['tier:champion'] };
     if (!assetIntegrity.ready) {
       return json({
@@ -2171,7 +2179,11 @@ export async function requestFighterUpgrade(
   const fighter = await getOwnedFighter(env, fighterId, auth.userId);
   if (!fighter) return json({ error: 'Fighter not found' }, 404);
   const body = await readJsonBody<{ toTier?: QualityTier }>(request, MAX_FIGHTER_JSON_BODY_BYTES);
-  const toTier = normalizeQualityTier(body.toTier, 'champion');
+  const toTier = normalizeQualityTier(body.toTier, 'contender');
+  if (!isOfferedQualityTier(toTier)) return json(RETIRED_TIER_ERROR, 409);
+  if (maxTier(fighter.quality_tier, toTier) === fighter.quality_tier) {
+    return json({ error: 'This fighter already has the requested quality or higher.', code: 'fighter_quality_already_owned' }, 409);
+  }
   return json({
     fighter: serializeFighter(request, fighter),
     upgrade: {
@@ -2444,10 +2456,10 @@ export async function getPublicArcadeSpriteHighDensityAsset(
     FROM sprites s
     JOIN fighters f ON f.id = s.fighter_id
     JOIN arcade_fighters af ON af.fighter_id = f.id
-    WHERE f.id = ? AND f.public_flag = 1 AND f.quality_tier = 'champion'
-      AND af.status = 'active' AND s.id = ? AND s.quality_tier = 'champion'
+    WHERE f.id = ? AND f.public_flag = 1
+      AND af.status = 'active' AND s.id = ? AND s.quality_tier = f.quality_tier
       AND s.animation_format = 'video-dense-v1'
-      AND ${playableSpriteSetSql('f', 'champion')}
+      AND ${officialPlayableSpriteSetSql('f')}
     LIMIT 1
   `).bind(fighterId, spriteId).first<{ raw_blob_key: string | null }>();
   if (!sprite?.raw_blob_key || publicAssetRevision(sprite.raw_blob_key) !== revision) {

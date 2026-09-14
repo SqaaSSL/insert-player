@@ -83,6 +83,8 @@ export interface MatchSceneData {
   auraDifficulty?: AuraDifficultyId;
   /** Aura track id from AuraTracks.ts; omitted lets the seed pick one. */
   auraTrackId?: string;
+  /** Explicit offline quickplay cast; never an owned or online identity. */
+  auraTrialPreset?: 'trump-lamine';
   /** Unverified asynchronous social target; never an online/ranked result. */
   auraChallenge?: AuraChallenge;
   /**
@@ -131,6 +133,7 @@ export const INTRO_STATE_EVENT = 'asf-intro';
 export const PAUSE_EVENT = 'asf-pause';
 export const NET_STATE_EVENT = 'asf-net-state';
 export const RUNTIME_READY_EVENT = 'asf-runtime-ready';
+export const MATCH_START_EVENT = 'asf-match-start';
 export const RUSH_RUN_COMPLETE_EVENT = 'asf-rush-run-complete';
 export const RUSH_COMPANION_ORDER_EVENT = 'asf-rush-companion-order';
 export const AURA_INPUT_EVENT = 'asf-aura-input';
@@ -167,6 +170,13 @@ export interface MatchActionsVisibilityDetail {
 export interface RuntimeReadyDetail {
   sceneKey: 'FightScene' | 'RushScene' | 'AuraScene';
   matchSeed?: number;
+  /** Offline human matches wait for this run's explicit Start action. */
+  startToken?: number;
+}
+
+export interface MatchStartDetail {
+  sceneKey: 'FightScene' | 'RushScene';
+  startToken: number;
 }
 
 export interface RushRunCompleteDetail {
@@ -292,6 +302,7 @@ declare global {
     [INTRO_STATE_EVENT]: CustomEvent<IntroStateDetail>;
     [NET_STATE_EVENT]: CustomEvent<NetStateDetail>;
     [RUNTIME_READY_EVENT]: CustomEvent<RuntimeReadyDetail>;
+    [MATCH_START_EVENT]: CustomEvent<MatchStartDetail>;
     [RUSH_RUN_COMPLETE_EVENT]: CustomEvent<RushRunCompleteDetail>;
     [RUSH_COMPANION_ORDER_EVENT]: CustomEvent<RushCompanionOrderDetail>;
     [AURA_INPUT_EVENT]: CustomEvent<AuraInputDetail>;
