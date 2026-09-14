@@ -14,6 +14,7 @@ import {
 } from '../shared/fighterPreview.ts';
 import { useObjectUrl } from '../shared/useObjectUrl.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
+import { selectBestSpriteSheet } from '../../services/SpriteSheetSource.ts';
 
 export interface FighterPreviewState {
   previewSprite: PreviewSpriteLike | null;
@@ -66,7 +67,7 @@ export function useFighterPreview(
   return {
     previewSprite,
     previewSourceBlob,
-    previewBlob: selection.kind === 'source' ? previewSourceBlob : previewSprite?.blob ?? null,
+    previewBlob: selection.kind === 'source' ? previewSourceBlob : previewSprite ? selectBestSpriteSheet(previewSprite).blob : null,
     selectedAnimName: selection.kind === 'animation' ? selection.animationName : null,
   };
 }
@@ -89,8 +90,12 @@ interface FighterPreviewColumnProps {
   emptyLabel?: string;
   /** Filename stem for downloads. */
   safeName: string;
+  onSavePng?: () => void;
   onSaveGif?: () => void;
   saveGifDisabled?: boolean;
+  downloadsDisabled?: boolean;
+  savingPng?: boolean;
+  savingGif?: boolean;
   /** Page-specific buttons appended to the preview action bar (e.g. Retry). */
   extraActions?: ReactNode;
   /** Source retry wiring (Gallery only). */
@@ -118,8 +123,12 @@ export function FighterPreviewColumn({
   loadingLabel,
   emptyLabel,
   safeName,
+  onSavePng,
   onSaveGif,
   saveGifDisabled,
+  downloadsDisabled,
+  savingPng,
+  savingGif,
   extraActions,
   sourceRetry,
   sourcePanelExtra,
@@ -191,23 +200,26 @@ export function FighterPreviewColumn({
           <div className="gallery-actions">
             {previewBlob ? (
               <Button
-                onClick={() =>
+                title="Download the best available quality"
+                disabled={downloadsDisabled || savingPng}
+                onClick={onSavePng ?? (() =>
                   downloadBlob(
                     previewBlob,
                     `${safeName}_${selection.kind === 'source' ? selection.source : selection.animationName}.png`,
                   )
-                }
+                )}
               >
-                Save PNG
+                {savingPng ? 'Preparing PNG...' : 'Save PNG'}
               </Button>
             ) : null}
             {hasCachedSelectedSprite && onSaveGif ? (
-              <Button disabled={saveGifDisabled} onClick={onSaveGif}>
-                Save GIF
+              <Button disabled={downloadsDisabled || saveGifDisabled || savingGif} onClick={onSaveGif} title="Download the best available quality">
+                {savingGif ? 'Preparing GIF...' : 'Save GIF'}
               </Button>
             ) : null}
             {previewSprite?.rawBlob ? (
               <Button
+                disabled={downloadsDisabled}
                 onClick={() => downloadBlob(previewSprite.rawBlob!, `${safeName}_${selectedAnimName}_RAW.png`)}
               >
                 Save RAW

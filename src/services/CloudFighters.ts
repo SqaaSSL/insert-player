@@ -1,12 +1,14 @@
 import {
   ApiSessionChangedError,
   apiFetch,
+  assertApiRequestContextCurrent,
   captureApiRequestContext,
   type ApiRequestContext,
 } from './ApiClient';
 import {
   CACHE_VERSION,
   getActiveSpriteCacheScope,
+  getAllSpritesForHash,
   getAllSpriteVersionsForHash,
   getCachedMeta,
   hashPhoto,
@@ -1383,44 +1385,99 @@ export async function downloadArcadeSpriteHighDensityToLocal(
     return false;
   }
 
+  return downloadSpriteHighDensityToLocal(fighter, {
+    ...remote,
+    rawUrl: remote.hqUrl,
+    rawFrameWidth: remote.hqFrameWidth,
+    rawFrameHeight: remote.hqFrameHeight,
+    rawFrameCount: remote.hqFrameCount,
+  }, arcadeFighterPhotoHash(fighter), context);
+}
+
+/** Hydrate one owner's reviewed native video sheet without changing playable refs. */
+export async function downloadCloudSpriteHighDensityToLocal(
+  fighter: CloudFighter,
+  animationName: string,
+  context?: ApiRequestContext,
+): Promise<boolean> {
+  if (!fighter.photoHash || fighter.arcade) {
+    throw new Error(`${fighter.name} is missing its private sprite manifest.`);
+  }
+  const remote = selectPlayableCloudSprites(fighter.sprites)
+    .find((sprite) => sprite.animationName === animationName);
+  if (!remote) return false;
+  return downloadSpriteHighDensityToLocal(fighter, remote, fighter.photoHash, context);
+}
+
+async function downloadSpriteHighDensityToLocal(
+  fighter: CloudFighter,
+  remote: CloudSprite,
+  photoHash: string,
+  context?: ApiRequestContext,
+): Promise<boolean> {
+  if (
+    remote.animationFormat !== 'video-dense-v1' || !remote.rawUrl ||
+    !Number.isSafeInteger(remote.rawFrameWidth) || (remote.rawFrameWidth ?? 0) <= 0 ||
+    !Number.isSafeInteger(remote.rawFrameHeight) || (remote.rawFrameHeight ?? 0) <= 0 ||
+    !Number.isSafeInteger(remote.rawFrameCount) || (remote.rawFrameCount ?? 0) <= 0
+  ) return false;
+
   const ownerScope = getActiveSpriteCacheScope();
-  const photoHash = arcadeFighterPhotoHash(fighter);
-  const versions = await getAllSpriteVersionsForHash(photoHash, ownerScope);
-  const existing = versions.find((sprite) => (
-    Boolean(remote.id) && sprite.versionId === remote.id
-  )) ?? versions.find((sprite) => (
+  const requestContext = context ?? captureApiRequestContext();
+  const assertCurrent = () => {
+    assertApiRequestContextCurrent(requestContext);
+    if (getActiveSpriteCacheScope() !== ownerScope) throw new ApiSessionChangedError();
+  };
+  assertCurrent();
+  const sprites = await getAllSpritesForHash(photoHash, ownerScope);
+  assertCurrent();
+  const matchesRemote = (sprite: CachedSprite) => (
     sprite.animationName === remote.animationName &&
     sprite.qualityTier === remote.qualityTier &&
-    Boolean(remote.contentHash) &&
-    sprite.contentHash === remote.contentHash
-  ));
+    sprite.frameWidth === remote.frameWidth && sprite.frameHeight === remote.frameHeight &&
+    sprite.frameCount === remote.frameCount &&
+    normalizeSpriteAnimationFormat(sprite.animationFormat) === remote.animationFormat &&
+    (sprite.processingVersion ?? 0) === remote.processingVersion &&
+    (sprite.contentHash && remote.contentHash
+      ? sprite.contentHash.toLowerCase() === remote.contentHash.toLowerCase()
+      : Boolean(remote.id) && sprite.versionId === remote.id)
+  );
+  const existing = sprites.find(matchesRemote);
   if (!existing) {
-    throw new Error(`${fighter.name} ${animationName} must be downloaded before its HQ preview.`);
+    throw new Error(`${fighter.name} ${remote.animationName} must be downloaded before its HQ preview.`);
   }
   if (
     existing.rawPngBlob &&
-    existing.rawFrameWidth === remote.hqFrameWidth &&
-    existing.rawFrameHeight === remote.hqFrameHeight &&
-    existing.rawFrameCount === remote.hqFrameCount
+    existing.rawFrameWidth === remote.rawFrameWidth &&
+    existing.rawFrameHeight === remote.rawFrameHeight &&
+    existing.rawFrameCount === remote.rawFrameCount &&
+    (!remote.rawContentHash || existing.rawContentHash === remote.rawContentHash)
   ) {
     return false;
   }
 
-  const requestContext = context ?? captureApiRequestContext();
   const rawPngBlob = await fetchRequiredBlob(
-    remote.hqUrl,
-    `${fighter.name} ${animationName} HQ sprite`,
+    remote.rawUrl,
+    `${fighter.name} ${remote.animationName} HQ sprite`,
     requestContext,
   );
+  assertCurrent();
   if (!rawPngBlob) return false;
+  const current = (await getAllSpritesForHash(photoHash, ownerScope)).find(matchesRemote);
+  assertCurrent();
+  if (!current) {
+    throw new Error(`${fighter.name} ${remote.animationName} changed while its HQ sprite was loading.`);
+  }
   await setCachedArchivedSprite({
-    ...existing,
+    ...current,
     ownerScope,
     rawPngBlob,
-    rawFrameWidth: remote.hqFrameWidth,
-    rawFrameHeight: remote.hqFrameHeight,
-    rawFrameCount: remote.hqFrameCount,
+    rawFrameWidth: remote.rawFrameWidth!,
+    rawFrameHeight: remote.rawFrameHeight!,
+    rawFrameCount: remote.rawFrameCount!,
+    rawContentHash: remote.rawContentHash ?? current.rawContentHash,
   }, { preserveVersionId: true, ownerScope });
+  assertCurrent();
   return true;
 }
 

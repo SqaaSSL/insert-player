@@ -1,13 +1,21 @@
 import { GIFEncoder, quantize, applyPalette } from 'gifenc';
 import { getAnimationList } from './CharacterPipeline';
 import type { CachedSprite } from './SpriteCache';
+import { getBestCachedSpriteSheet, getSpriteSheetPlaybackFrameIndices } from './SpriteSheetSource';
 
 interface GifFrameStep {
   sourceIndex: number;
   delayMs: number;
 }
 
+interface IndexedGifFrame {
+  sourceIndex: number;
+  palette: number[][];
+  index: Uint8Array;
+}
+
 const DEFAULT_BG = '#09061a';
+const MAX_CACHED_INDEXED_BYTES = 16 * 1024 * 1024;
 const ANIM_DURATION_MS = new Map(
   getAnimationList().map((anim) => [anim.name, Math.round(anim.duration * 1000)]),
 );
@@ -122,38 +130,73 @@ export async function exportAnimationGif(
   animationName: string,
   backgroundColor = DEFAULT_BG,
 ): Promise<Blob> {
-  const img = await blobToImage(sprite.pngBlob);
-  const frameW = sprite.frameWidth;
-  const frameH = sprite.frameHeight;
+  const source = getBestCachedSpriteSheet(sprite);
+  const img = await blobToImage(source.blob);
+  const frameW = source.frameWidth;
+  const frameH = source.frameHeight;
   const gridCols = Math.round(img.width / frameW);
-  const plan = buildGifFramePlan(animationName, sprite.frameCount);
+  const playbackFrameIndices = getSpriteSheetPlaybackFrameIndices(animationName, sprite.animationFormat, source);
+  const plan = source.highDensity && sprite.animationFormat === 'video-dense-v1'
+    ? (playbackFrameIndices ?? Array.from({ length: source.frameCount }, (_, index) => index))
+      .map((sourceIndex) => ({ sourceIndex, delayMs: 120 }))
+    : buildGifFramePlan(animationName, source.frameCount);
 
   const gif = GIFEncoder();
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = frameW;
   tempCanvas.height = frameH;
   const tempCtx = tempCanvas.getContext('2d')!;
-  tempCtx.imageSmoothingEnabled = true;
-  tempCtx.imageSmoothingQuality = 'high';
+  // Copy native pixels without sampling neighboring atlas cells at the edges.
+  tempCtx.imageSmoothingEnabled = false;
 
+  // Indexed pixels use one byte each. Bound their cache so the return half of
+  // an HQ attack can reuse frames without retaining every full RGBA image.
+  const indexedFrames = new Map<number, IndexedGifFrame>();
+  let cachedIndexedBytes = 0;
+  let encodedFrame: IndexedGifFrame | undefined;
   for (let i = 0; i < plan.length; i++) {
+    // Quantizing an entire HQ animation in one task would freeze the gallery.
+    // Let the browser paint the loading state and handle input between frames.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
     const step = plan[i];
-    const sc = step.sourceIndex % gridCols;
-    const sr = Math.floor(step.sourceIndex / gridCols);
-    tempCtx.clearRect(0, 0, frameW, frameH);
-    tempCtx.fillStyle = backgroundColor;
-    tempCtx.fillRect(0, 0, frameW, frameH);
-    tempCtx.drawImage(img, sc * frameW, sr * frameH, frameW, frameH, 0, 0, frameW, frameH);
+    if (encodedFrame?.sourceIndex !== step.sourceIndex) {
+      encodedFrame = indexedFrames.get(step.sourceIndex);
+      if (encodedFrame) {
+        indexedFrames.delete(step.sourceIndex);
+        indexedFrames.set(step.sourceIndex, encodedFrame);
+      }
+    }
+    if (!encodedFrame || encodedFrame.sourceIndex !== step.sourceIndex) {
+      const sc = step.sourceIndex % gridCols;
+      const sr = Math.floor(step.sourceIndex / gridCols);
+      tempCtx.clearRect(0, 0, frameW, frameH);
+      tempCtx.fillStyle = backgroundColor;
+      tempCtx.fillRect(0, 0, frameW, frameH);
+      tempCtx.drawImage(img, sc * frameW, sr * frameH, frameW, frameH, 0, 0, frameW, frameH);
 
-    const imageData = tempCtx.getImageData(0, 0, frameW, frameH);
-    const palette = quantize(imageData.data, 256);
-    const index = applyPalette(imageData.data, palette);
+      const imageData = tempCtx.getImageData(0, 0, frameW, frameH);
+      const palette = quantize(imageData.data, 256);
+      encodedFrame = {
+        sourceIndex: step.sourceIndex,
+        palette,
+        index: applyPalette(imageData.data, palette),
+      };
+      if (encodedFrame.index.byteLength <= MAX_CACHED_INDEXED_BYTES) {
+        while (cachedIndexedBytes + encodedFrame.index.byteLength > MAX_CACHED_INDEXED_BYTES) {
+          const oldest = indexedFrames.values().next().value!;
+          indexedFrames.delete(oldest.sourceIndex);
+          cachedIndexedBytes -= oldest.index.byteLength;
+        }
+        indexedFrames.set(step.sourceIndex, encodedFrame);
+        cachedIndexedBytes += encodedFrame.index.byteLength;
+      }
+    }
     const frameOpts: Record<string, unknown> = {
-      palette,
+      palette: encodedFrame.palette,
       delay: step.delayMs,
     };
     if (i === 0) frameOpts.repeat = 0;
-    gif.writeFrame(index, frameW, frameH, frameOpts as never);
+    gif.writeFrame(encodedFrame.index, frameW, frameH, frameOpts as never);
   }
 
   gif.finish();
