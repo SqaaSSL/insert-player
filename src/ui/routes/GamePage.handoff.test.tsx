@@ -82,9 +82,10 @@ const emit = (phase: 'loading' | 'ready' | 'error', token = 1, seed = 17, localC
   viewport.dispatchEvent(new CustomEvent(AURA_PRESENTATION_EVENT, { detail: { phase, token, seed, localControlledSlot } }));
   flush();
 };
-const startup = (phase: 'awaiting-input' | 'preparing' | 'versus' | 'countdown' | 'playing', count: number | null = null, token = 1, seed = 17) => {
+const startup = (phase: 'awaiting-input' | 'preparing' | 'versus' | 'countdown' | 'playing', count: number | null = null, token = 1, seed = 17,
+  instrumentVisible = phase === 'countdown' || phase === 'playing') => {
   viewport.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, {
-    detail: { token, seed, phase, count, remainingMs: count === null ? 0 : count * 1000 },
+    detail: { token, seed, phase, count, instrumentVisible, remainingMs: count === null ? 0 : count * 1000 },
   })); flush();
 };
 const advance = (ms: number) => { vi.advanceTimersByTime(ms); flush(); };
@@ -247,6 +248,7 @@ describe('GamePage Aura presentation handoff', () => {
   });
   it('uses the active local performer and disables touch inputs while paused', async () => {
     await mount('AuraScene', { vsAI: false }); emit('loading'); emit('ready'); finishOpening();
+    startup('playing');
     viewport.dispatchEvent(new CustomEvent(AURA_PRESENTATION_TURN_EVENT, { detail: { token: 1, seed: 17, playerIndex: 1 } })); flush();
     expect(find(node => node.type === AuraControls).props.playerIndex).toBe(1);
     find(node => node.props?.['aria-label'] === 'Pause').props.onClick(); flush();
@@ -271,9 +273,29 @@ describe('GamePage Aura presentation handoff', () => {
     expect(controls.props.rivalTurn).toBe(false);
     expect(AuraControls(controls.props).props.children.every((button: any) => !button.props.disabled)).toBe(true);
   });
+  it('keeps touch pads out of the intro until the scene reveals the instrument, without hiding exit or pause', async () => {
+    await mount('AuraScene', { vsAI: true }); emit('loading'); emit('ready'); finishOpening();
+    expect(find(node => node.type === AuraControls)).toBeUndefined();
+    for (const phase of ['preparing', 'versus'] as const) {
+      startup(phase);
+      expect(find(node => node.type === AuraControls)).toBeUndefined();
+      expect(find(node => node.props?.className === 'aura-game-toolbar__back')).toBeDefined();
+      expect(find(node => node.props?.['aria-label'] === 'Pause')).toBeDefined();
+    }
+    // The camera finishes while the same musical phase/count is still active.
+    // Visibility must not be lost by the startup-event render deduplication.
+    startup('versus', null, 1, 17, true);
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
+    startup('versus', null, 99, 17, false);
+    expect(find(node => node.type === AuraControls)).toBeDefined();
+    startup('countdown', 3, 1, 17, true);
+    expect(find(node => node.type === AuraControls).props.disabled).toBe(false);
+    startup('playing', null, 1, 17, false);
+    expect(find(node => node.type === AuraControls)).toBeUndefined();
+  });
   it('announces the current musical countdown and rejects signals from another lifecycle', async () => {
     await mount('AuraScene', { vsAI: true }); emit('loading'); emit('ready'); finishOpening();
-    expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
+    expect(find(node => node.type === AuraControls)).toBeUndefined();
     startup('countdown', 3);
     expect(find(node => node.props?.role === 'status' && node.props?.className === 'sr-only')?.props.children).toBe('Get ready. 3.');
     startup('playing', null, 99);
@@ -285,7 +307,7 @@ describe('GamePage Aura presentation handoff', () => {
     expect(find(node => node.props?.role === 'status' && node.props?.className === 'sr-only')).toBeUndefined();
     startup('playing', null);
     emit('ready', 2); finishOpening();
-    expect(find(node => node.type === AuraControls).props.disabled).toBe(true);
+    expect(find(node => node.type === AuraControls)).toBeUndefined();
   });
   it.each([
     { mode: 'offline', data: { vsAI: true }, acceptsCountdown: true, slot: 0 },
@@ -301,7 +323,7 @@ describe('GamePage Aura presentation handoff', () => {
     };
     startup('awaiting-input'); pressCircle();
     expect(input).not.toHaveBeenCalled();
-    startup('countdown', 1); pressCircle();
+    startup('countdown', 1, 1, 17, acceptsCountdown); pressCircle();
     expect(input).toHaveBeenCalledTimes(acceptsCountdown ? 1 : 0);
     if (acceptsCountdown) expect(input.mock.calls[0][0].detail).toEqual({ lane: 0, playerIndex: slot });
     input.mockClear();
@@ -373,6 +395,7 @@ describe('GamePage Aura presentation handoff', () => {
   });
   it('keeps the authenticated local slot for online controls, irrespective of turn', async () => {
     await mount('AuraScene', { online: { localSlot: 1 } }); emit('loading'); emit('ready'); finishOpening();
+    startup('playing');
     viewport.dispatchEvent(new CustomEvent(AURA_PRESENTATION_TURN_EVENT, { detail: { token: 1, seed: 17, playerIndex: 0 } })); flush();
     expect(find(node => node.type === AuraControls).props.playerIndex).toBe(1);
     expect(find(node => node.props?.['aria-label'] === 'Pause')).toBeUndefined();
@@ -381,11 +404,14 @@ describe('GamePage Aura presentation handoff', () => {
   it('preserves a P2 challenge human through retries and changes to P1 on a fresh remix lifecycle', async () => {
     await mount('AuraScene', { vsAI: true, auraChallenge: { slot: 1 } });
     emit('loading', 1, 17, 1); emit('ready', 1, 17, 1); finishOpening();
+    startup('playing');
     viewport.dispatchEvent(new CustomEvent(AURA_PRESENTATION_TURN_EVENT, { detail: { token: 1, seed: 17, playerIndex: 0 } })); flush();
     expect(find(node => node.type === AuraControls).props.playerIndex).toBe(1);
     emit('loading', 2, 17, 1); emit('ready', 2, 17, 1); finishOpening();
+    startup('playing', null, 2);
     expect(find(node => node.type === AuraControls).props.playerIndex).toBe(1);
     emit('loading', 3, 18, 0); emit('ready', 3, 18, 0); finishOpening();
+    startup('playing', null, 3, 18);
     expect(find(node => node.type === AuraControls).props.playerIndex).toBe(0);
     emit('loading', 2, 17, 1);
     expect(find(node => node.type === AuraControls).props.playerIndex).toBe(0);
@@ -428,10 +454,10 @@ describe('GamePage Aura presentation handoff', () => {
     viewport.dispatchEvent(new CustomEvent(AURA_ONBOARDING_EVENT, { detail: tip })); flush();
     expect(find(node => node.type === AuraControls).props.disabled).toBe(false);
     viewport.dispatchEvent(new CustomEvent(AURA_ONBOARDING_EVENT, { detail: { ...tip, phase: 'complete', cue: null, practiceLane: null, completedLanes: 4 } }));
-    viewport.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, { detail: { token: 1, seed: 17, phase: 'countdown', remainingMs: 3000, count: 3 } })); flush();
+    viewport.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, { detail: { token: 1, seed: 17, phase: 'countdown', remainingMs: 3000, count: 3, instrumentVisible: true } })); flush();
     expect(find(node => node.type === AuraControls).props.disabled).toBe(false);
     expect(find(node => node.type === AuraOnboardingHint)).toBeUndefined();
-    viewport.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, { detail: { token: 1, seed: 17, phase: 'playing', remainingMs: 0, count: null } })); flush();
+    viewport.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, { detail: { token: 1, seed: 17, phase: 'playing', remainingMs: 0, count: null, instrumentVisible: true } })); flush();
     expect(find(node => node.type === AuraControls).props.disabled).toBe(false);
     expect(find(node => node.type === AuraOnboardingHint)).toBeUndefined();
   });

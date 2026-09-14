@@ -23,6 +23,85 @@ describe('Aura continuous camera composition', () => {
     expect(layout).toEqual(original);
   });
 
+  it.each([[1024, 576], [576, 1024]])('opens with both bodies separated and clear of the frame at %i×%i', (width, height) => {
+    const layout = createAuraLayout(width, height);
+    const original = structuredClone(layout);
+    const intro = auraCameraComposition(layout, { activeSlot: 0, introProgress: 1 });
+    const [left, right] = intro.performers;
+    const previousFaceoff = auraCameraComposition(layout, { activeSlot: 0, finaleProgress: 1 });
+    expect(intro.performers).toEqual(auraCameraComposition(layout, { activeSlot: 1, introProgress: 1 }).performers);
+    expect(intro.performers.map(actor => actor.alpha)).toEqual([1, 1]);
+    expect(intro.finale).toBe(false);
+    expect(intro.transitioning).toBe(false);
+    expect((left.x + right.x) / 2).toBeCloseTo(width / 2, 10);
+    expect(left.height).toBe(right.height);
+    expect(right.x - left.x).toBeGreaterThan(previousFaceoff.performers[1].x - previousFaceoff.performers[0].x);
+    // Leave room around the two silhouettes, not just around their centre marks.
+    expect(left.x + left.height * 0.35).toBeLessThan(right.x - right.height * 0.35);
+    expect(left.x - left.height * 0.35).toBeGreaterThan(16);
+    expect(right.x + right.height * 0.35).toBeLessThan(width - 16);
+    expect(left.footY - left.height).toBeGreaterThan(layout.hudHeight);
+    expect(left.footY).toBe(layout.active.footY);
+    expect(right.footY).toBe(layout.active.footY);
+    expect(layout).toEqual(original);
+  });
+
+  it.each([[1024, 576], [576, 1024]])('pans and zooms continuously from the intro to either player at %i×%i', (width, height) => {
+    const layout = createAuraLayout(width, height);
+    for (const activeSlot of [0, 1] as const) {
+      let previous = auraCameraComposition(layout, { activeSlot, introProgress: 1 });
+      for (let frame = 1; frame <= 120; frame++) {
+        const view = auraCameraComposition(layout, { activeSlot, introProgress: 1 - frame / 120 });
+        expect(view.camera.zoom).toBeGreaterThanOrEqual(previous.camera.zoom);
+        expect(view.performers[activeSlot].alpha).toBe(1);
+        expect(view.performers[1 - activeSlot].alpha).toBeLessThanOrEqual(previous.performers[1 - activeSlot].alpha);
+        expect(view.performers[0].x).toBeLessThan(view.performers[1].x);
+        expect(view.performers.every(actor => actor.footY === layout.active.footY)).toBe(true);
+        expect(view.performers[0].height).toBe(view.performers[1].height);
+        expect(view.finale).toBe(false);
+        expect(view.transitioning).toBe(frame < 120);
+        view.performers.forEach((actor, slot) => {
+          expect(Math.abs(actor.x - previous.performers[slot].x)).toBeLessThan(width / 60);
+          expect(Math.abs(actor.height - previous.performers[slot].height)).toBeLessThan(2);
+        });
+        previous = view;
+      }
+      expect(previous).toEqual(auraCameraComposition(layout, { activeSlot }));
+      const midway = auraCameraComposition(layout, { activeSlot, introProgress: 0.5 });
+      auraCameraComposition(layout, { activeSlot, introProgress: 0.1 });
+      expect(auraCameraComposition(layout, { activeSlot, introProgress: 0.5 })).toEqual(midway);
+    }
+  });
+
+  it.each([[1024, 576], [576, 1024]])('keeps the opening two-shot but reaches focused play with reduced motion at %i×%i', (width, height) => {
+    const layout = createAuraLayout(width, height);
+    for (const activeSlot of [0, 1] as const) {
+      expect(auraCameraComposition(layout, { activeSlot, introProgress: 1, reducedMotion: true }))
+        .toEqual(auraCameraComposition(layout, { activeSlot, introProgress: 1 }));
+      for (const introProgress of [0.99, 0.5, 0.01, 0, -1, Number.NaN]) {
+        const focused = auraCameraComposition(layout, { activeSlot, introProgress, reducedMotion: true });
+        expect(focused).toEqual(auraCameraComposition(layout, { activeSlot }));
+        expect(focused.performers[1 - activeSlot].visible).toBe(false);
+      }
+    }
+  });
+
+  it('keeps final scoring and result framing independent of any stale intro value', () => {
+    const layout = createAuraLayout();
+    for (const finaleProgress of [0, 0.5, 1]) {
+      const input = { activeSlot: 1 as const, fromSlot: 0 as const, transitionProgress: 0.4, finaleProgress, resultTableau: true };
+      expect(auraCameraComposition(layout, { ...input, introProgress: 1 })).toEqual(auraCameraComposition(layout, input));
+    }
+  });
+
+  it('leaves an existing player handoff untouched at the intro focus endpoint', () => {
+    const layout = createAuraLayout();
+    for (const transitionProgress of [0, 0.25, 0.5, 0.9, 1]) {
+      const input = { activeSlot: 1 as const, fromSlot: 0 as const, transitionProgress };
+      expect(auraCameraComposition(layout, { ...input, introProgress: 0 })).toEqual(auraCameraComposition(layout, input));
+    }
+  });
+
   it.each([0, 1] as const)('pans continuously from slot %i with both actors visible midway and no identity swap', fromSlot => {
     const activeSlot = (1 - fromSlot) as AuraSlot;
     const layout = createAuraLayout();
@@ -123,8 +202,8 @@ describe('Aura continuous camera composition', () => {
     const handoff = { activeSlot: 1 as const, fromSlot: 0 as const, transitionProgress: 0.4 };
     expect(auraCameraComposition(layout, { ...handoff, finaleProgress: 0, resultTableau: true }).performers)
       .toEqual(auraCameraComposition(layout, handoff).performers);
-    // Startup still uses its original faceoff, not the result dock layout.
-    const intro = auraCameraComposition(layout, { activeSlot: 1, finaleProgress: 1 });
+    // Startup has its own wider faceoff, independent of the result dock.
+    const intro = auraCameraComposition(layout, { activeSlot: 1, introProgress: 1 });
     expect((intro.performers[0].x + intro.performers[1].x) / 2).toBe(width / 2);
   });
 
@@ -133,7 +212,8 @@ describe('Aura continuous camera composition', () => {
     for (const fromSlot of [0, 1] as const) for (let frame = 0; frame <= 100; frame++) {
       const activeSlot = (1 - fromSlot) as AuraSlot;
       const input = { fromSlot, activeSlot, transitionProgress: frame / 100 };
-      const views = [auraCameraComposition(layout, input), auraCameraComposition(layout, { ...input, finaleProgress: frame / 100 })];
+      const views = [auraCameraComposition(layout, input), auraCameraComposition(layout, { ...input, finaleProgress: frame / 100 }),
+        auraCameraComposition(layout, { ...input, introProgress: frame / 100 })];
       for (const view of views) {
         expect((view.backdropScale - 1) * width / 2).toBeGreaterThan(Math.abs(view.backdropOffsetX));
         expect(view.performers.every(actor => actor.alpha >= 0 && actor.alpha <= 1)).toBe(true);
