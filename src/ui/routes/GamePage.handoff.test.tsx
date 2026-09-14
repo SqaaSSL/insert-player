@@ -45,6 +45,9 @@ import { FightLoadingCurtain } from '../components/FightLoadingCurtain.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
 import { AuraOnboardingHint } from '../components/AuraOnboardingHint.tsx';
 import { AuraStartReady } from '../components/AuraStartReady.tsx';
+import { CombatStartReady } from '../components/CombatStartReady.tsx';
+import { FightControlsHint } from '../components/FightControlsHint.tsx';
+import { MATCH_START_EVENT } from '../../game/match/MatchConfig.ts';
 import { AURA_ONBOARDING_EVENT } from '../../game/aura/AuraOnboarding.ts';
 import { AURA_STARTUP_EVENT, AURA_STARTUP_READY_EVENT } from '../../game/aura/AuraStartup.ts';
 import { AURA_BATTLE_COMPLETE_EVENT, AURA_INPUT_EVENT, MATCH_ACTIONS_VISIBILITY_EVENT } from '../../game/match/MatchConfig.ts';
@@ -96,6 +99,44 @@ const finishOpening = () => {
   expect(curtain()?.props.phase).toBe('opening');
   advance(aura ? 300 : 720);
 };
+
+describe('combat cabinet start', () => {
+  it.each(['FightScene', 'RushScene'])('keeps controls visible and waits for Play on every %s match', async sceneKey => {
+    const combatStarts: unknown[] = [];
+    viewport.addEventListener(MATCH_START_EVENT, event => combatStarts.push((event as CustomEvent).detail));
+    await mount(sceneKey, { vsAI: true });
+    const ready = (startToken: number) => {
+      viewport.dispatchEvent(new CustomEvent(RUNTIME_READY_EVENT, { detail: { sceneKey, startToken } })); flush();
+    };
+    expect(find(node => node.type === FightControlsHint)).toBeDefined();
+    expect(find(node => node.type === FightControlsHint).props.disabled).toBe(true);
+    ready(1); finishOpening(); advance(60_000);
+    expect(find(node => node.type === FightControlsHint).props.disabled).toBe(false);
+    expect(find(node => node.type === FightControlsHint).props.inputResetKey).toBe(1);
+    expect(combatStarts).toEqual([]);
+    const start = find(node => node.type === CombatStartReady).props.onStart;
+    start(); start(); flush();
+    expect(combatStarts).toEqual([{ sceneKey, startToken: 1 }]);
+    expect(find(node => node.type === CombatStartReady)).toBeUndefined();
+    expect(find(node => node.type === FightControlsHint)).toBeDefined();
+    expect(find(node => node.type === FightControlsHint).props.inputResetKey).toBe(0);
+    ready(1);
+    expect(find(node => node.type === CombatStartReady)).toBeUndefined();
+    ready(2);
+    expect(find(node => node.type === CombatStartReady)).toBeDefined();
+    start(); flush();
+    expect(combatStarts).toHaveLength(1);
+    find(node => node.type === CombatStartReady).props.onStart(); flush();
+    expect(combatStarts).toHaveLength(2);
+  });
+
+  it.each([{ cpuVsCpu: true }, { online: { localSlot: 0 } }])('keeps automatic startup for spectators and online matches: %j', async data => {
+    await mount('FightScene', data);
+    viewport.dispatchEvent(new CustomEvent(RUNTIME_READY_EVENT, { detail: { sceneKey: 'FightScene', startToken: 1 } }));
+    flush(); finishOpening();
+    expect(find(node => node.type === CombatStartReady)).toBeUndefined();
+  });
+});
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });

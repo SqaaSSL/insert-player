@@ -4,6 +4,7 @@ import { Fighter } from '../fighters/Fighter.ts';
 import { FighterView } from '../fighters/FighterView.ts';
 import { FighterState, FIXED_TIMESTEP, GAME_HEIGHT, GAME_WIDTH } from '../constants.ts';
 import { InputManager } from '../systems/InputManager.ts';
+import { MatchStartGate } from '../match/MatchStartGate.ts';
 import { SoundManager } from '../systems/SoundManager.ts';
 import { resetVirtualInput } from '../systems/VirtualInput.ts';
 import { loadAiSprites } from '../sprites/AiSpriteLoader.ts';
@@ -11,6 +12,7 @@ import {
   MATCH_ACTION_EVENT,
   PAUSE_EVENT,
   RUNTIME_READY_EVENT,
+  MATCH_START_EVENT,
   RUSH_COMPANION_ORDER_EVENT,
   RUSH_RUN_COMPLETE_EVENT,
   type MatchAction,
@@ -162,6 +164,12 @@ export class RushScene extends Phaser.Scene {
   private jumpKey?: Phaser.Input.Keyboard.Key;
   private jumpQueued = false;
   private paused = false;
+  private readonly startGate = new MatchStartGate();
+  private readonly onMatchStart = (event: WindowEventMap[typeof MATCH_START_EVENT]): void => {
+    if (!this.ready || event.detail?.sceneKey !== 'RushScene'
+      || !this.startGate.accept(event.detail.startToken)) return;
+    this.beginRun();
+  };
   private waitingForRunAction = false;
   private runActionCommitted = false;
   private runSummaryReported = false;
@@ -192,6 +200,7 @@ export class RushScene extends Phaser.Scene {
   }
 
   init(data: MatchSceneData): void {
+    this.startGate.reset(data);
     this.battleCapture?.cancel();
     this.battleCapture = new BattleCaptureSession();
     this.matchData = data;
@@ -242,6 +251,8 @@ export class RushScene extends Phaser.Scene {
     const lifecycle = ++this.lifecycle;
     window.removeEventListener(PAUSE_EVENT, this.onPauseEvent);
     window.addEventListener(PAUSE_EVENT, this.onPauseEvent);
+    window.removeEventListener(MATCH_START_EVENT, this.onMatchStart);
+    window.addEventListener(MATCH_START_EVENT, this.onMatchStart);
     window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
     window.addEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
     window.removeEventListener(RUSH_COMPANION_ORDER_EVENT, this.onCompanionOrder);
@@ -264,7 +275,6 @@ export class RushScene extends Phaser.Scene {
     ], this.routeMap, { difficulty: this.rushDifficulty });
     this.inputManager = new InputManager(this);
     this.createHud();
-    this.handleEvents(this.sim.start());
     this.syncPresentations();
     this.syncProjectilePresentations();
     this.syncObstaclePresentations();
@@ -276,9 +286,9 @@ export class RushScene extends Phaser.Scene {
     window.__ASF_RUSH_STATE__ = () => this.sim.snapshot();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this);
     this.ready = true;
-    this.soundManager.startBattleMusic();
+    if (!this.startGate.waiting) this.beginRun();
     window.dispatchEvent(new CustomEvent(RUNTIME_READY_EVENT, {
-      detail: { sceneKey: 'RushScene', matchSeed: this.matchData.seed },
+      detail: { sceneKey: 'RushScene', matchSeed: this.matchData.seed, startToken: this.startGate.token },
     }));
     debugInfo('[RushScene] Co-op route ready', {
       stageId: this.stageId,
@@ -290,8 +300,21 @@ export class RushScene extends Phaser.Scene {
     });
   }
 
+  private beginRun(): void {
+    this.accumulator = 0;
+    this.jumpQueued = false;
+    this.jumpKey?.reset();
+    resetVirtualInput();
+    this.inputManager.reset();
+    this.inputManager.poll();
+    this.inputManager.readPlayer1();
+    this.inputManager.readPlayer2();
+    this.soundManager?.startBattleMusic();
+    this.handleEvents(this.sim.start());
+  }
+
   update(_time: number, delta: number): void {
-    if (!this.ready || this.paused || this.waitingForRunAction) return;
+    if (!this.ready || this.paused || this.startGate.waiting || this.waitingForRunAction) return;
     this.inputManager.poll();
     this.accumulator += Math.min(delta, FIXED_TIMESTEP * MAX_TICKS_PER_FRAME);
     let ticks = 0;
@@ -1527,6 +1550,7 @@ export class RushScene extends Phaser.Scene {
     this.ready = false;
     this.lifecycle += 1;
     window.removeEventListener(PAUSE_EVENT, this.onPauseEvent);
+    window.removeEventListener(MATCH_START_EVENT, this.onMatchStart);
     window.removeEventListener(MATCH_ACTION_EVENT, this.onMatchAction);
     window.removeEventListener(RUSH_COMPANION_ORDER_EVENT, this.onCompanionOrder);
     this.escapeKey?.off('down', this.exitToMenu, this);
