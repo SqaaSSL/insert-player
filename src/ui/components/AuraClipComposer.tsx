@@ -128,10 +128,13 @@ export function AuraClipComposer({ file, challenge, onLockChange, onCreated, com
           : 'Select and copy your battle link below.');
     } finally { active.current = false; if (mounted.current) setBusy(false); }
   };
+  const notice = <p className="aura-challenge-composer__notice">{clip
+    ? compact ? 'One link to watch, download and play.' : 'Watch, download and play your challenge, all from one Insert Player link.'
+    : compact ? 'Public link · watch and download for 30 days.'
+      : 'Publish your match video on Insert Player. Anyone with the link can watch and download it for 30 days.'}</p>;
   return (
-    <div className="aura-clip-composer">
-      <p className="aura-challenge-composer__notice">{clip ? 'Watch, download and play your challenge, all from one Insert Player link.'
-        : 'Publish your match video on Insert Player. Anyone with the link can watch and download it for 30 days.'}</p>
+    <div className={`aura-clip-composer${compact ? ' is-compact' : ''}`}>
+      {!compact ? notice : null}
       {verifying ? <div className="aura-clip-composer__verification">
         <p role="status">Verifying before publishing…</p>
         <TurnstileChallenge siteKey={siteKey} action="aura_share" resetSignal={reset} onTokenChange={setTurnstileToken} />
@@ -149,6 +152,7 @@ export function AuraClipComposer({ file, challenge, onLockChange, onCreated, com
           try { downloadAuraVideo(file); } catch { setError(true); setStatus('Download could not start. Try the video player’s download option.'); }
         }}>Download video</button> : null}
       </div>}
+      {compact ? notice : null}
       {progress !== null ? <progress className="aura-clip-composer__progress" value={progress} max={100} aria-label="Battle video upload" /> : null}
       {busy && !clip ? <p className="aura-challenge-composer__notice" role="status">Keep this page open until your link is ready.</p> : null}
       {fileError || status ? <p className={`aura-challenge-composer__notice${error || fileError ? ' is-error' : ''}`} role="status">{fileError || status}</p> : null}

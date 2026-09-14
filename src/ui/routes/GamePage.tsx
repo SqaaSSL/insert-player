@@ -153,6 +153,7 @@ export function GamePage({
   const [battleCaptureUnavailable, setBattleCaptureUnavailable] = useState(false);
   const [auraCapture, setAuraCapture] = useState<AuraCaptureDetail | null>(null);
   const [auraStartup, setAuraStartup] = useState<AuraStartupDetail | null>(null);
+  const auraAwaitingInput = isAura && loadingPhase === 'hidden' && auraStartup?.phase === 'awaiting-input' && !auraSummary;
   const [auraTouchSlot, setAuraTouchSlot] = useState<0 | 1>(0);
   const [auraControlledSlot, setAuraControlledSlot] = useState<0 | 1 | undefined>(
     online?.localSlot ?? launchTarget.data.auraChallenge?.slot ?? (launchTarget.data.vsAI === false ? undefined : 0));
@@ -634,7 +635,7 @@ export function GamePage({
       {isAura && loadingPhase === 'hidden' && !auraSummary && auraCapture?.state === 'recording' ? (
         <p className="aura-capture-status" role="status">{paused ? 'Recording paused' : 'Recording match'} · game only</p>
       ) : null}
-      {isAura && loadingPhase === 'hidden' && auraStartup && !auraSummary && auraOnboarding?.phase !== 'practice' ? (
+      {isAura && loadingPhase === 'hidden' && auraStartup && !auraSummary && !auraAwaitingInput && auraOnboarding?.phase !== 'practice' ? (
         <p className="sr-only" role="status" aria-live="polite">
           {auraStartup.phase === 'awaiting-input' ? 'Your duel is ready. Start when you are ready.'
             : auraStartup.phase === 'preparing' ? 'Preparing the Aura duel.'
@@ -643,13 +644,14 @@ export function GamePage({
                 : 'Go! Hit the beat.'}
         </p>
       ) : null}
-      {isAura && loadingPhase === 'hidden' && auraStartup?.phase === 'awaiting-input' && !auraSummary ? (
+      {auraAwaitingInput && !paused ? (
         <AuraStartReady
           playerName={launchTarget.data.p1Name ?? 'Player One'}
           rivalName={launchTarget.data.p2Name ?? 'Player Two'}
           practiceAvailable={canGuideAuraFirstBattle(launchTarget.data)}
           practiceRecommended={auraPracticeRecommended}
           busy={paused}
+          onExit={onExit}
           onStart={practice => {
             if (paused) return;
             if (practice) trackProductEvent('onboarding_started', { game: 'aura' });
@@ -658,7 +660,7 @@ export function GamePage({
               trackProductEvent('onboarding_skipped', { game: 'aura' });
             }
             window.dispatchEvent(new CustomEvent(AURA_STARTUP_READY_EVENT, {
-              detail: { token: auraStartup.token, seed: auraStartup.seed, practice },
+              detail: { token: auraStartup!.token, seed: auraStartup!.seed, practice },
             }));
           }}
         />
@@ -714,7 +716,7 @@ export function GamePage({
           }));
         }} />
       ) : null}
-      {isAura && loadingPhase === 'hidden' && !matchActionsVisible && !auraSummary ? (
+      {isAura && loadingPhase === 'hidden' && !matchActionsVisible && !auraSummary && !auraAwaitingInput ? (
         <div className="aura-game-toolbar" aria-label="Aura match controls">
           {!launchTarget.data.cpuVsCpu ? (
             <AuraControls playerIndex={online?.localSlot ?? auraControlledSlot ?? auraTouchSlot}

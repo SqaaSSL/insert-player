@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "identity": {
+    "slug": "casual",
+    "name": "Casual",
+    "sourceSha256": "e29f551726c5e80941bcf63618401bbf00429d56df52f6cbb20d8da57435c210"
+  },
+  "bundle": {
+    "releaseTag": "casual-generation-v1",
+    "assetName": "casual-roster-reviewed-v1.tar.gz",
+    "archiveSha256": "97fb1b0ef96fcc4606a95843260f5bf3005c47408f3f30b77a5f8872d54ed7aa",
+    "manifestSha256": "57356ef403eac2d5a9c9868b7052e24eeee09a0fd059a25503ca0e2199dba3f8"
+  }
+}

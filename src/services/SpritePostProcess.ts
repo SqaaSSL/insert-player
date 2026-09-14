@@ -568,20 +568,30 @@ export async function cleanSpriteSheet(
     rawFrames = sliceImageIntoGrid(img, gridCols, gridRows);
   }
 
+  const preErosionEdges: Array<{ left: boolean; right: boolean; top: boolean; bottom: boolean }> = [];
   for (const frame of rawFrames) {
     const ctx = frame.getContext('2d')!;
     const data = ctx.getImageData(0, 0, frame.width, frame.height);
+    let contentBoundary = { left: 0, right: data.width, top: 0, bottom: data.height };
     if (bgIsGreen) {
+      contentBoundary = removeThinCellBorderLines(data);
       chromaKeyRemove(data);
     } else {
       lightBgRemove(data);
     }
+    removeDetachedComponents(data, animationName === 'jump' || animationName === 'hit' ? 'largest' : 'conservative');
+    // Divider removal and erosion must not manufacture evidence of safe framing.
+    // The surviving silhouette needs real background before the inner divider boundary.
+    const originalBounds = findBoundingBox(data);
+    preErosionEdges.push({
+      left: !!originalBounds && originalBounds.x <= contentBoundary.left,
+      right: !!originalBounds && originalBounds.x + originalBounds.w >= contentBoundary.right,
+      top: !!originalBounds && originalBounds.y <= contentBoundary.top,
+      bottom: !!originalBounds && originalBounds.y + originalBounds.h >= contentBoundary.bottom,
+    });
     erodeAlphaEdge(data);
-    if (animationName === 'jump' || animationName === 'hit') {
-      removeDetachedComponents(data, 'largest');
-    } else {
-      removeDetachedComponents(data, 'conservative');
-    }
+    // Noise was removed before erosion. Erosion can disconnect a narrow wrist
+    // or ankle; do not discard a legitimate hand or foot as a new component.
     ctx.putImageData(data, 0, 0);
   }
 
@@ -604,6 +614,7 @@ export async function cleanSpriteSheet(
       srcFrameH,
       criticalConfig,
       animationName,
+      preErosionEdges,
     );
     workingFrames = filtered.frames;
     frameBBoxes = filtered.boxes;
@@ -1172,6 +1183,50 @@ function erodeAlphaEdge(data: ImageData): void {
   }
 }
 
+/** Remove only nearly continuous dark dividers in the outermost cell pixels. */
+function removeThinCellBorderLines(data: ImageData): { left: number; right: number; top: number; bottom: number } {
+  const { width, height, data: pixels } = data;
+  const isDark = (x: number, y: number) => {
+    const offset = (y * width + x) * 4;
+    return pixels[offset + 3] > ALPHA_THRESHOLD && pixels[offset] < 95 && pixels[offset + 1] < 95 && pixels[offset + 2] < 95;
+  };
+  const strip = Math.min(3, Math.floor(Math.min(width, height) * 0.02));
+  const columns: number[] = [];
+  const rows: number[] = [];
+  for (let inset = 0; inset < strip; inset++) {
+    for (const x of [inset, width - 1 - inset]) {
+      let dark = 0;
+      let adjacentGreen = 0;
+      const neighborX = x < width / 2 ? Math.min(width - 1, x + strip + 1) : Math.max(0, x - strip - 1);
+      for (let y = 0; y < height; y++) {
+        if (isDark(x, y)) dark++;
+        const offset = (y * width + neighborX) * 4;
+        if (isStrictGreen(pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3])) adjacentGreen++;
+      }
+      if (dark / height >= 0.95 && adjacentGreen / height >= 0.55) columns.push(x);
+    }
+    for (const y of [inset, height - 1 - inset]) {
+      let dark = 0;
+      let adjacentGreen = 0;
+      const neighborY = y < height / 2 ? Math.min(height - 1, y + strip + 1) : Math.max(0, y - strip - 1);
+      for (let x = 0; x < width; x++) {
+        if (isDark(x, y)) dark++;
+        const offset = (neighborY * width + x) * 4;
+        if (isStrictGreen(pixels[offset], pixels[offset + 1], pixels[offset + 2], pixels[offset + 3])) adjacentGreen++;
+      }
+      if (dark / width >= 0.95 && adjacentGreen / width >= 0.55) rows.push(y);
+    }
+  }
+  for (const x of columns) for (let y = 0; y < height; y++) pixels[(y * width + x) * 4 + 3] = 0;
+  for (const y of rows) for (let x = 0; x < width; x++) pixels[(y * width + x) * 4 + 3] = 0;
+  return {
+    left: Math.max(-1, ...columns.filter(x => x < width / 2)) + 1,
+    right: Math.min(width, ...columns.filter(x => x >= width / 2)),
+    top: Math.max(-1, ...rows.filter(y => y < height / 2)) + 1,
+    bottom: Math.min(height, ...rows.filter(y => y >= height / 2)),
+  };
+}
+
 function removeDetachedComponents(data: ImageData, mode: 'largest' | 'conservative'): void {
   const d = data.data;
   const w = data.width;
@@ -1255,6 +1310,7 @@ function filterCriticalAnimationFrames(
   frameH: number,
   config: ReliableFrameConfig,
   animationName: string,
+  preErosionEdges: ReadonlyArray<{ left: boolean; right: boolean; top: boolean; bottom: boolean }>,
 ): { frames: HTMLCanvasElement[]; boxes: (BBox | null)[] } {
   const populated = boxes
     .map((bbox, index) => ({ bbox, index }))
@@ -1271,6 +1327,13 @@ function filterCriticalAnimationFrames(
   const medianHeight = config.referenceMode === 'upper-percentile' ? upperPercentile(heights, 0.75) : median(heights);
   const medianWidth = config.referenceMode === 'upper-percentile' ? upperPercentile(widths, 0.75) : median(widths);
   const edgeMargin = config.edgeMargin ?? 2;
+  // Judge the original cell at the same relative margin as its normalized
+  // output. Four raw pixels can consume nearly 2% of a narrow provider cell,
+  // rejecting a complete boot that has a visible background border.
+  // Retain two post-erosion pixels as a second guard. Pre-erosion flags also
+  // reject silhouettes abutting a removed divider, which otherwise creates padding.
+  const horizontalEdgeMargin = Math.max(2, Math.min(edgeMargin, Math.floor(edgeMargin * frameW / CELL_W)));
+  const verticalEdgeMargin = Math.max(2, Math.min(edgeMargin, Math.floor(edgeMargin * frameH / CELL_H)));
   const minAreaRatio = config.minAreaRatio ?? 0.55;
   const maxAreaRatio = config.maxAreaRatio ?? 1.75;
   const minHeightRatio = config.minHeightRatio ?? 0.7;
@@ -1283,10 +1346,10 @@ function filterCriticalAnimationFrames(
     const areaRatio = medianArea > 0 ? area / medianArea : 1;
     const heightRatio = medianHeight > 0 ? bbox.h / medianHeight : 1;
     const widthRatio = medianWidth > 0 ? bbox.w / medianWidth : 1;
-    const touchesLeft = bbox.x <= edgeMargin;
-    const touchesRight = bbox.x + bbox.w >= frameW - edgeMargin;
-    const touchesTop = bbox.y <= edgeMargin;
-    const touchesBottom = bbox.y + bbox.h >= frameH - edgeMargin;
+    const touchesLeft = preErosionEdges[index]?.left || bbox.x < horizontalEdgeMargin;
+    const touchesRight = preErosionEdges[index]?.right || bbox.x + bbox.w > frameW - horizontalEdgeMargin;
+    const touchesTop = preErosionEdges[index]?.top || bbox.y < verticalEdgeMargin;
+    const touchesBottom = preErosionEdges[index]?.bottom || bbox.y + bbox.h > frameH - verticalEdgeMargin;
     const verticalFill = bbox.h / frameH;
 
     let score = 100;

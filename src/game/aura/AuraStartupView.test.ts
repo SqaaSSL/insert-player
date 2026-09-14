@@ -37,6 +37,21 @@ function harness() {
 }
 
 describe('Aura musical startup presentation', () => {
+  it.each([[1024, 576], [576, 1024]])('leaves the ready dialog and practice as the only instructions at %i×%i', (width, height) => {
+    const layout = createAuraLayout(width, height);
+    const { view, drawings, texts } = harness();
+    // The real recording still opens with a branded, fully rendered frame.
+    view.render(layout, { phase: 'preparing', count: null });
+    expect(texts[0].visible).toBe(true);
+    expect(drawings.fillPoints).toHaveBeenCalled();
+    for (const state of [null, { phase: 'awaiting-input' as const, count: null }]) {
+      view.render(layout, state);
+      expect(drawings.fillPoints).not.toHaveBeenCalled();
+      expect(texts.slice(0, 3).every(text => !text.visible)).toBe(true);
+      expect(texts[3].visible).toBe(true);
+    }
+  });
+
   it.each([[1024, 576], [576, 1024]])('keeps every countdown card clear of approaching notes and releases it for the first hit at %i×%i', (width, height) => {
     const layout = createAuraLayout(width, height);
     const { view, drawings, texts } = harness();

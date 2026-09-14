@@ -21,6 +21,7 @@ import { AURA_PLAZA_ASSET_PATH, DEFAULT_AURA_STAGE_ID, getStageTheme } from '../
 import type { MatchSceneData } from '../match/MatchConfig.ts';
 import { AURA_ANIMATION_NAMES } from '../../services/FighterAssetPacks.ts';
 import type { LoadedAuraAnimationPack } from '../aura/AuraSpriteLoader.ts';
+import { AuraPerformanceView } from '../aura/AuraPerformanceView.ts';
 
 const assetLoaders = vi.hoisted(() => ({ aura: vi.fn(), combat: vi.fn() }));
 vi.mock('../sprites/AiSpriteLoader.ts', () => ({ loadAiSprites: assetLoaders.combat }));
@@ -90,6 +91,17 @@ describe('AuraScene stage defaults and authored floor', () => {
     expect(backdrop.displayWidth).toBeGreaterThanOrEqual(layout.stage.width);
     expect(backdrop.x).toBe(layout.stage.width / 2);
 
+    scene.startup = null;
+    scene.cameraComposition = () => ({ backdropOffsetX: 0, backdropScale: 1.14 });
+    const base = { ...scene.stageFrame };
+    scene.applyBackdropComposition();
+    expect(backdrop.y - backdrop.displayHeight / 2).toBeLessThanOrEqual(1e-8);
+    expect(backdrop.y + 0.32 * backdrop.displayHeight).toBeCloseTo(layout.active.footY, 10);
+    scene.startup = new AuraStartup();
+    scene.applyBackdropComposition();
+    expect(backdrop.displayWidth).toBeCloseTo(base.width * 1.14, 10);
+    expect(backdrop.displayHeight).toBeCloseTo(base.height * 1.14, 10);
+
     scene.customStageTextureKey = 'photo-stage';
     scene.layoutStage();
     expect(backdrop.y + backdrop.displayHeight / 2).toBeCloseTo(layout.active.footY + 60, 10);
@@ -107,16 +119,17 @@ function harness(withPack = true) {
   const fighters = [new Fighter(0, 'P1', 250, true), new Fighter(1, 'P2', 774, false)];
   fighters.forEach(fighter => { vi.spyOn(fighter, 'forceState'); vi.spyOn(fighter, 'update'); });
   const views = fighters.map(() => ({
-    sprite: { setTintFill: vi.fn(), setTint: vi.fn(), clearTint: vi.fn(), setAlpha: vi.fn() },
-    shadowSprite: { setAlpha: vi.fn() }, syncSprite: vi.fn(), setRenderPresentation: vi.fn(),
+    sprite: { setTintFill: vi.fn(), setTint: vi.fn(), clearTint: vi.fn(), setAlpha: vi.fn(), setVisible: vi.fn() },
+    shadowSprite: { setAlpha: vi.fn(), setVisible: vi.fn() }, syncSprite: vi.fn(), setRenderPresentation: vi.fn(),
     getVisibleTopCenter: vi.fn(() => ({ x: 250, y: 220 })),
   }));
   const scene = Object.assign(Object.create(AuraScene.prototype), {
     layout: createAuraLayout(), applyPerformerLayout: vi.fn(), fitHudText: vi.fn(), emitPresentationTurn: vi.fn(),
     matchData: {}, p1Name: 'P1', p2Name: 'P2', performerNameText: controlText(),
     fighters, views, auraPerformanceViews: withPack ? [performance, waiting] : [null, null],
+    authoredFinaleAvailable: [false, false],
     activePerformerSlot: 0, matchFinished: false,
-    cameraFocusSlot: 0, cameraFromSlot: 0, cameraTransitionMs: AURA_CAMERA_HANDOFF_MS, finaleElapsedMs: null, stageFrame: null,
+    cameraFocusSlot: 0, cameraFromSlot: 0, cameraTransitionMs: AURA_CAMERA_HANDOFF_MS, finaleElapsedMs: null, resultDockElapsedMs: null, stageFrame: null,
     canaryPerformanceOverride: 'aura_six_seven',
     noteById: new Map([['n1', { id: 'n1', beat: 0.5, turnIndex: 0 }]]),
     chart: { turns: [{ round: 0, slot: 0, startMs: 0, endMs: 10_000 }], beatMs: 500, beatOffsetMs: 0 },
@@ -207,6 +220,7 @@ describe('AuraScene loaded performer eligibility', () => {
     assetLoaders.combat.mockResolvedValue(false);
     await expect(scene.loadFighters(1)).resolves.toBeUndefined();
     expect(scene.auraAnimationPacks).toEqual(packs);
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
     expect(packs.every(pack => !pack.animations.has('aura_shrug'))).toBe(true);
   });
 
@@ -219,6 +233,43 @@ describe('AuraScene loaded performer eligibility', () => {
     expect(assetLoaders.aura).toHaveBeenNthCalledWith(2, scene, 'fighter_p2', null, expect.any(Function),
       { id: 'template-zero', tint: 0x8cdeff });
     expect(assetLoaders.combat).not.toHaveBeenCalled();
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
+  });
+
+  it.each([
+    { animations: ['idle', 'victory', 'ko'], loaded: true, expected: true },
+    { animations: ['idle', 'victory'], loaded: true, expected: false },
+    { animations: ['idle', 'ko'], loaded: true, expected: false },
+    { animations: ['idle'], loaded: true, expected: false },
+    { animations: ['victory', 'ko'], loaded: false, expected: false },
+  ])('uses genuine finale poses only after both native sources loaded: $animations, loaded=$loaded', async ({ animations, loaded, expected }) => {
+    const scene = loadingScene();
+    assetLoaders.aura.mockResolvedValue(loadedAuraPack());
+    assetLoaders.combat.mockImplementation((_scene, key, _hash, _isCurrent, onLoaded) => {
+      onLoaded(new Set(key === 'fighter_p1' ? animations : ['idle']));
+      return Promise.resolve(key === 'fighter_p1' ? loaded : true);
+    });
+    await scene.loadFighters(1);
+    expect(scene.authoredFinaleAvailable).toEqual([expected, false]);
+  });
+
+  it('resets finale metadata on reinitialization and ignores old successful loads', async () => {
+    const scene = loadingScene();
+    scene.authoredFinaleAvailable = [true, true];
+    let finish!: (pack: LoadedAuraAnimationPack) => void;
+    assetLoaders.aura.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    assetLoaders.combat.mockImplementation((_scene, _key, _hash, _isCurrent, onLoaded) => {
+      onLoaded(new Set(['victory', 'ko']));
+      return Promise.resolve(true);
+    });
+    const loading = scene.loadFighters(1);
+    scene.init({ gameMode: 'aura', p1Name: 'NOVA', p2Name: 'BYTE' });
+    scene.lifecycleEpoch = 2;
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
+    finish(loadedAuraPack());
+    await loading;
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
+    expect(scene.auraAnimationPacks).toEqual([null, null]);
   });
 
   it('does not report missing performers or store late packs after a scene has ended', async () => {
@@ -231,6 +282,7 @@ describe('AuraScene loaded performer eligibility', () => {
     resolveLoad(null);
     await expect(loading).resolves.toBeUndefined();
     expect(scene.auraAnimationPacks).toEqual([null, null]);
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
   });
 });
 
@@ -781,12 +833,14 @@ describe('AuraScene actual action recording integration', () => {
       comicFeedback: { destroy: vi.fn() }, auraPerformanceViews: [null, null], auraAnimationPacks: [null, null],
       soundManager: { destroy: vi.fn(), pauseBattleMusic: vi.fn() },
       keyBindings: [], onlineUnsubscribe: [unsubscribe], online: null, customStageTextureKey: null,
+      authoredFinaleAvailable: [true, true],
     });
     const completion = scene.finishVideoCapture(1);
     scene.onLifecycleEnd();
     expect(oldVideo.destroy).toHaveBeenCalledOnce();
     expect(scene.videoRecorder).toBeNull();
     expect(scene.actionRecorder).toBeNull();
+    expect(scene.authoredFinaleAvailable).toEqual([false, false]);
     expect(unsubscribe).toHaveBeenCalledOnce();
     expect(scene.lifecycleEpoch).toBe(2);
     expect(scene.presentationReady).toBe(false);
@@ -1087,12 +1141,18 @@ describe('AuraScene responsive whole-rig layout', () => {
   });
 
   it.each([
-    { winner: 'p1', scoringSlot: 0, reducedMotion: false },
-    { winner: 'p2', scoringSlot: 1, reducedMotion: false },
-    { winner: 'draw', scoringSlot: null, reducedMotion: false },
-    { winner: 'p1', scoringSlot: 0, reducedMotion: true },
-  ])('reunites both bodies for $winner with winner/defeat poses and a readable finale, reduced=$reducedMotion', async ({ winner, scoringSlot, reducedMotion }) => {
+    { winner: 'p1', scoringSlot: 0, reducedMotion: false, authored: [false, false] },
+    { winner: 'p2', scoringSlot: 1, reducedMotion: false, authored: [false, false] },
+    { winner: 'draw', scoringSlot: null, reducedMotion: false, authored: [false, false] },
+    { winner: 'p1', scoringSlot: 0, reducedMotion: true, authored: [false, false] },
+    { winner: 'p1', scoringSlot: 0, reducedMotion: false, authored: [true, true] },
+    { winner: 'p2', scoringSlot: 1, reducedMotion: false, authored: [true, false] },
+    { winner: 'p1', scoringSlot: 0, reducedMotion: true, authored: [true, false] },
+    { winner: 'draw', scoringSlot: null, reducedMotion: false, authored: [true, true] },
+  ])('reunites both bodies for $winner with readable finale, reduced=$reducedMotion, authored=$authored', async ({ winner, scoringSlot, reducedMotion, authored }) => {
     vi.useFakeTimers();
+    let finishRecording!: () => void;
+    const recordingCompletion = new Promise<void>(resolve => { finishRecording = resolve; });
     const dispatchEvent = vi.fn();
     vi.stubGlobal('window', { dispatchEvent });
     const { scene, bodies } = cameraHarness();
@@ -1106,11 +1166,26 @@ describe('AuraScene responsive whole-rig layout', () => {
       online: null, isVsAI: true, cpuVsCpu: false, videoRecorder: null,
       cameraFocusSlot: 1, cameraFromSlot: winner === 'p1' && !reducedMotion ? 0 : 1, reduceMotion: reducedMotion,
       cameraTransitionMs: winner === 'p1' && !reducedMotion ? AURA_CAMERA_HANDOFF_MS / 2 : AURA_CAMERA_HANDOFF_MS,
-      finishVideoCapture: vi.fn(), setMatchActionsVisible: vi.fn(),
-      battleCapture: { capture: vi.fn().mockResolvedValue('ready') }, lifecycleActive: true,
+      finishVideoCapture: vi.fn(() => recordingCompletion), setMatchActionsVisible: vi.fn(),
+      battleCapture: { capture: vi.fn(() => {
+        const [left, right] = scene.cameraComposition().performers;
+        expect((left.x + right.x) / 2).toBe(scene.layout.width / 2);
+        return Promise.resolve('ready');
+      }) }, lifecycleActive: true,
       finaleLabels: [controlText(), controlText()],
+      authoredFinaleAvailable: authored,
       time: { delayedCall: vi.fn((delay: number, callback: () => void) => setTimeout(callback, delay)) },
     });
+    for (const slot of [0, 1] as const) {
+      if (!authored[slot]) continue;
+      // Exercise the real visibility transition and the next frame, not just
+      // the method call: an old performance must stop covering the native pose.
+      Object.assign(scene.auraPerformanceViews[slot], {
+        activeName: 'aura_one_leg', sprite: controlText(), shadow: controlText(),
+        interrupt: vi.fn(AuraPerformanceView.prototype.interrupt),
+        update: vi.fn(AuraPerformanceView.prototype.update),
+      });
+    }
     Object.assign(scene.soundManager, { playAnnounce: vi.fn(), peakAuraCrowd: vi.fn() });
     const before = scene.cameraComposition();
     const handoffTime = scene.cameraTransitionMs;
@@ -1134,14 +1209,37 @@ describe('AuraScene responsive whole-rig layout', () => {
       expect(bodies[slot].rootY * rig.scaleY + rig.y).toBeCloseTo(placement.footY, 10);
       const won = winner === 'draw' || scoringSlot === slot;
       expect(scene.fighters[slot].state).toBe(won ? FighterState.VICTORY : FighterState.DEFEAT);
-      expect(scene.auraPerformanceViews[slot].playFinale).toHaveBeenCalledExactlyOnceWith(won);
+      if (authored[slot]) {
+        expect(scene.auraPerformanceViews[slot].playFinale).not.toHaveBeenCalled();
+        expect(scene.auraPerformanceViews[slot].interrupt).toHaveBeenCalledExactlyOnceWith(scene.views[slot]);
+        expect(scene.auraPerformanceViews[slot].activeName).toBeNull();
+        expect(scene.auraPerformanceViews[slot].sprite.visible).toBe(false);
+        expect(scene.views[slot].sprite.setVisible).toHaveBeenLastCalledWith(true);
+        expect(scene.views[slot].shadowSprite.setVisible).toHaveBeenLastCalledWith(true);
+      } else {
+        expect(scene.auraPerformanceViews[slot].playFinale).toHaveBeenCalledExactlyOnceWith(won);
+        expect(scene.auraPerformanceViews[slot].interrupt).not.toHaveBeenCalled();
+      }
       expect(scene.auraPerformanceViews[slot].update).toHaveBeenLastCalledWith(1_000 / 60, scene.views[slot]);
     }
     expect(scene.cameraFocusSlot).toBe(1); // Winning P1 must not cut away from the last camera mark.
-    const resultsDelay = reducedMotion ? 2_200 : 3_000;
+    const resultsDelay = reducedMotion ? 2_800 : 3_000;
     await vi.advanceTimersByTimeAsync(resultsDelay - 1);
     expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
+    expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+    expect(scene.cameraComposition().camera.anchorX).toBe(scene.layout.width / 2);
+    finishRecording();
+    await vi.advanceTimersByTimeAsync(0);
+    if (!reducedMotion) {
+      expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+      const center = scene.cameraComposition().camera.anchorX;
+      expect(center).toBe(scene.layout.width / 2);
+      scene.advanceCameraPresentation(AURA_CAMERA_HANDOFF_MS / 2);
+      expect(scene.cameraComposition().camera.anchorX).toBeLessThan(center);
+      expect(scene.setMatchActionsVisible).not.toHaveBeenCalled();
+      scene.advanceCameraPresentation(AURA_CAMERA_HANDOFF_MS / 2);
+    }
     expect(scene.setMatchActionsVisible).toHaveBeenCalledExactlyOnceWith(true);
     expect(scene.time.delayedCall).toHaveBeenCalledWith(2_800, expect.any(Function));
     await vi.advanceTimersByTimeAsync(2_800);
@@ -1219,15 +1317,32 @@ describe('AuraScene responsive whole-rig layout', () => {
     Object.assign(scene, {
       layout: createAuraLayout(width, height), layoutStage: vi.fn(), cameras: { main: camera() }, uiCamera: camera(),
       hudPanel: controlGraphics(), crtOverlay: controlGraphics(), beatGraphics: controlGraphics(),
+      crowdLabelText: controlText(), crowdMeterGraphics: controlGraphics(),
       duelMeterGraphics: controlGraphics(), duelHeadingText: controlText(), performerNameText: controlText(),
       p1NameText: controlText(), p2NameText: controlText(), p1ScoreText: controlText(), p2ScoreText: controlText(),
       turnText: controlText(), phaseText: controlText(), countInText: controlText(), comboText: controlText(),
       drawLanes: vi.fn(), feedbackObject: null,
+      startup: null,
     });
     scene.applyLayout();
     expect(scene.comboText).toMatchObject({ x, y });
     expect(scene.comboText.setOrigin).toHaveBeenCalledExactlyOnceWith(origin, 0);
     expect(scene.comboText.setFontSize).toHaveBeenCalledExactlyOnceWith(fontSize);
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(false);
+    expect(scene.p1ScoreText.visible).toBe(false);
+    scene.startup = new AuraStartup();
+    scene.applyLayout();
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(true);
+    expect(scene.p1ScoreText.visible).toBe(true);
+    scene.matchFinished = true;
+    scene.applyLayout();
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(true);
+    expect(scene.comboText.visible).toBe(false);
+    scene.matchFinished = false;
+    scene.onboarding = new AuraOnboarding();
+    scene.applyLayout();
+    expect(scene.hudPanel.setVisible).toHaveBeenLastCalledWith(false);
+    expect(scene.p1ScoreText.visible).toBe(false);
     const instrument = scene.layout.instrument;
     const flowWidth = 'x999 FLOW'.length * fontSize;
     expect(scene.comboText.x - flowWidth).toBeGreaterThan(instrument.left);
@@ -1393,10 +1508,12 @@ describe('AuraScene responsive whole-rig layout', () => {
     const scene = Object.assign(new AuraScene(), harness().scene, state, {
       lifecycleActive: true, presentationReady: true, scale: { width: 576, height: 1024 },
       applyLayout: vi.fn(), updateNotes: vi.fn(),
+      startup: null, startupView: { render: vi.fn() },
     });
     scene.onLayoutResize();
     expect(scene.applyLayout).toHaveBeenCalledOnce();
     expect(scene.updateNotes).not.toHaveBeenCalled();
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, null, undefined);
   });
 
   it.each([0, 1, 2, 3])('keeps lane %i aligned when its reduced-motion flash ends after a rotation', lane => {
@@ -1498,6 +1615,7 @@ describe('AuraScene visible presentation handshake', () => {
     return Object.assign(new AuraScene(), harness().scene, {
       lifecycleActive: true, presentationReady: true, presentationStarted: false,
       presentationToken: 41, matchSeed: 67, localOnlineReady: false, online: null,
+      startupView: { render: vi.fn() },
       beginClock: vi.fn(), announceOnlineReady: vi.fn(), prepareStartup: vi.fn(),
       soundManager: { unlockPreparedMedia: vi.fn().mockResolvedValue(true) },
     });
@@ -1648,6 +1766,7 @@ describe('AuraScene visible presentation handshake', () => {
     scene.onPresentationStart({ detail: { token: 41, seed: 67 } });
     expect(scene.presentationStarted).toBe(true);
     expect(scene.awaitingStartInput).toBe(true);
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, null);
     expect(scene.beginClock).not.toHaveBeenCalled();
     expect(scene.soundManager.unlockPreparedMedia).not.toHaveBeenCalled();
     scene.onStartupReady({ detail: { token: 40, seed: 67 } });
@@ -1820,6 +1939,7 @@ describe('AuraScene first-play practice isolation', () => {
       clockStartedAt: null, scheduledClockStart: null, paused: false, finalizing: false,
       onboarding: new AuraOnboarding(), onboardingGraphics: { ...controlGraphics(), destroy: vi.fn() },
       lastOnboardingState: null, phaseText: controlText(), turnText: controlText(), highwayTitleText: controlText(), highwayMetaText: controlText(),
+      hudPanel: controlGraphics(), p1NameText: controlText(),
       p1ScoreText: controlText(), p2ScoreText: controlText(), p2NameText: controlText(), duelMeterGraphics: controlGraphics(),
       comboText: controlText(), crowdLabelText: controlText(), crowdMeterGraphics: controlGraphics(), duelHeadingText: controlText(),
       flashLaneInput: vi.fn(), updateTurnPresentation: vi.fn(), beginClock: vi.fn(), prepareStartup: vi.fn(),
@@ -1995,9 +2115,11 @@ describe('AuraScene first-play practice isolation', () => {
     scene.onboarding.advance(AURA_PRACTICE_TRAVEL_MS);
     scene.scale = { width, height };
     scene.applyLayout = vi.fn();
+    scene.startupView = { render: vi.fn() };
     const before = scene.onboarding.snapshot;
     scene.onLayoutResize();
     expect(scene.onboarding.snapshot).toEqual(before);
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, null, undefined);
     expect(scene.onboarding.practiceProgress).toBe(1);
     expect(scene.phaseText.text).toBe('PRACTICE 1/4');
     expect(scene.turnText.text).toBe('NO SCORE YET');
@@ -2035,6 +2157,7 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
       lifecycleActive: true, lifecycleEpoch: 1, presentationReady: true, presentationStarted: true,
       presentationToken: 41, matchSeed: 67, online: null, cpuVsCpu: false,
       startup: null, startupView: { render: vi.fn() }, startupAbort: new AbortController(),
+      setBattleHudVisible: vi.fn(),
       turnText: controlText(), countInText: controlText(), lastCountIn: -1,
       chart: createAuraChart(67, 'lowkey'), track: DEFAULT_AURA_TRACK,
       clockStartedAt: null, scheduledClockStart: null, paused: false, captureId: 'intro',
@@ -2068,6 +2191,8 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
     const prepared = scene.prepareStartup();
     expect(start).not.toHaveBeenCalled();
     expect(scene.startup.snapshot.phase).toBe('preparing');
+    expect(scene.setBattleHudVisible).toHaveBeenLastCalledWith(true);
+    expect(scene.startupView.render).toHaveBeenLastCalledWith(scene.layout, scene.startup.snapshot);
     rendered(true);
     await Promise.resolve();
     expect(start).toHaveBeenCalledOnce();

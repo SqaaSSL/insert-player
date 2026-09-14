@@ -264,6 +264,7 @@ export class AuraScene extends Phaser.Scene {
   private views!: [FighterView, FighterView];
   private auraAnimationPacks: [LoadedAuraAnimationPack | null, LoadedAuraAnimationPack | null] = [null, null];
   private auraPerformanceViews: [AuraPerformanceView | null, AuraPerformanceView | null] = [null, null];
+  private authoredFinaleAvailable: [boolean, boolean] = [false, false];
   private comicFeedback: AuraComicFeedback | null = null;
   private scoreFeedback: AuraScoreFeedback | null = null;
   private fighterRenderScale = 1;
@@ -273,6 +274,7 @@ export class AuraScene extends Phaser.Scene {
   private cameraFromSlot: AuraSlot = 0;
   private cameraTransitionMs = AURA_CAMERA_HANDOFF_MS;
   private finaleElapsedMs: number | null = null;
+  private resultDockElapsedMs: number | null = null;
   private stageFrame: { width: number; height: number; x: number; y: number } | null = null;
   private performerContainers!: [Phaser.GameObjects.Container, Phaser.GameObjects.Container];
   private hudPanel!: Phaser.GameObjects.Graphics;
@@ -420,6 +422,7 @@ export class AuraScene extends Phaser.Scene {
     this.noteObjects.clear();
     this.auraAnimationPacks = [null, null];
     this.auraPerformanceViews = [null, null];
+    this.authoredFinaleAvailable = [false, false];
     this.crowdHeat = [0, 0];
     this.comicFeedback = null;
     this.scoreFeedback = null;
@@ -428,6 +431,7 @@ export class AuraScene extends Phaser.Scene {
     this.cameraFromSlot = 0;
     this.cameraTransitionMs = AURA_CAMERA_HANDOFF_MS;
     this.finaleElapsedMs = null;
+    this.resultDockElapsedMs = null;
     this.finaleLabels = null;
     this.finaleWinner = null;
     this.stageFrame = null;
@@ -649,6 +653,7 @@ export class AuraScene extends Phaser.Scene {
     const epoch = this.lifecycleEpoch;
     this.startup = new AuraStartup(Boolean(this.online), this.online ? undefined
       : { firstNoteMs: this.chart.turns[0].firstNoteMs, beatMs: this.chart.beatMs });
+    this.setBattleHudVisible(true);
     this.turnText.setText('AURA DUEL · GET READY');
     this.fitHudText();
     this.emitStartup();
@@ -710,6 +715,7 @@ export class AuraScene extends Phaser.Scene {
 
   private awaitStartupGesture(): void {
     this.awaitingStartInput = true;
+    this.startupView?.render(this.layout, null);
     window.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, {
       detail: { token: this.presentationToken, seed: this.matchSeed,
         phase: 'awaiting-input', remainingMs: 0, count: null },
@@ -746,7 +752,7 @@ export class AuraScene extends Phaser.Scene {
     this.onboardingGraphics = this.add.graphics();
     this.uiLayer.add(this.onboardingGraphics);
     this.focusPerformer(0);
-    this.setPracticeHud(true);
+    this.setBattleHudVisible(false);
     this.drawLanes(0);
     this.drawOnboardingPractice();
     this.emitOnboarding();
@@ -808,17 +814,24 @@ export class AuraScene extends Phaser.Scene {
     else this.emitOnboarding();
   }
 
-  private setPracticeHud(practicing: boolean): void {
-    for (const object of [this.p1ScoreText, this.p2ScoreText, this.p2NameText, this.duelMeterGraphics,
-      this.comboText, this.crowdLabelText, this.crowdMeterGraphics]) object.setVisible(!practicing);
-    this.duelHeadingText.setVisible(!practicing && !this.layout.portrait);
+  private setBattleHudVisible(visible: boolean): void {
+    // Before a scored duel, the ready dialog / practice hint owns instructions.
+    // Hide the backing plate too, so this space belongs to the arena again.
+    for (const object of [this.hudPanel, this.p1NameText, this.p2NameText, this.p1ScoreText, this.p2ScoreText,
+      this.turnText, this.phaseText, this.duelMeterGraphics]) object.setVisible(visible);
+    this.comboText.setVisible(visible && !this.matchFinished);
+    if (!visible) {
+      this.crowdLabelText.setVisible(false);
+      this.crowdMeterGraphics.setVisible(false);
+    }
+    this.duelHeadingText.setVisible(visible && !this.layout.portrait);
   }
 
   private startBattleAfterPractice(): void {
     this.onboardingGraphics?.clear();
     this.onboarding?.complete();
     this.emitOnboarding();
-    this.setPracticeHud(false);
+    this.setBattleHudVisible(true);
     this.updateScoreUi();
     this.updateTurnPresentation(-1);
     void this.prepareStartup();
@@ -944,12 +957,16 @@ export class AuraScene extends Phaser.Scene {
   private async loadFighters(epoch: number): Promise<void> {
     const isCurrent = () => this.isCurrentLifecycle(epoch);
     const loadSlot = async (slot: AuraSlot, spriteKey: string, photoHash: string | null) => {
-      const [, auraPack] = await Promise.all([
-        photoHash ? loadAiSprites(this, spriteKey, photoHash, isCurrent) : Promise.resolve(false),
+      let hasAuthoredFinale = false;
+      const [combatLoaded, auraPack] = await Promise.all([
+        photoHash ? loadAiSprites(this, spriteKey, photoHash, isCurrent, animations => {
+          hasAuthoredFinale = animations.has('victory') && animations.has('ko');
+        }) : Promise.resolve(false),
         loadAuraAnimationPack(this, spriteKey, photoHash, isCurrent, auraDemoPerformer(this.matchData, slot)),
       ]);
       if (isCurrent()) {
         this.auraAnimationPacks[slot] = auraPack;
+        this.authoredFinaleAvailable[slot] = combatLoaded && hasAuthoredFinale;
       }
     };
     await Promise.all([
@@ -1233,7 +1250,7 @@ export class AuraScene extends Phaser.Scene {
     this.crtOverlay = this.add.graphics();
     this.uiLayer.add(this.crtOverlay);
     this.startupView = new AuraStartupView(this, this.uiLayer, [this.p1Name, this.p2Name]);
-    this.startupView.render(this.layout, { phase: 'preparing', count: null });
+    this.startupView.render(this.layout, null);
   }
 
   private createCameras(): void {
@@ -1248,7 +1265,7 @@ export class AuraScene extends Phaser.Scene {
     this.comicFeedback?.beginTurn();
     this.applyLayout();
     this.startupView?.render(this.layout, this.onboarding?.snapshot.phase === 'practice' ? null
-      : this.startup?.snapshot ?? { phase: 'preparing', count: null }, this.startup?.readyForOnline);
+      : this.startup?.snapshot ?? null, this.startup?.readyForOnline);
     if (this.onboarding?.snapshot.phase === 'practice') this.drawOnboardingPractice();
     if (this.clockStartedAt !== null && !this.matchFinished && !this.finalizing) {
       // Reproject at the already sampled/frozen instant, even while paused.
@@ -1315,7 +1332,7 @@ export class AuraScene extends Phaser.Scene {
     this.applyPerformerLayout();
     this.updateScoreUi();
     this.updateCrowdUi(this.activePerformerSlot);
-    if (this.onboarding?.snapshot.phase === 'practice') this.setPracticeHud(true);
+    this.setBattleHudVisible(this.startup !== null && this.onboarding?.snapshot.phase !== 'practice');
     if (!this.matchFinished && !this.finalizing) {
       this.drawLanes(this.activePerformerSlot ?? this.chart.turns[0]?.slot ?? 0);
     }
@@ -1373,6 +1390,7 @@ export class AuraScene extends Phaser.Scene {
       fromSlot: this.cameraFromSlot ?? this.cameraFocusSlot ?? this.activePerformerSlot ?? 0,
       transitionProgress: (this.cameraTransitionMs ?? AURA_CAMERA_HANDOFF_MS) / AURA_CAMERA_HANDOFF_MS,
       ...(this.finaleElapsedMs != null ? { finaleProgress: this.finaleElapsedMs / AURA_CAMERA_FINALE_MS, resultTableau: true } : {}),
+      ...(this.resultDockElapsedMs != null ? { resultDockProgress: this.resultDockElapsedMs / AURA_CAMERA_HANDOFF_MS } : {}),
       ...(introFaceoff !== null ? { finaleProgress: introFaceoff } : {}),
       reducedMotion: this.reduceMotion,
     });
@@ -1382,9 +1400,14 @@ export class AuraScene extends Phaser.Scene {
     if (!this.stageFrame || !this.stageBackdrop) return;
     const { backdropOffsetX, backdropScale } = this.cameraComposition();
     const base = this.stageFrame;
-    this.stageBackdrop.setDisplaySize(base.width * backdropScale, base.height * backdropScale)
+    // With no scoreboard yet, cover its old space as well. Keep the floor
+    // anchored beneath the performer and the scored duel's framing unchanged.
+    const scale = this.startup === null
+      ? Math.max(backdropScale, this.layout.active.footY / Math.max(1, this.layout.active.footY - base.y + base.height / 2))
+      : backdropScale;
+    this.stageBackdrop.setDisplaySize(base.width * scale, base.height * scale)
       .setPosition(base.x + backdropOffsetX,
-        this.layout.active.footY + (base.y - this.layout.active.footY) * backdropScale);
+        this.layout.active.footY + (base.y - this.layout.active.footY) * scale);
   }
 
   private advanceCameraPresentation(deltaMs: number): void {
@@ -1394,7 +1417,11 @@ export class AuraScene extends Phaser.Scene {
     const next = this.reduceMotion ? duration : Math.min(duration, before + Math.max(0, deltaMs));
     if (finalizing) this.finaleElapsedMs = next;
     else this.cameraTransitionMs = next;
-    if (next !== before) this.applyPerformerLayout();
+    const dockBefore = this.resultDockElapsedMs;
+    const docking = dockBefore != null && dockBefore < AURA_CAMERA_HANDOFF_MS;
+    if (docking) this.resultDockElapsedMs = Math.min(AURA_CAMERA_HANDOFF_MS, dockBefore + Math.max(0, deltaMs));
+    if (next !== before || docking) this.applyPerformerLayout();
+    if (docking && this.resultDockElapsedMs === AURA_CAMERA_HANDOFF_MS) this.setMatchActionsVisible(true);
   }
 
   private fitHudText(): void {
@@ -2328,7 +2355,9 @@ export class AuraScene extends Phaser.Scene {
     for (const slot of [0, 1] as const) {
       const performance = this.auraPerformanceViews[slot];
       const won = winner === 'draw' || winner === (slot === 0 ? 'p1' : 'p2');
-      if (performance && !performance.playFinale(won)) performance.interrupt(this.views[slot]);
+      if (performance && (this.authoredFinaleAvailable[slot] || !performance.playFinale(won))) {
+        performance.interrupt(this.views[slot]);
+      }
     }
     this.applyPerformerLayout();
     const summary: AuraBattleCompleteDetail = {
@@ -2368,8 +2397,15 @@ export class AuraScene extends Phaser.Scene {
     const battleCapture = this.battleCapture;
     let captureSettled = false;
     let presentationSettled = false;
+    let recordingStopped = false;
     const showResults = () => {
-      if (captureSettled && presentationSettled && this.isCurrentLifecycle(epoch)) this.setMatchActionsVisible(true);
+      if (!captureSettled || !presentationSettled || !recordingStopped
+        || !this.isCurrentLifecycle(epoch) || this.resultDockElapsedMs != null) return;
+      // The still and recorded celebration use the whole stage. Make room for
+      // the desktop panel afterwards, then reveal it without covering a body.
+      this.resultDockElapsedMs = this.reduceMotion || this.layout.portrait ? AURA_CAMERA_HANDOFF_MS : 0;
+      this.applyPerformerLayout();
+      if (this.resultDockElapsedMs === AURA_CAMERA_HANDOFF_MS) this.setMatchActionsVisible(true);
     };
     this.time.delayedCall(2_200, () => {
       if (!this.isCurrentLifecycle(epoch)) return;
@@ -2392,7 +2428,17 @@ export class AuraScene extends Phaser.Scene {
     // Include the winner reveal in the actual canvas recording, then stop game
     // music so it cannot double up with the result screen's video playback.
     if (this.videoRecorder?.status === 'recording') this.emitCapture({ id: this.captureId, state: 'processing' });
-    this.time.delayedCall(2_800, () => { void this.finishVideoCapture(epoch); });
+    this.time.delayedCall(2_800, () => {
+      if (!this.isCurrentLifecycle(epoch)) return;
+      // MediaRecorder queues its final frame collection; wait for completion
+      // before moving either body, including when reduced motion snaps the rig.
+      void Promise.resolve(this.finishVideoCapture(epoch)).catch(error => {
+        debugWarn('[AuraScene] Could not finish the result recording', error);
+      }).then(() => {
+        recordingStopped = true;
+        showResults();
+      });
+    });
     this.time.delayedCall(this.reduceMotion ? 1_800 : 3_000, () => {
       presentationSettled = true;
       showResults();
@@ -2706,6 +2752,7 @@ export class AuraScene extends Phaser.Scene {
     this.scoreFeedback = null;
     for (const view of this.auraPerformanceViews) view?.destroy();
     this.auraPerformanceViews = [null, null];
+    this.authoredFinaleAvailable = [false, false];
     for (const pack of this.auraAnimationPacks) destroyLoadedAuraAnimationPack(this, pack);
     this.auraAnimationPacks = [null, null];
     this.videoRecorder?.destroy();

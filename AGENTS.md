@@ -22,3 +22,7 @@ A worktree is an isolated checkout, but its branch and files may be stale. Never
 - Run `npm run check:deployment-policy` and the relevant tests before changing deployment workflows or wrappers.
 
 The detailed release and recovery contract is in `.github/DEPLOYMENT.md`.
+
+## Provider credentials
+
+Use the dedicated Insert Player Meterkey credential for local character generation, including FAL background removal and queue polling. Do not read, restore, or use the former direct FAL credential for `fnovellafletcher`, including as an upload, polling, or error fallback. Existing generated assets and paid-request history must be preserved when correcting provider routing.

@@ -76,17 +76,18 @@ describe('Aura challenge entry and result surfaces', () => {
     expect(markup).not.toContain('Share this challenge');
     expect(markup).toContain('Run It Back');
   });
-  it('keeps sharing and match details behind explicit disclosures without publishing on render', () => {
+  it('offers sharing directly and keeps secondary options out of the initial result without publishing on render', () => {
     const share = vi.fn();
     const markup = renderToStaticMarkup(<AuraBattleResults summary={summary} trial onRetry={vi.fn()} onExit={vi.fn()} onCreatePlayer={vi.fn()} onChallengeCreated={share} />);
     expect(markup).toContain('aura-challenge-composer is-compact');
-    expect(markup).toContain('<details class="aura-challenge-composer__identity"><summary>Edit name or score</summary>');
     expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('Create my Rookie Aura'));
-    expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('Watch or save your match video'));
-    expect(markup).toContain('<details class="aura-results__share-option"><summary>Share battle</summary>');
-    expect(markup).toContain('<details class="aura-results__details">');
-    expect(markup).toContain('<details class="aura-results__video-option">');
-    expect(markup).not.toContain('<details open');
+    expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('More options'));
+    expect(markup).toContain('class="aura-results__share-main"');
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('class="aura-results__options" hidden=""');
+    expect(markup).not.toContain('aura-results__share-option');
+    expect(markup).not.toContain('aura-results__video-option');
+    expect(markup).not.toContain('aura-results__details');
     expect(share).not.toHaveBeenCalled();
   });
   it('compares the recipient score from P2 when the shared phrase belongs to that side', () => {
