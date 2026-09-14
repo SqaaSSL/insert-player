@@ -288,6 +288,7 @@ export class AuraScene extends Phaser.Scene {
   private stageTint!: Phaser.GameObjects.Graphics;
   private stageLights!: Phaser.GameObjects.Graphics;
   private customStageTextureKey: string | null = null;
+  private instrumentLayer!: Phaser.GameObjects.Container;
   private laneGraphics!: Phaser.GameObjects.Graphics;
   private targetGraphics!: Phaser.GameObjects.Graphics;
   private highwayTitleText!: Phaser.GameObjects.Text;
@@ -636,15 +637,18 @@ export class AuraScene extends Phaser.Scene {
     if (!this.startup) return;
     const state = this.startup.snapshot;
     // Per-frame remaining time is for canvas only; React needs phase/count.
-    const identity = `${state.phase}:${state.count}`;
+    const instrumentVisible = this.isInstrumentVisible();
+    const phaseIdentity = `${state.phase}:${state.count}`;
+    const identity = `${phaseIdentity}:${instrumentVisible}`;
     if (identity === this.lastStartupState) return;
+    const cueChanged = !this.lastStartupState?.startsWith(`${phaseIdentity}:`);
     this.lastStartupState = identity;
-    if (state.phase === 'countdown' && (state.count === 1 || state.count === 2 || state.count === 3)) {
+    if (cueChanged && state.phase === 'countdown' && (state.count === 1 || state.count === 2 || state.count === 3)) {
       this.soundManager.playAuraCountIn(state.count);
     }
-    else if (state.phase === 'playing') this.soundManager.playAuraCountIn('go');
+    else if (cueChanged && state.phase === 'playing') this.soundManager.playAuraCountIn('go');
     window.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, {
-      detail: { token: this.presentationToken, seed: this.matchSeed, ...state },
+      detail: { token: this.presentationToken, seed: this.matchSeed, ...state, instrumentVisible },
     }));
   }
 
@@ -653,6 +657,7 @@ export class AuraScene extends Phaser.Scene {
     const epoch = this.lifecycleEpoch;
     this.startup = new AuraStartup(Boolean(this.online), this.online ? undefined
       : { firstNoteMs: this.chart.turns[0].firstNoteMs, beatMs: this.chart.beatMs });
+    this.syncInstrumentPresentation();
     this.setBattleHudVisible(true);
     this.turnText.setText('AURA DUEL · GET READY');
     this.fitHudText();
@@ -686,11 +691,13 @@ export class AuraScene extends Phaser.Scene {
 
   private updateStartup(delta: number): void {
     const alreadyPlaying = this.startup?.snapshot.phase === 'playing';
-    if (!this.startup || alreadyPlaying) return;
+    if (!this.startup) return;
+    if (alreadyPlaying) { this.syncInstrumentPresentation(); return; }
     if (this.online && this.scheduledClockStart !== null) {
       this.startup.countdown(Math.max(0, this.scheduledClockStart - performance.now()));
     } else if (!this.online && this.clockStartedAt !== null) this.startup.syncMusic(this.clockMs());
     else this.startup.advance(delta);
+    this.syncInstrumentPresentation();
     this.applyPerformerLayout();
     this.startupView?.render(this.layout, this.startup.snapshot, this.startup.readyForOnline);
     this.emitStartup();
@@ -750,10 +757,11 @@ export class AuraScene extends Phaser.Scene {
     this.onboarding = new AuraOnboarding();
     this.soundManager.startAuraPracticeAudio(this.track.bpm);
     this.onboardingGraphics = this.add.graphics();
-    this.uiLayer.add(this.onboardingGraphics);
+    this.instrumentLayer.add(this.onboardingGraphics);
     this.focusPerformer(0);
     this.setBattleHudVisible(false);
     this.drawLanes(0);
+    this.syncInstrumentPresentation();
     this.drawOnboardingPractice();
     this.emitOnboarding();
   }
@@ -812,6 +820,34 @@ export class AuraScene extends Phaser.Scene {
     this.drawOnboardingPractice();
     if (outcome === 'start-battle') this.startBattleAfterPractice();
     else this.emitOnboarding();
+  }
+
+  private isInstrumentVisible(): boolean {
+    if (this.onboarding?.snapshot.phase === 'practice') return true;
+    if (!this.startup) return false;
+    if (this.online) return this.startup.snapshot.phase === 'playing';
+    return this.clockStartedAt !== null && this.musicClock.timeMs >= this.chart.turns[0].firstNoteMs - this.chart.noteTravelMs;
+  }
+
+  private syncInstrumentPresentation(): void {
+    this.instrumentLayer?.setVisible(this.isInstrumentVisible());
+  }
+
+  /** The two-shot clears before the first note enters, using the existing song
+   * lead-in. Intro timing never offsets the chart, recording or online clock. */
+  private introProgress(): number | null {
+    if (this.onboarding?.snapshot.phase === 'practice') return null;
+    const state = this.startup?.snapshot;
+    if (this.warmingPresentation || this.startup === null) return 1;
+    if (!state || state.phase === 'playing') return null;
+    if (this.online) {
+      return state.phase === 'countdown'
+        ? Math.max(0, (state.remainingMs - (AURA_STARTUP_COUNTDOWN_MS - AURA_CAMERA_HANDOFF_MS)) / AURA_CAMERA_HANDOFF_MS)
+        : 1;
+    }
+    if (this.clockStartedAt === null) return 1;
+    const firstSpawnMs = this.chart.turns[0].firstNoteMs - this.chart.noteTravelMs;
+    return Math.min(1, Math.max(0, (firstSpawnMs - this.musicClock.timeMs) / AURA_CAMERA_HANDOFF_MS));
   }
 
   private setBattleHudVisible(visible: boolean): void {
@@ -1133,7 +1169,9 @@ export class AuraScene extends Phaser.Scene {
 
   private createUi(): void {
     this.uiLayer = this.add.container(0, 0).setDepth(500);
-    this.comicFeedback = new AuraComicFeedback(this, this.uiLayer, this.reduceMotion,
+    this.instrumentLayer = this.add.container(0, 0).setVisible(false);
+    this.uiLayer.add(this.instrumentLayer);
+    this.comicFeedback = new AuraComicFeedback(this, this.instrumentLayer, this.reduceMotion,
       (name) => this.soundManager.playAuraMove(name));
     this.scoreFeedback = new AuraScoreFeedback(this, this.uiLayer, this.reduceMotion);
     this.hudPanel = this.add.graphics();
@@ -1244,8 +1282,10 @@ export class AuraScene extends Phaser.Scene {
       this.highwayTitleText,
       this.highwayMetaText,
     ]);
-    for (const text of this.laneKeyTexts) this.uiLayer.bringToTop(text);
-    this.uiLayer.bringToTop(this.comboText);
+    this.instrumentLayer.add([this.laneGraphics, this.targetGraphics, this.beatGraphics,
+      ...this.inputFlashGraphics, ...this.inputPulseGraphics, this.countInText,
+      this.highwayTitleText, this.highwayMetaText, ...this.laneKeyTexts, this.comboText]);
+    this.uiLayer.bringToTop(this.instrumentLayer);
     this.uiLayer.bringToTop(this.crowdLabelText);
     this.crtOverlay = this.add.graphics();
     this.uiLayer.add(this.crtOverlay);
@@ -1332,6 +1372,7 @@ export class AuraScene extends Phaser.Scene {
     this.applyPerformerLayout();
     this.updateScoreUi();
     this.updateCrowdUi(this.activePerformerSlot);
+    this.syncInstrumentPresentation();
     this.setBattleHudVisible(this.startup !== null && this.onboarding?.snapshot.phase !== 'practice');
     if (!this.matchFinished && !this.finalizing) {
       this.drawLanes(this.activePerformerSlot ?? this.chart.turns[0]?.slot ?? 0);
@@ -1351,7 +1392,7 @@ export class AuraScene extends Phaser.Scene {
     }
     const labelSlot = this.activePerformerSlot ?? this.chart.turns[0]?.slot ?? 0;
     this.performerNameText.setText(`P${labelSlot + 1} · ${(labelSlot === 0 ? this.p1Name : this.p2Name).toUpperCase()}`)
-      .setColor(SLOT_COLOR_CSS[labelSlot]).setVisible(!this.matchFinished && !this.finalizing && !composition.transitioning);
+      .setColor(SLOT_COLOR_CSS[labelSlot]).setVisible(!this.matchFinished && !this.finalizing && !composition.transitioning && (this.introProgress() ?? 0) === 0);
     this.performerNameText.setScale(Math.min(1, 256 / Math.max(1, this.performerNameText.width)));
     const placement = composition.performers[this.activePerformerSlot ?? 0];
     this.activeGlow.setPosition(placement.x, placement.footY).setAlpha(this.activePerformerSlot === null ? 0 : 1);
@@ -1377,21 +1418,14 @@ export class AuraScene extends Phaser.Scene {
   }
 
   private cameraComposition() {
-    const startup = this.startup?.snapshot;
-    const countdownMs = this.online ? AURA_STARTUP_COUNTDOWN_MS : this.chart.beatMs * 3;
-    const handoffMs = Math.min(AURA_CAMERA_HANDOFF_MS, countdownMs);
-    const introFaceoff = this.warmingPresentation ? 1 : startup && startup.phase !== 'playing'
-      ? startup.phase === 'countdown'
-        ? Math.max(0, (startup.remainingMs - (countdownMs - handoffMs)) / handoffMs)
-        : 1
-      : null;
+    const introFaceoff = this.introProgress();
     return auraCameraComposition(this.layout, {
       activeSlot: this.cameraFocusSlot ?? this.activePerformerSlot ?? 0,
       fromSlot: this.cameraFromSlot ?? this.cameraFocusSlot ?? this.activePerformerSlot ?? 0,
       transitionProgress: (this.cameraTransitionMs ?? AURA_CAMERA_HANDOFF_MS) / AURA_CAMERA_HANDOFF_MS,
       ...(this.finaleElapsedMs != null ? { finaleProgress: this.finaleElapsedMs / AURA_CAMERA_FINALE_MS, resultTableau: true } : {}),
       ...(this.resultDockElapsedMs != null ? { resultDockProgress: this.resultDockElapsedMs / AURA_CAMERA_HANDOFF_MS } : {}),
-      ...(introFaceoff !== null ? { finaleProgress: introFaceoff } : {}),
+      ...(introFaceoff !== null ? { introProgress: introFaceoff } : {}),
       reducedMotion: this.reduceMotion,
     });
   }
@@ -1635,7 +1669,7 @@ export class AuraScene extends Phaser.Scene {
     const marker = this.add.graphics();
     drawNoteGlyph(marker, 0, 0, LANE_TONES[lane], true);
     container.add(marker);
-    this.uiLayer.add(container);
+    this.instrumentLayer.add(container);
     this.noteObjects.set(noteId, container);
     return container;
   }
@@ -2263,6 +2297,7 @@ export class AuraScene extends Phaser.Scene {
       this.scheduledClockStart = null;
       this.pausedDuration = 0;
       if (!keepStartupPresentation) this.startup?.play();
+      this.syncInstrumentPresentation();
       this.startupView?.render(this.layout, this.startup?.snapshot ?? null);
       if (!this.silentStartup) {
         this.soundManager.startBattleMusic(this.challengeMusicUrl ?? this.track.url);

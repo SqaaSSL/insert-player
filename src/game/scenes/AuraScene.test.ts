@@ -2180,6 +2180,63 @@ describe('AuraScene render, encoder and visible countdown gates', () => {
     scene.updateStartup(16);
   }
 
+  it.each([[1024, 576], [576, 1024]])('clears the opening two-shot and completes its camera before the full first-note approach at %ix%i', (width, height) => {
+    const scene = startupHarness();
+    scene.layout = createAuraLayout(width, height);
+    scene.instrumentLayer = controlText();
+    scene.syncInstrumentPresentation();
+    expect(scene.instrumentLayer.visible).toBe(false);
+    const opening = scene.cameraComposition();
+    expect(opening.performers.every((p: any) => p.visible && p.alpha === 1)).toBe(true);
+    expect((opening.performers[0].x + opening.performers[1].x) / 2).toBe(scene.layout.width / 2);
+    scene.startup = new AuraStartup(false, { firstNoteMs: scene.chart.turns[0].firstNoteMs, beatMs: scene.chart.beatMs });
+    scene.syncInstrumentPresentation();
+    expect(scene.instrumentLayer.visible).toBe(false);
+    scene.startup.begin();
+    scene.clockStartedAt = performance.now();
+    const firstSpawn = scene.chart.turns[0].firstNoteMs - scene.chart.noteTravelMs;
+    advanceSong(scene, firstSpawn - AURA_CAMERA_HANDOFF_MS);
+    expect(scene.introProgress()).toBe(1);
+    advanceSong(scene, firstSpawn - AURA_CAMERA_HANDOFF_MS / 2);
+    expect(scene.cameraComposition().transitioning).toBe(true);
+    expect(scene.instrumentLayer.visible).toBe(false);
+    advanceSong(scene, firstSpawn);
+    expect(scene.instrumentLayer.visible).toBe(true);
+    expect(scene.cameraComposition().transitioning).toBe(false);
+    expect(scene.cameraComposition().performers.map((p: any) => p.visible)).toEqual([true, false]);
+    expect(scene.clockMs()).toBe(firstSpawn);
+    expect(scene.chart.notes[0].atMs - scene.clockMs()).toBe(scene.chart.noteTravelMs);
+    const startupEvents = vi.mocked(window.dispatchEvent).mock.calls.map(([event]) => event as CustomEvent)
+      .filter(event => event.type === AURA_STARTUP_EVENT).map(event => event.detail);
+    expect(startupEvents.map(state => [state.phase, state.instrumentVisible])).toEqual([['versus', false], ['versus', true]]);
+    expect(scene.soundManager.playAuraCountIn).not.toHaveBeenCalled();
+    // A stalled audio sample freezes both the intro position and its reveal.
+    scene.soundManager.getBattleMusicClockSample.mockReturnValue({ status: 'waiting' });
+    scene.updateStartup(60_000);
+    expect(scene.clockMs()).toBe(firstSpawn);
+  });
+
+  it('keeps the online intro clear until its synchronized song start, while practice gets controls immediately', () => {
+    const scene = startupHarness();
+    scene.instrumentLayer = controlText();
+    scene.online = { localSlot: 0 };
+    scene.startup = new AuraStartup(true);
+    for (const remaining of [3_000, 2_280, 1_000, 0]) {
+      scene.startup.countdown(remaining);
+      scene.syncInstrumentPresentation();
+      expect(scene.instrumentLayer.visible).toBe(false);
+      if (remaining <= 2_280) expect(scene.introProgress()).toBe(0);
+    }
+    scene.startup.play();
+    scene.syncInstrumentPresentation();
+    expect(scene.instrumentLayer.visible).toBe(true);
+    scene.startup = null;
+    scene.onboarding = new AuraOnboarding();
+    scene.syncInstrumentPresentation();
+    expect(scene.instrumentLayer.visible).toBe(true);
+    expect(scene.introProgress()).toBeNull();
+  });
+
   it('captures a rendered intro before starting the song once, then follows one audible count-in through the first actual hit', async () => {
     const scene = startupHarness();
     let rendered!: (ready: boolean) => void;

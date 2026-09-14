@@ -271,7 +271,8 @@ export function GamePage({
       if (!isAuraStartupDetail(detail) || !current || current.phase !== 'started'
         || current.token !== detail.token || current.seed !== detail.seed) return;
       setAuraStartup(previous => previous?.token === detail.token
-        && previous.phase === detail.phase && previous.count === detail.count ? previous : detail);
+        && previous.phase === detail.phase && previous.count === detail.count
+        && previous.instrumentVisible === detail.instrumentVisible ? previous : detail);
     };
     window.addEventListener(AURA_STARTUP_EVENT, onStartup);
     return () => window.removeEventListener(AURA_STARTUP_EVENT, onStartup);
@@ -718,7 +719,8 @@ export function GamePage({
       ) : null}
       {isAura && loadingPhase === 'hidden' && !matchActionsVisible && !auraSummary && !auraAwaitingInput ? (
         <div className="aura-game-toolbar" aria-label="Aura match controls">
-          {!launchTarget.data.cpuVsCpu ? (
+          {!launchTarget.data.cpuVsCpu
+            && (auraOnboarding?.phase === 'practice' || auraStartup?.instrumentVisible === true) ? (
             <AuraControls playerIndex={online?.localSlot ?? auraControlledSlot ?? auraTouchSlot}
               rivalTurn={auraOnboarding?.phase !== 'practice' && auraStartup?.phase === 'playing'
                 && auraControlledSlot !== undefined && auraControlledSlot !== auraTouchSlot}

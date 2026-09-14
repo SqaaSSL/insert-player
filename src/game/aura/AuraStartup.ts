@@ -9,6 +9,8 @@ export interface AuraStartupDetail {
   seed: number;
   phase: 'awaiting-input' | 'preparing' | 'versus' | 'countdown' | 'playing';
   remainingMs: number;
+  /** Canvas instrument and native touch controls share the same reveal frame. */
+  instrumentVisible?: boolean;
   count: number | null;
 }
 
@@ -23,6 +25,7 @@ export function isAuraStartupDetail(value: unknown): value is AuraStartupDetail 
   return Number.isSafeInteger(detail.token) && detail.token! > 0
     && Number.isInteger(detail.seed) && detail.seed! >= 0 && detail.seed! <= 0xffff_ffff
     && ['awaiting-input', 'preparing', 'versus', 'countdown', 'playing'].includes(detail.phase ?? '')
+    && (detail.instrumentVisible === undefined || typeof detail.instrumentVisible === 'boolean')
     && Number.isFinite(detail.remainingMs) && detail.remainingMs! >= 0
     && (detail.count === null || (Number.isInteger(detail.count) && detail.count! >= 1 && detail.count! <= 3));
 }
