@@ -20,6 +20,8 @@ const ALLOWED_SVIX_REGIONS = new Set(['us', 'eu', 'ca', 'au', 'in']);
 const PRODUCTION_CONFIRMATION = 'ENABLE_PRODUCTION_CLERK_CREWS';
 const REQUEST_TIMEOUT_MS = 20_000;
 const SVIX_LOGOUT_PATH = ['/api/v1/auth', 'logout'].join('/');
+const PUBLIC_ENVIRONMENT_VERIFY_ATTEMPTS = 20;
+const PUBLIC_ENVIRONMENT_VERIFY_DELAY_MS = 1_000;
 
 function requiredString(value, label) {
   const normalized = String(value ?? '').trim();
@@ -187,11 +189,17 @@ export function parseSvixPortalUrl(rawUrl) {
   return { appId, oneTimeToken, portalApiBase, region, svixApiBase };
 }
 
-async function readPublicClerkEnvironment(fetchImpl) {
+async function readPublicClerkEnvironment(fetchImpl, auditKey = '') {
+  const environmentUrl = new URL(PRODUCTION_CLERK_ENVIRONMENT_URL);
+  if (auditKey) environmentUrl.searchParams.set('audit', auditKey);
   let response;
   try {
-    response = await fetchImpl(PRODUCTION_CLERK_ENVIRONMENT_URL, {
-      headers: { Accept: 'application/json' },
+    response = await fetchImpl(environmentUrl, {
+      headers: {
+        Accept: 'application/json',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
       redirect: 'error',
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -207,10 +215,34 @@ async function readPublicClerkEnvironment(fetchImpl) {
     'Production Clerk instance ID',
   );
   const environment = parseJsonText(await response.text(), 'Production Clerk environment');
-  if (environment?.organization_settings?.force_organization_selection !== false) {
-    throw new Error('Production Clerk must keep personal accounts available during Crew onboarding.');
+  if (
+    typeof environment?.organization_settings?.enabled !== 'boolean'
+    || typeof environment?.organization_settings?.force_organization_selection !== 'boolean'
+  ) {
+    throw new Error('Production Clerk public organization settings are invalid.');
   }
   return { environment, instanceId };
+}
+
+async function verifyPublicOrganizationSettings(fetchImpl, instanceId, sleepImpl) {
+  let lastSettings;
+  for (let attempt = 0; attempt < PUBLIC_ENVIRONMENT_VERIFY_ATTEMPTS; attempt += 1) {
+    const publicEnvironment = await readPublicClerkEnvironment(
+      fetchImpl,
+      `${Date.now()}-${attempt}`,
+    );
+    if (publicEnvironment.instanceId !== instanceId) {
+      throw new Error('Production Clerk public instance changed during verification.');
+    }
+    lastSettings = publicEnvironment.environment.organization_settings;
+    if (lastSettings.enabled === true && lastSettings.force_organization_selection === false) {
+      return;
+    }
+    if (attempt + 1 < PUBLIC_ENVIRONMENT_VERIFY_ATTEMPTS) {
+      await sleepImpl(PUBLIC_ENVIRONMENT_VERIFY_DELAY_MS);
+    }
+  }
+  throw new Error('Production Clerk did not expose Organizations with Personal Accounts enabled.');
 }
 
 async function listSvixEndpoints(fetchImpl, apiBase, appId, token) {
@@ -334,8 +366,10 @@ export async function configureClerkCrews({
   fetchImpl = globalThis.fetch,
   secretKey,
   signingSecret,
+  sleepImpl = (milliseconds) => new Promise((resolveSleep) => setTimeout(resolveSleep, milliseconds)),
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('A Fetch implementation is required.');
+  if (typeof sleepImpl !== 'function') throw new Error('A sleep implementation is required.');
   const clerkSecretKey = requiredString(secretKey, 'CLERK_SECRET_KEY');
   const webhookSigningSecret = requiredString(signingSecret, 'CLERK_WEBHOOK_SIGNING_SECRET');
   if (!clerkSecretKey.startsWith('sk_live_')) {
@@ -374,12 +408,26 @@ export async function configureClerkCrews({
   });
 
   const organizationsNeedUpdate = organizationSettings.enabled !== true;
-  if (organizationsNeedUpdate && apply) {
-    await clerkRequest(fetchImpl, clerkSecretKey, '/instance/organization_settings', {
+  const personalAccountsNeedUpdate = publicEnvironment.environment
+    .organization_settings.force_organization_selection !== false;
+  if ((organizationsNeedUpdate || personalAccountsNeedUpdate) && apply) {
+    const updated = await clerkRequest(fetchImpl, clerkSecretKey, '/instance/organization_settings', {
       label: 'Clerk Organizations enablement',
       method: 'PATCH',
-      body: { enabled: true },
+      body: {
+        enabled: true,
+        force_organization_selection: false,
+      },
     });
+    if (
+      updated?.enabled !== true
+      || (
+        Object.hasOwn(updated, 'force_organization_selection')
+        && updated.force_organization_selection !== false
+      )
+    ) {
+      throw new Error('Clerk did not apply optional Organization membership.');
+    }
   }
 
   if (apply) {
@@ -387,12 +435,19 @@ export async function configureClerkCrews({
       label: 'Clerk Organizations verification',
     });
     if (verified?.enabled !== true) throw new Error('Clerk Organizations verification failed.');
+    await verifyPublicOrganizationSettings(
+      fetchImpl,
+      publicEnvironment.instanceId,
+      sleepImpl,
+    );
   }
 
   return {
     applied: apply,
     organizationsNeedUpdate,
     organizationsUpdated: organizationsNeedUpdate && apply,
+    personalAccountsNeedUpdate,
+    personalAccountsUpdated: personalAccountsNeedUpdate && apply,
     webhookNeedsUpdate: webhook.needsUpdate,
     webhookUpdated: webhook.updated,
   };
@@ -418,12 +473,13 @@ async function main(args = process.argv.slice(2), env = process.env) {
   });
   if (apply) {
     console.log(
-      `Production Clerk Crews are enabled; webhook policy ${result.webhookUpdated ? 'updated' : 'already current'}.`,
+      `Production Clerk Crews and Personal Accounts are enabled; webhook policy ${result.webhookUpdated ? 'updated' : 'already current'}.`,
     );
   } else {
     const pending = [
       result.webhookNeedsUpdate ? 'webhook policy' : '',
       result.organizationsNeedUpdate ? 'Organizations' : '',
+      result.personalAccountsNeedUpdate ? 'Personal Accounts' : '',
     ].filter(Boolean);
     console.log(pending.length > 0
       ? `Dry run complete; pending: ${pending.join(', ')}.`

@@ -4428,7 +4428,8 @@ function assertCrewOnboardingAndReferralsAreWired() {
     "'organization.deleted'",
     "instance?.environment_type !== 'production'",
     'Production Clerk webhook signing secret does not match the Worker configuration.',
-    'body: { enabled: true }',
+    'force_organization_selection: false',
+    'Production Clerk did not expose Organizations with Personal Accounts enabled.',
     'Configure and verify production Clerk Crews',
     'ASF_CONFIGURE_CLERK_CREWS_CONFIRMATION: ENABLE_PRODUCTION_CLERK_CREWS',
     'node scripts/configure-clerk-crews.mjs --apply --confirm-production',
@@ -4450,7 +4451,7 @@ function assertCrewOnboardingAndReferralsAreWired() {
     throw new Error('Production must verify the Crew-capable Worker before Clerk activation and activate Clerk before Pages.');
   }
   const webhookConfiguration = productionConfiguration.indexOf('const webhook = await configureWebhook({');
-  const organizationEnablement = productionConfiguration.indexOf("body: { enabled: true }");
+  const organizationEnablement = productionConfiguration.indexOf('force_organization_selection: false');
   if (webhookConfiguration < 0 || organizationEnablement <= webhookConfiguration) {
     throw new Error('Production Clerk must verify its webhook before enabling Organizations.');
   }
