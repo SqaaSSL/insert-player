@@ -23,25 +23,30 @@ interface CrewOnboardingPageProps {
   onCreateCrew?: (name: string) => Promise<CrewSummary>;
   onSelectCrew?: (organizationId: string) => Promise<void>;
   onCreateFighter: () => void;
+  onCreateStage: () => void;
   onSignIn?: () => void;
   onComplete: () => void;
 }
 
-type MissionStep = 'crew' | 'invite' | 'complete';
+type MissionStep = 'crew' | 'stage' | 'invite' | 'complete';
 
 export function resolveCrewMissionStep({
   shared,
   canInviteCrew,
+  crewStageReady,
   invitationSent,
   serverComplete = false,
 }: {
   shared: boolean;
   canInviteCrew: boolean;
+  crewStageReady: boolean;
   invitationSent: boolean;
   serverComplete?: boolean;
 }): MissionStep {
-  if (shared && (!canInviteCrew || invitationSent || serverComplete)) return 'complete';
-  return shared ? 'invite' : 'crew';
+  if (!shared) return 'crew';
+  if (!canInviteCrew || serverComplete) return 'complete';
+  if (!invitationSent) return 'invite';
+  return crewStageReady ? 'complete' : 'stage';
 }
 
 function suggestedCrewName(playerName: string): string {
@@ -60,12 +65,15 @@ export function CrewOnboardingPage({
   onCreateCrew,
   onSelectCrew,
   onCreateFighter,
+  onCreateStage,
   onSignIn,
   onComplete,
 }: CrewOnboardingPageProps) {
   const [onboarding, setOnboarding] = useState<OnboardingStatus | null>(null);
   const [shared, setShared] = useState(false);
   const [canInviteCrew, setCanInviteCrew] = useState(false);
+  const [crewStageReady, setCrewStageReady] = useState(false);
+  const [crewStageState, setCrewStageState] = useState<OnboardingStatus['crewStageState']>('unavailable');
   const [invitationSent, setInvitationSent] = useState(false);
   const [crewName, setCrewName] = useState(() => suggestedCrewName(playerName));
   const [email, setEmail] = useState('');
@@ -86,6 +94,8 @@ export function CrewOnboardingPage({
       if (cancelled) return;
       setOnboarding(status);
       setCanInviteCrew(status.canInviteCrew);
+      setCrewStageReady(status.crewStageReady);
+      setCrewStageState(status.crewStageState);
       const selected = fighters.find((fighter) => (
         (fighterId && fighter.id === fighterId)
         || (fighterPhotoHash && fighter.photoHash === fighterPhotoHash)
@@ -111,6 +121,7 @@ export function CrewOnboardingPage({
   const step = resolveCrewMissionStep({
     shared,
     canInviteCrew,
+    crewStageReady,
     invitationSent,
     serverComplete: Boolean(onboarding?.complete),
   });
@@ -139,6 +150,8 @@ export function CrewOnboardingPage({
       void loadOnboardingStatus().then((status) => {
         setOnboarding(status);
         setCanInviteCrew(status.canInviteCrew);
+        setCrewStageReady(status.crewStageReady);
+        setCrewStageState(status.crewStageState);
         setInvitationSent(status.invitesSent > 0);
       }).catch(() => { /* the local mission state remains usable */ });
       setMessage(`${target.name} is now available to ${selected.name}.`);
@@ -159,7 +172,7 @@ export function CrewOnboardingPage({
       await sendCrewInvitation(email.trim());
       setInvitationSent(true);
       setEmail('');
-      setMessage('Invitation sent. Your Crew mission is complete.');
+      setMessage('Invitation sent. Wait for your Crew, then choose the one shared stage together.');
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : 'The invitation could not be sent.');
     } finally {
@@ -173,12 +186,12 @@ export function CrewOnboardingPage({
         <section className="product-entry__identity">
           <div className="product-entry__identity-copy">
             <h1>Save Your Crew</h1>
-            <p>Sign in to keep your Rookie, create a Crew, and invite your friends.</p>
+            <p>Sign in to keep your Rookie, create a Crew, invite your friends, and choose its home stage together.</p>
             {onSignIn ? <Button variant="primary" size="lg" onClick={onSignIn}>Sign In To Continue</Button> : authSlot}
           </div>
           <div className="gallery-panel">
             <h2>Next Mission</h2>
-            <p className="roster-hero__copy">Create a Crew · Share your Rookie · Invite one friend</p>
+            <p className="roster-hero__copy">Create a Crew · Invite Player Two · Choose one shared stage together</p>
           </div>
         </section>
       </div>
@@ -197,7 +210,13 @@ export function CrewOnboardingPage({
 
       <section className="product-entry__identity" aria-label="Crew missions">
         <div className="product-entry__identity-copy">
-          <h2>{step === 'crew' ? 'Share your Rookie' : step === 'invite' ? 'Bring in Player Two' : 'Crew Ready'}</h2>
+          <h2>{step === 'crew'
+            ? 'Share your Rookie'
+            : step === 'stage'
+              ? "Choose your Crew's home stage"
+              : step === 'invite'
+                ? 'Bring in Player Two'
+                : 'Crew Ready'}</h2>
           {step === 'crew' ? (
             <>
               <p>Crew members can select each other's characters in the roster. Your original photo and raw files stay out of the shared copy.</p>
@@ -233,6 +252,32 @@ export function CrewOnboardingPage({
             </>
           ) : null}
 
+          {step === 'stage' ? (
+            <>
+              <p>
+                Your Crew gets exactly one shared stage included—not one per player. Pick the bar,
+                park, football pitch, or corner that belongs to the whole Crew.
+              </p>
+              <p className="product-entry__pricing-note">
+                Wait until everyone who should have a say has joined. Once the stage is locked, every Crew member
+                can use it and the included Crew slot is spent.
+              </p>
+              <Button variant="primary" size="lg" onClick={onCreateStage}>
+                {crewStageState === 'reserved' ? 'Finish Choosing Crew Stage' : 'Choose Crew Stage · Included'}
+              </Button>
+              <form className="create-form" onSubmit={(event) => void invite(event)}>
+                <p>Still assembling the Crew? Invite another player before you lock the stage.</p>
+                <label className="create-form__field">
+                  <span>Another friend's email</span>
+                  <input type="email" inputMode="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="player3@example.com" />
+                </label>
+                <Button type="submit" disabled={busy || !email.trim()}>
+                  {busy ? 'Sending…' : 'Invite Another Player'}
+                </Button>
+              </form>
+            </>
+          ) : null}
+
           {step === 'invite' ? (
             <form className="create-form" onSubmit={(event) => void invite(event)}>
               <p>Invite a friend who is new to Insert Player. They join your Crew and get their own included Rookie.</p>
@@ -250,8 +295,10 @@ export function CrewOnboardingPage({
           {step === 'complete' ? (
             <>
               <p>{invitationSent
-                ? 'Your Rookie is shared and the first invitation is on its way.'
-                : 'Your Rookie is shared with the Crew.'} New Crew fighters appear automatically in character select.</p>
+                ? 'Your Rookie and home stage are shared, and the first invitation is on its way.'
+                : crewStageReady
+                  ? 'Your Rookie and home stage are shared with the Crew.'
+                  : 'Your Rookie is shared. A Crew admin will choose the one included home stage.'} New Crew fighters and the Crew stage appear automatically in character select.</p>
               <Button variant="primary" size="lg" onClick={onComplete}>Enter Insert Player</Button>
             </>
           ) : null}
@@ -280,8 +327,12 @@ export function CrewOnboardingPage({
               <dd>{shared ? 'Done' : 'Next'}</dd>
             </div>
             <div>
-              <dt>5 · Invite Player Two <span>{canInviteCrew ? 'Complete onboarding' : 'Crew admin mission'}</span></dt>
+              <dt>5 · Invite Player Two <span>{canInviteCrew ? 'Assemble the Crew' : 'Crew admin mission'}</span></dt>
               <dd>{!canInviteCrew && shared ? 'Not needed' : invitationSent ? 'Done' : shared ? 'Next' : 'Locked'}</dd>
+            </div>
+            <div>
+              <dt>6 · Choose a home stage <span>One included per Crew · decide together</span></dt>
+              <dd>{crewStageReady ? 'Done' : !canInviteCrew && shared ? 'Crew admin' : invitationSent ? 'Next' : 'Locked'}</dd>
             </div>
           </dl>
         </div>

@@ -114,6 +114,13 @@ interface CachedStageBackground {
   kind?: CachedStageKind;
   label?: string;
   source?: CachedStageSource;
+  cloudManagement?: 'crew';
+  cloudStageId?: string;
+  cloudContentHash?: string;
+  cloudCrewId?: string;
+  cloudCrewName?: string;
+  cloudUploadPending?: boolean;
+  cloudUploadPurchaseId?: string;
 }
 
 const CACHE_VERSION = 1;

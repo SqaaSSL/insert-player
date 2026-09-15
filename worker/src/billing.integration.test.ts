@@ -76,6 +76,22 @@ const SCHEMA = `
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE crew_stages (
+    clerk_organization_id TEXT PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    generation_charge_id TEXT UNIQUE REFERENCES generation_charges(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'reserved',
+    label TEXT NOT NULL DEFAULT 'CREW STAGE',
+    kind TEXT,
+    blob_key TEXT,
+    content_hash TEXT,
+    source_json TEXT,
+    reservation_expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
   CREATE TABLE provider_sessions (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -154,8 +170,10 @@ const SCHEMA = `
 
   CREATE TABLE provider_cost_events (
     id TEXT PRIMARY KEY,
+    charge_id TEXT,
     artifact_run_id TEXT,
-    estimated_cost_cents INTEGER NOT NULL
+    estimated_cost_cents INTEGER NOT NULL,
+    outcome TEXT NOT NULL DEFAULT 'reserved'
   );
 
   CREATE TABLE legal_acceptances (
@@ -449,6 +467,130 @@ describe('Exact checkout verification against D1', () => {
 });
 
 describe('Stage Forge credit reservations against D1', () => {
+  it('atomically reserves one zero-credit forge for the Clerk Crew, not each member', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-crew-stage';
+    const auth = {
+      userId,
+      rateLimitKey: `user:${userId}`,
+      claims: {},
+      activeOrganizationId: 'org_stage_crew',
+      activeOrganizationRole: 'org:admin',
+      user: { id: userId, credits_balance: 3 },
+    } as unknown as PublicAuthContext;
+    const request = () => new Request('https://api.insertplayer.ai/api/billing/stage-forge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ legal: generationLegal, crewIncluded: true }),
+    });
+    try {
+      await db.prepare(`
+        INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+        VALUES (?, ?, 'Crew Stage Admin', 3)
+      `).bind(userId, userId).run();
+
+      const first = await authorizeStageForgePurchase(request(), env, auth);
+      expect(first.status).toBe(200);
+      const receipt = await first.json() as { purchaseId: string; providerSessionId: string };
+      expect(receipt).toMatchObject({
+        authorized: true,
+        mode: 'crew_included',
+        creditsCharged: 0,
+        creditsBalance: 3,
+        providerCallLimit: 1,
+      });
+      const retry = await authorizeStageForgePurchase(request(), env, auth);
+      expect(retry.status).toBe(200);
+      expect(await retry.json()).toMatchObject({
+        purchaseId: receipt.purchaseId,
+        providerSessionId: receipt.providerSessionId,
+        mode: 'crew_included',
+      });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM crew_stages').first()).toEqual({ count: 1 });
+      expect(await db.prepare(`
+        SELECT credit_cost, status, reason FROM generation_charges WHERE id = ?
+      `).bind(receipt.purchaseId).first()).toEqual({
+        credit_cost: 0,
+        status: 'reserved',
+        reason: 'crew_stage_included',
+      });
+      expect(await db.prepare('SELECT credits_balance FROM users WHERE id = ?').bind(userId).first())
+        .toEqual({ credits_balance: 3 });
+
+      await settleGenerationPurchase(env, userId, receipt.purchaseId, false, null);
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM crew_stages').first()).toEqual({ count: 0 });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
+  it('returns the Crew slot after a terminal provider failure but not after a successful dispatch', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-crew-stage-failure';
+    const auth = {
+      userId,
+      rateLimitKey: `user:${userId}`,
+      claims: {},
+      activeOrganizationId: 'org_stage_failure',
+      activeOrganizationRole: 'org:admin',
+      user: { id: userId, credits_balance: 0 },
+    } as unknown as PublicAuthContext;
+    try {
+      await db.prepare(`
+        INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
+        VALUES (?, ?, 'Crew Stage Failure', 0)
+      `).bind(userId, userId).run();
+      const response = await authorizeStageForgePurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/stage-forge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ legal: generationLegal, crewIncluded: true }),
+        },
+      ), env, auth);
+      const receipt = await response.json() as { purchaseId: string };
+      await db.batch([
+        db.prepare(`UPDATE generation_charges SET status = 'committed' WHERE id = ?`).bind(receipt.purchaseId),
+        db.prepare(`
+          INSERT INTO provider_cost_events (id, charge_id, estimated_cost_cents, outcome)
+          VALUES ('crew-stage-failed-event', ?, 4, 'failed')
+        `).bind(receipt.purchaseId),
+      ]);
+
+      await settleGenerationPurchase(env, userId, receipt.purchaseId, false, null);
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM crew_stages').first()).toEqual({ count: 0 });
+      expect(await db.prepare('SELECT status FROM generation_charges WHERE id = ?')
+        .bind(receipt.purchaseId).first()).toEqual({ status: 'committed' });
+
+      const retryResponse = await authorizeStageForgePurchase(new Request(
+        'https://api.insertplayer.ai/api/billing/stage-forge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ legal: generationLegal, crewIncluded: true }),
+        },
+      ), env, auth);
+      expect(retryResponse.status).toBe(200);
+      const retryReceipt = await retryResponse.json() as { purchaseId: string };
+      await db.batch([
+        db.prepare(`UPDATE generation_charges SET status = 'committed' WHERE id = ?`)
+          .bind(retryReceipt.purchaseId),
+        db.prepare(`
+          INSERT INTO provider_cost_events (id, charge_id, estimated_cost_cents, outcome)
+          VALUES ('crew-stage-succeeded-event', ?, 4, 'succeeded')
+        `).bind(retryReceipt.purchaseId),
+      ]);
+
+      await settleGenerationPurchase(env, userId, retryReceipt.purchaseId, false, null);
+      expect(await db.prepare(`
+        SELECT generation_charge_id, status FROM crew_stages WHERE clerk_organization_id = ?
+      `).bind('org_stage_failure').first()).toEqual({
+        generation_charge_id: retryReceipt.purchaseId,
+        status: 'reserved',
+      });
+    } finally {
+      await mf.dispose();
+    }
+  });
+
   it('reserves one credit with a metered stage provider session and releases it before dispatch', async () => {
     const { mf, db, env } = await createBindings();
     const userId = 'user-stage-forge';

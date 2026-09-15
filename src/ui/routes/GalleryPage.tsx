@@ -96,6 +96,7 @@ import {
   type CloudFighter,
 } from '../../services/CloudFighters.ts';
 import { animationRetryQuote } from '../shared/generationRetry.ts';
+import { isStageVisibleToActiveCrew, syncCrewStageToLocal } from '../../services/CrewStages.ts';
 import {
   QUALITY_TIERS,
   offeredQualityTier,
@@ -329,6 +330,7 @@ export function GalleryPage({
       let reviewCloudJobs: GenerationJob[] = [];
       let generationJobs: GenerationJob[] = [];
       let cloudSyncUnavailable = false;
+      let crewStageSyncUnavailable = false;
       let generationJobsUnavailable = false;
       let cacheRefreshUnavailable = false;
       const [initialCache, arcadeResult] = await Promise.all([
@@ -358,7 +360,10 @@ export function GalleryPage({
         arcadeRosterAuthoritative,
       ).sort((a, b) => b.createdAt - a.createdAt);
       const initialVisibleStages = allStages
-        .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
+        .filter((stage) => (
+          (stage.kind === 'photo' || stage.kind === 'photo-direct')
+          && isStageVisibleToActiveCrew(stage, activeCrew)
+        ))
         .sort((a, b) => b.createdAt - a.createdAt);
       setMetas(initialVisibleMetas);
       setStages(initialVisibleStages);
@@ -386,6 +391,17 @@ export function GalleryPage({
               status: 'rejected',
               reason: new Error('Local fighter storage is unavailable'),
             };
+      if (authStatus === 'signed-in' && initialCache.stagesAvailable && activeCrew) {
+        try {
+          await syncCrewStageToLocal(activeCrew, apiContext);
+        } catch (reason) {
+          crewStageSyncUnavailable = true;
+          debugWarn(
+            '[Gallery] Crew stage sync skipped:',
+            reason instanceof Error ? reason.message : reason,
+          );
+        }
+      }
       const generationJobsResult = await generationJobsRequest;
       if (cancelled) return;
 
@@ -442,7 +458,7 @@ export function GalleryPage({
       }
       if (cancelled) return;
 
-      if (initialCache.metasAvailable) {
+      if (initialCache.metasAvailable || initialCache.stagesAvailable) {
         const refreshedCache = await loadGalleryCacheSnapshot(
           () => getAllCachedMetas(ownerScope),
           () => initialCache.stagesAvailable
@@ -480,7 +496,10 @@ export function GalleryPage({
       )
         .sort((a, b) => b.createdAt - a.createdAt);
       const filteredStages = allStages
-        .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
+        .filter((stage) => (
+          (stage.kind === 'photo' || stage.kind === 'photo-direct')
+          && isStageVisibleToActiveCrew(stage, activeCrew)
+        ))
         .sort((a, b) => b.createdAt - a.createdAt);
       setMetas(filtered);
       setStages(filteredStages);
@@ -492,13 +511,15 @@ export function GalleryPage({
         drafts: cloudDrafts,
         failed: cloudFailed,
       });
-      const cloudLoadWarning = generationJobsUnavailable && cloudSyncUnavailable
-        ? 'Saved fighters loaded; cloud sync and generation status are temporarily unavailable'
-        : generationJobsUnavailable
-          ? 'Fighters loaded; cloud generation status is temporarily unavailable'
-          : cloudSyncUnavailable
-            ? 'Saved fighters loaded; cloud sync is temporarily unavailable'
-            : null;
+      const cloudLoadWarning = crewStageSyncUnavailable
+        ? 'Saved collection loaded; the Crew stage is temporarily unavailable'
+        : generationJobsUnavailable && cloudSyncUnavailable
+          ? 'Saved fighters loaded; cloud sync and generation status are temporarily unavailable'
+          : generationJobsUnavailable
+            ? 'Fighters loaded; cloud generation status is temporarily unavailable'
+            : cloudSyncUnavailable
+              ? 'Saved fighters loaded; cloud sync is temporarily unavailable'
+              : null;
       const localLoadWarning = !initialCache.metasAvailable && !initialCache.stagesAvailable
         ? 'Local fighter and stage storage are temporarily unavailable'
         : !initialCache.metasAvailable
@@ -537,7 +558,7 @@ export function GalleryPage({
       if (!cancelled) setCloudSyncPending(false);
     });
     return () => { cancelled = true; };
-  }, [authSessionKey, authStatus]);
+  }, [activeCrew, authSessionKey, authStatus]);
 
   useEffect(() => {
     const requestId = ++assetLoadRequestRef.current;
@@ -708,7 +729,10 @@ export function GalleryPage({
     )
       .sort((a, b) => b.createdAt - a.createdAt);
     const filteredStages = allStages
-      .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
+      .filter((stage) => (
+        (stage.kind === 'photo' || stage.kind === 'photo-direct')
+        && isStageVisibleToActiveCrew(stage, activeCrew)
+      ))
       .sort((a, b) => b.createdAt - a.createdAt);
     setMetas(filtered);
     setStages(filteredStages);
@@ -2128,6 +2152,8 @@ export function GalleryPage({
                   </p>
                   {currentGlobalStage ? (
                     <p><strong>Arena</strong> {currentGlobalStage.blurb}</p>
+                  ) : currentStage?.cloudManagement === 'crew' ? (
+                    <p><strong>Access</strong> SHARED WITH {currentStage.cloudCrewName?.toUpperCase() ?? 'CREW'} · LOCKED</p>
                   ) : (
                     <p><strong>Created</strong> {formatDate(currentStage!.createdAt)}</p>
                   )}
@@ -2157,7 +2183,7 @@ export function GalleryPage({
                   <button type="button" disabled={!stagePreviewUrl} onClick={() => void saveCurrentStagePng()}>
                     Save PNG
                   </button>
-                  {currentStage ? (
+                  {currentStage && currentStage.cloudManagement !== 'crew' ? (
                     <>
                       <button type="button" disabled={busy} onClick={() => renameStage()}>
                         Rename

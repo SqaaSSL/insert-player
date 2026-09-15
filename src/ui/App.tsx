@@ -806,6 +806,7 @@ export function App({
           onCreateFighter={() => navigate('/fighters/new', buildCreationSearch({
             tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'trial',
           }))}
+          onCreateStage={() => navigate('/stages/new', 'crew=onboarding')}
           onSignIn={onSignIn}
           onComplete={() => navigate('/menu')}
         />
@@ -886,10 +887,15 @@ export function App({
       );
     }
     if (route === '/stages/new') {
+      const crewOnboarding = new URLSearchParams(routeSearch).get('crew') === 'onboarding';
+      if (crewOnboarding && !activeCrew) {
+        return <LoadingScreen label="Loading Crew stage mission..." />;
+      }
       return (
         <StageScoutPage
-          onBack={() => navigate('/gallery', 'tab=stages')}
-          onComplete={() => navigate('/gallery', 'tab=stages')}
+          crew={crewOnboarding ? activeCrew : null}
+          onBack={() => crewOnboarding ? navigate('/onboarding') : navigate('/gallery', 'tab=stages')}
+          onComplete={() => crewOnboarding ? navigate('/onboarding') : navigate('/gallery', 'tab=stages')}
         />
       );
     }
