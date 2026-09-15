@@ -283,7 +283,7 @@ jobs:
             --reviewed-by="$GITHUB_ACTOR"
 
       - name: Publish reviewed-current-v1 source handoff and operator evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-reviewed-canonical-manifest-${{ inputs.slug }}
           path: |
@@ -297,7 +297,7 @@ jobs:
 
       - name: Preserve the exactly-once source-import checkpoint
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-reviewed-global-mixed-import-checkpoint-${{ github.run_id }}
           path: |

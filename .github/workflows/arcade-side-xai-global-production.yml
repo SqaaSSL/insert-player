@@ -113,7 +113,7 @@ jobs:
 
       - name: Upload immutable audit bundle and resumable state
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-side-xai-global-pose-transfer-v1-state
           path: |
