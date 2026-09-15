@@ -1,4 +1,5 @@
 import type { FighterGameMode } from '../../services/FighterAssetPacks.ts';
+import { LaunchFilm } from '../components/LaunchFilm.tsx';
 import { GAME_ENTRY_CONTENT, GameEntryPlayButton, GameEntryPreview, AuraRosterButton, type PlayGameHandler } from './GameLandingPage.tsx';
 import './product-entry.css';
 
@@ -46,6 +47,8 @@ export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges
           </article>
         ))}
       </section>
+
+      <LaunchFilm />
 
       <nav className="product-entry__collection" aria-label="Your Insert Player collection">
         <p>Your characters and rivals, all in one place.</p>

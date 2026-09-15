@@ -1,0 +1,120 @@
+{
+  "revision": 25,
+  "duration": 27.7,
+  "bytes": 9543434,
+  "sha256": "84e5a2b16ee73a62b810f89cf849cb5989893e4dfd7ff1066592cb46b9cd704c",
+  "width": 1920,
+  "height": 1080,
+  "fps": "30/1",
+  "audioCodec": "aac",
+  "mixLufs": -19.68,
+  "truePeakDb": -4.25,
+  "windows": [
+    {
+      "at": 5,
+      "rmsDb": -36.4,
+      "peakDb": -17.8,
+      "sourceBedRmsDb": -31.8
+    },
+    {
+      "at": 8,
+      "rmsDb": -21.2,
+      "peakDb": -5.9,
+      "sourceBedRmsDb": -23
+    },
+    {
+      "at": 11,
+      "rmsDb": -27.7,
+      "peakDb": -10.7,
+      "sourceBedRmsDb": -25
+    },
+    {
+      "at": 14,
+      "rmsDb": -20.9,
+      "peakDb": -6.9,
+      "sourceBedRmsDb": -22.7
+    },
+    {
+      "at": 17,
+      "rmsDb": -24.8,
+      "peakDb": -10.5,
+      "sourceBedRmsDb": -20.9
+    },
+    {
+      "at": 20,
+      "rmsDb": -19.8,
+      "peakDb": -6.6,
+      "sourceBedRmsDb": -22.1
+    },
+    {
+      "at": 23,
+      "rmsDb": -22.4,
+      "peakDb": -4.9,
+      "sourceBedRmsDb": -20.7
+    },
+    {
+      "at": 25,
+      "rmsDb": -25.2,
+      "peakDb": -12.2,
+      "sourceBedRmsDb": -20.5
+    },
+    {
+      "at": 26.3,
+      "rmsDb": -23.6,
+      "peakDb": -8.2,
+      "sourceBedRmsDb": -21.5
+    }
+  ],
+  "motion": [
+    {
+      "id": "aura-cut-01",
+      "character": "Rosalia",
+      "animations": [
+        "aura_six_seven"
+      ],
+      "decodedFrames": 48,
+      "distinctCharacterFrames": 48
+    },
+    {
+      "id": "aura-cut-02",
+      "character": "Donald Trump",
+      "animations": [
+        "aura_glide"
+      ],
+      "decodedFrames": 36,
+      "distinctCharacterFrames": 36
+    },
+    {
+      "id": "aura-cut-03",
+      "character": "Rosalia",
+      "animations": [
+        "aura_mog_check"
+      ],
+      "decodedFrames": 54,
+      "distinctCharacterFrames": 54
+    },
+    {
+      "id": "aura-cut-04",
+      "character": "Donald Trump",
+      "animations": [
+        "aura_one_leg"
+      ],
+      "decodedFrames": 36,
+      "distinctCharacterFrames": 36
+    },
+    {
+      "id": "aura-cut-05",
+      "character": "Rosalia",
+      "animations": [
+        "aura_floor_worm"
+      ],
+      "decodedFrames": 45,
+      "distinctCharacterFrames": 45
+    }
+  ],
+  "webAudioIdenticalToRender": true,
+  "renderQuality": "delivery",
+  "webCrf": 22,
+  "userApproved": true,
+  "newInference": false
+}

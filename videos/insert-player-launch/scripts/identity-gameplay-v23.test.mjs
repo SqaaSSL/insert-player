@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -8,8 +8,8 @@ import { createHash } from 'node:crypto';
 const root = resolve(import.meta.dirname, '..');
 const manifest = JSON.parse(readFileSync(resolve(root, 'provenance/identity-gameplay-v23-review.json')));
 // v23 is preserved history; v24 intentionally changes its edit and voice timing.
-const html = execFileSync('git', ['show', '718de2c:videos/insert-player-launch/index.html'], { encoding: 'utf8', cwd: root });
-const approved = execFileSync('git', ['show', '1cc0ba6:videos/insert-player-launch/index.html'], { encoding: 'utf8', cwd: root });
+const html = readFileSync(resolve(root, 'scripts/fixtures/v23-index.html'), 'utf8');
+const approved = readFileSync(resolve(root, 'scripts/fixtures/v22-index.html'), 'utf8');
 const hash = path => createHash('sha256').update(readFileSync(resolve(root, path))).digest('hex');
 
 test('approved audio assets, mix markup, duration and intro remain unchanged', () => {

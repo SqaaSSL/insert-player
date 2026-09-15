@@ -26,7 +26,8 @@ specifically showing Rosalia's Six Seven and floor worm.
   beat/flow/stack and group-chat sentences, with all edits in source silence.
 - Keep the approved Fight/Rush explanation and announcer ending, no new TTS
   or accelerated speech. Original Neon Arena continues without looping.
-- Preview v25 before final export/publication; retain all previous versions.
+- User approved v25 for publication on 2026-09-15, including placement below
+  the landing game selector. Retain all previous versions.
 
 ## Previous Revision: Alternating Aura v24 (2026-09-14)
 

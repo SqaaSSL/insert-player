@@ -139,8 +139,6 @@ export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenChara
         </nav>
       )}
 
-      <LaunchFilm />
-
       <section className="product-entry__identity" aria-labelledby="game-personal-title">
         <div className="product-entry__identity-copy">
           <h2 id="game-personal-title">{content.personal}</h2>
@@ -173,6 +171,7 @@ export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenChara
         <span>One identity. More ways to play.</span>
         {otherModes.map((game) => <button key={game} className="product-entry__text-link" type="button" onClick={() => onExplore(game)}>Explore {GAME_ENTRY_CONTENT[game].name} →</button>)}
       </nav>
+      <LaunchFilm />
     </div>
   );
 }
