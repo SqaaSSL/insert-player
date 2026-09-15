@@ -1,0 +1,14 @@
+{
+  "duration": 36.15,
+  "originalMusicSourceSha256": "0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05",
+  "musicSourceRange": [
+    0,
+    31.5
+  ],
+  "musicStartsAt": 4.65,
+  "loops": 0,
+  "newGenerations": 0,
+  "voice": "Approved Orus v4, only timing changed",
+  "bedSha256": "2a7c1f59e0c39b093fc90fd95397d5f137789f026a008b13ed04f613951b50b8",
+  "voiceSha256": "c5df9c6042ed03ff43ca37431d2e4be8ef70e627826ed2d9474d9d8984cb739c"
+}

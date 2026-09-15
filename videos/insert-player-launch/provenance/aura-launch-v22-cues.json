@@ -1,0 +1,30 @@
+{
+  "duration": 40.15,
+  "positioning": "Aura farming is the core game. Fight and Rush are optional side activities.",
+  "playbackRate": 1,
+  "sources": {
+    "new": "assets/generated/tts-launch-aura-first-v22-matched.wav",
+    "closing": "assets/generated/tts-launch-friends-v4.wav"
+  },
+  "cues": [
+    { "source": "new", "range": [0, 5.35], "at": 0, "role": "aura-hook" },
+    { "source": "new", "range": [7.13, 11.15], "at": 6, "role": "aura-flow" },
+    { "source": "new", "range": [12.75, 17.1], "at": 10.95, "role": "aura-friends" },
+    { "source": "new", "range": [18.73, 21.15], "at": 18.75, "role": "aura-social" },
+    { "source": "new", "range": [22.6, 25.6], "at": 23.15, "role": "optional-fight" },
+    { "source": "new", "range": [27.03, 29.95], "at": 28.65, "role": "optional-rush" },
+    { "source": "new", "range": [31.58, 34.32], "at": 32.3, "role": "return-to-aura" },
+    { "source": "closing", "range": [9.58, 12.04], "at": 35.5, "role": "brand-close" }
+  ],
+  "captions": [
+    { "start": 0.27, "end": 2.95, "text": "Your photo. Your character." },
+    { "start": 3.16, "end": 5.2, "text": "Start farming Aura." },
+    { "start": 6.1, "end": 9.95, "text": "Hit the beat. Build your flow. Stack up Aura." },
+    { "start": 11.09, "end": 15.2, "text": "Challenge your friends. Take the lead.\nOwn the spotlight." },
+    { "start": 18.9, "end": 21.1, "text": "Give the group chat something to talk about." },
+    { "start": 23.28, "end": 26.05, "text": "Want a change? Take your character into Fight." },
+    { "start": 28.79, "end": 31.5, "text": "Or team up with a CPU ally in Rush." },
+    { "start": 32.44, "end": 34.85, "text": "Then get back to farming Aura." },
+    { "start": 35.5, "end": 37.72, "text": "Ready? Insert Player." }
+  ]
+}

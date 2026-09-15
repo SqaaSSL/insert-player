@@ -4,6 +4,7 @@ import { quoteGenerationPackage } from '../../services/GenerationPackages.ts';
 import { Button } from '../components/Button.tsx';
 import { AuraEntryPreview } from '../components/AuraEntryPreview.tsx';
 import { CombatEntryPreview } from '../components/CombatEntryPreview.tsx';
+import { LaunchFilm } from '../components/LaunchFilm.tsx';
 import './product-entry.css';
 
 export type PlayGameHandler = (mode: FighterGameMode) => void | Promise<void>;
@@ -170,6 +171,7 @@ export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenChara
         <span>One identity. More ways to play.</span>
         {otherModes.map((game) => <button key={game} className="product-entry__text-link" type="button" onClick={() => onExplore(game)}>Explore {GAME_ENTRY_CONTENT[game].name} →</button>)}
       </nav>
+      <LaunchFilm />
     </div>
   );
 }

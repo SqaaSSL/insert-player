@@ -1,0 +1,32 @@
+{
+  "baseUrl": "https://pixcli.hilo.cx",
+  "requestHash": "cdb7900cbce638c805c99dd207688df969f7a08b17bcb4db79e09c933c02fec6",
+  "requestedAt": "2026-09-12T09:29:23.027Z",
+  "state": "completed",
+  "submission": {
+    "job_id": "223c75c1ac4604ed84acb676d5c910f7",
+    "status": "pending",
+    "model": "gemini-tts",
+    "cost_estimate": 60000,
+    "pipeline": "Text-to-speech generation (Gemini TTS)",
+    "estimated_time": {
+      "estimated_seconds": 11,
+      "p50": 11,
+      "p90": 121,
+      "min": 6,
+      "max": 121,
+      "sample_count": 8
+    }
+  },
+  "status": {
+    "job_id": "223c75c1ac4604ed84acb676d5c910f7",
+    "status": "completed",
+    "type": "audio",
+    "mode": "opinionated",
+    "current_step": 0,
+    "total_steps": 1,
+    "cost": 60000,
+    "created_at": "2026-09-12 09:29:23",
+    "completed_at": "2026-09-12 09:29:41"
+  }
+}

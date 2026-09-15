@@ -1,0 +1,19 @@
+{
+  "version": 22,
+  "role": "launch explainer voiceover",
+  "model": "gemini-tts",
+  "upstreamModel": "gemini-3.1-flash-tts-preview",
+  "accessPath": "PixCLI through Meterkey",
+  "providerJobId": "223c75c1ac4604ed84acb676d5c910f7",
+  "voice": "Orus",
+  "language": "en",
+  "meteredCostMicrocredits": 60000,
+  "promptFile": "prompts/tts-launch-aura-first-v22.txt",
+  "promptSha256": "e2891161f1b479f68b341d7a01cc02950072e67510fd1e3d90988409524d686e",
+  "outputFile": "assets/generated/tts-launch-aura-first-v22.wav",
+  "outputSha256": "30e8476e7026567fd53274ed42f6162d687360b56c248ec0db998d4630d4e937",
+  "durationSeconds": 34.32,
+  "retries": 0,
+  "fallbacks": 0,
+  "published": false
+}

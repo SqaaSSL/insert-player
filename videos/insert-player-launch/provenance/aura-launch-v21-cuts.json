@@ -1,0 +1,103 @@
+{
+  "cuts": [
+    {
+      "game": "aura",
+      "source": "assets/captures/aura-trump-lamine-v1/master.webm",
+      "start": 9,
+      "duration": 1.4,
+      "montageStart": 0,
+      "file": "00.mp4"
+    },
+    {
+      "game": "rush",
+      "source": "assets/captures/rush-player-one-elon-v5/master.webm",
+      "start": 13,
+      "duration": 0.8,
+      "montageStart": 1.4,
+      "file": "01.mp4"
+    },
+    {
+      "game": "fight",
+      "source": "assets/captures/fight-player-one-trump-v21/master.mp4",
+      "start": 1.1,
+      "duration": 0.8,
+      "montageStart": 2.2,
+      "file": "02.mp4"
+    },
+    {
+      "game": "fight-loading",
+      "source": "assets/fight-montage-player-one-vs-casual-v15.mp4",
+      "start": 0,
+      "duration": 2.4,
+      "retained": true,
+      "montageStart": 3,
+      "file": "03.mp4"
+    },
+    {
+      "game": "fight",
+      "source": "assets/fight-montage-player-one-vs-casual-v15.mp4",
+      "start": 2.4,
+      "duration": 1,
+      "retained": true,
+      "montageStart": 5.4,
+      "file": "04.mp4"
+    },
+    {
+      "game": "fight",
+      "source": "assets/captures/fight-player-one-trump-v21/master.mp4",
+      "start": 2.4,
+      "duration": 2.1,
+      "montageStart": 6.4,
+      "file": "05.mp4"
+    },
+    {
+      "game": "rush",
+      "source": "assets/captures/rush-player-one-elon-v5/master.webm",
+      "start": 12.2,
+      "duration": 3.5,
+      "montageStart": 8.5,
+      "file": "06.mp4"
+    },
+    {
+      "game": "aura",
+      "source": "assets/captures/aura-trump-lamine-v1/master.webm",
+      "start": 8.2,
+      "duration": 6,
+      "montageStart": 12,
+      "file": "07.mp4"
+    },
+    {
+      "game": "aura",
+      "source": "assets/captures/aura-rosalia-trump-v1/master.webm",
+      "start": 9.3,
+      "duration": 6.5,
+      "montageStart": 18,
+      "file": "08.mp4"
+    },
+    {
+      "game": "aura",
+      "source": "assets/captures/aura-trump-lamine-v1/master.webm",
+      "start": 17,
+      "duration": 6,
+      "montageStart": 24.5,
+      "file": "09.mp4"
+    }
+  ],
+  "sources": {
+    "assets/captures/aura-trump-lamine-v1/master.webm": "00017093065a08e7d6e90fcecdf3410e9b83dececab77fb1c0e3f1a5982bb0ad",
+    "assets/captures/rush-player-one-elon-v5/master.webm": "342c776af4a189e38e2aa1c35d82c667f42db7ff648c18a43320f9a6036c9750",
+    "assets/captures/fight-player-one-trump-v21/master.mp4": "a7050c03c0cc8f2f10162fedd3bd8c421a6bbe17f881d56a424d4a86aa0cda10",
+    "assets/fight-montage-player-one-vs-casual-v15.mp4": "8e7b1c6b84312e741eb651c15da93ed319b59cbcf36300618ba7f90d9674974e",
+    "assets/captures/aura-rosalia-trump-v1/master.webm": "ec25d104dcf3f29850237373bcc3804095e6761c6b7dcea7272d5bf947baeafa"
+  },
+  "duration": 30.766666666666666,
+  "auraMainSeconds": 18.5,
+  "auraTotalSeconds": 19.9,
+  "fightCapture": {
+    "sourceCommit": "d2c41bf4e82909498a937aa1c18af45c55f3ba4e",
+    "fps": 30,
+    "frames": 240,
+    "method": "Playwright clock: one screenshot per 1/30s simulation, no screencast and no interpolation"
+  },
+  "note": "Replaces both low-cadence Trump excerpts. Retains the approved Casual/Player One loading and one-second exchange. Aura extended with real continuous score-building, not loops or time-stretch. Eight hold frames are hidden under the end-card reveal. No production mutation or image/video inference."
+}

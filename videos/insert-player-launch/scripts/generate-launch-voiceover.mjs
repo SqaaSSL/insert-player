@@ -13,13 +13,14 @@ const outputPath = resolve(
   process.argv[3] ?? join(projectRoot, 'assets/generated/tts-launch-explainer-v2.wav'),
 );
 const metadataPath = `${outputPath}.meta.json`;
-const force = process.argv.includes('--force');
+const journalPath = `${outputPath}.submission.json`;
+if (process.argv.includes('--force')) throw new Error('Choose a new version; never overwrite or resubmit an existing take.');
 
 if (!apiKey) {
   throw new Error('METERKEY_API_KEY is required');
 }
 
-if (!force && existsSync(outputPath) && existsSync(metadataPath)) {
+if (existsSync(outputPath) && existsSync(metadataPath)) {
   console.log(readFileSync(metadataPath, 'utf8'));
   process.exit(0);
 }
@@ -32,10 +33,26 @@ const requestBody = {
   language: 'en',
 };
 
-const submission = await request('/api/v1/audio/voice', {
-  method: 'POST',
-  body: JSON.stringify(requestBody),
-});
+const requestHash = sha256(Buffer.from(JSON.stringify(requestBody)));
+let journal = existsSync(journalPath) ? JSON.parse(readFileSync(journalPath, 'utf8')) : null;
+if (journal && (journal.requestHash !== requestHash || journal.baseUrl !== baseUrl)) {
+  throw new Error('The saved submission belongs to a different request. Choose a new output version.');
+}
+if (journal && !journal.submission?.job_id) {
+  throw new Error('Submission outcome is unknown. Investigate read-only; do not submit again.');
+}
+if (!journal) {
+  journal = { baseUrl, requestHash, requestedAt: new Date().toISOString(), state: 'submitting' };
+  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`, { flag: 'wx' });
+  journal.submission = await request('/api/v1/audio/voice', {
+    method: 'POST',
+    body: JSON.stringify(requestBody),
+  });
+  journal.state = 'submitted';
+  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+}
+const submission = journal.submission;
+console.log(`Resumable voiceover job: ${submission.job_id}`);
 
 if (submission.model !== 'gemini-tts') {
   throw new Error(`PixCLI selected unexpected model ${submission.model ?? 'unknown'}`);
@@ -60,6 +77,9 @@ if (status.status !== 'completed') {
 }
 
 const result = await request(`/api/v1/jobs/${encodeURIComponent(submission.job_id)}/result`);
+journal.state = status.status;
+journal.status = status;
+writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
 const asset = result.assets?.find((candidate) => candidate.kind === 'audio');
 if (!asset?.url) {
   throw new Error('Voiceover job returned no audio asset');

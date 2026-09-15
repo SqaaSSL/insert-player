@@ -1,0 +1,25 @@
+{
+  "duration": 40.15,
+  "rawSha256": "30e8476e7026567fd53274ed42f6162d687360b56c248ec0db998d4630d4e937",
+  "voiceSha256": "22a486755fa901652ede60640ad4f3f532a7c438fec8db51d9b322854e515d31",
+  "measurement": {
+    "input_i": "-18.07",
+    "input_tp": "-1.20",
+    "input_lra": "5.20",
+    "input_thresh": "-28.96",
+    "output_i": "-17.35",
+    "output_tp": "-1.35",
+    "output_lra": "4.90",
+    "output_thresh": "-28.21",
+    "normalization_type": "dynamic",
+    "target_offset": "0.71"
+  },
+  "normalization": "loudnorm=I=-16.64:TP=-1.35:LRA=11:measured_I=-18.07:measured_TP=-1.20:measured_LRA=5.20:measured_thresh=-28.96:offset=0.71:linear=true",
+  "music": "assets/generated/launch-bed-aura-v21.wav",
+  "musicUnchanged": true,
+  "newTakes": 1,
+  "retries": 0,
+  "fallbacks": 0,
+  "playbackRate": 1,
+  "note": "Source trims land inside measured silence, not approximate ASR word boundaries."
+}

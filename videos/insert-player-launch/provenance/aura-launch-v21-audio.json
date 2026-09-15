@@ -1,0 +1,32 @@
+{
+  "duration": 40.15,
+  "sourceMusicSha256": "0a0ae79a32b00c3b68099a83d09b9044f9debede8130370ce8ce185d51c78b05",
+  "sourceRange": [
+    0,
+    35.5
+  ],
+  "musicStart": 4.65,
+  "loops": 0,
+  "newTakes": 1,
+  "playbackRate": 1,
+  "measurement": {
+    "input_i": "-18.87",
+    "input_tp": "-1.71",
+    "input_lra": "1.50",
+    "input_thresh": "-29.87",
+    "output_i": "-16.90",
+    "output_tp": "-1.35",
+    "output_lra": "1.90",
+    "output_thresh": "-28.00",
+    "normalization_type": "dynamic",
+    "target_offset": "0.26"
+  },
+  "normalization": "loudnorm=I=-16.64:TP=-1.35:LRA=11:measured_I=-18.87:measured_TP=-1.71:measured_LRA=1.50:measured_thresh=-29.87:offset=0.26:linear=true",
+  "voiceSha256": "fd3a80b71468d3299a61b949641cee492cc8ad0b7697b312601492547d897ef8",
+  "bedSha256": "249bd37bd3e1497f2600edc51c3e51c88471f4b98a78c0362eae67557cc23fca",
+  "sources": {
+    "old": "8bfd6efccb2351ccbb926435f638bb349838e2826cc5d9491914c8a1aacd03dc",
+    "middle": "a8fccdcca6268ceaa0e7e2ae9b6514957586f85bf2c6cd84ba46616d00d70da7",
+    "aura": "1bd6b37892fd59c20f1453df20083ec22dcdc7a9693281cad6ecff56ca58d5df"
+  }
+}

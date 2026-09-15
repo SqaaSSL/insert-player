@@ -1,0 +1,150 @@
+{
+  "revision": 23,
+  "duration": 40.15,
+  "primaryGame": "aura",
+  "auraSeconds": 21.5,
+  "narration": {
+    "source": "assets/generated/launch-voice-aura-v22.wav",
+    "sha256": "22a486755fa901652ede60640ad4f3f532a7c438fec8db51d9b322854e515d31",
+    "changed": false
+  },
+  "music": {
+    "source": "assets/generated/launch-bed-aura-v21.wav",
+    "sha256": "249bd37bd3e1497f2600edc51c3e51c88471f4b98a78c0362eae67557cc23fca",
+    "changed": false
+  },
+  "sections": [
+    {
+      "at": 4.65,
+      "duration": 18.5,
+      "output": "assets/aura-action-hud-v23.mp4",
+      "sha256": "12ec1c6499036a7f8ba6b0da33070a9a60de8fb3e04368ad15361c91088c1417",
+      "clips": [
+        {
+          "source": "assets/captures/aura-active-hud-v23/master.mp4",
+          "start": 0,
+          "duration": 1.2,
+          "sourceSha256": "be2118337fecc6eb2725097aca8a108e63d688ab3964fc1f172b063d75589566",
+          "movement": {
+            "uniquePoses": 7,
+            "longestHeldPoseSeconds": 0.3333333333333333,
+            "longestRestSeconds": 0
+          }
+        },
+        {
+          "source": "assets/captures/aura-active-hud-v23/master.mp4",
+          "start": 8,
+          "duration": 2,
+          "sourceSha256": "be2118337fecc6eb2725097aca8a108e63d688ab3964fc1f172b063d75589566",
+          "movement": {
+            "uniquePoses": 10,
+            "longestHeldPoseSeconds": 0.16666666666666666,
+            "longestRestSeconds": 0
+          }
+        },
+        {
+          "source": "assets/captures/aura-active-hud-v23/master.mp4",
+          "start": 2.5,
+          "duration": 3,
+          "sourceSha256": "be2118337fecc6eb2725097aca8a108e63d688ab3964fc1f172b063d75589566",
+          "movement": {
+            "uniquePoses": 16,
+            "longestHeldPoseSeconds": 0.23333333333333334,
+            "longestRestSeconds": 0
+          }
+        },
+        {
+          "source": "assets/captures/aura-active-hud-v23/master.mp4",
+          "start": 10,
+          "duration": 3.5,
+          "sourceSha256": "be2118337fecc6eb2725097aca8a108e63d688ab3964fc1f172b063d75589566",
+          "movement": {
+            "uniquePoses": 16,
+            "longestHeldPoseSeconds": 0.23333333333333334,
+            "longestRestSeconds": 0
+          }
+        },
+        {
+          "source": "assets/captures/aura-active-hud-v23/master.mp4",
+          "start": 17.5,
+          "duration": 4,
+          "sourceSha256": "be2118337fecc6eb2725097aca8a108e63d688ab3964fc1f172b063d75589566",
+          "movement": {
+            "uniquePoses": 16,
+            "longestHeldPoseSeconds": 0.3,
+            "longestRestSeconds": 0.23333333333333334
+          }
+        },
+        {
+          "source": "assets/captures/aura-active-hud-v23/master.mp4",
+          "start": 23.2,
+          "duration": 3.3,
+          "sourceSha256": "be2118337fecc6eb2725097aca8a108e63d688ab3964fc1f172b063d75589566",
+          "movement": {
+            "uniquePoses": 16,
+            "longestHeldPoseSeconds": 0.16666666666666666,
+            "longestRestSeconds": 0
+          }
+        },
+        {
+          "source": "assets/captures/aura-active-hud-v23/master.mp4",
+          "start": 27,
+          "duration": 1.5,
+          "sourceSha256": "be2118337fecc6eb2725097aca8a108e63d688ab3964fc1f172b063d75589566",
+          "movement": {
+            "uniquePoses": 8,
+            "longestHeldPoseSeconds": 0.16666666666666666,
+            "longestRestSeconds": 0
+          }
+        }
+      ]
+    },
+    {
+      "at": 23.15,
+      "duration": 9,
+      "output": "assets/optional-games-hud-v23.mp4",
+      "sha256": "1bf8771d772bd488cb0ecdb9e228b322d6dfe7c0563b30d19b9647e2c8631283",
+      "clips": [
+        {
+          "source": "assets/three-games-aura-v21.mp4",
+          "start": 3,
+          "duration": 3.4,
+          "note": "Approved loading curtain and one-second Casual/Player One exchange retained.",
+          "sourceSha256": "2b87aace49a67d83d59a8efc5d95912e3a774000fe835a210aeaca5f93731a20"
+        },
+        {
+          "source": "assets/captures/fight-final-hud-v23/master.mp4",
+          "start": 2,
+          "duration": 2.1,
+          "sourceSha256": "4956a0e62e993dac1fe604110ca7d606f9efb9d7f09a1187b546ec34e8cb5b94"
+        },
+        {
+          "source": "assets/captures/rush-final-hud-v23/master.mp4",
+          "start": 3,
+          "duration": 3.5,
+          "sourceSha256": "72e979a3032e48c20668be820e74e9f5de1fd3a5468ff3f7024d1846a5cc5673"
+        }
+      ]
+    },
+    {
+      "at": 32.15,
+      "duration": 3.25,
+      "output": "assets/aura-return-hud-v23.mp4",
+      "sha256": "e75bc37319a285006ab583fe70b5422a41e0ef523204ba268b69590063b12db7",
+      "clips": [
+        {
+          "source": "assets/captures/aura-active-hud-v23/master.mp4",
+          "start": 25.3,
+          "duration": 3.25,
+          "sourceSha256": "be2118337fecc6eb2725097aca8a108e63d688ab3964fc1f172b063d75589566",
+          "movement": {
+            "uniquePoses": 16,
+            "longestHeldPoseSeconds": 0.16666666666666666,
+            "longestRestSeconds": 0
+          }
+        }
+      ]
+    }
+  ],
+  "note": "New 30fps clock-stepped real-game captures. No interpolation, acceleration, AI video, new voice or music. Original v22 audio markup and mix are preserved. The approved Casual loader/exchange remains legacy; every other gameplay section uses the new game HUD. Lamine omitted pending Spain-kit approval, not replaced by an unapproved skin."
+}
