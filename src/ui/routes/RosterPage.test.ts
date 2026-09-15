@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { CloudFighter } from '../../services/CloudFighters.ts';
 import type { CachedMeta } from '../../services/SpriteCache.ts';
 import { AURA_ANIMATION_NAMES } from '../../services/FighterAssetPacks.ts';
@@ -61,6 +62,14 @@ const globals = [
   fighter('rosalia-v2-id', 'rosalia-v2', 'Rosalía'),
   fighter('lamine-id', 'lamine-yamal', 'Lamine Yamal'),
 ];
+
+describe('Empty-roster creation copy', () => {
+  it.each(['ArcadePage.tsx', 'RosterPage.tsx'])('%s explains the result without an unverified time estimate', (route) => {
+    const source = readFileSync(new URL(route, import.meta.url), 'utf8');
+    expect(source).toContain('<small>One photo · Your playable character</small>');
+    expect(source).not.toMatch(/One photo[^<]*(?:minutes?|seconds?)/i);
+  });
+});
 
 describe('RosterPage fighter sections', () => {
   it('shows four globals once and counts only the genuine personal fighter as yours', () => {
