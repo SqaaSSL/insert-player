@@ -2211,6 +2211,8 @@ function assertTierPricingAndPipelineParity() {
   const authState = readFileSync(join(root, 'src/ui/authState.ts'), 'utf8');
   const createFighter = readFileSync(join(root, 'src/ui/routes/CreateFighterPage.tsx'), 'utf8');
   const gallery = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
+  const renderer = readFileSync(join(root, 'src/services/GenerationRenderer.ts'), 'utf8');
+  const generationJobs = readFileSync(join(root, 'src/services/GenerationJobs.ts'), 'utf8');
   const packageJson = readFileSync(join(root, 'package.json'), 'utf8');
   const tierParity = readFileSync(join(root, 'scripts/check-tier-parity.mjs'), 'utf8');
   const required = [
@@ -2249,11 +2251,13 @@ function assertTierPricingAndPipelineParity() {
     // Upgrade confirmation runs through the shared ConfirmDialog (Modal sets
     // aria-modal + aria-label from the title) with the QUALITY_TIERS copy.
     'Upgrade to ${pendingUpgrade.label}',
-    'animations are kept in cache and remain accessible.',
+    'Previous animation versions remain accessible. Progress is saved in the cloud.',
     'animationRetryQuote(selectedAnimName, sprites, currentTier)',
     'tier: selectedAnimationRetry.tier,',
     'void executeRetry(action, nextStatus, target, operation, retryTier, creditCost)',
-    "creationPackage: target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage, expectedCredits",
+    "const retryPackage = rendererVersion !== 'legacy-v1' ? 'complete'",
+    "target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage",
+    'creationPackage: retryPackage, expectedCredits, rendererVersion',
     'syncFighterToCloud(updatedMeta, updatedSprites, intro, apiContext)',
     "setStatus('Done and synced')",
     "animationName === 'ko' && frames === 8",
@@ -2264,6 +2268,45 @@ function assertTierPricingAndPipelineParity() {
   ];
   const combined = `${frontendTiers}\n${workerTiers}\n${pipeline}\n${gemini}\n${spritePostProcess}\n${generationWorkflow}\n${authState}\n${createFighter}\n${gallery}\n${packageJson}\n${tierParity}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
+  // Public purchases use the new renderer; recovery and maintenance preserve
+  // the paid job/selected asset. Keep these checks scoped to their call sites,
+  // not satisfied by a matching string in a different implementation.
+  const rendererScopes = [
+    ['renderer policy', renderer, [
+      "tier === 'rookie' ? 'rookie-two-atlas-v1' : 'champion-animation-sheet-v1'",
+      "sprite.animationFormat === 'template-atlas-v1' ? rendererForNewFighter(sprite.qualityTier) : 'legacy-v1'",
+    ]],
+    ['new fighter', createFighter, [
+      'const rendererVersion = rendererForNewFighter(tier)',
+      "{ creationPackage: 'complete', expectedCredits, rendererVersion }",
+      'assertGenerationRendererAcknowledged(rendererVersion, authorization.rendererVersion)',
+      "const rendererVersion = failedJob.rendererVersion ?? 'legacy-v1'",
+      '{ creationPackage: failedJob.creationPackage, expansion: failedJob.expansion, rendererVersion }',
+    ]],
+    ['gallery', gallery, [
+      "const rendererVersion = rendererSprite ? rendererForSprite(rendererSprite) : 'legacy-v1'",
+      "const retryPackage = rendererVersion !== 'legacy-v1' ? 'complete'",
+      "target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage",
+      'creationPackage: retryPackage, expectedCredits, rendererVersion',
+      'assertGenerationRendererAcknowledged(rendererVersion, authorization.rendererVersion)',
+      "? rendererForNewFighter(toTier) : 'legacy-v1'",
+      "expectedCredits: quoteGenerationPackage(toTier, 'complete').creditCost",
+      "assertGenerationRendererAcknowledged(failedJob.rendererVersion ?? 'legacy-v1', authorization.rendererVersion)",
+    ]],
+    ['durable job acknowledgement', generationJobs, [
+      "requested === 'legacy-v1' && (acknowledged === undefined || acknowledged === null)",
+      'if (acknowledged !== requested) throw new GenerationRendererMismatchError()',
+      'assertGenerationRendererAcknowledged(params.rendererVersion, body.job.rendererVersion)',
+      'assertGenerationRendererAcknowledged(params.rendererVersion, existing.rendererVersion)',
+      'error instanceof GenerationRendererMismatchError) throw error',
+      'lookupError instanceof GenerationRendererMismatchError) throw lookupError',
+    ]],
+  ];
+  for (const [label, source, snippets] of rendererScopes) {
+    for (const snippet of snippets) {
+      if (!source.includes(snippet)) missing.push(`${label}: ${snippet}`);
+    }
+  }
   const forbidden = ['setSpriteMode(', 'Mode: Refined', 'spriteMode,'];
   const foundForbidden = forbidden.filter((snippet) => gallery.includes(snippet));
   if (missing.length > 0 || foundForbidden.length > 0) {
@@ -3906,6 +3949,8 @@ function assertGithubActionsAreWired() {
     runbook: '.github/DEPLOYMENT.md',
     processorDeployCheck: 'scripts/check-image-processor-contract.mjs',
     processorDeployRoute: 'worker/src/deploymentPreflight.ts',
+    processorServer: 'processor/src/server.ts',
+    processorGenerationContract: 'worker/src/arcadeGeneration.ts',
     workerIndex: 'worker/src/index.ts',
   };
   const missingFiles = Object.values(files).filter((path) => !existsSync(join(root, path)));
@@ -3996,6 +4041,8 @@ function assertGithubActionsAreWired() {
       'node scripts/production-deploy-guard.mjs',
       'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s',
       'Guard frontend/Worker contract drift',
+      'npm run check:image-processor-contract',
+      'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
       'npm run deploy:frontend',
     ],
     xaiCanary: [
@@ -4105,12 +4152,19 @@ function assertGithubActionsAreWired() {
       "const PRODUCTION_WORKER_URL = 'https://api.insertplayer.ai'",
       "const PREFLIGHT_PATH = '/api/internal/deploy/image-processor-contract'",
       'assertApprovedArcadeGenerationContract',
+      'assertApprovedTemplateAtlasCompiler(body)',
       'X-Insert-Player-Clerk-Backend-Auth',
     ],
     processorDeployRoute: [
       'hasValidClerkBackendAuthBridge',
       'readImageProcessorGenerationContract',
       "'Cache-Control': 'private, no-store'",
+    ],
+    processorServer: ['templateAtlasCompiler: TEMPLATE_ATLAS_COMPILER_CONTRACT'],
+    processorGenerationContract: [
+      'isTemplateAtlasCompilerContract(payload.templateAtlasCompiler)',
+      'processor_template_atlas_compiler_incompatible',
+      "'-template-atlas-v1-p6'",
     ],
     workerIndex: [
       "path === '/api/internal/deploy/image-processor-contract' && method === 'GET'",
@@ -4125,6 +4179,11 @@ function assertGithubActionsAreWired() {
   }
   if (missingSnippets.length > 0) {
     throw new Error(`GitHub delivery wiring is incomplete:\n- ${missingSnippets.join('\n- ')}`);
+  }
+  for (const name of ['production', 'frontendProduction']) {
+    const check = text[name].indexOf('run: npm run check:image-processor-contract');
+    const pages = text[name].indexOf('run: npm run deploy:frontend');
+    if (check < 0 || pages <= check) throw new Error('Pages must wait for the compatible Template Atlas processor, including frontend-only releases.');
   }
   if (
     text.production.includes('ASF_ARCADE_PREFLIGHT_KEY:')
@@ -4466,6 +4525,7 @@ run('tier parity guard', node, ['scripts/check-tier-parity.mjs']);
 run('approved image-provider boundary', node, ['processor/scripts/assert-approved-image-providers.mjs']);
 assertLiveSmokeHasNoUndefinedNames();
 run('unit tests', npm, ['test']);
+run('deterministic Template Atlas pipeline tests', npm, ['run', 'test:template-atlas']);
 run(
   'deterministic video sprite compiler tests',
   npm,

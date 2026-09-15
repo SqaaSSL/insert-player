@@ -6,6 +6,8 @@ import {
   type SourceKey,
 } from '../shared/fighterPreview.ts';
 
+export const OPTIONAL_CROUCH_SOURCE_MESSAGE = 'Optional source. These animations use the upright reference and do not need a crouch photo.';
+
 interface SourceRetryActions {
   side?: () => void | Promise<void>;
   upright?: () => void | Promise<void>;
@@ -20,6 +22,8 @@ interface SourceViewsPanelProps {
   busy?: boolean;
   regeneratingSource?: SourceKey | null;
   retryCreditCost?: number;
+  /** Template atlases use upright only; an absent legacy crouch is not an error. */
+  crouchOptional?: boolean;
 }
 
 export function SourceViewsPanel({
@@ -30,6 +34,7 @@ export function SourceViewsPanel({
   busy,
   regeneratingSource,
   retryCreditCost = 1,
+  crouchOptional = false,
 }: SourceViewsPanelProps) {
   return (
     <>
@@ -39,6 +44,7 @@ export function SourceViewsPanel({
           const blob = getSourceBlob(meta, key);
           const isRegen = regeneratingSource === key;
           const isPrivateReference = key === 'original' && isArcadeCachedMeta(meta);
+          const isOptionalMissing = key === 'crouch' && crouchOptional && !blob;
           return (
             <button
               type="button"
@@ -47,11 +53,12 @@ export function SourceViewsPanel({
               aria-pressed={selectedSource === key && !isPrivateReference}
               disabled={isPrivateReference}
               onClick={() => onSelectSource(key)}
-              title={isPrivateReference ? 'The original reference stays private for Arcade globals.' : undefined}
+              title={isPrivateReference ? 'The original reference stays private for Arcade globals.'
+                : isOptionalMissing ? OPTIONAL_CROUCH_SOURCE_MESSAGE : undefined}
             >
               <span>{label}</span>
               <small>
-                {isPrivateReference ? 'Private reference' : isRegen ? 'Regenerating...' : blob ? 'Ready' : 'Missing'}
+                {isPrivateReference ? 'Private reference' : isRegen ? 'Regenerating...' : blob ? 'Ready' : isOptionalMissing ? 'Optional' : 'Missing'}
               </small>
             </button>
           );

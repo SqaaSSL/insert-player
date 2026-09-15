@@ -6,6 +6,7 @@ import {
 } from '../sprites/PoseFrameCalibration.ts';
 import { AURA_POSE_TEMPLATES, type AuraPoseTemplate } from './AuraPoseTemplates.ts';
 import { ADDITIONAL_AURA_BUILTIN_ASSETS } from './AuraBuiltinAssets.ts';
+import { TEMPLATE_ATLAS_ORIGIN_Y } from '../../SpriteAnimationFormat.ts';
 
 export interface AuraFrameCalibration extends Omit<PoseFrameCalibration, 'referenceBodyHeight'> {
   /** Explicit reviewed reuse, never inferred from a character name. */
@@ -32,6 +33,25 @@ export interface AuraIdleReference {
   bodyHeightRatio: number;
   rootXRatio: number;
   rootYRatio: number;
+}
+
+/** Cancel the native combat idle measurement once; do not fit any Aura pose. */
+export function calibrateTemplateAuraAtlas(atlas: AuraAtlasGeometry, combatIdle: AuraAtlasGeometry): AuraAnimationCalibration {
+  const visible = combatIdle.bounds.filter((bounds): bounds is PoseFrameBounds => bounds !== null);
+  if (!visible.length || combatIdle.frameHeight <= 0 || atlas.frameHeight <= 0) throw new Error('Template atlas requires its combat idle reference');
+  const heights = visible.map(bounds => bounds.height).sort((a, b) => a - b);
+  const middle = Math.floor(heights.length / 2);
+  const height = heights.length % 2 ? heights[middle] : (heights[middle - 1] + heights[middle]) / 2;
+  const ratio = atlas.frameHeight / combatIdle.frameHeight;
+  const bottom = (visible[0].y + visible[0].height) * ratio;
+  return {
+    referenceBodyHeight: height * ratio,
+    policy: 'shared-idle-v1',
+    frames: Array.from({ length: atlas.frameCount }, (_, sourceFrame) => ({
+      sourceFrame, scale: 1, originX: .5, originY: TEMPLATE_ATLAS_ORIGIN_Y,
+      offsetX: 0, offsetY: atlas.frameHeight * TEMPLATE_ATLAS_ORIGIN_Y - bottom,
+    })),
+  };
 }
 
 const median = (values: number[]) => {

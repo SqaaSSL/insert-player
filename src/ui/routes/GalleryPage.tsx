@@ -1,4 +1,5 @@
 import { quoteGenerationPackage, type GenerationPackageOptions } from '../../services/GenerationPackages';
+import { rendererForNewFighter, rendererForSprite } from '../../services/GenerationRenderer';
 import { resolveFighterModeReadiness } from '../../services/FighterAssetPacks';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -35,7 +36,7 @@ import { TierBadge } from '../components/TierBadge.tsx';
 import { Modal, ConfirmDialog } from '../components/Modal.tsx';
 import { GalleryFighterList } from '../components/GalleryFighterList.tsx';
 import { GalleryStageList } from '../components/GalleryStageList.tsx';
-import { SourceViewsPanel } from '../components/SourceViewsPanel.tsx';
+import { OPTIONAL_CROUCH_SOURCE_MESSAGE, SourceViewsPanel } from '../components/SourceViewsPanel.tsx';
 import { SpritePreviewSurface } from '../components/SpritePreviewSurface.tsx';
 import { DebugFeed } from '../components/DebugFeed.tsx';
 import {
@@ -116,6 +117,7 @@ import { currentGenerationLegalAttestation } from '../legal.ts';
 import {
   listGenerationJobs,
   startGenerationJob,
+  assertGenerationRendererAcknowledged,
   waitForGenerationJob,
   type GenerationJob,
 } from '../../services/GenerationJobs.ts';
@@ -959,7 +961,7 @@ export function GalleryPage({
         apiContext,
         failedJob.id,
         creationFlow,
-        { creationPackage: failedJob.creationPackage, expansion: failedJob.expansion },
+        { creationPackage: failedJob.creationPackage, expansion: failedJob.expansion, rendererVersion: failedJob.rendererVersion ?? 'legacy-v1' },
       );
       if (
         !authorization.authorized ||
@@ -971,11 +973,13 @@ export function GalleryPage({
       }
       purchaseId = authorization.purchaseId;
       assertCreationFlowAcknowledged(creationFlow, authorization.creationFlow);
+      assertGenerationRendererAcknowledged(failedJob.rendererVersion ?? 'legacy-v1', authorization.rendererVersion);
       const job = await startGenerationJob({
         fighterId: failedJob.fighterId,
         purchaseId: authorization.purchaseId,
         providerSessionId: authorization.providerSessionId,
         creationFlow,
+        rendererVersion: failedJob.rendererVersion ?? 'legacy-v1',
         creationPackage: failedJob.creationPackage,
         expansion: failedJob.expansion,
         targetKind: failedJob.targetKind ?? undefined,
@@ -1138,6 +1142,14 @@ export function GalleryPage({
     expectedCredits: number,
   ) => {
     if (!meta || !ownerActionsReady) return;
+    const targetSprite = target.kind === 'animation'
+      ? sprites.find(sprite => sprite.animationName === target.name && sprite.qualityTier === retryTier) : undefined;
+    const rendererSprite = targetSprite ?? (target.kind === 'animation'
+      ? sprites.find(sprite => sprite.qualityTier === retryTier && sprite.animationFormat === 'template-atlas-v1')
+      : undefined);
+    const rendererVersion = rendererSprite ? rendererForSprite(rendererSprite) : 'legacy-v1';
+    const retryPackage = rendererVersion !== 'legacy-v1' ? 'complete'
+      : target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage;
     clearDebugLog();
     setBusy(true);
     setRetryingTarget(target);
@@ -1165,13 +1177,14 @@ export function GalleryPage({
         apiContext,
         null,
         'original',
-        { creationPackage: target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage, expectedCredits },
+        { creationPackage: retryPackage, expectedCredits, rendererVersion },
       );
       if (!authorization.authorized) {
         throw new Error(authorization.error ?? 'Generation not authorized');
       }
       purchaseId = authorization.purchaseId;
       assertCreationFlowAcknowledged('original', authorization.creationFlow);
+      assertGenerationRendererAcknowledged(rendererVersion, authorization.rendererVersion);
       if (
         authStatus === 'signed-in' &&
         fighterId &&
@@ -1183,7 +1196,8 @@ export function GalleryPage({
           purchaseId: authorization.purchaseId,
           providerSessionId: authorization.providerSessionId,
           creationFlow: 'original',
-          creationPackage: target.kind === 'animation' && target.name.startsWith('aura_') ? 'aura' : currentPackage,
+          rendererVersion,
+          creationPackage: retryPackage,
           targetKind: target.kind,
           targetName: target.kind === 'animation' ? target.name : target.key,
         }, apiContext);
@@ -1198,6 +1212,9 @@ export function GalleryPage({
             : 'Done and synced',
         );
         return;
+      }
+      if (rendererVersion !== 'legacy-v1') {
+        throw new Error('The server did not provide a durable template repair session. No local fallback was started.');
       }
       await runWithProviderSession(authorization.providerSessionId, action, apiContext);
       generatedLocally = true;
@@ -1242,6 +1259,8 @@ export function GalleryPage({
   const currentFighterActionBusy = currentFighterBusy || Boolean(pendingFighterSync);
 
   const hasOutdatedSprites = sprites.some((sprite) => (sprite.processingVersion ?? 0) < SPRITE_PROCESSING_VERSION);
+  const hasTemplateAtlases = sprites.some((sprite) => sprite.animationFormat === 'template-atlas-v1');
+  const crouchSourceOptional = sprites.length > 0 && sprites.every((sprite) => sprite.animationFormat === 'template-atlas-v1');
 
   const renameFighter = () => {
     if (!meta || !ownerActionsReady) return;
@@ -1320,7 +1339,7 @@ export function GalleryPage({
   };
 
   const rebuildHd = () => {
-    if (!meta || !ownerActionsReady) return;
+    if (!meta || !ownerActionsReady || hasTemplateAtlases) return;
     setConfirmRequest({
       title: 'Rebuild HD',
       body: `Rebuild all sprites for "${meta.characterName}" at HD resolution for free? Animations without a cached raw blob will be skipped.`,
@@ -1334,7 +1353,7 @@ export function GalleryPage({
   };
 
   const executeRebuildHd = async () => {
-    if (!meta || !ownerActionsReady) return;
+    if (!meta || !ownerActionsReady || hasTemplateAtlases) return;
     clearDebugLog();
     setBusy(true);
     setStatus('Rebuilding at HD...');
@@ -1490,6 +1509,12 @@ export function GalleryPage({
     if (!meta || !ownerActionsReady || !legalAccepted) return;
     const tier = QUALITY_TIERS.find((item) => item.id === toTier);
     if (!tier || (!packageOptions.expansion && qualityTierRank(toTier) <= qualityTierRank(currentTier))) return;
+    const rendererVersion = !packageOptions.expansion
+      ? rendererForNewFighter(toTier) : 'legacy-v1';
+    const upgradeOptions: GenerationPackageOptions = rendererVersion !== 'legacy-v1'
+      ? { ...packageOptions, creationPackage: 'complete', rendererVersion,
+        expectedCredits: quoteGenerationPackage(toTier, 'complete').creditCost }
+      : { ...packageOptions, rendererVersion };
     clearDebugLog();
     setBusy(true);
     setStatus(packageOptions.expansion ? 'Adding Fight + Rush...' : `Upgrading to ${tier.label}...`);
@@ -1515,12 +1540,14 @@ export function GalleryPage({
         apiContext,
         undefined,
         'original',
-        packageOptions,
+        upgradeOptions,
       );
       if (!authorization.authorized) {
         throw new Error(authorization.error ?? 'Upgrade not authorized');
       }
       purchaseId = authorization.purchaseId;
+      assertCreationFlowAcknowledged('original', authorization.creationFlow);
+      assertGenerationRendererAcknowledged(rendererVersion, authorization.rendererVersion);
       if (
         authStatus === 'signed-in' &&
         fighterId &&
@@ -1531,8 +1558,10 @@ export function GalleryPage({
           fighterId,
           purchaseId: authorization.purchaseId,
           providerSessionId: authorization.providerSessionId,
-          creationPackage: packageOptions.creationPackage,
-          expansion: packageOptions.expansion,
+          creationFlow: 'original',
+          rendererVersion,
+          creationPackage: upgradeOptions.creationPackage,
+          expansion: upgradeOptions.expansion,
         }, apiContext);
         backendOwnsPurchase = true;
         setStatus(`${tierLabel(job.tier)} forge running in the cloud (${job.progressCurrent}/${job.progressTotal})...`);
@@ -1567,6 +1596,7 @@ export function GalleryPage({
         setStatus(packageOptions.expansion ? 'Fight + Rush added. Your Aura performances are preserved.' : `${tierLabel(completed.tier)} upgrade synced`);
         return;
       }
+      if (rendererVersion !== 'legacy-v1') throw new Error('The server did not provide a durable template upgrade session. No local fallback was started.');
       if (packageOptions.creationPackage === 'aura' || packageOptions.expansion) throw new Error('Sign in and sync this character before changing its pack');
       await runWithProviderSession(
         authorization.providerSessionId,
@@ -1829,10 +1859,10 @@ export function GalleryPage({
                       disabled={currentFighterActionBusy || !legalAccepted}
                       onClick={() => setPendingUpgradeTier(tier.id)}
                     >
-                      Upgrade to {tier.label} · {quoteGenerationPackage(tier.id, currentPackage).priceLabel}
+                      Upgrade to {tier.label} · {quoteGenerationPackage(tier.id, 'complete').priceLabel}
                     </Button>
                   )) : null}
-                  {ownerActionsReady && hasOutdatedSprites ? (
+                  {ownerActionsReady && hasOutdatedSprites && !hasTemplateAtlases ? (
                     <Button disabled={currentFighterActionBusy} onClick={() => rebuildHd()}>
                       Rebuild HD · Free
                     </Button>
@@ -1912,6 +1942,7 @@ export function GalleryPage({
                 <div className="gallery-panel gallery-panel--sources">
                   <SourceViewsPanel
                     meta={meta}
+                    crouchOptional={crouchSourceOptional}
                     selectedSource={selection.kind === 'source' ? selection.source : null}
                     onSelectSource={(source) => setSelection({ kind: 'source', source })}
                     regeneratingSource={retryingSource}
@@ -1995,6 +2026,8 @@ export function GalleryPage({
                     emptyLabel={selection.kind === 'source'
                       ? selection.source === 'original' && isArcadeFighter
                         ? 'Original reference is private'
+                        : selection.source === 'crouch' && crouchSourceOptional
+                          ? OPTIONAL_CROUCH_SOURCE_MESSAGE
                         : 'Missing source'
                       : 'No preview for this animation yet'}
                   />
@@ -2144,7 +2177,7 @@ export function GalleryPage({
       {pendingUpgrade ? (
         <ConfirmDialog
           title={`Upgrade to ${pendingUpgrade.label}`}
-          confirmLabel={`Regenerate for ${quoteGenerationPackage(pendingUpgrade.id, currentPackage).priceLabel}`}
+          confirmLabel={`Regenerate for ${quoteGenerationPackage(pendingUpgrade.id, 'complete').priceLabel}`}
           confirmVariant="primary"
           onCancel={() => setPendingUpgradeTier(null)}
           onConfirm={() => {
@@ -2153,9 +2186,9 @@ export function GalleryPage({
             void upgradeToTier(tier);
           }}
         >
-          Regenerate this character's {quoteGenerationPackage(pendingUpgrade.id, currentPackage).animationCount} animations at {pendingUpgrade.label} quality. This costs{' '}
-          {quoteGenerationPackage(pendingUpgrade.id, currentPackage).priceLabel} and takes about {pendingUpgrade.estimatedTime}. Existing
-          animations are kept in cache and remain accessible.
+          Create all 20 Fight, Aura, and Rush animations at {pendingUpgrade.label} quality for{' '}
+          {quoteGenerationPackage(pendingUpgrade.id, 'complete').priceLabel}, reusing your prepared identity.
+          Previous animation versions remain accessible. Progress is saved in the cloud.
         </ConfirmDialog>
       ) : null}
 

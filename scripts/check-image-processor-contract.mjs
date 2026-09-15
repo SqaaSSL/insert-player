@@ -9,6 +9,27 @@ const DEFAULT_ATTEMPTS = 30;
 const DEFAULT_INTERVAL_MS = 20_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 
+// Plain-JS deployment tooling mirrors the typed Worker/processor contract;
+// the parity test prevents either side from silently changing it alone.
+export const APPROVED_TEMPLATE_ATLAS_COMPILER = Object.freeze({
+  schemaVersion: 1,
+  rendererVersions: ['rookie-two-atlas-v1', 'champion-animation-sheet-v1'],
+  templateVersion: 'template-zero-v3',
+  templateManifestSha256: 'd352bb3fd4151673a4739ebf6e4cad2211bce6ae1f5b06ddbdccd7bb46ef8de8',
+  animationFormat: 'template-atlas-v1',
+  processingVersion: 6,
+  animationCount: 20,
+  model: 'fal-ai/nano-banana-2/edit',
+  transport: 'meterkey-fal',
+});
+export function assertApprovedTemplateAtlasCompiler(payload) {
+  const candidate = payload?.templateAtlasCompiler;
+  if (!candidate || !Object.entries(APPROVED_TEMPLATE_ATLAS_COMPILER)
+    .every(([key, expected]) => JSON.stringify(candidate[key]) === JSON.stringify(expected))) {
+    throw new Error('Pages deployment blocked: the image processor did not prove the approved Template Atlas compiler.');
+  }
+}
+
 function normalizedWorkerUrl(value) {
   return String(value ?? '').trim().replace(/\/+$/, '');
 }
@@ -74,6 +95,7 @@ export async function waitForCompatibleImageProcessor({
     const body = await responseJson(response);
     if (response.ok) {
       assertApprovedArcadeGenerationContract(body);
+      assertApprovedTemplateAtlasCompiler(body);
       console.log(`\u2713 compatible image processor contract verified on attempt ${attempt}`);
       return body;
     }

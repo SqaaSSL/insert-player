@@ -109,12 +109,12 @@ export function LandingPage({
   const availableRookiePasses = billingProfile
     ? Math.max(0, 1 - billingProfile.freeRookieGenerationsUsed) + billingProfile.referralRookiePasses
     : 0;
-  const rookieOffer = authStatus === 'signed-in' && billingProfileChecked && !billingProfile
+  const rookieOffer = authStatus === 'signed-out' || authStatus === 'local'
+    ? 'Sign in to check your included first Rookie'
+    : authStatus === 'signed-in' && billingProfileChecked && !billingProfile
     ? 'Rookie · pass verified at creation'
     : rookieStatus === 'included' && authStatus === 'signed-in' && availableRookiePasses > 0
     ? `Free Rookie pass${availableRookiePasses === 1 ? '' : 'es'} · ${availableRookiePasses} available`
-    : rookieStatus === 'included'
-      ? 'Free Rookie · human check at creation'
     : rookieStatus === 'credits'
       ? `Rookie · 2 credits · ${billingProfile?.creditsBalance ?? 0} available`
       : 'Checking your Rookie pass…';

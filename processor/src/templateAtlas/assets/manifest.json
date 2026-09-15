@@ -1,0 +1,4237 @@
+{
+  "schemaVersion": 1,
+  "version": "template-zero-v3",
+  "sourceManifestSha256": "25ca63a37e9af0dc09bd9ad097a42369894ebf3eb29be26aabd526eaebdf838d",
+  "templateSourceSha256": "36614af09625e1b0f3911e1e4fce73eedf8d8109b0db9abd7fd1d218b04528a4",
+  "canonical": {
+    "width": 1536,
+    "height": 2048,
+    "groundY": 1884
+  },
+  "counts": {
+    "masters": 131,
+    "animations": 20,
+    "playbackFrames": 184
+  },
+  "identityAssetsIncluded": false,
+  "masters": [
+    {
+      "id": "master-001",
+      "order": 0,
+      "file": "masters/master-001.png",
+      "sha256": "cb46dcb5bb88f2d79c631bae1bd30b207b3e63d61479c28732651a5603fe96b1",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-002",
+      "order": 1,
+      "file": "masters/master-002.png",
+      "sha256": "a19d68112ac0d7b194250661d8a1b67d75bca3263b8290aba59e2b69fae69ea5",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-003",
+      "order": 2,
+      "file": "masters/master-003.png",
+      "sha256": "780d0f30c45394d7a9f1d93c849a39be74157ed2829af54ff43908c5f45837db",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-004",
+      "order": 3,
+      "file": "masters/master-004.png",
+      "sha256": "7404a899b67d555345d6a03b5dd14dd057adf26bc46feb6e7076538ca4045f7b",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-005",
+      "order": 4,
+      "file": "masters/master-005.png",
+      "sha256": "057a7560c9882f79c424bf2e4bdf433ae5dec6f333f01054fca988db9c16a986",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-006",
+      "order": 5,
+      "file": "masters/master-006.png",
+      "sha256": "b5a8618b80627196fadad4dec9f6f3dcb5a791efb00fcab56258434b9b80f83f",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-007",
+      "order": 6,
+      "file": "masters/master-007.png",
+      "sha256": "b7519d78ae2ab0c3a7f02afc40628d627b9127a2411ca874e3b17b0cf864e079",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-008",
+      "order": 7,
+      "file": "masters/master-008.png",
+      "sha256": "492f6f8c09e6a6bdb7e1ce2ff8e16b28c861bfb7d17bb1bbe1fdd4bd5fbfcd54",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-009",
+      "order": 8,
+      "file": "masters/master-009.png",
+      "sha256": "6d1f7fdd83b69473909f6cbd431af3e202c8d135d68c14df33c5f74924d84364",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-010",
+      "order": 9,
+      "file": "masters/master-010.png",
+      "sha256": "6d36af30d34c6566ca2fd11c64ceb416c29330c4692530c136c53a49ffd11ec0",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-011",
+      "order": 10,
+      "file": "masters/master-011.png",
+      "sha256": "937cef68198cfe59dc1d3d0a76cecd67b499ec91e2fae30c86d59b126f181e49",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-012",
+      "order": 11,
+      "file": "masters/master-012.png",
+      "sha256": "87d48032f90c1aa66a5682a1130a6f900936a777d7cb52ab856911c96f4dd303",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-013",
+      "order": 12,
+      "file": "masters/master-013.png",
+      "sha256": "4567fefe61c644ad3a2b383a04f4c44deb98614bfaf48069acf624973330bbc9",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-014",
+      "order": 13,
+      "file": "masters/master-014.png",
+      "sha256": "de3158d0be4cfa80a730b5789e3b4c1670ec502fd2a88e36e6f91dc2e2cf733e",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-015",
+      "order": 14,
+      "file": "masters/master-015.png",
+      "sha256": "2512e029673d79b5e86c64d1f936ecde2c7b6d9ec01918bca5af31ade4642821",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-016",
+      "order": 15,
+      "file": "masters/master-016.png",
+      "sha256": "3df0d0881c03891ed2dfbc3bffd9adfddeb79079281535900aeab1f915aef6ae",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-017",
+      "order": 16,
+      "file": "masters/master-017.png",
+      "sha256": "05c55026ca075e1ebf0036ace314eb0d0583b58dce3b5d3933602248e6b98041",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-018",
+      "order": 17,
+      "file": "masters/master-018.png",
+      "sha256": "313ed0349825e345a2d927e677c0f37bf1781de851422427ec4398e8cc786550",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-019",
+      "order": 18,
+      "file": "masters/master-019.png",
+      "sha256": "67039cb6d44ffa7188d30c15b60107e489c8b96eb50e94cf5420dd0553dfb089",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-020",
+      "order": 19,
+      "file": "masters/master-020.png",
+      "sha256": "f1c8fca9cf59467b6119608d5e15fb01c3100bf8d40aca84f4bfdb0fc6fb14a5",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-021",
+      "order": 20,
+      "file": "masters/master-021.png",
+      "sha256": "8872e3d38c4ef3557fff75feb7811daa7b4c8a614fc017656541d200f4038a9c",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-022",
+      "order": 21,
+      "file": "masters/master-022.png",
+      "sha256": "4ba829ee37025a6b354ae38d95f447092edc2a9ec7506981c32f42a3f39151c5",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-023",
+      "order": 22,
+      "file": "masters/master-023.png",
+      "sha256": "f6ed2ee73d3500ca6434c7c7a0f0e7e60dfce595967f4d26ab78a6b92be68399",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-024",
+      "order": 23,
+      "file": "masters/master-024.png",
+      "sha256": "a8211f97a5c78c74fe04a935ccefdbaa529c8412b9fc0b617439c4b775899b5a",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-025",
+      "order": 24,
+      "file": "masters/master-025.png",
+      "sha256": "657c966027697baac258a1d6a5b696fc1693ee7b7647059fd8bd10f2a91ad80f",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-026",
+      "order": 25,
+      "file": "masters/master-026.png",
+      "sha256": "549d9ec6b006afe7670bfa79f9e2d61cfb39e3d00fa182ce69200ce950df86a4",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-027",
+      "order": 26,
+      "file": "masters/master-027.png",
+      "sha256": "771e12fcd45158b85c5626e4b5d7cdb6d3f31d6f10d3e007a3208696b77b0ba2",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-028",
+      "order": 27,
+      "file": "masters/master-028.png",
+      "sha256": "8dfbaf28455eb6a82de6a01a71fe7799e9c3f770c6884ae8ec0b4e5f751ea715",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-029",
+      "order": 28,
+      "file": "masters/master-029.png",
+      "sha256": "c59f52f4d4fe108689984ae330e3981d89b39f4e7a7b2f3a4fcfda30abdd5cda",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-030",
+      "order": 29,
+      "file": "masters/master-030.png",
+      "sha256": "2fe4d3b4518c876a976d924bc49283252499da58c93887af294ad871e1475dd6",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-031",
+      "order": 30,
+      "file": "masters/master-031.png",
+      "sha256": "52a4131d95af931585b9d845ff3a28f9a5e8410fa1757b18f04483e2e211edb8",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-032",
+      "order": 31,
+      "file": "masters/master-032.png",
+      "sha256": "8238125ed641b2dd538c9f98145be5eb1902e3f50a0dbbb713cbff24d59a28df",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-033",
+      "order": 32,
+      "file": "masters/master-033.png",
+      "sha256": "9d7d71374a40eb5a5eed482049d480fb31128958d60e29aa398021e8c438fa47",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-034",
+      "order": 33,
+      "file": "masters/master-034.png",
+      "sha256": "57c96627816b482276412bd49fadeeca97f378ef4a95a3d88cc8ecbf4234fa62",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-035",
+      "order": 34,
+      "file": "masters/master-035.png",
+      "sha256": "32543d45c0564d7225f8781f4f9413c20e4ef347c7a836aa49821956e3ed3b62",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-036",
+      "order": 35,
+      "file": "masters/master-036.png",
+      "sha256": "e138498b14358258bb4ef72a043c4766d5cfad7b9e23711624ae257f5bf0e644",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-037",
+      "order": 36,
+      "file": "masters/master-037.png",
+      "sha256": "875716535e351c90647f0033adebcfbf847d423970c58de7307fa52a4187dce6",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-038",
+      "order": 37,
+      "file": "masters/master-038.png",
+      "sha256": "1cc3d34ba7a630057828d39155b2cbba7d92d69511a69d35f66a674f5a99edf3",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-039",
+      "order": 38,
+      "file": "masters/master-039.png",
+      "sha256": "06bbc9298c4d140a5218a492802fec6acfda1e09718beaa4929e7e191e91f34f",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-040",
+      "order": 39,
+      "file": "masters/master-040.png",
+      "sha256": "9c81839ae08bd49b7351ebd09c257fb20d4727febdbf6b254b52b4ca17d83090",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-041",
+      "order": 40,
+      "file": "masters/master-041.png",
+      "sha256": "0ecab8c84ca282556a3127a419256c197c76674789188af5e7b5d9729c198bff",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-042",
+      "order": 41,
+      "file": "masters/master-042.png",
+      "sha256": "ab0275fb11e4752181d1315947c4771e49e9aa80c129027efc29e36c96f08467",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-043",
+      "order": 42,
+      "file": "masters/master-043.png",
+      "sha256": "2069cd6ce1655dbb6f9bd0d8c4f495df5771c9a3e3aaddfa059215c9a8207583",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-044",
+      "order": 43,
+      "file": "masters/master-044.png",
+      "sha256": "88dca42f50a379579077b87b8e33fb51ccfadbb3c29f8af3be9a118db533acb5",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-045",
+      "order": 44,
+      "file": "masters/master-045.png",
+      "sha256": "120ab2fea418e330200297218553ff780c9dfe872022a6c1a674c222be13fa64",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-046",
+      "order": 45,
+      "file": "masters/master-046.png",
+      "sha256": "c6fe1f49891a35f13629b5a680b11ff4ec0a4997af33182d8a10403d44445bba",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-047",
+      "order": 46,
+      "file": "masters/master-047.png",
+      "sha256": "d626f3a89be76fa49665346a10d7a73eb3eb5bfce3cb6c1058ca5c1568953925",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-048",
+      "order": 47,
+      "file": "masters/master-048.png",
+      "sha256": "294f9689d0b4531dd21a3ab536ffb4abc1bff410c18d7ec6e40ce01fc83e89c2",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-049",
+      "order": 48,
+      "file": "masters/master-049.png",
+      "sha256": "a89a374b5e0b286cfa85420252110c5bf118d580fb4fe48579fc9752d49d1d53",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-050",
+      "order": 49,
+      "file": "masters/master-050.png",
+      "sha256": "56b09253ecd643d67b610ce95402b94a0495d9b398d8558e1aefc628aaa7f7eb",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-051",
+      "order": 50,
+      "file": "masters/master-051.png",
+      "sha256": "3ef372f58eef79dae0c99ad5d32198de83d19f3f526dda600bb9af72239df6db",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-052",
+      "order": 51,
+      "file": "masters/master-052.png",
+      "sha256": "cb9f4d8ee853bf7c10b812e16b496805f2706ee85ebf059687834d0862d5af40",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-053",
+      "order": 52,
+      "file": "masters/master-053.png",
+      "sha256": "4cb00e8ac32c9e3dd3fe6dda5c48e5b941090fc52445a185704cc08f4b6cf047",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-054",
+      "order": 53,
+      "file": "masters/master-054.png",
+      "sha256": "a0f336c60f60a3c293cf351335c4ca105e9db1e29f39e1af4368392546b8a3b8",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-055",
+      "order": 54,
+      "file": "masters/master-055.png",
+      "sha256": "d47879945b718bdfb6ac5c677bb21d4e342d9cf2c47dbc9950bda3af98228d07",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-056",
+      "order": 55,
+      "file": "masters/master-056.png",
+      "sha256": "935d8460e9cb4b7016847d86b54027179b89c355665897315a93b30d4e22d1bb",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-057",
+      "order": 56,
+      "file": "masters/master-057.png",
+      "sha256": "dc73cc462c6783136d42b0b138e61fa71fe732eebcf7131eb594152d17b45f36",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-058",
+      "order": 57,
+      "file": "masters/master-058.png",
+      "sha256": "270b2f00140b5cc89a2fda730bf8e52be10b8a3568c9526e74bcf19a50846810",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-059",
+      "order": 58,
+      "file": "masters/master-059.png",
+      "sha256": "40304d2a7fa0e6abc99c7bf121c279f0fcf6d18e3aba83c73cc423c5a5162131",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-060",
+      "order": 59,
+      "file": "masters/master-060.png",
+      "sha256": "4d97fbf133a7f6a21980fccff9fd2029ee9b63130097bdc3e503adfb205abf43",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-061",
+      "order": 60,
+      "file": "masters/master-061.png",
+      "sha256": "a6c2e071f13dce9da9e8822f7d64edaa688dc27ab7922dded6c31ed01c624d9c",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-062",
+      "order": 61,
+      "file": "masters/master-062.png",
+      "sha256": "8d2e8ea479cf9803c585f9c6171da65be6a271cc16f91094e3400e5085a68d1c",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-063",
+      "order": 62,
+      "file": "masters/master-063.png",
+      "sha256": "382d3715699228253e91e316018256f3224eb271b6f1a428ad5e807156f188a5",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-064",
+      "order": 63,
+      "file": "masters/master-064.png",
+      "sha256": "0edacdcf24b3737779040b914f98392b2a5966cfbc3351da766d4dc744268570",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-065",
+      "order": 64,
+      "file": "masters/master-065.png",
+      "sha256": "47a719a749765eb372d78d8d82359314014e70b00a8f7f98dbf7b0e40d0666cb",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-066",
+      "order": 65,
+      "file": "masters/master-066.png",
+      "sha256": "0d0b0877dbaf87a9035a7a9f3fedf9c90877669a4bb9bdc302dbfafc062733ff",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-067",
+      "order": 66,
+      "file": "masters/master-067.png",
+      "sha256": "1ce83fd8a2de6d0e667b38ad9876c5b9fc6e33c8eb3646349d3665c13135d41b",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-068",
+      "order": 67,
+      "file": "masters/master-068.png",
+      "sha256": "dfdfba657bcef0085c216f714f7e43dd35e5da38f742f397b48578412b5b02b3",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-069",
+      "order": 68,
+      "file": "masters/master-069.png",
+      "sha256": "219529680ace8bc7c1e75ccafe8ac2934aa5102c30c143aef6db7315124b1bc9",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-070",
+      "order": 69,
+      "file": "masters/master-070.png",
+      "sha256": "18a3189505df2220d67914af3be406a72729fa4b2a10d86053daa8ab2a1d90a4",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-071",
+      "order": 70,
+      "file": "masters/master-071.png",
+      "sha256": "bce4744cbdb0d67239ff302fa278566a97ec459d4a9b75e5f069cd2f86a396df",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-072",
+      "order": 71,
+      "file": "masters/master-072.png",
+      "sha256": "549c871e93f9d53b2e409da9124f9c329a1b4358f97b9518cc4edcb44fb0c71c",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-073",
+      "order": 72,
+      "file": "masters/master-073.png",
+      "sha256": "a6d591f0caa3bfd962c830ca336b3e3ee003655d589de39d86236fabadeee988",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-074",
+      "order": 73,
+      "file": "masters/master-074.png",
+      "sha256": "eeb56a6d2690116ca8bfcea25e01acc42e1a7d4440bed5ee6c632aef416d952a",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-075",
+      "order": 74,
+      "file": "masters/master-075.png",
+      "sha256": "ff8be446b011ba645e119736ef4d3d2123ea73ff137f95f64f5462feaa2ef8ea",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-076",
+      "order": 75,
+      "file": "masters/master-076.png",
+      "sha256": "5da1d7c5e385c80b78321a34807c86bbad428c1e5824295c33ce1f15c2f33c01",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-077",
+      "order": 76,
+      "file": "masters/master-077.png",
+      "sha256": "f77c507060e9f1241350285dd032a1d7e2d10f227c7ab0a101b43b4ed739caa1",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-078",
+      "order": 77,
+      "file": "masters/master-078.png",
+      "sha256": "0f257af7a096deb12f50ad4a837321e2c973350eef74cd5b8cb3717420dbeec1",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-079",
+      "order": 78,
+      "file": "masters/master-079.png",
+      "sha256": "5db51473f66eb7e6f242675f21b74268b96974b6af5dbd8d9cd3811bfb77c01c",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-080",
+      "order": 79,
+      "file": "masters/master-080.png",
+      "sha256": "657bc79c370a42934038b8fe2773bd14a7a8d94be569a3c65cf1c43e983a00d7",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-081",
+      "order": 80,
+      "file": "masters/master-081.png",
+      "sha256": "8c4f6423710a5148898871ceb713d71bf4d9c0dd211e41a397fe35c616403d30",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-082",
+      "order": 81,
+      "file": "masters/master-082.png",
+      "sha256": "ee2ea51246b731082800b8144d22d25f6bb6fb0e1d02cbd565795744ea0e434c",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-083",
+      "order": 82,
+      "file": "masters/master-083.png",
+      "sha256": "a57e751711bb700c904679394e7baa5798c229f9ee64430dad025e433ddd0e14",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-084",
+      "order": 83,
+      "file": "masters/master-084.png",
+      "sha256": "0fc14877befe19dc88eb8cc61d9ba4e938f474d99961598c243a79704e86d140",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-085",
+      "order": 84,
+      "file": "masters/master-085.png",
+      "sha256": "7d40ee2660929f0405be0c5b5d8ef819050279a5a597a955cfd002df98ed442a",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-086",
+      "order": 85,
+      "file": "masters/master-086.png",
+      "sha256": "fb4fd9009805c03abd1cbf44b5f31f7ddf914ef853ab4538b38dc1a15f5f7859",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-087",
+      "order": 86,
+      "file": "masters/master-087.png",
+      "sha256": "2b8c1cd069e3957ed3ba9816421df83737e297d9fe3e911d850f8570d870e9ad",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-088",
+      "order": 87,
+      "file": "masters/master-088.png",
+      "sha256": "3aa0c65b29185075363b8c0dbd6d4f48548c1a5e0c9baad17084e709bcd9119a",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-089",
+      "order": 88,
+      "file": "masters/master-089.png",
+      "sha256": "354452c441feb06ea7b6dd60be601e500d51b4b40f2990163545f527ca1b8ded",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-090",
+      "order": 89,
+      "file": "masters/master-090.png",
+      "sha256": "5c6b02e64f58f0a20e821ed360ab7fe1d089138341f6654595edf955396fbc55",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-091",
+      "order": 90,
+      "file": "masters/master-091.png",
+      "sha256": "d4d715c987fa1e982eec381f20b854ab8462e76e950498d1584b2c15bbafd7ec",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-092",
+      "order": 91,
+      "file": "masters/master-092.png",
+      "sha256": "1e55df508498a95689e5f910d494a4e5007c78620c12dae2d27116662224aea4",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-093",
+      "order": 92,
+      "file": "masters/master-093.png",
+      "sha256": "558afec373a871ad3a1527901ed41b4163a1a13fceab9b5b30f665186918fb5d",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-094",
+      "order": 93,
+      "file": "masters/master-094.png",
+      "sha256": "0b6136fc863adf4ef212918a390a08409cb4c8714db4dd12c22ea52288edaaf1",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-095",
+      "order": 94,
+      "file": "masters/master-095.png",
+      "sha256": "3cef47b8e98e004e22d11a8da23b92e41d3fe3cfb58aef088cde74a48a7ccc27",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-096",
+      "order": 95,
+      "file": "masters/master-096.png",
+      "sha256": "a0ff92e03e1a9d28553a39e859055819640d0ce0ab019a119f7db46758b4a580",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-097",
+      "order": 96,
+      "file": "masters/master-097.png",
+      "sha256": "2b8b0bb0ffc649ed9ba87ccf15912a5a784c7324ecf4f3b7c9888d6e1b014480",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-098",
+      "order": 97,
+      "file": "masters/master-098.png",
+      "sha256": "f865fe1f54aec2e1fe1b6fc692ce66deeaf93c2120fc970847ddf577db59afd3",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-099",
+      "order": 98,
+      "file": "masters/master-099.png",
+      "sha256": "e6554d953022e1a9d39a7fda6c90e9ae1827b79bbc14f339f8cbc3d65fc9c5bd",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-100",
+      "order": 99,
+      "file": "masters/master-100.png",
+      "sha256": "c1295c4d9132c806f9c673ba2355b79e0ce4f38d8487a55f5cb39df1e9326703",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-101",
+      "order": 100,
+      "file": "masters/master-101.png",
+      "sha256": "52c69da9751427724cfe4e076840e8d80e00c64e932ea0ce0b4852096a735048",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-102",
+      "order": 101,
+      "file": "masters/master-102.png",
+      "sha256": "d44473fb31aa38c8a99fd226b7da129fdf764638607a24ef59dec7586c65c7bb",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-103",
+      "order": 102,
+      "file": "masters/master-103.png",
+      "sha256": "28e3c3712e47a0f7b71b577a56fbe5f0fa0a2e535e56dc1a18b136cec1748d38",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-104",
+      "order": 103,
+      "file": "masters/master-104.png",
+      "sha256": "4753fe8ebeb1e4d0239132a47d0d7c90ce486fda44b835888273c3a23fe2f122",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-105",
+      "order": 104,
+      "file": "masters/master-105.png",
+      "sha256": "1574e3cc5b576ef32c2f693aabdc2829c35388a56174c5f263c91260d25d5819",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-106",
+      "order": 105,
+      "file": "masters/master-106.png",
+      "sha256": "5e963f7a5a00db575fce8065f439b31b492cb26bcc15ddb8378bcc7b66b8fe6f",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-107",
+      "order": 106,
+      "file": "masters/master-107.png",
+      "sha256": "339f38977da483e4f350a63802ce9b470d4df65e1869c2b873f6291e21228518",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-108",
+      "order": 107,
+      "file": "masters/master-108.png",
+      "sha256": "3796b849676ccb563ba67ec07a640c6affe64e465092e5a939864c97bae28263",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-109",
+      "order": 108,
+      "file": "masters/master-109.png",
+      "sha256": "6f1c25e4c506e46d1342ab70ea722766ebb9d0a94c3505829fac31b7a5327011",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-110",
+      "order": 109,
+      "file": "masters/master-110.png",
+      "sha256": "f2572fe1f7780f92d539b1401ea26010c7f262362962fdb502e4377a98d07973",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-111",
+      "order": 110,
+      "file": "masters/master-111.png",
+      "sha256": "d27534fa0d09516e589c3afd1f552acdc89ebf4c0168de3961dc4c4126f37238",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-112",
+      "order": 111,
+      "file": "masters/master-112.png",
+      "sha256": "534da6829fa71b371d269946b7b29f708c7ff8b4a328f207fe4cb4be48dabfa7",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-113",
+      "order": 112,
+      "file": "masters/master-113.png",
+      "sha256": "f7038f5039a937c61556216a6f49e95d5920b53ef1df59362bce061d17c01438",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-114",
+      "order": 113,
+      "file": "masters/master-114.png",
+      "sha256": "f4476ec2f012a963a916081b3f22a427391ca1967fce2b395caa50fb94ce7ebe",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-115",
+      "order": 114,
+      "file": "masters/master-115.png",
+      "sha256": "7668bdf97524cbcb27b422bf9b16faa8275d1d3eaf756381056cd2334d766289",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-116",
+      "order": 115,
+      "file": "masters/master-116.png",
+      "sha256": "2da91eb74467a13d7d09eab13b7135f5ca53f736517c056b18c4f7228cfbebd9",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-117",
+      "order": 116,
+      "file": "masters/master-117.png",
+      "sha256": "9788acbb6a4f0842e9a0162b88969625114f1b0f482d56bec21154502ab7d190",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-118",
+      "order": 117,
+      "file": "masters/master-118.png",
+      "sha256": "4e419cbdbb21f7c075bf0163601d5815c04c8afbac4ec3cd50529af1d6885123",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-119",
+      "order": 118,
+      "file": "masters/master-119.png",
+      "sha256": "fb7abd1b8ec5e8ed61892c632b7f6d92501dd969ef7b67dc8236006da227dd1b",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-120",
+      "order": 119,
+      "file": "masters/master-120.png",
+      "sha256": "0f4ff40374a98e09952d21159faa17977276adeea97dd283034dc11de32003ec",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-121",
+      "order": 120,
+      "file": "masters/master-121.png",
+      "sha256": "a4de9cb32f87bdee534e6f6a37d103381644462779f440b97cf6a7f57c66a18b",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-122",
+      "order": 121,
+      "file": "masters/master-122.png",
+      "sha256": "4479e026b3e08d831dcc7afda6734c0b71b608c9247f85af24c4a1ec7b3f592a",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-123",
+      "order": 122,
+      "file": "masters/master-123.png",
+      "sha256": "96fea87bdb2d05a2f6e5d3b7a84c23d3e4f867270029e05766412e499803fe04",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-124",
+      "order": 123,
+      "file": "masters/master-124.png",
+      "sha256": "55f83bb16b0bc95011cbbdef284d30b00ae28922d4d9bfc5eeb225df6381c6b4",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-125",
+      "order": 124,
+      "file": "masters/master-125.png",
+      "sha256": "2741b30cd32d1250f579549f6a81516dd0c40af1191b986821e4746b9e82d015",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-126",
+      "order": 125,
+      "file": "masters/master-126.png",
+      "sha256": "a2b6a38a13a816531ed1774d529217bb75c21bcd4cdf5e7e316022cdcaddea0b",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-127",
+      "order": 126,
+      "file": "masters/master-127.png",
+      "sha256": "eb42d144a958e7f65afbdd5e8ee1ed0fe12aa14ac77ebfd95d13a0c09b051a35",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-128",
+      "order": 127,
+      "file": "masters/master-128.png",
+      "sha256": "10145fdd863489d1bbcce5d71f18bb0a35fe13a6036e7ea1ad8f700706676072",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-129",
+      "order": 128,
+      "file": "masters/master-129.png",
+      "sha256": "2855bd3ab7366132ce305224aa068092a7aa78f0ebea59b33b95e59e51a67da9",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-130",
+      "order": 129,
+      "file": "masters/master-130.png",
+      "sha256": "f7343c9d4bd197dfe41f1624ab6a47927dda3aba9b0ecc4371d5e97928a01e2f",
+      "width": 1536,
+      "height": 2048
+    },
+    {
+      "id": "master-131",
+      "order": 130,
+      "file": "masters/master-131.png",
+      "sha256": "f51a360fc8f4f527d92131c72fc6147ed50b328c7ee5e2427c953145ab11bc51",
+      "width": 1536,
+      "height": 2048
+    }
+  ],
+  "animations": [
+    {
+      "name": "idle",
+      "family": "fight",
+      "fps": 8,
+      "loop": true,
+      "sequence": [
+        "master-001",
+        "master-002",
+        "master-003",
+        "master-004",
+        "master-005",
+        "master-006",
+        "master-007",
+        "master-008"
+      ],
+      "authoredSequence": [
+        "master-001",
+        "master-002",
+        "master-003",
+        "master-004",
+        "master-005",
+        "master-006",
+        "master-007",
+        "master-008"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "walk",
+      "family": "fight",
+      "fps": 8,
+      "loop": true,
+      "sequence": [
+        "master-009",
+        "master-010",
+        "master-011",
+        "master-012",
+        "master-013",
+        "master-014",
+        "master-015",
+        "master-016",
+        "master-017",
+        "master-018",
+        "master-019",
+        "master-020"
+      ],
+      "authoredSequence": [
+        "master-009",
+        "master-010",
+        "master-011",
+        "master-012",
+        "master-013",
+        "master-014",
+        "master-015",
+        "master-016",
+        "master-017",
+        "master-018",
+        "master-019",
+        "master-020"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "high_punch",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-021",
+        "master-022",
+        "master-023",
+        "master-024",
+        "master-025",
+        "master-024",
+        "master-023",
+        "master-022",
+        "master-021"
+      ],
+      "authoredSequence": [
+        "master-021",
+        "master-022",
+        "master-023",
+        "master-024",
+        "master-025"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "high_kick",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-026",
+        "master-027",
+        "master-028",
+        "master-029",
+        "master-030",
+        "master-031",
+        "master-032",
+        "master-032",
+        "master-033",
+        "master-034",
+        "master-034",
+        "master-034",
+        "master-033",
+        "master-032",
+        "master-032",
+        "master-031",
+        "master-030",
+        "master-029",
+        "master-028",
+        "master-027",
+        "master-026"
+      ],
+      "authoredSequence": [
+        "master-026",
+        "master-027",
+        "master-028",
+        "master-029",
+        "master-030",
+        "master-031",
+        "master-032",
+        "master-032",
+        "master-033",
+        "master-034",
+        "master-034"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "low_punch",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-035",
+        "master-036",
+        "master-037",
+        "master-038",
+        "master-039",
+        "master-039",
+        "master-039",
+        "master-038",
+        "master-037",
+        "master-036",
+        "master-035"
+      ],
+      "authoredSequence": [
+        "master-035",
+        "master-036",
+        "master-037",
+        "master-038",
+        "master-039",
+        "master-039"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "low_kick",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-035",
+        "master-040",
+        "master-041",
+        "master-042",
+        "master-043",
+        "master-044",
+        "master-045",
+        "master-046",
+        "master-045",
+        "master-044",
+        "master-043",
+        "master-042",
+        "master-041",
+        "master-040",
+        "master-035"
+      ],
+      "authoredSequence": [
+        "master-035",
+        "master-040",
+        "master-041",
+        "master-042",
+        "master-043",
+        "master-044",
+        "master-045",
+        "master-046"
+      ],
+      "sourceReviewStatus": "needs_motion_review"
+    },
+    {
+      "name": "jump",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-047",
+        "master-048",
+        "master-049",
+        "master-050",
+        "master-051",
+        "master-052",
+        "master-047"
+      ],
+      "authoredSequence": [
+        "master-047",
+        "master-048",
+        "master-049",
+        "master-050",
+        "master-051",
+        "master-052",
+        "master-047"
+      ],
+      "sourceReviewStatus": "needs_motion_review"
+    },
+    {
+      "name": "crouch",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-026",
+        "master-053",
+        "master-054",
+        "master-055",
+        "master-056",
+        "master-035"
+      ],
+      "authoredSequence": [
+        "master-026",
+        "master-053",
+        "master-054",
+        "master-055",
+        "master-056",
+        "master-035"
+      ],
+      "sourceReviewStatus": "needs_motion_review"
+    },
+    {
+      "name": "hit",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-057",
+        "master-058",
+        "master-059",
+        "master-060",
+        "master-061",
+        "master-062"
+      ],
+      "authoredSequence": [
+        "master-057",
+        "master-058",
+        "master-059",
+        "master-060",
+        "master-061",
+        "master-062"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "ko",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-021",
+        "master-021",
+        "master-063",
+        "master-064",
+        "master-065",
+        "master-066",
+        "master-067",
+        "master-068",
+        "master-068",
+        "master-069",
+        "master-069",
+        "master-069"
+      ],
+      "authoredSequence": [
+        "master-021",
+        "master-021",
+        "master-063",
+        "master-064",
+        "master-065",
+        "master-066",
+        "master-067",
+        "master-068",
+        "master-068",
+        "master-069",
+        "master-069",
+        "master-069"
+      ],
+      "sourceReviewStatus": "visual_motion_review_passed"
+    },
+    {
+      "name": "victory",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-047",
+        "master-070",
+        "master-071",
+        "master-072",
+        "master-073",
+        "master-074",
+        "master-075",
+        "master-075",
+        "master-075",
+        "master-075",
+        "master-075",
+        "master-075"
+      ],
+      "authoredSequence": [
+        "master-047",
+        "master-070",
+        "master-071",
+        "master-072",
+        "master-073",
+        "master-074",
+        "master-075",
+        "master-075",
+        "master-075",
+        "master-075",
+        "master-075",
+        "master-075"
+      ],
+      "sourceReviewStatus": "visual_motion_review_passed"
+    },
+    {
+      "name": "uppercut",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-076",
+        "master-077",
+        "master-078",
+        "master-079",
+        "master-021"
+      ],
+      "authoredSequence": [
+        "master-076",
+        "master-077",
+        "master-078",
+        "master-079",
+        "master-021"
+      ],
+      "sourceReviewStatus": "visual_motion_review_passed"
+    },
+    {
+      "name": "fireball",
+      "family": "fight",
+      "fps": 8,
+      "loop": false,
+      "sequence": [
+        "master-080",
+        "master-081",
+        "master-082",
+        "master-021"
+      ],
+      "authoredSequence": [
+        "master-080",
+        "master-081",
+        "master-082",
+        "master-021"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "aura_unbothered",
+      "family": "aura",
+      "fps": 8,
+      "loop": true,
+      "sequence": [
+        "master-083",
+        "master-084",
+        "master-085",
+        "master-086",
+        "master-087",
+        "master-088",
+        "master-089",
+        "master-090"
+      ],
+      "authoredSequence": [
+        "master-083",
+        "master-084",
+        "master-085",
+        "master-086",
+        "master-087",
+        "master-088",
+        "master-089",
+        "master-090"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "aura_six_seven",
+      "family": "aura",
+      "fps": 8,
+      "loop": true,
+      "sequence": [
+        "master-091",
+        "master-092",
+        "master-093",
+        "master-094",
+        "master-095",
+        "master-092",
+        "master-096",
+        "master-094"
+      ],
+      "authoredSequence": [
+        "master-091",
+        "master-092",
+        "master-093",
+        "master-094",
+        "master-095",
+        "master-092",
+        "master-096",
+        "master-094"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "aura_mog_check",
+      "family": "aura",
+      "fps": 8,
+      "loop": true,
+      "sequence": [
+        "master-097",
+        "master-098",
+        "master-099",
+        "master-100",
+        "master-101",
+        "master-102",
+        "master-103",
+        "master-104"
+      ],
+      "authoredSequence": [
+        "master-097",
+        "master-098",
+        "master-099",
+        "master-100",
+        "master-101",
+        "master-102",
+        "master-103",
+        "master-104"
+      ],
+      "sourceReviewStatus": "intentional_perspective_user_approved"
+    },
+    {
+      "name": "aura_glide",
+      "family": "aura",
+      "fps": 8,
+      "loop": true,
+      "sequence": [
+        "master-105",
+        "master-106",
+        "master-107",
+        "master-108",
+        "master-109",
+        "master-110",
+        "master-111",
+        "master-112"
+      ],
+      "authoredSequence": [
+        "master-105",
+        "master-106",
+        "master-107",
+        "master-108",
+        "master-109",
+        "master-110",
+        "master-111",
+        "master-112"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "aura_floor_worm",
+      "family": "aura",
+      "fps": 8,
+      "loop": true,
+      "sequence": [
+        "master-113",
+        "master-114",
+        "master-115",
+        "master-116",
+        "master-117",
+        "master-118",
+        "master-119",
+        "master-120"
+      ],
+      "authoredSequence": [
+        "master-113",
+        "master-114",
+        "master-115",
+        "master-116",
+        "master-117",
+        "master-118",
+        "master-119",
+        "master-120"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "aura_one_leg",
+      "family": "aura",
+      "fps": 8,
+      "loop": true,
+      "sequence": [
+        "master-121",
+        "master-122",
+        "master-123",
+        "master-124",
+        "master-125",
+        "master-126",
+        "master-127",
+        "master-128"
+      ],
+      "authoredSequence": [
+        "master-121",
+        "master-122",
+        "master-123",
+        "master-124",
+        "master-125",
+        "master-126",
+        "master-127",
+        "master-128"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    },
+    {
+      "name": "aura_shrug",
+      "family": "aura",
+      "fps": 8,
+      "loop": true,
+      "sequence": [
+        "master-129",
+        "master-130",
+        "master-129",
+        "master-131",
+        "master-129",
+        "master-130",
+        "master-129",
+        "master-131"
+      ],
+      "authoredSequence": [
+        "master-129",
+        "master-130",
+        "master-129",
+        "master-131",
+        "master-129",
+        "master-130",
+        "master-129",
+        "master-131"
+      ],
+      "sourceReviewStatus": "audited_geometry"
+    }
+  ],
+  "rookiePacks": [
+    {
+      "id": "two-01",
+      "grid": {
+        "columns": 10,
+        "rows": 7
+      },
+      "cells": [
+        {
+          "index": 0,
+          "masterId": "master-001",
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 1,
+          "masterId": "master-002",
+          "rect": {
+            "x": 410,
+            "y": 0,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 2,
+          "masterId": "master-003",
+          "rect": {
+            "x": 819,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 3,
+          "masterId": "master-004",
+          "rect": {
+            "x": 1229,
+            "y": 0,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 4,
+          "masterId": "master-005",
+          "rect": {
+            "x": 1638,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 5,
+          "masterId": "master-006",
+          "rect": {
+            "x": 2048,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 6,
+          "masterId": "master-007",
+          "rect": {
+            "x": 2458,
+            "y": 0,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 2458,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 7,
+          "masterId": "master-008",
+          "rect": {
+            "x": 2867,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 8,
+          "masterId": "master-009",
+          "rect": {
+            "x": 3277,
+            "y": 0,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 3277,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 9,
+          "masterId": "master-010",
+          "rect": {
+            "x": 3686,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 10,
+          "masterId": "master-011",
+          "rect": {
+            "x": 0,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 11,
+          "masterId": "master-012",
+          "rect": {
+            "x": 410,
+            "y": 585,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 12,
+          "masterId": "master-013",
+          "rect": {
+            "x": 819,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 13,
+          "masterId": "master-014",
+          "rect": {
+            "x": 1229,
+            "y": 585,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 14,
+          "masterId": "master-015",
+          "rect": {
+            "x": 1638,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 15,
+          "masterId": "master-016",
+          "rect": {
+            "x": 2048,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 16,
+          "masterId": "master-017",
+          "rect": {
+            "x": 2458,
+            "y": 585,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 2458,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 17,
+          "masterId": "master-018",
+          "rect": {
+            "x": 2867,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 18,
+          "masterId": "master-019",
+          "rect": {
+            "x": 3277,
+            "y": 585,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 3277,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 19,
+          "masterId": "master-020",
+          "rect": {
+            "x": 3686,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 20,
+          "masterId": "master-021",
+          "rect": {
+            "x": 0,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 21,
+          "masterId": "master-022",
+          "rect": {
+            "x": 410,
+            "y": 1170,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 22,
+          "masterId": "master-023",
+          "rect": {
+            "x": 819,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 23,
+          "masterId": "master-024",
+          "rect": {
+            "x": 1229,
+            "y": 1170,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 24,
+          "masterId": "master-025",
+          "rect": {
+            "x": 1638,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 25,
+          "masterId": "master-026",
+          "rect": {
+            "x": 2048,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 26,
+          "masterId": "master-027",
+          "rect": {
+            "x": 2458,
+            "y": 1170,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 2458,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 27,
+          "masterId": "master-028",
+          "rect": {
+            "x": 2867,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 28,
+          "masterId": "master-029",
+          "rect": {
+            "x": 3277,
+            "y": 1170,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 3277,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 29,
+          "masterId": "master-030",
+          "rect": {
+            "x": 3686,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 30,
+          "masterId": "master-031",
+          "rect": {
+            "x": 0,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 31,
+          "masterId": "master-032",
+          "rect": {
+            "x": 410,
+            "y": 1755,
+            "width": 409,
+            "height": 586
+          },
+          "placement": {
+            "x": 410,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 32,
+          "masterId": "master-033",
+          "rect": {
+            "x": 819,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 33,
+          "masterId": "master-034",
+          "rect": {
+            "x": 1229,
+            "y": 1755,
+            "width": 409,
+            "height": 586
+          },
+          "placement": {
+            "x": 1229,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 34,
+          "masterId": "master-035",
+          "rect": {
+            "x": 1638,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 35,
+          "masterId": "master-036",
+          "rect": {
+            "x": 2048,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 36,
+          "masterId": "master-037",
+          "rect": {
+            "x": 2458,
+            "y": 1755,
+            "width": 409,
+            "height": 586
+          },
+          "placement": {
+            "x": 2458,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 37,
+          "masterId": "master-038",
+          "rect": {
+            "x": 2867,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 38,
+          "masterId": "master-039",
+          "rect": {
+            "x": 3277,
+            "y": 1755,
+            "width": 409,
+            "height": 586
+          },
+          "placement": {
+            "x": 3277,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 39,
+          "masterId": "master-040",
+          "rect": {
+            "x": 3686,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 40,
+          "masterId": "master-041",
+          "rect": {
+            "x": 0,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 41,
+          "masterId": "master-042",
+          "rect": {
+            "x": 410,
+            "y": 2341,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 42,
+          "masterId": "master-043",
+          "rect": {
+            "x": 819,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 43,
+          "masterId": "master-044",
+          "rect": {
+            "x": 1229,
+            "y": 2341,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 44,
+          "masterId": "master-045",
+          "rect": {
+            "x": 1638,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 45,
+          "masterId": "master-046",
+          "rect": {
+            "x": 2048,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 46,
+          "masterId": "master-047",
+          "rect": {
+            "x": 2458,
+            "y": 2341,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 2458,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 47,
+          "masterId": "master-048",
+          "rect": {
+            "x": 2867,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 48,
+          "masterId": "master-049",
+          "rect": {
+            "x": 3277,
+            "y": 2341,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 3277,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 49,
+          "masterId": "master-050",
+          "rect": {
+            "x": 3686,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 50,
+          "masterId": "master-051",
+          "rect": {
+            "x": 0,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 51,
+          "masterId": "master-052",
+          "rect": {
+            "x": 410,
+            "y": 2926,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 52,
+          "masterId": "master-053",
+          "rect": {
+            "x": 819,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 53,
+          "masterId": "master-054",
+          "rect": {
+            "x": 1229,
+            "y": 2926,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 54,
+          "masterId": "master-055",
+          "rect": {
+            "x": 1638,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 55,
+          "masterId": "master-056",
+          "rect": {
+            "x": 2048,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 56,
+          "masterId": "master-057",
+          "rect": {
+            "x": 2458,
+            "y": 2926,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 2458,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 57,
+          "masterId": "master-058",
+          "rect": {
+            "x": 2867,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 58,
+          "masterId": "master-059",
+          "rect": {
+            "x": 3277,
+            "y": 2926,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 3277,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 59,
+          "masterId": "master-060",
+          "rect": {
+            "x": 3686,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 60,
+          "masterId": "master-061",
+          "rect": {
+            "x": 0,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 61,
+          "masterId": "master-062",
+          "rect": {
+            "x": 410,
+            "y": 3511,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 62,
+          "masterId": "master-063",
+          "rect": {
+            "x": 819,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 63,
+          "masterId": "master-064",
+          "rect": {
+            "x": 1229,
+            "y": 3511,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 64,
+          "masterId": "master-065",
+          "rect": {
+            "x": 1638,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 65,
+          "masterId": "master-066",
+          "rect": {
+            "x": 2048,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        }
+      ],
+      "blankCells": [
+        {
+          "index": 66,
+          "rect": {
+            "x": 2458,
+            "y": 3511,
+            "width": 409,
+            "height": 585
+          }
+        },
+        {
+          "index": 67,
+          "rect": {
+            "x": 2867,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          }
+        },
+        {
+          "index": 68,
+          "rect": {
+            "x": 3277,
+            "y": 3511,
+            "width": 409,
+            "height": 585
+          }
+        },
+        {
+          "index": 69,
+          "rect": {
+            "x": 3686,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          }
+        }
+      ],
+      "image": {
+        "file": "rookie/two-01.png",
+        "sha256": "3ab60f28fdd16f0ab31dfe9725093e6e12baa057edb1f99b664c52260d893f21",
+        "width": 4096,
+        "height": 4096
+      }
+    },
+    {
+      "id": "two-02",
+      "grid": {
+        "columns": 10,
+        "rows": 7
+      },
+      "cells": [
+        {
+          "index": 0,
+          "masterId": "master-067",
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 1,
+          "masterId": "master-068",
+          "rect": {
+            "x": 410,
+            "y": 0,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 2,
+          "masterId": "master-069",
+          "rect": {
+            "x": 819,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 3,
+          "masterId": "master-070",
+          "rect": {
+            "x": 1229,
+            "y": 0,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 4,
+          "masterId": "master-071",
+          "rect": {
+            "x": 1638,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 5,
+          "masterId": "master-072",
+          "rect": {
+            "x": 2048,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 6,
+          "masterId": "master-073",
+          "rect": {
+            "x": 2458,
+            "y": 0,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 2458,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 7,
+          "masterId": "master-074",
+          "rect": {
+            "x": 2867,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 8,
+          "masterId": "master-075",
+          "rect": {
+            "x": 3277,
+            "y": 0,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 3277,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 9,
+          "masterId": "master-076",
+          "rect": {
+            "x": 3686,
+            "y": 0,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 19.833333333333314,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 10,
+          "masterId": "master-077",
+          "rect": {
+            "x": 0,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 11,
+          "masterId": "master-078",
+          "rect": {
+            "x": 410,
+            "y": 585,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 12,
+          "masterId": "master-079",
+          "rect": {
+            "x": 819,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 13,
+          "masterId": "master-080",
+          "rect": {
+            "x": 1229,
+            "y": 585,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 14,
+          "masterId": "master-081",
+          "rect": {
+            "x": 1638,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 15,
+          "masterId": "master-082",
+          "rect": {
+            "x": 2048,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 16,
+          "masterId": "master-083",
+          "rect": {
+            "x": 2458,
+            "y": 585,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 2458,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 17,
+          "masterId": "master-084",
+          "rect": {
+            "x": 2867,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 18,
+          "masterId": "master-085",
+          "rect": {
+            "x": 3277,
+            "y": 585,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 3277,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 19,
+          "masterId": "master-086",
+          "rect": {
+            "x": 3686,
+            "y": 585,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 604.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 20,
+          "masterId": "master-087",
+          "rect": {
+            "x": 0,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 21,
+          "masterId": "master-088",
+          "rect": {
+            "x": 410,
+            "y": 1170,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 22,
+          "masterId": "master-089",
+          "rect": {
+            "x": 819,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 23,
+          "masterId": "master-090",
+          "rect": {
+            "x": 1229,
+            "y": 1170,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 24,
+          "masterId": "master-091",
+          "rect": {
+            "x": 1638,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 25,
+          "masterId": "master-092",
+          "rect": {
+            "x": 2048,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 26,
+          "masterId": "master-093",
+          "rect": {
+            "x": 2458,
+            "y": 1170,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 2458,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 27,
+          "masterId": "master-094",
+          "rect": {
+            "x": 2867,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 28,
+          "masterId": "master-095",
+          "rect": {
+            "x": 3277,
+            "y": 1170,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 3277,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 29,
+          "masterId": "master-096",
+          "rect": {
+            "x": 3686,
+            "y": 1170,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 1189.8333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 30,
+          "masterId": "master-097",
+          "rect": {
+            "x": 0,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 31,
+          "masterId": "master-098",
+          "rect": {
+            "x": 410,
+            "y": 1755,
+            "width": 409,
+            "height": 586
+          },
+          "placement": {
+            "x": 410,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 32,
+          "masterId": "master-099",
+          "rect": {
+            "x": 819,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 33,
+          "masterId": "master-100",
+          "rect": {
+            "x": 1229,
+            "y": 1755,
+            "width": 409,
+            "height": 586
+          },
+          "placement": {
+            "x": 1229,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 34,
+          "masterId": "master-101",
+          "rect": {
+            "x": 1638,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 35,
+          "masterId": "master-102",
+          "rect": {
+            "x": 2048,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 36,
+          "masterId": "master-103",
+          "rect": {
+            "x": 2458,
+            "y": 1755,
+            "width": 409,
+            "height": 586
+          },
+          "placement": {
+            "x": 2458,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 37,
+          "masterId": "master-104",
+          "rect": {
+            "x": 2867,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 38,
+          "masterId": "master-105",
+          "rect": {
+            "x": 3277,
+            "y": 1755,
+            "width": 409,
+            "height": 586
+          },
+          "placement": {
+            "x": 3277,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 39,
+          "masterId": "master-106",
+          "rect": {
+            "x": 3686,
+            "y": 1755,
+            "width": 410,
+            "height": 586
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 1775.3333333333333,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 40,
+          "masterId": "master-107",
+          "rect": {
+            "x": 0,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 41,
+          "masterId": "master-108",
+          "rect": {
+            "x": 410,
+            "y": 2341,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 42,
+          "masterId": "master-109",
+          "rect": {
+            "x": 819,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 43,
+          "masterId": "master-110",
+          "rect": {
+            "x": 1229,
+            "y": 2341,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 44,
+          "masterId": "master-111",
+          "rect": {
+            "x": 1638,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 45,
+          "masterId": "master-112",
+          "rect": {
+            "x": 2048,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 46,
+          "masterId": "master-113",
+          "rect": {
+            "x": 2458,
+            "y": 2341,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 2458,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 47,
+          "masterId": "master-114",
+          "rect": {
+            "x": 2867,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 48,
+          "masterId": "master-115",
+          "rect": {
+            "x": 3277,
+            "y": 2341,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 3277,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 49,
+          "masterId": "master-116",
+          "rect": {
+            "x": 3686,
+            "y": 2341,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 2360.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 50,
+          "masterId": "master-117",
+          "rect": {
+            "x": 0,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 51,
+          "masterId": "master-118",
+          "rect": {
+            "x": 410,
+            "y": 2926,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 52,
+          "masterId": "master-119",
+          "rect": {
+            "x": 819,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 53,
+          "masterId": "master-120",
+          "rect": {
+            "x": 1229,
+            "y": 2926,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 54,
+          "masterId": "master-121",
+          "rect": {
+            "x": 1638,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 55,
+          "masterId": "master-122",
+          "rect": {
+            "x": 2048,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2048.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 56,
+          "masterId": "master-123",
+          "rect": {
+            "x": 2458,
+            "y": 2926,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 2458,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 57,
+          "masterId": "master-124",
+          "rect": {
+            "x": 2867,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 2867.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 58,
+          "masterId": "master-125",
+          "rect": {
+            "x": 3277,
+            "y": 2926,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 3277,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 59,
+          "masterId": "master-126",
+          "rect": {
+            "x": 3686,
+            "y": 2926,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 3686.5,
+            "y": 2945.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 60,
+          "masterId": "master-127",
+          "rect": {
+            "x": 0,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 0.5,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 61,
+          "masterId": "master-128",
+          "rect": {
+            "x": 410,
+            "y": 3511,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 410,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 62,
+          "masterId": "master-129",
+          "rect": {
+            "x": 819,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 819.5,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 63,
+          "masterId": "master-130",
+          "rect": {
+            "x": 1229,
+            "y": 3511,
+            "width": 409,
+            "height": 585
+          },
+          "placement": {
+            "x": 1229,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        },
+        {
+          "index": 64,
+          "masterId": "master-131",
+          "rect": {
+            "x": 1638,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          },
+          "placement": {
+            "x": 1638.5,
+            "y": 3530.8333333333335,
+            "width": 409,
+            "height": 545.3333333333334,
+            "uniformScale": 0.2662760416666667,
+            "sourceWidth": 1536,
+            "sourceHeight": 2048
+          }
+        }
+      ],
+      "blankCells": [
+        {
+          "index": 65,
+          "rect": {
+            "x": 2048,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          }
+        },
+        {
+          "index": 66,
+          "rect": {
+            "x": 2458,
+            "y": 3511,
+            "width": 409,
+            "height": 585
+          }
+        },
+        {
+          "index": 67,
+          "rect": {
+            "x": 2867,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          }
+        },
+        {
+          "index": 68,
+          "rect": {
+            "x": 3277,
+            "y": 3511,
+            "width": 409,
+            "height": 585
+          }
+        },
+        {
+          "index": 69,
+          "rect": {
+            "x": 3686,
+            "y": 3511,
+            "width": 410,
+            "height": 585
+          }
+        }
+      ],
+      "image": {
+        "file": "rookie/two-02.png",
+        "sha256": "c502762357818175c8ad97f52bef20a36b8ad58b739225cd06ea8124cbd8cd14",
+        "width": 4096,
+        "height": 4096
+      }
+    }
+  ]
+}

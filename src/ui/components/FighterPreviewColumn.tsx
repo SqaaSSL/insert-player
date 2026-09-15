@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from 'react';
 import type { CachedMeta, CachedSprite } from '../../services/SpriteCache.ts';
 import { AnimationGrid } from './AnimationGrid.tsx';
-import { SourceViewsPanel } from './SourceViewsPanel.tsx';
+import { OPTIONAL_CROUCH_SOURCE_MESSAGE, SourceViewsPanel } from './SourceViewsPanel.tsx';
 import { SpritePreviewSurface } from './SpritePreviewSurface.tsx';
 import { DebugFeed } from './DebugFeed.tsx';
 import { Button } from './Button.tsx';
@@ -80,6 +80,7 @@ interface SourceRetryActions {
 interface FighterPreviewColumnProps {
   meta: CachedMeta | null;
   sprites: readonly CachedSprite[];
+  animationNames?: readonly string[];
   selection: PreviewSelection;
   onSelectionChange: (selection: PreviewSelection) => void;
   /** Animations currently being generated/retried (shows spinner tiles). */
@@ -111,6 +112,7 @@ interface FighterPreviewColumnProps {
 export function FighterPreviewColumn({
   meta,
   sprites,
+  animationNames,
   selection,
   onSelectionChange,
   generating,
@@ -130,6 +132,9 @@ export function FighterPreviewColumn({
     selection,
   );
   const previewSourceUrl = useObjectUrl(previewSourceBlob);
+  const crouchOptional = sprites.length > 0 && sprites.every(sprite => sprite.animationFormat === 'template-atlas-v1');
+  const optionalCrouchSelected = crouchOptional && selection.kind === 'source'
+    && selection.source === 'crouch' && !previewSourceBlob;
   const hasCachedSelectedSprite = Boolean(
     selectedAnimName && sprites.some((item) => item.animationName === selectedAnimName),
   );
@@ -146,6 +151,7 @@ export function FighterPreviewColumn({
             retryCreditCost={sourceRetry?.creditCost}
             onRetry={sourceRetry?.actions}
             busy={sourceRetry?.busy}
+            crouchOptional={crouchOptional}
           />
           {sourcePanelExtra}
         </div>
@@ -153,6 +159,7 @@ export function FighterPreviewColumn({
         <div className="gallery-panel gallery-panel--anims">
           <h3>Animations</h3>
           <AnimationGrid
+            animationNames={animationNames}
             sprites={[...sprites]}
             failedArtifacts={meta?.failedAnimationArtifacts ?? null}
             generating={generating}
@@ -179,10 +186,11 @@ export function FighterPreviewColumn({
           <SpritePreviewSurface
             sourceImageUrl={selection.kind === 'source' ? previewSourceUrl : null}
             sprite={selection.kind === 'animation' ? previewSprite : null}
-            loading={loading}
+            loading={loading && (!optionalCrouchSelected || sourceRetry?.regeneratingSource === 'crouch')}
             loadingLabel={loadingLabel}
             emptyLabel={
-              emptyLabel ?? (selection.kind === 'source' ? 'Missing source' : 'No preview for this animation yet')
+              optionalCrouchSelected ? OPTIONAL_CROUCH_SOURCE_MESSAGE
+                : emptyLabel ?? (selection.kind === 'source' ? 'Missing source' : 'No preview for this animation yet')
             }
           />
         </div>

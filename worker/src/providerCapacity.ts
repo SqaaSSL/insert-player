@@ -1,5 +1,6 @@
 import type { Env, GenerationJobOperation, QualityTier } from './types';
 import { configuredGeminiTransport } from './geminiTransport';
+import type { GenerationRendererVersion } from '../../src/services/TemplateAtlasContract';
 
 export const GEMINI_PRO_IMAGE_MODEL = 'gemini-3-pro-image';
 export const GEMINI_FLASH_IMAGE_MODEL = 'gemini-3.1-flash-image';
@@ -55,7 +56,11 @@ function boundedRetryAfterSeconds(value: unknown): number {
 export function requiredGeminiModelsForGeneration(
   operation: GenerationJobOperation,
   tier: QualityTier,
+  rendererVersion: GenerationRendererVersion = 'legacy-v1',
 ): ApprovedGeminiModel[] {
+  if (rendererVersion !== 'legacy-v1') {
+    return operation === 'fighter_generation' || operation === 'fighter_retry_source' ? [GEMINI_PRO_IMAGE_MODEL] : [];
+  }
   if (operation === 'fighter_retry_source') return [GEMINI_PRO_IMAGE_MODEL];
   if (operation === 'fighter_generation') {
     return tier === 'champion'
@@ -129,10 +134,13 @@ export async function activeGenerationCapacity(
   operation: GenerationJobOperation,
   tier: QualityTier,
   nowMs = Date.now(),
+  rendererVersion: GenerationRendererVersion = 'legacy-v1',
 ): Promise<ProviderCapacityWindow | null> {
+  const models = requiredGeminiModelsForGeneration(operation, tier, rendererVersion);
+  if (models.length === 0) return null;
   const nowEpoch = Math.floor(nowMs / 1_000);
   const table = capacityTable(env);
-  for (const model of requiredGeminiModelsForGeneration(operation, tier)) {
+  for (const model of models) {
     const row = await env.DB.prepare(`
       SELECT provider, model, reason, retry_at_epoch
       FROM ${table}

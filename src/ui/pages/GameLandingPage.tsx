@@ -18,7 +18,7 @@ export const GAME_ENTRY_CONTENT = {
     playLabel: 'Play Aura',
     playHint: 'Free · no account · learn as you play',
     personal: 'Next round, make it you.',
-    personalDescription: 'One photo. Your name. Six Aura moves. Your first Rookie is included with your account.',
+    personalDescription: 'One photo. Your name. All 20 animations for Aura, Fight and Rush. Your first Rookie is included if your account has not used it.',
     previewCaption: 'Take turns. Hit the beat. The higher Aura wins.',
   },
   fight: {
@@ -29,7 +29,7 @@ export const GAME_ENTRY_CONTENT = {
     playLabel: 'Play Fight',
     playHint: 'Start with a ready-made fighter.',
     personal: 'Step into your own fight.',
-    personalDescription: 'Create your fighter once. The same character can clear Rush with a CPU ally and join Aura with compatible moves.',
+    personalDescription: 'Create your fighter once with all 20 animations. Take the same character into Fight, Rush with a CPU ally, and Aura.',
     previewCaption: 'Fight preview from the Insert Player roster.',
   },
   rush: {
@@ -40,7 +40,7 @@ export const GAME_ENTRY_CONTENT = {
     playLabel: 'Play Rush',
     playHint: 'You + a CPU ally. Ready-made fighters included.',
     personal: 'Bring your character along.',
-    personalDescription: 'Your Fight character is ready for Rush too. Create one from a photo and take the same identity into both games.',
+    personalDescription: 'Create one character from a photo, with all 20 animations for Rush, Fight and Aura.',
     previewCaption: 'Rush preview: one player teams up with a CPU ally.',
   },
 } as const;
@@ -103,8 +103,7 @@ export interface GameLandingPageProps {
 
 export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenCharacters, onOpenCredits, onBack, onLocalVersus, onOnlineVersus, onWatch, onChooseCharacter }: GameLandingPageProps) {
   const content = GAME_ENTRY_CONTENT[mode];
-  const rookieQuote = quoteGenerationPackage('rookie', 'aura');
-  const auraQuote = quoteGenerationPackage('contender', 'aura');
+  const rookieQuote = quoteGenerationPackage('rookie', 'complete');
   const completeQuote = quoteGenerationPackage('contender', 'complete');
   const otherModes = (['aura', 'fight', 'rush'] as const).filter((game) => game !== mode);
   return (
@@ -147,22 +146,18 @@ export function GameLandingPage({ mode, onPlay, onCreate, onExplore, onOpenChara
           <button className="product-entry__text-link" type="button" onClick={onOpenCharacters}>Open my characters →</button>
         </div>
         <div className="product-entry__pricing">
-          <p className="product-entry__pricing-context">{mode === 'aura' ? 'Start Rookie. Upgrade when you want.' : 'Create at Champion quality'}</p>
+          <p className="product-entry__pricing-context">One character. All three games.</p>
           <dl>
-            {mode === 'aura' && <div>
-              <dt>Rookie Aura <span>First Rookie included with your account</span></dt>
-              <dd>{rookieQuote.priceLabel}<small>after your first Rookie</small></dd>
-            </div>}
             <div>
-              <dt>{mode === 'aura' ? 'Champion Aura' : 'Aura'} <span>Six dedicated performance moves</span></dt>
-              <dd>{auraQuote.priceLabel}</dd>
+              <dt>Rookie <span>All 20 animations, compact detail</span></dt>
+              <dd>{rookieQuote.priceLabel}<small>after your first Rookie</small></dd>
             </div>
             <div>
-              <dt>Fight + Rush <span>{mode === 'aura' ? 'Champion · ' : ''}Combat moves for both games</span></dt>
+              <dt>Champion <span>All 20 animations, more detail per move</span></dt>
               <dd>{completeQuote.priceLabel}</dd>
             </div>
           </dl>
-          <p className="product-entry__pricing-note">Aura includes its six performance moves. Fight + Rush is a separate pack. You see the exact cost before creating.</p>
+          <p className="product-entry__pricing-note">Both qualities include Aura, Fight and Rush. Sign in to check your included first Rookie and the exact cost before creating.</p>
           <button className="product-entry__text-link" type="button" onClick={onOpenCredits}>View credit packs →</button>
         </div>
       </section>

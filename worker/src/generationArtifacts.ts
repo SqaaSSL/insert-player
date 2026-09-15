@@ -14,6 +14,7 @@ import type {
   GenerationJob,
   GenerationJobOperation,
 } from './types';
+import { storedGenerationRenderer } from './templateGenerationPolicy';
 
 export interface GenerationStageDefinition {
   key: string;
@@ -55,9 +56,10 @@ export function generationStagesForOperation(
 ): GenerationStageDefinition[] {
   const animationNames = storedGenerationAnimationNames(pack);
   if (operation === 'fighter_generation') {
+    const sourceNames = storedGenerationRenderer(pack) === 'legacy-v1' ? SOURCE_NAMES : ['side', 'upright'];
     return [
-      ...SOURCE_NAMES.map((name, index) => stage('source', name, index + 1)),
-      ...animationNames.map((name, index) => stage('sprite', name, index + 4)),
+      ...sourceNames.map((name, index) => stage('source', name, index + 1)),
+      ...animationNames.map((name, index) => stage('sprite', name, index + sourceNames.length + 1)),
     ];
   }
   if (operation === 'fighter_upgrade') {

@@ -2,6 +2,7 @@ import type { GenerationPackageOptions } from './GenerationPackages';
 import { apiFetch, type ApiRequestContext } from './ApiClient';
 import type { GenerationBillingOperation, QualityTier } from './QualityTiers';
 import type { GenerationCreationFlow } from './GenerationCreationFlow';
+import type { GenerationRendererVersion } from './TemplateAtlasContract';
 import {
   storedGenerationLegalAttestation,
   type CheckoutLegalAttestation,
@@ -11,6 +12,7 @@ import { STAGE_FORGE_CREDIT_COST } from '../shared/StageForgePricing.ts';
 
 export interface GenerationAuthorization {
   authorized: boolean;
+  rendererVersion?: GenerationRendererVersion;
   creationFlow?: GenerationCreationFlow;
   creationPackage?: GenerationPackageOptions['creationPackage'];
   expansion?: boolean;

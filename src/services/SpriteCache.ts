@@ -384,7 +384,7 @@ function spriteMatchesPlayableRef(sprite: CachedSprite, ref: CachedPlayableSprit
   const expectedHash = normalizedSpriteContentHash(ref.contentHash);
   if (!expectedHash || normalizedSpriteContentHash(sprite.contentHash) !== expectedHash) return false;
   if (ref.qualityTier !== 'rookie' && ref.qualityTier !== 'contender' && ref.qualityTier !== 'champion') return false;
-  if (ref.animationFormat !== 'legacy' && ref.animationFormat !== 'video-dense-v1') return false;
+  if (ref.animationFormat !== 'legacy' && ref.animationFormat !== 'video-dense-v1' && ref.animationFormat !== 'template-atlas-v1') return false;
   return sprite.animationName === ref.animationName &&
     normalizeQualityTier(sprite.qualityTier) === ref.qualityTier &&
     sprite.frameWidth === ref.frameWidth &&

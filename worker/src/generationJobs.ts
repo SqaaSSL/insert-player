@@ -1,5 +1,6 @@
 import { parseGenerationPackage, AURA_GENERATION_ANIMATIONS, type GenerationPackage } from '../../src/services/GenerationPackages';
 import { storedGenerationAnimationNames, type StoredGenerationPackage } from './generationPackages';
+import { requestedGenerationRenderer, rendererMatchesTier, storedGenerationRenderer } from './templateGenerationPolicy';
 import { generateId } from './auth';
 import { artifactProgress, generationStagesForOperation } from './generationArtifacts';
 import { settleGenerationPurchase } from './billing';
@@ -41,6 +42,7 @@ import {
 const MAX_JOB_BODY_BYTES = 8 * 1024;
 const JOB_TTL_HOURS = 48;
 const ANIMATION_TARGETS = new Set([
+  'uppercut', 'fireball', 'aura_shrug',
   'idle',
   'walk',
   'high_punch',
@@ -147,6 +149,7 @@ function serializeJob(
     fighterId: job.fighter_id,
     tier: job.tier,
     creationFlow: job.creation_flow,
+    rendererVersion: storedGenerationRenderer(job),
     creationPackage: job.creation_package ?? 'complete',
     expansion: Boolean(job.expansion_only),
     operation: job.operation,
@@ -355,6 +358,10 @@ async function validateRequiredAssets(
     } else {
       required = [row.upright_view_blob_key, row.upright_view_raw_blob_key];
     }
+  } else if (storedGenerationRenderer(row) !== 'legacy-v1') {
+    // Atlas maintenance reuses the prepared upright. New characters never
+    // generate the legacy crouch source, and do not need it to repair an atlas.
+    required = [row.upright_view_blob_key, row.upright_view_raw_blob_key];
   } else {
     required = [
       row.side_view_blob_key,
@@ -407,6 +414,7 @@ export async function createGenerationJob(
     targetKind?: string;
     targetName?: string;
     creationFlow?: unknown;
+    rendererVersion?: unknown;
     creationPackage?: unknown;
     expansion?: unknown;
   }>(request, MAX_JOB_BODY_BYTES);
@@ -418,6 +426,8 @@ export async function createGenerationJob(
     : null;
   const targetName = body.targetName?.trim().toLowerCase() || null;
   const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
+  const rendererVersion = requestedGenerationRenderer(body.rendererVersion);
+  if (!rendererVersion) return json({ error: 'Unsupported generation renderer' }, 400);
   const creationPackage = parseGenerationPackage(body.creationPackage);
   if (!creationPackage) return json({ error: 'Unsupported generation package' }, 400);
   if (body.expansion !== undefined && typeof body.expansion !== 'boolean') return json({ error: 'Invalid expansion request' }, 400);
@@ -496,6 +506,9 @@ export async function createGenerationJob(
     LIMIT 1
   `).bind(auth.userId, purchaseId, providerSessionId).first<GenerationJob>();
   if (existing) {
+    if (storedGenerationRenderer(existing) !== rendererVersion) {
+      return json({ error: 'Generation renderer does not match the existing job', code: 'generation_renderer_mismatch' }, 409);
+    }
     if (!matchesJobRequest(
       existing,
       fighterId,
@@ -620,7 +633,13 @@ export async function createGenerationJob(
     return rejectReservedJob(env, auth.userId, purchaseId, fighterId, 'This package requires Original generation', 400);
   }
   let authorizedAnimations: readonly string[];
-  try { authorizedAnimations = storedGenerationAnimationNames(authorization); } catch {
+  try {
+    authorizedAnimations = storedGenerationAnimationNames(authorization);
+    if (storedGenerationRenderer(authorization) !== rendererVersion || !rendererMatchesTier(rendererVersion, authorization.charge_tier)) {
+      return rejectReservedJob(env, auth.userId, purchaseId, fighterId, 'Generation renderer does not match the authorized purchase', 409,
+        { code: 'generation_renderer_mismatch' });
+    }
+  } catch {
     return rejectReservedJob(env, auth.userId, purchaseId, fighterId, 'Invalid authorized package plan', 400);
   }
   if (creationFlow === 'video' && authorization.charge_tier !== 'champion') {
@@ -847,7 +866,14 @@ export async function createGenerationJob(
   }
   let capacity;
   try {
-    capacity = await activeGenerationCapacity(env, operation, authorization.charge_tier);
+    let capacityOperation = operation;
+    if (rendererVersion !== 'legacy-v1' && operation === 'fighter_generation' && authorization.continuation_run_id) {
+      const sources = await env.DB.prepare(`SELECT COUNT(*) AS count FROM generation_artifact_checkpoints
+        WHERE run_id = ? AND artifact_kind = 'source' AND artifact_name IN ('side', 'upright') AND status = 'approved'`)
+        .bind(authorization.continuation_run_id).first<{ count: number }>();
+      if (sources?.count === 2) capacityOperation = 'fighter_upgrade';
+    }
+    capacity = await activeGenerationCapacity(env, capacityOperation, authorization.charge_tier, Date.now(), rendererVersion);
   } catch (error) {
     console.error(JSON.stringify({
       event: 'provider_capacity_read_failed',
@@ -929,7 +955,7 @@ export async function createGenerationJob(
 
   const jobId = purchaseId;
   const progressTotal = operation === 'fighter_generation'
-    ? authorizedAnimations.length + 3
+    ? authorizedAnimations.length + (rendererVersion === 'legacy-v1' ? 3 : 2)
     : operation === 'fighter_upgrade'
       ? authorizedAnimations.length
       : 1;

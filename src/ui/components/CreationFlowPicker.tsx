@@ -12,6 +12,8 @@ interface CreationFlowPickerProps {
   videoAvailable?: boolean;
   videoUnavailableReason?: string;
   compact?: boolean;
+  /** Explicit opt-in for internal legacy-pipeline review, never a public tier choice. */
+  internalReview?: boolean;
 }
 
 const FLOW_OPTIONS: ReadonlyArray<{
@@ -34,6 +36,7 @@ const FLOW_OPTIONS: ReadonlyArray<{
   },
 ];
 
+/** @deprecated Retained only for explicit internal review of legacy creation flows. */
 export function CreationFlowPicker({
   value,
   onChange,
@@ -43,8 +46,10 @@ export function CreationFlowPicker({
   videoAvailable = true,
   videoUnavailableReason,
   compact = false,
+  internalReview = false,
 }: CreationFlowPickerProps) {
   const id = useId();
+  if (internalReview !== true) return null;
 
   return (
     <fieldset

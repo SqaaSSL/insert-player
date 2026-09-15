@@ -53,7 +53,7 @@ export function SpritePreviewSurface({
   }
   if (sprite) {
     const useRawPreview = Boolean(
-      sprite.rawBlob && sprite.rawFrameWidth && sprite.rawFrameHeight && sprite.rawFrameCount,
+      sprite.animationFormat !== 'template-atlas-v1' && sprite.rawBlob && sprite.rawFrameWidth && sprite.rawFrameHeight && sprite.rawFrameCount,
     );
     return (
       <>
@@ -64,6 +64,7 @@ export function SpritePreviewSurface({
             frameHeight={useRawPreview ? sprite.rawFrameHeight! : sprite.frameHeight}
             frameCount={useRawPreview ? sprite.rawFrameCount! : sprite.frameCount}
             playbackFrameIndices={useRawPreview ? previewPlaybackFrameIndices(sprite) : undefined}
+            frameDelayMs={sprite.animationFormat === 'template-atlas-v1' ? 125 : undefined}
             className="gallery-preview__canvas"
           />
         </div>
