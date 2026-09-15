@@ -45,7 +45,7 @@ jobs:
 
     steps:
       - name: Check out the exact workflow commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Validate the guarded request
         shell: bash
