@@ -32,11 +32,14 @@ import {
 } from '../shared/fighterPreview.ts';
 import { downloadBlob } from '../shared/downloadBlob.ts';
 import { exportAnimationGif } from '../../services/GifExportService.ts';
+import { getBestCachedSpriteSheet } from '../../services/SpriteSheetSource.ts';
+import { prepareSpriteForExport } from '../../services/SpriteExportService.ts';
 import {
   downloadCloudFighterToLocal,
   getCloudFighter,
   prepareCloudFighterGeneration,
   syncFighterToCloud,
+  type CloudFighter,
 } from '../../services/CloudFighters.ts';
 import {
   QUALITY_TIERS,
@@ -50,7 +53,7 @@ import {
   getBillingProfile,
   type BillingProfile,
 } from '../../services/Billing.ts';
-import { captureApiRequestContext, runWithProviderSession } from '../../services/ApiClient.ts';
+import { assertApiRequestContextCurrent, captureApiRequestContext, runWithProviderSession } from '../../services/ApiClient.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { paidTiersLocked, type AuthStatus } from '../authState.ts';
 import { currentGenerationLegalAttestation } from '../legal.ts';
@@ -199,6 +202,9 @@ export function CreateFighterPage({
   const [photoHash, setPhotoHash] = useState<string | null>(null);
   const [meta, setMeta] = useState<CachedMeta | null>(null);
   const [sprites, setSprites] = useState<CachedSprite[]>([]);
+  const [exporting, setExporting] = useState<'png' | 'gif' | 'all' | null>(null);
+  const exportIdentityRef = useRef({ photoHash: meta?.photoHash, authSessionKey });
+  exportIdentityRef.current = { photoHash: meta?.photoHash, authSessionKey };
   const [generating, setGenerating] = useState<Set<string>>(new Set());
   const [selection, setSelection] = useState<PreviewSelection>({ kind: 'source', source: 'original' });
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
@@ -971,7 +977,7 @@ export function CreateFighterPage({
 
   const selectedAnimName = selection.kind === 'animation' ? selection.animationName : null;
 
-  const { previewSprite, previewSourceBlob } = useFighterPreview(meta, sprites, selection);
+  const { previewSprite, previewSourceBlob, previewBlob } = useFighterPreview(meta, sprites, selection);
   const safeName = (name.trim() || DEFAULT_NAME).replace(/[^a-z0-9]/gi, '_');
   const cachedSelectedSprite = selectedAnimName
     ? sprites.find((item) => item.animationName === selectedAnimName)
@@ -1002,31 +1008,98 @@ export function CreateFighterPage({
       ? 'Create Rookie · Pass Checked At Start'
     : `Create ${creationPackage === 'aura' ? 'Aura' : 'complete character'} · ${selectedQuote.priceLabel}`.trim();
 
-  const saveGif = async () => {
-    if (!cachedSelectedSprite || !selectedAnimName) return;
-    setStageText(`Encoding ${selectedAnimName}.gif...`);
+  const exportIdentityCurrent = () => (
+    exportIdentityRef.current.photoHash === meta?.photoHash &&
+    exportIdentityRef.current.authSessionKey === authSessionKey
+  );
+
+  const assertExportCurrent = (apiContext: ReturnType<typeof captureApiRequestContext>) => {
+    assertApiRequestContextCurrent(apiContext);
+    if (!exportIdentityCurrent()) throw new Error('The selected fighter changed. Please retry.');
+  };
+
+  const createDownloadPreparer = (apiContext: ReturnType<typeof captureApiRequestContext>) => {
+    // One manifest snapshot per export, including bulk exports of many moves.
+    let manifestRequest: ReturnType<typeof getCloudFighter> | undefined;
+    return async (cached: CachedSprite) => {
+      assertExportCurrent(apiContext);
+      let fighter: CloudFighter | null = null;
+      if (meta?.cloudFighterId && cached.animationFormat === 'video-dense-v1' && !getBestCachedSpriteSheet(cached).highDensity) {
+        fighter = await (manifestRequest ??= getCloudFighter(meta.cloudFighterId, apiContext));
+        if (!fighter) throw new Error('Could not load the best-quality animation. Please retry.');
+      }
+      const prepared = await prepareSpriteForExport(cached, fighter ?? undefined, apiContext);
+      assertExportCurrent(apiContext);
+      if (prepared !== cached) {
+        setSprites((current) => current.map((candidate) => candidate === cached ? prepared : candidate));
+      }
+      return prepared;
+    };
+  };
+
+  const savePng = async () => {
+    if (!meta || !previewBlob || exporting) return;
+    const apiContext = captureApiRequestContext();
+    const exportName = selection.kind === 'source' ? selection.source : selection.animationName;
+    setExporting('png');
+    setStageText('Preparing best-quality PNG...');
     try {
-      const gif = await exportAnimationGif(cachedSelectedSprite, selectedAnimName);
-      downloadBlob(gif, `${safeName}_${selectedAnimName}.gif`);
-      setStageText('GIF saved');
+      const prepared = cachedSelectedSprite ? await createDownloadPreparer(apiContext)(cachedSelectedSprite) : null;
+      assertExportCurrent(apiContext);
+      downloadBlob(prepared ? getBestCachedSpriteSheet(prepared).blob : previewBlob, `${safeName}_${exportName}.png`);
+      setStageText('PNG saved at best available quality');
     } catch (err: any) {
-      setStageText(err?.message ? `GIF failed: ${err.message}` : 'GIF failed');
+      if (exportIdentityCurrent()) setStageText(err?.message ? `PNG failed: ${err.message}` : 'PNG failed');
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  const saveGif = async () => {
+    if (!meta || !cachedSelectedSprite || !selectedAnimName || exporting) return;
+    const apiContext = captureApiRequestContext();
+    setExporting('gif');
+    setStageText('Preparing best-quality GIF...');
+    try {
+      const prepared = await createDownloadPreparer(apiContext)(cachedSelectedSprite);
+      setStageText(`Encoding ${selectedAnimName}.gif at full resolution...`);
+      const gif = await exportAnimationGif(prepared, selectedAnimName);
+      assertExportCurrent(apiContext);
+      downloadBlob(gif, `${safeName}_${selectedAnimName}.gif`);
+      setStageText('GIF saved at best available quality');
+    } catch (err: any) {
+      if (exportIdentityCurrent()) setStageText(err?.message ? `GIF failed: ${err.message}` : 'GIF failed');
+    } finally {
+      setExporting(null);
     }
   };
 
   const saveAll = async () => {
-    if (!meta) return;
-    const sources: Array<[string, Blob | null | undefined]> = [
-      ['original', meta.originalPhotoBlob],
-      ['side', meta.sideViewBlob],
-      ['upright', meta.uprightViewBlob],
-      ['crouch', meta.crouchViewBlob],
-    ];
-    for (const [label, blob] of sources) {
-      if (blob) downloadBlob(blob, `${safeName}_${label}.png`);
-    }
-    for (const sprite of sprites) {
-      downloadBlob(sprite.pngBlob, `${safeName}_${sprite.animationName}.png`);
+    if (!meta || exporting) return;
+    const apiContext = captureApiRequestContext();
+    const prepareDownloadSprite = createDownloadPreparer(apiContext);
+    setExporting('all');
+    setStageText('Saving all sprites at best available quality...');
+    try {
+      const sources: Array<[string, Blob | null | undefined]> = [
+        ['original', meta.originalPhotoBlob],
+        ['side', meta.sideViewBlob],
+        ['upright', meta.uprightViewBlob],
+        ['crouch', meta.crouchViewBlob],
+      ];
+      for (const [label, blob] of sources) {
+        if (blob) downloadBlob(blob, `${safeName}_${label}.png`);
+      }
+      for (const sprite of sprites) {
+        const prepared = await prepareDownloadSprite(sprite);
+        assertExportCurrent(apiContext);
+        downloadBlob(getBestCachedSpriteSheet(prepared).blob, `${safeName}_${sprite.animationName}.png`);
+      }
+      setStageText('All sprites saved at best available quality');
+    } catch (err: any) {
+      if (exportIdentityCurrent()) setStageText(err?.message ? `Bulk save failed: ${err.message}` : 'Bulk save failed');
+    } finally {
+      setExporting(null);
     }
   };
 
@@ -1242,7 +1315,9 @@ export function CreateFighterPage({
             {Math.round(percent * 100)}%
           </div>
           {done && meta ? (
-            <Button variant="ghost" onClick={() => void saveAll()}>Save All</Button>
+            <Button variant="ghost" disabled={Boolean(exporting)} onClick={() => void saveAll()}>
+              {exporting === 'all' ? 'Preparing files...' : 'Save All'}
+            </Button>
           ) : null}
           <Button
             variant={done ? 'primary' : 'secondary'}
@@ -1353,7 +1428,11 @@ export function CreateFighterPage({
         }
         emptyLabel={selection.kind === 'source' ? 'Missing source' : 'Waiting for pipeline'}
         safeName={safeName}
+        onSavePng={() => void savePng()}
         onSaveGif={() => void saveGif()}
+        downloadsDisabled={Boolean(exporting)}
+        savingPng={exporting === 'png'}
+        savingGif={exporting === 'gif'}
       />
     </section>
   );

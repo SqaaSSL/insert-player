@@ -29,6 +29,8 @@ import {
 } from '../../services/CharacterPipeline.ts';
 import { clearDebugLog, debugWarn } from '../../services/DebugLog.ts';
 import { exportAnimationGif } from '../../services/GifExportService.ts';
+import { getBestCachedSpriteSheet, selectBestSpriteSheet } from '../../services/SpriteSheetSource.ts';
+import { prepareSpriteForExport } from '../../services/SpriteExportService.ts';
 import { AnimationGrid } from '../components/AnimationGrid.tsx';
 import { Button } from '../components/Button.tsx';
 import { TierBadge } from '../components/TierBadge.tsx';
@@ -83,7 +85,6 @@ import {
   arcadeFighterPhotoHash,
   deleteCloudFighter,
   downloadArcadeFighterToLocal,
-  downloadArcadeSpriteHighDensityToLocal,
   downloadCloudFighterToLocal,
   formatCloudRosterSyncStatus,
   getCloudFighter,
@@ -105,6 +106,7 @@ import {
 } from '../../services/QualityTiers.ts';
 import { authorizeGeneration, finishGenerationPurchase } from '../../services/Billing.ts';
 import {
+  assertApiRequestContextCurrent,
   captureApiRequestContext,
   runWithProviderSession,
   type ApiRequestContext,
@@ -192,6 +194,7 @@ export function GalleryPage({
   const [selection, setSelection] = useState<PreviewSelection>({ kind: 'source', source: 'original' });
   const [status, setStatus] = useState<string>('Loading fighters...');
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState<'png' | 'gif' | 'all' | null>(null);
   const [retryingTarget, setRetryingTarget] = useState<RetryTarget | null>(null);
   const [legalAccepted, setLegalAccepted] = useState(false);
   const [pendingUpgradeTier, setPendingUpgradeTier] = useState<QualityTier | null>(null);
@@ -589,22 +592,27 @@ export function GalleryPage({
   useEffect(() => {
     if (!meta || !isArcadeFighter || selection.kind !== 'animation') return;
     const cached = sprites.find((item) => item.animationName === selection.animationName);
-    if (!cached || cached.rawPngBlob) return;
+    if (!cached || getBestCachedSpriteSheet(cached).highDensity) return;
     const fighter = arcadeFighters.find((item) => item.id === meta.cloudFighterId);
     const remote = fighter?.sprites.find((item) => item.animationName === selection.animationName);
     if (!fighter || !remote?.hqUrl) return;
 
-    const requestKey = `${fighter.id}:${selection.animationName}`;
+    const requestKey = `${getActiveSpriteCacheScope()}:${fighter.id}:${selection.animationName}`;
     if (hqPreviewRequestsRef.current.has(requestKey)) return;
     hqPreviewRequestsRef.current.add(requestKey);
     const ownerScope = getActiveSpriteCacheScope();
     const photoHash = meta.photoHash;
     const apiContext = captureApiRequestContext();
-    void downloadArcadeSpriteHighDensityToLocal(fighter, selection.animationName, apiContext)
-      .then(async (updated) => {
-        if (!updated || getActiveSpriteCacheScope() !== ownerScope) return;
+    void prepareSpriteForExport(cached, fighter, apiContext)
+      .then(async (prepared) => {
+        if (prepared === cached) return;
+        if (getActiveSpriteCacheScope() !== ownerScope) return;
         if (selectedPhotoHashRef.current !== photoHash) return;
-        setSprites(await getAllSpritesForHash(photoHash, ownerScope));
+        const updated = await getAllSpritesForHash(photoHash, ownerScope);
+        assertApiRequestContextCurrent(apiContext);
+        if (getActiveSpriteCacheScope() !== ownerScope) return;
+        if (selectedPhotoHashRef.current !== photoHash) return;
+        setSprites(updated);
       })
       .catch((error: any) => {
         debugWarn('[Gallery] HQ Arcade preview skipped:', error?.message ?? error);
@@ -622,7 +630,7 @@ export function GalleryPage({
 
   const previewBlob = selection.kind === 'source'
     ? previewSourceBlob
-    : previewSprite?.blob ?? null;
+    : previewSprite ? selectBestSpriteSheet(previewSprite).blob : null;
   const previewUrl = useObjectUrl(selection.kind === 'source' ? previewSourceBlob : null);
   const introUrl = useObjectUrl(getPrimaryIntroBlob(intro));
   const stageEntries = useMemo(() => buildGalleryStageEntries(stages), [stages]);
@@ -1344,27 +1352,73 @@ export function GalleryPage({
     }
   };
 
+  const prepareDownloadSprite = async (cached: CachedSprite, apiContext: ApiRequestContext) => {
+    let fighter = arcadeFighters.find((item) => item.id === meta?.cloudFighterId);
+    if (!fighter && meta?.cloudFighterId && cached.animationFormat === 'video-dense-v1' && !getBestCachedSpriteSheet(cached).highDensity) {
+      fighter = await getCloudFighter(meta.cloudFighterId, apiContext) ?? undefined;
+      if (!fighter) throw new Error('Could not load the best-quality animation. Please retry.');
+    }
+    return prepareSpriteForExport(cached, fighter, apiContext);
+  };
+
+  const savePng = async () => {
+    if (!meta || !previewBlob) return;
+    const photoHash = meta.photoHash;
+    const apiContext = captureApiRequestContext();
+    const exportName = selection.kind === 'source' ? selection.source : selection.animationName;
+    const cached = selection.kind === 'animation'
+      ? sprites.find((item) => item.animationName === selection.animationName)
+      : null;
+    setBusy(true);
+    setExporting('png');
+    setStatus('Preparing best-quality PNG...');
+    try {
+      const sprite = cached ? await prepareDownloadSprite(cached, apiContext) : null;
+      assertApiRequestContextCurrent(apiContext);
+      if (selectedPhotoHashRef.current !== photoHash) return;
+      downloadBlob(sprite ? getBestCachedSpriteSheet(sprite).blob : previewBlob, `${safeName}_${exportName}.png`);
+      setStatus('PNG saved at best available quality');
+    } catch (err: any) {
+      setStatus(err?.message ? `PNG failed: ${err.message}` : 'PNG failed');
+    } finally {
+      setBusy(false);
+      setExporting(null);
+    }
+  };
+
   const saveGif = async () => {
-    if (!selectedAnimName) return;
+    if (!meta || !selectedAnimName) return;
     const cached = sprites.find((item) => item.animationName === selectedAnimName);
     if (!cached) return;
+    const photoHash = meta.photoHash;
+    const apiContext = captureApiRequestContext();
     setBusy(true);
-    setStatus(`Encoding ${selectedAnimName}.gif...`);
+    setExporting('gif');
+    setStatus('Preparing best-quality GIF...');
     try {
-      const gif = await exportAnimationGif(cached, selectedAnimName);
+      const sprite = await prepareDownloadSprite(cached, apiContext);
+      if (selectedPhotoHashRef.current !== photoHash) return;
+      setStatus(`Encoding ${selectedAnimName}.gif at full resolution...`);
+      const gif = await exportAnimationGif(sprite, selectedAnimName);
+      assertApiRequestContextCurrent(apiContext);
+      if (selectedPhotoHashRef.current !== photoHash) return;
       downloadBlob(gif, `${safeName}_${selectedAnimName}.gif`);
-      setStatus('GIF saved');
+      setStatus('GIF saved at best available quality');
     } catch (err: any) {
       setStatus(err?.message ? `GIF failed: ${err.message}` : 'GIF failed');
     } finally {
       setBusy(false);
+      setExporting(null);
     }
   };
 
   const saveAll = async () => {
     if (!meta) return;
+    const photoHash = meta.photoHash;
+    const apiContext = captureApiRequestContext();
     setBusy(true);
-    setStatus('Saving all sprites...');
+    setExporting('all');
+    setStatus('Saving all sprites at best available quality...');
     try {
       const sources: Array<[string, Blob | null | undefined]> = [
         ...(!isArcadeFighter
@@ -1378,13 +1432,17 @@ export function GalleryPage({
         if (blob) downloadBlob(blob, `${safeName}_${label}.png`);
       }
       for (const sprite of sprites) {
-        downloadBlob(sprite.pngBlob, `${safeName}_${sprite.animationName}.png`);
+        const prepared = await prepareDownloadSprite(sprite, apiContext);
+        assertApiRequestContextCurrent(apiContext);
+        if (selectedPhotoHashRef.current !== photoHash) return;
+        downloadBlob(getBestCachedSpriteSheet(prepared).blob, `${safeName}_${sprite.animationName}.png`);
       }
       setStatus(`Saved ${sources.filter(([, b]) => b).length} sources + ${sprites.length} sprites`);
     } catch (err: any) {
       setStatus(err?.message ? `Bulk save failed: ${err.message}` : 'Bulk save failed');
     } finally {
       setBusy(false);
+      setExporting(null);
     }
   };
 
@@ -1975,13 +2033,13 @@ export function GalleryPage({
 
                 <div className="gallery-actions">
                   {previewBlob ? (
-                    <button type="button" onClick={() => downloadBlob(previewBlob, `${safeName}_${selection.kind === 'source' ? selection.source : selection.animationName}.png`)}>
-                      Save PNG
+                    <button type="button" disabled={currentFighterBusy} title="Download the best available quality" onClick={() => void savePng()}>
+                      {exporting === 'png' ? 'Preparing PNG...' : 'Save PNG'}
                     </button>
                   ) : null}
                   {selectedAnimName && sprites.some((item) => item.animationName === selectedAnimName) ? (
-                    <button type="button" disabled={currentFighterBusy} onClick={() => void saveGif()}>
-                      Save GIF
+                    <button type="button" disabled={currentFighterBusy} title="Download the best available quality" onClick={() => void saveGif()}>
+                      {exporting === 'gif' ? 'Preparing GIF...' : 'Save GIF'}
                     </button>
                   ) : null}
                   {previewSprite?.rawBlob && !isArcadeFighter ? (
