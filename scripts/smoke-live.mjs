@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fetchWithTransientNetworkRetry } from './live-smoke-fetch.mjs';
-import { assertOfficialArcadeContract } from './arcade-smoke-contract.mjs';
+import { assertForeignMatchOwnershipRejection, assertOfficialArcadeContract } from './arcade-smoke-contract.mjs';
 import { assertAuraClipSmokeEnvironment, createAuraClipSmokeChallenge, createAuraClipSmokeMedia, runHostedAuraClipSmoke } from './aura-clip-smoke.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -1178,11 +1178,7 @@ async function runAuthenticatedSmoke() {
       }),
     });
     const foreignMatch = await readJson(foreignMatchRes);
-    assert(foreignMatchRes.status === 403, `foreign fighter match report expected 403, got ${foreignMatchRes.status}`);
-    assert(
-      /not owned or an active Arcade fighter/i.test(String(foreignMatch.error ?? '')),
-      'Foreign fighter match report did not reject by ownership',
-    );
+    assertForeignMatchOwnershipRejection(foreignMatchRes.status, foreignMatch);
     log('match reporting rejects foreign community fighter ids');
   } else {
     if (requireCloneSmoke) {
