@@ -25,6 +25,7 @@ interface AuraBattleResultsProps {
   onBuildCrew?: () => void;
   onRetry: () => void;
   onRemix?: () => void;
+  onEditRoutine?: () => void;
   onExit: () => void;
 }
 
@@ -48,6 +49,7 @@ export function AuraBattleResults({
   onBuildCrew,
   onRetry,
   onRemix,
+  onEditRoutine,
   onExit,
 }: AuraBattleResultsProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -180,6 +182,7 @@ export function AuraBattleResults({
                   ? 'Rival Ready · Run It Back'
                   : challenge ? 'Retry this challenge' : 'Run It Back'}
           </button>
+          {onEditRoutine ? <button type="button" className="asf-btn asf-btn--ghost" onClick={onEditRoutine}>Edit routine</button> : null}
           <button type="button" className="asf-btn asf-btn--ghost" onClick={onExit}>{localSlot === undefined ? 'Menu' : 'Back To Lobby'}</button>
         </div>
         <button type="button" className="aura-results__options-toggle" aria-expanded={optionsOpen}

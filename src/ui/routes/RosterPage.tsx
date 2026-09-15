@@ -140,7 +140,7 @@ function getModeMeta(mode: RosterMode) {
   if (mode === 'aura-vs') {
     return {
       title: 'Local Aura Battle',
-      description: 'Two players, one keyboard, the same routine. Take turns winning the crowd.',
+      description: 'Two players, one keyboard. Choose your moves and take turns winning the crowd.',
       vsAI: false,
       cpuVsCpu: false,
       p1Label: 'Player 1',

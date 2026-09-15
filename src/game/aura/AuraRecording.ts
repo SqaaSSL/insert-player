@@ -3,6 +3,7 @@ import type { StageThemeId } from '../match/StageConfig.ts';
 import type { AuraJudgement, AuraPlayerScore } from './AuraBattle.ts';
 import type { AuraChart, AuraNote } from './AuraChart.ts';
 import type { AuraDifficultyId } from './AuraConfig.ts';
+import { isAuraSelectedRoutines, normalizeAuraSelectedRoutines, type AuraSelectedRoutines } from './AuraChoreography.ts';
 
 export const AURA_RECORDING_VERSION = 1;
 export const AURA_RECORDING_MAX_DURATION_MS = 300_000;
@@ -28,6 +29,8 @@ export interface AuraRecordingConfig {
   p2CloudFighterId?: string | null;
   /** Stable public cast for offline quickplay recordings with no cloud ids. */
   auraTrialPreset?: 'trump-lamine';
+  /** Nine chosen positions per player, grouped in three rounds. Omission keeps legacy seeded performance. */
+  auraRoutines?: AuraSelectedRoutines;
   chart: AuraChart;
 }
 
@@ -110,7 +113,7 @@ function sameNote(left: AuraNote, right: AuraNote): boolean {
 
 function validateConfig(value: unknown): asserts value is AuraRecordingConfig {
   const config = object(value, ['engineVersion', 'matchSeed', 'trackId', 'difficulty', 'stageId',
-    'p1Name', 'p2Name', 'p1CloudFighterId', 'p2CloudFighterId', 'auraTrialPreset', 'chart'], 'config');
+    'p1Name', 'p2Name', 'p1CloudFighterId', 'p2CloudFighterId', 'auraTrialPreset', 'auraRoutines', 'chart'], 'config');
   identifier(config.engineVersion, 'config.engineVersion');
   number(config.matchSeed, 0, 0xffff_ffff, 'config.matchSeed', true);
   identifier(config.trackId, 'config.trackId');
@@ -125,6 +128,7 @@ function validateConfig(value: unknown): asserts value is AuraRecordingConfig {
     requireValue(config.auraTrialPreset === 'trump-lamine'
       && !config.p1CloudFighterId && !config.p2CloudFighterId, 'config.auraTrialPreset');
   }
+  if (config.auraRoutines !== undefined) requireValue(isAuraSelectedRoutines(config.auraRoutines), 'config.auraRoutines');
   const chart = object(config.chart, ['seed', 'difficulty', 'trackId', 'bpm', 'beatMs', 'beatOffsetMs',
     'noteTravelMs', 'firstTurnMs', 'durationMs', 'turns', 'notes'], 'config.chart');
   requireValue(chart.seed === config.matchSeed && chart.trackId === config.trackId
@@ -262,6 +266,13 @@ export class AuraRecorder {
     this.recording = { version: AURA_RECORDING_VERSION, status: 'recording', config: clone(config),
       events: [], finalSummary: null, failure: null };
     this.notes = new Map(this.recording.config.chart.notes.map(note => [note.id, note]));
+  }
+
+  /** The peer's selection arrives during readiness, before any played events. */
+  setRoutines(routines: AuraSelectedRoutines): void {
+    requireValue(this.recording.status === 'recording' && this.recording.events.length === 0, 'recorder.started');
+    requireValue(isAuraSelectedRoutines(routines), 'config.auraRoutines');
+    this.recording.config.auraRoutines = normalizeAuraSelectedRoutines(routines);
   }
 
   record(atMs: number, judgement: AuraJudgement): void {
