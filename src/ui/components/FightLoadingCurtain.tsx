@@ -56,7 +56,7 @@ function AuraLoadingLayout({
             <div><strong>INSERT PLAYER</strong><span>AURA BATTLE</span></div>
           </div>
           <div className="aura-loader__claim">
-            <span>SAME ROUTINE</span>
+            <span>YOUR MOVES</span>
             <strong>WHO OWNS THE ROOM?</strong>
           </div>
           <div className="aura-loader__fighters">

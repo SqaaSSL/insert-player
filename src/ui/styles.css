@@ -5642,3 +5642,102 @@
     @apply min-h-12 text-[11px];
   }
 }
+
+@layer components {
+  .aura-routine {
+    @apply mx-auto w-full max-w-[960px] px-4 py-5 sm:px-8 sm:py-8;
+  }
+  .aura-routine__header {
+    @apply mb-7 flex items-center justify-between gap-4;
+  }
+  .aura-routine__mode {
+    @apply font-arcade text-xs text-asf-gold;
+  }
+  .aura-routine__intro h1 {
+    @apply text-lg leading-relaxed tracking-normal outline-none sm:text-2xl;
+  }
+  .aura-routine__intro p {
+    @apply mb-7 mt-3 text-base text-asf-muted;
+  }
+  .aura-routine__players {
+    @apply mb-5 flex flex-wrap gap-2;
+  }
+  .aura-routine__players button {
+    @apply min-h-11 rounded border border-asf-line bg-asf-bg-1 px-4 py-2 text-asf-text;
+  }
+  .aura-routine__players button[aria-pressed='true'] {
+    @apply border-asf-gold bg-asf-bg-2;
+  }
+  .aura-routine__players span {
+    @apply mr-2 text-asf-gold;
+  }
+  .aura-routine__sequence h2 {
+    @apply mb-4 flex flex-wrap items-baseline gap-x-4 gap-y-2 break-words text-sm leading-relaxed tracking-normal;
+  }
+  .aura-routine__sequence h2 span {
+    @apply font-sans text-sm font-normal normal-case text-asf-muted;
+  }
+  .aura-routine__moves {
+    @apply m-0 grid list-none grid-cols-3 gap-2 p-0 sm:gap-4;
+  }
+  .aura-routine__move {
+    @apply min-w-0 overflow-hidden rounded-md border border-asf-line bg-asf-bg-1;
+  }
+  .aura-routine__move.is-selected {
+    @apply border-asf-gold bg-asf-bg-2 ring-1 ring-asf-gold;
+  }
+  .aura-routine__select {
+    @apply relative flex w-full flex-col items-center px-1 pb-3 pt-4 text-asf-text sm:px-3;
+  }
+  .aura-routine__select strong {
+    @apply mt-1 min-h-10 content-center text-center text-sm leading-snug sm:min-h-6 sm:text-base;
+  }
+  .aura-routine__position {
+    @apply absolute left-2 top-2 font-arcade text-[10px] text-asf-gold sm:left-3 sm:top-3;
+  }
+  .aura-routine__gesture {
+    @apply h-24 w-full max-w-36 overflow-hidden sm:h-32;
+  }
+  .aura-routine__change {
+    @apply mt-1 text-[11px] text-asf-muted sm:text-xs;
+  }
+  .aura-routine__reorder {
+    @apply grid grid-cols-2 border-t border-asf-line;
+  }
+  .aura-routine__reorder button {
+    @apply min-h-11 text-lg text-asf-text hover:bg-asf-bg-2 disabled:cursor-default disabled:opacity-25;
+  }
+  .aura-routine__repeat {
+    @apply mb-7 mt-3 text-sm text-asf-muted;
+  }
+  .aura-routine__library h2 {
+    @apply mb-3 font-sans text-base font-semibold normal-case tracking-normal;
+  }
+  .aura-routine__choices {
+    @apply grid grid-cols-3 gap-2 sm:grid-cols-5 sm:gap-3;
+  }
+  .aura-routine__choices button {
+    @apply flex min-w-0 flex-col items-center rounded border border-transparent bg-asf-bg-1 px-1 py-3 text-center text-xs leading-normal text-asf-text hover:border-asf-line-strong;
+  }
+  .aura-routine__choices button[aria-pressed='true'] {
+    @apply border-asf-gold text-asf-gold;
+  }
+  .aura-routine__choices .aura-routine__gesture {
+    @apply mb-2 h-16 sm:h-20;
+  }
+  .aura-routine__footer {
+    @apply mt-7 flex flex-col gap-4 border-t border-asf-line pt-5 sm:flex-row sm:items-center sm:justify-between;
+  }
+  .aura-routine__footer p {
+    @apply m-0 text-sm leading-relaxed text-asf-muted;
+  }
+  .aura-routine__footer .asf-btn {
+    @apply min-h-12 shrink-0 text-[10px];
+  }
+}
+
+@layer components {
+  .aura-routine__error {
+    @apply mt-5 rounded border border-asf-warn bg-asf-bg-1 p-4 text-sm text-asf-warn;
+  }
+}

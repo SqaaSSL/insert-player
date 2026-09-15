@@ -397,7 +397,7 @@ export function HomePage({
               onClick={onOpenAuraCpu}
             >
               <span>Play Aura</span>
-              <small>Player vs CPU · Same routine · No excuses</small>
+              <small>Player vs CPU · Your moves · Hit the beat</small>
             </button>
             <div className="home-mode__footer home-mode__variants" aria-label="Aura modes">
               <button type="button" onClick={onOpenAuraCpu}>Aura CPU</button>

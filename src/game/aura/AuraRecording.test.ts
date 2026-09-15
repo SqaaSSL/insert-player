@@ -43,6 +43,29 @@ function finalized(): AuraRecording {
 }
 
 describe('AuraRecorder immutable local event journal', () => {
+  it('round-trips ordered repeated gestures and refuses a malformed selected routine', () => {
+    const auraRoutines = [['aura_six_seven', 'aura_six_seven', 'aura_one_leg'], null] as const;
+    const setup = { ...config(), auraRoutines };
+    const recorder = new AuraRecorder(setup);
+    recorder.record(0, passive());
+    recorder.finish(summary());
+    const saved = recorder.toRecording();
+    expect(parseAuraRecording(JSON.stringify(saved))?.config.auraRoutines).toEqual(auraRoutines);
+    expect(parseAuraRecording(JSON.stringify({ ...saved, config: { ...setup,
+      auraRoutines: [['aura_six_seven', 'unknown', 'aura_shrug'], null] } }))).toBeNull();
+  });
+
+  it('pins both online selections before playing and cannot change them after an event', () => {
+    const recorder = new AuraRecorder(config());
+    const local = ['aura_six_seven', 'aura_six_seven', 'aura_one_leg'] as const;
+    const remote = ['aura_glide', 'aura_mog_check', 'aura_floor_worm'] as const;
+    recorder.setRoutines([local, remote]);
+    expect(recorder.toRecording().config.auraRoutines).toEqual([local, remote]);
+    recorder.record(0, passive());
+    expect(() => recorder.setRoutines([null, null])).toThrow('recorder.started');
+    expect(recorder.toRecording().config.auraRoutines).toEqual([local, remote]);
+  });
+
   it('retains the actual bundled trial cast without inventing cloud identities', () => {
     const setup: AuraRecordingConfig = { ...config(), p1Name: 'DONALD TRUMP', p2Name: 'LAMINE YAMAL',
       p1CloudFighterId: null, p2CloudFighterId: null, auraTrialPreset: 'trump-lamine' };

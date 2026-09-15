@@ -24,6 +24,17 @@ describe('Aura public challenge transport', () => {
     }
   });
   it.each([
+    ['first player', [['aura_six_seven', 'aura_six_seven', 'aura_glide'], null]],
+    ['second player', [null, ['aura_mog_check', 'aura_floor_worm', 'aura_one_leg']]],
+    ['both players', [['aura_six_seven', 'aura_mog_check', 'aura_glide'], ['aura_floor_worm', 'aura_one_leg', 'aura_floor_worm']]],
+    ['seeded players', [null, null]],
+  ])('preserves selected gestures, their order and repetitions for %s', (_label, auraRoutines) => {
+    const selectedRoutine = createAuraChallengeRoutine(42, 'viral', 'neon-arena-155', 'aura-plaza-v3', auraRoutines);
+    const value = createAuraChallenge(selectedRoutine, 'Alex', 1000, 1);
+    expect(decodeAuraChallengePreview(encodeAuraChallenge(value))).toEqual(value);
+    expect(decodeAuraChallengePreview(encodeAuraChallenge(value)).auraRoutines).toEqual(auraRoutines);
+  });
+  it.each([
     ['huge token', () => 'a'.repeat(2049)], ['invalid base64', () => '!'],
     ['invalid UTF8', () => '_w'], ['extra private fields', () => encode({ ...challenge, photoHash: 'private' })],
     ['URL injection', () => encode({ ...challenge, redirect: 'https://untrusted.example' })],
@@ -36,6 +47,16 @@ describe('Aura public challenge transport', () => {
     ['bad seed', () => encode({ ...challenge, seed: 0 })], ['long name', () => encode({ ...challenge, name: 'a'.repeat(33) })],
     ['control name', () => encode({ ...challenge, name: 'Alex\n' })], ['bidi name', () => encode({ ...challenge, name: 'Alex\u202e' })],
     ['surrogate name', () => encode({ ...challenge, name: '\ud800' })], ['array', () => encode([])],
+    ['null routines', () => encode({ ...challenge, auraRoutines: null })],
+    ['one routine slot', () => encode({ ...challenge, auraRoutines: [null] })],
+    ['three routine slots', () => encode({ ...challenge, auraRoutines: [null, null, null] })],
+    ['routine object', () => encode({ ...challenge, auraRoutines: [{ 0: 'aura_glide', 1: 'aura_glide', 2: 'aura_glide' }, null] })],
+    ['short routine', () => encode({ ...challenge, auraRoutines: [['aura_glide', 'aura_glide'], null] })],
+    ['long routine', () => encode({ ...challenge, auraRoutines: [['aura_glide', 'aura_glide', 'aura_glide', 'aura_glide'], null] })],
+    ['unknown gesture', () => encode({ ...challenge, auraRoutines: [['aura_glide', 'private_gesture', 'aura_glide'], null] })],
+    ['idle gesture', () => encode({ ...challenge, auraRoutines: [['aura_glide', 'aura_unbothered', 'aura_glide'], null] })],
+    ['reaction gesture', () => encode({ ...challenge, auraRoutines: [null, ['aura_glide', 'aura_shrug', 'aura_glide']] })],
+    ['non-string gesture', () => encode({ ...challenge, auraRoutines: [null, ['aura_glide', 1, 'aura_glide']] })],
     ['duplicate key', () => Buffer.from(JSON.stringify(challenge).replace('"score":12500', '"score":1,"score":12500')).toString('base64url')],
   ])('fails closed for %s before rendering or storage', async (_label, invalid) => {
     expect(decodeAuraChallengePreview(invalid())).toBeNull();
@@ -45,6 +66,19 @@ describe('Aura public challenge transport', () => {
 });
 
 describe('Aura social HTML and PNG routes', () => {
+  it('carries a chosen choreography through the public link to the playable challenge', async () => {
+    const auraRoutines = [['aura_six_seven', 'aura_six_seven', 'aura_glide'], ['aura_one_leg', 'aura_floor_worm', 'aura_mog_check']];
+    const selectedRoutine = createAuraChallengeRoutine(42, 'viral', 'neon-arena-155', 'aura-plaza-v3', auraRoutines);
+    const selectedChallenge = createAuraChallenge(selectedRoutine, 'Alex', 1000, 0);
+    const selectedToken = encodeAuraChallenge(selectedChallenge);
+    const response = await auraChallengeShareResponse(new Request(`https://api.insertplayer.ai/challenges/aura/${selectedToken}`), env);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    const play = new URL(html.match(/<a id="play-challenge" href="([^"]+)"/)[1]);
+    expect(play.searchParams.get('challenge')).toBe(selectedToken);
+    expect(decodeAuraChallenge(play.searchParams.get('challenge'))).toEqual({ ok: true, challenge: selectedChallenge });
+    expect(selectedChallenge.auraRoutines).toEqual(auraRoutines);
+  });
   it('provides escaped crawler metadata, branded image and an exact same-routine frontend destination', async () => {
     const response = await auraChallengeShareResponse(new Request(`${url}?redirect=https://untrusted.example&photo=private`), env);
     const html = await response.text();
