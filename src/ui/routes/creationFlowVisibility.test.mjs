@@ -14,6 +14,14 @@ const sources = [
   ...routeSources(new URL('../pages/', import.meta.url), 'pages/'),
 ];
 
+describe('Empty-roster creation copy', () => {
+  it.each(['ArcadePage.tsx', 'RosterPage.tsx'])('%s explains the result without an unverified time estimate', (route) => {
+    const source = readFileSync(new URL(route, import.meta.url), 'utf8');
+    expect(source).toContain('<small>One photo · Your playable character</small>');
+    expect(source).not.toMatch(/One photo[^<]*(?:minutes?|seconds?)/i);
+  });
+});
+
 describe('Public creation flow visibility', () => {
   it.each(sources)('$name does not import or mount the legacy internal picker', ({ source }) => {
     expect(source).not.toMatch(/\b(?:from\s*|import\s*\(?\s*)['"][^'"]*CreationFlowPicker(?:\.tsx?)?['"]/);
