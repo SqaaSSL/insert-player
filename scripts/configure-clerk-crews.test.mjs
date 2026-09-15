@@ -39,6 +39,7 @@ function portalUrl(overrides = {}) {
 function createFixture({
   endpointDisabled = true,
   endpointEvents = null,
+  forceOrganizationSelection = false,
   instanceId = INSTANCE_ID,
   organizationsEnabled = false,
   signingSecret = SIGNING_SECRET,
@@ -50,6 +51,7 @@ function createFixture({
       disabled: endpointDisabled,
       eventTypes: endpointEvents,
     },
+    forceOrganizationSelection,
     organizationsEnabled,
   };
   const calls = [];
@@ -61,8 +63,13 @@ function createFixture({
     const body = init.body ? JSON.parse(init.body) : undefined;
     calls.push({ body, method, url: url.toString(), authorization: headers.get('Authorization') });
 
-    if (url.toString() === 'https://clerk.insertplayer.ai/v1/environment') {
-      return json({ organization_settings: { force_organization_selection: false } }, {
+    if (url.origin === 'https://clerk.insertplayer.ai' && url.pathname === '/v1/environment') {
+      return json({
+        organization_settings: {
+          enabled: state.organizationsEnabled,
+          force_organization_selection: state.forceOrganizationSelection,
+        },
+      }, {
         headers: { 'x-clerk-instance-id': INSTANCE_ID },
       });
     }
@@ -70,8 +77,14 @@ function createFixture({
       return json({ id: instanceId, environment_type: 'production' });
     }
     if (url.toString() === 'https://api.clerk.com/v1/instance/organization_settings') {
-      if (method === 'PATCH') state.organizationsEnabled = body.enabled;
-      return json({ enabled: state.organizationsEnabled });
+      if (method === 'PATCH') {
+        state.organizationsEnabled = body.enabled;
+        state.forceOrganizationSelection = body.force_organization_selection;
+      }
+      return json({
+        enabled: state.organizationsEnabled,
+        force_organization_selection: state.forceOrganizationSelection,
+      });
     }
     if (url.toString() === 'https://api.clerk.com/v1/webhooks/svix_url' && method === 'POST') {
       return json({ svix_url: portalUrl() });
@@ -139,6 +152,8 @@ describe('production Clerk Crew configuration', () => {
       applied: true,
       organizationsNeedUpdate: true,
       organizationsUpdated: true,
+      personalAccountsNeedUpdate: false,
+      personalAccountsUpdated: false,
       webhookNeedsUpdate: true,
       webhookUpdated: true,
     });
@@ -160,7 +175,10 @@ describe('production Clerk Crew configuration', () => {
       disabled: false,
       eventTypes: REQUIRED_CLERK_WEBHOOK_EVENTS,
     });
-    expect(fixture.calls[organizationsPatch].body).toEqual({ enabled: true });
+    expect(fixture.calls[organizationsPatch].body).toEqual({
+      enabled: true,
+      force_organization_selection: false,
+    });
     expect(fixture.calls.some((call) => (
       call.url.endsWith(['/auth', 'logout'].join('/'))
       && call.authorization === `Bearer ${PORTAL_TOKEN}`
@@ -183,6 +201,8 @@ describe('production Clerk Crew configuration', () => {
     expect(result).toMatchObject({
       organizationsNeedUpdate: false,
       organizationsUpdated: false,
+      personalAccountsNeedUpdate: false,
+      personalAccountsUpdated: false,
       webhookNeedsUpdate: false,
       webhookUpdated: false,
     });
@@ -201,11 +221,46 @@ describe('production Clerk Crew configuration', () => {
       applied: false,
       organizationsNeedUpdate: true,
       organizationsUpdated: false,
+      personalAccountsNeedUpdate: false,
+      personalAccountsUpdated: false,
       webhookNeedsUpdate: true,
       webhookUpdated: false,
     });
     expect(fixture.calls.filter((call) => call.method === 'PATCH')).toHaveLength(0);
     expect(fixture.state.organizationsEnabled).toBe(false);
+  });
+
+  it('repairs required membership while preserving enabled Organizations', async () => {
+    const fixture = createFixture({
+      endpointDisabled: false,
+      endpointEvents: [...REQUIRED_CLERK_WEBHOOK_EVENTS],
+      forceOrganizationSelection: true,
+      organizationsEnabled: true,
+    });
+    const result = await configureClerkCrews({
+      apply: true,
+      fetchImpl: fixture.fetchImpl,
+      secretKey: CLERK_SECRET_KEY,
+      signingSecret: SIGNING_SECRET,
+    });
+
+    expect(result).toMatchObject({
+      organizationsNeedUpdate: false,
+      organizationsUpdated: false,
+      personalAccountsNeedUpdate: true,
+      personalAccountsUpdated: true,
+    });
+    expect(fixture.state.organizationsEnabled).toBe(true);
+    expect(fixture.state.forceOrganizationSelection).toBe(false);
+    expect(fixture.calls.filter((call) => call.method === 'PATCH')).toEqual([
+      expect.objectContaining({
+        body: {
+          enabled: true,
+          force_organization_selection: false,
+        },
+        url: 'https://api.clerk.com/v1/instance/organization_settings',
+      }),
+    ]);
   });
 
   it('fails closed before activation when the webhook signing secret differs', async () => {
