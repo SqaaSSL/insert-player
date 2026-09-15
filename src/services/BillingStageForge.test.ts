@@ -64,4 +64,23 @@ describe('Stage Forge billing client', () => {
       error: 'Not enough credits. 1 credit required. You have 0.',
     });
   });
+
+  it('requests the server-owned Crew entitlement instead of charging a member credit', async () => {
+    vi.mocked(apiFetch).mockResolvedValueOnce(Response.json({
+      mode: 'crew_included',
+      purchaseId: 'crew-stage-purchase',
+      stageClaimId: 'crew-stage-claim',
+      creditsCharged: 0,
+      creditsBalance: 0,
+      providerSessionId: 'crew-stage-session',
+    }));
+
+    await expect(authorizeStageForge(undefined, { crewIncluded: true })).resolves.toMatchObject({
+      authorized: true,
+      mode: 'crew_included',
+      creditsCharged: 0,
+    });
+    const request = vi.mocked(apiFetch).mock.calls[0][1];
+    expect(JSON.parse(String(request?.body))).toMatchObject({ crewIncluded: true });
+  });
 });

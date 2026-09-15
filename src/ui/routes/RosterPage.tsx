@@ -35,6 +35,7 @@ import {
   type CloudFighter,
 } from '../../services/CloudFighters.ts';
 import { captureApiRequestContext } from '../../services/ApiClient.ts';
+import { isStageVisibleToActiveCrew, syncCrewStageToLocal } from '../../services/CrewStages.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { ensurePlayableSpritesUpToDate } from '../../services/CharacterPipeline.ts';
 import { getBillingProfile, type BillingProfile } from '../../services/Billing.ts';
@@ -557,7 +558,10 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         .filter((item) => item.version === CACHE_VERSION && item.status === 'ready')
         .sort((a, b) => b.createdAt - a.createdAt);
       const filteredStages = allStages
-        .filter((stage) => stage.kind === 'photo' || stage.kind === 'photo-direct')
+        .filter((stage) => (
+          (stage.kind === 'photo' || stage.kind === 'photo-direct')
+          && isStageVisibleToActiveCrew(stage, activeCrew)
+        ))
         .sort((a, b) => b.createdAt - a.createdAt);
       const sections = filterRosterFighterSectionsForMode(
         buildRosterFighterSections(
@@ -693,12 +697,18 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
       try {
         const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext);
         if (cancelled) return;
-        const crewSync = await syncCrewFightersToLocal(allMetas, activeCrew, apiContext);
+        const [crewSync, crewStageUpdated] = await Promise.all([
+          syncCrewFightersToLocal(allMetas, activeCrew, apiContext),
+          syncCrewStageToLocal(activeCrew, apiContext).catch((err: any) => {
+            debugWarn('[Roster] Crew stage sync skipped:', err?.message ?? err);
+            return false;
+          }),
+        ]);
         cloudImported = cloudSync.imported + crewSync.imported;
         cloudUpdated = cloudSync.updated + crewSync.updated;
         cloudSyncing = false;
         publishRosterSnapshot();
-        if (cloudImported > 0 || cloudUpdated > 0) {
+        if (cloudImported > 0 || cloudUpdated > 0 || crewStageUpdated) {
           void Promise.all([
             getAllCachedMetas(ownerScope),
             getAllCachedStageBackgrounds(ownerScope),
@@ -810,7 +820,12 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         : { label: 'AUTO', blurb: 'Let the matchup choose the arena.' }
       : stageChoice.kind === 'built-in'
         ? { label: getStageChoiceLabel(stageChoice.stageId), blurb: getStageChoiceBlurb(stageChoice.stageId) }
-        : { label: selectedPhotoStage?.label ?? stageChoice.label, blurb: 'Custom photo stage from your local cache.' };
+        : {
+            label: selectedPhotoStage?.label ?? stageChoice.label,
+            blurb: selectedPhotoStage?.cloudManagement === 'crew'
+              ? `Shared home stage for ${selectedPhotoStage.cloudCrewName ?? 'your Crew'}.`
+              : 'Custom photo stage from your local cache.',
+          };
 
   const cancelFightPreparation = (message = 'Preparation cancelled. Review the matchup and start again.') => {
     if (!preparingFight) return;
