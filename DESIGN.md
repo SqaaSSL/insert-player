@@ -105,9 +105,10 @@ Panels:
 
 Tier UI:
 
-- Rookie: fast, free/low-cost, playable.
-- Contender: default recommendation, best value.
-- Champion: highest fidelity, premium.
+- Rookie: lower-cost complete character from two white 4K atlases.
+- Champion: more image detail per move, with one white 4K sheet per animation.
+- Rookie and Champion are the only public quality choices. `contender` is the historical storage identifier for current Champion, not a third public tier.
+- Technical renderers and Template Zero are internal. Preserve deprecated generation paths and existing versions without advertising them as creation choices.
 - Tiers should communicate visible output quality, not just cost.
 
 Community UI:
@@ -160,7 +161,6 @@ Preferred CTAs:
 - Insert player
 - Fight CPU
 - Clone fighter
-- Upgrade to Contender
 - Upgrade to Champion
 - Sync cloud
 

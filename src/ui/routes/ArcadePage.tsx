@@ -269,7 +269,7 @@ export function ArcadePage({
               actions={(
                 <button type="button" className="home-menu__action is-primary" onClick={onCreateFighter}>
                   <span>Create Fighter</span>
-                  <small>One photo · about 2 minutes</small>
+                  <small>One photo · Your playable character</small>
                 </button>
               )}
             >
