@@ -129,6 +129,12 @@ jobs:
             printf '%s\n' "$CHANGED"
           fi
 
+      - name: Verify compatible image processor before Pages
+        env:
+          ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+          CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+        run: npm run check:image-processor-contract
+
       - name: Build, deploy, and smoke Pages
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

@@ -28,6 +28,7 @@ import {
 } from './reviewedCanonicalSources';
 import { requireReviewedProductionWorkerPin } from './reviewedDeploymentPin';
 import { readEligibleUnsealedVideoPartialRestart } from './videoRunRestart';
+import { isTemplateAtlasCompilerContract, TEMPLATE_ATLAS_COMPILER_CONTRACT } from '../../src/services/TemplateAtlasContract';
 import {
   VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
   VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
@@ -44,7 +45,8 @@ const AUTHORIZATION_TTL_HOURS = 12;
 const VIDEO_SPRITE_PREFLIGHT_CONTAINER_NAME =
   `official-arcade-${OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT.processorRuntimeRevision}`
   + `-video-v${VIDEO_SPRITE_PROCESSING_VERSION}`
-  + `-compiler-${VIDEO_SPRITE_COMPILER_VERSION.replaceAll('.', '-')}`;
+  + `-compiler-${VIDEO_SPRITE_COMPILER_VERSION.replaceAll('.', '-')}`
+  + '-template-atlas-v1-p6';
 const PLAYABLE_ANIMATION_NAMES = [
   'idle',
   'walk',
@@ -206,6 +208,7 @@ export async function readImageProcessorGenerationContract(env: Env): Promise<Re
       status?: unknown;
       runtime?: unknown;
       imageProviderContract?: unknown;
+      templateAtlasCompiler?: unknown;
       videoSpriteCompiler?: {
         schemaVersion?: unknown;
         compilerVersion?: unknown;
@@ -249,10 +252,17 @@ export async function readImageProcessorGenerationContract(env: Env): Promise<Re
         reason: 'processor_video_compiler_incompatible',
       }, 503);
     }
+    if (!isTemplateAtlasCompilerContract(payload.templateAtlasCompiler)) {
+      return json({
+        error: 'Image processor Template Atlas compiler is incompatible',
+        reason: 'processor_template_atlas_compiler_incompatible',
+      }, 503);
+    }
     return json({
       ready: true,
       runtime: payload.runtime,
       contract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      templateAtlasCompiler: TEMPLATE_ATLAS_COMPILER_CONTRACT,
       videoSpriteCompiler: {
         schemaVersion: payload.videoSpriteCompiler.schemaVersion,
         compilerVersion: payload.videoSpriteCompiler.compilerVersion,

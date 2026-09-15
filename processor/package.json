@@ -7,7 +7,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/server.mjs --external:@napi-rs/canvas && node scripts/assert-approved-image-providers.mjs --bundle dist/server.mjs",
+    "build": "node build.mjs && node scripts/assert-approved-image-providers.mjs --bundle dist/server.mjs",
     "check": "tsc --noEmit",
     "prestart": "npm run build",
     "start": "node dist/server.mjs",
@@ -25,6 +25,7 @@
     "qa:pose-atlas:test": "tsx --test src/benchmark/qaPoseAtlas.test.ts",
     "qa:pose-atlas": "tsx src/benchmark/qaPoseAtlasCli.ts",
     "test:video-sprite": "tsx --test src/videoSprite*.test.ts",
+    "test:template-atlas": "tsx --test src/templateAtlas/*.test.ts",
     "benchmark:klein-sequence:test": "tsx --test src/benchmark/kleinSequenceBenchmark.test.ts",
     "benchmark:klein-sequence:plan": "tsx src/benchmark/kleinSequenceBenchmarkCli.ts plan",
     "benchmark:klein-sequence:pricing": "tsx src/benchmark/kleinSequenceBenchmarkCli.ts pricing",
@@ -37,10 +38,12 @@
     "benchmark:provider-matrix:execute": "tsx src/benchmark/providerMatrix/cli.ts --execute"
   },
   "dependencies": {
-    "@napi-rs/canvas": "1.0.7"
+    "@napi-rs/canvas": "1.0.7",
+    "pngjs": "7.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.15",
+    "@types/pngjs": "6.0.5",
     "esbuild": "0.28.2",
     "tsx": "^4.21.0",
     "typescript": "~5.9.3"

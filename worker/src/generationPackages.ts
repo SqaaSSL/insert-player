@@ -1,5 +1,7 @@
 import { generationPackageAnimationNames, parseGenerationPackage, quoteGenerationPackage, type GenerationPackage } from '../../src/services/GenerationPackages';
 import type { Env, QualityTier } from './types';
+import { storedGenerationRenderer } from './templateGenerationPolicy';
+import { normalizeTemplateAtlasAnimationNames, TEMPLATE_ATLAS_ANIMATION_NAMES } from '../../src/services/TemplateAtlasContract';
 
 export interface StoredGenerationPackage {
   creation_package?: GenerationPackage;
@@ -9,6 +11,13 @@ export interface StoredGenerationPackage {
 
 /** The authorization owns the immutable plan. Never derive it from client job parameters. */
 export function storedGenerationAnimationNames(value: StoredGenerationPackage): readonly string[] {
+  if (storedGenerationRenderer(value) !== 'legacy-v1') {
+    if (value.creation_package !== 'complete' || value.expansion_only) throw new Error('Atlas generation requires the complete character contract');
+    const envelope = JSON.parse(value.animation_plan_json!);
+    const animations = normalizeTemplateAtlasAnimationNames(envelope.animations);
+    if (animations.length !== TEMPLATE_ATLAS_ANIMATION_NAMES.length) throw new Error('Incomplete atlas authorization');
+    return animations;
+  }
   const pack = parseGenerationPackage(value.creation_package);
   if (!pack) throw new Error('Invalid generation package');
   const allowed = generationPackageAnimationNames(pack);

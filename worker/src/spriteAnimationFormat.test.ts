@@ -18,22 +18,23 @@ describe('sprite animation format contract', () => {
     expect(normalizeSpriteAnimationFormat(undefined)).toBe('legacy');
     expect(normalizeSpriteAnimationFormat('future-format')).toBe('legacy');
     expect(isSpriteAnimationFormat('video-dense-v1')).toBe(true);
+    expect(isSpriteAnimationFormat('template-atlas-v1')).toBe(true);
     expect(isSpriteAnimationFormat('future-format')).toBe(false);
   });
 
   it('keeps frontend, Worker, and D1 enum values in parity', () => {
     const frontend = readFileSync(join(repositoryRoot, 'src/SpriteAnimationFormat.ts'), 'utf8');
     const migration = readFileSync(
-      join(workerRoot, 'migrations/0028_sprite_animation_format.sql'),
+      join(workerRoot, 'migrations/0041_template_atlas_animation_format.sql'),
       'utf8',
     );
 
-    expect(SPRITE_ANIMATION_FORMATS).toEqual(['legacy', 'video-dense-v1']);
+    expect(SPRITE_ANIMATION_FORMATS).toEqual(['legacy', 'video-dense-v1', 'template-atlas-v1']);
     for (const format of SPRITE_ANIMATION_FORMATS) {
       expect(frontend).toContain(`'${format}'`);
       expect(migration).toContain(`'${format}'`);
     }
-    expect(migration.match(/animation_format IN \('legacy', 'video-dense-v1'\)/g))
+    expect(migration.match(/animation_format IN \('legacy', 'video-dense-v1', 'template-atlas-v1'\)/g))
       .toHaveLength(3);
   });
 });

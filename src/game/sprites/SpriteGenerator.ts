@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { FighterState, FIGHTER_WIDTH, FIGHTER_HEIGHT } from '../constants.ts';
 import {
   VIDEO_DENSE_SPRITE_ANIMATION_FORMAT,
+  TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT,
   type SpriteAnimationFormat,
 } from '../../SpriteAnimationFormat.ts';
 
@@ -291,6 +292,16 @@ export function getAnimationRuntimeProfile(
   }
 
   const normalizedSourceCount = Math.floor(sourceFrameCount);
+  if (animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT) {
+    return {
+      frameCount: normalizedSourceCount,
+      playbackMode: 'timeline',
+      sourceFormat: 'timeline',
+      ...([FighterState.IDLE, FighterState.WALK_FORWARD, FighterState.WALK_BACKWARD,
+        FighterState.VICTORY, FighterState.DEFEAT].includes(state)
+        ? { durationTicks: Math.round(normalizedSourceCount * 60 / 8) } : {}),
+    };
+  }
   const runtimeMax = DENSE_VIDEO_RUNTIME_MAX[state];
   const denseSourceMin = DENSE_VIDEO_SOURCE_MIN[state];
   const supportsForwardPingPong = FORWARD_PING_PONG_STATES.has(state);

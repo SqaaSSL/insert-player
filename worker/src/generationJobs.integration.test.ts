@@ -2,10 +2,12 @@ import { Miniflare } from 'miniflare';
 import { describe, expect, it } from 'vitest';
 import { startAdminArcadeGeneration } from './arcadeGeneration';
 import { createGenerationJob, getGenerationJob, listGenerationJobs } from './generationJobs';
-import { GEMINI_PRO_IMAGE_MODEL, recordProviderDailyQuota } from './providerCapacity';
+import { GEMINI_FLASH_IMAGE_MODEL, GEMINI_PRO_IMAGE_MODEL, recordProviderDailyQuota } from './providerCapacity';
 import type { AuthContext, Env } from './types';
 import type { SealedReviewedCanonicalSources } from './reviewedCanonicalSources';
 import { UNSEALED_VIDEO_RESTART_FAILURE_STAGE } from './videoRunRestart';
+import { atlasAnimationPlan } from './templateGenerationPolicy';
+import { TEMPLATE_ATLAS_ANIMATION_NAMES, type TemplateAtlasRendererVersion } from '../../src/services/TemplateAtlasContract';
 import {
   SELF_SERVICE_VIDEO_POLICY,
   STUDIO_CURATED_VIDEO_POLICY,
@@ -1897,6 +1899,121 @@ describe('durable generation job creation', () => {
     } finally {
       await mf.dispose();
     }
+  }, 15_000);
+});
+
+describe('durable template renderer authorization', () => {
+  const templateRequest = (options: Record<string, unknown> = {}) => new Request('https://api.insertplayer.ai/api/generation-jobs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fighterId: FIGHTER_ID, purchaseId: PURCHASE_ID, providerSessionId: SESSION_ID, creationPackage: 'complete', rendererVersion: 'rookie-two-atlas-v1', ...options }),
+  });
+  async function seedPlan(db: D1Database, renderer: TemplateAtlasRendererVersion = 'rookie-two-atlas-v1') {
+    const tier = renderer === 'rookie-two-atlas-v1' ? 'rookie' : 'contender';
+    await db.prepare('UPDATE generation_charges SET tier = ?, animation_plan_json = ? WHERE id = ?').bind(tier, atlasAnimationPlan(renderer), PURCHASE_ID).run();
+    await db.prepare('UPDATE provider_sessions SET tier = ? WHERE id = ?').bind(tier, SESSION_ID).run();
+  }
+  async function seedUprightOnly(db: D1Database, env: Env) {
+    await db.prepare('UPDATE fighters SET upright_view_blob_key = ?, upright_view_raw_blob_key = ? WHERE id = ?').bind(SOURCE_KEYS.upright, SOURCE_KEYS.uprightRaw, FIGHTER_ID).run();
+    await env.SPRITES.put(SOURCE_KEYS.upright, png());
+    await env.SPRITES.put(SOURCE_KEYS.uprightRaw, png());
+  }
+
+  it.each(['rookie-two-atlas-v1', 'champion-animation-sheet-v1'] as const)('starts and replays %s with two source stages and 20 exact animation stages', async (rendererVersion) => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      await seedPlan(db, rendererVersion);
+      env.GEMINI_TRANSPORT = 'meterkey';
+      // The new sheets use FAL, not the old Google Flash quota bucket.
+      await recordProviderDailyQuota(env, { provider: 'gemini', model: GEMINI_FLASH_IMAGE_MODEL, retryAfterSeconds: 3600 });
+      const response = await createGenerationJob(templateRequest({ rendererVersion }), env, auth);
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ job: {
+        rendererVersion, progressTotal: 22, progressCurrent: 0,
+        pendingStages: ['source:side', 'source:upright', ...TEMPLATE_ATLAS_ANIMATION_NAMES.map(name => `sprite:${name}`)],
+      } });
+      for (const table of ['generation_jobs', 'generation_artifact_runs']) {
+        expect(await db.prepare(`SELECT animation_plan_json FROM ${table} WHERE id = ?`).bind(PURCHASE_ID).first()).toEqual({ animation_plan_json: atlasAnimationPlan(rendererVersion) });
+      }
+      const repeated = await createGenerationJob(templateRequest({ rendererVersion }), env, auth);
+      expect(repeated.status).toBe(200);
+      expect(await repeated.json()).toMatchObject({ job: { rendererVersion, id: PURCHASE_ID } });
+      const oldClient = await createGenerationJob(templateRequest({ rendererVersion: undefined }), env, auth);
+      expect(oldClient.status).toBe(409);
+      expect(await oldClient.json()).toMatchObject({ code: 'generation_renderer_mismatch' });
+      expect(workflowStarts).toEqual([PURCHASE_ID]);
+      expect(await db.prepare('SELECT status FROM generation_charges WHERE id = ?').bind(PURCHASE_ID).first()).toEqual({ status: 'reserved' });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it.each([
+    { rendererVersion: undefined },
+    { rendererVersion: 'champion-animation-sheet-v1' },
+    { creationPackage: 'aura' },
+    { expansion: true },
+  ])('rejects mismatched template dispatch before workflow and releases its reservation: %j', async (options) => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      await seedPlan(db);
+      const response = await createGenerationJob(templateRequest(options), env, auth);
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(workflowStarts).toEqual([]);
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_jobs').first()).toEqual({ count: 0 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_artifact_runs').first()).toEqual({ count: 0 });
+      expect(await db.prepare('SELECT status FROM generation_charges WHERE id = ?').bind(PURCHASE_ID).first()).toEqual({ status: 'refunded' });
+      expect(await db.prepare('SELECT status, provider_calls_used FROM provider_sessions WHERE id = ?').bind(SESSION_ID).first()).toEqual({ status: 'cancelled', provider_calls_used: 0 });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it.each([
+    { templateVersion: 'template-zero-unknown' },
+    { animations: TEMPLATE_ATLAS_ANIMATION_NAMES.slice(1) },
+    { animations: [...TEMPLATE_ATLAS_ANIMATION_NAMES.slice(1), TEMPLATE_ATLAS_ANIMATION_NAMES[1]] },
+  ])('refuses corrupt or partial template envelopes without dispatch: %j', async (overrides) => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      await seedPlan(db);
+      const plan = { ...JSON.parse(atlasAnimationPlan('rookie-two-atlas-v1')), ...overrides };
+      await db.prepare('UPDATE generation_charges SET animation_plan_json = ? WHERE id = ?').bind(JSON.stringify(plan), PURCHASE_ID).run();
+      const response = await createGenerationJob(templateRequest(), env, auth);
+      expect(response.status).toBe(400);
+      expect(workflowStarts).toEqual([]);
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_artifact_runs').first()).toEqual({ count: 0 });
+      expect(await db.prepare('SELECT status FROM generation_charges WHERE id = ?').bind(PURCHASE_ID).first()).toEqual({ status: 'refunded' });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it.each(['fighter_upgrade', 'fighter_retry_animation'] as const)('allows %s from the prepared upright without a legacy crouch', async (operation) => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      await seedPlan(db);
+      await seedUprightOnly(db, env);
+      env.GEMINI_TRANSPORT = 'meterkey';
+      for (const model of [GEMINI_PRO_IMAGE_MODEL, GEMINI_FLASH_IMAGE_MODEL] as const) {
+        await recordProviderDailyQuota(env, { provider: 'gemini', model, retryAfterSeconds: 3600 });
+      }
+      await db.prepare('UPDATE generation_charges SET reason = ? WHERE id = ?').bind(operation, PURCHASE_ID).run();
+      await db.prepare('UPDATE provider_sessions SET purpose = ? WHERE id = ?').bind(operation === 'fighter_upgrade' ? 'fighter_upgrade' : 'fighter_retry', SESSION_ID).run();
+      const target = operation === 'fighter_retry_animation' ? { targetKind: 'animation', targetName: 'aura_shrug' } : {};
+      const response = await createGenerationJob(templateRequest(target), env, auth);
+      expect(response.status).toBe(202);
+      expect(await response.json()).toMatchObject({ job: { rendererVersion: 'rookie-two-atlas-v1', operation, progressTotal: operation === 'fighter_upgrade' ? 20 : 1 } });
+      expect(workflowStarts).toEqual([PURCHASE_ID]);
+      expect(await db.prepare('SELECT crouch_view_blob_key, side_view_blob_key FROM fighters WHERE id = ?').bind(FIGHTER_ID).first()).toEqual({ crouch_view_blob_key: null, side_view_blob_key: null });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it('still refuses template repairs when the prepared upright binary is missing', async () => {
+    const { mf, db, env, workflowStarts } = await bindings();
+    try {
+      await seedPlan(db);
+      await seedUprightOnly(db, env);
+      await env.SPRITES.delete(SOURCE_KEYS.upright);
+      await db.prepare("UPDATE generation_charges SET reason = 'fighter_retry_animation' WHERE id = ?").bind(PURCHASE_ID).run();
+      await db.prepare("UPDATE provider_sessions SET purpose = 'fighter_retry' WHERE id = ?").bind(SESSION_ID).run();
+      expect((await createGenerationJob(templateRequest({ targetKind: 'animation', targetName: 'uppercut' }), env, auth)).status).toBe(409);
+      expect(workflowStarts).toEqual([]);
+      expect(await db.prepare('SELECT status FROM generation_charges WHERE id = ?').bind(PURCHASE_ID).first()).toEqual({ status: 'refunded' });
+    } finally { await mf.dispose(); }
   }, 15_000);
 });
 

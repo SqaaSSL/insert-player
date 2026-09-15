@@ -1,4 +1,6 @@
 import type { Env, PublicAuthContext, User } from './types';
+import { storedGenerationRenderer } from './templateGenerationPolicy';
+import { isTemplateAtlasRendererVersion, type TemplateAtlasRendererVersion } from '../../src/services/TemplateAtlasContract';
 import {
   generationCreationFlowOrDefault,
   isGenerationCreationFlow,
@@ -115,6 +117,11 @@ export function generationJobIdFromAuth(auth: PublicAuthContext): string | null 
   return typeof value === 'string' && /^[a-f0-9]{32}$/.test(value) ? value : null;
 }
 
+export function templateRendererFromAuth(auth: PublicAuthContext): TemplateAtlasRendererVersion | null {
+  const value = auth.claims?.generation_renderer_version;
+  return generationJobIdFromAuth(auth) && isTemplateAtlasRendererVersion(value) ? value : null;
+}
+
 export function generationCreationFlowFromAuth(
   auth: PublicAuthContext,
 ): GenerationCreationFlow | null {
@@ -139,7 +146,7 @@ export async function optionalGenerationJobAuth(
   }
 
   const job = await env.DB.prepare(`
-    SELECT id, user_id, provider_session_id, status, creation_flow
+    SELECT *
     FROM generation_jobs
     WHERE id = ? AND user_id = ? AND provider_session_id = ?
   `).bind(payload.jobId, payload.userId, payload.providerSessionId).first<{
@@ -148,6 +155,7 @@ export async function optionalGenerationJobAuth(
     provider_session_id: string;
     status: string;
     creation_flow: GenerationCreationFlow;
+    animation_plan_json?: string | null;
   }>();
   if (
     !job
@@ -160,6 +168,10 @@ export async function optionalGenerationJobAuth(
     .bind(payload.userId)
     .first<User>();
   if (!user) return Response.json({ error: 'Generation job user not found' }, { status: 401 });
+  let rendererVersion;
+  try { rendererVersion = storedGenerationRenderer(job); } catch {
+    return Response.json({ error: 'Generation renderer is not supported' }, { status: 401 });
+  }
 
   return {
     userId: user.id,
@@ -169,6 +181,7 @@ export async function optionalGenerationJobAuth(
       generation_job_id: job.id,
       generation_provider_session_id: job.provider_session_id,
       generation_creation_flow: job.creation_flow,
+      generation_renderer_version: rendererVersion,
     },
   };
 }

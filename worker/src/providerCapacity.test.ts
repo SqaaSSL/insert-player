@@ -11,6 +11,13 @@ import {
 import type { Env } from './types';
 
 describe('provider capacity policy', () => {
+  it('does not apply legacy Flash quota to FAL atlases or source-free repairs', async () => {
+    expect(requiredGeminiModelsForGeneration('fighter_generation', 'rookie', 'rookie-two-atlas-v1')).toEqual([GEMINI_PRO_IMAGE_MODEL]);
+    expect(requiredGeminiModelsForGeneration('fighter_retry_animation', 'rookie', 'rookie-two-atlas-v1')).toEqual([]);
+    expect(requiredGeminiModelsForGeneration('fighter_upgrade', 'contender', 'champion-animation-sheet-v1')).toEqual([]);
+    // An atlas-only continuation must not even consult the unrelated Gemini window.
+    expect(await activeGenerationCapacity({} as Env, 'fighter_upgrade', 'contender', Date.now(), 'champion-animation-sheet-v1')).toBeNull();
+  });
   it('includes Pro for every canonical source flow and Flash for non-Champion animations', () => {
     expect(requiredGeminiModelsForGeneration('fighter_generation', 'rookie')).toEqual([
       GEMINI_PRO_IMAGE_MODEL,

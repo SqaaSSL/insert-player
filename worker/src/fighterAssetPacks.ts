@@ -31,6 +31,7 @@ export const AURA_OPTIONAL_ANIMATION_NAMES = [
 ] as const;
 
 export const GENERATED_ANIMATION_NAMES = new Set<string>([
+  'uppercut', 'fireball',
   ...FIGHT_ANIMATION_NAMES,
   ...AURA_ANIMATION_NAMES,
   ...AURA_OPTIONAL_ANIMATION_NAMES,

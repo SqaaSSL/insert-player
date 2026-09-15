@@ -1,4 +1,4 @@
-export const SPRITE_ANIMATION_FORMATS = ['legacy', 'video-dense-v1'] as const;
+export const SPRITE_ANIMATION_FORMATS = ['legacy', 'video-dense-v1', 'template-atlas-v1'] as const;
 
 export type SpriteAnimationFormat = typeof SPRITE_ANIMATION_FORMATS[number];
 

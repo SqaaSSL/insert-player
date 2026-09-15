@@ -37,6 +37,9 @@ import {
   parseRequestedGenerationCreationFlow,
 } from './generationCreationFlow';
 import { STAGE_FORGE_CREDIT_COST } from '../../src/shared/StageForgePricing';
+import { atlasAnimationPlan, requestedGenerationRenderer, rendererMatchesTier, storedGenerationRenderer } from './templateGenerationPolicy';
+import { type GenerationRendererVersion, TEMPLATE_ATLAS_ANIMATION_NAMES } from '../../src/services/TemplateAtlasContract';
+import { meterkeyBaseUrl } from './geminiTransport';
 
 const FREE_ROOKIE_GENERATION_LIMIT = 1;
 const GENERATION_RESERVATION_TTL_HOURS = 12;
@@ -431,6 +434,7 @@ async function authorizeGenerationContinuation(
     creationFlow: GenerationCreationFlow;
     creationPackage: GenerationPackage;
     expansion: boolean;
+    rendererVersion?: GenerationRendererVersion;
     legal: GenerationLegalAttestation;
   },
 ): Promise<Response> {
@@ -505,6 +509,13 @@ async function authorizeGenerationContinuation(
       error: 'This job has no paid partial work eligible for a zero-credit continuation',
       code: 'generation_not_resumable',
     }, 409);
+  }
+  let rendererVersion: GenerationRendererVersion;
+  try { rendererVersion = storedGenerationRenderer(resumable); } catch {
+    return json({ error: 'Preserved generation renderer is not supported' }, 409);
+  }
+  if (params.rendererVersion !== undefined && params.rendererVersion !== rendererVersion) {
+    return json({ error: 'Resume renderer does not match the preserved generation work', code: 'generation_renderer_mismatch' }, 409);
   }
   if (
     resumable.run_user_id !== auth.user.id ||
@@ -583,6 +594,7 @@ async function authorizeGenerationContinuation(
       providerCostLimitCents: reusable.provider_cost_limit_cents,
       reservationExpiresAt: reusable.reservation_expires_at,
       creationFlow: reusable.creation_flow,
+      rendererVersion,
       creationPackage: params.creationPackage,
       expansion: params.expansion,
     });
@@ -642,6 +654,7 @@ async function authorizeGenerationContinuation(
     providerCostLimitCents: providerSession.providerCostLimitCents,
     reservationExpiresAt: expiresAt,
     creationFlow: params.creationFlow,
+    rendererVersion,
     creationPackage: params.creationPackage,
     expansion: params.expansion,
   });
@@ -1014,6 +1027,7 @@ export async function authorizeGenerationPurchase(
   const body = await readJsonBody<{
     tier?: QualityTier;
     creationFlow?: unknown;
+    rendererVersion?: unknown;
     creationPackage?: unknown;
     expansion?: unknown;
     quoteOnly?: unknown;
@@ -1032,6 +1046,20 @@ export async function authorizeGenerationPurchase(
   const tier = normalizeQualityTier(body.tier);
   const operation = normalizeGenerationBillingOperation(body.operation, body.reason);
   const creationFlow = parseRequestedGenerationCreationFlow(body.creationFlow);
+  const rendererVersion = requestedGenerationRenderer(body.rendererVersion);
+  if (!rendererVersion || !rendererMatchesTier(rendererVersion, tier)) {
+    return json({ error: 'Unsupported generation renderer for this quality', code: 'generation_renderer_invalid' }, 400);
+  }
+  if (rendererVersion !== 'legacy-v1') {
+    if (!auth.user) return json({ error: 'Sign in to create your fighter', code: 'template_creation_requires_sign_in' }, 401);
+    if (creationFlow !== 'original' || creationPackage !== 'complete' || expansion) {
+      return json({ error: 'Template generation includes the complete character and cannot use a legacy package or flow', code: 'generation_renderer_package_mismatch' }, 400);
+    }
+    if (env.GEMINI_TRANSPORT !== 'meterkey' || !env.METERKEY_API_KEY?.trim() || !meterkeyBaseUrl(env.METERKEY_BASE_URL)
+      || !env.IMAGE_PROCESSOR || !env.FIGHTER_GENERATION || !env.GENERATION_API_BASE_URL?.startsWith('https://')) {
+      return json({ error: 'Template generation is temporarily unavailable', code: 'generation_renderer_unavailable' }, 503);
+    }
+  }
   if (!creationFlow) return json({ error: 'Unsupported generation creation flow' }, 400);
   if (!generationCreationFlowAvailable(creationFlow)) {
     return json({
@@ -1062,7 +1090,8 @@ export async function authorizeGenerationPurchase(
   let packageQuote = quoteGenerationPackage(tier, creationPackage);
   let requiredCredits = operation === 'fighter_generation' || operation === 'fighter_upgrade'
     ? packageQuote.creditCost : generationCreditCost(tier, operation);
-  let animationPlanJson = JSON.stringify(packageQuote.animations);
+  let animationPlanJson = rendererVersion === 'legacy-v1'
+    ? JSON.stringify(packageQuote.animations) : atlasAnimationPlan(rendererVersion);
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) return json({ error: 'Current generation consent is required' }, 428);
   const resumeJobId = body.resumeJobId?.trim() ?? '';
@@ -1174,10 +1203,11 @@ export async function authorizeGenerationPurchase(
       creationPackage,
       expansion,
       legal,
+      rendererVersion: body.rendererVersion === undefined ? undefined : rendererVersion,
     });
   }
 
-  if (operation === 'fighter_upgrade' && !expansion) {
+  if (operation === 'fighter_upgrade' && !expansion && rendererVersion === 'legacy-v1') {
     const missingWork = await quoteOwnedPackageExpansion(env, auth.user.id, ownedFighterId!, tier, creationPackage);
     if (missingWork.animationCount === 0) return json({
       error: 'This character already has this pack at the requested quality or higher. You can retry individual animations.',
@@ -1222,7 +1252,8 @@ export async function authorizeGenerationPurchase(
     ? await availableReferralRookieEntitlement(env, user.id)
     : null;
   const quotedCredits = usesBaseIncludedRookie || quotedReferralEntitlement ? 0 : requiredCredits;
-  if (body.quoteOnly === true) return json({ authorized: true, mode: 'quote', quotedCredits, creationPackage, expansion, animationCount: packageQuote.animationCount });
+  if (body.quoteOnly === true) return json({ authorized: true, mode: 'quote', quotedCredits, creationPackage, expansion, rendererVersion,
+    animationCount: rendererVersion === 'legacy-v1' ? packageQuote.animationCount : TEMPLATE_ATLAS_ANIMATION_NAMES.length });
   if ((expansion && body.expectedCredits === undefined) ||
       (body.expectedCredits !== undefined && body.expectedCredits !== quotedCredits)) {
     return json({ error: 'Review the current package quote before continuing', code: 'package_quote_changed', requiredCredits: quotedCredits }, 409);
@@ -1317,6 +1348,7 @@ export async function authorizeGenerationPurchase(
       return json({
         authorized: true,
         mode: 'free_rookie',
+        rendererVersion,
         purchaseId,
         creditsCharged: 0,
         providerSessionId: providerSession.id,
@@ -1391,6 +1423,7 @@ export async function authorizeGenerationPurchase(
       return json({
         authorized: true,
         mode: 'referral_rookie',
+        rendererVersion,
         purchaseId,
         creditsCharged: 0,
         providerSessionId: providerSession.id,
@@ -1496,6 +1529,7 @@ export async function authorizeGenerationPurchase(
     authorized: true,
     mode: 'credits',
     purchaseId,
+    rendererVersion,
     creditsCharged: requiredCredits,
     creditsBalance: spend.credits_balance,
     providerSessionId: providerSession.id,

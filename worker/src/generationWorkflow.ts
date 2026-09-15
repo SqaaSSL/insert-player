@@ -1,5 +1,12 @@
 import { AURA_GENERATION_ANIMATIONS } from '../../src/services/GenerationPackages';
 import { storedGenerationAnimationNames } from './generationPackages';
+import { storedGenerationRenderer } from './templateGenerationPolicy';
+import { assertCompiledTemplateSprite, assertCompiledTemplatePng, assertCompiledTemplateSources } from './templateAtlasValidation';
+import { templateAtlasCompileBody, type TemplateAtlasStreamInput } from './templateAtlasStream';
+import { getTemplateAtlasPlanIds, normalizeTemplateAtlasAnimationNames,
+  type CompileTemplateAtlasResult, type GenerateTemplateAtlasResult, type TemplateAtlasRendererVersion } from '../../src/services/TemplateAtlasContract';
+import { loadTemplateAtlasRaw, loadTemplateAtlasReceipt, saveTemplateAtlasRaw,
+  saveTemplateAtlasReceipt, persistImmutableAtlasJson, type TemplateAtlasRawCheckpoint } from './templateAtlasCheckpoints';
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
 import { generateId, hashString } from './auth';
@@ -44,6 +51,7 @@ import {
   type SealedReviewedCanonicalSources,
 } from './reviewedCanonicalSources';
 import { officialPoseMasterFor } from './officialPoseMasters';
+import { createBoundedByteStream } from './streamLimits';
 import {
   storedVideoGenerationPolicy,
   type VideoGenerationPolicy,
@@ -128,6 +136,8 @@ const STEP_CONFIG = {
   timeout: '3 hours' as const,
 };
 const NON_RETRYABLE_PROVIDER_CODES = new Set([
+  'template_atlas_qa_failed', 'invalid_template_atlas_request',
+  'provider_result_invalid', 'provider_result_failed', 'template_atlas_output_too_large', 'output_too_large',
   'provider_request_not_dispatched',
   'provider_request_outcome_unknown',
   'daily_cap_exceeded',
@@ -339,6 +349,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     job: GenerationJob,
     path: string,
     body: Record<string, unknown>,
+    streamingAtlases?: readonly TemplateAtlasStreamInput[],
   ): Promise<T> {
     if (!this.env.IMAGE_PROCESSOR) throw new Error('Image processor binding is unavailable');
     const apiBaseUrl = stripTrailingSlashes(this.env.GENERATION_API_BASE_URL?.trim() ?? '');
@@ -352,21 +363,21 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       creationFlow: job.creation_flow,
     });
     const container = this.env.IMAGE_PROCESSOR.getByName(job.id);
+    const fields = { ...body, apiBaseUrl, generationToken, providerSessionId: job.provider_session_id };
     const response = await container.fetch(new Request(`http://image-processor${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...body,
-        apiBaseUrl,
-        generationToken,
-        providerSessionId: job.provider_session_id,
-      }),
+      body: streamingAtlases ? templateAtlasCompileBody(this.env.SPRITES, fields, streamingAtlases) : JSON.stringify(fields),
     }));
     if (!response.ok) {
-      const detail = (await response.text()).slice(0, 2_000);
+      // A cell-level QA report can exceed 2 KB. Parse the bounded whole error
+      // before truncating its display text, otherwise its no-retry code is lost.
+      const errorText = response.body
+        ? await new Response(createBoundedByteStream(response.body, 256 * 1024)).text() : '';
+      const detail = errorText.slice(0, 2_000);
       let errorCode = '';
       try {
-        const parsed = JSON.parse(detail) as { code?: unknown };
+        const parsed = JSON.parse(errorText) as { code?: unknown };
         errorCode = typeof parsed.code === 'string' ? parsed.code : '';
       } catch {
         // The bounded response text below remains the diagnostic for non-JSON failures.
@@ -406,6 +417,10 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         throw new NonRetryableError(providerDailyQuotaFailureMessage(window));
       }
       throw new Error(`Image processor ${path} failed with ${response.status}: ${detail}`);
+    }
+    if (path === '/v1/compile-template-atlas') {
+      if (!response.body) throw new NonRetryableError('Compiler returned no response body');
+      return new Response(createBoundedByteStream(response.body, 24 * 1024 * 1024)).json<T>();
     }
     return response.json<T>();
   }
@@ -644,6 +659,154 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     return { animationName: animation.name, versionId: persisted.versionId };
   }
 
+  private async ensureTemplateAtlasReceipt(job: GenerationJob, rendererVersion: TemplateAtlasRendererVersion,
+    animationNames: ReturnType<typeof normalizeTemplateAtlasAnimationNames>, planId: string,
+    uprightKey: string, step: WorkflowStep) {
+    const requestScope = `job:${requireArtifactRunId(job)}:atlas:${planId}`;
+    return step.do(`submit ${planId}`, STEP_CONFIG, async () => {
+      const raw = await loadTemplateAtlasRaw(this.env, job, rendererVersion, planId);
+      if (raw) return raw.receipt;
+      const restored = await loadTemplateAtlasReceipt(this.env, job, rendererVersion, planId);
+      if (restored) return restored;
+      let result: GenerateTemplateAtlasResult;
+      try {
+        result = await this.callProcessor<GenerateTemplateAtlasResult>(job, '/v1/generate-template-atlas', {
+          operation: 'submit', rendererVersion, animationNames, planId, requestScope,
+          uprightBase64: await this.loadAssetBase64(uprightKey),
+        });
+      } catch (error) {
+        if (error instanceof NonRetryableError) throw error;
+        throw new NonRetryableError('Template submission response could not be verified (provider_request_outcome_unknown). No automatic retry; the run-scoped request remains available for recovery.');
+      }
+      if (result.status !== 'submitted') throw new NonRetryableError('Template submission did not return a durable receipt');
+      await saveTemplateAtlasReceipt(this.env, job, rendererVersion, planId, result.receipt);
+      return result.receipt;
+    });
+  }
+
+  private async ensureTemplateAtlasRaw(job: GenerationJob, rendererVersion: TemplateAtlasRendererVersion,
+    animationNames: ReturnType<typeof normalizeTemplateAtlasAnimationNames>, planId: string,
+    uprightKey: string, step: WorkflowStep): Promise<TemplateAtlasRawCheckpoint> {
+    const requestScope = `job:${requireArtifactRunId(job)}:atlas:${planId}`;
+    const alreadySaved = await step.do(`restore ${planId} RAW`, STEP_CONFIG,
+      () => loadTemplateAtlasRaw(this.env, job, rendererVersion, planId));
+    if (alreadySaved) return alreadySaved;
+    const receipt = await this.ensureTemplateAtlasReceipt(job, rendererVersion, animationNames, planId, uprightKey, step);
+    // Only GETs after the receipt exists. Workflow replay and continuation use
+    // the same run-scoped request identity, never another inference submission.
+    for (let poll = 0; poll < 180; poll++) {
+      const checkpoint = await step.do(`collect ${planId} ${poll}`, STEP_CONFIG, async () => {
+        const restored = await loadTemplateAtlasRaw(this.env, job, rendererVersion, planId);
+        if (restored) return restored;
+        const result = await this.callProcessor<GenerateTemplateAtlasResult>(job, '/v1/generate-template-atlas', {
+          operation: 'collect', rendererVersion, animationNames, planId, requestScope, receipt,
+        });
+        if (result.status === 'pending') return null;
+        if (result.status !== 'completed') throw new NonRetryableError('Unexpected template collection state');
+        return saveTemplateAtlasRaw(this.env, job, rendererVersion, planId, receipt,
+          base64ToArrayBuffer(result.rawBase64), result.sha256, result.width, result.height);
+      });
+      if (checkpoint) return checkpoint;
+      await step.sleep(`wait ${planId} ${poll}`, '5 seconds');
+    }
+    throw new NonRetryableError('Template provider is still pending. Its receipt is preserved for continuation; no new inference was submitted.');
+  }
+
+  private async runTemplateAtlasFlow(job: GenerationJob, run: GenerationArtifactRun,
+    rendererVersion: TemplateAtlasRendererVersion, generationPrompt: string | undefined,
+    step: WorkflowStep): Promise<void> {
+    let uprightKey: string;
+    const sourceCount = job.operation === 'fighter_generation' ? 2 : 0;
+    if (job.operation === 'fighter_generation') {
+      if (!run.original_blob_key) throw new NonRetryableError('Durable original source photo is missing');
+      const side = await step.do('generate canonical side source', STEP_CONFIG, () => this.generateSourcePair(job, {
+        operation: 'repose', cleanKind: 'side', rawKind: 'side_raw', inputKey: run.original_blob_key!,
+        generationPrompt, progressCurrent: 1,
+      }));
+      const upright = await step.do('generate canonical upright source', STEP_CONFIG, () => this.generateSourcePair(job, {
+        operation: 'upright', cleanKind: 'upright', rawKind: 'upright_raw', inputKey: side.rawKey,
+        generationPrompt, progressCurrent: 2,
+      }));
+      uprightKey = upright.cleanKey;
+    } else {
+      const sources = JSON.parse(run.source_manifest_json || '{}') as Partial<SourceManifest>;
+      if (!sources.upright) throw new NonRetryableError('Prepared upright source is missing');
+      uprightKey = sources.upright;
+    }
+    const names = normalizeTemplateAtlasAnimationNames(job.operation === 'fighter_retry_animation'
+      ? [job.target_name] : storedGenerationAnimationNames(job));
+    const completed = new Set<string>();
+    for (const name of names) {
+      const restored = await step.do(`restore template sprite ${name}`, STEP_CONFIG,
+        () => reuseSpriteCheckpoint(this.env, job, name));
+      if (restored) completed.add(name);
+    }
+    if (completed.size === names.length) return;
+    const pending = names.filter(name => !completed.has(name));
+    await step.do('prepare template atlases', STEP_CONFIG, () => this.recordProgress(job,
+      'atlas:prepare', sourceCount + completed.size, `${rendererVersion}: ${pending.length} animations pending; original photo is not sent to atlas generation`));
+    const planIds = getTemplateAtlasPlanIds(rendererVersion, pending);
+    const raw = new Map<string, TemplateAtlasRawCheckpoint>();
+    // Queue both inferences before collecting either, but keep large request and
+    // response bodies sequential inside the memory-limited Workflow isolate.
+    for (let index = 0; index < planIds.length; index += 2) {
+      const batch = planIds.slice(index, index + 2);
+      for (const planId of batch) {
+        await this.ensureTemplateAtlasReceipt(job, rendererVersion, pending, planId, uprightKey, step);
+      }
+      for (const planId of batch) {
+        raw.set(planId, await this.ensureTemplateAtlasRaw(job, rendererVersion, pending, planId, uprightKey, step));
+      }
+    }
+    for (const name of pending) {
+      const progressCurrent = sourceCount + completed.size + 1;
+      await step.do(`compile template ${name}`, STEP_CONFIG, async () => {
+        await this.recordStageStarted(job, `sprite:${name}`);
+        const restored = await reuseSpriteCheckpoint(this.env, job, name);
+        if (!restored) {
+          const atlases: TemplateAtlasStreamInput[] = [];
+          const checkpoints: TemplateAtlasRawCheckpoint[] = [];
+          for (const planId of getTemplateAtlasPlanIds(rendererVersion, [name])) {
+            const checkpoint = raw.get(planId);
+            if (!checkpoint) throw new NonRetryableError('Required preserved atlas is unavailable');
+            atlases.push({ planId, rawKey: checkpoint.rawKey, sizeBytes: checkpoint.sizeBytes });
+            checkpoints.push(checkpoint);
+          }
+          const result = await this.callProcessor<CompileTemplateAtlasResult>(job, '/v1/compile-template-atlas', { rendererVersion, animationNames: [name] }, atlases);
+          const sprite = result.sprites?.[0];
+          if (result.sprites?.length !== 1) throw new NonRetryableError('Compiler returned an unexpected animation count');
+          let bytes: ArrayBuffer, rawBytes: ArrayBuffer;
+          try {
+            assertCompiledTemplateSprite(sprite, rendererVersion, name);
+            assertCompiledTemplateSources(sprite, checkpoints);
+            bytes = base64ToArrayBuffer(sprite.imageBase64);
+            rawBytes = base64ToArrayBuffer(sprite.rawBase64);
+            assertCompiledTemplatePng(bytes, sprite);
+            assertCompiledTemplatePng(rawBytes, sprite);
+          } catch (error) { throw new NonRetryableError(boundedErrorMessage(error)); }
+          await persistImmutableAtlasJson(this.env,
+            `users/${job.user_id}/fighters/${job.fighter_id}/generation-runs/${requireArtifactRunId(job)}/compiled/${name}.json`, {
+              animationName: name, frameWidth: sprite.frameW, frameHeight: sprite.frameH,
+              frameCount: sprite.frameCount, fps: sprite.fps, loop: sprite.loop,
+              originX: sprite.originX, originY: sprite.originY, sequence: sprite.sequence,
+              animationFormat: sprite.animationFormat, processingVersion: sprite.processingVersion,
+              provenance: sprite.provenance, qa: sprite.qa,
+            });
+          const persisted = await persistGeneratedSprite(this.env, {
+            jobId: job.id, userId: job.user_id, fighterId: job.fighter_id, tier: job.tier,
+            animationName: name, bytes, rawBytes,
+            frameWidth: sprite.frameW, frameHeight: sprite.frameH, frameCount: sprite.frameCount,
+            processingVersion: 6, animationFormat: 'template-atlas-v1',
+          });
+          await recordSpriteCheckpoint(this.env, job, { animationName: name,
+            stageIndex: sourceCount + names.indexOf(name) + 1, sprite: persisted, processingVersion: 6 });
+        }
+        await this.recordProgress(job, `sprite:${name}`, progressCurrent, `${name} compiled and saved; original atlas retained`);
+      });
+      completed.add(name);
+    }
+  }
+
   async run(event: Readonly<WorkflowEvent<FighterGenerationParams>>, step: WorkflowStep): Promise<unknown> {
     const jobId = event.payload.jobId;
     let job: GenerationJob | null = null;
@@ -674,8 +837,9 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         return { ...loaded, status: 'running', stage: 'initializing' };
       });
       job = activeJob;
+      const rendererVersion = storedGenerationRenderer(activeJob);
       const plannedNames = storedGenerationAnimationNames(activeJob);
-      const plannedAnimations = plannedNames.map((name) => {
+      const plannedAnimations = (rendererVersion === 'legacy-v1' ? plannedNames : []).map((name) => {
         const animation = PACKAGE_ANIMATIONS.find((candidate) => candidate.name === name);
         if (!animation) throw new Error(`Unsupported authorized animation: ${name}`);
         return animation;
@@ -703,7 +867,9 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         return { jobId, status: 'succeeded', reviewStatus: 'awaiting_review' };
       }
 
-      if (activeJob.operation === 'fighter_generation') {
+      if (rendererVersion !== 'legacy-v1' && activeJob.operation !== 'fighter_retry_source') {
+        await this.runTemplateAtlasFlow(activeJob, artifactRun, rendererVersion, generationPrompt, step);
+      } else if (activeJob.operation === 'fighter_generation') {
         if (!artifactRun.original_blob_key) throw new Error('Durable original source photo is missing');
         const side = await step.do('generate canonical side source', STEP_CONFIG, () => this.generateSourcePair(activeJob, {
           operation: 'repose',

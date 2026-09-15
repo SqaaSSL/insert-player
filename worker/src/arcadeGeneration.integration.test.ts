@@ -13,6 +13,7 @@ import {
 } from './providerSessions';
 import type { AuthContext, Env } from './types';
 import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
+import { TEMPLATE_ATLAS_COMPILER_CONTRACT } from '../../src/services/TemplateAtlasContract';
 import {
   VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
   VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
@@ -2118,6 +2119,7 @@ describe('official Arcade deployed provider preflight', () => {
       status: 'ok',
       runtime: 'canvas-skia',
       imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      templateAtlasCompiler: TEMPLATE_ATLAS_COMPILER_CONTRACT,
       videoSpriteCompiler: {
         schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
         compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
@@ -2132,6 +2134,7 @@ describe('official Arcade deployed provider preflight', () => {
       ready: true,
       runtime: 'canvas-skia',
       contract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      templateAtlasCompiler: TEMPLATE_ATLAS_COMPILER_CONTRACT,
       videoSpriteCompiler: {
         schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
         compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
@@ -2141,12 +2144,32 @@ describe('official Arcade deployed provider preflight', () => {
       adminVideoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY,
     });
     expect(getByName).toHaveBeenCalledWith(
-      'official-arcade-meterkey-transport-v1-video-v6-compiler-1-0-0',
+      'official-arcade-meterkey-transport-v1-video-v6-compiler-1-0-0-template-atlas-v1-p6',
     );
     expect(processorFetch).toHaveBeenCalledOnce();
     const [healthRequest] = processorFetch.mock.calls[0] as [Request];
     expect(healthRequest.url).toBe('http://image-processor/health');
     expect(healthRequest.method).toBe('GET');
+  });
+
+  it.each([
+    undefined,
+    { ...TEMPLATE_ATLAS_COMPILER_CONTRACT, processingVersion: 5 },
+    { ...TEMPLATE_ATLAS_COMPILER_CONTRACT, rendererVersions: ['rookie-two-atlas-v1'] },
+    { ...TEMPLATE_ATLAS_COMPILER_CONTRACT, animationCount: 11 },
+  ])('rejects a missing or incompatible Template Atlas compiler (%j)', async templateAtlasCompiler => {
+    const { env } = contractEnv({
+      status: 'ok', runtime: 'canvas-skia', imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      templateAtlasCompiler,
+      videoSpriteCompiler: {
+        schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION, compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
+        processingVersion: VIDEO_SPRITE_PROCESSING_VERSION, automaticSelectionPolicies: VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
+      },
+    });
+    const response = await readAdminArcadeGenerationContract(env, adminAuth);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Image processor Template Atlas compiler is incompatible',
+      reason: 'processor_template_atlas_compiler_incompatible' });
   });
 
   it('fails closed while the deployed processor still advertises the previous Video compiler', async () => {

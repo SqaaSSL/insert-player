@@ -1,9 +1,11 @@
 import { AURA_ANIMATION_NAMES } from './FighterAssetPacks';
 import { PLAYABLE_ANIMATION_NAMES } from './PlayableFighterAssets';
 import type { QualityTier } from './QualityTiers';
+import type { GenerationRendererVersion } from './TemplateAtlasContract';
 
 export type GenerationPackage = 'aura' | 'complete';
 export interface GenerationPackageOptions {
+  rendererVersion?: GenerationRendererVersion;
   creationPackage?: GenerationPackage;
   /** Add the missing target pack while retaining all existing versions. */
   expansion?: boolean;

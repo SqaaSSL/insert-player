@@ -98,6 +98,7 @@
     "smoke:frontend-sandbox": "node scripts/smoke-frontend-live.mjs --target=sandbox",
     "smoke:frontend:prelaunch": "node scripts/smoke-frontend-prelaunch.mjs",
     "test": "vitest run",
+    "test:template-atlas": "npm --prefix processor run test:template-atlas",
     "build": "npm run check:frontend && tsc && vite build",
     "build:sandbox": "npm run check:frontend && tsc && vite build --mode sandbox",
     "build:prelaunch": "node scripts/build-prelaunch.mjs",

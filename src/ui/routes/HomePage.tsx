@@ -287,12 +287,14 @@ export function HomePage({
   };
 
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
-  const heroNote = rookieStatus === 'included'
+  const heroNote = authStatus === 'signed-out' || authStatus === 'local'
+    ? 'Sign in to check your included first Rookie. One character works in Aura, Fight and Rush.'
+    : rookieStatus === 'included'
     ? 'Your first fighter is free in Rookie quality. Upgrade anytime to bring out the detail.'
     : rookieStatus === 'credits'
       ? 'Forge new challengers with credits. Every generated version stays yours.'
-      : 'Upload a photo, get a playable fighter. Your first Rookie is free.';
-  const arcadeModeHint = rookieStatus === 'included'
+      : 'Upload a photo, get a playable fighter. Your account eligibility is checked before creation.';
+  const arcadeModeHint = authStatus === 'signed-in' && rookieStatus === 'included'
     ? 'Your Rookie is included. Climb the machine roster.'
     : rookieStatus === 'credits'
       ? 'Climb the ladder: 13 challengers, 3 continues.'
@@ -300,7 +302,9 @@ export function HomePage({
   const purchaseTier = creationPurchaseIntent
     ? QUALITY_TIERS.find((item) => item.id === offeredQualityTier(creationPurchaseIntent.tier)) ?? null
     : null;
-  const purchaseQuote = purchaseTier ? quoteGenerationPackage(purchaseTier.id, creationPurchaseIntent?.creationPackage ?? 'complete') : null;
+  // An unsent creation intent follows the current public offer. Paid job plans
+  // are recovered separately and must never be re-priced here.
+  const purchaseQuote = purchaseTier ? quoteGenerationPackage(purchaseTier.id, 'complete') : null;
   const purchaseCreditsNeeded = purchaseTier && billingProfile
     ? Math.max(0, purchaseQuote!.creditCost - billingProfile.creditsBalance)
     : purchaseQuote?.creditCost ?? 0;
@@ -449,7 +453,7 @@ export function HomePage({
         {creationPurchaseIntent && purchaseTier ? (
           <div className="home-credits__creation-intent" role="status">
             <div>
-              <strong>{creationPurchaseIntent.creationPackage === 'aura' ? 'Aura moves' : 'Fight + Rush'} · {purchaseTier.label}</strong>
+              <strong>Aura + Fight + Rush · {purchaseTier.label} · 20 animations</strong>
               <span>
                 {purchaseIntentReady
                   ? 'Your balance is ready. Continue with the fighter you chose.'

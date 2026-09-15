@@ -3906,6 +3906,8 @@ function assertGithubActionsAreWired() {
     runbook: '.github/DEPLOYMENT.md',
     processorDeployCheck: 'scripts/check-image-processor-contract.mjs',
     processorDeployRoute: 'worker/src/deploymentPreflight.ts',
+    processorServer: 'processor/src/server.ts',
+    processorGenerationContract: 'worker/src/arcadeGeneration.ts',
     workerIndex: 'worker/src/index.ts',
   };
   const missingFiles = Object.values(files).filter((path) => !existsSync(join(root, path)));
@@ -3996,6 +3998,8 @@ function assertGithubActionsAreWired() {
       'node scripts/production-deploy-guard.mjs',
       'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s',
       'Guard frontend/Worker contract drift',
+      'npm run check:image-processor-contract',
+      'secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET',
       'npm run deploy:frontend',
     ],
     xaiCanary: [
@@ -4105,12 +4109,19 @@ function assertGithubActionsAreWired() {
       "const PRODUCTION_WORKER_URL = 'https://api.insertplayer.ai'",
       "const PREFLIGHT_PATH = '/api/internal/deploy/image-processor-contract'",
       'assertApprovedArcadeGenerationContract',
+      'assertApprovedTemplateAtlasCompiler(body)',
       'X-Insert-Player-Clerk-Backend-Auth',
     ],
     processorDeployRoute: [
       'hasValidClerkBackendAuthBridge',
       'readImageProcessorGenerationContract',
       "'Cache-Control': 'private, no-store'",
+    ],
+    processorServer: ['templateAtlasCompiler: TEMPLATE_ATLAS_COMPILER_CONTRACT'],
+    processorGenerationContract: [
+      'isTemplateAtlasCompilerContract(payload.templateAtlasCompiler)',
+      'processor_template_atlas_compiler_incompatible',
+      "'-template-atlas-v1-p6'",
     ],
     workerIndex: [
       "path === '/api/internal/deploy/image-processor-contract' && method === 'GET'",
@@ -4125,6 +4136,11 @@ function assertGithubActionsAreWired() {
   }
   if (missingSnippets.length > 0) {
     throw new Error(`GitHub delivery wiring is incomplete:\n- ${missingSnippets.join('\n- ')}`);
+  }
+  for (const name of ['production', 'frontendProduction']) {
+    const check = text[name].indexOf('run: npm run check:image-processor-contract');
+    const pages = text[name].indexOf('run: npm run deploy:frontend');
+    if (check < 0 || pages <= check) throw new Error('Pages must wait for the compatible Template Atlas processor, including frontend-only releases.');
   }
   if (
     text.production.includes('ASF_ARCADE_PREFLIGHT_KEY:')
@@ -4465,6 +4481,7 @@ run('tier parity guard', node, ['scripts/check-tier-parity.mjs']);
 run('approved image-provider boundary', node, ['processor/scripts/assert-approved-image-providers.mjs']);
 assertLiveSmokeHasNoUndefinedNames();
 run('unit tests', npm, ['test']);
+run('deterministic Template Atlas pipeline tests', npm, ['run', 'test:template-atlas']);
 run(
   'deterministic video sprite compiler tests',
   npm,
