@@ -78,6 +78,15 @@ describe('bounded Template Atlas JSON stream', () => {
       [{ planId: 'one', rawKey: 'raw' }])).json()).toEqual({ atlases: [{ planId: 'one', rawBase64: Buffer.from(bytes).toString('base64') }] });
   });
 
+  it('rejects a known oversized RPC before opening either preserved RAW', () => {
+    const storage = bucket(fixture(24));
+    expect(() => templateAtlasCompileBody(storage as unknown as R2Bucket, fields,
+      [{ planId: 'one', rawKey: 'first', sizeBytes: 24 * 1024 * 1024 },
+        { planId: 'two', rawKey: 'second', sizeBytes: 24 * 1024 * 1024 }]))
+      .toThrow('Template atlas request exceeds the processor limit');
+    expect(storage.get).not.toHaveBeenCalled();
+  });
+
   it.each([12, 20])('streams two %i MiB R2 objects through a real workerd Request with exact JSON hash', async mib => {
     const size = mib * 1024 * 1024;
     const modulePath = fileURLToPath(new URL('./templateAtlasStream.ts', import.meta.url).href);

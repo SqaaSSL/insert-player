@@ -4,6 +4,7 @@ export interface TemplateAtlasStreamInput { planId: string; rawKey: string; size
 const encoder = new TextEncoder();
 const MAX_RAW_BYTES = 32 * 1024 * 1024;
 const CHUNK_BYTES = 24 * 1024;
+const MAX_RPC_BYTES = 64 * 1024 * 1024;
 
 function base64(bytes: Uint8Array): Uint8Array {
   let binary = '';
@@ -16,6 +17,12 @@ function base64(bytes: Uint8Array): Uint8Array {
 export function templateAtlasCompileBody(bucket: R2Bucket, fields: Record<string, unknown>,
   inputs: readonly TemplateAtlasStreamInput[]): ReadableStream<Uint8Array> {
   if ('atlases' in fields || !inputs.length || inputs.length > 2) throw new NonRetryableError('Invalid atlas stream inputs');
+  const envelopeBytes = encoder.encode(JSON.stringify({ ...fields,
+    atlases: inputs.map(input => ({ planId: input.planId, rawBase64: '' })) })).length;
+  if (inputs.every(input => Number.isSafeInteger(input.sizeBytes) && input.sizeBytes! >= 0)
+    && envelopeBytes + inputs.reduce((sum, input) => sum + 4 * Math.ceil(input.sizeBytes! / 3), 0) > MAX_RPC_BYTES) {
+    throw new NonRetryableError('Template atlas request exceeds the processor limit; preserved RAWs require no new inference');
+  }
   async function* chunks(): AsyncGenerator<Uint8Array> {
     const fieldsJson = JSON.stringify(fields);
     yield encoder.encode(`${fieldsJson.slice(0, -1)}${Object.keys(fields).length ? ',' : ''}"atlases":[`);

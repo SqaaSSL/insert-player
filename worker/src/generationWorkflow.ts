@@ -383,6 +383,9 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         // The bounded response text below remains the diagnostic for non-JSON failures.
       }
       const nonRetryableProviderMessage = nonRetryableProcessorProviderMessage(errorCode, detail);
+      if (response.status === 413 && (path === '/v1/compile-template-atlas' || path === '/v1/generate-template-atlas')) {
+        throw new NonRetryableError(`Template atlas payload exceeds the processor limit; preserved work remains available: ${detail}`);
+      }
       if (nonRetryableProviderMessage) {
         throw new NonRetryableError(nonRetryableProviderMessage);
       }
