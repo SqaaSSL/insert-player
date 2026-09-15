@@ -80,10 +80,15 @@ function canInvite(auth: AuthContext): boolean {
 }
 
 function frontendOrigin(env: Env): string {
-  return (env.CORS_ORIGIN ?? '')
-    .split(',')
-    .map((origin) => origin.trim().replace(/\/+$/, ''))
-    .find((origin) => /^https:\/\//i.test(origin)) ?? 'https://insertplayer.ai';
+  for (const value of (env.CORS_ORIGIN ?? '').split(',')) {
+    try {
+      const origin = new URL(value.trim());
+      if (origin.protocol === 'https:') return origin.origin;
+    } catch {
+      // Ignore malformed configuration entries and keep looking for HTTPS.
+    }
+  }
+  return 'https://insertplayer.ai';
 }
 
 export async function createCrewInvitation(
