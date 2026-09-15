@@ -6,6 +6,7 @@ import {
 } from './ApiClient';
 import type { GenerationBillingOperation, QualityTier } from './QualityTiers';
 import type { GenerationCreationFlow } from './GenerationCreationFlow';
+import type { GenerationRendererVersion } from './TemplateAtlasContract';
 
 export type GenerationJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 export type GenerationJobReviewStatus = 'none' | 'awaiting_review' | 'approved' | 'rejected';
@@ -22,6 +23,7 @@ export interface GenerationJob {
   fighterId: string;
   tier: QualityTier;
   creationFlow: GenerationCreationFlow;
+  rendererVersion?: GenerationRendererVersion;
   creationPackage?: GenerationPackage;
   expansion?: boolean;
   operation: GenerationBillingOperation;
@@ -54,6 +56,18 @@ export class GenerationJobNotFoundError extends Error {
     super(`Generation job ${jobId} was not found`);
     this.name = 'GenerationJobNotFoundError';
   }
+}
+
+export class GenerationRendererMismatchError extends Error {
+  constructor() {
+    super('The server did not confirm the requested character renderer. No replacement generation was requested.');
+    this.name = 'GenerationRendererMismatchError';
+  }
+}
+
+export function assertGenerationRendererAcknowledged(requested: GenerationRendererVersion, acknowledged: unknown): void {
+  if (requested === 'legacy-v1' && (acknowledged === undefined || acknowledged === null)) return;
+  if (acknowledged !== requested) throw new GenerationRendererMismatchError();
 }
 
 interface JobResponseBody {
@@ -121,6 +135,7 @@ export async function startGenerationJob(
     purchaseId: string;
     providerSessionId: string;
     creationFlow?: GenerationCreationFlow;
+    rendererVersion?: GenerationRendererVersion;
     creationPackage?: GenerationPackage;
     expansion?: boolean;
     targetKind?: 'animation' | 'source';
@@ -139,16 +154,22 @@ export async function startGenerationJob(
         body: JSON.stringify(params),
       }, context);
       const body = await responseBody(response);
-      if (body.job && (response.ok || response.status === 409)) return body.job;
+      if (body.job && (response.ok || response.status === 409)) {
+        if (params.rendererVersion) assertGenerationRendererAcknowledged(params.rendererVersion, body.job.rendererVersion);
+        return body.job;
+      }
       throw jobError(body, `Generation could not start (${response.status})`);
     } catch (error) {
-      if (error instanceof ApiSessionChangedError) throw error;
+      if (error instanceof ApiSessionChangedError || error instanceof GenerationRendererMismatchError) throw error;
       lastError = error;
       try {
         const existing = await getGenerationJob(params.purchaseId, context);
-        if (existing) return existing;
+        if (existing) {
+          if (params.rendererVersion) assertGenerationRendererAcknowledged(params.rendererVersion, existing.rendererVersion);
+          return existing;
+        }
       } catch (lookupError) {
-        if (lookupError instanceof ApiSessionChangedError) throw lookupError;
+        if (lookupError instanceof ApiSessionChangedError || lookupError instanceof GenerationRendererMismatchError) throw lookupError;
       }
       if (attempt < 3) await wait(750 * (attempt + 1));
     }

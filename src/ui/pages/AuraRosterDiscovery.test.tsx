@@ -6,6 +6,18 @@ vi.mock('../components/AuraEntryPreview.tsx', () => ({ AuraEntryPreview: () => <
 vi.mock('../components/CombatEntryPreview.tsx', () => ({ CombatEntryPreview: () => <div>Combat preview</div> }));
 
 describe('ready Aura character discovery', () => {
+  it.each(['aura', 'fight', 'rush'] as const)('quotes the same complete character on the %s entry', (mode) => {
+    const html = renderToStaticMarkup(<GameLandingPage mode={mode} onPlay={vi.fn()} onCreate={vi.fn()} onExplore={vi.fn()}
+      onOpenCharacters={vi.fn()} onOpenCredits={vi.fn()} />);
+    expect(html).toContain('All 20 animations, compact detail');
+    expect(html).toContain('All 20 animations, more detail per move');
+    expect(html).toContain('2 credits');
+    expect(html).toContain('11 credits');
+    expect(html).toContain('Sign in to check your included first Rookie');
+    expect(html).not.toContain('6 credits');
+    expect(html).not.toContain('Six dedicated performance moves');
+    expect(html).not.toContain('separate pack');
+  });
   it('keeps one-tap free play first and adds a separate character choice on the Aura landing', () => {
     const html = renderToStaticMarkup(<GameLandingPage mode="aura" onPlay={vi.fn()} onCreate={vi.fn()} onExplore={vi.fn()}
       onChooseCharacter={vi.fn()} onOpenCharacters={vi.fn()} onOpenCredits={vi.fn()} />);

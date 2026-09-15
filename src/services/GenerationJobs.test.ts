@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiFetch, configureApiAuth } from './ApiClient';
 import {
   GenerationJobNotFoundError,
+  GenerationRendererMismatchError,
   startGenerationJob,
   waitForGenerationJob,
   type GenerationJob,
@@ -108,5 +109,20 @@ describe('durable generation browser recovery', () => {
 
     await expect(waitForGenerationJob(JOB.id)).resolves.toEqual(succeeded);
     expect(apiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('never silently accepts or re-submits a different renderer', async () => {
+    vi.mocked(apiFetch).mockResolvedValue(Response.json({ job: JOB }));
+    await expect(startGenerationJob({ fighterId: JOB.fighterId, purchaseId: JOB.id,
+      providerSessionId: 'session', rendererVersion: 'rookie-two-atlas-v1' })).rejects.toBeInstanceOf(GenerationRendererMismatchError);
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconnects only to the same acknowledged renderer after an uncertain POST', async () => {
+    vi.mocked(apiFetch).mockRejectedValueOnce(new TypeError('connection reset'))
+      .mockResolvedValueOnce(Response.json({ job: { ...JOB, rendererVersion: 'champion-animation-sheet-v1' } }));
+    await expect(startGenerationJob({ fighterId: JOB.fighterId, purchaseId: JOB.id,
+      providerSessionId: 'session', rendererVersion: 'rookie-two-atlas-v1' })).rejects.toBeInstanceOf(GenerationRendererMismatchError);
+    expect(apiFetch).toHaveBeenCalledTimes(2);
   });
 });

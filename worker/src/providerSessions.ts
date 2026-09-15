@@ -1,6 +1,7 @@
 import { generateId, hashString } from './auth';
 import type { Env, PublicAuthContext, QualityTier } from './types';
-import { generationCreationFlowFromAuth, generationJobIdFromAuth } from './generationAuth';
+import { generationCreationFlowFromAuth, generationJobIdFromAuth, templateRendererFromAuth } from './generationAuth';
+import { rendererMatchesTier } from './templateGenerationPolicy';
 import {
   normalizeGenerationBillingOperation,
   normalizeQualityTier,
@@ -22,6 +23,7 @@ import { PROVIDER_REQUEST_BODY_LIMITS, type ProviderName } from './providerLimit
 import { geminiEstimatedCostCents } from './geminiTransport';
 import { GENERATION_ANIMATION_NAMES } from './generationArtifacts';
 import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
+import { getTemplateAtlasPlanIds, TEMPLATE_ATLAS_ANIMATION_NAMES } from '../../src/services/TemplateAtlasContract';
 
 export const PROVIDER_SESSION_HEADER = 'X-ASF-Provider-Session';
 
@@ -265,6 +267,8 @@ function providerRequestPath(request: Request): string {
 }
 
 function providerStageFromRequestKey(requestKey: string): string | null {
+  const atlas = requestKey.match(/^job:[a-f0-9]{32}:atlas:((?:rookie-two-atlas-v1|champion-animation-sheet-v1):[a-z0-9_-]+)$/);
+  if (atlas) return `atlas:${atlas[1]}`;
   const match = requestKey.match(/^(?:job|run):[a-f0-9]{32}:(source|sprite):([a-z_]{2,64})$/i);
   return match ? `${match[1].toLowerCase()}:${match[2].toLowerCase()}` : null;
 }
@@ -294,7 +298,17 @@ function providerCallKind(
   ) {
     return 'video_generation';
   }
-  return route.provider === 'gemini' ? 'image_generation' : 'provider_other';
+  return route.provider === 'gemini' || isTemplateAtlasSubmission(route) ? 'image_generation' : 'provider_other';
+}
+
+function isTemplateAtlasSubmission(route: { provider: ProviderSessionProvider; path: string }): boolean {
+  return route.provider === 'fal' && route.path === '/proxy/fal/fal-ai/nano-banana-2/edit';
+}
+
+function isCanonicalTemplateAtlasDispatchKey(requestKey: string, artifactRunId: string, auth: PublicAuthContext): boolean {
+  const renderer = templateRendererFromAuth(auth);
+  return renderer !== null && getTemplateAtlasPlanIds(renderer, TEMPLATE_ATLAS_ANIMATION_NAMES)
+    .some(planId => requestKey === `job:${artifactRunId}:atlas:${planId}`);
 }
 
 function isPixcliAdvancedSubmission(
@@ -437,14 +451,22 @@ async function beginProviderRequestCache(
   if (!/^[a-zA-Z0-9:_-]{1,200}$/.test(requestKey)) {
     return json({ error: 'A valid durable provider request key is required' }, 400);
   }
-  const terminalOnUpstreamResponse = isPixcliAdvancedSubmission(route);
+  const pixcliSubmission = isPixcliAdvancedSubmission(route);
+  const atlasSubmission = isTemplateAtlasSubmission(route);
+  const terminalOnUpstreamResponse = pixcliSubmission || atlasSubmission;
   if (
-    terminalOnUpstreamResponse &&
+    pixcliSubmission &&
     !isCanonicalPixcliDispatchKey(requestKey, artifactRunId)
   ) {
     return json({
       error: 'PixCLI video dispatch requires the canonical run and action request key',
       code: 'pixcli_dispatch_identity_invalid',
+    }, 400);
+  }
+  if (atlasSubmission && !isCanonicalTemplateAtlasDispatchKey(requestKey, artifactRunId, auth)) {
+    return json({
+      error: 'Template Atlas dispatch requires its canonical run and trusted plan request key',
+      code: 'template_atlas_dispatch_identity_invalid',
     }, 400);
   }
   let requestHash: string;
@@ -459,7 +481,9 @@ async function beginProviderRequestCache(
     // remain one dispatch per durable run + action, independently of those
     // caller-controlled bytes. Keep hashing the body above for the size gate,
     // but persist a stable semantic dispatch hash for the advanced POST.
-    requestHash = terminalOnUpstreamResponse
+    requestHash = atlasSubmission
+      ? await hashString(`template-atlas-dispatch-v1\n${artifactRunId}\n${requestKey}`)
+      : pixcliSubmission
       ? await hashString(`pixcli-advanced-v1\n${artifactRunId}\n${requestKey}`)
       : bodyHash;
   } catch (error) {
@@ -490,7 +514,7 @@ async function beginProviderRequestCache(
     ownerAttemptId,
   ).run();
 
-  let row = terminalOnUpstreamResponse
+  let row = pixcliSubmission
     ? await env.DB.prepare(`
         SELECT id, status, response_blob_key, response_status, response_content_type,
                owner_attempt_id, updated_at
@@ -533,7 +557,7 @@ async function beginProviderRequestCache(
     await env.DB.prepare(`
       UPDATE provider_request_cache
       SET status = 'uncertain',
-          error_message = 'A prior PixCLI response was received but is not replayable; automatic replay is disabled',
+          error_message = 'A prior provider response was received but is not replayable; automatic replay is disabled',
           updated_at = datetime('now')
       WHERE id = ? AND status = 'failed' AND response_status IS NOT NULL
     `).bind(row.id).run();
@@ -951,6 +975,7 @@ function isAllowedProviderUse(
     path.startsWith('/proxy/freepik/v1/ai/reference-to-video/');
   const isFalIntro = path.startsWith('/proxy/fal/fal-ai/ltx-2.3/image-to-video/');
   const isFalBgRemoval = path.startsWith('/proxy/fal/fal-ai/birefnet');
+  const isTemplateAtlas = /^\/proxy\/fal\/fal-ai\/nano-banana-2\/(?:edit|requests\/[A-Za-z0-9-]{16,80}(?:\/status)?)$/.test(path);
   const isPixcliVideo = path.startsWith('/proxy/pixcli/api/v1/');
 
   const geminiModel = path.match(/^\/proxy\/gemini\/v1beta\/models\/([^/:]+):generateContent$/)?.[1];
@@ -964,6 +989,13 @@ function isAllowedProviderUse(
       isFreepikVideo ||
       isFalIntro
     );
+  }
+  if (provider === 'fal' && isTemplateAtlas) {
+    const renderer = templateRendererFromAuth(auth);
+    return renderer !== null && rendererMatchesTier(renderer, tier)
+      && sessionCreationFlow === 'original'
+      && (purpose === 'fighter_generation' || purpose === 'fighter_upgrade'
+        || (purpose === 'fighter_retry' && billingOperationForSession(purpose, chargeReason) === 'fighter_retry_animation'));
   }
 
   // PixCLI is reserved for the explicitly selected video creation flow. The
@@ -1017,6 +1049,7 @@ function estimatedProviderCallCostCents(env: Env, provider: ProviderSessionProvi
     return geminiEstimatedCostCents(env, model ?? '');
   }
   if (provider === 'fal') {
+    if (path === '/proxy/fal/fal-ai/nano-banana-2/edit') return 20;
     if (path.startsWith('/proxy/fal/fal-ai/birefnet')) return 1;
     if (path.startsWith('/proxy/fal/fal-ai/ltx-2.3/image-to-video/')) return 50;
     return null;
@@ -1283,7 +1316,7 @@ function applyProviderRequestCacheState(
   cache: ProviderRequestCacheClaim,
 ): void {
   state.cacheClaim = cache;
-  // PixCLI advanced is exactly one paid dispatch per semantic run + action,
+  // PixCLI advanced and Template Atlas are one paid dispatch per semantic run + action/plan,
   // so its cache row remains the upstream identity across local ownership
   // changes. Existing providers intentionally keep one key per owner attempt:
   // a known non-dispatched/failed Gemini attempt may be retried as new work.
@@ -1374,6 +1407,10 @@ export async function requireProviderSession(
   const sessionId = request.headers.get(PROVIDER_SESSION_HEADER)?.trim();
   if (!sessionId) {
     return json({ error: 'Provider session required' }, 402);
+  }
+  if (templateRendererFromAuth(auth)
+    && sessionId !== auth.claims?.generation_provider_session_id) {
+    return json({ error: 'Template Atlas provider session must match its signed job' }, 403);
   }
 
   const existing = await env.DB.prepare(`
@@ -1627,6 +1664,9 @@ export async function requireProviderResultSession(
   const sessionId = request.headers.get(PROVIDER_SESSION_HEADER)?.trim();
   if (!sessionId) {
     return json({ error: 'Provider session required' }, 402);
+  }
+  if (templateRendererFromAuth(auth) && sessionId !== auth.claims?.generation_provider_session_id) {
+    return json({ error: 'Template result session must match its signed job' }, 403);
   }
 
   const existing = await env.DB.prepare(`

@@ -11,14 +11,15 @@ const callbacks = {
 };
 
 describe('LandingPage onboarding offer', () => {
-  it('leads with the playable demo and explains the anonymous Rookie check', () => {
+  it('keeps the demo anonymous but checks creation eligibility through the account', () => {
     const markup = renderToStaticMarkup(
       <LandingPage authStatus="signed-out" billingProfile={null} billingProfileChecked {...callbacks} />,
     );
 
     expect(markup).toContain('Play a free round');
     expect(markup).toContain('Playable demo · no account, upload, or credits');
-    expect(markup).toContain('Free Rookie · human check at creation');
+    expect(markup).toContain('Sign in to check your included first Rookie');
+    expect(markup).not.toContain('human check at creation');
     expect(markup).toContain('Create your fighter');
     expect(markup).toContain('real Insert Player gameplay');
   });

@@ -8,7 +8,8 @@ import {
   requireUnmeteredProviderSession,
 } from './providerSessions';
 import { createBoundedByteStream } from './streamLimits';
-import { buildGeminiProxyTarget, pixcliUpstreamHeaders, proxyRequest } from './proxy';
+import { buildGeminiProxyTarget, handleProxy, pixcliUpstreamHeaders, proxyRequest } from './proxy';
+import { hashString } from './auth';
 import type { Env, PublicAuthContext } from './types';
 
 const USER_ID = 'user-provider-cache';
@@ -34,6 +35,7 @@ const PIXCLI_SUBMIT_ROUTE = {
 
 const SCHEMA = `
   CREATE TABLE users (id TEXT PRIMARY KEY);
+  CREATE TABLE rate_limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at TEXT NOT NULL);
   CREATE TABLE generation_charges (
     creation_package TEXT NOT NULL DEFAULT 'complete',
     expansion_only INTEGER NOT NULL DEFAULT 0,
@@ -285,6 +287,131 @@ function interceptBatches(
   });
   return () => attempts;
 }
+
+describe('Template Atlas Meterkey routing against D1 and R2', () => {
+  const atlasPath = '/proxy/fal/fal-ai/nano-banana-2/edit';
+  const falId = '01a0a225-88a2-7570-8dab-1d7ca8d5e0ed';
+  const atlasAuth: PublicAuthContext = { ...auth, claims: {
+    generation_job_id: JOB_ID, generation_provider_session_id: SESSION_ID,
+    generation_creation_flow: 'original', generation_renderer_version: 'rookie-two-atlas-v1',
+  } };
+  const payload = {
+    sync_mode: false, num_images: 1, resolution: '4K', aspect_ratio: '1:1', output_format: 'png',
+    limit_generations: true, enable_web_search: false,
+    prompt: 'Keep every template pose unchanged and apply the upright identity only.',
+    image_urls: Array(2).fill('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB'),
+  };
+  const key = `job:${JOB_ID}:atlas:rookie-two-atlas-v1:two-01`;
+  function atlasRequest(options: { method?: string; path?: string; key?: string; session?: string; changed?: Record<string, unknown> } = {}) {
+    const method = options.method ?? 'POST';
+    return new Request(`https://api.insertplayer.ai${options.path ?? atlasPath}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', [PROVIDER_SESSION_HEADER]: options.session ?? SESSION_ID, [PROVIDER_KEY_HEADER]: options.key ?? key },
+      ...(method === 'POST' ? { body: JSON.stringify({ ...payload, ...options.changed }) } : {}),
+    });
+  }
+  function configured(env: Env): Env {
+    return { ...env, METERKEY_BASE_URL: 'https://meter.hilo.cx', METERKEY_API_KEY: 'test-meterkey-only',
+      FAL_API_KEY: 'test-unused-fal', PIXCLI_API_KEY: 'test-unused-pixcli' };
+  }
+  it('pins one POST to Meterkey/FAL, reserves20c once and replays its exact receipt', async () => {
+    const { mf, db, env } = await bindings();
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ request_id: falId }, { headers: { 'X-Meterkey-Upstream-Outcome': 'received' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const response = await handleProxy(atlasRequest(), configured(env), atlasAuth);
+      expect(response?.status).toBe(200);
+      const receipt = await response?.json();
+      expect(receipt).toEqual({ request_id: falId, insert_player_request_body_sha256: await hashString(JSON.stringify(payload)) });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [target, init] = fetchMock.mock.calls[0]!;
+      expect(target).toBe('https://meter.hilo.cx/fal/fal-ai/nano-banana-2/edit');
+      expect(init).toMatchObject({ method: 'POST', redirect: 'error' });
+      const headers = new Headers(init.headers);
+      expect(headers.get('authorization')).toBe('Bearer test-meterkey-only');
+      expect(headers.get('idempotency-key')).toMatch(/^ip:[a-f0-9]{32}$/);
+      expect(headers.get('x-request-id')).toBe(headers.get('idempotency-key'));
+      expect(headers.get('cf-aig-max-attempts')).toBe('1'); expect(headers.get('cf-aig-skip-cache')).toBe('true');
+      expect(headers.get('x-fal-no-retry')).toBe('1'); expect(headers.get('cf-aig-collect-log-payload')).toBe('false');
+      expect(await usage(db)).toEqual({ calls: 1, cost: 20, events: 1 });
+      const replay = await handleProxy(atlasRequest(), configured(env), atlasAuth);
+      expect(await replay?.json()).toEqual(receipt); expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(await usage(db)).toEqual({ calls: 1, cost: 20, events: 1 });
+      const changed = await handleProxy(atlasRequest({ changed: { prompt: 'Changed prompt must not create a second paid atlas for this exact plan.' } }), configured(env), atlasAuth);
+      expect(await changed?.json()).toEqual(receipt); // Processor rejects its original-body hash, never claims new provenance.
+      expect(fetchMock).toHaveBeenCalledTimes(1); expect(await usage(db)).toEqual({ calls: 1, cost: 20, events: 1 });
+      expect(await db.prepare('SELECT call_kind, stage FROM provider_cost_events').first()).toEqual({ call_kind: 'image_generation', stage: 'atlas:rookie-two-atlas-v1:two-01' });
+    } finally { vi.unstubAllGlobals(); await mf.dispose(); }
+  }, 15_000);
+  it('status/result GETs use the base model and never consume another call or spend reservation', async () => {
+    const { mf, db, env } = await bindings();
+    const fetchMock = vi.fn().mockImplementation(async () => Response.json({ status: 'IN_PROGRESS' }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await db.prepare('UPDATE provider_sessions SET provider_calls_used=48,provider_cost_used_cents=300 WHERE id=?').bind(SESSION_ID).run();
+      for (const suffix of ['/status', '']) {
+        const path = `/proxy/fal/fal-ai/nano-banana-2/requests/${falId}${suffix}`;
+        expect((await handleProxy(atlasRequest({ method: 'GET', path }), configured(env), atlasAuth))?.status).toBe(200);
+        expect(fetchMock.mock.calls.at(-1)?.[0]).toBe(`https://meter.hilo.cx/fal/fal-ai/nano-banana-2/requests/${falId}${suffix}`);
+        expect(fetchMock.mock.calls.at(-1)?.[1].method).toBe('GET');
+      }
+      expect(await usage(db)).toEqual({ calls: 48, cost: 300, events: 0 });
+      expect((await db.prepare('SELECT COUNT(*) AS n FROM provider_request_cache').first<{ n: number }>())?.n).toBe(0);
+    } finally { vi.unstubAllGlobals(); await mf.dispose(); }
+  }, 15_000);
+  it('new source background cleanup uses Meterkey BiRefNet for submit and GET, with no direct fallback', async () => {
+    const { mf, db, env } = await bindings();
+    const fetchMock = vi.fn().mockImplementation(async () => Response.json({ request_id: falId, status: 'COMPLETED' }, { headers: { 'X-Meterkey-Upstream-Outcome': 'received' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const sourceKey = `job:${JOB_ID}:source:upright`;
+      const bgPath = '/proxy/fal/fal-ai/birefnet';
+      const bgRequest = new Request(`https://api.insertplayer.ai${bgPath}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', [PROVIDER_SESSION_HEADER]: SESSION_ID, [PROVIDER_KEY_HEADER]: sourceKey },
+        body: JSON.stringify({ image_url: `https://api.insertplayer.ai/temp-assets/${'d'.repeat(32)}.png` }),
+      });
+      const configuredEnv = configured(env); delete configuredEnv.FAL_API_KEY;
+      expect((await handleProxy(bgRequest, configuredEnv, atlasAuth))?.status).toBe(200);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe('https://meter.hilo.cx/fal/fal-ai/birefnet');
+      expect(new Headers(fetchMock.mock.calls[0]?.[1].headers).get('authorization')).toBe('Bearer test-meterkey-only');
+      for (const suffix of ['/status', '']) {
+        const path = `${bgPath}/requests/${falId}${suffix}`;
+        expect((await handleProxy(atlasRequest({ method: 'GET', path }), configuredEnv, atlasAuth))?.status).toBe(200);
+        expect(fetchMock.mock.calls.at(-1)?.[0]).toBe(`https://meter.hilo.cx/fal/fal-ai/birefnet/requests/${falId}${suffix}`);
+      }
+      expect(await usage(db)).toEqual({ calls: 1, cost: 1, events: 1 });
+    } finally { vi.unstubAllGlobals(); await mf.dispose(); }
+  }, 15_000);
+  it('rejects mismatched signed sessions, legacy jobs, wrong renderer/tier and noncanonical keys before costs', async () => {
+    const { mf, db, env } = await bindings(); const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+    try {
+      expect((await handleProxy(atlasRequest({ session: 'different-session' }), configured(env), atlasAuth))?.status).toBe(403);
+      expect((await handleProxy(atlasRequest(), configured(env), { ...atlasAuth, claims: { ...atlasAuth.claims, generation_renderer_version: 'legacy-v1' } }))?.status).toBe(403);
+      expect((await handleProxy(atlasRequest(), configured(env), { ...atlasAuth, claims: { ...atlasAuth.claims, generation_renderer_version: 'champion-animation-sheet-v1' } }))?.status).toBe(403);
+      expect((await handleProxy(atlasRequest({ key: `${key}:attempt2` }), configured(env), atlasAuth))?.status).toBe(400);
+      expect((await handleProxy(atlasRequest({ key: `job:${'f'.repeat(32)}:atlas:rookie-two-atlas-v1:two-01` }), configured(env), atlasAuth))?.status).toBe(400);
+      await db.prepare("UPDATE provider_sessions SET creation_flow='video' WHERE id=?").bind(SESSION_ID).run();
+      expect((await handleProxy(atlasRequest(), configured(env), atlasAuth))?.status).toBe(403);
+      expect(await usage(db)).toEqual({ calls: 0, cost: 0, events: 0 }); expect(fetchMock).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); await mf.dispose(); }
+  }, 15_000);
+  it('keeps a received rejection terminal, and an ambiguous failure quarantined, without POST retries', async () => {
+    for (const unknown of [false, true]) {
+      const { mf, db, env } = await bindings();
+      const fetchMock = vi.fn().mockResolvedValue(Response.json({ error: 'test failure' }, {
+        status: 503, headers: { 'X-Meterkey-Upstream-Outcome': unknown ? 'unknown' : 'received' },
+      }));
+      vi.stubGlobal('fetch', fetchMock);
+      try {
+        expect((await handleProxy(atlasRequest(), configured(env), atlasAuth))?.status).toBe(503);
+        const repeated = await handleProxy(atlasRequest(), configured(env), atlasAuth);
+        expect(repeated?.status).toBe(unknown ? 409 : 503);
+        if (unknown) expect(await repeated?.json()).toMatchObject({ code: 'provider_request_outcome_unknown' });
+        expect(fetchMock).toHaveBeenCalledTimes(1); expect(await usage(db)).toEqual({ calls: 1, cost: 20, events: 1 });
+      } finally { vi.unstubAllGlobals(); await mf.dispose(); }
+    }
+  }, 30_000);
+});
 
 describe('durable provider request cache against D1 and R2', () => {
   it('keeps PixCLI unreachable from original-flow generation tokens', async () => {

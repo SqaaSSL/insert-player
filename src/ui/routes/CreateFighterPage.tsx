@@ -43,7 +43,9 @@ import {
   qualityTierInfo,
   type QualityTier,
 } from '../../services/QualityTiers.ts';
-import { QualityComparison } from '../components/QualityComparison.tsx';
+import { rendererForNewFighter } from '../../services/GenerationRenderer.ts';
+import { isTemplateAtlasRendererVersion, TEMPLATE_ATLAS_ANIMATION_NAMES, type GenerationRendererVersion } from '../../services/TemplateAtlasContract.ts';
+import { describeGenerationJob, generationProgress, generationPreviewCheckpoint } from '../shared/generationProgress.ts';
 import {
   authorizeGeneration,
   finishGenerationPurchase,
@@ -58,6 +60,7 @@ import {
   listGenerationJobs,
   startGenerationJob,
   waitForGenerationJob,
+  assertGenerationRendererAcknowledged,
   type GenerationJob,
 } from '../../services/GenerationJobs.ts';
 import { expectedCreationCredits, includedRookieStatus, initialCreationTier } from '../shared/rookieEntitlement.ts';
@@ -89,6 +92,7 @@ interface PendingFighterSync {
   fighterId: string;
   completion: 'generation' | 'video-final';
   creationPackage?: GenerationPackage;
+  rendererVersion?: GenerationRendererVersion;
 }
 
 function initialQualityTier(authStatus: AuthStatus): QualityTier {
@@ -145,27 +149,6 @@ function stageToPercent(status: PipelineStatus): number | null {
   }
 }
 
-function describeDurableJob(job: GenerationJob): string {
-  if (job.status === 'queued') return 'Queued safely in the cloud...';
-  if (job.creationFlow === 'video' && job.status === 'succeeded') {
-    if (job.reviewStatus === 'awaiting_review') return 'Video ready. Paused safely for your review.';
-    if (job.reviewStatus === 'approved' && job.resumable) return 'Action approved. Continue when ready.';
-    if (job.reviewStatus === 'rejected') return 'Video rejected. No additional action was generated.';
-  }
-  if (job.status === 'succeeded') return 'Generation complete. Syncing this device...';
-  if (job.status === 'failed' || job.status === 'cancelled') {
-    return job.errorMessage ?? 'Generation stopped; review the job details or contact support.';
-  }
-  if (job.stage === 'initializing') return 'Starting cloud forge...';
-  if (job.stage === 'source:side') return 'Side reference ready';
-  if (job.stage === 'source:upright') return 'Upright reference ready';
-  if (job.stage === 'source:crouch') return 'Crouch reference ready';
-  if (job.stage.startsWith('sprite:')) {
-    return `${animLabel(job.stage.slice('sprite:'.length))} ready (${job.progressCurrent}/${job.progressTotal})`;
-  }
-  return 'Forging safely in the cloud...';
-}
-
 export function CreateFighterPage({
   authStatus,
   authSessionKey,
@@ -180,7 +163,7 @@ export function CreateFighterPage({
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState(DEFAULT_NAME);
   const [tier, setTier] = useState<QualityTier>(() => initialQualityTier(authStatus));
-  const [creationPackage, setCreationPackage] = useState<GenerationPackage>(() => readCreationNavigationContext(window.location.search).creationPackage ?? 'complete');
+  const [creationPackage, setCreationPackage] = useState<GenerationPackage>('complete');
   const [auraEntry] = useState(() => readCreationNavigationContext(window.location.search).creationPackage === 'aura');
   const [draftMessage, setDraftMessage] = useState<string | null>(null);
   const [draftLoaded, setDraftLoaded] = useState(false);
@@ -194,6 +177,8 @@ export function CreateFighterPage({
   const [error, setError] = useState<string | null>(null);
 
   const [percent, setPercent] = useState(0);
+  const [serverProgress, setServerProgress] = useState<ReturnType<typeof generationProgress> | null>(null);
+  const [activeRenderer, setActiveRenderer] = useState<GenerationRendererVersion | null>(null);
   const [stageText, setStageText] = useState('Ready to forge.');
 
   const [photoHash, setPhotoHash] = useState<string | null>(null);
@@ -234,7 +219,7 @@ export function CreateFighterPage({
       setFile(new File([draft.file], draft.fileName, { type: draft.file.type }));
       setName(draft.name);
       setTier(choices.tier);
-      setCreationPackage(choices.creationPackage);
+      setCreationPackage('complete');
       setCreationFlow(choices.creationFlow);
       setDraftMessage('Your photo and choices are restored on this device.');
     });
@@ -353,6 +338,7 @@ export function CreateFighterPage({
         setTier(recovering.tier);
         setCreationPackage(recovering.creationPackage ?? 'complete');
         setCreationFlow(creationFlowForResume(recovering.creationFlow));
+        setActiveRenderer(recovering.rendererVersion ?? 'legacy-v1');
         setStarted(true);
         setDone(false);
         applyDurableJob(recovering);
@@ -493,13 +479,13 @@ export function CreateFighterPage({
   };
 
   function applyDurableJob(job: GenerationJob): void {
-    setStageText(describeDurableJob(job));
-    setPercent(job.progressTotal > 0 ? job.progressCurrent / job.progressTotal : 0);
-    if (job.stage.startsWith('sprite:') && job.status === 'running') {
-      setGenerating(new Set([job.stage.slice('sprite:'.length)]));
-    } else {
-      setGenerating(new Set());
-    }
+    setActiveRenderer(job.rendererVersion ?? 'legacy-v1');
+    setStageText(describeGenerationJob(job));
+    const progress = generationProgress(job);
+    setServerProgress(progress);
+    setPercent(progress.fraction ?? 0);
+    // sprite:* is a saved checkpoint, not an animation still generating.
+    setGenerating(new Set());
   }
 
   async function monitorDurableJob(
@@ -511,14 +497,42 @@ export function CreateFighterPage({
     if (initial.status === 'succeeded' || initial.status === 'failed' || initial.status === 'cancelled') {
       return initial;
     }
-    return waitForGenerationJob(initial.id, {
+    let previewPromise = Promise.resolve();
+    let lastPreview: string | null = null;
+    const update = (job: GenerationJob) => {
+      applyDurableJob(job);
+      const checkpoint = generationPreviewCheckpoint(job);
+      if (!checkpoint || checkpoint === lastPreview || signal.aborted) return;
+      lastPreview = checkpoint;
+      previewPromise = previewPromise.then(async () => {
+        // Coalesce stale updates while a download is in flight. Content hashes
+        // in the cloud importer skip all already cached images.
+        if (lastPreview !== checkpoint || signal.aborted) return;
+        const fighter = await getCloudFighter(job.fighterId, apiContext);
+        if (!fighter?.photoHash || signal.aborted) return;
+        await downloadCloudFighterToLocal(fighter, apiContext, {
+          includeArchivedVersions: false, includeRawAssets: false, allowIncomplete: true,
+        });
+        if (signal.aborted) return;
+        const next = await refreshFromCache(fighter.photoHash);
+        setPhotoHash(fighter.photoHash);
+        setSelection(current => current.kind === 'source' && current.source === 'original' && next.meta?.uprightViewBlob
+          ? { kind: 'source', source: 'upright' } : current);
+      }).catch((error) => {
+        if (!signal.aborted) debugWarn('[Generation] Optional preview will retry at the next checkpoint:', error instanceof Error ? error.message : error);
+      });
+    };
+    update(initial);
+    const result = await waitForGenerationJob(initial.id, {
       context: apiContext,
       signal,
-      onUpdate: applyDurableJob,
+      onUpdate: update,
       onConnectionIssue: () => {
         setStageText('Connection lost. The cloud forge is still running; reconnecting...');
       },
     });
+    await previewPromise;
+    return result;
   }
 
   async function finishDurableJob(
@@ -554,7 +568,7 @@ export function CreateFighterPage({
       setGenerating(new Set());
       return;
     }
-    await syncCompletedFighter({ fighterId: job.fighterId, completion: 'generation', creationPackage: job.creationPackage }, apiContext);
+    await syncCompletedFighter({ fighterId: job.fighterId, completion: 'generation', creationPackage: job.creationPackage, rendererVersion: job.rendererVersion }, apiContext);
   }
 
   async function finishApprovedVideoFighter(fighterId: string): Promise<void> {
@@ -589,8 +603,15 @@ export function CreateFighterPage({
     setPhotoHash(fighter.photoHash);
     const cached = await refreshFromCache(fighter.photoHash);
     assertFighterReadyForMode(cached.sprites, fighter.name, pending.creationPackage === 'aura' ? 'aura' : 'fight');
+    if (isTemplateAtlasRendererVersion(pending.rendererVersion)) {
+      assertFighterReadyForMode(cached.sprites, fighter.name, 'aura');
+      const missing = TEMPLATE_ATLAS_ANIMATION_NAMES.filter(name => !cached.sprites.some(sprite =>
+        sprite.animationName === name && sprite.animationFormat === 'template-atlas-v1' && sprite.pngBlob.size > 0));
+      if (missing.length) throw new Error(`Your character is saved, but this device still needs ${missing.length} animations. Retry the download.`);
+    }
     setPendingFighterSync(null);
     setPercent(1);
+    setServerProgress(null);
     setDone(true);
     setGenerating(new Set());
     setStageText(
@@ -682,8 +703,11 @@ export function CreateFighterPage({
 
   async function startDurable(apiContext: ReturnType<typeof captureApiRequestContext>): Promise<void> {
     if (!file) return;
+    if (authStatus !== 'signed-in') throw new Error('Sign in before creating your character.');
+    const rendererVersion = rendererForNewFighter(tier);
+    setActiveRenderer(rendererVersion);
     const expectedCredits = expectedCreationCredits(tier, creationPackage, authStatus, billingProfile);
-    if (expectedCredits === null) throw new Error('Check your Rookie pass and credits before creating a character.');
+    if (expectedCredits === null) throw new Error('Check your account credits and eligibility before creating a character.');
     setStarted(true);
     setStageText('Preparing your cloud fighter...');
     const hash = await hashPhoto(file);
@@ -709,7 +733,7 @@ export function CreateFighterPage({
       apiContext,
       null,
       creationFlow,
-      { creationPackage, expectedCredits },
+      { creationPackage: 'complete', expectedCredits, rendererVersion },
     );
     if (!authorization.authorized || !authorization.purchaseId || !authorization.providerSessionId) {
       if (!authorization.authorized) {
@@ -723,12 +747,14 @@ export function CreateFighterPage({
     let job: GenerationJob;
     try {
       assertCreationFlowAcknowledged(creationFlow, authorization.creationFlow);
+      assertGenerationRendererAcknowledged(rendererVersion, authorization.rendererVersion);
       job = await startGenerationJob({
         fighterId: prepared.fighter.id,
         purchaseId: authorization.purchaseId,
         providerSessionId: authorization.providerSessionId,
         creationFlow,
-        creationPackage,
+        creationPackage: 'complete',
+        rendererVersion,
       }, apiContext);
     } catch (error) {
       try {
@@ -759,6 +785,7 @@ export function CreateFighterPage({
     apiContext: ReturnType<typeof captureApiRequestContext>,
   ): Promise<void> {
     const failedCreationFlow = creationFlowForResume(failedJob.creationFlow);
+    const rendererVersion = failedJob.rendererVersion ?? 'legacy-v1';
     setStarted(true);
     setStageText(`Restoring ${failedJob.preservedArtifactCount} completed stages...`);
     const authorization = await authorizeGeneration(
@@ -770,7 +797,7 @@ export function CreateFighterPage({
       apiContext,
       failedJob.id,
       failedCreationFlow,
-      { creationPackage: failedJob.creationPackage, expansion: failedJob.expansion },
+      { creationPackage: failedJob.creationPackage, expansion: failedJob.expansion, rendererVersion },
     );
     if (
       !authorization.authorized ||
@@ -783,11 +810,13 @@ export function CreateFighterPage({
     let job: GenerationJob;
     try {
       assertCreationFlowAcknowledged(failedCreationFlow, authorization.creationFlow);
+      assertGenerationRendererAcknowledged(rendererVersion, authorization.rendererVersion);
       job = await startGenerationJob({
         fighterId: failedJob.fighterId,
         purchaseId: authorization.purchaseId,
         providerSessionId: authorization.providerSessionId,
         creationFlow: failedCreationFlow,
+        rendererVersion,
         creationPackage: failedJob.creationPackage,
         expansion: failedJob.expansion,
       }, apiContext);
@@ -826,6 +855,10 @@ export function CreateFighterPage({
       setRecoveryError(null);
       setRecoveryReady(false);
       setRecoveryRetrySignal((current) => current + 1);
+      return;
+    }
+    if (authStatus !== 'signed-in') {
+      setError(authStatus === 'loading' ? 'Checking your account. No generation has started.' : 'Sign in to create and save your character.');
       return;
     }
     if ((!file && !resumableJob) || running || !turnstileReady || !legalAccepted || !recoveryReady) return;
@@ -967,6 +1000,9 @@ export function CreateFighterPage({
     setSelection({ kind: 'source', source: 'original' });
     setLegalAccepted(false);
     setCreationFlow('original');
+    setCreationPackage('complete');
+    setServerProgress(null);
+    setActiveRenderer(null);
   }
 
   const selectedAnimName = selection.kind === 'animation' ? selection.animationName : null;
@@ -979,7 +1015,7 @@ export function CreateFighterPage({
   const rookieStatus = includedRookieStatus(authStatus, billingProfile, creationPackage);
   const selectedTier = qualityTierInfo(tier);
   const selectedQuote = quoteGenerationPackage(tier, creationPackage);
-  const auraNeedsAccount = creationPackage === 'aura' && authStatus !== 'signed-in';
+  const auraNeedsAccount = authStatus !== 'signed-in';
   const selectedUsesIncludedRookie = tier === 'rookie' && rookieStatus === 'included';
   const creditCheckPending = authStatus === 'signed-in'
     && expectedCreationCredits(tier, creationPackage, authStatus, billingProfile) === null;
@@ -1030,16 +1066,16 @@ export function CreateFighterPage({
     }
   };
 
-  if (!started && auraEntry && authStatus !== 'signed-in') {
+  if (!started && authStatus !== 'signed-in') {
     return <section className="create-app">
       <header className="roster-hero">
-        <div><h1>Create your Aura character</h1><p className="roster-hero__copy">Account → Photo → Aura</p></div>
+        <div><h1>Make yourself playable</h1><p className="roster-hero__copy">Account → Photo → Play</p></div>
         <div className="roster-hero__actions"><Button onClick={onBack}>Back</Button></div>
       </header>
       <div className="creation-account">
         <h2>{authStatus === 'loading' ? 'Checking your account…' : 'Start with your account'}</h2>
-        <p>Sign in or join, then add your photo and name. Your character gets six Aura moves and stays in your account.</p>
-        <p className="creation-price-summary">First Rookie included if your account has not used it. After that, Rookie Aura costs {quoteGenerationPackage('rookie', 'aura').creditCost} credits.</p>
+        <p>Sign in or join, then add your photo and name. Your character works in Aura, Fight and Rush and stays in your account.</p>
+        <p className="creation-price-summary">First Rookie included if your account has not used it. After that, Rookie costs {quoteGenerationPackage('rookie', 'complete').creditCost} credits.</p>
         {authSlot ?? <p className="tier-picker__note">Character creation needs a live account. You can still play a free battle here.</p>}
         {onPlayTrial ? <Button variant="secondary" onClick={onPlayTrial}>Play a free battle</Button> : null}
       </div>
@@ -1053,8 +1089,7 @@ export function CreateFighterPage({
           <div>
             <h1>{auraEntry ? 'Create your Aura character' : 'Make Yourself Playable'}</h1>
             <p className="roster-hero__copy">
-              {auraEntry ? 'One photo, six Aura moves. Start with Rookie, then take your character into a duel.'
-                : 'One photo, your character. Choose where you want to play; your next game stays selected.'}
+              One photo, 20 animations for Aura, Fight and Rush. Your next game stays selected.
             </p>
           </div>
           <div className="roster-hero__actions">
@@ -1090,19 +1125,6 @@ export function CreateFighterPage({
           </label>
           {draftMessage ? <p role="status">{draftMessage}</p> : null}
           {file ? <p className="tier-picker__note">Photo selected: {file.name}</p> : null}
-          {!auraEntry ? <fieldset className="creation-offers">
-            <legend>Where do you want to play?</legend>
-            {(['aura', 'complete'] as const).map((pack) => {
-              const quote = quoteGenerationPackage(tier, pack);
-              return <label key={pack} className={`creation-offer${creationPackage === pack ? ' is-selected' : ''}`}>
-                <input type="radio" name="creation-package" checked={creationPackage === pack} onChange={() => setCreationPackage(pack)} />
-                <span><strong>{pack === 'aura' ? 'Aura moves' : 'Fight + Rush'}</strong>
-                  <span>{pack === 'aura' ? 'Six dedicated gestures for Aura challenges.' : 'A complete combat moveset for Fight and Rush. Aura moves are a separate pack.'}</span></span>
-                <b>{tier === 'rookie' && includedRookieStatus(authStatus, billingProfile, pack) === 'included' ? 'First Rookie included' : quote.priceLabel}</b>
-              </label>;
-            })}
-          </fieldset> : null}
-          {!auraEntry ? <p className="tier-picker__note">Aura moves work in Aura. You can add Fight + Rush to the same character later, after reviewing the expansion price.</p> : null}
           <details className="creation-advanced">
             <summary>Quality options · {selectedTier?.label}</summary>
           <fieldset className="tier-picker" aria-describedby="tier-picker-note">
@@ -1121,11 +1143,9 @@ export function CreateFighterPage({
                   : rookieStatus === 'credits'
                     ? quoteGenerationPackage(item.id, creationPackage).priceLabel
                     : rookieStatus === 'account-required' ? 'Sign in to check your Rookie pass' : 'Checking account';
-              const pitch = item.id === 'rookie' && rookieStatus === 'included'
-                ? authStatus !== 'signed-in'
-                  ? `${item.pitch} Your first Rookie is free after a quick human check.`
-                  : `${item.pitch} Your first Rookie is included with your account.`
-                : item.pitch;
+              const pitch = item.id === 'rookie'
+                ? 'The full moveset, with compact detail. A quick way to make yourself playable.'
+                : 'The same moveset, with more image detail available for each animation.';
               return (
                 <label
                   key={item.id}
@@ -1142,23 +1162,22 @@ export function CreateFighterPage({
                     />
                     <span>{item.label}</span>
                   </span>
-                  <small>{locked ? `${quoteGenerationPackage(item.id, creationPackage).priceLabel} · Sign in` : `${priceLabel} · ${item.estimatedTime}`}</small>
+                  <small>{locked ? `${quoteGenerationPackage(item.id, creationPackage).priceLabel} · Sign in` : priceLabel}</small>
                   <em>{locked ? 'Sign in to unlock paid quality.' : pitch}</em>
                 </label>
               );
             })}
           </fieldset>
           <p className="tier-picker__note" id="tier-picker-note">
-            Both qualities make a playable character. Champion refines the animation frames individually for more detail, using more AI processing.
+            Both qualities include all 20 animations. Champion dedicates more image area to each move; both preserve the same poses and timing.
           </p>
-          <QualityComparison />
           </details>
-          <p className="creation-price-summary"><strong>{creationPackage === 'aura' ? 'Aura moves' : 'Fight + Rush'} · {selectedTier?.label}</strong><span>{auraNeedsAccount
-            ? `Sign in to check your included first Rookie. After that, Rookie Aura costs ${quoteGenerationPackage('rookie', 'aura').creditCost} credits.`
-            : creditCheckPending ? 'Checking your Rookie pass and credits. No generation has started.'
+          <p className="creation-price-summary"><strong>Aura + Fight + Rush · {selectedTier?.label}</strong><span>{auraNeedsAccount
+            ? `Sign in to check your included first Rookie. After that, Rookie costs ${quoteGenerationPackage('rookie', 'complete').creditCost} credits.`
+              : creditCheckPending ? 'Checking your account credits and eligibility. No generation has started.'
               : selectedUsesIncludedRookie ? 'Uses your included first Rookie. No credits charged.' : `${selectedQuote.creditCost} credits to create. Playing uses no generation credits.`}</span></p>
-          {auraNeedsAccount ? <p className="create-recovery-error">An account is required to create and save your Aura character. Sign in above to continue; playing the demo needs no account.</p> : null}
-          {billingCheckFailed ? <div className="create-recovery-error" role="alert"><p>Your Rookie pass and credits could not be checked.</p><button type="button" onClick={() => setBillingRetrySignal((current) => current + 1)}>Retry price check</button></div> : null}
+          {auraNeedsAccount ? <p className="create-recovery-error">An account is required to create and save your character. Sign in above to continue; playing the demo needs no account.</p> : null}
+          {billingCheckFailed ? <div className="create-recovery-error" role="alert"><p>Your account credits and eligibility could not be checked.</p><button type="button" onClick={() => setBillingRetrySignal((current) => current + 1)}>Retry price check</button></div> : null}
           {requiresTurnstile ? (
             <TurnstileChallenge
               siteKey={turnstileSiteKey}
@@ -1207,7 +1226,7 @@ export function CreateFighterPage({
               void start();
             }}
           >
-            <span>{auraNeedsAccount ? 'Sign in to create Aura' : insufficientCredits || creditCheckPending
+            <span>{auraNeedsAccount ? 'Sign in to create' : insufficientCredits || creditCheckPending
               ? startLabel
               : recoveryError
                 ? 'Cloud Check Required'
@@ -1220,7 +1239,7 @@ export function CreateFighterPage({
               {insufficientCredits
                 ? `${selectedTier?.label ?? 'This tier'} needs ${selectedQuote.creditCost} credits · you have ${billingProfile?.creditsBalance ?? 0}`
                 : file
-                ? `${file.name} · ${creationFlow === 'video' ? 'Video flow' : 'Original flow'}`
+                ? file.name
                 : 'Pick a photo to continue'}
             </small>
           </button>
@@ -1239,7 +1258,7 @@ export function CreateFighterPage({
         </div>
         <div className="roster-hero__actions">
           <div className="gallery-hero__status" role="status" aria-live="polite">
-            {Math.round(percent * 100)}%
+            {serverProgress ? serverProgress.total > 0 ? `${serverProgress.completed}/${serverProgress.total} stages saved` : 'Waiting for progress' : `${Math.round(percent * 100)}%`}
           </div>
           {done && meta ? (
             <Button variant="ghost" onClick={() => void saveAll()}>Save All</Button>
@@ -1254,7 +1273,7 @@ export function CreateFighterPage({
         </div>
       </header>
 
-      <PipelineProgress percent={percent} />
+      <PipelineProgress percent={serverProgress ? serverProgress.fraction : percent} label={stageText} />
 
       {videoReviewJob ? (
         <>
@@ -1335,6 +1354,7 @@ export function CreateFighterPage({
       ) : null}
 
       <FighterPreviewColumn
+        animationNames={activeRenderer !== 'legacy-v1' ? TEMPLATE_ATLAS_ANIMATION_NAMES : undefined}
         meta={meta}
         sprites={sprites}
         selection={selection}

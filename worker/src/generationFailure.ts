@@ -57,6 +57,12 @@ export function generationFailureDetails(
       errorMessage: qualityDetail,
     };
   }
+  if (workflowErrorMessage.includes('template_atlas_qa_failed')) {
+    return {
+      errorCode: 'template_atlas_qa_failed',
+      errorMessage: 'The generated sheet did not preserve the required poses or layout. Its original result is saved; no automatic paid regeneration was started.',
+    };
+  }
 
   if (workflowErrorMessage.includes('The image provider declined this transformation')) {
     return {

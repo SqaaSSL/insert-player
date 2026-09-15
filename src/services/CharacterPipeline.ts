@@ -26,6 +26,11 @@ import {
 import type { QualityTier } from './QualityTiers';
 import { detectImageMime } from './ImageFile.ts';
 
+// Legacy implementation retained for current jobs, asset repair and reproducibility.
+// Deprecated as the direction for new product development, not disabled: the
+// replacement white-atlas renderers are not yet wired into durable generation.
+// See docs/generation-pipeline-transition.md. Never relabel this output as an
+// atlas generation or remove its historical modes when introducing a successor.
 // Sprite generation mode, applies to ALL animations (not just idle anymore).
 // - 'sheet_refined' (default): sheet establishes coherent pose + style, then each
 //   frame is re-rendered at full Gemini resolution using the side-view as style
@@ -34,6 +39,7 @@ import { detectImageMime } from './ImageFile.ts';
 // - 'frame_sequence': idle-only per-frame generation with previous-frame continuity.
 //   Falls back to 'sheet' for non-idle animations (frame_sequence doesn't build
 //   sheets, only the idle pipeline does).
+/** @deprecated Legacy renderer modes. Preserve for existing runs; see generation-pipeline-transition.md. */
 export type SpriteGenerationMode = 'sheet_refined' | 'sheet' | 'frame_sequence';
 
 /** @deprecated alias kept for pre-existing call sites; use SpriteGenerationMode. */

@@ -4,14 +4,16 @@ import {
   generationJobIdFromAuth,
   mintGenerationJobToken,
   optionalGenerationJobAuth,
+  templateRendererFromAuth,
 } from './generationAuth';
+import { atlasAnimationPlan } from './templateGenerationPolicy';
 import type { Env, PublicAuthContext } from './types';
 
 const JOB_ID = '11111111111111111111111111111111';
 const SESSION_ID = '22222222222222222222222222222222';
 const USER_ID = 'user-generation';
 
-function fakeEnv(status = 'running', creationFlow: 'original' | 'video' = 'original'): Env {
+function fakeEnv(status = 'running', creationFlow: 'original' | 'video' = 'original', animationPlanJson: string | null = null): Env {
   const database = {
     prepare(sql: string) {
       return {
@@ -29,6 +31,7 @@ function fakeEnv(status = 'running', creationFlow: 'original' | 'video' = 'origi
                   provider_session_id: SESSION_ID,
                   status,
                   creation_flow: creationFlow,
+                  animation_plan_json: animationPlanJson,
                 };
               }
               if (sql.includes('FROM users')) {
@@ -68,6 +71,25 @@ function request(value: string): Request {
 }
 
 describe('generation job authorization', () => {
+  it('derives the template renderer from the stored job envelope, never a caller header', async () => {
+    const env = fakeEnv('running', 'original', atlasAnimationPlan('rookie-two-atlas-v1'));
+    const signedRequest = request(await token(env));
+    signedRequest.headers.set('X-Generation-Renderer-Version', 'champion-animation-sheet-v1');
+    const result = await optionalGenerationJobAuth(signedRequest, env, 1001);
+    expect(result).not.toBeInstanceOf(Response);
+    expect(templateRendererFromAuth(result as PublicAuthContext)).toBe('rookie-two-atlas-v1');
+    expect((result as PublicAuthContext).claims?.generation_provider_session_id).toBe(SESSION_ID);
+    const legacy = await optionalGenerationJobAuth(request(await token(fakeEnv())), fakeEnv(), 1001);
+    expect(templateRendererFromAuth(legacy as PublicAuthContext)).toBeNull();
+  });
+  it('rejects corrupt or unsupported stored template envelopes', async () => {
+    for (const plan of ['not-json', JSON.stringify({ version: 1, rendererVersion: 'other', templateVersion: 'template-zero-v3', animations: ['idle'] })]) {
+      const env = fakeEnv('running', 'original', plan);
+      const result = await optionalGenerationJobAuth(request(await token(env)), env, 1001);
+      expect(result).toBeInstanceOf(Response);
+      expect((result as Response).status).toBe(401);
+    }
+  });
   it('accepts a valid active token and exposes only its scoped job', async () => {
     const env = fakeEnv();
     const result = await optionalGenerationJobAuth(request(await token(env)), env, 1_001);

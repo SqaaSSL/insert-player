@@ -1,7 +1,7 @@
 import type { Env, PublicAuthContext } from './types';
 import { enforceRateLimit } from './rateLimit';
 import { generateId, hashString } from './auth';
-import { generationJobIdFromAuth } from './generationAuth';
+import { generationJobIdFromAuth, templateRendererFromAuth } from './generationAuth';
 import {
   createProviderRequestState,
   finalizeProviderRequest,
@@ -83,6 +83,8 @@ const PROVIDER_ROUTE_ALLOWLIST: Record<ProxyProvider, ProviderRouteRule[]> = {
     { method: 'GET', pattern: /^\/v1\/tasks\/[^/]+$/ },
   ],
   fal: [
+    { method: 'POST', pattern: /^\/fal-ai\/nano-banana-2\/edit$/ },
+    { method: 'GET', pattern: /^\/fal-ai\/nano-banana-2\/requests\/[A-Za-z0-9-]{16,80}(?:\/status)?$/ },
     { method: 'POST', pattern: /^\/fal-ai\/birefnet$/ },
     { method: 'GET', pattern: /^\/fal-ai\/birefnet\/requests\/[^/]+(?:\/status)?$/ },
     { method: 'POST', pattern: /^\/fal-ai\/ltx-2\.3\/image-to-video\/fast$/ },
@@ -99,6 +101,40 @@ const PROVIDER_ROUTE_ALLOWLIST: Record<ProxyProvider, ProviderRouteRule[]> = {
 
 function missingKey(name: string): Response {
   return Response.json({ error: `${name} is not configured` }, { status: 503 });
+}
+
+/** Only the bounded, server-authored two-reference contract may consume atlas budget. */
+export async function validateTemplateAtlasTransportRequest(request: Request): Promise<Response | null> {
+  if (request.method !== 'POST') return null;
+  const body = await readJsonBody<Record<string, unknown>>(request.clone(), PROVIDER_REQUEST_BODY_LIMITS.fal);
+  const fields = new Set(['sync_mode', 'num_images', 'resolution', 'aspect_ratio', 'output_format',
+    'limit_generations', 'enable_web_search', 'prompt', 'image_urls']);
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+    || Object.keys(body).some(key => !fields.has(key))
+    || body.sync_mode !== false || body.num_images !== 1 || body.resolution !== '4K'
+    || body.aspect_ratio !== '1:1' || body.output_format !== 'png'
+    || body.limit_generations !== true || body.enable_web_search !== false
+    || typeof body.prompt !== 'string' || body.prompt.length < 20 || body.prompt.length > 24_000
+    || !Array.isArray(body.image_urls) || body.image_urls.length !== 2
+    || body.image_urls.some(value => typeof value !== 'string'
+      || value.length > 16 * 1024 * 1024 || !/^data:image\/png;base64,iVBOR[A-Za-z0-9+/=]+$/.test(value))) {
+    return Response.json({ error: 'Invalid Template Atlas provider contract' }, { status: 400 });
+  }
+  return null;
+}
+
+async function validateTemplateBackgroundRequest(request: Request): Promise<Response | null> {
+  if (request.method !== 'POST') return null;
+  const body = await readJsonBody<Record<string, unknown>>(request.clone(), 4096);
+  if (body && typeof body === 'object' && !Array.isArray(body)
+    && Object.keys(body).length === 1 && typeof body.image_url === 'string') {
+    try {
+      const image = new URL(body.image_url);
+      if (image.origin === new URL(request.url).origin && !image.username && !image.password && !image.search && !image.hash
+        && /^\/temp-assets\/[a-f0-9]{32}\.(?:gif|jpg|png|webp)$/.test(image.pathname)) return null;
+    } catch { /* Invalid source URL fails before spend reservation. */ }
+  }
+  return Response.json({ error: 'Template background removal requires its own prepared temporary image' }, { status: 400 });
 }
 
 function enforceProviderRouteAllowlist(provider: ProxyProvider, path: string, method: string): Response | null {
@@ -711,6 +747,15 @@ export async function getTempAsset(request: Request, env: Env): Promise<Response
 export async function handleProxy(request: Request, env: Env, auth: PublicAuthContext): Promise<Response | null> {
   const url = new URL(request.url);
   const path = url.pathname;
+  const templateRenderer = templateRendererFromAuth(auth);
+  if (templateRenderer && !(
+    path === '/proxy/upload-temp' || path === '/proxy/image'
+    || path.startsWith('/proxy/gemini/')
+    || path.startsWith('/proxy/fal/fal-ai/nano-banana-2/')
+    || /^\/proxy\/fal\/fal-ai\/birefnet(?:\/requests\/[^/]+(?:\/status)?)?$/.test(path)
+  )) {
+    return Response.json({ error: 'Template generation does not permit another provider or fallback' }, { status: 403 });
+  }
 
   if (path === '/proxy/upload-temp') {
     if (request.method !== 'POST') {
@@ -780,6 +825,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
     const allowlistError = enforceProviderRouteAllowlist('gemini', path, request.method);
     if (allowlistError) return allowlistError;
     const transport = geminiTransportStatus(env);
+    if (templateRenderer && transport.transport !== 'meterkey') {
+      return Response.json({ error: 'Template source generation requires the configured Meterkey transport' }, { status: 503 });
+    }
     if (!transport.configured || !transport.transport) {
       return Response.json({ error: transport.error ?? 'Gemini transport is not configured' }, { status: 503 });
     }
@@ -808,6 +856,7 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       PROVIDER_REQUEST_BODY_LIMITS.gemini,
       PROVIDER_RESPONSE_BODY_LIMITS.gemini,
       upstream.transport === 'meterkey' ? 'meterkey' : 'standard',
+      templateRenderer ? 'error' : 'follow',
     );
     const finalized = await finalizeProviderRequest(env, response, providerState);
     finalized.headers.set('X-Insert-Player-Gemini-Transport', upstream.transport);
@@ -843,6 +892,44 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
   if (path.startsWith('/proxy/fal')) {
     const allowlistError = enforceProviderRouteAllowlist('fal', path, request.method);
     if (allowlistError) return allowlistError;
+    const isNanoBanana = path.startsWith('/proxy/fal/fal-ai/nano-banana-2/');
+    const isTemplateBackgroundRemoval = Boolean(templateRenderer) && path.startsWith('/proxy/fal/fal-ai/birefnet');
+    if (isNanoBanana || isTemplateBackgroundRemoval) {
+      if (!templateRendererFromAuth(auth)) return Response.json({ error: 'Signed Template Atlas job required' }, { status: 403 });
+      if (url.search) return Response.json({ error: 'Template Atlas query parameters are not allowed' }, { status: 400 });
+      const base = meterkeyBaseUrl(env.METERKEY_BASE_URL);
+      if (!base || !env.METERKEY_API_KEY?.trim()) return missingKey('METERKEY_API_KEY / METERKEY_BASE_URL');
+      const contractError = isNanoBanana ? await validateTemplateAtlasTransportRequest(request) : await validateTemplateBackgroundRequest(request);
+      if (contractError) return contractError;
+      const limited = await enforceRateLimit(env, 'proxy:fal', auth);
+      if (limited) return limited;
+      const state = createProviderRequestState();
+      const sessionError = await requireProviderSession(request, env, auth, { provider: 'fal', path }, state);
+      if (sessionError) return sessionError;
+      const requestBodySha256 = isNanoBanana && request.method === 'POST' ? await hashString(await request.clone().arrayBuffer()) : null;
+      // New generations are pinned to Meterkey → FAL. No PixCLI or direct-key fallback.
+      const target = new URL(path.replace(/^\/proxy\/fal/, '/fal'), base);
+      let response = await proxyRequest(request, target.toString(), {
+        ...meterkeyGeminiHeaders(env.METERKEY_API_KEY, state.upstreamAttemptKey),
+        'x-fal-no-retry': '1', 'cf-aig-skip-cache': 'true',
+      }, PROVIDER_REQUEST_BODY_LIMITS.fal, PROVIDER_RESPONSE_BODY_LIMITS.fal, 'meterkey', 'error');
+      if (requestBodySha256 && response.ok) {
+        // This extra receipt field is cached with the acknowledged FAL handle.
+        // A semantic replay cannot mislabel an old result with new input hashes.
+        try {
+          const receipt: unknown = await response.json();
+          if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) throw new Error('Invalid atlas receipt');
+          response = new Response(JSON.stringify({ ...receipt, insert_player_request_body_sha256: requestBodySha256 }), {
+            status: response.status, headers: response.headers,
+          });
+        } catch {
+          response = Response.json({ error: 'Atlas submission returned no verifiable receipt', code: 'provider_request_outcome_unknown' }, {
+            status: 502, headers: { 'X-Insert-Player-Upstream-Outcome': 'unknown' },
+          });
+        }
+      }
+      return finalizeProviderRequest(env, response, state);
+    }
     if (!env.FAL_API_KEY) return missingKey('FAL_API_KEY');
     const limited = await enforceRateLimit(env, 'proxy:fal', auth);
     if (limited) return limited;

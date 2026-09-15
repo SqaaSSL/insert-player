@@ -10,6 +10,8 @@ import {
 } from './billing';
 import { CURRENT_LEGAL_VERSION } from './legal';
 import type { AuthContext, Env, PublicAuthContext } from './types';
+import { TEMPLATE_ATLAS_ANIMATION_NAMES } from '../../src/services/TemplateAtlasContract';
+import { atlasAnimationPlan } from './templateGenerationPolicy';
 
 const SCHEMA = `
   CREATE TABLE users (
@@ -1476,6 +1478,130 @@ describe('Stripe refund and dispute reconciliation against D1', () => {
       await mf.dispose();
     }
   });
+});
+
+describe('Versioned template renderer billing against D1', () => {
+  const legal = { legalVersion: CURRENT_LEGAL_VERSION, ageConfirmed: true, termsAccepted: true, photoRightsConfirmed: true, aiProcessingConfirmed: true, immediatePerformanceConfirmed: true, withdrawalLossAcknowledged: true };
+  const userId = 'template-billing-owner';
+  const auth = { userId, rateLimitKey: `user:${userId}`, claims: {}, user: { id: userId } } as unknown as PublicAuthContext;
+  const templateRequest = (options: Record<string, unknown> = {}) => new Request('https://api.insertplayer.ai/api/billing/generation', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tier: 'rookie', rendererVersion: 'rookie-two-atlas-v1', creationFlow: 'original', operation: 'fighter_generation', creationPackage: 'complete', legal, ...options }),
+  });
+  const ready = (env: Env) => Object.assign(env, {
+    GEMINI_TRANSPORT: 'meterkey', METERKEY_API_KEY: 'test-only-not-a-credential', METERKEY_BASE_URL: 'https://meter.hilo.cx',
+    IMAGE_PROCESSOR: {}, FIGHTER_GENERATION: {}, GENERATION_API_BASE_URL: 'https://api.insertplayer.ai',
+  });
+  async function seed(db: D1Database, used = 1) {
+    await db.prepare("INSERT INTO users (id, clerk_user_id, display_name, credits_balance, free_rookie_generations_used) VALUES (?, ?, 'Template owner', 30, ?)").bind(userId, userId, used).run();
+  }
+  async function untouched(db: D1Database) {
+    for (const table of ['generation_charges', 'provider_sessions', 'credit_ledger']) {
+      expect(await db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).first()).toEqual({ count: 0 });
+    }
+    expect(await db.prepare('SELECT credits_balance FROM users WHERE id = ?').bind(userId).first()).toEqual({ credits_balance: 30 });
+  }
+
+  it.each([
+    ['rookie', 'rookie-two-atlas-v1', 2, 1, 'credits'],
+    ['contender', 'champion-animation-sheet-v1', 11, 1, 'credits'],
+    ['rookie', 'rookie-two-atlas-v1', 0, 0, 'free_rookie'],
+  ])('quotes and authorizes %s with the exact renderer and full 20-animation envelope', async (tier, rendererVersion, price, used, mode) => {
+    const { mf, db, env } = await createBindings();
+    try {
+      ready(env);
+      await seed(db, Number(used));
+      const quote = await authorizeGenerationPurchase(templateRequest({ tier, rendererVersion, quoteOnly: true }), env, auth);
+      expect(quote.status).toBe(200);
+      expect(await quote.json()).toMatchObject({ mode: 'quote', quotedCredits: price, rendererVersion, animationCount: 20, creationPackage: 'complete' });
+      await untouched(db);
+      const authorized = await authorizeGenerationPurchase(templateRequest({ tier, rendererVersion, expectedCredits: price }), env, auth);
+      expect(authorized.status).toBe(200);
+      expect(await authorized.json()).toMatchObject({ authorized: true, mode, rendererVersion, creditsCharged: price, purchaseId: expect.any(String), providerSessionId: expect.any(String) });
+      const charge = await db.prepare('SELECT tier, credit_cost, animation_plan_json FROM generation_charges').first<{ tier: string; credit_cost: number; animation_plan_json: string }>();
+      expect(charge).toMatchObject({ tier, credit_cost: price });
+      expect(JSON.parse(charge!.animation_plan_json)).toEqual({ version: 1, rendererVersion, templateVersion: 'template-zero-v3', animations: TEMPLATE_ATLAS_ANIMATION_NAMES });
+      expect(await db.prepare('SELECT provider_calls_used FROM provider_sessions').first()).toEqual({ provider_calls_used: 0 });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it('rejects cross-tier, legacy package/flow and unavailable renderer before reservation', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      ready(env);
+      await seed(db);
+      for (const invalid of [
+        { rendererVersion: 'unknown-v9' },
+        { rendererVersion: 'champion-animation-sheet-v1' },
+        { tier: 'contender' },
+        { tier: 'champion', rendererVersion: 'champion-animation-sheet-v1' },
+        { creationPackage: 'aura' },
+        { creationFlow: 'video' },
+        { operation: 'fighter_upgrade', expansion: true },
+      ]) {
+        expect((await authorizeGenerationPurchase(templateRequest(invalid), env, auth)).status).toBe(400);
+        await untouched(db);
+      }
+      const anonymous = { ...auth, userId: null, user: null } as unknown as PublicAuthContext;
+      expect((await authorizeGenerationPurchase(templateRequest(), env, anonymous)).status).toBe(401);
+      await untouched(db);
+      env.GEMINI_TRANSPORT = 'google-direct';
+      expect((await authorizeGenerationPurchase(templateRequest(), env, auth)).status).toBe(503);
+      await untouched(db);
+      env.GEMINI_TRANSPORT = 'meterkey';
+      delete env.METERKEY_API_KEY;
+      const unavailable = await authorizeGenerationPurchase(templateRequest(), env, auth);
+      expect(unavailable.status).toBe(503);
+      expect(await unavailable.json()).toMatchObject({ code: 'generation_renderer_unavailable' });
+      await untouched(db);
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it('retains the exact template plan for a zero-debit continuation and refuses legacy reinterpretation', async () => {
+    const { mf, db, env } = await createBindings();
+    const fighterId = 'abababababababababababababababab';
+    const failedJobId = 'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
+    const originalChargeId = 'efefefefefefefefefefefefefefefef';
+    const plan = atlasAnimationPlan('rookie-two-atlas-v1');
+    try {
+      ready(env);
+      await seed(db);
+      await db.batch([
+        db.prepare('INSERT INTO fighters (id, owner_user_id) VALUES (?, ?)').bind(fighterId, userId),
+        db.prepare("INSERT INTO generation_charges (id, user_id, tier, credit_cost, status, reason, fighter_id, expires_at, animation_plan_json) VALUES (?, ?, 'rookie', 2, 'committed', 'fighter_generation', ?, datetime('now', '-1 hour'), ?)").bind(originalChargeId, userId, fighterId, plan),
+        db.prepare("INSERT INTO generation_artifact_runs (id, user_id, fighter_id, tier, operation, status, animation_plan_json) VALUES (?, ?, ?, 'rookie', 'fighter_generation', 'partial', ?)").bind(failedJobId, userId, fighterId, plan),
+        db.prepare("INSERT INTO generation_jobs (id, user_id, fighter_id, charge_id, artifact_run_id, tier, operation, status, animation_plan_json) VALUES (?, ?, ?, ?, ?, 'rookie', 'fighter_generation', 'failed', ?)").bind(failedJobId, userId, fighterId, originalChargeId, failedJobId, plan),
+      ]);
+      const options = { fighterId, resumeJobId: failedJobId };
+      const wrong = await authorizeGenerationPurchase(templateRequest({ ...options, rendererVersion: 'legacy-v1' }), env, auth);
+      expect(wrong.status).toBe(409);
+      expect(await wrong.json()).toMatchObject({ code: 'generation_renderer_mismatch' });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first()).toEqual({ count: 0 });
+      const first = await authorizeGenerationPurchase(templateRequest(options), env, auth);
+      expect(first.status).toBe(200);
+      const receipt = await first.json() as { purchaseId: string };
+      expect(receipt).toMatchObject({ rendererVersion: 'rookie-two-atlas-v1', mode: 'continuation', creditsCharged: 0, artifactRunId: failedJobId });
+      const repeated = await authorizeGenerationPurchase(templateRequest(options), env, auth);
+      expect(await repeated.json()).toMatchObject({ rendererVersion: 'rookie-two-atlas-v1', purchaseId: receipt.purchaseId, creditsCharged: 0 });
+      expect(await db.prepare('SELECT animation_plan_json, continuation_run_id, credit_cost FROM generation_charges WHERE id = ?').bind(receipt.purchaseId).first()).toEqual({ animation_plan_json: plan, continuation_run_id: failedJobId, credit_cost: 0 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first()).toEqual({ count: 1 });
+      expect(await db.prepare('SELECT credits_balance FROM users WHERE id = ?').bind(userId).first()).toEqual({ credits_balance: 30 });
+    } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it('keeps absent renderer as the historical 11-animation complete quote and array plan', async () => {
+    const { mf, db, env } = await createBindings();
+    try {
+      await seed(db);
+      const quote = await authorizeGenerationPurchase(templateRequest({ rendererVersion: undefined, quoteOnly: true }), env, auth);
+      expect(await quote.json()).toMatchObject({ rendererVersion: 'legacy-v1', quotedCredits: 2, animationCount: 11 });
+      const response = await authorizeGenerationPurchase(templateRequest({ rendererVersion: undefined, expectedCredits: 2 }), env, auth);
+      expect(response.status).toBe(200);
+      const charge = await db.prepare('SELECT animation_plan_json FROM generation_charges').first<{ animation_plan_json: string }>();
+      expect(Array.isArray(JSON.parse(charge!.animation_plan_json))).toBe(true);
+      expect(JSON.parse(charge!.animation_plan_json)).toHaveLength(11);
+    } finally { await mf.dispose(); }
+  }, 15_000);
 });
 
 describe('Package quotes and authorization against D1', () => {

@@ -9,11 +9,12 @@ import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 import type { AuraDemoPerformer } from './AuraDemoPerformers.ts';
 import { builtinAuraPerformerForCachedMeta, isAuraBuiltinPerformerId, type AuraBuiltinPerformerId } from '../../services/AuraBuiltinPerformers.ts';
 import {
-  auraAtlasContentHash, auraIdleReference, calibrateAuraAtlas, measureAuraAtlas,
+  auraAtlasContentHash, auraIdleReference, calibrateAuraAtlas, calibrateTemplateAuraAtlas, measureAuraAtlas,
   type AuraAnimationCalibration, type AuraAtlasGeometry,
 } from './AuraPoseCalibration.ts';
 import { AURA_POSE_TEMPLATES } from './AuraPoseTemplates.ts';
 import { ADDITIONAL_AURA_BUILTIN_ASSETS } from './AuraBuiltinAssets.ts';
+import { TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT } from '../../SpriteAnimationFormat.ts';
 
 export interface LoadedAuraAnimation {
   name: AuraAnimationName;
@@ -253,6 +254,16 @@ export async function loadAuraAnimationPack(
   const animations = new Map<AuraAnimationName, LoadedAuraAnimation>();
   const geometryByName = new Map<AuraAnimationName, AuraAtlasGeometry>();
   const textureKeys: string[] = [];
+  let templateIdle: AuraAtlasGeometry | undefined;
+  if (cached.some(sprite => sprite.animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT && sprite.animationName.startsWith('aura_'))) {
+    const idle = byName.get('idle');
+    if (idle?.animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT) {
+      templateIdle = measureAuraAtlas(await blobToImage(idle.pngBlob), {
+        name: 'idle', frameWidth: idle.frameWidth, frameHeight: idle.frameHeight, frameCount: idle.frameCount,
+      }, await auraAtlasContentHash(idle.pngBlob));
+      if (!isCurrent()) return null;
+    }
+  }
 
   for (const name of AURA_LOADABLE_ANIMATION_NAMES) {
     const sprite = byName.get(name);
@@ -326,7 +337,10 @@ export async function loadAuraAnimationPack(
     const geometry = geometryByName.get(name);
     if (!geometry) continue;
     try {
-      animation.calibration = calibrateAuraAtlas(geometry, idleReference);
+      if (byName.get(name)?.animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT) {
+        if (!templateIdle) throw new Error('Template Aura needs its saved combat idle for shared registration');
+        animation.calibration = calibrateTemplateAuraAtlas(geometry, templateIdle);
+      } else animation.calibration = calibrateAuraAtlas(geometry, idleReference);
       if (animation.calibration.audit?.verdict === 'shape-mismatch') {
         debugWarn(`[AuraSpriteLoader] ${name}: scale registered; shape review still required for frames`,
           animation.calibration.audit.shapeMismatchFrameIndices);

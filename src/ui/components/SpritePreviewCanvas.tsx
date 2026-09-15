@@ -6,6 +6,7 @@ interface SpritePreviewCanvasProps {
   frameHeight: number;
   frameCount: number;
   playbackFrameIndices?: readonly number[];
+  frameDelayMs?: number;
   className?: string;
 }
 
@@ -28,6 +29,7 @@ export function SpritePreviewCanvas({
   frameHeight,
   frameCount,
   playbackFrameIndices,
+  frameDelayMs = 120,
   className,
 }: SpritePreviewCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -56,9 +58,9 @@ export function SpritePreviewCanvas({
     if (playbackFrameCount <= 1) return;
     const timer = window.setInterval(() => {
       setFrameIndex((current) => (current + 1) % playbackFrameCount);
-    }, 120);
+    }, frameDelayMs);
     return () => window.clearInterval(timer);
-  }, [playbackFrameCount]);
+  }, [playbackFrameCount, frameDelayMs]);
 
   useEffect(() => {
     if (!image || !canvasRef.current) return;

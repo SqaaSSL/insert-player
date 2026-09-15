@@ -28,8 +28,9 @@ describe('HomePage game modes', () => {
         tier: 'champion', creationPackage: 'aura', returnTo: 'aura', source: 'landing', createdAt: Date.now(),
       }} {...callbacks} />,
     );
-    expect(markup).toContain('Aura moves · Champion');
-    expect(markup).toContain('6 credits required');
+    expect(markup).toContain('Aura + Fight + Rush · Champion · 20 animations');
+    expect(markup).toContain('11 credits required');
+    expect(markup).not.toContain('6 credits required');
     expect(markup).not.toContain('10 credits required');
     expect(markup).not.toContain('Contender');
   });

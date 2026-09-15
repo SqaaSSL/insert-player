@@ -1,6 +1,18 @@
 # Character quality
 
-## Current product contract — 2026-09-12
+## Approved direction, not yet activated — 2026-09-15
+
+The next Rookie uses two white-background 4K template atlases for the character;
+the next Champion uses one white-background 4K template sheet per animation.
+Keep earlier renderers as deprecated internal implementations, never delete
+them or expose their technical choices in the public creator.
+
+This is **not a backend cutover or repricing**. The public generator still runs
+the existing implementation below. The local atlas experiment is not a deployed
+renderer. [Transition policy, preservation rules and measured timing](docs/generation-pipeline-transition.md)
+define the migration boundary and remaining work.
+
+## Currently implemented product contract — 2026-09-12
 
 There are two purchase choices: **Rookie** and **Champion**. Champion is the
 former Contender offer. The former third premium offer is retired for new

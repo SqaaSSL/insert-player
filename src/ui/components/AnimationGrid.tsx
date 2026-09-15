@@ -1,6 +1,7 @@
 import type { GenerationPackage } from '../../services/GenerationPackages';
 import { AURA_ANIMATION_NAMES } from '../../services/FighterAssetPacks';
 import { getAnimationList } from '../../services/CharacterPipeline.ts';
+import { TEMPLATE_ATLAS_ANIMATION_NAMES } from '../../services/TemplateAtlasContract';
 import type {
   CachedFailedAnimationArtifact,
   CachedSprite,
@@ -12,6 +13,7 @@ type AnimState = 'ready' | 'failed' | 'generating' | 'pending';
 interface AnimationGridProps {
   sprites: CachedSprite[];
   creationPackage?: GenerationPackage;
+  animationNames?: readonly string[];
   failedArtifacts?: Record<string, CachedFailedAnimationArtifact> | null;
   generating?: ReadonlySet<string>;
   selectedName?: string | null;
@@ -33,6 +35,7 @@ function resolveState(
 export function AnimationGrid({
   sprites,
   creationPackage,
+  animationNames,
   failedArtifacts,
   generating,
   selectedName,
@@ -41,8 +44,12 @@ export function AnimationGrid({
   const hasAura = sprites.some((sprite) => sprite.animationName.startsWith('aura_'));
   const hasCombat = sprites.some((sprite) => !sprite.animationName.startsWith('aura_'));
   const chosenPackage = creationPackage ?? (hasAura && !hasCombat ? 'aura' : 'complete');
-  const names = [...getAnimationList(chosenPackage).map((animation) => animation.name),
-    ...(chosenPackage === 'complete' && hasAura ? AURA_ANIMATION_NAMES : [])];
+  const defaults = sprites.some(sprite => sprite.animationFormat === 'template-atlas-v1')
+    ? TEMPLATE_ATLAS_ANIMATION_NAMES : [
+      ...getAnimationList(chosenPackage).map((animation) => animation.name),
+      ...(chosenPackage === 'complete' && hasAura ? AURA_ANIMATION_NAMES : []),
+    ];
+  const names = [...new Set([...animationNames ?? defaults, ...sprites.map(sprite => sprite.animationName)])];
   return (
     <div className="gallery-anim-grid" role="group" aria-label="Animations">
       {names.map((name) => {

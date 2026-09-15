@@ -369,6 +369,7 @@ export default defineConfig(({ mode }) => ({
       ...configDefaults.exclude,
       '.local/**',
       'processor/src/benchmark/**/*.test.ts',
+      'processor/src/templateAtlas/**/*.test.ts',
       'processor/src/videoSpriteCompiler.test.ts',
       'processor/src/videoSpriteCompilerCore.test.ts',
       'processor/src/videoSpriteFfmpeg.integration.test.ts',

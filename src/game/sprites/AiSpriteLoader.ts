@@ -15,6 +15,8 @@ import {
 import { debugInfo, debugWarn } from '../../services/DebugLog.ts';
 import {
   VIDEO_DENSE_SPRITE_ANIMATION_FORMAT,
+  TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT,
+  TEMPLATE_ATLAS_ORIGIN_Y,
   type SpriteAnimationFormat,
 } from '../../SpriteAnimationFormat.ts';
 import {
@@ -36,6 +38,8 @@ const ANIM_NAME_TO_STATE: Record<string, FighterState> = {
   hit: FighterState.HIT_STUN,
   ko: FighterState.KNOCKDOWN,
   victory: FighterState.VICTORY,
+  uppercut: FighterState.UPPERCUT,
+  fireball: FighterState.FIREBALL,
 };
 
 const FALLBACK_MAP: Partial<Record<FighterState, FighterState>> = {
@@ -98,7 +102,7 @@ export async function loadAiSprites(
   const textureDensity: SpriteTextureDensity = chooseSpriteTextureDensity(
     detectSpriteRenderCapabilities(rendererContext),
     {
-      atlasWidthAt1x: 12 * FIGHTER_WIDTH,
+      atlasWidthAt1x: Math.max(12, ...cached.filter((sprite) => sprite.animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT).map((sprite) => sprite.frameCount)) * FIGHTER_WIDTH,
       atlasHeightAt1x: 16 * FIGHTER_HEIGHT,
       highResolutionSourcesAvailable,
     },
@@ -135,7 +139,9 @@ async function loadAiSpritesAtDensity(
 
   for (const [animName, sprite] of spritesByAnim) {
     if (!ANIM_NAME_TO_STATE[animName]) continue;
-    const useHighResolutionSource = textureDensity === 2 && Boolean(sprite.rawPngBlob);
+    // Template RAWs are provider evidence, not necessarily cleaned runtime frames.
+    const useHighResolutionSource = sprite.animationFormat !== TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT
+      && textureDensity === 2 && Boolean(sprite.rawPngBlob);
     const loadedImage = await blobToImage(useHighResolutionSource ? sprite.rawPngBlob! : sprite.pngBlob);
     if (!isCurrent()) return false;
     const sourceFrameWidth = useHighResolutionSource ? sprite.rawFrameWidth! : sprite.frameWidth;
@@ -169,7 +175,7 @@ async function loadAiSpritesAtDensity(
     const directAnimName = stateToAnimName(state);
     const resolved = resolveLoadedAnimationForState(state, loadedAnims);
     if (resolved) resolvedAnimationNames.set(state, resolved.animName);
-    const usesDenseSource = resolved && (
+    const usesDenseSource = resolved && (resolved.anim.sprite.animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT ||
       resolved.animName === directAnimName ||
       (state === FighterState.WALK_BACKWARD && resolved.animName === 'walk')
     );
@@ -246,6 +252,11 @@ async function loadAiSpritesAtDensity(
     resolvedAnimationNames,
     densePresentationByAnimation,
   );
+  for (const [state, name] of resolvedAnimationNames) {
+    if (loadedAnims.get(name)?.sprite.animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT) {
+      presentationProfiles[state] = { scale: 1, originX: .5, originY: TEMPLATE_ATLAS_ORIGIN_Y, offsetY: 0 };
+    }
+  }
 
   // Legacy sheets get their content fit-scaled to fill each atlas cell, so a
   // crouch always comes out idle-height regardless of how the AI drew it.
@@ -255,7 +266,8 @@ async function loadAiSpritesAtDensity(
   // and the crouch-block presentation is resolved per-frame by the Fighter.
   const legacyDrawnContentHeight = (animName: string): number | null => {
     const anim = loadedAnims.get(animName);
-    if (!anim || anim.sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT) {
+    if (!anim || anim.sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT
+      || anim.sprite.animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT) {
       return null;
     }
     const state = ANIM_NAME_TO_STATE[animName];
@@ -356,7 +368,7 @@ async function loadAiSpritesAtDensity(
     const extractedFrames = extractedFramesByAnimation.get(animName) ??
       extractFrames(sourceImg, srcW, srcH, srcTotal, gridCols);
     extractedFramesByAnimation.set(animName, extractedFrames);
-    const stableFrames = selectStableFramesForState(
+    const stableFrames = sprite.animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT ? extractedFrames : selectStableFramesForState(
       state,
       extractedFrames,
       srcW,
@@ -373,7 +385,7 @@ async function loadAiSpritesAtDensity(
         animationFormat: sprite.animationFormat,
       },
     );
-    const contentBox = sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT
+    const contentBox = sprite.animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT || sprite.animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT
       ? null
       : findUnionBBox(frames, srcW, srcH);
     const transform = calculateAtlasFrameTransform(
@@ -461,6 +473,10 @@ export function selectSourceFramesForAtlas<T>(
     animationFormat?: SpriteAnimationFormat;
   },
 ): T[] {
+  if (sourceContext?.animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT) {
+    if (targetFrameCount !== sourceFrames.length) throw new Error('Template atlas playback count changed');
+    return sourceFrames.slice();
+  }
   const runtimeSourceFrames = runtimeProfile.sourceFormat === 'expanded-ping-pong'
     ? sourceFrames.slice(0, runtimeProfile.frameCount)
     : sourceFrames;
@@ -597,7 +613,7 @@ export function calculateAtlasFrameTransform(
   targetWidth = FIGHTER_WIDTH,
   targetHeight = FIGHTER_HEIGHT,
 ): AtlasFrameTransform {
-  const source = animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT
+  const source = animationFormat === VIDEO_DENSE_SPRITE_ANIMATION_FORMAT || animationFormat === TEMPLATE_ATLAS_SPRITE_ANIMATION_FORMAT
     ? { x: 0, y: 0, w: sourceWidth, h: sourceHeight }
     : contentBox ?? { x: 0, y: 0, w: sourceWidth, h: sourceHeight };
   const scale = Math.min(targetWidth / source.w, targetHeight / source.h);

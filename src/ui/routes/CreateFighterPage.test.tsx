@@ -13,11 +13,12 @@ describe('Aura character creation entry', () => {
   it('starts with Rookie and asks only for the character, leaving quality in advanced options', () => {
     const markup = renderAuraEntry('?package=aura&return=aura', 'signed-in');
     expect(markup).toContain('Create your Aura character');
-    expect(markup).toContain('One photo, six Aura moves');
+    expect(markup).toContain('One photo, 20 animations for Aura, Fight and Rush');
     expect(markup).toContain('Quality options');
     expect(markup).toMatch(/name="fighter-quality-tier"[^>]*checked=""[^>]*value="rookie"/);
     expect(markup).not.toContain('Where do you want to play?');
-    expect(markup).not.toContain('Fight + Rush');
+    expect(markup).toContain('Aura + Fight + Rush');
+    expect(markup).not.toContain('name="creation-package"');
     expect(markup).not.toContain('fighter-creation-flow');
   });
 
@@ -26,7 +27,9 @@ describe('Aura character creation entry', () => {
     expect(markup.match(/name="fighter-quality-tier"/g)).toHaveLength(2);
     expect(markup).toMatch(/name="fighter-quality-tier"[^>]*checked=""[^>]*value="contender"/);
     expect(markup).toContain('Champion');
-    expect(markup).toContain('6 credits');
+    expect(markup).toContain('11 credits');
+    expect(markup).not.toContain('6 credits');
+    expect(markup).toContain('Checking your account credits and eligibility');
     expect(markup).not.toContain('10 credits');
     expect(markup).not.toContain('Contender');
     expect(markup).not.toContain('value="champion"');
@@ -48,7 +51,7 @@ describe('Aura character creation entry', () => {
     expect(markup).toContain('Sign in / Join');
     expect(markup).toContain('Play a free battle');
     expect(markup).toContain('First Rookie included if your account has not used it');
-    expect(markup).toContain('After that, Rookie Aura costs 2 credits');
+    expect(markup).toContain('After that, Rookie costs 2 credits');
     expect(markup).not.toContain('type="file"');
     expect(markup).not.toContain('Character name');
     expect(markup).not.toContain('Create Free Rookie');

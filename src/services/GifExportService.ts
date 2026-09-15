@@ -39,7 +39,10 @@ function pushHold(steps: GifFrameStep[], sourceIndex: number, delayMs: number, h
   }
 }
 
-function buildGifFramePlan(animationName: string, frameCount: number): GifFrameStep[] {
+export function buildGifFramePlan(animationName: string, frameCount: number, animationFormat?: string): GifFrameStep[] {
+  if (animationFormat === 'template-atlas-v1') {
+    return Array.from({ length: frameCount }, (_, sourceIndex) => ({ sourceIndex, delayMs: 125 }));
+  }
   const totalDurationMs = ANIM_DURATION_MS.get(animationName) ?? Math.max(frameCount * 110, 900);
   const baseDelayMs = clamp(Math.round(totalDurationMs / Math.max(1, frameCount)), 80, 160);
   const steps: GifFrameStep[] = [];
@@ -126,7 +129,7 @@ export async function exportAnimationGif(
   const frameW = sprite.frameWidth;
   const frameH = sprite.frameHeight;
   const gridCols = Math.round(img.width / frameW);
-  const plan = buildGifFramePlan(animationName, sprite.frameCount);
+  const plan = buildGifFramePlan(animationName, sprite.frameCount, sprite.animationFormat);
 
   const gif = GIFEncoder();
   const tempCanvas = document.createElement('canvas');

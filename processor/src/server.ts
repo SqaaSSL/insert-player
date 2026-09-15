@@ -11,6 +11,10 @@ import {
   VIDEO_SPRITE_PROCESSING_VERSION,
 } from './videoSpriteContract.ts';
 import { OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT } from '../../src/services/ImageProviderContract';
+import { generateTemplateAtlas, TemplateAtlasRequestError } from './templateAtlas/provider';
+import { compileTemplateAtlasRequest } from './templateAtlas/endpoints';
+import { TemplateAtlasCompileError } from './templateAtlas/compiler';
+import { TEMPLATE_ATLAS_COMPILER_CONTRACT } from '../../src/services/TemplateAtlasContract';
 
 installCanvasRuntime();
 
@@ -222,6 +226,7 @@ const server = createServer(async (request, response) => {
         status: 'ok',
         runtime: 'canvas-skia',
         imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+        templateAtlasCompiler: TEMPLATE_ATLAS_COMPILER_CONTRACT,
         videoSpriteCompiler: {
           schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
           compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
@@ -318,8 +323,29 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && request.url === '/v1/generate-template-atlas') {
+      sendJson(response, 200, await generateTemplateAtlas(await readJsonBody(request)));
+      return;
+    }
+
+    if (request.method === 'POST' && request.url === '/v1/compile-template-atlas') {
+      sendJson(response, 200, await compileTemplateAtlasRequest(await readJsonBody(request)));
+      return;
+    }
+
     sendJson(response, 404, { error: 'Not found' });
   } catch (error) {
+    if (error instanceof TemplateAtlasRequestError) {
+      sendJson(response, error.status, {
+        error: error.message, code: error.code,
+        ...(error.requestId ? { providerRequestId: error.requestId } : {}),
+      });
+      return;
+    }
+    if (error instanceof TemplateAtlasCompileError) {
+      sendJson(response, 422, { error: error.message, code: error.code, qa: error.qa });
+      return;
+    }
     const failure = processorErrorResponse(error);
     sendJson(response, failure.status, failure.body);
   }
