@@ -242,6 +242,13 @@ jobs:
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
         run: npm run check:image-processor-contract
 
+      - name: Configure and verify production Clerk Crews
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+          CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
+          ASF_CONFIGURE_CLERK_CREWS_CONFIRMATION: ENABLE_PRODUCTION_CLERK_CREWS
+        run: node scripts/configure-clerk-crews.mjs --apply --confirm-production
+
       - name: Build, deploy, and smoke Pages
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

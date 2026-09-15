@@ -78,6 +78,7 @@
     "stripe:bootstrap:sandbox": "node scripts/bootstrap-stripe-catalog.mjs --target=sandbox",
     "config:live": "node scripts/apply-live-config.mjs --require-complete --deploy-worker",
     "config:sandbox": "node scripts/apply-sandbox-config.mjs --require-complete --deploy-worker",
+    "config:clerk-crews:production": "node scripts/configure-clerk-crews.mjs",
     "config:launch-smoke:production": "node scripts/configure-launch-smoke-users.mjs",
     "release:guard": "node scripts/production-deploy-guard.mjs",
     "sandbox:guard": "node scripts/development-deploy-guard.mjs",
