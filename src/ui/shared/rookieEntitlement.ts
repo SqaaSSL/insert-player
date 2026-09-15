@@ -13,7 +13,9 @@ export function includedRookieStatus(
   if (creationPackage === 'aura' && (authStatus === 'signed-out' || authStatus === 'local')) return 'account-required';
   if (authStatus === 'local' || authStatus === 'signed-out') return 'included';
   if (authStatus !== 'signed-in' || !billingProfile) return 'checking';
-  return billingProfile.freeRookieGenerationsUsed < 1 ? 'included' : 'credits';
+  return billingProfile.freeRookieGenerationsUsed < 1 || billingProfile.referralRookiePasses > 0
+    ? 'included'
+    : 'credits';
 }
 
 export function initialCreationTier(requestedTier: unknown, paidTiersAreLocked: boolean, creationPackage?: GenerationPackage): QualityTier {

@@ -28,6 +28,7 @@ import {
   downloadArcadeFighterToLocal,
   downloadCloudFighterToLocal,
   listArcadeFighters,
+  syncCrewFightersToLocal,
   syncCloudFightersToLocal,
   type CloudFighter,
 } from '../../services/CloudFighters.ts';
@@ -61,6 +62,7 @@ import {
 
 interface OnlineVersusPageProps {
   authStatus: AuthStatus;
+  activeCrew?: { id: string; name: string } | null;
   onBack: () => void;
   onStartFight: (data: MatchSceneData) => void;
 }
@@ -238,7 +240,7 @@ function FighterPicker({ roster, status, selectedKey, disabled, guestMode = fals
               <FighterPreview entry={entry} className="online-versus__fighter-image" />
               <span className="online-versus__fighter-meta">
                 <strong>{entry.name}</strong>
-                <small>{entry.kind === 'arcade' ? 'Arcade' : 'Yours'} · {tierLabel(entry.qualityTier)}</small>
+                <small>{entry.kind === 'arcade' ? 'Arcade' : entry.kind === 'crew' ? 'Crew' : 'Yours'} · {tierLabel(entry.qualityTier)}</small>
               </span>
             </button>
           </li>
@@ -290,7 +292,12 @@ function ConnectionStats({
   );
 }
 
-export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVersusPageProps) {
+export function OnlineVersusPage({
+  authStatus,
+  activeCrew = null,
+  onBack,
+  onStartFight,
+}: OnlineVersusPageProps) {
   const requestedMode: OnlineDuelMode = typeof window !== 'undefined'
     && new URLSearchParams(window.location.search).get('mode') === 'aura'
     ? 'aura'
@@ -435,6 +442,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
         if (signedIn) {
           try {
             await syncCloudFightersToLocal(metas, context);
+            await syncCrewFightersToLocal(metas, activeCrew, context);
             metas = (await getAllCachedMetas(scope)).filter(
               (meta) => meta.version === CACHE_VERSION && meta.status === 'ready',
             );
@@ -460,7 +468,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
     return () => {
       cancelled = true;
     };
-  }, [guestInvite, signedIn]);
+  }, [activeCrew, guestInvite, signedIn]);
 
   // ---------------------------------------------------------- transport
 
@@ -507,7 +515,7 @@ export function OnlineVersusPage({ authStatus, onBack, onStartFight }: OnlineVer
       if (own) {
         if (own.kind === 'arcade' && own.cloud) {
           await downloadArcadeFighterToLocal(own.cloud, context);
-        } else {
+        } else if (own.kind === 'local') {
           await ensurePlayableSpritesUpToDate(own.photoHash);
         }
         assertFighterReadyForMode(

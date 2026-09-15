@@ -51,6 +51,7 @@ describe('billing load states', () => {
       user: {
         creditsBalance: 42,
         freeRookieGenerationsUsed: 1,
+        referralRookiePasses: 2,
         planTier: 'pro',
       },
     }));
@@ -60,6 +61,7 @@ describe('billing load states', () => {
       profile: {
         creditsBalance: 42,
         freeRookieGenerationsUsed: 1,
+        referralRookiePasses: 2,
         planTier: 'pro',
       },
     });

@@ -40,9 +40,20 @@ describe('room codes', () => {
 
 describe('room tickets', () => {
   it('round-trips and binds room, seat, and user', async () => {
-    const ticket = await mintRoomTicket(env, { roomCode: 'ABCDEF', seat: 'guest', userId: 'user_1' }, 1_000);
+    const ticket = await mintRoomTicket(env, {
+      roomCode: 'ABCDEF',
+      seat: 'guest',
+      userId: 'user_1',
+      activeOrganizationId: 'org_crew_1',
+    }, 1_000);
     const payload = await verifyRoomTicket(env, ticket, 1_001);
-    expect(payload).toMatchObject({ roomCode: 'ABCDEF', seat: 'guest', userId: 'user_1', purpose: 'room' });
+    expect(payload).toMatchObject({
+      roomCode: 'ABCDEF',
+      seat: 'guest',
+      userId: 'user_1',
+      activeOrganizationId: 'org_crew_1',
+      purpose: 'room',
+    });
     expect(payload?.exp).toBe(1_000 + ROOM_TICKET_TTL_SECONDS);
   });
 

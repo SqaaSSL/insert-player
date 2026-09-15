@@ -48,6 +48,7 @@ const secretKeys = [
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'CLERK_WEBHOOK_SIGNING_SECRET',
+  'CLERK_SECRET_KEY',
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
@@ -66,6 +67,7 @@ const requiredKeys = [
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'CLERK_WEBHOOK_SIGNING_SECRET',
+  'CLERK_SECRET_KEY',
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
@@ -434,6 +436,7 @@ async function validateRequired(values) {
   const anonymizationSecret = readValue(values, 'ANONYMIZATION_SECRET');
   const generationJobSigningSecret = readValue(values, 'GENERATION_JOB_SIGNING_SECRET');
   const clerkBackendAuthBridgeSecret = readValue(values, 'CLERK_BACKEND_AUTH_BRIDGE_SECRET');
+  const clerkSecretKey = readValue(values, 'CLERK_SECRET_KEY');
   const turnstileHostnames = readValue(values, 'TURNSTILE_HOSTNAMES') || defaultTurnstileHostnames;
   const stripeSecret = readValue(values, 'STRIPE_SECRET_KEY');
   const stripeAccountId = readValue(values, 'STRIPE_ACCOUNT_ID');
@@ -519,6 +522,13 @@ async function validateRequired(values) {
     readValue(values, 'CLERK_WEBHOOK_SIGNING_SECRET'),
     (value) => /^whsec_[A-Za-z0-9+/=_-]+$/i.test(value),
     'must be the signing secret for the isolated Insert Player Clerk webhook.',
+  );
+  assertLiveShape(
+    errors,
+    'CLERK_SECRET_KEY',
+    clerkSecretKey,
+    (value) => /^sk_live_[A-Za-z0-9_]+$/i.test(value),
+    'must be the matching live Clerk Backend API key.',
   );
   assertLiveShape(
     errors,

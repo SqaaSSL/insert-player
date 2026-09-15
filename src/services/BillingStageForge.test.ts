@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('./ApiClient', () => ({ apiFetch: vi.fn() }));
 vi.mock('../ui/legal.ts', () => ({
   storedGenerationLegalAttestation: () => ({
-    legalVersion: '2026-08-23.1',
+    legalVersion: '2026-09-15.1',
     ageConfirmed: true,
     termsAccepted: true,
     photoRightsConfirmed: true,

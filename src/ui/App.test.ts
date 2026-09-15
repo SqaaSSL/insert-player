@@ -11,6 +11,8 @@ describe('App route normalization', () => {
     expect(normalizeRoute('/roster/vs/', '')).toBe('/roster/vs');
     expect(normalizeRoute('/roster/rush/', '')).toBe('/roster/rush');
     expect(normalizeRoute('/stages/new', '')).toBe('/stages/new');
+    expect(normalizeRoute('/onboarding', '')).toBe('/onboarding');
+    expect(normalizeRoute('/join', '')).toBe('/join');
     expect(normalizeRoute('/roster/aura/', '')).toBe('/roster/aura');
     expect(normalizeRoute('/roster/aura-vs/', '')).toBe('/roster/aura-vs');
     expect(normalizeRoute('/roster/aura-watch/', '')).toBe('/roster/aura-watch');

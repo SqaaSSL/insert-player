@@ -89,7 +89,7 @@ import {
   getCloudFighter,
   listArcadeFighters,
   renameCloudFighter,
-  setCloudFighterPublic,
+  setCloudFighterAccess,
   syncCloudFightersToLocal,
   syncFighterToCloud,
   type CloudFighter,
@@ -144,6 +144,8 @@ interface GalleryPageProps {
   onBack: () => void;
   onCreateFighter: () => void;
   onCreateStage: () => void;
+  activeCrew?: { id: string; name: string } | null;
+  onOpenCrew?: () => void;
   onNavigateLegal?: (route: '/legal' | '/privacy' | '/terms' | '/refunds') => void;
 }
 
@@ -174,6 +176,8 @@ export function GalleryPage({
   onBack,
   onCreateFighter,
   onCreateStage,
+  activeCrew = null,
+  onOpenCrew,
   onNavigateLegal,
 }: GalleryPageProps) {
   const [activeTab, setActiveTab] = useState<'characters' | 'stages'>(() => (
@@ -226,6 +230,16 @@ export function GalleryPage({
   );
   const isArcadeFighter = isGlobalRosterMeta(meta, globalFighterIds);
   const ownerActionsReady = !isArcadeFighter && !cloudSyncPending;
+  const sharedWithActiveCrew = Boolean(
+    meta?.cloudAccessScope === 'crew'
+    && activeCrew
+    && meta.cloudAccessCrewIds?.includes(activeCrew.id),
+  );
+  const fighterAccessLabel = meta?.cloudAccessScope === 'community' || meta?.cloudPublic
+    ? 'Community'
+    : meta?.cloudAccessScope === 'crew'
+      ? sharedWithActiveCrew ? activeCrew?.name ?? 'Crew' : 'Crew'
+      : 'Crew setup needed';
   const currentRecoveryJobBusy = Boolean(
     meta?.cloudFighterId && recoveryJobs.some((job) => job.fighterId === meta.cloudFighterId),
   );
@@ -1051,7 +1065,7 @@ export function GalleryPage({
   const finishApprovedVideoFighter = async (approvedJob: GenerationJob) => {
     if (cloudSyncPending) return;
     setBusy(true);
-    setStatus('All video actions approved. Syncing your private fighter...');
+    setStatus('All video actions approved. Syncing your fighter...');
     const apiContext = captureApiRequestContext();
     try {
       await syncCompletedCloudFighter({
@@ -1059,7 +1073,7 @@ export function GalleryPage({
         jobId: approvedJob.id,
       }, apiContext);
       setVideoReviewJobs((current) => current.filter((job) => job.fighterId !== approvedJob.fighterId));
-      setStatus('All video actions approved, private, and synced');
+      setStatus('All video actions approved and synced');
     } catch (cause) {
       setStatus(cause instanceof Error ? `Approved fighter sync failed: ${cause.message}` : 'Approved fighter sync failed');
       throw cause;
@@ -1410,38 +1424,43 @@ export function GalleryPage({
     }
   };
 
-  const togglePublic = async () => {
+  const updateFighterAccess = async (scope: 'crew' | 'community') => {
     if (!meta || !ownerActionsReady) return;
+    if (scope === 'crew' && !activeCrew) {
+      onOpenCrew?.();
+      return;
+    }
     setBusy(true);
-    const nextPublic = !meta.cloudPublic;
-    setStatus(nextPublic ? 'Publishing fighter...' : 'Making fighter private...');
+    setStatus(scope === 'community' ? 'Publishing to Community...' : `Sharing with ${activeCrew?.name ?? 'Crew'}...`);
     const apiContext = captureApiRequestContext();
     try {
       let fighterId = meta.cloudFighterId ?? null;
       if (!fighterId) {
         const sync = await syncFighterToCloud(meta, sprites, intro, apiContext);
         if (sync.status !== 'synced' || !sync.fighterId) {
-          setStatus(sync.status === 'signed_out' ? 'Sign in to publish fighters' : `Publish failed: ${sync.message ?? 'cloud sync failed'}`);
+          setStatus(sync.status === 'signed_out' ? 'Sign in to share fighters' : `Share failed: ${sync.message ?? 'cloud sync failed'}`);
           return;
         }
         fighterId = sync.fighterId;
       }
-      const updated = await setCloudFighterPublic(fighterId, nextPublic, apiContext);
+      const updated = await setCloudFighterAccess(fighterId, scope, apiContext);
       if (!updated) {
-        setStatus('Sign in to publish fighters');
+        setStatus('Sign in to share fighters');
         return;
       }
       const latestMeta = await getCachedMeta(meta.photoHash);
       if (latestMeta) {
         latestMeta.cloudFighterId = updated.id;
         latestMeta.cloudPublic = updated.public;
+        latestMeta.cloudAccessScope = updated.access?.scope ?? scope;
+        latestMeta.cloudAccessCrewIds = updated.access?.crewIds ?? [];
         latestMeta.updatedAt = Date.now();
         await setCachedMeta(latestMeta);
       }
       await refreshCurrent();
-      setStatus(updated.public ? 'Published to Community' : 'Private again');
+      setStatus(scope === 'community' ? 'Published to Community' : `Shared with ${activeCrew?.name ?? 'your Crew'}`);
     } catch (err: any) {
-      setStatus(err?.message ? `Publish failed: ${err.message}` : 'Publish failed');
+      setStatus(err?.message ? `Share failed: ${err.message}` : 'Share failed');
     } finally {
       setBusy(false);
     }
@@ -1776,7 +1795,7 @@ export function GalleryPage({
                   {compatibilityLabel} ·
                   {isArcadeFighter
                     ? `Global roster · ${meta.animationsReady.length} animations ready`
-                    : `Your fighter · Status ${meta.status} · Created ${formatDate(meta.createdAt)}`}
+                    : `Your fighter · ${fighterAccessLabel} · Created ${formatDate(meta.createdAt)}`}
                 </p>
               </div>
               <div className="roster-hero__actions">
@@ -1824,13 +1843,21 @@ export function GalleryPage({
                         Sync Cloud
                       </Button>
                       <Button
-                        disabled={currentFighterActionBusy}
+                        variant={sharedWithActiveCrew ? 'primary' : 'secondary'}
+                        disabled={currentFighterActionBusy || sharedWithActiveCrew}
                         onClick={() => {
-                          if (meta.cloudPublic) void togglePublic();
-                          else setPublishConfirmOpen(true);
+                          if (activeCrew) void updateFighterAccess('crew');
+                          else onOpenCrew?.();
                         }}
                       >
-                        {meta.cloudPublic ? 'Unpublish' : 'Publish'}
+                        {activeCrew ? `Crew · ${activeCrew.name}` : 'Set Up Crew'}
+                      </Button>
+                      <Button
+                        variant={meta.cloudAccessScope === 'community' || meta.cloudPublic ? 'primary' : 'secondary'}
+                        disabled={currentFighterActionBusy || meta.cloudAccessScope === 'community' || meta.cloudPublic}
+                        onClick={() => setPublishConfirmOpen(true)}
+                      >
+                        Community
                       </Button>
                       {meta.cloudPublic && meta.cloudFighterId ? (
                         <Button variant="ghost" disabled={currentFighterBusy} onClick={() => void sharePublishedFighter()}>
@@ -1875,7 +1902,7 @@ export function GalleryPage({
                 onCreateNew={onCreateFighter}
                 generationConsentAccepted={legalAccepted}
                 onRejected={() => {
-                  setStatus('Video rejected. It remains private and no additional provider call was made.');
+                  setStatus('Video rejected. It was not shared and no additional provider call was made.');
                 }}
               />
             ) : null}
@@ -2134,20 +2161,20 @@ export function GalleryPage({
 
       {publishConfirmOpen && meta ? (
         <ConfirmDialog
-          title={`Publish ${meta.characterName}?`}
-          confirmLabel="Publish Fighter"
-          cancelLabel="Keep Private"
+          title={`Share ${meta.characterName} with everyone?`}
+          confirmLabel="Share With Community"
+          cancelLabel="Keep With Crew"
           confirmVariant="primary"
           onCancel={() => setPublishConfirmOpen(false)}
           onConfirm={() => {
             setPublishConfirmOpen(false);
-            void togglePublic();
+            void updateFighterAccess('community');
           }}
         >
           This makes the fighter name, tier, clean generated source views, and playable
           animations public under the neutral author label Player. Your account name, email,
           Clerk profile photo, original photo, RAW intermediates, private hashes, and
-          generation history stay private. You can unpublish at any time.
+          generation history stay restricted. You can move it back to your Crew at any time.
         </ConfirmDialog>
       ) : null}
 

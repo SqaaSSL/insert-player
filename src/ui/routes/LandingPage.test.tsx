@@ -27,7 +27,7 @@ describe('LandingPage onboarding offer', () => {
     const markup = renderToStaticMarkup(
       <LandingPage
         authStatus="signed-in"
-        billingProfile={{ creditsBalance: 0, freeRookieGenerationsUsed: 0, planTier: 'free' }}
+        billingProfile={{ creditsBalance: 0, freeRookieGenerationsUsed: 0, referralRookiePasses: 0, planTier: 'free' }}
         billingProfileChecked
         {...callbacks}
       />,
@@ -41,7 +41,7 @@ describe('LandingPage onboarding offer', () => {
     const markup = renderToStaticMarkup(
       <LandingPage
         authStatus="signed-in"
-        billingProfile={{ creditsBalance: 11, freeRookieGenerationsUsed: 1, planTier: 'free' }}
+        billingProfile={{ creditsBalance: 11, freeRookieGenerationsUsed: 1, referralRookiePasses: 0, planTier: 'free' }}
         billingProfileChecked
         {...callbacks}
       />,
@@ -49,6 +49,19 @@ describe('LandingPage onboarding offer', () => {
 
     expect(markup).toContain('Rookie · 2 credits · 11 available');
     expect(markup).not.toContain('Free Rookie pass · 1 available');
+  });
+
+  it('shows earned referral Rookie passes after the account Rookie is used', () => {
+    const markup = renderToStaticMarkup(
+      <LandingPage
+        authStatus="signed-in"
+        billingProfile={{ creditsBalance: 0, freeRookieGenerationsUsed: 1, referralRookiePasses: 2, planTier: 'free' }}
+        billingProfileChecked
+        {...callbacks}
+      />,
+    );
+
+    expect(markup).toContain('Free Rookie passes · 2 available');
   });
 
   it('does not claim an entitlement while the signed-in account is still loading', () => {

@@ -38,7 +38,7 @@ describe('provider session usage', () => {
       operation: 'fighter_retry_animation',
       chargeId: 'charge-champion-retry',
       legal: {
-        legalVersion: '2026-08-23.1',
+        legalVersion: '2026-09-15.1',
         ageConfirmed: true,
         termsAccepted: true,
         photoRightsConfirmed: true,
@@ -83,7 +83,7 @@ describe('provider session usage', () => {
       providerCallLimitCap: 2,
       providerCostLimitCentsCap: 30,
       legal: {
-        legalVersion: '2026-08-23.1',
+        legalVersion: '2026-09-15.1',
         ageConfirmed: true,
         termsAccepted: true,
         photoRightsConfirmed: true,

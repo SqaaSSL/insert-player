@@ -26,6 +26,8 @@ import {
   deleteFighter,
   getAsset,
   getCommunityFighter,
+  getCrewFighterSourceAsset,
+  getCrewFighterSpriteAsset,
   getFighter,
   getPublicArcadeSpriteHighDensityAsset,
   getPublicFighterSourceAsset,
@@ -33,6 +35,7 @@ import {
   listAdminArcadeFighters,
   listArcadeFighters,
   listCommunityFighters,
+  listCrewFighters,
   listOwnedCommunityFighterIds,
   listFighters,
   listStages,
@@ -40,6 +43,7 @@ import {
   promoteFighterSpriteVersion,
   reportCommunityFighter,
   requestFighterUpgrade,
+  setFighterAccess,
   shareCommunityFighterPage,
   tiersResponse,
   uploadFighterSource,
@@ -105,6 +109,13 @@ import {
 } from './matchRoomRoutes';
 import { normalizeRoomCode, verifyRoomTicket } from './matchRoomProtocol';
 import { versusInvitationOgImage, versusInvitationSharePage } from './versusInvites';
+import {
+  createCrewInvitation,
+  getOnboardingStatus,
+  getReferralLanding,
+  recordOnboardingDebut,
+  referralRookiePasses,
+} from './referrals';
 import {
   getImportedGlobalVideoRecurationAsset,
   getImportedGlobalVideoRecurationPromoteTransition,
@@ -201,6 +212,9 @@ function authAsPublicContext(auth: AuthContext): PublicAuthContext {
     rateLimitKey: `user:${auth.userId}`,
     user: auth.user,
     claims: auth.claims,
+    activeOrganizationId: auth.activeOrganizationId ?? null,
+    activeOrganizationSlug: auth.activeOrganizationSlug ?? null,
+    activeOrganizationRole: auth.activeOrganizationRole ?? null,
   };
 }
 
@@ -271,7 +285,11 @@ async function roomTicketParticipant(
       return json({ error: 'Room session does not match this room' }, 403);
     }
   }
-  return { userId: ticket.userId, rateLimitKey: `room:${ticket.userId}` };
+  return {
+    userId: ticket.userId,
+    activeOrganizationId: ticket.activeOrganizationId ?? null,
+    rateLimitKey: `room:${ticket.userId}`,
+  };
 }
 
 async function versusParticipant(
@@ -380,6 +398,11 @@ export default {
     try {
       if (path === '/api/clerk/webhook' && method === 'POST') {
         return addCors(await handleClerkWebhook(request, env), request, env);
+      }
+
+      const referralLandingMatch = path.match(/^\/api\/referrals\/([a-f0-9]{32})$/);
+      if (referralLandingMatch && method === 'GET') {
+        return addCors(await getReferralLanding(env, referralLandingMatch[1]), request, env);
       }
 
       const publicVersusInviteMatch = path.match(
@@ -884,6 +907,7 @@ export default {
         const user = await env.DB.prepare(
           'SELECT * FROM users WHERE id = ?'
         ).bind(publicAuth.user.id).first<User>() ?? publicAuth.user;
+        const referralPasses = await referralRookiePasses(env, user.id);
         return addCors(json({
           user: {
             id: user.id,
@@ -898,8 +922,48 @@ export default {
             wins: user.wins,
             losses: user.losses,
             winStreak: user.win_streak,
+            referralRookiePasses: referralPasses,
           },
+          activeCrew: publicAuth.activeOrganizationId ? {
+            id: publicAuth.activeOrganizationId,
+            slug: publicAuth.activeOrganizationSlug ?? null,
+            role: publicAuth.activeOrganizationRole ?? null,
+          } : null,
         }), request, env);
+      }
+
+      if (path === '/api/onboarding' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => getOnboardingStatus(env, auth)),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/onboarding/debut' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'onboarding:debut',
+            (auth) => recordOnboardingDebut(request, env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/crew/invitations' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'crew:invite',
+            (auth) => createCrewInvitation(request, env, auth),
+          ),
+          request,
+          env,
+        );
       }
 
       if (path === '/api/fighters' && method === 'GET') {
@@ -1015,6 +1079,37 @@ export default {
         );
       }
 
+      if (path === '/api/crews/current/fighters' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => listCrewFighters(request, env, auth)),
+          request,
+          env,
+        );
+      }
+
+      const crewFighterAssetMatch = path.match(
+        /^\/api\/crews\/current\/fighters\/([^/]+)\/(sprites|sources)\/([^/]+)\/([^/]+)$/,
+      );
+      if (crewFighterAssetMatch && method === 'GET') {
+        const params = crewFighterAssetMatch.slice(1).map(decodePathParam);
+        const invalid = params.find(isResponse);
+        if (invalid) return addCors(invalid, request, env);
+        const [fighterId, kind, id, revision] = params as string[];
+        return addCors(
+          await authenticated(request, env, (auth) => kind === 'sprites'
+            ? getCrewFighterSpriteAsset(env, auth, fighterId, id, revision)
+            : getCrewFighterSourceAsset(
+                env,
+                auth,
+                fighterId,
+                id as 'side' | 'upright' | 'crouch',
+                revision,
+              )),
+          request,
+          env,
+        );
+      }
+
       const fighterMatch = path.match(/^\/api\/fighters\/([^/]+)(?:\/([^/]+))?$/);
       if (fighterMatch) {
         const fighterId = decodePathParam(fighterMatch[1]);
@@ -1090,6 +1185,18 @@ export default {
               env,
               'fighters:write',
               (auth) => requestFighterUpgrade(request, env, auth, fighterId),
+            ),
+            request,
+            env,
+          );
+        }
+        if (action === 'access' && method === 'PATCH') {
+          return addCors(
+            await authenticatedLimited(
+              request,
+              env,
+              'fighters:write',
+              (auth) => setFighterAccess(request, env, auth, fighterId),
             ),
             request,
             env,
@@ -1282,13 +1389,23 @@ export default {
           await ensureSystemUser(env, systemOpponentId, systemOpponentName);
           const winnerSlot = body.winnerSlot === 'p2' ? 'p2' : 'p1';
           const winnerId = winnerSlot === 'p2' ? player2Id : auth.userId;
-          const p1FighterId = await readMatchFighterId(env, auth.userId, body.p1FighterId);
+          const p1FighterId = await readMatchFighterId(
+            env,
+            auth.userId,
+            body.p1FighterId,
+            auth.activeOrganizationId ?? null,
+          );
           if (body.p1FighterId && !p1FighterId) {
-            return json({ error: 'Match fighter is not owned or an active Arcade fighter' }, 403);
+            return json({ error: 'Match fighter is not available to this player' }, 403);
           }
-          const p2FighterId = await readMatchFighterId(env, auth.userId, body.p2FighterId);
+          const p2FighterId = await readMatchFighterId(
+            env,
+            auth.userId,
+            body.p2FighterId,
+            auth.activeOrganizationId ?? null,
+          );
           if (body.p2FighterId && !p2FighterId) {
-            return json({ error: 'Match fighter is not owned or an active Arcade fighter' }, 403);
+            return json({ error: 'Match fighter is not available to this player' }, 403);
           }
           return reportMatchResult(env, {
             matchId: generateId(),

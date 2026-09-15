@@ -30,6 +30,7 @@ import {
   arcadeFighterPhotoHash,
   downloadArcadeFighterToLocal,
   listArcadeFighters,
+  syncCrewFightersToLocal,
   syncCloudFightersToLocal,
   type CloudFighter,
 } from '../../services/CloudFighters.ts';
@@ -96,6 +97,8 @@ interface RosterPageProps {
   onCreateFighter: () => void;
   onStartFight: (data: MatchSceneData) => void;
   preferredPlayerPhotoHash?: string | null;
+  activeCrew?: { id: string; name: string } | null;
+  autoStart?: boolean;
 }
 
 type StageChoice =
@@ -105,7 +108,7 @@ type StageChoice =
 
 export interface RosterFighterEntry {
   key: string;
-  kind: 'local' | 'arcade';
+  kind: 'local' | 'arcade' | 'crew';
   name: string;
   photoHash: string;
   cloudFighterId: string | null;
@@ -208,7 +211,7 @@ function getPreviewBlob(meta: CachedMeta | null): Blob | null {
 function localRosterEntry(meta: CachedMeta): RosterFighterEntry {
   return {
     key: `local:${meta.photoHash}`,
-    kind: 'local',
+    kind: meta.cloudManagement === 'crew' ? 'crew' : 'local',
     name: meta.characterName,
     photoHash: meta.photoHash,
     cloudFighterId: meta.cloudFighterId ?? null,
@@ -375,6 +378,7 @@ function FighterRosterCard({
         <div className="roster-fighter-card__title">
           <strong>{fighter.name}</strong>
           {fighter.kind === 'arcade' ? <span className="roster-official-badge">Official</span> : null}
+          {fighter.kind === 'crew' ? <span className="roster-official-badge">Crew</span> : null}
         </div>
         <span><TierBadge tier={fighter.qualityTier} /> · {fighter.animationSummary ?? `${fighter.animationCount} anims`}</span>
         {fighter.challengerLine ? <span>{fighter.challengerLine}</span> : null}
@@ -436,6 +440,7 @@ function FighterSlotPanel({
               : 'Select a fighter below'}
           </span>
           {fighter?.kind === 'arcade' ? <span>Official Arcade challenger</span> : null}
+          {fighter?.kind === 'crew' ? <span>Shared by your Crew</span> : null}
           {showPersonality && <span>Personality: {FIGHTER_PERSONALITIES.find((entry) => entry.id === personalityId)?.label}</span>}
         </div>
       </div>
@@ -469,7 +474,7 @@ function CpuPersonalityControls({ label, personalityId, onChange }: {
   );
 }
 
-export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateFighter, onStartFight, preferredPlayerPhotoHash = null }: RosterPageProps) {
+export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateFighter, onStartFight, preferredPlayerPhotoHash = null, activeCrew = null, autoStart = false }: RosterPageProps) {
   const modeMeta = getModeMeta(mode);
   const isAuraMode = mode === 'aura' || mode === 'aura-vs' || mode === 'aura-watch';
   const rosterGameMode: FighterGameMode = mode === 'rush' ? 'rush' : isAuraMode ? 'aura' : 'fight';
@@ -501,6 +506,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const p2PersonalityExplicitRef = useRef(false);
   const p1SelectionExplicitRef = useRef(false);
   const preparationGuardRef = useRef(createAsyncEpochGuard());
+  const autoStartConsumedRef = useRef(false);
 
   useEffect(() => {
     const guard = preparationGuardRef.current;
@@ -528,6 +534,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     p1PersonalityExplicitRef.current = false;
     p2PersonalityExplicitRef.current = false;
     p1SelectionExplicitRef.current = false;
+    autoStartConsumedRef.current = false;
   }, [authSessionKey, mode, preferredPlayerPhotoHash]);
 
   useEffect(() => {
@@ -686,8 +693,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
       try {
         const cloudSync = await syncCloudFightersToLocal(allMetas, apiContext);
         if (cancelled) return;
-        cloudImported = cloudSync.imported;
-        cloudUpdated = cloudSync.updated;
+        const crewSync = await syncCrewFightersToLocal(allMetas, activeCrew, apiContext);
+        cloudImported = cloudSync.imported + crewSync.imported;
+        cloudUpdated = cloudSync.updated + crewSync.updated;
         cloudSyncing = false;
         publishRosterSnapshot();
         if (cloudImported > 0 || cloudUpdated > 0) {
@@ -728,7 +736,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
       window.clearTimeout(officialTimeout);
       window.clearTimeout(localTimeout);
     };
-  }, [authSessionKey, authStatus, mode, rosterReloadKey, preferredPlayerPhotoHash]);
+  }, [activeCrew, authSessionKey, authStatus, mode, rosterReloadKey, preferredPlayerPhotoHash]);
 
   const rosterSections = useMemo(
     () => filterRosterFighterSectionsForMode(
@@ -887,7 +895,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
             captureApiRequestContext(),
             mode === 'rush' ? { includeHighResolutionAssets: false } : {},
           );
-        } else {
+        } else if (fighter.kind === 'local') {
           upgraded += await ensurePlayableSpritesUpToDate(fighter.photoHash);
         }
         if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
@@ -902,6 +910,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         setStatus(`Updated ${upgraded} cached animations`);
       }
       onStartFight({
+        experience: autoStart ? 'onboarding' : undefined,
         gameMode: rosterGameMode,
         vsAI: modeMeta.vsAI,
         cpuVsCpu: modeMeta.cpuVsCpu,
@@ -935,6 +944,13 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
       }
     }
   };
+
+  useEffect(() => {
+    if (!autoStart || autoStartConsumedRef.current || !rosterLoaded || !preferredPlayerPhotoHash
+      || !p1Fighter || p1Fighter.photoHash !== preferredPlayerPhotoHash || !canStartFight || preparingFight) return;
+    autoStartConsumedRef.current = true;
+    void launchFight();
+  }, [autoStart, canStartFight, p1Fighter, preferredPlayerPhotoHash, preparingFight, rosterLoaded]);
 
   return (
     <div className="roster-app roster-app--simple">
@@ -1000,7 +1016,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                     aria-pressed={rosterFilter === 'yours'}
                     onClick={() => setRosterFilter('yours')}
                   >
-                    Yours <span>{localEntries.length}</span>
+                    Yours + Crew <span>{localEntries.length}</span>
                   </button>
                   <button
                     type="button"

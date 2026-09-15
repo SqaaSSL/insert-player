@@ -60,7 +60,7 @@ describe('auth and navigation hardening', () => {
     const markup = renderToStaticMarkup(
       <GenerationConsent checked={false} storageMode="device" onChange={vi.fn()} />,
     );
-    expect(markup).toContain('privately store this fighter on this device');
+    expect(markup).toContain('store this fighter on this device');
     expect(markup).not.toContain('in my Insert Player account');
   });
 

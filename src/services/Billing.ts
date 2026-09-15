@@ -21,7 +21,7 @@ export interface GenerationAuthorization {
   providerSessionExpiresAt?: string;
   providerCallLimit?: number;
   providerCostLimitCents?: number;
-  mode?: 'anonymous_rookie' | 'free_rookie' | 'credits' | 'continuation' | 'quote';
+  mode?: 'anonymous_rookie' | 'free_rookie' | 'referral_rookie' | 'credits' | 'continuation' | 'quote';
   artifactRunId?: string;
   resumedFromJobId?: string;
   message?: string;
@@ -42,6 +42,7 @@ export interface CreditPack {
 export interface BillingProfile {
   creditsBalance: number;
   freeRookieGenerationsUsed: number;
+  referralRookiePasses: number;
   planTier: 'free' | 'pro' | 'studio' | 'admin';
 }
 
@@ -251,6 +252,7 @@ export async function loadBillingProfile(context?: ApiRequestContext): Promise<B
       user?: {
         creditsBalance?: number;
         freeRookieGenerationsUsed?: number;
+        referralRookiePasses?: number;
         planTier?: BillingProfile['planTier'];
       } | null;
     };
@@ -260,6 +262,7 @@ export async function loadBillingProfile(context?: ApiRequestContext): Promise<B
       profile: {
         creditsBalance: Number(json.user.creditsBalance ?? 0),
         freeRookieGenerationsUsed: Number(json.user.freeRookieGenerationsUsed ?? 0),
+        referralRookiePasses: Number(json.user.referralRookiePasses ?? 0),
         planTier: json.user.planTier ?? 'free',
       },
     };

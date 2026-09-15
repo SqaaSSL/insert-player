@@ -7,13 +7,13 @@ import type { AuraPlayerScore } from '../aura/AuraBattle.ts';
 import type { AuraChallenge, AuraChallengeRoutine } from '../aura/AuraChallenge.ts';
 import { ROUNDS_TO_WIN } from '../constants.ts';
 
-export type MatchExperience = 'standard' | 'trial';
+export type MatchExperience = 'standard' | 'trial' | 'onboarding';
 
 export const MIN_MATCH_ROUNDS_TO_WIN = 1;
 export const MAX_MATCH_ROUNDS_TO_WIN = 5;
 
 export function isValidMatchExperience(value: unknown): value is MatchExperience {
-  return value === 'standard' || value === 'trial';
+  return value === 'standard' || value === 'trial' || value === 'onboarding';
 }
 
 export function isValidMatchRoundsToWin(value: unknown): value is number {

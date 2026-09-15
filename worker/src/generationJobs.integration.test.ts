@@ -40,7 +40,7 @@ const VIDEO_ACTIONS = [
   'victory',
 ] as const;
 const LEGAL = {
-  legalVersion: '2026-08-23.1',
+  legalVersion: '2026-09-15.1',
   ageConfirmed: true,
   termsAccepted: true,
   photoRightsConfirmed: true,

@@ -19,6 +19,7 @@ export async function readMatchFighterId(
   env: Env,
   userId: string,
   value: unknown,
+  activeOrganizationId: string | null = null,
 ): Promise<string | undefined> {
   const fighterId = readOptionalMatchId(value);
   if (!fighterId) return undefined;
@@ -27,13 +28,21 @@ export async function readMatchFighterId(
     SELECT f.id
     FROM fighters f
     LEFT JOIN arcade_fighters arcade ON arcade.fighter_id = f.id
+    LEFT JOIN fighter_group_grants crew_grant
+      ON crew_grant.fighter_id = f.id
+     AND crew_grant.clerk_organization_id = ?
     WHERE f.id = ?
       AND (
         f.owner_user_id = ?
         OR (f.public_flag = 1 AND arcade.status = 'active')
+        OR (
+          ? IS NOT NULL
+          AND f.public_flag = 0
+          AND crew_grant.fighter_id IS NOT NULL
+        )
       )
     LIMIT 1
-  `).bind(fighterId, userId).first<{ id: string }>();
+  `).bind(activeOrganizationId, fighterId, userId, activeOrganizationId).first<{ id: string }>();
 
   return fighter?.id;
 }
