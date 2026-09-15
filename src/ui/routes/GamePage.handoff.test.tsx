@@ -653,3 +653,20 @@ it('keeps the editor online session alive through StrictMode effect replay and c
   expect(transport.close).toHaveBeenCalledOnce();
   expect(getActiveOnlineSession()).toBeNull();
 });
+
+
+it('does not carry an open editor into a different game or a spectator match', async () => {
+  await mount('AuraScene', { seed: 17, vsAI: true });
+  viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
+  viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
+  find(node => node.type === AuraBattleResults).props.onEditRoutine(); flush();
+  expect(find(node => node.type === AuraRoutineEditor)).toBeDefined();
+  props.launchTarget = { sceneKey: 'AuraScene', data: { seed: 19, cpuVsCpu: true } };
+  flush(); await vi.dynamicImportSettled();
+  expect(find(node => node.type === AuraRoutineEditor)).toBeUndefined();
+  expect(runtime.create).toHaveBeenCalledTimes(2);
+  props.launchTarget = { sceneKey: 'FightScene', data: { seed: 21 } };
+  flush(); await vi.dynamicImportSettled();
+  expect(find(node => node.type === AuraRoutineEditor)).toBeUndefined();
+  expect(runtime.create).toHaveBeenCalledTimes(3);
+});

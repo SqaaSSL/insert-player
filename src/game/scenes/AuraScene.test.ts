@@ -792,6 +792,52 @@ describe('AuraScene online startup departure', () => {
     expect(scene.exitToMenu).not.toHaveBeenCalled();
     expect(scene.startupAbort.signal.aborted).toBe(false);
   });
+
+  it('ignores gameplay and rematch packets before initialization while still accepting readiness and quit', () => {
+    const { scene, control } = departureHarness();
+    expect(scene.attachOnlineSession(scene.online)).toBe(true);
+    const score = { score: 0, combo: 0, bestCombo: 0, perfect: 0, great: 0, good: 0, misses: 0, mashes: 0 };
+    Object.assign(scene, { presentationReady: false, presentationStarted: false,
+      maybeStartOnlineRematch: vi.fn(), restartOnlineMatch: vi.fn() });
+    expect(scene.battle).toBeUndefined();
+    expect(() => {
+      for (const presentationReady of [false, true]) {
+        scene.presentationReady = presentationReady;
+        scene.presentationStarted = presentationReady;
+        control({ t: 'aura_judgement', matchSerial: 1, noteId: 'not-created', grade: 'perfect', offsetMs: 0 });
+        control({ t: 'aura_finish', matchSerial: 1, score });
+        control({ t: 'rematch_ready', previousMatchSerial: 1 });
+        control({ t: 'rematch_start', previousMatchSerial: 1, matchSerial: 2, seed: 67 });
+      }
+    }).not.toThrow();
+    expect(scene.remoteFinalScore).toBeNull();
+    expect(scene.remoteRematchReady).toBe(false);
+    expect(scene.maybeStartOnlineRematch).not.toHaveBeenCalled();
+    expect(scene.restartOnlineMatch).not.toHaveBeenCalled();
+    control({ t: 'aura_ready', matchSerial: 1, routine: ['aura_glide', 'aura_glide', 'aura_one_leg'] });
+    expect(scene.remoteOnlineReady).toBe(true);
+    control({ t: 'quit' });
+    expect(scene.exitToMenu).toHaveBeenCalledOnce();
+  });
+
+  it('accepts a new rematch serial only after the completed guest explicitly agrees', () => {
+    const { scene, control } = departureHarness();
+    expect(scene.attachOnlineSession(scene.online)).toBe(true);
+    scene.onlineSession.seat = 'guest';
+    Object.assign(scene, { finalizing: true, matchFinished: true, localRematchReady: false,
+      restartOnlineMatch: vi.fn(), maybeStartOnlineRematch: vi.fn() });
+    const start = { t: 'rematch_start', previousMatchSerial: 1, matchSerial: 2, seed: 67 };
+    control(start);
+    expect(scene.restartOnlineMatch).not.toHaveBeenCalled();
+    control({ t: 'rematch_ready', previousMatchSerial: 1 });
+    expect(scene.remoteRematchReady).toBe(true);
+    scene.localRematchReady = true;
+    for (const invalid of [{ ...start, previousMatchSerial: 0 }, { ...start, matchSerial: 1 },
+      { ...start, seed: -1 }, { ...start, seed: 0x1_0000_0000 }]) control(invalid);
+    expect(scene.restartOnlineMatch).not.toHaveBeenCalled();
+    control(start);
+    expect(scene.restartOnlineMatch).toHaveBeenCalledExactlyOnceWith(2, 67);
+  });
 });
 
 function recordingHarness() {
@@ -801,6 +847,7 @@ function recordingHarness() {
     trackId: chart.trackId, difficulty: chart.difficulty, stageId: 'mars-incorporated',
     p1Name: 'P1', p2Name: 'P2', chart });
   Object.assign(scene, { chart, actionRecorder: recorder, battle: new AuraBattle(chart),
+    lifecycleActive: true, presentationReady: true, presentationStarted: true,
     isVsAI: false, cpuVsCpu: false, online: null, finalizing: false,
     noteById: new Map(chart.notes.map(note => [note.id, note])),
     lastWrongTurnFeedbackAt: -Infinity, flashLaneInput: vi.fn(),

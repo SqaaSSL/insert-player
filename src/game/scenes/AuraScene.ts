@@ -207,8 +207,11 @@ function isAuraOnlineControl(value: unknown): value is AuraOnlineControl {
   }
   if (message.t === 'rematch_start') {
     return Number.isSafeInteger(message.previousMatchSerial)
+      && (message.previousMatchSerial as number) > 0
       && Number.isSafeInteger(message.matchSerial)
-      && Number.isSafeInteger(message.seed);
+      && (message.matchSerial as number) > (message.previousMatchSerial as number)
+      && Number.isSafeInteger(message.seed)
+      && (message.seed as number) >= 0 && (message.seed as number) <= 0xffff_ffff;
   }
   return false;
 }
@@ -2555,7 +2558,14 @@ export class AuraScene extends Phaser.Scene {
 
   private onOnlineControl(value: unknown): void {
     if (!isAuraOnlineControl(value) || !this.online) return;
-    if ('matchSerial' in value && value.matchSerial !== this.online.matchSerial) return;
+    if ('matchSerial' in value && value.t !== 'rematch_start' && value.matchSerial !== this.online.matchSerial) return;
+    // The transport attaches before the battle and its views exist. Startup
+    // accepts the readiness handshake and departure, never scored gameplay.
+    if ((value.t === 'aura_judgement' || value.t === 'aura_finish')
+      && (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted
+        || this.clockStartedAt === null || this.matchFinished || this.opponentLeft)) return;
+    if ((value.t === 'rematch_ready' || value.t === 'rematch_start')
+      && (!this.lifecycleActive || this.opponentLeft || (!this.finalizing && !this.matchFinished))) return;
     if (value.t === 'aura_ready') {
       // Readiness pins the peer's own slot once. Delayed/duplicate controls
       // cannot rewrite a running performance or its recorded configuration.
@@ -2588,6 +2598,7 @@ export class AuraScene extends Phaser.Scene {
       value.t === 'rematch_start'
       && value.previousMatchSerial === this.online.matchSerial
       && this.onlineSession?.seat === 'guest'
+      && this.matchFinished && this.localRematchReady
     ) {
       this.restartOnlineMatch(value.matchSerial, value.seed);
     }

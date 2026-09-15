@@ -145,12 +145,12 @@ export function GamePage({
   const [auraSelection, setAuraSelection] = useState<{
     target: GamePageProps['launchTarget']; routines: AuraSelectedRoutines; data: MatchSceneData;
   } | null>(null);
-  const [editingAuraRoutine, setEditingAuraRoutine] = useState(false);
+  const [editingAuraRoutine, setEditingAuraRoutine] = useState<GamePageProps['launchTarget'] | null>(null);
   const [auraRematchConfig, setAuraRematchConfig] = useState<{ target: GamePageProps['launchTarget']; data: MatchSceneData } | null>(null);
   const editorData = auraRematchConfig?.target === launchTarget ? auraRematchConfig.data : launchTarget.data;
   const canEditAuraRoutine = isAura && !editorData.online && auraRoutinePlayerSlots(editorData).length > 0;
   const [auraSelectionError, setAuraSelectionError] = useState<string | null>(null);
-  const auraSelectionReady = !editingAuraRoutine && (!canChooseAuraRoutine || auraSelection?.target === launchTarget);
+  const auraSelectionReady = editingAuraRoutine !== launchTarget && (!canChooseAuraRoutine || auraSelection?.target === launchTarget);
   const auraEditorOwnsSession = useRef(false);
   auraEditorOwnsSession.current = isAura && !auraSelectionReady && Boolean(launchTarget.data.online);
   const runtimeLaunchTarget = useMemo(() => auraSelection?.target === launchTarget
@@ -1016,7 +1016,7 @@ export function GamePage({
             chooseMatchAction('run_it_back');
           }}
           onEditRoutine={canEditAuraRoutine ? () => {
-            setEditingAuraRoutine(true);
+            setEditingAuraRoutine(launchTarget);
             setLoadingPhase('loading');
             setAuraSummary(null);
             setAuraCapture(null);
@@ -1083,7 +1083,7 @@ export function GamePage({
     onPlay={routines => {
       if (auraSelectionError) return;
       setAuraSelection({ target: launchTarget, routines, data: editorData });
-      setEditingAuraRoutine(false);
+      setEditingAuraRoutine(null);
     }}
     onExit={() => {
       if (online) {
