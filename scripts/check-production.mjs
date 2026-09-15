@@ -4369,6 +4369,8 @@ function assertCrewOnboardingAndReferralsAreWired() {
   const onboarding = readFileSync(join(root, 'src/ui/routes/CrewOnboardingPage.tsx'), 'utf8');
   const joinPage = readFileSync(join(root, 'src/ui/routes/CrewJoinPage.tsx'), 'utf8');
   const gallery = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
+  const productionConfiguration = readFileSync(join(root, 'scripts/configure-clerk-crews.mjs'), 'utf8');
+  const productionDeploy = readFileSync(join(root, '.github/workflows/deploy-production.yml'), 'utf8');
   const combined = [
     migration,
     auth,
@@ -4384,6 +4386,8 @@ function assertCrewOnboardingAndReferralsAreWired() {
     onboarding,
     joinPage,
     gallery,
+    productionConfiguration,
+    productionDeploy,
   ].join('\n');
   const required = [
     'CREATE TABLE fighter_group_grants',
@@ -4418,6 +4422,16 @@ function assertCrewOnboardingAndReferralsAreWired() {
     'Create Account & Join',
     'canInviteCrew',
     'Free Rookie pass',
+    "export const PRODUCTION_CLERK_WEBHOOK_URL = 'https://api.insertplayer.ai/api/clerk/webhook'",
+    "'organizationInvitation.accepted'",
+    "'organizationMembership.deleted'",
+    "'organization.deleted'",
+    "instance?.environment_type !== 'production'",
+    'Production Clerk webhook signing secret does not match the Worker configuration.',
+    'body: { enabled: true }',
+    'Configure and verify production Clerk Crews',
+    'ASF_CONFIGURE_CLERK_CREWS_CONFIRMATION: ENABLE_PRODUCTION_CLERK_CREWS',
+    'node scripts/configure-clerk-crews.mjs --apply --confirm-production',
   ];
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
@@ -4427,6 +4441,18 @@ function assertCrewOnboardingAndReferralsAreWired() {
   const forbidden = ['Keep Private', 'Make Private'].filter((snippet) => visibleAccessUi.includes(snippet));
   if (forbidden.length > 0) {
     throw new Error(`Crew and Community must be the only visible fighter access choices: ${forbidden.join(', ')}`);
+  }
+
+  const workerSmoke = productionDeploy.indexOf('- name: Smoke production Worker');
+  const configureCrews = productionDeploy.indexOf('- name: Configure and verify production Clerk Crews');
+  const pagesDeploy = productionDeploy.indexOf('- name: Build, deploy, and smoke Pages');
+  if (workerSmoke < 0 || configureCrews <= workerSmoke || pagesDeploy <= configureCrews) {
+    throw new Error('Production must verify the Crew-capable Worker before Clerk activation and activate Clerk before Pages.');
+  }
+  const webhookConfiguration = productionConfiguration.indexOf('const webhook = await configureWebhook({');
+  const organizationEnablement = productionConfiguration.indexOf("body: { enabled: true }");
+  if (webhookConfiguration < 0 || organizationEnablement <= webhookConfiguration) {
+    throw new Error('Production Clerk must verify its webhook before enabling Organizations.');
   }
 }
 

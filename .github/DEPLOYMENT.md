@@ -37,7 +37,10 @@ in-progress deployment.
 - `validate.yml`: reusable production gate, full builds, Worker dry-runs, and a fail-closed check of high or critical Dependabot alerts against the checked-out lockfiles.
 - `dependency-security.yml`: GitHub Dependency Review blocks pull requests that introduce high or critical vulnerabilities in runtime, development, or unknown scopes.
 - `deploy-development.yml`: `develop` to the isolated sandbox.
-- `deploy-production.yml`: checked `main` release to `insertplayer.ai`.
+- `deploy-production.yml`: checked `main` release to `insertplayer.ai`; after the
+  Crew-capable Worker is healthy, it verifies Clerk's exact webhook target and
+  signing secret, applies the reviewed six-event subscription, and enables
+  Organizations before publishing Pages.
 - `deploy-frontend-production.yml`: manual Pages-only release of the selected
   `main` commit, with an explicit Worker-drift check.
 - `configure-production-smoke-users.yml`: explicit-confirmation deep merge of launch-smoke markers onto two preselected verified OAuth users; the primary must match the separately pinned Arcade admin id, the action restores that private admin marker, and it refuses an admin clone.
@@ -182,6 +185,8 @@ each individual put creates a deployment and can expose a half-configured
 transport between secret updates.
 
 Neither authenticated smoke consumes AI inference or charges Stripe. The development workflow creates two identified `+clerk_test` users, establishes browser sessions through Clerk Agent Tasks, runs the complete authenticated D1/R2/billing-reservation/match/community-clone/privacy smoke, deletes both users, and verifies that the deletion webhook tombstones their still-valid tokens. Clerk Agent Task tokens omit the browser `azp` claim, so these two workflows send a private backend bridge header. The Worker accepts a missing `azp` only when that header matches `CLERK_BACKEND_AUTH_BRIDGE_SECRET`; an incorrect `azp` is still rejected, and the header is deliberately absent from CORS. Production delivery also uses that secret on one machine-only, GET-only processor-contract endpoint before Pages is released. That probe cannot mutate user or application state and does not depend on an operator retaining an active Clerk browser session.
+
+Production Clerk Crew configuration is likewise repository-managed. `scripts/configure-clerk-crews.mjs` refuses test keys or a live key for any instance other than `clerk.insertplayer.ai`, keeps personal-account selection available, and fails before activation unless exactly one `https://api.insertplayer.ai/api/clerk/webhook` endpoint exists and its Svix secret matches `CLERK_WEBHOOK_SIGNING_SECRET`. It updates only that endpoint's enabled state and six-event allowlist, verifies the result, logs out the short-lived Svix portal token, then enables Organizations last. The command is idempotent on later releases and never prints Clerk, Svix, or webhook credentials.
 
 Production is intentionally different because its Clerk instance accepts only social sign-in: a Backend API user without a real OAuth identification cannot receive a production session. Create two dedicated Google or Apple QA accounts by signing into `insertplayer.ai` once with each account, then store their Clerk user ids in the two production secrets above and pin the operator separately as `ASF_ARCADE_ADMIN_CLERK_USER_ID`. Run `Configure production launch-smoke users` with the exact confirmation `CONFIGURE_PRODUCTION_LAUNCH_SMOKE_USERS`; it requires the primary to match that independent admin id, rejects an admin clone, verifies Google/Apple, and deep-merges the admin/QA markers without replacing other private metadata. The smoke workflow re-verifies those markers and OAuth accounts before it creates fresh Agent Task sessions. It exercises auth, D1, R2, publishing, sharing, cloning, and cross-account privacy, cleans up its fighters, and revokes both sessions. It deliberately leaves credit reservations and match history untouched on persistent QA accounts; the disposable development run covers those mutations and account deletion. Browser diagnostics are retained for seven days only when a run fails.
 
