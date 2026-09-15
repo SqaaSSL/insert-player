@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname, delimiter } from 'node:path';
 import { spawn } from 'node:child_process';
 
 const runner = resolve(import.meta.dirname, 'generate-launch-voiceover.mjs');
@@ -64,8 +64,13 @@ test('resume downloads the already-paid job with GET only, then reuses the local
 });
 
 function run(input, output, baseUrl) {
+  // This test covers paid-job resumption, not FFmpeg. Stub only the local probe
+  // for the known 0.1s PCM fixture; real media QA runs the actual tool separately.
+  const bin = dirname(output);
+  writeFileSync(join(bin, 'ffprobe'), `#!${process.execPath}\nconsole.log('0.1');\n`, { mode: 0o755 });
   return new Promise(resolve => {
-    const child = spawn(process.execPath, [runner, input, output], { env: { ...process.env, METERKEY_API_KEY: 'mock-not-a-key', PIXCLI_BASE_URL: baseUrl } });
+    const child = spawn(process.execPath, [runner, input, output], { env: { ...process.env,
+      PATH: bin + delimiter + process.env.PATH, METERKEY_API_KEY: 'mock-not-a-key', PIXCLI_BASE_URL: baseUrl } });
     let text = '';
     child.stdout.on('data', chunk => { text += chunk; });
     child.stderr.on('data', chunk => { text += chunk; });

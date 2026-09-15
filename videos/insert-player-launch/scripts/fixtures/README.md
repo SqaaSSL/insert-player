@@ -12,3 +12,9 @@ depending on Git history in a shallow CI checkout. They are not current renders.
 
 The launch-film tests use the repository's Vitest runner. Run them with
 `npx vitest run videos/insert-player-launch/scripts` from the repository root.
+
+`v23-probes.json` contains actual local FFprobe stream types and durations
+for the three archived v23 MP4s, bound to their SHA-256 hashes in the tests.
+The v24/v25 lossless WAV tests inspect RIFF PCM directly, following the existing
+Neon tests. The voiceover HTTP resumption test stubs only the local duration
+probe for its mock WAV. Actual render QA still uses FFmpeg and FFprobe.

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { readPcm16 } from './fixtures/read-pcm16.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const plan = JSON.parse(readFileSync(resolve(root, 'provenance/aura-launch-v25-edit.json')));
@@ -13,7 +13,7 @@ const hash = path => createHash('sha256').update(readFileSync(resolve(root, path
 const tag = id => [...html.matchAll(/<(?:video|audio|div)\b[^>]*>/g)]
   .map(match => match[0]).find(value => value.includes(` id="${id}"`));
 const attr = (element, name) => element.match(new RegExp(`\\s${name}="([^"]*)"`))?.[1];
-const decode = path => execFileSync('ffmpeg', ['-v', 'error', '-i', resolve(root, path), '-f', 's16le', '-c:a', 'pcm_s16le', '-'], { maxBuffer: 16 << 20 });
+const decode = path => readPcm16(resolve(root, path));
 
 test('Aura is halved with five different moves, opening Six Seven and closing worm by Rosalia', () => {
   assert.equal(plan.auraSeconds, 9.3);

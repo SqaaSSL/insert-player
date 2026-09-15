@@ -1,0 +1,35 @@
+{
+  "assets/aura-action-hud-v23-review.mp4": {
+    "sha256": "12ec1c6499036a7f8ba6b0da33070a9a60de8fb3e04368ad15361c91088c1417",
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_type": "video",
+        "duration": "18.500000"
+      }
+    ]
+  },
+  "assets/optional-games-hud-v23-review.mp4": {
+    "sha256": "51d35cbb2928b1896eb893f9ba1c9ca6c368a8e2ab4a51d2b8f0675d239fe6e8",
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_type": "video",
+        "duration": "9.000000"
+      }
+    ]
+  },
+  "assets/aura-return-hud-v23-review.mp4": {
+    "sha256": "e75bc37319a285006ab583fe70b5422a41e0ef523204ba268b69590063b12db7",
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_type": "video",
+        "duration": "3.266667"
+      }
+    ]
+  }
+}
