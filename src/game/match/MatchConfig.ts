@@ -84,7 +84,7 @@ export interface MatchSceneData {
   auraDifficulty?: AuraDifficultyId;
   /** Aura track id from AuraTracks.ts; omitted lets the seed pick one. */
   auraTrackId?: string;
-  /** Each player's ordered three gestures, repeated every round. Null uses the seeded routine. */
+  /** Each player's chosen gesture for rounds 1, 2 and 3. Null uses the seeded routine. */
   auraRoutines?: AuraSelectedRoutines;
   /** Explicit offline quickplay cast; never an owned or online identity. */
   auraTrialPreset?: 'trump-lamine';

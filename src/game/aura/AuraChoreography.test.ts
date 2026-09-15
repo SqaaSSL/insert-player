@@ -5,15 +5,17 @@ import {
   resolveAuraPerformanceRoutine, type AuraSelectedRoutines,
 } from './AuraChoreography.ts';
 
-const repeated = ['aura_six_seven', 'aura_six_seven', 'aura_one_leg'] as const;
+const repeated = ['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'] as const;
 
 describe('chosen Aura choreography', () => {
-  it('plays the chosen order, including repeats, for the same player in every round', () => {
+  it('assigns one chosen move to each round, keeping it throughout that round and allowing repeats', () => {
     const selections: AuraSelectedRoutines = [repeated, ['aura_glide', 'aura_mog_check', 'aura_floor_worm']];
-    for (const round of [0, 1, 2, 3]) {
-      const routine = resolveAuraPerformanceRoutine(67, round, 0, selections);
-      expect([0, 6, 11].map(beat => auraPerformanceAtBeat(routine, beat))).toEqual(repeated);
-      expect(resolveAuraPerformanceRoutine(67, round, 1, selections)).toEqual(selections[1]);
+    for (const slot of [0, 1] as const) {
+      for (const round of [0, 1, 2]) {
+        const routine = resolveAuraPerformanceRoutine(67, round, slot, selections);
+        expect([0, 0.5, 5, 6, 10, 11, 15.5, 16].map(beat => auraPerformanceAtBeat(routine, beat)))
+          .toEqual(Array(8).fill(selections[slot]![round]));
+      }
     }
   });
 
@@ -42,7 +44,7 @@ describe('chosen Aura choreography', () => {
     expect(normalizeAuraSelectedRoutines([repeated])).toEqual([null, null]);
     const input = [[...repeated], null];
     const copy = normalizeAuraSelectedRoutines(input);
-    input[0]![0] = 'aura_one_leg';
+    input[0]![0] = 'aura_floor_worm';
     expect(copy).toEqual([repeated, null]);
   });
 });

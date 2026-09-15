@@ -539,7 +539,7 @@ export class AuraScene extends Phaser.Scene {
     this.emitCapture({ id: this.captureId, state: 'preparing' });
     try {
       this.actionRecorder = new AuraRecorder({
-        engineVersion: 'aura-presentation-v1', matchSeed: this.matchSeed,
+        engineVersion: 'aura-round-selection-v1', matchSeed: this.matchSeed,
         trackId: this.track.id, difficulty: this.difficultyId, stageId: this.resolvedStageId,
         p1Name: this.p1Name, p2Name: this.p2Name,
         p1CloudFighterId: this.p1CloudFighterId, p2CloudFighterId: this.p2CloudFighterId,
@@ -2089,10 +2089,15 @@ export class AuraScene extends Phaser.Scene {
     const fighter = this.fighters[judgement.slot];
     const performanceView = this.auraPerformanceViews[judgement.slot];
     const note = judgement.noteId ? this.noteById.get(judgement.noteId) ?? null : null;
-    const routine = note ? resolveAuraPerformanceRoutine(this.matchSeed,
-      this.chart.turns[note.turnIndex].round, judgement.slot, this.matchData.auraRoutines) : null;
+    const turn = this.chart.turns[note?.turnIndex ?? this.currentTurnIndex];
+    const hasSelectedRounds = isAuraPerformanceRoutine(this.matchData.auraRoutines?.[judgement.slot]);
+    // A late result from this same player's previous round still scores, but
+    // must not replace the move selected for the round now on stage.
+    if (hasSelectedRounds && note && note.turnIndex !== this.currentTurnIndex) return;
+    const routine = turn && (note || hasSelectedRounds) ? resolveAuraPerformanceRoutine(this.matchSeed,
+      turn.round, judgement.slot, this.matchData.auraRoutines) : null;
     const requested = this.canaryPerformanceOverride
-      ?? (note && routine ? auraPerformanceAtBeat(routine, note.beat) : null);
+      ?? (routine ? auraPerformanceAtBeat(routine, note?.beat ?? 0) : null);
     let played: AuraAnimationName | null = requested && performanceView?.play(requested) ? requested : null;
     if (!played && performanceView) {
       const fallback = performanceView.firstRoutineAnimation();

@@ -4,8 +4,11 @@ import {
   type AuraPerformanceRoutine,
 } from './AuraPerformance.ts';
 
-/** A null slot keeps the seeded routine; selected gestures repeat each round. */
-export type AuraSelectedRoutines = readonly [AuraPerformanceRoutine | null, AuraPerformanceRoutine | null];
+/** One chosen gesture for each of the three rounds, in round order. */
+export type AuraRoundSelection = AuraPerformanceRoutine;
+
+/** A null player slot keeps the legacy seeded routine within each round. */
+export type AuraSelectedRoutines = readonly [AuraRoundSelection | null, AuraRoundSelection | null];
 
 export function isAuraPerformanceRoutine(value: unknown): value is AuraPerformanceRoutine {
   return Array.isArray(value) && value.length === 3
@@ -33,5 +36,9 @@ export function resolveAuraPerformanceRoutine(
   selections?: AuraSelectedRoutines,
 ): AuraPerformanceRoutine {
   const selected = selections?.[slot];
-  return isAuraPerformanceRoutine(selected) ? selected : createAuraPerformanceRoutine(seed, round);
+  if (!isAuraPerformanceRoutine(selected)) return createAuraPerformanceRoutine(seed, round);
+  const move = selected[Math.min(2, Math.max(0, Math.floor(round)))];
+  // The presentation still uses three beat phrases. A chosen round keeps its
+  // single move across all of them instead of switching the gesture mid-turn.
+  return [move, move, move];
 }

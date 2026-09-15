@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { buildMatchSeed, type MatchSceneData } from '../../game/match/MatchConfig.ts';
-import { AURA_ROUTINE_ANIMATION_NAMES, type AuraPerformanceRoutine, type AuraRoutineAnimationName } from '../../game/aura/AuraPerformance.ts';
-import { normalizeAuraSelectedRoutines, resolveAuraPerformanceRoutine, type AuraSelectedRoutines } from '../../game/aura/AuraChoreography.ts';
+import { AURA_ROUTINE_ANIMATION_NAMES, createAuraPerformanceRoutine, type AuraRoutineAnimationName } from '../../game/aura/AuraPerformance.ts';
+import { normalizeAuraSelectedRoutines, type AuraRoundSelection, type AuraSelectedRoutines } from '../../game/aura/AuraChoreography.ts';
 
 export const AURA_GESTURE_LABELS: Record<AuraRoutineAnimationName, string> = {
   aura_six_seven: 'Six seven', aura_mog_check: 'Mog check', aura_glide: 'Glide',
@@ -27,27 +27,31 @@ export function auraRoutinePlayerSlots(data: MatchSceneData): readonly (0 | 1)[]
 }
 
 export function prepareAuraRoutines(data: MatchSceneData, initial?: AuraSelectedRoutines): AuraSelectedRoutines {
-  const routines = [...normalizeAuraSelectedRoutines(initial ?? data.auraRoutines)] as [AuraPerformanceRoutine | null, AuraPerformanceRoutine | null];
+  const routines = [...normalizeAuraSelectedRoutines(initial ?? data.auraRoutines)] as [AuraRoundSelection | null, AuraRoundSelection | null];
   const seed = buildMatchSeed({ ...data, gameMode: 'aura' });
   for (const slot of auraRoutinePlayerSlots(data)) {
-    routines[slot] = [...resolveAuraPerformanceRoutine(seed, 0, slot, routines)] as unknown as AuraPerformanceRoutine;
+    const selection = routines[slot] ?? createAuraPerformanceRoutine(seed, 0);
+    routines[slot] = [selection[0], selection[1], selection[2]];
+  }
+  if (!data.online && !data.cpuVsCpu && !data.auraChallenge && data.vsAI !== false && !routines[1]) {
+    routines[1] = createAuraPerformanceRoutine(seed, 1);
   }
   return routines;
 }
 
-export function replaceAuraGesture(routine: AuraPerformanceRoutine, index: number, name: AuraRoutineAnimationName): AuraPerformanceRoutine {
+export function replaceAuraGesture(routine: AuraRoundSelection, index: number, name: AuraRoutineAnimationName): AuraRoundSelection {
   const next = [...routine];
   if (Number.isInteger(index) && index >= 0 && index < 3) next[index] = name;
-  return next as unknown as AuraPerformanceRoutine;
+  return next as unknown as AuraRoundSelection;
 }
 
-export function moveAuraGesture(routine: AuraPerformanceRoutine, index: number, direction: -1 | 1): AuraPerformanceRoutine {
+export function moveAuraGesture(routine: AuraRoundSelection, index: number, direction: -1 | 1): AuraRoundSelection {
   const next = [...routine];
   const target = index + direction;
   if (Number.isInteger(index) && index >= 0 && index < 3 && target >= 0 && target < 3) {
     [next[index], next[target]] = [next[target], next[index]];
   }
-  return next as unknown as AuraPerformanceRoutine;
+  return next as unknown as AuraRoundSelection;
 }
 
 interface AuraRoutineEditorProps {
@@ -68,17 +72,17 @@ export function AuraRoutineEditor({ data, initialRoutines, error, onPlay, onExit
   useEffect(() => { headingRef.current?.focus(); }, []);
   const routine = routines[activeSlot]!;
   const playerName = (activeSlot === 0 ? data.p1Name : data.p2Name) || `Player ${activeSlot + 1}`;
-  const update = (next: AuraPerformanceRoutine) => {
+  const update = (next: AuraRoundSelection) => {
     setRoutines(current => activeSlot === 0 ? [next, current[1]] : [current[0], next]);
   };
   const selectGesture = (name: AuraRoutineAnimationName) => {
     update(replaceAuraGesture(routine, activeIndex, name));
-    setAnnouncement(`${AURA_GESTURE_LABELS[name]} is move ${activeIndex + 1}.`);
+    setAnnouncement(`${AURA_GESTURE_LABELS[name]} is selected for round ${activeIndex + 1}.`);
   };
   const moveGesture = (index: number, direction: -1 | 1) => {
     update(moveAuraGesture(routine, index, direction));
     setActiveIndex(index + direction);
-    setAnnouncement(`${AURA_GESTURE_LABELS[routine[index]]} moved to position ${index + direction + 1}.`);
+    setAnnouncement(`${AURA_GESTURE_LABELS[routine[index]]} moved to round ${index + direction + 1}.`);
   };
 
   return <main className="aura-routine" aria-labelledby="aura-routine-heading">
@@ -88,7 +92,7 @@ export function AuraRoutineEditor({ data, initialRoutines, error, onPlay, onExit
     </header>
     <div className="aura-routine__intro">
       <h1 id="aura-routine-heading" ref={headingRef} tabIndex={-1}>Choose your moves</h1>
-      <p>Three gestures. Your order. Repeat any move you like.</p>
+      <p>Pick one move for each round. Repeat any move you like.</p>
     </div>
     {slots.length > 1 ? <div className="aura-routine__players" role="group" aria-label="Choose whose routine to edit">
       {slots.map(slot => <button type="button" key={slot} aria-pressed={activeSlot === slot}
@@ -97,26 +101,26 @@ export function AuraRoutineEditor({ data, initialRoutines, error, onPlay, onExit
       </button>)}
     </div> : null}
     <section className="aura-routine__sequence" aria-label={`${playerName}'s routine`}>
-      <h2>{playerName}<span>Your routine</span></h2>
+      <h2>{playerName}<span>Your three rounds</span></h2>
       <ol className="aura-routine__moves">
         {routine.map((name, index) => <li key={index} className={`aura-routine__move${activeIndex === index ? ' is-selected' : ''}`}>
           <button type="button" className="aura-routine__select" aria-pressed={activeIndex === index}
-            aria-label={`Change move ${index + 1}: ${AURA_GESTURE_LABELS[name]}`} onClick={() => setActiveIndex(index)}>
-            <span className="aura-routine__position">{index + 1}</span>
+            aria-label={`Change round ${index + 1} move: ${AURA_GESTURE_LABELS[name]}`} onClick={() => setActiveIndex(index)}>
+            <span className="aura-routine__position">Round {index + 1}</span>
             <GestureDiagram name={name} />
             <strong>{AURA_GESTURE_LABELS[name]}</strong>
             <span className="aura-routine__change">{activeIndex === index ? 'Choose below' : 'Change move'}</span>
           </button>
-          <div className="aura-routine__reorder" role="group" aria-label={`Reorder move ${index + 1}`}>
-            <button type="button" aria-label={`Move gesture ${index + 1} earlier`} disabled={index === 0} onClick={() => moveGesture(index, -1)}>←</button>
-            <button type="button" aria-label={`Move gesture ${index + 1} later`} disabled={index === 2} onClick={() => moveGesture(index, 1)}>→</button>
+          <div className="aura-routine__reorder" role="group" aria-label={`Reorder round ${index + 1} move`}>
+            <button type="button" aria-label={`Move round ${index + 1} gesture earlier`} disabled={index === 0} onClick={() => moveGesture(index, -1)}>←</button>
+            <button type="button" aria-label={`Move round ${index + 1} gesture later`} disabled={index === 2} onClick={() => moveGesture(index, 1)}>→</button>
           </div>
         </li>)}
       </ol>
-      <p className="aura-routine__repeat">This order repeats each round.</p>
+      <p className="aura-routine__rounds">Each move plays throughout its round.</p>
     </section>
     <section className="aura-routine__library" aria-labelledby="aura-routine-library-heading">
-      <h2 id="aura-routine-library-heading">Pick gesture {activeIndex + 1}</h2>
+      <h2 id="aura-routine-library-heading">Pick a move for round {activeIndex + 1}</h2>
       <div className="aura-routine__choices">
         {AURA_ROUTINE_ANIMATION_NAMES.map(name => <button type="button" key={name} aria-pressed={routine[activeIndex] === name}
           onClick={() => selectGesture(name)}>

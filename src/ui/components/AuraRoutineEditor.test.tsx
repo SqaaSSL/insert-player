@@ -2,9 +2,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { MatchSceneData } from '../../game/match/MatchConfig.ts';
 import { AuraRoutineEditor, auraRoutinePlayerSlots, moveAuraGesture, prepareAuraRoutines, replaceAuraGesture } from './AuraRoutineEditor.tsx';
-import type { AuraPerformanceRoutine } from '../../game/aura/AuraPerformance.ts';
+import type { AuraRoundSelection } from '../../game/aura/AuraChoreography.ts';
 
-const routine: AuraPerformanceRoutine = ['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'];
+const routine: AuraRoundSelection = ['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'];
 
 describe('Aura routine selection', () => {
   it('allows repeated gestures and reorders individual positions without mutating the saved choice', () => {
@@ -15,12 +15,14 @@ describe('Aura routine selection', () => {
     expect(moveAuraGesture(chosen, 0, -1)).toEqual(routine);
     expect(moveAuraGesture(chosen, 2, 1)).toEqual(routine);
   });
-  it('prepares only human seats, leaving the CPU free to use the existing seeded routine', () => {
+  it('seeds the CPU with one move per round while exposing only the human seat for editing', () => {
     const solo = prepareAuraRoutines({ seed: 17, vsAI: true });
+    expect(auraRoutinePlayerSlots({ vsAI: true })).toEqual([0]);
     expect(solo[0]).toHaveLength(3);
-    expect(solo[1]).toBeNull();
+    expect(solo[1]).toHaveLength(3);
     expect(prepareAuraRoutines({ seed: 17, vsAI: true })).toEqual(solo);
     expect(prepareAuraRoutines({ seed: 17, vsAI: false }).every(slot => slot?.length === 3)).toBe(true);
+    expect(prepareAuraRoutines({ seed: 17, cpuVsCpu: true })).toEqual([null, null]);
   });
   it('lets either online seat choose only its own gestures', () => {
     for (const localSlot of [0, 1] as const) {
@@ -32,7 +34,7 @@ describe('Aura routine selection', () => {
     }
   });
   it('preserves a previous custom choice, including repeats, when opening the editor again', () => {
-    const previous = [routine, null] as const;
+    const previous = [routine, ['aura_floor_worm', 'aura_glide', 'aura_one_leg']] as const;
     const next = prepareAuraRoutines({ seed: 91 }, previous);
     expect(next).toEqual(previous);
     expect(next[0]).not.toBe(routine);
@@ -40,10 +42,14 @@ describe('Aura routine selection', () => {
   it('shows all available gestures, order and accessible controls without demanding memorized keys', () => {
     const markup = renderToStaticMarkup(<AuraRoutineEditor data={{ p1Name: 'Player A' }} initialRoutines={[routine, null]} onPlay={vi.fn()} onExit={vi.fn()} />);
     expect(markup).toContain('Choose your moves');
-    expect(markup).toContain('This order repeats each round.');
-    expect(markup).toContain('Change move 2: Six seven');
-    expect(markup).toContain('Move gesture 3 earlier');
-    expect(markup).toContain('Pick gesture 1');
+    expect(markup).toContain('Pick one move for each round. Repeat any move you like.');
+    expect(markup).toContain('Each move plays throughout its round.');
+    expect(markup).toContain('Round 1');
+    expect(markup).toContain('Round 2');
+    expect(markup).toContain('Round 3');
+    expect(markup).toContain('Change round 2 move: Six seven');
+    expect(markup).toContain('Move round 3 gesture earlier');
+    expect(markup).toContain('Pick a move for round 1');
     expect(markup).toContain('Use this routine');
     expect(markup).toContain('One-leg hop');
     expect(markup).toContain('role="status"');

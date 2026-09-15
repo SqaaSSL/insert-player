@@ -292,25 +292,59 @@ describe('AuraScene loaded performer eligibility', () => {
 describe('AuraScene integrated presentation', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('plays each player’s chosen order and repeats it on the next round without changing judgements', () => {
+  it('plays one selected move for every note in a round and advances both players through all three choices', () => {
     const { scene, performance, waiting } = harness();
-    const routines = [['aura_six_seven', 'aura_six_seven', 'aura_one_leg'],
+    const routines = [['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'],
       ['aura_glide', 'aura_floor_worm', 'aura_mog_check']];
+    const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
     Object.assign(scene, { canaryPerformanceOverride: null, matchData: { auraRoutines: routines },
-      chart: { turns: [{ round: 0 }, { round: 1 }] } });
-    for (const slot of [0, 1]) {
-      scene.activePerformerSlot = slot;
-      for (const turnIndex of [0, 1]) {
-        for (const beat of [0, 6, 11]) {
-          scene.noteById.set('selected', { id: 'selected', beat, turnIndex });
-          scene.animateFighterForJudgement({ grade: 'perfect', slot, lane: 0, noteId: 'selected' });
-        }
-      }
+      chart, noteById: new Map(chart.notes.map(note => [note.id, note])) });
+    for (const note of chart.notes) {
+      scene.activePerformerSlot = note.slot;
+      scene.currentTurnIndex = note.turnIndex;
+      scene.animateFighterForJudgement({ grade: 'perfect', slot: note.slot, lane: note.lane, noteId: note.id });
     }
-    expect(performance.play.mock.calls).toEqual([...routines[0], ...routines[0]].map(move => [move]));
-    expect(waiting.play.mock.calls).toEqual([...routines[1], ...routines[1]].map(move => [move]));
+    for (const [slot, view] of [performance, waiting].entries()) {
+      expect(view.play.mock.calls).toEqual(chart.notes.filter(note => note.slot === slot)
+        .map(note => [routines[slot][chart.turns[note.turnIndex].round]]));
+      expect(new Set(chart.turns.filter(turn => turn.slot === slot).map(turn => turn.round)))
+        .toEqual(new Set([0, 1, 2]));
+    }
     expect(scene.actionRecorder).toBeNull();
     expect(scene.battle.scoreFor).not.toHaveBeenCalled();
+  });
+
+  it('keeps the selected round move on a mash instead of falling back to an unrelated animation', () => {
+    const { scene, performance } = harness();
+    Object.assign(scene, { canaryPerformanceOverride: null,
+      matchData: { auraRoutines: [['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'], null] },
+      chart: { turns: [{ round: 0 }, { round: 1 }, { round: 2 }] } });
+    for (const round of [0, 1, 2]) {
+      scene.currentTurnIndex = round;
+      scene.animateFighterForJudgement({ grade: 'mash', slot: 0, lane: 0, noteId: null });
+    }
+    expect(performance.play.mock.calls).toEqual([['aura_six_seven'], ['aura_floor_worm'], ['aura_six_seven']]);
+    expect(performance.firstRoutineAnimation).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 2])('scores a delayed round-one note without replacing the same player’s round %i move', round => {
+    const { scene, performance } = harness();
+    const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
+    const battle = new AuraBattle(chart);
+    const currentTurn = chart.turns.find(turn => turn.slot === 0 && turn.round === round)!;
+    const lateNote = chart.turns[0].notes[0];
+    Object.assign(scene, { chart, battle, canaryPerformanceOverride: null, activePerformerSlot: 0,
+      currentTurnIndex: currentTurn.index, noteById: new Map(chart.notes.map(note => [note.id, note])),
+      matchData: { auraRoutines: [['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'], null] } });
+    scene.animateFighterForJudgement({ grade: 'perfect', slot: 0, lane: 0, noteId: currentTurn.notes[0].id });
+    expect(performance.play).toHaveBeenLastCalledWith(round === 1 ? 'aura_floor_worm' : 'aura_six_seven');
+    performance.play.mockClear();
+    const judgement = battle.judgeNote(lateNote.id, 'great', 80)!;
+    scene.applyJudgement(judgement, false);
+    expect(battle.scoreFor(0).great).toBe(1);
+    expect(battle.scoreFor(0).score).toBeGreaterThan(0);
+    expect(scene.updateScoreUi).toHaveBeenCalledOnce();
+    expect(performance.play).not.toHaveBeenCalled();
   });
 
   it.each(['perfect', 'great', 'good', 'miss', 'mash'])('keeps the selected Aura pack on %s and sends only UI feedback', grade => {
