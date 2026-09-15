@@ -166,7 +166,7 @@ jobs:
             --reviewed-by="$GITHUB_ACTOR"
 
       - name: Publish the reviewed-current-v1 handoff for Video
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-reviewed-canonical-manifest-rosalia-v2
           path: |
@@ -178,7 +178,7 @@ jobs:
 
       - name: Preserve the source-import checkpoint
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-reviewed-manual-canonical-import-checkpoint-rosalia-v2-${{ github.run_id }}
           path: ${{ runner.temp }}/reviewed-manual-canonical-import/import-state.json

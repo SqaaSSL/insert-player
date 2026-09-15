@@ -351,7 +351,7 @@ jobs:
             --reviewed-by="$GITHUB_ACTOR"
 
       - name: Publish the reviewed-current-v1 handoff and full operator evidence
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-reviewed-canonical-manifest-elon-musk
           path: |
@@ -365,7 +365,7 @@ jobs:
 
       - name: Preserve the source-import checkpoint
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: arcade-reviewed-elon-mixed-import-checkpoint-${{ github.run_id }}
           path: |
