@@ -1,0 +1,291 @@
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import {
+  loadOnboardingStatus,
+  sendCrewInvitation,
+  shareFighterWithActiveCrew,
+  type OnboardingStatus,
+} from '../../services/Crews.ts';
+import { listCloudFighters } from '../../services/CloudFighters.ts';
+import type { AuthStatus } from '../authState.ts';
+import type { CrewMembershipSummary, CrewSummary } from '../crewState.ts';
+import { Button } from '../components/Button.tsx';
+import { StatusMessage } from '../components/StatusMessage.tsx';
+import '../pages/product-entry.css';
+
+interface CrewOnboardingPageProps {
+  authStatus: AuthStatus;
+  authSlot?: ReactNode;
+  playerName: string;
+  activeCrew: CrewSummary | null;
+  crews: CrewMembershipSummary[];
+  fighterId?: string | null;
+  fighterPhotoHash?: string | null;
+  onCreateCrew?: (name: string) => Promise<CrewSummary>;
+  onSelectCrew?: (organizationId: string) => Promise<void>;
+  onCreateFighter: () => void;
+  onSignIn?: () => void;
+  onComplete: () => void;
+}
+
+type MissionStep = 'crew' | 'invite' | 'complete';
+
+export function resolveCrewMissionStep({
+  shared,
+  canInviteCrew,
+  invitationSent,
+  serverComplete = false,
+}: {
+  shared: boolean;
+  canInviteCrew: boolean;
+  invitationSent: boolean;
+  serverComplete?: boolean;
+}): MissionStep {
+  if (shared && (!canInviteCrew || invitationSent || serverComplete)) return 'complete';
+  return shared ? 'invite' : 'crew';
+}
+
+function suggestedCrewName(playerName: string): string {
+  const clean = playerName.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  return `${clean || 'Player'}'s Crew`.slice(0, 50);
+}
+
+export function CrewOnboardingPage({
+  authStatus,
+  authSlot,
+  playerName,
+  activeCrew,
+  crews,
+  fighterId,
+  fighterPhotoHash,
+  onCreateCrew,
+  onSelectCrew,
+  onCreateFighter,
+  onSignIn,
+  onComplete,
+}: CrewOnboardingPageProps) {
+  const [onboarding, setOnboarding] = useState<OnboardingStatus | null>(null);
+  const [shared, setShared] = useState(false);
+  const [canInviteCrew, setCanInviteCrew] = useState(false);
+  const [invitationSent, setInvitationSent] = useState(false);
+  const [crewName, setCrewName] = useState(() => suggestedCrewName(playerName));
+  const [email, setEmail] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const target = useMemo(() => ({
+    id: fighterId ?? onboarding?.fighter?.id ?? null,
+    photoHash: fighterPhotoHash ?? onboarding?.fighter?.photoHash ?? null,
+    name: onboarding?.fighter?.name ?? 'your Rookie',
+  }), [fighterId, fighterPhotoHash, onboarding?.fighter]);
+
+  useEffect(() => {
+    if (authStatus !== 'signed-in') return;
+    let cancelled = false;
+    void Promise.all([loadOnboardingStatus(), listCloudFighters()]).then(([status, fighters]) => {
+      if (cancelled) return;
+      setOnboarding(status);
+      setCanInviteCrew(status.canInviteCrew);
+      const selected = fighters.find((fighter) => (
+        (fighterId && fighter.id === fighterId)
+        || (fighterPhotoHash && fighter.photoHash === fighterPhotoHash)
+        || (!fighterId && !fighterPhotoHash && fighter.id === status.fighter?.id)
+      ));
+      const statusFighterMatchesTarget = Boolean(status.fighter) && (
+        (!fighterId && !fighterPhotoHash)
+        || status.fighter?.id === fighterId
+        || status.fighter?.photoHash === fighterPhotoHash
+      );
+      setShared((statusFighterMatchesTarget && status.sharedWithActiveCrew) || Boolean(
+        activeCrew
+        && selected?.access?.scope === 'crew'
+        && selected.access.crewIds.includes(activeCrew.id)
+      ));
+      setInvitationSent(status.invitesSent > 0);
+    }).catch((cause: unknown) => {
+      if (!cancelled) setError(cause instanceof Error ? cause.message : 'Crew progress could not be loaded.');
+    });
+    return () => { cancelled = true; };
+  }, [activeCrew, authStatus, fighterId, fighterPhotoHash]);
+
+  const step = resolveCrewMissionStep({
+    shared,
+    canInviteCrew,
+    invitationSent,
+    serverComplete: Boolean(onboarding?.complete),
+  });
+
+  const selectAndShare = async (crew: CrewSummary | null, createName?: string) => {
+    if (!target.id && !target.photoHash) {
+      setError('Create your Rookie before building its Crew.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      let selected = crew;
+      if (createName) {
+        if (!onCreateCrew) throw new Error('Crew creation is unavailable right now.');
+        selected = await onCreateCrew(createName);
+        setCanInviteCrew(true);
+      } else if (selected && selected.id !== activeCrew?.id) {
+        if (!onSelectCrew) throw new Error('Crew selection is unavailable right now.');
+        await onSelectCrew(selected.id);
+      }
+      if (!selected) throw new Error('Choose or create a Crew first.');
+      await shareFighterWithActiveCrew(target);
+      setShared(true);
+      void loadOnboardingStatus().then((status) => {
+        setOnboarding(status);
+        setCanInviteCrew(status.canInviteCrew);
+        setInvitationSent(status.invitesSent > 0);
+      }).catch(() => { /* the local mission state remains usable */ });
+      setMessage(`${target.name} is now available to ${selected.name}.`);
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : 'Your Rookie could not be shared with the Crew.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const invite = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!email.trim()) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await sendCrewInvitation(email.trim());
+      setInvitationSent(true);
+      setEmail('');
+      setMessage('Invitation sent. Your Crew mission is complete.');
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : 'The invitation could not be sent.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (authStatus !== 'signed-in') {
+    return (
+      <div className="product-entry">
+        <section className="product-entry__identity">
+          <div className="product-entry__identity-copy">
+            <h1>Save Your Crew</h1>
+            <p>Sign in to keep your Rookie, create a Crew, and invite your friends.</p>
+            {onSignIn ? <Button variant="primary" size="lg" onClick={onSignIn}>Sign In To Continue</Button> : authSlot}
+          </div>
+          <div className="gallery-panel">
+            <h2>Next Mission</h2>
+            <p className="roster-hero__copy">Create a Crew · Share your Rookie · Invite one friend</p>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="product-entry">
+      <div className="product-entry__page-heading">
+        <div>
+          <p className="product-entry__genre">Aura onboarding</p>
+          <h1>Build Your Crew</h1>
+        </div>
+        <Button variant="ghost" onClick={onComplete}>Finish Later</Button>
+      </div>
+
+      <section className="product-entry__identity" aria-label="Crew missions">
+        <div className="product-entry__identity-copy">
+          <h2>{step === 'crew' ? 'Share your Rookie' : step === 'invite' ? 'Bring in Player Two' : 'Crew Ready'}</h2>
+          {step === 'crew' ? (
+            <>
+              <p>Crew members can select each other's characters in the roster. Your original photo and raw files stay out of the shared copy.</p>
+              {activeCrew ? (
+                <Button variant="primary" size="lg" disabled={busy} onClick={() => void selectAndShare(activeCrew)}>
+                  {busy ? 'Sharing…' : `Share With ${activeCrew.name}`}
+                </Button>
+              ) : null}
+              {!activeCrew && crews.length > 0 ? (
+                <div className="gallery-actions" aria-label="Your Crews">
+                  {crews.map((crew) => (
+                    <Button key={crew.id} disabled={busy} onClick={() => void selectAndShare(crew)}>
+                      Select {crew.name}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
+              {!activeCrew && crews.length === 0 ? (
+                <form className="create-form" onSubmit={(event) => {
+                  event.preventDefault();
+                  if (crewName.trim()) void selectAndShare(null, crewName.trim());
+                }}>
+                  <label className="create-form__field">
+                    <span>Crew name</span>
+                    <input type="text" maxLength={50} required value={crewName} onChange={(event) => setCrewName(event.target.value)} />
+                  </label>
+                  <Button type="submit" variant="primary" size="lg" disabled={busy || !crewName.trim()}>
+                    {busy ? 'Creating Crew…' : 'Create Crew & Share Rookie'}
+                  </Button>
+                </form>
+              ) : null}
+              {!target.id && !target.photoHash ? <Button onClick={onCreateFighter}>Create My Rookie</Button> : null}
+            </>
+          ) : null}
+
+          {step === 'invite' ? (
+            <form className="create-form" onSubmit={(event) => void invite(event)}>
+              <p>Invite a friend who is new to Insert Player. They join your Crew and get their own included Rookie.</p>
+              <label className="create-form__field">
+                <span>Friend's email</span>
+                <input type="email" inputMode="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="player2@example.com" />
+              </label>
+              <Button type="submit" variant="primary" size="lg" disabled={busy || !email.trim()}>
+                {busy ? 'Sending…' : 'Invite Player Two'}
+              </Button>
+              <p className="product-entry__pricing-note">Your bonus Rookie unlocks only after your friend accepts with a verified Google, Apple, or Microsoft account, creates their Rookie, and completes their Aura debut. Up to 3 bonus Rookies.</p>
+            </form>
+          ) : null}
+
+          {step === 'complete' ? (
+            <>
+              <p>{invitationSent
+                ? 'Your Rookie is shared and the first invitation is on its way.'
+                : 'Your Rookie is shared with the Crew.'} New Crew fighters appear automatically in character select.</p>
+              <Button variant="primary" size="lg" onClick={onComplete}>Enter Insert Player</Button>
+            </>
+          ) : null}
+
+          {error ? <StatusMessage severity="error">{error}</StatusMessage> : null}
+          {message ? <StatusMessage severity="success">{message}</StatusMessage> : null}
+        </div>
+
+        <div className="product-entry__pricing">
+          <p className="product-entry__pricing-context">Your first run</p>
+          <dl>
+            <div>
+              <dt>1 · Learn Aura <span>Play the guided trial</span></dt>
+              <dd>Done</dd>
+            </div>
+            <div>
+              <dt>2 · Create your Rookie <span>One photo · first Rookie included</span></dt>
+              <dd>{target.id || target.photoHash ? 'Done' : 'Next'}</dd>
+            </div>
+            <div>
+              <dt>3 · Aura debut <span>Play once as your own character</span></dt>
+              <dd>Done</dd>
+            </div>
+            <div>
+              <dt>4 · Build a Crew <span>Share your Rookie with friends</span></dt>
+              <dd>{shared ? 'Done' : 'Next'}</dd>
+            </div>
+            <div>
+              <dt>5 · Invite Player Two <span>{canInviteCrew ? 'Complete onboarding' : 'Crew admin mission'}</span></dt>
+              <dd>{!canInviteCrew && shared ? 'Not needed' : invitationSent ? 'Done' : shared ? 'Next' : 'Locked'}</dd>
+            </div>
+          </dl>
+        </div>
+      </section>
+    </div>
+  );
+}

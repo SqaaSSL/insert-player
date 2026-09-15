@@ -30,6 +30,7 @@ const VERSUS_GUEST_ID_PATTERN = /^[A-Za-z0-9_-]{20,64}$/;
 
 export interface VersusRoomParticipant {
   userId: string;
+  activeOrganizationId?: string | null;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -65,7 +66,12 @@ export async function createVersusRoom(env: Env, auth: AuthContext): Promise<Res
     return json({
       roomCode: record.code,
       seat: 'host' satisfies RoomSeat,
-      ticket: await mintRoomTicket(env, { roomCode: record.code, seat: 'host', userId: auth.userId }),
+      ticket: await mintRoomTicket(env, {
+        roomCode: record.code,
+        seat: 'host',
+        userId: auth.userId,
+        activeOrganizationId: auth.activeOrganizationId,
+      }),
       ticketExpiresInSeconds: ROOM_TICKET_TTL_SECONDS,
     }, 201);
   }
@@ -98,7 +104,12 @@ async function joinVersusRoomAsParticipant(
     roomCode: code,
     seat,
     peerConnected,
-    ticket: await mintRoomTicket(env, { roomCode: code, seat, userId: participant.userId }),
+    ticket: await mintRoomTicket(env, {
+      roomCode: code,
+      seat,
+      userId: participant.userId,
+      activeOrganizationId: participant.activeOrganizationId,
+    }),
     ticketExpiresInSeconds: ROOM_TICKET_TTL_SECONDS,
   });
 }
@@ -248,8 +259,13 @@ export async function createVersusInvitation(
   }
 
   const body = await readJsonBody<{ fighterId?: unknown }>(request, MAX_JOIN_BODY_BYTES);
-  const fighterId = await readMatchFighterId(env, auth.userId, body.fighterId);
-  if (!fighterId) return json({ error: 'Fighter is not owned or an active Arcade fighter' }, 403);
+  const fighterId = await readMatchFighterId(
+    env,
+    auth.userId,
+    body.fighterId,
+    auth.activeOrganizationId ?? null,
+  );
+  if (!fighterId) return json({ error: 'Fighter is not available to this player' }, 403);
   const snapshot = await loadVersusInviteFighterSnapshot(env, fighterId);
   if (!snapshot) return json({ error: 'Fighter is not playable' }, 409);
   if (!await env.SPRITES.head(snapshot.sourceBlobKey)) {
@@ -316,8 +332,13 @@ export async function declareVersusFighter(
   const body = await readJsonBody<{ fighterId?: unknown }>(request, MAX_JOIN_BODY_BYTES);
   let fighterId: string | null = null;
   if (body.fighterId !== null && body.fighterId !== undefined) {
-    fighterId = (await readMatchFighterId(env, auth.userId, body.fighterId)) ?? null;
-    if (!fighterId) return json({ error: 'Fighter is not owned or an active Arcade fighter' }, 403);
+    fighterId = (await readMatchFighterId(
+      env,
+      auth.userId,
+      body.fighterId,
+      auth.activeOrganizationId ?? null,
+    )) ?? null;
+    if (!fighterId) return json({ error: 'Fighter is not available to this player' }, 403);
   }
   const response = await roomStub(env, code).fetch('https://room/fighter', {
     method: 'POST',

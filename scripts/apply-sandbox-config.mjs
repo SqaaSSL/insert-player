@@ -42,6 +42,7 @@ const sandboxSecretKeys = [
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'CLERK_WEBHOOK_SIGNING_SECRET',
+  'CLERK_SECRET_KEY',
   'TURNSTILE_SECRET_KEY',
   'ANONYMIZATION_SECRET',
   'GENERATION_JOB_SIGNING_SECRET',
@@ -53,6 +54,7 @@ const requiredCompleteKeys = [
   'VITE_GOOGLE_MAPS_BROWSER_KEY',
   'CLERK_ISSUER',
   'CLERK_WEBHOOK_SIGNING_SECRET',
+  'CLERK_SECRET_KEY',
   'STRIPE_ACCOUNT_ID',
   'STRIPE_PRICE_STARTER',
   'STRIPE_PRICE_VERSUS',
@@ -268,6 +270,7 @@ async function validate(values) {
   const googleMapsServerKey = value(values, 'GOOGLE_MAPS_SERVER_KEY');
   const clerkIssuer = value(values, 'CLERK_ISSUER');
   const clerkWebhookSecret = value(values, 'CLERK_WEBHOOK_SIGNING_SECRET');
+  const clerkSecretKey = value(values, 'CLERK_SECRET_KEY');
   const stripeSecret = value(values, 'STRIPE_SECRET_KEY');
   const stripeWebhookSecret = value(values, 'STRIPE_WEBHOOK_SECRET');
   const anonymizationSecret = value(values, 'ANONYMIZATION_SECRET');
@@ -292,6 +295,7 @@ async function validate(values) {
   if (googleMapsServerKey && !/^AIza[A-Za-z0-9_-]{30,}$/.test(googleMapsServerKey)) errors.push('Sandbox Google Maps server key is invalid.');
   if (clerkIssuer && !/^https:\/\//i.test(clerkIssuer)) errors.push('CLERK_ISSUER must be HTTPS.');
   if (clerkWebhookSecret && !/^whsec_[A-Za-z0-9+/=_-]+$/i.test(clerkWebhookSecret)) errors.push('CLERK_WEBHOOK_SIGNING_SECRET must be a whsec_ secret.');
+  if (clerkSecretKey && !/^sk_test_[A-Za-z0-9_]+$/i.test(clerkSecretKey)) errors.push('CLERK_SECRET_KEY must be the isolated Clerk development sk_test_ key.');
   if (stripeSecret && !/^sk_test_[A-Za-z0-9_]+$/i.test(stripeSecret)) errors.push('Sandbox Stripe secret key must start with sk_test_.');
   if (stripeWebhookSecret && !/^whsec_[A-Za-z0-9+/=_-]+$/i.test(stripeWebhookSecret)) errors.push('STRIPE_WEBHOOK_SECRET must be a whsec_ secret.');
   if (anonymizationSecret && anonymizationSecret.length < 32) errors.push('ANONYMIZATION_SECRET must contain at least 32 characters.');

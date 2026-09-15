@@ -147,7 +147,15 @@ export function HomePage({
         } else if (profileResult.status === 'unavailable' && authStatus === 'signed-in') {
           setBillingStatus('Credit balance unavailable. Try again later.');
         } else if (profileResult.profile) {
-          setBillingStatus(`${profileResult.profile.creditsBalance} credits ready`);
+          const availableRookiePasses = Math.max(
+            0,
+            1 - profileResult.profile.freeRookieGenerationsUsed,
+          ) + profileResult.profile.referralRookiePasses;
+          setBillingStatus(
+            `${profileResult.profile.creditsBalance} credits ready${availableRookiePasses > 0
+              ? ` · ${availableRookiePasses} Rookie pass${availableRookiePasses === 1 ? '' : 'es'}`
+              : ''}`,
+          );
         } else if (profileResult.status === 'signed-out' && authStatus === 'signed-in') {
           setBillingStatus('Sign in again to load your credit balance');
         } else if (packsResult.packs.length === 0) {

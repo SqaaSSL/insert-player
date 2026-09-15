@@ -576,8 +576,8 @@ export function CreateFighterPage({
     setPendingFighterSync(pending);
     setStageText(
       pending.completion === 'video-final'
-        ? 'All actions approved. Downloading your private fighter...'
-        : 'Generation complete. Downloading your private fighter...',
+        ? 'All actions approved. Downloading your fighter...'
+        : 'Generation complete. Downloading your fighter...',
     );
     const fighter = await getCloudFighter(pending.fighterId, apiContext);
     if (!fighter?.photoHash) {
@@ -595,8 +595,8 @@ export function CreateFighterPage({
     setGenerating(new Set());
     setStageText(
       pending.completion === 'video-final'
-        ? 'All video actions approved, private, and synced!'
-        : 'All sprites generated, private, and synced!',
+        ? 'All video actions approved and synced!'
+        : 'All sprites generated and synced!',
     );
   }
 
@@ -685,7 +685,7 @@ export function CreateFighterPage({
     const expectedCredits = expectedCreationCredits(tier, creationPackage, authStatus, billingProfile);
     if (expectedCredits === null) throw new Error('Check your Rookie pass and credits before creating a character.');
     setStarted(true);
-    setStageText('Preparing your private cloud fighter...');
+    setStageText('Preparing your cloud fighter...');
     const hash = await hashPhoto(file);
     setPhotoHash(hash);
     const fighterName = name.trim() || DEFAULT_NAME;
@@ -1283,7 +1283,7 @@ export function CreateFighterPage({
               returnTo: creationPackage === 'aura' ? 'aura' : 'gallery',
             })}`)}
             onRejected={() => {
-              setStageText('Video rejected. It remains private and no additional provider call was made.');
+              setStageText('Video rejected. It was not shared and no additional provider call was made.');
             }}
           />
         </>

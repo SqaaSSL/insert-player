@@ -1,6 +1,13 @@
-import { StrictMode, useEffect, useState } from 'react';
+import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ClerkProvider, useAuth, useUser, useClerk } from '@clerk/react';
+import {
+  ClerkProvider,
+  useAuth,
+  useClerk,
+  useOrganization,
+  useOrganizationList,
+  useUser,
+} from '@clerk/react';
 import { App } from './ui/App.tsx';
 import { AuthDock } from './ui/components/AuthDock.tsx';
 import { LoadingScreen } from './ui/components/LoadingScreen.tsx';
@@ -41,9 +48,13 @@ if (!rootEl) {
 }
 
 function ClerkSessionBridge() {
-  const { openSignIn } = useClerk();
+  const { openSignIn, openSignUp } = useClerk();
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const { user } = useUser();
+  const { organization } = useOrganization();
+  const organizationList = useOrganizationList({
+    userMemberships: { infinite: true, pageSize: 50 },
+  });
   const authReady = isLoaded && (!isSignedIn || Boolean(user?.id));
   const authStatus: AuthStatus = !authReady ? 'loading' : isSignedIn ? 'signed-in' : 'signed-out';
   const authSessionKey = !authReady ? 'loading' : isSignedIn ? user?.id ?? 'signed-in' : 'signed-out';
@@ -61,6 +72,33 @@ function ClerkSessionBridge() {
     bootstrapped: false,
     message: null,
   });
+  const activeCrew = useMemo(() => organization ? {
+    id: organization.id,
+    name: organization.name,
+    slug: organization.slug ?? null,
+  } : null, [organization?.id, organization?.name, organization?.slug]);
+  const crews = useMemo(() => (
+    organizationList.userMemberships.data?.map((membership) => ({
+      id: membership.organization.id,
+      name: membership.organization.name,
+      slug: membership.organization.slug ?? null,
+      role: membership.role ?? null,
+    })) ?? []
+  ), [organizationList.userMemberships.data]);
+  const createCrew = useCallback(async (name: string) => {
+    if (!organizationList.isLoaded || !organizationList.createOrganization || !organizationList.setActive) {
+      throw new Error('Crew setup is still loading. Try again in a moment.');
+    }
+    const created = await organizationList.createOrganization({ name });
+    await organizationList.setActive({ organization: created.id });
+    return { id: created.id, name: created.name, slug: created.slug ?? null };
+  }, [organizationList.createOrganization, organizationList.isLoaded, organizationList.setActive]);
+  const selectCrew = useCallback(async (organizationId: string) => {
+    if (!organizationList.isLoaded || !organizationList.setActive) {
+      throw new Error('Crew setup is still loading. Try again in a moment.');
+    }
+    await organizationList.setActive({ organization: organizationId });
+  }, [organizationList.isLoaded, organizationList.setActive]);
 
   useEffect(() => {
     configureApiAuth(isLoaded && isSignedIn ? () => getToken() : null);
@@ -139,9 +177,15 @@ function ClerkSessionBridge() {
         authStatus={authStatus}
         authSessionKey={authSessionKey}
         isNewAccount={isNewAccount}
+        playerName={user?.firstName ?? user?.username ?? 'Player'}
         userImageUrl={authReady && isSignedIn ? user?.imageUrl ?? null : null}
+        activeCrew={activeCrew}
+        crews={crews}
+        onCreateCrew={createCrew}
+        onSelectCrew={selectCrew}
         authSlot={authDock}
         onSignIn={() => { clearPostSignUpTrialIntent(); void openSignIn(); }}
+        onSignUp={() => { clearPostSignUpTrialIntent(); void openSignUp(); }}
         cacheStatus={cacheState.status}
         cacheMessage={cacheState.message}
         onRetryCache={() => setCacheAttempt((current) => current + 1)}

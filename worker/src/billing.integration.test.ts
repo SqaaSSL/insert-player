@@ -54,9 +54,22 @@ const SCHEMA = `
     fighter_id TEXT REFERENCES fighters(id) ON DELETE SET NULL,
     ledger_id TEXT REFERENCES credit_ledger(id) ON DELETE SET NULL,
     refund_ledger_id TEXT REFERENCES credit_ledger(id) ON DELETE SET NULL,
+    entitlement_id TEXT,
     continuation_run_id TEXT,
     resumed_from_job_id TEXT,
     expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE fighter_entitlements (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'unused',
+    source_referral_id TEXT NOT NULL UNIQUE,
+    reserved_charge_id TEXT UNIQUE,
+    expires_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -1491,6 +1504,72 @@ describe('Package quotes and authorization against D1', () => {
       expect(await db.prepare('SELECT credits_balance, free_rookie_generations_used FROM users WHERE id = ?').bind(userId).first())
         .toEqual({ credits_balance: 20 - price, free_rookie_generations_used: 1 });
     } finally { await mf.dispose(); }
+  }, 15_000);
+
+  it('reserves, releases, and consumes one earned referral Rookie without charging credits', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'rookie-referral-pass';
+    const auth = {
+      userId,
+      rateLimitKey: `user:${userId}`,
+      claims: {},
+      user: { id: userId },
+    } as unknown as PublicAuthContext;
+    try {
+      await db.batch([
+        db.prepare(`
+          INSERT INTO users (
+            id, clerk_user_id, display_name, credits_balance, free_rookie_generations_used
+          ) VALUES (?, ?, 'Referral Player', 20, 1)
+        `).bind(userId, userId),
+        db.prepare(`
+          INSERT INTO fighter_entitlements (
+            id, user_id, kind, status, source_referral_id
+          ) VALUES ('referral-pass-1', ?, 'referral_rookie', 'unused', 'referral-source-1')
+        `).bind(userId),
+      ]);
+
+      const quote = await authorizeGenerationPurchase(
+        rookieAuraRequest({ quoteOnly: true }),
+        env,
+        auth,
+      );
+      expect(await quote.json()).toMatchObject({ mode: 'quote', quotedCredits: 0 });
+
+      const first = await authorizeGenerationPurchase(
+        rookieAuraRequest({ expectedCredits: 0 }),
+        env,
+        auth,
+      );
+      const firstReceipt = await first.json() as { purchaseId: string };
+      expect(first.status).toBe(200);
+      expect(firstReceipt).toMatchObject({ mode: 'referral_rookie', creditsCharged: 0 });
+      expect(await db.prepare(`
+        SELECT status, reserved_charge_id FROM fighter_entitlements WHERE id = 'referral-pass-1'
+      `).first()).toEqual({ status: 'reserved', reserved_charge_id: firstReceipt.purchaseId });
+
+      await settleGenerationPurchase(env, userId, firstReceipt.purchaseId, false, null);
+      expect(await db.prepare(`
+        SELECT status, reserved_charge_id FROM fighter_entitlements WHERE id = 'referral-pass-1'
+      `).first()).toEqual({ status: 'unused', reserved_charge_id: null });
+
+      const second = await authorizeGenerationPurchase(
+        rookieAuraRequest({ expectedCredits: 0 }),
+        env,
+        auth,
+      );
+      const secondReceipt = await second.json() as { purchaseId: string };
+      expect(secondReceipt).toMatchObject({ mode: 'referral_rookie', creditsCharged: 0 });
+      await settleGenerationPurchase(env, userId, secondReceipt.purchaseId, true, null);
+      expect(await db.prepare(`
+        SELECT status, reserved_charge_id FROM fighter_entitlements WHERE id = 'referral-pass-1'
+      `).first()).toEqual({ status: 'consumed', reserved_charge_id: secondReceipt.purchaseId });
+      expect(await db.prepare(`
+        SELECT credits_balance, free_rookie_generations_used FROM users WHERE id = ?
+      `).bind(userId).first()).toEqual({ credits_balance: 20, free_rookie_generations_used: 1 });
+    } finally {
+      await mf.dispose();
+    }
   }, 15_000);
 
   it('requires sign-in for Rookie Aura without reserving a pass or starting a provider session', async () => {

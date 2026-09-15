@@ -162,8 +162,8 @@ Use the same variable and secret names in both environments. Values must remain 
 | `PIXCLI_API_KEY` | Server-only PixCLI transport for the opt-in video creation flow |
 | `STRIPE_SECRET_KEY` | Test in development, live in production |
 | `STRIPE_WEBHOOK_SECRET` | Matching environment billing endpoint |
-| `CLERK_WEBHOOK_SIGNING_SECRET` | Matching environment user-lifecycle endpoint |
-| `ASF_LAUNCH_SMOKE_CLERK_KEY` | Clerk Backend API key for the matching environment; used by authenticated launch smoke and the reviewed Casual import session |
+| `CLERK_WEBHOOK_SIGNING_SECRET` | Matching environment user, Organization, membership, and invitation lifecycle endpoint |
+| `ASF_LAUNCH_SMOKE_CLERK_KEY` | Clerk Backend API key for the matching environment; installed in the Worker as `CLERK_SECRET_KEY` for Crew invitations/referral verification and also used by authenticated launch smoke and reviewed Casual imports |
 | `CLERK_BACKEND_AUTH_BRIDGE_SECRET` | Distinct random secret shared only by the matching Worker and backend workflows; authenticates Agent Task tokens and the read-only deploy processor probe; at least 32 characters |
 | `ASF_LAUNCH_SMOKE_PRIMARY_USER_ID` | Production only; Clerk user id for the dedicated primary OAuth QA account |
 | `ASF_LAUNCH_SMOKE_CLONE_USER_ID` | Production only; Clerk user id for the dedicated clone OAuth QA account |

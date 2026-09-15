@@ -39,8 +39,8 @@ export function GenerationConsent({
   storageMode = 'account',
 }: ConsentProps) {
   const storagePromise = storageMode === 'account'
-    ? 'privately store this fighter in my Insert Player account.'
-    : 'privately store this fighter on this device.';
+    ? 'store this fighter in my Insert Player account.'
+    : 'store this fighter on this device.';
   return (
     <div className="legal-consent">
       <label>
@@ -55,14 +55,13 @@ export function GenerationConsent({
           }}
         />
         <span>
-          <strong>Process this photo only for my private fighter.</strong>{' '}
+          <strong>Process this photo only to create my fighter.</strong>{' '}
           I am 18+ and confirm I own the photo or have the pictured adult's permission. I authorize
           Insert Player and the processors named in Privacy to process it solely to create and
-          {' '}{storagePromise} Neither my photo nor generated
-          fighter will be visible to other players unless I later choose Publish. Publishing is a
-          separate action and makes only the clean generated assets of that fighter public, never my
-          original photo, Clerk account identity, RAW files, or private generation history. This is
-          not a licence to reuse my photo or private fighter. Insert Player will not sell them, use
+          {' '}{storagePromise} Only its clean generated playable assets can be shared with a Crew I
+          select. Community is a separate confirmation. Neither access choice shares my original
+          photo, Clerk account identity, RAW files, or generation history. This is not a licence to
+          reuse my photo or generated fighter outside those selected product uses. Insert Player will not sell them, use
           them in advertising, or use them to train models. I agree to the Terms and Privacy Policy,
           request immediate generation, acknowledge that digital performance starts immediately,
           and understand that the displayed credits are consumed once external AI processing begins.

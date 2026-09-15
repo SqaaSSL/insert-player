@@ -36,7 +36,7 @@ const USER_ID = 'arcade-admin';
 const FIGHTER_ID = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const ORIGINAL_KEY = `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/original.png`;
 const LEGAL = {
-  legalVersion: '2026-08-23.1',
+  legalVersion: '2026-09-15.1',
   ageConfirmed: true,
   termsAccepted: true,
   photoRightsConfirmed: true,

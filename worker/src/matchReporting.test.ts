@@ -41,6 +41,14 @@ async function createEnv(): Promise<{ db: D1Database; env: Env }> {
         status TEXT NOT NULL
       )
     `),
+    db.prepare(`
+      CREATE TABLE fighter_group_grants (
+        fighter_id TEXT NOT NULL REFERENCES fighters(id),
+        clerk_organization_id TEXT NOT NULL,
+        granted_by_user_id TEXT NOT NULL,
+        PRIMARY KEY (fighter_id, clerk_organization_id)
+      )
+    `),
   ]);
   return { db, env: { DB: db } as Env };
 }
@@ -62,9 +70,11 @@ describe('match fighter authorization', () => {
       db.prepare("INSERT INTO fighters (id, owner_user_id, public_flag) VALUES ('arcade-draft', 'admin', 1)"),
       db.prepare("INSERT INTO fighters (id, owner_user_id, public_flag) VALUES ('arcade-private', 'admin', 0)"),
       db.prepare("INSERT INTO fighters (id, owner_user_id, public_flag) VALUES ('arcade-live', 'admin', 1)"),
+      db.prepare("INSERT INTO fighters (id, owner_user_id, public_flag) VALUES ('crew-shared', 'user-b', 0)"),
       db.prepare("INSERT INTO arcade_fighters (fighter_id, status) VALUES ('arcade-draft', 'draft')"),
       db.prepare("INSERT INTO arcade_fighters (fighter_id, status) VALUES ('arcade-private', 'active')"),
       db.prepare("INSERT INTO arcade_fighters (fighter_id, status) VALUES ('arcade-live', 'active')"),
+      db.prepare("INSERT INTO fighter_group_grants (fighter_id, clerk_organization_id, granted_by_user_id) VALUES ('crew-shared', 'org_crew_a', 'user-b')"),
     ]);
 
     await expect(readMatchFighterId(env, 'user-a', 'owned')).resolves.toBe('owned');
@@ -72,6 +82,9 @@ describe('match fighter authorization', () => {
     await expect(readMatchFighterId(env, 'user-a', 'community')).resolves.toBeUndefined();
     await expect(readMatchFighterId(env, 'user-a', 'arcade-draft')).resolves.toBeUndefined();
     await expect(readMatchFighterId(env, 'user-a', 'arcade-private')).resolves.toBeUndefined();
+    await expect(readMatchFighterId(env, 'user-a', 'crew-shared', 'org_crew_a')).resolves.toBe('crew-shared');
+    await expect(readMatchFighterId(env, 'user-a', 'crew-shared', 'org_other')).resolves.toBeUndefined();
+    await expect(readMatchFighterId(env, 'user-a', 'crew-shared')).resolves.toBeUndefined();
   });
 
   it('rejects malformed ids before querying the database', async () => {

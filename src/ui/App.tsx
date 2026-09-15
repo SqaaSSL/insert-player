@@ -51,6 +51,8 @@ import {
   rememberCreationPurchaseIntent,
 } from './shared/onboardingFlow.ts';
 import { readPendingVersusInvite } from './shared/versusInvite.ts';
+import { recordOnboardingDebut } from '../services/Crews.ts';
+import type { CrewMembershipSummary, CrewSummary } from './crewState.ts';
 
 const GalleryPage = lazy(() => import('./routes/GalleryPage.tsx').then((module) => ({
   default: module.GalleryPage,
@@ -76,6 +78,12 @@ const ModerationPage = lazy(() => import('./routes/ModerationPage.tsx').then((mo
 const ArcadePage = lazy(() => import('./routes/ArcadePage.tsx').then((module) => ({
   default: module.ArcadePage,
 })));
+const CrewOnboardingPage = lazy(() => import('./routes/CrewOnboardingPage.tsx').then((module) => ({
+  default: module.CrewOnboardingPage,
+})));
+const CrewJoinPage = lazy(() => import('./routes/CrewJoinPage.tsx').then((module) => ({
+  default: module.CrewJoinPage,
+})));
 
 type AppRoute =
   | '/'
@@ -94,6 +102,8 @@ type AppRoute =
   | '/community'
   | '/moderation'
   | '/fighters/new'
+  | '/onboarding'
+  | '/join'
   | '/stages/new'
   | '/roster/watch'
   | '/roster/cpu'
@@ -114,13 +124,19 @@ interface NavigationOptions {
 }
 
 interface AppProps extends Partial<AuthRouteState> {
+  playerName?: string;
   userImageUrl?: string | null;
   isNewAccount?: boolean;
+  activeCrew?: CrewSummary | null;
+  crews?: CrewMembershipSummary[];
+  onCreateCrew?: (name: string) => Promise<CrewSummary>;
+  onSelectCrew?: (organizationId: string) => Promise<void>;
   authSlot?: ReactNode;
   cacheStatus?: CacheStatus;
   cacheMessage?: string | null;
   onRetryCache?: () => void;
   onSignIn?: () => void;
+  onSignUp?: () => void;
   configurationError?: string | null;
 }
 
@@ -157,6 +173,8 @@ export function legalReturnRouteFromState(state: unknown): AppRoute {
     candidate === '/community' ||
     candidate === '/moderation' ||
     candidate === '/fighters/new' ||
+    candidate === '/onboarding' ||
+    candidate === '/join' ||
     candidate === '/stages/new' ||
     candidate === '/roster/watch' ||
     candidate === '/roster/cpu' ||
@@ -199,6 +217,8 @@ export function normalizeRoute(pathname: string, hash: string): AppRoute {
   if (cleaned === '/community') return '/community';
   if (cleaned === '/moderation') return '/moderation';
   if (cleaned === '/fighters/new') return '/fighters/new';
+  if (cleaned === '/onboarding') return '/onboarding';
+  if (cleaned === '/join') return '/join';
   if (cleaned === '/stages/new') return '/stages/new';
   if (cleaned === '/roster/watch') return '/roster/watch';
   if (cleaned === '/roster/cpu') return '/roster/cpu';
@@ -347,13 +367,19 @@ function useHashRoute(): [AppRoute, Navigate, string] {
 export function App({
   authStatus = 'local',
   authSessionKey = 'local',
+  playerName = 'Player',
   userImageUrl = null,
   isNewAccount = false,
+  activeCrew = null,
+  crews = [],
+  onCreateCrew,
+  onSelectCrew,
   authSlot = null,
   cacheStatus = 'ready',
   cacheMessage = null,
   onRetryCache,
   onSignIn,
+  onSignUp,
   configurationError = null,
 }: AppProps) {
   const [route, navigate, routeSearch] = useHashRoute();
@@ -758,7 +784,49 @@ export function App({
           onBack={() => navigate('/menu')}
           onCreateFighter={() => navigate('/fighters/new')}
           onCreateStage={() => navigate('/stages/new')}
+          activeCrew={activeCrew}
+          onOpenCrew={() => navigate('/onboarding')}
           onNavigateLegal={navigateToLegal}
+        />
+      );
+    }
+    if (route === '/onboarding') {
+      const params = new URLSearchParams(routeSearch);
+      return (
+        <CrewOnboardingPage
+          authStatus={authStatus}
+          authSlot={authSlot}
+          playerName={playerName}
+          activeCrew={activeCrew}
+          crews={crews}
+          fighterId={params.get('fighter')}
+          fighterPhotoHash={params.get('player')}
+          onCreateCrew={onCreateCrew}
+          onSelectCrew={onSelectCrew}
+          onCreateFighter={() => navigate('/fighters/new', buildCreationSearch({
+            tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'trial',
+          }))}
+          onSignIn={onSignIn}
+          onComplete={() => navigate('/menu')}
+        />
+      );
+    }
+    if (route === '/join') {
+      const params = new URLSearchParams(routeSearch);
+      return (
+        <CrewJoinPage
+          referralId={params.get('referral')}
+          authStatus={authStatus}
+          authSlot={authSlot}
+          activeCrew={activeCrew}
+          crews={crews}
+          onSelectCrew={onSelectCrew}
+          onSignIn={onSignIn}
+          onSignUp={onSignUp}
+          onCreateRookie={() => navigate('/fighters/new', buildCreationSearch({
+            tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'referral',
+          }))}
+          onBack={() => navigate('/menu')}
         />
       );
     }
@@ -778,6 +846,7 @@ export function App({
       return (
         <OnlineVersusPage
           authStatus={authStatus}
+          activeCrew={activeCrew}
           onBack={() => navigate('/menu')}
           onStartFight={startFight}
         />
@@ -793,13 +862,17 @@ export function App({
           onPlayTrial={() => void tryGame('aura')}
           authStatus={authStatus}
           authSessionKey={authSessionKey}
-          completionLabel={creationContext.challenge ? 'Return to challenge' : creationContext.returnTo === 'gallery' ? 'Open my characters' : `Play ${creationContext.returnTo === 'arcade' ? 'Fight' : creationContext.returnTo}`}
+          completionLabel={creationContext.source === 'trial' || creationContext.source === 'referral'
+            ? 'Make My Aura Debut'
+            : creationContext.challenge ? 'Return to challenge' : creationContext.returnTo === 'gallery' ? 'Open my characters' : `Play ${creationContext.returnTo === 'arcade' ? 'Fight' : creationContext.returnTo}`}
           onBack={() => creationContext.challenge
             ? navigate('/challenge', new URLSearchParams({ challenge: creationContext.challenge }).toString())
             : navigate(destination)}
           onComplete={(photoHash) => creationContext.challenge
             ? navigate('/challenge', new URLSearchParams({challenge: creationContext.challenge, player: photoHash}).toString())
-            : navigate(destination, destination === '/gallery' ? '' : buildArcadeSelectionSearch(photoHash))}
+            : creationContext.source === 'trial' || creationContext.source === 'referral'
+              ? navigate('/roster/aura', new URLSearchParams({ player: photoHash, onboarding: 'debut' }).toString())
+              : navigate(destination, destination === '/gallery' ? '' : buildArcadeSelectionSearch(photoHash))}
           onGetCredits={(tier, creationPackage, draftPersisted) => {
             rememberCreationPurchaseIntent(authSessionKey, {
               tier, creationPackage, challenge: creationContext.challenge,
@@ -858,6 +931,8 @@ export function App({
           mode={mode}
           onBack={() => navigate('/menu')}
           preferredPlayerPhotoHash={readPreferredArcadePlayerPhotoHash(routeSearch)}
+          activeCrew={activeCrew}
+          autoStart={new URLSearchParams(routeSearch).get('onboarding') === 'debut'}
           onCreateFighter={() => createForGame(mode.startsWith('aura') ? 'aura' : mode === 'rush' ? 'rush' : 'fight', 'roster')}
           onStartFight={startFight}
         />
@@ -882,6 +957,11 @@ export function App({
           source: pendingMatch.auraChallenge ? 'challenge' : pendingMatch.experience === 'trial' ? 'trial' : 'roster',
           challenge: pendingMatch.auraChallenge ? encodeAuraChallenge(pendingMatch.auraChallenge) : undefined,
         }))}
+        onContinueOnboarding={() => leaveFight('/onboarding', new URLSearchParams({
+          ...(pendingMatch.p1CloudFighterId ? { fighter: pendingMatch.p1CloudFighterId } : {}),
+          ...(pendingMatch.p1PhotoHash ? { player: pendingMatch.p1PhotoHash } : {}),
+        }).toString())}
+        onAuraDebutComplete={recordOnboardingDebut}
         onOpenArcade={() => leaveFight('/arcade')}
         ladder={ladderContext}
       />
@@ -909,8 +989,14 @@ export function App({
     configurationError,
     ladderContext,
     onSignIn,
+    onSignUp,
     signInForBattle,
     buyFinisherCredits,
+    playerName,
+    activeCrew,
+    crews,
+    onCreateCrew,
+    onSelectCrew,
   ]);
 
   const routedContent = (

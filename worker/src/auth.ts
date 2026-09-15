@@ -38,6 +38,15 @@ async function hmacString(secret: string, input: string): Promise<string> {
   return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+/** Pseudonymize a value for one narrowly scoped product purpose. */
+export async function hmacIdentifier(env: Env, namespace: string, value: string): Promise<string> {
+  const secret = env.ANONYMIZATION_SECRET?.trim() || (
+    env.ENVIRONMENT === 'production' ? '' : 'insert-player-local-development-only'
+  );
+  if (!secret) throw new Error('ANONYMIZATION_SECRET is required');
+  return hmacString(secret, `${namespace}:${value.trim().toLowerCase()}`);
+}
+
 export async function anonymousRateLimitKey(request: Request, env: Env): Promise<string> {
   const secret = env.ANONYMIZATION_SECRET?.trim() || (
     env.ENVIRONMENT === 'production' ? '' : 'insert-player-local-development-only'
@@ -89,6 +98,44 @@ function readStringClaim(claims: Record<string, unknown>, keys: string[]): strin
     if (typeof value === 'string' && value.trim()) return value.trim();
   }
   return null;
+}
+
+function readNestedStringClaim(value: unknown, keys: string[]): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return readStringClaim(value as Record<string, unknown>, keys);
+}
+
+function normalizeClerkOrganizationId(value: string | null): string | null {
+  if (!value || value.length > 128 || !/^org_[a-z0-9_-]+$/i.test(value)) return null;
+  return value;
+}
+
+export interface ActiveClerkOrganization {
+  id: string;
+  slug: string | null;
+  role: string | null;
+}
+
+/**
+ * Clerk session-token v2 keeps the active organization in the compact `o`
+ * claim. Legacy top-level claims remain accepted during session rollovers.
+ */
+export function resolveActiveClerkOrganization(
+  claims: Record<string, unknown>,
+): ActiveClerkOrganization | null {
+  const organizationClaim = claims.o;
+  const id = normalizeClerkOrganizationId(
+    readNestedStringClaim(organizationClaim, ['id', 'org_id'])
+      ?? readStringClaim(claims, ['org_id']),
+  );
+  if (!id) return null;
+  return {
+    id,
+    slug: readNestedStringClaim(organizationClaim, ['slg', 'slug', 'org_slug'])
+      ?? readStringClaim(claims, ['org_slug']),
+    role: readNestedStringClaim(organizationClaim, ['rol', 'role', 'org_role'])
+      ?? readStringClaim(claims, ['org_role']),
+  };
 }
 
 function cleanProfileString(value: unknown): string {
@@ -207,7 +254,15 @@ export async function verifyClerkRequest(
   if (!clerkUserId) throw new Error('Clerk token missing subject');
 
   const user = await upsertClerkUser(env, clerkUserId, claims);
-  return { userId: user.id, user, claims };
+  const organization = resolveActiveClerkOrganization(claims);
+  return {
+    userId: user.id,
+    user,
+    claims,
+    activeOrganizationId: organization?.id ?? null,
+    activeOrganizationSlug: organization?.slug ?? null,
+    activeOrganizationRole: organization?.role ?? null,
+  };
 }
 
 export async function optionalAuth(
@@ -223,6 +278,9 @@ export async function optionalAuth(
         rateLimitKey: `user:${auth.userId}`,
         user: auth.user,
         claims: auth.claims,
+        activeOrganizationId: auth.activeOrganizationId ?? null,
+        activeOrganizationSlug: auth.activeOrganizationSlug ?? null,
+        activeOrganizationRole: auth.activeOrganizationRole ?? null,
       };
     }
   } catch (err) {
@@ -234,6 +292,9 @@ export async function optionalAuth(
     rateLimitKey: await anonymousRateLimitKey(request, env),
     user: null,
     claims: null,
+    activeOrganizationId: null,
+    activeOrganizationSlug: null,
+    activeOrganizationRole: null,
   };
 }
 

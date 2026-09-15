@@ -32,6 +32,8 @@ export interface RoomTicket {
   roomCode: string;
   seat: RoomSeat;
   userId: string;
+  /** Clerk Organization selected when this signed room session was minted. */
+  activeOrganizationId?: string;
   exp: number;
 }
 
@@ -112,7 +114,7 @@ async function ticketKey(env: Pick<Env, 'GENERATION_JOB_SIGNING_SECRET' | 'ENVIR
 
 export async function mintRoomTicket(
   env: Pick<Env, 'GENERATION_JOB_SIGNING_SECRET' | 'ENVIRONMENT'>,
-  params: { roomCode: string; seat: RoomSeat; userId: string },
+  params: { roomCode: string; seat: RoomSeat; userId: string; activeOrganizationId?: string | null },
   nowSeconds = Math.floor(Date.now() / 1_000),
 ): Promise<string> {
   const payload: RoomTicket = {
@@ -121,6 +123,7 @@ export async function mintRoomTicket(
     roomCode: params.roomCode,
     seat: params.seat,
     userId: params.userId,
+    ...(params.activeOrganizationId ? { activeOrganizationId: params.activeOrganizationId } : {}),
     exp: nowSeconds + ROOM_TICKET_TTL_SECONDS,
   };
   const encoded = base64UrlEncode(new TextEncoder().encode(JSON.stringify(payload)));
@@ -156,6 +159,10 @@ export async function verifyRoomTicket(
       normalizeRoomCode(payload.roomCode) !== payload.roomCode ||
       (payload.seat !== 'host' && payload.seat !== 'guest') ||
       typeof payload.userId !== 'string' || !payload.userId ||
+      (payload.activeOrganizationId !== undefined && (
+        typeof payload.activeOrganizationId !== 'string'
+        || !/^[A-Za-z0-9_-]{1,128}$/.test(payload.activeOrganizationId)
+      )) ||
       typeof payload.exp !== 'number' || !Number.isInteger(payload.exp) ||
       payload.exp <= nowSeconds
     ) {
