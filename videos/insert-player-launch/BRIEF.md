@@ -7,12 +7,28 @@ destination: website-embed
 aspect: 1920x1080
 language: en
 audience: "Nostalgic players, friend groups, creators, and anyone arriving from a shared link"
-length: 36.9s
+length: 27.7s
 angle: "Aura farming is the core product, not one of three equal games"
 narration: "A concise product explanation ending with the arcade-announcer lockup"
 ---
 
-## Current Revision: Alternating Aura v24 (2026-09-14)
+## Current Revision: Short Aura v25 (2026-09-15)
+
+The user found v24 repetitive and requested roughly half the Aura duration,
+specifically showing Rosalia's Six Seven and floor worm.
+
+- Aura is 9.3s instead of 18.5s. Five different moves, each shown only once:
+  Rosalia Six Seven, Trump glide, Rosalia mog check, Trump one leg, Rosalia worm.
+- Retain the exact v23 capture, intro, optional Fight/Rush block and five-second
+  closing. New total 27.7s, with optional activities beginning at 13.95s.
+- Keep the original voice saying "Your photo. Your character. Start farming
+  Aura. Challenge your friends. Take the lead. Own the spotlight." Cut the
+  beat/flow/stack and group-chat sentences, with all edits in source silence.
+- Keep the approved Fight/Rush explanation and announcer ending, no new TTS
+  or accelerated speech. Original Neon Arena continues without looping.
+- Preview v25 before final export/publication; retain all previous versions.
+
+## Previous Revision: Alternating Aura v24 (2026-09-14)
 
 The user approved v23 with two changes: alternate Trump and Rosalia more often,
 and remove the Aura reprise after Fight/Rush. All other creative choices stay.

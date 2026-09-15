@@ -10,11 +10,11 @@
     .game-label--extra strong { font-size: 26px; }
     .game-label--extra span { font-size: 26px; }
   </style>
-  <div data-hf-id="hf-qcz5" id="games-root" data-composition-id="02-games" data-duration="27.5" data-width="1920" data-height="1080">
-    <div id="fight-label-slot" data-hf-id="hf-4ii5" class="clip game-label-slot" data-start="18.7" data-duration="3.8" data-track-index="2">
+  <div data-hf-id="hf-qcz5" id="games-root" data-composition-id="02-games" data-duration="18.3" data-width="1920" data-height="1080">
+    <div id="fight-label-slot" data-hf-id="hf-4ii5" class="clip game-label-slot" data-start="9.5" data-duration="3.8" data-track-index="2">
       <div data-hf-id="hf-lofk" id="fight-label" class="game-label game-label--extra"><strong data-hf-id="hf-481g">ALSO: FIGHT</strong><span data-hf-id="hf-45yf">Same character. New challenge.</span></div>
     </div>
-    <div id="rush-label-slot" data-hf-id="hf-ajrv" class="clip game-label-slot" data-start="24" data-duration="2.6" data-track-index="2">
+    <div id="rush-label-slot" data-hf-id="hf-ajrv" class="clip game-label-slot" data-start="14.8" data-duration="2.6" data-track-index="2">
       <div data-hf-id="hf-n3tq" id="rush-label" class="game-label game-label--extra"><strong data-hf-id="hf-27i4">ALSO: RUSH</strong><span data-hf-id="hf-qfrq">You + your CPU ally.</span></div>
     </div>
     <div id="aura-label-slot" data-hf-id="hf-bxfb" class="clip game-label-slot" data-start="0.2" data-duration="3.8" data-track-index="1">
@@ -24,7 +24,7 @@
   <script>
     (() => {
       const tl = gsap.timeline({ paused: true });
-      for (const [selector, at, hold] of [['#aura-label', 0.2, 3.6], ['#fight-label', 18.7, 3.6], ['#rush-label', 24, 2.4]]) {
+      for (const [selector, at, hold] of [['#aura-label', 0.2, 3.6], ['#fight-label', 9.5, 3.6], ['#rush-label', 14.8, 2.4]]) {
         tl.fromTo(selector, { opacity: 0, y: 28 }, { opacity: 1, y: 0, duration: 0.2, ease: 'power3.out' }, at);
         tl.to(selector, { opacity: 0, y: 12, duration: 0.2, ease: 'power2.in' }, at + hold);
       }

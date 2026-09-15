@@ -1,6 +1,6 @@
 ---
 format: 1920x1080
-duration: 36.9s
+duration: 27.7s
 message: "Farm Aura as yourself. Fight and Rush are optional side activities."
 arc: Photo transformation + Aura hook -> alternating Aura farming -> optional Fight/Rush -> end card
 audience: "Friend groups, creators, nostalgic players and visitors from shared clips"
@@ -13,10 +13,10 @@ music: "Original Neon Arena, continuous after the approved intro, no loop"
 Preserve the approved transformation and end-card design. Aura farming owns the
 hook, first gameplay, longest passage and final CTA.
 Fight/Rush are optional activities introduced only after the Aura story lands,
-never a mixed teaser or three equal feature chapters. The v24 edit alternates
-the two performers using v23's real gameplay with the larger identity HUDs.
-Preserve the approved narration except its removed Aura-return sentence; move
-the same closing voice earlier. Rush has a CPU ally, not online co-op.
+never a mixed teaser or three equal feature chapters. The v25 edit halves Aura
+to five different actions using v23's real gameplay with the larger identity HUDs.
+Keep the photo/farming hook and friends challenge; remove the beat/flow/stack
+and group-chat sentences. Rush has a CPU ally, not online co-op.
 No new voice, music, gameplay capture or AI video is generated for this edit.
 
 ## Frame 1 - Your Photo. Your Fighter.
@@ -35,32 +35,36 @@ GSAP choreography remain byte-identical to the approved composition.
 ## Frame 2 - Farm Aura. Extras After.
 
 - start: 4.65s
-- duration: 27.5s
+- duration: 18.3s
 - src: compositions/frames/02-games.html
-- footage: Ten native cuts from assets/aura-active-hud-v23-source.mp4, followed by unchanged optional-games-hud-v23-review.mp4; hashes and cuts in provenance/aura-launch-v24-edit.json
+- footage: Five native cuts from assets/aura-active-hud-v23-source.mp4, followed by unchanged optional-games-hud-v23-review.mp4; hashes and cuts in provenance/aura-launch-v25-edit.json
 - status: animated
 - scene: Real browser matches, full frame. Brief branded labels, no device frame.
-- voiceover: "Hit the beat. Build your flow. Stack up Aura. Challenge your friends. Take the lead. Own the spotlight. Give the group chat something to talk about. Want a change? Take your character into Fight. Or team up with a CPU ally in Rush."
+- voiceover: "Challenge your friends. Take the lead. Own the spotlight. Want a change? Take your character into Fight. Or team up with a CPU ally in Rush."
 - transition_in: Cut beneath the approved intro exit.
 
 | Absolute Time | Content |
 | --- | --- |
-| 4.65-23.15 | Ten excerpts strictly alternate Trump/Rosalia every 1.6-2s. Five distinct moves each: one leg, glide, floor worm, mog check and 6-7. No waiting or repeated source frames. |
-| 23.15-25.55 | "Want a change?" Approved Casual/Player One loading curtain |
-| 25.55-26.55 | Their approved one-second exchange on Executive Rumble |
-| 26.55-28.65 | Newly captured Player One versus Trump with the identity HUD |
-| 28.65-32.15 | Optional Rush with Player One and a CPU ally |
-| 31.9-32.15 | End-card reveal overlays the final 0.25s of Rush, with no Aura reprise |
+| 4.65-6.65 | Rosalia: Six Seven |
+| 6.65-8.25 | Trump: glide |
+| 8.25-10.45 | Rosalia: mog check |
+| 10.45-12.05 | Trump: one leg |
+| 12.05-13.95 | Rosalia: floor worm |
+| 13.95-16.35 | "Want a change?" Approved Casual/Player One loading curtain |
+| 16.35-17.35 | Their approved one-second exchange on Executive Rumble |
+| 17.35-19.45 | Player One versus Trump with the identity HUD |
+| 19.45-22.95 | Optional Rush with Player One and a CPU ally |
+| 22.7-22.95 | End-card reveal overlays the final 0.25s of Rush, with no Aura reprise |
 
 Aura headline: "AURA FARMING / Your character. Your flow."
 Fight and Rush use smaller "ALSO: FIGHT / ALSO: RUSH" labels, never equal
 headline chapters. There is no post-Rush Aura label or footage.
 The caption track is optional in the player. Edit ranges and hierarchy are in
-`provenance/aura-launch-v24-edit.json`; captions in `provenance/aura-launch-v24-en.vtt`.
+`provenance/aura-launch-v25-edit.json`; captions in `provenance/aura-launch-v25-en.vtt`.
 
 ## Frame 3 - Insert Player
 
-- start: 31.9s
+- start: 22.7s
 - duration: 5s
 - src: compositions/frames/03-insert-player.html
 - status: animated

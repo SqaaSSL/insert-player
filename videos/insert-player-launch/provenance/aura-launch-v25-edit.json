@@ -1,0 +1,169 @@
+{
+  "revision": 25,
+  "duration": 27.7,
+  "primaryGame": "aura",
+  "auraSeconds": 9.3,
+  "source": "assets/aura-active-hud-v23-source.mp4",
+  "sourceSha256": "be2118337fecc6eb2725097aca8a108e63d688ab3964fc1f172b063d75589566",
+  "clips": [
+    {
+      "id": "aura-cut-01",
+      "at": 4.65,
+      "start": 27,
+      "duration": 2,
+      "slot": 1,
+      "character": "Rosalia",
+      "animations": [
+        "aura_six_seven"
+      ],
+      "uniquePoses": 8,
+      "longestHoldSeconds": 0.16666666666666666,
+      "restingFrames": 0
+    },
+    {
+      "id": "aura-cut-02",
+      "at": 6.65,
+      "start": 2.1,
+      "duration": 1.6,
+      "slot": 0,
+      "character": "Donald Trump",
+      "animations": [
+        "aura_glide"
+      ],
+      "uniquePoses": 8,
+      "longestHoldSeconds": 0.2,
+      "restingFrames": 0
+    },
+    {
+      "id": "aura-cut-03",
+      "at": 8.25,
+      "start": 22.8,
+      "duration": 2.2,
+      "slot": 1,
+      "character": "Rosalia",
+      "animations": [
+        "aura_mog_check"
+      ],
+      "uniquePoses": 8,
+      "longestHoldSeconds": 0.16666666666666666,
+      "restingFrames": 0
+    },
+    {
+      "id": "aura-cut-04",
+      "at": 10.45,
+      "start": 0.3,
+      "duration": 1.6,
+      "slot": 0,
+      "character": "Donald Trump",
+      "animations": [
+        "aura_one_leg"
+      ],
+      "uniquePoses": 7,
+      "longestHoldSeconds": 0.3333333333333333,
+      "restingFrames": 0
+    },
+    {
+      "id": "aura-cut-05",
+      "at": 12.05,
+      "start": 11.6,
+      "duration": 1.9,
+      "slot": 1,
+      "character": "Rosalia",
+      "animations": [
+        "aura_floor_worm"
+      ],
+      "uniquePoses": 8,
+      "longestHoldSeconds": 0.23333333333333334,
+      "restingFrames": 0
+    }
+  ],
+  "optional": {
+    "source": "assets/optional-games-hud-v23-review.mp4",
+    "sha256": "51d35cbb2928b1896eb893f9ba1c9ca6c368a8e2ab4a51d2b8f0675d239fe6e8",
+    "at": 13.95,
+    "duration": 9,
+    "unchanged": true
+  },
+  "closing": {
+    "at": 22.7,
+    "duration": 5,
+    "overlapWithRush": 0.25
+  },
+  "voice": {
+    "source": "assets/generated/launch-voice-aura-v22.wav",
+    "sourceSha256": "22a486755fa901652ede60640ad4f3f532a7c438fec8db51d9b322854e515d31",
+    "output": "assets/generated/launch-voice-aura-v25.wav",
+    "sha256": "00719161d1686b3a0eb788d7f0bbc917152d6d3b9148fc754d8f98a326b2ff02",
+    "ranges": [
+      {
+        "start": 0,
+        "end": 5.65,
+        "at": 0
+      },
+      {
+        "start": 10.75,
+        "end": 15.5,
+        "at": 5.65
+      },
+      {
+        "start": 23.15,
+        "end": 31.9,
+        "at": 13.95
+      },
+      {
+        "start": 35.15,
+        "end": 40.15,
+        "at": 22.7
+      }
+    ],
+    "silence": [
+      10.4,
+      13.95
+    ],
+    "newInference": false,
+    "playbackRate": 1
+  },
+  "music": {
+    "source": "assets/generated/launch-bed-aura-v21.wav",
+    "sha256": "249bd37bd3e1497f2600edc51c3e51c88471f4b98a78c0362eae67557cc23fca",
+    "mediaStart": 0,
+    "duration": 27.7,
+    "terminalFade": [
+      27.4,
+      27.7
+    ],
+    "continuous": true
+  },
+  "captions": [
+    {
+      "start": 0.27,
+      "end": 2.95,
+      "text": "Your photo. Your character."
+    },
+    {
+      "start": 3.16,
+      "end": 5.2,
+      "text": "Start farming Aura."
+    },
+    {
+      "start": 5.99,
+      "end": 10.1,
+      "text": "Challenge your friends. Take the lead.\nOwn the spotlight."
+    },
+    {
+      "start": 14.08,
+      "end": 16.85,
+      "text": "Want a change? Take your character into Fight."
+    },
+    {
+      "start": 19.59,
+      "end": 22.3,
+      "text": "Or team up with a CPU ally in Rush."
+    },
+    {
+      "start": 23.05,
+      "end": 25.27,
+      "text": "Ready? Insert Player."
+    }
+  ]
+}

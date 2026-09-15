@@ -7,8 +7,9 @@ import { execFileSync } from 'node:child_process';
 
 const root = resolve(import.meta.dirname, '..');
 const plan = JSON.parse(readFileSync(resolve(root, 'provenance/aura-launch-v24-edit.json')));
-const html = readFileSync(resolve(root, 'index.html'), 'utf8');
-const labels = readFileSync(resolve(root, 'compositions/frames/02-games.html'), 'utf8');
+const historical = path => execFileSync('git', ['show', `02057ffbec9378924ff4999da04480dc43457ca2:videos/insert-player-launch/${path}`], { cwd: root, encoding: 'utf8' });
+const html = historical('index.html');
+const labels = historical('compositions/frames/02-games.html');
 const hash = path => createHash('sha256').update(readFileSync(resolve(root, path))).digest('hex');
 const tag = id => [...html.matchAll(/<(?:video|audio|div)\b[^>]*>/g)]
   .map(match => match[0]).find(value => value.includes(` id="${id}"`));
