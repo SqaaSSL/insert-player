@@ -22,6 +22,7 @@ interface AuraBattleResultsProps {
   disableRematch?: boolean;
   onChallengeCreated?: (challenge: AuraChallenge) => void;
   onCreatePlayer?: () => void;
+  onBuildCrew?: () => void;
   onRetry: () => void;
   onRemix?: () => void;
   onExit: () => void;
@@ -44,6 +45,7 @@ export function AuraBattleResults({
   disableRematch = false,
   onChallengeCreated,
   onCreatePlayer,
+  onBuildCrew,
   onRetry,
   onRemix,
   onExit,
@@ -141,6 +143,28 @@ export function AuraBattleResults({
             {onlineRematch.message}
           </p>
         ) : null}
+        {trial && onCreatePlayer ? (
+          <div className="aura-results__rookie">
+            <div>
+              <h3>Next Mission</h3>
+              <p>Create yourself from one photo. Your first Rookie is included.</p>
+            </div>
+            <button type="button" className="asf-btn asf-btn--primary" onClick={onCreatePlayer}>
+              Create My Free Rookie
+            </button>
+          </div>
+        ) : null}
+        {onBuildCrew ? (
+          <div className="aura-results__rookie">
+            <div>
+              <h3>Debut Complete</h3>
+              <p>Your Rookie is ready. Build a Crew so your friends can play it too.</p>
+            </div>
+            <button type="button" className="asf-btn asf-btn--primary" onClick={onBuildCrew}>
+              Build My Crew
+            </button>
+          </div>
+        ) : null}
         <div className="aura-results__actions">
           <button
             type="button"
@@ -199,7 +223,7 @@ export function AuraBattleResults({
           </div>
           <div className="aura-results__actions">
             {onRemix ? <button type="button" className="asf-btn" onClick={onRemix}>Remix Routine</button> : null}
-            {onCreatePlayer ? <button type="button" className="asf-btn" onClick={onCreatePlayer}>
+            {onCreatePlayer && !trial && !onBuildCrew ? <button type="button" className="asf-btn" onClick={onCreatePlayer}>
               {trial ? 'Create my Rookie Aura' : 'Create my Aura character'}
             </button> : null}
           </div>

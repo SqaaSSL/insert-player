@@ -6,6 +6,7 @@ import {
 } from './ApiClient';
 import {
   CACHE_VERSION,
+  deleteCharacter,
   getActiveSpriteCacheScope,
   getAllSpriteVersionsForHash,
   getCachedMeta,
@@ -79,6 +80,12 @@ export interface CloudFighter {
       credit: string;
     };
   };
+  crew?: { id: string };
+  access?: {
+    scope: 'owner' | 'crew' | 'community';
+    crewIds: string[];
+    canManage: boolean;
+  };
   name: string;
   photoHash?: string;
   qualityTier: CloudQualityTier;
@@ -128,6 +135,8 @@ export interface CloudImportOptions {
   includeRawAssets?: boolean;
   includeSourceAssets?: boolean;
   allowIncomplete?: boolean;
+  cloudManagement?: 'arcade' | 'crew';
+  crew?: { id: string; name: string } | null;
 }
 
 export interface CloudRosterSyncSummary {
@@ -591,6 +600,9 @@ async function cloudFighterRequestError(
 export function shouldRefreshLocalFighter(fighter: CloudFighter, existing: CachedMeta | null): boolean {
   if (!existing) return true;
   if (existing.cloudFighterId !== fighter.id) return true;
+  if (fighter.access?.scope && existing.cloudAccessScope !== fighter.access.scope) return true;
+  if (fighter.access?.crewIds
+    && [...(existing.cloudAccessCrewIds ?? [])].sort().join(':') !== [...fighter.access.crewIds].sort().join(':')) return true;
   if (!cloudPlayableRefsMatch(fighter, existing.cloudPlayableSpriteRefs)) return true;
   if (TIER_RANK[fighter.qualityTier] > TIER_RANK[getMetaTier(existing)]) return true;
   const remoteVersionCount = fighter.sprites.length;
@@ -715,6 +727,16 @@ export async function listCloudFighters(context?: ApiRequestContext): Promise<Cl
   return json.fighters ?? [];
 }
 
+export async function listCrewFighters(context?: ApiRequestContext): Promise<CloudFighter[]> {
+  if (isLocalDevWithoutApi()) return [];
+  const res = await apiFetch('/api/crews/current/fighters', {}, context);
+  if (res.status === 401 || res.status === 409) return [];
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Crew fighters');
+  if (!res.ok) throw new Error(`Crew fighters failed (${res.status})`);
+  const json = await res.json() as { fighters?: CloudFighter[] };
+  return (json.fighters ?? []).filter((fighter) => fighter.access?.scope === 'crew');
+}
+
 export async function getCloudFighter(fighterId: string, context?: ApiRequestContext): Promise<CloudFighter | null> {
   if (isLocalDevWithoutApi()) return null;
   const res = await apiFetch(`/api/fighters/${encodeURIComponent(fighterId)}`, {}, context);
@@ -748,7 +770,7 @@ export async function prepareCloudFighterGeneration(
     error?: string;
   };
   if (!createRes.ok || !createdBody.fighter?.id) {
-    throw new Error(createdBody.error ?? `Private fighter setup failed (${createRes.status})`);
+    throw new Error(createdBody.error ?? `Fighter setup failed (${createRes.status})`);
   }
 
   await uploadSource(
@@ -759,7 +781,7 @@ export async function prepareCloudFighterGeneration(
     requestContext,
   );
   const detailed = await getCloudFighter(createdBody.fighter.id, requestContext);
-  if (!detailed) throw new Error('Private fighter could not be reloaded after source upload');
+  if (!detailed) throw new Error('Fighter could not be reloaded after source upload');
   return { fighter: detailed, photoHash: params.photoHash };
 }
 
@@ -801,6 +823,12 @@ export function arcadeFighterPhotoHash(fighter: CloudFighter): string {
   return `arcade:${fighter.arcade?.slug ?? fighter.id}:${fighter.id}`;
 }
 
+export function crewFighterPhotoHash(fighter: CloudFighter): string {
+  const organizationId = fighter.crew?.id ?? fighter.access?.crewIds[0];
+  if (!organizationId) throw new Error(`${fighter.name} is missing its Crew identity.`);
+  return `crew:${organizationId}:${fighter.id}`;
+}
+
 export async function getCommunityFighter(
   fighterId: string,
   context?: ApiRequestContext,
@@ -826,7 +854,26 @@ export async function setCloudFighterPublic(
   if (res.status === 401) return null;
   if (res.status === 503) throw await cloudFighterRequestError(res, 'Share update');
   if (!res.ok) {
-    throw new Error(`Share update failed (${res.status}): ${await apiErrorMessage(res, 'Publish update failed')}`);
+    throw new Error(`Share update failed (${res.status}): ${await apiErrorMessage(res, 'Access update failed')}`);
+  }
+  const json = await res.json() as { fighter?: CloudFighter };
+  return json.fighter ?? null;
+}
+
+export async function setCloudFighterAccess(
+  fighterId: string,
+  scope: 'crew' | 'community',
+  context?: ApiRequestContext,
+): Promise<CloudFighter | null> {
+  const res = await apiFetch(`/api/fighters/${encodeURIComponent(fighterId)}/access`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope }),
+  }, context);
+  if (res.status === 401) return null;
+  if (res.status === 503) throw await cloudFighterRequestError(res, 'Share update');
+  if (!res.ok) {
+    throw new Error(`Share update failed (${res.status}): ${await apiErrorMessage(res, 'Share update failed')}`);
   }
   const json = await res.json() as { fighter?: CloudFighter };
   return json.fighter ?? null;
@@ -971,6 +1018,8 @@ export async function syncFighterToCloud(
   if (!fighterId) return { status: 'failed', message: 'Cloud API returned no fighter id.' };
   meta.cloudFighterId = fighterId;
   meta.cloudPublic = created.fighter?.public ?? meta.cloudPublic ?? false;
+  meta.cloudAccessScope = created.fighter?.access?.scope ?? meta.cloudAccessScope ?? 'owner';
+  meta.cloudAccessCrewIds = created.fighter?.access?.crewIds ?? meta.cloudAccessCrewIds ?? [];
   meta.cloudPlayableSpriteRefs = initialPlayableRefs;
   await setCachedMeta(meta);
 
@@ -1034,6 +1083,8 @@ export async function syncFighterToCloud(
       return { status: 'signed_out', message: 'Sign in to publish fighters.' };
     }
     meta.cloudPublic = published.public;
+    meta.cloudAccessScope = published.access?.scope ?? (published.public ? 'community' : 'owner');
+    meta.cloudAccessCrewIds = published.access?.crewIds ?? [];
     await setCachedMeta(meta);
   }
 
@@ -1300,6 +1351,11 @@ export async function downloadCloudFighterToLocal(
     qualityTier: fighter.qualityTier,
     cloudFighterId: fighter.id,
     cloudPublic: fighter.public,
+    cloudManagement: options.cloudManagement,
+    cloudCrewId: options.crew?.id ?? null,
+    cloudCrewName: options.crew?.name ?? null,
+    cloudAccessScope: fighter.access?.scope ?? (fighter.public ? 'community' : 'owner'),
+    cloudAccessCrewIds: fighter.access?.crewIds ?? [],
     cloudSourceHashes: {
       ...(existingMeta?.cloudSourceHashes ?? {}),
       ...(fighter.sourceHashes ?? {}),
@@ -1361,6 +1417,27 @@ export async function downloadArcadeFighterToLocal(
     includeArchivedVersions: false,
     includeRawAssets: includeHighResolutionAssets,
     includeSourceAssets: options.includeSourceAssets,
+    cloudManagement: 'arcade',
+  });
+}
+
+export async function downloadCrewFighterToLocal(
+  fighter: CloudFighter,
+  crew: { id: string; name: string },
+  context?: ApiRequestContext,
+): Promise<CloudImportResult> {
+  if (fighter.access?.scope !== 'crew' || fighter.crew?.id !== crew.id) {
+    throw new Error(`${fighter.name} is not shared with the active Crew.`);
+  }
+  return downloadCloudFighterToLocal({
+    ...fighter,
+    photoHash: crewFighterPhotoHash(fighter),
+  }, context, {
+    includeArchivedVersions: false,
+    includeRawAssets: false,
+    includeSourceAssets: true,
+    cloudManagement: 'crew',
+    crew,
   });
 }
 
@@ -1494,5 +1571,58 @@ export async function syncCloudFightersToLocal(
     }
   }
 
+  return summary;
+}
+
+export async function syncCrewFightersToLocal(
+  localMetas: CachedMeta[],
+  crew: { id: string; name: string } | null,
+  context?: ApiRequestContext,
+): Promise<CloudRosterSyncSummary> {
+  const requestContext = context ?? captureApiRequestContext();
+  const summary: CloudRosterSyncSummary = {
+    imported: 0,
+    updated: 0,
+    skipped: 0,
+    drafts: 0,
+    failed: 0,
+  };
+  const cachedCrewMetas = localMetas.filter((meta) => meta.cloudManagement === 'crew');
+  if (!crew) {
+    for (const meta of cachedCrewMetas) await deleteCharacter(meta.photoHash);
+    return summary;
+  }
+
+  const fighters = await listCrewFighters(requestContext);
+  const remoteIds = new Set(fighters.map((fighter) => fighter.id));
+  const stale = cachedCrewMetas.filter((meta) => (
+    meta.cloudCrewId !== crew.id || !meta.cloudFighterId || !remoteIds.has(meta.cloudFighterId)
+  ));
+  for (const meta of stale) await deleteCharacter(meta.photoHash);
+
+  const localByCloudId = new Map(
+    cachedCrewMetas
+      .filter((meta) => meta.cloudCrewId === crew.id && meta.cloudFighterId)
+      .map((meta) => [meta.cloudFighterId as string, meta]),
+  );
+  for (const fighter of fighters) {
+    const existing = localByCloudId.get(fighter.id) ?? null;
+    if (!shouldRefreshLocalFighter(fighter, existing)) {
+      if (existing && existing.cloudCrewName !== crew.name) {
+        await setCachedMeta({ ...existing, cloudCrewName: crew.name });
+      }
+      summary.skipped += 1;
+      continue;
+    }
+    try {
+      await downloadCrewFighterToLocal(fighter, crew, requestContext);
+      if (existing) summary.updated += 1;
+      else summary.imported += 1;
+    } catch (error) {
+      if (error instanceof ApiSessionChangedError) throw error;
+      summary.failed += 1;
+      debugWarn('[Crew] Fighter sync skipped:', error instanceof Error ? error.message : error);
+    }
+  }
   return summary;
 }

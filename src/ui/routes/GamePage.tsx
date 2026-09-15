@@ -90,6 +90,8 @@ interface GamePageProps extends Partial<AuthRouteState> {
   onComplete: () => void;
   onExit: () => void;
   onCreateFighter: () => void;
+  onContinueOnboarding?: () => void;
+  onAuraDebutComplete?: (fighterId: string) => Promise<void>;
   onOpenArcade: () => void;
   ladder?: LadderContext | null;
 }
@@ -119,6 +121,8 @@ export function GamePage({
   onComplete,
   onExit,
   onCreateFighter,
+  onContinueOnboarding,
+  onAuraDebutComplete,
   onOpenArcade,
   ladder,
   authStatus = 'local',
@@ -135,6 +139,7 @@ export function GamePage({
   const isAura = launchTarget.sceneKey === 'AuraScene';
   const online = isRush ? null : (launchTarget.data.online ?? null);
   const trial = launchTarget.data.experience === 'trial';
+  const onboardingDebut = launchTarget.data.experience === 'onboarding';
   const trialPlayerName = launchTarget.data.p1Name?.trim() || 'Player One';
   const [winnerSlot, setWinnerSlot] = useState<'p1' | 'p2' | null>(null);
   const [matchSummary, setMatchSummary] = useState<MatchCompletionDetail | null>(null);
@@ -357,10 +362,16 @@ export function GamePage({
       onComplete();
       setAuraSummary(event.detail);
       setWinnerSlot(event.detail.winnerSlot === 'draw' ? null : event.detail.winnerSlot);
+      const fighterId = launchTarget.data.p1CloudFighterId;
+      if (onboardingDebut && fighterId && onAuraDebutComplete) {
+        void onAuraDebutComplete(fighterId).catch((error: unknown) => {
+          debugWarn('[Onboarding] Aura debut could not be recorded:', error instanceof Error ? error.message : error);
+        });
+      }
     };
     window.addEventListener(AURA_BATTLE_COMPLETE_EVENT, onAuraComplete);
     return () => window.removeEventListener(AURA_BATTLE_COMPLETE_EVENT, onAuraComplete);
-  }, [isAura, onComplete]);
+  }, [isAura, launchTarget.data.p1CloudFighterId, onAuraDebutComplete, onComplete, onboardingDebut]);
 
   useEffect(() => {
     if (!import.meta.env.DEV || !isRush) return;
@@ -938,6 +949,7 @@ export function GamePage({
           battle={savedBattle} onBattleChange={updateSavedBattle}
           trial={trial}
           onCreatePlayer={onCreateFighter}
+          onBuildCrew={onboardingDebut ? onContinueOnboarding : undefined}
           capture={auraCapture}
           localSlot={online?.localSlot}
           onlineRematch={online ? onlineRematch : undefined}

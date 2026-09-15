@@ -348,8 +348,8 @@ export function ModerationPage({ onBack }: ModerationPageProps) {
           onConfirm={() => void reviewReport(removalTarget, 'actioned', true)}
         >
           {actionError ? <p className="moderation-dialog-error" role="alert">{actionError}</p> : null}
-          Remove {removalTarget.fighterName} from the public community? The owner keeps their
-          private fighter; only the public listing is taken down.
+          Remove {removalTarget.fighterName} from the public community? The owner keeps the
+          fighter in their roster or Crew; only the Community listing is taken down.
         </ConfirmDialog>
       ) : null}
     </div>

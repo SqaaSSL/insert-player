@@ -68,6 +68,7 @@ interface GenerationCharge {
   fighter_id: string | null;
   ledger_id: string | null;
   refund_ledger_id: string | null;
+  entitlement_id: string | null;
   continuation_run_id: string | null;
   resumed_from_job_id: string | null;
   expires_at: string;
@@ -253,6 +254,18 @@ async function getGenerationCharge(env: Env, userId: string, chargeId: string): 
   ).bind(chargeId, userId).first<GenerationCharge>();
 }
 
+async function availableReferralRookieEntitlement(
+  env: Env,
+  userId: string,
+): Promise<{ id: string } | null> {
+  return env.DB.prepare(`
+    SELECT id FROM fighter_entitlements
+    WHERE user_id = ? AND kind = 'referral_rookie' AND status = 'unused'
+      AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+    ORDER BY created_at ASC LIMIT 1
+  `).bind(userId).first<{ id: string }>();
+}
+
 async function resolveOwnedFighterId(
   env: Env,
   userId: string,
@@ -293,7 +306,7 @@ async function releaseReservedGenerationCharge(
   if (charge.status !== 'reserved') return false;
 
   const releaseLedgerId = generateId();
-  const [claim] = await env.DB.batch([
+  const statements: D1PreparedStatement[] = [
     env.DB.prepare(`
       INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
       SELECT ?, user_id, credit_cost, ?, fighter_id
@@ -341,7 +354,15 @@ async function releaseReservedGenerationCharge(
         SELECT 1 FROM credit_ledger WHERE id = ?
       )
     `).bind(releaseLedgerId, charge.id, charge.user_id, releaseLedgerId),
-  ]);
+  ];
+  if (charge.entitlement_id) {
+    statements.push(env.DB.prepare(`
+        UPDATE fighter_entitlements
+        SET status = 'unused', reserved_charge_id = NULL, updated_at = datetime('now')
+        WHERE id = ? AND status = 'reserved' AND reserved_charge_id = ?
+      `).bind(charge.entitlement_id, charge.id));
+  }
+  const [claim] = await env.DB.batch(statements);
 
   return Boolean(claim.results?.[0]);
 }
@@ -1194,8 +1215,13 @@ export async function authorizeGenerationPurchase(
     animationPlanJson = JSON.stringify(packageQuote.animations);
   }
 
-  const usesIncludedRookie = operation === 'fighter_generation' && tier === 'rookie' && user.free_rookie_generations_used < FREE_ROOKIE_GENERATION_LIMIT;
-  const quotedCredits = usesIncludedRookie ? 0 : requiredCredits;
+  const isNewRookie = operation === 'fighter_generation' && tier === 'rookie';
+  const usesBaseIncludedRookie = isNewRookie
+    && user.free_rookie_generations_used < FREE_ROOKIE_GENERATION_LIMIT;
+  const quotedReferralEntitlement = isNewRookie && !usesBaseIncludedRookie
+    ? await availableReferralRookieEntitlement(env, user.id)
+    : null;
+  const quotedCredits = usesBaseIncludedRookie || quotedReferralEntitlement ? 0 : requiredCredits;
   if (body.quoteOnly === true) return json({ authorized: true, mode: 'quote', quotedCredits, creationPackage, expansion, animationCount: packageQuote.animationCount });
   if ((expansion && body.expectedCredits === undefined) ||
       (body.expectedCredits !== undefined && body.expectedCredits !== quotedCredits)) {
@@ -1300,6 +1326,80 @@ export async function authorizeGenerationPurchase(
         creationFlow,
         creationPackage, expansion,
         freeRookieGenerationsRemaining: Math.max(0, FREE_ROOKIE_GENERATION_LIMIT - quota.free_rookie_generations_used),
+      });
+    }
+  }
+
+  if (isNewRookie) {
+    const purchaseId = generateId();
+    const ledgerId = generateId();
+    const expiresAt = reservationExpiresAt();
+    const reason = 'referral_rookie';
+    const [entitlementResult] = await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE fighter_entitlements
+        SET status = 'reserved', reserved_charge_id = ?, updated_at = datetime('now')
+        WHERE id = (
+          SELECT id FROM fighter_entitlements
+          WHERE user_id = ? AND kind = 'referral_rookie' AND status = 'unused'
+            AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+          ORDER BY created_at ASC LIMIT 1
+        )
+        AND status = 'unused'
+        RETURNING id
+      `).bind(purchaseId, user.id),
+      env.DB.prepare(`
+        INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+        SELECT ?, user_id, 0, ?, ? FROM fighter_entitlements
+        WHERE reserved_charge_id = ? AND status = 'reserved'
+      `).bind(ledgerId, reason, ownedFighterId, purchaseId),
+      env.DB.prepare(`
+        INSERT INTO generation_charges (
+          id, user_id, tier, credit_cost, free_quota_delta, status,
+          reason, fighter_id, ledger_id, expires_at, creation_flow,
+          creation_package, expansion_only, animation_plan_json, entitlement_id
+        )
+        SELECT ?, entitlement.user_id, ?, 0, 0, 'reserved', ?, ?, ledger.id, ?, ?, ?, ?, ?, entitlement.id
+        FROM fighter_entitlements entitlement
+        JOIN credit_ledger ledger ON ledger.id = ? AND ledger.user_id = entitlement.user_id
+        WHERE entitlement.reserved_charge_id = ? AND entitlement.status = 'reserved'
+      `).bind(
+        purchaseId,
+        tier,
+        reason,
+        ownedFighterId,
+        expiresAt,
+        creationFlow,
+        creationPackage,
+        expansion ? 1 : 0,
+        animationPlanJson,
+        ledgerId,
+        purchaseId,
+      ),
+    ]);
+    const entitlement = entitlementResult.results?.[0] as { id: string } | undefined;
+    if (entitlement) {
+      const providerSession = await createProviderSessionForCharge(
+        env,
+        auth,
+        tier,
+        operation,
+        purchaseId,
+        legal,
+        creationFlow,
+      );
+      return json({
+        authorized: true,
+        mode: 'referral_rookie',
+        purchaseId,
+        creditsCharged: 0,
+        providerSessionId: providerSession.id,
+        providerSessionExpiresAt: providerSession.expiresAt,
+        providerCallLimit: providerSession.providerCallLimit,
+        reservationExpiresAt: expiresAt,
+        creationFlow,
+        creationPackage,
+        expansion,
       });
     }
   }
@@ -1577,7 +1677,7 @@ export async function settleGenerationPurchase(
 
   if (success) {
     if (charge.status === 'reserved') {
-      await env.DB.batch([
+      const statements: D1PreparedStatement[] = [
         env.DB.prepare(`
           UPDATE generation_charges
           SET status = 'committed',
@@ -1594,11 +1694,26 @@ export async function settleGenerationPurchase(
             WHERE id = ? AND user_id = ? AND status = 'committed'
           )
         `).bind(fighterId, charge.ledger_id, userId, charge.id, userId),
-        ...successStatements,
-      ]);
+      ];
+      if (charge.entitlement_id) {
+        statements.push(env.DB.prepare(`
+            UPDATE fighter_entitlements
+            SET status = 'consumed', updated_at = datetime('now')
+            WHERE id = ? AND user_id = ? AND status = 'reserved' AND reserved_charge_id = ?
+          `).bind(charge.entitlement_id, userId, charge.id));
+      }
+      statements.push(...successStatements);
+      await env.DB.batch(statements);
       charge = (await getGenerationCharge(env, userId, purchaseId)) ?? charge;
     } else if (charge.status === 'committed') {
       const statements: D1PreparedStatement[] = [];
+      if (charge.entitlement_id) {
+        statements.push(env.DB.prepare(`
+          UPDATE fighter_entitlements
+          SET status = 'consumed', updated_at = datetime('now')
+          WHERE id = ? AND user_id = ? AND status = 'reserved' AND reserved_charge_id = ?
+        `).bind(charge.entitlement_id, userId, charge.id));
+      }
       if (fighterId && !charge.fighter_id) {
         statements.push(env.DB.prepare(`
           UPDATE generation_charges

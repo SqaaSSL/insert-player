@@ -1044,8 +1044,8 @@ function assertLegalConsentAndPrivacyIsWired() {
     liveReadiness,
   ].join('\n');
   const required = [
-    "CURRENT_LEGAL_VERSION = '2026-08-23.1'",
-    "LEGAL_VERSION = '2026-08-23.1'",
+    "CURRENT_LEGAL_VERSION = '2026-09-15.1'",
+    "LEGAL_VERSION = '2026-09-15.1'",
     "Paseo de la Castellana 126, 8th floor right, Madrid, Spain",
     "Registro Mercantil de Madrid, section 8, sheet M-784524",
     "type LegalPageKind = 'legal' | 'privacy' | 'terms' | 'refunds'",
@@ -1076,27 +1076,28 @@ function assertLegalConsentAndPrivacyIsWired() {
     '<GenerationConsent',
     '<CheckoutConsent',
     'storedGenerationLegalAttestation()',
-    'Process this photo only for my private fighter.',
+    'Process this photo only to create my fighter.',
     'process it solely to create and',
-    'privately store this fighter in my Insert Player account.',
-    'Neither my photo nor generated',
-    'fighter will be visible to other players unless I later choose Publish.',
-    'separate action and makes only the clean generated assets of that fighter public',
-    'original photo, Clerk account identity, RAW files, or private generation history.',
-    'not a licence to reuse my photo or private fighter.',
+    'store this fighter in my Insert Player account.',
+    'clean generated playable assets can be shared with a Crew I',
+    'Community is a separate confirmation.',
+    'Neither access choice shares my original',
+    'photo, Clerk account identity, RAW files, or generation history.',
+    'not a licence to',
+    'reuse my photo or generated fighter outside those selected product uses.',
     'Player will not sell them, use',
     'them in advertising, or use them to train models.',
     "only to Google Gemini to create the fighter you requested",
     "Clerk and Stripe do not receive that uploaded photo",
     "generated frames, but not the original upload, to fal or Freepik",
     "Google does not use paid-service prompts, uploaded files, or responses to improve its products",
-    'does not sell your photo or private fighter assets',
+    'does not sell your photo or fighter assets',
     'use either in advertising or promotion',
-    'Your original photo remains private and is never published',
+    'Your original photo and RAW intermediates remain restricted to your account',
     'use either to train its own models',
     'Any permission needed to process and host your inputs is limited',
-    'Publishing is optional and requires a separate confirmation.',
-    'Clerk profile photos',
+    'Community publishing is optional and requires a separate confirmation.',
+    'Clerk profile photo',
     'neutral author label Player',
     'A future public handle will require a separate opt-in.',
     "request.headers.get('CF-Connecting-IP')",
@@ -1531,9 +1532,10 @@ function assertMatchReportingIsWired() {
   const reporting = readFileSync(join(root, 'src/services/MatchReporting.ts'), 'utf8');
   const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
   const workerMatchReporting = readFileSync(join(root, 'worker/src/matchReporting.ts'), 'utf8');
+  const workerMatchReportingTests = readFileSync(join(root, 'worker/src/matchReporting.test.ts'), 'utf8');
   const leaderboard = readFileSync(join(root, 'worker/src/leaderboard.ts'), 'utf8');
   const smoke = readFileSync(join(root, 'scripts/smoke-live.mjs'), 'utf8');
-  const combined = `${app}\n${fightScene}\n${matchConfig}\n${reporting}\n${workerIndex}\n${workerMatchReporting}\n${leaderboard}\n${smoke}`;
+  const combined = `${app}\n${fightScene}\n${matchConfig}\n${reporting}\n${workerIndex}\n${workerMatchReporting}\n${workerMatchReportingTests}\n${leaderboard}\n${smoke}`;
   const required = [
     "MATCH_COMPLETE_EVENT = 'asf-match-complete'",
     'window.dispatchEvent(new CustomEvent(MATCH_COMPLETE_EVENT',
@@ -1547,15 +1549,18 @@ function assertMatchReportingIsWired() {
     'function readOptionalId',
     'readMatchFighterId',
     "f.public_flag = 1 AND arcade.status = 'active'",
-    'Match fighter is not owned or an active Arcade fighter',
+    'crew_grant.clerk_organization_id = ?',
+    'crew_grant.fighter_id IS NOT NULL',
+    'Match fighter is not available to this player',
     'isAttractModeMatchReport(body)',
     'recorded: false',
     'const player2Id = systemOpponentId',
     "const winnerId = winnerSlot === 'p2' ? player2Id : auth.userId",
     'Stats are private',
     'signed-out /api/stats/:userId is protected',
-    'const p1FighterId = await readMatchFighterId(env, auth.userId, body.p1FighterId)',
-    'const p2FighterId = await readMatchFighterId(env, auth.userId, body.p2FighterId)',
+    'const p1FighterId = await readMatchFighterId(',
+    'const p2FighterId = await readMatchFighterId(',
+    'auth.activeOrganizationId ?? null',
     'roundsP1: readBoundedInteger(body.roundsP1, 0, MAX_MATCH_ROUNDS)',
     'duration: readBoundedInteger(body.duration, 0, MAX_MATCH_DURATION_SECONDS)',
     'p1FighterId,\n            p2FighterId',
@@ -1569,6 +1574,8 @@ function assertMatchReportingIsWired() {
     'const activeArcadeFighterId = authenticatedArcadeBody.fighters[0]?.id ?? null',
     'Attract Mode does not persist history or change personal W/L',
     'match reporting accepts active published Arcade fighter ids',
+    'crew-shared',
+    "'org_crew_a'",
   ];
   const missing = required.filter((snippet) => !combined.includes(snippet));
   if (missing.length > 0) {
@@ -2103,7 +2110,7 @@ function assertCrossDeviceRosterImportIsWired() {
     'missingAnimations?: string[]',
     'Generate these animations before publishing',
     'json.missingAnimations.map(formatMissingAnimationName)',
-    "throw new Error(`Share update failed (${res.status}): ${await apiErrorMessage(res, 'Publish update failed')}`)",
+    "throw new Error(`Share update failed (${res.status}): ${await apiErrorMessage(res, 'Share update failed')}`)",
     'setCloudFighterPublic(fighterId, true, requestContext)',
     'await renameFighterCloudFirst(meta, trimmedName, {',
     'const updated = await dependencies.renameCloud(fighter.cloudFighterId, name)',
@@ -2305,7 +2312,8 @@ function replayMigrations() {
     "INSERT INTO sprites (id, fighter_id, animation_name, quality_tier, blob_key, frame_w, frame_h, frame_count, processing_version) VALUES ('legacy-current', 'f1', 'idle', 'rookie', 'legacy-current.png', 192, 256, 4, 3);",
     '.read worker/migrations/0028_sprite_animation_format.sql',
     '.read worker/migrations/0029_generation_creation_flow.sql',
-    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters", "arcade_generation_experiments", "arcade_generation_experiment_slots", "arcade_generation_experiment_artifacts");',
+    '.read worker/migrations/0040_crew_onboarding_referrals.sql',
+    'SELECT name FROM sqlite_master WHERE type = "table" AND name IN ("fighters", "sprites", "sprite_versions", "source_versions", "generation_charges", "provider_sessions", "provider_spend_months", "provider_spend_reservations", "provider_cost_events", "generation_jobs", "generation_job_events", "provider_request_cache", "checkout_sessions", "clerk_webhook_events", "clerk_user_tombstones", "legal_acceptances", "stripe_credit_adjustments", "community_reports", "arcade_fighters", "arcade_generation_experiments", "arcade_generation_experiment_slots", "arcade_generation_experiment_artifacts", "fighter_group_grants", "crew_referrals", "fighter_entitlements");',
   ];
   try {
     run('D1 migration replay', sqlite, migrationArgs);
@@ -2357,6 +2365,23 @@ function replayMigrations() {
     ]);
     if (generationCreationFlowColumns !== '4') {
       throw new Error(`Generation creation flow was not sealed across all durable records; got ${generationCreationFlowColumns}/4`);
+    }
+
+    const crewTableCount = runCapture('D1 Crew and referral schema check', sqlite, [
+      dbPath,
+      `SELECT COUNT(*) FROM sqlite_master
+       WHERE type = 'table'
+         AND name IN ('fighter_group_grants', 'crew_referrals', 'fighter_entitlements');`,
+    ]);
+    if (crewTableCount !== '3') {
+      throw new Error(`Crew/referral tables did not replay cleanly; got ${crewTableCount}/3`);
+    }
+    const entitlementColumnCount = runCapture('D1 referral charge column check', sqlite, [
+      dbPath,
+      "SELECT COUNT(*) FROM pragma_table_info('generation_charges') WHERE name = 'entitlement_id';",
+    ]);
+    if (entitlementColumnCount !== '1') {
+      throw new Error('Generation charges are missing the referral entitlement link');
     }
 
     const duplicateCount = runCapture('D1 sprite content index check', sqlite, [
@@ -3043,7 +3068,7 @@ function assertLocalCachePreservesSpriteVersions() {
     'animations.every((animation) => requestedTierAnimations.has(animation.name))',
     'spriteVersions: spriteVersions.map',
     'const spriteVersions = await getSpriteVersionsForFighter(env, fighterId)',
-    'serializeFighter(request, fighter, sprites, spriteVersions, sourceVersions)',
+    'spriteVersions,\n    sourceVersions,\n    crewIdsByFighter.get(fighterId) ?? [],',
   ];
   const combined = `${spriteCache}\n${cacheTests}\n${cloudTests}\n${main}\n${cloudFighters}\n${characterPipeline}\n${fighters}`;
   const missing = required.filter((snippet) => !combined.includes(snippet));
@@ -3448,7 +3473,7 @@ function assertDurableGenerationIsWired() {
     "step.do('retry canonical side source'",
     "step.do('retry canonical upright source'",
     "step.do('retry canonical crouch source'",
-    'preparing your private cloud fighter',
+    'preparing your cloud fighter',
     'deduplicates exact source retries while preserving every distinct version',
     'replays a completed provider response without another call reservation',
     'keys parallel calls by semantic scope plus body and blocks exact concurrent duplicates',
@@ -4122,9 +4147,18 @@ function assertGithubActionsAreWired() {
     /(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}/.test(githubText)
     || /whsec_[A-Za-z0-9+/=_-]{20,}/.test(githubText)
     || /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(githubText)
-    || githubText.includes('CLERK_SECRET_KEY')
   ) {
     throw new Error('GitHub delivery files must reference environment secrets by name and must not contain raw credentials.');
+  }
+
+  const clerkApiEnv = 'CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}';
+  if (
+    text.production.split(clerkApiEnv).length - 1 < 3
+    || text.development.split(clerkApiEnv).length - 1 < 1
+  ) {
+    throw new Error(
+      'GitHub deploy workflows must pass the matching Clerk Backend API key to Worker validation and upload steps.',
+    );
   }
 }
 
@@ -4320,6 +4354,82 @@ function assertArcadeExperimentArchiveIsImmutable() {
   }
 }
 
+function assertCrewOnboardingAndReferralsAreWired() {
+  const migration = readFileSync(join(root, 'worker/migrations/0040_crew_onboarding_referrals.sql'), 'utf8');
+  const auth = readFileSync(join(root, 'worker/src/auth.ts'), 'utf8');
+  const fighters = readFileSync(join(root, 'worker/src/fighters.ts'), 'utf8');
+  const referrals = readFileSync(join(root, 'worker/src/referrals.ts'), 'utf8');
+  const webhooks = readFileSync(join(root, 'worker/src/clerkWebhooks.ts'), 'utf8');
+  const billing = readFileSync(join(root, 'worker/src/billing.ts'), 'utf8');
+  const workerIndex = readFileSync(join(root, 'worker/src/index.ts'), 'utf8');
+  const app = readFileSync(join(root, 'src/ui/App.tsx'), 'utf8');
+  const auraResults = readFileSync(join(root, 'src/ui/components/AuraBattleResults.tsx'), 'utf8');
+  const landing = readFileSync(join(root, 'src/ui/routes/LandingPage.tsx'), 'utf8');
+  const roster = readFileSync(join(root, 'src/ui/routes/RosterPage.tsx'), 'utf8');
+  const onboarding = readFileSync(join(root, 'src/ui/routes/CrewOnboardingPage.tsx'), 'utf8');
+  const joinPage = readFileSync(join(root, 'src/ui/routes/CrewJoinPage.tsx'), 'utf8');
+  const gallery = readFileSync(join(root, 'src/ui/routes/GalleryPage.tsx'), 'utf8');
+  const combined = [
+    migration,
+    auth,
+    fighters,
+    referrals,
+    webhooks,
+    billing,
+    workerIndex,
+    app,
+    auraResults,
+    landing,
+    roster,
+    onboarding,
+    joinPage,
+    gallery,
+  ].join('\n');
+  const required = [
+    'CREATE TABLE fighter_group_grants',
+    'CREATE TABLE crew_referrals',
+    'CREATE TABLE fighter_entitlements',
+    'invited_email_hmac',
+    'oauth_identity_hmac TEXT UNIQUE',
+    'idx_crew_referrals_rewarded_invitee',
+    'resolveActiveClerkOrganization',
+    "scope !== 'crew' && scope !== 'community'",
+    'serializeCrewFighter',
+    'original: null',
+    'rawUrl: null',
+    'const MAX_INVITES_PER_DAY = 5',
+    'const MAX_REWARDS_PER_INVITER = 3',
+    "'google'",
+    "'apple'",
+    "'microsoft'",
+    "hmacIdentifier(env, 'crew-referral-email-v1', email)",
+    'insert_player_referral_id',
+    "organizationInvitation.accepted",
+    "organizationMembership.deleted",
+    "organization.deleted",
+    "mode: 'referral_rookie'",
+    "path === '/api/onboarding'",
+    "path === '/api/onboarding/debut'",
+    "path === '/api/crew/invitations'",
+    "path === '/api/crews/current/fighters'",
+    "experience: autoStart ? 'onboarding'",
+    'Create My Free Rookie',
+    'Build My Crew',
+    'Create Account & Join',
+    'canInviteCrew',
+    'Free Rookie pass',
+  ];
+  const missing = required.filter((snippet) => !combined.includes(snippet));
+  if (missing.length > 0) {
+    throw new Error(`Crew onboarding or referral protection is missing: ${missing.join(', ')}`);
+  }
+  const visibleAccessUi = `${onboarding}\n${joinPage}\n${gallery}`;
+  const forbidden = ['Keep Private', 'Make Private'].filter((snippet) => visibleAccessUi.includes(snippet));
+  if (forbidden.length > 0) {
+    throw new Error(`Crew and Community must be the only visible fighter access choices: ${forbidden.join(', ')}`);
+  }
+}
+
 assertNodeVersion();
 run('deployment branch policy', node, ['scripts/check-deployment-policy.mjs']);
 assertGeminiImageModelsAreGa();
@@ -4363,6 +4473,7 @@ assertSandboxIsolationIsWired();
 assertLegalConsentAndPrivacyIsWired();
 assertClerkAuthIsWired();
 assertClerkUserLifecycleIsWired();
+assertCrewOnboardingAndReferralsAreWired();
 assertCommunityAssetsAreSanitized();
 assertCommunityModerationIsWired();
 assertMatchReportingIsWired();

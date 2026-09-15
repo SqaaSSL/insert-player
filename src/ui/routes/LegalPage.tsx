@@ -195,7 +195,7 @@ function PrivacyPolicy() {
     <>
       <header className="legal-page__intro">
         <h1>Privacy Policy</h1>
-        <p>This policy explains what happens to your account, photos, generated fighters, payments, and public shares when you use Insert Player.</p>
+        <p>This policy explains what happens to your account, photos, generated fighters, Crews, referrals, payments, and Community shares when you use Insert Player.</p>
       </header>
 
       <section>
@@ -207,12 +207,13 @@ function PrivacyPolicy() {
       <section>
         <h2>2. Data we process</h2>
         <ul>
-          <li>Account data from Clerk, including your user ID, email, display name, and profile image.</li>
+          <li>Account data from Clerk, including your user ID, email, display name, profile image, Crew memberships, and the Crew you currently select.</li>
           <li>Photos you upload, generated source views, sprite sheets, fighter names, quality tier, and version history.</li>
           <li>Match records, public fighter choices, clone activity, credit balance, and generation charge history.</li>
           <li>Aura match recordings and the public name, score, and challenge routine you choose to publish in a battle link.</li>
           <li>Checkout references and payment status from Stripe. Insert Player does not receive or store your full card number.</li>
           <li>Community reports, bounded report details, report counts, moderation decisions, and moderator notes.</li>
+          <li>Crew identifiers, fighter-sharing grants, invitation status, referral reward status, and one-way keyed hashes used to detect repeat email or social-account rewards. Clerk receives the invitation email; Insert Player does not duplicate the raw invitation email in its referral table.</li>
           <li>Security and diagnostic data, including pseudonymized network identifiers, request timing, errors, and abuse counters.</li>
         </ul>
         <p>Insert Player does not use your photo to verify your identity, identify you in other images, or create a biometric identity database.</p>
@@ -221,9 +222,10 @@ function PrivacyPolicy() {
       <section>
         <h2>3. Why we process it</h2>
         <ul>
-          <li>To create, privately store, sync, upgrade, and play the fighter you request, and to publish its generated assets only when you choose.</li>
+          <li>To create, store, sync, upgrade, and play the fighter you request, share its clean playable derivatives with your selected Crew, and publish those derivatives to Community only when you choose.</li>
           <li>To authenticate your account, fulfil purchases, settle generation credits, investigate failures, and provide support or mandatory remedies.</li>
           <li>To prevent fraud, enforce rate limits, secure private assets, and investigate service failures.</li>
+          <li>To send requested Crew invitations, confirm referral eligibility, prevent repeat rewards, and issue or reconcile earned Rookie passes.</li>
           <li>To investigate community safety reports and remove content that breaches these terms or applicable law.</li>
           <li>To meet tax, accounting, consumer-protection, and other legal duties.</li>
         </ul>
@@ -234,7 +236,7 @@ function PrivacyPolicy() {
         <h2>4. Photos and AI providers</h2>
         <p>Your original photo is sent through Insert Player's Cloudflare backend only to Google Gemini to create the fighter you requested. Clerk and Stripe do not receive that uploaded photo. Refined tiers may send generated frames, but not the original upload, to fal or Freepik for background removal. Runway or Freepik receives generated fighter assets only if you separately request an optional video workflow.</p>
         <p>Insert Player uses the paid Gemini API. Under Google's terms current on this policy date, Google does not use paid-service prompts, uploaded files, or responses to improve its products, although it may retain limited logs for abuse prevention and legal compliance. The providers may process data outside the European Economic Area under their data-processing terms and transfer safeguards.</p>
-        <p>Your generation permission is limited to creating and privately storing the fighter you request. It is not a licence for Insert Player to publish or reuse your photo or private fighter for another purpose. Insert Player does not sell your photo or private fighter assets, use either in advertising or promotion, or use either to train its own models. Your original photo remains private and is never published, including when you choose to publish the generated fighter.</p>
+        <p>Your generation permission is limited to creating and storing the fighter you request. It is not a licence for Insert Player to publish or reuse your photo or fighter for another purpose. Insert Player does not sell your photo or fighter assets, use either in advertising or promotion, or use either to train its own models. Your original photo and RAW intermediates remain restricted to your account and are never delivered to a Crew or Community, even when you share the generated fighter.</p>
         <div className="legal-page__link-list">
           {providerLinks.map(([label, href]) => (
             <a key={label} href={href} target="_blank" rel="noreferrer">{label}</a>
@@ -249,6 +251,7 @@ function PrivacyPolicy() {
           <li>Anonymous provider inputs stored by Insert Player expire from temporary Cloudflare storage after one day.</li>
           <li>Published Aura battle videos are available for 30 days, unless removed earlier. Unfinished upload reservations expire after 15 minutes. Expired or removed videos are no longer publicly accessible and are deleted from storage by scheduled cleanup.</li>
           <li>Signed-in source photos, generated views, and every generated version remain in your roster until you delete the fighter or account.</li>
+          <li>Crew and referral records remain while needed to operate membership, administer rewards, and prevent repeat abuse. Account deletion removes active account links; a minimal pseudonymous anti-abuse record may remain where necessary to protect the referral system.</li>
           <li>Expired provider sessions are removed after seven days. Stripe and Clerk webhook audit markers are removed after 180 days.</li>
           <li>Minimal records proving generation and checkout consent are retained for up to six years, then deleted.</li>
           <li>Open community reports remain while review is needed. Dismissed and actioned reports are deleted after one year.</li>
@@ -257,18 +260,19 @@ function PrivacyPolicy() {
       </section>
 
       <section>
-        <h2>6. Community and battle sharing</h2>
-        <p>Fighters are private to their Insert Player account unless the owner separately confirms Publish. Public pages expose the fighter name, clean generated source views and playable assets, quality tier, and the neutral author label Player. The public Fight Board uses rank-only aliases such as Player 1 and never exposes an account name, avatar, or stable account identifier. Account names, emails, Clerk profile photos, original uploads, raw intermediates, private photo hashes, account IDs, and archived private versions are never published. A future public handle will require a separate opt-in.</p>
+        <h2>6. Crew, Community, and battle sharing</h2>
+        <p>A finished fighter can be available to the Crew you select or, after a separate confirmation, to Community. Crew members receive authenticated access to the fighter name, clean generated source views, playable assets, and quality tier so they can select it in a match. They do not receive your account name, email, Clerk profile photo, original upload, RAW intermediates, private photo hash, account ID, or archived versions. Changing the fighter to Community or removing the Crew grant ends new Crew-only access, subject to short-lived local and network caches.</p>
+        <p>Community pages expose the fighter name, clean generated source views and playable assets, quality tier, and the neutral author label Player. The public Fight Board uses rank-only aliases such as Player 1 and never exposes an account name, avatar, or stable account identifier. A future public handle will require a separate opt-in.</p>
         <p>Aura videos stay on your device until you choose Create battle link. That action publishes the recording and your chosen public name, score, and routine. Anyone with the link can watch, download, and share the video. A recording shows the characters and names visible during the match, including any private character you used; publishing a recording does not publish its underlying roster assets or original uploaded photo. Battle links are not listed in the public roster.</p>
         <p>You can remove a battle link from the browser that published it. Deleting your account also revokes battle links published while signed in. Removal stops future access on Insert Player, but cannot recall copies other people downloaded or shared elsewhere.</p>
         <p>Signed-in players can report a public fighter for review. Reports do not trigger automatic removal based on volume; an authorised moderator records a decision and may unpublish content after review.</p>
-        <p>You can unpublish a fighter at any time. Short-lived network caches may take a brief period to expire.</p>
+        <p>You can move a Community fighter back to your Crew at any time. Short-lived network caches may take a brief period to expire.</p>
       </section>
 
       <section>
         <h2>7. Cookies and local storage</h2>
         <p>After you publish an Aura video, this browser stores a removal token for that battle link until it expires. This token lets you remove the link without an account; it is not included in the shared URL. Clearing browser storage removes this browser’s copy of the token.</p>
-        <p>At launch, Insert Player uses only storage needed for authentication, security, checkout return state, local roster data, and gameplay. We do not run advertising trackers or send optional analytics to an external service. A bounded playtest log stays on this device and can be exported from Credits; it records game and creation events without names, photos or challenge links. A creation draft can be restored on this device for 24 hours after checkout navigation; expired drafts are discarded when accessed again. Cloudflare Turnstile may use necessary security storage to distinguish people from automated abuse.</p>
+        <p>Insert Player uses only storage needed for authentication, Crew selection, security, checkout return state, local roster data, and gameplay. We do not run advertising trackers or send optional analytics to an external service. A bounded playtest log stays on this device and can be exported from Credits; it records game and creation events without names, photos or challenge links. A creation draft can be restored on this device for 24 hours after checkout navigation; expired drafts are discarded when accessed again. Cloudflare Turnstile may use necessary security storage to distinguish people from automated abuse.</p>
       </section>
 
       <section>
@@ -295,7 +299,7 @@ function TermsOfService() {
     <>
       <header className="legal-page__intro">
         <h1>Terms of Service</h1>
-        <p>These terms govern Insert Player, including fighter generation, cloud sync, community sharing, gameplay, and credit purchases.</p>
+        <p>These terms govern Insert Player, including fighter generation, cloud sync, Crews, referrals, Community sharing, gameplay, and credit purchases.</p>
       </header>
 
       <section>
@@ -322,7 +326,7 @@ function TermsOfService() {
       <section>
         <h2>4. Generated content</h2>
         <p>You retain the rights you hold in your inputs. As between you and Insert Player, we do not claim ownership of the generated fighter assets delivered to your roster. We grant you a non-exclusive licence to use those assets for lawful personal or commercial purposes, subject to applicable law, third-party rights, and any provider terms that apply.</p>
-        <p>Any permission needed to process and host your inputs is limited to operating the private service you request. It is not a licence to publish or reuse your photo or private fighter for another purpose, and it does not permit us to use either in advertising or promotion or to train an Insert Player model with either.</p>
+        <p>Any permission needed to process and host your inputs is limited to operating the service you request. It is not a licence to publish or reuse your photo or fighter for another purpose, and it does not permit us to use either in advertising or promotion or to train an Insert Player model with either. Crew sharing never includes the original photo or RAW intermediates.</p>
         <p>AI output can be inaccurate, unexpected, or similar to other output and may not qualify for copyright protection. We do not guarantee exclusivity, likeness accuracy, or freedom from third-party claims.</p>
       </section>
 
@@ -332,14 +336,16 @@ function TermsOfService() {
           <li>Credit packs are one-time purchases. Credits have no cash value, are not transferable, and do not expire while your account remains active.</li>
           <li>The selected tier shows its credit cost before generation begins. Prices shown to consumers include applicable tax where the checkout says so.</li>
           <li>Credits are reserved when a generation is accepted. If Insert Player cannot start external AI processing, the unused reservation is released. Once the first external AI request begins, the displayed credits are consumed and are not automatically restored because a provider fails, the job is delayed, or the result needs remediation.</li>
+          <li>A new account includes one Rookie subject to the displayed eligibility rules. A qualifying referral may grant the inviter one additional non-transferable Rookie pass after the invited new user joins the Crew with an eligible verified social account, creates a Rookie, and completes an Aura debut. Sending or accepting an invitation alone earns no reward. Referral rewards are limited to three per inviter and may be withheld or revoked for duplicate, automated, misleading, or abusive accounts.</li>
           <li>An approved payment refund or payment dispute reverses the corresponding pack credits. If those credits were already spent, your wallet may become negative and further paid generation remains unavailable until the balance is restored.</li>
           <li>When you start a paid generation, you request immediate performance and acknowledge that consumed credits are not voluntarily refundable after external AI processing begins. This does not limit mandatory remedies for non-delivery, material lack of conformity, duplicate billing, or an incorrect charge.</li>
         </ul>
       </section>
 
       <section>
-        <h2>6. Public fighters</h2>
-        <p>Publishing is optional and requires a separate confirmation. For the fighter you choose to publish, you grant us a worldwide, non-exclusive, revocable licence to host, display, copy, and deliver its clean generated source views and playable assets so other players can view, play, share, and clone that fighter inside Insert Player. We show the neutral author label Player. This never includes your account name, email, Clerk profile photo, original photo, raw intermediates, private hashes, or archived generation history. A future public handle will require a separate opt-in. Unpublishing ends new public distribution, subject to short cache expiry and copies another player already cloned into their own roster.</p>
+        <h2>6. Crew and Community fighters</h2>
+        <p>By assigning a fighter to a Crew, you grant us a worldwide, non-exclusive, revocable licence to host, copy, and deliver its clean generated source views and playable assets to authenticated members of that Crew for play inside Insert Player. Crew administrators manage membership. Removing the grant, changing Crew, or leaving the Crew ends new Crew-only delivery, subject to short cache expiry.</p>
+        <p>Community publishing is optional and requires a separate confirmation. For the fighter you choose to publish, you grant us a worldwide, non-exclusive, revocable licence to host, display, copy, and deliver its clean generated source views and playable assets so other players can view, play, share, and clone that fighter inside Insert Player. We show the neutral author label Player. Neither Crew nor Community sharing includes your account name, email, Clerk profile photo, original photo, RAW intermediates, private hashes, or archived generation history. A future public handle will require a separate opt-in. Moving a fighter back to Crew ends new public distribution, subject to short cache expiry and copies another player already cloned into their own roster.</p>
         <p>Signed-in players may report public content. We review reports manually and may unpublish content, restrict community access, suspend accounts, preserve necessary evidence, or take no action. Report volume alone does not decide the outcome. Contact <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> if you believe a moderation decision is mistaken.</p>
       </section>
 

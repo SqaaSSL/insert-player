@@ -15,6 +15,7 @@ export interface Env extends OptionalCloudflareBindings {
   ENVIRONMENT: Cloudflare.Env['ENVIRONMENT'];
   CORS_ORIGIN: Cloudflare.Env['CORS_ORIGIN'];
   CLERK_JWKS_URL?: string;
+  CLERK_SECRET_KEY?: string;
   CLERK_BACKEND_AUTH_BRIDGE_SECRET?: string;
   GOOGLE_MAPS_SERVER_KEY?: string;
   /** Optional Cloudflare Realtime TURN credentials for online versus. */
@@ -136,6 +137,9 @@ export interface AuthContext {
   userId: string;
   user: User;
   claims: Record<string, unknown>;
+  activeOrganizationId?: string | null;
+  activeOrganizationSlug?: string | null;
+  activeOrganizationRole?: string | null;
 }
 
 export interface PublicAuthContext {
@@ -143,6 +147,9 @@ export interface PublicAuthContext {
   rateLimitKey: string;
   user: User | null;
   claims: Record<string, unknown> | null;
+  activeOrganizationId?: string | null;
+  activeOrganizationSlug?: string | null;
+  activeOrganizationRole?: string | null;
 }
 
 export interface Fighter {

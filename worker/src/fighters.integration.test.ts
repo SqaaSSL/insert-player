@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   cloneCommunityFighter,
   getAsset,
+  getCrewFighterSourceAsset,
+  getCrewFighterSpriteAsset,
   getCommunityFighter,
   getPublicArcadeSpriteHighDensityAsset,
   getPublicFighterSourceAsset,
@@ -10,11 +12,13 @@ import {
   listArcadeFighters,
   listAdminArcadeFighters,
   listCommunityFighters,
+  listCrewFighters,
   listOwnedCommunityFighterIds,
   listFighters,
   patchFighter,
   promoteFighterSpriteVersion,
   reportCommunityFighter,
+  setFighterAccess,
   shareCommunityFighterPage,
   uploadFighterSource,
   uploadFighterSprite,
@@ -60,6 +64,14 @@ const SCHEMA = `
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(owner_user_id, photo_hash)
+  );
+
+  CREATE TABLE fighter_group_grants (
+    fighter_id TEXT NOT NULL REFERENCES fighters(id) ON DELETE CASCADE,
+    clerk_organization_id TEXT NOT NULL,
+    granted_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (fighter_id, clerk_organization_id)
   );
 
   CREATE TABLE sprites (
@@ -363,6 +375,130 @@ function sha256Fixture(value: number): string {
 }
 
 describe('fighter uploads against real D1 and R2 bindings', () => {
+  it('shares only clean playable assets with the selected Crew and revokes them on Community switch', async () => {
+    const { mf, db, bucket, env } = await createBindings();
+    const organizationId = 'org_crew_alpha';
+    const ownerAuth = { ...auth, activeOrganizationId: organizationId };
+    const memberAuth = {
+      ...auth,
+      userId: 'crew-member',
+      activeOrganizationId: organizationId,
+      user: { ...auth.user, id: 'crew-member', clerk_user_id: 'crew-member' },
+    };
+    const wrongCrewAuth = { ...memberAuth, activeOrganizationId: 'org_other' };
+    try {
+      const sourceKey = 'users/user-target/fighters/fighter-target/sources/side.png';
+      await db.batch([
+        db.prepare(`
+          UPDATE fighters
+          SET original_blob_key = 'users/user-target/fighters/fighter-target/sources/original.png',
+              side_view_blob_key = ?,
+              side_view_raw_blob_key = 'users/user-target/fighters/fighter-target/sources/side-raw.png'
+          WHERE id = 'fighter-target'
+        `).bind(sourceKey),
+        ...AURA_ANIMATION_NAMES.map((animationName, index) => db.prepare(`
+          INSERT INTO sprites (
+            id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+            content_hash, raw_content_hash, frame_w, frame_h, frame_count, processing_version
+          ) VALUES (?, 'fighter-target', ?, 'contender', ?, ?, ?, ?, 256, 256, 6, 4)
+        `).bind(
+          `crew-sprite-${index}`,
+          animationName,
+          `users/user-target/fighters/fighter-target/sprites/${animationName}.png`,
+          `users/user-target/fighters/fighter-target/sprites/${animationName}-raw.png`,
+          sha256Fixture(index + 501),
+          sha256Fixture(index + 601),
+        )),
+      ]);
+      await Promise.all([
+        bucket.put(sourceKey, new Uint8Array([1, 2, 3]), { httpMetadata: { contentType: 'image/png' } }),
+        bucket.put(
+          'users/user-target/fighters/fighter-target/sprites/aura_unbothered.png',
+          new Uint8Array([4, 5, 6]),
+          { httpMetadata: { contentType: 'image/png' } },
+        ),
+      ]);
+
+      const shared = await setFighterAccess(
+        new Request('https://api.insertplayer.ai/api/fighters/fighter-target/access', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope: 'crew' }),
+        }),
+        env,
+        ownerAuth,
+        'fighter-target',
+      );
+      expect(shared.status).toBe(200);
+      expect(await shared.json()).toMatchObject({
+        fighter: { access: { scope: 'crew', crewIds: [organizationId], canManage: true } },
+      });
+
+      const crewResponse = await listCrewFighters(
+        new Request('https://api.insertplayer.ai/api/crews/current/fighters'),
+        env,
+        memberAuth,
+      );
+      const crewBody = await crewResponse.json() as { fighters: Array<Record<string, any>> };
+      expect(crewResponse.status).toBe(200);
+      expect(crewResponse.headers.get('Cache-Control')).toBe('no-store');
+      expect(crewBody.fighters).toHaveLength(1);
+      expect(crewBody.fighters[0]).toMatchObject({
+        id: 'fighter-target',
+        public: false,
+        owner: { name: 'Crew member' },
+        crew: { id: organizationId },
+        access: { scope: 'crew', crewIds: [organizationId], canManage: false },
+        sources: { original: null, sideRaw: null },
+      });
+      expect(crewBody.fighters[0].photoHash).toBe(`crew:${organizationId}:fighter-target`);
+      expect(crewBody.fighters[0].sources.side).toContain('/api/crews/current/fighters/fighter-target/sources/side/side.png');
+      expect(crewBody.fighters[0].sprites[0].rawUrl).toBeNull();
+      expect(JSON.stringify(crewBody.fighters[0])).not.toContain('user-target');
+
+      const [sourceAsset, spriteAsset, wrongCrewAsset] = await Promise.all([
+        getCrewFighterSourceAsset(env, memberAuth, 'fighter-target', 'side', 'side.png'),
+        getCrewFighterSpriteAsset(env, memberAuth, 'fighter-target', 'crew-sprite-0', 'aura_unbothered.png'),
+        getCrewFighterSourceAsset(env, wrongCrewAuth, 'fighter-target', 'side', 'side.png'),
+      ]);
+      expect(sourceAsset.status).toBe(200);
+      expect(sourceAsset.headers.get('Cache-Control')).toBe('private, no-store');
+      expect(spriteAsset.status).toBe(200);
+      expect(wrongCrewAsset.status).toBe(404);
+
+      const community = await setFighterAccess(
+        new Request('https://api.insertplayer.ai/api/fighters/fighter-target/access', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scope: 'community' }),
+        }),
+        env,
+        ownerAuth,
+        'fighter-target',
+      );
+      expect(await community.json()).toMatchObject({
+        fighter: { access: { scope: 'community', crewIds: [organizationId], canManage: true } },
+      });
+      expect(await db.prepare(`
+        SELECT clerk_organization_id FROM fighter_group_grants WHERE fighter_id = 'fighter-target'
+      `).first()).toEqual({ clerk_organization_id: organizationId });
+      expect(await listCrewFighters(
+        new Request('https://api.insertplayer.ai/api/crews/current/fighters'),
+        env,
+        memberAuth,
+      ).then((response) => response.json())).toEqual({ organizationId, fighters: [] });
+      expect((await getCrewFighterSourceAsset(
+        env,
+        memberAuth,
+        'fighter-target',
+        'side',
+        'side.png',
+      )).status).toBe(404);
+    } finally {
+      await mf.dispose();
+    }
+  }, INTEGRATION_TEST_TIMEOUT_MS);
+
   it('maps cloned same-photo fighters back to their public community source', async () => {
     const { mf, db, env } = await createBindings();
     try {

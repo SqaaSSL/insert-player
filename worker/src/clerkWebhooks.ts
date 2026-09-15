@@ -1,4 +1,11 @@
-import { verifyWebhook, type UserWebhookEvent, type WebhookEvent } from '@clerk/backend/webhooks';
+import {
+  verifyWebhook,
+  type OrganizationInvitationAcceptedWebhookEvent,
+  type OrganizationMembershipWebhookEvent,
+  type OrganizationWebhookEvent,
+  type UserWebhookEvent,
+  type WebhookEvent,
+} from '@clerk/backend/webhooks';
 import {
   hashString,
   isClerkUserTombstoned,
@@ -6,6 +13,7 @@ import {
 } from './auth';
 import type { Env } from './types';
 import { readRequestText, RequestBodyTooLargeError } from './requestBody';
+import { acceptReferralWebhook, revokeCrewWebhook } from './referrals';
 
 const R2_DELETE_BATCH_SIZE = 1000;
 const MAX_R2_DELETE_BATCHES_PER_DELIVERY = 5;
@@ -40,6 +48,18 @@ function isUserWebhookEvent(event: WebhookEvent): event is UserWebhookEvent {
   return event.type === 'user.created'
     || event.type === 'user.updated'
     || event.type === 'user.deleted';
+}
+
+function isReferralAcceptedEvent(
+  event: WebhookEvent,
+): event is OrganizationInvitationAcceptedWebhookEvent {
+  return event.type === 'organizationInvitation.accepted';
+}
+
+function isCrewRevocationEvent(
+  event: WebhookEvent,
+): event is OrganizationMembershipWebhookEvent | OrganizationWebhookEvent {
+  return event.type === 'organizationMembership.deleted' || event.type === 'organization.deleted';
 }
 
 async function webhookWasProcessed(env: Env, eventId: string): Promise<boolean> {
@@ -287,15 +307,23 @@ export async function handleClerkWebhook(request: Request, env: Env): Promise<Re
 
   try {
     const eventId = requiredWebhookId(request);
-    if (!isUserWebhookEvent(event)) {
+    if (!isUserWebhookEvent(event) && !isReferralAcceptedEvent(event) && !isCrewRevocationEvent(event)) {
       return json({ received: true, ignored: true });
     }
     if (await webhookWasProcessed(env, eventId)) {
       return json({ received: true, duplicate: true });
     }
 
-    const result = await processClerkUserWebhook(event, eventId, env);
-    return json({ received: true, ...result });
+    if (isUserWebhookEvent(event)) {
+      const result = await processClerkUserWebhook(event, eventId, env);
+      return json({ received: true, ...result });
+    }
+
+    const handled = isReferralAcceptedEvent(event)
+      ? await acceptReferralWebhook(event, env)
+      : await revokeCrewWebhook(event, env);
+    await recordWebhookEvent(env, eventId, event.type);
+    return json({ received: true, crewEvent: handled ? 'processed' : 'ignored' });
   } catch (error) {
     if (error instanceof InvalidClerkWebhookPayloadError) {
       return json({ error: 'Invalid Clerk webhook payload' }, 400);

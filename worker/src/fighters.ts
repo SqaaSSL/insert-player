@@ -143,6 +143,19 @@ interface ArcadeFighterRow extends Fighter {
   arcade_updated_at: string;
 }
 
+export type FighterAccessScope = 'owner' | 'crew' | 'community';
+
+interface FighterAccessDescriptor {
+  scope: FighterAccessScope;
+  crewIds: string[];
+  canManage: boolean;
+}
+
+interface FighterGroupGrantRow {
+  fighter_id: string;
+  clerk_organization_id: string;
+}
+
 const MIN_ARCADE_GENERATION_PROMPT_CHARS = 180;
 const MAX_ARCADE_GENERATION_PROMPT_CHARS = 3000;
 
@@ -284,6 +297,32 @@ function publicArcadeSpriteHighDensityAssetUrl(
   if (!revision) return null;
   const url = new URL(request.url);
   return `${url.origin}/public-assets/arcade/${encodeURIComponent(fighterId)}/sprites/${encodeURIComponent(sprite.id)}/hq/${encodeURIComponent(revision)}`;
+}
+
+function crewFighterAssetBaseUrl(request: Request, fighterId: string): string {
+  const url = new URL(request.url);
+  return `${url.origin}/api/crews/current/fighters/${encodeURIComponent(fighterId)}`;
+}
+
+function crewSourceAssetUrl(
+  request: Request,
+  fighterId: string,
+  kind: PublicSourceKind,
+  key: string | null,
+): string | null {
+  const revision = publicAssetRevision(key);
+  if (!revision) return null;
+  return `${crewFighterAssetBaseUrl(request, fighterId)}/sources/${kind}/${encodeURIComponent(revision)}`;
+}
+
+function crewSpriteAssetUrl(
+  request: Request,
+  fighterId: string,
+  sprite: SpriteAsset,
+): string | null {
+  const revision = publicAssetRevision(sprite.blob_key);
+  if (!revision) return null;
+  return `${crewFighterAssetBaseUrl(request, fighterId)}/sprites/${encodeURIComponent(sprite.id)}/${encodeURIComponent(revision)}`;
 }
 
 function decodeAssetKey(key: string): string | Response {
@@ -485,6 +524,7 @@ function serializeFighter(
   sprites: SpriteAsset[] = [],
   spriteVersions?: SpriteVersion[],
   sourceVersions?: SourceVersion[],
+  crewIds: string[] = [],
 ) {
   const includePrivateManifest = Array.isArray(spriteVersions) && Array.isArray(sourceVersions);
   const serialized = {
@@ -494,6 +534,11 @@ function serializeFighter(
     photoHash: fighter.photo_hash,
     qualityTier: fighter.quality_tier,
     public: Boolean(fighter.public_flag),
+    access: {
+      scope: fighter.public_flag ? 'community' : crewIds.length > 0 ? 'crew' : 'owner',
+      crewIds,
+      canManage: true,
+    } satisfies FighterAccessDescriptor,
     createdAt: fighter.created_at,
     updatedAt: fighter.updated_at,
     sources: {
@@ -527,6 +572,7 @@ function serializeCommunityFighter(
   const {
     ownerUserId: _ownerUserId,
     photoHash: _photoHash,
+    access: _access,
     sources,
     sprites: _serializedSprites,
     ...publicFighter
@@ -558,6 +604,50 @@ function serializeCommunityFighter(
     owner: {
       name: 'Player',
     },
+    access: {
+      scope: 'community',
+      crewIds: [],
+      canManage: false,
+    } satisfies FighterAccessDescriptor,
+  };
+}
+
+function serializeCrewFighter(
+  request: Request,
+  fighter: Fighter,
+  sprites: SpriteAsset[],
+  organizationId: string,
+) {
+  const serialized = serializeCommunityFighter(request, fighter, sprites);
+  return {
+    ...serialized,
+    public: false,
+    photoHash: `crew:${organizationId}:${fighter.id}`,
+    sources: {
+      original: null,
+      side: crewSourceAssetUrl(request, fighter.id, 'side', fighter.side_view_blob_key),
+      sideRaw: null,
+      upright: crewSourceAssetUrl(request, fighter.id, 'upright', fighter.upright_view_blob_key),
+      uprightRaw: null,
+      crouch: crewSourceAssetUrl(request, fighter.id, 'crouch', fighter.crouch_view_blob_key),
+      crouchRaw: null,
+    },
+    sprites: sprites.map((sprite) => ({
+      ...serializeSprite(request, sprite),
+      contentHash: sprite.content_hash,
+      url: crewSpriteAssetUrl(request, fighter.id, sprite),
+      rawUrl: null,
+      rawFrameWidth: null,
+      rawFrameHeight: null,
+      rawFrameCount: null,
+    })),
+    owner: { name: 'Crew member' },
+    crew: { id: organizationId },
+    access: {
+      scope: 'crew',
+      crewIds: [organizationId],
+      canManage: false,
+    } satisfies FighterAccessDescriptor,
   };
 }
 
@@ -656,6 +746,44 @@ async function getOwnedFighter(env: Env, fighterId: string, userId: string): Pro
   return env.DB.prepare(
     'SELECT * FROM fighters WHERE id = ? AND owner_user_id = ?'
   ).bind(fighterId, userId).first<Fighter>();
+}
+
+async function getFighterCrewIds(
+  env: Env,
+  fighterIds: string[],
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (fighterIds.length === 0) return result;
+  const placeholders = fighterIds.map(() => '?').join(',');
+  const { results } = await env.DB.prepare(`
+    SELECT fighter_id, clerk_organization_id
+    FROM fighter_group_grants
+    WHERE fighter_id IN (${placeholders})
+    ORDER BY created_at ASC
+  `).bind(...fighterIds).all<FighterGroupGrantRow>();
+  for (const grant of results ?? []) {
+    const crewIds = result.get(grant.fighter_id) ?? [];
+    crewIds.push(grant.clerk_organization_id);
+    result.set(grant.fighter_id, crewIds);
+  }
+  return result;
+}
+
+async function getCurrentCrewGrantedFighter(
+  env: Env,
+  fighterId: string,
+  organizationId: string,
+): Promise<Fighter | null> {
+  return env.DB.prepare(`
+    SELECT f.*
+    FROM fighter_group_grants grant_row
+    JOIN fighters f ON f.id = grant_row.fighter_id
+    WHERE grant_row.fighter_id = ?
+      AND grant_row.clerk_organization_id = ?
+      AND f.public_flag = 0
+      AND ${anyPlayableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId, organizationId).first<Fighter>();
 }
 
 async function isActiveArcadeFighter(env: Env, fighterId: string): Promise<boolean> {
@@ -771,7 +899,10 @@ export async function listFighters(request: Request, env: Env, auth: AuthContext
   ).bind(auth.userId).all<Fighter>();
   const fighters = results ?? [];
   const fighterIds = fighters.map((fighter) => fighter.id);
-  const sprites = await getSpritesForFighters(env, fighterIds);
+  const [sprites, crewIdsByFighter] = await Promise.all([
+    getSpritesForFighters(env, fighterIds),
+    getFighterCrewIds(env, fighterIds),
+  ]);
   const spritesByFighter = new Map<string, SpriteAsset[]>();
   for (const sprite of sprites) {
     const existing = spritesByFighter.get(sprite.fighter_id) ?? [];
@@ -779,8 +910,59 @@ export async function listFighters(request: Request, env: Env, auth: AuthContext
     spritesByFighter.set(sprite.fighter_id, existing);
   }
   return json({
-    fighters: fighters.map((fighter) => serializeFighter(request, fighter, spritesByFighter.get(fighter.id) ?? [])),
+    fighters: fighters.map((fighter) => serializeFighter(
+      request,
+      fighter,
+      spritesByFighter.get(fighter.id) ?? [],
+      undefined,
+      undefined,
+      crewIdsByFighter.get(fighter.id) ?? [],
+    )),
   });
+}
+
+export async function listCrewFighters(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+): Promise<Response> {
+  const organizationId = auth.activeOrganizationId ?? null;
+  if (!organizationId) {
+    return json({
+      error: 'Select a Crew before loading shared fighters',
+      code: 'active_organization_required',
+    }, 409, NO_STORE_HEADERS);
+  }
+  const { results } = await env.DB.prepare(`
+    SELECT f.*
+    FROM fighter_group_grants grant_row
+    JOIN fighters f ON f.id = grant_row.fighter_id
+    WHERE grant_row.clerk_organization_id = ?
+      AND f.owner_user_id <> ?
+      AND f.public_flag = 0
+      AND NOT EXISTS (
+        SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id
+      )
+      AND ${anyPlayableSpriteSetSql('f')}
+    ORDER BY grant_row.created_at DESC, f.updated_at DESC
+  `).bind(organizationId, auth.userId).all<Fighter>();
+  const fighters = results ?? [];
+  const sprites = await getSpritesForFighters(env, fighters.map((fighter) => fighter.id));
+  const spritesByFighter = new Map<string, SpriteAsset[]>();
+  for (const sprite of sprites) {
+    const existing = spritesByFighter.get(sprite.fighter_id) ?? [];
+    existing.push(sprite);
+    spritesByFighter.set(sprite.fighter_id, existing);
+  }
+  return json({
+    organizationId,
+    fighters: fighters.map((fighter) => serializeCrewFighter(
+      request,
+      fighter,
+      spritesByFighter.get(fighter.id) ?? [],
+      organizationId,
+    )),
+  }, 200, NO_STORE_HEADERS);
 }
 
 export async function listCommunityFighters(request: Request, env: Env): Promise<Response> {
@@ -1255,7 +1437,7 @@ export async function createFighter(request: Request, env: Env, auth: AuthContex
     const publicFlag = await resolvePublicFlag(env, existing.id, body.public, existing.public_flag);
     if (publicFlag instanceof Response) return publicFlag;
     const nextName = normalizeFighterName(body.name, existing.name);
-    await env.DB.prepare(`
+    const update = env.DB.prepare(`
       UPDATE fighters
       SET name = ?, quality_tier = ?, public_flag = ?, updated_at = datetime('now')
       WHERE id = ? AND owner_user_id = ?
@@ -1269,7 +1451,18 @@ export async function createFighter(request: Request, env: Env, auth: AuthContex
       nextName,
       nextTier,
       publicFlag,
-    ).run();
+    );
+    const statements: D1PreparedStatement[] = [update];
+    if (typeof body.public === 'boolean') {
+      statements.push(env.DB.prepare('DELETE FROM fighter_group_grants WHERE fighter_id = ?').bind(existing.id));
+    } else if (!publicFlag && auth.activeOrganizationId) {
+      statements.push(env.DB.prepare(`
+        INSERT OR IGNORE INTO fighter_group_grants (
+          fighter_id, clerk_organization_id, granted_by_user_id
+        ) VALUES (?, ?, ?)
+      `).bind(existing.id, auth.activeOrganizationId, auth.userId));
+    }
+    await env.DB.batch(statements);
     return getFighter(request, env, auth, existing.id);
   }
 
@@ -1278,7 +1471,7 @@ export async function createFighter(request: Request, env: Env, auth: AuthContex
   }
 
   const fighterId = generateId();
-  await env.DB.prepare(`
+  const create = env.DB.prepare(`
     INSERT INTO fighters (id, owner_user_id, name, photo_hash, quality_tier, public_flag)
     VALUES (?, ?, ?, ?, ?, ?)
   `).bind(
@@ -1288,7 +1481,22 @@ export async function createFighter(request: Request, env: Env, auth: AuthContex
     photoHash,
     requestedTier,
     body.public ? 1 : 0,
-  ).run();
+  );
+  const defaultOrganizationId = body.public === undefined
+    ? auth.activeOrganizationId ?? null
+    : null;
+  if (defaultOrganizationId) {
+    await env.DB.batch([
+      create,
+      env.DB.prepare(`
+        INSERT INTO fighter_group_grants (
+          fighter_id, clerk_organization_id, granted_by_user_id
+        ) VALUES (?, ?, ?)
+      `).bind(fighterId, defaultOrganizationId, auth.userId),
+    ]);
+  } else {
+    await create.run();
+  }
   return getFighter(request, env, auth, fighterId);
 }
 
@@ -1300,10 +1508,75 @@ export async function getFighter(
 ): Promise<Response> {
   const fighter = await getOwnedFighter(env, fighterId, auth.userId);
   if (!fighter) return json({ error: 'Fighter not found' }, 404);
-  const sprites = await getSpritesForFighters(env, [fighterId]);
-  const spriteVersions = await getSpriteVersionsForFighter(env, fighterId);
-  const sourceVersions = await getSourceVersionsForFighter(env, fighterId);
-  return json({ fighter: serializeFighter(request, fighter, sprites, spriteVersions, sourceVersions) });
+  const [sprites, spriteVersions, sourceVersions, crewIdsByFighter] = await Promise.all([
+    getSpritesForFighters(env, [fighterId]),
+    getSpriteVersionsForFighter(env, fighterId),
+    getSourceVersionsForFighter(env, fighterId),
+    getFighterCrewIds(env, [fighterId]),
+  ]);
+  return json({ fighter: serializeFighter(
+    request,
+    fighter,
+    sprites,
+    spriteVersions,
+    sourceVersions,
+    crewIdsByFighter.get(fighterId) ?? [],
+  ) });
+}
+
+export async function setFighterAccess(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+): Promise<Response> {
+  const fighter = await getOwnedFighter(env, fighterId, auth.userId);
+  if (!fighter) return json({ error: 'Fighter not found' }, 404, NO_STORE_HEADERS);
+  if (await isActiveArcadeFighter(env, fighterId)) return activeArcadeMutationFailure();
+
+  const body = await readJsonBody<{ scope?: unknown }>(request, MAX_FIGHTER_JSON_BODY_BYTES);
+  const scope = body.scope;
+  if (scope !== 'crew' && scope !== 'community') {
+    return json({ error: 'scope must be crew or community' }, 400, NO_STORE_HEADERS);
+  }
+  const organizationId = auth.activeOrganizationId ?? null;
+  if (scope === 'crew' && !organizationId) {
+    return json({
+      error: 'Create or select a Crew before sharing this fighter',
+      code: 'active_organization_required',
+    }, 409, NO_STORE_HEADERS);
+  }
+  const completePack = await env.DB.prepare(`
+    SELECT 1 AS ready FROM fighters f
+    WHERE f.id = ? AND ${anyPlayableSpriteSetSql('f')}
+    LIMIT 1
+  `).bind(fighterId).first<{ ready: number }>();
+  if (!completePack) {
+    return json({ error: 'Finish the playable animation pack before sharing' }, 409, NO_STORE_HEADERS);
+  }
+
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare(`
+      UPDATE fighters
+      SET public_flag = ?, updated_at = datetime('now')
+      WHERE id = ? AND owner_user_id = ?
+    `).bind(scope === 'community' ? 1 : 0, fighterId, auth.userId),
+  ];
+  // Keep a Community fighter's selected Crew as its safe fallback. Community
+  // access supersedes the grant while public; moderation or a later unpublish
+  // can then return it to Crew instead of inventing a visible Private state.
+  if (scope === 'crew' || organizationId) {
+    statements.push(env.DB.prepare('DELETE FROM fighter_group_grants WHERE fighter_id = ?').bind(fighterId));
+  }
+  if (organizationId) {
+    statements.push(env.DB.prepare(`
+      INSERT INTO fighter_group_grants (
+        fighter_id, clerk_organization_id, granted_by_user_id
+      ) VALUES (?, ?, ?)
+    `).bind(fighterId, organizationId, auth.userId));
+  }
+  await env.DB.batch(statements);
+  return getFighter(request, env, auth, fighterId);
 }
 
 export async function patchFighter(
@@ -1325,11 +1598,19 @@ export async function patchFighter(
   const publicFlag = await resolvePublicFlag(env, fighterId, body.public, fighter.public_flag);
   if (publicFlag instanceof Response) return publicFlag;
 
-  await env.DB.prepare(`
+  const update = env.DB.prepare(`
     UPDATE fighters
     SET name = ?, quality_tier = ?, public_flag = ?, updated_at = datetime('now')
     WHERE id = ? AND owner_user_id = ?
-  `).bind(name, qualityTier, publicFlag, fighterId, auth.userId).run();
+  `).bind(name, qualityTier, publicFlag, fighterId, auth.userId);
+  if (typeof body.public === 'boolean') {
+    await env.DB.batch([
+      update,
+      env.DB.prepare('DELETE FROM fighter_group_grants WHERE fighter_id = ?').bind(fighterId),
+    ]);
+  } else {
+    await update.run();
+  }
 
   return getFighter(request, env, auth, fighterId);
 }
@@ -2423,6 +2704,47 @@ async function privateAssetResponse(env: Env, blobKey: string): Promise<Response
   headers.set('Cache-Control', 'private, no-store');
   headers.set('X-Content-Type-Options', 'nosniff');
   return new Response(object.body, { headers });
+}
+
+export async function getCrewFighterSourceAsset(
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+  kind: PublicSourceKind,
+  revision: string,
+): Promise<Response> {
+  const column = PUBLIC_SOURCE_COLUMNS[kind];
+  const organizationId = auth.activeOrganizationId ?? null;
+  if (!column || !organizationId) return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  const fighter = await getCurrentCrewGrantedFighter(env, fighterId, organizationId);
+  if (!fighter) return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  const blobKey = fighter[column];
+  if (typeof blobKey !== 'string' || publicAssetRevision(blobKey) !== revision) {
+    return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  }
+  return privateAssetResponse(env, blobKey);
+}
+
+export async function getCrewFighterSpriteAsset(
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+  spriteId: string,
+  revision: string,
+): Promise<Response> {
+  const organizationId = auth.activeOrganizationId ?? null;
+  if (!organizationId) return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  const fighter = await getCurrentCrewGrantedFighter(env, fighterId, organizationId);
+  if (!fighter) return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  const sprite = await env.DB.prepare(`
+    SELECT blob_key FROM sprites
+    WHERE id = ? AND fighter_id = ?
+    LIMIT 1
+  `).bind(spriteId, fighter.id).first<{ blob_key: string }>();
+  if (!sprite?.blob_key || publicAssetRevision(sprite.blob_key) !== revision) {
+    return json({ error: 'Asset not found' }, 404, NO_STORE_HEADERS);
+  }
+  return privateAssetResponse(env, sprite.blob_key);
 }
 
 export async function getPublicFighterSpriteAsset(

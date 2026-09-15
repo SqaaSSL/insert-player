@@ -12,7 +12,7 @@ const validRequest = {
   id: 'insert-player-arena',
   label: 'INSERT PLAYER ARENA',
   blurb: 'Red corner, blue corner, and main-event lights.',
-  legalVersion: '2026-08-23.1',
+  legalVersion: '2026-09-15.1',
   sourceMode: 'transform-scene',
   model: 'gemini-3.1-flash-image',
   seed: {

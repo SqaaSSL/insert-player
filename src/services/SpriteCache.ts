@@ -142,7 +142,11 @@ interface CachedMeta {
   qualityTier?: 'rookie' | 'contender' | 'champion';
   cloudFighterId?: string | null;
   cloudPublic?: boolean;
-  cloudManagement?: 'arcade';
+  cloudManagement?: 'arcade' | 'crew';
+  cloudCrewId?: string | null;
+  cloudCrewName?: string | null;
+  cloudAccessScope?: 'owner' | 'crew' | 'community';
+  cloudAccessCrewIds?: string[];
   cloudSourceHashes?: Record<string, string | null>;
   cloudSpriteVersionCount?: number;
   cloudPlayableSpriteRefs?: Record<string, CachedPlayableSpriteRef>;
@@ -451,6 +455,11 @@ function mergeClaimedMeta(existing: CachedMeta | undefined, local: CachedMeta, o
     qualityTier: maxOptionalTier(existing.qualityTier, local.qualityTier),
     cloudFighterId: existing.cloudFighterId ?? local.cloudFighterId ?? null,
     cloudPublic: existing.cloudPublic ?? local.cloudPublic ?? false,
+    cloudManagement: existing.cloudManagement ?? local.cloudManagement,
+    cloudCrewId: existing.cloudCrewId ?? local.cloudCrewId ?? null,
+    cloudCrewName: existing.cloudCrewName ?? local.cloudCrewName ?? null,
+    cloudAccessScope: existing.cloudAccessScope ?? local.cloudAccessScope,
+    cloudAccessCrewIds: existing.cloudAccessCrewIds ?? local.cloudAccessCrewIds,
     cloudPlayableSpriteRefs: existing.cloudPlayableSpriteRefs ?? local.cloudPlayableSpriteRefs,
     animationsReady: Array.from(new Set([
       ...(existing.animationsReady ?? []),

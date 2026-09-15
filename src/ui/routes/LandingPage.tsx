@@ -106,10 +106,13 @@ export function LandingPage({
   const example = entries[exampleIndex % entries.length] ?? entries[0];
   const isYou = example.isYou;
   const rookieStatus = includedRookieStatus(authStatus, billingProfile);
+  const availableRookiePasses = billingProfile
+    ? Math.max(0, 1 - billingProfile.freeRookieGenerationsUsed) + billingProfile.referralRookiePasses
+    : 0;
   const rookieOffer = authStatus === 'signed-in' && billingProfileChecked && !billingProfile
     ? 'Rookie · pass verified at creation'
-    : rookieStatus === 'included' && authStatus === 'signed-in'
-    ? 'Free Rookie pass · 1 available'
+    : rookieStatus === 'included' && authStatus === 'signed-in' && availableRookiePasses > 0
+    ? `Free Rookie pass${availableRookiePasses === 1 ? '' : 'es'} · ${availableRookiePasses} available`
     : rookieStatus === 'included'
       ? 'Free Rookie · human check at creation'
     : rookieStatus === 'credits'

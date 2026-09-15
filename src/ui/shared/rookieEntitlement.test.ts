@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { BillingProfile } from '../../services/Billing.ts';
 import { expectedCreationCredits, includedRookieStatus, initialCreationTier } from './rookieEntitlement.ts';
 
-const profile = (freeRookieGenerationsUsed: number): BillingProfile => ({
+const profile = (freeRookieGenerationsUsed: number, referralRookiePasses = 0): BillingProfile => ({
   creditsBalance: 0,
   freeRookieGenerationsUsed,
+  referralRookiePasses,
   planTier: 'free',
 });
 
@@ -21,6 +22,11 @@ describe('includedRookieStatus', () => {
     expect(includedRookieStatus('signed-in', profile(0))).toBe('included');
     expect(includedRookieStatus('signed-in', profile(1))).toBe('credits');
     expect(includedRookieStatus('signed-in', profile(3))).toBe('credits');
+  });
+
+  it('includes an earned referral Rookie after the first account Rookie is used', () => {
+    expect(includedRookieStatus('signed-in', profile(1, 1))).toBe('included');
+    expect(expectedCreationCredits('rookie', 'aura', 'signed-in', profile(1, 1))).toBe(0);
   });
 
   it('does not promise an entitlement before the account is known', () => {

@@ -55,6 +55,8 @@ STRIPE_PRICE_STARTER = "price_1U7DsICPjQq08iG9cfEyX3NU"
 STRIPE_PRICE_VERSUS = "price_1U7DsJCPjQq08iG9feLhQhLr"
 STRIPE_PRICE_ARCADE = "price_1U7DsKCPjQq08iG98e4ZosBp"
 # wrangler secret put CLERK_WEBHOOK_SIGNING_SECRET
+# Clerk Backend API access for Organization invitations and verified referral identity checks.
+# wrangler secret put CLERK_SECRET_KEY
 # wrangler secret put TURNSTILE_SECRET_KEY
 # HMAC key used to pseudonymize anonymous network identifiers before D1 writes.
 # wrangler secret put ANONYMIZATION_SECRET
@@ -80,6 +82,7 @@ required = [
   "STRIPE_SECRET_KEY",
   "STRIPE_WEBHOOK_SECRET",
   "CLERK_WEBHOOK_SIGNING_SECRET",
+  "CLERK_SECRET_KEY",
   "TURNSTILE_SECRET_KEY",
   "ANONYMIZATION_SECRET",
   "GENERATION_JOB_SIGNING_SECRET",

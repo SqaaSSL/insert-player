@@ -6,7 +6,7 @@ import {
 } from '../../services/QualityTiers.ts';
 
 export type CreationReturnTarget = 'gallery' | 'arcade' | 'aura' | 'fight' | 'rush';
-export type CreationEntrySource = 'trial' | 'landing' | 'arcade' | 'menu' | 'gallery' | 'roster' | 'challenge';
+export type CreationEntrySource = 'trial' | 'referral' | 'landing' | 'arcade' | 'menu' | 'gallery' | 'roster' | 'challenge';
 
 export interface CreationNavigationContext {
   tier: QualityTier | null;
@@ -36,6 +36,7 @@ export interface CreationPurchaseIntent {
 
 const CREATION_ENTRY_SOURCES = new Set<CreationEntrySource>([
   'trial',
+  'referral',
   'landing',
   'arcade',
   'menu',

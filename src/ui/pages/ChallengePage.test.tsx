@@ -80,7 +80,7 @@ describe('Aura challenge entry and result surfaces', () => {
     const share = vi.fn();
     const markup = renderToStaticMarkup(<AuraBattleResults summary={summary} trial onRetry={vi.fn()} onExit={vi.fn()} onCreatePlayer={vi.fn()} onChallengeCreated={share} />);
     expect(markup).toContain('aura-challenge-composer is-compact');
-    expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('Create my Rookie Aura'));
+    expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('Create My Free Rookie'));
     expect(markup.indexOf('Share score back')).toBeLessThan(markup.indexOf('More options'));
     expect(markup).toContain('class="aura-results__share-main"');
     expect(markup).toContain('aria-expanded="false"');
@@ -89,6 +89,19 @@ describe('Aura challenge entry and result surfaces', () => {
     expect(markup).not.toContain('aura-results__video-option');
     expect(markup).not.toContain('aura-results__details');
     expect(share).not.toHaveBeenCalled();
+  });
+  it('turns a first Rookie debut into the Crew-building mission', () => {
+    const markup = renderToStaticMarkup(
+      <AuraBattleResults
+        summary={{ ...summary, challenge: undefined, challengeShareSlots: [] }}
+        onRetry={vi.fn()}
+        onExit={vi.fn()}
+        onBuildCrew={vi.fn()}
+      />,
+    );
+    expect(markup).toContain('Debut Complete');
+    expect(markup).toContain('Build My Crew');
+    expect(markup.indexOf('Build My Crew')).toBeLessThan(markup.indexOf('Run It Back'));
   });
   it('compares the recipient score from P2 when the shared phrase belongs to that side', () => {
     const markup = renderToStaticMarkup(<AuraBattleResults summary={{ ...summary, p1Score: { ...score, score: 900 },
