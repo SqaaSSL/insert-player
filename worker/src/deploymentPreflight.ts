@@ -30,5 +30,7 @@ export async function readDeploymentImageProcessorContract(
   if (!(await hasValidClerkBackendAuthBridge(request, env))) {
     return json({ error: 'Unauthorized' }, 401);
   }
-  return noStore(await readImageProcessorGenerationContract(env));
+  return noStore(await readImageProcessorGenerationContract(env, {
+    includeDeploymentDiagnostics: true,
+  }));
 }

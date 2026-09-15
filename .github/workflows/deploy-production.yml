@@ -237,6 +237,8 @@ jobs:
         run: npm run smoke:live
 
       - name: Wait for the compatible image processor Container
+        # Leave room for rollback even when individual health requests time out.
+        timeout-minutes: 22
         env:
           ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
           CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
